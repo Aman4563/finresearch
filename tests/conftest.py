@@ -6,6 +6,22 @@ import pytest
 from sqlalchemy import create_engine, text
 
 
+@pytest.fixture(autouse=True)
+def _isolate_data_dirs(tmp_path, monkeypatch):
+    """Every test writes runs, state, documents and caches under its own tmp dir, never the real data/ folder.
+
+    (Regression: pipeline tests once overwrote a live run's report because runs_dir still pointed at data/runs.)
+    """
+    from finresearch import config
+
+    for var, sub in (("FINRESEARCH_RUNS_DIR", "runs"), ("FINRESEARCH_STATE_DIR", "state"),
+                     ("FINRESEARCH_DOCS_DIR", "docs")):  # fmt: skip
+        monkeypatch.setenv(var, str(tmp_path / "_iso" / sub))
+    config.get_settings.cache_clear()
+    yield
+    config.get_settings.cache_clear()
+
+
 @pytest.fixture(scope="session")
 def db_url():
     from finresearch.config import Settings
