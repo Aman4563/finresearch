@@ -1,6 +1,6 @@
 [project]
 name = "finresearch"
-version = "0.1.0"
+version = "0.2.0"
 description = "Personal, fact-checked investment research engine (Indian IPOs first) driven by Claude Code with local-model fallback"
 authors = [{ name = "Aman4563" }]
 readme = "README.md"
