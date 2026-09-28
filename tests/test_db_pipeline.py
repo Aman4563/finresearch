@@ -12,41 +12,9 @@ import shutil
 from pathlib import Path
 
 import pytest
+from conftest import minimal_pdf
 
 FIX = Path(__file__).parent / "fixtures"
-
-
-def _minimal_pdf(pages: list[list[str]]) -> bytes:
-    """A tiny valid PDF: one Helvetica text line per entry; an empty list = page with no text layer."""
-    objs: list[bytes] = []
-    n_pages = len(pages)
-    kids = " ".join(f"{3 + 2 * i} 0 R" for i in range(n_pages))
-    objs.append(b"<< /Type /Catalog /Pages 2 0 R >>")
-    objs.append(f"<< /Type /Pages /Kids [{kids}] /Count {n_pages} >>".encode())
-    font_id = 3 + 2 * n_pages
-    for i, lines in enumerate(pages):
-        content_id = 4 + 2 * i
-        objs.append(
-            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents {content_id} 0 R "
-            f"/Resources << /Font << /F1 {font_id} 0 R >> >> >>".encode()
-        )
-        ops = ["BT", "/F1 11 Tf", "14 TL", "60 740 Td"]
-        for ln in lines:
-            ops.append("(" + ln.replace("(", r"\(").replace(")", r"\)") + ") Tj T*")
-        ops.append("ET")
-        stream = "\n".join(ops).encode() if lines else b""
-        objs.append(b"<< /Length %d >>\nstream\n" % len(stream) + stream + b"\nendstream")
-    objs.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
-    out = bytearray(b"%PDF-1.4\n")
-    offsets = []
-    for k, body in enumerate(objs, 1):
-        offsets.append(len(out))
-        out += f"{k} 0 obj\n".encode() + body + b"\nendobj\n"
-    xref = len(out)
-    out += f"xref\n0 {len(objs) + 1}\n0000000000 65535 f \n".encode()
-    out += b"".join(f"{o:010d} 00000 n \n".encode() for o in offsets)
-    out += f"trailer\n<< /Size {len(objs) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode()
-    return bytes(out)
 
 
 def test_ingest_pdf_pages_lines_scanned_and_idempotent(env, tmp_path):
@@ -55,7 +23,7 @@ def test_ingest_pdf_pages_lines_scanned_and_idempotent(env, tmp_path):
     from finresearch.ingest.text import read_lines
 
     pdf = tmp_path / "t.pdf"
-    pdf.write_bytes(_minimal_pdf([["Revenue from operations 11,716.54", "Profit for the year 535.61"], []]))
+    pdf.write_bytes(minimal_pdf([["Revenue from operations 11,716.54", "Profit for the year 535.61"], []]))
     with session_scope() as s:
         co = get_or_create_company(s, "acme", "Acme Ltd")
         doc = ingest_pdf(s, pdf, company=co, kind=DocKind.OTHER, docs_dir=env.docs_dir, ocr=True)

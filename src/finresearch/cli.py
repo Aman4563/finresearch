@@ -164,6 +164,32 @@ def docs_add(
         path.unlink(missing_ok=True)
 
 
+@docs_app.command("discover")
+def docs_discover(
+    company: str = typer.Argument(..., help="Company slug"),
+    name: str | None = typer.Option(None, help="Company name (creates the company if new)"),
+    nse_symbol: str | None = typer.Option(None),
+    agent: bool = typer.Option(True, help="Also search company IR pages with the discovery agent"),
+    index: bool = typer.Option(True, help="Build sections, chunks and embeddings"),
+) -> None:
+    """Find, download and ingest a company's offer and IR documents (NSE, SEBI, IR pages)."""
+    from finresearch.db import session_scope
+    from finresearch.ingest.discover import discover
+    from finresearch.ingest.documents import get_or_create_company
+
+    with session_scope() as db:
+        co = get_or_create_company(db, company, name, nse_symbol=nse_symbol)
+        if nse_symbol and not co.nse_symbol:
+            co.nse_symbol = nse_symbol
+    rep = asyncio.run(discover(company, use_agent=agent, index=index, log=console.print))
+    for o in rep.outcomes:
+        console.print(
+            f"  {o.status:<9} {o.candidate.kind.value:<22} {o.candidate.title[:60]} "
+            f"({o.candidate.source}) {o.detail or ''}"
+        )
+    console.print(rep.summary())
+
+
 @docs_app.command("list")
 def docs_list(company: str | None = typer.Option(None)) -> None:
     """List ingested documents."""
@@ -230,14 +256,25 @@ def _go(run_id: int, streams: str | None, concurrency: int, wait: bool) -> None:
 
 @ipo_app.command("run")
 def ipo_run(
-    company: str = typer.Argument(..., help="Company slug (documents must be ingested)"),
+    company: str = typer.Argument(
+        ..., help="Company slug (documents are discovered automatically if missing)"
+    ),
+    name: str | None = typer.Option(None, help="Company name (creates the company if new)"),
+    nse_symbol: str | None = typer.Option(None),
     streams: str | None = typer.Option(None, help="Comma-separated subset of streams (default: all seven)"),
     concurrency: int = typer.Option(4, help="Parallel agents (Max-plan friendly default)"),
     wait: bool = typer.Option(False, help="Sleep through Max-window resets and resume automatically"),
 ) -> None:
     """Start a new IPO research run."""
+    from finresearch.db import session_scope
+    from finresearch.ingest.documents import get_or_create_company
     from finresearch.orchestrator.ipo import create_run
 
+    if name or nse_symbol:
+        with session_scope() as db:
+            co = get_or_create_company(db, company, name, nse_symbol=nse_symbol)
+            if nse_symbol and not co.nse_symbol:
+                co.nse_symbol = nse_symbol
     run_id = create_run(company)
     console.print(f"created run {run_id} for {company}")
     _go(run_id, streams, concurrency, wait)

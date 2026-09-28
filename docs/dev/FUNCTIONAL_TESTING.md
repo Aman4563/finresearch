@@ -55,3 +55,16 @@ These are dated entries for bugs we reproduced, what caused them, and how they a
 ### 2026-09-28: corrupted PDF on re-render (Moneyview, manual run) is now an automated test
 - **Seen (earlier, by hand):** re-rendering the Moneyview report over an existing PDF produced two concatenated documents that viewers refused to open, and headless Chrome sometimes never exited.
 - **Now:** `render.pdf.html_to_pdf` prints to a unique temp file with its own Chrome profile, kills the process group, validates with pypdf in strict mode, rewrites a clean single document and atomically renames it. `test_pdf_rerender_over_existing_file_stays_valid` renders twice over the same path and asserts a single `%%EOF` and identical page counts.
+
+### 2026-09-28: live discovery crashed while indexing (AceVector)
+- **Seen:** the first live `docs discover acevector` failed with `asyncio.run() cannot be called from a running event loop`. `discover()` is a coroutine, and indexing calls `asyncio.run()` for embeddings (and OCR).
+- **Now:** ingestion and indexing run in a worker thread (`asyncio.to_thread`). `test_discover_indexes_documents_from_inside_an_event_loop` runs discovery with indexing inside an event loop.
+
+### 2026-09-28: NSE's RHP ZIP also contains the General Information Document
+- **Seen:** the NSE `RHP_ACEVECTOR.zip` held two PDFs: the 575-page RHP and a 50-page "GID". Both were tagged `RHP`, so an offer-document lookup could have picked the wrong one.
+- **Now:** each ZIP member is classified by its own filename (`kind_for_member`: GID → OTHER, abridged → ABRIDGED_PROSPECTUS). The stored AceVector GID was retagged.
+
+### 2026-09-28: the same RHP stored twice from NSE and SEBI (Orient Cables)
+- **Seen:** agent discovery for Orient Cables ingested NSE's copy of the RHP as a second RHP. It has different bytes from SEBI's copy (so sha256 did not match) but 480 of 491 pages are identical; only the signature pages differ. `Orient_GID.pdf` was also tagged RHP, because `\bgid\b` does not match after an underscore.
+- **Now:** after extraction, a document whose pages are at least 90% identical to another document of the same company is rolled back and reported as a duplicate, and its stored files are removed (`test_a_byte_different_copy_with_the_same_text_is_a_duplicate`). The GID pattern no longer relies on word boundaries. The stored GID was retagged, and the duplicate RHP copy was removed after run 5 finished.
+- **Also:** each discovered document is now committed on its own, so a crash on one document keeps the others (`test_a_broken_document_fails_alone_and_earlier_documents_are_kept`).
