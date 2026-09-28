@@ -20,3 +20,9 @@ dist/
 .idea/
 .vscode/
 tests/fixtures/*.pdf
+# web app
+web/node_modules/
+web/.next/
+web/out/
+web/next-env.d.ts
+web/*.tsbuildinfo

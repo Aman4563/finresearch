@@ -11,6 +11,7 @@ import asyncio
 import json
 import re
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +30,7 @@ from finresearch.db.models import AgentStep, Claim, Company, Document, ResearchR
 LOCAL_HOSTS = ["127.0.0.1", "localhost", "testserver"]
 DASHBOARD_ORIGINS = [f"http://{h}:{p}" for h in ("127.0.0.1", "localhost") for p in (3000, 3100)]
 TERMINAL = ("done", "failed", "blocked")
+RADAR_TTL_S = 300
 CITE_RE = re.compile(r"\[C(\d+)\]")
 
 
@@ -343,16 +345,71 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0) -> FastAP
             yield ": keep-alive\n\n"
         yield frame("end", {"id": run_id, "status": status})
 
+    # ------------------------------------------------------------------ IPO radar
+    radar_cache: dict[str, Any] = {}
+
+    @app.get("/api/ipos")
+    async def ipos(refresh: bool = False) -> dict[str, Any]:
+        """Current and upcoming NSE mainboard issues, linked to companies and runs already in the store."""
+        import time
+
+        from finresearch.adapters.nse import NseClient
+        from finresearch.fincalc.dates import now_ist
+
+        if not refresh and radar_cache.get("at", 0) > time.time() - RADAR_TTL_S:
+            return radar_cache["data"]
+        errors: list[str] = []
+        issues: list[tuple[str, Any]] = []
+        async with NseClient() as nse:
+            for phase, fetch in (("current", nse.current_issues), ("upcoming", nse.upcoming_issues)):
+                try:
+                    issues += [(phase, i) for i in await fetch()]
+                except Exception as e:
+                    errors.append(f"{phase}: {e}"[:200])
+        known = await asyncio.to_thread(_known_symbols)
+        today = now_ist().date()
+        rows, seen = [], set()
+        for listed_as, i in issues:
+            if i.symbol in seen:  # NSE's upcoming list repeats issues that are already open
+                continue
+            seen.add(i.symbol)
+            phase = listed_as
+            if i.issue_start and i.issue_end:
+                phase = "upcoming" if today < i.issue_start else "closed" if today > i.issue_end else "open"
+            k = known.get(i.symbol.upper(), {})
+            rows.append({"phase": phase, "symbol": i.symbol, "company": i.company, "series": i.series,
+                         "issue_start": _iso(i.issue_start), "issue_end": _iso(i.issue_end), "price_band": i.price_band,
+                         "times_subscribed": str(i.times_subscribed) if i.times_subscribed is not None else None,
+                         "status": i.status, "slug": k.get("slug"), "latest_run": k.get("run"),
+                         "latest_run_status": k.get("run_status")})  # fmt: skip
+        order = {"open": 0, "upcoming": 1, "current": 1, "closed": 2}
+        rows.sort(key=lambda r: (order.get(r["phase"], 3), r["issue_end"] or ""))
+        data = {"fetched_at": _iso(datetime.now(UTC)), "issues": rows, "errors": errors}
+        if not errors:
+            radar_cache.update(at=time.time(), data=data)
+        return data
+
     # ------------------------------------------------------------------ plan usage
     @app.get("/api/limits")
     def limits() -> dict[str, Any]:
         from finresearch.bridge.limits import LimitTracker
 
         s = get_settings()
-        return {"tiers": LimitTracker(s.state_dir).describe(),
+        return {"tiers": LimitTracker(s.state_dir).describe(), "now": datetime.now(UTC).timestamp(),
                 "ceilings": {"five_hour": s.max_five_hour_ceiling}}  # fmt: skip
 
     return app
+
+
+def _known_symbols() -> dict[str, dict[str, Any]]:
+    with session_scope() as s:
+        out: dict[str, dict[str, Any]] = {}
+        for co in s.scalars(select(Company).where(Company.nse_symbol.isnot(None))):
+            run = s.scalars(select(ResearchRun).where(ResearchRun.company_id == co.id, ResearchRun.kind == "ipo_report")
+                            .order_by(ResearchRun.id.desc())).first()  # fmt: skip
+            out[co.nse_symbol.upper()] = {"slug": co.slug, "run": run.id if run else None,
+                                          "run_status": run.status if run else None}  # fmt: skip
+        return out
 
 
 def _worker_alive(detail: dict[str, Any]) -> bool:
