@@ -140,7 +140,7 @@ uv run finresearch ipo render <run_id>             # rebuild the research pack (
 uv run finresearch serve                           # http://127.0.0.1:8710
 ```
 
-The dashboard (IPO radar, live agent view, report reader with clickable evidence, "ask about this report" chat, plan usage) is a Next.js app in
+The dashboard (IPO radar, live agent view, report reader with clickable evidence, "ask about this report" chat, personal suggestions checked against your own rules, a decision journal, plan usage) is a Next.js app in
 `web/`:
 
 ```bash

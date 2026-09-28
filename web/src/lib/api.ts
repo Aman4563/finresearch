@@ -165,3 +165,47 @@ export function useApi<T>(path: string | null, pollMs?: number) {
 export const pct = (x: number | null | undefined) => (x == null ? "" : `${Math.round(x * 100)}%`);
 export const when = (iso: string | null | undefined) =>
   iso ? new Date(iso).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" }) : "";
+
+export type Rule = { id: string; description: string; metric: string; op: string; value: string; action: "skip" | "warn" };
+export type Profile = {
+  capital_per_ipo_inr: string;
+  risk_appetite: "low" | "medium" | "high";
+  horizon: "listing" | "short" | "long";
+  tax_slab_pct: string;
+  category: "retail" | "shni" | "bhni";
+  holdings: { symbol: string; sector: string | null; value_inr: string | null }[];
+  rules: Rule[];
+  notes: string;
+};
+
+export type Decision = {
+  id: number;
+  run_id: number;
+  company_name?: string | null;
+  action: "APPLY" | "APPLY-CONDITIONAL" | "SKIP";
+  lots: number;
+  category: string | null;
+  suggestion: {
+    conditions: string[];
+    warnings: string[];
+    enforcement_notes: string[];
+    model?: string;
+    agent: { action: string; lots: number; exit_plan: string; watch: string[]; rationale_markdown: string; confidence: string };
+  };
+  inputs: {
+    at: string;
+    limits: Record<string, number | null>;
+    metrics: Record<string, { value: string | null; source: string; as_of: string | null }>;
+    rules: { rule: Rule; status: "fired" | "clear" | "unknown"; value: string | null; source: string | null }[];
+  };
+  user_action: "applied" | "skipped" | null;
+  applied_lots: number | null;
+  allotted_lots: number | null;
+  issue_price: string | null;
+  listing_price: string | null;
+  exit_price: string | null;
+  exit_date: string | null;
+  outcome: Record<string, string | boolean>;
+  notes: string | null;
+  created_at: string | null;
+};

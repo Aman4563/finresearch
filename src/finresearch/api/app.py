@@ -11,9 +11,10 @@ import asyncio
 import json
 import re
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,7 +26,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from finresearch.api.workers import Spawner, WorkerBusy, worker_info
 from finresearch.config import get_settings
 from finresearch.db import session_scope
-from finresearch.db.models import AgentStep, Claim, Company, Conversation, Document, ResearchRun
+from finresearch.db.models import AgentStep, Claim, Company, Conversation, Decision, Document, ResearchRun
 
 LOCAL_HOSTS = ["127.0.0.1", "localhost", "testserver"]
 DASHBOARD_ORIGINS = [f"http://{h}:{p}" for h in ("127.0.0.1", "localhost") for p in (3000, 3100)]
@@ -43,6 +44,17 @@ class StartRun(BaseModel):
 class Ask(BaseModel):
     question: str = Field(min_length=1, max_length=4000)
     conversation_id: int | None = None
+
+
+class DecisionUpdate(BaseModel):
+    user_action: Literal["applied", "skipped"] | None = None
+    applied_lots: int | None = Field(None, ge=0)
+    allotted_lots: int | None = Field(None, ge=0)
+    issue_price: Decimal | None = Field(None, gt=0)
+    listing_price: Decimal | None = Field(None, gt=0)
+    exit_price: Decimal | None = Field(None, gt=0)
+    exit_date: date | None = None
+    notes: str | None = Field(None, max_length=4000)
 
 
 class ResumeRun(BaseModel):
@@ -100,8 +112,10 @@ def _latest_report(s, run_id: int) -> str | None:
 
 
 # --------------------------------------------------------------------------- app
-def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=None) -> FastAPI:
-    """`router` overrides the bridge router used for report questions (tests pass a fake)."""
+def create_app(
+    *, spawner: Spawner | None = None, poll_s: float = 1.0, router=None, live_fetch=None
+) -> FastAPI:
+    """`router` overrides the bridge router for chat and suggestions; `live_fetch` the NSE live-data fetch (tests)."""
     spawner = spawner or Spawner()
     app = FastAPI(title="FinResearch", version="0.3.0", docs_url="/api/docs", openapi_url="/api/openapi.json")
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=LOCAL_HOSTS)
@@ -382,6 +396,69 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
                 raise HTTPException(404, f"unknown conversation {conversation_id}")
             return {"id": c.id, "run_id": c.run_id, "title": c.title,
                     "messages": [message_json(m) for m in c.messages]}  # fmt: skip
+
+    # ------------------------------------------------------------------ personal suggestions and journal
+    @app.get("/api/profile")
+    def get_profile() -> dict[str, Any]:
+        from finresearch.suggest.advisor import load_profile
+
+        with session_scope() as s:
+            return load_profile(s).model_dump(mode="json")
+
+    @app.put("/api/profile")
+    def put_profile(body: dict[str, Any]) -> dict[str, Any]:
+        from pydantic import ValidationError
+
+        from finresearch.suggest.advisor import save_profile
+        from finresearch.suggest.profile import Profile
+
+        try:
+            profile = Profile.model_validate(body)
+        except ValidationError as e:
+            raise HTTPException(422, e.errors(include_url=False, include_context=False)) from e
+        ids = [r.id for r in profile.rules]
+        if len(ids) != len(set(ids)):
+            raise HTTPException(422, "rule ids must be unique")
+        with session_scope() as s:
+            return save_profile(s, profile).model_dump(mode="json")
+
+    @app.post("/api/runs/{run_id}/suggest", status_code=201)
+    async def suggest_run(run_id: int) -> dict[str, Any]:
+        from finresearch.bridge import AllTiersFailed
+        from finresearch.suggest.advisor import suggest
+
+        try:
+            return await suggest(run_id, router=router, **({"fetch": live_fetch} if live_fetch else {}))
+        except LookupError as e:
+            raise HTTPException(404, str(e)) from e
+        except AllTiersFailed as e:
+            raise HTTPException(503, f"Claude is not available right now: {e}"[:500]) from e
+
+    @app.get("/api/decisions")
+    def decisions(run_id: int | None = None) -> list[dict[str, Any]]:
+        from finresearch.suggest.advisor import decision_json
+
+        with session_scope() as s:
+            q = select(Decision)
+            if run_id is not None:
+                q = q.where(Decision.run_id == run_id)
+            rows = s.scalars(q.order_by(Decision.id.desc())).all()
+            names = dict(s.execute(select(Company.id, Company.name)).all())
+            return [{**decision_json(d), "company_name": names.get(d.company_id)} for d in rows]
+
+    @app.patch("/api/decisions/{decision_id}")
+    def update_decision(decision_id: int, body: DecisionUpdate) -> dict[str, Any]:
+        from finresearch.suggest.advisor import decision_json, record_outcome
+
+        with session_scope() as s:
+            d = s.get(Decision, decision_id)
+            if d is None:
+                raise HTTPException(404, f"unknown decision {decision_id}")
+            for k, v in body.model_dump(exclude_unset=True).items():
+                setattr(d, k, v)
+            d.outcome = record_outcome(d)
+            s.flush()
+            return decision_json(d)
 
     # ------------------------------------------------------------------ IPO radar
     radar_cache: dict[str, Any] = {}

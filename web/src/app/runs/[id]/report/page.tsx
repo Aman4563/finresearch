@@ -8,6 +8,7 @@ import remarkGfm from "remark-gfm";
 
 import { AskPanel } from "@/components/ask";
 import { CiteChip, EvidencePanel } from "@/components/evidence";
+import { SuggestionPanel } from "@/components/suggestion";
 import { Card, ErrorNote } from "@/components/ui";
 import { API_URL, type Report, useApi } from "@/lib/api";
 
@@ -43,6 +44,10 @@ export default function ReportReader() {
           ))}
         </div>
       </div>
+
+      <Card title="My suggestion">
+        <SuggestionPanel runId={id} />
+      </Card>
 
       {!data.published && (
         <Card title="NOT PUBLISHED — the publish gate blocked this report">
