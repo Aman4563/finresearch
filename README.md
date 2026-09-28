@@ -84,8 +84,9 @@ They work only through the MCP tools, run as a resumable pipeline that schedules
 | **v0.1.0** | Claude Bridge, document pipeline, sections and search, NSE/SEBI data, fincalc, MCP server, claim ledger | ✅ Released |
 | **v0.2.0** | IPO report engine: agents and skills, multi-agent pipeline, verification gate, report and folder-pack renderer, document discovery, gold-set evaluation | ✅ Released |
 | **v0.3.0** | Web app: dashboard, live agent view, report reader with citations, "ask about this report", personal suggestions, monitoring | ✅ Released |
-| **v0.4.0** | Quality and scale: evaluation and back-testing on past IPOs, SME IPOs, Hindi news | 🚧 In progress |
-| Later | Listed stocks, mutual funds, bonds, F&O analytics | Planned |
+| **v0.4.0** | Quality and scale: offline evaluation in CI and back-testing, SME IPOs, Hindi news | ✅ Released |
+| **v0.5.0** | Listed stocks (research kinds, stock data, stock reports, stocks in the app) | 🚧 In progress |
+| Later | Mutual funds (v0.6.0), bonds (v0.7.0), F&O analytics (v0.8.0) | Planned |
 
 ## Requirements
 
