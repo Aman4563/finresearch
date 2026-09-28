@@ -100,8 +100,8 @@ def test_gold_files_are_well_formed(company):
 
 
 def test_underscored_metrics_and_other_contexts_are_handled(env, tmp_path):
-    """Regressions from live run 4: underscores hid matches; DRHP / lower-band / peer / dilution claims were
-    wrongly counted as contradicting gold facts."""
+    """Regressions from live runs 4 and 5: underscores hid matches; DRHP / lower-band / peer / dilution claims and
+    segment / export revenue were wrongly counted as contradicting gold facts."""
     from finresearch.db import session_scope
     from finresearch.db.models import AgentStep, Claim, ResearchRun
     from finresearch.ingest.documents import get_or_create_company
@@ -114,7 +114,9 @@ def test_underscored_metrics_and_other_contexts_are_handled(env, tmp_path):
         {"id": "ronw", "label": "RoNW FY26", "patterns": [r"ronw"], "period": r"fy ?2026", "value": 25.84,
          "unit": "%", "tolerance": 0.005, "importance": "normal"},
         {"id": "cfo", "label": "CFO FY26", "patterns": [r"\bcfo\b"], "period": r"fy ?2026", "value": -266.44,
-         "unit": "INR million", "tolerance": 0.005, "importance": "high"}]}  # fmt: skip
+         "unit": "INR million", "tolerance": 0.005, "importance": "high"},
+        {"id": "rev", "label": "Revenue FY26", "patterns": [r"revenue from operations|\brevenue\b"],
+         "period": r"fy ?2026", "value": 11716.54, "unit": "INR million", "tolerance": 0.005, "importance": "high"}]}  # fmt: skip
     with session_scope() as s:
         co = get_or_create_company(s, "ev2-" + hashlib.sha1(str(tmp_path).encode()).hexdigest()[:8], "E")
         r = ResearchRun(company_id=co.id, kind="ipo_report", manifest={})
@@ -126,7 +128,11 @@ def test_underscored_metrics_and_other_contexts_are_handled(env, tmp_path):
                 ("peer_ronw", "24.58", "%", "FY2026", "Polycab India FY2026 RoNW"),
                 ("ronw", "25.84", "%", "FY2026", "RoNW FY2026"),
                 ("cfo", "421.81", "INR million", "FY2024", "CFO ₹421.81m in FY2024, in contrast to FY2026"),
-                ("cfo", "-266.44", "INR million", "FY2026", "CFO FY2026")]  # fmt: skip
+                ("cfo", "-266.44", "INR million", "FY2026", "CFO FY2026"),
+                # live run 5: segment and export revenue were counted as contradicting total revenue
+                ("revenue_networking_cables_segment", "9165.65", "INR million", "FY2026", "Networking revenue"),
+                ("export_revenue", "1084.85", "INR million", "FY2026", "Export revenue FY2026"),
+                ("revenue_from_operations", "11716.54", "INR million", "FY2026", "Revenue FY2026")]  # fmt: skip
         ids = []
         for m, v, u, per, st in rows:
             c = Claim(run_id=r.id, stream="x", claim_type="numeric", metric=m, value=Decimal(v), unit=u, period=per,

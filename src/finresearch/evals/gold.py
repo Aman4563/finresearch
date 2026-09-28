@@ -32,6 +32,9 @@ DEFAULT_EXCLUDE = (
     r"weighted average cost"
 )
 
+# a claim about a component of the gold metric (segment revenue, export revenue, ...) never contradicts the total
+DEFAULT_COMPONENT = r"segment|export|domestic|geograph|product|region|channel|category"
+
 
 def load_gold(company: str, gold_dir: Path | None = None) -> dict[str, Any]:
     path = (gold_dir or GOLD_DIR) / f"{company}.json"
@@ -155,6 +158,7 @@ def evaluate(
         gv = Decimal(str(fact["value"]))
         fr = FactResult(fact["id"], fact["label"], fact.get("importance", "normal"))
         excl = re.compile(fact.get("exclude") or DEFAULT_EXCLUDE, re.I)
+        component = re.compile(fact.get("component") or DEFAULT_COMPONENT, re.I)
         for c in claims:
             metric = (c.metric or "").replace("_", " ")
             text = f"{metric} {c.statement}"
@@ -177,6 +181,7 @@ def evaluate(
                 and c.id in cited
                 and c.status in USABLE
                 and pat.search(metric)
+                and not component.search(metric)
                 and (per is None or per.search(c.period or ""))
             ):
                 # a contradiction needs the claim's own metric and period fields to name the gold fact
