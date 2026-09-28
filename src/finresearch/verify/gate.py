@@ -334,6 +334,14 @@ def check_report(session: Session, run_id: int, report_markdown: str) -> ReportG
             )
         elif c.status in CAVEAT_OK:
             g.warnings.append(f"[C{i}] is '{c.status}' — keep only with an UNVERIFIED caveat")
+        if (
+            c is not None
+            and (c.checks or {}).get("source_language") == "hi"
+            and not c.checks.get("translation_marked")
+        ):
+            g.warnings.append(
+                f"[C{i}] quotes a Hindi source: say in the report that the figure is translated"
+            )
     raw = sorted(set(_RAW_CITE_RE.findall(report_markdown)))
     if raw:
         g.blocking.append(

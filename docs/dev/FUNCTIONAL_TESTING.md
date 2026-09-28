@@ -84,3 +84,7 @@ These are dated entries for bugs we reproduced, what caused them, and how they a
 ### 2026-09-29: SME subscription tables would have read as zero demand
 - **Seen (live BMISL, SME):** NSE's category table for SME issues has no offered shares and shows 0.00x for every category, while the issue was 1.27x subscribed overall. Parsed as-is, that would have fired a "QIB < 1x" rule and reported zero demand.
 - **Now:** a category with no offered shares has unknown times. Rules on unknown metrics become conditions, and the monitor takes the overall total from NSE's current-issues list (`test_sme_category_times_are_unknown_not_zero`, `test_monitor_records_sme_subscription_from_the_current_issues_total`).
+
+### 2026-09-29: translated Hindi figures were not marked as translations (live run 7)
+- **Seen:** the news agent cited a Hindi Business Standard article with the Hindi quote but wrote an English statement without saying it was translated. Neither the prompt instruction nor the tool's note changed this.
+- **Now:** `save_claim` detects Devanagari in a citation quote and appends "(translated from Hindi)" to an unmarked statement (`checks.translation_mark_added`). The report gate still warns about unmarked Hindi claims saved earlier (`test_hindi_quotes_are_flagged_and_unmarked_translations_warned`).
