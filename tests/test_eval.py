@@ -1,0 +1,99 @@
+"""Gold-set scorer: unit normalisation, period matching, contradictions in the report, verdict agreement."""
+
+from __future__ import annotations
+
+import hashlib
+from decimal import Decimal
+
+import pytest
+
+from finresearch.evals.gold import GOLD_DIR, evaluate, load_gold
+
+GOLD = {
+    "company": "t",
+    "verdict": {"listing": "APPLY", "long_term": ["AVOID", "NEUTRAL"]},
+    "facts": [
+        {"id": "pat", "label": "PAT FY26", "patterns": [r"\bpat\b|profit"], "period": r"fy ?2026|fy26",
+         "value": 535.61, "unit": "INR million", "tolerance": 0.005, "importance": "high"},
+        {"id": "mcap", "label": "Market cap", "patterns": ["market cap"], "period": None, "value": 30953.5,
+         "unit": "INR million", "tolerance": 0.005, "importance": "high"},
+        {"id": "cust", "label": "Largest customer", "patterns": ["largest customer"], "period": None, "value": 38.54,
+         "unit": "%", "tolerance": 0.005, "importance": "normal"},
+        {"id": "lot", "label": "Lot", "patterns": [r"\blot\b"], "period": None, "value": 55, "unit": "shares",
+         "tolerance": 0.0, "importance": "normal"},
+    ],
+}  # fmt: skip
+
+
+@pytest.fixture
+def run(env, tmp_path):
+    from finresearch.db import session_scope
+    from finresearch.db.models import AgentStep, Claim, ResearchRun
+    from finresearch.ingest.documents import get_or_create_company
+
+    with session_scope() as s:
+        co = get_or_create_company(s, "eval-" + hashlib.sha1(str(tmp_path).encode()).hexdigest()[:8], "E")
+        r = ResearchRun(company_id=co.id, kind="ipo_report", manifest={"final_gate": {"ok": True}})
+        s.add(r)
+        s.flush()
+
+        def add(**kw):
+            c = Claim(run_id=r.id, claim_type="numeric", **kw)
+            s.add(c)
+            s.flush()
+            return c.id
+
+        ids = {
+            "pat_cr": add(stream="financials", statement="PAT FY26", metric="pat", value=Decimal("53.561"),
+                          unit="INR crore", period="FY2026", status="verified"),
+            "pat_wrong_year": add(stream="financials", statement="PAT", metric="pat", value=Decimal("535.61"),
+                                  unit="INR million", period="FY2025", status="verified"),
+            "mcap_bad": add(stream="valuation", statement="Post-issue market cap", metric="market_cap",
+                            value=Decimal("3200"), unit="INR crore", period="post-issue", status="unverified"),
+            "cust_frac": add(stream="business", statement="Largest customer share", metric="largest_customer_share",
+                             value=Decimal("0.3854"), unit="fraction", period="Q1 FY27", status="needs_review"),
+            "lot_contra": add(stream="valuation", statement="lot size", metric="lot", value=Decimal("55"),
+                              unit="shares", period="-", status="contradicted"),
+        }  # fmt: skip
+        report = f"PAT ₹53.56 cr [C{ids['pat_cr']}]; market cap ₹3,200 cr [C{ids['mcap_bad']}]."
+        s.add(AgentStep(run_id=r.id, key="synthesis", stage="synthesis", role="synthesizer", status="done",
+                        num_turns=10, duration_s=120, five_hour_before=0.1, five_hour_after=0.14,
+                        output={"report_markdown": report, "overall_verdict": "APPLY-CONDITIONAL",
+                                "verdict_listing": "APPLY-CONDITIONAL", "verdict_long_term": "AVOID at 272"}))  # fmt: skip
+        return r.id, ids, report
+
+
+def test_scoring_units_periods_contradictions_and_verdict(run):
+    from finresearch.db import session_scope
+
+    run_id, ids, report = run
+    with session_scope() as s:
+        res = evaluate(s, run_id, GOLD, report)
+    by = {f.id: f for f in res.facts}
+    assert (
+        by["pat"].found and by["pat"].verified and by["pat"].claim_ids == [ids["pat_cr"]]
+    )  # crore -> million
+    assert not by["mcap"].found and by["mcap"].contradicted_in_report == [ids["mcap_bad"]]
+    assert by["cust"].found and not by["cust"].verified  # fraction -> %, needs_review still counts as found
+    assert not by["lot"].found  # contradicted claims never count
+    assert res.recall == 0.5 and res.high_recall == 0.5 and len(res.contradicted) == 1
+    assert res.verdict_agrees and not res.passes_release_bar
+    assert abs(res.stats["five_hour_used"] - 0.04) < 1e-9 and res.stats["steps"] == 1
+    md = res.markdown()
+    assert "key-fact recall | **50%** (2/4)" in md and "| release bar" in md and "FAIL" in md
+
+
+@pytest.mark.parametrize("company", ["moneyview", "orient-cables"])
+def test_gold_files_are_well_formed(company):
+    import re
+
+    gold = load_gold(company)
+    assert gold["company"] == company and len(gold["facts"]) >= 20
+    assert (GOLD_DIR / f"{company}.json").exists()
+    ids = [f["id"] for f in gold["facts"]]
+    assert len(ids) == len(set(ids))
+    for f in gold["facts"]:
+        for p in f["patterns"] + ([f["period"]] if f.get("period") else []):
+            re.compile(p)
+        assert f["unit"] in {"INR million", "INR", "%", "shares"} and f["importance"] in {"high", "normal"}
+        assert not re.search(r"subscri|gmp|grey", f["label"], re.I), "live figures do not belong in gold sets"
