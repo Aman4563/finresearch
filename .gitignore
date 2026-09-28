@@ -1,0 +1,22 @@
+# secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+# data & artefacts (PDFs, archives, runs, state)
+data/
+*.pdf
+*.warc*
+# python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+dist/
+# os/editor
+.DS_Store
+.idea/
+.vscode/
+tests/fixtures/*.pdf

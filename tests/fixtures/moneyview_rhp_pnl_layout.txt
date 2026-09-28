@@ -1,0 +1,59 @@
+
+
+
+                                                                                              316
+Moneyview Limited (formerly known as Moneyview Private Limited and Whizdm Innovations Private Limited)
+CIN: U72200KA2014PLC075775
+Annexure II: Restated Consolidated Summary Statement of Profit and Loss
+(All amounts are in Indian Rupees in Million, except as stated otherwise)
+                                                                                            For the three month For the three month
+                                                                                                                                                  For the year ended     For the year ended       For the year ended
+Particulars                                                                       Note          period ended       period ended
+                                                                                                                                                   March 31, 2026         March 31, 2025           March 31, 2024
+                                                                                               June 30, 2026       June 30, 2025
+Income
+Revenue from operations                                                            31
+  - Fees and commission income                                                                          6,328.65           3,917.61                        18,994.55              14,867.98               10,153.77
+  - Interest income                                                                                     3,871.66           2,829.16                        13,127.00               7,890.46                3,008.33
+  - Gain on derecognition of financial assets                                                              97.99              81.25                           970.24                 285.48                   57.46
+  - Other operating income                                                                                112.83             102.44                           419.79                 347.54                  204.14
+Total revenue from operations (a)                                                                      10,411.13           6,930.46                        33,511.58              23,391.46               13,423.70
+Other income (b)                                                                   32                     239.79              98.70                           531.16                 393.83                  468.71
+Total income (I= a+b)                                                                                  10,650.92           7,029.16                        34,042.74              23,785.29               13,892.41
+Expenses
+Employee benefits expense                                                                  33                   933.76               611.87                 2,819.36               2,224.56                1,570.52
+Finance costs                                                                              34                 1,881.27             1,335.19                 6,316.90               3,698.21                1,255.38
+Depreciation and amortisation expense                                                      35                    31.74                23.11                    98.79                  89.51                   48.60
+Impairment of financial instruments                                                        36                 2,614.03             2,004.30                 9,835.28               6,677.30                2,527.17
+Other expenses                                                                             37                 2,862.63             2,157.42                 9,632.34               7,903.60                6,507.71
+Total expenses (II)                                                                                           8,323.43             6,131.89                28,702.67              20,593.18               11,909.38
+Restated profit before exceptional items and tax (III) = (I-II)                                               2,327.49               897.27                 5,340.07               3,192.11                1,983.03
+Exceptional items, (gain) / loss (IV)                                                      38                    (2.32)                 -                   2,066.53                    -                       -
+Restated profit before tax (V) = (III-IV)                                                                     2,329.81               897.27                 3,273.54               3,192.11                1,983.03
+Tax expense/(credit)                                                                      39(a)
+Other than exceptional items
+Current tax expense                                                                                              729.82              300.26                 1,423.49                 866.79                  461.54
+Deferred tax credit                                                                                             (138.55)             (74.51)                  (56.86)                (77.43)                (189.98)
+Exceptional items                                                                          38
+Current tax expense/(credit) (VI)                                                                                  0.58                  -                   (520.14)                    -                      -
+Deferred tax expense/(credit)                                                                                       -                    -                       -                       -                      -
+Total tax expense (VII)                                                                                         591.85               225.75                   846.49                 789.36                  271.56
+Restated profit for the period/year (VIII) = (V-VII)                                                          1,737.96               671.52                 2,427.05                2,402.75               1,711.47
+Restated profit for the period/year before exceptional items (net of tax) (IX) = (VIII+IV+VI)                 1,736.22               671.52                 3,973.44                2,402.75               1,711.47
+Other comprehensive income
+Items that will not be reclassified to profit or loss in subsequent periods/years:
+-Re-measurement (loss) /gain on defined benefit plan                                                             (0.42)               (3.94)                   19.52                   12.85                   4.40
+-Income tax relating to above item                                                        39(b)                   0.11                 1.00                    (5.22)                  (3.32)                  0.36
+Other comprehensive income/(expense) for the period/year, net of taxes (X)                                       (0.31)               (2.94)                   14.30                    9.53                   4.76
+Restated total comprehensive income for the period/year, net of taxes XI = (VIII+X)                           1,737.65               668.58                 2,441.35                2,412.28               1,716.23
+Restated profit for the period/ year attributable to
+Owners of the Company                                                                                         1,737.96               671.52                 2,427.05                2,402.75               1,711.47
+                                                                                                              1,737.96               671.52                 2,427.05                2,402.75               1,711.47
+Restated other comprehensive income/ (loss) profit for the period/ year attributable to
+Owners of the Company                                                                                             (0.31)               (2.94)                  14.30                    9.53                   4.76
+                                                                                                                  (0.31)               (2.94)                  14.30                    9.53                   4.76
+Restated total comprehensive income/ (loss) profit for the period/ year attributable to
+Owners of the Company                                                                                         1,737.65               668.58                 2,441.35                2,412.28               1,716.23
+                                                                                                              1,737.65               668.58                 2,441.35                2,412.28               1,716.23
+Earnings per equity share [Face value of Re. 1 each                                        40
+(June 30, 2025; March 31, 2026; March 31, 2025 and March 31, 2024 )]

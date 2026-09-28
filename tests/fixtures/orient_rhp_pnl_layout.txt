@@ -1,0 +1,39 @@
+
+                                                                                                (in ₹ million, unless otherwise specified)
+                         Particulars                              For the three    For the year       For the year        For the year
+                                                                 months period     ended March       ended March         ended March
+                                                                 ended June 30,      31, 2026           31, 2025            31, 2024
+                                                                      2026
+CONTINUING OPERATIONS
+INCOME
+(a) Revenue from Operations                                             4,891.56        11,716.54            8,249.58           6,577.67
+(b) Other income                                                           17.82           100.18               69.05              72.12
+TOTAL INCOME                                                            4,909.38        11,816.72            8,318.63           6,649.79
+EXPENSES
+(a) Cost of materials consumed                                          4,022.14          9,583.17           6,559.02           5,244.30
+(b) Changes in inventories of finished goods, Stock-in-trade &           (84.17)          (168.46)           (113.58)            (85.14)
+work in progress
+(c) Employee benefits expenses                                            174.26           594.80              429.32             308.55
+(d) Finance cost                                                           76.70           190.95              124.97              55.67
+(e) Depreciation & amortization expenses                                   45.01           147.20               65.56              61.10
+(f) Other expenses                                                        230.46           743.06              536.24             521.72
+TOTAL EXPENSES                                                          4,464.40        11,090.72            7,601.53           6,106.20
+Profit / (Loss) before exceptional items and tax                          444.98           726.00              717.10             543.59
+Exceptional items                                                              -                -                   -                  -
+Profit / (loss) before tax                                                444.98           726.00              717.10             543.59
+Tax Expenses of Continuing Operations
+(a) Current tax expense                                                  115.64            187.97              172.22            153.03
+(b) Deferred tax (Income)/Expenses                                         1.51              2.42               11.68            (10.13)
+Total Tax Expenses                                                       117.15            190.39              183.90            142.90
+Profit / (Loss) for the year                                             327.83            535.61              533.21            400.69
+Other Comprehensive Income (‘OCI’)
+(A) Items that will not be reclassified to profit or loss
+ - Remeasurement Gain / (Loss) on defined benefit plans                   (2.79)             0.25               (2.18)             (1.12)
+ - Tax Impact on above item                                                 0.70             0.06                 0.55               0.28
+(B) Items that will be reclassified to profit or loss                          -                -                    -                  -
+Other Comprehensive Income for the year (net of tax)                      (2.09)             0.31               (1.63)             (0.84)
+Total Comprehensive Income for the year                                  325.74            535.92              531.58             399.85
+Earning Per Equity Share (Face Value of ₹1/- each)
+Basic (in ₹)                                                               3.26               5.27               5.23               3.93
+Diluted (in ₹)                                                             3.26               5.27               5.23               3.93
+
