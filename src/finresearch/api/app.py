@@ -44,6 +44,7 @@ from finresearch.db.models import (
 LOCAL_HOSTS = ["127.0.0.1", "localhost", "testserver"]
 DASHBOARD_ORIGINS = [f"http://{h}:{p}" for h in ("127.0.0.1", "localhost") for p in (3000, 3100)]
 TERMINAL = ("done", "failed", "blocked")
+RESEARCH_KINDS = ("ipo_report", "stock_report")
 RADAR_TTL_S = 300
 CITE_RE = re.compile(r"\[C(\d+)\]")
 
@@ -73,6 +74,12 @@ class DecisionUpdate(BaseModel):
 
 class WatchBody(BaseModel):
     company: str
+    kind: Literal["ipo", "stock"] = "ipo"
+
+
+class NewCompany(BaseModel):
+    nse_symbol: str = Field(min_length=1, max_length=30)
+    name: str | None = None
 
 
 class ResumeRun(BaseModel):
@@ -131,7 +138,7 @@ def _latest_report(s, run_id: int) -> str | None:
 
 # --------------------------------------------------------------------------- app
 def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=None, live_fetch=None,
-               monitor: bool = False, monitor_deps=None, nse_detail=None) -> FastAPI:  # fmt: skip
+               monitor: bool = False, monitor_deps=None, nse_detail=None, equity_list=None) -> FastAPI:  # fmt: skip
     """Test seams: `router` (bridge for chat and suggestions), `live_fetch` / `nse_detail` (NSE), `monitor_deps`.
 
     With monitor=True (as `finresearch serve` does) the monitoring scheduler runs inside the API process."""
@@ -169,7 +176,7 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
                 s.execute(select(Document.company_id, func.count()).group_by(Document.company_id)).all()
             )
             runs = dict(s.execute(select(ResearchRun.company_id, func.max(ResearchRun.id))
-                                  .where(ResearchRun.kind == "ipo_report").group_by(ResearchRun.company_id)).all())  # fmt: skip
+                                  .where(ResearchRun.kind.in_(RESEARCH_KINDS)).group_by(ResearchRun.company_id)).all())  # fmt: skip
             return [{"slug": c.slug, "name": c.name, "nse_symbol": c.nse_symbol, "documents": docs.get(c.id, 0),
                      "latest_run": runs.get(c.id)}
                     for c in s.scalars(select(Company).order_by(Company.name))]  # fmt: skip
@@ -324,8 +331,10 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
         from finresearch.verify.gate import check_report
 
         with session_scope() as s:
-            if s.get(ResearchRun, run_id) is None:
+            run = s.get(ResearchRun, run_id)
+            if run is None:
                 raise HTTPException(404, f"unknown run {run_id}")
+            kind = run.kind
             md = _latest_report(s, run_id)
             if md is None:
                 raise HTTPException(404, f"run {run_id} has no report yet")
@@ -336,7 +345,7 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
                 s.scalars(select(Claim).where(Claim.id.in_(ids), Claim.run_id == run_id)).all() if ids else []
             )
             docs = _doc_titles(s, rows)
-            return {"run_id": run_id, "markdown": md, "published": gate.ok,
+            return {"run_id": run_id, "kind": kind, "markdown": md, "published": gate.ok,
                     "gate": {"ok": gate.ok, "blocking": gate.blocking, "warnings": gate.warnings},
                     "claims": {str(c.id): claim_json(c, docs) for c in rows}}  # fmt: skip
 
@@ -519,9 +528,11 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
 
     @app.post("/api/watches", status_code=201)
     async def add_watch(body: WatchBody) -> dict[str, Any]:
-        from finresearch.monitor.watch import watch_company
+        from finresearch.monitor.watch import watch_company, watch_stock
 
         try:
+            if body.kind == "stock":
+                return await asyncio.to_thread(watch_stock, body.company)
             return await watch_company(body.company, fetch_detail=nse_detail)
         except LookupError as e:
             raise HTTPException(404, str(e)) from e
@@ -578,6 +589,59 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
                 raise HTTPException(404, f"unknown alert {alert_id}")
             a.read_at = a.read_at or datetime.now(UTC)
             return alert_json(a)
+
+    # ------------------------------------------------------------------ listed stocks
+    equity_cache: dict[str, Any] = {}
+
+    async def _equities() -> list:
+        import time
+
+        from finresearch.adapters.http import PoliteClient
+        from finresearch.adapters.nse_equity import EQUITY_LIST_URL, parse_equity_list
+
+        if equity_cache.get("at", 0) > time.time() - 86400:
+            return equity_cache["rows"]
+        if equity_list is not None:
+            rows = parse_equity_list(await equity_list())
+        else:
+            async with PoliteClient() as c:
+                resp = await c.get(EQUITY_LIST_URL, headers={"Referer": "https://www.nseindia.com/"})
+            if not resp.ok:
+                raise HTTPException(502, f"NSE equity list unavailable (HTTP {resp.status})")
+            rows = parse_equity_list(resp.content.decode("utf-8", "replace"))
+        equity_cache.update(at=time.time(), rows=rows)
+        return rows
+
+    @app.get("/api/stocks/search")
+    async def stock_search(q: str = Query(..., min_length=1, max_length=60)) -> list[dict[str, Any]]:
+        from finresearch.adapters.nse_equity import search_equities
+
+        hits = search_equities(await _equities(), q)
+        known = await asyncio.to_thread(_known_symbols)
+        return [{**e.model_dump(mode="json"), "slug": known.get(e.symbol, {}).get("slug")} for e in hits]
+
+    @app.post("/api/companies", status_code=201)
+    async def add_company(body: NewCompany) -> dict[str, Any]:
+        """Add a listed company by NSE symbol (name from NSE's equity list when not given)."""
+        from finresearch.ingest.documents import get_or_create_company
+
+        sym = body.nse_symbol.strip().upper()
+        name = body.name
+        if not name:
+            match = next((e for e in await _equities() if e.symbol == sym), None)
+            if match is None:
+                raise HTTPException(404, f"{sym} is not in NSE's list of listed equities")
+            name = match.name
+        with session_scope() as s:
+            existing = s.scalar(select(Company).where(Company.nse_symbol == sym))
+            if existing is not None:
+                return {"slug": existing.slug, "name": existing.name, "nse_symbol": sym, "created": False}
+            slug = (
+                re.sub(r"[^a-z0-9]+", "-", re.sub(r"\b(limited|ltd)\b", "", name.lower())).strip("-")[:70]
+                or sym.lower()
+            )
+            co = get_or_create_company(s, slug, name, nse_symbol=sym)
+            return {"slug": co.slug, "name": co.name, "nse_symbol": sym, "created": True}
 
     # ------------------------------------------------------------------ IPO radar
     radar_cache: dict[str, Any] = {}

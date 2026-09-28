@@ -240,3 +240,57 @@ class NseEquity:
         if not resp.ok:
             raise NseError(f"HTTP {resp.status} for {url}")
         return resp.content
+
+
+# --------------------------------------------------------------------------- listed equities (search)
+EQUITY_LIST_URL = "https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv"
+
+
+class ListedEquity(BaseModel):
+    symbol: str
+    name: str
+    series: str
+    listed: date | None
+    isin: str
+
+
+def parse_equity_list(text: str) -> list[ListedEquity]:
+    import csv
+    import io
+
+    rows = csv.reader(io.StringIO(text))
+    header = [h.strip().upper() for h in next(rows, [])]
+    idx = {k: header.index(k) for k in ("SYMBOL", "NAME OF COMPANY", "SERIES", "DATE OF LISTING", "ISIN NUMBER")
+           if k in header}  # fmt: skip
+    out = []
+    for r in rows:
+        if len(r) < len(header):
+            continue
+        out.append(ListedEquity(symbol=r[idx["SYMBOL"]].strip(), name=r[idx["NAME OF COMPANY"]].strip(),
+                                series=r[idx["SERIES"]].strip(),
+                                listed=parse_nse_date(r[idx["DATE OF LISTING"]].strip().title()),
+                                isin=r[idx["ISIN NUMBER"]].strip()))  # fmt: skip
+    return out
+
+
+def search_equities(equities: list[ListedEquity], query: str, limit: int = 15) -> list[ListedEquity]:
+    """Exact symbol first, then symbol prefix, then names containing every word of the query."""
+    q = query.strip().upper()
+    if not q:
+        return []
+    words = q.split()
+
+    def rank(e: ListedEquity) -> int | None:
+        if e.symbol == q:
+            return 0
+        if e.symbol.startswith(q):
+            return 1
+        name = e.name.upper()
+        if name.startswith(q):
+            return 2
+        if all(w in name for w in words):
+            return 3
+        return None
+
+    scored = [(r, e.symbol, e) for e in equities if (r := rank(e)) is not None]
+    return [e for _, _, e in sorted(scored)[:limit]]

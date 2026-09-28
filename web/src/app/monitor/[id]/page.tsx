@@ -15,11 +15,18 @@ export default function WatchView() {
   return (
     <div className="space-y-4">
       <Card title={`${data.company_name} (${data.nse_symbol})`}>
-        <p className="text-sm">
-          Bidding {data.open_date} → {data.close_date} · allotment {data.allotment_date} · listing {data.listing_date}
-          {data.meta.listing_confirmed ? " (confirmed by NSE)" : " (expected)"}
-          {data.anchor_shares && ` · anchor book ${Number(data.anchor_shares).toLocaleString("en-IN")} shares`}
-        </p>
+        {data.kind === "stock" ? (
+          <p className="text-sm">
+            Listed stock, checked after each close: results filings, corporate actions and ex-dates, promoter holding, moves of 5% or more.
+            {typeof data.meta.promoter_pct === "string" && ` Last promoter holding ${data.meta.promoter_pct}%.`}
+          </p>
+        ) : (
+          <p className="text-sm">
+            Bidding {data.open_date} → {data.close_date} · allotment {data.allotment_date} · listing {data.listing_date}
+            {data.meta.listing_confirmed ? " (confirmed by NSE)" : " (expected)"}
+            {data.anchor_shares && ` · anchor book ${Number(data.anchor_shares).toLocaleString("en-IN")} shares`}
+          </p>
+        )}
       </Card>
       <Card title="Subscription (NSE combined NSE+BSE, times subscribed)">
         {data.subscription.length === 0 ? (

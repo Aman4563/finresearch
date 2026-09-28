@@ -73,13 +73,21 @@ export default function Monitor() {
                   {!w.active && <Badge status="pending">stopped</Badge>}
                   {!!w.unread_alerts && <Badge status="running">{w.unread_alerts} new</Badge>}
                 </td>
-                <td>
-                  {w.open_date} → {w.close_date}
-                </td>
-                <td>{w.allotment_date}</td>
-                <td>
-                  {w.listing_date} {w.meta.listing_confirmed ? "✓" : <span className="text-xs text-muted">(expected)</span>}
-                </td>
+                {w.kind === "stock" ? (
+                  <td colSpan={3} className="text-xs text-muted">
+                    listed stock · daily after-close check (results, corporate actions, holdings, big moves)
+                  </td>
+                ) : (
+                  <>
+                    <td>
+                      {w.open_date} → {w.close_date}
+                    </td>
+                    <td>{w.allotment_date}</td>
+                    <td>
+                      {w.listing_date} {w.meta.listing_confirmed ? "✓" : <span className="text-xs text-muted">(expected)</span>}
+                    </td>
+                  </>
+                )}
                 <td>{w.last_subscription ? `${Number(w.last_subscription.total_times).toFixed(2)}x @ ${when(w.last_subscription.as_of)}` : "—"}</td>
                 <td className="text-xs">{w.next_check ? `${w.next_check.kind} ${when(w.next_check.due_at)}` : "—"}</td>
                 <td className="text-right">

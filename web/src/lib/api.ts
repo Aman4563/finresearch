@@ -77,6 +77,7 @@ export type RunDetail = Omit<RunSummary, "steps"> & {
 
 export type Report = {
   run_id: number;
+  kind: string;
   markdown: string;
   published: boolean;
   gate: { ok: boolean; blocking: string[]; warnings: string[] };
@@ -224,13 +225,14 @@ export type AlertItem = {
 
 export type WatchSummary = {
   id: number;
+  kind: "ipo" | "stock";
   company: string | null;
   company_name: string | null;
   nse_symbol: string;
-  open_date: string;
-  close_date: string;
-  allotment_date: string;
-  listing_date: string;
+  open_date: string | null;
+  close_date: string | null;
+  allotment_date: string | null;
+  listing_date: string | null;
   anchor_shares: string | null;
   active: boolean;
   meta: Record<string, unknown>;

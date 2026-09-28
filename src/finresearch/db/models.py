@@ -302,20 +302,23 @@ class Decision(TimestampMixin, Base):
 
 # --------------------------------------------------------------------------- monitoring after the report
 class Watch(TimestampMixin, Base):
-    """An IPO being monitored: subscription to the close, allotment, listing and anchor lock-ins."""
+    """A company being monitored.
+
+    kind "ipo": subscription to the close, allotment, listing and anchor lock-ins (the IPO dates are set).
+    kind "stock": a daily after-close check for results filings, corporate actions, holdings and large moves.
+    """
 
     __tablename__ = "watch"
     id: Mapped[int] = mapped_column(primary_key=True)
     company_id: Mapped[int] = mapped_column(ForeignKey("company.id"), unique=True)
+    kind: Mapped[str] = mapped_column(String(20), default="ipo", server_default="ipo")
     nse_symbol: Mapped[str] = mapped_column(String(30))
-    open_date: Mapped[date] = mapped_column(Date)
-    close_date: Mapped[date] = mapped_column(Date)
-    allotment_date: Mapped[date] = mapped_column(
-        Date
-    )  # expected T+1 (exchange days); confirm with the registrar
-    listing_date: Mapped[date] = mapped_column(
-        Date
-    )  # expected T+3; replaced by NSE's listing date once known
+    open_date: Mapped[date | None] = mapped_column(Date)
+    close_date: Mapped[date | None] = mapped_column(Date)
+    # expected T+1 (exchange days); confirm with the registrar
+    allotment_date: Mapped[date | None] = mapped_column(Date)
+    # expected T+3; replaced by NSE's listing date once known
+    listing_date: Mapped[date | None] = mapped_column(Date)
     anchor_shares: Mapped[Decimal | None] = mapped_column(Numeric(20, 0))
     active: Mapped[bool] = mapped_column(default=True)
     meta: Mapped[dict[str, Any]] = mapped_column(default=dict)

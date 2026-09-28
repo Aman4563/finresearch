@@ -18,13 +18,15 @@ from sqlalchemy.dialects.postgresql import insert
 
 from finresearch.db import session_scope
 from finresearch.db.models import MonitorJob, Watch
+from finresearch.fincalc.dates import to_ist
 from finresearch.monitor import jobs
-from finresearch.monitor.plan import last_slot, plan
+from finresearch.monitor.plan import last_slot, plan, plan_stock
 
 log = logging.getLogger(__name__)
 GRACE = timedelta(hours=2)
+STOCK_HORIZON_DAYS = 3
 STALE = timedelta(minutes=15)
-MAX_ATTEMPTS = {"listing": 8, "subscription": 3, "allotment": 3, "lockin": 3}
+MAX_ATTEMPTS = {"listing": 8, "subscription": 3, "allotment": 3, "lockin": 3, "stock_daily": 3}
 RETRY_DELAY = {"listing": timedelta(minutes=30), "subscription": timedelta(minutes=10)}  # network errors
 
 
@@ -44,12 +46,18 @@ def sync_slots(now: datetime) -> int:
     added = 0
     with session_scope() as s:
         for w in s.scalars(select(Watch).where(Watch.active.is_(True))):
-            slots = plan(
-                w.nse_symbol, w.open_date, w.close_date, w.allotment_date, w.listing_date, w.anchor_shares
-            )
-            if now > last_slot(slots):
-                w.active = False
-                continue
+            if w.kind == "stock":  # open-ended: plan only the next few days
+                today = to_ist(now).date()
+                slots = plan_stock(
+                    w.nse_symbol, to_ist(now - GRACE).date(), today + timedelta(days=STOCK_HORIZON_DAYS)
+                )
+            else:
+                slots = plan(
+                    w.nse_symbol, w.open_date, w.close_date, w.allotment_date, w.listing_date, w.anchor_shares
+                )
+                if now > last_slot(slots):
+                    w.active = False
+                    continue
             for sl in slots:
                 if sl.due_at < now - GRACE:
                     continue

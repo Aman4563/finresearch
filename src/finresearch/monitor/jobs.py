@@ -26,6 +26,7 @@ class Deps:
     ipo_detail: Any  # async (symbol) -> IpoDetail
     quote: Any  # async (symbol) -> Quote
     current_issues: Any = None  # async () -> list[IpoIssue]; overall times for SME issues
+    stock_snapshot: Any = None  # async (symbol) -> dict: bars, announcements, actions, shareholding
 
     @classmethod
     def live(cls) -> Deps:
@@ -43,7 +44,21 @@ class Deps:
             async with NseClient() as nse:
                 return await nse.current_issues()
 
-        return cls(ipo_detail=ipo_detail, quote=quote, current_issues=current_issues)
+        async def stock_snapshot(symbol: str):
+            from datetime import timedelta
+
+            from finresearch.adapters.nse_equity import NseEquity
+            from finresearch.fincalc.dates import today_ist
+
+            async with NseEquity() as eq:
+                today = today_ist()
+                return {"bars": await eq.history(symbol, today - timedelta(days=10), today),
+                        "announcements": await eq.announcements(symbol),
+                        "actions": await eq.corporate_actions(symbol), "shareholding": await eq.shareholding(symbol)}  # fmt: skip
+
+        return cls(
+            ipo_detail=ipo_detail, quote=quote, current_issues=current_issues, stock_snapshot=stock_snapshot
+        )
 
 
 def alert(session: Session, watch: Watch, kind: str, message: str, level: str = "info", **data: Any) -> None:
@@ -187,4 +202,73 @@ async def lockin(session: Session, job: MonitorJob, watch: Watch, deps: Deps, no
     return {"alerted": True}
 
 
-HANDLERS = {"subscription": subscription, "allotment": allotment, "listing": listing, "lockin": lockin}
+BIG_MOVE = Decimal("0.05")  # a daily move of 5% or more raises an alert
+EX_DATE_SOON_DAYS = 7
+
+
+async def stock_daily(session: Session, job: MonitorJob, watch: Watch, deps: Deps, now: datetime) -> dict:
+    """After-close check of a watched stock: new results filings, corporate actions and ex-dates, promoter-holding
+    changes and large price moves. The first check records what exists without alerting on history."""
+    from datetime import timedelta
+
+    from finresearch.fincalc.dates import to_ist
+    from finresearch.fincalc.market import price_return
+
+    snap = await deps.stock_snapshot(watch.nse_symbol)
+    meta = dict(watch.meta or {})
+    first = not meta.get("stock_initialised")
+    sym, today, out = watch.nse_symbol, to_ist(now).date(), {"alerts": []}
+
+    def say(kind: str, message: str, level: str = "info", **data):
+        if not first:
+            alert(session, watch, kind, message, level, **data)
+            out["alerts"].append(kind)
+
+    seen_results = set(meta.get("seen_results", []))
+    for a in snap["announcements"]:
+        if a.results_period_end and a.results_period_end.isoformat() not in seen_results:
+            seen_results.add(a.results_period_end.isoformat())
+            say("results", f"{sym} filed financial results for the period ended {a.results_period_end}", "action",
+                url=a.attachment)  # fmt: skip
+    seen_actions, soon = set(meta.get("seen_actions", [])), set(meta.get("ex_soon_alerted", []))
+    for ca in snap["actions"]:
+        key = f"{ca.ex_date}|{ca.subject}"
+        if key not in seen_actions:
+            seen_actions.add(key)
+            say(
+                "corporate_action",
+                f"{sym}: {ca.subject} (ex-date {ca.ex_date}, record date {ca.record_date})",
+            )
+        if (
+            ca.ex_date
+            and today <= ca.ex_date <= today + timedelta(days=EX_DATE_SOON_DAYS)
+            and key not in soon
+        ):
+            soon.add(key)
+            say("ex_date_soon", f"{sym}: {ca.subject} goes ex on {ca.ex_date}; buy before then to be entitled",
+                "action")  # fmt: skip
+    latest = next((sh for sh in snap["shareholding"] if sh.promoter_pct is not None), None)
+    if latest:
+        prev = meta.get("promoter_pct")
+        if prev is not None and Decimal(prev) != latest.promoter_pct:
+            delta = latest.promoter_pct - Decimal(prev)
+            say("holding_change", f"{sym}: promoter holding {prev}% -> {latest.promoter_pct}% ({delta:+.2f} pp, "
+                f"as of {latest.as_of})", "warn" if abs(delta) >= 1 else "info")  # fmt: skip
+        meta["promoter_pct"] = str(latest.promoter_pct)
+    bars = [b for b in snap["bars"] if b.close]
+    if len(bars) >= 2:
+        move = price_return(bars[-2].close, bars[-1].close)
+        out["last_close"], out["day_move"] = str(bars[-1].close), f"{move:.4f}"
+        if abs(move) >= BIG_MOVE and meta.get("big_move_alerted") != bars[-1].day.isoformat():
+            meta["big_move_alerted"] = bars[-1].day.isoformat()
+            say("big_move", f"{sym} closed at ₹{bars[-1].close} on {bars[-1].day}, {move * 100:+.2f}% on the day",
+                "warn")  # fmt: skip
+    meta.update(stock_initialised=True, seen_results=sorted(seen_results), seen_actions=sorted(seen_actions),
+                ex_soon_alerted=sorted(soon))  # fmt: skip
+    watch.meta = meta
+    out["first_check"] = first
+    return out
+
+
+HANDLERS = {"subscription": subscription, "allotment": allotment, "listing": listing, "lockin": lockin,
+            "stock_daily": stock_daily}  # fmt: skip

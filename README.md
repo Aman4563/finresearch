@@ -140,6 +140,7 @@ uv run finresearch ipo render <run_id>             # rebuild the research pack (
 # listed stocks
 uv run finresearch docs discover infosys --name "Infosys Limited" --nse-symbol INFY --kind stock   # annual reports + results
 uv run finresearch stock run infosys --wait         # six stock streams; verdict BUY / ACCUMULATE / HOLD / REDUCE / AVOID
+uv run finresearch research resume <run_id> --wait  # resume any research run (IPO, stock, fund, bond)
 
 # local API for the app (always 127.0.0.1; OpenAPI docs at /api/docs); also runs the monitor
 uv run finresearch serve                           # http://127.0.0.1:8710
@@ -149,7 +150,7 @@ uv run finresearch monitor watch orient-cables     # schedule the checks from NS
 uv run finresearch monitor run                     # run the checks without the API
 ```
 
-The dashboard (IPO radar, live agent view, report reader with clickable evidence, "ask about this report" chat, personal suggestions checked against your own rules, a decision journal, monitoring alerts, plan usage) is a Next.js app in
+The dashboard (IPO radar, live agent view, report reader with clickable evidence, "ask about this report" chat, personal suggestions checked against your own rules, a decision journal, monitoring alerts, listed-stock search and watchlist, plan usage) is a Next.js app in
 `web/`:
 
 ```bash

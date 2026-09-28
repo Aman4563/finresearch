@@ -45,9 +45,11 @@ export default function ReportReader() {
         </div>
       </div>
 
-      <Card title="My suggestion">
-        <SuggestionPanel runId={id} />
-      </Card>
+      {data.kind === "ipo_report" && (
+        <Card title="My suggestion">
+          <SuggestionPanel runId={id} />
+        </Card>
+      )}
 
       {!data.published && (
         <Card title="NOT PUBLISHED — the publish gate blocked this report">
