@@ -233,17 +233,18 @@ def mcp_config() -> None:
 
 # --------------------------------------------------------------------------- ipo
 def _pipeline(run_id: int, streams: str | None, concurrency: int):
-    from finresearch.agents.roles import STREAMS
-    from finresearch.orchestrator.ipo import IpoPipeline, PipelineConfig
+    from finresearch.orchestrator.ipo import PipelineConfig
+    from finresearch.orchestrator.kinds import KINDS, kind_of, pipeline_for
 
-    chosen = tuple(x.strip() for x in streams.split(",")) if streams else STREAMS
-    unknown = set(chosen) - set(STREAMS)
+    allowed = KINDS[kind_of(run_id)].default_streams
+    chosen = tuple(x.strip() for x in streams.split(",")) if streams else allowed
+    unknown = set(chosen) - set(allowed)
     if unknown:
-        raise typer.BadParameter(f"unknown streams {sorted(unknown)}; choose from {STREAMS}")
+        raise typer.BadParameter(f"unknown streams {sorted(unknown)}; choose from {allowed}")
     cfg = PipelineConfig(
         streams=chosen, concurrency=concurrency, five_hour_ceiling=get_settings().max_five_hour_ceiling
     )
-    return IpoPipeline(run_id, config=cfg)
+    return pipeline_for(run_id, config=cfg)
 
 
 def _go(run_id: int, streams: str | None, concurrency: int, wait: bool) -> None:

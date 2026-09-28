@@ -180,7 +180,7 @@ src/finresearch/
   db/           database models (migrations/ holds Alembic migrations)
   mcp_server/   FinResearch MCP server and claim ledger
   agents/       research roles, prompts, skills and the role runner
-  orchestrator/ resumable, budget-aware IPO report pipeline
+  orchestrator/ resumable, budget-aware research pipeline, one subclass per research kind (IPO first)
   verify/       deterministic verification gate and publish gate
   render/       report HTML/PDF, tables, charts and the research folder pack
   api/          local HTTP API and live run events for the app

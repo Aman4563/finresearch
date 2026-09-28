@@ -50,6 +50,7 @@ CITE_RE = re.compile(r"\[C(\d+)\]")
 
 class StartRun(BaseModel):
     company: str
+    kind: str = "ipo_report"
     streams: list[str] | None = None
     concurrency: int = Field(4, ge=1, le=8)
 
@@ -237,13 +238,16 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
 
     @app.post("/api/runs", status_code=201)
     def start_run(body: StartRun) -> dict[str, Any]:
-        from finresearch.agents.roles import STREAMS
         from finresearch.orchestrator.ipo import create_run
+        from finresearch.orchestrator.kinds import KINDS
 
-        if body.streams and (bad := set(body.streams) - set(STREAMS)):
-            raise HTTPException(422, f"unknown streams {sorted(bad)}; choose from {list(STREAMS)}")
+        if body.kind not in KINDS:
+            raise HTTPException(422, f"unknown research kind {body.kind!r}; choose from {sorted(KINDS)}")
+        streams = KINDS[body.kind].default_streams
+        if body.streams and (bad := set(body.streams) - set(streams)):
+            raise HTTPException(422, f"unknown streams {sorted(bad)}; choose from {list(streams)}")
         try:
-            run_id = create_run(body.company)
+            run_id = create_run(body.company, kind=body.kind)
         except ValueError as e:
             raise HTTPException(404, str(e)) from e
         worker = spawner.start(run_id, streams=body.streams, concurrency=body.concurrency)
