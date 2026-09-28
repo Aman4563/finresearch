@@ -293,3 +293,48 @@ async def test_second_verifier_disagreement_downgrades_high_importance_claims(co
             c.status == "needs_review" and "second verifier disagrees" in c.verifier_note for c in highs
         )
     assert status == "blocked"  # the report cites a high-importance claim that is no longer verified
+
+
+# --------------------------------------------------------------------------- research kinds
+def test_kinds_registry_maps_runs_to_pipelines(company_run):
+    from finresearch.orchestrator.ipo import IpoPipeline, create_run
+    from finresearch.orchestrator.kinds import KINDS, pipeline_for
+
+    assert KINDS["ipo_report"] is IpoPipeline and IpoPipeline.default_streams == (
+        "financials", "business", "risks", "valuation", "news30", "demand", "major")  # fmt: skip
+    pipe = pipeline_for(company_run)
+    assert isinstance(pipe, IpoPipeline) and pipe.config.streams == IpoPipeline.default_streams
+    with pytest.raises(ValueError, match="unknown research kind"):
+        create_run("anything", kind="crypto")
+
+
+async def test_a_new_kind_is_configuration_not_a_new_orchestrator(env, tmp_path, monkeypatch):
+    """A kind with its own streams and no required documents runs the whole shared DAG."""
+    from finresearch.db import session_scope
+    from finresearch.ingest.documents import get_or_create_company
+    from finresearch.orchestrator import kinds
+    from finresearch.orchestrator.base import PipelineConfig, ResearchPipeline, create_run
+
+    class NotesKind(ResearchPipeline):
+        kind = "notes_report"
+        default_streams = ("financials", "news30")
+
+    monkeypatch.setitem(kinds.KINDS, NotesKind.kind, NotesKind)
+    with session_scope() as s:
+        get_or_create_company(s, "notes-" + tmp_path.name[-8:], "Notes Co")
+    run_id = create_run("notes-" + tmp_path.name[-8:], kind="notes_report")
+    runner = FakeRunner(run_id)
+    pipe = kinds.pipeline_for(run_id, runner=runner, tracker=LimitTracker(tmp_path / "limits"),
+                              config=PipelineConfig(concurrency=2, render=False))  # fmt: skip
+    assert type(pipe) is NotesKind
+    status = await pipe.run()
+    st = steps(run_id)
+    assert status == "done" and {"planner", "stream:financials", "stream:news30", "synthesis"} <= set(st)
+    assert "stream:risks" not in st and "baseline" not in str(st)
+    from finresearch.db.models import ResearchRun
+
+    with session_scope() as s:
+        m = s.get(ResearchRun, run_id).manifest
+    assert (
+        m["kind"] == "notes_report" and m["pipeline"] == "research-pipeline-1" and "today_ist" in m["facts"]
+    )

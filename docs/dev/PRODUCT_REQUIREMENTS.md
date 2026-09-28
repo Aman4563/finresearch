@@ -64,6 +64,14 @@ Statuses:
 | SME-001 | SME IPOs (NSE Emerge / BSE SME): documents, checks and report | delivered (NSE Emerge; BSE SME not covered; no live SME report run under the one-IPO rule) | v0.4.0 |
 | NEWS-002 | Hindi business news in the 30-day news stream | delivered | v0.4.0 |
 
+### Listed stocks (P4)
+| ID | Requirement | Status | Milestone |
+|---|---|---|---|
+| KIND-001 | Research-kind registry: one shared pipeline, kinds configure streams, role slots, primary documents and facts | delivered | v0.5.0 |
+| STOCK-001 | Listed-stock data: quotes, price history, results, shareholding, corporate actions | planned | v0.5.0 |
+| STOCK-002 | Stock research report end to end, with a gold set and one live run | planned | v0.5.0 |
+| STOCK-003 | Stocks in the app: search, watchlist, results and corporate-action monitoring | planned | v0.5.0 |
+
 ## Verification log
 
 | Date | ID(s) | Evidence |
@@ -90,3 +98,4 @@ Statuses:
 | 2026-09-29 | SME-001 | Live `docs discover bench-mark-infotech --nse-symbol BMISL --no-agent`: `ipo_detail` fell back to series SME and found 3 NSE archives. Ingested: the 382-page RHP, the GID (stored as OTHER), the anchor letter and three price-band advertisements ("Ratios / Basis of Issue Price"). SEBI has no SME filings. NSE's SME category table publishes no offered shares and prints 0.00x, so category times are now unknown rather than zero; the monitor records the overall times from NSE's current-issues list. Rules and lot limits follow the two-lot minimum above ₹2 lakh (effective 1-Jul-2025), and the skill tells agents to check SME terms in the RHP. 7 offline tests use recorded BMISL and PAPADMALJI payloads. |
 | 2026-09-29 | NEWS-002 | Live news30 stream on Orient Cables (run 7, Sonnet 5 on Max, 42 turns, 163 s, about 5% of the 5-hour window): 12+ English and 4+ Hindi searches found 4 relevant Hindi articles (Hindi Business Standard, Prabhat Khabar and others). The agent reported that the Orient Electric trademark dispute is covered only in English media. C985 cites hindi.business-standard.com with its access time and a Hindi quote, and was flagged `source_language: hi`. The agent did not mark its statement as a translation even when told to, so the marker is now added when the claim is saved; the gate warns about unmarked Hindi claims cited in a report. 2 offline tests. |
 | 2026-09-29 | Release v0.4.0 | Milestone closed (3/3: #24 offline replay and back-test, #25 SME IPOs, #26 Hindi news). `pytest` 227 passed; CI (tests, web, secret scan) green. |
+| 2026-09-29 | KIND-001 | `orchestrator/base.py` holds the shared DAG (budget, gate, revisions, critic rounds); `IpoPipeline` adds only its streams, offer documents and NSE facts. `orchestrator/kinds.py` maps `ResearchRun.kind` to the pipeline, and the CLI and API validate streams per kind. No behaviour change: all 227 existing tests pass, including the CI replay of live run 5 (22/22, 0 contradicted). A test kind with its own streams and no required documents runs the whole DAG through the fake runner. |
