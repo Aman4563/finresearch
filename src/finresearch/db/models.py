@@ -263,6 +263,43 @@ class ConversationMessage(TimestampMixin, Base):
     conversation: Mapped[Conversation] = relationship(back_populates="messages")
 
 
+# --------------------------------------------------------------------------- personal suggestions
+class InvestorProfile(Base):
+    """The investor's profile and personal rules (one row per profile name; the app uses "default")."""
+
+    __tablename__ = "investor_profile"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(60), unique=True)
+    data: Mapped[dict[str, Any]] = mapped_column(default=dict)  # finresearch.suggest.profile.Profile
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Decision(TimestampMixin, Base):
+    """Decision journal: one personal suggestion for a run, the investor's action and the outcome."""
+
+    __tablename__ = "decision"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("research_run.id", ondelete="CASCADE"), index=True)
+    company_id: Mapped[int | None] = mapped_column(ForeignKey("company.id"), index=True)
+    action: Mapped[str] = mapped_column(
+        String(30)
+    )  # APPLY | APPLY-CONDITIONAL | SKIP (after rule enforcement)
+    lots: Mapped[int] = mapped_column(Integer, default=0)
+    category: Mapped[str | None] = mapped_column(String(20))  # retail | shni | bhni
+    suggestion: Mapped[dict[str, Any]] = mapped_column(default=dict)  # agent output + enforcement notes
+    inputs: Mapped[dict[str, Any]] = mapped_column(default=dict)  # profile, live metrics, rule results
+    # what actually happened (entered later)
+    user_action: Mapped[str | None] = mapped_column(String(20))  # applied | skipped
+    applied_lots: Mapped[int | None] = mapped_column(Integer)
+    allotted_lots: Mapped[int | None] = mapped_column(Integer)
+    issue_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    listing_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    exit_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    exit_date: Mapped[date | None] = mapped_column(Date)
+    outcome: Mapped[dict[str, Any]] = mapped_column(default=dict)  # computed returns (fincalc)
+    notes: Mapped[str | None] = mapped_column(Text)
+
+
 # --------------------------------------------------------------------------- market data
 class IpoOffer(TimestampMixin, Base):
     __tablename__ = "ipo_offer"
