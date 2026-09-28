@@ -13,3 +13,7 @@
 - **Before committing:**
   - `uv run ruff check . && uv run ruff format --check . && uv run pytest -q`
   - Offline tests must not call the real CLI or Ollama; live checks live in `scripts/smoke_live.py`.
+- Workflow (mirrors Aman4563/lumen-ai-notes): issue first → `feat|fix|chore|docs|ci|perf|spike/<name>` branch →
+  imperative commit subjects → PR from the template with `Closes #N` → merge commit, branch auto-deleted. Never push
+  to `main`. Append a dated row to PRODUCT_REQUIREMENTS.md when a requirement ships; add docs/FUNCTIONAL_TESTING.md
+  entries for reproduced bugs. Invariants: ENGINEERING_HANDOFF.md.
