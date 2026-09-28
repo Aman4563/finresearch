@@ -1,0 +1,28 @@
+name: Research quality problem
+description: A generated report has a wrong, stale, uncited or missing fact, or a weak verdict.
+labels: ["bug", "type:research-quality"]
+body:
+  - type: input
+    id: report
+    attributes:
+      label: Report
+      description: Company, report version / run id, and generation time.
+    validations: { required: true }
+  - type: textarea
+    id: claim
+    attributes:
+      label: Problematic claim or gap
+      description: Quote the sentence or number, and what is wrong with it.
+    validations: { required: true }
+  - type: textarea
+    id: truth
+    attributes:
+      label: Correct information and source
+      description: Primary source (document + page/line, or exchange URL + timestamp) that shows the correct value.
+    validations: { required: true }
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind
+      options: [Wrong number, Wrong fact, Stale live data, Missing citation, Citation does not support claim, Missing important finding, Verdict reasoning, Other]
+    validations: { required: true }

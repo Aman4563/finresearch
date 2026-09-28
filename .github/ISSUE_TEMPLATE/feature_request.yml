@@ -1,0 +1,32 @@
+name: Feature request
+description: Propose a new capability or an improvement.
+labels: ["enhancement", "type:enhancement"]
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options: [Claude Bridge, Documents and search, Data sources, fincalc, MCP tools, Research agents, Report, App, Other]
+    validations: { required: true }
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do, and what gets in the way today?
+    validations: { required: true }
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+    validations: { required: true }
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Checkable outcomes, including the evidence that proves them (tests, live runs, gold-set comparison).
+    validations: { required: true }
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Constraints
+      description: e.g. personal use only, Max-plan limits, 16 GB RAM, no third-party subscription proxies, SEBI rules.

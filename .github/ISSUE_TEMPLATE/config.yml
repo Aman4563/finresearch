@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Architecture and decisions
+    url: https://github.com/Aman4563/finresearch/blob/main/ENGINEERING_HANDOFF.md
+    about: Invariants and design decisions to respect before proposing a change.
