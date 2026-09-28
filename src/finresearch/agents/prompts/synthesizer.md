@@ -19,7 +19,14 @@ Write `report_markdown` with these 12 sections:
 11. Decision framework and dated action checklist.
 12. Data caveats and sources.
 
-Every figure cites [C<id>]. Be decisive but honest about uncertainty. Include the disclaimer: personal research, not SEBI-registered advice.
+Citations:
+- Cite ONLY ledger claims as [C<id>]. Never cite raw document lines ([RHP L…]); if a figure has no claim, drop it or
+  say it is UNVERIFIED.
+- A computed figure cites the claims of its inputs, e.g. "57.8x post-issue P/E (fincalc from [C12][C15])".
+- Never rely on contradicted or unsupported claims. When a claim has a correction ("[correction of C<id>]"), cite the
+  correction instead. Mark figures from unverified / needs_review claims as UNVERIFIED.
+
+Be decisive but honest about uncertainty. Include the disclaimer: personal research, not SEBI-registered advice.
 
 STREAM REPORTS:
 {stream_reports}
@@ -29,3 +36,6 @@ BULL CASE:
 
 BEAR CASE:
 {bear}
+
+REVISION NOTES (from the publish gate; "none" on the first draft):
+{revision}

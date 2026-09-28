@@ -59,6 +59,7 @@ class StepFailed(Exception):
 class PipelineConfig:
     concurrency: int = 4
     max_followup_rounds: int = 2
+    max_revisions: int = 2
     five_hour_ceiling: float = 0.92
     streams: tuple[str, ...] = STREAMS
     verify_importance: tuple[str, ...] = ("high", "normal")
@@ -250,38 +251,117 @@ class IpoPipeline:
             self.ctx.decision_deadline = f"the UPI mandate cut-off, 5:00 PM IST on {facts['issue_close']}"
         self._update_manifest(facts=facts)
 
-    def _claims_text(self, stream: str) -> str:
+    def _claims_text(self, stream: str | None = None, ids: list[int] | None = None) -> str:
         with session_scope() as s:
-            rows = s.scalars(select(Claim).where(Claim.run_id == self.run_id, Claim.stream == stream,
-                                                 Claim.importance.in_(self.config.verify_importance),
-                                                 Claim.status.in_(("unverified", "needs_review")))
-                             .order_by(Claim.id)).all()  # fmt: skip
-            return json.dumps([{"claim_id": c.id, "statement": c.statement, "metric": c.metric,
+            q = select(Claim).where(Claim.run_id == self.run_id)
+            if ids is not None:
+                q = q.where(Claim.id.in_(ids))
+            else:
+                q = q.where(Claim.stream == stream, Claim.importance.in_(self.config.verify_importance),
+                            Claim.status.in_(("unverified", "needs_review")))  # fmt: skip
+            rows = s.scalars(q.order_by(Claim.id)).all()
+            return json.dumps([{"claim_id": c.id, "stream": c.stream, "statement": c.statement, "metric": c.metric,
                                 "value": str(c.value) if c.value is not None else None, "unit": c.unit,
-                                "period": c.period,
+                                "period": c.period, "importance": c.importance, "status": c.status,
+                                "gate_checks": c.checks or {}, "gate_notes": c.verifier_note,
                                 "citations": [{"document_id": x.document_id, "lines": [x.line_start, x.line_end],
                                                "url": x.url, "quote": (x.quote or "")[:300]} for x in c.citations]}
                                for c in rows], indent=1)  # fmt: skip
 
-    def _apply_verdicts(self, rep: VerificationReport) -> None:
+    def _once(self, key: str, fn: Callable[[], None]) -> None:
+        """Run post-processing for a step exactly once, even across resumes."""
+        with session_scope() as s:
+            run = s.get(ResearchRun, self.run_id)
+            applied = list((run.manifest or {}).get("applied", []))
+            if key in applied:
+                return
+        fn()
+        with session_scope() as s:
+            run = s.get(ResearchRun, self.run_id)
+            m = dict(run.manifest or {})
+            m["applied"] = [*m.get("applied", []), key]
+            run.manifest = m
+
+    def _gate(self, stream: str | None) -> dict[str, Any]:
+        from finresearch.verify.gate import run_gate
+
+        with session_scope() as s:
+            return run_gate(s, self.run_id, stream=stream, facts=self.ctx.facts).summary()
+
+    def _apply_verdicts(self, rep: VerificationReport, *, second_opinion: bool = False) -> None:
+        from finresearch.verify.gate import apply_correction
+
         with session_scope() as s:
             for v in rep.verdicts:
                 c = s.get(Claim, v.claim_id)
                 if c is None or c.run_id != self.run_id or c.status == "unsupported":
                     continue
+                note = (f"correct: {v.correct_value}. " if v.correct_value else "") + v.evidence[:2000]
+                if second_opinion:
+                    # a high-importance claim stays verified only if the second, independent verifier agrees
+                    if c.status == "verified" and v.verdict != "verified":
+                        c.status = "needs_review"
+                        c.verifier_note = f"{c.verifier_note or ''} | second verifier disagrees: {note}"[
+                            :4000
+                        ]
+                    continue
+                if c.status == "contradicted" and (c.checks or {}).get("day_label_ok") is False:
+                    continue  # a deterministic contradiction is not overridden by a model
                 c.status = v.verdict
-                c.verifier_note = (f"correct: {v.correct_value}. " if v.correct_value else "") + v.evidence[
-                    :2000
-                ]
+                c.verifier_note = note
+                if v.verdict == "contradicted":
+                    apply_correction(s, c, v.correct_value, v.evidence)
+
+    def _high_verified(self, stream: str) -> list[int]:
+        with session_scope() as s:
+            return list(s.scalars(select(Claim.id).where(Claim.run_id == self.run_id, Claim.stream == stream,
+                                                         Claim.importance == "high", Claim.status == "verified")))  # fmt: skip
 
     async def _stream_and_verify(self, stream: str, key_prefix: str = "", focus: str = "") -> StreamReport:
-        rep = await self.step(f"{key_prefix}stream:{stream}", "stream", stream, focus=focus or "see plan")
+        key = f"{key_prefix}stream:{stream}"
+        rep = await self.step(key, "stream", stream, focus=focus or "see plan")
+        self._once(f"gate:{key}", lambda: self._gate(stream))
         claims = self._claims_text(stream)
         if claims != "[]":
-            ver = await self.step(f"{key_prefix}verify:{stream}", "verify", "verifier", target_stream=stream,
-                                  claims=claims)  # fmt: skip
-            self._apply_verdicts(ver)
+            vkey = f"{key_prefix}verify:{stream}"
+            ver = await self.step(vkey, "verify", "verifier", target_stream=stream, claims=claims)
+            self._once(vkey, lambda: self._apply_verdicts(ver))
+            high = self._high_verified(stream)
+            if high:
+                v2key = f"{key_prefix}verify2:{stream}"
+                ver2 = await self.step(v2key, "verify", "verifier", target_stream=f"{stream} (second opinion)",
+                                       claims=self._claims_text(ids=high))  # fmt: skip
+                self._once(v2key, lambda: self._apply_verdicts(ver2, second_opinion=True))
         return rep
+
+    async def _cross_stream(self, key_prefix: str = "") -> None:
+        """Whole-run conflict check; conflicting claims go to one verifier pass."""
+        summary: dict[str, Any] = {}
+        self._once(f"gate:{key_prefix}cross", lambda: summary.update(self._gate(None)))
+        ids = sorted({i for pair in summary.get("conflicts", []) for i in pair})
+        if ids:
+            key = f"{key_prefix}verify:cross-stream"
+            ver = await self.step(key, "verify", "verifier", target_stream="cross-stream conflicts",
+                                  claims=self._claims_text(ids=ids))  # fmt: skip
+            self._once(key, lambda: self._apply_verdicts(ver))
+
+    async def _synthesize(self, key: str, reports: dict[str, StreamReport], bull, bear) -> Synthesis:
+        """Synthesis plus the publish gate, with up to max_revisions revision rounds."""
+        from finresearch.verify.gate import check_report
+
+        kwargs = {"stream_reports": _reports_text(reports), "bull": bull.model_dump_json(indent=1),
+                  "bear": bear.model_dump_json(indent=1)}  # fmt: skip
+        synth: Synthesis = await self.step(key, "synthesis", "synthesizer", revision="none", **kwargs)
+        for i in range(1, self.config.max_revisions + 1):
+            with session_scope() as s:
+                g = check_report(s, self.run_id, synth.report_markdown)
+            self._update_manifest(**{f"gate_{key}": {"ok": g.ok, "blocking": g.blocking[:50],
+                                                     "warnings": g.warnings[:50]}})  # fmt: skip
+            if g.ok:
+                break
+            synth = await self.step(f"{key}:fix{i}", "synthesis", "synthesizer",
+                                    revision=g.revision_request(), **kwargs)  # fmt: skip
+        return synth
 
     @staticmethod
     def _focus(plan: ResearchPlan, stream: str) -> str:
@@ -317,11 +397,10 @@ class IpoPipeline:
             plan: ResearchPlan = await self.step("planner", "plan", "planner")
             reports = dict(zip(self.config.streams, await self._gather(
                 [self._stream_and_verify(s, focus=self._focus(plan, s)) for s in self.config.streams]), strict=True))  # fmt: skip
+            await self._cross_stream()
             bull, bear = await self._gather([self.step("case:bull", "case", "bull"),
                                              self.step("case:bear", "case", "bear")])  # fmt: skip
-            synth: Synthesis = await self.step("synthesis", "synthesis", "synthesizer",
-                                               stream_reports=_reports_text(reports), bull=bull.model_dump_json(indent=1),
-                                               bear=bear.model_dump_json(indent=1))  # fmt: skip
+            synth = await self._synthesize("synthesis", reports, bull, bear)
             for rnd in range(1, self.config.max_followup_rounds + 1):
                 critic: CriticReport = await self.step(f"critic:r{rnd}", "critic", "critic",
                                                        draft=synth.report_markdown)  # fmt: skip
@@ -336,13 +415,23 @@ class IpoPipeline:
                                             for st, t in by_stream.items()])  # fmt: skip
                 for st, rep in zip(by_stream, extra, strict=True):
                     reports[f"{st} (follow-up {rnd})"] = rep
-                synth = await self.step(f"synthesis:r{rnd}", "synthesis", "synthesizer",
-                                        stream_reports=_reports_text(reports), bull=bull.model_dump_json(indent=1),
-                                        bear=bear.model_dump_json(indent=1))  # fmt: skip
+                await self._cross_stream(key_prefix=f"r{rnd}:")
+                synth = await self._synthesize(f"synthesis:r{rnd}", reports, bull, bear)
             out = get_settings().runs_dir / str(self.run_id)
             out.mkdir(parents=True, exist_ok=True)
-            (out / "report.md").write_text(synth.report_markdown)
+            from finresearch.verify.gate import check_report
+
+            with session_scope() as s:
+                final = check_report(s, self.run_id, synth.report_markdown)
             (out / "synthesis.json").write_text(synth.model_dump_json(indent=1))
+            self._update_manifest(final_gate={"ok": final.ok, "blocking": final.blocking[:50],
+                                              "warnings": final.warnings[:50]})  # fmt: skip
+            if not final.ok:
+                # never publish a report that relies on contradicted/unsupported/unverified-high claims
+                (out / "report_blocked.md").write_text(synth.report_markdown)
+                self._set_run(status="blocked", finished_at=_now())
+                return "blocked"
+            (out / "report.md").write_text(synth.report_markdown)
             self._set_run(status="done", finished_at=_now())
             return "done"
         except RunPaused as p:

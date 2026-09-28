@@ -217,3 +217,79 @@ async def test_critic_gap_triggers_follow_up_round(company_run, tmp_path):
     st = steps(company_run)
     assert {"r1:stream:risks", "r1:verify:risks", "synthesis:r1", "critic:r2"} <= set(st)
     assert "r2:stream:risks" not in st
+
+
+class GateRunner(FakeRunner):
+    """Adds high-importance claims, a disagreeing second verifier and bad synthesizer drafts."""
+
+    def __init__(self, run_id, *, bad_drafts=0, second_disagrees=False, **kw):
+        super().__init__(run_id, **kw)
+        self.bad_drafts, self.second_disagrees, self.revisions = bad_drafts, second_disagrees, []
+
+    async def __call__(self, role, ctx, **extra):
+        import json
+
+        from finresearch.db import session_scope
+        from finresearch.db.models import Claim
+
+        if role == "synthesizer":
+            self.calls.append("synthesizer")
+            self.revisions.append(extra.get("revision"))
+            with session_scope() as s:
+                ids = [
+                    c.id
+                    for c in s.scalars(select(Claim).where(Claim.run_id == self.run_id).order_by(Claim.id))
+                ]
+            cite = "[C999999]" if self.bad_drafts > 0 else f"[C{ids[0]}]"
+            self.bad_drafts -= 1
+            out = Synthesis(verdict_listing="-", verdict_long_term="-", overall_verdict="NEUTRAL", confidence="medium",
+                            executive_summary="-", reasons_for=[], reasons_against=[], scenarios=[],
+                            action_checklist=[], report_markdown=f"# Report\nRevenue ₹1,171.65 cr {cite}.\n")  # fmt: skip
+            return out, AgentResult(task_name="s", tier=Tier.CLAUDE_MAX, model="fake", ok=True)
+        if role == "verifier" and "second opinion" in extra.get("target_stream", ""):
+            self.calls.append("verifier:second")
+            ids = [c["claim_id"] for c in json.loads(extra["claims"])]
+            verdict = "contradicted" if self.second_disagrees else "verified"
+            out = VerificationReport(verdicts=[ClaimVerdict(claim_id=i, verdict=verdict, evidence="2nd") for i in ids],
+                                     summary="2nd")  # fmt: skip
+            return out, AgentResult(task_name="v2", tier=Tier.CLAUDE_MAX, model="fake", ok=True)
+        out, res = await super().__call__(role, ctx, **extra)
+        if role in STREAMS:
+            with session_scope() as s:
+                s.get(Claim, out.claim_ids[0]).importance = "high"
+        return out, res
+
+
+async def test_publish_gate_requests_a_revision_then_publishes(company_run, tmp_path, env):
+    runner = GateRunner(company_run, bad_drafts=1)
+    assert await make(company_run, tmp_path, runner).run() == "done"
+    st = steps(company_run)
+    assert st["synthesis:fix1"] == "done" and "synthesis:fix2" not in st
+    assert runner.revisions[0] == "none" and runner.revisions[1].startswith("REVISION REQUIRED")
+    assert "[C999999] does not exist" in runner.revisions[1]
+    assert (env.runs_dir / str(company_run) / "report.md").exists()
+    assert run_row(company_run)[2]["final_gate"]["ok"] is True
+
+
+async def test_report_stays_blocked_when_revisions_do_not_fix_it(company_run, tmp_path, env):
+    runner = GateRunner(company_run, bad_drafts=99)
+    assert await make(company_run, tmp_path, runner).run() == "blocked"
+    out = env.runs_dir / str(company_run)
+    assert (out / "report_blocked.md").exists() and not (out / "report.md").exists()
+    status, _, manifest = run_row(company_run)
+    assert status == "blocked" and manifest["final_gate"]["ok"] is False
+
+
+async def test_second_verifier_disagreement_downgrades_high_importance_claims(company_run, tmp_path):
+    from finresearch.db import session_scope
+    from finresearch.db.models import Claim
+
+    runner = GateRunner(company_run, second_disagrees=True, bad_drafts=0)
+    status = await make(company_run, tmp_path, runner).run()
+    assert "verifier:second" in runner.calls and all(f"verify2:{s}" in steps(company_run) for s in STREAMS)
+    with session_scope() as s:
+        highs = s.scalars(select(Claim).where(Claim.run_id == company_run, Claim.importance == "high")).all()
+        assert highs and all(
+            c.status == "needs_review" and "second verifier disagrees" in c.verifier_note for c in highs
+        )
+    assert status == "blocked"  # the report cites a high-importance claim that is no longer verified

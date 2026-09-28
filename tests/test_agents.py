@@ -39,7 +39,7 @@ def _isolated(tmp_path, monkeypatch):
 @pytest.mark.parametrize("name", sorted(ROLES))
 def test_every_role_renders_without_unfilled_placeholders(name):
     system, prompt = render(ROLES[name], CTX, target_stream="financials", claims="[]", stream_reports="-",
-                            bull="-", bear="-", draft="-")  # fmt: skip
+                            bull="-", bear="-", draft="-", revision="none")  # fmt: skip
     leftovers = set(re.findall(r"\{([a-z_]+)\}", system + prompt)) - {"focus"}
     assert not leftovers, f"{name} left placeholders {leftovers}"
     assert "run_id 7" in system or "run_id=7" in system or "run 7" in system.lower() or name in {"planner"}

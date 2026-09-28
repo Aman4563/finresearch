@@ -41,3 +41,13 @@ These are dated entries for bugs we reproduced, what caused them, and how they a
 ### 2026-09-28: secret scan failed on the new public repository
 - **Seen:** the first push to the re-created public repository failed the `secrets` job ("failed to scan Git repository"). gitleaks-action scans the push's `before..after` range, and `before` does not exist on a new repository or after a force push.
 - **Now:** CI runs the pinned gitleaks CLI over the full history, so every push and PR scans everything, independent of event ranges or PR API permissions (#11).
+
+### 2026-09-28: pipeline tests overwrote a live run's report
+- **Seen:** after adding the gate tests, `data/runs/3/report.md` (the real run 3 report, 20 KB) had been replaced by a 59-byte test stub. The DB fixture redirected the database and the docs/state dirs but not `runs_dir`, and test-database run ids overlap real ones.
+- **Recovered:** the report was restored from the `agent_step` output of `synthesis:r2`. Test-only run folders were removed.
+- **Now:** an autouse fixture in `tests/conftest.py` gives every test its own runs/state/docs directories. `tests/test_isolation.py` fails if any test's settings resolve inside the real `data/` folder.
+
+### 2026-09-28: gate replay on live run 3
+- **Seen:** replaying the publish gate on run 3's real report blocked it for 10 raw `[RHP L…]` citations (the synthesizer bypassing the ledger). It also warned that 63 lines carry figures without a claim citation.
+- **Now:** in a live run this triggers a revision round (`synthesis:fixN`), and a report that still fails is saved only as `report_blocked.md` with run status `blocked`.
+- **Also seen:** the first live-figure check flagged a lead-manager statement just for mentioning "subscription". It now requires a live number (x, ₹, %) in the claim (`test_live_check_ignores_statements_without_a_live_figure`).

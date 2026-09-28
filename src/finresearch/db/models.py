@@ -172,6 +172,9 @@ class Claim(TimestampMixin, Base):
     status: Mapped[str] = mapped_column(String(20), default="unverified", index=True)
     # unverified | verified | contradicted | unsupported | needs_review
     verifier_note: Mapped[str | None] = mapped_column(Text)
+    # deterministic gate results, e.g. {"value_in_source": true, "conflict_with": [12], "stale": false}
+    checks: Mapped[dict[str, Any]] = mapped_column(default=dict)
+    corrects_claim_id: Mapped[int | None] = mapped_column(ForeignKey("claim.id", ondelete="SET NULL"))
 
     run: Mapped[ResearchRun] = relationship(back_populates="claims")
     citations: Mapped[list[Citation]] = relationship(back_populates="claim", cascade="all, delete-orphan")
