@@ -229,6 +229,40 @@ class AgentStep(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+# --------------------------------------------------------------------------- report conversations
+class Conversation(TimestampMixin, Base):
+    """A follow-up chat about one research run, continued with Claude Code session resume."""
+
+    __tablename__ = "conversation"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("research_run.id", ondelete="CASCADE"), index=True)
+    title: Mapped[str] = mapped_column(String(200))
+    session_id: Mapped[str | None] = mapped_column(String(80))  # Claude Code session to --resume
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    messages: Mapped[list[ConversationMessage]] = relationship(
+        back_populates="conversation", cascade="all, delete-orphan", order_by="ConversationMessage.id"
+    )
+
+
+class ConversationMessage(TimestampMixin, Base):
+    __tablename__ = "conversation_message"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    conversation_id: Mapped[int] = mapped_column(
+        ForeignKey("conversation.id", ondelete="CASCADE"), index=True
+    )
+    role: Mapped[str] = mapped_column(String(20))  # user | assistant
+    content: Mapped[str] = mapped_column(Text)
+    # deterministic checks on assistant answers: cited claims, unknown/contradicted citations, uncited figures
+    checks: Mapped[dict[str, Any]] = mapped_column(default=dict)
+    tier: Mapped[str | None] = mapped_column(String(20))
+    model: Mapped[str | None] = mapped_column(String(60))
+    num_turns: Mapped[int | None] = mapped_column(Integer)
+    duration_s: Mapped[float | None] = mapped_column(Float)
+
+    conversation: Mapped[Conversation] = relationship(back_populates="messages")
+
+
 # --------------------------------------------------------------------------- market data
 class IpoOffer(TimestampMixin, Base):
     __tablename__ = "ipo_offer"

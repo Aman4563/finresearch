@@ -6,6 +6,7 @@ import { useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
+import { AskPanel } from "@/components/ask";
 import { CiteChip, EvidencePanel } from "@/components/evidence";
 import { Card, ErrorNote } from "@/components/ui";
 import { API_URL, type Report, useApi } from "@/lib/api";
@@ -17,6 +18,7 @@ export default function ReportReader() {
   const { data, error } = useApi<Report>(`/api/runs/${id}/report`);
   const pack = useApi<{ files: string[] }>(`/api/runs/${id}/pack`);
   const [open, setOpen] = useState<number | null>(null);
+  const [asking, setAsking] = useState(false);
 
   const markdown = useMemo(() => (data ? data.markdown.replace(CITE, "[C$1](#cite-$1)") : ""), [data]);
   const downloads = (pack.data?.files ?? []).filter((f) => f.startsWith("06_Final_Report/") && /\.(pdf|html|xlsx|md)$/.test(f));
@@ -30,7 +32,10 @@ export default function ReportReader() {
         <Link className="text-sm underline" href={`/runs/${id}`}>
           ← run #{id}
         </Link>
-        <div className="flex flex-wrap gap-3 text-sm">
+        <div className="flex flex-wrap items-center gap-3 text-sm">
+          <button type="button" className="rounded border border-border px-2 py-0.5" onClick={() => setAsking((a) => !a)}>
+            {asking ? "Hide chat" : "Ask about this report"}
+          </button>
           {downloads.map((f) => (
             <a key={f} className="underline" href={`${API_URL}/api/runs/${id}/pack/${f}`} target="_blank" rel="noreferrer">
               {f.split("/").pop()}
@@ -59,7 +64,7 @@ export default function ReportReader() {
         </details>
       )}
 
-      <div className={`grid gap-6 ${open ? "lg:grid-cols-[minmax(0,1fr)_26rem]" : ""}`}>
+      <div className={`grid gap-6 ${open != null || asking ? "lg:grid-cols-[minmax(0,1fr)_26rem]" : ""}`}>
         <article className="report rounded-lg border border-border bg-card p-6">
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
@@ -81,7 +86,17 @@ export default function ReportReader() {
             {markdown}
           </ReactMarkdown>
         </article>
-        {open != null && <EvidencePanel id={open} claim={data.claims[String(open)]} onClose={() => setOpen(null)} />}
+        {(open != null || asking) && (
+          <div className="space-y-4">
+            {open != null && <EvidencePanel id={open} claim={data.claims[String(open)]} onClose={() => setOpen(null)} />}
+            {asking && (
+              <section className="rounded-lg border border-border bg-card p-4">
+                <h3 className="mb-2 font-semibold">Ask Claude about this report</h3>
+                <AskPanel runId={id} claims={data.claims} onOpenClaim={setOpen} />
+              </section>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
