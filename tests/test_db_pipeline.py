@@ -117,9 +117,14 @@ def test_mcp_claims_quote_verification(table_doc):
                        "quote": "Profit / (Loss) for the year 327.83 535.61"}]}))  # fmt: skip
     assert ok["status"] == "unverified" and ok["citation_checks"][0]["quote_found"] is True
     bad = json.loads(call("save_claim", {
-        "run_id": run, "stream": "financials", "statement": "made up", "claim_type": "numeric", "value": "999",
+        "run_id": run, "stream": "financials", "statement": "made up", "claim_type": "numeric", "metric": "pat", "unit": "INR mn", "period": "FY2026", "value": "999",
         "citations": [{"document_id": table_doc, "line_start": ln, "line_end": ln, "quote": "PAT was 999.99"}]}))  # fmt: skip
     assert bad["status"] == "unsupported"
+    not_atomic = json.loads(call("save_claim", {
+        "run_id": run, "stream": "financials", "statement": "PAT and revenue grew", "claim_type": "numeric",
+        "value": "535.61", "citations": [{"document_id": table_doc, "line_start": ln, "line_end": ln,
+                                          "quote": "Profit / (Loss) for the year 327.83 535.61"}]}))  # fmt: skip
+    assert "atomic" in not_atomic["error"]
     err = json.loads(call("save_claim", {"run_id": run, "stream": "x", "statement": "y", "claim_type": "numeric",
                                          "citations": []}))  # fmt: skip
     assert "citation" in err["error"]

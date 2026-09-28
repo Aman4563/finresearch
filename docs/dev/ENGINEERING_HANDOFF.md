@@ -32,7 +32,10 @@ Every change must preserve these.
 3. Every numeric or factual claim in a report exists as a `claim` row with at least one `citation`. Document citations carry `document_id`, page and a line span, and are checked deterministically (`quote_found`). A claim whose quotes are all missing is `unsupported` and never reaches a report as fact.
 4. All arithmetic in reports comes from `fincalc`, using Decimal, documented rounding, and `None` for "not reported". LLMs never compute figures that end up in a report.
 5. Live market figures (subscription, GMP, prices) carry their source timestamp and an INTERIM label while bidding is open. NSE subscription multiples use the lower price-band share base.
-6. Nothing is silently truncated. Tools paginate with explicit continuation hints, and engines refuse over-long inputs (`CapabilityMismatch`) rather than cutting them.
+6. Numeric claims are atomic (metric, value, unit, period). A verifier's correction becomes a new claim linked by `corrects_claim_id` and is verified only if its value is printed at the cited lines. A deterministic contradiction (for example a wrong bidding day) is never overridden by a model.
+6a. A report is published (`report.md`) only if the publish gate passes: it cites only this run's claims, none contradicted or unsupported, no raw document lines, and every high-importance claim it cites is verified. Otherwise the output is `report_blocked.md` and the run status is `blocked`.
+6b. Tests never write to the real `data/` folder (autouse isolation fixture).
+7a. Nothing is silently truncated. Tools paginate with explicit continuation hints, and engines refuse over-long inputs (`CapabilityMismatch`) rather than cutting them.
 
 **Engines**
 
