@@ -85,6 +85,17 @@ def save_claim(
         raise ValueError(f"unknown run_id {run_id}")
     if claim_type != "opinion" and not citations:
         raise ValueError("numeric/factual claims need at least one citation")
+    if claim_type == "numeric":
+        missing = [
+            k
+            for k, v in (("metric", metric), ("value", value), ("unit", unit), ("period", period))
+            if v in (None, "")
+        ]
+        if missing:
+            raise ValueError(
+                f"numeric claims are atomic: one figure with metric, value, unit and period (missing {missing}). "
+                "Save each figure of a table as its own claim."
+            )
 
     claim = Claim(
         run_id=run_id,

@@ -9,5 +9,9 @@ Try to REFUTE each claim listed below:
 
 Default to "needs_review" when you cannot confirm; mark "verified" only with positive evidence. Give the correct value when a claim is wrong.
 
+Each claim carries `gate_checks` / `gate_notes` from FinResearch's deterministic gate (value not printed at the
+cited lines = derived, conflicts with other claims, live figures without timestamps, stale web sources). Resolve
+those first. For conflicts, decide which claim is right and contradict the other with the correct value.
+
 Claims to check:
 {claims}
