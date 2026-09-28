@@ -76,3 +76,7 @@ These are dated entries for bugs we reproduced, what caused them, and how they a
 ### 2026-09-28: price band, lot size and fresh issue never reached the ledger (run 4)
 - **Seen:** the valuation stream used these as fincalc inputs but never saved them as claims. Four high-importance gold facts were missing, so recall was 82%.
 - **Now:** `verify/baseline.py` records the NSE issue-information facts (price band, lot, face value, fresh issue, OFS, anchor portion) as verified claims citing the NSE URL, and the valuation stream has a checklist of offer facts to record. Run 5 found all of them.
+
+### 2026-09-28: the dashboard could not save the profile or journal entries (CORS)
+- **Seen (code review while adding monitoring):** the API allowed only GET and POST cross-origin, so the browser's preflight for `PUT /api/profile` and `PATCH /api/decisions/{id}` from the dashboard origin would be rejected. The page-load smoke test never saves, so it missed this.
+- **Now:** PUT and PATCH are allowed for the dashboard origins. `test_watch_api_and_cors_for_the_dashboard` sends the preflight for both methods, and a live `curl` preflight returns 200.

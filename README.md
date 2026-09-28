@@ -136,11 +136,15 @@ uv run finresearch ipo status <run_id>             # steps, models, turns, time 
 uv run finresearch ipo resume <run_id> --wait      # continue a paused or failed run (finished steps are kept)
 uv run finresearch ipo render <run_id>             # rebuild the research pack (report md/html/pdf, tables, charts)
 
-# local API for the app (always 127.0.0.1; OpenAPI docs at /api/docs)
+# local API for the app (always 127.0.0.1; OpenAPI docs at /api/docs); also runs the monitor
 uv run finresearch serve                           # http://127.0.0.1:8710
+
+# monitoring after the report: subscription to the close, allotment, listing, anchor lock-ins
+uv run finresearch monitor watch orient-cables     # schedule the checks from NSE's issue information
+uv run finresearch monitor run                     # run the checks without the API
 ```
 
-The dashboard (IPO radar, live agent view, report reader with clickable evidence, "ask about this report" chat, personal suggestions checked against your own rules, a decision journal, plan usage) is a Next.js app in
+The dashboard (IPO radar, live agent view, report reader with clickable evidence, "ask about this report" chat, personal suggestions checked against your own rules, a decision journal, monitoring alerts, plan usage) is a Next.js app in
 `web/`:
 
 ```bash
@@ -179,6 +183,8 @@ src/finresearch/
   verify/       deterministic verification gate and publish gate
   render/       report HTML/PDF, tables, charts and the research folder pack
   api/          local HTTP API and live run events for the app
+  suggest/      investor profile, personal rules, advisor and decision journal
+  monitor/      scheduled checks after the report and alerts
   cli.py        finresearch command line
 web/            Next.js dashboard (radar, live runs, report reader, usage)
 tests/          offline tests and recorded fixtures

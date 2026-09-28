@@ -377,13 +377,50 @@ def ipo_status(run_id: int) -> None:
 
 
 @app.command()
-def serve(port: int = typer.Option(8710, help="Port on 127.0.0.1")) -> None:
+def serve(
+    port: int = typer.Option(8710, help="Port on 127.0.0.1"),
+    monitor: bool = typer.Option(True, help="Run the monitoring scheduler inside the API process"),
+) -> None:
     """Start the local API for the research app (always bound to 127.0.0.1)."""
     import uvicorn
 
     from finresearch.api import create_app
 
-    uvicorn.run(create_app(), host="127.0.0.1", port=port, log_level="info")
+    uvicorn.run(create_app(monitor=monitor), host="127.0.0.1", port=port, log_level="info")
+
+
+monitor_app = typer.Typer(
+    no_args_is_help=True, help="Monitoring after the report: subscription, listing, lock-ins"
+)
+app.add_typer(monitor_app, name="monitor")
+
+
+@monitor_app.command("watch")
+def monitor_watch(company: str) -> None:
+    """Start (or refresh) monitoring a company's IPO from NSE's issue information."""
+    from finresearch.monitor.watch import watch_company
+
+    w = asyncio.run(watch_company(company))
+    console.print(f"watching {w['nse_symbol']}: bidding {w['open_date']} → {w['close_date']}, allotment "
+                  f"{w['allotment_date']}, listing {w['listing_date']} (expected)")  # fmt: skip
+
+
+@monitor_app.command("tick")
+def monitor_tick() -> None:
+    """Run one monitoring pass now (plan slots, run due checks)."""
+    from finresearch.monitor.jobs import Deps
+    from finresearch.monitor.scheduler import tick
+
+    console.print(asyncio.run(tick(Deps.live())))
+
+
+@monitor_app.command("run")
+def monitor_run(interval: float = typer.Option(60, help="Seconds between passes")) -> None:
+    """Run the monitoring loop in the foreground (use this when the API is not running)."""
+    from finresearch.monitor.scheduler import run_forever
+
+    logging.basicConfig(level=logging.INFO)
+    asyncio.run(run_forever(interval_s=interval))
 
 
 if __name__ == "__main__":

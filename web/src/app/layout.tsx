@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+
+import { AlertBadge } from "@/components/alerts";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -10,6 +12,7 @@ export const metadata: Metadata = {
 const nav = [
   { href: "/", label: "IPO radar" },
   { href: "/runs", label: "Runs" },
+  { href: "/monitor", label: "Monitor" },
   { href: "/journal", label: "Journal" },
   { href: "/profile", label: "Profile & rules" },
   { href: "/usage", label: "Usage" },
@@ -31,6 +34,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
                 </Link>
               ))}
             </nav>
+            <div className="ml-auto">
+              <AlertBadge />
+            </div>
           </div>
         </header>
         <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6">{children}</main>
