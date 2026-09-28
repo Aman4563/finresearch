@@ -75,9 +75,31 @@ async def watch_company(company_slug: str, *, fetch_detail=None) -> dict:
 
 
 def watch_json(w: Watch, co: Company | None = None) -> dict:
-    return {"id": w.id, "company_id": w.company_id, "company": co.slug if co else None,
+    def iso(d):
+        return d.isoformat() if d else None
+
+    return {"id": w.id, "kind": w.kind, "company_id": w.company_id, "company": co.slug if co else None,
             "company_name": co.name if co else None, "nse_symbol": w.nse_symbol,
-            "open_date": w.open_date.isoformat(), "close_date": w.close_date.isoformat(),
-            "allotment_date": w.allotment_date.isoformat(), "listing_date": w.listing_date.isoformat(),
+            "open_date": iso(w.open_date), "close_date": iso(w.close_date),
+            "allotment_date": iso(w.allotment_date), "listing_date": iso(w.listing_date),
             "anchor_shares": str(w.anchor_shares) if w.anchor_shares is not None else None, "active": w.active,
             "meta": w.meta or {}}  # fmt: skip
+
+
+def watch_stock(company_slug: str) -> dict:
+    """Start (or restart) the daily monitoring of a listed stock."""
+    with session_scope() as s:
+        co = s.scalar(select(Company).where(Company.slug == company_slug))
+        if co is None:
+            raise LookupError(f"unknown company {company_slug!r}")
+        if not co.nse_symbol:
+            raise ValueError(f"{company_slug} has no NSE symbol")
+        w = s.scalar(select(Watch).where(Watch.company_id == co.id))
+        if w is None:
+            w = Watch(company_id=co.id, kind="stock", nse_symbol=co.nse_symbol, meta={})
+            s.add(w)
+        elif w.kind != "stock":
+            raise ValueError(f"{company_slug} is already watched as an IPO; stop that watch first")
+        w.active = True
+        s.flush()
+        return watch_json(w, co)

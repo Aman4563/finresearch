@@ -301,7 +301,7 @@ def stock_run(
     concurrency: int = typer.Option(4, help="Parallel agents (Max-plan friendly default)"),
     wait: bool = typer.Option(False, help="Sleep through Max-window resets and resume automatically"),
 ) -> None:
-    """Start a new listed-stock research run (resume it with `finresearch ipo resume <run_id>`)."""
+    """Start a new listed-stock research run (resume any run with `finresearch research resume <run_id>`)."""
     from finresearch.db import session_scope
     from finresearch.ingest.documents import get_or_create_company
     from finresearch.orchestrator.base import create_run
@@ -314,6 +314,25 @@ def stock_run(
     run_id = create_run(company, kind="stock_report")
     console.print(f"created stock run {run_id} for {company}")
     _go(run_id, streams, concurrency, wait)
+
+
+research_app = typer.Typer(no_args_is_help=True, help="Any research run (IPO, stock, fund, bond)")
+app.add_typer(research_app, name="research")
+
+
+@research_app.command("resume")
+def research_resume(
+    run_id: int, streams: str | None = typer.Option(None), concurrency: int = typer.Option(4),
+    wait: bool = typer.Option(False),
+) -> None:  # fmt: skip
+    """Resume a paused or failed run of any kind; finished steps are not repeated."""
+    _go(run_id, streams, concurrency, wait)
+
+
+@research_app.command("status")
+def research_status(run_id: int) -> None:
+    """Show a run's steps, costs and Max-window usage."""
+    ipo_status(run_id)
 
 
 @ipo_app.command("resume")

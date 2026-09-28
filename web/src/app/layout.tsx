@@ -11,6 +11,7 @@ export const metadata: Metadata = {
 
 const nav = [
   { href: "/", label: "IPO radar" },
+  { href: "/stocks", label: "Stocks" },
   { href: "/runs", label: "Runs" },
   { href: "/monitor", label: "Monitor" },
   { href: "/journal", label: "Journal" },

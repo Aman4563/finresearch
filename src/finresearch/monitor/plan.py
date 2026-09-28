@@ -20,6 +20,7 @@ SUBSCRIPTION_TIMES = ((10, 30), (12, 0), (13, 30), (15, 0), (16, 0), (17, 15))
 LISTING_TIMES = ((10, 15, "open"), (15, 45, "close"))
 ALLOTMENT_TIME = (19, 0)
 LOCKIN_TIME = (9, 0)
+STOCK_DAILY_TIME = (16, 30)  # after the close, once NSE has published the day's prices and filings
 
 
 @dataclass(frozen=True)
@@ -60,3 +61,15 @@ def plan(symbol: str, open_date: date, close_date: date, allotment: date, listin
 
 def last_slot(slots: list[Slot]) -> datetime:
     return max(s.due_at for s in slots) + timedelta(days=1)
+
+
+def plan_stock(symbol: str, start: date, end: date) -> list[Slot]:
+    """One after-close check per exchange day in [start, end] for a watched listed stock."""
+    from finresearch.fincalc.dates import is_business_day
+
+    out, d = [], start
+    while d <= end:
+        if is_business_day(d):
+            out.append(Slot("stock_daily", f"{symbol}:stock_daily:{d}", ist_datetime(d, *STOCK_DAILY_TIME)))
+        d += timedelta(days=1)
+    return out
