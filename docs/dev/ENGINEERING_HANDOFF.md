@@ -1,6 +1,6 @@
 # Engineering handoff
 
-This file is the orientation for anyone (human or agent) changing FinResearch. The product design lives in `../FinResearch_App_Blueprint/` (`02_Final_Architecture_v1.2.md` is current). Status is tracked in [PRODUCT_REQUIREMENTS.md](PRODUCT_REQUIREMENTS.md).
+This file is the orientation for anyone (human or agent) changing FinResearch. Status is tracked in [PRODUCT_REQUIREMENTS.md](PRODUCT_REQUIREMENTS.md) and reproduced bugs in [FUNCTIONAL_TESTING.md](FUNCTIONAL_TESTING.md).
 
 ## 1. System map
 
