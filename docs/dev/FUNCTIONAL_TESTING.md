@@ -68,3 +68,11 @@ These are dated entries for bugs we reproduced, what caused them, and how they a
 - **Seen:** agent discovery for Orient Cables ingested NSE's copy of the RHP as a second RHP. It has different bytes from SEBI's copy (so sha256 did not match) but 480 of 491 pages are identical; only the signature pages differ. `Orient_GID.pdf` was also tagged RHP, because `\bgid\b` does not match after an underscore.
 - **Now:** after extraction, a document whose pages are at least 90% identical to another document of the same company is rolled back and reported as a duplicate, and its stored files are removed (`test_a_byte_different_copy_with_the_same_text_is_a_duplicate`). The GID pattern no longer relies on word boundaries. The stored GID was retagged, and the duplicate RHP copy was removed after run 5 finished.
 - **Also:** each discovered document is now committed on its own, so a crash on one document keeps the others (`test_a_broken_document_fails_alone_and_earlier_documents_are_kept`).
+
+### 2026-09-28: the gold scorer counted related figures as contradictions (runs 4 and 5)
+- **Seen:** run 4 showed 16 "contradicted" gold facts. They came from DRHP figures, the lower price band, peers' ratios, post-dilution EPS and underscored metric names. Run 5 showed 1: segment and export revenue claims contradicted "revenue from operations FY26" because the pattern includes a bare `revenue`.
+- **Now:** a contradiction needs the claim's own metric and period fields to name the gold fact, excluding other contexts (DRHP, lower band, peers, dilution) and component metrics (segment, export, domestic, product, region). Run 5: 100% recall and 0 contradicted. Regression cases are in `test_underscored_metrics_and_other_contexts_are_handled`.
+
+### 2026-09-28: price band, lot size and fresh issue never reached the ledger (run 4)
+- **Seen:** the valuation stream used these as fincalc inputs but never saved them as claims. Four high-importance gold facts were missing, so recall was 82%.
+- **Now:** `verify/baseline.py` records the NSE issue-information facts (price band, lot, face value, fresh issue, OFS, anchor portion) as verified claims citing the NSE URL, and the valuation stream has a checklist of offer facts to record. Run 5 found all of them.
