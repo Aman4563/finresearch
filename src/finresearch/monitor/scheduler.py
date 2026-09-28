@@ -2,7 +2,7 @@
 
 Each slot is a row with a unique key, inserted with ON CONFLICT DO NOTHING, and claimed with FOR UPDATE SKIP
 LOCKED, so a check never runs twice for the same slot even with two monitor processes. Past slots older than the
-grace period are not backfilled. A job whose information is not published yet (NotYet) or that hits a network
+grace period are not backfilled, and a planned slot still pending that long after its time is marked missed. A job whose information is not published yet (NotYet) or that hits a network
 error is retried with a delay, up to MAX_ATTEMPTS.
 """
 
@@ -67,6 +67,16 @@ def _recover_stale(now: datetime) -> None:
                   .values(status="pending"))  # fmt: skip
 
 
+def _expire_missed(now: datetime) -> int:
+    """A first attempt more than GRACE past its slot is marked missed: running it now would record "now" data
+    under an old slot (for example six subscription checks at once after the monitor was down)."""
+    with session_scope() as s:
+        res = s.execute(update(MonitorJob).where(MonitorJob.status == "pending", MonitorJob.attempts == 0,
+                                                 MonitorJob.due_at < now - GRACE)
+                        .values(status="missed", finished_at=now).returning(MonitorJob.id))  # fmt: skip
+        return len(res.all())
+
+
 def _claim(now: datetime, limit: int = 10) -> list[int]:
     with session_scope() as s:
         rows = s.scalars(select(MonitorJob).where(MonitorJob.status == "pending", MonitorJob.due_at <= now)
@@ -104,13 +114,14 @@ async def tick(deps: jobs.Deps, now: datetime | None = None) -> dict[str, int]:
     now = now or datetime.now(UTC)
     _recover_stale(now)
     added = sync_slots(now)
+    missed = _expire_missed(now)
     done = failed = retried = 0
     for jid in _claim(now):
         st = await run_job(jid, deps, now)
         done += st == "done"
         failed += st == "failed"
         retried += st == "pending"
-    return {"added": added, "done": done, "failed": failed, "retried": retried}
+    return {"added": added, "done": done, "failed": failed, "retried": retried, "missed": missed}
 
 
 async def run_forever(

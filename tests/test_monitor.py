@@ -204,3 +204,20 @@ def test_watch_api_and_cors_for_the_dashboard(watched):
             r = c.options("/api/profile", headers={"Origin": "http://127.0.0.1:3100",
                                                    "Access-Control-Request-Method": method})  # fmt: skip
             assert r.status_code == 200 and method in r.headers["access-control-allow-methods"]
+
+
+async def test_slots_left_pending_while_the_monitor_was_down_are_missed_not_run_late(watched):
+    from finresearch.db import session_scope
+    from finresearch.db.models import MonitorJob
+    from finresearch.monitor.scheduler import tick
+
+    fake = FakeNse()
+    await tick(deps(fake), ist(2026, 9, 29, 10, 0))  # plans the close day's slots; none due yet
+    stats = await tick(deps(fake), ist(2026, 9, 29, 16, 5))  # monitor was down from 10:00 to 16:05
+    with session_scope() as s:
+        status = {
+            j.slot[-4:]: j.status for j in s.query(MonitorJob).filter(MonitorJob.slot.like("%2026-09-29:%"))
+        }
+    assert status == {"1030": "missed", "1200": "missed", "1330": "missed", "1500": "done", "1600": "done",
+                      "1715": "pending"}  # fmt: skip
+    assert stats["missed"] == 3 and fake.calls == 2
