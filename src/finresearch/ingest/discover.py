@@ -192,16 +192,22 @@ def fetch_and_ingest(session: Session, company: Company, cands: list[Candidate],
                 pdf = Path(td) / re.sub(r"[^A-Za-z0-9._-]+", "_", Path(name).name)
                 pdf.write_bytes(data)
                 before = session.query(Document.id).filter(Document.sha256.isnot(None)).count()
-                doc = ingest_pdf(session, pdf, company=company, kind=kind_for_member(name, c.kind), title=f"{c.title} — {Path(name).stem}"
-                                 if len(pdfs) > 1 else c.title, docs_dir=docs_dir,
-                                 provenance={**prov, "discovered_via": c.source, "found_on": c.referer},
-                                 glm_ocr=glm_ocr)  # fmt: skip
-                after = session.query(Document.id).filter(Document.sha256.isnot(None)).count()
-                if after == before:
-                    report.outcomes.append(Outcome(c, "duplicate", doc.id, "already in the store"))
+                try:
+                    doc = ingest_pdf(session, pdf, company=company, kind=kind_for_member(name, c.kind),
+                                     title=f"{c.title} — {Path(name).stem}" if len(pdfs) > 1 else c.title,
+                                     docs_dir=docs_dir, glm_ocr=glm_ocr,
+                                     provenance={**prov, "discovered_via": c.source, "found_on": c.referer})  # fmt: skip
+                    after = session.query(Document.id).filter(Document.sha256.isnot(None)).count()
+                    if after == before:
+                        report.outcomes.append(Outcome(c, "duplicate", doc.id, "already in the store"))
+                        continue
+                    if index:
+                        index_document(session, doc, embedder=embedder)
+                    session.commit()  # keep each finished document even if a later download or OCR fails
+                except Exception as e:
+                    session.rollback()
+                    report.outcomes.append(Outcome(c, "failed", detail=f"ingest {name}: {e}"[:300]))
                     continue
-                if index:
-                    index_document(session, doc, embedder=embedder)
                 report.outcomes.append(Outcome(c, "ingested", doc.id, f"{doc.pages} pages"))
     return report
 

@@ -155,3 +155,34 @@ def test_zip_members_are_classified_by_their_own_names():
     assert kind_for_member("ACEVECTOR LIMITED - GID.pdf", DocKind.RHP) == DocKind.OTHER
     assert kind_for_member("Acevector_RHP.pdf", DocKind.RHP) == DocKind.RHP
     assert kind_for_member("Abridged Prospectus.pdf", DocKind.RHP) == DocKind.ABRIDGED
+
+
+@respx.mock
+def test_a_broken_document_fails_alone_and_earlier_documents_are_kept(env, tmp_path, monkeypatch):
+    from finresearch.db import session_scope
+    from finresearch.db.models import Document
+    from finresearch.ingest import discover as disc
+    from finresearch.ingest.documents import get_or_create_company
+    from finresearch.ingest.documents import ingest_pdf as real_ingest
+
+    good, bad = minimal_pdf([["Annual report FY26"]]), minimal_pdf([["Broken scan"]])
+    respx.get("https://co.example/good.pdf").mock(return_value=httpx.Response(200, content=good))
+    respx.get("https://co.example/bad.pdf").mock(return_value=httpx.Response(200, content=bad))
+
+    def flaky_ingest(session, pdf, **kw):
+        if kw["title"] == "bad":
+            raise RuntimeError("OCR crashed")
+        return real_ingest(session, pdf, **kw)
+
+    monkeypatch.setattr(disc, "ingest_pdf", flaky_ingest)
+    cands = [Candidate("https://co.example/good.pdf", DocKind.ANNUAL_REPORT, "good", "agent"),
+             Candidate("https://co.example/bad.pdf", DocKind.ANNUAL_REPORT, "bad", "agent")]  # fmt: skip
+    slug = "flaky-" + tmp_path.name[-8:]
+    with session_scope() as s:
+        co = get_or_create_company(s, slug, "Flaky Co")
+        rep = fetch_and_ingest(s, co, cands, docs_dir=env.docs_dir, index=False)
+    assert [o.status for o in rep.outcomes] == ["ingested", "failed"] and "OCR crashed" in rep.outcomes[
+        1
+    ].detail
+    with session_scope() as s:
+        assert s.get(Document, rep.outcomes[0].document_id).title == "good"
