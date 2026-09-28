@@ -1,108 +1,154 @@
 # FinResearch
 
-A personal research engine that produces deep, fact-checked reports. It starts with Indian IPOs and will extend to stocks, mutual funds, bonds and F&O.
+[![CI](https://github.com/Aman4563/finresearch/actions/workflows/ci.yml/badge.svg)](https://github.com/Aman4563/finresearch/actions/workflows/ci.yml)
+![Python 3.12](https://img.shields.io/badge/python-3.12-blue)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-The design is in `../FinResearch_App_Blueprint/`; start with `02_Final_Architecture_v1.2.md`. The reference reports this engine has to match or beat are in `../Moneyview_IPO_Research/` and `../OrientCables_IPO_Research/`.
+**FinResearch is a personal, local-first research engine that writes deep, fact-checked investment reports.** It starts with Indian IPOs and will cover listed stocks, mutual funds, bonds and F&O.
 
-> Personal use only. This is not SEBI-registered investment advice.
+For each company it reads the offer documents and filings, pulls live exchange data, and runs a team of AI research agents. Every agent must cite the exact page and line it relies on. Python then checks every quote and recomputes every number before a verdict is written.
 
-Workflow and gates: [CONTRIBUTING.md](CONTRIBUTING.md) · invariants: [ENGINEERING_HANDOFF.md](ENGINEERING_HANDOFF.md) · status: [PRODUCT_REQUIREMENTS.md](PRODUCT_REQUIREMENTS.md)
+> **Disclaimer.** FinResearch is a personal research tool. Its output is not investment advice and not research published by a SEBI-registered research analyst. Grey-market data is unofficial, and subscription figures are interim while an issue is open. Always check primary sources and your own circumstances before investing.
 
-## Status: P0 spike ✅ · P0 foundations ✅
+## What it does
 
-### P0 spike: Claude Bridge
+- **Reads offer documents properly.**
+  - Downloads the RHP, DRHP, annual reports and financial statements, and OCRs scanned pages.
+  - Maps every SEBI ICDR section (Risk Factors, Capital Structure, Objects, Basis for Offer Price, Restated Financials, MD&A, Litigation and others) with page and line ranges.
+  - Rebuilds prospectus financial tables deterministically.
+- **Finds evidence fast.** Hybrid keyword and semantic search over every document, with page and line anchors.
+- **Uses live market data.**
+  - NSE IPO calendars, and subscription by category, combined NSE+BSE as well as NSE-only, with timestamps.
+  - Price-wise demand and issue details.
+  - SEBI DRHP/RHP filings.
+- **Never trusts the model's arithmetic.** A tested Decimal finance library covers:
+  - Indian number formats and units;
+  - growth, margins, returns and working capital;
+  - P/E, P/B and EV/EBITDA;
+  - IPO share maths, allotment odds, lock-in schedules and market-day counting.
+- **Keeps a claim ledger.** Every finding is stored as a claim with citations. A claim whose quote isn't actually at the cited lines is marked unsupported automatically and can't appear in a report as fact.
+- **Runs on your machine.** It uses your Claude subscription through the official Claude Code CLI, and falls back to local models when limits are reached.
 
-The **Claude Bridge** gives every LLM task one interface over three engines, tried in this order:
+## How it works
 
-| Tier | Engine | Status |
+```
+                    finresearch CLI  (web app planned)
+                              │
+             Orchestrator: deterministic stages, budgets, resume
+                              │  agent tasks
+   ┌──────────────────── Claude Bridge ─────────────────────┐
+   │ 1. Claude Code (official CLI) on your Claude plan       │  limit-aware: 5-hour / 7-day window
+   │ 2. Same CLI on an Anthropic API key (optional)          │  ceilings, cool-down to reset,
+   │ 3. Local models via Ollama (degraded mode)              │  circuit breaker, call ledger
+   └──────────────────────────┬─────────────────────────────┘
+                              │  MCP (stdio)
+               FinResearch MCP server — the agents' only tools
+     documents · sections · grep · search · tables · fincalc
+     NSE / SEBI live data · claim ledger with citation checks
+                              │
+        Postgres + pgvector            immutable document store
+   claims · citations · chunks · runs   raw PDFs + canonical text
+```
+
+**Claude Bridge.** Every LLM task goes through one interface.
+- **Tier 1** runs the official `claude` CLI under your own Claude login, with structured JSON output. It records how much of the plan's 5-hour and 7-day windows is used, so the engine can slow down before hitting a limit.
+- **Tier 2** is the same CLI billed to an API key, for when you add one.
+- **Tier 3** is local Ollama models, tuned for a 16 GB Apple-silicon Mac:
+  - one generation at a time;
+  - automatic 9B → 4B fallback when memory is tight;
+  - schema validation with repair turns;
+  - loop-safe OCR.
+
+  Local results are always marked degraded. Tasks that need the web, tools or long context are refused locally rather than faked.
+
+**Research agents** (in progress). A planner, seven research streams, adversarial verifiers, bull and bear analysts, a synthesiser and a completeness critic. The seven streams cover:
+- financials;
+- business and industry;
+- risks and governance;
+- offer and valuation;
+- 30-day news;
+- demand and subscription;
+- history, sector and macro.
+
+They work only through the MCP tools. A verification gate recomputes numbers, checks citations, catches cross-stream conflicts and stale live data, and blocks contradicted claims before the report is written.
+
+## Status
+
+| Version | Scope | State |
 |---|---|---|
-| 1. `claude_max` | The official Claude Code CLI (`claude -p`) on the logged-in **Max** subscription | ✅ primary |
-| 2. `claude_api` | The same CLI billed to `ANTHROPIC_API_KEY` | ⏸ disabled (no key by choice). Set `FINRESEARCH_CLAUDE_API_ENABLED=true` + a key to enable |
-| 3. `local` | Ollama: `qwen3.5:9b` / `qwen3.5:4b`, `qwen3-embedding:0.6b`, `glm-ocr` | ✅ fallback (degraded mode) |
+| **v0.1.0** | Claude Bridge, document pipeline, sections and search, NSE/SEBI data, fincalc, MCP server, claim ledger | ✅ Released |
+| **v0.2.0** | IPO report engine: agents and skills, multi-agent pipeline, verification gate, report and folder-pack renderer, gold-set evaluation | 🚧 In progress |
+| v0.3.0 | Web app: dashboard, live agent view, report reader with citations, "ask about this report", personal suggestions, monitoring | Planned |
+| v0.4.0 | Quality and scale: evaluation and back-testing on past IPOs, SME IPOs, Hindi news | Planned |
+| Later | Listed stocks, mutual funds, bonds, F&O analytics | Planned |
 
-**Guarantees the router enforces:**
-- **Max always means the subscription.** API-key and auth-token env vars are stripped for Tier 1, so the CLI can't silently bill an API key.
-- **Limit-aware.**
-  - Every Claude run records the Max 5-hour and 7-day window utilisation from Claude Code's `rate_limit_event`.
-  - Before each call, Max is skipped when a window is above its ceiling (default 92% / 97%).
-  - When a limit is hit, Max cools down until the reported reset time.
-  - A circuit breaker handles repeated overloads.
-- **No silent fakes.**
-  - Local results are always flagged `degraded=True`.
-  - Tasks that need web or tools, or whose prompt is too long for local context, are refused locally (`CapabilityMismatch`) rather than quietly truncated or invented.
-  - A task can opt out of local entirely with `allow_degraded=False`.
-- **Local tier is sized for a 16 GB M1 Pro.**
-  - Only one generation runs at a time.
-  - It drops from 9B to 4B automatically when reclaimable RAM is short.
-  - Structured output is validated against the JSON Schema, with up to 2 automatic repair turns.
-  - Thinking mode is off for speed and determinism.
-  - It warns when output is mostly null.
-- **OCR is safe:** glm-ocr output is streamed, and the run is cut at the first repetition loop. That took one test page from 200 s / 48K garbage chars to 8–14 s / a clean page.
-- **Everything is logged:** each attempt goes to `data/state/ledger.jsonl`, and each Claude run's stream-json transcript is saved to `data/runs/**/transcripts/`.
+## Requirements
 
-**Ingest:** `finresearch.ingest.layout_table` rebuilds tables from `pdftotext -layout` output deterministically. It handles wrapped multi-line headers, per-line horizontal shifts, Notes columns and period detection, so an LLM never has to parse layout. With it, even `qwen3.5:4b` extracts P&L values exactly. Use `ingest.text.read_lines()` for line numbers: pdftotext page breaks (`\f`) make `str.splitlines()` disagree with grep/sed.
+- macOS on Apple silicon; 16 GB RAM is enough.
+- [uv](https://docs.astral.sh/uv/) and Python 3.12.
+- [Claude Code](https://code.claude.com), logged in (`claude auth status` shows your account).
+- Homebrew packages: `postgresql@17`, `pgvector`, `tesseract`, `poppler`.
+- [Ollama](https://ollama.com) with `qwen3.5:9b`, `qwen3.5:4b`, `qwen3-embedding:0.6b` and `glm-ocr`.
 
-### P0 foundations: data, documents, MCP tools, claim ledger
-
-| Component | What it does |
-|---|---|
-| **Postgres 17 + pgvector** (Homebrew, native) | Tables: company, document, document_page, section, chunk (HNSW vector + GIN full-text), research_run, claim, citation, ipo_offer, subscription_snapshot. Alembic migrations |
-| **Document pipeline** (`ingest.documents`) | Stores files by sha256 (immutable), runs `pdftotext -layout`, and OCRs scanned pages with Tesseract (+ optional loop-safe glm-ocr for low confidence). Writes a canonical `text.txt` whose line numbers match `grep -n`. Page→line spans are stored per page |
-| **Section mapper** (`ingest.sections`) | Maps SEBI ICDR offer-document sections (Risk Factors, Capital Structure, Objects, Basis for Offer Price, Business, Restated Financials, MD&A, Litigation, …) with line and page ranges. Verified on Moneyview and Orient RHP + DRHP |
-| **Index + search** (`ingest.index`) | Line-anchored chunks, local `qwen3-embedding` vectors, hybrid full-text + vector search (RRF) |
-| **Adapters** (`adapters.*`) | Polite HTTP (rate limits, retries, opt-in cache, provenance). NSE: current, upcoming and past issues, `ipo_detail` (combined NSE+BSE vs NSE-only subscription, demand, issue info). SEBI: DRHP/RHP/prospectus listings and full-PDF resolution |
-| **fincalc** | Deterministic Decimal finance library: Indian number parsing and units, growth, ratios, valuation, IPO maths (issue, reservation, lots, allotment floor, lock-ins), market-day arithmetic. Golden-tested against the manual reports |
-| **FinResearch MCP server** (`mcp_server`) | Tools for Claude agents: list/read documents and sections with line and page numbers, grep, hybrid search, `extract_table`, `fincalc_call`, live NSE/SEBI, `start_run`, **`save_claim` with deterministic quote-at-cited-lines verification**, `list_claims` |
-
-**Live-verified:** Claude Sonnet 5 on the Max plan, using only the MCP tools, found Orient Cables' largest-customer share (38.54%, Q1 FY27, RHP p26 L1663). It saved a claim, and the server confirmed the quote is at that line: 12 s, 6 turns (`scripts/smoke_mcp_live.py`).
-
-## Setup (once)
+## Setup
 
 ```bash
-brew install postgresql@17 pgvector tesseract poppler && brew services start postgresql@17
+brew install postgresql@17 pgvector tesseract poppler
+brew services start postgresql@17
 createdb finresearch && createdb finresearch_test
-uv sync && uv run alembic upgrade head
-ollama pull qwen3.5:9b qwen3.5:4b qwen3-embedding:0.6b glm-ocr
+
+ollama pull qwen3.5:9b && ollama pull qwen3.5:4b && ollama pull qwen3-embedding:0.6b && ollama pull glm-ocr
+
+git clone https://github.com/Aman4563/finresearch.git && cd finresearch
+uv sync
+uv run alembic upgrade head
+cp .env.example .env        # optional overrides; never commit .env
 ```
 
 ## Usage
 
 ```bash
-uv run finresearch bridge health                      # engines, login, models, RAM, limits
-uv run finresearch bridge limits                      # Max 5h / 7d window utilisation
-uv run finresearch bridge run "..." --schema s.json   # one task through the bridge
-uv run finresearch docs add <pdf|url> --company orient-cables --kind RHP   # ingest + OCR + sections + index
-uv run finresearch docs list | docs sections <id> | docs search "query" --company orient
-uv run finresearch mcp config                         # write Claude Code --mcp-config for the MCP server
-uv run python scripts/ingest_gold.py                  # load the Moneyview + Orient gold set
-uv run pytest -q                                      # 111 offline tests (+ DB tests on finresearch_test)
-uv run python scripts/smoke_live.py                   # live bridge check
-uv run python scripts/smoke_mcp_live.py               # live Claude -> MCP -> claim ledger check
+# engines
+uv run finresearch bridge health          # Claude login, local models, memory, limits
+uv run finresearch bridge limits          # Claude plan window usage
+uv run finresearch bridge run "Summarise ..." --schema schema.json --model-class standard
+
+# documents
+uv run finresearch docs add <pdf-or-url> --company orient-cables --name "Orient Cables (India) Limited" --kind RHP
+uv run finresearch docs list
+uv run finresearch docs sections <document_id>
+uv run finresearch docs search "largest customer share of revenue" --company orient
+
+# MCP server for Claude Code
+uv run finresearch mcp config             # writes the --mcp-config file for the FinResearch tools
 ```
 
-## Layout
+## Development
+
+```bash
+uv run ruff check . && uv run ruff format --check .
+uv run pytest -q                           # offline suite + database tests (finresearch_test)
+uv run python scripts/smoke_live.py        # live check of the Claude and local tiers
+uv run python scripts/smoke_mcp_live.py    # live check: Claude -> MCP tools -> verified claim
+```
+
+Contributions follow an issue → branch → pull request workflow; see [CONTRIBUTING](.github/CONTRIBUTING.md). Please read the [Code of Conduct](.github/CODE_OF_CONDUCT.md), and report vulnerabilities privately as described in the [Security policy](.github/SECURITY.md).
+
+## Project layout
 
 ```
 src/finresearch/
-  bridge/        types, claude_code (Tier 1/2), ollama_engine (Tier 3), limits, router
-  ingest/        documents (store/extract/OCR), sections (ICDR mapper), index (chunks, embeddings, hybrid
-                 search), layout_table (pdftotext table rebuild), text (line-safe reading)
-  adapters/      http (polite client), nse, sebi
-  fincalc/       numbers, growth, ratios, valuation, ipo, dates
-  db/            SQLAlchemy models + session       (migrations/ = Alembic)
-  mcp_server/    FinResearch MCP server (tools), claims (ledger + citation checks), config
-  config.py      settings (FINRESEARCH_* env / .env)
-  cli.py         `finresearch` CLI (bridge, docs, mcp)
-tests/           offline tests + fixtures (real RHP excerpts, NSE/SEBI recordings, fake claude CLI)
-scripts/         smoke_live.py, smoke_mcp_live.py, ingest_gold.py
-data/            gitignored: docs (raw + derived), state, runs, cache, logs
+  bridge/       Claude Code, API-key and Ollama engines; limit tracking; router
+  ingest/       document store, OCR, section mapper, table rebuild, chunks and search
+  adapters/     polite HTTP client, NSE and SEBI
+  fincalc/      deterministic finance calculations
+  db/           database models (migrations/ holds Alembic migrations)
+  mcp_server/   FinResearch MCP server and claim ledger
+  cli.py        finresearch command line
+tests/          offline tests and recorded fixtures
+scripts/        live smoke checks and gold-set ingestion
 ```
 
-## Next (P1: IPO report engine)
+## License
 
-- Agent definitions (`.claude/agents`) + skills: planner, 7 research streams, adversarial verifiers, bull/bear, synthesizer, critic.
-- Python DAG with Max-limit-aware concurrency and resume.
-- Numeric verification gate.
-- Report renderer (MD/HTML/PDF/XLSX).
-
-Acceptance: regenerate the Moneyview and Orient Cables reports and compare them with the manual fact-check logs.
+[MIT](LICENSE)
