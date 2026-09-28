@@ -60,6 +60,7 @@ class PipelineConfig:
     concurrency: int = 4
     max_followup_rounds: int = 2
     max_revisions: int = 2
+    render: bool = True  # build the folder pack (md/html/pdf/xlsx/charts) when the run finishes
     five_hour_ceiling: float = 0.92
     streams: tuple[str, ...] = STREAMS
     verify_importance: tuple[str, ...] = ("high", "normal")
@@ -384,6 +385,9 @@ class IpoPipeline:
                 raise r
         return results
 
+    def _render(self) -> None:
+        self._update_manifest(pack=_render_pack_safely(self.run_id))
+
     # ------------------------------------------------------------------ main
     async def run(self) -> str:
         self._paused = None
@@ -426,20 +430,38 @@ class IpoPipeline:
             (out / "synthesis.json").write_text(synth.model_dump_json(indent=1))
             self._update_manifest(final_gate={"ok": final.ok, "blocking": final.blocking[:50],
                                               "warnings": final.warnings[:50]})  # fmt: skip
+            status = "done" if final.ok else "blocked"
             if not final.ok:
                 # never publish a report that relies on contradicted/unsupported/unverified-high claims
                 (out / "report_blocked.md").write_text(synth.report_markdown)
-                self._set_run(status="blocked", finished_at=_now())
-                return "blocked"
-            (out / "report.md").write_text(synth.report_markdown)
-            self._set_run(status="done", finished_at=_now())
-            return "done"
+            else:
+                (out / "report.md").write_text(synth.report_markdown)
+            if self.config.render:
+                self._render()
+            self._set_run(status=status, finished_at=_now())
+            return status
         except RunPaused as p:
             self._set_run(status="paused", resume_after=p.resume_after)
             return "paused"
         except (StepFailed, Exception):
             self._set_run(status="failed")
             raise
+
+
+def _render_pack_safely(run_id: int) -> dict[str, Any]:
+    from finresearch.render.pack import render_pack
+
+    try:
+        r = render_pack(run_id)
+        return {
+            "path": str(r.path),
+            "gate_ok": r.gate_ok,
+            "pdf_pages": r.pdf_pages,
+            "files": r.files,
+            "notes": r.notes,
+        }
+    except Exception as e:  # rendering must never lose a finished run
+        return {"error": f"{type(e).__name__}: {e}"}
 
 
 def _reports_text(reports: dict[str, StreamReport]) -> str:
