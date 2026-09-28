@@ -1,0 +1,301 @@
+{
+ "company": "moneyview",
+ "version": 1,
+ "as_of": "2026-09-28",
+ "source": "Manual research pack + fact-check log; values re-read from the RHP (doc 8) and price-band ad",
+ "verdict": {
+  "listing": "APPLY",
+  "long_term": [
+   "NEUTRAL",
+   "AVOID"
+  ]
+ },
+ "facts": [
+  {
+   "id": "mv-price-high",
+   "label": "Upper price band",
+   "patterns": [
+    "price band|upper band|cap price|issue price"
+   ],
+   "period": null,
+   "value": 34,
+   "unit": "INR",
+   "tolerance": 0.005,
+   "importance": "high",
+   "source": "Ad L49"
+  },
+  {
+   "id": "mv-lot",
+   "label": "Lot size",
+   "patterns": [
+    "\\blot\\b|minimum bid"
+   ],
+   "period": null,
+   "value": 441,
+   "unit": "shares",
+   "tolerance": 0.005,
+   "importance": "normal",
+   "source": "Ad L51"
+  },
+  {
+   "id": "mv-issue-size",
+   "label": "Total issue size",
+   "patterns": [
+    "issue size|total (offer|issue)|offer size"
+   ],
+   "period": null,
+   "value": 10916.8,
+   "unit": "INR million",
+   "tolerance": 0.005,
+   "importance": "high",
+   "source": "Ad L60-62"
+  },
+  {
+   "id": "mv-fresh",
+   "label": "Fresh issue",
+   "patterns": [
+    "fresh issue"
+   ],
+   "period": null,
+   "value": 7500,
+   "unit": "INR million",
+   "tolerance": 0.005,
+   "importance": "high",
+   "source": "Ad L60"
+  },
+  {
+   "id": "mv-ofs-shares",
+   "label": "OFS shares",
+   "patterns": [
+    "offer for sale|\\bofs\\b"
+   ],
+   "period": null,
+   "value": 100494200,
+   "unit": "shares",
+   "tolerance": 0.005,
+   "importance": "normal",
+   "source": "Ad L61"
+  },
+  {
+   "id": "mv-post-shares",
+   "label": "Post-issue shares",
+   "patterns": [
+    "post[- ]?(issue|offer).*(shares|share capital)|shares outstanding"
+   ],
+   "period": null,
+   "value": 1760231268,
+   "unit": "shares",
+   "tolerance": 0.005,
+   "importance": "normal",
+   "source": "Ad L63"
+  },
+  {
+   "id": "mv-mcap",
+   "label": "Post-issue market cap at Rs 34",
+   "patterns": [
+    "market cap"
+   ],
+   "period": null,
+   "value": 59847.86,
+   "unit": "INR million",
+   "tolerance": 0.005,
+   "importance": "high",
+   "source": "Ad L63"
+  },
+  {
+   "id": "mv-anchor",
+   "label": "Anchor book",
+   "patterns": [
+    "anchor"
+   ],
+   "period": null,
+   "value": 3275.0,
+   "unit": "INR million",
+   "tolerance": 0.01,
+   "importance": "normal",
+   "source": "Anchor letter"
+  },
+  {
+   "id": "mv-total-income-fy26",
+   "label": "Total income FY26",
+   "patterns": [
+    "total income"
+   ],
+   "period": "fy ?2026|fy ?26\\b|2026-03-31|march 31, 2026|31-mar-2026|year ended.*2026",
+   "value": 34042.74,
+   "unit": "INR million",
+   "tolerance": 0.005,
+   "importance": "high",
+   "source": "RHP L18016"
+  },
+  {
+   "id": "mv-pat-fy26",
+   "label": "Restated PAT FY26",
+   "patterns": [
+    "\\bpat\\b|profit after tax|restated profit|profit for the (year|period)|net profit"
+   ],
+   "period": "fy ?2026|fy ?26\\b|2026-03-31|march 31, 2026|31-mar-2026|year ended.*2026",
+   "value": 2427.05,
+   "unit": "INR million",
+   "tolerance": 0.005,
+   "importance": "high",
+   "source": "RHP L18035"
+  },
+  {
+   "id": "mv-pat-fy25",
+   "label": "Restated PAT FY25",
+   "patterns": [
+    "\\bpat\\b|profit after tax|restated profit|profit for the (year|period)|net profit"
+   ],
+   "period": "fy ?2025|fy ?25\\b|2025-03-31|march 31, 2025|31-mar-2025",
+   "value": 2402.75,
+   "unit": "INR million",
+   "tolerance": 0.005,
+   "importance": "normal",
+   "source": "RHP L18035"
+  },
+  {
+   "id": "mv-pat-fy24",
+   "label": "Restated PAT FY24",
+   "patterns": [
+    "\\bpat\\b|profit after tax|restated profit|profit for the (year|period)|net profit"
+   ],
+   "period": "fy ?2024|fy ?24\\b|2024-03-31|march 31, 2024|31-mar-2024",
+   "value": 1711.47,
+   "unit": "INR million",
+   "tolerance": 0.005,
+   "importance": "normal",
+   "source": "RHP L18035"
+  },
+  {
+   "id": "mv-pat-q1",
+   "label": "Restated PAT Q1 FY27",
+   "patterns": [
+    "\\bpat\\b|profit after tax|restated profit|profit for the (year|period)|net profit"
+   ],
+   "period": "q1 ?fy ?27|q1fy27|june 30, 2026|2026-06-30|30-jun-2026|jun-26|three months.*2026|3m.*2026",
+   "value": 1737.96,
+   "unit": "INR million",
+   "tolerance": 0.005,
+   "importance": "high",
+   "source": "RHP L18035"
+  },
+  {
+   "id": "mv-exceptional-fy26",
+   "label": "Exceptional items FY26",
+   "patterns": [
+    "exceptional"
+   ],
+   "period": "fy ?2026|fy ?26\\b|2026-03-31|march 31, 2026|31-mar-2026|year ended.*2026",
+   "value": 2066.53,
+   "unit": "INR million",
+   "tolerance": 0.005,
+   "importance": "high",
+   "source": "RHP L18025"
+  },
+  {
+   "id": "mv-ceo-incentive",
+   "label": "One-time CEO incentive",
+   "patterns": [
+    "incentive|ceo|managing director"
+   ],
+   "period": null,
+   "value": 1600,
+   "unit": "INR million",
+   "tolerance": 0.005,
+   "importance": "high",
+   "source": "RHP L2011"
+  },
+  {
+   "id": "mv-cyber-loss",
+   "label": "Cyber incident loss",
+   "patterns": [
+    "cyber|unauthori[sz]ed|fraud"
+   ],
+   "period": null,
+   "value": 466.53,
+   "unit": "INR million",
+   "tolerance": 0.005,
+   "importance": "high",
+   "source": "RHP L20980"
+  },
+  {
+   "id": "mv-dlg",
+   "label": "DLG outstanding Jun-26",
+   "patterns": [
+    "dlg|default loss"
+   ],
+   "period": null,
+   "value": 10607.8,
+   "unit": "INR million",
+   "tolerance": 0.005,
+   "importance": "high",
+   "source": "RHP L2245"
+  },
+  {
+   "id": "mv-dlg-nw",
+   "label": "DLG as % of net worth",
+   "patterns": [
+    "dlg|default loss"
+   ],
+   "period": null,
+   "value": 43.92,
+   "unit": "%",
+   "tolerance": 0.005,
+   "importance": "normal",
+   "source": "RHP L2259"
+  },
+  {
+   "id": "mv-stage2",
+   "label": "Gross Stage 2 ratio Jun-26",
+   "patterns": [
+    "stage 2|stage-2|stage ii"
+   ],
+   "period": null,
+   "value": 3.27,
+   "unit": "%",
+   "tolerance": 0.005,
+   "importance": "normal",
+   "source": "RHP L24509"
+  },
+  {
+   "id": "mv-eps-fy26",
+   "label": "Diluted EPS FY26",
+   "patterns": [
+    "\\beps\\b|earnings per share"
+   ],
+   "period": "fy ?2026|fy ?26\\b|2026-03-31|march 31, 2026|31-mar-2026|year ended.*2026",
+   "value": 1.57,
+   "unit": "INR",
+   "tolerance": 0.005,
+   "importance": "normal",
+   "source": "RHP L18055"
+  },
+  {
+   "id": "mv-last-round",
+   "label": "Last primary round price",
+   "patterns": [
+    "primary|allotment|private placement|round|64\\.15"
+   ],
+   "period": null,
+   "value": 64.15,
+   "unit": "INR",
+   "tolerance": 0.005,
+   "importance": "high",
+   "source": "RHP L5168"
+  },
+  {
+   "id": "mv-promoter-post",
+   "label": "Promoter holding post-offer",
+   "patterns": [
+    "promoter"
+   ],
+   "period": "post",
+   "value": 15.55,
+   "unit": "%",
+   "tolerance": 0.005,
+   "importance": "high",
+   "source": "Ad L254-290"
+  }
+ ]
+}
