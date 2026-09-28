@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import time
 from pathlib import Path
@@ -12,7 +13,8 @@ from finresearch.db import session_scope
 from finresearch.ingest.documents import DocKind, get_or_create_company, ingest_pdf
 from finresearch.ingest.index import index_document
 
-ROOT = Path(__file__).resolve().parents[2]
+# Folder holding the manual research packs; override with FINRESEARCH_GOLD_DIR.
+ROOT = Path(os.environ.get("FINRESEARCH_GOLD_DIR", Path(__file__).resolve().parents[2]))
 PACKS = {
     "moneyview": ("Moneyview Limited", "MONEYVIEW", ROOT / "Moneyview_IPO_Research"),
     "orient-cables": ("Orient Cables (India) Limited", "ORIENTCABL", ROOT / "OrientCables_IPO_Research"),
