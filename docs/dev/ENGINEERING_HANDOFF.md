@@ -55,3 +55,5 @@ Every change must preserve these.
 - **MCP SDK 2.x:** `FastMCP` was renamed `MCPServer` (`mcp.server.mcpserver`).
 - **Claude Code flags:** `--bare` needs an API key, so it isn't usable on the Max tier. MCP tool permissions go in `--allowedTools` (`mcp__finresearch`), never in `--tools`.
 - **SEBI:** the full offer document is the iframe `file=` target (`sebi_data/attachdocs`). Listing rows link only the abridged prospectus.
+- **OCR'd documents** (scanned annual reports, audited statements; Tesseract mean confidence about 90) are accurate on clean pages. Noisy pages garble digits (for example `2,066 53`, `L7ULA7`). Treat OCR'd figures as secondary: prefer the RHP text layer and cross-check before citing.
+- **Agent roles** live in `src/finresearch/agents/`: `roles.py` (model, effort, tools, schema), `prompts/*.md` (house rules plus one file per role; their hash goes in the run manifest) and `skills/*/SKILL.md` (copied into each role's sandbox under `data/runs/<run>/<role>/.claude/skills`). Research roles never degrade to local models.
