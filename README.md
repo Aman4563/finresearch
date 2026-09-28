@@ -134,6 +134,9 @@ uv run finresearch ipo run orient-cables --wait     # full multi-agent run; paus
 uv run finresearch ipo status <run_id>             # steps, models, turns, time and plan-window usage
 uv run finresearch ipo resume <run_id> --wait      # continue a paused or failed run (finished steps are kept)
 uv run finresearch ipo render <run_id>             # rebuild the research pack (report md/html/pdf, tables, charts)
+
+# local API for the app (always 127.0.0.1; OpenAPI docs at /api/docs)
+uv run finresearch serve                           # http://127.0.0.1:8710
 ```
 
 A finished run produces a research pack under `data/reports/<company>/run-<id>/`:
@@ -167,6 +170,7 @@ src/finresearch/
   orchestrator/ resumable, budget-aware IPO report pipeline
   verify/       deterministic verification gate and publish gate
   render/       report HTML/PDF, tables, charts and the research folder pack
+  api/          local HTTP API and live run events for the app
   cli.py        finresearch command line
 tests/          offline tests and recorded fixtures
 scripts/        live smoke checks and gold-set ingestion
