@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from finresearch.agents.schemas import (
     CaseReport,
     CriticReport,
+    DiscoveryResult,
     ResearchPlan,
     StreamReport,
     Synthesis,
@@ -88,6 +89,9 @@ ROLES: dict[str, Role] = {
     "synthesizer": Role("synthesizer", "synthesizer.md", Synthesis, ModelClass.DEEP,
                         [*LEDGER_READ, *DOC_READ, *CALC, *SKILL], effort="high", max_turns=60, timeout_s=3000,
                         skills=["report-writer", "indian-fin-glossary"]),
+    "discovery": Role("discovery", "discovery.md", DiscoveryResult, ModelClass.STANDARD,
+                      [f"{MCP}list_documents", *WEB], effort="medium", max_turns=40, timeout_s=1500, needs_web=True,
+                      skills=[]),
     "critic": Role("critic", "critic.md", CriticReport, ModelClass.DEEP, [*LEDGER_READ, *DOC_READ],
                    effort="medium", max_turns=25, timeout_s=1200, skills=["ipo-deep-research"]),
 }  # fmt: skip

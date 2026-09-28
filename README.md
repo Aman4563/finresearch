@@ -119,6 +119,7 @@ uv run finresearch bridge limits          # Claude plan window usage
 uv run finresearch bridge run "Summarise ..." --schema schema.json --model-class standard
 
 # documents
+uv run finresearch docs discover acevector --name "AceVector Limited" --nse-symbol ACEVECTOR   # NSE + SEBI + IR pages
 uv run finresearch docs add <pdf-or-url> --company orient-cables --name "Orient Cables (India) Limited" --kind RHP
 uv run finresearch docs list
 uv run finresearch docs sections <document_id>
@@ -129,6 +130,7 @@ uv run finresearch mcp config             # writes the --mcp-config file for the
 
 # research reports
 uv run finresearch ipo run orient-cables --wait     # full multi-agent run; pauses and resumes around plan limits
+                                                   # (finds and ingests the offer documents first if none are stored)
 uv run finresearch ipo status <run_id>             # steps, models, turns, time and plan-window usage
 uv run finresearch ipo resume <run_id> --wait      # continue a paused or failed run (finished steps are kept)
 uv run finresearch ipo render <run_id>             # rebuild the research pack (report md/html/pdf, tables, charts)

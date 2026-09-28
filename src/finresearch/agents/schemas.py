@@ -118,6 +118,34 @@ class CriticReport(BaseModel):
     ready_to_publish: bool
 
 
+DocKindName = Literal[
+    "RHP",
+    "DRHP",
+    "ADDENDUM",
+    "ABRIDGED_PROSPECTUS",
+    "PRICE_BAND_AD",
+    "ANCHOR_ALLOCATION",
+    "ANNUAL_REPORT",
+    "FINANCIAL_STATEMENTS",
+    "INDUSTRY_REPORT",
+    "OTHER",
+]
+
+
+class DiscoveredDocument(BaseModel):
+    url: str = Field(description="Direct link to the PDF (or ZIP of PDFs), exactly as seen on found_on")
+    kind: DocKindName
+    title: str
+    fiscal_year: str | None = None
+    found_on: str = Field(description="The page URL where this link was seen")
+
+
+class DiscoveryResult(BaseModel):
+    ir_pages: list[str] = Field(description="Investor-relations / IPO-document pages visited")
+    documents: list[DiscoveredDocument]
+    notes: list[str] = Field(default_factory=list, description="What could not be found and where you looked")
+
+
 def json_schema_for(model: type[BaseModel]) -> dict[str, Any]:
     """Pydantic JSON schema with $refs inlined (the CLI's --json-schema validator and models do best with a
     flat, self-contained schema)."""

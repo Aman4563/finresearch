@@ -61,6 +61,7 @@ class PipelineConfig:
     max_followup_rounds: int = 2
     max_revisions: int = 2
     render: bool = True  # build the folder pack (md/html/pdf/xlsx/charts) when the run finishes
+    discover: bool = True  # find and ingest documents first when no RHP/DRHP is in the store
     five_hour_ceiling: float = 0.92
     streams: tuple[str, ...] = STREAMS
     verify_importance: tuple[str, ...] = ("high", "normal")
@@ -100,7 +101,7 @@ class IpoPipeline:
             self.tracker = self._get_router().tracker
         return self.tracker
 
-    def _load_context(self) -> RunContext:
+    def _load_context(self, require_offer_doc: bool = False) -> RunContext:
         from finresearch.mcp_server.server import list_documents
 
         with session_scope() as s:
@@ -113,9 +114,9 @@ class IpoPipeline:
             facts = dict(run.manifest.get("facts", {}))
             slug, name, sym = co.slug, co.name, co.nse_symbol
         docs = json.loads(list_documents(slug))
-        if not any(d["kind"] in ("RHP", "DRHP") for d in docs):
+        if require_offer_doc and not any(d["kind"] in ("RHP", "DRHP") for d in docs):
             raise StepFailed(
-                f"no RHP/DRHP ingested for {slug}; run `finresearch docs add ... --kind RHP` first"
+                f"no RHP/DRHP found for {slug}; run `finresearch docs discover {slug}` or `docs add`"
             )
         return RunContext(run_id=self.run_id, company_slug=slug, company_name=name, nse_symbol=sym, documents=docs,
                           facts=facts)  # fmt: skip
@@ -397,6 +398,12 @@ class IpoPipeline:
                               prompt_hashes={n: r.prompt_hash() for n, r in ROLES.items()})  # fmt: skip
         self._set_run(status="running", resume_after=None)
         try:
+            if not any(d["kind"] in ("RHP", "DRHP") for d in self.ctx.documents):
+                if self.config.discover:
+                    from finresearch.ingest.discover import discover
+
+                    await discover(self.ctx.company_slug, log=lambda m: None)
+                self.ctx = self._load_context(require_offer_doc=True)
             await self._facts()
             plan: ResearchPlan = await self.step("planner", "plan", "planner")
             reports = dict(zip(self.config.streams, await self._gather(
