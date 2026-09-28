@@ -238,6 +238,7 @@ class IpoPipeline:
                 d = json.loads(await nse_ipo_detail(self.ctx.nse_symbol))
                 facts["issue_info"] = d.get("issue_info", {})
                 facts["nse_fetched_at"] = d.get("fetched_at")
+                self._once("baseline", lambda: self._record_baseline(facts))
                 period = facts["issue_info"].get("Issue Period", "")
                 if " to " in period:
                     open_s, close_s = (x.strip() for x in period.split(" to "))
@@ -252,6 +253,15 @@ class IpoPipeline:
         if facts.get("issue_close"):
             self.ctx.decision_deadline = f"the UPI mandate cut-off, 5:00 PM IST on {facts['issue_close']}"
         self._update_manifest(facts=facts)
+
+    def _record_baseline(self, facts: dict[str, Any]) -> None:
+        from finresearch.verify.baseline import record_baseline
+
+        fetched = facts.get("nse_fetched_at")
+        with session_scope() as s:
+            ids = record_baseline(s, self.run_id, self.ctx.nse_symbol, facts.get("issue_info", {}),
+                                  datetime.fromisoformat(fetched) if fetched else _now())  # fmt: skip
+        facts["baseline_claim_ids"] = ids
 
     def _claims_text(self, stream: str | None = None, ids: list[int] | None = None) -> str:
         with session_scope() as s:

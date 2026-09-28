@@ -24,6 +24,8 @@ mcp_app = typer.Typer(no_args_is_help=True, help="FinResearch MCP server")
 app.add_typer(mcp_app, name="mcp")
 ipo_app = typer.Typer(no_args_is_help=True, help="IPO research reports (multi-agent pipeline)")
 app.add_typer(ipo_app, name="ipo")
+eval_app = typer.Typer(no_args_is_help=True, help="Evaluate runs against gold sets")
+app.add_typer(eval_app, name="eval")
 console = Console()
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -305,6 +307,37 @@ def ipo_render(
         console.print(f"  [red]blocking[/] {b[:200]}")
     for n in r.notes:
         console.print(f"  [yellow]note[/] {n}")
+
+
+@eval_app.command("gold")
+def eval_gold(
+    run_id: int, company: str | None = typer.Option(None, help="Gold set name (default: the run's company)")
+) -> None:
+    """Score a run against its company's gold set; prints a markdown summary to paste into PRs."""
+    from finresearch.db import session_scope
+    from finresearch.db.models import AgentStep, Company, ResearchRun
+    from finresearch.evals.gold import evaluate, load_gold
+
+    with session_scope() as s:
+        run = s.get(ResearchRun, run_id)
+        if run is None:
+            raise typer.BadParameter(f"unknown run {run_id}")
+        slug = company or s.get(Company, run.company_id).slug
+        synth = (
+            s.query(AgentStep)
+            .filter_by(run_id=run_id, stage="synthesis", status="done")
+            .order_by(AgentStep.finished_at.desc(), AgentStep.id.desc())
+            .first()
+        )
+        res = evaluate(
+            s, run_id, load_gold(slug), (synth.output or {}).get("report_markdown") if synth else None
+        )
+    md = res.markdown()
+    out = get_settings().reports_dir.parent / "evals" / f"{slug}-run{run_id}.md"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(md)
+    console.print(md)
+    console.print(f"saved {out}")
 
 
 @ipo_app.command("status")
