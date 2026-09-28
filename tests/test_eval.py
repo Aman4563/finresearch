@@ -97,3 +97,46 @@ def test_gold_files_are_well_formed(company):
             re.compile(p)
         assert f["unit"] in {"INR million", "INR", "%", "shares"} and f["importance"] in {"high", "normal"}
         assert not re.search(r"subscri|gmp|grey", f["label"], re.I), "live figures do not belong in gold sets"
+
+
+def test_underscored_metrics_and_other_contexts_are_handled(env, tmp_path):
+    """Regressions from live run 4: underscores hid matches; DRHP / lower-band / peer / dilution claims were
+    wrongly counted as contradicting gold facts."""
+    from finresearch.db import session_scope
+    from finresearch.db.models import AgentStep, Claim, ResearchRun
+    from finresearch.ingest.documents import get_or_create_company
+
+    gold = {"company": "t", "verdict": {"listing": "APPLY", "long_term": ["AVOID"]}, "facts": [
+        {"id": "px", "label": "Upper band", "patterns": [r"price band|upper band"], "period": None, "value": 272,
+         "unit": "INR", "tolerance": 0.005, "importance": "high"},
+        {"id": "size", "label": "Issue size", "patterns": ["offer size|issue size"], "period": None,
+         "value": 5520, "unit": "INR million", "tolerance": 0.005, "importance": "high"},
+        {"id": "ronw", "label": "RoNW FY26", "patterns": [r"ronw"], "period": r"fy ?2026", "value": 25.84,
+         "unit": "%", "tolerance": 0.005, "importance": "normal"},
+        {"id": "cfo", "label": "CFO FY26", "patterns": [r"\bcfo\b"], "period": r"fy ?2026", "value": -266.44,
+         "unit": "INR million", "tolerance": 0.005, "importance": "high"}]}  # fmt: skip
+    with session_scope() as s:
+        co = get_or_create_company(s, "ev2-" + hashlib.sha1(str(tmp_path).encode()).hexdigest()[:8], "E")
+        r = ResearchRun(company_id=co.id, kind="ipo_report", manifest={})
+        s.add(r)
+        s.flush()
+        rows = [("upper_price_band", "272", "INR", "RHP", "Upper price band ₹272"),
+                ("drhp_offer_size", "7000", "INR million", "DRHP Jul 2025", "DRHP offer size ₹7,000m"),
+                ("rhp_offer_size", "5520", "INR million", "RHP Sep 2026", "RHP offer size ₹5,520m"),
+                ("peer_ronw", "24.58", "%", "FY2026", "Polycab India FY2026 RoNW"),
+                ("ronw", "25.84", "%", "FY2026", "RoNW FY2026"),
+                ("cfo", "421.81", "INR million", "FY2024", "CFO ₹421.81m in FY2024, in contrast to FY2026"),
+                ("cfo", "-266.44", "INR million", "FY2026", "CFO FY2026")]  # fmt: skip
+        ids = []
+        for m, v, u, per, st in rows:
+            c = Claim(run_id=r.id, stream="x", claim_type="numeric", metric=m, value=Decimal(v), unit=u, period=per,
+                      statement=st, status="verified")  # fmt: skip
+            s.add(c)
+            s.flush()
+            ids.append(c.id)
+        report = " ".join(f"[C{i}]" for i in ids)
+        s.add(AgentStep(run_id=r.id, key="synthesis", stage="synthesis", role="synthesizer", status="done",
+                        output={"report_markdown": report}))  # fmt: skip
+        res = evaluate(s, r.id, gold, report)
+    assert all(f.found for f in res.facts), [f.id for f in res.facts if not f.found]
+    assert not res.contradicted, [(f.id, f.contradicted_in_report) for f in res.contradicted]

@@ -160,7 +160,7 @@
    "patterns": [
     "revenue from operations|revenue_from_operations|\\brevenue\\b"
    ],
-   "period": "q1 ?fy ?27|q1fy27|june 30, 2026|2026-06-30|30-jun-2026|jun-26|three months.*2026|3m.*2026",
+   "period": "q1 ?fy ?(20)?27|june 30,? 2026|2026-06-30|30-jun-(20)?26|jun-?26\\b|three months.*2026|3m.*2026",
    "value": 4891.56,
    "unit": "INR million",
    "tolerance": 0.005,
@@ -199,7 +199,7 @@
    "patterns": [
     "\\bpat\\b|profit after tax|restated profit|profit for the (year|period)|net profit"
    ],
-   "period": "q1 ?fy ?27|q1fy27|june 30, 2026|2026-06-30|30-jun-2026|jun-26|three months.*2026|3m.*2026",
+   "period": "q1 ?fy ?(20)?27|june 30,? 2026|2026-06-30|30-jun-(20)?26|jun-?26\\b|three months.*2026|3m.*2026",
    "value": 327.83,
    "unit": "INR million",
    "tolerance": 0.005,
@@ -238,7 +238,7 @@
    "patterns": [
     "largest customer|top customer|single customer"
    ],
-   "period": null,
+   "period": "q1 ?fy ?(20)?27|june 30,? 2026|2026-06-30|30-jun-(20)?26|jun-?26\\b|three months.*2026|3m.*2026",
    "value": 38.54,
    "unit": "%",
    "tolerance": 0.005,
@@ -251,7 +251,7 @@
    "patterns": [
     "caro|receivables.*(bank|lender)|quarterly (return|statement)"
    ],
-   "period": null,
+   "period": "q4 ?fy ?(20)?26|31-mar-(20)?26|march 31,? 2026|2026-03-31|mar-?26\\b",
    "value": 348.45,
    "unit": "INR million",
    "tolerance": 0.005,

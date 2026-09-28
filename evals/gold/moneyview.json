@@ -173,7 +173,7 @@
    "patterns": [
     "\\bpat\\b|profit after tax|restated profit|profit for the (year|period)|net profit"
    ],
-   "period": "q1 ?fy ?27|q1fy27|june 30, 2026|2026-06-30|30-jun-2026|jun-26|three months.*2026|3m.*2026",
+   "period": "q1 ?fy ?(20)?27|june 30,? 2026|2026-06-30|30-jun-(20)?26|jun-?26\\b|three months.*2026|3m.*2026",
    "value": 1737.96,
    "unit": "INR million",
    "tolerance": 0.005,
@@ -225,7 +225,7 @@
    "patterns": [
     "dlg|default loss"
    ],
-   "period": null,
+   "period": "q1 ?fy ?(20)?27|june 30,? 2026|2026-06-30|30-jun-(20)?26|jun-?26\\b|three months.*2026|3m.*2026",
    "value": 10607.8,
    "unit": "INR million",
    "tolerance": 0.005,
@@ -238,7 +238,7 @@
    "patterns": [
     "dlg|default loss"
    ],
-   "period": null,
+   "period": "q1 ?fy ?(20)?27|june 30,? 2026|2026-06-30|30-jun-(20)?26|jun-?26\\b|three months.*2026|3m.*2026",
    "value": 43.92,
    "unit": "%",
    "tolerance": 0.005,
@@ -251,7 +251,7 @@
    "patterns": [
     "stage 2|stage-2|stage ii"
    ],
-   "period": null,
+   "period": "q1 ?fy ?(20)?27|june 30,? 2026|2026-06-30|30-jun-(20)?26|jun-?26\\b|three months.*2026|3m.*2026",
    "value": 3.27,
    "unit": "%",
    "tolerance": 0.005,

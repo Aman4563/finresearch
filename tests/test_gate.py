@@ -215,3 +215,39 @@ def test_live_check_ignores_statements_without_a_live_figure(ledger):
              statement="Book Running Lead Managers are IIFL and JM Financial; subscription opens 25-Sep-2026")  # fmt: skip
     gate(ledger)
     assert claim(bm)[0] == "unverified" and "live_ok" not in claim(bm)[1]
+
+
+@pytest.mark.parametrize("fixture,expected", [
+    ("ipo_detail_ORIENTCABL_20260928_1636_live.json", {"price_band_upper": "272", "price_band_lower": "258",
+     "lot_size": "55", "fresh_issue_amount": "3200", "ofs_amount": "2320", "anchor_portion_shares": "6088233"}),
+    ("ipo_detail_MONEYVIEW_20260928_1357.json", {"price_band_upper": "34", "lot_size": "441",
+     "fresh_issue_amount": "7500", "ofs_shares": "100494200", "anchor_portion_shares": "96324729"}),
+])  # fmt: skip
+def test_baseline_facts_parse_from_nse_issue_info(fixture, expected):
+    import json
+
+    from finresearch.adapters.nse import parse_issue_info
+    from finresearch.verify.baseline import parse_baseline
+
+    info = parse_issue_info(json.loads((FIX / "nse" / fixture).read_text())["issueInfo"])
+    got = {b.metric: str(b.value) for b in parse_baseline(info)}
+    assert expected.items() <= got.items(), got
+
+
+def test_record_baseline_creates_verified_cited_claims(ledger):
+    from finresearch.db import session_scope
+    from finresearch.db.models import Claim
+    from finresearch.verify.baseline import record_baseline
+
+    info = {
+        "Price Range": "Rs. 258 to Rs. 272 per Equity Share",
+        "Bid Lot": "55 Equity Shares and in multiples",
+    }
+    with session_scope() as s:
+        ids = record_baseline(s, ledger["run"], "ORIENTCABL", info, NOW)
+        cs = [s.get(Claim, i) for i in ids]
+        assert {c.metric for c in cs} == {"price_band_upper", "price_band_lower", "lot_size"}
+        assert all(
+            c.status == "verified" and c.citations[0].url.endswith("symbol=ORIENTCABL&series=EQ") for c in cs
+        )
+        assert all(c.citations[0].accessed_at == NOW for c in cs)

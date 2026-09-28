@@ -25,6 +25,12 @@ from finresearch.verify.gate import rupee_scale
 GOLD_DIR = REPO_ROOT / "evals" / "gold"
 USABLE = ("verified", "unverified", "needs_review")
 RELEASE_RECALL = 0.90
+# claims about other contexts that share keywords with gold facts (draft offer, lower band, peers, dilution)
+DEFAULT_EXCLUDE = (
+    r"\bdrhp\b|lower band|floor price|\b258\b|\bpeer|polycab|\bkei\b|finolex|rr kabel|sterlite|"
+    r"kissht|onemi|bajaj|sbi card|paytm|pb fintech|post[- ]dilution|diluted at|waca|"
+    r"weighted average cost"
+)
 
 
 def load_gold(company: str, gold_dir: Path | None = None) -> dict[str, Any]:
@@ -148,23 +154,32 @@ def evaluate(
         per = re.compile(fact["period"], re.I) if fact.get("period") else None
         gv = Decimal(str(fact["value"]))
         fr = FactResult(fact["id"], fact["label"], fact.get("importance", "normal"))
+        excl = re.compile(fact.get("exclude") or DEFAULT_EXCLUDE, re.I)
         for c in claims:
-            text = f"{c.metric or ''} {c.statement}"
-            if not pat.search(text) or (per and not per.search(f"{c.period or ''} {c.statement}")):
+            metric = (c.metric or "").replace("_", " ")
+            text = f"{metric} {c.statement}"
+            context = f"{metric} {c.period or ''}"
+            if c.value is None or not pat.search(text) or excl.search(f"{context} {c.statement}"):
                 continue
-            if c.value is None:
+            if per and not per.search(f"{c.period or ''} {c.statement}"):
                 continue
             v = _to_gold_unit(Decimal(c.value), c.unit, fact["unit"])
             if v is None:
                 continue
-            match = _within(v, gv, fact.get("tolerance", 0.005)) or (
-                fact["unit"] != "%" and _within(-v, gv, fact.get("tolerance", 0.005))
-            )
+            tol = fact.get("tolerance", 0.005)
+            match = _within(v, gv, tol) or (fact["unit"] != "%" and _within(-v, gv, tol))
             if match and c.status in USABLE:
                 fr.found = True
                 fr.verified = fr.verified or c.status == "verified"
                 fr.claim_ids.append(c.id)
-            elif not match and c.id in cited and c.status in USABLE:
+            elif (
+                not match
+                and c.id in cited
+                and c.status in USABLE
+                and pat.search(metric)
+                and (per is None or per.search(c.period or ""))
+            ):
+                # a contradiction needs the claim's own metric and period fields to name the gold fact
                 fr.contradicted_in_report.append(c.id)
         results.append(fr)
 
