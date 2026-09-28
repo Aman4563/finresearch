@@ -1,5 +1,7 @@
 # Contributing to FinResearch
 
+By participating you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md). Report security problems privately as described in [SECURITY.md](SECURITY.md), never in a public issue.
+
 FinResearch is a personal, local-first research engine that produces deep, fact-checked investment research. It starts with Indian IPOs and will extend to stocks, mutual funds, bonds and F&O.
 
 Most changes touch one of these areas:
@@ -14,7 +16,7 @@ This guide covers the workflow, the gates a change must pass, and the constraint
 
 ## Getting set up
 
-See **Setup** in [README.md](README.md). You need:
+See **Setup** in the [README](../README.md). You need:
 - macOS with Homebrew `postgresql@17`, `pgvector`, `tesseract` and `poppler`;
 - Ollama with the models listed there;
 - `uv`;
@@ -63,7 +65,7 @@ uv run pytest -q                                  # offline suite + DB tests on 
 
 ## Constraints to respect
 
-- **Invariants.** [ENGINEERING_HANDOFF.md](ENGINEERING_HANDOFF.md) lists the data, citation, engine and security invariants every change must preserve.
+- **Invariants.** [docs/dev/ENGINEERING_HANDOFF.md](../docs/dev/ENGINEERING_HANDOFF.md) lists the data, citation, engine and security invariants every change must preserve.
 - **Claude access** goes only through the official `claude` CLI or Agent SDK under the owner's login, for personal use. Never add code that extracts OAuth tokens or re-exposes the subscription as an API.
 - **16 GB RAM.** Local generation is single-flight. Don't load two large models at once, and don't run Ollama or parsers inside Docker (no Metal GPU).
 - **Line numbers** come from `ingest.text.read_lines()` on a document's canonical `text.txt`. Never use `str.splitlines()` (form feeds).
@@ -71,6 +73,6 @@ uv run pytest -q                                  # offline suite + DB tests on 
 
 ## Tracking status
 
-[PRODUCT_REQUIREMENTS.md](PRODUCT_REQUIREMENTS.md) is the status authority.
+[docs/dev/PRODUCT_REQUIREMENTS.md](../docs/dev/PRODUCT_REQUIREMENTS.md) is the status authority.
 - When a change ships or verifies a requirement, append a dated row to its verification log. Never rewrite earlier rows.
-- Add a short dated entry to [docs/FUNCTIONAL_TESTING.md](docs/FUNCTIONAL_TESTING.md) for each bug you reproduced, saying how it is now checked.
+- Add a short dated entry to [docs/dev/FUNCTIONAL_TESTING.md](../docs/dev/FUNCTIONAL_TESTING.md) for each bug you reproduced, saying how it is now checked.
