@@ -57,6 +57,13 @@ Statuses:
 | APP-006 | Plan usage and limits dashboard | delivered | v0.3.0 |
 | APP-007 | Post-report monitoring: subscription to close, allotment, listing, lock-ins | delivered | v0.3.0 |
 
+### Quality and scale (P3)
+| ID | Requirement | Status | Milestone |
+|---|---|---|---|
+| EVAL-002 | Offline replay of real runs in CI (gold scorer + publish gate) and a verdict-vs-listing back-test | delivered | v0.4.0 |
+| SME-001 | SME IPOs (NSE Emerge / BSE SME): documents, checks and report | planned | v0.4.0 |
+| NEWS-002 | Hindi business news in the 30-day news stream | planned | v0.4.0 |
+
 ## Verification log
 
 | Date | ID(s) | Evidence |
@@ -79,3 +86,4 @@ Statuses:
 | 2026-09-28 | Release v0.2.0 | Milestone closed (16/16 issues). Release bar met on the live Orient Cables run 5: 100% key-fact recall, 0 gold facts contradicted, publish gate passed. `pytest` 206 passed; CI (tests with pgvector, web build, full-history gitleaks) green. |
 | 2026-09-28 | APP-007 | Live: `finresearch monitor watch orient-cables` read NSE's issue period (25–29 Sep) and anchor book (60,88,233 shares), then scheduled 11 checks from the next pass: 6 subscription checks on the close day, allotment 30-Sep 19:00, listing open and close (expected 2-Oct, T+3 without holidays; the check moves to the next exchange day until NSE lists the stock), and anchor lock-ins on 30-Oct and 29-Dec. 6 offline tests: the schedule; final-day checks run once per slot and store one snapshot per NSE timestamp; a personal rule that changes status raises an action alert (qib-floor fired → clear at 1.25x); listing on a holiday retries next exchange day, then fills the journal (+10.29%); lock-in and allotment alerts; failures retry then alert. The scheduler runs inside `finresearch serve` or `finresearch monitor run`. `scripts/smoke_web.sh 5`: 9/9 pages. |
 | 2026-09-28 | Release v0.3.0 | Milestone closed (7/7 issues: #17–#23). The app runs locally: `finresearch serve` (API, SSE and monitor on 127.0.0.1:8710) and the dashboard (127.0.0.1:3100) were started from the main tree. Orient Cables is watched, with its first close-day subscription check at 10:30 IST on 29-Sep. `pytest` 213 passed; CI green. |
+| 2026-09-29 | EVAL-002 | `finresearch eval export 5` wrote live run 5 as a 677 KB text fixture (434 claims with citation checks, 44 steps, final synthesis; no documents or local paths). `tests/test_replay.py` imports it with remapped claim ids in CI and asserts 22/22 recall, 0 contradicted, verdict agreement and a passing publish gate. `finresearch eval backtest` compares each report's verdict with the listing outcome from the monitor or journal; runs 3–5 are pending until Orient Cables lists. |
