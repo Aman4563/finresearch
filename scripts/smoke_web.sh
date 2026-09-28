@@ -10,7 +10,7 @@ OUT=$(mktemp -d)
 trap 'rm -rf "$OUT"' EXIT
 fail=0
 # the live run page keeps an SSE stream open, so it is checked with a hard timeout instead of network idle
-for page in "/" "/runs" "/usage" "/profile" "/journal" "/runs/$RUN_ID/report" "/runs/$RUN_ID"; do
+for page in "/" "/runs" "/usage" "/profile" "/journal" "/monitor" "/monitor/${WATCH_ID:-1}" "/runs/$RUN_ID/report" "/runs/$RUN_ID"; do
   name=$(echo "$page" | tr '/' '_')
   timeout 45 "$CHROME" --headless=new --disable-gpu --user-data-dir="$OUT/profile$name" --enable-logging=stderr \
     --virtual-time-budget=10000 --dump-dom "$WEB$page" >"$OUT/dom$name.html" 2>"$OUT/log$name.txt" || true

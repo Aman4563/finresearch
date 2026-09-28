@@ -8,6 +8,7 @@ inside the configured data directories.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import re
 from collections.abc import AsyncIterator
@@ -26,7 +27,19 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from finresearch.api.workers import Spawner, WorkerBusy, worker_info
 from finresearch.config import get_settings
 from finresearch.db import session_scope
-from finresearch.db.models import AgentStep, Claim, Company, Conversation, Decision, Document, ResearchRun
+from finresearch.db.models import (
+    AgentStep,
+    Alert,
+    Claim,
+    Company,
+    Conversation,
+    Decision,
+    Document,
+    MonitorJob,
+    ResearchRun,
+    SubscriptionSnapshotRow,
+    Watch,
+)
 
 LOCAL_HOSTS = ["127.0.0.1", "localhost", "testserver"]
 DASHBOARD_ORIGINS = [f"http://{h}:{p}" for h in ("127.0.0.1", "localhost") for p in (3000, 3100)]
@@ -55,6 +68,10 @@ class DecisionUpdate(BaseModel):
     exit_price: Decimal | None = Field(None, gt=0)
     exit_date: date | None = None
     notes: str | None = Field(None, max_length=4000)
+
+
+class WatchBody(BaseModel):
+    company: str
 
 
 class ResumeRun(BaseModel):
@@ -112,14 +129,29 @@ def _latest_report(s, run_id: int) -> str | None:
 
 
 # --------------------------------------------------------------------------- app
-def create_app(
-    *, spawner: Spawner | None = None, poll_s: float = 1.0, router=None, live_fetch=None
-) -> FastAPI:
-    """`router` overrides the bridge router for chat and suggestions; `live_fetch` the NSE live-data fetch (tests)."""
+def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=None, live_fetch=None,
+               monitor: bool = False, monitor_deps=None, nse_detail=None) -> FastAPI:  # fmt: skip
+    """Test seams: `router` (bridge for chat and suggestions), `live_fetch` / `nse_detail` (NSE), `monitor_deps`.
+
+    With monitor=True (as `finresearch serve` does) the monitoring scheduler runs inside the API process."""
     spawner = spawner or Spawner()
-    app = FastAPI(title="FinResearch", version="0.3.0", docs_url="/api/docs", openapi_url="/api/openapi.json")
+
+    @contextlib.asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        stop, task = asyncio.Event(), None
+        if monitor:
+            from finresearch.monitor.scheduler import run_forever
+
+            task = asyncio.create_task(run_forever(monitor_deps, stop=stop))
+        yield
+        stop.set()
+        if task:
+            await task
+
+    app = FastAPI(title="FinResearch", version="0.3.0", docs_url="/api/docs", openapi_url="/api/openapi.json",
+                  lifespan=lifespan)  # fmt: skip
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=LOCAL_HOSTS)
-    app.add_middleware(CORSMiddleware, allow_origins=DASHBOARD_ORIGINS, allow_methods=["GET", "POST"],
+    app.add_middleware(CORSMiddleware, allow_origins=DASHBOARD_ORIGINS, allow_methods=["GET", "POST", "PUT", "PATCH"],
                        allow_headers=["*"])  # fmt: skip
 
     @app.get("/api/health")
@@ -460,6 +492,89 @@ def create_app(
             s.flush()
             return decision_json(d)
 
+    # ------------------------------------------------------------------ monitoring
+    @app.get("/api/watches")
+    def watches() -> list[dict[str, Any]]:
+        from finresearch.monitor.watch import watch_json
+
+        with session_scope() as s:
+            out = []
+            for w, co in s.execute(select(Watch, Company).join(Company, Company.id == Watch.company_id)
+                                   .order_by(Watch.active.desc(), Watch.close_date.desc())):  # fmt: skip
+                nxt = s.scalars(select(MonitorJob).where(MonitorJob.watch_id == w.id, MonitorJob.status == "pending")
+                                .order_by(MonitorJob.due_at)).first()  # fmt: skip
+                last = s.scalars(select(SubscriptionSnapshotRow).where(SubscriptionSnapshotRow.nse_symbol == w.nse_symbol)
+                                 .order_by(SubscriptionSnapshotRow.as_of.desc())).first()  # fmt: skip
+                unread = s.scalar(select(func.count()).select_from(Alert).where(Alert.watch_id == w.id,
+                                                                               Alert.read_at.is_(None)))  # fmt: skip
+                out.append({**watch_json(w, co), "unread_alerts": unread,
+                            "next_check": {"kind": nxt.kind, "due_at": _iso(nxt.due_at)} if nxt else None,
+                            "last_subscription": {"as_of": _iso(last.as_of), "total_times": str(last.total_times)}
+                            if last else None})  # fmt: skip
+            return out
+
+    @app.post("/api/watches", status_code=201)
+    async def add_watch(body: WatchBody) -> dict[str, Any]:
+        from finresearch.monitor.watch import watch_company
+
+        try:
+            return await watch_company(body.company, fetch_detail=nse_detail)
+        except LookupError as e:
+            raise HTTPException(404, str(e)) from e
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from e
+
+    @app.post("/api/watches/{watch_id}/stop")
+    def stop_watch(watch_id: int) -> dict[str, Any]:
+        with session_scope() as s:
+            w = s.get(Watch, watch_id)
+            if w is None:
+                raise HTTPException(404, f"unknown watch {watch_id}")
+            w.active = False
+            return {"id": w.id, "active": False}
+
+    @app.get("/api/watches/{watch_id}")
+    def watch_detail(watch_id: int) -> dict[str, Any]:
+        from finresearch.monitor.watch import watch_json
+
+        with session_scope() as s:
+            w = s.get(Watch, watch_id)
+            if w is None:
+                raise HTTPException(404, f"unknown watch {watch_id}")
+            co = s.get(Company, w.company_id)
+            jobs = s.scalars(
+                select(MonitorJob).where(MonitorJob.watch_id == w.id).order_by(MonitorJob.due_at)
+            ).all()
+            snaps = s.scalars(select(SubscriptionSnapshotRow).where(SubscriptionSnapshotRow.nse_symbol == w.nse_symbol)
+                              .order_by(SubscriptionSnapshotRow.as_of)).all()  # fmt: skip
+            alerts = s.scalars(select(Alert).where(Alert.watch_id == w.id).order_by(Alert.id.desc())).all()
+            return {**watch_json(w, co),
+                    "jobs": [{"id": j.id, "kind": j.kind, "slot": j.slot, "due_at": _iso(j.due_at), "status": j.status,
+                              "attempts": j.attempts, "result": j.result, "error": j.error} for j in jobs],
+                    "subscription": [{"as_of": _iso(x.as_of), "source": x.source, "total_times": str(x.total_times),
+                                      "categories": x.categories} for x in snaps],
+                    "alerts": [alert_json(a) for a in alerts]}  # fmt: skip
+
+    @app.get("/api/alerts")
+    def alerts(unread: bool = False, limit: int = Query(100, ge=1, le=500)) -> list[dict[str, Any]]:
+        with session_scope() as s:
+            q = select(Alert, Watch.nse_symbol).join(Watch, Watch.id == Alert.watch_id, isouter=True)
+            if unread:
+                q = q.where(Alert.read_at.is_(None))
+            return [
+                {**alert_json(a), "nse_symbol": sym}
+                for a, sym in s.execute(q.order_by(Alert.id.desc()).limit(limit))
+            ]
+
+    @app.post("/api/alerts/{alert_id}/read")
+    def read_alert(alert_id: int) -> dict[str, Any]:
+        with session_scope() as s:
+            a = s.get(Alert, alert_id)
+            if a is None:
+                raise HTTPException(404, f"unknown alert {alert_id}")
+            a.read_at = a.read_at or datetime.now(UTC)
+            return alert_json(a)
+
     # ------------------------------------------------------------------ IPO radar
     radar_cache: dict[str, Any] = {}
 
@@ -514,6 +629,11 @@ def create_app(
                 "ceilings": {"five_hour": s.max_five_hour_ceiling}}  # fmt: skip
 
     return app
+
+
+def alert_json(a) -> dict[str, Any]:
+    return {"id": a.id, "watch_id": a.watch_id, "kind": a.kind, "level": a.level, "message": a.message,
+            "data": a.data or {}, "created_at": _iso(a.created_at), "read_at": _iso(a.read_at)}  # fmt: skip
 
 
 def _known_symbols() -> dict[str, dict[str, Any]]:

@@ -389,6 +389,34 @@ def parse_ipo_detail(symbol: str, data: dict[str, Any], fetch: FetchRecord | Non
 # --------------------------------------------------------------------------- client
 
 
+class Quote(BaseModel):
+    """An equity quote from NSE's quote API (lastUpdateTime is NSE's IST timestamp)."""
+
+    symbol: str
+    company: str | None = None
+    open: Decimal | None = None
+    last_price: Decimal | None = None
+    close_price: Decimal | None = None
+    previous_close: Decimal | None = None
+    listing_date: date | None = None
+    status: str | None = None
+    as_of: datetime | None = None
+
+    @classmethod
+    def parse(cls, data: dict[str, Any]) -> Quote:
+        rows = data.get("equityResponse") or []
+        if not rows:
+            raise NseError("quote payload has no equityResponse")
+        e = rows[0]
+        meta, trade, sec = e.get("metaData") or {}, e.get("tradeInfo") or {}, e.get("secInfo") or {}
+        listing = str(sec.get("listingDate") or "").split(" ")[0]
+        return cls(symbol=str(meta.get("symbol", "")).strip(), company=meta.get("companyName"),
+                   open=parse_num(meta.get("open")), last_price=parse_num(trade.get("lastPrice")),
+                   close_price=parse_num(meta.get("closePrice")) or None,
+                   previous_close=parse_num(meta.get("previousClose")), listing_date=parse_nse_date(listing),
+                   status=sec.get("secStatus"), as_of=parse_nse_timestamp(e.get("lastUpdateTime")))  # fmt: skip
+
+
 class NseClient:
     """NSE IPO endpoints with cookie warm-up. Owns its PoliteClient unless one is passed in."""
 
@@ -446,6 +474,20 @@ class NseClient:
     async def past_issues(self) -> list[PastIssue]:
         data, _ = await self.get_json("/api/public-past-issues")
         return [PastIssue.parse(r) for r in data or []]
+
+    async def quote(self, symbol: str, series: str = "EQ") -> Quote:
+        """Equity quote (open, last price, listing date). The classic quote-equity API refuses scripted clients,
+        so this uses the quote page's own API with the quote page as referer."""
+        page = f"{NSE_BASE}/get-quotes/equity?symbol={symbol}"
+        self.http.cookies.clear()
+        await self.http.get(page)
+        self._warmed = True
+        resp = await self.http.get(f"{NSE_BASE}/api/NextApi/apiClient/GetQuoteApi",
+                                   params={"functionName": "getSymbolData", "marketType": "N", "series": series,
+                                           "symbol": symbol}, headers={**API_HEADERS, "Referer": page})  # fmt: skip
+        if not resp.ok or not _looks_json(resp):
+            raise NseError(f"NSE quote refused for {symbol}: HTTP {resp.status}")
+        return Quote.parse(resp.json())
 
     async def ipo_detail(self, symbol: str, series: str = "EQ") -> IpoDetail:
         data, resp = await self.get_json("/api/ipo-detail", {"symbol": symbol, "series": series})

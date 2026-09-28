@@ -300,6 +300,58 @@ class Decision(TimestampMixin, Base):
     notes: Mapped[str | None] = mapped_column(Text)
 
 
+# --------------------------------------------------------------------------- monitoring after the report
+class Watch(TimestampMixin, Base):
+    """An IPO being monitored: subscription to the close, allotment, listing and anchor lock-ins."""
+
+    __tablename__ = "watch"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("company.id"), unique=True)
+    nse_symbol: Mapped[str] = mapped_column(String(30))
+    open_date: Mapped[date] = mapped_column(Date)
+    close_date: Mapped[date] = mapped_column(Date)
+    allotment_date: Mapped[date] = mapped_column(
+        Date
+    )  # expected T+1 (exchange days); confirm with the registrar
+    listing_date: Mapped[date] = mapped_column(
+        Date
+    )  # expected T+3; replaced by NSE's listing date once known
+    anchor_shares: Mapped[Decimal | None] = mapped_column(Numeric(20, 0))
+    active: Mapped[bool] = mapped_column(default=True)
+    meta: Mapped[dict[str, Any]] = mapped_column(default=dict)
+
+
+class MonitorJob(Base):
+    """One scheduled check. `slot` is unique, so a check can never run twice for the same slot."""
+
+    __tablename__ = "monitor_job"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    watch_id: Mapped[int] = mapped_column(ForeignKey("watch.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(30))  # subscription | allotment | listing | lockin
+    slot: Mapped[str] = mapped_column(String(120), unique=True)
+    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    status: Mapped[str] = mapped_column(
+        String(20), default="pending", index=True
+    )  # pending|running|done|failed
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    params: Mapped[dict[str, Any]] = mapped_column(default=dict)
+    result: Mapped[dict[str, Any]] = mapped_column(default=dict)
+    error: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class Alert(TimestampMixin, Base):
+    __tablename__ = "alert"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    watch_id: Mapped[int | None] = mapped_column(ForeignKey("watch.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(30))
+    level: Mapped[str] = mapped_column(String(10), default="info")  # info | warn | action
+    message: Mapped[str] = mapped_column(Text)
+    data: Mapped[dict[str, Any]] = mapped_column(default=dict)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 # --------------------------------------------------------------------------- market data
 class IpoOffer(TimestampMixin, Base):
     __tablename__ = "ipo_offer"

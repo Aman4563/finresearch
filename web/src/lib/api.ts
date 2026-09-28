@@ -209,3 +209,37 @@ export type Decision = {
   notes: string | null;
   created_at: string | null;
 };
+
+export type AlertItem = {
+  id: number;
+  watch_id: number | null;
+  kind: string;
+  level: "info" | "warn" | "action";
+  message: string;
+  created_at: string | null;
+  read_at: string | null;
+  nse_symbol?: string | null;
+};
+
+export type WatchSummary = {
+  id: number;
+  company: string | null;
+  company_name: string | null;
+  nse_symbol: string;
+  open_date: string;
+  close_date: string;
+  allotment_date: string;
+  listing_date: string;
+  anchor_shares: string | null;
+  active: boolean;
+  meta: Record<string, unknown>;
+  unread_alerts?: number;
+  next_check?: { kind: string; due_at: string } | null;
+  last_subscription?: { as_of: string; total_times: string } | null;
+};
+
+export type WatchDetail = WatchSummary & {
+  jobs: { id: number; kind: string; slot: string; due_at: string; status: string; attempts: number; error: string | null; result: Record<string, unknown> }[];
+  subscription: { as_of: string; source: string; total_times: string; categories: { name: string; code: string | null; times: string | null }[] }[];
+  alerts: AlertItem[];
+};
