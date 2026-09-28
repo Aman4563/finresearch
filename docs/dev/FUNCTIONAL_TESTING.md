@@ -37,3 +37,7 @@ These are dated entries for bugs we reproduced, what caused them, and how they a
 ### 2026-09-28: a successful Claude result could have been discarded as a limit hit
 - **Seen:** a `rate_limit_event` with status `rejected` would have raised `LimitReached` even when the run succeeded (code review).
 - **Now:** limit classification applies only when the run failed, and stderr is drained concurrently to avoid pipe deadlock.
+
+### 2026-09-28: secret scan failed on the new public repository
+- **Seen:** the first push to the re-created public repository failed the `secrets` job ("failed to scan Git repository"). gitleaks-action scans the push's `before..after` range, and `before` does not exist on a new repository or after a force push.
+- **Now:** CI runs the pinned gitleaks CLI over the full history, so every push and PR scans everything, independent of event ranges or PR API permissions (#11).
