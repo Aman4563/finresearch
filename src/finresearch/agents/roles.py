@@ -31,6 +31,8 @@ CALC = [f"{MCP}fincalc_functions", f"{MCP}fincalc_call"]
 LEDGER_WRITE = [f"{MCP}save_claim", f"{MCP}list_claims"]
 LEDGER_READ = [f"{MCP}list_claims"]
 MARKET = [f"{MCP}{t}" for t in ("nse_ipo_detail", "nse_current_issues", "sebi_filings", "sebi_resolve_pdf")]
+EQUITY = [f"{MCP}{t}" for t in ("nse_price_history", "nse_announcements", "nse_results_filings", "nse_results_facts",
+                                 "nse_shareholding", "nse_corporate_actions")]  # fmt: skip
 WEB = ["WebSearch", "WebFetch"]
 SKILL = ["Skill"]
 

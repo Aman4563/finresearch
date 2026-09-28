@@ -18,7 +18,7 @@ import dataclasses
 import inspect
 import json
 import re
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -277,7 +277,15 @@ def extract_table(document_id: int, line_start: int, line_end: int) -> str:
 # --------------------------------------------------------------------------- arithmetic
 _FINCALC_MODULES = {
     m.__name__.rsplit(".", 1)[-1]: m
-    for m in (fincalc.numbers, fincalc.growth, fincalc.ratios, fincalc.valuation, fincalc.ipo, fincalc.dates)
+    for m in (
+        fincalc.numbers,
+        fincalc.growth,
+        fincalc.ratios,
+        fincalc.valuation,
+        fincalc.ipo,
+        fincalc.dates,
+        fincalc.market,
+    )
 }
 
 
@@ -324,6 +332,91 @@ def fincalc_call(function: str, args: dict[str, Any]) -> str:
         return json.dumps({"function": function, "result": _jsonable(fn(**kwargs))})
     except (ValueError, TypeError, ArithmeticError) as e:
         return json.dumps({"function": function, "error": f"{type(e).__name__}: {e}"})
+
+
+# --------------------------------------------------------------------------- listed-stock data
+def _equity_json(rows) -> str:
+    return json.dumps([r.model_dump(mode="json") for r in rows], indent=1)
+
+
+@server.tool()
+async def nse_price_history(symbol: str, start: str, end: str) -> str:
+    """Daily NSE prices for a listed stock between two ISO dates (open/high/low/close, VWAP, volume, value and
+    52-week high/low), oldest first, plus deterministic summary stats (return, annualised volatility, max
+    drawdown). Cite the NSE quote page URL with today's access time."""
+    from finresearch.adapters.nse_equity import NseEquity
+    from finresearch.fincalc import market
+
+    async with NseEquity() as eq:
+        bars = await eq.history(symbol.upper(), date.fromisoformat(start), date.fromisoformat(end))
+    closes = [b.close for b in bars if b.close]
+    stats = {}
+    if len(closes) >= 3:
+        dd = market.max_drawdown(closes)
+        stats = {"return": str(market.price_return(closes[0], closes[-1])),
+                 "annualised_volatility": str(market.annualised_volatility(closes)),
+                 "max_drawdown": str(dd.max_drawdown), "bars": len(closes)}  # fmt: skip
+    return json.dumps({"symbol": symbol.upper(), "source": f"https://www.nseindia.com/get-quotes/equity?symbol={symbol.upper()}",
+                       "stats": stats, "bars": [b.model_dump(mode="json") for b in bars]}, indent=1)  # fmt: skip
+
+
+@server.tool()
+async def nse_announcements(symbol: str, limit: int = 40) -> str:
+    """Latest NSE corporate announcements for a listed stock (category, text, attachment PDF, time). Filings that
+    contain financial results carry results_period_end; ingest their PDFs with the document tools."""
+    from finresearch.adapters.nse_equity import NseEquity
+
+    async with NseEquity() as eq:
+        anns = await eq.announcements(symbol.upper())
+    return _equity_json(
+        sorted(anns, key=lambda a: a.at or datetime.min.replace(tzinfo=UTC), reverse=True)[:limit]
+    )
+
+
+@server.tool()
+async def nse_results_facts(xbrl_url: str) -> str:
+    """Key reported figures (revenue, expenses, PBT, tax, PAT, EPS, ...) from a results filing's XBRL, for the
+    quarter and year to date, in rupees. Use the xbrl link from nse_results_filings; cite the XBRL URL."""
+    from finresearch.adapters.nse_equity import NseEquity
+    from finresearch.adapters.xbrl import parse_results_xbrl
+
+    if not xbrl_url.startswith("https://nsearchives.nseindia.com/"):
+        return json.dumps({"error": "only NSE archive XBRL links are accepted"})
+    async with NseEquity() as eq:
+        x = parse_results_xbrl(await eq.fetch_bytes(xbrl_url))
+    return json.dumps({"symbol": x.symbol, "consolidated": x.consolidated, "audited": x.audited, "url": xbrl_url,
+                       "periods": {k: {"start": str(p.start), "end": str(p.end), "unit": "INR (EPS: INR per share)",
+                                       "facts": {f: str(v) for f, v in p.facts.items()}} for k, p in x.periods.items()}},
+                      indent=1)  # fmt: skip
+
+
+@server.tool()
+async def nse_results_filings(symbol: str, period: str = "Quarterly") -> str:
+    """NSE's index of results filings (period, consolidated/standalone, audited, XBRL link). NSE's index can lag;
+    the announcements list is the fresher source of results PDFs."""
+    from finresearch.adapters.nse_equity import NseEquity
+
+    async with NseEquity() as eq:
+        return _equity_json(await eq.results(symbol.upper(), period))
+
+
+@server.tool()
+async def nse_shareholding(symbol: str) -> str:
+    """Quarterly shareholding pattern (promoter and promoter group %, public %, employee trusts %), newest first."""
+    from finresearch.adapters.nse_equity import NseEquity
+
+    async with NseEquity() as eq:
+        return _equity_json(await eq.shareholding(symbol.upper()))
+
+
+@server.tool()
+async def nse_corporate_actions(symbol: str) -> str:
+    """Corporate actions (dividends with the per-share amount parsed, bonus, split, buyback) with ex and record
+    dates."""
+    from finresearch.adapters.nse_equity import NseEquity
+
+    async with NseEquity() as eq:
+        return _equity_json(await eq.corporate_actions(symbol.upper()))
 
 
 # --------------------------------------------------------------------------- market data
