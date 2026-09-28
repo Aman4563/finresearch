@@ -51,3 +51,7 @@ These are dated entries for bugs we reproduced, what caused them, and how they a
 - **Seen:** replaying the publish gate on run 3's real report blocked it for 10 raw `[RHP L…]` citations (the synthesizer bypassing the ledger). It also warned that 63 lines carry figures without a claim citation.
 - **Now:** in a live run this triggers a revision round (`synthesis:fixN`), and a report that still fails is saved only as `report_blocked.md` with run status `blocked`.
 - **Also seen:** the first live-figure check flagged a lead-manager statement just for mentioning "subscription". It now requires a live number (x, ₹, %) in the claim (`test_live_check_ignores_statements_without_a_live_figure`).
+
+### 2026-09-28: corrupted PDF on re-render (Moneyview, manual run) is now an automated test
+- **Seen (earlier, by hand):** re-rendering the Moneyview report over an existing PDF produced two concatenated documents that viewers refused to open, and headless Chrome sometimes never exited.
+- **Now:** `render.pdf.html_to_pdf` prints to a unique temp file with its own Chrome profile, kills the process group, validates with pypdf in strict mode, rewrites a clean single document and atomically renames it. `test_pdf_rerender_over_existing_file_stays_valid` renders twice over the same path and asserts a single `%%EOF` and identical page counts.

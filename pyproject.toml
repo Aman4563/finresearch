@@ -26,6 +26,10 @@ dependencies = [
     "pgvector>=0.3",
     "alembic>=1.13",
     "mcp>=1.2",
+    "markdown-it-py>=3.0",
+    "openpyxl>=3.1",
+    "pypdf>=5.0",
+    "matplotlib>=3.9",
 ]
 
 [project.urls]

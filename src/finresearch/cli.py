@@ -254,6 +254,22 @@ def ipo_resume(
     _go(run_id, streams, concurrency, wait)
 
 
+@ipo_app.command("render")
+def ipo_render(
+    run_id: int, pdf: bool = typer.Option(True, help="Also render the PDF (needs Chrome)")
+) -> None:
+    """(Re)build the research folder pack for a run: report md/html/pdf, tables, charts, documents."""
+    from finresearch.render.pack import render_pack
+
+    r = render_pack(run_id, pdf=pdf)
+    state = "[green]PASSED[/]" if r.gate_ok else "[red]BLOCKED (draft only)[/]"
+    console.print(f"publish gate: {state} · {r.files} files · pdf pages: {r.pdf_pages} → {r.path}")
+    for b in r.blocking[:10]:
+        console.print(f"  [red]blocking[/] {b[:200]}")
+    for n in r.notes:
+        console.print(f"  [yellow]note[/] {n}")
+
+
 @ipo_app.command("status")
 def ipo_status(run_id: int) -> None:
     """Show a run's steps, costs and Max-window usage."""
