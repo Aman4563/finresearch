@@ -22,6 +22,8 @@ docs_app = typer.Typer(no_args_is_help=True, help="Documents: ingest, sections, 
 app.add_typer(docs_app, name="docs")
 mcp_app = typer.Typer(no_args_is_help=True, help="FinResearch MCP server")
 app.add_typer(mcp_app, name="mcp")
+ipo_app = typer.Typer(no_args_is_help=True, help="IPO research reports (multi-agent pipeline)")
+app.add_typer(ipo_app, name="ipo")
 console = Console()
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -199,6 +201,93 @@ def mcp_config() -> None:
     from finresearch.mcp_server.config import write_mcp_config
 
     console.print(str(write_mcp_config()))
+
+
+# --------------------------------------------------------------------------- ipo
+def _pipeline(run_id: int, streams: str | None, concurrency: int):
+    from finresearch.agents.roles import STREAMS
+    from finresearch.orchestrator.ipo import IpoPipeline, PipelineConfig
+
+    chosen = tuple(x.strip() for x in streams.split(",")) if streams else STREAMS
+    unknown = set(chosen) - set(STREAMS)
+    if unknown:
+        raise typer.BadParameter(f"unknown streams {sorted(unknown)}; choose from {STREAMS}")
+    cfg = PipelineConfig(
+        streams=chosen, concurrency=concurrency, five_hour_ceiling=get_settings().max_five_hour_ceiling
+    )
+    return IpoPipeline(run_id, config=cfg)
+
+
+def _go(run_id: int, streams: str | None, concurrency: int, wait: bool) -> None:
+    from finresearch.orchestrator.ipo import run_until_done
+
+    status = asyncio.run(
+        run_until_done(run_id, wait=wait, pipeline=_pipeline(run_id, streams, concurrency), log=console.print)
+    )
+    console.print(f"run {run_id}: [bold]{status}[/]")
+    ipo_status(run_id)
+
+
+@ipo_app.command("run")
+def ipo_run(
+    company: str = typer.Argument(..., help="Company slug (documents must be ingested)"),
+    streams: str | None = typer.Option(None, help="Comma-separated subset of streams (default: all seven)"),
+    concurrency: int = typer.Option(4, help="Parallel agents (Max-plan friendly default)"),
+    wait: bool = typer.Option(False, help="Sleep through Max-window resets and resume automatically"),
+) -> None:
+    """Start a new IPO research run."""
+    from finresearch.orchestrator.ipo import create_run
+
+    run_id = create_run(company)
+    console.print(f"created run {run_id} for {company}")
+    _go(run_id, streams, concurrency, wait)
+
+
+@ipo_app.command("resume")
+def ipo_resume(
+    run_id: int,
+    streams: str | None = typer.Option(None),
+    concurrency: int = typer.Option(4),
+    wait: bool = typer.Option(False),
+) -> None:
+    """Resume a paused or failed run; finished steps are not repeated."""
+    _go(run_id, streams, concurrency, wait)
+
+
+@ipo_app.command("status")
+def ipo_status(run_id: int) -> None:
+    """Show a run's steps, costs and Max-window usage."""
+    from sqlalchemy import select
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import AgentStep, ResearchRun
+
+    with session_scope() as s:
+        run = s.get(ResearchRun, run_id)
+        if run is None:
+            raise typer.BadParameter(f"unknown run {run_id}")
+        t = Table(
+            title=f"run {run_id} — {run.status}"
+            + (f" (resume after {run.resume_after})" if run.resume_after else "")
+        )
+        for col in ("step", "status", "tier/model", "turns", "secs", "5h before→after", "est $"):
+            t.add_column(col)
+        for st in s.scalars(select(AgentStep).where(AgentStep.run_id == run_id).order_by(AgentStep.id)):
+            util = (
+                f"{st.five_hour_before or 0:.0%}→{st.five_hour_after:.0%}"
+                if st.five_hour_after is not None
+                else ""
+            )
+            t.add_row(
+                st.key,
+                st.status,
+                f"{st.tier or ''} {st.model or ''}".strip(),
+                str(st.num_turns or ""),
+                f"{st.duration_s or 0:.0f}",
+                util,
+                f"{st.cost_usd_est or 0:.2f}",
+            )
+        console.print(t)
 
 
 if __name__ == "__main__":
