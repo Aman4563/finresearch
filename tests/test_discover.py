@@ -153,6 +153,8 @@ def test_zip_members_are_classified_by_their_own_names():
     from finresearch.ingest.discover import kind_for_member
 
     assert kind_for_member("ACEVECTOR LIMITED - GID.pdf", DocKind.RHP) == DocKind.OTHER
+    assert kind_for_member("Orient_GID.pdf", DocKind.RHP) == DocKind.OTHER  # '_' is a word character
+    assert kind_for_member("Rigid_Plastics_RHP.pdf", DocKind.RHP) == DocKind.RHP
     assert kind_for_member("Acevector_RHP.pdf", DocKind.RHP) == DocKind.RHP
     assert kind_for_member("Abridged Prospectus.pdf", DocKind.RHP) == DocKind.ABRIDGED
 
@@ -186,3 +188,29 @@ def test_a_broken_document_fails_alone_and_earlier_documents_are_kept(env, tmp_p
     ].detail
     with session_scope() as s:
         assert s.get(Document, rep.outcomes[0].document_id).title == "good"
+
+
+@respx.mock
+def test_a_byte_different_copy_with_the_same_text_is_a_duplicate(env, tmp_path):
+    """Live: NSE's copy of the Orient Cables RHP differs in bytes from SEBI's but 480/491 pages are identical."""
+    from finresearch.db import session_scope
+    from finresearch.db.models import Document
+    from finresearch.ingest.documents import get_or_create_company
+
+    body = [[f"Page {i} of the offer document with restated financials"] for i in range(1, 11)]
+    signed_a = minimal_pdf([*body, ["Signed by director A"]])
+    signed_b = minimal_pdf([*body, ["Signed by director B"]])
+    other = minimal_pdf([[f"Annual report page {i}"] for i in range(1, 12)])
+    respx.get("https://sebi.example/rhp.pdf").mock(return_value=httpx.Response(200, content=signed_a))
+    respx.get("https://nse.example/rhp.pdf").mock(return_value=httpx.Response(200, content=signed_b))
+    respx.get("https://co.example/ar.pdf").mock(return_value=httpx.Response(200, content=other))
+    cands = [Candidate("https://sebi.example/rhp.pdf", DocKind.RHP, "SEBI RHP", "sebi"),
+             Candidate("https://nse.example/rhp.pdf", DocKind.RHP, "NSE RHP", "nse"),
+             Candidate("https://co.example/ar.pdf", DocKind.ANNUAL_REPORT, "AR", "agent")]  # fmt: skip
+    with session_scope() as s:
+        co = get_or_create_company(s, "twin-" + tmp_path.name[-8:], "Twin Co")
+        rep = fetch_and_ingest(s, co, cands, docs_dir=env.docs_dir, index=False)
+        first = rep.outcomes[0].document_id
+        assert [o.status for o in rep.outcomes] == ["ingested", "duplicate", "ingested"]
+        assert rep.outcomes[1].document_id == first and "same text" in rep.outcomes[1].detail
+        assert s.query(Document).filter_by(company_id=co.id).count() == 2

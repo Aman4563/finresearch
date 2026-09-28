@@ -63,3 +63,8 @@ These are dated entries for bugs we reproduced, what caused them, and how they a
 ### 2026-09-28: NSE's RHP ZIP also contains the General Information Document
 - **Seen:** the NSE `RHP_ACEVECTOR.zip` held two PDFs: the 575-page RHP and a 50-page "GID". Both were tagged `RHP`, so an offer-document lookup could have picked the wrong one.
 - **Now:** each ZIP member is classified by its own filename (`kind_for_member`: GID → OTHER, abridged → ABRIDGED_PROSPECTUS). The stored AceVector GID was retagged.
+
+### 2026-09-28: the same RHP stored twice from NSE and SEBI (Orient Cables)
+- **Seen:** agent discovery for Orient Cables ingested NSE's copy of the RHP as a second RHP. It has different bytes from SEBI's copy (so sha256 did not match) but 480 of 491 pages are identical; only the signature pages differ. `Orient_GID.pdf` was also tagged RHP, because `\bgid\b` does not match after an underscore.
+- **Now:** after extraction, a document whose pages are at least 90% identical to another document of the same company is rolled back and reported as a duplicate, and its stored files are removed (`test_a_byte_different_copy_with_the_same_text_is_a_duplicate`). The GID pattern no longer relies on word boundaries. The stored GID was retagged, and the duplicate RHP copy was removed after run 5 finished.
+- **Also:** each discovered document is now committed on its own, so a crash on one document keeps the others (`test_a_broken_document_fails_alone_and_earlier_documents_are_kept`).

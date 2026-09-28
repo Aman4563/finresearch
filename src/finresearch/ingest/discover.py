@@ -25,6 +25,9 @@ from finresearch.db.models import Company
 from finresearch.ingest.documents import DocKind, download, ingest_pdf
 
 MAX_BYTES = 150 * 1024 * 1024
+SAME_TEXT_PAGES = (
+    0.9  # share of identical pages that makes two files the same document (e.g. re-signed copies)
+)
 NSE_ZIP_KINDS = {"Red Herring Prospectus": DocKind.RHP, "Anchor Allocation Report": DocKind.ANCHOR}
 _STOP = {"limited", "ltd", "private", "pvt", "india", "the", "and", "&", "co", "company", "corporation"}
 
@@ -72,7 +75,7 @@ def names_match(a: str, b: str) -> bool:
 def kind_for_member(member: str, default: DocKind) -> DocKind:
     """Classify one PDF inside an exchange ZIP; NSE bundles the General Information Document with the RHP."""
     t = Path(member).stem.lower()
-    if re.search(r"\bgid\b|general[ _-]*information", t):
+    if re.search(r"(?:^|[^a-z])gid(?:[^a-z]|$)|general[ _-]*information", t):
         return DocKind.OTHER
     if "abridged" in t:
         return DocKind.ABRIDGED
@@ -153,6 +156,48 @@ def agent_candidates(result: dict[str, Any]) -> list[Candidate]:
 
 
 # --------------------------------------------------------------------------- download & ingest
+def _norm(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def same_text_as(session: Session, doc) -> int | None:
+    """Id of another document of the same company with (almost) the same page texts, if any.
+
+    Exchanges and SEBI host byte-different copies of the same offer document (different signature pages or
+    metadata), so sha256 alone does not catch them.
+    """
+    from sqlalchemy import select
+
+    from finresearch.db.models import Document, DocumentPage
+
+    others = session.scalars(select(Document.id).where(Document.company_id == doc.company_id, Document.id != doc.id,
+                                                       Document.pages == doc.pages)).all()  # fmt: skip
+    if not others or not doc.pages:
+        return None
+
+    def pages(doc_id: int) -> dict[int, str]:
+        rows = session.execute(
+            select(DocumentPage.page_no, DocumentPage.text).where(DocumentPage.document_id == doc_id)
+        )
+        return {n: _norm(t) for n, t in rows}
+
+    mine = pages(doc.id)
+    for other in others:
+        theirs = pages(other)
+        same = sum(1 for n, t in mine.items() if t and theirs.get(n) == t)
+        if same / doc.pages >= SAME_TEXT_PAGES:
+            return other
+    return None
+
+
+def _drop_files(local_path: str, text_path: str | None) -> None:
+    import shutil
+
+    Path(local_path).unlink(missing_ok=True)
+    if text_path:
+        shutil.rmtree(Path(text_path).parent, ignore_errors=True)
+
+
 def _pdfs_from(path: Path, url: str) -> list[tuple[str, bytes]]:
     data = path.read_bytes()
     if data[:5] == b"%PDF-":
@@ -200,6 +245,12 @@ def fetch_and_ingest(session: Session, company: Company, cands: list[Candidate],
                     after = session.query(Document.id).filter(Document.sha256.isnot(None)).count()
                     if after == before:
                         report.outcomes.append(Outcome(c, "duplicate", doc.id, "already in the store"))
+                        continue
+                    if (twin := same_text_as(session, doc)) is not None:
+                        paths = (doc.local_path, doc.text_path)
+                        session.rollback()
+                        _drop_files(*paths)
+                        report.outcomes.append(Outcome(c, "duplicate", twin, f"same text as document {twin}"))
                         continue
                     if index:
                         index_document(session, doc, embedder=embedder)
