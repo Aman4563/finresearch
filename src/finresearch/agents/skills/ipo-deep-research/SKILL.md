@@ -28,3 +28,17 @@ description: The FinResearch playbook for a deep, fact-checked Indian IPO report
 - Every number is saved as a claim citing document lines (quote found) or a URL with timestamp.
 - Ratios come from fincalc.
 - What cannot be verified is labelled UNVERIFIED and listed in open_questions.
+
+## SME issues (NSE Emerge / BSE SME)
+Recognise an SME issue by the NSE series `SME`, a "Market Maker portion" in the issue size, or "SME" on the RHP cover. The offer documents are filed with the exchange, not SEBI. Read the RHP for each point below and cite it:
+- **Application size:** since 1 July 2025 the minimum application is two lots and above ₹2 lakh, and individual investors bid exactly two lots. State the lot size and the two-lot cost at the cap (fincalc).
+- **Market maker:** who it is, the reserved shares, and the market-making period.
+- **Subscription data:** NSE's category table for SME issues publishes no offered shares, so per-category "times" are UNKNOWN there. Compute them with fincalc from shares bid and the RHP's reservation, or mark them UNVERIFIED. Never report 0.00x as real demand.
+- **SME-specific risks:**
+  - small float and thin trading after listing;
+  - concentration in a few customers or promoters;
+  - related-party transactions;
+  - use of proceeds for general corporate purposes or loan repayment;
+  - lead-manager track record;
+  - migration conditions to the main board.
+- **Lock-ins:** promoter and pre-IPO lock-ins as stated in the RHP (SME terms can differ from the main board; quote the RHP).

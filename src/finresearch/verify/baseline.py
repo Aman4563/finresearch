@@ -51,7 +51,7 @@ def parse_baseline(issue_info: dict[str, str]) -> list[BaselineFact]:
         )
         out.append(BaselineFact("price_band_lower", lo, "INR per share", f"Lower end of the price band is ₹{lo}", price,
                                 "normal"))  # fmt: skip
-    lot = issue_info.get("Bid Lot") or ""
+    lot = issue_info.get("Bid Lot") or issue_info.get("Lot Size") or ""  # SME issues use "Lot Size"
     m = re.search(r"(\d[\d,]*)\s*equity shares", lot, re.I)
     if m and (v := _num(m.group(1))) is not None:
         out.append(BaselineFact("lot_size", v, "shares", f"Bid lot is {v} equity shares", lot))
@@ -88,6 +88,10 @@ def parse_baseline(issue_info: dict[str, str]) -> list[BaselineFact]:
     if m and (v := _num(m.group(1))) is not None:
         out.append(BaselineFact("anchor_portion_shares", v, "shares", f"Anchor portion of {v} equity shares", size,
                                 "normal"))  # fmt: skip
+    m = re.search(r"market maker[^0-9]*portion of\s*(\d[\d,]*)\s*equity shares", size, re.I)
+    if m and (v := _num(m.group(1))) is not None:
+        out.append(BaselineFact("market_maker_portion_shares", v, "shares", f"Market maker portion of {v} equity "
+                                "shares (SME issue)", size, "normal"))  # fmt: skip
     return out
 
 

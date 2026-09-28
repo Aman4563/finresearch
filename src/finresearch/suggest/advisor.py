@@ -18,7 +18,7 @@ from finresearch.db import session_scope
 from finresearch.db.models import AgentStep, Decision, InvestorProfile, ResearchRun
 from finresearch.fincalc.dates import now_ist
 from finresearch.suggest.profile import Profile, default_profile
-from finresearch.suggest.rules import Inputs, gather, lot_limits
+from finresearch.suggest.rules import Inputs, gather, is_sme, lot_limits
 
 ADVISOR_TOOLS = [*DOC_READ, *CALC, *LEDGER_READ]
 PROFILE_NAME = "default"
@@ -96,7 +96,7 @@ def enforce(s: Suggestion, inputs: Inputs, limits: dict[str, int | None], profil
             else:
                 action, lots = "SKIP", 0
                 notes.append("capital does not cover the category's minimum application")
-        if lots == 0:
+        if lots == 0 and action != "SKIP":
             action = "SKIP"
             notes.append("zero lots after limits: SKIP")
     return {"action": action, "lots": lots, "category": profile.category, "conditions": conditions,
@@ -147,7 +147,9 @@ async def suggest(run_id: int, *, router=None, live_detail=None, fetch=fetch_liv
         gate_ok = check_report(s, run_id, synth["report_markdown"]).ok
         s.rollback()
         inputs = gather(s, run_id, profile, live_detail=live_detail, now=now, gate_ok=gate_ok)
-        limits = lot_limits(profile, inputs.metrics["lot_cost"].value)
+        run = s.get(ResearchRun, run_id)
+        issue_info = ((run.manifest or {}).get("facts") or {}).get("issue_info") or {}
+        limits = lot_limits(profile, inputs.metrics["lot_cost"].value, sme=is_sme(issue_info, live_detail))
         system = _prompt(run_id, co, now, profile, inputs, limits, synth)
 
     ws = get_settings().runs_dir / str(run_id) / "advisor"

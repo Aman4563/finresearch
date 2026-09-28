@@ -162,13 +162,15 @@ def _parse_category_rows(
         code = row.get("srNo")
         if code == "Sr.No." or row.get("category") == "Category":
             continue  # header row embedded in activeCat.dataList
+        offered = parse_num(row.get(offered_k))
         out.append(
             CategorySubscription(
                 name=_clean_text(row.get("category")),
                 code=str(code).strip() if code not in (None, "") else None,
-                shares_offered=parse_num(row.get(offered_k)),
+                shares_offered=offered,
                 shares_bid=parse_num(row.get(bid_k)),
-                times=parse_num(row.get(times_k)),
+                # SME tables publish no offered shares and print "0.00": that is unknown, not zero demand
+                times=parse_num(row.get(times_k)) if offered else None,
             )
         )
     return out
@@ -255,6 +257,7 @@ class DemandGraph(BaseModel):
 
 class IpoDetail(BaseModel):
     symbol: str
+    series: str = "EQ"  # EQ (mainboard) or SME (NSE Emerge)
     company_name: str | None = None
     combined: SubscriptionSnapshot | None = Field(default=None, description="activeCat: NSE+BSE")
     nse_only: SubscriptionSnapshot | None = Field(default=None, description="bidDetails: NSE only")
@@ -349,7 +352,9 @@ def parse_issue_info(data: dict[str, Any] | None) -> dict[str, str]:
     return out
 
 
-def parse_ipo_detail(symbol: str, data: dict[str, Any], fetch: FetchRecord | None = None) -> IpoDetail:
+def parse_ipo_detail(
+    symbol: str, data: dict[str, Any], fetch: FetchRecord | None = None, series: str = "EQ"
+) -> IpoDetail:
     """Parse an /api/ipo-detail payload. Missing sections (closed/unknown issue) become None, not errors."""
     active = data.get("activeCat") or {}
     combined = None
@@ -373,6 +378,7 @@ def parse_ipo_detail(symbol: str, data: dict[str, Any], fetch: FetchRecord | Non
     company = _clean_text(info_rows[0].get("title")) if info_rows else None
     return IpoDetail(
         symbol=symbol,
+        series=series,
         company_name=company or None,
         combined=combined,
         nse_only=nse_only,
@@ -489,11 +495,17 @@ class NseClient:
             raise NseError(f"NSE quote refused for {symbol}: HTTP {resp.status}")
         return Quote.parse(resp.json())
 
-    async def ipo_detail(self, symbol: str, series: str = "EQ") -> IpoDetail:
-        data, resp = await self.get_json("/api/ipo-detail", {"symbol": symbol, "series": series})
-        if not isinstance(data, dict):
-            raise NseError(f"Unexpected ipo-detail payload for {symbol}: {type(data).__name__}")
-        return parse_ipo_detail(symbol, data, fetch=resp.record)
+    async def ipo_detail(self, symbol: str, series: str | None = None) -> IpoDetail:
+        """Issue detail. Without a series, mainboard (EQ) is tried first and SME second: NSE answers an SME symbol
+        queried as EQ with an empty issue-information table."""
+        for ser in [series] if series else ["EQ", "SME"]:
+            data, resp = await self.get_json("/api/ipo-detail", {"symbol": symbol, "series": ser})
+            if not isinstance(data, dict):
+                raise NseError(f"Unexpected ipo-detail payload for {symbol}: {type(data).__name__}")
+            detail = parse_ipo_detail(symbol, data, fetch=resp.record, series=ser)
+            if detail.issue_info or series:
+                return detail
+        return detail
 
 
 def _looks_json(resp: Fetched) -> bool:
