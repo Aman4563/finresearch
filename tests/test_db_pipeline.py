@@ -1,0 +1,176 @@
+"""Integration tests against a real Postgres+pgvector test database (finresearch_test).
+
+Skipped automatically when the database is unreachable. CI provides one via a service container.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import json
+import shutil
+from pathlib import Path
+
+import pytest
+from sqlalchemy import create_engine, text
+
+FIX = Path(__file__).parent / "fixtures"
+
+
+def _minimal_pdf(pages: list[list[str]]) -> bytes:
+    """A tiny valid PDF: one Helvetica text line per entry; an empty list = page with no text layer."""
+    objs: list[bytes] = []
+    n_pages = len(pages)
+    kids = " ".join(f"{3 + 2 * i} 0 R" for i in range(n_pages))
+    objs.append(b"<< /Type /Catalog /Pages 2 0 R >>")
+    objs.append(f"<< /Type /Pages /Kids [{kids}] /Count {n_pages} >>".encode())
+    font_id = 3 + 2 * n_pages
+    for i, lines in enumerate(pages):
+        content_id = 4 + 2 * i
+        objs.append(
+            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents {content_id} 0 R "
+            f"/Resources << /Font << /F1 {font_id} 0 R >> >> >>".encode()
+        )
+        ops = ["BT", "/F1 11 Tf", "14 TL", "60 740 Td"]
+        for ln in lines:
+            ops.append("(" + ln.replace("(", r"\(").replace(")", r"\)") + ") Tj T*")
+        ops.append("ET")
+        stream = "\n".join(ops).encode() if lines else b""
+        objs.append(b"<< /Length %d >>\nstream\n" % len(stream) + stream + b"\nendstream")
+    objs.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+    out = bytearray(b"%PDF-1.4\n")
+    offsets = []
+    for k, body in enumerate(objs, 1):
+        offsets.append(len(out))
+        out += f"{k} 0 obj\n".encode() + body + b"\nendobj\n"
+    xref = len(out)
+    out += f"xref\n0 {len(objs) + 1}\n0000000000 65535 f \n".encode()
+    out += b"".join(f"{o:010d} 00000 n \n".encode() for o in offsets)
+    out += f"trailer\n<< /Size {len(objs) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode()
+    return bytes(out)
+
+
+@pytest.fixture(scope="module")
+def db_url():
+    from finresearch.config import Settings
+
+    url = Settings().test_database_url
+    try:
+        eng = create_engine(url)
+        with eng.connect() as c:
+            c.execute(text("SELECT 1"))
+    except Exception:
+        pytest.skip("test database not reachable")
+    from finresearch.db.models import Base
+
+    with eng.begin() as c:
+        c.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+    Base.metadata.drop_all(eng)
+    Base.metadata.create_all(eng)
+    eng.dispose()
+    return url
+
+
+@pytest.fixture
+def env(db_url, tmp_path, monkeypatch):
+    """Point settings + engine at the test DB and a temp docs dir; reset cached singletons."""
+    from finresearch import config, db
+
+    monkeypatch.setenv("FINRESEARCH_DATABASE_URL", db_url)
+    monkeypatch.setenv("FINRESEARCH_DOCS_DIR", str(tmp_path / "docs"))
+    monkeypatch.setenv("FINRESEARCH_STATE_DIR", str(tmp_path / "state"))
+    config.get_settings.cache_clear()
+    db.get_engine.cache_clear()
+    yield config.get_settings()
+    config.get_settings.cache_clear()
+    db.get_engine.cache_clear()
+
+
+def test_ingest_pdf_pages_lines_scanned_and_idempotent(env, tmp_path):
+    from finresearch.db import session_scope
+    from finresearch.ingest.documents import DocKind, get_or_create_company, ingest_pdf
+    from finresearch.ingest.text import read_lines
+
+    pdf = tmp_path / "t.pdf"
+    pdf.write_bytes(_minimal_pdf([["Revenue from operations 11,716.54", "Profit for the year 535.61"], []]))
+    with session_scope() as s:
+        co = get_or_create_company(s, "acme", "Acme Ltd")
+        doc = ingest_pdf(s, pdf, company=co, kind=DocKind.OTHER, docs_dir=env.docs_dir, ocr=True)
+        assert doc.pages == 2 and doc.scanned_pages == 1
+        pages = sorted(doc.page_rows, key=lambda p: p.page_no)
+        lines = read_lines(doc.text_path)
+        p1 = "\n".join(lines[pages[0].line_start - 1 : pages[0].line_end])
+        assert "11,716.54" in p1 and pages[1].text_source == "tesseract"
+        assert pages[0].line_end < pages[1].line_start
+        again = ingest_pdf(s, pdf, company=co, kind=DocKind.OTHER, docs_dir=env.docs_dir)
+        assert again.id == doc.id
+
+
+@pytest.fixture
+def table_doc(env, tmp_path):
+    """A Document whose canonical text is the Orient P&L layout fixture (one page)."""
+    from finresearch.db import session_scope
+    from finresearch.db.models import Document, DocumentPage
+    from finresearch.ingest.documents import get_or_create_company
+
+    txt = tmp_path / "text.txt"
+    shutil.copy(FIX / "orient_rhp_pnl_layout.txt", txt)
+    n = len(txt.read_text().split("\n"))
+    with session_scope() as s:
+        co = get_or_create_company(s, "orient-cables", "Orient Cables (India) Limited")
+        d = Document(company_id=co.id, kind="RHP", title="fixture", sha256=hashlib.sha256(str(tmp_path).encode()).hexdigest(), local_path=str(txt),
+                     text_path=str(txt), bytes=1, pages=1)  # fmt: skip
+        s.add(d)
+        s.flush()
+        s.add(DocumentPage(document_id=d.id, page_no=73, line_start=1, line_end=n, text="", char_count=0,
+                           text_source="pdftotext"))  # fmt: skip
+        return d.id
+
+
+def call(name: str, args: dict) -> str:
+    from finresearch.mcp_server.server import server
+
+    r = asyncio.run(server.call_tool(name, args))
+    return "\n".join(getattr(c, "text", "") for c in r.content)
+
+
+def test_mcp_read_grep_table(table_doc):
+    out = call("read_lines_tool", {"document_id": table_doc, "line_start": 1, "line_end": 12})
+    assert "[page 73]" in out and "     8| " in out
+    g = call("grep_document", {"document_id": table_doc, "pattern": r"Profit / \(Loss\) for the year"})
+    assert "1 matching lines" in g and "p73" in g
+    t = json.loads(call("extract_table", {"document_id": table_doc, "line_start": 1, "line_end": 39}))
+    assert t["periods"][1] == "FY ended 2026-03-31" and "535.61" in t["markdown"]
+
+
+def test_mcp_claims_quote_verification(table_doc):
+    run = json.loads(call("start_run", {"company": "orient-cables"}))["run_id"]
+    lines = (FIX / "orient_rhp_pnl_layout.txt").read_text().split("\n")
+    ln = next(i for i, x in enumerate(lines, 1) if "Profit / (Loss) for the year" in x)
+    ok = json.loads(call("save_claim", {
+        "run_id": run, "stream": "financials", "statement": "FY26 PAT was Rs 535.61 mn", "claim_type": "numeric",
+        "metric": "pat", "value": "535.61", "unit": "INR mn", "period": "FY2026", "importance": "high",
+        "citations": [{"document_id": table_doc, "line_start": ln, "line_end": ln,
+                       "quote": "Profit / (Loss) for the year 327.83 535.61"}]}))  # fmt: skip
+    assert ok["status"] == "unverified" and ok["citation_checks"][0]["quote_found"] is True
+    bad = json.loads(call("save_claim", {
+        "run_id": run, "stream": "financials", "statement": "made up", "claim_type": "numeric", "value": "999",
+        "citations": [{"document_id": table_doc, "line_start": ln, "line_end": ln, "quote": "PAT was 999.99"}]}))  # fmt: skip
+    assert bad["status"] == "unsupported"
+    err = json.loads(call("save_claim", {"run_id": run, "stream": "x", "statement": "y", "claim_type": "numeric",
+                                         "citations": []}))  # fmt: skip
+    assert "citation" in err["error"]
+    listed = json.loads(call("list_claims", {"run_id": run}))
+    assert [c["status"] for c in listed] == ["unverified", "unsupported"]
+
+
+def test_mcp_fincalc_and_bad_args(env):
+    r = json.loads(
+        call(
+            "fincalc_call",
+            {"function": "ipo.allotment_probability_floor", "args": {"times_subscribed": "14.11"}},
+        )
+    )
+    assert r["result"].startswith("0.0708")
+    assert "signature" in call("fincalc_call", {"function": "growth.cagr", "args": {"nope": 1}})
+    assert "unknown function" in call("fincalc_call", {"function": "os.system", "args": {}})

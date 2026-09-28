@@ -6,7 +6,9 @@ The design is in `../FinResearch_App_Blueprint/`; start with `02_Final_Architect
 
 > Personal use only. This is not SEBI-registered investment advice.
 
-## Status: P0 spike (Claude Bridge) ✅
+## Status: P0 spike ✅ · P0 foundations ✅
+
+### P0 spike: Claude Bridge
 
 The **Claude Bridge** gives every LLM task one interface over three engines, tried in this order:
 
@@ -38,17 +40,42 @@ The **Claude Bridge** gives every LLM task one interface over three engines, tri
 
 **Ingest:** `finresearch.ingest.layout_table` rebuilds tables from `pdftotext -layout` output deterministically. It handles wrapped multi-line headers, per-line horizontal shifts, Notes columns and period detection, so an LLM never has to parse layout. With it, even `qwen3.5:4b` extracts P&L values exactly. Use `ingest.text.read_lines()` for line numbers: pdftotext page breaks (`\f`) make `str.splitlines()` disagree with grep/sed.
 
+### P0 foundations: data, documents, MCP tools, claim ledger
+
+| Component | What it does |
+|---|---|
+| **Postgres 17 + pgvector** (Homebrew, native) | Tables: company, document, document_page, section, chunk (HNSW vector + GIN full-text), research_run, claim, citation, ipo_offer, subscription_snapshot. Alembic migrations |
+| **Document pipeline** (`ingest.documents`) | Stores files by sha256 (immutable), runs `pdftotext -layout`, and OCRs scanned pages with Tesseract (+ optional loop-safe glm-ocr for low confidence). Writes a canonical `text.txt` whose line numbers match `grep -n`. Page→line spans are stored per page |
+| **Section mapper** (`ingest.sections`) | Maps SEBI ICDR offer-document sections (Risk Factors, Capital Structure, Objects, Basis for Offer Price, Business, Restated Financials, MD&A, Litigation, …) with line and page ranges. Verified on Moneyview and Orient RHP + DRHP |
+| **Index + search** (`ingest.index`) | Line-anchored chunks, local `qwen3-embedding` vectors, hybrid full-text + vector search (RRF) |
+| **Adapters** (`adapters.*`) | Polite HTTP (rate limits, retries, opt-in cache, provenance). NSE: current, upcoming and past issues, `ipo_detail` (combined NSE+BSE vs NSE-only subscription, demand, issue info). SEBI: DRHP/RHP/prospectus listings and full-PDF resolution |
+| **fincalc** | Deterministic Decimal finance library: Indian number parsing and units, growth, ratios, valuation, IPO maths (issue, reservation, lots, allotment floor, lock-ins), market-day arithmetic. Golden-tested against the manual reports |
+| **FinResearch MCP server** (`mcp_server`) | Tools for Claude agents: list/read documents and sections with line and page numbers, grep, hybrid search, `extract_table`, `fincalc_call`, live NSE/SEBI, `start_run`, **`save_claim` with deterministic quote-at-cited-lines verification**, `list_claims` |
+
+**Live-verified:** Claude Sonnet 5 on the Max plan, using only the MCP tools, found Orient Cables' largest-customer share (38.54%, Q1 FY27, RHP p26 L1663). It saved a claim, and the server confirmed the quote is at that line: 12 s, 6 turns (`scripts/smoke_mcp_live.py`).
+
+## Setup (once)
+
+```bash
+brew install postgresql@17 pgvector tesseract poppler && brew services start postgresql@17
+createdb finresearch && createdb finresearch_test
+uv sync && uv run alembic upgrade head
+ollama pull qwen3.5:9b qwen3.5:4b qwen3-embedding:0.6b glm-ocr
+```
+
 ## Usage
 
 ```bash
-uv sync
-uv run finresearch bridge health            # login, models, RAM, limits
-uv run finresearch bridge limits            # Max 5h / 7d window utilisation
-uv run finresearch bridge run "Summarise ..." --schema schema.json --model-class standard
-uv run finresearch bridge run "..." --tier local          # force a tier
-uv run finresearch bridge reset             # clear cool-downs after a window resets
-uv run pytest -q                            # offline test suite (fake CLI + mocked Ollama)
-uv run python scripts/smoke_live.py         # live end-to-end check (1 tiny Haiku call + local)
+uv run finresearch bridge health                      # engines, login, models, RAM, limits
+uv run finresearch bridge limits                      # Max 5h / 7d window utilisation
+uv run finresearch bridge run "..." --schema s.json   # one task through the bridge
+uv run finresearch docs add <pdf|url> --company orient-cables --kind RHP   # ingest + OCR + sections + index
+uv run finresearch docs list | docs sections <id> | docs search "query" --company orient
+uv run finresearch mcp config                         # write Claude Code --mcp-config for the MCP server
+uv run python scripts/ingest_gold.py                  # load the Moneyview + Orient gold set
+uv run pytest -q                                      # 111 offline tests (+ DB tests on finresearch_test)
+uv run python scripts/smoke_live.py                   # live bridge check
+uv run python scripts/smoke_mcp_live.py               # live Claude -> MCP -> claim ledger check
 ```
 
 ## Layout
@@ -56,14 +83,24 @@ uv run python scripts/smoke_live.py         # live end-to-end check (1 tiny Haik
 ```
 src/finresearch/
   bridge/        types, claude_code (Tier 1/2), ollama_engine (Tier 3), limits, router
-  ingest/        layout_table (pdftotext table rebuild), text (line-safe reading)
+  ingest/        documents (store/extract/OCR), sections (ICDR mapper), index (chunks, embeddings, hybrid
+                 search), layout_table (pdftotext table rebuild), text (line-safe reading)
+  adapters/      http (polite client), nse, sebi
+  fincalc/       numbers, growth, ratios, valuation, ipo, dates
+  db/            SQLAlchemy models + session       (migrations/ = Alembic)
+  mcp_server/    FinResearch MCP server (tools), claims (ledger + citation checks), config
   config.py      settings (FINRESEARCH_* env / .env)
-  cli.py         `finresearch` CLI
-tests/           offline tests + fixtures (real RHP excerpts, fake claude CLI)
-scripts/         smoke_live.py
-data/            gitignored: state, runs, documents
+  cli.py         `finresearch` CLI (bridge, docs, mcp)
+tests/           offline tests + fixtures (real RHP excerpts, NSE/SEBI recordings, fake claude CLI)
+scripts/         smoke_live.py, smoke_mcp_live.py, ingest_gold.py
+data/            gitignored: docs (raw + derived), state, runs, cache, logs
 ```
 
-## Next (P0 foundations → P1)
+## Next (P1: IPO report engine)
 
-Document acquisition and ingestion (section mapper, OCR pipeline), the NSE/SEBI adapters, the FinResearch MCP server, the claim ledger (Postgres), the agent definitions and skills, and the multi-agent IPO DAG. The acceptance test is to regenerate the Moneyview and Orient Cables reports.
+- Agent definitions (`.claude/agents`) + skills: planner, 7 research streams, adversarial verifiers, bull/bear, synthesizer, critic.
+- Python DAG with Max-limit-aware concurrency and resume.
+- Numeric verification gate.
+- Report renderer (MD/HTML/PDF/XLSX).
+
+Acceptance: regenerate the Moneyview and Orient Cables reports and compare them with the manual fact-check logs.

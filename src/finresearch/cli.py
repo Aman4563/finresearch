@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from pathlib import Path
 
@@ -17,7 +18,12 @@ from finresearch.config import get_settings
 app = typer.Typer(no_args_is_help=True, help="FinResearch — personal research engine")
 bridge_app = typer.Typer(no_args_is_help=True, help="Claude Bridge: engines, limits, test runs")
 app.add_typer(bridge_app, name="bridge")
+docs_app = typer.Typer(no_args_is_help=True, help="Documents: ingest, sections, index, search")
+app.add_typer(docs_app, name="docs")
+mcp_app = typer.Typer(no_args_is_help=True, help="FinResearch MCP server")
+app.add_typer(mcp_app, name="mcp")
 console = Console()
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 @bridge_app.command()
@@ -103,6 +109,96 @@ def run(
         console.print(f"[yellow]warnings:[/] {res.warnings}")
     out = res.structured_output if res.structured_output is not None else res.text
     console.print_json(json.dumps(out)) if not isinstance(out, str) else console.print(out)
+
+
+# --------------------------------------------------------------------------- docs
+@docs_app.command("add")
+def docs_add(
+    source: str = typer.Argument(..., help="Local PDF path or http(s) URL"),
+    company: str = typer.Option(..., help="Company slug, e.g. orient-cables"),
+    kind: str = typer.Option(
+        "OTHER",
+        help="RHP|DRHP|ADDENDUM|ABRIDGED_PROSPECTUS|PRICE_BAND_AD|ANCHOR_ALLOCATION|"
+        "ANNUAL_REPORT|FINANCIAL_STATEMENTS|INDUSTRY_REPORT|OTHER",
+    ),
+    title: str | None = typer.Option(None),
+    name: str | None = typer.Option(None, help="Company display name (first time)"),
+    nse_symbol: str | None = typer.Option(None),
+    index: bool = typer.Option(True, help="Build sections + chunks + embeddings after ingest"),
+    glm_ocr: bool = typer.Option(
+        False, help="Second-opinion OCR with glm-ocr for low-confidence pages (slow)"
+    ),
+) -> None:
+    """Ingest a document (download if URL), OCR scanned pages, map sections, index for search."""
+    from finresearch.db import session_scope
+    from finresearch.ingest.documents import DocKind, download, get_or_create_company, ingest_pdf
+    from finresearch.ingest.index import index_document
+
+    s = get_settings()
+    router = build_router()
+    local = router.engines.get(Tier.LOCAL)
+    prov = None
+    path = Path(source)
+    if source.startswith(("http://", "https://")):
+        path, prov = download(source, s.docs_dir / "incoming")
+    with session_scope() as db:
+        co = get_or_create_company(db, company, name, nse_symbol=nse_symbol)
+        doc = ingest_pdf(
+            db,
+            path,
+            company=co,
+            kind=DocKind(kind.upper()),
+            title=title,
+            docs_dir=s.docs_dir,
+            provenance=prov,
+            glm_ocr=local if glm_ocr else None,
+            progress=console.print,
+        )
+        console.print(f"document {doc.id}: {doc.pages} pages ({doc.scanned_pages} OCR'd) -> {doc.text_path}")
+        if index:
+            n = index_document(db, doc, embedder=local, progress=lambda m: console.print(m, end="\r"))
+            console.print(f"\nindexed {n} chunks")
+    if prov:
+        path.unlink(missing_ok=True)
+
+
+@docs_app.command("list")
+def docs_list(company: str | None = typer.Option(None)) -> None:
+    """List ingested documents."""
+    from finresearch.mcp_server.server import list_documents
+
+    console.print_json(list_documents(company))
+
+
+@docs_app.command("sections")
+def docs_sections(document_id: int) -> None:
+    """Show mapped sections of a document."""
+    from finresearch.mcp_server.server import list_sections
+
+    console.print_json(list_sections(document_id))
+
+
+@docs_app.command("search")
+def docs_search(
+    query: str, company: str | None = typer.Option(None), k: int = typer.Option(5, "-k", "--k")
+) -> None:
+    """Hybrid keyword + semantic search with page/line anchors."""
+    from finresearch.mcp_server.server import search_documents
+
+    for h in json.loads(search_documents(query, company=company, k=k)):
+        console.print(
+            f"[bold]doc {h['document_id']}[/] {h['section']} p{h['pages'][0]} L{h['lines'][0]}-"
+            f"{h['lines'][1]}  score={h['score']}"
+        )
+        console.print("   " + h["text"].strip()[:300].replace("\n", " "))
+
+
+@mcp_app.command("config")
+def mcp_config() -> None:
+    """Write the Claude Code --mcp-config file for the FinResearch MCP server and print its path."""
+    from finresearch.mcp_server.config import write_mcp_config
+
+    console.print(str(write_mcp_config()))
 
 
 if __name__ == "__main__":

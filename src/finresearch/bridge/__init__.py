@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+from typing import TYPE_CHECKING
 
 from finresearch.bridge.claude_code import ClaudeCodeEngine
 from finresearch.bridge.limits import LimitTracker
@@ -16,7 +17,9 @@ from finresearch.bridge.types import (
     ModelClass,
     Tier,
 )
-from finresearch.config import Settings, get_settings
+
+if TYPE_CHECKING:
+    from finresearch.config import Settings
 
 __all__ = [
     "AgentResult",
@@ -32,6 +35,8 @@ __all__ = [
 
 def build_router(settings: Settings | None = None) -> BridgeRouter:
     """Wire engines from settings. The API tier is only added when enabled *and* a key exists."""
+    from finresearch.config import get_settings  # lazy: config imports bridge.types
+
     s = settings or get_settings()
     engines = {
         Tier.CLAUDE_MAX: ClaudeCodeEngine(

@@ -139,11 +139,11 @@ class ClaudeCodeEngine:
             "--setting-sources", "project,local",  # never load the user's personal hooks/plugins
             "--strict-mcp-config",  # only the MCP servers we pass explicitly
         ]  # fmt: skip
+        builtin = [t for t in task.allowed_tools if not t.startswith("mcp__")]
+        # built-in tools must be listed in --tools (availability); MCP tools only need permission
+        cmd += ["--tools", ",".join(builtin)]
         if task.allowed_tools:
-            tools = ",".join(task.allowed_tools)
-            cmd += ["--tools", tools, "--allowedTools", tools]
-        else:
-            cmd += ["--tools", ""]
+            cmd += ["--allowedTools", ",".join(task.allowed_tools)]
         if task.json_schema is not None:
             cmd += ["--json-schema", json.dumps(task.json_schema, separators=(",", ":"))]
         if task.effort:

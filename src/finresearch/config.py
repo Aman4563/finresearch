@@ -57,9 +57,14 @@ class Settings(BaseSettings):
     local_schema_repair_attempts: int = 2
     local_max_prompt_chars: int = 90_000  # ~24k tokens; beyond this the local tier refuses (LONG_CONTEXT)
 
+    # ---- storage
+    database_url: str = "postgresql+psycopg://localhost/finresearch"
+    test_database_url: str = "postgresql+psycopg://localhost/finresearch_test"
+
     # ---- paths
     state_dir: Path = REPO_ROOT / "data" / "state"
     runs_dir: Path = REPO_ROOT / "data" / "runs"
+    docs_dir: Path = REPO_ROOT / "data" / "docs"  # raw/<sha[:2]>/<sha>.pdf and derived/<sha>/...
 
 
 @lru_cache

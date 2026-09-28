@@ -1,0 +1,152 @@
+[
+ {
+  "company": "Adroit Industries (India) Limited",
+  "htmSym": "adroitind",
+  "ipoEndDate": "25-SEP-2026",
+  "ipoStartDate": "23-SEP-2026",
+  "issuePrice": "-",
+  "linkRemovalDate": "26-SEP-2026",
+  "listingDate": "-",
+  "priceRange": "Rs.126 to Rs.134",
+  "securityType": "EQ",
+  "symbol": "ADROITIND"
+ },
+ {
+  "company": "Elevate Campuses Limited",
+  "htmSym": "elevate",
+  "ipoEndDate": "25-SEP-2026",
+  "ipoStartDate": "23-SEP-2026",
+  "issuePrice": "-",
+  "linkRemovalDate": "26-SEP-2026",
+  "listingDate": "-",
+  "priceRange": "Rs.343 to Rs.362",
+  "securityType": "EQ",
+  "symbol": "ELEVATE"
+ },
+ {
+  "company": "ArMee Infotech Limited",
+  "htmSym": "armee",
+  "ipoEndDate": "25-SEP-2026",
+  "ipoStartDate": "23-SEP-2026",
+  "issuePrice": "-",
+  "linkRemovalDate": "26-SEP-2026",
+  "listingDate": "-",
+  "priceRange": "Rs.350 to Rs.375",
+  "securityType": "EQ",
+  "symbol": "ARMEE"
+ },
+ {
+  "company": "Swastika Infra Limited",
+  "htmSym": "swastikain",
+  "ipoEndDate": "25-SEP-2026",
+  "ipoStartDate": "23-SEP-2026",
+  "issuePrice": "-",
+  "linkRemovalDate": "26-SEP-2026",
+  "listingDate": "-",
+  "priceRange": "Rs.175 to Rs.185",
+  "securityType": "EQ",
+  "symbol": "SWASTIKAIN"
+ },
+ {
+  "companyName": "Coreintegra Consulting Services Limited",
+  "ipoEndDate": "25-SEP-2026",
+  "ipoStartDate": "23-SEP-2026",
+  "issuePrice": "-",
+  "listingDate": "-",
+  "priceRange": "Rs.74 to Rs.78",
+  "securityType": "SME",
+  "symbol": "COREIN",
+  "company": "Coreintegra Consulting Services Limited"
+ },
+ {
+  "companyName": "Pooja Logistics Limited",
+  "ipoEndDate": "25-SEP-2026",
+  "ipoStartDate": "23-SEP-2026",
+  "issuePrice": "-",
+  "listingDate": "-",
+  "priceRange": "Rs.109 to Rs.115",
+  "securityType": "SME",
+  "symbol": "POOJALOGIS",
+  "company": "Pooja Logistics Limited"
+ },
+ {
+  "company": "Varmora Granito Limited",
+  "htmSym": "varmora",
+  "ipoEndDate": "24-SEP-2026",
+  "ipoStartDate": "22-SEP-2026",
+  "issuePrice": "-",
+  "linkRemovalDate": "25-SEP-2026",
+  "listingDate": "-",
+  "priceRange": "Rs.140 to Rs.148",
+  "securityType": "EQ",
+  "symbol": "VARMORA"
+ },
+ {
+  "companyName": "Axiom Gas Engineering Limited",
+  "ipoEndDate": "22-SEP-2026",
+  "ipoStartDate": "18-SEP-2026",
+  "issuePrice": "54",
+  "listingDate": "25-SEP-2026",
+  "priceRange": "Rs.51 to Rs.54",
+  "securityType": "SME",
+  "symbol": "AXIOMGAS",
+  "company": "Axiom Gas Engineering Limited"
+ },
+ {
+  "company": "Sonaselection India Limited",
+  "htmSym": "sona",
+  "ipoEndDate": "21-SEP-2026",
+  "ipoStartDate": "17-SEP-2026",
+  "issuePrice": "    99",
+  "linkRemovalDate": "22-SEP-2026",
+  "listingDate": "24-SEP-2026",
+  "priceRange": "Rs.94 to Rs.99",
+  "securityType": "BE",
+  "symbol": "SONA"
+ },
+ {
+  "company": "National Stock Exchange of India Limited",
+  "htmSym": "nse",
+  "ipoEndDate": "21-SEP-2026",
+  "ipoStartDate": "17-SEP-2026",
+  "issuePrice": "-",
+  "linkRemovalDate": "22-SEP-2026",
+  "listingDate": "-",
+  "priceRange": "Rs.1700 to Rs.1785",
+  "securityType": "EQ",
+  "symbol": "NSE"
+ },
+ {
+  "companyName": "Kheria Autocomp Limited",
+  "ipoEndDate": "21-SEP-2026",
+  "ipoStartDate": "17-SEP-2026",
+  "issuePrice": "101",
+  "listingDate": "24-SEP-2026",
+  "priceRange": "Rs.96 to Rs.101",
+  "securityType": "SME",
+  "symbol": "KHERIAAUTO",
+  "company": "Kheria Autocomp Limited"
+ },
+ {
+  "companyName": "SpectraA Technology Solutions Limited",
+  "ipoEndDate": "21-SEP-2026",
+  "ipoStartDate": "17-SEP-2026",
+  "issuePrice": "118",
+  "listingDate": "24-SEP-2026",
+  "priceRange": "Rs.112 to Rs.118",
+  "securityType": "SME",
+  "symbol": "SPECTRAA",
+  "company": "SpectraA Technology Solutions Limited"
+ },
+ {
+  "companyName": "Thejo Engineering Limited",
+  "ipoEndDate": "06-Sep-2012",
+  "ipoStartDate": "04-Sep-2012",
+  "issuePrice": null,
+  "listingDate": "18-Sep-2012",
+  "priceRange": "402",
+  "securityType": "SME",
+  "symbol": "THEJO",
+  "company": "Thejo Engineering Limited"
+ }
+]
