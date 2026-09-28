@@ -119,6 +119,12 @@ export function EvidencePanel({ id, claim: given, onClose }: { id: number; claim
             </p>
           )}
           {claim.verifier_note && <p className="rounded bg-background p-2 text-xs">Verifier: {claim.verifier_note}</p>}
+          {claim.checks?.source_language === "hi" && (
+            <p className="text-xs text-amber-700 dark:text-amber-300">
+              Hindi source: the quote is in Hindi and the statement is a translation
+              {claim.checks.translation_marked ? "" : " (not marked as translated)"}.
+            </p>
+          )}
           {claim.corrects_claim_id && <p className="text-xs text-muted">Corrects C{claim.corrects_claim_id}</p>}
           {claim.citations.map((c, i) => (
             <div key={i} className="border-t border-border pt-2">

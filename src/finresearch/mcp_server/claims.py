@@ -15,6 +15,8 @@ from finresearch.ingest.text import read_lines
 
 CLAIM_TYPES = {"numeric", "factual", "opinion"}
 IMPORTANCE = {"high", "normal", "low"}
+DEVANAGARI = re.compile(r"[\u0900-\u097F]")
+TRANSLATION_MARK = re.compile(r"translat|अनुवाद", re.I)
 LINE_TOLERANCE = 2  # allow the quote to sit up to 2 lines outside the cited span (wrapped lines)
 
 
@@ -157,8 +159,20 @@ def save_claim(
     if doc_checks and not any(x["quote_found"] for x in doc_checks):
         claim.status = "unsupported"
         claim.verifier_note = "no cited quote was found at the cited lines"
+    out: dict[str, Any] = {"claim_id": claim.id, "status": claim.status, "citation_checks": checks}
+    if any(DEVANAGARI.search(c.get("quote") or "") for c in citations):
+        # live run 7: the agent kept the Hindi quote but did not mark its English statement as a translation, even
+        # when told to, so the marker is added deterministically
+        auto = not TRANSLATION_MARK.search(statement)
+        if auto:
+            claim.statement = f"{statement.rstrip()} (translated from Hindi)"
+            out["note"] = (
+                "Hindi source: the statement was marked '(translated from Hindi)'; keep the quote in Hindi."
+            )
+        claim.checks = {**(claim.checks or {}), "source_language": "hi", "translation_marked": True,
+                        "translation_mark_added": auto}  # fmt: skip
     session.flush()
-    return {"claim_id": claim.id, "status": claim.status, "citation_checks": checks}
+    return out
 
 
 def _page_of(session: Session, document_id: int, line: int) -> int | None:

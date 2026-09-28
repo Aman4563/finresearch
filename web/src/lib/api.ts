@@ -30,6 +30,7 @@ export type Claim = {
   importance: string;
   status: string;
   verifier_note: string | null;
+  checks?: { source_language?: string; translation_marked?: boolean } & Record<string, unknown>;
   corrects_claim_id: number | null;
   citations: Citation[];
 };
