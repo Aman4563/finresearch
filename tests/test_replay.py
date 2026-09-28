@@ -99,3 +99,23 @@ def test_backtest_reads_the_monitor_listing_price(replayed):
             row.listing_gain_pct.quantize(Decimal("0.01")) == Decimal("10.29") and row.result == "conditional"
         )
         assert "APPLY-CONDITIONAL | +10.29%" in markdown([row])
+
+
+def test_live_infosys_stock_run_9_passes_the_release_bar(env, tmp_path):
+    """The first listed-stock kind acceptance run: 21/23 key facts, 0 contradicted, publish gate passed."""
+    from finresearch.db import session_scope
+    from finresearch.db.models import AgentStep
+    from finresearch.evals.gold import evaluate, load_gold
+    from finresearch.evals.replay import import_run
+    from finresearch.verify.gate import check_report
+
+    data = json.loads((FIXTURE.parent / "infosys-run9.json").read_text())
+    with session_scope() as s:
+        run_id = import_run(s, data, slug_suffix="-" + tmp_path.name[-8:])
+        report = (s.query(AgentStep).filter_by(run_id=run_id, stage="synthesis", status="done")
+                  .order_by(AgentStep.finished_at.desc()).first().output["report_markdown"])  # fmt: skip
+        res = evaluate(s, run_id, load_gold("infosys"), report)
+        gate = check_report(s, run_id, report)
+    assert res.passes_release_bar and res.recall >= 0.9 and res.high_recall == 1.0 and gate.ok
+    assert data["run"]["kind"] == "stock_report" and data["synthesis"]["verdict"] == "ACCUMULATE"
+    assert res.verdict_actual["overall"] == "ACCUMULATE"

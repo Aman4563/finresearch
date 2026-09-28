@@ -34,6 +34,8 @@ class RunContext:
     company_name: str
     nse_symbol: str | None = None
     decision_deadline: str = "the issue closes (UPI mandate cut-off 5:00 PM IST on the last bidding day)"
+    subject: str = "an Indian IPO"
+    primary_source: str = "the offer documents (the RHP text layer)"
     documents: list[dict[str, Any]] = field(default_factory=list)  # from list_documents
     facts: dict[str, Any] = field(
         default_factory=dict
@@ -52,6 +54,8 @@ class RunContext:
             "now_ist": now.strftime("%Y-%m-%d %H:%M"),
             "news_from": (today - timedelta(days=30)).isoformat(),
             "decision_deadline": self.decision_deadline,
+            "subject": self.subject,
+            "primary_source": self.primary_source,
         }
 
 

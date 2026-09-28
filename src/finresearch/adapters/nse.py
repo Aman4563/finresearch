@@ -407,6 +407,10 @@ class Quote(BaseModel):
     listing_date: date | None = None
     status: str | None = None
     as_of: datetime | None = None
+    week52_high: Decimal | None = None
+    week52_low: Decimal | None = None
+    issued_shares: Decimal | None = None
+    industry: str | None = None
 
     @classmethod
     def parse(cls, data: dict[str, Any]) -> Quote:
@@ -415,12 +419,16 @@ class Quote(BaseModel):
             raise NseError("quote payload has no equityResponse")
         e = rows[0]
         meta, trade, sec = e.get("metaData") or {}, e.get("tradeInfo") or {}, e.get("secInfo") or {}
+        price = e.get("priceInfo") or {}
         listing = str(sec.get("listingDate") or "").split(" ")[0]
         return cls(symbol=str(meta.get("symbol", "")).strip(), company=meta.get("companyName"),
                    open=parse_num(meta.get("open")), last_price=parse_num(trade.get("lastPrice")),
                    close_price=parse_num(meta.get("closePrice")) or None,
                    previous_close=parse_num(meta.get("previousClose")), listing_date=parse_nse_date(listing),
-                   status=sec.get("secStatus"), as_of=parse_nse_timestamp(e.get("lastUpdateTime")))  # fmt: skip
+                   status=sec.get("secStatus"), as_of=parse_nse_timestamp(e.get("lastUpdateTime")),
+                   week52_high=parse_num(price.get("yearHigh")), week52_low=parse_num(price.get("yearLow")),
+                   issued_shares=parse_num(trade.get("issuedSize")),
+                   industry=(sec.get("basicIndustry") or None))  # fmt: skip
 
 
 class NseClient:

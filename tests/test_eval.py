@@ -83,7 +83,7 @@ def test_scoring_units_periods_contradictions_and_verdict(run):
     assert "key-fact recall | **50%** (2/4)" in md and "| release bar" in md and "FAIL" in md
 
 
-@pytest.mark.parametrize("company", ["moneyview", "orient-cables"])
+@pytest.mark.parametrize("company", ["moneyview", "orient-cables", "infosys"])
 def test_gold_files_are_well_formed(company):
     import re
 
@@ -95,7 +95,10 @@ def test_gold_files_are_well_formed(company):
     for f in gold["facts"]:
         for p in f["patterns"] + ([f["period"]] if f.get("period") else []):
             re.compile(p)
-        assert f["unit"] in {"INR million", "INR", "%", "shares"} and f["importance"] in {"high", "normal"}
+        assert f["unit"] in {"INR million", "INR crore", "INR", "%", "shares"} and f["importance"] in {
+            "high",
+            "normal",
+        }
         assert not re.search(r"subscri|gmp|grey", f["label"], re.I), "live figures do not belong in gold sets"
 
 
@@ -146,3 +149,97 @@ def test_underscored_metrics_and_other_contexts_are_handled(env, tmp_path):
         res = evaluate(s, r.id, gold, report)
     assert all(f.found for f in res.facts), [f.id for f in res.facts if not f.found]
     assert not res.contradicted, [(f.id, f.contradicted_in_report) for f in res.contradicted]
+
+
+def test_period_exclusion_and_exclude_unless(env, tmp_path):
+    """Live INFY run 8: an annual consolidated claim was dropped because its statement mentioned the quarter it was
+    booked in, or the standalone comparative. Quarter exclusion now looks at the period field only, and a
+    'standalone' exclusion is lifted when the claim says 'consolidated'."""
+    from finresearch.db import session_scope
+    from finresearch.db.models import Claim, ResearchRun
+    from finresearch.ingest.documents import get_or_create_company
+
+    fact = {"id": "lc", "label": "Labour Codes FY26", "patterns": [r"labou?r code|exceptional"], "period": r"fy ?2026",
+            "value": 1289, "unit": "INR crore", "tolerance": 0.005, "importance": "high",
+            "exclude": r"\bpeer|standalone", "exclude_unless": "consolidated", "period_exclude": r"\bq[1-4]\b"}  # fmt: skip
+    gold = {"company": "t", "verdict": None, "facts": [fact]}
+    with session_scope() as s:
+        co = get_or_create_company(s, "pe-" + hashlib.sha1(str(tmp_path).encode()).hexdigest()[:8], "E")
+        r = ResearchRun(company_id=co.id, kind="stock_report", manifest={})
+        s.add(r)
+        s.flush()
+        rows = [("labour_codes_exceptional_charge", "Q3 FY26", "1289", "Q3 FY26 charge", "verified"),
+                ("exceptional_item_labour_codes", "FY2026", "1146", "standalone charge FY26", "verified"),
+                ("exceptional_item_labour_codes", "FY2026", "1289",
+                 "Consolidated Labour Codes charge in Q3, FY26 total (standalone 1,146)", "verified")]  # fmt: skip
+        ids = []
+        for m, per, v, st, status in rows:
+            c = Claim(run_id=r.id, stream="x", claim_type="numeric", metric=m, value=Decimal(v), unit="INR crore",
+                      period=per, statement=st, status=status)  # fmt: skip
+            s.add(c)
+            s.flush()
+            ids.append(c.id)
+        res = evaluate(s, r.id, gold, " ".join(f"[C{i}]" for i in ids))
+    f = res.facts[0]
+    assert (
+        f.found and f.claim_ids == [ids[2]] and not f.contradicted_in_report
+    )  # the standalone 1,146 is not a contradiction
+    assert res.verdict_agrees is None
+
+
+def test_foreign_currency_units_never_get_a_rupee_scale():
+    """Live INFY run 8: USD revenue claims were compared with an INR gold fact and counted as contradictions."""
+    from finresearch.evals.gold import _to_gold_unit
+    from finresearch.verify.gate import rupee_scale
+
+    assert rupee_scale("USD million") is None and rupee_scale("US$ mn") is None and rupee_scale("EUR") is None
+    assert rupee_scale("INR crore") == Decimal(10_000_000) and rupee_scale("₹ million") == Decimal(1_000_000)
+    assert _to_gold_unit(Decimal(20158), "USD million", "INR crore") is None
+
+
+def test_derived_variants_do_not_contradict_the_reported_figure(env, tmp_path):
+    """Live INFY run 9: adjusted / normalised EPS, profit before exceptional items, interim and final dividend parts
+    and a standalone profit were counted as contradicting the reported consolidated figures."""
+    from finresearch.db import session_scope
+    from finresearch.db.models import Claim, ResearchRun
+    from finresearch.ingest.documents import get_or_create_company
+
+    facts = [
+        {"id": "eps", "label": "EPS", "patterns": [r"\beps\b|earnings per share"], "period": r"fy ?2026", "value": 71.58,
+         "unit": "INR", "tolerance": 0.005, "importance": "high", "exclude": r"\bpeer|standalone|diluted",
+         "exclude_unless": "consolidated"},
+        {"id": "exc", "label": "Exceptional", "patterns": [r"labou?r code|exceptional"], "period": r"fy ?2026",
+         "value": 1289, "unit": "INR crore", "tolerance": 0.005, "importance": "high", "exclude": r"\bpeer"},
+        {"id": "pat", "label": "PAT", "patterns": [r"net profit|profit for the year"], "period": r"fy ?2026",
+         "value": 29474, "unit": "INR crore", "tolerance": 0.005, "importance": "high", "exclude": r"standalone",
+         "exclude_unless": "consolidated"},
+        {"id": "pbt", "label": "PBT before exceptional", "patterns": [r"profit before exceptional"], "period": r"fy ?2026",
+         "value": 41284, "unit": "INR crore", "tolerance": 0.005, "importance": "normal", "exclude": r"\bpeer"}]  # fmt: skip
+    gold = {"company": "t", "verdict": None, "facts": facts}
+    rows = [("adjusted_fy26_basic_eps", "72.06", "INR/share", "Adjusted EPS"),
+            ("normalised_basic_eps", "71.13", "INR", "Normalised EPS"),
+            ("basic_eps", "71.58", "INR", "Consolidated basic EPS"),
+            ("profit_before_exceptional_items_and_tax", "41284", "INR crore", "Consolidated PBT before exceptional"),
+            ("standalone_net_profit", "29211", "INR crore", "Standalone net profit, vs consolidated 29,474"),
+            ("exceptional_items", "1289", "INR crore", "Consolidated exceptional items")]  # fmt: skip
+    with session_scope() as s:
+        co = get_or_create_company(s, "dv-" + hashlib.sha1(str(tmp_path).encode()).hexdigest()[:8], "E")
+        r = ResearchRun(company_id=co.id, kind="stock_report", manifest={})
+        s.add(r)
+        s.flush()
+        ids = []
+        for m, v, u, st in rows:
+            c = Claim(run_id=r.id, stream="x", claim_type="numeric", metric=m, value=Decimal(v), unit=u, period="FY2026",
+                      statement=st, status="verified")  # fmt: skip
+            s.add(c)
+            s.flush()
+            ids.append(c.id)
+        res = evaluate(s, r.id, gold, " ".join(f"[C{i}]" for i in ids))
+    by = {f.id: f for f in res.facts}
+    assert not res.contradicted, [(f.id, f.contradicted_in_report) for f in res.contradicted]
+    assert (
+        by["eps"].found and by["exc"].found and by["pbt"].found
+    )  # "before" is allowed when the fact names it
+    assert (
+        ids[4] not in by["pat"].claim_ids
+    )  # a standalone metric is excluded even if the statement says consolidated

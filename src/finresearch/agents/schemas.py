@@ -105,6 +105,33 @@ class Synthesis(BaseModel):
     report_markdown: str = Field(description="Full 12-section report; every figure cites [C<id>]")
 
 
+class StockScenario(BaseModel):
+    name: Literal["bear", "base", "bull"]
+    horizon: Literal["3m", "12m", "3y"]
+    price_low: float | None = None
+    price_high: float | None = None
+    rationale: str
+    likelihood: Literal["less likely", "most likely", "plausible"]
+
+
+class StockSynthesis(BaseModel):
+    verdict: Literal["BUY", "ACCUMULATE", "HOLD", "REDUCE", "AVOID"]
+    horizon: str = Field(description="Holding period the verdict is for, e.g. '3-5 years'")
+    confidence: Literal["low", "medium", "high"]
+    condition: str | None = Field(
+        default=None, description="What would change the verdict, with the datum to watch"
+    )
+    entry_zone: str | None = Field(
+        default=None, description="Price range where the verdict applies (fincalc-backed)"
+    )
+    executive_summary: str
+    reasons_for: list[CasePoint]
+    reasons_against: list[CasePoint]
+    scenarios: list[StockScenario]
+    action_checklist: list[str]
+    report_markdown: str = Field(description="Full report; every figure cites [C<id>]")
+
+
 class Gap(BaseModel):
     description: str
     stream: str = Field(description="Which stream should fill it")

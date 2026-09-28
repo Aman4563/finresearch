@@ -18,6 +18,7 @@ from finresearch.agents.schemas import (
     CriticReport,
     DiscoveryResult,
     ResearchPlan,
+    StockSynthesis,
     StreamReport,
     Synthesis,
     VerificationReport,
@@ -63,12 +64,19 @@ class Role:
         return hashlib.sha256((house + self.template_text()).encode()).hexdigest()[:12]
 
 
-def _stream(name: str, *, web: bool, market: bool = False, docs: bool = True, turns: int = 80) -> Role:
+def _stream(name: str, *, web: bool, market: bool = False, docs: bool = True, turns: int = 80,
+            equity: bool = False, skills: list[str] | None = None) -> Role:  # fmt: skip
     tools = [*(DOC_READ if docs else [f"{MCP}search_documents", f"{MCP}read_lines_tool"]), *CALC, *LEDGER_WRITE,
-             *(MARKET if market else []), *(WEB if web else []), *SKILL]  # fmt: skip
+             *(MARKET if market else []), *(EQUITY if equity else []), *(WEB if web else []), *SKILL]  # fmt: skip
+    extra = {"skills": skills} if skills is not None else {}
     return Role(name=name, template=f"stream_{name}.md", output=StreamReport, model_class=ModelClass.STANDARD,
-                tools=tools, effort="high" if name == "financials" else "medium", max_turns=turns,
-                timeout_s=3600, needs_web=web, writes_claims=True)  # fmt: skip
+                tools=tools, effort="high" if name in ("financials", "stock_fundamentals") else "medium",
+                max_turns=turns, timeout_s=3600, needs_web=web, writes_claims=True, **extra)  # fmt: skip
+
+
+STOCK_STREAMS = ("stock_fundamentals", "stock_business", "stock_valuation", "stock_governance", "stock_news",
+                 "stock_technical")  # fmt: skip
+STOCK_SKILLS = ["stock-research", "indian-fin-glossary"]
 
 
 ROLES: dict[str, Role] = {
@@ -96,4 +104,23 @@ ROLES: dict[str, Role] = {
                       skills=[]),
     "critic": Role("critic", "critic.md", CriticReport, ModelClass.DEEP, [*LEDGER_READ, *DOC_READ],
                    effort="medium", max_turns=25, timeout_s=1200, skills=["ipo-deep-research"]),
+    # ---- listed stocks
+    "stock_planner": Role("stock_planner", "stock_planner.md", ResearchPlan, ModelClass.DEEP,
+                          [*DOC_READ, *EQUITY, *CALC, *SKILL], effort="high", max_turns=30, timeout_s=1200,
+                          skills=STOCK_SKILLS),
+    "stock_fundamentals": _stream("stock_fundamentals", web=False, equity=True, turns=100, skills=STOCK_SKILLS),
+    "stock_business": _stream("stock_business", web=True, skills=STOCK_SKILLS),
+    "stock_valuation": _stream("stock_valuation", web=True, equity=True, skills=STOCK_SKILLS),
+    "stock_governance": _stream("stock_governance", web=True, equity=True, skills=STOCK_SKILLS),
+    "stock_news": _stream("stock_news", web=True, docs=False, equity=True, skills=STOCK_SKILLS),
+    "stock_technical": _stream("stock_technical", web=False, docs=False, equity=True, turns=40, skills=STOCK_SKILLS),
+    "stock_bull": Role("stock_bull", "case_stock_bull.md", CaseReport, ModelClass.DEEP, [*LEDGER_READ, *DOC_READ],
+                       effort="medium", max_turns=25, timeout_s=1200, skills=STOCK_SKILLS),
+    "stock_bear": Role("stock_bear", "case_stock_bear.md", CaseReport, ModelClass.DEEP, [*LEDGER_READ, *DOC_READ],
+                       effort="medium", max_turns=25, timeout_s=1200, skills=STOCK_SKILLS),
+    "stock_synthesizer": Role("stock_synthesizer", "stock_synthesizer.md", StockSynthesis, ModelClass.DEEP,
+                              [*LEDGER_READ, *DOC_READ, *CALC, *SKILL], effort="high", max_turns=60, timeout_s=3000,
+                              skills=["report-writer", *STOCK_SKILLS]),
+    "stock_critic": Role("stock_critic", "critic.md", CriticReport, ModelClass.DEEP, [*LEDGER_READ, *DOC_READ],
+                         effort="medium", max_turns=25, timeout_s=1200, skills=STOCK_SKILLS),
 }  # fmt: skip

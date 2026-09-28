@@ -30,6 +30,8 @@ class IpoPipeline(ResearchPipeline):
     version = PIPELINE_VERSION
     default_streams = STREAMS
     required_doc_kinds = ("RHP", "DRHP")
+    subject = "an Indian IPO"
+    primary_source = "the offer documents (the RHP text layer)"
 
     async def _facts(self) -> None:
         from finresearch.fincalc.dates import bidding_day_number, today_ist

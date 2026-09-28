@@ -173,6 +173,9 @@ def docs_discover(
     nse_symbol: str | None = typer.Option(None),
     agent: bool = typer.Option(True, help="Also search company IR pages with the discovery agent"),
     index: bool = typer.Option(True, help="Build sections, chunks and embeddings"),
+    kind: str = typer.Option(
+        "ipo", help="ipo (offer documents) or stock (annual reports and results filings)"
+    ),
 ) -> None:
     """Find, download and ingest a company's offer and IR documents (NSE, SEBI, IR pages)."""
     from finresearch.db import session_scope
@@ -183,7 +186,7 @@ def docs_discover(
         co = get_or_create_company(db, company, name, nse_symbol=nse_symbol)
         if nse_symbol and not co.nse_symbol:
             co.nse_symbol = nse_symbol
-    rep = asyncio.run(discover(company, use_agent=agent, index=index, log=console.print))
+    rep = asyncio.run(discover(company, use_agent=agent, index=index, log=console.print, kind=kind))
     for o in rep.outcomes:
         console.print(
             f"  {o.status:<9} {o.candidate.kind.value:<22} {o.candidate.title[:60]} "
@@ -280,6 +283,36 @@ def ipo_run(
                 co.nse_symbol = nse_symbol
     run_id = create_run(company)
     console.print(f"created run {run_id} for {company}")
+    _go(run_id, streams, concurrency, wait)
+
+
+stock_app = typer.Typer(no_args_is_help=True, help="Listed-stock research reports (multi-agent pipeline)")
+app.add_typer(stock_app, name="stock")
+
+
+@stock_app.command("run")
+def stock_run(
+    company: str = typer.Argument(
+        ..., help="Company slug (annual reports and results are discovered if missing)"
+    ),
+    name: str | None = typer.Option(None, help="Company name (creates the company if new)"),
+    nse_symbol: str | None = typer.Option(None),
+    streams: str | None = typer.Option(None, help="Comma-separated subset of the six stock streams"),
+    concurrency: int = typer.Option(4, help="Parallel agents (Max-plan friendly default)"),
+    wait: bool = typer.Option(False, help="Sleep through Max-window resets and resume automatically"),
+) -> None:
+    """Start a new listed-stock research run (resume it with `finresearch ipo resume <run_id>`)."""
+    from finresearch.db import session_scope
+    from finresearch.ingest.documents import get_or_create_company
+    from finresearch.orchestrator.base import create_run
+
+    if name or nse_symbol:
+        with session_scope() as db:
+            co = get_or_create_company(db, company, name, nse_symbol=nse_symbol)
+            if nse_symbol and not co.nse_symbol:
+                co.nse_symbol = nse_symbol
+    run_id = create_run(company, kind="stock_report")
+    console.print(f"created stock run {run_id} for {company}")
     _go(run_id, streams, concurrency, wait)
 
 

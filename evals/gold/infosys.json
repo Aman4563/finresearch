@@ -1,0 +1,374 @@
+{
+ "company": "infosys",
+ "kind": "stock_report",
+ "version": 1,
+ "as_of": "2026-09-29",
+ "source": "Infosys Integrated Annual Report 2025-26 (NSE annual reports, doc 83) and NSE shareholding / corporate actions",
+ "verdict": null,
+ "facts": [
+  {
+   "id": "inf-rev-fy26",
+   "label": "Consolidated revenue FY26",
+   "patterns": [
+    "revenue from operations|revenue_from_operations|\\brevenue\\b"
+   ],
+   "period": "fy ?2026|fy ?26\\b|2025-26|2026-03-31|march 31, 2026|31-mar-2026|year ended.*2026",
+   "value": 178650,
+   "unit": "INR crore",
+   "tolerance": 0.005,
+   "importance": "high",
+   "source": "AR FY26 p64 (doc 83 L2432)",
+   "exclude": "\\bdrhp\\b|lower band|floor price|\\bpeer|post[- ]dilution|diluted at|standalone|tcs|wipro|hcl|tech mahindra|segment",
+   "period_exclude": "\\bq[1-4]\\b|quarter|\\bh[12]\\b|9m|nine months|ttm|trailing",
+   "exclude_unless": "consolidated"
+  },
+  {
+   "id": "inf-rev-fy25",
+   "label": "Consolidated revenue FY25",
+   "patterns": [
+    "revenue from operations|revenue_from_operations|\\brevenue\\b"
+   ],
+   "period": "fy ?2025|fy ?25\\b|2024-25|2025-03-31|march 31, 2025|31-mar-2025|year ended.*2025",
+   "value": 162990,
+   "unit": "INR crore",
+   "tolerance": 0.005,
+   "importance": "normal",
+   "source": "AR FY26 p64",
+   "exclude": "\\bdrhp\\b|lower band|floor price|\\bpeer|post[- ]dilution|diluted at|standalone|tcs|wipro|hcl|tech mahindra|segment",
+   "period_exclude": "\\bq[1-4]\\b|quarter|\\bh[12]\\b|9m|nine months|ttm|trailing",
+   "exclude_unless": "consolidated"
+  },
+  {
+   "id": "inf-pat-fy26",
+   "label": "Consolidated PAT FY26",
+   "patterns": [
+    "\\bpat\\b|profit after tax|profit for the (year|period)|net profit"
+   ],
+   "period": "fy ?2026|fy ?26\\b|2025-26|2026-03-31|march 31, 2026|31-mar-2026|year ended.*2026",
+   "value": 29474,
+   "unit": "INR crore",
+   "tolerance": 0.005,
+   "importance": "high",
+   "source": "AR FY26 p64 / consolidated P&L",
+   "exclude": "\\bdrhp\\b|lower band|floor price|\\bpeer|post[- ]dilution|diluted at|standalone|tcs|wipro|hcl|tech mahindra|segment",
+   "period_exclude": "\\bq[1-4]\\b|quarter|\\bh[12]\\b|9m|nine months|ttm|trailing",
+   "exclude_unless": "consolidated"
+  },
+  {
+   "id": "inf-pat-fy25",
+   "label": "Consolidated PAT FY25",
+   "patterns": [
+    "\\bpat\\b|profit after tax|profit for the (year|period)|net profit"
+   ],
+   "period": "fy ?2025|fy ?25\\b|2024-25|2025-03-31|march 31, 2025|31-mar-2025|year ended.*2025",
+   "value": 26750,
+   "unit": "INR crore",
+   "tolerance": 0.005,
+   "importance": "normal",
+   "source": "AR FY26 p64",
+   "exclude": "\\bdrhp\\b|lower band|floor price|\\bpeer|post[- ]dilution|diluted at|standalone|tcs|wipro|hcl|tech mahindra|segment",
+   "period_exclude": "\\bq[1-4]\\b|quarter|\\bh[12]\\b|9m|nine months|ttm|trailing",
+   "exclude_unless": "consolidated"
+  },
+  {
+   "id": "inf-eps-fy26",
+   "label": "Consolidated basic EPS FY26",
+   "patterns": [
+    "\\beps\\b|earnings per share"
+   ],
+   "period": "fy ?2026|fy ?26\\b|2025-26|2026-03-31|march 31, 2026|31-mar-2026|year ended.*2026",
+   "value": 71.58,
+   "unit": "INR",
+   "tolerance": 0.005,
+   "importance": "high",
+   "source": "AR FY26 p64",
+   "exclude": "\\bdrhp\\b|lower band|floor price|\\bpeer|post[- ]dilution|diluted at|standalone|tcs|wipro|hcl|tech mahindra|segment|diluted",
+   "period_exclude": "\\bq[1-4]\\b|quarter|\\bh[12]\\b|9m|nine months|ttm|trailing",
+   "exclude_unless": "consolidated"
+  },
+  {
+   "id": "inf-pbt-fy26",
+   "label": "Consolidated PBT FY26",
+   "patterns": [
+    "\\bpbt\\b|profit before tax"
+   ],
+   "period": "fy ?2026|fy ?26\\b|2025-26|2026-03-31|march 31, 2026|31-mar-2026|year ended.*2026",
+   "value": 39995,
+   "unit": "INR crore",
+   "tolerance": 0.005,
+   "importance": "normal",
+   "source": "AR FY26 p64",
+   "exclude": "\\bdrhp\\b|lower band|floor price|\\bpeer|post[- ]dilution|diluted at|standalone|tcs|wipro|hcl|tech mahindra|segment|before (finance|exceptional)",
+   "period_exclude": "\\bq[1-4]\\b|quarter|\\bh[12]\\b|9m|nine months|ttm|trailing",
+   "exclude_unless": "consolidated"
+  },
+  {
+   "id": "inf-labour-codes",
+   "label": "Exceptional item: Labour Codes FY26",
+   "patterns": [
+    "labou?r code|exceptional"
+   ],
+   "period": "fy ?2026|fy ?26\\b|2025-26|2026-03-31|march 31, 2026|31-mar-2026|year ended.*2026",
+   "value": 1289,
+   "unit": "INR crore",
+   "tolerance": 0.005,
+   "importance": "high",
+   "source": "AR FY26 p64 note 1",
+   "exclude": "\\bdrhp\\b|lower band|floor price|\\bpeer|post[- ]dilution|diluted at|standalone|tcs|wipro|hcl|tech mahindra|segment",
+   "period_exclude": "\\bq[1-4]\\b|quarter|\\bh[12]\\b|9m|nine months|ttm|trailing",
+   "exclude_unless": "consolidated"
+  },
+  {
+   "id": "inf-dividend-fy26",
+   "label": "Dividend per share declared for FY26 (interim ₹23 + final ₹25)",
+   "patterns": [
+    "dividend per share|\\bdps\\b|dividend_per_share"
+   ],
+   "period": "fy ?2026|fy ?26\\b|2025-26",
+   "value": 48,
+   "unit": "INR",
+   "tolerance": 0.005,
+   "importance": "normal",
+   "source": "NSE corporate actions: interim ₹23 (ex 27-Oct-2025) + final ₹25 (ex 10-Jun-2026)",
+   "exclude": "\\bpeer|tcs|wipro|hcl|tech mahindra|standalone|ttm|trailing",
+   "period_exclude": "\\bq[1-4]\\b|quarter|\\bh[12]\\b|9m|nine months|ttm|trailing",
+   "exclude_unless": "consolidated"
+  },
+  {
+   "id": "inf-promoter",
+   "label": "Promoter and promoter group holding (30-Jun-2026)",
+   "patterns": [
+    "promoter"
+   ],
+   "period": "2026-06-30|30-jun|june 30, 2026|jun 2026|q1 ?fy ?27",
+   "value": 13.82,
+   "unit": "%",
+   "tolerance": 0.005,
+   "importance": "high",
+   "source": "NSE shareholding pattern",
+   "exclude": "\\bdrhp\\b|\\bpeer|tcs|wipro"
+  },
+  {
+   "id": "inf-dividend-ttm",
+   "label": "Dividends per share in the last 12 months",
+   "patterns": [
+    "dividend"
+   ],
+   "period": "ttm|trailing|last 12|12 months",
+   "value": 48,
+   "unit": "INR",
+   "tolerance": 0.005,
+   "importance": "normal",
+   "source": "NSE corporate actions (25 + 23)",
+   "exclude": "\\bpeer|tcs|wipro"
+  },
+  {
+   "id": "inf-total-income-fy26",
+   "label": "Consolidated total income FY26",
+   "patterns": [
+    "total income"
+   ],
+   "period": "fy ?2026|fy ?26\\b|2025-26|2026-03-31|march 31, 2026|31-mar-2026|year ended.*2026",
+   "value": 182972,
+   "unit": "INR crore",
+   "tolerance": 0.005,
+   "importance": "normal",
+   "source": "AR FY26 p64",
+   "exclude": "\\bdrhp\\b|lower band|floor price|\\bpeer|post[- ]dilution|diluted at|standalone|tcs|wipro|hcl|tech mahindra|segment",
+   "period_exclude": "\\bq[1-4]\\b|quarter|\\bh[12]\\b|9m|nine months|ttm|trailing",
+   "exclude_unless": "consolidated"
+  },
+  {
+   "id": "inf-other-income-fy26",
+   "label": "Consolidated other income FY26",
+   "patterns": [
+    "other income"
+   ],
+   "period": "fy ?2026|fy ?26\\b|2025-26|2026-03-31|march 31, 2026|31-mar-2026|year ended.*2026",
+   "value": 4322,
+   "unit": "INR crore",
+   "tolerance": 0.005,
+   "importance": "normal",
+   "source": "AR FY26 p64",
+   "exclude": "\\bdrhp\\b|lower band|floor price|\\bpeer|post[- ]dilution|diluted at|standalone|tcs|wipro|hcl|tech mahindra|segment",
+   "period_exclude": "\\bq[1-4]\\b|quarter|\\bh[12]\\b|9m|nine months|ttm|trailing",
+   "exclude_unless": "consolidated"
+  },
+  {
+   "id": "inf-employee-fy26",
+   "label": "Consolidated employee benefit expenses FY26",
+   "patterns": [
+    "employee (benefit|cost)"
+   ],
+   "period": "fy ?2026|fy ?26\\b|2025-26|2026-03-31|march 31, 2026|31-mar-2026|year ended.*2026",
+   "value": 95094,
+   "unit": "INR crore",
+   "tolerance": 0.005,
+   "importance": "normal",
+   "source": "AR FY26 p64",
+   "exclude": "\\bdrhp\\b|lower band|floor price|\\bpeer|post[- ]dilution|diluted at|standalone|tcs|wipro|hcl|tech mahindra|segment",
+   "period_exclude": "\\bq[1-4]\\b|quarter|\\bh[12]\\b|9m|nine months|ttm|trailing",
+   "exclude_unless": "consolidated"
+  },
+  {
+   "id": "inf-subcon-fy26",
+   "label": "Consolidated cost of technical sub-contractors FY26",
+   "patterns": [
+    "sub-?contract"
+   ],
+   "period": "fy ?2026|fy ?26\\b|2025-26|2026-03-31|march 31, 2026|31-mar-2026|year ended.*2026",
+   "value": 15421,
+   "unit": "INR crore",
+   "tolerance": 0.005,
+   "importance": "normal",
+   "source": "AR FY26 p64",
+   "exclude": "\\bdrhp\\b|lower band|floor price|\\bpeer|post[- ]dilution|diluted at|standalone|tcs|wipro|hcl|tech mahindra|segment",
+   "period_exclude": "\\bq[1-4]\\b|quarter|\\bh[12]\\b|9m|nine months|ttm|trailing",
+   "exclude_unless": "consolidated"
+  },
+  {
+   "id": "inf-expenses-fy26",
+   "label": "Consolidated total expenses FY26",
+   "patterns": [
+    "total expenses"
+   ],
+   "period": "fy ?2026|fy ?26\\b|2025-26|2026-03-31|march 31, 2026|31-mar-2026|year ended.*2026",
+   "value": 141272,
+   "unit": "INR crore",
+   "tolerance": 0.005,
+   "importance": "normal",
+   "source": "AR FY26 p64",
+   "exclude": "\\bdrhp\\b|lower band|floor price|\\bpeer|post[- ]dilution|diluted at|standalone|tcs|wipro|hcl|tech mahindra|segment",
+   "period_exclude": "\\bq[1-4]\\b|quarter|\\bh[12]\\b|9m|nine months|ttm|trailing",
+   "exclude_unless": "consolidated"
+  },
+  {
+   "id": "inf-tax-fy26",
+   "label": "Consolidated tax expense FY26",
+   "patterns": [
+    "tax expense"
+   ],
+   "period": "fy ?2026|fy ?26\\b|2025-26|2026-03-31|march 31, 2026|31-mar-2026|year ended.*2026",
+   "value": 10521,
+   "unit": "INR crore",
+   "tolerance": 0.005,
+   "importance": "normal",
+   "source": "AR FY26 p64",
+   "exclude": "\\bdrhp\\b|lower band|floor price|\\bpeer|post[- ]dilution|diluted at|standalone|tcs|wipro|hcl|tech mahindra|segment|deferred|current tax|rate",
+   "period_exclude": "\\bq[1-4]\\b|quarter|\\bh[12]\\b|9m|nine months|ttm|trailing",
+   "exclude_unless": "consolidated"
+  },
+  {
+   "id": "inf-pat-owners-fy26",
+   "label": "PAT attributable to owners FY26",
+   "patterns": [
+    "attributable to owners|owners of the company"
+   ],
+   "period": "fy ?2026|fy ?26\\b|2025-26|2026-03-31|march 31, 2026|31-mar-2026|year ended.*2026",
+   "value": 29440,
+   "unit": "INR crore",
+   "tolerance": 0.005,
+   "importance": "high",
+   "source": "AR FY26 p64",
+   "exclude": "\\bdrhp\\b|lower band|floor price|\\bpeer|post[- ]dilution|diluted at|standalone|tcs|wipro|hcl|tech mahindra|segment",
+   "period_exclude": "\\bq[1-4]\\b|quarter|\\bh[12]\\b|9m|nine months|ttm|trailing",
+   "exclude_unless": "consolidated"
+  },
+  {
+   "id": "inf-eps-fy25",
+   "label": "Consolidated basic EPS FY25",
+   "patterns": [
+    "\\beps\\b|earnings per share"
+   ],
+   "period": "fy ?2025|fy ?25\\b|2024-25|2025-03-31|march 31, 2025|31-mar-2025|year ended.*2025",
+   "value": 64.5,
+   "unit": "INR",
+   "tolerance": 0.005,
+   "importance": "normal",
+   "source": "AR FY26 p64",
+   "exclude": "\\bdrhp\\b|lower band|floor price|\\bpeer|post[- ]dilution|diluted at|standalone|tcs|wipro|hcl|tech mahindra|segment|diluted",
+   "period_exclude": "\\bq[1-4]\\b|quarter|\\bh[12]\\b|9m|nine months|ttm|trailing",
+   "exclude_unless": "consolidated"
+  },
+  {
+   "id": "inf-eps-diluted-fy26",
+   "label": "Consolidated diluted EPS FY26",
+   "patterns": [
+    "diluted"
+   ],
+   "period": "fy ?2026|fy ?26\\b|2025-26|2026-03-31|march 31, 2026|31-mar-2026|year ended.*2026",
+   "value": 71.46,
+   "unit": "INR",
+   "tolerance": 0.005,
+   "importance": "normal",
+   "source": "AR FY26 p64",
+   "exclude": "\\bdrhp\\b|lower band|floor price|\\bpeer|post[- ]dilution|diluted at|standalone|tcs|wipro|hcl|tech mahindra|segment",
+   "period_exclude": "\\bq[1-4]\\b|quarter|\\bh[12]\\b|9m|nine months|ttm|trailing",
+   "exclude_unless": "consolidated"
+  },
+  {
+   "id": "inf-pbt-fy25",
+   "label": "Consolidated PBT FY25",
+   "patterns": [
+    "\\bpbt\\b|profit before tax"
+   ],
+   "period": "fy ?2025|fy ?25\\b|2024-25|2025-03-31|march 31, 2025|31-mar-2025|year ended.*2025",
+   "value": 37608,
+   "unit": "INR crore",
+   "tolerance": 0.005,
+   "importance": "normal",
+   "source": "AR FY26 p64",
+   "exclude": "\\bdrhp\\b|lower band|floor price|\\bpeer|post[- ]dilution|diluted at|standalone|tcs|wipro|hcl|tech mahindra|segment|before (finance|exceptional)",
+   "period_exclude": "\\bq[1-4]\\b|quarter|\\bh[12]\\b|9m|nine months|ttm|trailing",
+   "exclude_unless": "consolidated"
+  },
+  {
+   "id": "inf-total-assets",
+   "label": "Consolidated total assets (31-Mar-2026)",
+   "patterns": [
+    "total assets"
+   ],
+   "period": "2026-03-31|march 31, 2026|31-mar-2026|fy ?2026|fy ?26\\b|as at .*2026",
+   "value": 155967,
+   "unit": "INR crore",
+   "tolerance": 0.005,
+   "importance": "high",
+   "source": "AR FY26 financial position",
+   "exclude": "\\bdrhp\\b|lower band|floor price|\\bpeer|post[- ]dilution|diluted at|standalone|tcs|wipro|hcl|tech mahindra|segment",
+   "period_exclude": "\\bq[1-4]\\b|quarter|\\bh[12]\\b|9m|nine months|ttm|trailing",
+   "exclude_unless": "consolidated"
+  },
+  {
+   "id": "inf-net-current-assets",
+   "label": "Consolidated net current assets (31-Mar-2026)",
+   "patterns": [
+    "net current assets|working capital"
+   ],
+   "period": "2026-03-31|march 31, 2026|31-mar-2026|fy ?2026|fy ?26\\b|as at .*2026",
+   "value": 51167,
+   "unit": "INR crore",
+   "tolerance": 0.005,
+   "importance": "normal",
+   "source": "AR FY26 financial position",
+   "exclude": "\\bdrhp\\b|lower band|floor price|\\bpeer|post[- ]dilution|diluted at|standalone|tcs|wipro|hcl|tech mahindra|segment",
+   "period_exclude": "\\bq[1-4]\\b|quarter|\\bh[12]\\b|9m|nine months|ttm|trailing",
+   "exclude_unless": "consolidated"
+  },
+  {
+   "id": "inf-dividends-paid-fy26",
+   "label": "Dividends paid in FY26 (consolidated)",
+   "patterns": [
+    "dividends? paid|dividends? \\(|dividend payout"
+   ],
+   "period": "fy ?2026|fy ?26\\b|2025-26|2026-03-31|march 31, 2026|31-mar-2026|year ended.*2026",
+   "value": 18653,
+   "unit": "INR crore",
+   "tolerance": 0.005,
+   "importance": "normal",
+   "source": "AR FY26 retained earnings",
+   "exclude": "\\bdrhp\\b|lower band|floor price|\\bpeer|post[- ]dilution|diluted at|standalone|tcs|wipro|hcl|tech mahindra|segment|per share",
+   "period_exclude": "\\bq[1-4]\\b|quarter|\\bh[12]\\b|9m|nine months|ttm|trailing",
+   "exclude_unless": "consolidated"
+  }
+ ]
+}

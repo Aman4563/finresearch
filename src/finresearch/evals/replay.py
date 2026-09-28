@@ -21,8 +21,8 @@ from finresearch.db.models import AgentStep, Citation, Claim, Company, Document,
 FORMAT = 1
 STEP_FIELDS = ("key", "stage", "role", "status", "tier", "model", "num_turns", "duration_s", "five_hour_before",
                "five_hour_after")  # fmt: skip
-SYNTH_FIELDS = ("overall_verdict", "verdict_listing", "verdict_long_term", "confidence", "condition",
-                "report_markdown")  # fmt: skip
+SYNTH_FIELDS = ("overall_verdict", "verdict_listing", "verdict_long_term", "verdict", "horizon", "entry_zone", "suits",
+                "price_or_yield", "confidence", "condition", "report_markdown")  # fmt: skip
 
 
 def _dt(v: datetime | None) -> str | None:

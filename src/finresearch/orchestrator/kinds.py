@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from finresearch.orchestrator.base import PipelineConfig, ResearchPipeline
 from finresearch.orchestrator.ipo import IpoPipeline
+from finresearch.orchestrator.stock import StockPipeline
 
-KINDS: dict[str, type[ResearchPipeline]] = {IpoPipeline.kind: IpoPipeline}
+KINDS: dict[str, type[ResearchPipeline]] = {IpoPipeline.kind: IpoPipeline, StockPipeline.kind: StockPipeline}
 
 
 def kind_of(run_id: int) -> str:

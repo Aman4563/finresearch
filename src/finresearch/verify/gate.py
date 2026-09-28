@@ -68,8 +68,13 @@ def numbers_in(text: str) -> list[Decimal]:
     return [v for v in (_dec(m.group(0)) for m in _NUM_RE.finditer(text)) if v is not None]
 
 
+FOREIGN_CURRENCY = ("usd", "us$", "$", "eur", "€", "gbp", "£", "jpy", "¥", "dollar", "euro")
+
+
 def rupee_scale(unit: str | None) -> Decimal | None:
     u = f" {(unit or '').lower()}"
+    if any(k in u for k in FOREIGN_CURRENCY):  # live INFY run 8: "USD million" was read as ₹ million
+        return None
     if not any(
         k in u for k in ("inr", "rs", "₹", "rupee", "crore", "lakh", "million", " mn", " cr", "billion")
     ):

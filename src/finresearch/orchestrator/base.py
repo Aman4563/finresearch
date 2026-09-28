@@ -82,9 +82,12 @@ class ResearchPipeline:
     # role that fills each slot of the DAG
     roles: dict[str, str] = {"planner": "planner", "verifier": "verifier", "bull": "bull", "bear": "bear",  # noqa: RUF012
                              "synthesizer": "synthesizer", "critic": "critic"}  # fmt: skip
-    required_doc_kinds: tuple[
-        str, ...
-    ] = ()  # at least one of these must be in the store before research starts
+    # at least one of these must be in the store before research starts
+    required_doc_kinds: tuple[str, ...] = ()
+    discovery_kind = "ipo"  # how `ingest.discover` looks for this kind's documents
+    subject = "a company"
+    primary_source = "the company's filings"
+    decision_deadline: str | None = None
 
     def __init__(self, run_id: int, *, runner: RoleRunner | None = None, router: BridgeRouter | None = None,
                  tracker: LimitTracker | None = None, config: PipelineConfig | None = None,
@@ -132,8 +135,9 @@ class ResearchPipeline:
         if require_offer_doc and self.required_doc_kinds and not self._has_primary_docs(docs):
             raise StepFailed(f"no {'/'.join(self.required_doc_kinds)} found for {slug}; run "
                              f"`finresearch docs discover {slug}` or `docs add`")  # fmt: skip
+        extra = {"decision_deadline": self.decision_deadline} if self.decision_deadline else {}
         return RunContext(run_id=self.run_id, company_slug=slug, company_name=name, nse_symbol=sym, documents=docs,
-                          facts=facts)  # fmt: skip
+                          facts=facts, subject=self.subject, primary_source=self.primary_source, **extra)  # fmt: skip
 
     def _has_primary_docs(self, docs: list[dict[str, Any]]) -> bool:
         return any(d["kind"] in self.required_doc_kinds for d in docs)
@@ -402,7 +406,7 @@ class ResearchPipeline:
                 if self.config.discover:
                     from finresearch.ingest.discover import discover
 
-                    await discover(self.ctx.company_slug, log=lambda m: None)
+                    await discover(self.ctx.company_slug, log=lambda m: None, kind=self.discovery_kind)
                 self.ctx = self._load_context(require_offer_doc=True)
             await self._facts()
             plan: ResearchPlan = await self.step("planner", "plan", self.roles["planner"])

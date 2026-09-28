@@ -33,6 +33,21 @@ DEFAULT_EXCLUDE = (
 )
 
 # a claim about a component of the gold metric (segment revenue, export revenue, ...) never contradicts the total
+DERIVED_VARIANTS = (
+    r"adjusted",
+    r"normali[sz]",
+    r"excluding",
+    r"\bex[- ]",
+    r"impact",
+    r"footnote",
+    r"\bbefore\b",
+    r"\binterim\b",
+    r"\bfinal\b",
+    r"standalone",
+    r"implied",
+    r"\bttm\b",
+    r"partial",
+)
 DEFAULT_COMPONENT = r"segment|export|domestic|geograph|product|region|channel|category"
 
 
@@ -103,8 +118,12 @@ class EvalResult:
         return [f for f in self.facts if f.contradicted_in_report]
 
     @property
-    def verdict_agrees(self) -> bool:
+    def verdict_agrees(self) -> bool | None:
         a, e = self.verdict_actual, self.verdict_expected
+        if not e:  # no reference verdict (stock gold sets are facts only)
+            return None
+        if "any_of" in e:  # stock reports: one verdict out of an acceptable set
+            return (a.get("overall") or "").upper() in {v.upper() for v in e["any_of"]}
         listing_ok = a.get("overall", "").startswith(e["listing"]) or a.get("listing", "").upper().startswith(
             e["listing"]
         )
@@ -126,7 +145,8 @@ class EvalResult:
             f"| verified recall | {self.verified_recall:.0%} |",
             f"| high-importance recall | {self.high_recall:.0%} |",
             f"| gold facts contradicted by the report | **{len(self.contradicted)}** |",
-            f"| verdict agrees with the manual report | {'yes' if self.verdict_agrees else 'no'} "
+            f"| verdict agrees with the manual report | "
+            f"{'n/a (no reference verdict)' if self.verdict_agrees is None else 'yes' if self.verdict_agrees else 'no'} "
             f"({self.verdict_actual.get('overall')}) |",
             f"| citation validity (cited claims with a found quote or URL) | {s['citation_validity']:.0%} |",
             f"| claims: total / verified / contradicted / unsupported | {s['claims_total']} / {s['claims_verified']} / "
@@ -158,12 +178,29 @@ def evaluate(
         gv = Decimal(str(fact["value"]))
         fr = FactResult(fact["id"], fact["label"], fact.get("importance", "normal"))
         excl = re.compile(fact.get("exclude") or DEFAULT_EXCLUDE, re.I)
+        # a fact can exclude claims by their period field alone (quarterly figures vs an annual fact), without
+        # dropping annual claims whose statement merely mentions a quarter
+        per_excl = re.compile(fact["period_exclude"], re.I) if fact.get("period_exclude") else None
+        # an exclusion is lifted when the claim also names this context (e.g. "consolidated ... (standalone ₹1,146 cr)")
+        keep = re.compile(fact["exclude_unless"], re.I) if fact.get("exclude_unless") else None
         component = re.compile(fact.get("component") or DEFAULT_COMPONENT, re.I)
+        # derived variants (adjusted, normalised, before-exceptional, interim/final parts) never contradict the
+        # reported figure, unless the fact's own pattern names that variant
+        pattern_text = " ".join(fact["patterns"])
+        variants = [v for v in DERIVED_VARIANTS if not re.search(v, pattern_text, re.I)]
+        derived = re.compile("|".join(variants), re.I) if variants else None
         for c in claims:
             metric = (c.metric or "").replace("_", " ")
             text = f"{metric} {c.statement}"
             context = f"{metric} {c.period or ''}"
-            if c.value is None or not pat.search(text) or excl.search(f"{context} {c.statement}"):
+            if c.value is None or not pat.search(text):
+                continue
+            # an exclusion in the claim's own metric or period always applies; one found only in the statement is
+            # lifted when the statement also names the wanted context (live INFY run 9: a "standalone_net_profit"
+            # claim whose statement said "consolidated" for contrast)
+            if excl.search(context) or (excl.search(c.statement) and not (keep and keep.search(c.statement))):
+                continue
+            if per_excl and per_excl.search(c.period or ""):
                 continue
             if per and not per.search(f"{c.period or ''} {c.statement}"):
                 continue
@@ -182,6 +219,7 @@ def evaluate(
                 and c.status in USABLE
                 and pat.search(metric)
                 and not component.search(metric)
+                and not (derived and derived.search(metric))
                 and (per is None or per.search(c.period or ""))
             ):
                 # a contradiction needs the claim's own metric and period fields to name the gold fact
@@ -213,6 +251,7 @@ def evaluate(
         "minutes": sum(s.duration_s or 0 for s in steps) / 60,
         "five_hour_used": used,
     }
-    actual = {"overall": synth.get("overall_verdict", ""), "listing": synth.get("verdict_listing", ""),
+    actual = {"overall": synth.get("overall_verdict") or synth.get("verdict", ""),
+              "listing": synth.get("verdict_listing", ""),
               "long_term": synth.get("verdict_long_term", "")}  # fmt: skip
-    return EvalResult(gold["company"], run_id, results, gold["verdict"], actual, stats)
+    return EvalResult(gold["company"], run_id, results, gold.get("verdict") or {}, actual, stats)

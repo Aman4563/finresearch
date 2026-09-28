@@ -46,6 +46,49 @@ STREAM_FOLDER = {"financials": "02", "news30": "03", "risks": "04", "major": "04
                  "demand": "05", "business": "05"}  # fmt: skip
 
 
+@dataclass(frozen=True)
+class PackLayout:
+    """Where a research kind's documents and stream sections go in its research pack."""
+
+    label: str
+    folders: dict[str, str]
+    doc_folder: dict[str, str]
+    stream_folder: dict[str, str]
+    financial_streams: tuple[str, ...]
+    readme_rows: tuple[tuple[str, str], ...]
+    disclaimer: str
+
+
+IPO_LAYOUT = PackLayout(
+    label="IPO research report", folders=FOLDERS, doc_folder=DOC_FOLDER, stream_folder=STREAM_FOLDER,
+    financial_streams=("financials",),
+    readme_rows=(("01", "RHP, DRHP, addenda, abridged prospectus, price-band ad, anchor letter, industry report"),
+                 ("02", "Annual reports and statements, financials section, financials.xlsx/.csv, charts"),
+                 ("03", "News section and every web source cited"),
+                 ("04", "Risks, litigation and governance; history, sector and macro"),
+                 ("05", "Valuation and peers, demand signals, business and industry"),
+                 ("06", "Report (md/html/pdf), fact-check log, full claim ledger (xlsx/csv)")),
+    disclaimer="Personal research, not SEBI-registered investment advice. Live figures are INTERIM; GMP is unofficial.",
+)  # fmt: skip
+STOCK_LAYOUT = PackLayout(
+    label="stock research report",
+    folders={"01": "01_Company_Filings", "02": "02_Financial_Reports", "03": "03_News_Last_30_Days",
+             "04": "04_Governance_and_Events", "05": "05_Valuation_and_Price", "06": "06_Final_Report"},
+    doc_folder={"ANNUAL_REPORT": "01", "FINANCIAL_STATEMENTS": "02", "OTHER": "01"},
+    stream_folder={"stock_fundamentals": "02", "stock_news": "03", "stock_governance": "04", "stock_business": "05",
+                   "stock_valuation": "05", "stock_technical": "05"},
+    financial_streams=("stock_fundamentals",),
+    readme_rows=(("01", "Annual reports and other company filings"),
+                 ("02", "Results filings, fundamentals section, financials.xlsx/.csv, charts"),
+                 ("03", "News section and every web source cited"),
+                 ("04", "Governance, ownership and major events"),
+                 ("05", "Business, valuation vs history and peers, price behaviour"),
+                 ("06", "Report (md/html/pdf), fact-check log, full claim ledger (xlsx/csv)")),
+    disclaimer="Personal research, not SEBI-registered investment advice. Prices and holdings are as of their dates.",
+)  # fmt: skip
+LAYOUTS = {"ipo_report": IPO_LAYOUT, "stock_report": STOCK_LAYOUT}
+
+
 @dataclass
 class PackResult:
     path: Path
@@ -99,12 +142,14 @@ def _latest_synthesis(session, run_id: int) -> dict[str, Any] | None:
 
 
 # --------------------------------------------------------------------------- tables & charts
-def financial_pivot(claims: dict[int, ClaimView]) -> tuple[list[str], list[list[Any]]]:
+def financial_pivot(
+    claims: dict[int, ClaimView], streams: tuple[str, ...] = ("financials",)
+) -> tuple[list[str], list[list[Any]]]:
     """metric x period table from usable numeric financials claims (verified first)."""
     rank = {"verified": 0, "unverified": 1, "needs_review": 2}
     cells: dict[tuple[str, str], tuple[int, str, int]] = {}
     for c in claims.values():
-        if c.stream != "financials" or not (c.metric and c.period and c.value) or c.status not in rank:
+        if c.stream not in streams or not (c.metric and c.period and c.value) or c.status not in rank:
             continue
         key = (f"{c.metric} ({c.unit})" if c.unit else c.metric, c.period)
         cand = (rank[c.status], c.value, c.id)
@@ -117,7 +162,8 @@ def financial_pivot(claims: dict[int, ClaimView]) -> tuple[list[str], list[list[
     return ["metric", *periods], rows
 
 
-def charts(claims: dict[int, ClaimView], out_dir: Path, limit: int = 4) -> list[Path]:
+def charts(claims: dict[int, ClaimView], out_dir: Path, limit: int = 4,
+           streams: tuple[str, ...] = ("financials",)) -> list[Path]:  # fmt: skip
     import matplotlib
 
     matplotlib.use("Agg")
@@ -126,7 +172,7 @@ def charts(claims: dict[int, ClaimView], out_dir: Path, limit: int = 4) -> list[
     series: dict[str, dict[str, float]] = {}
     for c in claims.values():
         if (
-            c.stream != "financials"
+            c.stream not in streams
             or c.status not in ("verified", "unverified")
             or not (c.metric and c.period and c.value)
         ):
@@ -246,9 +292,11 @@ def render_pack(
             for d in s.scalars(select(Document).where(Document.company_id == co.id))
         ]
         company_name, slug = co.name, co.slug
+        layout = LAYOUTS.get(run.kind, IPO_LAYOUT)
 
     root = (out_root or get_settings().reports_dir) / slug / f"run-{run_id}"
-    for f in FOLDERS.values():
+    folders = layout.folders
+    for f in folders.values():
         (root / f).mkdir(parents=True, exist_ok=True)
     res = PackResult(path=root, gate_ok=gate.ok, blocking=gate.blocking, warnings=gate.warnings)
 
@@ -256,7 +304,9 @@ def render_pack(
         for kind, title, src in docs:
             if src.exists():
                 dest = (
-                    root / FOLDERS[DOC_FOLDER.get(kind, "05")] / f"{_safe(kind)}__{_safe(title)}{src.suffix}"
+                    root
+                    / folders[layout.doc_folder.get(kind, "05")]
+                    / f"{_safe(kind)}__{_safe(title)}{src.suffix}"
                 )
                 if not dest.exists():
                     shutil.copyfile(src, dest)
@@ -264,25 +314,25 @@ def render_pack(
                 res.notes.append(f"source file missing for {title}")
 
     for stream, parts in sections.items():
-        folder = root / FOLDERS[STREAM_FOLDER.get(stream, "05")]
+        folder = root / folders[layout.stream_folder.get(stream, "05")]
         (folder / f"{stream}_section.md").write_text(f"# {stream} (run {run_id})\n\n" + "\n\n".join(parts))
     web = sorted(
         {(x["url"], x.get("accessed_at")) for c in claims.values() for x in c.citations if x.get("url")}
     )
-    (root / FOLDERS["03"] / "sources.md").write_text(
+    (root / folders["03"] / "sources.md").write_text(
         "# Web sources cited in the ledger\n\n" + "\n".join(f"- {u} (accessed {a})" for u, a in web) + "\n"
     )
 
-    fin_header, fin_rows = financial_pivot(claims)
-    write_csv(root / FOLDERS["02"] / "financials.csv", fin_header, fin_rows)
+    fin_header, fin_rows = financial_pivot(claims, layout.financial_streams)
+    write_csv(root / folders["02"] / "financials.csv", fin_header, fin_rows)
     claim_header, claim_rows = _claims_rows(claims)
-    write_xlsx(root / FOLDERS["02"] / "financials.xlsx", {"Financials": (fin_header, fin_rows)})
-    write_xlsx(root / FOLDERS["06"] / "claims.xlsx", {"Claims": (claim_header, claim_rows)})
-    write_csv(root / FOLDERS["06"] / "claims.csv", claim_header, claim_rows)
-    chart_paths = charts(claims, root / FOLDERS["02"] / "charts")
+    write_xlsx(root / folders["02"] / "financials.xlsx", {"Financials": (fin_header, fin_rows)})
+    write_xlsx(root / folders["06"] / "claims.xlsx", {"Claims": (claim_header, claim_rows)})
+    write_csv(root / folders["06"] / "claims.csv", claim_header, claim_rows)
+    chart_paths = charts(claims, root / folders["02"] / "charts", streams=layout.financial_streams)
 
-    final = root / FOLDERS["06"]
-    title = f"{company_name} — IPO research report (run {run_id})"
+    final = root / folders["06"]
+    title = f"{company_name} — {layout.label} (run {run_id})"
     md_name = "report.md" if gate.ok else "report_NOT_PUBLISHED.md"
     (final / md_name).write_text(report_md)
     cited = {int(x) for x in re.findall(r"\[C(\d+)\]", report_md)}
@@ -309,17 +359,11 @@ def render_pack(
     status = (
         "PASSED — published" if gate.ok else "BLOCKED — draft only (see 06_Final_Report/fact_check_log.md)"
     )
+    rows = "".join(f"| {folders[k]} | {text} |\n" for k, text in layout.readme_rows)
     (root / "README.md").write_text(
         f"# {company_name} — research pack (run {run_id})\n\n"
         f"Generated {now:%d %b %Y %H:%M} IST by FinResearch. Publish gate: **{status}**.\n\n"
-        "Personal research, not SEBI-registered investment advice. Live figures are INTERIM; GMP is unofficial.\n\n"
-        "| Folder | Contents |\n|---|---|\n"
-        "| 01_Offer_Documents | RHP, DRHP, addenda, abridged prospectus, price-band ad, anchor letter, industry report |\n"
-        "| 02_Financial_Reports | Annual reports and statements, financials section, financials.xlsx/.csv, charts |\n"
-        "| 03_News_Last_30_Days | News section and every web source cited |\n"
-        "| 04_Major_News_and_Events | Risks, litigation and governance; history, sector and macro |\n"
-        "| 05_Stock_and_Valuation_Analysis | Valuation and peers, demand signals, business and industry |\n"
-        "| 06_Final_Report | Report (md/html/pdf), fact-check log, full claim ledger (xlsx/csv) |\n"
+        f"{layout.disclaimer}\n\n| Folder | Contents |\n|---|---|\n{rows}"
     )
     res.files = sum(1 for p in root.rglob("*") if p.is_file())
     return res
