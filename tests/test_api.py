@@ -206,3 +206,76 @@ def test_only_localhost_hosts_are_accepted(client):
 def test_limits_reads_the_isolated_state(client, env):
     assert "tiers" in client.get("/api/limits").json()
     assert Path(env.state_dir).is_relative_to(Path(env.docs_dir).parent)
+
+
+def test_ipo_radar_links_known_companies_and_reports_source_errors(client, seeded, monkeypatch):
+    from datetime import date
+
+    from finresearch.adapters import nse
+    from finresearch.adapters.nse import IpoIssue
+
+    class FakeNse:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return None
+
+        async def current_issues(self):
+            return [
+                IpoIssue(
+                    symbol="APICO",
+                    company="Api Co",
+                    issue_start=date(2026, 9, 25),
+                    price_band="Rs.258 to Rs.272",
+                )
+            ]
+
+        async def upcoming_issues(self):
+            raise nse.NseError("NSE refused")
+
+    monkeypatch.setattr(nse, "NseClient", FakeNse)
+    data = client.get("/api/ipos", params={"refresh": True}).json()
+    row = data["issues"][0]
+    assert (
+        row["phase"] == "current" and row["slug"] == seeded["slug"] and row["latest_run"] == seeded["run_id"]
+    )
+    assert row["issue_start"] == "2026-09-25" and data["errors"][0].startswith("upcoming")
+
+
+def test_ipo_radar_dedupes_symbols_and_derives_the_phase_from_dates(client, monkeypatch):
+    from datetime import date, datetime
+
+    from finresearch.adapters import nse
+    from finresearch.adapters.nse import IpoIssue
+
+    def issue(sym, start, end):
+        return IpoIssue(symbol=sym, company=sym, issue_start=start, issue_end=end)
+
+    class FakeNse:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return None
+
+        async def current_issues(self):
+            return [
+                issue("OPEN", date(2026, 9, 25), date(2026, 9, 29)),
+                issue("DONE", date(2026, 9, 20), date(2026, 9, 24)),
+            ]
+
+        async def upcoming_issues(self):
+            return [
+                issue("OPEN", date(2026, 9, 25), date(2026, 9, 29)),
+                issue("NEXT", date(2026, 10, 1), date(2026, 10, 5)),
+            ]
+
+    monkeypatch.setattr(nse, "NseClient", FakeNse)
+    monkeypatch.setattr("finresearch.fincalc.dates.now_ist", lambda: datetime(2026, 9, 28, 12))
+    rows = client.get("/api/ipos", params={"refresh": True}).json()["issues"]
+    assert [(r["symbol"], r["phase"]) for r in rows] == [
+        ("OPEN", "open"),
+        ("NEXT", "upcoming"),
+        ("DONE", "closed"),
+    ]

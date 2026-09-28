@@ -93,6 +93,7 @@ They work only through the MCP tools, run as a resumable pipeline that schedules
 - [uv](https://docs.astral.sh/uv/) and Python 3.12.
 - [Claude Code](https://code.claude.com), logged in (`claude auth status` shows your account).
 - Homebrew packages: `postgresql@17`, `pgvector`, `tesseract`, `poppler`.
+- Node.js 22+ and pnpm for the dashboard.
 - [Ollama](https://ollama.com) with `qwen3.5:9b`, `qwen3.5:4b`, `qwen3-embedding:0.6b` and `glm-ocr`.
 
 ## Setup
@@ -139,6 +140,13 @@ uv run finresearch ipo render <run_id>             # rebuild the research pack (
 uv run finresearch serve                           # http://127.0.0.1:8710
 ```
 
+The dashboard (IPO radar, live agent view, report reader with clickable evidence, plan usage) is a Next.js app in
+`web/`:
+
+```bash
+cd web && pnpm install && pnpm build && pnpm start   # http://127.0.0.1:3100 (needs `finresearch serve`)
+```
+
 A finished run produces a research pack under `data/reports/<company>/run-<id>/`:
 - **Folders:** offer documents, financial reports, news, major events, valuation and a final report.
 - **Final report:** an HTML/PDF version where every figure links to its evidence (document page and line, or URL and access time).
@@ -172,6 +180,7 @@ src/finresearch/
   render/       report HTML/PDF, tables, charts and the research folder pack
   api/          local HTTP API and live run events for the app
   cli.py        finresearch command line
+web/            Next.js dashboard (radar, live runs, report reader, usage)
 tests/          offline tests and recorded fixtures
 scripts/        live smoke checks and gold-set ingestion
 ```
