@@ -108,7 +108,11 @@ if scenario == "near_ceiling":
     rl_ok = rl
 
 emit(rl_ok)
-out = {"answer": "ok", "leak": leak, "echo": prompt[:20]}
+out = (
+    json.loads(os.environ["FAKE_CLAUDE_OUTPUT"])
+    if os.environ.get("FAKE_CLAUDE_OUTPUT")
+    else {"answer": "ok", "leak": leak, "echo": prompt[:20]}
+)
 emit(
     {
         "type": "result",
