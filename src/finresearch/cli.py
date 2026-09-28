@@ -343,5 +343,15 @@ def ipo_status(run_id: int) -> None:
         console.print(t)
 
 
+@app.command()
+def serve(port: int = typer.Option(8710, help="Port on 127.0.0.1")) -> None:
+    """Start the local API for the research app (always bound to 127.0.0.1)."""
+    import uvicorn
+
+    from finresearch.api import create_app
+
+    uvicorn.run(create_app(), host="127.0.0.1", port=port, log_level="info")
+
+
 if __name__ == "__main__":
     app()

@@ -35,9 +35,13 @@ def db_url():
         pytest.skip("test database not reachable")
     from finresearch.db.models import Base
 
+    # reset the whole schema: tables created by other branches' models would block a metadata drop_all
+    if not eng.url.database or not eng.url.database.endswith("_test"):
+        pytest.exit(f"refusing to reset {eng.url.database!r}: the test database name must end in _test")
     with eng.begin() as c:
+        c.execute(text("DROP SCHEMA public CASCADE"))
+        c.execute(text("CREATE SCHEMA public"))
         c.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-    Base.metadata.drop_all(eng)
     Base.metadata.create_all(eng)
     eng.dispose()
     return url

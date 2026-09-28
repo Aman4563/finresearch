@@ -46,6 +46,17 @@ Statuses:
 | REPORT-001 | Renderer: the 12-section report (MD/HTML/PDF, atomic and validated), XLSX/CSV tables, charts, and the 01_…06_ folder pack | delivered | v0.2.0 |
 | EVAL-001 | Gold-set evaluation: regenerate Moneyview and Orient Cables and compare with the manual fact-check logs | planned | v0.2.0 |
 
+### Research app (P2)
+| ID | Requirement | Status | Milestone |
+|---|---|---|---|
+| APP-001 | Local API (127.0.0.1 only): companies, documents, runs, steps, claims, reports with gate, packs, limits; runs started as CLI worker processes; live SSE run events | delivered | v0.3.0 |
+| APP-002 | Dashboard: IPO radar, run launcher, live agent view | planned | v0.3.0 |
+| APP-003 | Report reader with citation hover and evidence panel | planned | v0.3.0 |
+| APP-004 | Ask Claude about a report, grounded in its claim ledger | planned | v0.3.0 |
+| APP-005 | Investor profile, deterministic personal rules, suggestions and decision journal | planned | v0.3.0 |
+| APP-006 | Plan usage and limits dashboard | planned | v0.3.0 |
+| APP-007 | Post-report monitoring: subscription to close, allotment, listing, lock-ins | planned | v0.3.0 |
+
 ## Verification log
 
 | Date | ID(s) | Evidence |
@@ -60,3 +71,4 @@ Statuses:
 | 2026-09-28 | VERIFY-001 | Deterministic gate (value-at-cited-lines with ₹/%-unit conversion, cross-claim conflicts, live-figure timestamps and staleness, bidding-day labels), atomic numeric claims, verifier corrections re-checked against the source, a second independent verifier for high-importance claims, a cross-stream conflict pass, and a publish gate with revision rounds (blocked report → `report_blocked.md`). Tests are seeded with real mistakes (weekend Day 3, stale GMP, ₹mn/₹cr scale, 80.36 vs 80.35, conflicting promoter holding, contradicted and raw citations). A replay on live run 3's report blocked its 10 raw `[RHP L…]` citations and flagged 63 uncited figure lines. 156 tests. |
 | 2026-09-28 | REPORT-001 | `finresearch ipo render 3` built the live run 3 pack: 32 files, a 17-page PDF (re-rendered over itself and still valid, Quick Look preview OK), source documents copied into 01/02/05, sections, sources, claims.xlsx/.csv and a fact-check log. The gate blocked it, so it is rendered as NOT PUBLISHED with the blocking reasons. Tests: citation links and statuses, evidence appendix, financial pivot (verified first, contradicted excluded), pack layout, published vs blocked naming, and the PDF re-render regression. The pipeline renders automatically at the end of a run. 162 tests. |
 | 2026-09-28 | DATA-003 | `finresearch docs discover acevector --no-agent` (live): NSE issue information gave 2 ZIP archives (RHP 575 pages + NSE General Information Document 50 pages, anchor letter 2 pages), all ingested and indexed. The SEBI copy of the RHP was recognised as a duplicate by sha256. Each document stores URL, HTTP status, fetched_at, content type, the ZIP member name and the discovery source. Fixed live: indexing inside the event loop, and the GID being tagged as an RHP. `ipo run` now discovers documents when no RHP/DRHP is stored. Orient Cables with the discovery agent (live, 25 min): 42 new documents from the company's IR "material documents" page (annual reports, the industry report, auditor examination report, WACA/KPI/basis-of-price certificates, offer agreements, SEBI observation letter) plus the NSE archives; the stored SEBI RHP and DRHP were recognised as duplicates. Separate audited financial statements were not listed on that page (already in the store from earlier ingestion). Fixed from this run: the NSE copy of the RHP (byte-different, 480/491 identical pages) is now a same-text duplicate, and `Orient_GID.pdf` is classified OTHER. Moneyview was not re-run live (one-IPO rule); 10 offline discovery tests. |
+| 2026-09-28 | APP-001 | `finresearch serve` on 127.0.0.1:8710 against the live database: companies (3), run 5 detail while running (28 steps, 373 claims, 61% of the 5-hour window, 1,783 turns), run 4 report (published, 209 cited claims with evidence), SSE snapshot for run 5. Host-header allow-list rejects non-localhost hosts; pack and document files are served only from the data directories. 9 offline API tests (spawned workers are faked; argv equals the CLI's `ipo resume <id> --wait`). |
