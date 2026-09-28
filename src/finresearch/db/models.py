@@ -149,7 +149,8 @@ class ResearchRun(TimestampMixin, Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     company_id: Mapped[int | None] = mapped_column(ForeignKey("company.id"), index=True)
     kind: Mapped[str] = mapped_column(String(40))  # ipo_report | stock_report | ...
-    status: Mapped[str] = mapped_column(String(20), default="running")
+    status: Mapped[str] = mapped_column(String(20), default="running")  # running | paused | done | failed
+    resume_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     manifest: Mapped[dict[str, Any]] = mapped_column(default=dict)  # models, prompt hashes, parser versions
 
@@ -190,6 +191,39 @@ class Citation(Base):
     accessed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     claim: Mapped[Claim] = relationship(back_populates="citations")
+
+
+class AgentStep(Base):
+    """One orchestrated step of a research run (idempotent by (run_id, key)); enables resume after a crash or limit."""
+
+    __tablename__ = "agent_step"
+    __table_args__ = (UniqueConstraint("run_id", "key"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("research_run.id", ondelete="CASCADE"), index=True)
+    key: Mapped[str] = mapped_column(
+        String(120)
+    )  # e.g. planner, stream:financials, verify:financials, round2:...
+    stage: Mapped[str] = mapped_column(
+        String(40)
+    )  # facts | plan | stream | verify | case | synthesis | critic
+    role: Mapped[str | None] = mapped_column(String(40))
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    # pending | running | done | failed | deferred (limit / budget; resumable)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    tier: Mapped[str | None] = mapped_column(String(20))
+    model: Mapped[str | None] = mapped_column(String(60))
+    output: Mapped[dict[str, Any]] = mapped_column(default=dict)
+    error: Mapped[str | None] = mapped_column(Text)
+    cost_usd_est: Mapped[float | None] = mapped_column(Float)
+    input_tokens: Mapped[int | None] = mapped_column(Integer)
+    output_tokens: Mapped[int | None] = mapped_column(Integer)
+    duration_s: Mapped[float | None] = mapped_column(Float)
+    num_turns: Mapped[int | None] = mapped_column(Integer)
+    five_hour_before: Mapped[float | None] = mapped_column(Float)
+    five_hour_after: Mapped[float | None] = mapped_column(Float)
+    transcript_path: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 # --------------------------------------------------------------------------- market data
