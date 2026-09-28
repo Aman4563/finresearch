@@ -137,6 +137,10 @@ uv run finresearch ipo status <run_id>             # steps, models, turns, time 
 uv run finresearch ipo resume <run_id> --wait      # continue a paused or failed run (finished steps are kept)
 uv run finresearch ipo render <run_id>             # rebuild the research pack (report md/html/pdf, tables, charts)
 
+# listed stocks
+uv run finresearch docs discover infosys --name "Infosys Limited" --nse-symbol INFY --kind stock   # annual reports + results
+uv run finresearch stock run infosys --wait         # six stock streams; verdict BUY / ACCUMULATE / HOLD / REDUCE / AVOID
+
 # local API for the app (always 127.0.0.1; OpenAPI docs at /api/docs); also runs the monitor
 uv run finresearch serve                           # http://127.0.0.1:8710
 

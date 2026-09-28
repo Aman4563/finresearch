@@ -129,6 +129,43 @@ class CorporateAction(BaseModel):
                    record_date=parse_nse_date(r.get("recDate")), dividend_per_share=dividend_per_share(subj))  # fmt: skip
 
 
+class AnnualReportFiling(BaseModel):
+    symbol: str
+    from_year: int | None
+    to_year: int | None
+    url: str
+    submission: str | None  # New | Revised
+    at: datetime | None
+
+    @property
+    def fiscal_label(self) -> str:
+        return f"FY{str(self.to_year)[-2:]}" if self.to_year else "FY?"
+
+    @classmethod
+    def parse(cls, r: dict[str, Any], symbol: str) -> AnnualReportFiling:
+        def year(v: Any) -> int | None:
+            try:
+                return int(str(v))
+            except (TypeError, ValueError):
+                return None
+
+        return cls(symbol=symbol, from_year=year(r.get("fromYr")), to_year=year(r.get("toYr")),
+                   url=r.get("fileName") or "", submission=r.get("submission_type"),
+                   at=parse_nse_timestamp((r.get("broadcast_dttm") or "").title() or None))  # fmt: skip
+
+
+def latest_annual_reports(filings: list[AnnualReportFiling], years: int = 2) -> list[AnnualReportFiling]:
+    """The most recent filing per financial year (a revised filing replaces the original), newest years first."""
+    best: dict[int, AnnualReportFiling] = {}
+    for f in filings:
+        if not f.to_year or not f.url.startswith("http"):
+            continue
+        cur = best.get(f.to_year)
+        if cur is None or (f.at and cur.at and f.at > cur.at):
+            best[f.to_year] = f
+    return [best[y] for y in sorted(best, reverse=True)[:years]]
+
+
 def _upper_date(v: str | None) -> date | None:
     """'30-JUN-2026' -> date (shareholding payloads use upper-case months)."""
     return parse_nse_date(v.title()) if v and v != "-" else None
@@ -192,6 +229,11 @@ class NseEquity:
             symbol, "/api/corporates-corporateActions", {"index": "equities", "symbol": symbol}
         )
         return [CorporateAction.parse(r) for r in rows or []]
+
+    async def annual_reports(self, symbol: str) -> list[AnnualReportFiling]:
+        d = await self._get(symbol, "/api/annual-reports", {"index": "equities", "symbol": symbol})
+        rows = d.get("data", []) if isinstance(d, dict) else d or []
+        return [AnnualReportFiling.parse(r, symbol) for r in rows]
 
     async def fetch_bytes(self, url: str) -> bytes:
         resp = await self.nse.http.get(url, headers={"Referer": f"{NSE_BASE}/"})

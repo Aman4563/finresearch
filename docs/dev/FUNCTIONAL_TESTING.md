@@ -88,3 +88,18 @@ These are dated entries for bugs we reproduced, what caused them, and how they a
 ### 2026-09-29: translated Hindi figures were not marked as translations (live run 7)
 - **Seen:** the news agent cited a Hindi Business Standard article with the Hindi quote but wrote an English statement without saying it was translated. Neither the prompt instruction nor the tool's note changed this.
 - **Now:** `save_claim` detects Devanagari in a citation quote and appends "(translated from Hindi)" to an unmarked statement (`checks.translation_mark_added`). The report gate still warns about unmarked Hindi claims saved earlier (`test_hindi_quotes_are_flagged_and_unmarked_translations_warned`).
+
+### 2026-09-29: the stock fundamentals stream skipped most statement lines (live Infosys run 8)
+- **Seen:** run 8 recorded revenue, PAT and EPS but not PBT, tax, expense lines, total assets, working capital or dividends paid. Recall was 11/23.
+- **Now:** the fundamentals prompt has a checklist of consolidated P&L, balance-sheet and cash-flow lines for the latest two years. Run 9 recall was 21/23.
+
+### 2026-09-29: USD figures read as rupees by the gate and scorer
+- **Seen:** Infosys's revenue in "USD million" was scaled as ₹ million and flagged as contradicting the INR gold fact.
+- **Now:** `rupee_scale` returns None for foreign currencies (USD, $, EUR, GBP, JPY) (`test_foreign_currency_units_never_get_a_rupee_scale`).
+
+### 2026-09-29: the scorer dropped or wrongly contradicted related figures (runs 8 and 9)
+- **Seen, and now fixed (each with a regression test):**
+  - An annual claim was dropped because its statement mentioned the quarter it was booked in. `period_exclude` now reads the period field only.
+  - A consolidated claim citing a standalone comparative was dropped. `exclude_unless` now lifts a statement-only exclusion.
+  - A `standalone_net_profit` metric counted for the consolidated fact. An exclusion in the metric or period always applies.
+  - Adjusted or normalised EPS, profit before exceptional items, and interim and final dividend parts counted as contradicting the reported totals. Derived variants no longer contradict, unless the fact's own pattern names them.

@@ -98,7 +98,8 @@ _DIVIDEND = re.compile(
 def dividend_per_share(subject: str) -> Decimal | None:
     """Cash dividend per share from an NSE corporate-action subject, e.g. 'Dividend - Rs 25 Per Share' -> 25.
 
-    Returns None for non-dividend actions (bonus, split, buyback) and for subjects without an amount.
+    A subject with several dividends ('Special Dividend - Rs 8 Per Share /Dividend - Rs 20 Per Share') returns their
+    sum. Returns None for non-dividend actions (bonus, split, buyback) and for subjects without an amount.
     """
-    m = _DIVIDEND.search(subject or "")
-    return Decimal(m.group(1)) if m else None
+    amounts = _DIVIDEND.findall(subject or "")
+    return sum((Decimal(a) for a in amounts), Decimal(0)) if amounts else None

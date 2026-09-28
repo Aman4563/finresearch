@@ -159,6 +159,33 @@ def agent_candidates(result: dict[str, Any]) -> list[Candidate]:
     return out
 
 
+async def stock_candidates(
+    symbol: str, *, report_years: int = 2, results: int = 4, equity=None
+) -> list[Candidate]:
+    """A listed stock's recent annual reports and results filings, from NSE."""
+    from finresearch.adapters.nse_equity import NseEquity, latest_annual_reports
+
+    out: list[Candidate] = []
+    page = f"https://www.nseindia.com/get-quotes/equity?symbol={symbol}"
+    async with equity or NseEquity() as eq:
+        for f in latest_annual_reports(await eq.annual_reports(symbol), report_years):
+            out.append(
+                Candidate(f.url, DocKind.ANNUAL_REPORT, f"Annual report {f.fiscal_label}", "nse", page)
+            )
+        filings = sorted((a for a in await eq.announcements(symbol) if a.results_period_end and a.attachment),
+                         key=lambda a: a.results_period_end, reverse=True)  # fmt: skip
+        seen = set()
+        for a in filings:
+            if a.results_period_end in seen:
+                continue
+            seen.add(a.results_period_end)
+            out.append(Candidate(a.attachment, DocKind.FINANCIALS,
+                                 f"Financial results for the period ended {a.results_period_end}", "nse", page))  # fmt: skip
+            if len(seen) >= results:
+                break
+    return out
+
+
 # --------------------------------------------------------------------------- download & ingest
 def _norm(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
@@ -270,9 +297,10 @@ def fetch_and_ingest(session: Session, company: Company, cands: list[Candidate],
 
 # --------------------------------------------------------------------------- orchestration
 async def discover(
-    company_slug: str, *, use_agent: bool = True, index: bool = True, log=print
+    company_slug: str, *, use_agent: bool = True, index: bool = True, log=print, kind: str = "ipo"
 ) -> DiscoveryReport:
-    """Find, download and ingest a company's documents from NSE, SEBI and (optionally) its IR pages."""
+    """Find, download and ingest a company's documents: for an IPO from NSE issue archives, SEBI and (optionally) its
+    IR pages; for a listed stock (kind="stock") its NSE annual reports and results filings."""
     import asyncio
     import json
 
@@ -289,7 +317,13 @@ async def discover(
             raise ValueError(f"unknown company {company_slug!r}")
         name, symbol, co_id = co.name, co.nse_symbol, co.id
     cands: list[Candidate] = []
-    if symbol:
+    if kind == "stock":
+        if not symbol:
+            raise ValueError(f"{company_slug} has no NSE symbol")
+        cands = await stock_candidates(symbol)
+        log(f"NSE: {len(cands)} annual report / results filing(s)")
+        use_agent = False
+    elif symbol:
         try:
             from finresearch.adapters.nse import NseClient
 
@@ -299,9 +333,10 @@ async def discover(
             log(f"NSE: {len(cands)} archive link(s)")
         except Exception as e:
             log(f"NSE issue info unavailable: {e}")
-    sebi = await sebi_candidates(name)
-    log(f"SEBI: {len(sebi)} matching filing(s)")
-    cands += sebi
+    if kind != "stock":
+        sebi = await sebi_candidates(name)
+        log(f"SEBI: {len(sebi)} matching filing(s)")
+        cands += sebi
     if use_agent:
         from finresearch.mcp_server.server import list_documents
 
