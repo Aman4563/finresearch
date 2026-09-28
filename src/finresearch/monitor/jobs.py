@@ -25,6 +25,7 @@ class Deps:
 
     ipo_detail: Any  # async (symbol) -> IpoDetail
     quote: Any  # async (symbol) -> Quote
+    current_issues: Any = None  # async () -> list[IpoIssue]; overall times for SME issues
 
     @classmethod
     def live(cls) -> Deps:
@@ -38,7 +39,11 @@ class Deps:
             async with NseClient() as nse:
                 return await nse.quote(symbol)
 
-        return cls(ipo_detail=ipo_detail, quote=quote)
+        async def current_issues():
+            async with NseClient() as nse:
+                return await nse.current_issues()
+
+        return cls(ipo_detail=ipo_detail, quote=quote, current_issues=current_issues)
 
 
 def alert(session: Session, watch: Watch, kind: str, message: str, level: str = "info", **data: Any) -> None:
@@ -54,13 +59,25 @@ async def subscription(session: Session, job: MonitorJob, watch: Watch, deps: De
 
     detail = await deps.ipo_detail(watch.nse_symbol)
     snap = detail.combined
-    if snap is None or snap.total_times is None:
+    if snap is None:
         raise NotYet("NSE has no combined subscription table yet")
+    total, source = snap.total_times, snap.source
+    if total is None and deps.current_issues:  # SME tables publish no offered shares, so no category times
+        row = next((i for i in await deps.current_issues() if i.symbol == watch.nse_symbol), None)
+        total, source = (row.times_subscribed, "nse_current_issues") if row else (None, source)
+    if total is None:
+        raise NotYet("NSE has not published a subscription total yet")
     session.execute(insert(SubscriptionSnapshotRow).values(
-        nse_symbol=watch.nse_symbol, as_of=snap.as_of or now, source=snap.source, total_times=snap.total_times,
+        nse_symbol=watch.nse_symbol, as_of=snap.as_of or now, source=source, total_times=total,
         categories=[c.model_dump(mode="json") for c in snap.categories], raw={},
     ).on_conflict_do_nothing(index_elements=["nse_symbol", "as_of", "source"]))  # fmt: skip
     m = subscription_metrics(detail)
+    if m.get("total_times") is None or m["total_times"].value is None:
+        from finresearch.suggest.rules import Metric
+
+        m["total_times"] = Metric(
+            total, "NSE current issues (overall)", snap.as_of.isoformat() if snap.as_of else None
+        )
     result = {k: str(v.value) if v.value is not None else None for k, v in m.items()}
     result["as_of"] = snap.as_of.isoformat() if snap.as_of else None
     changes = _reevaluate_rules(session, watch, detail, now)
@@ -69,9 +86,14 @@ async def subscription(session: Session, job: MonitorJob, watch: Watch, deps: De
               metrics=result)  # fmt: skip
     if job.params.get("final"):
         parts = [f"{label} {_fmt(m[k].value)}" for k, label in (("total_times", "total"), ("qib_times", "QIB"),
-                                                                ("nii_times", "NII"), ("rii_times", "retail")) if k in m]  # fmt: skip
+                 ("nii_times", "NII"), ("rii_times", "retail")) if k in m and m[k].value is not None]  # fmt: skip
+        label = (
+            "NSE combined"
+            if source == "nse_combined"
+            else "NSE current issues; SME category times unpublished"
+        )
         alert(session, watch, "subscription_final", f"{watch.nse_symbol} closed: " + ", ".join(parts)
-              + f" (NSE combined, {result['as_of']})", metrics=result)  # fmt: skip
+              + f" ({label}, {result['as_of']})", metrics=result)  # fmt: skip
     return {**result, "rule_changes": changes}
 
 

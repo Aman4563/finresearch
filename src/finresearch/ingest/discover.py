@@ -28,7 +28,11 @@ MAX_BYTES = 150 * 1024 * 1024
 SAME_TEXT_PAGES = (
     0.9  # share of identical pages that makes two files the same document (e.g. re-signed copies)
 )
-NSE_ZIP_KINDS = {"Red Herring Prospectus": DocKind.RHP, "Anchor Allocation Report": DocKind.ANCHOR}
+NSE_ZIP_KINDS = {
+    "Red Herring Prospectus": DocKind.RHP,
+    "Anchor Allocation Report": DocKind.ANCHOR,
+    "Ratios / Basis of Issue Price": DocKind.OTHER,
+}  # the last one is published for SME issues
 _STOP = {"limited", "ltd", "private", "pvt", "india", "the", "and", "&", "co", "company", "corporation"}
 
 
@@ -259,7 +263,8 @@ def fetch_and_ingest(session: Session, company: Company, cands: list[Candidate],
                     session.rollback()
                     report.outcomes.append(Outcome(c, "failed", detail=f"ingest {name}: {e}"[:300]))
                     continue
-                report.outcomes.append(Outcome(c, "ingested", doc.id, f"{doc.pages} pages"))
+                stored_as = f" as {doc.kind}" if doc.kind != c.kind.value else ""
+                report.outcomes.append(Outcome(c, "ingested", doc.id, f"{doc.pages} pages{stored_as}"))
     return report
 
 

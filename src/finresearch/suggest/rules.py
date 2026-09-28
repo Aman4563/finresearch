@@ -126,7 +126,9 @@ def _upper_from(issue_info: dict[str, str]) -> Decimal | None:
 def _lot_from(issue_info: dict[str, str]) -> Decimal | None:
     import re
 
-    m = re.search(r"(\d[\d,]*)\s*equity shares", issue_info.get("Bid Lot") or "", re.I)
+    m = re.search(
+        r"(\d[\d,]*)\s*equity shares", issue_info.get("Bid Lot") or issue_info.get("Lot Size") or "", re.I
+    )
     return Decimal(m.group(1).replace(",", "")) if m else None
 
 
@@ -157,11 +159,19 @@ def evaluate(rule: Rule, metrics: dict[str, Metric]) -> RuleResult:
     return RuleResult(rule, "fired" if fired else "clear", m.value, m.source)
 
 
-def lot_limits(profile: Profile, lot_cost: Decimal | None) -> dict[str, int | None]:
-    """Maximum lots by capital and by the SEBI category cap for the profile's category."""
+def lot_limits(profile: Profile, lot_cost: Decimal | None, *, sme: bool = False) -> dict[str, int | None]:
+    """Maximum lots by capital and by the SEBI category limits for the profile's category.
+
+    SME issues (ICDR amendment of March 2025, exchange circulars effective 1 July 2025): the minimum application is
+    two lots and above ₹2 lakh, and individual investors apply for exactly two lots; more lots is an NII bid.
+    """
     if not lot_cost:
         return {"by_capital": None, "by_category": None, "min_lots": None}
     by_capital = int(profile.capital_per_ipo_inr // lot_cost)
+    if sme:
+        if profile.category == "retail":
+            return {"by_capital": by_capital, "by_category": 2, "min_lots": 2}
+        return {"by_capital": by_capital, "by_category": None, "min_lots": 3}
     if profile.category == "retail":
         by_cat, min_lots = int(RETAIL_CAP_INR // lot_cost), 1
     elif profile.category == "shni":
@@ -169,6 +179,12 @@ def lot_limits(profile: Profile, lot_cost: Decimal | None) -> dict[str, int | No
     else:
         by_cat, min_lots = None, int(SHNI_CAP_INR // lot_cost) + 1
     return {"by_capital": by_capital, "by_category": by_cat, "min_lots": min_lots}
+
+
+def is_sme(issue_info: dict[str, str], detail=None) -> bool:
+    if detail is not None and getattr(detail, "series", "EQ") == "SME":
+        return True
+    return "market maker" in (issue_info.get("Issue Size") or "").lower()
 
 
 def company_of(session: Session, run_id: int) -> Company | None:

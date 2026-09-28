@@ -80,3 +80,7 @@ These are dated entries for bugs we reproduced, what caused them, and how they a
 ### 2026-09-28: the dashboard could not save the profile or journal entries (CORS)
 - **Seen (code review while adding monitoring):** the API allowed only GET and POST cross-origin, so the browser's preflight for `PUT /api/profile` and `PATCH /api/decisions/{id}` from the dashboard origin would be rejected. The page-load smoke test never saves, so it missed this.
 - **Now:** PUT and PATCH are allowed for the dashboard origins. `test_watch_api_and_cors_for_the_dashboard` sends the preflight for both methods, and a live `curl` preflight returns 200.
+
+### 2026-09-29: SME subscription tables would have read as zero demand
+- **Seen (live BMISL, SME):** NSE's category table for SME issues has no offered shares and shows 0.00x for every category, while the issue was 1.27x subscribed overall. Parsed as-is, that would have fired a "QIB < 1x" rule and reported zero demand.
+- **Now:** a category with no offered shares has unknown times. Rules on unknown metrics become conditions, and the monitor takes the overall total from NSE's current-issues list (`test_sme_category_times_are_unknown_not_zero`, `test_monitor_records_sme_subscription_from_the_current_issues_total`).

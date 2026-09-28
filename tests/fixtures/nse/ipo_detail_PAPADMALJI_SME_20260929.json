@@ -1,0 +1,191 @@
+{
+ "companyName": "PAPADMALJI",
+ "metaInfo": {},
+ "bidDetails": [
+  {
+   "category": "Total",
+   "noOfshareBid": "0",
+   "noofapplication": "0",
+   "srNo": null
+  }
+ ],
+ "issueInfo": {
+  "dataList": [
+   {
+    "title": null,
+    "value": "\"*As per SEBI circular no SEBI/HO/CFD/DIL2/CIR/P/2019/76 dated 28 June 2019 all are requested to comply with the provisions of the aforementioned circular which states as below: Intermediaries shall retain physical application forms submitted by retail individual investors with UPI as a payment mechanism, for a period of six months and thereafter forward the same to the issuer/ Registrar to Issue. However in case of Electronic forms printouts of such applications need not be retained or sent to the issuer. Intermediaries shall, at all times, maintain the electronic records relating to such forms for a minimum period of three years.\""
+   },
+   {
+    "title": "Symbol",
+    "value": "PAPADMALJI"
+   },
+   {
+    "title": "Issue Period",
+    "value": "29-Sep-2026 to 01-Oct-2026"
+   },
+   {
+    "title": "Cut-off time for UPI Mandate Confirmation",
+    "value": "01-Oct-2026 (upto 5:00 PM) The cut-off time for UPI mandate acceptance is 05:00 PM on last day of IPO bidding. Further bids with confirmed status of mandate amount blocked (RC100) shall be considered as valid applications and hence investors are advised to submit their UPI applications in IPO well in advance to avoid any last minute technical/systemic constraints that may hamper their ability to participate in IPOs by successfully accepting the mandate."
+   },
+   {
+    "title": "Issue Size",
+    "value": "\"Initial Public Offer comprising of Fresh issue of up to 25,72,800 equity shares and offer for sale of up to 2,30,400 equity shares (including Market Maker portion of 1,44,000 Equity Shares)\""
+   },
+   {
+    "title": "Issue Type",
+    "value": "Book Building"
+   },
+   {
+    "title": "Price Range",
+    "value": "Rs. 69 to Rs. 72 per equity Share"
+   },
+   {
+    "title": "Lot Size",
+    "value": "1600 Equity Shares"
+   },
+   {
+    "title": "Face Value",
+    "value": "Rs.10 per Equity Share"
+   },
+   {
+    "title": "Tick Size",
+    "value": "Re.1"
+   },
+   {
+    "title": "IPO Market Timings",
+    "value": "10.00 a.m. to 5.00 p.m. (Bidding Timings on Issue Closure upto 4:00 P.M.)"
+   },
+   {
+    "title": "Book Running Lead Managers",
+    "value": "Kreo Capital Private Limited"
+   },
+   {
+    "title": "Sponsor Bank",
+    "value": "Axis Bank Limited"
+   },
+   {
+    "title": "Categories",
+    "value": "\"FI, IC, MF, FII, OTH, CO, IND and NOH\""
+   },
+   {
+    "title": "Sub-Categories applicable for UPI",
+    "value": "\"IND (Up to Rs. 5,00,000)\""
+   },
+   {
+    "title": "Name of the Registrar",
+    "value": "MAS Services Limited"
+   },
+   {
+    "title": "Address of the Registrar",
+    "value": "\"T-34, 2nd Floor, Okhla Industral Area, Phase II, New Delhi 110 020, India.\""
+   },
+   {
+    "title": "Contact person name number and Email id",
+    "value": "\"Mr. N. C. Pal, 011 4132 0335, ipo@masserv.com  \""
+   },
+   {
+    "title": "e-form link",
+    "value": "https://bidcollection.nseindia.com/asba"
+   },
+   {
+    "title": "Branches of Self Certified Syndicate Banks (SCSBs) where syndicate / sub syndicate member to submit ASBA form",
+    "value": "<a href=http://www.sebi.gov.in/sebiweb/other/OtherAction.do?doRecognisedFpi=yes&intmId=35 target=new>SCSB List</a>"
+   },
+   {
+    "title": "Red Herring Prospectus",
+    "value": "https://nsearchives.nseindia.com/content/ipo/RHP_PAPADMALJI.zip"
+   },
+   {
+    "title": "Ratios / Basis of Issue Price",
+    "value": "https://nsearchives.nseindia.com/content/ipo/RATIOS_PAPADMALJI.zip"
+   },
+   {
+    "title": "Sample Application Forms",
+    "value": "https://nsearchives.nseindia.com/content/ipo/FORMS_PAPADMALJI.zip"
+   },
+   {
+    "title": "Security Parameters",
+    "value": "https://nsearchives.nseindia.com/content/ipo/LIVE_PARAMETERS_PAPADMALJI.zip"
+   },
+   {
+    "title": "Processing of ASBA Applications",
+    "value": "<a href=https://archives.nseindia.com/content/circulars/IPO53197.pdf target=new>NSE Circular on ASBA Application Processing</a>"
+   },
+   {
+    "title": "List of mobile applications accepting UPI as Payment Option",
+    "value": "<a href=https://www.sebi.gov.in/sebiweb/other/OtherAction.do?doRecognisedFpi=yes&intmId=43 target=new>Mobile APP for UPI</a>"
+   },
+   {
+    "title": "Video link  for UPI based ASBA process",
+    "value": "<a href=https://youtu.be/UJ394m2Q3rg target=new>UPI Based ASBA Process</a>"
+   },
+   {
+    "title": "Video link  for BHIM UPI Registration",
+    "value": "<a href=https://youtu.be/cIUJOIH0x4c target=new>BHIM UPI Registration</a>"
+   }
+  ],
+  "heading": "Papadmalji Agro Foods Limited",
+  "symbol": "PAPADMALJI"
+ },
+ "activeCat": {
+  "dataList": [
+   {
+    "category": "Category",
+    "noOfShareOffered": "No.of shares offered/reserved",
+    "noOfSharesBid": "No. of shares bid for",
+    "noOfTotalMeant": "No. of times of total meant for the category",
+    "srNo": "Sr.No."
+   },
+   {
+    "category": "Total",
+    "noOfShareOffered": "0.0",
+    "noOfSharesBid": "0.0",
+    "noOfTotalMeant": "0.00",
+    "srNo": null
+   }
+  ],
+  "heading": null,
+  "symbol": null,
+  "updateTime": "Updated as on null"
+ },
+ "demandGraph": {
+  "noOfShare": "Cumulative Demand(no. of shares in lakhs)",
+  "totalIssueSize": "2803200",
+  "note": "Cumulative (NSE) bid quantity at each price point includes the quantity (NSE) bidded at that relevant price point and all valid bids above that price point.",
+  "heading1": "Papadmalji Agro Foods Limited- Graphical display of bids received *",
+  "heading2": "(* indicates bids position and not necessarily the subscription to the issue)",
+  "plotData": {
+   "-": "-"
+  },
+  "graphData": []
+ },
+ "demandDataNSE": [
+  {
+   "company": "Papadmalji Agro Foods Limited",
+   "cumQty": "-",
+   "price": "-",
+   "symbol": "PAPADMALJI",
+   "timestamp": "-"
+  }
+ ],
+ "demandDataBSE": [
+  {
+   "company": "Papadmalji Agro Foods Limited",
+   "cumQty": "-",
+   "price": "-",
+   "symbol": "PAPADMALJI",
+   "timestamp": "-"
+  }
+ ],
+ "demandGraphALL": {
+  "noOfShare": "Cumulative Demand(no. of shares in lakhs)",
+  "totalIssueSize": "2803200",
+  "note": " Cumulative bid quantity at each price point includes the quantity bid at that relevant price point and all valid bids at the next higher price point as specified. The graph is updated every hour.",
+  "heading1": "Papadmalji Agro Foods Limited- Graphical display of bids received *",
+  "heading2": "(* indicates bids position and not necessarily the subscription to the issue)",
+  "plotData": {
+   "-": "-"
+  },
+  "graphData": []
+ }
+}
