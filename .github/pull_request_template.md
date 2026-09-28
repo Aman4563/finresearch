@@ -13,7 +13,7 @@ Closes #
 
 ## Checklist
 
-- [ ] ENGINEERING_HANDOFF.md invariants still hold
+- [ ] Invariants in docs/dev/ENGINEERING_HANDOFF.md still hold
 - [ ] No assertion was weakened; intentional test changes are explained above
-- [ ] PRODUCT_REQUIREMENTS.md verification row and docs/FUNCTIONAL_TESTING.md entry added where relevant
+- [ ] docs/dev/PRODUCT_REQUIREMENTS.md verification row and docs/dev/FUNCTIONAL_TESTING.md entry added where relevant
 - [ ] No secrets, `.env`, tokens, keys, downloaded documents or `data/` in the diff
