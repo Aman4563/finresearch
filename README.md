@@ -6,6 +6,8 @@ The design is in `../FinResearch_App_Blueprint/`; start with `02_Final_Architect
 
 > Personal use only. This is not SEBI-registered investment advice.
 
+Workflow and gates: [CONTRIBUTING.md](CONTRIBUTING.md) · invariants: [ENGINEERING_HANDOFF.md](ENGINEERING_HANDOFF.md) · status: [PRODUCT_REQUIREMENTS.md](PRODUCT_REQUIREMENTS.md)
+
 ## Status: P0 spike ✅ · P0 foundations ✅
 
 ### P0 spike: Claude Bridge

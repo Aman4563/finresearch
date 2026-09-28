@@ -1,0 +1,57 @@
+# Product requirements and status
+
+This file is the **status authority**. Each requirement has an ID, a status, and a dated **verification log**. Append rows and never rewrite earlier ones.
+
+Statuses:
+- `planned`: not started;
+- `in-progress`;
+- `delivered`: shipped and verified;
+- `partial`: core shipped, with the remainder named;
+- `deferred`.
+
+## Requirements
+
+### Engine (Claude Bridge)
+| ID | Requirement | Status | Milestone |
+|---|---|---|---|
+| BRIDGE-001 | Tier 1 runs every LLM task through the official Claude Code CLI on the Max subscription, with JSON-schema outputs and transcripts | delivered | v0.1.0 |
+| BRIDGE-002 | Subscription-window tracking (5h/7d), pre-flight ceilings, cool-down to reset, circuit breaker | delivered | v0.1.0 |
+| BRIDGE-003 | Tier 2 (API key), wired but disabled until a key is configured | delivered (disabled) | v0.1.0 |
+| BRIDGE-004 | Tier 3 local fallback (Ollama) sized for 16 GB, with schema validation and repair, degraded flag and capability refusal | delivered | v0.1.0 |
+
+### Documents and data
+| ID | Requirement | Status | Milestone |
+|---|---|---|---|
+| DOC-001 | sha256-immutable document store; pdftotext pages; OCR of scanned pages; grep-compatible canonical text | delivered | v0.1.0 |
+| DOC-002 | SEBI ICDR section mapper for RHP / DRHP with line and page ranges | delivered | v0.1.0 |
+| DOC-003 | Line-anchored chunks, local embeddings, hybrid search | delivered | v0.1.0 |
+| DOC-004 | Deterministic rebuild of offer-document financial tables | delivered | v0.1.0 |
+| DATA-001 | NSE IPO adapters (current, upcoming, past issues, ipo-detail combined vs NSE-only) | delivered | v0.1.0 |
+| DATA-002 | SEBI public-issue listings and full-PDF resolution | delivered | v0.1.0 |
+| DATA-003 | Automatic discovery and download of a company's IR documents (annual reports, audited FS, anchor, price-band ad) | planned | v0.2.0 |
+| CALC-001 | fincalc deterministic finance library, golden-tested against the manual reports | delivered | v0.1.0 |
+
+### Tools and ledger
+| ID | Requirement | Status | Milestone |
+|---|---|---|---|
+| MCP-001 | FinResearch MCP server: documents, sections, grep, search, tables, fincalc, NSE/SEBI | delivered | v0.1.0 |
+| LEDGER-001 | Claim ledger with deterministic citation verification (quote at cited lines) | delivered | v0.1.0 |
+
+### IPO report engine (P1)
+| ID | Requirement | Status | Milestone |
+|---|---|---|---|
+| AGENT-001 | Agent definitions and skills: planner, 7 research streams, adversarial verifiers, bull/bear, synthesizer, critic | planned | v0.2.0 |
+| AGENT-002 | Python DAG orchestrating the agents through the bridge, with Max-limit-aware concurrency, idempotent stages and resume | planned | v0.2.0 |
+| VERIFY-001 | Numeric verification gate: recompute and cross-check every numeric claim with fincalc; block contradicted claims | planned | v0.2.0 |
+| REPORT-001 | Renderer: the 12-section report (MD/HTML/PDF, atomic and validated), XLSX/CSV tables, charts, and the 01_…06_ folder pack | planned | v0.2.0 |
+| EVAL-001 | Gold-set evaluation: regenerate Moneyview and Orient Cables and compare with the manual fact-check logs | planned | v0.2.0 |
+
+## Verification log
+
+| Date | ID(s) | Evidence |
+|---|---|---|
+| 2026-09-28 | BRIDGE-001..004 | `scripts/smoke_live.py` all passed. The Max tier returned schema output (Haiku) with 5h/7d utilisation. A simulated limit routed to local and was marked degraded. 20 offline bridge tests. Commit 74a8969. |
+| 2026-09-28 | DOC-004, BRIDGE-004 | After normalisation with `layout_table`, `qwen3.5:4b` extracted all 8 Orient Cables P&L values exactly. Fixture tests on both the Moneyview and Orient layouts. |
+| 2026-09-28 | DOC-001..003 | Orient Cables RHP: 491 pages ingested in 6.6 s (14 OCR'd), 1,294 chunks embedded. Sections verified against hand-found lines on the Moneyview and Orient RHPs and DRHPs. Hybrid search found the Orient Electric dispute passage. |
+| 2026-09-28 | DATA-001..002, CALC-001 | 25 adapter tests (recorded fixtures) plus live runs (NSE ipo-detail ORIENTCABL/MONEYVIEW, SEBI RHP listing and PDF resolution). 57 fincalc tests reproducing report values (e.g. Moneyview mcap ₹5,984.79 cr, Orient fresh shares 1,17,64,705). |
+| 2026-09-28 | MCP-001, LEDGER-001 | `scripts/smoke_mcp_live.py`: Claude Sonnet 5 on Max, using only the MCP tools, saved "largest customer 38.54% (Q1 FY27)" citing RHP p26 L1663; `quote_found=true`; 6 turns, 12 s. DB tests cover a fabricated quote being marked `unsupported`. Commit 3da074b; 111 tests; CI green. |

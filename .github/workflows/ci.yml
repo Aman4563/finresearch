@@ -1,8 +1,20 @@
-name: ci
-on: [push, pull_request]
+# Deterministic checks on every pull request and on pushes to main: lint, format, the offline suite and
+# the DB integration tests against a pgvector service. Live Claude/Ollama acceptance runs stay local
+# (scripts/smoke_live.py, scripts/smoke_mcp_live.py) because CI has no Max login or local models.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     services:
       postgres:
         image: pgvector/pgvector:pg17
@@ -22,6 +34,10 @@ jobs:
       - run: uv run pytest -q   # offline: fake Claude CLI, mocked Ollama/HTTP, real Postgres service
   secrets:
     runs-on: ubuntu-latest
+    # gitleaks-action lists the PR's commits through the API; the default token cannot on pull_request.
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
