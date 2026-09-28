@@ -309,6 +309,50 @@ def ipo_render(
         console.print(f"  [yellow]note[/] {n}")
 
 
+@eval_app.command("export")
+def eval_export(run_id: int, out: Path = typer.Option(..., help="Fixture JSON to write")) -> None:
+    """Export a run's ledger, step statistics and report to a text fixture (no documents)."""
+    from finresearch.db import session_scope
+    from finresearch.evals.replay import export_run
+
+    with session_scope() as s:
+        data = export_run(s, run_id)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(data, indent=1, ensure_ascii=False, default=str) + "\n")
+    console.print(
+        f"{len(data['claims'])} claims, {len(data['steps'])} steps → {out} ({out.stat().st_size:,} bytes)"
+    )
+
+
+@eval_app.command("replay")
+def eval_replay(
+    fixture: Path, company: str | None = typer.Option(None, help="Gold set (default: fixture company)")
+) -> None:
+    """Import a fixture as a new run and score it against its gold set (no Claude, no documents)."""
+    from finresearch.db import session_scope
+    from finresearch.db.models import AgentStep
+    from finresearch.evals.gold import evaluate, load_gold
+    from finresearch.evals.replay import import_run
+
+    data = json.loads(fixture.read_text())
+    with session_scope() as s:
+        run_id = import_run(s, data, slug_suffix=f"-replay-{int(time.time())}")
+        report = (s.query(AgentStep).filter_by(run_id=run_id, stage="synthesis", status="done")
+                  .order_by(AgentStep.finished_at.desc()).first().output or {}).get("report_markdown")  # fmt: skip
+        res = evaluate(s, run_id, load_gold(company or data["company"]["slug"]), report)
+    console.print(res.markdown())
+
+
+@eval_app.command("backtest")
+def eval_backtest() -> None:
+    """Compare every finished IPO report's verdict with the listing outcome recorded by the monitor or journal."""
+    from finresearch.db import session_scope
+    from finresearch.evals.backtest import backtest, markdown
+
+    with session_scope() as s:
+        console.print(markdown(backtest(s)))
+
+
 @eval_app.command("gold")
 def eval_gold(
     run_id: int, company: str | None = typer.Option(None, help="Gold set name (default: the run's company)")

@@ -20,10 +20,11 @@ function host(url: string) {
   }
 }
 
-const isCalc = (url: string) => url.startsWith("fincalc:");
+// agents cite computed figures as "fincalc: ..." / "fincalc ipo.x(...)"; anything that is not a web URL is a calculation
+const isCalc = (url: string) => !/^https?:\/\//.test(url);
 
 function citeLabel(c: Citation) {
-  if (c.url) return isCalc(c.url) ? `computed: ${c.url.slice(8, 80)}` : host(c.url);
+  if (c.url) return isCalc(c.url) ? `computed: ${c.url.replace(/^fincalc:?\s*/, "").slice(0, 72)}` : host(c.url);
   return `${c.document_title ?? "document"} p${c.page ?? "?"} L${c.line_start}${c.line_end && c.line_end !== c.line_start ? `–${c.line_end}` : ""}`;
 }
 
@@ -123,7 +124,7 @@ export function EvidencePanel({ id, claim: given, onClose }: { id: number; claim
             <div key={i} className="border-t border-border pt-2">
               {c.url && isCalc(c.url) ? (
                 <p className="text-xs">
-                  Deterministic calculation <code className="break-all">{c.url.slice(8)}</code>
+                  Deterministic calculation <code className="break-all">{c.url.replace(/^fincalc:?\s*/, "")}</code>
                 </p>
               ) : c.url ? (
                 <p className="text-xs">
