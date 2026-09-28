@@ -1,0 +1,395 @@
+"""The IPO report pipeline: a deterministic, resumable DAG of research roles.
+
+    facts ─► planner ─► 7 streams ──(each, as soon as it finishes)──► verifier(stream)
+                                                                         │ (barrier: all verified)
+                                        bull ║ bear ─► synthesizer ─► critic ─┐
+                                                           ▲                  │ high-severity gaps (≤ 2 rounds)
+                                                           └── follow-up streams + verification ◄┘
+                                                                         ─► report.md
+
+Guarantees
+* Every step is an `agent_step` row keyed by (run_id, key). Finished steps are never re-run; `resume` continues a
+  crashed or paused run from where it stopped.
+* Budget-aware: before a Claude step starts, the Max 5-hour/7-day utilisation (last observed) plus the expected cost
+  of the step and of steps already in flight must stay under the ceiling; otherwise the step is deferred and the run
+  pauses until the reported window reset instead of failing midway.
+* Research never silently degrades: roles run with allow_degraded=False, so a limit hit pauses the run.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import subprocess
+import time
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from typing import Any
+
+from pydantic import BaseModel
+from sqlalchemy import func, select
+
+from finresearch.agents.roles import ROLES, STREAMS
+from finresearch.agents.runner import RoleOutputInvalid, RunContext, run_role
+from finresearch.agents.schemas import CriticReport, ResearchPlan, StreamReport, Synthesis, VerificationReport
+from finresearch.bridge import AllTiersFailed, BridgeRouter, Tier, build_router
+from finresearch.bridge.limits import LimitTracker
+from finresearch.bridge.types import AgentResult
+from finresearch.config import get_settings
+from finresearch.db import session_scope
+from finresearch.db.models import AgentStep, Claim, Company, ResearchRun
+
+PIPELINE_VERSION = "ipo-pipeline-1"
+RoleRunner = Callable[..., Awaitable[tuple[BaseModel, AgentResult]]]
+DEFAULT_COST = {"stream": 0.08, "verify": 0.04, "plan": 0.03, "case": 0.03, "synthesis": 0.06, "critic": 0.03}
+
+
+class RunPaused(Exception):
+    def __init__(self, reason: str, resume_after: datetime | None):
+        super().__init__(reason)
+        self.resume_after = resume_after
+
+
+class StepFailed(Exception):
+    pass
+
+
+@dataclass
+class PipelineConfig:
+    concurrency: int = 4
+    max_followup_rounds: int = 2
+    five_hour_ceiling: float = 0.92
+    streams: tuple[str, ...] = STREAMS
+    verify_importance: tuple[str, ...] = ("high", "normal")
+    cost_defaults: dict[str, float] = field(default_factory=lambda: dict(DEFAULT_COST))
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+class IpoPipeline:
+    def __init__(self, run_id: int, *, runner: RoleRunner | None = None, router: BridgeRouter | None = None,
+                 tracker: LimitTracker | None = None, config: PipelineConfig | None = None,
+                 clock: Callable[[], float] = time.time):  # fmt: skip
+        self.run_id = run_id
+        self.config = config or PipelineConfig(five_hour_ceiling=get_settings().max_five_hour_ceiling)
+        self._router = router
+        self.tracker = tracker
+        self.runner = runner or self._default_runner
+        self.clock = clock
+        self._sem = asyncio.Semaphore(self.config.concurrency)
+        self._reserved = 0.0
+        self._paused: RunPaused | None = None
+        self.ctx: RunContext | None = None
+
+    # ------------------------------------------------------------------ plumbing
+    async def _default_runner(self, role: str, ctx: RunContext, **extra: str):
+        return await run_role(role, ctx, router=self._get_router(), **extra)
+
+    def _get_router(self) -> BridgeRouter:
+        if self._router is None:
+            self._router = build_router()
+        return self._router
+
+    def _tracker(self) -> LimitTracker:
+        if self.tracker is None:
+            self.tracker = self._get_router().tracker
+        return self.tracker
+
+    def _load_context(self) -> RunContext:
+        from finresearch.mcp_server.server import list_documents
+
+        with session_scope() as s:
+            run = s.get(ResearchRun, self.run_id)
+            if run is None:
+                raise ValueError(f"unknown run {self.run_id}")
+            co = s.get(Company, run.company_id) if run.company_id else None
+            if co is None:
+                raise ValueError(f"run {self.run_id} has no company")
+            facts = dict(run.manifest.get("facts", {}))
+            slug, name, sym = co.slug, co.name, co.nse_symbol
+        docs = json.loads(list_documents(slug))
+        if not any(d["kind"] in ("RHP", "DRHP") for d in docs):
+            raise StepFailed(
+                f"no RHP/DRHP ingested for {slug}; run `finresearch docs add ... --kind RHP` first"
+            )
+        return RunContext(run_id=self.run_id, company_slug=slug, company_name=name, nse_symbol=sym, documents=docs,
+                          facts=facts)  # fmt: skip
+
+    def _set_run(self, **fields: Any) -> None:
+        with session_scope() as s:
+            run = s.get(ResearchRun, self.run_id)
+            for k, v in fields.items():
+                setattr(run, k, v)
+
+    def _update_manifest(self, **fields: Any) -> None:
+        with session_scope() as s:
+            run = s.get(ResearchRun, self.run_id)
+            run.manifest = {**(run.manifest or {}), **fields}
+
+    # ------------------------------------------------------------------ budget
+    def _expected_cost(self, stage: str, role: str) -> float:
+        with session_scope() as s:
+            avg = s.scalar(
+                select(func.avg(AgentStep.five_hour_after - AgentStep.five_hour_before)).where(
+                    AgentStep.role == role, AgentStep.status == "done",
+                    AgentStep.five_hour_after.is_not(None), AgentStep.five_hour_before.is_not(None),
+                    AgentStep.five_hour_after >= AgentStep.five_hour_before,
+                )
+            )  # fmt: skip
+        return float(avg) if avg is not None and avg > 0 else self.config.cost_defaults.get(stage, 0.05)
+
+    def _budget_check(self, stage: str, role: str) -> tuple[bool, float, float | None, datetime | None]:
+        """(ok, expected_cost, current_utilisation, resume_after)."""
+        tr = self._tracker()
+        ok, _why = tr.availability(Tier.CLAUDE_MAX)
+        snap = tr.snapshot(Tier.CLAUDE_MAX)
+        now = self.clock()
+        util = None
+        reset = None
+        if snap and snap.five_hour_utilization is not None and (snap.five_hour_resets_at or 0) > now:
+            util = snap.five_hour_utilization
+            reset = datetime.fromtimestamp(snap.five_hour_resets_at, UTC)
+        cost = self._expected_cost(stage, role)
+        if not ok:
+            state = tr.describe().get(Tier.CLAUDE_MAX.value, {})
+            until = state.get("cooling_until") or (snap.five_hour_resets_at if snap else None)
+            return False, cost, util, datetime.fromtimestamp(until, UTC) if until else reset
+        if util is not None and util + self._reserved + cost > self.config.five_hour_ceiling:
+            return False, cost, util, reset
+        return True, cost, util, None
+
+    # ------------------------------------------------------------------ one step
+    async def step(self, key: str, stage: str, role: str, **extra: str) -> BaseModel:
+        model = ROLES[role].output
+        with session_scope() as s:
+            st = s.scalar(select(AgentStep).where(AgentStep.run_id == self.run_id, AgentStep.key == key))
+            if st is not None and st.status == "done":
+                return model.model_validate(st.output)
+            if st is None:
+                st = AgentStep(run_id=self.run_id, key=key, stage=stage, role=role)
+                s.add(st)
+        async with self._sem:
+            if self._paused:
+                self._mark(key, status="deferred", error=f"run paused: {self._paused}")
+                raise self._paused
+            ok, cost, util, resume_after = self._budget_check(stage, role)
+            if not ok:
+                pause = RunPaused(
+                    f"Max budget: {key} deferred (5h util {util}, step cost ~{cost:.2f})", resume_after
+                )
+                self._paused = pause
+                self._mark(key, status="deferred", error=str(pause))
+                raise pause
+            self._reserved += cost
+            self._mark(key, status="running", started_at=_now(), five_hour_before=util, inc_attempt=True)
+            t0 = time.monotonic()
+            try:
+                parsed, res = await self.runner(role, self.ctx, **extra)
+            except AllTiersFailed as e:
+                limited = any(":limit" in a or "skipped(" in a for a in e.attempts)
+                if limited:
+                    tr = self._tracker().describe().get(Tier.CLAUDE_MAX.value, {})
+                    until = tr.get("cooling_until")
+                    pause = RunPaused(
+                        f"Claude limit during {key}", datetime.fromtimestamp(until, UTC) if until else None
+                    )
+                    self._paused = pause
+                    self._mark(key, status="deferred", error=str(e))
+                    raise pause from e
+                self._mark(key, status="failed", error=str(e), finished_at=_now())
+                raise StepFailed(f"{key}: {e}") from e
+            except RoleOutputInvalid as e:
+                self._mark(key, status="failed", error=str(e), finished_at=_now())
+                raise StepFailed(f"{key}: {e}") from e
+            finally:
+                self._reserved -= cost
+            rl = res.rate_limit
+            self._mark(key, status="done", output=parsed.model_dump(mode="json"), tier=res.tier.value,
+                       model=res.model, cost_usd_est=res.cost_usd_estimate, input_tokens=res.input_tokens,
+                       output_tokens=res.output_tokens, duration_s=round(time.monotonic() - t0, 2),
+                       num_turns=res.num_turns, five_hour_after=rl.five_hour_utilization if rl else None,
+                       transcript_path=str(res.transcript_path) if res.transcript_path else None,
+                       finished_at=_now(), error=None)  # fmt: skip
+            return parsed
+
+    def _mark(self, key: str, *, inc_attempt: bool = False, **fields: Any) -> None:
+        with session_scope() as s:
+            st = s.scalar(select(AgentStep).where(AgentStep.run_id == self.run_id, AgentStep.key == key))
+            for k, v in fields.items():
+                setattr(st, k, v)
+            if inc_attempt:
+                st.attempts += 1
+
+    # ------------------------------------------------------------------ stages
+    async def _facts(self) -> None:
+        from finresearch.fincalc.dates import bidding_day_number, today_ist
+
+        facts = dict(self.ctx.facts)
+        if self.ctx.nse_symbol and "issue_info" not in facts:
+            try:
+                from finresearch.mcp_server.server import nse_ipo_detail
+
+                d = json.loads(await nse_ipo_detail(self.ctx.nse_symbol))
+                facts["issue_info"] = d.get("issue_info", {})
+                facts["nse_fetched_at"] = d.get("fetched_at")
+                period = facts["issue_info"].get("Issue Period", "")
+                if " to " in period:
+                    open_s, close_s = (x.strip() for x in period.split(" to "))
+                    op = datetime.strptime(open_s, "%d-%b-%Y").date()
+                    cl = datetime.strptime(close_s, "%d-%b-%Y").date()
+                    facts["issue_open"], facts["issue_close"] = op.isoformat(), cl.isoformat()
+                    facts["bidding_day_today"] = bidding_day_number(op, today_ist())
+            except Exception as e:
+                facts["issue_info_error"] = f"{type(e).__name__}: {e}"
+        facts["today_ist"] = today_ist().isoformat()
+        self.ctx.facts = facts
+        if facts.get("issue_close"):
+            self.ctx.decision_deadline = f"the UPI mandate cut-off, 5:00 PM IST on {facts['issue_close']}"
+        self._update_manifest(facts=facts)
+
+    def _claims_text(self, stream: str) -> str:
+        with session_scope() as s:
+            rows = s.scalars(select(Claim).where(Claim.run_id == self.run_id, Claim.stream == stream,
+                                                 Claim.importance.in_(self.config.verify_importance),
+                                                 Claim.status.in_(("unverified", "needs_review")))
+                             .order_by(Claim.id)).all()  # fmt: skip
+            return json.dumps([{"claim_id": c.id, "statement": c.statement, "metric": c.metric,
+                                "value": str(c.value) if c.value is not None else None, "unit": c.unit,
+                                "period": c.period,
+                                "citations": [{"document_id": x.document_id, "lines": [x.line_start, x.line_end],
+                                               "url": x.url, "quote": (x.quote or "")[:300]} for x in c.citations]}
+                               for c in rows], indent=1)  # fmt: skip
+
+    def _apply_verdicts(self, rep: VerificationReport) -> None:
+        with session_scope() as s:
+            for v in rep.verdicts:
+                c = s.get(Claim, v.claim_id)
+                if c is None or c.run_id != self.run_id or c.status == "unsupported":
+                    continue
+                c.status = v.verdict
+                c.verifier_note = (f"correct: {v.correct_value}. " if v.correct_value else "") + v.evidence[
+                    :2000
+                ]
+
+    async def _stream_and_verify(self, stream: str, key_prefix: str = "", focus: str = "") -> StreamReport:
+        rep = await self.step(f"{key_prefix}stream:{stream}", "stream", stream, focus=focus or "see plan")
+        claims = self._claims_text(stream)
+        if claims != "[]":
+            ver = await self.step(f"{key_prefix}verify:{stream}", "verify", "verifier", target_stream=stream,
+                                  claims=claims)  # fmt: skip
+            self._apply_verdicts(ver)
+        return rep
+
+    @staticmethod
+    def _focus(plan: ResearchPlan, stream: str) -> str:
+        sf = next((x for x in plan.streams if x.stream == stream), None)
+        if sf is None:
+            return "No specific focus from the planner; cover the stream fully."
+        return (
+            "Questions:\n- "
+            + "\n- ".join(sf.questions)
+            + ("\nLeads:\n- " + "\n- ".join(sf.leads) if sf.leads else "")
+        )
+
+    async def _gather(self, coros: list[Awaitable[Any]]) -> list[Any]:
+        results = await asyncio.gather(*coros, return_exceptions=True)
+        for r in results:
+            if isinstance(r, RunPaused):
+                raise r
+        for r in results:
+            if isinstance(r, BaseException):
+                raise r
+        return results
+
+    # ------------------------------------------------------------------ main
+    async def run(self) -> str:
+        self._paused = None
+        self.ctx = self._load_context()
+        self._update_manifest(pipeline=PIPELINE_VERSION, git_sha=_git_sha(),
+                              models={k.value: v for k, v in get_settings().claude_models.items()},
+                              prompt_hashes={n: r.prompt_hash() for n, r in ROLES.items()})  # fmt: skip
+        self._set_run(status="running", resume_after=None)
+        try:
+            await self._facts()
+            plan: ResearchPlan = await self.step("planner", "plan", "planner")
+            reports = dict(zip(self.config.streams, await self._gather(
+                [self._stream_and_verify(s, focus=self._focus(plan, s)) for s in self.config.streams]), strict=True))  # fmt: skip
+            bull, bear = await self._gather([self.step("case:bull", "case", "bull"),
+                                             self.step("case:bear", "case", "bear")])  # fmt: skip
+            synth: Synthesis = await self.step("synthesis", "synthesis", "synthesizer",
+                                               stream_reports=_reports_text(reports), bull=bull.model_dump_json(indent=1),
+                                               bear=bear.model_dump_json(indent=1))  # fmt: skip
+            for rnd in range(1, self.config.max_followup_rounds + 1):
+                critic: CriticReport = await self.step(f"critic:r{rnd}", "critic", "critic",
+                                                       draft=synth.report_markdown)  # fmt: skip
+                gaps = [g for g in critic.gaps if g.severity == "high" and g.stream in self.config.streams]
+                if critic.ready_to_publish or not gaps:
+                    break
+                by_stream: dict[str, list[str]] = {}
+                for g in gaps:
+                    by_stream.setdefault(g.stream, []).append(g.task)
+                extra = await self._gather([self._stream_and_verify(st, key_prefix=f"r{rnd}:",
+                                                                    focus="FOLLOW-UP (critic):\n- " + "\n- ".join(t))
+                                            for st, t in by_stream.items()])  # fmt: skip
+                for st, rep in zip(by_stream, extra, strict=True):
+                    reports[f"{st} (follow-up {rnd})"] = rep
+                synth = await self.step(f"synthesis:r{rnd}", "synthesis", "synthesizer",
+                                        stream_reports=_reports_text(reports), bull=bull.model_dump_json(indent=1),
+                                        bear=bear.model_dump_json(indent=1))  # fmt: skip
+            out = get_settings().runs_dir / str(self.run_id)
+            out.mkdir(parents=True, exist_ok=True)
+            (out / "report.md").write_text(synth.report_markdown)
+            (out / "synthesis.json").write_text(synth.model_dump_json(indent=1))
+            self._set_run(status="done", finished_at=_now())
+            return "done"
+        except RunPaused as p:
+            self._set_run(status="paused", resume_after=p.resume_after)
+            return "paused"
+        except (StepFailed, Exception):
+            self._set_run(status="failed")
+            raise
+
+
+def _reports_text(reports: dict[str, StreamReport]) -> str:
+    parts = []
+    for name, r in reports.items():
+        parts.append(f"### Stream: {name}\nSummary: {r.summary}\nRed flags: {r.red_flags}\n"
+                     f"Open questions: {r.open_questions}\n\n{r.section_markdown}")  # fmt: skip
+    return "\n\n".join(parts)
+
+
+def _git_sha() -> str | None:
+    try:
+        return subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True,
+                              cwd=get_settings().runs_dir.parent.parent, timeout=5).stdout.strip() or None  # fmt: skip
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def create_run(company_slug: str, kind: str = "ipo_report") -> int:
+    with session_scope() as s:
+        co = s.scalar(select(Company).where(Company.slug == company_slug))
+        if co is None:
+            raise ValueError(f"unknown company {company_slug!r}; ingest its documents first")
+        run = ResearchRun(company_id=co.id, kind=kind, status="running", manifest={})
+        s.add(run)
+        s.flush()
+        return run.id
+
+
+async def run_until_done(run_id: int, *, wait: bool, pipeline: IpoPipeline | None = None, log=print,
+                         sleep=asyncio.sleep, clock=time.time) -> str:  # fmt: skip
+    """Run the pipeline; with wait=True, sleep through Max-window resets and resume automatically."""
+    pipe = pipeline or IpoPipeline(run_id)
+    while True:
+        status = await pipe.run()
+        if status != "paused" or not wait:
+            return status
+        with session_scope() as s:
+            ra = s.get(ResearchRun, run_id).resume_after
+        delay = max(60.0, (ra.timestamp() - clock()) + 60) if ra else 900.0
+        log(f"run {run_id} paused; resuming in {delay / 60:.0f} min ({ra})")
+        await sleep(delay)
