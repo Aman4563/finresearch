@@ -88,7 +88,11 @@ function SourceLines({ c }: { c: Citation }) {
   );
 }
 
-export function EvidencePanel({ id, claim, onClose }: { id: number; claim?: Claim; onClose: () => void }) {
+export function EvidencePanel({ id, claim: given, onClose }: { id: number; claim?: Claim; onClose: () => void }) {
+  // claims cited in a chat answer may not be in the report's map: fetch them from the ledger
+  const fetched = useApi<Claim>(given ? null : `/api/claims/${id}`);
+  const claim = given ?? (fetched.data && fetched.data.id === id ? fetched.data : undefined);
+  if (!given && !fetched.data && !fetched.error) return <p className="text-sm text-muted">Loading C{id}…</p>;
   return (
     <aside className="sticky top-4 max-h-[calc(100vh-2rem)] overflow-auto rounded-lg border border-border bg-card p-4 text-sm shadow">
       <div className="mb-2 flex items-center justify-between">

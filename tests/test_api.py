@@ -69,13 +69,29 @@ class FakeSpawner(Spawner):
         return 999_999_999  # never a live pid
 
 
+class FakeRouter:
+    """Stands in for the bridge: records tasks and returns queued structured answers."""
+
+    def __init__(self):
+        self.tasks = []
+        self.answers: list[dict] = []
+
+    async def run(self, task):
+        from finresearch.bridge.types import AgentResult, Tier
+
+        self.tasks.append(task)
+        return AgentResult(task_name=task.name, tier=Tier.CLAUDE_MAX, model="sonnet", ok=True,
+                           structured_output=self.answers.pop(0), session_id=f"sess-{len(self.tasks)}",
+                           num_turns=3, duration_s=4.0)  # fmt: skip
+
+
 @pytest.fixture
 def client(env):
     from finresearch.api import create_app
 
-    spawner = FakeSpawner()
-    with TestClient(create_app(spawner=spawner, poll_s=0.01)) as c:
-        c.spawner = spawner
+    spawner, router = FakeSpawner(), FakeRouter()
+    with TestClient(create_app(spawner=spawner, poll_s=0.01, router=router)) as c:
+        c.spawner, c.router = spawner, router
         yield c
 
 
@@ -279,3 +295,48 @@ def test_ipo_radar_dedupes_symbols_and_derives_the_phase_from_dates(client, monk
         ("NEXT", "upcoming"),
         ("DONE", "closed"),
     ]
+
+
+def test_ask_answers_are_checked_and_conversations_resume_the_session(client, seeded):
+    rid, ok, bad = seeded["run_id"], seeded["ok"], seeded["bad"]
+    client.router.answers = [
+        {"answer_markdown": f"FY26 PAT was ₹535.61 mn [C{ok}], see [D{seeded['doc_id']}:L2-2].", "cited_claims": [ok]},
+        {"answer_markdown": f"GMP was ₹90 [C{bad}] and the P/E is 51.6x.\nAlso [C999999] and [D{seeded['doc_id']}:L7-9].",
+         "cited_claims": []},
+    ]  # fmt: skip
+    r1 = client.post(f"/api/runs/{rid}/ask", json={"question": "What was FY26 PAT?"}).json()
+    conv = r1["conversation_id"]
+    assert r1["message"]["checks"]["ok"] is True and r1["message"]["checks"]["cited_claims"] == [ok]
+    first = client.router.tasks[0]
+    assert first.resume_session_id is None and not any(
+        t in first.allowed_tools for t in ("mcp__finresearch__save_claim", "WebSearch")
+    )
+    assert "PAT rose to" in first.system_prompt  # the report is in context
+
+    r2 = client.post(f"/api/runs/{rid}/ask", json={"question": "And GMP?", "conversation_id": conv}).json()
+    assert client.router.tasks[1].resume_session_id == "sess-1"
+    c = r2["message"]["checks"]
+    assert c["unusable_claims"] == [bad] and c["unknown_claims"] == [999999] and c["ok"] is False
+    assert c["bad_line_citations"] == [f"D{seeded['doc_id']}:L7-9"]  # the document has only 4 lines
+    assert any("51.6x" in line for line in c["uncited_figure_lines"])
+
+    thread = client.get(f"/api/conversations/{conv}").json()
+    assert [m["role"] for m in thread["messages"]] == ["user", "assistant", "user", "assistant"]
+    assert client.get(f"/api/runs/{rid}/conversations").json()[0]["messages"] == 4
+
+
+def test_ask_rejects_unknown_runs_and_foreign_conversations(client, seeded):
+    assert client.post("/api/runs/999999/ask", json={"question": "x"}).status_code == 404
+    client.router.answers = [{"answer_markdown": "ok"}]
+    conv = client.post(f"/api/runs/{seeded['run_id']}/ask", json={"question": "hi"}).json()["conversation_id"]
+    from finresearch.db import session_scope
+    from finresearch.db.models import ResearchRun
+
+    with session_scope() as s:
+        other = ResearchRun(kind="ipo_report", status="done", manifest={})
+        s.add(other)
+        s.flush()
+        other_id = other.id
+    r = client.post(f"/api/runs/{other_id}/ask", json={"question": "x", "conversation_id": conv})
+    assert r.status_code == 404
+    assert client.post(f"/api/runs/{seeded['run_id']}/ask", json={"question": ""}).status_code == 422

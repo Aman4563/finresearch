@@ -25,7 +25,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from finresearch.api.workers import Spawner, WorkerBusy, worker_info
 from finresearch.config import get_settings
 from finresearch.db import session_scope
-from finresearch.db.models import AgentStep, Claim, Company, Document, ResearchRun
+from finresearch.db.models import AgentStep, Claim, Company, Conversation, Document, ResearchRun
 
 LOCAL_HOSTS = ["127.0.0.1", "localhost", "testserver"]
 DASHBOARD_ORIGINS = [f"http://{h}:{p}" for h in ("127.0.0.1", "localhost") for p in (3000, 3100)]
@@ -38,6 +38,11 @@ class StartRun(BaseModel):
     company: str
     streams: list[str] | None = None
     concurrency: int = Field(4, ge=1, le=8)
+
+
+class Ask(BaseModel):
+    question: str = Field(min_length=1, max_length=4000)
+    conversation_id: int | None = None
 
 
 class ResumeRun(BaseModel):
@@ -95,7 +100,8 @@ def _latest_report(s, run_id: int) -> str | None:
 
 
 # --------------------------------------------------------------------------- app
-def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0) -> FastAPI:
+def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=None) -> FastAPI:
+    """`router` overrides the bridge router used for report questions (tests pass a fake)."""
     spawner = spawner or Spawner()
     app = FastAPI(title="FinResearch", version="0.3.0", docs_url="/api/docs", openapi_url="/api/openapi.json")
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=LOCAL_HOSTS)
@@ -344,6 +350,38 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0) -> FastAP
                 break  # the app's worker exited (finished, crashed or paused without --wait)
             yield ": keep-alive\n\n"
         yield frame("end", {"id": run_id, "status": status})
+
+    # ------------------------------------------------------------------ ask about a report
+    @app.post("/api/runs/{run_id}/ask")
+    async def ask_run(run_id: int, body: Ask) -> dict[str, Any]:
+        from finresearch.agents.ask import ask
+        from finresearch.bridge import AllTiersFailed
+
+        try:
+            return await ask(run_id, body.question, conversation_id=body.conversation_id, router=router)
+        except LookupError as e:
+            raise HTTPException(404, str(e)) from e
+        except AllTiersFailed as e:
+            raise HTTPException(503, f"Claude is not available right now: {e}"[:500]) from e
+
+    @app.get("/api/runs/{run_id}/conversations")
+    def conversations(run_id: int) -> list[dict[str, Any]]:
+        with session_scope() as s:
+            rows = s.scalars(select(Conversation).where(Conversation.run_id == run_id)
+                             .order_by(Conversation.updated_at.desc())).all()  # fmt: skip
+            return [{"id": c.id, "title": c.title, "updated_at": _iso(c.updated_at), "messages": len(c.messages)}
+                    for c in rows]  # fmt: skip
+
+    @app.get("/api/conversations/{conversation_id}")
+    def conversation(conversation_id: int) -> dict[str, Any]:
+        from finresearch.agents.ask import message_json
+
+        with session_scope() as s:
+            c = s.get(Conversation, conversation_id)
+            if c is None:
+                raise HTTPException(404, f"unknown conversation {conversation_id}")
+            return {"id": c.id, "run_id": c.run_id, "title": c.title,
+                    "messages": [message_json(m) for m in c.messages]}  # fmt: skip
 
     # ------------------------------------------------------------------ IPO radar
     radar_cache: dict[str, Any] = {}
