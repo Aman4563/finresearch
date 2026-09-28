@@ -35,6 +35,7 @@ Every change must preserve these.
 6. Numeric claims are atomic (metric, value, unit, period). A verifier's correction becomes a new claim linked by `corrects_claim_id` and is verified only if its value is printed at the cited lines. A deterministic contradiction (for example a wrong bidding day) is never overridden by a model.
 6a. A report is published (`report.md`) only if the publish gate passes: it cites only this run's claims, none contradicted or unsupported, no raw document lines, and every high-importance claim it cites is verified. Otherwise the output is `report_blocked.md` and the run status is `blocked`.
 6b. Tests never write to the real `data/` folder (autouse isolation fixture).
+6c. Research packs are built only from the ledger and step outputs (`finresearch ipo render`). A blocked report is written as `report_NOT_PUBLISHED.*` with the gate's reasons, never as `report.*`. PDFs are validated and atomically replaced.
 7a. Nothing is silently truncated. Tools paginate with explicit continuation hints, and engines refuse over-long inputs (`CapabilityMismatch`) rather than cutting them.
 
 **Engines**

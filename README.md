@@ -61,7 +61,7 @@ For each company it reads the offer documents and filings, pulls live exchange d
 
   Local results are always marked degraded. Tasks that need the web, tools or long context are refused locally rather than faked.
 
-**Research agents** (in progress). A planner, seven research streams, adversarial verifiers, bull and bear analysts, a synthesiser and a completeness critic. The seven streams cover:
+**Research agents.** A planner, seven research streams, adversarial verifiers, bull and bear analysts, a synthesiser and a completeness critic. The seven streams cover:
 - financials;
 - business and industry;
 - risks and governance;
@@ -70,7 +70,12 @@ For each company it reads the offer documents and filings, pulls live exchange d
 - demand and subscription;
 - history, sector and macro.
 
-They work only through the MCP tools. A verification gate recomputes numbers, checks citations, catches cross-stream conflicts and stale live data, and blocks contradicted claims before the report is written.
+They work only through the MCP tools, run as a resumable pipeline that schedules around plan limits, and hand their claims to a verification gate. The gate:
+- checks every value against its cited lines;
+- catches conflicts between streams, stale live figures and wrong bidding-day labels;
+- turns verifier corrections into re-checked claims;
+- gives high-importance claims a second independent verifier;
+- only publishes a report whose every citation is sound.
 
 ## Status
 
@@ -121,7 +126,19 @@ uv run finresearch docs search "largest customer share of revenue" --company ori
 
 # MCP server for Claude Code
 uv run finresearch mcp config             # writes the --mcp-config file for the FinResearch tools
+
+# research reports
+uv run finresearch ipo run orient-cables --wait     # full multi-agent run; pauses and resumes around plan limits
+uv run finresearch ipo status <run_id>             # steps, models, turns, time and plan-window usage
+uv run finresearch ipo resume <run_id> --wait      # continue a paused or failed run (finished steps are kept)
+uv run finresearch ipo render <run_id>             # rebuild the research pack (report md/html/pdf, tables, charts)
 ```
+
+A finished run produces a research pack under `data/reports/<company>/run-<id>/`:
+- **Folders:** offer documents, financial reports, news, major events, valuation and a final report.
+- **Final report:** an HTML/PDF version where every figure links to its evidence (document page and line, or URL and access time).
+- **Supporting files:** a fact-check log, the full claim ledger as Excel/CSV, financial tables and charts.
+- **Blocked reports:** a report that fails the publish gate is rendered only as a clearly marked draft.
 
 ## Development
 
@@ -144,6 +161,10 @@ src/finresearch/
   fincalc/      deterministic finance calculations
   db/           database models (migrations/ holds Alembic migrations)
   mcp_server/   FinResearch MCP server and claim ledger
+  agents/       research roles, prompts, skills and the role runner
+  orchestrator/ resumable, budget-aware IPO report pipeline
+  verify/       deterministic verification gate and publish gate
+  render/       report HTML/PDF, tables, charts and the research folder pack
   cli.py        finresearch command line
 tests/          offline tests and recorded fixtures
 scripts/        live smoke checks and gold-set ingestion
