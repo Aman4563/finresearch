@@ -174,6 +174,60 @@ def test_profile_round_trip_and_validation(api):
     assert api.put("/api/profile", json={**p, "category": "whale"}).status_code == 422
 
 
+def test_profile_identity_and_preferences_are_optional_and_validated(api):
+    from finresearch.db import session_scope
+    from finresearch.db.models import InvestorProfile
+    from finresearch.suggest.advisor import PROFILE_NAME
+
+    # a profile saved before the identity fields existed still loads, with defaults
+    old = {k: v for k, v in api.get("/api/profile").json().items()
+           if k not in ("display_name", "avatar_color", "preferences")}  # fmt: skip
+    with session_scope() as s:
+        s.add(InvestorProfile(name=PROFILE_NAME, data=old))
+    p = api.get("/api/profile").json()
+    assert p["display_name"] == "" and p["avatar_color"] is None
+    assert p["preferences"] == {"default_landing": "/", "number_format": "lakh_crore", "compact_tables": False,
+                                "reduce_motion": False}  # fmt: skip
+    assert api.put("/api/profile", json=old).status_code == 200  # an old client's body is still accepted
+
+    p.update(
+        display_name="  Aman   Yadav ",
+        avatar_color="accent",
+        preferences={"default_landing": "/ipos", "number_format": "million", "reduce_motion": True},
+    )
+    saved = api.put("/api/profile", json=p).json()
+    assert saved["display_name"] == "Aman Yadav" and saved["avatar_color"] == "accent"
+    assert (
+        saved["preferences"]["default_landing"] == "/ipos" and saved["preferences"]["compact_tables"] is False
+    )
+    assert api.get("/api/profile").json()["preferences"]["number_format"] == "million"
+    for bad in (
+        {"avatar_color": "purple"},
+        {"display_name": "x" * 61},
+        {"preferences": {"number_format": "billion"}},
+        {"preferences": {"default_landing": "/admin"}},
+    ):
+        assert api.put("/api/profile", json={**p, **bad}).status_code == 422, bad
+
+
+def test_advisor_prompt_leaves_out_identity_and_preferences(api):
+    p = api.get("/api/profile").json()
+    api.put("/api/profile", json={**p, "display_name": "Zed Quux", "preferences": {"compact_tables": True}})
+    d = api.post(f"/api/runs/{api.run_id}/suggest").json()
+    prompt = api.router.tasks[-1].system_prompt
+    assert "Zed Quux" not in prompt and "compact_tables" not in prompt and '"capital_per_ipo_inr"' in prompt
+    assert "display_name" not in d["inputs"]["profile"]
+
+
+def test_profile_stats_counts_activity(api):
+    st = api.get("/api/profile/stats").json()
+    assert st["runs"] >= 1 and st["runs_done"] >= 1 and st["first_run_at"]
+    assert {"decisions", "applied", "watches", "active_watches", "profile_updated_at"} <= set(st)
+    before = st["decisions"]
+    api.post(f"/api/runs/{api.run_id}/suggest")
+    assert api.get("/api/profile/stats").json()["decisions"] == before + 1
+
+
 def test_suggest_enforces_the_live_qib_rule_and_journals_the_outcome(api):
     d = api.post(f"/api/runs/{api.run_id}/suggest").json()
     # live day-2 QIB 0.05x fires the default qib-floor rule, whatever the agent said

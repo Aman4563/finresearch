@@ -1,12 +1,9 @@
-"use client";
+import type { Metadata } from "next";
 
-import { PageHeader, SkeletonRows } from "@/components/ui";
+import { RulesPage } from "@/components/rules/rules-page";
+
+export const metadata: Metadata = { title: "Rules" };
 
 export default function Page() {
-  return (
-    <div>
-      <PageHeader title="Rules" description="Coming in this release." />
-      <SkeletonRows rows={4} />
-    </div>
-  );
+  return <RulesPage />;
 }

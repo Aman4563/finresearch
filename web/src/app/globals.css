@@ -302,3 +302,12 @@ body {
 .report tr:hover td { background: var(--card-hover); }
 .report blockquote { border-left: 3px solid var(--brand); padding: 0.2rem 0 0.2rem 0.9rem; color: var(--muted); background: var(--brand-soft); border-radius: 0 6px 6px 0; }
 .report code { font-family: var(--font-mono); font-size: 0.85em; background: var(--background-subtle); padding: 0.05rem 0.3rem; border-radius: 4px; }
+
+/* Profile > Preferences > "Reduce motion" (set on <html> by PreferenceEffects), same as the OS setting */
+:root[data-reduce-motion="1"] *,
+:root[data-reduce-motion="1"] *::before,
+:root[data-reduce-motion="1"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+}

@@ -540,6 +540,31 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
         with session_scope() as s:
             return save_profile(s, profile).model_dump(mode="json")
 
+    @app.get("/api/profile/stats")
+    def profile_stats() -> dict[str, Any]:
+        """Activity counts for the profile page: research runs, journal decisions and watches."""
+        from finresearch.db.models import InvestorProfile
+        from finresearch.suggest.advisor import PROFILE_NAME
+
+        with session_scope() as s:
+
+            def count(model: Any, *where: Any) -> int:
+                return s.scalar(select(func.count()).select_from(model).where(*where)) or 0
+
+            research = ResearchRun.kind.in_(RESEARCH_KINDS)
+            first_run = s.scalar(select(func.min(ResearchRun.created_at)).where(research))
+            updated = s.scalar(select(InvestorProfile.updated_at).where(InvestorProfile.name == PROFILE_NAME))
+            return {
+                "runs": count(ResearchRun, research),
+                "runs_done": count(ResearchRun, research, ResearchRun.status == "done"),
+                "decisions": count(Decision),
+                "applied": count(Decision, Decision.user_action == "applied"),
+                "watches": count(Watch),
+                "active_watches": count(Watch, Watch.active),
+                "first_run_at": _iso(first_run),
+                "profile_updated_at": _iso(updated),
+            }
+
     @app.post("/api/runs/{run_id}/suggest", status_code=201)
     async def suggest_run(run_id: int) -> dict[str, Any]:
         from finresearch.bridge import AllTiersFailed

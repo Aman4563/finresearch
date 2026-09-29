@@ -1,0 +1,229 @@
+// Help centre content as plain data, so one search box can filter all of it. `backticks` render as code.
+
+export type Link = { href: string; label: string };
+
+export type GlossaryCategory = "IPO" | "Stocks" | "Mutual funds" | "Bonds" | "F&O" | "FinResearch";
+export type Term = { term: string; aka?: string; category: GlossaryCategory; def: string; link?: Link };
+
+export const GLOSSARY: Term[] = [
+  // IPO
+  { term: "IPO", aka: "Initial Public Offering", category: "IPO",
+    def: "When a company sells shares to the public for the first time and lists them on NSE and/or BSE. You bid during a 3-day window; shares are allotted, then listed." },
+  { term: "RHP", aka: "Red Herring Prospectus", category: "IPO",
+    def: "The final offer document filed before the issue opens: business, financials, risks, objects of the issue and the offer structure. FinResearch cites it by page and line." },
+  { term: "DRHP", aka: "Draft Red Herring Prospectus", category: "IPO",
+    def: "The first draft of the offer document, filed with SEBI for review. Numbers and structure can change before the RHP." },
+  { term: "Price band", category: "IPO",
+    def: "The range within which you can bid, e.g. ₹257–272. The top is the cap price; most retail bids are at cut-off, which pays the final (usually the upper) price." },
+  { term: "Cut-off price", category: "IPO",
+    def: "A retail option to bid at whatever final price is set. The full upper-band amount is blocked in your bank; any difference is released." },
+  { term: "Lot", aka: "market lot, minimum bid", category: "IPO",
+    def: "The minimum number of shares per application; bids are in multiples of it. Lot size × upper price band is what one lot blocks in your account." },
+  { term: "QIB", aka: "Qualified Institutional Buyers", category: "IPO",
+    def: "Mutual funds, banks, insurers, pension funds and foreign portfolio investors. They usually get up to 50% of a main-board issue. Strong QIB demand is often read as the 'smart money' signal." },
+  { term: "Anchor investors", category: "IPO",
+    def: "QIBs allotted part of the QIB portion one working day before the issue opens, at a fixed price. Half their shares are locked in for 30 days and half for 90 days after allotment." },
+  { term: "NII / HNI", aka: "Non-Institutional Investors, High Net-worth Individuals", category: "IPO",
+    def: "Individuals, companies and trusts bidding above ₹2 lakh; typically 15% of a main-board issue. Split into sHNI and bHNI." },
+  { term: "sHNI", aka: "small NII", category: "IPO",
+    def: "NII bids between ₹2 lakh and ₹10 lakh: one-third of the NII portion. Allotment is by lottery of the minimum sHNI application." },
+  { term: "bHNI", aka: "big NII", category: "IPO",
+    def: "NII bids above ₹10 lakh: two-thirds of the NII portion. Allotment is by lottery of the minimum bHNI application." },
+  { term: "RII", aka: "Retail Individual Investor", category: "IPO",
+    def: "Individuals bidding up to ₹2 lakh; typically 35% of a main-board issue. When oversubscribed, a lottery gives one minimum lot to as many applicants as possible." },
+  { term: "Subscription (x times)", category: "IPO",
+    def: "Shares bid for ÷ shares on offer, per category. 3x means three times as much demand as supply. Figures during bidding are interim; FinResearch labels them with a time." },
+  { term: "GMP", aka: "Grey Market Premium", category: "IPO",
+    def: "The unofficial premium at which IPO shares trade before listing. It is unregulated, thin and easy to move, so FinResearch never bases a verdict on it: verdicts rest on documents and exchange data." },
+  { term: "Grey market", category: "IPO",
+    def: "An informal, unregulated market for IPO shares and applications before listing (e.g. 'kostak'). Not recognised by SEBI or the exchanges; no investor protection." },
+  { term: "ASBA / UPI mandate", aka: "Application Supported by Blocked Amount", category: "IPO",
+    def: "Your bid money stays in your bank, only blocked until allotment. With UPI you must approve the mandate in your UPI app before the cut-off on the closing day, or the bid is invalid." },
+  { term: "Allotment", category: "IPO",
+    def: "Deciding who gets shares, done by the registrar after the issue closes. Oversubscribed categories use a lottery; unallotted money is unblocked." },
+  { term: "T+3", category: "IPO",
+    def: "SEBI's timeline: shares list on the third working day after the issue closes (T). Allotment is on T+1 and shares reach demat accounts on T+2." },
+  { term: "Listing gain", category: "IPO",
+    def: "(Listing price − issue price) ÷ issue price. The gain (or loss) if you sold at the listing-day price." },
+  { term: "Lock-in", category: "IPO",
+    def: "A period in which some holders (promoters, anchors, pre-IPO investors) cannot sell. Lock-in expiry can add selling pressure; the Monitor tracks anchor lock-in dates." },
+  { term: "OFS vs fresh issue", category: "IPO",
+    def: "A fresh issue brings new money into the company. An offer for sale (OFS) is existing shareholders selling; the company gets nothing from it." },
+  { term: "SME IPO", category: "IPO",
+    def: "Issues on NSE Emerge or BSE SME for smaller companies: larger minimum applications (individuals apply for two lots), thinner trading and lighter disclosure. Treat as higher risk." },
+  // Stocks
+  { term: "P/E", aka: "price-to-earnings", category: "Stocks",
+    def: "Share price ÷ earnings per share. How many years of current profit you pay for. Compare with listed peers in the same industry." },
+  { term: "EV/EBITDA", category: "Stocks",
+    def: "Enterprise value (market value + debt − cash) ÷ operating profit before depreciation. Useful for comparing companies with different debt levels." },
+  { term: "CAGR", aka: "Compound Annual Growth Rate", category: "Stocks",
+    def: "The steady yearly growth rate that turns a start value into an end value: (end ÷ start)^(1/years) − 1." },
+  { term: "Drawdown", category: "Stocks",
+    def: "The fall from a previous peak to a trough, in %. Maximum drawdown is the worst such fall in the period: a measure of how painful holding could have been." },
+  // Mutual funds
+  { term: "NAV", aka: "Net Asset Value", category: "Mutual funds",
+    def: "The value of one mutual fund unit, published every business day by AMFI. You buy and redeem at the NAV." },
+  { term: "SIP", aka: "Systematic Investment Plan", category: "Mutual funds",
+    def: "Investing a fixed amount in a fund at regular intervals, usually monthly. Buys more units when prices are low." },
+  { term: "XIRR", category: "Mutual funds",
+    def: "An annualised return for money invested at different dates (like SIPs). The right way to measure SIP returns; plain CAGR only fits a single lump sum." },
+  { term: "Expense ratio", aka: "TER", category: "Mutual funds",
+    def: "The yearly fee a fund charges, as a % of your investment, taken daily from the NAV. Direct plans are cheaper than regular plans (no distributor commission)." },
+  { term: "Rolling returns", category: "Mutual funds",
+    def: "Returns over every possible window of a fixed length (e.g. every 3-year period). Shows consistency better than a single point-to-point return." },
+  { term: "Sharpe ratio", category: "Mutual funds",
+    def: "(Return − risk-free rate) ÷ volatility. Return earned per unit of risk; higher is better when comparing similar funds." },
+  // Bonds
+  { term: "NCD", aka: "Non-Convertible Debenture", category: "Bonds",
+    def: "A bond issued by a company that cannot be converted into shares. Pays fixed interest; listed NCDs trade on NSE/BSE." },
+  { term: "Coupon", category: "Bonds",
+    def: "The interest rate a bond pays on its face value, e.g. 9% a year paid monthly or annually." },
+  { term: "YTM", aka: "Yield to Maturity", category: "Bonds",
+    def: "Your total annual return if you buy at today's price and hold to maturity, with all coupons paid. Above the coupon when the bond trades below face value." },
+  { term: "Accrued interest", category: "Bonds",
+    def: "Interest earned since the last coupon date. The buyer pays it to the seller on top of the quoted price." },
+  { term: "Clean vs dirty price", category: "Bonds",
+    def: "The clean price excludes accrued interest; the dirty (full) price includes it. You actually pay the dirty price." },
+  { term: "Duration", aka: "modified duration", category: "Bonds",
+    def: "How sensitive a bond's price is to interest rates: a duration of 4 means roughly a 4% price fall if yields rise 1 percentage point." },
+  { term: "Convexity", category: "Bonds",
+    def: "How duration itself changes as yields move. Positive convexity means prices rise more when yields fall than they drop when yields rise." },
+  { term: "Credit rating", category: "Bonds",
+    def: "An agency's view (CRISIL, ICRA, CARE, India Ratings…) of the issuer's ability to repay, from AAA (safest) down to D (default). Lower rating, higher yield, higher risk." },
+  // F&O
+  { term: "Option", category: "F&O",
+    def: "A contract giving the right, not the obligation, to buy (call) or sell (put) at a fixed price until expiry. Buyers pay a premium; sellers take on the risk." },
+  { term: "Strike", category: "F&O",
+    def: "The fixed price in an option contract at which the underlying can be bought (call) or sold (put)." },
+  { term: "Expiry", category: "F&O",
+    def: "The last day an option or future is valid. After it the contract settles and stops existing; time value falls to zero." },
+  { term: "Premium", category: "F&O",
+    def: "The price of an option, per unit. Premium × lot size is what a buyer pays and the most a buyer can lose." },
+  { term: "Lot size (F&O)", category: "F&O",
+    def: "The number of units in one futures or options contract, set by the exchange. All F&O positions are in whole lots." },
+  { term: "IV", aka: "Implied Volatility", category: "F&O",
+    def: "The volatility the market is pricing into an option. High IV means expensive options, often ahead of events like results." },
+  { term: "Greeks", category: "F&O",
+    def: "Sensitivities of an option's price: delta (to the underlying's price), gamma (how delta changes), theta (time decay per day), vega (to IV)." },
+  { term: "Open interest", aka: "OI", category: "F&O",
+    def: "The number of F&O contracts still open (not squared off). Rising OI with rising price suggests fresh positions, not just trading." },
+  { term: "PCR", aka: "Put-Call Ratio", category: "F&O",
+    def: "Put open interest ÷ call open interest. Read as a sentiment gauge; extremes are sometimes taken as contrarian signals." },
+  { term: "Max pain", category: "F&O",
+    def: "The strike at which option buyers as a whole would lose the most at expiry. A popular but weak theory about where prices gravitate; FinResearch shows it for context only." },
+  // FinResearch
+  { term: "Research stream", category: "FinResearch",
+    def: "One specialist AI researcher covering one area (e.g. financials, valuation, demand). An IPO report uses seven streams working in parallel." },
+  { term: "Claim ledger", category: "FinResearch",
+    def: "Every finding the agents make is stored as a claim with its value and citations (document page and lines, or a URL with time). Reports can only use claims from the ledger." },
+  { term: "Verification gate", category: "FinResearch",
+    def: "Deterministic Python checks run on every claim and on the final report: quote at the cited lines, numbers match, no conflicts, live figures time-stamped. A report that fails is not published as fact.",
+    link: { href: "/help#how-it-works", label: "How research works" } },
+  { term: "Claim status", category: "FinResearch",
+    def: "verified (checked against its source), unverified (not yet checked), needs review (derived or conflicting), unsupported (the quote isn't at the cited lines) or contradicted (the source says otherwise)." },
+  { term: "Personal rule", category: "FinResearch",
+    def: "Your own 'if metric compares to value then skip or warn' check, evaluated by Python on live data after the AI suggests. Rules always win.",
+    link: { href: "/rules", label: "Edit your rules" } },
+  { term: "Plan window", category: "FinResearch",
+    def: "Claude plans limit usage over a rolling 5-hour window and a 7-day window. FinResearch tracks both and pauses runs near the ceiling.",
+    link: { href: "/usage", label: "Plan usage" } },
+];
+
+export type Faq = { q: string; a: string; link?: Link };
+
+export const FAQ: Faq[] = [
+  { q: "Does it use my Claude plan?",
+    a: "Only for AI work: research runs, “Ask about this report” and personal suggestions go through the official Claude Code CLI on your own login, and count against your plan's 5-hour and 7-day windows. Browsing pages, prices, NAVs, option chains and monitor checks are plain data requests and use none of it. The Plan usage page shows how much is left.",
+    link: { href: "/usage", label: "Open Plan usage" } },
+  { q: "Is this investment advice?",
+    a: "No. FinResearch is a personal research tool, not a SEBI-registered adviser or research analyst. It shows cited evidence and a reasoned view; you decide, and you are responsible for your investments.",
+    link: { href: "/help#disclaimer", label: "Read the disclaimer" } },
+  { q: "Why is a claim unverified?",
+    a: "A claim starts unverified until a checker confirms it against its source. It stays unverified or becomes 'needs review' if the value is derived (not literally at the cited lines), conflicts with another stream, or is a live figure without a timestamp. Unsupported or contradicted claims can never appear in a report as fact. Click a figure in a report to see its evidence." },
+  { q: "What does the gate do?",
+    a: "The verification gate is plain Python, no AI. On every claim it checks that the quote is really at the cited page and lines and the number appears there, finds conflicts between streams, and checks live figures carry a time and day labels match the bidding calendar. On the final report it makes sure every cited claim is usable and important claims are verified. A report that fails is marked blocked with the reasons." },
+  { q: "Why doesn't the app use GMP?",
+    a: "Grey market premium is unofficial, unregulated and easy to move with a few trades. FinResearch may mention it as context with a time, but verdicts rest on the offer documents, exchange subscription data and valuation." },
+  { q: "Can a suggestion ignore my rules?",
+    a: "No. The AI proposes an action and lots; then Python applies your rules and limits. A skip rule that fires forces SKIP with 0 lots; a skip rule whose data isn't available yet makes the suggestion conditional; lots are capped by your capital and your category's SEBI limit.",
+    link: { href: "/rules", label: "Your rules" } },
+  { q: "What happens when my plan limit is reached?",
+    a: "Runs pause before the ceiling and record when they can resume, then continue from the step they stopped at; nothing is lost. Some tasks can fall back to local models, which are always marked degraded." },
+  { q: "Where is my data stored?",
+    a: "On your Mac: a local Postgres database and a local document folder. The API only listens on 127.0.0.1, so nothing is exposed to your network." },
+  { q: "How fresh are subscription figures?",
+    a: "They come from NSE (combined NSE + BSE) with the time they were published. While bidding is open they are interim and labelled so; the Monitor checks them on a schedule." },
+  { q: "What do my profile settings change?",
+    a: "Capital per IPO and category set how many lots a suggestion can recommend. Risk appetite, horizon, tax slab, holdings and notes are read by the advisor. Your name, avatar and display preferences only change how the app looks.",
+    link: { href: "/profile", label: "Open your profile" } },
+];
+
+export type Trouble = { problem: string; fix: string; link?: Link };
+
+export const TROUBLESHOOTING: Trouble[] = [
+  { problem: "“API offline” in the header, or “FinResearch API not reachable”",
+    fix: "The dashboard needs the local API. In the finresearch folder run `uv run finresearch serve`; it listens on `127.0.0.1:8710`. The status dot turns green within 30 seconds." },
+  { problem: "The dashboard does not open",
+    fix: "Build and start it from `web/`: `pnpm build && pnpm start` serves `http://127.0.0.1:3100`. If a port is busy, another copy is already running; open that one." },
+  { problem: "A run says it is waiting or paused",
+    fix: "It is near your Claude plan's 5-hour or 7-day ceiling. It resumes automatically after the window resets (the time is on the run page), or resume it yourself later.",
+    link: { href: "/usage", label: "Check plan usage" } },
+  { problem: "IPO lists or subscription numbers are empty",
+    fix: "NSE sometimes rate-limits or changes its site. Wait a minute and retry; the page will say what failed. Figures are cached for a few minutes." },
+  { problem: "A keyboard shortcut does nothing",
+    fix: "Shortcuts are ignored while you type in a box. Press Esc or click outside the field first. For `g` jumps, press `g`, release, then the letter within about a second." },
+  { problem: "Colours or theme look wrong",
+    fix: "Use the sun/moon button in the header, or your Profile preferences. “System” follows your Mac's appearance setting." },
+];
+
+export type Step = { title: string; text: string; link: Link };
+
+export const GETTING_STARTED: Step[] = [
+  { title: "Set up your profile", text: "Tell the app your capital per IPO, category (retail, sHNI, bHNI), risk appetite and horizon.",
+    link: { href: "/profile", label: "Open profile" } },
+  { title: "Add your rules", text: "Add red lines such as “skip if QIB is below 1x”. Python enforces them on every suggestion.",
+    link: { href: "/rules", label: "Add rules" } },
+  { title: "Pick an IPO", text: "The IPO radar lists open and upcoming NSE, BSE and SME issues with live subscription.",
+    link: { href: "/ipos", label: "Browse IPOs" } },
+  { title: "Run research", text: "Start a research run. Watch the seven streams live, then read the report; click any figure to see its source.",
+    link: { href: "/runs", label: "See runs" } },
+  { title: "Decide and track", text: "Ask for a personal suggestion, record what you did in the journal, and let the Monitor watch allotment and listing.",
+    link: { href: "/journal", label: "Open journal" } },
+];
+
+/** What you can do on each page, keyed by NAV href. */
+export const PAGE_GUIDES: Record<string, string[]> = {
+  "/": ["See open IPOs, running research and alerts at a glance", "Jump into anything with ⌘K"],
+  "/ipos": ["Open and upcoming main-board and SME issues", "Live subscription by category (QIB, NII, retail)", "Start research on an issue"],
+  "/stocks": ["Search listed companies", "Price history, results and research reports"],
+  "/funds": ["Search AMFI mutual funds", "NAV history, returns and risk", "Fund research reports"],
+  "/bonds": ["Listed bonds and NCDs", "Yields, coupons and ratings", "Bond research reports"],
+  "/fno": ["Option chains with greeks", "Build a strategy and see its payoff (analysis only)"],
+  "/runs": ["Every research run and its status", "Live agent progress", "Reports with clickable evidence and “Ask about this report”"],
+  "/monitor": ["Watches on IPOs and stocks", "Scheduled checks: subscription, allotment, listing, lock-ins", "Alerts"],
+  "/journal": ["Your suggestions and decisions", "Record applied lots, allotment and exit to see outcomes"],
+  "/profile": ["Your name and avatar", "Capital, category, risk and horizon used by suggestions", "Theme and display preferences"],
+  "/rules": ["Personal skip and warn rules", "Templates for common rules", "Plain-English preview of each rule"],
+  "/usage": ["Claude plan 5-hour and 7-day windows", "When limits reset; cool-downs"],
+  "/help": ["This guide, glossary, FAQ and shortcuts"],
+};
+
+export const RESEARCH_STREAMS = [
+  { key: "financials", label: "Financials" },
+  { key: "business", label: "Business & industry" },
+  { key: "risks", label: "Risks & governance" },
+  { key: "valuation", label: "Offer & valuation" },
+  { key: "news30", label: "30-day news" },
+  { key: "demand", label: "Demand & subscription" },
+  { key: "major", label: "History, sector & macro" },
+];
+
+/** Case-insensitive match of every word in the query. */
+export function matches(query: string, ...fields: (string | undefined)[]) {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  const hay = fields.filter(Boolean).join(" ").toLowerCase();
+  return q.split(/\s+/).every((w) => hay.includes(w));
+}
+
+export const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");

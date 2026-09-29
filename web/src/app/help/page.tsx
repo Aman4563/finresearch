@@ -1,12 +1,9 @@
-"use client";
+import type { Metadata } from "next";
 
-import { PageHeader, SkeletonRows } from "@/components/ui";
+import { HelpPage } from "@/components/help/help-page";
+
+export const metadata: Metadata = { title: "Help" };
 
 export default function Page() {
-  return (
-    <div>
-      <PageHeader title="Help" description="Coming in this release." />
-      <SkeletonRows rows={4} />
-    </div>
-  );
+  return <HelpPage />;
 }
