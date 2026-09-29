@@ -118,3 +118,62 @@ async def test_nse_equity_warms_the_quote_page_and_sends_it_as_referer():
     )
     assert req.headers["referer"] == "https://www.nseindia.com/get-quotes/equity?symbol=INFY"
     assert len(bars) == 19 and bars[-1].day == date(2026, 9, 28)
+
+
+# --------------------------------------------------------------------------- shareholding-pattern XBRL
+@pytest.mark.parametrize(
+    ("day", "taxonomy", "promoter", "fpi", "dii", "retail", "hni"),
+    [
+        ("30-JUN-2026", "2025-10-31", "13.82", "27.09", "42.96", "8.38", "4.61"),  # fractions (0.1382)
+        ("31-MAR-2025", "2022-09-30", "14.60", "32.88", "38.52", "7.42", "4.24"),  # percents
+        ("30-SEP-2021", "2020-09-30", "13.12", "33.46", "15.66", "6.27", "4.26"),  # one "Institutions" block
+    ],
+)
+def test_shareholding_xbrl_categories_across_taxonomy_vintages(
+    day, taxonomy, promoter, fpi, dii, retail, hni
+):
+    from finresearch.adapters.shp_xbrl import parse_shareholding_xbrl
+
+    p = parse_shareholding_xbrl((EQ / f"shp_INFY_{day}.xml").read_bytes())
+    assert p.symbol == "INFY" and p.taxonomy == taxonomy and p.warnings == []
+    assert p.as_of.strftime("%d-%b-%Y").upper() == day
+    s, g = p.split, p.groups
+    assert s["promoter"] == Decimal(promoter) and s["fpi"] == Decimal(fpi) and g["dii"] == Decimal(dii)
+    assert s["retail"] == Decimal(retail) and s["hni"] == Decimal(hni)
+    # the parts add back to the filed subtotals and the whole statement to 100 %
+    r = p.raw
+    assert s["promoter"] + r["public"] + s["employee_trusts"] == Decimal(100)
+    assert abs(sum(v for v in g.values() if v is not None) - 100) <= Decimal("0.02")
+    if "institutions_domestic" in r:
+        assert s["mutual_funds"] + s["insurance"] + s["banks"] + s["other_dii"] == r["institutions_domestic"]
+        assert s["fpi"] + s["foreign_other"] == r["institutions_foreign"]
+
+
+def test_shareholding_xbrl_reports_depository_receipts_outside_the_basis():
+    from finresearch.adapters.shp_xbrl import parse_shareholding_xbrl
+
+    p = parse_shareholding_xbrl((EQ / "shp_INFY_30-JUN-2026.xml").read_bytes())
+    # 31,76,58,095 ADR-underlying shares of 4,05,75,78,830 (BSE's summary says 7.83 %); the filed % exclude them
+    assert p.dr_shares == 317658095 and p.total_shares == 4057578830
+    assert round(p.dr_pct_of_total, 2) == Decimal("7.83")
+    old = parse_shareholding_xbrl((EQ / "shp_INFY_30-SEP-2021.xml").read_bytes())
+    assert old.split["depositories"] == Decimal("17.74")  # before 2022 the ADRs were counted as public
+
+
+def test_shareholding_xbrl_without_category_rows_is_flagged():
+    from finresearch.adapters.shp_xbrl import parse_shareholding_xbrl
+
+    p = parse_shareholding_xbrl(b'<xbrli:xbrl xmlns:xbrli="http://www.xbrl.org/2003/instance"/>')
+    assert p.split == {} and p.warnings == ["no category rows in the filing"]
+
+
+def test_shareholding_xbrl_no_promoter_and_strategic_fdi():
+    from finresearch.adapters.shp_xbrl import parse_shareholding_xbrl
+
+    # ITC 30-Jun-2026: no promoter group; BAT's 22.91 % is filed as foreign direct investment, not as an FPI
+    p = parse_shareholding_xbrl((EQ / "shp_ITC_30-JUN-2026.xml").read_bytes())
+    s, g = p.split, p.groups
+    assert s["promoter"] == 0 and s["fdi"] == Decimal("22.91") and s["fpi"] == Decimal("11.32")
+    # SUUTI's 7.79 % is filed as an "other financial institution"
+    assert g["fii"] == Decimal("11.32") and s["banks"] == Decimal("7.81")
+    assert abs(sum(v for v in g.values() if v is not None) - 100) <= Decimal("0.02") and p.warnings == []

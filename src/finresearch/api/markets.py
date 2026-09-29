@@ -30,7 +30,10 @@ HISTORY_MAX_REQUESTS = 40  # NSE returns at most ~70 rows (the latest) per histo
 HISTORY_WINDOW_DAYS = 360  # and refuses (HTTP 404) a range longer than a year
 RF_DEFAULT = Decimal("0.065")  # the page shows it and lets the viewer change it
 SIP_DEFAULT = Decimal(10000)
-CESS = Decimal("0.04")  # health and education cess on income tax
+CESS = Decimal("0.04")
+SHP_XBRL_TTL_S = (
+    30 * 86400
+)  # a filing's XBRL URL carries its filing id and never changes  # health and education cess on income tax
 
 
 # --------------------------------------------------------------------------- sources (live by default)
@@ -123,6 +126,11 @@ def _symbol(symbol: str) -> str:
     if not SYMBOL_RE.match(sym):
         raise HTTPException(422, f"{symbol!r} is not an NSE symbol")
     return sym
+
+
+def _quarter_end(d: date) -> bool:
+    """Quarterly patterns are dated the last day of Mar/Jun/Sep/Dec; other dates are event filings (buybacks...)."""
+    return d.month in (3, 6, 9, 12) and (d + timedelta(days=1)).day == 1
 
 
 def _official(url: str | None) -> bool:
@@ -343,6 +351,67 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
         out.sort(key=lambda r: r["period_end"])
         return {"symbol": sym, "unit": "INR (EPS: INR per share)", "quarters": out, "errors": errors,
                 "source": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results"}  # fmt: skip
+
+    @app.get("/api/stocks/{symbol}/shareholding")
+    async def stock_shareholding(symbol: str, quarters: int = Query(8, ge=1, le=12)) -> dict[str, Any]:
+        """Shareholder categories (promoter, FPI, mutual funds, insurers, banks, other DIIs, individuals, bodies
+        corporate, others) per quarter, read from each quarter's filed shareholding-pattern XBRL. Percentages are the
+        filed ones: of total shares excluding shares underlying depository receipts (SCRR basis)."""
+        sym = _symbol(symbol)
+        return await cache.get(
+            ("shareholding", sym, quarters), 12 * 3600, lambda: _shareholding(sym, quarters)
+        )
+
+    async def _shareholding(sym: str, quarters: int) -> dict[str, Any]:
+        from xml.etree.ElementTree import ParseError
+
+        from finresearch.adapters.shp_xbrl import CATEGORIES, GROUPS, parse_shareholding_xbrl
+
+        s = src()
+        errors: list[str] = []
+        out: list[dict[str, Any]] = []
+        async with s.open_equity() as eq:
+            rows = await eq.shareholding(sym)
+            best: dict[
+                date, Any
+            ] = {}  # one filing per quarter end: the latest submission (a revision replaces it)
+            for h in rows:
+                if not h.as_of or not _quarter_end(h.as_of) or not _official(h.xbrl):
+                    continue
+                cur = best.get(h.as_of)
+                if cur is None or (h.submitted or date.min) > (cur.submitted or date.min):
+                    best[h.as_of] = h
+            for end in sorted(best, reverse=True)[:quarters]:
+                h = best[end]
+                try:
+                    try:
+                        p = parse_shareholding_xbrl(await eq.fetch_bytes(h.xbrl, cache_ttl=SHP_XBRL_TTL_S))
+                    except ParseError:  # a cached block page: fetch it again
+                        p = parse_shareholding_xbrl(await eq.fetch_bytes(h.xbrl, cache_ttl=0))
+                except Exception as e:
+                    errors.append(f"{end}: {type(e).__name__}: {e}"[:200])
+                    continue
+                if not p.split:
+                    errors.append(f"{end}: {'; '.join(p.warnings) or 'no category rows'}")
+                    continue
+                if p.as_of and p.as_of != end:
+                    errors.append(f"{end}: the filing is dated {p.as_of}; skipped")
+                    continue
+                out.append({"as_of": end.isoformat(), "submitted": h.submitted.isoformat() if h.submitted else None,
+                            "xbrl": h.xbrl, "taxonomy": p.taxonomy,
+                            "categories": {k: _f(v, 4) for k, v in p.split.items()},
+                            "groups": {k: _f(v, 4) for k, v in p.groups.items()},
+                            "shareholders": {k: int(p.holders[k]) for k in ("total", "public", "retail", "hni")
+                                             if k in p.holders},
+                            "dr_pct_of_total_shares": _f(p.dr_pct_of_total, 4), "warnings": p.warnings})  # fmt: skip
+        out.sort(key=lambda r: r["as_of"])
+        return {"symbol": sym, "fetched_at": datetime.now(UTC).isoformat(),
+                "basis": "% of total shares excluding shares underlying depository receipts "
+                                         "(SCRR 1957 basis, as filed)",
+                "category_labels": [{"key": k, "label": lbl, "group": g} for k, lbl, g in CATEGORIES],
+                "group_labels": [{"key": k, "label": lbl} for k, lbl in GROUPS],
+                "quarters": out, "errors": errors,
+                "source": "https://www.nseindia.com/companies-listing/corporate-filings-shareholding-pattern"}  # fmt: skip
 
     # ------------------------------------------------------------------ mutual funds
     async def _scheme(code: str):

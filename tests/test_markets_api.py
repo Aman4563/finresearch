@@ -64,8 +64,14 @@ class FakeEquity:
     async def results(self, symbol, period="Quarterly"):
         return [ResultFiling.parse(r) for r in load("results_INFY_trimmed.json")]
 
-    async def fetch_bytes(self, url):
+    async def fetch_bytes(self, url, cache_ttl=None):
         self.log.append(("xbrl", url))
+        if "/SHP_" in url:  # shareholding-pattern XBRLs are recorded for a few quarters only
+            day = next(r["date"] for r in load("shareholding_INFY.json") if r["xbrl"] == url)
+            path = EQ / f"shp_INFY_{day}.xml"
+            if not path.exists():
+                raise RuntimeError("NSE refused")
+            return path.read_bytes()
         return (EQ / "results_INFY_Q3FY25_consolidated.xml").read_bytes()
 
 
@@ -176,6 +182,35 @@ def test_stock_results_reads_quarterly_xbrl(app_client):
 
 
 # --------------------------------------------------------------------------- funds
+def test_stock_shareholding_splits_each_quarter_from_its_xbrl(app_client):
+    c, log, _, _ = app_client
+    r = c.get("/api/stocks/INFY/shareholding", params={"quarters": 4}).json()
+    # 04-Dec-2025 is an event filing (buyback), not a quarter; 30-Sep-2025's XBRL is refused and listed as an error
+    assert [q["as_of"] for q in r["quarters"]] == ["2025-12-31", "2026-03-31", "2026-06-30"]
+    assert len(r["errors"]) == 1 and r["errors"][0].startswith("2025-09-30: RuntimeError")
+    assert not any("SHP_1584868" in u for k, u in log if k == "xbrl")
+    q = r["quarters"][-1]
+    cat, grp = q["categories"], q["groups"]
+    # INFY 30-Jun-2026 as filed: promoter 13.82, public 85.97, employee trusts 0.21 (same as NSE's summary row)
+    assert cat["promoter"] == 13.82 and cat["employee_trusts"] == 0.21
+    assert (
+        cat["fpi"] == 27.09
+        and cat["mutual_funds"] == 23.0
+        and cat["insurance"] == 16.2
+        and cat["banks"] == 0.01
+    )
+    assert grp["dii"] == 42.96 and grp["fii"] == 27.09 and cat["retail"] == 8.38 and cat["hni"] == 4.61
+    assert abs(sum(v for v in grp.values() if v is not None) - 100) < 0.05
+    assert q["dr_pct_of_total_shares"] == pytest.approx(7.8287, abs=1e-3) and q["taxonomy"] == "2025-10-31"
+    assert (
+        q["xbrl"].startswith("https://nsearchives.nseindia.com/corporate/xbrl/SHP_") and q["warnings"] == []
+    )
+    assert [x["key"] for x in r["group_labels"]] == ["promoter", "fii", "dii", "retail", "other"]
+    n = len(log)
+    c.get("/api/stocks/INFY/shareholding", params={"quarters": 4})
+    assert len(log) == n  # cached
+
+
 def test_fund_analytics_returns_rolling_and_risk(app_client):
     c, _, me, navs = app_client
     r = c.get(f"/api/funds/{me.code}/analytics", params={"years": 5, "rf": "0.065"}).json()

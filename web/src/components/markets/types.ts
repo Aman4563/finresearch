@@ -33,6 +33,29 @@ export type StockOverview = {
   errors: string[];
 };
 
+export type ShareholdingQuarter = {
+  as_of: string;
+  submitted: string | null;
+  xbrl: string;
+  taxonomy: string | null;
+  categories: Record<string, number | null>;
+  groups: Record<string, number | null>;
+  shareholders: Record<string, number>;
+  dr_pct_of_total_shares: number | null;
+  warnings: string[];
+};
+
+export type StockShareholding = {
+  symbol: string;
+  fetched_at: string;
+  basis: string;
+  category_labels: { key: string; label: string; group: string }[];
+  group_labels: { key: string; label: string }[];
+  quarters: ShareholdingQuarter[];
+  errors: string[];
+  source: string;
+};
+
 export type SeriesStats = {
   return?: number;
   annualised_volatility?: number;
