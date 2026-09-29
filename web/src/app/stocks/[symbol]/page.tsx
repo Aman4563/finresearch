@@ -11,8 +11,9 @@ import { useState } from "react";
 import { DonutChart, TimeSeriesChart, shortDate } from "@/components/charts";
 import { ensureStock, startResearch, watchStock } from "@/components/markets/actions";
 import { ResultsChart } from "@/components/markets/charts";
+import { ShareholdingSplit } from "@/components/markets/shareholding";
 import { Metric, PERIOD_DAYS, type Period, PeriodChart, RangeBar, Timeline, crore, inr, pctOf, signedPct, toneOf } from "@/components/markets/common";
-import type { StockHistory, StockOverview, StockResults } from "@/components/markets/types";
+import type { StockHistory, StockOverview, StockResults, StockShareholding } from "@/components/markets/types";
 import {
   Badge, Button, Callout, Card, Delta, EmptyState, ErrorNote, PageHeader, Skeleton, SkeletonRows, Stat, Table,
 } from "@/components/ui";
@@ -34,6 +35,7 @@ export default function StockDetail() {
   const days = PERIOD_DAYS[period] > 366 ? PERIOD_DAYS[period] : 366;
   const hist = useApi<StockHistory>(`/api/stocks/${encodeURIComponent(symbol)}/history?days=${Math.min(days, 1827)}`);
   const results = useApi<StockResults>(`/api/stocks/${encodeURIComponent(symbol)}/results`);
+  const shp = useApi<StockShareholding>(`/api/stocks/${encodeURIComponent(symbol)}/shareholding`);
   const watches = useApi<WatchSummary[]>("/api/watches");
   const watching = (watches.data ?? []).some((w) => w.kind === "stock" && w.active && w.nse_symbol === symbol);
 
@@ -71,6 +73,8 @@ export default function StockDetail() {
 
   const holding = ov.data?.shareholding ?? [];
   const latestHolding = holding.find((h) => h.promoter_pct != null);
+  const split = shp.data && shp.data.quarters.length > 0 ? shp.data : null;
+  const splitLoading = !shp.data && !shp.error;
   const quarters = results.data?.quarters ?? [];
 
   return (
@@ -202,9 +206,11 @@ export default function StockDetail() {
         {/* holding + results */}
         <div className="grid [&>*]:min-w-0 gap-5 lg:grid-cols-2">
           <Card title="Shareholding pattern" icon={<Users className="size-4" />}
-            subtitle={latestHolding?.as_of ? `Quarter ended ${day(latestHolding.as_of)}` : "Latest filing with NSE"}
-            help="Who owns the company. Promoters are the founders / controlling group; public includes institutions (FIIs, mutual funds, insurers) and retail. A falling promoter share can mean selling or dilution.">
-            {!ov.data ? (
+            subtitle={split ? `Quarter ended ${day(split.quarters[split.quarters.length - 1].as_of)}, from the filed pattern` : latestHolding?.as_of ? `Quarter ended ${day(latestHolding.as_of)}` : "Latest filing with NSE"}
+            help="Who owns the company: promoters (founders / controlling group), foreign institutions (FII / FPI), domestic institutions (DII: mutual funds, insurers, banks) and individuals. A falling promoter share can mean selling or dilution; rising institutional ownership often follows improving fundamentals.">
+            {split ? (
+              <ShareholdingSplit data={split} />
+            ) : !ov.data || splitLoading ? (
               <SkeletonRows rows={5} />
             ) : !latestHolding ? (
               <EmptyState icon={<PieChart className="size-5" />} title="No shareholding filing">NSE has no shareholding pattern for {symbol} yet.</EmptyState>
@@ -238,7 +244,7 @@ export default function StockDetail() {
                     />
                   </div>
                 )}
-                <p className="text-[11px] text-muted">Public = institutions (FIIs, mutual funds, insurers) plus retail. NSE&apos;s summary gives only promoter, public and employee trusts; the FII / DII split is in each quarter&apos;s full filing.</p>
+                <p className="text-[11px] text-muted">Public = institutions (FIIs, mutual funds, insurers) plus retail. NSE&apos;s summary gives only promoter, public and employee trusts; the FII / DII split could not be read from the filed pattern{shp.error ? ` (${shp.error})` : ""}.</p>
               </div>
             )}
           </Card>

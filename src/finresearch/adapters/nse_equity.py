@@ -235,8 +235,10 @@ class NseEquity:
         rows = d.get("data", []) if isinstance(d, dict) else d or []
         return [AnnualReportFiling.parse(r, symbol) for r in rows]
 
-    async def fetch_bytes(self, url: str) -> bytes:
-        resp = await self.nse.http.get(url, headers={"Referer": f"{NSE_BASE}/"})
+    async def fetch_bytes(self, url: str, *, cache_ttl: float | None = None) -> bytes:
+        """GET an archive file. Filing XBRLs carry the filing id in their URL and never change, so callers may pass a
+        long `cache_ttl` (on-disk cache)."""
+        resp = await self.nse.http.get(url, headers={"Referer": f"{NSE_BASE}/"}, cache_ttl=cache_ttl)
         if not resp.ok:
             raise NseError(f"HTTP {resp.status} for {url}")
         return resp.content
