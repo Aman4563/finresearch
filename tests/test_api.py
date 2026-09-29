@@ -268,7 +268,7 @@ def test_ipo_radar_links_known_companies_and_reports_source_errors(client, seede
             raise nse.NseError("NSE refused")
 
     monkeypatch.setattr(nse, "NseClient", FakeNse)
-    monkeypatch.setattr("finresearch.adapters.bse.sme_radar", no_bse)
+    monkeypatch.setattr("finresearch.adapters.bse.ipo_radar", no_bse)
     data = client.get("/api/ipos", params={"refresh": True}).json()
     row = data["issues"][0]
     assert (
@@ -306,7 +306,7 @@ def test_ipo_radar_dedupes_symbols_and_derives_the_phase_from_dates(client, monk
             ]
 
     monkeypatch.setattr(nse, "NseClient", FakeNse)
-    monkeypatch.setattr("finresearch.adapters.bse.sme_radar", no_bse)
+    monkeypatch.setattr("finresearch.adapters.bse.ipo_radar", no_bse)
     monkeypatch.setattr("finresearch.fincalc.dates.now_ist", lambda: datetime(2026, 9, 28, 12))
     rows = client.get("/api/ipos", params={"refresh": True}).json()["issues"]
     assert [(r["symbol"], r["phase"]) for r in rows] == [
@@ -382,6 +382,11 @@ class FakeNseList:
     async def upcoming_issues(self):
         return []
 
+    async def issue_terms(self, symbol, series=None):
+        from finresearch.adapters.nse import IssueTerms
+
+        return IssueTerms(symbol=symbol, series=series or "EQ")  # lot not published yet
+
 
 def test_radar_lists_bse_sme_issues_with_lot_and_skips_ones_nse_lists(client, monkeypatch):
     from datetime import date, datetime
@@ -411,7 +416,7 @@ def test_radar_lists_bse_sme_issues_with_lot_and_skips_ones_nse_lists(client, mo
     both = IpoIssue(symbol="EVEREST", company="Everestims Technologies Ltd", series="SME",
                     issue_start=date(2026, 9, 29), issue_end=date(2026, 10, 5))  # fmt: skip
     monkeypatch.setattr(nse, "NseClient", lambda: FakeNseList([both]))
-    monkeypatch.setattr(bse, "sme_radar", fake_radar)
+    monkeypatch.setattr(bse, "ipo_radar", fake_radar)
     monkeypatch.setattr("finresearch.fincalc.dates.now_ist", lambda: datetime(2026, 9, 29, 12, tzinfo=IST))
     data = client.get("/api/ipos", params={"refresh": True}).json()
     by = {(r["exchange"], r["symbol"]): r for r in data["issues"]}
@@ -428,9 +433,11 @@ def test_radar_lists_bse_sme_issues_with_lot_and_skips_ones_nse_lists(client, mo
         2,
         8008,
     )
-    assert by[("BSE", "TNA")]["phase"] == "upcoming" and data["errors"] == [
+    assert by[("BSE", "TNA")]["phase"] == "upcoming" and data["errors"] == []
+    assert data["notes"] == [
         "bse: BSE IPO 8007 details: HTTP 500"
-    ]
+    ]  # a detail failure does not block the cache
+    assert s["application"]["min_investment"] == 248000 and s["lot_source"]["label"] == "BSE issue details"
 
 
 # --------------------------------------------------------------------------- review fixes
@@ -563,7 +570,7 @@ def test_server_errors_are_json_with_cors_and_upstream_errors_are_502(env, monke
             return None
 
     monkeypatch.setattr(nse, "NseClient", DownNse)
-    monkeypatch.setattr("finresearch.adapters.bse.sme_radar", no_bse)
+    monkeypatch.setattr("finresearch.adapters.bse.ipo_radar", no_bse)
     app = create_app(equity_list=broken_list, fno_client=DownFno, nse_detail=down_detail)
     with TestClient(app, raise_server_exceptions=False) as c:
         r = c.get("/api/stocks/search", params={"q": "infy"}, headers=dash)
@@ -658,3 +665,77 @@ def test_bonds_search_and_add(env):
         assert c.post("/api/bonds", json={"isin": "INE000000000"}).status_code == 404
         kinds = {x["slug"]: x["kind"] for x in c.get("/api/companies").json()}
         assert kinds["bond-ine906b07df8"] == "bond_report"
+
+
+# --------------------------------------------------------------------------- the /api/ipos rows
+def test_radar_rows_carry_lots_from_nse_and_bse(client, monkeypatch):
+    from datetime import date, datetime
+
+    from finresearch.adapters import bse, nse
+    from finresearch.adapters.bse import BseIssue, BseIssueDetail
+    from finresearch.adapters.http import IST
+    from finresearch.adapters.nse import IpoIssue, parse_ipo_detail
+
+    fix = Path(__file__).parent / "fixtures"
+
+    def load(name):
+        return json.loads((fix / name).read_text())
+
+    def orient_bse():
+        return BseIssueDetail.parse(load("bse/issue_detail_8001_ORIENTCABL_mainboard_20260929.json"))
+
+    orient = IpoIssue(
+        symbol="ORIENTCABL",
+        company="Orient Cables (India) Limited",
+        series="EQ",
+        issue_start=date(2026, 9, 25),
+        issue_end=date(2026, 9, 29),
+        price_band="Rs.258 to Rs.272",
+    )
+    broken = IpoIssue(symbol="BROKEN", company="Broken Ltd", series="EQ", issue_start=date(2026, 9, 25),
+                      issue_end=date(2026, 9, 29), price_band="Rs.10 to Rs.12")  # fmt: skip
+    orient_terms = parse_ipo_detail("ORIENTCABL", load("nse/ipo_detail_ORIENTCABL_20260928_1443.json")).terms
+
+    class FakeNse:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return None
+
+        async def current_issues(self):
+            return [orient, broken]
+
+        async def upcoming_issues(self):
+            return []
+
+        async def issue_terms(self, symbol, series=None):
+            if symbol == "BROKEN":
+                raise nse.NseError("NSE refused")
+            return orient_terms
+
+    listed = [BseIssue.parse(r) for r in load("bse/public_issues_20260929.json")["Table"]]
+    shiv = BseIssueDetail.parse(load("bse/issue_detail_8008_SHIVCHEM_20260929_1034.json"))
+    mainboard = BseIssue(ipo_no=8001, scrip_code="", company="Orient Cables (India) Limited", issue_type="IPO",
+                         platform="MainBoard", status="L")  # fmt: skip
+
+    async def fake_radar():
+        return [(i, shiv if i.ipo_no == 8008 else None) for i in listed if i.ipo_no == 8008] + [
+            (mainboard, orient_bse())
+        ], []
+
+    monkeypatch.setattr(nse, "NseClient", FakeNse)
+    monkeypatch.setattr(bse, "ipo_radar", fake_radar)
+    monkeypatch.setattr("finresearch.fincalc.dates.now_ist", lambda: datetime(2026, 9, 29, 12, tzinfo=IST))
+    data = client.get("/api/ipos", params={"refresh": True}).json()
+    by = {r["symbol"]: r for r in data["issues"]}
+    assert set(by) == {"ORIENTCABL", "BROKEN", "SHIVCHEM"}  # BSE's mainboard row only cross-checks
+    o = by["ORIENTCABL"]
+    assert o["lot_size"] == 55 and o["application"]["bhni_min_amount"] == 1002320
+    assert o["lot_source"]["check"] == "BSE agrees"
+    b = by["BROKEN"]
+    assert b["lot_size"] is None and b["lot_note"].startswith("NSE issue page")
+    s = by["SHIVCHEM"]
+    assert (s["lot_size"], s["min_lots"], s["application"]["min_investment"]) == (2000, 2, 248000)
+    assert s["lot_source"]["label"] == "BSE issue details"
+    assert data["errors"] == [] and data["notes"] == ["NSE BROKEN issue page: NSE refused"]

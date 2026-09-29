@@ -80,12 +80,45 @@ export function parseBand(band: string | null | undefined): [number, number] | n
 
 export const isSme = (i: Pick<Issue, "series" | "exchange">) => i.series === "SME";
 
-/** Retail cost at the upper band: one lot and the minimum application (SME issues need at least `min_lots`). */
+/** Cost at the upper band: one lot and the minimum application (SME issues need `min_lots`, usually 2). Uses the
+ * API's amounts (NSE issue page / BSE issue details) and falls back to lot × upper band. */
 export function lotCost(i: Issue) {
+  const a = i.application;
+  if (a) return { lot: a.lot_cost, min: a.min_investment, minLots: i.min_lots || 1 };
   const band = parseBand(i.price_band);
   if (!band || !i.lot_size) return null;
   const lot = i.lot_size * band[1];
   return { lot, min: lot * (i.min_lots || 1), minLots: i.min_lots || 1 };
+}
+
+/** ₹2,09,440 -> "₹2.09L"; below a lakh the full amount. */
+export const lakh = (v: number) => (v >= 100000 ? `₹${(Math.floor(v / 1000) / 100).toFixed(2)}L` : inr(v));
+
+export type CategoryMin = { key: "retail" | "shni" | "bhni"; label: string; lots: number | null; amount: number | null; hint: string };
+
+/** Retail maximum and sHNI / bHNI minimums at the upper band (SME: individuals bid exactly the minimum). */
+export function categoryMins(i: Issue): CategoryMin[] | null {
+  const a = i.application;
+  if (!a) return null;
+  const sme = isSme(i);
+  return [
+    { key: "retail", label: sme ? "Individual" : "Retail max", lots: a.retail_max_lots, amount: a.retail_max_amount,
+      hint: sme ? "exactly the minimum" : `up to ${lakh(a.retail_cap)}` },
+    { key: "shni", label: "sHNI min", lots: a.shni_min_lots, amount: a.shni_min_amount, hint: "above ₹2L, up to ₹10L" },
+    { key: "bhni", label: "bHNI min", lots: a.bhni_min_lots, amount: a.bhni_min_amount, hint: "above ₹10L" },
+  ];
+}
+
+/** "NSE issue information · BSE agrees" plus a title with the URL and as-of. */
+export function lotSourceText(i: Issue) {
+  const s = i.lot_source;
+  if (!s) return null;
+  const when = s.as_of ? new Date(s.as_of).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit", timeZone: IST }) : null;
+  const short = s.label.startsWith("NSE") ? "NSE issue page" : "BSE issue details";
+  return {
+    short: s.check ? `${short} · ${s.check}` : short,
+    title: [s.label, when && `fetched ${when} IST`, s.min_lots_basis && `minimum: ${s.min_lots_basis}`, s.url].filter(Boolean).join(" · "),
+  };
 }
 
 export const times = (x: string | number | null | undefined) => {
@@ -128,7 +161,15 @@ export const TERMS: Record<string, ReactNode> = {
   NII: "Non-Institutional Investors (HNIs): individuals and companies bidding over ₹2 lakh. Often funded by loans, so their demand can be short-term.",
   Retail: "Retail Individual Investors: individuals bidding up to ₹2 lakh. If retail is oversubscribed, allotment is by lottery (one lot per winner).",
   anchor: "Anchor investors are large institutions allotted shares a day before the issue opens. Their shares are locked in for 30 days (half) and 90 days (the rest); the end of a lock-in can add selling pressure.",
-  lot: "A lot is the minimum number of shares you can bid for, and bids come in whole lots. Lot cost = lot size × upper price band.",
+  lot: "A lot is the minimum number of shares you can bid for, and bids come in whole lots. Lot cost = lot size × upper price band. Lot sizes come from NSE's issue page, checked against BSE's issue details.",
+  categories: (
+    <>
+      Who you bid as depends on the amount, at the upper band. <b>Retail</b>: up to ₹2 lakh (max lots shown); allotment is a
+      lottery for one lot. <b>sHNI</b> (small NII): more than ₹2 lakh up to ₹10 lakh; a lottery for the minimum sHNI
+      application. <b>bHNI</b> (big NII): more than ₹10 lakh. On SME issues individuals bid exactly two lots and NII
+      starts at three lots.
+    </>
+  ),
   band: "The price range the company set. Retail investors usually bid at the cut-off (the upper end), so costs here use the upper band.",
   upi: "Bids are paid with a UPI mandate. The mandate must be approved in your UPI app by 5 PM IST on the closing day or the bid is not counted.",
 };

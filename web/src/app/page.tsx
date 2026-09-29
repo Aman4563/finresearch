@@ -9,10 +9,12 @@ import {
   Calendar, GettingStarted, JournalMini, type Limits, PlanTile, QuickActions, RecentRuns, WatchedSubscription, buildEvents,
   planUsage,
 } from "@/components/dashboard/panels";
-import { LiveDot, SubMeter, TERMS, countdown, daysUntil, int, istAt, times, useNow } from "@/components/ipo/lib";
+import {
+  LiveDot, SubMeter, TERMS, categoryMins, countdown, daysUntil, inr, int, istAt, lakh, lotCost, lotSourceText, times, useNow,
+} from "@/components/ipo/lib";
 import { AlertFeed } from "@/components/monitor/alert-feed";
 import { useWatchDetails } from "@/components/monitor/hooks";
-import { Card, EmptyState, ErrorNote, Skeleton, SkeletonRows, Stat, cx } from "@/components/ui";
+import { Card, EmptyState, ErrorNote, InfoTip, Skeleton, SkeletonRows, Stat, cx } from "@/components/ui";
 import { useLive } from "@/components/live";
 import {
   type AlertItem, type Decision, type Issue, type Profile, type RunSummary, useApi, type WatchSummary,
@@ -161,12 +163,31 @@ export default function Dashboard() {
           {decisions.data ? <JournalMini decisions={decisions.data} /> : !decisions.error && <Skeleton className="h-40" />}
         </Card>
         <Card className="lg:col-span-2" title="Closing soonest" icon={<Timer className="size-4" />}
-          subtitle="Open issues by close date with the live NSE book."
+          subtitle="Open issues by close date: cost to apply at the upper band and the live book."
           actions={<Link href="/ipos" className="text-xs font-medium text-brand hover:underline">Screener →</Link>}>
           {radar.data ? <ClosingSoon issues={open} now={now} /> : !radar.error && <SkeletonRows rows={5} />}
         </Card>
       </div>
     </div>
+  );
+}
+
+/** "Lot ₹14,960 · min ₹14,960 · sHNI ₹2.09L · bHNI ₹10.02L" (upper band), with the category thresholds explained. */
+function ApplyLine({ i }: { i: Issue }) {
+  const cost = lotCost(i), cats = categoryMins(i), src = lotSourceText(i);
+  if (!cost) {
+    const failed = !!i.lot_note && /issue page|unavailable/i.test(i.lot_note);
+    return <p className="text-[11px] text-muted" title={i.lot_note ?? undefined}>{failed ? "Lot unavailable (exchange fetch failed)" : "Lot not published yet"}</p>;
+  }
+  const shni = cats?.find((c) => c.key === "shni"), bhni = cats?.find((c) => c.key === "bhni");
+  return (
+    <p className="num flex flex-wrap items-center gap-x-1.5 text-[11px] text-muted" title={src?.title}>
+      <span>Lot <span className="text-foreground">{inr(cost.lot)}</span></span>
+      <span>· min <span className="text-foreground">{inr(cost.min)}</span>{cost.minLots > 1 ? ` (${cost.minLots} lots)` : ""}</span>
+      {shni?.amount != null && <span className="hidden sm:inline">· sHNI {lakh(shni.amount)}</span>}
+      {bhni?.amount != null && <span className="hidden sm:inline">· bHNI {lakh(bhni.amount)}</span>}
+      <InfoTip>{TERMS.categories}</InfoTip>
+    </p>
   );
 }
 
@@ -184,6 +205,7 @@ function ClosingSoon({ issues, now }: { issues: Issue[]; now: number | null }) {
             <div className="min-w-0">
               <p className="flex items-center gap-2 truncate text-sm font-medium"><LiveDot /><span className="truncate">{i.company}</span></p>
               <p className="num text-xs text-muted">{i.exchange} {i.symbol}{i.series === "SME" ? " · SME" : ""}</p>
+              <ApplyLine i={i} />
             </div>
             <span className={cx("num text-right text-xs sm:order-last", d === 0 ? "font-medium text-warn" : "text-muted")}>
               {d == null ? "" : d === 0 ? (now! < istAt(i.issue_end!) ? `${countdown(istAt(i.issue_end!), now!)} left` : "closed") : `${d}d left`}

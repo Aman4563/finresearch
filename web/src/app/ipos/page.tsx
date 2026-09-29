@@ -10,7 +10,8 @@ import { LinkButton } from "@/components/dashboard/link-button";
 import { KIND_LABEL, ResearchButton } from "@/components/ipo/actions";
 import { IssueCard, NoLot, PHASE_TONE, ResearchCell, issueTiming, windowText } from "@/components/ipo/issue-card";
 import {
-  LiveDot, SUB_HELP, SubMeter, TERMS, categories, daysUntil, fmtX, inr, int, isSme, lotCost, parseBand, times, useNow,
+  LiveDot, SUB_HELP, SubMeter, TERMS, categories, categoryMins, daysUntil, fmtX, inr, int, isSme, lakh, lotCost,
+  lotSourceText, parseBand, times, useNow,
 } from "@/components/ipo/lib";
 import { useWatchDetails } from "@/components/monitor/hooks";
 import { BarsChart } from "@/components/charts";
@@ -20,7 +21,7 @@ import {
 import { LiveStamp, useLive } from "@/components/live";
 import { API_URL, type Company, type Issue, type WatchSummary, useApi } from "@/lib/api";
 
-type Radar = { fetched_at: string; issues: Issue[]; errors: string[] };
+type Radar = { fetched_at: string; issues: Issue[]; errors: string[]; notes?: string[] };
 type Phase = "all" | "open" | "upcoming" | "closed";
 type Exchange = "all" | "NSE" | "BSE";
 type Board = "all" | "main" | "sme";
@@ -174,7 +175,7 @@ export default function IposPage() {
 
       <Card
         title="Screener"
-        subtitle="Filter, search and sort every issue. Costs use the upper price band, the price retail bids at (cut-off)."
+        subtitle="Filter, search and sort every issue. Costs use the upper price band (the cut-off price retail bids at); lots come from NSE's issue page, checked against BSE."
         icon={<Search className="size-4" />}
       >
         <div className="mb-4 flex flex-col gap-3">
@@ -345,13 +346,14 @@ function IssueTable({ rows, now }: { rows: Issue[]; now: number | null }) {
           <th>Window</th>
           <th className="!text-right"><span className="inline-flex items-center gap-1">Price band <InfoTip>{TERMS.band}</InfoTip></span></th>
           <th className="!text-right"><span className="inline-flex items-center gap-1">Lot · min. invest <InfoTip>{TERMS.lot}</InfoTip></span></th>
+          <th className="!text-right"><span className="inline-flex items-center gap-1">Retail max · sHNI · bHNI min <InfoTip>{TERMS.categories}</InfoTip></span></th>
           <th className="w-36">Subscribed</th>
           <th>Research</th>
         </tr>
       </thead>
       <tbody>
         {rows.map((i) => {
-          const band = parseBand(i.price_band), cost = lotCost(i), t = issueTiming(i, now);
+          const band = parseBand(i.price_band), cost = lotCost(i), t = issueTiming(i, now), cats = categoryMins(i);
           const open = phaseOf(i) === "open";
           return (
             <tr key={`${i.exchange}-${i.phase}-${i.symbol}`}>
@@ -370,14 +372,25 @@ function IssueTable({ rows, now }: { rows: Issue[]; now: number | null }) {
                 <div className="num">{windowText(i)}</div>
                 <div className={cx("num", t.urgent ? "font-medium text-warn" : "text-muted")}>{t.text}</div>
               </td>
-              <td className="num text-right">{band ? `₹${band[0]}–${band[1]}` : "—"}</td>
+              <td className="num text-right" title={i.price_band_note ?? undefined}>
+                {band ? `₹${band[0]}–${band[1]}` : "—"}
+                {i.price_band_note && <span className="ml-0.5 text-warn">*</span>}
+              </td>
               <td className="num text-right">
-                {cost ? inr(cost.lot) : <NoLot />}
+                {cost ? inr(cost.lot) : <NoLot i={i} />}
                 {cost && (
-                  <div className="text-[10px] text-muted">
+                  <div className="text-[10px] text-muted" title={lotSourceText(i)?.title}>
                     {i.lot_size} sh · min {inr(cost.min)}{cost.minLots > 1 ? ` (${cost.minLots} lots)` : ""}
                   </div>
                 )}
+              </td>
+              <td className="num text-right text-xs">
+                {cats ? (
+                  <>
+                    <div>{cats.map((c) => (c.amount == null ? "—" : lakh(c.amount))).join(" · ")}</div>
+                    <div className="text-[10px] text-muted">{cats.map((c) => (c.lots == null ? "—" : `${c.lots}`)).join(" · ")} lots</div>
+                  </>
+                ) : <span className="text-muted">—</span>}
               </td>
               <td><SubMeter value={times(i.times_subscribed)} /></td>
               <td><ResearchCell i={i} compact /></td>

@@ -936,35 +936,59 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
     @app.get("/api/ipos")
     async def ipos(refresh: bool = False) -> dict[str, Any]:
         """Current and upcoming NSE issues (mainboard and SME) plus BSE SME issues, linked to companies and runs
-        already in the store."""
+        already in the store. Each row carries its lot, minimum bid and per-category application amounts: NSE's
+        issue page first, BSE's issue details as cross-check and fallback. A failed detail call only blanks that
+        row's lot (noted in `notes`); `errors` is for list-level failures and keeps the response out of the cache."""
         import time
 
+        from finresearch.adapters import bse
         from finresearch.adapters.nse import NseClient
         from finresearch.api.live import radar_ttl
+        from finresearch.api.radar import terms_fields
         from finresearch.fincalc.dates import now_ist
 
         ttl = await asyncio.to_thread(radar_ttl, datetime.now(UTC), RADAR_TTL_S)
         if not refresh and radar_cache.get("at", 0) > time.time() - ttl:
             return radar_cache["data"]
         errors: list[str] = []
-        issues: list[tuple[str, Any]] = []
-        try:
-            async with NseClient() as nse:
-                for phase, fetch in (("current", nse.current_issues), ("upcoming", nse.upcoming_issues)):
-                    try:
-                        issues += [(phase, i) for i in await fetch()]
-                    except Exception as e:
-                        errors.append(f"{phase}: {e}"[:200])
-        except Exception as e:  # warm-up or connection failure
-            errors.append(f"NSE: {type(e).__name__}: {e}"[:200])
-        from finresearch.adapters import bse
+        notes: list[str] = []
 
-        try:
-            bse_issues, bse_errors = await bse.sme_radar()
-            errors += [f"bse: {e}" for e in bse_errors]
-        except Exception as e:
-            bse_issues = []
-            errors.append(f"bse: {e}"[:200])
+        async def nse_side() -> tuple[list[tuple[str, Any]], dict[str, Any]]:
+            issues: list[tuple[str, Any]] = []
+            terms: dict[str, Any] = {}
+            try:
+                async with NseClient() as nse:
+                    for phase, fetch in (("current", nse.current_issues), ("upcoming", nse.upcoming_issues)):
+                        try:
+                            issues += [(phase, i) for i in await fetch()]
+                        except Exception as e:
+                            errors.append(f"{phase}: {e}"[:200])
+                    wanted = {i.symbol: i.series for _, i in issues}
+
+                    async def one(sym: str, series: str | None) -> None:
+                        try:
+                            terms[sym] = await nse.issue_terms(sym, series)
+                        except Exception as e:  # the row stays; BSE may still supply the lot
+                            terms[sym] = f"NSE issue page: {type(e).__name__}"
+                            notes.append(f"NSE {sym} issue page: {e}"[:200])
+
+                    await asyncio.gather(*(one(s, ser) for s, ser in wanted.items()))
+            except Exception as e:  # warm-up or connection failure
+                errors.append(f"NSE: {type(e).__name__}: {e}"[:200])
+            return issues, terms
+
+        async def bse_side() -> list[tuple[Any, Any]]:
+            try:
+                rows, detail_errors = await bse.ipo_radar()
+                notes.extend(f"bse: {e}" for e in detail_errors)
+                return rows
+            except Exception as e:
+                errors.append(f"bse: {e}"[:200])
+                return []
+
+        (issues, nse_terms), bse_rows = await asyncio.gather(nse_side(), bse_side())
+        bse_by_symbol = {d.symbol.upper(): d for _, d in bse_rows if d is not None and d.symbol}
+        bse_by_name = {bse.name_key(i.company): d for i, d in bse_rows if d is not None}
         known = await asyncio.to_thread(_known_symbols)
         today = now_ist().date()
         rows, seen = [], set()
@@ -976,29 +1000,39 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
             if i.issue_start and i.issue_end:
                 phase = "upcoming" if today < i.issue_start else "closed" if today > i.issue_end else "open"
             k = known.get(i.symbol.upper(), {})
-            rows.append({"phase": phase, "exchange": "NSE", "symbol": i.symbol, "company": i.company,
-                         "series": i.series, "issue_start": _iso(i.issue_start), "issue_end": _iso(i.issue_end),
-                         "price_band": i.price_band,
-                         "times_subscribed": str(i.times_subscribed) if i.times_subscribed is not None else None,
-                         "status": i.status, "slug": k.get("slug"), "latest_run": k.get("run"),
-                         "latest_run_status": k.get("run_status")})  # fmt: skip
-        on_nse = {bse.name_key(r["company"]) for r in rows}
-        for i, d in bse_issues:
-            if bse.name_key(i.company) in on_nse:  # on both: NSE's row has the combined book
+            t = nse_terms.get(i.symbol)
+            other = bse_by_symbol.get(i.symbol.upper()) or bse_by_name.get(bse.name_key(i.company))
+            row = {"phase": phase, "exchange": "NSE", "symbol": i.symbol, "company": i.company,
+                   "series": i.series, "issue_start": _iso(i.issue_start), "issue_end": _iso(i.issue_end),
+                   "price_band": i.price_band,
+                   "times_subscribed": str(i.times_subscribed) if i.times_subscribed is not None else None,
+                   "status": i.status, "slug": k.get("slug"), "latest_run": k.get("run"),
+                   "latest_run_status": k.get("run_status")}  # fmt: skip
+            row.update(terms_fields(series=i.series, list_band=i.price_band, bse=other,
+                                    nse=t if not isinstance(t, str) else None,
+                                    note=t if isinstance(t, str) else None))  # fmt: skip
+            rows.append(row)
+        on_nse = {bse.name_key(r["company"]) for r in rows} | {r["symbol"].upper() for r in rows}
+        for i, d in bse_rows:
+            if not i.is_sme_ipo:  # BSE mainboard issues are on NSE too; they only cross-check NSE's rows
                 continue
+            if bse.name_key(i.company) in on_nse or (d and d.symbol and d.symbol.upper() in on_nse):
+                continue  # on both: NSE's row has the combined book
             phase = "upcoming" if i.issue_start and today < i.issue_start else "closed" if i.issue_end and \
                 today > i.issue_end else "open"  # fmt: skip
             k = known.get(f"BSE:{i.ipo_no}", {})
-            rows.append({"phase": phase, "exchange": "BSE", "symbol": (d.symbol if d else None) or i.scrip_code,
-                         "company": i.company, "series": "SME", "issue_start": _iso(i.issue_start),
-                         "issue_end": _iso(i.issue_end), "price_band": i.price_band, "times_subscribed": None,
-                         "status": i.status, "bse_ipo_no": i.ipo_no, "lot_size": d.market_lot if d else None,
-                         "min_lots": d.min_lots if d else None,
-                         "issue_size_shares": d.issue_size_shares if d else None, "slug": k.get("slug"),
-                         "latest_run": k.get("run"), "latest_run_status": k.get("run_status")})  # fmt: skip
+            row = {"phase": phase, "exchange": "BSE", "symbol": (d.symbol if d else None) or i.scrip_code,
+                   "company": i.company, "series": "SME", "issue_start": _iso(i.issue_start),
+                   "issue_end": _iso(i.issue_end), "price_band": i.price_band, "times_subscribed": None,
+                   "status": i.status, "bse_ipo_no": i.ipo_no,
+                   "issue_size_shares": d.issue_size_shares if d else None, "slug": k.get("slug"),
+                   "latest_run": k.get("run"), "latest_run_status": k.get("run_status")}  # fmt: skip
+            row.update(terms_fields(series="SME", list_band=i.price_band, bse=d,
+                                    note=None if d else "BSE issue details unavailable"))  # fmt: skip
+            rows.append(row)
         order = {"open": 0, "upcoming": 1, "current": 1, "closed": 2}
         rows.sort(key=lambda r: (order.get(r["phase"], 3), r["issue_end"] or ""))
-        data = {"fetched_at": _iso(datetime.now(UTC)), "issues": rows, "errors": errors}
+        data = {"fetched_at": _iso(datetime.now(UTC)), "issues": rows, "errors": errors, "notes": notes}
         if not errors:
             radar_cache.update(at=time.time(), data=data)
         return data

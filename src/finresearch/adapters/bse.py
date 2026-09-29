@@ -3,7 +3,7 @@
 Endpoints (api.bseindia.com/BseIndiaAPI/api, verified live 29-Sep-2026; JSON, no cookies needed):
 - `/GetPublicIssue_par_updated/w?flag=1`             every open (Status L) and forthcoming (F) public issue:
                                                       IPO/FPO/rights/debt/buyback; `eXCHANGE_PLATFORM` = SME for SME
-- `/GetMkt_ISSUE_BBS_IPO/w?IPO_NO=n`                  issue details: market lot, minimum bid, issue size, BRLM,
+- `/GetMkt_ISSUE_BBS_IPO/w?IPO_NO=n`                  issue details (SME and MainBoard): market lot, minimum bid, issue size, BRLM,
                                                       registrar and document links (market maker is not published)
 - `/Pubissues_BSEDemSchd_GrShoe_ng/w?IPO_NO=n`        `is_green_shoe` S/BS marks the SME book-building format
 - `/Pubissues_GetBkbldgCatdem_PAR_bbnew_ng/w?IPO_NO=n` SME category-wise demand (`table1`, `Maxdt` timestamp)
@@ -20,6 +20,7 @@ Document links on listing.bseindia.com sit behind a bot challenge and usually do
 
 from __future__ import annotations
 
+import asyncio
 import re
 from datetime import date, datetime
 from decimal import Decimal
@@ -401,18 +402,31 @@ def name_key(name: str) -> frozenset[str]:
     return frozenset(t for t in re.findall(r"[a-z0-9]+", name.lower()) if t not in _STOP)
 
 
+async def ipo_radar(
+    client: BseClient | None = None, *, platforms: frozenset[str] = frozenset({"SME", "MAINBOARD"})
+) -> tuple[list[tuple[BseIssue, BseIssueDetail | None]], list[str]]:
+    """Open and forthcoming BSE IPOs (SME and mainboard) with their details: market lot, minimum bid and price band.
+
+    Details are fetched concurrently (the host limiter keeps BSE at its rate) and cached for hours. A failed detail
+    keeps its row (without a lot) and is reported in the second list."""
+    errors: list[str] = []
+    async with client or BseClient() as bse:
+        issues = [i for i in await bse.public_issues()
+                  if i.issue_type == "IPO" and (i.platform or "").upper() in platforms]  # fmt: skip
+
+        async def one(issue: BseIssue) -> tuple[BseIssue, BseIssueDetail | None]:
+            try:
+                return issue, await bse.issue_detail(issue.ipo_no, cache_ttl=DETAIL_TTL_S)
+            except Exception as e:  # the row is still worth listing without its lot
+                errors.append(f"BSE IPO {issue.ipo_no} details: {e}"[:200])
+                return issue, None
+
+        out = list(await asyncio.gather(*(one(i) for i in issues)))
+    return out, errors
+
+
 async def sme_radar(
     client: BseClient | None = None,
 ) -> tuple[list[tuple[BseIssue, BseIssueDetail | None]], list[str]]:
     """Open and forthcoming BSE SME IPOs with their details (lot, minimum bid); details are cached for hours."""
-    errors: list[str] = []
-    out: list[tuple[BseIssue, BseIssueDetail | None]] = []
-    async with client or BseClient() as bse:
-        for issue in await bse.sme_issues():
-            try:
-                detail = await bse.issue_detail(issue.ipo_no, cache_ttl=DETAIL_TTL_S)
-            except Exception as e:  # the row is still worth listing without its lot
-                detail = None
-                errors.append(f"BSE IPO {issue.ipo_no} details: {e}"[:200])
-            out.append((issue, detail))
-    return out, errors
+    return await ipo_radar(client, platforms=frozenset({"SME"}))
