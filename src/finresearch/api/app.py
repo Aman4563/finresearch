@@ -1034,6 +1034,11 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
                      **{k: round(v, 4) for k, v in by_run.get(r.id, empty).items()}}
                     for r, co in rows]  # fmt: skip
 
+    # ------------------------------------------------------------------ market data for the stock, fund and bond pages
+    from finresearch.api.markets import add_market_routes
+
+    add_market_routes(app, bond_rows=_bond_rows, scheme_rows=_scheme_rows)
+
     return app
 
 

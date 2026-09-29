@@ -64,8 +64,9 @@ class RollingStats:
     share_positive: Decimal
 
 
-def rolling_returns(navs: Series, years: int, step_days: int = 7) -> RollingStats | None:
-    """Annualised returns over every `years`-long window (sampled every `step_days`); None if history is short."""
+def rolling_return_series(navs: Series, years: int, step_days: int = 7) -> list[tuple[date, Decimal]]:
+    """(window start, annualised return) for every `years`-long window, sampled every `step_days`; empty if the
+    history is shorter than one window."""
     s = _series(navs)
     out, i = [], 0
     while i < len(s):
@@ -74,11 +75,17 @@ def rolling_returns(navs: Series, years: int, step_days: int = 7) -> RollingStat
         end = next(((d, v) for d, v in s[i:] if d >= target), None)
         if end is None:
             break
-        out.append(annualised_return(v0, end[1], d0, end[0]))
+        out.append((d0, annualised_return(v0, end[1], d0, end[0])))
         nxt = next((j for j in range(i + 1, len(s)) if (s[j][0] - d0).days >= step_days), None)
         if nxt is None:
             break
         i = nxt
+    return out
+
+
+def rolling_returns(navs: Series, years: int, step_days: int = 7) -> RollingStats | None:
+    """Annualised returns over every `years`-long window (sampled every `step_days`); None if history is short."""
+    out = [r for _, r in rolling_return_series(navs, years, step_days)]
     if not out:
         return None
     srt = sorted(out)
