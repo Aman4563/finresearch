@@ -576,6 +576,20 @@ def monitor_watch(company: str) -> None:
                   f"{w['allotment_date']}, listing {w['listing_date']} (expected)")  # fmt: skip
 
 
+@monitor_app.command("holidays")
+def monitor_holidays(force: bool = typer.Option(True, help="Fetch even if the cache is fresh")) -> None:
+    """Fetch NSE's trading and settlement holidays for the current year into the cache."""
+    from finresearch.adapters.nse_holidays import load_holidays, refresh_holidays
+
+    asyncio.run(refresh_holidays(force=force))
+    for kind in ("trading", "clearing"):
+        rows = load_holidays(kind)
+        console.print(
+            f"{kind}: {len(rows)} holidays, e.g. "
+            + ", ".join(f"{d} {n}" for d, n in sorted(rows.items())[:3])
+        )
+
+
 @monitor_app.command("tick")
 def monitor_tick() -> None:
     """Run one monitoring pass now (plan slots, run due checks)."""

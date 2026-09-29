@@ -118,3 +118,7 @@ These are dated entries for bugs we reproduced, what caused them, and how they a
 
 ### 2026-09-29: bond conventions that are not verified
 - Whether NSE's retail bond segment quotes prices dirty or clean is not confirmed, so `bond_analytics` requires `price_basis`. Coupon frequency must come from the offer document; secondary sources are marked as such in the claims.
+
+### 2026-09-29: expected listing date fell on an exchange holiday
+- **Seen:** the date calendar had no exchange holidays, so Orient Cables' expected T+3 listing was 2-Oct-2026, a trading holiday.
+- **Now:** NSE's holiday master (trading and clearing, CM segment) is cached and used in every exchange-date calculation. T+3 from 29-Sep-2026 is 5-Oct-2026, and a check whose slot moves is cancelled rather than run on the old day (`test_orient_t_plus_3_skips_gandhi_jayanti`, `test_moved_listing_date_cancels_the_old_check`).

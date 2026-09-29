@@ -142,13 +142,15 @@ def _close_from_facts(run: ResearchRun):
         return None
 
 
-def bidding_days_left(today, close) -> int:
+def bidding_days_left(today, close, holidays: set | None = None) -> int:
     """Exchange business days from today to the close, both included (0 once the issue has closed)."""
+    from finresearch.adapters.nse_holidays import trading_holidays
     from finresearch.fincalc.dates import business_days_between, is_business_day
 
     if close < today:
         return 0
-    return business_days_between(today, close) + (1 if is_business_day(today) else 0)
+    hol = trading_holidays() if holidays is None else holidays
+    return business_days_between(today, close, hol) + (1 if is_business_day(today, hol) else 0)
 
 
 def evaluate(rule: Rule, metrics: dict[str, Metric]) -> RuleResult:

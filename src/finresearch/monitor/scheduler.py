@@ -31,13 +31,14 @@ RETRY_DELAY = {"listing": timedelta(minutes=30), "subscription": timedelta(minut
 
 
 def retry_at(job: MonitorJob, error: Exception, now: datetime) -> datetime:
-    """When to try again. A stock that has not listed is checked again on the next exchange day at the same time
-    (the calendar has no exchange holidays, so the expected listing date can be a day early)."""
+    """When to try again. A stock that has not listed is checked again on the next trading day at the same time."""
     if job.kind == "listing" and isinstance(error, jobs.NotYet):
+        from finresearch.adapters.nse_holidays import trading_holidays
         from finresearch.fincalc.dates import next_business_day, to_ist
 
         due = to_ist(job.due_at)
-        return due.replace(year=(d := next_business_day(to_ist(now).date())).year, month=d.month, day=d.day)
+        d = next_business_day(to_ist(now).date(), trading_holidays())
+        return due.replace(year=d.year, month=d.month, day=d.day)
     return now + RETRY_DELAY.get(job.kind, timedelta(minutes=10))
 
 
@@ -58,6 +59,13 @@ def sync_slots(now: datetime) -> int:
                 if now > last_slot(slots):
                     w.active = False
                     continue
+            planned = {sl.slot for sl in slots}
+            # dates can move (holiday lists refreshed, NSE confirms a listing date): pending checks for slots that are
+            # no longer planned are cancelled instead of running on the wrong day
+            s.execute(update(MonitorJob).where(MonitorJob.watch_id == w.id, MonitorJob.status == "pending",
+                                               MonitorJob.attempts == 0, MonitorJob.slot.not_in(planned),
+                                               MonitorJob.due_at > now)
+                      .values(status="cancelled", finished_at=now))  # fmt: skip
             for sl in slots:
                 if sl.due_at < now - GRACE:
                     continue
@@ -118,8 +126,28 @@ async def run_job(job_id: int, deps: jobs.Deps, now: datetime) -> str:
         return job.status
 
 
+_HOLIDAYS_CHECKED: dict[str, float] = {}
+
+
+async def _refresh_holidays(deps: jobs.Deps) -> None:
+    """Keep NSE's holiday lists fresh (at most one attempt a day; failures keep the cached lists)."""
+    import time
+
+    if _HOLIDAYS_CHECKED.get("at", 0) > time.time() - 86400:
+        return
+    _HOLIDAYS_CHECKED["at"] = time.time()
+    try:
+        from finresearch.adapters.nse_holidays import refresh_holidays
+
+        await refresh_holidays(fetch=deps.holidays)
+    except Exception:
+        log.warning("could not refresh NSE holidays; using the cached lists", exc_info=True)
+
+
 async def tick(deps: jobs.Deps, now: datetime | None = None) -> dict[str, int]:
     now = now or datetime.now(UTC)
+    if deps.holidays is not None or deps.live_holidays:
+        await _refresh_holidays(deps)
     _recover_stale(now)
     added = sync_slots(now)
     missed = _expire_missed(now)
