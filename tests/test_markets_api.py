@@ -277,3 +277,34 @@ def test_stock_history_keeps_what_came_back_when_nse_refuses_an_older_piece(app_
     c.app.state.markets.equity = lambda: Flaky(log)
     r = c.get("/api/stocks/TCS/history", params={"days": 400}).json()
     assert r["partial"] is True and len(r["bars"]) == 5 and r["bars"][-1]["date"] == "2026-09-28"
+
+
+def test_bond_frequency_comes_from_verified_research_else_is_flagged_as_assumed(app_client):
+    from finresearch.db import session_scope
+    from finresearch.db.models import Claim, ResearchRun
+    from finresearch.ingest.documents import get_or_create_company
+
+    c, _, _, _ = app_client
+    r = c.get("/api/bonds/INE906B07DF8/analytics", params={"tax_slab_pct": 30}).json()
+    assert r["freq"] == 1 and r["freq_source"] == {"kind": "assumed"}
+
+    def add_claim(value: int, status: str) -> tuple[int, int]:
+        with session_scope() as s:
+            co = get_or_create_company(s, "bond-ine906b07df8", "Test NCD")
+            run = ResearchRun(company_id=co.id, kind="bond_report", status="done", manifest={})
+            s.add(run)
+            s.flush()
+            cl = Claim(run_id=run.id, stream="bond_terms", statement=f"{value} coupons a year", claim_type="numeric",
+                       metric="coupon_frequency", value=Decimal(value), unit="payments/year", status=status)  # fmt: skip
+            s.add(cl)
+            s.flush()
+            return run.id, cl.id
+
+    add_claim(12, "needs_review")  # committed but not verified: still an assumption
+    assert c.get("/api/bonds/INE906B07DF8/analytics").json()["freq_source"] == {"kind": "assumed"}
+    run_id, claim_id = add_claim(2, "verified")
+    r = c.get("/api/bonds/INE906B07DF8/analytics", params={"tax_slab_pct": 30}).json()
+    assert r["freq"] == 2 and r["freq_source"] == {"kind": "verified", "claim_id": claim_id, "run_id": run_id}
+    assert r["analytics"]["coupon_per_payment"] == 43.75
+    chosen = c.get("/api/bonds/INE906B07DF8/analytics", params={"freq": 4}).json()  # an explicit choice wins
+    assert chosen["freq"] == 4 and chosen["freq_source"] == {"kind": "chosen"}

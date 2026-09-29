@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { ensureBond, startResearch } from "@/components/markets/actions";
-import { SearchBox, inr, ratingTone } from "@/components/markets/common";
+import { SearchBox, inr, ratingLabel, ratingTone } from "@/components/markets/common";
 import type { Bond } from "@/components/markets/types";
 import { Badge, Button, Callout, Card, EmptyState, ErrorNote, InfoTip, PageHeader, SkeletonRows, Table } from "@/components/ui";
 import { api, type Company, day, useApi } from "@/lib/api";
@@ -122,7 +122,7 @@ export default function Bonds() {
                       <td className="num text-xs">{day(b.maturity)}</td>
                       <td className="num text-right">{b.last_price ? inr(b.last_price) : "—"}</td>
                       <td>
-                        {b.rating ? <Badge tone={ratingTone(b.rating)}>{b.rating.split(",")[0]}</Badge> : <span className="text-xs text-muted">unrated</span>}
+                        {b.rating ? <Badge tone={ratingTone(b.rating)}>{ratingLabel(b.rating)}</Badge> : <span className="text-xs text-muted">unrated</span>}
                         {b.rating_agency && <span className="block text-[11px] text-muted">{b.rating_agency}</span>}
                       </td>
                       <td>

@@ -524,19 +524,21 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
 
     # ------------------------------------------------------------------ listed bonds
     @app.get("/api/bonds/{isin}/analytics")
-    async def bond_analytics(isin: str, freq: int = 1, basis: str = "dirty",
+    async def bond_analytics(isin: str, freq: int | None = None, basis: str = "dirty",
                              tax_slab_pct: Annotated[Decimal | None, Query(ge=0, le=50)] = None,
                              settlement: date | None = None) -> dict[str, Any]:  # fmt: skip
         """YTM, current yield, accrued interest, durations, convexity and after-tax yield for a bond in NSE's
         capital-market list, with its cash-flow schedule and price-yield curve. NSE's CM-segment bond prices are
-        dirty (they include accrued interest) unless `basis=clean`. The coupon frequency (`freq`: 1, 2, 4 or 12)
-        must come from the offer document; the tax slab defaults to the profile's (4% cess added)."""
+        dirty (they include accrued interest) unless `basis=clean`. The coupon frequency (`freq`: 1, 2, 4 or 12) must
+        come from the offer document: without `freq`, a verified `coupon_frequency` claim from the bond's own research
+        is used, else yearly is assumed and flagged (`freq_source`). The tax slab defaults to the profile's (4% cess
+        added)."""
         from finresearch.fincalc import bonds as b
 
         code = isin.strip().upper()
         if not ISIN_RE.match(code):
             raise HTTPException(422, f"{isin!r} is not an ISIN")
-        if freq not in (1, 2, 4, 12):
+        if freq is not None and freq not in (1, 2, 4, 12):
             raise HTTPException(422, "freq must be 1, 2, 4 or 12")
         if basis not in ("dirty", "clean"):
             raise HTTPException(422, "basis must be 'dirty' or 'clean'")
@@ -544,10 +546,16 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
         if not rows:
             raise HTTPException(404, f"{code} is not in NSE's list of traded bonds")
         bond = max(rows, key=lambda x: x.traded_value or 0)
+        if freq is not None:
+            freq_source = {"kind": "chosen"}
+        else:
+            known = await asyncio.to_thread(_verified_frequency, code)
+            freq, freq_source = (known[0], known[1]) if known else (1, {"kind": "assumed"})
         if tax_slab_pct is None:
             tax_slab_pct = await asyncio.to_thread(_profile_slab)
         tax_rate = tax_slab_pct / 100 * (1 + CESS)
-        head = {"bond": bond.model_dump(mode="json"), "warnings": bond.warnings, "freq": freq, "basis": basis,
+        head = {"bond": bond.model_dump(mode="json"), "warnings": bond.warnings, "freq": freq,
+                "freq_source": freq_source, "basis": basis,
                 "tax_slab_pct": _s(tax_slab_pct), "tax_rate": _f(tax_rate),
                 "source": "https://www.nseindia.com/market-data/bonds-traded-in-capital-market"}  # fmt: skip
         if any("partly" in w for w in bond.warnings):
@@ -611,6 +619,26 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
                                     "yield taxes each coupon at the slab rate plus 4% cess and treats the gap between "
                                     "face value and the clean price as a capital gain or loss at redemption"}  # fmt: skip
         return {**head, "analytics": analytics, "error": None}
+
+
+def _verified_frequency(isin: str) -> tuple[int, dict[str, Any]] | None:
+    """The coupon frequency verified in the bond's latest research run (a `coupon_frequency` claim), if any."""
+    from sqlalchemy import select
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import Claim, Company, ResearchRun
+
+    with session_scope() as s:
+        rows = s.execute(select(Claim.id, Claim.run_id, Claim.value)
+                         .join(ResearchRun, ResearchRun.id == Claim.run_id)
+                         .join(Company, Company.id == ResearchRun.company_id)
+                         .where(Company.slug == f"bond-{isin.lower()}", ResearchRun.kind == "bond_report",
+                                Claim.metric == "coupon_frequency", Claim.status == "verified", Claim.value.is_not(None))
+                         .order_by(ResearchRun.id.desc(), Claim.id)).all()  # fmt: skip
+    for claim_id, run_id, value in rows:
+        if value is not None and value == int(value) and int(value) in (1, 2, 4, 12):
+            return int(value), {"kind": "verified", "claim_id": claim_id, "run_id": run_id}
+    return None
 
 
 def _profile_slab() -> Decimal:
