@@ -49,7 +49,10 @@ from finresearch.db.models import (
 )
 
 LOCAL_HOSTS = ["127.0.0.1", "localhost", "testserver"]
-DASHBOARD_ORIGINS = [f"http://{h}:{p}" for h in ("127.0.0.1", "localhost") for p in (3000, 3100)]
+# the dashboard (3100) and local previews (3000-3009, e.g. a worktree build next to the live one)
+DASHBOARD_ORIGINS = [
+    f"http://{h}:{p}" for h in ("127.0.0.1", "localhost") for p in (*range(3000, 3010), 3100)
+]
 SAFE_METHODS = ("GET", "HEAD", "OPTIONS")
 CSRF_HEADER = "x-finresearch"  # the dashboard sends `X-FinResearch: 1` on every unsafe request
 TERMINAL = ("done", "failed", "blocked")
