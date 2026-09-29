@@ -33,6 +33,17 @@ def add_years(d: date, years: int) -> date:
         return d.replace(year=d.year + years, day=28)
 
 
+def fiscal_year(d: date) -> int:
+    """The Indian financial year (April-March) a day falls in, named by its end year: 30-Jun-2026 -> 2027."""
+    return d.year + 1 if d.month >= 4 else d.year
+
+
+def fiscal_quarter_label(period_end: date) -> str:
+    """'Q1 FY27' for a quarter ending 30-Jun-2026 (Apr-Jun is Q1 of the April-March year)."""
+    q = (period_end.month - 4) % 12 // 3 + 1
+    return f"Q{q} FY{fiscal_year(period_end) % 100:02d}"
+
+
 def ist_datetime(d: date, hour: int = 0, minute: int = 0) -> datetime:
     """Aware IST datetime for a wall-clock time on ``d`` (e.g. UPI mandate cutoff 17:00)."""
     return datetime(d.year, d.month, d.day, hour, minute, tzinfo=IST)

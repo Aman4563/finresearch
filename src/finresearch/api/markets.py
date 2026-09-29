@@ -304,53 +304,64 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
                 "stats": _series_stats(points)}  # fmt: skip
 
     @app.get("/api/stocks/{symbol}/results")
-    async def stock_results(symbol: str, quarters: int = Query(6, ge=1, le=8)) -> dict[str, Any]:
-        """Revenue, profit and EPS for the latest quarters, read from each results filing's XBRL (consolidated when
-        the company files both). Values are in rupees."""
+    async def stock_results(symbol: str, quarters: int = Query(8, ge=1, le=12)) -> dict[str, Any]:
+        """Quarterly (and, where a March quarter is in range, annual) results read from each filing's XBRL:
+        revenue, other income, expenses, PBT, tax, net profit and EPS, consolidated when the company files both.
+        Quarters since Mar-2025 come from NSE's Integrated Filing (Financials) index, older ones from NSE's
+        Financial Results index. Values are in rupees."""
         sym = _symbol(symbol)
         return await cache.get(("results", sym, quarters), 12 * 3600, lambda: _results(sym, quarters))
 
     async def _results(sym: str, quarters: int) -> dict[str, Any]:
+        from finresearch.adapters.nse_equity import INTEGRATED_PAGE, RESULTS_PAGE
         from finresearch.adapters.xbrl import parse_results_xbrl
 
         s = src()
         errors: list[str] = []
-        out = []
+        filings: list[Any] = []
+        out: list[dict[str, Any]] = []
+        annual: dict[date, dict[str, Any]] = {}
         async with s.open_equity() as eq:
-            filings = await eq.results(sym, "Quarterly")
-            best: dict[date, Any] = {}
-            for f in filings:
-                if not f.period_to or not _official(f.xbrl):
-                    continue
-                cur = best.get(f.period_to)
-                better = cur is None or (f.consolidated and not cur.consolidated) or (
-                    f.consolidated == cur.consolidated and (f.filed_at or datetime.min.replace(tzinfo=UTC))
-                    > (cur.filed_at or datetime.min.replace(tzinfo=UTC)))  # fmt: skip
-                if better:
-                    best[f.period_to] = f
-            for end in sorted(best, reverse=True)[:quarters]:
-                f = best[end]
+            if hasattr(eq, "integrated_filings"):
                 try:
-                    x = parse_results_xbrl(await eq.fetch_bytes(f.xbrl))
+                    filings += [f.as_result_filing() for f in await eq.integrated_filings(sym)]
                 except Exception as e:
-                    errors.append(f"{end}: {type(e).__name__}: {e}"[:200])
-                    continue
-                p = x.quarter
-                if p is None:
-                    continue
-                facts = p.facts
-                profit = facts.get("profit_attributable_to_owners", facts.get("profit_for_period"))
-                revenue = facts.get("revenue_from_operations")
-                out.append({"period_start": (p.start or f.period_from).isoformat() if (p.start or f.period_from) else None,
-                            "period_end": (p.end or end).isoformat(), "consolidated": f.consolidated,
-                            "audited": f.audited, "filed_at": f.filed_at.isoformat() if f.filed_at else None,
-                            "revenue": _f(revenue, 2), "total_income": _f(facts.get("total_income"), 2),
-                            "profit": _f(profit, 2), "eps": _f(facts.get("eps_basic"), 4),
-                            "margin": _f(profit / revenue, 6) if profit is not None and revenue else None,
-                            "xbrl": f.xbrl})  # fmt: skip
+                    errors.append(f"integrated filing index: {type(e).__name__}: {e}"[:200])
+            if len({f.period_to for f in filings if f.period_to and _official(f.xbrl)}) < quarters:
+                try:  # the older index holds the quarters before integrated filing began (up to Dec-2024)
+                    filings += await eq.results(sym, "Quarterly")
+                except Exception as e:
+                    errors.append(f"financial results index: {type(e).__name__}: {e}"[:200])
+            ranked = _rank_result_filings(filings)
+            for end in sorted(ranked, reverse=True)[:quarters]:
+                for f in ranked[end]:  # consolidated first; the next candidate stands in when a file fails
+                    try:
+                        x = parse_results_xbrl(await eq.fetch_bytes(f.xbrl))
+                    except Exception as e:
+                        errors.append(f"{end} {f.xbrl}: {type(e).__name__}: {e}"[:200])
+                        continue
+                    if x.quarter is None or not x.quarter.facts:
+                        errors.append(f"{end} {f.xbrl}: no current-quarter facts")
+                        continue
+                    out.append(_result_row(f, x.quarter, end))
+                    y = x.year_to_date
+                    if y and y.start and y.end and (y.end - y.start).days >= 360 and y.end not in annual:
+                        annual[y.end] = _result_row(f, y, y.end, annual=True)
+                    break
         out.sort(key=lambda r: r["period_end"])
-        return {"symbol": sym, "unit": "INR (EPS: INR per share)", "quarters": out, "errors": errors,
-                "source": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results"}  # fmt: skip
+        _add_growth(out, annual=False)
+        years = sorted(annual.values(), key=lambda r: r["period_end"])
+        _add_growth(years, annual=True)
+        latest = out[-1] if out else None
+        sources = [{"name": "NSE Integrated Filing (Financials)", "url": INTEGRATED_PAGE,
+                    "note": "quarters from Mar-2025, when SEBI moved results into integrated filing"},
+                   {"name": "NSE Financial Results", "url": RESULTS_PAGE, "note": "quarters up to Dec-2024"}]  # fmt: skip
+        return {"symbol": sym, "unit": "INR (EPS: INR per share)", "quarters": out, "annual": years, "errors": errors,
+                "as_of": datetime.now(UTC).isoformat(), "sources": sources,
+                "latest_quarter": None if latest is None else {
+                    k: latest[k] for k in ("label", "period_end", "filed_at", "source", "source_url", "consolidated",
+                                           "xbrl", "ixbrl")},
+                "source": latest["source_url"] if latest else INTEGRATED_PAGE}  # fmt: skip
 
     @app.get("/api/stocks/{symbol}/shareholding")
     async def stock_shareholding(symbol: str, quarters: int = Query(8, ge=1, le=12)) -> dict[str, Any]:
@@ -671,6 +682,82 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
                                     "yield taxes each coupon at the slab rate plus 4% cess and treats the gap between "
                                     "face value and the clean price as a capital gain or loss at redemption"}  # fmt: skip
         return {**head, "analytics": analytics, "error": None}
+
+
+# what stands in for revenue, by taxonomy: Ind AS companies and NBFCs, banks, life insurers, general insurers
+REVENUE_BASES = ("revenue_from_operations", "interest_earned", "net_premium_income", "premium_earned")
+RESULT_SOURCE_RANK = {"nse_integrated_filing": 0, "nse_financial_results": 1}
+
+
+def _rank_result_filings(filings: list[Any]) -> dict[date, list[Any]]:
+    """Candidate filings per quarter end, best first: consolidated before standalone, integrated filing before the
+    older results index, then the latest filed (a revision replaces the original). Only NSE archive XBRL links."""
+    by_end: dict[date, list[Any]] = {}
+    for f in filings:
+        if f.period_to and _official(f.xbrl):
+            by_end.setdefault(f.period_to, []).append(f)
+    floor = datetime.min.replace(tzinfo=UTC)
+    for fs in by_end.values():
+        fs.sort(key=lambda f: (not f.consolidated, RESULT_SOURCE_RANK.get(getattr(f, "source", ""), 9),
+                               -(f.filed_at or floor).timestamp()))  # fmt: skip
+    return by_end
+
+
+def _result_row(f: Any, p: Any, end: date, *, annual: bool = False) -> dict[str, Any]:
+    """One period's figures from a parsed XBRL period (fincalc does the margins)."""
+    from finresearch.adapters.nse_equity import INTEGRATED_PAGE, RESULTS_PAGE
+    from finresearch.fincalc.dates import fiscal_quarter_label, fiscal_year
+
+    facts = p.facts
+    basis = next((k for k in REVENUE_BASES if k in facts), None)
+    revenue = facts.get(basis) if basis else None
+    insurer = basis in ("net_premium_income", "premium_earned")
+    expenses = facts.get("total_expenses")
+    if expenses is None and "expenditure_excluding_provisions" in facts:
+        expenses = facts["expenditure_excluding_provisions"] + facts.get("provisions", Decimal(0))
+    tax = facts.get("tax_expense", facts.get("tax_shareholders_account", facts.get("provision_for_tax")))
+    if insurer:  # the revenue account's income and expenses are policyholders' money, not the company's P&L
+        expenses = None
+    owners = facts.get("profit_attributable_to_owners", facts.get("profit_for_period"))
+    pbt = facts.get("profit_before_tax")
+    period_end = p.end or end
+    start = p.start or (None if annual else f.period_from)
+    source = getattr(f, "source", "nse_financial_results")
+    return {"label": f"FY{fiscal_year(period_end) % 100:02d}" if annual else fiscal_quarter_label(period_end),
+            "period_start": start.isoformat() if start else None, "period_end": period_end.isoformat(),
+            "consolidated": f.consolidated, "audited": f.audited,
+            "filed_at": f.filed_at.isoformat() if f.filed_at else None, "revised": getattr(f, "revised", False),
+            "source": source, "source_url": INTEGRATED_PAGE if source == "nse_integrated_filing" else RESULTS_PAGE,
+            "bank": basis == "interest_earned", "revenue_basis": basis, "revenue": _f(revenue, 2),
+            "other_income": None if insurer else _f(facts.get("other_income"), 2),
+            "total_income": None if insurer else _f(facts.get("total_income"), 2), "total_expenses": _f(expenses, 2),
+            "exceptional_items": _f(facts.get("exceptional_items"), 2), "profit_before_tax": _f(pbt, 2),
+            "tax": _f(tax, 2), "net_profit": _f(facts.get("profit_for_period"), 2),
+            "profit": _f(owners, 2), "eps": _f(facts.get("eps_basic"), 4), "eps_diluted": _f(facts.get("eps_diluted"), 4),
+            "margin": _f(owners / revenue, 6) if owners is not None and revenue else None,
+            "pbt_margin": _f(pbt / revenue, 6) if pbt is not None and revenue else None,
+            "xbrl": f.xbrl, "ixbrl": getattr(f, "ixbrl", None)}  # fmt: skip
+
+
+def _add_growth(rows: list[dict[str, Any]], *, annual: bool) -> None:
+    """QoQ (previous quarter) and YoY (same period a year earlier) change in revenue, profit and EPS, only between
+    periods reported on the same basis (consolidated vs standalone). Fractions; None when not comparable."""
+    from finresearch.fincalc.growth import pct_change
+
+    by_end = {r["period_end"]: r for r in rows}
+    for r in rows:
+        end = date.fromisoformat(r["period_end"])
+        start = date.fromisoformat(r["period_start"]) if r["period_start"] else None
+        prev = by_end.get((start - timedelta(days=1)).isoformat()) if start and not annual else None
+        year_ago = by_end.get(add_years(end, -1).isoformat())
+        g: dict[str, float | None] = {}
+        for key in ("revenue", "profit", "eps"):
+            for tag, other in (("qoq", prev), ("yoy", year_ago)):
+                if annual and tag == "qoq":
+                    continue
+                ok = other is not None and other["consolidated"] == r["consolidated"]
+                g[f"{key}_{tag}"] = _f(pct_change(other[key], r[key]), 6) if ok else None
+        r["growth"] = g
 
 
 def _verified_frequency(isin: str) -> tuple[int, dict[str, Any]] | None:

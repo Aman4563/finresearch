@@ -4,6 +4,12 @@ Only undimensioned facts are read (segment and expense-detail facts carry an xbr
 XBRL names the current period "OneD" and the year-to-date period "FourD", and the year-to-date context's own
 xbrli:period is sometimes wrong; each context's DateOfStart/EndOfReportingPeriod facts are authoritative.
 Monetary values are in rupees.
+
+Integrated Filing (Financials) XBRL (from the Mar-2025 quarter) keeps the same element names under a newer
+"in-capmkt" namespace, so matching is on local names. Its entity identifier is the BSE scrip code, not the NSE
+symbol. Banks file the banking taxonomy: interest earned stands in for revenue, and their profit/EPS elements are
+mapped onto the same keys (the taxonomies never carry both names). Insurers file life ("LI") or general ("GI")
+insurance taxonomies: net premium income (life) or premium earned (general) stands in for revenue.
 """
 
 from __future__ import annotations
@@ -31,6 +37,28 @@ KEY_FACTS = {
     "DilutedEarningsLossPerShareFromContinuingAndDiscontinuedOperations": "eps_diluted",
     "PaidUpValueOfEquityShareCapital": "paid_up_equity_capital",
     "FaceValueOfEquityShareCapital": "face_value",
+    # banking taxonomy
+    "InterestEarned": "interest_earned",
+    "InterestExpended": "interest_expended",
+    "ExpenditureExcludingProvisionsAndContingencies": "expenditure_excluding_provisions",
+    "ProvisionsOtherThanTaxAndContingencies": "provisions",
+    "ExceptionalItems": "exceptional_items",
+    "ProfitLossFromOrdinaryActivitiesBeforeTax": "profit_before_tax",
+    "ProfitLossForThePeriod": "profit_for_period",
+    "ProfitLossAfterTaxesMinorityInterestAndShareOfProfitLossOfAssociates": "profit_attributable_to_owners",
+    "BasicEarningsPerShareAfterExtraordinaryItems": "eps_basic",
+    "DilutedEarningsPerShareAfterExtraordinaryItems": "eps_diluted",
+    # insurance taxonomies (life "LI", general "GI"): premium stands in for revenue; profit is the P&L
+    # (shareholders') account's
+    "NetPremiumIncome": "net_premium_income",
+    "PremiumEarned": "premium_earned",
+    "ProfitLossBeforeTax": "profit_before_tax",
+    "ProfitOrLossBeforeTax": "profit_before_tax",
+    "ProvisionsForTaxes": "tax_shareholders_account",  # life: the P&L account's tax
+    "ProvisionForTax": "provision_for_tax",  # general: P&L tax; life: the policyholders' account's tax
+    "ProfitLossAfterTaxAndExtraordinaryItems": "profit_for_period",
+    "ProfitLossAfterTax": "profit_for_period",
+    "BasicAndDilutedEPSAfterExtraordinaryItemsNetOfTaxExpenseForThePeriodNotToBeAnnualized": "eps_basic",
 }
 
 

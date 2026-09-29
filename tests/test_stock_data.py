@@ -14,6 +14,7 @@ import respx
 from finresearch.adapters.nse_equity import (
     Announcement,
     CorporateAction,
+    IntegratedFiling,
     NseEquity,
     PriceBar,
     ResultFiling,
@@ -21,6 +22,7 @@ from finresearch.adapters.nse_equity import (
 )
 from finresearch.adapters.xbrl import parse_results_xbrl
 from finresearch.fincalc import market
+from finresearch.fincalc.dates import fiscal_quarter_label, fiscal_year
 
 EQ = Path(__file__).parent / "fixtures" / "nse" / "equity"
 
@@ -79,6 +81,63 @@ def test_results_xbrl_reads_the_quarter_and_the_true_year_to_date_period():
     assert (ytd.start, ytd.end) == (date(2024, 4, 1), date(2024, 12, 31))
     assert ytd.facts["revenue_from_operations"] == Decimal("1220640000000.00")
     assert "segment_revenue" not in q.facts  # dimensioned (segment) facts are not mixed in
+
+
+def test_integrated_filing_rows_parse_and_merge_into_result_filings():
+    """NSE's integrated-filing index (results since the Mar-2025 quarter): upper-case quarter dates, a literal
+    '/corporate/null' for a missing PDF, and governance rows mixed in with the financials."""
+    rows = [IntegratedFiling.parse(r) for r in load("integrated_filings_INFY_trimmed.json")["data"]]
+    gov, sa, con = rows[0], rows[1], rows[2]
+    assert gov.kind == "Integrated Filing- Governance" and gov.consolidated is None
+    assert (
+        con.kind == "Integrated Filing- Financials" and con.consolidated is True and sa.consolidated is False
+    )
+    assert con.period_end == date(2026, 6, 30) and con.audited is True and con.pdf is None
+    assert con.filed_at.isoformat() == "2026-07-23T17:40:57+05:30" and con.ixbrl.endswith("_iXBRL_WEB.html")
+    rf = con.as_result_filing()
+    assert (rf.period_from, rf.period_to, rf.consolidated) == (date(2026, 4, 1), date(2026, 6, 30), True)
+    assert rf.source == "nse_integrated_filing" and rf.xbrl == con.xbrl and not rf.revised
+    assert rows[3].as_result_filing().period_from == date(2026, 1, 1)
+
+
+def test_integrated_filing_xbrl_parses_with_the_same_facts():
+    x = parse_results_xbrl((EQ / "integrated_INFY_Q1FY27_consolidated.xml").read_bytes())
+    assert (
+        x.symbol == "500209" and x.consolidated is True and x.audited is True
+    )  # identifier = BSE scrip code
+    q = x.quarter
+    assert (q.start, q.end) == (date(2026, 4, 1), date(2026, 6, 30)) and x.year_to_date is None
+    f = q.facts
+    assert f["revenue_from_operations"] == Decimal("482110000000") and f["total_expenses"] == Decimal(
+        "381670000000"
+    )
+    assert f["profit_before_tax"] == Decimal("110280000000") and f["tax_expense"] == Decimal("32530000000")
+    assert f["profit_attributable_to_owners"] == Decimal("77690000000") and f["eps_basic"] == Decimal("19.19")
+    y = parse_results_xbrl((EQ / "integrated_INFY_Q4FY26_consolidated.xml").read_bytes()).year_to_date
+    assert (y.start, y.end) == (date(2025, 4, 1), date(2026, 3, 31)) and y.facts["exceptional_items"] < 0
+
+
+def test_bank_results_xbrl_maps_the_banking_taxonomy():
+    x = parse_results_xbrl((EQ / "integrated_HDFCBANK_Q1FY27_consolidated.xml").read_bytes())
+    f = x.quarter.facts
+    assert "revenue_from_operations" not in f and f["interest_earned"] == Decimal("905753300000")
+    assert f["profit_before_tax"] == Decimal("271931600000") and f["profit_for_period"] == Decimal(
+        "203826900000"
+    )
+    assert f["profit_attributable_to_owners"] == Decimal("192447100000") and f["eps_basic"] == Decimal("12.5")
+    assert f["expenditure_excluding_provisions"] + f["provisions"] == Decimal("1059172000000")
+
+
+def test_fiscal_quarter_labels():
+    assert (
+        fiscal_quarter_label(date(2026, 6, 30)) == "Q1 FY27"
+        and fiscal_quarter_label(date(2026, 3, 31)) == "Q4 FY26"
+    )
+    assert (
+        fiscal_quarter_label(date(2025, 12, 31)) == "Q3 FY26"
+        and fiscal_quarter_label(date(2024, 9, 30)) == "Q2 FY25"
+    )
+    assert fiscal_year(date(2026, 4, 1)) == 2027 and fiscal_year(date(2026, 3, 31)) == 2026
 
 
 def test_market_arithmetic_golden_values():
@@ -177,3 +236,34 @@ def test_shareholding_xbrl_no_promoter_and_strategic_fdi():
     # SUUTI's 7.79 % is filed as an "other financial institution"
     assert g["fii"] == Decimal("11.32") and s["banks"] == Decimal("7.81")
     assert abs(sum(v for v in g.values() if v is not None) - 100) <= Decimal("0.02") and p.warnings == []
+
+
+@respx.mock
+async def test_integrated_filings_asks_for_financials_and_drops_other_kinds():
+    respx.get("https://www.nseindia.com/get-quotes/equity", params={"symbol": "INFY"}).mock(
+        return_value=httpx.Response(200, text="<html>quote</html>"))  # fmt: skip
+    route = respx.get("https://www.nseindia.com/api/integrated-filing-results").mock(
+        return_value=httpx.Response(200, json=load("integrated_filings_INFY_trimmed.json")))  # fmt: skip
+    async with NseEquity() as eq:
+        rows = await eq.integrated_filings("INFY")
+    assert route.calls.last.request.url.params["type"] == "Integrated Filing- Financials"
+    assert len(rows) == 4 and all(r.kind == "Integrated Filing- Financials" for r in rows)
+
+
+@pytest.mark.parametrize(
+    ("name", "revenue_key", "revenue", "pbt", "tax_key", "tax", "pat", "eps"),
+    [  # life insurer: the shareholders' account tax, not the policyholders' one (4,725 lakh)
+        ("integrated_SBILIFE_Q1FY27_standalone.xml", "net_premium_income", "200782091000", "7458746000",
+         "tax_shareholders_account", "209415000", "7249331000", "7.22"),
+        ("integrated_ICICIGI_Q1FY27_standalone.xml", "premium_earned", "59500400000", "5357000000",
+         "provision_for_tax", "1325300000", "4031700000", "8.08"),
+    ],
+)  # fmt: skip
+def test_insurer_results_xbrl_maps_premium_and_the_pnl_account(
+    name, revenue_key, revenue, pbt, tax_key, tax, pat, eps
+):
+    f = parse_results_xbrl((EQ / name).read_bytes()).quarter.facts
+    assert "revenue_from_operations" not in f and f[revenue_key] == Decimal(revenue)
+    assert f["profit_before_tax"] == Decimal(pbt) and f[tax_key] == Decimal(tax)
+    assert f["profit_before_tax"] - f[tax_key] == f["profit_for_period"] == Decimal(pat)
+    assert f["eps_basic"] == Decimal(eps)
