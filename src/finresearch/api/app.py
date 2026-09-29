@@ -793,7 +793,8 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
 
     @app.get("/api/ipos")
     async def ipos(refresh: bool = False) -> dict[str, Any]:
-        """Current and upcoming NSE mainboard issues, linked to companies and runs already in the store."""
+        """Current and upcoming NSE issues (mainboard and SME) plus BSE SME issues, linked to companies and runs
+        already in the store."""
         import time
 
         from finresearch.adapters.nse import NseClient
@@ -809,6 +810,14 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
                     issues += [(phase, i) for i in await fetch()]
                 except Exception as e:
                     errors.append(f"{phase}: {e}"[:200])
+        from finresearch.adapters import bse
+
+        try:
+            bse_issues, bse_errors = await bse.sme_radar()
+            errors += [f"bse: {e}" for e in bse_errors]
+        except Exception as e:
+            bse_issues = []
+            errors.append(f"bse: {e}"[:200])
         known = await asyncio.to_thread(_known_symbols)
         today = now_ist().date()
         rows, seen = [], set()
@@ -820,11 +829,26 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
             if i.issue_start and i.issue_end:
                 phase = "upcoming" if today < i.issue_start else "closed" if today > i.issue_end else "open"
             k = known.get(i.symbol.upper(), {})
-            rows.append({"phase": phase, "symbol": i.symbol, "company": i.company, "series": i.series,
-                         "issue_start": _iso(i.issue_start), "issue_end": _iso(i.issue_end), "price_band": i.price_band,
+            rows.append({"phase": phase, "exchange": "NSE", "symbol": i.symbol, "company": i.company,
+                         "series": i.series, "issue_start": _iso(i.issue_start), "issue_end": _iso(i.issue_end),
+                         "price_band": i.price_band,
                          "times_subscribed": str(i.times_subscribed) if i.times_subscribed is not None else None,
                          "status": i.status, "slug": k.get("slug"), "latest_run": k.get("run"),
                          "latest_run_status": k.get("run_status")})  # fmt: skip
+        on_nse = {bse.name_key(r["company"]) for r in rows}
+        for i, d in bse_issues:
+            if bse.name_key(i.company) in on_nse:  # on both: NSE's row has the combined book
+                continue
+            phase = "upcoming" if i.issue_start and today < i.issue_start else "closed" if i.issue_end and \
+                today > i.issue_end else "open"  # fmt: skip
+            k = known.get(f"BSE:{i.ipo_no}", {})
+            rows.append({"phase": phase, "exchange": "BSE", "symbol": (d.symbol if d else None) or i.scrip_code,
+                         "company": i.company, "series": "SME", "issue_start": _iso(i.issue_start),
+                         "issue_end": _iso(i.issue_end), "price_band": i.price_band, "times_subscribed": None,
+                         "status": i.status, "bse_ipo_no": i.ipo_no, "lot_size": d.market_lot if d else None,
+                         "min_lots": d.min_lots if d else None,
+                         "issue_size_shares": d.issue_size_shares if d else None, "slug": k.get("slug"),
+                         "latest_run": k.get("run"), "latest_run_status": k.get("run_status")})  # fmt: skip
         order = {"open": 0, "upcoming": 1, "current": 1, "closed": 2}
         rows.sort(key=lambda r: (order.get(r["phase"], 3), r["issue_end"] or ""))
         data = {"fetched_at": _iso(datetime.now(UTC)), "issues": rows, "errors": errors}
@@ -854,13 +878,20 @@ def alert_json(a) -> dict[str, Any]:
 
 
 def _known_symbols() -> dict[str, dict[str, Any]]:
+    """Companies by NSE symbol, and BSE-only SME issues by "BSE:<IPO number>"."""
     with session_scope() as s:
         out: dict[str, dict[str, Any]] = {}
-        for co in s.scalars(select(Company).where(Company.nse_symbol.isnot(None))):
+        for co in s.scalars(select(Company)):
+            bse_no = (co.meta or {}).get("bse_ipo_no")
+            if not co.nse_symbol and not bse_no:
+                continue
             run = s.scalars(select(ResearchRun).where(ResearchRun.company_id == co.id, ResearchRun.kind == "ipo_report")
                             .order_by(ResearchRun.id.desc())).first()  # fmt: skip
-            out[co.nse_symbol.upper()] = {"slug": co.slug, "run": run.id if run else None,
-                                          "run_status": run.status if run else None}  # fmt: skip
+            entry = {"slug": co.slug, "run": run.id if run else None, "run_status": run.status if run else None}  # fmt: skip
+            if co.nse_symbol:
+                out[co.nse_symbol.upper()] = entry
+            if bse_no:
+                out[f"BSE:{bse_no}"] = entry
         return out
 
 

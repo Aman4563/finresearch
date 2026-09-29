@@ -41,11 +41,11 @@ export default function Radar() {
   return (
     <div className="space-y-6">
       <Card
-        title="IPO radar (NSE)"
+        title="IPO radar (NSE, BSE SME)"
         actions={<span className="text-xs text-muted">{radar.data && `as of ${when(radar.data.fetched_at)}`}</span>}
       >
         <ErrorNote error={radar.error} />
-        {radar.data?.errors.map((e) => <ErrorNote key={e} error={`NSE: ${e}`} />)}
+        {radar.data?.errors.map((e) => <ErrorNote key={e} error={e.startsWith("bse:") ? `BSE: ${e.slice(5)}` : `NSE: ${e}`} />)}
         {radar.data && radar.data.issues.length === 0 && <p className="text-sm text-muted">No open or upcoming issues.</p>}
         {radar.data && radar.data.issues.length > 0 && (
           <table className="w-full text-sm">
@@ -60,18 +60,26 @@ export default function Radar() {
             </thead>
             <tbody>
               {radar.data.issues.map((i) => (
-                <tr key={`${i.phase}-${i.symbol}`} className="border-t border-border">
+                <tr key={`${i.exchange}-${i.phase}-${i.symbol}`} className="border-t border-border">
                   <td className="py-2">
                     <div className="font-medium">{i.company}</div>
                     <div className="text-xs text-muted">
-                      {i.symbol} · <Badge status={PHASE[i.phase] ?? "pending"}>{i.phase}</Badge>
+                      {i.exchange} {i.symbol} · <Badge status={PHASE[i.phase] ?? "pending"}>{i.phase}</Badge>
                       {i.series && i.series !== "EQ" && <span className="ml-1"><Badge status="unverified">{i.series}</Badge></span>}
                     </div>
                   </td>
                   <td>
                     {i.issue_start} → {i.issue_end}
                   </td>
-                  <td>{i.price_band}</td>
+                  <td>
+                    {i.price_band}
+                    {i.lot_size ? (
+                      <div className="text-xs text-muted">
+                        lot {i.lot_size}
+                        {i.min_lots ? ` · min ${i.min_lots} lots` : ""}
+                      </div>
+                    ) : null}
+                  </td>
                   <td>{i.times_subscribed ? `${Number(i.times_subscribed).toFixed(2)}x` : ""}</td>
                   <td>
                     {i.latest_run ? (
@@ -80,6 +88,8 @@ export default function Radar() {
                       </Link>
                     ) : i.slug ? (
                       <StartButton slug={i.slug} />
+                    ) : i.bse_ipo_no ? (
+                      <code className="text-xs text-muted">finresearch ipo run … --bse-ipo {i.bse_ipo_no}</code>
                     ) : (
                       <code className="text-xs text-muted">finresearch docs discover …</code>
                     )}

@@ -1,4 +1,4 @@
-"""The IPO report: the research pipeline with the IPO's streams, offer documents and NSE issue facts."""
+"""The IPO report: the research pipeline with the IPO's streams, offer documents and NSE (or BSE SME) issue facts."""
 
 from __future__ import annotations
 
@@ -37,13 +37,23 @@ class IpoPipeline(ResearchPipeline):
         from finresearch.fincalc.dates import bidding_day_number, today_ist
 
         facts = dict(self.ctx.facts)
-        if self.ctx.nse_symbol and "issue_info" not in facts:
+        bse_ipo_no = None if self.ctx.nse_symbol else self._bse_ipo_no()
+        if (self.ctx.nse_symbol or bse_ipo_no) and "issue_info" not in facts:
             try:
-                from finresearch.mcp_server.server import nse_ipo_detail
+                if self.ctx.nse_symbol:
+                    from finresearch.mcp_server.server import nse_ipo_detail
 
-                d = json.loads(await nse_ipo_detail(self.ctx.nse_symbol))
-                facts["issue_info"] = d.get("issue_info", {})
-                facts["nse_fetched_at"] = d.get("fetched_at")
+                    d = json.loads(await nse_ipo_detail(self.ctx.nse_symbol))
+                    facts["issue_info"] = d.get("issue_info", {})
+                    facts["nse_fetched_at"] = d.get("fetched_at")
+                else:  # a BSE SME issue: BSE is the only exchange publishing its details
+                    from finresearch.adapters.bse import BseClient
+
+                    async with BseClient() as bse:
+                        bd = await bse.issue_detail(bse_ipo_no)
+                    facts["issue_info"] = bd.issue_info()
+                    facts["bse_fetched_at"] = bd.fetch.fetched_at.isoformat() if bd.fetch else None
+                    facts["exchange"] = "BSE"
                 self._once("baseline", lambda: self._record_baseline(facts))
                 period = facts["issue_info"].get("Issue Period", "")
                 if " to " in period:
@@ -62,11 +72,25 @@ class IpoPipeline(ResearchPipeline):
             self.ctx.decision_deadline = f"the UPI mandate cut-off, 5:00 PM IST on {facts['issue_close']}"
         self._update_manifest(facts=facts)
 
+    def _bse_ipo_no(self) -> int | None:
+        from finresearch.db.models import Company, ResearchRun
+
+        with session_scope() as s:
+            run = s.get(ResearchRun, self.run_id)
+            co = s.get(Company, run.company_id) if run and run.company_id else None
+            return (co.meta or {}).get("bse_ipo_no") if co else None
+
     def _record_baseline(self, facts: dict[str, Any]) -> None:
         from finresearch.verify.baseline import record_baseline
 
-        fetched = facts.get("nse_fetched_at")
+        if facts.get("exchange") == "BSE":
+            from finresearch.adapters.bse import detail_url
+
+            fetched = facts.get("bse_fetched_at")
+            extra = {"exchange": "BSE", "url": detail_url(facts["issue_info"]["BSE IPO No"])}
+        else:
+            fetched, extra = facts.get("nse_fetched_at"), {}
         with session_scope() as s:
             ids = record_baseline(s, self.run_id, self.ctx.nse_symbol, facts.get("issue_info", {}),
-                                  datetime.fromisoformat(fetched) if fetched else _now())  # fmt: skip
+                                  datetime.fromisoformat(fetched) if fetched else _now(), **extra)  # fmt: skip
         facts["baseline_claim_ids"] = ids

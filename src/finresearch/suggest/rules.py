@@ -25,7 +25,7 @@ OPS = {
     "!=": operator.ne,
 }
 CATEGORY_NAMES = {"qib_times": ("qualified institutional", "qib"), "nii_times": ("non institutional", "nii"),
-                  "rii_times": ("retail individual", "rii")}  # fmt: skip
+                  "rii_times": ("retail individual", "rii", "individual investors")}  # fmt: skip
 
 
 def dec_str(v: Decimal | None) -> str | None:
@@ -63,16 +63,17 @@ class Inputs:
 
 
 def subscription_metrics(detail) -> dict[str, Metric]:
-    """QIB / NII / RII / total times from NSE's combined (NSE+BSE) table."""
+    """QIB / NII / RII / total times from NSE's combined (NSE+BSE) table, or BSE's table for a BSE SME issue."""
     snap = detail.combined if detail is not None else None
     if snap is None:
         return {}
     as_of = snap.as_of.isoformat() if snap.as_of else None
-    out = {"total_times": Metric(snap.total_times, "NSE combined subscription", as_of)}
+    label = "BSE SME subscription" if snap.source == "bse_sme" else "NSE combined subscription"
+    out = {"total_times": Metric(snap.total_times, label, as_of)}
     for key, names in CATEGORY_NAMES.items():
         row = next((c for c in snap.top_level if any(n in c.name.lower() for n in names)), None)
         if row is not None:
-            out[key] = Metric(row.times, "NSE combined subscription", as_of)
+            out[key] = Metric(row.times, label, as_of)
     return out
 
 
@@ -192,7 +193,10 @@ def lot_limits(profile: Profile, lot_cost: Decimal | None, *, sme: bool = False)
 def is_sme(issue_info: dict[str, str], detail=None) -> bool:
     if detail is not None and getattr(detail, "series", "EQ") == "SME":
         return True
-    return "market maker" in (issue_info.get("Issue Size") or "").lower()
+    return (
+        "SME" in (issue_info.get("Platform") or "")
+        or "market maker" in (issue_info.get("Issue Size") or "").lower()
+    )
 
 
 def company_of(session: Session, run_id: int) -> Company | None:

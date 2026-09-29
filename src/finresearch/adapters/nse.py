@@ -179,7 +179,7 @@ def _parse_category_rows(
 class SubscriptionSnapshot(BaseModel):
     symbol: str
     as_of: datetime | None = Field(description="IST timestamp published by NSE for this table")
-    source: Literal["nse_combined", "nse_only"]
+    source: Literal["nse_combined", "nse_only", "bse_sme"]
     categories: list[CategorySubscription]
     total_times: Decimal | None = None
     total_shares_offered: Decimal | None = None

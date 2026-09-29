@@ -94,6 +94,7 @@ export type Company = {
 
 export type Issue = {
   phase: "open" | "upcoming" | "closed" | "current";
+  exchange: "NSE" | "BSE";
   symbol: string;
   company: string;
   series: string | null;
@@ -105,6 +106,10 @@ export type Issue = {
   slug: string | null;
   latest_run: number | null;
   latest_run_status: string | null;
+  // BSE SME rows only
+  bse_ipo_no?: number;
+  lot_size?: number | null;
+  min_lots?: number | null;
 };
 
 export class ApiError extends Error {

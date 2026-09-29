@@ -1,0 +1,108 @@
+{
+ "IPONO_0": [
+  {
+   "DT_TM": "",
+   "DT_TMC": "",
+   "ISBID_Detail": "1",
+   "IPO_NO": "8023",
+   "ScripCode": "4873",
+   "ScripName": "TNA Solutions Limited",
+   "Security_Type": "Equity",
+   "Symbol": "TNA",
+   "Issue_Period": "30 Sep 2026 to 06 Oct 2026",
+   "IPO_Market_Timings": "",
+   "Post_Issue_Modification": "",
+   "DY1": "",
+   "Cut_off_time_for_UPI_Mandate_Confirmation": "",
+   "Issue_Size_No_of_shares": "5408000",
+   "Price_Band": "66.00-70.00",
+   "Price_Band_Advertisement": "https://listing.bseindia.com/Download/E:\\inetpub\\LISTING\\RTA\\DocumentsSMEiPO\\282884\\Price_Band_Advertisement_PriceBandAdvertisement.zip",
+   "Face_Value": "10.00",
+   "Tick_Size": "1.00",
+   "Market_Lot": "2000",
+   "Minimum_Bid_Quantity": "4000",
+   "Maximum_Bid_Quantity_For_Qualified_Institutional_Investors": "5136000",
+   "Maximum_Bid_Quantity_For_Qualified_Non_Institutional_Investors": "2574000",
+   "Rating": "",
+   "DY2": "",
+   "Book_Running_Lead_Manager": "Credora Partners Private Limited^6th Floor, B-Wing, GSC Tower, Sector- 30, Gurgaon, Haryana - 122001, India||||||||info@credorapartners.com|Pankaj Kumar Pasi",
+   "Co_Book_Running_Lead_Manager": "",
+   "Syndicate_Member": "",
+   "Eligible_Banks": "",
+   "Registrar": "MAASHITLA SECURITIES PRIVATE LIMITED^451, Krishna Apra Business Square, Netaji Subhash Place, Pitampura, Delhi - 110034, India||||||||investor.ipo@maashitla.com",
+   "Sponsor_Bank": "ICICI BANK^Intellion Square, 501, 5th Floor, A Wing, Infinity IT\nPark, Gen. A.K. Vaidya Marg, Malad - East, Mumbai 400097||||||||cmsipo@kotak.com |Sumit Panchal",
+   "DY3": "",
+   "Prospectus_GID": "https://listing.bseindia.com/Download/E:\\inetpub\\LISTING\\RTA\\DocumentsSMEiPO\\282884\\Prospectus_And_GID_Document_RHPGIDTNASolutionsLimited.zip",
+   "Addendum": "",
+   "Corrigendum": "https://listing.bseindia.com/Download/E:\\inetpub\\LISTING\\RTA\\DocumentsSMEiPO\\282884\\Corrigendum_Corrigendum_TNA_Solutions.pdf",
+   "Anchor_Details": "",
+   "Bank_ASBA_Form": "https://ibbseforms.bseindia.com/ASBAFORMS/BlankForms_New.aspx?ipo=4873",
+   "Online_ASBA_Form": "https://ibbseforms.bseindia.com/ASBAFORMS/BidEntryQuick_New.aspx?ipo=4873",
+   "Revised_Online_ASBA_Form": "https://ibbseforms.bseindia.com/ASBAFORMS/SrchBid.aspx?ipo=4873",
+   "Registrar_issue_share_Transfer_Agents_Depository": "https://www.bseindia.com/Static/PublicIssues/RtaDp.aspx ",
+   "DY4": "",
+   "Public_Notices": "",
+   "Notes": "",
+   "Remarks": "",
+   "Branches_of_SCSBs": "http://www.sebi.gov.in/sebiweb/other/OtherAction.do?doRecognisedFpi=yes&intmId=34",
+   "List_of_SCSBs": "http://www.sebi.gov.in/sebiweb/other/OtherAction.do?doRecognisedFpi=yes&intmId=35",
+   "Self_Certified_Syndicate_Banks_Eligible": "https://www.sebi.gov.in/sebiweb/other/OtherAction.do?doRecognisedFpi=yes&intmId=40",
+   "DY5": "",
+   "DY6": ""
+  }
+ ],
+ "IPONO_1": [
+  {
+   "NEW_ID": "eea722bc-6a18-4208-a267-7e5c2df9dd5c",
+   "IPO_NO": "8023",
+   "DYN_COLNAME": "",
+   "DYN_COLValue": "",
+   "INSERT_DTTM": "9/28/2026 9:50:46 PM",
+   "DYN_ORDER": "1"
+  },
+  {
+   "NEW_ID": "c85dd3b8-d065-4695-8eef-f19c11d2a748",
+   "IPO_NO": "8023",
+   "DYN_COLNAME": "",
+   "DYN_COLValue": "",
+   "INSERT_DTTM": "9/28/2026 9:50:46 PM",
+   "DYN_ORDER": "2"
+  },
+  {
+   "NEW_ID": "be300d81-d021-4c40-8e41-ce3fb692a85c",
+   "IPO_NO": "8023",
+   "DYN_COLNAME": "",
+   "DYN_COLValue": "",
+   "INSERT_DTTM": "9/28/2026 9:50:46 PM",
+   "DYN_ORDER": "3"
+  },
+  {
+   "NEW_ID": "29e18ed3-deda-4d6b-9809-5bef52f9f6d9",
+   "IPO_NO": "8023",
+   "DYN_COLNAME": "",
+   "DYN_COLValue": "",
+   "INSERT_DTTM": "9/28/2026 9:50:46 PM",
+   "DYN_ORDER": "4"
+  },
+  {
+   "NEW_ID": "6ae59f67-5254-49a9-a292-c48f6c6d717c",
+   "IPO_NO": "8023",
+   "DYN_COLNAME": "",
+   "DYN_COLValue": "",
+   "INSERT_DTTM": "9/28/2026 9:50:46 PM",
+   "DYN_ORDER": "5"
+  },
+  {
+   "NEW_ID": "841c42d6-fc4c-41b5-aa72-4a1e50651372",
+   "IPO_NO": "8023",
+   "DYN_COLNAME": "",
+   "DYN_COLValue": "",
+   "INSERT_DTTM": "9/28/2026 9:50:46 PM",
+   "DYN_ORDER": "6"
+  }
+ ],
+ "IPONO_2": [],
+ "IPONO_3": [],
+ "IPONO_4": [],
+ "status": "success"
+}
