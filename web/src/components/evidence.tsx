@@ -1,9 +1,11 @@
 "use client";
 
 import { FileSearch, X } from "lucide-react";
+import Link from "next/link";
 
 import { Badge, SkeletonRows } from "@/components/ui";
-import { API_URL, type Citation, type Claim, useApi, when } from "@/lib/api";
+import { type Citation, type Claim, useApi, when } from "@/lib/api";
+import { viewerHref } from "@/lib/viewer";
 
 const CHIP: Record<string, string> = {
   verified: "border-gain/40 bg-gain-soft text-gain hover:border-gain",
@@ -154,9 +156,9 @@ export function EvidencePanel({ id, claim: given, onClose, embedded }: { id: num
                     </Badge>
                   )}{" "}
                   {c.document_id && (
-                    <a className="text-brand underline underline-offset-2" href={`${API_URL}/api/documents/${c.document_id}/file#page=${c.page ?? 1}`} target="_blank" rel="noreferrer">
-                      open PDF
-                    </a>
+                    <Link className="text-brand underline underline-offset-2" href={viewerHref({ doc: c.document_id, page: c.page })}>
+                      open page{c.page ? ` ${c.page}` : ""}
+                    </Link>
                   )}
                 </p>
               )}

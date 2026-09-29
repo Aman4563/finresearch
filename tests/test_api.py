@@ -154,6 +154,113 @@ def test_pack_listing_and_path_traversal(client, seeded):
     assert client.get(f"/api/runs/{rid}/pack/..%2F..%2F..%2Fetc%2Fpasswd").status_code == 404
 
 
+def test_pack_files_serve_get_head_inline_download_and_ranges(client, seeded, env):
+    rid, slug = seeded["run_id"], seeded["slug"]
+    pack = env.reports_dir / slug / f"run-{rid}" / "06_Final_Report"
+    (pack / "report.pdf").write_bytes(b"%PDF-1.7 " + b"x" * 100)
+    (pack / "claims.csv").write_text("id,statement\n1,PAT\n")
+    (pack / "claims.xlsx").write_bytes(b"PK\x03\x04")
+    (pack / 'odd"na\tme.md').write_text("x")  # quotes and control characters never reach the header
+    url = f"/api/runs/{rid}/pack/06_Final_Report/report.pdf"
+
+    got = client.get(url)
+    assert got.status_code == 200 and got.content.startswith(b"%PDF")
+    assert got.headers["content-type"] == "application/pdf"
+    assert got.headers["content-disposition"] == f'inline; filename="{slug}-run-{rid}-report.pdf"'
+    assert got.headers["cache-control"] == "private, max-age=300"  # the run is done
+    assert got.headers["x-content-type-options"] == "nosniff"
+
+    head = client.head(url)
+    assert head.status_code == 200 and head.content == b""
+    assert head.headers["content-length"] == "109" and head.headers["content-disposition"].startswith(
+        "inline;"
+    )
+
+    dl = client.get(url, params={"download": 1})
+    assert dl.headers["content-disposition"] == f'attachment; filename="{slug}-run-{rid}-report.pdf"'
+
+    part = client.get(url, headers={"Range": "bytes=0-7"})
+    assert part.status_code == 206 and part.content == b"%PDF-1.7"
+
+    odd = client.get(f"/api/runs/{rid}/pack/06_Final_Report/odd%22na%09me.md")
+    assert (
+        odd.status_code == 200
+        and odd.headers["content-disposition"] == f'inline; filename="{slug}-run-{rid}-odd na me.md"'
+    )
+
+    md = client.get(f"/api/runs/{rid}/pack/06_Final_Report/report.md")
+    assert md.headers["content-type"] == "text/markdown; charset=utf-8"
+    assert (
+        client.get(f"/api/runs/{rid}/pack/06_Final_Report/claims.csv")
+        .headers["content-type"]
+        .startswith("text/csv")
+    )
+    assert client.get(f"/api/runs/{rid}/pack/06_Final_Report/claims.xlsx").headers["content-type"] == (
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+
+def test_pack_files_of_a_running_run_are_not_cached(client, seeded):
+    from finresearch.db import session_scope
+    from finresearch.db.models import ResearchRun
+
+    with session_scope() as s:
+        s.get(ResearchRun, seeded["run_id"]).status = "running"
+    r = client.get(f"/api/runs/{seeded['run_id']}/pack/06_Final_Report/report.md")
+    assert r.status_code == 200 and r.headers["cache-control"] == "no-cache"
+
+
+def test_pack_files_refuse_traversal_and_unknown_files(client, seeded, env):
+    rid = seeded["run_id"]
+    secret = env.reports_dir / seeded["slug"] / "secret.txt"  # a sibling of the run folder
+    secret.write_text("nope")
+    for bad in ("..%2Fsecret.txt", "06_Final_Report/..%2F..%2Fsecret.txt", "..%2F..%2F..%2Fetc%2Fpasswd",
+                "%2Fetc%2Fpasswd", "06_Final_Report", "06_Final_Report/missing.pdf"):  # fmt: skip
+        assert client.get(f"/api/runs/{rid}/pack/{bad}").status_code == 404, bad
+        assert client.head(f"/api/runs/{rid}/pack/{bad}").status_code == 404, bad
+    assert client.get("/api/runs/999999999/pack/06_Final_Report/report.md").status_code == 404
+
+
+def test_document_file_and_metadata(client, seeded):
+    did = seeded["doc_id"]
+    meta = client.get(f"/api/documents/{did}").json()
+    assert meta["title"] == "Api RHP" and meta["pages"] == 2 and meta["filename"] == "Api RHP.pdf"
+    assert meta["company"]["name"] == "Api Co"
+
+    got = client.get(f"/api/documents/{did}/file")
+    assert got.content == b"%PDF-1.4 fake" and got.headers["content-type"] == "application/pdf"
+    assert got.headers["content-disposition"] == 'inline; filename="Api RHP.pdf"'
+    assert "immutable" in got.headers["cache-control"]
+    head = client.head(f"/api/documents/{did}/file")
+    assert head.status_code == 200 and head.content == b"" and head.headers["content-length"] == "13"
+    dl = client.get(f"/api/documents/{did}/file?download=1")
+    assert dl.headers["content-disposition"] == 'attachment; filename="Api RHP.pdf"'
+    assert client.get(f"/api/documents/{did}/file", headers={"Range": "bytes=0-3"}).content == b"%PDF"
+    assert client.get("/api/documents/999999999").status_code == 404
+    assert client.get("/api/documents/999999999/file").status_code == 404
+    assert client.head("/api/documents/999999999/file").status_code == 404
+
+
+def test_document_file_names_non_ascii_titles_with_rfc5987(client, seeded):
+    from finresearch.db import session_scope
+    from finresearch.db.models import Document
+
+    with session_scope() as s:
+        s.get(Document, seeded["doc_id"]).title = 'Api "RHP" / हिंदी सारांश'
+    cd = client.get(f"/api/documents/{seeded['doc_id']}/file").headers["content-disposition"]
+    assert cd.startswith("inline; filename=\"Api RHP.pdf\"; filename*=UTF-8''Api%20RHP%20")
+    assert cd.endswith(".pdf") and "%E0%A4%B9" in cd  # ह, percent-encoded UTF-8
+
+
+def test_file_routes_expose_length_and_range_headers_to_the_dashboard(client, seeded):
+    r = client.get(
+        f"/api/documents/{seeded['doc_id']}/file",
+        headers={"Origin": "http://127.0.0.1:3100", "Range": "bytes=0-3"},
+    )
+    exposed = {h.strip().lower() for h in r.headers["access-control-expose-headers"].split(",")}
+    assert {"content-length", "content-range", "accept-ranges", "content-disposition"} <= exposed
+
+
 def test_start_and_resume_spawn_the_cli_worker(client, seeded):
     r = client.post(
         "/api/runs", json={"company": seeded["slug"], "streams": ["financials"], "concurrency": 2}
