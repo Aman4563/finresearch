@@ -1,0 +1,9 @@
+UNDERLYING                          ,SYMBOL    ,SEP-26     ,OCT-26     ,NOV-26     ,DEC-26     ,MAR-27     ,JUN-27     ,DEC-27     ,JUN-28     ,DEC-28     ,JUN-29     ,DEC-29     ,JUN-30     ,DEC-30     ,JUN-31     
+NIFTY 50                            ,NIFTY     ,65         ,65         ,65         ,65         ,65         ,65         ,65         ,65         ,65         ,65         ,65         ,65         ,65         ,65         
+NIFTY BANK                          ,BANKNIFTY ,30         ,30         ,30         ,30         ,30         ,30         ,           ,           ,           ,           ,           ,           ,           ,           
+NIFTY FINANCIAL SERVICES            ,FINNIFTY  ,60         ,60         ,60         ,           ,           ,           ,           ,           ,           ,           ,           ,           ,           ,           
+NIFTY MID SELECT                    ,MIDCPNIFTY,120        ,120        ,120        ,           ,           ,           ,           ,           ,           ,           ,           ,           ,           ,           
+NIFTY NEXT 50                       ,NIFTYNXT50,25         ,25         ,25         ,           ,           ,           ,           ,           ,           ,           ,           ,           ,           ,           
+NIFTY FPI 150                       ,NIFTYFPI  ,1100       ,1100       ,1100       ,           ,           ,           ,           ,           ,           ,           ,           ,           ,           ,           
+Derivatives on Individual Securities,Symbol    ,SEP-26     ,OCT-26     ,NOV-26     ,           ,           ,           ,           ,           ,           ,           ,           ,           ,           ,           
+INFOSYS LIMITED                     ,INFY      ,400        ,400        ,400        ,           ,           ,           ,           ,           ,           ,           ,           ,           ,           ,           
