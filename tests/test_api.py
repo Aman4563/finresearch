@@ -107,6 +107,15 @@ def test_companies_documents_and_lines(client, seeded):
     assert client.get("/api/companies/nope").status_code == 404
 
 
+def test_usage_by_run_sums_plan_window_turns_and_minutes(client, seeded):
+    rows = client.get("/api/usage/runs").json()
+    row = next(r for r in rows if r["run_id"] == seeded["run_id"])
+    assert row["kind"] == "ipo_report" and row["company_name"] == "Api Co" and row["steps"] == 2
+    assert abs(row["five_hour_used"] - 0.05) < 1e-9 and row["turns"] == 3 and abs(row["minutes"] - 1) < 1e-9
+    assert len(client.get("/api/usage/runs", params={"limit": 1}).json()) == 1
+    assert client.get("/api/usage/runs", params={"limit": 0}).status_code == 422
+
+
 def test_run_detail_claims_and_report_with_gate(client, seeded):
     rid = seeded["run_id"]
     d = client.get(f"/api/runs/{rid}").json()

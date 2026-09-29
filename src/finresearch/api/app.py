@@ -1010,6 +1010,30 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
         return {"tiers": LimitTracker(s.state_dir).describe(), "now": datetime.now(UTC).timestamp(),
                 "ceilings": {"five_hour": s.max_five_hour_ceiling}}  # fmt: skip
 
+    @app.get("/api/usage/runs")
+    def usage_by_run(limit: int = Query(50, ge=1, le=500)) -> list[dict[str, Any]]:
+        """Plan usage per research run (newest first): the 5-hour window share, turns, agent minutes and steps."""
+        with session_scope() as s:
+            rows = s.execute(select(ResearchRun, Company).join(Company, Company.id == ResearchRun.company_id, isouter=True)
+                             .where(ResearchRun.kind.in_(RESEARCH_KINDS))
+                             .order_by(ResearchRun.id.desc()).limit(limit)).all()  # fmt: skip
+            ids = [r.id for r, _ in rows]
+            by_run: dict[int, dict[str, float]] = {}
+            for st in s.scalars(select(AgentStep).where(AgentStep.run_id.in_(ids))) if ids else []:
+                u = by_run.setdefault(st.run_id, {"five_hour_used": 0.0, "turns": 0, "minutes": 0.0, "steps": 0,
+                                                  "cost_usd_est": 0.0})  # fmt: skip
+                if st.five_hour_after is not None and st.five_hour_before is not None:
+                    u["five_hour_used"] += max(0.0, st.five_hour_after - st.five_hour_before)
+                u["turns"] += st.num_turns or 0
+                u["minutes"] += (st.duration_s or 0) / 60
+                u["steps"] += 1
+                u["cost_usd_est"] += st.cost_usd_est or 0
+            empty = {"five_hour_used": 0.0, "turns": 0, "minutes": 0.0, "steps": 0, "cost_usd_est": 0.0}
+            return [{"run_id": r.id, "kind": r.kind, "status": r.status, "company_name": co.name if co else None,
+                     "created_at": _iso(r.created_at), "finished_at": _iso(r.finished_at),
+                     **{k: round(v, 4) for k, v in by_run.get(r.id, empty).items()}}
+                    for r, co in rows]  # fmt: skip
+
     return app
 
 
