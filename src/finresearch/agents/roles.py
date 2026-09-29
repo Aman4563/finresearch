@@ -17,6 +17,7 @@ from finresearch.agents.schemas import (
     CaseReport,
     CriticReport,
     DiscoveryResult,
+    FundSynthesis,
     ResearchPlan,
     StockSynthesis,
     StreamReport,
@@ -32,6 +33,7 @@ CALC = [f"{MCP}fincalc_functions", f"{MCP}fincalc_call"]
 LEDGER_WRITE = [f"{MCP}save_claim", f"{MCP}list_claims"]
 LEDGER_READ = [f"{MCP}list_claims"]
 MARKET = [f"{MCP}{t}" for t in ("nse_ipo_detail", "nse_current_issues", "sebi_filings", "sebi_resolve_pdf")]
+FUNDS = [f"{MCP}{t}" for t in ("amfi_scheme_search", "amfi_nav_history", "amfi_category_peers")]
 EQUITY = [f"{MCP}{t}" for t in ("nse_price_history", "nse_announcements", "nse_results_filings", "nse_results_facts",
                                  "nse_shareholding", "nse_corporate_actions")]  # fmt: skip
 WEB = ["WebSearch", "WebFetch"]
@@ -65,9 +67,10 @@ class Role:
 
 
 def _stream(name: str, *, web: bool, market: bool = False, docs: bool = True, turns: int = 80,
-            equity: bool = False, skills: list[str] | None = None) -> Role:  # fmt: skip
+            equity: bool = False, funds: bool = False, skills: list[str] | None = None) -> Role:  # fmt: skip
     tools = [*(DOC_READ if docs else [f"{MCP}search_documents", f"{MCP}read_lines_tool"]), *CALC, *LEDGER_WRITE,
-             *(MARKET if market else []), *(EQUITY if equity else []), *(WEB if web else []), *SKILL]  # fmt: skip
+             *(MARKET if market else []), *(EQUITY if equity else []), *(FUNDS if funds else []),
+             *(WEB if web else []), *SKILL]  # fmt: skip
     extra = {"skills": skills} if skills is not None else {}
     return Role(name=name, template=f"stream_{name}.md", output=StreamReport, model_class=ModelClass.STANDARD,
                 tools=tools, effort="high" if name in ("financials", "stock_fundamentals") else "medium",
@@ -77,6 +80,8 @@ def _stream(name: str, *, web: bool, market: bool = False, docs: bool = True, tu
 STOCK_STREAMS = ("stock_fundamentals", "stock_business", "stock_valuation", "stock_governance", "stock_news",
                  "stock_technical")  # fmt: skip
 STOCK_SKILLS = ["stock-research", "indian-fin-glossary"]
+FUND_STREAMS = ("fund_performance", "fund_risk", "fund_portfolio", "fund_costs", "fund_manager", "fund_news")
+FUND_SKILLS = ["fund-research", "indian-fin-glossary"]
 
 
 ROLES: dict[str, Role] = {
@@ -123,4 +128,23 @@ ROLES: dict[str, Role] = {
                               skills=["report-writer", *STOCK_SKILLS]),
     "stock_critic": Role("stock_critic", "critic.md", CriticReport, ModelClass.DEEP, [*LEDGER_READ, *DOC_READ],
                          effort="medium", max_turns=25, timeout_s=1200, skills=STOCK_SKILLS),
+    # ---- mutual funds
+    "fund_planner": Role("fund_planner", "fund_planner.md", ResearchPlan, ModelClass.DEEP,
+                         [*DOC_READ, *FUNDS, *CALC, *SKILL], effort="high", max_turns=30, timeout_s=1200,
+                         skills=FUND_SKILLS),
+    "fund_performance": _stream("fund_performance", web=True, funds=True, skills=FUND_SKILLS),
+    "fund_risk": _stream("fund_risk", web=True, funds=True, skills=FUND_SKILLS),
+    "fund_portfolio": _stream("fund_portfolio", web=True, skills=FUND_SKILLS),
+    "fund_costs": _stream("fund_costs", web=True, funds=True, skills=FUND_SKILLS),
+    "fund_manager": _stream("fund_manager", web=True, funds=True, skills=FUND_SKILLS),
+    "fund_news": _stream("fund_news", web=True, docs=False, skills=FUND_SKILLS),
+    "fund_bull": Role("fund_bull", "case_fund_bull.md", CaseReport, ModelClass.DEEP, [*LEDGER_READ, *DOC_READ],
+                      effort="medium", max_turns=25, timeout_s=1200, skills=FUND_SKILLS),
+    "fund_bear": Role("fund_bear", "case_fund_bear.md", CaseReport, ModelClass.DEEP, [*LEDGER_READ, *DOC_READ],
+                      effort="medium", max_turns=25, timeout_s=1200, skills=FUND_SKILLS),
+    "fund_synthesizer": Role("fund_synthesizer", "fund_synthesizer.md", FundSynthesis, ModelClass.DEEP,
+                             [*LEDGER_READ, *DOC_READ, *CALC, *SKILL], effort="high", max_turns=60, timeout_s=3000,
+                             skills=["report-writer", *FUND_SKILLS]),
+    "fund_critic": Role("fund_critic", "critic.md", CriticReport, ModelClass.DEEP, [*LEDGER_READ, *DOC_READ],
+                        effort="medium", max_turns=25, timeout_s=1200, skills=FUND_SKILLS),
 }  # fmt: skip

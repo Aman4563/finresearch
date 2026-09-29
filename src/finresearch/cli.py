@@ -335,6 +335,45 @@ def research_status(run_id: int) -> None:
     ipo_status(run_id)
 
 
+fund_app = typer.Typer(no_args_is_help=True, help="Mutual-fund research reports (multi-agent pipeline)")
+app.add_typer(fund_app, name="fund")
+
+
+@fund_app.command("run")
+def fund_run(
+    scheme_code: str = typer.Argument(..., help="AMFI scheme code (find it with `finresearch fund search`)"),
+    streams: str | None = typer.Option(None, help="Comma-separated subset of the six fund streams"),
+    concurrency: int = typer.Option(4, help="Parallel agents (Max-plan friendly default)"),
+    wait: bool = typer.Option(False, help="Sleep through Max-window resets and resume automatically"),
+) -> None:
+    """Start a new mutual-fund research run for an AMFI scheme."""
+    from finresearch.orchestrator.base import create_run
+
+    slug = asyncio.run(_ensure_scheme(scheme_code))
+    run_id = create_run(slug, kind="fund_report")
+    console.print(f"created fund run {run_id} for {slug}")
+    _go(run_id, streams, concurrency, wait)
+
+
+@fund_app.command("search")
+def fund_search(query: str) -> None:
+    """Find mutual-fund schemes in AMFI's NAV file (code, plan, option, category, latest NAV)."""
+    from finresearch.mcp_server.server import amfi_scheme_search
+
+    for r in json.loads(asyncio.run(amfi_scheme_search(query))):
+        console.print(f"{r['scheme_code']:>7}  {r['name']} · {r['plan']} · {r['option']} · {r['category']} · "
+                      f"NAV {r['nav']} ({r['nav_date']})")  # fmt: skip
+
+
+async def _ensure_scheme(scheme_code: str) -> str:
+    from finresearch.orchestrator.fund import ensure_scheme_company
+
+    try:
+        return (await ensure_scheme_company(scheme_code))["slug"]
+    except LookupError as e:
+        raise typer.BadParameter(str(e)) from e
+
+
 @ipo_app.command("resume")
 def ipo_resume(
     run_id: int,

@@ -83,12 +83,14 @@ def test_scoring_units_periods_contradictions_and_verdict(run):
     assert "key-fact recall | **50%** (2/4)" in md and "| release bar" in md and "FAIL" in md
 
 
-@pytest.mark.parametrize("company", ["moneyview", "orient-cables", "infosys"])
+@pytest.mark.parametrize("company", ["moneyview", "orient-cables", "infosys", "mf-120505"])
 def test_gold_files_are_well_formed(company):
     import re
 
     gold = load_gold(company)
-    assert gold["company"] == company and len(gold["facts"]) >= 20
+    # IPO and stock gold sets come from full manual fact checks; fund sets use AMFI primary data only
+    minimum = 8 if gold.get("kind") == "fund_report" else 20
+    assert gold["company"] == company and len(gold["facts"]) >= minimum
     assert (GOLD_DIR / f"{company}.json").exists()
     ids = [f["id"] for f in gold["facts"]]
     assert len(ids) == len(set(ids))
@@ -243,3 +245,30 @@ def test_derived_variants_do_not_contradict_the_reported_figure(env, tmp_path):
     assert (
         ids[4] not in by["pat"].claim_ids
     )  # a standalone metric is excluded even if the statement says consolidated
+
+
+def test_require_keeps_peers_figures_out(env, tmp_path):
+    """Live fund run 11: category peers' volatility and drawdown were counted as contradicting Axis Midcap's."""
+    from finresearch.db import session_scope
+    from finresearch.db.models import Claim, ResearchRun
+    from finresearch.ingest.documents import get_or_create_company
+
+    fact = {"id": "dd", "label": "Max drawdown", "patterns": [r"drawdown"], "period": r"5y|2021-09", "value": -20.3446,
+            "unit": "%", "tolerance": 0.005, "importance": "normal", "exclude": r"\bpeer", "require": r"axis midcap"}  # fmt: skip
+    with session_scope() as s:
+        co = get_or_create_company(s, "rq-" + hashlib.sha1(str(tmp_path).encode()).hexdigest()[:8], "E")
+        r = ResearchRun(company_id=co.id, kind="fund_report", manifest={})
+        s.add(r)
+        s.flush()
+        ids = []
+        for st, v in (("ITI Mid Cap Fund Direct Growth max drawdown over 2021-09-20 to 2026-09-28", "-22.66"),
+                      ("Axis Midcap Fund max drawdown over 5y", "-20.3446")):  # fmt: skip
+            c = Claim(run_id=r.id, stream="x", claim_type="numeric", metric="max_drawdown", value=Decimal(v), unit="%",
+                      period="2021-09-20 to 2026-09-28", statement=st, status="verified")  # fmt: skip
+            s.add(c)
+            s.flush()
+            ids.append(c.id)
+        res = evaluate(
+            s, r.id, {"company": "t", "verdict": None, "facts": [fact]}, " ".join(f"[C{i}]" for i in ids)
+        )
+    assert res.facts[0].found and res.facts[0].claim_ids == [ids[1]] and not res.contradicted

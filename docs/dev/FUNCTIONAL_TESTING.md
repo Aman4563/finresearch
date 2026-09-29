@@ -103,3 +103,11 @@ These are dated entries for bugs we reproduced, what caused them, and how they a
   - A consolidated claim citing a standalone comparative was dropped. `exclude_unless` now lifts a statement-only exclusion.
   - A `standalone_net_profit` metric counted for the consolidated fact. An exclusion in the metric or period always applies.
   - Adjusted or normalised EPS, profit before exceptional items, and interim and final dividend parts counted as contradicting the reported totals. Derived variants no longer contradict, unless the fact's own pattern names them.
+
+### 2026-09-29: fund returns disagreed between tools, and a 5-year return was missing
+- **Seen (live AMFI checks):** the 5-year trailing return was empty because the history started exactly 5 years back. The peer table was anchored on today and the NAV history on the last NAV date, so Axis Midcap's 1-year return was 6.76% in one and 7.17% in the other.
+- **Now:** the history request has a 10-day buffer, and both tools anchor on the latest NAV date. They agree exactly.
+
+### 2026-09-29: rolling returns not recorded; peers' figures counted against the scheme (fund runs 10 and 11)
+- **Seen:** run 10 never recorded the tool's 5-year rolling statistics. Run 11's scoring counted category peers' volatility and drawdown, and the rolling median and maximum, as contradicting Axis Midcap's figures.
+- **Now:** the rolling minimum, median and maximum are baseline claims. Fund gold facts use `require` (the claim must name the scheme) and tight period patterns (`test_require_keeps_peers_figures_out`). The ledger stores fund returns in % so 6 decimals keep their precision.

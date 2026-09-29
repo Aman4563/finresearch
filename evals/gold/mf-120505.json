@@ -1,0 +1,131 @@
+{
+ "company": "mf-120505",
+ "kind": "fund_report",
+ "version": 1,
+ "as_of": "2026-09-28",
+ "source": "AMFI NAVAll.txt and NAV history report for Axis Midcap Fund Direct Growth (120505); statistics recomputed with fincalc",
+ "verdict": null,
+ "facts": [
+  {
+   "id": "mf-nav",
+   "label": "NAV (direct growth) on 28-Sep-2026",
+   "patterns": [
+    "\\bnav\\b|net asset value"
+   ],
+   "period": "2026-09-28|28-sep-2026|sep 28, 2026|to 2026-09-28",
+   "value": 138.78,
+   "unit": "INR",
+   "tolerance": 0.005,
+   "importance": "high",
+   "source": "AMFI NAVAll 28-Sep-2026",
+   "exclude": "regular plan|idcw|dividend option|\\bpeer|category average|benchmark|nifty|index",
+   "require": "axis midcap|\\b120505\\b"
+  },
+  {
+   "id": "mf-ret-1y",
+   "label": "1-year annualised return to 28-Sep-2026",
+   "patterns": [
+    "1[- ]?y(ea)?r|one[- ]year|return_1y"
+   ],
+   "period": "1y|1-year|one year|2025-09",
+   "value": 7.175,
+   "unit": "%",
+   "tolerance": 0.005,
+   "importance": "high",
+   "source": "AMFI NAV data (fincalc)",
+   "exclude": "regular plan|idcw|dividend option|\\bpeer|category average|benchmark|nifty|index",
+   "require": "axis midcap|\\b120505\\b"
+  },
+  {
+   "id": "mf-ret-3y",
+   "label": "3-year annualised return to 28-Sep-2026",
+   "patterns": [
+    "3[- ]?y(ea)?r|three[- ]year|return_3y"
+   ],
+   "period": "3y|3-year|three year|2023-09",
+   "value": 15.4953,
+   "unit": "%",
+   "tolerance": 0.005,
+   "importance": "high",
+   "source": "AMFI NAV data (fincalc)",
+   "exclude": "regular plan|idcw|dividend option|\\bpeer|category average|benchmark|nifty|index",
+   "require": "axis midcap|\\b120505\\b"
+  },
+  {
+   "id": "mf-ret-5y",
+   "label": "5-year annualised return to 28-Sep-2026",
+   "patterns": [
+    "5[- ]?y(ea)?r|five[- ]year|return_5y"
+   ],
+   "period": "5y|5-year|five year|2021-09",
+   "value": 12.7642,
+   "unit": "%",
+   "tolerance": 0.005,
+   "importance": "high",
+   "source": "AMFI NAV data (fincalc)",
+   "exclude": "regular plan|idcw|dividend option|\\bpeer|category average|benchmark|nifty|index",
+   "require": "axis midcap|\\b120505\\b"
+  },
+  {
+   "id": "mf-vol",
+   "label": "Annualised volatility over 5 years",
+   "patterns": [
+    "volatility|standard deviation"
+   ],
+   "period": "5y|5-year|five year|2021-09",
+   "value": 14.607,
+   "unit": "%",
+   "tolerance": 0.005,
+   "importance": "normal",
+   "source": "AMFI NAV data (fincalc)",
+   "exclude": "regular plan|idcw|dividend option|\\bpeer|category average|benchmark|nifty|index",
+   "require": "axis midcap|\\b120505\\b"
+  },
+  {
+   "id": "mf-dd",
+   "label": "Maximum drawdown over 5 years",
+   "patterns": [
+    "drawdown"
+   ],
+   "period": "5y|5-year|five year|2021-09",
+   "value": -20.3446,
+   "unit": "%",
+   "tolerance": 0.005,
+   "importance": "normal",
+   "source": "AMFI NAV data (fincalc)",
+   "exclude": "regular plan|idcw|dividend option|\\bpeer|category average|benchmark|nifty|index",
+   "require": "axis midcap|\\b120505\\b"
+  },
+  {
+   "id": "mf-rolling-min",
+   "label": "Minimum 3-year rolling return, windows within the last 5 years (106 windows from 20-Sep-2021)",
+   "patterns": [
+    "rolling.*(minimum|\\bmin\\b|lowest|worst)|(minimum|lowest|worst).*rolling"
+   ],
+   "period": "within 5y|5-year|five year|2021-09",
+   "value": 13.9058,
+   "unit": "%",
+   "tolerance": 0.005,
+   "importance": "normal",
+   "source": "AMFI NAV history for 120505 from 2021-09-20, fincalc.funds.rolling_returns (weekly windows)",
+   "exclude": "regular plan|idcw|dividend option|\\bpeer|category average|benchmark|nifty|index",
+   "require": "axis midcap|\\b120505\\b"
+  },
+  {
+   "id": "mf-nav-regular",
+   "label": "NAV (regular growth, 114564) on 28-Sep-2026",
+   "patterns": [
+    "nav|net asset value"
+   ],
+   "period": "2026-09-28|28-sep-2026",
+   "value": 117.99,
+   "unit": "INR",
+   "tolerance": 0.005,
+   "importance": "normal",
+   "source": "AMFI NAVAll 28-Sep-2026 (scheme 114564)",
+   "exclude": "direct plan|direct growth|nav_direct|idcw|\\bpeer|category",
+   "require": "axis midcap|\\b114564\\b"
+  }
+ ],
+ "notes": "v1 had 'NAV on 01-Jan-2025' (an arbitrary date no report needs); replaced after live run 10 by the regular-plan NAV. The rolling minimum was first computed without the 10-day history buffer (104 windows, 13.0619%); it is now defined on the history the tool fetches (106 windows from 2021-09-20, 13.9058%)."
+}

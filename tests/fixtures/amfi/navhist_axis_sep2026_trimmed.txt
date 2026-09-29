@@ -1,0 +1,60 @@
+Scheme Code;NAV Name;Plan;Option;ISIN Div Payout/ISIN Growth;ISIN Div Reinvestment;Net Asset Value;Date
+
+Open Ended Schemes ( Equity Scheme - Mid Cap Fund )
+
+
+Axis Mutual Fund
+120505;Axis Midcap Fund - Direct Plan - Growth;Direct Plan;Growth Option;INF846K01EH3;;144.46;01-Sep-2026
+120505;Axis Midcap Fund - Direct Plan - Growth;Direct Plan;Growth Option;INF846K01EH3;;143.96;02-Sep-2026
+120505;Axis Midcap Fund - Direct Plan - Growth;Direct Plan;Growth Option;INF846K01EH3;;144.64;03-Sep-2026
+120505;Axis Midcap Fund - Direct Plan - Growth;Direct Plan;Growth Option;INF846K01EH3;;144.13;04-Sep-2026
+120505;Axis Midcap Fund - Direct Plan - Growth;Direct Plan;Growth Option;INF846K01EH3;;143.87;07-Sep-2026
+120505;Axis Midcap Fund - Direct Plan - Growth;Direct Plan;Growth Option;INF846K01EH3;;144.45;08-Sep-2026
+120505;Axis Midcap Fund - Direct Plan - Growth;Direct Plan;Growth Option;INF846K01EH3;;144.14;09-Sep-2026
+120505;Axis Midcap Fund - Direct Plan - Growth;Direct Plan;Growth Option;INF846K01EH3;;143.77;10-Sep-2026
+120505;Axis Midcap Fund - Direct Plan - Growth;Direct Plan;Growth Option;INF846K01EH3;;143.44;11-Sep-2026
+120505;Axis Midcap Fund - Direct Plan - Growth;Direct Plan;Growth Option;INF846K01EH3;;140.20;15-Sep-2026
+120505;Axis Midcap Fund - Direct Plan - Growth;Direct Plan;Growth Option;INF846K01EH3;;140.21;16-Sep-2026
+120505;Axis Midcap Fund - Direct Plan - Growth;Direct Plan;Growth Option;INF846K01EH3;;141.24;17-Sep-2026
+120505;Axis Midcap Fund - Direct Plan - Growth;Direct Plan;Growth Option;INF846K01EH3;;143.49;18-Sep-2026
+120505;Axis Midcap Fund - Direct Plan - Growth;Direct Plan;Growth Option;INF846K01EH3;;143.50;21-Sep-2026
+120505;Axis Midcap Fund - Direct Plan - Growth;Direct Plan;Growth Option;INF846K01EH3;;143.49;22-Sep-2026
+120505;Axis Midcap Fund - Direct Plan - Growth;Direct Plan;Growth Option;INF846K01EH3;;144.19;23-Sep-2026
+120505;Axis Midcap Fund - Direct Plan - Growth;Direct Plan;Growth Option;INF846K01EH3;;141.36;24-Sep-2026
+120505;Axis Midcap Fund - Direct Plan - Growth;Direct Plan;Growth Option;INF846K01EH3;;140.80;25-Sep-2026
+120505;Axis Midcap Fund - Direct Plan - Growth;Direct Plan;Growth Option;INF846K01EH3;;138.78;28-Sep-2026
+120504;Axis Midcap Fund - Direct Plan - IDCW;Direct Plan;IDCW Option;INF846K01EF7;INF846K01EG5;55.99;01-Sep-2026
+120504;Axis Midcap Fund - Direct Plan - IDCW;Direct Plan;IDCW Option;INF846K01EF7;INF846K01EG5;55.80;02-Sep-2026
+120504;Axis Midcap Fund - Direct Plan - IDCW;Direct Plan;IDCW Option;INF846K01EF7;INF846K01EG5;56.06;03-Sep-2026
+120504;Axis Midcap Fund - Direct Plan - IDCW;Direct Plan;IDCW Option;INF846K01EF7;INF846K01EG5;55.86;04-Sep-2026
+120504;Axis Midcap Fund - Direct Plan - IDCW;Direct Plan;IDCW Option;INF846K01EF7;INF846K01EG5;55.76;07-Sep-2026
+120504;Axis Midcap Fund - Direct Plan - IDCW;Direct Plan;IDCW Option;INF846K01EF7;INF846K01EG5;55.99;08-Sep-2026
+120504;Axis Midcap Fund - Direct Plan - IDCW;Direct Plan;IDCW Option;INF846K01EF7;INF846K01EG5;55.87;09-Sep-2026
+120504;Axis Midcap Fund - Direct Plan - IDCW;Direct Plan;IDCW Option;INF846K01EF7;INF846K01EG5;55.72;10-Sep-2026
+120504;Axis Midcap Fund - Direct Plan - IDCW;Direct Plan;IDCW Option;INF846K01EF7;INF846K01EG5;55.60;11-Sep-2026
+120504;Axis Midcap Fund - Direct Plan - IDCW;Direct Plan;IDCW Option;INF846K01EF7;INF846K01EG5;54.34;15-Sep-2026
+120504;Axis Midcap Fund - Direct Plan - IDCW;Direct Plan;IDCW Option;INF846K01EF7;INF846K01EG5;54.34;16-Sep-2026
+120504;Axis Midcap Fund - Direct Plan - IDCW;Direct Plan;IDCW Option;INF846K01EF7;INF846K01EG5;54.74;17-Sep-2026
+120504;Axis Midcap Fund - Direct Plan - IDCW;Direct Plan;IDCW Option;INF846K01EF7;INF846K01EG5;55.62;18-Sep-2026
+120504;Axis Midcap Fund - Direct Plan - IDCW;Direct Plan;IDCW Option;INF846K01EF7;INF846K01EG5;55.62;21-Sep-2026
+120504;Axis Midcap Fund - Direct Plan - IDCW;Direct Plan;IDCW Option;INF846K01EF7;INF846K01EG5;55.62;22-Sep-2026
+120504;Axis Midcap Fund - Direct Plan - IDCW;Direct Plan;IDCW Option;INF846K01EF7;INF846K01EG5;55.89;23-Sep-2026
+120504;Axis Midcap Fund - Direct Plan - IDCW;Direct Plan;IDCW Option;INF846K01EF7;INF846K01EG5;54.79;24-Sep-2026
+120504;Axis Midcap Fund - Direct Plan - IDCW;Direct Plan;IDCW Option;INF846K01EF7;INF846K01EG5;54.57;25-Sep-2026
+120504;Axis Midcap Fund - Direct Plan - IDCW;Direct Plan;IDCW Option;INF846K01EF7;INF846K01EG5;53.79;28-Sep-2026
+114564;Axis Midcap Fund - Regular Plan - Growth;Regular Plan;Growth Option;INF846K01859;;122.91;01-Sep-2026
+114564;Axis Midcap Fund - Regular Plan - Growth;Regular Plan;Growth Option;INF846K01859;;122.48;02-Sep-2026
+114564;Axis Midcap Fund - Regular Plan - Growth;Regular Plan;Growth Option;INF846K01859;;123.05;03-Sep-2026
+114564;Axis Midcap Fund - Regular Plan - Growth;Regular Plan;Growth Option;INF846K01859;;122.62;04-Sep-2026
+114564;Axis Midcap Fund - Regular Plan - Growth;Regular Plan;Growth Option;INF846K01859;;122.39;07-Sep-2026
+114564;Axis Midcap Fund - Regular Plan - Growth;Regular Plan;Growth Option;INF846K01859;;122.87;08-Sep-2026
+114564;Axis Midcap Fund - Regular Plan - Growth;Regular Plan;Growth Option;INF846K01859;;122.61;09-Sep-2026
+114564;Axis Midcap Fund - Regular Plan - Growth;Regular Plan;Growth Option;INF846K01859;;122.29;10-Sep-2026
+114564;Axis Midcap Fund - Regular Plan - Growth;Regular Plan;Growth Option;INF846K01859;;122.01;11-Sep-2026
+114564;Axis Midcap Fund - Regular Plan - Growth;Regular Plan;Growth Option;INF846K01859;;119.24;15-Sep-2026
+114564;Axis Midcap Fund - Regular Plan - Growth;Regular Plan;Growth Option;INF846K01859;;119.24;16-Sep-2026
+114564;Axis Midcap Fund - Regular Plan - Growth;Regular Plan;Growth Option;INF846K01859;;120.11;17-Sep-2026
+114564;Axis Midcap Fund - Regular Plan - Growth;Regular Plan;Growth Option;INF846K01859;;122.03;18-Sep-2026
+114564;Axis Midcap Fund - Regular Plan - Growth;Regular Plan;Growth Option;INF846K01859;;122.03;21-Sep-2026
+114564;Axis Midcap Fund - Regular Plan - Growth;Regular Plan;Growth Option;INF846K01859;;122.01;22-Sep-2026
+114564;Axis Midcap Fund - Regular Plan - Growth;Regular Plan;Growth Option;INF846K01859;;122.61;23-Sep-2026

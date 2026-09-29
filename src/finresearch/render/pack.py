@@ -86,7 +86,23 @@ STOCK_LAYOUT = PackLayout(
                  ("06", "Report (md/html/pdf), fact-check log, full claim ledger (xlsx/csv)")),
     disclaimer="Personal research, not SEBI-registered investment advice. Prices and holdings are as of their dates.",
 )  # fmt: skip
-LAYOUTS = {"ipo_report": IPO_LAYOUT, "stock_report": STOCK_LAYOUT}
+FUND_LAYOUT = PackLayout(
+    label="mutual-fund research report",
+    folders={"01": "01_Scheme_Documents", "02": "02_Performance_and_Risk", "03": "03_News",
+             "04": "04_Management_and_AMC", "05": "05_Portfolio_and_Costs", "06": "06_Final_Report"},
+    doc_folder={"OTHER": "01"},
+    stream_folder={"fund_performance": "02", "fund_risk": "02", "fund_news": "03", "fund_manager": "04",
+                   "fund_portfolio": "05", "fund_costs": "05"},
+    financial_streams=("fund_performance", "fund_risk"),
+    readme_rows=(("01", "SID, KIM, factsheets and portfolio disclosures"),
+                 ("02", "Returns, rolling returns, category rank, risk and risk-adjusted returns"),
+                 ("03", "News section and every web source cited"),
+                 ("04", "Fund manager, AMC and scheme events"),
+                 ("05", "Portfolio, style, costs and loads"),
+                 ("06", "Report (md/html/pdf), fact-check log, full claim ledger (xlsx/csv)")),
+    disclaimer="Personal research, not SEBI-registered investment advice. Past returns do not guarantee future returns.",
+)  # fmt: skip
+LAYOUTS = {"ipo_report": IPO_LAYOUT, "stock_report": STOCK_LAYOUT, "fund_report": FUND_LAYOUT}
 
 
 @dataclass

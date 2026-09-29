@@ -183,6 +183,8 @@ def evaluate(
         per_excl = re.compile(fact["period_exclude"], re.I) if fact.get("period_exclude") else None
         # an exclusion is lifted when the claim also names this context (e.g. "consolidated ... (standalone ₹1,146 cr)")
         keep = re.compile(fact["exclude_unless"], re.I) if fact.get("exclude_unless") else None
+        # the claim must name this subject (e.g. the scheme), so peers' figures never match or contradict
+        require = re.compile(fact["require"], re.I) if fact.get("require") else None
         component = re.compile(fact.get("component") or DEFAULT_COMPONENT, re.I)
         # derived variants (adjusted, normalised, before-exceptional, interim/final parts) never contradict the
         # reported figure, unless the fact's own pattern names that variant
@@ -194,6 +196,8 @@ def evaluate(
             text = f"{metric} {c.statement}"
             context = f"{metric} {c.period or ''}"
             if c.value is None or not pat.search(text):
+                continue
+            if require and not require.search(text):
                 continue
             # an exclusion in the claim's own metric or period always applies; one found only in the statement is
             # lifted when the statement also names the wanted context (live INFY run 9: a "standalone_net_profit"

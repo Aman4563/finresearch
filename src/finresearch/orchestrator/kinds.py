@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from finresearch.orchestrator.base import PipelineConfig, ResearchPipeline
+from finresearch.orchestrator.fund import FundPipeline
 from finresearch.orchestrator.ipo import IpoPipeline
 from finresearch.orchestrator.stock import StockPipeline
 
-KINDS: dict[str, type[ResearchPipeline]] = {IpoPipeline.kind: IpoPipeline, StockPipeline.kind: StockPipeline}
+KINDS: dict[str, type[ResearchPipeline]] = {IpoPipeline.kind: IpoPipeline, StockPipeline.kind: StockPipeline,
+                                            FundPipeline.kind: FundPipeline}  # fmt: skip
 
 
 def kind_of(run_id: int) -> str:
