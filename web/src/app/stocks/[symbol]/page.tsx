@@ -10,7 +10,7 @@ import { useState } from "react";
 
 import { DonutChart, TimeSeriesChart, shortDate } from "@/components/charts";
 import { ensureStock, startResearch, watchStock } from "@/components/markets/actions";
-import { ResultsChart } from "@/components/markets/charts";
+import { MarginChart, ResultsChart } from "@/components/markets/charts";
 import { ShareholdingSplit } from "@/components/markets/shareholding";
 import { Metric, PERIOD_DAYS, type Period, PeriodChart, RangeBar, Timeline, crore, inr, pctOf, signedPct, toneOf } from "@/components/markets/common";
 import type { StockHistory, StockOverview, StockResults, StockShareholding } from "@/components/markets/types";
@@ -76,6 +76,9 @@ export default function StockDetail() {
   const split = shp.data && shp.data.quarters.length > 0 ? shp.data : null;
   const splitLoading = !shp.data && !shp.error;
   const quarters = results.data?.quarters ?? [];
+  const annual = results.data?.annual ?? [];
+  const latestQ = quarters[quarters.length - 1];
+  const prevQ = quarters[quarters.length - 2];
 
   return (
     <div>
@@ -250,45 +253,106 @@ export default function StockDetail() {
           </Card>
 
           <Card title="Quarterly results" icon={<Landmark className="size-4" />}
-            subtitle={quarters.length ? `${quarters[0].consolidated ? "Consolidated" : "Standalone"}, from each filing's XBRL` : "Revenue and profit from results filings"}
-            help="Revenue from operations and profit attributable to shareholders for each quarter, read from the company's own results filing on NSE.">
+            subtitle={latestQ ? `${latestQ.consolidated ? "Consolidated" : "Standalone"}, read from each filing's XBRL` : "Revenue and profit from results filings"}
+            actions={latestQ ? <Badge tone="accent">Latest: {latestQ.label}{latestQ.filed_at ? `, filed ${day(latestQ.filed_at)}` : ""}</Badge> : undefined}
+            help="Revenue from operations and profit attributable to shareholders, read from the company's own results filing on NSE. Since the March 2025 quarter SEBI has companies file results as Integrated Filing (Financials); older quarters come from NSE's financial results index.">
             {results.error ? (
               <ErrorNote error={results.error} onRetry={results.reload} />
             ) : !results.data ? (
               <Skeleton className="h-[240px] w-full rounded-lg" />
             ) : quarters.length === 0 ? (
-              <EmptyState icon={<FileText className="size-5" />} title="No results in NSE's index">
-                NSE&apos;s results index has no machine-readable filings for {symbol}. Check the announcements below for the latest results PDF.
+              <EmptyState icon={<FileText className="size-5" />} title="No machine-readable results on NSE">
+                NSE has no results XBRL for {symbol} in its integrated filing or financial results indexes. Check the announcements below for the latest results PDF.
               </EmptyState>
             ) : (
               <>
-                <ResultsChart rows={quarters.map((r) => ({ label: shortDate(r.period_end), revenue: r.revenue != null ? r.revenue / 1e7 : null, profit: r.profit != null ? r.profit / 1e7 : null }))} />
+                {latestQ && (
+                  <div className="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                    <Metric label={latestQ.bank ? "Interest earned" : "Revenue"} value={crore(latestQ.revenue)}
+                      help={latestQ.bank ? "Banks report interest earned in place of revenue from operations." : "Revenue from operations for the quarter."}
+                      sub={<GrowthSub qoq={latestQ.growth.revenue_qoq} yoy={latestQ.growth.revenue_yoy} />} />
+                    <Metric label="Net profit" value={crore(latestQ.profit)}
+                      help="Profit for the quarter attributable to the company's shareholders (after minority interests)."
+                      sub={<GrowthSub qoq={latestQ.growth.profit_qoq} yoy={latestQ.growth.profit_yoy} />} />
+                    <Metric label="Net margin" value={pctOf(latestQ.margin, 1)}
+                      help="Net profit as a share of revenue. A falling margin means costs or taxes grew faster than sales."
+                      sub={prevQ?.margin != null && latestQ.margin != null && prevQ.consolidated === latestQ.consolidated
+                        ? `${((latestQ.margin - prevQ.margin) * 100 >= 0 ? "+" : "")}${((latestQ.margin - prevQ.margin) * 100).toFixed(1)} pp QoQ` : "vs previous quarter: —"} />
+                  </div>
+                )}
+                <ResultsChart rows={quarters.map((r) => ({ label: r.label, title: `${r.label}, quarter ended ${day(r.period_end)}`,
+                  revenue: r.revenue != null ? r.revenue / 1e7 : null, profit: r.profit != null ? r.profit / 1e7 : null }))} />
+                <p className="mt-3 mb-1 text-[11px] font-medium text-muted">Net margin trend</p>
+                <MarginChart rows={quarters.map((r) => ({ label: r.label, title: `${r.label}, quarter ended ${day(r.period_end)}`, margin: r.margin }))} />
                 <Table className="mt-3">
                   <thead>
                     <tr>
                       <th>Quarter</th>
-                      <th className="text-right!">Margin</th>
-                      <th className="text-right!">EPS</th>
-                      <th className="text-right!">Filing</th>
+                      <th className="text-right!">{latestQ?.bank ? "Interest earned" : "Revenue"}</th>
+                      <th className="text-right!">Net profit</th>
+                      <th className="text-right!">Profit YoY</th>
                     </tr>
                   </thead>
                   <tbody>
                     {[...quarters].reverse().slice(0, 4).map((r) => (
                       <tr key={r.period_end}>
-                        <td className="num text-xs">{day(r.period_end)}</td>
-                        <td className="num text-right text-xs">{pctOf(r.margin, 1)}</td>
-                        <td className="num text-right text-xs">{r.eps != null ? `₹${r.eps.toFixed(2)}` : "—"}</td>
-                        <td className="text-right">
-                          <a href={r.xbrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-brand hover:underline">
-                            XBRL <ExternalLink className="size-3" />
-                          </a>
+                        <td className="text-xs">
+                          <span className="font-medium">{r.label}</span>
+                          <span className="block whitespace-nowrap text-[11px] text-muted">
+                            {r.filed_at ? `filed ${day(r.filed_at)}` : day(r.period_end)}{" · "}
+                            <a href={r.ixbrl ?? r.xbrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-0.5 text-brand hover:underline">
+                              {r.ixbrl ? "iXBRL" : "XBRL"} <ExternalLink className="size-3" />
+                            </a>
+                          </span>
                         </td>
+                        <td className="num text-right text-xs">{crore(r.revenue)}</td>
+                        <td className="num text-right text-xs">{crore(r.profit)}</td>
+                        <td className="text-right text-xs"><Delta value={r.growth.profit_yoy != null ? r.growth.profit_yoy * 100 : null} digits={1} /></td>
                       </tr>
                     ))}
                   </tbody>
                 </Table>
+                <details className="mt-3 text-xs">
+                  <summary className="cursor-pointer text-muted hover:text-foreground">Full P&amp;L lines{annual.length ? " and annual figures" : ""}</summary>
+                  <div className="mt-2 overflow-x-auto">
+                    <Table>
+                      <thead>
+                        <tr>
+                          <th>Period</th>
+                          <th className="text-right!">Revenue</th>
+                          <th className="text-right!">Other income</th>
+                          <th className="text-right!">Expenses</th>
+                          <th className="text-right!">PBT</th>
+                          <th className="text-right!">Tax</th>
+                          <th className="text-right!">Net profit</th>
+                          <th className="text-right!">EPS</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[...[...quarters].reverse(), ...[...annual].reverse()].map((r) => (
+                          <tr key={`${r.label}-${r.period_end}`}>
+                            <td className="whitespace-nowrap text-xs font-medium" title={`${r.consolidated ? "Consolidated" : "Standalone"}, ${day(r.period_start)} to ${day(r.period_end)}`}>
+                              {r.label}{r.consolidated ? "" : " (S)"}
+                            </td>
+                            <td className="num text-right text-xs">{crore(r.revenue)}</td>
+                            <td className="num text-right text-xs">{crore(r.other_income)}</td>
+                            <td className="num text-right text-xs">{crore(r.total_expenses)}</td>
+                            <td className="num text-right text-xs">{crore(r.profit_before_tax)}</td>
+                            <td className="num text-right text-xs">{crore(r.tax)}</td>
+                            <td className="num text-right text-xs">{crore(r.profit)}</td>
+                            <td className="num text-right text-xs">{r.eps != null ? `₹${r.eps.toFixed(2)}` : "—"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </Table>
+                  </div>
+                  <p className="mt-1 text-[11px] text-muted">(S) = standalone (the company filed no consolidated XBRL for that period). PBT includes exceptional items. EPS is as reported, not adjusted for later bonuses or splits.</p>
+                </details>
                 <p className="mt-2 text-[11px] text-muted">
-                  Latest in NSE&apos;s results index: quarter ended {day(quarters[quarters.length - 1].period_end)}. The index can lag; newer results appear first as announcements.
+                  Source: {results.data.sources.map((x, i) => (
+                    <span key={x.url}>{i ? " and " : ""}<a href={x.url} target="_blank" rel="noreferrer" className="text-brand hover:underline">{x.name}</a></span>
+                  ))} (NSE), each quarter&apos;s XBRL. Checked {when(results.data.as_of)}.
+                  {results.data.errors.length > 0 && ` ${results.data.errors.length} filing${results.data.errors.length > 1 ? "s" : ""} could not be read.`}
                 </p>
               </>
             )}
@@ -359,5 +423,15 @@ export default function StockDetail() {
         )}
       </div>
     </div>
+  );
+}
+
+/** QoQ and YoY change under a results KPI (fractions from the API). */
+function GrowthSub({ qoq, yoy }: { qoq: number | null | undefined; yoy: number | null | undefined }) {
+  return (
+    <span className="inline-flex flex-wrap gap-x-2">
+      <span>QoQ <Delta value={qoq != null ? qoq * 100 : null} digits={1} /></span>
+      <span>YoY <Delta value={yoy != null ? yoy * 100 : null} digits={1} /></span>
+    </span>
   );
 }

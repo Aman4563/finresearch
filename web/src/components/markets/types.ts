@@ -75,21 +75,43 @@ export type StockHistory = {
   stats: SeriesStats;
 };
 
+export type ResultPeriod = {
+  label: string; // "Q1 FY27" (quarters) or "FY26" (years)
+  period_start: string | null;
+  period_end: string;
+  consolidated: boolean;
+  audited: boolean | null;
+  filed_at: string | null;
+  revised: boolean;
+  source: "nse_integrated_filing" | "nse_financial_results";
+  source_url: string;
+  bank: boolean; // banking taxonomy: revenue is interest earned
+  revenue: number | null;
+  other_income: number | null;
+  total_income: number | null;
+  total_expenses: number | null;
+  exceptional_items: number | null;
+  profit_before_tax: number | null;
+  tax: number | null;
+  net_profit: number | null;
+  profit: number | null; // attributable to owners
+  eps: number | null;
+  eps_diluted: number | null;
+  margin: number | null;
+  pbt_margin: number | null;
+  xbrl: string;
+  ixbrl: string | null;
+  growth: Partial<Record<"revenue_qoq" | "revenue_yoy" | "profit_qoq" | "profit_yoy" | "eps_qoq" | "eps_yoy", number | null>>;
+};
+
 export type StockResults = {
   symbol: string;
-  quarters: {
-    period_start: string | null;
-    period_end: string;
-    consolidated: boolean;
-    audited: boolean | null;
-    filed_at: string | null;
-    revenue: number | null;
-    total_income: number | null;
-    profit: number | null;
-    eps: number | null;
-    margin: number | null;
-    xbrl: string;
-  }[];
+  unit: string;
+  quarters: ResultPeriod[];
+  annual: ResultPeriod[];
+  latest_quarter: Pick<ResultPeriod, "label" | "period_end" | "filed_at" | "source" | "source_url" | "consolidated" | "xbrl" | "ixbrl"> | null;
+  as_of: string;
+  sources: { name: string; url: string; note: string }[];
   errors: string[];
   source: string;
 };

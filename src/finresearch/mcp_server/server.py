@@ -14,6 +14,7 @@ Design notes
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import inspect
 import json
@@ -571,12 +572,20 @@ async def nse_results_facts(xbrl_url: str) -> str:
 
 @server.tool()
 async def nse_results_filings(symbol: str, period: str = "Quarterly") -> str:
-    """NSE's index of results filings (period, consolidated/standalone, audited, XBRL link). NSE's index can lag;
-    the announcements list is the fresher source of results PDFs."""
+    """NSE's results filings (period, consolidated/standalone, audited, XBRL link), newest first. For quarterly
+    results this merges NSE's Integrated Filing (Financials) index (quarters from Mar-2025, `source`
+    "nse_integrated_filing") with the older Financial Results index (up to Dec-2024)."""
     from finresearch.adapters.nse_equity import NseEquity
 
     async with NseEquity() as eq:
-        return _equity_json(await eq.results(symbol.upper(), period))
+        rows = await eq.results(symbol.upper(), period)
+        if period.lower() == "quarterly":
+            with contextlib.suppress(Exception):  # the older index still answers
+                rows = [f.as_result_filing() for f in await eq.integrated_filings(symbol.upper())] + rows
+        floor = datetime.min.replace(tzinfo=UTC)
+        return _equity_json(
+            sorted(rows, key=lambda f: (f.period_to or date.min, f.filed_at or floor), reverse=True)
+        )
 
 
 @server.tool()

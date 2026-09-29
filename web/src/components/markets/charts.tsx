@@ -166,7 +166,7 @@ export function SipChart({ path, height = 260 }: {
 
 /** Quarterly revenue and profit (₹ crore) side by side. */
 export function ResultsChart({ rows, height = 240 }: {
-  rows: { label: string; revenue: number | null; profit: number | null }[]; height?: number;
+  rows: { label: string; title?: string; revenue: number | null; profit: number | null }[]; height?: number;
 }) {
   return (
     <div style={{ height }} className="animate-fade-in">
@@ -176,12 +176,32 @@ export function ResultsChart({ rows, height = 240 }: {
           <XAxis dataKey="label" {...axis} />
           <YAxis {...axis} width={70} tickFormatter={(v) => `₹${Number(v).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`} />
           <Tooltip cursor={{ fill: "var(--background-subtle)" }}
-            content={<Tip title={(r) => `Quarter ended ${String(r.label)}`}
+            content={<Tip title={(r) => String(r.title ?? r.label)}
               format={(v) => `₹${v.toLocaleString("en-IN", { maximumFractionDigits: 0 })} Cr`} />} />
           <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11 }} />
           <Bar dataKey="revenue" name="Revenue (₹ Cr)" fill="var(--chart-1)" radius={[4, 4, 0, 0]} maxBarSize={28} animationDuration={700} />
-          <Bar dataKey="profit" name="Profit (₹ Cr)" fill="var(--chart-2)" radius={[4, 4, 0, 0]} maxBarSize={28} animationDuration={700} />
+          <Bar dataKey="profit" name="Net profit (₹ Cr)" fill="var(--chart-2)" radius={[4, 4, 0, 0]} maxBarSize={28} animationDuration={700} />
         </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+/** Net margin (profit / revenue) per quarter, on its own small chart under the revenue/profit bars (one axis each). */
+export function MarginChart({ rows, height = 120 }: {
+  rows: { label: string; title?: string; margin: number | null }[]; height?: number;
+}) {
+  return (
+    <div style={{ height }} className="animate-fade-in">
+      <ResponsiveContainer width="100%" height="100%">
+        <LineChart data={rows} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
+          <CartesianGrid vertical={false} strokeDasharray="3 3" />
+          <XAxis dataKey="label" {...axis} />
+          <YAxis {...axis} width={70} domain={["auto", "auto"]} tickFormatter={(v) => pctOf(Number(v), 0)} />
+          <Tooltip content={<Tip title={(r) => String(r.title ?? r.label)} format={(v) => pctOf(v, 1)} />} />
+          <Line type="monotone" dataKey="margin" name="Net margin" stroke="var(--chart-3)" strokeWidth={2}
+            dot={{ r: 4, strokeWidth: 2, fill: "var(--card)" }} activeDot={{ r: 5 }} connectNulls animationDuration={700} />
+        </LineChart>
       </ResponsiveContainer>
     </div>
   );

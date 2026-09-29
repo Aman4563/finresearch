@@ -1,6 +1,14 @@
 """NSE listed-equity data: price history, corporate announcements, results filings, shareholding and corporate
 actions. Every call warms the quote page first and sends it as referer (NSE refuses scripted clients otherwise).
 
+Results filings come from two NSE indexes (verified live 29-Sep-2026):
+- `/api/corporates-financial-results` (the "Financial Results" page): Regulation 33 filings up to the Dec-2024
+  quarter. It gets no new quarters.
+- `/api/integrated-filing-results` (the "Integrated Filing" page): from the Mar-2025 quarter SEBI moved quarterly
+  financial results into Integrated Filing (Financials). Each row links the results XBRL (same Ind AS facts, a
+  newer "in-capmkt" namespace; banks use a banking taxonomy) and its iXBRL rendering. The listing also carries
+  "Integrated Filing- Governance" rows; `integrated_filings()` keeps only the financials.
+
 Recorded payloads live in tests/fixtures/nse/equity/. Dates in the payloads are NSE's (IST).
 """
 
@@ -78,6 +86,11 @@ class Announcement(BaseModel):
                    text=text, attachment=att if att and att.startswith("http") else None, results_period_end=end)  # fmt: skip
 
 
+RESULTS_PAGE = f"{NSE_BASE}/companies-listing/corporate-filings-financial-results"
+INTEGRATED_PAGE = f"{NSE_BASE}/companies-listing/corporate-integrated-filing"
+INTEGRATED_FINANCIALS = "Integrated Filing- Financials"
+
+
 class ResultFiling(BaseModel):
     symbol: str
     period_from: date | None
@@ -87,6 +100,9 @@ class ResultFiling(BaseModel):
     audited: bool | None
     filed_at: datetime | None
     xbrl: str | None
+    source: str = "nse_financial_results"  # or "nse_integrated_filing"
+    ixbrl: str | None = None  # human-readable rendering of the XBRL (integrated filings only)
+    revised: bool = False
 
     @classmethod
     def parse(cls, r: dict[str, Any]) -> ResultFiling:
@@ -96,6 +112,52 @@ class ResultFiling(BaseModel):
                    consolidated=(r.get("consolidated") or "").lower() == "consolidated",
                    audited=None if not aud else aud == "audited", filed_at=parse_nse_timestamp(r.get("filingDate")),
                    xbrl=r.get("xbrl") or None)  # fmt: skip
+
+
+def _archive_link(v: Any) -> str | None:
+    """NSE sends 'https://nsearchives.nseindia.com/corporate/null' (or null) when a filing has no such file."""
+    v = (v or "").strip()
+    return v if v.startswith("https://") and not v.rstrip("/").endswith("/null") else None
+
+
+def _quarter_start(end: date) -> date:
+    m = end.month - 2
+    return date(end.year if m > 0 else end.year - 1, m if m > 0 else m + 12, 1)
+
+
+class IntegratedFiling(BaseModel):
+    """One row of NSE's integrated-filing index (financials or governance)."""
+
+    symbol: str
+    kind: str  # "Integrated Filing- Financials" | "Integrated Filing- Governance"
+    period_end: date | None
+    consolidated: bool | None
+    audited: bool | None
+    filed_at: datetime | None
+    revised_at: datetime | None
+    sub_type: str | None  # Original | New | Revised
+    xbrl: str | None
+    ixbrl: str | None
+    pdf: str | None
+
+    @classmethod
+    def parse(cls, r: dict[str, Any]) -> IntegratedFiling:
+        nature = (r.get("consolidated") or "").lower()
+        aud = (r.get("audited") or "").lower()
+        return cls(symbol=r.get("symbol", ""), kind=r.get("type") or "", period_end=_upper_date(r.get("qe_Date")),
+                   consolidated=None if not nature else nature.startswith("consolidated"),
+                   audited=None if not aud else aud == "audited", filed_at=parse_nse_timestamp(r.get("broadcast_Date")),
+                   revised_at=parse_nse_timestamp(r.get("revised_Date")), sub_type=r.get("type_Sub"),
+                   xbrl=_archive_link(r.get("xbrl")), ixbrl=_archive_link(r.get("ixbrl")),
+                   pdf=_archive_link(r.get("pdf_attach")))  # fmt: skip
+
+    def as_result_filing(self) -> ResultFiling:
+        """The same shape as a Financial Results index row, so both indexes merge into one list."""
+        return ResultFiling(symbol=self.symbol, period_from=_quarter_start(self.period_end) if self.period_end else None,
+                            period_to=self.period_end, relating_to=None, consolidated=bool(self.consolidated),
+                            audited=self.audited, filed_at=self.revised_at or self.filed_at, xbrl=self.xbrl,
+                            source="nse_integrated_filing", ixbrl=self.ixbrl,
+                            revised=(self.sub_type or "").lower().startswith("revis"))  # fmt: skip
 
 
 class Shareholding(BaseModel):
@@ -215,6 +277,15 @@ class NseEquity:
         rows = await self._get(symbol, "/api/corporates-financial-results",
                                {"index": "equities", "symbol": symbol, "period": period})  # fmt: skip
         return [ResultFiling.parse(r) for r in rows or []]
+
+    async def integrated_filings(
+        self, symbol: str, kind: str = INTEGRATED_FINANCIALS
+    ) -> list[IntegratedFiling]:
+        """Integrated filings of one kind, newest first (NSE's own order)."""
+        d = await self._get(symbol, "/api/integrated-filing-results",
+                            {"index": "equities", "symbol": symbol, "type": kind})  # fmt: skip
+        rows = d.get("data", []) if isinstance(d, dict) else d or []
+        return [f for f in (IntegratedFiling.parse(r) for r in rows) if f.kind == kind]
 
     async def shareholding(self, symbol: str) -> list[Shareholding]:
         rows = await self._get(

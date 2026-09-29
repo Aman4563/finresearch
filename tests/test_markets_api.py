@@ -17,6 +17,7 @@ from finresearch.adapters.nse import Quote
 from finresearch.adapters.nse_bonds import parse_live_bonds
 from finresearch.adapters.nse_equity import (
     CorporateAction,
+    IntegratedFiling,
     PriceBar,
     ResultFiling,
     Shareholding,
@@ -39,6 +40,7 @@ class FakeEquity:
 
     def __init__(self, log: list, cap: int = 5):
         self.log, self.cap = log, cap  # like NSE (~70 rows), only the latest `cap` rows of a range come back
+        self.integrated_fails, self.broken = False, set()
 
     async def __aenter__(self):
         return self
@@ -62,7 +64,14 @@ class FakeEquity:
         raise RuntimeError("NSE refused")  # one failing part must not blank the overview
 
     async def results(self, symbol, period="Quarterly"):
+        self.log.append(("results-index", symbol))
         return [ResultFiling.parse(r) for r in load("results_INFY_trimmed.json")]
+
+    async def integrated_filings(self, symbol, kind="Integrated Filing- Financials"):
+        if self.integrated_fails:
+            raise RuntimeError("NSE HTTP 503")
+        rows = load("integrated_filings_INFY_trimmed.json")["data"]
+        return [f for f in (IntegratedFiling.parse(r) for r in rows) if f.kind == kind]
 
     async def fetch_bytes(self, url, cache_ttl=None):
         self.log.append(("xbrl", url))
@@ -72,7 +81,20 @@ class FakeEquity:
             if not path.exists():
                 raise RuntimeError("NSE refused")
             return path.read_bytes()
-        return (EQ / "results_INFY_Q3FY25_consolidated.xml").read_bytes()
+        name = XBRL_FILES.get(url)
+        if name is None or url in self.broken:
+            raise FileNotFoundError(url)  # like an NSE archive 404
+        return (EQ / name).read_bytes()
+
+
+XBRL_FILES = {  # recorded XBRL per archive URL (the listings' own links)
+    "https://nsearchives.nseindia.com/corporate/xbrl/INTEGRATED_FILING_INDAS_1700136_23072026054446_WEB.xml":
+        "integrated_INFY_Q1FY27_consolidated.xml",
+    "https://nsearchives.nseindia.com/corporate/xbrl/INTEGRATED_FILING_INDAS_1658040_23042026090154_WEB.xml":
+        "integrated_INFY_Q4FY26_consolidated.xml",
+    "https://nsearchives.nseindia.com/corporate/xbrl/INDAS_117292_1348213_16012025074012.xml":
+        "results_INFY_Q3FY25_consolidated.xml",
+}  # fmt: skip
 
 
 def quote_fixture() -> Quote:
@@ -179,6 +201,61 @@ def test_stock_results_reads_quarterly_xbrl(app_client):
     q = r["quarters"][-1]
     assert q["revenue"] and q["revenue"] > 0 and q["profit"] and 0 < q["margin"] < 1 and q["eps"] > 0
     assert all(u.startswith("https://nsearchives.nseindia.com/") for k, u in log if k == "xbrl")
+    assert not [
+        x for x in log if x[0] == "results-index"
+    ]  # two integrated quarters suffice: no old index call
+
+
+def test_stock_results_merges_integrated_filing_with_the_older_index(app_client):
+    """Quarters since Mar-2025 come from integrated filing (INFY's Q1 FY27 figures match its filed results PDF);
+    older quarters from the Financial Results index; a quarter whose XBRL fails is reported, not invented."""
+    c, log, _, _ = app_client
+    r = c.get("/api/stocks/INFY/results", params={"quarters": 4}).json()
+    ends = [q["period_end"] for q in r["quarters"]]
+    assert ends == ["2024-12-31", "2026-03-31", "2026-06-30"]  # Sep-2024's XBRL is missing -> error, no row
+    assert any("2024-09-30" in e for e in r["errors"])
+    q1 = r["quarters"][-1]
+    assert q1["label"] == "Q1 FY27" and q1["source"] == "nse_integrated_filing" and q1["consolidated"] is True
+    assert q1["filed_at"] == "2026-07-23T17:40:57+05:30"
+    # Infosys Q1 FY27 consolidated (Rs crore): revenue 48,211, other income 984, expenses 38,167, PBT 11,028,
+    # tax 3,253, profit 7,775 (owners 7,769), basic EPS 19.19
+    assert (q1["revenue"], q1["other_income"], q1["total_expenses"]) == (
+        482110000000,
+        9840000000,
+        381670000000,
+    )
+    assert (q1["profit_before_tax"], q1["tax"], q1["net_profit"], q1["profit"]) == (
+        110280000000, 32530000000, 77750000000, 77690000000)  # fmt: skip
+    assert q1["eps"] == 19.19 and q1["ixbrl"].endswith("_iXBRL_WEB.html")
+    assert (
+        round(q1["growth"]["revenue_qoq"], 3) == 0.039 and q1["growth"]["revenue_yoy"] is None
+    )  # no Jun-25 row
+    assert r["quarters"][0]["source"] == "nse_financial_results"
+    assert r["latest_quarter"]["label"] == "Q1 FY27" and r["latest_quarter"]["period_end"] == "2026-06-30"
+    assert r["as_of"] and r["source"].endswith("corporate-integrated-filing")
+    fy = r["annual"]
+    assert [a["label"] for a in fy] == ["FY26"] and fy[0]["revenue"] == 1786500000000
+    assert fy[0]["exceptional_items"] == -12890000000 and fy[0]["profit_before_tax"] == 399950000000
+    assert all(u.startswith("https://nsearchives.nseindia.com/") for k, u in log if k == "xbrl")
+
+
+def test_stock_results_fall_back_to_standalone_and_to_the_older_index(app_client):
+    c, _, _, _ = app_client
+    fake = c.app.state.markets.equity()
+    fake.broken.add(next(u for u, n in XBRL_FILES.items() if n == "integrated_INFY_Q1FY27_consolidated.xml"))
+    c.app.state.markets.equity = lambda: fake
+    r = c.get("/api/stocks/INFY/results", params={"quarters": 2}).json()
+    assert (
+        r["quarters"][-1]["period_end"] == "2026-03-31"
+    )  # Jun-26: consolidated 404, standalone not recorded
+    assert len([e for e in r["errors"] if "2026-06-30" in e]) == 2
+    fake.integrated_fails = True
+    r = c.get("/api/stocks/INFY/results", params={"quarters": 3}).json()
+    assert (
+        r["quarters"][-1]["period_end"] == "2024-12-31"
+        and r["quarters"][-1]["source"] == "nse_financial_results"
+    )
+    assert any(e.startswith("integrated filing index") for e in r["errors"])
 
 
 # --------------------------------------------------------------------------- funds
@@ -343,3 +420,26 @@ def test_bond_frequency_comes_from_verified_research_else_is_flagged_as_assumed(
     assert r["analytics"]["coupon_per_payment"] == 43.75
     chosen = c.get("/api/bonds/INE906B07DF8/analytics", params={"freq": 4}).json()  # an explicit choice wins
     assert chosen["freq"] == 4 and chosen["freq_source"] == {"kind": "chosen"}
+
+
+@pytest.mark.parametrize(
+    ("name", "basis", "revenue", "profit", "expenses"),
+    [
+        ("integrated_HDFCBANK_Q1FY27_consolidated.xml", "interest_earned", 905753300000, 192447100000, 1059172000000),
+        ("integrated_SBILIFE_Q1FY27_standalone.xml", "net_premium_income", 200782091000, 7249331000, None),
+        ("integrated_ICICIGI_Q1FY27_standalone.xml", "premium_earned", 59500400000, 4031700000, None),
+    ],
+)  # fmt: skip
+def test_result_rows_for_banks_and_insurers_have_revenue_and_profit(name, basis, revenue, profit, expenses):
+    """Banks and insurers file other taxonomies; the results card must still get revenue and profit bars."""
+    from finresearch.adapters.xbrl import parse_results_xbrl
+    from finresearch.api.markets import _result_row
+
+    x = parse_results_xbrl((EQ / name).read_bytes())
+    f = ResultFiling(symbol="X", period_from=date(2026, 4, 1), period_to=date(2026, 6, 30), relating_to=None,
+                     consolidated=bool(x.consolidated), audited=x.audited, filed_at=None,
+                     xbrl="https://nsearchives.nseindia.com/corporate/xbrl/X.xml", source="nse_integrated_filing")  # fmt: skip
+    r = _result_row(f, x.quarter, date(2026, 6, 30))
+    assert r["revenue_basis"] == basis and r["bank"] is (basis == "interest_earned")
+    assert (r["revenue"], r["profit"], r["total_expenses"]) == (revenue, profit, expenses)
+    assert r["label"] == "Q1 FY27" and 0 < r["margin"] < 1 and r["eps"] > 0
