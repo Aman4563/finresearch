@@ -109,12 +109,18 @@ def gather(session: Session, run_id: int, profile: Profile, *, live_detail=None,
     if close is None and run is not None:
         close = _close_from_facts(run)
     m["bidding_days_left"] = Metric(
-        Decimal(bidding_days_left(now.date(), close)) if close else None,
+        Decimal(bidding_days_left(_ist_date(now), close)) if close else None,
         "fincalc: exchange bidding days from today to the close" if close else "close date unknown",
     )
     m["gate_ok"] = Metric(None if gate_ok is None else Decimal(int(gate_ok)), "publish gate")
     inputs.rules = [evaluate(r, m) for r in profile.rules]
     return inputs
+
+
+def _ist_date(now: datetime):
+    from finresearch.fincalc.dates import to_ist
+
+    return (to_ist(now) if now.tzinfo else now).date()  # the scheduler passes UTC; the close is an IST date
 
 
 def _upper_from(issue_info: dict[str, str]) -> Decimal | None:

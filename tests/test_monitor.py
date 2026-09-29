@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -48,8 +48,12 @@ def test_orient_schedule_follows_the_bidding_days_and_t_plus_3():
     }  # weekend skipped
     assert [s.slot for s in subs if s.params["final"]] == ["ORIENTCABL:subscription:2026-09-29:1715"]
     lockins = [s for s in slots if s.kind == "lockin"]
-    assert [s.params["unlock_date"] for s in lockins] == ["2026-10-30", "2026-12-29"]
+    assert [s.params["unlock_date"] for s in lockins] == ["2026-10-30", "2026-12-29", "2027-03-30"]
     assert lockins[0].params["shares"] == "3044116" and len({s.slot for s in slots}) == len(slots)
+    six = lockins[
+        -1
+    ].params  # promoters above the minimum and pre-IPO holders: 6 months, usually the largest unlock
+    assert "pre-IPO" in six["holder"] and "Reg 16" in six["basis"] and "Reg 17" in six["basis"]
 
 
 @pytest.fixture
@@ -136,6 +140,7 @@ async def test_listing_waits_for_nse_then_updates_the_journal(watched):
         job = s.query(MonitorJob).filter_by(slot="ORIENTCABL:listing:2026-10-02:open").one()
         assert job.status == "pending" and job.attempts == 1 and "not" in job.error.lower()
         assert job.due_at.astimezone(IST) == ist(2026, 10, 5, 10, 15)  # next exchange day, same time
+    await tick(deps(fake), ist(2026, 10, 2, 15, 50))  # the close check also retries on the next exchange day
     fake.q = Quote(symbol="ORIENTCABL", open=Decimal("300"), last_price=Decimal("310"), close_price=Decimal("0"),
                    listing_date=date(2026, 10, 5), as_of=ist(2026, 10, 5, 10, 15))  # fmt: skip
     await tick(deps(fake), ist(2026, 10, 5, 10, 16))
@@ -148,6 +153,102 @@ async def test_listing_waits_for_nse_then_updates_the_journal(watched):
         w = s.get(Watch, watched["watch_id"])
         assert w.listing_date == date(2026, 10, 5) and w.meta["expected_listing_date"] == "2026-10-02"
         assert "+10.29% vs the ₹272 upper band" in s.query(Alert).filter_by(kind="listing_open").one().message
+    # regression: the confirmed date moved the planned listing slots; the old ones must not alert again
+    await tick(deps(fake), ist(2026, 10, 5, 10, 17))
+    fake.q = fake.q.model_copy(update={"close_price": Decimal("305")})
+    await tick(deps(fake), ist(2026, 10, 5, 15, 50))
+    await tick(deps(fake), ist(2026, 10, 6, 15, 50))
+    with session_scope() as s:
+        kinds = [a.kind for a in s.query(Alert)]
+        assert kinds.count("listing_open") == 1 and kinds.count("listing_close") == 1
+        assert "close ₹305" in s.query(Alert).filter_by(kind="listing_close").one().message
+        assert not s.query(MonitorJob).filter_by(kind="listing", status="pending").count()
+
+
+async def test_listing_compares_the_ist_date(watched):
+    from finresearch.adapters.nse import Quote
+    from finresearch.db import session_scope
+    from finresearch.db.models import MonitorJob, Watch
+    from finresearch.monitor import jobs
+
+    q = Quote(symbol="ORIENTCABL", open=Decimal("300"), last_price=Decimal("300"), close_price=None,
+              listing_date=date(2026, 10, 5), as_of=ist(2026, 10, 5, 1, 0))  # fmt: skip
+
+    async def quote(symbol):
+        return q
+
+    with session_scope() as s:  # 02:00 IST on 5-Oct is still 4-Oct in UTC
+        w = s.get(Watch, watched["watch_id"])
+        job = MonitorJob(
+            watch_id=w.id, kind="listing", slot="x", due_at=ist(2026, 10, 5, 2, 0), params={"which": "open"}
+        )
+        now = ist(2026, 10, 5, 2, 0).astimezone(UTC)  # the scheduler passes UTC
+        out = await jobs.listing(s, job, w, jobs.Deps(ipo_detail=None, quote=quote), now)
+        s.rollback()
+    assert out["listing_date"] == "2026-10-05"
+
+
+def test_stopping_a_watch_cancels_its_checks(watched):
+    import asyncio
+
+    from fastapi.testclient import TestClient
+
+    from finresearch.api import create_app
+    from finresearch.db import session_scope
+    from finresearch.db.models import Alert, MonitorJob
+    from finresearch.monitor.scheduler import tick
+
+    asyncio.run(tick(deps(FakeNse()), ist(2026, 9, 29, 17, 20)))  # plans every slot up to the lock-ins
+    with TestClient(create_app()) as c:
+        assert c.post(f"/api/watches/{watched['watch_id']}/stop").json()["active"] is False
+    with (
+        session_scope() as s
+    ):  # a check still pending (e.g. retrying) from before the stop must not run either
+        s.query(MonitorJob).filter_by(slot="ORIENTCABL:allotment:2026-09-30").update({"status": "pending"})
+    for now in (ist(2026, 9, 30, 19, 5), ist(2026, 10, 30, 9, 5), ist(2026, 12, 29, 9, 5)):
+        stats = asyncio.run(tick(deps(FakeNse()), now))
+        assert stats["added"] == 0 and stats["done"] == 0
+    with session_scope() as s:
+        kinds = {a.kind for a in s.query(Alert)}
+        assert not kinds & {"allotment", "lockin", "listing_open"}
+        assert s.query(MonitorJob).filter_by(status="cancelled").count() > 0
+
+
+def test_ipo_and_stock_watches_convert_in_place(watched):
+    from finresearch.db import session_scope
+    from finresearch.db.models import MonitorJob, Watch
+    from finresearch.monitor.scheduler import sync_slots
+    from finresearch.monitor.watch import stop_watch, upsert_watch, watch_stock
+
+    slug, wid = watched["slug"], watched["watch_id"]
+    sync_slots(ist(2026, 9, 29, 10, 0))
+    with pytest.raises(ValueError, match="stop that watch first"):
+        watch_stock(slug)  # an active IPO watch that has not listed
+    with session_scope() as s:
+        s.get(Watch, wid).meta = {"listing_confirmed": True, "rule_status": {"qib-floor": "clear"}}
+    w = watch_stock(slug)  # listed: becomes a stock watch
+    assert (w["id"], w["kind"], w["active"], w["open_date"], w["listing_date"], w["meta"]) == (
+        wid,
+        "stock",
+        True,
+        None,
+        None,
+        {},
+    )
+    with session_scope() as s:
+        assert not s.query(MonitorJob).filter(MonitorJob.watch_id == wid, MonitorJob.status == "pending",
+                                              MonitorJob.kind != "stock_daily").count()  # fmt: skip
+    with pytest.raises(ValueError, match="stop that watch first"):
+        upsert_watch(slug, orient_detail().issue_info)  # an active stock watch
+    stop_watch(wid)
+    w = upsert_watch(slug, orient_detail().issue_info)  # inactive: back to an IPO watch
+    assert (w["kind"], w["active"], w["listing_date"], w["meta"]) == ("ipo", True, "2026-10-02", {})
+    sync_slots(ist(2026, 9, 29, 10, 0))  # the checks cancelled by the conversion are planned again
+    with session_scope() as s:
+        job = s.query(MonitorJob).filter_by(slot="ORIENTCABL:subscription:2026-09-29:1030").one()
+        assert (job.status, job.watch_id) == ("pending", wid)
+    stop_watch(wid)
+    assert watch_stock(slug)["kind"] == "stock"  # an inactive IPO watch can become a stock watch
 
 
 async def test_lock_in_and_allotment_alerts(watched):

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
 
@@ -220,10 +220,16 @@ def test_lot_and_price_fall_back_to_the_nse_issue_information(env, tmp_path):
                                                                                  "issue_close": "2026-09-29"}})  # fmt: skip
         s.add(run)
         s.flush()
+        rid = run.id
         inputs = gather(
-            s, run.id, default_profile(), live_detail=None, now=datetime(2026, 9, 28, 17), gate_ok=True
+            s, rid, default_profile(), live_detail=None, now=datetime(2026, 9, 28, 17), gate_ok=True
         )
     m = inputs.metrics
     assert (m["price_band_upper"].value, m["lot_size"].value, m["lot_cost"].value) == (272, 55, 14960)
     assert m["lot_size"].source == "NSE issue information (run facts)" and m["max_lots_by_capital"].value == 1
     assert {r.rule.id: r.status for r in inputs.rules}["one-lot"] == "clear"
+    assert m["bidding_days_left"].value == 2
+    with session_scope() as s:  # 01:30 IST on 30-Sep (still 29-Sep in UTC): the issue has closed
+        late = gather(s, rid, default_profile(), live_detail=None, now=datetime(2026, 9, 29, 20, 0, tzinfo=UTC),
+                      gate_ok=True)  # fmt: skip
+    assert late.metrics["bidding_days_left"].value == 0

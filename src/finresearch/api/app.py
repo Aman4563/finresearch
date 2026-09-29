@@ -561,12 +561,12 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
 
     @app.post("/api/watches/{watch_id}/stop")
     def stop_watch(watch_id: int) -> dict[str, Any]:
-        with session_scope() as s:
-            w = s.get(Watch, watch_id)
-            if w is None:
-                raise HTTPException(404, f"unknown watch {watch_id}")
-            w.active = False
-            return {"id": w.id, "active": False}
+        from finresearch.monitor.watch import stop_watch
+
+        out = stop_watch(watch_id)
+        if out is None:
+            raise HTTPException(404, f"unknown watch {watch_id}")
+        return out
 
     @app.get("/api/watches/{watch_id}")
     def watch_detail(watch_id: int) -> dict[str, Any]:
