@@ -404,7 +404,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             <p className="hidden truncate text-xs text-muted sm:block">{current?.description}</p>
           </div>
           <button type="button" onClick={() => setPalette(true)}
-            className="ml-auto flex h-9 w-full max-w-72 items-center gap-2 rounded-lg border border-border bg-card px-3 text-sm text-muted transition hover:border-border-strong">
+            className="ml-auto flex h-9 w-full min-w-0 max-w-72 items-center gap-2 rounded-lg border border-border bg-card px-3 text-sm text-muted transition hover:border-border-strong">
             <Search className="size-4" />
             <span className="flex-1 truncate text-left">Search or jump to…</span>
             <kbd className="hidden rounded border border-border px-1.5 text-[10px] sm:inline">⌘K</kbd>
