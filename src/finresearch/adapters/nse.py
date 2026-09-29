@@ -4,7 +4,9 @@ Endpoints (verified live 28-Sep-2026, all JSON after a cookie warm-up):
 - `/api/ipo-current-issue`                 open IPOs, each with its NSE+BSE "Total" subscription row
 - `/api/all-upcoming-issues?category=ipo`  open + upcoming IPOs (no subscription figures)
 - `/api/public-past-issues`                every past issue since 2012 (~1,450 rows; EQ, SME, debt, ...)
-- `/api/ipo-detail?symbol=..&series=EQ`    the full subscription page for one issue
+- `/api/ipo-detail?symbol=..&series=EQ`    the full subscription page for one issue, plus its issue information:
+                                           price range, "Bid Lot" + "Minimum Order Quantity" (mainboard) or
+                                           "Lot Size" (SME) - the lot the two issue lists above do not carry
 
 NSE's API returns 401/403 (or an HTML block page) without the bot-manager cookies that the website
 sets, so the client first GETs the public IPO page and re-warms once when the cookies go stale.
@@ -25,6 +27,7 @@ Subscription semantics that matter for a correct report:
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, Literal
@@ -271,6 +274,76 @@ class IpoDetail(BaseModel):
     def price_band(self) -> tuple[Decimal | None, Decimal | None]:
         return parse_price_band(self.issue_info.get("Price Range"))
 
+    @property
+    def terms(self) -> IssueTerms:
+        return parse_issue_terms(self.symbol, self.issue_info, self.series, self.fetch)
+
+
+# ICDR (Mar-2025): SME individual investors bid exactly 2 lots; NSE's SME page gives no minimum
+SME_MIN_LOTS = 2
+SME_MIN_BASIS = "SME minimum application: 2 lots (SEBI ICDR 2025; NSE Security Parameters)"
+TERMS_TTL_S = 6 * 3600  # a lot size does not change once the price band is out
+_LOT_KEYS = ("Bid Lot", "Lot Size", "Market Lot")
+_MIN_KEYS = ("Minimum Order Quantity", "Minimum Bid Quantity", "Minimum Bid", "Minimum Order Size")
+_LOT_IN_BODY = re.compile(rb'"(Bid Lot|Lot Size|Market Lot)\s*"')
+_FIRST_INT = re.compile(r"\d[\d,]*")
+
+
+def _first_int(value: str | None) -> int | None:
+    """'1600 Equity Shares and in multiples thereof' -> 1600; '"Rs. 2,00,000"' -> 200000."""
+    m = _FIRST_INT.search(value or "")
+    return int(m.group().replace(",", "")) if m else None
+
+
+def _info(info: dict[str, str], keys: tuple[str, ...]) -> str | None:
+    norm = {k.strip().lower(): v for k, v in info.items()}
+    return next((norm[k.lower()] for k in keys if k.lower() in norm), None)
+
+
+class IssueTerms(BaseModel):
+    """Lot, minimum bid and price band of one issue, from NSE's issue information (or BSE's issue details)."""
+
+    symbol: str
+    series: str = "EQ"
+    lot_size: int | None = None
+    min_bid_shares: int | None = None
+    min_lots: int | None = None
+    min_lots_basis: str | None = None
+    price_range: str | None = None
+    price_low: Decimal | None = None
+    price_high: Decimal | None = None
+    retail_cap: Decimal | None = None  # "Maximum Subscription Amount for Retail Investor"
+    source: str = "NSE issue information"
+    source_url: str | None = None
+    as_of: datetime | None = None
+
+    @property
+    def is_sme(self) -> bool:
+        return self.series.upper() == "SME"
+
+
+def parse_issue_terms(symbol: str, info: dict[str, str], series: str = "EQ",
+                      fetch: FetchRecord | None = None) -> IssueTerms:  # fmt: skip
+    """issue_info (NSE titles) -> IssueTerms. Mainboard pages carry "Bid Lot" and "Minimum Order Quantity"; SME
+    pages carry only "Lot Size", and SME individual investors must bid 2 lots, so the minimum is that rule."""
+    lot = _first_int(_info(info, _LOT_KEYS))
+    min_bid = _first_int(_info(info, _MIN_KEYS))
+    sme = series.upper() == "SME"
+    min_lots, basis = None, None
+    if lot and min_bid and min_bid % lot == 0:
+        min_lots, basis = min_bid // lot, "NSE Minimum Order Quantity"
+    elif lot and sme:
+        min_lots, basis, min_bid = SME_MIN_LOTS, SME_MIN_BASIS, lot * SME_MIN_LOTS
+    elif lot:
+        min_lots, basis, min_bid = 1, "one lot (NSE publishes no separate minimum)", lot
+    price_range = _info(info, ("Price Range", "Issue Price"))
+    low, high = parse_price_band(price_range)
+    cap = _first_int(_info(info, ("Maximum Subscription Amount for Retail Investor",)))
+    return IssueTerms(symbol=symbol, series=series, lot_size=lot, min_bid_shares=min_bid, min_lots=min_lots,
+                      min_lots_basis=basis, price_range=price_range, price_low=low, price_high=high,
+                      retail_cap=Decimal(cap) if cap else None,
+                      source_url=fetch.url if fetch else None, as_of=fetch.fetched_at if fetch else None)  # fmt: skip
+
 
 class IpoIssue(BaseModel):
     """A row of ipo-current-issue / all-upcoming-issues."""
@@ -457,13 +530,23 @@ class NseClient:
             raise NseError(f"NSE warm-up failed: HTTP {resp.status} for {self.warmup_url}")
         self._warmed = True
 
-    async def get_json(self, path: str, params: dict[str, str] | None = None) -> tuple[Any, Fetched]:
-        """GET an /api path. Re-warms cookies once on 401/403 or a non-JSON (block page) response."""
+    async def get_json(self, path: str, params: dict[str, str] | None = None, *, cache_ttl: float | None = None,
+                       cache_if: Callable[[Fetched], bool] | None = None) -> tuple[Any, Fetched]:  # fmt: skip
+        """GET an /api path. Re-warms cookies once on 401/403 or a non-JSON (block page) response.
+
+        With `cache_ttl`, only JSON bodies (that also pass `cache_if`) are cached: a 200 block page never is."""
         url = path if path.startswith("http") else f"{NSE_BASE}{path}"
         if not self._warmed:
             await self.warm_up()
         for attempt in range(2):
-            resp = await self.http.get(url, params=params, headers=API_HEADERS)
+            vet = (
+                (lambda r: _looks_json(r) and (cache_if is None or cache_if(r)))
+                if cache_ttl is not None
+                else None
+            )
+            resp = await self.http.get(
+                url, params=params, headers=API_HEADERS, cache_ttl=cache_ttl, cache_if=vet
+            )
             if resp.status in (401, 403) or (resp.ok and not _looks_json(resp)):
                 if attempt == 0:
                     await self.warm_up()
@@ -514,6 +597,17 @@ class NseClient:
             if detail.issue_info or series:
                 return detail
         return detail
+
+    async def issue_terms(self, symbol: str, series: str | None = None) -> IssueTerms:
+        """Lot, minimum bid and price band from the issue's detail page. Cached for hours, but only once the page
+        carries a lot: an upcoming issue whose lot NSE has not published yet is re-read on the next call."""
+        ser = (series or "EQ").upper()
+        ser = ser if ser in ("EQ", "SME") else "EQ"
+        data, resp = await self.get_json("/api/ipo-detail", {"symbol": symbol, "series": ser}, cache_ttl=TERMS_TTL_S,
+                                         cache_if=lambda r: bool(_LOT_IN_BODY.search(r.content)))  # fmt: skip
+        if not isinstance(data, dict):
+            raise NseError(f"Unexpected ipo-detail payload for {symbol}: {type(data).__name__}")
+        return parse_issue_terms(symbol, parse_issue_info(data.get("issueInfo")), ser, resp.record)
 
 
 def _looks_json(resp: Fetched) -> bool:

@@ -5,9 +5,10 @@ import Link from "next/link";
 
 import { CopyCommand, ResearchButton, bseCommand } from "@/components/ipo/actions";
 import {
-  LiveDot, SubMeter, countdown, dayLabel, daysUntil, inr, isSme, istAt, lotCost, parseBand, relDay, times,
+  LiveDot, SubMeter, TERMS, categoryMins, countdown, dayLabel, daysUntil, inr, isSme, istAt, lakh, lotCost, lotSourceText,
+  parseBand, relDay, times,
 } from "@/components/ipo/lib";
-import { Badge, cx } from "@/components/ui";
+import { Badge, InfoTip, cx } from "@/components/ui";
 import type { Issue } from "@/lib/api";
 
 export const PHASE_TONE = { open: "gain", current: "gain", upcoming: "info", closed: "neutral" } as const;
@@ -34,12 +35,40 @@ export const windowText = (i: Issue) => {
   return `${f(i.issue_start)} → ${f(i.issue_end)}`;
 };
 
-/** NSE's issue list has no lot size, so lot costs are only shown where the exchange publishes one (BSE SME). */
-export function NoLot() {
+/** No lot: "not out yet" when the exchanges have not published one, "unavailable" when a detail call failed. */
+export function NoLot({ i }: { i: Issue }) {
+  const failed = !!i.lot_note && /issue page|unavailable/i.test(i.lot_note);
   return (
-    <span className="font-normal text-muted" title="NSE's list does not include the lot size; it is in the offer document (RHP).">
-      in RHP
+    <span className={cx("font-normal", failed ? "text-warn" : "text-muted")} title={i.lot_note ?? "The exchanges have not published the lot yet."}>
+      {failed ? "unavailable" : "not out yet"}
     </span>
+  );
+}
+
+/** Retail maximum and sHNI / bHNI minimums at the upper band, with where the lot came from. */
+export function CategoryMins({ i, className }: { i: Issue; className?: string }) {
+  const cats = categoryMins(i), src = lotSourceText(i);
+  if (!cats) return null;
+  return (
+    <div className={className}>
+      <p className="mb-1 flex items-center gap-1 text-[11px] text-muted">
+        Apply as <InfoTip>{TERMS.categories}</InfoTip>
+      </p>
+      <dl className="grid grid-cols-3 gap-2 text-xs">
+        {cats.map((c) => (
+          <div key={c.key} title={c.hint}>
+            <dt className="text-[11px] text-muted">{c.label}</dt>
+            <dd className="num font-medium">{c.amount == null ? "—" : lakh(c.amount)}</dd>
+            <dd className="num text-[10px] text-muted">{c.lots == null ? "not reachable" : `${c.lots} lot${c.lots === 1 ? "" : "s"}`}</dd>
+          </div>
+        ))}
+      </dl>
+      {src && (
+        <p className="mt-1.5 truncate text-[10px] text-muted" title={src.title}>
+          Lot: {src.short}
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -82,19 +111,24 @@ export function IssueCard({ i, now }: { i: Issue; now: number | null }) {
       <dl className="mt-4 grid grid-cols-3 gap-2 text-xs">
         <div>
           <dt className="text-muted">Price band</dt>
-          <dd className="num mt-0.5 font-medium">{band ? `₹${band[0]}–${band[1]}` : "—"}</dd>
+          <dd className="num mt-0.5 font-medium" title={i.price_band_note ?? undefined}>
+            {band ? `₹${band[0]}–${band[1]}` : "—"}
+            {i.price_band_note && <span className="ml-0.5 text-warn">*</span>}
+          </dd>
         </div>
         <div>
           <dt className="text-muted">Lot cost</dt>
-          <dd className="num mt-0.5 font-medium">{cost ? inr(cost.lot) : <NoLot />}</dd>
+          <dd className="num mt-0.5 font-medium">{cost ? inr(cost.lot) : <NoLot i={i} />}</dd>
           {i.lot_size ? <dd className="num text-[10px] text-muted">{i.lot_size.toLocaleString("en-IN")} sh</dd> : null}
         </div>
         <div>
           <dt className="text-muted">Min. invest</dt>
-          <dd className="num mt-0.5 font-medium">{cost ? inr(cost.min) : <NoLot />}</dd>
+          <dd className="num mt-0.5 font-medium">{cost ? inr(cost.min) : <NoLot i={i} />}</dd>
           {cost && cost.minLots > 1 ? <dd className="text-[10px] text-muted">{cost.minLots} lots</dd> : null}
         </div>
       </dl>
+
+      <CategoryMins i={i} className="mt-3 border-t border-border/70 pt-3" />
 
       <div className="mt-4">
         <p className="mb-1 flex justify-between text-[11px] text-muted">

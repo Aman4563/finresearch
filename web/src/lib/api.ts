@@ -110,10 +110,39 @@ export type Issue = {
   slug: string | null;
   latest_run: number | null;
   latest_run_status: string | null;
-  // BSE SME rows only
-  bse_ipo_no?: number;
+  bse_ipo_no?: number; // BSE SME rows only
+  // lot and application amounts: NSE's issue page first, BSE's issue details as cross-check / fallback
   lot_size?: number | null;
   min_lots?: number | null;
+  min_bid_shares?: number | null;
+  application?: IssueApplication | null;
+  lot_source?: LotSource | null;
+  lot_note?: string | null;
+  price_band_note?: string | null;
+  price_band_list?: string | null;
+};
+
+/** Rupee amounts at the upper price band. `null` lots = the category cannot be reached with whole lots. */
+export type IssueApplication = {
+  price: number;
+  lot_cost: number;
+  min_investment: number;
+  retail_max_lots: number | null;
+  retail_max_amount: number | null;
+  shni_min_lots: number | null;
+  shni_min_amount: number | null;
+  bhni_min_lots: number | null;
+  bhni_min_amount: number | null;
+  retail_cap: number;
+  basis: string;
+};
+
+export type LotSource = {
+  label: string;
+  url: string | null;
+  as_of: string | null;
+  min_lots_basis: string | null;
+  check: string | null;
 };
 
 export class ApiError extends Error {

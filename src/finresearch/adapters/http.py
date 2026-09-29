@@ -207,8 +207,11 @@ class PoliteClient:
         params: Mapping[str, Any] | None = None,
         headers: Mapping[str, str] | None = None,
         cache_ttl: float | None = None,
+        cache_if: Callable[[Fetched], bool] | None = None,
     ) -> Fetched:
-        return await self.request("GET", url, params=params, headers=headers, cache_ttl=cache_ttl)
+        return await self.request(
+            "GET", url, params=params, headers=headers, cache_ttl=cache_ttl, cache_if=cache_if
+        )
 
     async def post(
         self,
@@ -229,8 +232,12 @@ class PoliteClient:
         data: Mapping[str, Any] | None = None,
         headers: Mapping[str, str] | None = None,
         cache_ttl: float | None = None,
+        cache_if: Callable[[Fetched], bool] | None = None,
     ) -> Fetched:
         """Fetch with rate limiting and retries. Non-2xx responses are returned, not raised.
+
+        `cache_if` vets a 2xx body before it is written to the cache: exchanges serve block pages and
+        not-yet-published placeholders with HTTP 200, and caching one would serve it for the whole TTL.
 
         An exception is raised only when every attempt failed at the transport level (timeout,
         connection reset); a final 429/5xx is returned so the caller can decide.
@@ -260,7 +267,7 @@ class PoliteClient:
         fetched = self._to_fetched(method, resp, params)
         if self.on_record is not None:
             self.on_record(fetched)
-        if key is not None and fetched.ok:
+        if key is not None and fetched.ok and (cache_if is None or cache_if(fetched)):
             self._cache_write(key, fetched)
         return fetched
 

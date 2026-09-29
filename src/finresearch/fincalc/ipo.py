@@ -129,6 +129,80 @@ def retail_lots_available(retail_shares: Num, lot_size: Num) -> Decimal:
     ).quantize(Decimal(1), rounding=ROUND_DOWN)
 
 
+# ICDR: retail individual investors bid up to ₹2 lakh; NII is "more than ₹2 lakh"
+RETAIL_CAP = Decimal(200_000)
+BNII_THRESHOLD = Decimal(1_000_000)  # ICDR Reg 32(3A): NII split at ₹10 lakh (sNII up to, bNII above)
+
+
+@dataclass(frozen=True)
+class ApplicationLimits:
+    """What one application costs at a price (normally the upper band), per bidder category.
+
+    ``lots`` fields are whole lots; ``*_amount`` = lots × lot cost. ``None`` means the category
+    cannot be reached with whole lots at this price (e.g. no retail bid fits under the cap)."""
+
+    price: Decimal
+    lot_size: int
+    lot_cost: Decimal
+    min_lots: int
+    min_investment: Decimal
+    retail_max_lots: int | None
+    retail_max_amount: Decimal | None
+    shni_min_lots: int | None
+    shni_min_amount: Decimal | None
+    bhni_min_lots: int | None
+    bhni_min_amount: Decimal | None
+
+
+def application_limits(
+    lot_size: Num,
+    price: Num,
+    *,
+    min_lots: int = 1,
+    sme: bool = False,
+    retail_cap: Num = RETAIL_CAP,
+    bnii_threshold: Num = BNII_THRESHOLD,
+) -> ApplicationLimits:
+    """Minimum and maximum applications per category at ``price``.
+
+    Mainboard: retail bids up to ``retail_cap`` (max lots = floor(cap / lot cost)); small NII (sHNI)
+    starts at the first whole lot above ₹2 lakh and ends at ₹10 lakh; big NII (bHNI) starts at the
+    first whole lot above ₹10 lakh. Orient Cables (55 × ₹272 = ₹14,960): retail ≤ 13 lots
+    (₹1,94,480), sHNI ≥ 14 lots (₹2,09,440), bHNI ≥ 67 lots (₹10,02,320).
+
+    SME (ICDR as amended Mar-2025; the exchanges' category tables read "Individual Investors
+    (bidding for 2 Lots)" / "NII ... more than 2 Lots"): individual investors bid exactly
+    ``min_lots`` (2) lots, so retail max = the minimum; NII starts at ``min_lots + 1`` lots.
+    """
+    lot = int(require_shares(lot_size, "lot_size"))
+    px = require_price(price)
+    cap, big = to_decimal(retail_cap), to_decimal(bnii_threshold)
+    cost = px * lot
+    min_lots = max(1, int(min_lots))
+
+    def first_above(amount: Decimal) -> int:
+        return int((amount / cost).quantize(Decimal(1), rounding=ROUND_DOWN)) + 1
+
+    if sme:
+        retail = min_lots
+        shni: int | None = max(min_lots + 1, first_above(cap))
+    else:
+        fit = int((cap / cost).quantize(Decimal(1), rounding=ROUND_DOWN))
+        retail = fit if fit >= min_lots else None
+        shni = max(first_above(cap), min_lots)
+    if shni is not None and shni * cost > big:
+        shni = None  # one lot above the retail range already costs more than ₹10 lakh
+    bhni = max(first_above(big), min_lots + 1 if sme else min_lots)
+
+    def amt(n: int | None) -> Decimal | None:
+        return None if n is None else cost * n
+
+    return ApplicationLimits(price=px, lot_size=lot, lot_cost=cost, min_lots=min_lots,
+                             min_investment=cost * min_lots, retail_max_lots=retail,
+                             retail_max_amount=amt(retail), shni_min_lots=shni, shni_min_amount=amt(shni),
+                             bhni_min_lots=bhni, bhni_min_amount=amt(bhni))  # fmt: skip
+
+
 # --- subscription & allotment ---------------------------------------------------------------
 
 
