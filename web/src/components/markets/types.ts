@@ -154,6 +154,8 @@ export type BondAnalytics = {
   bond: Bond;
   warnings: string[];
   freq: number;
+  /** where the frequency came from: the user's choice, a verified claim of the bond's research, or an assumption */
+  freq_source: { kind: "chosen" } | { kind: "assumed" } | { kind: "verified"; claim_id: number; run_id: number };
   basis: "dirty" | "clean";
   tax_slab_pct: string;
   tax_rate: number;

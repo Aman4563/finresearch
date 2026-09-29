@@ -1,7 +1,7 @@
 "use client";
 
 import {
-  ArrowLeft, BadgePercent, CalendarRange, Coins, FlaskConical, Gauge as GaugeIcon, Landmark, PiggyBank, Receipt, SlidersHorizontal, TriangleAlert, Waves,
+  ArrowLeft, BadgeCheck, BadgePercent, CalendarRange, Coins, FlaskConical, Gauge as GaugeIcon, Landmark, PiggyBank, Receipt, SlidersHorizontal, TriangleAlert, Waves,
 } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
@@ -10,7 +10,7 @@ import { useState } from "react";
 import { shortDate } from "@/components/charts";
 import { ensureBond, startResearch } from "@/components/markets/actions";
 import { CashFlowChart, PriceYieldChart } from "@/components/markets/charts";
-import { Facts, Metric, inr, pctOf, ratingTone, signedPct, toneOf } from "@/components/markets/common";
+import { Facts, Metric, inr, pctOf, ratingLabel, ratingTone, signedPct, toneOf } from "@/components/markets/common";
 import type { BondAnalytics } from "@/components/markets/types";
 import {
   Badge, Button, Callout, Card, ErrorNote, Field, InfoTip, PageHeader, Segmented, Skeleton, Stat, Table, cx, inputClass,
@@ -30,7 +30,7 @@ export default function BondDetail() {
   const isin = decodeURIComponent(raw).toUpperCase();
   const router = useRouter();
   const profile = useApi<Profile>("/api/profile");
-  const [freq, setFreq] = useState("1");
+  const [freqChoice, setFreq] = useState<string | null>(null);  // null: the API uses verified research, else assumes yearly
   const [basis, setBasis] = useState<"dirty" | "clean">("dirty");
   const [slabChoice, setSlabChoice] = useState<string | null>(null);
   const slab = slabChoice ?? (profile.data ? String(Number(profile.data.tax_slab_pct)) : null);
@@ -39,8 +39,10 @@ export default function BondDetail() {
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  const r = useApi<BondAnalytics>(slab != null || profile.error ? `/api/bonds/${isin}/analytics?freq=${freq}&basis=${basis}${slab != null ? `&tax_slab_pct=${slab}` : ""}` : null);
+  const r = useApi<BondAnalytics>(slab != null || profile.error ? `/api/bonds/${isin}/analytics?${freqChoice ? `freq=${freqChoice}&` : ""}basis=${basis}${slab != null ? `&tax_slab_pct=${slab}` : ""}` : null);
   const d = r.data;
+  const freq = freqChoice ?? (d ? String(d.freq) : "1");
+  const fs = d?.freq_source;
   const b = d?.bond;
   const a = d?.analytics;
   const shifted = a?.curve.find((p) => p.bp === shiftBp) ?? null;
@@ -67,7 +69,7 @@ export default function BondDetail() {
         icon={<Landmark className="size-5" />}
         eyebrow={<span className="num">NSE capital market · {isin}</span>}
         title={b ? <span className="inline-flex flex-wrap items-center gap-2">{b.symbol} <span className="text-base font-normal text-muted">{b.series}</span>
-          {b.rating ? <Badge tone={ratingTone(b.rating)}>{b.rating}{b.rating_agency ? ` · ${b.rating_agency}` : ""}</Badge> : <Badge tone="warn">unrated in NSE list</Badge>}</span>
+          {b.rating ? <Badge tone={ratingTone(b.rating)}>{ratingLabel(b.rating)}{b.rating_agency ? ` · ${b.rating_agency}` : ""}</Badge> : <Badge tone="warn">unrated in NSE list</Badge>}</span>
           : r.error ? isin : <Skeleton className="h-7 w-56" />}
         description={b ? <>{b.coupon_pct}% coupon · face {inr(b.face_value, 0)} · matures {day(b.maturity)}{b.as_of && <> · price as of {when(b.as_of)}</>}</> : undefined}
         actions={<Button size="md" disabled={busy || !b} onClick={research} icon={<FlaskConical className="size-4" />}>Research</Button>}
@@ -82,6 +84,16 @@ export default function BondDetail() {
           <div className="grid [&>*]:min-w-0 gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <Field label={<span className="inline-flex items-center gap-1">Coupon paid <InfoTip>How often interest is paid. NSE&apos;s list doesn&apos;t say: check the offer document or information memorandum. It changes the yield and accrued interest.</InfoTip></span>}>
               <Segmented value={freq} onChange={setFreq} options={FREQS.map((f) => ({ ...f, label: f.label.replace("-yearly", "-yr") }))} />
+              {fs?.kind === "verified" && (
+                <span className="mt-1.5 flex items-center gap-1 text-[11px] text-gain">
+                  <BadgeCheck className="size-3.5" /> Verified in <Link href={`/runs/${fs.run_id}/report`} className="underline underline-offset-2">research run #{fs.run_id}</Link>
+                </span>
+              )}
+              {fs?.kind === "assumed" && (
+                <span className="mt-1.5 flex items-center gap-1 text-[11px] text-warn">
+                  <TriangleAlert className="size-3.5" /> Assumed yearly: check the offer document, the yield depends on it
+                </span>
+              )}
             </Field>
             <Field label={<span className="inline-flex items-center gap-1">NSE price is <InfoTip>NSE states that capital-market bonds are traded and settled on the dirty price, i.e. including accrued interest. Switch to clean only if you know the quote excludes it.</InfoTip></span>}>
               <Segmented value={basis} onChange={setBasis} options={[{ value: "dirty", label: "Dirty (NSE)" }, { value: "clean", label: "Clean" }]} />
@@ -178,7 +190,7 @@ export default function BondDetail() {
                   </div>
                   <p className="rounded-lg bg-background-subtle/70 p-3 text-xs ring-1 ring-inset ring-border/60">
                     {fdAfterTax != null && (a.after_tax_ytm > fdAfterTax ? (
-                      <>The bond keeps <span className="num font-semibold text-gain">{((a.after_tax_ytm - fdAfterTax) * 100).toFixed(2)}%</span> a year more after tax, in return for credit risk{b.rating ? ` (rated ${b.rating})` : " (no rating in NSE's list)"} and price risk if sold early.</>
+                      <>The bond keeps <span className="num font-semibold text-gain">{((a.after_tax_ytm - fdAfterTax) * 100).toFixed(2)}%</span> a year more after tax, in return for credit risk{b.rating ? ` (rated ${ratingLabel(b.rating)})` : " (no rating in NSE's list)"} and price risk if sold early.</>
                     ) : (
                       <>The FD keeps <span className="num font-semibold text-loss">{((fdAfterTax - a.after_tax_ytm) * 100).toFixed(2)}%</span> a year more after tax, with less risk. The bond&apos;s premium over face value is a loss at maturity that eats into its yield.</>
                     ))}

@@ -206,6 +206,12 @@ export function LinkRow({ href, title, sub, trailing }: { href: string; title: R
   );
 }
 
+/** NSE lists one rating per agency, e.g. "AAA/, AAA/, AA+/": the distinct grades, "AAA" or "AAA / AA+". */
+export function ratingLabel(r: string | null): string {
+  const grades = (r ?? "").split(",").map((x) => x.replace(/\/+\s*$/, "").trim()).filter(Boolean);
+  return [...new Set(grades)].join(" / ");
+}
+
 /** Rough credit tone from the rating's letters (AAA best). */
 export function ratingTone(r: string | null): "gain" | "info" | "warn" | "loss" | "neutral" {
   if (!r) return "neutral";
