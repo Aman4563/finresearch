@@ -10,6 +10,8 @@ import { usePathname, useRouter } from "next/navigation";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AlertBadge } from "@/components/alerts";
+import { WelcomeTour } from "@/components/help/welcome";
+import { AVATAR_GRADIENT, PreferenceEffects } from "@/components/profile/common";
 import { cx } from "@/components/ui";
 import { API_URL, type Company, type Profile, useApi } from "@/lib/api";
 
@@ -164,7 +166,7 @@ function ProfileMenu() {
     <div className="relative" ref={ref}>
       <button type="button" onClick={() => setOpen((o) => !o)} aria-haspopup="menu" aria-expanded={open}
         className="flex items-center gap-2 rounded-full p-0.5 pr-2 transition hover:bg-background-subtle">
-        <span className="grid size-8 place-items-center rounded-full bg-gradient-to-br from-brand to-accent text-xs font-semibold text-white">
+        <span className={cx("grid size-8 place-items-center rounded-full bg-gradient-to-br text-xs font-semibold text-white", AVATAR_GRADIENT[data?.avatar_color ?? "brand"])}>
           {initials(name)}
         </span>
         <span className="hidden text-sm font-medium lg:inline">{name}</span>
@@ -422,6 +424,8 @@ export function AppShell({ children }: { children: ReactNode }) {
         </footer>
       </div>
       <CommandPalette open={palette} onClose={closePalette} />
+      <WelcomeTour />
+      <PreferenceEffects />
     </div>
   );
 }

@@ -194,6 +194,10 @@ export type Profile = {
   holdings: { symbol: string; sector: string | null; value_inr: string | null }[];
   rules: Rule[];
   notes: string;
+  // identity and dashboard preferences (optional: older API builds omit them)
+  display_name?: string;
+  avatar_color?: AvatarColor | null;
+  preferences?: Preferences;
 };
 
 export type Decision = {
@@ -261,4 +265,22 @@ export type WatchDetail = WatchSummary & {
   jobs: { id: number; kind: string; slot: string; due_at: string; status: string; attempts: number; error: string | null; result: Record<string, unknown> }[];
   subscription: { as_of: string; source: string; total_times: string; categories: { name: string; code: string | null; times: string | null }[] }[];
   alerts: AlertItem[];
+};
+
+export type AvatarColor = "brand" | "accent" | "gain" | "loss" | "warn" | "info";
+export type Preferences = {
+  default_landing: "/" | "/ipos" | "/stocks" | "/funds" | "/bonds" | "/fno" | "/runs" | "/monitor" | "/journal";
+  number_format: "lakh_crore" | "million";
+  compact_tables: boolean;
+  reduce_motion: boolean;
+};
+export type ProfileStats = {
+  runs: number;
+  runs_done: number;
+  decisions: number;
+  applied: number;
+  watches: number;
+  active_watches: number;
+  first_run_at: string | null;
+  profile_updated_at: string | null;
 };

@@ -11,7 +11,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 Metric = Literal[
     "qib_times",  # combined NSE+BSE subscription, qualified institutional buyers (ex-anchor)
@@ -43,6 +43,19 @@ class Holding(BaseModel):
     value_inr: Decimal | None = None
 
 
+AvatarColor = Literal["brand", "accent", "gain", "loss", "warn", "info"]  # dashboard colour tokens
+Landing = Literal["/", "/ipos", "/stocks", "/funds", "/bonds", "/fno", "/runs", "/monitor", "/journal"]
+
+
+class Preferences(BaseModel):
+    """Dashboard preferences. They only change how the app looks; suggestions never read them."""
+
+    default_landing: Landing = "/"
+    number_format: Literal["lakh_crore", "million"] = "lakh_crore"
+    compact_tables: bool = False
+    reduce_motion: bool = False
+
+
 class Profile(BaseModel):
     capital_per_ipo_inr: Decimal = Field(Decimal(15000), ge=0)
     risk_appetite: Literal["low", "medium", "high"] = "medium"
@@ -52,6 +65,19 @@ class Profile(BaseModel):
     holdings: list[Holding] = Field(default_factory=list)
     rules: list[Rule] = Field(default_factory=list)
     notes: str = ""
+    # identity and dashboard preferences (optional; profiles saved before they existed load with these defaults)
+    display_name: str = Field("", max_length=60)
+    avatar_color: AvatarColor | None = None
+    preferences: Preferences = Field(default_factory=Preferences)
+
+    @field_validator("display_name")
+    @classmethod
+    def _strip_name(cls, v: str) -> str:
+        return " ".join(v.split())
+
+
+# not investment inputs: kept out of the advisor prompt
+UI_FIELDS = {"display_name", "avatar_color", "preferences"}
 
 
 DEFAULT_RULES = [

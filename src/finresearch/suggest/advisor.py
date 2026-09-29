@@ -17,7 +17,7 @@ from finresearch.config import get_settings
 from finresearch.db import session_scope
 from finresearch.db.models import AgentStep, Decision, InvestorProfile, ResearchRun
 from finresearch.fincalc.dates import now_ist
-from finresearch.suggest.profile import Profile, default_profile
+from finresearch.suggest.profile import UI_FIELDS, Profile, default_profile
 from finresearch.suggest.rules import Inputs, gather, is_sme, lot_limits
 
 ADVISOR_TOOLS = [*DOC_READ, *CALC, *LEDGER_READ]
@@ -167,7 +167,7 @@ async def suggest(run_id: int, *, router=None, live_detail=None, fetch=fetch_liv
     with session_scope() as s:
         d = Decision(run_id=run_id, company_id=company_id, action=final["action"], lots=final["lots"],
                      category=final["category"], suggestion=final,
-                     inputs={"profile": profile.model_dump(mode="json"), "limits": limits, **inputs.to_json(),
+                     inputs={"profile": profile.model_dump(mode="json", exclude=UI_FIELDS), "limits": limits, **inputs.to_json(),
                              "at": now.isoformat()})  # fmt: skip
         s.add(d)
         s.flush()
@@ -183,7 +183,7 @@ def _prompt(run_id, co, now, profile: Profile, inputs: Inputs, limits, synth) ->
                                           "condition")}  # fmt: skip
     return tmpl.format(company_name=co.name if co else "?", nse_symbol=(co.nse_symbol if co else None) or "n/a",
                        run_id=run_id, now_ist=now.strftime("%H:%M"), today=now.date().isoformat(),
-                       profile=json.dumps(profile.model_dump(mode="json"), indent=1),
+                       profile=json.dumps(profile.model_dump(mode="json", exclude=UI_FIELDS), indent=1),
                        metrics=json.dumps(inputs.to_json()["metrics"], indent=1),
                        rules=json.dumps(inputs.to_json()["rules"], indent=1), limits=json.dumps(limits),
                        verdict=json.dumps(verdict), report=report)  # fmt: skip
