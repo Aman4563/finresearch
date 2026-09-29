@@ -165,8 +165,8 @@ export function SipChart({ path, height = 260 }: {
 }
 
 /** Quarterly revenue and profit (₹ crore) side by side. */
-export function ResultsChart({ rows, height = 240 }: {
-  rows: { label: string; title?: string; revenue: number | null; profit: number | null }[]; height?: number;
+export function ResultsChart({ rows, height = 240, revenueLabel = "Revenue" }: {
+  rows: { label: string; title?: string; revenue: number | null; profit: number | null }[]; height?: number; revenueLabel?: string;
 }) {
   return (
     <div style={{ height }} className="animate-fade-in">
@@ -179,7 +179,7 @@ export function ResultsChart({ rows, height = 240 }: {
             content={<Tip title={(r) => String(r.title ?? r.label)}
               format={(v) => `₹${v.toLocaleString("en-IN", { maximumFractionDigits: 0 })} Cr`} />} />
           <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11 }} />
-          <Bar dataKey="revenue" name="Revenue (₹ Cr)" fill="var(--chart-1)" radius={[4, 4, 0, 0]} maxBarSize={28} animationDuration={700} />
+          <Bar dataKey="revenue" name={`${revenueLabel} (₹ Cr)`} fill="var(--chart-1)" radius={[4, 4, 0, 0]} maxBarSize={28} animationDuration={700} />
           <Bar dataKey="profit" name="Net profit (₹ Cr)" fill="var(--chart-2)" radius={[4, 4, 0, 0]} maxBarSize={28} animationDuration={700} />
         </BarChart>
       </ResponsiveContainer>
