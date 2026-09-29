@@ -9,7 +9,7 @@ ids and rewrites the report's [C#] citations to match, so CI can score a real ru
 from __future__ import annotations
 
 import re
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -47,7 +47,7 @@ def export_run(session: Session, run_id: int) -> dict[str, Any]:
                                       "quote_found": x.quote_found, "url": x.url,
                                       "accessed_at": _dt(x.accessed_at)} for x in c.citations]})  # fmt: skip
     steps = session.scalars(select(AgentStep).where(AgentStep.run_id == run_id).order_by(AgentStep.id)).all()
-    synth = next((s for s in sorted(steps, key=lambda x: (x.finished_at or datetime.min.astimezone(), x.id),
+    synth = next((s for s in sorted(steps, key=lambda x: (x.finished_at or datetime.min.replace(tzinfo=UTC), x.id),
                                     reverse=True) if s.stage == "synthesis" and s.status == "done"), None)  # fmt: skip
     return {
         "format": FORMAT,

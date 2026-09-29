@@ -24,6 +24,15 @@ def to_ist(dt: datetime) -> datetime:
     return dt.astimezone(IST)
 
 
+def add_years(d: date, years: int) -> date:
+    """The same calendar day ``years`` years later (or earlier with a negative ``years``); 29 Feb falls back to
+    28 Feb in a non-leap year."""
+    try:
+        return d.replace(year=d.year + years)
+    except ValueError:
+        return d.replace(year=d.year + years, day=28)
+
+
 def ist_datetime(d: date, hour: int = 0, minute: int = 0) -> datetime:
     """Aware IST datetime for a wall-clock time on ``d`` (e.g. UPI mandate cutoff 17:00)."""
     return datetime(d.year, d.month, d.day, hour, minute, tzinfo=IST)

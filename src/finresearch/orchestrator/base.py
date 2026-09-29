@@ -60,13 +60,13 @@ class StepFailed(Exception):
 
 @dataclass
 class PipelineConfig:
-    concurrency: int = 4
+    concurrency: int | None = None  # default: the run's saved choice, else 4
     max_followup_rounds: int = 2
     max_revisions: int = 2
     render: bool = True  # build the folder pack (md/html/pdf/xlsx/charts) when the run finishes
     discover: bool = True  # find and ingest documents first when the kind's primary documents are missing
     five_hour_ceiling: float = 0.92
-    streams: tuple[str, ...] | None = None  # default: the kind's streams
+    streams: tuple[str, ...] | None = None  # default: the run's saved choice, else the kind's streams
     verify_importance: tuple[str, ...] = ("high", "normal")
     cost_defaults: dict[str, float] = field(default_factory=lambda: dict(DEFAULT_COST))
 
@@ -98,8 +98,12 @@ class ResearchPipeline:
         self.tracker = tracker
         self.runner = runner or self._default_runner
         self.clock = clock
+        # an explicit choice wins; otherwise run() restores the one saved at the start of the run
+        self._chosen = (self.config.streams, self.config.concurrency)
         if self.config.streams is None:
             self.config.streams = self.default_streams
+        if self.config.concurrency is None:
+            self.config.concurrency = 4
         self._sem = asyncio.Semaphore(self.config.concurrency)
         self._reserved = 0.0
         self._paused: RunPaused | None = None
@@ -195,6 +199,8 @@ class ResearchPipeline:
             if st is None:
                 st = AgentStep(run_id=self.run_id, key=key, stage=stage, role=role)
                 s.add(st)
+            elif stage == "stream":
+                self._drop_attempt_claims(s, st)
         async with self._sem:
             if self._paused:
                 self._mark(key, status="deferred", error=f"run paused: {self._paused}")
@@ -208,7 +214,8 @@ class ResearchPipeline:
                 self._mark(key, status="deferred", error=str(pause))
                 raise pause
             self._reserved += cost
-            self._mark(key, status="running", started_at=_now(), five_hour_before=util, inc_attempt=True)
+            self._mark(key, status="running", started_at=_now(), five_hour_before=util, inc_attempt=True,
+                       claim_floor=stage == "stream")  # fmt: skip
             t0 = time.monotonic()
             try:
                 parsed, res = await self.runner(role, self.ctx, **extra)
@@ -239,13 +246,28 @@ class ResearchPipeline:
                        finished_at=_now(), error=None)  # fmt: skip
             return parsed
 
-    def _mark(self, key: str, *, inc_attempt: bool = False, **fields: Any) -> None:
+    def _mark(self, key: str, *, inc_attempt: bool = False, claim_floor: bool = False, **fields: Any) -> None:
         with session_scope() as s:
             st = s.scalar(select(AgentStep).where(AgentStep.run_id == self.run_id, AgentStep.key == key))
             for k, v in fields.items():
                 setattr(st, k, v)
             if inc_attempt:
                 st.attempts += 1
+            if claim_floor and "claim_floor" not in (st.output or {}):
+                # the ledger's high-water mark when the stream first started: its claims all lie above it
+                top = s.scalar(select(func.max(Claim.id)).where(Claim.run_id == self.run_id))
+                st.output = {**(st.output or {}), "claim_floor": top or 0}
+
+    def _drop_attempt_claims(self, s, st: AgentStep) -> None:
+        """A stream step that is run again (deferred, failed or crashed mid-attempt) starts from a clean ledger:
+        the claims its earlier attempts saved are deleted (citations cascade), so the rerun does not duplicate them.
+        Claims of earlier rounds of the same stream lie below the floor; verifier corrections are kept."""
+        floor = (st.output or {}).get("claim_floor")
+        if st.status == "done" or floor is None:
+            return
+        for c in s.scalars(select(Claim).where(Claim.run_id == self.run_id, Claim.stream == st.role,
+                                               Claim.id > floor, Claim.corrects_claim_id.is_(None))):  # fmt: skip
+            s.delete(c)
 
     # ------------------------------------------------------------------ stages
     async def _facts(self) -> None:
@@ -295,13 +317,13 @@ class ResearchPipeline:
             return run_gate(s, self.run_id, stream=stream, facts=self.ctx.facts).summary()
 
     def _apply_verdicts(self, rep: VerificationReport, *, second_opinion: bool = False) -> None:
-        from finresearch.verify.gate import apply_correction
+        from finresearch.verify.gate import apply_correction, is_deterministic
 
         with session_scope() as s:
             for v in rep.verdicts:
                 c = s.get(Claim, v.claim_id)
-                if c is None or c.run_id != self.run_id or c.status == "unsupported":
-                    continue
+                if c is None or c.run_id != self.run_id or c.status == "unsupported" or is_deterministic(c):
+                    continue  # an exchange/AMFI fact is compared against, never re-judged by a model
                 note = (f"correct: {v.correct_value}. " if v.correct_value else "") + v.evidence[:2000]
                 if second_opinion:
                     # a high-importance claim stays verified only if the second, independent verifier agrees
@@ -342,9 +364,16 @@ class ResearchPipeline:
 
     async def _cross_stream(self, key_prefix: str = "") -> None:
         """Whole-run conflict check; conflicting claims go to one verifier pass."""
-        summary: dict[str, Any] = {}
-        self._once(f"gate:{key_prefix}cross", lambda: summary.update(self._gate(None)))
-        ids = sorted({i for pair in summary.get("conflicts", []) for i in pair})
+        # the conflicts are kept in the manifest: a run paused before their verifier finished resumes past the gate
+        mkey = f"conflicts_{key_prefix}cross"
+        self._once(f"gate:{key_prefix}cross",
+                   lambda: self._update_manifest(**{mkey: self._gate(None).get("conflicts", [])}))  # fmt: skip
+        with session_scope() as s:
+            conflicts = (s.get(ResearchRun, self.run_id).manifest or {}).get(mkey)
+            if conflicts is None:  # gated before the conflicts were saved: they are still on the claims
+                rows = s.scalars(select(Claim).where(Claim.run_id == self.run_id)).all()
+                conflicts = [(c.id, o) for c in rows for o in (c.checks or {}).get("conflict_with", [])]
+        ids = sorted({i for pair in conflicts for i in pair})
         if ids:
             key = f"{key_prefix}verify:cross-stream"
             ver = await self.step(key, "verify", self.roles["verifier"], target_stream="cross-stream conflicts",
@@ -390,6 +419,19 @@ class ResearchPipeline:
                 raise r
         return results
 
+    def _restore_choice(self) -> None:
+        """Streams and concurrency chosen when the run started are saved in the manifest; a resume that does not
+        choose again (the app's resume button, `ipo resume <id>`) keeps them."""
+        with session_scope() as s:
+            m = s.get(ResearchRun, self.run_id).manifest or {}
+        streams, concurrency = self._chosen
+        if streams is None and m.get("streams"):
+            self.config.streams = tuple(m["streams"])
+        if concurrency is None and m.get("concurrency"):
+            self.config.concurrency = int(m["concurrency"])
+            self._sem = asyncio.Semaphore(self.config.concurrency)
+        self._update_manifest(streams=list(self.config.streams), concurrency=self.config.concurrency)
+
     def _render(self) -> None:
         self._update_manifest(pack=_render_pack_safely(self.run_id))
 
@@ -397,6 +439,7 @@ class ResearchPipeline:
     async def run(self) -> str:
         self._paused = None
         self.ctx = self._load_context()
+        self._restore_choice()
         self._update_manifest(pipeline=self.version, kind=self.kind, git_sha=_git_sha(),
                               models={k.value: v for k, v in get_settings().claude_models.items()},
                               prompt_hashes={n: r.prompt_hash() for n, r in ROLES.items()})  # fmt: skip
@@ -491,11 +534,32 @@ def _git_sha() -> str | None:
         return None
 
 
+class KindMismatch(ValueError):
+    """The research kind does not suit the company's asset class (an IPO report on a mutual fund, ...)."""
+
+
+# slug prefix of a non-equity asset class -> the only kind that researches it
+ASSET_KINDS = {"mf-": "fund_report", "bond-": "bond_report"}
+
+
+def check_kind(company_slug: str, kind: str) -> None:
+    for prefix, only in ASSET_KINDS.items():
+        if company_slug.startswith(prefix) and kind != only:
+            raise KindMismatch(
+                f"{company_slug!r} is a {only.split('_')[0]}; research it with {only!r}, not {kind!r}"
+            )
+        if kind == only and not company_slug.startswith(prefix):
+            raise KindMismatch(
+                f"{kind!r} needs a {only.split('_')[0]} (slug {prefix}...), not {company_slug!r}"
+            )
+
+
 def create_run(company_slug: str, kind: str = "ipo_report") -> int:
     from finresearch.orchestrator.kinds import KINDS
 
     if kind not in KINDS:
         raise ValueError(f"unknown research kind {kind!r}; choose from {sorted(KINDS)}")
+    check_kind(company_slug, kind)
     with session_scope() as s:
         co = s.scalar(select(Company).where(Company.slug == company_slug))
         if co is None:

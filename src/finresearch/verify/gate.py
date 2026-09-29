@@ -5,7 +5,8 @@ Checks (results stored in claim.checks; a failing check never silently passes a 
                      appears among the numbers at its cited lines. Otherwise the figure is "derived" and must be
                      confirmed by a verifier (status needs_review if it was merely unverified).
 * conflicts        — the same metric + period stated with different values by different claims (after unit
-                     normalisation, >0.5% apart) -> both needs_review with a cross-reference.
+                     normalisation, >0.5% apart) -> both needs_review with a cross-reference, except a
+                     deterministic exchange/AMFI fact (checks.source), which keeps its status.
 * live_timestamp   — live market figures (subscription, GMP, prices) must carry a time (HH:MM) or an INTERIM label
                      while bidding is open, and web sources older than LIVE_MAX_AGE are stale.
 * day_label        — "Day N" next to a date must match the real bidding calendar (weekends/holidays excluded);
@@ -148,6 +149,40 @@ class GateResult:
                 "live_flags": self.live_flags, "day_label_errors": self.day_label_errors}  # fmt: skip
 
 
+# claims recorded by the pipeline from primary exchange/AMFI data, not by an agent (checks["source"])
+DETERMINISTIC_SOURCES = {"nse_issue_info", "bse_issue_info", "nse_equity", "amfi", "nse_bonds"}
+
+
+def is_deterministic(c: Claim) -> bool:
+    return (c.checks or {}).get("source") in DETERMINISTIC_SOURCES
+
+
+def _conflict_base(value: Decimal, unit: str | None) -> Decimal:
+    """One form per quantity for conflict detection: rupee amounts in rupees, percentages as fractions
+    (the same %/fraction equivalence candidate_forms accepts when matching the source)."""
+    scale = rupee_scale(unit)
+    if scale is not None:
+        return value * scale
+    u = (unit or "").lower()
+    if "%" in u or "percent" in u:
+        return value / 100
+    return value
+
+
+def _apart(a: Decimal, b: Decimal) -> bool:
+    denom = max(abs(a), abs(b))
+    return bool(denom) and abs(a - b) / denom > CONFLICT_TOL
+
+
+def _conflicting(a: Claim, b: Claim) -> bool:
+    va, vb = Decimal(a.value), Decimal(b.value)
+    if not _apart(_conflict_base(va, a.unit), _conflict_base(vb, b.unit)):
+        return False
+    # a percentage next to a loosely spelt unit ("pct", "per cent"): the same figure unless the raw values differ
+    loose = rupee_scale(a.unit) is None and rupee_scale(b.unit) is None
+    return not loose or _apart(va, vb)
+
+
 def _downgrade(c: Claim, note: str, *, force: bool = False) -> None:
     """unverified -> needs_review; with force, verified -> needs_review too. Never upgrades a claim and never
     overrides a contradiction."""
@@ -224,19 +259,14 @@ def run_gate(session: Session, run_id: int, *, stream: str | None = None, facts:
     all_claims = session.scalars(select(Claim).where(Claim.run_id == run_id, Claim.claim_type == "numeric",
                                                      Claim.value.is_not(None),
                                                      Claim.status.not_in(("unsupported", "contradicted")))).all()  # fmt: skip
-    groups: dict[tuple[str, str], list[tuple[Claim, Decimal]]] = {}
+    groups: dict[tuple[str, str], list[Claim]] = {}
     for c in all_claims:
-        if not c.metric or not c.period:
-            continue
-        v = Decimal(c.value)
-        scale = rupee_scale(c.unit)
-        base = v * scale if scale is not None else v
-        groups.setdefault((_norm_key(c.metric), _norm_key(c.period)), []).append((c, base))
+        if c.metric and c.period:
+            groups.setdefault((_norm_key(c.metric), _norm_key(c.period)), []).append(c)
     for items in groups.values():
-        for i, (a, va) in enumerate(items):
-            for b, vb in items[i + 1 :]:
-                denom = max(abs(va), abs(vb))
-                if denom and abs(va - vb) / denom > CONFLICT_TOL:
+        for i, a in enumerate(items):
+            for b in items[i + 1 :]:
+                if _conflicting(a, b):
                     res.conflicts.append((a.id, b.id))
                     for x, y in ((a, b), (b, a)):
                         chk = dict(x.checks or {})
@@ -244,6 +274,8 @@ def run_gate(session: Session, run_id: int, *, stream: str | None = None, facts:
                         if y.id not in chk["conflict_with"]:
                             chk["conflict_with"].append(y.id)
                         x.checks = chk
+                        if is_deterministic(x):
+                            continue  # the agent side is reviewed; the exchange's own figure stands
                         _downgrade(
                             x,
                             f"gate: conflicts with claim {y.id} ({y.stream}: {y.value} {y.unit or ''})",

@@ -22,7 +22,8 @@
    "unit": "INR",
    "tolerance": 0.005,
    "importance": "high",
-   "source": "RHP"
+   "source": "RHP",
+   "exclude": "\\bdrhp\\b|lower band|floor price|\\bpeer|post[- ]dilution|diluted at|waca|weighted average cost|\\b258\\b|polycab|\\bkei\\b|finolex|rr kabel|sterlite"
   },
   {
    "id": "oc-lot",
@@ -35,7 +36,8 @@
    "unit": "shares",
    "tolerance": 0.005,
    "importance": "normal",
-   "source": ""
+   "source": "",
+   "exclude": "\\bdrhp\\b|lower band|floor price|\\bpeer|post[- ]dilution|diluted at|waca|weighted average cost|\\b258\\b|polycab|\\bkei\\b|finolex|rr kabel|sterlite"
   },
   {
    "id": "oc-issue-size",
@@ -48,7 +50,8 @@
    "unit": "INR million",
    "tolerance": 0.01,
    "importance": "high",
-   "source": ""
+   "source": "",
+   "exclude": "\\bdrhp\\b|lower band|floor price|\\bpeer|post[- ]dilution|diluted at|waca|weighted average cost|\\b258\\b|polycab|\\bkei\\b|finolex|rr kabel|sterlite"
   },
   {
    "id": "oc-fresh",
@@ -61,7 +64,8 @@
    "unit": "INR million",
    "tolerance": 0.005,
    "importance": "high",
-   "source": ""
+   "source": "",
+   "exclude": "\\bdrhp\\b|lower band|floor price|\\bpeer|post[- ]dilution|diluted at|waca|weighted average cost|\\b258\\b|polycab|\\bkei\\b|finolex|rr kabel|sterlite"
   },
   {
    "id": "oc-ofs-shares",
@@ -74,7 +78,8 @@
    "unit": "shares",
    "tolerance": 0.005,
    "importance": "normal",
-   "source": ""
+   "source": "",
+   "exclude": "\\bdrhp\\b|lower band|floor price|\\bpeer|post[- ]dilution|diluted at|waca|weighted average cost|\\b258\\b|polycab|\\bkei\\b|finolex|rr kabel|sterlite"
   },
   {
    "id": "oc-post-shares",
@@ -87,7 +92,8 @@
    "unit": "shares",
    "tolerance": 0.005,
    "importance": "normal",
-   "source": ""
+   "source": "",
+   "exclude": "\\bdrhp\\b|lower band|floor price|\\bpeer|post[- ]dilution|diluted at|waca|weighted average cost|\\b258\\b|polycab|\\bkei\\b|finolex|rr kabel|sterlite"
   },
   {
    "id": "oc-mcap",
@@ -100,7 +106,8 @@
    "unit": "INR million",
    "tolerance": 0.005,
    "importance": "high",
-   "source": ""
+   "source": "",
+   "exclude": "\\bdrhp\\b|lower band|floor price|\\bpeer|post[- ]dilution|diluted at|waca|weighted average cost|\\b258\\b|polycab|\\bkei\\b|finolex|rr kabel|sterlite"
   },
   {
    "id": "oc-anchor",
@@ -113,7 +120,8 @@
    "unit": "INR million",
    "tolerance": 0.01,
    "importance": "normal",
-   "source": ""
+   "source": "",
+   "exclude": "\\bdrhp\\b|lower band|floor price|\\bpeer|post[- ]dilution|diluted at|waca|weighted average cost|\\b258\\b|polycab|\\bkei\\b|finolex|rr kabel|sterlite"
   },
   {
    "id": "oc-rev-fy26",
@@ -126,7 +134,8 @@
    "unit": "INR million",
    "tolerance": 0.005,
    "importance": "high",
-   "source": "RHP L4939"
+   "source": "RHP L4939",
+   "exclude": "\\bdrhp\\b|lower band|floor price|\\bpeer|post[- ]dilution|diluted at|waca|weighted average cost|\\b258\\b|polycab|\\bkei\\b|finolex|rr kabel|sterlite"
   },
   {
    "id": "oc-rev-fy25",
@@ -139,7 +148,8 @@
    "unit": "INR million",
    "tolerance": 0.005,
    "importance": "normal",
-   "source": ""
+   "source": "",
+   "exclude": "\\bdrhp\\b|lower band|floor price|\\bpeer|post[- ]dilution|diluted at|waca|weighted average cost|\\b258\\b|polycab|\\bkei\\b|finolex|rr kabel|sterlite"
   },
   {
    "id": "oc-rev-fy24",
@@ -152,7 +162,8 @@
    "unit": "INR million",
    "tolerance": 0.005,
    "importance": "normal",
-   "source": ""
+   "source": "",
+   "exclude": "\\bdrhp\\b|lower band|floor price|\\bpeer|post[- ]dilution|diluted at|waca|weighted average cost|\\b258\\b|polycab|\\bkei\\b|finolex|rr kabel|sterlite"
   },
   {
    "id": "oc-rev-q1",
@@ -165,7 +176,8 @@
    "unit": "INR million",
    "tolerance": 0.005,
    "importance": "high",
-   "source": ""
+   "source": "",
+   "exclude": "\\bdrhp\\b|lower band|floor price|\\bpeer|post[- ]dilution|diluted at|waca|weighted average cost|\\b258\\b|polycab|\\bkei\\b|finolex|rr kabel|sterlite"
   },
   {
    "id": "oc-pat-fy26",
@@ -178,7 +190,8 @@
    "unit": "INR million",
    "tolerance": 0.005,
    "importance": "high",
-   "source": "RHP L4960"
+   "source": "RHP L4960",
+   "exclude": "\\bdrhp\\b|lower band|floor price|\\bpeer|post[- ]dilution|diluted at|waca|weighted average cost|\\b258\\b|polycab|\\bkei\\b|finolex|rr kabel|sterlite"
   },
   {
    "id": "oc-pat-fy25",
@@ -191,7 +204,8 @@
    "unit": "INR million",
    "tolerance": 0.005,
    "importance": "normal",
-   "source": ""
+   "source": "",
+   "exclude": "\\bdrhp\\b|lower band|floor price|\\bpeer|post[- ]dilution|diluted at|waca|weighted average cost|\\b258\\b|polycab|\\bkei\\b|finolex|rr kabel|sterlite"
   },
   {
    "id": "oc-pat-q1",
@@ -204,7 +218,8 @@
    "unit": "INR million",
    "tolerance": 0.005,
    "importance": "high",
-   "source": ""
+   "source": "",
+   "exclude": "\\bdrhp\\b|lower band|floor price|\\bpeer|post[- ]dilution|diluted at|waca|weighted average cost|\\b258\\b|polycab|\\bkei\\b|finolex|rr kabel|sterlite"
   },
   {
    "id": "oc-ebitda-fy26",
@@ -217,7 +232,8 @@
    "unit": "INR million",
    "tolerance": 0.005,
    "importance": "normal",
-   "source": ""
+   "source": "",
+   "exclude": "\\bdrhp\\b|lower band|floor price|\\bpeer|post[- ]dilution|diluted at|waca|weighted average cost|\\b258\\b|polycab|\\bkei\\b|finolex|rr kabel|sterlite"
   },
   {
    "id": "oc-cfo-fy26",
@@ -230,7 +246,8 @@
    "unit": "INR million",
    "tolerance": 0.005,
    "importance": "high",
-   "source": ""
+   "source": "",
+   "exclude": "\\bdrhp\\b|lower band|floor price|\\bpeer|post[- ]dilution|diluted at|waca|weighted average cost|\\b258\\b|polycab|\\bkei\\b|finolex|rr kabel|sterlite"
   },
   {
    "id": "oc-largest-customer",
@@ -243,7 +260,8 @@
    "unit": "%",
    "tolerance": 0.005,
    "importance": "high",
-   "source": "RHP L1663"
+   "source": "RHP L1663",
+   "exclude": "\\bdrhp\\b|lower band|floor price|\\bpeer|post[- ]dilution|diluted at|waca|weighted average cost|\\b258\\b|polycab|\\bkei\\b|finolex|rr kabel|sterlite"
   },
   {
    "id": "oc-caro-gap",
@@ -256,7 +274,8 @@
    "unit": "INR million",
    "tolerance": 0.005,
    "importance": "high",
-   "source": ""
+   "source": "",
+   "exclude": "\\bdrhp\\b|lower band|floor price|\\bpeer|post[- ]dilution|diluted at|waca|weighted average cost|\\b258\\b|polycab|\\bkei\\b|finolex|rr kabel|sterlite"
   },
   {
    "id": "oc-promoter-post",
@@ -269,7 +288,8 @@
    "unit": "%",
    "tolerance": 0.005,
    "importance": "high",
-   "source": ""
+   "source": "",
+   "exclude": "\\bdrhp\\b|lower band|floor price|\\bpeer|post[- ]dilution|diluted at|waca|weighted average cost|\\b258\\b|polycab|\\bkei\\b|finolex|rr kabel|sterlite"
   },
   {
    "id": "oc-eps-fy26",
@@ -282,7 +302,8 @@
    "unit": "INR",
    "tolerance": 0.005,
    "importance": "normal",
-   "source": ""
+   "source": "",
+   "exclude": "\\bdrhp\\b|lower band|floor price|\\bpeer|post[- ]dilution|diluted at|waca|weighted average cost|\\b258\\b|polycab|\\bkei\\b|finolex|rr kabel|sterlite"
   },
   {
    "id": "oc-ronw-fy26",
@@ -295,7 +316,8 @@
    "unit": "%",
    "tolerance": 0.005,
    "importance": "normal",
-   "source": ""
+   "source": "",
+   "exclude": "\\bdrhp\\b|lower band|floor price|\\bpeer|post[- ]dilution|diluted at|waca|weighted average cost|\\b258\\b|polycab|\\bkei\\b|finolex|rr kabel|sterlite"
   }
  ]
 }

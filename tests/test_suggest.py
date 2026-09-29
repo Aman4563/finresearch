@@ -233,3 +233,25 @@ def test_lot_and_price_fall_back_to_the_nse_issue_information(env, tmp_path):
         late = gather(s, rid, default_profile(), live_detail=None, now=datetime(2026, 9, 29, 20, 0, tzinfo=UTC),
                       gate_ok=True)  # fmt: skip
     assert late.metrics["bidding_days_left"].value == 0
+
+
+async def test_suggest_refuses_runs_that_are_not_ipo_reports(env, tmp_path):
+    from finresearch.db import session_scope
+    from finresearch.db.models import AgentStep, ResearchRun
+    from finresearch.ingest.documents import get_or_create_company
+    from finresearch.suggest.advisor import suggest
+
+    with session_scope() as s:
+        co = get_or_create_company(s, "mf-" + tmp_path.name[-8:], "A fund")
+        run = ResearchRun(company_id=co.id, kind="fund_report", status="done", manifest={})
+        s.add(run)
+        s.flush()
+        s.add(AgentStep(run_id=run.id, key="synthesis", stage="synthesis", role="synthesizer", status="done",
+                        output={"report_markdown": "# Fund", "verdict": "HOLD"}))  # fmt: skip
+        run_id = run.id
+
+    async def fetch(symbol):
+        raise AssertionError("no live IPO data for a fund")
+
+    with pytest.raises(ValueError, match="IPO"):
+        await suggest(run_id, router=object(), fetch=fetch)

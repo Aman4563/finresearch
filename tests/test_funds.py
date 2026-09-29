@@ -73,3 +73,14 @@ def test_sharpe_is_zero_when_return_equals_the_risk_free_rate():
     mean = sum(r) / 3
     assert abs(funds.sharpe_ratio(navs, mean * 252)) < Decimal("1e-20")
     assert funds.sortino_ratio(navs, 0) > 0
+
+
+def test_leap_day_anchors_do_not_crash():
+    """29 Feb has no anniversary in other years: the N-year date falls back to 28 Feb (like add_months)."""
+    navs = [(date(2023, 2, 28) + timedelta(days=i), Decimal(100) + i) for i in range(800)]
+    assert funds.trailing_return([n for n in navs if n[0] <= date(2024, 2, 29)], 1) is not None
+    assert funds.rolling_returns([n for n in navs if n[0] >= date(2024, 2, 29)], 1) is not None
+    from finresearch.fincalc.dates import add_years
+
+    assert add_years(date(2024, 2, 29), -1) == date(2023, 2, 28)
+    assert add_years(date(2024, 2, 29), 4) == date(2028, 2, 29)

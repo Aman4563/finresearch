@@ -155,3 +155,34 @@ def test_live_bond_run_12_passes_the_release_bar(env, tmp_path):
         res = evaluate(s, run_id, load_gold("bond-ine027e07998"), report)
         gate = check_report(s, run_id, report)
     assert res.passes_release_bar and gate.ok and data["synthesis"]["verdict"] == "AVOID"
+
+
+@pytest.fixture
+def ist_local_time(monkeypatch):
+    import time
+
+    monkeypatch.setenv("TZ", "Asia/Kolkata")  # east of UTC, where the overflow happens
+    time.tzset()
+    yield
+    monkeypatch.undo()
+    time.tzset()
+
+
+def test_export_of_an_unfinished_run(env, tmp_path, ist_local_time):
+    """Regression: steps without finished_at were sorted with datetime.min.astimezone(), which overflows."""
+    from finresearch.db import session_scope
+    from finresearch.db.models import AgentStep, ResearchRun
+    from finresearch.evals.replay import export_run
+    from finresearch.ingest.documents import get_or_create_company
+
+    with session_scope() as s:
+        co = get_or_create_company(s, "unfinished-" + tmp_path.name[-8:], "U")
+        run = ResearchRun(company_id=co.id, kind="ipo_report", status="paused", manifest={})
+        s.add(run)
+        s.flush()
+        s.add(AgentStep(run_id=run.id, key="synthesis", stage="synthesis", role="synthesizer", status="done",
+                        output={"report_markdown": "# r"}))  # fmt: skip
+        s.add(AgentStep(run_id=run.id, key="critic:r1", stage="critic", role="critic", status="deferred"))
+        s.flush()
+        out = export_run(s, run.id)
+    assert out["synthesis"]["step"] == "synthesis" and len(out["steps"]) == 2

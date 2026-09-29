@@ -338,3 +338,188 @@ async def test_a_new_kind_is_configuration_not_a_new_orchestrator(env, tmp_path,
     assert (
         m["kind"] == "notes_report" and m["pipeline"] == "research-pipeline-1" and "today_ist" in m["facts"]
     )
+
+
+# --------------------------------------------------------------------------- review fixes
+def _claims(run_id, stream=None):
+    from finresearch.db import session_scope
+    from finresearch.db.models import Claim
+
+    with session_scope() as s:
+        q = select(Claim).where(Claim.run_id == run_id)
+        if stream:
+            q = q.where(Claim.stream == stream)
+        return [(c.id, c.statement, c.status) for c in s.scalars(q.order_by(Claim.id))]
+
+
+class ConflictRunner(FakeRunner):
+    """financials and risks state the same metric + period with different values: a cross-stream conflict."""
+
+    async def __call__(self, role, ctx, **extra):
+        out, res = await super().__call__(role, ctx, **extra)
+        if role in ("financials", "risks"):
+            from decimal import Decimal
+
+            from finresearch.db import session_scope
+            from finresearch.db.models import Claim
+
+            with session_scope() as s:
+                s.add(Claim(run_id=self.run_id, stream=role, statement=f"{role} PAT", claim_type="numeric",
+                            metric="pat", value=Decimal("535.61" if role == "financials" else "600"),
+                            unit="INR million", period="FY2026"))  # fmt: skip
+        return out, res
+
+
+async def test_cross_stream_conflicts_are_verified_after_a_resume(company_run, tmp_path):
+    tracker = LimitTracker(tmp_path / "limits")
+    runner = ConflictRunner(company_run, limit_on={"verifier:cross-stream conflicts"}, tracker=tracker)
+    assert await make(company_run, tmp_path, runner, tracker).run() == "paused"
+    assert steps(company_run)["verify:cross-stream"] == "deferred"
+    tracker.reset(Tier.CLAUDE_MAX)
+    runner2 = ConflictRunner(company_run, tracker=tracker)
+    assert await make(company_run, tmp_path, runner2, tracker).run() == "done"
+    assert "verifier:cross-stream conflicts" in runner2.calls
+    assert steps(company_run)["verify:cross-stream"] == "done"
+
+
+async def test_a_rerun_stream_step_replaces_its_earlier_claims(company_run, tmp_path):
+    class HalfRunner(FakeRunner):
+        """risks saves a claim, then crashes on its first attempt."""
+
+        async def __call__(self, role, ctx, **extra):
+            if role == "risks" and "risks" in self.fail_on:
+                from finresearch.db import session_scope
+                from finresearch.db.models import Citation, Claim
+
+                with session_scope() as s:
+                    c = Claim(
+                        run_id=self.run_id, stream="risks", statement="half-saved", claim_type="factual"
+                    )
+                    s.add(c)
+                    s.flush()
+                    s.add(Citation(claim_id=c.id, url="https://x.example", quote="q"))
+            return await super().__call__(role, ctx, **extra)
+
+    with pytest.raises(RuntimeError):
+        await make(company_run, tmp_path, HalfRunner(company_run, fail_on={"risks"})).run()
+    assert steps(company_run)["stream:risks"] == "running"  # the crash left the step mid-attempt
+    runner2 = FakeRunner(company_run)
+    assert await make(company_run, tmp_path, runner2).run() == "done"
+    assert runner2.calls.count("risks") == 1
+    assert [x[1] for x in _claims(company_run, "risks")] == ["risks fact"]
+    assert len(_claims(company_run, "financials")) == 1
+
+
+async def test_a_follow_up_rerun_keeps_the_first_rounds_claims(company_run, tmp_path):
+    class FollowUpCrash(FakeRunner):
+        """The follow-up risks stream saves a claim, then crashes."""
+
+        async def __call__(self, role, ctx, **extra):
+            if role == "risks" and self.calls.count("risks") == 1 and self.fail_on:
+                from finresearch.db import session_scope
+                from finresearch.db.models import Claim
+
+                self.fail_on.clear()
+                with session_scope() as s:
+                    s.add(
+                        Claim(
+                            run_id=self.run_id, stream="risks", statement="half-saved", claim_type="factual"
+                        )
+                    )
+                raise RuntimeError("crash in the follow-up")
+            return await super().__call__(role, ctx, **extra)
+
+    with pytest.raises(RuntimeError):
+        await make(
+            company_run, tmp_path, FollowUpCrash(company_run, critic_gap_rounds=1, fail_on={"x"})
+        ).run()
+    assert steps(company_run)["r1:stream:risks"] == "running"
+    before = [x for x in _claims(company_run, "risks") if x[1] != "half-saved"]
+    assert len(before) == 1 and before[0][2] == "verified"
+    runner2 = FakeRunner(company_run)  # critic:r1 is done; critic:r2 finds no gaps
+    assert await make(company_run, tmp_path, runner2).run() == "done"
+    assert "r2:stream:risks" not in steps(company_run)
+    after = _claims(company_run, "risks")
+    assert after[0] == before[0] and [x[1] for x in after] == ["risks fact", "risks fact"]
+
+
+async def test_resume_keeps_the_streams_chosen_at_start(company_run, tmp_path):
+    from finresearch.orchestrator.ipo import IpoPipeline, PipelineConfig
+
+    runner = FakeRunner(company_run, fail_on={"bear"})
+    with pytest.raises(RuntimeError):
+        await make(company_run, tmp_path, runner).run()
+    manifest = run_row(company_run)[2]
+    assert manifest["streams"] == list(STREAMS) and manifest["concurrency"] == 2
+    runner2 = FakeRunner(company_run)
+    pipe = IpoPipeline(
+        company_run, runner=runner2, tracker=LimitTracker(tmp_path / "limits"), config=PipelineConfig()
+    )
+    assert await pipe.run() == "done"
+    assert pipe.config.streams == STREAMS and pipe.config.concurrency == 2
+    assert not {k for k in steps(company_run) if k.startswith("stream:")} - {f"stream:{s}" for s in STREAMS}
+
+
+async def test_bidding_day_is_recomputed_on_every_run(company_run, tmp_path, monkeypatch):
+    from datetime import date
+
+    from finresearch.adapters import nse_holidays
+    from finresearch.db import session_scope
+    from finresearch.db.models import Company, ResearchRun
+    from finresearch.fincalc import dates
+    from finresearch.mcp_server import server
+
+    with session_scope() as s:
+        run = s.get(ResearchRun, company_run)
+        s.get(Company, run.company_id).nse_symbol = "ACME"
+        run.manifest = {"facts": {"issue_info": {"Issue Period": "25-Sep-2026 to 29-Sep-2026"},
+                                  "issue_open": "2026-09-25", "issue_close": "2026-09-29", "bidding_day_today": 1}}  # fmt: skip
+
+    async def no_network(symbol):
+        raise AssertionError("issue information is already in the manifest")
+
+    monkeypatch.setattr(server, "nse_ipo_detail", no_network)
+    monkeypatch.setattr(nse_holidays, "trading_holidays", lambda *a, **k: set())
+    monkeypatch.setattr(dates, "today_ist", lambda: date(2026, 9, 29))
+    pipe = make(company_run, tmp_path, FakeRunner(company_run))
+    pipe.ctx = pipe._load_context()
+    await pipe._facts()
+    assert pipe.ctx.facts["bidding_day_today"] == 3 and pipe.ctx.facts["today_ist"] == "2026-09-29"
+    assert run_row(company_run)[2]["facts"]["bidding_day_today"] == 3
+
+
+def test_create_run_refuses_mismatched_asset_classes(env, tmp_path):
+    from finresearch.db import session_scope
+    from finresearch.ingest.documents import get_or_create_company
+    from finresearch.orchestrator.base import KindMismatch, create_run
+
+    tag = tmp_path.name[-8:]
+    with session_scope() as s:
+        for slug in (f"mf-{tag}", f"bond-{tag}", f"eq-{tag}"):
+            get_or_create_company(s, slug, slug)
+    for slug, kind in ((f"mf-{tag}", "ipo_report"), (f"mf-{tag}", "bond_report"), (f"bond-{tag}", "stock_report"),
+                       (f"eq-{tag}", "fund_report"), (f"eq-{tag}", "bond_report")):  # fmt: skip
+        with pytest.raises(KindMismatch):
+            create_run(slug, kind=kind)
+    assert create_run(f"mf-{tag}", kind="fund_report") and create_run(f"bond-{tag}", kind="bond_report")
+    assert create_run(f"eq-{tag}", kind="ipo_report") and create_run(f"eq-{tag}", kind="stock_report")
+
+
+def test_a_verifier_cannot_overrule_a_deterministic_exchange_fact(company_run, tmp_path):
+    from decimal import Decimal
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import Claim
+
+    with session_scope() as s:
+        c = Claim(run_id=company_run, stream="facts", statement="Bid lot is 55 equity shares", claim_type="numeric",
+                  metric="lot_size", value=Decimal(55), unit="shares", period="offer", status="verified",
+                  checks={"source": "nse_issue_info"})  # fmt: skip
+        s.add(c)
+        s.flush()
+        cid = c.id
+    pipe = make(company_run, tmp_path, FakeRunner(company_run))
+    pipe._apply_verdicts(VerificationReport(verdicts=[ClaimVerdict(claim_id=cid, verdict="contradicted",
+                                                                   evidence="54 per the RHP", correct_value="54")],
+                                            summary="x"))  # fmt: skip
+    assert _claims(company_run, "facts") == [(cid, "Bid lot is 55 equity shares", "verified")]

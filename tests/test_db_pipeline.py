@@ -110,3 +110,18 @@ def test_mcp_fincalc_and_bad_args(env):
     assert r["result"].startswith("0.0708")
     assert "signature" in call("fincalc_call", {"function": "growth.cagr", "args": {"nope": 1}})
     assert "unknown function" in call("fincalc_call", {"function": "os.system", "args": {}})
+
+
+def test_mcp_save_claim_with_a_bad_citation_saves_nothing(table_doc):
+    """Regression: the claim row was inserted before its citations were checked, so a bad citation left a
+    half-saved claim behind and the agent's corrected retry duplicated it."""
+    run = json.loads(call("start_run", {"company": "orient-cables"}))["run_id"]
+    base = {"run_id": run, "stream": "financials", "statement": "FY26 PAT was Rs 535.61 mn", "claim_type": "numeric",
+            "metric": "pat", "value": "535.61", "unit": "INR mn", "period": "FY2026"}  # fmt: skip
+    good = {"document_id": table_doc, "line_start": 1, "line_end": 1, "quote": "x"}
+    for bad in ({"document_id": 99999999, "line_start": 1, "quote": "x"},
+                {"url": "https://x.example", "accessed_at": "yesterday", "quote": "x"},
+                {"document_id": table_doc, "quote": "no line"}, {"quote": "neither"}):  # fmt: skip
+        err = json.loads(call("save_claim", {**base, "citations": [good, bad]}))
+        assert "error" in err, err
+    assert json.loads(call("list_claims", {"run_id": run})) == []
