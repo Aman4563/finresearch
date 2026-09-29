@@ -86,6 +86,7 @@ export type ResultPeriod = {
   source: "nse_integrated_filing" | "nse_financial_results";
   source_url: string;
   bank: boolean; // banking taxonomy: revenue is interest earned
+  revenue_basis: "revenue_from_operations" | "interest_earned" | "net_premium_income" | "premium_earned" | null;
   revenue: number | null;
   other_income: number | null;
   total_income: number | null;

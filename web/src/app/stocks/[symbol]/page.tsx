@@ -268,8 +268,8 @@ export default function StockDetail() {
               <>
                 {latestQ && (
                   <div className="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
-                    <Metric label={latestQ.bank ? "Interest earned" : "Revenue"} value={crore(latestQ.revenue)}
-                      help={latestQ.bank ? "Banks report interest earned in place of revenue from operations." : "Revenue from operations for the quarter."}
+                    <Metric label={REVENUE_LABEL[latestQ.revenue_basis ?? ""] ?? "Revenue"} value={crore(latestQ.revenue)}
+                      help={REVENUE_HELP[latestQ.revenue_basis ?? ""] ?? "Revenue from operations for the quarter."}
                       sub={<GrowthSub qoq={latestQ.growth.revenue_qoq} yoy={latestQ.growth.revenue_yoy} />} />
                     <Metric label="Net profit" value={crore(latestQ.profit)}
                       help="Profit for the quarter attributable to the company's shareholders (after minority interests)."
@@ -280,7 +280,7 @@ export default function StockDetail() {
                         ? `${((latestQ.margin - prevQ.margin) * 100 >= 0 ? "+" : "")}${((latestQ.margin - prevQ.margin) * 100).toFixed(1)} pp QoQ` : "vs previous quarter: —"} />
                   </div>
                 )}
-                <ResultsChart rows={quarters.map((r) => ({ label: r.label, title: `${r.label}, quarter ended ${day(r.period_end)}`,
+                <ResultsChart revenueLabel={REVENUE_LABEL[latestQ?.revenue_basis ?? ""] ?? "Revenue"} rows={quarters.map((r) => ({ label: r.label, title: `${r.label}, quarter ended ${day(r.period_end)}`,
                   revenue: r.revenue != null ? r.revenue / 1e7 : null, profit: r.profit != null ? r.profit / 1e7 : null }))} />
                 <p className="mt-3 mb-1 text-[11px] font-medium text-muted">Net margin trend</p>
                 <MarginChart rows={quarters.map((r) => ({ label: r.label, title: `${r.label}, quarter ended ${day(r.period_end)}`, margin: r.margin }))} />
@@ -288,7 +288,7 @@ export default function StockDetail() {
                   <thead>
                     <tr>
                       <th>Quarter</th>
-                      <th className="text-right!">{latestQ?.bank ? "Interest earned" : "Revenue"}</th>
+                      <th className="text-right!">{REVENUE_LABEL[latestQ?.revenue_basis ?? ""] ?? "Revenue"}</th>
                       <th className="text-right!">Net profit</th>
                       <th className="text-right!">Profit YoY</th>
                     </tr>
@@ -425,6 +425,16 @@ export default function StockDetail() {
     </div>
   );
 }
+
+/** What stands in for revenue in a bank's or insurer's results filing. */
+const REVENUE_LABEL: Record<string, string> = {
+  interest_earned: "Interest earned", net_premium_income: "Net premium", premium_earned: "Premium earned",
+};
+const REVENUE_HELP: Record<string, string> = {
+  interest_earned: "Banks report interest earned in place of revenue from operations.",
+  net_premium_income: "Life insurers report net premium income (after reinsurance) in place of revenue.",
+  premium_earned: "General insurers report net premium earned in the period in place of revenue.",
+};
 
 /** QoQ and YoY change under a results KPI (fractions from the API). */
 function GrowthSub({ qoq, yoy }: { qoq: number | null | undefined; yoy: number | null | undefined }) {
