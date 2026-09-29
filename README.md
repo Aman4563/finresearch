@@ -158,6 +158,7 @@ uv run finresearch serve                           # http://127.0.0.1:8710
 # monitoring after the report: subscription to the close, allotment, listing, anchor lock-ins
 uv run finresearch monitor watch orient-cables     # schedule the checks from NSE's issue information
 uv run finresearch monitor run                     # run the checks without the API
+uv run finresearch monitor holidays                # fetch NSE's trading and settlement holidays
 ```
 
 The dashboard (IPO radar, live agent view, report reader with clickable evidence, "ask about this report" chat, personal suggestions checked against your own rules, a decision journal, monitoring alerts, listed-stock search and watchlist, mutual-fund search, an F&O option-chain and strategy analyser (analysis only), plan usage) is a Next.js app in

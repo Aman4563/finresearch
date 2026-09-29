@@ -27,6 +27,8 @@ class Deps:
     quote: Any  # async (symbol) -> Quote
     current_issues: Any = None  # async () -> list[IpoIssue]; overall times for SME issues
     stock_snapshot: Any = None  # async (symbol) -> dict: bars, announcements, actions, shareholding
+    holidays: Any = None  # async (kind) -> NSE holiday-master payload (tests); None + live_holidays uses NSE
+    live_holidays: bool = False
 
     @classmethod
     def live(cls) -> Deps:

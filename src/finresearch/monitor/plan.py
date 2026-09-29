@@ -1,9 +1,8 @@
 """Deterministic schedule of checks for a watched IPO (all times IST).
 
-Dates after the close follow SEBI's T+3 timeline counted in exchange days (allotment T+1, listing T+3). They are
-expected dates: the listing date is replaced by NSE's own listing date once the quote shows it. Exchange holidays
-are not in the calendar yet, so a holiday shifts the real dates by a day; the listing check retries until NSE lists
-the stock.
+Dates after the close follow SEBI's T+3 timeline counted in working days (allotment T+1, listing T+3), skipping
+NSE's trading and settlement holidays from the cached holiday master. They are still expected dates: the listing
+date is replaced by NSE's own listing date once the quote shows it, and the listing check retries until then.
 """
 
 from __future__ import annotations
@@ -31,15 +30,26 @@ class Slot:
     params: dict[str, Any] = field(default_factory=dict)
 
 
-def expected_dates(close: date) -> tuple[date, date]:
-    """(allotment, listing) = (T+1, T+3) exchange days after the close."""
-    return add_business_days(close, 1), add_business_days(close, 3)
+def expected_dates(close: date, holidays: set[date] | None = None) -> tuple[date, date]:
+    """(allotment, listing) = (T+1, T+3) working days after the close, skipping NSE trading and settlement
+    holidays (default: the cached NSE lists)."""
+    if holidays is None:
+        from finresearch.adapters.nse_holidays import settlement_holidays
+
+        holidays = settlement_holidays()
+    allot = add_business_days(close, 1, holidays)
+    listing = add_business_days(close, 3, holidays)
+    return allot, listing
 
 
 def plan(symbol: str, open_date: date, close_date: date, allotment: date, listing: date,
-         anchor_shares=None) -> list[Slot]:  # fmt: skip
-    n_days = business_days_between(open_date, close_date) + 1
-    days = bidding_dates(open_date, n_days)
+         anchor_shares=None, holidays: set[date] | None = None) -> list[Slot]:  # fmt: skip
+    if holidays is None:
+        from finresearch.adapters.nse_holidays import trading_holidays
+
+        holidays = trading_holidays()
+    n_days = business_days_between(open_date, close_date, holidays) + 1
+    days = bidding_dates(open_date, n_days, holidays)
     out: list[Slot] = []
     for d in days:
         for h, m in SUBSCRIPTION_TIMES:
@@ -63,13 +73,17 @@ def last_slot(slots: list[Slot]) -> datetime:
     return max(s.due_at for s in slots) + timedelta(days=1)
 
 
-def plan_stock(symbol: str, start: date, end: date) -> list[Slot]:
-    """One after-close check per exchange day in [start, end] for a watched listed stock."""
+def plan_stock(symbol: str, start: date, end: date, holidays: set[date] | None = None) -> list[Slot]:
+    """One after-close check per exchange trading day in [start, end] for a watched listed stock."""
     from finresearch.fincalc.dates import is_business_day
 
+    if holidays is None:
+        from finresearch.adapters.nse_holidays import trading_holidays
+
+        holidays = trading_holidays()
     out, d = [], start
     while d <= end:
-        if is_business_day(d):
+        if is_business_day(d, holidays):
             out.append(Slot("stock_daily", f"{symbol}:stock_daily:{d}", ist_datetime(d, *STOCK_DAILY_TIME)))
         d += timedelta(days=1)
     return out

@@ -209,7 +209,9 @@ def run_gate(session: Session, run_id: int, *, stream: str | None = None, facts:
             days = _DAY_RE.findall(c.statement)
             dates = [d for d in (_parse_date(m) for m in _DATE_RE.finditer(c.statement)) if d]
             if len(days) == 1 and len(dates) == 1 and dates[0] >= issue_open:
-                expected = bidding_day_number(issue_open, dates[0])
+                from finresearch.adapters.nse_holidays import trading_holidays
+
+                expected = bidding_day_number(issue_open, dates[0], trading_holidays())
                 checks["day_label_ok"] = expected == int(days[0])
                 if expected is not None and expected != int(days[0]):
                     res.day_label_errors.append(c.id)

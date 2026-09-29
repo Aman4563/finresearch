@@ -51,7 +51,9 @@ class IpoPipeline(ResearchPipeline):
                     op = datetime.strptime(open_s, "%d-%b-%Y").date()
                     cl = datetime.strptime(close_s, "%d-%b-%Y").date()
                     facts["issue_open"], facts["issue_close"] = op.isoformat(), cl.isoformat()
-                    facts["bidding_day_today"] = bidding_day_number(op, today_ist())
+                    from finresearch.adapters.nse_holidays import trading_holidays
+
+                    facts["bidding_day_today"] = bidding_day_number(op, today_ist(), trading_holidays())
             except Exception as e:
                 facts["issue_info_error"] = f"{type(e).__name__}: {e}"
         facts["today_ist"] = today_ist().isoformat()
