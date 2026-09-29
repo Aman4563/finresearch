@@ -301,6 +301,15 @@ body {
 .report th { background: var(--background-subtle); font-weight: 600; }
 .report tr:hover td { background: var(--card-hover); }
 .report blockquote { border-left: 3px solid var(--brand); padding: 0.2rem 0 0.2rem 0.9rem; color: var(--muted); background: var(--brand-soft); border-radius: 0 6px 6px 0; }
+/* report tables: scroll inside their own box so the header row can stay put; numbers right-aligned */
+.report .report-table { overflow: auto; max-height: 34rem; margin: 0.9rem 0; border: 1px solid var(--border); border-radius: 8px; }
+.report .report-table table { display: table; margin: 0; width: 100%; border-radius: 0; border-style: hidden; }
+.report .report-table td { min-width: 6rem; }
+.report .report-table thead th { position: sticky; top: 0; z-index: 1; box-shadow: inset 0 -1px 0 var(--border); }
+.report .report-table td.is-num, .report .report-table th.is-num { text-align: right; white-space: nowrap; font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 0.82rem; }
+.report .report-table tbody tr:nth-child(even) td { background: color-mix(in oklab, var(--background-subtle) 45%, transparent); }
+.report .report-table tbody tr:hover td { background: var(--card-hover); }
+.report p.explain { margin: 0.6rem 0; padding: 0.55rem 0.8rem; border-radius: 8px; background: var(--info-soft); border-left: 3px solid var(--info); font-size: 0.93em; }
 .report code { font-family: var(--font-mono); font-size: 0.85em; background: var(--background-subtle); padding: 0.05rem 0.3rem; border-radius: 4px; }
 
 /* Profile > Preferences > "Reduce motion" (set on <html> by PreferenceEffects), same as the OS setting */
@@ -311,3 +320,4 @@ body {
   animation-iteration-count: 1 !important;
   transition-duration: 0.01ms !important;
 }
+@media (max-width: 1023px) { .report .report-table { max-height: none; } }

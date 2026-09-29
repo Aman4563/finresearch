@@ -63,7 +63,7 @@ export function useReadingState(el: HTMLElement | null, ids: string[]) {
   return { active, progress };
 }
 
-export function Toc({ headings, active, onPick }: { headings: Heading[]; active: string | null; onPick?: () => void }) {
+export function Toc({ headings, active, onPick }: { headings: Heading[]; active: string | null; onPick?: (id: string) => void }) {
   return (
     <ul className="space-y-0.5 border-l border-border text-[13px]">
       {headings.map((h) => (
@@ -74,7 +74,7 @@ export function Toc({ headings, active, onPick }: { headings: Heading[]; active:
               e.preventDefault();
               document.getElementById(h.id)?.scrollIntoView({ behavior: "smooth", block: "start" });
               history.replaceState(null, "", `#${h.id}`);
-              onPick?.();
+              onPick?.(h.id);
             }}
             className={cx(
               "-ml-px block border-l-2 py-1 leading-snug transition",
@@ -130,7 +130,7 @@ export function parseVerdict(md: string): VerdictInfo | null {
 
 export function verdictTone(word: string | null): "gain" | "loss" | "warn" | "neutral" {
   if (!word) return "neutral";
-  if (/^(APPLY|BUY|ACCUMULATE|SUBSCRIBE|INVEST|STRONG BUY)$/.test(word)) return "gain";
-  if (/AVOID|SKIP|SELL|EXIT|REDEEM|REDUCE/.test(word)) return "loss";
+  if (/^(APPLY|BUY|ACCUMULATE|SUBSCRIBE|INVEST|STRONG BUY|SIP ONLY)$/.test(word) || /^APPLY \(/.test(word)) return "gain";
+  if (/AVOID|SKIP|SELL|EXIT|REDEEM|REDUCE|SWITCH/.test(word)) return "loss";
   return "warn";
 }

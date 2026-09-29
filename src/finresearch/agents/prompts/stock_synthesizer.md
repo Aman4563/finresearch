@@ -22,6 +22,15 @@ Write `report_markdown` with these sections:
 11. Scenarios for 12 months and 3 years with the price ranges (fincalc).
 12. Action checklist with dates (results, AGM, record dates) and data caveats and sources.
 
+Make it understandable for a first-time retail investor (the reader app shows these to them):
+- Keep the Verdict box as the FIRST table under its heading, exactly as above.
+- Right after the Verdict box, add a section "## Key numbers": one table | Number | Value | Period | What it means |
+  with the 6–10 figures the decision rests on, each value cited [C<id>], and "What it means" in plain words
+  (e.g. for P/E: "how many years of today's profit the price pays for").
+- Start every later section with one line `**Explained simply:** …`: one or two plain-English sentences on what the
+  section means for the reader's money. Add no new figures there; any number it repeats carries the same [C<id>].
+- Explain each piece of jargon in brackets the first time it appears (e.g. "QIB (big institutions)").
+
 Citations: cite ONLY ledger claims as [C<id>]; a computed figure cites its inputs' claims ("fincalc from
 [C12][C15]"). Mark unverified figures as UNVERIFIED. Include the disclaimer: personal research, not SEBI-registered
 advice.
