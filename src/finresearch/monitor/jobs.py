@@ -30,6 +30,9 @@ class Deps:
     holidays: Any = None  # async (kind) -> NSE holiday-master payload (tests); None + live_holidays uses NSE
     live_holidays: bool = False
     bse_ipo_detail: Any = None  # async (ipo_no) -> IpoDetail from BSE, for a BSE SME watch (meta bse_ipo_no)
+    bse_quote: Any = (
+        None  # async (symbol) -> Quote | None from BSE (None before listing), for a BSE SME watch
+    )
 
     @classmethod
     def live(cls) -> Deps:
@@ -65,8 +68,14 @@ class Deps:
             async with BseClient() as bse:
                 return await bse.ipo_detail(ipo_no)
 
+        async def bse_quote(symbol: str):
+            from finresearch.adapters.bse import BseClient
+
+            async with BseClient() as bse:
+                return await bse.quote(symbol)
+
         return cls(ipo_detail=ipo_detail, quote=quote, current_issues=current_issues, stock_snapshot=stock_snapshot,
-                   bse_ipo_detail=bse_ipo_detail)  # fmt: skip
+                   bse_ipo_detail=bse_ipo_detail, bse_quote=bse_quote)  # fmt: skip
 
 
 def alert(session: Session, watch: Watch, kind: str, message: str, level: str = "info", **data: Any) -> None:
@@ -161,12 +170,14 @@ async def listing(session: Session, job: MonitorJob, watch: Watch, deps: Deps, n
     which = job.params.get("which", "open")
     if (watch.meta or {}).get(f"listing_{which}") is not None:  # recorded by an earlier slot for this event
         return {"which": which, "skipped": "already recorded"}
+    bse = bool((watch.meta or {}).get("bse_ipo_no"))  # a BSE SME issue lists on BSE only
+    exchange = "BSE" if bse else "NSE"
     try:
-        q = await deps.quote(watch.nse_symbol)
+        q = await (deps.bse_quote(watch.nse_symbol) if bse else deps.quote(watch.nse_symbol))
     except Exception as e:
-        raise NotYet(f"no NSE quote for {watch.nse_symbol} yet: {e}") from e
-    if q.listing_date is None or q.listing_date > to_ist(now).date() or q.open is None:
-        raise NotYet(f"{watch.nse_symbol} has not listed yet")
+        raise NotYet(f"no {exchange} quote for {watch.nse_symbol} yet: {e}") from e
+    if q is None or q.listing_date is None or q.listing_date > to_ist(now).date() or q.open is None:
+        raise NotYet(f"{watch.nse_symbol} has not listed on {exchange} yet")
     meta = dict(watch.meta or {})
     if q.listing_date != watch.listing_date:
         meta["expected_listing_date"] = watch.listing_date.isoformat()

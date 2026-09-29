@@ -8,6 +8,9 @@ Endpoints (api.bseindia.com/BseIndiaAPI/api, verified live 29-Sep-2026; JSON, no
 - `/Pubissues_BSEDemSchd_GrShoe_ng/w?IPO_NO=n`        `is_green_shoe` S/BS marks the SME book-building format
 - `/Pubissues_GetBkbldgCatdem_PAR_bbnew_ng/w?IPO_NO=n` SME category-wise demand (`table1`, `Maxdt` timestamp)
 - `/Pubissues_IPODRHP_par_ng/w`                       offer documents (mainboard only; paths under /corporates/download/)
+- `/PeerSmartSearch/w?Type=SS&text=SYM`               an HTML snippet: trading scrip code per symbol ("No Match Found"
+                                                      until the scrip is listed; the issue's ScripCode is not it)
+- `/getScripHeaderData/w?scripcode=n`                 quote header: Open, PrevClose, LTP, `Ason` ("29 Sep 26 | 11:30")
 
 BSE's Akamai edge refuses requests without the full set of browser fetch headers (curl with the same headers gets a
 403; httpx over HTTP/1.1 passes). There is no warm-up page that fixes a refusal, so a 403 or a non-JSON body is an
@@ -28,6 +31,7 @@ from finresearch.adapters.http import IST, Fetched, FetchRecord, PoliteClient
 from finresearch.adapters.nse import (
     CategorySubscription,
     IpoDetail,
+    Quote,
     SubscriptionSnapshot,
     _clean_text,
     parse_num,
@@ -273,6 +277,32 @@ class OfferDocument(BaseModel):
 
 
 # --------------------------------------------------------------------------- client
+_SEARCH_ROW = re.compile(r"liclick\(\\?'(\d+)\\?',\\?'([^'\\]*)\\?'\).*?<strong>([^<]+)</strong>", re.S)
+
+
+def parse_smart_search(text: str) -> list[tuple[str, str, str]]:
+    """PeerSmartSearch's HTML snippet -> [(scrip code, company, symbol)]."""
+    return [(code, name.strip(), sym.strip()) for code, name, sym in _SEARCH_ROW.findall(text or "")]
+
+
+def parse_scrip_header(symbol: str, data: dict[str, Any]) -> Quote | None:
+    """getScripHeaderData -> Quote; None when BSE has no quote for the code (not listed). BSE gives no listing date:
+    a quote with an open price and no previous close is the listing day, so `listing_date` is set only then."""
+    h = (data or {}).get("Header") or {}
+    opened = parse_num(h.get("Open"))
+    ason = str(h.get("Ason") or "").replace("|", "").split()
+    as_of = None
+    if len(ason) == 4:
+        as_of = datetime.strptime(" ".join(ason), "%d %b %y %H:%M").replace(tzinfo=IST)
+    if opened is None and parse_num(h.get("LTP")) is None:
+        return None
+    prev = parse_num(h.get("PrevClose"))
+    first_day = opened is not None and not prev and as_of is not None
+    return Quote(symbol=symbol, company=(data.get("Cmpname") or {}).get("FullN"), open=opened,
+                 last_price=parse_num(h.get("LTP")), previous_close=prev or None,
+                 listing_date=as_of.date() if first_day else None, status=h.get("Category"), as_of=as_of)  # fmt: skip
+
+
 class BseClient:
     """BSE public-issue endpoints. Owns its PoliteClient unless one is passed in."""
 
@@ -334,6 +364,27 @@ class BseClient:
         detail = await self.issue_detail(ipo_no)
         snap = await self.sme_subscription(ipo_no, detail.symbol)
         return as_ipo_detail(detail, snap)
+
+    async def scrip_code(self, symbol: str) -> str | None:
+        """The trading scrip code of a listed symbol (exact symbol match), or None before listing."""
+        resp = await self.http.get(f"{BSE_API}/PeerSmartSearch/w", params={"Type": "SS", "text": symbol},
+                                   headers=BSE_HEADERS)  # fmt: skip
+        if not resp.ok:
+            raise BseError(f"BSE HTTP {resp.status} for the symbol search {symbol!r}")
+        text = resp.content.decode("utf-8", "replace")
+        return next(
+            (code for code, _, sym in parse_smart_search(text) if sym.upper() == symbol.upper()), None
+        )
+
+    async def quote(self, symbol: str) -> Quote | None:
+        """A BSE quote for a symbol, or None when it is not listed yet."""
+        code = await self.scrip_code(symbol)
+        if code is None:
+            return None
+        data, _ = await self.get_json(
+            "/getScripHeaderData/w", {"Debtflag": "", "scripcode": code, "seriesid": ""}
+        )
+        return parse_scrip_header(symbol, data or {})
 
     async def offer_documents(self) -> list[OfferDocument]:
         data, _ = await self.get_json("/Pubissues_IPODRHP_par_ng/w", cache_ttl=DETAIL_TTL_S)

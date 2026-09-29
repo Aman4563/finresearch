@@ -15,6 +15,8 @@ from finresearch.adapters.bse import (
     OfferDocument,
     as_ipo_detail,
     name_key,
+    parse_scrip_header,
+    parse_smart_search,
     parse_sme_demand,
 )
 from finresearch.adapters.http import IST
@@ -209,7 +211,70 @@ async def test_bse_only_company_gets_its_issue_facts_and_baseline_from_bse(env, 
         assert all(c.citations[0].url.endswith("GetMkt_ISSUE_BBS_IPO/w?IPO_NO=8008") for c in cs)
 
 
+def test_symbol_search_and_quote_header():
+    assert parse_smart_search((FIX / "smart_search_INFY.json").read_text()) == [
+        ("500209", "INFOSYS LTD", "INFY")
+    ]
+    assert parse_smart_search("\"<li class='quotemenu'><a>No Match Found<br /><span></span></a></li>\"") == []
+    q = parse_scrip_header("INFY", load("scrip_header_500209_20260929.json"))
+    assert (q.open, q.previous_close, q.status) == (Decimal("1004.95"), Decimal("1003.00"), "Listed")
+    assert q.as_of == datetime(2026, 9, 29, 11, 31, tzinfo=IST)
+    assert q.listing_date is None  # a previous close: not the listing day
+    assert parse_scrip_header("SHIVCHEM", load("scrip_header_unlisted_4858.json")) is None
+
+
+def test_the_first_trading_day_is_the_listing_date():
+    data = load("scrip_header_500209_20260929.json")
+    data["Header"] = {**data["Header"], "PrevClose": None, "Ason": "05 Oct 26 | 10:15"}
+    assert parse_scrip_header("INFY", data).listing_date == date(2026, 10, 5)
+
+
 # --------------------------------------------------------------------------- monitor
+async def test_bse_only_company_is_watched_from_bse_and_lists_on_bse(env, tmp_path):
+    from finresearch.adapters.nse import Quote
+    from finresearch.db import session_scope
+    from finresearch.db.models import Alert, MonitorJob, Watch
+    from finresearch.ingest.documents import get_or_create_company
+    from finresearch.monitor.jobs import Deps, NotYet, listing
+    from finresearch.monitor.watch import watch_company
+
+    slug = "bseonly-" + tmp_path.name[-8:]
+    with session_scope() as s:
+        co = get_or_create_company(s, slug, "Shivchem Agro Limited")
+        co.meta = {"bse_ipo_no": 8008, "exchange": "BSE"}
+
+    async def fetch_bse(ipo_no):
+        assert ipo_no == 8008
+        return shivchem()
+
+    async def no_nse(symbol):
+        raise AssertionError("a BSE-only issue must not ask NSE")
+
+    w = await watch_company(slug, fetch_detail=no_nse, fetch_bse=fetch_bse)
+    assert w["nse_symbol"] == "SHIVCHEM" and w["close_date"] == shivchem().issue_close.isoformat()
+
+    quotes = [None, Quote(symbol="SHIVCHEM", open=Decimal("70"), last_price=Decimal("72"),
+                          listing_date=date(2026, 10, 5), as_of=datetime(2026, 10, 5, 10, 15, tzinfo=IST))]  # fmt: skip
+
+    async def bse_quote(symbol):
+        return quotes.pop(0)
+
+    deps = Deps(ipo_detail=no_nse, quote=no_nse, bse_quote=bse_quote)
+    with session_scope() as s:
+        watch = s.get(Watch, w["id"])
+        assert watch.meta["bse_ipo_no"] == 8008
+        job = MonitorJob(watch_id=watch.id, kind="listing", slot=f"SHIVCHEM:listing:{tmp_path.name}",
+                         due_at=datetime(2026, 10, 5, 10, 15, tzinfo=IST), params={"which": "open"})  # fmt: skip
+        s.add(job)
+        s.flush()
+        with pytest.raises(NotYet, match="not listed on BSE"):
+            await listing(s, job, watch, deps, datetime(2026, 10, 5, 4, 45, tzinfo=IST))
+        out = await listing(s, job, watch, deps, datetime(2026, 10, 5, 4, 50, tzinfo=IST))
+        s.flush()
+        assert out["price"] == "70" and watch.listing_date == date(2026, 10, 5)
+        assert s.query(Alert).filter_by(watch_id=watch.id, kind="listing_open").count() == 1
+
+
 async def test_subscription_job_for_a_bse_watch_reads_the_bse_book(env, tmp_path):
     from finresearch.db import session_scope
     from finresearch.db.models import Alert, MonitorJob, SubscriptionSnapshotRow, Watch

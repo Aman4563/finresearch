@@ -615,9 +615,22 @@ app.add_typer(monitor_app, name="monitor")
 
 
 @monitor_app.command("watch")
-def monitor_watch(company: str) -> None:
-    """Start (or refresh) monitoring a company's IPO from NSE's issue information."""
+def monitor_watch(
+    company: str,
+    name: str | None = typer.Option(None, help="Company name (creates the company if new)"),
+    bse_ipo: int | None = typer.Option(
+        None, help="BSE IPO number of a BSE-only SME issue (`finresearch ipo bse`)"
+    ),
+) -> None:
+    """Start (or refresh) monitoring a company's IPO from NSE's issue information (BSE's for a BSE SME issue)."""
     from finresearch.monitor.watch import watch_company
+
+    if bse_ipo:
+        from finresearch.db import session_scope
+        from finresearch.ingest.documents import get_or_create_company
+
+        with session_scope() as db:
+            _set_bse_ipo(get_or_create_company(db, company, name), bse_ipo)
 
     w = asyncio.run(watch_company(company))
     console.print(f"watching {w['nse_symbol']}: bidding {w['open_date']} → {w['close_date']}, allotment "

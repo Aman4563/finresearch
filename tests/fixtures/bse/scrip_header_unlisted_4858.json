@@ -1,0 +1,58 @@
+{
+ "CurrRate": {
+  "LTP": "-",
+  "Chg": "-",
+  "PcChg": "-",
+  "D_Cpricelink": "",
+  "IssueChgVal": "",
+  "IssueChgPC": ""
+ },
+ "Cmpname": {
+  "FullN": null,
+  "ShortN": null,
+  "SeriesN": null,
+  "SEOUrlEQ": null,
+  "SEOUrlDR": null,
+  "IsNotPropernFIT": null,
+  "Category": null,
+  "EquityScrips": null
+ },
+ "Header": {
+  "Noticecnt": null,
+  "PrevClose": null,
+  "Open": null,
+  "High": null,
+  "Low": null,
+  "LTP": null,
+  "DisplayText": null,
+  "Category": null,
+  "PRE_OPEN_NO_BIDS": null,
+  "PRE_OPEN_NO_I_PRICE": null,
+  "PRE_OPEN_I_PRICE": null,
+  "PRE_OPEN_I_PRICE_QTY": null,
+  "PCAS_NO_BIDS": null,
+  "PCAS_INDICATIVE_PRICE": null,
+  "PCAS_INDICATIVE_QTY": null,
+  "PERODIC_CALL_AUCTION": null,
+  "GSMURL": null,
+  "GSMText": null,
+  "Invit": null,
+  "Ason": "-",
+  "NAVRate": "",
+  "NAVdttm": "",
+  "ASMText": null,
+  "SMSText": null,
+  "IRPText": null,
+  "ASMURL": null,
+  "SMSURL": null,
+  "IRPURL": null,
+  "IDB_DisplayText": null,
+  "IsALF": null,
+  "EMSText": null,
+  "EMSURL": null
+ },
+ "CompResp": {
+  "compRes": null,
+  "texturl": null
+ }
+}
