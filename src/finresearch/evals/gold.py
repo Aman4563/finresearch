@@ -25,11 +25,10 @@ from finresearch.verify.gate import rupee_scale
 GOLD_DIR = REPO_ROOT / "evals" / "gold"
 USABLE = ("verified", "unverified", "needs_review")
 RELEASE_RECALL = 0.90
-# claims about other contexts that share keywords with gold facts (draft offer, lower band, peers, dilution)
+# claims about other contexts that share keywords with gold facts (draft offer, lower band, peers, dilution);
+# company-specific peers and figures go in the gold file's own "exclude"
 DEFAULT_EXCLUDE = (
-    r"\bdrhp\b|lower band|floor price|\b258\b|\bpeer|polycab|\bkei\b|finolex|rr kabel|sterlite|"
-    r"kissht|onemi|bajaj|sbi card|paytm|pb fintech|post[- ]dilution|diluted at|waca|"
-    r"weighted average cost"
+    r"\bdrhp\b|lower band|floor price|\bpeer|post[- ]dilution|diluted at|waca|weighted average cost"
 )
 
 # a claim about a component of the gold metric (segment revenue, export revenue, ...) never contradicts the total

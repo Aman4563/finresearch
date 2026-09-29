@@ -99,6 +99,40 @@ def save_claim(
                 "Save each figure of a table as its own claim."
             )
 
+    # every citation is checked before anything is written: a bad one must not leave a half-saved claim behind
+    # (the agent fixes the citation and saves again, which would duplicate it)
+    parsed: list[tuple[Citation, dict[str, Any]]] = []
+    for c in citations:
+        if c.get("document_id"):
+            try:
+                doc_id = int(c["document_id"])
+                ls = int(c["line_start"])
+                le = int(c.get("line_end") or ls)
+            except (KeyError, TypeError, ValueError) as e:
+                raise ValueError(
+                    f"a document citation needs integer document_id and line_start: {c!r}"
+                ) from e
+            doc = session.get(Document, doc_id)
+            if doc is None:
+                raise ValueError(f"unknown document_id {c['document_id']}")
+            quote = (c.get("quote") or "").strip()
+            found, how = quote_in_lines(doc, ls, le, quote) if quote else (False, "no quote given")
+            page = _page_of(session, doc.id, ls)
+            parsed.append((Citation(document_id=doc.id, page_no=page, line_start=ls, line_end=le, quote=quote,
+                                    quote_found=found),
+                           {"document_id": doc.id, "lines": f"{ls}-{le}", "page": page, "quote_found": found,
+                            "match": how}))  # fmt: skip
+        elif c.get("url"):
+            accessed = c.get("accessed_at")
+            try:
+                at = datetime.fromisoformat(accessed) if accessed else datetime.now(UTC)
+            except (TypeError, ValueError) as e:
+                raise ValueError(f"accessed_at must be an ISO date-time, got {accessed!r}") from e
+            parsed.append((Citation(url=c["url"], quote=c.get("quote"), accessed_at=at),
+                           {"url": c["url"], "quote_found": None, "match": "web source (verified later)"}))  # fmt: skip
+        else:
+            raise ValueError("each citation needs document_id+line_start(+line_end)+quote, or url")
+
     claim = Claim(
         run_id=run_id,
         stream=stream,
@@ -110,51 +144,10 @@ def save_claim(
         period=period,
         importance=importance,
     )
+    claim.citations = [cit for cit, _ in parsed]
     session.add(claim)
     session.flush()
-    checks = []
-    for c in citations:
-        if c.get("document_id"):
-            doc = session.get(Document, int(c["document_id"]))
-            if doc is None:
-                raise ValueError(f"unknown document_id {c['document_id']}")
-            ls, le = int(c["line_start"]), int(c.get("line_end") or c["line_start"])
-            quote = (c.get("quote") or "").strip()
-            found, how = quote_in_lines(doc, ls, le, quote) if quote else (False, "no quote given")
-            page = _page_of(session, doc.id, ls)
-            session.add(
-                Citation(
-                    claim_id=claim.id,
-                    document_id=doc.id,
-                    page_no=page,
-                    line_start=ls,
-                    line_end=le,
-                    quote=quote,
-                    quote_found=found,
-                )
-            )
-            checks.append(
-                {
-                    "document_id": doc.id,
-                    "lines": f"{ls}-{le}",
-                    "page": page,
-                    "quote_found": found,
-                    "match": how,
-                }
-            )
-        elif c.get("url"):
-            accessed = c.get("accessed_at")
-            session.add(
-                Citation(
-                    claim_id=claim.id,
-                    url=c["url"],
-                    quote=c.get("quote"),
-                    accessed_at=datetime.fromisoformat(accessed) if accessed else datetime.now(UTC),
-                )
-            )
-            checks.append({"url": c["url"], "quote_found": None, "match": "web source (verified later)"})
-        else:
-            raise ValueError("each citation needs document_id+line_start(+line_end)+quote, or url")
+    checks = [chk for _, chk in parsed]
     doc_checks = [x for x in checks if "document_id" in x]
     if doc_checks and not any(x["quote_found"] for x in doc_checks):
         claim.status = "unsupported"

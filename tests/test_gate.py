@@ -261,3 +261,40 @@ def test_record_baseline_creates_verified_cited_claims(ledger):
             c.status == "verified" and c.citations[0].url.endswith("symbol=ORIENTCABL&series=EQ") for c in cs
         )
         assert all(c.citations[0].accessed_at == NOW for c in cs)
+
+
+def test_a_conflict_never_demotes_a_deterministic_exchange_fact(ledger):
+    from finresearch.db import session_scope
+    from finresearch.db.models import Claim
+
+    nse = add(
+        ledger,
+        stream="facts",
+        metric="lot_size",
+        value="55",
+        unit="shares",
+        period="offer",
+        status="verified",
+    )
+    with session_scope() as s:
+        s.get(Claim, nse).checks = {"source": "nse_issue_info"}
+    agent = add(ledger, stream="valuation", metric="lot size", value="54", unit="shares", period="Offer",
+                status="verified")  # fmt: skip
+    r = gate(ledger)
+    assert (nse, agent) in r.conflicts
+    assert claim(nse)[0] == "verified" and agent in claim(nse)[1]["conflict_with"]
+    assert claim(agent)[0] == "needs_review" and "conflicts with claim" in claim(agent)[2]
+
+
+def test_percent_and_fraction_forms_of_one_figure_do_not_conflict(ledger):
+    pct = add(
+        ledger, stream="financials", metric="roe", value="15", unit="%", period="FY2026", status="verified"
+    )
+    frac = add(ledger, stream="valuation", metric="ROE", value="0.15", unit="fraction", period="FY2026",
+               status="verified")  # fmt: skip
+    other = add(ledger, stream="risks", metric="roe", value="0.18", unit="ratio", period="FY2026")
+    loose = add(ledger, stream="business", metric="roe", value="15", unit="pct", period="FY2026")
+    r = gate(ledger)
+    assert (pct, frac) not in r.conflicts and frac not in claim(pct)[1]["conflict_with"]
+    assert (pct, loose) not in r.conflicts  # the same raw figure with a loosely spelt unit
+    assert {(pct, other), (frac, other)} <= set(r.conflicts)  # 15 % vs 0.18 is still a conflict

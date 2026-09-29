@@ -135,6 +135,8 @@ async def suggest(run_id: int, *, router=None, live_detail=None, fetch=fetch_liv
         run = s.get(ResearchRun, run_id)
         if run is None:
             raise LookupError(f"unknown run {run_id}")
+        if run.kind != "ipo_report":  # lots, categories and the UPI cut-off only exist for an IPO
+            raise ValueError(f"run {run_id} is a {run.kind}; personal suggestions are for IPO reports only")
         co = company_of(s, run_id)
         symbol, company_id = (co.nse_symbol if co else None), (co.id if co else None)
         synth = _synthesis(s, run_id)

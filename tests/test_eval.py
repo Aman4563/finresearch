@@ -276,3 +276,16 @@ def test_require_keeps_peers_figures_out(env, tmp_path):
             s, r.id, {"company": "t", "verdict": None, "facts": [fact]}, " ".join(f"[C{i}]" for i in ids)
         )
     assert res.facts[0].found and res.facts[0].claim_ids == [ids[1]] and not res.contradicted
+
+
+def test_the_default_exclusions_name_no_company():
+    """Company-specific peers and figures (Orient's ₹258 lower band, cable makers) live in that company's gold file."""
+    import re
+
+    from finresearch.evals.gold import DEFAULT_EXCLUDE
+
+    for term in ("258", "polycab", "finolex", "kissht", "paytm"):
+        assert term not in DEFAULT_EXCLUDE
+    orient = load_gold("orient-cables")
+    assert all(re.search(f["exclude"], "Polycab revenue", re.I) for f in orient["facts"])
+    assert all(re.search(f["exclude"], "lower band ₹258", re.I) for f in orient["facts"])

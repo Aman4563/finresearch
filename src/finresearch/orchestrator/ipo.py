@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from finresearch.agents.roles import STREAMS
@@ -61,11 +61,14 @@ class IpoPipeline(ResearchPipeline):
                     op = datetime.strptime(open_s, "%d-%b-%Y").date()
                     cl = datetime.strptime(close_s, "%d-%b-%Y").date()
                     facts["issue_open"], facts["issue_close"] = op.isoformat(), cl.isoformat()
-                    from finresearch.adapters.nse_holidays import trading_holidays
-
-                    facts["bidding_day_today"] = bidding_day_number(op, today_ist(), trading_holidays())
             except Exception as e:
                 facts["issue_info_error"] = f"{type(e).__name__}: {e}"
+        if facts.get("issue_open"):
+            # recomputed on every run: a run resumed on a later bidding day must not keep the first day's number
+            from finresearch.adapters.nse_holidays import trading_holidays
+
+            op = date.fromisoformat(facts["issue_open"])
+            facts["bidding_day_today"] = bidding_day_number(op, today_ist(), trading_holidays())
         facts["today_ist"] = today_ist().isoformat()
         self.ctx.facts = facts
         if facts.get("issue_close"):

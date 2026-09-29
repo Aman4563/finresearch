@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, localcontext
 
+from finresearch.fincalc.dates import add_years
 from finresearch.fincalc.numbers import Num, require_price, to_decimal
 
 Series = Sequence[tuple[date, Num]]
@@ -47,7 +48,7 @@ def trailing_return(navs: Series, years: int) -> Decimal | None:
     """Annualised return over the last `years` years (None if the history is shorter)."""
     s = _series(navs)
     end_d, end_v = s[-1]
-    start = nav_on_or_before(s, end_d.replace(year=end_d.year - years))
+    start = nav_on_or_before(s, add_years(end_d, -years))
     if start is None or (end_d - start[0]).days < 365 * years - 7:
         return None
     return annualised_return(start[1], end_v, start[0], end_d)
@@ -69,7 +70,7 @@ def rolling_returns(navs: Series, years: int, step_days: int = 7) -> RollingStat
     out, i = [], 0
     while i < len(s):
         d0, v0 = s[i]
-        target = d0.replace(year=d0.year + years)
+        target = add_years(d0, years)
         end = next(((d, v) for d, v in s[i:] if d >= target), None)
         if end is None:
             break

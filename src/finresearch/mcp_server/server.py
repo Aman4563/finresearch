@@ -440,7 +440,7 @@ async def amfi_nav_history(scheme_code: str, years: int = 5, risk_free_annual: s
     from finresearch.adapters.amfi import AmfiClient
     from finresearch.config import get_settings
     from finresearch.fincalc import funds, market
-    from finresearch.fincalc.dates import today_ist
+    from finresearch.fincalc.dates import add_years, today_ist
 
     today = today_ist()
     async with AmfiClient(cache_dir=get_settings().state_dir) as amfi:
@@ -449,9 +449,7 @@ async def amfi_nav_history(scheme_code: str, years: int = 5, risk_free_annual: s
             return json.dumps({"error": f"scheme {scheme_code} is not in AMFI's NAV file"})
         probe = today - timedelta(days=3 if today.weekday() == 0 else 1)
         # a few extra days so the N-year trailing return finds a NAV on or before its start date
-        hist = await amfi.scheme_history(
-            scheme, today.replace(year=today.year - years) - timedelta(days=10), today, probe
-        )
+        hist = await amfi.scheme_history(scheme, add_years(today, -years) - timedelta(days=10), today, probe)
     navs = [(h.day, h.nav) for h in hist]
     stats: dict[str, Any] = {"points": len(navs)}
     if len(navs) >= 3:
@@ -479,7 +477,7 @@ async def amfi_category_peers(scheme_code: str, limit: int = 25) -> str:
     NAVs (the scheme itself included), ranked by 3-year return. Cite AMFI's NAV history report."""
     from finresearch.adapters.amfi import AmfiClient
     from finresearch.fincalc import funds
-    from finresearch.fincalc.dates import today_ist
+    from finresearch.fincalc.dates import add_years, today_ist
 
     today = today_ist()
     async with AmfiClient() as amfi:
@@ -490,7 +488,7 @@ async def amfi_category_peers(scheme_code: str, limit: int = 25) -> str:
         peers = [x for x in rows if x.category == me.category and x.is_direct_growth and x.nav]
         # anchor on the latest NAV date (as trailing returns do), not today, so both tools agree
         anchor = me.day or today
-        past = {y: await amfi.navs_on(anchor.replace(year=anchor.year - y)) for y in (1, 3, 5)}
+        past = {y: await amfi.navs_on(add_years(anchor, -y)) for y in (1, 3, 5)}
     table = []
     for p in peers:
         row = {"scheme_code": p.code, "name": p.name, "amc": p.amc, "nav": str(p.nav), "nav_date": str(p.day)}
@@ -706,6 +704,7 @@ def save_claim(run_id: int, stream: str, statement: str, claim_type: str, citati
                 importance=importance,
             )
         except ValueError as e:
+            s.rollback()  # nothing of a rejected claim is kept
             return json.dumps({"error": str(e)})
         return json.dumps(res)
 

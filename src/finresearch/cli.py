@@ -239,13 +239,14 @@ def mcp_config() -> None:
 
 
 # --------------------------------------------------------------------------- ipo
-def _pipeline(run_id: int, streams: str | None, concurrency: int):
+def _pipeline(run_id: int, streams: str | None, concurrency: int | None):
     from finresearch.orchestrator.ipo import PipelineConfig
     from finresearch.orchestrator.kinds import KINDS, kind_of, pipeline_for
 
     allowed = KINDS[kind_of(run_id)].default_streams
-    chosen = tuple(x.strip() for x in streams.split(",")) if streams else allowed
-    unknown = set(chosen) - set(allowed)
+    # None: the pipeline keeps the streams/concurrency saved when the run started (or the kind's defaults)
+    chosen = tuple(x.strip() for x in streams.split(",")) if streams else None
+    unknown = set(chosen or ()) - set(allowed)
     if unknown:
         raise typer.BadParameter(f"unknown streams {sorted(unknown)}; choose from {allowed}")
     cfg = PipelineConfig(
@@ -254,7 +255,7 @@ def _pipeline(run_id: int, streams: str | None, concurrency: int):
     return pipeline_for(run_id, config=cfg)
 
 
-def _go(run_id: int, streams: str | None, concurrency: int, wait: bool) -> None:
+def _go(run_id: int, streams: str | None, concurrency: int | None, wait: bool) -> None:
     from finresearch.orchestrator.ipo import run_until_done
 
     status = asyncio.run(
@@ -368,7 +369,8 @@ app.add_typer(research_app, name="research")
 
 @research_app.command("resume")
 def research_resume(
-    run_id: int, streams: str | None = typer.Option(None), concurrency: int = typer.Option(4),
+    run_id: int, streams: str | None = typer.Option(None, help="Default: the streams the run started with"),
+    concurrency: int | None = typer.Option(None, help="Default: the concurrency the run started with"),
     wait: bool = typer.Option(False),
 ) -> None:  # fmt: skip
     """Resume a paused or failed run of any kind; finished steps are not repeated."""
@@ -458,8 +460,8 @@ def bond_run(
 @ipo_app.command("resume")
 def ipo_resume(
     run_id: int,
-    streams: str | None = typer.Option(None),
-    concurrency: int = typer.Option(4),
+    streams: str | None = typer.Option(None, help="Default: the streams the run started with"),
+    concurrency: int | None = typer.Option(None, help="Default: the concurrency the run started with"),
     wait: bool = typer.Option(False),
 ) -> None:
     """Resume a paused or failed run; finished steps are not repeated."""
