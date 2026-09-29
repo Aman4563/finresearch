@@ -87,8 +87,8 @@ They work only through the MCP tools, run as a resumable pipeline that schedules
 | **v0.4.0** | Quality and scale: offline evaluation in CI and back-testing, SME IPOs, Hindi news | ✅ Released |
 | **v0.5.0** | Listed stocks: research kinds, NSE stock data, stock research reports, stocks in the app | ✅ Released |
 | **v0.6.0** | Mutual funds: AMFI data, fund analytics, fund research reports, funds in the app | ✅ Released |
-| **v0.7.0** | Listed bonds and NCDs | 🚧 In progress |
-| Later | F&O analytics (v0.8.0) | Planned |
+| **v0.7.0** | Listed bonds and NCDs: NSE listing data, bond maths, bond research reports | ✅ Released |
+| **v0.8.0** | F&O analytics: option chains, greeks, strategy payoffs (analysis only) | 🚧 In progress |
 
 ## Requirements
 
