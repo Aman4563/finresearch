@@ -17,6 +17,7 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import quote
 
 import httpx
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -54,6 +55,7 @@ DASHBOARD_ORIGINS = [
     f"http://{h}:{p}" for h in ("127.0.0.1", "localhost") for p in (*range(3000, 3010), 3100)
 ]
 SAFE_METHODS = ("GET", "HEAD", "OPTIONS")
+EXPOSED_HEADERS = ["Content-Length", "Content-Range", "Accept-Ranges", "Content-Disposition", "ETag"]
 CSRF_HEADER = "x-finresearch"  # the dashboard sends `X-FinResearch: 1` on every unsafe request
 TERMINAL = ("done", "failed", "blocked")
 RESEARCH_KINDS = ("ipo_report", "stock_report", "fund_report", "bond_report")
@@ -165,6 +167,51 @@ def run_json(run: ResearchRun, co: Company | None, steps: dict[str, int] | None 
             "steps": steps or {}}  # fmt: skip
 
 
+MEDIA_TYPES = {
+    ".pdf": "application/pdf",
+    ".html": "text/html; charset=utf-8",
+    ".htm": "text/html; charset=utf-8",
+    ".md": "text/markdown; charset=utf-8",
+    ".csv": "text/csv; charset=utf-8",
+    ".txt": "text/plain; charset=utf-8",
+    ".json": "application/json",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".svg": "image/svg+xml",
+}
+UNSAFE_NAME = re.compile(r'[\x00-\x1f\x7f/\\:*?"<>|]+')
+
+
+def _download_name(title: str, suffix: str) -> str:
+    """A readable file name from a document title: no path or control characters, one extension, at most 120 chars."""
+    stem = re.sub(r"\s+", " ", UNSAFE_NAME.sub(" ", title)).strip(" .")[:120].strip(" .") or "document"
+    return stem if stem.lower().endswith(suffix.lower()) else f"{stem}{suffix}"
+
+
+def _content_disposition(kind: str, filename: str) -> str:
+    """RFC 6266 header: a quoted ASCII `filename` for every browser plus RFC 5987 `filename*` when it isn't ASCII."""
+    ascii_name = filename.encode("ascii", "ignore").decode().replace("\\", "_").replace('"', "'")
+    ascii_name = re.sub(r"\s+(?=\.[^.]*$)", "", re.sub(r"\s+", " ", ascii_name)).strip() or "file"
+    if ascii_name == filename:
+        return f'{kind}; filename="{filename}"'
+    if ascii_name.startswith("."):  # the whole stem was non-ASCII
+        ascii_name = f"file{ascii_name}"
+    return f"{kind}; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename, safe='')}"
+
+
+def _serve_file(path: Path, filename: str, *, download: bool, cache: str) -> FileResponse:
+    """GET and HEAD, byte ranges (206), a readable name, inline unless `download`, and a known media type."""
+    media = MEDIA_TYPES.get(path.suffix.lower(), "application/octet-stream")
+    headers = {
+        "Content-Disposition": _content_disposition("attachment" if download else "inline", filename),
+        "Cache-Control": cache,
+        "X-Content-Type-Options": "nosniff",
+    }
+    return FileResponse(path, media_type=media, headers=headers)
+
+
 def _within(path: Path, root: Path) -> bool:
     try:
         path.resolve().relative_to(root.resolve())
@@ -209,8 +256,10 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=LOCAL_HOSTS)
     app.add_middleware(CsrfGuard)
     app.add_middleware(CatchAll)
-    app.add_middleware(CORSMiddleware, allow_origins=DASHBOARD_ORIGINS, allow_methods=["GET", "POST", "PUT", "PATCH"],
-                       allow_headers=["*"])  # fmt: skip
+    # the in-app PDF viewer (pdf.js) reads the length/range headers to stream big documents in chunks
+    app.add_middleware(CORSMiddleware, allow_origins=DASHBOARD_ORIGINS,
+                       allow_methods=["GET", "HEAD", "POST", "PUT", "PATCH"], allow_headers=["*"],
+                       expose_headers=EXPOSED_HEADERS)  # fmt: skip
 
     @app.exception_handler(ValueError)
     async def _value_error(_req: Request, e: ValueError) -> JSONResponse:
@@ -283,16 +332,32 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
         return {"document_id": doc_id, "title": title, "start": start,
                 "lines": lines[start - 1 : min(end, len(lines))]}  # fmt: skip
 
-    @app.get("/api/documents/{doc_id}/file")
-    def document_file(doc_id: int) -> FileResponse:
+    @app.get("/api/documents/{doc_id}")
+    def document(doc_id: int) -> dict[str, Any]:
+        """A source document's metadata (the in-app viewer's title and page count)."""
         with session_scope() as s:
             d = s.get(Document, doc_id)
             if d is None:
                 raise HTTPException(404, "unknown document")
-            path = Path(d.local_path)
-        if not (_within(path, get_settings().docs_dir) and path.exists()):
+            co = s.get(Company, d.company_id) if d.company_id else None
+            return {"id": d.id, "kind": d.kind, "title": d.title, "pages": d.pages, "bytes": d.bytes,
+                    "source_url": d.source_url, "fetched_at": _iso(d.fetched_at),
+                    "filename": _download_name(d.title, Path(d.local_path).suffix or ".pdf"),
+                    "company": {"slug": co.slug, "name": co.name} if co else None}  # fmt: skip
+
+    @app.api_route("/api/documents/{doc_id}/file", methods=["GET", "HEAD"])
+    def document_file(doc_id: int, download: bool = False) -> FileResponse:
+        """The original file, inline (or as an attachment with ?download=1). Documents are sha256-addressed and never
+        rewritten in place, so browsers may cache them for a long time."""
+        with session_scope() as s:
+            d = s.get(Document, doc_id)
+            if d is None:
+                raise HTTPException(404, "unknown document")
+            path, title = Path(d.local_path), d.title
+        if not (_within(path, get_settings().docs_dir) and path.is_file()):
             raise HTTPException(404, "document file not available")
-        return FileResponse(path, media_type="application/pdf")
+        return _serve_file(path, _download_name(title, path.suffix or ".pdf"), download=download,
+                           cache="private, max-age=604800, immutable")  # fmt: skip
 
     # ------------------------------------------------------------------ runs
     @app.get("/api/runs")
@@ -431,21 +496,29 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
         )
         return {"run_id": run_id, "path": str(root), "files": files}
 
-    @app.get("/api/runs/{run_id}/pack/{path:path}")
-    def pack_file(run_id: int, path: str) -> FileResponse:
-        root = _pack_root(run_id)
+    @app.api_route("/api/runs/{run_id}/pack/{path:path}", methods=["GET", "HEAD"])
+    def pack_file(run_id: int, path: str, download: bool = False) -> FileResponse:
+        """One file of the run's pack, inline (or as an attachment with ?download=1), named after company and run."""
+        root, slug, status = _pack_info(run_id)
         target = root / path
         if not (_within(target, root) and target.is_file()):
             raise HTTPException(404, "file not in this run's pack")
-        return FileResponse(target)
+        # a finished run's pack only changes if the run is resumed: cache briefly; a running one not at all
+        cache = "private, max-age=300" if status in TERMINAL else "no-cache"
+        name = _download_name(f"{slug}-run-{run_id}-{target.stem}", target.suffix)
+        return _serve_file(target, name, download=download, cache=cache)
 
-    def _pack_root(run_id: int) -> Path:
+    def _pack_info(run_id: int) -> tuple[Path, str, str]:
         with session_scope() as s:
             run = s.get(ResearchRun, run_id)
             if run is None:
                 raise HTTPException(404, f"unknown run {run_id}")
             co = s.get(Company, run.company_id)
-            return get_settings().reports_dir / (co.slug if co else "_") / f"run-{run_id}"
+            slug = co.slug if co else "_"
+            return get_settings().reports_dir / slug / f"run-{run_id}", slug, run.status
+
+    def _pack_root(run_id: int) -> Path:
+        return _pack_info(run_id)[0]
 
     # ------------------------------------------------------------------ live events
     @app.get("/api/runs/{run_id}/events")

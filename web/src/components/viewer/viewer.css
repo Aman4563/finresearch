@@ -1,0 +1,83 @@
+/* In-app PDF viewer: pages, pdf.js text layer (selectable, searchable text over the canvas) and search highlights.
+   The text layer rules follow pdfjs-dist/web/pdf_viewer.css (v6), trimmed to what the viewer uses. */
+
+.pdf-page {
+  --scale-round-x: 1px;
+  --scale-round-y: 1px;
+  position: absolute; /* placed by the viewer (top/left), only pages near the viewport are in the DOM */
+  background: #fff;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.08), 0 4px 16px -6px rgb(0 0 0 / 0.18);
+  border-radius: 2px;
+  overflow: hidden;
+}
+:root[data-theme="dark"] .pdf-page { box-shadow: 0 0 0 1px rgb(255 255 255 / 0.06), 0 8px 24px -8px rgb(0 0 0 / 0.7); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]):not([data-theme="dark"]) .pdf-page { box-shadow: 0 0 0 1px rgb(255 255 255 / 0.06), 0 8px 24px -8px rgb(0 0 0 / 0.7); }
+}
+.pdf-page canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+
+.textLayer {
+  color-scheme: only light;
+  position: absolute;
+  text-align: initial;
+  inset: 0;
+  overflow: clip;
+  opacity: 1;
+  line-height: 1;
+  letter-spacing: normal;
+  word-spacing: normal;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  caret-color: CanvasText;
+  z-index: 0;
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+}
+.textLayer :is(span:not(.hl), br) {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+  user-select: text;
+}
+.textLayer > :not(.markedContent),
+.textLayer .markedContent span:not(.markedContent, .hl) {
+  z-index: 1;
+  --font-height: 0;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  --scale-x: 1;
+  --rotate: 0deg;
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+.textLayer .markedContent { display: contents; }
+.textLayer span[role="img"] { user-select: none; cursor: default; }
+.textLayer ::selection { background: color-mix(in srgb, AccentColor, transparent 50%); color: transparent; }
+.textLayer br::selection { background: transparent; }
+.textLayer .endOfContent {
+  display: block;
+  position: absolute;
+  inset: 100% 0 0;
+  z-index: 0;
+  cursor: default;
+  user-select: none;
+}
+.textLayer.selecting .endOfContent { top: 0; }
+
+/* search matches: inside a text span, so position is inline (not absolute) */
+.textLayer .hl {
+  position: relative;
+  color: transparent;
+  white-space: pre;
+  cursor: text;
+  margin: -1px;
+  padding: 1px;
+  border-radius: 3px;
+  background: rgb(250 204 21 / 0.42);
+}
+.textLayer .hl.sel {
+  background: rgb(13 148 136 / 0.45);
+  box-shadow: 0 0 0 2px rgb(13 148 136 / 0.85);
+}

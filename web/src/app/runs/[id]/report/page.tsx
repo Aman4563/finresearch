@@ -15,7 +15,8 @@ import { SuggestionPanel } from "@/components/suggestion";
 import { Badge, Button, Callout, Card, ErrorNote, InfoTip, Modal, Skeleton, SkeletonRows, cx } from "@/components/ui";
 import { Toc, extractHeadings, headingId, parseVerdict, plain, useReadingState, verdictTone } from "@/components/workspace/report-parts";
 import { KindIcon, kindMeta } from "@/components/workspace/run-meta";
-import { API_URL, type Claim, type Report, useApi } from "@/lib/api";
+import { type Claim, type Report, useApi } from "@/lib/api";
+import { fileUrl, viewerHref } from "@/lib/viewer";
 
 const CITE = /\[C(\d+)\](?!\()/g;
 
@@ -207,18 +208,33 @@ export default function ReportReader() {
         <div className="flex flex-wrap items-center gap-2">
           {downloads.map((f) => {
             const ext = f.split(".").pop() ?? "";
+            const file = { run: Number(id), path: f };
+            const chip = "inline-flex h-8 items-center gap-1.5 rounded-lg bg-card px-2.5 text-xs font-medium ring-1 ring-inset ring-border transition hover:bg-card-hover hover:ring-border-strong";
+            const label = <span className={dupExt(ext) ? "max-w-32 truncate" : "uppercase"}>{dupExt(ext) ? f.split("/").pop() : ext}</span>;
+            if (ext === "xlsx")
+              return (
+                <a key={f} href={fileUrl(file, true)} title={`Download ${f.split("/").pop()}`} className={chip}>
+                  {FILE_ICON[ext]}
+                  {label}
+                </a>
+              );
+            if (ext !== "pdf")
+              return (
+                <Link key={f} href={viewerHref(file)} title={`View ${f.split("/").pop()}`} className={chip}>
+                  {FILE_ICON[ext] ?? <FileText className="size-3.5" />}
+                  {label}
+                </Link>
+              );
             return (
-              <a
-                key={f}
-                href={`${API_URL}/api/runs/${id}/pack/${f}`}
-                target="_blank"
-                rel="noreferrer"
-                title={`Download ${f.split("/").pop()}`}
-                className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-card px-2.5 text-xs font-medium ring-1 ring-inset ring-border transition hover:bg-card-hover hover:ring-border-strong"
-              >
-                {FILE_ICON[ext] ?? <Download className="size-3.5" />}
-                <span className={dupExt(ext) ? "max-w-32 truncate" : "uppercase"}>{dupExt(ext) ? f.split("/").pop() : ext}</span>
-              </a>
+              <span key={f} className="inline-flex h-8 items-stretch overflow-hidden rounded-lg bg-card text-xs font-medium ring-1 ring-inset ring-border">
+                <Link href={viewerHref(file)} title={`View ${f.split("/").pop()} here`} className="inline-flex items-center gap-1.5 px-2.5 transition hover:bg-card-hover">
+                  {FILE_ICON.pdf}
+                  {dupExt(ext) ? label : <span>View PDF</span>}
+                </Link>
+                <a href={fileUrl(file, true)} title={`Download ${f.split("/").pop()}`} aria-label={`Download ${f.split("/").pop()}`} className="grid w-8 place-items-center border-l border-border text-muted transition hover:bg-card-hover hover:text-foreground">
+                  <Download className="size-3.5" />
+                </a>
+              </span>
             );
           })}
           <Button variant={asking ? "secondary" : "primary"} icon={asking ? <X className="size-3.5" /> : <MessagesSquare className="size-3.5" />} onClick={() => setAsking((a) => !a)}>
