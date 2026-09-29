@@ -140,3 +140,19 @@ These are dated entries for bugs we reproduced, what caused them, and how they a
 ### 2026-09-29: headless screenshots caught animations mid-way
 - **Seen:** Chrome's `--screenshot` captured before chart and entrance animations finished, so bars looked empty and list rows looked faded. It also cannot lay out narrower than about 500 px.
 - **Now:** UI checks drive Chrome through its debugging protocol with an explicit wait and 390 px device emulation, and `?theme=` / `?welcome=0` pin the theme and hide the welcome tour.
+
+### 2026-09-29: NSE data gaps (#83, #84, #85)
+- **Seen:** the stock page had no FII/DII split, results stopped at Dec-2024, and NSE mainboard IPOs showed no lot cost.
+- **Now:**
+  - The shareholding split comes from the filed shareholding-pattern XBRL (INFY Jun-2026: FPI 27.09, DII 42.96, promoter 13.82, matching the filing).
+  - Results come from NSE Integrated Filing (Financials) from Mar-2025 (INFY Q1 FY27 figures match the filed PDF). Banks and insurers are mapped.
+  - Lots come from NSE's issue page, cross-checked against BSE (Orient: 55 shares, confirmed by NSE's Security Parameters PDF).
+  - A band mismatch between NSE's list and its issue page (Runwal ₹302 vs ₹305) is flagged.
+
+### 2026-09-29: report PDF showed nothing in the user's browser (#91)
+- **Seen:** three 200 responses for run 9's report.pdf with nothing displayed. Not reproducible: the file is valid, and Chrome settings and extensions don't intercept PDFs. `HEAD` returned 405.
+- **Now:** the in-app pdf.js viewer is used for every PDF. File routes answer HEAD and send a filename. Scanned pages render (pdf.js decoder assets are copied at build).
+
+### 2026-09-29: report charts misrepresented ranges (#94, found in review)
+- **Seen:** "Fair value vs price" drew entry zones and bands as bars from ₹0. On run 12 a needs-review YTM the report had dropped appeared as a headline tile.
+- **Now:** ranges are floating low–high bars and single values are dots, with the missing end of a range never invented. Headlines use verified claims only (`test_summary_headlines_use_verified_claims_only`, `test_fair_values_pair_low_and_high_ends_but_never_invent_one`).
