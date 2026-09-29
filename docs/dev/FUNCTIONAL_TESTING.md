@@ -124,3 +124,11 @@ These are dated entries for bugs we reproduced, what caused them, and how they a
 - **Price basis:** NSE's page for bonds traded in the capital market says they trade and settle on a dirty price (accrued interest included). `bond_analytics` now defaults `price_basis` to `dirty` and returns `price_basis_source`. NSE's separate debt segment quotes clean prices, so that segment is out of scope.
 - **Day count:** SEBI circular CIR/IMD/DF-1/122/2016 sets Actual/Actual for listed debt: 366 days when the year (counted between maturity anniversaries) contains 29-Feb, otherwise 365. Before this fix, `accrued_interest` always used 365 (`test_accrued_interest_is_actual_actual_per_sebi`).
 - **L&T NCD INE027E07998:** the Tranche 1 prospectus (22-Feb-2019, on sebi.gov.in) lists Series VI Option 2 at 8.98%, paid monthly on an Actual/Actual basis, face value ₹1,000. Its gold file now cites the prospectus for the frequency.
+
+### 2026-09-29: deep code review (#63, #66, #67)
+- **Seen:** 24 problems across the monitor, the pipeline and the API/dashboard (listed in PRODUCT_REQUIREMENTS, verification log). 18 were reproduced against running code or throwaway tests.
+- **Now:** every one is fixed, with a regression test that fails on the old code (`tests/test_monitor.py`, `test_orchestrator.py`, `test_gate.py`, `test_db_pipeline.py`, `test_api.py`). The redeployed app was checked live: a cross-site POST is refused (403), and the 12:00 Orient check ran on the new monitor code.
+
+### 2026-09-29: BSE SME issues were not covered (#60, #69)
+- **Seen:** only NSE issues appeared on the radar, and a BSE-only SME issue could not be researched or watched.
+- **Now:** a BSE adapter with the full browser headers BSE's edge needs (the same headers from curl get a 403). The radar, issue facts, watches, subscription and listing checks all work for BSE-only issues. Tests run offline on payloads recorded live on 29-Sep-2026 (`tests/test_bse.py`).
