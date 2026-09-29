@@ -183,9 +183,9 @@ def _latest_report(s, run_id: int) -> str | None:
 # --------------------------------------------------------------------------- app
 def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=None, live_fetch=None,
                monitor: bool = False, monitor_deps=None, nse_detail=None, equity_list=None,
-               nav_all=None, fno_client=None, bonds=None) -> FastAPI:  # fmt: skip
+               nav_all=None, fno_client=None, bonds=None, clock=None) -> FastAPI:  # fmt: skip
     """Test seams: `router` (bridge for chat and suggestions), `live_fetch` / `nse_detail` / `bonds` (NSE),
-    `monitor_deps`.
+    `monitor_deps`, `clock` (() -> aware datetime, for the live routes' market hours).
 
     With monitor=True (as `finresearch serve` does) the monitoring scheduler runs inside the API process."""
     spawner = spawner or Spawner()
@@ -940,9 +940,11 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
         import time
 
         from finresearch.adapters.nse import NseClient
+        from finresearch.api.live import radar_ttl
         from finresearch.fincalc.dates import now_ist
 
-        if not refresh and radar_cache.get("at", 0) > time.time() - RADAR_TTL_S:
+        ttl = await asyncio.to_thread(radar_ttl, datetime.now(UTC), RADAR_TTL_S)
+        if not refresh and radar_cache.get("at", 0) > time.time() - ttl:
             return radar_cache["data"]
         errors: list[str] = []
         issues: list[tuple[str, Any]] = []
@@ -1038,6 +1040,11 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
     from finresearch.api.markets import add_market_routes
 
     add_market_routes(app, bond_rows=_bond_rows, scheme_rows=_scheme_rows)
+
+    # ------------------------------------------------------------------ live data while the market is open
+    from finresearch.api.live import add_live_routes
+
+    add_live_routes(app, monitor_deps=monitor_deps, clock=clock)
 
     return app
 

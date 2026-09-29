@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { InteractivePayoff, OiButterfly } from "@/components/fno/charts";
 import { type Chain, type Leg, type PresetKey, PRESETS, type Result, n, payoffCurve, pnlAt, premiumOf, presetLegs } from "@/components/fno/model";
 import { fmtINR } from "@/components/charts";
+import { LiveStamp, sessionOpen, useMarketStatus } from "@/components/live";
 import { Badge, Button, Callout, Card, EmptyState, ErrorNote, InfoTip, PageHeader, Segmented, Skeleton, Stat, cx, inputClass } from "@/components/ui";
 import { api, day, when } from "@/lib/api";
 
@@ -121,6 +122,9 @@ export default function Fno() {
   const [loading, setLoading] = useState<"" | "expiries" | "chain" | "analyse">("");
   const [width, setWidth] = useState(10);
   const [what, setWhat] = useState<number | null>(null);
+  const [chainAt, setChainAt] = useState<Date | null>(null);
+  const market = useMarketStatus();
+  const liveFno = sessionOpen(market.data, "equity");
 
   const loadChain = useCallback(async (sym: string, exp: string) => {
     setExpiry(exp);
@@ -128,6 +132,7 @@ export default function Fno() {
     setLoading("chain");
     try {
       setChain(await api<Chain>(`/api/fno/${encodeURIComponent(sym)}/chain?expiry=${exp}`));
+      setChainAt(new Date());
       setResult(null);
       setLegs([]);
       setWhat(null);
@@ -175,6 +180,30 @@ export default function Fno() {
       setLoading("");
     }
   }, [symbol, expiry, chain]);
+
+  // while NSE is open the chain refreshes every minute; legs stay, premiums (and so the payoff) follow the market
+  const legsRef = useRef<Leg[]>([]);
+  const refreshChain = useCallback(async () => {
+    if (!chain) return;
+    try {
+      setChain(await api<Chain>(`/api/fno/${encodeURIComponent(chain.symbol)}/chain?expiry=${chain.expiry}`));
+      setChainAt(new Date());
+      if (legsRef.current.length) await analyse(legsRef.current);
+    } catch {
+      /* keep the last chain; the stamp shows its time */
+    }
+  }, [chain, analyse]);
+  const refreshRef = useRef(refreshChain);
+  useEffect(() => {
+    legsRef.current = result ? legs : [];
+    refreshRef.current = refreshChain;
+  });
+  const hasChain = chain != null;
+  useEffect(() => {
+    if (!liveFno || !hasChain) return;
+    const t = setInterval(() => !document.hidden && refreshRef.current(), 60000);
+    return () => clearInterval(t);
+  }, [liveFno, hasChain]);
 
   // ?preset=iron_condor (shareable link): apply once, when the first chain arrives
   const [presetDone, setPresetDone] = useState(false);
@@ -230,6 +259,10 @@ export default function Fno() {
         title="F&O analytics"
         description="NSE option chain, open interest and a strategy builder that shows what you could make or lose at expiry. Analysis only: no orders are placed."
       />
+      {chain && (
+        <LiveStamp session="equity" live={liveFno} status={market.data} updatedAt={chainAt} everyMs={60000}
+          asOf={chain.as_of} onRefresh={refreshChain} className="-mt-4" />
+      )}
 
       <Card>
         <form className="flex flex-wrap items-end gap-2" onSubmit={(e) => { e.preventDefault(); load(symbol); }}>

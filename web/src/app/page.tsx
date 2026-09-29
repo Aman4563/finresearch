@@ -13,6 +13,7 @@ import { LiveDot, SubMeter, TERMS, countdown, daysUntil, int, istAt, times, useN
 import { AlertFeed } from "@/components/monitor/alert-feed";
 import { useWatchDetails } from "@/components/monitor/hooks";
 import { Card, EmptyState, ErrorNote, Skeleton, SkeletonRows, Stat, cx } from "@/components/ui";
+import { useLive } from "@/components/live";
 import {
   type AlertItem, type Decision, type Issue, type Profile, type RunSummary, useApi, type WatchSummary,
 } from "@/lib/api";
@@ -21,7 +22,7 @@ type Radar = { fetched_at: string; issues: Issue[]; errors: string[] };
 const IST = "Asia/Kolkata";
 
 export default function Dashboard() {
-  const radar = useApi<Radar>("/api/ipos", 5 * 60000);
+  const radar = useLive<Radar>("/api/ipos", { session: "ipo", everyMs: 60000, idleMs: 5 * 60000 });
   const watches = useApi<WatchSummary[]>("/api/watches", 60000);
   const alerts = useApi<AlertItem[]>("/api/alerts?limit=50", 60000);
   const runs = useApi<RunSummary[]>("/api/runs", 30000);

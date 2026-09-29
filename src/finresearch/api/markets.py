@@ -207,8 +207,6 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
         return await cache.get(("overview", sym), 600, lambda: _overview(sym))
 
     async def _overview(sym: str) -> dict[str, Any]:
-        from finresearch.fincalc.valuation import market_cap
-
         s = src()
         today = s.today()
         errors: list[str] = []
@@ -225,22 +223,7 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
             holding = await part("shareholding", lambda: eq.shareholding(sym), [])
             actions = await part("corporate actions", lambda: eq.corporate_actions(sym), [])
             anns = await part("announcements", lambda: eq.announcements(sym), [])
-        quote = None
-        if q is not None:
-            last = q.last_price or q.close_price
-            change = (last - q.previous_close) if last is not None and q.previous_close else None
-            mcap = market_cap(q.issued_shares, last) if q.issued_shares and last else None
-            pos = None
-            if last and q.week52_high and q.week52_low and q.week52_high > q.week52_low:
-                pos = (last - q.week52_low) / (q.week52_high - q.week52_low)
-            quote = {"symbol": q.symbol or sym, "company": q.company, "industry": q.industry, "status": q.status,
-                     "listing_date": q.listing_date.isoformat() if q.listing_date else None,
-                     "as_of": q.as_of.isoformat() if q.as_of else None, "last_price": _s(last), "open": _s(q.open),
-                     "previous_close": _s(q.previous_close), "change": _s(change),
-                     "change_pct": _f(change / q.previous_close * 100, 4) if change is not None else None,
-                     "week52_high": _s(q.week52_high), "week52_low": _s(q.week52_low),
-                     "week52_position": _f(pos, 4), "issued_shares": _s(q.issued_shares),
-                     "market_cap": _s(mcap.quantize(Decimal(1))) if mcap is not None else None}  # fmt: skip
+        quote = quote_json(q, sym) if q is not None else None
         year_ago = today - timedelta(days=365)
         ttm_dps = sum((a.dividend_per_share for a in actions
                        if a.dividend_per_share and a.ex_date and year_ago < a.ex_date <= today), Decimal(0))  # fmt: skip
@@ -639,6 +622,26 @@ def _verified_frequency(isin: str) -> tuple[int, dict[str, Any]] | None:
         if value is not None and value == int(value) and int(value) in (1, 2, 4, 12):
             return int(value), {"kind": "verified", "claim_id": claim_id, "run_id": run_id}
     return None
+
+
+def quote_json(q, sym: str) -> dict[str, Any]:
+    """An NSE quote as the stock pages show it: last price, day change, 52-week position and market cap."""
+    from finresearch.fincalc.valuation import market_cap
+
+    last = q.last_price or q.close_price
+    change = (last - q.previous_close) if last is not None and q.previous_close else None
+    mcap = market_cap(q.issued_shares, last) if q.issued_shares and last else None
+    pos = None
+    if last and q.week52_high and q.week52_low and q.week52_high > q.week52_low:
+        pos = (last - q.week52_low) / (q.week52_high - q.week52_low)
+    return {"symbol": q.symbol or sym, "company": q.company, "industry": q.industry, "status": q.status,
+            "listing_date": q.listing_date.isoformat() if q.listing_date else None,
+            "as_of": q.as_of.isoformat() if q.as_of else None, "last_price": _s(last), "open": _s(q.open),
+            "previous_close": _s(q.previous_close), "change": _s(change),
+            "change_pct": _f(change / q.previous_close * 100, 4) if change is not None else None,
+            "week52_high": _s(q.week52_high), "week52_low": _s(q.week52_low),
+            "week52_position": _f(pos, 4), "issued_shares": _s(q.issued_shares),
+            "market_cap": _s(mcap.quantize(Decimal(1))) if mcap is not None else None}  # fmt: skip
 
 
 def _profile_slab() -> Decimal:

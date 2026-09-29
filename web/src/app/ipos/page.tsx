@@ -17,7 +17,8 @@ import { BarsChart } from "@/components/charts";
 import {
   Badge, Button, Card, EmptyState, ErrorNote, InfoTip, PageHeader, Segmented, Skeleton, Stat, Table, cx, inputClass,
 } from "@/components/ui";
-import { API_URL, type Company, type Issue, type WatchSummary, useApi, when } from "@/lib/api";
+import { LiveStamp, useLive } from "@/components/live";
+import { API_URL, type Company, type Issue, type WatchSummary, useApi } from "@/lib/api";
 
 type Radar = { fetched_at: string; issues: Issue[]; errors: string[] };
 type Phase = "all" | "open" | "upcoming" | "closed";
@@ -30,7 +31,8 @@ const VIEW_KEY = "finresearch.ipos.view";
 const phaseOf = (i: Issue) => (i.phase === "current" ? "open" : i.phase);
 
 export default function IposPage() {
-  const radar = useApi<Radar>("/api/ipos", 5 * 60000);
+  // subscription moves during bidding hours: refresh every minute then, every 5 minutes otherwise
+  const radar = useLive<Radar>("/api/ipos", { session: "ipo", everyMs: 60000, idleMs: 5 * 60000 });
   const companies = useApi<Company[]>("/api/companies");
   const watches = useApi<WatchSummary[]>("/api/watches");
   const details = useWatchDetails(watches.data);
@@ -141,7 +143,6 @@ export default function IposPage() {
         description="Open and upcoming issues on NSE (mainboard and SME) and BSE SME, with lot costs, live subscription and one-click research."
         actions={
           <>
-            {data && <span className="num text-xs text-muted">Updated {when(data.fetched_at)}</span>}
             <Button variant="secondary" onClick={refresh} disabled={refreshing}
               icon={<RefreshCw className={cx("size-3.5", refreshing && "animate-spin")} />}>
               {refreshing ? "Refreshing…" : "Refresh"}
@@ -149,6 +150,8 @@ export default function IposPage() {
           </>
         }
       />
+      <LiveStamp session="ipo" live={radar.live} status={radar.status} updatedAt={radar.updatedAt} everyMs={60000}
+        asOf={data?.fetched_at} asOfLabel="Exchange data fetched" className="-mt-4 mb-5" />
 
       <div className="stagger grid grid-cols-2 gap-3 lg:grid-cols-5">
         <Stat label="Open now" format={int} value={radar.data ? kpi.open : null} icon={<LiveDot className="size-1.5" />} tone="gain"

@@ -144,34 +144,43 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-/** Fetch once (and on `reload`), optionally polling every `pollMs`. */
+/** Fetch once (and on `reload`), optionally polling every `pollMs`. Polling pauses while the tab is hidden and
+ * catches up when it is shown again. `updatedAt` is when the last successful response arrived. */
 export function useApi<T>(path: string | null, pollMs?: number) {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
   const [tick, setTick] = useState(0);
   const reload = useCallback(() => setTick((t) => t + 1), []);
 
   useEffect(() => {
     if (!path) return;
     let alive = true;
-    const load = () =>
-      api<T>(path)
+    let last = 0;
+    const load = () => {
+      last = Date.now();
+      return api<T>(path)
         .then((d) => {
           if (alive) {
             setData(d);
             setError(null);
+            setUpdatedAt(new Date());
           }
         })
         .catch((e: Error) => alive && setError(e.message));
+    };
     load();
-    const timer = pollMs ? setInterval(load, pollMs) : undefined;
+    const timer = pollMs ? setInterval(() => !document.hidden && load(), pollMs) : undefined;
+    const onShow = () => pollMs && !document.hidden && Date.now() - last >= pollMs && load();
+    document.addEventListener("visibilitychange", onShow);
     return () => {
       alive = false;
       if (timer) clearInterval(timer);
+      document.removeEventListener("visibilitychange", onShow);
     };
   }, [path, pollMs, tick]);
 
-  return { data, error, reload };
+  return { data, error, reload, updatedAt };
 }
 
 /** Tell other components (e.g. the header's alert badge) that alerts changed. */
