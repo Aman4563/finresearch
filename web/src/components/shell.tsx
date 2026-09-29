@@ -63,8 +63,9 @@ export function navFor(path: string): NavItem | undefined {
 export type Theme = "light" | "dark" | "system";
 const THEME_KEY = "finresearch.theme";
 
-/** Runs before paint (inlined in <head>) so the page never flashes the wrong theme. */
-export const THEME_SCRIPT = `try{var t=localStorage.getItem("${THEME_KEY}")||"system";document.documentElement.dataset.theme=t==="system"?(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"):t;document.documentElement.dataset.themePref=t}catch(e){}`;
+/** Runs before paint (inlined in <head>) so the page never flashes the wrong theme. `?theme=light|dark` forces one
+ * for that page view (screenshots), without saving it. */
+export const THEME_SCRIPT = `try{var q=new URLSearchParams(location.search).get("theme");var t=(q==="light"||q==="dark")?q:(localStorage.getItem("${THEME_KEY}")||"system");document.documentElement.dataset.theme=t==="system"?(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"):t;document.documentElement.dataset.themePref=t}catch(e){}`;
 
 export function useTheme() {
   const [pref, setPref] = useState<Theme>("system");
