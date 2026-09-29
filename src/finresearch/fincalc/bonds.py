@@ -6,7 +6,8 @@ Conventions (state them in reports):
   day and month schedule, the last one with the principal.
 * Discounting counts coupon periods: the fraction of the current period still to run (actual days / actual days in
   the period), then whole periods, so a bond priced at par on a coupon date yields exactly its coupon.
-* Accrued interest is the annual coupon x actual days since the last coupon / 365.
+* Accrued interest is Actual/Actual as SEBI prescribes for listed debt: a day accrues coupon/365, or coupon/366 in a
+  one-year period that contains 29 February.
 * Yields are annual, compounded `freq` times a year; prices are per `face` value and exclude accrued interest (clean)
   unless named dirty.
 """
@@ -71,12 +72,34 @@ def cash_flows(
     return [CashFlow(d, per + (f if d == maturity else 0), first + k) for k, d in enumerate(days)]
 
 
+def _anniversary(maturity: date, year: int) -> date:
+    return date(year, maturity.month, min(maturity.day, calendar.monthrange(year, maturity.month)[1]))
+
+
+def _year_basis(d: date, maturity: date) -> int:
+    """366 when the one-year period between two anniversaries of the maturity date that contains `d` includes a
+    29 February, else 365 (SEBI day-count convention, CIR/IMD/DF-1/122/2016, carried into the NCS operational
+    circular)."""
+    end = _anniversary(maturity, d.year)
+    if end <= d:
+        end = _anniversary(maturity, d.year + 1)
+    start = _anniversary(maturity, end.year - 1)
+    leap_days = (date(y, 2, 29) for y in range(start.year, end.year + 1) if calendar.isleap(y))
+    return 366 if any(start < x <= end for x in leap_days) else 365
+
+
 def accrued_interest(
     settlement: date, maturity: date, coupon_rate: Num, freq: int, face: Num = 100
 ) -> Decimal:
-    """Coupon accrued since the previous coupon date, actual days / 365 of the annual coupon."""
+    """Coupon accrued since the previous coupon date on the SEBI Actual/Actual basis: each day accrues
+    coupon / 365, or coupon / 366 in a one-year period that contains 29 February."""
     prev = previous_coupon(settlement, maturity, freq)
-    return require_price(face, "face") * to_decimal(coupon_rate) * Decimal((settlement - prev).days) / 365
+    per_year = require_price(face, "face") * to_decimal(coupon_rate)
+    total, d = Decimal(0), prev
+    while d < settlement:
+        total += per_year / _year_basis(d, maturity)
+        d = date.fromordinal(d.toordinal() + 1)
+    return total
 
 
 def dirty_price(
