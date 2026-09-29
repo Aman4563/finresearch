@@ -74,11 +74,13 @@ const RANGE_DAYS: Record<Range, number> = { "1M": 31, "3M": 92, "6M": 183, "1Y":
 /** Line/area time series. `data` rows have an ISO date under `x` plus one numeric field per series. */
 export function TimeSeriesChart({
   data, x = "date", series, height = 260, format = fmtDefault, ranges, defaultRange = "1Y", area = true,
-  references, showChange = true, xFormat = shortDate, yDomain,
+  references, showChange = true, xFormat = shortDate, yDomain, curve = "monotone", dots = false,
 }: {
   data: Record<string, unknown>[]; x?: string; series: Series[]; height?: number; format?: Fmt; ranges?: Range[];
   defaultRange?: Range; area?: boolean; references?: { y: number; label: string; tone?: "gain" | "loss" | "muted" }[];
   showChange?: boolean; xFormat?: (v: string | number) => string; yDomain?: [number | "auto" | "dataMin", number | "auto" | "dataMax"];
+  /** "linear" for sparse observations (no invented shape between points); `dots` marks each observation. */
+  curve?: "monotone" | "linear"; dots?: boolean;
 }) {
   const gid = useId().replace(/:/g, "");
   const [range, setRange] = useState<Range>(ranges ? (ranges.includes(defaultRange) ? defaultRange : ranges[ranges.length - 1]) : "ALL");
@@ -136,8 +138,9 @@ export function TimeSeriesChart({
                   strokeDasharray="4 4" label={{ value: r.label, position: "insideTopLeft", fill: "var(--muted)", fontSize: 10 }} />
               ))}
               {series.map((s, i) => (
-                <Area key={s.key} type="monotone" dataKey={s.key} name={s.label} stroke={color(s, i)} strokeWidth={2}
-                  strokeDasharray={s.dashed ? "5 4" : undefined} fill={`url(#${gid}-${i})`} dot={false}
+                <Area key={s.key} type={curve} dataKey={s.key} name={s.label} stroke={color(s, i)} strokeWidth={2}
+                  strokeDasharray={s.dashed ? "5 4" : undefined} fill={`url(#${gid}-${i})`}
+                  dot={dots ? { r: 3, strokeWidth: 0, fill: color(s, i) } : false}
                   activeDot={{ r: 4, strokeWidth: 2, stroke: "var(--card)" }} connectNulls animationDuration={700} />
               ))}
             </AreaChart>
@@ -153,8 +156,9 @@ export function TimeSeriesChart({
                   label={{ value: r.label, position: "insideTopLeft", fill: "var(--muted)", fontSize: 10 }} />
               ))}
               {series.map((s, i) => (
-                <Line key={s.key} type="monotone" dataKey={s.key} name={s.label} stroke={color(s, i)} strokeWidth={2}
-                  strokeDasharray={s.dashed ? "5 4" : undefined} dot={false} activeDot={{ r: 4 }} connectNulls animationDuration={700} />
+                <Line key={s.key} type={curve} dataKey={s.key} name={s.label} stroke={color(s, i)} strokeWidth={2}
+                  strokeDasharray={s.dashed ? "5 4" : undefined}
+                  dot={dots ? { r: 3, strokeWidth: 0, fill: color(s, i) } : false} activeDot={{ r: 4 }} connectNulls animationDuration={700} />
               ))}
             </LineChart>
           )}
