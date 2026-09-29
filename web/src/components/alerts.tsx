@@ -1,5 +1,6 @@
 "use client";
 
+import { Bell } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
@@ -14,10 +15,16 @@ export function AlertBadge() {
     window.addEventListener(ALERTS_CHANGED, reload);
     return () => window.removeEventListener(ALERTS_CHANGED, reload);
   }, [reload]);
-  if (!data?.length) return null;
+  const n = data?.length ?? 0;
   return (
-    <Link href="/monitor" className="rounded-full bg-rose-600 px-2 py-0.5 text-xs font-semibold text-white">
-      {data.length} alert{data.length === 1 ? "" : "s"}
+    <Link href="/monitor" title={n ? `${n} unread alert${n === 1 ? "" : "s"}` : "No unread alerts"} aria-label={`${n} unread alerts`}
+      className="relative grid size-9 place-items-center rounded-lg text-muted transition hover:bg-background-subtle hover:text-foreground">
+      <Bell className={n ? "size-4 origin-top animate-[wiggle_1s_ease-in-out_2]" : "size-4"} />
+      {n > 0 && (
+        <span className="absolute top-1 right-1 grid min-w-4 place-items-center rounded-full bg-loss px-1 text-[10px] font-semibold leading-4 text-white animate-scale-in">
+          {n > 99 ? "99+" : n}
+        </span>
+      )}
     </Link>
   );
 }
