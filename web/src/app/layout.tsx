@@ -1,49 +1,36 @@
-import type { Metadata } from "next";
-import Link from "next/link";
+import type { Metadata, Viewport } from "next";
+import { Inter, JetBrains_Mono } from "next/font/google";
+import { ViewTransition } from "react";
 
-import { AlertBadge } from "@/components/alerts";
+import { AppShell, THEME_SCRIPT } from "@/components/shell";
 import "./globals.css";
 
+const inter = Inter({ subsets: ["latin"], variable: "--font-inter", display: "swap" });
+const mono = JetBrains_Mono({ subsets: ["latin"], variable: "--font-jetbrains", display: "swap" });
+
 export const metadata: Metadata = {
-  title: "FinResearch",
-  description: "Personal, fact-checked IPO research",
+  title: { default: "FinResearch", template: "%s · FinResearch" },
+  description: "Personal, fact-checked research for IPOs, stocks, funds, bonds and F&O",
 };
 
-const nav = [
-  { href: "/", label: "IPO radar" },
-  { href: "/stocks", label: "Stocks" },
-  { href: "/funds", label: "Funds" },
-  { href: "/bonds", label: "Bonds" },
-  { href: "/fno", label: "F&O" },
-  { href: "/runs", label: "Runs" },
-  { href: "/monitor", label: "Monitor" },
-  { href: "/journal", label: "Journal" },
-  { href: "/profile", label: "Profile & rules" },
-  { href: "/usage", label: "Usage" },
-];
+export const viewport: Viewport = {
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#f5f7fb" },
+    { media: "(prefers-color-scheme: dark)", color: "#070b14" },
+  ],
+};
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en" className="h-full antialiased">
-      <body className="min-h-full flex flex-col">
-        <header className="border-b border-border bg-card">
-          <div className="mx-auto flex max-w-7xl items-center gap-6 px-4 py-3">
-            <Link href="/" className="font-semibold tracking-tight">
-              FinResearch
-            </Link>
-            <nav className="flex gap-4 text-sm text-muted">
-              {nav.map((n) => (
-                <Link key={n.href} href={n.href} className="hover:text-foreground">
-                  {n.label}
-                </Link>
-              ))}
-            </nav>
-            <div className="ml-auto">
-              <AlertBadge />
-            </div>
-          </div>
-        </header>
-        <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6">{children}</main>
+    <html lang="en" className={`${inter.variable} ${mono.variable} h-full antialiased`} suppressHydrationWarning>
+      <head>
+        {/* set the theme before first paint, so a dark-mode viewer never sees a white flash */}
+        <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
+      </head>
+      <body className="min-h-full">
+        <AppShell>
+          <ViewTransition name="page">{children}</ViewTransition>
+        </AppShell>
       </body>
     </html>
   );
