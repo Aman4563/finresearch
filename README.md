@@ -90,6 +90,7 @@ They work only through the MCP tools, run as a resumable pipeline that schedules
 | **v0.7.0** | Listed bonds and NCDs: NSE listing data, bond maths, bond research reports | ✅ Released |
 | **v0.8.0** | F&O analytics: option chains, greeks, strategy payoffs (analysis only) | ✅ Released |
 | **v0.9.0** | Verification and hardening: exchange holidays, SEBI bond conventions, BSE SME IPOs, 24 review fixes | ✅ Released |
+| **v0.10.0** | Redesigned app: dashboard, help centre, profile, rules, interactive charts, dark/light theme, command palette | ✅ Released |
 
 ## Requirements
 

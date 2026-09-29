@@ -132,3 +132,11 @@ These are dated entries for bugs we reproduced, what caused them, and how they a
 ### 2026-09-29: BSE SME issues were not covered (#60, #69)
 - **Seen:** only NSE issues appeared on the radar, and a BSE-only SME issue could not be researched or watched.
 - **Now:** a BSE adapter with the full browser headers BSE's edge needs (the same headers from curl get a 403). The radar, issue facts, watches, subscription and listing checks all work for BSE-only issues. Tests run offline on payloads recorded live on 29-Sep-2026 (`tests/test_bse.py`).
+
+### 2026-09-29: new bond page assumed yearly coupons (#79)
+- **Seen:** `/bonds/INE027E07998` showed YTM 7.68% and accrued ₹49.21, because NSE's list has no coupon frequency and the page defaulted to yearly. The bond pays monthly (SEBI prospectus; verified claim #2180 in run 12).
+- **Now:** without an explicit `freq`, the analytics use the verified `coupon_frequency` claim from the bond's latest research, else flag the frequency as assumed. The page shows the source (`test_bond_frequency_comes_from_verified_research_else_is_flagged_as_assumed`). Live: YTM 5.81%, accrued ₹3.94, after tax 3.22%.
+
+### 2026-09-29: headless screenshots caught animations mid-way
+- **Seen:** Chrome's `--screenshot` captured before chart and entrance animations finished, so bars looked empty and list rows looked faded. It also cannot lay out narrower than about 500 px.
+- **Now:** UI checks drive Chrome through its debugging protocol with an explicit wait and 390 px device emulation, and `?theme=` / `?welcome=0` pin the theme and hide the welcome tour.
