@@ -1,0 +1,52 @@
+{
+ "company": "bond-ine027e07998",
+ "kind": "bond_report",
+ "version": 1,
+ "as_of": "2026-09-28",
+ "source": "NSE list of bonds traded in the capital market; only exchange-published terms (coupon frequency and security are left to the offer document)",
+ "verdict": null,
+ "facts": [
+  {
+   "id": "b-coupon",
+   "label": "Coupon rate",
+   "patterns": [
+    "coupon"
+   ],
+   "period": null,
+   "value": 8.98,
+   "unit": "%",
+   "tolerance": 0.005,
+   "importance": "high",
+   "source": "NSE list of bonds traded in the capital market (28-Sep-2026)",
+   "exclude": "\\bpeer|g-?sec|government|fd\\b|fixed deposit|other bond|same rating"
+  },
+  {
+   "id": "b-face",
+   "label": "Face value",
+   "patterns": [
+    "face value|denomination"
+   ],
+   "period": null,
+   "value": 1000,
+   "unit": "INR",
+   "tolerance": 0.005,
+   "importance": "high",
+   "source": "NSE list of bonds traded in the capital market (28-Sep-2026)",
+   "exclude": "\\bpeer|g-?sec|government|fd\\b|fixed deposit|other bond|same rating"
+  },
+  {
+   "id": "b-maturity",
+   "label": "Maturity year (13-Mar-2029)",
+   "patterns": [
+    "maturity|matur"
+   ],
+   "period": "2029",
+   "value": 2029,
+   "unit": "year",
+   "tolerance": 0.005,
+   "importance": "normal",
+   "source": "NSE list of bonds traded in the capital market (28-Sep-2026)",
+   "exclude": "\\bpeer|g-?sec|government|fd\\b|fixed deposit|other bond|same rating"
+  }
+ ]
+}

@@ -67,6 +67,8 @@ def _to_gold_unit(value: Decimal, unit: str | None, gold_unit: str) -> Decimal |
         if "fraction" in u or "ratio" in u:
             return value * 100
         return value if ("%" in u or "percent" in u or not u) else None
+    if g == "year":
+        return value if (not u or "year" in u) else None
     if g == "shares":
         return value if (not u or "share" in u or u in {"count", "number", "nos"}) else None
     if g == "inr":  # per-share rupee values

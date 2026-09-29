@@ -83,13 +83,15 @@ def test_scoring_units_periods_contradictions_and_verdict(run):
     assert "key-fact recall | **50%** (2/4)" in md and "| release bar" in md and "FAIL" in md
 
 
-@pytest.mark.parametrize("company", ["moneyview", "orient-cables", "infosys", "mf-120505"])
+@pytest.mark.parametrize(
+    "company", ["moneyview", "orient-cables", "infosys", "mf-120505", "bond-ine027e07998"]
+)
 def test_gold_files_are_well_formed(company):
     import re
 
     gold = load_gold(company)
     # IPO and stock gold sets come from full manual fact checks; fund sets use AMFI primary data only
-    minimum = 8 if gold.get("kind") == "fund_report" else 20
+    minimum = {"fund_report": 8, "bond_report": 3}.get(gold.get("kind"), 20)
     assert gold["company"] == company and len(gold["facts"]) >= minimum
     assert (GOLD_DIR / f"{company}.json").exists()
     ids = [f["id"] for f in gold["facts"]]
@@ -97,7 +99,9 @@ def test_gold_files_are_well_formed(company):
     for f in gold["facts"]:
         for p in f["patterns"] + ([f["period"]] if f.get("period") else []):
             re.compile(p)
-        assert f["unit"] in {"INR million", "INR crore", "INR", "%", "shares"} and f["importance"] in {
+        assert f["unit"] in {"INR million", "INR crore", "INR", "%", "shares", "year"} and f[
+            "importance"
+        ] in {
             "high",
             "normal",
         }
