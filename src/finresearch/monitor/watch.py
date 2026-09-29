@@ -1,4 +1,4 @@
-"""Create or refresh a watch from NSE's issue information."""
+"""Create or refresh a watch from NSE's issue information (BSE's, for a BSE SME issue)."""
 
 from __future__ import annotations
 
@@ -30,16 +30,19 @@ def parse_anchor_shares(issue_size: str | None) -> Decimal | None:
 
 
 def upsert_watch(company_slug: str, issue_info: dict[str, str]) -> dict:
+    bse_ipo_no = int(issue_info["BSE IPO No"]) if issue_info.get("BSE IPO No") else None
+    source = "BSE" if bse_ipo_no else "NSE"
     period = parse_period(issue_info.get("Issue Period"))
     if period is None:
-        raise ValueError("NSE issue information has no 'Issue Period'; cannot schedule the checks")
+        raise ValueError(f"{source} issue information has no 'Issue Period'; cannot schedule the checks")
     open_date, close_date = period
     allotment, listing = expected_dates(close_date)
     with session_scope() as s:
         co = s.scalar(select(Company).where(Company.slug == company_slug))
         if co is None:
             raise LookupError(f"unknown company {company_slug!r}")
-        if not co.nse_symbol:
+        symbol = co.nse_symbol or (issue_info.get("Symbol") if bse_ipo_no else None)
+        if not symbol:
             raise ValueError(f"{company_slug} has no NSE symbol")
         w = s.scalar(select(Watch).where(Watch.company_id == co.id))
         if w is not None and w.kind != "ipo":
@@ -47,7 +50,7 @@ def upsert_watch(company_slug: str, issue_info: dict[str, str]) -> dict:
                 raise ValueError(f"{company_slug} is already watched as a stock; stop that watch first")
             _reset(s, w, "ipo")
         if w is None:
-            w = Watch(company_id=co.id, nse_symbol=co.nse_symbol, open_date=open_date, close_date=close_date,
+            w = Watch(company_id=co.id, nse_symbol=symbol, open_date=open_date, close_date=close_date,
                       allotment_date=allotment, listing_date=listing, meta={})  # fmt: skip
             s.add(w)
         else:
@@ -55,19 +58,31 @@ def upsert_watch(company_slug: str, issue_info: dict[str, str]) -> dict:
             if not (w.meta or {}).get("listing_confirmed"):
                 w.allotment_date, w.listing_date = allotment, listing
         w.anchor_shares = parse_anchor_shares(issue_info.get("Issue Size")) or w.anchor_shares
+        if bse_ipo_no:  # subscription and listing checks then read BSE
+            w.meta = {**(w.meta or {}), "bse_ipo_no": bse_ipo_no}
         s.flush()
         return watch_json(w, co)
 
 
-async def watch_company(company_slug: str, *, fetch_detail=None) -> dict:
-    """Fetch NSE's issue information for the company's symbol and create or refresh its watch."""
+async def watch_company(company_slug: str, *, fetch_detail=None, fetch_bse=None) -> dict:
+    """Fetch NSE's issue information for the company's symbol and create or refresh its watch. A BSE-only SME
+    issue (company meta `bse_ipo_no`, no NSE symbol) is watched from BSE's issue details instead."""
     from finresearch.adapters.nse import NseClient
 
     with session_scope() as s:
         co = s.scalar(select(Company).where(Company.slug == company_slug))
         if co is None:
             raise LookupError(f"unknown company {company_slug!r}")
-        symbol = co.nse_symbol
+        symbol, bse_ipo_no = co.nse_symbol, (co.meta or {}).get("bse_ipo_no")
+    if not symbol and bse_ipo_no:
+        if fetch_bse is None:
+            from finresearch.adapters.bse import BseClient
+
+            async with BseClient() as bse:
+                detail = await bse.issue_detail(bse_ipo_no)
+        else:
+            detail = await fetch_bse(bse_ipo_no)
+        return upsert_watch(company_slug, detail.issue_info())
     if not symbol:
         raise ValueError(f"{company_slug} has no NSE symbol")
     if fetch_detail is None:
