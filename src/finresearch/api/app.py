@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import re
 from collections.abc import AsyncIterator
 from datetime import UTC, date, datetime
@@ -17,13 +18,19 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal
 
+import httpx
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
-from pydantic import BaseModel, Field
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
+from starlette.datastructures import Headers
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from finresearch.adapters.amfi import AmfiError
+from finresearch.adapters.nse import NseError
+from finresearch.adapters.sebi import SebiError
 from finresearch.api.workers import Spawner, WorkerBusy, worker_info
 from finresearch.config import get_settings
 from finresearch.db import session_scope
@@ -43,6 +50,8 @@ from finresearch.db.models import (
 
 LOCAL_HOSTS = ["127.0.0.1", "localhost", "testserver"]
 DASHBOARD_ORIGINS = [f"http://{h}:{p}" for h in ("127.0.0.1", "localhost") for p in (3000, 3100)]
+SAFE_METHODS = ("GET", "HEAD", "OPTIONS")
+CSRF_HEADER = "x-finresearch"  # the dashboard sends `X-FinResearch: 1` on every unsafe request
 TERMINAL = ("done", "failed", "blocked")
 RESEARCH_KINDS = ("ipo_report", "stock_report", "fund_report", "bond_report")
 RADAR_TTL_S = 300
@@ -59,6 +68,13 @@ class StartRun(BaseModel):
 class Ask(BaseModel):
     question: str = Field(min_length=1, max_length=4000)
     conversation_id: int | None = None
+
+    @field_validator("question")
+    @classmethod
+    def _not_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("question is empty")
+        return v.strip()
 
 
 class DecisionUpdate(BaseModel):
@@ -101,9 +117,15 @@ class NewCompany(BaseModel):
     name: str | None = None
 
 
+class NewBond(BaseModel):
+    isin: str = Field(min_length=12, max_length=12)
+
+
 class ResumeRun(BaseModel):
     streams: list[str] | None = None
-    concurrency: int = Field(4, ge=1, le=8)
+    concurrency: int | None = Field(
+        None, ge=1, le=8, description="Default: the concurrency the run started with"
+    )
 
 
 # --------------------------------------------------------------------------- serialisers
@@ -158,8 +180,9 @@ def _latest_report(s, run_id: int) -> str | None:
 # --------------------------------------------------------------------------- app
 def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=None, live_fetch=None,
                monitor: bool = False, monitor_deps=None, nse_detail=None, equity_list=None,
-               nav_all=None, fno_client=None) -> FastAPI:  # fmt: skip
-    """Test seams: `router` (bridge for chat and suggestions), `live_fetch` / `nse_detail` (NSE), `monitor_deps`.
+               nav_all=None, fno_client=None, bonds=None) -> FastAPI:  # fmt: skip
+    """Test seams: `router` (bridge for chat and suggestions), `live_fetch` / `nse_detail` / `bonds` (NSE),
+    `monitor_deps`.
 
     With monitor=True (as `finresearch serve` does) the monitoring scheduler runs inside the API process."""
     spawner = spawner or Spawner()
@@ -178,9 +201,26 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
 
     app = FastAPI(title="FinResearch", version="0.3.0", docs_url="/api/docs", openapi_url="/api/openapi.json",
                   lifespan=lifespan)  # fmt: skip
+    # the last added middleware is outermost: CORS wraps the error and CSRF layers so their responses carry CORS
+    # headers (a bare 500 without them looks like "API not reachable" in the dashboard)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=LOCAL_HOSTS)
+    app.add_middleware(CsrfGuard)
+    app.add_middleware(CatchAll)
     app.add_middleware(CORSMiddleware, allow_origins=DASHBOARD_ORIGINS, allow_methods=["GET", "POST", "PUT", "PATCH"],
                        allow_headers=["*"])  # fmt: skip
+
+    @app.exception_handler(ValueError)
+    async def _value_error(_req: Request, e: ValueError) -> JSONResponse:
+        return JSONResponse({"detail": f"{type(e).__name__}: {e}"[:1000]}, status_code=422)
+
+    @app.exception_handler(NseError)
+    @app.exception_handler(SebiError)
+    @app.exception_handler(AmfiError)
+    @app.exception_handler(httpx.HTTPError)
+    async def _upstream_error(_req: Request, e: Exception) -> JSONResponse:
+        return JSONResponse(
+            {"detail": f"upstream source failed: {type(e).__name__}: {e}"[:1000]}, status_code=502
+        )
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:
@@ -197,8 +237,13 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
             )
             runs = dict(s.execute(select(ResearchRun.company_id, func.max(ResearchRun.id))
                                   .where(ResearchRun.kind.in_(RESEARCH_KINDS)).group_by(ResearchRun.company_id)).all())  # fmt: skip
+            kinds = dict(
+                s.execute(
+                    select(ResearchRun.id, ResearchRun.kind).where(ResearchRun.id.in_(runs.values()))
+                ).all()
+            )
             return [{"slug": c.slug, "name": c.name, "nse_symbol": c.nse_symbol, "documents": docs.get(c.id, 0),
-                     "latest_run": runs.get(c.id)}
+                     "latest_run": runs.get(c.id), "kind": kinds.get(runs.get(c.id)) or company_kind(c)}
                     for c in s.scalars(select(Company).order_by(Company.name))]  # fmt: skip
 
     @app.get("/api/companies/{slug}")
@@ -250,7 +295,8 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
     @app.get("/api/runs")
     def runs(company: str | None = None, limit: int = Query(50, ge=1, le=500)) -> list[dict[str, Any]]:
         with session_scope() as s:
-            q = select(ResearchRun, Company).join(Company, Company.id == ResearchRun.company_id, isouter=True)
+            q = (select(ResearchRun, Company).join(Company, Company.id == ResearchRun.company_id, isouter=True)
+                 .where(ResearchRun.kind.in_(RESEARCH_KINDS)))  # fmt: skip
             if company:
                 q = q.where(Company.slug == company)
             rows = s.execute(q.order_by(ResearchRun.id.desc()).limit(limit)).all()
@@ -261,7 +307,9 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
                                                 .where(AgentStep.run_id.in_(ids))
                                                 .group_by(AgentStep.run_id, AgentStep.status)):  # fmt: skip
                     counts.setdefault(rid, {})[status] = n
-            return [run_json(r, co, counts.get(r.id)) for r, co in rows]
+            reported = set(s.scalars(select(AgentStep.run_id).where(AgentStep.run_id.in_(ids), AgentStep.stage == "synthesis",
+                                                                   AgentStep.status == "done"))) if ids else set()  # fmt: skip
+            return [{**run_json(r, co, counts.get(r.id)), "has_report": r.id in reported} for r, co in rows]
 
     @app.post("/api/runs", status_code=201)
     def start_run(body: StartRun) -> dict[str, Any]:
@@ -273,10 +321,13 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
         streams = KINDS[body.kind].default_streams
         if body.streams and (bad := set(body.streams) - set(streams)):
             raise HTTPException(422, f"unknown streams {sorted(bad)}; choose from {list(streams)}")
+        with session_scope() as s:
+            if s.scalar(select(Company.id).where(Company.slug == body.company)) is None:
+                raise HTTPException(404, f"unknown company {body.company!r}; ingest its documents first")
         try:
             run_id = create_run(body.company, kind=body.kind)
         except ValueError as e:
-            raise HTTPException(404, str(e)) from e
+            raise HTTPException(422, str(e)) from e
         worker = spawner.start(run_id, streams=body.streams, concurrency=body.concurrency)
         return {"run_id": run_id, "worker": worker}
 
@@ -413,7 +464,8 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
         yield frame("snapshot", detail)
         seen = {st["id"]: st for st in detail["steps"]}
         status = detail["status"]
-        while status not in TERMINAL or _worker_alive(detail):
+        # without a live worker nothing will change the run (finished, crashed, killed, or never had one)
+        while _worker_alive(detail):
             if await request.is_disconnected():
                 return
             await asyncio.sleep(poll_s)
@@ -425,8 +477,6 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
             if detail["status"] != status:
                 status = detail["status"]
                 yield frame("run", {k: detail[k] for k in ("id", "status", "resume_after", "final_gate")})
-            if detail.get("worker") and not _worker_alive(detail):
-                break  # the app's worker exited (finished, crashed or paused without --wait)
             yield ": keep-alive\n\n"
         yield frame("end", {"id": run_id, "status": status})
 
@@ -492,10 +542,20 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
         from finresearch.bridge import AllTiersFailed
         from finresearch.suggest.advisor import suggest
 
+        with session_scope() as s:
+            run = s.get(ResearchRun, run_id)
+            if run is None:
+                raise HTTPException(404, f"unknown run {run_id}")
+            if run.kind != "ipo_report":
+                raise HTTPException(
+                    422, f"suggestions are for IPO reports only; run {run_id} is a {run.kind}"
+                )
         try:
             return await suggest(run_id, router=router, **({"fetch": live_fetch} if live_fetch else {}))
         except LookupError as e:
             raise HTTPException(404, str(e)) from e
+        except ValueError as e:  # includes a suggestion that failed model validation
+            raise HTTPException(422, f"{type(e).__name__}: {e}"[:1000]) from e
         except AllTiersFailed as e:
             raise HTTPException(503, f"Claude is not available right now: {e}"[:500]) from e
 
@@ -646,22 +706,40 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
         from finresearch.ingest.documents import get_or_create_company
 
         sym = body.nse_symbol.strip().upper()
-        name = body.name
+        name, listed = body.name, False
         if not name:
             match = next((e for e in await _equities() if e.symbol == sym), None)
             if match is None:
                 raise HTTPException(404, f"{sym} is not in NSE's list of listed equities")
-            name = match.name
+            name, listed = match.name, True
         with session_scope() as s:
             existing = s.scalar(select(Company).where(Company.nse_symbol == sym))
             if existing is not None:
-                return {"slug": existing.slug, "name": existing.name, "nse_symbol": sym, "created": False}
+                return {"slug": existing.slug, "name": existing.name, "nse_symbol": sym, "created": False,
+                        "kind": company_kind(existing)}  # fmt: skip
             slug = (
                 re.sub(r"[^a-z0-9]+", "-", re.sub(r"\b(limited|ltd)\b", "", name.lower())).strip("-")[:70]
                 or sym.lower()
             )
-            co = get_or_create_company(s, slug, name, nse_symbol=sym)
-            return {"slug": co.slug, "name": co.name, "nse_symbol": sym, "created": True}
+            co = s.scalar(select(Company).where(Company.slug == slug))
+            if co is not None and co.nse_symbol:  # the name's slug belongs to another symbol: never reuse it
+                slug = f"{slug[: 79 - len(sym)]}-{sym.lower()}"
+                co = s.scalar(select(Company).where(Company.slug == slug))
+                if co is not None and co.nse_symbol:
+                    raise HTTPException(409, f"slug {slug!r} already belongs to {co.nse_symbol}")
+            created = co is None
+            if co is None:
+                co = get_or_create_company(s, slug, name, nse_symbol=sym)
+            co.nse_symbol = sym  # a company added from documents alone has no symbol yet
+            if listed and created:
+                co.meta = {**(co.meta or {}), "kind": "stock_report"}
+            return {
+                "slug": co.slug,
+                "name": co.name,
+                "nse_symbol": sym,
+                "created": created,
+                "kind": company_kind(co),
+            }
 
     # ------------------------------------------------------------------ mutual funds
     async def _scheme_rows() -> list:
@@ -691,6 +769,42 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
 
         try:
             return await ensure_scheme_company(body.scheme_code.strip(), nav_all=_scheme_rows)
+        except LookupError as e:
+            raise HTTPException(404, str(e)) from e
+
+    # ------------------------------------------------------------------ listed bonds
+    bond_cache: dict[str, Any] = {}
+
+    async def _bond_rows() -> list:
+        import time
+
+        from finresearch.adapters.nse_bonds import live_bonds
+
+        if bond_cache.get("at", 0) > time.time() - RADAR_TTL_S:
+            return bond_cache["rows"]
+        rows = await (bonds() if bonds else live_bonds())
+        bond_cache.update(at=time.time(), rows=rows)
+        return rows
+
+    @app.get("/api/bonds")
+    async def bond_list(q: str = "", limit: int = Query(50, ge=1, le=200)) -> list[dict[str, Any]]:
+        """NSE capital-market bonds matching a symbol or ISIN (no query: the most traded)."""
+        from finresearch.adapters.nse_bonds import search_bonds
+
+        rows = await _bond_rows()
+        hits = (search_bonds(rows, q, limit) if q.strip() else
+                sorted(rows, key=lambda b: -(b.traded_value or 0))[:limit])  # fmt: skip
+        with session_scope() as s:
+            known = {slug for (slug,) in s.execute(select(Company.slug).where(Company.slug.like("bond-%")))}
+        return [{**b.model_dump(mode="json"), "warnings": b.warnings,
+                 "slug": f"bond-{b.isin.lower()}" if f"bond-{b.isin.lower()}" in known else None} for b in hits]  # fmt: skip
+
+    @app.post("/api/bonds", status_code=201)
+    async def add_bond(body: NewBond) -> dict[str, Any]:
+        from finresearch.orchestrator.bond import ensure_bond_company
+
+        try:
+            return await ensure_bond_company(body.isin.strip(), bonds=_bond_rows)
         except LookupError as e:
             raise HTTPException(404, str(e)) from e
 
@@ -804,12 +918,15 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
             return radar_cache["data"]
         errors: list[str] = []
         issues: list[tuple[str, Any]] = []
-        async with NseClient() as nse:
-            for phase, fetch in (("current", nse.current_issues), ("upcoming", nse.upcoming_issues)):
-                try:
-                    issues += [(phase, i) for i in await fetch()]
-                except Exception as e:
-                    errors.append(f"{phase}: {e}"[:200])
+        try:
+            async with NseClient() as nse:
+                for phase, fetch in (("current", nse.current_issues), ("upcoming", nse.upcoming_issues)):
+                    try:
+                        issues += [(phase, i) for i in await fetch()]
+                    except Exception as e:
+                        errors.append(f"{phase}: {e}"[:200])
+        except Exception as e:  # warm-up or connection failure
+            errors.append(f"NSE: {type(e).__name__}: {e}"[:200])
         from finresearch.adapters import bse
 
         try:
@@ -868,6 +985,57 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
     return app
 
 
+class CatchAll:
+    """Unhandled errors become a JSON 500 inside the CORS layer (Starlette's own 500 is outside it)."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        started = False
+
+        async def send_(msg: Message) -> None:
+            nonlocal started
+            started = started or msg["type"] == "http.response.start"
+            await send(msg)
+
+        try:
+            await self.app(scope, receive, send_)
+        except Exception as e:
+            if started:  # e.g. an event stream already under way: nothing left to answer with
+                raise
+            logging.getLogger("finresearch.api").exception("unhandled error on %s", scope.get("path"))
+            resp = JSONResponse({"detail": f"server error: {type(e).__name__}: {e}"[:1000]}, status_code=500)
+            await resp(scope, receive, send)
+
+
+class CsrfGuard:
+    """Any web page can make the browser send a body-less "simple" POST to 127.0.0.1. Unsafe methods therefore need
+    the dashboard's origin (when the browser sends one) and the custom X-FinResearch header, which a cross-site page
+    cannot add without a CORS preflight that only the dashboard origins pass. Clients without Origin (the CLI, curl,
+    tests) are not browsers and are let through."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http" and scope["method"] not in SAFE_METHODS:
+            h = Headers(scope=scope)
+            origin, site = h.get("origin"), h.get("sec-fetch-site")
+            reason = None
+            if origin is not None and origin not in DASHBOARD_ORIGINS:
+                reason = f"origin {origin!r} is not the dashboard"
+            elif (origin is not None or site == "cross-site") and h.get(CSRF_HEADER) != "1":
+                reason = f"missing {CSRF_HEADER} header"
+            if reason:
+                return await JSONResponse({"detail": f"forbidden: {reason}"}, status_code=403)(
+                    scope, receive, send
+                )
+        await self.app(scope, receive, send)
+
+
 def _money(x: float | None) -> float | None:
     return None if x is None else round(x, 2)
 
@@ -875,6 +1043,15 @@ def _money(x: float | None) -> float | None:
 def alert_json(a) -> dict[str, Any]:
     return {"id": a.id, "watch_id": a.watch_id, "kind": a.kind, "level": a.level, "message": a.message,
             "data": a.data or {}, "created_at": _iso(a.created_at), "read_at": _iso(a.read_at)}  # fmt: skip
+
+
+def company_kind(co: Company) -> str:
+    """The research kind a company is for: fund and bond slugs, listed stocks added from NSE's list, else an IPO."""
+    if co.slug.startswith("mf-"):
+        return "fund_report"
+    if co.slug.startswith("bond-"):
+        return "bond_report"
+    return (co.meta or {}).get("kind") or "ipo_report"
 
 
 def _known_symbols() -> dict[str, dict[str, Any]]:

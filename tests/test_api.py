@@ -158,6 +158,9 @@ def test_start_and_resume_spawn_the_cli_worker(client, seeded):
     detail = client.get(f"/api/runs/{run_id}").json()
     assert detail["worker"]["pid"] == 999_999_999 and detail["worker"]["alive"] is False
     assert client.post(f"/api/runs/{run_id}/resume").status_code == 200
+    assert "--concurrency" not in client.spawner.calls[-1]  # resume keeps the run's saved concurrency
+    client.post(f"/api/runs/{run_id}/resume", json={"concurrency": 3})
+    assert client.spawner.calls[-1][-2:] == ["--concurrency", "3"]
     assert client.post("/api/runs", json={"company": "nope"}).status_code == 404
     assert client.post("/api/runs", json={"company": seeded["slug"], "streams": ["bogus"]}).status_code == 422
 
@@ -192,15 +195,20 @@ def test_events_stream_step_changes_until_the_run_finishes(client, seeded):
 
     rid = seeded["run_id"]
     with session_scope() as s:
-        s.get(ResearchRun, rid).status = "running"
+        run = s.get(ResearchRun, rid)
+        run.status, run.manifest = (
+            "running",
+            {**run.manifest, "worker": {"pid": os.getpid()}},
+        )  # a live worker
 
-    def worker():  # stands in for the pipeline process: finish a step, then the run
+    def worker():  # stands in for the pipeline process: finish a step, then the run, then exit
         time.sleep(0.3)
         with session_scope() as s:
             s.add(AgentStep(run_id=rid, key="critic", stage="critic", role="critic", status="done"))
         time.sleep(0.3)
         with session_scope() as s:
-            s.get(ResearchRun, rid).status = "done"
+            run = s.get(ResearchRun, rid)
+            run.status, run.manifest = "done", {**run.manifest, "worker": {"pid": 999_999_999}}
 
     t = threading.Thread(target=worker)
     t.start()
@@ -414,3 +422,230 @@ def test_radar_lists_bse_sme_issues_with_lot_and_skips_ones_nse_lists(client, mo
     assert by[("BSE", "TNA")]["phase"] == "upcoming" and data["errors"] == [
         "bse: BSE IPO 8007 details: HTTP 500"
     ]
+
+
+# --------------------------------------------------------------------------- review fixes
+def test_finished_worker_is_reaped_and_not_reported_alive(tmp_path):
+    import subprocess
+    import sys
+    import time
+
+    from finresearch.api import workers
+
+    pid = workers._popen([sys.executable, "-c", "pass"], tmp_path / "w.log")
+    stray = subprocess.Popen([sys.executable, "-c", "pass"])  # a child the registry does not know
+    workers._children.pop(stray.pid, None)
+    time.sleep(1.0)  # both have exited: zombies until someone waits for them
+    assert workers.pid_alive(pid) is False and workers.pid_alive(stray.pid) is False
+    assert workers.pid_alive(os.getpid()) is True  # not our child: kill(pid, 0) decides
+
+
+def test_resume_clicked_twice_starts_one_worker(env, seeded):
+    import threading
+
+    from finresearch.api.workers import WorkerBusy
+
+    first_spawning, release, pids = threading.Event(), threading.Event(), []
+
+    def popen(argv, log):
+        pids.append(argv)
+        first_spawning.set()
+        release.wait(5)
+        return os.getpid()  # a live pid
+
+    sp = Spawner(popen=popen)
+    results: list[object] = []
+
+    def click():
+        try:
+            results.append(sp.start(seeded["run_id"]))
+        except WorkerBusy as e:
+            results.append(e)
+
+    a = threading.Thread(target=click)
+    a.start()
+    assert first_spawning.wait(5)
+    b = threading.Thread(target=click)
+    b.start()
+    b.join(0.5)  # blocked on the row lock while the first click spawns
+    release.set()
+    a.join(5)
+    b.join(5)
+    assert len(pids) == 1 and sum(isinstance(r, WorkerBusy) for r in results) == 1
+
+
+def test_unsafe_requests_from_other_origins_are_refused(client, seeded):
+    rid, dash = seeded["run_id"], "http://127.0.0.1:3100"
+    evil = client.post(f"/api/runs/{rid}/resume", headers={"origin": "https://evil.example"})
+    assert evil.status_code == 403 and not client.spawner.calls
+    assert client.post(f"/api/runs/{rid}/resume", headers={"origin": "null"}).status_code == 403
+    no_header = client.post(f"/api/runs/{rid}/resume", headers={"origin": dash})
+    assert no_header.status_code == 403 and no_header.headers["access-control-allow-origin"] == dash
+    cross = client.post("/api/alerts/1/read", headers={"sec-fetch-site": "cross-site"})
+    assert cross.status_code == 403
+    ok = client.post(f"/api/runs/{rid}/resume", headers={"origin": dash, "x-finresearch": "1"})
+    assert ok.status_code == 200 and len(client.spawner.calls) == 1
+    assert client.post(f"/api/runs/{rid}/resume").status_code == 200  # CLI/curl: no Origin, not a browser
+    pre = client.options(f"/api/runs/{rid}/resume", headers={"origin": dash, "access-control-request-method": "POST",
+                                                            "access-control-request-headers": "content-type,x-finresearch"})  # fmt: skip
+    assert pre.status_code == 200 and "x-finresearch" in pre.headers["access-control-allow-headers"].lower()
+    assert client.get("/api/health", headers={"origin": "https://evil.example"}).status_code == 200
+
+
+def test_start_run_errors_and_suggest_only_for_ipo_reports(client, seeded, monkeypatch):
+    from finresearch.db import session_scope
+    from finresearch.db.models import ResearchRun
+
+    assert client.post("/api/runs", json={"company": "nope"}).status_code == 404
+    assert client.post("/api/runs", json={"company": seeded["slug"], "kind": "bogus"}).status_code == 422
+    wrong = client.post("/api/runs", json={"company": seeded["slug"], "kind": "fund_report"})  # KindMismatch
+    assert wrong.status_code == 422 and "fund" in wrong.json()["detail"]
+    with session_scope() as s:
+        s.get(ResearchRun, seeded["run_id"]).kind = "stock_report"
+    r = client.post(f"/api/runs/{seeded['run_id']}/suggest")
+    assert r.status_code == 422 and "IPO" in r.json()["detail"] and not client.router.tasks
+    with session_scope() as s:
+        s.get(ResearchRun, seeded["run_id"]).kind = "ipo_report"
+
+    from pydantic import BaseModel
+
+    class M(BaseModel):
+        lots: int
+
+    async def bad_suggest(run_id, **kw):
+        M.model_validate({"lots": "many"})
+
+    monkeypatch.setattr("finresearch.suggest.advisor.suggest", bad_suggest)
+    r = client.post(f"/api/runs/{seeded['run_id']}/suggest")
+    assert r.status_code == 422 and "ValidationError" in r.json()["detail"]
+    assert client.post("/api/runs/999999/suggest").status_code == 404
+
+
+def test_blank_question_is_rejected_before_claude(client, seeded):
+    r = client.post(f"/api/runs/{seeded['run_id']}/ask", json={"question": "   \n "})
+    assert r.status_code == 422 and not client.router.tasks
+
+
+def test_server_errors_are_json_with_cors_and_upstream_errors_are_502(env, monkeypatch):
+    from finresearch.adapters import nse
+    from finresearch.adapters.nse import NseError
+    from finresearch.api import create_app
+
+    dash = {"origin": "http://localhost:3100"}
+
+    async def broken_list():
+        raise RuntimeError("boom")
+
+    class DownFno:
+        async def __aenter__(self):
+            raise NseError("NSE HTTP 403")
+
+        async def __aexit__(self, *a):
+            return None
+
+    async def down_detail(symbol):
+        raise NseError("NSE refused")
+
+    class DownNse:
+        async def __aenter__(self):
+            raise NseError("NSE warm-up failed")
+
+        async def __aexit__(self, *a):
+            return None
+
+    monkeypatch.setattr(nse, "NseClient", DownNse)
+    monkeypatch.setattr("finresearch.adapters.bse.sme_radar", no_bse)
+    app = create_app(equity_list=broken_list, fno_client=DownFno, nse_detail=down_detail)
+    with TestClient(app, raise_server_exceptions=False) as c:
+        r = c.get("/api/stocks/search", params={"q": "infy"}, headers=dash)
+        assert r.status_code == 500 and "boom" in r.json()["detail"]
+        assert r.headers["access-control-allow-origin"] == dash["origin"]
+        r = c.get("/api/fno/NIFTY/expiries", headers=dash)
+        assert r.status_code == 502 and r.headers["access-control-allow-origin"] == dash["origin"]
+        radar = c.get("/api/ipos", params={"refresh": True})
+        assert radar.status_code == 200 and "warm-up" in radar.json()["errors"][0]
+        from finresearch.db import session_scope
+        from finresearch.ingest.documents import get_or_create_company
+
+        with session_scope() as s:
+            get_or_create_company(s, "watch-down", "Watch Down", nse_symbol="WDOWN")
+        assert c.post("/api/watches", json={"company": "watch-down"}).status_code == 502
+
+
+def test_add_company_never_maps_a_symbol_onto_another_company(env):
+    from finresearch.api import create_app
+    from finresearch.db import session_scope
+    from finresearch.db.models import Company
+    from finresearch.ingest.documents import get_or_create_company
+
+    with session_scope() as s:
+        for slug in ("zeta-widgets", "zeta-widgets-zetb"):
+            if (co := s.query(Company).filter_by(slug=slug).one_or_none()) is not None:
+                co.slug = f"{slug}-old{co.id}"
+        s.query(Company).filter(Company.nse_symbol.in_(["ZETA", "ZETB"])).update({"nse_symbol": None})
+        get_or_create_company(s, "zeta-widgets", "Zeta Widgets Ltd")  # added from documents, no symbol yet
+    with TestClient(create_app()) as c:
+        r = c.post("/api/companies", json={"nse_symbol": "zeta", "name": "Zeta Widgets Limited"}).json()
+        assert (r["slug"], r["created"], r["nse_symbol"]) == ("zeta-widgets", False, "ZETA")
+        r = c.post("/api/companies", json={"nse_symbol": "ZETB", "name": "Zeta Widgets Limited"}).json()
+        assert (r["slug"], r["created"]) == ("zeta-widgets-zetb", True)
+    with session_scope() as s:
+        assert s.query(Company).filter_by(slug="zeta-widgets").one().nse_symbol == "ZETA"
+        assert s.query(Company).filter_by(slug="zeta-widgets-zetb").one().nse_symbol == "ZETB"
+
+
+def test_stale_running_run_ends_the_stream_and_runs_list_research_kinds_only(client, seeded):
+    from finresearch.db import session_scope
+    from finresearch.db.models import ResearchRun
+
+    with session_scope() as s:
+        s.get(ResearchRun, seeded["run_id"]).status = "running"  # no worker: e.g. a hard-killed one
+        stale = ResearchRun(kind="smoke_mcp", status="running", manifest={})
+        s.add(stale)
+        s.flush()
+        stale_id = stale.id
+    with client.stream("GET", f"/api/runs/{seeded['run_id']}/events") as r:
+        events = _sse(r.read().decode())
+    assert [e for e, _ in events] == ["snapshot", "end"] and events[-1][1]["status"] == "running"
+    rows = client.get("/api/runs", params={"limit": 500}).json()
+    assert stale_id not in [r["id"] for r in rows]
+    mine = next(r for r in rows if r["id"] == seeded["run_id"])
+    assert mine["has_report"] is True
+    assert client.post(f"/api/runs/{seeded['run_id']}/resume").status_code == 200
+
+
+def test_companies_report_the_research_kind(client, seeded):
+    from finresearch.db import session_scope
+    from finresearch.ingest.documents import get_or_create_company
+
+    tag = seeded["slug"][4:]
+    with session_scope() as s:
+        get_or_create_company(s, f"mf-{tag}", "Some Fund")
+        get_or_create_company(s, f"bond-{tag}", "Some Bond")
+        get_or_create_company(s, f"stk-{tag}", "Some Stock").meta = {"kind": "stock_report"}
+        get_or_create_company(s, f"ipo-{tag}", "Some IPO")
+    kinds = {c["slug"]: c["kind"] for c in client.get("/api/companies").json()}
+    assert kinds[f"mf-{tag}"] == "fund_report" and kinds[f"bond-{tag}"] == "bond_report"
+    assert kinds[f"stk-{tag}"] == "stock_report" and kinds[f"ipo-{tag}"] == "ipo_report"
+    assert kinds[seeded["slug"]] == "ipo_report"  # from its latest run
+
+
+def test_bonds_search_and_add(env):
+    from finresearch.adapters.nse_bonds import parse_live_bonds
+    from finresearch.api import create_app
+
+    fixture = Path(__file__).parent / "fixtures" / "nse" / "bonds_live_trimmed.json"
+
+    async def rows():
+        return parse_live_bonds(json.loads(fixture.read_text()))
+
+    with TestClient(create_app(bonds=rows)) as c:
+        hits = c.get("/api/bonds", params={"q": "INE906B07DF8"}).json()
+        assert hits[0]["symbol"] == "875NHAI29" and hits[0]["slug"] in (None, "bond-ine906b07df8")
+        assert len(c.get("/api/bonds").json()) > 0
+        made = c.post("/api/bonds", json={"isin": "INE906B07DF8"})
+        assert made.status_code == 201 and made.json()["slug"] == "bond-ine906b07df8"
+        assert c.get("/api/bonds", params={"q": "875NHAI29"}).json()[0]["slug"] == "bond-ine906b07df8"
+        assert c.post("/api/bonds", json={"isin": "INE000000000"}).status_code == 404
+        kinds = {x["slug"]: x["kind"] for x in c.get("/api/companies").json()}
+        assert kinds["bond-ine906b07df8"] == "bond_report"

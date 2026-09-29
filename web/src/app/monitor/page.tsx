@@ -16,8 +16,10 @@ export default function Monitor() {
 
   const add = async () => {
     if (!slug) return;
+    // a listed stock gets the daily after-close watch, anything else the IPO timeline
+    const kind = companies.data?.find((c) => c.slug === slug)?.kind === "stock_report" ? "stock" : "ipo";
     try {
-      await api("/api/watches", { method: "POST", body: JSON.stringify({ company: slug }) });
+      await api("/api/watches", { method: "POST", body: JSON.stringify({ company: slug, kind }) });
       setError(null);
       watches.reload();
     } catch (e) {
@@ -33,9 +35,9 @@ export default function Monitor() {
           <div className="flex items-center gap-2">
             <select className="rounded border border-border bg-background px-2 py-1 text-sm" value={slug} onChange={(e) => setSlug(e.target.value)}>
               <option value="">Watch a company…</option>
-              {companies.data?.filter((c) => c.nse_symbol).map((c) => (
+              {companies.data?.filter((c) => c.nse_symbol && (c.kind === "ipo_report" || c.kind === "stock_report")).map((c) => (
                 <option key={c.slug} value={c.slug}>
-                  {c.name}
+                  {c.name} {c.kind === "stock_report" ? "(listed)" : "(IPO)"}
                 </option>
               ))}
             </select>
@@ -92,7 +94,19 @@ export default function Monitor() {
                 <td className="text-xs">{w.next_check ? `${w.next_check.kind} ${when(w.next_check.due_at)}` : "—"}</td>
                 <td className="text-right">
                   {w.active && (
-                    <button type="button" className="text-xs underline" onClick={async () => { await api(`/api/watches/${w.id}/stop`, { method: "POST" }); watches.reload(); }}>
+                    <button
+                      type="button"
+                      className="text-xs underline"
+                      onClick={async () => {
+                        try {
+                          await api(`/api/watches/${w.id}/stop`, { method: "POST" });
+                          setError(null);
+                          watches.reload();
+                        } catch (e) {
+                          setError((e as Error).message);
+                        }
+                      }}
+                    >
                       stop
                     </button>
                   )}

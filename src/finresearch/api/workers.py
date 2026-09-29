@@ -21,17 +21,34 @@ from finresearch.db import session_scope
 from finresearch.db.models import ResearchRun
 
 
-def worker_command(run_id: int, *, streams: list[str] | None = None, concurrency: int = 4) -> list[str]:
-    argv = [sys.executable, "-m", "finresearch.cli", "ipo", "resume", str(run_id), "--wait",
-            "--concurrency", str(concurrency)]  # fmt: skip
+def worker_command(
+    run_id: int, *, streams: list[str] | None = None, concurrency: int | None = None
+) -> list[str]:
+    """Without streams/concurrency the CLI resumes with the ones saved when the run started."""
+    argv = [sys.executable, "-m", "finresearch.cli", "ipo", "resume", str(run_id), "--wait"]
+    if concurrency is not None:
+        argv += ["--concurrency", str(concurrency)]
     if streams:
         argv += ["--streams", ",".join(streams)]
     return argv
 
 
+_children: dict[int, subprocess.Popen] = {}  # workers this process started: poll() reaps them when they exit
+
+
 def pid_alive(pid: int | None) -> bool:
     if not pid:
         return False
+    if (proc := _children.get(pid)) is not None:
+        if proc.poll() is None:
+            return True
+        del _children[pid]
+        return False
+    try:  # a child we lost track of would stay a zombie (and pass kill(pid, 0)) until reaped
+        if os.waitpid(pid, os.WNOHANG)[0] == pid:
+            return False
+    except ChildProcessError:
+        pass  # not our child (started by an earlier API process or the CLI)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -51,6 +68,7 @@ def _popen(argv: list[str], log_path: Path) -> int:
     with log_path.open("ab") as log:
         proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
                                 start_new_session=True, env=os.environ.copy())  # fmt: skip
+    _children[proc.pid] = proc
     return proc.pid
 
 
@@ -64,9 +82,11 @@ class Spawner:
 
     popen: Callable[[list[str], Path], int] = _popen
 
-    def start(self, run_id: int, *, streams: list[str] | None = None, concurrency: int = 4) -> dict[str, Any]:
+    def start(
+        self, run_id: int, *, streams: list[str] | None = None, concurrency: int | None = None
+    ) -> dict[str, Any]:
         with session_scope() as s:
-            run = s.get(ResearchRun, run_id)
+            run = s.get(ResearchRun, run_id, with_for_update=True)  # one worker even for two quick clicks
             if run is None:
                 raise LookupError(f"unknown run {run_id}")
             current = worker_info(run.manifest)

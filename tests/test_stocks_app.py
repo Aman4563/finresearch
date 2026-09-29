@@ -62,7 +62,8 @@ def test_search_add_and_watch_a_stock(client):
     hits = client.get("/api/stocks/search", params={"q": "infosys"}).json()
     assert hits[0]["symbol"] == "INFY" and hits[0]["slug"] is None
     made = client.post("/api/companies", json={"nse_symbol": "infy"}).json()
-    assert made == {"slug": "infosys", "name": "Infosys Limited", "nse_symbol": "INFY", "created": True}
+    assert made == {"slug": "infosys", "name": "Infosys Limited", "nse_symbol": "INFY", "created": True,
+                    "kind": "stock_report"}  # fmt: skip
     again = client.post("/api/companies", json={"nse_symbol": "INFY"}).json()
     assert again["created"] is False and again["slug"] == "infosys"
     assert client.get("/api/stocks/search", params={"q": "INFY"}).json()[0]["slug"] == "infosys"

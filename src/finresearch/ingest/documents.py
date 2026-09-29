@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import ipaddress
 import shutil
+import socket
 import subprocess
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
@@ -22,6 +24,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 from sqlalchemy import select
@@ -32,6 +35,9 @@ from finresearch.db.models import Company, Document, DocumentPage
 PIPELINE_VERSION = "ingest-1"
 SCANNED_CHAR_THRESHOLD = 40  # a page with fewer non-space chars has no usable text layer
 TESSERACT_MIN_CONF = 70.0  # below this mean word confidence we ask glm-ocr for a second opinion
+MAX_DOWNLOAD_BYTES = 150 * 1024 * 1024
+MAX_REDIRECTS = 5
+RESERVED_TLDS = ("example", "invalid", "test")
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 
 
@@ -77,21 +83,74 @@ def store_file(src: Path, docs_dir: Path) -> tuple[str, Path]:
     return sha, dest
 
 
+class UnsafeUrl(ValueError):
+    pass
+
+
+def check_public_url(url: str, *, resolve=socket.getaddrinfo) -> None:
+    """URLs come from agents and web pages: only http(s) to public addresses (no loopback, private network,
+    link-local/cloud metadata). A name that does not resolve is left to fail in the fetch itself."""
+    parts = urlsplit(url)
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        raise UnsafeUrl(f"only http(s) URLs can be downloaded: {url!r}")
+    host = parts.hostname
+    if host == "localhost" or host.endswith((".localhost", ".local", ".internal")):
+        raise UnsafeUrl(f"{host} is a local host name")
+    try:
+        addrs = [ipaddress.ip_address(host)]
+    except ValueError:
+        if host.rsplit(".", 1)[-1] in RESERVED_TLDS:
+            return  # never resolves (RFC 2606/6761); skip a slow negative DNS lookup
+        try:
+            addrs = [ipaddress.ip_address(ai[4][0].split("%")[0]) for ai in resolve(host, parts.port or 443)]
+        except (OSError, UnicodeError):
+            return
+    for a in addrs:
+        a = getattr(a, "ipv4_mapped", None) or a
+        if not a.is_global or a.is_multicast:
+            raise UnsafeUrl(f"{host} resolves to a non-public address ({a})")
+
+
 def download(
-    url: str, dest_dir: Path, *, referer: str | None = None, timeout: float = 300
+    url: str,
+    dest_dir: Path,
+    *,
+    referer: str | None = None,
+    timeout: float = 300,
+    max_bytes: int = MAX_DOWNLOAD_BYTES,
 ) -> tuple[Path, dict]:
-    """Download to a temp file; returns (path, provenance). Validates that PDFs really are PDFs."""
+    """Download to a temp file; returns (path, provenance). Validates that PDFs really are PDFs.
+
+    Every hop of a redirect chain is checked with check_public_url, and the body is capped at max_bytes."""
     dest_dir.mkdir(parents=True, exist_ok=True)
     headers = {"User-Agent": UA, **({"Referer": referer} if referer else {})}
-    with (
-        httpx.Client(follow_redirects=True, timeout=timeout, headers=headers) as c,
-        c.stream("GET", url) as r,
-    ):
-        r.raise_for_status()
-        fd, tmp = tempfile.mkstemp(dir=dest_dir, suffix=".download")
-        with open(fd, "wb") as f:
-            for chunk in r.iter_bytes():
-                f.write(chunk)
+    with httpx.Client(follow_redirects=False, timeout=timeout, headers=headers) as c:
+        target = url
+        for _ in range(MAX_REDIRECTS + 1):
+            check_public_url(target)
+            r = c.send(c.build_request("GET", target), stream=True)
+            if not r.is_redirect:
+                break
+            r.close()
+            target = urljoin(target, r.headers["location"])
+        else:
+            raise ValueError(f"{url}: more than {MAX_REDIRECTS} redirects")
+        try:
+            r.raise_for_status()
+            if int(r.headers.get("content-length") or 0) > max_bytes:
+                raise ValueError(f"{url}: file larger than {max_bytes // (1024 * 1024)} MB")
+            fd, tmp = tempfile.mkstemp(dir=dest_dir, suffix=".download")
+            size = 0
+            with open(fd, "wb") as f:
+                for chunk in r.iter_bytes():
+                    size += len(chunk)
+                    if size > max_bytes:
+                        f.close()
+                        Path(tmp).unlink(missing_ok=True)
+                        raise ValueError(f"{url}: file larger than {max_bytes // (1024 * 1024)} MB")
+                    f.write(chunk)
+        finally:
+            r.close()
         prov = {
             "url": str(r.url),
             "requested_url": url,
