@@ -74,13 +74,15 @@ const RANGE_DAYS: Record<Range, number> = { "1M": 31, "3M": 92, "6M": 183, "1Y":
 /** Line/area time series. `data` rows have an ISO date under `x` plus one numeric field per series. */
 export function TimeSeriesChart({
   data, x = "date", series, height = 260, format = fmtDefault, ranges, defaultRange = "1Y", area = true,
-  references, showChange = true, xFormat = shortDate, yDomain, curve = "monotone", dots = false,
+  references, showChange = true, xFormat = shortDate, yDomain, curve = "monotone", dots = false, onPointClick,
 }: {
   data: Record<string, unknown>[]; x?: string; series: Series[]; height?: number; format?: Fmt; ranges?: Range[];
   defaultRange?: Range; area?: boolean; references?: { y: number; label: string; tone?: "gain" | "loss" | "muted" }[];
   showChange?: boolean; xFormat?: (v: string | number) => string; yDomain?: [number | "auto" | "dataMin", number | "auto" | "dataMax"];
   /** "linear" for sparse observations (no invented shape between points); `dots` marks each observation. */
   curve?: "monotone" | "linear"; dots?: boolean;
+  /** Click on the chart: called with the row under the crosshair (e.g. to show that point's sources). */
+  onPointClick?: (row: Record<string, unknown>, index: number) => void;
 }) {
   const gid = useId().replace(/:/g, "");
   const [range, setRange] = useState<Range>(ranges ? (ranges.includes(defaultRange) ? defaultRange : ranges[ranges.length - 1]) : "ALL");
@@ -99,6 +101,12 @@ export function TimeSeriesChart({
   }, [rows, first.key, showChange]);
 
   const up = (change ?? 0) >= 0;
+  const click = onPointClick
+    ? (st: { activeIndex?: unknown }) => {
+        const i = Number(st?.activeIndex);
+        if (Number.isInteger(i) && rows[i]) onPointClick(rows[i], i);
+      }
+    : undefined;
   const color = (s: Series, i: number) => s.color ?? (series.length === 1 ? (up ? "var(--gain)" : "var(--loss)") : CHART_COLORS[i % 6]);
 
   return (
@@ -120,7 +128,7 @@ export function TimeSeriesChart({
       <div style={{ height }} className="animate-fade-in">
         <ResponsiveContainer width="100%" height="100%">
           {area ? (
-            <AreaChart data={rows} margin={{ top: 6, right: 8, bottom: 0, left: 0 }}>
+            <AreaChart data={rows} margin={{ top: 6, right: 8, bottom: 0, left: 0 }} onClick={click} style={click ? { cursor: "pointer" } : undefined}>
               <defs>
                 {series.map((s, i) => (
                   <linearGradient key={s.key} id={`${gid}-${i}`} x1="0" y1="0" x2="0" y2="1">
@@ -145,7 +153,7 @@ export function TimeSeriesChart({
               ))}
             </AreaChart>
           ) : (
-            <LineChart data={rows} margin={{ top: 6, right: 8, bottom: 0, left: 0 }}>
+            <LineChart data={rows} margin={{ top: 6, right: 8, bottom: 0, left: 0 }} onClick={click} style={click ? { cursor: "pointer" } : undefined}>
               <CartesianGrid vertical={false} strokeDasharray="3 3" />
               <XAxis dataKey={x} {...axis} tickFormatter={xFormat} minTickGap={40} />
               <YAxis {...axis} width={64} tickFormatter={format} domain={yDomain ?? ["auto", "auto"]} />
@@ -169,9 +177,15 @@ export function TimeSeriesChart({
 }
 
 /** Bars per category, e.g. subscription times per investor category. `reference` draws a line (1x = fully subscribed). */
-export function BarsChart({ data, x, series, height = 240, format = fmtDefault, layout = "horizontal", reference, colorBy }: {
+export function BarsChart({ data, x, series, height = 240, format = fmtDefault, layout = "horizontal", reference, colorBy, onBarClick,
+  labelWidth = 96, stacked, tickFormat }: {
   data: Record<string, unknown>[]; x: string; series: Series[]; height?: number; format?: Fmt;
   layout?: "horizontal" | "vertical"; reference?: { value: number; label: string }; colorBy?: (row: Record<string, unknown>) => string;
+  /** Click on a bar: the row and the series key (e.g. to show that bar's sources). */
+  onBarClick?: (row: Record<string, unknown>, seriesKey: string) => void;
+  /** Width of the category axis in vertical layout (long names). */ labelWidth?: number;
+  stacked?: boolean;
+  /** Value-axis tick labels, when they should be shorter than the tooltip's `format`. */ tickFormat?: Fmt;
 }) {
   const vertical = layout === "vertical";
   return (
@@ -181,13 +195,13 @@ export function BarsChart({ data, x, series, height = 240, format = fmtDefault, 
           <CartesianGrid vertical={vertical} horizontal={!vertical} strokeDasharray="3 3" />
           {vertical ? (
             <>
-              <XAxis type="number" {...axis} tickFormatter={format} />
-              <YAxis type="category" dataKey={x} {...axis} width={96} />
+              <XAxis type="number" {...axis} tickFormatter={tickFormat ?? format} />
+              <YAxis type="category" dataKey={x} {...axis} width={labelWidth} />
             </>
           ) : (
             <>
               <XAxis dataKey={x} {...axis} />
-              <YAxis {...axis} width={56} tickFormatter={format} />
+              <YAxis {...axis} width={56} tickFormatter={tickFormat ?? format} />
             </>
           )}
           <Tooltip cursor={{ fill: "var(--background-subtle)" }} content={<ChartTooltip format={format} />} />
@@ -198,7 +212,9 @@ export function BarsChart({ data, x, series, height = 240, format = fmtDefault, 
           )}
           {series.map((s, i) => (
             <Bar key={s.key} dataKey={s.key} name={s.label} fill={s.color ?? CHART_COLORS[i % 6]} radius={vertical ? [0, 4, 4, 0] : [4, 4, 0, 0]}
-              maxBarSize={36} animationDuration={700}>
+              maxBarSize={36} animationDuration={700} stackId={stacked ? "s" : undefined}
+              onClick={onBarClick ? (_d: unknown, j: number) => data[j] && onBarClick(data[j], s.key) : undefined}
+              style={onBarClick ? { cursor: "pointer" } : undefined}>
               {colorBy && data.map((row, j) => <Cell key={j} fill={colorBy(row)} />)}
             </Bar>
           ))}
@@ -209,8 +225,9 @@ export function BarsChart({ data, x, series, height = 240, format = fmtDefault, 
 }
 
 /** Donut with a centre label; slices highlight on hover. */
-export function DonutChart({ data, height = 200, center, format = fmtDefault }: {
+export function DonutChart({ data, height = 200, center, format = fmtDefault, onSliceClick }: {
   data: { name: string; value: number; color?: string }[]; height?: number; center?: ReactNode; format?: Fmt;
+  /** Click on a slice or its legend row. */ onSliceClick?: (index: number) => void;
 }) {
   const [active, setActive] = useState<number | null>(null);
   const total = data.reduce((a, d) => a + d.value, 0);
@@ -220,7 +237,8 @@ export function DonutChart({ data, height = 200, center, format = fmtDefault }: 
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
             <Pie data={data} dataKey="value" nameKey="name" innerRadius="68%" outerRadius="92%" paddingAngle={2} stroke="none"
-              onMouseEnter={(_, i) => setActive(i)} onMouseLeave={() => setActive(null)} animationDuration={700}>
+              onMouseEnter={(_, i) => setActive(i)} onMouseLeave={() => setActive(null)} animationDuration={700}
+              onClick={onSliceClick ? (_: unknown, i: number) => onSliceClick(i) : undefined} style={onSliceClick ? { cursor: "pointer" } : undefined}>
               {data.map((d, i) => (
                 <Cell key={d.name} fill={d.color ?? CHART_COLORS[i % 6]} opacity={active == null || active === i ? 1 : 0.35} />
               ))}
@@ -238,8 +256,8 @@ export function DonutChart({ data, height = 200, center, format = fmtDefault }: 
       </div>
       <ul className="min-w-0 flex-1 space-y-1.5 text-xs">
         {data.map((d, i) => (
-          <li key={d.name} className={cx("flex items-center gap-2 transition-opacity", active != null && active !== i && "opacity-40")}
-            onMouseEnter={() => setActive(i)} onMouseLeave={() => setActive(null)}>
+          <li key={d.name} className={cx("flex items-center gap-2 transition-opacity", active != null && active !== i && "opacity-40", onSliceClick && "cursor-pointer")}
+            onMouseEnter={() => setActive(i)} onMouseLeave={() => setActive(null)} onClick={onSliceClick ? () => onSliceClick(i) : undefined}>
             <span className="size-2.5 shrink-0 rounded-sm" style={{ background: d.color ?? CHART_COLORS[i % 6] }} />
             <span className="truncate text-muted">{d.name}</span>
             <span className="num ml-auto font-medium">{format(d.value)}</span>

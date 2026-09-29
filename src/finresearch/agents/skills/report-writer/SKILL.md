@@ -13,3 +13,6 @@ description: House style and structure for FinResearch IPO reports. Use when wri
 - **Scenario tables** give bear/base/bull price ranges with the reasoning, and per-lot P&L from fincalc.
 - **Action checklist** entries carry exact dates and times (IST): UPI cut-off, allotment, listing, lock-in expiries, next results.
 - **Disclaimer** at the top and bottom: personal research, not SEBI-registered advice; GMP is unofficial; live data is interim.
+- **Key numbers table** right after the Verdict box: the 6–10 decisive figures with value, period, a citation and "what it means" in plain words.
+- **Explained simply:** every section after it opens with a one- or two-sentence plain-English line (no new figures; repeated numbers keep their [C<id>]).
+- **Jargon** is explained in brackets on first use (QIB, OFS, P/E, YTM, TER…).

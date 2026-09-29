@@ -494,7 +494,8 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
         files = (
             sorted(str(p.relative_to(root)) for p in root.rglob("*") if p.is_file()) if root.exists() else []
         )
-        return {"run_id": run_id, "path": str(root), "files": files}
+        entries = [{"path": f, "size": (root / f).stat().st_size} for f in files]
+        return {"run_id": run_id, "path": str(root), "files": files, "entries": entries}
 
     @app.api_route("/api/runs/{run_id}/pack/{path:path}", methods=["GET", "HEAD"])
     def pack_file(run_id: int, path: str, download: bool = False) -> FileResponse:
@@ -507,6 +508,43 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
         cache = "private, max-age=300" if status in TERMINAL else "no-cache"
         name = _download_name(f"{slug}-run-{run_id}-{target.stem}", target.suffix)
         return _serve_file(target, name, download=download, cache=cache)
+
+    @app.get("/api/runs/{run_id}/insights")
+    def run_insights(run_id: int) -> dict[str, Any]:
+        """Chart-ready, cited figures for the report reader, derived from the ledger without any model."""
+        from finresearch.api.insights import build_insights
+
+        with session_scope() as s:
+            run = s.get(ResearchRun, run_id)
+            if run is None:
+                raise HTTPException(404, f"unknown run {run_id}")
+            co = s.get(Company, run.company_id) if run.company_id else None
+            st = s.scalars(select(AgentStep).where(AgentStep.run_id == run_id, AgentStep.stage == "synthesis",
+                                                   AgentStep.status == "done")
+                           .order_by(AgentStep.finished_at.desc().nulls_last(), AgentStep.id.desc())).first()  # fmt: skip
+            synthesis = (st.output or {}) if st else {}
+            rows = s.scalars(select(Claim).where(Claim.run_id == run_id).order_by(Claim.id)).all()
+            claims = [claim_json(c, {}) for c in rows]
+            meta = (co.meta or {}) if co else {}
+            subject = {"slug": co.slug if co else None, "name": co.name if co else None,
+                       "nse_symbol": co.nse_symbol if co else None, "isin": meta.get("isin"),
+                       "amfi_code": meta.get("amfi_code")}  # fmt: skip
+            watch = None
+            w = s.scalars(select(Watch).where(Watch.company_id == co.id)).first() if co else None
+            if w is not None and w.kind == "ipo":
+                snaps = s.scalars(select(SubscriptionSnapshotRow)
+                                  .where(SubscriptionSnapshotRow.nse_symbol == w.nse_symbol,
+                                         SubscriptionSnapshotRow.source == "nse_combined")
+                                  .order_by(SubscriptionSnapshotRow.as_of)).all()  # fmt: skip
+                watch = {"id": w.id, **{k: _iso(getattr(w, k)) for k in ("open_date", "close_date", "allotment_date",
+                                                                         "listing_date")},
+                         "snapshots": [{"as_of": _iso(x.as_of), "source": x.source, "total_times": x.total_times,
+                                        "categories": x.categories} for x in snaps]}  # fmt: skip
+                subject["watch_id"] = w.id
+            out = build_insights(run_id=run_id, kind=run.kind, claims=claims, synthesis=synthesis,
+                                 report_markdown=synthesis.get("report_markdown"), subject=subject, watch=watch)  # fmt: skip
+            s.rollback()
+            return out
 
     def _pack_info(run_id: int) -> tuple[Path, str, str]:
         with session_scope() as s:
