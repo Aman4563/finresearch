@@ -1,7 +1,8 @@
 """Discover and ingest a company's offer and investor-relations documents.
 
 Sources, most deterministic first:
-1. NSE issue information: links to the RHP and the anchor-allocation report (ZIP archives of PDFs).
+1. NSE issue information: links to the RHP and the anchor-allocation report (ZIP archives of PDFs); for a BSE SME
+   issue, BSE's issue details (prospectus ZIP, price-band ad) and offer-document list.
 2. SEBI public-issue filings: DRHP / RHP / prospectus / addenda, matched by company name.
 3. A discovery agent (web tools only) for company IR pages: annual reports, audited statements, price-band ad,
    industry report. It may only return URLs it actually saw; Python validates, downloads and ingests them.
@@ -41,7 +42,7 @@ class Candidate:
     url: str
     kind: DocKind
     title: str
-    source: str  # nse | sebi | agent
+    source: str  # nse | bse | sebi | agent
     referer: str | None = None
 
 
@@ -118,6 +119,28 @@ def nse_candidates(issue_info: dict[str, str]) -> list[Candidate]:
         url = (issue_info.get(key) or "").strip()
         if url.startswith("http"):
             out.append(Candidate(url, kind, f"NSE {key}", "nse", "https://www.nseindia.com/"))
+    return out
+
+
+BSE_DOC_KINDS = {"Red Herring Prospectus": DocKind.RHP, "Price Band Advertisement": DocKind.PRICE_BAND_AD,
+                 "Addendum": DocKind.ADDENDUM, "Corrigendum": DocKind.ADDENDUM,
+                 "Anchor Allocation Report": DocKind.ANCHOR}  # fmt: skip
+
+
+def bse_candidates(company_name: str, detail=None, offer_docs=()) -> list[Candidate]:
+    """A BSE SME issue's document links (RHP/prospectus ZIP, price-band ad) from its issue details, plus any matching
+    row of BSE's offer-document list (DRHP / RHP / prospectus PDFs)."""
+    ref = "https://www.bseindia.com/"
+    out = []
+    for label, url in detail.documents.items() if detail is not None else ():
+        if label in BSE_DOC_KINDS:
+            out.append(Candidate(url, BSE_DOC_KINDS[label], f"BSE {label}", "bse", ref))
+    for d in offer_docs:
+        if names_match(company_name, d.company):
+            for url, kind, title in ((d.prospectus, DocKind.RHP, "Prospectus"), (d.rhp, DocKind.RHP, "RHP"),
+                                     (d.drhp, DocKind.DRHP, "DRHP")):  # fmt: skip
+                if url:
+                    out.append(Candidate(url, kind, f"BSE {title}", "bse", ref))
     return out
 
 
@@ -316,6 +339,7 @@ async def discover(
         if co is None:
             raise ValueError(f"unknown company {company_slug!r}")
         name, symbol, co_id = co.name, co.nse_symbol, co.id
+        bse_ipo_no = (co.meta or {}).get("bse_ipo_no")
     cands: list[Candidate] = []
     if kind == "stock":
         if not symbol:
@@ -333,6 +357,16 @@ async def discover(
             log(f"NSE: {len(cands)} archive link(s)")
         except Exception as e:
             log(f"NSE issue info unavailable: {e}")
+    elif bse_ipo_no:
+        try:
+            from finresearch.adapters.bse import BseClient
+
+            async with BseClient() as bse:
+                detail = await bse.issue_detail(bse_ipo_no)
+                cands += bse_candidates(name, detail, await bse.offer_documents())
+            log(f"BSE: {len(cands)} document link(s)")
+        except Exception as e:
+            log(f"BSE issue details unavailable: {e}")
     if kind != "stock":
         sebi = await sebi_candidates(name)
         log(f"SEBI: {len(sebi)} matching filing(s)")

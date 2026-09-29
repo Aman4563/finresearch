@@ -1,0 +1,134 @@
+{
+ "IPONO_0": [
+  {
+   "DT_TM": "9/29/2026 10:34:21 AM",
+   "DT_TMC": "Tuesday, September 29 ,  2026 10:34:21 AM",
+   "ISBID_Detail": "1",
+   "IPO_NO": "8008",
+   "ScripCode": "4858",
+   "ScripName": "Shivchem Agro Limited",
+   "Security_Type": "Equity",
+   "Symbol": "SHIVCHEM",
+   "Issue_Period": "28 Sep 2026 to 30 Sep 2026",
+   "IPO_Market_Timings": "",
+   "Post_Issue_Modification": "",
+   "DY1": "",
+   "Cut_off_time_for_UPI_Mandate_Confirmation": "",
+   "Issue_Size_No_of_shares": "2260000",
+   "Price_Band": "59.00-62.00",
+   "Price_Band_Advertisement": "https://listing.bseindia.com/Download/E:\\inetpub\\LISTING\\RTA\\DocumentsSMEiPO\\282344\\Price_Band_Advertisement_Pre-Issue_&_Price_Band_Advertisement_-_Shivchem.pdf",
+   "Face_Value": "5.00",
+   "Tick_Size": "1.00",
+   "Market_Lot": "2000",
+   "Minimum_Bid_Quantity": "4000",
+   "Maximum_Bid_Quantity_For_Qualified_Institutional_Investors": "2146000",
+   "Maximum_Bid_Quantity_For_Qualified_Non_Institutional_Investors": "2038000",
+   "Rating": "",
+   "DY2": "",
+   "Book_Running_Lead_Manager": "Shannon Advisors Private Limited^902, IX Floor, New Delhi House, 27, Barakhamba Road, Connaught Place, New Delhi, 110001||||||||sme.ipo@shannon.co.in|Shivani Mehra/ Priyanshi Jindal",
+   "Co_Book_Running_Lead_Manager": "",
+   "Syndicate_Member": "",
+   "Eligible_Banks": "",
+   "Registrar": "Maashitla Securities Private Limited^451, Krishna Apra Business Square, Netaji Subhash Place, Pitampura, New Delhi-110034||||||||ipo@maashitla.com",
+   "Sponsor_Bank": "KOTAK BANK^Intellion Square, 501, 5th Floor, A Wing, Infinity IT Park,\nGen. A.K. Vaidya Marg, Malad - East, Mumbai 400097||||||||ruchi.prasad@kotak.com,prashant.sawant@kotak.com,CMSIPO@kotak.com,girish.tondare@kotak.com,richardje|Sumit Panchal",
+   "DY3": "",
+   "Prospectus_GID": "https://listing.bseindia.com/Download/E:\\inetpub\\LISTING\\RTA\\DocumentsSMEiPO\\282344\\Prospectus_And_GID_Document_Prospectus_and_GID.zip",
+   "Addendum": "",
+   "Corrigendum": "",
+   "Anchor_Details": "",
+   "Bank_ASBA_Form": "https://ibbseforms.bseindia.com/ASBAFORMS/BlankForms_New.aspx?ipo=4858",
+   "Online_ASBA_Form": "https://ibbseforms.bseindia.com/ASBAFORMS/BidEntryQuick_New.aspx?ipo=4858",
+   "Revised_Online_ASBA_Form": "https://ibbseforms.bseindia.com/ASBAFORMS/SrchBid.aspx?ipo=4858",
+   "Registrar_issue_share_Transfer_Agents_Depository": "https://www.bseindia.com/Static/PublicIssues/RtaDp.aspx ",
+   "DY4": "",
+   "Public_Notices": "",
+   "Notes": "",
+   "Remarks": "",
+   "Branches_of_SCSBs": "http://www.sebi.gov.in/sebiweb/other/OtherAction.do?doRecognisedFpi=yes&intmId=34",
+   "List_of_SCSBs": "http://www.sebi.gov.in/sebiweb/other/OtherAction.do?doRecognisedFpi=yes&intmId=35",
+   "Self_Certified_Syndicate_Banks_Eligible": "https://www.sebi.gov.in/sebiweb/other/OtherAction.do?doRecognisedFpi=yes&intmId=40",
+   "DY5": "",
+   "DY6": ""
+  }
+ ],
+ "IPONO_1": [
+  {
+   "NEW_ID": "7cdafd1c-36a3-4849-868e-481f6d3c8aa2",
+   "IPO_NO": "8008",
+   "DYN_COLNAME": "",
+   "DYN_COLValue": "",
+   "INSERT_DTTM": "9/25/2026 11:43:34 PM",
+   "DYN_ORDER": "1"
+  },
+  {
+   "NEW_ID": "f2ef06e1-1fcb-4f07-b454-e82a7b20a0ed",
+   "IPO_NO": "8008",
+   "DYN_COLNAME": "",
+   "DYN_COLValue": "",
+   "INSERT_DTTM": "9/25/2026 11:43:34 PM",
+   "DYN_ORDER": "2"
+  },
+  {
+   "NEW_ID": "6b072e11-de76-45b3-ac7b-e29a63b73109",
+   "IPO_NO": "8008",
+   "DYN_COLNAME": "",
+   "DYN_COLValue": "",
+   "INSERT_DTTM": "9/25/2026 11:43:34 PM",
+   "DYN_ORDER": "3"
+  },
+  {
+   "NEW_ID": "3ffed325-316b-4f7e-87fe-dc657bf9ea16",
+   "IPO_NO": "8008",
+   "DYN_COLNAME": "",
+   "DYN_COLValue": "",
+   "INSERT_DTTM": "9/25/2026 11:43:34 PM",
+   "DYN_ORDER": "4"
+  },
+  {
+   "NEW_ID": "b26c6fbf-b35f-4b83-b621-ec8ba55166e9",
+   "IPO_NO": "8008",
+   "DYN_COLNAME": "",
+   "DYN_COLValue": "",
+   "INSERT_DTTM": "9/25/2026 11:43:34 PM",
+   "DYN_ORDER": "5"
+  },
+  {
+   "NEW_ID": "4d458b85-52c9-457a-b92e-ff84dfb595f2",
+   "IPO_NO": "8008",
+   "DYN_COLNAME": "",
+   "DYN_COLValue": "",
+   "INSERT_DTTM": "9/25/2026 11:43:34 PM",
+   "DYN_ORDER": "6"
+  }
+ ],
+ "IPONO_2": [
+  {
+   "Price": "59.00",
+   "Quantity": "290000",
+   "Price1": "59",
+   "process_dttm": "9/29/2026 10:34:21 AM"
+  },
+  {
+   "Price": "62.00",
+   "Quantity": "282000",
+   "Price1": "62",
+   "process_dttm": "9/29/2026 10:34:21 AM"
+  }
+ ],
+ "IPONO_3": [
+  {
+   "Price": "59.00",
+   "Quantity": "290000",
+   "Price1": "59",
+   "process_dttm": "9/29/2026 10:33:00 AM"
+  },
+  {
+   "Price": "62.00",
+   "Quantity": "282000",
+   "Price1": "62",
+   "process_dttm": "9/29/2026 10:33:00 AM"
+  }
+ ],
+ "IPONO_4": [],
+ "status": "success"
+}

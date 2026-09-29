@@ -1,0 +1,244 @@
+{
+ "table1": [
+  {
+   "SRNo": "Sr.No.",
+   "col2": "Category",
+   "col3": "No.of shares offered/reserved",
+   "col8": "No. of shares app for",
+   "col4": "No. of shares bid for",
+   "col5": "No. of times of total meant for the category",
+   "Scripname": "Shivchem Agro Limited",
+   "Maxdt": "9/29/2026 10:35:43 AM"
+  },
+  {
+   "SRNo": "1",
+   "col2": "Qualified Institutional Buyers (QIBs)",
+   "col3": "108000",
+   "col8": "0",
+   "col4": "0",
+   "col5": "0.0000",
+   "Scripname": "Shivchem Agro Limited",
+   "Maxdt": "9/29/2026 10:35:43 AM"
+  },
+  {
+   "SRNo": "1(a)",
+   "col2": "Foreign Institutional Investors (FIIs)",
+   "col3": "",
+   "col8": "",
+   "col4": "",
+   "col5": "",
+   "Scripname": "Shivchem Agro Limited",
+   "Maxdt": "9/29/2026 10:35:43 AM"
+  },
+  {
+   "SRNo": "1(b)",
+   "col2": "Domestic Financial Institutions (Banks/ Financial Institutions(FIs)/ Insurance Companies)",
+   "col3": "",
+   "col8": "",
+   "col4": "",
+   "col5": "",
+   "Scripname": "Shivchem Agro Limited",
+   "Maxdt": "9/29/2026 10:35:43 AM"
+  },
+  {
+   "SRNo": "1(c)",
+   "col2": "Mutual Funds",
+   "col3": "",
+   "col8": "",
+   "col4": "",
+   "col5": "",
+   "Scripname": "Shivchem Agro Limited",
+   "Maxdt": "9/29/2026 10:35:43 AM"
+  },
+  {
+   "SRNo": "1(d)",
+   "col2": "Others",
+   "col3": "",
+   "col8": "",
+   "col4": "",
+   "col5": "",
+   "Scripname": "Shivchem Agro Limited",
+   "Maxdt": "9/29/2026 10:35:43 AM"
+  },
+  {
+   "SRNo": "2",
+   "col2": "Non Institutional Investors",
+   "col3": "1128000",
+   "col8": "7",
+   "col4": "146000",
+   "col5": "0.1294",
+   "Scripname": "Shivchem Agro Limited",
+   "Maxdt": "9/29/2026 10:35:43 AM"
+  },
+  {
+   "SRNo": "2.1",
+   "col2": "Non-Institutional Investors    (Bid amount of more than Ten Lakh Rupees)",
+   "col3": "676000",
+   "col8": "2",
+   "col4": "114000",
+   "col5": "0.1686",
+   "Scripname": "Shivchem Agro Limited",
+   "Maxdt": "9/29/2026 10:35:43 AM"
+  },
+  {
+   "SRNo": "2.1(a)",
+   "col2": "Corporates",
+   "col3": "",
+   "col8": "1",
+   "col4": "",
+   "col5": "",
+   "Scripname": "Shivchem Agro Limited",
+   "Maxdt": "9/29/2026 10:35:43 AM"
+  },
+  {
+   "SRNo": "2.1(b)",
+   "col2": "Individuals",
+   "col3": "",
+   "col8": "",
+   "col4": "",
+   "col5": "",
+   "Scripname": "Shivchem Agro Limited",
+   "Maxdt": "9/29/2026 10:35:43 AM"
+  },
+  {
+   "SRNo": "2.1(c)",
+   "col2": "Others",
+   "col3": "",
+   "col8": "1",
+   "col4": "114000",
+   "col5": "",
+   "Scripname": "Shivchem Agro Limited",
+   "Maxdt": "9/29/2026 10:35:43 AM"
+  },
+  {
+   "SRNo": "2.2",
+   "col2": "Non-Institutional Investors (Bid amount upto Ten Lakh Rupees)",
+   "col3": "338000",
+   "col8": "5",
+   "col4": "32000",
+   "col5": "0.0947",
+   "Scripname": "Shivchem Agro Limited",
+   "Maxdt": "9/29/2026 10:35:43 AM"
+  },
+  {
+   "SRNo": "2.2(a)",
+   "col2": "Corporates",
+   "col3": "",
+   "col8": "1",
+   "col4": "6000",
+   "col5": "",
+   "Scripname": "Shivchem Agro Limited",
+   "Maxdt": "9/29/2026 10:35:43 AM"
+  },
+  {
+   "SRNo": "2.2(b)",
+   "col2": "Individuals (IND category bidding for more than 2 Lots )",
+   "col3": "",
+   "col8": "4",
+   "col4": "26000",
+   "col5": "",
+   "Scripname": "Shivchem Agro Limited",
+   "Maxdt": "9/29/2026 10:35:43 AM"
+  },
+  {
+   "SRNo": "2.2(c)",
+   "col2": "Others",
+   "col3": "",
+   "col8": "",
+   "col4": "",
+   "col5": "",
+   "Scripname": "Shivchem Agro Limited",
+   "Maxdt": "9/29/2026 10:35:43 AM"
+  },
+  {
+   "SRNo": "3",
+   "col2": "Individual Investors (IND category bidding for 2 Lots)",
+   "col3": "1024000",
+   "col8": "37",
+   "col4": "148000",
+   "col5": "0.1445",
+   "Scripname": "Shivchem Agro Limited",
+   "Maxdt": "9/29/2026 10:35:43 AM"
+  },
+  {
+   "SRNo": "3(a)",
+   "col2": "Price bids",
+   "col3": "",
+   "col8": "37",
+   "col4": "148000",
+   "col5": "",
+   "Scripname": "Shivchem Agro Limited",
+   "Maxdt": "9/29/2026 10:35:43 AM"
+  },
+  {
+   "SRNo": "4",
+   "col2": "Eligible Employees (EMP)",
+   "col3": "",
+   "col8": "0",
+   "col4": "0",
+   "col5": "",
+   "Scripname": "Shivchem Agro Limited",
+   "Maxdt": "9/29/2026 10:35:43 AM"
+  },
+  {
+   "SRNo": "4(a)",
+   "col2": "Price bids",
+   "col3": "",
+   "col8": "",
+   "col4": "",
+   "col5": "",
+   "Scripname": "Shivchem Agro Limited",
+   "Maxdt": "9/29/2026 10:35:43 AM"
+  },
+  {
+   "SRNo": "5",
+   "col2": "Eligible Share Holders (SHA)",
+   "col3": "",
+   "col8": "0",
+   "col4": "0",
+   "col5": "",
+   "Scripname": "Shivchem Agro Limited",
+   "Maxdt": "9/29/2026 10:35:43 AM"
+  },
+  {
+   "SRNo": "5(a)",
+   "col2": "Price bids",
+   "col3": "",
+   "col8": "",
+   "col4": "",
+   "col5": "",
+   "Scripname": "Shivchem Agro Limited",
+   "Maxdt": "9/29/2026 10:35:43 AM"
+  },
+  {
+   "SRNo": "6",
+   "col2": "Eligible Policy Holders (POL)",
+   "col3": "",
+   "col8": "0",
+   "col4": "0",
+   "col5": "",
+   "Scripname": "Shivchem Agro Limited",
+   "Maxdt": "9/29/2026 10:35:43 AM"
+  },
+  {
+   "SRNo": "6(a)",
+   "col2": "Price bids",
+   "col3": "",
+   "col8": "",
+   "col4": "",
+   "col5": "",
+   "Scripname": "Shivchem Agro Limited",
+   "Maxdt": "9/29/2026 10:35:43 AM"
+  },
+  {
+   "SRNo": "",
+   "col2": "Total",
+   "col3": "2260000",
+   "col8": "44",
+   "col4": "294000",
+   "col5": "0.1301",
+   "Scripname": "Shivchem Agro Limited",
+   "Maxdt": "9/29/2026 10:35:43 AM"
+  }
+ ]
+}

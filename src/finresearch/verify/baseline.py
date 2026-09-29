@@ -1,4 +1,4 @@
-"""Baseline offer facts parsed deterministically from NSE's issue information (no LLM).
+"""Baseline offer facts parsed deterministically from NSE's (or, for a BSE SME issue, BSE's) issue information.
 
 Live run 4 used the price band, lot size and fresh-issue amount only as inputs to calculations and never recorded
 them as claims. The exchange publishes them verbatim, so the pipeline records them itself: each one is an atomic
@@ -95,15 +95,17 @@ def parse_baseline(issue_info: dict[str, str]) -> list[BaselineFact]:
     return out
 
 
-def record_baseline(session: Session, run_id: int, symbol: str, issue_info: dict[str, str],
-                    fetched_at: datetime | None) -> list[int]:  # fmt: skip
+def record_baseline(session: Session, run_id: int, symbol: str | None, issue_info: dict[str, str],
+                    fetched_at: datetime | None, *, exchange: str = "NSE", url: str | None = None) -> list[int]:  # fmt: skip
+    """`exchange="BSE"` for a BSE-only SME issue, whose issue_info comes from BSE's issue details at `url`."""
     ids = []
-    url = NSE_DETAIL_URL.format(symbol=symbol)
+    url = url or NSE_DETAIL_URL.format(symbol=symbol)
     for f in parse_baseline(issue_info):
-        c = Claim(run_id=run_id, stream="facts", statement=f"{f.statement} (NSE issue information)", claim_type="numeric",
-                  metric=f.metric, value=f.value, unit=f.unit, period="offer", importance=f.importance,
-                  status="verified", verifier_note="deterministic: parsed from NSE issue information (primary source)",
-                  checks={"source": "nse_issue_info"})  # fmt: skip
+        c = Claim(run_id=run_id, stream="facts", statement=f"{f.statement} ({exchange} issue information)",
+                  claim_type="numeric", metric=f.metric, value=f.value, unit=f.unit, period="offer",
+                  importance=f.importance, status="verified",
+                  verifier_note=f"deterministic: parsed from {exchange} issue information (primary source)",
+                  checks={"source": f"{exchange.lower()}_issue_info"})  # fmt: skip
         session.add(c)
         session.flush()
         session.add(Citation(claim_id=c.id, url=url, accessed_at=fetched_at, quote=f.quote[:1000]))

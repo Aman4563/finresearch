@@ -171,6 +171,9 @@ def docs_discover(
     company: str = typer.Argument(..., help="Company slug"),
     name: str | None = typer.Option(None, help="Company name (creates the company if new)"),
     nse_symbol: str | None = typer.Option(None),
+    bse_ipo: int | None = typer.Option(
+        None, help="BSE IPO number of a BSE-only SME issue (`finresearch ipo bse`)"
+    ),
     agent: bool = typer.Option(True, help="Also search company IR pages with the discovery agent"),
     index: bool = typer.Option(True, help="Build sections, chunks and embeddings"),
     kind: str = typer.Option(
@@ -186,6 +189,7 @@ def docs_discover(
         co = get_or_create_company(db, company, name, nse_symbol=nse_symbol)
         if nse_symbol and not co.nse_symbol:
             co.nse_symbol = nse_symbol
+        _set_bse_ipo(co, bse_ipo)
     rep = asyncio.run(discover(company, use_agent=agent, index=index, log=console.print, kind=kind))
     for o in rep.outcomes:
         console.print(
@@ -267,6 +271,9 @@ def ipo_run(
     ),
     name: str | None = typer.Option(None, help="Company name (creates the company if new)"),
     nse_symbol: str | None = typer.Option(None),
+    bse_ipo: int | None = typer.Option(
+        None, help="BSE IPO number of a BSE-only SME issue (`finresearch ipo bse`)"
+    ),
     streams: str | None = typer.Option(None, help="Comma-separated subset of streams (default: all seven)"),
     concurrency: int = typer.Option(4, help="Parallel agents (Max-plan friendly default)"),
     wait: bool = typer.Option(False, help="Sleep through Max-window resets and resume automatically"),
@@ -276,14 +283,53 @@ def ipo_run(
     from finresearch.ingest.documents import get_or_create_company
     from finresearch.orchestrator.ipo import create_run
 
-    if name or nse_symbol:
+    if name or nse_symbol or bse_ipo:
         with session_scope() as db:
             co = get_or_create_company(db, company, name, nse_symbol=nse_symbol)
             if nse_symbol and not co.nse_symbol:
                 co.nse_symbol = nse_symbol
+            _set_bse_ipo(co, bse_ipo)
     run_id = create_run(company)
     console.print(f"created run {run_id} for {company}")
     _go(run_id, streams, concurrency, wait)
+
+
+def _set_bse_ipo(co, bse_ipo: int | None) -> None:
+    """Mark a company as a BSE SME issue: issue facts, documents and subscription then come from BSE."""
+    if bse_ipo:
+        co.meta = {**(co.meta or {}), "bse_ipo_no": bse_ipo, "exchange": "BSE"}
+
+
+@ipo_app.command("bse")
+def ipo_bse() -> None:
+    """List open and forthcoming BSE SME IPOs with lot size and minimum bid (live from BSE)."""
+    from finresearch.adapters.bse import sme_radar
+
+    rows, errors = asyncio.run(sme_radar())
+    t = Table(title="BSE SME IPOs")
+    for col in (
+        "IPO no",
+        "symbol",
+        "company",
+        "status",
+        "bidding",
+        "price band",
+        "lot",
+        "min bid",
+        "issue shares",
+    ):
+        t.add_column(col)
+    for i, d in rows:
+        t.add_row(str(i.ipo_no), (d.symbol if d else None) or i.scrip_code, i.company,
+                  {"L": "open", "F": "forthcoming"}.get(i.status or "", i.status or ""),
+                  f"{i.issue_start} → {i.issue_end}", i.price_band or "",
+                  str(d.market_lot) if d and d.market_lot else "",
+                  f"{d.minimum_bid} ({d.min_lots} lots)" if d and d.minimum_bid else "",
+                  f"{d.issue_size_shares:,}" if d and d.issue_size_shares else "")  # fmt: skip
+    console.print(t)
+    for e in errors:
+        console.print(f"[yellow]{e}[/]")
+    console.print("research one: finresearch ipo run <slug> --name '<company>' --bse-ipo <IPO no>")
 
 
 stock_app = typer.Typer(no_args_is_help=True, help="Listed-stock research reports (multi-agent pipeline)")

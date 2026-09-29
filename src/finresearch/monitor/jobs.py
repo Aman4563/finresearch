@@ -29,6 +29,7 @@ class Deps:
     stock_snapshot: Any = None  # async (symbol) -> dict: bars, announcements, actions, shareholding
     holidays: Any = None  # async (kind) -> NSE holiday-master payload (tests); None + live_holidays uses NSE
     live_holidays: bool = False
+    bse_ipo_detail: Any = None  # async (ipo_no) -> IpoDetail from BSE, for a BSE SME watch (meta bse_ipo_no)
 
     @classmethod
     def live(cls) -> Deps:
@@ -58,9 +59,14 @@ class Deps:
                         "announcements": await eq.announcements(symbol),
                         "actions": await eq.corporate_actions(symbol), "shareholding": await eq.shareholding(symbol)}  # fmt: skip
 
-        return cls(
-            ipo_detail=ipo_detail, quote=quote, current_issues=current_issues, stock_snapshot=stock_snapshot
-        )
+        async def bse_ipo_detail(ipo_no: int):
+            from finresearch.adapters.bse import BseClient
+
+            async with BseClient() as bse:
+                return await bse.ipo_detail(ipo_no)
+
+        return cls(ipo_detail=ipo_detail, quote=quote, current_issues=current_issues, stock_snapshot=stock_snapshot,
+                   bse_ipo_detail=bse_ipo_detail)  # fmt: skip
 
 
 def alert(session: Session, watch: Watch, kind: str, message: str, level: str = "info", **data: Any) -> None:
@@ -74,16 +80,18 @@ def _fmt(x: Decimal | None) -> str:
 async def subscription(session: Session, job: MonitorJob, watch: Watch, deps: Deps, now: datetime) -> dict:
     from finresearch.suggest.rules import subscription_metrics
 
-    detail = await deps.ipo_detail(watch.nse_symbol)
+    bse_ipo_no = (watch.meta or {}).get("bse_ipo_no")  # a BSE SME issue: BSE publishes the whole book
+    detail = await (deps.bse_ipo_detail(bse_ipo_no) if bse_ipo_no else deps.ipo_detail(watch.nse_symbol))
     snap = detail.combined
     if snap is None:
-        raise NotYet("NSE has no combined subscription table yet")
+        raise NotYet("the exchange has no subscription table yet")
     total, source = snap.total_times, snap.source
-    if total is None and deps.current_issues:  # SME tables publish no offered shares, so no category times
+    # NSE SME tables publish no offered shares, so no category times; BSE's SME table has both
+    if total is None and deps.current_issues and not bse_ipo_no:
         row = next((i for i in await deps.current_issues() if i.symbol == watch.nse_symbol), None)
         total, source = (row.times_subscribed, "nse_current_issues") if row else (None, source)
     if total is None:
-        raise NotYet("NSE has not published a subscription total yet")
+        raise NotYet("the exchange has not published a subscription total yet")
     session.execute(insert(SubscriptionSnapshotRow).values(
         nse_symbol=watch.nse_symbol, as_of=snap.as_of or now, source=source, total_times=total,
         categories=[c.model_dump(mode="json") for c in snap.categories], raw={},
@@ -104,10 +112,8 @@ async def subscription(session: Session, job: MonitorJob, watch: Watch, deps: De
     if job.params.get("final"):
         parts = [f"{label} {_fmt(m[k].value)}" for k, label in (("total_times", "total"), ("qib_times", "QIB"),
                  ("nii_times", "NII"), ("rii_times", "retail")) if k in m and m[k].value is not None]  # fmt: skip
-        label = (
-            "NSE combined"
-            if source == "nse_combined"
-            else "NSE current issues; SME category times unpublished"
+        label = {"nse_combined": "NSE combined", "bse_sme": "BSE SME book"}.get(
+            source, "NSE current issues; SME category times unpublished"
         )
         alert(session, watch, "subscription_final", f"{watch.nse_symbol} closed: " + ", ".join(parts)
               + f" ({label}, {result['as_of']})", metrics=result)  # fmt: skip

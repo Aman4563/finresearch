@@ -251,6 +251,7 @@ def test_ipo_radar_links_known_companies_and_reports_source_errors(client, seede
             raise nse.NseError("NSE refused")
 
     monkeypatch.setattr(nse, "NseClient", FakeNse)
+    monkeypatch.setattr("finresearch.adapters.bse.sme_radar", no_bse)
     data = client.get("/api/ipos", params={"refresh": True}).json()
     row = data["issues"][0]
     assert (
@@ -288,6 +289,7 @@ def test_ipo_radar_dedupes_symbols_and_derives_the_phase_from_dates(client, monk
             ]
 
     monkeypatch.setattr(nse, "NseClient", FakeNse)
+    monkeypatch.setattr("finresearch.adapters.bse.sme_radar", no_bse)
     monkeypatch.setattr("finresearch.fincalc.dates.now_ist", lambda: datetime(2026, 9, 28, 12))
     rows = client.get("/api/ipos", params={"refresh": True}).json()["issues"]
     assert [(r["symbol"], r["phase"]) for r in rows] == [
@@ -340,3 +342,75 @@ def test_ask_rejects_unknown_runs_and_foreign_conversations(client, seeded):
     r = client.post(f"/api/runs/{other_id}/ask", json={"question": "x", "conversation_id": conv})
     assert r.status_code == 404
     assert client.post(f"/api/runs/{seeded['run_id']}/ask", json={"question": ""}).status_code == 422
+
+
+# --------------------------------------------------------------------------- BSE SME in the radar
+async def no_bse():
+    return [], []
+
+
+class FakeNseList:
+    def __init__(self, issues):
+        self.issues = issues
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return None
+
+    async def current_issues(self):
+        return self.issues
+
+    async def upcoming_issues(self):
+        return []
+
+
+def test_radar_lists_bse_sme_issues_with_lot_and_skips_ones_nse_lists(client, monkeypatch):
+    from datetime import date, datetime
+
+    from finresearch.adapters import bse, nse
+    from finresearch.adapters.bse import BseIssue, BseIssueDetail
+    from finresearch.adapters.http import IST
+    from finresearch.adapters.nse import IpoIssue
+
+    fix = Path(__file__).parent / "fixtures" / "bse"
+
+    def load(name):
+        return json.loads((fix / name).read_text())
+
+    def shivchem():
+        return BseIssueDetail.parse(load("issue_detail_8008_SHIVCHEM_20260929_1034.json"))
+
+    rows = [BseIssue.parse(r) for r in load("public_issues_20260929.json")["Table"]]
+    sme = [i for i in rows if i.is_sme_ipo]
+    tna = BseIssueDetail.parse(load("issue_detail_8023_TNA_20260929.json"))
+
+    async def fake_radar():
+        return [(i, {8008: shivchem(), 8023: tna}.get(i.ipo_no)) for i in sme], [
+            "BSE IPO 8007 details: HTTP 500"
+        ]
+
+    both = IpoIssue(symbol="EVEREST", company="Everestims Technologies Ltd", series="SME",
+                    issue_start=date(2026, 9, 29), issue_end=date(2026, 10, 5))  # fmt: skip
+    monkeypatch.setattr(nse, "NseClient", lambda: FakeNseList([both]))
+    monkeypatch.setattr(bse, "sme_radar", fake_radar)
+    monkeypatch.setattr("finresearch.fincalc.dates.now_ist", lambda: datetime(2026, 9, 29, 12, tzinfo=IST))
+    data = client.get("/api/ipos", params={"refresh": True}).json()
+    by = {(r["exchange"], r["symbol"]): r for r in data["issues"]}
+    assert set(by) == {
+        ("NSE", "EVEREST"),
+        ("BSE", "SHIVCHEM"),
+        ("BSE", "TNA"),
+    }  # Everestims only once, from NSE
+    s = by[("BSE", "SHIVCHEM")]
+    assert (s["phase"], s["series"], s["lot_size"], s["min_lots"], s["bse_ipo_no"]) == (
+        "open",
+        "SME",
+        2000,
+        2,
+        8008,
+    )
+    assert by[("BSE", "TNA")]["phase"] == "upcoming" and data["errors"] == [
+        "bse: BSE IPO 8007 details: HTTP 500"
+    ]
