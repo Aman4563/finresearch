@@ -1,11 +1,12 @@
 "use client";
 
+import { Loader2, MessagesSquare, Send, ShieldCheck, Sparkles } from "lucide-react";
 import { useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { CiteChip } from "@/components/evidence";
-import { Button, ErrorNote } from "@/components/ui";
+import { Button, ErrorNote, cx, inputClass } from "@/components/ui";
 import { api, type Claim, useApi } from "@/lib/api";
 
 type Checks = {
@@ -30,9 +31,14 @@ function CheckNotes({ c }: { c: Checks }) {
   if (c.bad_line_citations?.length) notes.push(`document lines that do not exist: ${c.bad_line_citations.join(", ")}`);
   if (c.uncited_figure_lines?.length) notes.push(`${c.uncited_figure_lines.length} sentence(s) with figures but no citation — treat as UNVERIFIED`);
   if (c.needs_new_research) notes.push("needs new research: the ledger and documents do not answer this");
-  if (!notes.length) return <p className="mt-1 text-[0.7rem] text-emerald-600">✓ every figure is cited to the ledger or a document</p>;
+  if (!notes.length)
+    return (
+      <p className="mt-2 inline-flex items-center gap-1 text-[0.7rem] text-gain">
+        <ShieldCheck className="size-3.5" /> every figure is cited to the ledger or a document
+      </p>
+    );
   return (
-    <ul className="mt-1 list-disc pl-4 text-[0.7rem] text-amber-700 dark:text-amber-300">
+    <ul className="mt-2 list-disc rounded-lg bg-warn-soft py-1.5 pr-2 pl-6 text-[0.7rem] text-warn">
       {notes.map((n) => (
         <li key={n}>{n}</li>
       ))}
@@ -83,8 +89,10 @@ export function AskPanel({ runId, claims, onOpenClaim }: { runId: string; claims
   return (
     <div className="space-y-3 text-sm">
       <div className="flex flex-wrap items-center gap-2">
+        <MessagesSquare className="size-4 text-muted" />
         <select
-          className="rounded border border-border bg-background px-2 py-1 text-xs"
+          aria-label="Conversation"
+          className={cx(inputClass, "h-8 min-w-0 flex-1 text-xs")}
           value={thread?.id ?? ""}
           onChange={(e) => (e.target.value ? open(Number(e.target.value)) : setThread(null))}
         >
@@ -96,9 +104,18 @@ export function AskPanel({ runId, claims, onOpenClaim }: { runId: string; claims
           ))}
         </select>
       </div>
-      <div className="max-h-[60vh] space-y-3 overflow-auto">
+      <div className="max-h-[60vh] space-y-3 overflow-auto pr-1">
+        {!thread && (
+          <div className="rounded-lg border border-dashed border-border p-3 text-xs text-muted">
+            <p className="mb-2 flex items-center gap-1.5 font-medium text-foreground">
+              <Sparkles className="size-3.5 text-brand" /> Ask anything about this report
+            </p>
+            Answers come only from this run&apos;s checked claims and documents, each figure cited. Try: &ldquo;What are the three biggest risks?&rdquo;
+            or &ldquo;How does the valuation compare with peers?&rdquo; Each question uses a little of your Claude plan.
+          </div>
+        )}
         {thread?.messages.map((m) => (
-          <div key={m.id} className={m.role === "user" ? "rounded bg-background p-2" : "rounded border border-border p-2"}>
+          <div key={m.id} className={m.role === "user" ? "ml-6 rounded-xl rounded-br-sm bg-brand-soft px-3 py-2 animate-fade-up" : "mr-2 rounded-xl rounded-bl-sm border border-border bg-background-subtle/50 px-3 py-2 animate-fade-up"}>
             {m.role === "user" ? (
               <p className="font-medium">{m.content}</p>
             ) : (
@@ -110,7 +127,7 @@ export function AskPanel({ runId, claims, onOpenClaim }: { runId: string; claims
                       a: ({ href, children }) => {
                         const c = href?.match(/^#cite-(\d+)$/);
                         if (c) return <CiteChip id={Number(c[1])} claim={allClaims[c[1]]} onOpen={onOpenClaim} />;
-                        if (href?.startsWith("#doc-")) return <code className="rounded bg-background px-1 text-[0.7rem]">{children}</code>;
+                        if (href?.startsWith("#doc-")) return <code className="rounded bg-background-subtle px-1 text-[0.7rem]">{children}</code>;
                         return (
                           <a href={href} className="underline" target="_blank" rel="noreferrer noopener">
                             {children}
@@ -123,14 +140,18 @@ export function AskPanel({ runId, claims, onOpenClaim }: { runId: string; claims
                   </ReactMarkdown>
                 </div>
                 <CheckNotes c={m.checks} />
-                <p className="mt-1 text-[0.65rem] text-muted">
+                <p className="num mt-1 text-[0.65rem] text-muted">
                   {m.model} {m.duration_s ? `· ${Math.round(m.duration_s)}s` : ""}
                 </p>
               </>
             )}
           </div>
         ))}
-        {busy && <p className="text-xs text-muted">Claude is reading the ledger and documents…</p>}
+        {busy && (
+          <p className="flex items-center gap-2 text-xs text-muted">
+            <Loader2 className="size-3.5 animate-spin text-brand" /> Claude is reading the ledger and documents…
+          </p>
+        )}
       </div>
       <ErrorNote error={error ?? list.error} />
       <form
@@ -141,13 +162,14 @@ export function AskPanel({ runId, claims, onOpenClaim }: { runId: string; claims
         }}
       >
         <input
-          className="flex-1 rounded border border-border bg-background px-2 py-1"
+          aria-label="Question"
+          className={cx(inputClass, "min-w-0 flex-1")}
           placeholder="Ask about this report…"
           value={question}
           onChange={(e) => setQuestion(e.target.value)}
           disabled={busy}
         />
-        <Button type="submit" disabled={busy || !question.trim()}>
+        <Button type="submit" size="md" icon={<Send className="size-3.5" />} disabled={busy || !question.trim()}>
           Ask
         </Button>
       </form>

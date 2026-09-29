@@ -1,15 +1,17 @@
 "use client";
 
-import { Badge } from "@/components/ui";
+import { FileSearch, X } from "lucide-react";
+
+import { Badge, SkeletonRows } from "@/components/ui";
 import { API_URL, type Citation, type Claim, useApi, when } from "@/lib/api";
 
 const CHIP: Record<string, string> = {
-  verified: "border-emerald-500 text-emerald-700 dark:text-emerald-300",
-  unverified: "border-amber-500 text-amber-700 dark:text-amber-300",
-  needs_review: "border-amber-500 text-amber-700 dark:text-amber-300",
-  contradicted: "border-rose-500 text-rose-700 dark:text-rose-300",
-  unsupported: "border-rose-500 text-rose-700 dark:text-rose-300",
-  missing: "border-rose-500 bg-rose-50 text-rose-700 dark:bg-rose-950 dark:text-rose-300",
+  verified: "border-gain/40 bg-gain-soft text-gain hover:border-gain",
+  unverified: "border-warn/40 bg-warn-soft text-warn hover:border-warn",
+  needs_review: "border-warn/40 bg-warn-soft text-warn hover:border-warn",
+  contradicted: "border-loss/40 bg-loss-soft text-loss hover:border-loss",
+  unsupported: "border-loss/40 bg-loss-soft text-loss hover:border-loss",
+  missing: "border-loss bg-loss-soft text-loss",
 };
 
 function host(url: string) {
@@ -35,14 +37,14 @@ export function CiteChip({ id, claim, onOpen }: { id: number; claim?: Claim; onO
       <button
         type="button"
         onClick={() => onOpen(id)}
-        className={`mx-0.5 rounded border px-1 align-baseline text-[0.7rem] font-medium leading-4 ${CHIP[status] ?? CHIP.unverified}`}
+        className={`num mx-0.5 rounded border px-1 align-baseline text-[0.68rem] font-medium leading-4 no-underline transition ${CHIP[status] ?? CHIP.unverified}`}
         aria-label={`claim ${id}: ${status}`}
       >
         C{id}
       </button>
       <span
         role="tooltip"
-        className="pointer-events-none invisible absolute bottom-full left-1/2 z-20 mb-1 w-80 -translate-x-1/2 rounded border border-border bg-card p-2 text-left text-xs font-normal leading-snug opacity-0 shadow-lg transition-opacity group-hover:visible group-hover:opacity-100"
+        className="pointer-events-none absolute bottom-full left-1/2 z-30 mb-1.5 hidden w-72 max-w-[80vw] -translate-x-1/2 rounded-lg border border-border bg-card p-2.5 text-left text-xs font-normal leading-snug text-foreground shadow-pop group-hover:block group-hover:animate-scale-in"
       >
         {claim ? (
           <>
@@ -58,7 +60,7 @@ export function CiteChip({ id, claim, onOpen }: { id: number; claim?: Claim; onO
             )}
           </>
         ) : (
-          <span className="text-rose-600">C{id} is not in this run&apos;s claim ledger.</span>
+          <span className="text-loss">C{id} is not in this run&apos;s claim ledger.</span>
         )}
       </span>
     </span>
@@ -71,15 +73,15 @@ function SourceLines({ c }: { c: Citation }) {
   const { data, error } = useApi<{ lines: string[]; start: number }>(
     c.document_id && c.line_start ? `/api/documents/${c.document_id}/lines?start=${start}&end=${end}` : null,
   );
-  if (error) return <p className="text-xs text-rose-600">{error}</p>;
+  if (error) return <p className="text-xs text-loss">{error}</p>;
   if (!data) return null;
   return (
-    <pre className="mt-1 max-h-60 overflow-auto rounded bg-background p-2 text-[0.7rem] leading-4">
+    <pre className="num mt-2 max-h-60 overflow-auto rounded-lg border border-border bg-background-subtle p-2 text-[0.7rem] leading-4">
       {data.lines.map((l, i) => {
         const n = data.start + i;
         const hit = n >= (c.line_start ?? 0) && n <= (c.line_end ?? c.line_start ?? 0);
         return (
-          <div key={n} className={hit ? "bg-amber-200/60 dark:bg-amber-700/40" : ""}>
+          <div key={n} className={hit ? "-mx-2 bg-warn-soft px-2 text-foreground" : ""}>
             <span className="mr-2 select-none text-muted">{n}</span>
             {l.replaceAll("\f", "")}
           </div>
@@ -89,21 +91,25 @@ function SourceLines({ c }: { c: Citation }) {
   );
 }
 
-export function EvidencePanel({ id, claim: given, onClose }: { id: number; claim?: Claim; onClose: () => void }) {
+export function EvidencePanel({ id, claim: given, onClose, embedded }: { id: number; claim?: Claim; onClose: () => void; embedded?: boolean }) {
   // claims cited in a chat answer may not be in the report's map: fetch them from the ledger
   const fetched = useApi<Claim>(given ? null : `/api/claims/${id}`);
   const claim = given ?? (fetched.data && fetched.data.id === id ? fetched.data : undefined);
-  if (!given && !fetched.data && !fetched.error) return <p className="text-sm text-muted">Loading C{id}…</p>;
+  if (!given && !fetched.data && !fetched.error) return <div className="space-y-2 rounded-xl border border-border bg-card p-4"><SkeletonRows rows={4} /></div>;
   return (
-    <aside className="sticky top-4 max-h-[calc(100vh-2rem)] overflow-auto rounded-lg border border-border bg-card p-4 text-sm shadow">
+    <aside className={embedded ? "text-sm" : "sticky top-20 max-h-[calc(100vh-6rem)] overflow-auto rounded-xl border border-border bg-card p-4 text-sm shadow-card animate-scale-in"}>
       <div className="mb-2 flex items-center justify-between">
-        <h3 className="font-semibold">Evidence for C{id}</h3>
-        <button type="button" onClick={onClose} className="text-muted hover:text-foreground" aria-label="close">
-          ✕
-        </button>
+        <h3 className="flex items-center gap-1.5 font-semibold">
+          <FileSearch className="size-4 text-brand" /> Evidence for <span className="num">C{id}</span>
+        </h3>
+        {!embedded && (
+          <button type="button" onClick={onClose} className="text-muted hover:text-foreground" aria-label="close">
+            <X className="size-4" />
+          </button>
+        )}
       </div>
       {!claim ? (
-        <p className="text-rose-600">This citation does not exist in the run&apos;s claim ledger.</p>
+        <p className="text-loss">This citation does not exist in the run&apos;s claim ledger.</p>
       ) : (
         <div className="space-y-3">
           <div className="flex flex-wrap items-center gap-2">
@@ -115,12 +121,12 @@ export function EvidencePanel({ id, claim: given, onClose }: { id: number; claim
           <p>{claim.statement}</p>
           {claim.value && (
             <p className="text-muted">
-              {claim.metric}: <span className="text-foreground">{claim.value}</span> {claim.unit} {claim.period && `(${claim.period})`}
+              {claim.metric}: <span className="num font-medium text-foreground">{claim.value}</span> {claim.unit} {claim.period && `(${claim.period})`}
             </p>
           )}
-          {claim.verifier_note && <p className="rounded bg-background p-2 text-xs">Verifier: {claim.verifier_note}</p>}
+          {claim.verifier_note && <p className="rounded-lg bg-background-subtle p-2 text-xs"><span className="font-medium">Verifier:</span> {claim.verifier_note}</p>}
           {claim.checks?.source_language === "hi" && (
-            <p className="text-xs text-amber-700 dark:text-amber-300">
+            <p className="text-xs text-warn">
               Hindi source: the quote is in Hindi and the statement is a translation
               {claim.checks.translation_marked ? "" : " (not marked as translated)"}.
             </p>
@@ -134,7 +140,7 @@ export function EvidencePanel({ id, claim: given, onClose }: { id: number; claim
                 </p>
               ) : c.url ? (
                 <p className="text-xs">
-                  <a className="underline" href={/^https?:\/\//.test(c.url) ? c.url : undefined} target="_blank" rel="noreferrer noopener">
+                  <a className="break-all text-brand underline underline-offset-2" href={/^https?:\/\//.test(c.url) ? c.url : undefined} target="_blank" rel="noreferrer noopener">
                     {c.url}
                   </a>{" "}
                   <span className="text-muted">accessed {when(c.accessed_at)}</span>
@@ -148,13 +154,13 @@ export function EvidencePanel({ id, claim: given, onClose }: { id: number; claim
                     </Badge>
                   )}{" "}
                   {c.document_id && (
-                    <a className="underline" href={`${API_URL}/api/documents/${c.document_id}/file#page=${c.page ?? 1}`} target="_blank" rel="noreferrer">
+                    <a className="text-brand underline underline-offset-2" href={`${API_URL}/api/documents/${c.document_id}/file#page=${c.page ?? 1}`} target="_blank" rel="noreferrer">
                       open PDF
                     </a>
                   )}
                 </p>
               )}
-              {c.quote && <blockquote className="mt-1 border-l-2 border-border pl-2 text-xs italic">“{c.quote}”</blockquote>}
+              {c.quote && <blockquote className="mt-1.5 border-l-2 border-brand pl-2 text-xs italic text-foreground/85">“{c.quote}”</blockquote>}
               {c.document_id && c.line_start && <SourceLines c={c} />}
             </div>
           ))}
