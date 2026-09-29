@@ -82,6 +82,11 @@ Statuses:
 |---|---|---|---|
 | BOND-001 | Listed bonds / NCDs: NSE listing data, bond arithmetic (YTM, accrued, duration, convexity, after-tax yield) and the bond research report | delivered | v0.7.0 |
 
+### F&O (P7)
+| ID | Requirement | Status | Milestone |
+|---|---|---|---|
+| FNO-001 | NSE option chains, lot sizes, Black–Scholes greeks, implied volatility and strategy payoffs; analysis only, no order placement | delivered | v0.8.0 |
+
 ## Verification log
 
 | Date | ID(s) | Evidence |
@@ -117,3 +122,4 @@ Statuses:
 | 2026-09-29 | Release v0.6.0 | Milestone closed (#40 mutual funds). Release bar met on the live Axis Midcap run 11 (8/8 key facts, 0 contradicted), replayed in CI. `pytest` 302 passed; CI green. |
 | 2026-09-29 | BOND-001 | NSE's list of bonds traded in the capital market (1,461 bonds; coupon, face value, last price, maturity, rating), with warnings for partly redeemed face values and stale interest dates. `fincalc.bonds`: a par bond yields exactly its coupon; the textbook 10% 5-year bond at 96.304 yields 11.00%; a 5-year zero has Macaulay duration 5.0. **Live bond run 12** on L&T Finance 8.98% NCD 2029 (INE027E07998, AAA): 30 steps, 98 min, 36% of the 5-hour window, **3/3 listing facts, 0 contradicted, gate passed, release bar PASS.** Verdict AVOID at ₹1,076: the after-tax yield for a 30% slab is below 4.08%, against 6.40% on an SBI FD and 6.623% on a 2-year G-sec. The coupon frequency (monthly, on the 13th) comes from secondary bond-data providers; no primary offer document was found. The verifier showed that YTM x (1 − t) overstates a premium bond's after-tax yield, so `after_tax_ytm` now taxes coupons and the pull-to-par separately. Pack: 15 files, 16-page PDF. Replayed in CI. |
 | 2026-09-29 | Release v0.7.0 | Milestone closed (#41 bonds). Release bar met on the live L&T Finance NCD run 12 (3/3 listing facts, 0 contradicted, gate passed), replayed in CI. `pytest` 329 passed; CI green. |
+| 2026-09-29 | FNO-001 | `fincalc.options` matches textbook values: S=K=100, r=5%, σ=20%, T=1 gives call 10.4506, put 5.5735, Δ 0.6368, Γ 0.01876, vega 0.3752, θ −0.01757/day, ρ 0.5323; the IV solver recovers 20%. Payoffs are hand-checked: bull call spread (breakeven 103, max +7 / −3), straddle, covered call, naked short call (unlimited). Live NSE: NIFTY 6-Oct expiry (107 strikes, spot 22,780.25, ATM 22,800, PCR 0.73, max pain 23,000, lot 65) and INFY 27-Oct (24 strikes, ATM 1,000, PCR 0.81, max pain 1,020, lot 400). A live 22,800/23,000 bull call spread: breakeven 22,895.45, max profit ₹6,795.75, max loss ₹6,204.25 (= 95.45 × 65), probability of profit 41.9%. `scripts/smoke_web.sh 12`: /fno and /funds render. |

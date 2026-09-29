@@ -77,6 +77,21 @@ class WatchBody(BaseModel):
     kind: Literal["ipo", "stock"] = "ipo"
 
 
+class StrategyLeg(BaseModel):
+    right: Literal["call", "put", "future"]
+    strike: Decimal = Field(gt=0, description="Strike (for a future: the entry price)")
+    side: Literal["buy", "sell"]
+    lots: int = Field(1, ge=1, le=100)
+    premium: Decimal | None = Field(None, ge=0, description="Default: the chain's last price")
+
+
+class Strategy(BaseModel):
+    symbol: str
+    expiry: date
+    legs: list[StrategyLeg] = Field(min_length=1, max_length=8)
+    rate: Decimal = Field(Decimal("0.065"), description="Risk-free rate for greeks (state its source)")
+
+
 class NewFund(BaseModel):
     scheme_code: str = Field(min_length=1, max_length=12)
 
@@ -143,7 +158,7 @@ def _latest_report(s, run_id: int) -> str | None:
 # --------------------------------------------------------------------------- app
 def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=None, live_fetch=None,
                monitor: bool = False, monitor_deps=None, nse_detail=None, equity_list=None,
-               nav_all=None) -> FastAPI:  # fmt: skip
+               nav_all=None, fno_client=None) -> FastAPI:  # fmt: skip
     """Test seams: `router` (bridge for chat and suggestions), `live_fetch` / `nse_detail` (NSE), `monitor_deps`.
 
     With monitor=True (as `finresearch serve` does) the monitoring scheduler runs inside the API process."""
@@ -679,6 +694,100 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
         except LookupError as e:
             raise HTTPException(404, str(e)) from e
 
+    # ------------------------------------------------------------------ F&O analytics (analysis only)
+    def _fno():
+        from finresearch.adapters.nse_fno import NseFno
+
+        return fno_client() if fno_client else NseFno()
+
+    @app.get("/api/fno/{symbol}/expiries")
+    async def fno_expiries(symbol: str) -> dict[str, Any]:
+        async with _fno() as f:
+            expiries, strikes = await f.contract_info(symbol.upper())
+        return {
+            "symbol": symbol.upper(),
+            "expiries": [e.isoformat() for e in expiries],
+            "strikes": [str(x) for x in strikes],
+        }
+
+    @app.get("/api/fno/{symbol}/chain")
+    async def fno_chain(symbol: str, expiry: date) -> dict[str, Any]:
+        from finresearch.adapters.nse_fno import lot_size_for
+
+        async with _fno() as f:
+            chain = await f.option_chain(symbol.upper(), expiry)
+            try:
+                lot = lot_size_for(await f.lot_sizes(), symbol.upper(), expiry)
+            except Exception:
+                lot = None
+        atm = chain.atm()
+        return {"symbol": chain.symbol, "expiry": expiry.isoformat(), "underlying": str(chain.underlying),
+                "as_of": _iso(chain.as_of), "lot_size": lot, "atm_strike": str(atm.strike) if atm else None,
+                "atm_iv": {"call": str(atm.call.iv) if atm and atm.call else None,
+                           "put": str(atm.put.iv) if atm and atm.put else None},
+                "pcr_oi": str(chain.pcr()) if chain.pcr() is not None else None,
+                "max_pain": str(chain.max_pain()) if chain.max_pain() is not None else None,
+                "rows": [r.model_dump(mode="json") for r in chain.rows],
+                "source": "https://www.nseindia.com/option-chain"}  # fmt: skip
+
+    @app.post("/api/fno/strategy")
+    async def fno_strategy(body: Strategy) -> dict[str, Any]:
+        """Payoff at expiry, breakevens, max profit/loss, probability of profit and net greeks (fincalc.options)."""
+        from finresearch.adapters.nse_fno import lot_size_for
+        from finresearch.fincalc import options as o
+        from finresearch.fincalc.dates import now_ist
+
+        sym = body.symbol.upper()
+        async with _fno() as f:
+            chain = await f.option_chain(sym, body.expiry)
+            lot = lot_size_for(await f.lot_sizes(), sym, body.expiry)
+        if not lot:
+            raise HTTPException(422, f"no NSE lot size for {sym} {body.expiry:%b-%y}")
+        spot = float(chain.underlying)
+        t = max((body.expiry - now_ist().date()).days, 0.5) / 365
+        by_strike = {r.strike: r for r in chain.rows}
+        legs, greeks, notes = [], {"delta": 0.0, "gamma": 0.0, "vega": 0.0, "theta": 0.0}, []
+        for leg in body.legs:
+            qty = leg.lots * lot * (1 if leg.side == "buy" else -1)
+            if leg.right == "future":
+                legs.append(o.Leg("future", float(leg.strike), 0.0, qty))
+                greeks["delta"] += qty
+                continue
+            row = by_strike.get(leg.strike)
+            quote = (row.call if leg.right == "call" else row.put) if row else None
+            premium = (
+                float(leg.premium)
+                if leg.premium is not None
+                else (float(quote.last_price) if quote and quote.last_price else None)
+            )
+            if premium is None:
+                raise HTTPException(
+                    422, f"no premium for {leg.right} {leg.strike}: pass one or pick a traded strike"
+                )
+            legs.append(o.Leg(leg.right, float(leg.strike), premium, qty))
+            iv = (
+                float(quote.iv) / 100
+                if quote and quote.iv
+                else o.implied_vol(leg.right, premium, spot, float(leg.strike), t, float(body.rate))
+            )
+            if not iv:
+                notes.append(f"no implied volatility for {leg.right} {leg.strike}; its greeks are left out")
+                continue
+            g = o.greeks(leg.right, spot, float(leg.strike), t, float(body.rate), iv)
+            for k in greeks:
+                greeks[k] += getattr(g, k) * qty
+        prof = o.profile(legs, spot)
+        atm = chain.atm()
+        atm_iv = float(atm.call.iv) / 100 if atm and atm.call and atm.call.iv else None
+        pop = o.probability_of_profit(legs, spot, t, atm_iv, float(body.rate)) if atm_iv else None
+        return {"symbol": sym, "expiry": body.expiry.isoformat(), "spot": spot, "lot_size": lot, "as_of": _iso(chain.as_of),
+                "breakevens": prof.breakevens, "max_profit": _money(prof.max_profit), "max_loss": _money(prof.max_loss),
+                "net_premium": _money(prof.net_premium), "probability_of_profit": None if pop is None else round(pop, 4),
+                "net_greeks": {k: round(v, 4) for k, v in greeks.items()},
+                "curve": [(round(x, 2), round(y, 2)) for x, y in prof.curve[:: max(1, len(prof.curve) // 120)]],
+                "notes": notes,
+                "disclaimer": "Analysis only; payoffs at expiry exclude brokerage, taxes and margin. Not advice."}  # fmt: skip
+
     # ------------------------------------------------------------------ IPO radar
     radar_cache: dict[str, Any] = {}
 
@@ -733,6 +842,10 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
                 "ceilings": {"five_hour": s.max_five_hour_ceiling}}  # fmt: skip
 
     return app
+
+
+def _money(x: float | None) -> float | None:
+    return None if x is None else round(x, 2)
 
 
 def alert_json(a) -> dict[str, Any]:

@@ -13,6 +13,7 @@ const nav = [
   { href: "/", label: "IPO radar" },
   { href: "/stocks", label: "Stocks" },
   { href: "/funds", label: "Funds" },
+  { href: "/fno", label: "F&O" },
   { href: "/runs", label: "Runs" },
   { href: "/monitor", label: "Monitor" },
   { href: "/journal", label: "Journal" },

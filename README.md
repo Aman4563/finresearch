@@ -160,7 +160,7 @@ uv run finresearch monitor watch orient-cables     # schedule the checks from NS
 uv run finresearch monitor run                     # run the checks without the API
 ```
 
-The dashboard (IPO radar, live agent view, report reader with clickable evidence, "ask about this report" chat, personal suggestions checked against your own rules, a decision journal, monitoring alerts, listed-stock search and watchlist, mutual-fund search, plan usage) is a Next.js app in
+The dashboard (IPO radar, live agent view, report reader with clickable evidence, "ask about this report" chat, personal suggestions checked against your own rules, a decision journal, monitoring alerts, listed-stock search and watchlist, mutual-fund search, an F&O option-chain and strategy analyser (analysis only), plan usage) is a Next.js app in
 `web/`:
 
 ```bash
