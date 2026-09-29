@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import re
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from finresearch.db import session_scope
-from finresearch.db.models import Company, Watch
+from finresearch.db.models import Company, MonitorJob, Watch
 from finresearch.monitor.plan import expected_dates
 
 _PERIOD = re.compile(r"(\d{1,2}-[A-Za-z]{3}-\d{4})\s*to\s*(\d{1,2}-[A-Za-z]{3}-\d{4})")
@@ -42,6 +42,10 @@ def upsert_watch(company_slug: str, issue_info: dict[str, str]) -> dict:
         if not co.nse_symbol:
             raise ValueError(f"{company_slug} has no NSE symbol")
         w = s.scalar(select(Watch).where(Watch.company_id == co.id))
+        if w is not None and w.kind != "ipo":
+            if w.active:
+                raise ValueError(f"{company_slug} is already watched as a stock; stop that watch first")
+            _reset(s, w, "ipo")
         if w is None:
             w = Watch(company_id=co.id, nse_symbol=co.nse_symbol, open_date=open_date, close_date=close_date,
                       allotment_date=allotment, listing_date=listing, meta={})  # fmt: skip
@@ -99,7 +103,33 @@ def watch_stock(company_slug: str) -> dict:
             w = Watch(company_id=co.id, kind="stock", nse_symbol=co.nse_symbol, meta={})
             s.add(w)
         elif w.kind != "stock":
-            raise ValueError(f"{company_slug} is already watched as an IPO; stop that watch first")
+            if w.active and not (w.meta or {}).get("listing_confirmed"):
+                raise ValueError(f"{company_slug} is already watched as an IPO; stop that watch first")
+            _reset(s, w, "stock")  # stopped, or listed: the same row becomes a stock watch
         w.active = True
         s.flush()
         return watch_json(w, co)
+
+
+def _cancel_pending(s, watch_id: int) -> None:
+    now = datetime.now(UTC)
+    s.execute(update(MonitorJob).where(MonitorJob.watch_id == watch_id, MonitorJob.status == "pending")
+              .values(status="cancelled", finished_at=now))  # fmt: skip
+
+
+def _reset(s, w: Watch, kind: str) -> None:
+    """Turn a watch into the other kind in place (company_id is unique): its old checks, dates and state go."""
+    _cancel_pending(s, w.id)
+    w.kind, w.meta, w.anchor_shares = kind, {}, None
+    w.open_date = w.close_date = w.allotment_date = w.listing_date = None
+
+
+def stop_watch(watch_id: int) -> dict | None:
+    """Deactivate a watch and cancel its pending checks. None if there is no such watch."""
+    with session_scope() as s:
+        w = s.get(Watch, watch_id)
+        if w is None:
+            return None
+        w.active = False
+        _cancel_pending(s, w.id)
+        return {"id": w.id, "active": False}

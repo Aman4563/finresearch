@@ -27,7 +27,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from finresearch.db.models import Citation, Claim, Document
-from finresearch.fincalc.dates import bidding_day_number
+from finresearch.fincalc.dates import bidding_day_number, to_ist
 from finresearch.ingest.text import read_lines
 
 LINE_TOLERANCE = 2
@@ -167,7 +167,7 @@ def run_gate(session: Session, run_id: int, *, stream: str | None = None, facts:
     claims = session.scalars(q.order_by(Claim.id)).all()
     res = GateResult()
     cache: dict[int, list[str]] = {}
-    bidding_open = facts.get("issue_close") and date.fromisoformat(facts["issue_close"]) >= now.date()
+    bidding_open = facts.get("issue_close") and date.fromisoformat(facts["issue_close"]) >= to_ist(now).date()
     issue_open = date.fromisoformat(facts["issue_open"]) if facts.get("issue_open") else None
 
     for c in claims:

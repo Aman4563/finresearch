@@ -53,9 +53,11 @@ def sync_slots(now: datetime) -> int:
                     w.nse_symbol, to_ist(now - GRACE).date(), today + timedelta(days=STOCK_HORIZON_DAYS)
                 )
             else:
-                slots = plan(
-                    w.nse_symbol, w.open_date, w.close_date, w.allotment_date, w.listing_date, w.anchor_shares
+                listed = frozenset(
+                    x for x in ("open", "close") if (w.meta or {}).get(f"listing_{x}") is not None
                 )
+                slots = plan(w.nse_symbol, w.open_date, w.close_date, w.allotment_date, w.listing_date,
+                             w.anchor_shares, listed=listed)  # fmt: skip
                 if now > last_slot(slots):
                     w.active = False
                     continue
@@ -66,13 +68,22 @@ def sync_slots(now: datetime) -> int:
                                                MonitorJob.attempts == 0, MonitorJob.slot.not_in(planned),
                                                MonitorJob.due_at > now)
                       .values(status="cancelled", finished_at=now))  # fmt: skip
+            # a listing check keyed to the old expected date may already be retrying: its event now has a new slot
+            s.execute(update(MonitorJob).where(MonitorJob.watch_id == w.id, MonitorJob.status == "pending",
+                                               MonitorJob.kind == "listing", MonitorJob.slot.not_in(planned))
+                      .values(status="cancelled", finished_at=now))  # fmt: skip
             for sl in slots:
                 if sl.due_at < now - GRACE:
                     continue
-                inserted = s.scalars(insert(MonitorJob).values(watch_id=w.id, kind=sl.kind, slot=sl.slot,
-                                                               due_at=sl.due_at, params=sl.params, result={})
-                                     .on_conflict_do_nothing(index_elements=["slot"])
-                                     .returning(MonitorJob.id)).all()  # fmt: skip
+                ins = insert(MonitorJob).values(watch_id=w.id, kind=sl.kind, slot=sl.slot, due_at=sl.due_at,
+                                                params=sl.params, result={})  # fmt: skip
+                # a slot cancelled by a stop (or a date move) is planned again once the watch is back
+                inserted = s.scalars(ins.on_conflict_do_update(
+                    index_elements=["slot"], where=MonitorJob.status == "cancelled",
+                    set_={"watch_id": w.id, "kind": sl.kind, "due_at": sl.due_at, "params": sl.params,
+                          "status": "pending", "attempts": 0, "error": None, "result": {}, "started_at": None,
+                          "finished_at": None},
+                ).returning(MonitorJob.id)).all()  # fmt: skip
                 added += len(inserted)
     return added
 
@@ -95,8 +106,10 @@ def _expire_missed(now: datetime) -> int:
 
 def _claim(now: datetime, limit: int = 10) -> list[int]:
     with session_scope() as s:
-        rows = s.scalars(select(MonitorJob).where(MonitorJob.status == "pending", MonitorJob.due_at <= now)
-                         .order_by(MonitorJob.due_at).limit(limit).with_for_update(skip_locked=True)).all()  # fmt: skip
+        rows = s.scalars(select(MonitorJob).join(Watch, Watch.id == MonitorJob.watch_id)
+                         .where(MonitorJob.status == "pending", MonitorJob.due_at <= now, Watch.active.is_(True))
+                         .order_by(MonitorJob.due_at).limit(limit)
+                         .with_for_update(skip_locked=True, of=MonitorJob)).all()  # fmt: skip
         for j in rows:
             j.status, j.started_at, j.attempts = "running", now, j.attempts + 1
         return [j.id for j in rows]

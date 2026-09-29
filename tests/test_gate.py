@@ -134,6 +134,16 @@ def test_live_figures_need_timestamps_and_fresh_sources(ledger):
     assert stale in r.live_flags and "older than 24h" in claim(stale)[2]
 
 
+def test_bidding_open_uses_the_ist_date(ledger):
+    from finresearch.db import session_scope
+    from finresearch.verify.gate import run_gate
+
+    cid = add(ledger, stream="demand", claim_type="factual", statement="GMP is Rs 90 per share (unofficial)")
+    with session_scope() as s:  # 01:30 IST on 30-Sep is still 29-Sep in UTC, but the issue closed on 29-Sep
+        r = run_gate(s, ledger["run"], facts=FACTS, now=datetime(2026, 9, 29, 20, 0, tzinfo=UTC))
+    assert cid not in r.live_flags and claim(cid)[1]["live_ok"] is True
+
+
 def test_weekend_day_label_is_a_deterministic_contradiction(ledger):
     wrong = add(ledger, stream="demand", claim_type="factual",
                 statement="Day 3 (28-Sep-2026 14:27 IST, INTERIM): 6.48x subscribed")  # fmt: skip

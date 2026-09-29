@@ -12,13 +12,16 @@ from datetime import date, datetime, timedelta
 from typing import Any
 
 from finresearch.fincalc.dates import add_business_days, bidding_dates, business_days_between, ist_datetime
-from finresearch.fincalc.ipo import lock_in_schedule
+from finresearch.fincalc.ipo import LockInEvent, add_months, lock_in_schedule
 
 # bidding-day checks; the last one follows the 17:00 close so it records the final day's book
 SUBSCRIPTION_TIMES = ((10, 30), (12, 0), (13, 30), (15, 0), (16, 0), (17, 15))
 LISTING_TIMES = ((10, 15, "open"), (15, 45, "close"))
 ALLOTMENT_TIME = (19, 0)
 LOCKIN_TIME = (9, 0)
+SIX_MONTHS = 6
+SIX_MONTH_NOTE = ("This is usually the largest unlock (often most of the pre-issue capital); check the share count "
+                  "in the RHP's capital structure and the exchange's lock-in notice.")  # fmt: skip
 STOCK_DAILY_TIME = (16, 30)  # after the close, once NSE has published the day's prices and filings
 
 
@@ -43,7 +46,9 @@ def expected_dates(close: date, holidays: set[date] | None = None) -> tuple[date
 
 
 def plan(symbol: str, open_date: date, close_date: date, allotment: date, listing: date,
-         anchor_shares=None, holidays: set[date] | None = None) -> list[Slot]:  # fmt: skip
+         anchor_shares=None, holidays: set[date] | None = None, listed: frozenset[str] = frozenset()) -> list[Slot]:  # fmt: skip
+    """``listed``: listing events ("open", "close") already recorded, which are not planned again when NSE's
+    listing date replaces the expected one."""
     if holidays is None:
         from finresearch.adapters.nse_holidays import trading_holidays
 
@@ -58,14 +63,24 @@ def plan(symbol: str, open_date: date, close_date: date, allotment: date, listin
                             {"final": final, "day": days.index(d) + 1}))  # fmt: skip
     out.append(Slot("allotment", f"{symbol}:allotment:{allotment}", ist_datetime(allotment, *ALLOTMENT_TIME)))
     for h, m, which in LISTING_TIMES:
+        if which in listed:
+            continue
         out.append(Slot("listing", f"{symbol}:listing:{listing}:{which}", ist_datetime(listing, h, m),
                         {"which": which}))  # fmt: skip
-    for ev in lock_in_schedule(allotment, anchor_shares=anchor_shares):
-        if ev.holder.startswith("anchor"):
-            out.append(Slot("lockin", f"{symbol}:lockin:{ev.unlock_date}:{ev.holder}",
-                            ist_datetime(ev.unlock_date, *LOCKIN_TIME),
-                            {"holder": ev.holder, "unlock_date": ev.unlock_date.isoformat(),
-                             "shares": str(ev.shares) if ev.shares is not None else None, "basis": ev.basis}))  # fmt: skip
+    events = lock_in_schedule(allotment, anchor_shares=anchor_shares)
+    lockins = [ev for ev in events if ev.holder.startswith("anchor")]
+    # promoter holding above the minimum and other pre-IPO shares unlock together after 6 months: one alert
+    six = [ev for ev in events if ev.unlock_date == add_months(allotment, SIX_MONTHS) and ev not in lockins]
+    if six:
+        lockins.append(LockInEvent("promoter (above the minimum) and pre-IPO shareholder", six[0].unlock_date,
+                                   None, "; ".join(ev.basis for ev in six)))  # fmt: skip
+    for ev in lockins:
+        note = SIX_MONTH_NOTE if ev.unlock_date == add_months(allotment, SIX_MONTHS) else None
+        out.append(Slot("lockin", f"{symbol}:lockin:{ev.unlock_date}:{ev.holder}",
+                        ist_datetime(ev.unlock_date, *LOCKIN_TIME),
+                        {"holder": ev.holder, "unlock_date": ev.unlock_date.isoformat(),
+                         "shares": str(ev.shares) if ev.shares is not None else None, "basis": ev.basis,
+                         **({"note": note} if note else {})}))  # fmt: skip
     return sorted(out, key=lambda s: s.due_at)
 
 

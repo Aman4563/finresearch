@@ -133,3 +133,24 @@ async def test_stock_daily_check_alerts_only_on_changes(client):
     await tick(deps, datetime(2026, 9, 30, 16, 35, tzinfo=IST))
     with session_scope() as s:
         assert s.query(Alert).count() == len(alerts)  # nothing new, nothing repeated
+
+
+async def test_first_check_still_flags_an_imminent_ex_date(client):
+    from finresearch.db import session_scope
+    from finresearch.db.models import Alert
+    from finresearch.monitor.jobs import Deps
+    from finresearch.monitor.scheduler import tick
+
+    client.post("/api/companies", json={"nse_symbol": "INFY"})
+    client.post("/api/watches", json={"company": "infosys", "kind": "stock"})
+    mk = Market()
+    mk.snap["actions"].append(CorporateAction(symbol="INFY", subject="Interim Dividend - Rs 24 Per Share",
+                                              ex_date=date(2026, 10, 2), record_date=date(2026, 10, 2),
+                                              dividend_per_share=Decimal(24)))  # fmt: skip
+    mk.snap["bars"].append(_bar(date(2026, 9, 29), "940"))  # a big move, but no baseline yet
+    deps = Deps(ipo_detail=None, quote=None, stock_snapshot=mk.snapshot)
+    await tick(deps, datetime(2026, 9, 29, 16, 35, tzinfo=IST))
+    await tick(deps, datetime(2026, 9, 30, 16, 35, tzinfo=IST))
+    with session_scope() as s:
+        alerts = [(a.kind, a.message) for a in s.query(Alert)]
+    assert [k for k, _ in alerts] == ["ex_date_soon"] and "goes ex on 2026-10-02" in alerts[0][1]

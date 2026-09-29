@@ -148,21 +148,24 @@ async def allotment(session: Session, job: MonitorJob, watch: Watch, deps: Deps,
 
 
 async def listing(session: Session, job: MonitorJob, watch: Watch, deps: Deps, now: datetime) -> dict:
+    from finresearch.fincalc.dates import to_ist
     from finresearch.fincalc.ipo import listing_gain
     from finresearch.suggest.advisor import record_outcome
 
+    which = job.params.get("which", "open")
+    if (watch.meta or {}).get(f"listing_{which}") is not None:  # recorded by an earlier slot for this event
+        return {"which": which, "skipped": "already recorded"}
     try:
         q = await deps.quote(watch.nse_symbol)
     except Exception as e:
         raise NotYet(f"no NSE quote for {watch.nse_symbol} yet: {e}") from e
-    if q.listing_date is None or q.listing_date > now.date() or q.open is None:
+    if q.listing_date is None or q.listing_date > to_ist(now).date() or q.open is None:
         raise NotYet(f"{watch.nse_symbol} has not listed yet")
     meta = dict(watch.meta or {})
     if q.listing_date != watch.listing_date:
         meta["expected_listing_date"] = watch.listing_date.isoformat()
         watch.listing_date = q.listing_date
     meta["listing_confirmed"] = True
-    which = job.params.get("which", "open")
     price = q.open if which == "open" else (q.close_price or q.last_price)
     meta[f"listing_{which}"] = str(price)
     watch.meta = meta
@@ -200,7 +203,8 @@ async def lockin(session: Session, job: MonitorJob, watch: Watch, deps: Deps, no
     p = job.params
     shares = f"{int(Decimal(p['shares'])):,} shares" if p.get("shares") else "shares"
     alert(session, watch, "lockin", f"{watch.nse_symbol}: the {p['holder']} lock-in ends on {p['unlock_date']}; "
-          f"{shares} may become tradable ({p['basis']}). Expect supply pressure around this date.", "warn")  # fmt: skip
+          f"{shares} may become tradable ({p['basis']}). Expect supply pressure around this date."
+          + (f" {p['note']}" if p.get("note") else ""), "warn")  # fmt: skip
     return {"alerted": True}
 
 
@@ -210,7 +214,8 @@ EX_DATE_SOON_DAYS = 7
 
 async def stock_daily(session: Session, job: MonitorJob, watch: Watch, deps: Deps, now: datetime) -> dict:
     """After-close check of a watched stock: new results filings, corporate actions and ex-dates, promoter-holding
-    changes and large price moves. The first check records what exists without alerting on history."""
+    changes and large price moves. The first check records what exists without alerting on history, except an
+    ex-date coming up within EX_DATE_SOON_DAYS (still actionable)."""
     from datetime import timedelta
 
     from finresearch.fincalc.dates import to_ist
@@ -221,8 +226,8 @@ async def stock_daily(session: Session, job: MonitorJob, watch: Watch, deps: Dep
     first = not meta.get("stock_initialised")
     sym, today, out = watch.nse_symbol, to_ist(now).date(), {"alerts": []}
 
-    def say(kind: str, message: str, level: str = "info", **data):
-        if not first:
+    def say(kind: str, message: str, level: str = "info", always: bool = False, **data):
+        if always or not first:
             alert(session, watch, kind, message, level, **data)
             out["alerts"].append(kind)
 
@@ -248,7 +253,7 @@ async def stock_daily(session: Session, job: MonitorJob, watch: Watch, deps: Dep
         ):
             soon.add(key)
             say("ex_date_soon", f"{sym}: {ca.subject} goes ex on {ca.ex_date}; buy before then to be entitled",
-                "action")  # fmt: skip
+                "action", always=True)  # fmt: skip
     latest = next((sh for sh in snap["shareholding"] if sh.promoter_pct is not None), None)
     if latest:
         prev = meta.get("promoter_pct")
