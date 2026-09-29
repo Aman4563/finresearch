@@ -5,17 +5,34 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { Badge, Button, Card, ErrorNote } from "@/components/ui";
-import { api, type Company, type Issue, useApi, when } from "@/lib/api";
+import { api, type Company, type Issue, type ResearchKind, useApi, when } from "@/lib/api";
 
-function StartButton({ slug }: { slug: string }) {
+const KIND_LABEL: Record<ResearchKind, string> = {
+  ipo_report: "IPO",
+  stock_report: "stock",
+  fund_report: "fund",
+  bond_report: "bond",
+};
+
+/** Start a research run; with `issue` (an NSE issue not in the store yet) the company is added first. */
+function StartButton({ slug, kind, issue }: { slug?: string; kind: ResearchKind; issue?: Issue }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const label = slug ?? issue?.symbol;
   const start = async () => {
-    if (!confirm(`Start a full research run for ${slug}? It uses your Claude plan window.`)) return;
+    if (!confirm(`Start a full ${KIND_LABEL[kind]} research run for ${label}? It uses your Claude plan window.`)) return;
     setBusy(true);
     try {
-      const r = await api<{ run_id: number }>("/api/runs", { method: "POST", body: JSON.stringify({ company: slug }) });
+      const company =
+        slug ??
+        (
+          await api<{ slug: string }>("/api/companies", {
+            method: "POST",
+            body: JSON.stringify({ nse_symbol: issue!.symbol, name: issue!.company }),
+          })
+        ).slug;
+      const r = await api<{ run_id: number }>("/api/runs", { method: "POST", body: JSON.stringify({ company, kind }) });
       router.push(`/runs/${r.run_id}`);
     } catch (e) {
       setError((e as Error).message);
@@ -87,11 +104,11 @@ export default function Radar() {
                         run {i.latest_run} <Badge status={i.latest_run_status ?? "pending"} />
                       </Link>
                     ) : i.slug ? (
-                      <StartButton slug={i.slug} />
+                      <StartButton slug={i.slug} kind="ipo_report" />
                     ) : i.bse_ipo_no ? (
                       <code className="text-xs text-muted">finresearch ipo run … --bse-ipo {i.bse_ipo_no}</code>
                     ) : (
-                      <code className="text-xs text-muted">finresearch docs discover …</code>
+                      <StartButton issue={i} kind="ipo_report" />
                     )}
                   </td>
                 </tr>
@@ -109,6 +126,7 @@ export default function Radar() {
               <th className="py-1">Company</th>
               <th>NSE</th>
               <th>Documents</th>
+              <th>Kind</th>
               <th>Latest run</th>
               <th />
             </tr>
@@ -119,6 +137,7 @@ export default function Radar() {
                 <td className="py-2 font-medium">{c.name}</td>
                 <td>{c.nse_symbol}</td>
                 <td>{c.documents}</td>
+                <td className="text-muted">{KIND_LABEL[c.kind] ?? c.kind}</td>
                 <td>
                   {c.latest_run && (
                     <Link className="underline" href={`/runs/${c.latest_run}`}>
@@ -127,7 +146,7 @@ export default function Radar() {
                   )}
                 </td>
                 <td className="text-right">
-                  <StartButton slug={c.slug} />
+                  <StartButton slug={c.slug} kind={c.kind} />
                 </td>
               </tr>
             ))}

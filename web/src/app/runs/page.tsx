@@ -43,7 +43,7 @@ export default function Runs() {
               </td>
               <td className="text-muted">{when(r.created_at)}</td>
               <td>
-                {r.kind !== "discovery" && r.status !== "running" && (
+                {r.has_report && (
                   <Link className="underline" href={`/runs/${r.id}/report`}>
                     read
                   </Link>

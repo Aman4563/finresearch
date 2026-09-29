@@ -82,7 +82,7 @@ export default function ProfilePage() {
       <Card
         title="Personal rules (checked by Python against live data, never by the model)"
         actions={
-          <Button onClick={() => set("rules", [...p.rules, { id: `rule-${p.rules.length + 1}`, description: "", metric: "qib_times", op: "<", value: "1", action: "skip" }])}>
+          <Button onClick={() => set("rules", [...p.rules, { id: nextRuleId(p.rules), description: "", metric: "qib_times", op: "<", value: "1", action: "skip" }])}>
             Add rule
           </Button>
         }
@@ -139,4 +139,12 @@ export default function ProfilePage() {
       </Card>
     </div>
   );
+}
+
+/** rule-N one past the highest existing rule-N (ids must be unique; deleting a rule must not cause a repeat). */
+function nextRuleId(rules: { id: string }[]) {
+  const ids = new Set(rules.map((r) => r.id));
+  let n = Math.max(0, ...rules.map((r) => Number(/^rule-(\d+)$/.exec(r.id)?.[1] ?? 0))) + 1;
+  while (ids.has(`rule-${n}`)) n += 1;
+  return `rule-${n}`;
 }

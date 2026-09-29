@@ -540,6 +540,18 @@ async def nse_announcements(symbol: str, limit: int = 40) -> str:
     )
 
 
+NSE_ARCHIVE_HOSTS = ("nsearchives.nseindia.com",)
+SEBI_HOSTS = ("www.sebi.gov.in", "sebi.gov.in")
+
+
+def _official(url: str, hosts: tuple[str, ...]) -> bool:
+    """Tools that fetch a caller-supplied URL only fetch https pages on these exact hosts."""
+    from urllib.parse import urlsplit
+
+    p = urlsplit(url)
+    return p.scheme == "https" and (p.hostname or "") in hosts and p.port in (None, 443) and not p.username
+
+
 @server.tool()
 async def nse_results_facts(xbrl_url: str) -> str:
     """Key reported figures (revenue, expenses, PBT, tax, PAT, EPS, ...) from a results filing's XBRL, for the
@@ -547,7 +559,7 @@ async def nse_results_facts(xbrl_url: str) -> str:
     from finresearch.adapters.nse_equity import NseEquity
     from finresearch.adapters.xbrl import parse_results_xbrl
 
-    if not xbrl_url.startswith("https://nsearchives.nseindia.com/"):
+    if not _official(xbrl_url, NSE_ARCHIVE_HOSTS):
         return json.dumps({"error": "only NSE archive XBRL links are accepted"})
     async with NseEquity() as eq:
         x = parse_results_xbrl(await eq.fetch_bytes(xbrl_url))
@@ -662,6 +674,8 @@ async def sebi_resolve_pdf(detail_url: str) -> str:
     """PDF URL(s) for a SEBI filing detail page (full document first)."""
     from finresearch.adapters.sebi import SebiClient
 
+    if not _official(detail_url, SEBI_HOSTS):
+        return json.dumps({"error": "only sebi.gov.in filing pages are accepted"})
     async with SebiClient() as sebi:
         return json.dumps(await sebi.resolve_pdf_url(detail_url))
 

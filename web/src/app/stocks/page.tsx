@@ -123,7 +123,7 @@ export default function Stocks() {
       <Card title="Researched companies">
         <ul className="space-y-1 text-sm">
           {companies.data
-            ?.filter((c) => c.latest_run)
+            ?.filter((c) => c.latest_run && c.kind === "stock_report")
             .map((c) => (
               <li key={c.slug}>
                 <span className="font-medium">{c.name}</span> <span className="text-muted">{c.nse_symbol}</span> ·{" "}

@@ -214,3 +214,61 @@ def test_a_byte_different_copy_with_the_same_text_is_a_duplicate(env, tmp_path):
         assert [o.status for o in rep.outcomes] == ["ingested", "duplicate", "ingested"]
         assert rep.outcomes[1].document_id == first and "same text" in rep.outcomes[1].detail
         assert s.query(Document).filter_by(company_id=co.id).count() == 2
+
+
+def test_download_refuses_local_addresses_schemes_and_redirects_there(tmp_path):
+    import pytest
+
+    from finresearch.ingest.documents import UnsafeUrl, check_public_url, download
+
+    for url in ("http://127.0.0.1:8710/api/x.pdf", "http://10.0.0.5/a.pdf", "http://169.254.169.254/latest/meta-data",
+                "http://[::1]/a.pdf", "http://localhost:3100/a.pdf", "file:///etc/passwd", "ftp://co.example/a.pdf",
+                "http://192.168.1.1/a.pdf", "http://[::ffff:127.0.0.1]/a.pdf"):  # fmt: skip
+        with pytest.raises(UnsafeUrl):
+            download(url, tmp_path)
+    with pytest.raises(UnsafeUrl):  # a public-looking name that resolves inside the network
+        check_public_url(
+            "https://files.acme-intranet.com/a.pdf", resolve=lambda h, p: [(2, 1, 6, "", ("10.1.2.3", p))]
+        )
+    check_public_url("https://www.sebi.gov.in/a.pdf", resolve=lambda h, p: [(2, 1, 6, "", ("14.143.1.1", p))])
+
+    with respx.mock:
+        respx.get("https://co.example/ar.pdf").mock(
+            return_value=httpx.Response(302, headers={"location": "http://127.0.0.1:8710/api/runs"})
+        )
+        local = respx.get("http://127.0.0.1:8710/api/runs").mock(
+            return_value=httpx.Response(200, content=b"%PDF-1")
+        )
+        with pytest.raises(UnsafeUrl):
+            download("https://co.example/ar.pdf", tmp_path)
+        assert not local.called
+
+
+@respx.mock
+def test_download_follows_public_redirects_and_caps_the_size(tmp_path):
+    import pytest
+
+    from finresearch.ingest.documents import download
+
+    respx.get("https://co.example/r.pdf").mock(
+        return_value=httpx.Response(301, headers={"location": "/files/r.pdf"})
+    )
+    respx.get("https://co.example/files/r.pdf").mock(
+        return_value=httpx.Response(200, content=b"%PDF-1.4 x" * 10)
+    )
+    path, prov = download("https://co.example/r.pdf", tmp_path)
+    assert path.read_bytes().startswith(b"%PDF-") and prov["url"] == "https://co.example/files/r.pdf"
+    respx.get("https://co.example/big.pdf").mock(
+        return_value=httpx.Response(200, content=b"%PDF-" + b"0" * 5000)
+    )
+    with pytest.raises(ValueError, match="larger than"):
+        download("https://co.example/big.pdf", tmp_path / "big", max_bytes=1000)
+    assert not list((tmp_path / "big").iterdir())
+
+
+async def test_sebi_resolve_pdf_only_fetches_sebi_pages():
+    from finresearch.mcp_server.server import sebi_resolve_pdf
+
+    for url in ("http://127.0.0.1:8710/api/runs", "https://evil.example/sebi.gov.in", "http://www.sebi.gov.in/x.html",
+                "https://sebi.gov.in.evil.example/x", "https://user@www.sebi.gov.in:8443/x"):  # fmt: skip
+        assert "error" in json.loads(await sebi_resolve_pdf(url))

@@ -67,6 +67,7 @@ export type RunSummary = {
   final_gate: { ok: boolean; blocking: string[] } | null;
   worker: Worker;
   steps: Record<string, number>;
+  has_report?: boolean;
 };
 
 export type RunDetail = Omit<RunSummary, "steps"> & {
@@ -90,7 +91,10 @@ export type Company = {
   nse_symbol: string | null;
   documents: number;
   latest_run: number | null;
+  kind: ResearchKind;
 };
+
+export type ResearchKind = "ipo_report" | "stock_report" | "fund_report" | "bond_report";
 
 export type Issue = {
   phase: "open" | "upcoming" | "closed" | "current";
@@ -123,7 +127,8 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   try {
     res = await fetch(`${API_URL}${path}`, {
       ...init,
-      headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+      // X-FinResearch marks the request as the dashboard's (the API refuses unsafe requests without it)
+      headers: { "Content-Type": "application/json", "X-FinResearch": "1", ...(init?.headers ?? {}) },
       cache: "no-store",
     });
   } catch {
@@ -169,9 +174,15 @@ export function useApi<T>(path: string | null, pollMs?: number) {
   return { data, error, reload };
 }
 
+/** Tell other components (e.g. the header's alert badge) that alerts changed. */
+export const ALERTS_CHANGED = "finresearch:alerts-changed";
+
 export const pct = (x: number | null | undefined) => (x == null ? "" : `${Math.round(x * 100)}%`);
 export const when = (iso: string | null | undefined) =>
   iso ? new Date(iso).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" }) : "";
+/** A calendar date (YYYY-MM-DD) without inventing a time or shifting it by the viewer's time zone. */
+export const day = (iso: string | null | undefined) =>
+  iso ? new Date(`${iso.slice(0, 10)}T00:00:00Z`).toLocaleDateString("en-IN", { dateStyle: "medium", timeZone: "UTC" }) : "";
 
 export type Rule = { id: string; description: string; metric: string; op: string; value: string; action: "skip" | "warn" };
 export type Profile = {

@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { Button, Card, ErrorNote } from "@/components/ui";
-import { api, when } from "@/lib/api";
+import { api, day } from "@/lib/api";
 
 type Scheme = {
   scheme_code: string;
@@ -92,7 +92,7 @@ export default function Funds() {
                 </td>
                 <td className="text-xs">{s.category}</td>
                 <td>
-                  {s.nav} <span className="text-xs text-muted">{when(s.nav_date)}</span>
+                  {s.nav} <span className="text-xs text-muted">{day(s.nav_date)}</span>
                 </td>
                 <td className="text-right">
                   <Button disabled={busy === s.scheme_code} onClick={() => research(s)}>

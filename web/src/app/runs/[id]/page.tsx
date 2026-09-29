@@ -44,8 +44,13 @@ function useRunEvents(id: string) {
       api<RunDetail>(`/api/runs/${id}`).then(setRun).catch(() => undefined);
     });
     es.onerror = () => {
+      // a down API leaves the stream reconnecting (CONNECTING), never CLOSED: report every error
       setLive(false);
-      if (es.readyState === EventSource.CLOSED) setError(`Lost the event stream from ${API_URL}`);
+      setError(
+        es.readyState === EventSource.CLOSED
+          ? `Lost the event stream from ${API_URL}`
+          : `Cannot reach the FinResearch API at ${API_URL}; retrying… (is \`uv run finresearch serve\` running?)`,
+      );
     };
     return () => es.close();
   }, [id, epoch]);
@@ -93,8 +98,10 @@ export default function RunView() {
     }
   };
 
-  if (!run) return <ErrorNote error={error} />;
-  const canResume = ["paused", "failed", "blocked"].includes(run.status) && !run.worker?.alive;
+  if (!run) return error ? <ErrorNote error={error} /> : <p className="text-sm text-muted">Connecting…</p>;
+  // nothing is working on the run without a live worker (including a "running" run whose worker was killed)
+  const canResume = run.status !== "done" && !run.worker?.alive;
+  const hasReport = steps.some((s) => s.stage === "synthesis" && s.status === "done");
 
   return (
     <div className="space-y-4">
@@ -105,9 +112,11 @@ export default function RunView() {
             <Badge status={run.status} />
             {live && <span className="text-xs text-sky-600">● live</span>}
             {canResume && <Button onClick={resume}>Resume</Button>}
-            <Link className="underline" href={`/runs/${run.id}/report`}>
-              Report
-            </Link>
+            {hasReport && (
+              <Link className="underline" href={`/runs/${run.id}/report`}>
+                Report
+              </Link>
+            )}
           </div>
         }
       >
