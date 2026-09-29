@@ -102,7 +102,23 @@ FUND_LAYOUT = PackLayout(
                  ("06", "Report (md/html/pdf), fact-check log, full claim ledger (xlsx/csv)")),
     disclaimer="Personal research, not SEBI-registered investment advice. Past returns do not guarantee future returns.",
 )  # fmt: skip
-LAYOUTS = {"ipo_report": IPO_LAYOUT, "stock_report": STOCK_LAYOUT, "fund_report": FUND_LAYOUT}
+BOND_LAYOUT = PackLayout(
+    label="bond research report",
+    folders={"01": "01_Offer_Documents", "02": "02_Issuer_Credit", "03": "03_News", "04": "04_Ratings",
+             "05": "05_Pricing_and_Terms", "06": "06_Final_Report"},
+    doc_folder={"OTHER": "01", "ANNUAL_REPORT": "02", "FINANCIAL_STATEMENTS": "02"},
+    stream_folder={"bond_terms": "05", "bond_pricing": "05", "bond_issuer": "02", "bond_rating": "04", "bond_news": "03"},
+    financial_streams=("bond_issuer",),
+    readme_rows=(("01", "Offer document / information memorandum"),
+                 ("02", "Issuer financials and credit analysis"),
+                 ("03", "News section and every web source cited"),
+                 ("04", "Rating history, drivers and sensitivities"),
+                 ("05", "Terms, cash flows, yields and comparisons"),
+                 ("06", "Report (md/html/pdf), fact-check log, full claim ledger (xlsx/csv)")),
+    disclaimer="Personal research, not SEBI-registered investment advice. Prices and ratings are as of their dates.",
+)  # fmt: skip
+LAYOUTS = {"ipo_report": IPO_LAYOUT, "stock_report": STOCK_LAYOUT, "fund_report": FUND_LAYOUT,
+           "bond_report": BOND_LAYOUT}  # fmt: skip
 
 
 @dataclass

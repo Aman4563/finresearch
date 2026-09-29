@@ -137,3 +137,21 @@ def test_live_fund_run_11_passes_the_release_bar(env, tmp_path):
         res = evaluate(s, run_id, load_gold("mf-120505"), report)
         gate = check_report(s, run_id, report)
     assert res.passes_release_bar and res.recall == 1.0 and gate.ok and data["synthesis"]["verdict"] == "HOLD"
+
+
+def test_live_bond_run_12_passes_the_release_bar(env, tmp_path):
+    """The bond kind acceptance run (L&T Finance 8.98% NCD 2029): 3/3 listing facts, 0 contradicted, gate passed."""
+    from finresearch.db import session_scope
+    from finresearch.db.models import AgentStep
+    from finresearch.evals.gold import evaluate, load_gold
+    from finresearch.evals.replay import import_run
+    from finresearch.verify.gate import check_report
+
+    data = json.loads((FIXTURE.parent / "bond-ine027e07998-run12.json").read_text())
+    with session_scope() as s:
+        run_id = import_run(s, data, slug_suffix="-" + tmp_path.name[-8:])
+        report = (s.query(AgentStep).filter_by(run_id=run_id, stage="synthesis", status="done")
+                  .order_by(AgentStep.finished_at.desc()).first().output["report_markdown"])  # fmt: skip
+        res = evaluate(s, run_id, load_gold("bond-ine027e07998"), report)
+        gate = check_report(s, run_id, report)
+    assert res.passes_release_bar and gate.ok and data["synthesis"]["verdict"] == "AVOID"

@@ -44,7 +44,7 @@ from finresearch.db.models import (
 LOCAL_HOSTS = ["127.0.0.1", "localhost", "testserver"]
 DASHBOARD_ORIGINS = [f"http://{h}:{p}" for h in ("127.0.0.1", "localhost") for p in (3000, 3100)]
 TERMINAL = ("done", "failed", "blocked")
-RESEARCH_KINDS = ("ipo_report", "stock_report", "fund_report")
+RESEARCH_KINDS = ("ipo_report", "stock_report", "fund_report", "bond_report")
 RADAR_TTL_S = 300
 CITE_RE = re.compile(r"\[C(\d+)\]")
 

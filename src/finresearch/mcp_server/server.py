@@ -334,6 +334,69 @@ def fincalc_call(function: str, args: dict[str, Any]) -> str:
         return json.dumps({"function": function, "error": f"{type(e).__name__}: {e}"})
 
 
+# --------------------------------------------------------------------------- listed bonds
+@server.tool()
+async def nse_bond_search(query: str) -> str:
+    """Find listed bonds / NCDs traded on NSE by symbol fragment (e.g. "NHAI", "SCL") or ISIN: coupon, face value,
+    last price, maturity, rating and warnings (partly redeemed face value, stale interest dates). Cite
+    https://www.nseindia.com/market-data/bonds-traded-in-capital-market with the access time."""
+    from finresearch.adapters.nse_bonds import live_bonds, search_bonds
+
+    hits = search_bonds(await live_bonds(), query)
+    return json.dumps([{**b.model_dump(mode="json"), "warnings": b.warnings} for b in hits], indent=1)
+
+
+@server.tool()
+async def bond_analytics(isin: str, coupon_frequency: int, price_basis: str, settlement: str | None = None,
+                         tax_rate: str | None = None) -> str:  # fmt: skip
+    """Yield to maturity, current yield, accrued interest, Macaulay/modified duration and convexity for a listed bond
+    from NSE's last price, coupon and maturity (fincalc.bonds). `coupon_frequency` (1, 2, 4 or 12) must come from
+    the offer document or information memorandum, never assumed. With `tax_rate` it returns the after-tax YTM from
+    after-tax cash flows. `price_basis` is "dirty" (the traded price includes
+    accrued interest) or "clean"; confirm how the segment quotes it and cite that. Pass `tax_rate` (a fraction) for
+    the post-tax yield. Refuses partly redeemed bonds, whose cash flows need the redemption schedule."""
+    from datetime import date as _date
+
+    from finresearch.adapters.nse_bonds import live_bonds
+    from finresearch.fincalc import bonds as b
+    from finresearch.fincalc.dates import today_ist
+
+    bond = next((x for x in await live_bonds() if x.isin.upper() == isin.upper()), None)
+    if bond is None:
+        return json.dumps({"error": f"{isin} is not in NSE's list of traded bonds"})
+    if any("partly" in w for w in bond.warnings):
+        return json.dumps({"error": bond.warnings[0], "bond": bond.model_dump(mode="json")})
+    if not (bond.last_price and bond.coupon_pct is not None and bond.maturity and bond.face_value):
+        return json.dumps(
+            {"error": "price, coupon, maturity or face value missing", "bond": bond.model_dump(mode="json")}
+        )
+    s = _date.fromisoformat(settlement) if settlement else today_ist()
+    coupon = bond.coupon_pct / 100
+    ai = b.accrued_interest(s, bond.maturity, coupon, coupon_frequency, bond.face_value)
+    if price_basis not in ("dirty", "clean"):
+        return json.dumps({"error": "price_basis must be 'dirty' or 'clean'"})
+    clean = bond.last_price - ai if price_basis == "dirty" else bond.last_price
+    y = b.ytm(clean, s, bond.maturity, coupon, coupon_frequency, bond.face_value)
+    d = b.duration(y, s, bond.maturity, coupon, coupon_frequency, bond.face_value)
+    out = {"bond": bond.model_dump(mode="json"), "settlement": s.isoformat(), "coupon_frequency": coupon_frequency,
+           "accrued_interest": str(ai.quantize(Decimal("0.0001"))), "clean_price": str(clean.quantize(Decimal("0.0001"))),
+           "ytm": str(y), "current_yield": str(b.current_yield(bond.last_price, coupon, bond.face_value)),
+           "macaulay_duration_years": str(d.macaulay), "modified_duration": str(d.modified), "convexity": str(d.convexity),
+           "price_basis": price_basis,
+           "conventions": "accrued interest actual/365; discounting by coupon periods",
+           "warnings": bond.warnings}  # fmt: skip
+    if tax_rate is not None:
+        # live bond run 12: YTM x (1 - t) overstated the post-tax yield of a premium bond (pull-to-par is a
+        # capital loss, not interest); compute it from after-tax cash flows instead
+        out["after_tax_ytm"] = str(b.after_tax_ytm(clean, s, bond.maturity, coupon, coupon_frequency, tax_rate,
+                                                   face=bond.face_value))  # fmt: skip
+        out["after_tax_note"] = (
+            "coupons taxed at tax_rate; the premium over face is a capital loss at redemption "
+            "that saves tax only if the investor can offset it"
+        )
+    return json.dumps(out, indent=1)
+
+
 # --------------------------------------------------------------------------- mutual funds (AMFI)
 _NAV_ALL: dict[str, Any] = {}
 

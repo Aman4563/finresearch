@@ -1,0 +1,175 @@
+"""Bond arithmetic for Indian listed bonds and NCDs: cash flows, price from yield, yield to maturity, accrued
+interest, durations, convexity and post-tax yield.
+
+Conventions (state them in reports):
+* Coupons are paid `freq` times a year (1 annual, 2 half-yearly, 4 quarterly, 12 monthly) on the maturity date's
+  day and month schedule, the last one with the principal.
+* Discounting counts coupon periods: the fraction of the current period still to run (actual days / actual days in
+  the period), then whole periods, so a bond priced at par on a coupon date yields exactly its coupon.
+* Accrued interest is the annual coupon x actual days since the last coupon / 365.
+* Yields are annual, compounded `freq` times a year; prices are per `face` value and exclude accrued interest (clean)
+  unless named dirty.
+"""
+
+from __future__ import annotations
+
+import calendar
+from dataclasses import dataclass
+from datetime import date
+from decimal import Decimal
+
+from finresearch.fincalc.numbers import Num, require_price, to_decimal
+
+
+def _months(freq: int) -> int:
+    if freq not in (1, 2, 4, 12):
+        raise ValueError("freq must be 1, 2, 4 or 12")
+    return 12 // freq
+
+
+def _back(d: date, months: int) -> date:
+    """`d` moved back by `months` calendar months, clamped to month end."""
+    y, m = divmod(d.month - 1 - months, 12)
+    year, month = d.year + y, m + 1
+    return date(year, month, min(d.day, calendar.monthrange(year, month)[1]))
+
+
+def coupon_dates(settlement: date, maturity: date, freq: int) -> list[date]:
+    """Coupon dates after `settlement` up to and including `maturity`, stepping back from maturity."""
+    if maturity <= settlement:
+        raise ValueError("maturity must be after settlement")
+    step, out, k = _months(freq), [], 0
+    while (d := _back(maturity, k * step)) > settlement:
+        out.append(d)
+        k += 1
+    return sorted(out)
+
+
+def previous_coupon(settlement: date, maturity: date, freq: int) -> date:
+    first = coupon_dates(settlement, maturity, freq)[0]
+    return _back(first, _months(freq))
+
+
+@dataclass(frozen=True)
+class CashFlow:
+    day: date
+    amount: Decimal
+    periods: Decimal  # coupon periods from settlement (fractional first period)
+
+    def years(self, freq: int) -> Decimal:
+        return self.periods / freq
+
+
+def cash_flows(
+    settlement: date, maturity: date, coupon_rate: Num, freq: int, face: Num = 100
+) -> list[CashFlow]:
+    f, c = require_price(face, "face"), to_decimal(coupon_rate)
+    per = f * c / freq
+    days = coupon_dates(settlement, maturity, freq)
+    prev = _back(days[0], _months(freq))
+    first = Decimal((days[0] - settlement).days) / Decimal((days[0] - prev).days)
+    return [CashFlow(d, per + (f if d == maturity else 0), first + k) for k, d in enumerate(days)]
+
+
+def accrued_interest(
+    settlement: date, maturity: date, coupon_rate: Num, freq: int, face: Num = 100
+) -> Decimal:
+    """Coupon accrued since the previous coupon date, actual days / 365 of the annual coupon."""
+    prev = previous_coupon(settlement, maturity, freq)
+    return require_price(face, "face") * to_decimal(coupon_rate) * Decimal((settlement - prev).days) / 365
+
+
+def dirty_price(
+    yld: Num, settlement: date, maturity: date, coupon_rate: Num, freq: int, face: Num = 100
+) -> Decimal:
+    """Present value of the remaining cash flows at annual yield `yld` compounded `freq` times a year."""
+    base = 1 + float(to_decimal(yld)) / freq
+    total = sum(float(cf.amount) / base ** float(cf.periods)
+                for cf in cash_flows(settlement, maturity, coupon_rate, freq, face))  # fmt: skip
+    return Decimal(str(total))
+
+
+def clean_price(
+    yld: Num, settlement: date, maturity: date, coupon_rate: Num, freq: int, face: Num = 100
+) -> Decimal:
+    return dirty_price(yld, settlement, maturity, coupon_rate, freq, face) - accrued_interest(
+        settlement, maturity, coupon_rate, freq, face)  # fmt: skip
+
+
+def ytm(
+    clean: Num, settlement: date, maturity: date, coupon_rate: Num, freq: int, face: Num = 100
+) -> Decimal:
+    """Yield to maturity for a clean price (bisection between -50% and 100%)."""
+    target = require_price(clean, "price")
+    lo, hi = Decimal("-0.5"), Decimal("1.0")
+    for _ in range(120):
+        mid = (lo + hi) / 2
+        if clean_price(mid, settlement, maturity, coupon_rate, freq, face) > target:
+            lo = mid
+        else:
+            hi = mid
+    return ((lo + hi) / 2).quantize(Decimal("1e-8"))
+
+
+def current_yield(clean: Num, coupon_rate: Num, face: Num = 100) -> Decimal:
+    return require_price(face, "face") * to_decimal(coupon_rate) / require_price(clean, "price")
+
+
+@dataclass(frozen=True)
+class Duration:
+    macaulay: Decimal  # years
+    modified: Decimal  # years; % price change for a 1-point yield change is about -modified
+    convexity: Decimal
+
+
+def duration(
+    yld: Num, settlement: date, maturity: date, coupon_rate: Num, freq: int, face: Num = 100
+) -> Duration:
+    y = float(to_decimal(yld))
+    flows = cash_flows(settlement, maturity, coupon_rate, freq, face)
+    pv = [(float(cf.amount) / (1 + y / freq) ** float(cf.periods), float(cf.periods) / freq) for cf in flows]
+    price = sum(v for v, _ in pv)
+    mac = sum(v * t for v, t in pv) / price
+    conv = sum(v * t * (t + 1 / freq) for v, t in pv) / (price * (1 + y / freq) ** 2)
+    return Duration(
+        Decimal(str(round(mac, 6))),
+        Decimal(str(round(mac / (1 + y / freq), 6))),
+        Decimal(str(round(conv, 6))),
+    )
+
+
+def post_tax_yield(pre_tax_yield: Num, tax_rate: Num) -> Decimal:
+    """Rough yield after tax, ``YTM x (1 - tax_rate)``. Right only for a bond bought at par: it taxes the whole
+    return as interest. Use `after_tax_ytm` for bonds bought at a premium or discount."""
+    return to_decimal(pre_tax_yield) * (1 - to_decimal(tax_rate))
+
+
+def after_tax_ytm(clean: Num, settlement: date, maturity: date, coupon_rate: Num, freq: int, tax_rate: Num,
+                  capital_gains_rate: Num | None = None, face: Num = 100, loss_offset: bool = False) -> Decimal:  # fmt: skip
+    """Yield on after-tax cash flows: each coupon is taxed at `tax_rate` (the investor's slab), and the difference
+    between face value and the clean purchase price is a capital gain or loss at redemption, taxed at
+    `capital_gains_rate` (default: the same as `tax_rate`). A capital loss saves tax only when `loss_offset` is
+    True (the investor has gains to set it against). Accrued interest paid at purchase is ignored (a simplification)."""
+    t = float(to_decimal(tax_rate))
+    cg = float(to_decimal(capital_gains_rate)) if capital_gains_rate is not None else t
+    price, f = float(require_price(clean, "price")), float(require_price(face, "face"))
+    flows = cash_flows(settlement, maturity, coupon_rate, freq, face)
+    coupon = f * float(to_decimal(coupon_rate)) / freq
+    gain = f - price
+    gain_tax = gain * cg if gain > 0 or loss_offset else 0.0
+    after = [
+        (float(cf.periods), coupon * (1 - t) + ((f - gain_tax) if cf.day == maturity else 0.0))
+        for cf in flows
+    ]
+
+    def pv(y: float) -> float:
+        return sum(a / (1 + y / freq) ** p for p, a in after)
+
+    lo, hi = -0.5, 1.0
+    for _ in range(200):
+        mid = (lo + hi) / 2
+        if pv(mid) > price:
+            lo = mid
+        else:
+            hi = mid
+    return Decimal(str(round((lo + hi) / 2, 8)))

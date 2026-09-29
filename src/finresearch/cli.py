@@ -374,6 +374,41 @@ async def _ensure_scheme(scheme_code: str) -> str:
         raise typer.BadParameter(str(e)) from e
 
 
+bond_app = typer.Typer(no_args_is_help=True, help="Listed bond / NCD research reports (multi-agent pipeline)")
+app.add_typer(bond_app, name="bond")
+
+
+@bond_app.command("search")
+def bond_search(query: str) -> None:
+    """Find listed bonds / NCDs traded on NSE by symbol fragment or ISIN."""
+    from finresearch.mcp_server.server import nse_bond_search
+
+    for r in json.loads(asyncio.run(nse_bond_search(query))):
+        console.print(f"{r['isin']}  {r['symbol']:<12} {r['series'] or '':<3} coupon {r['coupon_pct']}%  "
+                      f"LTP {r['last_price']}  matures {r['maturity']}  {r['rating'] or 'unrated'} "
+                      f"{'; '.join(r['warnings'])}")  # fmt: skip
+
+
+@bond_app.command("run")
+def bond_run(
+    isin: str,
+    streams: str | None = typer.Option(None, help="Comma-separated subset of the five bond streams"),
+    concurrency: int = typer.Option(4),
+    wait: bool = typer.Option(False, help="Sleep through Max-window resets and resume automatically"),
+) -> None:
+    """Start a new listed-bond research run for an ISIN."""
+    from finresearch.orchestrator.base import create_run
+    from finresearch.orchestrator.bond import ensure_bond_company
+
+    try:
+        slug = asyncio.run(ensure_bond_company(isin))["slug"]
+    except LookupError as e:
+        raise typer.BadParameter(str(e)) from e
+    run_id = create_run(slug, kind="bond_report")
+    console.print(f"created bond run {run_id} for {slug}")
+    _go(run_id, streams, concurrency, wait)
+
+
 @ipo_app.command("resume")
 def ipo_resume(
     run_id: int,

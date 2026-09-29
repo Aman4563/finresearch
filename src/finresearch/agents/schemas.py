@@ -149,6 +149,21 @@ class FundSynthesis(BaseModel):
     report_markdown: str = Field(description="Full report; every figure cites [C<id>]")
 
 
+class BondSynthesis(BaseModel):
+    verdict: Literal["BUY", "BUY BELOW PRICE", "HOLD", "AVOID"]
+    price_or_yield: str | None = Field(default=None, description="Price or YTM at which the verdict applies")
+    suits: str = Field(description="Who the bond suits: horizon, tax slab and risk appetite")
+    confidence: Literal["low", "medium", "high"]
+    condition: str | None = Field(
+        default=None, description="What would change the verdict, with the datum to watch"
+    )
+    executive_summary: str
+    reasons_for: list[CasePoint]
+    reasons_against: list[CasePoint]
+    action_checklist: list[str]
+    report_markdown: str = Field(description="Full report; every figure cites [C<id>]")
+
+
 class Gap(BaseModel):
     description: str
     stream: str = Field(description="Which stream should fill it")

@@ -148,6 +148,10 @@ uv run finresearch research resume <run_id> --wait  # resume any research run (I
 uv run finresearch fund search "axis midcap direct"
 uv run finresearch fund run 120505 --wait           # performance, risk, portfolio, costs, manager, news
 
+# listed bonds / NCDs
+uv run finresearch bond search LTF
+uv run finresearch bond run INE027E07998 --wait     # terms, issuer credit, ratings, pricing, news
+
 # local API for the app (always 127.0.0.1; OpenAPI docs at /api/docs); also runs the monitor
 uv run finresearch serve                           # http://127.0.0.1:8710
 

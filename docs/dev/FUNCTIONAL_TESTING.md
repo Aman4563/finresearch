@@ -111,3 +111,10 @@ These are dated entries for bugs we reproduced, what caused them, and how they a
 ### 2026-09-29: rolling returns not recorded; peers' figures counted against the scheme (fund runs 10 and 11)
 - **Seen:** run 10 never recorded the tool's 5-year rolling statistics. Run 11's scoring counted category peers' volatility and drawdown, and the rolling median and maximum, as contradicting Axis Midcap's figures.
 - **Now:** the rolling minimum, median and maximum are baseline claims. Fund gold facts use `require` (the claim must name the scheme) and tight period patterns (`test_require_keeps_peers_figures_out`). The ledger stores fund returns in % so 6 decimals keep their precision.
+
+### 2026-09-29: post-tax yield of a premium bond was overstated (live bond run 12)
+- **Seen:** `bond_analytics` gave the post-tax yield as YTM x (1 − tax rate). The verifier contradicted it: for a bond bought above par, only coupons are taxed as interest, and the pull to par at redemption is a capital loss that saves tax only if it can be offset.
+- **Now:** `fincalc.bonds.after_tax_ytm` solves the yield on after-tax cash flows (coupons after slab tax; the redemption gain or loss taxed or relieved separately). The tool returns `after_tax_ytm` with a note (`test_after_tax_ytm_uses_after_tax_cash_flows`).
+
+### 2026-09-29: bond conventions that are not verified
+- Whether NSE's retail bond segment quotes prices dirty or clean is not confirmed, so `bond_analytics` requires `price_basis`. Coupon frequency must come from the offer document; secondary sources are marked as such in the claims.
