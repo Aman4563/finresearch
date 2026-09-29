@@ -1,9 +1,9 @@
 {
  "company": "bond-ine027e07998",
  "kind": "bond_report",
- "version": 1,
+ "version": 2,
  "as_of": "2026-09-28",
- "source": "NSE list of bonds traded in the capital market; only exchange-published terms (coupon frequency and security are left to the offer document)",
+ "source": "NSE list of bonds traded in the capital market; only exchange-published terms (coupon frequency and security are left to the offer document); coupon frequency from the issuer's Tranche 1 Prospectus on sebi.gov.in",
  "verdict": null,
  "facts": [
   {
@@ -46,6 +46,20 @@
    "tolerance": 0.005,
    "importance": "normal",
    "source": "NSE list of bonds traded in the capital market (28-Sep-2026)",
+   "exclude": "\\bpeer|g-?sec|government|fd\\b|fixed deposit|other bond|same rating"
+  },
+  {
+   "id": "b-frequency",
+   "label": "Coupon frequency: monthly (Series VI)",
+   "patterns": [
+    "frequen|payments? (a|per) year|monthly"
+   ],
+   "period": null,
+   "value": 12,
+   "unit": "count",
+   "tolerance": 0.005,
+   "importance": "high",
+   "source": "L&T Finance Tranche 1 Prospectus 22-Feb-2019 (SEBI): 'In case of Series VI Secured NCDs, interest would be paid monthly on Actual/Actual basis'",
    "exclude": "\\bpeer|g-?sec|government|fd\\b|fixed deposit|other bond|same rating"
   }
  ]

@@ -116,9 +116,11 @@ These are dated entries for bugs we reproduced, what caused them, and how they a
 - **Seen:** `bond_analytics` gave the post-tax yield as YTM x (1 − tax rate). The verifier contradicted it: for a bond bought above par, only coupons are taxed as interest, and the pull to par at redemption is a capital loss that saves tax only if it can be offset.
 - **Now:** `fincalc.bonds.after_tax_ytm` solves the yield on after-tax cash flows (coupons after slab tax; the redemption gain or loss taxed or relieved separately). The tool returns `after_tax_ytm` with a note (`test_after_tax_ytm_uses_after_tax_cash_flows`).
 
-### 2026-09-29: bond conventions that are not verified
-- Whether NSE's retail bond segment quotes prices dirty or clean is not confirmed, so `bond_analytics` requires `price_basis`. Coupon frequency must come from the offer document; secondary sources are marked as such in the claims.
-
 ### 2026-09-29: expected listing date fell on an exchange holiday
 - **Seen:** the date calendar had no exchange holidays, so Orient Cables' expected T+3 listing was 2-Oct-2026, a trading holiday.
 - **Now:** NSE's holiday master (trading and clearing, CM segment) is cached and used in every exchange-date calculation. T+3 from 29-Sep-2026 is 5-Oct-2026, and a check whose slot moves is cancelled rather than run on the old day (`test_orient_t_plus_3_skips_gandhi_jayanti`, `test_moved_listing_date_cancels_the_old_check`).
+
+### 2026-09-29: bond conventions verified against primary sources (#59)
+- **Price basis:** NSE's page for bonds traded in the capital market says they trade and settle on a dirty price (accrued interest included). `bond_analytics` now defaults `price_basis` to `dirty` and returns `price_basis_source`. NSE's separate debt segment quotes clean prices, so that segment is out of scope.
+- **Day count:** SEBI circular CIR/IMD/DF-1/122/2016 sets Actual/Actual for listed debt: 366 days when the year (counted between maturity anniversaries) contains 29-Feb, otherwise 365. Before this fix, `accrued_interest` always used 365 (`test_accrued_interest_is_actual_actual_per_sebi`).
+- **L&T NCD INE027E07998:** the Tranche 1 prospectus (22-Feb-2019, on sebi.gov.in) lists Series VI Option 2 at 8.98%, paid monthly on an Actual/Actual basis, face value ₹1,000. Its gold file now cites the prospectus for the frequency.

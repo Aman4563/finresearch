@@ -347,13 +347,14 @@ async def nse_bond_search(query: str) -> str:
 
 
 @server.tool()
-async def bond_analytics(isin: str, coupon_frequency: int, price_basis: str, settlement: str | None = None,
+async def bond_analytics(isin: str, coupon_frequency: int, price_basis: str = "dirty", settlement: str | None = None,
                          tax_rate: str | None = None) -> str:  # fmt: skip
     """Yield to maturity, current yield, accrued interest, Macaulay/modified duration and convexity for a listed bond
     from NSE's last price, coupon and maturity (fincalc.bonds). `coupon_frequency` (1, 2, 4 or 12) must come from
     the offer document or information memorandum, never assumed. With `tax_rate` it returns the after-tax YTM from
-    after-tax cash flows. `price_basis` is "dirty" (the traded price includes
-    accrued interest) or "clean"; confirm how the segment quotes it and cite that. Pass `tax_rate` (a fraction) for
+    after-tax cash flows. `price_basis` defaults to "dirty": NSE states that bonds traded
+    in the capital-market segment "are traded & settled on Dirty Price i.e. including accrued interest"
+    (https://www.nseindia.com/market-data/bonds-traded-in-capital-market); pass "clean" for clean quotes. Pass `tax_rate` (a fraction) for
     the post-tax yield. Refuses partly redeemed bonds, whose cash flows need the redemption schedule."""
     from datetime import date as _date
 
@@ -383,7 +384,9 @@ async def bond_analytics(isin: str, coupon_frequency: int, price_basis: str, set
            "ytm": str(y), "current_yield": str(b.current_yield(bond.last_price, coupon, bond.face_value)),
            "macaulay_duration_years": str(d.macaulay), "modified_duration": str(d.modified), "convexity": str(d.convexity),
            "price_basis": price_basis,
-           "conventions": "accrued interest actual/365; discounting by coupon periods",
+           "price_basis_source": "NSE: CM-segment bonds are traded and settled on dirty price (bonds-traded-in-capital-market page)"
+           if price_basis == "dirty" else "stated by the caller",
+           "conventions": "accrued interest Actual/Actual (SEBI CIR/IMD/DF-1/122/2016); discounting by coupon periods",
            "warnings": bond.warnings}  # fmt: skip
     if tax_rate is not None:
         # live bond run 12: YTM x (1 - t) overstated the post-tax yield of a premium bond (pull-to-par is a

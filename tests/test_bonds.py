@@ -169,3 +169,17 @@ def test_after_tax_ytm_uses_after_tax_cash_flows():
     assert b.after_tax_ytm(95, s, m, "0.10", 1, "0.30") < b.ytm(95, s, m, "0.10", 1) * Decimal(
         "0.7"
     ) + Decimal("0.01")
+
+
+def test_accrued_interest_is_actual_actual_per_sebi():
+    """SEBI CIR/IMD/DF-1/122/2016: 366 days is the denominator for the one-year period containing 29 February."""
+    m = date(2029, 3, 13)  # L&T Finance 8.98% NCD, monthly on the 13th
+    # 13-Feb-2028 to 10-Mar-2028: 26 days in the year 13-Mar-2027..13-Mar-2028, which contains 29-Feb-2028
+    leap = b.accrued_interest(date(2028, 3, 10), m, "0.0898", 12, 1000)
+    assert leap == pytest.approx(Decimal(1000) * Decimal("0.0898") * 26 / 366, abs=Decimal("1e-9"))
+    # 13-Sep-2026 to 29-Sep-2026: 16 days in a year without 29-February
+    normal = b.accrued_interest(date(2026, 9, 29), m, "0.0898", 12, 1000)
+    assert normal == pytest.approx(Decimal(1000) * Decimal("0.0898") * 16 / 365, abs=Decimal("1e-9"))
+    # annual coupons: 13-Mar-2027 to 10-Mar-2028 is 363 days in the year that contains 29-Feb-2028
+    annual = b.accrued_interest(date(2028, 3, 10), m, "0.0898", 1, 1000)
+    assert annual == pytest.approx(Decimal(1000) * Decimal("0.0898") * 363 / 366, abs=Decimal("1e-9"))

@@ -99,7 +99,7 @@ def test_gold_files_are_well_formed(company):
     for f in gold["facts"]:
         for p in f["patterns"] + ([f["period"]] if f.get("period") else []):
             re.compile(p)
-        assert f["unit"] in {"INR million", "INR crore", "INR", "%", "shares", "year"} and f[
+        assert f["unit"] in {"INR million", "INR crore", "INR", "%", "shares", "year", "count"} and f[
             "importance"
         ] in {
             "high",
