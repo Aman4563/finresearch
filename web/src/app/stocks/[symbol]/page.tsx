@@ -16,6 +16,7 @@ import type { StockHistory, StockOverview, StockResults } from "@/components/mar
 import {
   Badge, Button, Callout, Card, Delta, EmptyState, ErrorNote, PageHeader, Skeleton, SkeletonRows, Stat, Table,
 } from "@/components/ui";
+import { LiveStamp, useLive } from "@/components/live";
 import { day, useApi, when, type WatchSummary } from "@/lib/api";
 
 const PERIODS: Period[] = ["1M", "3M", "6M", "1Y", "3Y", "5Y"];
@@ -36,7 +37,10 @@ export default function StockDetail() {
   const watches = useApi<WatchSummary[]>("/api/watches");
   const watching = (watches.data ?? []).some((w) => w.kind === "stock" && w.active && w.nse_symbol === symbol);
 
-  const q = ov.data?.quote;
+  // the price refreshes every 30 s while NSE is open; the rest of the page is fetched once
+  const live = useLive<{ quote: NonNullable<StockOverview["quote"]>; fetched_at: string }>(
+    `/api/stocks/${encodeURIComponent(symbol)}/quote`, { session: "equity", everyMs: 30000 });
+  const q = live.data?.quote ? { ...ov.data?.quote, ...live.data.quote } : ov.data?.quote;
   const last = q?.last_price ? Number(q.last_price) : null;
   const bars = hist.data?.bars ?? [];
   const lastBar = bars[bars.length - 1];
@@ -88,7 +92,6 @@ export default function StockDetail() {
             <>
               {q.industry ?? "Industry not stated"}
               {q.listing_date && <> · listed {day(q.listing_date)}</>}
-              {q.as_of && <> · price as of {when(q.as_of)}</>}
             </>
           ) : undefined
         }
@@ -104,6 +107,8 @@ export default function StockDetail() {
         }
       />
 
+      <LiveStamp session="equity" live={live.live} status={live.status} updatedAt={live.updatedAt ?? ov.updatedAt} everyMs={30000}
+        asOf={q?.as_of} onRefresh={live.reload} className="-mt-3 mb-5" />
       <div className="space-y-5">
         <ErrorNote error={actionError} />
         {note && <Callout tone="gain">{note}</Callout>}

@@ -86,9 +86,9 @@ def _fmt(x: Decimal | None) -> str:
     return "n/a" if x is None else f"{x:.2f}x"
 
 
-async def subscription(session: Session, job: MonitorJob, watch: Watch, deps: Deps, now: datetime) -> dict:
-    from finresearch.suggest.rules import subscription_metrics
-
+async def fetch_book(session: Session, watch: Watch, deps: Deps, now: datetime):
+    """The watch's current subscription book from the exchange, recorded as a snapshot (once per exchange timestamp).
+    Returns (detail, snapshot, total, source). Used by the scheduled checks and the live view."""
     bse_ipo_no = (watch.meta or {}).get("bse_ipo_no")  # a BSE SME issue: BSE publishes the whole book
     detail = await (deps.bse_ipo_detail(bse_ipo_no) if bse_ipo_no else deps.ipo_detail(watch.nse_symbol))
     snap = detail.combined
@@ -105,6 +105,13 @@ async def subscription(session: Session, job: MonitorJob, watch: Watch, deps: De
         nse_symbol=watch.nse_symbol, as_of=snap.as_of or now, source=source, total_times=total,
         categories=[c.model_dump(mode="json") for c in snap.categories], raw={},
     ).on_conflict_do_nothing(index_elements=["nse_symbol", "as_of", "source"]))  # fmt: skip
+    return detail, snap, total, source
+
+
+async def subscription(session: Session, job: MonitorJob, watch: Watch, deps: Deps, now: datetime) -> dict:
+    from finresearch.suggest.rules import subscription_metrics
+
+    detail, snap, total, source = await fetch_book(session, watch, deps, now)
     m = subscription_metrics(detail)
     if m.get("total_times") is None or m["total_times"].value is None:
         from finresearch.suggest.rules import Metric

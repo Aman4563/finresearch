@@ -4,7 +4,7 @@ import {
   ArrowLeft, BarChart3, BellRing, CalendarCheck, ChartCandlestick, ChartLine, ListChecks, PartyPopper, Rocket, Table2,
 } from "lucide-react";
 import { useParams } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { LinkButton } from "@/components/dashboard/link-button";
 import { BarsChart, TimeSeriesChart } from "@/components/charts";
@@ -16,6 +16,7 @@ import { NextCheck, RuleChips, StopWatch, jobLabel } from "@/components/monitor/
 import {
   Badge, Card, EmptyState, ErrorNote, PageHeader, Segmented, Skeleton, Stat, Table, cx,
 } from "@/components/ui";
+import { LiveStamp, useLive } from "@/components/live";
 import { useApi, when, type WatchDetail } from "@/lib/api";
 
 type Snap = WatchDetail["subscription"][number];
@@ -60,7 +61,14 @@ function jobDetail(j: Job) {
 
 export default function WatchView() {
   const { id } = useParams<{ id: string }>();
-  const { data, error, reload } = useApi<WatchDetail>(`/api/watches/${id}`, 60000);
+  const { data, error, reload, updatedAt } = useApi<WatchDetail>(`/api/watches/${id}`, 60000);
+  // while bidding is on, read the exchange's book every minute; each new exchange timestamp becomes a snapshot
+  const book = useLive<{ live: boolean; book?: { as_of: string | null; total_times: string } | null; reason?: string }>(
+    `/api/watches/${id}/live`, { session: "ipo", everyMs: 60000, active: data?.kind === "ipo" && data.active });
+  const bookAsOf = book.data?.book?.as_of;
+  useEffect(() => {
+    if (bookAsOf) reload();
+  }, [bookAsOf, reload]);
   const now = useNow(30000);
   const [focus, setFocus] = useState<string>("all");
   const [stopError, setStopError] = useState<string | null>(null);
@@ -120,6 +128,11 @@ export default function WatchView() {
           <StopWatch w={data} onDone={reload} onError={setStopError} />
         )}
       />
+      {ipo && data.active && (
+        <LiveStamp session="ipo" live={book.live && !!book.data?.live} status={book.status} everyMs={60000}
+          updatedAt={book.updatedAt ?? updatedAt} asOf={bookAsOf ?? last?.as_of} asOfLabel="Exchange book as of"
+          onRefresh={book.reload} className="-mt-4" />
+      )}
       <ErrorNote error={stopError} />
       <ErrorNote error={error} onRetry={reload} />
 
