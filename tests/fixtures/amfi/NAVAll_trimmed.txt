@@ -1,0 +1,414 @@
+Scheme Code;ISIN Div Payout/ ISIN Growth;ISIN Div Reinvestment;Scheme Name;Plan;Option;Net Asset Value;Date
+ 
+Open Ended Schemes(Children’s Fund - Childrens' Fund)
+ 
+Axis Mutual Fund
+ 
+135762;INF846K01WO1;-;Axis Children's Fund;Direct Plan;Growth Option;29.3632;28-Sep-2026
+135765;INF846K01WP8;-;Axis Children's Fund;Direct Plan;IDCW Option;27.0488;28-Sep-2026
+135759;INF846K01WJ1;-;Axis Children's Fund;Regular Plan;Growth Option;25.5630;28-Sep-2026
+135760;INF846K01WK9;-;Axis Children's Fund;Regular Plan;IDCW Option;23.5839;28-Sep-2026
+135764;INF846K01WR4;-;Axis Children's Fund;Direct Plan;Growth Option;29.9247;28-Sep-2026
+135763;INF846K01WS2;INF846K01WQ6;Axis Children's Fund;Direct Plan;IDCW Option;27.0999;28-Sep-2026
+135766;INF846K01WM5;-;Axis Children's Fund;Regular Plan;Growth Option;25.5598;28-Sep-2026
+135761;INF846K01WN3;INF846K01WL7;Axis Children's Fund;Regular Plan;IDCW Option;23.5626;28-Sep-2026
+Open Ended Schemes(Equity Scheme - Mid Cap Fund)
+ 
+Aditya Birla Sun Life Mutual Fund
+ 
+119620;INF209K01Q30;-;Aditya Birla Sun Life Midcap Fund;Direct Plan;GROWTH;919.61;28-Sep-2026
+119619;INF209K01Q22;-;Aditya Birla Sun Life Midcap Fund;Direct Plan;IDCW;98.19;28-Sep-2026
+101591;INF209K01355;INF209K01CN6;Aditya Birla Sun Life Midcap Fund;Regular Plan;IDCW;57.01;28-Sep-2026
+101592;INF209K01363;-;Aditya Birla Sun Life Midcap Fund;Regular Plan;GROWTH;817.43;28-Sep-2026
+ 
+Axis Mutual Fund
+ 
+120505;INF846K01EH3;-;Axis Midcap Fund;Direct Plan;Growth Option;138.78;28-Sep-2026
+120504;INF846K01EF7;INF846K01EG5;Axis Midcap Fund;Direct Plan;IDCW Option;53.79;28-Sep-2026
+114564;INF846K01859;-;Axis Midcap Fund;Regular Plan;Growth Option;117.99;28-Sep-2026
+114565;INF846K01867;INF846K01875;Axis Midcap Fund;Regular Plan;IDCW Option;40.23;28-Sep-2026
+ 
+Baroda BNP Paribas Mutual Fund
+ 
+150212;INF251K01HQ0;-;Baroda BNP Paribas Mid Cap Fund;Direct Plan;Growth Option;129.3676;28-Sep-2026
+150211;INF251K01HO5;INF251K01HP2;Baroda BNP Paribas Mid Cap Fund;Direct Plan;IDCW Option;71.5150;28-Sep-2026
+150209;INF251K01AW3;-;Baroda BNP Paribas Mid Cap Fund;Regular Plan;Growth Option;106.8357;28-Sep-2026
+150210;INF251K01AX1;INF251K01AY9;Baroda BNP Paribas Mid Cap Fund;Regular Plan;IDCW Option;55.6109;28-Sep-2026
+ 
+DSP Mutual Fund
+ 
+119071;INF740K01PX1;-;DSP Midcap Fund;Direct Plan;Growth;167.6320;28-Sep-2026
+119070;INF740K01PY9;INF740K01PZ6;DSP Midcap Fund;Direct Plan;IDCW;66.9410;28-Sep-2026
+104481;INF740K01128;-;DSP Midcap Fund;Regular Plan;Growth;149.0890;28-Sep-2026
+104482;INF740K01102;INF740K01110;DSP Midcap Fund;Regular Plan;IDCW;28.3980;28-Sep-2026
+ 
+Edelweiss Mutual Fund
+ 
+140228;INF843K01AO4;-;Edelweiss Mid Cap Fund;Direct Plan;Growth;123.838;28-Sep-2026
+140227;INF843K01AP1;INF843K01AQ9;Edelweiss Mid Cap Fund;Direct Plan;IDCW;90.3;28-Sep-2026
+140225;INF843K01013;-;Edelweiss Mid Cap Fund;Regular Plan;Growth;104.521;28-Sep-2026
+140226;INF843K01021;INF843K01039;Edelweiss Mid Cap Fund;Regular Plan;IDCW;60.259;28-Sep-2026
+ 
+Franklin Templeton Mutual Fund
+ 
+118533;INF090I01FH9;-;Franklin India Mid Cap Fund;Direct Plan;Growth;3054.8538;28-Sep-2026
+118532;INF090I01FI7;INF090I01FJ5;Franklin India Mid Cap Fund;Direct Plan;IDCW;100.4637;28-Sep-2026
+100472;INF090I01726;INF090I01734;Franklin India Mid Cap Fund;Regular Plan;IDCW;82.8124;28-Sep-2026
+100473;INF090I01809;-;Franklin India Mid Cap Fund;Regular Plan;Growth;2692.4213;28-Sep-2026
+ 
+HDFC Mutual Fund
+ 
+118989;INF179K01XQ0;-;HDFC Mid Cap Fund;Direct Plan;Growth Option;223.172;28-Sep-2026
+105758;INF179K01CR2;-;HDFC Mid Cap Fund;Regular Plan;Growth Option;201.193;28-Sep-2026
+118988;INF179K01XO5;INF179K01XP2;HDFC Mid Cap Fund;Direct Plan;IDCW Option;79.244;28-Sep-2026
+105757;INF179K01CS0;INF179K01CT8;HDFC Mid Cap Fund;Regular Plan;IDCW Option;50.477;28-Sep-2026
+ 
+ITI Mutual Fund
+ 
+148733;INF00XX01929;-;ITI Mid Cap Fund;Direct Plan;Growth Option;24.9558;28-Sep-2026
+148731;INF00XX01937;INF00XX01945;ITI Mid Cap Fund;Direct Plan;IDCW Option;22.8811;28-Sep-2026
+148732;INF00XX01895;-;ITI Mid Cap Fund;Regular Plan;Growth Option;22.4203;28-Sep-2026
+148734;INF00XX01903;INF00XX01911;ITI Mid Cap Fund;Regular Plan;IDCW Option;20.3997;28-Sep-2026
+ 
+LIC Mutual Fund
+ 
+152002;INF397L01JK8;-;LIC MF Mid Cap Fund;Direct Plan;Growth;33.8156;28-Sep-2026
+151999;INF397L01JH4;INF397L01JI2;LIC MF Mid Cap Fund;Direct Plan;IDCW;31.766;28-Sep-2026
+152001;INF397L01JO0;-;LIC MF Mid Cap Fund;Regular Plan;Growth;29.8544;28-Sep-2026
+152000;INF397L01JL6;INF397L01JM4;LIC MF Mid Cap Fund;Regular Plan;IDCW;28.019;28-Sep-2026
+ 
+Motilal Oswal Mutual Fund
+ 
+127044;INF247L01460;INF247L01452;Motilal Oswal Midcap Fund;;;46.8576;28-Sep-2026
+127042;INF247L01445;-;Motilal Oswal Midcap Fund;;;114.8816;28-Sep-2026
+127040;INF247L01437;INF247L01429;Motilal Oswal Midcap Fund;;;44.8966;28-Sep-2026
+127039;INF247L01411;-;Motilal Oswal Midcap Fund;;;99.3511;28-Sep-2026
+ 
+Nippon India Mutual Fund
+ 
+118666;INF204K01E39;INF204K01E47;Nippon India Growth Mid Cap Fund;Direct Plan;IDCW Option;186.7773;28-Sep-2026
+118665;INF204K01E21;-;Nippon India Growth Mid Cap Fund;Direct Plan;Bonus Option;799.9957;28-Sep-2026
+118668;INF204K01E54;-;Nippon India Growth Mid Cap Fund;Direct Plan;Growth Option;4815.2942;28-Sep-2026
+100375;INF204K01299;INF204K01307;Nippon India Growth Mid Cap Fund;Regular Plan;IDCW Option;117.1141;28-Sep-2026
+106260;INF204K01257;INF204K01265;Nippon India Growth Mid Cap Fund;Regular Plan;INSTITUTIONAL Plan - IDCW Option;1329.7409;28-Sep-2026
+100376;INF204K01315;-;Nippon India Growth Mid Cap Fund;Regular Plan;Bonus Option;724.9490;28-Sep-2026
+100377;INF204K01323;-;Nippon India Growth Mid Cap Fund;Regular Plan;Growth Option;4354.8076;28-Sep-2026
+ 
+PGIM India Mutual Fund
+ 
+125301;INF663L01DW1;INF663L01DX9;PGIM India Midcap Fund;Direct Plan;Direct IDCW;62.36;28-Sep-2026
+125307;INF663L01DV3;-;PGIM India Midcap Fund;Direct Plan;Direct Growth;75.24;28-Sep-2026
+125306;INF663L01EA5;INF663L01EB3;PGIM India Midcap Fund;Regular Plan;Regular IDCW;22.92;28-Sep-2026
+125305;INF663L01DZ4;-;PGIM India Midcap Fund;Regular Plan;Regular Growth;64.03;28-Sep-2026
+ 
+quant Mutual Fund
+ 
+120841;INF966L01887;-;Quant Mid Cap Fund;Direct Plan;Growth Option;242.2093;28-Sep-2026
+101065;INF966L01176;-;Quant Mid Cap Fund;Regular Plan;Growth Option;213.2418;28-Sep-2026
+120840;INF966L01861;INF966L01879;Quant Mid Cap Fund;Direct Plan;IDCW Option;85.0735;28-Sep-2026
+101066;INF966L01150;INF966L01168;Quant Mid Cap Fund;Regular Plan;IDCW Option;75.8081;28-Sep-2026
+ 
+SBI Mutual Fund
+ 
+119716;INF200K01TP4;-;SBI MIDCAP FUND;Direct Plan;Growth;263.9056;28-Sep-2026
+119715;INF200K01TN9;INF200K01TO7;SBI MIDCAP FUND;Direct Plan;IDCW;149.6205;28-Sep-2026
+102941;INF200K01560;-;SBI MIDCAP FUND;Regular Plan;Growth;233.1964;28-Sep-2026
+102942;INF200K01578;INF200K01586;SBI MIDCAP FUND;Regular Plan;IDCW;95.2875;28-Sep-2026
+ 
+Sundaram Mutual Fund
+ 
+119581;INF903J01MJ3;-;Sundaram Mid Cap Fund;Direct Plan;GROWTH;1576.0172;28-Sep-2026
+119582;INF903J01MH7;INF903J01MI5;Sundaram Mid Cap Fund;Direct Plan;IDCW (Income Distribution CUM Capital Withdrawal);69.0197;28-Sep-2026
+101539;INF903J01173;-;Sundaram Mid Cap Fund;Regular Plan;GROWTH;1429.1328;28-Sep-2026
+101538;INF903J01181;INF903J01199;Sundaram Mid Cap Fund;Regular Plan;IDCW (Income Distribution CUM Capital Withdrawal);61.6791;28-Sep-2026
+ 
+Tata Mutual Fund
+ 
+119178;INF277K01PY2;-;Tata Mid Cap Fund;Direct Plan;Growth Option;511.4138;28-Sep-2026
+119177;INF277K01PW6;INF277K01PX4;Tata Mid Cap Fund;Direct Plan;IDCW Option;163.9308;28-Sep-2026
+102328;INF277K01626;-;Tata Mid Cap Fund;Regular Plan;Growth Option;443.3560;28-Sep-2026
+102326;INF277K01DS0;INF277K01642;Tata Mid Cap Fund;Regular Plan;IDCW Option;117.5177;28-Sep-2026
+ 
+Taurus Mutual Fund
+ 
+118872;INF044D01CA9;-;Taurus Mid Cap Fund;Direct Plan;Growth;133.75;28-Sep-2026
+118873;INF044D01CB7;INF044D01CC5;Taurus Mid Cap Fund;Direct Plan;Income Distribution cum Capital Withdrawal;106.28;28-Sep-2026
+100477;INF044D01815;-;Taurus Mid Cap Fund;Regular Plan;Growth;126.00;28-Sep-2026
+111642;INF044D01781;INF044D01799;Taurus Mid Cap Fund;Regular Plan;Income Distribution cum Capital Withdrawal;100.48;28-Sep-2026
+ 
+Trust Mutual Fund
+ 
+154210;INF0GCD01875;-;TRUSTMF MID CAP FUND;Direct Plan;Growth;11.86;28-Sep-2026
+154211;INF0GCD01883;-;TRUSTMF MID CAP FUND;Regular Plan;Growth;11.75;28-Sep-2026
+ 
+Union Mutual Fund
+ 
+148073;INF582M01GI3;-;Union Midcap Fund;Direct Plan;Growth Option;55.34;28-Sep-2026
+148074;INF582M01GK9;INF582M01GJ1;Union Midcap Fund;Direct Plan;IDCW Option;55.34;28-Sep-2026
+148071;INF582M01GM5;-;Union Midcap Fund;Regular Plan;Growth Option;50.62;28-Sep-2026
+148072;INF582M01GO1;INF582M01GN3;Union Midcap Fund;Regular Plan;IDCW Option;50.62;28-Sep-2026
+ 
+UTI Mutual Fund
+ 
+120727;INF789F01TY8;INF789F01TZ5;UTI - Mid Cap Fund;Direct Plan;IDCW;167.374;28-Sep-2026
+102393;INF789F01794;INF789F01802;UTI - Mid Cap Fund;Regular Plan;IDCW;143.0541;28-Sep-2026
+102394;INF789F01810;-;UTI - Mid Cap Fund;Regular Plan;Growth;302.3063;28-Sep-2026
+120726;INF789F01UA6;-;UTI - Mid Cap Fund;Direct Plan;Growth;340.1199;28-Sep-2026
+ 
+Open Ended Schemes(Equity Scheme - Multi Cap Fund)
+ 
+Aditya Birla Sun Life Mutual Fund
+ 
+148921;INF209KB1Y49;-;Aditya Birla Sun Life Multi-Cap Fund;Direct Plan;GROWTH;22.29;28-Sep-2026
+148920;INF209KB1Y56;-;Aditya Birla Sun Life Multi-Cap Fund;Direct Plan;IDCW Payout;18.34;28-Sep-2026
+148918;INF209KB1Y23;-;Aditya Birla Sun Life Multi-Cap Fund;Regular Plan;GROWTH;20.75;28-Sep-2026
+148919;INF209KB1Y31;-;Aditya Birla Sun Life Multi-Cap Fund;Regular Plan;IDCW Payout;17.07;28-Sep-2026
+ 
+Bajaj Finserv Mutual Fund
+ 
+153309;INF0QA701AV7;-;Bajaj Finserv Multi Cap Fund;Direct Plan;Growth;12.233;28-Sep-2026
+153306;INF0QA701AW5;INF0QA701AX3;Bajaj Finserv Multi Cap Fund;Direct Plan;IDCW;12.233;28-Sep-2026
+153307;INF0QA701AS3;-;Bajaj Finserv Multi Cap Fund;Regular Plan;Growth;11.941;28-Sep-2026
+153308;INF0QA701AT1;INF0QA701AU9;Bajaj Finserv Multi Cap Fund;Regular Plan;IDCW;11.941;28-Sep-2026
+ 
+Bandhan Mutual Fund
+ 
+149303;INF194KB1CL0;-;BANDHAN MULTI CAP FUND;Direct Plan;Growth;18.207;28-Sep-2026
+149305;INF194KB1CI6;-;BANDHAN MULTI CAP FUND;Regular Plan;Growth;16.923;28-Sep-2026
+149304;INF194KB1CM8;INF194KB1CN6;BANDHAN MULTI CAP FUND;Direct Plan;IDCW;16.042;28-Sep-2026
+149302;INF194KB1CJ4;INF194KB1CK2;BANDHAN MULTI CAP FUND;Regular Plan;IDCW;14.755;28-Sep-2026
+ 
+Bank of India Mutual Fund
+ 
+151443;INF761K01FR0;-;BANK OF INDIA MULTI CAP FUND;Direct Plan;Growth;20.30;28-Sep-2026
+151444;INF761K01FQ2;INF761K01FS8;BANK OF INDIA MULTI CAP FUND;Direct Plan;IDCW;20.27;28-Sep-2026
+151445;INF761K01FU4;-;BANK OF INDIA MULTI CAP FUND;Regular Plan;Growth;19.49;28-Sep-2026
+151446;INF761K01FT6;INF761K01FV2;BANK OF INDIA MULTI CAP FUND;Regular Plan;IDCW;19.49;28-Sep-2026
+ 
+Baroda BNP Paribas Mutual Fund
+ 
+119354;INF955L01AG0;-;Baroda BNP Paribas Multi Cap Fund;Direct Plan;Growth Option;323.1814;28-Sep-2026
+119353;INF955L01AE5;-;Baroda BNP Paribas Multi Cap Fund;Direct Plan;IDCW Option;53.1036;28-Sep-2026
+102020;INF955L01674;-;Baroda BNP Paribas Multi Cap Fund;Regular Plan;Growth Option;284.3340;28-Sep-2026
+102021;INF955L01658;INF955L01666;Baroda BNP Paribas Multi Cap Fund;Regular Plan;IDCW Option;49.3670;28-Sep-2026
+ 
+Edelweiss Mutual Fund
+ 
+152094;INF754K01SD8;-;Edelweiss Multi Cap Fund;Direct Plan;Growth;15.9239;28-Sep-2026
+152093;INF754K01SA4;INF754K01SB2;Edelweiss Multi Cap Fund;Direct Plan;IDCW;15.4314;28-Sep-2026
+152095;INF754K01RW0;-;Edelweiss Multi Cap Fund;Regular Plan;Growth;15.222;28-Sep-2026
+152096;INF754K01RX8;INF754K01RY6;Edelweiss Multi Cap Fund;Regular Plan;IDCW;14.7313;28-Sep-2026
+ 
+Franklin Templeton Mutual Fund
+ 
+152739;INF090I01XA7;-;Franklin India Multi Cap Fund;Direct Plan;Growth;11.1333;28-Sep-2026
+152737;INF090I01XB5;INF090I01XC3;Franklin India Multi Cap Fund;Direct Plan;IDCW;11.1333;28-Sep-2026
+152738;INF090I01WX1;-;Franklin India Multi Cap Fund;Regular Plan;Growth;10.7929;28-Sep-2026
+152740;INF090I01WY9;INF090I01WZ6;Franklin India Multi Cap Fund;Regular Plan;IDCW;10.7929;28-Sep-2026
+ 
+HDFC Mutual Fund
+ 
+149366;INF179KC1BV9;-;HDFC Multi Cap Fund;Regular Plan;Growth Option;18.058;28-Sep-2026
+149368;INF179KC1BS5;-;HDFC Multi Cap Fund;Direct Plan;Growth Option;19.079;28-Sep-2026
+149365;INF179KC1BW7;INF179KC1BX5;HDFC Multi Cap Fund;Regular Plan;IDCW Option;16.359;28-Sep-2026
+149367;INF179KC1BT3;INF179KC1BU1;HDFC Multi Cap Fund;Direct Plan;IDCW Option;17.435;28-Sep-2026
+ 
+ITI Mutual Fund
+ 
+147183;INF00XX01168;-;ITI Multi Cap Fund;Direct Plan;Growth Option;29.5125;28-Sep-2026
+147186;INF00XX01176;INF00XX01184;ITI Multi Cap Fund;Direct Plan;IDCW Option;26.1092;28-Sep-2026
+147184;INF00XX01135;-;ITI Multi Cap Fund;Regular Plan;Growth Option;25.6570;28-Sep-2026
+147185;INF00XX01143;INF00XX01150;ITI Multi Cap Fund;Regular Plan;IDCW Option;22.4429;28-Sep-2026
+ 
+LIC Mutual Fund
+ 
+150659;INF767K01RK7;-;LIC MF Multi Cap Fund;Direct Plan;Growth;19.097;28-Sep-2026
+150660;INF767K01RL5;INF767K01RM3;LIC MF Multi Cap Fund;Direct Plan;IDCW;19.097;28-Sep-2026
+150661;INF767K01RH3;-;LIC MF Multi Cap Fund;Regular Plan;Growth;17.9417;28-Sep-2026
+150662;INF767K01RI1;INF767K01RJ9;LIC MF Multi Cap Fund;Regular Plan;IDCW;17.9417;28-Sep-2026
+ 
+Motilal Oswal Mutual Fund
+ 
+152650;INF247L01CO2;-;Motilal Oswal Multi Cap Fund;;;14.5997;28-Sep-2026
+152649;INF247L01CJ2;INF247L01CK0;Motilal Oswal Multi Cap Fund;;;14.3805;28-Sep-2026
+152651;INF247L01CL8;-;Motilal Oswal Multi Cap Fund;;;15.0335;28-Sep-2026
+152652;INF247L01CM6;INF247L01CN4;Motilal Oswal Multi Cap Fund;;;14.8125;28-Sep-2026
+ 
+PGIM India Mutual Fund
+ 
+152815;INF663L01Z03;-;PGIM India Multi Cap Fund;Direct Plan;Direct Growth;10.76;28-Sep-2026
+152817;INF663L01Z11;INF663L01Z29;PGIM India Multi Cap Fund;Direct Plan;Direct IDCW;10.76;28-Sep-2026
+152816;INF663L01Y87;-;PGIM India Multi Cap Fund;Regular Plan;Regular Growth;10.39;28-Sep-2026
+152818;INF663L01Y95;INF663L01Z37;PGIM India Multi Cap Fund;Regular Plan;Regular IDCW;10.39;28-Sep-2026
+ 
+quant Mutual Fund
+ 
+100631;INF966L01234;-;Quant Multi Cap Fund;Regular Plan;Growth Option;648.6918;28-Sep-2026
+120823;INF966L01614;-;Quant Multi Cap Fund;Direct Plan;Growth Option;716.5182;28-Sep-2026
+120822;INF966L01598;INF966L01606;Quant Multi Cap Fund;Direct Plan;IDCW Option;82.979;28-Sep-2026
+100630;INF966L01218;INF966L01226;Quant Multi Cap Fund;Regular Plan;IDCW Option;74.1861;28-Sep-2026
+ 
+SBI Mutual Fund
+ 
+149887;INF200KA19E0;INF200KA10F6;SBI MultiCap Fund;Direct Plan;IDCW;17.4858;28-Sep-2026
+149882;INF200KA18E2;-;SBI MultiCap Fund;Direct Plan;Growth;17.4857;28-Sep-2026
+149886;INF200KA15E8;-;SBI MultiCap Fund;Regular Plan;Growth;16.7817;28-Sep-2026
+149883;INF200KA16E6;INF200KA17E4;SBI MultiCap Fund;Regular Plan;IDCW;16.7845;28-Sep-2026
+ 
+Sundaram Mutual Fund
+ 
+149668;INF173K01FN7;INF173K01FO5;Sundaram Multi Cap Fund (Formerly Known as Principal Multi Cap Growth Fund);Direct Plan;IDCW (Income Distribution CUM Capital Withdrawal);84.6330;28-Sep-2026
+149666;INF173K01957;INF173K01965;Sundaram Multi Cap Fund (Formerly Known as Principal Multi Cap Growth Fund);Regular Plan;IDCW (Income Distribution CUM Capital Withdrawal);61.9399;28-Sep-2026
+149669;INF173K01FQ0;-;Sundaram Multi Cap Fund (Formerly Known as Principal Multi Cap Growth Fund);Direct Plan;GROWTH;426.6042;28-Sep-2026
+149667;INF173K01940;-;Sundaram Multi Cap Fund (Formerly Known as Principal Multi Cap Growth Fund);Regular Plan;GROWTH;378.4037;28-Sep-2026
+ 
+Tata Mutual Fund
+ 
+151232;INF277KA1679;-;TATA MULTICAP FUND;Direct Plan;Growth Option;15.6048;28-Sep-2026
+151234;INF277KA1695;-;TATA MULTICAP FUND;Direct Plan;IDCW Payout Option;15.6048;28-Sep-2026
+151233;-;INF277KA1687;TATA MULTICAP FUND;Direct Plan;IDCW Reinvestment Option;15.6048;28-Sep-2026
+151235;INF277KA1703;-;TATA MULTICAP FUND;Regular Plan;Growth Option;14.7544;28-Sep-2026
+151237;INF277KA1729;-;TATA MULTICAP FUND;Regular Plan;IDCW Payout Option;14.7544;28-Sep-2026
+151236;-;INF277KA1711;TATA MULTICAP FUND;Regular Plan;IDCW Reinvestment Option;14.7544;28-Sep-2026
+ 
+Trust Mutual Fund
+ 
+153644;INF0GCD01834;-;TRUSTMF MULTI CAP FUND;Direct Plan;Growth;11.79;28-Sep-2026
+153645;INF0GCD01842;-;TRUSTMF MULTI CAP FUND;Regular Plan;Growth;11.54;28-Sep-2026
+ 
+Union Mutual Fund
+ 
+150858;INF582M01IO7;-;Union Multicap Fund;Direct Plan;Growth Option;17.86;28-Sep-2026
+150857;INF582M01IP4;INF582M01IQ2;Union Multicap Fund;Direct Plan;IDCW Option;17.86;28-Sep-2026
+150855;INF582M01IS8;-;Union Multicap Fund;Regular Plan;Growth Option;17.02;28-Sep-2026
+150856;INF582M01IT6;INF582M01IU4;Union Multicap Fund;Regular Plan;IDCW Option;17.02;28-Sep-2026
+ 
+Open Ended Schemes(Equity Scheme - Sectoral/ Thematic)
+ 
+Aditya Birla Sun Life Mutual Fund
+ 
+125598;INF209K013W3;INF209K015W8;Aditya Birla Sun Life Banking and Financial Services Fund;Direct Plan;IDCW Payout;29.69;28-Sep-2026
+125597;INF209K014W1;-;Aditya Birla Sun Life Banking and Financial Services Fund;Direct Plan;GROWTH;67.34;28-Sep-2026
+125596;INF209K010W9;INF209K012W5;Aditya Birla Sun Life Banking and Financial Services Fund;Regular Plan;IDCW-Re-investment;21.72;28-Sep-2026
+125595;INF209K011W7;-;Aditya Birla Sun Life Banking and Financial Services Fund;Regular Plan;GROWTH;59.38;28-Sep-2026
+149295;INF209KB14D2;-;Aditya Birla Sun Life Business Cycle Fund;Direct Plan;GROWTH;16.99;25-Sep-2026
+149297;INF209KB15D9;-;Aditya Birla Sun Life Business Cycle Fund;Direct Plan;IDCW Payout;14.87;25-Sep-2026
+149294;INF209KB13D4;-;Aditya Birla Sun Life Business Cycle Fund;Regular Plan;IDCW Payout;13.99;25-Sep-2026
+149296;INF209KB12D6;-;Aditya Birla Sun Life Business Cycle Fund;Regular Plan;GROWTH;15.99;25-Sep-2026
+119576;INF209K01VL0;-;Aditya Birla Sun Life Commodity Equities Fund - Global Agri Plan;;;37.3501;28-Jul-2023
+111349;INF209K01207;-;Aditya Birla Sun Life Commodity Equities Fund - Global Agri Plan;;;35.7925;28-Jul-2023
+119575;INF209K01P64;INF209K01VM8;Aditya Birla Sun Life Commodity Equities Fund - Global Agri Plan;;;21.5614;28-Jul-2023
+111348;INF209K01199;INF209K01CG0;Aditya Birla Sun Life Commodity Equities Fund - Global Agri Plan;;;20.6236;28-Jul-2023
+153124;INF209KC1373;-;Aditya Birla Sun Life Conglomerate Fund;Direct Plan;GROWTH;10.63;28-Sep-2026
+153125;INF209KC1381;-;Aditya Birla Sun Life Conglomerate Fund;Direct Plan;IDCW Payout;10.63;28-Sep-2026
+153127;INF209KC1399;-;Aditya Birla Sun Life Conglomerate Fund;Regular Plan;GROWTH;10.37;28-Sep-2026
+153126;INF209KC1407;-;Aditya Birla Sun Life Conglomerate Fund;Regular Plan;IDCW Payout;10.37;28-Sep-2026
+119591;INF209K01WC7;-;Aditya Birla Sun Life Consumption Fund;Direct Plan;GROWTH;231.02;28-Sep-2026
+119590;INF209K01Q63;-;Aditya Birla Sun Life Consumption Fund;Direct Plan;IDCW-Payout;44.45;28-Sep-2026
+103110;INF209K01439;INF209K01CR7;Aditya Birla Sun Life Consumption Fund;Regular Plan;IDCW-Re-investment;34.62;28-Sep-2026
+103111;INF209K01447;-;Aditya Birla Sun Life Consumption Fund;Regular Plan;GROWTH;199.54;28-Sep-2026
+120539;INF209K01VF2;-;Aditya Birla Sun Life Digital India Fund;Direct Plan;GROWTH;173.39;25-Sep-2026
+103168;INF209K01140;-;Aditya Birla Sun Life Digital India Fund;Regular Plan;GROWTH;152.21;25-Sep-2026
+120538;INF209K01P49;INF209K01VE5;Aditya Birla Sun Life Digital India Fund;Direct Plan;IDCW Payout;48.36;25-Sep-2026
+103167;INF209K01132;INF209K01CD7;Aditya Birla Sun Life Digital India Fund;Regular Plan;IDCW Payout;35.12;25-Sep-2026
+148640;INF209KB1U84;INF209KB1U92;Aditya Birla Sun Life ESG Integration Strategy Fund;Direct Plan;IDCW;15.15;28-Sep-2026
+148637;INF209KB1U76;-;Aditya Birla Sun Life ESG Integration Strategy Fund;Direct Plan;GROWTH;18.66;28-Sep-2026
+148636;INF209KB1U50;INF209KB1U68;Aditya Birla Sun Life ESG Integration Strategy Fund;Regular Plan;IDCW;14.00;28-Sep-2026
+148635;INF209KB1U43;-;Aditya Birla Sun Life ESG Integration Strategy Fund;Regular Plan;GROWTH;17.25;28-Sep-2026
+119515;INF209K01WG8;-;Aditya Birla Sun Life Infrastructure Fund;Direct Plan;IDCW;46.11;28-Sep-2026
+103475;INF209K01470;INF209K01CT3;Aditya Birla Sun Life Infrastructure Fund;Regular Plan;IDCW;27.11;28-Sep-2026
+119514;INF209K01WH6;-;Aditya Birla Sun Life Infrastructure Fund;Direct Plan;GROWTH;118.46;28-Sep-2026
+103476;INF209K01504;-;Aditya Birla Sun Life Infrastructure Fund;Regular Plan;GROWTH;106.28;28-Sep-2026
+119516;INF209K01Q89;INF209K01WT1;Aditya Birla Sun Life International Equity Fund;Direct Plan;IDCW;53.9491;25-Sep-2026
+119517;INF209K01WS3;-;Aditya Birla Sun Life International Equity Fund;Direct Plan;GROWTH;57.9132;25-Sep-2026
+106873;INF209K01520;-;Aditya Birla Sun Life International Equity Fund;Regular Plan;GROWTH;53.3878;25-Sep-2026
+106872;INF209K01512;INF209K01CV9;Aditya Birla Sun Life International Equity Fund;Regular Plan;IDCW;22.7511;25-Sep-2026
+119519;INF209K01Q97;INF209K01WV7;Aditya Birla Sun Life International Equity Fund Plan B;;;23.1342;28-Jul-2023
+119518;INF209K01WU9;-;Aditya Birla Sun Life International Equity Fund Plan B;;;30.2806;28-Jul-2023
+106876;INF209K01546;-;Aditya Birla Sun Life International Equity Fund Plan B;;;28.8036;28-Jul-2023
+106875;INF209K01538;INF209K01CW7;Aditya Birla Sun Life International Equity Fund Plan B;;;19.8371;28-Jul-2023
+133514;INF209KA1YL8;INF209KA1YM6;Aditya Birla Sun Life Manufacturing Equity Fund;Direct Plan;IDCW;25.80;28-Sep-2026
+133516;INF209KA1YK0;-;Aditya Birla Sun Life Manufacturing Equity Fund;Direct Plan;GROWTH;43.61;28-Sep-2026
+133515;INF209KA1YI4;INF209KA1YJ2;Aditya Birla Sun Life Manufacturing Equity Fund;Regular Plan;IDCW;23.34;28-Sep-2026
+133513;INF209KA1YH6;-;Aditya Birla Sun Life Manufacturing Equity Fund;Regular Plan;GROWTH;39.20;28-Sep-2026
+119647;INF209K01Q06;INF209K01VU1;Aditya Birla Sun Life MNC Fund;Direct Plan;IDCW;421.47;25-Sep-2026
+119646;INF209K01VT3;-;Aditya Birla Sun Life MNC Fund;Direct Plan;GROWTH;1415.49;25-Sep-2026
+100064;INF209K01322;-;Aditya Birla Sun Life MNC Fund;Regular Plan;GROWTH;1261.71;25-Sep-2026
+100063;INF209K01314;INF209K01CL0;Aditya Birla Sun Life MNC Fund;Regular Plan;IDCW;202.91;25-Sep-2026
+147410;INF209KB1O33;INF209KB1O41;Aditya Birla Sun Life Pharma and Healthcare Fund;Direct Plan;IDCW;26.20;28-Sep-2026
+147409;INF209KB1O25;-;Aditya Birla Sun Life Pharma and Healthcare Fund;Direct Plan;GROWTH;40.30;28-Sep-2026
+147408;INF209KB1O09;INF209KB1O17;Aditya Birla Sun Life Pharma and Healthcare Fund;Regular Plan;IDCW;23.86;28-Sep-2026
+147407;INF209KB1N91;-;Aditya Birla Sun Life Pharma and Healthcare Fund;Regular Plan;Growth;36.14;28-Sep-2026
+147845;INF209KB1O90;-;Aditya Birla Sun Life PSU Equity Fund;Direct Plan;IDCW;29.00;28-Sep-2026
+147844;INF209KB1O82;-;Aditya Birla Sun Life PSU Equity Fund;Direct Plan;GROWTH;38.18;28-Sep-2026
+147847;INF209KB1O74;-;Aditya Birla Sun Life PSU Equity Fund;Regular Plan;IDCW;24.70;28-Sep-2026
+147846;INF209KB1O66;-;Aditya Birla Sun Life PSU Equity Fund;Regular Plan;GROWTH;34.45;28-Sep-2026
+152684;INF209KC1118;-;Aditya Birla Sun Life Quant Fund;Direct Plan;GROWTH;10.20;28-Sep-2026
+152685;INF209KC1126;-;Aditya Birla Sun Life Quant Fund;Direct Plan;IDCW;10.19;28-Sep-2026
+152686;INF209KC1092;-;Aditya Birla Sun Life Quant Fund;Regular Plan;GROWTH;9.88;28-Sep-2026
+152687;INF209KC1100;-;Aditya Birla Sun Life Quant Fund;Regular Plan;IDCW;9.87;28-Sep-2026
+148540;INF209KB1T87;INF209KB1T95;Aditya Birla Sun Life Special Opportunities Fund;Direct Plan;IDCW;23.59;28-Sep-2026
+148539;INF209KB1T79;-;Aditya Birla Sun Life Special Opportunities Fund;Direct Plan;GROWTH;30.36;28-Sep-2026
+148538;INF209KB1T53;INF209KB1T61;Aditya Birla Sun Life Special Opportunities Fund;Regular Plan;IDCW;21.74;28-Sep-2026
+148537;INF209KB1T46;-;Aditya Birla Sun Life Special Opportunities Fund;Regular Plan;GROWTH;27.99;28-Sep-2026
+152158;INF209KB15X7;-;Aditya Birla Sun Life Transportation and Logistics Fund;Direct Plan;GROWTH;17.67;28-Sep-2026
+152159;INF209KB16X5;-;Aditya Birla Sun Life Transportation and Logistics Fund;Direct Plan;IDCW;17.66;28-Sep-2026
+152161;INF209KB17X3;-;Aditya Birla Sun Life Transportation and Logistics Fund;Regular Plan;GROWTH;16.97;28-Sep-2026
+152160;INF209KB18X1;-;Aditya Birla Sun Life Transportation and Logistics Fund;Regular Plan;IDCW;16.97;28-Sep-2026
+ 
+Axis Mutual Fund
+ 
+147928;INF846K01W23;-;Axis ESG Integration Strategy Fund;Direct Plan;Growth Option;21.86;28-Sep-2026
+147931;INF846K01W31;INF846K01W49;Axis ESG Integration Strategy Fund;Direct Plan;IDCW Option;14.29;28-Sep-2026
+147929;INF846K01W56;-;Axis ESG Integration Strategy Fund;Regular Plan;Growth Option;20.15;28-Sep-2026
+147930;INF846K01W64;INF846K01W72;Axis ESG Integration Strategy Fund;Regular Plan;IDCW Option;13.16;28-Sep-2026
+ 
+Bajaj Finserv Mutual Fund
+ 
+153937;INF0QA701BZ6;-;Bajaj Finserv Banking and Financial Services Fund;Direct Plan;Growth;9.503;28-Sep-2026
+153938;INF0QA701CA7;INF0QA701CB5;Bajaj Finserv Banking and Financial Services Fund;Direct Plan;IDCW;9.503;28-Sep-2026
+153935;INF0QA701BW3;-;Bajaj Finserv Banking and Financial Services Fund;Regular Plan;Growth;9.374;28-Sep-2026
+153936;INF0QA701BX1;INF0QA701BY9;Bajaj Finserv Banking and Financial Services Fund;Regular Plan;IDCW;9.374;28-Sep-2026
+153075;INF0QA701946;-;Bajaj Finserv Consumption Fund;Direct Plan;Growth;9.282;28-Sep-2026
+153074;INF0QA701953;INF0QA701961;Bajaj Finserv Consumption Fund;Direct Plan;IDCW;9.282;28-Sep-2026
+153072;INF0QA701979;-;Bajaj Finserv Consumption Fund;Regular Plan;Growth;9.007;28-Sep-2026
+153073;INF0QA701920;INF0QA701938;Bajaj Finserv Consumption Fund;Regular Plan;IDCW;9.007;28-Sep-2026
+153157;INF0QA701AB9;-;Bajaj Finserv Healthcare Fund;Direct Plan;Growth;12.008;28-Sep-2026
+153156;INF0QA701AC7;INF0QA701AD5;Bajaj Finserv Healthcare Fund;Direct Plan;IDCW;12.008;28-Sep-2026
+153155;INF0QA701987;-;Bajaj Finserv Healthcare Fund;Regular Plan;Growth;11.658;28-Sep-2026
+153158;INF0QA701995;INF0QA701AA1;Bajaj Finserv Healthcare Fund;Regular Plan;IDCW;11.658;28-Sep-2026
+ 
+Bank of India Mutual Fund
+ 
+154093;INF761K01HE4;-;Bank of India Banking & Financial Services Fund;Direct Plan;Growth;9.20;28-Sep-2026
+154094;INF761K01HF1;INF761K01HG9;Bank of India Banking & Financial Services Fund;Direct Plan;IDCW;9.20;28-Sep-2026
+154095;INF761K01HH7;-;Bank of India Banking & Financial Services Fund;Regular Plan;Growth;9.13;28-Sep-2026
+154096;INF761K01HI5;INF761K01HJ3;Bank of India Banking & Financial Services Fund;Regular Plan;IDCW;9.13;28-Sep-2026
+152788;INF761K01GG1;INF761K01GH9;Bank of India Business Cycle Fund;Direct Plan;IDCW;9.74;28-Sep-2026
+152789;INF761K01GF3;-;Bank of India Business Cycle Fund;Direct Plan;Growth;9.74;28-Sep-2026
+152791;INF761K01GD8;INF761K01GE6;Bank of India Business Cycle Fund;Regular Plan;IDCW;9.49;28-Sep-2026
+152790;INF761K01GC0;-;Bank of India Business Cycle Fund;Regular Plan;Growth;9.49;28-Sep-2026
+153139;INF761K01GI7;-;Bank of India Consumption Fund;Direct Plan;Growth;11.02;28-Sep-2026
+153142;INF761K01GJ5;INF761K01GK3;Bank of India Consumption Fund;Direct Plan;IDCW;11.01;28-Sep-2026
+153140;INF761K01GL1;-;Bank of India Consumption Fund;Regular Plan;Growth;10.79;28-Sep-2026
+153141;INF761K01GM9;INF761K01GN7;Bank of India Consumption Fund;Regular Plan;IDCW;10.79;28-Sep-2026
+119364;INF761K01702;-;BANK OF INDIA MANUFACTURING & INFRASTRUCTURE FUND;Direct Plan;Growth;79.09;28-Sep-2026
+119365;INF761K01728;INF761K01710;BANK OF INDIA MANUFACTURING & INFRASTRUCTURE FUND;Direct Plan;Quarterly IDCW;77.74;28-Sep-2026
+119363;INF761K01694;INF761K01686;BANK OF INDIA MANUFACTURING & INFRASTRUCTURE FUND;Direct Plan;IDCW;74.62;28-Sep-2026
+112359;INF761K01199;-;BANK OF INDIA MANUFACTURING & INFRASTRUCTURE FUND;Regular Plan;Growth;66.32;28-Sep-2026
+112360;INF761K01231;INF761K01223;BANK OF INDIA MANUFACTURING & INFRASTRUCTURE FUND;Regular Plan;Quarterly IDCW;43.05;28-Sep-2026
+112361;INF761K01215;INF761K01207;BANK OF INDIA MANUFACTURING & INFRASTRUCTURE FUND;Regular Plan;IDCW;42.27;28-Sep-2026
+ 
+Baroda BNP Paribas Mutual Fund
+ 
+119333;INF955L01971;-;Baroda BNP Paribas Banking and Financial Services Fund;Direct Plan;Growth Option;53.8506;28-Sep-2026
+119334;INF955L01955;-;Baroda BNP Paribas Banking and Financial Services Fund;Direct Plan;IDCW Option;22.5707;28-Sep-2026
+117549;INF955L01856;-;Baroda BNP Paribas Banking and Financial Services Fund;Regular Plan;Growth Option;47.1628;28-Sep-2026
+117547;INF955L01831;-;Baroda BNP Paribas Banking and Financial Services Fund;Regular Plan;IDCW Option;19.3407;28-Sep-2026
+153847;INF251K01VJ6;-;Baroda BNP Paribas Business Conglomerates Fund;Direct Plan;Growth Option;9.7471;28-Sep-2026
+153845;INF251K01VK4;-;Baroda BNP Paribas Business Conglomerates Fund;Direct Plan;IDCW Option;9.7471;28-Sep-2026
+153844;INF251K01VG2;-;Baroda BNP Paribas Business Conglomerates Fund;Regular Plan;Growth Option;9.5848;28-Sep-2026
+153846;INF251K01VH0;-;Baroda BNP Paribas Business Conglomerates Fund;Regular Plan;IDCW Option;9.5848;28-Sep-2026
+149141;INF955L01KK1;-;Baroda BNP Paribas Business Cycle Fund;Direct Plan;Growth Option;16.7221;28-Sep-2026
+149143;INF955L01KL9;INF955L01KM7;Baroda BNP Paribas Business Cycle Fund;Direct Plan;IDCW Option;13.9702;28-Sep-2026
+149140;INF955L01KH7;-;Baroda BNP Paribas Business Cycle Fund;Regular Plan;Growth Option;15.5370;28-Sep-2026

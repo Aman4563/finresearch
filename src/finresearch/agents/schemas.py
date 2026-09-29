@@ -132,6 +132,23 @@ class StockSynthesis(BaseModel):
     report_markdown: str = Field(description="Full report; every figure cites [C<id>]")
 
 
+class FundSynthesis(BaseModel):
+    verdict: Literal["INVEST", "SIP ONLY", "HOLD", "SWITCH", "AVOID"]
+    suits: str = Field(description="Who the scheme suits: horizon and risk appetite")
+    confidence: Literal["low", "medium", "high"]
+    condition: str | None = Field(
+        default=None, description="What would change the verdict, with the datum to watch"
+    )
+    executive_summary: str
+    reasons_for: list[CasePoint]
+    reasons_against: list[CasePoint]
+    alternatives: list[str] = Field(
+        default_factory=list, description="Other schemes worth comparing, with reasons"
+    )
+    action_checklist: list[str]
+    report_markdown: str = Field(description="Full report; every figure cites [C<id>]")
+
+
 class Gap(BaseModel):
     description: str
     stream: str = Field(description="Which stream should fill it")

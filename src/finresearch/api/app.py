@@ -44,7 +44,7 @@ from finresearch.db.models import (
 LOCAL_HOSTS = ["127.0.0.1", "localhost", "testserver"]
 DASHBOARD_ORIGINS = [f"http://{h}:{p}" for h in ("127.0.0.1", "localhost") for p in (3000, 3100)]
 TERMINAL = ("done", "failed", "blocked")
-RESEARCH_KINDS = ("ipo_report", "stock_report")
+RESEARCH_KINDS = ("ipo_report", "stock_report", "fund_report")
 RADAR_TTL_S = 300
 CITE_RE = re.compile(r"\[C(\d+)\]")
 
@@ -75,6 +75,10 @@ class DecisionUpdate(BaseModel):
 class WatchBody(BaseModel):
     company: str
     kind: Literal["ipo", "stock"] = "ipo"
+
+
+class NewFund(BaseModel):
+    scheme_code: str = Field(min_length=1, max_length=12)
 
 
 class NewCompany(BaseModel):
@@ -138,7 +142,8 @@ def _latest_report(s, run_id: int) -> str | None:
 
 # --------------------------------------------------------------------------- app
 def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=None, live_fetch=None,
-               monitor: bool = False, monitor_deps=None, nse_detail=None, equity_list=None) -> FastAPI:  # fmt: skip
+               monitor: bool = False, monitor_deps=None, nse_detail=None, equity_list=None,
+               nav_all=None) -> FastAPI:  # fmt: skip
     """Test seams: `router` (bridge for chat and suggestions), `live_fetch` / `nse_detail` (NSE), `monitor_deps`.
 
     With monitor=True (as `finresearch serve` does) the monitoring scheduler runs inside the API process."""
@@ -642,6 +647,37 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
             )
             co = get_or_create_company(s, slug, name, nse_symbol=sym)
             return {"slug": co.slug, "name": co.name, "nse_symbol": sym, "created": True}
+
+    # ------------------------------------------------------------------ mutual funds
+    async def _scheme_rows() -> list:
+        from finresearch.adapters.amfi import AmfiClient
+
+        if nav_all is not None:
+            return await nav_all()
+        from finresearch.mcp_server.server import _nav_all
+
+        async with AmfiClient() as amfi:
+            return await _nav_all(amfi)
+
+    @app.get("/api/funds/search")
+    async def fund_search(q: str = Query(..., min_length=1, max_length=80)) -> list[dict[str, Any]]:
+        from finresearch.adapters.amfi import search_schemes
+
+        rows = search_schemes(await _scheme_rows(), q)
+        with session_scope() as s:
+            known = {slug for (slug,) in s.execute(select(Company.slug).where(Company.slug.like("mf-%")))}
+        return [{"scheme_code": x.code, "name": x.name, "plan": x.plan, "option": x.option, "category": x.category,
+                 "amc": x.amc, "nav": str(x.nav) if x.nav is not None else None, "nav_date": _iso(x.day),
+                 "slug": f"mf-{x.code}" if f"mf-{x.code}" in known else None} for x in rows]  # fmt: skip
+
+    @app.post("/api/funds", status_code=201)
+    async def add_fund(body: NewFund) -> dict[str, Any]:
+        from finresearch.orchestrator.fund import ensure_scheme_company
+
+        try:
+            return await ensure_scheme_company(body.scheme_code.strip(), nav_all=_scheme_rows)
+        except LookupError as e:
+            raise HTTPException(404, str(e)) from e
 
     # ------------------------------------------------------------------ IPO radar
     radar_cache: dict[str, Any] = {}

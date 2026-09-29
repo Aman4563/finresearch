@@ -11,7 +11,7 @@ from pathlib import Path
 import jsonschema
 import pytest
 
-from finresearch.agents.roles import LEDGER_WRITE, MARKET, ROLES, STOCK_STREAMS, STREAMS, WEB
+from finresearch.agents.roles import FUND_STREAMS, LEDGER_WRITE, MARKET, ROLES, STOCK_STREAMS, STREAMS, WEB
 from finresearch.agents.runner import RoleOutputInvalid, RunContext, build_task, render, run_role
 from finresearch.agents.schemas import StreamReport, json_schema_for
 from finresearch.bridge.claude_code import ClaudeCodeEngine
@@ -53,7 +53,9 @@ def test_least_privilege_tools():
         writes = bool(set(LEDGER_WRITE[:1]) & set(role.tools))
         assert writes == role.writes_claims, f"{name}: only research streams may save claims"
         assert "Bash" not in role.tools and "Write" not in role.tools and "Edit" not in role.tools
-    assert set(STREAMS) | set(STOCK_STREAMS) == {n for n, r in ROLES.items() if r.writes_claims}
+    assert set(STREAMS) | set(STOCK_STREAMS) | set(FUND_STREAMS) == {
+        n for n, r in ROLES.items() if r.writes_claims
+    }
     assert not ROLES["financials"].needs_web and ROLES["news30"].needs_web
     # stock streams read NSE equity data; only the IPO roles get the IPO market tools
     assert not set(MARKET) & {t for n in STOCK_STREAMS for t in ROLES[n].tools}

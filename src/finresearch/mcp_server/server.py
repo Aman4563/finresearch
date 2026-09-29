@@ -334,6 +334,109 @@ def fincalc_call(function: str, args: dict[str, Any]) -> str:
         return json.dumps({"function": function, "error": f"{type(e).__name__}: {e}"})
 
 
+# --------------------------------------------------------------------------- mutual funds (AMFI)
+_NAV_ALL: dict[str, Any] = {}
+
+
+async def _nav_all(amfi) -> list:
+    import time
+
+    if _NAV_ALL.get("at", 0) < time.time() - 6 * 3600:
+        _NAV_ALL.update(at=time.time(), rows=await amfi.nav_all())
+    return _NAV_ALL["rows"]
+
+
+def _scheme_json(x) -> dict[str, Any]:
+    return {"scheme_code": x.code, "name": x.name, "plan": x.plan, "option": x.option, "category": x.category,
+            "amc": x.amc, "nav": str(x.nav) if x.nav is not None else None,
+            "nav_date": x.day.isoformat() if x.day else None, "isin": x.isin_growth}  # fmt: skip
+
+
+@server.tool()
+async def amfi_scheme_search(query: str) -> str:
+    """Find mutual-fund schemes in AMFI's daily NAV file by scheme code or name words (direct-growth first). Returns
+    code, plan, option, SEBI category, AMC and the latest NAV with its date. Cite https://www.amfiindia.com/spages/NAVAll.txt."""
+    from finresearch.adapters.amfi import AmfiClient, search_schemes
+
+    async with AmfiClient() as amfi:
+        rows = await _nav_all(amfi)
+    return json.dumps([_scheme_json(x) for x in search_schemes(rows, query)], indent=1)
+
+
+@server.tool()
+async def amfi_nav_history(scheme_code: str, years: int = 5, risk_free_annual: str | None = None) -> str:
+    """AMFI NAV history of a scheme (up to `years` years) with deterministic statistics: trailing 1/3/5-year
+    annualised returns, 3-year rolling-return range, annualised volatility and max drawdown (fincalc), and
+    Sharpe/Sortino when you pass a risk-free rate (a fraction, e.g. "0.065", with its source cited separately).
+    Cite AMFI's NAV history report URL with today's access time."""
+    from datetime import timedelta
+
+    from finresearch.adapters.amfi import AmfiClient
+    from finresearch.config import get_settings
+    from finresearch.fincalc import funds, market
+    from finresearch.fincalc.dates import today_ist
+
+    today = today_ist()
+    async with AmfiClient(cache_dir=get_settings().state_dir) as amfi:
+        scheme = next((x for x in await _nav_all(amfi) if x.code == scheme_code), None)
+        if scheme is None:
+            return json.dumps({"error": f"scheme {scheme_code} is not in AMFI's NAV file"})
+        probe = today - timedelta(days=3 if today.weekday() == 0 else 1)
+        # a few extra days so the N-year trailing return finds a NAV on or before its start date
+        hist = await amfi.scheme_history(
+            scheme, today.replace(year=today.year - years) - timedelta(days=10), today, probe
+        )
+    navs = [(h.day, h.nav) for h in hist]
+    stats: dict[str, Any] = {"points": len(navs)}
+    if len(navs) >= 3:
+        closes = [v for _, v in navs]
+        stats.update({f"trailing_{y}y": str(r) if (r := funds.trailing_return(navs, y)) is not None else None
+                      for y in (1, 3, 5)})  # fmt: skip
+        roll = funds.rolling_returns(navs, 3)
+        stats["rolling_3y"] = {k: str(v) for k, v in roll.__dict__.items()} if roll else None
+        stats["annualised_volatility"] = str(market.annualised_volatility(closes))
+        stats["max_drawdown"] = str(market.max_drawdown(closes).max_drawdown)
+        if risk_free_annual is not None:
+            stats["risk_free_annual"] = risk_free_annual
+            stats["sharpe"] = str(funds.sharpe_ratio(navs, risk_free_annual))
+            stats["sortino"] = str(funds.sortino_ratio(navs, risk_free_annual))
+    sample = navs[:: max(1, len(navs) // 60)] + navs[-1:]
+    return json.dumps({"scheme": _scheme_json(scheme), "source": "https://portal.amfiindia.com/DownloadNAVHistoryReport_Po.aspx",
+                       "first": {"date": str(navs[0][0]), "nav": str(navs[0][1])} if navs else None,
+                       "last": {"date": str(navs[-1][0]), "nav": str(navs[-1][1])} if navs else None,
+                       "stats": stats, "sample": [[str(d), str(v)] for d, v in sample]}, indent=1)  # fmt: skip
+
+
+@server.tool()
+async def amfi_category_peers(scheme_code: str, limit: int = 25) -> str:
+    """Direct-growth schemes in the same SEBI category with point-to-point 1/3/5-year annualised returns from AMFI
+    NAVs (the scheme itself included), ranked by 3-year return. Cite AMFI's NAV history report."""
+    from finresearch.adapters.amfi import AmfiClient
+    from finresearch.fincalc import funds
+    from finresearch.fincalc.dates import today_ist
+
+    today = today_ist()
+    async with AmfiClient() as amfi:
+        rows = await _nav_all(amfi)
+        me = next((x for x in rows if x.code == scheme_code), None)
+        if me is None:
+            return json.dumps({"error": f"scheme {scheme_code} is not in AMFI's NAV file"})
+        peers = [x for x in rows if x.category == me.category and x.is_direct_growth and x.nav]
+        # anchor on the latest NAV date (as trailing returns do), not today, so both tools agree
+        anchor = me.day or today
+        past = {y: await amfi.navs_on(anchor.replace(year=anchor.year - y)) for y in (1, 3, 5)}
+    table = []
+    for p in peers:
+        row = {"scheme_code": p.code, "name": p.name, "amc": p.amc, "nav": str(p.nav), "nav_date": str(p.day)}
+        for y, snap in past.items():
+            old = snap.get(p.code)
+            row[f"return_{y}y"] = (str(funds.annualised_return(old.nav, p.nav, old.day, p.day))
+                                   if old and old.nav and p.day else None)  # fmt: skip
+        table.append(row)
+    table.sort(key=lambda r: Decimal(r["return_3y"]) if r["return_3y"] else Decimal(-99), reverse=True)
+    return json.dumps({"category": me.category, "peers": len(table), "table": table[:limit]}, indent=1)
+
+
 # --------------------------------------------------------------------------- listed-stock data
 def _equity_json(rows) -> str:
     return json.dumps([r.model_dump(mode="json") for r in rows], indent=1)
