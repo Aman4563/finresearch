@@ -21,7 +21,10 @@ export function IpoSignalLine({ symbol, series, company, closed }: { symbol: str
   const [open, setOpen] = useState(false);
   if (error) return null; // the card still shows the exchange data; the signal is optional
   if (!s) return <Skeleton className="mt-3 h-12 rounded-lg" />;
-  const ev = s.sizing?.ev_per_lot as number | null | undefined;
+  // the lottery unit is the category's minimum application (1 lot retail, 14+ lots sNII): show EV per application
+  const minLots = (s.sizing?.min_lots as number | undefined) ?? 1;
+  const ev = (minLots > 1 ? s.sizing?.ev_per_application : s.sizing?.ev_per_lot) as number | null | undefined;
+  const evLabel = minLots > 1 ? `EV per ${minLots}-lot application` : "EV per lot";
   const reason = s.probability == null ? s.caveats[0] : null; // no call, a rule-only skip, or after listing
   return (
     <div className="mt-3 rounded-lg bg-background-subtle px-3 py-2">
@@ -48,7 +51,7 @@ export function IpoSignalLine({ symbol, series, company, closed }: { symbol: str
             <dd className="num font-medium">{s.base_rate?.n ?? s.validation.n ?? "—"}</dd>
           </div>
           <div title={s.sizing?.p_allot_basis as string | undefined}>
-            <dt className="text-[10px] text-muted">EV per lot</dt>
+            <dt className="text-[10px] text-muted">{evLabel}</dt>
             <dd className={cx("num font-medium", ev != null && (ev > 0 ? "text-gain" : ev < 0 ? "text-loss" : ""))}>{ev == null ? "—" : inr0(ev)}</dd>
           </div>
         </dl>
@@ -60,8 +63,8 @@ export function IpoSignalLine({ symbol, series, company, closed }: { symbol: str
               <div><dt className="text-muted">Lot cost</dt><dd className="num font-medium">{inr0(s.sizing.lot_cost as number)}</dd></div>
               <div title={s.sizing.p_allot_basis as string}><dt className="text-muted">P(allotment) ≥</dt><dd className="num font-medium">{pctText(s.sizing.p_allot as number | null, 1)}</dd></div>
               <div><dt className="text-muted">Mean open return</dt><dd className="num font-medium">{pctText(s.sizing.expected_return_mean as number | null, 1)}</dd></div>
-              <div><dt className="text-muted">EV of one lot</dt><dd className="num font-medium">{ev == null ? "—" : inr0(ev)}</dd></div>
-              <p className="col-span-full text-[11px] text-muted">EV ≈ P(allotment) × lot cost × mean past open return. Oversubscribed books are lotteries: one lot gives the same odds as more.</p>
+              <div><dt className="text-muted">{minLots > 1 ? `EV of one ${minLots}-lot application` : "EV of one lot"}</dt><dd className="num font-medium">{ev == null ? "—" : inr0(ev)}</dd></div>
+              <p className="col-span-full text-[11px] text-muted">EV ≈ P(allotment) × {minLots > 1 ? `${minLots} lots` : "lot cost"}{minLots > 1 ? " × lot cost" : ""} × mean past open return. Oversubscribed books are lotteries over minimum applications: a bigger bid gives the same odds. A book below 1x allots every valid bid in full.</p>
             </dl>
           )}
           <SignalView s={s} />

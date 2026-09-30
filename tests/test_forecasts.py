@@ -81,8 +81,10 @@ class Action:
 
 
 class FakeDeps:
-    def __init__(self, bars: dict[str, list[Bar]] | None = None, actions: list[Action] | None = None):
+    def __init__(self, bars: dict[str, list[Bar]] | None = None, actions: list[Action] | None = None,
+                 bench_actions: list[Action] | None = None):  # fmt: skip
         self.bars, self.actions, self.calls = bars or {}, actions or [], []
+        self.bench_actions = bench_actions or []
         self.forecasts, self.holidays, self.live_holidays = True, None, False
 
     async def price_history(self, symbol, start, end):
@@ -90,7 +92,7 @@ class FakeDeps:
         return [b for b in self.bars.get(symbol, []) if start <= b.day <= end]
 
     async def corporate_actions(self, symbol):
-        return self.actions
+        return self.bench_actions if symbol == "NIFTYBEES" else self.actions
 
 
 @pytest.fixture
@@ -386,3 +388,89 @@ def test_forecast_and_calibration_api(ledger_db):
     assert (
         cal_json["next_open"]["resolve_on"] == "2026-10-05" and cal_json["next_scored"]["probability"] == 0.75
     )
+
+
+# ------------------------------------------------------------------------------------------------ audit #137
+async def _resolve_stock(
+    ledger_db, suffix: str, actions, bench_actions, s0="1000", s1="1100", b0="280", b1="30"
+):
+    from finresearch.db import session_scope
+    from finresearch.db.models import Forecast
+    from finresearch.signals import ledger
+
+    sym = ("AU" + suffix + ledger_db).upper()[:20]
+    with session_scope() as s:
+        fid = ledger.record_run(
+            s, make_run(s, ledger_db, "stock_report", "BUY", "high", at(2026, 9, 29, 4), sym)
+        )
+        end = s.get(Forecast, fid).resolve_on
+    d0 = date(2026, 9, 28)
+    bars = {sym: _series(s0, s1, d0, end), "NIFTYBEES": _series(b0, b1, d0, end)}
+    now = datetime.combine(end, datetime.min.time(), tzinfo=IST) + timedelta(hours=17)
+    await ledger.resolve_due(FakeDeps(bars, actions, bench_actions), now)
+    with session_scope() as s:
+        f = s.get(Forecast, fid)
+        return f.status, f.outcome, f.resolution_note
+
+
+async def test_a_benchmark_split_voids_the_stock_forecast(ledger_db):
+    # NIFTYBEES 280 -> 30 after a 1:10 unit split: unadjusted, the benchmark "fell 89 %" and the stock "beat" it
+    status, outcome, note = await _resolve_stock(
+        ledger_db,
+        "S",
+        [],
+        [Action("Face Value Split (Sub-Division) - From Rs 10/- To Rs 1/-", date(2027, 3, 1))],
+    )
+    assert status == "void" and outcome is None and "NIFTYBEES" in note
+
+
+async def test_a_demerger_voids_the_stock_forecast(ledger_db):
+    status, _, note = await _resolve_stock(
+        ledger_db, "D", [Action("Demerger", date(2027, 2, 1))], [], s1="520", b1="300"
+    )
+    assert status == "void" and "Demerger" in note
+
+
+async def test_ipo_forecast_made_after_the_listing_open_is_void_and_the_listing_bar_is_used(ledger_db):
+    from finresearch.db import session_scope
+    from finresearch.db.models import Forecast
+    from finresearch.signals import ledger
+
+    late, ok = ("LT" + ledger_db).upper()[:20], ("LB" + ledger_db).upper()[:20]
+    with session_scope() as s:
+        # a report that finished at 11:00 on the listing day: the open (09:15) was already known
+        f_late = ledger.record_run(s, make_run(s, ledger_db, "ipo_report", "APPLY", "high", at(2026, 10, 5, 11),
+                                               late, date(2026, 10, 5)))  # fmt: skip
+        f_ok = ledger.record_run(s, make_run(s, ledger_db, "ipo_report", "APPLY", "high", at(2026, 10, 1, 20),
+                                             ok, date(2026, 10, 5), upper="100"))  # fmt: skip
+    bars = {late: [Bar(date(2026, 10, 5), Decimal("300"), Decimal("310"))],
+            # the NSE history also has a bar before the listing (a stray row) and the listing bar itself
+            ok: [Bar(date(2026, 10, 2), Decimal("150"), Decimal("150")), Bar(date(2026, 10, 5), Decimal("95"), Decimal("97"))]}  # fmt: skip
+    await ledger.resolve_due(FakeDeps(bars), at(2026, 10, 5, 17))
+    with session_scope() as s:
+        a, b = s.get(Forecast, f_late), s.get(Forecast, f_ok)
+        assert a is None or (a.status == "void" and "after the listing" in a.resolution_note)
+        assert (b.status, b.outcome) == ("resolved", 0) and "2026-10-05" in b.resolution_note
+
+
+def test_ipo_base_rate_forecasts_in_different_qib_bands_pool_into_one_calibration_group(ledger_db):
+    """Audit #137: the band was written into `method`, so every QIB band became its own calibration group."""
+    from finresearch.db import session_scope
+    from finresearch.db.models import Forecast
+    from finresearch.signals import Signal, Validation, ledger
+    from finresearch.signals.ipo import BASE_RATE_METHOD
+
+    with session_scope() as s:
+        for i, (band, p, o) in enumerate((("50–100x", 0.86, 1), ("10–50x", 0.61, 0), (">100x", 0.96, 1))):
+            sig = Signal(asset="ipo", instrument=f"PB{i}{ledger_db}"[:20].upper(), name=None, action="APPLY",
+                         score=10, event=ledger.IPO_EVENT, horizon="listing day",
+                         method=BASE_RATE_METHOD if i else f"empirical base rate by final QIB band × regime ({band}, "
+                         "post-Apr-2022)", validation=Validation("base_rate", 30), probability=p,
+                         as_of=at(2026, 9, 30, 10))  # fmt: skip
+            fid = ledger.record(sig, source="signal:ipo", resolve_on=date(2026, 10, 5), event_kind="listing_gain",
+                                session=s)  # fmt: skip
+            ledger.resolve(s, fid, o, now=at(2026, 10, 5, 17))
+        s.flush()
+        groups = [g for g in ledger.calibration_groups(s, "ipo") if g["asset"] == "ipo"]
+        assert len(groups) == 1 and groups[0]["method"] == BASE_RATE_METHOD and groups[0]["n"] == 3
+        assert s.query(Forecast).filter(Forecast.instrument.like("PB%")).count() == 3

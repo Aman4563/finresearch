@@ -415,3 +415,35 @@ async def test_sme_card_needs_no_nse_request():
     src.ipo_detail = ipo_detail
     s = await sig_ipo.compute("ACMEUNIV", {"series": "sme"}, src)
     assert s.action == "NO_SIGNAL" and s.caveats[0] == sig_ipo.SME_REASON and asked == []
+
+
+# ------------------------------------------------------------------------------------------------ sizing by category
+# Audit #137: an sNII / bNII applicant was told "at most 1 lot", which is a retail bid. The lottery unit in those
+# categories is the minimum category application (ICDR Reg 32(3A)), so the size is that minimum, and the expected value
+# is per application. A retail book below 1x is not a lottery at all.
+async def test_small_nii_applicant_is_sized_at_the_minimum_snii_application():
+    prof = Profile(category="shni", capital_per_ipo_inr=Decimal(500000))
+    s = await sig_ipo.compute("ORIENTCABL", {}, sources(orient(qib="150"), profile=prof))
+    z = s.sizing
+    # Orient: lot ₹14,960; the first whole lot above ₹2 lakh is 14 lots (₹2,09,440)
+    assert s.action == "APPLY" and z["min_lots"] == 14 and z["max_lots"] == 14
+    snii = z["p_allot"]
+    assert snii == pytest.approx(1 / 21.3418, rel=1e-6)  # the fixture's sNII book (2.2), 4 dp
+    assert z["ev_per_application"] == pytest.approx(snii * 14 * 14960 * z["expected_return_mean"])
+    assert z["ev_per_lot"] == pytest.approx(snii * 14960 * z["expected_return_mean"])
+    assert "minimum" in z["reason"] and "sNII" in z["reason"]
+
+
+async def test_nii_applicant_who_cannot_afford_the_minimum_application_skips():
+    prof = Profile(category="shni", capital_per_ipo_inr=Decimal(100000))  # 6 lots, below the 14-lot minimum
+    s = await sig_ipo.compute("ORIENTCABL", {}, sources(orient(qib="150"), profile=prof))
+    assert s.action == "SKIP" and s.sizing["max_lots"] == 0
+    assert "minimum" in s.caveats[0] and "₹2,09,440" in s.caveats[0]
+
+
+async def test_undersubscribed_retail_book_is_not_a_lottery():
+    prof = Profile(capital_per_ipo_inr=Decimal(60000))  # 4 lots of ₹14,960
+    s = await sig_ipo.compute("ORIENTCABL", {}, sources(orient(qib="150", retail="0.8"), profile=prof))
+    z = s.sizing
+    assert s.action == "APPLY" and z["p_allot"] == 1.0
+    assert z["max_lots"] == 4 and "in full" in z["reason"]
