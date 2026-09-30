@@ -11,7 +11,7 @@ import { Badge, Card, InfoTip, SkeletonRows, cx } from "@/components/ui";
 import { useApi } from "@/lib/api";
 
 export type SignalFactor = { name: string; value: number | string | null; contribution: number; explanation: string; source: string | null; unit: string | null };
-export type SignalValidation = { status: "backtested" | "base_rate" | "rule_based" | "uncalibrated"; n: number; metrics: Record<string, number>; description: string };
+export type SignalValidation = { status: "backtested" | "base_rate" | "rule_based" | "uncalibrated" | "shadow"; n: number; metrics: Record<string, number>; description: string };
 export type Signal = {
   asset: "ipo" | "stock" | "fund" | "bond" | "fno";
   instrument: string;
@@ -32,6 +32,7 @@ export type Signal = {
   sources: string[];
   as_of: string | null;
   disclaimer: string;
+  shadow?: SignalShadow | null;
 };
 
 const POSITIVE = new Set(["APPLY", "BUY", "ACCUMULATE", "ENTER", "HOLD_AFTER_LISTING"]);
@@ -44,7 +45,27 @@ const VALIDATION: Record<SignalValidation["status"], { label: string; tone: "gai
   base_rate: { label: "Historical base rate", tone: "info", help: "How often this happened in comparable past cases; no fitted model." },
   rule_based: { label: "Rule-based", tone: "warn", help: "Fixed rules drawn from published research, not yet validated on this app's own outcomes." },
   uncalibrated: { label: "Uncalibrated", tone: "neutral", help: "Too few resolved cases to measure accuracy yet. Treat the probability as a rough guide." },
+  shadow: { label: "Shadow test", tone: "neutral", help: "Shadow test: logged for out-of-sample scoring, not used for the call." },
 };
+
+/** An alternative method computed beside the call and logged as a shadow test (never used for the action). */
+export type SignalShadow = {
+  method: string; probability: number; probability_interval: [number, number] | null; status: "shadow";
+  description: string; backtest?: string; caveats?: string[];
+};
+
+/** "Experimental comparison": the shadow method's P and range, with what the shadow test is and when it could switch. */
+export function ShadowLine({ sh, className }: { sh: SignalShadow; className?: string }) {
+  return (
+    <p className={cx("flex flex-wrap items-center gap-x-1.5 text-[11px] text-muted", className)}>
+      <FlaskConical className="size-3 shrink-0" />
+      <span>Experimental comparison:</span>
+      <span className="num text-foreground/80">{pctText(sh.probability)}</span>
+      {sh.probability_interval && <span className="num">({pctText(sh.probability_interval[0])}–{pctText(sh.probability_interval[1])})</span>}
+      <InfoTip>{sh.description} {sh.backtest ? `Backtest: ${sh.backtest}.` : ""} Method: {sh.method}.</InfoTip>
+    </p>
+  );
+}
 
 export const pctText = (p: number | null | undefined, d = 0) => (p == null ? "—" : `${(p * 100).toFixed(d)}%`);
 
@@ -94,6 +115,7 @@ export function SignalView({ s, compact }: { s: Signal; compact?: boolean }) {
         // the providers put the reason for "no signal" first (stock, IPO, F&O, bond): never hide it behind "Why?"
         <p className="rounded-lg bg-background-subtle px-3 py-2 text-xs text-foreground/90"><span className="font-medium">Why no signal: </span>{s.caveats[0]}</p>
       )}
+      {s.shadow && <ShadowLine sh={s.shadow} />}
       {s.expected_return && (
         <p className="text-xs text-muted">
           Return range:{" "}

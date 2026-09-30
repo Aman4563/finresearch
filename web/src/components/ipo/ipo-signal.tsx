@@ -6,7 +6,7 @@
 import { Activity } from "lucide-react";
 import { useState } from "react";
 
-import { type Signal, SignalView, pctText } from "@/components/signal";
+import { ShadowLine, type Signal, SignalView, pctText } from "@/components/signal";
 import { Badge, InfoTip, Modal, Skeleton, cx } from "@/components/ui";
 import { useApi } from "@/lib/api";
 
@@ -56,6 +56,7 @@ export function IpoSignalLine({ symbol, series, company, closed }: { symbol: str
           </div>
         </dl>
       )}
+      {!reason && s.shadow && <ShadowLine sh={s.shadow} className="mt-1" />}
       <Modal open={open} onClose={() => setOpen(false)} title={`${company} · signal`} wide>
         <div className="max-h-[70vh] space-y-4 overflow-y-auto p-4">
           {s.sizing?.lot_cost != null && (

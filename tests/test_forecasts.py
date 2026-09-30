@@ -385,6 +385,7 @@ def test_forecast_and_calibration_api(ledger_db):
     assert (g["hits"], g["calls"]) == (3, 4) and len(g["hit_rate_ci"]) == 2
     assert cal_json["groups"][-1]["asset"] == "all" and cal_json["groups"][-1]["n"] == 4
     assert cal_json["confidence_map"] == {"low": 0.55, "medium": 0.65, "high": 0.75}
+    assert g["policy"]["tier"] == "base_rate" and g["policy"]["next_tier"] == {"tier": "shrink", "at_n": 50}
     assert (
         cal_json["next_open"]["resolve_on"] == "2026-10-05" and cal_json["next_scored"]["probability"] == 0.75
     )
@@ -474,3 +475,82 @@ def test_ipo_base_rate_forecasts_in_different_qib_bands_pool_into_one_calibratio
         groups = [g for g in ledger.calibration_groups(s, "ipo") if g["asset"] == "ipo"]
         assert len(groups) == 1 and groups[0]["method"] == BASE_RATE_METHOD and groups[0]["n"] == 3
         assert s.query(Forecast).filter(Forecast.instrument.like("PB%")).count() == 3
+
+
+# ------------------------------------------------------------------------------------------------ shadow mode (#151)
+def test_a_shadow_method_is_logged_beside_the_call_and_deduped_per_method(ledger_db):
+    from finresearch.db import session_scope
+    from finresearch.db.models import Forecast
+    from finresearch.signals import Signal, Validation, ledger
+    from finresearch.signals.ipo import BASE_RATE_METHOD, BLEND_METHOD
+
+    sym = ("SH" + ledger_db).upper()[:20]
+
+    def sig(method, status, p, when):
+        return Signal(asset="ipo", instrument=sym, name=None, action="APPLY", score=10, event=ledger.IPO_EVENT,
+                      horizon="listing day", method=method, validation=Validation(status, 30), probability=p,
+                      as_of=when)  # fmt: skip
+
+    kw = dict(source="signal:ipo", resolve_on=date(2026, 10, 5), event_kind="listing_gain")
+    with session_scope() as s:
+        base = ledger.record(sig(BASE_RATE_METHOD, "base_rate", 0.9, at(2026, 9, 30, 10)), session=s, **kw)
+        shadow = ledger.record(sig(BLEND_METHOD, "shadow", 0.8, at(2026, 9, 30, 10)), session=s, **kw)
+        assert base != shadow  # both methods on the same day: two rows
+        # a later same-day forecast updates its own method's row only
+        again = ledger.record(sig(BLEND_METHOD, "shadow", 0.7, at(2026, 9, 30, 15)), session=s, **kw)
+        assert (
+            again == shadow
+            and s.get(Forecast, shadow).probability == 0.7
+            and s.get(Forecast, base).probability == 0.9
+        )
+        assert s.get(Forecast, shadow).validation_status == "shadow"
+        for fid in (base, shadow):
+            ledger.resolve(s, fid, 1, now=at(2026, 10, 5, 17))
+        s.flush()
+        groups = {(g["asset"], g["method"]): g for g in ledger.calibration_groups(s, "ipo")}
+        assert (
+            groups[("ipo", BLEND_METHOD)]["n"] == 1
+            and groups[("ipo", BLEND_METHOD)]["validation_status"] == "shadow"
+        )
+        assert groups[("ipo", BASE_RATE_METHOD)]["n"] == 1
+        assert groups[("all", "all methods")]["n"] == 1  # the headline pools the calls, not the shadow
+
+
+def test_a_legacy_same_day_row_is_kept_for_its_method_and_does_not_block_another(ledger_db):
+    """Live row 253 (1-Oct-2026): a blend forecast logged under the pre-#151 method-less key. It stays the blend's row
+    for that day, and the base-rate call gets its own row instead of overwriting it."""
+    from sqlalchemy import select
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import Forecast
+    from finresearch.signals import Signal, Validation, ledger
+    from finresearch.signals.ipo import BASE_RATE_METHOD, BLEND_METHOD
+
+    sym = ("LG" + ledger_db).upper()[:20]
+    legacy = ledger.dedupe_key("ipo", sym, "listing_gain", date(2026, 10, 1))
+    with session_scope() as s:
+        s.add(Forecast(created_at=at(2026, 10, 1, 1), asset="ipo", instrument=sym, source="signal:ipo",
+                       event_kind="listing_gain", event=ledger.IPO_EVENT, horizon="listing day",
+                       resolve_on=date(2026, 10, 5), probability=0.91, action="APPLY", method=BLEND_METHOD,
+                       validation_status="backtested", inputs={}, status="open", dedupe_key=legacy))  # fmt: skip
+        s.flush()
+        old = s.scalar(select(Forecast.id).where(Forecast.dedupe_key == legacy))
+
+        def sig(method, status, p):
+            return Signal(asset="ipo", instrument=sym, name=None, action="APPLY", score=10, event=ledger.IPO_EVENT,
+                          horizon="listing day", method=method, validation=Validation(status, 30), probability=p,
+                          as_of=at(2026, 10, 1, 10))  # fmt: skip
+
+        kw = dict(source="signal:ipo", resolve_on=date(2026, 10, 5), event_kind="listing_gain", session=s)
+        base = ledger.record(sig(BASE_RATE_METHOD, "base_rate", 0.96), **kw)
+        assert (
+            base != old
+            and s.get(Forecast, old).probability == 0.91
+            and s.get(Forecast, old).method == BLEND_METHOD
+        )
+        shadow = ledger.record(sig(BLEND_METHOD, "shadow", 0.93), **kw)
+        assert (
+            shadow == old and s.get(Forecast, old).probability == 0.93
+        )  # same method: the legacy row is updated
+        assert s.query(Forecast).filter(Forecast.instrument == sym).count() == 2
+    assert ledger.dedupe_key("ipo", "X", "listing_gain", date(2026, 10, 1), "m") != legacy

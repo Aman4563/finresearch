@@ -345,6 +345,8 @@ def test_base_rates_endpoint_reads_the_harvested_table(clean, monkeypatch):
         assert body["source"] == "database" and body["n"] == 30 and body["as_of"] == "2024-02-10"
         hot = next(x for x in body["cells"] if x["band"] == ">100x" and x["regime"] == "post_2022")
         assert hot["n"] == 20 and hot["p_loss"] == 0.1 and "FINAL" in body["caveat"]
+        blend = body["model"]["blend"]  # the committed E-IPO-1 artefact (#147)
+        assert 0 < blend["lambda"] < 1 and blend["gate"]["passes"] and "reliability" not in blend["pooled"]
         assert c.get("/api/ipo/base-rates", params={"by": "total"}).json()["by"] == "total"
         assert c.get("/api/ipo/base-rates", params={"by": "gmp"}).status_code == 422
 
@@ -447,3 +449,99 @@ async def test_undersubscribed_retail_book_is_not_a_lottery():
     z = s.sizing
     assert s.action == "APPLY" and z["p_allot"] == 1.0
     assert z["max_lots"] == 4 and "in full" in z["reason"]
+
+
+# --------------------------------------------------------------------------- E-IPO-1 shrinkage blend (#147)
+def _blend(lam: float = 0.45, passes: bool = True):
+    from test_ipo_model import _synthetic
+
+    from finresearch.evals import ipo_model as im
+
+    fm = im.fit(im.usable(_synthetic(signal=True)))
+    return {"ship": "S", "calibrator": {"variant": "S", "params": {"lambda": lam}}, "final_model": fm,
+            "n_rows": 440, "min_cell": 5, "variants_tested": ["T", "S", "P"],
+            "gate": {"years_evaluated": list(range(2019, 2026)), "years_passed": [2019, 2020, 2022, 2023, 2025],
+                     "passes": passes},
+            "pooled": {"n": 288, "brier": 0.1451, "brier_table": 0.1510, "bss_vs_table": 0.039, "auc": 0.833,
+                       "reliability": [{"n": 58, "mean_p": 0.35, "observed": 0.38},
+                                       {"n": 58, "mean_p": 0.9, "observed": 0.91}]},
+            "folds": [{"year": y, "bss_vs_table": b} for y, b in
+                      zip(range(2019, 2026), (0.43, 0.55, -0.05, 0.002, 0.18, -0.03, 0.02), strict=True)]}  # fmt: skip
+
+
+def _closes(n: int = 30, last: date = date(2026, 9, 28)):
+    from datetime import timedelta
+
+    return [(last - timedelta(days=n - i), Decimal(20000 + 10 * i)) for i in range(n + 1)]
+
+
+async def test_blend_runs_in_shadow_beside_the_base_rate_call_and_fills_live_features():
+    detail = orient(qib="150", retail="20")
+    logged = []
+    src = sources(detail, record=lambda sig, day, inputs: logged.append((sig, inputs)))
+    src.calibrated = lambda: _blend()
+
+    async def closes(today):
+        return _closes()
+
+    src.nifty_closes = closes
+    s = await sig_ipo.compute("ORIENTCABL", {}, src)
+    # the live call is unchanged: the base-rate table (#151 shadow mode)
+    p_cell = fipo.smoothed_rate(18, 20)  # the >100x band in history(): 18 of 20 gained
+    assert s.method == sig_ipo.BASE_RATE_METHOD and s.validation.status == "base_rate"
+    assert s.probability == pytest.approx(p_cell, abs=6e-5)
+    assert sig_ipo.BLEND_CAVEAT not in s.caveats and not any(f.name.startswith("Model:") for f in s.factors)
+    from finresearch.evals import ipo_model as im
+
+    book = sig_ipo.book_of(None, detail)
+    feat = await sig_ipo._live_features_full(
+        book, detail.terms.price_high, history(), NOW.date(), detail, src
+    )
+    assert feat["nifty20"] == pytest.approx(
+        20300 / 20100 - 1, abs=1e-6
+    )  # 20 sessions back, 6 dp as harvested
+    assert feat["ofs_share"] == pytest.approx(0.4203)  # ₹232 cr OFS of ₹552 cr, the harvester's parser
+    p_model = float(im.predict(_blend()["final_model"], [feat])["p"][0])
+    sh = s.shadow
+    assert sh["status"] == "shadow" and sh["method"] == sig_ipo.BLEND_METHOD
+    assert sh["probability"] == pytest.approx(0.45 * p_model + 0.55 * p_cell, abs=6e-5)
+    lo, hi = sh["probability_interval"]
+    assert lo <= sh["probability"] <= hi  # the range always contains the forecast
+    assert (
+        "5 of 7" in sh["backtest"] and "2022 (+0.002)" in sh["backtest"] and "SHADOW.md" in sh["description"]
+    )
+    assert s.to_json()["shadow"]["probability"] == sh["probability"]
+    assert sig_ipo.calibrated_interval(_blend(), 0.2)[0] == 0.2  # below the lowest bin: stretched down to p
+    # both are logged: the call under its method, the blend as its own method with validation "shadow"
+    assert [x.method for x, _ in logged] == [sig_ipo.BASE_RATE_METHOD, sig_ipo.BLEND_METHOD]
+    shadow_sig, inputs = logged[1]
+    assert shadow_sig.validation.status == "shadow" and shadow_sig.probability == sh["probability"]
+    assert inputs["shadow_of"] == sig_ipo.BASE_RATE_METHOD and shadow_sig.event == s.event
+
+
+async def test_shadow_uses_the_regime_rate_for_a_thin_band_and_is_off_without_a_passing_artefact():
+    detail = orient(qib="150", retail="20")
+    rows = history(n_hot_gain=3, n_hot=3)  # the >100x band has 3 issues: below MIN_CELL
+    src = sources(detail, rows=rows)
+    src.calibrated = lambda: _blend(lam=0.0)  # λ = 0: the shadow IS its reference
+    s = await sig_ipo.compute("ORIENTCABL", {}, src)
+    regime = fipo.base_rates(rows)["regime_totals"]["post_2022"]
+    p_regime = fipo.smoothed_rate(round(regime["p_gain"] * regime["n"]), regime["n"])
+    assert s.shadow["probability"] == pytest.approx(p_regime, abs=6e-5) and "regime" in s.shadow["reference"]
+    assert any("Nifty 50 20-session return unavailable" in c for c in s.shadow["caveats"])  # no nifty source
+    for bad in (None, _blend(passes=False), {**_blend(), "ship": None}):
+        src.calibrated = lambda bad=bad: bad
+        s = await sig_ipo.compute("ORIENTCABL", {}, src)
+        assert (
+            s.validation.status == "base_rate" and s.method == sig_ipo.BASE_RATE_METHOD and s.shadow is None
+        )
+
+
+def test_committed_blend_artefact_is_ready_and_consistent():
+    from finresearch.evals.ipo_calibration import load_signal_artefact
+
+    art = load_signal_artefact()
+    assert sig_ipo.calibrated_ready(art)
+    assert art["gate"]["passes"] and len(art["gate"]["years_passed"]) >= 5
+    assert art["pooled"]["brier"] < art["pooled"]["brier_table"]
+    assert 0 < art["calibrator"]["params"]["lambda"] < 1

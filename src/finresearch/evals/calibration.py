@@ -13,8 +13,9 @@ Every function returns None instead of NaN/inf when a metric is undefined, so th
   (Bröcker & Smith 2007 on binning; roadmap source [30]).
 * Hit rate: the share of directional calls (p ≠ 0.5) that pointed the right way, with a Wilson CI.
 
-Recalibration (Platt / isotonic) is deliberately absent: the roadmap says not to fit anything below ~50–100
-resolved cases, and one investor produces tens a year.
+Recalibration lives in `evals.calibration_policy`: a tiered policy (base rate only below 50 effective resolved
+cases, shrinkage 50–99, Platt 100–999, isotonic from ~1,000) that `/api/calibration` reports per group. It is
+informational: one investor produces tens of resolved forecasts a year, so nothing is re-fitted yet.
 """
 
 from __future__ import annotations

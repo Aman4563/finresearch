@@ -480,6 +480,12 @@ export type CalibrationGroup = {
   n: number; base_rate: number | null; mean_p: number | null; brier: number | null; brier_reference: number | null;
   brier_skill: number | null; log_loss: number | null; hits: number; calls: number; hit_rate: number | null;
   hit_rate_ci: [number, number] | null; bins: ReliabilityBin[];
+  /** Recalibration tier the track record has reached (research §2.6): informational, nothing is re-fitted yet. */
+  policy?: CalibrationPolicy;
+};
+export type CalibrationPolicy = {
+  tier: "base_rate" | "shrink" | "platt" | "isotonic"; n: number; n_effective: number; overlap: number;
+  description: string; next_tier: { tier: string; at_n: number } | null;
 };
 export type Calibration = {
   groups: CalibrationGroup[];

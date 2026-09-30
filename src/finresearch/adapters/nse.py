@@ -498,6 +498,10 @@ class Quote(BaseModel):
     week52_low: Decimal | None = None
     issued_shares: Decimal | None = None
     industry: str | None = None
+    # secInfo: the sectoral index NSE maps the stock to, that index's P/E and the stock's own P/E (monitor.archive)
+    sector_index: str | None = None
+    sector_pe: Decimal | None = None
+    symbol_pe: Decimal | None = None
 
     @classmethod
     def parse(cls, data: dict[str, Any]) -> Quote:
@@ -521,7 +525,10 @@ class Quote(BaseModel):
                    status=sec.get("secStatus"), as_of=parse_nse_timestamp(e.get("lastUpdateTime")),
                    week52_high=parse_num(price.get("yearHigh")), week52_low=parse_num(price.get("yearLow")),
                    issued_shares=parse_num(trade.get("issuedSize")),
-                   industry=(sec.get("basicIndustry") or None))  # fmt: skip
+                   industry=(sec.get("basicIndustry") or None),
+                   sector_index=(str(sec.get("pdSectorInd") or "").strip().strip("-").strip() or None),
+                   sector_pe=parse_num(sec.get("pdSectorPe")) or None,
+                   symbol_pe=parse_num(sec.get("pdSymbolPe")) or None)  # fmt: skip
 
 
 class NseClient:

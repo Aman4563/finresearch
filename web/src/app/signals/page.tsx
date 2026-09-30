@@ -134,12 +134,12 @@ export default function Signals() {
         <div className="grid gap-4 lg:grid-cols-5 [&>*]:min-w-0">
           {cal.error ? null : <Card className="lg:col-span-3" title="Calibration" icon={<Target className="size-4" />}
             help="Each dot is a group of forecasts: across is what was forecast, up is how often it happened, and the whisker is the 95% Wilson interval. On the dashed diagonal is perfect; with few cases the whiskers are long and nothing can be concluded yet."
-            subtitle={selected && selected.asset !== "all" ? `${ASSET_LABEL[selected.asset]} · ${selected.method}` : "All methods pooled"}
+            subtitle={selected && selected.asset !== "all" ? `${ASSET_LABEL[selected.asset]} · ${selected.method}` : "All live methods pooled (shadow tests apart)"}
             actions={perMethod.length > 1 ? (
               <select aria-label="Method" className="max-w-44 truncate rounded-md border border-border bg-card px-2 py-1 text-xs"
                 value={groupKey} onChange={(e) => setGroupKey(e.target.value)}>
                 <option value="">All methods</option>
-                {perMethod.map((g) => <option key={`${g.asset}|${g.method}`} value={`${g.asset}|${g.method}`}>{ASSET_LABEL[g.asset]}: {g.method}</option>)}
+                {perMethod.map((g) => <option key={`${g.asset}|${g.method}`} value={`${g.asset}|${g.method}`}>{ASSET_LABEL[g.asset]}: {g.validation_status === "shadow" ? "[shadow test] " : ""}{g.method}</option>)}
               </select>
             ) : undefined}>
             {loadingCal ? <Skeleton className="mx-auto aspect-square w-full max-w-[380px]" /> : (
@@ -165,6 +165,7 @@ export default function Signals() {
                 that the verdict&apos;s direction is right (AVOID or REDUCE is the same number against the event).</li>
               <li>IPO calls are about the <b>listing-day open above the issue price</b>; stock calls about the <b>12-month return beating the Nifty 50</b> (NIFTYBEES as the index proxy, dividends counted).</li>
               <li>Conditional or neutral verdicts are logged as <b>no call</b>: their outcome is still recorded, but they are not scored. Fund and bond verdicts have no checkable event yet and are not logged.</li>
+              <li>A <b>shadow test</b> is a candidate method logged beside the call for out-of-sample scoring, never used for the call; it has its own row in the method list and is left out of the pooled headline.</li>
               <li>Below about {cal.data?.min_n_for_recalibration ?? 50} resolved cases nothing is re-fitted and nothing should be concluded: expect years for stock calls.</li>
             </ul>
           </Callout></div>
@@ -237,6 +238,8 @@ function ComingCard({ asset, items }: { asset: Asset; items: readonly Instrument
   );
 }
 
+const TIER_LABEL: Record<string, string> = { base_rate: "base rate only", shrink: "shrink to base rate", platt: "Platt", isotonic: "isotonic" };
+
 function GroupFacts({ g }: { g: CalibrationGroup | undefined }) {
   if (!g) return <p className="text-xs text-muted">No forecasts logged yet.</p>;
   const rows: [string, React.ReactNode, string][] = [
@@ -247,6 +250,14 @@ function GroupFacts({ g }: { g: CalibrationGroup | undefined }) {
     ["Log loss", <span key="l" className="num">{num(g.log_loss)}</span>, "Punishes confident misses hard; lower is better. 0.693 is what always saying 50% scores."],
     ["Open · no call · void", <span key="o" className="num">{g.open} · {g.no_call} · {g.void}</span>, "Waiting for their date; logged without a probability; could not be scored honestly (e.g. a split in the window)."],
   ];
+  if (g.policy) {
+    const p = g.policy;
+    rows.push(["Calibration tier", <span key="t">{TIER_LABEL[p.tier] ?? p.tier}</span>,
+      `${p.description}. Effective n ${p.n_effective}${p.overlap > 1 ? ` (${p.n} forecasts ÷ ${p.overlap} overlapping months)` : ""}${p.next_tier ? `; the next tier starts at n = ${p.next_tier.at_n}` : ""}. Informational: probabilities are not re-fitted yet.`]);
+  }
+  if (g.validation_status === "shadow")
+    rows.push(["Status", <Badge key="s" tone="neutral">shadow test</Badge>, "Shadow test: logged for out-of-sample scoring, not used for the call. The switch criterion is pre-registered."]);
+  const enough = g.policy ? g.policy.tier !== "base_rate" : g.n >= 50;
   return (
     <dl className="space-y-2 text-xs">
       {rows.map(([k, v, help]) => (
@@ -255,7 +266,7 @@ function GroupFacts({ g }: { g: CalibrationGroup | undefined }) {
           <dd className="whitespace-nowrap">{v}</dd>
         </div>
       ))}
-      <dd className="pt-1"><Badge tone={g.n >= 50 ? "info" : "neutral"}>{g.n >= 50 ? "enough cases to read" : "too few cases to judge"}</Badge></dd>
+      <dd className="pt-1"><Badge tone={enough ? "info" : "neutral"}>{enough ? "enough cases to read" : "too few cases to judge"}</Badge></dd>
     </dl>
   );
 }
@@ -294,7 +305,7 @@ function ForecastTable({ rows, total }: { rows: Forecast[]; total: number }) {
                     : <span className="block max-w-44 truncate font-medium" title={f.source}>{f.name ?? f.instrument}</span>}
                 </div>
               </td>
-              <td><Badge status={f.action}>{f.action}</Badge></td>
+              <td><span className="inline-flex items-center gap-1"><Badge status={f.action}>{f.action}</Badge>{f.validation_status === "shadow" && <span title="Shadow test: logged for out-of-sample scoring, not used for the call."><Badge tone="neutral">shadow</Badge></span>}</span></td>
               <td className="num text-right">{f.probability == null ? <span className="text-muted">no call</span> : pc(f.probability)}</td>
               <td>
                 <span className="inline-flex max-w-44 items-center gap-1">

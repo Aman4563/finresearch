@@ -1342,6 +1342,14 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
         model = None
         if art:
             model = {**summary(art), "uses_model": bool((art.get("gate") or {}).get("passes"))}
+            from finresearch.evals.ipo_calibration import load_signal_artefact
+            from finresearch.signals.ipo import calibrated_ready
+
+            blend = load_signal_artefact()  # E-IPO-1 blend: a shadow test beside the table call (#147, #151)
+            if not model["uses_model"] and calibrated_ready(blend):
+                model["blend"] = {"lambda": blend["calibrator"]["params"]["lambda"], "gate": blend["gate"],
+                                  "pooled": {k: v for k, v in blend["pooled"].items() if k != "reliability"},
+                                  "source": blend.get("source"), "mode": "shadow"}  # fmt: skip
         return {
             **table,
             "event": "listing-day open vs the issue price",
@@ -1499,10 +1507,15 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
         """Track record per asset and method: Brier score, skill vs the base rate, reliability bins and the hit rate
         with a Wilson 95 % interval, over resolved forecasts that carried a probability."""
         from finresearch.db.models import Forecast
+        from finresearch.evals.calibration_policy import group_policy
         from finresearch.signals.ledger import CONFIDENCE_P, calibration_groups, forecast_json
 
         with session_scope() as s:
             groups = calibration_groups(s, asset, bins)
+            for (
+                g
+            ) in groups:  # the recalibration tier the track record has reached (research §2.6; informational)
+                g["policy"] = group_policy(g["asset"], g["n"])
             nxt = s.scalars(select(Forecast).where(Forecast.status == "open")
                             .order_by(Forecast.resolve_on, Forecast.id).limit(1)).first()  # fmt: skip
             scored = s.scalars(select(Forecast).where(Forecast.status == "open", Forecast.probability.isnot(None))

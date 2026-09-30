@@ -21,7 +21,10 @@ export type BaseRates = {
   by: "qib" | "total"; bands: string[]; cells: BaseRateCell[]; n: number; source: "database" | "snapshot" | "empty";
   as_of: string | null; caveat: string; scope: string;
   model: { gate: { rule: string; years_evaluated: number[]; years_passed: number[]; passes: boolean }; folds: ModelFold[];
-    pooled: Record<string, number | null>; uses_model: boolean } | null;
+    pooled: Record<string, number | null>; uses_model: boolean;
+    /** E-IPO-1: calibrated blend λ·model + (1 − λ)·table, used by the signal when it passed its own walk-forward. */
+    blend?: { lambda: number; gate: { years_evaluated: number[]; years_passed: number[]; passes: boolean };
+      pooled: { n: number; brier: number; brier_table: number; bss_vs_table: number } } } | null;
 };
 type Metric = "gain" | "loss" | "median";
 
@@ -143,6 +146,13 @@ export function BaseRatesCard() {
               Listing model (logistic + quantile regression): Brier skill above this table in <span className="num">{g.years_passed.length}</span> of{" "}
               <span className="num">{g.years_evaluated.length}</span> walk-forward years ({g.years_evaluated[0]}–{g.years_evaluated.at(-1)}).{" "}
               {data.model?.uses_model ? "It passed, so IPO signals use it." : "It did not pass the bar (5 of 7), so IPO signals use this table."}
+              {data.model?.blend && (
+                <>
+                  {" "}Blended with this table ({pct(data.model.blend.lambda)} model, {pct(1 - data.model.blend.lambda)} table, weight fitted on earlier years only) it beat the table in{" "}
+                  <span className="num">{data.model.blend.gate.years_passed.length}</span> of <span className="num">{data.model.blend.gate.years_evaluated.length}</span> years
+                  (pooled Brier <span className="num">{data.model.blend.pooled.brier.toFixed(3)}</span> vs <span className="num">{data.model.blend.pooled.brier_table.toFixed(3)}</span>, n = <span className="num">{data.model.blend.pooled.n}</span>), but at the minimum and as one of three calibrations tried, so it runs only as a shadow test: logged beside each call for out-of-sample scoring and shown as an &ldquo;experimental comparison&rdquo;, never used for the call.
+                </>
+              )}
             </p>
           )}
         </>
