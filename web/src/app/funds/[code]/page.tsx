@@ -11,6 +11,7 @@ import { ReturnHistogram } from "@/components/markets/charts";
 import { Metric, type Period, PeriodChart, pctOf, toneOf } from "@/components/markets/common";
 import { FundConsistencyCard } from "@/components/markets/signal-charts";
 import { SipCalculator } from "@/components/markets/sip";
+import { FundOverlapCard } from "@/components/portfolio/fund-overlap-card";
 import type { FundAnalytics, FundPeers } from "@/components/markets/types";
 import { SignalCard } from "@/components/signal";
 import { Button, Callout, Card, EmptyState, ErrorNote, Field, PageHeader, Segmented, Skeleton, Stat, cx, inputClass } from "@/components/ui";
@@ -115,6 +116,8 @@ export default function FundDetail() {
           <SignalCard asset="fund" instrument={code} title="Invest, hold or switch?" />
           <FundConsistencyCard code={code} />
         </div>
+
+        <FundOverlapCard code={code} />
 
         <Card title="NAV history" icon={<ChartLine className="size-4" />} subtitle="Daily NAV from AMFI (growth option: dividends stay invested)">
           {!d ? (
