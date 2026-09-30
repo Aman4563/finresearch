@@ -92,6 +92,7 @@ They work only through the MCP tools, run as a resumable pipeline that schedules
 | **v0.9.0** | Verification and hardening: exchange holidays, SEBI bond conventions, BSE SME IPOs, 24 review fixes | ✅ Released |
 | **v0.10.0** | Redesigned app: dashboard, help centre, profile, rules, interactive charts, dark/light theme, command palette | ✅ Released |
 | **v0.11.0** | Live market-hours refresh, FII/DII split, latest results, IPO lot sizes, in-app PDF viewer, interactive reports | ✅ Released |
+| **v0.12.0** | Buy/sell signals for every asset class with a forecast ledger and calibration, accuracy checks, robust runs, BSE stocks, intraday charts and time frames | ✅ Released |
 
 ## Requirements
 

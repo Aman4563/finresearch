@@ -156,3 +156,22 @@ These are dated entries for bugs we reproduced, what caused them, and how they a
 ### 2026-09-29: report charts misrepresented ranges (#94, found in review)
 - **Seen:** "Fair value vs price" drew entry zones and bands as bars from ₹0. On run 12 a needs-review YTM the report had dropped appeared as a headline tile.
 - **Now:** ranges are floating low–high bars and single values are dots, with the missing end of a range never invented. Headlines use verified claims only (`test_summary_headlines_use_verified_claims_only`, `test_fair_values_pair_low_and_high_ends_but_never_invent_one`).
+
+### 2026-09-30: research runs died on Mac sleep and OAuth refresh collisions (run 13, #100/#99)
+- **Seen:** "API Error: Your computer went to sleep mid-response", then `TaskFailed ... Failed to refresh OAuth token: another Claude Code process is refreshing it`. The worker crashed and the run stayed `running` with no reason given.
+- **Now:** these are classified transient, including a stream silent for 15 minutes. A failed step is retried with backoff; after that the run pauses with a reason and resumes itself. An unexpected exception fails the run with `last_error` instead of crashing. Workers keep the Mac awake. Stalled runs show Resume.
+
+### 2026-09-30: after-tax bond yield ignored accrued interest (#104)
+- **Seen:** `after_tax_ytm` priced cash flows against the clean price, so the buyer's accrued interest was left out. Between coupon dates this overstated the yield.
+- **Now:** the dirty price paid is used. L&T INE027E07998 (monthly): 3.06% monthly-compounded, 3.10% effective, matching an independent IRR (3.00%).
+- **Also found in review:** the PR text quoted a yearly-coupon 4.30%. It came from the builder's test script; the signal uses the verified monthly frequency and flags an assumed one.
+
+### 2026-09-30: NSE IPO data gaps found by the harvest (#109)
+- **Seen:** of 461 mainboard issues:
+  - 22 have no final book on NSE, and 10 are corrupted at the source (numbers truncated at a comma: PAYTM, NYKAA, STARHEALTH and others);
+  - CAMS and PROTEAN listed on BSE months before NSE.
+- **Now:** these are excluded with reasons instead of guessed; coverage is 423 complete rows.
+
+### 2026-09-30: test runs collided on a shared test database
+- **Seen:** 167 errors (`relation "research_run" does not exist`, duplicate keys) when two pytest runs shared `finresearch_g_test`. conftest resets the whole schema.
+- **Now:** every parallel worktree uses its own `finresearch_<x>_test`, and the full suite passes (605) on a private database.
