@@ -385,6 +385,7 @@ def test_forecast_and_calibration_api(ledger_db):
     assert (g["hits"], g["calls"]) == (3, 4) and len(g["hit_rate_ci"]) == 2
     assert cal_json["groups"][-1]["asset"] == "all" and cal_json["groups"][-1]["n"] == 4
     assert cal_json["confidence_map"] == {"low": 0.55, "medium": 0.65, "high": 0.75}
+    assert g["policy"]["tier"] == "base_rate" and g["policy"]["next_tier"] == {"tier": "shrink", "at_n": 50}
     assert (
         cal_json["next_open"]["resolve_on"] == "2026-10-05" and cal_json["next_scored"]["probability"] == 0.75
     )

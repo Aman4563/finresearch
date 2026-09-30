@@ -75,7 +75,9 @@ def oof_forecasts(rows: list[Any], *, live_parity: bool = False, min_train: int 
     return out
 
 
-def _fit_variant(v: str, pool: list[Oof]) -> tuple[Callable[[np.ndarray, np.ndarray], np.ndarray], dict[str, float]]:
+def _fit_variant(
+    v: str, pool: list[Oof]
+) -> tuple[Callable[[np.ndarray, np.ndarray], np.ndarray], dict[str, float]]:
     pm = np.asarray([o.p_model for o in pool])
     pt = np.asarray([o.p_table for o in pool])
     y = np.asarray([o.y for o in pool], dtype=float)
@@ -129,7 +131,7 @@ def evaluate(oof: list[Oof], *, years: tuple[int, ...] = REPORT_YEARS, gate_year
                 pooled[k] += np.asarray(p).tolist()
     y = np.asarray(pooled["y"])
     bs_table = m.brier(pooled["table"], y) if len(y) else None
-    summary: dict[str, Any] = {"n": int(len(y)), "brier_table": bs_table, "auc_table": m.auc(pooled["table"], y),
+    summary: dict[str, Any] = {"n": len(y), "brier_table": bs_table, "auc_table": m.auc(pooled["table"], y),
                                "log_loss_table": cp.log_loss(pooled["table"], y),
                                "reliability_table": m.reliability(pooled["table"], y)}  # fmt: skip
     verdicts: dict[str, Any] = {}
@@ -206,14 +208,22 @@ def render(res: dict[str, Any], data_note: str) -> str:
               "|---|---|---|---|"]  # fmt: skip
     for f in res["folds"]:
         t, pp, s = f["T"]["params"], f["P"]["params"], f["S"]["params"]
-        lines.append(f"| {f['year']} | {_r(t.get('T'))} | {_r(pp.get('a'))}, {_r(pp.get('b'))} | {_r(s.get('lambda'))} |")
+        lines.append(
+            f"| {f['year']} | {_r(t.get('T'))} | {_r(pp.get('a'))}, {_r(pp.get('b'))} | {_r(s.get('lambda'))} |"
+        )
     lines += ["", "## Reliability, pooled 2019–2025 (equal-count bins: mean forecast → observed)", ""]
     for v in ("raw", *VARIANTS):
         bins = ", ".join(f"{b['mean_p']:.2f}→{b['observed']:.2f}" for b in p[v]["reliability"])
         lines.append(f"- {VARIANT_NAMES[v]}: {bins}")
-    lines.append(f"- base-rate table: {', '.join(f'{b['mean_p']:.2f}→{b['observed']:.2f}' for b in p['reliability_table'])}")
+    lines.append(
+        f"- base-rate table: {', '.join(f'{b["mean_p"]:.2f}→{b["observed"]:.2f}' for b in p['reliability_table'])}"
+    )
     if res.get("live_parity"):
-        lines += ["", "## Live-parity check (OFS share and Nifty 20-session return blanked at prediction)", ""]
+        lines += [
+            "",
+            "## Live-parity check (OFS share and Nifty 20-session return blanked at prediction)",
+            "",
+        ]
         for v, d in res["live_parity"]["verdicts"].items():
             lines.append(f"- {VARIANT_NAMES[v]} ({v}): {len(d['years_passed'])}/7 years, pooled Brier better: "
                          f"{d['pooled_brier_better']}, passes: {d['passes']}")  # fmt: skip

@@ -93,7 +93,8 @@ async def harvest(start: date, end: date, symbols: list[str] | None = None, out:
             universe = parse_constituents(text)
             fetched = resp.record.fetched_at.date().isoformat()
             (ARTEFACT_DIR / f"nifty50_constituents_{fetched}.csv").write_text(text)
-        todo = [u["symbol"] for u in universe if not symbols or u["symbol"] in symbols]
+        # explicit symbols may be former members (the point-in-time universe, evals.stock_universe)
+        todo = list(symbols) if symbols else [u["symbol"] for u in universe]
         idx_path = out / "index_NIFTY50.csv"
         if not idx_path.exists():
             bars, partial = await _walk_forward(eq, start, end)

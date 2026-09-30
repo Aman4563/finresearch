@@ -1499,10 +1499,15 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
         """Track record per asset and method: Brier score, skill vs the base rate, reliability bins and the hit rate
         with a Wilson 95 % interval, over resolved forecasts that carried a probability."""
         from finresearch.db.models import Forecast
+        from finresearch.evals.calibration_policy import group_policy
         from finresearch.signals.ledger import CONFIDENCE_P, calibration_groups, forecast_json
 
         with session_scope() as s:
             groups = calibration_groups(s, asset, bins)
+            for (
+                g
+            ) in groups:  # the recalibration tier the track record has reached (research §2.6; informational)
+                g["policy"] = group_policy(g["asset"], g["n"])
             nxt = s.scalars(select(Forecast).where(Forecast.status == "open")
                             .order_by(Forecast.resolve_on, Forecast.id).limit(1)).first()  # fmt: skip
             scored = s.scalars(select(Forecast).where(Forecast.status == "open", Forecast.probability.isnot(None))

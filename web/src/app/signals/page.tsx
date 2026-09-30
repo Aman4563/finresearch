@@ -237,6 +237,8 @@ function ComingCard({ asset, items }: { asset: Asset; items: readonly Instrument
   );
 }
 
+const TIER_LABEL: Record<string, string> = { base_rate: "base rate only", shrink: "shrink to base rate", platt: "Platt", isotonic: "isotonic" };
+
 function GroupFacts({ g }: { g: CalibrationGroup | undefined }) {
   if (!g) return <p className="text-xs text-muted">No forecasts logged yet.</p>;
   const rows: [string, React.ReactNode, string][] = [
@@ -247,6 +249,12 @@ function GroupFacts({ g }: { g: CalibrationGroup | undefined }) {
     ["Log loss", <span key="l" className="num">{num(g.log_loss)}</span>, "Punishes confident misses hard; lower is better. 0.693 is what always saying 50% scores."],
     ["Open · no call · void", <span key="o" className="num">{g.open} · {g.no_call} · {g.void}</span>, "Waiting for their date; logged without a probability; could not be scored honestly (e.g. a split in the window)."],
   ];
+  if (g.policy) {
+    const p = g.policy;
+    rows.push(["Calibration tier", <span key="t" className="num">{TIER_LABEL[p.tier] ?? p.tier}{p.next_tier ? ` · next at n = ${p.next_tier.at_n}` : ""}</span>,
+      `${p.description}. Effective n ${p.n_effective}${p.overlap > 1 ? ` (${p.n} forecasts ÷ ${p.overlap} overlapping months)` : ""}. Informational: probabilities are not re-fitted yet.`]);
+  }
+  const enough = g.policy ? g.policy.tier !== "base_rate" : g.n >= 50;
   return (
     <dl className="space-y-2 text-xs">
       {rows.map(([k, v, help]) => (
@@ -255,7 +263,7 @@ function GroupFacts({ g }: { g: CalibrationGroup | undefined }) {
           <dd className="whitespace-nowrap">{v}</dd>
         </div>
       ))}
-      <dd className="pt-1"><Badge tone={g.n >= 50 ? "info" : "neutral"}>{g.n >= 50 ? "enough cases to read" : "too few cases to judge"}</Badge></dd>
+      <dd className="pt-1"><Badge tone={enough ? "info" : "neutral"}>{enough ? "enough cases to read" : "too few cases to judge"}</Badge></dd>
     </dl>
   );
 }

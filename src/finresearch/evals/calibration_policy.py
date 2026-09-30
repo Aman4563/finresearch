@@ -177,7 +177,9 @@ def describe(tier: str) -> str:
     }[tier]
 
 
-def fit_policy(p: Sequence[float], y: Sequence[float], *, overlap: float = 1.0, k: float = SHRINK_K) -> Calibrator:
+def fit_policy(
+    p: Sequence[float], y: Sequence[float], *, overlap: float = 1.0, k: float = SHRINK_K
+) -> Calibrator:
     """Fit the tier the track record allows. `p` must be forecasts made before their outcomes `y` (0/1)."""
     if len(p) != len(y):
         raise ValueError(f"{len(p)} forecasts but {len(y)} outcomes")
@@ -195,3 +197,19 @@ def fit_policy(p: Sequence[float], y: Sequence[float], *, overlap: float = 1.0, 
         knots, values = fit_isotonic(p, y)
         params.update(knots=knots, values=values)
     return Calibrator(tier=tier, n=n, n_effective=n_eff, base_rate=base, params=params)
+
+
+# overlapping outcome windows per ledger asset: a stock forecast can be logged every month for a 12-month event
+OVERLAP = {"stock": 12.0}
+
+
+def group_policy(asset: str, n_resolved: int) -> dict[str, Any]:
+    """The tier a ledger group (asset, method) has reached, for `/api/calibration`. Informational: nothing applies a
+    calibrator to displayed probabilities yet (evals/experiments/calibration_policy/PREREG.md)."""
+    overlap = OVERLAP.get(asset, 1.0)
+    n_eff = effective_n(n_resolved, overlap)
+    tier = policy_tier(n_eff)
+    nxt = next(((name, lo) for name, lo in TIERS if lo > n_eff), None)
+    return {"tier": tier, "n": n_resolved, "n_effective": round(n_eff, 2), "overlap": overlap,
+            "description": describe(tier),
+            "next_tier": None if nxt is None else {"tier": nxt[0], "at_n": math.ceil(nxt[1] * overlap)}}  # fmt: skip
