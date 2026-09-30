@@ -157,10 +157,24 @@ async def _refresh_holidays(deps: jobs.Deps) -> None:
         log.warning("could not refresh NSE holidays; using the cached lists", exc_info=True)
 
 
+async def _record_iv(deps: jobs.Deps, now: datetime) -> None:
+    """Daily ATM IV after the close (monitor.iv); failures are logged and retried there, never break the tick."""
+    try:
+        from finresearch.monitor.iv import record_iv
+
+        res = await record_iv(deps.fno, now)
+        if res.get("recorded"):
+            log.info("IV history recorded: %s", res["recorded"])
+    except Exception:
+        log.warning("could not record IV history", exc_info=True)
+
+
 async def tick(deps: jobs.Deps, now: datetime | None = None) -> dict[str, int]:
     now = now or datetime.now(UTC)
     if deps.holidays is not None or deps.live_holidays:
         await _refresh_holidays(deps)
+    if deps.fno is not None:
+        await _record_iv(deps, now)
     _recover_stale(now)
     added = sync_slots(now)
     missed = _expire_missed(now)

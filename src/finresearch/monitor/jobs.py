@@ -33,6 +33,9 @@ class Deps:
     bse_quote: Any = (
         None  # async (symbol) -> Quote | None from BSE (None before listing), for a BSE SME watch
     )
+    fno: Any = (
+        None  # () -> async context manager with NseFno's methods; set: record daily ATM IV (monitor.iv)
+    )
 
     @classmethod
     def live(cls) -> Deps:
@@ -74,8 +77,10 @@ class Deps:
             async with BseClient() as bse:
                 return await bse.quote(symbol)
 
+        from finresearch.adapters.nse_fno import NseFno
+
         return cls(ipo_detail=ipo_detail, quote=quote, current_issues=current_issues, stock_snapshot=stock_snapshot,
-                   bse_ipo_detail=bse_ipo_detail, bse_quote=bse_quote)  # fmt: skip
+                   bse_ipo_detail=bse_ipo_detail, bse_quote=bse_quote, fno=NseFno)  # fmt: skip
 
 
 def alert(session: Session, watch: Watch, kind: str, message: str, level: str = "info", **data: Any) -> None:

@@ -118,6 +118,10 @@ class Strategy(BaseModel):
     expiry: date
     legs: list[StrategyLeg] = Field(min_length=1, max_length=8)
     rate: Decimal = Field(Decimal("0.065"), description="Risk-free rate for greeks (state its source)")
+    drift: Decimal | None = Field(None, ge=-1, le=1, description="Real-world annual drift; default = rate")
+    charge_overrides: dict[str, Decimal] | None = Field(
+        None, description="fincalc.charges keys -> rate (fraction)"
+    )
 
 
 class NewFund(BaseModel):
@@ -1058,17 +1062,65 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
             g = o.greeks(leg.right, spot, float(leg.strike), t, float(body.rate), iv)
             for k in greeks:
                 greeks[k] += getattr(g, k) * qty
+        from finresearch.fincalc.charges import KEYS
+        from finresearch.signals import fno as fs
+        from finresearch.suggest.advisor import load_profile
+
+        if body.charge_overrides and set(body.charge_overrides) - set(KEYS):
+            raise HTTPException(422, f"unknown charge keys; use {list(KEYS)}")
         prof = o.profile(legs, spot)
-        atm = chain.atm()
-        atm_iv = float(atm.call.iv) / 100 if atm and atm.call and atm.call.iv else None
-        pop = o.probability_of_profit(legs, spot, t, atm_iv, float(body.rate)) if atm_iv else None
+        today = now_ist().date()
+        async with _fno() as f:
+            closes = await fs.underlying_closes(f, sym, today)
+        with session_scope() as s:
+            profile = load_profile(s)
+        legs_in = [fs.LegIn(x.right, float(x.strike), x.side, x.lots, float(x.premium) if x.premium is not None else None)
+                   for x in body.legs]  # fmt: skip
+        try:
+            a = fs.analyse(chain, lot, legs_in, today=today, closes=closes,
+                           iv_series=[v for _, v, _ in fs.iv_series(sym)], capital=float(profile.fno_capital_inr),
+                           max_loss_pct=float(profile.fno_max_loss_pct),
+                           brokerage=float(profile.fno_brokerage_per_order_inr), rate=float(body.rate),
+                           drift=None if body.drift is None else float(body.drift),
+                           overrides=body.charge_overrides)  # fmt: skip
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from e
+        rn = a["risk_neutral"]
         return {"symbol": sym, "expiry": body.expiry.isoformat(), "spot": spot, "lot_size": lot, "as_of": _iso(chain.as_of),
                 "breakevens": prof.breakevens, "max_profit": _money(prof.max_profit), "max_loss": _money(prof.max_loss),
-                "net_premium": _money(prof.net_premium), "probability_of_profit": None if pop is None else round(pop, 4),
+                "net_premium": _money(prof.net_premium),
+                "probability_of_profit": None if rn is None else rn["pop"],  # risk-neutral, after costs
                 "net_greeks": {k: round(v, 4) for k, v in greeks.items()},
                 "curve": [(round(x, 2), round(y, 2)) for x, y in prof.curve[:: max(1, len(prof.curve) // 120)]],
-                "notes": notes,
-                "disclaimer": "Analysis only; payoffs at expiry exclude brokerage, taxes and margin. Not advice."}  # fmt: skip
+                "analysis": {k: v for k, v in a.items() if k not in ("legs", "breakevens", "max_profit", "net_premium")},
+                "risk_notice": fs.risk_notice(),
+                "notes": notes + a["notes"],
+                "disclaimer": "Analysis only: model probabilities, not forecasts; costs from a dated table (some rates "
+                              "unconfirmed); margin not computed. Not advice."}  # fmt: skip
+
+    @app.get("/api/fno/risk-notice")
+    def fno_risk_notice() -> dict[str, Any]:
+        """SEBI's latest finding on individual F&O traders, with its source and date (roadmap §D.5)."""
+        from finresearch.signals.fno import risk_notice
+
+        return risk_notice()
+
+    @app.get("/api/fno/{symbol}/iv")
+    def fno_iv(symbol: str, days: int = Query(252, ge=1, le=1000)) -> dict[str, Any]:
+        """Recorded daily ATM IV with IV rank / percentile (from 60 days) and the latest 25-delta skew."""
+        from finresearch.fincalc.volatility import MIN_DAYS, WINDOW, iv_stats
+        from finresearch.signals.fno import iv_series
+
+        rows = iv_series(symbol)
+        st = iv_stats([v for _, v, _ in rows])
+        return {"symbol": symbol.upper(), "n": st.n, "min_days": MIN_DAYS, "window": WINDOW, "status": st.status,
+                "current": st.current, "rank": st.rank, "percentile": st.percentile, "low": st.low, "high": st.high,
+                "skew_25d": rows[-1][2] if rows else None, "last_day": rows[-1][0].isoformat() if rows else None,
+                "series": [{"day": d.isoformat(), "atm_iv": v, "skew_25d": k} for d, v, k in rows[-days:]],
+                "method": "ATM IV = mean of call and put IV at the strike nearest the underlying, nearest expiry at "
+                          "least 7 days away, recorded after the close by the monitor. IVR = (IV − min)/(max − min) "
+                          "and IVP = share of days below today, over the last 252 recorded days.",
+                "source": "https://www.nseindia.com/option-chain"}  # fmt: skip
 
     # ------------------------------------------------------------------ IPO radar
     radar_cache: dict[str, Any] = {}

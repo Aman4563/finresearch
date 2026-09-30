@@ -15,7 +15,37 @@ export type Chain = {
   rows: Row[];
 };
 export type Leg = { right: "call" | "put" | "future"; strike: string; side: "buy" | "sell"; lots: number };
+export type ChargeRate = { key: string; rate_pct: number; basis: string; effective_from: string; source: string; status: "verified" | "secondary" | "unconfirmed"; note: string };
+export type Costs = { lines: Record<string, number>; total: number; turnover: number; orders: number; rates: ChargeRate[] };
+export type Outcome = { vol: number; drift: number; pop: number; ev: number; ev_gross: number; quantiles: Record<string, number>; window?: string } | null;
+export type RiskNotice = { headline: string; text: string; source: string; url: string; date: string };
+export type Analysis = {
+  spot: number;
+  days_to_expiry: number;
+  rate: number;
+  drift: number;
+  max_loss: number | null;
+  net_vega: number | null;
+  vols: { atm_iv: number | null; atm_strike: number | null; realised_20d: number | null; realised_60d: number | null; closes: number };
+  costs: { entry: Costs; square_off_at_same_prices: Costs; expected_exercise_stt: number | null; total_to_expiry: number | null; brokerage_per_order: number; note: string };
+  risk_neutral: Outcome;
+  real_world: Outcome;
+  real_world_20d: Outcome;
+  real_world_60d: Outcome;
+  fair_price_note: string;
+  expected_move: { move: number; low: number; high: number; vol: number } | null;
+  capital_check: { capital: number; max_loss: number | null; pct: number | null; limit_pct: number; within: boolean; message: string };
+  drawdown: { probability: number; threshold_pct: number; repeats: number } | null;
+  iv_context: { n: number; current: number | null; rank: number | null; percentile: number | null; status: string; skew_25d: number | null; iv_rv_ratio: number | null };
+  notes: string[];
+};
+export type IvHistory = {
+  symbol: string; n: number; min_days: number; status: string; current: number | null; rank: number | null; percentile: number | null;
+  low: number | null; high: number | null; skew_25d: number | null; last_day: string | null; series: { day: string; atm_iv: number }[]; method: string;
+};
 export type Result = {
+  analysis?: Analysis;
+  risk_notice?: RiskNotice;
   breakevens: number[];
   max_profit: number | null;
   max_loss: number | null;
