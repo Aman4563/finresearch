@@ -251,8 +251,8 @@ function GroupFacts({ g }: { g: CalibrationGroup | undefined }) {
   ];
   if (g.policy) {
     const p = g.policy;
-    rows.push(["Calibration tier", <span key="t" className="num">{TIER_LABEL[p.tier] ?? p.tier}{p.next_tier ? ` · next at n = ${p.next_tier.at_n}` : ""}</span>,
-      `${p.description}. Effective n ${p.n_effective}${p.overlap > 1 ? ` (${p.n} forecasts ÷ ${p.overlap} overlapping months)` : ""}. Informational: probabilities are not re-fitted yet.`]);
+    rows.push(["Calibration tier", <span key="t">{TIER_LABEL[p.tier] ?? p.tier}</span>,
+      `${p.description}. Effective n ${p.n_effective}${p.overlap > 1 ? ` (${p.n} forecasts ÷ ${p.overlap} overlapping months)` : ""}${p.next_tier ? `; the next tier starts at n = ${p.next_tier.at_n}` : ""}. Informational: probabilities are not re-fitted yet.`]);
   }
   const enough = g.policy ? g.policy.tier !== "base_rate" : g.n >= 50;
   return (

@@ -503,6 +503,9 @@ async def test_blend_is_lambda_model_plus_one_minus_lambda_table_and_fills_live_
     assert sum(f.contribution for f in s.factors) == pytest.approx(s.score, abs=0.05)
     assert s.factors[0].name.startswith("Base rate, QIB band") and "(weight 0.55)" in s.factors[0].name
     assert sig_ipo.BLEND_CAVEAT in s.caveats
+    lo, hi = s.probability_interval
+    assert lo <= s.probability <= hi  # the range always contains the forecast
+    assert sig_ipo.calibrated_interval(_blend(), 0.2)[0] == 0.2  # below the lowest bin: stretched down to p
 
 
 async def test_blend_falls_back_to_the_regime_rate_for_a_thin_band_and_off_without_a_passing_artefact():

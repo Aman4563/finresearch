@@ -371,10 +371,13 @@ def calibrated_ready(blend: dict[str, Any] | None) -> bool:
 
 def calibrated_interval(blend: dict[str, Any], p: float) -> tuple[float, float] | None:
     """The blend's measured range: the Wilson 95% interval of the observed gain rate in the out-of-sample
-    reliability bin (calibrated forecasts, pooled 2019–2025) whose mean forecast is closest to p."""
-    return reliability_interval(
+    reliability bin (calibrated forecasts, pooled 2019–2025) whose mean forecast is closest to p, stretched to include
+    p itself: beyond the outermost bins' means the nearest bin's interval can miss the forecast, and a range that
+    excludes its own point estimate would mislead."""
+    ci = reliability_interval(
         {"pooled": {"reliability_model": (blend.get("pooled") or {}).get("reliability")}}, p
     )
+    return None if ci is None else (min(ci[0], p), max(ci[1], p))
 
 
 def _no_signal(symbol: str, name: str | None, reason: str, now: datetime, *, base: dict[str, Any] | None = None,
