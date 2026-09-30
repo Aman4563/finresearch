@@ -242,3 +242,80 @@ def test_env_never_contains_api_key_for_max(fake_claude):
         assert "ANTHROPIC_API_KEY" not in env and "ANTHROPIC_AUTH_TOKEN" not in env
     finally:
         del os.environ["ANTHROPIC_AUTH_TOKEN"]
+
+
+# ---------------------------------------------------------------- transient CLI failures (run 13, 2026-09-30)
+# "<fake CLI scenario> -> <expected kind>"
+@pytest.mark.parametrize(
+    "case",
+    [
+        "sleep -> sleep",
+        "login_refresh -> oauth",
+        "enotfound -> network",
+        "conn_reset -> network",
+        "cut_off -> sleep",
+    ],
+)
+async def test_machine_and_network_failures_are_transient(fake_claude, case):
+    """The CLI reports these as an is_error result with subtype "success" (or exits with ECONNRESET on stderr);
+    the OAuth collision used to be a TaskFailed that crashed the worker."""
+    scenario, kind = case.split(" -> ")
+    with pytest.raises(TransientError) as ei:
+        await fake_claude(scenario).run(task(json_schema=SCHEMA))
+    assert ei.value.kind == kind
+    assert " success " not in str(ei.value)  # the misleading subtype is not part of the reason
+
+
+async def test_a_real_task_error_is_still_task_failed(fake_claude):
+    from finresearch.bridge.types import TaskFailed
+
+    with pytest.raises(TaskFailed):
+        await fake_claude("denied").run(task())
+
+
+def test_transient_kind_classifies_cli_messages():
+    from finresearch.bridge.types import transient_kind
+
+    assert transient_kind("API Error: Your computer went to sleep mid-response.") == "sleep"
+    assert (
+        transient_kind("Failed to refresh OAuth token: another Claude Code process is refreshing it")
+        == "oauth"
+    )
+    assert transient_kind("socket hang up") == transient_kind("connect ETIMEDOUT 1.2.3.4:443") == "network"
+    assert transient_kind("API Error: 529 overloaded_error") == "overloaded"
+    assert transient_kind(None, "", "Error: read ECONNRESET") == "network"
+    for text in ("Claude AI usage limit reached|1790000000", "Invalid API key", "Permission to use Bash denied",
+                 "output failed validation", None):  # fmt: skip
+        assert transient_kind(text) is None
+
+
+async def test_local_transient_failures_do_not_open_the_circuit(tmp_path, fake_claude):
+    """A Mac that slept or a login-refresh collision says nothing about the service: no breaker, and the router
+    reports the error as transient so the pipeline retries or pauses instead of failing the run."""
+    r = router(tmp_path, fake_claude("login_refresh"))
+    for _ in range(3):
+        with pytest.raises(AllTiersFailed) as ei:
+            await r.run(task(allow_degraded=False))
+        assert ei.value.transient is not None and ei.value.transient.kind == "oauth" and not ei.value.limited
+    assert r.tracker.availability(Tier.CLAUDE_MAX)[0]
+
+
+def test_all_tiers_failed_tells_limits_from_transient_errors():
+    from finresearch.bridge.types import EngineUnavailable as EU
+
+    t = TransientError("x", kind="network")
+    assert (
+        AllTiersFailed("t", ["claude_max:transient(x)", "local:skipped(allow_degraded=False)"], [t]).transient
+        is t
+    )
+    assert AllTiersFailed("t", ["claude_max:limit", "local:skipped(allow_degraded=False)"], []).limited
+    assert AllTiersFailed("t", ["claude_max:skipped(circuit open after 3 failures: x)"], []).limited
+    assert not AllTiersFailed("t", ["local:skipped(allow_degraded=False)"], []).limited
+    mixed = AllTiersFailed("t", ["claude_max:transient(x)", "local:EngineUnavailable(down)"], [t, EU("down")])
+    assert mixed.transient is None
+
+
+async def test_a_silent_stream_is_given_up_as_transient(fake_claude):
+    with pytest.raises(TransientError) as ei:
+        await fake_claude("silent").run(task(idle_timeout_s=1))
+    assert ei.value.kind == "idle" and "printed nothing" in str(ei.value)

@@ -66,6 +66,13 @@ export type RunSummary = {
   resume_after: string | null;
   final_gate: { ok: boolean; blocking: string[] } | null;
   worker: Worker;
+  /** why the run failed (set when a step or the pipeline failed; cleared when it is resumed) */
+  last_error?: { message: string; type?: string; at?: string } | null;
+  /** why the run is paused, and whether for the plan budget/limit or a transient Claude CLI failure */
+  pause_reason?: string | null;
+  pause_kind?: "budget" | "limit" | "transient" | null;
+  /** marked running but its worker has exited: nothing is working on it until it is resumed */
+  stalled?: { reason: string; since: string | null } | null;
   steps: Record<string, number>;
   has_report?: boolean;
 };

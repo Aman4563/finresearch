@@ -164,6 +164,15 @@ uv run finresearch monitor run                     # run the checks without the 
 uv run finresearch monitor holidays                # fetch NSE's trading and settlement holidays
 ```
 
+**Long runs and a sleepy Mac.** A research run takes an hour or more. While a run worker (or `ipo run/resume`) is
+working, it holds a macOS `caffeinate -is -w <pid>` assertion so an idle Mac does not sleep mid-response; it ends
+when the worker exits and changes no system setting (closing the lid still sleeps the Mac). Turn it off with
+`FINRESEARCH_KEEP_AWAKE=false`. If a step still fails for a passing reason (the Mac slept, two Claude Code processes
+refreshed the login at once, the network dropped, the CLI went silent), it is retried with backoff; when retries run
+out the run pauses with the reason and a resume time, and resumes by itself (`--wait` workers, or the API's monitor
+for a worker that has exited). Any other failure marks the run failed with the reason shown on its page; a run left
+"running" by a dead worker is shown as stalled. Either way, Resume continues from the last finished step.
+
 The dashboard (IPO radar, live agent view, report reader with clickable evidence, "ask about this report" chat, personal suggestions checked against your own rules, a decision journal, monitoring alerts, listed-stock search and watchlist, mutual-fund search, an F&O option-chain and strategy analyser (analysis only), plan usage) is a Next.js app in
 `web/`:
 

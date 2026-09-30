@@ -84,6 +84,44 @@ if scenario == "auth_fail":
         }
     )
     sys.exit(1)
+# failures of the machine or network, as Claude Code 2.1 reports them: an is_error result whose subtype is "success"
+CLI_ERRORS = {
+    "sleep": "API Error: Your computer went to sleep mid-response. The response above may be incomplete.",
+    "login_refresh": "Failed to refresh OAuth token: another Claude Code process is refreshing it or exited mid-refresh. "
+    "This is usually transient; retry in a minute, and if it persists close other Claude Code processes or sign "
+    "in again",
+    "enotfound": "API Error: Can't reach the API server — check your internet or DNS (ENOTFOUND)",
+    "denied": "Permission to use Bash has been denied.",
+}
+if scenario in CLI_ERRORS:
+    if scenario == "sleep":
+        emit(
+            {"type": "system", "subtype": "api_retry", "attempt": 1, "error": "unknown", "error_status": None}
+        )
+    emit(
+        {
+            "type": "result",
+            "subtype": "success",
+            "is_error": True,
+            "result": CLI_ERRORS[scenario],
+            "session_id": "s1",
+            "num_turns": 3,
+        }
+    )
+    sys.exit(1)
+if scenario == "cut_off":  # not flagged as an error, but the answer never arrived
+    emit(rl_ok)
+    emit({"type": "result", "subtype": "success", "is_error": False, "result": CLI_ERRORS["sleep"],
+          "session_id": "s1", "num_turns": 3})  # fmt: skip
+    sys.exit(0)
+if scenario == "silent":  # started, then the stream hangs (as after the Mac slept)
+    import time
+
+    time.sleep(30)
+    sys.exit(0)
+if scenario == "conn_reset":
+    print("Error: read ECONNRESET", file=sys.stderr)
+    sys.exit(1)
 if scenario == "crash":
     print("segfault-ish garbage", file=sys.stderr)
     sys.exit(3)

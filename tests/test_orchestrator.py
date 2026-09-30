@@ -167,9 +167,15 @@ async def test_happy_path_order_persistence_and_report(company_run, tmp_path, en
 
 async def test_resume_after_crash_skips_finished_steps(company_run, tmp_path):
     runner = FakeRunner(company_run, fail_on={"bear"})
-    with pytest.raises(RuntimeError):
-        await make(company_run, tmp_path, runner).run()
-    assert run_row(company_run)[0] == "failed"
+    assert (
+        await make(company_run, tmp_path, runner).run() == "failed"
+    )  # recorded, not raised: the worker exits cleanly
+    status, _, manifest = run_row(company_run)
+    assert status == "failed" and steps(company_run)["case:bear"] == "failed"
+    assert (
+        "crash in bear" in manifest["last_error"]["message"]
+        and manifest["last_error"]["type"] == "StepFailed"
+    )
     runner2 = FakeRunner(company_run)
     assert await make(company_run, tmp_path, runner2).run() == "done"
     assert "planner" not in runner2.calls and not set(STREAMS) & set(runner2.calls)
@@ -400,9 +406,8 @@ async def test_a_rerun_stream_step_replaces_its_earlier_claims(company_run, tmp_
                     s.add(Citation(claim_id=c.id, url="https://x.example", quote="q"))
             return await super().__call__(role, ctx, **extra)
 
-    with pytest.raises(RuntimeError):
-        await make(company_run, tmp_path, HalfRunner(company_run, fail_on={"risks"})).run()
-    assert steps(company_run)["stream:risks"] == "running"  # the crash left the step mid-attempt
+    assert await make(company_run, tmp_path, HalfRunner(company_run, fail_on={"risks"})).run() == "failed"
+    assert steps(company_run)["stream:risks"] == "failed"  # the crash left a half-saved claim behind
     runner2 = FakeRunner(company_run)
     assert await make(company_run, tmp_path, runner2).run() == "done"
     assert runner2.calls.count("risks") == 1
@@ -429,11 +434,9 @@ async def test_a_follow_up_rerun_keeps_the_first_rounds_claims(company_run, tmp_
                 raise RuntimeError("crash in the follow-up")
             return await super().__call__(role, ctx, **extra)
 
-    with pytest.raises(RuntimeError):
-        await make(
-            company_run, tmp_path, FollowUpCrash(company_run, critic_gap_rounds=1, fail_on={"x"})
-        ).run()
-    assert steps(company_run)["r1:stream:risks"] == "running"
+    pipe = make(company_run, tmp_path, FollowUpCrash(company_run, critic_gap_rounds=1, fail_on={"x"}))
+    assert await pipe.run() == "failed"
+    assert steps(company_run)["r1:stream:risks"] == "failed"
     before = [x for x in _claims(company_run, "risks") if x[1] != "half-saved"]
     assert len(before) == 1 and before[0][2] == "verified"
     runner2 = FakeRunner(company_run)  # critic:r1 is done; critic:r2 finds no gaps
@@ -447,8 +450,7 @@ async def test_resume_keeps_the_streams_chosen_at_start(company_run, tmp_path):
     from finresearch.orchestrator.ipo import IpoPipeline, PipelineConfig
 
     runner = FakeRunner(company_run, fail_on={"bear"})
-    with pytest.raises(RuntimeError):
-        await make(company_run, tmp_path, runner).run()
+    assert await make(company_run, tmp_path, runner).run() == "failed"
     manifest = run_row(company_run)[2]
     assert manifest["streams"] == list(STREAMS) and manifest["concurrency"] == 2
     runner2 = FakeRunner(company_run)
@@ -523,3 +525,191 @@ def test_a_verifier_cannot_overrule_a_deterministic_exchange_fact(company_run, t
                                                                    evidence="54 per the RHP", correct_value="54")],
                                             summary="x"))  # fmt: skip
     assert _claims(company_run, "facts") == [(cid, "Bid lot is 55 equity shares", "verified")]
+
+
+# ---------------------------------------------------------------- transient failures (run 13, 2026-09-30)
+OAUTH = ("Failed to refresh OAuth token: another Claude Code process is refreshing it or exited mid-refresh. "
+         "This is usually transient; retry in a minute")  # fmt: skip
+SLEPT = "API Error: Your computer went to sleep mid-response. The response above may be incomplete."
+
+
+def transient(key, text, kind):
+    from finresearch.bridge.types import TransientError
+
+    err = TransientError(f"run1-{key}: {text}", kind=kind)
+    return AllTiersFailed(key, [f"claude_max:transient({err})", "local:skipped(allow_degraded=False)"], [err])
+
+
+class FlakyRunner(FakeRunner):
+    """Raises the queued errors for a role, one per call, then behaves like FakeRunner. A stream saves a claim
+    before failing, as a real stream that dies mid-response does."""
+
+    def __init__(self, run_id, errors: dict[str, list[BaseException]], **kw):
+        super().__init__(run_id, **kw)
+        self.errors = {k: list(v) for k, v in errors.items()}
+
+    async def __call__(self, role, ctx, **extra):
+        queued = self.errors.get(role)
+        if queued:
+            self.calls.append(role)
+            if role in STREAMS:
+                from finresearch.db import session_scope
+                from finresearch.db.models import Claim
+
+                with session_scope() as s:
+                    s.add(
+                        Claim(run_id=self.run_id, stream=role, statement="half-saved", claim_type="factual")
+                    )
+            raise queued.pop(0)
+        return await super().__call__(role, ctx, **extra)
+
+
+def flaky(run_id, tmp_path, runner, **cfg):
+    from finresearch.orchestrator.ipo import IpoPipeline, PipelineConfig
+
+    slept: list[float] = []
+
+    async def sleep(d):
+        slept.append(d)
+
+    tracker = LimitTracker(tmp_path / "limits")
+    runner.tracker = tracker
+    pipe = IpoPipeline(run_id, runner=runner, tracker=tracker, sleep=sleep,
+                       config=PipelineConfig(streams=STREAMS, concurrency=2, **cfg))  # fmt: skip
+    return pipe, slept
+
+
+def step_row(run_id, key):
+    from finresearch.db import session_scope
+    from finresearch.db.models import AgentStep
+
+    with session_scope() as s:
+        st = s.scalar(select(AgentStep).where(AgentStep.run_id == run_id, AgentStep.key == key))
+        return st.status, st.attempts, st.error
+
+
+async def test_oauth_collision_is_retried_in_place_after_30_to_90_seconds(company_run, tmp_path):
+    from finresearch.bridge.types import TaskFailed
+
+    # the second one is how the CLI's message reached the pipeline before: a TaskFailed from the router
+    runner = FlakyRunner(
+        company_run, {"risks": [transient("risks", OAUTH, "oauth"), TaskFailed(f"x: {OAUTH}")]}
+    )
+    pipe, slept = flaky(company_run, tmp_path, runner)
+    assert await pipe.run() == "done"
+    assert len(slept) == 2 and all(30 <= d <= 90 for d in slept)
+    status, attempts, error = step_row(company_run, "stream:risks")
+    assert status == "done" and attempts == 3 and error is None
+    assert [x[1] for x in _claims(company_run, "risks")] == ["risks fact"]  # failed attempts' claims dropped
+
+
+async def test_backoff_grows_exponentially_with_jitter(company_run, tmp_path):
+    errs = [transient("news30", "read ECONNRESET", "network") for _ in range(3)]
+    pipe, slept = flaky(company_run, tmp_path, FlakyRunner(company_run, {"news30": errs}), retry_base_s=10)
+    assert await pipe.run() == "done"
+    assert 10 <= slept[0] <= 15 and 20 <= slept[1] <= 30 and 40 <= slept[2] <= 60
+
+
+async def test_exhausted_retries_pause_the_run_with_a_reason_then_resume(company_run, tmp_path):
+    from finresearch.orchestrator.ipo import run_until_done
+
+    errs = [transient("financials", SLEPT, "sleep") for _ in range(8)]  # twice (1 try + 3 retries)
+    runner = FlakyRunner(company_run, {"financials": errs})
+    pipe, _ = flaky(company_run, tmp_path, runner)
+    t0 = time.time()
+    assert await pipe.run() == "paused"
+    status, resume_after, m = run_row(company_run)
+    assert status == "paused" and m["pause_kind"] == "transient" and m["transient_pauses"] == 1
+    assert 590 <= resume_after.timestamp() - t0 <= 620  # transient_pause_s
+    assert "the Mac went to sleep mid-response" in m["pause_reason"] and "went to sleep" in m["pause_reason"]
+    assert step_row(company_run, "stream:financials")[0] == "deferred"
+
+    waits = []
+
+    async def fake_sleep(d):
+        waits.append(d)
+
+    assert (
+        await run_until_done(company_run, wait=True, pipeline=pipe, sleep=fake_sleep, log=lambda m: None)
+        == "done"
+    )
+    _, _, m = run_row(company_run)
+    assert waits and m["pause_reason"] is None and m["transient_pauses"] == 0 and m["last_error"] is None
+
+
+async def test_repeated_transient_pauses_end_in_a_failed_run(company_run, tmp_path):
+    errs = [transient("financials", OAUTH, "oauth") for _ in range(20)]
+    runner = FlakyRunner(company_run, {"financials": errs})
+    pipe, _ = flaky(company_run, tmp_path, runner, transient_retries=0, max_transient_pauses=2)
+    assert [await pipe.run() for _ in range(3)] == ["paused", "paused", "failed"]
+    status, _, m = run_row(company_run)
+    assert status == "failed" and "sign in again" in m["last_error"]["message"]
+    assert step_row(company_run, "stream:financials")[0] == "failed"
+
+
+async def test_an_open_circuit_pauses_until_the_cool_down(company_run, tmp_path):
+    runner = FlakyRunner(
+        company_run, {"risks": [AllTiersFailed("risks", ["claude_max:skipped(circuit open)"])]}
+    )
+    pipe, _ = flaky(company_run, tmp_path, runner)
+
+    async def open_circuit(role, ctx, **extra):
+        if role == "risks":
+            pipe.tracker.record_limit(
+                Tier.CLAUDE_MAX, int(time.time()) + 300, "circuit open after 3 failures: x"
+            )
+        return await FlakyRunner.__call__(runner, role, ctx, **extra)
+
+    pipe.runner = open_circuit
+    assert await pipe.run() == "paused"
+    _, resume_after, m = run_row(company_run)
+    assert m["pause_kind"] == "transient" and "circuit open" in m["pause_reason"]
+    assert 250 <= resume_after.timestamp() - time.time() <= 310
+
+
+async def test_a_step_timeout_fails_the_step_without_retrying(company_run, tmp_path):
+    runner = FlakyRunner(company_run, {"bear": [transient("bear", "timed out after 1800s", "timeout")]})
+    pipe, slept = flaky(company_run, tmp_path, runner)
+    assert await pipe.run() == "failed" and slept == []
+    assert "timed out" in run_row(company_run)[2]["last_error"]["message"]
+
+
+@pytest.mark.parametrize("error", [KeyError("boom"), ValueError("bad output"), RuntimeError("?")])
+async def test_an_unexpected_step_error_fails_the_run_cleanly_and_resume_recovers(
+    company_run, tmp_path, error
+):
+    from finresearch.bridge.types import TaskFailed
+
+    runner = FlakyRunner(
+        company_run, {"risks": [error], "bull": [TaskFailed("run1-bull: permission denied")]}
+    )
+    pipe, _ = flaky(company_run, tmp_path, runner)
+    assert await pipe.run() == "failed"  # no exception reaches the worker
+    status, _, m = run_row(company_run)
+    assert status == "failed" and type(error).__name__ in m["last_error"]["message"]
+    assert step_row(company_run, "stream:risks")[0] == "failed"
+    assert "running" not in steps(company_run).values()
+    runner.errors.clear()
+    assert await pipe.run() == "done"
+    assert run_row(company_run)[2]["last_error"] is None
+
+
+async def test_a_schema_violation_is_retried_once(company_run, tmp_path):
+    from finresearch.bridge.types import SchemaViolation
+
+    def sv():
+        return AllTiersFailed(
+            "x", ["claude_max:SchemaViolation(no structured_output)"], [SchemaViolation("no so")]
+        )
+
+    pipe, slept = flaky(company_run, tmp_path, FlakyRunner(company_run, {"critic": [sv()]}))
+    assert await pipe.run() == "done" and len(slept) == 1
+    pipe2, _ = flaky(company_run, tmp_path, FlakyRunner(company_run, {"critic": [sv(), sv()]}))
+    from finresearch.db import session_scope
+    from finresearch.db.models import AgentStep
+
+    with session_scope() as s:  # run the critic again
+        s.delete(
+            s.scalar(select(AgentStep).where(AgentStep.run_id == company_run, AgentStep.key == "critic:r1"))
+        )
+    assert await pipe2.run() == "failed"

@@ -30,6 +30,7 @@ from finresearch.bridge.types import (
     TaskFailed,
     Tier,
     TransientError,
+    transient_kind,
 )
 
 # Env vars that would silently switch the CLI away from the subscription login.
@@ -183,25 +184,41 @@ class ClaudeCodeEngine:
         stderr_task = asyncio.create_task(proc.stderr.read()) if proc.stderr else None
         try:
             await asyncio.wait_for(
-                self._pump(proc, task.prompt, transcript_path, state), timeout=task.timeout_s
+                self._pump(proc, task.prompt, transcript_path, state, task.idle_timeout_s),
+                timeout=task.timeout_s,
             )
+        except _Idle as e:
+            await _terminate(proc)
+            if stderr_task:
+                stderr_task.cancel()
+            raise TransientError(
+                f"{task.name}: the CLI printed nothing for {task.idle_timeout_s:.0f}s (stream went silent)",
+                kind="idle",
+            ) from e
         except TimeoutError as e:
             await _terminate(proc)
             if stderr_task:
                 stderr_task.cancel()
-            raise TransientError(f"{task.name}: timed out after {task.timeout_s:.0f}s") from e
+            raise TransientError(f"{task.name}: timed out after {task.timeout_s:.0f}s", kind="timeout") from e
         rc = await proc.wait()
         stderr = (await stderr_task).decode(errors="replace") if stderr_task else ""
         duration = time.monotonic() - started
         return self._interpret(task, state, rc, stderr, duration, transcript_path)
 
-    async def _pump(self, proc, prompt: str, transcript_path: Path, state: _StreamState) -> None:
+    async def _pump(self, proc, prompt: str, transcript_path: Path, state: _StreamState,
+                    idle_s: float | None = None) -> None:  # fmt: skip
         assert proc.stdin and proc.stdout
         proc.stdin.write(prompt.encode())
         await proc.stdin.drain()
         proc.stdin.close()
         with open(transcript_path, "w") as tf:
-            async for raw in proc.stdout:
+            while True:
+                try:  # a stream that goes silent (a connection left hanging after sleep) is given up on
+                    raw = await asyncio.wait_for(proc.stdout.readline(), timeout=idle_s)
+                except TimeoutError as e:
+                    raise _Idle from e
+                if not raw:
+                    break
                 line = raw.decode(errors="replace").strip()
                 if not line:
                     continue
@@ -238,17 +255,32 @@ class ClaudeCodeEngine:
             raise EngineUnavailable(f"{self.tier.value}: {sorted(errors_seen & _UNAVAILABLE_ERRORS)}")
         if res is None:
             detail = {"rc": rc, "stderr": stderr[-800:], "noise": state.noise[-3:]}
-            if "not logged in" in stderr.lower() or "login" in stderr.lower():
+            kind = transient_kind(stderr, *state.noise[-3:]) or "crash"
+            if kind == "crash" and ("not logged in" in stderr.lower() or "login" in stderr.lower()):
                 raise EngineUnavailable(f"{self.tier.value}: CLI reports no login", detail=detail)
-            raise TransientError(f"{task.name}: CLI exited ({rc}) without a result event", detail=detail)
+            raise TransientError(
+                f"{task.name}: CLI exited ({rc}) without a result event", kind=kind, detail=detail
+            )
+        # the CLI reports some failures of the machine or network (the Mac slept mid-response, two processes
+        # refreshed the login at once, no connection) as an is_error result whose subtype is still "success"
+        subtype = res.get("subtype", "")
+        why = f"{task.name}: {text[:300]}" if subtype == "success" else f"{task.name}: {subtype} {text[:300]}"
         if res.get("is_error"):
-            subtype = res.get("subtype", "")
-            if errors_seen & _TRANSIENT_ERRORS or res.get("api_error_status") in (500, 502, 503, 529):
-                raise TransientError(f"{task.name}: {subtype} {text[:200]}")
-            raise TaskFailed(f"{task.name}: {subtype} {text[:300]}", detail={"denials": state.denials})
+            kind = transient_kind(text)
+            if kind is None and (
+                errors_seen & _TRANSIENT_ERRORS or res.get("api_error_status") in (500, 502, 503, 529)
+            ):
+                kind = "overloaded"
+            if kind:
+                raise TransientError(
+                    why, kind=kind, detail={"subtype": subtype, "errors": sorted(errors_seen)}
+                )
+            raise TaskFailed(why, detail={"denials": state.denials})
 
         structured = res.get("structured_output")
         if task.json_schema is not None and structured is None:
+            if kind := transient_kind(text):  # a cut-off answer is not a schema problem: run the step again
+                raise TransientError(why, kind=kind, detail={"subtype": subtype})
             raise SchemaViolation(f"{task.name}: no structured_output returned", detail={"text": text[:500]})
 
         usage = res.get("usage") or {}
@@ -266,6 +298,10 @@ class ClaudeCodeEngine:
             duration_s=duration, num_turns=int(res.get("num_turns") or 0),
             rate_limit=snap, warnings=warnings, transcript_path=transcript_path,
         )  # fmt: skip
+
+
+class _Idle(Exception):
+    """No output from the CLI for the task's idle_timeout_s."""
 
 
 class _StreamState:
