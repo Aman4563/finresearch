@@ -1428,6 +1428,11 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
 
     add_wealth_routes(app, clock=clock)
 
+    # ------------------------------------------------------------------ daily layer: brief, calendars, strip, export
+    from finresearch.api.brief import add_brief_routes
+
+    add_brief_routes(app, clock=clock)
+
     # ------------------------------------------------------------------ buy/sell signals (finresearch.signals)
     @app.get("/api/signals")
     def signal_assets() -> dict[str, Any]:

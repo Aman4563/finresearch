@@ -61,6 +61,16 @@ class Deps:
         None  # async (code, start, end) -> list[PriceBar] (BSE daily); resolves BSE forecasts
     )
     bse_corporate_actions: Any = None  # async (code) -> list[CorporateAction] from BSE
+    # the daily portfolio pass (monitor.portfolio_daily) and the morning brief / weekly digest (monitor.digest);
+    # None = the live source (NSE via one QuoteBatch session, AMFI NAVAll and TER files, signal providers with log=0)
+    portfolio_daily: bool = False
+    pf_quote: Any = None  # async (symbol, exchange) -> Quote
+    pf_scheme_rows: Any = None  # async () -> list[SchemeNav] (AMFI NAVAll)
+    pf_signal: Any = None  # async (asset, instrument) -> Signal (never logged in the forecast ledger)
+    pf_stock_events: Any = None  # async (symbol) -> {"actions", "board_meetings", "results"}
+    pf_ter: Any = None  # async (month) -> {ter_key(name): SchemeTer}
+    pf_spacing_s: float = 1.0  # pause between instruments in the signals and events steps
+    brief: bool = False  # build the 08:30 brief and the weekly digest (monitor.digest)
 
     @classmethod
     def live(cls) -> Deps:
@@ -145,7 +155,7 @@ class Deps:
                    bse_ipo_detail=bse_ipo_detail, bse_quote=bse_quote, fno=NseFno, price_history=price_history,
                    corporate_actions=corporate_actions, forecasts=True, archive_books=True,
                    intraday=live_fetch, bse_stock_snapshot=bse_stock_snapshot, bse_price_history=bse_price_history,
-                   bse_corporate_actions=bse_corporate_actions)  # fmt: skip
+                   bse_corporate_actions=bse_corporate_actions, portfolio_daily=True, brief=True)  # fmt: skip
 
 
 def alert(session: Session, watch: Watch, kind: str, message: str, level: str = "info", **data: Any) -> None:

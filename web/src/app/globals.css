@@ -322,3 +322,17 @@ body {
   transition-duration: 0.01ms !important;
 }
 @media (max-width: 1023px) { .report .report-table { max-height: none; } }
+
+/* "Blur amounts" (components/privacy.tsx): rupee amounts and anything marked data-private, for screen sharing */
+:root[data-privacy="blur"] [data-inr],
+:root[data-privacy="blur"] [data-private] {
+  filter: blur(6px);
+  user-select: none;
+}
+@media print {
+  :root[data-privacy="blur"] [data-inr],
+  :root[data-privacy="blur"] [data-private] {
+    filter: none;
+    visibility: hidden;
+  }
+}

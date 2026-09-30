@@ -3,6 +3,7 @@ import { Inter, JetBrains_Mono } from "next/font/google";
 import { ViewTransition } from "react";
 
 import { AppShell, THEME_SCRIPT } from "@/components/shell";
+import { PRIVACY_SCRIPT } from "@/lib/privacy-script";
 import "./globals.css";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter", display: "swap" });
@@ -11,6 +12,11 @@ const mono = JetBrains_Mono({ subsets: ["latin"], variable: "--font-jetbrains", 
 export const metadata: Metadata = {
   title: { default: "FinResearch", template: "%s · FinResearch" },
   description: "Personal, fact-checked research for IPOs, stocks, funds, bonds and F&O",
+  applicationName: "FinResearch",
+  // installable as an app (PWA) from the browser on this Mac: manifest + icons in web/public
+  manifest: "/manifest.webmanifest",
+  icons: { icon: [{ url: "/icon-192.png", sizes: "192x192", type: "image/png" }], apple: "/apple-touch-icon.png" },
+  appleWebApp: { capable: true, title: "FinResearch", statusBarStyle: "black-translucent" },
 };
 
 export const viewport: Viewport = {
@@ -26,6 +32,8 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <head>
         {/* set the theme before first paint, so a dark-mode viewer never sees a white flash */}
         <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
+        {/* and blur amounts before first paint when the privacy toggle is on */}
+        <script dangerouslySetInnerHTML={{ __html: PRIVACY_SCRIPT }} />
       </head>
       <body className="min-h-full">
         <AppShell>

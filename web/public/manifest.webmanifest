@@ -1,0 +1,22 @@
+{
+  "name": "FinResearch",
+  "short_name": "FinResearch",
+  "description": "Personal, fact-checked research for IPOs, stocks, funds, bonds and F&O. Not investment advice.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#070b14",
+  "theme_color": "#070b14",
+  "categories": ["finance", "productivity"],
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Morning brief", "url": "/brief", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Portfolio", "url": "/portfolio", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Open IPOs", "url": "/ipos", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] }
+  ]
+}

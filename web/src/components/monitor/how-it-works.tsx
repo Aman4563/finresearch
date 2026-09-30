@@ -74,6 +74,15 @@ export function HowMonitoringWorks() {
               From <T>{s.iv.from}</T> the at-the-money implied volatility of {list(s.iv.indices)} and watched NSE F&amp;O stocks is recorded
               (BSE-only stocks have no options).
             </Row>
+            {s.portfolio && (
+              <Row head="Portfolio">
+                on trading days at <T>{s.portfolio.close_pass}</T> your holdings are valued (the daily snapshot behind the portfolio alerts),
+                each holding&apos;s signal is computed (never logged in the forecast ledger) and its corporate actions, results dates and fund
+                TER are read (at most {s.portfolio.max_instruments} instruments); funds are re-valued at <T>{s.portfolio.nav_pass}</T> with the
+                day&apos;s NAVs. The <a href="/brief" className="underline underline-offset-2">morning brief</a> is built at <T>{s.portfolio.brief}</T> and
+                the weekly digest on {s.portfolio.digest_day} at <T>{s.portfolio.digest}</T>.
+              </Row>
+            )}
             <Row head="Forecasts">
               signals and verdicts logged in the forecast ledger are scored once their date has passed, checked every {s.forecasts.every_min} minutes
               after <T>{s.forecasts.after}</T>.

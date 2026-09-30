@@ -758,9 +758,14 @@ def monitor_holidays(force: bool = typer.Option(True, help="Fetch even if the ca
 def monitor_tick() -> None:
     """Run one monitoring pass now (plan slots, run due checks)."""
     from finresearch.monitor.jobs import Deps
-    from finresearch.monitor.scheduler import tick
+    from finresearch.monitor.scheduler import drain, tick
 
-    console.print(asyncio.run(tick(Deps.live())))
+    async def once():
+        out = await tick(Deps.live())
+        await drain()  # the daily portfolio pass runs in the background inside `serve`; here, wait for it
+        return out
+
+    console.print(asyncio.run(once()))
 
 
 @monitor_app.command("run")

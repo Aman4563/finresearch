@@ -536,8 +536,9 @@ class Reader:
             return unknown(reason, "finresearch.portfolio")
         if metric not in metrics:
             return unknown(f"the portfolio does not compute {metric} yet", "finresearch.portfolio")
-        v, src = metrics[metric]
-        return Reading(D(v), src) if v is not None else unknown(src, "finresearch.portfolio")
+        v, src, *rest = metrics[metric]  # (value, source) or (value, source, detail)
+        detail = rest[0] if rest else None
+        return Reading(D(v), src, detail=detail) if v is not None else unknown(src, "finresearch.portfolio")
 
 
 _LEG = re.compile(r"^(buy|sell):(call|put|future):(\d+(?:\.\d+)?):(\d+):(\d+(?:\.\d+)?)$")

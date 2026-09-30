@@ -34,6 +34,7 @@ const SHORTCUTS: { keys: string[]; what: string; group: string }[] = [
   { keys: ["/"], what: "Open search", group: "Anywhere" },
   { keys: ["?"], what: "Open these shortcuts", group: "Anywhere" },
   { keys: ["Esc"], what: "Close a dialog or the search", group: "Anywhere" },
+  { keys: ["Shift", "B"], what: "Blur rupee amounts for screen sharing (press again to show)", group: "Anywhere" },
   { keys: ["↑", "↓", "↵"], what: "Move through search results and open one", group: "In search" },
   ...NAV_ITEMS.filter((n) => n.keys).map((n) => ({ keys: n.keys!.split(" "), what: `Go to ${n.label}`, group: "Jump (press g, then the letter)" })),
 ];
