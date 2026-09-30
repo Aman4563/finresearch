@@ -67,7 +67,7 @@ def sync_slots(now: datetime) -> int:
         for w in s.scalars(select(Watch).where(Watch.active.is_(True))):
             if w.kind == "stock":  # open-ended: plan only the next few days
                 today = to_ist(now).date()
-                slots = plan_stock(w.nse_symbol, to_ist(now - GRACE).date(),
+                slots = plan_stock(w.key, to_ist(now - GRACE).date(),
                                    today + timedelta(days=STOCK_HORIZON_DAYS), at=stock_at)  # fmt: skip
             else:
                 listed = frozenset(
@@ -157,7 +157,7 @@ async def run_job(job_id: int, deps: jobs.Deps, now: datetime) -> str:
             else:
                 job.status = "failed"
                 if not isinstance(e, jobs.NotYet) or job.kind != "subscription":
-                    jobs.alert(s, watch, "monitor_error", f"{watch.nse_symbol}: the {job.kind} check failed "
+                    jobs.alert(s, watch, "monitor_error", f"{watch.label}: the {job.kind} check failed "
                                f"{job.attempts} times ({job.error})", "warn")  # fmt: skip
         job.finished_at = now
         return job.status

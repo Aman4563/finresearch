@@ -98,7 +98,8 @@ def watch_json(w: Watch, co: Company | None = None) -> dict:
         return d.isoformat() if d else None
 
     return {"id": w.id, "kind": w.kind, "company_id": w.company_id, "company": co.slug if co else None,
-            "company_name": co.name if co else None, "nse_symbol": w.nse_symbol,
+            "company_name": co.name if co else None, "nse_symbol": w.nse_symbol, "exchange": w.exchange or "NSE",
+            "bse_code": w.bse_code, "key": w.key, "label": w.label,
             "open_date": iso(w.open_date), "close_date": iso(w.close_date),
             "allotment_date": iso(w.allotment_date), "listing_date": iso(w.listing_date),
             "anchor_shares": str(w.anchor_shares) if w.anchor_shares is not None else None, "active": w.active,
@@ -106,21 +107,26 @@ def watch_json(w: Watch, co: Company | None = None) -> dict:
 
 
 def watch_stock(company_slug: str) -> dict:
-    """Start (or restart) the daily monitoring of a listed stock."""
+    """Start (or restart) the daily monitoring of a listed stock: from NSE when the company has an NSE symbol, else
+    from BSE by its scrip code (a BSE-only stock)."""
     with session_scope() as s:
         co = s.scalar(select(Company).where(Company.slug == company_slug))
         if co is None:
             raise LookupError(f"unknown company {company_slug!r}")
-        if not co.nse_symbol:
-            raise ValueError(f"{company_slug} has no NSE symbol")
+        if not co.nse_symbol and not co.bse_code:
+            raise ValueError(f"{company_slug} has no NSE symbol or BSE scrip code")
+        exchange = "NSE" if co.nse_symbol else "BSE"
         w = s.scalar(select(Watch).where(Watch.company_id == co.id))
         if w is None:
-            w = Watch(company_id=co.id, kind="stock", nse_symbol=co.nse_symbol, meta={})
+            w = Watch(company_id=co.id, kind="stock", nse_symbol=co.nse_symbol, exchange=exchange,
+                      bse_code=co.bse_code if exchange == "BSE" else None, meta={})  # fmt: skip
             s.add(w)
         elif w.kind != "stock":
             if w.active and not (w.meta or {}).get("listing_confirmed"):
                 raise ValueError(f"{company_slug} is already watched as an IPO; stop that watch first")
             _reset(s, w, "stock")  # stopped, or listed: the same row becomes a stock watch
+        if exchange == "BSE":  # an NSE watch is never touched; a BSE-only company's watch reads BSE
+            w.exchange, w.bse_code = "BSE", co.bse_code
         w.active = True
         s.flush()
         return watch_json(w, co)

@@ -183,17 +183,29 @@ def agent_candidates(result: dict[str, Any]) -> list[Candidate]:
 
 
 async def stock_candidates(
-    symbol: str, *, report_years: int = 2, results: int = 4, equity=None
+    symbol: str, *, report_years: int = 2, results: int = 4, equity=None, exchange: str = "NSE"
 ) -> list[Candidate]:
-    """A listed stock's recent annual reports and results filings, from NSE."""
-    from finresearch.adapters.nse_equity import NseEquity, latest_annual_reports
+    """A listed stock's recent annual reports and results filings, from NSE; for a BSE-only stock (`exchange="BSE"`,
+    `symbol` = the BSE scrip code) from BSE's annual-report index and its announcements (results PDFs)."""
+    from finresearch.adapters.nse_equity import latest_annual_reports
 
     out: list[Candidate] = []
-    page = f"https://www.nseindia.com/get-quotes/equity?symbol={symbol}"
-    async with equity or NseEquity() as eq:
+    bse = exchange == "BSE"
+    source = "bse" if bse else "nse"
+    if bse:
+        from finresearch.adapters.bse_equity import BseEquity
+
+        page = "https://www.bseindia.com/"  # BSE's filings answer with this referer
+        client = equity or BseEquity()
+    else:
+        from finresearch.adapters.nse_equity import NseEquity
+
+        page = f"https://www.nseindia.com/get-quotes/equity?symbol={symbol}"
+        client = equity or NseEquity()
+    async with client as eq:
         for f in latest_annual_reports(await eq.annual_reports(symbol), report_years):
             out.append(
-                Candidate(f.url, DocKind.ANNUAL_REPORT, f"Annual report {f.fiscal_label}", "nse", page)
+                Candidate(f.url, DocKind.ANNUAL_REPORT, f"Annual report {f.fiscal_label}", source, page)
             )
         filings = sorted((a for a in await eq.announcements(symbol) if a.results_period_end and a.attachment),
                          key=lambda a: a.results_period_end, reverse=True)  # fmt: skip
@@ -203,7 +215,7 @@ async def stock_candidates(
                 continue
             seen.add(a.results_period_end)
             out.append(Candidate(a.attachment, DocKind.FINANCIALS,
-                                 f"Financial results for the period ended {a.results_period_end}", "nse", page))  # fmt: skip
+                                 f"Financial results for the period ended {a.results_period_end}", source, page))  # fmt: skip
             if len(seen) >= results:
                 break
     return out
@@ -323,7 +335,8 @@ async def discover(
     company_slug: str, *, use_agent: bool = True, index: bool = True, log=print, kind: str = "ipo"
 ) -> DiscoveryReport:
     """Find, download and ingest a company's documents: for an IPO from NSE issue archives, SEBI and (optionally) its
-    IR pages; for a listed stock (kind="stock") its NSE annual reports and results filings."""
+    IR pages; for a listed stock (kind="stock") its NSE annual reports and results filings (BSE's, for a BSE-only
+    stock)."""
     import asyncio
     import json
 
@@ -338,14 +351,18 @@ async def discover(
         co = db.query(Company).filter_by(slug=company_slug).one_or_none()
         if co is None:
             raise ValueError(f"unknown company {company_slug!r}")
-        name, symbol, co_id = co.name, co.nse_symbol, co.id
+        name, symbol, co_id, bse_code = co.name, co.nse_symbol, co.id, co.bse_code
         bse_ipo_no = (co.meta or {}).get("bse_ipo_no")
     cands: list[Candidate] = []
     if kind == "stock":
-        if not symbol:
-            raise ValueError(f"{company_slug} has no NSE symbol")
-        cands = await stock_candidates(symbol)
-        log(f"NSE: {len(cands)} annual report / results filing(s)")
+        if symbol:
+            cands = await stock_candidates(symbol)
+            log(f"NSE: {len(cands)} annual report / results filing(s)")
+        elif bse_code:  # a BSE-only listed stock
+            cands = await stock_candidates(bse_code, exchange="BSE")
+            log(f"BSE: {len(cands)} annual report / results filing(s)")
+        else:
+            raise ValueError(f"{company_slug} has no NSE symbol or BSE scrip code")
         use_agent = False
     elif symbol:
         try:

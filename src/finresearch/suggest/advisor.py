@@ -181,7 +181,7 @@ def _prompt(run_id, co, now, profile: Profile, inputs: Inputs, limits, synth) ->
         report = report[:MAX_REPORT_CHARS] + "\n\n[report truncated for length]"
     verdict = {k: synth.get(k) for k in ("overall_verdict", "verdict_listing", "verdict_long_term", "confidence",
                                           "condition")}  # fmt: skip
-    return tmpl.format(company_name=co.name if co else "?", nse_symbol=(co.nse_symbol if co else None) or "n/a",
+    return tmpl.format(company_name=co.name if co else "?", nse_symbol=(co.stock_key if co else None) or "n/a",
                        run_id=run_id, now_ist=now.strftime("%H:%M"), today=now.date().isoformat(),
                        profile=json.dumps(profile.model_dump(mode="json", exclude=UI_FIELDS), indent=1),
                        metrics=json.dumps(inputs.to_json()["metrics"], indent=1),

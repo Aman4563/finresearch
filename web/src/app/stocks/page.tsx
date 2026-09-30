@@ -25,7 +25,7 @@ export default function Stocks() {
   const watches = useApi<WatchSummary[]>("/api/watches");
 
   const stockWatches = (watches.data ?? []).filter((w) => w.kind === "stock" && w.active);
-  const watched = new Set(stockWatches.map((w) => w.nse_symbol));
+  const watched = new Set(stockWatches.map((w) => w.key ?? w.nse_symbol));
   const researched = (companies.data ?? []).filter((c) => c.latest_run && c.kind === "stock_report");
 
   const search = async () => {
@@ -42,7 +42,8 @@ export default function Stocks() {
   };
 
   const research = async (symbol: string) => {
-    if (!confirm(`Start a full stock research run for ${symbol}? It uses your Claude plan window.`)) return;
+    const where = symbol.startsWith("BSE:") ? `BSE ${symbol.slice(4)}` : symbol;
+    if (!confirm(`Start a full stock research run for ${where}? It uses your Claude plan window.`)) return;
     setBusy(symbol);
     try {
       const runId = await startResearch(await ensureStock(symbol), "stock_report");
@@ -57,7 +58,8 @@ export default function Stocks() {
     setBusy(symbol);
     try {
       await watchStock(symbol);
-      setNote(`Watching ${symbol}: results filings, corporate actions, holding changes and big moves are checked after each close.`);
+      const where = symbol.startsWith("BSE:") ? `BSE ${symbol.slice(4)} on BSE` : `${symbol} on NSE`;
+      setNote(`Watching ${where}: results filings, corporate actions, holding changes and big moves are checked after each close.`);
       companies.reload();
       watches.reload();
     } catch (e) {
@@ -110,7 +112,9 @@ export default function Stocks() {
                 <tbody className="stagger">
                   {hits.map((h) => {
                     const href = `/stocks/${encodeURIComponent(h.key)}`;
-                    const nse = h.nse_symbol; // watches and research runs follow NSE symbols
+                    // watches and research runs follow the NSE symbol when there is one, else the BSE key (BSE-only)
+                    const k = h.nse_symbol ?? h.key;
+                    const on = h.nse_symbol ? "NSE" : "BSE";
                     return (
                       <tr key={h.key}>
                         <td className="max-w-[16rem] sm:max-w-none">
@@ -118,7 +122,7 @@ export default function Stocks() {
                             <span className="flex flex-wrap items-center gap-1.5 font-semibold group-hover:text-brand">
                               {h.symbol}
                               <ExchangeBadge exchange={h.exchange} group={h.bse_group} />
-                              {nse && watched.has(nse) && <Badge tone="brand">watching</Badge>}
+                              {watched.has(k) && <Badge tone="brand">watching</Badge>}
                               {h.slug && <Badge tone="accent">in library</Badge>}
                             </span>
                             <span className="block truncate text-xs text-muted">
@@ -133,13 +137,13 @@ export default function Stocks() {
                               className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-card px-3 text-xs font-medium ring-1 ring-inset ring-border transition hover:bg-card-hover hover:ring-border-strong">
                               <Eye className="size-3.5" /> View
                             </Link>
-                            <Button variant="secondary" disabled={!nse || busy === nse || watched.has(nse)} onClick={() => nse && watch(nse)}
+                            <Button variant="secondary" disabled={busy === k || watched.has(k)} onClick={() => watch(k)}
                               icon={<BellPlus className="size-3.5" />}
-                              title={nse ? "Check filings, actions and big moves after each close" : "Watching follows NSE symbols; this stock trades only on BSE"}>
-                              <span className="hidden sm:inline">{nse && watched.has(nse) ? "Watching" : "Watch"}</span>
+                              title={`Check ${on} filings, actions and big moves after each close`}>
+                              <span className="hidden sm:inline">{watched.has(k) ? "Watching" : "Watch"}</span>
                             </Button>
-                            <Button disabled={!nse || busy === nse} onClick={() => nse && research(nse)} icon={<FlaskConical className="size-3.5" />}
-                              title={nse ? "Full research run (uses your Claude plan)" : "Research runs follow NSE symbols; this stock trades only on BSE"}>
+                            <Button disabled={busy === k} onClick={() => research(k)} icon={<FlaskConical className="size-3.5" />}
+                              title={`Full research run on ${on} data and filings (uses your Claude plan)`}>
                               <span className="hidden sm:inline">Research</span>
                             </Button>
                           </div>
@@ -196,9 +200,9 @@ export default function Stocks() {
               <ul className="-mx-2 stagger">
                 {researched.map((c) => (
                   <li key={c.slug} className="flex items-center gap-2 rounded-lg px-2 py-2 transition hover:bg-card-hover">
-                    <Link href={c.nse_symbol ? `/stocks/${c.nse_symbol}` : `/runs/${c.latest_run}`} className="min-w-0 flex-1">
+                    <Link href={c.key ? `/stocks/${encodeURIComponent(c.key)}` : `/runs/${c.latest_run}`} className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium hover:text-brand">{c.name}</p>
-                      <p className="text-xs text-muted">{c.nse_symbol}</p>
+                      <p className="num text-xs text-muted">{c.nse_symbol ? `NSE ${c.nse_symbol}` : c.bse_code ? `BSE ${c.bse_code}` : ""}</p>
                     </Link>
                     <Link href={`/runs/${c.latest_run}/report`}
                       className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-brand ring-1 ring-inset ring-brand/25 transition hover:bg-brand-soft">
@@ -217,16 +221,18 @@ export default function Stocks() {
 
 /** A watched stock with its last month of closes as a sparkline. */
 function WatchRow({ w }: { w: WatchSummary }) {
-  const h = useApi<StockHistory>(`/api/stocks/${encodeURIComponent(w.nse_symbol)}/history?days=35`);
+  const key = w.key ?? w.nse_symbol ?? "";
+  const h = useApi<StockHistory>(`/api/stocks/${encodeURIComponent(key)}/history?days=35`);
   const closes = (h.data?.bars ?? []).map((b) => b.close);
   const last = closes[closes.length - 1];
   const change = closes.length > 1 ? last / closes[0] - 1 : null;
   return (
     <LinkRow
-      href={`/stocks/${w.nse_symbol}`}
+      href={`/stocks/${encodeURIComponent(key)}`}
       title={
         <span className="flex items-center gap-1.5">
-          {w.nse_symbol}
+          {w.label ?? w.nse_symbol}
+          {w.exchange === "BSE" && <Badge tone="accent">BSE only</Badge>}
           {!!w.unread_alerts && <Badge tone="warn">{w.unread_alerts} new</Badge>}
         </span>
       }

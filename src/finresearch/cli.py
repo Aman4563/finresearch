@@ -174,6 +174,9 @@ def docs_discover(
     bse_ipo: int | None = typer.Option(
         None, help="BSE IPO number of a BSE-only SME issue (`finresearch ipo bse`)"
     ),
+    bse_code: str | None = typer.Option(
+        None, help="BSE scrip code of a BSE-only listed stock (with --kind stock)"
+    ),
     agent: bool = typer.Option(True, help="Also search company IR pages with the discovery agent"),
     index: bool = typer.Option(True, help="Build sections, chunks and embeddings"),
     kind: str = typer.Option(
@@ -189,6 +192,8 @@ def docs_discover(
         co = get_or_create_company(db, company, name, nse_symbol=nse_symbol)
         if nse_symbol and not co.nse_symbol:
             co.nse_symbol = nse_symbol
+        if bse_code and not co.bse_code:
+            co.bse_code = bse_code
         _set_bse_ipo(co, bse_ipo)
     rep = asyncio.run(discover(company, use_agent=agent, index=index, log=console.print, kind=kind))
     for o in rep.outcomes:
@@ -423,6 +428,9 @@ def stock_run(
     ),
     name: str | None = typer.Option(None, help="Company name (creates the company if new)"),
     nse_symbol: str | None = typer.Option(None),
+    bse_code: str | None = typer.Option(
+        None, help="BSE scrip code of a BSE-only stock (e.g. 526433); its data and filings are read from BSE"
+    ),
     streams: str | None = typer.Option(None, help="Comma-separated subset of the six stock streams"),
     concurrency: int = typer.Option(4, help="Parallel agents (Max-plan friendly default)"),
     wait: bool = typer.Option(
@@ -434,11 +442,13 @@ def stock_run(
     from finresearch.ingest.documents import get_or_create_company
     from finresearch.orchestrator.base import create_run
 
-    if name or nse_symbol:
+    if name or nse_symbol or bse_code:
         with session_scope() as db:
             co = get_or_create_company(db, company, name, nse_symbol=nse_symbol)
             if nse_symbol and not co.nse_symbol:
                 co.nse_symbol = nse_symbol
+            if bse_code and not co.bse_code:
+                co.bse_code = bse_code
     run_id = create_run(company, kind="stock_report")
     console.print(f"created stock run {run_id} for {company}")
     _go(run_id, streams, concurrency, wait)

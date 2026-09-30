@@ -232,7 +232,7 @@ function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void 
       { id: "glossary", label: "Glossary: QIB, NII, GMP, YTM…", group: "Help", icon: <CircleHelp />, run: go("/help#glossary") },
     ];
     const cos: Cmd[] = (companies ?? []).map((c) => ({
-      id: `co-${c.slug}`, label: c.name, hint: c.nse_symbol ?? c.slug, group: "Companies", icon: <BadgeIndianRupee />,
+      id: `co-${c.slug}`, label: c.name, hint: c.nse_symbol ? `NSE ${c.nse_symbol}` : c.bse_code ? `BSE ${c.bse_code}` : c.slug, group: "Companies", icon: <BadgeIndianRupee />,
       run: go(c.latest_run ? `/runs/${c.latest_run}` : `/ipos`),
     }));
     return [...pages, ...actions, ...cos];

@@ -15,6 +15,7 @@ from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     Computed,
     Date,
     DateTime,
@@ -50,11 +51,22 @@ class Company(TimestampMixin, Base):
     name: Mapped[str] = mapped_column(String(300))
     cin: Mapped[str | None] = mapped_column(String(30))
     nse_symbol: Mapped[str | None] = mapped_column(String(30), index=True)
-    bse_code: Mapped[str | None] = mapped_column(String(20))
+    bse_code: Mapped[str | None] = mapped_column(String(20), index=True)  # BSE scrip code, e.g. "526433"
+    isin: Mapped[str | None] = mapped_column(String(12), index=True)
     website: Mapped[str | None] = mapped_column(String(300))
     meta: Mapped[dict[str, Any]] = mapped_column(default=dict)
 
     documents: Mapped[list[Document]] = relationship(back_populates="company")
+
+    @property
+    def stock_key(self) -> str | None:
+        """The listed stock's key on the stock pages and APIs: the NSE symbol, else "BSE:<scrip code>" for a
+        BSE-only stock, else None (an unlisted IPO, a fund, a bond)."""
+        return self.nse_symbol or (f"BSE:{self.bse_code}" if self.bse_code else None)
+
+    @property
+    def exchange(self) -> str | None:
+        return "NSE" if self.nse_symbol else ("BSE" if self.bse_code else None)
 
 
 class Document(TimestampMixin, Base):
@@ -307,13 +319,22 @@ class Watch(TimestampMixin, Base):
 
     kind "ipo": subscription to the close, allotment, listing and anchor lock-ins (the IPO dates are set).
     kind "stock": a daily after-close check for results filings, corporate actions, holdings and large moves.
+
+    `exchange` says where a stock watch reads its data: "NSE" (every watch before BSE-only stocks, keyed by
+    `nse_symbol`) or "BSE" (a BSE-only stock, keyed by `bse_code`; `nse_symbol` is then empty). `key` is the
+    instrument key used in slot names, alerts and the stock pages: the NSE symbol, or "BSE:<scrip code>".
     """
 
     __tablename__ = "watch"
+    __table_args__ = (
+        CheckConstraint("nse_symbol IS NOT NULL OR bse_code IS NOT NULL", name="ck_watch_has_instrument"),
+    )
     id: Mapped[int] = mapped_column(primary_key=True)
     company_id: Mapped[int] = mapped_column(ForeignKey("company.id"), unique=True)
     kind: Mapped[str] = mapped_column(String(20), default="ipo", server_default="ipo")
-    nse_symbol: Mapped[str] = mapped_column(String(30))
+    nse_symbol: Mapped[str | None] = mapped_column(String(30))
+    exchange: Mapped[str] = mapped_column(String(10), default="NSE", server_default="NSE")
+    bse_code: Mapped[str | None] = mapped_column(String(20))
     open_date: Mapped[date | None] = mapped_column(Date)
     close_date: Mapped[date | None] = mapped_column(Date)
     # expected T+1 (exchange days); confirm with the registrar
@@ -323,6 +344,18 @@ class Watch(TimestampMixin, Base):
     anchor_shares: Mapped[Decimal | None] = mapped_column(Numeric(20, 0))
     active: Mapped[bool] = mapped_column(default=True)
     meta: Mapped[dict[str, Any]] = mapped_column(default=dict)
+
+    @property
+    def key(self) -> str:
+        """The instrument key: the NSE symbol for an NSE watch (unchanged slot names), "BSE:<code>" for a BSE one."""
+        if self.exchange == "BSE" and self.bse_code:
+            return f"BSE:{self.bse_code}"
+        return self.nse_symbol or f"BSE:{self.bse_code}"
+
+    @property
+    def label(self) -> str:
+        """How alerts name the stock: "INFY" on NSE, "BSE 526433" on BSE."""
+        return f"BSE {self.bse_code}" if self.exchange == "BSE" and self.bse_code else (self.nse_symbol or "")
 
 
 class MonitorJob(Base):

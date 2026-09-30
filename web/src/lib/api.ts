@@ -61,6 +61,9 @@ export type RunSummary = {
   status: string;
   company: string | null;
   company_name: string | null;
+  /** the listed stock's key (NSE symbol or "BSE:<code>") and exchange, when the company is a listed stock */
+  key?: string | null;
+  exchange?: "NSE" | "BSE" | null;
   created_at: string | null;
   finished_at: string | null;
   resume_after: string | null;
@@ -96,6 +99,13 @@ export type Company = {
   slug: string;
   name: string;
   nse_symbol: string | null;
+  /** BSE scrip code (set for BSE-only stocks; also noted for dual-listed ones added by code) */
+  bse_code?: string | null;
+  isin?: string | null;
+  /** where the listed stock is read: NSE, or BSE for a BSE-only stock; null for IPOs without a symbol, funds, bonds */
+  exchange?: "NSE" | "BSE" | null;
+  /** the stock page / API key: the NSE symbol, or "BSE:<code>" */
+  key?: string | null;
   documents: number;
   latest_run: number | null;
   kind: ResearchKind;
@@ -292,6 +302,10 @@ export type AlertItem = {
   created_at: string | null;
   read_at: string | null;
   nse_symbol?: string | null;
+  exchange?: "NSE" | "BSE" | null;
+  /** the stock page key (NSE symbol or "BSE:<code>") and how to show it ("INFY", "BSE 526433") */
+  key?: string | null;
+  label?: string | null;
 };
 
 export type WatchSummary = {
@@ -299,7 +313,14 @@ export type WatchSummary = {
   kind: "ipo" | "stock";
   company: string | null;
   company_name: string | null;
-  nse_symbol: string;
+  /** null for a BSE-only stock's watch (exchange "BSE", keyed by bse_code) */
+  nse_symbol: string | null;
+  exchange: "NSE" | "BSE";
+  bse_code: string | null;
+  /** the stock page key: the NSE symbol, or "BSE:<code>" */
+  key: string;
+  /** how the watch is named in alerts: "INFY", or "BSE 526433" */
+  label: string;
   open_date: string | null;
   close_date: string | null;
   allotment_date: string | null;
@@ -382,3 +403,16 @@ export type Calibration = {
   next_scored: Forecast | null;
   min_n_for_recalibration: number;
 };
+
+/** "NSE INFY", "BSE 526433" (a BSE-only stock) or "BSE SME XYZ" (a BSE SME IPO): the exchange is always named. */
+export function watchExchangeLabel(w: Pick<WatchSummary, "exchange" | "bse_code" | "nse_symbol" | "meta" | "kind">): string {
+  if (w.exchange === "BSE" && w.bse_code) return `BSE ${w.bse_code}`;
+  if (w.kind === "ipo" && w.meta?.bse_ipo_no) return `BSE SME ${w.nse_symbol ?? ""}`.trim();
+  return `NSE ${w.nse_symbol ?? ""}`.trim();
+}
+
+/** A listed stock's key as shown next to its name: "NSE INFY", or "BSE 526433" for a BSE-only stock. */
+export function listingLabel(key: string | null | undefined): string | null {
+  if (!key) return null;
+  return key.toUpperCase().startsWith("BSE:") ? `BSE ${key.slice(4)}` : `NSE ${key}`;
+}

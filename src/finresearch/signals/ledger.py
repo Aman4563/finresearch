@@ -22,6 +22,10 @@ Research-run verdicts → probabilities (fixed map v1, until outcomes say otherw
   NIFTYBEES stands in for the Nifty 50 TRI because the app has no index-history adapter; it tracks the index less
   its expense ratio. A split, bonus, rights issue or consolidation in the window voids the forecast rather than
   score unadjusted prices.
+* BSE-only stocks (instrument "BSE:<scrip code>", inputs `exchange` "BSE"): the same event on BSE closes plus cash
+  dividends from BSE's corporate actions. The benchmark stays NIFTYBEES on NSE (the two exchanges share trading days
+  and hours), so BSE and NSE stock forecasts are scored against one benchmark and pool in one calibration group. A
+  SENSEX-tracking ETF on BSE was the alternative; it would split the stock group by benchmark for no gain in accuracy.
 * Fund and bond reports are not logged: neither verdict maps to an event the app can check yet.
 * Only reports that passed the publish gate (status "done") are logged.
 
@@ -57,6 +61,8 @@ RUN_METHOD = "report verdict, fixed confidence map v1 (low 0.55 / medium 0.65 / 
 IPO_EVENT = "NSE listing-day open above the issue price"
 STOCK_EVENT = ("12-month total return (NSE closes plus cash dividends) above the price return of NIFTYBEES "
                "(Nifty 50 ETF) over the same dates")  # fmt: skip
+STOCK_EVENT_BSE = ("12-month total return (BSE closes plus cash dividends) above the price return of NIFTYBEES "
+                   "(Nifty 50 ETF, NSE) over the same dates")  # fmt: skip
 BENCHMARK = "NIFTYBEES"
 IPO_UP = ("APPLY", "APPLY (listing gains only)", "APPLY (long term)")
 IPO_DOWN = ("AVOID",)
@@ -216,7 +222,7 @@ def record_run(session: Session, run_id: int) -> int | None:
                    "bse_ipo_no": bse_no, "listing_verdict": syn.get("verdict_listing")}  # fmt: skip
         event_kind, event, horizon, asset = "listing_gain", IPO_EVENT, "listing day", "ipo"
     else:
-        if not co.nse_symbol:
+        if not co.nse_symbol and not co.bse_code:
             return None
         end = add_years(day, 1)
         from finresearch.adapters.nse_holidays import trading_holidays
@@ -224,11 +230,14 @@ def record_run(session: Session, run_id: int) -> int | None:
 
         hol = trading_holidays()
         resolve_on = end if is_business_day(end, hol) else next_business_day(end, hol)
-        instrument = co.nse_symbol
-        inputs |= {"symbol": co.nse_symbol, "start_date": day.isoformat(), "benchmark": BENCHMARK,
+        instrument = co.nse_symbol or f"BSE:{co.bse_code}"  # a BSE-only stock is scored on BSE closes
+        inputs |= {"symbol": instrument, "start_date": day.isoformat(), "benchmark": BENCHMARK,
                    "report_horizon": syn.get("horizon"), "entry_zone": syn.get("entry_zone"),
                    "note": "the report's own horizon may be longer; the ledger scores the 12-month call"}  # fmt: skip
-        event_kind, event, horizon, asset = "excess_return_12m", STOCK_EVENT, "12 months", "stock"
+        if not co.nse_symbol:
+            inputs |= {"exchange": "BSE", "benchmark_exchange": "NSE"}
+        event_kind, event, horizon, asset = "excess_return_12m", STOCK_EVENT if co.nse_symbol else STOCK_EVENT_BSE, \
+            "12 months", "stock"  # fmt: skip
     values = dict(created_at=created, asset=asset, instrument=instrument, name=co.name, source=f"run:{run.id}",
                   run_id=run.id, event_kind=event_kind, event=event, horizon=horizon, resolve_on=resolve_on,
                   probability=p, interval_low=None, interval_high=None, action=str(verdict)[:40], score=None,
@@ -378,31 +387,44 @@ def _close_on_or_before(bars: list, day: date):
 @resolver("stock", "excess_return_12m")
 async def resolve_excess_return(f: Forecast, deps: Any, session: Session) -> Resolution:
     """Total return of the stock (last close on or before each date, plus cash dividends with an ex-date in the
-    window, not reinvested) against NIFTYBEES's price return over the same dates."""
+    window, not reinvested) against NIFTYBEES's price return over the same dates. A BSE-only stock ("BSE:<code>")
+    reads its closes and corporate actions from BSE (`deps.bse_price_history` / `bse_corporate_actions`); the
+    benchmark is NIFTYBEES on NSE either way."""
+    from finresearch.adapters.bse_equity import scrip_code_of
+
     if getattr(deps, "price_history", None) is None:
         raise NotYet("no price-history source configured")
     inp = f.inputs or {}
     symbol, bench = inp.get("symbol") or f.instrument, inp.get("benchmark") or BENCHMARK
     start = date.fromisoformat(inp["start_date"]) if inp.get("start_date") else ist_day(f.created_at)
     end = f.resolve_on
+    code = scrip_code_of(symbol)
+    if code is not None:
+        if getattr(deps, "bse_price_history", None) is None:
+            raise NotYet("no BSE price-history source configured")
+        stock_history, stock_id, ex = deps.bse_price_history, code, "BSE"
+        stock_actions = getattr(deps, "bse_corporate_actions", None)
+    else:
+        stock_history, stock_id, ex = deps.price_history, symbol, "NSE"
+        stock_actions = getattr(deps, "corporate_actions", None)
 
-    async def closes(sym: str):
-        a = _close_on_or_before(await deps.price_history(sym, start - timedelta(days=10), start), start)
-        b = _close_on_or_before(await deps.price_history(sym, end - timedelta(days=10), end), end)
+    async def closes(history, sym: str, label: str, exchange: str):
+        a = _close_on_or_before(await history(sym, start - timedelta(days=10), start), start)
+        b = _close_on_or_before(await history(sym, end - timedelta(days=10), end), end)
         if a is None or b is None:
-            raise NotYet(f"no NSE close for {sym} near {start if a is None else end}")
+            raise NotYet(f"no {exchange} close for {label} near {start if a is None else end}")
         return a, b
 
-    s0, s1 = await closes(symbol)
-    b0, b1 = await closes(bench)
+    s0, s1 = await closes(stock_history, stock_id, symbol, ex)
+    b0, b1 = await closes(deps.price_history, bench, bench, "NSE")
     divs = Decimal(0)
-    if getattr(deps, "corporate_actions", None) is not None:
-        for ca in await deps.corporate_actions(symbol):
+    if stock_actions is not None:
+        for ca in await stock_actions(stock_id):
             if ca.ex_date is None or not (s0.day < ca.ex_date <= s1.day):
                 continue
             if any(w in ca.subject.lower() for w in VOIDING_ACTIONS):
                 return Resolution(None, None, f"void: {ca.subject.strip()} (ex {ca.ex_date}) changes the share "
-                                  "count, and NSE closes are not adjusted")  # fmt: skip
+                                  f"count, and {ex} closes are not adjusted")  # fmt: skip
             divs += ca.dividend_per_share or 0
     else:
         return Resolution(

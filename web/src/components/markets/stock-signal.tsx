@@ -24,7 +24,7 @@ export function StockSignalCard({ symbol }: { symbol: string }) {
   const sz = (data?.sizing ?? null) as Sizing | null;
   return (
     <Card title="Signal" icon={<Activity className="size-4" />}
-      subtitle="Momentum, trend, valuation, shareholding and forensic flags, scored by fixed rules"
+      subtitle={`Momentum, trend, valuation, shareholding and forensic flags, scored by fixed rules${symbol.toUpperCase().startsWith("BSE:") ? " · from BSE data" : ""}`}
       help="A personal, research-backed estimate: the probability of a stated event with its range, the factors behind it and how it was validated. Not investment advice."
       actions={<Link href="/stocks/backtest" className="inline-flex items-center gap-1 text-xs font-medium text-brand hover:underline">Backtest <ArrowRight className="size-3.5" /></Link>}>
       {error ? <ErrorNote error={`No signal: ${error}`} onRetry={reload} /> : !data ? <SkeletonRows rows={5} /> : (
@@ -73,7 +73,7 @@ type ForensicScore = {
 };
 type Forensic = {
   symbol: string | null; industry: string | null; fiscal_year_end: string | null; prior_year_end: string | null; basis: string | null;
-  sources: string[]; notes: string[]; red_flags: number; scores: ForensicScore[]; disclaimer: string;
+  sources: string[]; notes: string[]; red_flags: number; scores: ForensicScore[]; disclaimer: string; exchange?: "NSE" | "BSE";
 };
 
 const HELP: Record<string, string> = {
@@ -95,7 +95,7 @@ export function ForensicCard({ symbol }: { symbol: string }) {
   const { data, error, reload } = useApi<Forensic>(`/api/stocks/${encodeURIComponent(symbol)}/forensic`);
   return (
     <Card title="Forensic scorecard" icon={<Microscope className="size-4" />}
-      subtitle={data?.fiscal_year_end ? `FY ending ${day(data.fiscal_year_end)}${data.prior_year_end ? ` vs ${day(data.prior_year_end)}` : ""}, ${data.basis}, from the annual Integrated Filing XBRL` : "Quality and red-flag scores from the filed annual results"}
+      subtitle={data?.fiscal_year_end ? `FY ending ${day(data.fiscal_year_end)}${data.prior_year_end ? ` vs ${day(data.prior_year_end)}` : ""}, ${data.basis}, from the annual Integrated Filing XBRL on ${data.exchange ?? "NSE"}` : "Quality and red-flag scores from the filed annual results"}
       help="Screening flags computed from the company's own filed results: they point at what to check, they are not buy or sell signals. None of them has been validated on Indian data."
       actions={data && data.red_flags > 0 ? <Badge tone="loss">{data.red_flags} red flag{data.red_flags > 1 ? "s" : ""}</Badge> : data ? <Badge tone="gain">no red flags</Badge> : undefined}>
       {error ? <ErrorNote error={error} onRetry={reload} /> : !data ? <SkeletonRows rows={5} /> : (
@@ -176,7 +176,7 @@ export function SinceReport({ runId, symbol }: { runId?: number; symbol?: string
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <p className="flex items-center gap-1.5 text-sm font-semibold">
           <History className="size-4 text-brand" /> Since this report
-          <InfoTip>How much has changed since the research run finished: days elapsed, the live price against the report&apos;s own entry zone and fair-value range, and filings made with NSE since then.</InfoTip>
+          <InfoTip>How much has changed since the research run finished: days elapsed, the live price against the report&apos;s own entry zone and fair-value range, and filings made with the exchange (NSE, or BSE for a BSE-only stock) since then.</InfoTip>
         </p>
         <span className="inline-flex items-center gap-1 text-xs text-muted">
           <CalendarClock className="size-3.5" />

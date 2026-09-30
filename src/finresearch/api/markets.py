@@ -786,6 +786,7 @@ async def results_from_nse(
                                   + ("; only its full-year figures are used" if full else "; skipped"))  # fmt: skip
                     if full and y.end not in annual:
                         annual[y.end] = _result_row(f, y, y.end, annual=True)
+                        _annual_facts(annual_facts, f, x, y)  # the full year still feeds the forensic scores
                     break
                 if problem:
                     errors.append(f"{end} {f.xbrl}: {problem}; skipped"[:240])
@@ -794,13 +795,7 @@ async def results_from_nse(
             out.append(_result_row(f, x.quarter, end))
             if y and y.start and y.end and (y.end - y.start).days >= 360 and y.end not in annual:
                 annual[y.end] = _result_row(f, y, y.end, annual=True)
-                bs = x.balance_sheet
-                if annual_facts is not None and y.end not in annual_facts:
-                    annual_facts[y.end] = {"facts": {**y.facts, **(bs.facts if bs and bs.end == y.end else {})},
-                                           "consolidated": f.consolidated, "xbrl": f.xbrl,
-                                           "company_type": x.company_type,
-                                           "revenue_basis": next((k for k in REVENUE_BASES if k in y.facts), None),
-                                           "filed_at": f.filed_at}  # fmt: skip
+                _annual_facts(annual_facts, f, x, y)
             break
     out.sort(key=lambda r: r["period_end"])
     _add_growth(out, annual=False)
@@ -816,6 +811,17 @@ async def results_from_nse(
                 k: latest[k] for k in ("label", "period_end", "filed_at", "source", "source_url", "consolidated",
                                        "xbrl", "ixbrl")},
             "source": latest["source_url"] if latest else INTEGRATED_PAGE}  # fmt: skip
+
+
+def _annual_facts(annual_facts: dict[date, dict[str, Any]] | None, f: Any, x: Any, y: Any) -> None:
+    """The fiscal year's P&L and cash-flow facts merged with the year-end balance sheet: fincalc.forensic's inputs."""
+    if annual_facts is None or y.end in annual_facts:
+        return
+    bs = x.balance_sheet
+    annual_facts[y.end] = {"facts": {**y.facts, **(bs.facts if bs and bs.end == y.end else {})},
+                           "consolidated": f.consolidated, "xbrl": f.xbrl, "company_type": x.company_type,
+                           "revenue_basis": next((k for k in REVENUE_BASES if k in y.facts), None),
+                           "filed_at": f.filed_at}  # fmt: skip
 
 
 async def shareholding_from_nse(eq: Any, sym: str, quarters: int) -> dict[str, Any]:

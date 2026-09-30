@@ -85,10 +85,10 @@ export function AlertFeed({ alerts, onRead, limit, showSymbol = true, emptyHint,
                   <div className="min-w-0 flex-1">
                     <p className="flex flex-wrap items-center gap-x-2 text-xs text-muted">
                       <span className="font-medium text-foreground">{kindLabel(a.kind)}</span>
-                      {showSymbol && a.nse_symbol && (
+                      {showSymbol && (a.label ?? a.nse_symbol) && (
                         a.watch_id ? (
-                          <Link href={`/monitor/${a.watch_id}`} className="num hover:text-brand">{a.nse_symbol}</Link>
-                        ) : <span className="num">{a.nse_symbol}</span>
+                          <Link href={`/monitor/${a.watch_id}`} className="num hover:text-brand">{a.label ?? a.nse_symbol}</Link>
+                        ) : <span className="num">{a.label ?? a.nse_symbol}</span>
                       )}
                       {a.created_at && (
                         <span className="num">

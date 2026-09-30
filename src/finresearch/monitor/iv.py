@@ -71,7 +71,7 @@ def symbols(lots: dict[str, dict[str, int]] | None) -> list[str]:
         watched = s.scalars(
             select(Watch.nse_symbol).where(Watch.active.is_(True), Watch.kind == "stock")
         ).all()
-    extra = sorted({w.upper() for w in watched if lots and w.upper() in lots})
+    extra = sorted({w.upper() for w in watched if w and lots and w.upper() in lots})  # BSE-only watches: None
     return [*INDEX_SYMBOLS, *(x for x in extra if x not in INDEX_SYMBOLS)]
 
 

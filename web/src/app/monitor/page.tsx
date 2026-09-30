@@ -24,7 +24,9 @@ export default function Monitor() {
   const [show, setShow] = useState<"active" | "all">("active");
   const [alertView, setAlertView] = useState<"unread" | "all">("all");
 
-  const watchable = (companies.data ?? []).filter((c) => c.nse_symbol && (c.kind === "ipo_report" || c.kind === "stock_report"));
+  // IPOs need an NSE symbol (or a BSE SME issue number, set by the IPO page); listed stocks an NSE symbol or a BSE code
+  const watchable = (companies.data ?? []).filter((c) =>
+    (c.kind === "ipo_report" && c.nse_symbol) || (c.kind === "stock_report" && (c.nse_symbol || c.bse_code)));
 
   const add = async () => {
     if (!slug) return;
@@ -90,7 +92,7 @@ export default function Monitor() {
                   <option value="">{companies.data ? "Choose a company…" : "Loading…"}</option>
                   {watchable.map((c) => (
                     <option key={c.slug} value={c.slug}>
-                      {c.name} {c.kind === "stock_report" ? "(listed)" : "(IPO)"}
+                      {c.name} {c.kind === "stock_report" ? `(listed, ${c.nse_symbol ? `NSE ${c.nse_symbol}` : `BSE ${c.bse_code}`})` : "(IPO)"}
                     </option>
                   ))}
                 </select>

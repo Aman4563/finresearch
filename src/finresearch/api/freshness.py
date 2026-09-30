@@ -1,7 +1,7 @@
 """'Since this report' (docs/dev/RESEARCH_ROADMAP.md item 4): how old a report is, where the live price sits against
 the report's entry zone and fair-value bands, which filings came in since, and whether a re-run is worth it.
 
-GET only; the live price and announcements come from NSE through the same sources as the stock pages
+GET only; the live price and announcements come from NSE (BSE, for a BSE-only stock) through the same sources as the stock pages
 (`app.state.markets` is the test seam), the bands from the report's own ledger claims (insights.fair_values).
 """
 
@@ -13,7 +13,7 @@ from typing import Any
 from fastapi import FastAPI, HTTPException
 from sqlalchemy import select
 
-from finresearch.api.markets import MarketSources, TtlCache, _symbol
+from finresearch.api.markets import MarketSources, TtlCache
 
 
 def add_freshness_routes(app: FastAPI, *, clock=None) -> None:
@@ -39,7 +39,7 @@ def add_freshness_routes(app: FastAPI, *, clock=None) -> None:
             co = s.get(Company, run.company_id) if run.company_id else None
             claims = [claim_json(c, {}) for c in s.scalars(select(Claim).where(Claim.run_id == run_id)).all()]
             usable, _ = _claims(claims)
-            out = {"run_id": run.id, "kind": run.kind, "status": run.status, "symbol": co.nse_symbol if co else None,
+            out = {"run_id": run.id, "kind": run.kind, "status": run.status, "symbol": co.stock_key if co else None,
                    "report_at": run.finished_at or run.created_at, "fair": fair_values(usable)}  # fmt: skip
             s.rollback()
             return out
@@ -51,20 +51,24 @@ def add_freshness_routes(app: FastAPI, *, clock=None) -> None:
         price = as_of = None
         anns: list[dict[str, Any]] = []
         errors: list[str] = []
+        from finresearch.adapters.bse_equity import scrip_code_of
+
+        code = scrip_code_of(sym or "")
+        ex, sid = ("BSE", code) if code else ("NSE", sym)
         if sym:
             try:
-                q = await src().get_quote(sym)
+                q = await src().get_quote(sid, ex) if code else await src().get_quote(sid)
                 last = q.last_price or q.close_price
                 price = float(last) if last is not None else None
                 as_of = q.as_of.isoformat() if q.as_of else None
             except Exception as e:
                 errors.append(f"quote: {type(e).__name__}")
             try:
-                async with src().open_equity() as eq:
+                async with src().open_equity(ex) if code else src().open_equity() as eq:
                     anns = [{"at": a.at.isoformat() if a.at else None, "category": a.category, "text": a.text[:300],
                              "attachment": a.attachment,
                              "results_period_end": a.results_period_end.isoformat() if a.results_period_end else None}
-                            for a in await eq.announcements(sym)]  # fmt: skip
+                            for a in await eq.announcements(sid)]  # fmt: skip
             except Exception as e:
                 errors.append(f"announcements: {type(e).__name__}")
         out = freshness(run_id=facts["run_id"], kind=facts["kind"], symbol=sym, report_at=facts["report_at"],
@@ -83,11 +87,19 @@ def add_freshness_routes(app: FastAPI, *, clock=None) -> None:
         """The same for the latest finished stock report on this symbol; `run_id` is null when there is none."""
         from finresearch.db import session_scope
         from finresearch.db.models import Company, ResearchRun
+        from finresearch.signals.stock import instrument_key
 
-        sym = _symbol(symbol)
+        try:
+            sym = instrument_key(symbol)  # an NSE symbol, or "BSE:<code>" for a BSE-only stock
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from e
+        code = sym[4:] if sym.startswith("BSE:") else None
+        match = (
+            (Company.bse_code == code) & Company.nse_symbol.is_(None) if code else Company.nse_symbol == sym
+        )
         with session_scope() as s:
             run_id = s.scalar(select(ResearchRun.id).join(Company, Company.id == ResearchRun.company_id)
-                              .where(Company.nse_symbol == sym, ResearchRun.kind == "stock_report",
+                              .where(match, ResearchRun.kind == "stock_report",
                                      ResearchRun.status == "done")
                               .order_by(ResearchRun.finished_at.desc().nulls_last(), ResearchRun.id.desc()).limit(1))  # fmt: skip
         if run_id is None:

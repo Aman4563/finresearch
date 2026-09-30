@@ -18,6 +18,12 @@ and value premia are supported in India, size is not) and treat forensic scores 
 | each forensic red flag              | -10 (at most -30)                                 | screening flag [W]    |
 | 52-week position, volatility, ATR   | 0: shown as context and used for sizing           |                       |
 
+BSE-only stocks (instrument "BSE:<scrip code>") get the same signal and forensic card from BSE data: BSE's daily
+closes (one CSV for the whole range), corporate actions, Integrated Filing XBRL (quarters from Mar-2025, so at most
+two fiscal years for the forensic scores) and shareholding-pattern XBRL. The bucket probability still comes from the
+NIFTY 50 backtest (NSE large caps), which a small BSE-only company may not resemble: every such signal says so. Its
+forecast is resolved on BSE closes against NIFTYBEES on NSE (see signals/ledger.py).
+
 Only the momentum + trend part is backtested; the composite and its action are "rule_based". Sizing is
 volatility-scaled, capped by the profile's single-stock limit and by a quarter-Kelly ceiling from the bucket's
 backtested mean excess return (roadmap §D.6); an ATR(14) stop distance is shown as risk control, not alpha [46].
@@ -45,7 +51,13 @@ from finresearch.signals.registry import register
 # NIFTY 50 price index (dividends left out on both sides); see the caveat on every signal.
 EVENT = ("12-month total return (NSE closes plus cash dividends) above the price return of NIFTYBEES "
          "(Nifty 50 ETF) over the same dates")  # fmt: skip
+EVENT_BSE = ("12-month total return (BSE closes plus cash dividends) above the price return of NIFTYBEES "
+             "(Nifty 50 ETF, NSE) over the same dates")  # fmt: skip
 EVENT_KIND = "excess_return_12m"
+BSE_CAVEAT = ("BSE-only stock: the bucket probability was backtested on NSE-listed NIFTY 50 stocks (large, liquid "
+              "survivors). A small BSE-only company can trade thinly (wide spreads, days without trades, circuit "
+              "limits) and has no survivorship-free history in this backtest, so treat the probability as a weak "
+              "prior, not a measured rate for stocks like this one.")  # fmt: skip
 LOG_FORECASTS = os.environ.get("FINRESEARCH_LOG_SIGNALS", "1") != "0"  # "0" for screenshots against a live DB
 METHOD = ("Composite v1 (pre-registered weights: momentum 40, trend 20, valuation vs own history 10, shareholding "
           "10, forensic flags -10 each). Probability: backtested hit rate of the stock's momentum + trend bucket, "
@@ -116,9 +128,27 @@ async def _part(errors: list[str], name: str, make: Callable[[], Awaitable[Any]]
         return default
 
 
+def instrument_key(instrument: str) -> str:
+    """An NSE symbol ("INFY") or a BSE-only stock ("BSE:526433"); anything else is a ValueError."""
+    from finresearch.adapters.bse_equity import bse_key, scrip_code_of
+    from finresearch.api.markets import SYMBOL_RE
+
+    sym = instrument.strip().upper()
+    code = scrip_code_of(sym)
+    if code:
+        return bse_key(code)
+    if not SYMBOL_RE.match(sym):
+        raise ValueError(f"{instrument!r} is not an NSE symbol or BSE:<scrip code>")
+    return sym
+
+
 async def _load_live(sym: str) -> dict[str, Any]:
     """Quote, three years of daily bars, corporate actions, 12 quarters of results (with the annual statements the
-    forensic scores need) and five quarters of shareholding, from NSE."""
+    forensic scores need) and five quarters of shareholding, from NSE (from BSE for "BSE:<code>")."""
+    from finresearch.adapters.bse_equity import scrip_code_of
+
+    if (code := scrip_code_of(sym)) is not None:
+        return await _load_live_bse(code)
     from finresearch.adapters.nse import NseClient
     from finresearch.adapters.nse_equity import NseEquity, walk_history
     from finresearch.api.markets import _retry, results_from_nse, shareholding_from_nse
@@ -144,6 +174,35 @@ async def _load_live(sym: str) -> dict[str, Any]:
         )
     return {"quote": quote, "bars": bars, "actions": actions, "results": results, "annual": annual,
             "shareholding": holding, "errors": errors}  # fmt: skip
+
+
+async def _load_live_bse(code: str, equity: Any = None) -> dict[str, Any]:
+    """The same inputs for a BSE-only stock from BSE: its daily-price CSV answers three years in one request; results
+    and the forensic annual statements come from BSE's Integrated Filing XBRL (Mar-2025 onwards)."""
+    from finresearch.adapters.bse_equity import BseEquity
+    from finresearch.api.markets import results_from_nse, shareholding_from_nse
+
+    errors: list[str] = []
+    today = _today()
+    annual: dict[date, dict[str, Any]] = {}
+    async with equity or BseEquity() as eq:
+        try:
+            quote = await eq.quote(code)
+        except Exception as e:
+            raise LookupError(f"BSE has no quote for scrip {code}: {e}") from e
+        if quote is None:
+            raise LookupError(f"BSE has no quote for scrip {code}")
+        bars = await _part(
+            errors, "price history", lambda: eq.history(code, today - timedelta(days=HISTORY_DAYS), today), []
+        )
+        actions = await _part(errors, "corporate actions", lambda: eq.corporate_actions(code), [])
+        results = await _part(errors, "results", lambda: results_from_nse(eq, code, RESULT_QUARTERS, annual_facts=annual),
+                              {"quarters": []})  # fmt: skip
+        holding = await _part(
+            errors, "shareholding", lambda: shareholding_from_nse(eq, code, 5), {"quarters": []}
+        )
+    return {"exchange": "BSE", "quote": quote, "bars": bars, "actions": actions, "results": results,
+            "annual": annual, "shareholding": holding, "errors": errors}  # fmt: skip
 
 
 async def inputs(sym: str) -> dict[str, Any]:
@@ -301,7 +360,12 @@ def forensic(raw: dict[str, Any]) -> dict[str, Any]:
         )
     scores = fz.scorecard(cur["facts"] if cur else None, prev["facts"] if prev else None, industry=industry,
                           revenue_basis=cur.get("revenue_basis") if cur else None)  # fmt: skip
-    return {"symbol": getattr(q, "symbol", None), "industry": industry,
+    bse = raw.get("exchange") == "BSE"
+    if bse:
+        notes.append("Read from BSE's Integrated Filing XBRL, which starts with the Mar-2025 quarter: at most two "
+                     "fiscal years, so the year-on-year scores rest on FY25 and FY26 only.")  # fmt: skip
+    return {"symbol": getattr(q, "symbol", None), "industry": industry, "exchange": "BSE" if bse else "NSE",
+            "scrip_code": getattr(q, "scrip_code", None) if bse else None,
             "fiscal_year_end": cur_end.isoformat() if cur_end else None,
             "prior_year_end": prev_end.isoformat() if prev and prev_end else None,
             "basis": None if cur is None else ("consolidated" if cur["consolidated"] else "standalone"),
@@ -333,8 +397,12 @@ def _clip(x: float) -> float:
     return max(-1.0, min(1.0, x))
 
 
-def composite(f: Features, fz_scores: list[dict[str, Any]]) -> list[Factor]:
-    """The factors and their contributions (pre-registered v1, see the module docstring)."""
+SHP_PAGE = "https://www.nseindia.com/companies-listing/corporate-filings-shareholding-pattern"
+
+
+def composite(f: Features, fz_scores: list[dict[str, Any]], shp_source: str = SHP_PAGE) -> list[Factor]:
+    """The factors and their contributions (pre-registered v1, see the module docstring). `shp_source` is where the
+    shareholding patterns were read (NSE's filings page, or a BSE-only stock's BSE page)."""
     out: list[Factor] = []
     if f.mom_score is not None:
         out.append(Factor("Momentum (12-1 month, risk-adjusted)", round(f.mom_score, 2), 40 * _clip(f.mom_score / 1.5),
@@ -361,13 +429,13 @@ def composite(f: Features, fz_scores: list[dict[str, Any]]) -> list[Factor]:
         out.append(Factor("FII + DII holding change", round(f.inst_change_pp, 2), 5 * _clip(f.inst_change_pp / 2),
                           f"Change in foreign plus domestic institutional holding, {f.holding_span}, from the filed "
                           "shareholding-pattern XBRL. Weak evidence; small weight. Not backtested.",
-                          "https://www.nseindia.com/companies-listing/corporate-filings-shareholding-pattern", "pp"))  # fmt: skip
+                          shp_source, "pp"))  # fmt: skip
     if f.promoter_change_pp is not None:
         out.append(Factor("Promoter holding change", round(f.promoter_change_pp, 2),
                           5 * _clip(f.promoter_change_pp / 2),
                           f"Change in promoter holding, {f.holding_span}. Selling or dilution counts against; "
                           "buying for. Weak evidence; small weight. Not backtested.",
-                          "https://www.nseindia.com/companies-listing/corporate-filings-shareholding-pattern", "pp"))  # fmt: skip
+                          shp_source, "pp"))  # fmt: skip
     red = [s for s in fz_scores if s["red_flag"]]
     for i, s in enumerate(red):
         out.append(Factor(f"Forensic flag: {s['name']}", s["value"], -10.0 if i < 3 else 0.0,
@@ -406,12 +474,11 @@ def sizing(f: Features, bucket: dict[str, Any] | None, profile: Any) -> dict[str
 
 @register("stock")
 async def stock_signal(instrument: str, ctx: dict[str, Any]) -> Signal:
-    from finresearch.api.markets import SYMBOL_RE
     from finresearch.evals.stock_backtest import bucket_of
 
-    sym = instrument.strip().upper()
-    if not SYMBOL_RE.match(sym):
-        raise ValueError(f"{instrument!r} is not an NSE symbol")
+    sym = instrument_key(instrument)
+    bse = sym.startswith("BSE:")
+    ex = "BSE" if bse else "NSE"
     raw = await inputs(sym)
     q = raw.get("quote")
     name = getattr(q, "company", None)
@@ -426,19 +493,25 @@ async def stock_signal(instrument: str, ctx: dict[str, Any]) -> Signal:
         "on the stock's total return against NIFTYBEES, which is close but not identical.",
         "Personal research, not advice: a probability with a range, not a prediction for this stock.",
     ]
+    if bse:
+        caveats.insert(0, BSE_CAVEAT)
+        caveats.append("The logged forecast is scored on BSE closes (plus cash dividends) against NIFTYBEES on NSE, "
+                       "the same benchmark as NSE stocks so that both land in one calibration.")  # fmt: skip
     if raw.get("errors"):
-        caveats.append("Some inputs could not be loaded from NSE: " + "; ".join(raw["errors"]))
+        caveats.append(f"Some inputs could not be loaded from {ex}: " + "; ".join(raw["errors"]))
     if f.anomalies:
         caveats.append("Unexplained one-day moves over 35 % in the price history (" +
                        ", ".join(d.isoformat() for d in f.anomalies[:3]) + "): a demerger or bad print.")  # fmt: skip
-    base = dict(asset="stock", instrument=sym, name=name, event=EVENT, horizon="12 months", method=METHOD,
-                as_of=datetime.now(UTC), sources=[f"https://www.nseindia.com/get-quotes/equity?symbol={sym}"])  # fmt: skip
+    source = ((getattr(q, "page_url", None) or "https://www.bseindia.com/") if bse else
+              f"https://www.nseindia.com/get-quotes/equity?symbol={sym}")  # fmt: skip
+    base = dict(asset="stock", instrument=sym, name=name, event=EVENT_BSE if bse else EVENT, horizon="12 months",
+                method=METHOD, as_of=datetime.now(UTC), sources=[source])  # fmt: skip
     if f.mom_score is None or f.trend_distance is None:
         return Signal(**base, action="NO_SIGNAL", score=0.0,
                       validation=Validation(status="rule_based", description="Not enough price history."),
-                      caveats=[f"Needs 13 months of daily prices for momentum and the 200-day average; NSE returned "
+                      caveats=[f"Needs 13 months of daily prices for momentum and the 200-day average; {ex} returned "
                                f"{f.bars} trading days.", *caveats])  # fmt: skip
-    factors = composite(f, fzr["scores"])
+    factors = composite(f, fzr["scores"], source if bse else SHP_PAGE)
     score = clip_score(sum(x.contribution for x in factors))
     bucket_name = bucket_of(f.trend_distance >= 0, f.mom_score)
     bucket = (bt or {}).get("buckets", {}).get(bucket_name)
@@ -514,6 +587,7 @@ def _log(sig: Signal, bucket_name: str) -> None:
 
         rec(sig, source="signal:stock", resolve_on=add_years(today, 1), event_kind=EVENT_KIND,
             inputs={"symbol": sig.instrument, "benchmark": "NIFTYBEES", "start_date": today.isoformat(),
-                    "bucket": bucket_name})  # fmt: skip
+                    "bucket": bucket_name,
+                    **({"exchange": "BSE", "benchmark_exchange": "NSE"} if sig.instrument.startswith("BSE:") else {})})  # fmt: skip
     except Exception:  # the database may be down; the signal still shows
         logging.getLogger(__name__).warning("could not log the %s signal", sig.instrument, exc_info=True)

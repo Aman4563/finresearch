@@ -542,12 +542,13 @@ function LoadingChart({ what }: { what: string }) {
 
 function LivePrice({ symbol, ins, claims, onOpen }: { symbol: string; ins: Insights; claims: ClaimMap; onOpen: OpenClaim }) {
   const { data, error, reload } = useApi<StockHistory>(`/api/stocks/${encodeURIComponent(symbol)}/history?days=1825`);
+  const ex = symbol.startsWith("BSE:") ? "BSE" : "NSE";
   const zone = ins.valuation.fair_value.filter((f) => /^entry_zone/.test(f.metric) && f.status === "verified");
   return (
     <ChartCard live title="Share price" icon={<LineIcon className="size-4" />} claims={claims} onOpen={onOpen}
-      subtitle={zone.length ? `NSE closes; dashed lines = the report's entry zone (${zone.map((z) => z.display).join(" – ")})` : "NSE daily closes"}>
-      {error ? <ErrorNote error={error} onRetry={reload} /> : !data ? <LoadingChart what="five years of NSE closes" /> : data.bars.length < 2 ? (
-        <p className="text-sm text-muted">NSE returned no price history for {symbol}. <button type="button" onClick={reload} className="text-brand hover:underline">Retry</button></p>
+      subtitle={zone.length ? `${ex} closes; dashed lines = the report's entry zone (${zone.map((z) => z.display).join(" – ")})` : `${ex} daily closes`}>
+      {error ? <ErrorNote error={error} onRetry={reload} /> : !data ? <LoadingChart what={`five years of ${ex} closes`} /> : data.bars.length < 2 ? (
+        <p className="text-sm text-muted">{ex} returned no price history for {symbol}. <button type="button" onClick={reload} className="text-brand hover:underline">Retry</button></p>
       ) : (
         <TimeSeriesChart data={data.bars} series={[{ key: "close", label: "Close" }]} ranges={["3M", "6M", "1Y", "3Y", "5Y"]} defaultRange="1Y" format={(v) => inr(v, 0)} height={260}
           references={zone.map((z) => ({ y: z.value, label: `${z.label}${z.role ? ` ${z.role}` : ""}${z.basis ? ` (${z.basis})` : ""}`, tone: "gain" as const }))} />
@@ -629,7 +630,8 @@ export function ChartsTab({ ins, error, reload, claims, onOpen }: { ins: Insight
     : ins.kind === "stock_report" ? (ins.key_numbers.find((t) => t.label === "Share price") ?? null) : null;
   const blocks: ReactNode[] = [];
   if (ins.kind === "ipo_report" && ins.ipo) blocks.push(<IpoCharts key="ipo" ins={ins} claims={claims} onOpen={onOpen} />);
-  if (ins.kind === "stock_report" && ins.subject.nse_symbol) blocks.push(<LivePrice key="px" symbol={ins.subject.nse_symbol} ins={ins} claims={claims} onOpen={onOpen} />);
+  const stockKey = ins.subject.key ?? ins.subject.nse_symbol; // "BSE:<code>" for a BSE-only stock
+  if (ins.kind === "stock_report" && stockKey) blocks.push(<LivePrice key="px" symbol={stockKey} ins={ins} claims={claims} onOpen={onOpen} />);
   if (ins.kind === "fund_report" && ins.fund) {
     blocks.push(<FundCharts key="fund" ins={ins} claims={claims} onOpen={onOpen} />);
     if (ins.subject.amfi_code) blocks.push(<LiveNav key="nav" code={ins.subject.amfi_code} claims={claims} onOpen={onOpen} />);
