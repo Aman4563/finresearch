@@ -1,0 +1,4184 @@
+{
+ "rule": "momentum-trend v1 (pre-registered 30-Sep-2026)",
+ "generated": "2026-09-30",
+ "universe": {
+  "name": "NIFTY 50 (today's list applied to the past)",
+  "constituents_file": "nifty50_constituents_2026-09-30.csv",
+  "symbols": 50,
+  "coverage": {
+   "ADANIENT": {
+    "first": "2014-01-01",
+    "last": "2026-09-29",
+    "days": 3154,
+    "splits_bonuses_applied": [],
+    "unexplained_jumps": [
+     "2015-06-03"
+    ]
+   },
+   "ADANIPORTS": {
+    "first": "2014-01-01",
+    "last": "2026-09-29",
+    "days": 3154,
+    "splits_bonuses_applied": [],
+    "unexplained_jumps": []
+   },
+   "APOLLOHOSP": {
+    "first": "2014-01-01",
+    "last": "2026-09-29",
+    "days": 3154,
+    "splits_bonuses_applied": [],
+    "unexplained_jumps": []
+   },
+   "ASIANPAINT": {
+    "first": "2014-01-01",
+    "last": "2026-09-29",
+    "days": 3154,
+    "splits_bonuses_applied": [],
+    "unexplained_jumps": []
+   },
+   "AXISBANK": {
+    "first": "2014-01-01",
+    "last": "2026-09-29",
+    "days": 3154,
+    "splits_bonuses_applied": [
+     [
+      "2014-07-28",
+      5.0
+     ]
+    ],
+    "unexplained_jumps": []
+   },
+   "BAJAJ-AUTO": {
+    "first": "2014-01-01",
+    "last": "2026-09-29",
+    "days": 3154,
+    "splits_bonuses_applied": [],
+    "unexplained_jumps": []
+   },
+   "BAJAJFINSV": {
+    "first": "2014-01-01",
+    "last": "2026-09-29",
+    "days": 3154,
+    "splits_bonuses_applied": [
+     [
+      "2022-09-13",
+      10.0
+     ]
+    ],
+    "unexplained_jumps": []
+   },
+   "BAJFINANCE": {
+    "first": "2014-01-01",
+    "last": "2026-09-29",
+    "days": 3154,
+    "splits_bonuses_applied": [
+     [
+      "2016-09-08",
+      10.0
+     ],
+     [
+      "2025-06-16",
+      10.0
+     ]
+    ],
+    "unexplained_jumps": []
+   },
+   "BEL": {
+    "first": "2014-01-01",
+    "last": "2026-09-29",
+    "days": 3154,
+    "splits_bonuses_applied": [
+     [
+      "2022-09-15",
+      3.0
+     ]
+    ],
+    "unexplained_jumps": [
+     "2015-09-14",
+     "2017-03-16"
+    ]
+   },
+   "BHARTIARTL": {
+    "first": "2014-01-01",
+    "last": "2026-09-29",
+    "days": 3154,
+    "splits_bonuses_applied": [],
+    "unexplained_jumps": []
+   },
+   "BSE": {
+    "first": "2017-02-03",
+    "last": "2026-09-29",
+    "days": 2392,
+    "splits_bonuses_applied": [
+     [
+      "2022-03-21",
+      3.0
+     ],
+     [
+      "2025-05-23",
+      3.0
+     ]
+    ],
+    "unexplained_jumps": []
+   },
+   "CIPLA": {
+    "first": "2014-01-01",
+    "last": "2026-09-29",
+    "days": 3154,
+    "splits_bonuses_applied": [],
+    "unexplained_jumps": []
+   },
+   "COALINDIA": {
+    "first": "2014-01-01",
+    "last": "2026-09-29",
+    "days": 3154,
+    "splits_bonuses_applied": [],
+    "unexplained_jumps": []
+   },
+   "DRREDDY": {
+    "first": "2014-01-01",
+    "last": "2026-09-29",
+    "days": 3154,
+    "splits_bonuses_applied": [
+     [
+      "2024-10-28",
+      5.0
+     ]
+    ],
+    "unexplained_jumps": []
+   },
+   "EICHERMOT": {
+    "first": "2014-01-01",
+    "last": "2026-09-29",
+    "days": 3154,
+    "splits_bonuses_applied": [
+     [
+      "2020-08-24",
+      10.0
+     ]
+    ],
+    "unexplained_jumps": []
+   },
+   "ETERNAL": {
+    "first": "2021-07-23",
+    "last": "2026-09-29",
+    "days": 1287,
+    "splits_bonuses_applied": [],
+    "unexplained_jumps": []
+   },
+   "GRASIM": {
+    "first": "2014-01-01",
+    "last": "2026-09-29",
+    "days": 3154,
+    "splits_bonuses_applied": [
+     [
+      "2016-10-06",
+      5.0
+     ]
+    ],
+    "unexplained_jumps": []
+   },
+   "HCLTECH": {
+    "first": "2014-01-01",
+    "last": "2026-09-29",
+    "days": 3154,
+    "splits_bonuses_applied": [],
+    "unexplained_jumps": [
+     "2015-03-19",
+     "2019-12-05"
+    ]
+   },
+   "HDFCBANK": {
+    "first": "2014-01-01",
+    "last": "2026-09-29",
+    "days": 3154,
+    "splits_bonuses_applied": [
+     [
+      "2019-09-19",
+      2.0
+     ],
+     [
+      "2025-08-26",
+      2.0
+     ]
+    ],
+    "unexplained_jumps": []
+   },
+   "HDFCLIFE": {
+    "first": "2017-11-17",
+    "last": "2026-09-29",
+    "days": 2197,
+    "splits_bonuses_applied": [],
+    "unexplained_jumps": []
+   },
+   "HINDALCO": {
+    "first": "2014-01-01",
+    "last": "2026-09-29",
+    "days": 3154,
+    "splits_bonuses_applied": [],
+    "unexplained_jumps": []
+   },
+   "HINDUNILVR": {
+    "first": "2014-01-01",
+    "last": "2026-09-29",
+    "days": 3154,
+    "splits_bonuses_applied": [],
+    "unexplained_jumps": []
+   },
+   "ICICIBANK": {
+    "first": "2014-01-01",
+    "last": "2026-09-29",
+    "days": 3154,
+    "splits_bonuses_applied": [
+     [
+      "2014-12-04",
+      5.0
+     ],
+     [
+      "2017-06-20",
+      1.1
+     ]
+    ],
+    "unexplained_jumps": []
+   },
+   "INDIGO": {
+    "first": "2015-11-10",
+    "last": "2026-09-29",
+    "days": 2697,
+    "splits_bonuses_applied": [],
+    "unexplained_jumps": []
+   },
+   "INFY": {
+    "first": "2014-01-01",
+    "last": "2026-09-29",
+    "days": 3154,
+    "splits_bonuses_applied": [
+     [
+      "2018-09-04",
+      2.0
+     ]
+    ],
+    "unexplained_jumps": [
+     "2014-12-02",
+     "2015-06-15"
+    ]
+   },
+   "ITC": {
+    "first": "2014-01-01",
+    "last": "2026-09-29",
+    "days": 3154,
+    "splits_bonuses_applied": [
+     [
+      "2016-07-01",
+      1.5
+     ]
+    ],
+    "unexplained_jumps": []
+   },
+   "JIOFIN": {
+    "first": "2023-09-04",
+    "last": "2026-09-29",
+    "days": 762,
+    "splits_bonuses_applied": [],
+    "unexplained_jumps": []
+   },
+   "JSWSTEEL": {
+    "first": "2014-01-01",
+    "last": "2026-09-29",
+    "days": 3154,
+    "splits_bonuses_applied": [
+     [
+      "2017-01-04",
+      10.0
+     ]
+    ],
+    "unexplained_jumps": []
+   },
+   "KOTAKBANK": {
+    "first": "2014-01-01",
+    "last": "2026-09-29",
+    "days": 3154,
+    "splits_bonuses_applied": [
+     [
+      "2015-07-08",
+      2.0
+     ],
+     [
+      "2026-01-14",
+      5.0
+     ]
+    ],
+    "unexplained_jumps": []
+   },
+   "LT": {
+    "first": "2014-01-01",
+    "last": "2026-09-29",
+    "days": 3154,
+    "splits_bonuses_applied": [
+     [
+      "2017-07-13",
+      1.5
+     ]
+    ],
+    "unexplained_jumps": []
+   },
+   "M&M": {
+    "first": "2014-01-01",
+    "last": "2026-09-29",
+    "days": 3154,
+    "splits_bonuses_applied": [
+     [
+      "2017-12-21",
+      2.0
+     ]
+    ],
+    "unexplained_jumps": []
+   },
+   "MARUTI": {
+    "first": "2014-01-01",
+    "last": "2026-09-29",
+    "days": 3154,
+    "splits_bonuses_applied": [],
+    "unexplained_jumps": []
+   },
+   "MAXHEALTH": {
+    "first": "2020-09-04",
+    "last": "2026-09-29",
+    "days": 1506,
+    "splits_bonuses_applied": [],
+    "unexplained_jumps": []
+   },
+   "NESTLEIND": {
+    "first": "2014-01-01",
+    "last": "2026-09-29",
+    "days": 3154,
+    "splits_bonuses_applied": [
+     [
+      "2024-01-05",
+      10.0
+     ],
+     [
+      "2025-08-08",
+      2.0
+     ]
+    ],
+    "unexplained_jumps": []
+   },
+   "NTPC": {
+    "first": "2014-01-01",
+    "last": "2026-09-29",
+    "days": 3154,
+    "splits_bonuses_applied": [],
+    "unexplained_jumps": []
+   },
+   "ONGC": {
+    "first": "2014-01-01",
+    "last": "2026-09-29",
+    "days": 3154,
+    "splits_bonuses_applied": [],
+    "unexplained_jumps": []
+   },
+   "POWERGRID": {
+    "first": "2014-01-01",
+    "last": "2026-09-29",
+    "days": 3154,
+    "splits_bonuses_applied": [
+     [
+      "2021-07-29",
+      1.3333333333333333
+     ],
+     [
+      "2023-09-12",
+      1.3333333333333333
+     ]
+    ],
+    "unexplained_jumps": []
+   },
+   "RELIANCE": {
+    "first": "2014-01-01",
+    "last": "2026-09-29",
+    "days": 3154,
+    "splits_bonuses_applied": [
+     [
+      "2017-09-07",
+      2.0
+     ],
+     [
+      "2024-10-28",
+      2.0
+     ]
+    ],
+    "unexplained_jumps": []
+   },
+   "SBILIFE": {
+    "first": "2017-10-03",
+    "last": "2026-09-29",
+    "days": 2229,
+    "splits_bonuses_applied": [],
+    "unexplained_jumps": []
+   },
+   "SBIN": {
+    "first": "2014-01-01",
+    "last": "2026-09-29",
+    "days": 3154,
+    "splits_bonuses_applied": [],
+    "unexplained_jumps": [
+     "2014-11-20"
+    ]
+   },
+   "SHRIRAMFIN": {
+    "first": "2014-01-01",
+    "last": "2026-09-29",
+    "days": 3154,
+    "splits_bonuses_applied": [
+     [
+      "2025-01-10",
+      5.0
+     ]
+    ],
+    "unexplained_jumps": []
+   },
+   "SUNPHARMA": {
+    "first": "2014-01-01",
+    "last": "2026-09-29",
+    "days": 3154,
+    "splits_bonuses_applied": [],
+    "unexplained_jumps": []
+   },
+   "TATACONSUM": {
+    "first": "2014-01-01",
+    "last": "2026-09-29",
+    "days": 3154,
+    "splits_bonuses_applied": [],
+    "unexplained_jumps": []
+   },
+   "TATASTEEL": {
+    "first": "2014-01-01",
+    "last": "2026-09-29",
+    "days": 3154,
+    "splits_bonuses_applied": [
+     [
+      "2022-07-28",
+      10.0
+     ]
+    ],
+    "unexplained_jumps": []
+   },
+   "TCS": {
+    "first": "2014-01-01",
+    "last": "2026-09-29",
+    "days": 3154,
+    "splits_bonuses_applied": [],
+    "unexplained_jumps": [
+     "2018-05-31"
+    ]
+   },
+   "TECHM": {
+    "first": "2014-01-01",
+    "last": "2026-09-29",
+    "days": 3154,
+    "splits_bonuses_applied": [],
+    "unexplained_jumps": [
+     "2015-03-19"
+    ]
+   },
+   "TITAN": {
+    "first": "2014-01-01",
+    "last": "2026-09-29",
+    "days": 3154,
+    "splits_bonuses_applied": [],
+    "unexplained_jumps": []
+   },
+   "TMPV": {
+    "first": "2014-01-01",
+    "last": "2026-09-29",
+    "days": 3154,
+    "splits_bonuses_applied": [],
+    "unexplained_jumps": [
+     "2025-10-14"
+    ]
+   },
+   "TRENT": {
+    "first": "2014-01-01",
+    "last": "2026-09-29",
+    "days": 3154,
+    "splits_bonuses_applied": [
+     [
+      "2016-09-12",
+      10.0
+     ],
+     [
+      "2026-06-04",
+      1.5
+     ]
+    ],
+    "unexplained_jumps": []
+   },
+   "ULTRACEMCO": {
+    "first": "2014-01-01",
+    "last": "2026-09-29",
+    "days": 3154,
+    "splits_bonuses_applied": [],
+    "unexplained_jumps": []
+   }
+  }
+ },
+ "data": {
+  "prices": "NSE historical trade data (EQ series), unadjusted; splits and bonuses adjusted from NSE corporate actions (fincalc.signals.adjust_for_actions)",
+  "index": "NIFTY 50 price index, NSE historicalOR/indicesHistory (no total-return series there)",
+  "returns": "price returns, no dividends, for stocks and index alike"
+ },
+ "costs": {
+  "buy": 0.0016860459999999999,
+  "sell": 0.001536046,
+  "components": {
+   "stt": 0.001,
+   "stamp_buy": 0.00015,
+   "nse_txn": 2.97e-05,
+   "gst_on_txn": 0.18,
+   "sebi_fee": 1e-06,
+   "slippage": 0.0005,
+   "brokerage": 0
+  }
+ },
+ "caveats": [
+  "Survivorship bias: today's NIFTY 50 applied to the past; absolute returns are biased up.",
+  "Monthly 12-month windows overlap, and stocks in the same month are correlated: the effective sample is far smaller than n. Wilson intervals use n/12 and are still optimistic.",
+  "Price returns only (no dividends) on both sides; cash earns 0 %.",
+  "Not investment advice; a personal research backtest, not a track record."
+ ],
+ "months": [
+  {
+   "month_end": "2015-01-30",
+   "next": "2015-02-28",
+   "universe": 41,
+   "qualifying": 36,
+   "held": [
+    "ADANIPORTS",
+    "AXISBANK",
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "BEL",
+    "EICHERMOT",
+    "KOTAKBANK",
+    "MARUTI"
+   ],
+   "strategy": 0.027353938509746305,
+   "strategy_gross": 0.029039984509746306,
+   "equal_weight": 0.009907698800078772,
+   "nifty50": 0.01055182826459622,
+   "turnover": 0.5,
+   "cost": 0.0016860459999999999,
+   "ew_turnover": 0.5
+  },
+  {
+   "month_end": "2015-02-28",
+   "next": "2015-03-31",
+   "universe": 41,
+   "qualifying": 33,
+   "held": [
+    "ADANIENT",
+    "AXISBANK",
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "BEL",
+    "EICHERMOT",
+    "KOTAKBANK",
+    "MARUTI"
+   ],
+   "strategy": -0.053408299099254465,
+   "strategy_gross": -0.05295725023575218,
+   "equal_weight": -0.044011294940623,
+   "nifty50": -0.04615332767907798,
+   "turnover": 0.13998633915552008,
+   "cost": 0.00045104886350228797,
+   "ew_turnover": 0.05658876492688299
+  },
+  {
+   "month_end": "2015-03-31",
+   "next": "2015-04-30",
+   "universe": 39,
+   "qualifying": 28,
+   "held": [
+    "AXISBANK",
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "BEL",
+    "CIPLA",
+    "EICHERMOT",
+    "KOTAKBANK",
+    "MARUTI"
+   ],
+   "strategy": -0.025034218582328977,
+   "strategy_gross": -0.02458940166958913,
+   "equal_weight": -0.027637488063426693,
+   "nifty50": -0.03645035920386286,
+   "turnover": 0.13805220730501977,
+   "cost": 0.0004448169127398457,
+   "ew_turnover": 0.023037141556766574
+  },
+  {
+   "month_end": "2015-04-30",
+   "next": "2015-05-29",
+   "universe": 39,
+   "qualifying": 22,
+   "held": [
+    "AXISBANK",
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "BEL",
+    "CIPLA",
+    "EICHERMOT",
+    "KOTAKBANK",
+    "MARUTI"
+   ],
+   "strategy": 0.07877400515980204,
+   "strategy_gross": 0.07883922783714084,
+   "equal_weight": 0.03663661330923127,
+   "nifty50": 0.03081953187068387,
+   "turnover": 0.02024233862310689,
+   "cost": 6.522267733880373e-05,
+   "ew_turnover": 0.02357853957917993
+  },
+  {
+   "month_end": "2015-05-29",
+   "next": "2015-06-30",
+   "universe": 39,
+   "qualifying": 25,
+   "held": [
+    "BAJFINANCE",
+    "BEL",
+    "CIPLA",
+    "DRREDDY",
+    "EICHERMOT",
+    "HINDUNILVR",
+    "MARUTI",
+    "SUNPHARMA"
+   ],
+   "strategy": 0.030670379681194206,
+   "strategy_gross": 0.031936583607497654,
+   "equal_weight": -0.00450200480960214,
+   "nifty50": -0.007725006373278442,
+   "turnover": 0.3929757208370981,
+   "cost": 0.001266203926303447,
+   "ew_turnover": 0.04024317463501764
+  },
+  {
+   "month_end": "2015-06-30",
+   "next": "2015-07-31",
+   "universe": 38,
+   "qualifying": 20,
+   "held": [
+    "AXISBANK",
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "BEL",
+    "DRREDDY",
+    "EICHERMOT",
+    "HINDUNILVR",
+    "MARUTI"
+   ],
+   "strategy": 0.07762845978281964,
+   "strategy_gross": 0.07847946666555927,
+   "equal_weight": 0.021071851575666392,
+   "nifty50": 0.019639122901356387,
+   "turnover": 0.2641162582383205,
+   "cost": 0.0008510068827396266,
+   "ew_turnover": 0.029081483219055862
+  },
+  {
+   "month_end": "2015-07-31",
+   "next": "2015-08-31",
+   "universe": 38,
+   "qualifying": 22,
+   "held": [
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "BEL",
+    "EICHERMOT",
+    "HDFCBANK",
+    "HINDUNILVR",
+    "KOTAKBANK",
+    "MARUTI"
+   ],
+   "strategy": -0.06444141273755562,
+   "strategy_gross": -0.06354410051321223,
+   "equal_weight": -0.06218422777708799,
+   "nifty50": -0.06581036816538444,
+   "turnover": 0.2784874622895276,
+   "cost": 0.0008973122243433884,
+   "ew_turnover": 0.030140733531264303
+  },
+  {
+   "month_end": "2015-08-31",
+   "next": "2015-09-30",
+   "universe": 38,
+   "qualifying": 12,
+   "held": [
+    "ASIANPAINT",
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "DRREDDY",
+    "EICHERMOT",
+    "HDFCBANK",
+    "MARUTI"
+   ],
+   "strategy": 0.0036122255034004864,
+   "strategy_gross": 0.004625917707144614,
+   "equal_weight": -0.014185738193098048,
+   "nifty50": -0.0028100811661837533,
+   "turnover": 0.31751644699907006,
+   "cost": 0.0010136922037441275,
+   "ew_turnover": 0.04584554134854746
+  },
+  {
+   "month_end": "2015-09-30",
+   "next": "2015-10-30",
+   "universe": 37,
+   "qualifying": 11,
+   "held": [
+    "ASIANPAINT",
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "DRREDDY",
+    "EICHERMOT",
+    "HDFCBANK",
+    "MARUTI"
+   ],
+   "strategy": 0.020710943853998732,
+   "strategy_gross": 0.02092072915446262,
+   "equal_weight": 0.037747942499219825,
+   "nifty50": 0.014706437368692482,
+   "turnover": 0.06221221142954741,
+   "cost": 0.00020978530046388536,
+   "ew_turnover": 0.026877644367947245
+  },
+  {
+   "month_end": "2015-10-30",
+   "next": "2015-11-30",
+   "universe": 37,
+   "qualifying": 14,
+   "held": [
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "DRREDDY",
+    "EICHERMOT",
+    "HDFCBANK",
+    "KOTAKBANK",
+    "MARUTI"
+   ],
+   "strategy": -0.03942387692054253,
+   "strategy_gross": -0.038919273269365506,
+   "equal_weight": -0.012832746022373217,
+   "nifty50": -0.016185623248778813,
+   "turnover": 0.15660746222547897,
+   "cost": 0.000504603651177018,
+   "ew_turnover": 0.02748623144901402
+  },
+  {
+   "month_end": "2015-11-30",
+   "next": "2015-12-31",
+   "universe": 38,
+   "qualifying": 13,
+   "held": [
+    "ASIANPAINT",
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "GRASIM",
+    "HDFCBANK",
+    "KOTAKBANK",
+    "M&M",
+    "MARUTI"
+   ],
+   "strategy": 0.018390891848447073,
+   "strategy_gross": 0.019599176348447073,
+   "equal_weight": 0.020265437929464402,
+   "nifty50": 0.0013988217132416825,
+   "turnover": 0.37499999999999994,
+   "cost": 0.0012082844999999997,
+   "ew_turnover": 0.04364784739183295
+  },
+  {
+   "month_end": "2015-12-31",
+   "next": "2016-01-29",
+   "universe": 38,
+   "qualifying": 18,
+   "held": [
+    "APOLLOHOSP",
+    "ASIANPAINT",
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "GRASIM",
+    "HDFCBANK",
+    "MARUTI",
+    "TRENT"
+   ],
+   "strategy": -0.055550351931101506,
+   "strategy_gross": -0.054725894201226505,
+   "equal_weight": -0.05634556517233344,
+   "nifty50": -0.04817306058756543,
+   "turnover": 0.2558765329714355,
+   "cost": 0.0008244577298749984,
+   "ew_turnover": 0.0248558390433111
+  },
+  {
+   "month_end": "2016-01-29",
+   "next": "2016-02-29",
+   "universe": 38,
+   "qualifying": 12,
+   "held": [
+    "APOLLOHOSP",
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "JSWSTEEL",
+    "KOTAKBANK",
+    "NTPC",
+    "RELIANCE",
+    "TRENT"
+   ],
+   "strategy": -0.05929733391238253,
+   "strategy_gross": -0.0576590470852338,
+   "equal_weight": -0.060787115809245285,
+   "nifty50": -0.07622082223294613,
+   "turnover": 0.5084543914788084,
+   "cost": 0.0016382868271487367,
+   "ew_turnover": 0.029150762179533246
+  },
+  {
+   "month_end": "2016-02-29",
+   "next": "2016-03-31",
+   "universe": 38,
+   "qualifying": 8,
+   "held": [
+    "APOLLOHOSP",
+    "ASIANPAINT",
+    "BAJFINANCE",
+    "EICHERMOT",
+    "JSWSTEEL",
+    "RELIANCE",
+    "SUNPHARMA",
+    "TRENT"
+   ],
+   "strategy": 0.05003978754493481,
+   "strategy_gross": 0.051262144334512094,
+   "equal_weight": 0.11258009310306807,
+   "nifty50": 0.10753465339449408,
+   "turnover": 0.3793674387873734,
+   "cost": 0.0012223567895772855,
+   "ew_turnover": 0.030676679272557808
+  },
+  {
+   "month_end": "2016-03-31",
+   "next": "2016-04-29",
+   "universe": 40,
+   "qualifying": 18,
+   "held": [
+    "ASIANPAINT",
+    "BAJFINANCE",
+    "EICHERMOT",
+    "HINDUNILVR",
+    "JSWSTEEL",
+    "RELIANCE",
+    "TRENT",
+    "ULTRACEMCO"
+   ],
+   "strategy": 0.009572105170438976,
+   "strategy_gross": 0.010401134121859279,
+   "equal_weight": 0.023471356296253108,
+   "nifty50": 0.014395740721596217,
+   "turnover": 0.2572952452693168,
+   "cost": 0.0008290289514203034,
+   "ew_turnover": 0.06506111213369914
+  },
+  {
+   "month_end": "2016-04-29",
+   "next": "2016-05-31",
+   "universe": 40,
+   "qualifying": 25,
+   "held": [
+    "BAJAJ-AUTO",
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "EICHERMOT",
+    "JSWSTEEL",
+    "RELIANCE",
+    "TRENT",
+    "ULTRACEMCO"
+   ],
+   "strategy": 0.002222417412870055,
+   "strategy_gross": 0.0030779952987790155,
+   "equal_weight": 0.028863916016171068,
+   "nifty50": 0.03952966954572101,
+   "turnover": 0.2655349027616096,
+   "cost": 0.0008555778859089603,
+   "ew_turnover": 0.01779359441359308
+  },
+  {
+   "month_end": "2016-05-31",
+   "next": "2016-06-30",
+   "universe": 40,
+   "qualifying": 27,
+   "held": [
+    "ASIANPAINT",
+    "BAJFINANCE",
+    "GRASIM",
+    "HDFCBANK",
+    "JSWSTEEL",
+    "SHRIRAMFIN",
+    "TRENT",
+    "ULTRACEMCO"
+   ],
+   "strategy": 0.046022497815616764,
+   "strategy_gross": 0.04764996573508623,
+   "equal_weight": 0.04720447098260376,
+   "nifty50": 0.015643190647173455,
+   "turnover": 0.505096663741901,
+   "cost": 0.001627467919469469,
+   "ew_turnover": 0.029077440962366634
+  },
+  {
+   "month_end": "2016-06-30",
+   "next": "2016-07-29",
+   "universe": 42,
+   "qualifying": 33,
+   "held": [
+    "ASIANPAINT",
+    "BAJFINANCE",
+    "GRASIM",
+    "HDFCBANK",
+    "INFY",
+    "JSWSTEEL",
+    "SHRIRAMFIN",
+    "TRENT"
+   ],
+   "strategy": 0.08062251319134352,
+   "strategy_gross": 0.08106714773872088,
+   "equal_weight": 0.0553512227660753,
+   "nifty50": 0.04232149859732748,
+   "turnover": 0.13799560887068407,
+   "cost": 0.0004446345473773601,
+   "ew_turnover": 0.05150068583313029
+  },
+  {
+   "month_end": "2016-07-29",
+   "next": "2016-08-31",
+   "universe": 42,
+   "qualifying": 34,
+   "held": [
+    "ASIANPAINT",
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "GRASIM",
+    "ITC",
+    "JSWSTEEL",
+    "SHRIRAMFIN",
+    "TRENT"
+   ],
+   "strategy": 0.046071073249293874,
+   "strategy_gross": 0.04692232292730027,
+   "equal_weight": 0.027467479004380183,
+   "nifty50": 0.017097875788620875,
+   "turnover": 0.2641916115388362,
+   "cost": 0.0008512496780063916,
+   "ew_turnover": 0.024866877573235052
+  },
+  {
+   "month_end": "2016-08-31",
+   "next": "2016-09-30",
+   "universe": 42,
+   "qualifying": 34,
+   "held": [
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "GRASIM",
+    "HINDALCO",
+    "JSWSTEEL",
+    "POWERGRID",
+    "SHRIRAMFIN",
+    "TRENT"
+   ],
+   "strategy": -0.01882021029504756,
+   "strategy_gross": -0.017947790217884896,
+   "equal_weight": -0.019884777526918297,
+   "nifty50": -0.01992328879379035,
+   "turnover": 0.27076200094927905,
+   "cost": 0.0008724200771626643,
+   "ew_turnover": 0.026092638134223224
+  },
+  {
+   "month_end": "2016-09-30",
+   "next": "2016-10-30",
+   "universe": 43,
+   "qualifying": 35,
+   "held": [
+    "ASIANPAINT",
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "GRASIM",
+    "HINDALCO",
+    "JSWSTEEL",
+    "POWERGRID",
+    "TATASTEEL",
+    "TRENT"
+   ],
+   "strategy": 0.003263586357506282,
+   "strategy_gross": 0.003979606801950726,
+   "equal_weight": 0.012770151685979607,
+   "nifty50": 0.0016896697885881995,
+   "turnover": 0.2222222222222222,
+   "cost": 0.0007160204444444443,
+   "ew_turnover": 0.0304612841549454
+  },
+  {
+   "month_end": "2016-10-30",
+   "next": "2016-11-30",
+   "universe": 43,
+   "qualifying": 32,
+   "held": [
+    "ASIANPAINT",
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "GRASIM",
+    "HINDALCO",
+    "JSWSTEEL",
+    "TATASTEEL",
+    "TRENT",
+    "ULTRACEMCO"
+   ],
+   "strategy": -0.04952374805714792,
+   "strategy_gross": -0.04909682227768916,
+   "equal_weight": -0.042000809135986535,
+   "nifty50": -0.046512167128465065,
+   "turnover": 0.13249956222812775,
+   "cost": 0.0004269257794587526,
+   "ew_turnover": 0.02163308230264278
+  },
+  {
+   "month_end": "2016-11-30",
+   "next": "2016-12-30",
+   "universe": 44,
+   "qualifying": 26,
+   "held": [
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "EICHERMOT",
+    "GRASIM",
+    "HINDALCO",
+    "JSWSTEEL",
+    "POWERGRID",
+    "TATASTEEL",
+    "ULTRACEMCO"
+   ],
+   "strategy": -0.055487073666889264,
+   "strategy_gross": -0.0546688649941293,
+   "equal_weight": -0.02461343217543331,
+   "nifty50": -0.004705453219040701,
+   "turnover": 0.25393709203833026,
+   "cost": 0.0008182086727599677,
+   "ew_turnover": 0.043285013858249816
+  },
+  {
+   "month_end": "2016-12-30",
+   "next": "2017-01-31",
+   "universe": 44,
+   "qualifying": 21,
+   "held": [
+    "BAJAJFINSV",
+    "BEL",
+    "EICHERMOT",
+    "HDFCBANK",
+    "HINDALCO",
+    "JSWSTEEL",
+    "NTPC",
+    "POWERGRID",
+    "TATASTEEL"
+   ],
+   "strategy": 0.12840060301348105,
+   "strategy_gross": 0.12950107598511842,
+   "equal_weight": 0.07214127389943902,
+   "nifty50": 0.0458721200127048,
+   "turnover": 0.34153989756883896,
+   "cost": 0.0011004729716373755,
+   "ew_turnover": 0.02317085323451614
+  },
+  {
+   "month_end": "2017-01-31",
+   "next": "2017-02-28",
+   "universe": 44,
+   "qualifying": 27,
+   "held": [
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "EICHERMOT",
+    "HDFCBANK",
+    "HINDALCO",
+    "JSWSTEEL",
+    "MARUTI",
+    "POWERGRID",
+    "TATASTEEL"
+   ],
+   "strategy": 0.031625559746919246,
+   "strategy_gross": 0.032387444434332016,
+   "equal_weight": 0.03693322407580894,
+   "nifty50": 0.03717893310595377,
+   "turnover": 0.23645652806089096,
+   "cost": 0.0007618846874127722,
+   "ew_turnover": 0.026843685680277105
+  },
+  {
+   "month_end": "2017-02-28",
+   "next": "2017-03-31",
+   "universe": 44,
+   "qualifying": 32,
+   "held": [
+    "BAJAJFINSV",
+    "HDFCBANK",
+    "HINDALCO",
+    "JSWSTEEL",
+    "MARUTI",
+    "POWERGRID",
+    "SBIN",
+    "TATASTEEL",
+    "TRENT"
+   ],
+   "strategy": 0.040554381933033276,
+   "strategy_gross": 0.041368678275091025,
+   "equal_weight": 0.034035825229241444,
+   "nifty50": 0.03312649218433261,
+   "turnover": 0.2527228713698262,
+   "cost": 0.000814296342057746,
+   "ew_turnover": 0.03717756524876272
+  },
+  {
+   "month_end": "2017-03-31",
+   "next": "2017-04-28",
+   "universe": 43,
+   "qualifying": 33,
+   "held": [
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "HDFCBANK",
+    "HINDALCO",
+    "JSWSTEEL",
+    "MARUTI",
+    "POWERGRID",
+    "TATASTEEL",
+    "TRENT"
+   ],
+   "strategy": 0.040699365106480416,
+   "strategy_gross": 0.041098591210400284,
+   "equal_weight": 0.0107456853331968,
+   "nifty50": 0.014203569968660457,
+   "turnover": 0.12390276376958487,
+   "cost": 0.00039922610391986916,
+   "ew_turnover": 0.023367256393758692
+  },
+  {
+   "month_end": "2017-04-28",
+   "next": "2017-05-31",
+   "universe": 43,
+   "qualifying": 31,
+   "held": [
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "HDFCBANK",
+    "HINDALCO",
+    "KOTAKBANK",
+    "MARUTI",
+    "POWERGRID",
+    "SBIN",
+    "TRENT"
+   ],
+   "strategy": 0.017336786833829186,
+   "strategy_gross": 0.01809321953169718,
+   "equal_weight": 0.01607862379561838,
+   "nifty50": 0.03409268006943211,
+   "turnover": 0.23476446292284478,
+   "cost": 0.0007564326978679948,
+   "ew_turnover": 0.02209747365601939
+  },
+  {
+   "month_end": "2017-05-31",
+   "next": "2017-06-30",
+   "universe": 43,
+   "qualifying": 32,
+   "held": [
+    "ADANIPORTS",
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "HDFCBANK",
+    "HINDALCO",
+    "MARUTI",
+    "POWERGRID",
+    "RELIANCE",
+    "SBIN"
+   ],
+   "strategy": 0.0038140910646591794,
+   "strategy_gross": 0.0045845084596118045,
+   "equal_weight": 0.0039544434222795926,
+   "nifty50": -0.010430037677017112,
+   "turnover": 0.2391047167345393,
+   "cost": 0.0007704173949526252,
+   "ew_turnover": 0.026440600791230704
+  },
+  {
+   "month_end": "2017-06-30",
+   "next": "2017-07-31",
+   "universe": 43,
+   "qualifying": 32,
+   "held": [
+    "ADANIPORTS",
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "EICHERMOT",
+    "HDFCBANK",
+    "HINDALCO",
+    "KOTAKBANK",
+    "MARUTI",
+    "RELIANCE"
+   ],
+   "strategy": 0.13246449832392498,
+   "strategy_gross": 0.13320863826215718,
+   "equal_weight": 0.0541462652494466,
+   "nifty50": 0.058418846957745574,
+   "turnover": 0.23094931436848695,
+   "cost": 0.0007441399382321868,
+   "ew_turnover": 0.02256757965860032
+  },
+  {
+   "month_end": "2017-07-31",
+   "next": "2017-08-31",
+   "universe": 43,
+   "qualifying": 36,
+   "held": [
+    "ADANIENT",
+    "ADANIPORTS",
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "HDFCBANK",
+    "KOTAKBANK",
+    "MARUTI",
+    "RELIANCE",
+    "TATASTEEL"
+   ],
+   "strategy": 0.016895191583878276,
+   "strategy_gross": 0.017680563000615254,
+   "equal_weight": 0.0023097713531954733,
+   "nifty50": -0.01579819590953757,
+   "turnover": 0.2437458076110108,
+   "cost": 0.0007853714167369769,
+   "ew_turnover": 0.025592820198360164
+  },
+  {
+   "month_end": "2017-08-31",
+   "next": "2017-09-29",
+   "universe": 43,
+   "qualifying": 35,
+   "held": [
+    "ADANIENT",
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "HDFCBANK",
+    "INDIGO",
+    "KOTAKBANK",
+    "MARUTI",
+    "RELIANCE",
+    "TATASTEEL"
+   ],
+   "strategy": -0.020403167157652363,
+   "strategy_gross": -0.019976356586192654,
+   "equal_weight": -0.0039428982796113135,
+   "nifty50": -0.013037034049546703,
+   "turnover": 0.13246380657650628,
+   "cost": 0.00042681057145970824,
+   "ew_turnover": 0.030987922199981904
+  },
+  {
+   "month_end": "2017-09-29",
+   "next": "2017-10-31",
+   "universe": 43,
+   "qualifying": 32,
+   "held": [
+    "ADANIENT",
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "HDFCBANK",
+    "HINDALCO",
+    "HINDUNILVR",
+    "MARUTI",
+    "RELIANCE",
+    "TATASTEEL"
+   ],
+   "strategy": 0.06244104902899454,
+   "strategy_gross": 0.06321058224281109,
+   "equal_weight": 0.07043354370676093,
+   "nifty50": 0.05585068344809252,
+   "turnover": 0.23883030460227422,
+   "cost": 0.0007695332138165509,
+   "ew_turnover": 0.02502473598043619
+  },
+  {
+   "month_end": "2017-10-31",
+   "next": "2017-11-30",
+   "universe": 43,
+   "qualifying": 36,
+   "held": [
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "HDFCBANK",
+    "HINDALCO",
+    "HINDUNILVR",
+    "MARUTI",
+    "RELIANCE",
+    "TATASTEEL",
+    "TITAN"
+   ],
+   "strategy": 0.0278165633817758,
+   "strategy_gross": 0.02826868400157272,
+   "equal_weight": 0.012080628498102685,
+   "nifty50": -0.010522190937853781,
+   "turnover": 0.14031896662072924,
+   "cost": 0.00045212061979691873,
+   "ew_turnover": 0.021913595418916108
+  },
+  {
+   "month_end": "2017-11-30",
+   "next": "2017-12-29",
+   "universe": 43,
+   "qualifying": 35,
+   "held": [
+    "BAJFINANCE",
+    "BHARTIARTL",
+    "HDFCBANK",
+    "HINDUNILVR",
+    "MARUTI",
+    "RELIANCE",
+    "TATACONSUM",
+    "TATASTEEL",
+    "TITAN"
+   ],
+   "strategy": 0.055350689962322945,
+   "strategy_gross": 0.05612351533102784,
+   "equal_weight": 0.040366379225646336,
+   "nifty50": 0.029741212823484187,
+   "turnover": 0.23985204913605745,
+   "cost": 0.0007728253687048977,
+   "ew_turnover": 0.028349319508848496
+  },
+  {
+   "month_end": "2017-12-29",
+   "next": "2018-01-31",
+   "universe": 43,
+   "qualifying": 38,
+   "held": [
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "HDFCBANK",
+    "HINDUNILVR",
+    "MARUTI",
+    "RELIANCE",
+    "TATACONSUM",
+    "TATASTEEL",
+    "TITAN"
+   ],
+   "strategy": -0.015616097488878405,
+   "strategy_gross": -0.01520694433788425,
+   "equal_weight": 0.016105837210016842,
+   "nifty50": 0.0471953431395824,
+   "turnover": 0.12698369599445175,
+   "cost": 0.000409153150994155,
+   "ew_turnover": 0.01749943939273623
+  },
+  {
+   "month_end": "2018-01-31",
+   "next": "2018-02-28",
+   "universe": 43,
+   "qualifying": 34,
+   "held": [
+    "ADANIENT",
+    "BAJFINANCE",
+    "BHARTIARTL",
+    "HDFCBANK",
+    "HINDUNILVR",
+    "MARUTI",
+    "RELIANCE",
+    "TATACONSUM",
+    "TITAN"
+   ],
+   "strategy": -0.04313700710080226,
+   "strategy_gross": -0.04238345315737737,
+   "equal_weight": -0.027741758777280023,
+   "nifty50": -0.04850059395884909,
+   "turnover": 0.23387102026413098,
+   "cost": 0.0007535539434248943,
+   "ew_turnover": 0.033452926549561716
+  },
+  {
+   "month_end": "2018-02-28",
+   "next": "2018-03-28",
+   "universe": 44,
+   "qualifying": 29,
+   "held": [
+    "ADANIENT",
+    "HDFCBANK",
+    "HINDUNILVR",
+    "KOTAKBANK",
+    "MARUTI",
+    "RELIANCE",
+    "TATACONSUM",
+    "TATASTEEL",
+    "TITAN"
+   ],
+   "strategy": -0.04386302208637825,
+   "strategy_gross": -0.043118315801547145,
+   "equal_weight": -0.036052337226961904,
+   "nifty50": -0.03613412943099348,
+   "turnover": 0.2311250842096083,
+   "cost": 0.0007447062848311052,
+   "ew_turnover": 0.03239850233186334
+  },
+  {
+   "month_end": "2018-03-28",
+   "next": "2018-04-30",
+   "universe": 45,
+   "qualifying": 23,
+   "held": [
+    "ADANIENT",
+    "HDFCBANK",
+    "HINDUNILVR",
+    "JSWSTEEL",
+    "KOTAKBANK",
+    "MARUTI",
+    "RELIANCE",
+    "TATACONSUM",
+    "TITAN"
+   ],
+   "strategy": 0.06844240726660483,
+   "strategy_gross": 0.06888959553846052,
+   "equal_weight": 0.06597233645699765,
+   "nifty50": 0.06186163323017291,
+   "turnover": 0.1387881760842599,
+   "cost": 0.00044718827185568505,
+   "ew_turnover": 0.04079210545948063
+  },
+  {
+   "month_end": "2018-04-30",
+   "next": "2018-05-31",
+   "universe": 45,
+   "qualifying": 29,
+   "held": [
+    "HDFCBANK",
+    "HINDUNILVR",
+    "JSWSTEEL",
+    "MARUTI",
+    "NESTLEIND",
+    "TATACONSUM",
+    "TECHM",
+    "TITAN",
+    "TRENT"
+   ],
+   "strategy": -0.00041059395684121206,
+   "strategy_gross": 0.0007100266922772653,
+   "equal_weight": -0.02433833491194078,
+   "nifty50": -0.0002979696164107093,
+   "turnover": 0.3477928777696222,
+   "cost": 0.0011206206491184774,
+   "ew_turnover": 0.0360800630662334
+  },
+  {
+   "month_end": "2018-05-31",
+   "next": "2018-06-29",
+   "universe": 44,
+   "qualifying": 22,
+   "held": [
+    "HINDUNILVR",
+    "JSWSTEEL",
+    "KOTAKBANK",
+    "NESTLEIND",
+    "RELIANCE",
+    "SHRIRAMFIN",
+    "TATACONSUM",
+    "TECHM",
+    "TITAN"
+   ],
+   "strategy": -0.015454094441674846,
+   "strategy_gross": -0.014315698903725624,
+   "equal_weight": -0.011215017628501309,
+   "nifty50": -0.002035180208920351,
+   "turnover": 0.3533094455245917,
+   "cost": 0.0011383955379492227,
+   "ew_turnover": 0.03307495833829618
+  },
+  {
+   "month_end": "2018-06-29",
+   "next": "2018-07-31",
+   "universe": 44,
+   "qualifying": 18,
+   "held": [
+    "BAJFINANCE",
+    "HDFCBANK",
+    "HINDUNILVR",
+    "JSWSTEEL",
+    "KOTAKBANK",
+    "NESTLEIND",
+    "TATACONSUM",
+    "TECHM",
+    "TITAN"
+   ],
+   "strategy": 0.03426158017656255,
+   "strategy_gross": 0.03500531090689839,
+   "equal_weight": 0.05188475668859923,
+   "nifty50": 0.059938586748551126,
+   "turnover": 0.23082231368186729,
+   "cost": 0.0007437307303358351,
+   "ew_turnover": 0.026856572507539783
+  },
+  {
+   "month_end": "2018-07-31",
+   "next": "2018-08-31",
+   "universe": 44,
+   "qualifying": 26,
+   "held": [
+    "BAJFINANCE",
+    "HINDUNILVR",
+    "INFY",
+    "JSWSTEEL",
+    "KOTAKBANK",
+    "M&M",
+    "NESTLEIND",
+    "TECHM",
+    "TITAN"
+   ],
+   "strategy": 0.06157110151413384,
+   "strategy_gross": 0.06231682656454409,
+   "equal_weight": 0.05183773730905864,
+   "nifty50": 0.028529916787742637,
+   "turnover": 0.231441265615708,
+   "cost": 0.0007457250504102478,
+   "ew_turnover": 0.036348294172018396
+  },
+  {
+   "month_end": "2018-08-31",
+   "next": "2018-09-28",
+   "universe": 44,
+   "qualifying": 32,
+   "held": [
+    "BAJFINANCE",
+    "HDFCBANK",
+    "HINDUNILVR",
+    "INFY",
+    "KOTAKBANK",
+    "M&M",
+    "NESTLEIND",
+    "RELIANCE",
+    "TECHM"
+   ],
+   "strategy": -0.08390689632656656,
+   "strategy_gross": -0.08313939867818844,
+   "equal_weight": -0.08896132632677148,
+   "nifty50": -0.0642138607080176,
+   "turnover": 0.2381985518657184,
+   "cost": 0.0007674976483781163,
+   "ew_turnover": 0.028780415199544922
+  },
+  {
+   "month_end": "2018-09-28",
+   "next": "2018-10-31",
+   "universe": 44,
+   "qualifying": 19,
+   "held": [
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "HINDUNILVR",
+    "INFY",
+    "JSWSTEEL",
+    "M&M",
+    "NESTLEIND",
+    "RELIANCE",
+    "TECHM"
+   ],
+   "strategy": -0.04371970296083706,
+   "strategy_gross": -0.04289606929281948,
+   "equal_weight": -0.02809206284185704,
+   "nifty50": -0.04975549954484948,
+   "turnover": 0.2556207793004004,
+   "cost": 0.0008236336680175855,
+   "ew_turnover": 0.03335614342312049
+  },
+  {
+   "month_end": "2018-10-31",
+   "next": "2018-11-30",
+   "universe": 45,
+   "qualifying": 17,
+   "held": [
+    "AXISBANK",
+    "BAJFINANCE",
+    "HCLTECH",
+    "HINDUNILVR",
+    "INFY",
+    "JSWSTEEL",
+    "NESTLEIND",
+    "RELIANCE",
+    "TECHM"
+   ],
+   "strategy": 0.020422527262495545,
+   "strategy_gross": 0.021212674803752465,
+   "equal_weight": 0.02599512143887319,
+   "nifty50": 0.047190610979531256,
+   "turnover": 0.2452281130572683,
+   "cost": 0.0007901475412569197,
+   "ew_turnover": 0.04679331666603169
+  },
+  {
+   "month_end": "2018-11-30",
+   "next": "2018-12-31",
+   "universe": 46,
+   "qualifying": 21,
+   "held": [
+    "BAJFINANCE",
+    "HCLTECH",
+    "HINDUNILVR",
+    "INFY",
+    "ITC",
+    "KOTAKBANK",
+    "NESTLEIND",
+    "RELIANCE",
+    "TECHM"
+   ],
+   "strategy": 0.003145371265644853,
+   "strategy_gross": 0.003924748178243644,
+   "equal_weight": 0.009818587764108842,
+   "nifty50": -0.001305537040016569,
+   "turnover": 0.24188536907040248,
+   "cost": 0.0007793769125987913,
+   "ew_turnover": 0.045284069839313094
+  },
+  {
+   "month_end": "2018-12-31",
+   "next": "2019-01-31",
+   "universe": 46,
+   "qualifying": 24,
+   "held": [
+    "ASIANPAINT",
+    "BAJFINANCE",
+    "HDFCBANK",
+    "HINDUNILVR",
+    "INFY",
+    "KOTAKBANK",
+    "NESTLEIND",
+    "RELIANCE",
+    "TECHM"
+   ],
+   "strategy": 0.02506867320566534,
+   "strategy_gross": 0.02580617595272969,
+   "equal_weight": -0.031217957659250988,
+   "nifty50": -0.002909077518630343,
+   "turnover": 0.22888941317142808,
+   "cost": 0.000737502747064353,
+   "ew_turnover": 0.017359767797882283
+  },
+  {
+   "month_end": "2019-01-31",
+   "next": "2019-02-28",
+   "universe": 46,
+   "qualifying": 19,
+   "held": [
+    "ASIANPAINT",
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "HDFCBANK",
+    "HINDUNILVR",
+    "INFY",
+    "KOTAKBANK",
+    "NESTLEIND",
+    "TECHM"
+   ],
+   "strategy": 0.007482534587579511,
+   "strategy_gross": 0.007908522879727296,
+   "equal_weight": 0.0010682307919463445,
+   "nifty50": -0.0035500117718206825,
+   "turnover": 0.13220860613160168,
+   "cost": 0.0004259882921477847,
+   "ew_turnover": 0.030567602754762564
+  },
+  {
+   "month_end": "2019-02-28",
+   "next": "2019-03-29",
+   "universe": 46,
+   "qualifying": 17,
+   "held": [
+    "ASIANPAINT",
+    "AXISBANK",
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "DRREDDY",
+    "HINDUNILVR",
+    "INFY",
+    "NESTLEIND",
+    "RELIANCE"
+   ],
+   "strategy": 0.06339127205683998,
+   "strategy_gross": 0.06451830009990084,
+   "equal_weight": 0.06790400695292488,
+   "nifty50": 0.07703497799397718,
+   "turnover": 0.34978145970408614,
+   "cost": 0.0011270280430608582,
+   "ew_turnover": 0.023786536982784476
+  },
+  {
+   "month_end": "2019-03-29",
+   "next": "2019-04-30",
+   "universe": 46,
+   "qualifying": 27,
+   "held": [
+    "ASIANPAINT",
+    "AXISBANK",
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "HINDUNILVR",
+    "INFY",
+    "NESTLEIND",
+    "RELIANCE",
+    "TECHM"
+   ],
+   "strategy": 0.021036999190201525,
+   "strategy_gross": 0.021451351606493634,
+   "equal_weight": 0.019261868649693727,
+   "nifty50": 0.010689183492631482,
+   "turnover": 0.1285973262998408,
+   "cost": 0.0004143524162921066,
+   "ew_turnover": 0.022568546100726398
+  },
+  {
+   "month_end": "2019-04-30",
+   "next": "2019-05-31",
+   "universe": 46,
+   "qualifying": 30,
+   "held": [
+    "ASIANPAINT",
+    "AXISBANK",
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "DRREDDY",
+    "HDFCBANK",
+    "ICICIBANK",
+    "INFY",
+    "RELIANCE"
+   ],
+   "strategy": 0.01675066759377757,
+   "strategy_gross": 0.017855348138409916,
+   "equal_weight": 0.024951285871683694,
+   "nifty50": 0.014866170418321056,
+   "turnover": 0.3428457488589234,
+   "cost": 0.0011046805446323462,
+   "ew_turnover": 0.02223721487237615
+  },
+  {
+   "month_end": "2019-05-31",
+   "next": "2019-06-28",
+   "universe": 46,
+   "qualifying": 32,
+   "held": [
+    "AXISBANK",
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "DRREDDY",
+    "HCLTECH",
+    "HDFCBANK",
+    "ICICIBANK",
+    "INFY",
+    "RELIANCE"
+   ],
+   "strategy": -5.668146868931766e-05,
+   "strategy_gross": 0.0003729775341909409,
+   "equal_weight": 0.005044043564312637,
+   "nifty50": -0.011234777065789792,
+   "turnover": 0.13334783826168173,
+   "cost": 0.0004296590028802586,
+   "ew_turnover": 0.03431018876224308
+  },
+  {
+   "month_end": "2019-06-28",
+   "next": "2019-07-31",
+   "universe": 47,
+   "qualifying": 31,
+   "held": [
+    "AXISBANK",
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "HDFCBANK",
+    "ICICIBANK",
+    "RELIANCE",
+    "SBIN",
+    "TITAN",
+    "ULTRACEMCO"
+   ],
+   "strategy": -0.10793447923199569,
+   "strategy_gross": -0.10683956199762895,
+   "equal_weight": -0.07119878504195187,
+   "nifty50": -0.056905465757898344,
+   "turnover": 0.33981563355941724,
+   "cost": 0.0010949172343667295,
+   "ew_turnover": 0.03096261469666206
+  },
+  {
+   "month_end": "2019-07-31",
+   "next": "2019-08-30",
+   "universe": 47,
+   "qualifying": 24,
+   "held": [
+    "APOLLOHOSP",
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "ICICIBANK",
+    "INDIGO",
+    "LT",
+    "SBIN",
+    "TITAN",
+    "TRENT"
+   ],
+   "strategy": 0.020940950087206162,
+   "strategy_gross": 0.022441917941482682,
+   "equal_weight": 0.003236290826742747,
+   "nifty50": -0.00852221622593996,
+   "turnover": 0.4658364361652372,
+   "cost": 0.0015009678542765212,
+   "ew_turnover": 0.036131924096496196
+  },
+  {
+   "month_end": "2019-08-30",
+   "next": "2019-09-30",
+   "universe": 47,
+   "qualifying": 22,
+   "held": [
+    "BAJFINANCE",
+    "ICICIBANK",
+    "INDIGO",
+    "INFY",
+    "KOTAKBANK",
+    "POWERGRID",
+    "SBILIFE",
+    "TCS",
+    "TITAN"
+   ],
+   "strategy": 0.06608966234793794,
+   "strategy_gross": 0.06789990026440715,
+   "equal_weight": 0.050532070384327346,
+   "nifty50": 0.04093166715805241,
+   "turnover": 0.5618206793813514,
+   "cost": 0.001810237916469217,
+   "ew_turnover": 0.034346374764649516
+  },
+  {
+   "month_end": "2019-09-30",
+   "next": "2019-10-31",
+   "universe": 47,
+   "qualifying": 28,
+   "held": [
+    "APOLLOHOSP",
+    "ASIANPAINT",
+    "HDFCLIFE",
+    "ICICIBANK",
+    "INDIGO",
+    "NESTLEIND",
+    "SBILIFE",
+    "TITAN",
+    "TRENT"
+   ],
+   "strategy": 0.040831934177614576,
+   "strategy_gross": 0.04264475200256617,
+   "equal_weight": 0.06228699147901758,
+   "nifty50": 0.03512150909193901,
+   "turnover": 0.5626213729935697,
+   "cost": 0.001812817824951597,
+   "ew_turnover": 0.02390358462101739
+  },
+  {
+   "month_end": "2019-10-31",
+   "next": "2019-11-29",
+   "universe": 47,
+   "qualifying": 33,
+   "held": [
+    "ASIANPAINT",
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "HDFCLIFE",
+    "KOTAKBANK",
+    "NESTLEIND",
+    "SBILIFE",
+    "TITAN",
+    "TRENT"
+   ],
+   "strategy": -0.02547028865125629,
+   "strategy_gross": -0.0243905264825967,
+   "equal_weight": -0.0037987783794025663,
+   "nifty50": 0.015036897650589909,
+   "turnover": 0.335112147219753,
+   "cost": 0.0010797621686595884,
+   "ew_turnover": 0.0345050013349047
+  },
+  {
+   "month_end": "2019-11-29",
+   "next": "2019-12-31",
+   "universe": 47,
+   "qualifying": 32,
+   "held": [
+    "ASIANPAINT",
+    "BAJFINANCE",
+    "HDFCLIFE",
+    "HINDUNILVR",
+    "KOTAKBANK",
+    "NESTLEIND",
+    "SBILIFE",
+    "TITAN",
+    "TRENT"
+   ],
+   "strategy": 0.02513101086207046,
+   "strategy_gross": 0.025573633566923954,
+   "equal_weight": 0.009791298652171914,
+   "nifty50": 0.009323119927339585,
+   "turnover": 0.13737121871551042,
+   "cost": 0.00044262270485349636,
+   "ew_turnover": 0.04031277477427231
+  },
+  {
+   "month_end": "2019-12-31",
+   "next": "2020-01-31",
+   "universe": 46,
+   "qualifying": 31,
+   "held": [
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "HDFCLIFE",
+    "ICICIBANK",
+    "KOTAKBANK",
+    "RELIANCE",
+    "SBILIFE",
+    "TATACONSUM",
+    "TRENT"
+   ],
+   "strategy": 0.026666562499027824,
+   "strategy_gross": 0.02811150239614076,
+   "equal_weight": -0.0007609590550439866,
+   "nifty50": -0.016957788378963667,
+   "turnover": 0.44844774671639853,
+   "cost": 0.001444939897112934,
+   "ew_turnover": 0.01717122617820022
+  },
+  {
+   "month_end": "2020-01-31",
+   "next": "2020-02-28",
+   "universe": 46,
+   "qualifying": 28,
+   "held": [
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "BHARTIARTL",
+    "HDFCLIFE",
+    "ICICIBANK",
+    "NESTLEIND",
+    "SBILIFE",
+    "TATACONSUM",
+    "TRENT"
+   ],
+   "strategy": -0.004805724198363334,
+   "strategy_gross": -0.004038621703759968,
+   "equal_weight": -0.062332066602501325,
+   "nifty50": -0.06356325394370554,
+   "turnover": 0.23807591297932112,
+   "cost": 0.0007671024946033667,
+   "ew_turnover": 0.030679118309880606
+  },
+  {
+   "month_end": "2020-02-28",
+   "next": "2020-03-31",
+   "universe": 46,
+   "qualifying": 18,
+   "held": [
+    "ADANIENT",
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "HDFCLIFE",
+    "ICICIBANK",
+    "NESTLEIND",
+    "SBILIFE",
+    "TATACONSUM",
+    "TRENT"
+   ],
+   "strategy": -0.29418269763284227,
+   "strategy_gross": -0.2936921753796322,
+   "equal_weight": -0.23780297127662076,
+   "nifty50": -0.23246367755038277,
+   "turnover": 0.15223719658223042,
+   "cost": 0.0004905222532100319,
+   "ew_turnover": 0.03422552875049702
+  },
+  {
+   "month_end": "2020-03-31",
+   "next": "2020-04-30",
+   "universe": 46,
+   "qualifying": 4,
+   "held": [
+    "BHARTIARTL",
+    "DRREDDY",
+    "HINDUNILVR",
+    "NESTLEIND"
+   ],
+   "strategy": 0.05167383322095132,
+   "strategy_gross": 0.05360122277650688,
+   "equal_weight": 0.14003721018260634,
+   "nifty50": 0.14680003489284976,
+   "turnover": 0.611111111111111,
+   "cost": 0.0019273895555555554,
+   "ew_turnover": 0.07859934251897754
+  },
+  {
+   "month_end": "2020-04-30",
+   "next": "2020-05-29",
+   "universe": 46,
+   "qualifying": 9,
+   "held": [
+    "ASIANPAINT",
+    "BHARTIARTL",
+    "CIPLA",
+    "DRREDDY",
+    "HINDUNILVR",
+    "NESTLEIND",
+    "RELIANCE",
+    "SUNPHARMA",
+    "TATACONSUM"
+   ],
+   "strategy": 0.015038686437951199,
+   "strategy_gross": 0.016052307044001735,
+   "equal_weight": -0.006388015514847819,
+   "nifty50": -0.0283572855708476,
+   "turnover": 0.30231095257623913,
+   "cost": 0.0010136206060505357,
+   "ew_turnover": 0.04084751596672091
+  },
+  {
+   "month_end": "2020-05-29",
+   "next": "2020-06-30",
+   "universe": 46,
+   "qualifying": 8,
+   "held": [
+    "BHARTIARTL",
+    "CIPLA",
+    "DRREDDY",
+    "HINDUNILVR",
+    "NESTLEIND",
+    "RELIANCE",
+    "SUNPHARMA",
+    "TATACONSUM"
+   ],
+   "strategy": 0.024848134243583085,
+   "strategy_gross": 0.025065800786539597,
+   "equal_weight": 0.07831103771020885,
+   "nifty50": 0.07534210828470944,
+   "turnover": 0.07014072729451706,
+   "cost": 0.00021766654295651171,
+   "ew_turnover": 0.035507314688498284
+  },
+  {
+   "month_end": "2020-06-30",
+   "next": "2020-07-31",
+   "universe": 46,
+   "qualifying": 13,
+   "held": [
+    "BHARTIARTL",
+    "CIPLA",
+    "DRREDDY",
+    "HINDUNILVR",
+    "NESTLEIND",
+    "RELIANCE",
+    "SUNPHARMA",
+    "TATACONSUM",
+    "TRENT"
+   ],
+   "strategy": 0.06493455847297237,
+   "strategy_gross": 0.06518860351523563,
+   "equal_weight": 0.07116167526186255,
+   "nifty50": 0.0748730841284786,
+   "turnover": 0.07632168257353765,
+   "cost": 0.00025404504226325165,
+   "ew_turnover": 0.03422725637848267
+  },
+  {
+   "month_end": "2020-07-31",
+   "next": "2020-08-31",
+   "universe": 46,
+   "qualifying": 21,
+   "held": [
+    "BAJAJ-AUTO",
+    "BHARTIARTL",
+    "CIPLA",
+    "DRREDDY",
+    "HINDUNILVR",
+    "NESTLEIND",
+    "RELIANCE",
+    "TATACONSUM",
+    "TRENT"
+   ],
+   "strategy": 0.017876036466427846,
+   "strategy_gross": 0.01836408742523616,
+   "equal_weight": 0.06396834797684847,
+   "nifty50": 0.028360628349791472,
+   "turnover": 0.1514702121504646,
+   "cost": 0.00048805095880831477,
+   "ew_turnover": 0.0349008682650423
+  },
+  {
+   "month_end": "2020-08-31",
+   "next": "2020-09-30",
+   "universe": 46,
+   "qualifying": 31,
+   "held": [
+    "ADANIENT",
+    "BHARTIARTL",
+    "CIPLA",
+    "DRREDDY",
+    "EICHERMOT",
+    "INFY",
+    "RELIANCE",
+    "SUNPHARMA",
+    "TATACONSUM"
+   ],
+   "strategy": 0.03171671791522503,
+   "strategy_gross": 0.03322187816223913,
+   "equal_weight": -0.013223830281214643,
+   "nifty50": -0.012289791437980258,
+   "turnover": 0.4671375761505555,
+   "cost": 0.0015051602470140956,
+   "ew_turnover": 0.04143234464969604
+  },
+  {
+   "month_end": "2020-09-30",
+   "next": "2020-10-30",
+   "universe": 46,
+   "qualifying": 28,
+   "held": [
+    "ADANIENT",
+    "CIPLA",
+    "DRREDDY",
+    "EICHERMOT",
+    "JSWSTEEL",
+    "RELIANCE",
+    "SUNPHARMA",
+    "TATACONSUM",
+    "TRENT"
+   ],
+   "strategy": -0.007824360872782151,
+   "strategy_gross": -0.00705104178100819,
+   "equal_weight": 0.02512883928683282,
+   "nifty50": 0.03510542295877772,
+   "turnover": 0.24000527972943086,
+   "cost": 0.0007733190917739612,
+   "ew_turnover": 0.03982611051826962
+  },
+  {
+   "month_end": "2020-10-30",
+   "next": "2020-11-27",
+   "universe": 46,
+   "qualifying": 34,
+   "held": [
+    "ADANIENT",
+    "APOLLOHOSP",
+    "CIPLA",
+    "DRREDDY",
+    "INFY",
+    "RELIANCE",
+    "SUNPHARMA",
+    "TATACONSUM",
+    "TRENT"
+   ],
+   "strategy": 0.05645891921704823,
+   "strategy_gross": 0.05725564768929319,
+   "equal_weight": 0.16094483890668318,
+   "nifty50": 0.1139412835841409,
+   "turnover": 0.2472705534928735,
+   "cost": 0.0007967284722449597,
+   "ew_turnover": 0.028980147907643958
+  },
+  {
+   "month_end": "2020-11-27",
+   "next": "2020-12-31",
+   "universe": 46,
+   "qualifying": 43,
+   "held": [
+    "ADANIENT",
+    "APOLLOHOSP",
+    "ASIANPAINT",
+    "CIPLA",
+    "DRREDDY",
+    "INFY",
+    "RELIANCE",
+    "TATACONSUM",
+    "TCS"
+   ],
+   "strategy": 0.10941820170174023,
+   "strategy_gross": 0.11022787748974133,
+   "equal_weight": 0.08254720212639409,
+   "nifty50": 0.07809421734219035,
+   "turnover": 0.2512888483634548,
+   "cost": 0.0008096757880011007,
+   "ew_turnover": 0.045606009839824116
+  },
+  {
+   "month_end": "2020-12-31",
+   "next": "2021-01-29",
+   "universe": 47,
+   "qualifying": 47,
+   "held": [
+    "ADANIENT",
+    "APOLLOHOSP",
+    "CIPLA",
+    "DRREDDY",
+    "HCLTECH",
+    "INFY",
+    "M&M",
+    "TATACONSUM",
+    "TCS"
+   ],
+   "strategy": 0.0034813110533712752,
+   "strategy_gross": 0.004255725592987147,
+   "equal_weight": -0.0022540462088517592,
+   "nifty50": -0.024828794678777633,
+   "turnover": 0.2403452600409523,
+   "cost": 0.0007744145396158719,
+   "ew_turnover": 0.03511034006695793
+  },
+  {
+   "month_end": "2021-01-29",
+   "next": "2021-02-26",
+   "universe": 47,
+   "qualifying": 44,
+   "held": [
+    "ADANIENT",
+    "ASIANPAINT",
+    "CIPLA",
+    "DRREDDY",
+    "HCLTECH",
+    "INFY",
+    "JSWSTEEL",
+    "TATACONSUM",
+    "TCS"
+   ],
+   "strategy": 0.06685950325069975,
+   "strategy_gross": 0.06765790891596123,
+   "equal_weight": 0.0955610797659844,
+   "nifty50": 0.06560881874055702,
+   "turnover": 0.24779108270697092,
+   "cost": 0.0007984056652614693,
+   "ew_turnover": 0.036444605659523815
+  },
+  {
+   "month_end": "2021-02-26",
+   "next": "2021-03-31",
+   "universe": 47,
+   "qualifying": 44,
+   "held": [
+    "ADANIENT",
+    "CIPLA",
+    "EICHERMOT",
+    "HCLTECH",
+    "INFY",
+    "SUNPHARMA",
+    "TATACONSUM",
+    "TCS",
+    "TMPV"
+   ],
+   "strategy": 0.06251582098318957,
+   "strategy_gross": 0.06371757929319942,
+   "equal_weight": 0.02344833681477851,
+   "nifty50": 0.01111902623346861,
+   "turnover": 0.3729745488365462,
+   "cost": 0.0012017583100098447,
+   "ew_turnover": 0.05129037047168944
+  },
+  {
+   "month_end": "2021-03-31",
+   "next": "2021-04-30",
+   "universe": 47,
+   "qualifying": 42,
+   "held": [
+    "ADANIENT",
+    "ADANIPORTS",
+    "APOLLOHOSP",
+    "GRASIM",
+    "HINDALCO",
+    "JSWSTEEL",
+    "M&M",
+    "TATACONSUM",
+    "TMPV"
+   ],
+   "strategy": 0.09181863192708815,
+   "strategy_gross": 0.0940151877916372,
+   "equal_weight": 0.02680891645108827,
+   "nifty50": -0.0040569884348601315,
+   "turnover": 0.6817173018489386,
+   "cost": 0.0021965558645490506,
+   "ew_turnover": 0.03204106397805129
+  },
+  {
+   "month_end": "2021-04-30",
+   "next": "2021-05-31",
+   "universe": 47,
+   "qualifying": 44,
+   "held": [
+    "ADANIENT",
+    "ADANIPORTS",
+    "GRASIM",
+    "HINDALCO",
+    "INFY",
+    "JSWSTEEL",
+    "M&M",
+    "TATASTEEL",
+    "TMPV"
+   ],
+   "strategy": 0.06446778328808249,
+   "strategy_gross": 0.06533118601388524,
+   "equal_weight": 0.07574788186534959,
+   "nifty50": 0.0650463738201501,
+   "turnover": 0.2679633994941012,
+   "cost": 0.0008634027258027474,
+   "ew_turnover": 0.033493285099944654
+  },
+  {
+   "month_end": "2021-05-31",
+   "next": "2021-06-30",
+   "universe": 47,
+   "qualifying": 46,
+   "held": [
+    "ADANIENT",
+    "APOLLOHOSP",
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "GRASIM",
+    "HINDALCO",
+    "JSWSTEEL",
+    "TATASTEEL",
+    "TMPV"
+   ],
+   "strategy": 0.044278458624638126,
+   "strategy_gross": 0.045383002728399464,
+   "equal_weight": 0.02156960854901993,
+   "nifty50": 0.008900839387016468,
+   "turnover": 0.3428034034289952,
+   "cost": 0.001104544103761338,
+   "ew_turnover": 0.02084657862954545
+  },
+  {
+   "month_end": "2021-06-30",
+   "next": "2021-07-30",
+   "universe": 47,
+   "qualifying": 46,
+   "held": [
+    "ADANIENT",
+    "APOLLOHOSP",
+    "GRASIM",
+    "HINDALCO",
+    "INFY",
+    "JSWSTEEL",
+    "SBIN",
+    "TATASTEEL",
+    "TMPV"
+   ],
+   "strategy": 0.05575007190116976,
+   "strategy_gross": 0.056541680612423525,
+   "equal_weight": 0.02377997424811287,
+   "nifty50": 0.0026428775880162902,
+   "turnover": 0.24568159793505623,
+   "cost": 0.0007916087112537611,
+   "ew_turnover": 0.023028007809719763
+  },
+  {
+   "month_end": "2021-07-30",
+   "next": "2021-08-31",
+   "universe": 47,
+   "qualifying": 39,
+   "held": [
+    "ADANIENT",
+    "ADANIPORTS",
+    "APOLLOHOSP",
+    "GRASIM",
+    "HINDALCO",
+    "JSWSTEEL",
+    "SBIN",
+    "TATASTEEL",
+    "TMPV"
+   ],
+   "strategy": 0.04252925755501742,
+   "strategy_gross": 0.04300699906748633,
+   "equal_weight": 0.07025730693867807,
+   "nifty50": 0.08685819051516064,
+   "turnover": 0.14827059949526836,
+   "cost": 0.0004777415124689082,
+   "ew_turnover": 0.035002807455307344
+  },
+  {
+   "month_end": "2021-08-31",
+   "next": "2021-09-30",
+   "universe": 47,
+   "qualifying": 43,
+   "held": [
+    "ADANIENT",
+    "APOLLOHOSP",
+    "BAJAJFINSV",
+    "BSE",
+    "GRASIM",
+    "INFY",
+    "JSWSTEEL",
+    "TATASTEEL",
+    "ULTRACEMCO"
+   ],
+   "strategy": -0.024787009508463492,
+   "strategy_gross": -0.023280240700832823,
+   "equal_weight": 0.0369508632055169,
+   "nifty50": 0.028364716732235173,
+   "turnover": 0.4676368047934907,
+   "cost": 0.001506768807630668,
+   "ew_turnover": 0.029366285824557845
+  },
+  {
+   "month_end": "2021-09-30",
+   "next": "2021-10-29",
+   "universe": 48,
+   "qualifying": 45,
+   "held": [
+    "ADANIENT",
+    "APOLLOHOSP",
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "GRASIM",
+    "HINDALCO",
+    "JSWSTEEL",
+    "MAXHEALTH",
+    "TATASTEEL",
+    "ULTRACEMCO"
+   ],
+   "strategy": -0.017245151649816746,
+   "strategy_gross": -0.016278524049816747,
+   "equal_weight": 3.3166872341359766e-05,
+   "nifty50": 0.00303664119104452,
+   "turnover": 0.29999999999999993,
+   "cost": 0.0009666275999999998,
+   "ew_turnover": 0.038510086891406003
+  },
+  {
+   "month_end": "2021-10-29",
+   "next": "2021-11-30",
+   "universe": 48,
+   "qualifying": 42,
+   "held": [
+    "ADANIENT",
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "BEL",
+    "GRASIM",
+    "HINDALCO",
+    "MAXHEALTH",
+    "SBIN",
+    "TATACONSUM",
+    "TATASTEEL"
+   ],
+   "strategy": -0.024022922965313075,
+   "strategy_gross": -0.023011665977373984,
+   "equal_weight": -0.01150760519893742,
+   "nifty50": -0.03895787886247182,
+   "turnover": 0.31385105947908654,
+   "cost": 0.001011256987939089,
+   "ew_turnover": 0.030139054056843036
+  },
+  {
+   "month_end": "2021-11-30",
+   "next": "2021-12-31",
+   "universe": 48,
+   "qualifying": 37,
+   "held": [
+    "ADANIENT",
+    "BAJAJFINSV",
+    "BSE",
+    "GRASIM",
+    "HINDALCO",
+    "MAXHEALTH",
+    "ONGC",
+    "SBIN",
+    "TECHM",
+    "TMPV"
+   ],
+   "strategy": 0.07045907101902717,
+   "strategy_gross": 0.07180066239890281,
+   "equal_weight": 0.02971632954693032,
+   "nifty50": 0.021836285270149247,
+   "turnover": 0.41637277268173906,
+   "cost": 0.0013415913798756499,
+   "ew_turnover": 0.030562692862422993
+  },
+  {
+   "month_end": "2021-12-31",
+   "next": "2022-01-31",
+   "universe": 48,
+   "qualifying": 34,
+   "held": [
+    "ADANIENT",
+    "APOLLOHOSP",
+    "BAJAJFINSV",
+    "BEL",
+    "BSE",
+    "GRASIM",
+    "MAXHEALTH",
+    "SBIN",
+    "TECHM",
+    "TMPV"
+   ],
+   "strategy": -0.017912735449377964,
+   "strategy_gross": -0.01716258802359949,
+   "equal_weight": 0.0030609522307981016,
+   "nifty50": -0.0008182527997787625,
+   "turnover": 0.23281378240549094,
+   "cost": 0.0007501474257784731,
+   "ew_turnover": 0.026655822088729235
+  },
+  {
+   "month_end": "2022-01-31",
+   "next": "2022-02-28",
+   "universe": 48,
+   "qualifying": 34,
+   "held": [
+    "ADANIENT",
+    "APOLLOHOSP",
+    "BAJAJFINSV",
+    "BSE",
+    "GRASIM",
+    "HINDALCO",
+    "INFY",
+    "MAXHEALTH",
+    "TECHM",
+    "TITAN"
+   ],
+   "strategy": 0.01889740840367492,
+   "strategy_gross": 0.020005102187244054,
+   "equal_weight": -0.021784548222920915,
+   "nifty50": -0.03148527813101021,
+   "turnover": 0.34378092977144437,
+   "cost": 0.0011076937835691326,
+   "ew_turnover": 0.030985432130258464
+  },
+  {
+   "month_end": "2022-02-28",
+   "next": "2022-03-31",
+   "universe": 48,
+   "qualifying": 26,
+   "held": [
+    "ADANIENT",
+    "BAJAJFINSV",
+    "BEL",
+    "BSE",
+    "INFY",
+    "MAXHEALTH",
+    "ONGC",
+    "SUNPHARMA",
+    "TECHM",
+    "TITAN"
+   ],
+   "strategy": 0.09280333076584796,
+   "strategy_gross": 0.09382539406986797,
+   "equal_weight": 0.04554977372128548,
+   "nifty50": 0.03994605184025146,
+   "turnover": 0.31720487932064123,
+   "cost": 0.0010220633040200035,
+   "ew_turnover": 0.02351142392533003
+  },
+  {
+   "month_end": "2022-03-31",
+   "next": "2022-04-29",
+   "universe": 48,
+   "qualifying": 34,
+   "held": [
+    "BAJAJFINSV",
+    "BEL",
+    "BSE",
+    "HINDALCO",
+    "MAXHEALTH",
+    "ONGC",
+    "SUNPHARMA",
+    "TATASTEEL",
+    "TECHM",
+    "TITAN"
+   ],
+   "strategy": -0.02360205367795322,
+   "strategy_gross": -0.02281106313887098,
+   "equal_weight": 0.0060117528288528115,
+   "nifty50": -0.020738916961307807,
+   "turnover": 0.245489743645507,
+   "cost": 0.0007909905390822388,
+   "ew_turnover": 0.028774962236025846
+  },
+  {
+   "month_end": "2022-04-29",
+   "next": "2022-05-31",
+   "universe": 48,
+   "qualifying": 27,
+   "held": [
+    "ADANIENT",
+    "BEL",
+    "BHARTIARTL",
+    "BSE",
+    "MAXHEALTH",
+    "ONGC",
+    "SBIN",
+    "SUNPHARMA",
+    "TITAN",
+    "TRENT"
+   ],
+   "strategy": -0.0763553009363784,
+   "strategy_gross": -0.07505584670804265,
+   "equal_weight": -0.04050751071668258,
+   "nifty50": -0.030287881046978327,
+   "turnover": 0.4032951971376867,
+   "cost": 0.0012994542283357629,
+   "ew_turnover": 0.03065133258910479
+  },
+  {
+   "month_end": "2022-05-31",
+   "next": "2022-06-30",
+   "universe": 48,
+   "qualifying": 19,
+   "held": [
+    "ADANIENT",
+    "BEL",
+    "BSE",
+    "ITC",
+    "MAXHEALTH",
+    "NTPC",
+    "POWERGRID",
+    "RELIANCE",
+    "SUNPHARMA",
+    "TRENT"
+   ],
+   "strategy": -0.05076768339693867,
+   "strategy_gross": -0.04944384591056401,
+   "equal_weight": -0.055561582893186204,
+   "nifty50": -0.04849694444528185,
+   "turnover": 0.41086272098209986,
+   "cost": 0.0013238374863746558,
+   "ew_turnover": 0.030993438221222035
+  },
+  {
+   "month_end": "2022-06-30",
+   "next": "2022-07-29",
+   "universe": 48,
+   "qualifying": 12,
+   "held": [
+    "ADANIENT",
+    "BEL",
+    "COALINDIA",
+    "EICHERMOT",
+    "ITC",
+    "M&M",
+    "MARUTI",
+    "NTPC",
+    "POWERGRID",
+    "RELIANCE"
+   ],
+   "strategy": 0.08361377881492751,
+   "strategy_gross": 0.08492812443943887,
+   "equal_weight": 0.11310542088679033,
+   "nifty50": 0.08732434530504896,
+   "turnover": 0.40791685169490804,
+   "cost": 0.0013143456245113495,
+   "ew_turnover": 0.02549240653337133
+  },
+  {
+   "month_end": "2022-07-29",
+   "next": "2022-08-30",
+   "universe": 49,
+   "qualifying": 27,
+   "held": [
+    "ADANIENT",
+    "BEL",
+    "COALINDIA",
+    "ITC",
+    "M&M",
+    "MAXHEALTH",
+    "NTPC",
+    "POWERGRID",
+    "RELIANCE",
+    "SUNPHARMA"
+   ],
+   "strategy": 0.08366266150006717,
+   "strategy_gross": 0.08437470206742294,
+   "equal_weight": 0.05228758749853683,
+   "nifty50": 0.035029796162195925,
+   "turnover": 0.22098703803484682,
+   "cost": 0.0007120405673557756,
+   "ew_turnover": 0.044770727459419665
+  },
+  {
+   "month_end": "2022-08-30",
+   "next": "2022-09-30",
+   "universe": 49,
+   "qualifying": 37,
+   "held": [
+    "ADANIENT",
+    "BEL",
+    "COALINDIA",
+    "ITC",
+    "M&M",
+    "MARUTI",
+    "NTPC",
+    "SBIN",
+    "TMPV",
+    "TRENT"
+   ],
+   "strategy": -0.02213854797196357,
+   "strategy_gross": -0.020838145863462023,
+   "equal_weight": -0.026175922815726383,
+   "nifty50": -0.03744235414684138,
+   "turnover": 0.40358937873330364,
+   "cost": 0.0013004021085015476,
+   "ew_turnover": 0.019698746076593693
+  },
+  {
+   "month_end": "2022-09-30",
+   "next": "2022-10-31",
+   "universe": 49,
+   "qualifying": 30,
+   "held": [
+    "ADANIENT",
+    "BEL",
+    "COALINDIA",
+    "ICICIBANK",
+    "ITC",
+    "M&M",
+    "MARUTI",
+    "NTPC",
+    "TITAN",
+    "TRENT"
+   ],
+   "strategy": 0.06451018187867773,
+   "strategy_gross": 0.06518689332784931,
+   "equal_weight": 0.045730486243680944,
+   "nifty50": 0.053693179325332796,
+   "turnover": 0.2100223858200146,
+   "cost": 0.0006767114491715825,
+   "ew_turnover": 0.02373773666438078
+  },
+  {
+   "month_end": "2022-10-31",
+   "next": "2022-11-30",
+   "universe": 49,
+   "qualifying": 35,
+   "held": [
+    "ADANIENT",
+    "BEL",
+    "CIPLA",
+    "COALINDIA",
+    "EICHERMOT",
+    "ITC",
+    "M&M",
+    "MARUTI",
+    "MAXHEALTH",
+    "TRENT"
+   ],
+   "strategy": -0.021616578416498656,
+   "strategy_gross": -0.020613477672723115,
+   "equal_weight": 0.02516889124385307,
+   "nifty50": 0.041424701035964295,
+   "turnover": 0.31131970898892386,
+   "cost": 0.0010031007437755397,
+   "ew_turnover": 0.01811378978889686
+  },
+  {
+   "month_end": "2022-11-30",
+   "next": "2022-12-30",
+   "universe": 49,
+   "qualifying": 44,
+   "held": [
+    "ADANIENT",
+    "AXISBANK",
+    "BEL",
+    "CIPLA",
+    "COALINDIA",
+    "EICHERMOT",
+    "ITC",
+    "M&M",
+    "SUNPHARMA",
+    "TRENT"
+   ],
+   "strategy": -0.03673411451706322,
+   "strategy_gross": -0.036035474337150035,
+   "equal_weight": -0.03292107027848083,
+   "nifty50": -0.034813829574562805,
+   "turnover": 0.2168281290270978,
+   "cost": 0.0006986401799131796,
+   "ew_turnover": 0.020977955868799192
+  },
+  {
+   "month_end": "2022-12-30",
+   "next": "2023-01-31",
+   "universe": 49,
+   "qualifying": 34,
+   "held": [
+    "ADANIENT",
+    "BEL",
+    "COALINDIA",
+    "EICHERMOT",
+    "ICICIBANK",
+    "ITC",
+    "M&M",
+    "NTPC",
+    "SBIN",
+    "SUNPHARMA"
+   ],
+   "strategy": -0.021505605547818753,
+   "strategy_gross": -0.020517284461806565,
+   "equal_weight": -0.026099249422148536,
+   "nifty50": -0.02447625833319511,
+   "turnover": 0.3067327332714854,
+   "cost": 0.0009883210860121869,
+   "ew_turnover": 0.01574724440916488
+  },
+  {
+   "month_end": "2023-01-31",
+   "next": "2023-02-28",
+   "universe": 49,
+   "qualifying": 33,
+   "held": [
+    "AXISBANK",
+    "BEL",
+    "COALINDIA",
+    "EICHERMOT",
+    "ITC",
+    "JSWSTEEL",
+    "M&M",
+    "NTPC",
+    "SBIN",
+    "SUNPHARMA"
+   ],
+   "strategy": -0.0345673527328121,
+   "strategy_gross": -0.03388786455290425,
+   "equal_weight": -0.03734650691428973,
+   "nifty50": -0.020280656658447582,
+   "turnover": 0.2108841646693667,
+   "cost": 0.000679488179907849,
+   "ew_turnover": 0.03142653941093841
+  },
+  {
+   "month_end": "2023-02-28",
+   "next": "2023-03-31",
+   "universe": 49,
+   "qualifying": 18,
+   "held": [
+    "AXISBANK",
+    "HDFCBANK",
+    "ICICIBANK",
+    "ITC",
+    "JSWSTEEL",
+    "LT",
+    "M&M",
+    "MAXHEALTH",
+    "NTPC",
+    "SUNPHARMA"
+   ],
+   "strategy": 0.011420099503360107,
+   "strategy_gross": 0.012749473289610937,
+   "equal_weight": 0.013377056497926965,
+   "nifty50": 0.003224697251205555,
+   "turnover": 0.41258095245288773,
+   "cost": 0.0013293737862508296,
+   "ew_turnover": 0.028738877309071452
+  },
+  {
+   "month_end": "2023-03-31",
+   "next": "2023-04-28",
+   "universe": 49,
+   "qualifying": 23,
+   "held": [
+    "AXISBANK",
+    "BEL",
+    "HINDUNILVR",
+    "ICICIBANK",
+    "ITC",
+    "LT",
+    "MAXHEALTH",
+    "NESTLEIND",
+    "NTPC",
+    "ULTRACEMCO"
+   ],
+   "strategy": 0.03767524118289474,
+   "strategy_gross": 0.03896407798289474,
+   "equal_weight": 0.057906498218730604,
+   "nifty50": 0.04062558504586766,
+   "turnover": 0.4,
+   "cost": 0.0012888368,
+   "ew_turnover": 0.01695836310160466
+  },
+  {
+   "month_end": "2023-04-28",
+   "next": "2023-05-31",
+   "universe": 49,
+   "qualifying": 32,
+   "held": [
+    "DRREDDY",
+    "EICHERMOT",
+    "HDFCBANK",
+    "ICICIBANK",
+    "ITC",
+    "LT",
+    "MAXHEALTH",
+    "NTPC",
+    "SHRIRAMFIN",
+    "ULTRACEMCO"
+   ],
+   "strategy": 0.02777441498233288,
+   "strategy_gross": 0.02909559313383147,
+   "equal_weight": 0.05136327950147522,
+   "nifty50": 0.02598394685856631,
+   "turnover": 0.4100373768032045,
+   "cost": 0.0013211781514985907,
+   "ew_turnover": 0.02074549116805842
+  },
+  {
+   "month_end": "2023-05-31",
+   "next": "2023-06-30",
+   "universe": 49,
+   "qualifying": 40,
+   "held": [
+    "AXISBANK",
+    "BEL",
+    "GRASIM",
+    "HDFCBANK",
+    "ICICIBANK",
+    "ITC",
+    "LT",
+    "M&M",
+    "NESTLEIND",
+    "ULTRACEMCO"
+   ],
+   "strategy": 0.058276452689058594,
+   "strategy_gross": 0.05994097974096645,
+   "equal_weight": 0.05621481773122425,
+   "nifty50": 0.03532080887430933,
+   "turnover": 0.5165982386312551,
+   "cost": 0.0016645270519078579,
+   "ew_turnover": 0.023665010661055474
+  },
+  {
+   "month_end": "2023-06-30",
+   "next": "2023-07-31",
+   "universe": 49,
+   "qualifying": 44,
+   "held": [
+    "AXISBANK",
+    "BEL",
+    "COALINDIA",
+    "ICICIBANK",
+    "INDIGO",
+    "ITC",
+    "LT",
+    "TITAN",
+    "TRENT",
+    "ULTRACEMCO"
+   ],
+   "strategy": 0.013862426325646895,
+   "strategy_gross": 0.015190020328132214,
+   "equal_weight": 0.03799435202450834,
+   "nifty50": 0.02943084728008949,
+   "turnover": 0.41202858344371274,
+   "cost": 0.0013275940024853193,
+   "ew_turnover": 0.02088039368127384
+  },
+  {
+   "month_end": "2023-07-31",
+   "next": "2023-08-31",
+   "universe": 49,
+   "qualifying": 46,
+   "held": [
+    "AXISBANK",
+    "BEL",
+    "BHARTIARTL",
+    "INDIGO",
+    "ITC",
+    "JSWSTEEL",
+    "LT",
+    "MAXHEALTH",
+    "TITAN",
+    "TRENT"
+   ],
+   "strategy": 0.0028102461029628745,
+   "strategy_gross": 0.0038168588426488745,
+   "equal_weight": -0.000320668225834741,
+   "nifty50": -0.025311585618969512,
+   "turnover": 0.31240968280421544,
+   "cost": 0.001006612739686,
+   "ew_turnover": 0.023539623420966854
+  },
+  {
+   "month_end": "2023-08-31",
+   "next": "2023-09-29",
+   "universe": 49,
+   "qualifying": 43,
+   "held": [
+    "AXISBANK",
+    "DRREDDY",
+    "ITC",
+    "LT",
+    "MAXHEALTH",
+    "NTPC",
+    "ONGC",
+    "SUNPHARMA",
+    "TMPV",
+    "ULTRACEMCO"
+   ],
+   "strategy": 0.043550086925676926,
+   "strategy_gross": 0.045506599589637736,
+   "equal_weight": 0.03891669473247066,
+   "nifty50": 0.01997008382760801,
+   "turnover": 0.6072181253548352,
+   "cost": 0.0019565126639608113,
+   "ew_turnover": 0.02297556237496131
+  },
+  {
+   "month_end": "2023-09-29",
+   "next": "2023-10-31",
+   "universe": 49,
+   "qualifying": 44,
+   "held": [
+    "DRREDDY",
+    "HCLTECH",
+    "ITC",
+    "LT",
+    "NTPC",
+    "ONGC",
+    "SHRIRAMFIN",
+    "TMPV",
+    "TRENT",
+    "ULTRACEMCO"
+   ],
+   "strategy": -0.011959171816112894,
+   "strategy_gross": -0.010951037029018508,
+   "equal_weight": -0.00791129709578241,
+   "nifty50": -0.02844950937708457,
+   "turnover": 0.312882061435361,
+   "cost": 0.001008134787094385,
+   "ew_turnover": 0.021475419324242552
+  },
+  {
+   "month_end": "2023-10-31",
+   "next": "2023-11-30",
+   "universe": 49,
+   "qualifying": 39,
+   "held": [
+    "BAJAJ-AUTO",
+    "BSE",
+    "ITC",
+    "LT",
+    "NTPC",
+    "ONGC",
+    "SHRIRAMFIN",
+    "TMPV",
+    "TRENT",
+    "ULTRACEMCO"
+   ],
+   "strategy": 0.12569928855713206,
+   "strategy_gross": 0.12637709922255103,
+   "equal_weight": 0.0792710798961949,
+   "nifty50": 0.05521866286504973,
+   "turnover": 0.21036353568395225,
+   "cost": 0.000677810665418977,
+   "ew_turnover": 0.022200892193799303
+  },
+  {
+   "month_end": "2023-11-30",
+   "next": "2023-12-29",
+   "universe": 49,
+   "qualifying": 44,
+   "held": [
+    "BAJAJ-AUTO",
+    "BSE",
+    "COALINDIA",
+    "ETERNAL",
+    "ITC",
+    "LT",
+    "NTPC",
+    "ONGC",
+    "TMPV",
+    "TRENT"
+   ],
+   "strategy": 0.0785176896873817,
+   "strategy_gross": 0.07924049182219071,
+   "equal_weight": 0.07825055651674234,
+   "nifty50": 0.07938400101325427,
+   "turnover": 0.22432696980999417,
+   "cost": 0.0007228021348090237,
+   "ew_turnover": 0.02168986745249707
+  },
+  {
+   "month_end": "2023-12-29",
+   "next": "2024-01-31",
+   "universe": 49,
+   "qualifying": 49,
+   "held": [
+    "BAJAJ-AUTO",
+    "BSE",
+    "COALINDIA",
+    "ETERNAL",
+    "ITC",
+    "LT",
+    "NTPC",
+    "TITAN",
+    "TMPV",
+    "TRENT"
+   ],
+   "strategy": 0.049149733285632796,
+   "strategy_gross": 0.049542753925681984,
+   "equal_weight": 0.027014961471222107,
+   "nifty50": -0.00026229327148741266,
+   "turnover": 0.1219768523211581,
+   "cost": 0.00039302064004918493,
+   "ew_turnover": 0.024320766180055547
+  },
+  {
+   "month_end": "2024-01-31",
+   "next": "2024-02-29",
+   "universe": 49,
+   "qualifying": 42,
+   "held": [
+    "BAJAJ-AUTO",
+    "BEL",
+    "BSE",
+    "ETERNAL",
+    "LT",
+    "NTPC",
+    "TITAN",
+    "TMPV",
+    "TRENT",
+    "ULTRACEMCO"
+   ],
+   "strategy": 0.06737173570468856,
+   "strategy_gross": 0.06807074893973557,
+   "equal_weight": 0.03312133264897974,
+   "nifty50": 0.011833910990209695,
+   "turnover": 0.21694390943741132,
+   "cost": 0.0006990132350470075,
+   "ew_turnover": 0.03461043348312476
+  },
+  {
+   "month_end": "2024-02-29",
+   "next": "2024-03-28",
+   "universe": 49,
+   "qualifying": 42,
+   "held": [
+    "ADANIPORTS",
+    "BAJAJ-AUTO",
+    "BEL",
+    "BSE",
+    "COALINDIA",
+    "ETERNAL",
+    "NTPC",
+    "SHRIRAMFIN",
+    "TMPV",
+    "TRENT"
+   ],
+   "strategy": 0.03331052112857769,
+   "strategy_gross": 0.034306427856942226,
+   "equal_weight": 0.024265051629290234,
+   "nifty50": 0.015653147005840973,
+   "turnover": 0.30908699328403183,
+   "cost": 0.0009959067283645327,
+   "ew_turnover": 0.02786115854190157
+  },
+  {
+   "month_end": "2024-03-28",
+   "next": "2024-04-30",
+   "universe": 49,
+   "qualifying": 43,
+   "held": [
+    "BAJAJ-AUTO",
+    "BEL",
+    "BSE",
+    "COALINDIA",
+    "ETERNAL",
+    "NTPC",
+    "SUNPHARMA",
+    "TATACONSUM",
+    "TMPV",
+    "TRENT"
+   ],
+   "strategy": 0.049444663465925374,
+   "strategy_gross": 0.05013365504867765,
+   "equal_weight": 0.02301630458385083,
+   "nifty50": 0.012449108474530624,
+   "turnover": 0.21383361578511106,
+   "cost": 0.00068899158275228,
+   "ew_turnover": 0.022419600217622432
+  },
+  {
+   "month_end": "2024-04-30",
+   "next": "2024-05-31",
+   "universe": 49,
+   "qualifying": 40,
+   "held": [
+    "BAJAJ-AUTO",
+    "BEL",
+    "BHARTIARTL",
+    "BSE",
+    "ETERNAL",
+    "LT",
+    "NTPC",
+    "SUNPHARMA",
+    "TMPV",
+    "TRENT"
+   ],
+   "strategy": 0.014117906548270855,
+   "strategy_gross": 0.014834432522494646,
+   "equal_weight": -0.0013721258510568574,
+   "nifty50": -0.003280269499686961,
+   "turnover": 0.22237911711515093,
+   "cost": 0.0007165259742237908,
+   "ew_turnover": 0.028377903670804457
+  },
+  {
+   "month_end": "2024-05-31",
+   "next": "2024-06-28",
+   "universe": 49,
+   "qualifying": 34,
+   "held": [
+    "BAJAJ-AUTO",
+    "BEL",
+    "BHARTIARTL",
+    "BSE",
+    "ETERNAL",
+    "LT",
+    "NTPC",
+    "SUNPHARMA",
+    "TMPV",
+    "TRENT"
+   ],
+   "strategy": 0.054572299894603916,
+   "strategy_gross": 0.05466917780219252,
+   "equal_weight": 0.0649462121142564,
+   "nifty50": 0.06568371155800734,
+   "turnover": 0.030066772639826128,
+   "cost": 9.687790758860265e-05,
+   "ew_turnover": 0.023881332829243415
+  },
+  {
+   "month_end": "2024-06-28",
+   "next": "2024-07-31",
+   "universe": 49,
+   "qualifying": 43,
+   "held": [
+    "BAJAJ-AUTO",
+    "BEL",
+    "BHARTIARTL",
+    "BSE",
+    "COALINDIA",
+    "ETERNAL",
+    "M&M",
+    "NTPC",
+    "TMPV",
+    "TRENT"
+   ],
+   "strategy": 0.06619843065449413,
+   "strategy_gross": 0.06688235492267099,
+   "equal_weight": 0.05517877185359508,
+   "nifty50": 0.03917228224200997,
+   "turnover": 0.21226093735897728,
+   "cost": 0.0006839242681768618,
+   "ew_turnover": 0.023189174721943078
+  },
+  {
+   "month_end": "2024-07-31",
+   "next": "2024-08-30",
+   "universe": 49,
+   "qualifying": 46,
+   "held": [
+    "BAJAJ-AUTO",
+    "BEL",
+    "BHARTIARTL",
+    "BSE",
+    "COALINDIA",
+    "ETERNAL",
+    "M&M",
+    "NTPC",
+    "POWERGRID",
+    "TRENT"
+   ],
+   "strategy": 0.0500848164176268,
+   "strategy_gross": 0.050482021853851936,
+   "equal_weight": 0.020226356885316505,
+   "nifty50": 0.01141229963348378,
+   "turnover": 0.1232756346575872,
+   "cost": 0.00039720543622513444,
+   "ew_turnover": 0.026735548292809434
+  },
+  {
+   "month_end": "2024-08-30",
+   "next": "2024-09-30",
+   "universe": 49,
+   "qualifying": 47,
+   "held": [
+    "BAJAJ-AUTO",
+    "BEL",
+    "BHARTIARTL",
+    "BSE",
+    "COALINDIA",
+    "ETERNAL",
+    "M&M",
+    "POWERGRID",
+    "TMPV",
+    "TRENT"
+   ],
+   "strategy": 0.06052820830135776,
+   "strategy_gross": 0.06094730954656069,
+   "equal_weight": 0.036593673973917676,
+   "nifty50": 0.022783019428670892,
+   "turnover": 0.13007116035263142,
+   "cost": 0.00041910124520293083,
+   "ew_turnover": 0.02186192540248587
+  },
+  {
+   "month_end": "2024-09-30",
+   "next": "2024-10-31",
+   "universe": 50,
+   "qualifying": 50,
+   "held": [
+    "BAJAJ-AUTO",
+    "BEL",
+    "BHARTIARTL",
+    "BSE",
+    "ETERNAL",
+    "INDIGO",
+    "M&M",
+    "SUNPHARMA",
+    "TMPV",
+    "TRENT"
+   ],
+   "strategy": -0.06869694319079735,
+   "strategy_gross": -0.0679628748807733,
+   "equal_weight": -0.06988756711437799,
+   "nifty50": -0.062202523357425266,
+   "turnover": 0.22782351032312181,
+   "cost": 0.0007340683100240481,
+   "ew_turnover": 0.03724339206982894
+  },
+  {
+   "month_end": "2024-10-31",
+   "next": "2024-11-29",
+   "universe": 50,
+   "qualifying": 33,
+   "held": [
+    "BAJAJ-AUTO",
+    "BEL",
+    "BHARTIARTL",
+    "ETERNAL",
+    "INDIGO",
+    "M&M",
+    "NTPC",
+    "POWERGRID",
+    "SUNPHARMA",
+    "TRENT"
+   ],
+   "strategy": 0.01600820971579962,
+   "strategy_gross": 0.016762822978895864,
+   "equal_weight": -0.016149989461891813,
+   "nifty50": -0.0030675036717089377,
+   "turnover": 0.23419978793164276,
+   "cost": 0.0007546132630962426,
+   "ew_turnover": 0.02719713551087783
+  },
+  {
+   "month_end": "2024-11-29",
+   "next": "2024-12-31",
+   "universe": 50,
+   "qualifying": 29,
+   "held": [
+    "BEL",
+    "BHARTIARTL",
+    "BSE",
+    "ETERNAL",
+    "ICICIBANK",
+    "INDIGO",
+    "M&M",
+    "SHRIRAMFIN",
+    "SUNPHARMA",
+    "TRENT"
+   ],
+   "strategy": 0.01554883523600754,
+   "strategy_gross": 0.016554996467113826,
+   "equal_weight": -0.01209430273032229,
+   "nifty50": -0.020152417419844082,
+   "turnover": 0.31226955378874527,
+   "cost": 0.0010061612311062858,
+   "ew_turnover": 0.024870836014048145
+  },
+  {
+   "month_end": "2024-12-31",
+   "next": "2025-01-31",
+   "universe": 50,
+   "qualifying": 22,
+   "held": [
+    "BEL",
+    "BHARTIARTL",
+    "BSE",
+    "ETERNAL",
+    "ICICIBANK",
+    "INDIGO",
+    "M&M",
+    "SHRIRAMFIN",
+    "SUNPHARMA",
+    "TRENT"
+   ],
+   "strategy": -0.05948389179030904,
+   "strategy_gross": -0.05941369866270976,
+   "equal_weight": -0.010297237986410083,
+   "nifty50": -0.005768710244958619,
+   "turnover": 0.02178495449517729,
+   "cost": 7.019312759927478e-05,
+   "ew_turnover": 0.02254747371985541
+  },
+  {
+   "month_end": "2025-01-31",
+   "next": "2025-02-28",
+   "universe": 50,
+   "qualifying": 20,
+   "held": [
+    "BEL",
+    "BHARTIARTL",
+    "BSE",
+    "EICHERMOT",
+    "HDFCBANK",
+    "ICICIBANK",
+    "M&M",
+    "MAXHEALTH",
+    "SUNPHARMA",
+    "TECHM"
+   ],
+   "strategy": -0.08443226349913631,
+   "strategy_gross": -0.08313791966987685,
+   "equal_weight": -0.06244604387737434,
+   "nifty50": -0.058859811811948104,
+   "turnover": 0.4017091471191566,
+   "cost": 0.0012943438292594574,
+   "ew_turnover": 0.030234949748493094
+  },
+  {
+   "month_end": "2025-02-28",
+   "next": "2025-03-28",
+   "universe": 50,
+   "qualifying": 10,
+   "held": [
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "BHARTIARTL",
+    "BSE",
+    "HDFCBANK",
+    "INDIGO",
+    "JSWSTEEL",
+    "KOTAKBANK",
+    "MAXHEALTH",
+    "SHRIRAMFIN"
+   ],
+   "strategy": 0.10291724772046215,
+   "strategy_gross": 0.10486581085105325,
+   "equal_weight": 0.07586105397511429,
+   "nifty50": 0.06303588297242446,
+   "turnover": 0.6047509290830615,
+   "cost": 0.0019485631305910997,
+   "ew_turnover": 0.0298496720569673
+  },
+  {
+   "month_end": "2025-03-28",
+   "next": "2025-04-30",
+   "universe": 50,
+   "qualifying": 18,
+   "held": [
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "BEL",
+    "BHARTIARTL",
+    "BSE",
+    "EICHERMOT",
+    "HDFCBANK",
+    "INDIGO",
+    "MAXHEALTH",
+    "SHRIRAMFIN"
+   ],
+   "strategy": 0.026275591655423737,
+   "strategy_gross": 0.02697296553617118,
+   "equal_weight": 0.0326030569648996,
+   "nifty50": 0.03464594047029368,
+   "turnover": 0.2164351237480003,
+   "cost": 0.0006973738807474418,
+   "ew_turnover": 0.022452199465941722
+  },
+  {
+   "month_end": "2025-04-30",
+   "next": "2025-05-30",
+   "universe": 50,
+   "qualifying": 26,
+   "held": [
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "BHARTIARTL",
+    "EICHERMOT",
+    "HDFCBANK",
+    "ICICIBANK",
+    "INDIGO",
+    "M&M",
+    "MAXHEALTH",
+    "SUNPHARMA"
+   ],
+   "strategy": 0.0035832448838652407,
+   "strategy_gross": 0.004594762444929989,
+   "equal_weight": 0.027491951604792415,
+   "nifty50": 0.017115828751304685,
+   "turnover": 0.31393193026913835,
+   "cost": 0.0010115175610647485,
+   "ew_turnover": 0.023989167338085537
+  },
+  {
+   "month_end": "2025-05-30",
+   "next": "2025-06-30",
+   "universe": 50,
+   "qualifying": 27,
+   "held": [
+    "APOLLOHOSP",
+    "BAJFINANCE",
+    "BHARTIARTL",
+    "BSE",
+    "HDFCBANK",
+    "HDFCLIFE",
+    "ICICIBANK",
+    "KOTAKBANK",
+    "MAXHEALTH",
+    "SBILIFE"
+   ],
+   "strategy": 0.044361151067101874,
+   "strategy_gross": 0.04597509855524236,
+   "equal_weight": 0.039275611363062075,
+   "nifty50": 0.030962760649193788,
+   "turnover": 0.5009004982292513,
+   "cost": 0.0016139474881404845,
+   "ew_turnover": 0.025288707832253243
+  },
+  {
+   "month_end": "2025-06-30",
+   "next": "2025-07-31",
+   "universe": 50,
+   "qualifying": 37,
+   "held": [
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "BEL",
+    "BHARTIARTL",
+    "BSE",
+    "HDFCLIFE",
+    "ICICIBANK",
+    "INDIGO",
+    "KOTAKBANK",
+    "SBILIFE"
+   ],
+   "strategy": -0.05266312080684121,
+   "strategy_gross": -0.051660563830362174,
+   "equal_weight": -0.03359314422978841,
+   "nifty50": -0.029341166004691055,
+   "turnover": 0.31115094680072436,
+   "cost": 0.0010025569764790395,
+   "ew_turnover": 0.017111512014931052
+  },
+  {
+   "month_end": "2025-07-31",
+   "next": "2025-08-29",
+   "universe": 50,
+   "qualifying": 32,
+   "held": [
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "BEL",
+    "BHARTIARTL",
+    "BSE",
+    "HDFCBANK",
+    "ICICIBANK",
+    "INDIGO",
+    "KOTAKBANK",
+    "MAXHEALTH"
+   ],
+   "strategy": -0.04550119034171531,
+   "strategy_gross": -0.04480459934799617,
+   "equal_weight": -0.00439619741365351,
+   "nifty50": -0.013787757359694952,
+   "turnover": 0.2161921489886523,
+   "cost": 0.0006965909937191447,
+   "ew_turnover": 0.024114562980121518
+  },
+  {
+   "month_end": "2025-08-29",
+   "next": "2025-09-30",
+   "universe": 50,
+   "qualifying": 34,
+   "held": [
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "BEL",
+    "BHARTIARTL",
+    "BSE",
+    "HDFCBANK",
+    "ICICIBANK",
+    "INDIGO",
+    "M&M",
+    "MAXHEALTH"
+   ],
+   "strategy": 0.02354626891302905,
+   "strategy_gross": 0.023917131519774128,
+   "equal_weight": 0.013920104838083338,
+   "nifty50": 0.0075429291947182175,
+   "turnover": 0.11509994337377005,
+   "cost": 0.0003708626067450775,
+   "ew_turnover": 0.01848082251197567
+  },
+  {
+   "month_end": "2025-09-30",
+   "next": "2025-10-31",
+   "universe": 50,
+   "qualifying": 31,
+   "held": [
+    "APOLLOHOSP",
+    "BAJFINANCE",
+    "BEL",
+    "BHARTIARTL",
+    "EICHERMOT",
+    "HDFCBANK",
+    "HDFCLIFE",
+    "INDIGO",
+    "MARUTI",
+    "ULTRACEMCO"
+   ],
+   "strategy": 0.02114699650967692,
+   "strategy_gross": 0.022785422927725344,
+   "equal_weight": 0.046835171414241324,
+   "nifty50": 0.04514223256985672,
+   "turnover": 0.5084977145433536,
+   "cost": 0.0016384264180484233,
+   "ew_turnover": 0.03662608550159485
+  },
+  {
+   "month_end": "2025-10-31",
+   "next": "2025-11-28",
+   "universe": 49,
+   "qualifying": 40,
+   "held": [
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "BEL",
+    "BSE",
+    "EICHERMOT",
+    "ETERNAL",
+    "INDIGO",
+    "JSWSTEEL",
+    "M&M",
+    "MARUTI"
+   ],
+   "strategy": 0.01406232591265718,
+   "strategy_gross": 0.015690035677543412,
+   "equal_weight": 0.011150704048975854,
+   "nifty50": 0.018694041310779452,
+   "turnover": 0.5051717222494678,
+   "cost": 0.0016277097648862322,
+   "ew_turnover": 0.019065100749917123
+  },
+  {
+   "month_end": "2025-11-28",
+   "next": "2025-12-31",
+   "universe": 49,
+   "qualifying": 41,
+   "held": [
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "BEL",
+    "BHARTIARTL",
+    "EICHERMOT",
+    "HINDALCO",
+    "INDIGO",
+    "JSWSTEEL",
+    "MARUTI",
+    "SBILIFE"
+   ],
+   "strategy": -0.0032590876632828786,
+   "strategy_gross": -0.0022356444893100406,
+   "equal_weight": -0.0016859215512499387,
+   "nifty50": -0.0027993031318993555,
+   "turnover": 0.31763313213056554,
+   "cost": 0.001023443173972838,
+   "ew_turnover": 0.021238560870040474
+  },
+  {
+   "month_end": "2025-12-31",
+   "next": "2026-01-30",
+   "universe": 49,
+   "qualifying": 33,
+   "held": [
+    "BAJAJFINSV",
+    "BAJFINANCE",
+    "BEL",
+    "BHARTIARTL",
+    "EICHERMOT",
+    "MARUTI",
+    "RELIANCE",
+    "SBILIFE",
+    "SHRIRAMFIN",
+    "TATACONSUM"
+   ],
+   "strategy": -0.035769211302042365,
+   "strategy_gross": -0.03477109647560071,
+   "equal_weight": -0.01590783355370141,
+   "nifty50": -0.030959142122343852,
+   "turnover": 0.3097722927966214,
+   "cost": 0.0009981148264416513,
+   "ew_turnover": 0.01836664765234022
+  },
+  {
+   "month_end": "2026-01-30",
+   "next": "2026-02-27",
+   "universe": 49,
+   "qualifying": 27,
+   "held": [
+    "ADANIPORTS",
+    "AXISBANK",
+    "BEL",
+    "BHARTIARTL",
+    "EICHERMOT",
+    "HINDALCO",
+    "MARUTI",
+    "SBILIFE",
+    "SBIN",
+    "SHRIRAMFIN"
+   ],
+   "strategy": 0.03090528209258867,
+   "strategy_gross": 0.03223455280619708,
+   "equal_weight": 0.011568059086606748,
+   "nifty50": -0.005608070882856531,
+   "turnover": 0.41254896309863653,
+   "cost": 0.001329270713608412,
+   "ew_turnover": 0.031874567286430164
+  },
+  {
+   "month_end": "2026-02-27",
+   "next": "2026-03-13",
+   "universe": 49,
+   "qualifying": 27,
+   "held": [
+    "AXISBANK",
+    "BEL",
+    "EICHERMOT",
+    "HINDALCO",
+    "NESTLEIND",
+    "SBILIFE",
+    "SBIN",
+    "SHRIRAMFIN",
+    "TATASTEEL",
+    "TITAN"
+   ],
+   "strategy": -0.08591376762459058,
+   "strategy_gross": -0.0849007324904186,
+   "equal_weight": -0.07449299068665766,
+   "nifty50": -0.08052655722209101,
+   "turnover": 0.3144029202679428,
+   "cost": 0.0010130351341719763,
+   "ew_turnover": 0.029086872659841567
+  },
+  {
+   "month_end": "2026-03-13",
+   "next": "2026-05-29",
+   "universe": 49,
+   "qualifying": 15,
+   "held": [
+    "APOLLOHOSP",
+    "BEL",
+    "BSE",
+    "EICHERMOT",
+    "HINDALCO",
+    "ONGC",
+    "SBIN",
+    "SHRIRAMFIN",
+    "TATASTEEL",
+    "TITAN"
+   ],
+   "strategy": 0.07963621718747642,
+   "strategy_gross": 0.08066208390170394,
+   "equal_weight": 0.06675190565605747,
+   "nifty50": 0.017133095187701786,
+   "turnover": 0.3183852957108362,
+   "cost": 0.0010258667142275194,
+   "ew_turnover": 0.025599587310034908
+  },
+  {
+   "month_end": "2026-05-29",
+   "next": "2026-06-30",
+   "universe": 49,
+   "qualifying": 23,
+   "held": [
+    "BSE",
+    "EICHERMOT",
+    "HINDALCO",
+    "JSWSTEEL",
+    "NESTLEIND",
+    "NTPC",
+    "ONGC",
+    "SHRIRAMFIN",
+    "TATASTEEL",
+    "TITAN"
+   ],
+   "strategy": -0.0403471584089059,
+   "strategy_gross": -0.0392884362488788,
+   "equal_weight": 0.0039129831215978066,
+   "nifty50": 0.013504474949835865,
+   "turnover": 0.3285822254693856,
+   "cost": 0.0010587221600271036,
+   "ew_turnover": 0.04601379350266584
+  },
+  {
+   "month_end": "2026-06-30",
+   "next": "2026-07-31",
+   "universe": 49,
+   "qualifying": 26,
+   "held": [
+    "ADANIPORTS",
+    "APOLLOHOSP",
+    "BAJAJ-AUTO",
+    "BSE",
+    "HINDALCO",
+    "JSWSTEEL",
+    "NESTLEIND",
+    "NTPC",
+    "SBIN",
+    "SHRIRAMFIN"
+   ],
+   "strategy": 0.019134237994164055,
+   "strategy_gross": 0.020483455415469563,
+   "equal_weight": 0.02970500207065749,
+   "nifty50": 0.021698459088861588,
+   "turnover": 0.4187395708457452,
+   "cost": 0.001349217421305509,
+   "ew_turnover": 0.02926816712492354
+  },
+  {
+   "month_end": "2026-07-31",
+   "next": "2026-08-31",
+   "universe": 49,
+   "qualifying": 27,
+   "held": [
+    "ADANIPORTS",
+    "APOLLOHOSP",
+    "BSE",
+    "EICHERMOT",
+    "HINDALCO",
+    "JSWSTEEL",
+    "NESTLEIND",
+    "SBIN",
+    "SHRIRAMFIN",
+    "TITAN"
+   ],
+   "strategy": 0.004267925172797832,
+   "strategy_gross": 0.004975009570270939,
+   "equal_weight": -0.013187917072616025,
+   "nifty50": -0.012434587181548107,
+   "turnover": 0.219448854183278,
+   "cost": 0.0007070843974731065,
+   "ew_turnover": 0.031687439085359266
+  }
+ ],
+ "stats": {
+  "months": 138,
+  "from": "2015-01-30",
+  "to": "2026-08-31",
+  "cagr": {
+   "strategy": 0.16984001737491794,
+   "equal_weight_universe": 0.17506684911512949,
+   "nifty50_price": 0.09138395997402449,
+   "strategy_gross_of_costs": 0.18264659189620103
+  },
+  "excess_cagr_vs_equal_weight": -0.005226831740211546,
+  "excess_cagr_vs_nifty50": 0.07845605740089345,
+  "volatility": {
+   "strategy": 0.18919330925889508,
+   "equal_weight_universe": 0.16794477144858497,
+   "nifty50_price": 0.1571020812938216
+  },
+  "max_drawdown": {
+   "strategy": -0.2975746609224518,
+   "equal_weight_universe": -0.2858561353217921,
+   "nifty50_price": -0.2934391808323986
+  },
+  "monthly_hit_rate_vs_equal_weight": {
+   "hits": 71,
+   "n": 138,
+   "rate": 0.5144927536231884,
+   "wilson95": [
+    0.43184819252577833,
+    0.5963522789861052
+   ]
+  },
+  "annual_turnover": 3.4275757166073317,
+  "annual_cost_drag": 0.011050280234602854,
+  "newey_west_t_excess_vs_equal_weight": -0.005857631715303937,
+  "average_names_held": 9.210144927536232
+ },
+ "buckets": {
+  "all": {
+   "n": 5745,
+   "hits": 3200,
+   "p": 0.557006092254134,
+   "n_effective": 479,
+   "wilson95": [
+    0.5126482596873205,
+    0.6012607324127801
+   ],
+   "mean_excess_12m": 0.10346133764746486,
+   "sd_excess_12m": 0.43580829224146445,
+   "median_excess_12m": 0.03657567641241655
+  },
+  "uptrend / negative momentum": {
+   "n": 584,
+   "hits": 331,
+   "p": 0.5667808219178082,
+   "n_effective": 49,
+   "wilson95": [
+    0.4327024751701555,
+    0.6997689110104294
+   ],
+   "mean_excess_12m": 0.11329768592360856,
+   "sd_excess_12m": 0.4005786556318273,
+   "median_excess_12m": 0.04971184364279768
+  },
+  "uptrend / moderate momentum": {
+   "n": 1373,
+   "hits": 792,
+   "p": 0.5768390386016023,
+   "n_effective": 114,
+   "wilson95": [
+    0.4871920773140631,
+    0.6655553395573982
+   ],
+   "mean_excess_12m": 0.09398452496486087,
+   "sd_excess_12m": 0.3441077157141812,
+   "median_excess_12m": 0.045337587352697994
+  },
+  "uptrend / strong momentum": {
+   "n": 1821,
+   "hits": 1020,
+   "p": 0.5601317957166392,
+   "n_effective": 152,
+   "wilson95": [
+    0.47978700895683946,
+    0.635714885274226
+   ],
+   "mean_excess_12m": 0.09543122998952878,
+   "sd_excess_12m": 0.3594423354157673,
+   "median_excess_12m": 0.041979662674665796
+  },
+  "downtrend / negative momentum": {
+   "n": 1172,
+   "hits": 629,
+   "p": 0.5366894197952219,
+   "n_effective": 98,
+   "wilson95": [
+    0.4424786494488038,
+    0.6360747118495262
+   ],
+   "mean_excess_12m": 0.12117768039856805,
+   "sd_excess_12m": 0.5315720610461117,
+   "median_excess_12m": 0.023891524826555544
+  },
+  "downtrend / moderate momentum": {
+   "n": 643,
+   "hits": 353,
+   "p": 0.5489891135303266,
+   "n_effective": 54,
+   "wilson95": [
+    0.42375413911364457,
+    0.6799774312440219
+   ],
+   "mean_excess_12m": 0.10624800068980707,
+   "sd_excess_12m": 0.5881125459888588,
+   "median_excess_12m": 0.02681162220361588
+  },
+  "downtrend / strong momentum": {
+   "n": 152,
+   "hits": 75,
+   "p": 0.4934210526315789,
+   "n_effective": 13,
+   "wilson95": [
+    0.2320575430148814,
+    0.7085656756816796
+   ],
+   "mean_excess_12m": 0.0990842614930564,
+   "sd_excess_12m": 0.5530594890362345,
+   "median_excess_12m": -0.0019530583816349534
+  }
+ },
+ "by_period": {
+  "to 2020-04-30": {
+   "uptrend / negative momentum": {
+    "n": 265,
+    "hits": 121,
+    "p": 0.45660377358490567,
+    "n_effective": 22,
+    "wilson95": [
+     0.26920014432004846,
+     0.6534052671095845
+    ],
+    "mean_excess_12m": 0.01895611822278882,
+    "sd_excess_12m": 0.28403339359010366,
+    "median_excess_12m": -0.011086605843565689
+   },
+   "uptrend / moderate momentum": {
+    "n": 614,
+    "hits": 339,
+    "p": 0.5521172638436482,
+    "n_effective": 51,
+    "wilson95": [
+     0.41384471541649237,
+     0.6773269498886776
+    ],
+    "mean_excess_12m": 0.060778317785268786,
+    "sd_excess_12m": 0.27232290900046996,
+    "median_excess_12m": 0.031630285009744075
+   },
+   "uptrend / strong momentum": {
+    "n": 704,
+    "hits": 412,
+    "p": 0.5852272727272727,
+    "n_effective": 59,
+    "wilson95": [
+     0.46593171365564306,
+     0.7091115697744415
+    ],
+    "mean_excess_12m": 0.07663914232430484,
+    "sd_excess_12m": 0.28842733821151223,
+    "median_excess_12m": 0.06471778558762553
+   },
+   "downtrend / negative momentum": {
+    "n": 698,
+    "hits": 322,
+    "p": 0.46131805157593125,
+    "n_effective": 58,
+    "wilson95": [
+     0.34331815357826717,
+     0.5920004668972703
+    ],
+    "mean_excess_12m": 0.03205327797675395,
+    "sd_excess_12m": 0.37274813780117716,
+    "median_excess_12m": -0.027265503363441912
+   },
+   "downtrend / moderate momentum": {
+    "n": 326,
+    "hits": 155,
+    "p": 0.4754601226993865,
+    "n_effective": 27,
+    "wilson95": [
+     0.3074295064970908,
+     0.6601467541378958
+    ],
+    "mean_excess_12m": 0.04074423793647913,
+    "sd_excess_12m": 0.30046443217952806,
+    "median_excess_12m": -0.013240780022016563
+   },
+   "downtrend / strong momentum": {
+    "n": 53,
+    "hits": 28,
+    "p": 0.5283018867924528,
+    "n_effective": 4,
+    "wilson95": [
+     0.15003570882017148,
+     0.8499642911798285
+    ],
+    "mean_excess_12m": 0.21301069169256465,
+    "sd_excess_12m": 0.8572321853939742,
+    "median_excess_12m": 0.031712502228975925
+   }
+  },
+  "from 2020-04-30": {
+   "uptrend / negative momentum": {
+    "n": 319,
+    "hits": 210,
+    "p": 0.658307210031348,
+    "n_effective": 27,
+    "wilson95": [
+     0.47824419872105484,
+     0.8135694555640665
+    ],
+    "mean_excess_12m": 0.19166920768134282,
+    "sd_excess_12m": 0.46220000370775266,
+    "median_excess_12m": 0.11378760043111757
+   },
+   "uptrend / moderate momentum": {
+    "n": 759,
+    "hits": 453,
+    "p": 0.5968379446640316,
+    "n_effective": 63,
+    "wilson95": [
+     0.47980694060752427,
+     0.7146827185269069
+    ],
+    "mean_excess_12m": 0.1208469903248998,
+    "sd_excess_12m": 0.3908147750769671,
+    "median_excess_12m": 0.050840392417873526
+   },
+   "uptrend / strong momentum": {
+    "n": 1117,
+    "hits": 608,
+    "p": 0.5443151298119964,
+    "n_effective": 93,
+    "wilson95": [
+     0.44733119871635174,
+     0.6456040687720004
+    ],
+    "mean_excess_12m": 0.10727512409545327,
+    "sd_excess_12m": 0.3974083808749858,
+    "median_excess_12m": 0.027412934497664354
+   },
+   "downtrend / negative momentum": {
+    "n": 474,
+    "hits": 307,
+    "p": 0.6476793248945147,
+    "n_effective": 40,
+    "wilson95": [
+     0.4950559699353738,
+     0.7786566682895086
+    ],
+    "mean_excess_12m": 0.25241994388048,
+    "sd_excess_12m": 0.6825170721563081,
+    "median_excess_12m": 0.08757874265502241
+   },
+   "downtrend / moderate momentum": {
+    "n": 317,
+    "hits": 198,
+    "p": 0.6246056782334385,
+    "n_effective": 26,
+    "wilson95": [
+     0.42534520039420076,
+     0.7757164048816557
+    ],
+    "mean_excess_12m": 0.17361149172319795,
+    "sd_excess_12m": 0.7751576312208834,
+    "median_excess_12m": 0.059904716495489785
+   },
+   "downtrend / strong momentum": {
+    "n": 99,
+    "hits": 47,
+    "p": 0.47474747474747475,
+    "n_effective": 8,
+    "wilson95": [
+     0.21521252682444186,
+     0.7847874731755582
+    ],
+    "mean_excess_12m": 0.03809334431554188,
+    "sd_excess_12m": 0.26570815972234724,
+    "median_excess_12m": -0.011680218087884331
+   }
+  }
+ }
+}

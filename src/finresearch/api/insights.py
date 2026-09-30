@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -933,3 +934,64 @@ def build_insights(*, run_id: int, kind: str, claims: list[dict[str, Any]], synt
         "accuracy": accuracy_block(claims, cited),
         "triangulation": triangulation_block(claims, kind, fair),
     }  # fmt: skip
+
+
+# --------------------------------------------------------------------------- "since this report" (roadmap item 4)
+STALE_DAYS = 90  # a stock report older than a quarter has missed at least one results filing
+
+
+def price_bands(fair: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The report's per-share fair-value / entry-zone estimates as bands (low-high) or points, from `fair_values`."""
+    groups: dict[str, dict[str, Any]] = {}
+    for f in fair:
+        if f.get("unit") not in ("₹/share", "₹"):
+            continue
+        g = groups.setdefault(f["group"], {"group": f["group"], "label": f["label"], "low": None, "high": None,
+                                           "mid": None, "claim_ids": [], "verified": True})  # fmt: skip
+        role = f.get("role") or "mid"
+        if g.get(role) is None:
+            g[role] = f["value"]
+            g["claim_ids"].append(f["claim_id"])
+            g["verified"] = g["verified"] and f.get("status") == "verified"
+    out = []
+    for g in groups.values():
+        lo, hi = g["low"], g["high"]
+        if lo is None and hi is None:
+            lo = hi = g["mid"]
+        if lo is None or hi is None:
+            continue
+        out.append({**g, "low": min(lo, hi), "high": max(lo, hi)})
+    return out
+
+
+def freshness(*, run_id: int, kind: str, symbol: str | None, report_at: datetime | None, now: datetime,
+              price: float | None, price_as_of: str | None, fair: list[dict[str, Any]],
+              announcements: list[dict[str, Any]], stale_days: int = STALE_DAYS) -> dict[str, Any]:  # fmt: skip
+    """What changed since the report: days elapsed, the live price against the report's entry zone and fair-value
+    bands, filings made since, and whether a re-run is worth it. Pure: callers pass the clock and the data."""
+    days = (now - report_at).days if report_at else None
+    bands = []
+    for b in price_bands(fair):
+        pos = None
+        if price is not None:
+            pos = "below" if price < b["low"] else "above" if price > b["high"] else "inside"
+        bands.append({**b, "position": pos,
+                      "distance": None if price is None else
+                      (price / b["low"] - 1 if pos == "below" else price / b["high"] - 1 if pos == "above" else 0.0)})  # fmt: skip
+    since = sorted((a for a in announcements if report_at and a.get("at") and datetime.fromisoformat(a["at"]) > report_at),
+                   key=lambda a: a["at"], reverse=True)  # fmt: skip
+    results = [a for a in since if a.get("results_period_end")]
+    reasons: list[str] = []
+    if days is not None and days > stale_days:
+        reasons.append(f"The report is {days} days old (over {stale_days}).")
+    if results:
+        reasons.append(f"{len(results)} results filing{'s' if len(results) > 1 else ''} since the report.")
+    for b in bands:  # only a verified estimate can fire the review trigger
+        if b["position"] == "above" and "fair" in b["group"] and b["verified"]:
+            reasons.append(f"The price is above the report's {b['label'].lower()} band (a review trigger).")
+    return {"run_id": run_id, "kind": kind, "symbol": symbol,
+            "report_at": report_at.isoformat() if report_at else None, "now": now.isoformat(), "days_since": days,
+            "price": price, "price_as_of": price_as_of, "bands": bands,
+            "new_filings": {"count": len(since), "results": len(results), "items": since[:8]},
+            "stale": bool(reasons), "suggest_rerun": (days is not None and days > stale_days) or bool(results),
+            "reasons": reasons}  # fmt: skip

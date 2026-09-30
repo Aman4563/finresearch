@@ -15,7 +15,8 @@ Recorded payloads live in tests/fixtures/nse/equity/. Dates in the payloads are 
 from __future__ import annotations
 
 import re
-from datetime import date, datetime
+from collections.abc import Awaitable, Callable
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -55,6 +56,22 @@ class PriceBar(BaseModel):
                    vwap=parse_num(r.get("vwap")), volume=parse_num(r.get("chTotTradedQty")),
                    value_inr=parse_num(r.get("chTotTradedVal")), trades=parse_num(r.get("chTotalTrades")),
                    week52_high=parse_num(r.get("ch52WeekHighPrice")), week52_low=parse_num(r.get("ch52WeekLowPrice")))  # fmt: skip
+
+
+class IndexBar(BaseModel):
+    """One day of an NSE index (price index; NSE's history API has no total-return series)."""
+
+    day: date
+    open: Decimal | None
+    high: Decimal | None
+    low: Decimal | None
+    close: Decimal | None
+
+    @classmethod
+    def parse(cls, r: dict[str, Any]) -> IndexBar:
+        return cls(day=_upper_date(r.get("EOD_TIMESTAMP")), open=parse_num(r.get("EOD_OPEN_INDEX_VAL")),
+                   high=parse_num(r.get("EOD_HIGH_INDEX_VAL")), low=parse_num(r.get("EOD_LOW_INDEX_VAL")),
+                   close=parse_num(r.get("EOD_CLOSE_INDEX_VAL")))  # fmt: skip
 
 
 class Announcement(BaseModel):
@@ -267,6 +284,13 @@ class NseEquity:
                                 "fromDate": start.strftime("%d-%m-%Y"), "toDate": end.strftime("%d-%m-%Y")})  # fmt: skip
         return sorted((PriceBar.parse(r) for r in rows or []), key=lambda b: b.day)
 
+    async def index_history(self, index: str, start: date, end: date) -> list[IndexBar]:
+        """Daily values of an NSE index (e.g. "NIFTY 50"); like `history`, one request answers ~70 trading days."""
+        d = await self._get("INFY", "/api/historicalOR/indicesHistory",
+                            {"indexType": index, "from": start.strftime("%d-%m-%Y"), "to": end.strftime("%d-%m-%Y")})  # fmt: skip
+        rows = d.get("data", []) if isinstance(d, dict) else d or []
+        return sorted((b for b in (IndexBar.parse(r) for r in rows) if b.day), key=lambda b: b.day)
+
     async def announcements(self, symbol: str) -> list[Announcement]:
         rows = await self._get(
             symbol, "/api/corporate-announcements", {"index": "equities", "symbol": symbol}
@@ -313,6 +337,44 @@ class NseEquity:
         if not resp.ok:
             raise NseError(f"HTTP {resp.status} for {url}")
         return resp.content
+
+
+# --------------------------------------------------------------------------- long histories
+HISTORY_MAX_REQUESTS = 40  # NSE returns at most ~70 rows (the latest) per historical-trade request
+HISTORY_WINDOW_DAYS = 360  # and refuses (HTTP 404) a range longer than a year
+
+
+async def walk_history(fetch: Callable[[date, date], Awaitable[list[Any]]], start: date, end: date, *,
+                       max_requests: int = HISTORY_MAX_REQUESTS,
+                       window_days: int = HISTORY_WINDOW_DAYS) -> tuple[list[Any], bool]:  # fmt: skip
+    """Daily rows (anything with a `.day`) from `start` to `end`, oldest first, and whether the walk stopped early.
+
+    NSE answers a date range with only its latest ~70 trading days, so this walks backwards from the end until a
+    request reaches the start (or returns nothing new). A request that fails after some rows came back ends the
+    walk with `partial=True`; a failure before any row came back is raised.
+    """
+    bars: dict[date, Any] = {}
+    hi, partial = end, False
+    for _ in range(max_requests):
+        if hi < start:
+            break
+        lo = max(start, hi - timedelta(days=window_days))
+        try:
+            got = await fetch(lo, hi)
+        except Exception:
+            if not bars:
+                raise
+            partial = True  # keep what came back; callers say the history is shorter
+            break
+        got = [x for x in got if lo <= x.day <= hi]
+        for x in got:
+            bars[x.day] = x
+        if not got and lo == start:
+            break
+        earliest = min((x.day for x in got), default=lo)
+        # a window answered in full (or empty: e.g. before listing) moves to the previous window
+        hi = lo - timedelta(days=1) if earliest <= lo + timedelta(days=4) else earliest - timedelta(days=1)
+    return [bars[d] for d in sorted(bars)], partial
 
 
 # --------------------------------------------------------------------------- listed equities (search)

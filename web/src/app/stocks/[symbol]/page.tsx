@@ -12,6 +12,7 @@ import { DonutChart, TimeSeriesChart, shortDate } from "@/components/charts";
 import { ensureStock, startResearch, watchStock } from "@/components/markets/actions";
 import { MarginChart, ResultsChart } from "@/components/markets/charts";
 import { ShareholdingSplit } from "@/components/markets/shareholding";
+import { ForensicCard, SinceReport, StockSignalCard } from "@/components/markets/stock-signal";
 import { Metric, PERIOD_DAYS, type Period, PeriodChart, RangeBar, Timeline, crore, inr, pctOf, signedPct, toneOf } from "@/components/markets/common";
 import type { StockHistory, StockOverview, StockResults, StockShareholding } from "@/components/markets/types";
 import {
@@ -148,6 +149,14 @@ export default function StockDetail() {
                 help="Cash dividends per share with an ex-date in the last 12 months, divided by today's price." />
             </>
           )}
+        </div>
+
+        <SinceReport symbol={symbol} />
+
+        {/* signal + forensic scorecard (computed in Python; screening flags, not advice) */}
+        <div className="grid [&>*]:min-w-0 gap-5 lg:grid-cols-2">
+          <StockSignalCard symbol={symbol} />
+          <ForensicCard symbol={symbol} />
         </div>
 
         {/* price chart + range */}

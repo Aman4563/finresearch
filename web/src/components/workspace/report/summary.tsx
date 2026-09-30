@@ -13,6 +13,7 @@ import { KindIcon, kindMeta } from "@/components/workspace/run-meta";
 import {
   type ClaimMap, CiteText, ConfidenceMeter, type OpenClaim, SourceStrip, StatusDot, STATUS_LABEL, tileHelp,
 } from "@/components/workspace/report/shared";
+import { SinceReport } from "@/components/markets/stock-signal";
 import type { Report } from "@/lib/api";
 import type { Insights, Tile } from "@/lib/insights";
 
@@ -247,6 +248,7 @@ export function SummaryTab({ report, ins, claims, onOpen, title, goTab, extra }:
   return (
     <div className="space-y-5">
       <VerdictHero report={report} ins={ins} claims={claims} onOpen={onOpen} title={title} />
+      {report.kind === "stock_report" && <SinceReport runId={report.run_id} />}
 
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_20rem]">
         <Card title="In plain English" icon={<Lightbulb className="size-4" />} subtitle="What the report is saying, without the jargon. Chips open the evidence.">
