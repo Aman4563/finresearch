@@ -73,6 +73,7 @@ CAPS = {"low": 0.05, "medium": 0.08, "high": 0.10}  # single-stock cap when the 
 RISK_BUDGET = {"low": 0.015, "medium": 0.02, "high": 0.025}  # weight x volatility (annual) per position
 ATR_K = 2.5  # stop = price - k x ATR(14); roadmap §D.2 suggests k = 2-3
 CACHE_S = 1800
+NEGATIVE_CACHE_S = 30  # inputs with a part the exchange could not serve just now
 
 
 # --------------------------------------------------------------------------- data sources (test seam)
@@ -125,11 +126,32 @@ def _profile() -> Any:
         return Profile()
 
 
+class _Errors(list):
+    """The inputs' error lines, plus `unreachable`: the parts lost to the network or the exchange's gate."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.unreachable: list[str] = []
+
+    def finish(self, results: Any) -> list[str]:
+        """Every unreachable part, including the results' own XBRL fetches that failed on the network."""
+        extra = (
+            ["results"]
+            if isinstance(results, dict) and results.get("unreachable") and "results" not in self.unreachable
+            else []
+        )
+        return [*self.unreachable, *extra]
+
+
 async def _part(errors: list[str], name: str, make: Callable[[], Awaitable[Any]], default: Any) -> Any:
+    from finresearch.adapters.http import is_transient
+
     try:
         return await make()
     except Exception as e:  # one refused section must not sink the signal; it is listed in the caveats
         errors.append(f"{name}: {type(e).__name__}")
+        if is_transient(e) and isinstance(errors, _Errors):
+            errors.unreachable.append(name)
         return default
 
 
@@ -158,7 +180,7 @@ async def _load_live(sym: str) -> dict[str, Any]:
     from finresearch.adapters.nse_equity import NseEquity, walk_history
     from finresearch.api.markets import _retry, results_from_nse, shareholding_from_nse
 
-    errors: list[str] = []
+    errors = _Errors()
     async with NseClient() as nse:
         try:
             quote = await nse.quote(sym)
@@ -171,6 +193,7 @@ async def _load_live(sym: str) -> dict[str, Any]:
                                            today - timedelta(days=HISTORY_DAYS), today)  # fmt: skip
         if partial:
             errors.append("price history: NSE refused part of the older history")
+            errors.unreachable.append("price history")
         actions = await _part(errors, "corporate actions", lambda: eq.corporate_actions(sym), [])
         results = await _part(errors, "results", lambda: results_from_nse(eq, sym, RESULT_QUARTERS, annual_facts=annual),
                               {"quarters": []})  # fmt: skip
@@ -178,7 +201,7 @@ async def _load_live(sym: str) -> dict[str, Any]:
             errors, "shareholding", lambda: shareholding_from_nse(eq, sym, 5), {"quarters": []}
         )
     return {"quote": quote, "bars": bars, "actions": actions, "results": results, "annual": annual,
-            "shareholding": holding, "errors": errors}  # fmt: skip
+            "shareholding": holding, "errors": list(errors), "unreachable": errors.finish(results)}  # fmt: skip
 
 
 async def _load_live_bse(code: str, equity: Any = None) -> dict[str, Any]:
@@ -187,7 +210,7 @@ async def _load_live_bse(code: str, equity: Any = None) -> dict[str, Any]:
     from finresearch.adapters.bse_equity import BseEquity
     from finresearch.api.markets import results_from_nse, shareholding_from_nse
 
-    errors: list[str] = []
+    errors = _Errors()
     today = _today()
     annual: dict[date, dict[str, Any]] = {}
     async with equity or BseEquity() as eq:
@@ -207,7 +230,8 @@ async def _load_live_bse(code: str, equity: Any = None) -> dict[str, Any]:
             errors, "shareholding", lambda: shareholding_from_nse(eq, code, 5), {"quarters": []}
         )
     return {"exchange": "BSE", "quote": quote, "bars": bars, "actions": actions, "results": results,
-            "annual": annual, "shareholding": holding, "errors": errors}  # fmt: skip
+            "annual": annual, "shareholding": holding, "errors": list(errors),
+            "unreachable": errors.finish(results)}  # fmt: skip
 
 
 async def inputs(sym: str) -> dict[str, Any]:
@@ -218,7 +242,8 @@ async def inputs(sym: str) -> dict[str, Any]:
     if hit and hit[0] > time.time():
         return hit[1]
     raw = await (SOURCES.load or _load_live)(sym)
-    _cache[sym] = (time.time() + CACHE_S, raw)
+    # a part lost to the network (DNS, timeout, a 403/5xx or block page) must not stick for half an hour
+    _cache[sym] = (time.time() + (NEGATIVE_CACHE_S if raw.get("unreachable") else CACHE_S), raw)
     if len(_cache) > 64:
         for k in [k for k, (at, _) in _cache.items() if at < time.time()]:
             _cache.pop(k, None)
@@ -586,6 +611,10 @@ async def stock_signal(instrument: str, ctx: dict[str, Any]) -> Signal:
         caveats.insert(0, BSE_CAVEAT)
         caveats.append("The logged forecast is scored on BSE closes (plus cash dividends) against NIFTYBEES on NSE, "
                        "the same benchmark as NSE stocks so that both land in one calibration.")  # fmt: skip
+    if raw.get("unreachable"):
+        caveats.insert(0, f"Couldn't reach {ex} just now for: {', '.join(raw['unreachable'])}. Those factors are "
+                          "missing for now (not because nothing is filed); this signal is not logged and is recomputed "
+                          "on the next view.")  # fmt: skip
     if raw.get("errors"):
         caveats.append(f"Some inputs could not be loaded from {ex}: " + "; ".join(raw["errors"]))
     if f.anomalies:
@@ -634,7 +663,9 @@ async def stock_signal(instrument: str, ctx: dict[str, Any]) -> Signal:
     sig = Signal(**base, action=action_for_score(score), score=round(score, 1), validation=validation,
                  probability=prob, probability_interval=interval, base_rate=base_rate, factors=factors,
                  caveats=caveats, sizing=sizing(f, bucket, _profile()))  # fmt: skip
-    if str(ctx.get("log", "1")) != "0":  # ctx log=0: a scheduled alert check, not a viewed signal
+    # ctx log=0: a scheduled alert check, not a viewed signal. A signal missing inputs the exchange could not serve
+    # just now is not logged: the day's forecast is recorded from complete inputs on a later view
+    if str(ctx.get("log", "1")) != "0" and not raw.get("unreachable"):
         _log(sig, bucket_name)
     return sig
 

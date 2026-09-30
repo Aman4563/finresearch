@@ -393,11 +393,16 @@ async def _analyse(code: str) -> dict[str, Any]:
     w1 = windows(me.code, codes, anchors, snaps, 1) if snaps else []
     q = quarterly(me.code, codes, anchors, snaps) if snaps else {}
     ter_errors = None
+    unreachable: list[str] = []
     try:
         table = await _ter(SOURCES.today())
     except Exception as e:  # the TER file is optional: the factor is marked missing
+        from finresearch.adapters.http import is_transient
+
         table, ter_errors = {}, f"AMFI TER file unavailable: {e}"
-    return {"scheme": {"scheme_code": me.code, "name": me.name, "plan": me.plan, "option": me.option,
+        if is_transient(e):  # AMFI unreachable just now: keep this answer for seconds, not 12 hours
+            unreachable.append("AMFI TER file")
+    return {"unreachable": unreachable, "scheme": {"scheme_code": me.code, "name": me.name, "plan": me.plan, "option": me.option,
                        "category": me.category, "amc": me.amc, "nav_date": me.day.isoformat() if me.day else None},
             "direct": direct, "growth": is_growth(me), "passive": passive, "peers": len(peers),
             "anchors": [a.isoformat() for a in anchors],

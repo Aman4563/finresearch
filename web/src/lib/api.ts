@@ -205,6 +205,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+/** useApi for a route that marks parts it could not fetch (`unreachable`): `retry()` asks the server to skip its
+ * short negative cache (`retry=true`) and fetch from the exchange again. */
+export function useRetryApi<T>(path: string, pollMs?: number) {
+  const [attempt, setAttempt] = useState(0);
+  const p = attempt ? `${path}${path.includes("?") ? "&" : "?"}retry=true&attempt=${attempt}` : path;
+  const r = useApi<T>(p, pollMs);
+  const retry = useCallback(() => setAttempt((n) => n + 1), []);
+  return { ...r, retry };
+}
+
 /** Fetch once (and on `reload`), optionally polling every `pollMs`. Polling pauses while the tab is hidden and
  * catches up when it is shown again. `updatedAt` is when the last successful response arrived. */
 export function useApi<T>(path: string | null, pollMs?: number) {

@@ -52,7 +52,9 @@ def add_freshness_routes(app: FastAPI, *, clock=None) -> None:
         price = as_of = None
         anns: list[dict[str, Any]] = []
         errors: list[str] = []
+        unreachable: list[str] = []  # lost to the network: kept in the cache for seconds, not minutes
         from finresearch.adapters.bse_equity import scrip_code_of
+        from finresearch.adapters.http import is_transient
 
         code = scrip_code_of(sym or "")
         ex, sid = ("BSE", code) if code else ("NSE", sym)
@@ -64,6 +66,8 @@ def add_freshness_routes(app: FastAPI, *, clock=None) -> None:
                 as_of = q.as_of.isoformat() if q.as_of else None
             except Exception as e:
                 errors.append(f"quote: {type(e).__name__}")
+                if is_transient(e):
+                    unreachable.append("quote")
             try:
                 async with src().open_equity(ex) if code else src().open_equity() as eq:
                     anns = [{"at": a.at.isoformat() if a.at else None, "category": a.category, "text": a.text[:300],
@@ -72,9 +76,11 @@ def add_freshness_routes(app: FastAPI, *, clock=None) -> None:
                             for a in await eq.announcements(sid)]  # fmt: skip
             except Exception as e:
                 errors.append(f"announcements: {type(e).__name__}")
+                if is_transient(e):
+                    unreachable.append("announcements")
         out = freshness(run_id=facts["run_id"], kind=facts["kind"], symbol=sym, report_at=facts["report_at"],
                         now=now(), price=price, price_as_of=as_of, fair=facts["fair"], announcements=anns)  # fmt: skip
-        out["errors"] = errors
+        out["errors"], out["unreachable"] = errors, unreachable
         return out
 
     @app.get("/api/runs/{run_id}/since")

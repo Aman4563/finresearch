@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import re
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime, timedelta, timezone
@@ -48,6 +49,27 @@ DEFAULT_HOST_RATES: dict[str, float] = {"nseindia.com": 2.0}
 DEFAULT_RATE = 1.0
 
 RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
+
+# how a network or exchange failure reads in the adapters' errors ("NSE HTTP 403 for ...", "BSE returned a non-JSON
+# page ...", "NSE refused ... after re-warm"). A 404 or an empty answer is the exchange saying "no data": not transient.
+_TRANSIENT_MSG = re.compile(r"\bHTTP (?:401|403|408|425|429|5\d\d)\b|non-JSON|invalid JSON|\brefused\b|block page",
+                            re.IGNORECASE)  # fmt: skip
+
+
+def is_transient(exc: BaseException | None) -> bool:
+    """Whether a failure came from the network or the exchange's gate (DNS, connection, timeout, 401/403/429/5xx, a
+    block page instead of JSON), so a retry soon may well succeed. Such a failure must never be cached as data or as
+    "no data". Follows `raise ... from` chains (a LookupError wrapping an NseError)."""
+    seen = 0
+    while exc is not None and seen < 5:
+        if isinstance(
+            exc, (httpx.TransportError, httpx.TimeoutException, TimeoutError, ConnectionError, OSError)
+        ):
+            return True
+        if _TRANSIENT_MSG.search(str(exc)):
+            return True
+        exc, seen = exc.__cause__ or exc.__context__, seen + 1
+    return False
 
 
 def now_ist() -> datetime:

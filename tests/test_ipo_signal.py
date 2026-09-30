@@ -347,3 +347,71 @@ def test_base_rates_endpoint_reads_the_harvested_table(clean, monkeypatch):
         assert hot["n"] == 20 and hot["p_loss"] == 0.1 and "FINAL" in body["caveat"]
         assert c.get("/api/ipo/base-rates", params={"by": "total"}).json()["by"] == "total"
         assert c.get("/api/ipo/base-rates", params={"by": "gmp"}).status_code == 422
+
+
+# --------------------------------------------------------------------------- the provider's cache
+async def test_ipo_signal_is_cached_per_inputs_and_logs_once(monkeypatch):
+    import httpx
+
+    calls = {"detail": 0}
+    logged: list = []
+    snap = {"as_of": datetime(2026, 9, 29, 14, 0, tzinfo=IST)}
+    state = {"down": False, "snapshot": None, "profile": default_profile()}
+    detail = orient(qib="150", retail="20")
+
+    async def ipo_detail(symbol, series):
+        calls["detail"] += 1
+        if state["down"]:
+            raise httpx.ConnectError("[Errno 8] nodename nor servname provided, or not known")
+        return detail
+
+    async def issue_terms(symbol, series):
+        return detail.terms
+
+    src = sig_ipo.Sources(history_rows=history, latest_snapshot=lambda s: state["snapshot"], ipo_detail=ipo_detail,
+                          issue_terms=issue_terms, profile=lambda: state["profile"], artefact=lambda: None,
+                          now=lambda: NOW, record=lambda sig, on, inp: logged.append(sig.instrument))  # fmt: skip
+    monkeypatch.setattr(sig_ipo, "SOURCES", src)
+    monkeypatch.setattr(sig_ipo, "_SIGNALS", {})
+    clock = {"t": 1000.0}
+    monkeypatch.setattr("time.time", lambda: clock["t"])
+    assert (
+        sig_ipo.signal_ttl(NOW) == sig_ipo.SIGNAL_TTL_BIDDING_S
+    )  # 15:00 IST on a trading day: bidding hours
+    assert sig_ipo.signal_ttl(datetime(2026, 9, 29, 18, 0, tzinfo=IST)) == sig_ipo.SIGNAL_TTL_S
+
+    first = await sig_ipo.ipo_signal("ORIENTCABL", {})
+    again = await sig_ipo.ipo_signal("orientcabl", {})
+    assert first.action == "APPLY" and again is first and calls["detail"] == 1
+    assert logged == ["ORIENTCABL"]  # a cache hit never records the forecast again
+    state["snapshot"] = snap  # a new recorded book is a new input: recomputed
+    await sig_ipo.ipo_signal("ORIENTCABL", {})
+    assert calls["detail"] == 2
+    state["profile"] = Profile(capital_per_ipo_inr=Decimal(30000))  # a profile edit too
+    await sig_ipo.ipo_signal("ORIENTCABL", {})
+    assert calls["detail"] == 3
+    clock["t"] += sig_ipo.SIGNAL_TTL_BIDDING_S + 1  # expired in bidding hours
+    await sig_ipo.ipo_signal("ORIENTCABL", {})
+    assert calls["detail"] == 4
+
+    # a failure is never cached: NSE unreachable, then back
+    monkeypatch.setattr(sig_ipo, "_SIGNALS", {})
+    state.update(down=True, snapshot=None)
+    down = await sig_ipo.ipo_signal("ORIENTCABL", {"series": "EQ"})
+    assert down.action == "NO_SIGNAL" and "unavailable" in down.caveats[0]
+    state["down"] = False
+    back = await sig_ipo.ipo_signal("ORIENTCABL", {"series": "EQ"})
+    assert back.action == "APPLY"
+
+
+async def test_sme_card_needs_no_nse_request():
+    asked: list = []
+
+    async def ipo_detail(symbol, series):
+        asked.append(symbol)
+        raise AssertionError("no NSE request for an SME card")
+
+    src = sources(orient())
+    src.ipo_detail = ipo_detail
+    s = await sig_ipo.compute("ACMEUNIV", {"series": "sme"}, src)
+    assert s.action == "NO_SIGNAL" and s.caveats[0] == sig_ipo.SME_REASON and asked == []

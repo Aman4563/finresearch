@@ -105,14 +105,14 @@ def history_rows_db() -> list[dict[str, Any]]:
     """Mainboard ipo_history rows as dicts (cached 10 minutes); [] if the table is missing or empty."""
 
     def make() -> list[dict[str, Any]]:
-        try:
-            from finresearch.evals.ipo_model import load_rows
+        from finresearch.evals.ipo_model import load_rows
 
-            return load_rows()
-        except Exception:
-            return []
+        return load_rows()
 
-    return _cached("history_rows", ROWS_TTL_S, make)
+    try:
+        return _cached("history_rows", ROWS_TTL_S, make)
+    except Exception:  # database unreachable: answer [] now, never cache it (the next call asks again)
+        return []
 
 
 def base_rate_table(by: str = "qib") -> dict[str, Any]:
@@ -183,27 +183,58 @@ def _nse_lock() -> asyncio.Lock:
     return _NSE_LOCK
 
 
+_NSE_SHARED: dict[str, Any] = {}
+NSE_SESSION_S = 900  # re-open the shared session (and its cookies) every 15 minutes
+
+
+def _shared_nse():
+    """One warmed NSE session for the provider's calls on this event loop (call under `_nse_lock`). Each /ipos card
+    asks for its signal; opening a new client per call cost a cookie warm-up (the NSE home page) every time, about
+    half of a cold /ipos fill. NseClient re-warms by itself on a 401/403 or a block page."""
+    from finresearch.adapters.nse import NseClient
+
+    loop = asyncio.get_running_loop()
+    cur = _NSE_SHARED.get("client")
+    if (
+        cur is None
+        or _NSE_SHARED.get("loop") is not loop
+        or _NSE_SHARED.get("at", 0) < time.time() - NSE_SESSION_S
+    ):
+        _NSE_SHARED.update(client=NseClient(), loop=loop, at=time.time())
+        if cur is not None:
+            _NSE_SHARED.setdefault("stale", []).append(cur)  # closed by the caller
+    return _NSE_SHARED["client"]
+
+
+async def _close_stale() -> None:
+    import contextlib
+
+    for c in _NSE_SHARED.pop("stale", []):
+        with contextlib.suppress(Exception):  # its loop may be gone; then the process exits with it
+            await c.aclose()
+
+
 async def ipo_detail_live(symbol: str, series: str | None):
     key = ("detail", symbol, series)
     hit = _CACHE.get(key)
     if hit and hit[0] > time.time():
         return hit[1]
-    from finresearch.adapters.nse import NseClient
 
     async with _nse_lock():
         hit = _CACHE.get(key)  # another request may have fetched it while this one waited
         if hit and hit[0] > time.time():
             return hit[1]
-        async with NseClient() as nse:
-            detail = await nse.ipo_detail(symbol, series)
+        nse = _shared_nse()
+        await _close_stale()
+        detail = await nse.ipo_detail(symbol, series)
         _CACHE[key] = (time.time() + DETAIL_TTL_S, detail)
     return detail
 
 
 async def issue_terms_live(symbol: str, series: str | None):
-    from finresearch.adapters.nse import NseClient
-
-    async with _nse_lock(), NseClient() as nse:
+    async with _nse_lock():
+        nse = _shared_nse()
+        await _close_stale()
         return await nse.issue_terms(symbol, series)  # disk-cached for hours by the adapter
 
 
@@ -319,12 +350,73 @@ def _listed(detail, rows: list[dict[str, Any]], symbol: str, today: date) -> dic
 # --------------------------------------------------------------------------- the provider
 
 
+SME_REASON = (
+    "SME issue: the base rates and model cover mainboard (EQ) issues only; SME listings (thin trading, 90% "
+    "price bands) behave differently"
+)
+SIGNAL_TTL_BIDDING_S = 60  # the book moves minute to minute while bidding is open
+SIGNAL_TTL_S = 600
+_SIGNALS: dict[Any, tuple[float, Signal]] = {}
+
+
+def signal_ttl(now: datetime) -> int:
+    """60 s during IPO bidding hours (10:00-17:00 IST on trading days), 10 minutes otherwise."""
+    from finresearch.api.live import _holidays, market_status
+
+    try:
+        holidays = _holidays()
+    except Exception:
+        holidays = {}
+    return SIGNAL_TTL_BIDDING_S if market_status(now, holidays)["ipo_bidding"]["open"] else SIGNAL_TTL_S
+
+
+def _inputs_key(symbol: str, ctx: dict[str, Any], src: Sources) -> tuple:
+    """What the signal depends on besides the exchange's pages (which the adapters cache): the context, the latest
+    recorded book and the profile (rules, capital, category). A new snapshot or a profile edit is a new key."""
+    import hashlib
+
+    snap = src.latest_snapshot(symbol)
+    try:
+        prof = src.profile()
+        prof_id = hashlib.sha256(prof.model_dump_json().encode()).hexdigest()[:16] if hasattr(prof, "model_dump_json") \
+            else repr(prof)  # fmt: skip
+    except Exception:
+        prof_id = None
+    return (symbol, tuple(sorted((str(k), str(v)) for k, v in ctx.items())),
+            str(snap.get("as_of")) if snap else None, prof_id)  # fmt: skip
+
+
 @register("ipo")
 async def ipo_signal(instrument: str, ctx: dict[str, Any]) -> Signal:
-    return await compute(instrument, ctx, SOURCES)
+    """The provider behind /api/signals/ipo/{symbol}, cached per symbol + inputs (60 s in bidding hours, 10 minutes
+    otherwise). A cache hit returns the stored signal without recomputing, so the forecast ledger is written only
+    when the signal is computed (and it de-duplicates per symbol per day). A signal degraded by a network/exchange
+    failure is never cached: the next request computes it again."""
+    import time as _t
+
+    symbol = instrument.strip().upper()
+    if not symbol or len(symbol) > 30:
+        raise ValueError("an NSE IPO symbol is required")
+    key = await asyncio.to_thread(_inputs_key, symbol, ctx, SOURCES)
+    hit = _SIGNALS.get(key)
+    if hit and hit[0] > _t.time():
+        return hit[1]
+    state: dict[str, Any] = {}
+    sig = await compute(instrument, ctx, SOURCES, state=state)
+    if not state.get("unreachable"):
+        _SIGNALS[key] = (_t.time() + signal_ttl(SOURCES.now()), sig)
+        if len(_SIGNALS) > 256:
+            now = _t.time()
+            for k in [k for k, (at, _) in _SIGNALS.items() if at < now]:
+                _SIGNALS.pop(k, None)
+    return sig
 
 
-async def compute(instrument: str, ctx: dict[str, Any], src: Sources) -> Signal:
+async def compute(
+    instrument: str, ctx: dict[str, Any], src: Sources, *, state: dict[str, Any] | None = None
+) -> Signal:
+    """`state` (optional) receives "unreachable": True when an exchange page failed on the network or at its gate, so
+    the caller does not cache the result."""
     from finresearch.fincalc.dates import to_ist
     from finresearch.suggest.rules import Metric, evaluate, lot_limits
 
@@ -349,18 +441,23 @@ async def compute(instrument: str, ctx: dict[str, Any], src: Sources) -> Signal:
         table = {**((artefact or {}).get("base_rates") or {}).get("qib", {}), "source": "snapshot"}
     table_n = table.get("n", 0)
 
+    if series == "SME":  # known from the caller (the /ipos card): no NSE request is needed to say so
+        return _no_signal(symbol, None, SME_REASON, now)
     snap = await asyncio.to_thread(src.latest_snapshot, symbol)
     detail = None
     try:
         detail = await src.ipo_detail(symbol, series)
     except Exception as e:
+        from finresearch.adapters.http import is_transient
+
+        if state is not None and is_transient(e):
+            state["unreachable"] = True
         if snap is None:
             return _no_signal(symbol, None, f"NSE issue page unavailable ({type(e).__name__})", now,
                               base=_regime_base(table, table_n))  # fmt: skip
     name = getattr(detail, "company_name", None)
     if (getattr(detail, "series", series) or "EQ").upper() == "SME" or series == "SME":
-        return _no_signal(symbol, name, "SME issue: the base rates and model cover mainboard (EQ) issues only; SME "
-                          "listings (thin trading, 90% price bands) behave differently", now)  # fmt: skip
+        return _no_signal(symbol, name, SME_REASON, now)
 
     listed = _listed(detail, rows, symbol, today)
     if listed:
@@ -401,7 +498,11 @@ async def compute(instrument: str, ctx: dict[str, Any], src: Sources) -> Signal:
     terms = None
     try:
         terms = await src.issue_terms(symbol, series)
-    except Exception:
+    except Exception as e:
+        from finresearch.adapters.http import is_transient
+
+        if state is not None and is_transient(e):
+            state["unreachable"] = True
         terms = getattr(detail, "terms", None) if detail is not None else None
     lot = getattr(terms, "lot_size", None)
     upper = getattr(terms, "price_high", None)
