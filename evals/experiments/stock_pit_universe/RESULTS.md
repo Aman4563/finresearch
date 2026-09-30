@@ -35,6 +35,7 @@ Bar: excess > 0 and Newey–West t > 2.394 (Bonferroni, 3 variants). Deflated Sh
 - NIFTYBEES (the market-filter series and the price reference) CAGR over the same months: +12.60 %.
 - A price jump with no matching split/bonus in NSE's corporate actions is treated as a data error: returns across it are dropped for 252 days (v1's rule). That also drops some REAL moves, e.g. YESBANK in March 2020, from the strategy and the benchmark alike; it flatters the equal-weight universe slightly. Symbols affected: ADANIENT (1), ASIANPAINT (1), AUROPHARMA (1), BEL (2), BPCL (1), HCLTECH (2), IDEA (4), IDFC (1), INDUSINDBK (1), INFY (2), IOC (2), JPASSOCIAT (1), PNB (1), SBIN (1), SUNPHARMA (1), TCS (1), TECHM (1), TMPV (1), VEDL (1), WIPRO (1), YESBANK (4), ZEEL (1).
 - Price returns without dividends; cash at 0 %; a monthly close-to-close trade with 5 bp slippage.
+- The survivorship twin (20.7 % CAGR) differs from the committed v1 result (17.0 %, evals/stock_backtest) because the calendar differs (NIFTYBEES month-ends from Jan-2014 here; the NSE index series, which has holes, there), not because the rule changed.
 - Delisted members (HDFC, CAIRN, RANBAXY, IDFC, TATAMTRDVR, JPASSOCIAT) drop out in the month their trading stops (their last partial month is not counted).
 
 ## Decision

@@ -810,9 +810,9 @@ def _m(v: Any, source: str) -> tuple[Decimal | None, str]:
 def _live_features(book: Book, upper, rows: list[dict[str, Any]], today: date) -> dict[str, Any]:
     """Model features for an open issue from the live book (Nifty unavailable here → 0, the training imputation).
 
-    Known gap (audit #137; dormant while the walk-forward gate fails, so no live signal uses it): the OFS share is
-    always imputed (ofs_missing = 1) and the Nifty return always 0, although both are knowable at decision time;
-    training rows mostly have them. Fill both before the model is ever switched on."""
+    The OFS share and the Nifty return are left None here; `_live_features_full` fills both (the blend path, #147).
+    The raw-model path still uses this function alone: it is unreached while `ipo_model_walkforward.json` fails
+    its gate, and must switch to `_live_features_full` before it is ever used."""
     from finresearch.evals.ipo_history import ipo_count
 
     book_cr = (book.public_shares or 0) * float(upper or 0) / 1e7

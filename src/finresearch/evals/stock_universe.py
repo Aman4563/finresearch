@@ -17,6 +17,11 @@ quintile; V3 = top quintile of the average of the momentum rank and the low-vola
 Pass bar per variant: net excess vs the equal-weight PIT universe > 0 and Newey–West t > 2.39 (two-sided Bonferroni
 for 3 tests at 5 %). The deflated Sharpe ratio (Bailey & López de Prado 2014) with N = 4 trials is reported.
 
+Data: the prices are harvested once into the gitignored `data/cache/stock_backtest/` (about 90 symbols from Jan-2013,
+roughly 4 hours at the harvester's polite pace). `harvest_symbols()` lists every symbol needed:
+
+    uv run python -m finresearch.evals.stock_harvest --start 2013-01-01 --end 2026-09-30 \
+        --symbols "$(uv run python -m finresearch.evals.stock_universe --symbols)"
     uv run python -m finresearch.evals.stock_universe
 """
 
@@ -324,6 +329,14 @@ def _current_list() -> list[str]:
     return [inverse.get(s, s) for s in cur]  # the log uses the symbols of the day
 
 
+def harvest_symbols() -> list[str]:
+    """Every data symbol the run needs: all members since 2014 (today's list and the change log), mapped to the
+    symbol NSE serves their history under, plus the market series."""
+    changes = load_changes()
+    pit = set(_current_list()) | {c.symbol for c in changes}
+    return sorted({data_symbol(s) for s in pit} | {MARKET})
+
+
 def _pct(x: float | None) -> str:
     return "—" if x is None else f"{x * 100:+.2f} %"
 
@@ -368,6 +381,9 @@ def render(out: dict[str, Any]) -> str:
               "YESBANK in March 2020, from the strategy and the benchmark alike; it flatters the equal-weight "
               f"universe slightly. Symbols affected: {', '.join(f'{k} ({len(v)})' for k, v in sorted(jumps.items()))}.",
               "- Price returns without dividends; cash at 0 %; a monthly close-to-close trade with 5 bp slippage.",
+              "- The survivorship twin (20.7 % CAGR) differs from the committed v1 result (17.0 %, "
+              "evals/stock_backtest) because the calendar differs (NIFTYBEES month-ends from Jan-2014 here; the "
+              "NSE index series, which has holes, there), not because the rule changed.",
               "- Delisted members (HDFC, CAIRN, RANBAXY, IDFC, TATAMTRDVR, JPASSOCIAT) drop out in the month their "
               "trading stops (their last partial month is not counted)."]  # fmt: skip
     lines += ["", "## Decision", "", out["decision"], ""]
@@ -375,6 +391,9 @@ def render(out: dict[str, Any]) -> str:
 
 
 def main() -> None:
+    if "--symbols" in sys.argv[1:]:
+        print(",".join(harvest_symbols()))
+        return
     universe, _, coverage = load(DATA_DIR)
     market = universe.pop(MARKET, None)
     if market is None:

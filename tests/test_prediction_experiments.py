@@ -263,3 +263,9 @@ def test_committed_pit_results_match_the_signal_caveat():
     src = pathlib.Path(su.__file__).parents[1] / "signals" / "stock.py"
     text = src.read_text()
     assert "point-in-time NIFTY 50" in text and "by 3.1 pp a year" in text and "t −0.97" in text
+
+
+def test_harvest_symbols_cover_every_member_and_the_market():
+    syms = su.harvest_symbols()
+    assert "NIFTYBEES" in syms and "HDFC" in syms and "UNITDSPR" in syms and "MCDOWELL-N" not in syms
+    assert "TMPV" in syms and "TATAMOTORS" not in syms and len(syms) == len(set(syms)) == 88
