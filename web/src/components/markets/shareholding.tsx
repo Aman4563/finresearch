@@ -168,7 +168,7 @@ export function ShareholdingSplit({ data }: { data: StockShareholding }) {
         </p>
         <p>
           Source: quarter ended {day(latest.as_of)} shareholding pattern{" "}
-          <a href={latest.xbrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-0.5 text-brand hover:underline">
+          <a href={latest.xbrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-0.5 text-brand underline underline-offset-2">
             XBRL <ExternalLink className="size-3" />
           </a>
           {latest.submitted && <>, filed {day(latest.submitted)}</>} on {data.exchange ?? "NSE"}; read {when(data.fetched_at)}.

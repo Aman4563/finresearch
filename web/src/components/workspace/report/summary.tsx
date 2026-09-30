@@ -4,6 +4,7 @@
 // what to do next and how much of the evidence is verified. Every figure is a ledger claim (chips open the source).
 
 import { AlertTriangle, CheckCircle2, ClipboardCheck, Compass, Lightbulb, ShieldCheck, ThumbsDown, ThumbsUp } from "lucide-react";
+import Link from "next/link";
 import { useMemo, useState } from "react";
 
 import { Badge, Card, InfoTip, cx } from "@/components/ui";
@@ -102,6 +103,23 @@ function VerdictHero({ report, ins, claims, onOpen, title }: { report: Report; i
   );
 }
 
+/** Headline precision (roadmap §B0.5): drop decimals beyond three significant figures ("₹4,06,260.47 Cr" →
+ * "₹4,06,260 Cr", "13.54x" → "13.5x", "31.71%" → "31.7%"). Whole-number digits are never changed; the exact
+ * ledger value stays in the tooltip and the evidence panel. */
+export function headline(display: string): string {
+  return display.replace(/(\d[\d,]*)\.(\d+)/, (_, int: string, dec: string) => {
+    const digits = int.replace(/,/g, "").replace(/^0+/, "").length;
+    const keep = Math.max(0, 3 - digits);
+    if (keep >= dec.length) return `${int}.${dec}`;
+    const v = Number(`${int.replace(/,/g, "")}.${dec}`);
+    const r = v.toFixed(keep);
+    const [ri, rd] = r.split(".");
+    // re-group the integer part the way the source did (Indian grouping when it had commas)
+    const grouped = int.includes(",") || ri.length > int.length ? Number(ri).toLocaleString("en-IN") : ri;
+    return rd ? `${grouped}.${rd}` : grouped;
+  });
+}
+
 function KeyTile({ t, claims, onOpen }: { t: Tile; claims: ClaimMap; onOpen: OpenClaim }) {
   const help = tileHelp(t.label, t.term);
   return (
@@ -110,8 +128,8 @@ function KeyTile({ t, claims, onOpen }: { t: Tile; claims: ClaimMap; onOpen: Ope
         <span className="truncate">{t.label}</span>
         {help && <InfoTip>{help}</InfoTip>}
       </p>
-      <button type="button" onClick={() => onOpen(t.claim_id)} className="mt-1.5 block text-left" title={`Open the source of C${t.claim_id}`}>
-        <span className="num text-lg font-semibold tracking-tight sm:text-xl">{t.display}</span>
+      <button type="button" onClick={() => onOpen(t.claim_id)} className="mt-1.5 block text-left" title={`${t.display} (exact) · open the source of C${t.claim_id}`}>
+        <span className="num text-lg font-semibold tracking-tight sm:text-xl">{headline(t.display)}</span>
         {t.unit.startsWith("₹/") && <span className="ml-1 text-xs text-muted">/{t.unit.slice(2)}</span>}
       </button>
       <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted">
@@ -207,8 +225,8 @@ function QualityCard({ q, onEvidence }: { q: Insights["quality"]; onEvidence: ()
   const pct = q.cited_verified_pct ?? 0;
   const tone = pct >= 90 ? "text-gain" : pct >= 70 ? "text-warn" : "text-loss";
   return (
-    <Card title="How solid is the evidence?" icon={<CheckCircle2 className="size-4" />}
-      help="Every number in the report is a claim that a separate verifier checked against its source. Verified = the quote was found at the cited page/lines; needs review = plausible but not fully confirmed (the report marks it UNVERIFIED); contradicted/unsupported claims are never used as fact.">
+    <Card title="Citations verified" icon={<CheckCircle2 className="size-4" />}
+      help="Every number in the report is a claim that a separate verifier checked against its source. Verified = the quote was found at the cited page/lines; needs review = plausible but not fully confirmed (the report marks it UNVERIFIED); contradicted/unsupported claims are never used as fact. This measures whether the facts are quoted correctly, not whether the call will turn out right.">
       <div className="flex items-end gap-3">
         <p className={cx("num text-3xl font-semibold tracking-tight", tone)}>{q.cited_verified_pct == null ? "—" : `${q.cited_verified_pct}%`}</p>
         <p className="pb-1 text-xs text-muted">
@@ -229,6 +247,10 @@ function QualityCard({ q, onEvidence }: { q: Insights["quality"]; onEvidence: ()
           All <span className="num">{q.total}</span> claims in the ledger, <span className="num">{q.verified_pct ?? 0}%</span> verified. Contradicted ones were caught and left out.
         </p>
       </div>
+      <p className="mt-2 rounded-md bg-background-subtle/70 px-2 py-1.5 text-[11px] text-muted">
+        A verified citation is not a correct forecast. How past calls turned out is tracked on{" "}
+        <Link href="/signals" className="font-medium text-brand hover:underline">Signals</Link>.
+      </p>
       <button type="button" onClick={onEvidence} className="mt-3 text-xs font-medium text-brand hover:underline">
         Explore every claim →
       </button>

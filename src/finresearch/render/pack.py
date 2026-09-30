@@ -27,7 +27,7 @@ from finresearch.config import get_settings
 from finresearch.db import session_scope
 from finresearch.db.models import AgentStep, Claim, Company, Document, ResearchRun
 from finresearch.fincalc.dates import now_ist
-from finresearch.render.html import ClaimView, render_html
+from finresearch.render.html import EXPORT_DISCLAIMER, EXPORT_WATERMARK, ClaimView, render_html
 from finresearch.render.pdf import PdfRenderError, html_to_pdf
 from finresearch.verify.gate import check_report
 
@@ -395,7 +395,7 @@ def render_pack(
     (root / "README.md").write_text(
         f"# {company_name} — research pack (run {run_id})\n\n"
         f"Generated {now:%d %b %Y %H:%M} IST by FinResearch. Publish gate: **{status}**.\n\n"
-        f"{layout.disclaimer}\n\n| Folder | Contents |\n|---|---|\n{rows}"
+        f"{layout.disclaimer}\n\n**{EXPORT_WATERMARK}.** {EXPORT_DISCLAIMER}\n\n| Folder | Contents |\n|---|---|\n{rows}"
     )
     res.files = sum(1 for p in root.rglob("*") if p.is_file())
     return res

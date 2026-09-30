@@ -145,10 +145,11 @@ export function ProfilePage() {
 
       {/* ---------------------------------------------------------------- identity */}
       <section className="relative mb-6 overflow-hidden rounded-2xl border border-border bg-card shadow-card animate-fade-up">
-        <div className={cx("h-20 bg-gradient-to-r opacity-90 sm:h-24", AVATAR_GRADIENT[p.avatar_color ?? "brand"])} />
-        <div className="px-4 pb-5 sm:px-6">
-          <div className="flex flex-wrap items-end gap-x-4 gap-y-3">
-            <Avatar name={p.display_name || "Investor"} color={p.avatar_color} size="lg" className="-mt-8 ring-4 ring-card sm:-mt-10" />
+        {/* a thin accent in the avatar colour: the tall banner was decoration (low data-ink, roadmap §B /profile 1) */}
+        <div className={cx("h-1.5 bg-gradient-to-r opacity-90", AVATAR_GRADIENT[p.avatar_color ?? "brand"])} />
+        <div className="px-4 pt-4 pb-5 sm:px-6">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
+            <Avatar name={p.display_name || "Investor"} color={p.avatar_color} size="lg" />
             <div className="min-w-0 flex-1 basis-60 pt-3">
               <label className="sr-only" htmlFor="display-name">Your name</label>
               <input

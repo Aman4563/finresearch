@@ -154,7 +154,7 @@ export function CandleChart({ rows, type, format, xFormat, height = 300, referen
         </ResponsiveContainer>
       </div>
       {hasVolume && (
-        <div style={{ height: 72 }} aria-label="Volume">
+        <div style={{ height: 72 }} role="img" aria-label="Volume">
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={data} syncId={syncId} margin={{ top: 4, right: 8, bottom: 0, left: 0 }} barCategoryGap="20%">
               <XAxis dataKey="t" {...axis} tickFormatter={xFormat} minTickGap={48} />

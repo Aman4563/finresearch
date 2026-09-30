@@ -11,7 +11,7 @@ import { BarsChart, DonutChart, Gauge, Sparkline } from "@/components/charts";
 import { LinkButton } from "@/components/dashboard/link-button";
 import { KIND_LABEL } from "@/components/ipo/actions";
 import {
-  LiveDot, SUB_HELP, TERMS, categories, countdown, dayLabel, daysUntil, fmtX, istAt, istDate, timeIST,
+  LiveDot, SUB_HELP, TERMS, categories, countdown, dayLabel, daysUntil, fmtX, istAt, istDate, timeIST, useNow,
 } from "@/components/ipo/lib";
 import { Badge, EmptyState, InfoTip, Segmented, cx } from "@/components/ui";
 import { watchExchangeLabel, type Decision, type Issue, type RunSummary, type WatchDetail, type WatchSummary } from "@/lib/api";
@@ -19,33 +19,46 @@ import { watchExchangeLabel, type Decision, type Issue, type RunSummary, type Wa
 // ------------------------------------------------------------------ plan window tile
 
 export type Limits = {
-  tiers: Record<string, { snapshot?: { five_hour_utilization?: number; five_hour_resets_at?: number; seven_day_utilization?: number } }>;
+  tiers: Record<string, { snapshot?: { five_hour_utilization?: number; five_hour_resets_at?: number; seven_day_utilization?: number; seven_day_resets_at?: number } }>;
   now: number;
   ceilings: { five_hour: number };
 };
 
 export function planUsage(l: Limits | null) {
   const snap = l?.tiers?.claude_max?.snapshot;
-  return { used: snap?.five_hour_utilization ?? null, resets: snap?.five_hour_resets_at ?? null, week: snap?.seven_day_utilization ?? null };
+  return {
+    used: snap?.five_hour_utilization ?? null, resets: snap?.five_hour_resets_at ?? null,
+    week: snap?.seven_day_utilization ?? null, weekResets: snap?.seven_day_resets_at ?? null,
+  };
+}
+
+/** The window that binds: whichever of the 5-hour and 7-day windows is fuller (a run stops when either is full). */
+export function bindingWindow(p: ReturnType<typeof planUsage>) {
+  const weekBinds = p.week != null && (p.used == null || p.week > p.used);
+  return weekBinds
+    ? { label: "7-day", used: p.week, resets: p.weekResets, other: p.used == null ? null : { label: "5-hour", used: p.used } }
+    : { label: "5-hour", used: p.used, resets: p.resets, other: p.week == null ? null : { label: "7-day", used: p.week } };
 }
 
 export function PlanTile({ limits, now }: { limits: Limits | null; now: number | null }) {
-  const { used, resets, week } = planUsage(limits);
+  const b = bindingWindow(planUsage(limits));
   return (
     <Link href="/usage" className="group relative block h-full overflow-hidden rounded-xl border border-border bg-card p-4 shadow-card transition duration-200 hover:-translate-y-0.5 hover:border-border-strong hover:shadow-glow">
       <p className="flex items-center gap-1 text-xs font-medium text-muted">
         Plan window
         <InfoTip>
-          Research runs use your Claude plan. It has a rolling 5-hour window; FinResearch pauses runs before it reaches
+          Research runs use your Claude plan. It has a rolling 5-hour window and a 7-day weekly allowance; a run stops
+          when either is full, so the fuller one is shown large. FinResearch pauses runs before the 5-hour window reaches
           {limits ? ` ${Math.round(limits.ceilings.five_hour * 100)}%` : " the ceiling"} and resumes after the reset.
         </InfoTip>
       </p>
       <div className="mt-1 flex items-end justify-between gap-2">
         <div className="text-xs text-muted">
-          <p>{resets && now && resets * 1000 > now ? <>resets in <span className="num text-foreground">{countdown(resets * 1000, now)}</span></> : "used, 5-h"}</p>
-          {week != null && <p className="num mt-0.5">7-day {Math.round(week * 100)}%</p>}
+          <p className="font-medium text-foreground" title={b.other ? "The fuller of the two windows: it is the one that stops runs" : undefined}>{b.label}{b.other ? " · tighter" : ""}</p>
+          <p>{b.resets && now && b.resets * 1000 > now ? <>resets in <span className="num text-foreground">{countdown(b.resets * 1000, now)}</span></> : "used"}</p>
+          {b.other && <p className="num mt-0.5">{b.other.label} {Math.round(b.other.used * 100)}%</p>}
         </div>
-        <div className="-mb-1 shrink-0"><Gauge value={limits ? used : null} size={96} /></div>
+        <div className="-mb-1 shrink-0"><Gauge value={limits ? b.used : null} size={96} /></div>
       </div>
     </Link>
   );
@@ -126,8 +139,10 @@ export function Calendar({ events, now }: { events: Ev[]; now: number }) {
               className={cx(
                 "flex w-11 shrink-0 flex-col items-center rounded-lg py-1.5 text-[10px] ring-1 ring-inset transition",
                 active ? "bg-brand text-brand-fg ring-brand" : i === 0 ? "bg-brand-soft text-foreground ring-brand/30" : "ring-border hover:bg-background-subtle",
-                (wk === 0 || wk === 6) && !active && "opacity-60",
-              )}>
+                // weekends are tinted, not faded: faded text failed WCAG contrast (3.1:1)
+                (wk === 0 || wk === 6) && !active && i !== 0 && "bg-background-subtle/70",
+              )}
+              aria-label={`${i === 0 ? "Today, " : ""}${dayLabel(d, { weekday: "long", day: "numeric", month: "long" })}: ${evs.length ? `${evs.length} event${evs.length === 1 ? "" : "s"}` : "no events"}`}>
               <span className={cx("uppercase", active ? "" : "text-muted")}>{i === 0 ? "Today" : dayLabel(d, { weekday: "short" })}</span>
               <span className="num text-sm font-semibold">{Number(d.slice(8))}</span>
               <span className="mt-0.5 flex h-1.5 gap-0.5">
@@ -194,7 +209,10 @@ export function Calendar({ events, now }: { events: Ev[]; now: number }) {
 // ------------------------------------------------------------------ watched subscription
 
 export function WatchedSubscription({ details }: { details: WatchDetail[] }) {
-  const withData = details.filter((d) => d.subscription.length);
+  const now = useNow(60000);
+  // open books first: a closed issue's book is final and belongs after the ones still taking bids
+  const closed = (d: WatchDetail) => now != null && !!d.close_date && istAt(d.close_date) <= now;
+  const withData = details.filter((d) => d.subscription.length).sort((a, b) => Number(closed(a)) - Number(closed(b)));
   const [pick, setPick] = useState<string>("");
   const cur = withData.find((d) => String(d.id) === pick) ?? withData[0];
   if (!cur)
@@ -218,13 +236,14 @@ export function WatchedSubscription({ details }: { details: WatchDetail[] }) {
         <Link href={`/monitor/${cur.id}`} className="min-w-0 truncate text-sm font-medium hover:text-brand">{cur.company_name ?? cur.label}</Link>
         <div className="flex shrink-0 items-center gap-2 text-xs text-muted">
           <Sparkline values={trend} width={64} height={22} />
+          {closed(cur) ? <span title="Bidding has closed: this is the final book"><Badge tone="neutral">final</Badge></span> : <Badge tone="gain" dot>live</Badge>}
           <span className="num">{dayLabel(last.as_of, { day: "numeric", month: "short" })} {timeIST(last.as_of)}</span>
         </div>
       </div>
       <BarsChart data={rows} x="name" layout="vertical" height={rows.length * 36 + 30} series={[{ key: "times", label: "Subscribed" }]}
         format={fmtX} reference={{ value: 1, label: "1x" }} colorBy={(r) => (Number(r.times) >= 1 ? "var(--gain)" : "var(--warn)")} />
       <p className="mt-2 flex items-center gap-1 text-[11px] text-muted">
-        Green is fully subscribed (1x or more), amber is not yet. <InfoTip>{SUB_HELP} {TERMS.QIB}</InfoTip>
+        Green is fully subscribed (1x or more), amber is not yet; the dashed line is 1x. <InfoTip>{SUB_HELP} {TERMS.QIB}</InfoTip>
       </p>
     </div>
   );
@@ -306,7 +325,19 @@ export function JournalMini({ decisions }: { decisions: Decision[] }) {
   const followed = decisions.filter((d) => typeof d.outcome?.followed_suggestion === "boolean");
   return (
     <div className="space-y-4">
-      <DonutChart data={mix} height={120} center={<div><p className="num text-lg font-semibold">{decisions.length}</p><p className="text-[10px] text-muted">decisions</p></div>} />
+      {decisions.length < 5 ? (
+        // a share-of-total chart for one to four decisions says little: list them instead
+        <ul className="divide-y divide-border/70 text-sm">
+          {decisions.slice(0, 4).map((d) => (
+            <li key={d.id} className="flex items-center justify-between gap-2 py-2">
+              <span className="min-w-0 truncate">{d.company_name ?? `Run #${d.run_id}`}</span>
+              <Badge status={d.action}>{d.action === "APPLY-CONDITIONAL" ? "Conditional" : d.action === "APPLY" ? "Apply" : "Skip"}</Badge>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <DonutChart data={mix} height={120} center={<div><p className="num text-lg font-semibold">{decisions.length}</p><p className="text-[10px] text-muted">decisions</p></div>} />
+      )}
       {gains.length ? (
         <div>
           <p className="mb-1 text-xs font-medium text-muted">Listing gain vs issue price</p>
@@ -371,7 +402,7 @@ export function QuickActions() {
 }
 
 export function GettingStarted({ profileSet, researched, watched }: { profileSet: boolean; researched: boolean; watched: boolean }) {
-  const [state, setState] = useState<{ dismissed: boolean; help: boolean } | null>(null);
+  const [state, setState] = useState<{ dismissed: boolean; help: boolean; expanded?: boolean } | null>(null);
   useEffect(() => {
     let dismissed = false, help = false;
     try {
@@ -390,6 +421,24 @@ export function GettingStarted({ profileSet, researched, watched }: { profileSet
   ];
   const n = steps.filter((s) => s.done).length;
   if (state.dismissed || n === steps.length) return null;
+  // nearly done: a one-line reminder instead of the full checklist, so it stops taking prime space
+  if (n >= steps.length - 1 && !state.expanded) {
+    const next = steps.find((s) => !s.done)!;
+    return (
+      <section className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-border bg-card px-4 py-2.5 text-sm shadow-card animate-fade-up">
+        <Sparkles className="size-4 shrink-0 text-brand" aria-hidden />
+        <span className="text-muted">Getting started <span className="num">{n}/{steps.length}</span> · last step:</span>
+        <Link href={next.href} onClick={next.onClick} className="font-medium text-brand hover:underline">{next.label}</Link>
+        <span className="ml-auto flex items-center gap-1">
+          <button type="button" onClick={() => setState({ ...state, expanded: true })} className="rounded-md px-2 py-1 text-xs text-muted transition hover:bg-background-subtle hover:text-foreground">Show all</button>
+          <button type="button" onClick={() => { try { localStorage.setItem(DISMISS_KEY, "1"); } catch { /* storage blocked */ } setState({ ...state, dismissed: true }); }}
+            aria-label="Hide getting started" title="Hide" className="grid size-7 place-items-center rounded-md text-muted transition hover:bg-background-subtle hover:text-foreground">
+            <X className="size-4" />
+          </button>
+        </span>
+      </section>
+    );
+  }
   const dismiss = () => {
     try { localStorage.setItem(DISMISS_KEY, "1"); } catch { /* storage blocked */ }
     setState({ ...state, dismissed: true });

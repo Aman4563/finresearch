@@ -1,6 +1,6 @@
 "use client";
 
-import { Activity, ArrowLeft, BarChart3, ChartLine, FlaskConical, Loader2, PieChart, Scale, ShieldAlert, TrendingDown, Users } from "lucide-react";
+import { Activity, ArrowLeft, BarChart3, ChartLine, FlaskConical, Loader2, PieChart, Scale, ShieldAlert, TrendingDown } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
@@ -26,12 +26,13 @@ export default function FundDetail() {
   const [period, setPeriod] = useState<Period>("3Y");
   const [rollWin, setRollWin] = useState<"1y" | "3y">("1y");
   const [rollView, setRollView] = useState<"dist" | "time">("dist");
-  const [wantPeers, setWantPeers] = useState(false);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
   const a = useApi<FundAnalytics>(`/api/funds/${code}/analytics?years=5&rf=${rf.toFixed(4)}`);
-  const peers = useApi<FundPeers>(wantPeers ? `/api/funds/${code}/peers` : null);
+  // the category comparator is the default (roadmap §B /funds 1), asked for once the fund's own NAVs are in so the
+  // slower all-schemes read never delays the page
+  const peers = useApi<FundPeers>(a.data ? `/api/funds/${code}/peers` : null);
   const d = a.data;
   const s = d?.scheme;
   const navs = useMemo(() => d?.navs ?? [], [d]);
@@ -99,10 +100,11 @@ export default function FundDetail() {
                 format={(n) => `₹${n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`} hint={`as of ${day(s?.nav_date)}`}
                 help="Net asset value: the price of one unit, published by AMFI after each business day." />
               {(["1y", "3y", "5y"] as const).map((k) => (
-                <Stat key={k} label={`${k.toUpperCase()} return${k === "1y" ? "" : " (CAGR)"}`} tone={(d.trailing[k] ?? 0) >= 0 ? "gain" : "loss"}
+                <Stat key={k} label={`${k.toUpperCase()} return${k === "1y" ? "" : " (CAGR)"}`} tone="brand"
                   icon={<BarChart3 className="size-4" />}
-                  display={<span className={cx("num", toneOf(d.trailing[k]))}>{pctOf(d.trailing[k])}</span>}
-                  hint={d.trailing[k] == null ? "history too short" : "a year, point to point"}
+                  // green/red only against a benchmark (roadmap §B0.2): a 6% return below a 6.5% risk-free rate is not a gain
+                  display={<span className={cx("num", vsTone(d.trailing[k], peers.data?.periods[k]?.median ?? rf))}>{pctOf(d.trailing[k])}</span>}
+                  hint={d.trailing[k] == null ? "history too short" : vsHint(d.trailing[k]!, peers.data?.periods[k]?.median ?? null, rf)}
                   help={k === "1y" ? "How much the NAV rose over the last year." : "CAGR: the steady yearly growth rate that gets from the NAV then to the NAV now."} />
               ))}
             </>
@@ -129,9 +131,7 @@ export default function FundDetail() {
           <Card title="Trailing returns" icon={<BarChart3 className="size-4" />}
             subtitle={peers.data ? `Against ${peers.data.peers} direct-growth schemes in ${peers.data.category}` : "Yearly returns over the last 1, 3 and 5 years"}
             help="Point-to-point returns ending on the latest NAV date. Comparing with the category median shows whether the fund beat similar funds, not just the market."
-            actions={!wantPeers && d ? (
-              <Button variant="secondary" onClick={() => setWantPeers(true)} icon={<Users className="size-3.5" />}>Compare with category</Button>
-            ) : undefined}>
+>
             {!d ? (
               <Skeleton className="h-[220px] w-full rounded-lg" />
             ) : (
@@ -139,7 +139,7 @@ export default function FundDetail() {
                 <BarsChart data={trailingRows} x="period" height={220} format={(v) => `${v.toFixed(1)}%`}
                   series={[{ key: "fund", label: "This fund", color: "var(--chart-1)" }, ...(peers.data ? [{ key: "median", label: "Category median", color: "var(--chart-2)" }] : [])]} />
                 {peers.error && <div className="mt-3"><ErrorNote error={peers.error} onRetry={peers.reload} /></div>}
-                {wantPeers && !peers.data && !peers.error && (
+                {!peers.data && !peers.error && (
                   <p className="mt-3 flex items-center gap-2 text-xs text-muted"><Loader2 className="size-3.5 animate-spin" /> Reading every scheme&apos;s NAV on three dates from AMFI…</p>
                 )}
                 {peers.data && (
@@ -237,4 +237,17 @@ export default function FundDetail() {
       </div>
     </div>
   );
+}
+
+/** Colour a return by whether it beat its comparator (category median, else the risk-free rate), not by its sign. */
+function vsTone(x: number | null | undefined, bench: number) {
+  return x == null ? "" : x >= bench ? "text-gain" : "text-loss";
+}
+
+/** "▲ 0.9 pp vs category median 5.2% · risk-free 6.5%" */
+function vsHint(x: number, median: number | null, rf: number) {
+  const pp = (v: number) => `${x >= v ? "▲" : "▼"} ${Math.abs((x - v) * 100).toFixed(1)} pp`;
+  return median != null
+    ? `${pp(median)} vs category median ${(median * 100).toFixed(1)}%`
+    : `${pp(rf)} vs risk-free ${(rf * 100).toFixed(1)}%`;
 }

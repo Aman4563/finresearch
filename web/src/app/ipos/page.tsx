@@ -310,7 +310,7 @@ export default function IposPage() {
                 <th className="!text-right">Documents</th>
                 <th>Kind</th>
                 <th>Latest run</th>
-                <th />
+                <th><span className="sr-only">Actions</span></th>
               </tr>
             </thead>
             <tbody>

@@ -240,7 +240,7 @@ export function Stepper({ stages, current, className }: { stages: Stage[]; curre
             <span className="num text-[10px] text-muted">
               {s.key === "bidding" ? s.hint : s.date ? dayLabel(s.date, { day: "numeric", month: "short" }) : s.hint}
             </span>
-            {s.key === "listing" && s.hint === "expected" && <span className="text-[10px] text-muted/80">expected</span>}
+            {s.key === "listing" && s.hint === "expected" && <span className="text-[10px] text-muted">expected</span>}
           </li>
         );
       })}

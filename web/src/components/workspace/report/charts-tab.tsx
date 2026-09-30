@@ -184,15 +184,19 @@ function PeerChart({ ins, claims, onOpen }: { ins: Insights; claims: ClaimMap; o
     .filter((r) => !(hideOutliers && outliers.includes(r)))
     .sort((a, b) => b.value - a.value)
     .map((r) => ({ name: r.name, value: r.value, id: r.claim_id, own: r === set.subject }));
-  const subjLabel = ins.kind === "bond_report" ? "This bond" : "This company";
+  const subjLabel = ins.kind === "bond_report" ? "▶ This bond" : "▶ This company";
+  // the comparator (roadmap §B /runs/9/report#charts 1): the median of the peers, not counting the subject
+  const peerVals = all.filter((r) => r !== set.subject).map((r) => r.value).sort((a, b) => a - b);
+  const m = peerVals.length;
+  const peerMedian = m ? (m % 2 ? peerVals[(m - 1) / 2] : (peerVals[m / 2 - 1] + peerVals[m / 2]) / 2) : null;
   return (
     <ChartCard title="Valuation vs peers" icon={<Scale className="size-4" />} sel={sel} claims={claims} onOpen={onOpen}
-      subtitle={`${set.label}${set.subject ? `: ${subjLabel.toLowerCase()} highlighted` : ""}. Lower = cheaper for P/E and P/B.`}
+      subtitle={`${set.label}${set.subject ? `: ${subjLabel.slice(2).toLowerCase()} highlighted` : ""}${peerMedian != null ? `; dashed line = peer median ${fmtUnit(set.unit)(peerMedian)}` : ""}. Lower = cheaper for P/E and P/B.`}
       help="Peers as named in the report's sources. A higher multiple than peers means you pay more for each rupee of profit or book value; that needs faster growth or better quality to be worth it."
       actions={sets.length > 1 ? <Segmented value={set.key} onChange={(k) => { setKey(k); setSel(null); }} options={sets.map((s) => ({ value: s.key, label: s.label }))} /> : undefined}>
       <BarsChart data={rows.map((r) => ({ ...r, name: r.own ? subjLabel : r.name }))} x="name" layout="vertical" labelWidth={128}
         series={[{ key: "value", label: set.label }]} format={fmtUnit(set.unit)} height={Math.max(160, rows.length * 32 + 30)}
-        reference={set.subject ? { value: set.subject.value, label: "" } : undefined}
+        reference={peerMedian != null ? { value: peerMedian, label: "" } : undefined}
         colorBy={(r) => (r.own ? "var(--brand)" : "var(--chart-2)")}
         onBarClick={(r) => { setSel({ label: String(r.name), ids: [Number(r.id)] }); onOpen(Number(r.id)); }} />
       {outliers.length > 0 && (

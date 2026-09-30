@@ -24,13 +24,14 @@ function OiTip({ active, payload, label }: { active?: boolean; payload?: { paylo
   return (
     <div className="rounded-lg border border-border bg-card/95 px-3 py-2 text-xs shadow-pop backdrop-blur">
       <p className="num mb-1 font-semibold">Strike {Number(label).toLocaleString("en-IN")}</p>
-      <p className="flex justify-between gap-4"><span className="text-loss">Call OI</span><span className="num">{compact(-r.calls)} <span className="text-muted">({chg(r.callChg)})</span></span></p>
-      <p className="flex justify-between gap-4"><span className="text-gain">Put OI</span><span className="num">{compact(r.puts)} <span className="text-muted">({chg(r.putChg)})</span></span></p>
+      <p className="flex justify-between gap-4"><span style={{ color: "var(--chart-5)" }}>Call OI</span><span className="num">{compact(-r.calls)} <span className="text-muted">({chg(r.callChg)})</span></span></p>
+      <p className="flex justify-between gap-4"><span style={{ color: "var(--chart-3)" }}>Put OI</span><span className="num">{compact(r.puts)} <span className="text-muted">({chg(r.putChg)})</span></span></p>
     </div>
   );
 }
 
-/** Calls to the left (red, resistance), puts to the right (green, support); spot and max pain marked. */
+/** Calls to the left (blue), puts to the right (orange): neutral colours, since red/green mean loss/gain (WCAG 1.4.1,
+ * roadmap §B0.2); spot and max pain marked. */
 export function OiButterfly({ rows, spot, maxPain, height = 420 }: { rows: OiRow[]; spot: number; maxPain: number | null; height?: number }) {
   const max = Math.max(1, ...rows.map((r) => Math.max(-r.calls, r.puts)));
   // Recharts category axes can't place a line between categories: mark the strike nearest to spot
@@ -46,10 +47,10 @@ export function OiButterfly({ rows, spot, maxPain, height = 420 }: { rows: OiRow
           <ReferenceLine x={0} stroke="var(--border-strong)" />
           <ReferenceLine y={nearest} stroke="var(--accent)" strokeDasharray="4 4" />
           {maxPain != null && rows.some((r) => r.strike === maxPain) && (
-            <ReferenceLine y={maxPain} stroke="var(--warn)" strokeDasharray="2 3" />
+            <ReferenceLine y={maxPain} stroke="var(--chart-6)" strokeDasharray="2 3" />
           )}
-          <Bar dataKey="calls" name="Call OI" stackId="oi" fill="var(--loss)" fillOpacity={0.75} radius={[4, 0, 0, 4]} animationDuration={600} />
-          <Bar dataKey="puts" name="Put OI" stackId="oi" fill="var(--gain)" fillOpacity={0.75} radius={[0, 4, 4, 0]} animationDuration={600} />
+          <Bar dataKey="calls" name="Call OI" stackId="oi" fill="var(--chart-5)" fillOpacity={0.8} radius={[4, 0, 0, 4]} animationDuration={600} />
+          <Bar dataKey="puts" name="Put OI" stackId="oi" fill="var(--chart-3)" fillOpacity={0.8} radius={[0, 4, 4, 0]} animationDuration={600} />
         </BarChart>
       </ResponsiveContainer>
     </div>

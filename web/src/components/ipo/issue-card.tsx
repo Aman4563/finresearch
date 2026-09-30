@@ -6,7 +6,7 @@ import Link from "next/link";
 import { CopyCommand, ResearchButton, bseCommand } from "@/components/ipo/actions";
 import { IpoSignalLine } from "@/components/ipo/ipo-signal";
 import {
-  LiveDot, SubMeter, TERMS, categoryMins, countdown, dayLabel, daysUntil, inr, isSme, istAt, lakh, lotCost, lotSourceText,
+  LiveDot, SubMeter, TERMS, categoryMins, countdown, dayLabel, daysUntil, inr, isSme, istAt, istDate, lakh, lotCost, lotSourceText,
   parseBand, relDay, times,
 } from "@/components/ipo/lib";
 import { Badge, InfoTip, cx } from "@/components/ui";
@@ -81,7 +81,15 @@ export function ResearchCell({ i, compact }: { i: Issue; compact?: boolean }) {
       </Link>
     );
   if (i.slug) return <ResearchButton slug={i.slug} kind="ipo_report" label={i.company} />;
-  if (i.bse_ipo_no) return <CopyCommand command={bseCommand(i)} compact={compact} className={compact ? undefined : "w-full"} />;
+  if (i.bse_ipo_no)
+    return compact ? <CopyCommand command={bseCommand(i)} compact /> : (
+      <div className="space-y-1">
+        {/* why no button: the one-click run starts from NSE's issue page; a BSE-only SME issue has none, so its run is
+            started from the terminal with BSE's issue number (roadmap §B /ipos 2) */}
+        <p className="text-[11px] text-muted">BSE-only issue: no one-click run yet. Copy and run in a terminal:</p>
+        <CopyCommand command={bseCommand(i)} className="w-full" />
+      </div>
+    );
   return <ResearchButton issue={i} kind="ipo_report" />;
 }
 
@@ -133,7 +141,7 @@ export function IssueCard({ i, now }: { i: Issue; now: number | null }) {
 
       <div className="mt-4">
         <p className="mb-1 flex justify-between text-[11px] text-muted">
-          <span>Subscription</span>
+          <span>Subscription{sub != null && biddingDay(i, now) && <span className="num"> · {biddingDay(i, now)}</span>}</span>
           {sub == null && <span>{i.phase === "upcoming" ? "not open yet" : "not published"}</span>}
         </p>
         <SubMeter value={sub} />
@@ -152,4 +160,18 @@ export function IssueCard({ i, now }: { i: Issue; now: number | null }) {
       </div>
     </article>
   );
+}
+
+/** "day 2 of 3" while bidding (weekdays from the open to the close, IST), "final" once closed; null otherwise.
+ * Day-1 7x means something different from day-3 7x (roadmap §B /ipos 4). */
+export function biddingDay(i: Issue, now: number | null): string | null {
+  if (!i.issue_start || !i.issue_end || now == null) return null;
+  if (i.phase === "closed" || istAt(i.issue_end) <= now) return "final";
+  const days: string[] = [];
+  for (let t = Date.parse(`${i.issue_start.slice(0, 10)}T00:00:00Z`); t <= Date.parse(`${i.issue_end.slice(0, 10)}T00:00:00Z`); t += 86400000) {
+    const wd = new Date(t).getUTCDay();
+    if (wd !== 0 && wd !== 6) days.push(new Date(t).toISOString().slice(0, 10));
+  }
+  const today = days.indexOf(istDate(now));
+  return today < 0 || days.length < 2 ? null : `day ${today + 1} of ${days.length}`;
 }

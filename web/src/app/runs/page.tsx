@@ -1,9 +1,10 @@
 "use client";
 
-import { ArrowRight, CheckCircle2, Clock, FileText, FlaskConical, LayoutGrid, List, ShieldAlert, ShieldCheck, Timer } from "lucide-react";
+import { ArrowRight, CheckCircle2, CirclePause, Clock, FileText, FlaskConical, Gauge, LayoutGrid, List, ShieldAlert, ShieldCheck, Timer } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
+import { countdown, useNow } from "@/components/ipo/lib";
 import { KindIcon, KIND, fmtDuration, kindMeta, runSeconds } from "@/components/workspace/run-meta";
 import { Badge, Card, EmptyState, ErrorNote, PageHeader, Segmented, Skeleton, Stat, Table, cx, inputClass } from "@/components/ui";
 import { listingLabel, type RunSummary, useApi, when } from "@/lib/api";
@@ -48,7 +49,27 @@ function StepsBar({ steps }: { steps: Record<string, number> }) {
   );
 }
 
-function RunCard({ r }: { r: RunSummary }) {
+/** Per-run share of the Claude plan's 5-hour window (from /api/usage/runs), the scarcest resource. */
+type RunUsage = { run_id: number; five_hour_used: number; minutes: number };
+
+/** A run that is not actually working right now: paused for the plan window (with when it resumes), paused after a
+ * Claude error, or stalled (marked running but no worker). Distinct from "running" so a long wall-clock time is
+ * not mistaken for progress. */
+function WaitState({ r, now, compact }: { r: RunSummary; now: number | null; compact?: boolean }) {
+  const resumeAt = r.resume_after ? Date.parse(r.resume_after) : NaN;
+  const eta = Number.isFinite(resumeAt) && now != null && resumeAt > now ? countdown(resumeAt, now) : null;
+  if (r.stalled) return <Badge tone="warn"><CirclePause className="size-3" /> {compact ? "stalled" : "stalled: resume needed"}</Badge>;
+  if (r.status !== "paused" && !r.resume_after) return null;
+  if (r.pause_kind === "transient")
+    return <Badge status="paused"><CirclePause className="size-3" /> {compact ? "retrying" : `paused: Claude error, retries ${eta ? `in ${eta}` : "soon"}`}</Badge>;
+  return (
+    <Badge status="paused">
+      <Gauge className="size-3" /> {compact ? (eta ? `waits ${eta}` : "waiting") : `waiting for plan window${eta ? ` · resumes in ${eta}` : ""}`}
+    </Badge>
+  );
+}
+
+function RunCard({ r, usage, now }: { r: RunSummary; usage?: RunUsage; now: number | null }) {
   const secs = runSeconds(r.created_at, r.finished_at);
   return (
     <Card interactive padded={false} className="group flex flex-col">
@@ -67,18 +88,22 @@ function RunCard({ r }: { r: RunSummary }) {
         <div className="flex flex-wrap items-center gap-2">
           <GateBadge gate={r.final_gate} />
           {r.worker?.alive && <Badge tone="info" dot>worker live</Badge>}
-          {r.stalled && <Badge tone="warn">stalled: resume needed</Badge>}
-          {r.status === "paused" && r.resume_after && (
-            <Badge status="paused">{r.pause_kind === "transient" ? "paused: Claude error, retries later" : "paused for plan window"}</Badge>
-          )}
+          <WaitState r={r} now={now} />
         </div>
         <StepsBar steps={r.steps} />
         <div className="mt-auto flex items-center justify-between gap-2 text-xs text-muted">
           <span className="inline-flex items-center gap-1">
             <Clock className="size-3.5" /> {when(r.created_at)}
           </span>
-          <span className="num inline-flex items-center gap-1">
-            <Timer className="size-3.5" /> {fmtDuration(secs)}
+          <span className="flex items-center gap-3">
+            {usage && usage.five_hour_used > 0 && (
+              <span className="num inline-flex items-center gap-1" title="Share of the Claude plan's 5-hour window this run's steps used, summed step by step">
+                <Gauge className="size-3.5" /> {Math.round(usage.five_hour_used * 100)}% of 5-h
+              </span>
+            )}
+            <span className="num inline-flex items-center gap-1" title="Wall clock, start to finish, including any wait for the plan window">
+              <Timer className="size-3.5" /> {fmtDuration(secs)}
+            </span>
           </span>
         </div>
       </Link>
@@ -100,6 +125,9 @@ function RunCard({ r }: { r: RunSummary }) {
 
 export default function Runs() {
   const { data, error, reload } = useApi<RunSummary[]>("/api/runs", 10000);
+  const usage = useApi<RunUsage[]>("/api/usage/runs?limit=200", 60000);
+  const usageBy = useMemo(() => new Map((usage.data ?? []).map((u) => [u.run_id, u])), [usage.data]);
+  const now = useNow(30000);
   const [kind, setKind] = useState<string>("all");
   const [status, setStatus] = useState<StatusFilter>("all");
   const [q, setQ] = useState("");
@@ -110,12 +138,18 @@ export default function Runs() {
     const by: Record<string, number> = {};
     for (const r of runs) by[r.status] = (by[r.status] ?? 0) + 1;
     const finished = runs.filter((r) => ["done", "failed", "blocked"].includes(r.status));
-    const ok = finished.filter((r) => r.status === "done" && r.final_gate?.ok !== false);
+    const completed = finished.filter((r) => r.status === "done");
+    // the gate pass rate counts only runs with a gate record: "no gate record" is not a pass
+    const gated = runs.filter((r) => r.final_gate);
+    const passed = gated.filter((r) => r.final_gate!.ok);
     const durations = runs.filter((r) => r.finished_at).map((r) => runSeconds(r.created_at, r.finished_at)).filter((x): x is number => x != null);
     return {
       by,
       total: runs.length,
-      rate: finished.length ? (ok.length / finished.length) * 100 : null,
+      completed: finished.length ? (completed.length / finished.length) * 100 : null,
+      completedN: `${completed.length} of ${finished.length} finished`,
+      gate: gated.length ? (passed.length / gated.length) * 100 : null,
+      gateN: `${passed.length} of ${gated.length} with a gate record`,
       avg: durations.length ? durations.reduce((a, b) => a + b, 0) / durations.length : null,
       reports: runs.filter((r) => r.has_report).length,
       live: runs.filter((r) => r.worker?.alive).length,
@@ -144,11 +178,15 @@ export default function Runs() {
         description="Every research run the agents have done: its live progress, whether the report passed the fact-check gate, and a link to read it."
       />
 
-      <div className="stagger grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="stagger grid grid-cols-2 gap-3 lg:grid-cols-5">
         <Stat label="Runs" value={data ? kpi.total : null} format={(n) => String(Math.round(n))} icon={<FlaskConical className="size-4" />}
           hint={data ? `${kpi.by.done ?? 0} done · ${kpi.by.running ?? 0} running · ${(kpi.by.failed ?? 0) + (kpi.by.blocked ?? 0)} failed` : undefined} />
-        <Stat label="Success rate" value={kpi.rate} format={(n) => `${Math.round(n)}%`} tone="gain" icon={<CheckCircle2 className="size-4" />}
-          help="Finished runs that completed and whose report passed the publish gate (every figure cited to a verified source)." hint="of finished runs" />
+        <Stat label="Completed" value={kpi.completed} format={(n) => `${Math.round(n)}%`} tone="brand" icon={<CheckCircle2 className="size-4" />}
+          help="Finished runs that ran to the end (not failed or blocked). This is not accuracy: it says nothing about whether a report's call turned out right. See Signals for measured track records."
+          hint={data ? kpi.completedN : undefined} />
+        <Stat label="Gate pass rate" value={kpi.gate} format={(n) => `${Math.round(n)}%`} tone="accent" icon={<ShieldCheck className="size-4" />}
+          help="Runs whose report passed the publish gate: every cited figure is in the claim ledger and none is contradicted. Runs without a gate record are left out. A pass means the citations check out, not that the forecast is right."
+          hint={data ? kpi.gateN : undefined} />
         <Stat label="Average duration" value={kpi.avg} format={fmtDuration} tone="info" icon={<Timer className="size-4" />}
           hint="start to finish, wall clock" />
         <Stat label="Reports ready" value={data ? kpi.reports : null} format={(n) => String(Math.round(n))} tone="accent" icon={<FileText className="size-4" />}
@@ -196,7 +234,7 @@ export default function Runs() {
           {rows.length > 0 && view === "cards" && (
             <div className="stagger grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
               {rows.map((r) => (
-                <RunCard key={r.id} r={r} />
+                <RunCard key={r.id} r={r} usage={usageBy.get(r.id)} now={now} />
               ))}
             </div>
           )}
@@ -210,6 +248,7 @@ export default function Runs() {
                   <th>Gate</th>
                   <th>Steps</th>
                   <th className="!text-right">Duration</th>
+                  <th className="!text-right" title="Share of the Claude plan's 5-hour window this run used">Plan (5-h)</th>
                   <th>Started</th>
                   <th className="!text-right">Report</th>
                 </tr>
@@ -235,7 +274,7 @@ export default function Runs() {
                       <div className="flex items-center gap-1">
                         <Badge status={r.status} />
                         {r.worker?.alive && <Badge tone="info" dot>worker</Badge>}
-                        {r.stalled && <Badge tone="warn">stalled</Badge>}
+                        <WaitState r={r} now={now} compact />
                       </div>
                     </td>
                     <td>
@@ -245,6 +284,7 @@ export default function Runs() {
                       <StepsBar steps={r.steps} />
                     </td>
                     <td className="num text-right">{fmtDuration(runSeconds(r.created_at, r.finished_at))}</td>
+                    <td className="num text-right text-muted">{usageBy.get(r.id)?.five_hour_used ? `${Math.round(usageBy.get(r.id)!.five_hour_used * 100)}%` : "—"}</td>
                     <td className="text-muted">{when(r.created_at)}</td>
                     <td className="text-right">
                       {r.has_report ? (

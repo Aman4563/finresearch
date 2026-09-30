@@ -49,7 +49,7 @@ function Tip({ active, payload, title, format }: {
 }
 
 /** Distribution of rolling returns: bars per return bucket, green above the reference (e.g. 0% or the risk-free
- *  rate), red below; the median is marked. */
+ *  rate), red and lighter below, with a text key; the median is marked. */
 export function ReturnHistogram({ bins, median, reference, height = 220 }: {
   bins: { from: number; to: number; count: number }[]; median: number; reference: { value: number; label: string }; height?: number;
 }) {
@@ -57,49 +57,66 @@ export function ReturnHistogram({ bins, median, reference, height = 220 }: {
   const data = bins.map((b) => ({ ...b, mid: (b.from + b.to) / 2, share: b.count / total }));
   const nearest = (v: number) => data.reduce((best, d) => (Math.abs(d.mid - v) < Math.abs(best.mid - v) ? d : best), data[0])?.mid;
   return (
-    <div style={{ height }} className="animate-fade-in">
-      <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={data} margin={{ top: 18, right: 8, bottom: 0, left: 0 }} barCategoryGap={2}>
-          <CartesianGrid vertical={false} strokeDasharray="3 3" />
-          <XAxis dataKey="mid" {...axis} tickFormatter={(v) => pctOf(Number(v), 0)} minTickGap={24} />
-          <YAxis {...axis} width={40} tickFormatter={(v) => `${Math.round(Number(v) * 100)}%`} />
-          <Tooltip
-            cursor={{ fill: "var(--background-subtle)" }}
-            content={<Tip title={(r) => `${pctOf(Number(r.from), 1)} to ${pctOf(Number(r.to), 1)} a year`}
-              format={(v) => `${(v * 100).toFixed(1)}% of windows`} />}
-          />
-          <ReferenceLine x={nearest(reference.value)} stroke="var(--warn)" strokeDasharray="4 4"
-            label={{ value: reference.label, position: "top", fill: "var(--warn)", fontSize: 10 }} />
-          <ReferenceLine x={nearest(median)} stroke="var(--foreground)" strokeOpacity={0.45} />
-          <Bar dataKey="share" name="Windows" radius={[4, 4, 0, 0]} animationDuration={700}>
-            {data.map((d) => (
-              <Cell key={d.mid} fill={d.mid >= reference.value ? "var(--gain)" : "var(--loss)"} fillOpacity={0.85} />
-            ))}
-          </Bar>
-        </BarChart>
-      </ResponsiveContainer>
+    <div className="animate-fade-in">
+      <div style={{ height }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={data} margin={{ top: 18, right: 8, bottom: 0, left: 0 }} barCategoryGap={2}>
+            <CartesianGrid vertical={false} strokeDasharray="3 3" />
+            <XAxis dataKey="mid" {...axis} tickFormatter={(v) => pctOf(Number(v), 0)} minTickGap={24} />
+            <YAxis {...axis} width={40} tickFormatter={(v) => `${Math.round(Number(v) * 100)}%`} />
+            <Tooltip
+              cursor={{ fill: "var(--background-subtle)" }}
+              content={<Tip title={(r) => `${pctOf(Number(r.from), 1)} to ${pctOf(Number(r.to), 1)} a year`}
+                format={(v) => `${(v * 100).toFixed(1)}% of windows`} />}
+            />
+            <ReferenceLine x={nearest(reference.value)} stroke="var(--warn)" strokeDasharray="4 4"
+              label={{ value: reference.label, position: "top", fill: "var(--warn)", fontSize: 10 }} />
+            <ReferenceLine x={nearest(median)} stroke="var(--foreground)" strokeOpacity={0.45} />
+            <Bar dataKey="share" name="Windows" radius={[4, 4, 0, 0]} animationDuration={700}>
+              {data.map((d) => (
+                <Cell key={d.mid} fill={d.mid >= reference.value ? "var(--gain)" : "var(--loss)"} fillOpacity={d.mid >= reference.value ? 0.85 : 0.5} />
+              ))}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+      {/* colour is not the only cue (WCAG 1.4.1): below-reference bars are also lighter, and the key says which is which */}
+      <p className="mt-1 flex flex-wrap gap-x-3 text-[11px] text-muted">
+        <span className="inline-flex items-center gap-1"><span className="size-2 rounded-sm bg-gain/85" /> ▲ at or above {reference.label}</span>
+        <span className="inline-flex items-center gap-1"><span className="size-2 rounded-sm bg-loss/50" /> ▼ below (lighter)</span>
+      </p>
     </div>
   );
 }
 
-/** A bond's remaining cash flows: coupon and principal stacked per payment date. */
+/** Bond cash flows. Coupons (₹7 a month) and the principal (₹1,000 at maturity) differ by two orders of magnitude, so
+ * stacking them on one axis hides the coupons (roadmap §B /bonds item 1). Coupons are bars on the left axis; the
+ * running total received, principal included, is a line on the right axis, and the principal is marked where it
+ * arrives. */
 export function CashFlowChart({ flows, height = 240 }: {
   flows: { date: string; coupon: number; principal: number; coupon_after_tax: number }[]; height?: number;
 }) {
+  const rows = flows.reduce<(typeof flows[number] & { cumulative: number })[]>(
+    (out, f) => [...out, { ...f, cumulative: (out.at(-1)?.cumulative ?? 0) + f.coupon + f.principal }], []);
+  const principal = rows.filter((r) => r.principal > 0);
   return (
     <div style={{ height }} className="animate-fade-in">
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={flows} margin={{ top: 6, right: 8, bottom: 0, left: 0 }}>
+        <ComposedChart data={rows} margin={{ top: 18, right: 4, bottom: 0, left: 0 }}>
           <CartesianGrid vertical={false} strokeDasharray="3 3" />
           <XAxis dataKey="date" {...axis} tickFormatter={(v) => shortDate(String(v))} minTickGap={16} />
-          <YAxis {...axis} width={64} tickFormatter={(v) => fmtCompactINR(Number(v))} />
+          <YAxis yAxisId="c" {...axis} width={56} tickFormatter={(v) => inr(Number(v), 0)} />
+          <YAxis yAxisId="t" orientation="right" {...axis} width={64} tickFormatter={(v) => fmtCompactINR(Number(v))} />
           <Tooltip cursor={{ fill: "var(--background-subtle)" }}
-            content={<Tip title={(r) => `Paid on ${shortDate(String(r.date))}`} format={(v) => inr(v)} />} />
+            content={<Tip title={(r) => `Paid on ${shortDate(String(r.date))}${Number(r.principal) > 0 ? ` · principal back ${inr(Number(r.principal))}` : ""}`} format={(v) => inr(v)} />} />
           <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11 }} />
-          <Bar dataKey="coupon" name="Coupon (interest)" stackId="cf" fill="var(--chart-1)" maxBarSize={36} animationDuration={700} />
-          <Bar dataKey="principal" name="Principal back" stackId="cf" fill="var(--chart-2)" radius={[4, 4, 0, 0]} maxBarSize={36}
-            animationDuration={700} />
-        </BarChart>
+          <Bar yAxisId="c" dataKey="coupon" name="Coupon (interest, left axis)" fill="var(--chart-1)" fillOpacity={0.7} maxBarSize={28} radius={[3, 3, 0, 0]} animationDuration={700} />
+          <Line yAxisId="t" type="stepAfter" dataKey="cumulative" name="Total received incl. principal (right axis; ● = principal back)" stroke="var(--chart-2)"
+            strokeWidth={2.5} dot={false} animationDuration={700} />
+          {principal.map((r) => (
+            <ReferenceDot key={r.date} yAxisId="t" x={r.date} y={r.cumulative} r={5} fill="var(--chart-2)" stroke="var(--card)" strokeWidth={2} />
+          ))}
+        </ComposedChart>
       </ResponsiveContainer>
     </div>
   );

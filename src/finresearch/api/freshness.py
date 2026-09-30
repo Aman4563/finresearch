@@ -7,6 +7,7 @@ GET only; the live price and announcements come from NSE (BSE, for a BSE-only st
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from typing import Any
 
@@ -79,8 +80,15 @@ def add_freshness_routes(app: FastAPI, *, clock=None) -> None:
     @app.get("/api/runs/{run_id}/since")
     async def run_since(run_id: int) -> dict[str, Any]:
         """Days since the report, live price vs the report's bands, filings since, and a re-run hint."""
-        facts = _run_facts(run_id)
-        return await cache.get(("since", run_id), 300, lambda: _build(facts))
+
+        # the ledger read is synchronous and heavy (every claim of the run, ~2 s for a 376-claim stock report): run it in
+        # a worker thread and only on a cache miss, so it neither repeats per request nor blocks the event loop that
+        # serves the page's other requests (docs/dev/RESEARCH_ROADMAP.md §B0.1, measured stall of every call on
+        # /stocks/INFY)
+        async def make() -> dict[str, Any]:
+            return await _build(await asyncio.to_thread(_run_facts, run_id))
+
+        return await cache.get(("since", run_id), 300, make)
 
     @app.get("/api/stocks/{symbol}/since-report")
     async def stock_since(symbol: str) -> dict[str, Any]:

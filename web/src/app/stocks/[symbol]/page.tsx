@@ -62,6 +62,10 @@ export default function StockDetail() {
   const bars = hist.data?.bars ?? [];
   const lastBar = bars[bars.length - 1];
   const histLoadingMore = hist.data && hist.data.days < Math.min(days, 1827);
+  // benchmark for the headline return (roadmap §B0.3): NIFTY 50 through its ETF (NIFTYBEES) over the same number of
+  // days, asked for only after the stock's own history has arrived so it never delays the page
+  const benchDays = hist.data && !histLoadingMore && symbol.toUpperCase() !== "NIFTYBEES" ? hist.data.days : null;
+  const bench = useApi<StockHistory>(benchDays ? `/api/stocks/NIFTYBEES/history?days=${benchDays}` : null);
 
   const research = async () => {
     if (!stockKey) return;
@@ -198,7 +202,9 @@ export default function StockDetail() {
             )}
             {hist.data && bars.length >= 2 && (
               <div className="mt-4 grid grid-cols-3 gap-2">
-                <Metric label={`Return (${hist.data.days >= 1827 ? "5Y" : hist.data.days >= 1096 ? "3Y" : "1Y"})`} value={signedPct(hist.data.stats.return)} tone={toneOf(hist.data.stats.return)} />
+                <Metric label={`Return (${hist.data.days >= 1827 ? "5Y" : hist.data.days >= 1096 ? "3Y" : "1Y"})`} value={signedPct(hist.data.stats.return)} tone={toneOf(hist.data.stats.return)}
+                  sub={benchReturn(hist.data.stats.return, bench.data?.stats.return)}
+                  help="Price return over the period (dividends left out). Below it: the NIFTY 50 over the same dates, through its ETF NIFTYBEES, and the gap in percentage points (pp)." />
                 <Metric label="Volatility (yearly)" value={pctOf(hist.data.stats.annualised_volatility, 1)}
                   help="How much the price swings, annualised (standard deviation of daily returns × √252). Higher = bumpier ride." />
                 <Metric label="Max drawdown" value={pctOf(hist.data.stats.max_drawdown, 1)} tone="text-loss"
@@ -223,13 +229,13 @@ export default function StockDetail() {
               {!ov.data ? (
                 <SkeletonRows rows={4} />
               ) : (
-                <dl className="grid [&>*]:min-w-0 grid-cols-2 gap-2">
+                <div className="grid [&>*]:min-w-0 grid-cols-2 gap-2">
                   <Metric label="Open" value={inr(q?.open)} />
                   <Metric label="Previous close" value={inr(q?.previous_close)} />
                   <Metric label="Day change" value={<Delta value={q?.change_pct} />} />
                   <Metric label="Last session volume" value={lastBar?.volume != null ? lastBar.volume.toLocaleString("en-IN") : "—"}
                     sub={lastBar ? shortDate(lastBar.date) : undefined} />
-                </dl>
+                </div>
               )}
             </Card>
           </div>
@@ -331,7 +337,7 @@ export default function StockDetail() {
                           <span className="font-medium">{r.label}</span>
                           <span className="block whitespace-nowrap text-[11px] text-muted">
                             {r.filed_at ? `filed ${day(r.filed_at)}` : day(r.period_end)}{" · "}
-                            <a href={r.ixbrl ?? r.xbrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-0.5 text-brand hover:underline">
+                            <a href={r.ixbrl ?? r.xbrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-0.5 text-brand underline underline-offset-2">
                               {r.ixbrl ? "iXBRL" : "XBRL"} <ExternalLink className="size-3" />
                             </a>
                           </span>
@@ -381,7 +387,7 @@ export default function StockDetail() {
                 </details>
                 <p className="mt-2 text-[11px] text-muted">
                   Source: {results.data.sources.map((x, i) => (
-                    <span key={x.url}>{i ? " and " : ""}<a href={x.url} target="_blank" rel="noreferrer" className="text-brand hover:underline">{x.name}</a></span>
+                    <span key={x.url}>{i ? " and " : ""}<a href={x.url} target="_blank" rel="noreferrer" className="text-brand underline underline-offset-2">{x.name}</a></span>
                   ))} ({ex}), each quarter&apos;s XBRL. Checked {when(results.data.as_of)}.
                   {results.data.errors.length > 0 && ` ${results.data.errors.length} filing${results.data.errors.length > 1 ? "s" : ""} could not be read.`}
                 </p>
@@ -399,7 +405,7 @@ export default function StockDetail() {
             ) : ov.data.corporate_actions.length === 0 ? (
               <EmptyState icon={<CalendarClock className="size-5" />} title="No corporate actions">{ex} lists no dividends, bonuses or splits for {symbol}.</EmptyState>
             ) : (
-              <div className="max-h-[420px] overflow-y-auto pr-1 pl-1.5">
+              <div tabIndex={0} role="region" aria-label="Announcements" className="max-h-[420px] overflow-y-auto pr-1 pl-1.5">
                 <Timeline
                   items={ov.data.corporate_actions.map((a, i) => ({
                     key: `${a.ex_date}-${i}`,
@@ -475,4 +481,13 @@ function GrowthSub({ qoq, yoy }: { qoq: number | null | undefined; yoy: number |
       <span>YoY <Delta value={yoy != null ? yoy * 100 : null} digits={1} /></span>
     </span>
   );
+}
+
+/** "NIFTY 50 −4.1% · −27.0 pp": the benchmark's price return and the gap, or nothing until it has loaded. */
+function benchReturn(own: number | string | null | undefined, nifty: number | string | null | undefined) {
+  if (own == null || nifty == null) return undefined;
+  const a = Number(own) * 100, b = Number(nifty) * 100;
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return undefined;
+  const gap = a - b;
+  return `NIFTY 50 ${b >= 0 ? "+" : "−"}${Math.abs(b).toFixed(1)}% · ${gap >= 0 ? "+" : "−"}${Math.abs(gap).toFixed(1)} pp ${gap >= 0 ? "ahead" : "behind"}`;
 }
