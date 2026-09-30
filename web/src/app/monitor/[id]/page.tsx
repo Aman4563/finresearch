@@ -16,8 +16,9 @@ import { NextCheck, RuleChips, StopWatch, jobLabel } from "@/components/monitor/
 import {
   Badge, Card, EmptyState, ErrorNote, PageHeader, Segmented, Skeleton, Stat, Table, cx,
 } from "@/components/ui";
-import { LiveStamp, useLive } from "@/components/live";
+import { LiveStamp, sessionOpen, useLive } from "@/components/live";
 import { useApi, when, type WatchDetail } from "@/lib/api";
+import { useTimeFrames } from "@/lib/timeframes";
 
 type Snap = WatchDetail["subscription"][number];
 type Job = WatchDetail["jobs"][number];
@@ -62,9 +63,11 @@ function jobDetail(j: Job) {
 export default function WatchView() {
   const { id } = useParams<{ id: string }>();
   const { data, error, reload, updatedAt } = useApi<WatchDetail>(`/api/watches/${id}`, 60000);
-  // while bidding is on, read the exchange's book every minute; each new exchange timestamp becomes a snapshot
+  // while bidding is on, read the exchange's book every minute (profile: 1, 2 or 5 min, or off); each new exchange
+  // timestamp becomes a snapshot
+  const bookMs = useTimeFrames().tf.ipo_book_refresh_s * 1000;
   const book = useLive<{ live: boolean; book?: { as_of: string | null; total_times: string } | null; reason?: string }>(
-    `/api/watches/${id}/live`, { session: "ipo", everyMs: 60000, active: data?.kind === "ipo" && data.active });
+    `/api/watches/${id}/live`, { session: "ipo", everyMs: bookMs, active: data?.kind === "ipo" && data.active && bookMs > 0 });
   const bookAsOf = book.data?.book?.as_of;
   useEffect(() => {
     if (bookAsOf) reload();
@@ -129,7 +132,8 @@ export default function WatchView() {
         )}
       />
       {ipo && data.active && (
-        <LiveStamp session="ipo" live={book.live && !!book.data?.live} status={book.status} everyMs={60000}
+        <LiveStamp session="ipo" live={bookMs > 0 ? book.live && !!book.data?.live : sessionOpen(book.status, "ipo")} autoRefresh={bookMs > 0}
+          status={book.status} everyMs={bookMs || 60000}
           updatedAt={book.updatedAt ?? updatedAt} asOf={bookAsOf ?? last?.as_of} asOfLabel="Exchange book as of"
           onRefresh={book.reload} className="-mt-4" />
       )}

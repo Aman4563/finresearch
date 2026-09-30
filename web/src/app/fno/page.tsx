@@ -11,6 +11,7 @@ import { fmtINR } from "@/components/charts";
 import { LiveStamp, sessionOpen, useMarketStatus } from "@/components/live";
 import { Badge, Button, Callout, Card, EmptyState, ErrorNote, InfoTip, PageHeader, Segmented, Skeleton, Stat, cx, inputClass } from "@/components/ui";
 import { api, day, when } from "@/lib/api";
+import { useTimeFrames } from "@/lib/timeframes";
 
 const QUICK = ["NIFTY", "BANKNIFTY", "FINNIFTY", "RELIANCE", "INFY"];
 const inr = (x: number | null) => (x == null ? "Unlimited" : `${x < 0 ? "−" : ""}${fmtINR(Math.abs(Math.round(x)))}`);
@@ -126,7 +127,9 @@ export default function Fno() {
   const [what, setWhat] = useState<number | null>(null);
   const [chainAt, setChainAt] = useState<Date | null>(null);
   const market = useMarketStatus();
-  const liveFno = sessionOpen(market.data, "equity");
+  const fnoMs = useTimeFrames().tf.fno_refresh_s * 1000; // profile: 1, 2 or 5 min, or off
+  const fnoOpen = sessionOpen(market.data, "equity");
+  const liveFno = fnoOpen && fnoMs > 0;
 
   const loadChain = useCallback(async (sym: string, exp: string) => {
     setExpiry(exp);
@@ -203,9 +206,9 @@ export default function Fno() {
   const hasChain = chain != null;
   useEffect(() => {
     if (!liveFno || !hasChain) return;
-    const t = setInterval(() => !document.hidden && refreshRef.current(), 60000);
+    const t = setInterval(() => !document.hidden && refreshRef.current(), fnoMs);
     return () => clearInterval(t);
-  }, [liveFno, hasChain]);
+  }, [liveFno, hasChain, fnoMs]);
 
   // ?preset=iron_condor (shareable link): apply once, when the first chain arrives
   const [presetDone, setPresetDone] = useState(false);
@@ -265,7 +268,7 @@ export default function Fno() {
       />
       <RiskBanner />
       {chain && (
-        <LiveStamp session="equity" live={liveFno} status={market.data} updatedAt={chainAt} everyMs={60000}
+        <LiveStamp session="equity" live={fnoOpen} autoRefresh={fnoMs > 0} status={market.data} updatedAt={chainAt} everyMs={fnoMs || 60000}
           asOf={chain.as_of} onRefresh={refreshChain} className="-mt-4" />
       )}
 

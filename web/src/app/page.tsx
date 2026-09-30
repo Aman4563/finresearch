@@ -12,6 +12,7 @@ import {
 import {
   LiveDot, SubMeter, TERMS, categoryMins, countdown, daysUntil, inr, int, istAt, lakh, lotCost, lotSourceText, times, useNow,
 } from "@/components/ipo/lib";
+import { IndexCards } from "@/components/markets/index-cards";
 import { AlertFeed } from "@/components/monitor/alert-feed";
 import { useWatchDetails } from "@/components/monitor/hooks";
 import { Card, EmptyState, ErrorNote, InfoTip, Skeleton, SkeletonRows, Stat, cx } from "@/components/ui";
@@ -120,6 +121,8 @@ export default function Dashboard() {
       </div>
 
       <QuickActions />
+
+      <IndexCards />
 
       <div className="grid gap-4 lg:grid-cols-5 [&>*]:min-w-0">
         <Card className="lg:col-span-3" title="Today & next 14 days" icon={<CalendarDays className="size-4" />}

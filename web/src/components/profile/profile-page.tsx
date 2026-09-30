@@ -10,6 +10,7 @@ import { type ReactNode, useEffect, useState } from "react";
 import {
   applyReduceMotion, Avatar, Labelled, LinkButton, AVATAR_COLORS, AVATAR_GRADIENT, SaveBar, Switch, useDraft, withDefaults,
 } from "@/components/profile/common";
+import { TimeFramesCard } from "@/components/profile/time-frames";
 import { NAV, type Theme, useTheme } from "@/components/shell";
 import {
   Badge, Button, Callout, Card, cx, EmptyState, ErrorNote, Field, InfoTip, inputClass, PageHeader, Segmented, Skeleton,
@@ -18,6 +19,7 @@ import {
 import {
   api, day, type Decision, type Preferences, type Profile, type ProfileStats, type RunSummary, useApi, type WatchSummary, when,
 } from "@/lib/api";
+import { DEFAULT_TIME_FRAMES, DEFAULT_WATCH } from "@/lib/timeframes";
 
 const CATEGORIES: { value: Profile["category"]; label: string; range: string; note: string }[] = [
   { value: "retail", label: "Retail (RII)", range: "Up to ₹2 lakh", note: "Lottery of one minimum lot when oversubscribed." },
@@ -93,7 +95,8 @@ export function ProfilePage() {
     (p.display_name ?? "").length > 60 ? "Your name can be at most 60 characters." :
     p.fno_capital_inr != null && !isNum(p.fno_capital_inr) ? "F&O capital must be a number of rupees (0 = not set)." :
     p.fno_max_loss_pct != null && (!isNum(p.fno_max_loss_pct) || Number(p.fno_max_loss_pct) <= 0 || Number(p.fno_max_loss_pct) > 100) ? "Max loss per strategy must be a percentage above 0 and at most 100." :
-    p.fno_brokerage_per_order_inr != null && (!isNum(p.fno_brokerage_per_order_inr) || Number(p.fno_brokerage_per_order_inr) > 1000) ? "Brokerage per order must be between ₹0 and ₹1,000." : null;
+    p.fno_brokerage_per_order_inr != null && (!isNum(p.fno_brokerage_per_order_inr) || Number(p.fno_brokerage_per_order_inr) > 1000) ? "Brokerage per order must be between ₹0 and ₹1,000." :
+    prefs.watch?.quiet_start && prefs.watch.quiet_start === prefs.watch.quiet_end ? "Quiet hours must start and end at different times." : null;
 
   const save = async () => {
     setSaving(true);
@@ -344,6 +347,10 @@ export function ProfilePage() {
               </div>
             </Card>
           )}
+
+          {/* ------------------------------------------------------------ time frames & watch windows */}
+          <TimeFramesCard tf={prefs.time_frames ?? DEFAULT_TIME_FRAMES} watch={prefs.watch ?? DEFAULT_WATCH}
+            onTf={(v) => setPref("time_frames", v)} onWatch={(v) => setPref("watch", v)} />
 
           {/* ------------------------------------------------------------ holdings */}
           <Card

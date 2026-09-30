@@ -42,22 +42,39 @@ def retry_at(job: MonitorJob, error: Exception, now: datetime) -> datetime:
     return now + RETRY_DELAY.get(job.kind, timedelta(minutes=10))
 
 
+def watch_windows():
+    """The profile's watch windows (check times); the defaults when the profile cannot be read."""
+    from finresearch.suggest.profile import WatchWindows
+
+    try:
+        from finresearch.suggest.advisor import load_profile
+
+        with session_scope() as s:
+            return load_profile(s).preferences.watch
+    except Exception:
+        log.warning("could not read the profile's watch windows; using the defaults", exc_info=True)
+        return WatchWindows()
+
+
 def sync_slots(now: datetime) -> int:
-    """Insert the not-yet-stored slots of every active watch; deactivate watches whose schedule has ended."""
+    """Insert the not-yet-stored slots of every active watch; deactivate watches whose schedule has ended. Check
+    times come from the profile's watch windows; changing them re-plans pending checks (the old slots are cancelled
+    below because they are no longer planned)."""
     added = 0
+    ww = watch_windows()
+    sub_times, stock_at = ww.subscription_times(), ww.stock_time()
     with session_scope() as s:
         for w in s.scalars(select(Watch).where(Watch.active.is_(True))):
             if w.kind == "stock":  # open-ended: plan only the next few days
                 today = to_ist(now).date()
-                slots = plan_stock(
-                    w.nse_symbol, to_ist(now - GRACE).date(), today + timedelta(days=STOCK_HORIZON_DAYS)
-                )
+                slots = plan_stock(w.nse_symbol, to_ist(now - GRACE).date(),
+                                   today + timedelta(days=STOCK_HORIZON_DAYS), at=stock_at)  # fmt: skip
             else:
                 listed = frozenset(
                     x for x in ("open", "close") if (w.meta or {}).get(f"listing_{x}") is not None
                 )
                 slots = plan(w.nse_symbol, w.open_date, w.close_date, w.allotment_date, w.listing_date,
-                             w.anchor_shares, listed=listed)  # fmt: skip
+                             w.anchor_shares, listed=listed, subscription_times=sub_times)  # fmt: skip
                 if now > last_slot(slots):
                     w.active = False
                     continue
@@ -72,6 +89,13 @@ def sync_slots(now: datetime) -> int:
             s.execute(update(MonitorJob).where(MonitorJob.watch_id == w.id, MonitorJob.status == "pending",
                                                MonitorJob.kind == "listing", MonitorJob.slot.not_in(planned))
                       .values(status="cancelled", finished_at=now))  # fmt: skip
+            # a slot whose time changed (the profile's watch windows) keeps its key: move its pending first attempt
+            due_by_slot = {sl.slot: sl.due_at for sl in slots}
+            for j in s.scalars(select(MonitorJob).where(MonitorJob.watch_id == w.id, MonitorJob.status == "pending",
+                                                        MonitorJob.attempts == 0,
+                                                        MonitorJob.slot.in_(list(due_by_slot)))):  # fmt: skip
+                if j.due_at != due_by_slot[j.slot]:
+                    j.due_at = due_by_slot[j.slot]
             for sl in slots:
                 if sl.due_at < now - GRACE:
                     continue
@@ -169,6 +193,18 @@ async def _record_iv(deps: jobs.Deps, now: datetime) -> None:
         log.warning("could not record IV history", exc_info=True)
 
 
+async def _archive_intraday(deps: jobs.Deps, now: datetime) -> None:
+    """Store today's 1-minute series after the close (monitor.intraday); failures never break the tick."""
+    try:
+        from finresearch.monitor.intraday import archive_after_close
+
+        res = await archive_after_close(deps.intraday, now)
+        if res.get("archived"):
+            log.info("intraday archived: %s", res["archived"])
+    except Exception:
+        log.warning("could not archive intraday series", exc_info=True)
+
+
 FORECAST_EVERY = timedelta(hours=1)
 _FORECASTS_CHECKED: dict[str, datetime] = {}
 
@@ -198,6 +234,8 @@ async def tick(deps: jobs.Deps, now: datetime | None = None) -> dict[str, int]:
         await _refresh_holidays(deps)
     if deps.fno is not None:
         await _record_iv(deps, now)
+    if deps.intraday is not None:
+        await _archive_intraday(deps, now)
     _recover_stale(now)
     added = sync_slots(now)
     missed = _expire_missed(now)
