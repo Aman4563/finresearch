@@ -262,15 +262,26 @@ class NseEquity:
     async def __aexit__(self, *exc: object) -> None:
         await self.nse.aclose()
 
-    async def _get(self, symbol: str, path: str, params: dict[str, str]) -> Any:
+    async def _get(
+        self, symbol: str, path: str, params: dict[str, str], *, cache_ttl: float | None = None
+    ) -> Any:
+        """GET with the quote page as referer. A stale session (401/403 or an HTML block page) is re-warmed once.
+        With `cache_ttl`, only JSON bodies are cached (for data that no longer changes, such as old price bars)."""
         page = f"{NSE_BASE}/get-quotes/equity?symbol={symbol}"
-        if not self.nse._warmed:
-            self.nse.http.cookies.clear()
-            await self.nse.http.get(page)
-            self.nse._warmed = True
-        resp = await self.nse.http.get(
-            f"{NSE_BASE}{path}", params=params, headers={**API_HEADERS, "Referer": page}
-        )
+        for attempt in range(2):
+            if not self.nse._warmed:
+                self.nse.http.cookies.clear()
+                await self.nse.http.get(page)
+                self.nse._warmed = True
+            resp = await self.nse.http.get(
+                f"{NSE_BASE}{path}", params=params, headers={**API_HEADERS, "Referer": page},
+                cache_ttl=cache_ttl, cache_if=_json_body if cache_ttl is not None else None,
+            )  # fmt: skip
+            stale = resp.status in (401, 403) or (resp.ok and not _json_body(resp))
+            if stale and attempt == 0:
+                self.nse._warmed = False
+                continue
+            break
         if not resp.ok:
             raise NseError(f"NSE HTTP {resp.status} for {path} ({symbol})")
         try:
@@ -278,10 +289,12 @@ class NseEquity:
         except ValueError as e:
             raise NseError(f"NSE returned a non-JSON page for {path} ({symbol})") from e
 
-    async def history(self, symbol: str, start: date, end: date, series: str = "EQ") -> list[PriceBar]:
+    async def history(self, symbol: str, start: date, end: date, series: str = "EQ", *,
+                      cache_ttl: float | None = None) -> list[PriceBar]:  # fmt: skip
         rows = await self._get(symbol, "/api/NextApi/apiClient/GetQuoteApi",
                                {"functionName": "getHistoricalTradeData", "symbol": symbol, "series": series,
-                                "fromDate": start.strftime("%d-%m-%Y"), "toDate": end.strftime("%d-%m-%Y")})  # fmt: skip
+                                "fromDate": start.strftime("%d-%m-%Y"), "toDate": end.strftime("%d-%m-%Y")},
+                               cache_ttl=cache_ttl)  # fmt: skip
         return sorted((PriceBar.parse(r) for r in rows or []), key=lambda b: b.day)
 
     async def index_history(self, index: str, start: date, end: date) -> list[IndexBar]:
@@ -429,3 +442,8 @@ def search_equities(equities: list[ListedEquity], query: str, limit: int = 15) -
 
     scored = [(r, e.symbol, e) for e in equities if (r := rank(e)) is not None]
     return [e for _, _, e in sorted(scored)[:limit]]
+
+
+def _json_body(resp) -> bool:
+    head = resp.content.lstrip()[:1]
+    return head in (b"{", b"[")

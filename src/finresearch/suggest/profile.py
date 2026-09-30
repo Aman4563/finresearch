@@ -24,6 +24,7 @@ Metric = Literal[
     "max_lots_by_capital",
     "bidding_days_left",
     "gate_ok",  # 1 when the report passed the publish gate
+    "p_listing_gain",  # P(listing-day open > issue price), 0..1, from signals.ipo (base-rate table or model)
 ]
 Op = Literal["<", "<=", ">", ">=", "==", "!="]
 

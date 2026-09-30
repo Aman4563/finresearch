@@ -8,6 +8,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { LinkButton } from "@/components/dashboard/link-button";
 import { KIND_LABEL, ResearchButton } from "@/components/ipo/actions";
+import { BaseRatesCard } from "@/components/ipo/base-rates";
 import { IssueCard, NoLot, PHASE_TONE, ResearchCell, issueTiming, windowText } from "@/components/ipo/issue-card";
 import {
   LiveDot, SUB_HELP, SubMeter, TERMS, categories, categoryMins, daysUntil, fmtX, inr, int, isSme, lakh, lotCost,
@@ -290,6 +291,8 @@ export default function IposPage() {
           )}
         </Card>
       </div>
+
+      <BaseRatesCard />
 
       <Card title="Researched companies" subtitle="Everything in your research store, with the kind of report it gets."
         icon={<Building2 className="size-4" />} padded>

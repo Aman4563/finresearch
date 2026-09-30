@@ -210,6 +210,11 @@ async def tick(deps: jobs.Deps, now: datetime | None = None) -> dict[str, int]:
     out = {"added": added, "done": done, "failed": failed, "retried": retried, "missed": missed}
     if deps.forecasts:
         out |= {k: v for k, v in (await forecast_step(deps, now)).items() if k in ("resolved", "void")}
+    try:
+        res = await jobs.archive_open_books(deps, now)
+        out["archived"] = len(res["archived"]) if res else 0
+    except Exception:
+        log.warning("subscription archive pass failed; it is retried on the next tick", exc_info=True)
     return out
 
 

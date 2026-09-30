@@ -4,6 +4,7 @@ import { CalendarClock, FileText } from "lucide-react";
 import Link from "next/link";
 
 import { CopyCommand, ResearchButton, bseCommand } from "@/components/ipo/actions";
+import { IpoSignalLine } from "@/components/ipo/ipo-signal";
 import {
   LiveDot, SubMeter, TERMS, categoryMins, countdown, dayLabel, daysUntil, inr, isSme, istAt, lakh, lotCost, lotSourceText,
   parseBand, relDay, times,
@@ -137,6 +138,7 @@ export function IssueCard({ i, now }: { i: Issue; now: number | null }) {
         </p>
         <SubMeter value={sub} />
       </div>
+      {i.exchange === "NSE" && !isSme(i) && i.phase !== "upcoming" && <IpoSignalLine symbol={i.symbol} series={i.series} company={i.company} closed={i.phase === "closed"} />}
 
       <div className="mt-auto pt-4">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs">

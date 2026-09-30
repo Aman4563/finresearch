@@ -1,0 +1,85 @@
+[
+ {
+  "company": "Swiggy Limited",
+  "htmSym": "swiggy",
+  "ipoEndDate": "08-NOV-2024",
+  "ipoStartDate": "06-NOV-2024",
+  "issuePrice": "   390",
+  "linkRemovalDate": "09-NOV-2024",
+  "listingDate": "13-NOV-2024",
+  "priceRange": "Rs.371 to Rs.390",
+  "securityType": "EQ",
+  "symbol": "SWIGGY"
+ },
+ {
+  "company": "Laurus Labs Limited",
+  "htmSym": "lauruslabs",
+  "ipoEndDate": "08-DEC-2016",
+  "ipoStartDate": "06-DEC-2016",
+  "issuePrice": "   428",
+  "linkRemovalDate": "15-DEC-2016",
+  "listingDate": "19-DEC-2016",
+  "priceRange": "Rs 426 to Rs 428",
+  "securityType": "EQ",
+  "symbol": "LAURUSLABS"
+ },
+ {
+  "company": "TeamLease Services Limited",
+  "htmSym": "teamlease",
+  "ipoEndDate": "04-FEB-2016",
+  "ipoStartDate": "02-FEB-2016",
+  "issuePrice": "   850",
+  "linkRemovalDate": "12-FEB-2016",
+  "listingDate": "12-FEB-2016",
+  "priceRange": "Rs 785 to Rs 850",
+  "securityType": "EQ",
+  "symbol": "TEAMLEASE"
+ },
+ {
+  "company": "Ruchi Soya Industries Limited",
+  "htmSym": "ruchisoya",
+  "ipoEndDate": "28-MAR-2022",
+  "ipoStartDate": "24-MAR-2022",
+  "issuePrice": "    34",
+  "linkRemovalDate": "04-APR-2022",
+  "listingDate": "02-JAN-2003",
+  "priceRange": "Rs.615 to Rs.650",
+  "securityType": "EQ",
+  "symbol": "RUCHISOYA"
+ },
+ {
+  "companyName": "Coreintegra Consulting Services Limited",
+  "ipoEndDate": "25-SEP-2026",
+  "ipoStartDate": "23-SEP-2026",
+  "issuePrice": "78",
+  "listingDate": "30-SEP-2026",
+  "priceRange": "Rs.74 to Rs.78",
+  "securityType": "SME",
+  "symbol": "COREIN",
+  "company": "Coreintegra Consulting Services Limited"
+ },
+ {
+  "company": "Nashik Municipal Corporation",
+  "htmSym": "nmc01",
+  "ipoEndDate": "02-MAR-2026",
+  "ipoStartDate": "25-FEB-2026",
+  "issuePrice": "   125",
+  "linkRemovalDate": "03-MAR-2026",
+  "listingDate": "06-MAR-2026",
+  "priceRange": "Rs.1000",
+  "securityType": "DEBT",
+  "symbol": "NMC01"
+ },
+ {
+  "company": "Orient Cables (India) Limited",
+  "htmSym": "orientcabl",
+  "ipoEndDate": "29-SEP-2026",
+  "ipoStartDate": "25-SEP-2026",
+  "issuePrice": "-",
+  "linkRemovalDate": "30-SEP-2026",
+  "listingDate": "-",
+  "priceRange": "Rs.258 to Rs.272",
+  "securityType": "EQ",
+  "symbol": "ORIENTCABL"
+ }
+]

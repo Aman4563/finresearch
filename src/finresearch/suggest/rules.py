@@ -114,6 +114,10 @@ def gather(session: Session, run_id: int, profile: Profile, *, live_detail=None,
         "fincalc: exchange bidding days from today to the close" if close else "close date unknown",
     )
     m["gate_ok"] = Metric(None if gate_ok is None else Decimal(int(gate_ok)), "publish gate")
+    if any(r.metric == "p_listing_gain" for r in profile.rules):
+        from finresearch.signals.ipo import listing_gain_metric
+
+        m["p_listing_gain"] = listing_gain_metric(m.get("qib_times"))
     inputs.rules = [evaluate(r, m) for r in profile.rules]
     return inputs
 

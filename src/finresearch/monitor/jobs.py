@@ -43,6 +43,10 @@ class Deps:
     forecasts: bool = (
         False  # log finished runs' verdicts and resolve due forecasts once a day (signals.ledger)
     )
+    archive_books: bool = False  # archive every open issue's book 4 times a bidding day (item 15); live only
+    archive_spacing_s: float = (
+        2.0  # pause between issues within one archive pass (on top of the rate limiter)
+    )
 
     @classmethod
     def live(cls) -> Deps:
@@ -100,7 +104,7 @@ class Deps:
 
         return cls(ipo_detail=ipo_detail, quote=quote, current_issues=current_issues, stock_snapshot=stock_snapshot,
                    bse_ipo_detail=bse_ipo_detail, bse_quote=bse_quote, fno=NseFno, price_history=price_history,
-                   corporate_actions=corporate_actions, forecasts=True)  # fmt: skip
+                   corporate_actions=corporate_actions, forecasts=True, archive_books=True)  # fmt: skip
 
 
 def alert(session: Session, watch: Watch, kind: str, message: str, level: str = "info", **data: Any) -> None:
@@ -324,6 +328,105 @@ async def stock_daily(session: Session, job: MonitorJob, watch: Watch, deps: Dep
     watch.meta = meta
     out["first_check"] = first
     return out
+
+
+# --------------------------------------------------------------------------- item 15: archive every open book
+
+# IST times of the archive passes on each bidding day; the last follows the 17:00 close (the final book)
+ARCHIVE_TIMES = ((11, 0), (13, 0), (15, 0), (17, 15))
+ARCHIVE_WINDOW_MIN = 45  # a pass still runs up to this long after its time (monitor restarts, slow ticks)
+
+
+def archive_slot(now: datetime, holidays: set | None = None) -> str | None:
+    """The archive slot due at `now` ("2026-09-30T13:00"), or None outside the windows and on non-trading days."""
+    from datetime import timedelta
+
+    from finresearch.fincalc.dates import is_business_day, ist_datetime, to_ist
+
+    ist = to_ist(now)
+    day = ist.date()
+    if holidays is None:
+        from finresearch.adapters.nse_holidays import trading_holidays
+
+        holidays = trading_holidays()
+    if not is_business_day(day, holidays):
+        return None
+    for h, m in ARCHIVE_TIMES:
+        start = ist_datetime(day, h, m)
+        if start <= ist < start + timedelta(minutes=ARCHIVE_WINDOW_MIN):
+            return f"{day.isoformat()}T{h:02d}:{m:02d}"
+    return None
+
+
+async def archive_open_books(deps: Deps, now: datetime, *, holidays: set | None = None) -> dict | None:
+    """Snapshot the category book of EVERY open NSE issue (not only watched ones), once per archive slot.
+
+    This builds the intraday history the IPO model lacks (roadmap §D.1: what was knowable before the 5 pm UPI
+    cut-off). The slot row is claimed first (unique key), so two monitor processes never archive the same slot;
+    snapshots are de-duplicated on (symbol, NSE timestamp, source). Requests go through the polite NSE client with
+    `archive_spacing_s` between issues. BSE-only SME issues are not covered."""
+    import asyncio
+
+    from sqlalchemy import delete
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import SubscriptionArchiveSlot
+    from finresearch.fincalc.dates import to_ist
+
+    if not deps.archive_books or deps.current_issues is None:
+        return None
+    slot = archive_slot(now, holidays)
+    if slot is None:
+        return None
+    with session_scope() as s:
+        claimed = s.execute(insert(SubscriptionArchiveSlot).values(slot=slot, started_at=now, result={})
+                            .on_conflict_do_nothing(index_elements=["slot"])
+                            .returning(SubscriptionArchiveSlot.slot)).first()  # fmt: skip
+    if claimed is None:
+        return None
+    try:
+        issues = await deps.current_issues()
+    except Exception:
+        with session_scope() as s:  # release the slot so the next tick retries within the window
+            s.execute(delete(SubscriptionArchiveSlot).where(SubscriptionArchiveSlot.slot == slot))
+        raise
+    today = to_ist(now).date()
+    live = [i for i in issues if i.symbol and (i.issue_start is None or i.issue_start <= today)
+            and (i.issue_end is None or today <= i.issue_end)]  # fmt: skip
+    result: dict[str, Any] = {"slot": slot, "open": len(live), "archived": [], "unchanged": [], "no_book": [],
+                              "errors": []}  # fmt: skip
+    for n, issue in enumerate(live):
+        if n:
+            await asyncio.sleep(deps.archive_spacing_s)
+        try:
+            detail = await deps.ipo_detail(issue.symbol)
+        except Exception as e:
+            result["errors"].append(f"{issue.symbol}: {type(e).__name__}: {e}"[:200])
+            continue
+        snap = detail.combined
+        total = snap.total_times if snap else None
+        source = snap.source if snap else None
+        if snap is not None and total is None and issue.times_subscribed is not None:
+            total, source = (
+                issue.times_subscribed,
+                "nse_current_issues",
+            )  # NSE SME tables carry no category times
+        if snap is None or total is None:
+            result["no_book"].append(issue.symbol)
+            continue
+        with session_scope() as s:
+            got = s.execute(insert(SubscriptionSnapshotRow).values(
+                nse_symbol=issue.symbol, as_of=snap.as_of or now, source=source, total_times=total,
+                categories=[c.model_dump(mode="json") for c in snap.categories],
+                raw={"archive_slot": slot, "series": issue.series},
+            ).on_conflict_do_nothing(index_elements=["nse_symbol", "as_of", "source"])
+             .returning(SubscriptionSnapshotRow.id)).first()  # fmt: skip
+        result["archived" if got else "unchanged"].append(issue.symbol)
+    with session_scope() as s:
+        row = s.get(SubscriptionArchiveSlot, slot)
+        if row is not None:
+            row.result = result
+    return result
 
 
 HANDLERS = {"subscription": subscription, "allotment": allotment, "listing": listing, "lockin": lockin,

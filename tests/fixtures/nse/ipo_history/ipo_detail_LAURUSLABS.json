@@ -1,0 +1,173 @@
+{
+ "companyName": "Laurus Labs Limited",
+ "metaInfo": {
+  "symbol": "LAURUSLABS",
+  "listingDate": "2016-12-19",
+  "activeSeries": [
+   "EQ",
+   " T0"
+  ]
+ },
+ "activeCat": {
+  "dataList": [
+   {
+    "category": "Category",
+    "noOfShareOffered": "No.of shares offered/reserved",
+    "noOfSharesBid": "No. of shares bid for",
+    "noOfTotalMeant": "No. of times of total meant for the category",
+    "srNo": "Sr.No."
+   },
+   {
+    "category": "Qualified Institutional Buyers (QIBs)    ",
+    "noOfShareOffered": "6174544",
+    "noOfSharesBid": "65061465",
+    "noOfTotalMeant": "10.54",
+    "srNo": "1"
+   },
+   {
+    "category": "Foreign Institutional Investors(FIIs)",
+    "noOfShareOffered": null,
+    "noOfSharesBid": "23588215",
+    "noOfTotalMeant": null,
+    "srNo": "1(a)"
+   },
+   {
+    "category": "Domestic Financial Institutions(Banks/ Financial Institutions(FIs)/ Insurance Companies) ",
+    "noOfShareOffered": null,
+    "noOfSharesBid": "6549305",
+    "noOfTotalMeant": null,
+    "srNo": "1(b)"
+   },
+   {
+    "category": "Mutual funds ",
+    "noOfShareOffered": null,
+    "noOfSharesBid": "32083940",
+    "noOfTotalMeant": null,
+    "srNo": "1(c)"
+   },
+   {
+    "category": "Others ",
+    "noOfShareOffered": null,
+    "noOfSharesBid": "2840005",
+    "noOfTotalMeant": null,
+    "srNo": "1(d)"
+   },
+   {
+    "category": "Non Institutional Investors",
+    "noOfShareOffered": "4623879",
+    "noOfSharesBid": "16545060",
+    "noOfTotalMeant": "3.58",
+    "srNo": "2"
+   },
+   {
+    "category": "Corporates",
+    "noOfShareOffered": null,
+    "noOfSharesBid": "5746965",
+    "noOfTotalMeant": null,
+    "srNo": "2(a)"
+   },
+   {
+    "category": "Individuals(Other than RIIs)",
+    "noOfShareOffered": null,
+    "noOfSharesBid": "8985795",
+    "noOfTotalMeant": null,
+    "srNo": "2(b)"
+   },
+   {
+    "category": "Others",
+    "noOfShareOffered": null,
+    "noOfSharesBid": "1812300",
+    "noOfTotalMeant": null,
+    "srNo": "2(c)"
+   },
+   {
+    "category": "Retail Individual Investors(RIIs) ",
+    "noOfShareOffered": "10789051",
+    "noOfSharesBid": "18014360",
+    "noOfTotalMeant": "1.67",
+    "srNo": "3"
+   },
+   {
+    "category": "Cut Off",
+    "noOfShareOffered": null,
+    "noOfSharesBid": "15670760",
+    "noOfTotalMeant": null,
+    "srNo": "3(a)"
+   },
+   {
+    "category": "Price bids",
+    "noOfShareOffered": null,
+    "noOfSharesBid": "2343600",
+    "noOfTotalMeant": null,
+    "srNo": "3(b)"
+   },
+   {
+    "category": "Employees",
+    "noOfShareOffered": "323834",
+    "noOfSharesBid": "552405",
+    "noOfTotalMeant": "1.71",
+    "srNo": "4"
+   },
+   {
+    "category": "Cut Off",
+    "noOfShareOffered": null,
+    "noOfSharesBid": "315140",
+    "noOfTotalMeant": null,
+    "srNo": "4(a)"
+   },
+   {
+    "category": "Price bids",
+    "noOfShareOffered": null,
+    "noOfSharesBid": "237265",
+    "noOfTotalMeant": null,
+    "srNo": "4(b)"
+   },
+   {
+    "category": "Total",
+    "noOfShareOffered": "21911308",
+    "noOfSharesBid": "100173290",
+    "noOfTotalMeant": "4.57",
+    "srNo": null
+   }
+  ],
+  "heading": "LAURUS LABS LIMITED",
+  "symbol": "LAURUSLABS",
+  "updateTime": "Updated as on 08 December 2016 at 2200 hrs"
+ },
+ "issueInfo": {
+  "dataList": [
+   {
+    "title": "Laurus Labs Limited",
+    "value": ""
+   },
+   {
+    "title": "Symbol",
+    "value": "LAURUSLABS"
+   },
+   {
+    "title": "Issue Period",
+    "value": "06-Dec-2016 to 08-Dec-2016"
+   },
+   {
+    "title": "Issue Size ",
+    "value": "\"Initial Public offer of [.] Equity Shares aggregating upto Rs 3,000 million and an offer of share upto 24,107,440 Equity Shares (including anchor portion of 9,238,385 Equity Shares)\""
+   },
+   {
+    "title": "Issue Type",
+    "value": "100% Book Building"
+   },
+   {
+    "title": "Price Range",
+    "value": "Rs 426 to Rs 428"
+   },
+   {
+    "title": "Market Lot",
+    "value": "35 Equity Shares and in multiples thereof"
+   },
+   {
+    "title": "Minimum Order Quantity",
+    "value": "35 Equity Shares"
+   }
+  ]
+ }
+}

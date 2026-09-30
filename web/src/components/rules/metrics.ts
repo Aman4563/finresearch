@@ -7,8 +7,8 @@ export type MetricInfo = {
   /** noun phrase for the sentence preview: "Skip if <phrase> is below 1x" */
   phrase: string;
   description: string;
-  unit: "times" | "inr" | "shares" | "lots" | "days" | "flag";
-  group: "Demand" | "Price and lots" | "Timing and quality";
+  unit: "times" | "inr" | "shares" | "lots" | "days" | "flag" | "prob";
+  group: "Demand" | "Price and lots" | "Timing and quality" | "Signal";
 };
 
 export const METRICS: MetricInfo[] = [
@@ -32,6 +32,8 @@ export const METRICS: MetricInfo[] = [
     description: "Exchange working days from today to the issue close, both included (1 on the last day, 0 once closed)." },
   { key: "gate_ok", label: "Report passed the gate", phrase: "the verification gate result", unit: "flag", group: "Timing and quality",
     description: "1 when the research report passed FinResearch's deterministic verification gate, 0 when it did not." },
+  { key: "p_listing_gain", label: "P(listing gain)", phrase: "the chance of a listing gain", unit: "prob", group: "Signal",
+    description: "Probability (0 to 1) that the listing-day open is above the issue price, from past issues with similar final QIB demand (the IPO signal). Built on final books, so it is optimistic before the close." },
 ];
 
 export const METRIC = Object.fromEntries(METRICS.map((m) => [m.key, m])) as Record<string, MetricInfo>;
@@ -47,7 +49,7 @@ export const OPS: { value: string; label: string; phrase: string }[] = [
 const OP = Object.fromEntries(OPS.map((o) => [o.value, o]));
 
 export const UNIT_SUFFIX: Record<MetricInfo["unit"], string> = {
-  times: "x", inr: "₹", shares: "shares", lots: "lots", days: "days", flag: "0 or 1",
+  times: "x", inr: "₹", shares: "shares", lots: "lots", days: "days", flag: "0 or 1", prob: "0 to 1",
 };
 
 export function formatValue(metric: string, value: string) {
@@ -60,6 +62,7 @@ export function formatValue(metric: string, value: string) {
     case "shares": return `${n.toLocaleString("en-IN")} ${n === 1 ? "share" : "shares"}`;
     case "lots": return `${n} ${n === 1 ? "lot" : "lots"}`;
     case "days": return `${n} ${n === 1 ? "day" : "days"}`;
+    case "prob": return `${Math.round(n * 100)}%`;
     default: return String(n);
   }
 }
@@ -94,6 +97,8 @@ export const TEMPLATES: Template[] = [
     why: "Warn when one lot blocks more than ₹15,000." },
   { id: "last-day", title: "Last bidding day", metric: "bidding_days_left", op: "<=", value: "1", action: "warn",
     why: "Warn on the final day so you approve the UPI mandate in time." },
+  { id: "p-listing-gain", title: "Likely listing gain", metric: "p_listing_gain", op: "<", value: "0.6", action: "skip",
+    why: "Skip when fewer than 60% of past issues with similar QIB demand opened above the issue price." },
   { id: "nii-cold", title: "HNIs stay away", metric: "nii_times", op: "<", value: "1", action: "warn",
     why: "Warn when the NII (HNI) book is under-subscribed." },
 ];

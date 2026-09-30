@@ -1229,6 +1229,28 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
             radar_cache.update(at=time.time(), data=data)
         return data
 
+    @app.get("/api/ipo/base-rates")
+    async def ipo_base_rates(by: str = Query("qib", pattern="^(qib|total)$")) -> dict[str, Any]:
+        """How past mainboard IPOs opened on listing day, by final subscription band × regime (pre/post the Apr-2022
+        NII reform): n, median and IQR of the open-vs-issue return, P(loss at open) with 95% Wilson intervals. Reads
+        the harvested `ipo_history` table, or the committed snapshot while that is empty. Includes the listing
+        model's walk-forward result (roadmap §D.1, items 2 and 14)."""
+        from finresearch.evals.ipo_model import load_artefact, summary
+        from finresearch.signals.ipo import DECISION_CAVEAT, base_rate_table
+
+        table = await asyncio.to_thread(base_rate_table, by)
+        art = load_artefact()
+        model = None
+        if art:
+            model = {**summary(art), "uses_model": bool((art.get("gate") or {}).get("passes"))}
+        return {
+            **table,
+            "event": "listing-day open vs the issue price",
+            "caveat": DECISION_CAVEAT,
+            "scope": "Mainboard (EQ) issues; final combined NSE+BSE book (activeCat), ex-anchor",
+            "model": model,
+        }
+
     # ------------------------------------------------------------------ plan usage
     @app.get("/api/limits")
     def limits() -> dict[str, Any]:
