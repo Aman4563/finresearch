@@ -169,13 +169,14 @@ class ResearchPipeline:
             if co is None:
                 raise ValueError(f"run {self.run_id} has no company")
             facts = dict(run.manifest.get("facts", {}))
-            slug, name, sym = co.slug, co.name, co.nse_symbol
+            slug, name, sym, bse_code = co.slug, co.name, co.nse_symbol, co.bse_code
         docs = json.loads(list_documents(slug))
         if require_offer_doc and self.required_doc_kinds and not self._has_primary_docs(docs):
             raise StepFailed(f"no {'/'.join(self.required_doc_kinds)} found for {slug}; run "
                              f"`finresearch docs discover {slug}` or `docs add`")  # fmt: skip
         extra = {"decision_deadline": self.decision_deadline} if self.decision_deadline else {}
-        return RunContext(run_id=self.run_id, company_slug=slug, company_name=name, nse_symbol=sym, documents=docs,
+        return RunContext(run_id=self.run_id, company_slug=slug, company_name=name, nse_symbol=sym,
+                          bse_code=None if sym else bse_code, documents=docs,
                           facts=facts, subject=self.subject, primary_source=self.primary_source, **extra)  # fmt: skip
 
     def _has_primary_docs(self, docs: list[dict[str, Any]]) -> bool:

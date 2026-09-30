@@ -14,7 +14,7 @@ import {
   LiveDot, SUB_HELP, TERMS, categories, countdown, dayLabel, daysUntil, fmtX, istAt, istDate, timeIST,
 } from "@/components/ipo/lib";
 import { Badge, EmptyState, InfoTip, Segmented, cx } from "@/components/ui";
-import type { Decision, Issue, RunSummary, WatchDetail, WatchSummary } from "@/lib/api";
+import { watchExchangeLabel, type Decision, type Issue, type RunSummary, type WatchDetail, type WatchSummary } from "@/lib/api";
 
 // ------------------------------------------------------------------ plan window tile
 
@@ -85,8 +85,8 @@ export function buildEvents(issues: Issue[], watches: WatchSummary[], details: W
       push({ day: i.issue_start!, at: istAt(i.issue_start!, "10:00"), kind: "open", title: i.company, sub: `${i.exchange} ${i.symbol}${i.series === "SME" ? " · SME" : ""}`, href: "/ipos" }, `open:${i.symbol}`);
   }
   for (const w of watches.filter((x) => x.kind === "ipo" && x.active)) {
-    const name = w.company_name ?? w.nse_symbol;
-    if (within(w.close_date)) push({ day: w.close_date!, at: istAt(w.close_date!), kind: "close", title: name, sub: `NSE ${w.nse_symbol} · watched`, href: `/monitor/${w.id}`, live: true }, `close:${w.nse_symbol}`);
+    const name = w.company_name ?? w.label;
+    if (within(w.close_date)) push({ day: w.close_date!, at: istAt(w.close_date!), kind: "close", title: name, sub: `${watchExchangeLabel(w)} · watched`, href: `/monitor/${w.id}`, live: true }, `close:${w.nse_symbol}`);
     if (within(w.allotment_date)) push({ day: w.allotment_date!, kind: "allot", title: name, sub: "basis of allotment; check the registrar", href: `/monitor/${w.id}` }, `allot:${w.nse_symbol}`);
     if (within(w.listing_date))
       push({ day: w.listing_date!, at: istAt(w.listing_date!, "10:00"), kind: "list", title: name, sub: w.meta?.listing_confirmed ? "confirmed by NSE" : "expected date", href: `/monitor/${w.id}` }, `list:${w.nse_symbol}`);
@@ -94,7 +94,7 @@ export function buildEvents(issues: Issue[], watches: WatchSummary[], details: W
   for (const d of details) {
     for (const j of d.jobs.filter((x) => x.kind === "lockin" && x.status === "pending")) {
       const day = j.due_at.slice(0, 10);
-      if (within(day)) push({ day, kind: "lockin", title: d.company_name ?? d.nse_symbol, sub: j.slot.split(":").pop() ?? "", href: `/monitor/${d.id}` }, `lock:${j.id}`);
+      if (within(day)) push({ day, kind: "lockin", title: d.company_name ?? d.label, sub: j.slot.split(":").pop() ?? "", href: `/monitor/${d.id}` }, `lock:${j.id}`);
     }
   }
   out.sort((a, b) => a.day.localeCompare(b.day) || (a.at ?? 0) - (b.at ?? 0));
@@ -211,11 +211,11 @@ export function WatchedSubscription({ details }: { details: WatchDetail[] }) {
     <div>
       {withData.length > 1 && (
         <div className="mb-3 overflow-x-auto">
-          <Segmented value={String(cur.id)} onChange={setPick} options={withData.map((d) => ({ value: String(d.id), label: d.nse_symbol }))} />
+          <Segmented value={String(cur.id)} onChange={setPick} options={withData.map((d) => ({ value: String(d.id), label: d.label ?? d.nse_symbol ?? "" }))} />
         </div>
       )}
       <div className="mb-2 flex items-center justify-between gap-3">
-        <Link href={`/monitor/${cur.id}`} className="min-w-0 truncate text-sm font-medium hover:text-brand">{cur.company_name ?? cur.nse_symbol}</Link>
+        <Link href={`/monitor/${cur.id}`} className="min-w-0 truncate text-sm font-medium hover:text-brand">{cur.company_name ?? cur.label}</Link>
         <div className="flex shrink-0 items-center gap-2 text-xs text-muted">
           <Sparkline values={trend} width={64} height={22} />
           <span className="num">{dayLabel(last.as_of, { day: "numeric", month: "short" })} {timeIST(last.as_of)}</span>

@@ -14,7 +14,7 @@ import {
   type ClaimMap, CiteText, ConfidenceMeter, type OpenClaim, SourceStrip, StatusDot, STATUS_LABEL, tileHelp,
 } from "@/components/workspace/report/shared";
 import { SinceReport } from "@/components/markets/stock-signal";
-import type { Report } from "@/lib/api";
+import { listingLabel, type Report } from "@/lib/api";
 import type { Insights, Tile } from "@/lib/insights";
 
 const TONE_RING: Record<string, string> = {
@@ -68,6 +68,7 @@ function VerdictHero({ report, ins, claims, onOpen, title }: { report: Report; i
           </div>
           <ConfidenceMeter level={conf} />
           <div className="flex flex-wrap gap-1.5">
+            {ins?.kind === "stock_report" && ins.subject.key && <Badge tone={ins.subject.key.startsWith("BSE:") ? "accent" : "neutral"}>{listingLabel(ins.subject.key)}</Badge>}
             {vd?.horizon && <Badge tone="info">Horizon: {vd.horizon}</Badge>}
             {report.published ? (
               <Badge tone="gain">

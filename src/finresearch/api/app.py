@@ -129,7 +129,10 @@ class NewFund(BaseModel):
 
 
 class NewCompany(BaseModel):
-    nse_symbol: str = Field(min_length=1, max_length=30)
+    """A listed company by NSE symbol, or a BSE-only one by BSE scrip code (6 digits, or "BSE:<code>")."""
+
+    nse_symbol: str | None = Field(None, min_length=1, max_length=30)
+    bse_code: str | None = Field(None, min_length=6, max_length=10)
     name: str | None = None
 
 
@@ -177,7 +180,8 @@ def run_json(run: ResearchRun, co: Company | None, steps: dict[str, int] | None 
     worker = worker_info(m)
     err = m.get("last_error")
     return {"id": run.id, "kind": run.kind, "status": run.status, "company": co.slug if co else None,
-            "company_name": co.name if co else None, "created_at": _iso(run.created_at),
+            "company_name": co.name if co else None, "key": co.stock_key if co else None,
+            "exchange": co.exchange if co else None, "created_at": _iso(run.created_at),
             "finished_at": _iso(run.finished_at), "resume_after": _iso(run.resume_after),
             "final_gate": m.get("final_gate"), "pack": m.get("pack"), "worker": worker,
             "last_error": err if err is None or isinstance(err, dict) else {"message": str(err)},
@@ -325,7 +329,8 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
                     select(ResearchRun.id, ResearchRun.kind).where(ResearchRun.id.in_(runs.values()))
                 ).all()
             )
-            return [{"slug": c.slug, "name": c.name, "nse_symbol": c.nse_symbol, "documents": docs.get(c.id, 0),
+            return [{"slug": c.slug, "name": c.name, "nse_symbol": c.nse_symbol, "bse_code": c.bse_code, "isin": c.isin,
+                     "exchange": c.exchange, "key": c.stock_key, "documents": docs.get(c.id, 0),
                      "latest_run": runs.get(c.id), "kind": kinds.get(runs.get(c.id)) or company_kind(c)}
                     for c in s.scalars(select(Company).order_by(Company.name))]  # fmt: skip
 
@@ -338,7 +343,8 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
             docs = s.scalars(select(Document).where(Document.company_id == co.id).order_by(Document.id)).all()
             runs = s.scalars(select(ResearchRun).where(ResearchRun.company_id == co.id)
                              .order_by(ResearchRun.id.desc())).all()  # fmt: skip
-            return {"slug": co.slug, "name": co.name, "nse_symbol": co.nse_symbol,
+            return {"slug": co.slug, "name": co.name, "nse_symbol": co.nse_symbol, "bse_code": co.bse_code,
+                    "isin": co.isin, "exchange": co.exchange, "key": co.stock_key,
                     "documents": [{"id": d.id, "kind": d.kind, "title": d.title, "pages": d.pages,
                                    "source_url": d.source_url, "fetched_at": _iso(d.fetched_at)} for d in docs],
                     "runs": [run_json(r, co) for r in runs]}  # fmt: skip
@@ -560,8 +566,9 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
             claims = [claim_json(c, {}) for c in rows]
             meta = (co.meta or {}) if co else {}
             subject = {"slug": co.slug if co else None, "name": co.name if co else None,
-                       "nse_symbol": co.nse_symbol if co else None, "isin": meta.get("isin"),
-                       "amfi_code": meta.get("amfi_code")}  # fmt: skip
+                       "nse_symbol": co.nse_symbol if co else None, "isin": (co.isin if co else None) or meta.get("isin"),
+                       "bse_code": co.bse_code if co else None, "key": co.stock_key if co else None,
+                       "exchange": co.exchange if co else None, "amfi_code": meta.get("amfi_code")}  # fmt: skip
             watch = None
             w = s.scalars(select(Watch).where(Watch.company_id == co.id)).first() if co else None
             if w is not None and w.kind == "ipo":
@@ -770,7 +777,7 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
                 nxt = s.scalars(select(MonitorJob).where(MonitorJob.watch_id == w.id, MonitorJob.status == "pending")
                                 .order_by(MonitorJob.due_at)).first()  # fmt: skip
                 last = s.scalars(select(SubscriptionSnapshotRow).where(SubscriptionSnapshotRow.nse_symbol == w.nse_symbol)
-                                 .order_by(SubscriptionSnapshotRow.as_of.desc())).first()  # fmt: skip
+                                 .order_by(SubscriptionSnapshotRow.as_of.desc())).first() if w.nse_symbol else None  # fmt: skip
                 unread = s.scalar(select(func.count()).select_from(Alert).where(Alert.watch_id == w.id,
                                                                                Alert.read_at.is_(None)))  # fmt: skip
                 out.append({**watch_json(w, co), "unread_alerts": unread,
@@ -814,7 +821,7 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
                 select(MonitorJob).where(MonitorJob.watch_id == w.id).order_by(MonitorJob.due_at)
             ).all()
             snaps = s.scalars(select(SubscriptionSnapshotRow).where(SubscriptionSnapshotRow.nse_symbol == w.nse_symbol)
-                              .order_by(SubscriptionSnapshotRow.as_of)).all()  # fmt: skip
+                              .order_by(SubscriptionSnapshotRow.as_of)).all() if w.nse_symbol else []  # fmt: skip
             alerts = s.scalars(select(Alert).where(Alert.watch_id == w.id).order_by(Alert.id.desc())).all()
             return {**watch_json(w, co),
                     "jobs": [{"id": j.id, "kind": j.kind, "slot": j.slot, "due_at": _iso(j.due_at), "status": j.status,
@@ -826,13 +833,13 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
     @app.get("/api/alerts")
     def alerts(unread: bool = False, limit: int = Query(100, ge=1, le=500)) -> list[dict[str, Any]]:
         with session_scope() as s:
-            q = select(Alert, Watch.nse_symbol).join(Watch, Watch.id == Alert.watch_id, isouter=True)
+            q = select(Alert, Watch).join(Watch, Watch.id == Alert.watch_id, isouter=True)
             if unread:
                 q = q.where(Alert.read_at.is_(None))
-            return [
-                {**alert_json(a), "nse_symbol": sym}
-                for a, sym in s.execute(q.order_by(Alert.id.desc()).limit(limit))
-            ]
+            # `key` is the stock page key (NSE symbol or "BSE:<code>"), `label` how to show it ("BSE 526433")
+            return [{**alert_json(a), "nse_symbol": w.nse_symbol if w else None, "exchange": w.exchange if w else None,
+                     "key": w.key if w else None, "label": w.label if w else None}
+                    for a, w in s.execute(q.order_by(Alert.id.desc()).limit(limit))]  # fmt: skip
 
     @app.post("/api/alerts/{alert_id}/read")
     def read_alert(alert_id: int) -> dict[str, Any]:
@@ -916,30 +923,54 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
         known = await asyncio.to_thread(_known_symbols)
         return [{**r.model_dump(mode="json", exclude={"market_cap_cr"}),
                  "market_cap_cr": float(r.market_cap_cr) if r.market_cap_cr is not None else None,
-                 "slug": known.get(r.nse_symbol, {}).get("slug") if r.nse_symbol else None,
+                 "slug": known.get(r.key, {}).get("slug"),
                  "bse_error": bse_error} for r in hits]  # fmt: skip
 
     @app.post("/api/companies", status_code=201)
     async def add_company(body: NewCompany) -> dict[str, Any]:
-        """Add a listed company by NSE symbol (name from NSE's equity list when not given)."""
+        """Add a listed company by NSE symbol (name from NSE's equity list when not given), or a BSE-only stock by
+        BSE scrip code (`bse_code` "526433" or "BSE:526433"; name and ISIN from BSE's scrip master). A BSE code whose
+        ISIN also trades on NSE adds the NSE company (NSE stays the default exchange) with its BSE code noted."""
+        from finresearch.adapters.bse_equity import scrip_code_of
         from finresearch.ingest.documents import get_or_create_company
 
-        sym = body.nse_symbol.strip().upper()
-        name, listed = body.name, False
-        if not name:
-            match = next((e for e in await _equities() if e.symbol == sym), None)
-            if match is None:
-                raise HTTPException(404, f"{sym} is not in NSE's list of listed equities")
-            name, listed = match.name, True
+        if (body.nse_symbol is None) == (body.bse_code is None):
+            raise HTTPException(422, "give exactly one of nse_symbol or bse_code")
+        bse_code = isin = None
+        if body.bse_code is not None:
+            raw = body.bse_code.strip().upper()
+            code = scrip_code_of(raw) or (raw if raw.isdigit() and len(raw) == 6 else None)
+            if code is None:
+                raise HTTPException(422, f"{body.bse_code!r} is not a BSE scrip code (six digits)")
+            try:
+                listings = (await _listings())[0]
+            except HTTPException:
+                raise
+            except Exception as e:
+                raise HTTPException(502, f"BSE scrip list unavailable: {type(e).__name__}: {e}"[:200]) from e
+            row = listings.by_code(code)
+            if row is None:
+                raise HTTPException(404, f"BSE scrip {code} is not in BSE's list of active equities")
+            if not row.nse_symbol:
+                return await asyncio.to_thread(_add_bse_company, code, body.name or row.name, row.isin)
+            sym, bse_code, isin = row.nse_symbol, code, row.isin  # dual-listed: the NSE company
+            name, listed = body.name or row.name, True
+        else:
+            sym = (body.nse_symbol or "").strip().upper()
+            name, listed = body.name, False
+            if not name:
+                match = next((e for e in await _equities() if e.symbol == sym), None)
+                if match is None:
+                    raise HTTPException(404, f"{sym} is not in NSE's list of listed equities")
+                name, listed, isin = match.name, True, match.isin or None
         with session_scope() as s:
             existing = s.scalar(select(Company).where(Company.nse_symbol == sym))
             if existing is not None:
+                existing.bse_code = existing.bse_code or bse_code
+                existing.isin = existing.isin or isin
                 return {"slug": existing.slug, "name": existing.name, "nse_symbol": sym, "created": False,
-                        "kind": company_kind(existing)}  # fmt: skip
-            slug = (
-                re.sub(r"[^a-z0-9]+", "-", re.sub(r"\b(limited|ltd)\b", "", name.lower())).strip("-")[:70]
-                or sym.lower()
-            )
+                        "kind": company_kind(existing), "exchange": "NSE", "key": sym}  # fmt: skip
+            slug = _company_slug(name) or sym.lower()
             co = s.scalar(select(Company).where(Company.slug == slug))
             if co is not None and co.nse_symbol:  # the name's slug belongs to another symbol: never reuse it
                 slug = f"{slug[: 79 - len(sym)]}-{sym.lower()}"
@@ -950,6 +981,8 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
             if co is None:
                 co = get_or_create_company(s, slug, name, nse_symbol=sym)
             co.nse_symbol = sym  # a company added from documents alone has no symbol yet
+            co.bse_code = co.bse_code or bse_code
+            co.isin = co.isin or isin
             if listed and created:
                 co.meta = {**(co.meta or {}), "kind": "stock_report"}
             return {
@@ -958,6 +991,8 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
                 "nse_symbol": sym,
                 "created": created,
                 "kind": company_kind(co),
+                "exchange": "NSE",
+                "key": sym,
             }
 
     # ------------------------------------------------------------------ mutual funds
@@ -1501,19 +1536,53 @@ def company_kind(co: Company) -> str:
     return (co.meta or {}).get("kind") or "ipo_report"
 
 
+def _company_slug(name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", re.sub(r"\b(limited|ltd)\b", "", name.lower())).strip("-")[:70]
+
+
+def _add_bse_company(code: str, name: str, isin: str | None) -> dict[str, Any]:
+    """A BSE-only listed stock (no NSE listing for its ISIN), keyed by its scrip code. An existing company with the
+    same code is returned; a company added from documents alone (same name slug, no listing yet) gets the code."""
+    from finresearch.ingest.documents import get_or_create_company
+
+    with session_scope() as s:
+        existing = s.scalar(select(Company).where(Company.bse_code == code, Company.nse_symbol.is_(None)))
+        if existing is not None:
+            existing.isin = existing.isin or isin
+            return {"slug": existing.slug, "name": existing.name, "nse_symbol": None, "bse_code": code,
+                    "created": False, "kind": company_kind(existing), "exchange": "BSE", "key": f"BSE:{code}"}  # fmt: skip
+        slug = _company_slug(name) or f"bse-{code}"
+        co = s.scalar(select(Company).where(Company.slug == slug))
+        if co is not None and (co.nse_symbol or co.bse_code):  # the slug is another listed company's
+            slug = f"{slug[: 79 - len(code) - 4]}-bse-{code}"
+            co = s.scalar(select(Company).where(Company.slug == slug))
+            if co is not None and (co.nse_symbol or co.bse_code):
+                raise HTTPException(409, f"slug {slug!r} already belongs to {co.stock_key}")
+        created = co is None
+        if co is None:
+            co = get_or_create_company(s, slug, name, bse_code=code, isin=isin)
+        co.bse_code, co.isin = code, co.isin or isin
+        if created:
+            co.meta = {**(co.meta or {}), "kind": "stock_report"}
+        return {"slug": co.slug, "name": co.name, "nse_symbol": None, "bse_code": code, "created": created,
+                "kind": company_kind(co), "exchange": "BSE", "key": f"BSE:{code}"}  # fmt: skip
+
+
 def _known_symbols() -> dict[str, dict[str, Any]]:
     """Companies by NSE symbol, and BSE-only SME issues by "BSE:<IPO number>"."""
     with session_scope() as s:
         out: dict[str, dict[str, Any]] = {}
         for co in s.scalars(select(Company)):
             bse_no = (co.meta or {}).get("bse_ipo_no")
-            if not co.nse_symbol and not bse_no:
+            if not co.nse_symbol and not bse_no and not co.bse_code:
                 continue
             run = s.scalars(select(ResearchRun).where(ResearchRun.company_id == co.id, ResearchRun.kind == "ipo_report")
                             .order_by(ResearchRun.id.desc())).first()  # fmt: skip
             entry = {"slug": co.slug, "run": run.id if run else None, "run_status": run.status if run else None}  # fmt: skip
             if co.nse_symbol:
                 out[co.nse_symbol.upper()] = entry
+            elif co.bse_code:  # a BSE-only listed stock: "BSE:<6-digit scrip code>" (IPO numbers are shorter)
+                out[f"BSE:{co.bse_code}"] = entry
             if bse_no:
                 out[f"BSE:{bse_no}"] = entry
         return out

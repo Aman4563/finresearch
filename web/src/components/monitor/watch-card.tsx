@@ -9,7 +9,7 @@ import {
   LiveDot, Stepper, SubMeter, countdown, currentStage, dayLabel, daysUntil, stagesFor, times, timeIST,
 } from "@/components/ipo/lib";
 import { Badge, Button, Modal, cx } from "@/components/ui";
-import { api, when, type WatchSummary } from "@/lib/api";
+import { api, watchExchangeLabel, when, type WatchSummary } from "@/lib/api";
 
 export const JOB_LABEL: Record<string, string> = {
   subscription: "Subscription check",
@@ -70,7 +70,7 @@ export function StopWatch({ w, onDone, onError }: { w: WatchSummary; onDone: () 
   return (
     <>
       <Button variant="ghost" icon={<Square className="size-3" />} onClick={() => setOpen(true)}>Stop</Button>
-      <Modal open={open} onClose={() => setOpen(false)} title={`Stop watching ${w.company_name ?? w.nse_symbol}?`}>
+      <Modal open={open} onClose={() => setOpen(false)} title={`Stop watching ${w.company_name ?? w.label ?? w.nse_symbol}?`}>
         <p className="p-4 text-sm">
           Pending checks are cancelled and no new alerts are raised. The history (snapshots, alerts) stays. You can watch it
           again later.
@@ -98,9 +98,9 @@ export function WatchCard({ w, now, onChange, onError }: {
         <div className="min-w-0">
           <Link href={`/monitor/${w.id}`} className="flex items-center gap-2 font-semibold leading-snug hover:text-brand">
             {w.active && bidding && <LiveDot />}
-            <span className="truncate">{w.company_name ?? w.nse_symbol}</span>
+            <span className="truncate">{w.company_name ?? w.label ?? w.nse_symbol}</span>
           </Link>
-          <p className="num mt-0.5 text-xs text-muted">{w.nse_symbol} · {w.kind === "stock" ? "listed stock" : "IPO"}</p>
+          <p className="num mt-0.5 text-xs text-muted">{watchExchangeLabel(w)} · {w.kind === "stock" ? "listed stock" : "IPO"}</p>
         </div>
         <div className="flex shrink-0 flex-wrap justify-end gap-1">
           {!w.active && <Badge status="closed">stopped</Badge>}

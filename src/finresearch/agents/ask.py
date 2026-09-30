@@ -116,7 +116,7 @@ def system_prompt(session, run_id: int) -> str:
             report[:MAX_REPORT_CHARS] + "\n\n[report truncated here for length; read the ledger for the rest]"
         )
     tmpl = resources.files("finresearch.agents.prompts").joinpath("ask.md").read_text()
-    return tmpl.format(company_name=co.name if co else "?", nse_symbol=(co.nse_symbol if co else None) or "n/a",
+    return tmpl.format(company_name=co.name if co else "?", nse_symbol=(co.stock_key if co else None) or "n/a",
                        run_id=run_id, today=now.date().isoformat(), now_ist=now.strftime("%H:%M"), report=report)  # fmt: skip
 
 

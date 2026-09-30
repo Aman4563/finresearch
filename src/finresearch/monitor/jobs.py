@@ -48,6 +48,14 @@ class Deps:
         2.0  # pause between issues within one archive pass (on top of the rate limiter)
     )
     intraday: Any = None  # async (kind, symbol) -> IntradaySeries; set: archive each session after the close
+    # BSE-only stocks (watch.exchange "BSE"; the argument is the BSE scrip code): the same shapes as the NSE ones
+    bse_stock_snapshot: Any = (
+        None  # async (code) -> dict: bars, announcements, actions, shareholding (from BSE)
+    )
+    bse_price_history: Any = (
+        None  # async (code, start, end) -> list[PriceBar] (BSE daily); resolves BSE forecasts
+    )
+    bse_corporate_actions: Any = None  # async (code) -> list[CorporateAction] from BSE
 
     @classmethod
     def live(cls) -> Deps:
@@ -76,6 +84,30 @@ class Deps:
                 return {"bars": await eq.history(symbol, today - timedelta(days=10), today),
                         "announcements": await eq.announcements(symbol),
                         "actions": await eq.corporate_actions(symbol), "shareholding": await eq.shareholding(symbol)}  # fmt: skip
+
+        async def bse_stock_snapshot(code: str):
+            from datetime import timedelta
+
+            from finresearch.adapters.bse_equity import BseEquity
+            from finresearch.fincalc.dates import today_ist
+
+            async with BseEquity() as eq:  # BSE answers any date range in one request
+                today = today_ist()
+                return {"bars": await eq.history(code, today - timedelta(days=10), today),
+                        "announcements": await eq.announcements(code),
+                        "actions": await eq.corporate_actions(code), "shareholding": await eq.shareholding(code)}  # fmt: skip
+
+        async def bse_price_history(code: str, start, end):
+            from finresearch.adapters.bse_equity import BseEquity
+
+            async with BseEquity() as eq:
+                return await eq.history(code, start, end)
+
+        async def bse_corporate_actions(code: str):
+            from finresearch.adapters.bse_equity import BseEquity
+
+            async with BseEquity() as eq:
+                return await eq.corporate_actions(code)
 
         async def bse_ipo_detail(ipo_no: int):
             from finresearch.adapters.bse import BseClient
@@ -107,7 +139,8 @@ class Deps:
         return cls(ipo_detail=ipo_detail, quote=quote, current_issues=current_issues, stock_snapshot=stock_snapshot,
                    bse_ipo_detail=bse_ipo_detail, bse_quote=bse_quote, fno=NseFno, price_history=price_history,
                    corporate_actions=corporate_actions, forecasts=True, archive_books=True,
-                   intraday=live_fetch)  # fmt: skip
+                   intraday=live_fetch, bse_stock_snapshot=bse_stock_snapshot, bse_price_history=bse_price_history,
+                   bse_corporate_actions=bse_corporate_actions)  # fmt: skip
 
 
 def alert(session: Session, watch: Watch, kind: str, message: str, level: str = "info", **data: Any) -> None:
@@ -271,20 +304,31 @@ EX_DATE_SOON_DAYS = 7
 async def stock_daily(session: Session, job: MonitorJob, watch: Watch, deps: Deps, now: datetime) -> dict:
     """After-close check of a watched stock: new results filings, corporate actions and ex-dates, promoter-holding
     changes and large price moves. The first check records what exists without alerting on history, except an
-    ex-date coming up within EX_DATE_SOON_DAYS (still actionable)."""
+    ex-date coming up within EX_DATE_SOON_DAYS (still actionable).
+
+    An NSE watch reads NSE; a BSE-only stock's watch (exchange "BSE") reads the same things from BSE (daily bars,
+    announcements, corporate actions, shareholding via adapters/bse_equity.py) and its alerts say "BSE <code>"."""
     from datetime import timedelta
 
     from finresearch.fincalc.dates import to_ist
     from finresearch.fincalc.market import price_return
 
-    snap = await deps.stock_snapshot(watch.nse_symbol)
+    bse = watch.exchange == "BSE"
+    if bse:
+        if deps.bse_stock_snapshot is None:
+            raise RuntimeError("no BSE data source configured for a BSE watch")
+        snap = await deps.bse_stock_snapshot(watch.bse_code)
+    else:
+        snap = await deps.stock_snapshot(watch.nse_symbol)
     meta = dict(watch.meta or {})
     first = not meta.get("stock_initialised")
-    sym, today, out = watch.nse_symbol, to_ist(now).date(), {"alerts": []}
+    sym, today, out = watch.label, to_ist(now).date(), {"alerts": []}
+    if bse:
+        out["exchange"] = "BSE"
 
     def say(kind: str, message: str, level: str = "info", always: bool = False, **data):
         if always or not first:
-            alert(session, watch, kind, message, level, **data)
+            alert(session, watch, kind, message, level, **({"exchange": "BSE"} if bse else {}), **data)
             out["alerts"].append(kind)
 
     seen_results = set(meta.get("seen_results", []))

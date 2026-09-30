@@ -46,10 +46,12 @@ export default function StockDetail() {
   const shp = useApi<StockShareholding>(`/api/stocks/${encodeURIComponent(symbol)}/shareholding`);
   const watches = useApi<WatchSummary[]>("/api/watches");
   const listing = ov.data?.listing;
-  // watches and research runs track NSE symbols: a BSE-only stock has none
-  const nseSymbol = onBse ? (listing?.nse_symbol ?? null) : symbol;
-  const watching = (watches.data ?? []).some((w) => w.kind === "stock" && w.active && w.nse_symbol === nseSymbol);
-  const nseOnlyNote = "Watching and research runs follow NSE symbols; this stock trades only on BSE.";
+  // watches, research runs and the signal follow the stock's key: the NSE symbol when it trades on NSE (also from
+  // the BSE view of a dual-listed stock), else "BSE:<code>" for a BSE-only stock, read from BSE throughout
+  const stockKey = onBse ? (ov.data ? (listing?.nse_symbol ?? symbol) : null) : symbol;
+  const keyExchange = stockKey?.startsWith("BSE:") ? "BSE" : "NSE";
+  const keyLabel = stockKey?.startsWith("BSE:") ? `BSE ${stockKey.slice(4)}` : stockKey;
+  const watching = (watches.data ?? []).some((w) => w.kind === "stock" && w.active && (w.key ?? w.nse_symbol) === stockKey);
 
   // the price refreshes while the market is open (NSE and BSE keep the same hours; every 30 s unless the profile
   // says otherwise); the rest is fetched once
@@ -62,22 +64,22 @@ export default function StockDetail() {
   const histLoadingMore = hist.data && hist.data.days < Math.min(days, 1827);
 
   const research = async () => {
-    if (!nseSymbol) return;
-    if (!confirm(`Start a full stock research run for ${nseSymbol}? It uses your Claude plan window.`)) return;
+    if (!stockKey) return;
+    if (!confirm(`Start a full stock research run for ${keyLabel} (${keyExchange} data and filings)? It uses your Claude plan window.`)) return;
     setBusy(true);
     try {
-      router.push(`/runs/${await startResearch(await ensureStock(nseSymbol), "stock_report")}`);
+      router.push(`/runs/${await startResearch(await ensureStock(stockKey), "stock_report")}`);
     } catch (e) {
       setActionError((e as Error).message);
       setBusy(false);
     }
   };
   const watch = async () => {
-    if (!nseSymbol) return;
+    if (!stockKey) return;
     setBusy(true);
     try {
-      await watchStock(nseSymbol);
-      setNote(`Watching ${nseSymbol}: results filings, corporate actions, holding changes and big moves are checked after each close.`);
+      await watchStock(stockKey);
+      setNote(`Watching ${keyLabel} on ${keyExchange}: results filings, corporate actions, holding changes and big moves are checked after each close.`);
       watches.reload();
     } catch (e) {
       setActionError((e as Error).message);
@@ -121,12 +123,12 @@ export default function StockDetail() {
         }
         actions={
           <>
-            <Button variant="secondary" size="md" disabled={busy || watching || !nseSymbol} onClick={watch} icon={<BellPlus className="size-4" />}
-              title={nseSymbol ? undefined : nseOnlyNote}>
+            <Button variant="secondary" size="md" disabled={busy || watching || !stockKey} onClick={watch} icon={<BellPlus className="size-4" />}
+              title={stockKey ? `Checks ${keyExchange} filings, actions and big moves after each close` : undefined}>
               {watching ? "Watching" : "Watch"}
             </Button>
-            <Button size="md" disabled={busy || !nseSymbol} onClick={research} icon={<FlaskConical className="size-4" />}
-              title={nseSymbol ? undefined : nseOnlyNote}>
+            <Button size="md" disabled={busy || !stockKey} onClick={research} icon={<FlaskConical className="size-4" />}
+              title={stockKey ? `Full research run on ${keyExchange} data and filings (uses your Claude plan)` : undefined}>
               Research
             </Button>
           </>
@@ -169,21 +171,17 @@ export default function StockDetail() {
           )}
         </div>
 
-        {/* signal + forensic scorecard (computed in Python; screening flags, not advice). They read NSE data, so the
-            BSE view of a dual-listed stock shows its NSE symbol's cards and a BSE-only stock says why there are none */}
-        {nseSymbol ? (
+        {/* signal + forensic scorecard (computed in Python; screening flags, not advice). The BSE view of a dual-listed
+            stock shows its NSE symbol's cards; a BSE-only stock's are computed from BSE history and BSE XBRL */}
+        {stockKey && (
           <>
-            <SinceReport symbol={nseSymbol} />
+            <SinceReport symbol={stockKey} />
             <div className="grid [&>*]:min-w-0 gap-5 lg:grid-cols-2">
-              <StockSignalCard symbol={nseSymbol} />
-              <ForensicCard symbol={nseSymbol} />
+              <StockSignalCard symbol={stockKey} />
+              <ForensicCard symbol={stockKey} />
             </div>
           </>
-        ) : onBse && ov.data ? (
-          <Callout tone="info" title="No signal or forensic scorecard for BSE-only stocks yet">
-            Both are computed from NSE data (price history, filings index and the stock&apos;s research runs). The price, results, shareholding and filings below come from BSE.
-          </Callout>
-        ) : null}
+        )}
 
         {/* price chart + range */}
         <div className="grid [&>*]:min-w-0 gap-5 lg:grid-cols-3">

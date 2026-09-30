@@ -20,6 +20,8 @@ The endpoint names come from BSE's own site bundle, which calls them the same wa
                                                            quarter; each row's iXBRL `.html` has its XBRL instance at
                                                            the same path with `.xml` (in-capmkt taxonomy, parsed by
                                                            adapters/xbrl.py). Older quarters are not indexed here.
+- `/AnnualReport_New/w?scripcode=N`                        every annual report PDF (Year = the fiscal year's end,
+                                                           "2026" = FY26), newest first (verified live 30-Sep-2026)
 - `/SHPQNewFormat/w?scripcode=N`                          every filed shareholding pattern with its XBRL file name,
                                                            served at www.bseindia.com/XBRLFILES/SHPXBRLDataXML/<file>
                                                            (in-bse-shp taxonomy, parsed by adapters/shp_xbrl.py)
@@ -53,6 +55,7 @@ from finresearch.adapters.nse import Quote, parse_num
 from finresearch.adapters.nse_equity import (
     INTEGRATED_FINANCIALS,
     Announcement,
+    AnnualReportFiling,
     CorporateAction,
     IntegratedFiling,
     ListedEquity,
@@ -280,6 +283,30 @@ def parse_corporate_actions(code: str, rows: list[dict[str, Any]]) -> list[Corpo
         purpose = str(r.get("Purpose") or "").strip()
         out.append(CorporateAction(symbol=code, subject=purpose, ex_date=_day(r.get("Ex_date")),
                                    record_date=_day(r.get("RD_Date")), dividend_per_share=bse_dividend_per_share(purpose)))  # fmt: skip
+    return out
+
+
+def parse_annual_reports(code: str, data: dict[str, Any]) -> list[AnnualReportFiling]:
+    """AnnualReport_New -> one filing per row. BSE's `Year` is the fiscal year's end ("2026" = FY26 = Apr-2025 to
+    Mar-2026). Some older links carry a stray backslash ("AttachHis/\\6b9a...pdf"); only https links on
+    www.bseindia.com are kept (the ingest step downloads them)."""
+    out = []
+    for r in (data or {}).get("Table") or []:
+        url = str(r.get("PDFDownload") or "").replace("\\", "").strip()
+        p = urlsplit(url)
+        if (
+            p.scheme != "https"
+            or (p.hostname or "") not in BSE_FILE_HOSTS
+            or not p.path.lower().endswith(".pdf")
+        ):
+            continue
+        try:
+            year = int(str(r.get("Year") or "").strip())
+        except ValueError:
+            continue
+        out.append(AnnualReportFiling(symbol=code, from_year=year - 1, to_year=year, url=url,
+                                      submission=(str(r.get("status") or "").strip() or None),
+                                      at=_bse_datetime(r.get("revised_date_time") or r.get("Fld_AuthoriseDate"))))  # fmt: skip
     return out
 
 
@@ -528,6 +555,10 @@ class BseEquity:
     async def results(self, code: str, period: str = "Quarterly") -> list[ResultFiling]:
         """BSE's pre-2025 results filings have no XBRL index this adapter can read (see the module docstring)."""
         return []
+
+    async def annual_reports(self, code: str) -> list[AnnualReportFiling]:
+        data = await self._json("/AnnualReport_New/w", {"scripcode": code})
+        return parse_annual_reports(code, data if isinstance(data, dict) else {})
 
     async def shareholding(self, code: str) -> list[Shareholding]:
         """Every filed pattern with its XBRL; the latest also carries promoter / public / employee-trust % from

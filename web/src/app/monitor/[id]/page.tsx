@@ -3,6 +3,7 @@
 import {
   ArrowLeft, BarChart3, BellRing, CalendarCheck, ChartCandlestick, ChartLine, ListChecks, PartyPopper, Rocket, Table2,
 } from "lucide-react";
+import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
@@ -17,7 +18,7 @@ import {
   Badge, Card, EmptyState, ErrorNote, PageHeader, Segmented, Skeleton, Stat, Table, cx,
 } from "@/components/ui";
 import { LiveStamp, sessionOpen, useLive } from "@/components/live";
-import { useApi, when, type WatchDetail } from "@/lib/api";
+import { useApi, watchExchangeLabel, when, type WatchDetail } from "@/lib/api";
 import { useTimeFrames } from "@/lib/timeframes";
 
 type Snap = WatchDetail["subscription"][number];
@@ -119,10 +120,11 @@ export default function WatchView() {
       <PageHeader
         icon={ipo ? <Rocket className="size-5" /> : <ChartCandlestick className="size-5" />}
         eyebrow={ipo ? "IPO watch" : "Stock watch"}
-        title={data.company_name ?? data.nse_symbol}
+        title={data.company_name ?? data.label ?? data.nse_symbol}
         description={
           <span className="inline-flex flex-wrap items-center gap-2">
-            <span className="num">NSE {data.nse_symbol}</span>
+            <span className="num">{watchExchangeLabel(data)}</span>
+            {data.kind === "stock" && <Link href={`/stocks/${encodeURIComponent(data.key ?? data.nse_symbol ?? "")}`} className="text-xs font-medium text-brand hover:underline">Stock page</Link>}
             {data.active ? <Badge status="live">watching</Badge> : <Badge status="closed">stopped</Badge>}
             {data.active && <NextCheck next={pending[0] ? { kind: pending[0].kind, due_at: pending[0].due_at } : null} now={now} />}
           </span>

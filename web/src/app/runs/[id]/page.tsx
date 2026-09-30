@@ -9,7 +9,7 @@ import { DonutChart } from "@/components/charts";
 import { Badge, Button, Callout, Card, EmptyState, ErrorNote, InfoTip, Modal, PageHeader, Progress, Segmented, Skeleton, Stat } from "@/components/ui";
 import { PipelineStepper, StepRow, StepTimeline, type StepX, buildLanes } from "@/components/workspace/pipeline";
 import { KindIcon, fmtDuration, kindMeta, runSeconds } from "@/components/workspace/run-meta";
-import { API_URL, type RunDetail, type Step, api, when } from "@/lib/api";
+import { API_URL, listingLabel, type RunDetail, type Step, api, when } from "@/lib/api";
 
 function useRunEvents(id: string) {
   const [run, setRun] = useState<RunDetail | null>(null);
@@ -204,6 +204,7 @@ export default function RunView() {
         eyebrow={
           <span className="inline-flex items-center gap-1.5">
             {kindMeta(run.kind).label} research · run <span className="num">#{run.id}</span>
+            {run.key && <> · <span className="num">{listingLabel(run.key)}</span></>}
           </span>
         }
         title={run.company_name ?? `Run #${run.id}`}

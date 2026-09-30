@@ -6,7 +6,7 @@ import { useMemo, useState } from "react";
 
 import { KindIcon, KIND, fmtDuration, kindMeta, runSeconds } from "@/components/workspace/run-meta";
 import { Badge, Card, EmptyState, ErrorNote, PageHeader, Segmented, Skeleton, Stat, Table, cx, inputClass } from "@/components/ui";
-import { type RunSummary, useApi, when } from "@/lib/api";
+import { listingLabel, type RunSummary, useApi, when } from "@/lib/api";
 
 type View = "cards" | "table";
 const STATUS_FILTERS = ["all", "running", "done", "paused", "failed"] as const;
@@ -58,6 +58,7 @@ function RunCard({ r }: { r: RunSummary }) {
           <div className="min-w-0 flex-1">
             <p className="text-[11px] font-medium uppercase tracking-wider text-muted">
               {kindMeta(r.kind).label} · <span className="num">#{r.id}</span>
+              {r.key && <> · <span className="num normal-case">{listingLabel(r.key)}</span></>}
             </p>
             <p className="line-clamp-2 text-sm font-semibold leading-snug">{r.company_name ?? r.company ?? "Unknown company"}</p>
           </div>
@@ -226,7 +227,7 @@ export default function Runs() {
                         <KindIcon kind={r.kind} className="size-7" />
                         <div className="min-w-0">
                           <p className="max-w-56 truncate font-medium" title={r.company_name ?? undefined}>{r.company_name}</p>
-                          <p className="text-[11px] text-muted">{kindMeta(r.kind).label}</p>
+                          <p className="text-[11px] text-muted">{kindMeta(r.kind).label}{r.key && <> · <span className="num">{listingLabel(r.key)}</span></>}</p>
                         </div>
                       </div>
                     </td>

@@ -7,17 +7,23 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException
 
-from finresearch.api.markets import _symbol
-
 
 def add_stock_signal_routes(app: FastAPI) -> None:
     @app.get("/api/stocks/{symbol}/forensic")
     async def stock_forensic(symbol: str) -> dict[str, Any]:
-        """Piotroski, Altman Z''-EM, Beneish, accruals and CFO/EBITDA from the last two annual Integrated Filings.
-        Screening flags, not buy/sell triggers."""
+        """Piotroski, Altman Z''-EM, Beneish, accruals and CFO/EBITDA from the last two annual Integrated Filings
+        (NSE's, or BSE's for a BSE-only stock "BSE:<scrip code>"). Screening flags, not buy/sell triggers."""
         from finresearch.signals import stock
 
-        return stock.forensic(await stock.inputs(_symbol(symbol)))
+        try:
+            key = stock.instrument_key(symbol)
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from e
+        try:
+            raw = await stock.inputs(key)
+        except LookupError as e:
+            raise HTTPException(404, str(e)) from e
+        return stock.forensic(raw)
 
     @app.get("/api/backtests/stock")
     def stock_backtest(months: bool = False) -> dict[str, Any]:

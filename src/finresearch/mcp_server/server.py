@@ -96,15 +96,16 @@ def _doc(session, document_id: int) -> Document:
 @server.tool()
 def list_documents(company: str | None = None) -> str:
     """List ingested documents (id, company, kind, title, pages, scanned pages, section count).
-    `company` filters by slug, NSE symbol or name substring."""
+    `company` filters by slug, NSE symbol, BSE scrip code (or "BSE:<code>") or name substring."""
     with session_scope() as s:
         q = select(Document, Company).outerjoin(Company, Company.id == Document.company_id)
         if company:
-            like = f"%{company.lower()}%"
+            like = f"%{company.lower().removeprefix('bse:')}%"
             q = q.where(
                 func.lower(Company.slug).like(like)
                 | func.lower(Company.name).like(like)
                 | func.lower(func.coalesce(Company.nse_symbol, "")).like(like)
+                | func.coalesce(Company.bse_code, "").like(like)
             )
         rows = []
         for d, c in s.execute(q.order_by(Document.id)).all():
@@ -582,16 +583,38 @@ def _equity_json(rows) -> str:
     return json.dumps([r.model_dump(mode="json") for r in rows], indent=1)
 
 
+def _equity(symbol: str, exchange: str = "NSE") -> tuple[Any, str, str, str]:
+    """(client, id, exchange, quote page) for an equity tool. NSE by default; a BSE-only stock is read from BSE when
+    `symbol` is "BSE:<scrip code>" or `exchange` is "BSE" with the six-digit scrip code as `symbol`."""
+    from finresearch.adapters.bse_equity import BseEquity, scrip_code_of
+
+    sym = symbol.strip().upper()
+    code = scrip_code_of(sym) or (
+        sym if (exchange or "").upper() == "BSE" and sym.isdigit() and len(sym) == 6 else None
+    )
+    if code is not None:
+        return BseEquity(), code, "BSE", "https://www.bseindia.com/"
+    if (exchange or "NSE").upper() == "BSE":
+        raise ValueError(f"on BSE pass the six-digit scrip code (or BSE:<code>), not {symbol!r}")
+    from finresearch.adapters.nse_equity import NseEquity
+
+    return NseEquity(), sym, "NSE", f"https://www.nseindia.com/get-quotes/equity?symbol={sym}"
+
+
 @server.tool()
-async def nse_price_history(symbol: str, start: str, end: str) -> str:
+async def nse_price_history(symbol: str, start: str, end: str, exchange: str = "NSE") -> str:
     """Daily NSE prices for a listed stock between two ISO dates (open/high/low/close, VWAP, volume, value and
     52-week high/low), oldest first, plus deterministic summary stats (return, annualised volatility, max
-    drawdown). Cite the NSE quote page URL with today's access time."""
-    from finresearch.adapters.nse_equity import NseEquity
+    drawdown). Cite the NSE quote page URL with today's access time. A BSE-only stock: pass symbol "BSE:<scrip
+    code>" (or exchange "BSE" and the code) to read BSE's daily prices instead; cite the BSE source returned."""
     from finresearch.fincalc import market
 
-    async with NseEquity() as eq:
-        bars = await eq.history(symbol.upper(), date.fromisoformat(start), date.fromisoformat(end))
+    try:
+        client, sym, ex, page = _equity(symbol, exchange)
+    except ValueError as e:
+        return json.dumps({"error": str(e)})
+    async with client as eq:
+        bars = await eq.history(sym, date.fromisoformat(start), date.fromisoformat(end))
     closes = [b.close for b in bars if b.close]
     stats = {}
     if len(closes) >= 3:
@@ -599,18 +622,21 @@ async def nse_price_history(symbol: str, start: str, end: str) -> str:
         stats = {"return": str(market.price_return(closes[0], closes[-1])),
                  "annualised_volatility": str(market.annualised_volatility(closes)),
                  "max_drawdown": str(dd.max_drawdown), "bars": len(closes)}  # fmt: skip
-    return json.dumps({"symbol": symbol.upper(), "source": f"https://www.nseindia.com/get-quotes/equity?symbol={symbol.upper()}",
+    return json.dumps({"symbol": sym if ex == "NSE" else f"BSE:{sym}", "exchange": ex, "source": page,
                        "stats": stats, "bars": [b.model_dump(mode="json") for b in bars]}, indent=1)  # fmt: skip
 
 
 @server.tool()
-async def nse_announcements(symbol: str, limit: int = 40) -> str:
+async def nse_announcements(symbol: str, limit: int = 40, exchange: str = "NSE") -> str:
     """Latest NSE corporate announcements for a listed stock (category, text, attachment PDF, time). Filings that
-    contain financial results carry results_period_end; ingest their PDFs with the document tools."""
-    from finresearch.adapters.nse_equity import NseEquity
-
-    async with NseEquity() as eq:
-        anns = await eq.announcements(symbol.upper())
+    contain financial results carry results_period_end; ingest their PDFs with the document tools. A BSE-only stock:
+    symbol "BSE:<scrip code>" reads BSE's announcements (last 120 days)."""
+    try:
+        client, sym, _, _ = _equity(symbol, exchange)
+    except ValueError as e:
+        return json.dumps({"error": str(e)})
+    async with client as eq:
+        anns = await eq.announcements(sym)
     return _equity_json(
         sorted(anns, key=lambda a: a.at or datetime.min.replace(tzinfo=UTC), reverse=True)[:limit]
     )
@@ -631,13 +657,19 @@ def _official(url: str, hosts: tuple[str, ...]) -> bool:
 @server.tool()
 async def nse_results_facts(xbrl_url: str) -> str:
     """Key reported figures (revenue, expenses, PBT, tax, PAT, EPS, ...) from a results filing's XBRL, for the
-    quarter and year to date, in rupees. Use the xbrl link from nse_results_filings; cite the XBRL URL."""
+    quarter and year to date, in rupees. Use the xbrl link from nse_results_filings (an NSE archive link, or a BSE
+    www.bseindia.com/XBRLFILES link for a BSE-only stock); cite the XBRL URL."""
+    from finresearch.adapters.bse_equity import BseEquity, official_file
     from finresearch.adapters.nse_equity import NseEquity
     from finresearch.adapters.xbrl import parse_results_xbrl
 
-    if not _official(xbrl_url, NSE_ARCHIVE_HOSTS):
-        return json.dumps({"error": "only NSE archive XBRL links are accepted"})
-    async with NseEquity() as eq:
+    if _official(xbrl_url, NSE_ARCHIVE_HOSTS):
+        client: Any = NseEquity()
+    elif official_file(xbrl_url) and xbrl_url.endswith(".xml"):
+        client = BseEquity()
+    else:
+        return json.dumps({"error": "only NSE archive or BSE XBRLFILES XBRL links are accepted"})
+    async with client as eq:
         x = parse_results_xbrl(await eq.fetch_bytes(xbrl_url))
     return json.dumps({"symbol": x.symbol, "consolidated": x.consolidated, "audited": x.audited, "url": xbrl_url,
                        "periods": {k: {"start": str(p.start), "end": str(p.end), "unit": "INR (EPS: INR per share)",
@@ -646,17 +678,20 @@ async def nse_results_facts(xbrl_url: str) -> str:
 
 
 @server.tool()
-async def nse_results_filings(symbol: str, period: str = "Quarterly") -> str:
+async def nse_results_filings(symbol: str, period: str = "Quarterly", exchange: str = "NSE") -> str:
     """NSE's results filings (period, consolidated/standalone, audited, XBRL link), newest first. For quarterly
     results this merges NSE's Integrated Filing (Financials) index (quarters from Mar-2025, `source`
-    "nse_integrated_filing") with the older Financial Results index (up to Dec-2024)."""
-    from finresearch.adapters.nse_equity import NseEquity
-
-    async with NseEquity() as eq:
-        rows = await eq.results(symbol.upper(), period)
+    "nse_integrated_filing") with the older Financial Results index (up to Dec-2024). A BSE-only stock (symbol
+    "BSE:<scrip code>"): BSE's Integrated Filing (Financials) index, quarters from Mar-2025 only."""
+    try:
+        client, sym, _, _ = _equity(symbol, exchange)
+    except ValueError as e:
+        return json.dumps({"error": str(e)})
+    async with client as eq:
+        rows = await eq.results(sym, period)
         if period.lower() == "quarterly":
             with contextlib.suppress(Exception):  # the older index still answers
-                rows = [f.as_result_filing() for f in await eq.integrated_filings(symbol.upper())] + rows
+                rows = [f.as_result_filing() for f in await eq.integrated_filings(sym)] + rows
         floor = datetime.min.replace(tzinfo=UTC)
         return _equity_json(
             sorted(rows, key=lambda f: (f.period_to or date.min, f.filed_at or floor), reverse=True)
@@ -664,22 +699,28 @@ async def nse_results_filings(symbol: str, period: str = "Quarterly") -> str:
 
 
 @server.tool()
-async def nse_shareholding(symbol: str) -> str:
-    """Quarterly shareholding pattern (promoter and promoter group %, public %, employee trusts %), newest first."""
-    from finresearch.adapters.nse_equity import NseEquity
-
-    async with NseEquity() as eq:
-        return _equity_json(await eq.shareholding(symbol.upper()))
+async def nse_shareholding(symbol: str, exchange: str = "NSE") -> str:
+    """Quarterly shareholding pattern (promoter and promoter group %, public %, employee trusts %), newest first. A
+    BSE-only stock (symbol "BSE:<scrip code>"): BSE's filed patterns with their XBRL links; the percentages are on
+    the latest one (older quarters: read the XBRL)."""
+    try:
+        client, sym, _, _ = _equity(symbol, exchange)
+    except ValueError as e:
+        return json.dumps({"error": str(e)})
+    async with client as eq:
+        return _equity_json(await eq.shareholding(sym))
 
 
 @server.tool()
-async def nse_corporate_actions(symbol: str) -> str:
+async def nse_corporate_actions(symbol: str, exchange: str = "NSE") -> str:
     """Corporate actions (dividends with the per-share amount parsed, bonus, split, buyback) with ex and record
-    dates."""
-    from finresearch.adapters.nse_equity import NseEquity
-
-    async with NseEquity() as eq:
-        return _equity_json(await eq.corporate_actions(symbol.upper()))
+    dates. A BSE-only stock: symbol "BSE:<scrip code>" reads BSE's full corporate-action history."""
+    try:
+        client, sym, _, _ = _equity(symbol, exchange)
+    except ValueError as e:
+        return json.dumps({"error": str(e)})
+    async with client as eq:
+        return _equity_json(await eq.corporate_actions(sym))
 
 
 # --------------------------------------------------------------------------- market data

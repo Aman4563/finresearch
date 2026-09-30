@@ -99,7 +99,9 @@ export type Triangulation = {
 export type Insights = {
   run_id: number;
   kind: string;
-  subject: { slug?: string | null; name?: string | null; nse_symbol?: string | null; isin?: string | null; amfi_code?: string | null; watch_id?: number };
+  subject: { slug?: string | null; name?: string | null; nse_symbol?: string | null; isin?: string | null; amfi_code?: string | null; watch_id?: number;
+    /** the listed stock's key (NSE symbol or "BSE:<code>") and exchange */
+    key?: string | null; bse_code?: string | null; exchange?: "NSE" | "BSE" | null };
   verdict: {
     word: string | null; confidence: string | null; horizon: string | null; entry_zone: string | null; price_or_yield: string | null;
     suits: string | null; condition: string | null; listing: string | null; long_term: string | null; summary: string | null;

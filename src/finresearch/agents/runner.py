@@ -33,6 +33,7 @@ class RunContext:
     company_slug: str
     company_name: str
     nse_symbol: str | None = None
+    bse_code: str | None = None  # a BSE-only listed stock (no NSE symbol): its BSE scrip code
     decision_deadline: str = "the issue closes (UPI mandate cut-off 5:00 PM IST on the last bidding day)"
     subject: str = "an Indian IPO"
     primary_source: str = "the offer documents (the RHP text layer)"
@@ -49,7 +50,9 @@ class RunContext:
             "run_id": str(self.run_id),
             "company_name": self.company_name,
             "company_slug": self.company_slug,
-            "nse_symbol": self.nse_symbol or "n/a",
+            # a BSE-only stock reads "BSE:526433" wherever the prompts name the symbol: the equity tools accept it
+            "nse_symbol": self.nse_symbol or (f"BSE:{self.bse_code}" if self.bse_code else "n/a"),
+            "listing": self.listing(),
             "today": today.isoformat(),
             "now_ist": now.strftime("%Y-%m-%d %H:%M"),
             "news_from": (today - timedelta(days=30)).isoformat(),
@@ -57,6 +60,14 @@ class RunContext:
             "subject": self.subject,
             "primary_source": self.primary_source,
         }
+
+    def listing(self) -> str:
+        """Where the stock trades, as the prompts say it: "NSE INFY", or for a BSE-only stock its scrip code and how to
+        read it with the equity tools."""
+        if self.nse_symbol or not self.bse_code:
+            return f"NSE {self.nse_symbol or 'n/a'}"
+        return (f"BSE {self.bse_code}; BSE-only, not listed on NSE: pass \"BSE:{self.bse_code}\" as the symbol to the "
+                "nse_* equity tools, which then read BSE")  # fmt: skip
 
 
 class RoleOutputInvalid(Exception):
@@ -80,7 +91,7 @@ def render(role: Role, ctx: RunContext, **extra: str) -> tuple[str, str]:
     )
     facts = json.dumps(ctx.facts, indent=1, default=str) if ctx.facts else "{}"
     prompt = (
-        f"Company: {ctx.company_name} (slug {ctx.company_slug}, NSE {ctx.nse_symbol or 'n/a'}). Run id: {ctx.run_id}.\n"
+        f"Company: {ctx.company_name} (slug {ctx.company_slug}, {ctx.listing()}). Run id: {ctx.run_id}.\n"
         f"Documents in the store:\n{docs}\n\nDeterministic facts already established:\n{facts}\n\n"
         f"Do the task described in your instructions, then return the structured result."
     )

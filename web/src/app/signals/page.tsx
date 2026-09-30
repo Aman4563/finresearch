@@ -25,7 +25,8 @@ const num = (v: number | null | undefined, d = 3) => (v == null ? "—" : v.toFi
 function instrumentOf(c: Company): Instrument | null {
   const asset = KIND_ASSET[c.kind];
   if (!asset) return null;
-  const id = asset === "fund" ? c.slug.replace(/^mf-/, "") : asset === "bond" ? c.slug.replace(/^bond-/, "").toUpperCase() : c.nse_symbol;
+  const id = asset === "fund" ? c.slug.replace(/^mf-/, "") : asset === "bond" ? c.slug.replace(/^bond-/, "").toUpperCase()
+    : asset === "stock" ? (c.key ?? c.nse_symbol) : c.nse_symbol; // a BSE-only stock: "BSE:<code>"
   if (!id) return null;
   return { key: `${asset}:${id}`, asset, instrument: id, name: c.name, slug: c.slug, watched: false, run: c.latest_run };
 }
