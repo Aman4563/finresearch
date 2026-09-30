@@ -809,3 +809,92 @@ def forecasts_calibration() -> None:
     with session_scope() as s:
         for g in calibration_groups(s):
             console.print(g)
+
+
+portfolio_app = typer.Typer(
+    no_args_is_help=True, help="Your portfolio: import statements and tradebooks (local only)"
+)
+app.add_typer(portfolio_app, name="portfolio")
+
+
+def _import_file(res, path: Path, content: bytes, dry_run: bool) -> None:
+    import hashlib
+
+    from finresearch.db import session_scope
+    from finresearch.portfolio.service import apply, preview, save_upload
+
+    sha = hashlib.sha256(content).hexdigest()
+    with session_scope() as s:
+        if dry_run or res.holdings_only:
+            out = preview(s, res)
+        else:
+            from sqlalchemy import select
+
+            from finresearch.db.models import PortfolioImport
+
+            if s.scalar(select(PortfolioImport.id).where(PortfolioImport.sha256 == sha)):
+                raise typer.Exit(console.print("[red]this file was already imported[/red]") or 1)
+            out = apply(
+                s,
+                res,
+                filename=path.name,
+                sha256=sha,
+                saved_path=save_upload(content, sha, path.suffix.lower()),
+            )
+    for k in ("rows", "new_rows", "added", "duplicates", "reconciled"):
+        if k in out:
+            console.print(f"{k}: {out[k]}")
+    for r in out.get("reconciliation", []):
+        mark = "[green]ok[/green]" if r["ok"] else "[red]MISMATCH[/red]"
+        console.print(f"  {mark} {r['name']}: statement {r['statement_units']} vs lots {r['lot_units']}")
+    for w in out.get("warnings", []):
+        console.print(f"  [yellow]{w}[/yellow]")
+    if dry_run:
+        console.print("dry run: nothing written (add --apply to import)")
+
+
+@portfolio_app.command("import-cas")
+def portfolio_import_cas(
+    path: Path, apply_: bool = typer.Option(False, "--apply", help="Write (default: preview)")
+) -> None:
+    """Import a CAMS/KFintech CAS PDF. The password is asked for (not echoed) and never stored or logged."""
+    import getpass
+
+    from finresearch.portfolio.importers import StatementError, parse_cas
+
+    content = path.read_bytes()
+    try:
+        res = parse_cas(content, getpass.getpass("CAS PDF password (not shown, not stored): "))
+    except StatementError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1) from None
+    _import_file(res, path, content, not apply_)
+
+
+@portfolio_app.command("import-tradebook")
+def portfolio_import_tradebook(path: Path, broker: str | None = typer.Option(None, help="zerodha | groww | upstox"),
+                               apply_: bool = typer.Option(False, "--apply", help="Write (default: preview)")) -> None:  # fmt: skip
+    """Import a broker equity tradebook (CSV or XLSX; the broker is detected from the headers)."""
+    from finresearch.portfolio.importers import StatementError, parse_tradebook
+
+    content = path.read_bytes()
+    try:
+        res = parse_tradebook(content, path.name, broker)
+    except StatementError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1) from None
+    _import_file(res, path, content, not apply_)
+
+
+@portfolio_app.command("tax-csv")
+def portfolio_tax_csv(
+    out: Path, fy: int | None = typer.Option(None, help="Financial year by its end year, e.g. 2026")
+) -> None:
+    """Write realised capital gains (one row per FIFO disposal, with the rule applied) as a CSV for your CA."""
+    from finresearch.db import session_scope
+    from finresearch.portfolio.report import export_rows
+    from finresearch.portfolio.tax import export_csv
+
+    with session_scope() as s:
+        out.write_text(export_csv(export_rows(s), fy))
+    console.print(f"written {out} (a personal estimate: verify with a CA)")
