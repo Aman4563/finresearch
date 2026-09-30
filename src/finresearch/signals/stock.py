@@ -681,8 +681,11 @@ async def stock_signal(instrument: str, ctx: dict[str, Any]) -> Signal:
     fzr = forensic(raw)
     bt = load_backtest()
     caveats = [
-        "Survivorship bias: the backtest universe is today's NIFTY 50 applied to the past, so its absolute returns "
-        "are flattering.",
+        "Survivorship bias: the bucket probabilities come from today's NIFTY 50 applied to the past, so they "
+        "flatter. Rerun on the point-in-time NIFTY 50 (every member since 2014 from NSE's index-change notices, "
+        "evals/experiments/stock_pit_universe), the same momentum-trend rule trailed the equal-weight index members "
+        "by 3.1 pp a year after costs (Newey–West t −0.97), and no pre-registered variant (market trend filter, low "
+        "volatility, momentum + low-vol) beat them: no edge is claimed.",
         "Costs (STT, stamp duty, exchange fees, slippage) are in the backtest; taxes are not. The backtest compares "
         "price returns with the NIFTY 50 price index (no dividends on either side); the logged forecast is scored "
         "on the stock's total return against NIFTYBEES, which is close but not identical.",

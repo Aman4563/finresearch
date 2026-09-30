@@ -250,3 +250,16 @@ def test_group_policy_counts_overlapping_stock_windows():
     ipo = cp.group_policy("ipo", 150)
     assert ipo["tier"] == "platt" and ipo["next_tier"] == {"tier": "isotonic", "at_n": 1000}
     assert cp.group_policy("fund", 5000)["next_tier"] is None
+
+
+def test_committed_pit_results_match_the_signal_caveat():
+    import json
+    import pathlib
+
+    res = json.loads((su.OUT_DIR / "results.json").read_text())
+    assert res["passing"] == [] and res["membership"]["problems"] == []
+    b0 = res["verdicts"]["B0"]
+    assert round(b0["excess_cagr_vs_equal_weight"] * 100, 1) == -3.1 and round(b0["newey_west_t"], 2) == -0.97
+    src = pathlib.Path(su.__file__).parents[1] / "signals" / "stock.py"
+    text = src.read_text()
+    assert "point-in-time NIFTY 50" in text and "by 3.1 pp a year" in text and "t −0.97" in text

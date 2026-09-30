@@ -354,6 +354,22 @@ def render(out: dict[str, Any]) -> str:
         for h, d in r["stats"]["halves"].items():
             lines.append(f"| {k} | {h} | {d['from']} → {d['to']} | {_pct(d['excess_cagr_vs_equal_weight'])} | "
                          f"{(d['newey_west_t'] or 0):.2f} |")  # fmt: skip
+    jumps = {
+        k: v["unexplained_jumps"] for k, v in out["price_coverage"].items() if v.get("unexplained_jumps")
+    }
+    b0 = out["strategies"]["B0"]["stats"]["cagr"]
+    lines += ["", "## Limits", "",
+              f"- Eligible member-months (≥ 252 clean days of history at the month end): {cov['eligible']} of "
+              f"{cov['member_months']} ({cov['eligible'] / max(1, cov['member_months']) * 100:.1f} %).",
+              f"- NIFTYBEES (the market-filter series and the price reference) CAGR over the same months: "
+              f"{_pct(b0['nifty50_price'])}.",
+              "- A price jump with no matching split/bonus in NSE's corporate actions is treated as a data error: "
+              "returns across it are dropped for 252 days (v1's rule). That also drops some REAL moves, e.g. "
+              "YESBANK in March 2020, from the strategy and the benchmark alike; it flatters the equal-weight "
+              f"universe slightly. Symbols affected: {', '.join(f'{k} ({len(v)})' for k, v in sorted(jumps.items()))}.",
+              "- Price returns without dividends; cash at 0 %; a monthly close-to-close trade with 5 bp slippage.",
+              "- Delisted members (HDFC, CAIRN, RANBAXY, IDFC, TATAMTRDVR, JPASSOCIAT) drop out in the month their "
+              "trading stops (their last partial month is not counted)."]  # fmt: skip
     lines += ["", "## Decision", "", out["decision"], ""]
     return "\n".join(lines)
 
