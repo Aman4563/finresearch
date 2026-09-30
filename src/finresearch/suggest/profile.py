@@ -196,6 +196,29 @@ class Preferences(BaseModel):
     watch: WatchWindows = Field(default_factory=WatchWindows)
 
 
+class Household(BaseModel):
+    """Household facts for /wealth (emergency fund, insurance, debt ratios, glide path, goals). All optional: a check
+    whose input is missing says so instead of guessing. Personal financial data: kept out of the advisor (LLM)
+    prompt (PRIVATE_FIELDS) and used only by finresearch.wealth."""
+
+    age: int | None = Field(None, ge=16, le=100)
+    retirement_age: int = Field(60, ge=30, le=85)
+    monthly_income_inr: Decimal | None = Field(None, ge=0)  # net take-home, all earners
+    monthly_expenses_inr: Decimal | None = Field(
+        None, ge=0
+    )  # essential household expenses (no EMIs, no SIPs)
+    dependants: int = Field(0, ge=0, le=20)
+    earners: int = Field(1, ge=1, le=10)
+    emergency_months_target: Decimal | None = Field(
+        None, gt=0, le=60
+    )  # None = the rule of thumb (6 / 9 / 12)
+    support_years: int | None = Field(
+        None, ge=0, le=60
+    )  # years dependants need support; None = to retirement
+    tax_regime: Literal["new", "old"] = "new"
+    target_equity_pct: Decimal | None = Field(None, ge=0, le=100)  # None = the age rule of thumb
+
+
 class Profile(BaseModel):
     capital_per_ipo_inr: Decimal = Field(Decimal(15000), ge=0)
     risk_appetite: Literal["low", "medium", "high"] = "medium"
@@ -222,6 +245,8 @@ class Profile(BaseModel):
     preferences: Preferences = Field(default_factory=Preferences)
     # notify-only alert rules for every asset kind (roadmap item 10); delivery settings live outside the profile
     alert_rules: list[AlertRule] = Field(default_factory=list, max_length=200)
+    # household finances for /wealth (finresearch.wealth); private, never in the advisor prompt
+    household: Household = Field(default_factory=Household)
 
     @field_validator("display_name")
     @classmethod
@@ -229,8 +254,10 @@ class Profile(BaseModel):
         return " ".join(v.split())
 
 
-# not investment inputs: kept out of the advisor prompt
-UI_FIELDS = {"display_name", "avatar_color", "preferences", "alert_rules"}
+# personal financial data: never sent to an LLM
+PRIVATE_FIELDS = {"household"}
+# not investment inputs (or private): kept out of the advisor prompt
+UI_FIELDS = {"display_name", "avatar_color", "preferences", "alert_rules", *PRIVATE_FIELDS}
 
 
 DEFAULT_RULES = [

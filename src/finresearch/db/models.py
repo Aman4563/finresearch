@@ -649,6 +649,119 @@ class AlertDelivery(Base):
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+# --------------------------------------------------------------------------- household finances (WEALTH, /wealth)
+# Personal financial data entered by hand: bank deposits, retirement accounts, gold, property, loans, goals and
+# insurance. Local database only; never sent to an LLM (finresearch.wealth). Holds no identity data: a bank or
+# lender label ("HDFC Bank"), never an account number.
+class WealthAsset(Base):
+    """An asset outside the demat/MF portfolio. Its value on a day comes from finresearch.wealth.calc: an FD/RD from
+    its principal, booked rate and compounding; EPF/PPF from the last entered balance plus contributions and
+    interest at the stated rate; everything else from the last dated valuation (wealth_valuation)."""
+
+    __tablename__ = "wealth_asset"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    kind: Mapped[str] = mapped_column(
+        String(12)
+    )  # fd | rd | epf | ppf | nps | gold | sgb | real_estate | cash | other
+    name: Mapped[str] = mapped_column(String(120))
+    institution: Mapped[str | None] = mapped_column(String(120))  # bank / post office / NPS CRA label
+    asset_class: Mapped[str | None] = mapped_column(
+        String(20)
+    )  # override for "other": Equity | Debt | Gold | ...
+    principal: Mapped[Decimal | None] = mapped_column(Numeric(20, 2))  # FD principal
+    rate_pct: Mapped[Decimal | None] = mapped_column(Numeric(7, 3))  # booked / declared rate, % a year
+    compounding: Mapped[int] = mapped_column(
+        Integer, default=4
+    )  # FD compounding per year; 0 = interest paid out
+    monthly_contribution: Mapped[Decimal | None] = mapped_column(Numeric(20, 2))  # RD instalment, EPF/PPF/NPS
+    start_date: Mapped[date | None] = mapped_column(Date)
+    maturity_date: Mapped[date | None] = mapped_column(Date)
+    liquid: Mapped[bool] = mapped_column(Boolean, default=False)  # counts towards the emergency fund
+    equity_pct: Mapped[Decimal | None] = mapped_column(Numeric(6, 2))  # NPS: the equity share (E); rest debt
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class WealthValuation(Base):
+    """A dated value of a manual asset (a balance, an NPS statement value, a property estimate). The latest row on or
+    before a day values the asset that day; nothing is marked to market."""
+
+    __tablename__ = "wealth_valuation"
+    __table_args__ = (UniqueConstraint("asset_id", "day"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    asset_id: Mapped[int] = mapped_column(ForeignKey("wealth_asset.id", ondelete="CASCADE"), index=True)
+    day: Mapped[date] = mapped_column(Date)
+    value: Mapped[Decimal] = mapped_column(Numeric(20, 2))
+
+
+class WealthLoan(Base):
+    """A loan. Outstanding principal follows the amortisation schedule from `start_date` (first EMI one month
+    later) unless a dated statement balance (`outstanding`, `outstanding_as_of`) is entered."""
+
+    __tablename__ = "wealth_loan"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    kind: Mapped[str] = mapped_column(String(12))  # home | car | personal | education | other
+    name: Mapped[str] = mapped_column(String(120))
+    lender: Mapped[str | None] = mapped_column(String(120))
+    principal: Mapped[Decimal] = mapped_column(Numeric(20, 2))
+    rate_pct: Mapped[Decimal] = mapped_column(Numeric(7, 3))
+    tenure_months: Mapped[int] = mapped_column(Integer)
+    emi: Mapped[Decimal | None] = mapped_column(
+        Numeric(20, 2)
+    )  # None = computed from principal, rate, tenure
+    start_date: Mapped[date] = mapped_column(Date)
+    outstanding: Mapped[Decimal | None] = mapped_column(Numeric(20, 2))
+    outstanding_as_of: Mapped[date | None] = mapped_column(Date)
+    floating: Mapped[bool] = mapped_column(Boolean, default=True)
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class WealthGoal(Base):
+    """A goal: a target in today's rupees on a date, funded by linked assets (and a share of the portfolio) plus a
+    monthly SIP that steps up once a year. Planned by a seeded Monte Carlo (finresearch.wealth.goals)."""
+
+    __tablename__ = "wealth_goal"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(120))
+    target_inr: Mapped[Decimal] = mapped_column(Numeric(20, 2))  # in today's rupees
+    target_date: Mapped[date] = mapped_column(Date)
+    priority: Mapped[str] = mapped_column(String(8), default="medium")  # high | medium | low
+    inflation_pct: Mapped[Decimal] = mapped_column(Numeric(6, 2), default=Decimal(6))
+    current_inr: Mapped[Decimal] = mapped_column(
+        Numeric(20, 2), default=Decimal(0)
+    )  # saved outside linked assets
+    monthly_sip: Mapped[Decimal] = mapped_column(Numeric(20, 2), default=Decimal(0))
+    step_up_pct: Mapped[Decimal] = mapped_column(Numeric(6, 2), default=Decimal(0))
+    linked_asset_ids: Mapped[list[Any]] = mapped_column(default=list)
+    portfolio_pct: Mapped[Decimal] = mapped_column(
+        Numeric(6, 2), default=Decimal(0)
+    )  # share of the portfolio
+    equity_pct: Mapped[Decimal | None] = mapped_column(Numeric(6, 2))  # None = the time-to-goal glide
+    gold_pct: Mapped[Decimal] = mapped_column(Numeric(6, 2), default=Decimal(0))
+    in_cover: Mapped[bool] = mapped_column(
+        Boolean, default=False
+    )  # counted in the term-cover need (e.g. education)
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class WealthPolicy(Base):
+    """An insurance policy: cover only (arithmetic on sum assured; no product view)."""
+
+    __tablename__ = "wealth_policy"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    kind: Mapped[str] = mapped_column(String(10))  # term | health | other
+    name: Mapped[str] = mapped_column(String(120))
+    cover_inr: Mapped[Decimal] = mapped_column(Numeric(20, 2))
+    premium_inr: Mapped[Decimal | None] = mapped_column(Numeric(20, 2))  # a year
+    end_date: Mapped[date | None] = mapped_column(Date)
+    employer: Mapped[bool] = mapped_column(Boolean, default=False)  # group cover through an employer
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 # --------------------------------------------------------------------------- personal portfolio (roadmap items 8-9)
 # Personal financial data: it lives only in this local database (and the uploaded files under data/portfolio/), is
 # never sent to an LLM, and holds no identity data (no PAN, name, email, address or phone from a CAS; the folio or
