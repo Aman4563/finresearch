@@ -908,6 +908,8 @@ def build_insights(*, run_id: int, kind: str, claims: list[dict[str, Any]], synt
         peers(ver, by_id, {"pe": next((m for m in v_mult if m["key"] == "pe"), None), "pb": None}),
     )
     fair = fair_values(usable)
+    from finresearch.api.accuracy import accuracy_block, triangulation_block
+
     scenarios = []
     for s in syn.get("scenarios") or []:
         if isinstance(s, dict) and (s.get("price_low") is not None or s.get("price_high") is not None):
@@ -928,4 +930,6 @@ def build_insights(*, run_id: int, kind: str, claims: list[dict[str, Any]], synt
         "checklist": [{"text": norm_cites(str(x)), "claim_ids": cite_ids(str(x))} for x in syn.get("action_checklist") or []],
         "alternatives": [norm_cites(str(x)) for x in syn.get("alternatives") or []],
         "quality": quality(claims, cited),
+        "accuracy": accuracy_block(claims, cited),
+        "triangulation": triangulation_block(claims, kind, fair),
     }  # fmt: skip

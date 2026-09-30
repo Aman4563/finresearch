@@ -13,7 +13,8 @@ Checks (results stored in claim.checks; a failing check never silently passes a 
                      a mismatch is a deterministic contradiction with the correct day recorded.
 
 The publish gate (check_report) inspects a synthesized report: it may only cite usable claims, must not cite raw
-document lines, and high-importance claims it relies on must be verified.
+document lines, and high-importance claims it relies on must be verified. It also applies the accounting-identity
+severity policy (see `identity_findings`) to the checks in `verify.identities`.
 """
 
 from __future__ import annotations
@@ -397,5 +398,47 @@ def check_report(session: Session, run_id: int, report_markdown: str) -> ReportG
     if uncited:
         g.warnings.append(f"{len(uncited)} lines contain figures without a [C<id>] citation, e.g.: "
                           + " || ".join(uncited[:5]))  # fmt: skip
+    ib, iw = identity_findings(session, run_id, set(ids))
+    g.blocking += ib
+    g.warnings += iw
     g.ok = not g.blocking
     return g
+
+
+# --------------------------------------------------------------------------- accounting identities: severity policy
+# verify.identities returns pass / warn / fail per check (tolerances documented there; roadmap §C.1–C.3).
+# How a result reaches the publish gate:
+#   1. Only checks that involve a claim the report CITES produce gate items (for a recomputed rate or a sanity band:
+#      the stated figure itself must be cited, since its operands are not the suspect; for the EPS share basis: the
+#      flagged period's EPS, not its PAT or the reference period). Failures on uncited claims are recorded
+#      in the run manifest (identity_checks) and shown in the report's Accuracy card, never forced into the text.
+#   2. BLOCK when the check is `hard` AND failed AND a cited claim in it is high-importance. `hard` means an
+#      unambiguous error: a 10^n scale shift or ₹/US$ label mix-up; an EPS not restated for a bonus / split
+#      (implied share counts ≈ k× apart); a money identity > 5 % apart, an EPS identity > 5 % apart or a
+#      recomputed rate ≥ 1 pp off, each with every operand verified.
+#   3. Otherwise WARN (revision request: recheck the figure, cite the consistent one, or caveat it). This covers
+#      small gaps (≤ 2 %), identities where exceptional items / overdrafts may explain the gap, definitional
+#      differences, basis mixes, cross-document differences (restated vs audited: needs the restatement note) and
+#      sanity-band outliers.
+# Replays of live runs 5/9/11/12 pass this policy with no blocks (tests/test_identities.py).
+def identity_findings(session: Session, run_id: int, cited: set[int]) -> tuple[list[str], list[str]]:
+    from finresearch.verify.identities import run_identities
+
+    rep = run_identities(session, run_id)
+    blocking: list[str] = []
+    warnings: list[str] = []
+    for chk in rep.failing():
+        # the suspect figure: a stated rate / band value, or the flagged period's EPS (not its PAT or the reference)
+        subject = chk.claims[:1] if chk.family in ("margin", "growth", "sanity", "eps_basis") else chk.claims
+        hit = [c for c in subject if c["claim_id"] in cited]
+        if not hit:
+            continue
+        refs = ", ".join(f"[C{c['claim_id']}]" for c in chk.claims)
+        msg = f"accounting check '{chk.title}' {chk.status}s ({refs}): {chk.detail}"
+        if chk.hint:
+            msg += f" — {chk.hint}"
+        if chk.hard and chk.status == "fail" and any(c["importance"] == "high" for c in hit):
+            blocking.append(msg[:600] + " — correct or drop the inconsistent figure")
+        else:
+            warnings.append(msg[:500] + " — recheck, cite the consistent figure or caveat it")
+    return blocking, warnings

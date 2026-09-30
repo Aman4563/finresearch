@@ -10,10 +10,23 @@ Library-wide conventions:
 * ``ValueError`` = structurally invalid input (negative shares, ``years <= 0``, COE <= g, ...).
 * Share counts derived from amounts are floored; display rounding is ROUND_HALF_UP.
 
-Modules: :mod:`numbers`, :mod:`growth`, :mod:`ratios`, :mod:`valuation`, :mod:`ipo`, :mod:`dates`, :mod:`market`, :mod:`funds`, :mod:`bonds`, :mod:`options`.
+Modules: :mod:`numbers`, :mod:`growth`, :mod:`ratios`, :mod:`valuation`, :mod:`montecarlo`, :mod:`ipo`, :mod:`dates`,
+:mod:`market`, :mod:`funds`, :mod:`bonds`, :mod:`options`.
 """
 
-from finresearch.fincalc import bonds, dates, funds, growth, ipo, market, numbers, options, ratios, valuation
+from finresearch.fincalc import (
+    bonds,
+    dates,
+    funds,
+    growth,
+    ipo,
+    market,
+    montecarlo,
+    numbers,
+    options,
+    ratios,
+    valuation,
+)
 from finresearch.fincalc.numbers import (
     convert,
     format_indian,
@@ -38,6 +51,7 @@ __all__ = [
     "growth",
     "ipo",
     "market",
+    "montecarlo",
     "numbers",
     "options",
     "parse_number",

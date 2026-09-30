@@ -148,3 +148,179 @@ def implied_fair_value(metric_per_share: Num, multiple_low: Num, multiple_high: 
     if lo < 0 or hi < 0 or lo > hi:
         raise ValueError("need 0 <= multiple_low <= multiple_high")
     return FairValueRange(m * lo, m * (lo + hi) / 2, m * hi, m, lo, hi)
+
+
+# --------------------------------------------------------------------------- triangulation (roadmap §C.7)
+# DCF with sensitivity, reverse DCF (Mauboussin & Rappaport, "Expectations Investing"), relative multiples and the
+# EV bridge (Damodaran-style). Rates are fractions. All cash-flow inputs share one unit; per-share outputs are in
+# that unit per share (convert to rupees first for ₹/share).
+
+
+@dataclass(frozen=True)
+class DcfValue:
+    """Two-stage DCF: ``years`` of growth at ``growth``, then a Gordon terminal value growing at ``terminal_growth``."""
+
+    pv_explicit: Decimal
+    pv_terminal: Decimal
+    value: Decimal
+
+    @property
+    def terminal_share(self) -> Decimal:
+        """Fraction of the value that sits in the terminal value (high = the answer is mostly the TV assumption)."""
+        return self.pv_terminal / self.value if self.value else Decimal(0)
+
+
+def dcf(cash_flow: Num, growth: Num, discount_rate: Num, terminal_growth: Num, years: int = 10) -> DcfValue:
+    """Present value of ``cash_flow`` (the latest year's FCF, not yet grown) growing at ``growth`` for ``years``,
+    then a terminal value ``CF_n × (1 + g_T) / (r − g_T)`` discounted from year ``n``.
+
+    ``CF_t = CF_0 (1+g)^t``; value = Σ_{t=1..n} CF_t/(1+r)^t + TV/(1+r)^n. Raises ValueError unless r > g_T
+    (the terminal value diverges otherwise) and ``years >= 1``. With g = g_T it equals Gordon: CF_0(1+g)/(r−g).
+    """
+    cf, g, r, gt = (
+        to_decimal(cash_flow),
+        to_decimal(growth),
+        to_decimal(discount_rate),
+        to_decimal(terminal_growth),
+    )
+    if r <= gt:
+        raise ValueError("discount_rate must exceed terminal_growth")
+    if years < 1:
+        raise ValueError("years must be >= 1")
+    if r <= -1 or g <= -1:
+        raise ValueError("rates must be > -100%")
+    pv = Decimal(0)
+    cft = cf
+    disc = Decimal(1)
+    for _ in range(years):
+        cft *= 1 + g
+        disc *= 1 + r
+        pv += cft / disc
+    tv = cft * (1 + gt) / (r - gt)
+    pvt = tv / disc
+    return DcfValue(pv, pvt, pv + pvt)
+
+
+def ev_bridge(enterprise_value: Num, *, cash: Num = 0, debt: Num = 0, leases: Num = 0, nci: Num = 0,
+              non_operating_assets: Num = 0, esop_value: Num = 0, fresh_issue_proceeds: Num = 0) -> Decimal:  # fmt: skip
+    """Equity value = EV + cash + non-operating assets + IPO fresh-issue proceeds − debt − leases − NCI − ESOPs.
+
+    For an IPO the fresh issue's money comes into the company (OFS money goes to the sellers, so it is excluded);
+    pair the result with post-issue shares (``post_issue_shares``). Proceeds used to repay debt are neutral here:
+    cash in, debt out."""
+    return (to_decimal(enterprise_value) + to_decimal(cash) + to_decimal(non_operating_assets)
+            + to_decimal(fresh_issue_proceeds) - to_decimal(debt) - to_decimal(leases) - to_decimal(nci)
+            - to_decimal(esop_value))  # fmt: skip
+
+
+def dcf_per_share(cash_flow: Num, growth: Num, discount_rate: Num, terminal_growth: Num, shares: Num, *,
+                  years: int = 10, net_debt: Num = 0, fresh_issue_proceeds: Num = 0) -> Decimal:  # fmt: skip
+    """``(DCF value − net debt + fresh-issue proceeds) / shares`` (net debt negative = net cash)."""
+    v = dcf(cash_flow, growth, discount_rate, terminal_growth, years).value
+    eq = ev_bridge(v, debt=net_debt, fresh_issue_proceeds=fresh_issue_proceeds)
+    return eq / require_shares(shares)
+
+
+def reverse_dcf(price: Num, shares: Num, cash_flow: Num, discount_rate: Num, terminal_growth: Num, *,
+                years: int = 10, net_debt: Num = 0, fresh_issue_proceeds: Num = 0, low: Num = "-0.5",
+                high: Num = "1.0", tolerance: Num = "0.0000001") -> Decimal | None:  # fmt: skip
+    """The growth g* of the next ``years`` that makes the DCF value per share equal ``price`` (Mauboussin &
+    Rappaport's "price-implied expectations"). Bisection: the value rises monotonically with g when the cash flow
+    is positive. Returns None when the cash flow is <= 0 (no growth rate can justify a price from a negative
+    base) or when g* lies outside [low, high]."""
+    p, cf = require_price(price), to_decimal(cash_flow)
+    if cf <= 0:
+        return None
+    lo, hi, tol = to_decimal(low), to_decimal(high), to_decimal(tolerance)
+
+    def f(g: Decimal) -> Decimal:
+        return dcf_per_share(cf, g, discount_rate, terminal_growth, shares, years=years, net_debt=net_debt,
+                             fresh_issue_proceeds=fresh_issue_proceeds) - p  # fmt: skip
+
+    flo, fhi = f(lo), f(hi)
+    if flo > 0 or fhi < 0:
+        return None
+    for _ in range(200):
+        mid = (lo + hi) / 2
+        if f(mid) < 0:
+            lo = mid
+        else:
+            hi = mid
+        if hi - lo <= tol:
+            break
+    return (lo + hi) / 2
+
+
+def dcf_grid(cash_flow: Num, growth: Num, shares: Num, discount_rates: list[Num], terminal_growths: list[Num], *,
+             years: int = 10, net_debt: Num = 0, fresh_issue_proceeds: Num = 0) -> list[list[Decimal | None]]:  # fmt: skip
+    """Per-share values for each (discount rate row × terminal growth column); None where r <= g_T."""
+    out: list[list[Decimal | None]] = []
+    for r in discount_rates:
+        row: list[Decimal | None] = []
+        for gt in terminal_growths:
+            try:
+                row.append(dcf_per_share(cash_flow, growth, r, gt, shares, years=years, net_debt=net_debt,
+                                         fresh_issue_proceeds=fresh_issue_proceeds))  # fmt: skip
+            except ValueError:
+                row.append(None)
+        out.append(row)
+    return out
+
+
+@dataclass(frozen=True)
+class PeerStats:
+    """Median and inter-quartile range of peer multiples, and where the company sits (0–100 percentile)."""
+
+    n: int
+    q1: Decimal
+    median: Decimal
+    q3: Decimal
+    own: Decimal | None
+    percentile: Decimal | None
+
+
+def _quantile(xs: list[Decimal], q: Decimal) -> Decimal:
+    """Linear interpolation between order statistics (Excel QUARTILE.INC / numpy 'linear')."""
+    pos = (len(xs) - 1) * q
+    i = int(pos)
+    frac = pos - i
+    return xs[i] if i + 1 >= len(xs) else xs[i] + (xs[i + 1] - xs[i]) * frac
+
+
+def peer_stats(peers: list[Num], own: Num | None = None) -> PeerStats:
+    """Peer multiple distribution (non-positive multiples dropped: a loss-maker's P/E is not meaningful) and the
+    company's percentile rank = share of peers below it + half of ties. Roadmap §C.7 wants ≥ 3 peers; raises
+    ValueError with fewer."""
+    xs = sorted(x for x in (to_decimal(p) for p in peers) if x > 0)
+    if len(xs) < 3:
+        raise ValueError("need at least 3 positive peer multiples")
+    o = opt_decimal(own)
+    pct = None
+    if o is not None:
+        below = sum(1 for x in xs if x < o)
+        ties = sum(1 for x in xs if x == o)
+        pct = Decimal(100) * (below + Decimal(ties) / 2) / len(xs)
+    return PeerStats(len(xs), _quantile(xs, Decimal("0.25")), _quantile(xs, Decimal("0.5")),
+                     _quantile(xs, Decimal("0.75")), o, pct)  # fmt: skip
+
+
+@dataclass(frozen=True)
+class Band:
+    low: Decimal
+    high: Decimal
+    intersection: tuple[Decimal, Decimal] | None
+    disagree: bool  # the methods' midpoints differ by more than 30 %
+    spread: Decimal  # (max mid − min mid) / min mid
+
+
+def triangulate(ranges: dict[str, tuple[Num, Num]], disagree_above: Num = "0.30") -> Band:
+    """Fair-value band from several methods' (low, high) ranges: the union, the intersection (None when they do
+    not overlap) and a disagreement flag when the midpoints differ by more than ``disagree_above`` (roadmap §C.7)."""
+    if not ranges:
+        raise ValueError("need at least one range")
+    rs = [(min(to_decimal(a), to_decimal(b)), max(to_decimal(a), to_decimal(b))) for a, b in ranges.values()]
+    lo, hi = min(r[0] for r in rs), max(r[1] for r in rs)
+    ilo, ihi = max(r[0] for r in rs), min(r[1] for r in rs)
+    mids = [(a + b) / 2 for a, b in rs]
+    spread = (max(mids) - min(mids)) / min(mids) if min(mids) > 0 else Decimal(0)
+    return Band(lo, hi, (ilo, ihi) if ilo <= ihi else None, spread > to_decimal(disagree_above), spread)

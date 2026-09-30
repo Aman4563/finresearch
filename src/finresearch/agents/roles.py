@@ -31,6 +31,10 @@ MCP = "mcp__finresearch__"
 DOC_READ = [f"{MCP}{t}" for t in ("list_documents", "list_sections", "read_lines_tool", "read_section",
                                    "grep_document", "search_documents", "extract_table")]  # fmt: skip
 CALC = [f"{MCP}fincalc_functions", f"{MCP}fincalc_call"]
+CHECKS = [
+    f"{MCP}identity_checks"
+]  # accounting-identity / scale checks over the ledger (verify/identities.py)
+VALUE = [f"{MCP}reverse_dcf", f"{MCP}valuation_monte_carlo"]  # valuation triangulation (fincalc)
 LEDGER_WRITE = [f"{MCP}save_claim", f"{MCP}list_claims"]
 LEDGER_READ = [f"{MCP}list_claims"]
 MARKET = [f"{MCP}{t}" for t in ("nse_ipo_detail", "nse_current_issues", "sebi_filings", "sebi_resolve_pdf")]
@@ -69,11 +73,11 @@ class Role:
 
 
 def _stream(name: str, *, web: bool, market: bool = False, docs: bool = True, turns: int = 80,
-            equity: bool = False, funds: bool = False, bonds: bool = False,
+            equity: bool = False, funds: bool = False, bonds: bool = False, value: bool = False,
             skills: list[str] | None = None) -> Role:  # fmt: skip
     tools = [*(DOC_READ if docs else [f"{MCP}search_documents", f"{MCP}read_lines_tool"]), *CALC, *LEDGER_WRITE,
              *(MARKET if market else []), *(EQUITY if equity else []), *(FUNDS if funds else []),
-             *(BONDS if bonds else []),
+             *(BONDS if bonds else []), *(VALUE if value else []),
              *(WEB if web else []), *SKILL]  # fmt: skip
     extra = {"skills": skills} if skills is not None else {}
     return Role(name=name, template=f"stream_{name}.md", output=StreamReport, model_class=ModelClass.STANDARD,
@@ -96,24 +100,24 @@ ROLES: dict[str, Role] = {
     "financials": _stream("financials", web=False, turns=100),
     "business": _stream("business", web=True),
     "risks": _stream("risks", web=True),
-    "valuation": _stream("valuation", web=True, market=True),
+    "valuation": _stream("valuation", web=True, market=True, value=True),
     "news30": _stream("news30", web=True, docs=False),
     "demand": _stream("demand", web=True, market=True),
     "major": _stream("major", web=True),
     "verifier": Role("verifier", "verifier.md", VerificationReport, ModelClass.DEEP,
-                     [*DOC_READ, *CALC, *LEDGER_READ, *WEB], effort="high", max_turns=60, timeout_s=2400,
+                     [*DOC_READ, *CALC, *CHECKS, *LEDGER_READ, *WEB], effort="high", max_turns=60, timeout_s=2400,
                      needs_web=True, skills=["indian-fin-glossary", "rhp-navigator"]),
     "bull": Role("bull", "case_bull.md", CaseReport, ModelClass.DEEP, [*LEDGER_READ, *DOC_READ],
                  effort="medium", max_turns=25, timeout_s=1200, skills=["indian-fin-glossary"]),
     "bear": Role("bear", "case_bear.md", CaseReport, ModelClass.DEEP, [*LEDGER_READ, *DOC_READ],
                  effort="medium", max_turns=25, timeout_s=1200, skills=["indian-fin-glossary"]),
     "synthesizer": Role("synthesizer", "synthesizer.md", Synthesis, ModelClass.DEEP,
-                        [*LEDGER_READ, *DOC_READ, *CALC, *SKILL], effort="high", max_turns=60, timeout_s=3000,
+                        [*LEDGER_READ, *DOC_READ, *CALC, *CHECKS, *VALUE, *SKILL], effort="high", max_turns=60, timeout_s=3000,
                         skills=["report-writer", "indian-fin-glossary"]),
     "discovery": Role("discovery", "discovery.md", DiscoveryResult, ModelClass.STANDARD,
                       [f"{MCP}list_documents", *WEB], effort="medium", max_turns=40, timeout_s=1500, needs_web=True,
                       skills=[]),
-    "critic": Role("critic", "critic.md", CriticReport, ModelClass.DEEP, [*LEDGER_READ, *DOC_READ],
+    "critic": Role("critic", "critic.md", CriticReport, ModelClass.DEEP, [*LEDGER_READ, *DOC_READ, *CHECKS],
                    effort="medium", max_turns=25, timeout_s=1200, skills=["ipo-deep-research"]),
     # ---- listed stocks
     "stock_planner": Role("stock_planner", "stock_planner.md", ResearchPlan, ModelClass.DEEP,
@@ -121,7 +125,7 @@ ROLES: dict[str, Role] = {
                           skills=STOCK_SKILLS),
     "stock_fundamentals": _stream("stock_fundamentals", web=False, equity=True, turns=100, skills=STOCK_SKILLS),
     "stock_business": _stream("stock_business", web=True, skills=STOCK_SKILLS),
-    "stock_valuation": _stream("stock_valuation", web=True, equity=True, skills=STOCK_SKILLS),
+    "stock_valuation": _stream("stock_valuation", web=True, equity=True, value=True, skills=STOCK_SKILLS),
     "stock_governance": _stream("stock_governance", web=True, equity=True, skills=STOCK_SKILLS),
     "stock_news": _stream("stock_news", web=True, docs=False, equity=True, skills=STOCK_SKILLS),
     "stock_technical": _stream("stock_technical", web=False, docs=False, equity=True, turns=40, skills=STOCK_SKILLS),
@@ -130,9 +134,9 @@ ROLES: dict[str, Role] = {
     "stock_bear": Role("stock_bear", "case_stock_bear.md", CaseReport, ModelClass.DEEP, [*LEDGER_READ, *DOC_READ],
                        effort="medium", max_turns=25, timeout_s=1200, skills=STOCK_SKILLS),
     "stock_synthesizer": Role("stock_synthesizer", "stock_synthesizer.md", StockSynthesis, ModelClass.DEEP,
-                              [*LEDGER_READ, *DOC_READ, *CALC, *SKILL], effort="high", max_turns=60, timeout_s=3000,
+                              [*LEDGER_READ, *DOC_READ, *CALC, *CHECKS, *VALUE, *SKILL], effort="high", max_turns=60, timeout_s=3000,
                               skills=["report-writer", *STOCK_SKILLS]),
-    "stock_critic": Role("stock_critic", "critic.md", CriticReport, ModelClass.DEEP, [*LEDGER_READ, *DOC_READ],
+    "stock_critic": Role("stock_critic", "critic.md", CriticReport, ModelClass.DEEP, [*LEDGER_READ, *DOC_READ, *CHECKS],
                          effort="medium", max_turns=25, timeout_s=1200, skills=STOCK_SKILLS),
     # ---- mutual funds
     "fund_planner": Role("fund_planner", "fund_planner.md", ResearchPlan, ModelClass.DEEP,

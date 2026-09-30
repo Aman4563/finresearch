@@ -335,6 +335,81 @@ def fincalc_call(function: str, args: dict[str, Any]) -> str:
         return json.dumps({"function": function, "error": f"{type(e).__name__}: {e}"})
 
 
+# --------------------------------------------------------------------------- accuracy and valuation triangulation
+@server.tool()
+def identity_checks(run_id: int, only_failing: bool = True) -> str:
+    """Accounting-identity, recomputation and unit/scale checks over a run's claim ledger (no model): P&L subtotals
+    (revenue + other income = total income; − expenses = PBT; PBT − tax = PAT), EPS × weighted shares = PAT, EPS
+    restated for bonus/split, balance sheet balances, cash roll-forward, margins and growth recomputed from their
+    parts, lakh/crore/million scale shifts, ₹ vs US$ labels, standalone vs consolidated mixes and restated-vs-later
+    filing differences. Each result names the claim ids involved; fix or caveat failing figures before citing them
+    (a failing high-importance figure blocks the publish gate). Checks without inputs are listed, never guessed."""
+    from finresearch.verify.identities import run_identities
+
+    with session_scope() as s:
+        rep = run_identities(s, run_id).to_dict()
+    if only_failing:
+        rep["checks"] = [c for c in rep["checks"] if c["status"] != "pass"]
+    return json.dumps(rep, indent=1)
+
+
+@server.tool()
+def reverse_dcf(price: str, shares: str, cash_flow: str, discount_rate: str, terminal_growth: str = "0.04",
+                years: int = 10, net_debt: str = "0", fresh_issue_proceeds: str = "0") -> str:  # fmt: skip
+    """Price-implied growth (Mauboussin & Rappaport reverse DCF): the growth g* of the next `years` at which a
+    two-stage DCF of `cash_flow` (latest FCF, rupees) gives `price` per share. Rates are fractions ("0.12").
+    Money in RUPEES (convert crore/million with fincalc first); `net_debt` negative = net cash; for an IPO pass
+    post-issue `shares` and the fresh-issue amount as `fresh_issue_proceeds`. Compare g* with the ledger's
+    historical growth. Save the result as a claim citing its inputs ("fincalc reverse DCF from [C..]") and state the
+    discount rate as an assumption unless the ledger has one. Returns g*, or null when the cash flow is <= 0."""
+    try:
+        g = fincalc.valuation.reverse_dcf(price, shares, cash_flow, discount_rate, terminal_growth, years=years,
+                                          net_debt=net_debt, fresh_issue_proceeds=fresh_issue_proceeds)  # fmt: skip
+        grid_r = [
+            fincalc.numbers.to_decimal(discount_rate) + d for d in (Decimal("-0.01"), 0, Decimal("0.01"))
+        ]
+        return json.dumps({"implied_growth": _jsonable(g), "inputs": {"price": price, "shares": shares,
+                           "cash_flow": cash_flow, "discount_rate": discount_rate, "terminal_growth": terminal_growth,
+                           "years": years, "net_debt": net_debt, "fresh_issue_proceeds": fresh_issue_proceeds},
+                           "implied_growth_at_discount_rate_minus_plus_1pp": [
+                               _jsonable(fincalc.valuation.reverse_dcf(price, shares, cash_flow, r, terminal_growth,
+                                                                       years=years, net_debt=net_debt,
+                                                                       fresh_issue_proceeds=fresh_issue_proceeds))
+                               for r in grid_r],
+                           "method": "fincalc.valuation.reverse_dcf (two-stage DCF, bisection)"})  # fmt: skip
+    except (ValueError, ArithmeticError) as e:
+        return json.dumps({"error": f"{type(e).__name__}: {e}"})
+
+
+@server.tool()
+def valuation_monte_carlo(cash_flow: str, shares: str, growth: dict[str, Any], discount_rate: dict[str, Any],
+                          terminal_growth: dict[str, Any] | None = None, years: int = 10, net_debt: str = "0",
+                          fresh_issue_proceeds: str = "0", price: str | None = None, n: int = 5000,
+                          seed: int = 20260930) -> str:  # fmt: skip
+    """Seeded Monte Carlo DCF fair-value distribution per share (Damodaran probabilistic valuation). Each range is
+    {"low": 0.05, "mode": 0.08, "high": 0.10, "source": "C123 / ASSUMPTION: why"} (triangular, fractions); give the
+    source of every range. Money in rupees. Returns P5/P25/P50/P75/P95, mean, P(value > price) and a histogram;
+    the same inputs and seed always give the same numbers. Draws with r − g_T < 1 pp are rejected (counted)."""
+    from finresearch.fincalc.montecarlo import Range, simulate_dcf
+
+    def rng(d: dict[str, Any]) -> Range:
+        return Range(float(d["low"]), float(d.get("mode", (float(d["low"]) + float(d["high"])) / 2)),
+                     float(d["high"]), str(d.get("source", "")))  # fmt: skip
+
+    try:
+        tg = (
+            rng(terminal_growth) if terminal_growth else Range(0.03, 0.04, 0.05, "ASSUMPTION: 3–5 % long-run")
+        )
+        res = simulate_dcf(cash_flow, shares, rng(growth), rng(discount_rate), tg, years=years, net_debt=net_debt,
+                           fresh_issue_proceeds=fresh_issue_proceeds, price=price, n=min(max(n, 100), 20000),
+                           seed=seed)  # fmt: skip
+    except (ValueError, KeyError, TypeError, ArithmeticError) as e:
+        return json.dumps({"error": f"{type(e).__name__}: {e}"})
+    return json.dumps({**_jsonable(res), "ranges": {"growth": growth, "discount_rate": discount_rate,
+                                                     "terminal_growth": tg.__dict__},
+                       "method": "fincalc.montecarlo.simulate_dcf (triangular draws, seeded)"})  # fmt: skip
+
+
 # --------------------------------------------------------------------------- listed bonds
 @server.tool()
 async def nse_bond_search(query: str) -> str:

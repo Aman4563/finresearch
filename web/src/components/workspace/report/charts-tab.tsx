@@ -12,6 +12,7 @@ import { CashFlowChart, PriceYieldChart } from "@/components/markets/charts";
 import { Metric, Timeline, inr, pctOf } from "@/components/markets/common";
 import type { BondAnalytics, FundAnalytics, StockHistory } from "@/components/markets/types";
 import { Badge, Card, EmptyState, ErrorNote, InfoTip, Segmented, Skeleton, cx } from "@/components/ui";
+import { TriangulationCard } from "@/components/workspace/report/accuracy";
 import { type ClaimMap, CiteText, type OpenClaim, SourceStrip, StatusDot, STATUS_LABEL } from "@/components/workspace/report/shared";
 import { useApi } from "@/lib/api";
 import type { FinSeries, Insights, Pt } from "@/lib/insights";
@@ -643,6 +644,7 @@ export function ChartsTab({ ins, error, reload, claims, onOpen }: { ins: Insight
   }
   // bonds: peer yields are already in the yield comparison
   if (ins.valuation.peers.length && ins.kind !== "bond_report") blocks.push(<PeerChart key="peers" ins={ins} claims={claims} onOpen={onOpen} />);
+  if (ins.triangulation) blocks.push(<TriangulationCard key="tri" t={ins.triangulation} claims={claims} onOpen={onOpen} />);
   if (ins.valuation.fair_value.length) blocks.push(<FairValue key="fv" ins={ins} claims={claims} onOpen={onOpen} price={price} />);
   if (ins.scenarios.length) blocks.push(<Scenarios key="sc" ins={ins} claims={claims} onOpen={onOpen} price={price} />);
   if (!blocks.length)

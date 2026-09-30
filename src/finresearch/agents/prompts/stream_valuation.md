@@ -16,4 +16,7 @@ Sources: THE_OFFER, CAPITAL_STRUCTURE, OBJECTS_OF_THE_OFFER, BASIS_FOR_OFFER_PRI
    - EV/EBITDA and P/S where relevant.
 5. Peers: take the RHP peer set, then fetch CURRENT prices and metrics for relevant listed peers (WebSearch/WebFetch, cite URL + timestamp). Build a peer table and say where the RHP set flatters.
 6. Fair-value range from 2–3 methods with the implied upside/downside.
+7. Triangulate with `reverse_dcf` (the growth the cap price implies, vs the ledger's historical growth) and
+   `valuation_monte_carlo` (a seeded fair-value distribution; every input range states its claim or ASSUMPTION).
+   Save g*, P5/P50/P95 and P(value > price) as claims citing their inputs.
 Focus: {focus}
