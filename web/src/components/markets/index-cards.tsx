@@ -37,7 +37,7 @@ function IndexTile({ name, refreshS, selected, onSelect }: { name: string; refre
             <Sparkline values={d.candles.map((c) => c.c)} width={88} height={28} />
           </div>
           <p className="mt-1 text-[10px] text-muted">
-            {d.live ? `NSE ${asOf}${d.delay_s != null ? ` · ${behind(d.delay_s * 1000)}` : ""}` : `Closed · last session to ${asOf}`}
+            {d.live ? `NSE ${asOf}${d.delay_s != null ? ` · ${behind(d.delay_s * 1000)}` : ""}` : d.last_kind === "official_close" ? `Official close · data to ${asOf}` : `Closed · last value ${asOf}`}
           </p>
         </>
       ) : r.error ? (

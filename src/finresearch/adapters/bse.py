@@ -392,7 +392,19 @@ class BseClient:
         data, _ = await self.get_json(
             "/getScripHeaderData/w", {"Debtflag": "", "scripcode": code, "seriesid": ""}
         )
-        return parse_scrip_header(symbol, data or {})
+        q = parse_scrip_header(symbol, data or {})
+        if q is not None and q.as_of is not None and q.last_price is not None:
+            from finresearch.fincalc.price import session_over
+
+            if session_over(q.as_of):  # the official close is the day's bar (the header has no close field)
+                from finresearch.adapters.bse_equity import BseEquity
+
+                try:
+                    bars = await BseEquity(self).history(code, q.as_of.date(), q.as_of.date())
+                except BseError:
+                    bars = []
+                q.close_price = next((b.close for b in bars if b.day == q.as_of.date() and b.close), None)
+        return q
 
     async def offer_documents(self) -> list[OfferDocument]:
         data, _ = await self.get_json("/Pubissues_IPODRHP_par_ng/w", cache_ttl=DETAIL_TTL_S)

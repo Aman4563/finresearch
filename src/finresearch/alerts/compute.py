@@ -265,21 +265,25 @@ class Reader:
     ) -> Reading:
         exch = "BSE quote" if key.startswith("BSE:") else "NSE quote"
         if metric in ("price", "day_change_pct", "pct_from_52w_high", "pct_from_52w_low"):
+            from finresearch.fincalc.price import REF_LABELS, price_view
+
             q = await self._quote(key)
-            price = D(q.last_price or q.close_price)
+            v = price_view(q, exchange="BSE" if key.startswith("BSE:") else "NSE")
+            price = D(v.price)
             as_of = q.as_of.isoformat() if getattr(q, "as_of", None) else None
             if price is None:
-                return unknown(f"the {exch} has no last price for {key}", exch)
+                return unknown(f"the {exch} has no price for {key}", exch)
+            what_px = v.label.lower()
             if metric == "price":
-                return Reading(price, f"{exch}: last price", as_of)
-            ref = {"day_change_pct": q.previous_close, "pct_from_52w_high": q.week52_high,
+                return Reading(price, f"{exch}: {what_px}", as_of)
+            ref = {"day_change_pct": v.reference, "pct_from_52w_high": q.week52_high,
                    "pct_from_52w_low": q.week52_low}[metric]  # fmt: skip
             ref = D(ref)
             if not ref:
                 return unknown(f"the {exch} has no {metric.replace('_', ' ')} reference for {key}", exch)
-            what = {"day_change_pct": "previous close", "pct_from_52w_high": "52-week high",
-                    "pct_from_52w_low": "52-week low"}[metric]  # fmt: skip
-            return Reading(pct(price, ref), f"{exch}: last price {price} vs {what} {ref}", as_of)
+            what = {"day_change_pct": REF_LABELS.get(v.reference_kind or "", "previous close"),
+                    "pct_from_52w_high": "52-week high", "pct_from_52w_low": "52-week low"}[metric]  # fmt: skip
+            return Reading(pct(price, ref), f"{exch}: {what_px} {price} vs {what} {ref}", as_of)
         if metric in ("signal_action_changed", "signal_score"):
             sig = await self._signal("stock", key)
             if metric == "signal_score":

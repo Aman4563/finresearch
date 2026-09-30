@@ -10,6 +10,7 @@ the last figures with `live: false`, so the page can say the market is closed an
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from datetime import UTC, date, datetime, time
 from typing import Any
 
@@ -108,7 +109,21 @@ def add_live_routes(app: FastAPI, *, monitor_deps=None, clock=None) -> None:
                 if inst
                 else f"https://www.nseindia.com/get-quotes/equity?symbol={sym}"
             )
-            return {"quote": quote_json(q, sym), "fetched_at": datetime.now(UTC).isoformat(), "source": source,
+            div_today = action_today = None
+            if (
+                ex == "BSE"
+            ):  # BSE publishes no adjusted previous close: today's ex-date actions adjust the change
+                from finresearch.api.markets import ex_today
+
+                async def actions() -> list:
+                    async with sources().open_equity("BSE") as eq:
+                        return await eq.corporate_actions(sym)
+
+                # on failure the change falls back to the unadjusted previous close, as BSE itself shows it
+                with contextlib.suppress(Exception):
+                    div_today, action_today = ex_today(await cache.get(("actions", sym), 3600, actions), q)
+            return {"quote": quote_json(q, sym, now=now(), dividend_today=div_today, action_today=action_today),
+                    "fetched_at": datetime.now(UTC).isoformat(), "source": source,
                     "quote_page": page, "exchange": ex}  # fmt: skip
 
         key = ("quote", sym, live) if ex == "NSE" else ("quote", "BSE", sym, live)

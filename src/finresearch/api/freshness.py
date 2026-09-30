@@ -61,7 +61,9 @@ def add_freshness_routes(app: FastAPI, *, clock=None) -> None:
         if sym:
             try:
                 q = await src().get_quote(sid, ex) if code else await src().get_quote(sid)
-                last = q.last_price or q.close_price
+                from finresearch.fincalc.price import display_price
+
+                last = display_price(q, exchange=ex, now=now())
                 price = float(last) if last is not None else None
                 as_of = q.as_of.isoformat() if q.as_of else None
             except Exception as e:

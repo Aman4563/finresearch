@@ -122,3 +122,16 @@ async def index_intraday(nse: NseClient, name: str) -> IntradaySeries:
     page = index_page(name)
     data = await _get(nse, INDEX_PATH, {"functionName": "getIndexChart", "index": name, "flag": "1D"}, page)
     return parse_chart(data, name, "index", page)
+
+
+async def index_snapshot(nse: NseClient, name: str) -> dict[str, Any]:
+    """The index page's own figures (`getIndexData`): last value, previous close and NSE's time stamp. After 15:30 the
+    last value is the closing value (NIFTY 50 30-Sep-2026: 22620.45 = the history endpoint's close)."""
+    page = index_page(name)
+    data = await _get(nse, INDEX_PATH, {"functionName": "getIndexData", "index": name}, page)
+    rows = data.get("data") if isinstance(data, dict) else None
+    if not rows:
+        raise NseError(f"NSE index data for {name} is empty")
+    r = rows[0]
+    return {"last": parse_num(r.get("last")), "previous_close": parse_num(r.get("previousClose")),
+            "time": r.get("timeVal"), "change_pct": parse_num(r.get("percChange"))}  # fmt: skip

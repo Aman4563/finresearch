@@ -42,14 +42,16 @@ def market():
 def test_stock_baseline_facts_from_recorded_nse_payloads():
     quote, sh, acts = market()
     facts = {f.metric: f for f in stock_facts("INFY", quote, sh, acts, date(2026, 9, 29))}
-    assert facts["last_price"].value == Decimal("1003.2") and facts["week52_low"].value == Decimal("982.4")
-    # market cap = issued shares x last price, equal to NSE's own totalMarketCap in the same payload
+    # recorded at 16:00 (after the close): the official close, which equals the last trade here
+    assert "last_price" not in facts and facts["close_price"].value == Decimal("1003.2")
+    assert facts["close_price"].quote == "closePrice 1003.2" and facts["week52_low"].value == Decimal("982.4")
+    # market cap = issued shares x official close, equal to NSE's own totalMarketCap in the same payload
     assert facts["market_cap"].value == Decimal("4071218805878.4") and facts[
         "promoter_holding"
     ].value == Decimal("13.82")
     ttm = facts["dividend_per_share_ttm"]
     assert ttm.value == 48 and "Interim Dividend - Rs 23" in ttm.quote and "Rs 22" not in ttm.quote  # 25 + 23
-    assert facts["last_price"].period == "2026-09-28 16:00 IST"
+    assert facts["close_price"].period == "2026-09-28 16:00 IST"
 
 
 def test_dividend_subjects_with_several_dividends_are_summed():

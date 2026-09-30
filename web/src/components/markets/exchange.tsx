@@ -8,6 +8,7 @@ import Link from "next/link";
 
 import { LiveStamp, useLive } from "@/components/live";
 import { Metric, inr } from "@/components/markets/common";
+import { displayPrice } from "@/components/markets/price-quality";
 import type { StockHit, StockListing, StockOverview } from "@/components/markets/types";
 import { Badge, Card, cx } from "@/components/ui";
 
@@ -43,26 +44,38 @@ export function ExchangeSwitch({ listing, current }: { listing: StockListing | n
   );
 }
 
+/** NSE vs BSE beyond this gap (percent) is shown as a data-quality warning (the price audit uses the same 0.5 %). */
+const CROSS_TOL_PCT = 0.5;
+
 /** Last price on NSE and on BSE side by side, and the gap between them. Refreshes every 30 s in market hours. */
 export function PriceComparison({ listing }: { listing: StockListing }) {
   const nse = useLive<LiveQuote>(listing.nse_symbol ? `/api/stocks/${encodeURIComponent(listing.nse_symbol)}/quote` : null,
     { session: "equity", everyMs: 30000 });
   const bse = useLive<LiveQuote>(listing.bse_key ? `/api/stocks/${encodeURIComponent(listing.bse_key)}/quote` : null,
     { session: "equity", everyMs: 30000 });
-  const n = nse.data?.quote.last_price != null ? Number(nse.data.quote.last_price) : null;
-  const b = bse.data?.quote.last_price != null ? Number(bse.data.quote.last_price) : null;
+  // like for like: last trade vs last trade in session, official close vs official close after it
+  const n = displayPrice(nse.data?.quote);
+  const b = displayPrice(bse.data?.quote);
+  const nl = nse.data?.quote.price_label, bl = bse.data?.quote.price_label;
+  const mixed = nl && bl && nse.data?.quote.price_kind !== bse.data?.quote.price_kind;
   const gap = n != null && b != null ? b - n : null;
   const gapPct = gap != null && n ? (gap / n) * 100 : null;
   return (
     <Card title="NSE vs BSE" icon={<ArrowLeftRight className="size-4" />}
-      help="The same shares trade on both exchanges. Prices usually sit within a few paise of each other; a wider gap means one side is thinly traded right now. Buy where the price is better after brokerage.">
+      help="The same shares trade on both exchanges. In session this compares last trades; after the close, each exchange's official close (computed separately on each exchange, so they can differ by a few paise or more). A wider gap means one side is thinly traded. Buy where the price is better after brokerage.">
       <div className="grid [&>*]:min-w-0 grid-cols-3 gap-2">
-        <Metric label="NSE" value={nse.error && !nse.data ? "—" : inr(n)} sub={nse.error && !nse.data ? "unavailable" : undefined} />
-        <Metric label="BSE" value={bse.error && !bse.data ? "—" : inr(b)} sub={bse.error && !bse.data ? "unavailable" : undefined} />
-        <Metric label="Spread" help="BSE's last price minus NSE's, in rupees and as a share of the NSE price."
+        <Metric label="NSE" value={nse.error && !nse.data ? "—" : inr(n)} sub={nse.error && !nse.data ? "unavailable" : nl?.toLowerCase()} />
+        <Metric label="BSE" value={bse.error && !bse.data ? "—" : inr(b)} sub={bse.error && !bse.data ? "unavailable" : bl?.toLowerCase()} />
+        <Metric label="Spread" help="BSE's price minus NSE's (same kind of price on both), in rupees and as a share of the NSE price."
           value={gap == null ? "—" : `${gap > 0 ? "+" : gap < 0 ? "−" : ""}${inr(Math.abs(gap))}`}
           sub={gapPct == null ? undefined : `${gapPct > 0 ? "+" : ""}${gapPct.toFixed(3)}%`} />
       </div>
+      {!mixed && gapPct != null && Math.abs(gapPct) > CROSS_TOL_PCT && (
+        <p className="mt-2 text-[11px] text-warn">
+          Sources disagree by more than {CROSS_TOL_PCT}%: NSE {inr(n)} ({nl?.toLowerCase() ?? "price"}) vs BSE {inr(b)} ({bl?.toLowerCase() ?? "price"}). Each exchange computes its own close; neither is picked for you.
+        </p>
+      )}
+      {mixed && <p className="mt-2 text-[11px] text-warn">Not like for like: one exchange shows its official close and the other its last trade.</p>}
       <LiveStamp session="equity" live={nse.live} status={nse.status} updatedAt={bse.updatedAt ?? nse.updatedAt} everyMs={30000}
         asOf={bse.data?.quote.as_of} asOfLabel="BSE as of" onRefresh={() => { nse.reload(); bse.reload(); }} className="mt-3" />
     </Card>

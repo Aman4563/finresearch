@@ -67,6 +67,7 @@ CSRF_HEADER = "x-finresearch"  # the dashboard sends `X-FinResearch: 1` on every
 TERMINAL = ("done", "failed", "blocked")
 RESEARCH_KINDS = ("ipo_report", "stock_report", "fund_report", "bond_report")
 RADAR_TTL_S = 300
+MCAP_SEARCH_SOURCE = "BSE scrip master: BSE's price × shares when the list was read (approximate; the stock page has the quote's)"
 CITE_RE = re.compile(r"\[C(\d+)\]")
 
 
@@ -931,8 +932,14 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
         listings, bse_error = await _listings(require_bse=False)
         hits = search_listings(listings, q)
         known = await asyncio.to_thread(_known_symbols)
+        fetched = bse_cache.get("at")
+        mcap_as_of = datetime.fromtimestamp(fetched, UTC).isoformat() if fetched else None
         return [{**r.model_dump(mode="json", exclude={"market_cap_cr"}),
                  "market_cap_cr": float(r.market_cap_cr) if r.market_cap_cr is not None else None,
+                 # BSE's scrip master figure (BSE's price x shares at the moment the list was read, kept up to a day):
+                 # a size indication for ranking, not the quote's market cap, which the stock page computes
+                 "market_cap_source": MCAP_SEARCH_SOURCE if r.market_cap_cr is not None else None,
+                 "market_cap_as_of": mcap_as_of if r.market_cap_cr is not None else None,
                  "slug": known.get(r.key, {}).get("slug"),
                  "bse_error": bse_error} for r in hits]  # fmt: skip
 

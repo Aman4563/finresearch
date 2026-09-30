@@ -94,14 +94,25 @@ def instrument_of(h: Any, isin_map: dict[str, Any] | None = None) -> tuple[str |
 
 
 def price_from_quote(q: Any, exch: str, listing: Any = None) -> PriceInfo:
-    price = q.last_price or q.close_price or q.previous_close
+    """The holding's price is the display price (fincalc.price): the last trade in session, the official close after
+    it, the previous close when there has been no trade."""
+    from finresearch.fincalc.price import price_view
+
+    v = price_view(q, exchange=exch)
+    price = v.price
     mcap = getattr(q, "market_cap", None)
     mcap_cr = (mcap / Decimal(10**7)) if mcap else None
     if mcap_cr is None and price and q.issued_shares:
         mcap_cr = price * q.issued_shares / Decimal(10**7)
     if mcap_cr is None and listing is not None:
         mcap_cr = listing.market_cap_cr
-    return PriceInfo(price, q.as_of.isoformat() if q.as_of else None, f"{exch} quote", q.industry, mcap_cr)
+    return PriceInfo(
+        price,
+        q.as_of.isoformat() if q.as_of else None,
+        f"{exch} quote: {v.label.lower()}",
+        q.industry,
+        mcap_cr,
+    )
 
 
 def fund_prices(funds: Sequence[Any], rows: list, err: str | None) -> dict[int, PriceInfo]:

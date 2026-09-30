@@ -1,0 +1,58 @@
+{
+ "CurrRate": {
+  "LTP": "421.60",
+  "Chg": "-8.65",
+  "PcChg": "-2.01",
+  "D_Cpricelink": "",
+  "IssueChgVal": "",
+  "IssueChgPC": ""
+ },
+ "Cmpname": {
+  "FullN": "Tata Motors Ltd",
+  "ShortN": "tmcv",
+  "SeriesN": "Tata Motors Ltd",
+  "SEOUrlEQ": "/stock-share-price/tata-motors-ltd/tmcv/544569/",
+  "SEOUrlDR": "/stock-share-price/future-options/derivatives/544569/",
+  "IsNotPropernFIT": "0",
+  "Category": "Listed",
+  "EquityScrips": "544569"
+ },
+ "Header": {
+  "Noticecnt": "2",
+  "PrevClose": "430.25",
+  "Open": "430.05",
+  "High": "438.10",
+  "Low": "418.85",
+  "LTP": "421.60",
+  "DisplayText": "",
+  "Category": "Listed",
+  "PRE_OPEN_NO_BIDS": null,
+  "PRE_OPEN_NO_I_PRICE": null,
+  "PRE_OPEN_I_PRICE": null,
+  "PRE_OPEN_I_PRICE_QTY": null,
+  "PCAS_NO_BIDS": null,
+  "PCAS_INDICATIVE_PRICE": null,
+  "PCAS_INDICATIVE_QTY": null,
+  "PERODIC_CALL_AUCTION": null,
+  "GSMURL": "",
+  "GSMText": "",
+  "Invit": "0",
+  "Ason": "30 Sep 26 | 16:00",
+  "NAVRate": "",
+  "NAVdttm": "",
+  "ASMText": "",
+  "SMSText": "",
+  "IRPText": "",
+  "ASMURL": "",
+  "SMSURL": "https://www.bseindia.com/attention_investors.aspx",
+  "IRPURL": "https://www.bseindia.com/markets/MarketInfo/DispNewNoticesCirculars.aspx?page=20230210-55",
+  "IDB_DisplayText": "",
+  "IsALF": "0",
+  "EMSText": "",
+  "EMSURL": ""
+ },
+ "CompResp": {
+  "compRes": null,
+  "texturl": null
+ }
+}

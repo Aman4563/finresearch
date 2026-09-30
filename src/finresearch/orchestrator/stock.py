@@ -66,7 +66,10 @@ async def fetch_market(symbol: str) -> dict[str, Any]:
     async with NseEquity() as eq:
         shareholding = await eq.shareholding(symbol)
         actions = await eq.corporate_actions(symbol)
-    summary = {"last_price": str(quote.last_price), "as_of": quote.as_of.isoformat() if quote.as_of else None,
+    from finresearch.fincalc.price import price_view
+
+    view = price_view(quote, exchange="NSE")
+    summary = {"last_price": str(quote.last_price), "price": str(view.price), "price_kind": view.kind, "as_of": quote.as_of.isoformat() if quote.as_of else None,
                "week52_high": str(quote.week52_high), "week52_low": str(quote.week52_low),
                "industry": quote.industry,
                "promoter_holding": str(shareholding[0].promoter_pct) if shareholding else None}  # fmt: skip
@@ -93,7 +96,11 @@ async def fetch_market_bse(code: str, *, equity: Any = None) -> dict[str, Any]:
             results = {"quarters": [], "errors": [f"{type(e).__name__}: {e}"[:200]]}
     latest = next((sh for sh in shareholding if sh.promoter_pct is not None), None)
     last_q = (results.get("quarters") or [None])[-1]
+    from finresearch.fincalc.price import price_view
+
+    view = price_view(quote, exchange="BSE")
     summary = {"exchange": "BSE", "bse_code": code, "isin": quote.isin, "last_price": str(quote.last_price),
+               "price": str(view.price), "price_kind": view.kind,
                "as_of": quote.as_of.isoformat() if quote.as_of else None,
                "week52_high": str(quote.week52_high), "week52_low": str(quote.week52_low),
                "market_cap": str(quote.market_cap) if quote.market_cap is not None else None,

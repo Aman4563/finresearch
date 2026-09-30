@@ -469,7 +469,15 @@ def parse_ipo_detail(
 
 
 class Quote(BaseModel):
-    """An equity quote from NSE's quote API (lastUpdateTime is NSE's IST timestamp)."""
+    """An equity quote from NSE's quote API (lastUpdateTime is NSE's IST timestamp).
+
+    Price fields keep NSE's meaning (see fincalc.price for the display rule and the scratch research notes it cites):
+    `last_price` is the last traded price (`tradeInfo.lastPrice`), which after the close is still the last trade of the
+    normal market unless the stock trades in the 15:40-16:00 closing session (then it equals the close: observed, not
+    documented); `close_price` is NSE's official
+    closing price (`metaData.closePrice`, 0 until published, so None here); `previous_close` is the previous session's
+    close as traded; `base_price` (`metaData.basePrice`) is that close adjusted for a corporate action with today's
+    ex-date (a dividend, split, bonus...), the reference NSE's own day change and price band use."""
 
     symbol: str
     company: str | None = None
@@ -477,6 +485,12 @@ class Quote(BaseModel):
     last_price: Decimal | None = None
     close_price: Decimal | None = None
     previous_close: Decimal | None = None
+    base_price: Decimal | None = None
+    indicative_close: Decimal | None = None
+    average_price: Decimal | None = None  # the day's VWAP so far
+    # NSE's tradeInfo.totalMarketCap in rupees (issued shares x closePrice after the close, checked 30-Sep-2026)
+    exchange_market_cap: Decimal | None = None
+    isin: str | None = None
     listing_date: date | None = None
     status: str | None = None
     as_of: datetime | None = None
@@ -497,7 +511,13 @@ class Quote(BaseModel):
         return cls(symbol=str(meta.get("symbol", "")).strip(), company=meta.get("companyName"),
                    open=parse_num(meta.get("open")), last_price=parse_num(trade.get("lastPrice")),
                    close_price=parse_num(meta.get("closePrice")) or None,
-                   previous_close=parse_num(meta.get("previousClose")), listing_date=parse_nse_date(listing),
+                   previous_close=parse_num(meta.get("previousClose")),
+                   base_price=parse_num(meta.get("basePrice") or trade.get("basePrice")) or None,
+                   indicative_close=parse_num(meta.get("indicativeClose")) or None,
+                   average_price=parse_num(meta.get("averagePrice")) or None,
+                   exchange_market_cap=parse_num(trade.get("totalMarketCap")) or None,
+                   isin=(meta.get("isinCode") or None),
+                   listing_date=parse_nse_date(listing),
                    status=sec.get("secStatus"), as_of=parse_nse_timestamp(e.get("lastUpdateTime")),
                    week52_high=parse_num(price.get("yearHigh")), week52_low=parse_num(price.get("yearLow")),
                    issued_shares=parse_num(trade.get("issuedSize")),

@@ -37,6 +37,16 @@ def _num(v) -> float | None:
     return None if v is None else round(float(v), 4)
 
 
+def post_close(ticks) -> Any:
+    """The official close the exchange's chart publishes after the session: the last sample stamped after 15:30:59 IST
+    (the candles ignore it), or None while the session is on or when the chart has none."""
+    from datetime import time
+
+    edge = time(15, 30, 59)
+    after = [t for t in ticks or [] if t.at.time() > edge]
+    return after[-1].price if after else None
+
+
 def candles_json(candles) -> list[dict[str, Any]]:
     return [{"t": c.start.isoformat(), "o": _num(c.open), "h": _num(c.high), "l": _num(c.low), "c": _num(c.close),
              "n": c.samples, **({"v": _num(c.volume)} if c.volume is not None else {}),
@@ -152,7 +162,14 @@ def add_intraday_routes(app: FastAPI, *, fetch=None, clock=None) -> None:
         ticks = [tk for _, _, ts, _ in sessions for tk in ts]
         candles = aggregate(ticks, interval, live=live and today_day is not None)
         _, prev_close, last_ticks, _ = sessions[-1]
-        last = candles[-1].close if candles else None
+        last_traded = candles[-1].close if candles else None
+        # after the session NSE's chart carries a point after 15:30 holding the official close (a stock's closePrice,
+        # an index's closing value). Candles stop at 15:30, so without it the chart's "last" would be the last trade
+        # (TMCV 30-Sep-2026: 420.00 vs the official 421.65). BSE's chart does not: after 15:30 it repeats the last
+        # trade (TENNIND 30-Sep-2026: 506.50 vs BSE's close 508.15), so a BSE series ends on its last trade.
+        close_mark = post_close(last_ticks) if not live and ex == "NSE" else None
+        last = close_mark if close_mark is not None else last_traded
+        last_kind = "official_close" if close_mark is not None else "last_traded"
         as_of = last_ticks[-1].at if last_ticks else None
         fetched = got["fetched_at"] if got else None
         delay = round((fetched - as_of).total_seconds()) if fetched and as_of and live else None
@@ -171,7 +188,9 @@ def add_intraday_routes(app: FastAPI, *, fetch=None, clock=None) -> None:
             "sessions": [{"day": d.isoformat(), "prev_close": _num(pc), "samples": len(ts), "complete": c}
                          for d, pc, ts, c in sessions],
             "candles": candles_json(candles),
-            "prev_close": _num(prev_close), "last": _num(last),
+            "prev_close": _num(prev_close), "last": _num(last), "last_kind": last_kind,
+            "last_label": "Close (official)" if last_kind == "official_close" else "Last traded",
+            "last_traded": _num(last_traded), "official_close": _num(close_mark),
             "change": _num(change), "change_pct": _num(change / prev_close * 100) if change is not None else None,
             "as_of": as_of.isoformat() if as_of else None,
             "fetched_at": fetched.isoformat() if fetched else None,
