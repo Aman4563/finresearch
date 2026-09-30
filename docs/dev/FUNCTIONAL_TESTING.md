@@ -187,3 +187,19 @@ These are dated entries for bugs we reproduced, what caused them, and how they a
 ### 2026-09-30: stuck background waiters matched their own command line
 - **Seen:** three `while pgrep -f "ipo harvest"` loops kept running for 3.5 h after the harvest ended, because each loop's own command line contains "ipo harvest".
 - **Now:** they were stopped. Wait on a PID (`wait`/`kill -0 <pid>`) or a result condition, never on `pgrep -f` of a string that appears in the waiter itself.
+
+### 2026-10-01: IPO sizing told sNII applicants to bid one lot (#141)
+- **Seen:** the IPO signal capped sizing at 1 lot for every category. An sNII bid must exceed ₹2 lakh (Orient: 14 lots = ₹2,09,440). When retail is below 1x, every bid is filled in full, not a lottery.
+- **Now:** sizing and EV are per category; SKIP if capital can't meet the category minimum. Regression tests fail on the old code.
+
+### 2026-10-01: forecasts that could be scored with hindsight (#141)
+- **Seen:** a forecast made after the listing-day open (a report finishing on listing day) was scored; a NIFTYBEES split or a demerger in the window was scored on unadjusted prices.
+- **Now:** such forecasts are voided with a reason.
+
+### 2026-10-01: fund-file weights 100x off (#150)
+- **Seen:** mixed '%' text and plain numbers in a weight column were scaled inconsistently. The shipped test asserted 0.40 for '40.00%' in a percent column.
+- **Now:** percent text is converted once, and a '%'-text GRAND TOTAL is a percent total.
+
+### 2026-10-01: an experiment wrote to the live database
+- **Seen:** an agent started a test API without FINRESEARCH_DATABASE_URL, so it used the live DB and logged 4 forecast rows.
+- **Now:** the rows were reviewed and kept (valid, pre-listing). Rule: every non-live server must point at a test DB (the brief now says so).

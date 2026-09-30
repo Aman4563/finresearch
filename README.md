@@ -94,6 +94,7 @@ They work only through the MCP tools, run as a resumable pipeline that schedules
 | **v0.11.0** | Live market-hours refresh, FII/DII split, latest results, IPO lot sizes, in-app PDF viewer, interactive reports | ✅ Released |
 | **v0.12.0** | Buy/sell signals for every asset class with a forecast ledger and calibration, accuracy checks, robust runs, BSE stocks, intraday charts and time frames | ✅ Released |
 | **v0.13.0** | Portfolio import and tax engine, rules and phone alerts for every asset, UI review fixes, correct official closing prices and data reconciliation | ✅ Released |
+| **v0.14.0** | Broker connections (read-only), portfolio analytics and benchmark, household wealth and goals, fund look-through, daily brief, audited predictions with shadow experiments | ✅ Released |
 
 ## Requirements
 
