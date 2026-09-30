@@ -201,3 +201,71 @@ def expense_drag(amount: Num, years: Num, gross_return: Num, ter_high: Num, ter_
         ctx.prec = 28
         return a * ((1 + g - lo) ** int(y) - (1 + g - hi) ** int(y)) if y == int(y) else a * (
             Decimal(float(1 + g - lo) ** float(y)) - Decimal(float(1 + g - hi) ** float(y)))  # fmt: skip
+
+
+# --------------------------------------------------------------------------- consistency against category peers
+# Probabilities and ranks below are plain floats (0..1): they are statistics about returns, not money amounts.
+
+
+def wilson_interval(successes: float, n: float, z: float = 1.96) -> tuple[float, float]:
+    """Wilson score interval for a proportion (95 % by default). Centre (p + z²/2n) / (1 + z²/n), half-width
+    z·√(p(1-p)/n + z²/4n²) / (1 + z²/n). `n` may be fractional (an effective sample size). Example: 7 of 10 gives
+    about 0.397-0.892 (docs/dev/RESEARCH_ROADMAP.md §C.10)."""
+    if n <= 0:
+        raise ValueError("n must be positive")
+    if not 0 <= successes <= n:
+        raise ValueError("successes must be between 0 and n")
+    p, z2 = successes / n, z * z
+    centre = (p + z2 / (2 * n)) / (1 + z2 / n)
+    half = z * (p * (1 - p) / n + z2 / (4 * n * n)) ** 0.5 / (1 + z2 / n)
+    return max(0.0, centre - half), min(1.0, centre + half)
+
+
+def effective_windows(count: int, step_days: float, window_days: float) -> float:
+    """Roughly how many independent observations `count` overlapping windows hold: 1 + (count - 1) x step/window.
+    Quarterly 3-year windows overlap by 11/12, so 13 of them are worth about 2 independent 3-year periods."""
+    if count <= 0:
+        return 0.0
+    return 1 + (count - 1) * min(1.0, step_days / window_days)
+
+
+def percentile_rank(values: Sequence[float], x: float) -> float:
+    """Share of `values` below `x`, counting ties as half (0 = worst, 1 = best when higher is better)."""
+    if not values:
+        raise ValueError("no values")
+    below = sum(1 for v in values if v < x)
+    ties = sum(1 for v in values if v == x)
+    return (below + 0.5 * ties) / len(values)
+
+
+def median(values: Sequence[float]) -> float:
+    if not values:
+        raise ValueError("no values")
+    s = sorted(values)
+    n = len(s)
+    return s[n // 2] if n % 2 else (s[n // 2 - 1] + s[n // 2]) / 2
+
+
+def downside_capture(fund: Sequence[float], benchmark: Sequence[float]) -> float | None:
+    """Sum of the fund's period returns over the sum of the benchmark's, in the periods the benchmark fell. Below 1
+    means the fund fell less than the benchmark in its down periods. None when the benchmark never fell."""
+    if len(fund) != len(benchmark):
+        raise ValueError("series must have the same length")
+    pairs = [(f, b) for f, b in zip(fund, benchmark, strict=True) if b < 0]
+    if not pairs:
+        return None
+    return sum(f for f, _ in pairs) / sum(b for _, b in pairs)
+
+
+def r_squared(x: Sequence[float], y: Sequence[float]) -> float | None:
+    """Square of the Pearson correlation between two return series: the share of y's variation that moves with x.
+    None if either series is constant."""
+    if len(x) != len(y) or len(x) < 3:
+        raise ValueError("need two series of the same length, at least 3 points")
+    mx, my = sum(x) / len(x), sum(y) / len(y)
+    sxy = sum((a - mx) * (b - my) for a, b in zip(x, y, strict=True))
+    sxx = sum((a - mx) ** 2 for a in x)
+    syy = sum((b - my) ** 2 for b in y)
+    if sxx == 0 or syy == 0:
+        return None
+    return sxy * sxy / (sxx * syy)

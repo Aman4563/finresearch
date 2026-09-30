@@ -9,8 +9,10 @@ import { BarsChart, TimeSeriesChart, shortDate } from "@/components/charts";
 import { ensureFund, startResearch } from "@/components/markets/actions";
 import { ReturnHistogram } from "@/components/markets/charts";
 import { Metric, type Period, PeriodChart, pctOf, toneOf } from "@/components/markets/common";
+import { FundConsistencyCard } from "@/components/markets/signal-charts";
 import { SipCalculator } from "@/components/markets/sip";
 import type { FundAnalytics, FundPeers } from "@/components/markets/types";
+import { SignalCard } from "@/components/signal";
 import { Button, Callout, Card, EmptyState, ErrorNote, Field, PageHeader, Segmented, Skeleton, Stat, cx, inputClass } from "@/components/ui";
 import { day, useApi } from "@/lib/api";
 
@@ -105,6 +107,11 @@ export default function FundDetail() {
               ))}
             </>
           )}
+        </div>
+
+        <div className="grid [&>*]:min-w-0 gap-5 lg:grid-cols-2">
+          <SignalCard asset="fund" instrument={code} title="Invest, hold or switch?" />
+          <FundConsistencyCard code={code} />
         </div>
 
         <Card title="NAV history" icon={<ChartLine className="size-4" />} subtitle="Daily NAV from AMFI (growth option: dividends stay invested)">

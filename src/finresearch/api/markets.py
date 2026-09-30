@@ -585,6 +585,20 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
                                        "percentile": round(_pct_rank(vals, mine), 4) if mine is not None else None}  # fmt: skip
         return out
 
+    @app.get("/api/funds/{code}/consistency")
+    async def fund_consistency(code: str) -> dict[str, Any]:
+        """The fund signal's evidence: the scheme's 1- and 3-year returns at each quarter end against its category
+        (median, quartiles, percentile), downside capture, quarter-end drawdown, R², TER and category fit inputs.
+        Slow the first time (one AMFI all-scheme NAV snapshot per quarter end, kept on disk afterwards)."""
+        from finresearch.signals.fund import analyse
+
+        try:
+            return await analyse(code)
+        except LookupError as e:
+            raise HTTPException(404, str(e)) from e
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from e
+
     # ------------------------------------------------------------------ listed bonds
     @app.get("/api/bonds/{isin}/analytics")
     async def bond_analytics(isin: str, freq: int | None = None, basis: str = "dirty",
@@ -645,7 +659,7 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
             }
         y = b.ytm(clean, s_day, bond.maturity, coupon, freq, face)
         d = b.duration(y, s_day, bond.maturity, coupon, freq, face)
-        after = b.after_tax_ytm(clean, s_day, bond.maturity, coupon, freq, tax_rate, face=face)
+        after = b.after_tax_ytm(clean, s_day, bond.maturity, coupon, freq, tax_rate, face=face, accrued=ai)
         flows = b.cash_flows(s_day, bond.maturity, coupon, freq, face)
         per = face * coupon / freq
         yf = float(y)
@@ -679,8 +693,9 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
                                 "received": _f(total_coupons + face, 2), "paid_today": _f(dirty, 2)},
                      "curve": curve, "sensitivity": sensitivity,
                      "conventions": "accrued interest Actual/Actual (SEBI); discounting by coupon periods; after-tax "
-                                    "yield taxes each coupon at the slab rate plus 4% cess and treats the gap between "
-                                    "face value and the clean price as a capital gain or loss at redemption"}  # fmt: skip
+                                    "yield pays the dirty price, taxes each coupon at the slab rate plus 4% cess and "
+                                    "treats the gap between face value and the clean price as a capital gain or loss "
+                                    "at redemption"}  # fmt: skip
         return {**head, "analytics": analytics, "error": None}
 
 

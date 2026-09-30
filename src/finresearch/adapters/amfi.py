@@ -7,11 +7,17 @@
 AMFI does not publish its AMC codes, so they are discovered once by asking for a single day per code and reading
 the AMC heading, then cached. A one-day history request for all AMCs gives every scheme's NAV on that day, which is
 how category-peer returns are computed without downloading each peer's full history.
+
+* TER: the total expense ratio of every scheme, regular and direct plan, per day of a month, from AMFI's TER page
+  (https://www.amfiindia.com/ter-of-mf-schemes), downloaded as one Excel file per month. SEBI requires AMCs to
+  publish TER daily and a direct plan's TER to be lower than its regular plan's (Master Circular for Mutual Funds).
 """
 
 from __future__ import annotations
 
+import io
 import json
+import re
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
@@ -22,6 +28,8 @@ from finresearch.adapters.http import PoliteClient
 NAV_ALL_URL = "https://www.amfiindia.com/spages/NAVAll.txt"
 HISTORY_URL = "https://portal.amfiindia.com/DownloadNAVHistoryReport_Po.aspx"
 MAX_AMC_CODE = 90
+TER_URL = "https://www.amfiindia.com/api/populate-te-rdata-revised"
+TER_PAGE = "https://www.amfiindia.com/ter-of-mf-schemes"
 
 
 class AmfiError(RuntimeError):
@@ -104,6 +112,76 @@ def parse_nav_history(text: str) -> list[SchemeNav]:
     return _parse(text, history=True)
 
 
+@dataclass(frozen=True)
+class SchemeTer:
+    """A scheme's latest total expense ratio in a month's TER file, in percent a year (1.03 = 1.03 %)."""
+
+    name: str
+    category: str | None
+    day: date
+    regular: Decimal | None
+    direct: Decimal | None
+
+
+def ter_key(name: str) -> str:
+    """Scheme names as a join key: lower case, punctuation and spacing folded ('HDFC Large Cap Fund' in the TER
+    file matches the NAV file's scheme name)."""
+    return re.sub(r"[^a-z0-9]+", " ", name.lower()).strip()
+
+
+def parse_ter_xlsx(content: bytes) -> dict[str, SchemeTer]:
+    """AMFI's monthly TER Excel file -> the latest row per scheme, keyed by `ter_key(name)`. Columns are found by
+    their headings ('Scheme Name', 'Scheme Category', 'TER Date', 'Regular Plan - Total TER (%)', 'Direct Plan -
+    Total TER (%)')."""
+    from openpyxl import load_workbook
+
+    wb = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+    try:
+        rows = wb.worksheets[0].iter_rows(values_only=True)
+        head = [str(x or "").strip().lower() for x in next(rows, ())]
+
+        def col(*words: str) -> int:
+            for i, h in enumerate(head):
+                if all(w in h for w in words):
+                    return i
+            raise AmfiError(f"TER file has no column with {words}; headings: {head}")
+
+        c_name, c_cat, c_day = col("scheme name"), col("scheme category"), col("ter date")
+        c_reg, c_dir = col("regular", "total ter"), col("direct", "total ter")
+        out: dict[str, SchemeTer] = {}
+        for r in rows:
+            if not r or len(r) <= max(c_name, c_reg, c_dir) or not r[c_name]:
+                continue
+            raw_day = r[c_day]
+            day_ = (
+                raw_day.date()
+                if isinstance(raw_day, datetime)
+                else raw_day
+                if isinstance(raw_day, date)
+                else None
+            )
+            if day_ is None:
+                continue
+            key = ter_key(str(r[c_name]))
+            if key in out and out[key].day >= day_:
+                continue
+            out[key] = SchemeTer(name=str(r[c_name]).strip(), category=(str(r[c_cat]).strip() if r[c_cat] else None),
+                                 day=day_, regular=_ter(r[c_reg]), direct=_ter(r[c_dir]))  # fmt: skip
+        return out
+    finally:
+        wb.close()
+
+
+def _ter(v: object) -> Decimal | None:
+    if v is None or v == "":
+        return None
+    try:
+        d = Decimal(str(v).strip())
+    except InvalidOperation:
+        return None
+    return d if d >= 0 else None
+
+
 def search_schemes(schemes: list[SchemeNav], query: str, limit: int = 20) -> list[SchemeNav]:
     """Code match first, then names containing every word; direct-growth variants first."""
     q = query.strip().lower()
@@ -143,6 +221,21 @@ class AmfiClient:
         if amc_code is not None:
             params["mf"] = str(amc_code)
         return parse_nav_history(await self._text(HISTORY_URL, params))
+
+    async def ter(self, month: date) -> dict[str, SchemeTer]:
+        """Every scheme's latest TER in `month` (AMFI's Excel download; cached on disk for a day)."""
+        params = {
+            "MF_ID": "All",
+            "Month": month.strftime("%m-%Y"),
+            "strCat": "-1",
+            "strType": "-1",
+            "excel": "true",
+        }
+        resp = await self.http.get(TER_URL, params=params, cache_ttl=86400,
+                                   cache_if=lambda f: f.content[:2] == b"PK")  # fmt: skip
+        if not resp.ok or resp.content[:2] != b"PK":
+            raise AmfiError(f"AMFI TER download failed (HTTP {resp.status}) for {month:%m-%Y}")
+        return parse_ter_xlsx(resp.content)
 
     async def navs_on(self, day: date, lookback_days: int = 7) -> dict[str, SchemeNav]:
         """Every scheme's latest NAV on or before `day` (a holiday falls back to the previous NAV date)."""
