@@ -13,14 +13,19 @@ import type { Signal } from "@/components/signal";
 import { Badge, Button, Callout, Card, EmptyState, ErrorNote, Field, InfoTip, Modal, PageHeader, Segmented, SkeletonRows, Stat, Table, cx, inputClass } from "@/components/ui";
 import { API_URL, api, day, useApi, when } from "@/lib/api";
 
+import { ConcentrationAnalytics } from "./concentration-analytics";
+import { CostsAnalytics } from "./costs-analytics";
 import { ImportPanel } from "./import-panel";
+import { PerformanceAnalytics } from "./performance-analytics";
+import { RiskAnalytics } from "./risk-analytics";
 import { TaxPanel } from "./tax-panel";
 import { ASSET_CLASSES, type Holding, type HoldingDetail, type Snapshot, TAX_CLASS_LABEL, type TaxClass, inr, pctx, signed, units } from "./types";
 
-type Tab = "holdings" | "allocation" | "pnl" | "dividends" | "tax" | "import";
+type Tab = "holdings" | "allocation" | "performance" | "risk" | "concentration" | "costs" | "pnl" | "dividends" | "tax" | "import";
 const TABS: { value: Tab; label: string }[] = [
-  { value: "holdings", label: "Holdings" }, { value: "allocation", label: "Allocation" }, { value: "pnl", label: "P&L" },
-  { value: "dividends", label: "Dividends" }, { value: "tax", label: "Tax" }, { value: "import", label: "Import" },
+  { value: "holdings", label: "Holdings" }, { value: "allocation", label: "Allocation" }, { value: "performance", label: "Performance" },
+  { value: "risk", label: "Risk" }, { value: "concentration", label: "Concentration" }, { value: "costs", label: "Costs" },
+  { value: "pnl", label: "P&L" }, { value: "dividends", label: "Dividends" }, { value: "tax", label: "Tax" }, { value: "import", label: "Import" },
 ];
 const POSITIVE = new Set(["BUY", "ACCUMULATE"]);
 const NEGATIVE = new Set(["SELL", "REDUCE", "AVOID"]);
@@ -305,7 +310,7 @@ function Pnl({ snap }: { snap: Snapshot }) {
   if (tl.length < 2) return <EmptyState title="Not enough history yet">Import a statement or tradebook with at least two months of activity.</EmptyState>;
   return (
     <div className="grid gap-4 lg:grid-cols-2">
-      <Card title="Net invested over time" help="Cumulative purchases minus sale proceeds at each month end. Past market values are not stored, so there is no value line.">
+      <Card title="Net invested over time" help="Cumulative purchases minus sale proceeds at each month end. The daily value line is on the Performance tab.">
         <TimeSeriesChart data={tl} series={[{ key: "invested", label: "Net invested", color: "var(--chart-1)" }]} format={fmtCompactINR} ranges={["1Y", "3Y", "ALL"]} defaultRange="ALL" showChange={false} />
       </Card>
       <Card title="Realised P&L and dividends (cumulative)" help="Gains booked on sales (FIFO) and dividends received, added up month by month. Two series on one ₹ axis.">
@@ -447,6 +452,10 @@ export function PortfolioPage() {
             <div key={tab} className="animate-fade-up">
               {tab === "holdings" && <Holdings snap={data} onChanged={changed} updating={updating} />}
               {tab === "allocation" && <Allocation snap={data} onChanged={changed} />}
+              {tab === "performance" && <PerformanceAnalytics refresh={refresh} />}
+              {tab === "risk" && <RiskAnalytics refresh={refresh} />}
+              {tab === "concentration" && <ConcentrationAnalytics refresh={refresh} />}
+              {tab === "costs" && <CostsAnalytics refresh={refresh} />}
               {tab === "pnl" && <Pnl snap={data} />}
               {tab === "dividends" && <Dividends snap={data} />}
               {tab === "tax" && <TaxPanel refresh={refresh} />}
