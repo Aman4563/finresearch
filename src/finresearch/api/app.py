@@ -1392,6 +1392,9 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
     from finresearch.api.portfolio import add_portfolio_routes
 
     add_portfolio_routes(app, scheme_rows=_scheme_rows)
+    from finresearch.api.portfolio_analytics import add_portfolio_analytics_routes
+
+    add_portfolio_analytics_routes(app, scheme_rows=_scheme_rows)
 
     # ------------------------------------------------------------------ live data while the market is open
     from finresearch.api.live import add_live_routes
