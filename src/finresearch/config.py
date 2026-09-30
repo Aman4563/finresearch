@@ -76,6 +76,9 @@ class Settings(BaseSettings):
     reports_dir: Path = (
         REPO_ROOT / "data" / "reports"
     )  # rendered research packs (<company>/run-<id>/...)  # raw/<sha[:2]>/<sha>.pdf and derived/<sha>/...
+    # personal portfolio imports (CAS PDFs as uploaded, still password-protected; broker CSVs). Gitignored like all
+    # of data/; never sent to an LLM.
+    portfolio_dir: Path = REPO_ROOT / "data" / "portfolio"
 
 
 @lru_cache

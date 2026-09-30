@@ -33,6 +33,7 @@ dependencies = [
     "numpy>=2.0",
     "fastapi>=0.141.1",
     "uvicorn>=0.30",
+    "casparser>=1.4.1",
 ]
 
 [project.urls]

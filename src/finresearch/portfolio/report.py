@@ -1,0 +1,283 @@
+"""The portfolio as the API shows it: holdings with P&L and XIRR, allocation, P&L over time, dividends, and the tax
+view. Reads the database, takes prices from valuation.fetch_prices; all arithmetic is fincalc's or lots'."""
+
+from __future__ import annotations
+
+from collections import defaultdict
+from dataclasses import dataclass
+from datetime import date
+from decimal import Decimal
+from typing import Any
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from finresearch.db.models import PortfolioDisposal, PortfolioHolding, PortfolioLot, PortfolioTxn
+from finresearch.fincalc.dates import fiscal_year
+from finresearch.fincalc.tax import RULES, VERIFY_NOTE, fy_label
+from finresearch.portfolio.tax import (
+    DisposalRow,
+    HoldingTax,
+    OpenLot,
+    auto_tax_class,
+    evaluate,
+    fy_summary,
+    harvest,
+    is_listed,
+)
+from finresearch.portfolio.valuation import (
+    CAP_LIST,
+    PriceInfo,
+    asset_label,
+    cap_bucket,
+    cash_flows,
+    fund_cap_bucket,
+    xirr_or_reason,
+)
+
+ZERO = Decimal(0)
+PRIVACY = ("Your portfolio stays on this machine: in the local database and data/portfolio/ (gitignored). It is never "
+           "sent to an LLM, and CAS passwords are never stored.")  # fmt: skip
+
+
+@dataclass
+class Loaded:
+    holdings: list[PortfolioHolding]
+    txns: dict[int, list[PortfolioTxn]]
+    lots: dict[int, list[PortfolioLot]]
+    disposals: dict[int, list[PortfolioDisposal]]
+
+
+def load(s: Session) -> Loaded:
+    hs = list(s.scalars(select(PortfolioHolding).order_by(PortfolioHolding.name, PortfolioHolding.account)))
+    txns: dict[int, list[PortfolioTxn]] = defaultdict(list)
+    for t in s.scalars(select(PortfolioTxn).order_by(PortfolioTxn.day, PortfolioTxn.id)):
+        txns[t.holding_id].append(t)
+    lots: dict[int, list[PortfolioLot]] = defaultdict(list)
+    for lot in s.scalars(select(PortfolioLot).order_by(PortfolioLot.id)):
+        lots[lot.holding_id].append(lot)
+    disp: dict[int, list[PortfolioDisposal]] = defaultdict(list)
+    for d in s.scalars(select(PortfolioDisposal).order_by(PortfolioDisposal.sold, PortfolioDisposal.id)):
+        disp[d.holding_id].append(d)
+    return Loaded(hs, txns, lots, disp)
+
+
+def tax_class_of(h: PortfolioHolding, category: str | None = None) -> tuple[str, str, str]:
+    """(effective class, automatic class, why the automatic class)."""
+    auto, why = auto_tax_class(h.asset_type, h.name, category or h.category, (h.meta or {}).get("cas_type"),
+                               h.nse_symbol)  # fmt: skip
+    return (h.tax_class or auto), auto, why
+
+
+def holding_tax(h: PortfolioHolding, category: str | None = None) -> HoldingTax:
+    eff, _, _ = tax_class_of(h, category)
+    return HoldingTax(h.id, h.name, h.account, h.isin, eff, is_listed(h.asset_type, h.name, h.meta), h.fmv_2018,
+                      bool((h.meta or {}).get("sgb_original_subscriber")))  # fmt: skip
+
+
+def _f(x: Decimal | None, nd: int = 2) -> float | None:
+    return None if x is None else round(float(x), nd)
+
+
+def _signal(h: PortfolioHolding, price: PriceInfo | None) -> dict[str, str] | None:
+    if h.asset_type == "stock" and (h.nse_symbol or h.bse_code):
+        key = h.nse_symbol or f"BSE:{h.bse_code}"
+        return {"asset": "stock", "instrument": key, "href": f"/stocks/{key}"}
+    code = h.scheme_code or (price.scheme_code if price else None)
+    if h.asset_type == "mf" and code:
+        return {"asset": "fund", "instrument": code, "href": f"/funds/{code}"}
+    return None
+
+
+def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str, Any]:
+    data = load(s)
+    rows, all_flows = [], []
+    alloc: dict[str, dict[str, Decimal]] = {"asset": defaultdict(Decimal), "sector": defaultdict(Decimal),
+                                            "cap": defaultdict(Decimal)}  # fmt: skip
+    tot = defaultdict(Decimal)
+    unknown_cost = unpriced = excluded = 0
+    for h in data.holdings:
+        p = prices.get(h.id) or PriceInfo(error="not priced")
+        category = p.category or h.category
+        eff, auto, why = tax_class_of(h, category)
+        open_lots = [lot for lot in data.lots.get(h.id, []) if lot.open_quantity > Decimal("0.0005")]
+        units = sum((lot.open_quantity for lot in open_lots), ZERO)
+        known = all(lot.cost_per_unit is not None for lot in open_lots)
+        cost = sum(
+            (lot.cost_per_unit * lot.open_quantity for lot in open_lots if lot.cost_per_unit is not None),
+            ZERO,
+        )
+        value = p.price * units if p.price is not None and units > 0 else None
+        realised = sum(
+            (d.proceeds - d.cost for d in data.disposals.get(h.id, []) if d.cost is not None), ZERO
+        )
+        divs = sum(
+            (abs(t.amount) for t in data.txns.get(h.id, []) if t.kind == "dividend" and t.amount), ZERO
+        )
+        flows, why_not = cash_flows(data.txns.get(h.id, []), value, today)
+        x, x_reason = xirr_or_reason(flows, today) if why_not is None else (None, why_not)
+        if why_not is None and (value is not None or units <= 0):  # an unpriced open holding would skew it
+            all_flows += flows[:-1] if value else flows
+            tot["xirr_value"] += value or ZERO
+        elif units > 0 or why_not is not None:
+            excluded += 1
+        unreal = (value - cost) if value is not None and known and units > 0 else None
+        if units > 0:
+            unknown_cost += 0 if known else 1
+            unpriced += 1 if value is None else 0
+        if value is not None:
+            tot["value"] += value
+            label = asset_label(h.asset_type, eff)
+            alloc["asset"][label] += value
+            sector = h.sector or (p.industry if h.asset_type == "stock" else None)
+            alloc["sector"][
+                sector or ("Funds (no look-through)" if h.asset_type == "mf" else "Unclassified")
+            ] += value
+            bucket = cap_bucket(p.market_cap_cr) if h.asset_type == "stock" and eff == "equity" else (
+                fund_cap_bucket(category, eff) if h.asset_type == "mf" else "Not equity")  # fmt: skip
+            alloc["cap"][bucket] += value
+        if known:
+            tot["cost"] += cost
+        tot["realised"] += realised
+        tot["dividends"] += divs
+        if unreal is not None:
+            tot["unrealised"] += unreal
+        rows.append({
+            "id": h.id, "name": h.name, "account": h.account, "asset_type": h.asset_type, "ikey": h.ikey,
+            "isin": h.isin, "nse_symbol": h.nse_symbol, "bse_code": h.bse_code,
+            "scheme_code": h.scheme_code or p.scheme_code, "category": category, "sector": h.sector or p.industry,
+            "tax_class": eff, "tax_class_auto": auto, "tax_class_why": why, "tax_class_override": h.tax_class,
+            "listed": is_listed(h.asset_type, h.name, h.meta), "fmv_2018": _f(h.fmv_2018, 4),
+            "sgb_original_subscriber": bool((h.meta or {}).get("sgb_original_subscriber")),
+            "units": _f(units, 4), "cost": _f(cost) if known else None, "cost_known": known,
+            "avg_cost": _f(cost / units, 4) if known and units > 0 else None,
+            "price": _f(p.price, 4), "price_as_of": p.as_of, "price_source": p.source, "price_error": p.error,
+            "value": _f(value), "unrealised": _f(unreal),
+            "unrealised_pct": _f(unreal / cost * 100) if unreal is not None and cost > 0 else None,
+            "realised": _f(realised), "dividends": _f(divs), "xirr": x, "xirr_reason": x_reason,
+            "market_cap_cr": _f(p.market_cap_cr), "cap_bucket": (cap_bucket(p.market_cap_cr) if h.asset_type == "stock" and eff == "equity"
+                                                                  else "Not equity" if h.asset_type == "stock"
+                                                                  else fund_cap_bucket(category, eff)),
+            "lots": len(open_lots), "closed": units <= 0, "signal": _signal(h, p),
+            "warnings": (h.meta or {}).get("lot_warnings") or [],
+        })  # fmt: skip
+    ox, ox_reason = xirr_or_reason(
+        [*all_flows, (today, tot["xirr_value"])] if tot["xirr_value"] else all_flows, today
+    )
+    if excluded and ox is not None:
+        ox_reason = f"excludes {excluded} holding(s) without a known cost or a price"
+    tl = timeline(data)
+    complete = unpriced == 0 and unknown_cost == 0 and tot["value"] > 0
+    return {
+        "as_of": today.isoformat(), "holdings": rows, "complete": complete,
+        "invested": tl[-1]["invested"] if tl else 0.0,
+        "summary": {"value": _f(tot["value"]), "cost": _f(tot["cost"]), "unrealised": _f(tot["unrealised"]),
+                    "realised": _f(tot["realised"]), "dividends": _f(tot["dividends"]), "xirr": ox,
+                    "xirr_reason": ox_reason, "holdings": sum(1 for r in rows if not r["closed"]),
+                    "unknown_cost": unknown_cost, "unpriced": unpriced},
+        "allocation": {k: [{"label": lab, "value": _f(v)} for lab, v in sorted(d.items(), key=lambda kv: -kv[1])]
+                       for k, d in alloc.items()},
+        "cap_list": {k: str(v) for k, v in CAP_LIST.items()},
+        "timeline": tl,
+        "dividends": dividends(data),
+        "privacy": PRIVACY,
+    }  # fmt: skip
+
+
+def timeline(data: Loaded) -> list[dict[str, Any]]:
+    """Month-end cumulative net invested (buys - sales proceeds), realised P&L and dividends. Past market values are
+    not stored, so there is no value line."""
+    by_month: dict[str, dict[str, Decimal]] = defaultdict(lambda: defaultdict(Decimal))
+    for h in data.holdings:
+        for t in data.txns.get(h.id, []):
+            m = t.day.strftime("%Y-%m")
+            gross = abs(t.amount) if t.amount is not None else ((t.quantity or 0) * (t.price or 0))
+            if t.kind == "buy" and not (t.meta or {}).get("reinvest"):
+                by_month[m]["invested"] += gross + (t.charges or 0)
+            elif t.kind == "sell":
+                by_month[m]["invested"] -= gross - (t.charges or 0)
+            elif t.kind == "dividend" and t.amount:
+                by_month[m]["dividends"] += abs(t.amount)
+        for d in data.disposals.get(h.id, []):
+            if d.cost is not None:
+                by_month[d.sold.strftime("%Y-%m")]["realised"] += d.proceeds - d.cost
+    out, acc = [], defaultdict(Decimal)
+    for m in sorted(by_month):
+        for k in ("invested", "realised", "dividends"):
+            acc[k] += by_month[m][k]
+        out.append({"date": f"{m}-01", "invested": _f(acc["invested"]), "realised": _f(acc["realised"]),
+                    "dividends": _f(acc["dividends"])})  # fmt: skip
+    return out
+
+
+def dividends(data: Loaded) -> dict[str, Any]:
+    names = {h.id: h.name for h in data.holdings}
+    items = [{"day": t.day.isoformat(), "holding_id": t.holding_id, "name": names.get(t.holding_id), "amount": _f(abs(t.amount)),
+              "reinvested": bool((t.meta or {}).get("reinvest"))}
+             for h in data.holdings for t in data.txns.get(h.id, []) if t.kind == "dividend" and t.amount]  # fmt: skip
+    by_fy: dict[int, Decimal] = defaultdict(Decimal)
+    for it in items:
+        by_fy[fiscal_year(date.fromisoformat(it["day"]))] += Decimal(str(it["amount"]))
+    return {"items": sorted(items, key=lambda x: x["day"], reverse=True),
+            "by_fy": [{"fy": fy, "label": fy_label(fy), "amount": _f(v)} for fy, v in sorted(by_fy.items())],
+            "note": "Dividends are taxed at your slab rate; TDS deducted by the company counts towards it."}  # fmt: skip
+
+
+# --------------------------------------------------------------------------- tax
+def disposal_rows(data: Loaded, categories: dict[int, str | None] | None = None) -> list[DisposalRow]:
+    categories = categories or {}
+    txn_meta = {t.id: t.meta or {} for ts in data.txns.values() for t in ts}
+    out = []
+    for h in data.holdings:
+        ht = holding_tax(h, categories.get(h.id))
+        for d in data.disposals.get(h.id, []):
+            m = txn_meta.get(d.txn_id, {})
+            out.append(evaluate(DisposalRow(ht, d.acquired, d.sold, d.quantity, d.cost, d.proceeds, d.stt_paid,
+                                            d.origin, rbi_redemption=bool(m.get("rbi_redemption")),
+                                            held_to_maturity=bool(m.get("held_to_maturity")), txn_id=d.txn_id)))  # fmt: skip
+    return out
+
+
+def disposal_json(r: DisposalRow) -> dict[str, Any]:
+    c = r.cls
+    return {"holding_id": r.holding.id, "name": r.holding.name, "account": r.holding.account, "fy": r.fy,
+            "fy_label": fy_label(r.fy), "tax_class": r.holding.tax_class,
+            "acquired": r.acquired.isoformat() if r.acquired else None, "sold": r.sold.isoformat(),
+            "quantity": _f(r.quantity, 4), "cost": _f(r.cost), "tax_cost": _f(r.tax_cost), "proceeds": _f(r.proceeds),
+            "gain": _f(r.gain), "term": c.term if c else None, "bucket": c.bucket if c else None,
+            "rate_pct": None if c is None or c.rate is None else float(c.rate * 100),
+            "slab": bool(c and c.rate is None and c.term == "short"), "rule": c.rule.id if c and c.rule else None,
+            "holding_days": c.holding_days if c else None, "stt_paid": r.stt_paid, "notes": r.notes}  # fmt: skip
+
+
+def tax_view(s: Session, prices: dict[int, PriceInfo], today: date, slab: Decimal) -> dict[str, Any]:
+    data = load(s)
+    cats = {hid: p.category for hid, p in prices.items()}
+    rows = disposal_rows(data, cats)
+    fys = sorted({r.fy for r in rows} | {fiscal_year(today)}, reverse=True)
+    lots_by: dict[int, list[OpenLot]] = {}
+    px: dict[int, Decimal] = {}
+    for h in data.holdings:
+        ht = holding_tax(h, cats.get(h.id))
+        lots = [OpenLot(ht, lot.acquired, lot.open_quantity, lot.cost_per_unit, lot.stt_paid)
+                for lot in data.lots.get(h.id, []) if lot.open_quantity > Decimal("0.0005")]  # fmt: skip
+        if lots:
+            lots_by[h.id] = lots
+        p = prices.get(h.id)
+        if p is not None and p.price is not None and p.source and "statement" not in p.source:
+            px[h.id] = p.price  # harvesting needs a live price, not an old statement NAV
+    types = {h.id: h.asset_type for h in data.holdings}
+    return {"as_of": today.isoformat(), "fys": [fy_summary(rows, fy, slab) for fy in fys],
+            "disposals": [disposal_json(r) for r in sorted(rows, key=lambda r: (r.sold, r.holding.name), reverse=True)],
+            "harvest": harvest(rows, lots_by, px, types, today, slab),
+            "rules": [r.to_json() for r in RULES], "verify": VERIFY_NOTE,
+            "caveats": ["Surcharge (capped at 15 % on these gains) and the s.87A rebate (not available against "
+                        "special-rate tax) are not modelled.",
+                        "Losses carried forward from earlier years are not included.",
+                        "Indexation for transfers before 23-Jul-2024 is not modelled.",
+                        "F&O and intraday trades are business income and are not in this computation."]}  # fmt: skip
+
+
+def export_rows(s: Session, prices: dict[int, PriceInfo] | None = None) -> list[DisposalRow]:
+    data = load(s)
+    return disposal_rows(data, {hid: p.category for hid, p in (prices or {}).items()})

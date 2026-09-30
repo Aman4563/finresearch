@@ -293,7 +293,7 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
     app.add_middleware(CatchAll)
     # the in-app PDF viewer (pdf.js) reads the length/range headers to stream big documents in chunks
     app.add_middleware(CORSMiddleware, allow_origins=DASHBOARD_ORIGINS,
-                       allow_methods=["GET", "HEAD", "POST", "PUT", "PATCH"], allow_headers=["*"],
+                       allow_methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"], allow_headers=["*"],
                        expose_headers=EXPOSED_HEADERS)  # fmt: skip
 
     @app.exception_handler(ValueError)
@@ -1380,6 +1380,11 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
     from finresearch.api.markets import add_market_routes
 
     add_market_routes(app, bond_rows=_bond_rows, scheme_rows=_scheme_rows)
+
+    # ------------------------------------------------------------------ personal portfolio and capital-gains tax
+    from finresearch.api.portfolio import add_portfolio_routes
+
+    add_portfolio_routes(app, scheme_rows=_scheme_rows)
 
     # ------------------------------------------------------------------ live data while the market is open
     from finresearch.api.live import add_live_routes

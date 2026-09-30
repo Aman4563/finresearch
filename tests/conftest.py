@@ -15,7 +15,7 @@ def _isolate_data_dirs(tmp_path, monkeypatch):
     from finresearch import config
 
     for var, sub in (("FINRESEARCH_RUNS_DIR", "runs"), ("FINRESEARCH_STATE_DIR", "state"),
-                     ("FINRESEARCH_DOCS_DIR", "docs"), ("FINRESEARCH_REPORTS_DIR", "reports")):  # fmt: skip
+                     ("FINRESEARCH_DOCS_DIR", "docs"), ("FINRESEARCH_REPORTS_DIR", "reports"), ("FINRESEARCH_PORTFOLIO_DIR", "portfolio")):  # fmt: skip
         monkeypatch.setenv(var, str(tmp_path / "_iso" / sub))
     config.get_settings.cache_clear()
     yield

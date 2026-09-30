@@ -647,3 +647,139 @@ class AlertDelivery(Base):
     test: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+# --------------------------------------------------------------------------- personal portfolio (roadmap items 8-9)
+# Personal financial data: it lives only in this local database (and the uploaded files under data/portfolio/), is
+# never sent to an LLM, and holds no identity data (no PAN, name, email, address or phone from a CAS; the folio or
+# broker account label is enough). Transactions are the source of truth; lots and disposals are derived from them by
+# finresearch.portfolio.lots (FIFO per holding, i.e. per instrument and account/folio) and rebuilt after every change.
+class PortfolioImport(Base):
+    """One imported file (CAS PDF or broker CSV) or manual batch. `sha256` refuses the identical file twice. The CAS
+    password is never stored here or anywhere else."""
+
+    __tablename__ = "portfolio_import"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    kind: Mapped[str] = mapped_column(String(20))  # cas | tradebook
+    source: Mapped[str] = mapped_column(String(20))  # CAMS | KFINTECH | zerodha | groww | upstox
+    filename: Mapped[str] = mapped_column(String(300))
+    sha256: Mapped[str] = mapped_column(String(64), unique=True)
+    saved_path: Mapped[str | None] = mapped_column(String(600))  # under settings.portfolio_dir
+    summary: Mapped[dict[str, Any]] = mapped_column(default=dict)  # counts, period, reconciliation, warnings
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class PortfolioHolding(Base):
+    """One instrument in one account (a demat/broker account or an MF folio). FIFO runs inside a holding, as Indian
+    tax requires (CBDT Circular 768: first-in-first-out per demat account; per folio for MF units)."""
+
+    __tablename__ = "portfolio_holding"
+    __table_args__ = (UniqueConstraint("ikey", "account"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ikey: Mapped[str] = mapped_column(
+        String(60)
+    )  # "ISIN:INE009A01021", "NSE:INFY", "MF:120503", "NAME:<slug>"
+    account: Mapped[str] = mapped_column(String(80))  # "Zerodha", "CAMS folio 1234567890 / 12", "Manual"
+    asset_type: Mapped[str] = mapped_column(String(10))  # stock | mf | other
+    name: Mapped[str] = mapped_column(String(300))
+    isin: Mapped[str | None] = mapped_column(String(12), index=True)
+    nse_symbol: Mapped[str | None] = mapped_column(String(30))
+    bse_code: Mapped[str | None] = mapped_column(String(20))
+    scheme_code: Mapped[str | None] = mapped_column(String(20))  # AMFI scheme code
+    category: Mapped[str | None] = mapped_column(String(120))  # AMFI category (funds)
+    sector: Mapped[str | None] = mapped_column(String(120))  # user override; else the NSE industry
+    tax_class: Mapped[str | None] = mapped_column(String(20))  # user override: equity | debt_mf | other | sgb
+    fmv_2018: Mapped[Decimal | None] = mapped_column(
+        Numeric(20, 6)
+    )  # FMV per unit on 31-Jan-2018 (grandfathering)
+    meta: Mapped[dict[str, Any]] = mapped_column(default=dict)  # CAS valuation, casparser type, SGB flags ...
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class PortfolioTxn(Base):
+    """A dated event on a holding: buy, sell, dividend, bonus, split or opening balance (a CAS opening balance whose
+    cost is unknown). `dedupe_key` makes re-importing the same or an overlapping statement idempotent."""
+
+    __tablename__ = "portfolio_txn"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    holding_id: Mapped[int] = mapped_column(
+        ForeignKey("portfolio_holding.id", ondelete="CASCADE"), index=True
+    )
+    import_id: Mapped[int | None] = mapped_column(
+        ForeignKey("portfolio_import.id", ondelete="CASCADE"), index=True
+    )
+    day: Mapped[date] = mapped_column(Date, index=True)
+    kind: Mapped[str] = mapped_column(String(12))  # buy | sell | dividend | bonus | split | opening
+    quantity: Mapped[Decimal | None] = mapped_column(Numeric(20, 6))  # units (positive)
+    price: Mapped[Decimal | None] = mapped_column(Numeric(20, 6))  # per unit
+    amount: Mapped[Decimal | None] = mapped_column(Numeric(20, 4))  # gross value (dividend: the payout)
+    charges: Mapped[Decimal] = mapped_column(Numeric(16, 4), default=Decimal(0))  # brokerage, STT, stamp, ...
+    stt_paid: Mapped[bool] = mapped_column(Boolean, default=True)
+    source: Mapped[str] = mapped_column(String(20))  # cas | zerodha | groww | upstox | manual | nse_actions
+    dedupe_key: Mapped[str] = mapped_column(String(64), unique=True)
+    meta: Mapped[dict[str, Any]] = mapped_column(
+        default=dict
+    )  # split/bonus ratio, CAS description, trade id ...
+    note: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class PortfolioLot(Base):
+    """An open or closed FIFO lot (derived). `cost_per_unit` is None when the cost is unknown (a CAS opening
+    balance); tax on such a lot cannot be computed until the cost is entered."""
+
+    __tablename__ = "portfolio_lot"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    holding_id: Mapped[int] = mapped_column(
+        ForeignKey("portfolio_holding.id", ondelete="CASCADE"), index=True
+    )
+    txn_id: Mapped[int | None] = mapped_column(ForeignKey("portfolio_txn.id", ondelete="CASCADE"))
+    acquired: Mapped[date | None] = mapped_column(Date)
+    origin: Mapped[str] = mapped_column(String(12))  # buy | bonus | opening
+    quantity: Mapped[Decimal] = mapped_column(Numeric(20, 6))  # after splits
+    open_quantity: Mapped[Decimal] = mapped_column(Numeric(20, 6))
+    cost_per_unit: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))  # incl. buy charges, after splits
+    stt_paid: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class PortfolioDisposal(Base):
+    """A sale matched against one lot (derived, FIFO): the unit of capital-gains tax."""
+
+    __tablename__ = "portfolio_disposal"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    holding_id: Mapped[int] = mapped_column(
+        ForeignKey("portfolio_holding.id", ondelete="CASCADE"), index=True
+    )
+    txn_id: Mapped[int] = mapped_column(ForeignKey("portfolio_txn.id", ondelete="CASCADE"), index=True)
+    lot_id: Mapped[int | None] = mapped_column(ForeignKey("portfolio_lot.id", ondelete="CASCADE"))
+    acquired: Mapped[date | None] = mapped_column(Date)
+    sold: Mapped[date] = mapped_column(Date)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(20, 6))
+    cost: Mapped[Decimal | None] = mapped_column(Numeric(20, 4))  # None when the lot's cost is unknown
+    proceeds: Mapped[Decimal] = mapped_column(Numeric(20, 4))  # net of the sale's charges (apportioned)
+    stt_paid: Mapped[bool] = mapped_column(Boolean, default=True)
+    origin: Mapped[str] = mapped_column(String(12), default="buy")
+
+
+class PortfolioSnapshot(Base):
+    """The portfolio's value on a day, written whenever it is valued (the /portfolio page, the API). Feeds the
+    drawdown and allocation-drift alert metrics. `complete` = every open holding had a price."""
+
+    __tablename__ = "portfolio_snapshot"
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    value: Mapped[Decimal] = mapped_column(Numeric(20, 2))
+    invested: Mapped[Decimal] = mapped_column(
+        Numeric(20, 2)
+    )  # cumulative net invested (buys - sales) that day
+    by_asset: Mapped[dict[str, Any]] = mapped_column(default=dict)  # asset-class label -> value
+    complete: Mapped[bool] = mapped_column(Boolean, default=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class PortfolioSetting(Base):
+    """Small portfolio settings by key (e.g. "targets": target allocation % by asset class)."""
+
+    __tablename__ = "portfolio_setting"
+    key: Mapped[str] = mapped_column(String(40), primary_key=True)
+    value: Mapped[dict[str, Any]] = mapped_column(default=dict)

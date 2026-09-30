@@ -1,7 +1,7 @@
 "use client";
 
 import {
-  Activity, BadgeIndianRupee, BellRing, BookOpenCheck, ChartCandlestick, ChevronsLeft, CircleHelp, Command, FlaskConical,
+  Activity, BadgeIndianRupee, BellRing, BookOpenCheck, Briefcase, ChartCandlestick, ChevronsLeft, CircleHelp, Command, FlaskConical,
   Gauge as GaugeIcon, Landmark, LayoutDashboard, ListChecks, Menu, Monitor, Moon, NotebookPen, PieChart, Radar, Rocket,
   Search, Sun, UserRound, X,
 } from "lucide-react";
@@ -46,6 +46,7 @@ export const NAV: { group: string; items: NavItem[] }[] = [
   {
     group: "You",
     items: [
+      { href: "/portfolio", label: "Portfolio", icon: <Briefcase />, keys: "g t", description: "Holdings, P&L, XIRR, allocation and capital-gains tax" },
       { href: "/profile", label: "Profile", icon: <UserRound />, keys: "g p", description: "You, your investor profile and preferences" },
       { href: "/rules", label: "Rules", icon: <ListChecks />, keys: "g u", description: "IPO red lines and alerts for every asset" },
       { href: "/usage", label: "Plan usage", icon: <GaugeIcon />, keys: "g l", description: "Claude plan window and limits" },
@@ -183,6 +184,7 @@ function ProfileMenu() {
             )}
           </div>
           {[
+            { href: "/portfolio", label: "My portfolio", icon: <Briefcase className="size-4" /> },
             { href: "/profile", label: "Profile & preferences", icon: <UserRound className="size-4" /> },
             { href: "/rules", label: "My rules", icon: <ListChecks className="size-4" /> },
             { href: "/journal", label: "Decision journal", icon: <BookOpenCheck className="size-4" /> },
