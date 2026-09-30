@@ -175,3 +175,15 @@ These are dated entries for bugs we reproduced, what caused them, and how they a
 ### 2026-09-30: test runs collided on a shared test database
 - **Seen:** 167 errors (`relation "research_run" does not exist`, duplicate keys) when two pytest runs shared `finresearch_g_test`. conftest resets the whole schema.
 - **Now:** every parallel worktree uses its own `finresearch_<x>_test`, and the full suite passes (605) on a private database.
+
+### 2026-09-30: NSE price after the close showed the last trade, not the official close (TMCV)
+- **Seen:** after 15:30 the stock page showed TMCV at ₹420.00, NSE `lastPrice` (the last trade). The official close was ₹421.65: NSE's close (VWAP of the last 30 min), the NSE history bar, BSE 421.60, and TradingView 421.65. The day change showed −10.15 (−2.36%) instead of −8.50 (−1.98%). Market cap, portfolio value, signals and alerts inherited the error.
+- **Now (#134):** one display-price rule for NSE and BSE: last traded in session, official close once published, and change vs the adjusted base. It is applied to quotes, overview, portfolio, signals, alerts, monitor, dashboard and market cap. `finresearch audit prices` reconciles NSE quote vs history vs BSE vs intraday, fund NAVs and bonds. The UI shows 'Sources disagree' with both values when they differ.
+
+### 2026-09-30: failures cached as 'no data' (#132)
+- **Seen:** a one-off DNS failure reaching BSE was cached for 12 h, and the results card said BSE had no machine-readable results. BSE block pages (HTML with HTTP 200) could be written to the disk cache.
+- **Now:** transient failures are classified and never cached. The UI distinguishes 'couldn't reach' from 'no data', and only JSON is written to disk caches.
+
+### 2026-09-30: stuck background waiters matched their own command line
+- **Seen:** three `while pgrep -f "ipo harvest"` loops kept running for 3.5 h after the harvest ended, because each loop's own command line contains "ipo harvest".
+- **Now:** they were stopped. Wait on a PID (`wait`/`kill -0 <pid>`) or a result condition, never on `pgrep -f` of a string that appears in the waiter itself.
