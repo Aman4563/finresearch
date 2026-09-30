@@ -32,7 +32,14 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from finresearch.adapters.amfi import AmfiError
 from finresearch.adapters.nse import NseError
 from finresearch.adapters.sebi import SebiError
-from finresearch.api.workers import Spawner, WorkerBusy, worker_info
+from finresearch.api.workers import (
+    Spawner,
+    WorkerBusy,
+    auto_resume_due,
+    last_activity,
+    stalled_info,
+    worker_info,
+)
 from finresearch.config import get_settings
 from finresearch.db import session_scope
 from finresearch.db.models import (
@@ -158,13 +165,21 @@ def claim_json(c: Claim, docs: dict[int, str]) -> dict[str, Any]:
                           for x in c.citations]}  # fmt: skip
 
 
-def run_json(run: ResearchRun, co: Company | None, steps: dict[str, int] | None = None) -> dict[str, Any]:
+def run_json(run: ResearchRun, co: Company | None, steps: dict[str, int] | None = None,
+             last: Any = None) -> dict[str, Any]:  # fmt: skip
+    """`last_error` / `pause_reason` say why a run failed or paused; `stalled` is set when the run is marked
+    running but nothing is working on it (its worker exited), so the app can offer Resume."""
     m = run.manifest or {}
+    worker = worker_info(m)
+    err = m.get("last_error")
     return {"id": run.id, "kind": run.kind, "status": run.status, "company": co.slug if co else None,
             "company_name": co.name if co else None, "created_at": _iso(run.created_at),
             "finished_at": _iso(run.finished_at), "resume_after": _iso(run.resume_after),
-            "final_gate": m.get("final_gate"), "pack": m.get("pack"), "worker": worker_info(m),
-            "steps": steps or {}}  # fmt: skip
+            "final_gate": m.get("final_gate"), "pack": m.get("pack"), "worker": worker,
+            "last_error": err if err is None or isinstance(err, dict) else {"message": str(err)},
+            "pause_reason": m.get("pause_reason") if run.status == "paused" else None,
+            "pause_kind": m.get("pause_kind") if run.status == "paused" else None,
+            "stalled": stalled_info(run, worker, last), "steps": steps or {}}  # fmt: skip
 
 
 MEDIA_TYPES = {
@@ -239,15 +254,26 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
 
     @contextlib.asynccontextmanager
     async def lifespan(_app: FastAPI):
-        stop, task = asyncio.Event(), None
+        stop, tasks = asyncio.Event(), []
         if monitor:
             from finresearch.monitor.scheduler import run_forever
 
-            task = asyncio.create_task(run_forever(monitor_deps, stop=stop))
+            tasks.append(asyncio.create_task(run_forever(monitor_deps, stop=stop)))
+            tasks.append(asyncio.create_task(_auto_resume_loop(stop)))
         yield
         stop.set()
-        if task:
+        for task in tasks:
             await task
+
+    async def _auto_resume_loop(stop: asyncio.Event, every_s: float = 60.0) -> None:
+        """Restart runs paused by transient errors whose worker exited, once their resume time has passed."""
+        while not stop.is_set():
+            try:
+                await asyncio.to_thread(auto_resume_due, spawner)
+            except Exception:  # the database may be briefly unreachable; try again next minute
+                logging.getLogger(__name__).exception("auto-resume check failed")
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(stop.wait(), timeout=every_s)
 
     app = FastAPI(title="FinResearch", version="0.3.0", docs_url="/api/docs", openapi_url="/api/openapi.json",
                   lifespan=lifespan)  # fmt: skip
@@ -377,7 +403,9 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
                     counts.setdefault(rid, {})[status] = n
             reported = set(s.scalars(select(AgentStep.run_id).where(AgentStep.run_id.in_(ids), AgentStep.stage == "synthesis",
                                                                    AgentStep.status == "done"))) if ids else set()  # fmt: skip
-            return [{**run_json(r, co, counts.get(r.id)), "has_report": r.id in reported} for r, co in rows]
+            last = last_activity(s, ids)
+            return [{**run_json(r, co, counts.get(r.id), last.get(r.id)), "has_report": r.id in reported}
+                    for r, co in rows]  # fmt: skip
 
     @app.post("/api/runs", status_code=201)
     def start_run(body: StartRun) -> dict[str, Any]:
@@ -421,7 +449,7 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
             ).all()
             claims = dict(s.execute(select(Claim.status, func.count()).where(Claim.run_id == run_id)
                                     .group_by(Claim.status)).all())  # fmt: skip
-            out = run_json(run, co)
+            out = run_json(run, co, last=last_activity(s, [run_id]).get(run_id))
             out["steps"] = [step_json(x) for x in steps]
             out["claims"] = claims
             out["usage"] = {
@@ -590,7 +618,8 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
                     yield frame("step", st)
             if detail["status"] != status:
                 status = detail["status"]
-                yield frame("run", {k: detail[k] for k in ("id", "status", "resume_after", "final_gate")})
+                yield frame("run", {k: detail[k] for k in ("id", "status", "resume_after", "final_gate", "last_error",
+                                                           "pause_reason", "pause_kind", "stalled")})  # fmt: skip
             yield ": keep-alive\n\n"
         yield frame("end", {"id": run_id, "status": status})
 

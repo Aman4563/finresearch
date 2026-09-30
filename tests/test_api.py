@@ -846,3 +846,132 @@ def test_radar_rows_carry_lots_from_nse_and_bse(client, monkeypatch):
     assert (s["lot_size"], s["min_lots"], s["application"]["min_investment"]) == (2000, 2, 248000)
     assert s["lot_source"]["label"] == "BSE issue details"
     assert data["errors"] == [] and data["notes"] == ["NSE BROKEN issue page: NSE refused"]
+
+
+# --------------------------------------------------------------------------- run robustness (run 13, 2026-09-30)
+def _set_run(run_id, **fields):
+    from finresearch.db import session_scope
+    from finresearch.db.models import ResearchRun
+
+    with session_scope() as s:
+        run = s.get(ResearchRun, run_id)
+        manifest = fields.pop("manifest", None)
+        if manifest is not None:
+            run.manifest = {**(run.manifest or {}), **manifest}
+        for k, v in fields.items():
+            setattr(run, k, v)
+
+
+def test_a_running_run_whose_worker_died_is_reported_stalled(client, seeded):
+    rid = seeded["run_id"]
+    _set_run(rid, status="running", manifest={"worker": {"pid": 999_999_999, "argv": [], "log": "x"}})
+    d = client.get(f"/api/runs/{rid}").json()
+    assert d["stalled"] and "no longer running" in d["stalled"]["reason"] and d["worker"]["alive"] is False
+    listed = next(r for r in client.get("/api/runs").json() if r["id"] == rid)
+    assert listed["stalled"] == d["stalled"]
+    _set_run(rid, manifest={"worker": {"pid": os.getpid(), "argv": [], "log": "x"}})  # a live worker
+    assert client.get(f"/api/runs/{rid}").json()["stalled"] is None
+    _set_run(rid, status="paused", manifest={"worker": {"pid": 999_999_999, "argv": [], "log": "x"}})
+    assert client.get(f"/api/runs/{rid}").json()["stalled"] is None  # paused is not stalled
+
+
+def test_a_run_without_a_worker_record_is_stalled_only_after_a_quiet_spell(env, seeded):
+    from datetime import UTC, datetime, timedelta
+
+    from finresearch.api.workers import stalled_info
+    from finresearch.db.models import ResearchRun
+
+    t = datetime(2026, 9, 30, 6, 0, tzinfo=UTC)
+    run = ResearchRun(status="running", created_at=t - timedelta(days=1))
+    assert stalled_info(run, None, t - timedelta(minutes=30), now=t) is None  # a terminal run still working
+    assert (
+        stalled_info(run, None, t - timedelta(hours=3), now=t)["since"]
+        == (t - timedelta(hours=3)).isoformat()
+    )
+
+
+def test_run_json_carries_the_failure_and_pause_reasons(client, seeded):
+    rid = seeded["run_id"]
+    _set_run(rid, status="failed", manifest={"last_error": {"message": "stream:risks: KeyError: 'x'"}})
+    d = client.get(f"/api/runs/{rid}").json()
+    assert d["last_error"]["message"].startswith("stream:risks") and d["pause_reason"] is None
+    _set_run(
+        rid, status="paused", manifest={"pause_reason": "the Mac went to sleep", "pause_kind": "transient"}
+    )
+    d = client.get(f"/api/runs/{rid}").json()
+    assert d["pause_reason"] == "the Mac went to sleep" and d["pause_kind"] == "transient"
+
+
+def test_auto_resume_restarts_only_due_transient_pauses_without_a_worker(env, seeded):
+    from datetime import UTC, datetime, timedelta
+
+    from finresearch.api.workers import MAX_AUTO_RESUMES, auto_resume_due
+
+    rid, now = seeded["run_id"], datetime.now(UTC)
+    sp = FakeSpawner()
+    _set_run(rid, status="paused", resume_after=now + timedelta(minutes=5),
+             manifest={"pause_kind": "transient", "worker": {"pid": 999_999_999}})  # fmt: skip
+    assert auto_resume_due(sp, now=now) == []  # not due yet
+    _set_run(rid, manifest={"pause_kind": "limit"}, resume_after=now - timedelta(minutes=1))
+    assert auto_resume_due(sp, now=now) == []  # a plan-limit pause is left to the worker / the user
+    _set_run(rid, manifest={"pause_kind": "transient", "worker": {"pid": os.getpid()}})
+    assert auto_resume_due(sp, now=now) == []  # its worker is alive and resumes it itself
+    _set_run(rid, manifest={"worker": {"pid": 999_999_999}})
+    assert auto_resume_due(sp, now=now) == [rid] and len(sp.calls) == 1
+    from finresearch.db import session_scope
+    from finresearch.db.models import ResearchRun
+
+    with session_scope() as s:
+        assert s.get(ResearchRun, rid).manifest["auto_resumes"] == 1
+    _set_run(rid, manifest={"auto_resumes": MAX_AUTO_RESUMES})
+    assert auto_resume_due(sp, now=now) == [] and len(sp.calls) == 1  # bounded
+
+
+def test_workers_keep_the_mac_awake_only_where_caffeinate_exists(env):
+    from finresearch.api import workers
+
+    assert workers.caffeinate_argv(42, platform="darwin", which=lambda _: "/usr/bin/caffeinate") == [
+        "/usr/bin/caffeinate", "-i", "-s", "-w", "42"]  # fmt: skip
+    assert workers.caffeinate_argv(42, platform="linux", which=lambda _: "/usr/bin/caffeinate") is None
+    assert workers.caffeinate_argv(42, platform="darwin", which=lambda _: None) is None
+    started = []
+    assert workers.keep_awake(7, platform="darwin", which=lambda _: "/usr/bin/caffeinate",
+                              popen=lambda argv, **kw: started.append((argv, kw)) or FakeProc())  # fmt: skip
+    assert started[0][0][-2:] == ["-w", "7"] and started[0][1]["start_new_session"]
+
+    def broken(argv, **kw):
+        raise OSError("no")
+
+    assert (
+        workers.keep_awake(7, platform="darwin", which=lambda _: "/x", popen=broken) is False
+    )  # never raises
+    assert workers.keep_awake(7, platform="linux", popen=broken) is False
+
+
+def test_keep_awake_can_be_turned_off(env, monkeypatch):
+    from finresearch import config
+    from finresearch.api import workers
+
+    monkeypatch.setenv("FINRESEARCH_KEEP_AWAKE", "false")
+    config.get_settings.cache_clear()
+    assert workers.caffeinate_argv(42, platform="darwin", which=lambda _: "/usr/bin/caffeinate") is None
+
+
+class FakeProc:
+    def poll(self):
+        return None
+
+
+def test_the_cli_worker_records_itself_and_refuses_a_second_live_worker(env, seeded):
+    from finresearch.api.workers import WorkerBusy, claim_worker
+    from finresearch.db import session_scope
+    from finresearch.db.models import ResearchRun
+
+    rid = seeded["run_id"]
+    claim_worker(rid, ["ipo", "resume", str(rid)])
+    with session_scope() as s:
+        w = s.get(ResearchRun, rid).manifest["worker"]
+    assert w["pid"] == os.getpid() and w["source"] == "cli"
+    _set_run(rid, manifest={"worker": {"pid": os.getppid()}})  # another live process owns the run
+    with pytest.raises(WorkerBusy):
+        claim_worker(rid, [])

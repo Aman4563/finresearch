@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, Cpu, FileText, Gauge as GaugeIcon, GitBranch, Play, Radio, ShieldAlert, ShieldCheck, Timer, Waypoints } from "lucide-react";
+import { ArrowLeft, CirclePause, CircleX, Cpu, FileText, Gauge as GaugeIcon, GitBranch, Play, Radio, ShieldAlert, ShieldCheck, Timer, TriangleAlert, Waypoints } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
@@ -75,6 +75,61 @@ function useNow(active: boolean) {
   return now;
 }
 
+/** Why the run is paused, failed or stalled, with the way forward. Nothing is shown for a healthy run. */
+function RunStateNote({ run, stuckStep, action }: { run: RunDetail; stuckStep?: string; action: React.ReactNode }) {
+  const workerAlive = !!run.worker?.alive;
+  if (run.stalled) {
+    return (
+      <Callout tone="warn" title="Stalled: nothing is working on this run" icon={<TriangleAlert className="size-4" />}>
+        <p>
+          {run.stalled.reason}
+          {stuckStep ? <> Step <span className="font-mono text-xs">{stuckStep}</span> was in progress</> : null}
+          {run.stalled.since ? <>{stuckStep ? "; " : " "}last activity {when(run.stalled.since)}.</> : stuckStep ? "." : null}
+        </p>
+        <p className="mt-1 text-xs text-muted">
+          Usually the Mac slept, restarted or the worker was stopped. Resuming continues from the last finished step; finished steps are not repeated.
+        </p>
+        {action && <div className="mt-2.5">{action}</div>}
+      </Callout>
+    );
+  }
+  if (run.status === "failed" && run.last_error) {
+    return (
+      <Callout tone="loss" title="The run failed" icon={<CircleX className="size-4" />}>
+        <p className="break-words font-mono text-xs leading-relaxed">{run.last_error.message}</p>
+        <p className="mt-1 text-xs text-muted">
+          {run.last_error.at ? <>Stopped {when(run.last_error.at)}. </> : null}
+          Fix the cause if it needs fixing (for example sign in to Claude Code again), then resume: finished steps are kept.
+        </p>
+        {action && <div className="mt-2.5">{action}</div>}
+      </Callout>
+    );
+  }
+  if (run.status === "paused" && run.pause_kind === "transient") {
+    return (
+      <Callout tone="warn" title="Paused after a temporary Claude error" icon={<CirclePause className="size-4" />}>
+        {run.pause_reason && <p className="break-words">{run.pause_reason}</p>}
+        <p className="mt-1 text-xs text-muted">
+          {run.resume_after ? <>It resumes automatically after {when(run.resume_after)}</> : <>It resumes automatically</>}
+          {workerAlive ? " (its worker is waiting)." : "; you can also resume it now."}
+        </p>
+        {action && <div className="mt-2.5">{action}</div>}
+      </Callout>
+    );
+  }
+  if (run.status === "paused" || run.resume_after) {
+    return (
+      <Callout tone="warn" title="Paused for the plan window" icon={<GaugeIcon className="size-4" />}>
+        The Claude plan&apos;s 5-hour window is nearly used up, so the run waits
+        {run.resume_after ? <> and resumes after {when(run.resume_after)}</> : null}.
+        {run.pause_reason && <p className="mt-1 text-xs text-muted">{run.pause_reason}</p>}
+        {action && <div className="mt-2.5">{action}</div>}
+      </Callout>
+    );
+  }
+  return null;
+}
+
 function Loading() {
   return (
     <div className="space-y-6">
@@ -102,7 +157,8 @@ export default function RunView() {
   const [resuming, setResuming] = useState(false);
   const [stage, setStage] = useState<string | null>(null);
   const [tab, setTab] = useState<"stages" | "timeline">("stages");
-  const running = !!run && (run.status === "running" || !!run.worker?.alive);
+  // a "running" run whose worker has exited (stalled) is not being worked on
+  const running = !!run && (!!run.worker?.alive || (run.status === "running" && !run.stalled));
   const now = useNow(running);
 
   const lanes = useMemo(() => buildLanes(steps), [steps]);
@@ -127,6 +183,11 @@ export default function RunView() {
   const hasReport = steps.some((s) => s.stage === "synthesis" && s.status === "done");
   const done = steps.filter((s) => s.status === "done").length;
   const current = steps.find((s) => s.status === "running");
+  const resumeButton = canResume && (
+    <Button variant="secondary" icon={<Play className="size-3.5" />} onClick={() => setConfirm(true)}>
+      Resume run
+    </Button>
+  );
   const claims = Object.entries(run.claims ?? {}).map(([k, v]) => ({ name: k.replaceAll("_", " "), value: v, color: CLAIM_COLOR[k] }));
   const claimTotal = claims.reduce((a, c) => a + c.value, 0);
   const verified = run.claims?.verified ?? 0;
@@ -150,6 +211,7 @@ export default function RunView() {
         actions={
           <>
             <Badge status={run.status} />
+            {run.stalled && <Badge tone="warn">stalled</Badge>}
             {live && (
               <Badge tone="info" dot>
                 live
@@ -171,11 +233,7 @@ export default function RunView() {
       />
 
       <ErrorNote error={error ?? resumeError} onRetry={error ? reconnect : undefined} />
-      {run.resume_after && (
-        <Callout tone="warn" title="Paused for the plan window" icon={<GaugeIcon className="size-4" />}>
-          The Claude plan&apos;s 5-hour window is nearly used up, so the run waits and resumes after {when(run.resume_after)}.
-        </Callout>
-      )}
+      <RunStateNote run={run} stuckStep={current?.key} action={resumeButton} />
 
       {/* progress */}
       <Card className="animate-fade-up">
@@ -193,6 +251,8 @@ export default function RunView() {
                   </>
                 ) : run.status === "done" ? (
                   "Pipeline complete"
+                ) : run.stalled ? (
+                  "Pipeline stalled: the worker stopped"
                 ) : (
                   `Pipeline ${run.status.replaceAll("_", " ")}`
                 )}

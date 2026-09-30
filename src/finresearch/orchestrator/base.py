@@ -18,17 +18,24 @@ Guarantees
   of the step and of steps already in flight must stay under the ceiling; otherwise the step is deferred and the run
   pauses until the reported window reset instead of failing midway.
 * Research never silently degrades: roles run with allow_degraded=False, so a limit hit pauses the run.
+* Transient failures (the Mac slept mid-response, two Claude Code processes refreshed the login at once, the network
+  dropped) are retried in place with exponential backoff and jitter. When the retries run out the run pauses with
+  the reason and a resume time instead of failing; `run_until_done(wait=True)` resumes it then.
+* Nothing a step raises crashes the worker: the step is marked failed with the error, the run is marked failed (or
+  paused) with a readable reason in the manifest (`last_error` / `pause_reason`), and `run()` returns.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import random
 import subprocess
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from pydantic import BaseModel
@@ -39,19 +46,34 @@ from finresearch.agents.runner import RoleOutputInvalid, RunContext, run_role
 from finresearch.agents.schemas import CriticReport, ResearchPlan, StreamReport, VerificationReport
 from finresearch.bridge import AllTiersFailed, BridgeRouter, Tier, build_router
 from finresearch.bridge.limits import LimitTracker
-from finresearch.bridge.types import AgentResult
+from finresearch.bridge.types import AgentResult, SchemaViolation, TaskFailed, TransientError, transient_kind
 from finresearch.config import get_settings
 from finresearch.db import session_scope
 from finresearch.db.models import AgentStep, Claim, Company, ResearchRun
 
+logger = logging.getLogger(__name__)
 RoleRunner = Callable[..., Awaitable[tuple[BaseModel, AgentResult]]]
 DEFAULT_COST = {"stream": 0.08, "verify": 0.04, "plan": 0.03, "case": 0.03, "synthesis": 0.06, "critic": 0.03}
 
 
 class RunPaused(Exception):
-    def __init__(self, reason: str, resume_after: datetime | None):
+    """kind: "budget" (pre-flight ceiling), "limit" (plan limit hit) or "transient" (retries ran out)."""
+
+    def __init__(self, reason: str, resume_after: datetime | None, kind: str = "limit"):
         super().__init__(reason)
         self.resume_after = resume_after
+        self.kind = kind
+
+
+TRANSIENT_LABELS = {
+    "sleep": "the Mac went to sleep mid-response",
+    "oauth": "another Claude Code process was refreshing the login",
+    "network": "the connection to Claude dropped",
+    "overloaded": "Claude was overloaded",
+    "crash": "the Claude CLI exited without a result",
+    "idle": "the Claude CLI stopped responding",
+    "other": "a temporary Claude error",
+}
 
 
 class StepFailed(Exception):
@@ -66,6 +88,13 @@ class PipelineConfig:
     render: bool = True  # build the folder pack (md/html/pdf/xlsx/charts) when the run finishes
     discover: bool = True  # find and ingest documents first when the kind's primary documents are missing
     five_hour_ceiling: float = 0.92
+    # transient failures: in-place retries per step, backoff (base * 2^n, capped, with jitter), then a pause whose
+    # length doubles with each consecutive transient pause; after max_transient_pauses in a row the run fails
+    transient_retries: int = 3
+    retry_base_s: float = 30.0
+    retry_cap_s: float = 480.0
+    transient_pause_s: float = 600.0
+    max_transient_pauses: int = 6
     streams: tuple[str, ...] | None = None  # default: the run's saved choice, else the kind's streams
     verify_importance: tuple[str, ...] = ("high", "normal")
     cost_defaults: dict[str, float] = field(default_factory=lambda: dict(DEFAULT_COST))
@@ -91,8 +120,11 @@ class ResearchPipeline:
 
     def __init__(self, run_id: int, *, runner: RoleRunner | None = None, router: BridgeRouter | None = None,
                  tracker: LimitTracker | None = None, config: PipelineConfig | None = None,
-                 clock: Callable[[], float] = time.time):  # fmt: skip
+                 clock: Callable[[], float] = time.time,
+                 sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep, rng: random.Random | None = None):  # fmt: skip
         self.run_id = run_id
+        self.sleep = sleep
+        self.rng = rng or random.Random()
         self.config = config or PipelineConfig(five_hour_ceiling=get_settings().max_five_hour_ceiling)
         self._router = router
         self.tracker = tracker
@@ -107,6 +139,9 @@ class ResearchPipeline:
         self._sem = asyncio.Semaphore(self.config.concurrency)
         self._reserved = 0.0
         self._paused: RunPaused | None = None
+        self._transient_pauses = (
+            0  # consecutive transient pauses without a finished step (kept in the manifest)
+        )
         self.ctx: RunContext | None = None
 
     # ------------------------------------------------------------------ plumbing
@@ -208,33 +243,16 @@ class ResearchPipeline:
             ok, cost, util, resume_after = self._budget_check(stage, role)
             if not ok:
                 pause = RunPaused(
-                    f"Max budget: {key} deferred (5h util {util}, step cost ~{cost:.2f})", resume_after
+                    f"Max budget: {key} deferred (5h util {util}, step cost ~{cost:.2f})",
+                    resume_after,
+                    "budget",
                 )
                 self._paused = pause
                 self._mark(key, status="deferred", error=str(pause))
                 raise pause
             self._reserved += cost
-            self._mark(key, status="running", started_at=_now(), five_hour_before=util, inc_attempt=True,
-                       claim_floor=stage == "stream")  # fmt: skip
-            t0 = time.monotonic()
             try:
-                parsed, res = await self.runner(role, self.ctx, **extra)
-            except AllTiersFailed as e:
-                limited = any(":limit" in a or "skipped(" in a for a in e.attempts)
-                if limited:
-                    tr = self._tracker().describe().get(Tier.CLAUDE_MAX.value, {})
-                    until = tr.get("cooling_until")
-                    pause = RunPaused(
-                        f"Claude limit during {key}", datetime.fromtimestamp(until, UTC) if until else None
-                    )
-                    self._paused = pause
-                    self._mark(key, status="deferred", error=str(e))
-                    raise pause from e
-                self._mark(key, status="failed", error=str(e), finished_at=_now())
-                raise StepFailed(f"{key}: {e}") from e
-            except RoleOutputInvalid as e:
-                self._mark(key, status="failed", error=str(e), finished_at=_now())
-                raise StepFailed(f"{key}: {e}") from e
+                parsed, res, t0 = await self._attempts(key, stage, role, util, extra)
             finally:
                 self._reserved -= cost
             rl = res.rate_limit
@@ -244,7 +262,108 @@ class ResearchPipeline:
                        num_turns=res.num_turns, five_hour_after=rl.five_hour_utilization if rl else None,
                        transcript_path=str(res.transcript_path) if res.transcript_path else None,
                        finished_at=_now(), error=None)  # fmt: skip
+            if self._transient_pauses:
+                self._transient_pauses = 0
+                self._update_manifest(transient_pauses=0, auto_resumes=0)
             return parsed
+
+    async def _attempts(self, key: str, stage: str, role: str, util: float | None,
+                        extra: dict[str, str]) -> tuple[BaseModel, AgentResult, float]:  # fmt: skip
+        """Run one step, retrying transient failures in place; a pause or a failure is recorded on the step."""
+        retry = 0
+        while True:
+            self._mark(key, status="running", started_at=_now(), five_hour_before=util, inc_attempt=True,
+                       claim_floor=stage == "stream")  # fmt: skip
+            t0 = time.monotonic()
+            try:
+                parsed, res = await self.runner(role, self.ctx, **extra)
+                return parsed, res, t0
+            except AllTiersFailed as e:
+                if e.limited:
+                    raise self._limit_pause(key, e) from e
+                transient = e.transient
+                err: Exception = transient or e
+                if transient is None and not (
+                    retry == 0 and any(isinstance(x, SchemaViolation) for x in e.errors)
+                ):
+                    self._mark(key, status="failed", error=str(e), finished_at=_now())
+                    raise StepFailed(f"{key}: {e}") from e
+                kind = transient.kind if transient else "schema"
+            except (TransientError, TaskFailed) as e:
+                # the router re-raises TaskFailed; a transient message inside one (an older CLI wording) still retries
+                kind = e.kind if isinstance(e, TransientError) else transient_kind(str(e))
+                if kind is None:
+                    self._mark(key, status="failed", error=f"{type(e).__name__}: {e}", finished_at=_now())
+                    raise StepFailed(f"{key}: {e}") from e
+                err = e
+            except RoleOutputInvalid as e:
+                self._mark(key, status="failed", error=str(e), finished_at=_now())
+                raise StepFailed(f"{key}: {e}") from e
+            except Exception as e:  # anything unexpected fails this step, never the whole worker
+                self._mark(key, status="failed", error=f"{type(e).__name__}: {e}", finished_at=_now())
+                raise StepFailed(f"{key}: {type(e).__name__}: {e}") from e
+            # ---- a transient failure: retry in place, or pause the run when the retries are used up
+            max_retries = 1 if kind == "schema" else 0 if kind == "timeout" else self.config.transient_retries
+            if kind == "timeout":  # a step that ran out of time would only burn the plan again
+                self._mark(key, status="failed", error=str(err), finished_at=_now())
+                raise StepFailed(f"{key}: {err}") from err
+            if retry >= max_retries:
+                raise self._transient_pause(key, kind, err) from err
+            retry += 1
+            delay = self._retry_delay(kind, retry)
+            self._mark(key, error=f"attempt failed ({TRANSIENT_LABELS.get(kind, kind)}): {err}"[:1500]
+                       + f" | retry {retry}/{max_retries} in {delay:.0f}s")  # fmt: skip
+            await self.sleep(delay)
+            if self._paused:  # another step paused the run meanwhile
+                self._mark(key, status="deferred", error=f"run paused: {self._paused}")
+                raise self._paused
+            if stage == "stream":
+                with session_scope() as s:
+                    st = s.scalar(
+                        select(AgentStep).where(AgentStep.run_id == self.run_id, AgentStep.key == key)
+                    )
+                    self._drop_attempt_claims(s, st)
+
+    def _retry_delay(self, kind: str, retry: int) -> float:
+        """Exponential backoff with jitter; a login-refresh collision waits 30-90 s for the other process."""
+        if kind == "oauth":
+            return self.rng.uniform(30, 90)
+        base = min(self.config.retry_cap_s, self.config.retry_base_s * 2 ** (retry - 1))
+        return base + self.rng.uniform(0, base / 2)
+
+    def _limit_pause(self, key: str, e: AllTiersFailed) -> RunPaused:
+        tr = self._tracker()
+        state = tr.describe().get(Tier.CLAUDE_MAX.value, {})
+        until = state.get("cooling_until")
+        reason = state.get("reason") or ""
+        circuit = "circuit open" in reason
+        resume = datetime.fromtimestamp(until, UTC) if until and until > self.clock() else None
+        if circuit:
+            pause = RunPaused(f"Claude kept failing during {key} ({reason}); retrying when the cool-down ends",
+                              resume or _now() + timedelta(seconds=self.config.transient_pause_s), "transient")  # fmt: skip
+        else:
+            pause = RunPaused(f"Claude limit during {key}", resume)
+        self._paused = pause
+        self._mark(key, status="deferred", error=str(e))
+        return pause
+
+    def _transient_pause(self, key: str, kind: str, err: Exception) -> RunPaused:
+        self._transient_pauses += 1
+        n = self._transient_pauses
+        self._update_manifest(transient_pauses=n)
+        what = TRANSIENT_LABELS.get(kind, "the model's output did not match the schema")
+        if n > self.config.max_transient_pauses:
+            self._mark(key, status="failed", error=str(err), finished_at=_now())
+            raise StepFailed(f"{key}: still failing after {n - 1} automatic pauses ({what}): {err}. Check that "
+                             f"`claude` works in a terminal (sign in again if needed), then resume.")  # fmt: skip
+        delay = min(self.config.transient_pause_s * 2 ** (n - 1), 4 * 3600)
+        resume = _now() + timedelta(seconds=delay)
+        tries = 1 if kind == "schema" else self.config.transient_retries
+        pause = RunPaused(f"{key}: {what} (retried {tries} times); the run resumes automatically in about "
+                          f"{delay / 60:.0f} min. Last error: {err}"[:2000], resume, "transient")  # fmt: skip
+        self._paused = pause
+        self._mark(key, status="deferred", error=str(pause))
+        return pause
 
     def _mark(self, key: str, *, inc_attempt: bool = False, claim_floor: bool = False, **fields: Any) -> None:
         with session_scope() as s:
@@ -437,14 +556,21 @@ class ResearchPipeline:
 
     # ------------------------------------------------------------------ main
     async def run(self) -> str:
+        """Returns "done", "blocked", "paused" or "failed"; never raises for a failed step (the reason is stored in
+        the manifest as `last_error`, a pause's as `pause_reason`)."""
         self._paused = None
-        self.ctx = self._load_context()
-        self._restore_choice()
-        self._update_manifest(pipeline=self.version, kind=self.kind, git_sha=_git_sha(),
-                              models={k.value: v for k, v in get_settings().claude_models.items()},
-                              prompt_hashes={n: r.prompt_hash() for n, r in ROLES.items()})  # fmt: skip
-        self._set_run(status="running", resume_after=None)
         try:
+            self._set_run(status="running", resume_after=None)
+            self._update_manifest(last_error=None, pause_reason=None, pause_kind=None)
+            self.ctx = self._load_context()
+            self._restore_choice()
+            with session_scope() as s:
+                self._transient_pauses = int(
+                    (s.get(ResearchRun, self.run_id).manifest or {}).get("transient_pauses") or 0
+                )
+            self._update_manifest(pipeline=self.version, kind=self.kind, git_sha=_git_sha(),
+                                  models={k.value: v for k, v in get_settings().claude_models.items()},
+                                  prompt_hashes={n: r.prompt_hash() for n, r in ROLES.items()})  # fmt: skip
             if self.required_doc_kinds and not self._has_primary_docs(self.ctx.documents):
                 if self.config.discover:
                     from finresearch.ingest.discover import discover
@@ -496,10 +622,32 @@ class ResearchPipeline:
             return status
         except RunPaused as p:
             self._set_run(status="paused", resume_after=p.resume_after)
+            self._update_manifest(pause_reason=str(p), pause_kind=p.kind)
             return "paused"
-        except (StepFailed, Exception):
+        except (
+            Exception
+        ) as e:  # StepFailed or anything unexpected: record why and return, never kill the worker
+            self._fail(e)
+            return "failed"
+
+    def _fail(self, e: BaseException) -> None:
+        reason = str(e) if isinstance(e, StepFailed) else f"{type(e).__name__}: {e}"
+        logger.error("run %s failed: %s", self.run_id, reason, exc_info=e)
+        try:
             self._set_run(status="failed")
-            raise
+            self._update_manifest(last_error={"message": reason[:4000], "type": type(e).__name__,
+                                              "at": _now().isoformat()})  # fmt: skip
+            # a step left "running" by the failure would look like work in progress
+            with session_scope() as s:
+                for st in s.scalars(select(AgentStep).where(AgentStep.run_id == self.run_id,
+                                                            AgentStep.status == "running")):  # fmt: skip
+                    st.status, st.error, st.finished_at = (
+                        "failed",
+                        st.error or f"run failed: {reason[:1000]}",
+                        _now(),
+                    )
+        except Exception:  # the database itself is unreachable (or the run is gone): the log keeps the reason
+            logger.exception("run %s: could not record the failure", self.run_id)
 
 
 def _render_pack_safely(run_id: int) -> dict[str, Any]:
@@ -581,7 +729,8 @@ async def run_until_done(run_id: int, *, wait: bool, pipeline: ResearchPipeline 
         if status != "paused" or not wait:
             return status
         with session_scope() as s:
-            ra = s.get(ResearchRun, run_id).resume_after
+            run = s.get(ResearchRun, run_id)
+            ra, why = run.resume_after, (run.manifest or {}).get("pause_reason")
         delay = max(60.0, (ra.timestamp() - clock()) + 60) if ra else 900.0
-        log(f"run {run_id} paused; resuming in {delay / 60:.0f} min ({ra})")
+        log(f"run {run_id} paused ({why}); resuming in {delay / 60:.0f} min ({ra})")
         await sleep(delay)

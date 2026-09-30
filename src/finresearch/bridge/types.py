@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
@@ -50,6 +51,11 @@ class AgentTask(BaseModel):
     agents_json: Path | None = Field(default=None, description="Claude Code --agents file for subagents")
     max_turns: int = 20
     timeout_s: float = 1800
+    idle_timeout_s: float | None = Field(
+        default=900,
+        description="Give up (transient) when the CLI prints nothing for this long, e.g. a stream left hanging "
+        "after the Mac slept; None disables it",
+    )
     run_dir: Path | None = Field(default=None, description="Working directory / sandbox for the run")
     resume_session_id: str | None = None
     allow_degraded: bool = Field(
@@ -116,7 +122,72 @@ class LimitReached(EngineError):
 
 
 class TransientError(EngineError):
-    """Overload, timeout, network blip — may succeed on retry or another tier."""
+    """Overload, timeout, network blip — may succeed on retry or another tier.
+
+    `kind` says what went wrong (see `transient_kind`); the pipeline picks its retry delay from it."""
+
+    def __init__(self, message: str, *, kind: str = "other", detail: dict[str, Any] | None = None):
+        super().__init__(message, detail=detail)
+        self.kind = kind
+
+
+# Failures of the machine or the network rather than of the task, as the Claude CLI reports them in its result
+# text or on stderr. Each may succeed if the same step is simply run again a little later.
+_TRANSIENT_ALTERNATIVES: dict[str, tuple[str, ...]] = {
+    # the Mac slept while a request was streaming: "API Error: Your computer went to sleep mid-response. ..."
+    "sleep": (
+        r"went to sleep",
+        r"mid-response",
+        r"response (above )?may be incomplete",
+        r"incomplete response",
+        r"response was (cut off|truncated|interrupted)",
+    ),
+    # two Claude Code processes refreshing the login at once: "Failed to refresh OAuth token: another ..."
+    "oauth": (
+        r"refresh(ing)? (the )?oauth token",
+        r"oauth token refresh",
+        r"is refreshing it",
+        r"exited mid-refresh",
+    ),
+    # "API Error: Can't reach the API server — check your internet or DNS (ENOTFOUND)", resets, timeouts
+    "network": (
+        r"can.?t reach the api server",
+        r"\bENOTFOUND\b",
+        r"\bECONNRESET\b",
+        r"\bECONNREFUSED\b",
+        r"\bETIMEDOUT\b",
+        r"\bEPIPE\b",
+        r"\bEAI_AGAIN\b",
+        r"\bENETUNREACH\b",
+        r"\bEHOSTUNREACH\b",
+        r"socket hang ?up",
+        r"connection (was )?(reset|refused|closed|error|timed out)",
+        r"network (error|is unreachable)",
+        r"fetch failed",
+        r"request timed out",
+        r"stream (closed|ended) unexpectedly",
+    ),
+    "overloaded": (
+        r"\boverloaded",
+        r"internal server error",
+        r"bad gateway",
+        r"service unavailable",
+        r"gateway time-?out",
+        r"api error:? *(500|502|503|504|529)\b",
+    ),
+}
+_TRANSIENT_PATTERNS = {k: re.compile("|".join(v), re.I) for k, v in _TRANSIENT_ALTERNATIVES.items()}
+
+
+def transient_kind(*texts: str | None) -> str | None:
+    """The kind of transient failure a CLI message describes ("sleep", "oauth", "network", "overloaded"), or None."""
+    for text in texts:
+        if not text:
+            continue
+        for kind, pat in _TRANSIENT_PATTERNS.items():
+            if pat.search(text):
+                return kind
+    return None
 
 
 class SchemaViolation(EngineError):

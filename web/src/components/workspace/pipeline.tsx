@@ -137,7 +137,10 @@ export function StepRow({ s }: { s: StepX }) {
           </div>
         )}
       </dl>
-      {s.error && <p className="mt-1.5 line-clamp-3 rounded bg-loss-soft px-2 py-1 text-xs text-loss">{s.error}</p>}
+      {/* a running or deferred step's error is a retry in progress or a pause, not a failure */}
+      {s.error && (
+        <p className={`mt-1.5 line-clamp-3 rounded px-2 py-1 text-xs ${s.status === "failed" ? "bg-loss-soft text-loss" : "bg-warn-soft text-warn"}`}>{s.error}</p>
+      )}
     </li>
   );
 }

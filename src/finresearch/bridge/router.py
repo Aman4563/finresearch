@@ -32,6 +32,9 @@ from finresearch.bridge.types import (
     TransientError,
 )
 
+# transient failures of this machine rather than of the service: they do not count towards the circuit breaker
+LOCAL_TRANSIENT_KINDS = frozenset({"sleep", "oauth", "idle"})
+
 
 class Engine(Protocol):
     tier: Tier
@@ -42,9 +45,25 @@ class Engine(Protocol):
 
 
 class AllTiersFailed(Exception):
-    def __init__(self, task: str, attempts: list[str]):
+    def __init__(self, task: str, attempts: list[str], errors: list[EngineError] | None = None):
         super().__init__(f"{task}: no tier could complete the task -> " + "; ".join(attempts))
         self.attempts = attempts
+        self.errors = errors or []  # the engine errors behind the attempts, for callers that retry or pause
+
+    @property
+    def limited(self) -> bool:
+        """A tier hit its plan limit or was skipped for it (a cool-down, a pre-flight ceiling or an open circuit)."""
+        return any(
+            a.endswith(":limit") or ("skipped(" in a and "allow_degraded" not in a) for a in self.attempts
+        )
+
+    @property
+    def transient(self) -> TransientError | None:
+        """The transient error, when that alone is why the task failed: running it again later may work."""
+        if self.limited:
+            return None
+        tr = [e for e in self.errors if isinstance(e, TransientError)]
+        return tr[-1] if tr and len(tr) == len(self.errors) else None
 
 
 class BridgeRouter:
@@ -58,6 +77,7 @@ class BridgeRouter:
     async def run(self, task: AgentTask, *, force_tier: Tier | None = None) -> AgentResult:
         tiers = [force_tier] if force_tier else self.order
         attempts: list[str] = []
+        errors: list[EngineError] = []
         for tier in tiers:
             engine = self.engines.get(tier)
             if engine is None:
@@ -80,12 +100,16 @@ class BridgeRouter:
                 self._log(task, tier, started, "limit", str(e))
                 continue
             except TransientError as e:
-                self.tracker.record_transient_failure(tier, str(e))
+                # a Mac that slept or two processes refreshing the login say nothing about the service's health
+                if e.kind not in LOCAL_TRANSIENT_KINDS:
+                    self.tracker.record_transient_failure(tier, str(e))
                 attempts.append(f"{tier.value}:transient({e})")
+                errors.append(e)
                 self._log(task, tier, started, "transient", str(e))
                 continue
             except (EngineUnavailable, CapabilityMismatch, SchemaViolation) as e:
                 attempts.append(f"{tier.value}:{type(e).__name__}({e})")
+                errors.append(e)
                 self._log(task, tier, started, type(e).__name__, str(e))
                 continue
             except TaskFailed as e:
@@ -93,6 +117,7 @@ class BridgeRouter:
                 raise
             except EngineError as e:  # any other engine error: try next tier
                 attempts.append(f"{tier.value}:{type(e).__name__}({e})")
+                errors.append(e)
                 self._log(task, tier, started, type(e).__name__, str(e))
                 continue
 
@@ -108,7 +133,7 @@ class BridgeRouter:
             result.attempts = [*attempts, f"{tier.value}:ok"]
             self._log(task, tier, started, "ok", None, result)
             return result
-        raise AllTiersFailed(task.name, attempts)
+        raise AllTiersFailed(task.name, attempts, errors)
 
     async def health(self) -> dict[str, dict]:
         report: dict[str, dict] = {}

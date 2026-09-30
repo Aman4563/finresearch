@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     # Circuit breaker for transient errors
     breaker_failures: int = 3
     breaker_cooldown_s: int = 600
+    # Run workers hold a macOS `caffeinate -is -w <pid>` assertion so an idle Mac does not sleep mid-run
+    # (FINRESEARCH_KEEP_AWAKE=false turns it off; no effect on other systems or without caffeinate)
+    keep_awake: bool = True
+    # The API's monitor restarts a run paused by transient errors whose worker has exited, once resume_after passes
+    auto_resume_transient: bool = True
 
     # ---- API tier guardrails (only used when claude_api_enabled)
     api_budget_per_task_usd: float = 5.0

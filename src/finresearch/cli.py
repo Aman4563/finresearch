@@ -256,13 +256,30 @@ def _pipeline(run_id: int, streams: str | None, concurrency: int | None):
 
 
 def _go(run_id: int, streams: str | None, concurrency: int | None, wait: bool) -> None:
+    """Run (or resume) a research run in this process. This is also what an app-started worker runs.
+
+    The process records itself as the run's worker (refusing if another live worker has the run) and, on macOS,
+    keeps the Mac awake with `caffeinate -is -w <pid>` while it runs (FINRESEARCH_KEEP_AWAKE=false turns it off).
+    A failed step does not crash the process: the run is marked failed with the reason and the exit code is 1."""
+    import os
+    import sys
+
+    from finresearch.api.workers import AWAKE_ENV, WorkerBusy, claim_worker, keep_awake
     from finresearch.orchestrator.ipo import run_until_done
 
-    status = asyncio.run(
-        run_until_done(run_id, wait=wait, pipeline=_pipeline(run_id, streams, concurrency), log=console.print)
-    )
+    pipeline = _pipeline(run_id, streams, concurrency)
+    try:
+        claim_worker(run_id, sys.argv[1:])
+    except WorkerBusy as e:
+        console.print(f"[red]{e}[/]")
+        raise typer.Exit(2) from e
+    if not os.environ.get(AWAKE_ENV):
+        keep_awake(os.getpid())
+    status = asyncio.run(run_until_done(run_id, wait=wait, pipeline=pipeline, log=console.print))
     console.print(f"run {run_id}: [bold]{status}[/]")
     ipo_status(run_id)
+    if status == "failed":
+        raise typer.Exit(1)
 
 
 @ipo_app.command("run")
@@ -277,7 +294,9 @@ def ipo_run(
     ),
     streams: str | None = typer.Option(None, help="Comma-separated subset of streams (default: all seven)"),
     concurrency: int = typer.Option(4, help="Parallel agents (Max-plan friendly default)"),
-    wait: bool = typer.Option(False, help="Sleep through Max-window resets and resume automatically"),
+    wait: bool = typer.Option(
+        False, help="Sleep through Max-window resets and transient-error pauses, resuming automatically"
+    ),
 ) -> None:
     """Start a new IPO research run."""
     from finresearch.db import session_scope
@@ -346,7 +365,9 @@ def stock_run(
     nse_symbol: str | None = typer.Option(None),
     streams: str | None = typer.Option(None, help="Comma-separated subset of the six stock streams"),
     concurrency: int = typer.Option(4, help="Parallel agents (Max-plan friendly default)"),
-    wait: bool = typer.Option(False, help="Sleep through Max-window resets and resume automatically"),
+    wait: bool = typer.Option(
+        False, help="Sleep through Max-window resets and transient-error pauses, resuming automatically"
+    ),
 ) -> None:
     """Start a new listed-stock research run (resume any run with `finresearch research resume <run_id>`)."""
     from finresearch.db import session_scope
@@ -392,7 +413,9 @@ def fund_run(
     scheme_code: str = typer.Argument(..., help="AMFI scheme code (find it with `finresearch fund search`)"),
     streams: str | None = typer.Option(None, help="Comma-separated subset of the six fund streams"),
     concurrency: int = typer.Option(4, help="Parallel agents (Max-plan friendly default)"),
-    wait: bool = typer.Option(False, help="Sleep through Max-window resets and resume automatically"),
+    wait: bool = typer.Option(
+        False, help="Sleep through Max-window resets and transient-error pauses, resuming automatically"
+    ),
 ) -> None:
     """Start a new mutual-fund research run for an AMFI scheme."""
     from finresearch.orchestrator.base import create_run
@@ -442,7 +465,9 @@ def bond_run(
     isin: str,
     streams: str | None = typer.Option(None, help="Comma-separated subset of the five bond streams"),
     concurrency: int = typer.Option(4),
-    wait: bool = typer.Option(False, help="Sleep through Max-window resets and resume automatically"),
+    wait: bool = typer.Option(
+        False, help="Sleep through Max-window resets and transient-error pauses, resuming automatically"
+    ),
 ) -> None:
     """Start a new listed-bond research run for an ISIN."""
     from finresearch.orchestrator.base import create_run
@@ -593,6 +618,12 @@ def ipo_status(run_id: int) -> None:
                 f"{st.cost_usd_est or 0:.2f}",
             )
         console.print(t)
+        m = run.manifest or {}
+        if run.status == "paused" and m.get("pause_reason"):
+            console.print(f"[yellow]paused:[/] {m['pause_reason']}")
+        if run.status == "failed" and m.get("last_error"):
+            err = m["last_error"]
+            console.print(f"[red]failed:[/] {err.get('message') if isinstance(err, dict) else err}")
 
 
 @app.command()

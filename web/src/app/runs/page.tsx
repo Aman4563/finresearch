@@ -66,7 +66,10 @@ function RunCard({ r }: { r: RunSummary }) {
         <div className="flex flex-wrap items-center gap-2">
           <GateBadge gate={r.final_gate} />
           {r.worker?.alive && <Badge tone="info" dot>worker live</Badge>}
-          {r.resume_after && <Badge status="paused">paused for plan window</Badge>}
+          {r.stalled && <Badge tone="warn">stalled: resume needed</Badge>}
+          {r.status === "paused" && r.resume_after && (
+            <Badge status="paused">{r.pause_kind === "transient" ? "paused: Claude error, retries later" : "paused for plan window"}</Badge>
+          )}
         </div>
         <StepsBar steps={r.steps} />
         <div className="mt-auto flex items-center justify-between gap-2 text-xs text-muted">
@@ -231,6 +234,7 @@ export default function Runs() {
                       <div className="flex items-center gap-1">
                         <Badge status={r.status} />
                         {r.worker?.alive && <Badge tone="info" dot>worker</Badge>}
+                        {r.stalled && <Badge tone="warn">stalled</Badge>}
                       </div>
                     </td>
                     <td>
