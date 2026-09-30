@@ -42,9 +42,10 @@ from sqlalchemy.orm import Session
 from finresearch.adapters.http import IST, PoliteClient
 from finresearch.adapters.nse import NseClient, PastIssue, parse_num, parse_price_band
 
-REFORM_DATE = date(
-    2022, 4, 4
-)  # SEBI circular 13-Jan-2022: NII allotment reform for issues opening on/after this
+# SEBI NII allotment reform (ICDR amendment of 14-Jan-2022, Reg 32(3A)): issues opening on/after this date. Audit #137
+# could not re-read the primary text for the exact start (1-Apr vs 4-Apr-2022 in secondary sources); no mainboard
+# issue opened between 14-Mar and 25-Apr-2022, so either date gives the same regime for every harvested row.
+REFORM_DATE = date(2022, 4, 4)
 DETAIL_TTL_S = 45 * 86400  # a closed issue's book and issue page do not change
 HISTORY_TTL_S = 45 * 86400
 NIFTY_CHUNK_DAYS = 90  # NSE's index-history API returns at most ~70 sessions per call

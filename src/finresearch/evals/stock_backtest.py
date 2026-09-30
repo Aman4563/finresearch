@@ -10,6 +10,8 @@ each month's decision uses only prices known at that month end:
   names qualify stay in cash at 0 % (conservative: T-bills paid ~4-7 %);
 - benchmark: the same universe equally weighted, rebalanced monthly (same costs), and the NIFTY 50 price index.
 Returns are price returns (no dividends) for the stocks and for the NIFTY 50 price index alike.
+Timing (a stated simplification): the rule reads the month-end close and trades at that same close. A real order
+fills at the next open at the earliest; the 5 bp slippage per side stands in for that gap, not a measured one.
 
 Costs per side (dated constants, as researched 30-Sep-2026, roadmap §D.2/§D.7): STT 0.1 % on delivery buys and
 sells; stamp duty 0.015 % on buys; NSE transaction charge ~0.00297 % plus 18 % GST; SEBI fee 0.0001 %; brokerage

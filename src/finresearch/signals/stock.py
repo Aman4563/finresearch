@@ -650,6 +650,9 @@ def sizing(f: Features, bucket: dict[str, Any] | None, profile: Any) -> dict[str
     risk = getattr(profile, "risk_appetite", "medium") or "medium"
     explicit = getattr(profile, "max_position_pct", None)
     cap = float(explicit) / 100 if explicit else CAPS.get(risk, 0.08)
+    # Judgment (audit #137): Kelly's μ is the bucket's mean 12-month return in excess of the NIFTY 50 (not of cash) and
+    # σ the stock's own volatility (not the tracking error). Both choices make the ceiling smaller than an
+    # excess-over-cash / tracking-error Kelly; the backtest's μ is survivorship-flattered, so the ceiling is loose anyway.
     mean_excess = bucket.get("mean_excess_12m") if bucket else None
     s = sg.position_size(f.vol, risk_budget=RISK_BUDGET.get(risk, 0.02), cap=cap, mean_excess=mean_excess)
     s["cap_source"] = "profile max_position_pct" if explicit else f"default for a {risk}-risk profile"

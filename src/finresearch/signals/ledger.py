@@ -16,12 +16,14 @@ Research-run verdicts → probabilities (fixed map v1, until outcomes say otherw
 * IPO report (`overall_verdict`), event "the NSE listing-day open is above the issue price":
   APPLY, APPLY (listing gains only), APPLY (long term) → P(event) = map; AVOID → P(event) = 1 − map;
   APPLY-CONDITIONAL and NEUTRAL → no call (logged with probability None, resolved for coverage, never scored:
-  the condition is free text, and scoring it as 0.5 would only add noise).
+  the condition is free text, and scoring it as 0.5 would only add noise). A forecast made after the listing-day
+  open (09:00 IST on the listing date, when the pre-open auction starts) is voided at resolution: its outcome was
+  already known. The price-history resolver reads the first bar on or after the known listing date.
 * Stock report (`verdict`), event "12-month total return (price + cash dividends, NSE closes) above the price
   return of NIFTYBEES, the Nifty 50 ETF": BUY, ACCUMULATE → map; REDUCE, AVOID → 1 − map; HOLD → no call.
   NIFTYBEES stands in for the Nifty 50 TRI because the app has no index-history adapter; it tracks the index less
-  its expense ratio. A split, bonus, rights issue or consolidation in the window voids the forecast rather than
-  score unadjusted prices.
+  its expense ratio. A split, bonus, rights issue, consolidation, demerger or scheme of arrangement in the window
+  (of the stock, or a split/consolidation of NIFTYBEES itself) voids the forecast rather than score unadjusted prices.
 * BSE-only stocks (instrument "BSE:<scrip code>", inputs `exchange` "BSE"): the same event on BSE closes plus cash
   dividends from BSE's corporate actions. The benchmark stays NIFTYBEES on NSE (the two exchanges share trading days
   and hours), so BSE and NSE stock forecasts are scored against one benchmark and pool in one calibration group. A
@@ -42,7 +44,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -51,7 +53,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from finresearch.db.models import AgentStep, Company, Forecast, IpoOffer, ResearchRun, Watch
-from finresearch.fincalc.dates import add_years, next_business_day, to_ist
+from finresearch.fincalc.dates import IST, add_years, next_business_day, to_ist
 from finresearch.signals.base import Signal
 
 log = logging.getLogger(__name__)
@@ -341,6 +343,20 @@ def _dec(x: Any) -> Decimal | None:
         return None
 
 
+LISTING_OPEN_IST = time(9, 0)
+
+
+def _history_listing(session: Session, symbol: str | None) -> date | None:
+    """The listing date the IPO harvest recorded for a mainboard symbol, if any (newest issue first)."""
+    if not symbol or symbol.startswith("BSE:"):
+        return None
+    from finresearch.db.models import IpoHistory
+
+    return session.scalar(select(IpoHistory.listing_date).where(IpoHistory.symbol == symbol,
+                                                                IpoHistory.listing_date.is_not(None))
+                          .order_by(IpoHistory.listing_date.desc()))  # fmt: skip
+
+
 @resolver("ipo", "listing_gain")
 async def resolve_listing_gain(f: Forecast, deps: Any, session: Session) -> Resolution:
     """Listing-day open vs the issue price: first from the monitor's own listing check (NSE or BSE quote on the
@@ -355,14 +371,25 @@ async def resolve_listing_gain(f: Forecast, deps: Any, session: Session) -> Reso
         from finresearch.monitor.jobs import _upper_band
 
         issue = _upper_band(session, watch)
+    listing = (watch.listing_date if watch is not None else None) or _history_listing(session, symbol)
+    if listing is not None and to_ist(f.created_at) >= datetime.combine(
+        listing, LISTING_OPEN_IST, tzinfo=IST
+    ):
+        # the listing-day open (pre-open call auction 09:00-09:08, trading from 09:15) was already known: scoring it
+        # would put a hindsight "forecast" in the calibration
+        return Resolution(
+            None, None, f"void: forecast made after the listing-day open ({listing}, 09:00 IST)"
+        )
     open_price, listed_on, basis = None, None, None
     if watch is not None and (watch.meta or {}).get("listing_open") is not None:
         open_price, listed_on = _dec(watch.meta["listing_open"]), watch.listing_date
         basis = "exchange quote on the listing day (monitor)"
     elif symbol and not symbol.startswith("BSE:") and getattr(deps, "price_history", None) is not None:
-        start = ist_day(f.created_at)
+        # the first traded day on or after the known listing date (a stray earlier row is not the listing), else the
+        # first on or after the forecast
+        start = max(listing, ist_day(f.created_at)) if listing else ist_day(f.created_at)
         bars = [b for b in await deps.price_history(symbol, start, max(start, f.resolve_on) + timedelta(days=10))
-                if b.open is not None]  # fmt: skip
+                if b.open is not None and b.day >= start]  # fmt: skip
         if bars:
             open_price, listed_on, basis = bars[0].open, bars[0].day, "NSE daily history (first traded day)"
     if open_price is None:
@@ -376,7 +403,11 @@ async def resolve_listing_gain(f: Forecast, deps: Any, session: Session) -> Reso
                       f"opened at ₹{open_price} on {listed_on} vs issue ₹{issue} ({gain:+.2f}%); {basis}")  # fmt: skip
 
 
-VOIDING_ACTIONS = ("split", "bonus", "rights", "consolidation", "sub-division", "subdivision")
+# share-count or perimeter changes that NSE/BSE closes are not adjusted for: the forecast is voided rather than scored on
+# unadjusted prices. A demerger or scheme of arrangement moves part of the value into another listed company (the
+# Tata Motors CV demerger, Nov-2025), so the parent's close drops with no split or bonus in the subject.
+VOIDING_ACTIONS = ("split", "bonus", "rights", "consolidation", "sub-division", "subdivision", "demerger",
+                   "de-merger", "scheme of arrangement", "amalgamation", "reduction of capital", "capital reduction")  # fmt: skip
 
 
 def _close_on_or_before(bars: list, day: date):
@@ -417,6 +448,17 @@ async def resolve_excess_return(f: Forecast, deps: Any, session: Session) -> Res
 
     s0, s1 = await closes(stock_history, stock_id, symbol, ex)
     b0, b1 = await closes(deps.price_history, bench, bench, "NSE")
+    bench_actions = getattr(deps, "corporate_actions", None)
+    if bench_actions is not None:
+        # the benchmark's closes are unadjusted too: a unit split of NIFTYBEES would read as a 90 % fall
+        for ca in await bench_actions(bench):
+            if (
+                ca.ex_date is not None
+                and b0.day < ca.ex_date <= b1.day
+                and any(w in ca.subject.lower() for w in VOIDING_ACTIONS)
+            ):
+                return Resolution(None, None, f"void: {bench} {ca.subject.strip()} (ex {ca.ex_date}) changes its unit "
+                                  "count, and NSE closes are not adjusted")  # fmt: skip
     divs = Decimal(0)
     if stock_actions is not None:
         for ca in await stock_actions(stock_id):
@@ -452,6 +494,19 @@ def forecast_json(f: Forecast) -> dict[str, Any]:
             "inputs": f.inputs or {}}  # fmt: skip
 
 
+_LEGACY_IPO_BAND_METHOD = "empirical base rate by final QIB band × regime ("
+
+
+def _method_group(method: str) -> str:
+    """The calibration group of a method string. IPO base-rate forecasts logged before audit #137 carry their QIB band
+    in the method ("... (50–100x, post-Apr-2022)"); they belong to the one base-rate method."""
+    if method.startswith(_LEGACY_IPO_BAND_METHOD):
+        from finresearch.signals.ipo import BASE_RATE_METHOD
+
+        return BASE_RATE_METHOD
+    return method
+
+
 def calibration_groups(session: Session, asset: str | None = None, n_bins: int = 5) -> list[dict[str, Any]]:
     """Calibration per (asset, method) over resolved forecasts with a probability, plus coverage counts (open, no-call,
     void) so the track record shows what was not scored as well as what was. The last group, asset "all", pools
@@ -463,7 +518,7 @@ def calibration_groups(session: Session, asset: str | None = None, n_bins: int =
         q = q.where(Forecast.asset == asset)
     groups: dict[tuple[str, str], list[Forecast]] = {}
     for f in session.scalars(q.order_by(Forecast.id)):
-        groups.setdefault((f.asset, f.method), []).append(f)
+        groups.setdefault((f.asset, _method_group(f.method)), []).append(f)
     out = []
     if not groups:
         return out

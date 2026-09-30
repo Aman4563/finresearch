@@ -16,6 +16,10 @@ latest live snapshot, and QIB books fill late on the last day. So the table is o
 Expected value of applying for one lot (roadmap §D.1): E[value] ≈ P(allot) × lot cost × E[r], with
 P(allot) ≈ min(1, 1/category×) (`fincalc.ipo.allotment_probability_floor`, a floor for a minimum-lot applicant) and
 E[r] = the cell's mean listing-open return. Blocked UPI funds are treated as free for the few days they are blocked.
+The lottery unit is the category's minimum application (1 lot retail; the first whole lot above ₹2 lakh for sNII and
+above ₹10 lakh for bNII, ICDR Reg 32(3A)), so the size suggested is that minimum and `ev_per_application` = EV per lot
+× the minimum lots. A category book below 1x is not a lottery (every valid bid is allotted in full). An sNII/bNII
+investor whose capital cannot cover the minimum application gets SKIP (a smaller bid would be a retail bid).
 
 After listing the default is SELL_AT_LISTING: the median 780-day buy-and-hold abnormal return of 2016–22 Indian
 mainboard IPOs was −31.2% and only 41% beat the market [36]. It becomes HOLD_AFTER_LISTING only if the stock signal
@@ -45,6 +49,7 @@ log = logging.getLogger(__name__)
 EVENT = "NSE listing-day open above the issue price"  # = signals.ledger.IPO_EVENT
 HORIZON = "listing day"
 DEFAULT_THRESHOLD = 0.5
+BASE_RATE_METHOD = "empirical base rate by final QIB band × regime (post-Apr-2022)"
 SOURCES_CITED = [
     "NSE ipo-detail activeCat (combined NSE+BSE book) and public-past-issues; NSE price history (listing day)",
     "Neupane, Paleari & Vismara, institutional demand and IPO underpricing in India [33]",
@@ -471,6 +476,9 @@ async def compute(
                           base=_regime_base(table, table_n),
                           caveats=["The unconditional post-2022 base rate is shown for context only."])  # fmt: skip
 
+    # Judgment (audit #137): any cell with n >= 1 is used, Laplace-smoothed, with its (wide) Wilson range and a "only n
+    # past issues" caveat below 20. The walk-forward reference table (evals.ipo_model.table_forecaster) falls back to the
+    # regime rate below MIN_CELL = 5; today every post-2022 cell holds 34+ issues except <1x (0), so the two agree.
     cell = cell_for(table, book.qib)
     if not cell or not cell.get("n"):
         reason = f"no post-2022 issue closed with a final QIB book of {fipo.band_of(book.qib)}"
@@ -563,7 +571,10 @@ async def compute(
         why = (f"the fitted model did not pass the bar (Brier skill > 0 vs this table in {len(g.get('years_passed', []))}"
                f" of {len(g.get('years_evaluated', []))} test years; {GATE_TEXT})" if g
                else "no walk-forward report for the fitted model yet")  # fmt: skip
-        method = f"empirical base rate by final QIB band × regime ({cell['band']}, post-Apr-2022)"
+        method = (
+            BASE_RATE_METHOD  # the band is an input (base_rate, factors), not part of the method: calibration
+        )
+        # groups forecasts by method, and one group per band would never pool the base-rate forecasts
         validation = Validation(status="base_rate", n=cell["n"],
                                 metrics={"p_gain": cell["p_gain"], "ci_low": (cell["p_gain_ci"] or [0, 0])[0],
                                          "ci_high": (cell["p_gain_ci"] or [0, 0])[1]},
@@ -588,10 +599,18 @@ async def compute(
         (1.0 if cat_times is not None else None)  # fmt: skip
     ev = p_allot * float(lot_cost) * e_r if p_allot is not None and lot_cost and e_r is not None else None
     limits = lot_limits(profile, lot_cost)
+    # The lottery unit is the category's minimum application (ICDR Reg 32(3A)): 1 lot for retail, the first whole lot
+    # above ₹2 lakh for sNII, above ₹10 lakh for bNII. A successful sNII/bNII applicant is allotted that minimum, so
+    # the expected value that matters is per application; `ev_per_lot` is the same quantity per lot applied.
+    min_lots = limits.get("min_lots") or 1
+    ev_app = ev * min_lots if ev is not None else None
     sizing = {"lot_cost": float(lot_cost) if lot_cost else None, "lot_size": lot, "upper_band": _fl(upper),
-              "p_allot": p_allot, "p_allot_basis": f"min(1, 1/{cat_label} times) — a floor for a minimum-lot "
-              "applicant (fincalc.ipo.allotment_probability_floor)", "expected_return_mean": e_r,
-              "ev_per_lot": ev, "category": profile.category, "limits": limits}  # fmt: skip
+              "p_allot": p_allot, "p_allot_basis": f"min(1, 1/{cat_label} times) — a floor for a minimum "
+              f"{cat_label} application (fincalc.ipo.allotment_probability_floor)", "expected_return_mean": e_r,
+              "ev_per_lot": ev, "min_lots": min_lots, "ev_per_application": ev_app,
+              "category": profile.category, "limits": limits}  # fmt: skip
+    by_capital = limits.get("by_capital")
+    cannot_afford = profile.category != "retail" and by_capital is not None and by_capital < min_lots
     if ev is None:
         caveats.append(
             "Expected value per lot unavailable: the lot, the upper band or the category book is missing."
@@ -611,7 +630,12 @@ async def compute(
     warns = [r for r in results if r.status == "fired" and r.rule.action == "warn"]
     has_p_rule = any(r.rule.metric == "p_listing_gain" for r in results)
     threshold_ok = has_p_rule or p >= DEFAULT_THRESHOLD
-    if fired:
+    if cannot_afford:
+        action = "SKIP"
+        caveats.insert(0, f"Your capital (₹{_inr(float(profile.capital_per_ipo_inr))} per issue) is below the minimum "
+                          f"{cat_label} application of {min_lots} lots (₹{_inr(min_lots * float(lot_cost))}); "
+                          "a smaller bid would be a retail bid.")  # fmt: skip
+    elif fired:
         action = "SKIP"
         caveats.insert(0, "Your rules say skip: " + "; ".join(f"{r.rule.id} ({r.rule.metric} = "
                                                               f"{float(r.value):.2f})" for r in fired))  # fmt: skip
@@ -628,12 +652,23 @@ async def compute(
     caveats += [f"Warning rule {r.rule.id}: {r.rule.description or r.rule.metric}" for r in warns]
     if book.as_of:
         caveats.append(f"Book as of {to_ist(book.as_of).strftime('%d-%b-%Y %H:%M')} IST ({book.source}).")
-    if action == "APPLY":
+    if cannot_afford:
+        sizing.update(max_lots=0, reason=f"The minimum {cat_label} application is {min_lots} lots; your capital "
+                                         f"covers {by_capital}.")  # fmt: skip
+    elif action == "APPLY":
         by = [x for x in (limits.get("by_capital"), limits.get("by_category")) if x is not None]
-        max_lots = min(by) if by else None
-        sizing.update(max_lots=min(1, max_lots) if max_lots is not None else None,
-                      reason="Oversubscribed retail/sNII books are lotteries over applications, so one minimum lot "
-                             "gives the same odds as more; never above your capital and category limits.")  # fmt: skip
+        cap_lots = min(by) if by else None
+        if cat_times is not None and cat_times < 1:
+            # an undersubscribed category is not a lottery: every valid bid is allotted in full
+            max_lots, reason = cap_lots, (f"The {cat_label} book is below 1x, so every valid bid is allotted in full; "
+                                          "the size is capped only by your capital and the category limit.")  # fmt: skip
+        else:
+            max_lots = None if cap_lots is None else min(min_lots, cap_lots)
+            reason = (f"An oversubscribed {cat_label} book is a lottery over applications and a winner gets the "
+                      f"minimum application ({min_lots} lot{'s' if min_lots != 1 else ''}), so the minimum "
+                      "application gives the same odds as a bigger bid; never above your capital and category "
+                      "limits.")  # fmt: skip
+        sizing.update(max_lots=max_lots, reason=reason)
     sizing["rules"] = [r.to_json() for r in results]
     sig = Signal(asset="ipo", instrument=symbol, name=name, action=action, score=round(score, 2), event=EVENT,
                  horizon=HORIZON, method=method, validation=validation, probability=round(p, 4),
@@ -644,6 +679,12 @@ async def compute(
         src.record(sig, expected_listing(detail, today), {"symbol": symbol, "issue_price": _s(upper),
                                                           "qib_times": book.qib, "book_as_of": _s(book.as_of)})  # fmt: skip
     return sig
+
+
+def _inr(x: float) -> str:
+    from finresearch.fincalc.numbers import group_indian
+
+    return group_indian(str(round(x)))
 
 
 def _s(v: Any) -> str | None:
@@ -658,7 +699,11 @@ def _m(v: Any, source: str) -> tuple[Decimal | None, str]:
 
 
 def _live_features(book: Book, upper, rows: list[dict[str, Any]], today: date) -> dict[str, Any]:
-    """Model features for an open issue from the live book (Nifty unavailable here → 0, the training imputation)."""
+    """Model features for an open issue from the live book (Nifty unavailable here → 0, the training imputation).
+
+    Known gap (audit #137; dormant while the walk-forward gate fails, so no live signal uses it): the OFS share is
+    always imputed (ofs_missing = 1) and the Nifty return always 0, although both are knowable at decision time;
+    training rows mostly have them. Fill both before the model is ever switched on."""
     from finresearch.evals.ipo_history import ipo_count
 
     book_cr = (book.public_shares or 0) * float(upper or 0) / 1e7

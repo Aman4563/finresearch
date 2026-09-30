@@ -265,6 +265,9 @@ def assess(
     fd_ctx = _num(ctx, "fd", 0, 20)
     fd = fd_ctx / 100 if fd_ctx is not None else fd_rate_for(tenor)
     fd_eff = B.effective_annual(fd, 4)
+    # Judgment (audit #137): tax is taken off each quarterly credit, (1 + y(1-t)/4)^4 - 1. A cumulative FD taxed once a
+    # year on the year's accrual gets EAR x (1 - t), about 3 bp a year higher at 6.4 % and a 31.2 % rate; the
+    # difference flatters the bond side by that much at most.
     fd_post = B.after_tax_par_yield(fd, tax, 4)
     alt = max(gsec_post, fd_post)
     alt_name = "G-sec" if gsec_post >= fd_post else "FD"
