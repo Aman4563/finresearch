@@ -256,6 +256,7 @@ class Features:
     price: float | None = None
     last_day: date | None = None
     bars: int = 0
+    first_day: date | None = None
     sma200: float | None = None
     trend_distance: float | None = None
     mom_12_1: float | None = None
@@ -295,10 +296,16 @@ def features(raw: dict[str, Any]) -> Features:
                                 low=[float(b.low) if b.low else None for b in bars])  # fmt: skip
     f.adjustments, f.anomalies = adj.applied, adj.anomalies
     c = adj.close
-    f.price, f.last_day, f.bars = c[-1], days[-1], len(c)
+    f.price, f.last_day, f.bars, f.first_day = c[-1], days[-1], len(c), days[0]
     q = raw.get("quote")
-    if q is not None and (q.last_price or q.close_price):
-        f.price = float(q.last_price or q.close_price)
+    if (
+        q is not None
+    ):  # the display price: last traded in session, the official close after it (fincalc.price)
+        from finresearch.fincalc.price import display_price
+
+        px = display_price(q)
+        if px is not None:
+            f.price = float(px)
     f.sma200 = sg.sma(c, 200)
     if f.sma200:
         f.trend_distance = f.price / f.sma200 - 1
@@ -443,8 +450,13 @@ def forensic(raw: dict[str, Any]) -> dict[str, Any]:
         notes.append(
             "The annual filing carries no balance sheet (filings before the Mar-2025 quarter don't)."
         )
+    restructured = restructured_reason(getattr(q, "listing_date", None), cur_end, prev_end, bool(ends))
+    if restructured and cur is not None:
+        notes.append(f"Recently listed or restructured ({restructured}): scores built on the balance sheet are "
+                     "unreliable, and a single filed year allows no year-on-year comparison.")  # fmt: skip
     scores = fz.scorecard(cur["facts"] if cur else None, prev["facts"] if prev else None, industry=industry,
-                          revenue_basis=cur.get("revenue_basis") if cur else None)  # fmt: skip
+                          revenue_basis=cur.get("revenue_basis") if cur else None,
+                          restructured=restructured)  # fmt: skip
     bse = raw.get("exchange") == "BSE"
     if bse:
         notes.append("Read from BSE's Integrated Filing XBRL, which starts with the Mar-2025 quarter: at most two "
@@ -461,6 +473,21 @@ def forensic(raw: dict[str, Any]) -> dict[str, Any]:
                           "Indian data [W]."}  # fmt: skip
 
 
+def restructured_reason(
+    listed: date | None, cur_end: date | None, prev_end: date | None, any_filing: bool
+) -> str | None:
+    """Why a company's latest balance sheet is not the history of a going concern: listed within the two fiscal years
+    before the year's end (a demerged or newly listed company: TMCV, the Tata Motors CV demerger, listed 12-Nov-2025),
+    or no annual filing for the year before (the entity did not report as a listed company then)."""
+    if cur_end is None:
+        return None
+    if listed is not None and listed > cur_end - timedelta(days=730):
+        return f"listed {listed:%d %b %Y}, within two fiscal years of the {cur_end:%b %Y} year end (a demerger or new listing)"
+    if prev_end is None and any_filing:
+        return "no annual results for the year before were found, as for a newly demerged or listed company"
+    return None
+
+
 def _num(v: Any) -> Any:
     if isinstance(v, Decimal):
         return round(float(v), 6)
@@ -474,7 +501,8 @@ def _num(v: Any) -> Any:
 def score_json(s: fz.Score) -> dict[str, Any]:
     return {"key": s.key, "name": s.name, "value": _num(s.value), "flag": s.flag, "red_flag": s.red_flag,
             "components": {k: _num(v) for k, v in s.components.items()}, "missing": s.missing,
-            "proxies": s.proxies, "reason": s.reason, "thresholds": s.thresholds, "source": s.source}  # fmt: skip
+            "proxies": s.proxies, "reason": s.reason, "thresholds": s.thresholds, "source": s.source,
+            "caveat": s.caveat}  # fmt: skip
 
 
 # --------------------------------------------------------------------------- the signal
@@ -568,6 +596,56 @@ def composite(f: Features, fz_scores: list[dict[str, Any]], shp_source: str = SH
     return out
 
 
+def history_reason(f: Features, listed: date | None, ex: str) -> str:
+    """Why there is no signal, in numbers: when the stock listed, how many sessions the exchange returned, and what
+    momentum (more than 252 sessions: 12 months back, skipping the last month) and the 200-day average need."""
+    have = f"{ex} returned {f.bars} trading day{'s' if f.bars != 1 else ''} of prices"
+    if f.first_day and f.last_day:
+        months = (f.last_day.year - f.first_day.year) * 12 + f.last_day.month - f.first_day.month
+        have += f" ({f.first_day:%d %b %Y} to {f.last_day:%d %b %Y}, about {months} month{'s' if months != 1 else ''})"
+    need = []
+    if f.mom_score is None:
+        need.append(f"12-1 momentum needs {sg.TRADING_DAYS + 1} sessions (13 months)")
+    if f.trend_distance is None:
+        need.append("the 200-day average needs 200 sessions")
+    # a listing inside the momentum window explains the short history (the first bars can come a few sessions later,
+    # e.g. TMCV listed 12 Nov 2025 and its EQ-series history starts 26 Nov 2025)
+    recent = listed and f.last_day and listed > f.last_day - timedelta(days=400)
+    lead = f"Listed {listed:%d %b %Y}: " if recent else ""
+    return (
+        f"{lead}{have}; {' and '.join(need)}. The score and the backtested probability rest on momentum and "
+        "trend, so there is no signal until then. The other factors below are shown for information only."
+    )
+
+
+def no_signal_factors(f: Features, fz_scores: list[dict[str, Any]], shp_source: str, fz_notes: list[str] | None,
+                      why: str) -> list[Factor]:  # fmt: skip
+    """Every factor, as in `composite`, with the missing momentum / trend listed (value None and the reason) and every
+    contribution set to 0: without the two backtested factors nothing is scored (rule from #122: never drop a factor
+    silently)."""
+    out = composite(f, fz_scores, shp_source, fz_notes)
+    names = {x.name for x in out}
+    missing = []
+    if "Momentum (12-1 month, risk-adjusted)" not in names:
+        missing.append(Factor("Momentum (12-1 month, risk-adjusted)", None, 0.0,
+                              f"Not computed: needs more than {sg.TRADING_DAYS} trading days of prices "
+                              f"(has {f.bars}). {why.split(';')[0]}.",
+                              "https://faculty.iima.ac.in/iffm/Indian-Fama-French-Momentum/", "× σ"))  # fmt: skip
+    if "Trend (price vs 200-day average)" not in names:
+        missing.append(Factor("Trend (price vs 200-day average)", None, 0.0,
+                              f"Not computed: needs 200 trading days of prices (has {f.bars}).",
+                              "fincalc:signals.sma", "%"))  # fmt: skip
+    if f.vol is None:
+        missing.append(Factor("Realised volatility (1 year)", None, 0.0,
+                              f"Not computed: needs {sg.TRADING_DAYS + 1} daily closes (has {f.bars}).",
+                              "fincalc:signals.realised_vol", "%"))  # fmt: skip
+    for x in out:
+        if x.contribution:
+            x.explanation = f"{x.explanation} Informational only here: no score without momentum and trend."
+        x.contribution = 0.0
+    return missing + out
+
+
 def sizing(f: Features, bucket: dict[str, Any] | None, profile: Any) -> dict[str, Any]:
     risk = getattr(profile, "risk_appetite", "medium") or "medium"
     explicit = getattr(profile, "max_position_pct", None)
@@ -627,10 +705,11 @@ async def stock_signal(instrument: str, ctx: dict[str, Any]) -> Signal:
     base = dict(asset="stock", instrument=sym, name=name, event=EVENT_BSE if bse else EVENT, horizon="12 months",
                 method=METHOD, as_of=datetime.now(UTC), sources=[source])  # fmt: skip
     if f.mom_score is None or f.trend_distance is None:
-        return Signal(**base, action="NO_SIGNAL", score=0.0,
-                      validation=Validation(status="rule_based", description="Not enough price history."),
-                      caveats=[f"Needs 13 months of daily prices for momentum and the 200-day average; {ex} returned "
-                               f"{f.bars} trading days.", *caveats])  # fmt: skip
+        why = history_reason(f, getattr(q, "listing_date", None), ex)
+        factors = no_signal_factors(f, fzr["scores"], source if bse else SHP_PAGE, fzr["notes"], why)
+        return Signal(**base, action="NO_SIGNAL", score=0.0, factors=factors,
+                      validation=Validation(status="rule_based", description=f"No signal: {why}"),
+                      caveats=[why, *caveats])  # fmt: skip
     factors = composite(f, fzr["scores"], source if bse else SHP_PAGE, fzr["notes"])
     score = clip_score(sum(x.contribution for x in factors))
     bucket_name = bucket_of(f.trend_distance >= 0, f.mom_score)

@@ -404,3 +404,64 @@ def test_signal_lands_in_the_real_forecast_ledger(env, sources, monkeypatch):
         assert len(rows) == 1 and rows[0].event_kind == "excess_return_12m" and rows[0].probability == 0.6
         assert rows[0].validation_status == "rule_based" and rows[0].inputs["benchmark"] == "NIFTYBEES"
     assert ("stock", "excess_return_12m") in RESOLVERS
+
+
+# --------------------------------------------------------------------------- recently listed / demerged (TMCV)
+# TMCV FY26 consolidated balance sheet and P&L, Rs, as read from its annual Integrated Filing XBRL
+# (nsearchives.nseindia.com/corporate/xbrl/INTEGRATED_FILING_INDAS_1666515_13052026052222_WEB.xml, 30-Sep-2026)
+TMCV_FY26 = {"current_assets": Decimal("232080000000"), "current_liabilities": Decimal("306030000000"),
+             "total_assets": Decimal("523090000000"), "other_equity": Decimal("119980000000"),
+             "profit_before_tax": Decimal("44940000000"), "finance_costs": Decimal("8740000000"),
+             "total_equity": Decimal("127340000000"), "total_liabilities": Decimal("395750000000")}  # fmt: skip
+
+
+def test_altman_tmcv_hand_computed_and_marked_unreliable_after_a_demerger():
+    from finresearch.fincalc import forensic as fz
+
+    # by hand: X1 = (232.08 - 306.03) / 523.09 = -0.141371; X2 = 119.98 / 523.09 = 0.229368;
+    # X3 = (44.94 + 8.74) / 523.09 = 0.102621; X4 = 127.34 / 395.75 = 0.321769;
+    # Z'' = 6.56 X1 + 3.26 X2 + 6.72 X3 + 1.05 X4 = -0.927397 + 0.747739 + 0.689613 + 0.337857 = 0.847812 (< 1.1)
+    plain = fz.altman_z_em(TMCV_FY26)
+    assert (
+        float(plain.value) == pytest.approx(0.847812, abs=2e-6)
+        and plain.flag == "distress"
+        and plain.red_flag
+    )
+    c = plain.components
+    assert (float(c["x1_working_capital"]), float(c["x2_retained_earnings"]), float(c["x3_ebit"]),
+            float(c["x4_equity_to_liabilities"])) == pytest.approx((-0.141371, 0.229368, 0.102621, 0.321769), abs=2e-6)  # fmt: skip
+    assert float(c["em_score"]) == pytest.approx(0.847812 + 3.25, abs=2e-6)
+    why = st.restructured_reason(date(2025, 11, 12), date(2026, 3, 31), None, True)
+    assert why.startswith("listed 12 Nov 2025")
+    s = fz.altman_z_em(TMCV_FY26, restructured=why)
+    assert s.value == plain.value and s.flag == "distress (unreliable)" and not s.red_flag
+    assert "Other equity" in s.caveat and "scheme of arrangement" in s.caveat
+    # a long-listed company with a prior year is not flagged; a missing prior year is
+    assert st.restructured_reason(date(1995, 2, 8), date(2026, 3, 31), date(2025, 3, 31), True) is None
+    assert "year before" in st.restructured_reason(None, date(2026, 3, 31), None, True)
+
+
+def test_recently_listed_stock_gets_a_reasoned_no_signal_with_every_factor(sources):
+    r = raw(n_bars=210)
+    r["quote"].listing_date = r["bars"][0].day
+    del r["annual"][date(2025, 3, 31)]  # the demerged company's first annual filing
+    sources["raw"] = r
+    s = run()
+    assert s.action == "NO_SIGNAL" and s.probability is None and s.score == 0
+    why = s.caveats[0]
+    assert why.startswith(f"Listed {r['bars'][0].day:%d %b %Y}: NSE returned 210 trading days of prices")
+    assert (
+        "12-1 momentum needs 253 sessions (13 months)" in why and "200-day" not in why
+    )  # 210 >= 200: trend exists
+    by = {f.name: f for f in s.factors}
+    assert (
+        by["Momentum (12-1 month, risk-adjusted)"].value is None
+        and "has 210" in by["Momentum (12-1 month, risk-adjusted)"].explanation
+    )
+    assert by["Trend (price vs 200-day average)"].value is not None  # computed, shown for information
+    assert by["Realised volatility (1 year)"].value is None
+    assert "52-week position" in by and "P/E vs its own history" in by and "FII + DII holding change" in by
+    assert all(f.contribution == 0 for f in s.factors)
+    f = st.forensic(r)
+    assert f["prior_year_end"] is None and any("restructured" in n for n in f["notes"])
+    assert not sources["logged"]

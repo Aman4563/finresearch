@@ -12,6 +12,7 @@ import { DonutChart, TimeSeriesChart, shortDate } from "@/components/charts";
 import { PriceChart } from "@/components/markets/price-chart";
 import { ensureStock, startResearch, watchStock } from "@/components/markets/actions";
 import { ExchangeBadge, ExchangeSwitch, PriceComparison } from "@/components/markets/exchange";
+import { QualityNote, displayPrice, lastTradedNote, priceCaption, qualityFlags } from "@/components/markets/price-quality";
 import { MarginChart, ResultsChart } from "@/components/markets/charts";
 import { ShareholdingSplit } from "@/components/markets/shareholding";
 import { ForensicCard, SinceReport, StockSignalCard } from "@/components/markets/stock-signal";
@@ -58,7 +59,7 @@ export default function StockDetail() {
   const live = useLive<{ quote: NonNullable<StockOverview["quote"]>; fetched_at: string }>(
     `/api/stocks/${encodeURIComponent(symbol)}/quote`, { session: "equity", everyMs: quoteMs, active: quoteMs > 0 });
   const q = live.data?.quote ? { ...ov.data?.quote, ...live.data.quote } : ov.data?.quote;
-  const last = q?.last_price ? Number(q.last_price) : null;
+  const last = displayPrice(q);
   const bars = hist.data?.bars ?? [];
   const lastBar = bars[bars.length - 1];
   const histLoadingMore = hist.data && hist.data.days < Math.min(days, 1827);
@@ -159,18 +160,27 @@ export default function StockDetail() {
           </Callout>
         )}
 
+        <QualityNote flags={qualityFlags(q, lastBar ? { date: lastBar.date, close: lastBar.close } : undefined, ex)} />
+
         {/* headline numbers */}
         <div className="grid [&>*]:min-w-0 grid-cols-2 gap-3 lg:grid-cols-4 stagger">
           {!ov.data && !ov.error ? (
             Array.from({ length: 4 }, (_, i) => <Skeleton key={i} className="h-[104px] rounded-xl" />)
           ) : (
             <>
-              <Stat label="Last price" icon={<TrendingUp className="size-4" />} value={last} format={(n) => inr(n)}
-                delta={q?.change_pct} deltaLabel={q?.change ? `${Number(q.change) > 0 ? "+" : "−"}${inr(Math.abs(Number(q.change)))} today` : undefined} />
+              <Stat label={q?.price_label ?? "Last price"} icon={<TrendingUp className="size-4" />} value={last} format={(n) => inr(n)}
+                delta={q?.change_pct}
+                deltaLabel={q?.change ? `${Number(q.change) > 0 ? "+" : "−"}${inr(Math.abs(Number(q.change)))} today` : undefined}
+                note={lastTradedNote(q)}
+                help={<>
+                  {priceCaption(q)}. In session this is the last traded price; after the close it is the exchange&apos;s official closing price, which is computed from the closing trades and can differ from the last trade (both are shown when they do).
+                  {q?.reference_label && <> Day change is measured from the {q.reference_label} ({inr(q.reference_price)}).</>}
+                  {(q?.price_notes ?? []).map((n) => <span key={n} className="mt-1 block">{n}</span>)}
+                </>} />
               <Stat label="Market cap" icon={<Building2 className="size-4" />} tone="accent"
                 display={<span className="num">{q?.market_cap ? crore(q.market_cap) : "—"}</span>}
-                hint={q?.issued_shares ? `${Number(q.issued_shares).toLocaleString("en-IN")} shares` : undefined}
-                help="Market capitalisation: shares issued × last price. The market's price tag for the whole company." />
+                hint={q?.issued_shares ? `${Number(q.issued_shares).toLocaleString("en-IN")} shares × ${(q?.price_label ?? "last price").toLowerCase()}` : q?.market_cap_basis ?? undefined}
+                help={`Market capitalisation: the market's price tag for the whole company. Basis: ${q?.market_cap_basis ?? "shares issued × price"}.`} />
               <Stat label="52-week position" icon={<ChartCandlestick className="size-4" />} tone="info"
                 display={<span className="num">{q?.week52_position != null ? `${Math.round(q.week52_position * 100)}%` : "—"}</span>}
                 hint={q?.week52_position != null ? (q.week52_position < 0.2 ? "near its 1-year low" : q.week52_position > 0.8 ? "near its 1-year high" : "mid-range") : undefined}
@@ -201,6 +211,7 @@ export default function StockDetail() {
             help={`1D and 5D show today's (and archived) 1-minute ${ex} prices as candles of your chosen size; 1M and longer show ${ex}'s official daily bars. Your default range, interval and chart type are set on the profile page; this page remembers your last choice.`}>
             {/* the chart renders at once: intraday ranges do not wait for the (slower) daily history */}
             <PriceChart kind="stock" symbol={symbol} exchange={ex} defaults={tf.stock} refreshS={tf.quote_refresh_s} onRange={onRange}
+              day={q ? { pct: q.change_pct ?? null, ref: q.reference_price != null ? Number(q.reference_price) : q.previous_close != null ? Number(q.previous_close) : null, label: q.reference_label ?? null } : undefined}
               daily={bars.map((b) => ({ t: b.date, o: b.open, h: b.high, l: b.low, c: b.close, v: b.volume }))}
               dailyLoading={!hist.data || !!histLoadingMore} dailyError={hist.error && !hist.data ? hist.error : null} onDailyRetry={hist.reload}
               dailyEmpty={hist.data && bars.length < 2 ? `${ex} returned no trading days for ${symbol}. It may be suspended or newly listed.` : null} />
@@ -239,8 +250,14 @@ export default function StockDetail() {
               ) : (
                 <div className="grid [&>*]:min-w-0 grid-cols-2 gap-2">
                   <Metric label="Open" value={inr(q?.open)} />
-                  <Metric label="Previous close" value={inr(q?.previous_close)} />
-                  <Metric label="Day change" value={<Delta value={q?.change_pct} />} />
+                  <Metric label="Previous close" value={inr(q?.previous_close)}
+                    sub={q?.reference_kind === "base_price" && q.reference_price !== q.previous_close ? `ex-date: base ${inr(q.reference_price)}` : undefined}
+                    help="The last session's close. On an ex-date (dividend, split, bonus) the exchange adjusts it into a base price, and the day change is measured from that." />
+                  <Metric label="Day change" value={<Delta value={q?.change_pct} />} sub={q?.change_pct != null ? `vs ${q?.reference_kind === "base_price" ? "adjusted base" : q?.reference_kind === "previous_close_less_dividend" ? "prev. close − dividend" : "previous close"}` : undefined} />
+                  {q?.price_kind === "official_close" && (
+                    <Metric label="Last traded" value={inr(q.last_price)} sub={q.last_differs ? "≠ official close" : "= official close"}
+                      help="The last trade of the session. The official close is computed by the exchange from the closing trades, so the two can differ." />
+                  )}
                   <Metric label="Last session volume" value={lastBar?.volume != null ? lastBar.volume.toLocaleString("en-IN") : "—"}
                     sub={lastBar ? shortDate(lastBar.date) : undefined} />
                 </div>

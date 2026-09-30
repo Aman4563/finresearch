@@ -8,6 +8,8 @@ export type StockHit = {
   key: string; symbol: string; name: string; series: string | null; listed: string | null; isin: string; slug: string | null;
   exchange: "NSE" | "BSE" | "both"; exchanges: Exchange[]; nse_symbol: string | null; bse_code: string | null;
   bse_symbol: string | null; bse_group: string | null; market_cap_cr: number | null; bse_error: string | null;
+  /** where market_cap_cr comes from (BSE's scrip master, read up to a day ago) and when it was read */
+  market_cap_source?: string | null; market_cap_as_of?: string | null;
 };
 
 /** Where a stock trades: NSE, BSE or both (same ISIN). */
@@ -26,17 +28,35 @@ export type StockQuote = {
   status: string | null;
   listing_date: string | null;
   as_of: string | null;
+  /** the display price: last traded in session, the official close after it (fincalc/price.py) */
+  price?: string | null;
+  price_kind?: "last_traded" | "official_close" | "previous_close";
+  price_label?: string;
+  session?: "open" | "closing" | "closed";
+  /** the last traded price (after the close it can differ from the official close) */
   last_price: string | null;
+  official_close?: string | null;
+  last_differs?: boolean;
   open: string | null;
   previous_close: string | null;
+  /** what the day change is measured from: the exchange's adjusted base price on an ex-date, else the previous close */
+  reference_price?: string | null;
+  reference_kind?: string | null;
+  reference_label?: string | null;
   change: string | null;
   change_pct: number | null;
+  price_notes?: string[];
+  quality?: QualityFlag[];
   week52_high: string | null;
   week52_low: string | null;
   week52_position: number | null;
   issued_shares: string | null;
   market_cap: string | null;
+  market_cap_basis?: string | null;
 };
+
+/** Two published figures that disagree beyond tolerance: both are shown with their sources, never one picked silently. */
+export type QualityFlag = { field: string; severity: "warn" | "info"; message: string; values: { value: string | null; source: string }[] };
 
 export type StockOverview = {
   /** parts the exchange could not serve just now (network / refused); retried, never cached long */

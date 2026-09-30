@@ -64,6 +64,7 @@ from finresearch.adapters.nse_equity import (
     Shareholding,
     parse_results_period_end,
 )
+from finresearch.fincalc.price import session_over
 
 BSE_WWW = "https://www.bseindia.com"
 BHAVCOPY_URL = BSE_WWW + "/download/BhavCopy/Equity/BhavCopy_BSE_CM_0_0_0_{day:%Y%m%d}_F_0000.CSV"
@@ -561,7 +562,19 @@ class BseEquity:
                 extra.append(await self._json(path, params))
             except BseError:
                 extra.append(None)
-        return build_quote(code, header or {}, *extra)
+        q = build_quote(code, header or {}, *extra)
+        if q is not None and q.as_of is not None and session_over(q.as_of):
+            # BSE's header has no close field: after the session the official close is the day's bar (the same figure
+            # as the bhavcopy's ClsPric). The LTP usually equals it but need not (no trade in the closing session).
+            day = q.as_of.date()
+            try:
+                bars = await self.history(code, day, day)
+            except BseError:
+                bars = []
+            bar = next((b for b in bars if b.day == day and b.close), None)
+            if bar is not None:
+                q.close_price = bar.close
+        return q
 
     async def history(self, code: str, start: date, end: date, series: str = "EQ") -> list[PriceBar]:
         url = f"{BSE_API}/StockPriceCSVDownload/w"

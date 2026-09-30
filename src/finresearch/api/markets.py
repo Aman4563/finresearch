@@ -413,11 +413,14 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
             holding = await part("shareholding", lambda: eq.shareholding(sym), [])
             actions = await part("corporate actions", lambda: eq.corporate_actions(sym), [])
             anns = await part("announcements", lambda: eq.announcements(sym), [])
-        quote = quote_json(q, sym) if q is not None else None
+        div_today, action_today = ex_today(actions, q)
+        quote = (
+            quote_json(q, sym, dividend_today=div_today, action_today=action_today) if q is not None else None
+        )
         year_ago = today - timedelta(days=365)
         ttm_dps = sum((a.dividend_per_share for a in actions
                        if a.dividend_per_share and a.ex_date and year_ago < a.ex_date <= today), Decimal(0))  # fmt: skip
-        last_px = Decimal(quote["last_price"]) if quote and quote["last_price"] else None
+        last_px = Decimal(quote["price"]) if quote and quote["price"] else None
         acts = sorted(actions, key=lambda a: a.ex_date or date.min, reverse=True)
         anns = sorted(anns, key=lambda a: a.at or datetime.min.replace(tzinfo=UTC), reverse=True)
         listing = await _listing(inst)
@@ -1128,28 +1131,80 @@ def _verified_frequency(isin: str) -> tuple[int, dict[str, Any]] | None:
     return None
 
 
-def quote_json(q, sym: str) -> dict[str, Any]:
-    """An NSE or BSE quote as the stock pages show it: last price, day change, 52-week position and market cap."""
+def quote_json(q, sym: str, *, now: datetime | None = None, dividend_today: Decimal | None = None,
+               action_today: str | None = None) -> dict[str, Any]:  # fmt: skip
+    """An NSE or BSE quote as the stock pages show it: the display price (fincalc.price: last traded in session, the
+    official close after it) with its kind, label and as-of, the last trade and official close side by side, the day
+    change from the (corporate-action adjusted) previous close, 52-week position and market cap on the same price.
+
+    `last_price` keeps its meaning (the last traded price); pages show `price`. `quality` lists disagreements between
+    two published figures (e.g. the computed market cap vs the exchange's own), each with both values and sources."""
+    from finresearch.fincalc.price import REF_LABELS, disagreement, price_view
     from finresearch.fincalc.valuation import market_cap
 
-    last = q.last_price or q.close_price
-    change = (last - q.previous_close) if last is not None and q.previous_close else None
-    mcap = getattr(q, "market_cap", None)  # BSE publishes the market cap itself (no issued-share count)
-    if mcap is None:
-        mcap = market_cap(q.issued_shares, last) if q.issued_shares and last else None
+    ex = getattr(q, "exchange", "NSE")
+    v = price_view(q, exchange=ex, now=now, dividend_today=dividend_today, action_today=action_today)
+    px = v.price
+    quality: list[dict[str, Any]] = []
+    published = getattr(q, "market_cap", None)  # BSE publishes the market cap itself (no issued-share count)
+    if published is not None and published > 0:
+        mcap, basis = (
+            published,
+            f"BSE-published (BSE's price × shares, as of {v.as_of:%d %b %H:%M})"
+            if v.as_of
+            else "BSE-published",
+        )
+    elif q.issued_shares and px:
+        mcap, basis = market_cap(q.issued_shares, px), f"issued shares × {v.label.lower()}"
+        nse_mcap = getattr(q, "exchange_market_cap", None)
+        gap = (
+            disagreement(mcap, nse_mcap) if v.kind == "official_close" else None
+        )  # NSE's in-session basis: unverified
+        if gap is not None and gap > MCAP_TOLERANCE:
+            quality.append({"field": "market_cap", "severity": "warn",
+                            "message": "The market cap computed on the shown price differs from NSE's own figure.",
+                            "values": [{"value": _s(mcap.quantize(Decimal(1))), "source": f"issued shares × {v.label.lower()}"},
+                                       {"value": _s(nse_mcap.quantize(Decimal(1))), "source": "NSE quote tradeInfo.totalMarketCap"}]})  # fmt: skip
+    else:
+        mcap, basis = None, None
     pos = None
-    if last and q.week52_high and q.week52_low and q.week52_high > q.week52_low:
-        pos = (last - q.week52_low) / (q.week52_high - q.week52_low)
-    return {"symbol": q.symbol or sym, "exchange": getattr(q, "exchange", "NSE"),
+    if px and q.week52_high and q.week52_low and q.week52_high > q.week52_low:
+        pos = (px - q.week52_low) / (q.week52_high - q.week52_low)
+    change, change_pct = v.change, v.change_pct
+    return {"symbol": q.symbol or sym, "exchange": ex,
             "scrip_code": getattr(q, "scrip_code", None), "isin": getattr(q, "isin", None),
             "company": q.company, "industry": q.industry, "status": q.status,
             "listing_date": q.listing_date.isoformat() if q.listing_date else None,
-            "as_of": q.as_of.isoformat() if q.as_of else None, "last_price": _s(last), "open": _s(q.open),
-            "previous_close": _s(q.previous_close), "change": _s(change),
-            "change_pct": _f(change / q.previous_close * 100, 4) if change is not None else None,
+            "as_of": q.as_of.isoformat() if q.as_of else None,
+            "price": _s(px), "price_kind": v.kind, "price_label": v.label, "session": v.session,
+            "last_price": _s(v.last_traded), "official_close": _s(v.official_close), "last_differs": v.differs,
+            "open": _s(q.open), "previous_close": _s(q.previous_close),
+            "reference_price": _s(v.reference), "reference_kind": v.reference_kind,
+            "reference_label": REF_LABELS.get(v.reference_kind or ""),
+            "change": _s(change), "change_pct": _f(change_pct, 4) if change_pct is not None else None,
+            "price_notes": v.notes, "quality": quality,
             "week52_high": _s(q.week52_high), "week52_low": _s(q.week52_low),
             "week52_position": _f(pos, 4), "issued_shares": _s(q.issued_shares),
-            "market_cap": _s(mcap.quantize(Decimal(1))) if mcap is not None else None}  # fmt: skip
+            "market_cap": _s(mcap.quantize(Decimal(1))) if mcap is not None else None,
+            "market_cap_basis": basis}  # fmt: skip
+
+
+def ex_today(actions: list, q: Any) -> tuple[Decimal | None, str | None]:
+    """(cash dividend per share, other corporate action) going ex on the quote's day, for exchanges that publish no
+    adjusted previous close (BSE). NSE's base price already carries the adjustment and wins in fincalc.price."""
+    if q is None or getattr(q, "as_of", None) is None:
+        return None, None
+    from finresearch.fincalc.dates import to_ist
+
+    day = to_ist(q.as_of).date()
+    todays = [a for a in actions or [] if a.ex_date == day]
+    dps = sum((a.dividend_per_share for a in todays if a.dividend_per_share), Decimal(0))
+    other = next((a.subject for a in todays if PRICE_ACTION.search(a.subject or "")), None)
+    return (dps or None), other
+
+
+PRICE_ACTION = re.compile(r"split|sub-?division|bonus|rights|consolidat|demerger|reduction|arrangement", re.I)
+MCAP_TOLERANCE = Decimal("0.001")  # 0.1 %: NSE's own figure is issued shares × its close, to the paisa
 
 
 def _profile_slab() -> Decimal:

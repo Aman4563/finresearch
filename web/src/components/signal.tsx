@@ -90,6 +90,10 @@ export function SignalView({ s, compact }: { s: Signal; compact?: boolean }) {
         </div>
       </div>
 
+      {s.action === "NO_SIGNAL" && s.asset !== "fund" && s.caveats[0] && (
+        // the providers put the reason for "no signal" first (stock, IPO, F&O, bond): never hide it behind "Why?"
+        <p className="rounded-lg bg-background-subtle px-3 py-2 text-xs text-foreground/90"><span className="font-medium">Why no signal: </span>{s.caveats[0]}</p>
+      )}
       {s.expected_return && (
         <p className="text-xs text-muted">
           Return range:{" "}

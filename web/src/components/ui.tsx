@@ -137,9 +137,11 @@ export function AnimatedNumber({ value, format = (n) => n.toLocaleString("en-IN"
 }
 
 /** A KPI tile: label, big number, optional change and footnote. */
-export function Stat({ label, value, format, display, delta, deltaLabel, hint, icon, tone = "brand", href, help }: {
+export function Stat({ label, value, format, display, delta, deltaLabel, hint, note, icon, tone = "brand", href, help }: {
   label: ReactNode; value?: number | null; format?: (n: number) => string; display?: ReactNode;
   delta?: number | null; deltaLabel?: string; hint?: ReactNode; icon?: ReactNode; tone?: Tone; href?: string; help?: ReactNode;
+  /** a second, untruncated line under the delta (e.g. the last trade under an official close) */
+  note?: ReactNode;
 }) {
   const body = (
     <div className="group relative overflow-hidden rounded-xl border border-border bg-card p-4 shadow-card transition duration-200 hover:-translate-y-0.5 hover:border-border-strong hover:shadow-glow">
@@ -157,6 +159,7 @@ export function Stat({ label, value, format, display, delta, deltaLabel, hint, i
         {delta != null && <Delta value={delta} />}
         {(deltaLabel || hint) && <span className="truncate text-muted">{deltaLabel ?? hint}</span>}
       </div>
+      {note && <p className="mt-0.5 text-[11px] text-muted">{note}</p>}
       <span className="pointer-events-none absolute -right-8 -bottom-8 size-24 rounded-full bg-brand/5 transition group-hover:scale-125" />
     </div>
   );

@@ -179,9 +179,10 @@ function Holdings({ snap, onChanged, updating }: { snap: Snapshot; onChanged: ()
                 <td className="num text-right" title={h.xirr_reason ?? ""}>{h.pending ? <span className="text-xs text-muted">…</span> : h.xirr == null ? <span className="text-xs text-muted">—</span> : pctx(h.xirr * 100)}</td>
                 <td className="num text-right">{units(h.units)}</td>
                 <td className="num text-right">{inr(h.avg_cost, 2)}</td>
-                <td className="num text-right">
+                <td className="num text-right" title={h.price_source ? `${h.price_source}${h.price_as_of ? ` · as of ${h.price_as_of}` : ""}` : undefined}>
                   {h.pending ? <span className="skeleton inline-block h-3 w-14 rounded align-middle" aria-label="price updating" /> : h.price == null ? <span className="text-xs text-muted" title={h.price_error ?? ""}>no price</span> : inr(h.price, 2)}
                   {h.price_source?.includes("statement") && <span className="block text-[10px] text-warn">statement NAV {day(h.price_as_of)}</span>}
+                  {!h.pending && h.price_source?.includes("close (official)") && <span className="block text-[10px] text-muted">close {day(h.price_as_of)}</span>}
                 </td>
                 <td className={cx("num text-right", h.realised > 0 ? "text-gain" : h.realised < 0 ? "text-loss" : "text-muted")}>{h.realised ? signed(h.realised) : "—"}</td>
                 <td onClick={(e) => e.stopPropagation()}>{h.signal ? <SignalBadge s={h.signal} /> : <span className="text-[11px] text-muted">—</span>}</td>

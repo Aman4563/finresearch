@@ -19,6 +19,11 @@ class NotYet(RuntimeError):
     """The information is not published yet (for example the stock has not listed); retry later."""
 
 
+class CloseNotPublished(RuntimeError):
+    """The stock traded today but the exchange has not published its official close yet: retry within the day
+    (the scheduler's usual network-error delay), not on the next trading day as for NotYet."""
+
+
 @dataclass
 class Deps:
     """Network access for the handlers; tests pass fakes."""
@@ -255,7 +260,18 @@ async def listing(session: Session, job: MonitorJob, watch: Watch, deps: Deps, n
         meta["expected_listing_date"] = watch.listing_date.isoformat()
         watch.listing_date = q.listing_date
     meta["listing_confirmed"] = True
-    price = q.open if which == "open" else (q.close_price or q.last_price)
+    if which == "close":
+        from finresearch.fincalc.price import OFFICIAL_CLOSE, price_view
+
+        v = price_view(q, exchange=exchange, now=now)
+        if v.kind != OFFICIAL_CLOSE:
+            # an in-session or not-yet-published close must never be recorded as the listing-day close
+            raise CloseNotPublished(
+                f"{exchange} has not published {watch.nse_symbol}'s official close yet ({v.label.lower()})"
+            )
+        price = v.price
+    else:
+        price = q.open
     meta[f"listing_{which}"] = str(price)
     watch.meta = meta
     upper = _upper_band(session, watch)

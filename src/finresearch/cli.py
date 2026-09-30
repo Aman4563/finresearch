@@ -26,6 +26,8 @@ ipo_app = typer.Typer(no_args_is_help=True, help="IPO research reports (multi-ag
 app.add_typer(ipo_app, name="ipo")
 eval_app = typer.Typer(no_args_is_help=True, help="Evaluate runs against gold sets")
 app.add_typer(eval_app, name="eval")
+audit_app = typer.Typer(no_args_is_help=True, help="Read-only data audits against the exchanges' own figures")
+app.add_typer(audit_app, name="audit")
 console = Console()
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -898,3 +900,30 @@ def portfolio_tax_csv(
     with session_scope() as s:
         out.write_text(export_csv(export_rows(s), fy))
     console.print(f"written {out} (a personal estimate: verify with a CA)")
+
+
+@audit_app.command("prices")
+def audit_prices(
+    symbols: list[str] = typer.Argument(None, help="NSE symbols or BSE:<code> (default: the audit's list)"),
+    index: str = typer.Option("NIFTY 50", help="NSE index to check ('' to skip)"),
+    fund: str = typer.Option("122639", help="AMFI scheme code to check ('' to skip)"),
+    bond: bool = typer.Option(True, help="Check one traded bond from NSE's list"),
+    out: Path | None = typer.Option(None, help="Also write the report (Markdown; .json for JSON)"),
+    strict: bool = typer.Option(False, help="Exit 1 when any check is a mismatch"),
+) -> None:
+    """Cross-check every price source (NSE quote/history/intraday, BSE quote/history/intraday, an index, AMFI NAV, a
+    bond) and flag disagreements beyond tolerance. Read-only; a few requests per symbol."""
+    import asyncio
+
+    from finresearch.evals.data_audit import audit_live
+
+    report = asyncio.run(
+        audit_live(list(symbols or []) or None, index=index or None, fund=fund or None, bond=bond)
+    )
+    md = report.markdown()
+    typer.echo(md)
+    if out:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(report.as_json(), indent=1) + "\n" if out.suffix == ".json" else md)
+    if strict and report.mismatches:
+        raise typer.Exit(1)

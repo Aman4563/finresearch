@@ -70,6 +70,8 @@ export function StockSignalCard({ symbol }: { symbol: string }) {
 type ForensicScore = {
   key: string; name: string; value: number | null; flag: string | null; red_flag: boolean; components: Record<string, unknown>;
   missing: string[]; proxies: string[]; reason: string | null; thresholds: string; source: string;
+  /** why a computed value may mislead (a balance sheet reshaped by a demerger, a recent listing) */
+  caveat?: string | null;
 };
 type Forensic = {
   symbol: string | null; industry: string | null; fiscal_year_end: string | null; prior_year_end: string | null; basis: string | null;
@@ -78,7 +80,7 @@ type Forensic = {
 
 const HELP: Record<string, string> = {
   piotroski: "Nine yes/no tests of profitability, funding and efficiency (ROA > 0, cash flow > 0, ROA up, cash flow above profit, less long-term debt, better current ratio, no new shares, better gross margin, better asset turnover). One point each; 8-9 is strong, 0-2 weak.",
-  altman: "A bankruptcy-risk score built for emerging-market companies: 6.56 × working capital/assets + 3.26 × retained earnings/assets + 6.72 × EBIT/assets + 1.05 × equity/liabilities. Above 2.6 is safe, 1.1-2.6 grey, below 1.1 distress.",
+  altman: "A bankruptcy-risk score built for emerging-market companies: 6.56 × working capital/assets + 3.26 × retained earnings/assets + 6.72 × EBIT/assets + 1.05 × equity/liabilities. The zones apply to this Z'' value: above 2.6 safe, 1.1-2.6 grey, below 1.1 distress. The emerging-market (EM) score shown under it is Z'' + 3.25, Altman's rating-equivalent scale.",
   beneish: "Eight ratios that rose in companies later caught manipulating earnings (receivables vs sales, margins, asset quality, sales growth, depreciation, overheads, leverage, accruals). Above −1.78 is a red flag worth a closer look, not proof.",
   accruals: "How much of the profit did not arrive as cash: (net profit − operating cash flow) ÷ average total assets. High accruals have preceded weaker returns in US studies; above +0.10 is flagged.",
   cfo_ebitda: "Operating cash flow as a share of operating profit before depreciation (EBITDA). Below 0.6 means profits are not turning into cash; check receivables and inventory.",
@@ -97,7 +99,9 @@ export function ForensicCard({ symbol }: { symbol: string }) {
     <Card title="Forensic scorecard" icon={<Microscope className="size-4" />}
       subtitle={data?.fiscal_year_end ? `FY ending ${day(data.fiscal_year_end)}${data.prior_year_end ? ` vs ${day(data.prior_year_end)}` : ""}, ${data.basis}, from the annual Integrated Filing XBRL on ${data.exchange ?? "NSE"}` : "Quality and red-flag scores from the filed annual results"}
       help="Screening flags computed from the company's own filed results: they point at what to check, they are not buy or sell signals. None of them has been validated on Indian data."
-      actions={data && data.red_flags > 0 ? <Badge tone="loss">{data.red_flags} red flag{data.red_flags > 1 ? "s" : ""}</Badge> : data ? <Badge tone="gain">no red flags</Badge> : undefined}>
+      actions={data && data.red_flags > 0 ? <Badge tone="loss">{data.red_flags} red flag{data.red_flags > 1 ? "s" : ""}</Badge>
+        : data && data.scores.some((x) => x.caveat) ? <Badge tone="warn">{data.scores.filter((x) => x.caveat).length} unreliable</Badge>
+        : data ? <Badge tone="gain">no red flags</Badge> : undefined}>
       {error ? <ErrorNote error={error} onRetry={reload} /> : !data ? <SkeletonRows rows={5} /> : (
         <div className="space-y-3">
           <ul className="divide-y divide-border/70">
@@ -109,8 +113,14 @@ export function ForensicCard({ symbol }: { symbol: string }) {
                 </span>
                 <span className="flex items-center gap-2">
                   <span className={cx("num text-sm font-semibold", s.red_flag ? "text-loss" : s.value == null ? "text-muted" : "")}>{fmtScore(s)}</span>
-                  {s.flag && <Badge tone={s.red_flag ? "loss" : s.flag === "grey" || s.flag === "middling" ? "warn" : "gain"}>{s.flag}</Badge>}
+                  {s.flag && <Badge tone={s.red_flag ? "loss" : s.caveat || s.flag === "grey" || s.flag === "middling" ? "warn" : "gain"}>{s.flag}</Badge>}
                 </span>
+                {s.key === "altman" && s.value != null && typeof s.components.em_score === "number" && (
+                  <p className="col-span-2 text-[11px] text-muted">
+                    Z&apos;&apos; {s.value.toFixed(2)} · EM score {(s.components.em_score as number).toFixed(2)} (Z&apos;&apos; + 3.25) · working capital/assets {Number(s.components.x1_working_capital).toFixed(3)}, other equity/assets {Number(s.components.x2_retained_earnings).toFixed(3)}, EBIT/assets {Number(s.components.x3_ebit).toFixed(3)}, equity/liabilities {Number(s.components.x4_equity_to_liabilities).toFixed(3)}
+                  </p>
+                )}
+                {s.caveat && <p className="col-span-2 text-[11px] text-warn">{s.caveat}</p>}
                 {s.value == null && (
                   <p className="col-span-2 text-[11px] text-muted">
                     {s.reason}{s.missing.length > 0 && <> Missing: <span className="num">{s.missing.join(", ")}</span>.</>}

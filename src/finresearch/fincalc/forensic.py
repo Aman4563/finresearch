@@ -66,6 +66,9 @@ class Score:
     reason: str | None = None
     thresholds: str = ""
     source: str = ""
+    caveat: str | None = (
+        None  # why a computed value may mislead (e.g. a balance sheet reshaped by a demerger)
+    )
 
 
 def financial_reason(facts: Facts | None = None, *, industry: str | None = None,
@@ -182,10 +185,16 @@ def piotroski(cur: Facts, prev: Facts, *, not_for: str | None = None) -> Score:
 ALTMAN_T = "Z'': above 2.6 safe, 1.1-2.6 grey, below 1.1 distress (Altman 2005). EM score = Z'' + 3.25."
 
 
-def altman_z_em(cur: Facts, *, not_for: str | None = None) -> Score:
+def altman_z_em(cur: Facts, *, not_for: str | None = None, restructured: str | None = None) -> Score:
     """Altman Z''-score for emerging-market / non-manufacturing firms:
     Z'' = 6.56 X1 + 3.26 X2 + 6.72 X3 + 1.05 X4 with X1 = working capital / TA, X2 = retained earnings / TA,
-    X3 = EBIT / TA, X4 = book equity / total liabilities. The EM score adds 3.25 (rating-equivalent scale)."""
+    X3 = EBIT / TA (EBIT = profit before tax + finance costs), X4 = book equity / total liabilities. `value` is Z''
+    (the zones apply to it); the EM score Z'' + 3.25 (Altman's rating-equivalent scale) is in `components`.
+
+    `restructured` (a demerger / scheme of arrangement, or a listing within the last two fiscal years): "other equity"
+    then holds the reserves the scheme created, not accumulated retained earnings, and the balance sheet mixes
+    transferred assets and liabilities, so the score is marked unreliable, its zone carries the caveat, and a distress
+    reading is not raised as a red flag."""
     src = "Altman 2005, Emerging Markets Review 6 (doi:10.1016/j.ememar.2005.09.007)"
     if g := _guard("altman", "Altman Z''-EM", not_for, ALTMAN_T, src):
         return g
@@ -204,7 +213,15 @@ def altman_z_em(cur: Facts, *, not_for: str | None = None) -> Score:
                      reason="Total assets or total liabilities is zero.")  # fmt: skip
     z = Decimal("6.56") * x1 + Decimal("3.26") * x2 + Decimal("6.72") * x3 + Decimal("1.05") * x4  # type: ignore[operator]
     zone = "safe" if z > ALTMAN_SAFE else "distress" if z < ALTMAN_DISTRESS else "grey"
-    return Score("altman", "Altman Z''-EM", z, flag=zone, red_flag=zone == "distress",
+    caveat = None
+    if restructured:
+        caveat = (
+            f'Unreliable here: {restructured}. "Other equity" (the retained-earnings stand-in) holds the '
+            "reserves the scheme of arrangement created, not earnings retained over the years, and the balance "
+            "sheet mixes transferred assets and liabilities, so Z'' does not read as Altman calibrated it."
+        )
+    return Score("altman", "Altman Z''-EM", z, flag=f"{zone} (unreliable)" if restructured else zone,
+                 red_flag=zone == "distress" and not restructured, caveat=caveat,
                  components={"x1_working_capital": x1, "x2_retained_earnings": x2, "x3_ebit": x3,
                              "x4_equity_to_liabilities": x4, "em_score": z + ALTMAN_EM_CONSTANT},
                  proxies=["retained earnings = other equity (includes other reserves)"],
@@ -340,10 +357,11 @@ def cfo_to_ebitda(years: list[Facts], *, not_for: str | None = None) -> Score:
 
 
 def scorecard(cur: Facts | None, prev: Facts | None, *, industry: str | None = None,
-              revenue_basis: str | None = None) -> list[Score]:  # fmt: skip
-    """All five scores for the latest year (`cur`) against the year before (`prev`)."""
+              revenue_basis: str | None = None, restructured: str | None = None) -> list[Score]:  # fmt: skip
+    """All five scores for the latest year (`cur`) against the year before (`prev`). `restructured` says why the
+    balance sheet is not a going concern's own history (see `altman_z_em`)."""
     reason = financial_reason(cur, industry=industry, revenue_basis=revenue_basis)
     c, p = cur or {}, prev or {}
-    return [piotroski(c, p, not_for=reason), altman_z_em(c, not_for=reason), beneish(c, p, not_for=reason),
+    return [piotroski(c, p, not_for=reason), altman_z_em(c, not_for=reason, restructured=restructured), beneish(c, p, not_for=reason),
             accruals_ratio(c, p, not_for=reason),
             cfo_to_ebitda([y for y in (prev, cur) if y], not_for=reason)]  # fmt: skip

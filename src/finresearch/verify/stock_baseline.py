@@ -55,7 +55,20 @@ def stock_facts(symbol: str, quote, shareholding: list, actions: list, today: da
         ("LTP", "Fifty2WkHigh_adj", "Fifty2WkLow_adj") if bse else ("lastPrice", "yearHigh", "yearLow")
     )
     asof = quote.as_of.strftime("%Y-%m-%d %H:%M IST") if quote and quote.as_of else today.isoformat()
-    if quote and quote.last_price:
+    from finresearch.fincalc.price import OFFICIAL_CLOSE, price_view
+
+    view = price_view(quote, exchange="BSE" if bse else "NSE") if quote else None
+    px = view.price if view else None
+    if (
+        view and view.kind == OFFICIAL_CLOSE
+    ):  # after the close: the official close, the last trade noted beside it
+        extra = f"; last traded ₹{view.last_traded}" if view.differs else ""
+        d = view.day
+        close_url = bse_source_url("history", code, start=d, end=d) if bse and d else page
+        out.append(StockFact("close_price", px, "INR per share", asof,
+                             f"{symbol} closed at ₹{px} (official close, {asof}{extra})", close_url,
+                             f"{'Close Price' if bse else 'closePrice'} {px}"))  # fmt: skip
+    elif quote and quote.last_price:
         out.append(StockFact("last_price", quote.last_price, "INR per share", asof,
                              f"{symbol} last traded at ₹{quote.last_price} ({asof})", page, f"{f_last} {quote.last_price}"))  # fmt: skip
     if quote and quote.week52_high and quote.week52_low:
@@ -66,10 +79,12 @@ def stock_facts(symbol: str, quote, shareholding: list, actions: list, today: da
     if quote and quote.issued_shares:
         out.append(StockFact("shares_outstanding", quote.issued_shares, "shares", asof,
                              f"{quote.issued_shares:,} shares issued", page, f"issuedSize {quote.issued_shares}", "normal"))  # fmt: skip
-        if quote.last_price:
-            mcap = market_cap(quote.issued_shares, quote.last_price)
-            out.append(StockFact("market_cap", mcap, "INR", asof, f"Market cap ₹{mcap:,.0f} (fincalc: shares x last "
-                                 "price)", page, f"issuedSize {quote.issued_shares}; lastPrice {quote.last_price}"))  # fmt: skip
+        if px:
+            what = "official close" if view.kind == OFFICIAL_CLOSE else "last price"
+            field = "closePrice" if view.kind == OFFICIAL_CLOSE else "lastPrice"
+            mcap = market_cap(quote.issued_shares, px)
+            out.append(StockFact("market_cap", mcap, "INR", asof, f"Market cap ₹{mcap:,.0f} (fincalc: shares x {what})",
+                                 page, f"issuedSize {quote.issued_shares}; {field} {px}"))  # fmt: skip
     elif bse and quote and getattr(quote, "market_cap", None):
         out.append(StockFact("market_cap", quote.market_cap, "INR", asof, f"Market cap ₹{quote.market_cap:,.0f} "
                              "(as published by BSE; BSE's quote gives no issued-share count)", page,

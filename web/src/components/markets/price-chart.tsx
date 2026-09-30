@@ -39,7 +39,12 @@ export type IntradayResponse = {
   sessions: { day: string; prev_close: number | null; samples: number; complete: boolean }[];
   candles: { t: string; o: number; h: number; l: number; c: number; n: number; v?: number; partial?: boolean }[];
   prev_close: number | null;
+  /** after the session: the official close from the chart's post-close point; in session: the last traded price */
   last: number | null;
+  last_kind?: "official_close" | "last_traded";
+  last_label?: string;
+  last_traded?: number | null;
+  official_close?: number | null;
   change: number | null;
   change_pct: number | null;
   as_of: string | null;
@@ -181,13 +186,16 @@ const pts: Fmt = (v) => v.toLocaleString("en-IN", { maximumFractionDigits: 2 });
  * bars (the exchange's EOD history); `defaults` the profile's chart defaults; `refreshS` the profile's live refresh (0 = off).
  */
 export function PriceChart({ kind, symbol, daily, dailyLoading, dailyError, onDailyRetry, dailyEmpty, defaults, refreshS, height = 300,
-  compactHeader = false, onRange, exchange = "NSE" }: {
+  compactHeader = false, onRange, exchange = "NSE", day }: {
   kind: "stock" | "index"; symbol: string; daily?: Ohlc[]; dailyLoading?: boolean; defaults: ChartDefaults; refreshS: number;
   /** daily-history states, shown only when a daily range (1M…5Y) is chosen */
   dailyError?: string | null; onDailyRetry?: () => void; dailyEmpty?: string | null;
   height?: number; compactHeader?: boolean;
   /** Called with the chosen range (e.g. so the page fetches enough daily history). */ onRange?: (r: ChartRange) => void;
   /** The exchange whose series this is (the stock page's BSE view passes "BSE" with a "BSE:<code>" symbol). */ exchange?: "NSE" | "BSE";
+  /** The quote's day change (display price vs the corporate-action adjusted previous close): the 1D figure on a stock
+   * page, so the chart and the headline agree (the chart's own reference is the unadjusted previous close). */
+  day?: { pct: number | null; ref: number | null; label: string | null };
 }) {
   const choice = useChartChoice(kind, defaults);
   const { range, interval, type } = choice.value;
@@ -210,7 +218,7 @@ export function PriceChart({ kind, symbol, daily, dailyLoading, dailyError, onDa
   const multiDay = intraday ? (live.data?.sessions.length ?? 0) > 1 : true;
   const xFormat = intraday ? (multiDay ? (s: string) => `${dayMon(s)} ${hhmm(s)}` : hhmm) : (s: string) => shortDate(s);
   const change = intraday
-    ? range === "1D" ? live.data?.change_pct ?? null : rows.length > 1 && rows[0].o ? ((rows[rows.length - 1].c ?? 0) / rows[0].o - 1) * 100 : null
+    ? range === "1D" ? (day ? day.pct : live.data?.change_pct ?? null) : rows.length > 1 && rows[0].o ? ((rows[rows.length - 1].c ?? 0) / rows[0].o - 1) * 100 : null
     : rows.length > 1 && rows[0].c ? ((rows[rows.length - 1].c ?? 0) / rows[0].c - 1) * 100 : null;
   const sessions = live.data?.sessions.length ?? 0;
   const lineOnly = interval === "1m";
@@ -222,7 +230,12 @@ export function PriceChart({ kind, symbol, daily, dailyLoading, dailyError, onDa
           <p className="text-xs text-muted">
             {range} change{" "}
             <span className={cx("num text-sm font-semibold", toneOf(change == null ? null : change / 100))}>{signedPct(change == null ? null : change / 100)}</span>
-            {intraday && range === "1D" && live.data?.prev_close != null && <span className="ml-1">vs previous close {format(live.data.prev_close)}</span>}
+            {intraday && range === "1D" && day?.ref != null
+              ? <span className="ml-1">vs {day.label ?? "previous close"} {format(day.ref)}</span>
+              : intraday && range === "1D" && live.data?.prev_close != null && <span className="ml-1">vs previous close {format(live.data.prev_close)}</span>}
+            {intraday && range === "1D" && live.data?.last_kind === "official_close" && live.data.last_traded != null && live.data.last != null && live.data.last_traded !== live.data.last && (
+              <span className="ml-1">· close (official) {format(live.data.last)}, last traded {format(live.data.last_traded)}</span>
+            )}
           </p>
         )}
         <div className="flex flex-wrap items-center gap-2">
