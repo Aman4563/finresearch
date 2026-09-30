@@ -393,7 +393,7 @@ async def bond_analytics(isin: str, coupon_frequency: int, price_basis: str = "d
         # live bond run 12: YTM x (1 - t) overstated the post-tax yield of a premium bond (pull-to-par is a
         # capital loss, not interest); compute it from after-tax cash flows instead
         out["after_tax_ytm"] = str(b.after_tax_ytm(clean, s, bond.maturity, coupon, coupon_frequency, tax_rate,
-                                                   face=bond.face_value))  # fmt: skip
+                                                   face=bond.face_value, accrued=ai))  # fmt: skip
         out["after_tax_note"] = (
             "coupons taxed at tax_rate; the premium over face is a capital loss at redemption "
             "that saves tax only if the investor can offset it"

@@ -345,7 +345,7 @@ def test_bond_analytics_matches_fincalc_with_cash_flows_curve_and_tax(app_client
     assert a["ytm"] == round(float(b.ytm(clean, s, mat, cpn, 1, face)), 6)
     assert r["tax_rate"] == 0.312  # 30% slab + 4% cess
     assert a["after_tax_ytm"] == round(
-        float(b.after_tax_ytm(clean, s, mat, cpn, 1, Decimal("0.312"), face=face)), 6
+        float(b.after_tax_ytm(clean, s, mat, cpn, 1, Decimal("0.312"), face=face, accrued=ai)), 6
     )
     assert a["after_tax_ytm"] < a["ytm"]
     flows = a["cash_flows"]

@@ -168,14 +168,22 @@ def post_tax_yield(pre_tax_yield: Num, tax_rate: Num) -> Decimal:
 
 
 def after_tax_ytm(clean: Num, settlement: date, maturity: date, coupon_rate: Num, freq: int, tax_rate: Num,
-                  capital_gains_rate: Num | None = None, face: Num = 100, loss_offset: bool = False) -> Decimal:  # fmt: skip
+                  capital_gains_rate: Num | None = None, face: Num = 100, loss_offset: bool = False,
+                  accrued: Num = 0) -> Decimal:  # fmt: skip
     """Yield on after-tax cash flows: each coupon is taxed at `tax_rate` (the investor's slab), and the difference
     between face value and the clean purchase price is a capital gain or loss at redemption, taxed at
     `capital_gains_rate` (default: the same as `tax_rate`). A capital loss saves tax only when `loss_offset` is
-    True (the investor has gains to set it against). Accrued interest paid at purchase is ignored (a simplification)."""
+    True (the investor has gains to set it against).
+
+    `accrued` is the interest accrued since the last coupon, which the buyer pays on top of the clean price (NSE
+    trades bonds on the dirty price). Pass it whenever settlement is between coupon dates: the first coupon returns
+    it, so leaving it out overstates the yield (an 8.98 % bond 2.45 years from maturity with 49.45 accrued on a clean
+    1026.55 comes out 6.50 % instead of 4.32 % after 31.2 % tax). The whole first coupon is taxed, a conservative
+    simplification: relief for the purchased broken-period interest is not assumed."""
     t = float(to_decimal(tax_rate))
     cg = float(to_decimal(capital_gains_rate)) if capital_gains_rate is not None else t
     price, f = float(require_price(clean, "price")), float(require_price(face, "face"))
+    paid = price + float(to_decimal(accrued))
     flows = cash_flows(settlement, maturity, coupon_rate, freq, face)
     coupon = f * float(to_decimal(coupon_rate)) / freq
     gain = f - price
@@ -191,8 +199,24 @@ def after_tax_ytm(clean: Num, settlement: date, maturity: date, coupon_rate: Num
     lo, hi = -0.5, 1.0
     for _ in range(200):
         mid = (lo + hi) / 2
-        if pv(mid) > price:
+        if pv(mid) > paid:
             lo = mid
         else:
             hi = mid
     return Decimal(str(round((lo + hi) / 2, 8)))
+
+
+def effective_annual(nominal: Num, freq: int) -> Decimal:
+    """A yield compounded `freq` times a year as an effective annual rate, ``(1 + y/freq)**freq - 1``. Compare yields
+    only on this basis: a half-yearly 6.66 % G-sec par yield is 6.77 % a year, a quarterly-compounded 6.40 % FD is
+    6.56 %."""
+    if freq < 1:
+        raise ValueError("freq must be at least 1")
+    y = float(to_decimal(nominal))
+    return Decimal(str(round((1 + y / freq) ** freq - 1, 10)))
+
+
+def after_tax_par_yield(nominal: Num, tax_rate: Num, freq: int) -> Decimal:
+    """Effective annual yield after tax on an instrument bought at par (a par G-sec, an FD): each interest payment is
+    taxed at `tax_rate`, so the post-tax nominal yield is ``y x (1 - t)``, then made effective annual."""
+    return effective_annual(post_tax_yield(nominal, tax_rate), freq)

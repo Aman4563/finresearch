@@ -10,8 +10,10 @@ import { useState } from "react";
 import { shortDate } from "@/components/charts";
 import { ensureBond, startResearch } from "@/components/markets/actions";
 import { CashFlowChart, PriceYieldChart } from "@/components/markets/charts";
+import { BondLadderCard } from "@/components/markets/signal-charts";
 import { Facts, Metric, inr, pctOf, ratingLabel, ratingTone, signedPct, toneOf } from "@/components/markets/common";
 import type { BondAnalytics } from "@/components/markets/types";
+import { SignalCard } from "@/components/signal";
 import {
   Badge, Button, Callout, Card, ErrorNote, Field, InfoTip, PageHeader, Segmented, Skeleton, Stat, Table, cx, inputClass,
 } from "@/components/ui";
@@ -35,7 +37,8 @@ export default function BondDetail() {
   const [slabChoice, setSlabChoice] = useState<string | null>(null);
   const slab = slabChoice ?? (profile.data ? String(Number(profile.data.tax_slab_pct)) : null);
   const [shiftBp, setShiftBp] = useState(0);
-  const [fdDraft, setFdDraft] = useState("7.0");
+  const [fdDraft, setFdDraft] = useState("6.40");  // SBI 2-3 year card rate, w.e.f. 15-Dec-2025
+  const [fdTouched, setFdTouched] = useState(false);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -48,6 +51,8 @@ export default function BondDetail() {
   const shifted = a?.curve.find((p) => p.bp === shiftBp) ?? null;
   const fd = Math.max(0, Number(fdDraft) || 0) / 100;
   const fdAfterTax = d ? fd * (1 - d.tax_rate) : null;
+  // the signal uses the same assumptions as the page (it compares yields as effective yearly rates)
+  const signalQuery: Record<string, string> = { basis, ...(freqChoice ? { freq: freqChoice } : {}), ...(slab != null ? { tax_slab_pct: slab } : {}), ...(fdTouched && Number(fdDraft) > 0 ? { fd: String(Math.min(20, Number(fdDraft))) } : {}) };
 
   const research = async () => {
     if (!b || !confirm(`Start a full research run for ${b.symbol} ${b.series ?? ""} (${b.isin})? It uses your Claude plan window.`)) return;
@@ -103,8 +108,8 @@ export default function BondDetail() {
                 {SLABS.map((s) => <option key={s} value={s}>{s}%</option>)}
               </select>
             </Field>
-            <Field label="Compare with an FD at (% a year)" hint="Your bank's rate; interest is taxed at the same slab">
-              <input className={cx(inputClass, "num w-full")} inputMode="decimal" value={fdDraft} onChange={(e) => setFdDraft(e.target.value.replace(/[^0-9.]/g, ""))} />
+            <Field label="Compare with an FD at (% a year)" hint={fdTouched ? "Your rate; interest is taxed at the same slab" : "SBI 2–3 yr card rate (w.e.f. 15-Dec-2025); the signal uses SBI's rate for the bond's tenor until you change this"}>
+              <input className={cx(inputClass, "num w-full")} inputMode="decimal" value={fdDraft} onChange={(e) => { setFdTouched(true); setFdDraft(e.target.value.replace(/[^0-9.]/g, "")); }} />
             </Field>
           </div>
         </Card>
@@ -116,6 +121,13 @@ export default function BondDetail() {
         ) : null}
         {d?.error && <Callout tone="loss" title="Yield can't be computed">{d.error}</Callout>}
 
+        {slab != null && (
+          <div className="grid [&>*]:min-w-0 gap-5 lg:grid-cols-2">
+            <SignalCard asset="bond" instrument={isin} query={signalQuery} title="Buy, hold or avoid?" />
+            <BondLadderCard isin={isin} query={signalQuery} />
+          </div>
+        )}
+
         <div className="grid [&>*]:min-w-0 grid-cols-2 gap-3 lg:grid-cols-5 stagger">
           {!d ? (
             Array.from({ length: 5 }, (_, i) => <Skeleton key={i} className="h-[104px] rounded-xl" />)
@@ -124,7 +136,7 @@ export default function BondDetail() {
               <Stat label="Yield to maturity" icon={<BadgePercent className="size-4" />} value={a.ytm * 100} format={(n) => `${n.toFixed(2)}%`}
                 hint="before tax, if held to maturity" help="YTM: the yearly return if you buy at today's price, receive every coupon and hold until the face value is repaid (coupons assumed reinvested at the same rate)." />
               <Stat label="After-tax yield" tone="gain" icon={<PiggyBank className="size-4" />} value={a.after_tax_ytm * 100} format={(n) => `${n.toFixed(2)}%`}
-                hint={`at ${d.tax_slab_pct}% slab + cess`} help="The yield on what you keep: each coupon is taxed at your slab (plus 4% cess), and the gap between face value and the clean price you pay is a capital gain or loss at maturity. A loss is assumed not set off against other gains." />
+                hint={`at ${d.tax_slab_pct}% slab + cess`} help="The yield on what you keep: each coupon is taxed at your slab (plus 4% cess), the price paid includes the accrued interest, and the gap between face value and the clean price is a capital gain or loss at maturity. A loss is assumed not set off against other gains." />
               <Stat label="Current yield" tone="info" icon={<Coins className="size-4" />} value={a.current_yield * 100} format={(n) => `${n.toFixed(2)}%`}
                 hint="coupon ÷ clean price" help="This year's interest divided by the clean price. Ignores the gain or loss at maturity, so it overstates the return of a bond bought above face value." />
               <Stat label="Modified duration" tone="accent" icon={<Waves className="size-4" />} value={a.modified_duration} format={(n) => `${n.toFixed(2)}`}
