@@ -198,6 +198,45 @@ def test_sync_slots_follows_the_profiles_watch_windows(env):
         save_profile(s, p)
 
 
+def test_monitor_schedule_route_reads_the_profile_and_the_scheduler(env):
+    """The Monitor page's "How monitoring works" box reads its times from here, never hardcoded."""
+    from fastapi.testclient import TestClient
+
+    from finresearch.api import create_app
+    from finresearch.db import session_scope
+    from finresearch.monitor import intraday, iv, jobs
+    from finresearch.suggest.advisor import load_profile, save_profile
+
+    with session_scope() as s:
+        p = load_profile(s)
+        p.preferences.watch = WatchWindows(ipo_check_times=["11:00", "14:30"], stock_daily_time="18:00",
+                                           quiet_start="22:00", quiet_end="07:00")  # fmt: skip
+        save_profile(s, p)
+    try:
+        with TestClient(create_app()) as c:
+            r = c.get("/api/monitor/schedule").json()
+        assert r["ipo"]["check_times"] == ["11:00", "14:30"] and r["ipo"]["final_check"] == "17:15"
+        assert r["stock"]["daily_time"] == "18:00" and r["quiet"] == {"start": "22:00", "end": "07:00"}
+        assert r["ipo"]["archive_times"] == [f"{h:02d}:{m:02d}" for h, m in jobs.ARCHIVE_TIMES]
+        assert r["intraday"]["from"] == "15:45" == f"{intraday.START[0]}:{intraday.START[1]}"
+        assert r["iv"]["from"] == "15:50" and r["iv"]["indices"] == list(iv.INDEX_SYMBOLS)
+        assert (
+            r["ipo"]["listing_times"] == {"open": "10:15", "close": "15:45"}
+            and r["ipo"]["allotment_time"] == "19:00"
+        )
+        assert r["ipo"]["bidding_hours"] == ["10:00", "17:00"] and r["ipo"]["anchor_lockin_days"] == [30, 90]
+        assert (
+            r["forecasts"] == {"after": "16:30", "every_min": 60}
+            and r["running"] is False
+            and r["tick_s"] == 60
+        )
+    finally:
+        with session_scope() as s:
+            p = load_profile(s)
+            p.preferences.watch = WatchWindows()
+            save_profile(s, p)
+
+
 # --------------------------------------------------------------------------- archive + API
 def _series(day: int, prices: list[int], kind="equity", sym="INFY", start=(9, 15)) -> IntradaySeries:
     h, m = start
@@ -323,6 +362,65 @@ def test_after_close_archive_completes_watched_and_viewed_symbols(env):
     assert asyncio.run(archive_after_close(fetch, datetime(2026, 10, 3, 16, 0, tzinfo=IST), holidays={}))[
         "skipped"
     ]
+
+
+def test_after_close_archive_saves_a_bse_only_watch_from_bse(env, monkeypatch):
+    """A BSE-only stock watch (exchange "BSE", no NSE symbol) gets its session archived from BSE's own 1-minute series
+    under "BSE:<scrip code>", with BSE volume, complete after the close."""
+    import asyncio
+
+    from finresearch.adapters import bse_intraday
+    from finresearch.adapters.bse_intraday import parse_graph
+    from finresearch.db import session_scope
+    from finresearch.db.models import Alert, Company, IntradaySeriesRow, MonitorJob, Watch
+    from finresearch.monitor import intraday
+
+    intraday.reset_tries()
+    data = json.loads(
+        (Path(__file__).parent / "fixtures" / "bse" / "stockreachgraph_500209_1D.json").read_text()
+    )
+    asked: list[str] = []
+
+    async def fake_bse(client, code):  # the BSE adapter behind live_fetch, with the recorded payload
+        asked.append(code)
+        return parse_graph(data, f"BSE:{code}", code)
+
+    monkeypatch.setattr(bse_intraday, "bse_intraday", fake_bse)
+    with session_scope() as s:
+        s.query(IntradaySeriesRow).delete()
+        s.query(Alert).delete()
+        s.query(MonitorJob).delete()
+        s.query(Watch).delete()
+        co = s.query(Company).filter(Company.slug == "asm-intraday").one_or_none()
+        if co is None:
+            co = Company(slug="asm-intraday", name="ASM Technologies Ltd")
+            s.add(co)
+            s.flush()
+        s.add(
+            Watch(company_id=co.id, kind="stock", exchange="BSE", bse_code="526433", nse_symbol=None, meta={})
+        )
+    assert ("equity", "BSE:526433") in intraday.targets(date(2026, 9, 30))
+    fetched: list[tuple[str, str]] = []
+
+    async def fetch(kind, sym):
+        fetched.append((kind, sym))
+        if sym.startswith("BSE:"):
+            return await intraday.live_fetch(kind, sym)  # the monitor's real routing for BSE keys
+        return _series(30, [1, 2, 3], kind, sym)
+
+    out = asyncio.run(intraday.archive_after_close(fetch, at(15, 50), holidays={}))
+    assert ("equity", "BSE:526433") in fetched and asked == ["526433"] and "BSE:526433" in out["archived"]
+    with session_scope() as s:
+        row = (
+            s.query(IntradaySeriesRow)
+            .filter_by(kind="equity", symbol="BSE:526433", day=date(2026, 9, 30))
+            .one()
+        )
+        assert row.complete and row.tick_count == 217 and row.source.startswith("https://api.bseindia.com/")
+        assert row.prev_close == D("1005.5") and intraday.from_json(row.ticks)[0].volume == D(24885)
+    fetched.clear()
+    asyncio.run(intraday.archive_after_close(fetch, at(16, 30), holidays={}))
+    assert ("equity", "BSE:526433") not in fetched  # complete: not fetched again
 
 
 # --------------------------------------------------------------------------- BSE view ("BSE:<scrip code>")

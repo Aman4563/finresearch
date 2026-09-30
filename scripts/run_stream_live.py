@@ -1,4 +1,6 @@
-"""Live run of one research role on an ingested company (acceptance check for the agent definitions).
+"""Live run of one research role on an ingested company (acceptance check for the agent definitions). A BSE-only
+stock (company with a bse_code and no NSE symbol) runs as "BSE:<scrip code>"; stock_* roles get the stock pipeline's
+context (subject, primary source, market facts).
 
 usage: uv run python scripts/run_stream_live.py <company-slug> <role> [--run-id N]
 """
@@ -36,9 +38,28 @@ async def main() -> int:
             s.add(run)
             s.flush()
             run_id = run.id
-        name, sym = co.name, co.nse_symbol
+        name, sym, bse_code = co.name, co.nse_symbol, co.bse_code
+    if a.role.startswith("stock_") and not sym and not bse_code:
+        # without either key the prompts would say "NSE n/a" and the agent would guess a ticker
+        print(f"{a.company} has neither an NSE symbol nor a BSE code; set one before running a stock role")
+        return 2
     docs = json.loads(list_documents(a.company))
-    ctx = RunContext(run_id=run_id, company_slug=a.company, company_name=name, nse_symbol=sym, documents=docs)
+    extra: dict = {}
+    # stock_* roles: the listed-stock pipeline's context (subject, primary source, market facts)
+    if a.role.startswith("stock_"):
+        from finresearch.orchestrator.stock import StockPipeline, fetch_market, fetch_market_bse
+
+        extra = {"subject": StockPipeline.subject, "primary_source": StockPipeline.primary_source,
+                 "decision_deadline": StockPipeline.decision_deadline}  # fmt: skip
+        try:
+            market = await (fetch_market(sym) if sym else fetch_market_bse(bse_code))
+            extra["facts"] = {"market": market["summary"]}
+        except Exception as e:
+            extra["facts"] = {"market_error": f"{type(e).__name__}: {e}"}
+    # a BSE-only stock (no NSE symbol) is keyed "BSE:<scrip code>" in the prompts and the equity tools
+    ctx = RunContext(run_id=run_id, company_slug=a.company, company_name=name, nse_symbol=sym,
+                     bse_code=None if sym else bse_code, documents=docs, **extra)  # fmt: skip
+    print(f"company {a.company}: {ctx.listing()}")
     t0 = time.time()
     parsed, res = await run_role(a.role, ctx)
     print(f"role={a.role} run={run_id} tier={res.tier.value} model={res.model} turns={res.num_turns} "

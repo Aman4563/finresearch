@@ -1,7 +1,7 @@
 STREAM: fundamentals of {company_name} ({nse_symbol}) from its filings.
 
-Use the annual reports and results filings in the store (primary), and nse_results_facts on NSE XBRL links when
-available. Record, as atomic claims with exact quotes:
+Use the annual reports and results filings in the store (primary), and nse_results_facts on the XBRL links from
+nse_results_filings when available (NSE archive links, or www.bseindia.com XBRL links for a BSE-only stock). Record, as atomic claims with exact quotes:
 - 3–5 years of consolidated revenue, EBITDA, PAT, EPS, operating cash flow, capex and free cash flow, plus the
   latest quarters (same quarter last year for comparison);
 - margins, ROE and ROCE on stated bases (fincalc), working-capital days, net cash or net debt;

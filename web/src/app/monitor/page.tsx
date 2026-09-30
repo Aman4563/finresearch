@@ -1,14 +1,15 @@
 "use client";
 
-import { BellRing, CalendarClock, Eye, Info, Plus, Radar } from "lucide-react";
+import { BellRing, CalendarClock, Eye, Plus, Radar } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
 import { countdown, daysUntil, int, useNow } from "@/components/ipo/lib";
 import { AlertFeed } from "@/components/monitor/alert-feed";
+import { HowMonitoringWorks } from "@/components/monitor/how-it-works";
 import { WatchCard, jobLabel } from "@/components/monitor/watch-card";
 import {
-  Button, Callout, Card, EmptyState, ErrorNote, Field, PageHeader, Segmented, Skeleton, Stat, cx, inputClass,
+  Button, Card, EmptyState, ErrorNote, Field, PageHeader, Segmented, Skeleton, Stat, cx, inputClass,
 } from "@/components/ui";
 import { api, type AlertItem, type Company, useApi, type WatchSummary } from "@/lib/api";
 
@@ -81,8 +82,8 @@ export default function Monitor() {
           hint={kpi.next ? jobLabel(kpi.next.kind) : "nothing scheduled"} />
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-3 [&>*]:min-w-0">
-        <Card className="lg:col-span-2" title="Add a watch" icon={<Plus className="size-4" />}
+      <div className="grid gap-4 [&>*]:min-w-0">
+        <Card title="Add a watch" icon={<Plus className="size-4" />}
           subtitle="IPOs get the full timeline; listed stocks get a daily after-close check.">
           <ErrorNote error={companies.error} onRetry={companies.reload} />
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
@@ -111,13 +112,7 @@ export default function Monitor() {
           {added && <p className="mt-2 text-xs text-gain animate-fade-in">Now watching {added}. Its checks are planned on the next monitor pass.</p>}
           <div className="mt-3"><ErrorNote error={error} /></div>
         </Card>
-        <Callout tone="info" icon={<Info className="size-4" />} title="How monitoring works">
-          <p className="text-xs leading-relaxed">
-            Checks run inside <code className="num">finresearch serve</code> (or <code className="num">finresearch monitor run</code>):
-            subscription six times a bidding day, allotment (T+1), listing open and close (T+3; retried until NSE lists the
-            stock) and anchor lock-ins (30 and 90 days). Dates after the close are expected dates until NSE confirms them.
-          </p>
-        </Callout>
+        <HowMonitoringWorks />
       </div>
 
       <section>

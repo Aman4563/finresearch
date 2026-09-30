@@ -754,6 +754,7 @@ async def results_from_nse(
     filings: list[Any] = []
     out: list[dict[str, Any]] = []
     annual: dict[date, dict[str, Any]] = {}
+    periods: dict[tuple[str, str], dict[str, Any]] = {}
     if hasattr(eq, "integrated_filings"):
         try:
             filings += [f.as_result_filing() for f in await eq.integrated_filings(sym)]
@@ -783,16 +784,20 @@ async def results_from_nse(
                     q = x.quarter
                     full = bool(y and y.start and y.end and (y.end - y.start).days >= 360)
                     errors.append(f"{end}: the filing reports {q.start} to {q.end}, not a quarter"
-                                  + ("; only its full-year figures are used" if full else "; skipped"))  # fmt: skip
+                                  + ("; it is not shown as a quarter, but its half-year and full-year figures are "
+                                     "used (annual results, trailing EPS)" if full else
+                                     "; not shown as a quarter, its half-year used for trailing EPS only"))  # fmt: skip
                     if full and y.end not in annual:
                         annual[y.end] = _result_row(f, y, y.end, annual=True)
                         _annual_facts(annual_facts, f, x, y)  # the full year still feeds the forensic scores
+                    _add_periods(periods, f, q, y)  # the half-year and the year still give a TTM EPS
                     break
                 if problem:
                     errors.append(f"{end} {f.xbrl}: {problem}; skipped"[:240])
                     continue
                 _fill_owner_profit(x.quarter, errors, end)
             out.append(_result_row(f, x.quarter, end))
+            _add_periods(periods, f, x.quarter, y)
             if y and y.start and y.end and (y.end - y.start).days >= 360 and y.end not in annual:
                 annual[y.end] = _result_row(f, y, y.end, annual=True)
                 _annual_facts(annual_facts, f, x, y)
@@ -806,11 +811,49 @@ async def results_from_nse(
                 "note": "quarters from Mar-2025, when SEBI moved results into integrated filing"},
                {"name": "NSE Financial Results", "url": RESULTS_PAGE, "note": "quarters up to Dec-2024"}]  # fmt: skip
     return {"symbol": sym, "unit": "INR (EPS: INR per share)", "quarters": out, "annual": years, "errors": errors,
+            "periods": sorted(periods.values(), key=lambda r: (r["period_end"], r["period_start"])),
             "as_of": datetime.now(UTC).isoformat(), "sources": sources,
             "latest_quarter": None if latest is None else {
                 k: latest[k] for k in ("label", "period_end", "filed_at", "source", "source_url", "consolidated",
                                        "xbrl", "ixbrl")},
             "source": latest["source_url"] if latest else INTEGRATED_PAGE}  # fmt: skip
+
+
+def _period_label(start: date, end: date) -> str:
+    """ "Q1 FY27", "H1 FY26"/"H2 FY26", "9M FY26" or "FY26" for a filed period."""
+    from finresearch.fincalc.dates import fiscal_quarter_label, fiscal_year
+
+    months = round(((end - start).days + 1) / 30.44)
+    fy = f"FY{fiscal_year(end) % 100:02d}"
+    if months == 3:
+        return fiscal_quarter_label(end)
+    if months == 6:
+        return f"{'H1' if end.month in (9, 10) else 'H2'} {fy}"
+    return fy if months == 12 else f"{months}M {fy}"
+
+
+def _add_periods(periods: dict[tuple[str, str], dict[str, Any]], f: Any, *parts: Any) -> None:
+    """Every period a filing reports (its current period and its year-to-date) with its EPS: what the stock signal
+    builds a trailing-twelve-month EPS from when a company files half-years instead of a March quarter."""
+    for p in parts:
+        eps = p.facts.get("eps_basic") if p is not None else None
+        if eps is None or p.end is None:
+            continue
+        start = p.start or (
+            getattr(f, "period_from", None) if p.end == getattr(f, "period_to", None) else None
+        )
+        if start is None or start >= p.end:
+            continue
+        key = (start.isoformat(), p.end.isoformat())
+        if key in periods:
+            continue
+        source = getattr(f, "source", "nse_financial_results")
+        periods[key] = {"label": _period_label(start, p.end), "period_start": key[0], "period_end": key[1],
+                        "months": round(((p.end - start).days + 1) / 30.44), "eps": _f(eps, 4),
+                        "consolidated": f.consolidated, "filed_at": f.filed_at.isoformat() if f.filed_at else None,
+                        "source": source,
+                        "source_url": (getattr(f, "ixbrl", None) or f.xbrl) if source == "bse_integrated_filing"
+                                      else f.xbrl}  # fmt: skip
 
 
 def _annual_facts(annual_facts: dict[date, dict[str, Any]] | None, f: Any, x: Any, y: Any) -> None:

@@ -308,6 +308,24 @@ export type AlertItem = {
   label?: string | null;
 };
 
+/** GET /api/monitor/schedule: when each monitor check runs (IST), from the scheduler and the profile's watch windows. */
+export type MonitorSchedule = {
+  running: boolean | null;
+  tick_s: number;
+  grace_hours: number;
+  ipo: {
+    check_times: string[]; final_check: string; bidding_hours: [string, string]; allotment_time: string;
+    listing_times: { open: string; close: string }; lockin_time: string; anchor_lockin_days: number[];
+    archive_times: string[]; archive_window_min: number; listing_max_attempts: number;
+  };
+  stock: { daily_time: string; horizon_days: number };
+  quiet: { start: string | null; end: string | null };
+  intraday: { from: string; indices: string[]; max_tries: number; retry_min: number };
+  iv: { from: string; indices: string[] };
+  forecasts: { after: string; every_min: number };
+  equity_hours: [string, string];
+};
+
 export type WatchSummary = {
   id: number;
   kind: "ipo" | "stock";

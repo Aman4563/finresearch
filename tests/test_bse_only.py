@@ -281,6 +281,9 @@ async def test_agent_equity_tools_accept_bse(monkeypatch):
     assert "six-digit scrip code" in bad["error"]
     hist = json.loads(await server.nse_price_history("BSE:526433", "2026-09-01", "2026-09-29"))
     assert hist["exchange"] == "BSE" and hist["symbol"] == "BSE:526433" and hist["bars"]
+    # the citation is the exact BSE file read (a live run cited BSE's bare home page before this)
+    assert hist["source"] == ("https://api.bseindia.com/BseIndiaAPI/api/StockPriceCSVDownload/w?pageType=0&rbType=D"
+                              "&Scode=526433&FDates=01%2F09%2F2026&TDates=29%2F09%2F2026")  # fmt: skip
     url = next(iter(k for k in XBRL if "IFIndAs" in k and "582026193852" in k))
     facts = json.loads(await server.nse_results_facts(url))
     assert facts["consolidated"] is True and facts["periods"]
@@ -356,6 +359,26 @@ def test_signal_for_a_bse_only_stock(bse_sources):
     assert kw["inputs"]["benchmark_exchange"] == "NSE" and kw["inputs"]["symbol"] == "BSE:526433"
     with pytest.raises(ValueError):
         asyncio.run(st.stock_signal("BSE:12", {}))
+
+
+def test_half_yearly_bse_filer_keeps_the_pe_factor(bse_sources):
+    """ASM files Jun/Sep/Dec quarters but a six-month March: the March filings still give H2 and the fiscal year, so
+    the P/E uses FY26's own EPS (41.65) and says why Q1 FY27 cannot extend it (Jul-Sep 2025 is not on file here)."""
+    raw = asyncio.run(st.inputs("BSE:526433"))
+    periods = {p["label"]: p for p in raw["results"]["periods"]}
+    assert set(periods) == {"FY25", "H2 FY25", "FY26", "H2 FY26", "Q1 FY27"}
+    assert periods["H2 FY26"]["eps"] == 11.48 and periods["H2 FY26"]["period_start"] == "2025-10-01"
+    assert periods["FY26"]["eps"] == 41.65 and periods["FY26"]["source_url"].startswith(
+        "https://www.bseindia.com/"
+    )
+    assert "Q4 FY26" not in {q["label"] for q in raw["results"]["quarters"]}  # still not shown as a quarter
+    s = asyncio.run(st.stock_signal("BSE:526433", {}))
+    pe = next(f for f in s.factors if f.name == "P/E vs its own history")
+    price = float(raw["quote"].last_price)
+    assert pe.value == pytest.approx(price / 41.65, abs=0.05)
+    assert "last fiscal year EPS to 31 Mar 2026" in pe.explanation
+    assert "no separate figures for Jul 2025-Sep 2025" in pe.explanation
+    assert "percentile of its daily history since 2025-05-19" in pe.explanation
 
 
 def test_signal_and_forensic_routes_accept_bse_keys(env, bse_sources):

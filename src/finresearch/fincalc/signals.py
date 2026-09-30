@@ -22,7 +22,9 @@ import re
 from bisect import bisect_right
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
+
+from finresearch.fincalc.dates import add_years
 
 TRADING_DAYS = 252
 SKIP_DAYS = 21  # the "-1" in 12-1 momentum: skip the latest month (short-term reversal)
@@ -158,6 +160,136 @@ def ttm_eps_series(quarters: Sequence[tuple[date, float]]) -> list[tuple[date, f
     oldest first; each entry from the fourth on is the sum of the latest four."""
     q = sorted(quarters)
     return [(q[i][0], sum(e for _, e in q[i - 3 : i + 1])) for i in range(3, len(q))]
+
+
+@dataclass(frozen=True)
+class FiledPeriod:
+    """One period's EPS as filed: a quarter, a half-year (a half-yearly filer's March filing reports Oct-Mar), a
+    year-to-date (H1 in the September filing, nine months in December's) or a fiscal year. `known` is the day it
+    became public; `consolidated` the filing's basis (None when unknown)."""
+
+    start: date
+    end: date
+    eps: float
+    known: date
+    consolidated: bool | None = None
+
+    @property
+    def months(self) -> int:
+        return round(((self.end - self.start).days + 1) / 30.44)
+
+
+@dataclass(frozen=True)
+class TtmEps:
+    """A trailing-twelve-month EPS ending on `end`, known from `known`, summed from `pieces` (oldest first)."""
+
+    known: date
+    end: date
+    eps: float
+    basis: str  # "TTM from four quarters", "TTM from two half-years", "last fiscal year EPS", ...
+    pieces: tuple[FiledPeriod, ...]
+
+
+_PIECE = {3: "a quarter", 6: "a half-year", 9: "nine months", 12: "a year"}
+TTM_TOLERANCE_DAYS = 3  # adjacent periods may be a day or two apart in filings; a year is 365 or 366 days
+
+
+def ttm_basis(pieces: Sequence[FiledPeriod]) -> str:
+    """How a trailing-twelve-month EPS was built, in words."""
+    m = [p.months for p in pieces]
+    if len(m) == 1:
+        return "last fiscal year EPS"
+    if m == [3, 3, 3, 3]:
+        return "TTM from four quarters"
+    if m == [6, 6]:
+        return "TTM from two half-years"
+    return "TTM from " + " + ".join(_PIECE.get(x, f"{x} months") for x in m)
+
+
+def _is_year(start: date, end: date, tol: int = TTM_TOLERANCE_DAYS) -> bool:
+    return 365 - tol <= (end - start).days + 1 <= 366 + tol
+
+
+def ttm_chains(
+    periods: Sequence[FiledPeriod], end: date, max_pieces: int = 4
+) -> list[tuple[FiledPeriod, ...]]:
+    """Every way to tile the twelve months ending on `end` with filed periods that do not overlap: the last piece ends
+    on `end`, each earlier piece ends the day before the next starts (± a few days), and together they span one year.
+    Pieces are returned oldest first."""
+    tol = TTM_TOLERANCE_DAYS
+    out: list[tuple[FiledPeriod, ...]] = []
+
+    def walk(to: date, chain: tuple[FiledPeriod, ...]) -> None:
+        for p in periods:
+            if p in chain or abs((p.end - to).days) > tol or p.start > p.end:
+                continue
+            got = (p, *chain)
+            if _is_year(p.start, end):
+                out.append(got)
+            elif (end - p.start).days + 1 < 365 - tol and len(got) < max_pieces:
+                walk(p.start - timedelta(days=1), got)
+
+    walk(end, ())
+    return out
+
+
+def ttm_from_periods(periods: Sequence[FiledPeriod], max_pieces: int = 4) -> list[TtmEps]:
+    """Trailing-twelve-month EPS known on each date, from whatever the company files (roadmap §D.2 valuation factor).
+
+    Quarterly filers give four quarters; a half-yearly filer (its March filing reports Oct-Mar, e.g. ASM Technologies,
+    BSE 526433) gives two half-years (H1 from the September filing's year-to-date + H2 from March's), or a half-year
+    and two quarters; any fiscal year's own EPS is the TTM at the year end. For each period end the preferred tiling is
+    the fiscal year itself, then four quarters, then the fewest pieces, always on one basis when one exists (consolidated
+    before standalone, as the results route ranks filings). EPS of different periods is added as filed (the usual approximation: share counts shift a little
+    between periods). Rows are ordered by the day they became known, each ending later than the one before (a newer
+    period end supersedes an older one; an older end learned later never replaces a newer one)."""
+    uniq: dict[tuple[date, date, bool | None], FiledPeriod] = {}
+    for p in sorted(periods, key=lambda x: x.known):
+        uniq.setdefault(
+            (p.start, p.end, p.consolidated), p
+        )  # a restated period keeps its first publication date
+    ps = list(uniq.values())
+    rows: list[TtmEps] = []
+    for end in sorted({p.end for p in ps}):
+        chains = ttm_chains(ps, end, max_pieces)
+        if not chains:
+            continue
+
+        def rank(c: tuple[FiledPeriod, ...]) -> tuple[int, int, int, int, date]:
+            uniform = len({p.consolidated for p in c}) == 1
+            style = 0 if len(c) == 1 else 1 if [p.months for p in c] == [3, 3, 3, 3] else 2
+            consolidated = all(p.consolidated is True for p in c)
+            return (0 if uniform else 1, style, len(c), 0 if consolidated else 1, max(p.known for p in c))
+
+        best = min(chains, key=rank)
+        rows.append(TtmEps(max(p.known for p in best), end, sum(p.eps for p in best), ttm_basis(best), best))
+    out: list[TtmEps] = []
+    for r in sorted(rows, key=lambda r: (r.known, r.end)):
+        if out and r.end <= out[-1].end:
+            continue
+        if out and r.known == out[-1].known:
+            out[-1] = r
+        else:
+            out.append(r)
+    return out
+
+
+def ttm_gaps(periods: Sequence[FiledPeriod], end: date) -> list[tuple[date, date]]:
+    """The spans of the twelve months ending on `end` that no filed period lying wholly inside them covers: what is
+    missing before a TTM EPS can be built for that end (e.g. Jul-Sep 2025 for a half-yearly filer at June 2026 whose
+    September filing is not on file)."""
+    start = add_years(end, -1) + timedelta(days=1)
+    inside = sorted((p.start, p.end) for p in periods
+                    if p.start >= start - timedelta(days=TTM_TOLERANCE_DAYS) and p.end <= end)  # fmt: skip
+    gaps: list[tuple[date, date]] = []
+    cur = start
+    for a, b in inside:
+        if (a - cur).days > TTM_TOLERANCE_DAYS:
+            gaps.append((cur, a - timedelta(days=1)))
+        cur = max(cur, b + timedelta(days=1))
+    if (end - cur).days >= TTM_TOLERANCE_DAYS:
+        gaps.append((cur, end))
+    return gaps
 
 
 def pe_series(days: Sequence[date], close: Sequence[float], ttm: Sequence[tuple[date, float]]) -> list[float]:
