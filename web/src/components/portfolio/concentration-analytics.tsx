@@ -11,6 +11,7 @@ import { BarsChart } from "@/components/charts";
 import { Badge, Button, Callout, Card, ErrorNote, InfoTip, Stat, Table, cx, inputClass } from "@/components/ui";
 import { api, useApi } from "@/lib/api";
 
+import { LookthroughConcentration } from "./lookthrough-panel";
 import { AnalyticsFooter, type AnalyticsBase, Loading, NotEnough } from "./shared-analytics";
 import { inr } from "./types";
 
@@ -69,6 +70,7 @@ export function ConcentrationAnalytics({ refresh }: { refresh: number }) {
           hint="0 = spread out, 1 = one holding" help="Herfindahl–Hirschman index: the sum of squared weights. Funds count as one position each here." />
       </div>
       {data.funds_note && <p className="text-xs text-muted">{data.funds_note}</p>}
+      {data.funds_note && <LookthroughConcentration />}
       <div className="grid gap-4 lg:grid-cols-2">
         <Card title="By sector" icon={<PieChart className="size-4" />} subtitle={`dashed line: ${lim.sector_pct} % rule of thumb`} help={`Stocks by NSE industry (or your own label on the holding). Rule of thumb [W]: no sector above ${lim.sector_pct} %.`}>
           {bar(data.sectors ?? [], lim.sector_pct)}
