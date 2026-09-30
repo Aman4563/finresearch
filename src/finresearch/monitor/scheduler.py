@@ -206,6 +206,18 @@ async def _archive_intraday(deps: jobs.Deps, now: datetime) -> None:
         log.warning("could not archive intraday series", exc_info=True)
 
 
+async def _archive_data(deps: jobs.Deps, now: datetime) -> None:
+    """The daily validation archive (monitor.archive); failures are logged and retried there, never break the tick."""
+    try:
+        from finresearch.monitor.archive import ArchiveSources, archive_step
+
+        res = await archive_step(now, ArchiveSources(fno=deps.fno))
+        if res.get("archived"):
+            log.info("data archived: %s", res["archived"])
+    except Exception:
+        log.warning("could not archive validation data", exc_info=True)
+
+
 FORECAST_EVERY = timedelta(hours=1)
 _FORECASTS_CHECKED: dict[str, datetime] = {}
 
@@ -303,6 +315,8 @@ async def tick(deps: jobs.Deps, now: datetime | None = None) -> dict[str, int]:
         await _record_iv(deps, now)
     if deps.intraday is not None:
         await _archive_intraday(deps, now)
+    if deps.archive:
+        await _archive_data(deps, now)
     _recover_stale(now)
     added = sync_slots(now)
     missed = _expire_missed(now)

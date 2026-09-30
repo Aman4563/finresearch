@@ -71,6 +71,9 @@ class Deps:
     pf_ter: Any = None  # async (month) -> {ter_key(name): SchemeTer}
     pf_spacing_s: float = 1.0  # pause between instruments in the signals and events steps
     brief: bool = False  # build the 08:30 brief and the weekly digest (monitor.digest)
+    archive: bool = (
+        False  # the daily validation archive after the close (monitor.archive: sector P/E, IV term, G-sec)
+    )
 
     @classmethod
     def live(cls) -> Deps:
@@ -155,7 +158,7 @@ class Deps:
                    bse_ipo_detail=bse_ipo_detail, bse_quote=bse_quote, fno=NseFno, price_history=price_history,
                    corporate_actions=corporate_actions, forecasts=True, archive_books=True,
                    intraday=live_fetch, bse_stock_snapshot=bse_stock_snapshot, bse_price_history=bse_price_history,
-                   bse_corporate_actions=bse_corporate_actions, portfolio_daily=True, brief=True)  # fmt: skip
+                   bse_corporate_actions=bse_corporate_actions, portfolio_daily=True, brief=True, archive=True)  # fmt: skip
 
 
 def alert(session: Session, watch: Watch, kind: str, message: str, level: str = "info", **data: Any) -> None:
