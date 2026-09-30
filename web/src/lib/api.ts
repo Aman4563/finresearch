@@ -240,6 +240,42 @@ export const day = (iso: string | null | undefined) =>
   iso ? new Date(`${iso.slice(0, 10)}T00:00:00Z`).toLocaleDateString("en-IN", { dateStyle: "medium", timeZone: "UTC" }) : "";
 
 export type Rule = { id: string; description: string; metric: string; op: string; value: string; action: "skip" | "warn" };
+
+// ------------------------------------------------------------------ alert rules for every asset (finresearch.alerts)
+export type AlertKind = "ipo" | "stock" | "fund" | "bond" | "fno" | "portfolio";
+export type Channel = "ntfy" | "telegram" | "macos";
+export type Priority = "min" | "low" | "default" | "high" | "urgent";
+export type AlertRule = {
+  id: string; kind: AlertKind; metric: string; op: string; value: string;
+  /** null = every watch of the kind */
+  instrument: string | null;
+  params: Record<string, string>; channels: Channel[]; priority: Priority; cooldown_h: string; enabled: boolean;
+  description: string;
+};
+export type MetricSpec = {
+  key: string; kind: AlertKind; label: string; phrase: string; unit: string; cadence: "intraday" | "daily";
+  description: string; source: string; event: boolean; event_text: string; rebase: string | null; params: string[];
+  default_op: string; default_value: string; allows_all: boolean;
+};
+export type RuleTemplate = { id: string; kind: AlertKind; title: string; why: string; metric: string; op: string; value: string; priority: Priority; params: Record<string, string> };
+export type AlertRegistry = { kinds: AlertKind[]; metrics: MetricSpec[]; templates: RuleTemplate[]; ops: Record<string, string> };
+export type AlertRuleState = {
+  rule_id: string; instrument: string; status: "new" | "clear" | "fired" | "unknown"; value: string | null; source: string | null;
+  note: string | null; since: string | null; last_fired_at: string | null; fired_count: number; suppressed_count: number; checked_at: string | null;
+};
+export type ChannelStatus = { enabled: boolean; status: string };
+export type NotificationSettings = {
+  ntfy: ChannelStatus & { server: string; topic: string; topic_set: boolean; token: string; token_set: boolean };
+  telegram: ChannelStatus & { bot_token: string; bot_token_set: boolean; chat_id: string };
+  macos: ChannelStatus & { sound: boolean };
+  general: { app_url: string; forward_level: "off" | "action" | "warn"; forward_channels: Channel[] };
+  channels: Channel[];
+};
+export type Delivery = {
+  id: number; alert_id: number | null; channel: Channel; priority: Priority; title: string; message: string;
+  status: "pending" | "sent" | "failed"; attempts: number; next_try_at: string | null; last_error: string | null; held: string | null;
+  test: boolean; created_at: string | null; sent_at: string | null; rule_id?: string | null; alert_kind?: string | null;
+};
 export type Profile = {
   capital_per_ipo_inr: string;
   risk_appetite: "low" | "medium" | "high";
@@ -248,6 +284,8 @@ export type Profile = {
   category: "retail" | "shni" | "bhni";
   holdings: { symbol: string; sector: string | null; value_inr: string | null }[];
   rules: Rule[];
+  /** notify-only alert rules for every asset kind (optional: older API builds omit them) */
+  alert_rules?: AlertRule[];
   notes: string;
   // F&O analysis budget (optional: older API builds omit them)
   fno_capital_inr?: string;
@@ -306,6 +344,8 @@ export type AlertItem = {
   /** the stock page key (NSE symbol or "BSE:<code>") and how to show it ("INFY", "BSE 526433") */
   key?: string | null;
   label?: string | null;
+  /** rule alerts carry their source rule: rule_id, rule_kind, metric, instrument, value, threshold, source, path … */
+  data?: Record<string, unknown>;
 };
 
 /** GET /api/monitor/schedule: when each monitor check runs (IST), from the scheduler and the profile's watch windows. */

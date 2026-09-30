@@ -229,6 +229,27 @@ async def forecast_step(deps: jobs.Deps, now: datetime) -> dict[str, int]:
         return {}
 
 
+async def alerts_step(now: datetime) -> dict[str, int]:
+    """Alert rules for every asset (finresearch.alerts.engine) and phone delivery (monitor.notify). Failures are
+    logged and retried on the next tick; they never break the tick."""
+    out: dict[str, int] = {}
+    try:
+        from finresearch.alerts.engine import rules_step
+
+        res = await rules_step(now)
+        out["rules_fired"] = sum(v.get("fired", 0) for v in res.values())
+    except Exception:
+        log.warning("alert-rule evaluation failed", exc_info=True)
+    try:
+        from finresearch.monitor.notify import deliver_due
+
+        res = await deliver_due(now)
+        out["notified"] = res["sent"]
+    except Exception:
+        log.warning("alert delivery failed", exc_info=True)
+    return {k: v for k, v in out.items() if v}
+
+
 async def tick(deps: jobs.Deps, now: datetime | None = None) -> dict[str, int]:
     now = now or datetime.now(UTC)
     if deps.holidays is not None or deps.live_holidays:
@@ -249,6 +270,7 @@ async def tick(deps: jobs.Deps, now: datetime | None = None) -> dict[str, int]:
     out = {"added": added, "done": done, "failed": failed, "retried": retried, "missed": missed}
     if deps.forecasts:
         out |= {k: v for k, v in (await forecast_step(deps, now)).items() if k in ("resolved", "void")}
+    out |= await alerts_step(now)
     try:
         res = await jobs.archive_open_books(deps, now)
         out["archived"] = len(res["archived"]) if res else 0

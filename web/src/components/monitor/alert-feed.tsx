@@ -16,6 +16,7 @@ const LEVEL = {
 
 const KIND: Record<string, string> = {
   rule_change: "Rule changed",
+  rule_alert: "Alert rule",
   subscription: "Subscription",
   allotment: "Allotment",
   listing_open: "Listed (open)",
@@ -24,6 +25,21 @@ const KIND: Record<string, string> = {
 };
 
 const kindLabel = (k: string) => KIND[k] ?? k.replaceAll("_", " ").replace(/^./, (c) => c.toUpperCase());
+
+/** The rule an alert came from, with its data source and a link to the instrument's page. */
+function RuleSource({ data }: { data: Record<string, unknown> }) {
+  const s = (k: string) => (data[k] == null ? "" : String(data[k]));
+  return (
+    <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted">
+      <Link href={`/rules?kind=${encodeURIComponent(s("rule_kind") || "stock")}`} className="font-medium text-brand hover:underline">
+        rule {s("rule_id")}
+      </Link>
+      {s("rule") && <span>“{s("rule")}”</span>}
+      {s("source") && <span className="break-all">source: {s("source")}</span>}
+      {s("path") && <Link href={s("path")} className="hover:text-brand">open {s("instrument")}</Link>}
+    </p>
+  );
+}
 
 /** Alerts grouped by IST day, coloured by level, with "mark read". `limit` shows the latest N (dashboard). */
 export function AlertFeed({ alerts, onRead, limit, showSymbol = true, emptyHint, emptyTitle = "No alerts yet" }: {
@@ -98,6 +114,7 @@ export function AlertFeed({ alerts, onRead, limit, showSymbol = true, emptyHint,
                       {!a.read_at && <span className="size-1.5 rounded-full bg-brand" aria-label="unread" />}
                     </p>
                     <p className="mt-0.5 text-sm break-words">{a.message}</p>
+                    {a.kind === "rule_alert" && a.data?.rule_id != null && <RuleSource data={a.data} />}
                   </div>
                   {!a.read_at && (
                     <button

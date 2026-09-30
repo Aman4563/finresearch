@@ -689,6 +689,9 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
         ids = [r.id for r in profile.rules]
         if len(ids) != len(set(ids)):
             raise HTTPException(422, "rule ids must be unique")
+        alert_ids = [r.id for r in profile.alert_rules]
+        if len(alert_ids) != len(set(alert_ids)):
+            raise HTTPException(422, "alert rule ids must be unique")
         with session_scope() as s:
             return save_profile(s, profile).model_dump(mode="json")
 
@@ -1395,6 +1398,11 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
     from finresearch.api.intraday import add_intraday_routes
 
     add_intraday_routes(app, clock=clock)
+
+    # ------------------------------------------------------------------ alert rules for every asset + delivery
+    from finresearch.api.alert_rules import add_alert_rule_routes
+
+    add_alert_rule_routes(app, clock=clock)
 
     # ------------------------------------------------------------------ buy/sell signals (finresearch.signals)
     @app.get("/api/signals")

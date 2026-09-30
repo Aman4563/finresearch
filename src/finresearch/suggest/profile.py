@@ -38,6 +38,62 @@ class Rule(BaseModel):
     action: Literal["skip", "warn"] = "skip"
 
 
+AlertKind = Literal["ipo", "stock", "fund", "bond", "fno", "portfolio"]
+Channel = Literal["ntfy", "telegram", "macos"]
+Priority = Literal["min", "low", "default", "high", "urgent"]
+
+
+class AlertRule(BaseModel):
+    """A notify-only rule for any asset kind (finresearch.alerts): "if <metric> of <instrument> <op> <value>, alert me".
+
+    `instrument` None means every watch of the kind (watched IPOs and stocks, funds and bonds added to the app). The
+    monitor evaluates it on the metric's cadence; it fires once when the condition becomes true, not again until it
+    has cleared and `cooldown_h` has passed. `channels` empty = in-app only. Unlike `Rule`, it never changes a
+    suggestion."""
+
+    id: str = Field(min_length=1, max_length=40)
+    kind: AlertKind
+    metric: str = Field(min_length=1, max_length=40)
+    op: Op = "<"
+    value: Decimal = Decimal(0)
+    instrument: str | None = Field(None, max_length=40)
+    params: dict[str, str] = Field(default_factory=dict)
+    channels: list[Channel] = Field(default_factory=list)
+    priority: Priority = "default"
+    cooldown_h: Decimal = Field(Decimal(24), ge=0, le=720)
+    enabled: bool = True
+    description: str = Field("", max_length=300)
+
+    @field_validator("instrument")
+    @classmethod
+    def _inst(cls, v: str | None) -> str | None:
+        v = (v or "").strip().upper()
+        return v or None
+
+    @field_validator("channels")
+    @classmethod
+    def _chan(cls, v: list[str]) -> list[str]:
+        return list(dict.fromkeys(v))
+
+    @model_validator(mode="after")
+    def _known_metric(self) -> AlertRule:
+        from finresearch.alerts.registry import spec
+
+        m = spec(self.kind, self.metric)
+        if m is None:
+            raise ValueError(f"unknown {self.kind} metric {self.metric!r}")
+        if m.event:  # a change flag: always "fires when it changes"
+            self.op, self.value = "==", Decimal(1)
+        if self.kind == "portfolio":
+            self.instrument = "PORTFOLIO"
+        elif self.instrument is None and not m.allows_all:
+            raise ValueError(f"{m.label} needs an instrument (it cannot apply to all watches)")
+        missing = [p for p in m.params if not str(self.params.get(p, "")).strip()]
+        if missing:
+            raise ValueError(f"{m.label} needs {', '.join(missing)}")
+        return self
+
+
 class Holding(BaseModel):
     symbol: str
     sector: str | None = None
@@ -164,6 +220,8 @@ class Profile(BaseModel):
     display_name: str = Field("", max_length=60)
     avatar_color: AvatarColor | None = None
     preferences: Preferences = Field(default_factory=Preferences)
+    # notify-only alert rules for every asset kind (roadmap item 10); delivery settings live outside the profile
+    alert_rules: list[AlertRule] = Field(default_factory=list, max_length=200)
 
     @field_validator("display_name")
     @classmethod
@@ -172,7 +230,7 @@ class Profile(BaseModel):
 
 
 # not investment inputs: kept out of the advisor prompt
-UI_FIELDS = {"display_name", "avatar_color", "preferences"}
+UI_FIELDS = {"display_name", "avatar_color", "preferences", "alert_rules"}
 
 
 DEFAULT_RULES = [

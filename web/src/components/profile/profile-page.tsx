@@ -10,6 +10,7 @@ import { type ReactNode, useEffect, useState } from "react";
 import {
   applyReduceMotion, Avatar, Labelled, LinkButton, AVATAR_COLORS, AVATAR_GRADIENT, SaveBar, Switch, useDraft, withDefaults,
 } from "@/components/profile/common";
+import { NotificationsCard } from "@/components/profile/notifications";
 import { TimeFramesCard } from "@/components/profile/time-frames";
 import { NAV, type Theme, useTheme } from "@/components/shell";
 import {
@@ -351,6 +352,11 @@ export function ProfilePage() {
           {/* ------------------------------------------------------------ time frames & watch windows */}
           <TimeFramesCard tf={prefs.time_frames ?? DEFAULT_TIME_FRAMES} watch={prefs.watch ?? DEFAULT_WATCH}
             onTf={(v) => setPref("time_frames", v)} onWatch={(v) => setPref("watch", v)} />
+
+          {/* ------------------------------------------------------------ notifications (own save: secrets live outside the profile) */}
+          <div id="notifications" className="scroll-mt-20">
+            <NotificationsCard />
+          </div>
 
           {/* ------------------------------------------------------------ holdings */}
           <Card
