@@ -266,17 +266,48 @@ async def fetch_url(store: PortfolioStore, url: str, *, amc: str | None = None, 
                     ) -> tuple[str, list[SchemePortfolio]]:  # fmt: skip
     """Download one allow-listed file and store it."""
     url = check_url(url)
-    own = client is None
-    http = client or _client()
-    try:
-        got = await http.get(url)
-    finally:
-        if own:
-            await http.aclose()
-    if not got.ok:
-        raise AmcPortfolioError(f"the fund house answered HTTP {got.status} for {url}")
+    if client is not None:  # tests pass a fake client
+        got = await client.get(url)
+        if not got.ok:
+            raise AmcPortfolioError(f"the fund house answered HTTP {got.status} for {url}")
+        content = got.content
+    else:
+        url, content = await _download_checked(url)
     name = url.rsplit("/", 1)[-1].split("?", 1)[0] or "download.xlsx"
-    return store.add_file(got.content, name, url=url, amc=amc)
+    return store.add_file(content, name, url=url, amc=amc)
+
+
+MAX_REDIRECTS = 5
+MAX_FILE_BYTES = 60 * 1024 * 1024  # a month's workbook for a whole fund house is a few MB
+
+
+async def _download_checked(url: str) -> tuple[str, bytes]:
+    """GET with redirects followed by hand: every hop must pass `check_url` (https, allow-listed AMC host), so a
+    redirect can't take the fetch anywhere else; the body is capped. Returns the final URL and the bytes."""
+    import httpx
+
+    from finresearch.adapters.http import BROWSER_HEADERS
+
+    async with httpx.AsyncClient(follow_redirects=False, timeout=60.0,
+                                 headers={**BROWSER_HEADERS, "Accept": "*/*"}) as c:  # fmt: skip
+        for _ in range(MAX_REDIRECTS + 1):
+            async with c.stream("GET", url) as r:
+                if r.is_redirect:
+                    nxt = r.headers.get("location", "")
+                    url = check_url(str(httpx.URL(url).join(nxt)))
+                    continue
+                if r.status_code >= 400:
+                    raise AmcPortfolioError(f"the fund house answered HTTP {r.status_code} for {url}")
+                chunks, size = [], 0
+                async for chunk in r.aiter_bytes():
+                    size += len(chunk)
+                    if size > MAX_FILE_BYTES:
+                        raise AmcPortfolioError(
+                            f"{url}: file larger than {MAX_FILE_BYTES // 1024 // 1024} MB"
+                        )
+                    chunks.append(chunk)
+                return url, b"".join(chunks)
+    raise AmcPortfolioError(f"{url}: more than {MAX_REDIRECTS} redirects")
 
 
 async def fetch_scheme(store: PortfolioStore, key: str, amc: str | None, *, months: int = 1, client: Any = None
@@ -304,7 +335,8 @@ async def fetch_scheme(store: PortfolioStore, key: str, amc: str | None, *, mont
             if link.url in have:
                 continue
             try:
-                await fetch_url(store, link.url, amc=src.amc, client=http)
+                # live: the hop-checked download (the page client follows redirects); tests: their fake
+                await fetch_url(store, link.url, amc=src.amc, client=None if own else http)
                 fetched.append({"url": link.url, "month": link.month})
             except AmcPortfolioError as e:
                 errors.append({"url": link.url, "month": link.month, "error": str(e)})

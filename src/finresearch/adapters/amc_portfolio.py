@@ -173,6 +173,11 @@ def _num(v: Any) -> Decimal | None:
     return d / 100 if pct else d  # '0.05%' in a fraction-scaled column is a fraction like the others
 
 
+def _is_pct_text(v: Any) -> bool:
+    """A text cell written with a percent sign ('7.63%'): `_num` returns it as a fraction (0.0763)."""
+    return isinstance(v, str) and v.strip().endswith("%")
+
+
 def _industry(v: Any) -> str | None:
     """'Computer Software: Prepackaged Software ##' -> without the footnote markers (#, *, ^, ~)."""
     t = re.sub(r"[\s#*^~$@]+$", "", _text(v)).strip()
@@ -339,6 +344,7 @@ def parse_sheet(rows: list[tuple], sheet: str) -> SchemePortfolio | None:
     holdings: list[Holding] = []
     section, grand = "", None
     grand_weight: Decimal | None = None
+    pct_text: set[int] = set()  # holdings whose weight cell was '7.63%' text
     end = len(rows)
     for r_i in range(header_at + 1, len(rows)):
         row = rows[r_i]
@@ -349,6 +355,8 @@ def parse_sheet(rows: list[tuple], sheet: str) -> SchemePortfolio | None:
         label = next((t for t in texts if not re.fullmatch(r"[A-Z0-9_]{2,14}|\d+", t)), first)
         if _STOP.match(label):
             grand, grand_weight = _num(cell(row, "value")), _num(cell(row, "weight"))
+            if grand_weight is not None and _is_pct_text(cell(row, "weight")):
+                grand_weight *= 100  # '100.00%' text is a percent total, not the fraction 1.00
             if grand_weight is None:  # the weight may sit in another column on the total row
                 nums = [n for c in row if (n := _num(c)) is not None]
                 grand_weight = nums[-1] if nums else None
@@ -365,6 +373,8 @@ def parse_sheet(rows: list[tuple], sheet: str) -> SchemePortfolio | None:
         w = _num(cell(row, "weight"))
         if w is None:
             continue
+        if _is_pct_text(cell(row, "weight")):
+            pct_text.add(len(holdings))  # already a fraction of 1 whatever the column's scale
         holdings.append(Holding(isin=isin, name=_text(cell(row, "name")) or isin,
                                 industry=_industry(cell(row, "industry")), quantity=_num(cell(row, "quantity")),
                                 value_lakh=_num(cell(row, "value")), weight=w, kind=_kind(isin, section),
@@ -373,14 +383,17 @@ def parse_sheet(rows: list[tuple], sheet: str) -> SchemePortfolio | None:
         return None
     warnings: list[str] = []
     # scale: GRAND TOTAL says 1 (fractions) or 100 (percent); without it, the size of the weights decides
-    raw_sum = sum((h.weight for h in holdings), Decimal(0))
+    # infer from the plain-number cells only: '%' text cells say nothing about the column's own scale
+    raw_sum = sum((h.weight for i, h in enumerate(holdings) if i not in pct_text), Decimal(0))
     if grand_weight is not None and grand_weight > 0:
         fractions = grand_weight <= Decimal("1.5")
     else:
         fractions = raw_sum <= Decimal("1.5")
         warnings.append("no GRAND TOTAL row: the weight scale was inferred from the weights")
-    if fractions:
-        for h in holdings:
+    # '%' text cells were read as fractions by `_num`: they become percent with the rest in a fraction-scaled
+    # column, and on their own in a percent-scaled one (else a mixed sheet reads them 100x too small)
+    for i, h in enumerate(holdings):
+        if fractions or i in pct_text:
             h.weight *= 100
     total = sum((h.weight for h in holdings), Decimal(0))
     if total > Decimal("110") or total < Decimal("1"):

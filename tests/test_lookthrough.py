@@ -15,8 +15,10 @@ from pathlib import Path
 
 import httpx
 import pytest
+import respx
 
 from finresearch.adapters.amc_portfolio import (
+    ALLOWED_HOSTS,
     AMC_SOURCES,
     AmcPortfolioError,
     _num,
@@ -210,7 +212,8 @@ def test_percent_scale_other_headers_and_errors():
                       ["Grand Total", None, None, None, 94, 100]])  # fmt: skip
     [p] = parse_file(data, "x.xlsx")
     assert (p.scheme_name, p.as_of) == ("Example Equity Fund", date(2026, 8, 31))
-    assert [h.weight for h in p.holdings] == [D("55.5"), D("0.4000")]  # '40.00%' as a fraction-scaled string
+    # '40.00%' text in a percent-scaled column is 40 %, like its plain-number neighbours (it was read 100x too small)
+    assert [h.weight for h in p.holdings] == [D("55.5"), D("40.0000")]
     assert (_num("$0.00%"), _num("*"), _num("(1,234.5)"), _num("NIL")) == (0, 0, D("-1234.5"), None)
     # no GRAND TOTAL row: the scale is inferred and the sheet says so
     [q] = parse_file(synthetic([["F"], ["Name", "ISIN", "% to Net Assets"], ["A", "INE000A01011", 0.6],
@@ -510,3 +513,40 @@ def test_cap_by_issuer_after_isin_change_and_reparse(tmp_path):
     assert (
         alphabet.industry == "Computer Software: Programming, Data Processing"
     )  # '##' footnote marker dropped
+
+
+def test_percent_text_totals_and_mixed_cells_keep_one_scale():
+    # a GRAND TOTAL written as '100.00%' text is a percent total: the plain 55.5 must not become 5550
+    [p] = parse_file(synthetic([["F"], ["Name", "ISIN", "% to NAV"], ["A", "INE000A01011", 55.5],
+                                ["B", "INE000B01011", "40.00%"], ["Grand Total", None, "100.00%"]]), "p.xlsx")  # fmt: skip
+    assert [h.weight for h in p.holdings] == [D("55.5"), D("40.0000")]
+    # a fraction-scaled column with a '%' text cell: 0.555 -> 55.5 and '40.00%' -> 40
+    [q] = parse_file(synthetic([["F"], ["Name", "ISIN", "% to NAV"], ["A", "INE000A01011", 0.555],
+                                ["B", "INE000B01011", "40.00%"], ["Grand Total", None, 1]]), "q.xlsx")  # fmt: skip
+    assert [h.weight for h in q.holdings] == [D("55.500"), D("40.0000")]
+    # only '%' text and no total: each cell is read once as a percent
+    [r] = parse_file(synthetic([["F"], ["Name", "ISIN", "% to NAV"], ["A", "INE000A01011", "60%"],
+                                ["B", "INE000B01011", "30%"]]), "r.xlsx")  # fmt: skip
+    assert [h.weight for h in r.holdings] == [D("60"), D("30")]
+
+
+@respx.mock
+async def test_download_rechecks_every_redirect_hop_against_the_allow_list(tmp_path):
+    from finresearch.portfolio.lookthrough import PortfolioStore, fetch_url
+
+    host = sorted(h for h in ALLOWED_HOSTS if "." in h)[0]
+    ok = f"https://{host}/files/a.xlsx"
+    respx.get(ok).mock(
+        return_value=httpx.Response(302, headers={"location": "http://127.0.0.1:8710/api/profile"})
+    )
+    store = PortfolioStore(tmp_path)
+    with pytest.raises(AmcPortfolioError, match="only https links"):
+        await fetch_url(store, ok)  # a redirect off the allow-list (here: this machine's own API) is refused
+    good = f"https://{host}/files/b.xlsx"
+    final = f"https://{host}/files/b-final.xlsx"
+    respx.get(good).mock(return_value=httpx.Response(301, headers={"location": "/files/b-final.xlsx"}))
+    respx.get(final).mock(return_value=httpx.Response(200, content=synthetic(
+        [["F"], ["Name", "ISIN", "% to NAV"], ["A", "INE000A01011", 60], ["B", "INE000B01011", 40],
+         ["Grand Total", None, 100]])))  # fmt: skip
+    _key, parsed = await fetch_url(store, good)
+    assert parsed and [h.weight for h in parsed[0].holdings] == [D("60"), D("40")]
