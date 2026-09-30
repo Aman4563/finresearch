@@ -2,7 +2,7 @@
 
 import {
   Activity, BadgeIndianRupee, BellRing, BookOpenCheck, ChartCandlestick, ChevronsLeft, CircleHelp, Command, FlaskConical,
-  Gauge as GaugeIcon, Landmark, LayoutDashboard, ListChecks, Menu, Monitor, Moon, NotebookPen, PieChart, Rocket,
+  Gauge as GaugeIcon, Landmark, LayoutDashboard, ListChecks, Menu, Monitor, Moon, NotebookPen, PieChart, Radar, Rocket,
   Search, Sun, UserRound, X,
 } from "lucide-react";
 import Link from "next/link";
@@ -32,6 +32,7 @@ export const NAV: { group: string; items: NavItem[] }[] = [
       { href: "/funds", label: "Mutual funds", icon: <PieChart />, keys: "g f", description: "AMFI NAVs, returns and fund research" },
       { href: "/bonds", label: "Bonds", icon: <Landmark />, keys: "g b", description: "Listed bonds and NCDs, yields" },
       { href: "/fno", label: "F&O", icon: <Activity />, keys: "g o", description: "Option chains, greeks, strategy payoffs" },
+      { href: "/signals", label: "Signals", icon: <Radar />, keys: "g g", description: "Buy/sell signals and their track record" },
     ],
   },
   {
@@ -325,7 +326,8 @@ export function AppShell({ children }: { children: ReactNode }) {
       if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.key === "/") { e.preventDefault(); setPalette(true); return; }
       if (e.key === "?") { router.push("/help#shortcuts"); return; }
-      if (e.key === "g") { pendingG = Date.now(); return; }
+      // a second "g" inside the window is the "g g" jump, not a new prefix
+      if (e.key === "g" && Date.now() - pendingG >= 1200) { pendingG = Date.now(); return; }
       if (Date.now() - pendingG < 1200) {
         const hit = ALL_NAV.find((n) => n.keys === `g ${e.key.toLowerCase()}`);
         pendingG = 0;

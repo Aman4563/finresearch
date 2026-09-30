@@ -404,3 +404,44 @@ class IvHistory(Base):
     as_of: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # NSE's chain timestamp
     source: Mapped[str] = mapped_column(String(200), default="https://www.nseindia.com/option-chain")
     recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# --------------------------------------------------------------------------- forecast ledger (calibration)
+class Forecast(Base):
+    """One probability forecast of a defined, checkable event, logged before the outcome is known and scored after.
+
+    Written by `finresearch.signals.ledger.record` (signal providers) and `record_run` (research-run verdicts);
+    resolved by the monitor with the resolver registered for (asset, event_kind). `probability` is P(event) and is
+    None for a "no call" (the verdict took no side), which is kept for coverage but never scored. At most one open
+    forecast per asset + instrument + event kind + IST day (`dedupe_key`).
+    """
+
+    __tablename__ = "forecast"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    asset: Mapped[str] = mapped_column(String(20), index=True)  # ipo | stock | fund | bond | fno
+    instrument: Mapped[str] = mapped_column(String(60), index=True)  # NSE symbol, ISIN, AMFI code ...
+    name: Mapped[str | None] = mapped_column(String(300))
+    source: Mapped[str] = mapped_column(String(80))  # "run:<id>" | "signal:<provider>"
+    run_id: Mapped[int | None] = mapped_column(ForeignKey("research_run.id", ondelete="SET NULL"), index=True)
+    event_kind: Mapped[str] = mapped_column(String(60))  # resolver key, e.g. listing_gain | excess_return_12m
+    event: Mapped[str] = mapped_column(Text)  # the event in words, exactly as it will be checked
+    horizon: Mapped[str] = mapped_column(String(60))
+    resolve_on: Mapped[date] = mapped_column(Date, index=True)  # first day the outcome can be checked
+    probability: Mapped[float | None] = mapped_column(Float)  # P(event); None = no call
+    interval_low: Mapped[float | None] = mapped_column(Float)
+    interval_high: Mapped[float | None] = mapped_column(Float)
+    action: Mapped[str] = mapped_column(String(40))
+    score: Mapped[float | None] = mapped_column(Float)
+    method: Mapped[str] = mapped_column(String(200))
+    validation_status: Mapped[str] = mapped_column(String(20))
+    inputs: Mapped[dict[str, Any]] = mapped_column(
+        default=dict
+    )  # snapshot of what the resolver and review need
+    status: Mapped[str] = mapped_column(String(20), default="open", index=True)  # open | resolved | void
+    outcome: Mapped[int | None] = mapped_column(Integer)  # 1 = the event happened, 0 = it did not
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    resolution_value: Mapped[float | None] = mapped_column(Float)  # e.g. the listing gain in %
+    resolution_note: Mapped[str | None] = mapped_column(Text)
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    dedupe_key: Mapped[str] = mapped_column(String(200), unique=True)

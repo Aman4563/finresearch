@@ -36,6 +36,13 @@ class Deps:
     fno: Any = (
         None  # () -> async context manager with NseFno's methods; set: record daily ATM IV (monitor.iv)
     )
+    price_history: Any = (
+        None  # async (symbol, start, end) -> list[PriceBar] (NSE daily history); resolves forecasts
+    )
+    corporate_actions: Any = None  # async (symbol) -> list[CorporateAction]; splits void, dividends count
+    forecasts: bool = (
+        False  # log finished runs' verdicts and resolve due forecasts once a day (signals.ledger)
+    )
 
     @classmethod
     def live(cls) -> Deps:
@@ -77,10 +84,23 @@ class Deps:
             async with BseClient() as bse:
                 return await bse.quote(symbol)
 
+        async def price_history(symbol: str, start, end):
+            from finresearch.adapters.nse_equity import NseEquity
+
+            async with NseEquity() as eq:
+                return await eq.history(symbol, start, end)
+
+        async def corporate_actions(symbol: str):
+            from finresearch.adapters.nse_equity import NseEquity
+
+            async with NseEquity() as eq:
+                return await eq.corporate_actions(symbol)
+
         from finresearch.adapters.nse_fno import NseFno
 
         return cls(ipo_detail=ipo_detail, quote=quote, current_issues=current_issues, stock_snapshot=stock_snapshot,
-                   bse_ipo_detail=bse_ipo_detail, bse_quote=bse_quote, fno=NseFno)  # fmt: skip
+                   bse_ipo_detail=bse_ipo_detail, bse_quote=bse_quote, fno=NseFno, price_history=price_history,
+                   corporate_actions=corporate_actions, forecasts=True)  # fmt: skip
 
 
 def alert(session: Session, watch: Watch, kind: str, message: str, level: str = "info", **data: Any) -> None:

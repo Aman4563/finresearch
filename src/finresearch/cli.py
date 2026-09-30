@@ -702,3 +702,40 @@ def monitor_run(interval: float = typer.Option(60, help="Seconds between passes"
 
 if __name__ == "__main__":
     app()
+
+
+forecasts_app = typer.Typer(
+    no_args_is_help=True, help="Forecast ledger: logged probabilities and calibration"
+)
+app.add_typer(forecasts_app, name="forecasts")
+
+
+@forecasts_app.command("backfill")
+def forecasts_backfill() -> None:
+    """Log forecasts for finished IPO and stock reports that have none yet (the monitor also does this daily)."""
+    from finresearch.db import session_scope
+    from finresearch.signals.ledger import backfill_runs
+
+    with session_scope() as s:
+        ids = backfill_runs(s)
+    console.print(f"{len(ids)} forecast(s) logged or refreshed: {ids}")
+
+
+@forecasts_app.command("resolve")
+def forecasts_resolve() -> None:
+    """Resolve every due forecast now (NSE, politely), as the monitor does after the close."""
+    from finresearch.monitor.jobs import Deps
+    from finresearch.signals.ledger import resolve_due
+
+    console.print(asyncio.run(resolve_due(Deps.live())))
+
+
+@forecasts_app.command("calibration")
+def forecasts_calibration() -> None:
+    """Brier score, skill vs the base rate and hit rate (Wilson 95 % CI) per asset and method."""
+    from finresearch.db import session_scope
+    from finresearch.signals.ledger import calibration_groups
+
+    with session_scope() as s:
+        for g in calibration_groups(s):
+            console.print(g)

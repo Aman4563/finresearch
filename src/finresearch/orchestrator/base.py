@@ -619,6 +619,10 @@ class ResearchPipeline:
             if self.config.render:
                 self._render()
             self._set_run(status=status, finished_at=_now())
+            if status == "done":  # log the verdict as a checkable forecast (never fails the run)
+                from finresearch.signals.ledger import record_run_safely
+
+                record_run_safely(self.run_id)
             return status
         except RunPaused as p:
             self._set_run(status="paused", resume_after=p.resume_after)
