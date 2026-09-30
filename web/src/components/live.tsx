@@ -116,19 +116,31 @@ export function LiveStamp({ session, live, status, updatedAt, everyMs, asOf, asO
   );
 }
 
+/** A small link to the exact API/CSV request behind a figure (machine-readable, not a page to read). */
+export function DataRequest({ href, label = "data request" }: { href: string; label?: string }) {
+  return (
+    <a href={href} target="_blank" rel="noreferrer" title={href}
+      className="text-[10px] uppercase tracking-wide text-muted underline decoration-dotted underline-offset-2 hover:text-foreground">
+      {label}
+    </a>
+  );
+}
+
 /**
  * Where a price came from and how fresh it is. Intraday: "NSE quote-page chart, 1-minute price samples · last price
  * 12:51:10 · about 10 s behind · refreshes every 30 s". EOD: "NSE daily bars (end of day) · last bar 29 Sep 26
  * (today's bar is added after the close)".
  */
-export function Freshness({ mode, sourceLabel, sourceHref, asOf, fetchedAt, delayS, live, refresh, className }: {
+export function Freshness({ mode, sourceLabel, sourceHref, requestHref, asOf, fetchedAt, delayS, live, refresh, className }: {
   mode: "intraday" | "eod"; sourceLabel: string; sourceHref?: string | null; asOf?: string | null; fetchedAt?: string | null;
+  /** the exact data request (JSON/CSV), linked small as "data request"; sourceHref stays a page a person opens */
+  requestHref?: string | null;
   delayS?: number | null; live?: boolean; refresh?: string; className?: string;
 }) {
   const src = sourceHref ? (
     <a href={sourceHref} target="_blank" rel="noreferrer" className="underline decoration-dotted underline-offset-2 hover:text-foreground">{sourceLabel}</a>
   ) : sourceLabel;
-  const parts: ReactNode[] = [<span key="s">Source: {src}</span>];
+  const parts: ReactNode[] = [<span key="s">Source: {src}{requestHref && <> (<DataRequest href={requestHref} />)</>}</span>];
   if (mode === "intraday") {
     if (asOf) {
       const d = new Date(asOf);

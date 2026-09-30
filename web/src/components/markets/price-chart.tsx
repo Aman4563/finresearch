@@ -49,6 +49,10 @@ export type IntradayResponse = {
   refresh_s: number;
   source: string | null;
   source_label: string;
+  /** the exchange's human page for the stock or index (null when BSE's scrip master has none) */
+  quote_page?: string | null;
+  /** the exact request behind the series (JSON), shown as a secondary "data request" link */
+  data_request?: string | null;
   exchange?: "NSE" | "BSE";
   has_volume: boolean;
   notes: string[];
@@ -258,7 +262,8 @@ export function PriceChart({ kind, symbol, daily, dailyLoading, dailyError, onDa
 
       <div className="mt-2 space-y-1">
         {intraday && live.data ? (
-          <Freshness mode="intraday" sourceLabel={live.data.source_label} sourceHref={live.data.source} asOf={live.data.as_of}
+          <Freshness mode="intraday" sourceLabel={live.data.source_label}
+            sourceHref={live.data.quote_page === undefined ? live.data.source : live.data.quote_page} requestHref={live.data.data_request} asOf={live.data.as_of}
             fetchedAt={live.data.fetched_at} delayS={live.data.delay_s} live={live.data.live}
             refresh={everyMs ? `refreshes every ${Math.round(everyMs / 1000)} s in market hours` : "auto-refresh off"} />
         ) : !intraday && rows.length ? (

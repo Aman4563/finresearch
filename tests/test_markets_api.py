@@ -178,7 +178,9 @@ def test_stock_overview_combines_quote_holding_actions_and_survives_a_failed_par
                                                               strict=False) if a["ex_date"] and b_["ex_date"])  # fmt: skip
     assert r["announcements"] == [] and r["errors"][0].startswith("announcements: RuntimeError")
     assert r["source"] == "https://www.nseindia.com/get-quotes/equity?symbol=INFY"
+    assert r["quote_page"] == "https://www.nseindia.com/get-quotes/equity?symbol=INFY"
     assert r["sources"] == {
+        "quote": f"{NSE_API}/NextApi/apiClient/GetQuoteApi?functionName=getSymbolData&marketType=N&series=EQ&symbol=INFY",
         "shareholding": f"{NSE_API}/corporate-share-holdings-master?index=equities&symbol=INFY",
         "corporate_actions": f"{NSE_API}/corporates-corporateActions?index=equities&symbol=INFY",
         "announcements": f"{NSE_API}/corporate-announcements?index=equities&symbol=INFY",

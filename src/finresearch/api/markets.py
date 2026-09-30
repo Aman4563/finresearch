@@ -218,6 +218,26 @@ def stock_source_url(inst: Instrument, quote: Any = None) -> str:
     return page or bse_quote_page(inst.id)  # the scrip's quote API URL, never BSE's home page
 
 
+def stock_page_url(inst: Instrument, quote: Any = None) -> str | None:
+    """The exchange's human stock page (for links a person opens): NSE's get-quotes page; for BSE the quote header's
+    page, else the scrip master's (www.bseindia.com/stock-share-price/<name>/<symbol>/<code>/). None when BSE gives
+    neither; never an API URL."""
+    if inst.exchange == "NSE":
+        return f"https://www.nseindia.com/get-quotes/equity?symbol={inst.id}"
+    return getattr(quote, "page_url", None) or getattr(inst.listing, "bse_url", None)
+
+
+async def bse_stock_page(code: str, listings: Callable[[], Awaitable[Any]] | None) -> str | None:
+    """A BSE scrip's stock page from the scrip master (the merged listings), or None."""
+    if listings is None:
+        return None
+    try:
+        row = (await listings()).by_code(code)
+    except Exception:
+        return None
+    return getattr(row, "bse_url", None)
+
+
 def data_source_url(exchange: str, sym: str, kind: str, **kw: Any) -> str:
     """The exact exchange API URL a per-scrip data set was read from (adapters' bse_source_url / nse_source_url)."""
     if exchange == "BSE":
@@ -324,6 +344,11 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
             return None
         return index.by_nse(inst.id) if inst.exchange == "NSE" else index.by_code(inst.id)
 
+    async def _with_listing(inst: Instrument) -> Instrument:
+        if inst.exchange == "BSE" and inst.listing is None:
+            return Instrument(inst.exchange, inst.id, inst.key, await _listing(inst))
+        return inst
+
     async def _source(inst: Instrument) -> str:
         if inst.exchange == "BSE" and inst.listing is None:
             return stock_source_url(Instrument(inst.exchange, inst.id, inst.key, await _listing(inst)))
@@ -370,8 +395,9 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
                 "exchange": inst.exchange, "key": inst.key, "scrip_code": sym if inst.exchange == "BSE" else None,
                 "listing": _listing_json(listing), "fetched_at": datetime.now(UTC).isoformat(),
                 "source": stock_source_url(inst, q), "quote": quote,
+                "quote_page": stock_page_url(await _with_listing(inst), q),
                 "sources": {k: data_source_url(inst.exchange, sym, k)
-                            for k in ("shareholding", "corporate_actions", "announcements")},
+                            for k in ("quote", "shareholding", "corporate_actions", "announcements")},
                 "dividends": {"ttm_per_share": _s(ttm_dps) if ttm_dps else None,
                               "ttm_yield": _f(ttm_dps / last_px) if ttm_dps and last_px else None},
                 "shareholding": [{"as_of": h.as_of.isoformat() if h.as_of else None, "promoter_pct": _f(h.promoter_pct, 4),
@@ -415,6 +441,7 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
         last = rows[-1] if rows else None
         return {"symbol": sym, "exchange": inst.exchange, "days": days, "source": await _source(inst),
                 "data_source": data_source_url(inst.exchange, sym, "history", start=start, end=end),
+                "quote_page": stock_page_url(await _with_listing(inst)),
                 "bars": [{"date": b.day.isoformat(), "close": _f(b.close, 4), "open": _f(b.open, 4), "high": _f(b.high, 4),
                           "low": _f(b.low, 4), "volume": _f(b.volume, 0)} for b in rows],
                 "partial": partial, "week52_high": _s(last.week52_high) if last else None, "week52_low": _s(last.week52_low) if last else None,

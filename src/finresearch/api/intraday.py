@@ -89,6 +89,30 @@ def add_intraday_routes(app: FastAPI, *, fetch=None, clock=None) -> None:
         except Exception:
             return []
 
+    async def _links(kind: str, sym: str) -> tuple[str | None, str]:
+        """(the exchange's human page for the stock or index, the exact data request behind the series). A BSE
+        scrip's page comes from the scrip master; None when it has none (the request is still given)."""
+        from finresearch.adapters.bse_equity import scrip_code_of
+        from finresearch.adapters.nse_intraday import equity_chart_url, equity_page, index_page
+
+        code = scrip_code_of(sym) if kind == "equity" else None
+        if code is not None:
+            from finresearch.adapters.bse_intraday import graph_url
+            from finresearch.api.markets import bse_stock_page
+
+            m = getattr(app.state, "markets", None)
+            listings = getattr(m, "listings", None) or getattr(app.state, "listings", None)
+            return await bse_stock_page(code, listings), graph_url(code)
+        if kind == "index":
+            from urllib.parse import urlencode
+
+            from finresearch.adapters.nse import NSE_BASE
+            from finresearch.adapters.nse_intraday import INDEX_PATH
+
+            return index_page(sym), f"{NSE_BASE}{INDEX_PATH}?" + urlencode(
+                {"functionName": "getIndexChart", "index": sym, "flag": "1D"})  # fmt: skip
+        return equity_page(sym), equity_chart_url(sym)
+
     async def serve(kind: str, sym: str, interval: str, days: int) -> dict[str, Any]:
         if interval not in INTERVALS:
             raise HTTPException(422, f"interval must be one of {', '.join(INTERVALS)}")
@@ -133,7 +157,7 @@ def add_intraday_routes(app: FastAPI, *, fetch=None, clock=None) -> None:
         fetched = got["fetched_at"] if got else None
         delay = round((fetched - as_of).total_seconds()) if fetched and as_of and live else None
         change = (last - prev_close) if last is not None and prev_close else None
-        page = series.source if series is not None else None
+        page, request = await _links(kind, sym)
         has_volume = any(c.volume is not None for c in candles)
         notes = [NOTE_BSE if ex == "BSE" else NOTE_CANDLES]
         if days > len(sessions):
@@ -152,7 +176,8 @@ def add_intraday_routes(app: FastAPI, *, fetch=None, clock=None) -> None:
             "as_of": as_of.isoformat() if as_of else None,
             "fetched_at": fetched.isoformat() if fetched else None,
             "delay_s": delay, "live": live, "market": st["equity"],
-            "refresh_s": QUOTE_TTL_LIVE_S, "source": page, "exchange": ex,
+            "refresh_s": QUOTE_TTL_LIVE_S, "source": page or request, "exchange": ex,
+            "quote_page": page, "data_request": request,
             "source_label": BSE_SOURCE_LABEL if ex == "BSE" else SOURCE_LABEL,
             "has_volume": has_volume, "notes": notes,
         }  # fmt: skip

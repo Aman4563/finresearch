@@ -118,6 +118,9 @@ def nse_endpoint(kind: str, symbol: str, **kw: Any) -> tuple[str, dict[str, str]
         return "/api/NextApi/apiClient/GetQuoteApi", {
             "functionName": "getHistoricalTradeData", "symbol": symbol, "series": kw.get("series", "EQ"),
             "fromDate": kw["start"].strftime("%d-%m-%Y"), "toDate": kw["end"].strftime("%d-%m-%Y")}  # fmt: skip
+    if kind == "quote":  # NseClient.quote: the quote page's own API
+        return "/api/NextApi/apiClient/GetQuoteApi", {"functionName": "getSymbolData", "marketType": "N",
+                                                      "series": kw.get("series", "EQ"), "symbol": symbol}  # fmt: skip
     if kind == "announcements":
         return "/api/corporate-announcements", eq
     if kind == "results":

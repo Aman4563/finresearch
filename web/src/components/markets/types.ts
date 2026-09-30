@@ -45,7 +45,12 @@ export type StockOverview = {
   scrip_code?: string | null;
   listing?: StockListing | null;
   fetched_at: string;
+  /** citation: the stock page, else the exact quote request */
   source: string;
+  /** the exchange's human stock page (NSE get-quotes / BSE stock-share-price); null when BSE gives none */
+  quote_page?: string | null;
+  /** the exact API request behind each part (quote, shareholding, corporate_actions, announcements) */
+  sources?: Record<string, string>;
   quote: StockQuote | null;
   dividends: { ttm_per_share: string | null; ttm_yield: number | null };
   shareholding: { as_of: string | null; promoter_pct: number | null; public_pct: number | null; employee_trusts_pct: number | null; xbrl: string | null }[];

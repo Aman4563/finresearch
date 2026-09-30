@@ -290,6 +290,11 @@ def test_bse_only_stock_overview_and_history(bse_app):
     assert o["corporate_actions"][0]["ex_date"] == "2026-08-12"
     assert o["announcements"] and o["announcements"][0]["attachment"].startswith("https://www.bseindia.com/")
     assert o["shareholding"][0]["promoter_pct"] == 57.65
+    # the human link is BSE's stock page; the exact JSON request is separate
+    assert o["quote_page"] == o["source"] and o["quote_page"].startswith(
+        "https://www.bseindia.com/stock-share-price/"
+    )
+    assert o["sources"]["quote"] == f"{API}/getScripHeaderData/w?Debtflag=&scripcode=526433&seriesid="
     # each part names the exact BSE request for this scrip
     assert (
         o["sources"]["corporate_actions"].startswith(f"{API}/DefaultData/w?")
@@ -303,6 +308,8 @@ def test_bse_only_stock_overview_and_history(bse_app):
 
     h = c.get("/api/stocks/BSE:526433/history", params={"days": 1825}).json()
     assert h["exchange"] == "BSE" and h["bars"][-1]["date"] == "2026-09-29"
+    # no quote header in a history read: BSE's stock page comes from the scrip master
+    assert h["quote_page"] == "https://www.bseindia.com/stock-share-price/asm-technologies-ltd/asmtec/526433/"
     assert (
         h["data_source"].startswith(f"{API}/StockPriceCSVDownload/w?") and "Scode=526433" in h["data_source"]
     )

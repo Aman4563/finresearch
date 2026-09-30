@@ -20,7 +20,7 @@ import type { StockHistory, StockOverview, StockResults, StockShareholding } fro
 import {
   Badge, Button, Callout, Card, Delta, EmptyState, ErrorNote, PageHeader, Skeleton, SkeletonRows, Stat, Table,
 } from "@/components/ui";
-import { LiveStamp, sessionOpen, useLive } from "@/components/live";
+import { DataRequest, LiveStamp, sessionOpen, useLive } from "@/components/live";
 import { day, useApi, when, type WatchSummary } from "@/lib/api";
 import { RANGE_DAYS, useTimeFrames } from "@/lib/timeframes";
 
@@ -449,7 +449,15 @@ export default function StockDetail() {
 
         {ov.data && (
           <p className="text-[11px] text-muted">
-            Source: <a href={ov.data.source} target="_blank" rel="noreferrer" className="underline underline-offset-2">{ex} quote page</a>, fetched {when(ov.data.fetched_at)} (cached up to 10 minutes). Not investment advice.
+            Source: {(() => {
+              // a person opens the exchange's stock page; the exact JSON request is a separate, labelled link
+              const page = ov.data.quote_page === undefined ? ov.data.source : ov.data.quote_page;
+              const request = ov.data.sources?.quote;
+              return <>
+                {page ? <a href={page} target="_blank" rel="noreferrer" className="underline underline-offset-2">{ex} stock page</a> : <>{ex}</>}
+                {request && <> (<DataRequest href={request} label={page ? "data request" : "quote data request"} />)</>}
+              </>;
+            })()}, fetched {when(ov.data.fetched_at)} (cached up to 10 minutes). Not investment advice.
           </p>
         )}
       </div>

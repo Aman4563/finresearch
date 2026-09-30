@@ -298,6 +298,10 @@ def test_intraday_api_candles_freshness_and_cache(intraday_app):
     assert r["candles"][-1]["partial"] and r["as_of"] == "2026-09-30T09:25:59+05:30"
     assert r["last"] == 110 and r["change"] == 10 and r["change_pct"] == 10 and r["refresh_s"] == 30
     assert r["delay_s"] is not None and "1-minute" in r["source_label"] and "understated" in r["notes"][0]
+    # a human page to link, and the exact chart request behind the series
+    assert r["quote_page"] == r["source"] == "https://www.nseindia.com/get-quotes/equity?symbol=INFY"
+    assert r["data_request"] == ("https://www.nseindia.com/api/NextApi/apiClient/GetQuoteApi?"
+                                 "functionName=getSymbolChartData&symbol=INFYEQN&days=1D")  # fmt: skip
     c.get("/api/stocks/INFY/intraday?interval=1m")
     assert calls["n"] == 1  # one NSE call per 30 s whatever the interval
     assert c.get("/api/stocks/INFY/intraday?interval=2m").status_code == 422
@@ -447,11 +451,20 @@ def test_bse_series_parses_price_and_bse_volume():
 
 
 def test_bse_key_is_served_with_volume_and_archived_with_it(intraday_app):
+    from finresearch.adapters.bse_equity import merge_listings, parse_scrip_list
     from finresearch.db import session_scope
     from finresearch.monitor.intraday import from_json, load_days
 
     c, _, calls = intraday_app
     app = c.app
+    scrips = json.loads(
+        (Path(__file__).parent / "fixtures" / "bse" / "equity" / "scrips_trimmed.json").read_text()
+    )
+
+    async def listings():  # BSE's scrip master from the recorded rows (offline)
+        return merge_listings([], parse_scrip_list(scrips))
+
+    app.state.listings = listings
 
     async def fetch(kind, sym):
         calls["n"] += 1
@@ -461,6 +474,21 @@ def test_bse_key_is_served_with_volume_and_archived_with_it(intraday_app):
     app.state.intraday_fetch = fetch
     r = c.get("/api/stocks/bse:500209/intraday?interval=5m").json()
     assert r["exchange"] == "BSE" and r["has_volume"] and "BSE volume" in r["source_label"]
+    # the human link is BSE's stock page from the scrip master; the JSON request is only the data request
+    assert (
+        r["quote_page"]
+        == r["source"]
+        == "https://www.bseindia.com/stock-share-price/infosys-ltd/infy/500209/"
+    )
+    assert (
+        r["data_request"]
+        == "https://api.bseindia.com/BseIndiaAPI/api/StockReachGraph/w?scripcode=500209&flag=1D"
+    )
+    app.state.listings = (
+        None  # no scrip master: no page is invented, the source falls back to the exact request
+    )
+    r2 = c.get("/api/stocks/BSE:500209/intraday?interval=15m").json()
+    assert r2["quote_page"] is None and r2["source"] == r2["data_request"]
     assert [x["v"] for x in r["candles"]] == [150, 130]  # 10+20+30+40+50, 60+70
     assert "BSE's own" in r["notes"][0]
     assert c.get("/api/stocks/BSE:12/intraday").status_code == 422

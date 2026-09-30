@@ -101,8 +101,15 @@ def add_live_routes(app: FastAPI, *, monitor_deps=None, clock=None) -> None:
                 if inst
                 else f"https://www.nseindia.com/get-quotes/equity?symbol={sym}"
             )
+            from finresearch.api.markets import stock_page_url
+
+            page = (
+                stock_page_url(inst, q)
+                if inst
+                else f"https://www.nseindia.com/get-quotes/equity?symbol={sym}"
+            )
             return {"quote": quote_json(q, sym), "fetched_at": datetime.now(UTC).isoformat(), "source": source,
-                    "exchange": ex}  # fmt: skip
+                    "quote_page": page, "exchange": ex}  # fmt: skip
 
         key = ("quote", sym, live) if ex == "NSE" else ("quote", "BSE", sym, live)
         try:
