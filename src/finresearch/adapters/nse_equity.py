@@ -108,6 +108,44 @@ def parse_results_period_end(text: str) -> date | None:
 
 
 RESULTS_PAGE = f"{NSE_BASE}/companies-listing/corporate-filings-financial-results"
+
+
+def nse_endpoint(kind: str, symbol: str, **kw: Any) -> tuple[str, dict[str, str]]:
+    """(API path, query) of each per-symbol NSE data set: the one place both the fetch and its citation are built
+    from, so a cited URL is exactly the request that produced the data."""
+    eq = {"index": "equities", "symbol": symbol}
+    if kind == "history":
+        return "/api/NextApi/apiClient/GetQuoteApi", {
+            "functionName": "getHistoricalTradeData", "symbol": symbol, "series": kw.get("series", "EQ"),
+            "fromDate": kw["start"].strftime("%d-%m-%Y"), "toDate": kw["end"].strftime("%d-%m-%Y")}  # fmt: skip
+    if kind == "announcements":
+        return "/api/corporate-announcements", eq
+    if kind == "results":
+        return "/api/corporates-financial-results", {**eq, "period": kw.get("period", "Quarterly")}
+    if kind == "integrated_filings":
+        return "/api/integrated-filing-results", {**eq, "type": kw.get("type", INTEGRATED_FINANCIALS)}
+    if kind == "shareholding":
+        return "/api/corporate-share-holdings-master", eq
+    if kind == "corporate_actions":
+        return "/api/corporates-corporateActions", eq
+    if kind == "annual_reports":
+        return "/api/annual-reports", eq
+    raise ValueError(f"unknown NSE data set {kind!r}")
+
+
+def nse_source_url(kind: str, symbol: str, **kw: Any) -> str:
+    """The exact NSE API URL a per-symbol data set is read from (NSE answers it only with the quote page's cookies;
+    `nse_quote_page` is the page a reader opens)."""
+    from urllib.parse import urlencode
+
+    path, params = nse_endpoint(kind, symbol, **kw)
+    return f"{NSE_BASE}{path}?" + urlencode(params)
+
+
+def nse_quote_page(symbol: str) -> str:
+    return f"{NSE_BASE}/get-quotes/equity?symbol={symbol}"
+
+
 INTEGRATED_PAGE = f"{NSE_BASE}/companies-listing/corporate-integrated-filing"
 INTEGRATED_FINANCIALS = "Integrated Filing- Financials"
 
@@ -296,9 +334,7 @@ class NseEquity:
 
     async def history(self, symbol: str, start: date, end: date, series: str = "EQ", *,
                       cache_ttl: float | None = None) -> list[PriceBar]:  # fmt: skip
-        rows = await self._get(symbol, "/api/NextApi/apiClient/GetQuoteApi",
-                               {"functionName": "getHistoricalTradeData", "symbol": symbol, "series": series,
-                                "fromDate": start.strftime("%d-%m-%Y"), "toDate": end.strftime("%d-%m-%Y")},
+        rows = await self._get(symbol, *nse_endpoint("history", symbol, start=start, end=end, series=series),
                                cache_ttl=cache_ttl)  # fmt: skip
         return sorted((PriceBar.parse(r) for r in rows or []), key=lambda b: b.day)
 
@@ -310,41 +346,33 @@ class NseEquity:
         return sorted((b for b in (IndexBar.parse(r) for r in rows) if b.day), key=lambda b: b.day)
 
     async def announcements(self, symbol: str) -> list[Announcement]:
-        rows = await self._get(
-            symbol, "/api/corporate-announcements", {"index": "equities", "symbol": symbol}
-        )
+        rows = await self._get(symbol, *nse_endpoint("announcements", symbol))
         return [Announcement.parse(r) for r in rows or []]
 
     async def results(self, symbol: str, period: str = "Quarterly") -> list[ResultFiling]:
-        rows = await self._get(symbol, "/api/corporates-financial-results",
-                               {"index": "equities", "symbol": symbol, "period": period})  # fmt: skip
+        rows = await self._get(symbol, *nse_endpoint("results", symbol, period=period))
         return [ResultFiling.parse(r) for r in rows or []]
 
     async def integrated_filings(
         self, symbol: str, kind: str = INTEGRATED_FINANCIALS
     ) -> list[IntegratedFiling]:
         """Integrated filings of one kind, newest first (NSE's own order)."""
-        d = await self._get(symbol, "/api/integrated-filing-results",
-                            {"index": "equities", "symbol": symbol, "type": kind})  # fmt: skip
+        d = await self._get(symbol, *nse_endpoint("integrated_filings", symbol, type=kind))
         rows = d.get("data", []) if isinstance(d, dict) else d or []
         return [f for f in (IntegratedFiling.parse(r) for r in rows) if f.kind == kind]
 
     async def shareholding(self, symbol: str) -> list[Shareholding]:
-        rows = await self._get(
-            symbol, "/api/corporate-share-holdings-master", {"index": "equities", "symbol": symbol}
-        )
+        rows = await self._get(symbol, *nse_endpoint("shareholding", symbol))
         return sorted(
             (Shareholding.parse(r) for r in rows or []), key=lambda x: x.as_of or date.min, reverse=True
         )
 
     async def corporate_actions(self, symbol: str) -> list[CorporateAction]:
-        rows = await self._get(
-            symbol, "/api/corporates-corporateActions", {"index": "equities", "symbol": symbol}
-        )
+        rows = await self._get(symbol, *nse_endpoint("corporate_actions", symbol))
         return [CorporateAction.parse(r) for r in rows or []]
 
     async def annual_reports(self, symbol: str) -> list[AnnualReportFiling]:
-        d = await self._get(symbol, "/api/annual-reports", {"index": "equities", "symbol": symbol})
+        d = await self._get(symbol, *nse_endpoint("annual_reports", symbol))
         rows = d.get("data", []) if isinstance(d, dict) else d or []
         return [AnnualReportFiling.parse(r, symbol) for r in rows]
 

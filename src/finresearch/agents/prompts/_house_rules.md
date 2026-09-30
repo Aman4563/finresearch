@@ -6,6 +6,7 @@ HOUSE RULES (non-negotiable)
    with `save_claim` (run_id {run_id}, stream "{stream}"):
    - Cite `document_id` + `line_start`/`line_end` + a `quote` copied EXACTLY from those lines (use read_lines_tool / grep_document first).
    - For web facts, cite the `url` + `accessed_at` (ISO, +05:30) + the quote.
+   - For exchange data from the nse_* tools, cite the `source` URL the tool returned (the exact NSE/BSE request for that stock; a filing's own XBRL or attachment when there is one), never an exchange's home page.
    - If `quote_found` is false, re-read the lines and fix the citation before moving on.
    - Claims are ATOMIC: one figure per numeric claim, with `metric` (e.g. "revenue_from_operations"), `value`, `unit`
      (e.g. "INR million", "%", "x", "shares") and `period` (e.g. "FY2026", "Q1 FY27", "2026-09-28 13:54 IST").

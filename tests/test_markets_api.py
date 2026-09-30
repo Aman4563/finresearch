@@ -161,6 +161,9 @@ def app_client(env):
 
 
 # --------------------------------------------------------------------------- stocks
+NSE_API = "https://www.nseindia.com/api"
+
+
 def test_stock_overview_combines_quote_holding_actions_and_survives_a_failed_part(app_client):
     c, _, _, _ = app_client
     r = c.get("/api/stocks/infy/overview").json()
@@ -174,6 +177,12 @@ def test_stock_overview_combines_quote_holding_actions_and_survives_a_failed_par
     assert all(a["ex_date"] >= b_["ex_date"] for a, b_ in zip(r["corporate_actions"], r["corporate_actions"][1:],
                                                               strict=False) if a["ex_date"] and b_["ex_date"])  # fmt: skip
     assert r["announcements"] == [] and r["errors"][0].startswith("announcements: RuntimeError")
+    assert r["source"] == "https://www.nseindia.com/get-quotes/equity?symbol=INFY"
+    assert r["sources"] == {
+        "shareholding": f"{NSE_API}/corporate-share-holdings-master?index=equities&symbol=INFY",
+        "corporate_actions": f"{NSE_API}/corporates-corporateActions?index=equities&symbol=INFY",
+        "announcements": f"{NSE_API}/corporate-announcements?index=equities&symbol=INFY",
+    }
     assert c.get("/api/stocks/bad sym!/overview").status_code == 422
 
 
@@ -189,6 +198,10 @@ def test_stock_history_walks_back_past_nse_row_cap_and_caches(app_client):
     assert r["bars"][-1] == {"date": "2026-09-28", "close": 1003.2, "open": 1002.0, "high": 1009.5, "low": 986.6,
                              "volume": 8567672.0}  # fmt: skip
     assert len(r["bars"]) == 19 and r["week52_high"] == "1728" and r["stats"]["points"] == 19
+    assert (
+        r["data_source"].startswith(f"{NSE_API}/NextApi/apiClient/GetQuoteApi?")
+        and "symbol=INFY" in r["data_source"]
+    )
     assert r["stats"]["max_drawdown"] <= 0 and r["stats"]["annualised_volatility"] > 0
     c.get("/api/stocks/INFY/history", params={"days": 800})
     assert len([x for x in log if x[0] == "history"]) == 7  # served from the cache
@@ -232,7 +245,8 @@ def test_stock_results_merges_integrated_filing_with_the_older_index(app_client)
     )  # no Jun-25 row
     assert r["quarters"][0]["source"] == "nse_financial_results"
     assert r["latest_quarter"]["label"] == "Q1 FY27" and r["latest_quarter"]["period_end"] == "2026-06-30"
-    assert r["as_of"] and r["source"].endswith("corporate-integrated-filing")
+    # the latest quarter's own XBRL (scrip and period specific), not NSE's generic filings page
+    assert r["as_of"] and r["source"] == r["latest_quarter"]["source_url"] == q1["xbrl"]
     fy = r["annual"]
     assert [a["label"] for a in fy] == ["FY26"] and fy[0]["revenue"] == 1786500000000
     assert fy[0]["exceptional_items"] == -12890000000 and fy[0]["profit_before_tax"] == 399950000000
@@ -256,6 +270,13 @@ def test_stock_results_fall_back_to_standalone_and_to_the_older_index(app_client
         and r["quarters"][-1]["source"] == "nse_financial_results"
     )
     assert any(e.startswith("integrated filing index") for e in r["errors"])
+    # each index's exact request for this symbol, and each quarter cited to its own XBRL
+    assert [x["api"] for x in r["sources"]] == [
+        f"{NSE_API}/integrated-filing-results?index=equities&symbol=INFY&type=Integrated+Filing-+Financials",
+        f"{NSE_API}/corporates-financial-results?index=equities&symbol=INFY&period=Quarterly"]  # fmt: skip
+    assert all(
+        q["source_url"] == q["xbrl"] and q["xbrl"].startswith("https://nsearchives.") for q in r["quarters"]
+    )
 
 
 # --------------------------------------------------------------------------- funds
@@ -265,6 +286,7 @@ def test_stock_shareholding_splits_each_quarter_from_its_xbrl(app_client):
     # 04-Dec-2025 is an event filing (buyback), not a quarter; 30-Sep-2025's XBRL is refused and listed as an error
     assert [q["as_of"] for q in r["quarters"]] == ["2025-12-31", "2026-03-31", "2026-06-30"]
     assert len(r["errors"]) == 1 and r["errors"][0].startswith("2025-09-30: RuntimeError")
+    assert r["source"] == f"{NSE_API}/corporate-share-holdings-master?index=equities&symbol=INFY"
     assert not any("SHP_1584868" in u for k, u in log if k == "xbrl")
     q = r["quarters"][-1]
     cat, grp = q["categories"], q["groups"]

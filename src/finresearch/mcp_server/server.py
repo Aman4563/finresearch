@@ -583,30 +583,49 @@ def _equity_json(rows) -> str:
     return json.dumps([r.model_dump(mode="json") for r in rows], indent=1)
 
 
+def _source(ex: str, sym: str, kind: str, **kw: Any) -> str:
+    """The exact exchange URL a tool's data came from, for this scrip (the citation to use)."""
+    if ex == "BSE":
+        from finresearch.adapters.bse_equity import bse_source_url
+
+        return bse_source_url(kind, sym, **kw)
+    from finresearch.adapters.nse_equity import nse_source_url
+
+    return nse_source_url(kind, sym, **kw)
+
+
+def _sourced(ex: str, sym: str, page: str, source: str, key: str, rows: list, **extra: Any) -> str:
+    """A tool's rows with where they came from: `source` is the exact exchange URL of the data (cite it with today's
+    access time); `quote_page` is the scrip's exchange page."""
+    return json.dumps({"symbol": sym if ex == "NSE" else f"BSE:{sym}", "exchange": ex, "source": source,
+                       "quote_page": page, **extra, key: [r.model_dump(mode="json") for r in rows]},
+                      indent=1)  # fmt: skip
+
+
 def _equity(symbol: str, exchange: str = "NSE") -> tuple[Any, str, str, str]:
     """(client, id, exchange, quote page) for an equity tool. NSE by default; a BSE-only stock is read from BSE when
     `symbol` is "BSE:<scrip code>" or `exchange` is "BSE" with the six-digit scrip code as `symbol`."""
-    from finresearch.adapters.bse_equity import BseEquity, scrip_code_of
+    from finresearch.adapters.bse_equity import BseEquity, bse_quote_page, scrip_code_of
 
     sym = symbol.strip().upper()
     code = scrip_code_of(sym) or (
         sym if (exchange or "").upper() == "BSE" and sym.isdigit() and len(sym) == 6 else None
     )
     if code is not None:
-        return BseEquity(), code, "BSE", "https://www.bseindia.com/"
+        return BseEquity(), code, "BSE", bse_quote_page(code)
     if (exchange or "NSE").upper() == "BSE":
         raise ValueError(f"on BSE pass the six-digit scrip code (or BSE:<code>), not {symbol!r}")
-    from finresearch.adapters.nse_equity import NseEquity
+    from finresearch.adapters.nse_equity import NseEquity, nse_quote_page
 
-    return NseEquity(), sym, "NSE", f"https://www.nseindia.com/get-quotes/equity?symbol={sym}"
+    return NseEquity(), sym, "NSE", nse_quote_page(sym)
 
 
 @server.tool()
 async def nse_price_history(symbol: str, start: str, end: str, exchange: str = "NSE") -> str:
     """Daily NSE prices for a listed stock between two ISO dates (open/high/low/close, VWAP, volume, value and
     52-week high/low), oldest first, plus deterministic summary stats (return, annualised volatility, max
-    drawdown). Cite the NSE quote page URL with today's access time. A BSE-only stock: pass symbol "BSE:<scrip
-    code>" (or exchange "BSE" and the code) to read BSE's daily prices instead; cite the BSE source returned."""
+    drawdown). Cite `source` (the exact exchange URL of these prices) with today's access time. A BSE-only stock:
+    pass symbol "BSE:<scrip code>" (or exchange "BSE" and the code) to read BSE's daily prices instead."""
     from finresearch.fincalc import market
 
     try:
@@ -616,10 +635,6 @@ async def nse_price_history(symbol: str, start: str, end: str, exchange: str = "
     lo, hi = date.fromisoformat(start), date.fromisoformat(end)
     async with client as eq:
         bars = await eq.history(sym, lo, hi)
-    if ex == "BSE":  # cite the exact BSE file the closes came from, not BSE's home page
-        from finresearch.adapters.bse_equity import price_csv_url
-
-        page = price_csv_url(sym, lo, hi)
     closes = [b.close for b in bars if b.close]
     stats = {}
     if len(closes) >= 3:
@@ -627,24 +642,26 @@ async def nse_price_history(symbol: str, start: str, end: str, exchange: str = "
         stats = {"return": str(market.price_return(closes[0], closes[-1])),
                  "annualised_volatility": str(market.annualised_volatility(closes)),
                  "max_drawdown": str(dd.max_drawdown), "bars": len(closes)}  # fmt: skip
-    return json.dumps({"symbol": sym if ex == "NSE" else f"BSE:{sym}", "exchange": ex, "source": page,
+    # NSE answers ~70 trading days per request: the cited URL is the requested range (its first window when longer)
+    return json.dumps({"symbol": sym if ex == "NSE" else f"BSE:{sym}", "exchange": ex,
+                       "source": _source(ex, sym, "history", start=lo, end=hi), "quote_page": page,
                        "stats": stats, "bars": [b.model_dump(mode="json") for b in bars]}, indent=1)  # fmt: skip
 
 
 @server.tool()
 async def nse_announcements(symbol: str, limit: int = 40, exchange: str = "NSE") -> str:
-    """Latest NSE corporate announcements for a listed stock (category, text, attachment PDF, time). Filings that
+    """Latest NSE corporate announcements for a listed stock (category, text, attachment PDF, time), with `source`
+    (the exact exchange URL of the list; cite each announcement's own attachment when it has one). Filings that
     contain financial results carry results_period_end; ingest their PDFs with the document tools. A BSE-only stock:
     symbol "BSE:<scrip code>" reads BSE's announcements (last 120 days)."""
     try:
-        client, sym, _, _ = _equity(symbol, exchange)
+        client, sym, ex, page = _equity(symbol, exchange)
     except ValueError as e:
         return json.dumps({"error": str(e)})
     async with client as eq:
         anns = await eq.announcements(sym)
-    return _equity_json(
-        sorted(anns, key=lambda a: a.at or datetime.min.replace(tzinfo=UTC), reverse=True)[:limit]
-    )
+    rows = sorted(anns, key=lambda a: a.at or datetime.min.replace(tzinfo=UTC), reverse=True)[:limit]
+    return _sourced(ex, sym, page, _source(ex, sym, "announcements"), "announcements", rows)
 
 
 NSE_ARCHIVE_HOSTS = ("nsearchives.nseindia.com",)
@@ -677,6 +694,7 @@ async def nse_results_facts(xbrl_url: str) -> str:
     async with client as eq:
         x = parse_results_xbrl(await eq.fetch_bytes(xbrl_url))
     return json.dumps({"symbol": x.symbol, "consolidated": x.consolidated, "audited": x.audited, "url": xbrl_url,
+                       "source": xbrl_url,
                        "periods": {k: {"start": str(p.start), "end": str(p.end), "unit": "INR (EPS: INR per share)",
                                        "facts": {f: str(v) for f, v in p.facts.items()}} for k, p in x.periods.items()}},
                       indent=1)  # fmt: skip
@@ -687,45 +705,57 @@ async def nse_results_filings(symbol: str, period: str = "Quarterly", exchange: 
     """NSE's results filings (period, consolidated/standalone, audited, XBRL link), newest first. For quarterly
     results this merges NSE's Integrated Filing (Financials) index (quarters from Mar-2025, `source`
     "nse_integrated_filing") with the older Financial Results index (up to Dec-2024). A BSE-only stock (symbol
-    "BSE:<scrip code>"): BSE's Integrated Filing (Financials) index, quarters from Mar-2025 only."""
+    "BSE:<scrip code>"): BSE's Integrated Filing (Financials) index, quarters from Mar-2025 only. `sources` are the
+    exact index URLs read; cite a figure to its filing's XBRL (nse_results_facts)."""
     try:
-        client, sym, _, _ = _equity(symbol, exchange)
+        client, sym, ex, page = _equity(symbol, exchange)
     except ValueError as e:
         return json.dumps({"error": str(e)})
+    quarterly = period.lower() == "quarterly"
+    sources = ([_source(ex, sym, "integrated_filings")] if quarterly or ex == "BSE" else []) + (
+        [_source(ex, sym, "results", period=period)] if ex == "NSE" else [])  # fmt: skip
     async with client as eq:
         rows = await eq.results(sym, period)
-        if period.lower() == "quarterly":
+        if quarterly:
             with contextlib.suppress(Exception):  # the older index still answers
                 rows = [f.as_result_filing() for f in await eq.integrated_filings(sym)] + rows
         floor = datetime.min.replace(tzinfo=UTC)
-        return _equity_json(
-            sorted(rows, key=lambda f: (f.period_to or date.min, f.filed_at or floor), reverse=True)
-        )
+        rows = sorted(rows, key=lambda f: (f.period_to or date.min, f.filed_at or floor), reverse=True)
+    return _sourced(ex, sym, page, sources[0], "filings", rows, sources=sources)
 
 
 @server.tool()
 async def nse_shareholding(symbol: str, exchange: str = "NSE") -> str:
-    """Quarterly shareholding pattern (promoter and promoter group %, public %, employee trusts %), newest first. A
-    BSE-only stock (symbol "BSE:<scrip code>"): BSE's filed patterns with their XBRL links; the percentages are on
-    the latest one (older quarters: read the XBRL)."""
+    """Quarterly shareholding pattern (promoter and promoter group %, public %, employee trusts %), newest first,
+    each with its filed XBRL; `source` is the exact exchange URL of the list. A BSE-only stock (symbol
+    "BSE:<scrip code>"): BSE's filed patterns with their XBRL links; the percentages are on the latest one (older
+    quarters: read the XBRL)."""
     try:
-        client, sym, _, _ = _equity(symbol, exchange)
+        client, sym, ex, page = _equity(symbol, exchange)
     except ValueError as e:
         return json.dumps({"error": str(e)})
     async with client as eq:
-        return _equity_json(await eq.shareholding(sym))
+        rows = await eq.shareholding(sym)
+    extra = (
+        {"sources": [_source(ex, sym, "shareholding"), _source(ex, sym, "shareholding_summary")]}
+        if ex == "BSE"
+        else {}
+    )
+    return _sourced(ex, sym, page, _source(ex, sym, "shareholding"), "patterns", rows, **extra)
 
 
 @server.tool()
 async def nse_corporate_actions(symbol: str, exchange: str = "NSE") -> str:
     """Corporate actions (dividends with the per-share amount parsed, bonus, split, buyback) with ex and record
-    dates. A BSE-only stock: symbol "BSE:<scrip code>" reads BSE's full corporate-action history."""
+    dates; `source` is the exact exchange URL of the list (cite it with today's access time). A BSE-only stock:
+    symbol "BSE:<scrip code>" reads BSE's full corporate-action history."""
     try:
-        client, sym, _, _ = _equity(symbol, exchange)
+        client, sym, ex, page = _equity(symbol, exchange)
     except ValueError as e:
         return json.dumps({"error": str(e)})
     async with client as eq:
-        return _equity_json(await eq.corporate_actions(sym))
+        rows = await eq.corporate_actions(sym)
+    return _sourced(ex, sym, page, _source(ex, sym, "corporate_actions"), "actions", rows)
 
 
 # --------------------------------------------------------------------------- market data

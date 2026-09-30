@@ -591,7 +591,9 @@ async def stock_signal(instrument: str, ctx: dict[str, Any]) -> Signal:
     if f.anomalies:
         caveats.append("Unexplained one-day moves over 35 % in the price history (" +
                        ", ".join(d.isoformat() for d in f.anomalies[:3]) + "): a demerger or bad print.")  # fmt: skip
-    source = ((getattr(q, "page_url", None) or "https://www.bseindia.com/") if bse else
+    from finresearch.adapters.bse_equity import bse_quote_page, scrip_code_of
+
+    source = (bse_quote_page(scrip_code_of(sym) or sym, q) if bse else
               f"https://www.nseindia.com/get-quotes/equity?symbol={sym}")  # fmt: skip
     base = dict(asset="stock", instrument=sym, name=name, event=EVENT_BSE if bse else EVENT, horizon="12 months",
                 method=METHOD, as_of=datetime.now(UTC), sources=[source])  # fmt: skip

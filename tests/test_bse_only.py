@@ -272,11 +272,30 @@ async def test_agent_equity_tools_accept_bse(monkeypatch):
     from finresearch.mcp_server import server
 
     monkeypatch.setattr(bse_equity, "BseEquity", lambda *a: AsmBse())
-    acts = json.loads(await server.nse_corporate_actions("BSE:526433"))
-    assert acts[-1]["subject"].startswith("Interim Dividend") or acts
+    out = json.loads(await server.nse_corporate_actions("BSE:526433"))
+    acts = out["actions"]
     assert any(a["dividend_per_share"] == "2.5" for a in acts)
     same = json.loads(await server.nse_corporate_actions("526433", exchange="BSE"))
-    assert same == acts
+    assert same == out and out["symbol"] == "BSE:526433" and out["exchange"] == "BSE"
+    # every BSE-backed tool names the exact BSE URL of its data for this scrip, never BSE's home page
+    api = "https://api.bseindia.com/BseIndiaAPI/api"
+    assert (
+        out["source"] == f"{api}/DefaultData/w?Fdate=&Purposecode=&TDate=&ddlcategorys=E&ddlindustrys="
+        "&scripcode=526433&segment=0&strSearch=S"
+    )
+    anns = json.loads(await server.nse_announcements("BSE:526433"))
+    assert (
+        anns["source"].startswith(f"{api}/AnnSubCategoryGetData/w?") and "strScrip=526433" in anns["source"]
+    )
+    assert anns["announcements"]
+    shp = json.loads(await server.nse_shareholding("BSE:526433"))
+    assert shp["source"] == f"{api}/SHPQNewFormat/w?scripcode=526433" and shp["patterns"]
+    assert shp["sources"][1] == f"{api}/CorporatesSHPSecuritybeta/w?scripcode=526433&qtrid="
+    fil = json.loads(await server.nse_results_filings("BSE:526433"))
+    assert fil["source"] == f"{api}/Integratedfinancedata/w?scripcode=526433" and fil["filings"]
+    for o in (out, anns, shp, fil):
+        assert o["quote_page"] == f"{api}/getScripHeaderData/w?Debtflag=&scripcode=526433&seriesid="
+        assert o["source"].rstrip("/") != "https://www.bseindia.com"
     bad = json.loads(await server.nse_shareholding("ASMTEC", exchange="BSE"))
     assert "six-digit scrip code" in bad["error"]
     hist = json.loads(await server.nse_price_history("BSE:526433", "2026-09-01", "2026-09-29"))
@@ -286,7 +305,7 @@ async def test_agent_equity_tools_accept_bse(monkeypatch):
                               "&Scode=526433&FDates=01%2F09%2F2026&TDates=29%2F09%2F2026")  # fmt: skip
     url = next(iter(k for k in XBRL if "IFIndAs" in k and "582026193852" in k))
     facts = json.loads(await server.nse_results_facts(url))
-    assert facts["consolidated"] is True and facts["periods"]
+    assert facts["consolidated"] is True and facts["periods"] and facts["source"] == url
     assert "error" in json.loads(await server.nse_results_facts("https://www.bseindia.com/some/page.html"))
 
 
