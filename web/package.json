@@ -1,6 +1,6 @@
 {
   "name": "finresearch-web",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "private": true,
   "scripts": {
     "dev": "node scripts/copy-pdfjs-assets.mjs && next dev -H 127.0.0.1 -p 3100",
