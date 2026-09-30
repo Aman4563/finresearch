@@ -101,10 +101,20 @@ async def _get(nse: NseClient, path: str, params: dict[str, str], referer: str) 
         raise NseError(f"NSE returned a non-JSON page for {path}") from e
 
 
+def equity_chart_params(symbol: str, series: str = "EQ") -> dict[str, str]:
+    return {"functionName": "getSymbolChartData", "symbol": f"{symbol}{series}N", "days": "1D"}
+
+
+def equity_chart_url(symbol: str, series: str = "EQ") -> str:
+    """The exact NSE request behind a stock's 1-minute series (the quote page's chart API)."""
+    from urllib.parse import urlencode
+
+    return f"{NSE_BASE}{EQUITY_PATH}?" + urlencode(equity_chart_params(symbol, series))
+
+
 async def equity_intraday(nse: NseClient, symbol: str, series: str = "EQ") -> IntradaySeries:
     page = equity_page(symbol)
-    data = await _get(nse, EQUITY_PATH, {"functionName": "getSymbolChartData", "symbol": f"{symbol}{series}N",
-                                         "days": "1D"}, page)  # fmt: skip
+    data = await _get(nse, EQUITY_PATH, equity_chart_params(symbol, series), page)
     return parse_chart(data, symbol, "equity", page)
 
 

@@ -162,6 +162,47 @@ def build_quote(code: str, header: dict[str, Any], info: dict[str, Any] | None, 
     return BseQuote(**fields)
 
 
+def bse_endpoint(kind: str, code: str, *, days: int | None = None, today: date | None = None) -> tuple[str, dict[str, str]]:  # fmt: skip
+    """(API path, query) of each per-scrip BSE data set: the one place both the fetch and its citation are built from,
+    so a cited URL is exactly the request that produced the data."""
+    if kind == "quote":
+        return "/getScripHeaderData/w", {"Debtflag": "", "scripcode": code, "seriesid": ""}
+    if kind == "announcements":
+        end = today or datetime.now(IST).date()
+        start = end - timedelta(days=ANNOUNCEMENT_DAYS if days is None else days)
+        return "/AnnSubCategoryGetData/w", {
+            "pageno": "1", "strCat": "-1", "strPrevDate": start.strftime("%Y%m%d"), "strScrip": code,
+            "strSearch": "P", "strToDate": end.strftime("%Y%m%d"), "strType": "C", "subcategory": "-1"}  # fmt: skip
+    if kind == "corporate_actions":
+        return "/DefaultData/w", {"Fdate": "", "Purposecode": "", "TDate": "", "ddlcategorys": "E",
+                                  "ddlindustrys": "", "scripcode": code, "segment": "0", "strSearch": "S"}  # fmt: skip
+    if kind == "integrated_filings":
+        return "/Integratedfinancedata/w", {"scripcode": code}
+    if kind == "annual_reports":
+        return "/AnnualReport_New/w", {"scripcode": code}
+    if kind == "shareholding":
+        return "/SHPQNewFormat/w", {"scripcode": code}
+    if kind == "shareholding_summary":
+        return "/CorporatesSHPSecuritybeta/w", {"scripcode": code, "qtrid": ""}
+    raise ValueError(f"unknown BSE data set {kind!r}")
+
+
+def bse_source_url(kind: str, code: str, **kw: Any) -> str:
+    """The exact BSE API URL a per-scrip data set is read from ("history" takes `start` and `end`)."""
+    from urllib.parse import urlencode
+
+    if kind == "history":
+        return price_csv_url(code, kw["start"], kw["end"])
+    path, params = bse_endpoint(kind, code, **kw)
+    return f"{BSE_API}{path}?" + urlencode(params)
+
+
+def bse_quote_page(code: str, quote: Any = None) -> str:
+    """The scrip's own BSE page when BSE's header gives one, else the exact quote API URL for the scrip (never BSE's
+    home page, which would not let a reader find the numbers)."""
+    return getattr(quote, "page_url", None) or bse_source_url("quote", code)
+
+
 def price_csv_params(code: str, start: date, end: date) -> dict[str, str]:
     return {"pageType": "0", "rbType": "D", "Scode": code, "FDates": start.strftime("%d/%m/%Y"),
             "TDates": end.strftime("%d/%m/%Y")}  # fmt: skip
@@ -511,9 +552,7 @@ class BseEquity:
         return parse_scrip_list(rows if isinstance(rows, list) else [])
 
     async def quote(self, code: str) -> BseQuote | None:
-        header = await self._json(
-            "/getScripHeaderData/w", {"Debtflag": "", "scripcode": code, "seriesid": ""}
-        )
+        header = await self._json(*bse_endpoint("quote", code))
         extra: list[Any] = []
         for path, params in (("/ComHeadernew/w", {"quotetype": "EQ", "scripcode": code, "seriesid": ""}),
                              ("/StockTrading/w", {"flag": "", "quotetype": "EQ", "scripcode": code}),
@@ -543,16 +582,11 @@ class BseEquity:
         return parse_bhavcopy(resp.text)
 
     async def announcements(self, code: str, days: int = ANNOUNCEMENT_DAYS, today: date | None = None) -> list[Announcement]:  # fmt: skip
-        end = today or datetime.now(IST).date()
-        data = await self._json("/AnnSubCategoryGetData/w", {
-            "pageno": "1", "strCat": "-1", "strPrevDate": (end - timedelta(days=days)).strftime("%Y%m%d"),
-            "strScrip": code, "strSearch": "P", "strToDate": end.strftime("%Y%m%d"), "strType": "C", "subcategory": "-1"})  # fmt: skip
+        data = await self._json(*bse_endpoint("announcements", code, days=days, today=today))
         return parse_announcements(code, data if isinstance(data, dict) else {})
 
     async def corporate_actions(self, code: str) -> list[CorporateAction]:
-        rows = await self._json("/DefaultData/w", {"Fdate": "", "Purposecode": "", "TDate": "", "ddlcategorys": "E",
-                                                   "ddlindustrys": "", "scripcode": code, "segment": "0",
-                                                   "strSearch": "S"})  # fmt: skip
+        rows = await self._json(*bse_endpoint("corporate_actions", code))
         return parse_corporate_actions(code, rows if isinstance(rows, list) else [])
 
     async def integrated_filings(
@@ -560,7 +594,7 @@ class BseEquity:
     ) -> list[IntegratedFiling]:
         if kind != INTEGRATED_FINANCIALS:
             return []
-        data = await self._json("/Integratedfinancedata/w", {"scripcode": code})
+        data = await self._json(*bse_endpoint("integrated_filings", code))
         return parse_integrated_financials(code, data if isinstance(data, dict) else {})
 
     async def results(self, code: str, period: str = "Quarterly") -> list[ResultFiling]:
@@ -568,17 +602,17 @@ class BseEquity:
         return []
 
     async def annual_reports(self, code: str) -> list[AnnualReportFiling]:
-        data = await self._json("/AnnualReport_New/w", {"scripcode": code})
+        data = await self._json(*bse_endpoint("annual_reports", code))
         return parse_annual_reports(code, data if isinstance(data, dict) else {})
 
     async def shareholding(self, code: str) -> list[Shareholding]:
         """Every filed pattern with its XBRL; the latest also carries promoter / public / employee-trust % from
         BSE's summary (older quarters' percentages come from their XBRL on the shareholding route)."""
-        data = await self._json("/SHPQNewFormat/w", {"scripcode": code})
+        data = await self._json(*bse_endpoint("shareholding", code))
         rows = parse_shareholding_index(code, data if isinstance(data, dict) else {})
         try:
             end, pct = parse_shareholding_summary(
-                await self._json("/CorporatesSHPSecuritybeta/w", {"scripcode": code, "qtrid": ""})
+                await self._json(*bse_endpoint("shareholding_summary", code))
             )
         except BseError:
             return rows

@@ -38,10 +38,17 @@ def quote_page(symbol: str) -> str:
 
 def stock_facts(symbol: str, quote, shareholding: list, actions: list, today: date, *, exchange: str = "NSE",
                 results: dict | None = None) -> list[StockFact]:  # fmt: skip
+    from finresearch.adapters.bse_equity import bse_quote_page, bse_source_url, scrip_code_of
+    from finresearch.adapters.nse_equity import nse_source_url
     from finresearch.fincalc.valuation import market_cap
 
     bse = exchange == "BSE"
-    page = (getattr(quote, "page_url", None) or "https://www.bseindia.com/") if bse else quote_page(symbol)
+    code = (scrip_code_of(symbol) or symbol) if bse else None
+    page = bse_quote_page(code, quote) if bse else quote_page(symbol)
+    # dividends come from the corporate-action list: cite that exact list for this scrip
+    actions_url = (
+        bse_source_url("corporate_actions", code) if bse else nse_source_url("corporate_actions", symbol)
+    )
     out: list[StockFact] = []
     # the exchange's own field names, quoted in each citation
     f_last, f_high, f_low = (
@@ -71,7 +78,9 @@ def stock_facts(symbol: str, quote, shareholding: list, actions: list, today: da
     if latest:
         out.append(StockFact("promoter_holding", latest.promoter_pct, "%", latest.as_of.isoformat(),
                              f"Promoter and promoter group held {latest.promoter_pct}% at {latest.as_of}",
-                             latest.xbrl or page, f"pr_and_prgrp {latest.promoter_pct}"))  # fmt: skip
+                             latest.xbrl or (bse_source_url("shareholding_summary", code) if bse else
+                                             nse_source_url("shareholding", symbol)),
+                             f"pr_and_prgrp {latest.promoter_pct}"))  # fmt: skip
     if results:
         out += _results_facts(results)
     year_ago = today - timedelta(days=365)
@@ -80,7 +89,7 @@ def stock_facts(symbol: str, quote, shareholding: list, actions: list, today: da
         ttm = sum((a.dividend_per_share for a in paid), Decimal(0))
         out.append(StockFact("dividend_per_share_ttm", ttm, "INR per share", f"TTM to {today}",
                              f"Dividends of ₹{ttm} per share went ex in the last 12 months ({len(paid)} payment(s))",
-                             page, "; ".join(f"{a.subject} ex {a.ex_date}" for a in paid), "normal"))  # fmt: skip
+                             actions_url, "; ".join(f"{a.subject} ex {a.ex_date}" for a in paid), "normal"))  # fmt: skip
     return out
 
 

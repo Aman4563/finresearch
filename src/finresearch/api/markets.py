@@ -212,8 +212,41 @@ def stock_source_url(inst: Instrument, quote: Any = None) -> str:
     """The exchange's own quote page for the stock."""
     if inst.exchange == "NSE":
         return f"https://www.nseindia.com/get-quotes/equity?symbol={inst.id}"
+    from finresearch.adapters.bse_equity import bse_quote_page
+
     page = getattr(quote, "page_url", None) or getattr(inst.listing, "bse_url", None)
-    return page or "https://www.bseindia.com/"
+    return page or bse_quote_page(inst.id)  # the scrip's quote API URL, never BSE's home page
+
+
+def stock_page_url(inst: Instrument, quote: Any = None) -> str | None:
+    """The exchange's human stock page (for links a person opens): NSE's get-quotes page; for BSE the quote header's
+    page, else the scrip master's (www.bseindia.com/stock-share-price/<name>/<symbol>/<code>/). None when BSE gives
+    neither; never an API URL."""
+    if inst.exchange == "NSE":
+        return f"https://www.nseindia.com/get-quotes/equity?symbol={inst.id}"
+    return getattr(quote, "page_url", None) or getattr(inst.listing, "bse_url", None)
+
+
+async def bse_stock_page(code: str, listings: Callable[[], Awaitable[Any]] | None) -> str | None:
+    """A BSE scrip's stock page from the scrip master (the merged listings), or None."""
+    if listings is None:
+        return None
+    try:
+        row = (await listings()).by_code(code)
+    except Exception:
+        return None
+    return getattr(row, "bse_url", None)
+
+
+def data_source_url(exchange: str, sym: str, kind: str, **kw: Any) -> str:
+    """The exact exchange API URL a per-scrip data set was read from (adapters' bse_source_url / nse_source_url)."""
+    if exchange == "BSE":
+        from finresearch.adapters.bse_equity import bse_source_url
+
+        return bse_source_url(kind, sym, **kw)
+    from finresearch.adapters.nse_equity import nse_source_url
+
+    return nse_source_url(kind, sym, **kw)
 
 
 def _quarter_end(d: date) -> bool:
@@ -311,6 +344,11 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
             return None
         return index.by_nse(inst.id) if inst.exchange == "NSE" else index.by_code(inst.id)
 
+    async def _with_listing(inst: Instrument) -> Instrument:
+        if inst.exchange == "BSE" and inst.listing is None:
+            return Instrument(inst.exchange, inst.id, inst.key, await _listing(inst))
+        return inst
+
     async def _source(inst: Instrument) -> str:
         if inst.exchange == "BSE" and inst.listing is None:
             return stock_source_url(Instrument(inst.exchange, inst.id, inst.key, await _listing(inst)))
@@ -357,6 +395,9 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
                 "exchange": inst.exchange, "key": inst.key, "scrip_code": sym if inst.exchange == "BSE" else None,
                 "listing": _listing_json(listing), "fetched_at": datetime.now(UTC).isoformat(),
                 "source": stock_source_url(inst, q), "quote": quote,
+                "quote_page": stock_page_url(await _with_listing(inst), q),
+                "sources": {k: data_source_url(inst.exchange, sym, k)
+                            for k in ("quote", "shareholding", "corporate_actions", "announcements")},
                 "dividends": {"ttm_per_share": _s(ttm_dps) if ttm_dps else None,
                               "ttm_yield": _f(ttm_dps / last_px) if ttm_dps and last_px else None},
                 "shareholding": [{"as_of": h.as_of.isoformat() if h.as_of else None, "promoter_pct": _f(h.promoter_pct, 4),
@@ -399,6 +440,8 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
         points = [(b.day, b.close) for b in rows]
         last = rows[-1] if rows else None
         return {"symbol": sym, "exchange": inst.exchange, "days": days, "source": await _source(inst),
+                "data_source": data_source_url(inst.exchange, sym, "history", start=start, end=end),
+                "quote_page": stock_page_url(await _with_listing(inst)),
                 "bars": [{"date": b.day.isoformat(), "close": _f(b.close, 4), "open": _f(b.open, 4), "high": _f(b.high, 4),
                           "low": _f(b.low, 4), "volume": _f(b.volume, 0)} for b in rows],
                 "partial": partial, "week52_high": _s(last.week52_high) if last else None, "week52_low": _s(last.week52_low) if last else None,
@@ -421,12 +464,6 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
         async with src().open_equity(inst.exchange) as eq:
             out = await results_from_nse(eq, inst.id, quarters)
         out["exchange"] = inst.exchange
-        if inst.exchange == "BSE":
-            page = await _source(inst)
-            out["sources"] = [{"name": "BSE Integrated Filing (Financials)", "url": page,
-                               "note": "quarters from Mar-2025; each quarter's XBRL is on www.bseindia.com/XBRLFILES"}]  # fmt: skip
-            if not out["quarters"]:
-                out["source"] = page
         return out
 
     @app.get("/api/stocks/{symbol}/shareholding")
@@ -444,8 +481,6 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
         async with src().open_equity(inst.exchange) as eq:
             out = await shareholding_from_nse(eq, inst.id, quarters)
         out["exchange"] = inst.exchange
-        if inst.exchange == "BSE":
-            out["source"] = await _source(inst)
         return out
 
     # ------------------------------------------------------------------ mutual funds
@@ -807,16 +842,21 @@ async def results_from_nse(
     years = sorted(annual.values(), key=lambda r: r["period_end"])
     _add_growth(years, annual=True)
     latest = out[-1] if out else None
-    sources = [{"name": "NSE Integrated Filing (Financials)", "url": INTEGRATED_PAGE,
+    ex = getattr(eq, "exchange", "NSE")
+    index_url = data_source_url(ex, sym, "integrated_filings")  # this scrip's filing index, as read
+    sources = [{"name": "NSE Integrated Filing (Financials)", "url": INTEGRATED_PAGE, "api": index_url,
                 "note": "quarters from Mar-2025, when SEBI moved results into integrated filing"},
-               {"name": "NSE Financial Results", "url": RESULTS_PAGE, "note": "quarters up to Dec-2024"}]  # fmt: skip
+               {"name": "NSE Financial Results", "url": RESULTS_PAGE, "api": data_source_url("NSE", sym, "results"),
+                "note": "quarters up to Dec-2024"}] if ex == "NSE" else \
+              [{"name": "BSE Integrated Filing (Financials)", "url": index_url, "api": index_url,
+                "note": "quarters from Mar-2025; each quarter's XBRL is on www.bseindia.com/XBRLFILES"}]  # fmt: skip
     return {"symbol": sym, "unit": "INR (EPS: INR per share)", "quarters": out, "annual": years, "errors": errors,
             "periods": sorted(periods.values(), key=lambda r: (r["period_end"], r["period_start"])),
             "as_of": datetime.now(UTC).isoformat(), "sources": sources,
             "latest_quarter": None if latest is None else {
                 k: latest[k] for k in ("label", "period_end", "filed_at", "source", "source_url", "consolidated",
                                        "xbrl", "ixbrl")},
-            "source": latest["source_url"] if latest else INTEGRATED_PAGE}  # fmt: skip
+            "source": latest["source_url"] if latest else index_url}  # fmt: skip
 
 
 def _period_label(start: date, end: date) -> str:
@@ -913,7 +953,9 @@ async def shareholding_from_nse(eq: Any, sym: str, quarters: int) -> dict[str, A
             "category_labels": [{"key": k, "label": lbl, "group": g} for k, lbl, g in CATEGORIES],
             "group_labels": [{"key": k, "label": lbl} for k, lbl in GROUPS],
             "quarters": out, "errors": errors,
-            "source": "https://www.nseindia.com/companies-listing/corporate-filings-shareholding-pattern"}  # fmt: skip
+            "source": data_source_url(getattr(eq, "exchange", "NSE"), sym, "shareholding"),
+            "page": "https://www.nseindia.com/companies-listing/corporate-filings-shareholding-pattern"
+            if getattr(eq, "exchange", "NSE") == "NSE" else None}  # fmt: skip
 
 
 def _rank_result_filings(filings: list[Any]) -> dict[date, list[Any]]:
@@ -982,9 +1024,8 @@ def _result_row(f: Any, p: Any, end: date, *, annual: bool = False) -> dict[str,
             "consolidated": f.consolidated, "audited": f.audited,
             "filed_at": f.filed_at.isoformat() if f.filed_at else None, "revised": getattr(f, "revised", False),
             "source": source,
-            "source_url": (INTEGRATED_PAGE if source == "nse_integrated_filing"
-                           else (getattr(f, "ixbrl", None) or f.xbrl) if source == "bse_integrated_filing"
-                           else RESULTS_PAGE),
+            "source_url": (getattr(f, "ixbrl", None) or f.xbrl) if source == "bse_integrated_filing"
+                          else (f.xbrl or (INTEGRATED_PAGE if source == "nse_integrated_filing" else RESULTS_PAGE)),
             "bank": basis == "interest_earned", "revenue_basis": basis, "revenue": _f(revenue, 2),
             "other_income": None if insurer else _f(facts.get("other_income"), 2),
             "total_income": None if insurer else _f(facts.get("total_income"), 2), "total_expenses": _f(expenses, 2),

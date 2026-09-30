@@ -273,6 +273,9 @@ def bse_app(env):
         yield c, log
 
 
+API = "https://api.bseindia.com/BseIndiaAPI/api"
+
+
 def test_bse_only_stock_overview_and_history(bse_app):
     c, log = bse_app
     r = c.get("/api/stocks/BSE:526433/overview")
@@ -287,12 +290,29 @@ def test_bse_only_stock_overview_and_history(bse_app):
     assert o["corporate_actions"][0]["ex_date"] == "2026-08-12"
     assert o["announcements"] and o["announcements"][0]["attachment"].startswith("https://www.bseindia.com/")
     assert o["shareholding"][0]["promoter_pct"] == 57.65
+    # the human link is BSE's stock page; the exact JSON request is separate
+    assert o["quote_page"] == o["source"] and o["quote_page"].startswith(
+        "https://www.bseindia.com/stock-share-price/"
+    )
+    assert o["sources"]["quote"] == f"{API}/getScripHeaderData/w?Debtflag=&scripcode=526433&seriesid="
+    # each part names the exact BSE request for this scrip
+    assert (
+        o["sources"]["corporate_actions"].startswith(f"{API}/DefaultData/w?")
+        and "scripcode=526433" in o["sources"]["corporate_actions"]
+    )
+    assert o["sources"]["shareholding"] == f"{API}/SHPQNewFormat/w?scripcode=526433"
+    assert "strScrip=526433" in o["sources"]["announcements"]
     assert (
         c.get("/api/stocks/bse:526433/overview").json()["key"] == "BSE:526433"
     )  # cached, case-insensitive key
 
     h = c.get("/api/stocks/BSE:526433/history", params={"days": 1825}).json()
     assert h["exchange"] == "BSE" and h["bars"][-1]["date"] == "2026-09-29"
+    # no quote header in a history read: BSE's stock page comes from the scrip master
+    assert h["quote_page"] == "https://www.bseindia.com/stock-share-price/asm-technologies-ltd/asmtec/526433/"
+    assert (
+        h["data_source"].startswith(f"{API}/StockPriceCSVDownload/w?") and "Scode=526433" in h["data_source"]
+    )
     assert sum(1 for x in log if x[0] == "history") == 1  # BSE answers five years in one request
 
 
@@ -312,11 +332,14 @@ def test_bse_results_and_shareholding_from_xbrl(bse_app):
     fy26 = next(x for x in r["annual"] if x["period_end"] == "2026-03-31")
     assert fy26["label"] == "FY26" and fy26["revenue"] > 0
     assert r["sources"][0]["name"].startswith("BSE")
+    assert r["sources"][0]["url"] == f"{API}/Integratedfinancedata/w?scripcode=526433"
+    assert r["source"] == q1["source_url"] or r["source"].startswith("https://www.bseindia.com/XBRLFILES/")
 
     s = c.get("/api/stocks/BSE:526433/shareholding", params={"quarters": 2}).json()
     assert s["exchange"] == "BSE" and [x["as_of"] for x in s["quarters"]] == ["2026-03-31", "2026-06-30"]
     jun = s["quarters"][-1]["categories"]
     assert jun["promoter"] == 57.65 and jun["retail"] == 16.96 and jun["hni"] == 18.78
+    assert s["source"] == f"{API}/SHPQNewFormat/w?scripcode=526433"
 
 
 def test_exchange_switch_for_a_dual_listed_stock(bse_app):
