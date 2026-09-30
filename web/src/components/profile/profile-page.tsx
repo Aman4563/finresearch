@@ -2,7 +2,7 @@
 
 import {
   BellRing, BookOpenCheck, BriefcaseBusiness, CalendarDays, CircleHelp, FlaskConical, IndianRupee, ListChecks, Monitor,
-  Moon, Palette, Plus, Sparkles, Sun, Trash2, UserRound,
+  Moon, Palette, Plus, ShieldAlert, Sparkles, Sun, Trash2, UserRound,
 } from "lucide-react";
 import Link from "next/link";
 import { type ReactNode, useEffect, useState } from "react";
@@ -90,7 +90,10 @@ export function ProfilePage() {
     !isNum(p.tax_slab_pct) || Number(p.tax_slab_pct) > 50 ? "Tax slab must be a percentage between 0 and 50." :
     p.holdings.some((h) => !h.symbol.trim()) ? "Every holding needs a symbol (or remove the empty row)." :
     p.holdings.some((h) => h.value_inr && !isNum(h.value_inr)) ? "Holding values must be numbers of rupees." :
-    (p.display_name ?? "").length > 60 ? "Your name can be at most 60 characters." : null;
+    (p.display_name ?? "").length > 60 ? "Your name can be at most 60 characters." :
+    p.fno_capital_inr != null && !isNum(p.fno_capital_inr) ? "F&O capital must be a number of rupees (0 = not set)." :
+    p.fno_max_loss_pct != null && (!isNum(p.fno_max_loss_pct) || Number(p.fno_max_loss_pct) <= 0 || Number(p.fno_max_loss_pct) > 100) ? "Max loss per strategy must be a percentage above 0 and at most 100." :
+    p.fno_brokerage_per_order_inr != null && (!isNum(p.fno_brokerage_per_order_inr) || Number(p.fno_brokerage_per_order_inr) > 1000) ? "Brokerage per order must be between ₹0 and ₹1,000." : null;
 
   const save = async () => {
     setSaving(true);
@@ -299,6 +302,48 @@ export function ProfilePage() {
               </Labelled>
             </div>
           </Card>
+
+          {/* ------------------------------------------------------------ F&O budget */}
+          {p.fno_capital_inr != null && (
+            <Card icon={<ShieldAlert className="size-4" />} title="F&O risk budget"
+              help="Used only by the F&O page and its signal: a strategy passes only if its maximum loss is within this share of your F&O capital. Analysis only; no orders are placed."
+              subtitle="SEBI found 87.7% of individual F&O traders lost money in FY26. Keep this small.">
+              <div className="grid gap-4 sm:grid-cols-3">
+                <Labelled label={<Label tip="Money you have set aside for F&O and could lose without affecting your goals. 0 means not set: the F&O signal then makes no call.">F&amp;O capital</Label>}
+                  hint={inWords(p.fno_capital_inr) ? `= ₹${inWords(p.fno_capital_inr)}` : "0 = not set"}>
+                  <div className="relative">
+                    <span className="pointer-events-none absolute inset-y-0 left-3 grid place-items-center text-sm text-muted">₹</span>
+                    <input aria-label="F&O capital in rupees" className={cx(inputClass, "num w-full pl-7")} inputMode="decimal" value={p.fno_capital_inr}
+                      onChange={(e) => set("fno_capital_inr", e.target.value.replace(/[,\s₹]/g, ""))} />
+                  </div>
+                </Labelled>
+                <Labelled label={<Label tip="The most one strategy may lose, as a share of your F&O capital. The research roadmap suggests 2% or less.">Max loss per strategy</Label>} hint="% of F&O capital">
+                  <div className="relative w-28">
+                    <input aria-label="Max loss per strategy in percent" className={cx(inputClass, "num w-full pr-7")} inputMode="decimal" value={p.fno_max_loss_pct ?? "2"}
+                      onChange={(e) => set("fno_max_loss_pct", e.target.value.replace(/[%\s]/g, ""))} />
+                    <span className="pointer-events-none absolute inset-y-0 right-3 grid place-items-center text-sm text-muted">%</span>
+                  </div>
+                </Labelled>
+                <Labelled label={<Label tip="Your broker's flat charge per executed order. Used in the cost breakdown (statutory charges come from a dated table).">Brokerage per order</Label>} hint="₹ per executed order">
+                  <div className="relative w-28">
+                    <span className="pointer-events-none absolute inset-y-0 left-3 grid place-items-center text-sm text-muted">₹</span>
+                    <input aria-label="Brokerage per order in rupees" className={cx(inputClass, "num w-full pl-7")} inputMode="decimal" value={p.fno_brokerage_per_order_inr ?? "20"}
+                      onChange={(e) => set("fno_brokerage_per_order_inr", e.target.value.replace(/[,\s₹]/g, ""))} />
+                  </div>
+                </Labelled>
+              </div>
+              <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                <Labelled label={<Label tip="Defined risk means the worst case is known in advance (spreads, condors, bought options). Naked short options can lose far more than the premium.">Strategies allowed</Label>}>
+                  <div><Segmented value={p.fno_defined_risk_only === false ? "any" : "defined"} onChange={(v) => set("fno_defined_risk_only", v === "defined")}
+                    options={[{ value: "defined", label: "Defined risk only" }, { value: "any", label: "Any" }]} /></div>
+                </Labelled>
+                <Labelled label={<Label tip="Your experience with futures and options. Shown with the F&O signal; it does not loosen any limit.">Experience</Label>}>
+                  <div><Segmented value={p.fno_experience ?? "none"} onChange={(v) => set("fno_experience", v as Profile["fno_experience"])}
+                    options={[{ value: "none", label: "None" }, { value: "some", label: "Some" }, { value: "experienced", label: "Experienced" }]} /></div>
+                </Labelled>
+              </div>
+            </Card>
+          )}
 
           {/* ------------------------------------------------------------ holdings */}
           <Card

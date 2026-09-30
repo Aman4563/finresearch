@@ -239,6 +239,12 @@ export type Profile = {
   holdings: { symbol: string; sector: string | null; value_inr: string | null }[];
   rules: Rule[];
   notes: string;
+  // F&O analysis budget (optional: older API builds omit them)
+  fno_capital_inr?: string;
+  fno_max_loss_pct?: string;
+  fno_brokerage_per_order_inr?: string;
+  fno_defined_risk_only?: boolean;
+  fno_experience?: "none" | "some" | "experienced";
   // identity and dashboard preferences (optional: older API builds omit them)
   display_name?: string;
   avatar_color?: AvatarColor | null;

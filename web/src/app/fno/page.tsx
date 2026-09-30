@@ -4,6 +4,8 @@ import { Activity, Calculator, Crosshair, Layers, Loader2, Minus, Plus, RefreshC
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { InteractivePayoff, OiButterfly } from "@/components/fno/charts";
+import { CostsBreakdown, IvTile, ProbabilityPanel, RiskBanner } from "@/components/fno/risk";
+import { SignalCard } from "@/components/signal";
 import { type Chain, type Leg, type PresetKey, PRESETS, type Result, n, payoffCurve, pnlAt, premiumOf, presetLegs } from "@/components/fno/model";
 import { fmtINR } from "@/components/charts";
 import { LiveStamp, sessionOpen, useMarketStatus } from "@/components/live";
@@ -250,6 +252,8 @@ export default function Fno() {
     }));
   }, [chain]);
   const pcr = chain?.pcr_oi ? Number(chain.pcr_oi) : null;
+  const atmIv = chain ? (([n(chain.atm_iv.call), n(chain.atm_iv.put)].filter((x) => x != null) as number[]).reduce((s, x, _, arr) => s + x / arr.length, 0) || null) : null;
+  const an = fresh ? result?.analysis : undefined;
 
   return (
     <div className="space-y-6">
@@ -259,6 +263,7 @@ export default function Fno() {
         title="F&O analytics"
         description="NSE option chain, open interest and a strategy builder that shows what you could make or lose at expiry. Analysis only: no orders are placed."
       />
+      <RiskBanner />
       {chain && (
         <LiveStamp session="equity" live={liveFno} status={market.data} updatedAt={chainAt} everyMs={60000}
           asOf={chain.as_of} onRefresh={refreshChain} className="-mt-4" />
@@ -314,7 +319,7 @@ export default function Fno() {
         </div>
       ) : chain ? (
         <>
-          <div className="stagger grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <div className="stagger grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
             <Stat label={`${chain.symbol} spot`} value={spot} format={(v) => v.toLocaleString("en-IN", { maximumFractionDigits: 2 })} icon={<TrendingUp className="size-4" />}
               hint={chain.as_of ? `as of ${when(chain.as_of)}` : undefined} />
             <Stat label="ATM strike" value={n(chain.atm_strike)} format={(v) => v.toLocaleString("en-IN")} tone="accent" icon={<Crosshair className="size-4" />}
@@ -326,6 +331,7 @@ export default function Fno() {
             <Stat label="Max pain" value={n(chain.max_pain)} format={(v) => v.toLocaleString("en-IN")} tone="warn" icon={<Target className="size-4" />}
               help="The expiry price at which option buyers, in total, would lose the most (and sellers keep the most). Prices sometimes drift towards it near expiry; it is not a forecast."
               hint={chain.lot_size ? `lot size ${chain.lot_size} · expires ${day(chain.expiry)}` : `expires ${day(chain.expiry)}`} />
+            <IvTile symbol={chain.symbol} atmIv={atmIv} rv20={fresh ? result?.analysis?.vols.realised_20d : null} />
           </div>
 
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,22rem)_minmax(0,1fr)]">
@@ -428,7 +434,7 @@ export default function Fno() {
                 <div className="min-w-0 space-y-4">
                   {curve && (
                     <InteractivePayoff points={curve.points} spot={spot} breakevens={fresh ? result!.breakevens : curve.breakevens}
-                      what={{ spot: whatSpot, pnl: Math.round(whatPnl) }} onPick={setWhat} />
+                      what={{ spot: whatSpot, pnl: Math.round(whatPnl) }} onPick={setWhat} band={an?.expected_move ?? null} />
                   )}
                   {result && !fresh && (
                     <Callout tone="warn">The numbers below are for the previous legs. Press Analyse to update them.</Callout>
@@ -441,9 +447,17 @@ export default function Fno() {
                         <Stat label="Max loss" display={<span className="num text-loss">{inr(result.max_loss)}</span>} tone="loss" />
                         <Stat label={result.net_premium > 0 ? "Net debit (you pay)" : "Net credit (you receive)"} display={<span className="num">{inr(Math.abs(result.net_premium))}</span>}
                           help="Premium received (credit) or paid (debit) to open all legs together." />
-                        <Stat label="Chance of profit" value={result.probability_of_profit == null ? null : result.probability_of_profit * 100} format={(v) => `${v.toFixed(1)}%`} tone="info"
-                          help="Estimated probability the position makes money at expiry, from the ATM implied volatility (a lognormal model). An estimate, not a promise." />
+                        <Stat label="Expected move (1σ)" tone="info"
+                          display={<span className="num">{result.analysis?.expected_move ? `±${Math.round(result.analysis.expected_move.move).toLocaleString("en-IN")}` : "—"}</span>}
+                          hint={result.analysis?.expected_move ? `${Math.round(result.analysis.expected_move.low).toLocaleString("en-IN")}–${Math.round(result.analysis.expected_move.high).toLocaleString("en-IN")}` : undefined}
+                          help="±S·σ·√T with the ATM implied volatility: under the model about two in three expiry prices land inside this band (shaded on the chart)." />
                       </div>
+                      {result.analysis && (
+                        <div className="grid gap-3 xl:grid-cols-2">
+                          <ProbabilityPanel a={result.analysis} />
+                          <CostsBreakdown a={result.analysis} />
+                        </div>
+                      )}
                       <div className="flex flex-wrap items-center gap-2 text-xs">
                         <span className="text-muted">Breakevens</span>
                         {result.breakevens.length ? result.breakevens.map((b) => <Badge key={b} tone="warn"><span className="num">{b.toLocaleString("en-IN")}</span></Badge>) : <span>none</span>}
@@ -468,6 +482,11 @@ export default function Fno() {
               </div>
             )}
           </Card>
+
+          {fresh && result && (
+            <SignalCard key={analysed} asset="fno" instrument={chain.symbol} title="Strategy check" compact={false}
+              query={{ expiry: chain.expiry, legs: JSON.stringify(legs.map(({ right, strike, side, lots }) => ({ right, strike, side, lots }))) }} />
+          )}
         </>
       ) : (
         !error && (

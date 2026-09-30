@@ -65,6 +65,15 @@ class Profile(BaseModel):
     holdings: list[Holding] = Field(default_factory=list)
     rules: list[Rule] = Field(default_factory=list)
     notes: str = ""
+    # F&O analysis (the /fno page and the F&O signal); the signal never proposes a position whose maximum loss is
+    # above fno_max_loss_pct of fno_capital_inr, and by default only defined-risk strategies
+    fno_capital_inr: Decimal = Field(
+        Decimal(0), ge=0
+    )  # 0 = not set: the F&O signal says so and makes no call
+    fno_max_loss_pct: Decimal = Field(Decimal(2), gt=0, le=100)  # per strategy, % of fno_capital_inr
+    fno_brokerage_per_order_inr: Decimal = Field(Decimal(20), ge=0, le=1000)  # flat per executed order
+    fno_defined_risk_only: bool = True
+    fno_experience: Literal["none", "some", "experienced"] = "none"
     # identity and dashboard preferences (optional; profiles saved before they existed load with these defaults)
     display_name: str = Field("", max_length=60)
     avatar_color: AvatarColor | None = None

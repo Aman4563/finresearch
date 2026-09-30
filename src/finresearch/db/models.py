@@ -382,3 +382,25 @@ class SubscriptionSnapshotRow(Base):
     total_times: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
     categories: Mapped[list[Any]] = mapped_column(default=list)
     raw: Mapped[dict[str, Any]] = mapped_column(default=dict)
+
+
+class IvHistory(Base):
+    """One day's at-the-money implied volatility for an F&O underlying, recorded after the close by the monitor
+    (roadmap item 18). `expiry` is the contract the IV was read from: the nearest expiry at least a week away, so
+    same-week expiries do not add noise. IV values are annual % as NSE publishes them."""
+
+    __tablename__ = "iv_history"
+    __table_args__ = (UniqueConstraint("symbol", "day"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(30), index=True)
+    day: Mapped[date] = mapped_column(Date)
+    expiry: Mapped[date] = mapped_column(Date)
+    underlying: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    atm_strike: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    atm_iv: Mapped[Decimal] = mapped_column(Numeric(8, 3))
+    call_iv: Mapped[Decimal | None] = mapped_column(Numeric(8, 3))
+    put_iv: Mapped[Decimal | None] = mapped_column(Numeric(8, 3))
+    skew_25d: Mapped[Decimal | None] = mapped_column(Numeric(8, 3))  # 25-delta put IV − call IV, vol points
+    as_of: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # NSE's chain timestamp
+    source: Mapped[str] = mapped_column(String(200), default="https://www.nseindia.com/option-chain")
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

@@ -62,6 +62,9 @@ class Settings(BaseSettings):
     local_schema_repair_attempts: int = 2
     local_max_prompt_chars: int = 90_000  # ~24k tokens; beyond this the local tier refuses (LONG_CONTEXT)
 
+    # ---- F&O risk notice (finresearch.signals.fno.RISK_NOTICE); set when SEBI publishes a newer study
+    fno_risk_notice: str | None = None
+
     # ---- storage
     database_url: str = "postgresql+psycopg://localhost/finresearch"
     test_database_url: str = "postgresql+psycopg://localhost/finresearch_test"

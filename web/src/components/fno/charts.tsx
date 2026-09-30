@@ -4,7 +4,7 @@
 
 import { useId, useMemo } from "react";
 import {
-  Area, AreaChart, Bar, BarChart, CartesianGrid, ReferenceDot, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
+  Area, AreaChart, Bar, BarChart, CartesianGrid, ReferenceArea, ReferenceDot, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 
 import { fmtINR } from "@/components/charts";
@@ -68,9 +68,9 @@ function PayoffTip({ active, payload, label }: { active?: boolean; payload?: { v
 }
 
 /** Payoff at expiry: profit green, loss red; spot, breakevens and a movable what-if price (click the chart to move it). */
-export function InteractivePayoff({ points, spot, breakevens, what, onPick, height = 300 }: {
+export function InteractivePayoff({ points, spot, breakevens, what, onPick, band, height = 300 }: {
   points: { spot: number; pnl: number }[]; spot: number; breakevens: number[]; what?: { spot: number; pnl: number } | null;
-  onPick?: (s: number) => void; height?: number;
+  onPick?: (s: number) => void; band?: { low: number; high: number } | null; height?: number;
 }) {
   const gid = useId().replace(/:/g, "");
   const off = useMemo(() => {
@@ -98,6 +98,10 @@ export function InteractivePayoff({ points, spot, breakevens, what, onPick, heig
             </linearGradient>
           </defs>
           <CartesianGrid strokeDasharray="3 3" vertical={false} />
+          {band && (
+            <ReferenceArea x1={band.low} x2={band.high} fill="var(--chart-2)" fillOpacity={0.1} stroke="var(--chart-2)" strokeOpacity={0.35} strokeDasharray="3 3"
+              ifOverflow="hidden" label={{ value: "±1σ expected move", position: "insideBottom", fill: "var(--chart-2)", fontSize: 10 }} />
+          )}
           <XAxis dataKey="spot" type="number" domain={["dataMin", "dataMax"]} {...axis} tickFormatter={(v) => Number(v).toLocaleString("en-IN")} />
           <YAxis {...axis} width={72} tickFormatter={(v) => fmtINR(Number(v)).replace(/\.\d+$/, "")} />
           <Tooltip content={<PayoffTip />} />

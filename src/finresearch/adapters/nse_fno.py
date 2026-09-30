@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import csv
 import io
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -22,6 +22,11 @@ from finresearch.adapters.nse import (
 )
 
 INDICES = {"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "NIFTYNXT50"}
+# the index name NSE's index-history API expects for each F&O index symbol (verified live 30-Sep-2026 for the first
+# three; the API answers FINNIFTY rows as "NIFTY FIN SERVICE")
+INDEX_NAMES = {"NIFTY": "NIFTY 50", "BANKNIFTY": "NIFTY BANK", "FINNIFTY": "NIFTY FINANCIAL SERVICES",
+               "MIDCPNIFTY": "NIFTY MID SELECT", "NIFTYNXT50": "NIFTY NEXT 50"}  # fmt: skip
+INDEX_HISTORY_PAGE = f"{NSE_BASE}/reports-indices-historical-index-data"
 LOTS_URL = "https://nsearchives.nseindia.com/content/fo/fo_mktlots.csv"
 PAGE = f"{NSE_BASE}/option-chain"
 
@@ -108,6 +113,16 @@ def parse_lot_sizes(text: str) -> dict[str, dict[str, int]]:
     return out
 
 
+def parse_index_history(data: dict[str, Any]) -> list[tuple[date, Decimal]]:
+    """(day, close) oldest first from NSE's /api/historicalOR/indicesHistory payload."""
+    out = {}
+    for r in (data or {}).get("data") or []:
+        d, close = parse_nse_date(r.get("EOD_TIMESTAMP")), parse_num(r.get("EOD_CLOSE_INDEX_VAL"))
+        if d and close:
+            out[d] = close
+    return sorted(out.items())
+
+
 def lot_size_for(lots: dict[str, dict[str, int]], symbol: str, expiry: date) -> int | None:
     return lots.get(symbol, {}).get(expiry.strftime("%b-%y").upper())
 
@@ -145,6 +160,29 @@ class NseFno:
         if not d:
             raise NseError(f"NSE returned no option chain for {symbol} {expiry}")
         return parse_chain(symbol, expiry, d)
+
+    async def closes(self, symbol: str, start: date, end: date) -> list[tuple[date, Decimal]]:
+        """Daily closes of the underlying, oldest first: NSE's index history for indices, the equity history for
+        stocks."""
+        sym = symbol.upper()
+        if sym in INDICES:
+            # the API returns at most about 70 rows from the start of the range: ask in 60-day windows
+            out: dict[date, Decimal] = {}
+            async with NseClient(warmup_url=INDEX_HISTORY_PAGE) as nse:
+                lo = start
+                while lo <= end:
+                    hi = min(end, lo + timedelta(days=59))
+                    d, _ = await nse.get_json("/api/historicalOR/indicesHistory",
+                                              {"indexType": INDEX_NAMES[sym], "from": lo.strftime("%d-%m-%Y"),
+                                               "to": hi.strftime("%d-%m-%Y")})  # fmt: skip
+                    out.update(parse_index_history(d))
+                    lo = hi + timedelta(days=1)
+            return sorted(out.items())
+        from finresearch.adapters.nse_equity import NseEquity
+
+        async with NseEquity() as eq:
+            bars = await eq.history(sym, start, end)
+        return [(b.day, b.close) for b in bars if b.close]
 
     async def lot_sizes(self) -> dict[str, dict[str, int]]:
         resp = await self.nse.http.get(LOTS_URL, headers={"Referer": f"{NSE_BASE}/"})
