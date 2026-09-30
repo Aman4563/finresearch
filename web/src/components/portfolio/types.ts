@@ -50,6 +50,10 @@ export type Holding = {
   closed: boolean;
   signal: { asset: "stock" | "fund"; instrument: string; href: string } | null;
   warnings: string[];
+  /** where its transactions came from: manual, cas, zerodha/groww/upstox (CSV), groww_api ... (broker sync) */
+  sources?: string[];
+  /** has a broker holdings baseline (average cost, purchase date unknown) */
+  broker_baseline?: boolean;
   /** the price is still being fetched (the page streams it in) */
   pending?: boolean;
 };

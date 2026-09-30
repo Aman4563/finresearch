@@ -457,3 +457,83 @@ def _trade_row(broker: str, r: list[Any], cell, account: str) -> ImportedTxn | N
                        amount=qty * price, source=broker, isin=isin or None,
                        nse_symbol=sym or None,
                        meta={k: v for k, v in meta.items() if v not in (None, "")}, ext=ext)  # fmt: skip
+
+
+# --------------------------------------------------------------------------- broker holdings statements
+# A holdings statement is a snapshot (instrument, quantity, average price) with no dates: it feeds the broker-baseline
+# merge rules (connectors.merge), exactly like a holdings API response. Column names are matched loosely (normalised,
+# first match wins) because brokers rename them; see docs/dev/BROKER_SETUP.md for how to download each.
+#   Zerodha Console → Portfolio → Holdings → download (XLSX): Symbol, ISIN, Sector, Quantity Available, Quantity
+#     Discrepant, Quantity Long Term, Quantity Pledged (Margin), Quantity Pledged (Loan), Average Price, Previous
+#     Closing Price, Unrealized P&L ... [U: from open-source importers and Zerodha support pages, not a raw file]
+#   Groww → Stocks → Holdings → download statement (XLSX): Stock Name, ISIN, Quantity, Average buy price, Buy value,
+#     Closing price, Closing value, Unrealised P&L [U]
+#   Any other broker: a table with an ISIN column, a quantity column and an average-price column (pass the broker).
+_HS_NAME = ("symbol", "stock name", "instrument", "company name", "scrip name", "security name", "name")
+_HS_QTY = ("quantity available", "quantity", "qty", "qty.", "net qty", "total quantity", "free quantity")
+_HS_AVG = ("average price", "average buy price", "avg. cost", "avg cost", "avg. price", "avg price", "buy avg",
+           "buy average", "average cost")  # fmt: skip
+_HS_EXTRA_QTY = ("quantity discrepant", "quantity pledged (margin)", "quantity pledged (loan)")
+_HS_CLOSE = ("previous closing price", "closing price", "ltp", "last traded price", "close price")
+
+
+def _first(col: dict[str, int], names: tuple[str, ...]) -> int | None:
+    return next((col[n] for n in names if n in col), None)
+
+
+def detect_holdings_statement(rows: list[list[Any]]) -> tuple[str | None, int] | None:
+    """(broker or None, header row) for the first row that has ISIN, quantity and average-price columns and no
+    trade-date column (a tradebook has one)."""
+    for i, row in enumerate(rows[:40]):
+        cells = {_norm(c) for c in row if c is not None}
+        if "isin" not in cells or "trade date" in cells or "execution date and time" in cells:
+            continue
+        if not any(q in cells for q in _HS_QTY) or not any(a in cells for a in _HS_AVG):
+            continue
+        broker = ("zerodha" if "quantity available" in cells or "quantity long term" in cells
+                  else "groww" if "average buy price" in cells or "stock name" in cells else None)  # fmt: skip
+        return broker, i
+    return None
+
+
+def parse_holdings_statement(content: bytes, filename: str = "", broker: str | None = None):
+    """A broker holdings statement → (broker, [BrokerHolding]). Raises StatementError when it is not one."""
+    from finresearch.portfolio.connectors.base import BrokerHolding
+
+    rows = read_table(content, filename)
+    found = detect_holdings_statement(rows)
+    if found is None:
+        raise StatementError("could not recognise the columns: expected a tradebook (Zerodha/Groww/Upstox) or a "
+                             "holdings statement with ISIN, quantity and average-price columns")  # fmt: skip
+    detected, hi = found
+    broker = broker or detected
+    if broker not in ("zerodha", "groww", "upstox"):
+        raise StatementError("this looks like a holdings statement, but the broker is not clear: choose it")
+    col = {}
+    for j, h in enumerate(rows[hi]):
+        col.setdefault(_norm(h), j)
+    ji, jn, jq, ja = col["isin"], _first(col, _HS_NAME), _first(col, _HS_QTY), _first(col, _HS_AVG)
+    jc = _first(col, _HS_CLOSE)
+    extra = [col[n] for n in _HS_EXTRA_QTY if n in col]
+    out: list[BrokerHolding] = []
+
+    def at(r: list[Any], j: int | None) -> Any:
+        return r[j] if j is not None and j < len(r) else None
+
+    for r in rows[hi + 1 :]:
+        isin = str(at(r, ji) or "").strip().upper()
+        if not ISIN_RE.match(isin):
+            continue  # totals, blank and note rows
+        q = _dec(at(r, jq)) or Decimal(0)
+        q += sum((_dec(at(r, j)) or Decimal(0) for j in extra), Decimal(0))
+        if q <= 0:
+            continue
+        name = str(at(r, jn) or isin).strip()
+        sym = (
+            name.upper() if broker == "zerodha" and re.fullmatch(r"[A-Z0-9&\-]{1,20}", name.upper()) else None
+        )
+        out.append(BrokerHolding(name=name, quantity=q, isin=isin, symbol=sym, avg_price=_dec(at(r, ja)),
+                                 last_price=_dec(at(r, jc))))  # fmt: skip
+    if not out:
+        raise StatementError("no holdings with an ISIN and a quantity found in the statement")
+    return broker, out

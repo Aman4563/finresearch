@@ -271,6 +271,12 @@ async def tick(deps: jobs.Deps, now: datetime | None = None) -> dict[str, int]:
     if deps.forecasts:
         out |= {k: v for k, v in (await forecast_step(deps, now)).items() if k in ("resolved", "void")}
     out |= await alerts_step(now)
+    try:  # broker syncs after the close and the statement inbox (portfolio.connectors.sync)
+        from finresearch.portfolio.connectors.sync import connections_step
+
+        out |= await connections_step(now)
+    except Exception:
+        log.warning("broker connection step failed; it is retried on the next tick", exc_info=True)
     try:
         res = await jobs.archive_open_books(deps, now)
         out["archived"] = len(res["archived"]) if res else 0
