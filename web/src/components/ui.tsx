@@ -240,6 +240,27 @@ export function SkeletonRows({ rows = 4 }: { rows?: number }) {
   );
 }
 
+/** A part the exchange could not serve just now (network, timeout, a refused or block page): not "no data". */
+export function Unreachable({ exchange, what, onRetry, compact }: { exchange: string; what?: string; onRetry?: () => void; compact?: boolean }) {
+  const text = <>Couldn&apos;t reach {exchange} just now{what ? <> for {what}</> : null}. This is a connection problem, not missing data.</>;
+  const button = onRetry && (
+    <button type="button" onClick={onRetry} className="rounded-md border border-warn/40 px-2 py-0.5 text-xs font-medium text-warn hover:bg-warn-soft">
+      Retry
+    </button>
+  );
+  if (compact) {
+    return <p role="status" className="flex flex-wrap items-center gap-2 text-xs text-warn"><TriangleAlert className="size-3.5" />{text}{button}</p>;
+  }
+  return (
+    <div role="status" className="flex flex-col items-center justify-center rounded-xl border border-dashed border-warn/40 px-6 py-10 text-center animate-fade-in">
+      <span className="mb-3 grid size-11 place-items-center rounded-full bg-warn-soft text-warn"><TriangleAlert className="size-5" /></span>
+      <p className="font-medium">Couldn&apos;t reach {exchange} just now</p>
+      <p className="mt-1 max-w-md text-sm text-muted">{what ? <>The {what} did not load. </> : null}This is a connection problem, not missing data; try again in a moment.</p>
+      {button && <div className="mt-4">{button}</div>}
+    </div>
+  );
+}
+
 export function EmptyState({ icon, title, children, action }: { icon?: ReactNode; title: ReactNode; children?: ReactNode; action?: ReactNode }) {
   return (
     <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border px-6 py-10 text-center animate-fade-in">

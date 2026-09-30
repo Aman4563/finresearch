@@ -136,9 +136,8 @@ class FbilClient:
             await self.http.aclose()
 
     async def published_dates(self) -> list[date]:
-        resp = await self.http.get(
-            LATEST_URL, params={"authenticated": "false"}, headers=HEADERS, cache_ttl=3600
-        )
+        resp = await self.http.get(LATEST_URL, params={"authenticated": "false"}, headers=HEADERS, cache_ttl=3600,
+                                   cache_if=lambda f: f.content.lstrip()[:1] == b"[")  # fmt: skip
         if not resp.ok:
             raise FbilError(f"FBIL HTTP {resp.status} for {LATEST_URL}")
         days = [_iso(r.get("processRunDate")) for r in resp.json() if isinstance(r, dict)]

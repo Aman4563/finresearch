@@ -58,6 +58,10 @@ DETAIL_TTL_S = 6 * 3600  # issue details change rarely; the radar may reuse them
 SME_FLAGS = {"S", "BS"}  # is_green_shoe values for which BSE's own page uses the SME demand table
 
 
+def _json_body(f: Fetched) -> bool:
+    return f.content.lstrip()[:1] in (b"{", b"[")
+
+
 class BseError(RuntimeError):
     """BSE refused the request or returned something that is not the expected JSON."""
 
@@ -324,7 +328,10 @@ class BseClient:
     async def get_json(self, path: str, params: dict[str, Any] | None = None,
                        cache_ttl: float | None = None) -> tuple[Any, Fetched]:  # fmt: skip
         url = f"{BSE_API}{path}"
-        resp = await self.http.get(url, params=params, headers=BSE_HEADERS, cache_ttl=cache_ttl)
+        # with `cache_ttl`, only a JSON body is written to disk: BSE answers a blocked or failed request with an HTML
+        # page and HTTP 200, which must never be served from the cache as the day's answer
+        resp = await self.http.get(url, params=params, headers=BSE_HEADERS, cache_ttl=cache_ttl,
+                                   cache_if=_json_body if cache_ttl is not None else None)  # fmt: skip
         if not resp.ok:
             raise BseError(f"BSE HTTP {resp.status} for {url}")
         if resp.content.lstrip()[:1] not in (b"{", b"["):

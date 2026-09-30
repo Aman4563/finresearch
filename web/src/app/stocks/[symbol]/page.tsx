@@ -18,10 +18,10 @@ import { ForensicCard, SinceReport, StockSignalCard } from "@/components/markets
 import { Metric, RangeBar, Timeline, crore, inr, pctOf, signedPct, toneOf } from "@/components/markets/common";
 import type { StockHistory, StockOverview, StockResults, StockShareholding } from "@/components/markets/types";
 import {
-  Badge, Button, Callout, Card, Delta, EmptyState, ErrorNote, PageHeader, Skeleton, SkeletonRows, Stat, Table,
+  Badge, Button, Callout, Card, Delta, EmptyState, ErrorNote, Unreachable, PageHeader, Skeleton, SkeletonRows, Stat, Table,
 } from "@/components/ui";
 import { DataRequest, LiveStamp, sessionOpen, useLive } from "@/components/live";
-import { day, useApi, when, type WatchSummary } from "@/lib/api";
+import { day, useApi, useRetryApi, when, type WatchSummary } from "@/lib/api";
 import { RANGE_DAYS, useTimeFrames } from "@/lib/timeframes";
 
 export default function StockDetail() {
@@ -39,11 +39,11 @@ export default function StockDetail() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
 
-  const ov = useApi<StockOverview>(`/api/stocks/${encodeURIComponent(symbol)}/overview`);
+  const ov = useRetryApi<StockOverview>(`/api/stocks/${encodeURIComponent(symbol)}/overview`);
   const days = histDays;
-  const hist = useApi<StockHistory>(`/api/stocks/${encodeURIComponent(symbol)}/history?days=${Math.min(days, 1827)}`);
-  const results = useApi<StockResults>(`/api/stocks/${encodeURIComponent(symbol)}/results`);
-  const shp = useApi<StockShareholding>(`/api/stocks/${encodeURIComponent(symbol)}/shareholding`);
+  const hist = useRetryApi<StockHistory>(`/api/stocks/${encodeURIComponent(symbol)}/history?days=${Math.min(days, 1827)}`);
+  const results = useRetryApi<StockResults>(`/api/stocks/${encodeURIComponent(symbol)}/results`);
+  const shp = useRetryApi<StockShareholding>(`/api/stocks/${encodeURIComponent(symbol)}/shareholding`);
   const watches = useApi<WatchSummary[]>("/api/watches");
   const listing = ov.data?.listing;
   // watches, research runs and the signal follow the stock's key: the NSE symbol when it trades on NSE (also from
@@ -145,9 +145,17 @@ export default function StockDetail() {
         <ErrorNote error={actionError} />
         {note && <Callout tone="gain">{note}</Callout>}
         {ov.error && <ErrorNote error={`Could not load ${symbol} from ${ex}: ${ov.error}`} onRetry={ov.reload} />}
-        {ov.data && ov.data.errors.length > 0 && (
-          <Callout tone="warn" title={`Some sections could not be loaded from ${ex}`}>
-            {ov.data.errors.map((e) => e.split(":")[0]).join(", ")}: {ex} refused or timed out. The rest of the page is current; reload in a minute to retry.
+        {ov.data && (ov.data.unreachable?.length ?? 0) > 0 && (
+          <Callout tone="warn" title={`Couldn't reach ${ex} just now`}>
+            <span className="flex flex-wrap items-center gap-2">
+              {ov.data.unreachable!.join(", ")} did not load (a connection problem, not missing data). The rest of the page is current.
+              <Button size="sm" variant="secondary" onClick={ov.retry}>Retry</Button>
+            </span>
+          </Callout>
+        )}
+        {ov.data && ov.data.errors.some((e) => !(ov.data!.unreachable ?? []).includes(e.split(":")[0])) && (
+          <Callout tone="warn" title={`Some sections could not be read from ${ex}`}>
+            {ov.data.errors.filter((e) => !(ov.data!.unreachable ?? []).includes(e.split(":")[0])).map((e) => e.split(":")[0]).join(", ")}: {ex} answered, but the data could not be read.
           </Callout>
         )}
 
@@ -169,7 +177,7 @@ export default function StockDetail() {
                 help="Where today's price sits between the lowest (0%) and highest (100%) price of the past 52 weeks." />
               <Stat label="Dividend yield (12m)" icon={<Receipt className="size-4" />} tone="gain"
                 display={<span className="num">{ov.data?.dividends.ttm_yield != null ? pctOf(ov.data.dividends.ttm_yield) : "—"}</span>}
-                hint={ov.data?.dividends.ttm_per_share ? `₹${ov.data.dividends.ttm_per_share}/share with ex-date in the last year` : "no cash dividend in the last year"}
+                hint={ov.data?.dividends.ttm_per_share ? `₹${ov.data.dividends.ttm_per_share}/share with ex-date in the last year` : ov.data?.unreachable?.some((u) => u === "quote" || u === "corporate actions") ? `${ex} unreachable just now` : "no cash dividend in the last year"}
                 help="Cash dividends per share with an ex-date in the last 12 months, divided by today's price." />
             </>
           )}
@@ -198,7 +206,7 @@ export default function StockDetail() {
               dailyEmpty={hist.data && bars.length < 2 ? `${ex} returned no trading days for ${symbol}. It may be suspended or newly listed.` : null} />
             {histLoadingMore && <p className="mt-1 inline-flex items-center gap-1 text-[11px] text-muted"><Loader2 className="size-3 animate-spin" /> Loading longer history…</p>}
             {hist.data?.partial && bars.length > 0 && (
-              <p className="mt-2 text-xs text-warn">{ex} refused part of the older history; the daily chart starts at {shortDate(bars[0].date)}.</p>
+              <div className="mt-2"><Unreachable compact exchange={ex} what={`the older history (the daily chart starts at ${shortDate(bars[0].date)})`} onRetry={hist.retry} /></div>
             )}
             {hist.data && bars.length >= 2 && (
               <div className="mt-4 grid grid-cols-3 gap-2">
@@ -220,7 +228,7 @@ export default function StockDetail() {
               {q?.week52_low && q?.week52_high && last != null ? (
                 <RangeBar low={Number(q.week52_low)} high={Number(q.week52_high)} value={last} lowLabel="52w low" highLabel="52w high" />
               ) : ov.data ? (
-                <p className="text-sm text-muted">{ex} did not give a 52-week range.</p>
+                <p className="text-sm text-muted">{ov.data?.unreachable?.includes("quote") ? `Couldn't reach ${ex} just now for the quote.` : `${ex} did not give a 52-week range.`}</p>
               ) : (
                 <SkeletonRows rows={2} />
               )}
@@ -250,6 +258,8 @@ export default function StockDetail() {
               <ShareholdingSplit data={split} />
             ) : !ov.data || splitLoading ? (
               <SkeletonRows rows={5} />
+            ) : !latestHolding && ov.data.unreachable?.includes("shareholding") ? (
+              <Unreachable exchange={ex} what="shareholding pattern" onRetry={ov.retry} />
             ) : !latestHolding ? (
               <EmptyState icon={<PieChart className="size-5" />} title="No shareholding filing">{ex} has no shareholding pattern for {symbol} yet.</EmptyState>
             ) : (
@@ -283,6 +293,7 @@ export default function StockDetail() {
                   </div>
                 )}
                 <p className="text-[11px] text-muted">Public = institutions (FIIs, mutual funds, insurers) plus retail. {ex}&apos;s summary gives only promoter, public and employee trusts; the FII / DII split could not be read from the filed pattern{shp.error ? ` (${shp.error})` : ""}.</p>
+                {(shp.error || (shp.data?.unreachable?.length ?? 0) > 0) && <Unreachable compact exchange={ex} what="the filed shareholding patterns" onRetry={shp.retry} />}
               </div>
             )}
           </Card>
@@ -297,8 +308,10 @@ export default function StockDetail() {
               <ErrorNote error={results.error} onRetry={results.reload} />
             ) : !results.data ? (
               <Skeleton className="h-[240px] w-full rounded-lg" />
+            ) : quarters.length === 0 && (results.data.unreachable?.length ?? 0) > 0 ? (
+              <Unreachable exchange={ex} what="results filings" onRetry={results.retry} />
             ) : quarters.length === 0 ? (
-              <EmptyState icon={<FileText className="size-5" />} title={`No machine-readable results on ${ex}`}>
+              <EmptyState icon={<FileText className="size-5" />} title={`No machine-readable results filed on ${ex}`}>
                 {onBse ? `BSE has no integrated-filing results XBRL for ${symbol} (they start with the March 2025 quarter).` : `NSE has no results XBRL for ${symbol} in its integrated filing or financial results indexes.`} Check the announcements below for the latest results PDF.
               </EmptyState>
             ) : (
@@ -391,6 +404,9 @@ export default function StockDetail() {
                   ))} ({ex}), each quarter&apos;s XBRL. Checked {when(results.data.as_of)}.
                   {results.data.errors.length > 0 && ` ${results.data.errors.length} filing${results.data.errors.length > 1 ? "s" : ""} could not be read.`}
                 </p>
+                {(results.data.unreachable?.length ?? 0) > 0 && (
+                  <div className="mt-1"><Unreachable compact exchange={ex} what={results.data.unreachable!.join(", ")} onRetry={results.retry} /></div>
+                )}
               </>
             )}
           </Card>
@@ -402,6 +418,8 @@ export default function StockDetail() {
             help="The ex-date is the first day the share trades without the benefit: buy before it to get the dividend or bonus. The record date is when the company checks who holds the shares.">
             {!ov.data ? (
               <SkeletonRows rows={5} />
+            ) : ov.data.corporate_actions.length === 0 && ov.data.unreachable?.includes("corporate actions") ? (
+              <Unreachable exchange={ex} what="corporate actions" onRetry={ov.retry} />
             ) : ov.data.corporate_actions.length === 0 ? (
               <EmptyState icon={<CalendarClock className="size-5" />} title="No corporate actions">{ex} lists no dividends, bonuses or splits for {symbol}.</EmptyState>
             ) : (
@@ -428,9 +446,11 @@ export default function StockDetail() {
           <Card title="Announcements" icon={<Megaphone className="size-4" />} subtitle={`Latest filings with ${ex}`}>
             {!ov.data ? (
               <SkeletonRows rows={6} />
+            ) : ov.data.announcements.length === 0 && ov.data.unreachable?.includes("announcements") ? (
+              <Unreachable exchange={ex} what="announcements" onRetry={ov.retry} />
             ) : ov.data.announcements.length === 0 ? (
-              <EmptyState icon={<Megaphone className="size-5" />} title="No announcements loaded">
-                {ov.data.errors.some((e) => e.startsWith("announcements")) ? `${ex} refused the announcements list just now; reload to retry.` : `${ex} lists no recent announcements for ${symbol}.`}
+              <EmptyState icon={<Megaphone className="size-5" />} title="No announcements">
+                {ov.data.errors.some((e) => e.startsWith("announcements")) ? `${ex}'s announcements list could not be read just now.` : `${ex} lists no recent announcements for ${symbol}.`}
               </EmptyState>
             ) : (
               <ul className="-mx-2 max-h-[420px] space-y-0.5 overflow-y-auto stagger">

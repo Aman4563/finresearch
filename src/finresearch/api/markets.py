@@ -106,24 +106,47 @@ class MarketSources:
             return await amfi.navs_on(day)
 
 
+NEGATIVE_TTL_S = (
+    30  # a result degraded by a network/exchange failure is kept this long at most (no hammering)
+)
+
+
+def degraded(value: Any) -> bool:
+    """A route payload that is missing parts because the exchange could not be reached (its `unreachable` list)."""
+    return isinstance(value, dict) and bool(value.get("unreachable"))
+
+
 @dataclass
 class TtlCache:
-    """A tiny in-memory cache with per-entry expiry, plus a lock per key so concurrent requests fetch once."""
+    """A tiny in-memory cache with per-entry expiry, plus a lock per key so concurrent requests fetch once.
+
+    Failures are never cached as data: an exception is not cached at all (the next request tries again), and a payload
+    marked `unreachable` (some part failed on the network or at the exchange's gate, see adapters.http.is_transient)
+    is kept for NEGATIVE_TTL_S at most, and `retry=True` (the UI's Retry button) skips even that. Genuine data and a
+    genuine "the exchange has no data" answer keep the full TTL."""
 
     entries: dict[Any, tuple[float, Any]] = field(default_factory=dict)
     locks: dict[Any, asyncio.Lock] = field(default_factory=dict)
 
-    async def get(self, key: Any, ttl: float, make: Callable[[], Awaitable[Any]]) -> Any:
+    def _fresh(self, key: Any, retry: bool) -> tuple[bool, Any]:
         hit = self.entries.get(key)
-        if hit and hit[0] > time.time():
-            return hit[1]
+        if hit and hit[0] > time.time() and not (retry and degraded(hit[1])):
+            return True, hit[1]
+        return False, None
+
+    async def get(
+        self, key: Any, ttl: float, make: Callable[[], Awaitable[Any]], *, retry: bool = False
+    ) -> Any:
+        ok, value = self._fresh(key, retry)
+        if ok:
+            return value
         lock = self.locks.setdefault(key, asyncio.Lock())
         async with lock:
-            hit = self.entries.get(key)
-            if hit and hit[0] > time.time():
-                return hit[1]
+            ok, value = self._fresh(key, retry)
+            if ok:
+                return value
             value = await make()
-            self.entries[key] = (time.time() + ttl, value)
+            self.entries[key] = (time.time() + (min(ttl, NEGATIVE_TTL_S) if degraded(value) else ttl), value)
             if len(self.entries) > 500:  # drop expired entries now and then
                 now = time.time()
                 for k in [k for k, (at, _) in self.entries.items() if at < now]:
@@ -356,24 +379,31 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
 
     # ------------------------------------------------------------------ stocks
     @app.get("/api/stocks/{symbol}/overview")
-    async def stock_overview(symbol: str, exchange: str | None = None) -> dict[str, Any]:
+    async def stock_overview(symbol: str, exchange: str | None = None, retry: bool = False) -> dict[str, Any]:
         """Quote, 52-week range, market cap, shareholding trend, corporate actions and announcements. Each part is
         fetched separately; a part the exchange refuses is listed under `errors` and the rest still comes back.
         `listing` says which exchanges the stock trades on (NSE, BSE or both, matched by ISIN)."""
         inst = await _inst(symbol, exchange)
-        return await cache.get(("overview", *inst.cache_id), 600, lambda: _overview(inst))
+        return await cache.get(("overview", *inst.cache_id), 600, lambda: _overview(inst), retry=retry)
 
     async def _overview(inst: Instrument) -> dict[str, Any]:
         s = src()
         sym = inst.id
         today = s.today()
         errors: list[str] = []
+        unreachable: list[str] = []
 
         async def part(name: str, make: Callable[[], Awaitable[Any]], default: Any) -> Any:
+            from finresearch.adapters.http import is_transient
+
             try:
                 return await make()
             except Exception as e:  # one refused section must not blank the whole page
                 errors.append(f"{name}: {type(e).__name__}: {e}"[:240])
+                if is_transient(
+                    e
+                ):  # not "no data": the page says "couldn't reach" and the cache keeps it briefly
+                    unreachable.append(name)
                 return default
 
         q = await part(
@@ -411,16 +441,18 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
                                    "attachment": a.attachment,
                                    "results_period_end": a.results_period_end.isoformat() if a.results_period_end else None}
                                   for a in anns[:15]],
-                "errors": errors}  # fmt: skip
+                "errors": errors, "unreachable": unreachable}  # fmt: skip
 
     @app.get("/api/stocks/{symbol}/history")
     async def stock_history(symbol: str, days: int = Query(365, ge=7, le=1830),
-                            exchange: str | None = None) -> dict[str, Any]:  # fmt: skip
+                            exchange: str | None = None, retry: bool = False) -> dict[str, Any]:  # fmt: skip
         """Daily closes (and OHLC, volume) for the last `days` calendar days with return, volatility and max
         drawdown. NSE answers ~70 trading days per request, so longer ranges take several requests (cached); BSE
         answers any range in one CSV."""
         inst = await _inst(symbol, exchange)
-        return await cache.get(("history", *inst.cache_id, days), 1800, lambda: _history(inst, days))
+        return await cache.get(
+            ("history", *inst.cache_id, days), 1800, lambda: _history(inst, days), retry=retry
+        )
 
     async def _history(inst: Instrument, days: int) -> dict[str, Any]:
         s = src()
@@ -444,12 +476,12 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
                 "quote_page": stock_page_url(await _with_listing(inst)),
                 "bars": [{"date": b.day.isoformat(), "close": _f(b.close, 4), "open": _f(b.open, 4), "high": _f(b.high, 4),
                           "low": _f(b.low, 4), "volume": _f(b.volume, 0)} for b in rows],
-                "partial": partial, "week52_high": _s(last.week52_high) if last else None, "week52_low": _s(last.week52_low) if last else None,
+                "partial": partial, "unreachable": ["older price history"] if partial else [], "week52_high": _s(last.week52_high) if last else None, "week52_low": _s(last.week52_low) if last else None,
                 "stats": _series_stats(points)}  # fmt: skip
 
     @app.get("/api/stocks/{symbol}/results")
     async def stock_results(symbol: str, quarters: int = Query(8, ge=1, le=12),
-                            exchange: str | None = None) -> dict[str, Any]:  # fmt: skip
+                            exchange: str | None = None, retry: bool = False) -> dict[str, Any]:  # fmt: skip
         """Quarterly (and, where a March quarter is in range, annual) results read from each filing's XBRL:
         revenue, other income, expenses, PBT, tax, net profit and EPS, consolidated when the company files both.
         Quarters since Mar-2025 come from NSE's Integrated Filing (Financials) index, older ones from NSE's
@@ -457,7 +489,7 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
         in rupees."""
         inst = await _inst(symbol, exchange)
         return await cache.get(
-            ("results", *inst.cache_id, quarters), 12 * 3600, lambda: _results(inst, quarters)
+            ("results", *inst.cache_id, quarters), 12 * 3600, lambda: _results(inst, quarters), retry=retry
         )
 
     async def _results(inst: Instrument, quarters: int) -> dict[str, Any]:
@@ -468,13 +500,16 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
 
     @app.get("/api/stocks/{symbol}/shareholding")
     async def stock_shareholding(symbol: str, quarters: int = Query(8, ge=1, le=12),
-                                 exchange: str | None = None) -> dict[str, Any]:  # fmt: skip
+                                 exchange: str | None = None, retry: bool = False) -> dict[str, Any]:  # fmt: skip
         """Shareholder categories (promoter, FPI, mutual funds, insurers, banks, other DIIs, individuals, bodies
         corporate, others) per quarter, read from each quarter's filed shareholding-pattern XBRL. Percentages are the
         filed ones: of total shares excluding shares underlying depository receipts (SCRR basis)."""
         inst = await _inst(symbol, exchange)
         return await cache.get(
-            ("shareholding", *inst.cache_id, quarters), 12 * 3600, lambda: _shareholding(inst, quarters)
+            ("shareholding", *inst.cache_id, quarters),
+            12 * 3600,
+            lambda: _shareholding(inst, quarters),
+            retry=retry,
         )
 
     async def _shareholding(inst: Instrument, quarters: int) -> dict[str, Any]:
@@ -782,10 +817,14 @@ async def results_from_nse(
     """Quarterly and annual results from each filing's XBRL (see the /api/stocks/{symbol}/results route). When
     `annual_facts` is given it also receives, per fiscal year end, the full-year P&L and cash-flow facts merged with
     the year-end balance sheet (Decimal, rupees) and the filing's basis: the inputs of fincalc.forensic."""
+    from finresearch.adapters.http import is_transient
     from finresearch.adapters.nse_equity import INTEGRATED_PAGE, RESULTS_PAGE
     from finresearch.adapters.xbrl import parse_results_xbrl
 
     errors: list[str] = []
+    unreachable: list[
+        str
+    ] = []  # parts lost to the network / the exchange's gate (retried, never cached long)
     filings: list[Any] = []
     out: list[dict[str, Any]] = []
     annual: dict[date, dict[str, Any]] = {}
@@ -795,11 +834,15 @@ async def results_from_nse(
             filings += [f.as_result_filing() for f in await eq.integrated_filings(sym)]
         except Exception as e:
             errors.append(f"integrated filing index: {type(e).__name__}: {e}"[:200])
+            if is_transient(e):
+                unreachable.append("integrated filing index")
     if len({f.period_to for f in filings if f.period_to and _official(f.xbrl)}) < quarters:
         try:  # the older index holds the quarters before integrated filing began (up to Dec-2024)
             filings += await eq.results(sym, "Quarterly")
         except Exception as e:
             errors.append(f"financial results index: {type(e).__name__}: {e}"[:200])
+            if is_transient(e):
+                unreachable.append("financial results index")
     ranked = _rank_result_filings(filings)
     for end in sorted(ranked, reverse=True)[:quarters]:
         for f in ranked[end]:  # consolidated first; the next candidate stands in when a file fails
@@ -807,6 +850,8 @@ async def results_from_nse(
                 x = parse_results_xbrl(await _xbrl(eq, f.xbrl))
             except Exception as e:
                 errors.append(f"{end} {f.xbrl}: {type(e).__name__}: {e}"[:200])
+                if is_transient(e):
+                    unreachable.append(f"{end} XBRL")
                 continue
             if x.quarter is None or not x.quarter.facts:
                 errors.append(f"{end} {f.xbrl}: no current-quarter facts")
@@ -851,6 +896,7 @@ async def results_from_nse(
               [{"name": "BSE Integrated Filing (Financials)", "url": index_url, "api": index_url,
                 "note": "quarters from Mar-2025; each quarter's XBRL is on www.bseindia.com/XBRLFILES"}]  # fmt: skip
     return {"symbol": sym, "unit": "INR (EPS: INR per share)", "quarters": out, "annual": years, "errors": errors,
+            "unreachable": unreachable,
             "periods": sorted(periods.values(), key=lambda r: (r["period_end"], r["period_start"])),
             "as_of": datetime.now(UTC).isoformat(), "sources": sources,
             "latest_quarter": None if latest is None else {
@@ -911,11 +957,13 @@ async def shareholding_from_nse(eq: Any, sym: str, quarters: int) -> dict[str, A
     """Shareholder categories per quarter from each filed pattern's XBRL (the /shareholding route's payload)."""
     from xml.etree.ElementTree import ParseError
 
+    from finresearch.adapters.http import is_transient
     from finresearch.adapters.shp_xbrl import CATEGORIES, GROUPS, parse_shareholding_xbrl
 
     errors: list[str] = []
+    unreachable: list[str] = []
     out: list[dict[str, Any]] = []
-    rows = await eq.shareholding(sym)
+    rows = await eq.shareholding(sym)  # the index failing raises: the route is not cached
     best: dict[date, Any] = {}  # one filing per quarter end: the latest submission (a revision replaces it)
     for h in rows:
         if not h.as_of or not _quarter_end(h.as_of) or not _official(h.xbrl):
@@ -932,6 +980,8 @@ async def shareholding_from_nse(eq: Any, sym: str, quarters: int) -> dict[str, A
                 p = parse_shareholding_xbrl(await eq.fetch_bytes(h.xbrl, cache_ttl=0))
         except Exception as e:
             errors.append(f"{end}: {type(e).__name__}: {e}"[:200])
+            if is_transient(e):
+                unreachable.append(f"{end} XBRL")
             continue
         if not p.split:
             errors.append(f"{end}: {'; '.join(p.warnings) or 'no category rows'}")
@@ -952,7 +1002,7 @@ async def shareholding_from_nse(eq: Any, sym: str, quarters: int) -> dict[str, A
                                      "(SCRR 1957 basis, as filed)",
             "category_labels": [{"key": k, "label": lbl, "group": g} for k, lbl, g in CATEGORIES],
             "group_labels": [{"key": k, "label": lbl} for k, lbl in GROUPS],
-            "quarters": out, "errors": errors,
+            "quarters": out, "errors": errors, "unreachable": unreachable,
             "source": data_source_url(getattr(eq, "exchange", "NSE"), sym, "shareholding"),
             "page": "https://www.nseindia.com/companies-listing/corporate-filings-shareholding-pattern"
             if getattr(eq, "exchange", "NSE") == "NSE" else None}  # fmt: skip

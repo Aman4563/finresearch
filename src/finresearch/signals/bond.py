@@ -99,15 +99,21 @@ async def _par_curve():
         return await SOURCES.par_curve()
 
     async def make():
-        from finresearch.adapters.fbil import FALLBACK_CURVE, FbilClient
+        from finresearch.adapters.fbil import FbilClient
 
         try:
             async with FbilClient() as fbil:
                 return await fbil.latest_par_curve()
         except Exception:
-            return FALLBACK_CURVE
+            return None
 
-    return await _CACHE.get("fbil", 6 * 3600, make)
+    curve = await _CACHE.get("fbil", 6 * 3600, make)
+    if curve is None:  # FBIL could not be reached: the fallback is used now and FBIL is asked again next time
+        from finresearch.adapters.fbil import FALLBACK_CURVE
+
+        _CACHE.entries.pop("fbil", None)
+        return FALLBACK_CURVE
+    return curve
 
 
 async def _verified_freq(isin: str):

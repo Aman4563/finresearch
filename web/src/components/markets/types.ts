@@ -39,6 +39,8 @@ export type StockQuote = {
 };
 
 export type StockOverview = {
+  /** parts the exchange could not serve just now (network / refused); retried, never cached long */
+  unreachable?: string[];
   symbol: string;
   exchange?: Exchange;
   key?: string;
@@ -72,6 +74,8 @@ export type ShareholdingQuarter = {
 };
 
 export type StockShareholding = {
+  /** parts the exchange could not serve just now (network / refused); retried, never cached long */
+  unreachable?: string[];
   symbol: string;
   exchange?: "NSE" | "BSE";
   fetched_at: string;
@@ -93,6 +97,8 @@ export type SeriesStats = {
 };
 
 export type StockHistory = {
+  /** parts the exchange could not serve just now (network / refused); retried, never cached long */
+  unreachable?: string[];
   symbol: string;
   days: number;
   partial: boolean;
@@ -133,6 +139,8 @@ export type ResultPeriod = {
 };
 
 export type StockResults = {
+  /** parts the exchange could not serve just now (network / refused); retried, never cached long */
+  unreachable?: string[];
   symbol: string;
   unit: string;
   quarters: ResultPeriod[];
