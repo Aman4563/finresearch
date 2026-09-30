@@ -335,3 +335,47 @@ export type ProfileStats = {
   first_run_at: string | null;
   profile_updated_at: string | null;
 };
+
+// ------------------------------------------------------------------ forecast ledger (finresearch.signals.ledger)
+export type Forecast = {
+  id: number;
+  created_at: string | null;
+  asset: "ipo" | "stock" | "fund" | "bond" | "fno";
+  instrument: string;
+  name: string | null;
+  source: string;
+  run_id: number | null;
+  event_kind: string;
+  event: string;
+  horizon: string;
+  resolve_on: string;
+  probability: number | null;
+  interval: [number, number] | null;
+  action: string;
+  score: number | null;
+  method: string;
+  validation_status: string;
+  status: "open" | "resolved" | "void";
+  outcome: 0 | 1 | null;
+  resolved_at: string | null;
+  resolution_value: number | null;
+  resolution_note: string | null;
+  last_checked_at: string | null;
+  inputs: Record<string, unknown>;
+};
+export type ForecastPage = { total: number; limit: number; offset: number; items: Forecast[] };
+export type ReliabilityBin = { n: number; p_low: number; p_high: number; mean_p: number; observed: number; ci: [number, number] | null };
+export type CalibrationGroup = {
+  asset: string; method: string; validation_status: string;
+  total: number; open: number; resolved: number; void: number; no_call: number;
+  n: number; base_rate: number | null; mean_p: number | null; brier: number | null; brier_reference: number | null;
+  brier_skill: number | null; log_loss: number | null; hits: number; calls: number; hit_rate: number | null;
+  hit_rate_ci: [number, number] | null; bins: ReliabilityBin[];
+};
+export type Calibration = {
+  groups: CalibrationGroup[];
+  confidence_map: Record<string, number>;
+  next_open: Forecast | null;
+  next_scored: Forecast | null;
+  min_n_for_recalibration: number;
+};

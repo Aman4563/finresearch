@@ -169,6 +169,29 @@ async def _record_iv(deps: jobs.Deps, now: datetime) -> None:
         log.warning("could not record IV history", exc_info=True)
 
 
+FORECAST_EVERY = timedelta(hours=1)
+_FORECASTS_CHECKED: dict[str, datetime] = {}
+
+
+async def forecast_step(deps: jobs.Deps, now: datetime) -> dict[str, int]:
+    """The forecast ledger's daily work (signals.ledger): log verdicts of finished runs that have no forecast yet, then
+    resolve the forecasts whose date has passed. At most once an hour; each forecast is itself checked at most every
+    few hours and only after the close on its date, so this makes a handful of NSE requests a day at most."""
+    last = _FORECASTS_CHECKED.get("at")
+    if last is not None and now - last < FORECAST_EVERY:
+        return {}
+    _FORECASTS_CHECKED["at"] = now
+    from finresearch.signals import ledger
+
+    try:
+        with session_scope() as s:
+            logged = len(ledger.backfill_runs(s))
+        return {"forecasts_logged": logged, **await ledger.resolve_due(deps, now)}
+    except Exception:
+        log.warning("forecast ledger step failed", exc_info=True)
+        return {}
+
+
 async def tick(deps: jobs.Deps, now: datetime | None = None) -> dict[str, int]:
     now = now or datetime.now(UTC)
     if deps.holidays is not None or deps.live_holidays:
@@ -184,7 +207,10 @@ async def tick(deps: jobs.Deps, now: datetime | None = None) -> dict[str, int]:
         done += st == "done"
         failed += st == "failed"
         retried += st == "pending"
-    return {"added": added, "done": done, "failed": failed, "retried": retried, "missed": missed}
+    out = {"added": added, "done": done, "failed": failed, "retried": retried, "missed": missed}
+    if deps.forecasts:
+        out |= {k: v for k, v in (await forecast_step(deps, now)).items() if k in ("resolved", "void")}
+    return out
 
 
 async def run_forever(

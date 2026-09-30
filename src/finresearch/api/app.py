@@ -1297,6 +1297,56 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
             raise HTTPException(422, str(e)) from e
         return sig.to_json()
 
+    # ------------------------------------------------------------------ forecast ledger and calibration
+    @app.get("/api/forecasts")
+    def forecasts(
+        asset: str | None = None,
+        instrument: str | None = None,
+        status: Literal["open", "resolved", "void"] | None = None,
+        method: str | None = None,
+        run_id: int | None = None,
+        limit: int = Query(50, ge=1, le=500),
+        offset: int = Query(0, ge=0),
+    ) -> dict[str, Any]:
+        """Logged forecasts, newest first. Open ones are ordered by the date they resolve."""
+        from finresearch.db.models import Forecast
+        from finresearch.signals.ledger import forecast_json
+
+        with session_scope() as s:
+            q = select(Forecast)
+            for col, val in ((Forecast.asset, asset), (Forecast.instrument, instrument), (Forecast.status, status),
+                             (Forecast.method, method), (Forecast.run_id, run_id)):  # fmt: skip
+                if val is not None:
+                    q = q.where(col == val)
+            total = s.scalar(select(func.count()).select_from(q.subquery()))
+            order = ((Forecast.resolve_on, Forecast.id) if status == "open"
+                     else (Forecast.created_at.desc(), Forecast.id.desc()))  # fmt: skip
+            rows = s.scalars(q.order_by(*order).limit(limit).offset(offset)).all()
+            return {
+                "total": total,
+                "limit": limit,
+                "offset": offset,
+                "items": [forecast_json(f) for f in rows],
+            }
+
+    @app.get("/api/calibration")
+    def calibration(asset: str | None = None, bins: int = Query(5, ge=1, le=10)) -> dict[str, Any]:
+        """Track record per asset and method: Brier score, skill vs the base rate, reliability bins and the hit rate
+        with a Wilson 95 % interval, over resolved forecasts that carried a probability."""
+        from finresearch.db.models import Forecast
+        from finresearch.signals.ledger import CONFIDENCE_P, calibration_groups, forecast_json
+
+        with session_scope() as s:
+            groups = calibration_groups(s, asset, bins)
+            nxt = s.scalars(select(Forecast).where(Forecast.status == "open")
+                            .order_by(Forecast.resolve_on, Forecast.id).limit(1)).first()  # fmt: skip
+            scored = s.scalars(select(Forecast).where(Forecast.status == "open", Forecast.probability.isnot(None))
+                               .order_by(Forecast.resolve_on, Forecast.id).limit(1)).first()  # fmt: skip
+            return {"groups": groups, "confidence_map": CONFIDENCE_P,
+                    "next_open": forecast_json(nxt) if nxt else None,
+                    "next_scored": forecast_json(scored) if scored else None,
+                    "min_n_for_recalibration": 50}  # fmt: skip
+
     return app
 
 
