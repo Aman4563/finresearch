@@ -352,6 +352,66 @@ def ipo_bse() -> None:
     console.print("research one: finresearch ipo run <slug> --name '<company>' --bse-ipo <IPO no>")
 
 
+@ipo_app.command("harvest")
+def ipo_harvest(
+    series: str = typer.Option(
+        "EQ", help="EQ (mainboard) or SME; SME rows are stored and reported separately"
+    ),
+    limit: int | None = typer.Option(None, help="Fetch at most this many issues (a trial run)"),
+    refresh: bool = typer.Option(False, help="Re-fetch rows that are already complete"),
+    delay: float = typer.Option(2.0, min=1.0, help="Seconds between NSE requests (polite: at least 1)"),
+    export: Path | None = typer.Option(None, help="Write the whole table to this JSONL file afterwards"),
+    import_path: Path | None = typer.Option(
+        None, "--import", help="Load rows from a JSONL export instead of NSE"
+    ),
+    reparse: bool = typer.Option(False, help="Re-derive every row from its stored raw payloads (no network)"),
+) -> None:
+    """Harvest past NSE issues (final category book, issue info, listing-day prices, Nifty mood) into ipo_history,
+    then print the coverage report. Resumable: complete rows are skipped; NSE payloads are disk-cached."""
+    import json
+
+    from sqlalchemy import select
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import IpoHistory
+    from finresearch.evals import ipo_history as ih
+
+    if import_path:
+        with session_scope() as s:
+            console.print(f"imported {ih.import_jsonl(s, import_path)} rows from {import_path}")
+    elif reparse:
+        with session_scope() as s:
+            console.print(f"re-derived {ih.reparse(s)} rows")
+    else:
+        console.print(asyncio.run(ih.harvest(series=series, limit=limit, refresh=refresh, delay=delay,
+                                             log=console.print)))  # fmt: skip
+    with session_scope() as s:
+        rows = s.scalars(select(IpoHistory)).all()
+        console.print_json(json.dumps(ih.coverage(rows), default=str))
+        if export:
+            console.print(f"exported {ih.export_jsonl(s, export)} rows to {export}")
+
+
+@ipo_app.command("model")
+def ipo_model(
+    out: Path | None = typer.Option(None, help="Write the walk-forward report (JSON) here"),
+    data: Path | None = typer.Option(None, help="Read a JSONL export instead of the database"),
+) -> None:
+    """Walk-forward validation of the IPO listing model (logistic + quantile regression) against the base-rate
+    table, 2019-2026. Prints AUC, Brier, Brier skill and whether the model passes the bar for use."""
+    import json
+
+    from finresearch.evals import ipo_model as im
+
+    rows = im.load_rows(data)
+    report = im.build_artefact(rows)
+    console.print_json(json.dumps(im.summary(report), default=str))
+    if out:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(report, indent=1, default=str) + "\n")
+        console.print(f"wrote {out}")
+
+
 stock_app = typer.Typer(no_args_is_help=True, help="Listed-stock research reports (multi-agent pipeline)")
 app.add_typer(stock_app, name="stock")
 

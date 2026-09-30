@@ -15,7 +15,7 @@ import {
 } from "@/components/ui";
 import { api, type Profile, type Rule, useApi } from "@/lib/api";
 
-const GROUPS = ["Demand", "Price and lots", "Timing and quality"] as const;
+const GROUPS = ["Demand", "Price and lots", "Timing and quality", "Signal"] as const;
 
 export function RulesPage() {
   const { data, error, reload } = useApi<Profile>("/api/profile");

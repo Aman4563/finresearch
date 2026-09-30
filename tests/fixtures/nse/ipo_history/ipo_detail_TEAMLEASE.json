@@ -1,0 +1,172 @@
+{
+ "companyName": "Teamlease Services Limited",
+ "metaInfo": {
+  "symbol": "TEAMLEASE",
+  "listingDate": "2016-02-12",
+  "activeSeries": [
+   "EQ"
+  ]
+ },
+ "activeCat": {
+  "dataList": [
+   {
+    "category": "Category",
+    "noOfShareOffered": "No.of shares offered/reserved",
+    "noOfSharesBid": "No. of shares bid for",
+    "noOfTotalMeant": "No. of times of total meant for the category",
+    "srNo": "Sr.No."
+   },
+   {
+    "category": "Qualified Institutional Buyers (QIBs)    ",
+    "noOfShareOffered": "1601923",
+    "noOfSharesBid": "43205970",
+    "noOfTotalMeant": "26.97",
+    "srNo": "1"
+   },
+   {
+    "category": "Foreign Institutional Investors(FIIs)",
+    "noOfShareOffered": null,
+    "noOfSharesBid": "21594585",
+    "noOfTotalMeant": null,
+    "srNo": "1(a)"
+   },
+   {
+    "category": "Domestic Financial Institutions(Banks/ Financial Institutions(FIs)/ Insurance Companies) ",
+    "noOfShareOffered": null,
+    "noOfSharesBid": "11644065",
+    "noOfTotalMeant": null,
+    "srNo": "1(b)"
+   },
+   {
+    "category": "Mutual funds ",
+    "noOfShareOffered": null,
+    "noOfSharesBid": "7237170",
+    "noOfTotalMeant": null,
+    "srNo": "1(c)"
+   },
+   {
+    "category": "Others ",
+    "noOfShareOffered": null,
+    "noOfSharesBid": "2730150",
+    "noOfTotalMeant": null,
+    "srNo": "1(d)"
+   },
+   {
+    "category": "Non Institutional Investors",
+    "noOfShareOffered": "768084",
+    "noOfSharesBid": "142278840",
+    "noOfTotalMeant": "185.24",
+    "srNo": "2"
+   },
+   {
+    "category": "Corporates",
+    "noOfShareOffered": null,
+    "noOfSharesBid": "56659515",
+    "noOfTotalMeant": null,
+    "srNo": "2(a)"
+   },
+   {
+    "category": "Individuals(Other than RIIs)",
+    "noOfShareOffered": null,
+    "noOfSharesBid": "82944405",
+    "noOfTotalMeant": null,
+    "srNo": "2(b)"
+   },
+   {
+    "category": "Others",
+    "noOfShareOffered": null,
+    "noOfSharesBid": "2674920",
+    "noOfTotalMeant": null,
+    "srNo": "2(c)"
+   },
+   {
+    "category": "Retail Individual Investors(RIIs) ",
+    "noOfShareOffered": "512056",
+    "noOfSharesBid": "5440230",
+    "noOfTotalMeant": "10.62",
+    "srNo": "3"
+   },
+   {
+    "category": "Cut Off",
+    "noOfShareOffered": null,
+    "noOfSharesBid": "4652160",
+    "noOfTotalMeant": null,
+    "srNo": "3(a)"
+   },
+   {
+    "category": "Price bids",
+    "noOfShareOffered": null,
+    "noOfSharesBid": "788070",
+    "noOfTotalMeant": null,
+    "srNo": "3(b)"
+   },
+   {
+    "category": "Employees",
+    "noOfShareOffered": "10000",
+    "noOfSharesBid": "13845",
+    "noOfTotalMeant": "1.38",
+    "srNo": "3"
+   },
+   {
+    "category": "Cut Off",
+    "noOfShareOffered": null,
+    "noOfSharesBid": "13695",
+    "noOfTotalMeant": null,
+    "srNo": "3(a)"
+   },
+   {
+    "category": "Price bids",
+    "noOfShareOffered": null,
+    "noOfSharesBid": "150",
+    "noOfTotalMeant": null,
+    "srNo": "3(b)"
+   },
+   {
+    "category": "Total",
+    "noOfShareOffered": "2892063",
+    "noOfSharesBid": "190938885",
+    "noOfTotalMeant": "66.02",
+    "srNo": null
+   }
+  ],
+  "heading": "TeamLease Services Limited",
+  "symbol": "TEAMLEASE",
+  "updateTime": "Updated as on 04 February 2016 at 2115 hrs"
+ },
+ "issueInfo": {
+  "dataList": [
+   {
+    "title": "TeamLease Services Limited",
+    "value": ""
+   },
+   {
+    "title": "Symbol",
+    "value": "TEAMLEASE"
+   },
+   {
+    "title": "Issue Period",
+    "value": "02-Feb-2016 to 04-Feb-2016"
+   },
+   {
+    "title": "Issue Size ",
+    "value": "\"Public Issue of [.] Equity shares consisting of a fresh issue aggregating upto Rs 1,500 million & an offer for sale upto 32,19,733 equity shares (including Anchor Portion 22,38,498 equity shares)\""
+   },
+   {
+    "title": "Issue Type",
+    "value": "100% Book Building"
+   },
+   {
+    "title": "Price Range",
+    "value": "Rs 785 to Rs 850"
+   },
+   {
+    "title": "Market Lot",
+    "value": "15 Equity Shares and in the multiples of 15 Equity Shares thereafter"
+   },
+   {
+    "title": "Minimum Order Quantity",
+    "value": "15 Equity Shares"
+   }
+  ]
+ }
+}

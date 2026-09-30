@@ -377,3 +377,100 @@ def lock_in_schedule(
                     f"ICDR Reg 17: pre-issue capital, {non_promoter_months} months")
     )  # fmt: skip
     return sorted(events, key=lambda e: e.unlock_date)
+
+
+# --- historical base rates (docs/dev/RESEARCH_ROADMAP.md §D.1) ------------------------------
+
+# Final QIB (and total) subscription bands: [lo, hi) in times subscribed; None = open-ended
+SUB_BANDS: tuple[tuple[float | None, float | None, str], ...] = (
+    (None, 1.0, "<1x"), (1.0, 10.0, "1–10x"), (10.0, 50.0, "10–50x"), (50.0, 100.0, "50–100x"), (100.0, None, ">100x"),
+)  # fmt: skip
+REGIMES = ("pre_2022", "post_2022")  # SEBI NII allotment reform, issues opening on/after 4-Apr-2022
+Z95 = 1.959963984540054
+
+
+def wilson_interval(k: int, n: int, z: float = Z95) -> tuple[float, float] | None:
+    """Wilson score interval for a binomial proportion k/n (Wilson 1927): centre (p̂ + z²/2n)/(1 + z²/n),
+    half-width z·√(p̂(1−p̂)/n + z²/4n²)/(1 + z²/n). 7/10 → (0.3968, 0.8922). None when n = 0."""
+    if n <= 0:
+        return None
+    if not 0 <= k <= n:
+        raise ValueError("need 0 <= k <= n")
+    p = k / n
+    denom = 1 + z * z / n
+    centre = (p + z * z / (2 * n)) / denom
+    half = z * ((p * (1 - p) / n + z * z / (4 * n * n)) ** 0.5) / denom
+    lo = 0.0 if k == 0 else max(0.0, centre - half)  # exact at the boundaries (float residue otherwise)
+    hi = 1.0 if k == n else min(1.0, centre + half)
+    return lo, hi
+
+
+def quantile(values: list[float], q: float) -> float | None:
+    """Linear-interpolation sample quantile (Hyndman & Fan type 7, the numpy/Excel default)."""
+    xs = sorted(values)
+    if not xs:
+        return None
+    if not 0 <= q <= 1:
+        raise ValueError("q must be within 0..1")
+    h = (len(xs) - 1) * q
+    lo = int(h)
+    hi = min(lo + 1, len(xs) - 1)
+    return xs[lo] + (h - lo) * (xs[hi] - xs[lo])
+
+
+def band_of(times: float | None, bands=SUB_BANDS) -> str | None:
+    if times is None:
+        return None
+    for lo, hi, label in bands:
+        if (lo is None or times >= lo) and (hi is None or times < hi):
+            return label
+    return None
+
+
+def smoothed_rate(k: int, n: int) -> float:
+    """Laplace's rule of succession (k + 1)/(n + 2): a probability forecast that never says 0 or 1 from a small cell."""
+    return (k + 1) / (n + 2)
+
+
+def outcome_summary(returns: list[float]) -> dict[str, float | int | list[float] | None]:
+    """n, median and IQR of listing-open returns, P(loss at open) and P(gain at open) with 95% Wilson intervals."""
+    n = len(returns)
+    loss = sum(1 for r in returns if r < 0)
+    gain = sum(1 for r in returns if r > 0)
+    ci_loss, ci_gain = wilson_interval(loss, n), wilson_interval(gain, n)
+    return {"n": n, "median": quantile(returns, 0.5), "q1": quantile(returns, 0.25), "q3": quantile(returns, 0.75),
+            "p10": quantile(returns, 0.1), "p90": quantile(returns, 0.9),
+            "mean": sum(returns) / n if n else None,
+            "p_loss": loss / n if n else None, "p_loss_ci": list(ci_loss) if ci_loss else None,
+            "p_gain": gain / n if n else None, "p_gain_ci": list(ci_gain) if ci_gain else None,
+            "p_gain_smoothed": smoothed_rate(gain, n)}  # fmt: skip
+
+
+def _get(row, key):
+    v = row.get(key) if isinstance(row, Mapping) else getattr(row, key, None)
+    return None if v is None else (bool(v) if isinstance(v, bool) else float(v))
+
+
+def base_rates(rows, *, by: str = "qib", bands=SUB_BANDS) -> dict:
+    """Empirical listing-open outcomes by final subscription band × regime (pre/post the Apr-2022 NII reform).
+
+    `rows` carry `qib_times` / `total_times`, `return_open` (open / issue − 1) and `post_2022` (dicts or objects);
+    rows without a band value or a return are skipped. `by` is "qib" or "total". Every cell has n, median and IQR,
+    P(loss at open) and P(gain at open) with 95% Wilson intervals. Uses FINAL subscription, which is not known at
+    the retail decision time (bids close at 5 pm on the last day): the table is optimistic about what can be known.
+    """
+    key = {"qib": "qib_times", "total": "total_times"}[by]
+    cells: dict[tuple[str, str], list[float]] = {}
+    regime_all: dict[str, list[float]] = {r: [] for r in REGIMES}
+    for row in rows:
+        t, r, post = _get(row, key), _get(row, "return_open"), _get(row, "post_2022")
+        if t is None or r is None or post is None:
+            continue
+        regime = REGIMES[1] if post else REGIMES[0]
+        cells.setdefault((band_of(t, bands), regime), []).append(r)
+        regime_all[regime].append(r)
+    out_cells = [{"band": label, "regime": regime, **outcome_summary(cells.get((label, regime), []))}
+                 for regime in REGIMES for _, _, label in bands]  # fmt: skip
+    return {"by": by, "bands": [label for _, _, label in bands], "regimes": list(REGIMES), "cells": out_cells,
+            "regime_totals": {rg: outcome_summary(v) for rg, v in regime_all.items()},
+            "n": sum(len(v) for v in regime_all.values())}  # fmt: skip

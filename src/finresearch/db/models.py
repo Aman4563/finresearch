@@ -445,3 +445,77 @@ class Forecast(Base):
     resolution_note: Mapped[str | None] = mapped_column(Text)
     last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     dedupe_key: Mapped[str] = mapped_column(String(200), unique=True)
+
+
+class IpoHistory(Base):
+    """One past issue's final subscription book and listing-day prices: the training set for the IPO base rates and
+    listing model (docs/dev/RESEARCH_ROADMAP.md §D.1, item 2). Filled by `finresearch ipo harvest`
+    (finresearch.evals.ipo_history).
+
+    Subscription scope: NSE `ipo-detail` `activeCat` = the COMBINED NSE+BSE book, ex-anchor, with shares offered on
+    the LOWER price band (NSE's convention). Times are recomputed as bid / offered. These are FINAL numbers (after the
+    close), which a retail applicant cannot know at the 5 pm UPI cut-off.
+    """
+
+    __tablename__ = "ipo_history"
+    __table_args__ = (UniqueConstraint("symbol", "series", "ipo_start"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(30), index=True)
+    series: Mapped[str] = mapped_column(String(10))  # EQ (mainboard) | SME
+    company: Mapped[str | None] = mapped_column(String(300))
+    ipo_start: Mapped[date | None] = mapped_column(Date)
+    ipo_end: Mapped[date | None] = mapped_column(Date)
+    listing_date: Mapped[date | None] = mapped_column(Date, index=True)
+    issue_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    price_low: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    price_high: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    lot_size: Mapped[int | None] = mapped_column(Integer)
+    issue_size_cr: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))  # from NSE's issue-size text
+    public_book_cr: Mapped[Decimal | None] = mapped_column(
+        Numeric(14, 2)
+    )  # ex-anchor shares offered x issue price
+    fresh_cr: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    ofs_cr: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    ofs_share: Mapped[Decimal | None] = mapped_column(Numeric(8, 4))
+    qib_times: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    nii_times: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    bnii_times: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    snii_times: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    retail_times: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    employee_times: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    total_times: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    subscription_scope: Mapped[str | None] = mapped_column(String(40))  # nse_combined (activeCat)
+    subscription_updated: Mapped[str | None] = mapped_column(String(80))  # NSE's own "Updated as on ..." text
+    list_open: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    list_high: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    list_low: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    list_close: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    list_vwap: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    list_prev_close: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))  # NSE sets it to the issue price
+    return_open: Mapped[Decimal | None] = mapped_column(Numeric(10, 6))  # open / issue - 1
+    return_close: Mapped[Decimal | None] = mapped_column(Numeric(10, 6))
+    nifty_ret20_close: Mapped[Decimal | None] = mapped_column(
+        Numeric(10, 6)
+    )  # 20 sessions to the issue close
+    nifty_ret20_listing: Mapped[Decimal | None] = mapped_column(Numeric(10, 6))  # 20 sessions before listing
+    ipo_count_90d: Mapped[int | None] = mapped_column(
+        Integer
+    )  # same-board listings in the 90 days to the close
+    post_2022: Mapped[bool | None] = mapped_column()  # opened on/after 4-Apr-2022 (SEBI NII allotment reform)
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # complete | partial | error
+    missing: Mapped[list[Any]] = mapped_column(default=list)  # fields that could not be read, with reasons
+    source: Mapped[dict[str, Any]] = mapped_column(default=dict)  # URLs and fetch times
+    raw: Mapped[dict[str, Any]] = mapped_column(
+        default=dict
+    )  # activeCat rows and issue-info subset, for audit
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class SubscriptionArchiveSlot(Base):
+    """One archive pass of every open issue's subscription book (item 15). The unique slot key means two monitor
+    processes never archive the same slot twice."""
+
+    __tablename__ = "subscription_archive_slot"
+    slot: Mapped[str] = mapped_column(String(40), primary_key=True)  # e.g. "2026-09-30T13:00"
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    result: Mapped[dict[str, Any]] = mapped_column(default=dict)

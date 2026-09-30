@@ -1,0 +1,208 @@
+{
+ "companyName": "Swiggy Limited",
+ "metaInfo": {
+  "symbol": "SWIGGY",
+  "listingDate": "2024-11-13",
+  "activeSeries": [
+   "EQ",
+   " T0"
+  ]
+ },
+ "activeCat": {
+  "dataList": [
+   {
+    "category": "Category",
+    "noOfShareOffered": "No.of shares offered/reserved",
+    "noOfSharesBid": "No. of shares bid for",
+    "noOfTotalMeant": "No. of times of total meant for the category",
+    "srNo": "Sr.No."
+   },
+   {
+    "category": "Qualified Institutional Buyers(QIBs)",
+    "noOfShareOffered": "86923475",
+    "noOfSharesBid": "523089494",
+    "noOfTotalMeant": "6.0178161768152965",
+    "srNo": "1"
+   },
+   {
+    "category": "Foreign Institutional Investors(FIIs)",
+    "noOfShareOffered": "",
+    "noOfSharesBid": "288810222",
+    "noOfTotalMeant": "",
+    "srNo": "1(a)"
+   },
+   {
+    "category": "Domestic Financial Institutions(Banks/ Financial Institutions(FIs)/ Insurance Companies)",
+    "noOfShareOffered": "",
+    "noOfSharesBid": "63512668",
+    "noOfTotalMeant": "",
+    "srNo": "1(b)"
+   },
+   {
+    "category": "Mutual funds",
+    "noOfShareOffered": "",
+    "noOfSharesBid": "140116792",
+    "noOfTotalMeant": "",
+    "srNo": "1(c)"
+   },
+   {
+    "category": "Others",
+    "noOfShareOffered": "",
+    "noOfSharesBid": "30649812",
+    "noOfTotalMeant": "",
+    "srNo": "1(d)"
+   },
+   {
+    "category": "Non Institutional Investors",
+    "noOfShareOffered": "43461737",
+    "noOfSharesBid": "17901724",
+    "noOfTotalMeant": "0.4118961927361532",
+    "srNo": "2"
+   },
+   {
+    "category": "Non Institutional Investors(Bid amount of more than Ten Lakh Rupees)",
+    "noOfShareOffered": "28974492",
+    "noOfSharesBid": "10703612",
+    "noOfTotalMeant": "0.36941500130528604",
+    "srNo": "2.1"
+   },
+   {
+    "category": "Corporates",
+    "noOfShareOffered": "",
+    "noOfSharesBid": "501144",
+    "noOfTotalMeant": "",
+    "srNo": "2.1(a)"
+   },
+   {
+    "category": "Individuals(Other than RIIs)",
+    "noOfShareOffered": "",
+    "noOfSharesBid": "9845876",
+    "noOfTotalMeant": "",
+    "srNo": "2.1(b)"
+   },
+   {
+    "category": "Others",
+    "noOfShareOffered": "",
+    "noOfSharesBid": "356592",
+    "noOfTotalMeant": "",
+    "srNo": "2.1(c)"
+   },
+   {
+    "category": "Non Institutional Investors(Bid amount of more than Two Lakh Rupees upto Ten Lakh Rupees)",
+    "noOfShareOffered": "14487245",
+    "noOfSharesBid": "7198112",
+    "noOfTotalMeant": "0.496858581462521",
+    "srNo": "2.2"
+   },
+   {
+    "category": "Corporates",
+    "noOfShareOffered": "",
+    "noOfSharesBid": "45676",
+    "noOfTotalMeant": "",
+    "srNo": "2.2(a)"
+   },
+   {
+    "category": "Individuals(Other than RIIs)",
+    "noOfShareOffered": "",
+    "noOfSharesBid": "6912124",
+    "noOfTotalMeant": "",
+    "srNo": "2.2(b)"
+   },
+   {
+    "category": "Others",
+    "noOfShareOffered": "",
+    "noOfSharesBid": "240312",
+    "noOfTotalMeant": "",
+    "srNo": "2.2(c)"
+   },
+   {
+    "category": "Retail Individual Investors(RIIs)",
+    "noOfShareOffered": "28974491",
+    "noOfSharesBid": "33079304",
+    "noOfTotalMeant": "1.1416698916298478",
+    "srNo": "3"
+   },
+   {
+    "category": "Cut Off",
+    "noOfShareOffered": "",
+    "noOfSharesBid": "29298760",
+    "noOfTotalMeant": "",
+    "srNo": "3(a)"
+   },
+   {
+    "category": "Price bids",
+    "noOfShareOffered": "",
+    "noOfSharesBid": "3780544",
+    "noOfTotalMeant": "",
+    "srNo": "3(b)"
+   },
+   {
+    "category": "Employees",
+    "noOfShareOffered": "750000",
+    "noOfSharesBid": "1237470",
+    "noOfTotalMeant": "1.64996",
+    "srNo": "4"
+   },
+   {
+    "category": "Cut Off",
+    "noOfShareOffered": "",
+    "noOfSharesBid": "1015664",
+    "noOfTotalMeant": "",
+    "srNo": "4(a)"
+   },
+   {
+    "category": "Price Bids",
+    "noOfShareOffered": "",
+    "noOfSharesBid": "221806",
+    "noOfTotalMeant": "",
+    "srNo": "4(b)"
+   },
+   {
+    "category": "Total",
+    "noOfShareOffered": "1.60109703E8",
+    "noOfSharesBid": "5.75307992E8",
+    "noOfTotalMeant": "3.593211287138544",
+    "srNo": null
+   }
+  ],
+  "heading": null,
+  "symbol": null,
+  "updateTime": "Updated as on 08-Nov-2024 19:00:00"
+ },
+ "issueInfo": {
+  "dataList": [
+   {
+    "title": "Swiggy Limited",
+    "value": ""
+   },
+   {
+    "title": "Symbol",
+    "value": "SWIGGY"
+   },
+   {
+    "title": "Issue Period",
+    "value": "06-Nov-2024 to 08-Nov-2024"
+   },
+   {
+    "title": "Issue Size",
+    "value": "\"Initial Public Offer of Fresh Issue of up to Rs 44,990 million and Offer for Sale Up to 175,087,863 equity Shares (Including Anchor allocation of 13,03,85,211 Equity Shares)\""
+   },
+   {
+    "title": "Issue Type",
+    "value": "100% Book Building"
+   },
+   {
+    "title": "Price Range",
+    "value": "Rs. 371 per Equity Share to Rs. 390 per Equity Share"
+   },
+   {
+    "title": "Bid Lot",
+    "value": "38 Equity Shares and in multiples thereof"
+   },
+   {
+    "title": "Minimum Order Quantity",
+    "value": "38 Equity Shares"
+   }
+  ]
+ }
+}
