@@ -35,6 +35,9 @@ Citations: cite ONLY ledger claims as [C<id>]; a computed figure cites its input
 [C12][C15]"). Mark unverified figures as UNVERIFIED. Include the disclaimer: personal research, not SEBI-registered
 advice.
 
+Before writing, call `identity_checks` (run_id {run_id}): do not rely on a figure in a failing identity
+without fixing or caveating it.
+
 STREAM REPORTS:
 {stream_reports}
 

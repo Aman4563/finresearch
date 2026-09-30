@@ -8,6 +8,7 @@ import { useMemo, useState } from "react";
 
 import { Badge, Card, InfoTip, cx } from "@/components/ui";
 import { parseVerdict, verdictTone } from "@/components/workspace/report-parts";
+import { AccuracyCard } from "@/components/workspace/report/accuracy";
 import { KindIcon, kindMeta } from "@/components/workspace/run-meta";
 import {
   type ClaimMap, CiteText, ConfidenceMeter, type OpenClaim, SourceStrip, StatusDot, STATUS_LABEL, tileHelp,
@@ -280,6 +281,8 @@ export function SummaryTab({ report, ins, claims, onOpen, title, goTab, extra }:
           </div>
         </section>
       )}
+
+      {ins?.accuracy && <AccuracyCard acc={ins.accuracy} claims={claims} onOpen={onOpen} />}
 
       {extra}
 

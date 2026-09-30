@@ -68,6 +68,34 @@ export type BondInsights = {
   duration: Pt | null;
 };
 
+/** One accounting-identity / recomputation / scale check (verify/identities.py). */
+export type IdentityCheck = {
+  family: string; title: string; status: "pass" | "warn" | "fail"; period: string | null; basis: string; formula: string; detail: string;
+  claims: { claim_id: number; metric: string; value: string; unit: string | null; period: string | null; status: string; importance: string }[];
+  claim_ids: number[]; cited: number[]; expected: number | null; actual: number | null; diff_pct: number | null; tolerance: string | null;
+  hard: boolean; hint: string | null;
+};
+export type Accuracy = { counts: { pass: number; warn: number; fail: number }; applicable: number; facts: number; checks: IdentityCheck[]; not_enough_inputs: string[] };
+
+export type McRange = { low: number; mode: number; high: number; source: string };
+export type Triangulation = {
+  status: "ok" | "not_enough_inputs";
+  unit: string; years: number; seed: number;
+  inputs: { name: string; value: number | null; display: string; source: string; claim_id: number | null; status: string | null }[];
+  missing: string[]; notes: string[]; cash_flow_basis: string | null;
+  history: { label: string; value: number; claim_ids: number[]; status: string }[];
+  price: number | null; price_claim: number | null;
+  reverse_dcf: { implied_growth: number | null; discount_rate: number; terminal_growth: number; years: number; note: string | null } | null;
+  monte_carlo: {
+    p5: number; p25: number; p50: number; p75: number; p95: number; mean: number; prob_above_price: number | null; n: number; rejected: number;
+    histogram: { lo: number; hi: number; count: number }[]; ranges: Record<"growth" | "discount_rate" | "terminal_growth", McRange>;
+  } | null;
+  grid: { growth: number; discount_rates: number[]; terminal_growths: number[]; values: (number | null)[][] } | null;
+  peers: { metric: string; n: number; q1: number; median: number; q3: number; own: number; own_claim: number; own_label: string; percentile: number | null;
+    claim_ids: number[]; values: number[]; implied?: { low: number; mid: number; high: number } } | null;
+  band: { low: number; high: number; intersection: [number, number] | null; disagree: boolean; spread: number; methods: { name: string; low: number; high: number }[] } | null;
+};
+
 export type Insights = {
   run_id: number;
   kind: string;
@@ -93,4 +121,7 @@ export type Insights = {
     total: number; by_status: Record<string, number>; verified_pct: number | null; cited: number; cited_verified_pct: number | null;
     by_stream: ({ stream: string; total: number } & Record<string, number | string>)[];
   };
+  /** Absent on insights served by an older API. */
+  accuracy?: Accuracy;
+  triangulation?: Triangulation | null;
 };

@@ -499,6 +499,21 @@ class ResearchPipeline:
                                   claims=self._claims_text(ids=ids))  # fmt: skip
             self._once(key, lambda: self._apply_verdicts(ver))
 
+    def _identities(self, key: str) -> None:
+        """Accounting-identity and scale checks (verify/identities.py) after the streams, before synthesis. Results
+        go to the manifest and to each involved claim's checks; the publish gate applies the severity policy."""
+
+        def go() -> None:
+            from finresearch.verify.identities import run_identities
+
+            with session_scope() as s:
+                rep = run_identities(s, self.run_id, record=True).to_dict()
+            self._update_manifest(identity_checks={"counts": rep["counts"], "applicable": rep["applicable"],
+                                                   "failing": [x for x in rep["checks"] if x["status"] != "pass"][:40],
+                                                   "not_enough_inputs": rep["not_enough_inputs"]})  # fmt: skip
+
+        self._once(key, go)
+
     async def _synthesize(self, key: str, reports: dict[str, StreamReport], bull, bear) -> BaseModel:
         """Synthesis plus the publish gate, with up to max_revisions revision rounds."""
         from finresearch.verify.gate import check_report
@@ -582,6 +597,7 @@ class ResearchPipeline:
             reports = dict(zip(self.config.streams, await self._gather(
                 [self._stream_and_verify(s, focus=self._focus(plan, s)) for s in self.config.streams]), strict=True))  # fmt: skip
             await self._cross_stream()
+            self._identities("identities")
             bull, bear = await self._gather([self.step("case:bull", "case", self.roles["bull"]),
                                              self.step("case:bear", "case", self.roles["bear"])])  # fmt: skip
             synth = await self._synthesize("synthesis", reports, bull, bear)
@@ -600,6 +616,7 @@ class ResearchPipeline:
                 for st, rep in zip(by_stream, extra, strict=True):
                     reports[f"{st} (follow-up {rnd})"] = rep
                 await self._cross_stream(key_prefix=f"r{rnd}:")
+                self._identities(f"identities:r{rnd}")
                 synth = await self._synthesize(f"synthesis:r{rnd}", reports, bull, bear)
             out = get_settings().runs_dir / str(self.run_id)
             out.mkdir(parents=True, exist_ok=True)
