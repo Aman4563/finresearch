@@ -50,6 +50,8 @@ export type Holding = {
   closed: boolean;
   signal: { asset: "stock" | "fund"; instrument: string; href: string } | null;
   warnings: string[];
+  /** the price is still being fetched (the page streams it in) */
+  pending?: boolean;
 };
 
 export type Slice = { label: string; value: number };
@@ -71,6 +73,8 @@ export type Snapshot = {
   };
   privacy: string;
   complete: boolean;
+  /** holdings whose price was not cached yet (prices=cached) */
+  pending?: number;
   targets?: Record<string, number>;
   drift?: { label: string; weight_pct: number; target_pct: number; drift_pp: number }[];
 };
