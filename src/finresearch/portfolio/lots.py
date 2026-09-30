@@ -8,6 +8,8 @@ Events (``Event.kind``):
 - ``opening``: units held at the start of a statement whose cost and date are unknown (a one-year CAS). The lot keeps
   ``cost_per_unit=None`` until the user enters them; tax on it cannot be computed and says so. A statement's opening
   balance (``meta.statement_opening``) is ignored when earlier events exist: an older statement covers that history.
+  A broker holdings baseline (``meta.cost_basis == "broker_average"``, finresearch.portfolio.connectors.merge) keeps
+  the broker's average cost with an unknown date: P&L works, the tax term stays "unknown" until the date is entered.
 - ``buy``: a purchase (also SIP, switch-in, dividend reinvestment). Cost = amount + charges (brokerage and stamp duty
   are part of the cost of acquisition; STT is not deductible under s.48 but a tradebook does not split it out, so
   whatever the user enters as charges is added).
@@ -184,7 +186,10 @@ def build_lots(events: Iterable[Event]) -> LotBook:
                 acquired = e.meta.get("acquired")
                 acq = date.fromisoformat(acquired) if isinstance(acquired, str) and acquired else None
                 cpu = (gross + e.charges) / q if gross is not None and e.price is not None else None
-                lot = Lot(e.id, acq, "opening", q, q, cpu if acq else None, e.stt_paid)
+                # a broker's holdings snapshot (connectors.merge) knows the average cost but not the purchase dates:
+                # the cost is kept so P&L works, the date stays unknown so tax says it cannot classify the term
+                keep = acq is not None or e.meta.get("cost_basis") == "broker_average"
+                lot = Lot(e.id, acq, "opening", q, q, cpu if keep else None, e.stt_paid)
             else:
                 cpu = (gross + e.charges) / q if gross is not None else None
                 if cpu is None:

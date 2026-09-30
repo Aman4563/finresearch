@@ -783,3 +783,46 @@ class PortfolioSetting(Base):
     __tablename__ = "portfolio_setting"
     key: Mapped[str] = mapped_column(String(40), primary_key=True)
     value: Mapped[dict[str, Any]] = mapped_column(default=dict)
+
+
+# --------------------------------------------------------------------------- broker connections (read-only sync)
+# Credentials for the user's own broker accounts live only in this local database (like notification_setting): the
+# API masks them, errors are redacted before they are stored, and nothing here is ever put in the investor profile
+# or sent to an LLM. The connectors are read-only by construction (finresearch.portfolio.connectors).
+class BrokerConnection(Base):
+    """One broker (or the CAS inbox) the user has set up: "groww", "zerodha", "upstox", "dhan", "angel", "cas_inbox".
+    `config` holds the user's settings and secrets (API key/secret, TOTP secret, CAS password if opted in); `token`
+    the current access token and `token_expires_at` when the broker ends it (most expire daily). `state` keeps the
+    latest positions/funds snapshot and the last reconciliation, for display only (never turned into transactions)."""
+
+    __tablename__ = "broker_connection"
+    key: Mapped[str] = mapped_column(String(20), primary_key=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    auto_sync: Mapped[bool] = mapped_column(Boolean, default=True)  # daily after the close, by the monitor
+    config: Mapped[dict[str, Any]] = mapped_column(default=dict)  # secrets: masked by the API
+    token: Mapped[str | None] = mapped_column(Text)  # secret: never returned by the API
+    token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(
+        String(20), default="not_connected"
+    )  # connected | reconnect | error | ...
+    last_error: Mapped[str | None] = mapped_column(Text)  # secrets redacted
+    last_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_sync_day: Mapped[date | None] = mapped_column(Date)  # IST day of the last scheduled sync
+    state: Mapped[dict[str, Any]] = mapped_column(default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class BrokerSyncLog(Base):
+    """One sync (or inbox scan) and what it did: rows added, duplicates skipped, baselines, reconciliation differences
+    and errors (redacted). The portfolio_import rows it created are listed in `summary.import_ids`."""
+
+    __tablename__ = "broker_sync_log"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    key: Mapped[str] = mapped_column(String(20), index=True)
+    trigger: Mapped[str] = mapped_column(String(12))  # manual | scheduled | inbox
+    status: Mapped[str] = mapped_column(String(12))  # ok | partial | error | reconnect
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    summary: Mapped[dict[str, Any]] = mapped_column(default=dict)
+    error: Mapped[str | None] = mapped_column(Text)  # secrets redacted

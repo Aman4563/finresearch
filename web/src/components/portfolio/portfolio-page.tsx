@@ -4,14 +4,14 @@
 // Personal data from the local API only (never sent to an LLM). Signals load per row on demand, so the table does
 // not fire one NSE/AMFI request per holding.
 
-import { Activity, BadgeIndianRupee, Briefcase, ChevronRight, Coins, Info, PieChart, Receipt, Upload, Wallet } from "lucide-react";
+import { Activity, BadgeIndianRupee, Briefcase, ChevronRight, Coins, Info, PieChart, PlugZap, Receipt, Upload, Wallet } from "lucide-react";
 import Link from "next/link";
 import { Fragment, useCallback, useEffect, useState } from "react";
 
 import { DonutChart, TimeSeriesChart, fmtCompactINR } from "@/components/charts";
 import type { Signal } from "@/components/signal";
 import { Badge, Button, Callout, Card, EmptyState, ErrorNote, Field, InfoTip, Modal, PageHeader, Segmented, SkeletonRows, Stat, Table, cx, inputClass } from "@/components/ui";
-import { API_URL, api, day, useApi } from "@/lib/api";
+import { API_URL, api, day, useApi, when } from "@/lib/api";
 
 import { ImportPanel } from "./import-panel";
 import { TaxPanel } from "./tax-panel";
@@ -137,6 +137,39 @@ function HoldingEditor({ h, onSaved }: { h: Holding; onSaved: () => void }) {
   );
 }
 
+const SOURCE_LABEL: Record<string, string> = {
+  manual: "manual", cas: "CAS", nse_actions: "corp. action", zerodha: "Zerodha CSV", groww: "Groww CSV", upstox: "Upstox CSV",
+  groww_api: "Groww sync", zerodha_api: "Zerodha sync", upstox_api: "Upstox sync", dhan_api: "Dhan sync",
+  groww_holdings: "Groww holdings file", zerodha_holdings: "Zerodha holdings file", upstox_holdings: "Upstox holdings file",
+};
+
+function SourceBadge({ source }: { source: string }) {
+  if (source === "manual" || source === "nse_actions") return null;
+  return <Badge tone={source.endsWith("_api") ? "brand" : "neutral"}>{SOURCE_LABEL[source] ?? source}</Badge>;
+}
+
+type ConnSummary = { key: string; label: string; status: string; last_sync_at: string | null; last_error: string | null };
+
+/** "Groww synced 2 h ago · Zerodha: log in again" — the broker connections behind the numbers, linking to Profile. */
+function SyncStrip() {
+  const { data } = useApi<ConnSummary[]>("/api/connections/summary", 120000);
+  if (!data) return null;
+  return (
+    <div className="mb-4 flex flex-wrap items-center gap-2 text-xs text-muted">
+      <PlugZap className="size-3.5" />
+      {data.length === 0 ? (
+        <Link href="/profile#connections" className="text-brand hover:underline">Connect a broker (Groww, Zerodha, Upstox, Dhan) or set up the statement inbox</Link>
+      ) : data.map((c) => (
+        <Link key={c.key} href="/profile#connections" className="inline-flex items-center gap-1.5 rounded-md bg-background-subtle px-2 py-1 ring-1 ring-inset ring-border hover:text-foreground">
+          <span className={cx("size-1.5 rounded-full", c.status === "connected" ? "bg-gain" : c.status === "reconnect" || c.status === "error" ? "bg-warn" : "bg-muted")} />
+          <span className="font-medium text-foreground">{c.label}</span>
+          <span>{c.key === "cas_inbox" ? (c.status === "connected" ? "watching the folder" : "off") : c.status === "reconnect" ? "log in again" : c.last_sync_at ? `synced ${when(c.last_sync_at)}` : "not synced yet"}</span>
+        </Link>
+      ))}
+    </div>
+  );
+}
+
 function Holdings({ snap, onChanged, updating }: { snap: Snapshot; onChanged: () => void; updating: { done: number; total: number } | null }) {
   const [open, setOpen] = useState<number | null>(null);
   const [showClosed, setShowClosed] = useState(false);
@@ -168,6 +201,8 @@ function Holdings({ snap, onChanged, updating }: { snap: Snapshot; onChanged: ()
                   </span>
                   <span className="ml-5 flex flex-wrap items-center gap-1.5 text-[11px] text-muted">
                     <span className="truncate">{h.account}</span>·<span>{TAX_CLASS_LABEL[h.tax_class]}</span>
+                    {(h.sources ?? []).map((src) => <SourceBadge key={src} source={src} />)}
+                    {h.broker_baseline && <Badge tone="neutral">broker avg cost</Badge>}
                     {!h.cost_known && <Badge tone="warn">cost unknown</Badge>}
                     {h.warnings.length > 0 && <Badge tone="warn">{h.warnings.length} note{h.warnings.length > 1 ? "s" : ""}</Badge>}
                   </span>
@@ -385,7 +420,7 @@ export function PortfolioPage() {
   return (
     <div>
       <PageHeader icon={<Briefcase className="size-5" />} title="Portfolio" eyebrow="You"
-        description="Your holdings from CAS statements, broker tradebooks and manual entries: FIFO lots, P&L, XIRR, allocation and capital-gains tax."
+        description="Your holdings from broker connections, CAS statements, tradebooks and manual entries: FIFO lots, P&L, XIRR, allocation and capital-gains tax."
         actions={<Button variant="secondary" icon={<Upload className="size-3.5" />} onClick={() => go("import")}>Import</Button>} />
       {error && <ErrorNote error={error} onRetry={reload} />}
       {!data && !error && <SkeletonRows rows={6} />}
@@ -402,6 +437,7 @@ export function PortfolioPage() {
               icon={<Activity className="size-4" />} hint={updating ? "waiting for prices" : s!.xirr_reason ?? "annualised, all holdings"}
               help="Money-weighted annual return over every cash flow: purchases, sales, dividends paid out and today's value." />
           </div>
+          <SyncStrip />
           <div className="mb-4 overflow-x-auto"><Segmented value={tab} onChange={go} options={TABS} /></div>
           {empty && tab !== "import" ? (
             <EmptyState icon={<Briefcase className="size-5" />} title="No holdings yet" action={<Button onClick={() => go("import")}>Import a statement</Button>}>

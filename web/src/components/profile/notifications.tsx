@@ -14,7 +14,7 @@ import { api, type Channel, type Delivery, type NotificationSettings, useApi, wh
 
 const CH: Record<Channel, string> = { ntfy: "ntfy", telegram: "Telegram", macos: "Mac" };
 
-function SecretInput({ label, value, set, placeholder, hint, isSet }: {
+export function SecretInput({ label, value, set, placeholder, hint, isSet }: {
   label: ReactNode; value: string; set: (v: string) => void; placeholder?: string; hint?: ReactNode; isSet: boolean;
 }) {
   const [show, setShow] = useState(false);

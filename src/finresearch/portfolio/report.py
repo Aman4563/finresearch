@@ -162,6 +162,9 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
                                                                   else fund_cap_bucket(category, eff)),
             "lots": len(open_lots), "closed": units <= 0, "signal": _signal(h, p),
             "warnings": (h.meta or {}).get("lot_warnings") or [],
+            "sources": sorted({t.source for t in data.txns.get(h.id, [])}),
+            "broker_baseline": any(t.kind == "opening" and (t.meta or {}).get("baseline")
+                                   for t in data.txns.get(h.id, [])),
         })  # fmt: skip
     ox, ox_reason = xirr_or_reason(
         [*all_flows, (today, tot["xirr_value"])] if tot["xirr_value"] else all_flows, today

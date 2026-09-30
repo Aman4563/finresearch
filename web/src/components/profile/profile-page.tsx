@@ -10,6 +10,7 @@ import { type ReactNode, useEffect, useState } from "react";
 import {
   applyReduceMotion, Avatar, Labelled, LinkButton, AVATAR_COLORS, AVATAR_GRADIENT, SaveBar, Switch, useDraft, withDefaults,
 } from "@/components/profile/common";
+import { ConnectionsCard } from "@/components/profile/connections";
 import { NotificationsCard } from "@/components/profile/notifications";
 import { TimeFramesCard } from "@/components/profile/time-frames";
 import { NAV, type Theme, useTheme } from "@/components/shell";
@@ -357,6 +358,11 @@ export function ProfilePage() {
           {/* ------------------------------------------------------------ notifications (own save: secrets live outside the profile) */}
           <div id="notifications" className="scroll-mt-20">
             <NotificationsCard />
+          </div>
+
+          {/* ------------------------------------------------------------ broker connections (own save: secrets live outside the profile) */}
+          <div id="connections" className="scroll-mt-20">
+            <ConnectionsCard />
           </div>
 
           {/* ------------------------------------------------------------ holdings */}

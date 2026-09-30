@@ -1,0 +1,229 @@
+"""Run a read-only sync for one connection, and the monitor's daily schedule.
+
+`sync_now` = (log in headlessly if the connector can) → read holdings, positions, trades, fund holdings and funds →
+`merge.merge_sync` (baselines, trades, reconciliation) → store positions/funds on the connection → one
+`broker_sync_log` row. A read failure of one kind (say positions) is recorded and the rest still merges; an expired
+session marks the connection "reconnect" and raises an in-app alert once a day (forwarded to the phone when the
+user forwards warnings). Nothing here ever retries a login on its own beyond the one headless attempt per sync.
+
+Schedule (`connections_step`, from the monitor tick): once per trading day after SYNC_AFTER IST for every enabled
+connection with auto-sync, and the statement inbox every INBOX_EVERY.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from datetime import UTC, date, datetime, time, timedelta
+from decimal import Decimal
+from typing import Any
+
+from sqlalchemy import select
+
+from finresearch.db import session_scope
+from finresearch.db.models import Alert, BrokerConnection, BrokerSyncLog
+from finresearch.fincalc.dates import to_ist
+from finresearch.portfolio.connectors import CONNECTORS, INBOX_KEY
+from finresearch.portfolio.connectors.base import ConnectorError, ReconnectNeeded, redact
+from finresearch.portfolio.connectors.store import build, set_token, token_valid
+
+log = logging.getLogger(__name__)
+SYNC_AFTER = time(16, 0)  # IST: after the 15:30 close, once brokers have settled the day's holdings
+INBOX_EVERY = timedelta(minutes=5)
+OVERLAP_DAYS = 3  # re-read a few days each sync: late fills and holidays are covered, duplicates are no-ops
+HEADLESS = ("totp", "password_totp", "key_secret")
+_LOCKS: dict[str, asyncio.Lock] = {}
+_LAST_INBOX: dict[str, datetime] = {}
+
+
+def _lock(key: str) -> asyncio.Lock:
+    return _LOCKS.setdefault(key, asyncio.Lock())
+
+
+def _json_dec(v: Any) -> Any:
+    if isinstance(v, Decimal):
+        return float(v)
+    return v
+
+
+async def sync_now(key: str, *, trigger: str = "manual", now: datetime | None = None) -> dict[str, Any]:
+    """Sync one broker connection. Returns the sync-log entry as a dict."""
+    if key not in CONNECTORS:
+        raise LookupError(f"unknown connection {key}")
+    now = now or datetime.now(UTC)
+    today = to_ist(now).date()
+    async with _lock(key):
+        with session_scope() as s:
+            row = s.get(BrokerConnection, key)
+            if row is None or not row.enabled:
+                raise LookupError(f"{key} is not connected or turned off")
+            conn = build(row)
+            valid = token_valid(row, now)
+            last_day = row.last_sync_day
+        secrets = conn.secret_values()
+        if not valid:
+            try:
+                grant = await conn.login()
+            except ReconnectNeeded as e:
+                return _finish(key, trigger, now, "reconnect", {}, redact(str(e), *secrets), today=None)
+            except ConnectorError as e:
+                return _finish(key, trigger, now, "error", {}, redact(str(e), *secrets), today=None)
+            with session_scope() as s:
+                set_token(s, key, grant)
+            conn.token = grant.token
+            secrets = conn.secret_values()
+
+        data: dict[str, Any] = {}
+        errors: list[str] = []
+        caps = conn.capabilities
+        since = (
+            (last_day - timedelta(days=OVERLAP_DAYS))
+            if last_day
+            else today - timedelta(days=conn.first_sync_days)
+        )
+        steps = [("holdings", conn.holdings), ("positions", conn.positions), ("mf", conn.mf_holdings),
+                 ("funds", conn.funds), ("trades", lambda: conn.trades(since, today))]  # fmt: skip
+        for name, fn in steps:
+            if name not in caps:
+                continue
+            try:
+                data[name] = await fn()
+            except ReconnectNeeded as e:
+                return _finish(key, trigger, now, "reconnect", {"read": sorted(data)}, redact(str(e), *secrets),
+                               today=None, expire=True)  # fmt: skip
+            except ConnectorError as e:
+                errors.append(f"{name}: {redact(str(e), *secrets)}")
+            except Exception as e:  # a response shape we did not expect: keep the rest of the sync
+                log.warning("%s %s read failed: %s", key, name, type(e).__name__)
+                errors.append(f"{name}: unexpected response ({type(e).__name__})")
+
+        from finresearch.portfolio.connectors.merge import merge_sync
+
+        have_holdings = "holdings" in data
+        with session_scope() as s:
+            res = merge_sync(s, account=conn.account, source=conn.source, label=conn.label,
+                             holdings=data.get("holdings") or [], trades=data.get("trades") or [], today=today,
+                             now=now, holdings_include_today=conn.holdings_include_today,
+                             mf_holdings=data.get("mf") or None, allow_baseline=have_holdings)  # fmt: skip
+            summary = res.as_dict()
+            if not have_holdings:
+                summary["reconciliation"], summary["reconciled"], summary["differences"] = [], None, 0
+            summary["read"] = {k: (len(v) if isinstance(v, list) else 1) for k, v in data.items()}
+            summary["trades_since"] = since.isoformat()
+            row = s.get(BrokerConnection, key)
+            state = dict(row.state or {})
+            if "positions" in data:
+                state["positions"] = [
+                    {k: _json_dec(v) for k, v in vars(p).items()} for p in data["positions"]
+                ][:200]
+            if "funds" in data:
+                state["funds"] = {k: _json_dec(v) for k, v in (data["funds"] or {}).items()}
+            state["last_summary"] = {k: summary[k] for k in ("added", "duplicates", "differences", "reconciled",
+                                                             "read", "covered_by_baseline")}  # fmt: skip
+            state["last_summary"]["baselines"] = len(summary["baselines"])
+            state["last_summary"]["conflicts"] = len(summary["conflicts"])
+            state.pop("reconnect_alert_day", None)
+            state.pop("failed_day", None)
+            row.state = state
+        status = "partial" if errors else "ok"
+        return _finish(key, trigger, now, status, summary, "; ".join(errors) or None, today=today)
+
+
+def _finish(key: str, trigger: str, now: datetime, status: str, summary: dict[str, Any], error: str | None, *,
+            today: date | None, expire: bool = False) -> dict[str, Any]:  # fmt: skip
+    with session_scope() as s:
+        row = s.get(BrokerConnection, key)
+        if row is not None:
+            if trigger == "scheduled" and status in ("reconnect", "error"):
+                # one scheduled attempt per day: a wrong TOTP seed or a lapsed subscription must not retry every tick
+                row.state = {**(row.state or {}), "failed_day": to_ist(now).date().isoformat()}
+            if status == "reconnect":
+                row.status = "reconnect"
+                if expire:
+                    row.token, row.token_expires_at = None, None
+                day = to_ist(now).date().isoformat()
+                if (row.state or {}).get("reconnect_alert_day") != day and trigger == "scheduled":
+                    s.add(Alert(kind="broker_reconnect", level="warn", data={"connection": key},
+                                message=f"{CONNECTORS[key].label}: log in again to keep your portfolio in sync "
+                                        "(Profile → Connections)."))  # fmt: skip
+                    row.state = {**(row.state or {}), "reconnect_alert_day": day}
+            elif status == "error":
+                row.status = "error"
+            else:
+                row.status = "connected"
+                row.last_sync_at = now
+                if today is not None:
+                    row.last_sync_day = today
+            row.last_error = error
+        entry = BrokerSyncLog(key=key, trigger=trigger, status=status, started_at=now, finished_at=datetime.now(UTC),
+                              summary=summary, error=error)  # fmt: skip
+        s.add(entry)
+        s.flush()
+        return log_json(entry)
+
+
+def log_json(e: BrokerSyncLog) -> dict[str, Any]:
+    return {"id": e.id, "key": e.key, "trigger": e.trigger, "status": e.status,
+            "started_at": e.started_at.isoformat() if e.started_at else None,
+            "finished_at": e.finished_at.isoformat() if e.finished_at else None, "summary": e.summary or {},
+            "error": e.error}  # fmt: skip
+
+
+def recent_logs(s, key: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
+    q = select(BrokerSyncLog).order_by(BrokerSyncLog.id.desc()).limit(limit)
+    if key:
+        q = q.where(BrokerSyncLog.key == key)
+    return [log_json(e) for e in s.scalars(q)]
+
+
+def due(row: BrokerConnection, now: datetime, holidays: set[date] | None = None) -> bool:
+    """A scheduled sync is due once per trading day after SYNC_AFTER IST (a missed day is caught up on the next)."""
+    ist = to_ist(now)
+    if not (row.enabled and row.auto_sync):
+        return False
+    if row.status == "reconnect" and CONNECTORS[row.key].auth_kind not in HEADLESS:
+        return False  # waiting for the user to log in again: the alert was raised once
+    if (row.state or {}).get("failed_day") == ist.date().isoformat():
+        return False  # today's scheduled attempt failed: tomorrow (or Sync now) tries again
+    d = ist.date()
+    trading = d.weekday() < 5 and d not in (holidays or set())
+    if trading and ist.time() >= SYNC_AFTER:
+        return row.last_sync_day != d
+    # not after today's close: catch up if the last scheduled sync is older than the previous weekday
+    prev = d - timedelta(days=1)
+    while prev.weekday() >= 5 or prev in (holidays or set()):
+        prev -= timedelta(days=1)
+    return row.last_sync_day is not None and row.last_sync_day < prev
+
+
+async def connections_step(now: datetime) -> dict[str, int]:
+    """The monitor's hook: scheduled syncs and the statement inbox. Failures never break the tick."""
+    out: dict[str, int] = {}
+    try:
+        from finresearch.adapters.nse_holidays import trading_holidays
+
+        holidays = set(trading_holidays())
+    except Exception:
+        holidays = set()
+    with session_scope() as s:
+        rows = list(s.scalars(select(BrokerConnection)))
+        dues = [r.key for r in rows if r.key in CONNECTORS and due(r, now, holidays)]
+        inbox_on = any(r.key == INBOX_KEY and r.enabled for r in rows)
+    for key in dues:
+        try:
+            res = await sync_now(key, trigger="scheduled", now=now)
+            out["broker_synced"] = out.get("broker_synced", 0) + (res["status"] in ("ok", "partial"))
+        except Exception:
+            log.warning("scheduled %s sync failed", key, exc_info=True)
+    last = _LAST_INBOX.get("at")
+    if inbox_on and (last is None or now - last >= INBOX_EVERY):
+        _LAST_INBOX["at"] = now
+        try:
+            from finresearch.portfolio.connectors.inbox import scan
+
+            got = await asyncio.to_thread(scan, now=now)
+            if got["imported"]:
+                out["inbox_imported"] = got["imported"]
+        except Exception:
+            log.warning("statement inbox scan failed", exc_info=True)
+    return out

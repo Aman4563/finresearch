@@ -1416,6 +1416,11 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
 
     add_alert_rule_routes(app, clock=clock)
 
+    # ------------------------------------------------------------------ broker connections (read-only) + statement inbox
+    from finresearch.api.connections import add_connection_routes
+
+    add_connection_routes(app, clock=clock)
+
     # ------------------------------------------------------------------ buy/sell signals (finresearch.signals)
     @app.get("/api/signals")
     def signal_assets() -> dict[str, Any]:

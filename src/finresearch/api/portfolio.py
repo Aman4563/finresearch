@@ -391,12 +391,18 @@ def add_portfolio_routes(app: FastAPI, *, scheme_rows: Callable[[], Awaitable[li
         broker = body.get("broker") or None
         if broker not in (None, "zerodha", "groww", "upstox"):
             raise HTTPException(422, "broker must be zerodha, groww, upstox or empty (auto-detect)")
+        sha = hashlib.sha256(content).hexdigest()
+        dry = body.get("dry_run", True) is not False
         try:
             res = parse_tradebook(content, filename, broker)
         except StatementError as e:
-            raise HTTPException(422, str(e)) from None
-        sha = hashlib.sha256(content).hexdigest()
-        dry = body.get("dry_run", True) is not False
+            from finresearch.portfolio.importers import parse_holdings_statement
+
+            try:  # not a tradebook: maybe a holdings statement (baseline + reconciliation, connectors.merge)
+                hs = parse_holdings_statement(content, filename, broker)
+            except StatementError:
+                raise HTTPException(422, str(e)) from None
+            return _holdings_statement(hs, sha, filename, dry)
         with session_scope() as s:
             if dry:
                 return {"dry_run": True, **preview(s, res), "already_imported": _existing(s, sha)}
@@ -521,6 +527,37 @@ def add_portfolio_routes(app: FastAPI, *, scheme_rows: Callable[[], Awaitable[li
                 if got:
                     added[h.name] = got
         return {"checked": len(targets), "added": added, "errors": errors}
+
+
+def _holdings_statement(hs, sha: str, filename: str, dry: bool) -> dict[str, Any]:
+    """A broker holdings statement: the broker-baseline merge rules (connectors.merge). Dry run = the same merge in a
+    savepoint that is rolled back."""
+    from datetime import UTC, datetime
+
+    from finresearch.portfolio.connectors.inbox import _record_sha
+    from finresearch.portfolio.connectors.merge import merge_sync
+
+    broker, holdings = hs
+    acc = {"zerodha": "Zerodha", "groww": "Groww", "upstox": "Upstox"}[broker]
+    now = datetime.now(UTC)
+    with session_scope() as s:
+        prev = _existing(s, sha)
+        if not dry and prev is not None:
+            raise HTTPException(409, f"this file was already imported (import #{prev})")
+        sp = s.begin_nested()
+        mr = merge_sync(s, account=acc, source=f"{broker}_holdings", label=f"{acc} holdings file", holdings=holdings,
+                        trades=[], today=now.date(), now=now)  # fmt: skip
+        out = mr.as_dict()
+        if dry:
+            sp.rollback()
+        else:
+            sp.commit()
+            _record_sha(s, mr.import_ids, sha, filename, f"{broker}_holdings")
+    return {"dry_run": dry, "kind": "holdings", "source": broker, "rows": len(holdings),
+            "new_rows": len(out["baselines"]), "duplicates": 0, "holdings_only": True, "already_imported": prev,
+            "warnings": ["A holdings statement has no dates: holdings without history in this account get a "
+                         "baseline at the broker's average cost (purchase date unknown); the rest are only "
+                         "compared. Import the tradebook too for exact lots and tax."], **out}  # fmt: skip
 
 
 def _existing(s, sha: str) -> int | None:

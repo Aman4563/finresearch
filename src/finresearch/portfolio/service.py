@@ -68,23 +68,29 @@ def rebuild(s: Session, holding_id: int) -> LotBook:
 
 
 # --------------------------------------------------------------------------- holdings
-def get_or_create_holding(s: Session, t: ImportedTxn) -> PortfolioHolding:
-    ik = t.ikey
-    h = s.scalar(
-        select(PortfolioHolding).where(PortfolioHolding.ikey == ik, PortfolioHolding.account == t.account)
-    )
-    if h is None:  # the same instrument keyed differently (a manual INFY buy vs the tradebook's ISIN row)
+def find_holding(s: Session, t: ImportedTxn, account: str | None = None) -> PortfolioHolding | None:
+    """The holding `t` belongs to in `account` (default: its own), matched by key or by any shared identifier (a
+    manual INFY buy vs the tradebook's ISIN row). `account=""` searches every account."""
+    acc = t.account if account is None else account
+    conds = [PortfolioHolding.account == acc] if acc else []
+    h = s.scalars(select(PortfolioHolding).where(PortfolioHolding.ikey == t.ikey, *conds)
+                  .order_by(PortfolioHolding.id)).first()  # fmt: skip
+    if h is None:
         ids = [(col, v) for col, v in ((PortfolioHolding.isin, t.isin), (PortfolioHolding.nse_symbol, t.nse_symbol),
                                        (PortfolioHolding.bse_code, t.bse_code),
                                        (PortfolioHolding.scheme_code, t.scheme_code)) if v]  # fmt: skip
         if ids:
             from sqlalchemy import or_
 
-            h = s.scalars(select(PortfolioHolding).where(PortfolioHolding.account == t.account,
-                                                         or_(*[col == v for col, v in ids]))
+            h = s.scalars(select(PortfolioHolding).where(*conds, or_(*[col == v for col, v in ids]))
                           .order_by(PortfolioHolding.id)).first()  # fmt: skip
+    return h
+
+
+def get_or_create_holding(s: Session, t: ImportedTxn) -> PortfolioHolding:
+    h = find_holding(s, t)
     if h is None:
-        h = PortfolioHolding(ikey=ik, account=t.account, asset_type=t.asset_type, name=t.name[:300], isin=t.isin,
+        h = PortfolioHolding(ikey=t.ikey, account=t.account, asset_type=t.asset_type, name=t.name[:300], isin=t.isin,
                              nse_symbol=t.nse_symbol, bse_code=t.bse_code, scheme_code=t.scheme_code, meta={})  # fmt: skip
         s.add(h)
         s.flush()
