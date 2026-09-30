@@ -1,9 +1,7 @@
 "use client";
 
 import {
-  Activity, BadgeIndianRupee, BellRing, BookOpenCheck, Briefcase, ChartCandlestick, ChevronsLeft, CircleHelp, Command, Download, EyeOff,
-  FlaskConical, Gauge as GaugeIcon, Landmark, LayoutDashboard, ListChecks, Menu, Monitor, Moon, NotebookPen, PieChart, PiggyBank, Radar, Rocket,
-  Search, Sun, Sunrise, UserRound, X,
+  Activity, BadgeIndianRupee, BellRing, BookOpenCheck, Briefcase, ChartCandlestick, ChevronsLeft, CircleHelp, Command, Download, EyeOff, FlaskConical, Gauge as GaugeIcon, Landmark, Layers, LayoutDashboard, ListChecks, Menu, Monitor, Moon, NotebookPen, PieChart, PiggyBank, Radar, Rocket, Search, Sun, Sunrise, UserRound, X,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -51,6 +49,7 @@ export const NAV: { group: string; items: NavItem[] }[] = [
     group: "You",
     items: [
       { href: "/portfolio", label: "Portfolio", icon: <Briefcase />, keys: "g t", description: "Holdings, P&L, XIRR, allocation and capital-gains tax" },
+      { href: "/portfolio/lookthrough", label: "Look-through", icon: <Layers />, keys: "g k", description: "True exposure inside your funds: overlap, stocks, sectors" },
       { href: "/wealth", label: "Wealth", icon: <PiggyBank />, keys: "g w", description: "Net worth, goals, emergency fund, insurance and loans" },
       { href: "/profile", label: "Profile", icon: <UserRound />, keys: "g p", description: "You, your investor profile and preferences" },
       { href: "/rules", label: "Rules", icon: <ListChecks />, keys: "g u", description: "IPO red lines and alerts for every asset" },
