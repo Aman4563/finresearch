@@ -85,22 +85,26 @@ class Announcement(BaseModel):
     @classmethod
     def parse(cls, r: dict[str, Any]) -> Announcement:
         text = (r.get("attchmntText") or "").strip()
-        m = re.search(
-            r"financial results for the (?:period|quarter|year) ended\s+([A-Za-z]+\.? \d{1,2},? \d{4})",
-            text,
-            re.I,
-        )
-        end = None
-        if m:
-            for fmt in ("%B %d, %Y", "%b %d, %Y", "%B %d %Y", "%b %d %Y"):
-                try:
-                    end = datetime.strptime(m.group(1).replace(".", ""), fmt).date()
-                    break
-                except ValueError:
-                    continue
+        end = parse_results_period_end(text)
         att = r.get("attchmntFile") or None
         return cls(symbol=r.get("symbol", ""), at=parse_nse_timestamp(r.get("an_dt")), category=r.get("desc") or "",
                    text=text, attachment=att if att and att.startswith("http") else None, results_period_end=end)  # fmt: skip
+
+
+def parse_results_period_end(text: str) -> date | None:
+    """'...financial results for the quarter ended June 30, 2026' -> 2026-06-30 (None when not a results filing)."""
+    m = re.search(
+        r"financial results for the (?:period|quarter|year) ended\s+([A-Za-z]+\.? \d{1,2},? \d{4})",
+        text or "",
+        re.I,
+    )
+    if m:
+        for fmt in ("%B %d, %Y", "%b %d, %Y", "%B %d %Y", "%b %d %Y"):
+            try:
+                return datetime.strptime(m.group(1).replace(".", ""), fmt).date()
+            except ValueError:
+                continue
+    return None
 
 
 RESULTS_PAGE = f"{NSE_BASE}/companies-listing/corporate-filings-financial-results"
@@ -156,6 +160,7 @@ class IntegratedFiling(BaseModel):
     xbrl: str | None
     ixbrl: str | None
     pdf: str | None
+    source: str = "nse_integrated_filing"  # or "bse_integrated_filing" (adapters/bse_equity.py)
 
     @classmethod
     def parse(cls, r: dict[str, Any]) -> IntegratedFiling:
@@ -173,7 +178,7 @@ class IntegratedFiling(BaseModel):
         return ResultFiling(symbol=self.symbol, period_from=_quarter_start(self.period_end) if self.period_end else None,
                             period_to=self.period_end, relating_to=None, consolidated=bool(self.consolidated),
                             audited=self.audited, filed_at=self.revised_at or self.filed_at, xbrl=self.xbrl,
-                            source="nse_integrated_filing", ixbrl=self.ixbrl,
+                            source=self.source, ixbrl=self.ixbrl,
                             revised=(self.sub_type or "").lower().startswith("revis"))  # fmt: skip
 
 

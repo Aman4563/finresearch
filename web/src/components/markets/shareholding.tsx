@@ -157,7 +157,7 @@ export function ShareholdingSplit({ data }: { data: StockShareholding }) {
         <p>
           % of shares as filed under SEBI LODR Reg 31 (SCRR basis
           <InfoTip label="What is the SCRR basis?">
-            Percentages are of total shares excluding shares that sit behind depository receipts (ADRs / GDRs), exactly as the company files them. That is why they match NSE&apos;s promoter / public figures.
+            Percentages are of total shares excluding shares that sit behind depository receipts (ADRs / GDRs), exactly as the company files them. That is why they match the exchange&apos;s promoter / public figures.
           </InfoTip>
           ).
           {latest.dr_pct_of_total_shares != null && latest.dr_pct_of_total_shares >= 0.01 && (
@@ -171,7 +171,7 @@ export function ShareholdingSplit({ data }: { data: StockShareholding }) {
           <a href={latest.xbrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-0.5 text-brand hover:underline">
             XBRL <ExternalLink className="size-3" />
           </a>
-          {latest.submitted && <>, filed {day(latest.submitted)}</>} on NSE; read {when(data.fetched_at)}.
+          {latest.submitted && <>, filed {day(latest.submitted)}</>} on {data.exchange ?? "NSE"}; read {when(data.fetched_at)}.
           {data.errors.length > 0 && <> {data.errors.length} older quarter{data.errors.length > 1 ? "s" : ""} could not be read.</>}
         </p>
       </div>

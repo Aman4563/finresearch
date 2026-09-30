@@ -1,0 +1,58 @@
+{
+ "CurrRate": {
+  "LTP": "1003.95",
+  "Chg": "-1.55",
+  "PcChg": "-0.15",
+  "D_Cpricelink": "",
+  "IssueChgVal": "",
+  "IssueChgPC": ""
+ },
+ "Cmpname": {
+  "FullN": "Infosys Ltd",
+  "ShortN": "infy",
+  "SeriesN": "Infosys Ltd",
+  "SEOUrlEQ": "/stock-share-price/infosys-ltd/infy/500209/",
+  "SEOUrlDR": "/stock-share-price/future-options/derivatives/500209/",
+  "IsNotPropernFIT": "0",
+  "Category": "Listed",
+  "EquityScrips": "500209"
+ },
+ "Header": {
+  "Noticecnt": "2",
+  "PrevClose": "1005.50",
+  "Open": "1002.00",
+  "High": "1023.85",
+  "Low": "993.15",
+  "LTP": "1003.95",
+  "DisplayText": "",
+  "Category": "Listed",
+  "PRE_OPEN_NO_BIDS": null,
+  "PRE_OPEN_NO_I_PRICE": null,
+  "PRE_OPEN_I_PRICE": null,
+  "PRE_OPEN_I_PRICE_QTY": null,
+  "PCAS_NO_BIDS": null,
+  "PCAS_INDICATIVE_PRICE": null,
+  "PCAS_INDICATIVE_QTY": null,
+  "PERODIC_CALL_AUCTION": null,
+  "GSMURL": "",
+  "GSMText": "",
+  "Invit": "0",
+  "Ason": "30 Sep 26 | 13:07",
+  "NAVRate": "",
+  "NAVdttm": "",
+  "ASMText": "",
+  "SMSText": "",
+  "IRPText": "",
+  "ASMURL": "",
+  "SMSURL": "https://www.bseindia.com/attention_investors.aspx",
+  "IRPURL": "https://www.bseindia.com/markets/MarketInfo/DispNewNoticesCirculars.aspx?page=20230210-55",
+  "IDB_DisplayText": "",
+  "IsALF": "0",
+  "EMSText": "",
+  "EMSURL": ""
+ },
+ "CompResp": {
+  "compRes": null,
+  "texturl": null
+ }
+}

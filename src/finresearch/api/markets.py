@@ -1,9 +1,14 @@
-"""Read-only market data for the dashboard's stock, fund and bond pages: NSE quotes, price history, shareholding,
-corporate actions, announcements and results; AMFI NAV history with returns, rolling returns, risk and SIP outcomes;
+"""Read-only market data for the dashboard's stock, fund and bond pages: NSE or BSE quotes, price history,
+shareholding, corporate actions, announcements and results; AMFI NAV history with returns, rolling returns, risk
+and SIP outcomes;
 listed-bond yields, durations, cash flows and the price-yield curve. All arithmetic is fincalc's.
 
 Every route is a GET that only reads public sources (and the stored profile's tax slab). Results are cached in
 memory per app so moving around the dashboard does not hammer NSE or AMFI.
+
+Stocks are NSE by default. A BSE-only stock is keyed "BSE:<scrip code>" (``/api/stocks/BSE:526433/overview``), and
+a dual-listed one can be read from BSE with ``?exchange=BSE`` (the NSE symbol is mapped to its BSE scrip code by
+ISIN). Without either, every stock route behaves exactly as before.
 
 Test seam: set ``app.state.markets`` to a `MarketSources` with fakes before the first request.
 """
@@ -43,18 +48,37 @@ class MarketSources:
 
     equity: Callable[[], Any] | None = None  # () -> async context manager with NseEquity's methods
     quote: Callable[[str], Awaitable[Any]] | None = None  # symbol -> nse.Quote
+    bse_equity: Callable[[], Any] | None = None  # () -> async context manager with BseEquity's methods
+    bse_quote: Callable[[str], Awaitable[Any]] | None = None  # scrip code -> bse_equity.BseQuote
+    listings: Callable[[], Awaitable[Any]] | None = None  # () -> bse_equity.Listings (NSE + BSE by ISIN)
     nav_history: Callable[[Any, date, date], Awaitable[list]] | None = None  # (SchemeNav, start, end) -> NAVs
     navs_on: Callable[[date], Awaitable[dict]] | None = None  # day -> {scheme code: SchemeNav} (all AMCs)
     today: Callable[[], date] = today_ist
 
-    def open_equity(self):
+    def open_equity(self, exchange: str = "NSE"):
+        if exchange == "BSE":
+            if self.bse_equity is not None:
+                return self.bse_equity()
+            from finresearch.adapters.bse_equity import BseEquity
+
+            return BseEquity()
         if self.equity is not None:
             return self.equity()
         from finresearch.adapters.nse_equity import NseEquity
 
         return NseEquity()
 
-    async def get_quote(self, symbol: str):
+    async def get_quote(self, symbol: str, exchange: str = "NSE"):
+        if exchange == "BSE":
+            if self.bse_quote is not None:
+                return await self.bse_quote(symbol)
+            from finresearch.adapters.bse_equity import BseEquity
+
+            async with BseEquity() as bse:
+                q = await bse.quote(symbol)
+            if q is None:
+                raise LookupError(f"BSE has no quote for scrip {symbol}")
+            return q
         if self.quote is not None:
             return await self.quote(symbol)
         from finresearch.adapters.nse import NseClient
@@ -128,18 +152,86 @@ def _symbol(symbol: str) -> str:
     return sym
 
 
+@dataclass
+class Instrument:
+    """A stock resolved to one exchange: `id` is the NSE symbol or the BSE scrip code; `key` is the page / API key."""
+
+    exchange: str  # "NSE" | "BSE"
+    id: str
+    key: str
+    listing: Any = None  # bse_equity.Listing when the listings were consulted
+
+    @property
+    def cache_id(self) -> tuple:
+        """Cache-key part: the bare symbol for NSE (as before this existed), exchange-tagged for BSE."""
+        return (self.id,) if self.exchange == "NSE" else ("BSE", self.id)
+
+
+async def resolve_stock(
+    symbol: str, exchange: str | None, listings: Callable[[], Awaitable[Any]] | None
+) -> Instrument:
+    """A route's `{symbol}` and `?exchange=` -> the exchange and id to read. Plain NSE symbols with no exchange need
+    no lookup; "BSE:<code>" and `exchange=BSE` for an NSE symbol consult the merged NSE/BSE listings (by ISIN)."""
+    from finresearch.adapters.bse_equity import bse_key, scrip_code_of
+
+    ex = (exchange or "").strip().upper() or None
+    if ex not in (None, "NSE", "BSE"):
+        raise HTTPException(422, f"exchange must be NSE or BSE, not {exchange!r}")
+    code = scrip_code_of(symbol)
+    if code is None and ex != "BSE":
+        return Instrument("NSE", _symbol(symbol), _symbol(symbol))
+    if code is not None and ex != "NSE":
+        return Instrument("BSE", code, bse_key(code))
+    if listings is None:
+        raise HTTPException(503, "the NSE/BSE listing map is not available")
+    try:
+        index = await listings()
+    except Exception as e:
+        raise HTTPException(502, f"could not load the NSE/BSE listings: {e}") from e
+    if code is not None:  # BSE:<code> read on NSE
+        row = index.by_code(code)
+        if row is None or not row.nse_symbol:
+            raise HTTPException(404, f"BSE scrip {code} is not listed on NSE's main board")
+        return Instrument("NSE", row.nse_symbol, row.nse_symbol, row)
+    sym = _symbol(symbol)
+    row = index.by_nse(sym)
+    if row is None or not row.bse_code:
+        raise HTTPException(404, f"{sym} is not listed on BSE (no BSE scrip with its ISIN)")
+    return Instrument("BSE", row.bse_code, bse_key(row.bse_code), row)
+
+
+def _listing_json(row: Any) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    return {"isin": row.isin, "exchange": row.exchange, "exchanges": row.exchanges, "nse_symbol": row.nse_symbol,
+            "bse_code": row.bse_code, "bse_symbol": row.bse_symbol, "bse_group": row.bse_group,
+            "bse_key": f"BSE:{row.bse_code}" if row.bse_code else None, "name": row.name}  # fmt: skip
+
+
+def stock_source_url(inst: Instrument, quote: Any = None) -> str:
+    """The exchange's own quote page for the stock."""
+    if inst.exchange == "NSE":
+        return f"https://www.nseindia.com/get-quotes/equity?symbol={inst.id}"
+    page = getattr(quote, "page_url", None) or getattr(inst.listing, "bse_url", None)
+    return page or "https://www.bseindia.com/"
+
+
 def _quarter_end(d: date) -> bool:
     """Quarterly patterns are dated the last day of Mar/Jun/Sep/Dec; other dates are event filings (buybacks...)."""
     return d.month in (3, 6, 9, 12) and (d + timedelta(days=1)).day == 1
 
 
 def _official(url: str | None) -> bool:
+    """An NSE archive file, or a BSE filing file (XBRLFILES / xml-data on www.bseindia.com)."""
     from urllib.parse import urlsplit
+
+    from finresearch.adapters.bse_equity import official_file
 
     if not url:
         return False
     p = urlsplit(url)
-    return p.scheme == "https" and (p.hostname or "") in NSE_ARCHIVE_HOSTS and p.port in (None, 443)
+    nse = p.scheme == "https" and (p.hostname or "") in NSE_ARCHIVE_HOSTS and p.port in (None, 443)
+    return nse or official_file(url)
 
 
 async def _retry(make: Callable[[], Awaitable[Any]], wait_s: float = 1.5) -> Any:
@@ -203,19 +295,39 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
     def src() -> MarketSources:
         s = getattr(app.state, "markets", None)
         if s is None:
-            s = app.state.markets = MarketSources()
+            s = app.state.markets = MarketSources(listings=getattr(app.state, "listings", None))
         return s
+
+    async def _inst(symbol: str, exchange: str | None) -> Instrument:
+        return await resolve_stock(symbol, exchange, src().listings)
+
+    async def _listing(inst: Instrument) -> Any:
+        """The stock's NSE/BSE listing row (for the page's exchange switch); None when the map is unavailable."""
+        if inst.listing is not None or src().listings is None:
+            return inst.listing
+        try:
+            index = await src().listings()
+        except Exception:
+            return None
+        return index.by_nse(inst.id) if inst.exchange == "NSE" else index.by_code(inst.id)
+
+    async def _source(inst: Instrument) -> str:
+        if inst.exchange == "BSE" and inst.listing is None:
+            return stock_source_url(Instrument(inst.exchange, inst.id, inst.key, await _listing(inst)))
+        return stock_source_url(inst)
 
     # ------------------------------------------------------------------ stocks
     @app.get("/api/stocks/{symbol}/overview")
-    async def stock_overview(symbol: str) -> dict[str, Any]:
+    async def stock_overview(symbol: str, exchange: str | None = None) -> dict[str, Any]:
         """Quote, 52-week range, market cap, shareholding trend, corporate actions and announcements. Each part is
-        fetched separately; a part NSE refuses is listed under `errors` and the rest still comes back."""
-        sym = _symbol(symbol)
-        return await cache.get(("overview", sym), 600, lambda: _overview(sym))
+        fetched separately; a part the exchange refuses is listed under `errors` and the rest still comes back.
+        `listing` says which exchanges the stock trades on (NSE, BSE or both, matched by ISIN)."""
+        inst = await _inst(symbol, exchange)
+        return await cache.get(("overview", *inst.cache_id), 600, lambda: _overview(inst))
 
-    async def _overview(sym: str) -> dict[str, Any]:
+    async def _overview(inst: Instrument) -> dict[str, Any]:
         s = src()
+        sym = inst.id
         today = s.today()
         errors: list[str] = []
 
@@ -226,8 +338,10 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
                 errors.append(f"{name}: {type(e).__name__}: {e}"[:240])
                 return default
 
-        q = await part("quote", lambda: s.get_quote(sym), None)
-        async with s.open_equity() as eq:
+        q = await part(
+            "quote", lambda: s.get_quote(sym, "BSE") if inst.exchange == "BSE" else s.get_quote(sym), None
+        )
+        async with s.open_equity(inst.exchange) as eq:
             holding = await part("shareholding", lambda: eq.shareholding(sym), [])
             actions = await part("corporate actions", lambda: eq.corporate_actions(sym), [])
             anns = await part("announcements", lambda: eq.announcements(sym), [])
@@ -238,8 +352,11 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
         last_px = Decimal(quote["last_price"]) if quote and quote["last_price"] else None
         acts = sorted(actions, key=lambda a: a.ex_date or date.min, reverse=True)
         anns = sorted(anns, key=lambda a: a.at or datetime.min.replace(tzinfo=UTC), reverse=True)
-        return {"symbol": sym, "fetched_at": datetime.now(UTC).isoformat(),
-                "source": f"https://www.nseindia.com/get-quotes/equity?symbol={sym}", "quote": quote,
+        listing = await _listing(inst)
+        return {"symbol": sym if inst.exchange == "NSE" else (q.symbol if q is not None else sym),
+                "exchange": inst.exchange, "key": inst.key, "scrip_code": sym if inst.exchange == "BSE" else None,
+                "listing": _listing_json(listing), "fetched_at": datetime.now(UTC).isoformat(),
+                "source": stock_source_url(inst, q), "quote": quote,
                 "dividends": {"ttm_per_share": _s(ttm_dps) if ttm_dps else None,
                               "ttm_yield": _f(ttm_dps / last_px) if ttm_dps and last_px else None},
                 "shareholding": [{"as_of": h.as_of.isoformat() if h.as_of else None, "promoter_pct": _f(h.promoter_pct, 4),
@@ -256,57 +373,80 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
                 "errors": errors}  # fmt: skip
 
     @app.get("/api/stocks/{symbol}/history")
-    async def stock_history(symbol: str, days: int = Query(365, ge=7, le=1830)) -> dict[str, Any]:
+    async def stock_history(symbol: str, days: int = Query(365, ge=7, le=1830),
+                            exchange: str | None = None) -> dict[str, Any]:  # fmt: skip
         """Daily closes (and OHLC, volume) for the last `days` calendar days with return, volatility and max
-        drawdown. NSE answers ~70 trading days per request, so longer ranges take several requests (cached)."""
-        sym = _symbol(symbol)
-        return await cache.get(("history", sym, days), 1800, lambda: _history(sym, days))
+        drawdown. NSE answers ~70 trading days per request, so longer ranges take several requests (cached); BSE
+        answers any range in one CSV."""
+        inst = await _inst(symbol, exchange)
+        return await cache.get(("history", *inst.cache_id, days), 1800, lambda: _history(inst, days))
 
-    async def _history(sym: str, days: int) -> dict[str, Any]:
+    async def _history(inst: Instrument, days: int) -> dict[str, Any]:
         s = src()
+        sym = inst.id
         end = s.today()
         start = end - timedelta(days=days)
         from finresearch.adapters.nse_equity import walk_history
 
-        async with s.open_equity() as eq:
-            got, partial = await walk_history(lambda lo, hi: _retry(lambda: eq.history(sym, lo, hi)), start, end,
-                                              max_requests=HISTORY_MAX_REQUESTS, window_days=HISTORY_WINDOW_DAYS)  # fmt: skip
-        bars = {b.day: b for b in got}
+        async with s.open_equity(inst.exchange) as eq:
+            if getattr(eq, "answers_full_range", False):  # BSE returns the whole range in one CSV
+                got, partial = await _retry(lambda: eq.history(sym, start, end)), False
+            else:
+                got, partial = await walk_history(lambda lo, hi: _retry(lambda: eq.history(sym, lo, hi)), start, end,
+                                                  max_requests=HISTORY_MAX_REQUESTS, window_days=HISTORY_WINDOW_DAYS)  # fmt: skip
+        bars = {b.day: b for b in got if start <= b.day <= end}
         rows = [bars[d] for d in sorted(bars) if bars[d].close]
         points = [(b.day, b.close) for b in rows]
         last = rows[-1] if rows else None
-        return {"symbol": sym, "days": days, "source": f"https://www.nseindia.com/get-quotes/equity?symbol={sym}",
+        return {"symbol": sym, "exchange": inst.exchange, "days": days, "source": await _source(inst),
                 "bars": [{"date": b.day.isoformat(), "close": _f(b.close, 4), "open": _f(b.open, 4), "high": _f(b.high, 4),
                           "low": _f(b.low, 4), "volume": _f(b.volume, 0)} for b in rows],
                 "partial": partial, "week52_high": _s(last.week52_high) if last else None, "week52_low": _s(last.week52_low) if last else None,
                 "stats": _series_stats(points)}  # fmt: skip
 
     @app.get("/api/stocks/{symbol}/results")
-    async def stock_results(symbol: str, quarters: int = Query(8, ge=1, le=12)) -> dict[str, Any]:
+    async def stock_results(symbol: str, quarters: int = Query(8, ge=1, le=12),
+                            exchange: str | None = None) -> dict[str, Any]:  # fmt: skip
         """Quarterly (and, where a March quarter is in range, annual) results read from each filing's XBRL:
         revenue, other income, expenses, PBT, tax, net profit and EPS, consolidated when the company files both.
         Quarters since Mar-2025 come from NSE's Integrated Filing (Financials) index, older ones from NSE's
-        Financial Results index. Values are in rupees."""
-        sym = _symbol(symbol)
-        return await cache.get(("results", sym, quarters), 12 * 3600, lambda: _results(sym, quarters))
+        Financial Results index. On BSE only the integrated-filing quarters (from Mar-2025) are indexed. Values are
+        in rupees."""
+        inst = await _inst(symbol, exchange)
+        return await cache.get(
+            ("results", *inst.cache_id, quarters), 12 * 3600, lambda: _results(inst, quarters)
+        )
 
-    async def _results(sym: str, quarters: int) -> dict[str, Any]:
-        async with src().open_equity() as eq:
-            return await results_from_nse(eq, sym, quarters)
+    async def _results(inst: Instrument, quarters: int) -> dict[str, Any]:
+        async with src().open_equity(inst.exchange) as eq:
+            out = await results_from_nse(eq, inst.id, quarters)
+        out["exchange"] = inst.exchange
+        if inst.exchange == "BSE":
+            page = await _source(inst)
+            out["sources"] = [{"name": "BSE Integrated Filing (Financials)", "url": page,
+                               "note": "quarters from Mar-2025; each quarter's XBRL is on www.bseindia.com/XBRLFILES"}]  # fmt: skip
+            if not out["quarters"]:
+                out["source"] = page
+        return out
 
     @app.get("/api/stocks/{symbol}/shareholding")
-    async def stock_shareholding(symbol: str, quarters: int = Query(8, ge=1, le=12)) -> dict[str, Any]:
+    async def stock_shareholding(symbol: str, quarters: int = Query(8, ge=1, le=12),
+                                 exchange: str | None = None) -> dict[str, Any]:  # fmt: skip
         """Shareholder categories (promoter, FPI, mutual funds, insurers, banks, other DIIs, individuals, bodies
         corporate, others) per quarter, read from each quarter's filed shareholding-pattern XBRL. Percentages are the
         filed ones: of total shares excluding shares underlying depository receipts (SCRR basis)."""
-        sym = _symbol(symbol)
+        inst = await _inst(symbol, exchange)
         return await cache.get(
-            ("shareholding", sym, quarters), 12 * 3600, lambda: _shareholding(sym, quarters)
+            ("shareholding", *inst.cache_id, quarters), 12 * 3600, lambda: _shareholding(inst, quarters)
         )
 
-    async def _shareholding(sym: str, quarters: int) -> dict[str, Any]:
-        async with src().open_equity() as eq:
-            return await shareholding_from_nse(eq, sym, quarters)
+    async def _shareholding(inst: Instrument, quarters: int) -> dict[str, Any]:
+        async with src().open_equity(inst.exchange) as eq:
+            out = await shareholding_from_nse(eq, inst.id, quarters)
+        out["exchange"] = inst.exchange
+        if inst.exchange == "BSE":
+            out["source"] = await _source(inst)
+        return out
 
     # ------------------------------------------------------------------ mutual funds
     async def _scheme(code: str):
@@ -585,7 +725,7 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
 
 # what stands in for revenue, by taxonomy: Ind AS companies and NBFCs, banks, life insurers, general insurers
 REVENUE_BASES = ("revenue_from_operations", "interest_earned", "net_premium_income", "premium_earned")
-RESULT_SOURCE_RANK = {"nse_integrated_filing": 0, "nse_financial_results": 1}
+RESULT_SOURCE_RANK = {"nse_integrated_filing": 0, "bse_integrated_filing": 0, "nse_financial_results": 1}
 
 
 async def _xbrl(eq: Any, url: str) -> bytes:
@@ -635,8 +775,23 @@ async def results_from_nse(
             if x.quarter is None or not x.quarter.facts:
                 errors.append(f"{end} {f.xbrl}: no current-quarter facts")
                 continue
-            out.append(_result_row(f, x.quarter, end))
             y = x.year_to_date
+            if f.source == "bse_integrated_filing":  # BSE-read filings: arithmetic checks first
+                problem = _bse_filing_problem(x.quarter, y)
+                if problem == "half_year":
+                    # a half-yearly filer (e.g. its March filing): the "current period" is six months long
+                    q = x.quarter
+                    full = bool(y and y.start and y.end and (y.end - y.start).days >= 360)
+                    errors.append(f"{end}: the filing reports {q.start} to {q.end}, not a quarter"
+                                  + ("; only its full-year figures are used" if full else "; skipped"))  # fmt: skip
+                    if full and y.end not in annual:
+                        annual[y.end] = _result_row(f, y, y.end, annual=True)
+                    break
+                if problem:
+                    errors.append(f"{end} {f.xbrl}: {problem}; skipped"[:240])
+                    continue
+                _fill_owner_profit(x.quarter, errors, end)
+            out.append(_result_row(f, x.quarter, end))
             if y and y.start and y.end and (y.end - y.start).days >= 360 and y.end not in annual:
                 annual[y.end] = _result_row(f, y, y.end, annual=True)
                 bs = x.balance_sheet
@@ -726,6 +881,33 @@ def _rank_result_filings(filings: list[Any]) -> dict[date, list[Any]]:
     return by_end
 
 
+def _bse_filing_problem(q: Any, y: Any) -> str | None:
+    """Arithmetic checks on a BSE integrated filing's periods before its figures are shown (filed data, company
+    typos included, is what BSE serves): "half_year" when the current period is six months long, or a reason when
+    the year-to-date revenue is below the quarter it contains (the company swapped the two periods)."""
+    if q.start and q.end and (q.end - q.start).days > 100:
+        return "half_year"
+    rq, ry = q.facts.get("revenue_from_operations"), (y.facts.get("revenue_from_operations") if y else None)
+    if y is not None and rq is not None and ry is not None and y.start and q.start and y.end == q.end \
+            and y.start < q.start and ry < rq:  # fmt: skip
+        return (
+            f"the year-to-date revenue ({ry}) is below the quarter's ({rq}) although it contains the quarter: "
+            "the filing's periods look swapped"
+        )
+    return None
+
+
+def _fill_owner_profit(q: Any, errors: list[str], end: date) -> None:
+    """A filing with profit attributable to owners of exactly 0 but a non-zero profit for the period left the owners'
+    line blank (a listed parent never has 100% minority interest): use the period's profit and say so."""
+    owners, total = q.facts.get("profit_attributable_to_owners"), q.facts.get("profit_for_period")
+    if owners == 0 and total:
+        q.facts["profit_attributable_to_owners"] = total
+        errors.append(
+            f"{end}: profit attributable to owners was filed as 0; the period's profit ({total}) is shown"
+        )
+
+
 def _result_row(f: Any, p: Any, end: date, *, annual: bool = False) -> dict[str, Any]:
     """One period's figures from a parsed XBRL period (fincalc does the margins)."""
     from finresearch.adapters.nse_equity import INTEGRATED_PAGE, RESULTS_PAGE
@@ -750,7 +932,10 @@ def _result_row(f: Any, p: Any, end: date, *, annual: bool = False) -> dict[str,
             "period_start": start.isoformat() if start else None, "period_end": period_end.isoformat(),
             "consolidated": f.consolidated, "audited": f.audited,
             "filed_at": f.filed_at.isoformat() if f.filed_at else None, "revised": getattr(f, "revised", False),
-            "source": source, "source_url": INTEGRATED_PAGE if source == "nse_integrated_filing" else RESULTS_PAGE,
+            "source": source,
+            "source_url": (INTEGRATED_PAGE if source == "nse_integrated_filing"
+                           else (getattr(f, "ixbrl", None) or f.xbrl) if source == "bse_integrated_filing"
+                           else RESULTS_PAGE),
             "bank": basis == "interest_earned", "revenue_basis": basis, "revenue": _f(revenue, 2),
             "other_income": None if insurer else _f(facts.get("other_income"), 2),
             "total_income": None if insurer else _f(facts.get("total_income"), 2), "total_expenses": _f(expenses, 2),
@@ -804,16 +989,20 @@ def _verified_frequency(isin: str) -> tuple[int, dict[str, Any]] | None:
 
 
 def quote_json(q, sym: str) -> dict[str, Any]:
-    """An NSE quote as the stock pages show it: last price, day change, 52-week position and market cap."""
+    """An NSE or BSE quote as the stock pages show it: last price, day change, 52-week position and market cap."""
     from finresearch.fincalc.valuation import market_cap
 
     last = q.last_price or q.close_price
     change = (last - q.previous_close) if last is not None and q.previous_close else None
-    mcap = market_cap(q.issued_shares, last) if q.issued_shares and last else None
+    mcap = getattr(q, "market_cap", None)  # BSE publishes the market cap itself (no issued-share count)
+    if mcap is None:
+        mcap = market_cap(q.issued_shares, last) if q.issued_shares and last else None
     pos = None
     if last and q.week52_high and q.week52_low and q.week52_high > q.week52_low:
         pos = (last - q.week52_low) / (q.week52_high - q.week52_low)
-    return {"symbol": q.symbol or sym, "company": q.company, "industry": q.industry, "status": q.status,
+    return {"symbol": q.symbol or sym, "exchange": getattr(q, "exchange", "NSE"),
+            "scrip_code": getattr(q, "scrip_code", None), "isin": getattr(q, "isin", None),
+            "company": q.company, "industry": q.industry, "status": q.status,
             "listing_date": q.listing_date.isoformat() if q.listing_date else None,
             "as_of": q.as_of.isoformat() if q.as_of else None, "last_price": _s(last), "open": _s(q.open),
             "previous_close": _s(q.previous_close), "change": _s(change),
