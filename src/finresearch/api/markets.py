@@ -266,34 +266,12 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
         s = src()
         end = s.today()
         start = end - timedelta(days=days)
-        bars: dict[date, Any] = {}
+        from finresearch.adapters.nse_equity import walk_history
+
         async with s.open_equity() as eq:
-            # NSE answers a range with only its latest ~70 trading days, so walk backwards from the end until a
-            # request reaches the start (or returns nothing new)
-            hi, partial = end, False
-            for _ in range(HISTORY_MAX_REQUESTS):
-                if hi < start:
-                    break
-                lo = max(start, hi - timedelta(days=HISTORY_WINDOW_DAYS))
-                try:
-                    got = await _retry(lambda lo=lo, hi=hi: eq.history(sym, lo, hi))
-                except Exception:
-                    if not bars:
-                        raise
-                    partial = True  # keep what came back; the page says the history is shorter
-                    break
-                got = [x for x in got if lo <= x.day <= hi]
-                for x in got:
-                    bars[x.day] = x
-                if not got and lo == start:
-                    break
-                earliest = min((x.day for x in got), default=lo)
-                # a window answered in full (or empty: e.g. before listing) moves to the previous window
-                hi = (
-                    lo - timedelta(days=1)
-                    if earliest <= lo + timedelta(days=4)
-                    else earliest - timedelta(days=1)
-                )
+            got, partial = await walk_history(lambda lo, hi: _retry(lambda: eq.history(sym, lo, hi)), start, end,
+                                              max_requests=HISTORY_MAX_REQUESTS, window_days=HISTORY_WINDOW_DAYS)  # fmt: skip
+        bars = {b.day: b for b in got}
         rows = [bars[d] for d in sorted(bars) if bars[d].close]
         points = [(b.day, b.close) for b in rows]
         last = rows[-1] if rows else None
@@ -313,55 +291,8 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
         return await cache.get(("results", sym, quarters), 12 * 3600, lambda: _results(sym, quarters))
 
     async def _results(sym: str, quarters: int) -> dict[str, Any]:
-        from finresearch.adapters.nse_equity import INTEGRATED_PAGE, RESULTS_PAGE
-        from finresearch.adapters.xbrl import parse_results_xbrl
-
-        s = src()
-        errors: list[str] = []
-        filings: list[Any] = []
-        out: list[dict[str, Any]] = []
-        annual: dict[date, dict[str, Any]] = {}
-        async with s.open_equity() as eq:
-            if hasattr(eq, "integrated_filings"):
-                try:
-                    filings += [f.as_result_filing() for f in await eq.integrated_filings(sym)]
-                except Exception as e:
-                    errors.append(f"integrated filing index: {type(e).__name__}: {e}"[:200])
-            if len({f.period_to for f in filings if f.period_to and _official(f.xbrl)}) < quarters:
-                try:  # the older index holds the quarters before integrated filing began (up to Dec-2024)
-                    filings += await eq.results(sym, "Quarterly")
-                except Exception as e:
-                    errors.append(f"financial results index: {type(e).__name__}: {e}"[:200])
-            ranked = _rank_result_filings(filings)
-            for end in sorted(ranked, reverse=True)[:quarters]:
-                for f in ranked[end]:  # consolidated first; the next candidate stands in when a file fails
-                    try:
-                        x = parse_results_xbrl(await eq.fetch_bytes(f.xbrl))
-                    except Exception as e:
-                        errors.append(f"{end} {f.xbrl}: {type(e).__name__}: {e}"[:200])
-                        continue
-                    if x.quarter is None or not x.quarter.facts:
-                        errors.append(f"{end} {f.xbrl}: no current-quarter facts")
-                        continue
-                    out.append(_result_row(f, x.quarter, end))
-                    y = x.year_to_date
-                    if y and y.start and y.end and (y.end - y.start).days >= 360 and y.end not in annual:
-                        annual[y.end] = _result_row(f, y, y.end, annual=True)
-                    break
-        out.sort(key=lambda r: r["period_end"])
-        _add_growth(out, annual=False)
-        years = sorted(annual.values(), key=lambda r: r["period_end"])
-        _add_growth(years, annual=True)
-        latest = out[-1] if out else None
-        sources = [{"name": "NSE Integrated Filing (Financials)", "url": INTEGRATED_PAGE,
-                    "note": "quarters from Mar-2025, when SEBI moved results into integrated filing"},
-                   {"name": "NSE Financial Results", "url": RESULTS_PAGE, "note": "quarters up to Dec-2024"}]  # fmt: skip
-        return {"symbol": sym, "unit": "INR (EPS: INR per share)", "quarters": out, "annual": years, "errors": errors,
-                "as_of": datetime.now(UTC).isoformat(), "sources": sources,
-                "latest_quarter": None if latest is None else {
-                    k: latest[k] for k in ("label", "period_end", "filed_at", "source", "source_url", "consolidated",
-                                           "xbrl", "ixbrl")},
-                "source": latest["source_url"] if latest else INTEGRATED_PAGE}  # fmt: skip
+        async with src().open_equity() as eq:
+            return await results_from_nse(eq, sym, quarters)
 
     @app.get("/api/stocks/{symbol}/shareholding")
     async def stock_shareholding(symbol: str, quarters: int = Query(8, ge=1, le=12)) -> dict[str, Any]:
@@ -374,55 +305,8 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
         )
 
     async def _shareholding(sym: str, quarters: int) -> dict[str, Any]:
-        from xml.etree.ElementTree import ParseError
-
-        from finresearch.adapters.shp_xbrl import CATEGORIES, GROUPS, parse_shareholding_xbrl
-
-        s = src()
-        errors: list[str] = []
-        out: list[dict[str, Any]] = []
-        async with s.open_equity() as eq:
-            rows = await eq.shareholding(sym)
-            best: dict[
-                date, Any
-            ] = {}  # one filing per quarter end: the latest submission (a revision replaces it)
-            for h in rows:
-                if not h.as_of or not _quarter_end(h.as_of) or not _official(h.xbrl):
-                    continue
-                cur = best.get(h.as_of)
-                if cur is None or (h.submitted or date.min) > (cur.submitted or date.min):
-                    best[h.as_of] = h
-            for end in sorted(best, reverse=True)[:quarters]:
-                h = best[end]
-                try:
-                    try:
-                        p = parse_shareholding_xbrl(await eq.fetch_bytes(h.xbrl, cache_ttl=SHP_XBRL_TTL_S))
-                    except ParseError:  # a cached block page: fetch it again
-                        p = parse_shareholding_xbrl(await eq.fetch_bytes(h.xbrl, cache_ttl=0))
-                except Exception as e:
-                    errors.append(f"{end}: {type(e).__name__}: {e}"[:200])
-                    continue
-                if not p.split:
-                    errors.append(f"{end}: {'; '.join(p.warnings) or 'no category rows'}")
-                    continue
-                if p.as_of and p.as_of != end:
-                    errors.append(f"{end}: the filing is dated {p.as_of}; skipped")
-                    continue
-                out.append({"as_of": end.isoformat(), "submitted": h.submitted.isoformat() if h.submitted else None,
-                            "xbrl": h.xbrl, "taxonomy": p.taxonomy,
-                            "categories": {k: _f(v, 4) for k, v in p.split.items()},
-                            "groups": {k: _f(v, 4) for k, v in p.groups.items()},
-                            "shareholders": {k: int(p.holders[k]) for k in ("total", "public", "retail", "hni")
-                                             if k in p.holders},
-                            "dr_pct_of_total_shares": _f(p.dr_pct_of_total, 4), "warnings": p.warnings})  # fmt: skip
-        out.sort(key=lambda r: r["as_of"])
-        return {"symbol": sym, "fetched_at": datetime.now(UTC).isoformat(),
-                "basis": "% of total shares excluding shares underlying depository receipts "
-                                         "(SCRR 1957 basis, as filed)",
-                "category_labels": [{"key": k, "label": lbl, "group": g} for k, lbl, g in CATEGORIES],
-                "group_labels": [{"key": k, "label": lbl} for k, lbl in GROUPS],
-                "quarters": out, "errors": errors,
-                "source": "https://www.nseindia.com/companies-listing/corporate-filings-shareholding-pattern"}  # fmt: skip
+        async with src().open_equity() as eq:
+            return await shareholding_from_nse(eq, sym, quarters)
 
     # ------------------------------------------------------------------ mutual funds
     async def _scheme(code: str):
@@ -702,6 +586,130 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
 # what stands in for revenue, by taxonomy: Ind AS companies and NBFCs, banks, life insurers, general insurers
 REVENUE_BASES = ("revenue_from_operations", "interest_earned", "net_premium_income", "premium_earned")
 RESULT_SOURCE_RANK = {"nse_integrated_filing": 0, "nse_financial_results": 1}
+
+
+async def _xbrl(eq: Any, url: str) -> bytes:
+    """A filing's XBRL (its URL carries the filing id and never changes, so it is cached on disk); a cached block
+    page that does not parse is fetched again."""
+    import xml.etree.ElementTree as ET
+
+    data = await eq.fetch_bytes(url, cache_ttl=SHP_XBRL_TTL_S)
+    try:
+        ET.fromstring(data)
+    except ET.ParseError:
+        data = await eq.fetch_bytes(url, cache_ttl=0)
+    return data
+
+
+async def results_from_nse(
+    eq: Any, sym: str, quarters: int, *, annual_facts: dict[date, dict[str, Any]] | None = None
+) -> dict[str, Any]:
+    """Quarterly and annual results from each filing's XBRL (see the /api/stocks/{symbol}/results route). When
+    `annual_facts` is given it also receives, per fiscal year end, the full-year P&L and cash-flow facts merged with
+    the year-end balance sheet (Decimal, rupees) and the filing's basis: the inputs of fincalc.forensic."""
+    from finresearch.adapters.nse_equity import INTEGRATED_PAGE, RESULTS_PAGE
+    from finresearch.adapters.xbrl import parse_results_xbrl
+
+    errors: list[str] = []
+    filings: list[Any] = []
+    out: list[dict[str, Any]] = []
+    annual: dict[date, dict[str, Any]] = {}
+    if hasattr(eq, "integrated_filings"):
+        try:
+            filings += [f.as_result_filing() for f in await eq.integrated_filings(sym)]
+        except Exception as e:
+            errors.append(f"integrated filing index: {type(e).__name__}: {e}"[:200])
+    if len({f.period_to for f in filings if f.period_to and _official(f.xbrl)}) < quarters:
+        try:  # the older index holds the quarters before integrated filing began (up to Dec-2024)
+            filings += await eq.results(sym, "Quarterly")
+        except Exception as e:
+            errors.append(f"financial results index: {type(e).__name__}: {e}"[:200])
+    ranked = _rank_result_filings(filings)
+    for end in sorted(ranked, reverse=True)[:quarters]:
+        for f in ranked[end]:  # consolidated first; the next candidate stands in when a file fails
+            try:
+                x = parse_results_xbrl(await _xbrl(eq, f.xbrl))
+            except Exception as e:
+                errors.append(f"{end} {f.xbrl}: {type(e).__name__}: {e}"[:200])
+                continue
+            if x.quarter is None or not x.quarter.facts:
+                errors.append(f"{end} {f.xbrl}: no current-quarter facts")
+                continue
+            out.append(_result_row(f, x.quarter, end))
+            y = x.year_to_date
+            if y and y.start and y.end and (y.end - y.start).days >= 360 and y.end not in annual:
+                annual[y.end] = _result_row(f, y, y.end, annual=True)
+                bs = x.balance_sheet
+                if annual_facts is not None and y.end not in annual_facts:
+                    annual_facts[y.end] = {"facts": {**y.facts, **(bs.facts if bs and bs.end == y.end else {})},
+                                           "consolidated": f.consolidated, "xbrl": f.xbrl,
+                                           "company_type": x.company_type,
+                                           "revenue_basis": next((k for k in REVENUE_BASES if k in y.facts), None),
+                                           "filed_at": f.filed_at}  # fmt: skip
+            break
+    out.sort(key=lambda r: r["period_end"])
+    _add_growth(out, annual=False)
+    years = sorted(annual.values(), key=lambda r: r["period_end"])
+    _add_growth(years, annual=True)
+    latest = out[-1] if out else None
+    sources = [{"name": "NSE Integrated Filing (Financials)", "url": INTEGRATED_PAGE,
+                "note": "quarters from Mar-2025, when SEBI moved results into integrated filing"},
+               {"name": "NSE Financial Results", "url": RESULTS_PAGE, "note": "quarters up to Dec-2024"}]  # fmt: skip
+    return {"symbol": sym, "unit": "INR (EPS: INR per share)", "quarters": out, "annual": years, "errors": errors,
+            "as_of": datetime.now(UTC).isoformat(), "sources": sources,
+            "latest_quarter": None if latest is None else {
+                k: latest[k] for k in ("label", "period_end", "filed_at", "source", "source_url", "consolidated",
+                                       "xbrl", "ixbrl")},
+            "source": latest["source_url"] if latest else INTEGRATED_PAGE}  # fmt: skip
+
+
+async def shareholding_from_nse(eq: Any, sym: str, quarters: int) -> dict[str, Any]:
+    """Shareholder categories per quarter from each filed pattern's XBRL (the /shareholding route's payload)."""
+    from xml.etree.ElementTree import ParseError
+
+    from finresearch.adapters.shp_xbrl import CATEGORIES, GROUPS, parse_shareholding_xbrl
+
+    errors: list[str] = []
+    out: list[dict[str, Any]] = []
+    rows = await eq.shareholding(sym)
+    best: dict[date, Any] = {}  # one filing per quarter end: the latest submission (a revision replaces it)
+    for h in rows:
+        if not h.as_of or not _quarter_end(h.as_of) or not _official(h.xbrl):
+            continue
+        cur = best.get(h.as_of)
+        if cur is None or (h.submitted or date.min) > (cur.submitted or date.min):
+            best[h.as_of] = h
+    for end in sorted(best, reverse=True)[:quarters]:
+        h = best[end]
+        try:
+            try:
+                p = parse_shareholding_xbrl(await eq.fetch_bytes(h.xbrl, cache_ttl=SHP_XBRL_TTL_S))
+            except ParseError:  # a cached block page: fetch it again
+                p = parse_shareholding_xbrl(await eq.fetch_bytes(h.xbrl, cache_ttl=0))
+        except Exception as e:
+            errors.append(f"{end}: {type(e).__name__}: {e}"[:200])
+            continue
+        if not p.split:
+            errors.append(f"{end}: {'; '.join(p.warnings) or 'no category rows'}")
+            continue
+        if p.as_of and p.as_of != end:
+            errors.append(f"{end}: the filing is dated {p.as_of}; skipped")
+            continue
+        out.append({"as_of": end.isoformat(), "submitted": h.submitted.isoformat() if h.submitted else None,
+                    "xbrl": h.xbrl, "taxonomy": p.taxonomy,
+                    "categories": {k: _f(v, 4) for k, v in p.split.items()},
+                    "groups": {k: _f(v, 4) for k, v in p.groups.items()},
+                    "shareholders": {k: int(p.holders[k]) for k in ("total", "public", "retail", "hni")
+                                     if k in p.holders},
+                    "dr_pct_of_total_shares": _f(p.dr_pct_of_total, 4), "warnings": p.warnings})  # fmt: skip
+    out.sort(key=lambda r: r["as_of"])
+    return {"symbol": sym, "fetched_at": datetime.now(UTC).isoformat(),
+            "basis": "% of total shares excluding shares underlying depository receipts "
+                                     "(SCRR 1957 basis, as filed)",
+            "category_labels": [{"key": k, "label": lbl, "group": g} for k, lbl, g in CATEGORIES],
+            "group_labels": [{"key": k, "label": lbl} for k, lbl in GROUPS],
+            "quarters": out, "errors": errors,
+            "source": "https://www.nseindia.com/companies-listing/corporate-filings-shareholding-pattern"}  # fmt: skip
 
 
 def _rank_result_filings(filings: list[Any]) -> dict[date, list[Any]]:

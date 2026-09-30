@@ -64,6 +64,8 @@ class Profile(BaseModel):
     category: Literal["retail", "shni", "bhni"] = "retail"
     holdings: list[Holding] = Field(default_factory=list)
     rules: list[Rule] = Field(default_factory=list)
+    # the most of the portfolio one stock may take (percent); None = by risk appetite (low 5, medium 8, high 10)
+    max_position_pct: Decimal | None = Field(None, gt=0, le=100)
     notes: str = ""
     # F&O analysis (the /fno page and the F&O signal); the signal never proposes a position whose maximum loss is
     # above fno_max_loss_pct of fno_capital_inr, and by default only defined-risk strategies

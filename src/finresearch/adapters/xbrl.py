@@ -37,6 +37,33 @@ KEY_FACTS = {
     "DilutedEarningsLossPerShareFromContinuingAndDiscontinuedOperations": "eps_diluted",
     "PaidUpValueOfEquityShareCapital": "paid_up_equity_capital",
     "FaceValueOfEquityShareCapital": "face_value",
+    # statement of assets and liabilities (an instant context, "OneI") and cash flow (year to date), filed with
+    # half-year and annual results in Integrated Filing; used by fincalc.forensic
+    "ProfitBeforeExceptionalItemsAndTax": "profit_before_exceptional_and_tax",
+    "ProfitLossForPeriodFromContinuingOperations": "profit_continuing",
+    "CostOfMaterialsConsumed": "cost_of_materials",
+    "PurchasesOfStockInTrade": "purchases_stock_in_trade",
+    "ChangesInInventoriesOfFinishedGoodsWorkInProgressAndStockInTrade": "changes_in_inventories",
+    "OtherExpenses": "other_expenses",
+    "Assets": "total_assets",
+    "CurrentAssets": "current_assets",
+    "Inventories": "inventories",
+    "TradeReceivablesCurrent": "trade_receivables_current",
+    "TradeReceivablesNoncurrent": "trade_receivables_noncurrent",
+    "PropertyPlantAndEquipment": "ppe",
+    "CurrentInvestments": "current_investments",
+    "NoncurrentInvestments": "noncurrent_investments",
+    "CashAndCashEquivalents": "cash",
+    "Equity": "total_equity",
+    "EquityShareCapital": "equity_share_capital",
+    "OtherEquity": "other_equity",
+    "Liabilities": "total_liabilities",
+    "CurrentLiabilities": "current_liabilities",
+    "BorrowingsCurrent": "borrowings_current",
+    "BorrowingsNoncurrent": "borrowings_noncurrent",
+    "CashFlowsFromUsedInOperatingActivities": "cfo",
+    "PurchaseOfPropertyPlantAndEquipmentClassifiedAsInvestingActivities": "capex_ppe",
+    "ProceedsFromIssuingSharesClassifiedAsFinancingActivities": "proceeds_share_issue",
     # banking taxonomy
     "InterestEarned": "interest_earned",
     "InterestExpended": "interest_expended",
@@ -77,6 +104,17 @@ class ResultsXbrl:
     consolidated: bool | None
     audited: bool | None
     periods: dict[str, PeriodFacts]
+    company_type: str | None = None  # "TypeOfCompany", e.g. "Main Board"
+
+    @property
+    def balance_sheet(self) -> PeriodFacts | None:
+        """The statement of assets and liabilities (an instant context), when the filing carries one."""
+        inst = [
+            p
+            for p in self.periods.values()
+            if p.start is None and p.end is not None and "total_assets" in p.facts
+        ]
+        return max(inst, key=lambda p: p.end) if inst else None
 
     @property
     def quarter(self) -> PeriodFacts | None:
@@ -101,6 +139,8 @@ def parse_results_xbrl(data: bytes) -> ResultsXbrl:
         ident = ctx.find(f".//{XBRLI}identifier")
         symbol = symbol or (ident.text.strip() if ident is not None and ident.text else None)
         s, e = ctx.find(f".//{XBRLI}startDate"), ctx.find(f".//{XBRLI}endDate")
+        if e is None:
+            e = ctx.find(f".//{XBRLI}instant")  # balance-sheet facts: a point in time
         ctx_period[cid] = (date.fromisoformat(s.text) if s is not None else None,
                            date.fromisoformat(e.text) if e is not None else None)  # fmt: skip
     periods: dict[str, PeriodFacts] = {}
@@ -126,5 +166,7 @@ def parse_results_xbrl(data: bytes) -> ResultsXbrl:
             p.end = date.fromisoformat(e)
     nature = next((v for (c, n), v in text_facts.items() if n == "NatureOfReportStandaloneConsolidated"), "")
     audited = next((v for (c, n), v in text_facts.items() if n == "WhetherResultsAreAuditedOrUnaudited"), "")
+    ctype = next((v for (c, n), v in text_facts.items() if n == "TypeOfCompany" and v), None)
     return ResultsXbrl(symbol=symbol, consolidated=None if not nature else nature.lower().startswith("consolidated"),
-                       audited=None if not audited else audited.lower() == "audited", periods=periods)  # fmt: skip
+                       audited=None if not audited else audited.lower() == "audited", periods=periods,
+                       company_type=ctype)  # fmt: skip
