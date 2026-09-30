@@ -387,7 +387,8 @@ export function Modal({ open, onClose, title, children, wide }: { open: boolean;
 /** A table with sticky header styling and row hover; pass <thead>/<tbody> children. */
 export function Table({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <div className={cx("-mx-4 overflow-x-auto sm:-mx-5", className)}>
+    // focusable so keyboard users can scroll a table wider than the screen (WCAG 2.1.1)
+    <div tabIndex={0} className={cx("-mx-4 overflow-x-auto sm:-mx-5", className)}>
       <table className="w-full min-w-max text-sm [&_td]:px-4 [&_td]:py-2.5 sm:[&_td]:px-5 [&_th]:px-4 [&_th]:py-2 sm:[&_th]:px-5 [&_th]:text-left [&_th]:text-[11px] [&_th]:font-medium [&_th]:uppercase [&_th]:tracking-wider [&_th]:text-muted [&_thead_tr]:border-b [&_thead_tr]:border-border [&_tbody_tr]:border-b [&_tbody_tr]:border-border/60 [&_tbody_tr:last-child]:border-0 [&_tbody_tr]:transition-colors [&_tbody_tr:hover]:bg-card-hover">
         {children}
       </table>

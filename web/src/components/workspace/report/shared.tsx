@@ -172,7 +172,8 @@ export function ConfidenceMeter({ level }: { level: string | null }) {
         ))}
       </div>
       <span className="text-xs font-medium capitalize">{level ?? "not stated"}</span>
-      <InfoTip>How sure the report is of its own call. Medium usually means one or two key data points are still pending or unverified: read &ldquo;what would change the view&rdquo;.</InfoTip>
+      <span className="rounded border border-border px-1 text-[10px] text-muted">uncalibrated</span>
+      <InfoTip>How sure the report is of its own call. Medium usually means one or two key data points are still pending or unverified: read &ldquo;what would change the view&rdquo;. Uncalibrated: there are not yet enough resolved past calls to say how often &ldquo;medium&rdquo; turns out right, so treat it as the writer&apos;s wording, not a probability.</InfoTip>
     </div>
   );
 }

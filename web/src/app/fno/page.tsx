@@ -60,16 +60,17 @@ function ChainTable({ chain, width, onAdd }: { chain: Chain; width: number; onAd
   return (
     <div ref={box} className="-mx-4 max-h-[600px] overflow-auto sm:-mx-5">
       <table className="num w-full min-w-[720px] text-xs [&_td]:px-2 [&_td]:py-1.5 [&_th]:px-2 [&_th]:py-2 [&_th]:text-[10px] [&_th]:font-medium [&_th]:uppercase [&_th]:tracking-wider [&_th]:text-muted">
-        <thead>
+        {/* sticky: the chain opens scrolled to the ATM row, so the column labels must stay in view */}
+        <thead className="sticky top-0 z-10 bg-card shadow-[0_1px_0_var(--border)]">
           <tr className="border-b border-border">
-            <th colSpan={5} className="!text-center !text-loss">Calls</th>
+            <th colSpan={5} className="!text-center"><span className="inline-flex items-center gap-1.5"><span className="size-2 rounded-sm" style={{ background: "var(--chart-5)" }} />Calls</span></th>
             <th className="bg-background-subtle !text-center">Strike</th>
-            <th colSpan={5} className="!text-center !text-gain">Puts</th>
+            <th colSpan={5} className="!text-center"><span className="inline-flex items-center gap-1.5"><span className="size-2 rounded-sm" style={{ background: "var(--chart-3)" }} />Puts</span></th>
           </tr>
           <tr className="border-b border-border text-right">
-            <th className="!text-left">OI</th><th className="!text-right">Chg OI</th><th className="!text-right">IV</th><th className="!text-right">LTP</th><th />
-            <th className="bg-background-subtle" />
-            <th /><th className="!text-left">LTP</th><th className="!text-left">IV</th><th className="!text-left">Chg OI</th><th className="!text-right">OI</th>
+            <th className="!text-left" title="Open interest: contracts open">OI</th><th className="!text-right" title="Change in open interest today">Chg OI</th><th className="!text-right" title="Implied volatility, % a year">IV %</th><th className="!text-right" title="Last traded price">LTP</th><th><span className="sr-only">Add leg</span></th>
+            <th className="bg-background-subtle"><span className="sr-only">Strike price</span></th>
+            <th><span className="sr-only">Add leg</span></th><th className="!text-left" title="Last traded price">LTP</th><th className="!text-left" title="Implied volatility, % a year">IV %</th><th className="!text-left" title="Change in open interest today">Chg OI</th><th className="!text-right" title="Open interest: contracts open">OI</th>
           </tr>
         </thead>
         <tbody>
@@ -82,7 +83,7 @@ function ChainTable({ chain, width, onAdd }: { chain: Chain; width: number; onAd
               <tr key={r.strike} data-atm={atm || undefined} className={cx("border-b border-border/50 transition-colors hover:bg-card-hover", atm && "!bg-brand-soft/70 font-semibold")}>
                 <td className={cx(callItm && "bg-warn-soft/40")}>
                   <div className="flex items-center gap-1.5">
-                    <div className="h-1.5 w-14 shrink-0 overflow-hidden rounded-full bg-background-subtle"><div className="ml-auto h-full rounded-full bg-loss/70" style={{ width: `${(coi / maxOi) * 100}%` }} /></div>
+                    <div className="h-1.5 w-14 shrink-0 overflow-hidden rounded-full bg-background-subtle"><div className="ml-auto h-full rounded-full opacity-80" style={{ width: `${(coi / maxOi) * 100}%`, background: "var(--chart-5)" }} /></div>
                     <span className="w-12 text-right">{compact(coi)}</span>
                   </div>
                 </td>
@@ -101,7 +102,7 @@ function ChainTable({ chain, width, onAdd }: { chain: Chain; width: number; onAd
                 <td className={cx(putItm && "bg-warn-soft/40")}>
                   <div className="flex items-center gap-1.5">
                     <span className="w-12">{compact(poi)}</span>
-                    <div className="h-1.5 w-14 shrink-0 overflow-hidden rounded-full bg-background-subtle"><div className="h-full rounded-full bg-gain/70" style={{ width: `${(poi / maxOi) * 100}%` }} /></div>
+                    <div className="h-1.5 w-14 shrink-0 overflow-hidden rounded-full bg-background-subtle"><div className="h-full rounded-full opacity-80" style={{ width: `${(poi / maxOi) * 100}%`, background: "var(--chart-3)" }} /></div>
                   </div>
                 </td>
               </tr>
@@ -328,7 +329,7 @@ export default function Fno() {
             <Stat label="ATM strike" value={n(chain.atm_strike)} format={(v) => v.toLocaleString("en-IN")} tone="accent" icon={<Crosshair className="size-4" />}
               help="At the money: the strike closest to the current price. IV (implied volatility) is how much movement option prices are expecting, as a yearly %."
               hint={`IV call ${chain.atm_iv.call ?? "—"}% · put ${chain.atm_iv.put ?? "—"}%`} />
-            <Stat label="PCR (OI)" value={pcr} format={(v) => v.toFixed(2)} tone={pcr == null ? "neutral" : pcr > 1 ? "gain" : pcr < 0.7 ? "loss" : "warn"} icon={<Layers className="size-4" />}
+            <Stat label="PCR (OI)" value={pcr} format={(v) => v.toFixed(2)} tone="info" icon={<Layers className="size-4" />}
               help="Put-call ratio: total put open interest ÷ total call open interest. Above 1 means more puts are open (often read as support below the price); below 0.7, more calls. A rough sentiment gauge, not a signal."
               hint={pcr == null ? undefined : pcr > 1 ? "more puts than calls" : "more calls than puts"} />
             <Stat label="Max pain" value={n(chain.max_pain)} format={(v) => v.toLocaleString("en-IN")} tone="warn" icon={<Target className="size-4" />}
@@ -343,10 +344,10 @@ export default function Fno() {
               help="Open interest (OI) is the number of contracts still open. Big call OI above the price often acts as resistance, big put OI below it as support.">
               <OiButterfly rows={oiRows} spot={spot} maxPain={n(chain.max_pain)} />
               <div className="mt-2 flex justify-center gap-4 text-[11px] text-muted">
-                <span className="inline-flex items-center gap-1"><span className="size-2 rounded-sm bg-loss" /> Call OI</span>
-                <span className="inline-flex items-center gap-1"><span className="size-2 rounded-sm bg-gain" /> Put OI</span>
+                <span className="inline-flex items-center gap-1"><span className="size-2 rounded-sm" style={{ background: "var(--chart-5)" }} /> Call OI</span>
+                <span className="inline-flex items-center gap-1"><span className="size-2 rounded-sm" style={{ background: "var(--chart-3)" }} /> Put OI</span>
                 <span className="inline-flex items-center gap-1"><span className="h-0.5 w-3 bg-accent" /> nearest spot</span>
-                <span className="inline-flex items-center gap-1"><span className="h-0.5 w-3 bg-warn" /> max pain</span>
+                <span className="inline-flex items-center gap-1"><span className="h-0.5 w-3" style={{ background: "var(--chart-6)" }} /> max pain</span>
               </div>
             </Card>
             <Card title="Option chain" icon={<Activity className="size-4" />} 

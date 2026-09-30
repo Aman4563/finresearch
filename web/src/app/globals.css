@@ -13,20 +13,21 @@
   --border-strong: #cbd5e3;
   --ring: #0ea5a4;
 
-  --brand: #0d9488;
-  --brand-strong: #0f766e;
+  /* text-bearing tones darkened for WCAG AA (≥ 4.5:1 on card, page and their -soft fills); charts keep --chart-* */
+  --brand: #0f766e;
+  --brand-strong: #115e59;
   --brand-soft: #ccfbf1;
   --brand-fg: #ffffff;
   --accent: #4f46e5;
   --accent-soft: #e0e7ff;
 
-  --gain: #059669;
+  --gain: #047857;
   --gain-soft: #d1fae5;
-  --loss: #e11d48;
+  --loss: #be123c;
   --loss-soft: #ffe4e6;
-  --warn: #d97706;
+  --warn: #a64b06;
   --warn-soft: #fef3c7;
-  --info: #0284c7;
+  --info: #0369a1;
   --info-soft: #e0f2fe;
 
   --chart-1: #0d9488;

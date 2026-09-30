@@ -8,9 +8,10 @@ import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 import { LinkButton } from "@/components/dashboard/link-button";
-import { BarsChart, TimeSeriesChart } from "@/components/charts";
+import { BarsChart } from "@/components/charts";
+import { SubscriptionTimeChart } from "@/components/monitor/subscription-chart";
 import {
-  SUB_HELP, Stepper, TERMS, Term, categories, countdown, currentStage, dayLabel, fmtX, inr, stagesFor, times, timeIST, useNow,
+  SUB_HELP, Stepper, TERMS, Term, categories, countdown, currentStage, fmtX, inr, stagesFor, times, timeIST, useNow,
 } from "@/components/ipo/lib";
 import { AlertFeed } from "@/components/monitor/alert-feed";
 import { NextCheck, RuleChips, StopWatch, jobLabel } from "@/components/monitor/watch-card";
@@ -30,11 +31,6 @@ const SERIES = [
   { key: "nii", label: "NII", color: "var(--chart-3)" },
   { key: "retail", label: "Retail", color: "var(--chart-6)" },
 ];
-
-const stamp = (v: string | number) => {
-  const s = String(v);
-  return `${dayLabel(s, { day: "numeric", month: "short" })}, ${timeIST(s)}`;
-};
 
 /** Top-level and NII sub-categories of the latest snapshot, for the bar chart. */
 function latestBars(s: Snap) {
@@ -80,7 +76,7 @@ export default function WatchView() {
   const chart = useMemo(
     () =>
       (data?.subscription ?? []).map((s) => {
-        const row: Record<string, unknown> = { at: s.as_of };
+        const row: Record<string, unknown> & { at: string } = { at: s.as_of };
         for (const c of categories(s)) row[c.key] = c.times == null ? null : Number(c.times.toFixed(3));
         return row;
       }),
@@ -220,8 +216,7 @@ export default function WatchView() {
                   The trend line appears after the next check. The latest breakdown is on the right.
                 </EmptyState>
               ) : (
-                <TimeSeriesChart data={chart} x="at" series={series} area={false} height={300} format={fmtX}
-                  xFormat={stamp} showChange={false} references={[{ y: 1, label: "1x" }]} curve="linear" dots />
+                <SubscriptionTimeChart data={chart} series={series} format={fmtX} />
               )}
             </Card>
             <Card className="xl:col-span-2" title="Latest by category" icon={<BarChart3 className="size-4" />}
@@ -290,7 +285,7 @@ export default function WatchView() {
                     <td className="num text-xs whitespace-nowrap">{when(j.due_at)}</td>
                     <td className="text-xs">{jobLabel(j.kind)}{j.attempts > 1 && <span className="text-muted"> · {j.attempts} tries</span>}</td>
                     <td><Badge status={j.id === pending[0]?.id ? "current" : j.status}>{j.id === pending[0]?.id ? "next" : j.status}</Badge></td>
-                    <td className="max-w-56 truncate text-xs text-muted">{jobDetail(j)}</td>
+                    <td className="text-xs text-muted"><div className="w-36 break-words whitespace-normal sm:w-44">{jobDetail(j)}</div></td>
                   </tr>
                 ))}
               </tbody>

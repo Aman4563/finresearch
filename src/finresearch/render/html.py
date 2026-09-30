@@ -12,6 +12,15 @@ from markdown_it import MarkdownIt
 
 _CITE = re.compile(r"\[C(\d+)\]")
 
+# Required on every exported report (docs/dev/RESEARCH_ROADMAP.md §D.8). Under the SEBI RA master circular
+# (6-Feb-2026) a purely personal tool is outside RA/IA registration, but publishing its calls would not be, so every
+# export says what it is and carries a visible watermark. Keep the wording in sync with the web footer.
+EXPORT_DISCLAIMER = (
+    "Personal research generated with AI assistance; not investment advice; the author is not a SEBI-registered "
+    "Research Analyst (RA) or Investment Adviser (IA); do not distribute."
+)
+EXPORT_WATERMARK = "PERSONAL – NOT FOR DISTRIBUTION"
+
 STATUS_LABEL = {
     "verified": "verified",
     "unverified": "unverified",
@@ -45,6 +54,13 @@ a.cite.contradicted,a.cite.unsupported,a.cite.missing{color:var(--bad);font-weig
 .badge.verified{color:var(--ok)} .badge.needs_review,.badge.unverified{color:var(--warn)}
 .badge.contradicted,.badge.unsupported{color:var(--bad)}
 .quote{color:var(--muted);white-space:pre-wrap;font-family:ui-monospace,Menlo,monospace;font-size:11.5px}
+.disclaimer{border:1px solid var(--line);background:var(--head);color:var(--muted);font-size:12.5px;padding:8px 12px;
+border-radius:6px;margin:12px 0}
+.disclaimer b{color:var(--fg)}
+.watermark{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;
+z-index:0;overflow:hidden}
+.watermark span{transform:rotate(-30deg);font-size:clamp(20px,5.2vw,64px);font-weight:700;letter-spacing:.06em;white-space:nowrap;
+color:var(--bad);opacity:.07}
 @media print{body{max-width:none;font-size:11px}table{display:table;font-size:9.5px}tr{page-break-inside:avoid}
 h2{page-break-after:avoid} a.cite{color:#000!important}}
 """
@@ -133,5 +149,17 @@ def render_html(report_md: str, claims: dict[int, ClaimView], *, title: str, gen
     cited = sorted({int(x) for x in _CITE.findall(report_md)})
     appendix = evidence_appendix([claims[i] for i in cited if i in claims])
     return (f"<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' "
-            f"content='width=device-width,initial-scale=1'><title>{_html.escape(title)}</title><style>{CSS}</style>"
-            f"</head><body>{banner}{body}{appendix}</body></html>")  # fmt: skip
+            f"content='width=device-width,initial-scale=1'><meta name='robots' content='noindex,nofollow'>"
+            f"<title>{_html.escape(title)}</title><style>{CSS}</style></head><body>{export_notice()}{banner}{body}"
+            f"{appendix}{export_notice(footer=True)}</body></html>")  # fmt: skip
+
+
+def export_notice(*, footer: bool = False) -> str:
+    """The §D.8 export disclaimer; the top copy also carries the watermark (fixed, so it prints on every PDF page)."""
+    note = (f"<div class='disclaimer' role='note'><b>{_html.escape(EXPORT_WATERMARK)}.</b> "
+            f"{_html.escape(EXPORT_DISCLAIMER)}</div>")  # fmt: skip
+    if footer:
+        return f"<footer>{note}</footer>"
+    return (
+        f"<div class='watermark' aria-hidden='true'><span>{_html.escape(EXPORT_WATERMARK)}</span></div>{note}"
+    )

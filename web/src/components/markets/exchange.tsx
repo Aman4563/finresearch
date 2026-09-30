@@ -56,13 +56,13 @@ export function PriceComparison({ listing }: { listing: StockListing }) {
   return (
     <Card title="NSE vs BSE" icon={<ArrowLeftRight className="size-4" />}
       help="The same shares trade on both exchanges. Prices usually sit within a few paise of each other; a wider gap means one side is thinly traded right now. Buy where the price is better after brokerage.">
-      <dl className="grid [&>*]:min-w-0 grid-cols-3 gap-2">
+      <div className="grid [&>*]:min-w-0 grid-cols-3 gap-2">
         <Metric label="NSE" value={nse.error && !nse.data ? "—" : inr(n)} sub={nse.error && !nse.data ? "unavailable" : undefined} />
         <Metric label="BSE" value={bse.error && !bse.data ? "—" : inr(b)} sub={bse.error && !bse.data ? "unavailable" : undefined} />
         <Metric label="Spread" help="BSE's last price minus NSE's, in rupees and as a share of the NSE price."
           value={gap == null ? "—" : `${gap > 0 ? "+" : gap < 0 ? "−" : ""}${inr(Math.abs(gap))}`}
           sub={gapPct == null ? undefined : `${gapPct > 0 ? "+" : ""}${gapPct.toFixed(3)}%`} />
-      </dl>
+      </div>
       <LiveStamp session="equity" live={nse.live} status={nse.status} updatedAt={bse.updatedAt ?? nse.updatedAt} everyMs={30000}
         asOf={bse.data?.quote.as_of} asOfLabel="BSE as of" onRefresh={() => { nse.reload(); bse.reload(); }} className="mt-3" />
     </Card>

@@ -135,10 +135,13 @@ export default function BondDetail() {
             <>
               <Stat label="Yield to maturity" icon={<BadgePercent className="size-4" />} value={a.ytm * 100} format={(n) => `${n.toFixed(2)}%`}
                 hint="before tax, if held to maturity" help="YTM: the yearly return if you buy at today's price, receive every coupon and hold until the face value is repaid (coupons assumed reinvested at the same rate)." />
-              <Stat label="After-tax yield" tone="gain" icon={<PiggyBank className="size-4" />} value={a.after_tax_ytm * 100} format={(n) => `${n.toFixed(2)}%`}
+              <Stat label="After-tax yield" tone="brand" icon={<PiggyBank className="size-4" />} value={a.after_tax_ytm * 100} format={(n) => `${n.toFixed(2)}%`}
                 hint={`at ${d.tax_slab_pct}% slab + cess`} help="The yield on what you keep: each coupon is taxed at your slab (plus 4% cess), the price paid includes the accrued interest, and the gap between face value and the clean price is a capital gain or loss at maturity. A loss is assumed not set off against other gains." />
-              <Stat label="Current yield" tone="info" icon={<Coins className="size-4" />} value={a.current_yield * 100} format={(n) => `${n.toFixed(2)}%`}
-                hint="coupon ÷ clean price" help="This year's interest divided by the clean price. Ignores the gain or loss at maturity, so it overstates the return of a bond bought above face value." />
+              {/* de-emphasised (roadmap §B /bonds 2): for a premium bond it overstates the return, so it says so */}
+              <Stat label="Current yield" tone="neutral" icon={<Coins className="size-4" />}
+                display={<span className="num text-muted">{(a.current_yield * 100).toFixed(2)}%</span>}
+                hint={a.current_yield > a.ytm ? "overstates: ignores the premium lost at maturity; use YTM" : "coupon ÷ clean price; ignores maturity gain"}
+                help="This year's interest divided by the clean price. Ignores the gain or loss at maturity, so it overstates the return of a bond bought above face value. Yield to maturity is the figure to compare." />
               <Stat label="Modified duration" tone="accent" icon={<Waves className="size-4" />} value={a.modified_duration} format={(n) => `${n.toFixed(2)}`}
                 hint={`≈ −${a.modified_duration.toFixed(2)}% if rates +1%`} help="How sensitive the price is to interest rates: if yields rise by 1 percentage point, the price falls by about this many percent (and rises if yields fall)." />
               <Stat label="Accrued interest" tone="warn" icon={<Receipt className="size-4" />} value={a.accrued_interest} format={(n) => inr(n)}

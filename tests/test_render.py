@@ -10,7 +10,14 @@ from pathlib import Path
 import pytest
 from pypdf import PdfReader
 
-from finresearch.render.html import ClaimView, evidence_appendix, link_citations
+from finresearch.render.html import (
+    EXPORT_DISCLAIMER,
+    EXPORT_WATERMARK,
+    ClaimView,
+    evidence_appendix,
+    link_citations,
+    render_html,
+)
 from finresearch.render.pack import financial_pivot
 from finresearch.render.pdf import find_chrome, html_to_pdf
 
@@ -36,6 +43,17 @@ def test_evidence_appendix_shows_quotes_urls_and_corrections():
     ])  # fmt: skip
     assert "id='claim-5'" in html and "535.61 INR mn (FY26)" in html and "✓ quote found" in html
     assert "https://gmp.example/x" in html and "corrects C4" in html and "verifier: stale" in html
+
+
+def test_export_html_has_disclaimer_and_watermark_even_when_blocked():
+    from datetime import datetime
+
+    for ok in (True, False):
+        out = render_html("# R\nText [C1].", {}, title="T", generated_at=datetime(2026, 9, 30), gate_ok=ok,
+                          gate_blocking=["x"], gate_warnings=[])  # fmt: skip
+        assert out.count(EXPORT_DISCLAIMER) == 2 and EXPORT_WATERMARK in out and "aria-hidden='true'" in out
+        # the report body and banner are unchanged: the notice is added around them
+        assert ("Publish gate passed" in out) is ok and ("NOT PUBLISHED" in out) is not ok
 
 
 def test_financial_pivot_prefers_verified_and_drops_contradicted():
@@ -121,6 +139,10 @@ def test_render_pack_layout_tables_and_published_names(run_with_report, env):
         "Publish gate passed" in html and "Evidence: claims cited" in html and "data:image/png;base64" in html
     )
     assert "PASSED" in (r.path / "README.md").read_text()
+    # §D.8: every export carries the personal-use disclaimer (top and bottom) and the watermark
+    readme = (r.path / "README.md").read_text()
+    assert html.count(EXPORT_DISCLAIMER) == 2 and "class='watermark'" in html and EXPORT_WATERMARK in html
+    assert EXPORT_DISCLAIMER in readme and "not a SEBI-registered" in EXPORT_DISCLAIMER
 
 
 def test_blocked_report_is_rendered_as_not_published(run_with_report):

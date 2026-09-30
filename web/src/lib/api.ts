@@ -168,7 +168,22 @@ export class ApiError extends Error {
   }
 }
 
+/** GETs in flight, by path: components that ask for the same resource at the same moment (the header, a page and a
+ * card all reading /api/profile on load) share one request instead of queueing several (roadmap §B0.1). */
+const INFLIGHT = new Map<string, Promise<unknown>>();
+
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  if ((!init?.method || init.method === "GET") && !init?.body && !init?.signal) {
+    const hit = INFLIGHT.get(path);
+    if (hit) return hit as Promise<T>;
+    const p = request<T>(path, init).finally(() => INFLIGHT.delete(path));
+    INFLIGHT.set(path, p);
+    return p;
+  }
+  return request<T>(path, init);
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
     res = await fetch(`${API_URL}${path}`, {

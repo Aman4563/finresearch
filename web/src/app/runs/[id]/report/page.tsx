@@ -191,7 +191,9 @@ export default function ReportReader() {
         <details className="group rounded-xl border border-warn/30 bg-warn-soft/40 px-4 py-2.5 text-sm">
           <summary className="cursor-pointer font-medium text-warn">
             {data.gate.warnings.length} gate warning{data.gate.warnings.length === 1 ? "" : "s"}
-            <span className="ml-1 font-normal text-muted">(claims kept only with an UNVERIFIED caveat, and similar)</span>
+            <span className="ml-1 font-normal text-muted">
+              ({warningKinds(data.gate.warnings).map(([k, n]) => `${n} ${k}`).join(" · ")}; kept only with an UNVERIFIED caveat)
+            </span>
           </summary>
           <ul className="mt-2 max-h-60 list-disc space-y-1 overflow-auto pl-5 text-xs text-muted">
             {data.gate.warnings.map((w) => (
@@ -262,4 +264,15 @@ export default function ReportReader() {
       )}
     </div>
   );
+}
+
+/** "[C2409] is 'needs_review' — keep only …" → counts by kind ("needs review" 7, "unverified" 9, "other" 1). */
+function warningKinds(warnings: string[]): [string, number][] {
+  const out = new Map<string, number>();
+  for (const w of warnings) {
+    const m = w.match(/is '([a-z_]+)'/);
+    const k = m ? m[1].replace(/_/g, " ") : "other";
+    out.set(k, (out.get(k) ?? 0) + 1);
+  }
+  return [...out.entries()].sort((x, y) => y[1] - x[1]);
 }

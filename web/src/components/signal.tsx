@@ -52,7 +52,7 @@ function ScoreBar({ score }: { score: number }) {
   const left = score < 0 ? 50 + score / 2 : 50;
   const width = Math.abs(score) / 2;
   return (
-    <div className="relative h-2 rounded-full bg-background-subtle" aria-label={`score ${score.toFixed(0)} of ±100`}>
+    <div className="relative h-2 rounded-full bg-background-subtle" role="img" aria-label={`score ${score.toFixed(0)} of ±100`}>
       <span className="absolute inset-y-0 left-1/2 w-px bg-border-strong" />
       <span className={cx("absolute inset-y-0 rounded-full transition-all duration-700", score >= 0 ? "bg-gain" : "bg-loss")} style={{ left: `${left}%`, width: `${width}%` }} />
     </div>

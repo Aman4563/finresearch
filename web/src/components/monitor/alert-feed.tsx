@@ -1,6 +1,6 @@
 "use client";
 
-import { BellOff, CheckCheck, CircleAlert, Info, Zap } from "lucide-react";
+import { BellOff, CheckCheck, CircleAlert, CircleCheck, Info, Zap } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 
@@ -12,7 +12,11 @@ const LEVEL = {
   action: { icon: Zap, dot: "bg-loss", ring: "text-loss bg-loss-soft", label: "Action" },
   warn: { icon: CircleAlert, dot: "bg-warn", ring: "text-warn bg-warn-soft", label: "Warning" },
   info: { icon: Info, dot: "bg-info", ring: "text-info bg-info-soft", label: "Info" },
+  // a skip rule that stopped firing is good news: never draw it in the red "action" style (roadmap §B0.2)
+  cleared: { icon: CircleCheck, dot: "bg-gain", ring: "text-gain bg-gain-soft", label: "Cleared" },
 } as const;
+
+const levelOf = (a: AlertItem) => (a.kind === "rule_change" && /\bnow clear\b/i.test(a.message) ? "cleared" : a.level);
 
 const KIND: Record<string, string> = {
   rule_change: "Rule changed",
@@ -84,7 +88,7 @@ export function AlertFeed({ alerts, onRead, limit, showSymbol = true, emptyHint,
           </h3>
           <ul className="stagger space-y-2">
             {items.map((a) => {
-              const L = LEVEL[a.level] ?? LEVEL.info;
+              const L = LEVEL[levelOf(a) as keyof typeof LEVEL] ?? LEVEL.info;
               const Icon = L.icon;
               return (
                 <li
@@ -95,7 +99,7 @@ export function AlertFeed({ alerts, onRead, limit, showSymbol = true, emptyHint,
                   )}
                 >
                   <span className={cx("absolute inset-y-2 left-0 w-1 rounded-r-full", L.dot)} aria-hidden />
-                  <span className={cx("grid size-7 shrink-0 place-items-center rounded-lg", L.ring)} title={L.label}>
+                  <span className={cx("grid size-7 shrink-0 place-items-center rounded-lg", L.ring)} title={L.label} role="img" aria-label={L.label}>
                     <Icon className="size-3.5" />
                   </span>
                   <div className="min-w-0 flex-1">
@@ -111,7 +115,7 @@ export function AlertFeed({ alerts, onRead, limit, showSymbol = true, emptyHint,
                           {new Date(a.created_at).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata" })}
                         </span>
                       )}
-                      {!a.read_at && <span className="size-1.5 rounded-full bg-brand" aria-label="unread" />}
+                      {!a.read_at && <span className="size-1.5 rounded-full bg-brand" role="img" aria-label="unread" />}
                     </p>
                     <p className="mt-0.5 text-sm break-words">{a.message}</p>
                     {a.kind === "rule_alert" && a.data?.rule_id != null && <RuleSource data={a.data} />}

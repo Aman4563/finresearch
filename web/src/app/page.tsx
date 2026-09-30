@@ -6,8 +6,8 @@ import { useMemo } from "react";
 
 import { LinkButton } from "@/components/dashboard/link-button";
 import {
-  Calendar, GettingStarted, JournalMini, type Limits, PlanTile, QuickActions, RecentRuns, WatchedSubscription, buildEvents,
-  planUsage,
+  Calendar, GettingStarted, JournalMini, type Limits, PlanTile, QuickActions, RecentRuns, WatchedSubscription, bindingWindow,
+  buildEvents, planUsage,
 } from "@/components/dashboard/panels";
 import {
   LiveDot, SubMeter, TERMS, categoryMins, countdown, daysUntil, inr, int, istAt, lakh, lotCost, lotSourceText, times, useNow,
@@ -65,7 +65,8 @@ export default function Dashboard() {
   }
   if (unread.length) attention.push({ text: `${unread.length} unread alert${unread.length > 1 ? "s" : ""}`, href: "/monitor", tone: "text-loss" });
   if (running.length) attention.push({ text: `${running.length} research run${running.length > 1 ? "s" : ""} in progress`, href: "/runs", tone: "text-info" });
-  if (plan.used != null && plan.used >= 0.6) attention.push({ text: `plan window ${Math.round(plan.used * 100)}% used`, href: "/usage", tone: "text-warn" });
+  const bind = bindingWindow(plan);
+  if (bind.used != null && bind.used >= 0.6) attention.push({ text: `${bind.label} plan window ${Math.round(bind.used * 100)}% used`, href: "/usage", tone: "text-warn" });
   const loaded = radar.data || watches.data || alerts.data || runs.data;
 
   return (
