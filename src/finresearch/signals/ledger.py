@@ -6,9 +6,11 @@ Recording
 * `record(signal, source=..., resolve_on=..., event_kind=...)` logs a signal provider's `Signal`.
 * `record_run(session, run_id)` logs a finished research run's verdict (called when a run completes, and by the daily
   monitor step / `finresearch forecasts backfill` for runs finished before the ledger existed).
-* Dedupe: at most one open forecast per asset + instrument + event kind + IST day (`dedupe_key`). A newer forecast on
-  the same day replaces the open one (several same-day runs count once, as the last run's call); an older one never
-  replaces a newer one.
+* Dedupe: at most one open forecast per asset + instrument + event kind + IST day + METHOD (`dedupe_key`; the method
+  since #151, so a shadow method logged beside the live call never displaces it, and each method's calibration group
+  keeps its own forecast). A newer forecast on the same day replaces the open one of the same method (several
+  same-day runs count once, as the last run's call); an older one never replaces a newer one. Rows logged before
+  #151 carry the method-less key; a same-day forecast of the SAME method still updates that row (`_key_for`).
 
 Research-run verdicts → probabilities (fixed map v1, until outcomes say otherwise; roadmap §C.10 Step 1)
 * The agents only say low / medium / high. That is mapped to P = 0.55 / 0.65 / 0.75 that the verdict's direction is
@@ -105,8 +107,27 @@ def ist_day(dt: datetime) -> date:
     return to_ist(dt).date()
 
 
-def dedupe_key(asset: str, instrument: str, event_kind: str, day: date) -> str:
-    return f"{asset}:{instrument}:{event_kind}:{day.isoformat()}"
+def dedupe_key(asset: str, instrument: str, event_kind: str, day: date, method: str | None = None) -> str:
+    """One open forecast per asset + instrument + event kind + IST day + method (a 12-hex hash of the method keeps the
+    key short). Without a method: the pre-#151 key."""
+    base = f"{asset}:{instrument}:{event_kind}:{day.isoformat()}"
+    if method is None:
+        return base
+    import hashlib
+
+    return f"{base}:{hashlib.sha1(method.encode()).hexdigest()[:12]}"
+
+
+def _key_for(session: Session, asset: str, instrument: str, event_kind: str, day: date, method: str) -> str:
+    """The key for a new forecast: the legacy method-less key when a pre-#151 row of the SAME method holds it (so it
+    keeps being updated, not duplicated), else the per-method key."""
+    legacy = dedupe_key(asset, instrument, event_kind, day)
+    held = session.scalar(select(Forecast.method).where(Forecast.dedupe_key == legacy))
+    return (
+        legacy
+        if held is not None and held == method[:200]
+        else dedupe_key(asset, instrument, event_kind, day, method)
+    )
 
 
 # ------------------------------------------------------------------------------------------------------ recording
@@ -141,13 +162,19 @@ def record(signal: Signal, *, source: str, resolve_on: date, event_kind: str, se
                   inputs={"factors": [{"name": f.name, "value": _plain(f.value), "contribution": f.contribution}
                                       for f in signal.factors],
                           "base_rate": signal.base_rate, "sources": signal.sources, **(inputs or {})},
-                  status="open", dedupe_key=dedupe_key(signal.asset, signal.instrument, event_kind, ist_day(created)))  # fmt: skip
+                  status="open")  # fmt: skip
+
+    def put(s: Session) -> int:
+        values["dedupe_key"] = _key_for(s, signal.asset, signal.instrument, event_kind, ist_day(created),
+                                        signal.method[:200])  # fmt: skip
+        return _upsert(s, values)
+
     if session is not None:
-        return _upsert(session, values)
+        return put(session)
     from finresearch.db import session_scope
 
     with session_scope() as s:
-        return _upsert(s, values)
+        return put(s)
 
 
 def _plain(v: Any) -> Any:
@@ -244,7 +271,7 @@ def record_run(session: Session, run_id: int) -> int | None:
                   run_id=run.id, event_kind=event_kind, event=event, horizon=horizon, resolve_on=resolve_on,
                   probability=p, interval_low=None, interval_high=None, action=str(verdict)[:40], score=None,
                   method=RUN_METHOD, validation_status="uncalibrated", inputs=inputs, status="open",
-                  dedupe_key=dedupe_key(asset, instrument, event_kind, day))  # fmt: skip
+                  dedupe_key=_key_for(session, asset, instrument, event_kind, day, RUN_METHOD))  # fmt: skip
     return _upsert(session, values)
 
 
@@ -522,7 +549,9 @@ def calibration_groups(session: Session, asset: str | None = None, n_bins: int =
     out = []
     if not groups:
         return out
-    groups[("all", "all methods")] = [f for rows in list(groups.values()) for f in rows]
+    # the headline pools the methods that made the calls; shadow methods (#151) are scored in their own rows only
+    groups[("all", "all methods")] = [f for rows in list(groups.values()) for f in rows
+                                      if f.validation_status != "shadow"]  # fmt: skip
     for (a, method), rows in sorted(groups.items(), key=lambda kv: (kv[0][0] == "all", kv[0])):
         scored = [
             f for f in rows if f.status == "resolved" and f.probability is not None and f.outcome is not None

@@ -6,14 +6,14 @@ Method, in order of preference:
 1. The fitted listing model (`evals.ipo_model`: L2 logistic for P(open > issue), quantile regression for the return
    range) — ONLY if its committed walk-forward report passes the bar (Brier skill > 0 against the base-rate table in
    ≥ 5 of the 7 complete test years 2019–2025). Validation status "backtested".
-2. Otherwise the shrinkage blend p = λ·p_model + (1−λ)·p_table (E-IPO-1, evals/experiments/ipo_calibration): λ was
-   chosen on earlier years' out-of-fold forecasts only, and the blend passed the same bar plus a pooled 2019–2025
-   Brier below the table's — ONLY while its committed artefact (`evals/artefacts/ipo_calibrated.json`) says so.
-   The live OFS share (NSE issue-size text) and Nifty 50 20-session return are computed as in the harvest.
-   Validation status "backtested".
-3. Otherwise the empirical base-rate table: mainboard issues in the same final-QIB band × regime (pre/post the
+2. Otherwise the empirical base-rate table: mainboard issues in the same final-QIB band × regime (pre/post the
    Apr-2022 NII allotment reform). P = Laplace-smoothed share that opened above the issue price, range = 95% Wilson
    interval, return quantiles = the cell's empirical 10/50/90%. Validation status "base_rate".
+
+Shadow test (#151): the E-IPO-1 shrinkage blend p = λ·p_model + (1−λ)·p_table (evals/experiments/ipo_calibration)
+passed its walk-forward bar at the minimum, so it is NOT the call. It is computed alongside (`Signal.shadow`) and
+logged in the forecast ledger as its own method with validation "shadow"; the switch criterion is pre-registered in
+SHADOW.md. The live OFS share (NSE issue-size text) and Nifty 50 20-session return feed it as in the harvest.
 
 Decision-time caveat: the history uses FINAL subscription (after the 5 pm close); a retail applicant decides on the
 latest live snapshot, and QIB books fill late on the last day. So the table is optimistic about what is knowable.
@@ -590,56 +590,9 @@ async def compute(
     quantiles = {"p10": cell["p10"], "p50": cell["median"], "p90": cell["p90"]}
     use_model = model_ready(artefact)
     blend = None if use_model or src.calibrated is None else src.calibrated()
-    if not calibrated_ready(blend):
-        blend = None
-    if blend is not None:
-        from finresearch.evals import ipo_model as im
-
-        fm, lam = blend["final_model"], float(blend["calibrator"]["params"]["lambda"])
-        # the walk-forward reference falls back to the regime rate below MIN_CELL issues: mirror it
-        p_ref, ref_label = ((p_cell, f"QIB band {cell['band']}") if cell["n"] >= blend.get("min_cell", 5)
-                            else (p_regime, "post-2022 regime (band has too few issues)"))  # fmt: skip
-        feat = await _live_features_full(book, upper, eq_rows, today, detail, src)
-        p_model = float(im.predict(fm, [feat])["p"][0])
-        p = lam * p_model + (1 - lam) * p_ref
-        interval = calibrated_interval(blend, p)
-        g, pooled = blend["gate"], blend["pooled"]
-        narrow = min((f for f in blend["folds"] if f["year"] in g["years_evaluated"]),
-                     key=lambda f: f["bss_vs_table"] if f["year"] in g["years_passed"] else 9)  # fmt: skip
-        method = BLEND_METHOD
-        validation = Validation(status="backtested", n=int(pooled["n"]),
-                                metrics={"lambda": lam, "brier": pooled["brier"], "brier_table": pooled["brier_table"],
-                                         "bss_vs_table": pooled["bss_vs_table"], "auc": pooled["auc"]},
-                                description=f"walk-forward {g['years_evaluated'][0]}-{g['years_evaluated'][-1]} (one of "
-                                            f"{len(blend.get('variants_tested', []))} pre-registered calibrations): "
-                                            f"Brier skill vs the base-rate table > 0 in {len(g['years_passed'])} of "
-                                            f"{len(g['years_evaluated'])} years, narrowest {narrow['year']} "
-                                            f"({narrow['bss_vs_table']:+.3f}); pooled Brier {pooled['brier']:.4f} vs "
-                                            f"{pooled['brier_table']:.4f} (skill {pooled['bss_vs_table']:+.3f}, "
-                                            f"n = {pooled['n']}); λ = {lam:.2f}")  # fmt: skip
-        contrib = im.contributions(fm, feat)
-        p0 = 1 / (1 + math.exp(-fm["logistic"][0]))
-        score = clip_score(200 * (p - 0.5))
-        total = sum(contrib.values())
-        factors.append(Factor(f"Base rate, {ref_label} (weight {1 - lam:.2f})", round(p_ref, 3),
-                              200 * (1 - lam) * (p_ref - 0.5), "Share of comparable post-2022 issues that opened above "
-                              "the issue price (Laplace-smoothed); the blend keeps this much of it.",
-                              "fincalc:ipo.base_rates"))  # fmt: skip
-        factors.append(Factor(f"Model: average past issue (weight {lam:.2f})", round(p0, 3), 200 * lam * (p0 - 0.5),
-                              "The listing model's probability for an issue with average features.",
-                              "fincalc:ipo_model"))  # fmt: skip
-        for key, c in contrib.items():
-            share = (c / total) if abs(total) > 1e-12 else 0.0
-            val = feat.get(key)
-            factors.append(Factor(f"Model: {im.FEATURE_LABELS[key]}", round(val, 4) if isinstance(val, float) else val,
-                                  200 * lam * (p_model - p0) * share, f"Logit term {c:+.3f} for this issue.",
-                                  "fincalc:ipo_model"))  # fmt: skip
-        caveats.append(BLEND_CAVEAT)
-        if feat.get("ofs_share") is None:
-            caveats.append("OFS share not stated in NSE's issue-size text: imputed with the training median.")
-        if feat.get("nifty20") is None:
-            caveats.append("Nifty 50 20-session return unavailable: set to 0 (the training imputation).")
-    elif use_model:
+    shadow = await _shadow_blend(blend, cell, p_cell, p_regime, book, upper, eq_rows, today, detail, src) \
+        if calibrated_ready(blend) else None  # fmt: skip
+    if use_model:
         from finresearch.evals import ipo_model as im
 
         fm = artefact["final_model"]
@@ -784,9 +737,18 @@ async def compute(
                  probability_interval=(round(interval[0], 4), round(interval[1], 4)) if interval else None,
                  expected_return={k: round(v, 4) for k, v in quantiles.items() if v is not None}, base_rate=base,
                  factors=factors, caveats=caveats, sizing=sizing, sources=list(SOURCES_CITED), as_of=now)  # fmt: skip
+    sig.shadow = shadow
     if src.record is not None:
-        src.record(sig, expected_listing(detail, today), {"symbol": symbol, "issue_price": _s(upper),
-                                                          "qib_times": book.qib, "book_as_of": _s(book.as_of)})  # fmt: skip
+        resolve_on = expected_listing(detail, today)
+        inputs = {
+            "symbol": symbol,
+            "issue_price": _s(upper),
+            "qib_times": book.qib,
+            "book_as_of": _s(book.as_of),
+        }
+        src.record(sig, resolve_on, inputs)
+        if shadow is not None:  # logged as its own method: scored out of sample, never used for the call
+            src.record(shadow_signal(sig, shadow), resolve_on, {**inputs, "shadow_of": sig.method})
     return sig
 
 
@@ -844,6 +806,62 @@ async def _live_features_full(book: Book, upper, rows: list[dict[str, Any]], tod
         except Exception:
             log.warning("NIFTY 50 history unavailable for the IPO model", exc_info=True)
     return feat
+
+
+SHADOW_TEXT = ("Shadow test: logged for out-of-sample scoring, not used for the call. It replaces the base-rate "
+               "table only if, after at least 30 resolved live IPO forecasts where both methods forecast, its Brier "
+               "score is lower with a paired-bootstrap 90% interval that excludes 0 "
+               "(evals/experiments/ipo_calibration/SHADOW.md).")  # fmt: skip
+
+
+async def _shadow_blend(blend: dict[str, Any], cell: dict[str, Any], p_cell: float, p_regime: float, book: Book,
+                        upper, rows: list[dict[str, Any]], today: date, detail, src: Sources) -> dict[str, Any]:  # fmt: skip
+    """The E-IPO-1 blend p = λ·p_model + (1 − λ)·p_ref, computed alongside the live call (shadow mode, #151). The
+    reference is the band's rate, or the regime's below MIN_CELL issues, as in the walk-forward."""
+    from finresearch.evals import ipo_model as im
+
+    fm, lam = blend["final_model"], float(blend["calibrator"]["params"]["lambda"])
+    p_ref, ref = ((p_cell, f"QIB band {cell['band']}") if cell["n"] >= blend.get("min_cell", 5)
+                  else (p_regime, "post-2022 regime (band has too few issues)"))  # fmt: skip
+    feat = await _live_features_full(book, upper, rows, today, detail, src)
+    p_model = float(im.predict(fm, [feat])["p"][0])
+    p = lam * p_model + (1 - lam) * p_ref
+    interval = calibrated_interval(blend, p)
+    g, pooled = blend["gate"], blend["pooled"]
+    narrow = min(
+        (f for f in blend["folds"] if f["year"] in g["years_passed"]), key=lambda f: f["bss_vs_table"]
+    )
+    notes = []
+    if feat.get("ofs_share") is None:
+        notes.append("OFS share not stated in NSE's issue-size text: imputed with the training median.")
+    if feat.get("nifty20") is None:
+        notes.append("Nifty 50 20-session return unavailable: set to 0 (the training imputation).")
+    return {"method": BLEND_METHOD, "probability": round(p, 4),
+            "probability_interval": [round(interval[0], 4), round(interval[1], 4)] if interval else None,
+            "p_model": round(p_model, 4), "p_reference": round(p_ref, 4), "reference": ref, "lambda": lam,
+            "status": "shadow", "description": SHADOW_TEXT,
+            "backtest": f"walk-forward {g['years_evaluated'][0]}-{g['years_evaluated'][-1]} (one of "
+                        f"{len(blend.get('variants_tested', []))} pre-registered calibrations): beat the table in "
+                        f"{len(g['years_passed'])} of {len(g['years_evaluated'])} years, narrowest {narrow['year']} "
+                        f"({narrow['bss_vs_table']:+.3f}); pooled Brier {pooled['brier']:.4f} vs "
+                        f"{pooled['brier_table']:.4f} (n = {pooled['n']}); λ = {lam:.2f}",
+            "caveats": [BLEND_CAVEAT, *notes]}  # fmt: skip
+
+
+def shadow_signal(sig: Signal, shadow: dict[str, Any]) -> Signal:
+    """The shadow forecast as a ledger entry: same event and instrument, its own method, validation "shadow". The
+    action is only what the default 50% threshold would say; it is never shown or acted on."""
+    p = shadow["probability"]
+    iv = shadow.get("probability_interval")
+    return Signal(asset=sig.asset, instrument=sig.instrument, name=sig.name,
+                  action="APPLY" if p >= DEFAULT_THRESHOLD else "SKIP", score=round(clip_score(200 * (p - 0.5)), 2),
+                  event=sig.event, horizon=sig.horizon, method=shadow["method"],
+                  validation=Validation(status="shadow", description=shadow["description"]), probability=p,
+                  probability_interval=tuple(iv) if iv else None, base_rate=sig.base_rate,
+                  factors=[Factor("Model probability", shadow["p_model"], 0.0, "L2 logistic listing model", "fincalc:ipo_model"),
+                           Factor(f"Base rate, {shadow['reference']}", shadow["p_reference"], 0.0, "blend reference",
+                                  "fincalc:ipo.base_rates")],
+                  caveats=list(shadow["caveats"]), sources=list(sig.sources), as_of=sig.as_of)  # fmt: skip
 
 
 async def _after_listing(

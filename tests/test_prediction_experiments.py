@@ -269,3 +269,67 @@ def test_harvest_symbols_cover_every_member_and_the_market():
     syms = su.harvest_symbols()
     assert "NIFTYBEES" in syms and "HDFC" in syms and "UNITDSPR" in syms and "MCDOWELL-N" not in syms
     assert "TMPV" in syms and "TATAMOTORS" not in syms and len(syms) == len(set(syms)) == 88
+
+
+def test_shadow_switch_criterion_golden():
+    from finresearch.evals import ipo_shadow as sh
+
+    assert sh.shadow_verdict([])["reason"] == "no resolved pairs yet"
+    # blend always closer to the outcome: d_i > 0 for every pair, so the whole bootstrap distribution is > 0
+    good = [sh.Pair(f"I{i}", 0.6, 0.8, 1) for i in range(20)] + [
+        sh.Pair(f"J{i}", 0.4, 0.2, 0) for i in range(10)
+    ]
+    v = sh.shadow_verdict(good)
+    assert v["switch"] and v["mean_diff"] == pytest.approx(0.16 - 0.04) and v["ci90"][0] > 0
+    assert v["brier_table"] == pytest.approx(0.16) and v["brier_blend"] == pytest.approx(0.04)
+    assert not sh.shadow_verdict(good[:29])["switch"]  # fewer than 30 pairs: not evaluated
+    # a coin flip of wins and losses: the interval straddles 0, keep the table
+    # wins d = 0.16 − 0.04 = +0.12, losses d = 0.25 − 0.3844 = −0.1344: mean −0.0072
+    mixed = [sh.Pair(f"M{i}", 0.6, 0.8, 1) if i % 2 else sh.Pair(f"M{i}", 0.5, 0.62, 0) for i in range(40)]
+    m = sh.shadow_verdict(mixed)
+    assert not m["switch"] and m["ci90"][0] < 0 < m["ci90"][1] and m["retire"] is False
+    assert m["mean_diff"] == pytest.approx(-0.0072)
+    assert sh.shadow_verdict(mixed * 2)["retire"] is True  # 80 pairs, no switch: retire
+    assert sh.shadow_verdict(good)["ci90"] == v["ci90"]  # seeded: reproducible
+
+
+def test_shadow_pairs_come_from_resolved_forecasts_of_both_methods(env):
+    from datetime import UTC, datetime
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import Forecast
+    from finresearch.evals import ipo_shadow as sh
+
+    with session_scope() as s:
+        s.query(Forecast).filter(Forecast.instrument.like("PAIR%")).delete()
+        for i, (inst, method, p, status) in enumerate((("PAIRA", "T", 0.7, "resolved"), ("PAIRA", "B", 0.9, "resolved"),
+                                                      ("PAIRA", "B", 0.8, "resolved"), ("PAIRB", "T", 0.5, "resolved"),
+                                                      ("PAIRC", "T", 0.5, "resolved"), ("PAIRC", "B", 0.4, "void"))):  # fmt: skip
+            s.add(Forecast(created_at=datetime(2026, 10, 2 + i, tzinfo=UTC), asset="ipo", instrument=inst,
+                           source="signal:ipo", event_kind="listing_gain", event="e", horizon="listing day",
+                           resolve_on=date(2026, 10, 20), probability=p, action="APPLY", method=method,
+                           validation_status="shadow" if method == "B" else "base_rate", inputs={}, status=status,
+                           outcome=1, dedupe_key=f"pair-{i}"))  # fmt: skip
+        s.flush()
+        pairs = sh.pairs_from_ledger(s, "T", "B")
+        s.query(Forecast).filter(Forecast.instrument.like("PAIR%")).delete()
+    assert pairs == [
+        sh.Pair("PAIRA", 0.7, 0.8, 1)
+    ]  # the latest blend forecast; unpaired and void rows left out
+
+
+def test_shadow_is_an_additive_validation_status():
+    from typing import get_args
+
+    from finresearch.signals.base import Signal, Validation, ValidationStatus
+
+    assert set(get_args(ValidationStatus)) >= {
+        "backtested",
+        "base_rate",
+        "rule_based",
+        "uncalibrated",
+        "shadow",
+    }
+    s = Signal(asset="ipo", instrument="X", name=None, action="SKIP", score=0.0, event="e", horizon="h", method="m",
+               validation=Validation("base_rate"))  # fmt: skip
+    assert s.to_json()["shadow"] is None  # additive: absent unless a shadow method ran

@@ -475,9 +475,10 @@ def _closes(n: int = 30, last: date = date(2026, 9, 28)):
     return [(last - timedelta(days=n - i), Decimal(20000 + 10 * i)) for i in range(n + 1)]
 
 
-async def test_blend_is_lambda_model_plus_one_minus_lambda_table_and_fills_live_features():
+async def test_blend_runs_in_shadow_beside_the_base_rate_call_and_fills_live_features():
     detail = orient(qib="150", retail="20")
-    src = sources(detail)
+    logged = []
+    src = sources(detail, record=lambda sig, day, inputs: logged.append((sig, inputs)))
     src.calibrated = lambda: _blend()
 
     async def closes(today):
@@ -485,8 +486,11 @@ async def test_blend_is_lambda_model_plus_one_minus_lambda_table_and_fills_live_
 
     src.nifty_closes = closes
     s = await sig_ipo.compute("ORIENTCABL", {}, src)
-    assert s.method == sig_ipo.BLEND_METHOD and s.validation.status == "backtested"
-    assert "5 of 7" in s.validation.description and "2022 (+0.002)" in s.validation.description
+    # the live call is unchanged: the base-rate table (#151 shadow mode)
+    p_cell = fipo.smoothed_rate(18, 20)  # the >100x band in history(): 18 of 20 gained
+    assert s.method == sig_ipo.BASE_RATE_METHOD and s.validation.status == "base_rate"
+    assert s.probability == pytest.approx(p_cell, abs=6e-5)
+    assert sig_ipo.BLEND_CAVEAT not in s.caveats and not any(f.name.startswith("Model:") for f in s.factors)
     from finresearch.evals import ipo_model as im
 
     book = sig_ipo.book_of(None, detail)
@@ -498,30 +502,39 @@ async def test_blend_is_lambda_model_plus_one_minus_lambda_table_and_fills_live_
     )  # 20 sessions back, 6 dp as harvested
     assert feat["ofs_share"] == pytest.approx(0.4203)  # ₹232 cr OFS of ₹552 cr, the harvester's parser
     p_model = float(im.predict(_blend()["final_model"], [feat])["p"][0])
-    p_cell = fipo.smoothed_rate(18, 20)  # the >100x band in history(): 18 of 20 gained
-    assert s.probability == pytest.approx(0.45 * p_model + 0.55 * p_cell, abs=6e-5)
-    assert sum(f.contribution for f in s.factors) == pytest.approx(s.score, abs=0.05)
-    assert s.factors[0].name.startswith("Base rate, QIB band") and "(weight 0.55)" in s.factors[0].name
-    assert sig_ipo.BLEND_CAVEAT in s.caveats
-    lo, hi = s.probability_interval
-    assert lo <= s.probability <= hi  # the range always contains the forecast
+    sh = s.shadow
+    assert sh["status"] == "shadow" and sh["method"] == sig_ipo.BLEND_METHOD
+    assert sh["probability"] == pytest.approx(0.45 * p_model + 0.55 * p_cell, abs=6e-5)
+    lo, hi = sh["probability_interval"]
+    assert lo <= sh["probability"] <= hi  # the range always contains the forecast
+    assert (
+        "5 of 7" in sh["backtest"] and "2022 (+0.002)" in sh["backtest"] and "SHADOW.md" in sh["description"]
+    )
+    assert s.to_json()["shadow"]["probability"] == sh["probability"]
     assert sig_ipo.calibrated_interval(_blend(), 0.2)[0] == 0.2  # below the lowest bin: stretched down to p
+    # both are logged: the call under its method, the blend as its own method with validation "shadow"
+    assert [x.method for x, _ in logged] == [sig_ipo.BASE_RATE_METHOD, sig_ipo.BLEND_METHOD]
+    shadow_sig, inputs = logged[1]
+    assert shadow_sig.validation.status == "shadow" and shadow_sig.probability == sh["probability"]
+    assert inputs["shadow_of"] == sig_ipo.BASE_RATE_METHOD and shadow_sig.event == s.event
 
 
-async def test_blend_falls_back_to_the_regime_rate_for_a_thin_band_and_off_without_a_passing_artefact():
+async def test_shadow_uses_the_regime_rate_for_a_thin_band_and_is_off_without_a_passing_artefact():
     detail = orient(qib="150", retail="20")
     rows = history(n_hot_gain=3, n_hot=3)  # the >100x band has 3 issues: below MIN_CELL
     src = sources(detail, rows=rows)
-    src.calibrated = lambda: _blend(lam=0.0)  # λ = 0: the forecast IS the reference
+    src.calibrated = lambda: _blend(lam=0.0)  # λ = 0: the shadow IS its reference
     s = await sig_ipo.compute("ORIENTCABL", {}, src)
     regime = fipo.base_rates(rows)["regime_totals"]["post_2022"]
     p_regime = fipo.smoothed_rate(round(regime["p_gain"] * regime["n"]), regime["n"])
-    assert s.probability == pytest.approx(p_regime, abs=6e-5) and "regime" in s.factors[0].name
-    assert any("Nifty 50 20-session return unavailable" in c for c in s.caveats)  # no nifty source injected
+    assert s.shadow["probability"] == pytest.approx(p_regime, abs=6e-5) and "regime" in s.shadow["reference"]
+    assert any("Nifty 50 20-session return unavailable" in c for c in s.shadow["caveats"])  # no nifty source
     for bad in (None, _blend(passes=False), {**_blend(), "ship": None}):
         src.calibrated = lambda bad=bad: bad
         s = await sig_ipo.compute("ORIENTCABL", {}, src)
-        assert s.validation.status == "base_rate" and s.method == sig_ipo.BASE_RATE_METHOD
+        assert (
+            s.validation.status == "base_rate" and s.method == sig_ipo.BASE_RATE_METHOD and s.shadow is None
+        )
 
 
 def test_committed_blend_artefact_is_ready_and_consistent():

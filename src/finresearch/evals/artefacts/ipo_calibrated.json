@@ -1,5 +1,6 @@
 {
  "ship": "S",
+ "mode": "shadow",
  "name": "shrinkage blend to the table",
  "calibrator": {
   "variant": "S",

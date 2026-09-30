@@ -145,12 +145,12 @@ export function BaseRatesCard() {
             <p className="mt-2 text-[11px] text-muted">
               Listing model (logistic + quantile regression): Brier skill above this table in <span className="num">{g.years_passed.length}</span> of{" "}
               <span className="num">{g.years_evaluated.length}</span> walk-forward years ({g.years_evaluated[0]}–{g.years_evaluated.at(-1)}).{" "}
-              {data.model?.uses_model ? "It passed, so IPO signals use it." : data.model?.blend ? "On its own it did not pass the bar (5 of 7)." : "It did not pass the bar (5 of 7), so IPO signals use this table."}
+              {data.model?.uses_model ? "It passed, so IPO signals use it." : "It did not pass the bar (5 of 7), so IPO signals use this table."}
               {data.model?.blend && (
                 <>
                   {" "}Blended with this table ({pct(data.model.blend.lambda)} model, {pct(1 - data.model.blend.lambda)} table, weight fitted on earlier years only) it beat the table in{" "}
                   <span className="num">{data.model.blend.gate.years_passed.length}</span> of <span className="num">{data.model.blend.gate.years_evaluated.length}</span> years
-                  (pooled Brier <span className="num">{data.model.blend.pooled.brier.toFixed(3)}</span> vs <span className="num">{data.model.blend.pooled.brier_table.toFixed(3)}</span>, n = <span className="num">{data.model.blend.pooled.n}</span>), so IPO signals use the blend. It passed at the minimum, one of three calibrations tried.
+                  (pooled Brier <span className="num">{data.model.blend.pooled.brier.toFixed(3)}</span> vs <span className="num">{data.model.blend.pooled.brier_table.toFixed(3)}</span>, n = <span className="num">{data.model.blend.pooled.n}</span>), but at the minimum and as one of three calibrations tried, so it runs only as a shadow test: logged beside each call for out-of-sample scoring and shown as an &ldquo;experimental comparison&rdquo;, never used for the call.
                 </>
               )}
             </p>

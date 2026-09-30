@@ -178,9 +178,12 @@ def run(rows: list[Any], *, live_features_filled: bool | None = None) -> dict[st
         shippable = [v for v in passing if live["verdicts"][v]["passes"]]
         if filled:
             v = passing[0]
-            out["decision"] = {"ship": v, "reason": f"{VARIANT_NAMES[v]} passed the bar; the live signal now supplies "
-                               "the OFS share and the Nifty 20-session return (ADDENDUM.md), so the parity check "
-                               "is vacuous and reported only", "calibrator": deployed_calibrator(oof, v)}  # fmt: skip
+            out["decision"] = {"ship": v, "mode": "shadow",
+                               "reason": f"{VARIANT_NAMES[v]} passed the bar; the live signal now supplies the OFS share "
+                               "and the Nifty 20-session return (ADDENDUM.md), so the parity check is vacuous and "
+                               "reported only. Coordinator decision on #151: it runs as a SHADOW test beside the "
+                               "base-rate call, switching only under SHADOW.md's pre-registered criterion",
+                               "calibrator": deployed_calibrator(oof, v)}  # fmt: skip
         elif shippable:
             v = shippable[0]
             out["decision"] = {"ship": v, "reason": f"{VARIANT_NAMES[v]} passed the bar and the live-parity check",
@@ -192,14 +195,15 @@ def run(rows: list[Any], *, live_features_filled: bool | None = None) -> dict[st
 
 
 def signal_artefact(rows: list[Any], res: dict[str, Any], data_note: str) -> dict[str, Any]:
-    """What `signals/ipo.py` reads: the shipped calibrator, the model refitted on every usable row, the variant's
+    """What `signals/ipo.py` reads (as a shadow test since #151): the calibrator, the model refitted on every usable row, the variant's
     walk-forward verdict and its pooled metrics and reliability bins computed on the CALIBRATED forecasts."""
     v = res["decision"]["ship"]
     if v is None:
         return {"ship": None, "reason": res["decision"]["reason"], "generated": date.today().isoformat()}
     p = res["pooled_2019_2025"]
     verdict = res["verdicts"][v]
-    return {"ship": v, "name": VARIANT_NAMES[v], "calibrator": res["decision"]["calibrator"],
+    return {"ship": v, "mode": res["decision"].get("mode", "live"), "name": VARIANT_NAMES[v],
+            "calibrator": res["decision"]["calibrator"],
             "final_model": im.fit(im.usable(rows)), "n_rows": len(im.usable(rows)), "min_cell": im.MIN_CELL,
             "gate": {"rule": f"Brier skill vs the base-rate table > 0 in >= {im.GATE_MIN_PASS} of the complete years "
                              f"{GATE_YEARS[0]}-{GATE_YEARS[-1]} AND pooled {GATE_YEARS[0]}-{GATE_YEARS[-1]} Brier below the "
@@ -274,7 +278,8 @@ def render(res: dict[str, Any], data_note: str) -> str:
         for v, d in res["live_parity"]["verdicts"].items():
             lines.append(f"- {VARIANT_NAMES[v]} ({v}): {len(d['years_passed'])}/7 years, pooled Brier better: "
                          f"{d['pooled_brier_better']}, passes: {d['passes']}")  # fmt: skip
-    lines += ["", "## Decision", "", f"- Ship: {res['decision']['ship'] or 'nothing'}",
+    lines += ["", "## Decision", "", f"- Ship: {res['decision']['ship'] or 'nothing'}"
+              + (f" (mode: {res['decision']['mode']})" if res["decision"].get("mode") else ""),
               f"- Reason: {res['decision']['reason']}", ""]  # fmt: skip
     return "\n".join(lines)
 

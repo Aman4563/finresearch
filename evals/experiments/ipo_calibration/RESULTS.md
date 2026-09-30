@@ -64,5 +64,5 @@ Generated 2026-10-01 by `finresearch.evals.ipo_calibration` from `ipo_history.js
 
 ## Decision
 
-- Ship: S
-- Reason: shrinkage blend to the table passed the bar; the live signal now supplies the OFS share and the Nifty 20-session return (ADDENDUM.md), so the parity check is vacuous and reported only
+- Ship: S (mode: shadow)
+- Reason: shrinkage blend to the table passed the bar; the live signal now supplies the OFS share and the Nifty 20-session return (ADDENDUM.md), so the parity check is vacuous and reported only. Coordinator decision on #151: it runs as a SHADOW test beside the base-rate call, switching only under SHADOW.md's pre-registered criterion

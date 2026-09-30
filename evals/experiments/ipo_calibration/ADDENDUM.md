@@ -38,3 +38,12 @@ follow-up is to fill the two live features (#137 gap) and re-run this pre-regist
   fold it stays close to the table the app already shows.
 - Timing: training used the Nifty close on the issue's last day; on the closing day the live signal has the previous
   session's close. The signal carries a caveat.
+
+## Update (1-Oct-2026, coordinator decision on PR #151): shadow mode
+
+Three reasons weighed against letting the blend replace the live call: it passed at exactly the minimum (5 of 7 years,
+2022 by +0.002), it passed only after a post-hoc input fix, and three variants were tried against an uncorrected bar.
+So it does not replace the live call. The live IPO signal stays the empirical base-rate table (validation
+`base_rate`). The blend is computed alongside and logged in the forecast ledger as its own method, with validation
+status `shadow`. The IPO card shows it as an "experimental comparison". The switch criterion is pre-registered in
+`SHADOW.md` (≥ 30 paired live outcomes; the blend's Brier lower, with a paired-bootstrap 90% interval that excludes 0).
