@@ -250,8 +250,53 @@ async def alerts_step(now: datetime) -> dict[str, int]:
     return {k: v for k, v in out.items() if v}
 
 
+_BACKGROUND: dict[str, asyncio.Task] = {}
+
+
+def _spawn_portfolio(deps: jobs.Deps, now: datetime) -> None:
+    """Start the daily portfolio pass (monitor.portfolio_daily) in the background when one is due: it can take a few
+    minutes (quotes, signals, events at polite rates) and must not hold up the IPO checks in this tick. At most one
+    runs at a time; failures are logged and retried there."""
+    from finresearch.monitor.portfolio_daily import portfolio_step
+
+    t = _BACKGROUND.get("portfolio")
+    if t is not None and not t.done():
+        return
+
+    async def run() -> None:
+        try:
+            res = await portfolio_step(deps, now)
+            if res:
+                log.info("portfolio daily pass: %s", res)
+        except Exception:
+            log.warning("portfolio daily pass failed", exc_info=True)
+
+    _BACKGROUND["portfolio"] = asyncio.create_task(run())
+
+
+async def drain() -> None:
+    """Wait for background work started by `tick` (a one-shot `finresearch monitor tick` calls this)."""
+    for t in list(_BACKGROUND.values()):
+        with contextlib.suppress(Exception):
+            await t
+
+
+def brief_step(now: datetime) -> dict[str, int]:
+    """The 08:30 brief and the Sunday digest (monitor.digest): database only, so it runs inline."""
+    try:
+        from finresearch.monitor.digest import brief_step as step
+
+        return step(now)
+    except Exception:
+        log.warning("morning brief failed; it is retried on the next tick", exc_info=True)
+        return {}
+
+
 async def tick(deps: jobs.Deps, now: datetime | None = None) -> dict[str, int]:
     now = now or datetime.now(UTC)
+    if deps.portfolio_daily:
+        _spawn_portfolio(deps, now)
+    out_brief = brief_step(now) if deps.brief else {}
     if deps.holidays is not None or deps.live_holidays:
         await _refresh_holidays(deps)
     if deps.fno is not None:
@@ -277,6 +322,7 @@ async def tick(deps: jobs.Deps, now: datetime | None = None) -> dict[str, int]:
         out |= await connections_step(now)
     except Exception:
         log.warning("broker connection step failed; it is retried on the next tick", exc_info=True)
+    out |= {f"{k}_sent": v for k, v in out_brief.items()}
     try:
         res = await jobs.archive_open_books(deps, now)
         out["archived"] = len(res["archived"]) if res else 0
@@ -308,7 +354,9 @@ def schedule_json(ww=None, *, running: bool | None = None) -> dict:
 
     from finresearch.api.live import BIDDING_HOURS, EQUITY_HOURS
     from finresearch.fincalc.ipo import lock_in_schedule
+    from finresearch.monitor import digest as dg
     from finresearch.monitor import intraday, iv
+    from finresearch.monitor import portfolio_daily as pd
     from finresearch.monitor.plan import ALLOTMENT_TIME, LISTING_TIMES, LOCKIN_TIME
     from finresearch.signals.ledger import READY_AFTER_IST
     from finresearch.suggest.profile import IPO_FINAL_CHECK
@@ -332,6 +380,10 @@ def schedule_json(ww=None, *, running: bool | None = None) -> dict:
                      "max_tries": intraday.MAX_TRIES, "retry_min": intraday.RETRY_S // 60},
         "iv": {"from": hm(iv.START), "indices": list(iv.INDEX_SYMBOLS)},
         "forecasts": {"after": hm(READY_AFTER_IST), "every_min": int(FORECAST_EVERY.total_seconds() // 60)},
+        "portfolio": {"close_pass": hm((pd.close_time(ww.stock_time()).hour, pd.close_time(ww.stock_time()).minute)),
+                      "nav_pass": hm((pd.NAV_AT.hour, pd.NAV_AT.minute)), "max_instruments": pd.MAX_INSTRUMENTS,
+                      "brief": hm((dg.BRIEF_AT.hour, dg.BRIEF_AT.minute)),
+                      "digest": hm((dg.DIGEST_AT.hour, dg.DIGEST_AT.minute)), "digest_day": "Sunday"},
         "equity_hours": [hm((EQUITY_HOURS[0].hour, EQUITY_HOURS[0].minute)),
                          hm((EQUITY_HOURS[1].hour, EQUITY_HOURS[1].minute))],
     }  # fmt: skip

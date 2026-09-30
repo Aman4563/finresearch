@@ -1,9 +1,9 @@
 "use client";
 
 import {
-  Activity, BadgeIndianRupee, BellRing, BookOpenCheck, Briefcase, ChartCandlestick, ChevronsLeft, CircleHelp, Command, FlaskConical,
-  Gauge as GaugeIcon, Landmark, LayoutDashboard, ListChecks, Menu, Monitor, Moon, NotebookPen, PieChart, Radar, Rocket,
-  Search, Sun, UserRound, X,
+  Activity, BadgeIndianRupee, BellRing, BookOpenCheck, Briefcase, ChartCandlestick, ChevronsLeft, CircleHelp, Command, Download, EyeOff,
+  FlaskConical, Gauge as GaugeIcon, Landmark, LayoutDashboard, ListChecks, Menu, Monitor, Moon, NotebookPen, PieChart, PiggyBank, Radar, Rocket,
+  Search, Sun, Sunrise, UserRound, X,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -11,6 +11,7 @@ import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } fro
 
 import { AlertBadge } from "@/components/alerts";
 import { WelcomeTour } from "@/components/help/welcome";
+import { PrivacyToggle, usePrivacy } from "@/components/privacy";
 import { AVATAR_GRADIENT, PreferenceEffects } from "@/components/profile/common";
 import { cx } from "@/components/ui";
 import { API_URL, type Company, type Profile, useApi } from "@/lib/api";
@@ -22,7 +23,10 @@ export type NavItem = { href: string; label: string; icon: ReactNode; keys?: str
 export const NAV: { group: string; items: NavItem[] }[] = [
   {
     group: "Overview",
-    items: [{ href: "/", label: "Dashboard", icon: <LayoutDashboard />, keys: "g d", description: "Everything at a glance" }],
+    items: [
+      { href: "/", label: "Dashboard", icon: <LayoutDashboard />, keys: "g d", description: "Everything at a glance" },
+      { href: "/brief", label: "Morning brief", icon: <Sunrise />, keys: "g n", description: "Today's events, fired rules, calendar and data health" },
+    ],
   },
   {
     group: "Research",
@@ -47,6 +51,7 @@ export const NAV: { group: string; items: NavItem[] }[] = [
     group: "You",
     items: [
       { href: "/portfolio", label: "Portfolio", icon: <Briefcase />, keys: "g t", description: "Holdings, P&L, XIRR, allocation and capital-gains tax" },
+      { href: "/wealth", label: "Wealth", icon: <PiggyBank />, keys: "g w", description: "Net worth, goals, emergency fund, insurance and loans" },
       { href: "/profile", label: "Profile", icon: <UserRound />, keys: "g p", description: "You, your investor profile and preferences" },
       { href: "/rules", label: "Rules", icon: <ListChecks />, keys: "g u", description: "IPO red lines and alerts for every asset" },
       { href: "/usage", label: "Plan usage", icon: <GaugeIcon />, keys: "g l", description: "Claude plan window and limits" },
@@ -197,6 +202,11 @@ function ProfileMenu() {
               {i.label}
             </Link>
           ))}
+          <a href={`${API_URL}/api/export/all.zip`} role="menuitem" onClick={() => setOpen(false)}
+            className="flex items-center gap-2.5 border-t border-border px-4 py-2 text-sm text-muted transition hover:bg-background-subtle hover:text-foreground">
+            <Download className="size-4" />
+            Export all my data
+          </a>
         </div>
       )}
     </div>
@@ -210,6 +220,7 @@ type Cmd = { id: string; label: string; hint?: string; group: string; icon?: Rea
 function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void }) {
   const router = useRouter();
   const { setTheme } = useTheme();
+  const { toggle: togglePrivacy } = usePrivacy();
   const { data: companies } = useApi<Company[]>(open ? "/api/companies" : null);
   const [q, setQ] = useState("");
   const [sel, setSel] = useState(0);
@@ -230,6 +241,9 @@ function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void 
       { id: "t-light", label: "Light theme", group: "Appearance", icon: <Sun />, run: () => { setTheme("light"); onClose(); } },
       { id: "t-dark", label: "Dark theme", group: "Appearance", icon: <Moon />, run: () => { setTheme("dark"); onClose(); } },
       { id: "t-system", label: "Match system theme", group: "Appearance", icon: <Monitor />, run: () => { setTheme("system"); onClose(); } },
+      { id: "privacy", label: "Blur amounts (privacy)", hint: "Shift+B", group: "Appearance", icon: <EyeOff />, run: () => { togglePrivacy(); onClose(); } },
+      { id: "export", label: "Export all my data", hint: "zip of JSON and CSV", group: "Your data", icon: <Download />,
+        run: () => { window.open(`${API_URL}/api/export/all.zip`, "_blank", "noopener"); onClose(); } },
       { id: "shortcuts", label: "Keyboard shortcuts", group: "Help", icon: <Command />, run: go("/help#shortcuts") },
       { id: "glossary", label: "Glossary: QIB, NII, GMP, YTM…", group: "Help", icon: <CircleHelp />, run: go("/help#glossary") },
     ];
@@ -238,7 +252,7 @@ function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void 
       run: go(c.latest_run ? `/runs/${c.latest_run}` : `/ipos`),
     }));
     return [...pages, ...actions, ...cos];
-  }, [companies, onClose, router, setTheme]);
+  }, [companies, onClose, router, setTheme, togglePrivacy]);
 
   const shown = useMemo(() => {
     const t = q.trim().toLowerCase();
@@ -415,6 +429,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             <kbd className="hidden rounded border border-border px-1.5 text-[10px] sm:inline">⌘K</kbd>
           </button>
           <ApiStatus />
+          <PrivacyToggle />
           <AlertBadge />
           <Link href="/help" title="Help (press ?)" aria-label="Help" className="grid size-9 place-items-center rounded-lg text-muted transition hover:bg-background-subtle hover:text-foreground">
             <CircleHelp className="size-4" />

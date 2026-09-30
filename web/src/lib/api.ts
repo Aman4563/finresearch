@@ -388,6 +388,8 @@ export type MonitorSchedule = {
   intraday: { from: string; indices: string[]; max_tries: number; retry_min: number };
   iv: { from: string; indices: string[] };
   forecasts: { after: string; every_min: number };
+  /** the daily layer (monitor.portfolio_daily, monitor.digest); older API builds omit it */
+  portfolio?: { close_pass: string; nav_pass: string; max_instruments: number; brief: string; digest: string; digest_day: string };
   equity_hours: [string, string];
 };
 

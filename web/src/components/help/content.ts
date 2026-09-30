@@ -184,6 +184,16 @@ export const FAQ: Faq[] = [
     a: "On your Mac: a local Postgres database and a local document folder. The API only listens on 127.0.0.1, so nothing is exposed to your network." },
   { q: "How fresh are subscription figures?",
     a: "They come from NSE (combined NSE + BSE) with the time they were published. While bidding is open they are interim and labelled so; the Monitor checks them on a schedule." },
+  { q: "What is the morning brief?",
+    a: "At 08:30 IST on trading days the app builds a short brief from stored data: what is dated for your holdings and watched IPOs this week (ex-dates, results board meetings, SIP instalments, lots turning long-term, tax dates), the alerts that fired since the last brief, signal changes on holdings and data health. It never shows daily P&L by default: performance comes in a weekly digest on Sunday, because checking P&L every day tends to raise loss aversion without improving decisions. Choose push channels on the brief page; quiet hours hold a push until they end. Nothing in it is sent to an AI.",
+    link: { href: "/brief", label: "Open the brief" } },
+  { q: "When is my portfolio valued, and what do the portfolio alerts use?",
+    a: "While `finresearch serve` runs, the monitor values your holdings after the close on every trading day (and again at 23:00 for fund NAVs), computes each holding's signal once (scheduled checks never write the forecast ledger) and reads corporate actions, results dates and fund TERs. The portfolio alerts (a holding moving 5 %, a signal change, a lot turning long-term, a missed SIP, a TER change, concentration and more) read that stored data, and each says the date of the data it used. Tax figures are estimates from a dated rule table: verify with a chartered accountant.",
+    link: { href: "/rules", label: "Portfolio alerts" } },
+  { q: "Can I install FinResearch as an app, or open it on my phone?",
+    a: "On this Mac, yes: in Chrome or Edge use the install icon in the address bar (or Safari → File → Add to Dock) while the app is open at 127.0.0.1; it then opens in its own window. On a phone over your home network it is not installable: browsers only install apps from a secure (HTTPS) origin or localhost, and the API only listens on this Mac. Use the ntfy, Telegram or macOS notifications for alerts and the brief instead." },
+  { q: "How do I export or hide my data?",
+    a: "Export all my data (profile menu, the brief page or ⌘K) downloads a zip with every table of yours as JSON and CSV, watermarked 'PERSONAL – NOT FOR DISTRIBUTION'; notification secrets and derived caches are left out. For screen sharing, the eye button in the header (or Shift+B) blurs every rupee amount until you turn it off." },
   { q: "What do my profile settings change?",
     a: "Capital per IPO and category set how many lots a suggestion can recommend. Risk appetite, horizon, tax slab, holdings and notes are read by the advisor. Your name, avatar and display preferences only change how the app looks.",
     link: { href: "/profile", label: "Open your profile" } },
@@ -224,7 +234,9 @@ export const GETTING_STARTED: Step[] = [
 
 /** What you can do on each page, keyed by NAV href. */
 export const PAGE_GUIDES: Record<string, string[]> = {
-  "/": ["See open IPOs, running research and alerts at a glance", "Jump into anything with ⌘K"],
+  "/": ["See open IPOs, running research and alerts at a glance", "Your portfolio strip: value, the week's return with new money removed, LTCG headroom", "Jump into anything with ⌘K"],
+  "/wealth": ["Net worth with manual assets and loans", "Goals, emergency fund, insurance and debt ratios"],
+  "/brief": ["Today's dated events for holdings and watches", "Alerts since the last brief, signal changes, data health", "45-day calendar, lots turning long-term, SIP health, advance-tax estimate", "Weekly digest and push settings"],
   "/ipos": ["Open and upcoming main-board and SME issues", "Live subscription by category (QIB, NII, retail)", "Start research on an issue"],
   "/stocks": ["Search listed companies", "Price history, results and research reports"],
   "/funds": ["Search AMFI mutual funds", "NAV history, returns and risk", "Fund research reports"],

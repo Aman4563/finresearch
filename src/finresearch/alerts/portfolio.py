@@ -5,7 +5,8 @@ missing, every portfolio metric is "unknown" with a reason and no rule fires):
 
     def alert_metrics(session) -> dict[str, tuple[Decimal | None, str]]
         # {"allocation_drift_pp": (value, source), "ltcg_headroom_inr": (...), "drawdown_pct": (...)}
-        # value None = not computable (say why in the source string); keys it does not know are simply absent
+        # value None = not computable (say why in the source string); keys it does not know are simply absent;
+        # a third element, when present, is a detail shown in the alert ("INFY -6.2%")
 
 Tests (and a coordinator wiring things up) can set `SOURCE` to any callable with that signature.
 """

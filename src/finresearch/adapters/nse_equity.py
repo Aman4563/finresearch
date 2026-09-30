@@ -133,6 +133,8 @@ def nse_endpoint(kind: str, symbol: str, **kw: Any) -> tuple[str, dict[str, str]
         return "/api/corporates-corporateActions", eq
     if kind == "annual_reports":
         return "/api/annual-reports", eq
+    if kind == "board_meetings":  # read 30-Sep-2026: upcoming and past board meetings with their purpose
+        return "/api/corporate-board-meetings", eq
     raise ValueError(f"unknown NSE data set {kind!r}")
 
 
@@ -254,6 +256,30 @@ class CorporateAction(BaseModel):
                    record_date=parse_nse_date(r.get("recDate")), dividend_per_share=dividend_per_share(subj))  # fmt: skip
 
 
+class BoardMeeting(BaseModel):
+    """One board-meeting intimation (NSE /api/corporate-board-meetings): the meeting date and its purpose, e.g.
+    "Financial Results/Dividend". Several rows can announce the same meeting (an XBRL intimation and a PDF)."""
+
+    symbol: str
+    day: date | None
+    purpose: str
+    description: str
+    announced_at: datetime | None
+    attachment: str | None
+
+    @property
+    def results(self) -> bool:
+        text = f"{self.purpose} {self.description}".lower()
+        return "result" in text
+
+    @classmethod
+    def parse(cls, r: dict[str, Any]) -> BoardMeeting:
+        return cls(symbol=r.get("bm_symbol") or r.get("symbol") or "", day=parse_nse_date(r.get("bm_date")),
+                   purpose=(r.get("bm_purpose") or "").strip(), description=" ".join((r.get("bm_desc") or "").split()),
+                   announced_at=parse_nse_timestamp(r.get("bm_timestamp")),
+                   attachment=_archive_link(r.get("attachment")))  # fmt: skip
+
+
 class AnnualReportFiling(BaseModel):
     symbol: str
     from_year: int | None
@@ -373,6 +399,12 @@ class NseEquity:
     async def corporate_actions(self, symbol: str) -> list[CorporateAction]:
         rows = await self._get(symbol, *nse_endpoint("corporate_actions", symbol))
         return [CorporateAction.parse(r) for r in rows or []]
+
+    async def board_meetings(self, symbol: str) -> list[BoardMeeting]:
+        """Board meetings (upcoming and past) with their purpose; results meetings give the results date."""
+        rows = await self._get(symbol, *nse_endpoint("board_meetings", symbol))
+        rows = rows.get("data", []) if isinstance(rows, dict) else rows or []
+        return sorted((BoardMeeting.parse(r) for r in rows), key=lambda b: b.day or date.min, reverse=True)
 
     async def annual_reports(self, symbol: str) -> list[AnnualReportFiling]:
         d = await self._get(symbol, *nse_endpoint("annual_reports", symbol))

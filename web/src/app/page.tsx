@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useMemo } from "react";
 
 import { LinkButton } from "@/components/dashboard/link-button";
+import { PortfolioStrip } from "@/components/dashboard/portfolio-strip";
 import {
   Calendar, GettingStarted, JournalMini, type Limits, PlanTile, QuickActions, RecentRuns, WatchedSubscription, bindingWindow,
   buildEvents, planUsage,
@@ -106,6 +107,8 @@ export default function Dashboard() {
       </section>
 
       <GettingStarted profileSet={!!profile.data?.display_name} researched={!!runs.data?.length} watched={!!watches.data?.length} />
+
+      <PortfolioStrip />
 
       <div className="stagger grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
         <Stat label="IPOs open now" format={int} value={radar.data ? open.length : null} href="/ipos" tone="gain"
