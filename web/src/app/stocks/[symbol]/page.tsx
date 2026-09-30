@@ -10,6 +10,7 @@ import { useState } from "react";
 
 import { DonutChart, TimeSeriesChart, shortDate } from "@/components/charts";
 import { ensureStock, startResearch, watchStock } from "@/components/markets/actions";
+import { ExchangeBadge, ExchangeSwitch, PriceComparison } from "@/components/markets/exchange";
 import { MarginChart, ResultsChart } from "@/components/markets/charts";
 import { ShareholdingSplit } from "@/components/markets/shareholding";
 import { ForensicCard, SinceReport, StockSignalCard } from "@/components/markets/stock-signal";
@@ -25,7 +26,10 @@ const PERIODS: Period[] = ["1M", "3M", "6M", "1Y", "3Y", "5Y"];
 
 export default function StockDetail() {
   const { symbol: raw } = useParams<{ symbol: string }>();
+  // the NSE symbol, or "BSE:<scrip code>" for the BSE view of a stock (the only view of a BSE-only one)
   const symbol = decodeURIComponent(raw).toUpperCase();
+  const onBse = symbol.startsWith("BSE:");
+  const ex = onBse ? "BSE" : "NSE";
   const router = useRouter();
   const [period, setPeriod] = useState<Period>("1Y");
   const [busy, setBusy] = useState(false);
@@ -38,9 +42,13 @@ export default function StockDetail() {
   const results = useApi<StockResults>(`/api/stocks/${encodeURIComponent(symbol)}/results`);
   const shp = useApi<StockShareholding>(`/api/stocks/${encodeURIComponent(symbol)}/shareholding`);
   const watches = useApi<WatchSummary[]>("/api/watches");
-  const watching = (watches.data ?? []).some((w) => w.kind === "stock" && w.active && w.nse_symbol === symbol);
+  const listing = ov.data?.listing;
+  // watches and research runs track NSE symbols: a BSE-only stock has none
+  const nseSymbol = onBse ? (listing?.nse_symbol ?? null) : symbol;
+  const watching = (watches.data ?? []).some((w) => w.kind === "stock" && w.active && w.nse_symbol === nseSymbol);
+  const nseOnlyNote = "Watching and research runs follow NSE symbols; this stock trades only on BSE.";
 
-  // the price refreshes every 30 s while NSE is open; the rest of the page is fetched once
+  // the price refreshes every 30 s while the market is open (NSE and BSE keep the same hours); the rest is fetched once
   const live = useLive<{ quote: NonNullable<StockOverview["quote"]>; fetched_at: string }>(
     `/api/stocks/${encodeURIComponent(symbol)}/quote`, { session: "equity", everyMs: 30000 });
   const q = live.data?.quote ? { ...ov.data?.quote, ...live.data.quote } : ov.data?.quote;
@@ -50,20 +58,22 @@ export default function StockDetail() {
   const histLoadingMore = hist.data && hist.data.days < Math.min(days, 1827);
 
   const research = async () => {
-    if (!confirm(`Start a full stock research run for ${symbol}? It uses your Claude plan window.`)) return;
+    if (!nseSymbol) return;
+    if (!confirm(`Start a full stock research run for ${nseSymbol}? It uses your Claude plan window.`)) return;
     setBusy(true);
     try {
-      router.push(`/runs/${await startResearch(await ensureStock(symbol), "stock_report")}`);
+      router.push(`/runs/${await startResearch(await ensureStock(nseSymbol), "stock_report")}`);
     } catch (e) {
       setActionError((e as Error).message);
       setBusy(false);
     }
   };
   const watch = async () => {
+    if (!nseSymbol) return;
     setBusy(true);
     try {
-      await watchStock(symbol);
-      setNote(`Watching ${symbol}: results filings, corporate actions, holding changes and big moves are checked after each close.`);
+      await watchStock(nseSymbol);
+      setNote(`Watching ${nseSymbol}: results filings, corporate actions, holding changes and big moves are checked after each close.`);
       watches.reload();
     } catch (e) {
       setActionError((e as Error).message);
@@ -89,8 +99,10 @@ export default function StockDetail() {
       <PageHeader
         icon={<ChartCandlestick className="size-5" />}
         eyebrow={
-          <span className="inline-flex items-center gap-2">
-            NSE · {symbol}
+          <span className="inline-flex flex-wrap items-center gap-2">
+            {onBse ? <>BSE · {q?.symbol ?? ""} {symbol.slice(4)}</> : <>NSE · {symbol}</>}
+            <ExchangeSwitch listing={listing} current={ex} />
+            {listing && listing.exchange !== "both" && <ExchangeBadge exchange={listing.exchange} group={listing.bse_group} />}
             {q?.status && <Badge tone={q.status === "Listed" ? "gain" : "warn"}>{q.status.toLowerCase()}</Badge>}
           </span>
         }
@@ -105,10 +117,12 @@ export default function StockDetail() {
         }
         actions={
           <>
-            <Button variant="secondary" size="md" disabled={busy || watching} onClick={watch} icon={<BellPlus className="size-4" />}>
+            <Button variant="secondary" size="md" disabled={busy || watching || !nseSymbol} onClick={watch} icon={<BellPlus className="size-4" />}
+              title={nseSymbol ? undefined : nseOnlyNote}>
               {watching ? "Watching" : "Watch"}
             </Button>
-            <Button size="md" disabled={busy} onClick={research} icon={<FlaskConical className="size-4" />}>
+            <Button size="md" disabled={busy || !nseSymbol} onClick={research} icon={<FlaskConical className="size-4" />}
+              title={nseSymbol ? undefined : nseOnlyNote}>
               Research
             </Button>
           </>
@@ -116,14 +130,14 @@ export default function StockDetail() {
       />
 
       <LiveStamp session="equity" live={live.live} status={live.status} updatedAt={live.updatedAt ?? ov.updatedAt} everyMs={30000}
-        asOf={q?.as_of} onRefresh={live.reload} className="-mt-3 mb-5" />
+        asOf={q?.as_of} asOfLabel={`${ex} as of`} onRefresh={live.reload} className="-mt-3 mb-5" />
       <div className="space-y-5">
         <ErrorNote error={actionError} />
         {note && <Callout tone="gain">{note}</Callout>}
-        {ov.error && <ErrorNote error={`Could not load ${symbol} from NSE: ${ov.error}`} onRetry={ov.reload} />}
+        {ov.error && <ErrorNote error={`Could not load ${symbol} from ${ex}: ${ov.error}`} onRetry={ov.reload} />}
         {ov.data && ov.data.errors.length > 0 && (
-          <Callout tone="warn" title="Some sections could not be loaded from NSE">
-            {ov.data.errors.map((e) => e.split(":")[0]).join(", ")}: NSE refused or timed out. The rest of the page is current; reload in a minute to retry.
+          <Callout tone="warn" title={`Some sections could not be loaded from ${ex}`}>
+            {ov.data.errors.map((e) => e.split(":")[0]).join(", ")}: {ex} refused or timed out. The rest of the page is current; reload in a minute to retry.
           </Callout>
         )}
 
@@ -151,31 +165,39 @@ export default function StockDetail() {
           )}
         </div>
 
-        <SinceReport symbol={symbol} />
-
-        {/* signal + forensic scorecard (computed in Python; screening flags, not advice) */}
-        <div className="grid [&>*]:min-w-0 gap-5 lg:grid-cols-2">
-          <StockSignalCard symbol={symbol} />
-          <ForensicCard symbol={symbol} />
-        </div>
+        {/* signal + forensic scorecard (computed in Python; screening flags, not advice). They read NSE data, so the
+            BSE view of a dual-listed stock shows its NSE symbol's cards and a BSE-only stock says why there are none */}
+        {nseSymbol ? (
+          <>
+            <SinceReport symbol={nseSymbol} />
+            <div className="grid [&>*]:min-w-0 gap-5 lg:grid-cols-2">
+              <StockSignalCard symbol={nseSymbol} />
+              <ForensicCard symbol={nseSymbol} />
+            </div>
+          </>
+        ) : onBse && ov.data ? (
+          <Callout tone="info" title="No signal or forensic scorecard for BSE-only stocks yet">
+            Both are computed from NSE data (price history, filings index and the stock&apos;s research runs). The price, results, shareholding and filings below come from BSE.
+          </Callout>
+        ) : null}
 
         {/* price chart + range */}
         <div className="grid [&>*]:min-w-0 gap-5 lg:grid-cols-3">
-          <Card className="lg:col-span-2" title="Price" subtitle="Daily closing price on NSE" icon={<TrendingUp className="size-4" />}
+          <Card className="lg:col-span-2" title="Price" subtitle={`Daily closing price on ${ex}`} icon={<TrendingUp className="size-4" />}
             help="Each point is the day's official closing price. Pick a period to see how much the price moved over it.">
             {hist.error && !hist.data ? (
               <ErrorNote error={hist.error} onRetry={hist.reload} />
             ) : !hist.data ? (
               <Skeleton className="h-[320px] w-full rounded-lg" />
             ) : bars.length < 2 ? (
-              <EmptyState title="No price history">NSE returned no trading days for {symbol}. It may be suspended or newly listed.</EmptyState>
+              <EmptyState title="No price history">{ex} returned no trading days for {symbol}. It may be suspended or newly listed.</EmptyState>
             ) : (
               <>
                 <PeriodChart data={bars} series={[{ key: "close", label: "Close" }]} periods={PERIODS} period={period} onPeriod={setPeriod}
                   format={(v) => `₹${v.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`}
                   extra={histLoadingMore ? <Loader2 className="size-4 animate-spin text-muted" aria-label="Loading longer history" /> : null} />
                 {hist.data.partial && (
-                  <p className="mt-2 text-xs text-warn">NSE refused part of the older history; the chart starts at {shortDate(bars[0].date)}.</p>
+                  <p className="mt-2 text-xs text-warn">{ex} refused part of the older history; the chart starts at {shortDate(bars[0].date)}.</p>
                 )}
                 <div className="mt-4 grid grid-cols-3 gap-2">
                   <Metric label={`Return (${hist.data.days >= 1827 ? "5Y" : hist.data.days >= 1096 ? "3Y" : "1Y"})`} value={signedPct(hist.data.stats.return)} tone={toneOf(hist.data.stats.return)} />
@@ -190,11 +212,12 @@ export default function StockDetail() {
           </Card>
 
           <div className="space-y-5">
+            {listing?.exchange === "both" && <PriceComparison listing={listing} />}
             <Card title="52-week range" icon={<ChartCandlestick className="size-4" />} help="The lowest and highest prices of the last 52 weeks, with today's price marked.">
               {q?.week52_low && q?.week52_high && last != null ? (
                 <RangeBar low={Number(q.week52_low)} high={Number(q.week52_high)} value={last} lowLabel="52w low" highLabel="52w high" />
               ) : ov.data ? (
-                <p className="text-sm text-muted">NSE did not give a 52-week range.</p>
+                <p className="text-sm text-muted">{ex} did not give a 52-week range.</p>
               ) : (
                 <SkeletonRows rows={2} />
               )}
@@ -218,14 +241,14 @@ export default function StockDetail() {
         {/* holding + results */}
         <div className="grid [&>*]:min-w-0 gap-5 lg:grid-cols-2">
           <Card title="Shareholding pattern" icon={<Users className="size-4" />}
-            subtitle={split ? `Quarter ended ${day(split.quarters[split.quarters.length - 1].as_of)}, from the filed pattern` : latestHolding?.as_of ? `Quarter ended ${day(latestHolding.as_of)}` : "Latest filing with NSE"}
+            subtitle={split ? `Quarter ended ${day(split.quarters[split.quarters.length - 1].as_of)}, from the filed pattern` : latestHolding?.as_of ? `Quarter ended ${day(latestHolding.as_of)}` : `Latest filing with ${ex}`}
             help="Who owns the company: promoters (founders / controlling group), foreign institutions (FII / FPI), domestic institutions (DII: mutual funds, insurers, banks) and individuals. A falling promoter share can mean selling or dilution; rising institutional ownership often follows improving fundamentals.">
             {split ? (
               <ShareholdingSplit data={split} />
             ) : !ov.data || splitLoading ? (
               <SkeletonRows rows={5} />
             ) : !latestHolding ? (
-              <EmptyState icon={<PieChart className="size-5" />} title="No shareholding filing">NSE has no shareholding pattern for {symbol} yet.</EmptyState>
+              <EmptyState icon={<PieChart className="size-5" />} title="No shareholding filing">{ex} has no shareholding pattern for {symbol} yet.</EmptyState>
             ) : (
               <div className="space-y-5">
                 <DonutChart
@@ -256,7 +279,7 @@ export default function StockDetail() {
                     />
                   </div>
                 )}
-                <p className="text-[11px] text-muted">Public = institutions (FIIs, mutual funds, insurers) plus retail. NSE&apos;s summary gives only promoter, public and employee trusts; the FII / DII split could not be read from the filed pattern{shp.error ? ` (${shp.error})` : ""}.</p>
+                <p className="text-[11px] text-muted">Public = institutions (FIIs, mutual funds, insurers) plus retail. {ex}&apos;s summary gives only promoter, public and employee trusts; the FII / DII split could not be read from the filed pattern{shp.error ? ` (${shp.error})` : ""}.</p>
               </div>
             )}
           </Card>
@@ -264,14 +287,16 @@ export default function StockDetail() {
           <Card title="Quarterly results" icon={<Landmark className="size-4" />}
             subtitle={latestQ ? `${latestQ.consolidated ? "Consolidated" : "Standalone"}, read from each filing's XBRL` : "Revenue and profit from results filings"}
             actions={latestQ ? <Badge tone="accent">Latest: {latestQ.label}{latestQ.filed_at ? `, filed ${day(latestQ.filed_at)}` : ""}</Badge> : undefined}
-            help="Revenue from operations and profit attributable to shareholders, read from the company's own results filing on NSE. Since the March 2025 quarter SEBI has companies file results as Integrated Filing (Financials); older quarters come from NSE's financial results index.">
+            help={onBse
+              ? "Revenue from operations and profit attributable to shareholders, read from the company's own results filing on BSE. BSE indexes machine-readable results from the March 2025 quarter, when SEBI moved results into Integrated Filing (Financials)."
+              : "Revenue from operations and profit attributable to shareholders, read from the company's own results filing on NSE. Since the March 2025 quarter SEBI has companies file results as Integrated Filing (Financials); older quarters come from NSE's financial results index."}>
             {results.error ? (
               <ErrorNote error={results.error} onRetry={results.reload} />
             ) : !results.data ? (
               <Skeleton className="h-[240px] w-full rounded-lg" />
             ) : quarters.length === 0 ? (
-              <EmptyState icon={<FileText className="size-5" />} title="No machine-readable results on NSE">
-                NSE has no results XBRL for {symbol} in its integrated filing or financial results indexes. Check the announcements below for the latest results PDF.
+              <EmptyState icon={<FileText className="size-5" />} title={`No machine-readable results on ${ex}`}>
+                {onBse ? `BSE has no integrated-filing results XBRL for ${symbol} (they start with the March 2025 quarter).` : `NSE has no results XBRL for ${symbol} in its integrated filing or financial results indexes.`} Check the announcements below for the latest results PDF.
               </EmptyState>
             ) : (
               <>
@@ -360,7 +385,7 @@ export default function StockDetail() {
                 <p className="mt-2 text-[11px] text-muted">
                   Source: {results.data.sources.map((x, i) => (
                     <span key={x.url}>{i ? " and " : ""}<a href={x.url} target="_blank" rel="noreferrer" className="text-brand hover:underline">{x.name}</a></span>
-                  ))} (NSE), each quarter&apos;s XBRL. Checked {when(results.data.as_of)}.
+                  ))} ({ex}), each quarter&apos;s XBRL. Checked {when(results.data.as_of)}.
                   {results.data.errors.length > 0 && ` ${results.data.errors.length} filing${results.data.errors.length > 1 ? "s" : ""} could not be read.`}
                 </p>
               </>
@@ -375,7 +400,7 @@ export default function StockDetail() {
             {!ov.data ? (
               <SkeletonRows rows={5} />
             ) : ov.data.corporate_actions.length === 0 ? (
-              <EmptyState icon={<CalendarClock className="size-5" />} title="No corporate actions">NSE lists no dividends, bonuses or splits for {symbol}.</EmptyState>
+              <EmptyState icon={<CalendarClock className="size-5" />} title="No corporate actions">{ex} lists no dividends, bonuses or splits for {symbol}.</EmptyState>
             ) : (
               <div className="max-h-[420px] overflow-y-auto pr-1 pl-1.5">
                 <Timeline
@@ -397,12 +422,12 @@ export default function StockDetail() {
             )}
           </Card>
 
-          <Card title="Announcements" icon={<Megaphone className="size-4" />} subtitle="Latest filings with NSE">
+          <Card title="Announcements" icon={<Megaphone className="size-4" />} subtitle={`Latest filings with ${ex}`}>
             {!ov.data ? (
               <SkeletonRows rows={6} />
             ) : ov.data.announcements.length === 0 ? (
               <EmptyState icon={<Megaphone className="size-5" />} title="No announcements loaded">
-                {ov.data.errors.some((e) => e.startsWith("announcements")) ? "NSE refused the announcements list just now; reload to retry." : `NSE lists no recent announcements for ${symbol}.`}
+                {ov.data.errors.some((e) => e.startsWith("announcements")) ? `${ex} refused the announcements list just now; reload to retry.` : `${ex} lists no recent announcements for ${symbol}.`}
               </EmptyState>
             ) : (
               <ul className="-mx-2 max-h-[420px] space-y-0.5 overflow-y-auto stagger">
@@ -427,7 +452,7 @@ export default function StockDetail() {
 
         {ov.data && (
           <p className="text-[11px] text-muted">
-            Source: <a href={ov.data.source} target="_blank" rel="noreferrer" className="underline underline-offset-2">NSE quote page</a>, fetched {when(ov.data.fetched_at)} (cached up to 10 minutes). Not investment advice.
+            Source: <a href={ov.data.source} target="_blank" rel="noreferrer" className="underline underline-offset-2">{ex} quote page</a>, fetched {when(ov.data.fetched_at)} (cached up to 10 minutes). Not investment advice.
           </p>
         )}
       </div>

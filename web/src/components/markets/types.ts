@@ -1,9 +1,26 @@
 // Shapes of the market-data API behind the Stocks, Mutual funds and Bonds pages (src/finresearch/api/markets.py).
 
-export type StockHit = { symbol: string; name: string; series: string; listed: string | null; isin: string; slug: string | null };
+export type Exchange = "NSE" | "BSE";
+
+/** A search hit across NSE and BSE (matched by ISIN). `key` is the page / API key: the NSE symbol, or "BSE:<code>"
+ * for a stock that trades only on BSE. */
+export type StockHit = {
+  key: string; symbol: string; name: string; series: string | null; listed: string | null; isin: string; slug: string | null;
+  exchange: "NSE" | "BSE" | "both"; exchanges: Exchange[]; nse_symbol: string | null; bse_code: string | null;
+  bse_symbol: string | null; bse_group: string | null; market_cap_cr: number | null; bse_error: string | null;
+};
+
+/** Where a stock trades: NSE, BSE or both (same ISIN). */
+export type StockListing = {
+  isin: string; exchange: "NSE" | "BSE" | "both"; exchanges: Exchange[]; nse_symbol: string | null; bse_code: string | null;
+  bse_symbol: string | null; bse_group: string | null; bse_key: string | null; name: string;
+};
 
 export type StockQuote = {
   symbol: string;
+  exchange?: Exchange;
+  scrip_code?: string | null;
+  isin?: string | null;
   company: string | null;
   industry: string | null;
   status: string | null;
@@ -23,6 +40,10 @@ export type StockQuote = {
 
 export type StockOverview = {
   symbol: string;
+  exchange?: Exchange;
+  key?: string;
+  scrip_code?: string | null;
+  listing?: StockListing | null;
   fetched_at: string;
   source: string;
   quote: StockQuote | null;
@@ -47,6 +68,7 @@ export type ShareholdingQuarter = {
 
 export type StockShareholding = {
   symbol: string;
+  exchange?: "NSE" | "BSE";
   fetched_at: string;
   basis: string;
   category_labels: { key: string; label: string; group: string }[];

@@ -1,0 +1,88 @@
+{
+ "Table": [
+  {
+   "yr": "2026 - 2027",
+   "qtrid": 130.0,
+   "qtr": "June 2026",
+   "status": "New",
+   "filing_date_time": "2026-07-21T10:33:22.017",
+   "revised_date_time": null,
+   "XbrlFile": "526433_2172026103321_SHP.xml",
+   "revised_reson": "",
+   "xbrlurl": "/XBRLFILES/SHPXBRLDataXML/526433_2172026103321_SP.html",
+   "seourl": "/stock-share-price/asm-technologies-ltd/asmtec/526433/",
+   "navigateurl": "/stock-share-price/asm-technologies-ltd/asmtec/526433/qtrid/130.00/shareholding-pattern/Jun-2026/",
+   "navigateurldebt": "/stock-share-price/debt-other/scripcode/526433/qtrid/130.00/shareholding-pattern/Jun-2026/"
+  },
+  {
+   "yr": "2025 - 2026",
+   "qtrid": 129.0,
+   "qtr": "March 2026",
+   "status": "New",
+   "filing_date_time": "2026-04-09T16:30:50.19",
+   "revised_date_time": null,
+   "XbrlFile": "526433_942026163048_SHP.xml",
+   "revised_reson": "",
+   "xbrlurl": "/XBRLFILES/SHPXBRLDataXML/526433_942026163048_SP.html",
+   "seourl": "/stock-share-price/asm-technologies-ltd/asmtec/526433/",
+   "navigateurl": "/stock-share-price/asm-technologies-ltd/asmtec/526433/qtrid/129.00/shareholding-pattern/Mar-2026/",
+   "navigateurldebt": "/stock-share-price/debt-other/scripcode/526433/qtrid/129.00/shareholding-pattern/Mar-2026/"
+  },
+  {
+   "yr": "2025 - 2026",
+   "qtrid": 128.0,
+   "qtr": "December 2025",
+   "status": "New",
+   "filing_date_time": "2026-01-20T22:28:57.303",
+   "revised_date_time": null,
+   "XbrlFile": "526433_2012026222856_SHP.xml",
+   "revised_reson": "",
+   "xbrlurl": "/XBRLFILES/SHPXBRLDataXML/526433_2012026222856_SP.html",
+   "seourl": "/stock-share-price/asm-technologies-ltd/asmtec/526433/",
+   "navigateurl": "/stock-share-price/asm-technologies-ltd/asmtec/526433/qtrid/128.00/shareholding-pattern/Dec-2025/",
+   "navigateurldebt": "/stock-share-price/debt-other/scripcode/526433/qtrid/128.00/shareholding-pattern/Dec-2025/"
+  },
+  {
+   "yr": "2025 - 2026",
+   "qtrid": 127.0,
+   "qtr": "September 2025",
+   "status": "Revised",
+   "filing_date_time": null,
+   "revised_date_time": "2025-10-21T17:37:37.983",
+   "XbrlFile": "526433_21102025173640_SHP.xml",
+   "revised_reson": "This is Fresh filing for quarter ended 30th Sep 2025",
+   "xbrlurl": "/XBRLFILES/SHPXBRLDataXML/526433_21102025173640_SP.html",
+   "seourl": "/stock-share-price/asm-technologies-ltd/asmtec/526433/",
+   "navigateurl": "/stock-share-price/asm-technologies-ltd/asmtec/526433/qtrid/127.00/shareholding-pattern/Sep-2025/",
+   "navigateurldebt": "/stock-share-price/debt-other/scripcode/526433/qtrid/127.00/shareholding-pattern/Sep-2025/"
+  },
+  {
+   "yr": "2025 - 2026",
+   "qtrid": 127.03,
+   "qtr": "09 Oct 2025",
+   "status": "New",
+   "filing_date_time": "2025-10-21T17:21:30.48",
+   "revised_date_time": null,
+   "XbrlFile": "526433_21102025172129_SHP.xml",
+   "revised_reson": "",
+   "xbrlurl": "/XBRLFILES/SHPXBRLDataXML/526433_21102025172129_SP.html",
+   "seourl": "/stock-share-price/asm-technologies-ltd/asmtec/526433/",
+   "navigateurl": "/stock-share-price/asm-technologies-ltd/asmtec/526433/qtrid/127.03/shareholding-pattern/Oct-2025/",
+   "navigateurldebt": "/stock-share-price/debt-other/scripcode/526433/qtrid/127.03/shareholding-pattern/Oct-2025/"
+  },
+  {
+   "yr": "2025 - 2026",
+   "qtrid": 127.02,
+   "qtr": "09 Oct 2025",
+   "status": "New",
+   "filing_date_time": "2025-10-21T17:19:03.92",
+   "revised_date_time": null,
+   "XbrlFile": "526433_2110202517192_SHP.xml",
+   "revised_reson": "",
+   "xbrlurl": "/XBRLFILES/SHPXBRLDataXML/526433_2110202517192_SP.html",
+   "seourl": "/stock-share-price/asm-technologies-ltd/asmtec/526433/",
+   "navigateurl": "/stock-share-price/asm-technologies-ltd/asmtec/526433/qtrid/127.02/shareholding-pattern/Oct-2025/",
+   "navigateurldebt": "/stock-share-price/debt-other/scripcode/526433/qtrid/127.02/shareholding-pattern/Oct-2025/"
+  }
+ ]
+}

@@ -1,7 +1,8 @@
 """Live data for the pages that refresh while the market is open: the session status (NSE holiday aware), a fast stock
 quote, and a watched IPO's live subscription book.
 
-The pages poll these only in session: equities 09:15–15:30 IST on NSE trading days, IPO bidding 10:00–17:00 IST on
+The pages poll these only in session: equities 09:15–15:30 IST on NSE trading days (BSE equities keep the same
+hours and trading holidays, so one session serves both exchanges), IPO bidding 10:00–17:00 IST on
 the issue's bidding days (the exchanges keep publishing the book until the close). Outside those hours they return
 the last figures with `live: false`, so the page can say the market is closed and when it last updated.
 """
@@ -58,6 +59,7 @@ def bidding_now(
 
 def add_live_routes(app: FastAPI, *, monitor_deps=None, clock=None) -> None:
     """`monitor_deps` (monitor.jobs.Deps) and `clock` (() -> aware datetime) are test seams."""
+    from finresearch.adapters.bse_equity import scrip_code_of
     from finresearch.api.markets import MarketSources, TtlCache, quote_json
 
     cache = TtlCache()
@@ -66,7 +68,7 @@ def add_live_routes(app: FastAPI, *, monitor_deps=None, clock=None) -> None:
     def sources() -> MarketSources:
         s = getattr(app.state, "markets", None)
         if s is None:
-            s = app.state.markets = MarketSources()
+            s = app.state.markets = MarketSources(listings=getattr(app.state, "listings", None))
         return s
 
     @app.get("/api/market/status")
@@ -74,26 +76,39 @@ def add_live_routes(app: FastAPI, *, monitor_deps=None, clock=None) -> None:
         return market_status(now(), await asyncio.to_thread(_holidays))
 
     @app.get("/api/stocks/{symbol}/quote")
-    async def stock_quote(symbol: str) -> dict[str, Any]:
-        """Just the NSE quote, for the stock page to refresh every few seconds in session (cached 15 s while the
-        market is open, 5 minutes when it is closed)."""
-        sym = symbol.strip().upper()
-        if not sym or len(sym) > 20:
-            raise HTTPException(422, f"{symbol!r} is not an NSE symbol")
+    async def stock_quote(symbol: str, exchange: str | None = None) -> dict[str, Any]:
+        """Just the quote, for the stock page to refresh every few seconds in session (cached 15 s while the
+        market is open, 5 minutes when it is closed). NSE by default; "BSE:<code>" or `exchange=BSE` reads BSE,
+        whose equity session has the same hours (09:15-15:30 IST) and trading holidays."""
+        from finresearch.api.markets import resolve_stock, stock_source_url
+
+        if scrip_code_of(symbol) is None and exchange is None:
+            sym = symbol.strip().upper()
+            if not sym or len(sym) > 20:
+                raise HTTPException(422, f"{symbol!r} is not an NSE symbol")
+            inst = None
+        else:
+            inst = await resolve_stock(symbol, exchange, sources().listings)
+            sym = inst.id
+        ex = inst.exchange if inst else "NSE"
         st = market_status(now(), await asyncio.to_thread(_holidays))
         live = st["equity"]["open"]
 
         async def make() -> dict[str, Any]:
-            q = await sources().get_quote(sym)
-            return {"quote": quote_json(q, sym), "fetched_at": datetime.now(UTC).isoformat(),
-                    "source": f"https://www.nseindia.com/get-quotes/equity?symbol={sym}"}  # fmt: skip
-
-        try:
-            out = await cache.get(
-                ("quote", sym, live), QUOTE_TTL_LIVE_S if live else QUOTE_TTL_CLOSED_S, make
+            q = await (sources().get_quote(sym, "BSE") if ex == "BSE" else sources().get_quote(sym))
+            source = (
+                stock_source_url(inst, q)
+                if inst
+                else f"https://www.nseindia.com/get-quotes/equity?symbol={sym}"
             )
-        except Exception as e:  # NSE refused or is down: say so, the page keeps its last figures
-            raise HTTPException(502, f"NSE quote for {sym} failed: {e}") from e
+            return {"quote": quote_json(q, sym), "fetched_at": datetime.now(UTC).isoformat(), "source": source,
+                    "exchange": ex}  # fmt: skip
+
+        key = ("quote", sym, live) if ex == "NSE" else ("quote", "BSE", sym, live)
+        try:
+            out = await cache.get(key, QUOTE_TTL_LIVE_S if live else QUOTE_TTL_CLOSED_S, make)
+        except Exception as e:  # the exchange refused or is down: say so, the page keeps its last figures
+            raise HTTPException(502, f"{ex} quote for {sym} failed: {e}") from e
         return {**out, "live": live, "market": st["equity"]}
 
     @app.get("/api/watches/{watch_id}/live")

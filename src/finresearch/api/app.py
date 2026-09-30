@@ -249,8 +249,9 @@ def _latest_report(s, run_id: int) -> str | None:
 # --------------------------------------------------------------------------- app
 def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=None, live_fetch=None,
                monitor: bool = False, monitor_deps=None, nse_detail=None, equity_list=None,
-               nav_all=None, fno_client=None, bonds=None, clock=None) -> FastAPI:  # fmt: skip
+               nav_all=None, fno_client=None, bonds=None, clock=None, bse_scrips=None) -> FastAPI:  # fmt: skip
     """Test seams: `router` (bridge for chat and suggestions), `live_fetch` / `nse_detail` / `bonds` (NSE),
+    `equity_list` / `bse_scrips` (the NSE equity list text and BSE's scrip-master rows, for stock search),
     `monitor_deps`, `clock` (() -> aware datetime, for the live routes' market hours).
 
     With monitor=True (as `finresearch serve` does) the monitoring scheduler runs inside the API process."""
@@ -864,13 +865,59 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
         equity_cache.update(at=time.time(), rows=rows)
         return rows
 
+    bse_cache: dict[str, Any] = {}
+
+    async def _bse_scrips() -> list:
+        """BSE's active equity scrip master (a day on disk and in memory)."""
+        import time
+
+        from finresearch.adapters.bse_equity import BseEquity, parse_scrip_list
+
+        if bse_cache.get("at", 0) > time.time() - 86400:
+            return bse_cache["rows"]
+        if bse_scrips is not None:
+            rows = parse_scrip_list(await bse_scrips())
+        else:
+            async with BseEquity() as bse:
+                rows = await bse.scrips()
+        bse_cache.update(at=time.time(), rows=rows)
+        return rows
+
+    async def _listings(*, require_bse: bool = True):
+        """NSE and BSE listings merged by ISIN. Without BSE's scrip master (`require_bse=False`) the NSE list alone
+        comes back, and `bse_error` says why."""
+        from finresearch.adapters.bse_equity import merge_listings
+
+        nse_rows = await _equities()
+        try:
+            bse_rows, err = await _bse_scrips(), None
+        except Exception as e:
+            if require_bse:
+                raise
+            bse_rows, err = [], f"BSE scrip list unavailable: {type(e).__name__}: {e}"[:200]
+        return merge_listings(nse_rows, bse_rows), err
+
+    async def _listings_strict():
+        return (await _listings())[0]
+
+    app.state.listings = (
+        _listings_strict  # markets / live routes resolve BSE keys and exchange switches with it
+    )
+
     @app.get("/api/stocks/search")
     async def stock_search(q: str = Query(..., min_length=1, max_length=60)) -> list[dict[str, Any]]:
-        from finresearch.adapters.nse_equity import search_equities
+        """NSE and BSE equities by symbol, BSE scrip code or name. Each hit keeps the NSE list's fields (symbol,
+        name, series, listed, isin) and adds `key` (the stock page / API key: the NSE symbol, or "BSE:<code>" for a
+        BSE-only stock), `exchange` (NSE / BSE / both), and the BSE code, scrip id and group."""
+        from finresearch.adapters.bse_equity import search_listings
 
-        hits = search_equities(await _equities(), q)
+        listings, bse_error = await _listings(require_bse=False)
+        hits = search_listings(listings, q)
         known = await asyncio.to_thread(_known_symbols)
-        return [{**e.model_dump(mode="json"), "slug": known.get(e.symbol, {}).get("slug")} for e in hits]
+        return [{**r.model_dump(mode="json", exclude={"market_cap_cr"}),
+                 "market_cap_cr": float(r.market_cap_cr) if r.market_cap_cr is not None else None,
+                 "slug": known.get(r.nse_symbol, {}).get("slug") if r.nse_symbol else None,
+                 "bse_error": bse_error} for r in hits]  # fmt: skip
 
     @app.post("/api/companies", status_code=201)
     async def add_company(body: NewCompany) -> dict[str, Any]:

@@ -54,7 +54,12 @@ def client(env):
     async def eq_list():
         return equity_text()
 
-    with TestClient(create_app(equity_list=eq_list)) as c:
+    async def bse_list():  # BSE's scrip master (search merges it by ISIN); recorded, so nothing hits BSE
+        import json
+
+        return json.loads((EQ.parent.parent / "bse" / "equity" / "scrips_trimmed.json").read_text())
+
+    with TestClient(create_app(equity_list=eq_list, bse_scrips=bse_list)) as c:
         yield c
 
 

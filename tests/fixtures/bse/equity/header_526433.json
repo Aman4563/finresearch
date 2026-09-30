@@ -1,0 +1,58 @@
+{
+ "CurrRate": {
+  "LTP": "6840.95",
+  "Chg": "-28.65",
+  "PcChg": "-0.42",
+  "D_Cpricelink": "",
+  "IssueChgVal": "",
+  "IssueChgPC": ""
+ },
+ "Cmpname": {
+  "FullN": "ASM Technologies Ltd",
+  "ShortN": "asmtec",
+  "SeriesN": "ASM Technologies Ltd",
+  "SEOUrlEQ": "/stock-share-price/asm-technologies-ltd/asmtec/526433/",
+  "SEOUrlDR": "/stock-share-price/future-options/derivatives/526433/",
+  "IsNotPropernFIT": "0",
+  "Category": "Listed",
+  "EquityScrips": "526433"
+ },
+ "Header": {
+  "Noticecnt": "3",
+  "PrevClose": "6869.60",
+  "Open": "6925.60",
+  "High": "6992.00",
+  "Low": "6766.00",
+  "LTP": "6840.95",
+  "DisplayText": "",
+  "Category": "Listed",
+  "PRE_OPEN_NO_BIDS": null,
+  "PRE_OPEN_NO_I_PRICE": null,
+  "PRE_OPEN_I_PRICE": null,
+  "PRE_OPEN_I_PRICE_QTY": null,
+  "PCAS_NO_BIDS": null,
+  "PCAS_INDICATIVE_PRICE": null,
+  "PCAS_INDICATIVE_QTY": null,
+  "PERODIC_CALL_AUCTION": null,
+  "GSMURL": "",
+  "GSMText": "",
+  "Invit": "0",
+  "Ason": "30 Sep 26 | 13:06",
+  "NAVRate": "",
+  "NAVdttm": "",
+  "ASMText": "ASM ST : Stage 1",
+  "SMSText": "",
+  "IRPText": "",
+  "ASMURL": "https://www.bseindia.com/markets/equity/EQReports/additional_surveillance_measure.aspx",
+  "SMSURL": "https://www.bseindia.com/attention_investors.aspx",
+  "IRPURL": "https://www.bseindia.com/markets/MarketInfo/DispNewNoticesCirculars.aspx?page=20230210-55",
+  "IDB_DisplayText": "",
+  "IsALF": "0",
+  "EMSText": "",
+  "EMSURL": ""
+ },
+ "CompResp": {
+  "compRes": null,
+  "texturl": null
+ }
+}

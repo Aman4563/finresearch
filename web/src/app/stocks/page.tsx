@@ -8,6 +8,7 @@ import { useState } from "react";
 import { Sparkline } from "@/components/charts";
 import { ensureStock, startResearch, watchStock } from "@/components/markets/actions";
 import { LinkRow, SearchBox, inr, signedPct, toneOf } from "@/components/markets/common";
+import { ExchangeBadge } from "@/components/markets/exchange";
 import type { StockHistory, StockHit } from "@/components/markets/types";
 import { Badge, Button, Callout, Card, EmptyState, ErrorNote, PageHeader, SkeletonRows, Table, cx } from "@/components/ui";
 import { api, type Company, day, useApi, type WatchSummary } from "@/lib/api";
@@ -72,11 +73,11 @@ export default function Stocks() {
         icon={<ChartCandlestick className="size-5" />}
         eyebrow="Markets"
         title="Stocks"
-        description="Look up any NSE-listed company: live price, 52-week range, shareholding, results and corporate actions. Watch it for filings, or start a full research run."
+        description="Look up any company listed on NSE or BSE: live price, 52-week range, shareholding, results and corporate actions. Watch it for filings, or start a full research run."
       />
 
       <div className="space-y-5">
-        <Card title="Find a listed stock" subtitle="Search NSE's equity list by symbol or company name" icon={<ChartCandlestick className="size-4" />}>
+        <Card title="Find a listed stock" subtitle="Search NSE's and BSE's equity lists by symbol, BSE code or company name" icon={<ChartCandlestick className="size-4" />}>
           <SearchBox value={q} onChange={setQ} onSubmit={search} busy={searching} placeholder="Symbol or company name, e.g. INFY or Infosys" />
           <div className="mt-3 space-y-2">
             <ErrorNote error={error} onRetry={q.trim() ? search : undefined} />
@@ -89,9 +90,12 @@ export default function Stocks() {
           {hits && hits.length === 0 && (
             <div className="mt-4">
               <EmptyState title="No listed equity matches">
-                Try the NSE symbol (e.g. TCS) or one distinctive word of the company name. Only NSE-listed equities appear here; for IPOs use the IPOs page.
+                Try the symbol (e.g. TCS), the 6-digit BSE code or one distinctive word of the company name. Listed equities on NSE and BSE appear here; for IPOs use the IPOs page.
               </EmptyState>
             </div>
+          )}
+          {hits && hits.length > 0 && hits[0].bse_error && (
+            <p className="mt-3 text-xs text-warn">BSE&apos;s scrip list could not be loaded just now, so only NSE listings are shown ({hits[0].bse_error}).</p>
           )}
           {hits && hits.length > 0 && (
             <div className="mt-4">
@@ -104,37 +108,45 @@ export default function Stocks() {
                   </tr>
                 </thead>
                 <tbody className="stagger">
-                  {hits.map((h) => (
-                    <tr key={h.symbol}>
-                      <td className="max-w-[16rem] sm:max-w-none">
-                        <Link href={`/stocks/${h.symbol}`} className="group block">
-                          <span className="flex items-center gap-1.5 font-semibold group-hover:text-brand">
-                            {h.symbol}
-                            {watched.has(h.symbol) && <Badge tone="brand">watching</Badge>}
-                            {h.slug && <Badge tone="accent">in library</Badge>}
-                          </span>
-                          <span className="block truncate text-xs text-muted">{h.name}</span>
-                        </Link>
-                      </td>
-                      <td className="hidden text-muted sm:table-cell">{day(h.listed)}</td>
-                      <td>
-                        <div className="flex justify-end gap-1.5">
-                          <Link href={`/stocks/${h.symbol}`}
-                            className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-card px-3 text-xs font-medium ring-1 ring-inset ring-border transition hover:bg-card-hover hover:ring-border-strong">
-                            <Eye className="size-3.5" /> View
+                  {hits.map((h) => {
+                    const href = `/stocks/${encodeURIComponent(h.key)}`;
+                    const nse = h.nse_symbol; // watches and research runs follow NSE symbols
+                    return (
+                      <tr key={h.key}>
+                        <td className="max-w-[16rem] sm:max-w-none">
+                          <Link href={href} className="group block">
+                            <span className="flex flex-wrap items-center gap-1.5 font-semibold group-hover:text-brand">
+                              {h.symbol}
+                              <ExchangeBadge exchange={h.exchange} group={h.bse_group} />
+                              {nse && watched.has(nse) && <Badge tone="brand">watching</Badge>}
+                              {h.slug && <Badge tone="accent">in library</Badge>}
+                            </span>
+                            <span className="block truncate text-xs text-muted">
+                              {h.name}{h.bse_code && <span className="num"> · BSE {h.bse_code}</span>}
+                            </span>
                           </Link>
-                          <Button variant="secondary" disabled={busy === h.symbol || watched.has(h.symbol)} onClick={() => watch(h.symbol)}
-                            icon={<BellPlus className="size-3.5" />} title="Check filings, actions and big moves after each close">
-                            <span className="hidden sm:inline">{watched.has(h.symbol) ? "Watching" : "Watch"}</span>
-                          </Button>
-                          <Button disabled={busy === h.symbol} onClick={() => research(h.symbol)} icon={<FlaskConical className="size-3.5" />}
-                            title="Full research run (uses your Claude plan)">
-                            <span className="hidden sm:inline">Research</span>
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                        </td>
+                        <td className="hidden text-muted sm:table-cell">{h.listed ? day(h.listed) : "—"}</td>
+                        <td>
+                          <div className="flex justify-end gap-1.5">
+                            <Link href={href}
+                              className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-card px-3 text-xs font-medium ring-1 ring-inset ring-border transition hover:bg-card-hover hover:ring-border-strong">
+                              <Eye className="size-3.5" /> View
+                            </Link>
+                            <Button variant="secondary" disabled={!nse || busy === nse || watched.has(nse)} onClick={() => nse && watch(nse)}
+                              icon={<BellPlus className="size-3.5" />}
+                              title={nse ? "Check filings, actions and big moves after each close" : "Watching follows NSE symbols; this stock trades only on BSE"}>
+                              <span className="hidden sm:inline">{nse && watched.has(nse) ? "Watching" : "Watch"}</span>
+                            </Button>
+                            <Button disabled={!nse || busy === nse} onClick={() => nse && research(nse)} icon={<FlaskConical className="size-3.5" />}
+                              title={nse ? "Full research run (uses your Claude plan)" : "Research runs follow NSE symbols; this stock trades only on BSE"}>
+                              <span className="hidden sm:inline">Research</span>
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </Table>
             </div>
@@ -142,9 +154,9 @@ export default function Stocks() {
           {!hits && (
             <p className="mt-3 flex flex-wrap items-center gap-1.5 text-xs text-muted">
               Try
-              {["INFY", "RELIANCE", "HDFCBANK", "TCS"].map((s) => (
-                <Link key={s} href={`/stocks/${s}`} className="rounded-full bg-background-subtle px-2 py-0.5 font-medium text-foreground ring-1 ring-inset ring-border transition hover:ring-brand">
-                  {s}
+              {[["INFY", "INFY"], ["RELIANCE", "RELIANCE"], ["HDFCBANK", "HDFCBANK"], ["TCS", "TCS"], ["BSE:526433", "ASMTEC (BSE)"]].map(([key, label]) => (
+                <Link key={key} href={`/stocks/${encodeURIComponent(key)}`} className="rounded-full bg-background-subtle px-2 py-0.5 font-medium text-foreground ring-1 ring-inset ring-border transition hover:ring-brand">
+                  {label}
                 </Link>
               ))}
             </p>
