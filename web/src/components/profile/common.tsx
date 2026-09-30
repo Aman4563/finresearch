@@ -6,6 +6,7 @@ import { type ReactNode, useEffect, useState } from "react";
 
 import { Button, cx } from "@/components/ui";
 import type { AvatarColor, Preferences, Profile } from "@/lib/api";
+import { DEFAULT_TIME_FRAMES, DEFAULT_WATCH } from "@/lib/timeframes";
 
 // ------------------------------------------------------------------ avatar
 
@@ -59,7 +60,11 @@ export function withDefaults(p: Profile): Profile {
     ...p,
     display_name: p.display_name ?? "",
     avatar_color: p.avatar_color ?? null,
-    preferences: { ...DEFAULT_PREFERENCES, ...(p.preferences ?? {}) },
+    preferences: {
+      ...DEFAULT_PREFERENCES, ...(p.preferences ?? {}),
+      time_frames: { ...DEFAULT_TIME_FRAMES, ...(p.preferences?.time_frames ?? {}) },
+      watch: { ...DEFAULT_WATCH, ...(p.preferences?.watch ?? {}) },
+    },
   };
 }
 

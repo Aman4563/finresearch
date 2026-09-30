@@ -324,6 +324,9 @@ export type Preferences = {
   number_format: "lakh_crore" | "million";
   compact_tables: boolean;
   reduce_motion: boolean;
+  // chart defaults, refresh cadences and the monitor's watch windows (optional: older API builds omit them)
+  time_frames?: import("@/lib/timeframes").TimeFrames;
+  watch?: import("@/lib/timeframes").WatchWindows;
 };
 export type ProfileStats = {
   runs: number;

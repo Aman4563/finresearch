@@ -186,8 +186,11 @@ def test_profile_identity_and_preferences_are_optional_and_validated(api):
         s.add(InvestorProfile(name=PROFILE_NAME, data=old))
     p = api.get("/api/profile").json()
     assert p["display_name"] == "" and p["avatar_color"] is None
-    assert p["preferences"] == {"default_landing": "/", "number_format": "lakh_crore", "compact_tables": False,
-                                "reduce_motion": False}  # fmt: skip
+    assert {k: p["preferences"][k] for k in ("default_landing", "number_format", "compact_tables", "reduce_motion")} == {
+        "default_landing": "/", "number_format": "lakh_crore", "compact_tables": False, "reduce_motion": False}  # fmt: skip
+    assert (
+        p["preferences"]["time_frames"]["stock"]["range"] == "1Y"
+    )  # chart defaults and watch windows default too
     assert api.put("/api/profile", json=old).status_code == 200  # an old client's body is still accepted
 
     p.update(

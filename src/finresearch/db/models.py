@@ -14,6 +14,7 @@ from typing import Any, ClassVar
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     Computed,
     Date,
     DateTime,
@@ -519,3 +520,25 @@ class SubscriptionArchiveSlot(Base):
     slot: Mapped[str] = mapped_column(String(40), primary_key=True)  # e.g. "2026-09-30T13:00"
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     result: Mapped[dict[str, Any]] = mapped_column(default=dict)
+
+
+# --------------------------------------------------------------------------- intraday archive (5D charts)
+class IntradaySeriesRow(Base):
+    """One session's 1-minute price series for an NSE equity or index (NSE's quote-page 1D chart), kept so that
+    multi-day intraday charts (5D) work: NSE serves only the current session. Written by the intraday API whenever a
+    page fetches a series (viewed symbols archive themselves) and completed after the close by the monitor for
+    watched stocks and the main indices (monitor.intraday). `ticks` = [[NSE ts ms (IST wall clock), price, phase]]."""
+
+    __tablename__ = "intraday_series"
+    __table_args__ = (UniqueConstraint("kind", "symbol", "day"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    kind: Mapped[str] = mapped_column(String(10))  # equity | index
+    symbol: Mapped[str] = mapped_column(String(40), index=True)
+    day: Mapped[date] = mapped_column(Date, index=True)
+    prev_close: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    ticks: Mapped[list[Any]] = mapped_column(JSONB, default=list)
+    tick_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    complete: Mapped[bool] = mapped_column(Boolean, default=False)  # recorded after the 15:30 close
+    source: Mapped[str] = mapped_column(String(200))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

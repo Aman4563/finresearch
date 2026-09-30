@@ -1349,6 +1349,11 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
 
     add_stock_signal_routes(app)
 
+    # ------------------------------------------------------------------ intraday charts (NSE 1-minute series + archive)
+    from finresearch.api.intraday import add_intraday_routes
+
+    add_intraday_routes(app, clock=clock)
+
     # ------------------------------------------------------------------ buy/sell signals (finresearch.signals)
     @app.get("/api/signals")
     def signal_assets() -> dict[str, Any]:

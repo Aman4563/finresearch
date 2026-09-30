@@ -5,7 +5,7 @@
 // figures and says the market is closed. <LiveStamp> shows when the data last updated.
 
 import { RefreshCw } from "lucide-react";
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 
 import { cx } from "@/components/ui";
 import { useApi } from "@/lib/api";
@@ -59,6 +59,13 @@ function ago(ms: number) {
   return m < 60 ? `${m} min ago` : `${Math.round(m / 60)} h ago`;
 }
 
+/** "about 50 s behind" / "about 1 min behind": how old the exchange's own timestamp was when the app fetched it. */
+export function behind(ms: number) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 5) return "real time";
+  return s < 90 ? `about ${s} s behind` : `about ${Math.round(s / 60)} min behind`;
+}
+
 function nextOpenLabel(st: MarketStatus) {
   if (!st.equity.next_open) return "";
   const d = new Date(st.equity.next_open);
@@ -70,9 +77,10 @@ function nextOpenLabel(st: MarketStatus) {
  * "● Live · updates every 30s · Updated 3:31:05 pm (12s ago) · NSE as of 3:30 pm  ⟳"
  * or "○ Market closed (opens Wed, 9:15 am) · Updated …". `asOf` is the exchange's own timestamp when it has one.
  */
-export function LiveStamp({ session, live, status, updatedAt, everyMs, asOf, asOfLabel = "NSE as of", onRefresh, className }: {
+export function LiveStamp({ session, live, status, updatedAt, everyMs, asOf, asOfLabel = "NSE as of", onRefresh, className, autoRefresh = true }: {
   session: Session; live: boolean; status: MarketStatus | null | undefined; updatedAt: Date | null; everyMs: number;
   asOf?: string | null; asOfLabel?: string; onRefresh?: () => void; className?: string;
+  /** false: the session is open but the viewer turned auto-refresh off (profile → Time frames & watch). */ autoRefresh?: boolean;
 }) {
   const now = useNow();
   const every = everyMs >= 60000 ? `${Math.round(everyMs / 60000)} min` : `${Math.round(everyMs / 1000)}s`;
@@ -85,7 +93,7 @@ export function LiveStamp({ session, live, status, updatedAt, everyMs, asOf, asO
     <div className={cx("flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted", className)} aria-live="polite">
       <span className={cx("inline-flex items-center gap-1.5 font-medium", live ? "text-gain" : "text-muted")}>
         <span className={cx("size-1.5 rounded-full", live ? "bg-gain text-gain animate-pulse-ring" : "bg-muted")} />
-        {live ? `Live · updates every ${every}` : closed}
+        {live ? (autoRefresh ? `Live · updates every ${every}` : "Market open · auto-refresh off") : closed}
       </span>
       {updatedAt && (
         <span title={updatedAt.toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}>
@@ -95,6 +103,7 @@ export function LiveStamp({ session, live, status, updatedAt, everyMs, asOf, asO
       {asOf && (
         <span>
           {asOfLabel} <span className="num text-foreground/80">{time(asOf)}</span>
+          {live && updatedAt && <> ({behind(updatedAt.getTime() - new Date(asOf).getTime())})</>}
         </span>
       )}
       {onRefresh && (
@@ -104,5 +113,42 @@ export function LiveStamp({ session, live, status, updatedAt, everyMs, asOf, asO
         </button>
       )}
     </div>
+  );
+}
+
+/**
+ * Where a price came from and how fresh it is. Intraday: "NSE quote-page chart, 1-minute price samples · last price
+ * 12:51:10 · about 10 s behind · refreshes every 30 s". EOD: "NSE daily bars (end of day) · last bar 29 Sep 26
+ * (today's bar is added after the close)".
+ */
+export function Freshness({ mode, sourceLabel, sourceHref, asOf, fetchedAt, delayS, live, refresh, className }: {
+  mode: "intraday" | "eod"; sourceLabel: string; sourceHref?: string | null; asOf?: string | null; fetchedAt?: string | null;
+  delayS?: number | null; live?: boolean; refresh?: string; className?: string;
+}) {
+  const src = sourceHref ? (
+    <a href={sourceHref} target="_blank" rel="noreferrer" className="underline decoration-dotted underline-offset-2 hover:text-foreground">{sourceLabel}</a>
+  ) : sourceLabel;
+  const parts: ReactNode[] = [<span key="s">Source: {src}</span>];
+  if (mode === "intraday") {
+    if (asOf) {
+      const d = new Date(asOf);
+      const stamp = d.toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit", second: "2-digit", timeZone: "Asia/Kolkata" });
+      parts.push(<span key="a">{live ? "last price" : "session ended"} <span className="num text-foreground/80">{live ? time(d) : stamp}</span></span>);
+    }
+    if (live && delayS != null) parts.push(<span key="d">{behind(delayS * 1000)} when fetched</span>);
+    if (!live) parts.push(<span key="c">market closed, showing the last session</span>);
+    else if (refresh) parts.push(<span key="r">{refresh}</span>);
+    if (fetchedAt && !live) parts.push(<span key="f">fetched {time(fetchedAt)}</span>);
+  } else if (asOf) {
+    const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+    parts.push(<span key="a">last bar <span className="num text-foreground/80">{new Date(`${asOf.slice(0, 10)}T00:00:00Z`).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "2-digit", timeZone: "UTC" })}</span></span>);
+    if (asOf.slice(0, 10) !== today) parts.push(<span key="n">today&apos;s bar is added after the close</span>);
+  }
+  return (
+    <p className={cx("flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-muted", className)}>
+      {parts.map((p, i) => (
+        <span key={i} className="inline-flex items-center gap-1.5">{i > 0 && <span aria-hidden>·</span>}{p}</span>
+      ))}
+    </p>
   );
 }

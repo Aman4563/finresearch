@@ -6,23 +6,23 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 
 import { DonutChart, TimeSeriesChart, shortDate } from "@/components/charts";
+import { PriceChart } from "@/components/markets/price-chart";
 import { ensureStock, startResearch, watchStock } from "@/components/markets/actions";
 import { ExchangeBadge, ExchangeSwitch, PriceComparison } from "@/components/markets/exchange";
 import { MarginChart, ResultsChart } from "@/components/markets/charts";
 import { ShareholdingSplit } from "@/components/markets/shareholding";
 import { ForensicCard, SinceReport, StockSignalCard } from "@/components/markets/stock-signal";
-import { Metric, PERIOD_DAYS, type Period, PeriodChart, RangeBar, Timeline, crore, inr, pctOf, signedPct, toneOf } from "@/components/markets/common";
+import { Metric, RangeBar, Timeline, crore, inr, pctOf, signedPct, toneOf } from "@/components/markets/common";
 import type { StockHistory, StockOverview, StockResults, StockShareholding } from "@/components/markets/types";
 import {
   Badge, Button, Callout, Card, Delta, EmptyState, ErrorNote, PageHeader, Skeleton, SkeletonRows, Stat, Table,
 } from "@/components/ui";
-import { LiveStamp, useLive } from "@/components/live";
+import { LiveStamp, sessionOpen, useLive } from "@/components/live";
 import { day, useApi, when, type WatchSummary } from "@/lib/api";
-
-const PERIODS: Period[] = ["1M", "3M", "6M", "1Y", "3Y", "5Y"];
+import { RANGE_DAYS, useTimeFrames } from "@/lib/timeframes";
 
 export default function StockDetail() {
   const { symbol: raw } = useParams<{ symbol: string }>();
@@ -31,13 +31,16 @@ export default function StockDetail() {
   const onBse = symbol.startsWith("BSE:");
   const ex = onBse ? "BSE" : "NSE";
   const router = useRouter();
-  const [period, setPeriod] = useState<Period>("1Y");
+  const [histDays, setHistDays] = useState(366);
+  const onRange = useCallback((r: keyof typeof RANGE_DAYS) => setHistDays((d) => Math.max(d, RANGE_DAYS[r], 366)), []);
+  const { tf } = useTimeFrames();
+  const quoteMs = tf.quote_refresh_s * 1000;
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
 
   const ov = useApi<StockOverview>(`/api/stocks/${encodeURIComponent(symbol)}/overview`);
-  const days = PERIOD_DAYS[period] > 366 ? PERIOD_DAYS[period] : 366;
+  const days = histDays;
   const hist = useApi<StockHistory>(`/api/stocks/${encodeURIComponent(symbol)}/history?days=${Math.min(days, 1827)}`);
   const results = useApi<StockResults>(`/api/stocks/${encodeURIComponent(symbol)}/results`);
   const shp = useApi<StockShareholding>(`/api/stocks/${encodeURIComponent(symbol)}/shareholding`);
@@ -48,9 +51,10 @@ export default function StockDetail() {
   const watching = (watches.data ?? []).some((w) => w.kind === "stock" && w.active && w.nse_symbol === nseSymbol);
   const nseOnlyNote = "Watching and research runs follow NSE symbols; this stock trades only on BSE.";
 
-  // the price refreshes every 30 s while the market is open (NSE and BSE keep the same hours); the rest is fetched once
+  // the price refreshes while the market is open (NSE and BSE keep the same hours; every 30 s unless the profile
+  // says otherwise); the rest is fetched once
   const live = useLive<{ quote: NonNullable<StockOverview["quote"]>; fetched_at: string }>(
-    `/api/stocks/${encodeURIComponent(symbol)}/quote`, { session: "equity", everyMs: 30000 });
+    `/api/stocks/${encodeURIComponent(symbol)}/quote`, { session: "equity", everyMs: quoteMs, active: quoteMs > 0 });
   const q = live.data?.quote ? { ...ov.data?.quote, ...live.data.quote } : ov.data?.quote;
   const last = q?.last_price ? Number(q.last_price) : null;
   const bars = hist.data?.bars ?? [];
@@ -129,7 +133,7 @@ export default function StockDetail() {
         }
       />
 
-      <LiveStamp session="equity" live={live.live} status={live.status} updatedAt={live.updatedAt ?? ov.updatedAt} everyMs={30000}
+      <LiveStamp session="equity" live={sessionOpen(live.status, "equity")} autoRefresh={quoteMs > 0} status={live.status} updatedAt={live.updatedAt ?? ov.updatedAt} everyMs={quoteMs || 30000}
         asOf={q?.as_of} asOfLabel={`${ex} as of`} onRefresh={live.reload} className="-mt-3 mb-5" />
       <div className="space-y-5">
         <ErrorNote error={actionError} />
@@ -183,31 +187,26 @@ export default function StockDetail() {
 
         {/* price chart + range */}
         <div className="grid [&>*]:min-w-0 gap-5 lg:grid-cols-3">
-          <Card className="lg:col-span-2" title="Price" subtitle={`Daily closing price on ${ex}`} icon={<TrendingUp className="size-4" />}
-            help="Each point is the day's official closing price. Pick a period to see how much the price moved over it.">
-            {hist.error && !hist.data ? (
-              <ErrorNote error={hist.error} onRetry={hist.reload} />
-            ) : !hist.data ? (
-              <Skeleton className="h-[320px] w-full rounded-lg" />
-            ) : bars.length < 2 ? (
-              <EmptyState title="No price history">{ex} returned no trading days for {symbol}. It may be suspended or newly listed.</EmptyState>
-            ) : (
-              <>
-                <PeriodChart data={bars} series={[{ key: "close", label: "Close" }]} periods={PERIODS} period={period} onPeriod={setPeriod}
-                  format={(v) => `₹${v.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`}
-                  extra={histLoadingMore ? <Loader2 className="size-4 animate-spin text-muted" aria-label="Loading longer history" /> : null} />
-                {hist.data.partial && (
-                  <p className="mt-2 text-xs text-warn">{ex} refused part of the older history; the chart starts at {shortDate(bars[0].date)}.</p>
-                )}
-                <div className="mt-4 grid grid-cols-3 gap-2">
-                  <Metric label={`Return (${hist.data.days >= 1827 ? "5Y" : hist.data.days >= 1096 ? "3Y" : "1Y"})`} value={signedPct(hist.data.stats.return)} tone={toneOf(hist.data.stats.return)} />
-                  <Metric label="Volatility (yearly)" value={pctOf(hist.data.stats.annualised_volatility, 1)}
-                    help="How much the price swings, annualised (standard deviation of daily returns × √252). Higher = bumpier ride." />
-                  <Metric label="Max drawdown" value={pctOf(hist.data.stats.max_drawdown, 1)} tone="text-loss"
-                    sub={hist.data.stats.drawdown_peak ? `${shortDate(hist.data.stats.drawdown_peak)} → ${shortDate(hist.data.stats.drawdown_trough!)}` : undefined}
-                    help="The biggest fall from a peak to a later low in this period: the worst loss a buyer at the top would have sat through." />
-                </div>
-              </>
+          <Card className="lg:col-span-2" title="Price" subtitle={`Intraday (1D, 5D) and daily bars on ${ex}`} icon={<TrendingUp className="size-4" />}
+            help={`1D and 5D show today's (and archived) 1-minute ${ex} prices as candles of your chosen size; 1M and longer show ${ex}'s official daily bars. Your default range, interval and chart type are set on the profile page; this page remembers your last choice.`}>
+            {/* the chart renders at once: intraday ranges do not wait for the (slower) daily history */}
+            <PriceChart kind="stock" symbol={symbol} exchange={ex} defaults={tf.stock} refreshS={tf.quote_refresh_s} onRange={onRange}
+              daily={bars.map((b) => ({ t: b.date, o: b.open, h: b.high, l: b.low, c: b.close, v: b.volume }))}
+              dailyLoading={!hist.data || !!histLoadingMore} dailyError={hist.error && !hist.data ? hist.error : null} onDailyRetry={hist.reload}
+              dailyEmpty={hist.data && bars.length < 2 ? `${ex} returned no trading days for ${symbol}. It may be suspended or newly listed.` : null} />
+            {histLoadingMore && <p className="mt-1 inline-flex items-center gap-1 text-[11px] text-muted"><Loader2 className="size-3 animate-spin" /> Loading longer history…</p>}
+            {hist.data?.partial && bars.length > 0 && (
+              <p className="mt-2 text-xs text-warn">{ex} refused part of the older history; the daily chart starts at {shortDate(bars[0].date)}.</p>
+            )}
+            {hist.data && bars.length >= 2 && (
+              <div className="mt-4 grid grid-cols-3 gap-2">
+                <Metric label={`Return (${hist.data.days >= 1827 ? "5Y" : hist.data.days >= 1096 ? "3Y" : "1Y"})`} value={signedPct(hist.data.stats.return)} tone={toneOf(hist.data.stats.return)} />
+                <Metric label="Volatility (yearly)" value={pctOf(hist.data.stats.annualised_volatility, 1)}
+                  help="How much the price swings, annualised (standard deviation of daily returns × √252). Higher = bumpier ride." />
+                <Metric label="Max drawdown" value={pctOf(hist.data.stats.max_drawdown, 1)} tone="text-loss"
+                  sub={hist.data.stats.drawdown_peak ? `${shortDate(hist.data.stats.drawdown_peak)} → ${shortDate(hist.data.stats.drawdown_trough!)}` : undefined}
+                  help="The biggest fall from a peak to a later low in this period: the worst loss a buyer at the top would have sat through." />
+              </div>
             )}
           </Card>
 

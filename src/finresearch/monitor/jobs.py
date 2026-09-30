@@ -47,6 +47,7 @@ class Deps:
     archive_spacing_s: float = (
         2.0  # pause between issues within one archive pass (on top of the rate limiter)
     )
+    intraday: Any = None  # async (kind, symbol) -> IntradaySeries; set: archive each session after the close
 
     @classmethod
     def live(cls) -> Deps:
@@ -101,10 +102,12 @@ class Deps:
                 return await eq.corporate_actions(symbol)
 
         from finresearch.adapters.nse_fno import NseFno
+        from finresearch.monitor.intraday import live_fetch
 
         return cls(ipo_detail=ipo_detail, quote=quote, current_issues=current_issues, stock_snapshot=stock_snapshot,
                    bse_ipo_detail=bse_ipo_detail, bse_quote=bse_quote, fno=NseFno, price_history=price_history,
-                   corporate_actions=corporate_actions, forecasts=True, archive_books=True)  # fmt: skip
+                   corporate_actions=corporate_actions, forecasts=True, archive_books=True,
+                   intraday=live_fetch)  # fmt: skip
 
 
 def alert(session: Session, watch: Watch, kind: str, message: str, level: str = "info", **data: Any) -> None:

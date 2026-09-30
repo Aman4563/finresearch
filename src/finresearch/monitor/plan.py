@@ -46,9 +46,11 @@ def expected_dates(close: date, holidays: set[date] | None = None) -> tuple[date
 
 
 def plan(symbol: str, open_date: date, close_date: date, allotment: date, listing: date,
-         anchor_shares=None, holidays: set[date] | None = None, listed: frozenset[str] = frozenset()) -> list[Slot]:  # fmt: skip
+         anchor_shares=None, holidays: set[date] | None = None, listed: frozenset[str] = frozenset(),
+         subscription_times: tuple[tuple[int, int], ...] = SUBSCRIPTION_TIMES) -> list[Slot]:  # fmt: skip
     """``listed``: listing events ("open", "close") already recorded, which are not planned again when NSE's
-    listing date replaces the expected one."""
+    listing date replaces the expected one. ``subscription_times``: the bidding-day check times (the profile's watch
+    windows); the last one is the final check that records the closing book."""
     if holidays is None:
         from finresearch.adapters.nse_holidays import trading_holidays
 
@@ -57,8 +59,8 @@ def plan(symbol: str, open_date: date, close_date: date, allotment: date, listin
     days = bidding_dates(open_date, n_days, holidays)
     out: list[Slot] = []
     for d in days:
-        for h, m in SUBSCRIPTION_TIMES:
-            final = d == close_date and (h, m) == SUBSCRIPTION_TIMES[-1]
+        for h, m in subscription_times:
+            final = d == close_date and (h, m) == subscription_times[-1]
             out.append(Slot("subscription", f"{symbol}:subscription:{d}:{h:02d}{m:02d}", ist_datetime(d, h, m),
                             {"final": final, "day": days.index(d) + 1}))  # fmt: skip
     out.append(Slot("allotment", f"{symbol}:allotment:{allotment}", ist_datetime(allotment, *ALLOTMENT_TIME)))
@@ -88,8 +90,15 @@ def last_slot(slots: list[Slot]) -> datetime:
     return max(s.due_at for s in slots) + timedelta(days=1)
 
 
-def plan_stock(symbol: str, start: date, end: date, holidays: set[date] | None = None) -> list[Slot]:
-    """One after-close check per exchange trading day in [start, end] for a watched listed stock."""
+def plan_stock(
+    symbol: str,
+    start: date,
+    end: date,
+    holidays: set[date] | None = None,
+    at: tuple[int, int] = STOCK_DAILY_TIME,
+) -> list[Slot]:
+    """One after-close check per exchange trading day in [start, end] for a watched listed stock, at `at` IST (the
+    profile's watch windows; default 16:30)."""
     from finresearch.fincalc.dates import is_business_day
 
     if holidays is None:
@@ -99,6 +108,6 @@ def plan_stock(symbol: str, start: date, end: date, holidays: set[date] | None =
     out, d = [], start
     while d <= end:
         if is_business_day(d, holidays):
-            out.append(Slot("stock_daily", f"{symbol}:stock_daily:{d}", ist_datetime(d, *STOCK_DAILY_TIME)))
+            out.append(Slot("stock_daily", f"{symbol}:stock_daily:{d}", ist_datetime(d, *at)))
         d += timedelta(days=1)
     return out
