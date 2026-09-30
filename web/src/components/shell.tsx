@@ -47,7 +47,7 @@ export const NAV: { group: string; items: NavItem[] }[] = [
     group: "You",
     items: [
       { href: "/profile", label: "Profile", icon: <UserRound />, keys: "g p", description: "You, your investor profile and preferences" },
-      { href: "/rules", label: "Rules", icon: <ListChecks />, keys: "g u", description: "Personal rules that gate suggestions" },
+      { href: "/rules", label: "Rules", icon: <ListChecks />, keys: "g u", description: "IPO red lines and alerts for every asset" },
       { href: "/usage", label: "Plan usage", icon: <GaugeIcon />, keys: "g l", description: "Claude plan window and limits" },
       { href: "/help", label: "Help", icon: <CircleHelp />, keys: "g h", description: "Guides, glossary, FAQ and shortcuts" },
     ],

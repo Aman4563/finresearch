@@ -575,3 +575,75 @@ class IntradaySeriesRow(Base):
     complete: Mapped[bool] = mapped_column(Boolean, default=False)  # recorded after the 15:30 close
     source: Mapped[str] = mapped_column(String(200))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# --------------------------------------------------------------------------- rules and alerts for every asset (item 10)
+class AlertRuleState(Base):
+    """Where one alert rule stands for one instrument, so a rule fires once when its condition becomes true and not
+    again until it has cleared (and its cooldown has passed). `rule_sig` is a digest of the rule's definition: editing
+    the rule (metric, comparison, value, params) starts it afresh. `baseline` holds what change metrics compare
+    against (the last signal action, rating, TER)."""
+
+    __tablename__ = "alert_rule_state"
+    __table_args__ = (UniqueConstraint("rule_id", "instrument"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    rule_id: Mapped[str] = mapped_column(String(40), index=True)
+    instrument: Mapped[str] = mapped_column(String(40))
+    rule_sig: Mapped[str] = mapped_column(String(64), default="")
+    status: Mapped[str] = mapped_column(String(10), default="new")  # new | clear | fired | unknown
+    value: Mapped[Decimal | None] = mapped_column(Numeric(20, 6))
+    source: Mapped[str | None] = mapped_column(Text)
+    note: Mapped[str | None] = mapped_column(Text)  # why the value is unknown, or a suppressed re-fire
+    baseline: Mapped[dict[str, Any]] = mapped_column(default=dict)
+    since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # when the status last changed
+    last_fired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    fired_count: Mapped[int] = mapped_column(Integer, default=0)
+    suppressed_count: Mapped[int] = mapped_column(Integer, default=0)  # re-fires held back by the cooldown
+    checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class AlertEvalSlot(Base):
+    """One evaluation pass of the alert rules ("intraday:2026-09-30T10:15", "daily:2026-09-30"): the unique key means
+    two monitor processes never evaluate the same pass twice."""
+
+    __tablename__ = "alert_eval_slot"
+    slot: Mapped[str] = mapped_column(String(60), primary_key=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    result: Mapped[dict[str, Any]] = mapped_column(default=dict)
+
+
+class NotificationSetting(Base):
+    """Delivery settings, one row per key ("ntfy", "telegram", "macos", "general"). Holds secrets (ntfy topic and
+    token, Telegram bot token): they stay in this local database, are masked by the API and are never put in the
+    profile (which reaches the model)."""
+
+    __tablename__ = "notification_setting"
+    key: Mapped[str] = mapped_column(String(20), primary_key=True)
+    value: Mapped[dict[str, Any]] = mapped_column(default=dict)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class AlertDelivery(Base):
+    """One alert sent (or to be sent) to one channel, with its attempts: the delivery log. A test send has no alert."""
+
+    __tablename__ = "alert_delivery"
+    __table_args__ = (UniqueConstraint("alert_id", "channel"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    alert_id: Mapped[int | None] = mapped_column(ForeignKey("alert.id", ondelete="CASCADE"), index=True)
+    channel: Mapped[str] = mapped_column(String(20))  # ntfy | telegram | macos
+    priority: Mapped[str] = mapped_column(
+        String(10), default="default"
+    )  # min | low | default | high | urgent
+    title: Mapped[str] = mapped_column(String(200))
+    message: Mapped[str] = mapped_column(Text)
+    click: Mapped[str | None] = mapped_column(String(500))
+    status: Mapped[str] = mapped_column(String(10), default="pending", index=True)  # pending | sent | failed
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    next_try_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+    last_error: Mapped[str | None] = mapped_column(Text)  # secrets redacted
+    held: Mapped[str | None] = mapped_column(String(100))  # e.g. "quiet hours until 07:00"
+    test: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

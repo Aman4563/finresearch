@@ -1,19 +1,43 @@
 "use client";
 
 import {
-  Ban, Check, CircleHelp, Cpu, DatabaseZap, ListChecks, Plus, ShieldCheck, Sparkles, Trash2, TriangleAlert, UserRound,
+  Ban, BellRing, Check, CircleHelp, Siren, Smartphone, Cpu, DatabaseZap, ListChecks, Plus, ShieldCheck, Sparkles, Trash2, TriangleAlert, UserRound,
 } from "lucide-react";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { Labelled, LinkButton, SaveBar, useDraft, withDefaults } from "@/components/profile/common";
+import { AlertRulesPanel, KIND_LABEL, newAlertRule, validateAlertRules } from "@/components/rules/alert-rules";
 import {
   isNumber, METRIC, METRICS, OPS, sentence, TEMPLATES, uniqueId, UNIT_SUFFIX, validate,
 } from "@/components/rules/metrics";
 import {
   Badge, Button, Card, cx, EmptyState, ErrorNote, Field, InfoTip, inputClass, PageHeader, Segmented, Skeleton, Stat,
 } from "@/components/ui";
-import { api, type Profile, type Rule, useApi } from "@/lib/api";
+import {
+  type AlertKind, type AlertRegistry, type AlertRule, type AlertRuleState, api, type NotificationSettings, type Profile, type Rule,
+  useApi, type WatchSummary,
+} from "@/lib/api";
+
+const KINDS: AlertKind[] = ["ipo", "stock", "fund", "bond", "fno", "portfolio"];
+const FNO_UNDERLYINGS = ["NIFTY", "BANKNIFTY", "FINNIFTY"];
+
+/** The asset tab from ?kind=… (so alert links and the profile can deep-link a tab). */
+function useKindTab(): [AlertKind, (k: AlertKind) => void] {
+  const [tab, setTab] = useState<AlertKind>("ipo");
+  useEffect(() => {
+    const k = new URLSearchParams(window.location.search).get("kind") as AlertKind | null;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- read the tab from the URL once on mount
+    if (k && KINDS.includes(k)) setTab(k);
+  }, []);
+  const choose = (k: AlertKind) => {
+    setTab(k);
+    const url = new URL(window.location.href);
+    url.searchParams.set("kind", k);
+    window.history.replaceState(null, "", url);
+  };
+  return [tab, choose];
+}
 
 const GROUPS = ["Demand", "Price and lots", "Timing and quality", "Signal"] as const;
 
@@ -26,17 +50,50 @@ export function RulesPage() {
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [fresh, setFresh] = useState<string | null>(null);
 
+  const [tab, setTab] = useKindTab();
+  const registry = useApi<AlertRegistry>("/api/alert-rules/registry");
+  const states = useApi<AlertRuleState[]>("/api/alert-rules/state", 60000);
+  const notifications = useApi<NotificationSettings>("/api/notifications");
+  const watches = useApi<WatchSummary[]>("/api/watches");
+  const companies = useApi<{ slug: string; name: string }[]>("/api/companies");
+
   const problems = useMemo(() => (p ? validate(p.rules) : {}), [p]);
+  const alertRules = useMemo(() => p?.alert_rules ?? [], [p]);
+  const alertProblems = useMemo(() => validateAlertRules(alertRules, registry.data?.metrics ?? []), [alertRules, registry.data]);
+  const [savedRules, setSavedRules] = useState<AlertRule[] | null>(null);
+  const savedAlertIds = useMemo(() => {
+    const saved = new Map((savedRules ?? data?.alert_rules ?? []).map((r) => [r.id, JSON.stringify(r)]));
+    return new Set(alertRules.filter((r) => saved.get(r.id) === JSON.stringify(r)).map((r) => r.id));
+  }, [savedRules, data, alertRules]);
+  const suggestions = useMemo(() => {
+    const w = watches.data ?? [];
+    const slugs = (companies.data ?? []).map((c) => c.slug);
+    const stocks = w.filter((x) => x.kind === "stock").map((x) => x.key);
+    return {
+      ipo: w.filter((x) => x.kind === "ipo" && x.nse_symbol).map((x) => x.nse_symbol!),
+      stock: stocks,
+      fund: slugs.filter((x) => x.startsWith("mf-")).map((x) => x.slice(3)),
+      bond: slugs.filter((x) => x.startsWith("bond-")).map((x) => x.slice(5).toUpperCase()),
+      fno: [...FNO_UNDERLYINGS, ...stocks.filter((x) => !x.startsWith("BSE:"))],
+      portfolio: [],
+    } as Record<AlertKind, string[]>;
+  }, [watches.data, companies.data]);
 
   const header = (
     <PageHeader
       icon={<ListChecks className="size-5" />}
       title="Rules"
-      description="Your personal red lines. Python checks them against live exchange data after the AI suggests, so a rule always wins."
+      description="Your red lines for IPO suggestions, and alerts for every asset you follow. Python checks them against live data; the AI never does."
       actions={
         <>
           <LinkButton href="/help#how-it-works" variant="ghost" icon={<CircleHelp className="size-3.5" />}>How rules work</LinkButton>
-          {p && <Button icon={<Plus className="size-3.5" />} onClick={() => addRule()}>Add rule</Button>}
+          {p && tab === "ipo" && <Button icon={<Plus className="size-3.5" />} onClick={() => addRule()}>Add rule</Button>}
+          {p && tab !== "ipo" && registry.data && (
+            <Button icon={<Plus className="size-3.5" />} onClick={() => {
+              const m = registry.data!.metrics.find((x) => x.kind === tab);
+              if (m) addAlert(newAlertRule(tab, m, alertRules));
+            }}>Add alert</Button>
+          )}
         </>
       }
     />
@@ -68,17 +125,29 @@ export function RulesPage() {
   const setRule = (i: number, patch: Partial<Rule>) =>
     setDraft({ ...p, rules: p.rules.map((r, j) => (j === i ? { ...r, ...patch } : r)) });
   const removeRule = (i: number) => setDraft({ ...p, rules: p.rules.filter((_, j) => j !== i) });
+  function addAlert(r: AlertRule) {
+    if (!p) return;
+    setDraft({ ...p, alert_rules: [...alertRules, r] });
+  }
+  const setAlert = (i: number, r: AlertRule | null) =>
+    setDraft({ ...p, alert_rules: r ? alertRules.map((x, j) => (j === i ? r : x)) : alertRules.filter((_, j) => j !== i) });
 
-  const nProblems = Object.keys(problems).length;
+  const nProblems = Object.keys(problems).length + Object.keys(alertProblems).length;
   const invalid = nProblems ? `${nProblems} rule${nProblems > 1 ? "s need" : " needs"} fixing before you can save.` : null;
 
   const save = async () => {
     setSaving(true);
     try {
       // PUT replaces the whole profile: send the loaded profile with only the rules changed
-      const body = { ...p, rules: p.rules.map((r) => ({ ...r, id: r.id.trim(), value: String(r.value).trim(), description: r.description.trim() || sentence(r) })) };
+      const body = {
+        ...p,
+        rules: p.rules.map((r) => ({ ...r, id: r.id.trim(), value: String(r.value).trim(), description: r.description.trim() || sentence(r) })),
+        alert_rules: alertRules.map((r) => ({ ...r, id: r.id.trim(), value: String(r.value).trim(), instrument: r.instrument?.trim() || null, description: r.description.trim() })),
+      };
       const saved = withDefaults(await api<Profile>("/api/profile", { method: "PUT", body: JSON.stringify(body) }));
       commit(saved);
+      setSavedRules(saved.alert_rules ?? []);
+      states.reload();
       setSaveError(null);
       setSavedAt(Date.now());
     } catch (e) {
@@ -88,6 +157,14 @@ export function RulesPage() {
     }
   };
 
+  const alertPanel = (kind: AlertKind) => registry.error ? <ErrorNote error={registry.error} onRetry={registry.reload} /> : !registry.data ? (
+    <div className="grid gap-4 lg:grid-cols-2">{[0, 1].map((i) => <Skeleton key={i} className="h-72 rounded-xl" />)}</div>
+  ) : (
+    <AlertRulesPanel kind={kind} registry={registry.data} allRules={alertRules} states={states.data ?? []}
+      rules={alertRules.map((rule, index) => ({ rule, index })).filter((x) => x.rule.kind === kind)}
+      suggestions={suggestions[kind]} notifications={notifications.data} savedIds={savedAlertIds} problems={alertProblems}
+      onChange={setAlert} onAdd={addAlert} />
+  );
   const skip = p.rules.filter((r) => r.action === "skip").length;
   const have = (t: (typeof TEMPLATES)[number]) =>
     p.rules.some((r) => r.metric === t.metric && r.op === t.op && Number(r.value) === Number(t.value) && r.action === t.action);
@@ -96,72 +173,111 @@ export function RulesPage() {
     <div className="pb-4">
       {header}
 
-      <div className="stagger mb-6 grid grid-cols-3 gap-3">
-        <Stat label="Rules" value={p.rules.length} icon={<ListChecks className="size-4" />} hint="always checked" />
-        <Stat label="Skip rules" value={skip} icon={<Ban className="size-4" />} tone="loss" hint="force SKIP"
-          help="If a skip rule fires, the suggestion becomes SKIP with 0 lots, whatever the AI said. If its data is not available yet, the suggestion becomes conditional." />
-        <Stat label="Warn rules" value={p.rules.length - skip} icon={<TriangleAlert className="size-4" />} tone="warn" hint="add a warning"
-          help="A warn rule never changes the action; it shows a warning next to the suggestion when it fires." />
+      <div className="mb-6 overflow-x-auto">
+        <Segmented value={tab} onChange={setTab} size="md"
+          options={KINDS.map((k) => {
+            const n = k === "ipo" ? p.rules.length + alertRules.filter((r) => r.kind === "ipo").length : alertRules.filter((r) => r.kind === k).length;
+            return { value: k, label: <span className="inline-flex items-center gap-1.5">{KIND_LABEL[k]}{n > 0 && <span className="num rounded-full bg-background px-1.5 text-[10px] text-muted">{n}</span>}</span> };
+          })} />
       </div>
 
-      <HowRulesWork />
-
-      <div className="mt-6 grid grid-cols-[minmax(0,1fr)] gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
-        <div className="space-y-4">
-          {!p.rules.length ? (
-            <EmptyState icon={<ListChecks className="size-5" />} title="No rules yet"
-              action={<Button icon={<Plus className="size-3.5" />} onClick={() => addRule(TEMPLATES[0])}>Add “skip if QIB is below 1x”</Button>}>
-              Without rules, suggestions are only limited by your capital and category. Start with a template on the right, or add your own.
-            </EmptyState>
-          ) : (
-            <div className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
-              {p.rules.map((r, i) => (
-                <RuleCard key={i} index={i} rule={r} errors={problems[i]} fresh={fresh === r.id}
-                  onChange={(patch) => setRule(i, patch)} onRemove={() => removeRule(i)} />
-              ))}
-            </div>
-          )}
+      {tab === "ipo" ? (
+        <>
+        <div className="stagger mb-6 grid grid-cols-3 gap-3">
+          <Stat label="Rules" value={p.rules.length} icon={<ListChecks className="size-4" />} hint="always checked" />
+          <Stat label="Skip rules" value={skip} icon={<Ban className="size-4" />} tone="loss" hint="force SKIP"
+            help="If a skip rule fires, the suggestion becomes SKIP with 0 lots, whatever the AI said. If its data is not available yet, the suggestion becomes conditional." />
+          <Stat label="Warn rules" value={p.rules.length - skip} icon={<TriangleAlert className="size-4" />} tone="warn" hint="add a warning"
+            help="A warn rule never changes the action; it shows a warning next to the suggestion when it fires." />
         </div>
 
-        <div className="space-y-4">
-          <Card icon={<Sparkles className="size-4" />} title="Templates" subtitle="Common rules, one click to add. Tweak the numbers after.">
-            <ul className="space-y-2">
-              {TEMPLATES.map((t) => {
-                const added = have(t);
-                return (
-                  <li key={t.id}>
-                    <button type="button" disabled={added} onClick={() => addRule(t)}
-                      className={cx("group flex w-full items-start gap-3 rounded-lg border p-2.5 text-left transition",
-                        added ? "border-border opacity-60" : "border-border hover:border-brand/50 hover:bg-brand-soft/40")}>
-                      <span className={cx("mt-0.5 grid size-6 shrink-0 place-items-center rounded-md",
-                        t.action === "skip" ? "bg-loss-soft text-loss" : "bg-warn-soft text-warn")}>
-                        {t.action === "skip" ? <Ban className="size-3.5" /> : <TriangleAlert className="size-3.5" />}
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="block text-sm font-medium">{t.title}</span>
-                        <span className="block text-xs text-muted">{t.why}</span>
-                        <span className="mt-1 block text-[11px] font-medium text-brand">{sentence(t)}</span>
-                      </span>
-                      <span className="mt-0.5 shrink-0 text-muted transition group-hover:text-brand">
-                        {added ? <Check className="size-4 text-gain" /> : <Plus className="size-4" />}
-                      </span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          </Card>
-          <Card icon={<UserRound className="size-4" />} title="Capital and category" subtitle="Lot limits come from your profile, not from rules.">
-            <p className="text-sm text-muted">
-              Suggestions never exceed the lots your capital per IPO buys, or your category’s SEBI limit. Change those on your{" "}
-              <Link href="/profile" className="text-brand underline-offset-2 hover:underline">profile</Link>.
-            </p>
-          </Card>
+        <HowRulesWork />
+
+        <div className="mt-6 grid grid-cols-[minmax(0,1fr)] gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+          <div className="space-y-4">
+            {!p.rules.length ? (
+              <EmptyState icon={<ListChecks className="size-5" />} title="No rules yet"
+                action={<Button icon={<Plus className="size-3.5" />} onClick={() => addRule(TEMPLATES[0])}>Add “skip if QIB is below 1x”</Button>}>
+                Without rules, suggestions are only limited by your capital and category. Start with a template on the right, or add your own.
+              </EmptyState>
+            ) : (
+              <div className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
+                {p.rules.map((r, i) => (
+                  <RuleCard key={i} index={i} rule={r} errors={problems[i]} fresh={fresh === r.id}
+                    onChange={(patch) => setRule(i, patch)} onRemove={() => removeRule(i)} />
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-4">
+            <Card icon={<Sparkles className="size-4" />} title="Templates" subtitle="Common rules, one click to add. Tweak the numbers after.">
+              <ul className="space-y-2">
+                {TEMPLATES.map((t) => {
+                  const added = have(t);
+                  return (
+                    <li key={t.id}>
+                      <button type="button" disabled={added} onClick={() => addRule(t)}
+                        className={cx("group flex w-full items-start gap-3 rounded-lg border p-2.5 text-left transition",
+                          added ? "border-border opacity-60" : "border-border hover:border-brand/50 hover:bg-brand-soft/40")}>
+                        <span className={cx("mt-0.5 grid size-6 shrink-0 place-items-center rounded-md",
+                          t.action === "skip" ? "bg-loss-soft text-loss" : "bg-warn-soft text-warn")}>
+                          {t.action === "skip" ? <Ban className="size-3.5" /> : <TriangleAlert className="size-3.5" />}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-sm font-medium">{t.title}</span>
+                          <span className="block text-xs text-muted">{t.why}</span>
+                          <span className="mt-1 block text-[11px] font-medium text-brand">{sentence(t)}</span>
+                        </span>
+                        <span className="mt-0.5 shrink-0 text-muted transition group-hover:text-brand">
+                          {added ? <Check className="size-4 text-gain" /> : <Plus className="size-4" />}
+                        </span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </Card>
+            <Card icon={<UserRound className="size-4" />} title="Capital and category" subtitle="Lot limits come from your profile, not from rules.">
+              <p className="text-sm text-muted">
+                Suggestions never exceed the lots your capital per IPO buys, or your category’s SEBI limit. Change those on your{" "}
+                <Link href="/profile" className="text-brand underline-offset-2 hover:underline">profile</Link>.
+              </p>
+            </Card>
+          </div>
         </div>
-      </div>
+
+          <section className="mt-10">
+            <h2 className="mb-1 flex items-center gap-2 text-base font-semibold"><BellRing className="size-4 text-info" />Alerts for watched IPOs</h2>
+            <p className="mb-4 text-sm text-muted">Notify-only: these never change a suggestion. Checked against the monitor’s subscription snapshots.</p>
+            {alertPanel("ipo")}
+          </section>
+        </>
+      ) : (
+        <>
+          <AlertKindStats kind={tab} rules={alertRules} states={states.data ?? []} />
+          {alertPanel(tab)}
+        </>
+      )}
 
       <SaveBar dirty={dirty} saving={saving} error={saveError} invalid={invalid} savedAt={savedAt} onSave={save}
         onDiscard={() => { discard(); setSaveError(null); }} label="Your rule changes are not saved yet" />
+    </div>
+  );
+}
+
+function AlertKindStats({ kind, rules, states }: { kind: AlertKind; rules: AlertRule[]; states: AlertRuleState[] }) {
+  const mine = rules.filter((r) => r.kind === kind);
+  const ids = new Set(mine.map((r) => r.id));
+  const firing = states.filter((s) => ids.has(s.rule_id) && s.status === "fired").length;
+  const phone = mine.filter((r) => r.channels.length > 0).length;
+  return (
+    <div className="stagger mb-6 grid grid-cols-3 gap-3">
+      <Stat label={`${{ ipo: "IPO", stock: "Stock", fund: "Fund", bond: "Bond", fno: "F&O", portfolio: "Portfolio" }[kind]} alerts`} value={mine.length} icon={<BellRing className="size-4" />} tone="info" hint={`${mine.filter((r) => r.enabled).length} on`} />
+      <Stat label="Firing now" value={firing} icon={<Siren className="size-4" />} tone={firing ? "warn" : "neutral"} hint="condition true"
+        help="Rules whose condition is true at the last check. Each fires once, then waits until it clears (and the cooldown passes) before it can alert again." />
+      <Stat label="To your phone" value={phone} icon={<Smartphone className="size-4" />} tone="brand" hint="with a channel"
+        help="Rules that send to ntfy, Telegram or the Mac besides the in-app bell." />
     </div>
   );
 }

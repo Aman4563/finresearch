@@ -543,7 +543,8 @@ async def stock_signal(instrument: str, ctx: dict[str, Any]) -> Signal:
     sig = Signal(**base, action=action_for_score(score), score=round(score, 1), validation=validation,
                  probability=prob, probability_interval=interval, base_rate=base_rate, factors=factors,
                  caveats=caveats, sizing=sizing(f, bucket, _profile()))  # fmt: skip
-    _log(sig, bucket_name)
+    if str(ctx.get("log", "1")) != "0":  # ctx log=0: a scheduled alert check, not a viewed signal
+        _log(sig, bucket_name)
     return sig
 
 
