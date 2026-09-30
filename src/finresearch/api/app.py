@@ -1191,6 +1191,31 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
 
     add_live_routes(app, monitor_deps=monitor_deps, clock=clock)
 
+    # ------------------------------------------------------------------ buy/sell signals (finresearch.signals)
+    @app.get("/api/signals")
+    def signal_assets() -> dict[str, Any]:
+        from finresearch.signals import DISCLAIMER, providers
+        from finresearch.signals.registry import ASSETS
+
+        have = providers()
+        return {"assets": [{"asset": a, "available": a in have} for a in ASSETS], "disclaimer": DISCLAIMER}
+
+    @app.get("/api/signals/{asset}/{instrument}")
+    async def signal(asset: str, instrument: str, request: Request) -> dict[str, Any]:
+        """The signal for one instrument. Query parameters are passed to the provider as its context."""
+        from finresearch.signals import get_provider
+
+        provider = get_provider(asset)
+        if provider is None:
+            raise HTTPException(404, f"no signal provider for {asset!r} yet")
+        try:
+            sig = await provider(instrument, dict(request.query_params))
+        except LookupError as e:
+            raise HTTPException(404, str(e)) from e
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from e
+        return sig.to_json()
+
     return app
 
 
