@@ -150,3 +150,80 @@ def test_backtest_statistics_golden():
     assert bt.bucket_of(True, 1.2) == "uptrend / strong momentum" and bt.bucket_of(False, -0.1).startswith(
         "down"
     )
+
+
+# --------------------------------------------------------------------------- TTM EPS from what the company files
+def _p(a: str, b: str, eps: float, known: str, cons: bool | None = True) -> sg.FiledPeriod:
+    return sg.FiledPeriod(date.fromisoformat(a), date.fromisoformat(b), eps, date.fromisoformat(known), cons)
+
+
+def test_ttm_from_four_quarters_is_their_sum():
+    q = [_p("2025-04-01", "2025-06-30", 1, "2025-07-20"), _p("2025-07-01", "2025-09-30", 2, "2025-10-20"),
+         _p("2025-10-01", "2025-12-31", 3, "2026-01-20"), _p("2026-01-01", "2026-03-31", 4, "2026-04-20")]  # fmt: skip
+    (row,) = sg.ttm_from_periods(q)
+    assert (row.end, row.eps, row.known, row.basis) == (
+        date(2026, 3, 31),
+        10,
+        date(2026, 4, 20),
+        "TTM from four quarters",
+    )
+
+
+def test_ttm_from_two_half_years_for_a_half_yearly_filer():
+    # H1 from the September filing's year-to-date, H2 from March's six-month "current period": 3 + 7 = 10
+    h = [_p("2025-04-01", "2025-09-30", 3, "2025-11-10"), _p("2025-10-01", "2026-03-31", 7, "2026-05-09")]
+    (row,) = sg.ttm_from_periods(h)
+    assert (row.eps, row.basis, row.known) == (10, "TTM from two half-years", date(2026, 5, 9))
+
+
+def test_fiscal_year_eps_is_preferred_at_the_year_end_and_four_quarters_otherwise():
+    fy = _p(
+        "2025-04-01", "2026-03-31", 10.2, "2026-05-09"
+    )  # the year's own EPS (weighted shares) beats a sum
+    halves = [
+        _p("2025-04-01", "2025-09-30", 3, "2025-11-10"),
+        _p("2025-10-01", "2026-03-31", 7, "2026-05-09"),
+    ]
+    (row,) = sg.ttm_from_periods([*halves, fy])
+    assert (row.eps, row.basis) == (10.2, "last fiscal year EPS")
+
+
+def test_ttm_from_a_half_year_and_two_quarters():
+    # a half-yearly filer at June: Jul-Sep quarter + Oct-Mar half + Apr-Jun quarter = 2 + 7 + 5 = 14
+    p = [_p("2025-07-01", "2025-09-30", 2, "2025-11-10"), _p("2025-10-01", "2026-03-31", 7, "2026-05-09"),
+         _p("2026-04-01", "2026-06-30", 5, "2026-08-05")]  # fmt: skip
+    (row,) = sg.ttm_from_periods(p)
+    assert (row.end, row.eps, row.basis) == (
+        date(2026, 6, 30),
+        14,
+        "TTM from a quarter + a half-year + a quarter",
+    )
+
+
+def test_no_ttm_when_a_quarter_is_missing_and_the_gap_is_named():
+    fy = _p("2025-04-01", "2026-03-31", 41.65, "2026-05-09")
+    h2 = _p("2025-10-01", "2026-03-31", 11.48, "2026-05-09")
+    q1 = _p("2026-04-01", "2026-06-30", 18.39, "2026-08-05")
+    rows = sg.ttm_from_periods([fy, h2, q1])
+    # only the fiscal year tiles twelve months; June 2026 needs Jul-Sep 2025 on its own
+    assert [(r.end, r.eps, r.basis) for r in rows] == [(date(2026, 3, 31), 41.65, "last fiscal year EPS")]
+    assert sg.ttm_chains([fy, h2, q1], date(2026, 6, 30)) == []
+    assert sg.ttm_gaps([fy, h2, q1], date(2026, 6, 30)) == [(date(2025, 7, 1), date(2025, 9, 30))]
+    assert sg.ttm_gaps([h2], date(2026, 3, 31)) == [(date(2025, 4, 1), date(2025, 9, 30))]
+    assert sg.ttm_from_periods([h2, q1]) == []
+
+
+def test_ttm_keeps_one_basis_and_never_goes_back_in_time():
+    cons = [_p("2025-04-01", "2025-09-30", 3, "2025-11-10"), _p("2025-10-01", "2026-03-31", 7, "2026-05-09")]
+    alone = [_p("2025-04-01", "2025-09-30", 90, "2025-11-09", cons=False),
+             _p("2025-10-01", "2026-03-31", 10, "2026-05-08", cons=False)]  # fmt: skip
+    (row,) = sg.ttm_from_periods([*cons, *alone])
+    assert row.eps == 10 and {p.consolidated for p in row.pieces} == {True}  # consolidated first, never mixed
+    (row,) = sg.ttm_from_periods([cons[1], alone[0]])
+    assert row.eps == 97  # a mixed-basis chain only when no single-basis one exists
+    (row,) = sg.ttm_from_periods(alone)
+    assert row.eps == 100
+    # an older year learned after a newer one never replaces it
+    late = sg.ttm_from_periods([_p("2025-04-01", "2026-03-31", 10, "2026-05-09"),
+                                _p("2024-04-01", "2025-03-31", 8, "2026-06-01")])  # fmt: skip
+    assert [r.end for r in late] == [date(2026, 3, 31)]

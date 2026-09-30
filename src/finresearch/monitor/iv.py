@@ -1,7 +1,7 @@
 """Daily ATM implied-volatility recorder (roadmap item 18).
 
 After the close (from 15:50 IST) the monitor reads one option chain per underlying — NIFTY, BANKNIFTY, FINNIFTY and
-every actively watched stock that trades in F&O — and stores that day's ATM IV and 25-delta skew in `iv_history`.
+every actively watched NSE stock that trades in F&O (BSE-only watches have no options) — and stores that day's ATM IV and 25-delta skew in `iv_history`.
 Nothing historical is available from NSE, so IV rank and percentile start once 60 days have been recorded.
 
 - The contract is the nearest expiry at least 7 days away, so same-week expiries (whose IV swings on time decay
@@ -67,11 +67,12 @@ def snapshot(chain, today: date) -> dict[str, Any] | None:
 
 
 def symbols(lots: dict[str, dict[str, int]] | None) -> list[str]:
+    """The indices plus every NSE stock watch that trades in F&O. BSE-only watches (Watch.exchange "BSE") are left out
+    on purpose: stock options trade on NSE only, so a BSE-only stock has no option chain and no IV to record."""
     with session_scope() as s:
-        watched = s.scalars(
-            select(Watch.nse_symbol).where(Watch.active.is_(True), Watch.kind == "stock")
-        ).all()
-    extra = sorted({w.upper() for w in watched if w and lots and w.upper() in lots})  # BSE-only watches: None
+        watched = s.scalars(select(Watch.nse_symbol).where(Watch.active.is_(True), Watch.kind == "stock",
+                                                           Watch.exchange != "BSE")).all()  # fmt: skip
+    extra = sorted({w.upper() for w in watched if w and lots and w.upper() in lots})
     return [*INDEX_SYMBOLS, *(x for x in extra if x not in INDEX_SYMBOLS)]
 
 

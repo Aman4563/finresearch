@@ -162,6 +162,19 @@ def build_quote(code: str, header: dict[str, Any], info: dict[str, Any] | None, 
     return BseQuote(**fields)
 
 
+def price_csv_params(code: str, start: date, end: date) -> dict[str, str]:
+    return {"pageType": "0", "rbType": "D", "Scode": code, "FDates": start.strftime("%d/%m/%Y"),
+            "TDates": end.strftime("%d/%m/%Y")}  # fmt: skip
+
+
+def price_csv_url(code: str, start: date, end: date) -> str:
+    """The exact BSE daily-price CSV a history read comes from: the citation for BSE closes (the bare BSE home page
+    would not let a reader find the numbers)."""
+    from urllib.parse import urlencode
+
+    return f"{BSE_API}/StockPriceCSVDownload/w?" + urlencode(price_csv_params(code, start, end))
+
+
 def parse_price_csv(text: str) -> list[PriceBar]:
     """StockPriceCSVDownload -> PriceBars, oldest first; the previous close is the previous row's close."""
     rows = list(csv.reader(io.StringIO((text or "").lstrip("﻿"))))
@@ -513,9 +526,7 @@ class BseEquity:
 
     async def history(self, code: str, start: date, end: date, series: str = "EQ") -> list[PriceBar]:
         url = f"{BSE_API}/StockPriceCSVDownload/w"
-        params = {"pageType": "0", "rbType": "D", "Scode": code, "FDates": start.strftime("%d/%m/%Y"),
-                  "TDates": end.strftime("%d/%m/%Y")}  # fmt: skip
-        resp = await self.bse.http.get(url, params=params, headers=BSE_HEADERS)
+        resp = await self.bse.http.get(url, params=price_csv_params(code, start, end), headers=BSE_HEADERS)
         if not resp.ok:
             raise BseError(f"BSE HTTP {resp.status} for the price history of {code}")
         return [b for b in parse_price_csv(resp.text) if start <= b.day <= end]

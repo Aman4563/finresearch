@@ -24,6 +24,11 @@ two fiscal years for the forensic scores) and shareholding-pattern XBRL. The buc
 NIFTY 50 backtest (NSE large caps), which a small BSE-only company may not resemble: every such signal says so. Its
 forecast is resolved on BSE closes against NIFTYBEES on NSE (see signals/ledger.py).
 
+The P/E uses a trailing-twelve-month EPS built from what the company files (fincalc.signals.ttm_from_periods): four
+quarters, or for a half-yearly filer (whose March filing reports six months) two half-years or a half-year and two
+quarters, or the fiscal year's own EPS; the factor says which. A scored factor that cannot be computed (no P/E, fewer
+than two shareholding patterns, no forensic score) is still listed with value None, contribution 0 and the reason.
+
 Only the momentum + trend part is backtested; the composite and its action are "rule_based". Sizing is
 volatility-scaled, capped by the profile's single-stock limit and by a quarter-Kelly ceiling from the bucket's
 backtested mean excess return (roadmap §D.6); an ATR(14) stop distance is shown as risk control, not alpha [46].
@@ -237,6 +242,15 @@ class Features:
     pe_percentile: float | None = None
     pe_points: int = 0
     pe_from: date | None = None
+    pe_basis: str | None = None  # how the TTM EPS was built (fincalc.signals.ttm_basis)
+    pe_ttm_end: date | None = None
+    pe_ttm_eps: float | None = None
+    pe_pieces: list[str] = field(default_factory=list)
+    pe_note: str | None = None  # why a newer filed period could not be used
+    pe_reason: str | None = None  # why there is no P/E (then pe is None)
+    holding_reason: str | None = None
+    inst_reason: str | None = None
+    promoter_reason: str | None = None
     inst_change_pp: float | None = None
     promoter_change_pp: float | None = None
     holding_span: str | None = None
@@ -282,56 +296,102 @@ def features(raw: dict[str, Any]) -> Features:
     return f
 
 
+def _filed_periods(raw: dict[str, Any]) -> list[sg.FiledPeriod]:
+    """Every filed period with an EPS: the results' `periods` (quarters, half-years, year-to-dates, years), or for an
+    older payload its quarters and fiscal years (a quarter without a start date is the three months to its end)."""
+    res = raw.get("results") or {}
+    rows = res.get("periods")
+    if rows is None:
+        rows = [*(res.get("quarters") or []), *(res.get("annual") or [])]
+    out: list[sg.FiledPeriod] = []
+    for r in rows:
+        if r.get("eps") is None or not r.get("filed_at") or not r.get("period_end"):
+            continue
+        end = date.fromisoformat(r["period_end"])
+        start = date.fromisoformat(r["period_start"]) if r.get("period_start") else _quarter_start(end)
+        out.append(sg.FiledPeriod(start, end, float(r["eps"]), datetime.fromisoformat(r["filed_at"]).date(),
+                                  r.get("consolidated")))  # fmt: skip
+    return out
+
+
+def _quarter_start(end: date) -> date:
+    m = end.month - 2
+    return date(end.year - (m < 1), m + 12 if m < 1 else m, 1)
+
+
+def _span(a: date, b: date) -> str:
+    return f"{a:%b %Y}" if (a.year, a.month) == (b.year, b.month) else f"{a:%b %Y}-{b:%b %Y}"
+
+
 def _valuation(f: Features, raw: dict[str, Any], days: list[date], close: list[float],
                applied: list[tuple[date, float]]) -> None:  # fmt: skip
-    """P/E = adjusted close / TTM EPS known that day. EPS filed before a split or bonus is put on today's share
-    basis with the same factor as the price. TTM needs four consecutive quarters."""
-    qs = [
-        r
-        for r in (raw.get("results") or {}).get("quarters") or []
-        if r.get("eps") is not None and r.get("filed_at")
-    ]
-    qs.sort(key=lambda r: r["period_end"])
-    rows: list[tuple[date, float]] = []
-    for i in range(3, len(qs)):
-        ends = [date.fromisoformat(qs[j]["period_end"]) for j in range(i - 3, i + 1)]
-        if (ends[-1] - ends[0]).days > 290:  # a missing quarter in between
-            continue
-        known = datetime.fromisoformat(qs[i]["filed_at"]).date()
-        eps = 0.0
-        for j in range(i - 3, i + 1):
-            filed = datetime.fromisoformat(qs[j]["filed_at"]).date()
-            eps += qs[j]["eps"] / math.prod(fct for ex, fct in applied if ex > filed)
-        rows.append((known, eps))
+    """P/E = adjusted close / the TTM EPS known that day (fincalc.signals.ttm_from_periods: four quarters, two
+    half-years, a half-year and two quarters, or the fiscal year's own EPS). EPS filed before a split or bonus is put on
+    today's share basis with the same factor as the price. When no P/E can be computed, `pe_reason` says exactly why."""
+    periods = [sg.FiledPeriod(p.start, p.end, p.eps / math.prod(fct for ex, fct in applied if ex > p.known), p.known,
+                              p.consolidated) for p in _filed_periods(raw)]  # fmt: skip
+    if not periods:
+        failed = [e for e in raw.get("errors") or [] if e.startswith("results")]
+        f.pe_reason = (f"The results could not be loaded ({'; '.join(failed)}), so there is no EPS to divide by."
+                       if failed else "No filed results with an EPS were found, so there is no EPS to divide by.")  # fmt: skip
+        return
+    rows = sg.ttm_from_periods(periods)
+    latest = max(periods, key=lambda p: p.end)
+    on_file = ", ".join(f"{_span(p.start, p.end)}" for p in sorted(periods, key=lambda p: p.end)[-6:])
     if not rows:
+        gaps = sg.ttm_gaps(periods, latest.end)
+        f.pe_reason = ("The filed periods do not add up to any twelve months (on file: " + on_file + ")" +
+                       (f"; missing for the year to {latest.end:%b %Y}: " + ", ".join(_span(a, b) for a, b in gaps)
+                        if gaps else "") + ". No trailing EPS, so no P/E.")  # fmt: skip
         return
-    pe = sg.pe_series(days, close, rows)
-    if not pe:
+    cur = rows[-1]
+    f.pe_basis, f.pe_ttm_end, f.pe_ttm_eps = cur.basis, cur.end, cur.eps
+    f.pe_pieces = [_span(p.start, p.end) for p in cur.pieces]
+    if latest.end > cur.end:
+        gaps = sg.ttm_gaps(periods, latest.end)
+        f.pe_note = (f"The latest filed period (to {latest.end:%d %b %Y}) cannot extend it: " +
+                     (("the filings on file have no separate figures for " + ", ".join(_span(a, b) for a, b in gaps))
+                      if gaps else "its pieces overlap other filed periods") + ".")  # fmt: skip
+    if cur.eps <= 0:
+        f.pe_reason = (f"Trailing EPS ({cur.basis}, to {cur.end:%d %b %Y}) is {cur.eps:.2f}: a loss, so P/E has no "
+                       "meaning.")  # fmt: skip
         return
-    ttm_now = rows[-1][1]
-    if ttm_now > 0 and f.price:
-        f.pe = f.price / ttm_now
-        f.pe_points = len(pe)
-        f.pe_from = next((d for d in days if d >= rows[0][0]), None)
-        if len(pe) >= 120:  # about six months of daily P/E before a percentile means anything
-            f.pe_percentile = sg.percentile_rank(pe, f.pe)
+    pe = sg.pe_series(days, close, [(r.known, r.eps) for r in rows])
+    if not f.price:
+        f.pe_reason = "No current price."
+        return
+    f.pe = f.price / cur.eps
+    f.pe_points = len(pe)
+    f.pe_from = next((d for d in days if d >= rows[0].known), None)
+    if len(pe) >= 120:  # about six months of daily P/E before a percentile means anything
+        f.pe_percentile = sg.percentile_rank(pe, f.pe)
 
 
 def _holding(f: Features, shp: dict[str, Any]) -> None:
     qs = [q for q in shp.get("quarters") or [] if q.get("groups")]
     if len(qs) < 2:
+        n = len(shp.get("quarters") or [])
+        why = (f"{len(qs)} of the {n} shareholding patterns read carry a category breakdown" if n
+               else "no shareholding pattern could be read")  # fmt: skip
+        f.holding_reason = f"Needs two filed shareholding patterns to compare; {why}."
         return
     a, b = qs[0], qs[-1]  # oldest, latest (up to four quarters apart)
 
     def g(q: dict[str, Any], k: str) -> float | None:
         return q["groups"].get(k)
 
+    f.holding_span = f"{a['as_of']} to {b['as_of']}"
     fa, da, fb, db = g(a, "fii"), g(a, "dii"), g(b, "fii"), g(b, "dii")
     if None not in (fa, da, fb, db):
         f.inst_change_pp = (fb + db) - (fa + da)  # type: ignore[operator]
+    else:
+        f.inst_reason = f"The patterns ({f.holding_span}) do not both report FII and DII holdings."
     if g(a, "promoter") is not None and g(b, "promoter") is not None:
         f.promoter_change_pp = g(b, "promoter") - g(a, "promoter")  # type: ignore[operator]
-    f.holding_span = f"{a['as_of']} to {b['as_of']}"
+    else:
+        f.promoter_reason = (
+            f"The patterns ({f.holding_span}) do not both report the promoter group's holding."
+        )
 
 
 # --------------------------------------------------------------------------- forensic
@@ -400,9 +460,11 @@ def _clip(x: float) -> float:
 SHP_PAGE = "https://www.nseindia.com/companies-listing/corporate-filings-shareholding-pattern"
 
 
-def composite(f: Features, fz_scores: list[dict[str, Any]], shp_source: str = SHP_PAGE) -> list[Factor]:
+def composite(f: Features, fz_scores: list[dict[str, Any]], shp_source: str = SHP_PAGE,
+              fz_notes: list[str] | None = None) -> list[Factor]:  # fmt: skip
     """The factors and their contributions (pre-registered v1, see the module docstring). `shp_source` is where the
-    shareholding patterns were read (NSE's filings page, or a BSE-only stock's BSE page)."""
+    shareholding patterns were read (NSE's filings page, or a BSE-only stock's BSE page). A scored factor that cannot
+    be computed is still listed, with value None, contribution 0 and the reason, never silently dropped."""
     out: list[Factor] = []
     if f.mom_score is not None:
         out.append(Factor("Momentum (12-1 month, risk-adjusted)", round(f.mom_score, 2), 40 * _clip(f.mom_score / 1.5),
@@ -419,28 +481,55 @@ def composite(f: Features, fz_scores: list[dict[str, Any]], shp_source: str = SH
                           "fincalc:signals.sma", "%"))  # fmt: skip
     if f.pe is not None:
         pct = f.pe_percentile
+        basis = (f"price ÷ trailing EPS {f.pe_ttm_eps:.2f}, {f.pe_basis} to {f.pe_ttm_end:%d %b %Y} "
+                 f"({' + '.join(f.pe_pieces)}), from the filed results")  # fmt: skip
         out.append(Factor("P/E vs its own history", round(f.pe, 1), 0.0 if pct is None else 10 * (1 - 2 * pct),
-                          (f"P/E {f.pe:.1f} (price ÷ trailing-12-month EPS from the filed results) is at the "
-                           f"{pct:.0%} percentile of its daily history since {f.pe_from}. " if pct is not None else
-                           f"P/E {f.pe:.1f}; too little filed history for a percentile. ") +
+                          (f"P/E {f.pe:.1f} ({basis}) is at the {pct:.0%} percentile of its daily history since "
+                           f"{f.pe_from}. " if pct is not None else
+                           f"P/E {f.pe:.1f} ({basis}); only {f.pe_points} days of P/E history, under the 120 a "
+                           "percentile needs, so it adds nothing. ") + (f"{f.pe_note} " if f.pe_note else "") +
                           "Cheaper than usual adds, dearer subtracts. Context only: no Indian forward-return study "
-                          "backs it. Not backtested.", "fincalc:signals.pe_series", "×"))  # fmt: skip
+                          "backs it. Not backtested.", "fincalc:signals.ttm_from_periods", "×"))  # fmt: skip
+    else:
+        out.append(Factor("P/E vs its own history", None, 0.0,
+                          f"Not computed: {f.pe_reason or 'no trailing EPS.'} It adds nothing to the score.",
+                          "fincalc:signals.ttm_from_periods", "×"))  # fmt: skip
     if f.inst_change_pp is not None:
         out.append(Factor("FII + DII holding change", round(f.inst_change_pp, 2), 5 * _clip(f.inst_change_pp / 2),
                           f"Change in foreign plus domestic institutional holding, {f.holding_span}, from the filed "
                           "shareholding-pattern XBRL. Weak evidence; small weight. Not backtested.",
                           shp_source, "pp"))  # fmt: skip
+    else:
+        out.append(Factor("FII + DII holding change", None, 0.0,
+                          f"Not computed: {f.inst_reason or f.holding_reason or 'no shareholding data.'} It adds "
+                          "nothing to the score.", shp_source, "pp"))  # fmt: skip
     if f.promoter_change_pp is not None:
         out.append(Factor("Promoter holding change", round(f.promoter_change_pp, 2),
                           5 * _clip(f.promoter_change_pp / 2),
                           f"Change in promoter holding, {f.holding_span}. Selling or dilution counts against; "
                           "buying for. Weak evidence; small weight. Not backtested.",
                           shp_source, "pp"))  # fmt: skip
+    else:
+        out.append(Factor("Promoter holding change", None, 0.0,
+                          f"Not computed: {f.promoter_reason or f.holding_reason or 'no shareholding data.'} It adds "
+                          "nothing to the score.", shp_source, "pp"))  # fmt: skip
     red = [s for s in fz_scores if s["red_flag"]]
     for i, s in enumerate(red):
         out.append(Factor(f"Forensic flag: {s['name']}", s["value"], -10.0 if i < 3 else 0.0,
                           f"{s['name']} is in its warning zone ({s['flag']}; {s['thresholds']}). A screening flag, "
                           "not a verdict: check the filings. Not validated on Indian data.", s["source"]))  # fmt: skip
+    if not red:
+        done = [s for s in fz_scores if s.get("value") is not None]
+        if done:
+            out.append(Factor("Forensic flags", 0, 0.0,
+                              f"None of the {len(done)} forensic scores computed ("
+                              + ", ".join(s["name"] for s in done) + ") is in its warning zone. Screening only.",
+                              "fincalc:forensic.scorecard"))  # fmt: skip
+        else:
+            why = " ".join(fz_notes or []) or "the annual filings needed were not found."
+            out.append(Factor("Forensic flags", None, 0.0,
+                              f"Not computed: no forensic score could be calculated ({why.rstrip('.')}). Absence of "
+                              "flags here means no data, not a clean bill.", "fincalc:forensic.scorecard"))  # fmt: skip
     if f.week52_position is not None:
         out.append(Factor("52-week position", round(f.week52_position * 100), 0.0,
                           "Where today's price sits between the 52-week low (0) and high (100). Context only; it "
@@ -511,7 +600,7 @@ async def stock_signal(instrument: str, ctx: dict[str, Any]) -> Signal:
                       validation=Validation(status="rule_based", description="Not enough price history."),
                       caveats=[f"Needs 13 months of daily prices for momentum and the 200-day average; {ex} returned "
                                f"{f.bars} trading days.", *caveats])  # fmt: skip
-    factors = composite(f, fzr["scores"], source if bse else SHP_PAGE)
+    factors = composite(f, fzr["scores"], source if bse else SHP_PAGE, fzr["notes"])
     score = clip_score(sum(x.contribution for x in factors))
     bucket_name = bucket_of(f.trend_distance >= 0, f.mom_score)
     bucket = (bt or {}).get("buckets", {}).get(bucket_name)

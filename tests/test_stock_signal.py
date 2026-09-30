@@ -134,6 +134,87 @@ def test_sizing_is_capped_by_the_profile_and_never_above_it(sources):
     assert z["weight"] <= 0.03 and z["cap_source"] == "profile max_position_pct"
 
 
+def _factor(s, name):
+    return next(f for f in s.factors if f.name == name)
+
+
+def test_quarterly_filer_pe_says_its_basis(sources):
+    pe = _factor(run(), "P/E vs its own history")
+    assert (
+        "TTM from four quarters to 31 Mar 2025" in pe.explanation
+        and pe.source == "fincalc:signals.ttm_from_periods"
+    )
+    assert pe.value == pytest.approx(
+        float(sources["raw"]["quote"].last_price) / (17 + 18 + 19 + 20), abs=0.05
+    )
+
+
+def test_half_yearly_filer_gets_a_pe_from_two_half_years(sources):
+    """A half-yearly filer (its March filing reports Oct-Mar) never has four quarters: H1 + H2 make the year."""
+    r = raw()
+    r["results"] = {"quarters": [], "periods": [
+        {"period_start": "2023-04-01", "period_end": "2023-09-30", "eps": 12.0, "filed_at": "2023-11-10T18:00:00+05:30",
+         "consolidated": True},
+        {"period_start": "2023-10-01", "period_end": "2024-03-31", "eps": 13.0, "filed_at": "2024-05-10T18:00:00+05:30",
+         "consolidated": True},
+        {"period_start": "2024-04-01", "period_end": "2024-09-30", "eps": 14.0, "filed_at": "2024-11-10T18:00:00+05:30",
+         "consolidated": True}]}  # fmt: skip
+    sources["raw"] = r
+    s = run()
+    pe = _factor(s, "P/E vs its own history")
+    price = float(r["quote"].last_price)
+    assert pe.value == pytest.approx(price / (13 + 14), abs=0.05)  # H2 FY24 + H1 FY25, to 30 Sep 2024
+    assert "TTM from two half-years to 30 Sep 2024 (Oct 2023-Mar 2024 + Apr 2024-Sep 2024)" in pe.explanation
+    assert "percentile of its daily history since 2024-05-10" in pe.explanation and pe.contribution != 0
+    assert s.score == round(sum(f.contribution for f in s.factors), 1)
+
+
+def test_missing_factors_are_listed_with_null_value_and_the_reason(sources):
+    r = raw()
+    r["results"] = {"quarters": []}
+    r["errors"] = ["results: HTTPError"]
+    r["shareholding"] = {"quarters": [{"as_of": "2026-06-30", "groups": {"promoter": 14.4}}]}
+    r["annual"] = {}
+    sources["raw"] = r
+    s = run()
+    by = {f.name: f for f in s.factors}
+    pe, inst, prom, fz = (by["P/E vs its own history"], by["FII + DII holding change"], by["Promoter holding change"],
+                          by["Forensic flags"])  # fmt: skip
+    assert all(f.value is None and f.contribution == 0 for f in (pe, inst, prom, fz))
+    assert "The results could not be loaded (results: HTTPError)" in pe.explanation
+    assert "Needs two filed shareholding patterns to compare; 1 of the 1" in inst.explanation
+    assert "Needs two filed shareholding patterns" in prom.explanation
+    assert (
+        "No annual results XBRL was found" in fz.explanation and "no data, not a clean bill" in fz.explanation
+    )
+    assert s.action != "NO_SIGNAL" and s.score == round(sum(f.contribution for f in s.factors), 1)
+
+
+def test_loss_making_and_untileable_results_explain_the_missing_pe(sources):
+    r = raw()
+    q = r["results"]["quarters"]
+    r["results"] = {"quarters": [{**x, "eps": -5.0} for x in q]}
+    sources["raw"] = r
+    pe = _factor(run(), "P/E vs its own history")
+    assert pe.value is None and pe.contribution == 0 and "a loss, so P/E has no meaning" in pe.explanation
+    st._cache.clear()
+    r = raw()
+    r["results"] = {"quarters": [q[0], q[2], q[4]]}  # every other quarter: no twelve months tile
+    sources["raw"] = r
+    pe = _factor(run(), "P/E vs its own history")
+    assert pe.value is None and "do not add up to any twelve months" in pe.explanation
+    assert "missing for the year to Dec 2024: Jan 2024-Mar 2024, Jul 2024-Sep 2024" in pe.explanation
+
+
+def test_no_red_flag_is_shown_as_a_zero_factor(sources):
+    s = run()
+    assert not any(f.name.startswith("Forensic flag:") for f in s.factors)
+    fz = _factor(s, "Forensic flags")
+    assert (
+        fz.value == 0 and fz.contribution == 0 and "None of the 5 forensic scores computed" in fz.explanation
+    )
+
+
 def test_falling_stock_and_short_history(sources):
     sources["raw"] = raw(daily=-0.0012)
     s = run()

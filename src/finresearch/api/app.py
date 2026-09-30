@@ -786,6 +786,13 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
                             if last else None})  # fmt: skip
             return out
 
+    @app.get("/api/monitor/schedule")
+    def monitor_schedule() -> dict[str, Any]:
+        """When each monitor check runs (IST), from the scheduler's constants and the profile's watch windows."""
+        from finresearch.monitor.scheduler import schedule_json
+
+        return schedule_json(running=monitor)
+
     @app.post("/api/watches", status_code=201)
     async def add_watch(body: WatchBody) -> dict[str, Any]:
         from finresearch.monitor.watch import watch_company, watch_stock

@@ -27,6 +27,7 @@ GRACE = timedelta(hours=2)
 STOCK_HORIZON_DAYS = 3
 STALE = timedelta(minutes=15)
 MAX_ATTEMPTS = {"listing": 8, "subscription": 3, "allotment": 3, "lockin": 3, "stock_daily": 3}
+TICK_S = 60.0  # the monitor loop's pass interval
 RETRY_DELAY = {"listing": timedelta(minutes=30), "subscription": timedelta(minutes=10)}  # network errors
 
 
@@ -257,7 +258,7 @@ async def tick(deps: jobs.Deps, now: datetime | None = None) -> dict[str, int]:
 
 
 async def run_forever(
-    deps: jobs.Deps | None = None, interval_s: float = 60.0, stop: asyncio.Event | None = None
+    deps: jobs.Deps | None = None, interval_s: float = TICK_S, stop: asyncio.Event | None = None
 ):
     deps = deps or jobs.Deps.live()
     stop = stop or asyncio.Event()
@@ -270,3 +271,39 @@ async def run_forever(
             log.exception("monitor tick failed")
         with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(stop.wait(), timeout=interval_s)
+
+
+def schedule_json(ww=None, *, running: bool | None = None) -> dict:
+    """What the monitor does and when, from the live constants and the profile's watch windows: the Monitor page's
+    "How monitoring works" box reads this instead of hardcoding times (all IST)."""
+    import inspect
+
+    from finresearch.api.live import BIDDING_HOURS, EQUITY_HOURS
+    from finresearch.fincalc.ipo import lock_in_schedule
+    from finresearch.monitor import intraday, iv
+    from finresearch.monitor.plan import ALLOTMENT_TIME, LISTING_TIMES, LOCKIN_TIME
+    from finresearch.signals.ledger import READY_AFTER_IST
+    from finresearch.suggest.profile import IPO_FINAL_CHECK
+
+    ww = ww or watch_windows()
+    hm = lambda t: f"{t[0]:02d}:{t[1]:02d}"  # noqa: E731
+    return {
+        "running": running,
+        "tick_s": int(TICK_S),
+        "grace_hours": GRACE.total_seconds() / 3600,
+        "ipo": {"check_times": list(ww.ipo_check_times), "final_check": IPO_FINAL_CHECK,
+                "bidding_hours": [hm((BIDDING_HOURS[0].hour, BIDDING_HOURS[0].minute)),
+                                  hm((BIDDING_HOURS[1].hour, BIDDING_HOURS[1].minute))],
+                "allotment_time": hm(ALLOTMENT_TIME), "listing_times": {w: hm((h, m)) for h, m, w in LISTING_TIMES},
+                "lockin_time": hm(LOCKIN_TIME), "anchor_lockin_days": list(inspect.signature(lock_in_schedule).parameters["anchor_days"].default),
+                "archive_times": [hm(t) for t in jobs.ARCHIVE_TIMES], "archive_window_min": jobs.ARCHIVE_WINDOW_MIN,
+                "listing_max_attempts": MAX_ATTEMPTS["listing"]},
+        "stock": {"daily_time": ww.stock_daily_time, "horizon_days": STOCK_HORIZON_DAYS},
+        "quiet": {"start": ww.quiet_start, "end": ww.quiet_end},
+        "intraday": {"from": hm(intraday.START), "indices": list(intraday.ARCHIVE_INDICES),
+                     "max_tries": intraday.MAX_TRIES, "retry_min": intraday.RETRY_S // 60},
+        "iv": {"from": hm(iv.START), "indices": list(iv.INDEX_SYMBOLS)},
+        "forecasts": {"after": hm(READY_AFTER_IST), "every_min": int(FORECAST_EVERY.total_seconds() // 60)},
+        "equity_hours": [hm((EQUITY_HOURS[0].hour, EQUITY_HOURS[0].minute)),
+                         hm((EQUITY_HOURS[1].hour, EQUITY_HOURS[1].minute))],
+    }  # fmt: skip

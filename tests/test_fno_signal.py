@@ -253,6 +253,12 @@ async def test_monitor_records_daily_atm_iv_once(env):
         s.add(co)
         s.flush()
         s.add(Watch(company_id=co.id, kind="stock", nse_symbol="INFY"))
+        bse_co = Company(slug="asm-iv", name="ASM Technologies")
+        s.add(bse_co)
+        s.flush()
+        # a BSE-only watch has no NSE options: left out explicitly (even if a lot file named its code)
+        s.add(Watch(company_id=bse_co.id, kind="stock", exchange="BSE", bse_code="526433"))
+    assert "526433" not in iv.symbols({"INFY": {}, "526433": {}}) and "INFY" in iv.symbols({"INFY": {}})
     early = await iv.record_iv(FakeFno, datetime(2026, 9, 29, 15, 0, tzinfo=dates.IST))
     assert early["recorded"] == [] and FakeFno.calls == {}
     # the fixture chain is stamped 28-Sep 15:30; record as that day

@@ -121,7 +121,8 @@ export function SignalView({ s, compact }: { s: Signal; compact?: boolean }) {
                     <span className="truncate font-medium">{f.name}</span>
                     <InfoTip>{f.explanation}{f.source && <> Source: {f.source}</>}</InfoTip>
                   </span>
-                  <span className="num text-xs text-muted">{f.value == null ? "—" : typeof f.value === "number" ? f.value.toLocaleString("en-IN", { maximumFractionDigits: 2 }) : f.value}{f.unit ? ` ${f.unit}` : ""}</span>
+                  <span className="num text-xs text-muted">{f.value == null ? "not computed" : typeof f.value === "number" ? f.value.toLocaleString("en-IN", { maximumFractionDigits: 2 }) : f.value}{f.unit && f.value != null ? ` ${f.unit}` : ""}</span>
+                  {f.value == null && <span className="col-span-2 text-xs text-muted">{f.explanation}</span>}
                   <span className="col-span-2 flex h-1.5 overflow-hidden rounded-full bg-background-subtle">
                     <span className="w-1/2">{f.contribution < 0 && <span className="ml-auto block h-full rounded-full bg-loss" style={{ width: `${(Math.abs(f.contribution) / maxAbs) * 100}%` }} />}</span>
                     <span className="w-1/2">{f.contribution > 0 && <span className="block h-full rounded-full bg-gain" style={{ width: `${(f.contribution / maxAbs) * 100}%` }} />}</span>

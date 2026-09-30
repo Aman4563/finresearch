@@ -4,8 +4,9 @@ NSE's and BSE's quote pages serve only the current session's 1-minute series (ad
 adapters.bse_intraday; BSE rows are keyed "BSE:<scrip code>"); nothing older is published at 1-minute resolution. Two writers keep `intraday_series`:
 - the intraday API stores every series it fetches (at most every few minutes per symbol), so a symbol you look at
   archives itself;
-- after the close (from 15:45 IST on trading days) the monitor fetches the full session once for watched stocks, the
-  main indices and every symbol viewed today whose row is not complete yet (at most 3 tries, 10 minutes apart).
+- after the close (from 15:45 IST on trading days) the monitor fetches the full session once for watched stocks (NSE
+  watches from NSE; BSE-only watches, Watch.exchange "BSE", from BSE's series under "BSE:<scrip code>"), the main
+  indices and every symbol viewed today whose row is not complete yet (at most 3 tries, 10 minutes apart).
 
 NSE's terms of use prohibit systematic data collection from its website; this keeps the footprint to one request per
 symbol per day for a personal watch list (see the timeframes research notes).
@@ -93,22 +94,34 @@ def load_days(session, kind: str, symbol: str, n: int, before: date | None = Non
 
 
 def targets(today: date) -> list[tuple[str, str]]:
-    """(kind, symbol) to complete today: main indices, active stock watches, and anything viewed today."""
+    """(kind, symbol) to complete today: main indices, active stock watches (an NSE watch by its NSE symbol, a
+    BSE-only watch by "BSE:<scrip code>", which live_fetch reads from BSE), and anything viewed today."""
     with session_scope() as s:
-        watched = s.scalars(
-            select(Watch.nse_symbol).where(Watch.active.is_(True), Watch.kind == "stock")
-        ).all()
+        watched = s.execute(select(Watch.exchange, Watch.nse_symbol, Watch.bse_code)
+                            .where(Watch.active.is_(True), Watch.kind == "stock")).all()  # fmt: skip
         rows = s.execute(select(IntradaySeriesRow.kind, IntradaySeriesRow.symbol, IntradaySeriesRow.complete)
                          .where(IntradaySeriesRow.day == today)).all()  # fmt: skip
     done = {(k, sym) for k, sym, c in rows if c}
     want = [("index", x) for x in ARCHIVE_INDICES]
-    want += [("equity", w.upper()) for w in sorted(set(watched)) if w and not w.startswith("BSE:")]
+    want += [("equity", k) for k in sorted({_watch_key(*w) for w in watched} - {None})]
     want += [(k, sym) for k, sym, c in rows if not c]
     out: list[tuple[str, str]] = []
     for t in want:
         if t not in done and t not in out:
             out.append(t)
     return out[:MAX_SYMBOLS]
+
+
+def _watch_key(exchange: str | None, nse_symbol: str | None, bse_code: str | None) -> str | None:
+    """The series key of a stock watch: its NSE symbol, or "BSE:<code>" for a BSE-only watch (Watch.key)."""
+    from finresearch.adapters.bse_equity import scrip_code_of
+
+    if exchange == "BSE" and bse_code:
+        code = scrip_code_of(f"BSE:{bse_code}")
+        return f"BSE:{code}" if code else None
+    if nse_symbol:
+        return nse_symbol.upper()
+    return f"BSE:{bse_code}" if bse_code and scrip_code_of(f"BSE:{bse_code}") else None
 
 
 async def archive_after_close(

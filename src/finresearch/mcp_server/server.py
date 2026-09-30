@@ -613,8 +613,13 @@ async def nse_price_history(symbol: str, start: str, end: str, exchange: str = "
         client, sym, ex, page = _equity(symbol, exchange)
     except ValueError as e:
         return json.dumps({"error": str(e)})
+    lo, hi = date.fromisoformat(start), date.fromisoformat(end)
     async with client as eq:
-        bars = await eq.history(sym, date.fromisoformat(start), date.fromisoformat(end))
+        bars = await eq.history(sym, lo, hi)
+    if ex == "BSE":  # cite the exact BSE file the closes came from, not BSE's home page
+        from finresearch.adapters.bse_equity import price_csv_url
+
+        page = price_csv_url(sym, lo, hi)
     closes = [b.close for b in bars if b.close]
     stats = {}
     if len(closes) >= 3:
