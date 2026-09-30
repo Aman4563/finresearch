@@ -55,7 +55,7 @@ Generated 2026-10-01 by `finresearch.evals.ipo_calibration` from `ipo_history.js
 - Platt scaling: 0.25→0.47, 0.54→0.55, 0.77→0.71, 0.88→0.95, 0.95→1.00
 - base-rate table: 0.44→0.40, 0.60→0.62, 0.70→0.76, 0.89→0.91, 0.97→0.98
 
-## Live-parity check (OFS share and Nifty 20-session return blanked at prediction)
+## Live-parity check (OFS share and Nifty 20-session return blanked at prediction) (informational: the live signal now supplies both, ADDENDUM.md)
 
 - uncalibrated model (raw): 3/7 years, pooled Brier better: False, passes: False
 - temperature scaling (T): 3/7 years, pooled Brier better: False, passes: False
@@ -64,5 +64,5 @@ Generated 2026-10-01 by `finresearch.evals.ipo_calibration` from `ipo_history.js
 
 ## Decision
 
-- Ship: nothing
-- Reason: passed the bar but not the live-parity check (S); signals unchanged until the live features are filled
+- Ship: S
+- Reason: shrinkage blend to the table passed the bar; the live signal now supplies the OFS share and the Nifty 20-session return (ADDENDUM.md), so the parity check is vacuous and reported only

@@ -593,6 +593,7 @@
    "passes": false
   }
  },
+ "live_features_filled": true,
  "passing_variants": [
   "S"
  ],
@@ -1175,11 +1176,24 @@
      }
     }
    }
-  ]
+  ],
+  "informational_only": true
  },
  "decision": {
-  "ship": null,
-  "reason": "passed the bar but not the live-parity check (S); signals unchanged until the live features are filled"
+  "ship": "S",
+  "reason": "shrinkage blend to the table passed the bar; the live signal now supplies the OFS share and the Nifty 20-session return (ADDENDUM.md), so the parity check is vacuous and reported only",
+  "calibrator": {
+   "variant": "S",
+   "name": "shrinkage blend to the table",
+   "params": {
+    "lambda": 0.45
+   },
+   "n_fit": 402,
+   "years": [
+    2017,
+    2026
+   ]
+  }
  },
  "data": "`ipo_history.jsonl` (sha256 5abee99809574022\u2026)"
 }

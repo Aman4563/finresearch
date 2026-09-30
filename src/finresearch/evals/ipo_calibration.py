@@ -38,6 +38,9 @@ REPORT_YEARS = (*GATE_YEARS, 2026)
 MIN_TRAIN_OOF = 20
 MIN_POOL = 30
 VARIANTS = ("T", "S", "P")  # also the pre-registered shipping priority
+SIGNAL_ARTEFACT = Path(__file__).parent / "artefacts" / "ipo_calibrated.json"
+# True since the IPO signal computes the OFS share and the Nifty 20-session return live (ADDENDUM.md)
+LIVE_FEATURES_FILLED = True
 VARIANT_NAMES = {"T": "temperature scaling", "S": "shrinkage blend to the table", "P": "Platt scaling",
                  "raw": "uncalibrated model", "table": "base-rate table"}  # fmt: skip
 
@@ -153,11 +156,16 @@ def deployed_calibrator(oof: list[Oof], variant: str) -> dict[str, Any]:
             "years": [min(o.year for o in oof), max(o.year for o in oof)]}  # fmt: skip
 
 
-def run(rows: list[Any]) -> dict[str, Any]:
+def run(rows: list[Any], *, live_features_filled: bool | None = None) -> dict[str, Any]:
+    """The pre-registered run. `live_features_filled` (default: LIVE_FEATURES_FILLED) says whether the live signal
+    now supplies the two features the parity check blanks; then that check is vacuous and is reported only
+    (ADDENDUM.md, the PREREG's named follow-up)."""
+    filled = LIVE_FEATURES_FILLED if live_features_filled is None else live_features_filled
     oof = oof_forecasts(rows)
     main = evaluate(oof)
     out: dict[str, Any] = {"experiment": "E-IPO-1 post-hoc calibration", "prereg": "PREREG.md",
-                           "oof_years": sorted({o.year for o in oof}), "n_oof": len(oof), **main}  # fmt: skip
+                           "oof_years": sorted({o.year for o in oof}), "n_oof": len(oof), **main,
+                           "live_features_filled": filled}  # fmt: skip
     passing = [v for v in VARIANTS if main["verdicts"][v]["passes"]]
     out["passing_variants"] = passing
     out["live_parity"] = None
@@ -166,9 +174,14 @@ def run(rows: list[Any]) -> dict[str, Any]:
         oof_live = oof_forecasts(rows, live_parity=True)
         live = evaluate(oof_live)
         out["live_parity"] = {"verdicts": live["verdicts"], "pooled_2019_2025": live["pooled_2019_2025"],
-                              "folds": live["folds"]}  # fmt: skip
+                              "folds": live["folds"], "informational_only": filled}  # fmt: skip
         shippable = [v for v in passing if live["verdicts"][v]["passes"]]
-        if shippable:
+        if filled:
+            v = passing[0]
+            out["decision"] = {"ship": v, "reason": f"{VARIANT_NAMES[v]} passed the bar; the live signal now supplies "
+                               "the OFS share and the Nifty 20-session return (ADDENDUM.md), so the parity check "
+                               "is vacuous and reported only", "calibrator": deployed_calibrator(oof, v)}  # fmt: skip
+        elif shippable:
             v = shippable[0]
             out["decision"] = {"ship": v, "reason": f"{VARIANT_NAMES[v]} passed the bar and the live-parity check",
                                "calibrator": deployed_calibrator(oof_live, v)}  # fmt: skip
@@ -176,6 +189,35 @@ def run(rows: list[Any]) -> dict[str, Any]:
             out["decision"] = {"ship": None, "reason": "passed the bar but not the live-parity check "
                                f"({', '.join(passing)}); signals unchanged until the live features are filled"}  # fmt: skip
     return out
+
+
+def signal_artefact(rows: list[Any], res: dict[str, Any], data_note: str) -> dict[str, Any]:
+    """What `signals/ipo.py` reads: the shipped calibrator, the model refitted on every usable row, the variant's
+    walk-forward verdict and its pooled metrics and reliability bins computed on the CALIBRATED forecasts."""
+    v = res["decision"]["ship"]
+    if v is None:
+        return {"ship": None, "reason": res["decision"]["reason"], "generated": date.today().isoformat()}
+    p = res["pooled_2019_2025"]
+    verdict = res["verdicts"][v]
+    return {"ship": v, "name": VARIANT_NAMES[v], "calibrator": res["decision"]["calibrator"],
+            "final_model": im.fit(im.usable(rows)), "n_rows": len(im.usable(rows)), "min_cell": im.MIN_CELL,
+            "gate": {"rule": f"Brier skill vs the base-rate table > 0 in >= {im.GATE_MIN_PASS} of the complete years "
+                             f"{GATE_YEARS[0]}-{GATE_YEARS[-1]} AND pooled {GATE_YEARS[0]}-{GATE_YEARS[-1]} Brier below the "
+                             "table's", **verdict},
+            "pooled": {"n": p["n"], "brier": p[v]["brier"], "brier_table": p["brier_table"],
+                       "bss_vs_table": p[v]["bss_vs_table"], "auc": p[v]["auc"], "auc_table": p["auc_table"],
+                       "log_loss": p[v]["log_loss"], "reliability": p[v]["reliability"]},
+            "folds": [{"year": f["year"], "n_test": f["n_test"], "brier_table": f["brier_table"],
+                       "brier": f[v]["brier"], "bss_vs_table": f[v]["bss_vs_table"]} for f in res["folds"]],
+            "variants_tested": list(VARIANTS), "data": data_note, "generated": date.today().isoformat(),
+            "source": "evals/experiments/ipo_calibration (PREREG.md, ADDENDUM.md, RESULTS.md)"}  # fmt: skip
+
+
+def load_signal_artefact(path: Path | None = None) -> dict[str, Any] | None:
+    try:
+        return json.loads((path or SIGNAL_ARTEFACT).read_text())
+    except (OSError, ValueError):
+        return None
 
 
 def _r(x: Any) -> str:
@@ -219,9 +261,14 @@ def render(res: dict[str, Any], data_note: str) -> str:
         f"- base-rate table: {', '.join(f'{b["mean_p"]:.2f}→{b["observed"]:.2f}' for b in p['reliability_table'])}"
     )
     if res.get("live_parity"):
+        note = (
+            " (informational: the live signal now supplies both, ADDENDUM.md)"
+            if res.get("live_features_filled")
+            else ""
+        )
         lines += [
             "",
-            "## Live-parity check (OFS share and Nifty 20-session return blanked at prediction)",
+            f"## Live-parity check (OFS share and Nifty 20-session return blanked at prediction){note}",
             "",
         ]
         for v, d in res["live_parity"]["verdicts"].items():
@@ -246,6 +293,7 @@ def main(argv: list[str] | None = None) -> None:
     a.out.mkdir(parents=True, exist_ok=True)
     (a.out / "results.json").write_text(json.dumps(res, indent=1, default=float) + "\n")
     (a.out / "RESULTS.md").write_text(render(res, note))
+    SIGNAL_ARTEFACT.write_text(json.dumps(signal_artefact(rows, res, note), indent=1, default=float) + "\n")
     print(render(res, note))
 
 

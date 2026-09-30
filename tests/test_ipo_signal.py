@@ -345,6 +345,8 @@ def test_base_rates_endpoint_reads_the_harvested_table(clean, monkeypatch):
         assert body["source"] == "database" and body["n"] == 30 and body["as_of"] == "2024-02-10"
         hot = next(x for x in body["cells"] if x["band"] == ">100x" and x["regime"] == "post_2022")
         assert hot["n"] == 20 and hot["p_loss"] == 0.1 and "FINAL" in body["caveat"]
+        blend = body["model"]["blend"]  # the committed E-IPO-1 artefact (#147)
+        assert 0 < blend["lambda"] < 1 and blend["gate"]["passes"] and "reliability" not in blend["pooled"]
         assert c.get("/api/ipo/base-rates", params={"by": "total"}).json()["by"] == "total"
         assert c.get("/api/ipo/base-rates", params={"by": "gmp"}).status_code == 422
 
@@ -447,3 +449,83 @@ async def test_undersubscribed_retail_book_is_not_a_lottery():
     z = s.sizing
     assert s.action == "APPLY" and z["p_allot"] == 1.0
     assert z["max_lots"] == 4 and "in full" in z["reason"]
+
+
+# --------------------------------------------------------------------------- E-IPO-1 shrinkage blend (#147)
+def _blend(lam: float = 0.45, passes: bool = True):
+    from test_ipo_model import _synthetic
+
+    from finresearch.evals import ipo_model as im
+
+    fm = im.fit(im.usable(_synthetic(signal=True)))
+    return {"ship": "S", "calibrator": {"variant": "S", "params": {"lambda": lam}}, "final_model": fm,
+            "n_rows": 440, "min_cell": 5, "variants_tested": ["T", "S", "P"],
+            "gate": {"years_evaluated": list(range(2019, 2026)), "years_passed": [2019, 2020, 2022, 2023, 2025],
+                     "passes": passes},
+            "pooled": {"n": 288, "brier": 0.1451, "brier_table": 0.1510, "bss_vs_table": 0.039, "auc": 0.833,
+                       "reliability": [{"n": 58, "mean_p": 0.35, "observed": 0.38},
+                                       {"n": 58, "mean_p": 0.9, "observed": 0.91}]},
+            "folds": [{"year": y, "bss_vs_table": b} for y, b in
+                      zip(range(2019, 2026), (0.43, 0.55, -0.05, 0.002, 0.18, -0.03, 0.02), strict=True)]}  # fmt: skip
+
+
+def _closes(n: int = 30, last: date = date(2026, 9, 28)):
+    from datetime import timedelta
+
+    return [(last - timedelta(days=n - i), Decimal(20000 + 10 * i)) for i in range(n + 1)]
+
+
+async def test_blend_is_lambda_model_plus_one_minus_lambda_table_and_fills_live_features():
+    detail = orient(qib="150", retail="20")
+    src = sources(detail)
+    src.calibrated = lambda: _blend()
+
+    async def closes(today):
+        return _closes()
+
+    src.nifty_closes = closes
+    s = await sig_ipo.compute("ORIENTCABL", {}, src)
+    assert s.method == sig_ipo.BLEND_METHOD and s.validation.status == "backtested"
+    assert "5 of 7" in s.validation.description and "2022 (+0.002)" in s.validation.description
+    from finresearch.evals import ipo_model as im
+
+    book = sig_ipo.book_of(None, detail)
+    feat = await sig_ipo._live_features_full(
+        book, detail.terms.price_high, history(), NOW.date(), detail, src
+    )
+    assert feat["nifty20"] == pytest.approx(
+        20300 / 20100 - 1, abs=1e-6
+    )  # 20 sessions back, 6 dp as harvested
+    assert feat["ofs_share"] == pytest.approx(0.4203)  # ₹232 cr OFS of ₹552 cr, the harvester's parser
+    p_model = float(im.predict(_blend()["final_model"], [feat])["p"][0])
+    p_cell = fipo.smoothed_rate(18, 20)  # the >100x band in history(): 18 of 20 gained
+    assert s.probability == pytest.approx(0.45 * p_model + 0.55 * p_cell, abs=6e-5)
+    assert sum(f.contribution for f in s.factors) == pytest.approx(s.score, abs=0.05)
+    assert s.factors[0].name.startswith("Base rate, QIB band") and "(weight 0.55)" in s.factors[0].name
+    assert sig_ipo.BLEND_CAVEAT in s.caveats
+
+
+async def test_blend_falls_back_to_the_regime_rate_for_a_thin_band_and_off_without_a_passing_artefact():
+    detail = orient(qib="150", retail="20")
+    rows = history(n_hot_gain=3, n_hot=3)  # the >100x band has 3 issues: below MIN_CELL
+    src = sources(detail, rows=rows)
+    src.calibrated = lambda: _blend(lam=0.0)  # λ = 0: the forecast IS the reference
+    s = await sig_ipo.compute("ORIENTCABL", {}, src)
+    regime = fipo.base_rates(rows)["regime_totals"]["post_2022"]
+    p_regime = fipo.smoothed_rate(round(regime["p_gain"] * regime["n"]), regime["n"])
+    assert s.probability == pytest.approx(p_regime, abs=6e-5) and "regime" in s.factors[0].name
+    assert any("Nifty 50 20-session return unavailable" in c for c in s.caveats)  # no nifty source injected
+    for bad in (None, _blend(passes=False), {**_blend(), "ship": None}):
+        src.calibrated = lambda bad=bad: bad
+        s = await sig_ipo.compute("ORIENTCABL", {}, src)
+        assert s.validation.status == "base_rate" and s.method == sig_ipo.BASE_RATE_METHOD
+
+
+def test_committed_blend_artefact_is_ready_and_consistent():
+    from finresearch.evals.ipo_calibration import load_signal_artefact
+
+    art = load_signal_artefact()
+    assert sig_ipo.calibrated_ready(art)
+    assert art["gate"]["passes"] and len(art["gate"]["years_passed"]) >= 5
+    assert art["pooled"]["brier"] < art["pooled"]["brier_table"]
+    assert 0 < art["calibrator"]["params"]["lambda"] < 1

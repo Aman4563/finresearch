@@ -1342,6 +1342,14 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
         model = None
         if art:
             model = {**summary(art), "uses_model": bool((art.get("gate") or {}).get("passes"))}
+            from finresearch.evals.ipo_calibration import load_signal_artefact
+            from finresearch.signals.ipo import calibrated_ready
+
+            blend = load_signal_artefact()  # E-IPO-1: the calibrated model-table blend (#147)
+            if not model["uses_model"] and calibrated_ready(blend):
+                model["blend"] = {"lambda": blend["calibrator"]["params"]["lambda"], "gate": blend["gate"],
+                                  "pooled": {k: v for k, v in blend["pooled"].items() if k != "reliability"},
+                                  "source": blend.get("source")}  # fmt: skip
         return {
             **table,
             "event": "listing-day open vs the issue price",

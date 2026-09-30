@@ -6,7 +6,12 @@ Method, in order of preference:
 1. The fitted listing model (`evals.ipo_model`: L2 logistic for P(open > issue), quantile regression for the return
    range) — ONLY if its committed walk-forward report passes the bar (Brier skill > 0 against the base-rate table in
    ≥ 5 of the 7 complete test years 2019–2025). Validation status "backtested".
-2. Otherwise the empirical base-rate table: mainboard issues in the same final-QIB band × regime (pre/post the
+2. Otherwise the shrinkage blend p = λ·p_model + (1−λ)·p_table (E-IPO-1, evals/experiments/ipo_calibration): λ was
+   chosen on earlier years' out-of-fold forecasts only, and the blend passed the same bar plus a pooled 2019–2025
+   Brier below the table's — ONLY while its committed artefact (`evals/artefacts/ipo_calibrated.json`) says so.
+   The live OFS share (NSE issue-size text) and Nifty 50 20-session return are computed as in the harvest.
+   Validation status "backtested".
+3. Otherwise the empirical base-rate table: mainboard issues in the same final-QIB band × regime (pre/post the
    Apr-2022 NII allotment reform). P = Laplace-smoothed share that opened above the issue price, range = 95% Wilson
    interval, return quantiles = the cell's empirical 10/50/90%. Validation status "base_rate".
 
@@ -50,6 +55,11 @@ EVENT = "NSE listing-day open above the issue price"  # = signals.ledger.IPO_EVE
 HORIZON = "listing day"
 DEFAULT_THRESHOLD = 0.5
 BASE_RATE_METHOD = "empirical base rate by final QIB band × regime (post-Apr-2022)"
+BLEND_METHOD = ("shrinkage blend v1: λ × L2 logistic listing model + (1 − λ) × QIB-band base rate "
+                "(walk-forward calibrated, E-IPO-1)")  # fmt: skip
+BLEND_CAVEAT = ("The blended model reads the live book as if it were final. On the closing day the last Nifty close "
+                "is the previous session's, and a book that is still filling moves the model more than the band "
+                "table: re-check after the close.")  # fmt: skip
 SOURCES_CITED = [
     "NSE ipo-detail activeCat (combined NSE+BSE book) and public-past-issues; NSE price history (listing day)",
     "Neupane, Paleari & Vismara, institutional demand and IPO underpricing in India [33]",
@@ -88,6 +98,10 @@ class Sources:
     now: Callable[[], datetime] = field(default=lambda: datetime.now(UTC))
     stock_signal: Callable[[str], Awaitable[Any]] | None = None
     record: Callable[[Signal, date, dict[str, Any]], None] | None = None  # the forecast ledger
+    calibrated: Callable[[], dict[str, Any] | None] | None = None  # the E-IPO-1 blend artefact
+    nifty_closes: Callable[[date], Awaitable[list[tuple[date, Decimal]]]] | None = (
+        None  # NIFTY 50 closes to a day
+    )
 
 
 # --------------------------------------------------------------------------- live sources (cached, polite)
@@ -269,6 +283,34 @@ def _artefact():
     return load_artefact()
 
 
+def _calibrated():
+    from finresearch.evals.ipo_calibration import load_signal_artefact
+
+    return load_signal_artefact()
+
+
+NIFTY_TTL_S = 3 * 3600
+
+
+async def nifty_closes_live(today: date) -> list[tuple[date, Decimal]]:
+    """NIFTY 50 closes for the ~45 days to `today` (one NSE request through the shared session, cached 3 hours)."""
+    from datetime import timedelta
+
+    from finresearch.adapters.nse_equity import NseEquity
+
+    key = ("nifty_closes", today)
+    hit = _CACHE.get(key)
+    if hit and hit[0] > time.time():
+        return hit[1]
+    async with _nse_lock():
+        eq = NseEquity(_shared_nse())  # not a context manager: the shared session stays open
+        await _close_stale()
+        bars = await eq.index_history("NIFTY 50", today - timedelta(days=45), today)
+    out = [(b.day, b.close) for b in bars if b.close is not None]
+    _CACHE[key] = (time.time() + NIFTY_TTL_S, out)
+    return out
+
+
 # --------------------------------------------------------------------------- pieces
 
 
@@ -319,6 +361,20 @@ def reliability_interval(artefact: dict[str, Any], p: float) -> tuple[float, flo
 
 def model_ready(artefact: dict[str, Any] | None) -> bool:
     return bool(artefact and (artefact.get("gate") or {}).get("passes") and artefact.get("final_model"))
+
+
+def calibrated_ready(blend: dict[str, Any] | None) -> bool:
+    """The E-IPO-1 blend is used only when its artefact shipped the blend and its walk-forward gate passed."""
+    return bool(blend and blend.get("ship") == "S" and (blend.get("gate") or {}).get("passes")
+                and blend.get("final_model") and "lambda" in ((blend.get("calibrator") or {}).get("params") or {}))  # fmt: skip
+
+
+def calibrated_interval(blend: dict[str, Any], p: float) -> tuple[float, float] | None:
+    """The blend's measured range: the Wilson 95% interval of the observed gain rate in the out-of-sample
+    reliability bin (calibrated forecasts, pooled 2019–2025) whose mean forecast is closest to p."""
+    return reliability_interval(
+        {"pooled": {"reliability_model": (blend.get("pooled") or {}).get("reliability")}}, p
+    )
 
 
 def _no_signal(symbol: str, name: str | None, reason: str, now: datetime, *, base: dict[str, Any] | None = None,
@@ -530,7 +586,57 @@ async def compute(
                            f"{table.get('source', 'database')}, listings to {table.get('as_of') or 'n/a'})"}  # fmt: skip
     quantiles = {"p10": cell["p10"], "p50": cell["median"], "p90": cell["p90"]}
     use_model = model_ready(artefact)
-    if use_model:
+    blend = None if use_model or src.calibrated is None else src.calibrated()
+    if not calibrated_ready(blend):
+        blend = None
+    if blend is not None:
+        from finresearch.evals import ipo_model as im
+
+        fm, lam = blend["final_model"], float(blend["calibrator"]["params"]["lambda"])
+        # the walk-forward reference falls back to the regime rate below MIN_CELL issues: mirror it
+        p_ref, ref_label = ((p_cell, f"QIB band {cell['band']}") if cell["n"] >= blend.get("min_cell", 5)
+                            else (p_regime, "post-2022 regime (band has too few issues)"))  # fmt: skip
+        feat = await _live_features_full(book, upper, eq_rows, today, detail, src)
+        p_model = float(im.predict(fm, [feat])["p"][0])
+        p = lam * p_model + (1 - lam) * p_ref
+        interval = calibrated_interval(blend, p)
+        g, pooled = blend["gate"], blend["pooled"]
+        narrow = min((f for f in blend["folds"] if f["year"] in g["years_evaluated"]),
+                     key=lambda f: f["bss_vs_table"] if f["year"] in g["years_passed"] else 9)  # fmt: skip
+        method = BLEND_METHOD
+        validation = Validation(status="backtested", n=int(pooled["n"]),
+                                metrics={"lambda": lam, "brier": pooled["brier"], "brier_table": pooled["brier_table"],
+                                         "bss_vs_table": pooled["bss_vs_table"], "auc": pooled["auc"]},
+                                description=f"walk-forward {g['years_evaluated'][0]}-{g['years_evaluated'][-1]} (one of "
+                                            f"{len(blend.get('variants_tested', []))} pre-registered calibrations): "
+                                            f"Brier skill vs the base-rate table > 0 in {len(g['years_passed'])} of "
+                                            f"{len(g['years_evaluated'])} years, narrowest {narrow['year']} "
+                                            f"({narrow['bss_vs_table']:+.3f}); pooled Brier {pooled['brier']:.4f} vs "
+                                            f"{pooled['brier_table']:.4f} (skill {pooled['bss_vs_table']:+.3f}, "
+                                            f"n = {pooled['n']}); λ = {lam:.2f}")  # fmt: skip
+        contrib = im.contributions(fm, feat)
+        p0 = 1 / (1 + math.exp(-fm["logistic"][0]))
+        score = clip_score(200 * (p - 0.5))
+        total = sum(contrib.values())
+        factors.append(Factor(f"Base rate, {ref_label} (weight {1 - lam:.2f})", round(p_ref, 3),
+                              200 * (1 - lam) * (p_ref - 0.5), "Share of comparable post-2022 issues that opened above "
+                              "the issue price (Laplace-smoothed); the blend keeps this much of it.",
+                              "fincalc:ipo.base_rates"))  # fmt: skip
+        factors.append(Factor(f"Model: average past issue (weight {lam:.2f})", round(p0, 3), 200 * lam * (p0 - 0.5),
+                              "The listing model's probability for an issue with average features.",
+                              "fincalc:ipo_model"))  # fmt: skip
+        for key, c in contrib.items():
+            share = (c / total) if abs(total) > 1e-12 else 0.0
+            val = feat.get(key)
+            factors.append(Factor(f"Model: {im.FEATURE_LABELS[key]}", round(val, 4) if isinstance(val, float) else val,
+                                  200 * lam * (p_model - p0) * share, f"Logit term {c:+.3f} for this issue.",
+                                  "fincalc:ipo_model"))  # fmt: skip
+        caveats.append(BLEND_CAVEAT)
+        if feat.get("ofs_share") is None:
+            caveats.append("OFS share not stated in NSE's issue-size text: imputed with the training median.")
+        if feat.get("nifty20") is None:
+            caveats.append("Nifty 50 20-session return unavailable: set to 0 (the training imputation).")
+    elif use_model:
         from finresearch.evals import ipo_model as im
 
         fm = artefact["final_model"]
@@ -714,6 +820,29 @@ def _live_features(book: Book, upper, rows: list[dict[str, Any]], today: date) -
             "post_2022": 1.0}  # fmt: skip
 
 
+async def _live_features_full(book: Book, upper, rows: list[dict[str, Any]], today: date, detail,
+                             src: Sources) -> dict[str, Any]:  # fmt: skip
+    """`_live_features` plus the two inputs the harvest records and the blend needs (audit #137 gap closed): the OFS
+    share parsed from NSE's issue-size text with the harvest's own parser, and the NIFTY 50 20-session return to the
+    last close on or before today (`evals.ipo_history.nifty_return`). Either stays None (imputed as in training) when
+    it cannot be computed."""
+    from finresearch.evals.ipo_history import _info, nifty_return, parse_issue_size
+
+    feat = _live_features(book, upper, rows, today)
+    info = getattr(detail, "issue_info", None) or {}
+    size = parse_issue_size(_info(info, "Issue Size"), Decimal(str(upper)) if upper else None)
+    if size["ofs_share"] is not None:
+        feat["ofs_share"] = float(size["ofs_share"])
+    if src.nifty_closes is not None:
+        try:
+            closes = await src.nifty_closes(today)
+            r = nifty_return(sorted(closes), today, inclusive=True) if closes else None
+            feat["nifty20"] = None if r is None else float(r)
+        except Exception:
+            log.warning("NIFTY 50 history unavailable for the IPO model", exc_info=True)
+    return feat
+
+
 async def _after_listing(
     symbol: str, name: str | None, listed: dict[str, Any], now: datetime, src: Sources
 ) -> Signal:
@@ -772,4 +901,5 @@ def expected_listing(detail, today: date) -> date:
 
 SOURCES = Sources(history_rows=history_rows_db, latest_snapshot=latest_snapshot_db, ipo_detail=ipo_detail_live,
                   issue_terms=issue_terms_live, profile=profile_db, artefact=_artefact,
-                  stock_signal=stock_signal_live, record=record_live)  # fmt: skip
+                  stock_signal=stock_signal_live, record=record_live, calibrated=_calibrated,
+                  nifty_closes=nifty_closes_live)  # fmt: skip
