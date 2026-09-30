@@ -1421,6 +1421,10 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
 
     add_connection_routes(app, clock=clock)
 
+    from finresearch.api.wealth import add_wealth_routes  # household finances (/wealth)
+
+    add_wealth_routes(app, clock=clock)
+
     # ------------------------------------------------------------------ buy/sell signals (finresearch.signals)
     @app.get("/api/signals")
     def signal_assets() -> dict[str, Any]:
