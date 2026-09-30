@@ -572,13 +572,19 @@ class NseClient:
         data, _ = await self.get_json("/api/public-past-issues")
         return [PastIssue.parse(r) for r in data or []]
 
-    async def quote(self, symbol: str, series: str = "EQ") -> Quote:
-        """Equity quote (open, last price, listing date). The classic quote-equity API refuses scripted clients,
-        so this uses the quote page's own API with the quote page as referer."""
-        page = f"{NSE_BASE}/get-quotes/equity?symbol={symbol}"
+    async def warm_quote_session(self, symbol: str) -> None:
+        """Fresh cookies from a quote page (what `quote` does before every call unless `warm=False`)."""
         self.http.cookies.clear()
-        await self.http.get(page)
+        await self.http.get(f"{NSE_BASE}/get-quotes/equity?symbol={symbol}")
         self._warmed = True
+
+    async def quote(self, symbol: str, series: str = "EQ", *, warm: bool = True) -> Quote:
+        """Equity quote (open, last price, listing date). The classic quote-equity API refuses scripted clients,
+        so this uses the quote page's own API with the quote page as referer. `warm=False` reuses the session's
+        cookies (a batch of quotes warms once: portfolio.valuation.QuoteBatch)."""
+        page = f"{NSE_BASE}/get-quotes/equity?symbol={symbol}"
+        if warm:
+            await self.warm_quote_session(symbol)
         resp = await self.http.get(f"{NSE_BASE}/api/NextApi/apiClient/GetQuoteApi",
                                    params={"functionName": "getSymbolData", "marketType": "N", "series": series,
                                            "symbol": symbol}, headers={**API_HEADERS, "Referer": page})  # fmt: skip

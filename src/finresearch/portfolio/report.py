@@ -115,8 +115,10 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
             (abs(t.amount) for t in data.txns.get(h.id, []) if t.kind == "dividend" and t.amount), ZERO
         )
         flows, why_not = cash_flows(data.txns.get(h.id, []), value, today)
+        if why_not is None and units > 0 and value is None:
+            why_not = "no current price"  # without today's value the flows alone would read as a large loss
         x, x_reason = xirr_or_reason(flows, today) if why_not is None else (None, why_not)
-        if why_not is None and (value is not None or units <= 0):  # an unpriced open holding would skew it
+        if why_not is None:
             all_flows += flows[:-1] if value else flows
             tot["xirr_value"] += value or ZERO
         elif units > 0 or why_not is not None:

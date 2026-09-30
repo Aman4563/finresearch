@@ -11,7 +11,7 @@ import { Fragment, useCallback, useEffect, useState } from "react";
 import { DonutChart, TimeSeriesChart, fmtCompactINR } from "@/components/charts";
 import type { Signal } from "@/components/signal";
 import { Badge, Button, Callout, Card, EmptyState, ErrorNote, Field, InfoTip, Modal, PageHeader, Segmented, SkeletonRows, Stat, Table, cx, inputClass } from "@/components/ui";
-import { api, day, useApi } from "@/lib/api";
+import { API_URL, api, day, useApi } from "@/lib/api";
 
 import { ImportPanel } from "./import-panel";
 import { TaxPanel } from "./tax-panel";
@@ -137,14 +137,16 @@ function HoldingEditor({ h, onSaved }: { h: Holding; onSaved: () => void }) {
   );
 }
 
-function Holdings({ snap, onChanged }: { snap: Snapshot; onChanged: () => void }) {
+function Holdings({ snap, onChanged, updating }: { snap: Snapshot; onChanged: () => void; updating: { done: number; total: number } | null }) {
   const [open, setOpen] = useState<number | null>(null);
   const [showClosed, setShowClosed] = useState(false);
   const rows = snap.holdings.filter((h) => showClosed || !h.closed);
   const openH = snap.holdings.find((h) => h.id === open) ?? null;
   const closed = snap.holdings.length - snap.holdings.filter((h) => !h.closed).length;
   return (
-    <Card padded={false} title="Holdings" subtitle={`${snap.summary.holdings} open · priced ${day(snap.as_of)}`}
+    <Card padded={false} title="Holdings" subtitle={updating
+      ? <span className="inline-flex items-center gap-1.5"><span className="size-1.5 rounded-full bg-info animate-pulse-ring" />prices updating… {updating.done} of {updating.total} · cost basis shown</span>
+      : `${snap.summary.holdings} open · priced ${day(snap.as_of)}`}
       actions={closed > 0 ? <button type="button" className="text-xs text-brand" onClick={() => setShowClosed((s) => !s)}>{showClosed ? "Hide" : "Show"} {closed} closed</button> : undefined}>
       <Table className="!mx-0">
         <thead>
@@ -170,15 +172,15 @@ function Holdings({ snap, onChanged }: { snap: Snapshot; onChanged: () => void }
                     {h.warnings.length > 0 && <Badge tone="warn">{h.warnings.length} note{h.warnings.length > 1 ? "s" : ""}</Badge>}
                   </span>
                 </td>
-                <td className="num text-right font-medium">{inr(h.value)}</td>
+                <td className="num text-right font-medium">{h.pending ? <span className="skeleton inline-block h-3 w-14 rounded align-middle" /> : inr(h.value)}</td>
                 <td className={cx("num text-right", (h.unrealised ?? 0) >= 0 ? "text-gain" : "text-loss")}>
-                  {signed(h.unrealised)}<span className="block text-[10px]">{pctx(h.unrealised_pct)}</span>
+                  {h.pending ? <span className="skeleton inline-block h-3 w-14 rounded align-middle" /> : <>{signed(h.unrealised)}<span className="block text-[10px]">{pctx(h.unrealised_pct)}</span></>}
                 </td>
-                <td className="num text-right" title={h.xirr_reason ?? ""}>{h.xirr == null ? <span className="text-xs text-muted">—</span> : pctx(h.xirr * 100)}</td>
+                <td className="num text-right" title={h.xirr_reason ?? ""}>{h.pending ? <span className="text-xs text-muted">…</span> : h.xirr == null ? <span className="text-xs text-muted">—</span> : pctx(h.xirr * 100)}</td>
                 <td className="num text-right">{units(h.units)}</td>
                 <td className="num text-right">{inr(h.avg_cost, 2)}</td>
                 <td className="num text-right">
-                  {h.price == null ? <span className="text-xs text-muted" title={h.price_error ?? ""}>no price</span> : inr(h.price, 2)}
+                  {h.pending ? <span className="skeleton inline-block h-3 w-14 rounded align-middle" aria-label="price updating" /> : h.price == null ? <span className="text-xs text-muted" title={h.price_error ?? ""}>no price</span> : inr(h.price, 2)}
                   {h.price_source?.includes("statement") && <span className="block text-[10px] text-warn">statement NAV {day(h.price_as_of)}</span>}
                 </td>
                 <td className={cx("num text-right", h.realised > 0 ? "text-gain" : h.realised < 0 ? "text-loss" : "text-muted")}>{h.realised ? signed(h.realised) : "—"}</td>
@@ -298,10 +300,72 @@ function Dividends({ snap }: { snap: Snapshot }) {
   );
 }
 
+/** The portfolio, progressively: cost basis at once from the price cache (no network), then each price as it arrives
+ * over /api/portfolio/prices/stream (concurrent, rate-limited, cached for 10 minutes), then the full valuation (XIRR,
+ * allocation, summary) from the now-warm cache. */
+function useProgressivePortfolio(refresh: number) {
+  const [data, setData] = useState<Snapshot | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [updating, setUpdating] = useState<{ done: number; total: number } | null>(null);
+  const [tick, setTick] = useState(0);
+  const reload = useCallback(() => setTick((t) => t + 1), []);
+  useEffect(() => {
+    let alive = true;
+    const ctl = new AbortController();
+    (async () => {
+      try {
+        const first = await api<Snapshot>(`/api/portfolio?prices=cached&r=${refresh}`);
+        if (!alive) return;
+        setData(first);
+        setError(null);
+        const total = first.pending ?? 0;
+        if (total > 0) {
+          setUpdating({ done: 0, total });
+          const res = await fetch(`${API_URL}/api/portfolio/prices/stream`, { signal: ctl.signal, cache: "no-store" });
+          const reader = res.body?.getReader();
+          const dec = new TextDecoder();
+          let buf = "", done = 0;
+          while (reader) {
+            const { value, done: end } = await reader.read();
+            if (end) break;
+            buf += dec.decode(value, { stream: true });
+            const lines = buf.split("\n");
+            buf = lines.pop() ?? "";
+            for (const line of lines.filter(Boolean)) {
+              const e = JSON.parse(line) as { type: string; id: number; price: number | null; as_of: string | null; source: string | null; error: string | null };
+              if (e.type !== "price" || !alive) continue;
+              done += 1;
+              setUpdating({ done: Math.min(done, total), total });
+              setData((d) => d && {
+                ...d,
+                holdings: d.holdings.map((h) => {
+                  if (h.id !== e.id || !h.pending) return h;
+                  const value = e.price == null ? null : e.price * h.units;
+                  const unrealised = value != null && h.cost_known && h.cost != null ? value - h.cost : null;
+                  return { ...h, pending: false, price: e.price, price_as_of: e.as_of, price_source: e.source, price_error: e.error, value, unrealised,
+                    unrealised_pct: unrealised != null && h.cost ? (unrealised / h.cost) * 100 : null };
+                }),
+              });
+            }
+          }
+          const full = await api<Snapshot>(`/api/portfolio?r=${refresh}`);
+          if (alive) setData(full);
+        }
+      } catch (e) {
+        if (alive && (e as Error).name !== "AbortError") setError((e as Error).message);
+      } finally {
+        if (alive) setUpdating(null);
+      }
+    })();
+    return () => { alive = false; ctl.abort(); };
+  }, [refresh, tick]);
+  return { data, error, reload, updating };
+}
+
 export function PortfolioPage() {
   const [tab, setTab] = useState<Tab>("holdings");
   const [refresh, setRefresh] = useState(0);
-  const { data, error, reload } = useApi<Snapshot>(`/api/portfolio?r=${refresh}`);
+  const { data, error, reload, updating } = useProgressivePortfolio(refresh);
   const changed = useCallback(() => setRefresh((r) => r + 1), []);
   // the tab lives in the URL hash so a link or reload lands on the same view
   useEffect(() => {
@@ -327,14 +391,14 @@ export function PortfolioPage() {
       {data && (
         <>
           <div className="stagger mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <Stat label="Current value" value={s!.value} format={(n) => inr(n)} icon={<Wallet className="size-4" />}
-              hint={s!.unpriced ? `${s!.unpriced} holding(s) without a price` : `cost ${inr(s!.cost)}`} />
-            <Stat label="Unrealised P&L" value={s!.unrealised} format={(n) => signed(n)} icon={<BadgeIndianRupee className="size-4" />} tone={s!.unrealised >= 0 ? "gain" : "loss"}
-              hint={s!.unknown_cost ? `${s!.unknown_cost} holding(s) with unknown cost excluded` : "value − cost of open lots"} />
+            <Stat label="Current value" value={s!.value} display={updating ? <span className="skeleton inline-block h-7 w-32 rounded" aria-label="updating" /> : undefined} format={(n) => inr(n)} icon={<Wallet className="size-4" />}
+              hint={updating ? `prices updating… ${updating.done}/${updating.total}` : s!.unpriced ? `${s!.unpriced} holding(s) without a price` : `cost ${inr(s!.cost)}`} />
+            <Stat label="Unrealised P&L" value={s!.unrealised} display={updating ? <span className="skeleton inline-block h-7 w-32 rounded" aria-label="updating" /> : undefined} format={(n) => signed(n)} icon={<BadgeIndianRupee className="size-4" />} tone={s!.unrealised >= 0 ? "gain" : "loss"}
+              hint={updating ? "waiting for prices" : s!.unknown_cost ? `${s!.unknown_cost} holding(s) with unknown cost excluded` : "value − cost of open lots"} />
             <Stat label="Realised P&L" value={s!.realised} format={(n) => signed(n)} icon={<Receipt className="size-4" />} tone={s!.realised >= 0 ? "gain" : "loss"}
               hint={`+ dividends ${inr(s!.dividends)}`} />
-            <Stat label="XIRR" display={s!.xirr == null ? <span className="text-muted">—</span> : <span className="num">{pctx(s!.xirr * 100)}</span>}
-              icon={<Activity className="size-4" />} hint={s!.xirr_reason ?? "annualised, all holdings"}
+            <Stat label="XIRR" display={updating ? <span className="skeleton inline-block h-7 w-32 rounded" aria-label="updating" /> : s!.xirr == null ? <span className="text-muted">—</span> : <span className="num">{pctx(s!.xirr * 100)}</span>}
+              icon={<Activity className="size-4" />} hint={updating ? "waiting for prices" : s!.xirr_reason ?? "annualised, all holdings"}
               help="Money-weighted annual return over every cash flow: purchases, sales, dividends paid out and today's value." />
           </div>
           <div className="mb-4 overflow-x-auto"><Segmented value={tab} onChange={go} options={TABS} /></div>
@@ -344,7 +408,7 @@ export function PortfolioPage() {
             </EmptyState>
           ) : (
             <div key={tab} className="animate-fade-up">
-              {tab === "holdings" && <Holdings snap={data} onChanged={changed} />}
+              {tab === "holdings" && <Holdings snap={data} onChanged={changed} updating={updating} />}
               {tab === "allocation" && <Allocation snap={data} onChanged={changed} />}
               {tab === "pnl" && <Pnl snap={data} />}
               {tab === "dividends" && <Dividends snap={data} />}

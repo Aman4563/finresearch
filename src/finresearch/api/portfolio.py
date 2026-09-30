@@ -14,6 +14,7 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+import time
 from collections.abc import Awaitable, Callable
 from datetime import date
 from decimal import Decimal
@@ -21,7 +22,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 
@@ -29,6 +30,7 @@ from finresearch.config import get_settings
 from finresearch.db import session_scope
 
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024
+_MISS = object()
 PRICE_TTL_S = 600
 
 
@@ -118,18 +120,63 @@ def add_portfolio_routes(app: FastAPI, *, scheme_rows: Callable[[], Awaitable[li
             s = app.state.markets = MarketSources(listings=getattr(app.state, "listings", None))
         return s
 
-    async def _prices(holdings: list[Any]) -> dict[int, Any]:
-        from finresearch.portfolio.valuation import fetch_prices
+    def _cached(key: tuple) -> Any:
+        hit = cache.entries.get(key)
+        return hit[1] if hit and hit[0] > time.time() else _MISS
+
+    async def _prices(
+        holdings: list[Any], *, cached_only: bool = False, on_price=None
+    ) -> tuple[dict[int, Any], set[int]]:
+        """(prices, ids still pending). Live: one shared NSE/BSE session for the whole valuation (QuoteBatch) behind
+        the 10-minute quote cache and the 6-hour NAVAll cache. `cached_only`: no network at all; holdings without a
+        cached price are returned as pending (the page shows cost basis at once, then streams the prices)."""
+        from finresearch.portfolio.valuation import QuoteBatch, fetch_prices
 
         sources = src()
+        pending: set[tuple] = set()
 
-        async def quote(sym: str, exch: str) -> Any:
-            return await cache.get(("quote", exch, sym), PRICE_TTL_S, lambda: sources.get_quote(sym, exch))
+        async with QuoteBatch() as batch:
 
-        async def rows() -> list:
-            return await cache.get(("navall",), 6 * 3600, scheme_rows)
+            async def live(sym: str, exch: str) -> Any:
+                if (exch == "NSE" and sources.quote is not None) or (
+                    exch == "BSE" and sources.bse_quote is not None
+                ):
+                    return await sources.get_quote(sym, exch)  # test seams / injected fakes
+                return await batch.quote(sym, exch)
 
-        return await fetch_prices(holdings, quote=quote, scheme_rows=rows, listings=sources.listings)
+            async def quote(sym: str, exch: str) -> Any:
+                key = ("quote", exch, sym)
+                if cached_only:
+                    got = _cached(key)
+                    if got is _MISS:
+                        pending.add(key)
+                        raise LookupError("price not cached yet")
+                    return got
+                return await cache.get(key, PRICE_TTL_S, lambda: live(sym, exch))
+
+            async def rows() -> list:
+                if cached_only:
+                    got = _cached(("navall",))
+                    if got is _MISS:
+                        pending.add(("navall",))
+                        raise LookupError("NAVs not cached yet")
+                    return got
+                return await cache.get(("navall",), 6 * 3600, scheme_rows)
+
+            prices = await fetch_prices(holdings, quote=quote, scheme_rows=rows, listings=sources.listings,
+                                        on_price=on_price)  # fmt: skip
+        waiting: set[int] = set()
+        if pending:
+            from finresearch.portfolio.valuation import instrument_of
+
+            for h in holdings:
+                if h.asset_type == "mf" and ("navall",) in pending:
+                    waiting.add(h.id)
+                elif h.asset_type == "stock":
+                    sym, exch, _ = instrument_of(h)
+                    if ("quote", exch, sym) in pending:
+                        waiting.add(h.id)
+        return prices, waiting
 
     def _detached_holdings() -> list[Any]:
         from finresearch.db.models import PortfolioHolding
@@ -147,17 +194,29 @@ def add_portfolio_routes(app: FastAPI, *, scheme_rows: Callable[[], Awaitable[li
 
     # ------------------------------------------------------------------ read
     @app.get("/api/portfolio")
-    async def portfolio() -> dict[str, Any]:
-        """Holdings with live valuation, P&L and XIRR; allocation; invested/realised over time; dividends."""
+    async def portfolio(prices: Literal["live", "cached"] = "live") -> dict[str, Any]:
+        """Holdings with live valuation, P&L and XIRR; allocation; invested/realised over time; dividends.
+
+        `prices=cached` answers at once from the 10-minute price cache without any network call: holdings whose price
+        is not cached come back with `pending: true` (cost basis only) and `pending` counts them; the page then reads
+        /api/portfolio/prices/stream and finally this route again (by then every price is cached)."""
         from finresearch.portfolio.metrics import drift, get_targets, record_snapshot
         from finresearch.portfolio.report import snapshot
 
-        prices = await _prices(_detached_holdings())
+        cached_only = prices == "cached"
+        got, waiting = await _prices(_detached_holdings(), cached_only=cached_only)
         today = src().today()
         with session_scope() as s:
-            snap = snapshot(s, prices, today)
+            snap = snapshot(s, got, today)
+            for row in snap["holdings"]:
+                row["pending"] = row["id"] in waiting
+                if row["pending"]:
+                    row["price_error"] = None
+            snap["pending"] = len(waiting)
             by_asset = {r["label"]: r["value"] for r in snap["allocation"]["asset"]}
-            if snap["summary"]["value"]:  # the value history behind the drawdown and drift alerts
+            if (
+                snap["summary"]["value"] and not waiting
+            ):  # the value history behind the drawdown and drift alerts
                 record_snapshot(
                     s, today, snap["summary"]["value"], snap["invested"], by_asset, snap["complete"]
                 )
@@ -172,6 +231,41 @@ def add_portfolio_routes(app: FastAPI, *, scheme_rows: Callable[[], Awaitable[li
 
         with session_scope() as s:
             return {"targets": get_targets(s), "classes": list(ASSET_CLASSES)}
+
+    @app.get("/api/portfolio/prices/stream")
+    async def price_stream() -> StreamingResponse:
+        """Newline-delimited JSON: one {"type": "price", "id", "price", "as_of", "source", "error"} line per holding as
+        its price arrives (concurrent, rate-limited fetches that fill the 10-minute cache), then {"type": "done"}."""
+        import asyncio
+        import json
+
+        holdings = _detached_holdings()
+        queue: asyncio.Queue = asyncio.Queue()
+
+        def on_price(hid: int, p: Any) -> None:
+            queue.put_nowait({"type": "price", "id": hid, "price": None if p.price is None else float(p.price),
+                              "as_of": p.as_of, "source": p.source, "error": p.error})  # fmt: skip
+
+        async def run() -> None:
+            try:
+                await _prices(holdings, on_price=on_price)
+            finally:
+                queue.put_nowait({"type": "done", "count": len(holdings)})
+
+        async def body():
+            task = asyncio.create_task(run())
+            try:
+                while True:
+                    item = await queue.get()
+                    yield json.dumps(item) + "\n"
+                    if item["type"] == "done":
+                        break
+            finally:
+                await task
+
+        return StreamingResponse(
+            body(), media_type="application/x-ndjson", headers={"Cache-Control": "no-store"}
+        )
 
     @app.put("/api/portfolio/targets")
     def put_targets(body: dict[str, float | None]) -> dict[str, Any]:
@@ -231,7 +325,7 @@ def add_portfolio_routes(app: FastAPI, *, scheme_rows: Callable[[], Awaitable[li
         rule, and harvesting ideas for the current year. A personal estimate: verify with a CA."""
         from finresearch.portfolio.report import tax_view
 
-        prices = await _prices(_detached_holdings())
+        prices, _ = await _prices(_detached_holdings())
         slab = _slab()
         with session_scope() as s:
             return tax_view(s, prices, src().today(), slab)
