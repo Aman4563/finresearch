@@ -8,8 +8,8 @@ reads "if <metric> <op> <value> then <action>":
 
 from __future__ import annotations
 
-from decimal import Decimal
-from typing import Literal
+from decimal import Decimal, InvalidOperation
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -36,6 +36,50 @@ class Rule(BaseModel):
     op: Op
     value: Decimal
     action: Literal["skip", "warn"] = "skip"
+
+
+# metrics that are probabilities (fractions 0..1, never percent): a threshold of 60 meant as 60 % would make
+# "p_listing_gain < 60 → skip" fire on every IPO
+PROBABILITY_METRICS = frozenset({"p_listing_gain"})
+
+
+def rule_range_errors(rules: list[Rule]) -> list[str]:
+    """Save-time check: a probability rule's value must be a fraction in [0, 1]."""
+    out = []
+    for r in rules:
+        if r.metric in PROBABILITY_METRICS and not Decimal(0) <= r.value <= Decimal(1):
+            hint = f"; for {r.value} % write {r.value / 100}" if Decimal(1) < r.value <= Decimal(100) else ""
+            out.append(f"rule {r.id!r}: {r.metric} is a probability from 0 to 1, got {r.value}{hint}")
+    return out
+
+
+def normalize_stored_rules(data: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """Load-time repair of a stored profile saved before the range check: a probability threshold in (1, 100] is
+    read as a percent (60 → 0.60); one outside [0, 100] cannot be interpreted, so the rule is dropped rather than
+    let it force SKIP on every IPO. Returns (data, warnings); the stored row is not changed until the next save."""
+    rules = data.get("rules")
+    if not isinstance(rules, list):
+        return data, []
+    warnings: list[str] = []
+    kept = []
+    for raw in rules:
+        if not isinstance(raw, dict) or raw.get("metric") not in PROBABILITY_METRICS:
+            kept.append(raw)
+            continue
+        try:
+            v = Decimal(str(raw.get("value")))
+        except (InvalidOperation, ValueError):
+            kept.append(raw)  # the model's own validation reports it
+            continue
+        if Decimal(0) <= v <= Decimal(1):
+            kept.append(raw)
+        elif Decimal(1) < v <= Decimal(100):
+            warnings.append(f"rule {raw.get('id')!r}: {raw['metric']} threshold {v} read as {v} % = {v / 100}")
+            kept.append({**raw, "value": str(v / 100)})
+        else:
+            warnings.append(f"rule {raw.get('id')!r}: {raw['metric']} threshold {v} is not a probability; rule "
+                            "ignored until it is fixed and saved")  # fmt: skip
+    return {**data, "rules": kept}, warnings
 
 
 AlertKind = Literal["ipo", "stock", "fund", "bond", "fno", "portfolio"]

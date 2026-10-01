@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime
 from importlib import resources
 from typing import Any, Literal
@@ -17,9 +18,10 @@ from finresearch.config import get_settings
 from finresearch.db import session_scope
 from finresearch.db.models import AgentStep, Decision, InvestorProfile, ResearchRun
 from finresearch.fincalc.dates import now_ist
-from finresearch.suggest.profile import UI_FIELDS, Profile, default_profile
+from finresearch.suggest.profile import UI_FIELDS, Profile, default_profile, normalize_stored_rules
 from finresearch.suggest.rules import Inputs, gather, is_sme, lot_limits
 
+log = logging.getLogger(__name__)
 ADVISOR_TOOLS = [*DOC_READ, *CALC, *LEDGER_READ]
 PROFILE_NAME = "default"
 MAX_REPORT_CHARS = 50_000
@@ -41,7 +43,12 @@ class Suggestion(BaseModel):
 # --------------------------------------------------------------------------- profile store
 def load_profile(session) -> Profile:
     row = session.scalar(select(InvestorProfile).where(InvestorProfile.name == PROFILE_NAME))
-    return Profile.model_validate(row.data) if row else default_profile()
+    if row is None:
+        return default_profile()
+    data, warnings = normalize_stored_rules(row.data or {})
+    for w in warnings:
+        log.warning("stored profile: %s", w)
+    return Profile.model_validate(data)
 
 
 def save_profile(session, profile: Profile) -> Profile:
