@@ -129,7 +129,9 @@ def parse_day(value: Any) -> date | None:
     if not text or text in ("-", "NA", "None", "null"):
         return None
     text = re.split(r"\s+to\s+", text, maxsplit=1, flags=re.I)[0].strip()
-    text = re.sub(r"\s+[+-]\d{4}$", "", text)  # "30 Sep, 2026 +0530" (a space before the offset: "01-OCT-2026" keeps its year)
+    text = re.sub(
+        r"\s+[+-]\d{4}$", "", text
+    )  # "30 Sep, 2026 +0530" (a space before the offset: "01-OCT-2026" keeps its year)
     for fmt in _DATE_FORMATS:
         try:
             return datetime.strptime(text, fmt).date()  # %b / %B match any case ("SEP", "Sep")

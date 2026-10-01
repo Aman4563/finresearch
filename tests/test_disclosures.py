@@ -81,7 +81,9 @@ def test_surveillance_codes_are_parsed_not_taken_from_gsm_stage():
     assert nd.parse_surv_code("ESM II & GSM 0 (37)")["esm"] == "II"
     assert nd.parse_surv_code("GSM IV & IBC - Receipt (66)")["gsm"] == "IV"
     gsm = {r.symbol: r for r in nd.parse_gsm(fx("gsm.json"))}
-    assert gsm["TESTPOWER"].stage == "0" and gsm["TESTPOWER"].ibc  # gsmStage "LXII" is the code number, not a stage
+    assert (
+        gsm["TESTPOWER"].stage == "0" and gsm["TESTPOWER"].ibc
+    )  # gsmStage "LXII" is the code number, not a stage
     assert gsm["MOCKAGRO"].label == "GSM Stage 0 · ESM Stage II"
     asm = {r.symbol: r for r in nd.parse_asm(fx("asm.json"))}
     assert asm["EXAMPLE"].term == "long-term" and asm["EXAMPLE"].stage == "I"
@@ -104,7 +106,9 @@ def test_pledge_is_recomputed_from_share_counts():
     assert p.promoter_pct == Decimal("60.0000") and p.mismatch is None
     assert p.reported_pct_of_promoter == Decimal("15.00")  # padded "    15.00" parsed
     b = nd.parse_pledge(fx("pledge_EXAMPLE_blank.json"), "EXAMPLE")
-    assert b.reported_pct_of_promoter is None and b.pct_of_promoter == Decimal("10.0000")  # blank: still recomputed
+    assert b.reported_pct_of_promoter is None and b.pct_of_promoter == Decimal(
+        "10.0000"
+    )  # blank: still recomputed
     assert b.disclosed_shares is None  # "-"
     bad = fx("pledge_EXAMPLE.json")
     bad["data"][0]["percPromoterShares"] = "16.00"
@@ -113,7 +117,9 @@ def test_pledge_is_recomputed_from_share_counts():
 
 
 def test_pledge_change_needs_two_quarters():
-    assert fd.pledge_change([(date(2026, 6, 30), Decimal("15"))])[0] is None  # first snapshot: unknown, not 0 pp
+    assert (
+        fd.pledge_change([(date(2026, 6, 30), Decimal("15"))])[0] is None
+    )  # first snapshot: unknown, not 0 pp
     ch, q0, q1 = fd.pledge_change([(date(2026, 6, 30), Decimal("15.0000")), (date(2026, 3, 31), Decimal("10.0000")),
                                    (date(2025, 12, 31), None)])  # fmt: skip
     assert (ch, q0, q1) == (Decimal("5.0000"), date(2026, 3, 31), date(2026, 6, 30))
@@ -130,7 +136,11 @@ def test_pit_xbrl_rows_and_net_insider_value_by_hand():
     #          director sell 1,10,00,000 (25-Sep). Not counted: ESOP, inter-se transfer; 03-Jul is outside.
     assert net.buy_value == Decimal("50900000") and net.sell_value == Decimal("11000000")
     assert net.net_value == Decimal("39900000") and net.n_counted == 3
-    assert net.by_group == {"promoter": Decimal("50900000"), "director_kmp": Decimal("-11000000"), "other": Decimal(0)}
+    assert net.by_group == {
+        "promoter": Decimal("50900000"),
+        "director_kmp": Decimal("-11000000"),
+        "other": Decimal(0),
+    }
     assert dict(net.excluded) == {"ESOP / employee allotment": 1, "inter-se transfer": 1}
 
 
@@ -141,7 +151,10 @@ def test_insider_classification_rules():
     assert fd.classify({**ok, "instrument": "Warrants"})[0] is None
     assert fd.classify({**ok, "mode": "Gift"}) == (None, "gift")
     assert fd.classify({**ok, "mode": "Off Market"}) == (None, "off-market transfer")
-    assert fd.classify({**ok, "mode": "Revokation of Pledge", "side": "Pledge Revoke"})[1] == "pledge creation / release"
+    assert (
+        fd.classify({**ok, "mode": "Revokation of Pledge", "side": "Pledge Revoke"})[1]
+        == "pledge creation / release"
+    )
     assert fd.person_group("Key Managerial Personnel") == "director_kmp"
     assert fd.person_group("Immediate relative") == "other"
 
@@ -154,7 +167,11 @@ def test_sast_and_deals():
     sale = s["Example Promoter Holdings Pvt Ltd"]
     assert sale.kind == "Sale" and sale.shares == Decimal("4000000") and sale.pct == Decimal("2")
     d = nd.parse_deals(fx("bulk_EXAMPLE.json"), "bulk")
-    assert d[0].day == date(2026, 9, 29) and d[0].side == "BUY" and d[0].value_inr == Decimal("1200000") * Decimal("512.35")
+    assert (
+        d[0].day == date(2026, 9, 29)
+        and d[0].side == "BUY"
+        and d[0].value_inr == Decimal("1200000") * Decimal("512.35")
+    )
     assert nd.parse_deals(fx("block_EXAMPLE.json"), "block")[0].remarks is None
 
 
@@ -162,21 +179,64 @@ def test_sast_and_deals():
     ("args", "expected"),
     [
         (("Downgrade", None, "CARE A", None, "CARE", "CARE AA", None, "CARE"), ("downgrade", True)),
-        (("Reaffirm", None, "CARE AA-; Negative", "Negative", "CARE Ratings", "CARE AA; Stable", "Stable", "CARE Ratings"),
-         ("downgrade", True)),  # a bare "Reaffirm" that moved a notch at the same agency
-        (("Reaffirm", None, "IND AAA", "Stable", "India Ratings", "CARE AAA", "Stable", "CARE Ratings"),
-         ("reaffirm", False)),  # another agency's earlier rating is not compared
-        (("Reaffirm", None, "CRISIL AA; Negative", "Negative", "CRISIL", "CRISIL AA; Stable", "Stable", "CRISIL"),
-         ("outlook_negative", True)),
+        (
+            (
+                "Reaffirm",
+                None,
+                "CARE AA-; Negative",
+                "Negative",
+                "CARE Ratings",
+                "CARE AA; Stable",
+                "Stable",
+                "CARE Ratings",
+            ),
+            ("downgrade", True),
+        ),  # a bare "Reaffirm" that moved a notch at the same agency
+        (
+            ("Reaffirm", None, "IND AAA", "Stable", "India Ratings", "CARE AAA", "Stable", "CARE Ratings"),
+            ("reaffirm", False),
+        ),  # another agency's earlier rating is not compared
+        (
+            (
+                "Reaffirm",
+                None,
+                "CRISIL AA; Negative",
+                "Negative",
+                "CRISIL",
+                "CRISIL AA; Stable",
+                "Stable",
+                "CRISIL",
+            ),
+            ("outlook_negative", True),
+        ),
         (("Other", "Withdrawn", None, None, "IND", "IND AA+/Stable", None, "IND"), ("withdrawn", False)),
-        (("Other", "Assigned", "IND A-/Stable/IND A2+", None, "IND", "IND A-/Stable", None, "IND"), ("new", False)),
+        (
+            ("Other", "Assigned", "IND A-/Stable/IND A2+", None, "IND", "IND A-/Stable", None, "IND"),
+            ("new", False),
+        ),
         (("New", None, "Crisil A1+", None, "CRISIL", None, None, None), ("new", False)),
         (("Other", None, "CARE D", None, "CARE", "CARE BB", None, "CARE"), ("default", True)),
-        (("Other", "Placed on watch", "[ICRA]BBB (Rating Watch with Negative Implications)", None, "ICRA",
-          "[ICRA]BBB; Stable", "Stable", "ICRA"), ("watch_negative", True)),
-        (("Reaffirm", None, "CARE BB; Issuer Not Cooperating", None, "CARE", "CARE BB", None, "CARE"),
-         ("not_cooperating", True)),
-        (("Upgrade", None, "CRISIL AA+", "Stable", "CRISIL", "CRISIL AA", "Stable", "CRISIL"), ("upgrade", False)),
+        (
+            (
+                "Other",
+                "Placed on watch",
+                "[ICRA]BBB (Rating Watch with Negative Implications)",
+                None,
+                "ICRA",
+                "[ICRA]BBB; Stable",
+                "Stable",
+                "ICRA",
+            ),
+            ("watch_negative", True),
+        ),
+        (
+            ("Reaffirm", None, "CARE BB; Issuer Not Cooperating", None, "CARE", "CARE BB", None, "CARE"),
+            ("not_cooperating", True),
+        ),
+        (
+            ("Upgrade", None, "CRISIL AA+", "Stable", "CRISIL", "CRISIL AA", "Stable", "CRISIL"),
+            ("upgrade", False),
+        ),
     ],
 )
 def test_rating_action_mapping(args, expected):
@@ -187,12 +247,20 @@ def test_rating_action_mapping(args, expected):
 def test_rating_notches_and_issuer_code():
     assert nd.rating_notch("IND A-/Stable/IND A2+") == ("long", nd.LONG_SCALE.index("A-"))
     assert nd.rating_notch("Crisil A1+") == ("short", 0)
-    assert nd.rating_notch("[ICRA]BBB (Rating Watch with Negative Implications)") == ("long", nd.LONG_SCALE.index("BBB"))
+    assert nd.rating_notch("[ICRA]BBB (Rating Watch with Negative Implications)") == (
+        "long",
+        nd.LONG_SCALE.index("BBB"),
+    )
     assert nd.issuer_code("INE000X07018") == "INE000X" == nd.issuer_code("INE000X01011")
     assert nd.issuer_code("INF000X01011") is None and nd.issuer_code("bad") is None
     rows = nd.parse_credit_ratings(fx("credit_rating.json"))
     ex = rows[0]
-    assert ex.action == "downgrade" and ex.adverse and ex.outlook == "Negative" and ex.rating_day == date(2026, 9, 27)
+    assert (
+        ex.action == "downgrade"
+        and ex.adverse
+        and ex.outlook == "Negative"
+        and ex.rating_day == date(2026, 9, 27)
+    )
     assert ex.derived and "same agency" in ex.derived
     assert rows[1].action == "withdrawn" and rows[1].symbol is None
 
@@ -211,7 +279,11 @@ class FakeNse:
         if self.down:
             raise httpx.ConnectError("DNS failure", request=request)
         path, q = request.url.path, dict(request.url.params)
-        if not path.startswith("/api/") and not path.startswith("/content") and not path.startswith("/corporate"):
+        if (
+            not path.startswith("/api/")
+            and not path.startswith("/content")
+            and not path.startswith("/corporate")
+        ):
             return httpx.Response(200, text="<html>NSE</html>", headers={"content-type": "text/html"})
         body = {
             "/api/reportASM": lambda: fx("asm.json"),
@@ -227,7 +299,9 @@ class FakeNse:
         if body is not None:
             return httpx.Response(200, json=body())
         if path == "/content/fo/fo_secban.csv":
-            return httpx.Response(200, text=(FIX / "fo_secban.csv").read_text(), headers={"content-type": "text/csv"})
+            return httpx.Response(
+                200, text=(FIX / "fo_secban.csv").read_text(), headers={"content-type": "text/csv"}
+            )
         if path.startswith("/corporate/xbrl/IT_9001"):
             return httpx.Response(200, content=(FIX / "pit_filing_9001.xml").read_bytes())
         if path.startswith("/corporate/xbrl/IT_9002"):
@@ -243,7 +317,9 @@ def client_for(net: FakeNse, tmp_path):
         return None
 
     def make():
-        http = PoliteClient(transport=httpx.MockTransport(net), cache_dir=tmp_path / "http", sleep=no_sleep, max_retries=0)
+        http = PoliteClient(
+            transport=httpx.MockTransport(net), cache_dir=tmp_path / "http", sleep=no_sleep, max_retries=0
+        )
         return nd.NseDisclosures(NseClient(http, warmup_url=nd.INSIDER_PAGE))
 
     return make
@@ -263,7 +339,10 @@ def test_client_reads_every_feed(tmp_path):
 
     asm, ban, pit, txns = run(go())
     assert len(asm.items) == 3 and ban.items.trade_date == date(2026, 10, 1)
-    assert pit.url.startswith("https://www.nseindia.com/api/corporates-pit-gg?") and "from_date=04-07-2026" in pit.url
+    assert (
+        pit.url.startswith("https://www.nseindia.com/api/corporates-pit-gg?")
+        and "from_date=04-07-2026" in pit.url
+    )
     assert [t.mode for t in txns] == ["Market Purchase", "ESOP"]
 
 
@@ -275,14 +354,18 @@ def test_oversize_and_block_pages_raise(tmp_path):
         if request.url.path == "/api/reportGSM":
             return httpx.Response(200, json=[{"symbol": "X" * 50}] * 200_000)
         if request.url.path.startswith("/api/"):
-            return httpx.Response(200, text="<html>Access Denied</html>", headers={"content-type": "text/html"})
+            return httpx.Response(
+                200, text="<html>Access Denied</html>", headers={"content-type": "text/html"}
+            )
         return httpx.Response(200, text="<html></html>")
 
     async def no_sleep(_):
         return None
 
     async def go():
-        http = PoliteClient(transport=httpx.MockTransport(handler), cache_dir=tmp_path, sleep=no_sleep, max_retries=0)
+        http = PoliteClient(
+            transport=httpx.MockTransport(handler), cache_dir=tmp_path, sleep=no_sleep, max_retries=0
+        )
         async with nd.NseDisclosures(NseClient(http)) as d:
             with pytest.raises(nd.NseError, match="cap"):
                 await d.gsm()
@@ -311,11 +394,17 @@ def disc(env, tmp_path, monkeypatch):
     with session_scope() as s:
         for m in (DisclosureRecord, DisclosureFeed, AlertEvalSlot, PortfolioLot, PortfolioHolding, Watch):
             s.query(m).delete()
-        s.query(Company).filter(Company.slug.in_(("disc-example", "bond-ine000y08012"))).delete(synchronize_session=False)
-        co = Company(slug="disc-example", name="Example Ltd", nse_symbol="EXAMPLE", isin="INE000X01011", meta={})
+        s.query(Company).filter(Company.slug.in_(("disc-example", "bond-ine000y08012"))).delete(
+            synchronize_session=False
+        )
+        co = Company(
+            slug="disc-example", name="Example Ltd", nse_symbol="EXAMPLE", isin="INE000X01011", meta={}
+        )
         s.add(co)
         s.flush()
-        s.add(Watch(company_id=co.id, kind="stock", nse_symbol="EXAMPLE", exchange="NSE", meta={}, active=True))
+        s.add(
+            Watch(company_id=co.id, kind="stock", nse_symbol="EXAMPLE", exchange="NSE", meta={}, active=True)
+        )
         s.add(Company(slug="bond-ine000y08012", name="Sample Finance NCD", meta={}))
     net = FakeNse()
 
@@ -348,11 +437,17 @@ def test_refresh_then_stock_view_with_sources_and_as_of(disc):
     assert labels["asm"]["label"] == "ASM long-term Stage I" and labels["asm"]["as_of"] == "2026-10-01"
     assert labels["asm"]["source_url"] == "https://www.nseindia.com/api/reportASM"
     assert labels["fno_ban"]["label"] == "F&O ban (2026-10-01)"
-    assert labels["pledge"]["label"] == "Promoter pledge 15.00% of holding" and labels["pledge"]["tone"] == "info"
+    assert (
+        labels["pledge"]["label"] == "Promoter pledge 15.00% of holding"
+        and labels["pledge"]["tone"] == "info"
+    )
     assert v["stage"] == "ASM long-term Stage I" and v["unavailable"] == []
     ins = v["insider"]
     assert ins["complete"] and ins["net"]["net_value"] == "39900000" and ins["state"] == "ok"
-    assert {t["excluded_why"] for t in ins["trades"] if not t["counted"]} == {"ESOP / employee allotment", "inter-se transfer"}
+    assert {t["excluded_why"] for t in ins["trades"] if not t["counted"]} == {
+        "ESOP / employee allotment",
+        "inter-se transfer",
+    }
     assert len(v["deals"]["rows"]) == 3 and v["deals"]["recent_n"] == 2  # 29-Sep and 30-Sep within 5 days
     r = v["ratings"]
     assert r["issuer_code"] == "INE000X" and r["latest_adverse"]["action"] == "downgrade"
@@ -378,7 +473,11 @@ def test_refetch_is_idempotent_and_pledge_history_gives_the_change(disc):
                                             "data": nd.parse_pledge(fx("pledge_EXAMPLE_blank.json"), "EXAMPLE")}], update=True)  # fmt: skip
         p = views.pledge(s, "EXAMPLE", NOW)
         assert p["change_pp"] == "5.0000" and p["prev_quarter"] == "2026-03-31"
-        flag = next(f for f in views.flags_of("EXAMPLE", views.surveillance(s, "EXAMPLE", NOW), p) if f["kind"] == "pledge")
+        flag = next(
+            f
+            for f in views.flags_of("EXAMPLE", views.surveillance(s, "EXAMPLE", NOW), p)
+            if f["kind"] == "pledge"
+        )
         assert flag["tone"] == "warn" and "+5.00 pp" in flag["label"]
 
 
@@ -388,7 +487,10 @@ def test_sebi_feed_stores_only_matched_orders_without_pans(disc):
 
     _refresh_all()
     with session_scope() as s:
-        dump = json.dumps([r.data for r in s.query(DisclosureRecord).all()] + [f.payload for f in s.query(DisclosureFeed).all()])
+        dump = json.dumps(
+            [r.data for r in s.query(DisclosureRecord).all()]
+            + [f.payload for f in s.query(DisclosureFeed).all()]
+        )
         orders = s.query(DisclosureRecord).filter(DisclosureRecord.dataset == "sebi_order").all()
     assert SYNTH_PAN not in dump and "ZYXWV9876K" not in dump and "Unrelated Person" not in dump
     assert sorted(o.symbol for o in orders) == ["EXAMPLE", "EXAMPLE"]
@@ -405,7 +507,10 @@ def test_failure_reads_unavailable_never_none(disc):
     with session_scope() as s:
         v = views.stock(s, "EXAMPLE", NOW)
     assert v["flags"] == [] and v["stage"] is None  # no flag shown, but not "none" either:
-    assert v["surveillance"]["asm"]["state"] == "unavailable" and "ConnectError" in v["surveillance"]["asm"]["reason"]
+    assert (
+        v["surveillance"]["asm"]["state"] == "unavailable"
+        and "ConnectError" in v["surveillance"]["asm"]["reason"]
+    )
     assert v["surveillance"]["fno_ban"]["in_ban"] is None
     assert v["insider"]["net"] is None and not v["insider"]["complete"]
     assert "NSE ASM list" in v["unavailable"] and "promoter pledge (NSE)" in v["unavailable"]
@@ -485,7 +590,12 @@ def test_surveillance_stage_change_fires_once_then_clears(disc):
         f = store.feed(s, "asm")
         f.payload = {"rows": [r for r in f.payload["rows"] if r["symbol"] != "EXAMPLE"]}
         g = store.feed(s, "gsm")
-        g.payload = {"rows": [*g.payload["rows"], {**g.payload["rows"][0], "symbol": "EXAMPLE", "isin": "INE000X01011"}]}
+        g.payload = {
+            "rows": [
+                *g.payload["rows"],
+                {**g.payload["rows"][0], "symbol": "EXAMPLE", "isin": "INE000X01011"},
+            ]
+        }
     r1 = read(r0.baseline)
     assert r1.value == 1 and r1.detail == "ASM long-term Stage I -> GSM Stage 0 · IBC (insolvency)"
     r2 = read(r1.baseline)
@@ -532,19 +642,32 @@ def test_api_routes(disc):
         assert c.get("/api/stocks/BSE:999999/disclosures").json()["covered"] is False
         assert c.get("/api/stocks/EXAMPLE/disclosures", params={"isin": "nope"}).status_code == 422
         b = c.get("/api/bonds/INE000Y08012/rating-actions", params={"refresh": False}).json()
-        assert b["ratings"]["actions"][0]["action"] == "withdrawn" and b["ratings"]["actions"][0]["scope"] == "this instrument"
+        assert (
+            b["ratings"]["actions"][0]["action"] == "withdrawn"
+            and b["ratings"]["actions"][0]["scope"] == "this instrument"
+        )
         t = c.get("/api/disclosures/tracked").json()
         assert [x["key"] for x in t["stocks"]] == ["EXAMPLE"]
-        mine = next(b for b in t["bonds"] if b["isin"] == "INE000Y08012")  # other tests may leave bonds behind
+        mine = next(
+            b for b in t["bonds"] if b["isin"] == "INE000Y08012"
+        )  # other tests may leave bonds behind
         assert mine["tracked"] and mine["latest"]["action"] == "withdrawn"
-        assert set(c.get("/api/disclosures/status").json()) == {"asm", "gsm", "fno_ban", "credit_ratings", "sebi_orders"}
+        assert set(c.get("/api/disclosures/status").json()) == {
+            "asm",
+            "gsm",
+            "fno_ban",
+            "credit_ratings",
+            "sebi_orders",
+        }
 
 
 def test_page_view_refreshes_only_stale_feeds(disc):
     from finresearch.disclosures import refresh
 
     out = run(refresh.ensure_fresh("EXAMPLE", NOW))
-    assert set(out["market"]) == set(refresh.MARKET_DATASETS) and set(out["stock"]) == set(refresh.STOCK_DATASETS)
+    assert set(out["market"]) == set(refresh.MARKET_DATASETS) and set(out["stock"]) == set(
+        refresh.STOCK_DATASETS
+    )
     n = len(disc.calls)
     assert run(refresh.ensure_fresh("EXAMPLE", NOW + timedelta(hours=1))) == {}  # fresh: no request
     assert len(disc.calls) == n
