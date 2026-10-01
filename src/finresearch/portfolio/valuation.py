@@ -217,7 +217,9 @@ async def fetch_prices(holdings: Sequence[Any], *, quote: Callable[[str, str], A
             p = price_from_quote(await quote(new, "NSE"), "NSE", listing)
         except Exception:
             return None
-        p.note = (f"NSE symbol changed: {sym} is now {new} (matched by ISIN {isin}); update the holding's symbol")
+        p.note = (
+            f"NSE symbol changed: {sym} is now {new} (matched by ISIN {isin}); update the holding's symbol"
+        )
         return listing, new, p
 
     async def price_stocks() -> None:

@@ -243,7 +243,7 @@ const TIER_LABEL: Record<string, string> = { base_rate: "base rate only", shrink
 function GroupFacts({ g }: { g: CalibrationGroup | undefined }) {
   if (!g) return <p className="text-xs text-muted">No forecasts logged yet.</p>;
   const rows: [string, React.ReactNode, string][] = [
-    ["Scored", <span key="n" className="num">{g.n}</span>, "Resolved forecasts that carried a probability."],
+    ["Scored", <span key="n" className="num">{g.n}{g.scored_forecasts != null && g.scored_forecasts !== g.n ? ` (of ${g.scored_forecasts} forecasts)` : ""}</span>, "Independent resolved events that carried a probability: one per IPO listing (its latest forecast) and non-overlapping 12-month windows per stock, so a call logged on many days counts once."],
     ["Hit rate", <span key="h" className="num">{g.calls ? `${g.hits}/${g.calls} · ${pc(g.hit_rate)}` : "—"}</span>, "Calls that pointed the right way (above 50% and it happened, or below 50% and it did not)."],
     ["95% CI", <span key="c" className="num">{g.hit_rate_ci ? `${pc(g.hit_rate_ci[0])}–${pc(g.hit_rate_ci[1])}` : "—"}</span>, "Wilson interval for the hit rate: the range the true rate plausibly lies in, given so few cases."],
     ["Base rate", <span key="b" className="num">{pc(g.base_rate)}</span>, "How often the event happened across the scored cases."],
@@ -253,7 +253,7 @@ function GroupFacts({ g }: { g: CalibrationGroup | undefined }) {
   if (g.policy) {
     const p = g.policy;
     rows.push(["Calibration tier", <span key="t">{TIER_LABEL[p.tier] ?? p.tier}</span>,
-      `${p.description}. Effective n ${p.n_effective}${p.overlap > 1 ? ` (${p.n} forecasts ÷ ${p.overlap} overlapping months)` : ""}${p.next_tier ? `; the next tier starts at n = ${p.next_tier.at_n}` : ""}. Informational: probabilities are not re-fitted yet.`]);
+      `${p.description}. Effective n ${p.n_effective} independent events${p.next_tier ? `; the next tier starts at n = ${p.next_tier.at_n}` : ""}. Informational: probabilities are not re-fitted yet.`]);
   }
   if (g.validation_status === "shadow")
     rows.push(["Status", <Badge key="s" tone="neutral">shadow test</Badge>, "Shadow test: logged for out-of-sample scoring, not used for the call. The switch criterion is pre-registered."]);

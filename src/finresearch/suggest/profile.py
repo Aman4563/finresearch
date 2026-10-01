@@ -74,7 +74,9 @@ def normalize_stored_rules(data: dict[str, Any]) -> tuple[dict[str, Any], list[s
         if Decimal(0) <= v <= Decimal(1):
             kept.append(raw)
         elif Decimal(1) < v <= Decimal(100):
-            warnings.append(f"rule {raw.get('id')!r}: {raw['metric']} threshold {v} read as {v} % = {v / 100}")
+            warnings.append(
+                f"rule {raw.get('id')!r}: {raw['metric']} threshold {v} read as {v} % = {v / 100}"
+            )
             kept.append({**raw, "value": str(v / 100)})
         else:
             warnings.append(f"rule {raw.get('id')!r}: {raw['metric']} threshold {v} is not a probability; rule "
