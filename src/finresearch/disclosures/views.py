@@ -172,8 +172,10 @@ def insider(s: Session, symbol: str, now: datetime, days: int = INSIDER_DAYS) ->
         problems.append(f"{payload['no_xbrl']} filing(s) without an XBRL file")
     if win[0] and win[0] > start.isoformat():
         problems.append(f"filings read from {win[0]} only")
-    complete = _ok(st) and not problems
     net = net_insider(rows, today, days)
+    if net.missing_value:
+        problems.append(f"{net.missing_value} counted trade(s) filed without a value (not in the totals)")
+    complete = _ok(st) and not problems
     from finresearch.fincalc.disclosures import classify, trade_day
 
     trades = []

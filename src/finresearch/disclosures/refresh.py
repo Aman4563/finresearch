@@ -30,6 +30,7 @@ MARKET_DATASETS = ("asm", "gsm", "fno_ban", "credit_ratings", "sebi_orders")
 STOCK_DATASETS = ("pledge", "pit", "sast", "deals")
 PIT_DAYS = DEALS_DAYS = 90
 MAX_FILINGS = 25  # PIT XBRLs read per stock per pass; the rest are read on the next pass ("pending")
+MAX_FILINGS_ON_VIEW = 8  # a page view reads fewer (it waits on them); the remainder shows as "pending"
 NEGATIVE_CACHE = timedelta(
     seconds=30
 )  # a failed read is not retried sooner (unless the caller asks), DATA-004
@@ -85,9 +86,12 @@ async def refresh_market(now: datetime, datasets: tuple[str, ...] = MARKET_DATAS
 async def _market_one(d: NseDisclosures, ds: str, now: datetime) -> None:
     if ds in ("asm", "gsm"):
         f = await (d.asm() if ds == "asm" else d.gsm())
+        published = max(
+            (r.published_at for r in f.items if r.published_at), default=None
+        )  # NSE's asmTime/gsmTime
         with session_scope() as s:
             store.record_ok(s, ds, store.MARKET, payload={"rows": f.items}, url=f.url,
-                            as_of=to_ist(f.fetched_at).date().isoformat(), now=now)  # fmt: skip
+                            as_of=to_ist(published or f.fetched_at).date().isoformat(), now=now)  # fmt: skip
     elif ds == "fno_ban":
         f = await d.fno_ban()
         with session_scope() as s:
@@ -147,8 +151,8 @@ def company_names(s: Any) -> dict[str, str]:
 
 # --------------------------------------------------------------------------- per-stock feeds
 async def refresh_stock(symbol: str, now: datetime, *, isin: str | None = None,
-                        datasets: tuple[str, ...] = STOCK_DATASETS,
-                        client: NseDisclosures | None = None) -> dict[str, str]:  # fmt: skip
+                        datasets: tuple[str, ...] = STOCK_DATASETS, client: NseDisclosures | None = None,
+                        max_filings: int | None = None) -> dict[str, str]:  # fmt: skip
     """Read one NSE stock's feeds; {dataset: "ok" | error}."""
     symbol = symbol.upper()
     out: dict[str, str] = {}
@@ -158,9 +162,10 @@ async def refresh_stock(symbol: str, now: datetime, *, isin: str | None = None,
     try:
         for ds in datasets:
             try:
-                await {"pledge": _pledge, "pit": _pit, "sast": _sast, "deals": _deals}[ds](
-                    d, symbol, isin, today, now
-                )
+                if ds == "pit":
+                    await _pit(d, symbol, isin, today, now, max_filings=max_filings or MAX_FILINGS)
+                else:
+                    await {"pledge": _pledge, "sast": _sast, "deals": _deals}[ds](d, symbol, isin, today, now)
                 out[ds] = "ok"
             except Exception as e:
                 log.info("disclosure feed %s for %s failed: %s", ds, symbol, e)
@@ -185,7 +190,9 @@ async def _pledge(d: NseDisclosures, sym: str, isin: str | None, today, now: dat
                         as_of=p.quarter_end.isoformat() if p and p.quarter_end else None, now=now)  # fmt: skip
 
 
-async def _pit(d: NseDisclosures, sym: str, isin: str | None, today, now: datetime) -> None:
+async def _pit(
+    d: NseDisclosures, sym: str, isin: str | None, today, now: datetime, *, max_filings: int
+) -> None:
     start, end = window(today, PIT_DAYS)
     idx = await d.pit_index(sym, start, end)
     with session_scope() as s:
@@ -195,7 +202,7 @@ async def _pit(d: NseDisclosures, sym: str, isin: str | None, today, now: dateti
     urls = {f.xml_url for f in filings if f.xml_url}
     read = {u for u in read_before if u in urls}
     failed: list[dict[str, str]] = []
-    todo = [f for f in filings if f.xml_url and f.xml_url not in read][:MAX_FILINGS]
+    todo = [f for f in filings if f.xml_url and f.xml_url not in read][:max_filings]
     for f in todo:
         try:
             txns = await d.pit_filing(f.xml_url)
@@ -286,5 +293,6 @@ async def ensure_fresh(
             if m_due:
                 out["market"] = await refresh_market(now, tuple(m_due), client=d)
             if s_due and symbol:
-                out["stock"] = await refresh_stock(symbol, now, isin=isin, datasets=tuple(s_due), client=d)
+                out["stock"] = await refresh_stock(symbol, now, isin=isin, datasets=tuple(s_due), client=d,
+                                                   max_filings=MAX_FILINGS_ON_VIEW)  # fmt: skip
         return out

@@ -85,12 +85,20 @@ def finish(slot: str, result: dict[str, Any], now: datetime, failed: bool) -> No
 async def run_pass(kind: str, now: datetime, *, spacing_s: float = SPACING_S,
                    retry_of: dict[str, Any] | None = None) -> dict[str, Any]:  # fmt: skip
     """One pass. A retry (`retry_of` = the failed attempt's result) re-reads only what failed."""
-    from finresearch.disclosures import refresh, store
+    from finresearch.disclosures import refresh
 
     feeds = MORNING_FEEDS if kind == "morning" else refresh.MARKET_DATASETS
     if retry_of and retry_of.get("market_failed") is not None:
         feeds = tuple(retry_of["market_failed"])
-    out: dict[str, Any] = {"market": await refresh.refresh_market(now, feeds) if feeds else {}}
+    async with refresh._client() as d:  # one NSE session (one warm-up) for the whole pass
+        return await _run(kind, now, feeds, d, spacing_s, retry_of)
+
+
+async def _run(kind: str, now: datetime, feeds: tuple[str, ...], d: Any, spacing_s: float,
+               retry_of: dict[str, Any] | None) -> dict[str, Any]:  # fmt: skip
+    from finresearch.disclosures import refresh, store
+
+    out: dict[str, Any] = {"market": await refresh.refresh_market(now, feeds, client=d) if feeds else {}}
     if kind == "evening":
         with session_scope() as s:
             t = store.tracked(s)
@@ -104,7 +112,7 @@ async def run_pass(kind: str, now: datetime, *, spacing_s: float = SPACING_S,
             if n and spacing_s:
                 await asyncio.sleep(spacing_s)
             datasets = tuple(redo[sym]) if redo is not None else refresh.STOCK_DATASETS
-            res = await refresh.refresh_stock(sym, now, isin=v.get("isin"), datasets=datasets)
+            res = await refresh.refresh_stock(sym, now, isin=v.get("isin"), datasets=datasets, client=d)
             if bad := [ds for ds, st in res.items() if st != "ok"]:
                 failed[sym] = bad
         out["stocks_failed"] = failed

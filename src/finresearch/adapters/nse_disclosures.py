@@ -30,7 +30,8 @@ Endpoints (all JSON after the usual cookie warm-up unless noted):
 - `/api/corporate-sast-reg29?index=equities&symbol=X`  the latest 20 Regulation 29 disclosures
 - `/api/historicalOR/bulk-block-short-deals?optionType=bulk_deals|block_deals&symbol=X&from=dd-mm-yyyy&to=...`
                                             {"data": [...]} with BD_DT_DATE, BD_SYMBOL, BD_CLIENT_NAME, BD_BUY_SELL,
-                                            BD_QTY_TRD, BD_TP_WATP (price), BD_REMARKS
+                                            BD_QTY_TRD, BD_TP_WATP (price), BD_REMARKS (the same BD_* keys for
+                                            bulk_deals and block_deals, both recorded 01-Oct-2026)
 - `/api/corporate-credit-rating?index=equities`  ~430 recent rating filings (a symbol parameter is ignored). Columns
                                             NameOfCRAgency, CreditRating, RatingAction (only "Reaffirm" / "New" /
                                             "Other"), SpecifyOthRatingActn (the real verb when "Other": "Assigned",
@@ -173,6 +174,7 @@ class Surveillance(BaseModel):
     components: list[str] = Field(default_factory=list)  # parsed survCode parts: ["IBC Receipt", "GSM 0"]
     ibc: bool = False  # insolvency (IBC) flag in the code: a resolution process has been admitted/initiated
     esm: str | None = None  # Enhanced Surveillance Measure stage, when part of the code
+    published_at: datetime | None = None  # NSE's asmTime / gsmTime for the row
 
     @property
     def label(self) -> str:
@@ -230,7 +232,8 @@ def parse_asm(data: Any) -> list[Surveillance]:
             pc = parse_surv_code(r.get("survCode"))
             stage = stage or pc["ltasm"] or pc["stasm"]
             out.append(Surveillance(framework="ASM", symbol=sym, isin=_isin(r.get("isin")), company=_txt(r.get("companyName")),
-                                    term=label, stage=stage, code=_txt(r.get("survCode")), components=pc["components"]))  # fmt: skip
+                                    term=label, stage=stage, code=_txt(r.get("survCode")), components=pc["components"],
+                                    published_at=parse_when(r.get("asmTime"))))  # fmt: skip
     return out
 
 
@@ -252,7 +255,7 @@ def parse_gsm(data: Any) -> list[Surveillance]:
             stage = g if g in ("0", "I", "II", "III", "IV", "V", "VI") else None
         out.append(Surveillance(framework="GSM", symbol=sym, isin=_isin(r.get("isin")), company=_txt(r.get("companyName")),
                                 stage=stage, code=_txt(r.get("survCode")), components=pc["components"],
-                                ibc=pc["ibc"], esm=pc["esm"]))  # fmt: skip
+                                ibc=pc["ibc"], esm=pc["esm"], published_at=parse_when(r.get("gsmTime"))))  # fmt: skip
     return out
 
 
@@ -518,6 +521,10 @@ def parse_deals(data: Any, kind: str) -> list[Deal]:
     out = []
     for r in rows:
         f = {re.sub(r"^[A-Z]{2,3}_", "", str(k).upper()): v for k, v in r.items()}
+        if not {"DT_DATE", "SYMBOL", "QTY_TRD"} <= set(
+            f
+        ):  # renamed fields: refuse rather than store blank rows
+            raise NseError(f"{kind} deal row has unexpected fields: {sorted(r)[:10]}")
         side = str(f.get("BUY_SELL") or "").strip().upper() or None
         out.append(Deal(kind=kind, day=parse_day(f.get("DT_DATE")), symbol=str(f.get("SYMBOL") or "").strip().upper(),
                         client=_txt(f.get("CLIENT_NAME")), side=side, quantity=parse_num(f.get("QTY_TRD")),

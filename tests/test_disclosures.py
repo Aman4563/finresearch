@@ -434,7 +434,9 @@ def test_refresh_then_stock_view_with_sources_and_as_of(disc):
     with session_scope() as s:
         v = views.stock(s, "EXAMPLE", NOW)
     labels = {f["kind"]: f for f in v["flags"]}
-    assert labels["asm"]["label"] == "ASM long-term Stage I" and labels["asm"]["as_of"] == "2026-10-01"
+    assert (
+        labels["asm"]["label"] == "ASM long-term Stage I" and labels["asm"]["as_of"] == "2026-09-30"
+    )  # NSE's asmTime, not the read time
     assert labels["asm"]["source_url"] == "https://www.nseindia.com/api/reportASM"
     assert labels["fno_ban"]["label"] == "F&O ban (2026-10-01)"
     assert (
@@ -695,5 +697,31 @@ def test_monitor_passes_and_retry_reads_only_what_failed(disc):
     disc.down = False
     disc.calls.clear()
     res = run(md.disclosures_step(ist(20, 15), spacing_s=0))
+    assert (
+        sum(1 for u in disc.calls if u.startswith(nd.INSIDER_PAGE)) <= 1
+    )  # one NSE session for the whole pass
     assert set(res["evening"]["market"].values()) == {"ok"} and res["evening"]["stocks_failed"] == {}
     assert run(md.disclosures_step(ist(21, 0), spacing_s=0)) == {}  # done for the day
+
+
+def test_a_counted_trade_without_a_value_makes_the_net_incomplete(disc):
+    from finresearch.alerts.compute import Reader
+    from finresearch.db import session_scope
+    from finresearch.db.models import DisclosureRecord
+
+    _refresh_all()
+    with session_scope() as s:
+        rec = next(r for r in s.query(DisclosureRecord).filter(DisclosureRecord.dataset == "pit")
+                   if r.data.get("mode") == "Market Sale")  # fmt: skip
+        rec.data = {**rec.data, "value_inr": None}
+    rows = [{"instrument": "Equity", "mode": "Market Sale", "side": "Sell", "quantity": "10", "value_inr": None,
+             "to_day": "2026-09-30"}]  # fmt: skip
+    assert fd.net_insider(rows, TODAY).missing_value == 1
+    with session_scope() as s:
+        r = run(Reader(s).read("stock", "insider_net_buy_90d", "EXAMPLE", {}, {}))
+    assert r.value is None and "without a value" in r.note
+
+
+def test_deal_rows_with_renamed_fields_are_refused():
+    with pytest.raises(nd.NseError, match="unexpected fields"):
+        nd.parse_deals({"data": [{"DEAL_DATE": "30-SEP-2026", "SYM": "EXAMPLE"}]}, "block")
