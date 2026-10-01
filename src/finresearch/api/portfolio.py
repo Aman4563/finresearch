@@ -32,6 +32,12 @@ from finresearch.db import session_scope
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024
 _MISS = object()
 PRICE_TTL_S = 600
+# The whole live price fetch of one request (stream or page) at most; rows still unpriced then show their reason.
+PRICE_BUDGET_S = 45.0
+# A quote that just failed is answered with the same error for this long: the page's stream is followed at once by the
+# full valuation, which would otherwise re-fetch every failed instrument (doubling a slow first load). An error is
+# never stored as a price, and it expires in seconds (no "no data" kept for the 10-minute price TTL).
+FAILED_TTL_S = 30.0
 
 
 class ManualTxn(BaseModel):
@@ -113,6 +119,8 @@ def add_portfolio_routes(app: FastAPI, *, scheme_rows: Callable[[], Awaitable[li
     from finresearch.api.markets import MarketSources, TtlCache
 
     cache = TtlCache()
+    # quote key -> (expiry, the error), see FAILED_TTL_S
+    failed: dict[tuple, tuple[float, BaseException]] = {}
 
     def src() -> MarketSources:
         s = getattr(app.state, "markets", None)
@@ -146,13 +154,20 @@ def add_portfolio_routes(app: FastAPI, *, scheme_rows: Callable[[], Awaitable[li
 
             async def quote(sym: str, exch: str) -> Any:
                 key = ("quote", exch, sym)
+                recent = failed.get(key)
+                if recent is not None and recent[0] > time.time():
+                    raise recent[1]
                 if cached_only:
                     got = _cached(key)
                     if got is _MISS:
                         pending.add(key)
                         raise LookupError("price not cached yet")
                     return got
-                return await cache.get(key, PRICE_TTL_S, lambda: live(sym, exch))
+                try:
+                    return await cache.get(key, PRICE_TTL_S, lambda: live(sym, exch))
+                except Exception as e:
+                    failed[key] = (time.time() + FAILED_TTL_S, e)
+                    raise
 
             async def rows() -> list:
                 if cached_only:
@@ -164,7 +179,7 @@ def add_portfolio_routes(app: FastAPI, *, scheme_rows: Callable[[], Awaitable[li
                 return await cache.get(("navall",), 6 * 3600, scheme_rows)
 
             prices = await fetch_prices(holdings, quote=quote, scheme_rows=rows, listings=sources.listings,
-                                        on_price=on_price)  # fmt: skip
+                                        on_price=on_price, budget_s=None if cached_only else PRICE_BUDGET_S)  # fmt: skip
         waiting: set[int] = set()
         if pending:
             from finresearch.portfolio.valuation import instrument_of

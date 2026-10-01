@@ -49,6 +49,11 @@ class NseError(RuntimeError):
     """NSE refused the request or returned something that is not the expected JSON."""
 
 
+class NseNoQuote(NseError, LookupError):
+    """NSE answered, and has no quote for the symbol (HTTP 404 from the quote API: an unknown, delisted or renamed
+    symbol). The exchange's "no data", not a refusal: fresh cookies would not help, and it is not transient."""
+
+
 # --------------------------------------------------------------------------- parsing helpers
 
 
@@ -615,6 +620,10 @@ class NseClient:
         resp = await self.http.get(f"{NSE_BASE}/api/NextApi/apiClient/GetQuoteApi",
                                    params={"functionName": "getSymbolData", "marketType": "N", "series": series,
                                            "symbol": symbol}, headers={**API_HEADERS, "Referer": page})  # fmt: skip
+        if (
+            resp.status == 404
+        ):  # observed 1-Oct-2026 for an unknown symbol: 404 {"error": "Unexpected end of JSON input"}
+            raise NseNoQuote(f"NSE has no quote for {symbol} (HTTP 404: unknown, delisted or renamed symbol)")
         if not resp.ok or not _looks_json(resp):
             raise NseError(f"NSE quote refused for {symbol}: HTTP {resp.status}")
         return Quote.parse(resp.json())

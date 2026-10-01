@@ -14,6 +14,7 @@ cut-off may be stale. Market cap = last price × issued shares (NSE quote), else
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
@@ -22,6 +23,8 @@ from decimal import Decimal
 from typing import Any
 
 from finresearch.fincalc.funds import xirr
+
+log = logging.getLogger(__name__)
 
 CAP_LIST = {
     "as_of": "2025-12-31",
@@ -152,11 +155,16 @@ def fund_prices(funds: Sequence[Any], rows: list, err: str | None) -> dict[int, 
 async def fetch_prices(holdings: Sequence[Any], *, quote: Callable[[str, str], Awaitable[Any]],
                        scheme_rows: Callable[[], Awaitable[list]] | None,
                        listings: Callable[[], Awaitable[Any]] | None = None, on_price: OnPrice | None = None,
-                       concurrency: int = QUOTE_CONCURRENCY) -> dict[int, PriceInfo]:  # fmt: skip
+                       concurrency: int = QUOTE_CONCURRENCY,
+                       budget_s: float | None = None) -> dict[int, PriceInfo]:  # fmt: skip
     """holding id -> PriceInfo, fetched concurrently: one AMFI NAVAll download prices every fund while the stock
     quotes run, at most `concurrency` at a time, one request per distinct instrument (a stock held in two accounts
     is quoted once). `quote(id, exchange)` should be cached and rate-limited by the caller (the API passes a shared
-    polite client behind a 10-minute cache). `on_price(holding id, PriceInfo)` is called as each price arrives."""
+    polite client behind a 10-minute cache). `on_price(holding id, PriceInfo)` is called as each price arrives.
+
+    `budget_s` bounds the whole call: whatever is still being fetched then is cancelled, and those rows fall back to
+    their last statement price (or none) with a "did not answer in time" reason, so one slow source never holds the
+    page. Nothing unfinished is cached (the caller's cache stores only completed fetches)."""
     out: dict[int, PriceInfo] = {}
 
     def emit(hid: int, p: PriceInfo) -> None:
@@ -225,61 +233,112 @@ async def fetch_prices(holdings: Sequence[Any], *, quote: Callable[[str, str], A
 
         await asyncio.gather(*(one(k, m) for k, m in groups.items()))
 
-    await asyncio.gather(price_funds(), price_stocks())
+    work = asyncio.gather(price_funds(), price_stocks())
+    if budget_s is None:
+        await work
+    else:
+        try:
+            await asyncio.wait_for(work, budget_s)
+        except TimeoutError:
+            late = f"no price within {budget_s:g} s (the exchange or AMFI is slow): retry shortly"
+            for h in holdings:
+                if h.id not in out and h.asset_type in ("mf", "stock"):
+                    emit(
+                        h.id,
+                        _statement_price(h, late)
+                        if h.asset_type == "mf"
+                        else broker_statement_price(h, late),
+                    )
     for h in holdings:
         if h.id not in out:
             emit(h.id, PriceInfo(error="no price source for this kind of holding"))
     return out
 
 
+# A cold first load once took over 120 s (reproduced 1-Oct-2026 with one unknown symbol among 21 holdings): NSE's quote
+# API answers an unknown symbol with a fast 404, but the batch then re-warmed from that symbol's quote PAGE, which NSE
+# never answers (ReadTimeout), and the polite client retried the timeout 3 times at 30 s each. Now cookies come from
+# a fixed, always-listed stock's page, a 404 is "no quote" (no re-warm), and every NSE call is bounded.
+WARM_SYMBOL = "RELIANCE"  # any quote page's cookies serve every symbol; a NIFTY 50 stock's page always exists
+NSE_TIMEOUT_S = 10.0  # per HTTP request on the interactive path (the polite client's default is 30 s)
+NSE_RETRIES = 1  # one retry of a timeout / 5xx, not three
+QUOTE_TIMEOUT_S = 20.0  # one instrument's whole quote (warm-up wait, re-warm, BSE's extra calls) at most
+MAX_WARMS = 2  # the first warm-up plus one re-warm per batch, however many quotes are refused
+
+
 class QuoteBatch:
     """Live quotes for one valuation over ONE NSE session and ONE BSE client, instead of a new client (and a fresh
     quote-page warm-up) per stock. NSE's quote page is fetched once for cookies; every quote then shares the client's
     host rate limit (adapters.http: 2 requests per second to nseindia.com), so concurrency overlaps network latency
-    without raising the request rate. A refused quote re-warms the session once (serialised) and retries."""
+    without raising the request rate. A refused quote (401/403/block page) re-warms the session (serialised, at most
+    MAX_WARMS warm-ups per batch) and retries; NSE's "no quote" (404) and timeouts do not. Each quote is bounded by
+    `quote_timeout` seconds."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, quote_timeout: float = QUOTE_TIMEOUT_S) -> None:
         self._nse: Any = None
         self._bse: Any = None
+        self._http: list[Any] = []
         self._lock = asyncio.Lock()
         self._warm_gen = 0
+        self._warms = 0
+        self.quote_timeout = quote_timeout
 
     async def __aenter__(self) -> QuoteBatch:
         return self
 
     async def __aexit__(self, *exc: object) -> None:
-        for c in (self._nse, self._bse):
-            if c is not None:
-                await c.__aexit__(None, None, None)
+        for c in self._http:
+            await c.aclose()
 
-    async def _warm(self, symbol: str, seen_gen: int) -> None:
+    def _client(self, **kw: Any) -> Any:
+        from finresearch.adapters.http import PoliteClient
+
+        c = PoliteClient(timeout=NSE_TIMEOUT_S, max_retries=NSE_RETRIES, **kw)
+        self._http.append(c)
+        return c
+
+    async def _warm(self, seen_gen: int) -> None:
         async with self._lock:
             if self._nse is None:
                 from finresearch.adapters.nse import NseClient
 
-                self._nse = await NseClient().__aenter__()
-            if self._warm_gen == seen_gen:  # nobody re-warmed while we waited
-                await self._nse.warm_quote_session(symbol)
-                self._warm_gen += 1
+                self._nse = NseClient(self._client())
+            if self._warm_gen != seen_gen or self._warms >= MAX_WARMS:
+                return  # someone re-warmed while we waited, or the batch has used its warm-ups
+            self._warms += 1
+            self._warm_gen += 1  # even when the warm-up fails: the next quote must not queue for another one
+            try:
+                await self._nse.warm_quote_session(WARM_SYMBOL)
+            except Exception:  # the quote that follows fails (and says why) if the cookies are really missing
+                log.warning("NSE quote-session warm-up failed", exc_info=True)
 
     async def quote(self, symbol: str, exchange: str = "NSE") -> Any:
+        return await asyncio.wait_for(self._quote(symbol, exchange), self.quote_timeout)
+
+    async def _quote(self, symbol: str, exchange: str) -> Any:
         if exchange == "BSE":
             async with self._lock:
                 if self._bse is None:
+                    from finresearch.adapters.bse import BSE_RATE, BseClient
                     from finresearch.adapters.bse_equity import BseEquity
 
-                    self._bse = await BseEquity().__aenter__()
+                    self._bse = BseEquity(BseClient(self._client(host_rates={"nseindia.com": 2.0,
+                                                                              "bseindia.com": BSE_RATE})))  # fmt: skip
             q = await self._bse.quote(symbol)
             if q is None:
                 raise LookupError(f"BSE has no quote for scrip {symbol}")
             return q
+        from finresearch.adapters.nse import NseError, NseNoQuote
+
         if self._warm_gen == 0:
-            await self._warm(symbol, 0)
+            await self._warm(0)
         gen = self._warm_gen
         try:
             return await self._nse.quote(symbol, warm=False)
-        except Exception:
-            await self._warm(symbol, gen)
+        except NseNoQuote:
+            raise  # NSE answered "no such symbol": fresh cookies would not change that
+        except NseError:  # refused (401/403/block page): the cookies may have expired
+            await self._warm(gen)
             return await self._nse.quote(symbol, warm=False)
 
 
