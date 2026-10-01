@@ -501,7 +501,7 @@ def realised_report_hint(content: bytes, filename: str = "") -> str | None:
     can import (it has no open positions and repeats trades the order history has): say so and what to use instead."""
     try:
         rows = read_table(content, filename)
-    except Exception:  # noqa: BLE001 - unreadable files keep the generic message
+    except Exception:  # unreadable files keep the generic message
         return None
     for row in rows[:40]:
         cells = {_norm(c) for c in row if c is not None}
