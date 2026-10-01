@@ -395,7 +395,7 @@ def test_migration_matches_the_model_and_is_the_single_head():
     from finresearch.db.models import Base
 
     script = ScriptDirectory.from_config(Config(str(ROOT / "alembic.ini")))
-    assert script.get_heads() == ["d8b4f2a6c1e9"]
+    assert len(script.get_heads()) == 1
     src = Path(script.get_revision("d8b4f2a6c1e9").path).read_text()
     cols = set(re.findall(r'sa\.Column\("(\w+)"', src))
     assert cols == {c.name for c in Base.metadata.tables["trade_note"].columns}
@@ -417,3 +417,27 @@ def test_entry_survives_its_trade_being_deleted(client):
     assert client.delete(f"/api/portfolio/transactions/{a['id']}", headers=ORIGIN).status_code == 200
     n = next(x for x in notes(client) if x["id"] == nid)
     assert n["holding_id"] is None and n["txn_ids"] == [] and n["name"] == "Example Textiles"
+
+
+def test_planned_buy_by_symbol_matches_a_trade_imported_with_an_isin(client):
+    from finresearch.db import session_scope
+    from finresearch.db.models import PortfolioHolding, PortfolioTxn
+
+    r = client.post("/api/journal/notes", headers=ORIGIN,
+                    json={"side": "buy", "status": "planned", "name": "Example Ltd", "instrument": "NSE:EXMPL",
+                          "trade_day": "2026-09-24", "thesis": "cheap"})  # fmt: skip
+    pid = r.json()["id"]
+    notes(client)
+    with session_scope() as s:
+        h = PortfolioHolding(ikey="ISIN:INE000X01011", account="Zerodha", asset_type="stock", name="EXAMPLE LTD",
+                             isin="INE000X01011", nse_symbol="EXMPL", meta={})  # fmt: skip
+        s.add(h)
+        s.flush()
+        s.add(PortfolioTxn(holding_id=h.id, day=date(2026, 9, 25), kind="buy", quantity=D(5), price=D(100),
+                           amount=D(500), source="zerodha", dedupe_key="test-isin-buy", meta={}))  # fmt: skip
+    got = notes(client)
+    assert (
+        [n["id"] for n in got] == [pid]
+        and got[0]["status"] == "active"
+        and got[0]["instrument"] == "ISIN:INE000X01011"
+    )

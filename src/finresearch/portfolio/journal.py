@@ -51,6 +51,21 @@ def instrument_of(h: PortfolioHolding) -> str:
     return group_key(h)
 
 
+def keys_of(h: PortfolioHolding) -> set[str]:
+    """Every key a planned note may name this holding by (a plan made from a symbol matches a trade imported with an
+    ISIN)."""
+    out = {h.ikey, instrument_of(h)}
+    if h.isin:
+        out.add(f"ISIN:{h.isin.upper()}")
+    if h.nse_symbol:
+        out.add(f"NSE:{h.nse_symbol.upper()}")
+    if h.bse_code:
+        out.add(f"BSE:{h.bse_code}")
+    if h.scheme_code:
+        out.add(f"MF:{h.scheme_code}")
+    return out
+
+
 def is_decision(t: PortfolioTxn) -> bool:
     """A buy or sell the investor chose that day (not an SIP instalment, a reinvested dividend or a corporate action)."""
     m = t.meta or {}
@@ -112,12 +127,13 @@ def sync_drafts(s: Session, today: date) -> dict[str, int]:
         if h is None:
             continue
         inst = instrument_of(h)
+        keys = keys_of(h)
         notes = s.scalars(select(TradeNote).where(TradeNote.side == side, TradeNote.status != "cancelled")
                           .order_by(TradeNote.id)).all()  # fmt: skip
         # a draft or entry already made for this holding, side and day (partial fills imported later)
         same = next((n for n in notes if n.holding_id == hid and n.trade_day == day and n.txn_ids), None)
         plan = next((n for n in notes if n.status == "planned" and not n.txn_ids
-                     and (n.holding_id == hid or (n.instrument and n.instrument == inst))
+                     and (n.holding_id == hid or (n.instrument and n.instrument in keys))
                      and n.trade_day is not None and abs((n.trade_day - day).days) <= MATCH_DAYS), None)  # fmt: skip
         if same is not None:
             _fill(s, same, txns)
