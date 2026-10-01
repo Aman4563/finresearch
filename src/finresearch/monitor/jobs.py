@@ -444,6 +444,8 @@ async def stock_daily(session: Session, job: MonitorJob, watch: Watch, deps: Dep
 # IST times of the archive passes on each bidding day; the last follows the 17:00 close (the final book)
 ARCHIVE_TIMES = ((11, 0), (13, 0), (15, 0), (17, 15))
 ARCHIVE_WINDOW_MIN = 45  # a pass still runs up to this long after its time (monitor restarts, slow ticks)
+ARCHIVE_RETRY_S = 300  # a pass NSE refused is retried within the window, at most every 5 minutes
+_archive_retry_at: dict[str, float] = {}  # slot -> earliest time.time() of its next attempt
 
 
 def archive_slot(now: datetime, holidays: set | None = None) -> str | None:
@@ -484,9 +486,17 @@ async def archive_open_books(deps: Deps, now: datetime, *, holidays: set | None 
 
     if not deps.archive_books or deps.current_issues is None:
         return None
+    import time
+
     slot = archive_slot(now, holidays)
-    if slot is None:
+    if slot is None or _archive_retry_at.get(slot, 0.0) > time.time():
         return None
+
+    def release() -> None:  # the next tick in the window (after ARCHIVE_RETRY_S) tries the slot again
+        _archive_retry_at[slot] = time.time() + ARCHIVE_RETRY_S
+        with session_scope() as s:
+            s.execute(delete(SubscriptionArchiveSlot).where(SubscriptionArchiveSlot.slot == slot))
+
     with session_scope() as s:
         claimed = s.execute(insert(SubscriptionArchiveSlot).values(slot=slot, started_at=now, result={})
                             .on_conflict_do_nothing(index_elements=["slot"])
@@ -496,8 +506,7 @@ async def archive_open_books(deps: Deps, now: datetime, *, holidays: set | None 
     try:
         issues = await deps.current_issues()
     except Exception:
-        with session_scope() as s:  # release the slot so the next tick retries within the window
-            s.execute(delete(SubscriptionArchiveSlot).where(SubscriptionArchiveSlot.slot == slot))
+        release()
         raise
     today = to_ist(now).date()
     live = [i for i in issues if i.symbol and (i.issue_start is None or i.issue_start <= today)
@@ -531,6 +540,10 @@ async def archive_open_books(deps: Deps, now: datetime, *, holidays: set | None 
             ).on_conflict_do_nothing(index_elements=["nse_symbol", "as_of", "source"])
              .returning(SubscriptionSnapshotRow.id)).first()  # fmt: skip
         result["archived" if got else "unchanged"].append(issue.symbol)
+    if live and len(result["errors"]) == len(live):
+        # NSE refused every open issue (a 403 wave, an outage): nothing was archived, so the slot is not done
+        release()
+        return result
     with session_scope() as s:
         row = s.get(SubscriptionArchiveSlot, slot)
         if row is not None:
