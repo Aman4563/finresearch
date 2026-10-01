@@ -62,6 +62,12 @@ export function alertSentence(r: Pick<AlertRule, "kind" | "metric" | "op" | "val
   return `${who}: ${m.phrase} ${OP_LABEL[r.op] ?? r.op} ${fmtUnit(m.unit, r.value)}`;
 }
 
+// the metrics signals.fund_rank ranks a fund on (category_rank_drop's optional `basis` param)
+const RANK_BASES: [string, string][] = [
+  ["cagr_3y", "3-year CAGR"], ["cagr_1y", "1-year return"], ["cagr_5y", "5-year CAGR"],
+  ["consistency_3y", "Rolling 1-year consistency"], ["sortino_3y", "Sortino ratio"], ["max_drawdown_3y", "Max drawdown"],
+  ["ter", "Expense ratio"],
+];
 const isNumber = (v: string) => /^-?\d+(\.\d+)?$/.test(v.trim());
 
 /** Problems per alert-rule id-index (empty when every alert rule can be saved). */
@@ -287,6 +293,15 @@ function AlertRuleCard({ rule: r, metrics, listId, errors, states, readyChannels
               </div>
             </Field>
           </div>
+        )}
+
+        {m?.key === "category_rank_drop" && (
+          <Field label="Rank on" hint="Which metric's category percentile to watch (the stored daily ranking; direct-growth plans, month-end NAVs).">
+            <select className={cx(inputClass, "w-full")} value={r.params.basis ?? "cagr_3y"}
+              onChange={(e) => set({ params: { ...r.params, basis: e.target.value } })}>
+              {RANK_BASES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            </select>
+          </Field>
         )}
 
         {m?.params.includes("legs") && (

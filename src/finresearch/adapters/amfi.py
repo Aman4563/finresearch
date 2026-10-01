@@ -71,6 +71,7 @@ class SchemeNav:
     day: date | None
     category: str | None
     amc: str | None
+    structure: str | None = None  # "open", "close" or "interval" (the heading's "Open Ended" prefix)
 
     @property
     def is_direct_growth(self) -> bool:
@@ -89,6 +90,14 @@ def _day(v: str) -> date | None:
         return datetime.strptime(v.strip(), "%d-%b-%Y").date()
     except ValueError:
         return None
+
+
+def _structure(line: str) -> str | None:
+    """'Open Ended Schemes(Equity Scheme - Mid Cap Fund)' -> 'open'; 'Close Ended ...' -> 'close'; 'Interval Fund
+    Schemes(...)' -> 'interval'."""
+    head = line.split("(")[0].lower()
+    return "open" if "open ended" in head else "close" if "close ended" in head else "interval" if "interval" in head \
+        else None  # fmt: skip
 
 
 def _category(line: str) -> str | None:
@@ -146,7 +155,7 @@ def _columns(header: list[str]) -> tuple[str, ...] | None:
 
 def _parse(text: str, history: bool) -> list[SchemeNav]:
     out: list[SchemeNav] = []
-    category = amc = None
+    category = amc = structure = None
     cols = _HISTORY_COLS if history else _NAV_ALL_COLS
     for raw in text.splitlines():
         line = raw.strip()
@@ -158,7 +167,7 @@ def _parse(text: str, history: bool) -> list[SchemeNav]:
         if ";" not in line:
             cat = _category(line)
             if cat is not None:
-                category = cat
+                category, structure = cat, _structure(line)
             else:
                 amc = line
             continue
@@ -169,7 +178,8 @@ def _parse(text: str, history: bool) -> list[SchemeNav]:
         g, r = v.get("g", ""), v.get("r", "")
         out.append(SchemeNav(code=v["code"], name=v["name"], plan=v.get("plan") or None, option=v.get("option") or None,
                              isin_growth=None if g in ("", "-") else g, isin_reinvest=None if r in ("", "-") else r,
-                             nav=_dec(v["nav"]), day=_day(v["day"]), category=category, amc=amc))  # fmt: skip
+                             nav=_dec(v["nav"]), day=_day(v["day"]), category=category, amc=amc,
+                             structure=structure))  # fmt: skip
     return out
 
 
@@ -196,6 +206,47 @@ def ter_key(name: str) -> str:
     """Scheme names as a join key: lower case, punctuation and spacing folded ('HDFC Large Cap Fund' in the TER
     file matches the NAV file's scheme name)."""
     return re.sub(r"[^a-z0-9]+", " ", name.lower()).strip()
+
+
+# AMFI's NAVAll spells the same SEBI category several ways while AMCs move to its newer headings (seen in the
+# 30-Sep-2026 file: "Equity Scheme - Flexi Cap Fund" for some AMCs, "Equity Schemes - Flexi Cap Fund" for others).
+# Only spellings are folded here. Headings whose *names* differ ("Debt Scheme - Short Duration Fund" vs
+# "Income/Debt Oriented Schemes - Short Term Fund", "Sectoral/ Thematic" vs separate "Sectoral Fund" and
+# "Thematic Fund") are kept apart: whether they are the same SEBI category is not verified here.
+_GROUPS = {
+    "equity scheme": "equity", "equity schemes": "equity",
+    "hybrid scheme": "hybrid", "hybrid schemes": "hybrid",
+    "debt scheme": "debt", "income/debt oriented schemes": "debt",
+    "solution oriented scheme": "solution", "solution oriented schemes": "solution", "children's fund": "solution",
+    "other scheme": "other", "index funds": "index", "exchange traded funds (etfs)": "etf",
+    "fund of funds scheme (domestic)": "fof", "overseas fund of funds": "fof", "life cycle funds": "lifecycle",
+}  # fmt: skip
+_NAMES = {
+    "elss- tax saver fund": "elss",
+    "elss - tax saver fund": "elss",
+    "elss tax saver fund": "elss",
+    "balanced advantage fund/ dynamic asset allocation": "dynamic asset allocation or balanced advantage",
+    "childrens' fund": "children's fund",
+    "banking and psu debt fund": "banking and psu fund",
+}
+
+
+def category_key(raw: str | None) -> str | None:
+    """A grouping key for AMFI category headings that folds spelling variants: "Equity Scheme - ELSS" and "Equity
+    Schemes - ELSS- Tax Saver Fund" -> "equity:elss"; "Hybrid Scheme - Equity Savings" and "Hybrid Schemes - Equity
+    Savings Fund" -> "hybrid:equity savings". A heading without a " - " (the legacy "Income", "Growth", "Gilt") gets
+    "legacy:<name>"."""
+    if not raw:
+        return None
+    s = re.sub(r"\s+", " ", raw.lower().replace("\u2019", "'").replace("**", "")).strip()
+    if " - " not in s:
+        return f"legacy:{s}"
+    group, name = (x.strip() for x in s.split(" - ", 1))
+    group = _GROUPS.get(group, group)
+    name = _NAMES.get(name, name)
+    if name.endswith(" fund"):
+        name = name[: -len(" fund")]
+    return f"{group}:{name}"
 
 
 def parse_ter_xlsx(content: bytes) -> dict[str, SchemeTer]:

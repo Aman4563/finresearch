@@ -59,6 +59,7 @@ class Sources:
     fund_scheme: Callable[[str], Awaitable[Any]] | None = None  # code -> SchemeNav (NAVAll row)
     fund_navs: Callable[[Any], Awaitable[list[tuple[date, Decimal]]]] | None = None  # scheme -> last ~10 days
     fund_analyse: Callable[[str], Awaitable[dict[str, Any]]] | None = None  # signals.fund.analyse
+    fund_ranks: Callable[[], Awaitable[dict[str, Any] | None]] | None = None  # stored fund_rank result
     bonds: Callable[[], Awaitable[list]] | None = None  # NSE bond list rows (ListedBond)
     bond_freq: Callable[[str], Awaitable[int | None]] | None = None  # verified coupon frequency
     fno_expiries: Callable[[str], Awaitable[list[date]]] | None = None
@@ -127,6 +128,12 @@ async def _live_analyse(code: str) -> dict[str, Any]:
     from finresearch.signals import fund
 
     return await fund.analyse(code)
+
+
+async def _live_ranks() -> dict[str, Any] | None:
+    from finresearch.signals import fund_rank
+
+    return await asyncio.to_thread(fund_rank.load)
 
 
 async def _live_bonds() -> list:
@@ -367,6 +374,8 @@ class Reader:
         if metric == "signal_action_changed":
             sig = await self._signal("fund", code)
             return await self._change("fund", code, baseline, "action", sig.action, "signals.fund action")
+        if metric == "category_rank_drop":
+            return await self._rank_drop(code, params, baseline)
         a = await self._get(("analyse", code), lambda: (SOURCES.fund_analyse or _live_analyse)(code))
         if metric in ("hit_rate_3y_pct", "excess_3y_pp"):
             ws = a.get("windows_3y") or []
@@ -399,6 +408,31 @@ class Reader:
             return Reading(ter - before, f"{src}: {before}% -> {ter}%", t.get("day"), baseline={"ter": str(ter)},
                            detail=f"{before}% -> {ter}%")  # fmt: skip
         return unknown(f"unknown fund metric {metric}")
+
+    async def _rank_drop(self, code: str, params: dict[str, str], baseline: dict[str, Any]) -> Reading:
+        """Percentile points lost in the stored category ranking since the baseline (positive = fell)."""
+        from finresearch.fincalc.fund_rank import METRIC_KEYS
+        from finresearch.signals import fund_rank
+
+        basis = (params or {}).get("basis") or "cagr_3y"
+        if basis not in METRIC_KEYS:
+            return unknown(f"unknown ranking basis {basis!r} (one of {', '.join(METRIC_KEYS)})")
+        data = await self._get(("fund_ranks",), lambda: (SOURCES.fund_ranks or _live_ranks)())
+        if data is None:
+            return unknown("fund category ranks have not been computed yet (the monitor computes them daily)")
+        s = fund_rank.summary(data, code, basis)
+        if s.get("percentile") is None:
+            return unknown(f"{code} has no {basis} category rank: {s.get('reason') or s['status']}",
+                           "signals.fund_rank")  # fmt: skip
+        pct = Decimal(str(s["percentile"])) * 100
+        now = {"percentile": str(pct), "rank": s["rank"], "of": s["of"], "basis": basis, "as_of": s["as_of"]}
+        where = f"{s['rank']} / {s['of']} in {s['label']} on {basis} (as of {s['as_of']})"
+        before = baseline.get("percentile")  # a changed basis changes the rule's signature, which clears this
+        if before is None:  # first check: record the baseline, report no change
+            return Reading(Decimal(0), f"{where}; baseline recorded", s["as_of"], baseline=now)
+        drop = (Decimal(str(before)) - pct).quantize(Decimal("0.01"))
+        return Reading(drop, f"category rank {baseline.get('rank')} / {baseline.get('of')} -> {where}", s["as_of"],
+                       baseline=now, detail=f"{baseline.get('rank')}/{baseline.get('of')} -> {s['rank']}/{s['of']}")  # fmt: skip
 
     # ------------------------------------------------------------------ bonds
     async def _bond(

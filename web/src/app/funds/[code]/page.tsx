@@ -7,6 +7,7 @@ import { useMemo, useState } from "react";
 
 import { BarsChart, TimeSeriesChart, shortDate } from "@/components/charts";
 import { ensureFund, startResearch } from "@/components/markets/actions";
+import { FundCategoryRankCard } from "@/components/markets/category-rank";
 import { ReturnHistogram } from "@/components/markets/charts";
 import { Metric, type Period, PeriodChart, pctOf, toneOf } from "@/components/markets/common";
 import { FundConsistencyCard } from "@/components/markets/signal-charts";
@@ -116,6 +117,8 @@ export default function FundDetail() {
           <SignalCard asset="fund" instrument={code} title="Invest, hold or switch?" />
           <FundConsistencyCard code={code} />
         </div>
+
+        <FundCategoryRankCard code={code} />
 
         <FundOverlapCard code={code} />
 

@@ -129,12 +129,15 @@ async def _ter(month: date) -> dict:
         return await SOURCES.ter(month)
     from finresearch.adapters.amfi import AmfiClient
 
+    prev = month.replace(day=1) - timedelta(days=1)
     async with AmfiClient() as amfi:
         try:
-            return await amfi.ter(month)
+            table = await amfi.ter(month)
         except Exception:
-            prev = month.replace(day=1) - timedelta(days=1)  # early in a month the new file can be empty
             return await amfi.ter(prev)
+        # early in a month the new file downloads fine but holds no rows yet (seen on 1-Oct-2026): an empty table
+        # read as "no TER for any fund", so fall back to the previous month's file then too
+        return table or await amfi.ter(prev)
 
 
 async def _profile():

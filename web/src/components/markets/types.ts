@@ -284,3 +284,33 @@ export type BondAnalytics = {
     conventions: string;
   } | null;
 };
+
+/** Fund category rank (GET /api/funds/{code}/category-rank; signals.fund_rank, computed daily by the monitor). */
+export type RankMetricKey = "cagr_1y" | "cagr_3y" | "cagr_5y" | "consistency_3y" | "sortino_3y" | "max_drawdown_3y" | "ter";
+export type RankMetric = { key: RankMetricKey; label: string; higher_is_better: boolean; unit: "fraction" | "ratio" | "pct" };
+export type RankedFund = {
+  code: string; name: string; amc: string | null;
+  values: Record<RankMetricKey, number | null>;
+  ranks: Record<RankMetricKey, number | null>;
+  percentiles: Record<RankMetricKey, number | null>;
+  no_downside: boolean;
+  missing: Partial<Record<RankMetricKey, string>>;
+};
+export type FundCategoryRank = {
+  status: "ok" | "not_computed" | "not_ranked" | "excluded" | "unknown";
+  message?: string; reason?: string; label?: string | null; via?: string | null;
+  as_of?: string; generated_at?: string; sampling?: string; mar?: number; ter_day?: string | null; ter_error?: string | null;
+  metrics?: RankMetric[]; caveats?: string[]; sources?: string[];
+  fund?: RankedFund; size?: number; counts?: Record<RankMetricKey, number>;
+  category?: {
+    key: string; label: string; raw_labels: string[]; size: number;
+    counts: Record<RankMetricKey, number>; ranked: Record<RankMetricKey, boolean>;
+    funds: RankedFund[]; excluded: { code: string; name: string; reason: string }[];
+  };
+};
+export type RankSummary = {
+  code: string; status: FundCategoryRank["status"]; metric: RankMetricKey; as_of: string | null; label: string | null;
+  via: string | null; reason: string | null; rank: number | null; of: number | null; percentile: number | null;
+  value: number | null; category_size: number | null;
+};
+export type CategoryRanks = { status: "ok" | "not_computed"; message?: string; as_of?: string; metric?: RankMetricKey; caveats?: string[]; ranks: Record<string, RankSummary> };
