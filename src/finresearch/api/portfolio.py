@@ -534,22 +534,15 @@ def add_portfolio_routes(app: FastAPI, *, scheme_rows: Callable[[], Awaitable[li
 def _holdings_statement(hs, sha: str, filename: str, dry: bool) -> dict[str, Any]:
     """A broker holdings statement: the broker-baseline merge rules (connectors.merge). Dry run = the same merge in a
     savepoint that is rolled back."""
-    import re
     from datetime import UTC, datetime
 
     from finresearch.portfolio.connectors.inbox import _record_sha
-    from finresearch.portfolio.connectors.merge import merge_sync, remember_statement_prices
+    from finresearch.portfolio.connectors.merge import merge_sync, remember_statement_prices, statement_day
 
     broker, holdings = hs
     acc = {"zerodha": "Zerodha", "groww": "Groww", "upstox": "Upstox"}[broker]
     now = datetime.now(UTC)
-    dated = re.findall(
-        r"(20\d\d-\d\d-\d\d)", filename
-    )  # Groww: Stocks_Holdings_Statement_<id>_<yyyy-mm-dd>.xlsx
-    try:
-        as_of = min(date.fromisoformat(dated[-1]), now.date()) if dated else now.date()
-    except ValueError:
-        as_of = now.date()
+    as_of = statement_day(filename, now)
     with session_scope() as s:
         prev = _existing(s, sha)
         if not dry and prev is not None:

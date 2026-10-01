@@ -837,3 +837,128 @@ def test_numeric_tradebook_symbol_is_a_bse_code():
     wb.save(buf)
     (t,) = parse_tradebook(buf.getvalue(), "orders.xlsx").txns
     assert t.bse_code == "941149" and t.nse_symbol is None
+
+
+# ------------------------------------------------------------------ audit regressions (Oct-2026)
+def _zerodha(rows: list[tuple[str, str, int, str, str]]) -> bytes:
+    head = (
+        "symbol,isin,trade_date,exchange,segment,series,trade_type,auction,quantity,price,trade_id,order_id\n"
+    )
+    return (head + "".join(f"EXSPLIT,INE000S01011,{d},NSE,EQ,EQ,{side},false,{q},{p},{tid},{tid}\n"
+                           for d, side, q, p, tid in rows)).encode()  # fmt: skip
+
+
+def test_older_units_before_a_tradebook_with_a_split_inside_it(db):
+    """Tradebook: 10 bought @ ₹1,000 on 10-Jan-2025; a 10 -> 2 split on 2-Jun-2025 (x5). Zerodha holds 100 at an
+    average ₹200 (₹20,000). Older units O satisfy (O + 10) x 5 = 100, so O = 10 (not 100 - 50 = 50), and they cost
+    20,000 - 10,000 = ₹10,000 for 10 pre-split units = ₹1,000 each (₹200 after the split)."""
+    from sqlalchemy import select
+
+    from finresearch.db.models import PortfolioHolding, PortfolioLot
+    from finresearch.portfolio.connectors.merge import merge_sync
+    from finresearch.portfolio.importers import parse_tradebook
+    from finresearch.portfolio.service import apply, manual_txn
+
+    with db() as s:
+        apply(s, parse_tradebook(_zerodha([("2025-01-10", "buy", 10, "1000", "S1")]), "z.csv"), filename="z.csv",
+              sha256="c" * 64, saved_path=None)  # fmt: skip
+        hold = s.scalar(select(PortfolioHolding).where(PortfolioHolding.isin == "INE000S01011"))
+        manual_txn(
+            s,
+            {"holding_id": hold.id, "day": date(2025, 6, 2), "kind": "split", "meta": {"from": 10, "to": 2}},
+        )
+        h = BrokerHolding(
+            name="EXSPLIT", quantity=D(100), isin="INE000S01011", symbol="EXSPLIT", avg_price=D(200)
+        )
+        res = merge_sync(s, account="Zerodha", source="zerodha_holdings", label="Zerodha", holdings=[h], trades=[],
+                         today=TODAY, now=NOW)  # fmt: skip
+        (b,) = res.baselines
+        assert (D(b["units"]), D(b["avg_price"]), b["day"]) == (D(10), D(1000), "2025-01-09")
+        assert _units(s, "Zerodha") == {"ISIN:INE000S01011": D(100)}
+        lots = s.scalars(select(PortfolioLot).where(PortfolioLot.holding_id == hold.id)).all()
+        assert sum(x.open_quantity * x.cost_per_unit for x in lots) == D(20000)
+
+
+def test_an_ignored_baseline_does_not_swallow_later_trades(db):
+    """A Zerodha holdings baseline on 30-Sep-2026, then a tradebook from 1-Aug-2026 (the baseline is now ignored by
+    the lots: older history covers it). An API trade on 25-Sep-2026 is a real trade, not 'covered by the baseline'."""
+    from finresearch.portfolio.connectors.merge import merge_sync
+    from finresearch.portfolio.importers import parse_tradebook
+    from finresearch.portfolio.service import apply
+
+    with db() as s:
+        h = BrokerHolding(
+            name="EXSPLIT", quantity=D(10), isin="INE000S01011", symbol="EXSPLIT", avg_price=D(100)
+        )
+        merge_sync(s, account="Zerodha", source="zerodha_holdings", label="Zerodha", holdings=[h], trades=[],
+                   today=TODAY, now=NOW)  # fmt: skip
+        apply(s, parse_tradebook(_zerodha([("2026-08-01", "buy", 10, "100", "S1")]), "z.csv"), filename="z.csv",
+              sha256="d" * 64, saved_path=None)  # fmt: skip
+        assert _units(s, "Zerodha") == {"ISIN:INE000S01011": D(10)}  # the baseline is ignored, the buy stands
+        t = BrokerTrade(day=date(2026, 9, 25), side="buy", quantity=D(2), price=D(110), name="EXSPLIT",
+                        isin="INE000S01011", symbol="EXSPLIT", exchange="NSE", trade_id="A1", order_id="O1")  # fmt: skip
+        res = merge_sync(s, account="Zerodha", source="zerodha_api", label="Zerodha", holdings=[], trades=[t],
+                         today=TODAY, now=NOW)  # fmt: skip
+        assert res.added == 1 and res.covered_by_baseline == 0
+        assert _units(s, "Zerodha") == {"ISIN:INE000S01011": D(12)}
+
+
+def test_an_older_statement_price_never_replaces_a_newer_one(db):
+    from sqlalchemy import select
+
+    from finresearch.db.models import PortfolioHolding
+    from finresearch.portfolio.connectors.merge import merge_sync, remember_statement_prices
+
+    with db() as s:
+        h = BrokerHolding(name="EXSPLIT", quantity=D(10), isin="INE000S01011", symbol="EXSPLIT", avg_price=D(100),
+                          last_price=D(150))  # fmt: skip
+        merge_sync(s, account="Groww", source="groww_holdings", label="Groww", holdings=[h], trades=[], today=TODAY,
+                   now=NOW)  # fmt: skip
+        remember_statement_prices(s, account="Groww", holdings=[h], day=TODAY, label="Groww")
+        old = BrokerHolding(name="EXSPLIT", quantity=D(10), isin="INE000S01011", symbol="EXSPLIT", avg_price=D(100),
+                            last_price=D(90))  # fmt: skip
+        remember_statement_prices(s, account="Groww", holdings=[old], day=date(2026, 6, 30), label="Groww")
+        hold = s.scalar(select(PortfolioHolding).where(PortfolioHolding.isin == "INE000S01011"))
+        assert hold.meta["statement_price"] == {"price": "150", "day": "2026-09-30", "source": "Groww"}
+
+
+def test_trades_missed_by_a_partial_sync_are_read_again(db, monkeypatch):
+    """Trades last read on 20-Sep-2026; the trades read then fails on 21..30-Sep (partial syncs, which still advance
+    last_sync_day); on 1-Oct it works. It must ask from 20-Sep - 3 days overlap = 17-Sep, not 30-Sep - 3 = 27-Sep."""
+    from finresearch.db.models import BrokerConnection
+    from finresearch.portfolio.connectors import sync
+
+    asked: list[date] = []
+
+    class Fake:
+        capabilities = frozenset({"holdings", "trades"})
+        account, source, label = "Groww", "groww_api", "Groww"
+        holdings_include_today, first_sync_days = True, 30
+        fail = True
+
+        def secret_values(self):
+            return []
+
+        async def holdings(self):
+            return []
+
+        positions = mf_holdings = funds = holdings
+
+        async def trades(self, since, today):
+            asked.append(since)
+            if Fake.fail:
+                raise base.ConnectorError("trades endpoint down")
+            return []
+
+    monkeypatch.setattr(sync, "build", lambda row: Fake())
+    monkeypatch.setattr(sync, "token_valid", lambda row, now: True)
+    with db() as s:
+        s.add(BrokerConnection(key="groww", enabled=True, auto_sync=True, status="connected",
+                               last_sync_day=date(2026, 9, 20), state={"trades_through": "2026-09-20"}))  # fmt: skip
+    for d in (21, 30):
+        assert run(sync.sync_now("groww", now=datetime(2026, 9, d, 11, 0, tzinfo=UTC)))["status"] == "partial"
+    Fake.fail = False
+    assert run(sync.sync_now("groww", now=datetime(2026, 10, 1, 11, 0, tzinfo=UTC)))["status"] == "ok"
+    assert asked == [date(2026, 9, 17)] * 3
+    run(sync.sync_now("groww", now=datetime(2026, 10, 2, 11, 0, tzinfo=UTC)))
+    assert asked[-1] == date(2026, 9, 28)  # 1-Oct read them: from 1-Oct - 3 days

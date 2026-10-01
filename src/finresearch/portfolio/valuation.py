@@ -311,8 +311,13 @@ def cash_flows(
     """Investor cash flows for XIRR: buys out (amount + charges), sales and paid-out dividends in, the current value
     in today. Reinvested dividends are neither (the units were bought with the dividend). An opening balance with no
     cost makes XIRR impossible."""
+    from finresearch.portfolio.lots import superseded_openings
+
     flows: list[tuple[date, Decimal]] = []
-    for t in txns:
+    skip = superseded_openings(txns)  # openings the lots ignore: earlier rows already hold that history
+    for i, t in enumerate(txns):
+        if i in skip:
+            continue
         reinvest = bool((t.meta or {}).get("reinvest"))
         gross = (
             abs(t.amount)
@@ -327,7 +332,11 @@ def cash_flows(
             if gross is None:
                 return [], "a purchase without an amount"
             flows.append((t.day, -(gross + (t.charges or 0))))
-        elif t.kind == "sell" and gross is not None:
+        elif t.kind == "sell":
+            if (
+                gross is None
+            ):  # dropping it would leave the units' value out of the flows: XIRR would read a loss
+                return [], "a sale without an amount"
             flows.append((t.day, gross - (t.charges or 0)))
         elif t.kind == "dividend" and not reinvest and t.amount:
             flows.append((t.day, abs(t.amount)))
