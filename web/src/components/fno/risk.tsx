@@ -176,7 +176,8 @@ export function IvTile({ symbol, atmIv, rv20 }: { symbol: string; atmIv: number 
     <Stat label="IV rank" icon={<Gauge className="size-4" />} tone="info"
       help={<>IV rank = where today&apos;s ATM implied volatility sits between its low and high over the last 252 recorded days; IV percentile = share of those days with lower IV. Recorded daily after the close from {data?.min_days ?? 60} days on. {data?.method}</>}
       display={<span className="num">{ok ? pctText(data!.rank, 0) : "—"}</span>}
-      hint={!data ? "loading…" : ok ? `percentile ${pctText(data.percentile, 0)} · ${data.n} days${data.skew_25d != null ? ` · skew ${data.skew_25d.toFixed(1)}` : ""}`
-        : `${data.status}${ratio != null ? ` · IV/RV20 ${ratio.toFixed(2)}×` : ""}`} />
+      // the short part is the one-line hint; the rest wraps in the note below it (a truncated status was unreadable)
+      hint={!data ? "loading…" : ok ? `percentile ${pctText(data.percentile, 0)}` : ratio != null ? `IV/RV20 ${ratio.toFixed(2)}×` : undefined}
+      note={!data ? undefined : ok ? `${data.n} days recorded${data.skew_25d != null ? ` · 25-delta skew ${data.skew_25d.toFixed(1)}` : ""}` : data.status} />
   );
 }

@@ -19,7 +19,7 @@ import { ForensicCard, SinceReport, StockSignalCard } from "@/components/markets
 import { Metric, RangeBar, Timeline, crore, inr, pctOf, signedPct, toneOf } from "@/components/markets/common";
 import type { StockHistory, StockOverview, StockResults, StockShareholding } from "@/components/markets/types";
 import {
-  Badge, Button, Callout, Card, Delta, EmptyState, ErrorNote, Unreachable, PageHeader, Skeleton, SkeletonRows, Stat, Table,
+  Badge, Button, Callout, Card, Delta, EmptyState, ErrorNote, Unreachable, PageHeader, ScrollArea, Skeleton, SkeletonRows, Stat, Table,
 } from "@/components/ui";
 import { DataRequest, LiveStamp, sessionOpen, useLive } from "@/components/live";
 import { day, useApi, useRetryApi, when, type WatchSummary } from "@/lib/api";
@@ -440,7 +440,7 @@ export default function StockDetail() {
             ) : ov.data.corporate_actions.length === 0 ? (
               <EmptyState icon={<CalendarClock className="size-5" />} title="No corporate actions">{ex} lists no dividends, bonuses or splits for {symbol}.</EmptyState>
             ) : (
-              <div tabIndex={0} role="region" aria-label="Announcements" className="max-h-[420px] overflow-y-auto pr-1 pl-1.5">
+              <ScrollArea axis="y" focusable role="region" aria-label="Corporate actions" className="max-h-[420px] pt-1 pr-1 pb-3 pl-1.5">
                 <Timeline
                   items={ov.data.corporate_actions.map((a, i) => ({
                     key: `${a.ex_date}-${i}`,
@@ -456,7 +456,7 @@ export default function StockDetail() {
                     meta: a.record_date ? `Record date ${day(a.record_date)}` : undefined,
                   }))}
                 />
-              </div>
+              </ScrollArea>
             )}
           </Card>
 
@@ -470,7 +470,8 @@ export default function StockDetail() {
                 {ov.data.errors.some((e) => e.startsWith("announcements")) ? `${ex}'s announcements list could not be read just now.` : `${ex} lists no recent announcements for ${symbol}.`}
               </EmptyState>
             ) : (
-              <ul className="-mx-2 max-h-[420px] space-y-0.5 overflow-y-auto stagger">
+              <ScrollArea axis="y" focusable role="region" aria-label="Announcements" className="-mx-2 max-h-[420px] pb-2">
+              <ul className="space-y-0.5 stagger">
                 {ov.data.announcements.map((a, i) => (
                   <li key={`${a.at}-${i}`} className="rounded-lg px-2 py-2 transition hover:bg-card-hover">
                     <div className="flex flex-wrap items-center gap-2">
@@ -486,6 +487,7 @@ export default function StockDetail() {
                   </li>
                 ))}
               </ul>
+              </ScrollArea>
             )}
           </Card>
         </div>

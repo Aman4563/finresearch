@@ -192,7 +192,8 @@ export function BarsChart({ data, x, series, height = 240, format = fmtDefault, 
   return (
     <div style={{ height }} className="animate-fade-in">
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={data} layout={vertical ? "vertical" : "horizontal"} margin={{ top: 6, right: 12, bottom: 0, left: 0 }}>
+        {/* a vertical chart's reference label sits above the plot: give it room, or "1x" is cut to "…" */}
+        <BarChart data={data} layout={vertical ? "vertical" : "horizontal"} margin={{ top: vertical && reference ? 18 : 6, right: 12, bottom: 0, left: 0 }}>
           <CartesianGrid vertical={vertical} horizontal={!vertical} strokeDasharray="3 3" />
           {vertical ? (
             <>

@@ -164,8 +164,9 @@ export default function IposPage() {
           hint="opening soon" />
         <Stat label="Oversubscribed" format={int} value={radar.data ? kpi.hot : null} icon={<Flame className="size-4" />} tone="accent"
           hint={radar.data ? `of ${kpi.withSub} with live data` : undefined} help={SUB_HELP} />
-        <Stat label="Researched" format={int} value={radar.data ? kpi.researched : null} icon={<Building2 className="size-4" />}
-          hint="have a report run" />
+        <Stat label="With a research run" format={int} value={radar.data ? kpi.researched : null} icon={<Building2 className="size-4" />}
+          hint={radar.data ? `of the ${issues.length} issues listed here` : undefined}
+          help="How many of the issues in the screener below (open, upcoming and recently closed) you have started a research run for. Companies researched earlier are in Researched companies at the bottom of the page." />
       </div>
 
       <ErrorNote error={radar.error} onRetry={radar.reload} />

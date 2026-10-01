@@ -168,7 +168,7 @@ export default function Stocks() {
         </Card>
 
         <div className="grid [&>*]:min-w-0 gap-5 lg:grid-cols-2">
-          <Card title="Watchlist" subtitle="Stocks checked after every market close" icon={<Star className="size-4" />}
+          <Card title="Watchlist" subtitle="Stocks checked after every market close · last close and 1-month change" icon={<Star className="size-4" />}
             actions={<Link href="/monitor" className="text-xs font-medium text-brand hover:underline">Monitor →</Link>}>
             {watches.error ? (
               <ErrorNote error={watches.error} onRetry={watches.reload} />
@@ -223,7 +223,10 @@ export default function Stocks() {
 function WatchRow({ w }: { w: WatchSummary }) {
   const key = w.key ?? w.nse_symbol ?? "";
   const h = useApi<StockHistory>(`/api/stocks/${encodeURIComponent(key)}/history?days=35`);
-  const closes = (h.data?.bars ?? []).map((b) => b.close);
+  const bars = h.data?.bars ?? [];
+  const closes = bars.map((b) => b.close);
+  // the price is the last daily close, so its stamp is that bar's date (the history has no intraday time)
+  const lastDay = bars.length ? bars[bars.length - 1].date : null;
   const last = closes[closes.length - 1];
   const change = closes.length > 1 ? last / closes[0] - 1 : null;
   return (
@@ -240,9 +243,10 @@ function WatchRow({ w }: { w: WatchSummary }) {
       trailing={
         <span className="flex items-center gap-3">
           {h.data ? <Sparkline values={closes} width={84} height={28} /> : <span className="skeleton h-7 w-[84px] rounded-md" />}
-          <span className="w-20 text-right">
+          <span className="w-24 text-right">
             <span className="num block text-sm font-medium">{last != null ? inr(last) : "—"}</span>
             <span className={cx("num block text-[11px]", toneOf(change))}>{change != null ? `${signedPct(change)} 1M` : h.error ? "no data" : " "}</span>
+            {lastDay && <span className="block text-[10px] text-muted">close {day(lastDay)}</span>}
           </span>
         </span>
       }
