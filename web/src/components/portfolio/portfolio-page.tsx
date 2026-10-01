@@ -222,6 +222,7 @@ function Holdings({ snap, onChanged, updating }: { snap: Snapshot; onChanged: ()
                 <td className="num text-right" title={h.price_source ? `${h.price_source}${h.price_as_of ? ` · as of ${h.price_as_of}` : ""}` : undefined}>
                   {h.pending ? <span className="skeleton inline-block h-3 w-14 rounded align-middle" aria-label="price updating" /> : h.price == null ? <span className="text-xs text-muted" title={h.price_error ?? ""}>no price</span> : inr(h.price, 2)}
                   {h.price_source?.includes("statement") && <span className="block text-[10px] text-warn">statement NAV {day(h.price_as_of)}</span>}
+                  {!h.pending && h.price_note && <span className="block text-[10px] text-warn" title={h.price_note}>symbol changed</span>}
                   {!h.pending && h.price_source?.includes("close (official)") && <span className="block text-[10px] text-muted">close {day(h.price_as_of)}</span>}
                 </td>
                 <td className={cx("num text-right", h.realised > 0 ? "text-gain" : h.realised < 0 ? "text-loss" : "text-muted")}>{h.realised ? signed(h.realised) : "—"}</td>
@@ -373,7 +374,7 @@ function useProgressivePortfolio(refresh: number) {
             const lines = buf.split("\n");
             buf = lines.pop() ?? "";
             for (const line of lines.filter(Boolean)) {
-              const e = JSON.parse(line) as { type: string; id: number; price: number | null; as_of: string | null; source: string | null; error: string | null };
+              const e = JSON.parse(line) as { type: string; id: number; price: number | null; as_of: string | null; source: string | null; error: string | null; note?: string | null };
               if (e.type !== "price" || !alive) continue;
               done += 1;
               setUpdating({ done: Math.min(done, total), total });
@@ -383,7 +384,7 @@ function useProgressivePortfolio(refresh: number) {
                   if (h.id !== e.id || !h.pending) return h;
                   const value = e.price == null ? null : e.price * h.units;
                   const unrealised = value != null && h.cost_known && h.cost != null ? value - h.cost : null;
-                  return { ...h, pending: false, price: e.price, price_as_of: e.as_of, price_source: e.source, price_error: e.error, value, unrealised,
+                  return { ...h, pending: false, price: e.price, price_as_of: e.as_of, price_source: e.source, price_error: e.error, price_note: e.note ?? null, value, unrealised,
                     unrealised_pct: unrealised != null && h.cost ? (unrealised / h.cost) * 100 : null };
                 }),
               });
