@@ -454,11 +454,18 @@ async def bond_analytics(isin: str, coupon_frequency: int, price_basis: str = "d
     if price_basis not in ("dirty", "clean"):
         return json.dumps({"error": "price_basis must be 'dirty' or 'clean'"})
     clean = bond.last_price - ai if price_basis == "dirty" else bond.last_price
-    y = b.ytm(clean, s, bond.maturity, coupon, coupon_frequency, bond.face_value)
+    if clean <= 0:
+        return json.dumps({"error": "the clean price would be negative: check the price basis"})
+    try:
+        y = b.ytm(clean, s, bond.maturity, coupon, coupon_frequency, bond.face_value)
+    except ValueError as e:
+        return json.dumps(
+            {"error": f"{e}: check the price basis and face value", "bond": bond.model_dump(mode="json")}
+        )
     d = b.duration(y, s, bond.maturity, coupon, coupon_frequency, bond.face_value)
     out = {"bond": bond.model_dump(mode="json"), "settlement": s.isoformat(), "coupon_frequency": coupon_frequency,
            "accrued_interest": str(ai.quantize(Decimal("0.0001"))), "clean_price": str(clean.quantize(Decimal("0.0001"))),
-           "ytm": str(y), "current_yield": str(b.current_yield(bond.last_price, coupon, bond.face_value)),
+           "ytm": str(y), "current_yield": str(b.current_yield(clean, coupon, bond.face_value)),
            "macaulay_duration_years": str(d.macaulay), "modified_duration": str(d.modified), "convexity": str(d.convexity),
            "price_basis": price_basis,
            "price_basis_source": "NSE: CM-segment bonds are traded and settled on dirty price (bonds-traded-in-capital-market page)"

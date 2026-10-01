@@ -423,10 +423,18 @@ class Reader:
                 return unknown(b.warnings[0], NSE_BONDS)
             freq = await self._get(("freq", isin), lambda: (SOURCES.bond_freq or _live_freq)(isin))
             how = "verified in a research run" if freq else "assumed yearly"
-            clean = Decimal(price) * 100 / Decimal(b.face_value)  # per 100 of face
-            y = B.ytm(clean, today, b.maturity, Decimal(b.coupon_pct) / 100, freq or 1)
-            return Reading((y * 100).quantize(Decimal("0.0001")), f"fincalc.bonds.ytm at ₹{price} (coupon "
-                           f"{b.coupon_pct}%, matures {b.maturity}, frequency {freq or 1}/yr {how})", as_of)  # fmt: skip
+            # NSE's CM-segment bond prices are dirty (incl. accrued interest), as the bond page and the bond signal
+            # read them; taking the quote as clean understated the YTM by the accrued interest's pull
+            f, coupon, face = freq or 1, Decimal(b.coupon_pct) / 100, Decimal(b.face_value)
+            ai = B.accrued_interest(today, b.maturity, coupon, f, face)
+            clean = Decimal(price) - ai
+            try:
+                y = B.ytm(clean, today, b.maturity, coupon, f, face)
+            except ValueError as e:
+                return unknown(f"no yield fits {isin}'s price ₹{price}: {e}", NSE_BONDS)
+            return Reading((y * 100).quantize(Decimal("0.0001")), f"fincalc.bonds.ytm at the dirty price ₹{price} "
+                           f"less accrued ₹{ai.quantize(Decimal('0.01'))} (coupon {b.coupon_pct}%, matures "
+                           f"{b.maturity}, frequency {f}/yr {how})", as_of)  # fmt: skip
         if metric == "rating_changed":
             rating = f"{b.rating} ({b.rating_agency})" if b.rating and b.rating_agency else b.rating
             return await self._change("bond", isin, baseline, "rating", rating, "NSE bonds list rating")

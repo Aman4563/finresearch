@@ -251,10 +251,16 @@ def assess(
     dirty = price if basis == "dirty" else price + ai
     if clean <= 0:
         return no_signal("The clean price would be negative: check the price basis.")
-    ytm = B.ytm(clean, today, bond.maturity, coupon, freq, face)
+    try:
+        ytm = B.ytm(clean, today, bond.maturity, coupon, freq, face)
+        ata = B.after_tax_ytm(clean, today, bond.maturity, coupon, freq, coupon_tax, capital_gains_rate=gain_tax,
+                              face=face, accrued=ai)  # fmt: skip
+    except ValueError as e:
+        # a price no yield in -50 %..100 % explains: never show the solver's bound as a yield
+        return no_signal(
+            f"No yield fits the {basis} price {price}: {e}. Check the price basis and face value."
+        )
     ytm_eff = B.effective_annual(ytm, freq)
-    ata = B.after_tax_ytm(clean, today, bond.maturity, coupon, freq, coupon_tax, capital_gains_rate=gain_tax,
-                          face=face, accrued=ai)  # fmt: skip
     ata_eff = B.effective_annual(ata, freq)
 
     # --- alternatives
@@ -367,8 +373,11 @@ def assess(
             clean_f = price - ai_f if basis == "dirty" else price
             if clean_f <= 0:
                 continue
-            ata_f = B.effective_annual(B.after_tax_ytm(clean_f, today, bond.maturity, coupon, f, coupon_tax,
-                                                       capital_gains_rate=gain_tax, face=face, accrued=ai_f), f)  # fmt: skip
+            try:
+                ata_f = B.effective_annual(B.after_tax_ytm(clean_f, today, bond.maturity, coupon, f, coupon_tax,
+                                                           capital_gains_rate=gain_tax, face=face, accrued=ai_f), f)  # fmt: skip
+            except ValueError:
+                continue
             outcomes.add(ata_f > alt)
         freq_flips = len(outcomes) > 1
 

@@ -26,7 +26,11 @@ preceding the date of its transfer").
 
 Not modelled (shown as caveats): surcharge (capped at 15 % on these gains), the s.87A rebate (not available against
 tax at special rates), indexation for pre-23-Jul-2024 transfers of other assets, set-off of the unused basic
-exemption, carry-forward of losses across years (8 years), and the s.94(7)/(8) dividend and bonus-stripping rules.
+exemption, carry-forward of losses across years (8 years), the s.94(7)/(8) dividend and bonus-stripping rules, and
+share buybacks (taxed as dividend with the cost as a capital loss from 1-Oct-2024; as capital gains from tax year
+2026-27, promoters at an effective 30 %, Budget 2026 memo p.63, enactment not verified [U]). Also not modelled:
+unlisted bonds and debentures transferred on or after 23-Jul-2024 are slab-rate STCG under s.50AA whatever the
+holding period, which ``other`` (24-month rule) does not capture.
 """
 
 from __future__ import annotations

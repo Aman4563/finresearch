@@ -84,3 +84,14 @@ def test_leap_day_anchors_do_not_crash():
 
     assert add_years(date(2024, 2, 29), -1) == date(2023, 2, 28)
     assert add_years(date(2024, 2, 29), 4) == date(2028, 2, 29)
+
+
+def test_sip_on_a_day_the_month_lacks_falls_on_month_end():
+    """A SIP dated the 31st falls on 30-Apr (the month's last day), not the 28th as before. NAV 10 on 28-Apr and 20
+    on 30-Apr and 31-May: two ₹1,000 instalments at 20 buy 50 + 50 = 100 units (the old fallback bought 100 + 50)."""
+    from finresearch.fincalc import funds as fx
+
+    navs = [(date(2025, 1, 1), 10), (date(2025, 4, 28), 10), (date(2025, 4, 30), 20), (date(2025, 5, 31), 20)]
+    o = fx.sip_outcome(navs, 1000, date(2025, 4, 1), date(2025, 5, 31), 31)
+    assert o.instalments == 2 and o.units == Decimal(100) and o.value == Decimal(2000)
+    assert o.xirr == Decimal(0)
