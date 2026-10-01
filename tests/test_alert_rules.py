@@ -768,7 +768,7 @@ def test_bond_ytm_alert_reads_nse_price_as_dirty(monkeypatch):
     took them as clean and understated the YTM. Annual 8 % bond, maturity 31-Mar-2030, settlement 30-Sep-2026: 183 days
     accrued = 1000 x 0.08 x 183/365 = 40.1096, so a dirty 1040.1096 is a clean 1000. Hand bisection of
     1040.1096 = sum (80 [+1000]) / (1+y)^(182/365 + k), k = 0..3, gives y = 7.9740 %. Read as clean, the old code gave
-    about 6.8 %."""
+    6.6561 % (the same price taken as a clean 104.01096 per 100)."""
     from finresearch.adapters.nse_bonds import ListedBond
 
     b = ListedBond(symbol="EXM", series="N2", isin="INE000X07AB2", coupon_pct=Decimal(8), face_value=Decimal(1000),
