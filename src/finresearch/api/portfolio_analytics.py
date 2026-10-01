@@ -119,6 +119,8 @@ def add_portfolio_analytics_routes(app: FastAPI, *, scheme_rows: Callable[[], Aw
 
         return await cache.get(key, HISTORY_TTL_S, make), today, fp
 
+    app.state.portfolio_history = history  # shared with the behaviour report (api/journal.py)
+
     async def _risk_free(rf: float | None):
         from finresearch.portfolio.analytics import RiskFree, risk_free_from_curve
 

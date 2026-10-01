@@ -246,7 +246,7 @@ def forward_monitor_alerts(session: Session, now: datetime) -> int:
     n = 0
     for a in rows:
         if a.kind != "rule_alert" and a.level in levels:
-            path = f"/monitor/{a.watch_id}" if a.watch_id else "/monitor"
+            path = (a.data or {}).get("path") or (f"/monitor/{a.watch_id}" if a.watch_id else "/monitor")
             n += bool(queue(session, a, general.forward_channels, "high" if a.level == "action" else "default",
                             title=f"FinResearch · {a.kind.replace('_', ' ')}", message=a.message, path=path, now=now))  # fmt: skip
     if rows:
