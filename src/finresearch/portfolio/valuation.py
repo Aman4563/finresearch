@@ -46,6 +46,7 @@ class PriceInfo:
     category: str | None = None
     scheme_code: str | None = None
     error: str | None = None
+    note: str | None = None  # e.g. the symbol was renamed and the holding was priced under its new one
 
 
 def cap_bucket(market_cap_cr: Decimal | None) -> str:
@@ -189,13 +190,42 @@ async def fetch_prices(holdings: Sequence[Any], *, quote: Callable[[str, str], A
         for hid, p in fund_prices(funds, rows, err).items():
             emit(hid, p)
 
+    index: dict[str, dict[str, Any]] = {}  # the ISIN map, loaded at most once per call
+    index_lock = asyncio.Lock()
+
+    async def isin_index() -> dict[str, Any]:
+        async with index_lock:
+            if "map" not in index:
+                try:
+                    index["map"] = {r.isin.upper(): r for r in (await listings()).rows} if listings else {}
+                except Exception:
+                    log.warning("could not load the NSE/BSE listings for ISIN lookups", exc_info=True)
+                    index["map"] = {}
+            return index["map"]
+
+    async def renamed(sym: str, members: list[tuple[Any, Any]]) -> tuple[Any, str, PriceInfo] | None:
+        """NSE has no quote for `sym` (HTTP 404): when a holding carries an ISIN and today's NSE listing of that ISIN
+        has another symbol (a rename such as ZOMATO -> ETERNAL keeps the ISIN), price it under the new symbol."""
+        isin = next(((h.isin or "").upper() for h, _ in members if h.isin), "")
+        if not isin or listings is None:
+            return None
+        listing = (await isin_index()).get(isin)
+        new = getattr(listing, "nse_symbol", None)
+        if listing is None or not new or new.upper() == sym.upper():
+            return None
+        try:
+            p = price_from_quote(await quote(new, "NSE"), "NSE", listing)
+        except Exception:
+            return None
+        p.note = (
+            f"NSE symbol changed: {sym} is now {new} (matched by ISIN {isin}); update the holding's symbol"
+        )
+        return listing, new, p
+
     async def price_stocks() -> None:
         isin_map: dict[str, Any] = {}
         if listings is not None and any(not h.nse_symbol and not h.bse_code and h.isin for h in stocks):
-            try:
-                isin_map = {r.isin.upper(): r for r in (await listings()).rows}
-            except Exception:
-                isin_map = {}
+            isin_map = await isin_index()
         groups: dict[tuple[str, str], list[tuple[Any, Any]]] = {}
         for h in stocks:
             sym, exch, listing = instrument_of(h, isin_map)
@@ -209,14 +239,20 @@ async def fetch_prices(holdings: Sequence[Any], *, quote: Callable[[str, str], A
         sem = asyncio.Semaphore(max(1, concurrency))
 
         async def one(key: tuple[str, str], members: list[tuple[Any, Any]]) -> None:
+            from finresearch.adapters.nse import NseNoQuote
+
             sym, exch = key
             err = None
+            no_such_symbol = False
             async with sem:
                 try:
                     q = await quote(sym, exch)
                 except Exception as e:
                     q, err = None, f"no quote from {exch} ({type(e).__name__})"
+                    no_such_symbol = exch == "NSE" and isinstance(e, NseNoQuote)
                 p = price_from_quote(q, exch, members[0][1]) if q is not None else PriceInfo(error=err)
+                if no_such_symbol and (hit := await renamed(sym, members)) is not None:
+                    p = hit[2]
                 alt = bse_fallback(*members[0]) if exch == "NSE" else None
                 if p.price is None and alt:
                     try:

@@ -37,6 +37,8 @@ export type Holding = {
   price_as_of: string | null;
   price_source: string | null;
   price_error: string | null;
+  /** e.g. "NSE symbol changed: OLD is now NEW (matched by ISIN …)" */
+  price_note?: string | null;
   value: number | null;
   unrealised: number | null;
   unrealised_pct: number | null;

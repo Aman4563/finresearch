@@ -174,6 +174,30 @@ def test_profile_round_trip_and_validation(api):
     assert api.put("/api/profile", json={**p, "category": "whale"}).status_code == 422
 
 
+def test_probability_rule_threshold_is_range_checked_on_save_and_repaired_on_load(api, caplog):
+    """Audit follow-up: `p_listing_gain < 60` (meant as 60 %) made every IPO SKIP, since P is a fraction 0..1."""
+    from finresearch.db import session_scope
+    from finresearch.db.models import InvestorProfile
+    from finresearch.suggest.advisor import PROFILE_NAME
+
+    p = api.get("/api/profile").json()
+    rule = {"id": "p-gain", "metric": "p_listing_gain", "op": "<", "value": "60", "action": "skip"}
+    r = api.put("/api/profile", json={**p, "rules": [*p["rules"], rule]})
+    assert r.status_code == 422 and "0 to 1" in r.text and "write 0.6" in r.text
+    ok = api.put("/api/profile", json={**p, "rules": [*p["rules"], {**rule, "value": "0.6"}]})
+    assert ok.status_code == 200
+    # a profile stored before the check: 60 is read as 60 % = 0.60; 250 cannot be a probability and is ignored
+    stored = {**p, "rules": [*p["rules"], rule, {**rule, "id": "p-bad", "value": "250"}]}
+    with session_scope() as s:
+        s.query(InvestorProfile).filter(InvestorProfile.name == PROFILE_NAME).delete()
+        s.add(InvestorProfile(name=PROFILE_NAME, data=stored))
+    with caplog.at_level("WARNING", logger="finresearch.suggest.advisor"):
+        got = {x["id"]: x for x in api.get("/api/profile").json()["rules"]}
+    assert Decimal(got["p-gain"]["value"]) == Decimal("0.6") and "p-bad" not in got
+    assert {"qib-floor", "gate", "one-lot"} <= set(got)
+    assert "read as 60 %" in caplog.text and "not a probability" in caplog.text
+
+
 def test_profile_identity_and_preferences_are_optional_and_validated(api):
     from finresearch.db import session_scope
     from finresearch.db.models import InvestorProfile

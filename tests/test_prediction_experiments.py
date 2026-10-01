@@ -243,10 +243,14 @@ def test_run_pit_respects_membership_and_the_market_filter():
     assert v["V1"]["passes"] is False and v["B0"]["passes"] is False
 
 
-def test_group_policy_counts_overlapping_stock_windows():
+def test_group_policy_takes_an_already_independent_count():
+    # the ledger de-overlaps stock windows before counting (signals.ledger.independent_events): no n/12 here, which
+    # assumed monthly logging while signals are logged on every day they are viewed
     stock = cp.group_policy("stock", 120)
-    assert stock["tier"] == "base_rate" and stock["n_effective"] == 10 and stock["next_tier"] == {
-        "tier": "shrink", "at_n": 600}  # fmt: skip
+    assert stock["tier"] == "platt" and stock["n_effective"] == 120 and stock["overlap"] == 1
+    assert stock["next_tier"] == {"tier": "isotonic", "at_n": 1000}
+    # the backtest's fixed monthly cadence keeps its n/12
+    assert cp.fit_policy([0.5] * 120, [0, 1] * 60, overlap=12).n_effective == 10
     ipo = cp.group_policy("ipo", 150)
     assert ipo["tier"] == "platt" and ipo["next_tier"] == {"tier": "isotonic", "at_n": 1000}
     assert cp.group_policy("fund", 5000)["next_tier"] is None

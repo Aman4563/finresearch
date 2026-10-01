@@ -33,3 +33,14 @@ forecast is changed by this; `/api/calibration` only reports which tier each tra
 `GET /api/calibration` gains, per group, `policy: {tier, n, n_effective, description}` (additive; nothing removed).
 Nothing downstream applies the calibrator yet: the tiers are informational until a group reaches `shrink`, and
 applying it to displayed probabilities is a separate, reviewed change.
+
+## Amendment, 1-Oct-2026 (before any group reached `shrink`; no outcome was looked at)
+
+The "overlap = 12" rule assumed one stock forecast a month. The ledger logs a forecast on every IST day a signal is
+viewed (IPOs during bidding, stocks any day), so n/12 overstated the stock count and nothing at all corrected the
+IPO count (one listing viewed on five days counted five times). From this date `/api/calibration` counts independent
+events before computing any metric or tier (`signals.ledger.independent_events`): one forecast per IPO listing (the
+latest, i.e. the last before the listing-day open) and non-overlapping 12-month windows per stock (each kept window
+starts on or after the previous kept one's resolution date). `group_policy` then uses overlap 1. Test 1's
+"600 stock forecasts → 50" now reads "50 independent stock events → `shrink`"; `fit_policy(overlap=12)` stays for the
+monthly backtest sample. Tier boundaries, k and the calibrators are unchanged.

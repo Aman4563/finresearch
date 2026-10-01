@@ -443,6 +443,25 @@ def test_bond_avoid_when_it_does_not_beat_the_risk_free_alternative():
     assert s.action == "AVOID" and s.probability == 0 and any("doesn't beat" in c for c in s.caveats)
 
 
+def test_bond_never_shows_a_zero_width_range():
+    """Audit follow-up: an AVOID bond showed "0 %, range 0 %–0 %". It fails by arithmetic (no default needed), so the
+    0 % is a rule's certainty: no range, rule-based. A BB bond (no worse grade in CRISIL's table) had equal ends too."""
+    avoid = bond_sig.assess(par_bond(coupon_pct=Decimal("6.5")), FLAT_7, Profile(tax_slab_pct=30), {"freq": "1"},
+                            TODAY, None)  # fmt: skip
+    assert avoid.probability == 0 and avoid.probability_interval is None
+    assert avoid.validation.status == "rule_based" and "arithmetic" in avoid.validation.description
+    assert avoid.to_json()["probability_interval"] is None
+    bb = bond_sig.assess(par_bond(coupon_pct=Decimal(16), rating="CRISIL BB/Stable"), FLAT_7,
+                         Profile(tax_slab_pct=30), {"freq": "1"}, TODAY, None)  # fmt: skip
+    # CRISIL BB 3-year CDR 9.70 %, extended at a constant annual rate to 1,096 days: 1 - 0.903 ** (3.0007 / 3)
+    assert bb.probability == pytest.approx(0.903 ** ((1096 / 365.25) / 3), abs=1e-4)
+    assert bb.probability_interval is None and bb.validation.status == "base_rate"
+    assert any(c.startswith("No range") for c in bb.caveats)
+    # an AA bond still has its downgrade range (A's CDR is higher): unchanged
+    aa = bond_sig.assess(par_bond(), FLAT_7, Profile(tax_slab_pct=30), {"freq": "1"}, TODAY, None)
+    assert aa.probability_interval[0] < aa.probability_interval[1]
+
+
 def test_bond_tax_free_and_ctx_overrides():
     s = bond_sig.assess(par_bond(coupon_pct=Decimal("6.5"), rating=None), FLAT_7, Profile(tax_slab_pct=30),
                         {"freq": "1", "tax_free": "1", "rating": "AAA", "fd": "7.5"}, TODAY, None)  # fmt: skip

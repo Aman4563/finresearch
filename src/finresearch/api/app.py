@@ -690,6 +690,10 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
         ids = [r.id for r in profile.rules]
         if len(ids) != len(set(ids)):
             raise HTTPException(422, "rule ids must be unique")
+        from finresearch.suggest.profile import rule_range_errors
+
+        if errs := rule_range_errors(profile.rules):
+            raise HTTPException(422, "; ".join(errs))
         alert_ids = [r.id for r in profile.alert_rules]
         if len(alert_ids) != len(set(alert_ids)):
             raise HTTPException(422, "alert rule ids must be unique")
