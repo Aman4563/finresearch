@@ -372,7 +372,7 @@ function IssueTable({ rows, now }: { rows: Issue[]; now: number | null }) {
                 </div>
                 <div className="mt-0.5 flex items-center gap-1.5 text-xs text-muted">
                   <span className="num">{i.exchange} {i.symbol}</span>
-                  {over ? <Badge tone="neutral">closed today</Badge> : <Badge tone={PHASE_TONE[i.phase]}>{phaseOf(i)}</Badge>}
+                  {over ? <Badge tone="neutral">bidding closed</Badge> : <Badge tone={PHASE_TONE[i.phase]}>{phaseOf(i)}</Badge>}
                   <Badge tone={isSme(i) ? "accent" : "brand"}>{isSme(i) ? "SME" : "Main"}</Badge>
                 </div>
               </td>

@@ -113,7 +113,7 @@ export function IssueCard({ i, now }: { i: Issue; now: number | null }) {
           </p>
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
-          {over ? <Badge tone="neutral">closed today</Badge> : <Badge tone={PHASE_TONE[i.phase]} dot={open}>{i.phase === "current" ? "open" : i.phase}</Badge>}
+          {over ? <Badge tone="neutral">bidding closed</Badge> : <Badge tone={PHASE_TONE[i.phase]} dot={open}>{i.phase === "current" ? "open" : i.phase}</Badge>}
           <Badge tone={isSme(i) ? "accent" : "brand"}>{isSme(i) ? "SME" : "Mainboard"}</Badge>
         </div>
       </div>

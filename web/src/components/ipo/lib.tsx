@@ -38,12 +38,13 @@ export function daysUntil(iso: string | null | undefined, now: number) {
 /** An instant for a calendar date at an IST wall-clock time, e.g. the 5 PM UPI cut-off on the close date. */
 export const istAt = (iso: string, hhmm = "17:00") => Date.parse(`${iso.slice(0, 10)}T${hhmm}:00+05:30`);
 
-/** An issue the exchange still lists as open whose bidding has ended: its close date is today (IST) and the 5 PM
- * UPI cut-off has passed. The NSE/BSE phase flips only overnight, so without this the card said "open" with a live
- * dot next to "Bidding closed today". */
+/** An issue the exchange still lists as open whose bidding has ended: the 5 PM UPI cut-off on its close date (today
+ * or earlier, IST) has passed. The NSE/BSE phase flips only on the next refresh, so without this the card said
+ * "open" with a live dot next to "Bidding closed today". */
 export function biddingOver(i: Pick<Issue, "phase" | "issue_end">, now: number | null) {
   if (now == null || !i.issue_end || !(i.phase === "open" || i.phase === "current")) return false;
-  return daysUntil(i.issue_end, now) === 0 && istAt(i.issue_end) <= now;
+  const d = daysUntil(i.issue_end, now);
+  return d != null && d <= 0 && istAt(i.issue_end) <= now;
 }
 
 /** "3d 4h", "2h 15m", "12m" until `target`; "now" when past. */
