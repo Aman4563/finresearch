@@ -144,6 +144,18 @@ export function PreTradePanel({ onRecorded }: { onRecorded: () => void }) {
           {input("charges", "Charges ₹ (optional)", { inputMode: "decimal" })}
           {input("day", "Day", { type: "date" })}
         </div>
+        {f.side === "sell" && (() => {
+          const e = holdings.find((h) => String(h.id) === f.holding_id)?.elss;
+          if (!e) return null;
+          return (
+            <p className="flex flex-wrap items-center gap-2 text-xs text-muted">
+              <Badge tone={e.locked_units > 0 ? "warn" : "gain"}>ELSS</Badge>
+              You can redeem up to {e.sellable_units.toLocaleString("en-IN")} unit(s) today; {e.locked_units.toLocaleString("en-IN")} are still in the 3-year lock-in
+              {e.next_unlock ? ` (next ${e.next_unlock.units.toLocaleString("en-IN")} on ${e.next_unlock.day})` : ""}{e.unknown_units > 0 ? `; ${e.unknown_units.toLocaleString("en-IN")} have no purchase date` : ""}.
+              {e.sellable_units > 0 && <button type="button" className="font-medium text-brand hover:underline" onClick={() => { setF({ ...f, quantity: String(e.sellable_units) }); setC(null); }}>Use {e.sellable_units.toLocaleString("en-IN")}</button>}
+            </p>
+          );
+        })()}
         <Button onClick={run} disabled={busy || !f.quantity || !f.price || (f.side === "sell" && !f.holding_id)}>
           {busy && !c ? "Checking…" : "Run the checklist"}
         </Button>

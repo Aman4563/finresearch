@@ -19,9 +19,11 @@ Items:
   (fincalc.tax.tax_delta), and lots that turn long-term within 60 days (portfolio.tax_watch.lt_date) with the tax
   saved by waiting at today's price;
 - exit load (fund sales): the load the user entered for the scheme (the app has no exit-load data);
-- ELSS lock-in (fund sales): units of an ELSS are locked for 3 years from each purchase (Equity Linked Savings
-  Scheme, 2005, para 5, Ministry of Finance notification; also each SIP instalment separately). The scheme is
-  recognised by "ELSS" / "tax saver" in its name or category [unverified against AMFI's category];
+- ELSS lock-in (fund sales): units of an ELSS are locked for 3 years from the allotment of each lot (every SIP
+  instalment, IDCW reinvestment and switch-in separately; portfolio.elss cites the rule). The scheme is recognised by
+  AMFI's category (the daily valuation's NAVAll category), else by its name [unverified]. Redemptions are FIFO and
+  the locked lots are the newest, so the units that can be sold today are the unlocked ones: a sale above them is
+  blocked, and the item says how many can be sold and when the next lot unlocks;
 - the signal and its uncertainty: action, probability with its interval and how the method was validated (n);
 - surveillance flags (ASM/GSM, F&O ban, pledge): finresearch.disclosures (`RED_FLAGS` overrides it in tests);
 - your thesis: the open journal entries for the instrument, with the exit condition you wrote;
@@ -43,7 +45,7 @@ from finresearch.db.models import PortfolioHolding, PortfolioTxn, TradeNote
 
 ZERO = Decimal(0)
 NEAR_LT_DAYS = 60
-ELSS_LOCK_YEARS = 3
+EPS_UNITS = Decimal("0.0005")  # units below this are rounding noise (portfolio.lots.EPS)
 ACTIVITY_DAYS = 30
 # (instrument key, asset type) -> list of {"label", "detail", "level"} or None when the feed is not available
 RED_FLAGS: Callable[[str, str], list[dict[str, Any]] | None] | None = None
@@ -195,15 +197,41 @@ def concentration_items(s: Session, p: Plan, key: str, h: PortfolioHolding | Non
 
 
 # --------------------------------------------------------------------------- tax, exit load, ELSS lock
-def is_elss(h: PortfolioHolding) -> bool:
-    text = f"{h.name} {h.category or ''}".lower()
-    return h.asset_type == "mf" and ("elss" in text or "tax saver" in text or "taxsaver" in text)
+def elss_item(s: Session, p: Plan, h: PortfolioHolding, lots: list[Any]) -> dict[str, Any] | None:
+    """The ELSS lock-in item of a fund sale, or None when the fund is not an ELSS."""
+    from finresearch.portfolio import cache, elss
+
+    v = cache.read(s, cache.VALUATION)
+    det = elss.detect(h.asset_type, h.name, elss.category_of(h, v))
+    if det is None:
+        return None
+    unlocked, locked, unknown = elss.split_units(lots, p.day)
+    view = elss.lockin(lots, p.day, p.price, det)
+    nxt = view["next_unlock"]
+    when = f"; next {nxt['units']:g} unit(s) unlock on {nxt['day']}" if nxt else ""
+    # FIFO takes undated lots (an opening balance) first, but their lock cannot be known: they are not counted as
+    # sellable, and a sale that needs them is "unknown" rather than "ok"
+    in_sale_locked = max(ZERO, p.quantity - unlocked - unknown)
+    if p.quantity <= unlocked + EPS_UNITS:
+        status, detail = "ok", (f"every unit sold is past its 3-year lock-in: you can redeem up to "
+                                f"{float(unlocked):g} unit(s) today{when}")  # fmt: skip
+    elif p.quantity <= unlocked + unknown + EPS_UNITS:
+        status, detail = "unknown", (f"only {float(unlocked):g} unit(s) are known to be unlocked; "
+                                     f"{float(unknown):g} have no purchase date (enter it to check the lock){when}")  # fmt: skip
+    else:
+        status, detail = "block", (f"you can redeem at most {float(unlocked):g} unit(s) today: {float(locked):g} are "
+                                   f"still within 3 years of allotment{when}"
+                                   + (f"; {float(unknown):g} have no purchase date" if unknown > 0 else ""))  # fmt: skip
+    src = f"{elss.SOURCE}; {det.why}"
+    return item("elss_lock", "ELSS lock-in", status, _f(in_sale_locked, 4), detail, src,
+                sellable_units=_f(unlocked, 4), locked_units=_f(locked, 4), unknown_units=_f(unknown, 4),
+                next_unlock=nxt, verified=det.verified, schedule=view["schedule"])  # fmt: skip
 
 
 def sell_items(s: Session, p: Plan, h: PortfolioHolding | None) -> list[dict[str, Any]]:
     from finresearch.api.portfolio_analytics import get_settings_row
     from finresearch.fincalc.dates import fiscal_year
-    from finresearch.fincalc.tax import add_months, tax_delta
+    from finresearch.fincalc.tax import tax_delta
     from finresearch.portfolio.report import disposal_rows, holding_tax, load
     from finresearch.portfolio.tax import DisposalRow, evaluate, gains_of
     from finresearch.portfolio.tax_watch import lt_date
@@ -285,14 +313,8 @@ def sell_items(s: Session, p: Plan, h: PortfolioHolding | None) -> list[dict[str
             out.append(item("exit_load", "Exit load", "warn" if load_amt > 0 else "ok", _f(load_amt),
                             f"{float(pct * 100):g} % on units held under {days} days: {_inr(load_amt)}",
                             "your settings (scheme document)"))  # fmt: skip
-        if is_elss(h):
-            locked = sum((t for lot, t in pieces if lot.acquired is None
-                          or add_months(lot.acquired, 12 * ELSS_LOCK_YEARS) > p.day), ZERO)  # fmt: skip
-            out.append(item("elss_lock", "ELSS lock-in", "block" if locked > 0 else "ok", _f(locked, 4),
-                            (f"{float(locked):g} of the units are within {ELSS_LOCK_YEARS} years of purchase (or the "
-                             "date is unknown) and cannot be redeemed" if locked > 0 else
-                             f"every unit sold is over {ELSS_LOCK_YEARS} years old"),
-                            "ELSS 2005 (3-year lock-in per purchase); scheme recognised by name [unverified]"))  # fmt: skip
+        if (got := elss_item(s, p, h, lots)) is not None:
+            out.append(got)
     out.append(item("proceeds", "Proceeds", "info", _f(gross - p.charges), f"{_inr(gross)} less charges "
                     f"{_inr(p.charges)}", "your entry"))  # fmt: skip
     return out

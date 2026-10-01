@@ -38,7 +38,8 @@ export type Checklist = {
   quantity: number; price: number; value: number | null; day: string; status: "ok" | "warn" | "block"; items: CheckItem[]; note: string;
 };
 
-export type HoldingLite = { id: number; name: string; account: string; asset_type: string; units: number | null; price: number | null; closed: boolean; nse_symbol?: string | null };
+export type HoldingLite = { id: number; name: string; account: string; asset_type: string; units: number | null; price: number | null; closed: boolean; nse_symbol?: string | null;
+  elss?: { sellable_units: number; locked_units: number; unknown_units: number; next_unlock: { day: string; units: number } | null } | null };
 
 type Side = { n: number; median_days: number | null; mean_days: number | null };
 export type Disposition = {

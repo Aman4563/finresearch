@@ -20,7 +20,7 @@ import { ImportPanel } from "./import-panel";
 import { PerformanceAnalytics } from "./performance-analytics";
 import { RiskAnalytics } from "./risk-analytics";
 import { TaxPanel } from "./tax-panel";
-import { ASSET_CLASSES, type Holding, type HoldingDetail, type Snapshot, TAX_CLASS_LABEL, type TaxClass, inr, pctx, signed, units } from "./types";
+import { ASSET_CLASSES, type ElssLock, type Holding, type HoldingDetail, type Snapshot, TAX_CLASS_LABEL, type TaxClass, inr, pctx, signed, units } from "./types";
 
 type Tab = "holdings" | "allocation" | "performance" | "risk" | "concentration" | "costs" | "pnl" | "dividends" | "tax" | "import";
 const TABS: { value: Tab; label: string }[] = [
@@ -49,6 +49,46 @@ function SignalBadge({ s }: { s: NonNullable<Holding["signal"]> }) {
     <Link href={s.href} title={`${state.method} · ${state.validation.status}`} className="inline-flex">
       <Badge tone={tone}>{state.action.replaceAll("_", " ").toLowerCase()}{state.validation.status === "uncalibrated" ? " ·?" : ""}</Badge>
     </Link>
+  );
+}
+
+const monthLabel = (m: string) => new Date(`${m}-01T00:00:00`).toLocaleDateString("en-IN", { month: "short", year: "numeric" });
+
+/** "ELSS · 26 locked": opens the unlock schedule. A "?" marks a fund recognised as ELSS by its name only. */
+function ElssBadge({ e, open, onToggle }: { e: ElssLock; open: boolean; onToggle: () => void }) {
+  const unverified = e.detected && !e.detected.verified;
+  const label = e.locked_units > 0 ? `ELSS · ${units(e.locked_units)} locked` : e.unknown_units > 0 ? "ELSS · dates unknown" : "ELSS · all unlocked";
+  return (
+    <button type="button" aria-expanded={open} onClick={(ev) => { ev.stopPropagation(); onToggle(); }}
+      title={`${e.detected?.why ?? ""}. ${e.rule}. Click for the unlock schedule.`}>
+      <Badge tone={e.locked_units > 0 ? "warn" : e.unknown_units > 0 ? "neutral" : "gain"}>{label}{unverified ? " ?" : ""}</Badge>
+    </button>
+  );
+}
+
+/** Locked / unlocked units and value, the next unlock and the month-by-month unlock schedule of an ELSS holding. */
+function ElssSchedule({ e }: { e: ElssLock }) {
+  return (
+    <div className="space-y-3">
+      <div className="grid gap-3 sm:grid-cols-3">
+        <div><p className="text-[11px] text-muted">Can be redeemed today</p><p className="num text-sm font-medium">{units(e.unlocked_units)} units · {inr(e.unlocked_value)}</p></div>
+        <div><p className="text-[11px] text-muted">Locked</p><p className="num text-sm font-medium">{units(e.locked_units)} units · {inr(e.locked_value)}</p></div>
+        <div><p className="text-[11px] text-muted">Next unlock</p><p className="num text-sm font-medium">{e.next_unlock ? `${day(e.next_unlock.day)}: ${units(e.next_unlock.units)} units · ${inr(e.next_unlock.value)}` : "none: nothing is locked"}</p></div>
+      </div>
+      {e.unknown_units > 0 && <p className="text-xs text-warn">{units(e.unknown_units)} units have no purchase date ({inr(e.unknown_value)}): set the date on the opening balance to know whether they are free.</p>}
+      {e.schedule.length > 0 && (
+        <Table label="ELSS unlock schedule">
+          <thead><tr><th>Month</th><th>First unlock</th><th className="text-right">Lots</th><th className="text-right">Units unlocking</th><th className="text-right">Value today</th></tr></thead>
+          <tbody>{e.schedule.map((m) => (
+            <tr key={m.month}><td>{monthLabel(m.month)}</td><td className="num text-xs">{day(m.first)}</td><td className="num text-right">{m.lots}</td>
+              <td className="num text-right">{units(m.units)}</td><td className="num text-right">{inr(m.value)}</td></tr>
+          ))}</tbody>
+        </Table>
+      )}
+      <p className="text-[11px] text-muted">{e.rule}. Redemptions are first-in-first-out, so the locked lots are the newest. Values at today&apos;s NAV{e.price != null ? ` (₹${e.price})` : " (no NAV yet)"}. {e.detected?.why}.</p>
+      {e.notes.length > 0 && <ul className="list-disc pl-4 text-[11px] text-muted">{e.notes.map((n) => <li key={n}>{n}</li>)}</ul>}
+      <p className="text-[10px] text-muted/80">Source: {e.source}</p>
+    </div>
   );
 }
 
@@ -101,6 +141,12 @@ function HoldingEditor({ h, onSaved }: { h: Holding; onSaved: () => void }) {
       {error ? <ErrorNote error={error} onRetry={reload} /> : !data ? <SkeletonRows rows={3} /> : (
         <>
           {data.warnings.length > 0 && <ul className="rounded-lg bg-warn-soft px-3 py-2 text-xs">{data.warnings.map((w) => <li key={w}>{w}</li>)}</ul>}
+          {(data.elss ?? h.elss) && (
+            <div className="rounded-lg border border-border px-3 py-3">
+              <p className="mb-2 text-xs font-medium">ELSS lock-in</p>
+              <ElssSchedule e={(data.elss ?? h.elss)!} />
+            </div>
+          )}
           <div>
             <p className="mb-1 text-xs font-medium">Open lots (FIFO order)</p>
             <Table label="Open lots">
@@ -178,6 +224,7 @@ function SyncStrip() {
 
 function Holdings({ snap, onChanged, updating }: { snap: Snapshot; onChanged: () => void; updating: { done: number; total: number } | null }) {
   const [open, setOpen] = useState<number | null>(null);
+  const [elssOpen, setElssOpen] = useState<number | null>(null);
   const [showClosed, setShowClosed] = useState(false);
   const rows = snap.holdings.filter((h) => showClosed || !h.closed);
   const openH = snap.holdings.find((h) => h.id === open) ?? null;
@@ -210,6 +257,7 @@ function Holdings({ snap, onChanged, updating }: { snap: Snapshot; onChanged: ()
                     {(h.sources ?? []).map((src) => <SourceBadge key={src} source={src} />)}
                     {h.broker_baseline && <Badge tone="neutral">broker avg cost</Badge>}
                     {!h.cost_known && <Badge tone="warn">cost unknown</Badge>}
+                    {h.elss && <ElssBadge e={h.elss} open={elssOpen === h.id} onToggle={() => setElssOpen(elssOpen === h.id ? null : h.id)} />}
                     {h.warnings.length > 0 && <Badge tone="warn">{h.warnings.length} note{h.warnings.length > 1 ? "s" : ""}</Badge>}
                   </span>
                 </td>
@@ -229,6 +277,9 @@ function Holdings({ snap, onChanged, updating }: { snap: Snapshot; onChanged: ()
                 <td className={cx("num text-right", h.realised > 0 ? "text-gain" : h.realised < 0 ? "text-loss" : "text-muted")}>{h.realised ? signed(h.realised) : "—"}</td>
                 <td onClick={(e) => e.stopPropagation()}>{h.signal ? <SignalBadge s={h.signal} /> : <span className="text-[11px] text-muted">—</span>}</td>
               </tr>
+              {h.elss && elssOpen === h.id && (
+                <tr><td colSpan={9} className="bg-background-subtle"><ElssSchedule e={h.elss} /></td></tr>
+              )}
             </Fragment>
           ))}
         </tbody>

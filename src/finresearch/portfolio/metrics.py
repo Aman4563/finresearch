@@ -107,6 +107,7 @@ PORTFOLIO_METRICS = (
     "max_position_pct", "max_sector_pct", "n_effective", "sip_missed", "dividend_received",
     "days_to_holding_ex_date", "days_to_holding_results_meeting", "days_since_holding_results",
     "fund_ter_change_pp", "advance_tax_due_inr", "regular_plan_value_inr", "unpriced_holdings",
+    "days_to_elss_unlock",
 )  # fmt: skip
 NEGATIVE_ACTIONS = ("REDUCE", "SELL", "AVOID", "EXIT")
 FRESH_DAYS = 5  # the daily valuation is used for alerts only when it is at most this many days old
@@ -169,6 +170,66 @@ def lt_watch(session: Session, data: Any, v: dict[str, Any], today: date) -> lis
     cats = {int(h): x.get("category") for h, x in (v.get("holdings") or {}).items()}
     lots = open_lots_with_prices(data, cached_prices(v), cats)
     return turning_long_term(lots, disposal_rows(data, cats), today, slab_rate(session))
+
+
+def elss_unlocks(session: Session, data: Any, today: date, days: int | None = None) -> list[dict[str, Any]]:
+    """Every future unlock of the ELSS holdings' locked lots (portfolio.elss), soonest first, within `days` when given:
+    {holding_id, name, account, day, days, units, value, verified}. The category is the daily valuation's AMFI
+    category, else the holding's own or its name (unverified); the value uses the valuation's live price (None
+    without one)."""
+    from finresearch.portfolio import cache, elss
+
+    v = cache.read(session, cache.VALUATION)
+    px = cached_prices(v)
+    out = []
+    for h in data.holdings:
+        lots = [lot for lot in data.lots.get(h.id, []) if lot.open_quantity > elss.EPS]
+        det = elss.detect(h.asset_type, h.name, elss.category_of(h, v)) if lots else None
+        if det is None:
+            continue
+        view = elss.lockin(lots, today, px.get(h.id), det)
+        for lot in view["lots"]:
+            if lot["status"] != "locked":
+                continue
+            d = date.fromisoformat(lot["unlocks"])
+            if days is None or (d - today).days <= days:
+                out.append({"holding_id": h.id, "name": h.name, "account": h.account, "day": lot["unlocks"],
+                            "days": (d - today).days, "units": lot["units"],
+                            "value": None if px.get(h.id) is None else
+                            round(float(Decimal(str(lot["units"])) * px[h.id]), 2),
+                            "verified": det.verified})  # fmt: skip
+    # one row per holding and day (a month's SIP instalments bought on one day unlock together)
+    merged: dict[tuple[int, str], dict[str, Any]] = {}
+    for x in out:
+        k = (x["holding_id"], x["day"])
+        if k in merged:
+            m = merged[k]
+            m["units"] = round(m["units"] + x["units"], 4)
+            m["value"] = (
+                None if m["value"] is None or x["value"] is None else round(m["value"] + x["value"], 2)
+            )
+        else:
+            merged[k] = dict(x)
+    return sorted(merged.values(), key=lambda x: (x["day"], x["name"]))
+
+
+def elss_unlock_metric(session: Session, data: Any, today: date) -> tuple[Any, ...]:
+    from finresearch.portfolio import cache, elss
+
+    v = cache.read(session, cache.VALUATION)
+    if not any(elss.detect(h.asset_type, h.name, elss.category_of(h, v)) for h in data.holdings
+               if any(lot.open_quantity > elss.EPS for lot in data.lots.get(h.id, []))):  # fmt: skip
+        return (None, "no ELSS holding (AMFI category, else 'ELSS' in the name)")
+    ahead = elss_unlocks(session, data, today)
+    if not ahead:
+        return (None, "every ELSS unit is past its 3-year lock-in (or its purchase date is unknown)")
+    x = ahead[0]
+    val = f" (₹{x['value']:,.0f})" if x["value"] is not None else ""
+    return (
+        Decimal(x["days"]),
+        "open ELSS lots and their 3-year lock-in from allotment (portfolio.elss)",
+        f"{x['name']}: {x['units']:g} units{val} unlock on {x['day']}",
+    )
 
 
 def advance_tax(session: Session, data: Any, today: date) -> dict[str, Any]:
@@ -246,6 +307,7 @@ def alert_metrics(session: Session) -> Out:
     out["sip_missed"] = (Decimal(len(late)), f"{len(sips)} SIP(s) inferred from monthly purchases; "
                          f"{len(late)} missed or stopped (no instalment for over 35 days)",
                          ", ".join(f"{x.name}: {x.status}, last {x.last}" for x in late[:3]) or None)  # fmt: skip
+    out["days_to_elss_unlock"] = elss_unlock_metric(session, data, today)
     at = advance_tax(session, data, today)
     nxt = at["next"]
     if nxt is None:

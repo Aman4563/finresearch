@@ -11,6 +11,9 @@ export type LtLot = {
   holding_id: number; name: string; account: string; acquired: string; quantity: number; lt_date: string; days: number;
   gain: number; tax_now: number; tax_later: number; saved: number; older_lots: number; price: number;
 };
+export type ElssUnlock = {
+  holding_id: number; name: string; account: string; day: string; days: number; units: number; value: number | null; verified: boolean;
+};
 export type TaxItem = { day: string; kind: string; title: string; verified: boolean; note: string };
 export type AdvanceTax = {
   fy: number; capital_gains_tax: number; dividends: number; dividend_tax: number; total: number; threshold: number;
@@ -28,7 +31,7 @@ export type BriefSettings = { enabled: boolean; channels: Channel[]; daily_perfo
 export type Brief = {
   day: string; generated_at: string; has_portfolio: boolean; headline: string; events: BriefEvent[];
   rules_fired: FiredAlert[]; since: string; signal_changes: SignalChange[]; sip: Sip[]; sip_missed: Sip[];
-  long_term: LtLot[]; tax_calendar: TaxItem[]; advance_tax: AdvanceTax | null;
+  long_term: LtLot[]; tax_calendar: TaxItem[]; advance_tax: AdvanceTax | null; elss_unlocks?: ElssUnlock[];
   health: { level: "warn" | "info"; text: string }[]; performance: ValueChange | null; settings: BriefSettings;
   method: string; behaviour_note: string; disclaimer: string;
   history: { id: number; kind: string; at: string; message: string }[];
@@ -43,11 +46,12 @@ export type Digest = {
   day: string; window_days: number; value: ValueChange | null;
   contributors: { from: string; to: string; top: Contributor[]; bottom: Contributor[] } | null;
   signals: HeldSignal[]; benchmark: string; method: string; behaviour_note: string; disclaimer: string;
+  elss_unlocks?: ElssUnlock[];
 };
 
 export type CalendarView = {
   from: string; days: number; items: BriefEvent[]; tax: TaxItem[]; advance_tax: AdvanceTax | null; long_term: LtLot[];
-  sip: Sip[]; events_read: string | null; bse_only: string[];
+  sip: Sip[]; events_read: string | null; bse_only: string[]; elss_unlocks?: ElssUnlock[];
 };
 
 export type Strip = {

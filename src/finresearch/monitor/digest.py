@@ -156,6 +156,21 @@ def holding_events(ev: dict[str, Any], today: date, days: int = EVENT_DAYS) -> l
     return out
 
 
+def elss_this_month(s: Session, data: Any, today: date) -> list[dict[str, Any]]:
+    """ELSS lots that finish their 3-year lock-in from today to the end of this calendar month (portfolio.elss)."""
+    from finresearch.portfolio.metrics import elss_unlocks
+
+    month_end = (today.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
+    return elss_unlocks(s, data, today, (month_end - today).days)
+
+
+def elss_event(x: dict[str, Any]) -> dict[str, Any]:
+    val = f" (about {_inr(x['value'])})" if x.get("value") is not None else ""
+    return {"day": x["day"], "kind": "elss_unlock", "title": f"{x['name']}: {x['units']:g} ELSS units{val} finish "
+            "the 3-year lock-in and can be redeemed" + ("" if x["verified"] else " [ELSS by name, unverified]"),
+            "path": "/portfolio"}  # fmt: skip
+
+
 # --------------------------------------------------------------------------- the brief
 def build_brief(s: Session, now: datetime) -> dict[str, Any]:
     """The morning brief as structured data (the /brief page renders it; `brief_text` makes the push message)."""
@@ -187,6 +202,10 @@ def build_brief(s: Session, now: datetime) -> dict[str, Any]:
             events.append({"day": x["lt_date"], "kind": "long_term", "title": f"{x['name']}: a lot turns long-term "
                            f"(tax on a sale: {_inr(x['tax_now'])} now vs {_inr(x['tax_later'])} after)",
                            "path": "/portfolio"})  # fmt: skip
+    elss_month = elss_this_month(s, data, today) if has_pf else []
+    for x in elss_month:
+        if 0 <= x["days"] <= EVENT_DAYS:
+            events.append(elss_event(x))
     tax_cal = calendar(today, fiscal_year(today), horizon_days=120)
     for t in tax_cal:
         if (date.fromisoformat(t["day"]) - today).days <= 14:
@@ -260,6 +279,7 @@ def build_brief(s: Session, now: datetime) -> dict[str, Any]:
                     if quiet else _headline(rules, changes, events, missed, today, disc),
         "events": events, "rules_fired": rules, "since": since.isoformat(), "signal_changes": changes,
         "sip": sips, "sip_missed": missed, "long_term": lots, "tax_calendar": tax_cal, "advance_tax": at,
+        "elss_unlocks": elss_month,
         "health": health, "performance": perf, "settings": settings.model_dump(mode="json"), "disclosures": disc,
         "method": "Deterministic templates over the local database: holdings' events and signals from the monitor's "
                   "daily pass (NSE, AMFI), rule alerts, the dated tax table. Nothing here is sent to an LLM.",
@@ -341,6 +361,7 @@ def brief_text(b: dict[str, Any]) -> str:
 def build_digest(s: Session, now: datetime, days: int = 7) -> dict[str, Any]:
     from finresearch.fincalc.dates import to_ist
     from finresearch.portfolio import cache
+    from finresearch.portfolio.report import load
 
     today = to_ist(now).date()
     snaps = _snaps(s, today - timedelta(days=days + 4))
@@ -358,8 +379,10 @@ def build_digest(s: Session, now: datetime, days: int = 7) -> dict[str, Any]:
             names = {hid: h["name"] for hid, h in (v.get("holdings") or {}).items()}
             contrib = {"from": a, "to": b, **contributors(hist, names, a, b)}
     sg = cache.read(s, cache.SIGNALS)
+    data = load(s)
     return {
         "day": today.isoformat(), "generated_at": now.isoformat(), "window_days": days, "value": vc,
+        "elss_unlocks": elss_this_month(s, data, today) if data.holdings else [],
         "contributors": contrib, "signals": sorted((sg.get("items") or {}).values(), key=lambda x: -(x.get("weight_pct") or 0))[:10],
         "benchmark": "Comparison with NIFTYBEES over the same window needs the portfolio value history "
                      "(portfolio analytics); not shown yet.",
@@ -385,6 +408,8 @@ def digest_text(d: dict[str, Any]) -> str:
             lines.append("Up most: " + ", ".join(f"{x['name']} {_inr(x['inr'])}" for x in c["top"]))
         if c.get("bottom"):
             lines.append("Down most: " + ", ".join(f"{x['name']} {_inr(x['inr'])}" for x in c["bottom"]))
+    for x in (d.get("elss_unlocks") or [])[:3]:
+        lines.append(f"ELSS unlock {date.fromisoformat(x['day']):%d %b}: {x['name']} {x['units']:g} units")
     lines.append("Personal research, not advice.")
     text = "\n".join(lines)
     return text if len(text) <= PUSH_MAX else text[: PUSH_MAX - 1] + "…"

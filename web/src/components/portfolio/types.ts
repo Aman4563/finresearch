@@ -10,6 +10,18 @@ export const TAX_CLASS_LABEL: Record<TaxClass, string> = {
   other: "Other asset",
 };
 
+/** ELSS lock-in of a fund holding (finresearch.portfolio.elss): each lot is locked 3 years from its allotment. */
+export type ElssLock = {
+  detected: { verified: boolean; why: string } | null;
+  as_of: string; price: number | null;
+  locked_units: number; locked_value: number | null; unlocked_units: number; unlocked_value: number | null;
+  unknown_units: number; unknown_value: number | null; sellable_units: number;
+  next_unlock: { day: string; days: number; units: number; value: number | null } | null;
+  schedule: { month: string; first: string; units: number; value: number | null; lots: number }[];
+  lots: { acquired: string | null; origin: string; units: number; unlocks: string | null; status: "locked" | "unlocked" | "unknown" }[];
+  rule: string; source: string; notes: string[];
+};
+
 export type Holding = {
   id: number;
   name: string;
@@ -58,6 +70,8 @@ export type Holding = {
   broker_baseline?: boolean;
   /** the price is still being fetched (the page streams it in) */
   pending?: boolean;
+  /** ELSS lock-in, for a fund recognised as ELSS (else null) */
+  elss?: ElssLock | null;
 };
 
 export type Slice = { label: string; value: number };
@@ -97,6 +111,7 @@ export type HoldingDetail = {
   lots: { id: number; acquired: string | null; origin: string; quantity: string; open_quantity: string; cost_per_unit: string | null; stt_paid: boolean }[];
   disposals: { id: number; acquired: string | null; sold: string; quantity: string; cost: string | null; proceeds: string; origin: string }[];
   warnings: string[];
+  elss?: ElssLock | null;
 };
 
 export type Reconciliation = { name: string; account: string; ikey: string; statement_units: string; lot_units: string; diff: string; ok: boolean; as_of: string | null };

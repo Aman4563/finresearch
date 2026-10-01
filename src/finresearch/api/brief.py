@@ -163,12 +163,12 @@ def strip(s: Any, now: datetime) -> dict[str, Any]:
 
 def calendar_view(s: Any, now: datetime, days: int = CALENDAR_DAYS) -> dict[str, Any]:
     """Dated items for the next `days` days: holdings' corporate actions and results meetings, watched IPOs, SIP
-    instalments, lots turning long-term and the tax calendar."""
+    instalments, lots turning long-term, ELSS lots finishing their lock-in and the tax calendar."""
     from finresearch.fincalc.dates import fiscal_year, to_ist
     from finresearch.fincalc.tax_calendar import calendar
-    from finresearch.monitor.digest import holding_events, ipo_events
+    from finresearch.monitor.digest import elss_event, holding_events, ipo_events
     from finresearch.portfolio import cache
-    from finresearch.portfolio.metrics import advance_tax, lt_watch
+    from finresearch.portfolio.metrics import advance_tax, elss_unlocks, lt_watch
     from finresearch.portfolio.report import load
     from finresearch.portfolio.sip import sip_health
 
@@ -186,12 +186,14 @@ def calendar_view(s: Any, now: datetime, days: int = CALENDAR_DAYS) -> dict[str,
     for x in lots:
         items.append({"day": x["lt_date"], "kind": "long_term", "title": f"{x['name']}: a lot turns long-term",
                       "path": "/portfolio"})  # fmt: skip
+    unlocks = elss_unlocks(s, data, today, days) if data.holdings else []
+    items += [elss_event(x) for x in unlocks]
     tax = calendar(today, fiscal_year(today), horizon_days=max(days, 120))
     items += [{"day": t["day"], "kind": "tax", "title": t["title"], "verified": t["verified"], "note": t["note"],
                "path": "/brief#tax"} for t in tax if t["day"] <= (today + timedelta(days=days)).isoformat()]  # fmt: skip
     return {"from": today.isoformat(), "days": days, "items": sorted(items, key=lambda e: (e["day"], e["kind"])),
             "tax": tax, "advance_tax": advance_tax(s, data, today) if data.holdings else None,
-            "long_term": lots, "sip": [x.json() for x in sips], "events_read": ev.get("day"),
+            "long_term": lots, "sip": [x.json() for x in sips], "elss_unlocks": unlocks, "events_read": ev.get("day"),
             "bse_only": ev.get("bse_only") or []}  # fmt: skip
 
 
