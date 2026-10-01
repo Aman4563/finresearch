@@ -118,7 +118,7 @@ export default function Bonds() {
                           ) : null;
                         })()}
                       </td>
-                      <td className="num text-right">{b.coupon_pct != null ? `${b.coupon_pct}%` : "—"}</td>
+                      <td className="num text-right">{b.coupon_pct != null ? `${Number(b.coupon_pct).toFixed(2)}%` : "—"}</td>
                       <td className="num text-xs">{day(b.maturity)}</td>
                       <td className="num text-right">{b.last_price ? inr(b.last_price) : "—"}</td>
                       <td>

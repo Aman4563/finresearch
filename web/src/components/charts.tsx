@@ -34,8 +34,9 @@ type Fmt = (v: number) => string;
 export const fmtINR: Fmt = (v) => `₹${v.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
 export const fmtCompactINR: Fmt = (v) => {
   const a = Math.abs(v);
-  if (a >= 1e7) return `₹${(v / 1e7).toFixed(2)} Cr`;
-  if (a >= 1e5) return `₹${(v / 1e5).toFixed(2)} L`;
+  // a no-break space: an axis tick or a sentence never splits "₹60.00" from its "L"
+  if (a >= 1e7) return `₹${(v / 1e7).toFixed(2)}\u00a0Cr`;
+  if (a >= 1e5) return `₹${(v / 1e5).toFixed(2)}\u00a0L`;
   return `₹${v.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
 };
 export const fmtPct: Fmt = (v) => `${v.toFixed(2)}%`;

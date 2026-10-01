@@ -273,7 +273,7 @@ export function HelpPage() {
                     <div className="flex items-center gap-2.5">
                       <span className="grid size-8 place-items-center rounded-lg bg-brand-soft text-brand transition group-hover:scale-110 [&_svg]:size-4">{n.icon}</span>
                       <span className="flex-1 text-sm font-semibold">{n.label}</span>
-                      {n.keys && <span className="flex gap-1">{n.keys.split(" ").map((k) => <Kbd key={k}>{k}</Kbd>)}</span>}
+                      {n.keys && <span className="flex gap-1">{n.keys.split(" ").map((k, i) => <Kbd key={i}>{k}</Kbd>)}</span>}
                     </div>
                     <p className="mt-2 text-xs text-muted">{n.description}</p>
                     <ul className="mt-2 space-y-1">

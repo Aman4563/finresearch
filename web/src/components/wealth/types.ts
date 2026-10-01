@@ -104,7 +104,7 @@ export type GoalPlan = {
 
 export const inr = (v: number | null | undefined, d = 0) =>
   v == null ? "—" : `₹${v.toLocaleString("en-IN", { maximumFractionDigits: d, minimumFractionDigits: d })}`;
-export const pc = (v: number | null | undefined, d = 1) => (v == null ? "—" : `${v.toFixed(d)} %`);
+export const pc = (v: number | null | undefined, d = 1) => (v == null ? "—" : `${v.toFixed(d)}%`);
 export const prob = (p: number | null | undefined) =>
-  p == null ? "—" : p > 0 && p < 0.005 ? "<1 %" : p < 1 && p > 0.995 ? ">99 %" : `${Math.round(p * 100)} %`;
+  p == null ? "—" : p > 0 && p < 0.005 ? "<1%" : p < 1 && p > 0.995 ? ">99%" : `${Math.round(p * 100)}%`;
 export const num = (s: string) => (s.trim() === "" ? null : s.trim());
