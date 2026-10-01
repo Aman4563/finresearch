@@ -600,6 +600,22 @@ METRICS: list[MetricSpec] = [
     ),
     _m(
         "portfolio",
+        "days_to_elss_unlock",
+        "ELSS units unlock",
+        "days until locked ELSS units unlock",
+        "days",
+        "daily",
+        "Days until the next lot of an ELSS (tax-saver) fund you hold finishes its 3-year lock-in. Every SIP "
+        "instalment and IDCW reinvestment is locked 3 years from its own allotment (ELSS Scheme 2005); units can "
+        "be redeemed from the day after the third anniversary. The fund is recognised by AMFI's category, else by "
+        "its name.",
+        "open FIFO lots of your funds + portfolio.elss (AMFI category from the daily portfolio pass)",
+        default_op="<=",
+        default_value="7",
+        allows_all=False,
+    ),
+    _m(
+        "portfolio",
         "lt_wait_tax_saved_inr",
         "Tax saved by waiting",
         "tax saved by waiting for lots to turn long-term",
@@ -1254,6 +1270,15 @@ TEMPLATES: list[Template] = [
         "Lot turning long-term",
         "A lot in profit turns long-term within a week.",
         "days_to_next_lt_lot",
+        "<=",
+        "7",
+    ),
+    Template(
+        "pf-elss-unlock",
+        "portfolio",
+        "ELSS units unlock",
+        "Locked ELSS units finish their 3-year lock-in within a week.",
+        "days_to_elss_unlock",
         "<=",
         "7",
     ),

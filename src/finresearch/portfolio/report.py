@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from finresearch.db.models import PortfolioDisposal, PortfolioHolding, PortfolioLot, PortfolioTxn
 from finresearch.fincalc.dates import fiscal_year
 from finresearch.fincalc.tax import RULES, VERIFY_NOTE, fy_label
+from finresearch.portfolio import elss
 from finresearch.portfolio.tax import (
     DisposalRow,
     HoldingTax,
@@ -124,6 +125,8 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
         elif units > 0 or why_not is not None:
             excluded += 1
         unreal = (value - cost) if value is not None and known and units > 0 else None
+        det = elss.detect(h.asset_type, h.name, category) if units > 0 else None
+        lock = elss.lockin(open_lots, today, p.price, det) if det is not None else None
         if units > 0:
             unknown_cost += 0 if known else 1
             unpriced += 1 if value is None else 0
@@ -161,7 +164,7 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
             "market_cap_cr": _f(p.market_cap_cr), "cap_bucket": (cap_bucket(p.market_cap_cr) if h.asset_type == "stock" and eff == "equity"
                                                                   else "Not equity" if h.asset_type == "stock"
                                                                   else fund_cap_bucket(category, eff)),
-            "lots": len(open_lots), "closed": units <= 0, "signal": _signal(h, p),
+            "lots": len(open_lots), "closed": units <= 0, "signal": _signal(h, p), "elss": lock,
             "warnings": (h.meta or {}).get("lot_warnings") or [],
             "sources": sorted({t.source for t in data.txns.get(h.id, [])}),
             "broker_baseline": any(t.kind == "opening" and (t.meta or {}).get("baseline")
@@ -282,8 +285,14 @@ def tax_view(s: Session, prices: dict[int, PriceInfo], today: date, slab: Decima
     px: dict[int, Decimal] = {}
     for h in data.holdings:
         ht = holding_tax(h, cats.get(h.id))
-        lots = [OpenLot(ht, lot.acquired, lot.open_quantity, lot.cost_per_unit, lot.stt_paid)
-                for lot in data.lots.get(h.id, []) if lot.open_quantity > Decimal("0.0005")]  # fmt: skip
+        open_ = [lot for lot in data.lots.get(h.id, []) if lot.open_quantity > Decimal("0.0005")]
+        if elss.detect(h.asset_type, h.name, cats.get(h.id) or h.category) is not None:
+            # an ELSS lot within its 3-year lock-in cannot be redeemed, so harvesting never suggests it. The locked
+            # lots are the newest (FIFO), so what is left is still a FIFO prefix
+            open_ = [lot for lot in open_ if lot.acquired is None or today >= elss.unlock_date(lot.acquired)]
+        lots = [
+            OpenLot(ht, lot.acquired, lot.open_quantity, lot.cost_per_unit, lot.stt_paid) for lot in open_
+        ]
         if lots:
             lots_by[h.id] = lots
         p = prices.get(h.id)

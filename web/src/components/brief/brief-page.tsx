@@ -15,15 +15,15 @@ import { BriefDisclosuresCard } from "@/components/brief/disclosures";
 import { API_URL, api, day, when, useApi } from "@/lib/api";
 
 import {
-  type AdvanceTax, type Brief, type BriefEvent, type BriefSettings, type CalendarView, type Channel, type Digest, type LtLot, type Sip, inr,
+  type AdvanceTax, type Brief, type BriefEvent, type BriefSettings, type CalendarView, type Channel, type Digest, type ElssUnlock, type LtLot, type Sip, inr,
 } from "./types";
 
 const KIND_LABEL: Record<string, string> = {
   ipo: "IPO", corporate_action: "Ex-date", results: "Results", board_meeting: "Board", sip: "SIP", long_term: "Long-term",
-  tax: "Tax", fy_end: "Tax", itr: "Tax", advance_tax: "Tax",
+  tax: "Tax", fy_end: "Tax", itr: "Tax", advance_tax: "Tax", elss_unlock: "ELSS",
 };
 const KIND_TONE: Record<string, "brand" | "info" | "warn" | "accent" | "neutral" | "gain"> = {
-  ipo: "brand", corporate_action: "info", results: "accent", board_meeting: "neutral", sip: "gain", long_term: "warn", tax: "warn",
+  ipo: "brand", corporate_action: "info", results: "accent", board_meeting: "neutral", sip: "gain", long_term: "warn", tax: "warn", elss_unlock: "gain",
 };
 const ACTION_TONE: Record<string, "gain" | "loss" | "neutral"> = { BUY: "gain", ACCUMULATE: "gain", REDUCE: "loss", SELL: "loss", AVOID: "loss" };
 
@@ -31,6 +31,7 @@ const TERMS = {
   twr: "Time-weighted return: the portfolio's return with new money removed, so buying more or selling does not look like a gain or a loss. Each day: (value − that day's new money) ÷ previous value, chained.",
   lt: "Long-term: held for more than 12 months (listed equity and equity funds) or 24 months (other listed securities). Equity long-term gains are taxed at 12.5 % above the ₹1.25 lakh yearly exemption; short-term at 20 % (plus 4 % cess). FIFO: the oldest lot of the same account or folio sells first.",
   advance: "Advance tax: tax paid during the year in four instalments (15 %, 45 %, 75 %, 100 % by 15 June, September, December and March) when the year's tax is ₹10,000 or more. [unverified]: long-standing rules the app could not re-read from incometax.gov.in; verify each year.",
+  elss: "ELSS (tax-saver) units are locked for 3 years from the allotment of each lot: every SIP instalment and IDCW reinvestment separately (ELSS Scheme 2005). They can be redeemed from the day after the third anniversary. The fund is recognised by AMFI's category, else by its name.",
   sip: "SIPs are inferred from regular monthly purchases in your imported transactions (the statement carries no mandate). 'Missed' = no instalment for 36–65 days; 'stopped' = more than 65.",
 };
 
@@ -99,6 +100,25 @@ function LtTable({ lots }: { lots: LtLot[] }) {
             <td className="num text-right">{inr(l.tax_now)}</td>
             <td className="num text-right">{inr(l.tax_later)}</td>
             <td className="num text-right font-medium">{inr(l.saved)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </Table>
+  );
+}
+
+function ElssTable({ items }: { items: ElssUnlock[] }) {
+  if (!items.length) return <p className="py-3 text-sm text-muted">No ELSS units finish their lock-in this month.</p>;
+  return (
+    <Table label="ELSS units unlocking this month">
+      <thead><tr><th>Holding</th><th className="text-right">Unlocks</th><th className="text-right">Units</th><th className="text-right">Value today</th></tr></thead>
+      <tbody>
+        {items.map((x) => (
+          <tr key={`${x.holding_id}-${x.day}`}>
+            <td><p className="font-medium">{x.name}</p><p className="text-[11px] text-muted">{x.account}{x.verified ? "" : " · ELSS by name [unverified]"}</p></td>
+            <td className="num text-right">{day(x.day)} <span className="text-muted">({x.days}d)</span></td>
+            <td className="num text-right">{x.units.toLocaleString("en-IN", { maximumFractionDigits: 3 })}</td>
+            <td className="num text-right">{inr(x.value)}</td>
           </tr>
         ))}
       </tbody>
@@ -307,6 +327,10 @@ export function BriefPage() {
               <Card title={<>Lots turning long-term <InfoTip>{TERMS.lt}</InfoTip></>} icon={<Hourglass className="size-4" />}
                 subtitle="Tax shown before any benefit: what a sale costs today versus after the date, at today's price.">
                 <LtTable lots={b.long_term} />
+              </Card>
+              <Card title={<>ELSS unlocks this month <InfoTip>{TERMS.elss}</InfoTip></>} icon={<Hourglass className="size-4" />}
+                subtitle="Tax-saver fund units that finish their 3-year lock-in by the end of the month. Unlocked is not a reason to sell.">
+                <ElssTable items={b.elss_unlocks ?? []} />
               </Card>
               <Card title={<>SIP health <InfoTip>{TERMS.sip}</InfoTip></>} icon={<Repeat className="size-4" />}
                 subtitle="A SIP is a discipline, not an edge: in rising markets a lump sum does better on average.">

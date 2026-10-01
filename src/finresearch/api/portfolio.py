@@ -292,6 +292,28 @@ def add_portfolio_routes(app: FastAPI, *, scheme_rows: Callable[[], Awaitable[li
         with session_scope() as s:
             return {"targets": set_targets(s, body), "classes": list(ASSET_CLASSES)}
 
+    def _elss_view(s: Any, h: Any, lots: list[Any]) -> dict[str, Any] | None:
+        """The ELSS lock-in of a fund holding (portfolio.elss), or None. Category and NAV come from the NAVAll rows
+        already in the price cache (no network here), else from the monitor's daily valuation."""
+        from finresearch.portfolio import cache as pf_cache
+        from finresearch.portfolio import elss
+        from finresearch.portfolio.valuation import fund_prices
+
+        if h.asset_type != "mf":
+            return None
+        category, price = None, None
+        rows = _cached(("navall",))
+        if rows is not _MISS:
+            p = fund_prices([h], rows, None)[h.id]
+            if p.source == "AMFI NAVAll":
+                category, price = p.category, p.price
+        v = pf_cache.read(s, pf_cache.VALUATION)
+        if price is None:
+            got = ((v.get("holdings") or {}).get(str(h.id)) or {}).get("price")
+            price = Decimal(str(got)) if got is not None else None
+        det = elss.detect(h.asset_type, h.name, elss.category_of(h, v, category))
+        return None if det is None else elss.lockin(lots, src().today(), price, det)
+
     @app.get("/api/portfolio/holdings/{holding_id}")
     def holding(holding_id: int) -> dict[str, Any]:
         from finresearch.db.models import PortfolioDisposal, PortfolioHolding, PortfolioLot, PortfolioTxn
@@ -307,7 +329,7 @@ def add_portfolio_routes(app: FastAPI, *, scheme_rows: Callable[[], Awaitable[li
             ).all()
             disp = s.scalars(select(PortfolioDisposal).where(PortfolioDisposal.holding_id == h.id)
                              .order_by(PortfolioDisposal.sold, PortfolioDisposal.id)).all()  # fmt: skip
-            return {
+            return {"elss": _elss_view(s, h, lots),
                 "id": h.id, "name": h.name, "account": h.account, "asset_type": h.asset_type,
                 "transactions": [{"id": t.id, "day": t.day.isoformat(), "kind": t.kind, "quantity": _n(t.quantity),
                                   "price": _n(t.price), "amount": _n(t.amount), "charges": _n(t.charges),
