@@ -203,9 +203,9 @@ function EmptyChartNote({ next, scored }: { next: Forecast | null; scored: Forec
 
 function InstrumentLine({ i }: { i: Instrument }) {
   return (
-    <div className="flex min-w-0 items-center gap-2 px-1 text-xs">
+    <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 px-1 text-xs">
       <Badge tone="brand">{ASSET_LABEL[i.asset]}</Badge>
-      <Link href={i.run != null ? `/runs/${i.run}` : "/monitor"} className="truncate font-medium hover:text-brand">{i.name}</Link>
+      <Link href={i.run != null ? `/runs/${i.run}` : "/monitor"} className="min-w-0 font-medium break-words hover:text-brand">{i.name}</Link>
       <span className="num shrink-0 text-muted">{i.instrument}</span>
       {i.watched && <Badge tone="info">watched</Badge>}
     </div>
@@ -301,8 +301,8 @@ function ForecastTable({ rows, total }: { rows: Forecast[]; total: number }) {
                 <div className="flex items-center gap-2">
                   <Badge tone="brand">{ASSET_LABEL[f.asset] ?? f.asset}</Badge>
                   {f.run_id
-                    ? <Link href={`/runs/${f.run_id}`} className="block max-w-44 truncate font-medium hover:text-brand" title={`${f.name ?? f.instrument}: research run ${f.run_id}`}>{f.name ?? f.instrument}</Link>
-                    : <span className="block max-w-44 truncate font-medium" title={f.source}>{f.name ?? f.instrument}</span>}
+                    ? <Link href={`/runs/${f.run_id}`} className="line-clamp-2 max-w-44 font-medium whitespace-normal hover:text-brand" title={`${f.name ?? f.instrument}: research run ${f.run_id}`}>{f.name ?? f.instrument}</Link>
+                    : <span className="line-clamp-2 max-w-44 font-medium whitespace-normal" title={f.source}>{f.name ?? f.instrument}</span>}
                 </div>
               </td>
               <td><span className="inline-flex items-center gap-1"><Badge status={f.action}>{f.action}</Badge>{f.validation_status === "shadow" && <span title="Shadow test: logged for out-of-sample scoring, not used for the call."><Badge tone="neutral">shadow</Badge></span>}</span></td>

@@ -6,7 +6,7 @@ import Link from "next/link";
 import { CopyCommand, ResearchButton, bseCommand } from "@/components/ipo/actions";
 import { IpoSignalLine } from "@/components/ipo/ipo-signal";
 import {
-  LiveDot, SubMeter, TERMS, categoryMins, countdown, dayLabel, daysUntil, inr, isSme, istAt, istDate, lakh, lotCost, lotSourceText,
+  LiveDot, SubMeter, TERMS, biddingOver, categoryMins, countdown, dayLabel, daysUntil, inr, isSme, istAt, istDate, lakh, lotCost, lotSourceText,
   parseBand, relDay, times,
 } from "@/components/ipo/lib";
 import { Badge, InfoTip, cx } from "@/components/ui";
@@ -98,7 +98,8 @@ export function IssueCard({ i, now }: { i: Issue; now: number | null }) {
   const cost = lotCost(i);
   const sub = times(i.times_subscribed);
   const t = issueTiming(i, now);
-  const open = i.phase === "open" || i.phase === "current";
+  const over = biddingOver(i, now);
+  const open = (i.phase === "open" || i.phase === "current") && !over;
   return (
     <article className="group flex flex-col rounded-xl border border-border bg-card p-4 shadow-card transition duration-200 hover:-translate-y-0.5 hover:border-border-strong hover:shadow-glow">
       <div className="flex items-start justify-between gap-3">
@@ -112,7 +113,7 @@ export function IssueCard({ i, now }: { i: Issue; now: number | null }) {
           </p>
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
-          <Badge tone={PHASE_TONE[i.phase]} dot={open}>{i.phase === "current" ? "open" : i.phase}</Badge>
+          {over ? <Badge tone="neutral">closed today</Badge> : <Badge tone={PHASE_TONE[i.phase]} dot={open}>{i.phase === "current" ? "open" : i.phase}</Badge>}
           <Badge tone={isSme(i) ? "accent" : "brand"}>{isSme(i) ? "SME" : "Mainboard"}</Badge>
         </div>
       </div>

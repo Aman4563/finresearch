@@ -12,7 +12,7 @@ import {
 } from "@/components/help/content";
 import { openWelcome } from "@/components/help/welcome";
 import { NAV } from "@/components/shell";
-import { Badge, Button, Callout, cx, EmptyState, PageHeader } from "@/components/ui";
+import { Badge, Button, Callout, cx, EmptyState, PageHeader, ScrollArea } from "@/components/ui";
 
 const SECTIONS = [
   { id: "getting-started", label: "Getting started", icon: <Rocket /> },
@@ -202,14 +202,16 @@ export function HelpPage() {
         </div>
       </div>
 
-      {/* mobile section chips */}
-      <nav aria-label="Help sections" className="-mx-4 mb-6 flex gap-2 overflow-x-auto px-4 pb-1 lg:hidden">
-        {SECTIONS.filter((s) => show(s.id)).map((s) => (
-          <a key={s.id} href={`#${s.id}`}
-            className="flex shrink-0 items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-muted [&_svg]:size-3.5">
-            {s.icon}{s.label}
-          </a>
-        ))}
+      {/* mobile section chips: they overflow a phone, so the strip fades and shows an arrow on the side that scrolls */}
+      <nav aria-label="Help sections" className="mb-6 lg:hidden">
+        <ScrollArea className="-mx-4 flex gap-2 px-4 pb-1">
+          {SECTIONS.filter((s) => show(s.id)).map((s) => (
+            <a key={s.id} href={`#${s.id}`}
+              className="flex shrink-0 items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-muted [&_svg]:size-3.5">
+              {s.icon}{s.label}
+            </a>
+          ))}
+        </ScrollArea>
       </nav>
 
       <div className="grid grid-cols-[minmax(0,1fr)] gap-8 lg:grid-cols-[200px_minmax(0,1fr)]">
@@ -292,7 +294,7 @@ export function HelpPage() {
           {show("glossary") && (
             <Section id="glossary" title="Glossary" icon={<BookA />} count={terms.length}
               description="Indian market terms in plain English. Pages explain them inline with the (?) icon too.">
-              <div className="-mx-4 mb-4 flex gap-1.5 overflow-x-auto px-4 pb-1 sm:mx-0 sm:flex-wrap sm:px-0">
+              <ScrollArea className="-mx-4 mb-4 flex gap-1.5 px-4 pb-1 sm:mx-0 sm:flex-wrap sm:px-0">
                 {categories.map((c) => (
                   <button key={c} type="button" onClick={() => setCat(c)} aria-pressed={cat === c}
                     className={cx("shrink-0 rounded-full px-3 py-1 text-xs font-medium ring-1 ring-inset transition",
@@ -300,7 +302,7 @@ export function HelpPage() {
                     {c}
                   </button>
                 ))}
-              </div>
+              </ScrollArea>
               {terms.length ? (
                 <dl className="grid gap-3 md:grid-cols-2">
                   {terms.map((t) => {

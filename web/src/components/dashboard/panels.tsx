@@ -185,7 +185,7 @@ export function Calendar({ events, now }: { events: Ev[]; now: number }) {
                         <span className={cx("w-1 self-stretch shrink-0 rounded-full sm:hidden", EV_STYLE[e.kind].dot)} aria-hidden />
                         <div className="min-w-0 flex-1">
                           <p className="flex items-center gap-1.5 truncate text-sm font-medium">
-                            {e.live && n === 0 && <LiveDot />}
+                            {e.live && n === 0 && (e.at == null || e.at > now) && <LiveDot />}
                             <span className="truncate">{e.title}</span>
                           </p>
                           <p className="truncate text-xs text-muted"><span className="sm:hidden">{EV_STYLE[e.kind].label} · </span>{e.sub}</p>

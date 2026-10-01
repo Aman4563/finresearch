@@ -61,8 +61,10 @@ export function Card({
       )}
     >
       {(title || actions) && (
-        <div className={cx("flex items-start justify-between gap-3", padded ? "mb-4" : "px-4 pt-4 pb-3 sm:px-5")}>
-          <div className="flex min-w-0 items-start gap-2.5">
+        // wraps when the title needs ~14rem and the actions don't fit beside it (a phone): before, wide actions such as
+        // a segmented control squeezed the title and subtitle into a narrow column
+        <div className={cx("flex flex-wrap items-start justify-between gap-3", padded ? "mb-4" : "px-4 pt-4 pb-3 sm:px-5")}>
+          <div className="flex min-w-0 flex-1 basis-56 items-start gap-2.5">
             {icon && <span className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-lg bg-brand-soft text-brand">{icon}</span>}
             <div className="min-w-0">
               {title && (
@@ -74,7 +76,7 @@ export function Card({
               {subtitle && <p className="mt-0.5 text-xs text-muted">{subtitle}</p>}
             </div>
           </div>
-          {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
+          {actions && <div className="ml-auto flex max-w-full shrink-0 items-center gap-2">{actions}</div>}
         </div>
       )}
       {children}

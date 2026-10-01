@@ -11,7 +11,7 @@ import { KIND_LABEL, ResearchButton } from "@/components/ipo/actions";
 import { BaseRatesCard } from "@/components/ipo/base-rates";
 import { IssueCard, NoLot, PHASE_TONE, ResearchCell, issueTiming, windowText } from "@/components/ipo/issue-card";
 import {
-  LiveDot, SUB_HELP, SubMeter, TERMS, categories, categoryMins, daysUntil, fmtX, inr, int, isSme, lakh, lotCost,
+  LiveDot, SUB_HELP, biddingOver, SubMeter, TERMS, categories, categoryMins, daysUntil, fmtX, inr, int, isSme, lakh, lotCost,
   lotSourceText, parseBand, times, useNow,
 } from "@/components/ipo/lib";
 import { useWatchDetails } from "@/components/monitor/hooks";
@@ -82,9 +82,12 @@ export default function IposPage() {
 
   const kpi = useMemo(() => {
     const open = issues.filter((i) => phaseOf(i) === "open");
+    // "accepting bids" and "closing today" leave out issues whose 5 PM cut-off has passed (still "open" on NSE until
+    // the overnight refresh); the subscription counts keep them, their book is final
+    const bidding = open.filter((i) => !biddingOver(i, now));
     return {
-      open: open.length,
-      closingToday: now == null ? null : open.filter((i) => daysUntil(i.issue_end, now) === 0).length,
+      open: bidding.length,
+      closingToday: now == null ? null : bidding.filter((i) => daysUntil(i.issue_end, now) === 0).length,
       upcoming: issues.filter((i) => i.phase === "upcoming").length,
       hot: open.filter((i) => (times(i.times_subscribed) ?? 0) >= 1).length,
       withSub: open.filter((i) => times(i.times_subscribed) != null).length,
@@ -358,7 +361,8 @@ function IssueTable({ rows, now }: { rows: Issue[]; now: number | null }) {
       <tbody>
         {rows.map((i) => {
           const band = parseBand(i.price_band), cost = lotCost(i), t = issueTiming(i, now), cats = categoryMins(i);
-          const open = phaseOf(i) === "open";
+          const over = biddingOver(i, now);
+          const open = phaseOf(i) === "open" && !over;
           return (
             <tr key={`${i.exchange}-${i.phase}-${i.symbol}`}>
               <td>
@@ -368,7 +372,7 @@ function IssueTable({ rows, now }: { rows: Issue[]; now: number | null }) {
                 </div>
                 <div className="mt-0.5 flex items-center gap-1.5 text-xs text-muted">
                   <span className="num">{i.exchange} {i.symbol}</span>
-                  <Badge tone={PHASE_TONE[i.phase]}>{phaseOf(i)}</Badge>
+                  {over ? <Badge tone="neutral">closed today</Badge> : <Badge tone={PHASE_TONE[i.phase]}>{phaseOf(i)}</Badge>}
                   <Badge tone={isSme(i) ? "accent" : "brand"}>{isSme(i) ? "SME" : "Main"}</Badge>
                 </div>
               </td>
