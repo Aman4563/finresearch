@@ -50,11 +50,15 @@ def upgrade() -> None:
         sa.Column("dedupe_key", sa.String(length=64), nullable=False),
         sa.Column("data", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
         sa.Column("source_url", sa.Text(), nullable=True),
-        sa.Column("first_seen_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column(
+            "first_seen_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False
+        ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("dedupe_key"),
     )
-    op.create_index("ix_disclosure_record_lookup", "disclosure_record", ["dataset", "symbol", "day"], unique=False)
+    op.create_index(
+        "ix_disclosure_record_lookup", "disclosure_record", ["dataset", "symbol", "day"], unique=False
+    )
     op.create_index(op.f("ix_disclosure_record_isin"), "disclosure_record", ["isin"], unique=False)
     op.create_index(op.f("ix_disclosure_record_issuer"), "disclosure_record", ["issuer"], unique=False)
 
