@@ -168,7 +168,7 @@ export default function Stocks() {
         </Card>
 
         <div className="grid [&>*]:min-w-0 gap-5 lg:grid-cols-2">
-          <Card title="Watchlist" subtitle="Stocks checked after every market close · last close and 1-month change" icon={<Star className="size-4" />}
+          <Card title="Watchlist" subtitle="Stocks checked after every market close · last daily price and 1-month change" icon={<Star className="size-4" />}
             actions={<Link href="/monitor" className="text-xs font-medium text-brand hover:underline">Monitor →</Link>}>
             {watches.error ? (
               <ErrorNote error={watches.error} onRetry={watches.reload} />
@@ -201,7 +201,7 @@ export default function Stocks() {
                 {researched.map((c) => (
                   <li key={c.slug} className="flex items-center gap-2 rounded-lg px-2 py-2 transition hover:bg-card-hover">
                     <Link href={c.key ? `/stocks/${encodeURIComponent(c.key)}` : `/runs/${c.latest_run}`} className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium hover:text-brand">{c.name}</p>
+                      <p className="line-clamp-2 text-sm font-medium break-words hover:text-brand">{c.name}</p>
                       <p className="num text-xs text-muted">{c.nse_symbol ? `NSE ${c.nse_symbol}` : c.bse_code ? `BSE ${c.bse_code}` : ""}</p>
                     </Link>
                     <Link href={`/runs/${c.latest_run}/report`}
@@ -225,7 +225,7 @@ function WatchRow({ w }: { w: WatchSummary }) {
   const h = useApi<StockHistory>(`/api/stocks/${encodeURIComponent(key)}/history?days=35`);
   const bars = h.data?.bars ?? [];
   const closes = bars.map((b) => b.close);
-  // the price is the last daily close, so its stamp is that bar's date (the history has no intraday time)
+  // the price is the last daily bar, so its stamp is that bar's date (the history has no intraday time)
   const lastDay = bars.length ? bars[bars.length - 1].date : null;
   const last = closes[closes.length - 1];
   const change = closes.length > 1 ? last / closes[0] - 1 : null;
@@ -246,7 +246,7 @@ function WatchRow({ w }: { w: WatchSummary }) {
           <span className="w-24 text-right">
             <span className="num block text-sm font-medium">{last != null ? inr(last) : "—"}</span>
             <span className={cx("num block text-[11px]", toneOf(change))}>{change != null ? `${signedPct(change)} 1M` : h.error ? "no data" : " "}</span>
-            {lastDay && <span className="block text-[10px] text-muted">close {day(lastDay)}</span>}
+            {lastDay && <span className="block text-[10px] text-muted">as of {day(lastDay)}</span>}
           </span>
         </span>
       }

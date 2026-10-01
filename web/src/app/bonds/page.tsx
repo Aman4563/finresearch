@@ -167,7 +167,7 @@ export default function Bonds() {
               {researched.map((c) => (
                 <li key={c.slug} className="flex items-center gap-2 rounded-lg px-2 py-2 transition hover:bg-card-hover">
                   <Link href={`/bonds/${c.slug.replace(/^bond-/, "").toUpperCase()}`} className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium hover:text-brand">{c.name}</p>
+                    <p className="line-clamp-2 text-sm font-medium break-words hover:text-brand">{c.name}</p>
                     <p className="num text-xs text-muted">{c.slug.replace(/^bond-/, "").toUpperCase()}</p>
                   </Link>
                   <Link href={`/runs/${c.latest_run}/report`}

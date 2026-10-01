@@ -161,9 +161,10 @@ export function Stat({ label, value, format, display, delta, deltaLabel, hint, n
       <p className={cx("relative mt-2 text-2xl font-semibold tracking-tight", through)}>
         {display ?? <AnimatedNumber value={value} format={format} />}
       </p>
-      <div className={cx("relative mt-1 flex items-center gap-2 text-xs", through)}>
+      <div className={cx("relative mt-1 flex items-start gap-2 text-xs", through)}>
         {delta != null && <Delta value={delta} />}
-        {(deltaLabel || hint) && <span className="truncate text-muted">{deltaLabel ?? hint}</span>}
+        {/* two lines, not one: in a half-width phone tile a one-line hint lost its end ("as of 1 Oct 2026, 3:40…") */}
+        {(deltaLabel || hint) && <span className="line-clamp-2 min-w-0 text-muted">{deltaLabel ?? hint}</span>}
       </div>
       {note && <p className={cx("relative mt-0.5 text-[11px] text-muted", through)}>{note}</p>}
       <span className="pointer-events-none absolute -right-8 -bottom-8 size-24 rounded-full bg-brand/5 transition group-hover:scale-125" />
@@ -363,7 +364,7 @@ export function Segmented<T extends string>({ value, onChange, options, size = "
           tabIndex={o.value === current ? 0 : -1}
           onClick={() => onChange(o.value)}
           className={cx(
-            "rounded-md font-medium whitespace-nowrap transition duration-150",
+            "rounded-md font-medium transition duration-150",
             size === "sm" ? "px-2.5 py-1 text-xs" : "px-3.5 py-1.5 text-sm",
             o.value === value ? "bg-card text-foreground shadow-sm" : "text-muted hover:text-foreground",
           )}

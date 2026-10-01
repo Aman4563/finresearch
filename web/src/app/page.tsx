@@ -135,7 +135,7 @@ export default function Dashboard() {
           <ErrorNote error={radar.error ?? watches.error} onRetry={() => { radar.reload(); watches.reload(); }} />
           {events && now != null ? <Calendar events={events.events} now={now} /> : !(radar.error || watches.error) && (
             <div className="space-y-3">
-              <div className="flex gap-1.5">{Array.from({ length: 9 }, (_, i) => <Skeleton key={i} className="h-14 w-11 shrink-0" />)}</div>
+              <div className="flex gap-1.5 overflow-hidden">{Array.from({ length: 9 }, (_, i) => <Skeleton key={i} className="h-14 w-11 shrink-0" />)}</div>
               <SkeletonRows rows={5} />
             </div>
           )}
