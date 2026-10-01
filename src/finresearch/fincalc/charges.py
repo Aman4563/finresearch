@@ -72,11 +72,13 @@ RATES: tuple[ChargeRate, ...] = (
     _r("stt_futures_sell", "0.02", "futures turnover, sell side", date(2024, 10, 1), CLEARTAX_STT, "secondary",
        "Finance (No. 2) Act 2024 rate (\"the existing 0.02%\")"),
     _r("stt_option_sell", "0.15", "option premium, sell side", date(2026, 4, 1), BUDGET_2026, "unconfirmed",
-       "Finance Bill 2026; enactment of the Finance Act 2026 not confirmed (roadmap §D.5)"),
+       "Finance Bill 2026 memo p.62-63 (re-read 1-Oct-2026: 0.1 % -> 0.15 % of premium, for options entered into on "
+       "or after 1-Apr-2026); enactment of the Finance Act 2026 not confirmed (roadmap §D.5)"),
     _r("stt_option_exercise", "0.15", "intrinsic value of long options exercised at expiry", date(2026, 4, 1),
-       BUDGET_2026, "unconfirmed", "Finance Bill 2026; enactment not confirmed"),
+       BUDGET_2026, "unconfirmed", "Finance Bill 2026 memo p.62-63: 0.125 % -> 0.15 % of the intrinsic price; "
+       "enactment not confirmed"),
     _r("stt_futures_sell", "0.05", "futures turnover, sell side", date(2026, 4, 1), BUDGET_2026, "unconfirmed",
-       "Finance Bill 2026; enactment not confirmed"),
+       "Finance Bill 2026 memo p.62-63: 0.02 % -> 0.05 % of the traded price; enactment not confirmed"),
     _r("exchange_option", "0.03553", "option premium, both sides (NSE)", date(2026, 9, 30), ZERODHA_CHARGES,
        "secondary", _SEEN),
     _r("exchange_futures", "0.00183", "futures turnover, both sides (NSE)", date(2026, 9, 30), ZERODHA_CHARGES,

@@ -17,7 +17,9 @@ CDR_SOURCE = (
     "crisil-ratings-annual-default-and-ratings-transition-study-fy-2026.pdf"
 )
 CDR_AS_OF = "FY2016-FY2026 averages, CRISIL Ratings Annual Default and Ratings Transition Study FY2026"
-# Average cumulative default rates by grade over 1, 2 and 3 years (fractions). CRISIL does not publish a 5-year CDR.
+# Average cumulative default rates by grade over 1, 2 and 3 years (fractions), Table 1 of the study (monthly static
+# pools; re-read 1-Oct-2026, all five rows match). CRISIL does not publish a 5-year CDR. Table 1 also gives B
+# (8.60 / 17.68 / 27.28 %) and C (24.84 / 42.71 / 56.05 %); they are left out on purpose: a sub-BB bond gets no signal.
 CDR: dict[str, tuple[Decimal, Decimal, Decimal]] = {
     "AAA": (Decimal("0"), Decimal("0"), Decimal("0")),
     "AA": (Decimal("0.0002"), Decimal("0.0007"), Decimal("0.0014")),
@@ -54,7 +56,8 @@ def base_grade(rating: str | None) -> str | None:
 def cumulative_default_rate(grade: str, years: float) -> Decimal | None:
     """Probability of default within `years` for a grade: CRISIL's 1/2/3-year CDR (linear in between, and from zero
     below one year), and beyond three years a constant annual rate from the 3-year CDR. SOV is zero; grades below BB
-    (B, C, D) and unknown grades give None: the study's averages don't support a number for them."""
+    (B, C, D) and unknown grades give None: B and C are in CRISIL's table but deliberately not used here (D is in
+    default already)."""
     if years < 0:
         raise ValueError("years must be >= 0")
     if grade == "SOV":
