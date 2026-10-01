@@ -941,6 +941,52 @@ class BrokerSyncLog(Base):
     error: Mapped[str | None] = mapped_column(Text)  # secrets redacted
 
 
+# --------------------------------------------------------------------------- exchange disclosures (finresearch.disclosures)
+# Public market data (no personal data): NSE surveillance lists, the F&O ban list, promoter pledge, insider (PIT) and
+# SAST disclosures, bulk/block deals, credit ratings, and SEBI orders that name a tracked company (PAN-scrubbed).
+class DisclosureFeed(Base):
+    """Where one feed stands: the last good read (payload, publisher as-of, source URL) and the last failure. A feed
+    is per market ("asm", "gsm", "fno_ban", "credit_ratings", "sebi_orders"; key "*") or per stock ("pledge", "pit",
+    "sast", "deals"; key = NSE symbol). A failure never replaces the last good payload; the views say "unavailable"
+    when there is no good read recent enough (DATA-004)."""
+
+    __tablename__ = "disclosure_feed"
+    __table_args__ = (UniqueConstraint("dataset", "key"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    dataset: Mapped[str] = mapped_column(String(30))
+    key: Mapped[str] = mapped_column(String(40), default="*")
+    payload: Mapped[dict[str, Any]] = mapped_column(
+        default=dict
+    )  # parsed rows / summary of the last good read
+    source_url: Mapped[str | None] = mapped_column(Text)
+    as_of: Mapped[str | None] = mapped_column(
+        String(40)
+    )  # the publisher's date (e.g. the ban list's trade date)
+    ok_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # last good read
+    error: Mapped[str | None] = mapped_column(Text)
+    error_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class DisclosureRecord(Base):
+    """One disclosed fact kept as history: an insider trade ("pit"), a SAST disclosure ("sast"), a bulk or block deal
+    ("deal"), a quarter's promoter pledge ("pledge"), a credit-rating filing ("rating") or a SEBI order matched to a
+    tracked company ("sebi_order"). `dedupe_key` makes re-fetching the same rows idempotent."""
+
+    __tablename__ = "disclosure_record"
+    __table_args__ = (Index("ix_disclosure_record_lookup", "dataset", "symbol", "day"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    dataset: Mapped[str] = mapped_column(String(20))
+    symbol: Mapped[str | None] = mapped_column(String(40))
+    isin: Mapped[str | None] = mapped_column(String(12), index=True)
+    issuer: Mapped[str | None] = mapped_column(String(7), index=True)  # ISIN[:7], for ratings
+    day: Mapped[date | None] = mapped_column(Date)
+    dedupe_key: Mapped[str] = mapped_column(String(64), unique=True)
+    data: Mapped[dict[str, Any]] = mapped_column(default=dict)
+    source_url: Mapped[str | None] = mapped_column(Text)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 # --------------------------------------------------------------------------- decision journal for every trade (#5)
 # Personal data: the investor's own reasons for buying and selling. Local database only, never sent to an LLM (no
 # agent, advisor prompt or MCP tool reads this table) and never put in a forwarded alert's text.

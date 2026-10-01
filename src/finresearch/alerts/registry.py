@@ -1,10 +1,11 @@
 """The alert-metric registry: for each asset kind, the metrics the app can actually compute, with a plain-English
 phrase, a unit, a source and the cadence the monitor checks it on.
 
-Only metrics with a working data path are listed. Left out on purpose (not computable today): promoter *pledge*
-(the shareholding XBRL parser reads category holdings, not encumbrance), P/E percentile alerts (needs 120 days of
-daily P/E; shown on the signal instead), fund category-rank (no ranking source), bond spread over G-sec and rating
-*actions* from agencies (only NSE's rating string is read, so a rating change is detected when NSE's list changes).
+Only metrics with a working data path are listed. Left out on purpose (not computable today): P/E percentile alerts
+(needs 120 days of daily P/E; shown on the signal instead), fund category-rank (no ranking source) and bond spread
+over G-sec. Promoter pledge, surveillance stages, the F&O ban, insider trades, bulk/block deals, credit-rating actions
+and SEBI orders come from finresearch.disclosures (stored by the monitor's daily disclosure refresh; the checks read
+the database only, so they run on the cheap intraday cadence).
 Portfolio risk metrics that need a reconstructed value history, fund look-through or household data (volatility,
 beta, VaR, underperformance vs an index, fund overlap, business-group share, emergency-fund months, cash share,
 stale manual entries) are left for the portfolio-analytics, look-through and wealth work that computes them.
@@ -35,6 +36,7 @@ NSE_CHAIN = "https://www.nseindia.com/option-chain"
 AMFI_NAV = "https://www.amfiindia.com/spages/NAVAll.txt"
 AMFI_HISTORY = "https://portal.amfiindia.com/DownloadNAVHistoryReport_Po.aspx"
 AMFI_TER = "https://www.amfiindia.com/ter-of-mf-schemes"
+_DISC = "https://www.nseindia.com/companies-listing/"
 
 
 @dataclass(frozen=True)
@@ -389,11 +391,12 @@ METRICS: list[MetricSpec] = [
     _m(
         "bond",
         "rating_changed",
-        "Rating changed",
+        "Rating text changed (legacy)",
         "the credit rating",
         "flag",
         "daily",
-        "Fires when the rating string in NSE's bond list differs from the last check (for example AA to AA-).",
+        "Legacy: fires when the rating string in NSE's bond list differs from the last check (for example AA to AA-). "
+        'Prefer "Adverse rating action", which reads the agency\'s action and outlook.',
         f"NSE bonds list rating column: {NSE_BONDS}",
         event=True,
         event_text="its credit rating changed",
@@ -788,6 +791,167 @@ METRICS: list[MetricSpec] = [
         default_value="1",
         allows_all=False,
     ),
+    # ------------------------------------------------------------------ disclosures (finresearch.disclosures)
+    # Read from the database (monitor.disclosures refreshes it after each close and before the open); a feed with no
+    # recent good read makes the value unknown, so nothing fires on a failure.
+    _m(
+        "stock",
+        "pledge_pct",
+        "Promoter pledge",
+        "promoter shares pledged (% of promoter holding)",
+        "pct",
+        "intraday",
+        "Promoter shares encumbered (pledged or otherwise, SEBI SAST Regulation 31) at the latest quarter end, as a % "
+        "of the promoter holding, recomputed from NSE's share counts. High pledges can force sales if the price falls.",
+        f"NSE pledged data: {_DISC}corporate-filings-pledged-data",
+        default_op=">=",
+        default_value="10",
+    ),
+    _m(
+        "stock",
+        "pledge_change_pp",
+        "Promoter pledge change",
+        "change in promoter pledge over the last quarter",
+        "pp",
+        "intraday",
+        "The pledged share of the promoter holding in the latest quarter minus the quarter before, in percentage "
+        "points (unknown until two quarters are recorded).",
+        f"NSE pledged data (quarters recorded by the monitor): {_DISC}corporate-filings-pledged-data",
+        default_op=">",
+        default_value="0",
+    ),
+    _m(
+        "stock",
+        "surveillance_stage",
+        "Surveillance stage changed",
+        "the NSE surveillance stage",
+        "flag",
+        "intraday",
+        "Fires when the stock enters, changes stage on or leaves NSE's ASM or GSM list (including IBC and ESM "
+        "markers). These lists mean higher margins or trade-for-trade settlement, which make an exit costlier.",
+        "NSE ASM and GSM reports: https://www.nseindia.com/reports/asm",
+        event=True,
+        event_text="its NSE surveillance stage changed",
+        rebase="always",
+        default_op="==",
+        default_value="1",
+    ),
+    _m(
+        "stock",
+        "in_fno_ban",
+        "In the F&O ban",
+        "in the F&O ban period (1 = yes)",
+        "flag",
+        "intraday",
+        "1 while the stock is in NSE's F&O ban list for today's trade date (open interest above 95 % of the market-"
+        "wide position limit: positions can only be reduced).",
+        "NSE securities in ban period: https://nsearchives.nseindia.com/content/fo/fo_secban.csv",
+        default_op="==",
+        default_value="1",
+    ),
+    _m(
+        "stock",
+        "insider_net_buy_90d",
+        "Net insider buying (90 days)",
+        "net insider buying over 90 days",
+        "inr",
+        "intraday",
+        "Open-market purchases minus sales of the company's shares by insiders (promoters, directors, KMP, designated "
+        "persons) in the last 90 days, in ₹ as filed under SEBI PIT Regulation 7(2). ESOP, gift, inter-se and "
+        "off-market transfers are excluded. Unknown while any filing in the window is unread. Context, not a signal.",
+        f"NSE insider-trading filings (XBRL): {_DISC}corporate-filings-insider-trading",
+        default_op=">",
+        default_value="0",
+    ),
+    _m(
+        "stock",
+        "bulk_block_deals_5d",
+        "Bulk or block deals",
+        "bulk and block deals in the last 5 days",
+        "count",
+        "intraday",
+        "Bulk deals (a client trading over 0.5 % of the shares in a day) and block deals in the stock on NSE over the "
+        "last 5 calendar days.",
+        "NSE bulk and block deals: https://www.nseindia.com/report-detail/display-bulk-and-block-deals",
+        default_op=">=",
+        default_value="1",
+    ),
+    _m(
+        "stock",
+        "rating_action",
+        "Adverse rating action",
+        "an adverse credit-rating action on the company",
+        "flag",
+        "intraday",
+        "Fires on a new downgrade, negative watch, negative outlook, default or issuer-not-cooperating rating on any "
+        "instrument of the company (matched by ISIN issuer code), from the issuer's own rating filings on NSE.",
+        f"NSE credit-rating filings: {_DISC}corporate-filings-credit-rating",
+        event=True,
+        event_text="a credit-rating agency took an adverse action",
+        rebase="always",
+        default_op="==",
+        default_value="1",
+    ),
+    _m(
+        "stock",
+        "sebi_order",
+        "SEBI order",
+        "a SEBI order naming the company",
+        "flag",
+        "intraday",
+        "Fires on a new SEBI enforcement order (adjudication, settlement, final, recovery) whose title names the "
+        "company's legal name: a possible match, open the order to confirm.",
+        "SEBI RSS: https://www.sebi.gov.in/sebirss.xml",
+        event=True,
+        event_text="a SEBI order may name it",
+        rebase="always",
+        default_op="==",
+        default_value="1",
+    ),
+    _m(
+        "bond",
+        "rating_action",
+        "Adverse rating action",
+        "an adverse credit-rating action",
+        "flag",
+        "intraday",
+        "Fires on a new downgrade, negative watch, negative outlook, default or issuer-not-cooperating rating on this "
+        "bond or another instrument of its issuer (ISIN issuer code), from the issuer's rating filings on NSE: the "
+        "agency's action and outlook, not just a changed rating string.",
+        f"NSE credit-rating filings: {_DISC}corporate-filings-credit-rating",
+        event=True,
+        event_text="a credit-rating agency took an adverse action",
+        rebase="always",
+        default_op="==",
+        default_value="1",
+    ),
+    _m(
+        "fno",
+        "in_ban",
+        "In the F&O ban",
+        "in the F&O ban period (1 = yes)",
+        "flag",
+        "intraday",
+        "1 while the underlying is in NSE's F&O ban list for today's trade date: new positions are not allowed, "
+        "existing ones can only be reduced.",
+        "NSE securities in ban period: https://nsearchives.nseindia.com/content/fo/fo_secban.csv",
+        default_op="==",
+        default_value="1",
+    ),
+    _m(
+        "portfolio",
+        "holdings_red_flags",
+        "Red flags on holdings",
+        "number of held stocks with a red flag",
+        "count",
+        "intraday",
+        "Held stocks on NSE's ASM or GSM list, in the F&O ban, or with a promoter pledge that rose last quarter. "
+        "Unknown when a list could not be read.",
+        "finresearch.disclosures (NSE ASM/GSM, F&O ban, pledged data)",
+        default_op=">=",
+        default_value="1",
+        allows_all=False,
+    ),
 ]
 
 REGISTRY: dict[tuple[str, str], MetricSpec] = {(m.kind, m.key): m for m in METRICS}
@@ -954,6 +1118,35 @@ TEMPLATES: list[Template] = [
         "high",
     ),
     Template(
+        "stock-surveillance",
+        "stock",
+        "Surveillance stage changed",
+        "The stock entered, moved within or left NSE's ASM/GSM lists.",
+        "surveillance_stage",
+        "==",
+        "1",
+        "high",
+    ),
+    Template(
+        "stock-pledge-up",
+        "stock",
+        "Promoter pledge rising",
+        "Promoters pledged more of their holding last quarter.",
+        "pledge_change_pp",
+        ">",
+        "0",
+    ),
+    Template(
+        "stock-insider-buying",
+        "stock",
+        "Insiders buying",
+        "Net open-market insider buying over 90 days.",
+        "insider_net_buy_90d",
+        ">",
+        "0",
+        "low",
+    ),
+    Template(
         "fund-nav-drop",
         "fund",
         "NAV drop",
@@ -983,9 +1176,9 @@ TEMPLATES: list[Template] = [
     Template(
         "bond-rating",
         "bond",
-        "Rating changed",
-        "NSE's rating string changed.",
-        "rating_changed",
+        "Rating downgraded or on watch",
+        "An agency downgraded the issuer, put it on negative watch or turned the outlook negative.",
+        "rating_action",
         "==",
         "1",
         "high",
@@ -1091,6 +1284,16 @@ TEMPLATES: list[Template] = [
         "max_position_pct",
         ">=",
         "10",
+    ),
+    Template(
+        "pf-red-flags",
+        "portfolio",
+        "Red flag on a holding",
+        "A held stock is under surveillance, in the F&O ban or its promoters pledged more.",
+        "holdings_red_flags",
+        ">=",
+        "1",
+        "high",
     ),
     Template(
         "pf-drawdown",

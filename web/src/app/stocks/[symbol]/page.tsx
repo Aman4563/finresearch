@@ -16,6 +16,7 @@ import { QualityNote, displayPrice, lastTradedNote, priceCaption, qualityFlags }
 import { MarginChart, ResultsChart } from "@/components/markets/charts";
 import { ShareholdingSplit } from "@/components/markets/shareholding";
 import { ForensicCard, SinceReport, StockSignalCard } from "@/components/markets/stock-signal";
+import { StockDisclosuresCard } from "@/components/markets/disclosures";
 import { Metric, RangeBar, Timeline, crore, inr, pctOf, signedPct, toneOf } from "@/components/markets/common";
 import type { StockHistory, StockOverview, StockResults, StockShareholding } from "@/components/markets/types";
 import {
@@ -202,6 +203,7 @@ export default function StockDetail() {
               <StockSignalCard symbol={stockKey} />
               <ForensicCard symbol={stockKey} />
             </div>
+            <StockDisclosuresCard symbol={stockKey} isin={ov.data?.quote?.isin} />
           </>
         )}
 

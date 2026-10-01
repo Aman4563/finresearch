@@ -1,0 +1,8 @@
+[
+  {"srno": 1, "symbol": "TESTPOWER", "companyName": "Test Power Ltd", "isin": "INE000W01013", "gsmStage": "LXII",
+   "survCode": "IBC - Receipt & GSM 0 (62)", "survDesc": "IBC Receipt and GSM Stage 0", "gsmTime": "30-Sep-2026 18:05"},
+  {"srno": 2, "symbol": "MOCKAGRO", "companyName": "Mock Agro Ltd", "isin": "INE000V01015", "gsmStage": "XXXVII",
+   "survCode": "ESM II & GSM 0 (37)", "survDesc": "ESM II and GSM 0", "gsmTime": "30-Sep-2026 18:05"},
+  {"srno": 3, "symbol": "FAKESTEEL", "companyName": "Fake Steel Ltd", "isin": "INE000U01017", "gsmStage": "IV",
+   "survCode": "GSM IV & IBC - Receipt (66)", "survDesc": "GSM IV and IBC Receipt", "gsmTime": "30-Sep-2026 18:05"}
+]

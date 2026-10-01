@@ -1449,6 +1449,11 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
 
     add_brief_routes(app, clock=clock)
 
+    # ------------------------------------------------------------------ exchange disclosures (finresearch.disclosures)
+    from finresearch.api.disclosures import add_disclosure_routes
+
+    add_disclosure_routes(app, clock=clock)
+
     # ------------------------------------------------------------------ decision journal for every trade, behaviour report
     from finresearch.api.journal import add_journal_routes
 

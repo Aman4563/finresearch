@@ -23,7 +23,7 @@ Items:
   Scheme, 2005, para 5, Ministry of Finance notification; also each SIP instalment separately). The scheme is
   recognised by "ELSS" / "tax saver" in its name or category [unverified against AMFI's category];
 - the signal and its uncertainty: action, probability with its interval and how the method was validated (n);
-- surveillance flags (ASM/GSM, pledge): `RED_FLAGS`, a seam until the surveillance feed exists;
+- surveillance flags (ASM/GSM, F&O ban, pledge): finresearch.disclosures (`RED_FLAGS` overrides it in tests);
 - your thesis: the open journal entries for the instrument, with the exit condition you wrote;
 - recent activity: decisions in the last 30 days (Barber & Odean 2000: the most active traders earned least).
 """
@@ -357,10 +357,16 @@ async def signal_item(
 
 
 def red_flag_item(key: str, asset_type: str) -> dict[str, Any]:
-    flags = RED_FLAGS(key, asset_type) if RED_FLAGS is not None else None
+    if RED_FLAGS is not None:
+        flags = RED_FLAGS(key, asset_type)
+    else:
+        from finresearch.disclosures.views import pretrade_flags
+
+        flags = pretrade_flags(key, asset_type)
     if flags is None:
         return item("red_flags", "Surveillance and pledge flags", "unknown", None,
-                    "not available yet: the ASM/GSM, F&O ban and pledge feed is not built in this version", "")  # fmt: skip
+                    "unavailable: NSE's ASM/GSM, F&O ban or pledge data has no recent good read (not the same as "
+                    "none)", "finresearch.disclosures")  # fmt: skip
     if not flags:
         return item("red_flags", "Surveillance and pledge flags", "ok", 0, "none found", "exchange lists")
     return item("red_flags", "Surveillance and pledge flags", "warn", len(flags),

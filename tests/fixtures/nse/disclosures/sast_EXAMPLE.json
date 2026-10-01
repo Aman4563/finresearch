@@ -1,0 +1,16 @@
+{"acqNameList": ["Sample Capital Fund"], "data": [
+  {"symbol": "EXAMPLE", "company": "Example Ltd", "acquirerName": "Sample Capital Fund", "acqSaleType": "Acquisition",
+   "acqType": "Equity shares", "regType": "Reg29(1)", "promoterType": "N", "acquisitionMode": "Open Market",
+   "acquirerDate": "22-SEP-2026 to 23-SEP-2026", "noOfShareAcq": "10500000", "noOfShareSale": null, "noOfShareAft": "10500000",
+   "totAcqShare": "5.25", "totSaleShare": null, "totAftShare": "5.25", "totAcqDiluted": "5.25", "totAftDiluted": "5.25",
+   "totSaleDiluted": null, "timestamp": "24-Sep-2026 17:42", "time": "24-Sep-2026 17:42", "sysTime": "24-Sep-2026 17:42",
+   "timeDifference": "00:00:01", "application_no": "1234", "remarks": null,
+   "attachement": "https://nsearchives.nseindia.com/corporate/EXAMPLE_24092026174222_1234.zip"},
+  {"symbol": "EXAMPLE", "company": "Example Ltd", "acquirerName": "Example Promoter Holdings Pvt Ltd", "acqSaleType": "Sale",
+   "acqType": "Equity shares", "regType": "Reg29(2)", "promoterType": "Y", "acquisitionMode": "Inter-se transfer",
+   "acquirerDate": "05-AUG-2026 to 05-AUG-2026", "noOfShareAcq": null, "noOfShareSale": "4000000", "noOfShareAft": "60000000",
+   "totAcqShare": null, "totSaleShare": "2", "totAftShare": "30", "totAcqDiluted": null, "totAftDiluted": "30",
+   "totSaleDiluted": "2", "timestamp": "07-Aug-2026 11:10", "time": "07-Aug-2026 11:10", "sysTime": "07-Aug-2026 11:10",
+   "timeDifference": "00:00:01", "application_no": "1200", "remarks": null,
+   "attachement": "https://nsearchives.nseindia.com/corporate/EXAMPLE_07082026111000_1200.zip"}
+]}

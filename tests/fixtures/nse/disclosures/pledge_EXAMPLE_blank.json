@@ -1,0 +1,7 @@
+{"comNameList": ["Example Ltd"], "data": [
+  {"comName": "Example Ltd", "shp": "31-Mar-2026", "broadcastDt": "30-Jun-2026 16:31:07",
+   "totIssuedShares": "200000000", "totPromoterHolding": "120000000", "percPromoterHolding": "    60.00",
+   "totPublicHolding": "80000000", "totPromoterShares": "12000000", "percPromoterShares": "",
+   "percTotShares": "     6.00", "numSharesPledged": "-", "percSharesPledged": "     0.00",
+   "totDematShares": "199000000", "compBroadcastDate": "30-06-2026", "disclosureFromDate": null, "disclosureToDate": null}
+]}
