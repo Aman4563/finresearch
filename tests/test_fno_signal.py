@@ -273,3 +273,50 @@ async def test_monitor_records_daily_atm_iv_once(env):
         ).all()
         assert len(rows) == 4 and rows[0].day == date(2026, 9, 28) and rows[0].expiry == date(2026, 10, 6)
         assert rows[0].atm_strike == 22800 and rows[0].atm_iv > 0 and rows[0].skew_25d is not None
+
+
+async def test_a_failed_lot_file_is_retried_not_cached_as_no_fno_stocks(env, monkeypatch):
+    """Regression: one 403 on the lot file cached {} for the IST day, so no watched F&O stock got an IV row."""
+    import time as _time
+
+    from finresearch.monitor import iv
+
+    iv.reset_tries()
+    monkeypatch.setattr(
+        iv, "symbols", lambda lots: [*iv.INDEX_SYMBOLS, *(["INFY"] if lots and "INFY" in lots else [])]
+    )
+    recorded: list[str] = []
+
+    class Flaky(FakeFno):
+        fail = True
+
+        async def lot_sizes(self):
+            if Flaky.fail:
+                raise RuntimeError("NSE HTTP 403 for fo_mktlots.csv")
+            return {"INFY": {"OCT-26": 400}}
+
+    monkeypatch.setattr(iv, "insert", lambda _m: _Ins(recorded))
+    first = await iv.record_iv(Flaky, datetime(2026, 9, 30, 16, 0, tzinfo=dates.IST))
+    assert "lot sizes" in first["failed"] and "INFY" not in first["recorded"]
+    Flaky.fail = False
+    clock = _time.time() + iv.RETRY_S + 1
+    monkeypatch.setattr(iv.time, "time", lambda: clock)
+    second = await iv.record_iv(Flaky, datetime(2026, 9, 30, 16, 11, tzinfo=dates.IST))
+    assert "INFY" in second["recorded"]
+    iv.reset_tries()
+
+
+class _Ins:
+    """insert(IvHistory).values(...).on_conflict_do_nothing(...) without touching iv_history."""
+
+    def __init__(self, sink):
+        self.sink = sink
+
+    def values(self, **row):
+        self.sink.append(row["symbol"])
+        return self
+
+    def on_conflict_do_nothing(self, **_kw):
+        from sqlalchemy import text
+
+        return text("SELECT 1")

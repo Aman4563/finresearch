@@ -199,13 +199,22 @@ def _done(stream: str, today: date) -> None:
     _tries[(stream, today)] = (MAX_TRIES, time.time())
 
 
-async def archive_step(now: datetime, src: ArchiveSources | None = None) -> dict[str, Any]:
-    """Archive each stream once per IST weekday after the close. Returns {"archived": {stream: n}, "failed": {...}}."""
+async def archive_step(now: datetime, src: ArchiveSources | None = None, *,
+                       holidays: set[date] | None = None) -> dict[str, Any]:  # fmt: skip
+    """Archive each stream once per NSE trading day after the close. Returns {"archived": {stream: n}, "failed":
+    {...}}. On an exchange holiday NSE serves the last session's figures: archiving them under the holiday's date
+    would add a duplicate day to the series, so holidays are skipped like weekends."""
     src = src or ArchiveSources()
     local = to_ist(now)
     today = local.date()
     if local.weekday() >= 5 or (local.hour, local.minute) < START:
         return {"archived": {}, "failed": {}, "skipped": "outside the after-close window"}
+    if holidays is None:
+        from finresearch.adapters.nse_holidays import trading_holidays
+
+        holidays = trading_holidays()
+    if today in holidays:
+        return {"archived": {}, "failed": {}, "skipped": "exchange holiday"}
     out: dict[str, Any] = {"archived": {}, "failed": {}}
     key = today.isoformat()
     for stream, run in (("sector_pe", _sector_pe), ("iv_term", _iv_term), ("gsec_spread", _gsec_spread)):

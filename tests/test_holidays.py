@@ -115,3 +115,61 @@ async def test_moved_listing_date_cancels_the_old_check(env, cached, tmp_path):
         and jobs["HOLCO:listing:2026-10-05:open"] == "pending"
     )
     assert Deps(ipo_detail=None, quote=None).live_holidays is False
+
+
+def test_the_live_monitor_refreshes_nse_holidays():
+    """Regression: Deps.live() never set live_holidays, so the API's monitor never fetched NSE's holiday list; a new
+    year (or a fresh install) then treated every weekday holiday as a trading day."""
+    from finresearch.monitor.jobs import Deps
+
+    assert Deps.live().live_holidays is True
+
+
+async def test_refresh_uses_the_ist_year(tmp_path, monkeypatch):
+    """At 00:30 IST on 1-Jan the machine's UTC/local date can still be 31-Dec: the refresh must fetch the new year."""
+    from finresearch.fincalc import dates
+
+    monkeypatch.setattr(dates, "today_ist", lambda: date(2027, 1, 1))
+    asked = []
+
+    async def fetch(kind):
+        asked.append(kind)
+        return {"CM": [{"tradingDate": "26-Jan-2027", "description": "Republic Day"}]}
+
+    for kind in ("trading", "clearing"):  # last year's lists, freshly fetched yesterday
+        h.save_holidays(h.parse_holidays(payload(kind)), kind, tmp_path)
+    assert await h.refresh_holidays(tmp_path, fetch=fetch)  # 2027 is missing: fetched
+    assert 2027 in h.cached_years(tmp_path) and date(2027, 1, 26) in h.trading_holidays(tmp_path)
+
+
+def test_market_status_says_when_the_holiday_list_is_missing():
+    from finresearch.api.live import market_status
+
+    t = datetime(2026, 10, 1, 11, 0, tzinfo=UTC)  # 16:30 IST, Thursday; Friday 2-Oct is Gandhi Jayanti
+    blind = market_status(t, {})
+    assert blind["holidays_known"] is False and "2026 holiday list is not loaded" in blind["warning"]
+    known = market_status(t, h.parse_holidays(payload("trading")))
+    assert known["holidays_known"] is True and known["warning"] is None
+    assert known["equity"]["next_open"].startswith("2026-10-05")  # not the holiday
+
+
+async def test_a_missing_year_is_retried_within_the_hour(tmp_path, monkeypatch):
+    import time
+
+    from finresearch.monitor import scheduler
+    from finresearch.monitor.jobs import Deps
+
+    monkeypatch.setenv("FINRESEARCH_STATE_DIR", str(tmp_path / "state"))
+    from finresearch import config
+
+    config.get_settings.cache_clear()
+    calls = []
+
+    async def fails(kind):
+        calls.append(kind)
+        raise RuntimeError("NSE HTTP 503")
+
+    monkeypatch.setitem(scheduler._HOLIDAYS_CHECKED, "at", time.time() - 2 * 3600)  # tried two hours ago
+    await scheduler._refresh_holidays(Deps(ipo_detail=None, quote=None, holidays=fails))
+    assert calls == ["trading"]  # nothing cached for this year: tried again after an hour, not a day
+    config.get_settings.cache_clear()

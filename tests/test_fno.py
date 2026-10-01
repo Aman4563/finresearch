@@ -111,3 +111,85 @@ def test_fno_api_chain_and_strategy(env, monkeypatch):
         assert r["net_greeks"]["delta"] > 0 and "Analysis only" in r["disclaimer"]
         bad = {**body, "legs": [{"right": "call", "strike": "99999", "side": "buy", "lots": 1}]}
         assert c.post("/api/fno/strategy", json=bad).status_code == 422
+
+
+def _offline_fno(handler):
+    import httpx
+
+    from finresearch.adapters.http import PoliteClient
+    from finresearch.adapters.nse import NseClient
+    from finresearch.adapters.nse_fno import PAGE, NseFno
+
+    async def nosleep(_s):
+        return None
+
+    pc = PoliteClient(transport=httpx.MockTransport(handler), host_rates={}, default_rate=0, cache_dir=None,
+                      sleep=nosleep, max_retries=0)  # fmt: skip
+    return NseFno(NseClient(pc, warmup_url=PAGE)), pc
+
+
+async def test_an_option_chain_block_page_rewarms_once_then_reads_as_unreachable():
+    import httpx
+
+    from finresearch.adapters.http import is_transient
+    from finresearch.adapters.nse import NseError
+
+    seen = {"warm": 0, "api": 0}
+
+    def handler(req):
+        if "/api/" not in req.url.path:
+            seen["warm"] += 1
+            return httpx.Response(200, html="<html>page</html>")
+        seen["api"] += 1
+        if seen["api"] == 1:  # the first call hits Akamai's block page (HTTP 200, HTML)
+            return httpx.Response(200, html="<html>Access Denied</html>")
+        return httpx.Response(200, json={"expiryDates": ["06-Oct-2026"], "strikePrice": ["22800"]})
+
+    f, pc = _offline_fno(handler)
+    expiries, _ = await f.contract_info("NIFTY")
+    assert expiries == [date(2026, 10, 6)] and seen == {"warm": 2, "api": 2}
+    f2, pc2 = _offline_fno(lambda req: httpx.Response(200, html="<html>Access Denied</html>"))
+    with pytest.raises(NseError) as ei:
+        await f2.contract_info("NIFTY")
+    assert is_transient(ei.value)  # "couldn't reach NSE", never "no expiries"
+    await pc.aclose()
+    await pc2.aclose()
+
+
+async def test_stock_underlying_closes_walk_back_and_adjust_for_a_bonus(monkeypatch):
+    """NSE returns only the latest ~70 rows of a range and does not adjust for bonuses: the F&O risk gate's ~90 closes
+    were ~70, with a 1:1 bonus showing as a -50 % day."""
+    from datetime import timedelta
+
+    from finresearch.adapters import nse_equity
+    from finresearch.adapters.nse_equity import CorporateAction, PriceBar
+    from finresearch.adapters.nse_fno import NseFno
+
+    days = [date(2026, 5, 1) + timedelta(days=i) for i in range(150)]
+    days = [d for d in days if d.weekday() < 5]
+    ex = days[60]
+    series = {d: Decimal(1000 if d < ex else 500) for d in days}  # flat price, halved by a 1:1 bonus on `ex`
+
+    class FakeEq:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return None
+
+        async def history(self, sym, lo, hi):
+            rows = [d for d in days if lo <= d <= hi][-70:]  # the latest 70 only, like NSE
+            return [PriceBar(day=d, open=None, high=None, low=None, close=series[d], prev_close=None, vwap=None,
+                             volume=None, value_inr=None, trades=None) for d in rows]  # fmt: skip
+
+        async def corporate_actions(self, sym):
+            return [
+                CorporateAction(
+                    symbol=sym, subject="Bonus 1:1", ex_date=ex, record_date=None, dividend_per_share=None
+                )
+            ]
+
+    monkeypatch.setattr(nse_equity, "NseEquity", FakeEq)
+    rows = await NseFno(client=object()).closes("EXAMPLE", days[0], days[-1])  # type: ignore[arg-type]
+    assert len(rows) == len(days) > 70
+    assert {c for _, c in rows} == {Decimal(500)}  # back-adjusted: no fake -50 % day

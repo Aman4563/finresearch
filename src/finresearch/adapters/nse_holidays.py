@@ -96,7 +96,9 @@ def cached_years(state_dir: Path | None = None) -> set[int]:
 
 async def refresh_holidays(state_dir: Path | None = None, *, fetch=None, force: bool = False) -> bool:
     """Fetch the current year's lists when the cache is missing or stale. Returns True when it fetched."""
-    year = date.today().year
+    from finresearch.fincalc.dates import today_ist
+
+    year = today_ist().year  # the exchange's year: the machine's local date can still be 31-Dec at 00:30 IST
     fresh = all(
         (p := _cache(state_dir, k, year)).exists() and time.time() - p.stat().st_mtime < MAX_AGE_S
         for k in ("trading", "clearing")

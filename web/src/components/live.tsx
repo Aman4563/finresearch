@@ -14,6 +14,9 @@ export type MarketStatus = {
   now: string;
   trading_day: boolean;
   holiday: string | null;
+  /** false: NSE's holiday list for this year is not loaded, so a holiday can read as a trading day (`warning`) */
+  holidays_known?: boolean;
+  warning?: string | null;
   equity: { open: boolean; hours: string; next_open: string | null; closes_at: string | null };
   ipo_bidding: { open: boolean; hours: string };
 };
@@ -106,6 +109,7 @@ export function LiveStamp({ session, live, status, updatedAt, everyMs, asOf, asO
           {live && updatedAt && <> ({behind(updatedAt.getTime() - new Date(asOf).getTime())})</>}
         </span>
       )}
+      {status?.warning && <span className="text-warn" title={status.warning}>Holiday list not loaded</span>}
       {onRefresh && (
         <button type="button" onClick={onRefresh} title="Refresh now" aria-label="Refresh now"
           className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 transition hover:bg-background-subtle hover:text-foreground">

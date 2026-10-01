@@ -531,7 +531,9 @@ async def amfi_nav_history(scheme_code: str, years: int = 5, risk_free_annual: s
         scheme = next((x for x in await _nav_all(amfi) if x.code == scheme_code), None)
         if scheme is None:
             return json.dumps({"error": f"scheme {scheme_code} is not in AMFI's NAV file"})
-        probe = today - timedelta(days=3 if today.weekday() == 0 else 1)
+        from finresearch.adapters.amfi import probe_day
+
+        probe = probe_day(today)
         # a few extra days so the N-year trailing return finds a NAV on or before its start date
         hist = await amfi.scheme_history(scheme, add_years(today, -years) - timedelta(days=10), today, probe)
     navs = [(h.day, h.nav) for h in hist]

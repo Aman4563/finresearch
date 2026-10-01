@@ -331,3 +331,13 @@ async def test_sebi_client_pages_and_resolve(tmp_path):
     assert form["doDirect"] == "1" and form["smid"] == "11" and form["next"] == "n"
     assert len(filings) == 50 and all(f.listing == "rhp" for f in filings)
     assert pdfs[0].endswith("/attachdocs/sep-2026/1790144515401.pdf")
+
+
+def test_detail_page_links_off_sebi_are_never_offered_for_download():
+    """The detail page is untrusted HTML: an iframe or anchor pointing at another host (or plain http) must not be
+    returned as the filing's PDF, which discovery downloads and cites as SEBI's."""
+    html = ('<iframe src="/web/?file=https://evil.example/sebi_data/attachdocs/x.pdf"></iframe>'
+            '<a href="https://evil.example/sebi_data/commondocs/y.pdf">a</a>'
+            '<a href="http://www.sebi.gov.in/sebi_data/attachdocs/z.pdf">b</a>'
+            '<a href="/sebi_data/attachdocs/ok.pdf">c</a>')  # fmt: skip
+    assert parse_detail_pdfs(html, ORIENT_RHP) == ["https://www.sebi.gov.in/sebi_data/attachdocs/ok.pdf"]
