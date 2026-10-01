@@ -126,7 +126,7 @@ def concentration_items(s: Session, p: Plan, key: str, h: PortfolioHolding | Non
     val = cache.read(s, cache.VALUATION)
     trade = p.quantity * p.price
     if not val.get("holdings") or not val.get("value"):
-        why = "unknown: the daily valuation has not run yet (it runs after the close, or open /portfolio)"
+        why = "unknown: the monitor's daily valuation has not run yet (it runs after the close)"
         return [
             item("position_size", "Position size", "unknown", None, why, "cache:valuation"),
             item("concentration", "Concentration after the trade", "unknown", None, why, "cache:valuation"),
