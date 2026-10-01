@@ -4,7 +4,7 @@ the scheduler can retry."""
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -262,18 +262,30 @@ async def listing(session: Session, job: MonitorJob, watch: Watch, deps: Deps, n
         return {"which": which, "skipped": "already recorded"}
     bse = bool((watch.meta or {}).get("bse_ipo_no"))  # a BSE SME issue lists on BSE only
     exchange = "BSE" if bse else "NSE"
+    from finresearch.adapters.http import is_transient
+
     try:
         q = await (deps.bse_quote(watch.nse_symbol) if bse else deps.quote(watch.nse_symbol))
     except Exception as e:
+        # a timeout or a 403 on listing day: retried in minutes (RETRY_DELAY), not on the next trading day
+        if is_transient(e):
+            raise
         raise NotYet(f"no {exchange} quote for {watch.nse_symbol} yet: {e}") from e
-    if q is None or q.listing_date is None or q.listing_date > to_ist(now).date() or q.open is None:
+    # an open of 0 is NSE's "no trade yet" placeholder (e.g. a listing special session that has not matched)
+    if q is None or q.listing_date is None or q.listing_date > to_ist(now).date() or not q.open:
         raise NotYet(f"{watch.nse_symbol} has not listed on {exchange} yet")
+    # A quote describes its own session: a check that runs after the listing day (a retry, a late confirmation) would
+    # read a later day's open and close. Then the listing day's bar from the exchange's price history is used.
+    later = q.as_of is not None and to_ist(q.as_of).date() > q.listing_date
+    bar = await _listing_bar(deps, watch.nse_symbol, q.listing_date, bse) if later else None
     meta = dict(watch.meta or {})
     if q.listing_date != watch.listing_date:
         meta["expected_listing_date"] = watch.listing_date.isoformat()
         watch.listing_date = q.listing_date
     meta["listing_confirmed"] = True
-    if which == "close":
+    if bar is not None:
+        price = bar.close if which == "close" else bar.open
+    elif which == "close":
         from finresearch.fincalc.price import OFFICIAL_CLOSE, price_view
 
         v = price_view(q, exchange=exchange, now=now)
@@ -303,6 +315,26 @@ async def listing(session: Session, job: MonitorJob, watch: Watch, deps: Deps, n
           "action" if which == "open" else "info", price=str(price), as_of=q.as_of.isoformat() if q.as_of else None)  # fmt: skip
     return {"price": str(price), "which": which, "listing_date": q.listing_date.isoformat(),
             "gain_pct": f"{gain:.2f}" if gain is not None else None, "decisions_updated": updated}  # fmt: skip
+
+
+class ListingDayPassed(RuntimeError):
+    """The listing day is over and its open/close could not be read from the exchange's price history: never record a
+    later session's price as the listing price (retried, then failed with an alert)."""
+
+
+async def _listing_bar(deps: Deps, symbol: str, day: date, bse: bool) -> Any:
+    """The listing day's daily bar (open and official close), or ListingDayPassed."""
+    # BSE's history is keyed by scrip code; a BSE SME watch carries the issue's symbol, so it has no history to read
+    fetch = (deps.bse_price_history if symbol.isdigit() else None) if bse else deps.price_history
+    if fetch is None:
+        raise ListingDayPassed(
+            f"{symbol}'s quote is from after its listing day {day} and no price history is set"
+        )
+    bars = await fetch(symbol, day, day)
+    bar = next((b for b in bars or [] if b.day == day and b.open and b.close), None)
+    if bar is None:
+        raise ListingDayPassed(f"no {day} bar for {symbol} in the exchange's price history yet")
+    return bar
 
 
 def _upper_band(session: Session, watch: Watch) -> Decimal | None:

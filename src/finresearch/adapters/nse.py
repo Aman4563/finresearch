@@ -518,7 +518,7 @@ class Quote(BaseModel):
         price = e.get("priceInfo") or {}
         listing = str(sec.get("listingDate") or "").split(" ")[0]
         return cls(symbol=str(meta.get("symbol", "")).strip(), company=meta.get("companyName"),
-                   open=parse_num(meta.get("open")), last_price=parse_num(trade.get("lastPrice")),
+                   open=parse_num(meta.get("open")) or None, last_price=parse_num(trade.get("lastPrice")),
                    close_price=parse_num(meta.get("closePrice")) or None,
                    previous_close=parse_num(meta.get("previousClose")),
                    base_price=parse_num(meta.get("basePrice") or trade.get("basePrice")) or None,
