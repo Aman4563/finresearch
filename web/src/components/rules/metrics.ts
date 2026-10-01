@@ -130,6 +130,8 @@ export function validate(rules: Rule[]): Record<number, string[]> {
     if (id) seen.set(id, seen.has(id) ? seen.get(id)! : i);
     if (!METRIC[r.metric]) errs.push("Pick a metric.");
     if (!isNumber(String(r.value))) errs.push("The value must be a number.");
+    else if (METRIC[r.metric]?.unit === "prob" && (Number(r.value) < 0 || Number(r.value) > 1))
+      errs.push(`A probability goes from 0 to 1: for ${r.value}% write ${Number(r.value) / 100}.`);
     if (errs.length) out[i] = errs;
   });
   return out;
