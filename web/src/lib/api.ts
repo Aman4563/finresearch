@@ -186,10 +186,14 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
+    // X-FinResearch marks the request as the dashboard's (the API refuses unsafe requests without it). Reads go
+    // without custom headers: those make every GET a non-"simple" CORS request, so the browser sent an OPTIONS
+    // preflight before each new URL (twice the requests and a round-trip of latency on every page load).
+    const method = (init?.method ?? "GET").toUpperCase();
+    const safe = method === "GET" || method === "HEAD";
     res = await fetch(`${API_URL}${path}`, {
       ...init,
-      // X-FinResearch marks the request as the dashboard's (the API refuses unsafe requests without it)
-      headers: { "Content-Type": "application/json", "X-FinResearch": "1", ...(init?.headers ?? {}) },
+      headers: safe ? (init?.headers ?? {}) : { "Content-Type": "application/json", "X-FinResearch": "1", ...(init?.headers ?? {}) },
       cache: "no-store",
     });
   } catch {

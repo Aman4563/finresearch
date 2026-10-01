@@ -85,6 +85,8 @@ export function SignalView({ s, compact }: { s: Signal; compact?: boolean }) {
   const tone = POSITIVE.has(s.action) ? "gain" : NEGATIVE.has(s.action) ? "loss" : "neutral";
   const v = VALIDATION[s.validation.status];
   const maxAbs = Math.max(1, ...s.factors.map((f) => Math.abs(f.contribution)));
+  // a directional call whose probability of the (favourable) event sits on the other side of 50%
+  const split = s.probability != null && ((tone === "loss" && s.probability > 0.5) || (tone === "gain" && s.probability < 0.5));
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
@@ -111,6 +113,20 @@ export function SignalView({ s, compact }: { s: Signal; compact?: boolean }) {
         </div>
       </div>
 
+      {split && (
+        // e.g. REDUCE next to "54% chance it beats the Nifty": the action comes from the factor score and the
+        // probability from a separate base rate (for stocks, the momentum + trend backtest bucket), so they can point
+        // different ways. Say so rather than let a big "54%" read as support for the call.
+        <p className="flex items-start gap-1.5 rounded-lg bg-warn-soft px-3 py-2 text-xs text-foreground/90">
+          <ShieldAlert className="mt-0.5 size-3.5 shrink-0 text-warn" />
+          <span>
+            <span className="font-medium">The call and the probability disagree. </span>
+            {LABEL[s.action] ?? s.action.replaceAll("_", " ")} follows the score ({s.score > 0 ? "+" : ""}{s.score.toFixed(0)}); the {pctText(s.probability)} is
+            a separate estimate of the event, which is {s.probability! > 0.5 ? "more likely than not" : "less likely than not"}. Neither is strong evidence
+            on its own here.
+          </span>
+        </p>
+      )}
       {s.action === "NO_SIGNAL" && s.asset !== "fund" && s.caveats[0] && (
         // the providers put the reason for "no signal" first (stock, IPO, F&O, bond): never hide it behind "Why?"
         <p className="rounded-lg bg-background-subtle px-3 py-2 text-xs text-foreground/90"><span className="font-medium">Why no signal: </span>{s.caveats[0]}</p>
