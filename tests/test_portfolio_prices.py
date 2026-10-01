@@ -115,6 +115,45 @@ async def test_bse_fallback_numeric_codes_and_broker_statement_price():
     assert out[3].error  # the reason the live price is missing stays visible
 
 
+async def test_a_renamed_nse_symbol_is_priced_through_its_isin():
+    """Audit follow-up: a holding under its old NSE symbol (a rename like ZOMATO -> ETERNAL keeps the ISIN) showed "no
+    price". NSE's 404 for the old symbol now looks the ISIN up in the NSE/BSE listings and quotes the new symbol."""
+    from finresearch.adapters.bse_equity import Listing, Listings
+    from finresearch.adapters.nse import NseNoQuote
+
+    asked: list[str] = []
+    loads = 0
+
+    async def quote(sym: str, exch: str = "NSE") -> Quote:
+        asked.append(sym)
+        if sym in ("OLDCO", "GONECO", "SAMECO"):
+            raise NseNoQuote(f"NSE has no quote for {sym} (HTTP 404)")
+        return Quote(symbol=sym, last_price=D("212.40"))
+
+    async def listings() -> Listings:
+        nonlocal loads
+        loads += 1
+        return Listings(rows=[Listing(key="NEWCO", symbol="NEWCO", name="Example Ltd", isin="INE000X01011",
+                                      exchange="NSE", exchanges=["NSE"], nse_symbol="NEWCO"),
+                              Listing(key="SAMECO", symbol="SAMECO", name="Same Ltd", isin="INE000X01029",
+                                      exchange="NSE", exchanges=["NSE"], nse_symbol="SAMECO")])  # fmt: skip
+
+    hs = [H(1, "stock", "Example Ltd", nse_symbol="OLDCO", isin="ine000x01011"),
+          H(2, "stock", "Example Ltd (2nd account)", nse_symbol="OLDCO", isin="INE000X01011"),
+          H(3, "stock", "No ISIN", nse_symbol="GONECO"),
+          H(4, "stock", "Same symbol", nse_symbol="SAMECO", isin="INE000X01029"),
+          H(5, "stock", "Unaffected", nse_symbol="FINECO", isin="INE000X01037")]  # fmt: skip
+    out = await fetch_prices(hs, quote=quote, scheme_rows=None, listings=listings)
+    for hid in (1, 2):
+        assert out[hid].price == D("212.40") and out[hid].error is None
+        assert "OLDCO is now NEWCO" in out[hid].note and "INE000X01011" in out[hid].note
+    assert out[3].price is None and out[3].note is None and "NseNoQuote" in out[3].error  # no ISIN: no guess
+    assert out[4].price is None and out[4].note is None  # the listing has the same symbol: no second quote
+    assert out[5].price == D("212.40") and out[5].note is None
+    assert sorted(asked) == ["FINECO", "GONECO", "NEWCO", "OLDCO", "SAMECO"]  # NEWCO once for both holdings
+    assert loads == 1  # the listings are loaded once, and only because a quote 404'd
+
+
 @pytest.fixture
 def client(env):
     from sqlalchemy import text

@@ -249,7 +249,7 @@ def add_portfolio_routes(app: FastAPI, *, scheme_rows: Callable[[], Awaitable[li
 
     @app.get("/api/portfolio/prices/stream")
     async def price_stream() -> StreamingResponse:
-        """Newline-delimited JSON: one {"type": "price", "id", "price", "as_of", "source", "error"} line per holding as
+        """Newline-delimited JSON: one {"type": "price", "id", "price", "as_of", "source", "error", "note"} line per holding as
         its price arrives (concurrent, rate-limited fetches that fill the 10-minute cache), then {"type": "done"}."""
         import asyncio
         import json
@@ -259,7 +259,8 @@ def add_portfolio_routes(app: FastAPI, *, scheme_rows: Callable[[], Awaitable[li
 
         def on_price(hid: int, p: Any) -> None:
             queue.put_nowait({"type": "price", "id": hid, "price": None if p.price is None else float(p.price),
-                              "as_of": p.as_of, "source": p.source, "error": p.error})  # fmt: skip
+                              "as_of": p.as_of, "source": p.source, "error": p.error,
+                              "note": p.note})  # fmt: skip
 
         async def run() -> None:
             try:

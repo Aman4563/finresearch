@@ -554,3 +554,69 @@ def test_a_legacy_same_day_row_is_kept_for_its_method_and_does_not_block_another
         )  # same method: the legacy row is updated
         assert s.query(Forecast).filter(Forecast.instrument == sym).count() == 2
     assert ledger.dedupe_key("ipo", "X", "listing_gain", date(2026, 10, 1), "m") != legacy
+
+
+# ------------------------------------------------------------------------------------------- independent events
+def _sig(asset, sym, p, when, event):
+    from finresearch.signals import Signal, Validation
+
+    return Signal(asset=asset, instrument=sym, name=None, action="APPLY" if asset == "ipo" else "BUY", score=10,
+                  event=event, horizon="listing day" if asset == "ipo" else "12 months", method=f"test {asset} method",
+                  validation=Validation("base_rate", 30), probability=p, as_of=when)  # fmt: skip
+
+
+def test_calibration_counts_one_event_per_ipo_listing_not_one_per_day(ledger_db):
+    """Audit follow-up: an IPO viewed on three bidding days was three rows, and calibration counted three outcomes of
+    one listing. Now the latest forecast before the listing is the one scored."""
+    from finresearch.db import session_scope
+    from finresearch.signals import ledger
+
+    sym = ("IE" + ledger_db).upper()[:20]
+    with session_scope() as s:
+        for day, p in ((1, 0.6), (2, 0.7), (3, 0.9)):
+            fid = ledger.record(_sig("ipo", sym, p, at(2026, 9, day, 15), ledger.IPO_EVENT), source="signal:ipo",
+                                resolve_on=date(2026, 9, 8), event_kind="listing_gain", session=s)  # fmt: skip
+            ledger.resolve(s, fid, 1, now=at(2026, 9, 8, 17))
+        s.flush()
+        g = next(g for g in ledger.calibration_groups(s, "ipo") if g["asset"] == "ipo")
+    assert g["scored_forecasts"] == 3 and g["n"] == 1 and g["calls"] == 1
+    # the last call: (0.9 − 1)²
+    assert g["mean_p"] == pytest.approx(0.9) and g["brier"] == pytest.approx(0.01)
+    z = 1.959963984540054
+    # Wilson for 1 of 1: lower = 1 / (1 + z²) ≈ 0.2065, upper 1 (not 3 of 3's ≈ 0.4385)
+    assert g["hit_rate_ci"] == pytest.approx([1 / (1 + z * z), 1.0], abs=1e-9)
+    from finresearch.evals.calibration_policy import group_policy
+
+    assert group_policy("ipo", g["n"])["n_effective"] == 1
+
+
+def test_calibration_samples_non_overlapping_stock_windows(ledger_db):
+    """Daily stock signals log overlapping 12-month windows. Only windows that start on or after the previous kept
+    window's resolution date are scored, per stock."""
+    from finresearch.db import session_scope
+    from finresearch.signals import ledger
+
+    a, b = ("SA" + ledger_db).upper()[:20], ("SB" + ledger_db).upper()[:20]
+    rows = ((a, date(2025, 1, 2), date(2026, 1, 2), 0.6, 1),   # kept
+            (a, date(2025, 1, 3), date(2026, 1, 5), 0.6, 0),   # overlaps the first: dropped
+            (a, date(2025, 7, 1), date(2026, 7, 1), 0.7, 0),   # overlaps: dropped
+            (a, date(2026, 1, 2), date(2027, 1, 4), 0.4, 0),   # starts on the first's end date: kept
+            (b, date(2025, 1, 3), date(2026, 1, 5), 0.5, 1))  # another stock: its own event  # fmt: skip
+    with session_scope() as s:
+        for sym, start, end, p, o in rows:
+            when = datetime(start.year, start.month, start.day, 12, tzinfo=IST)
+            fid = ledger.record(_sig("stock", sym, p, when, ledger.STOCK_EVENT), source="signal:stock",
+                                resolve_on=end, event_kind="excess_return_12m", session=s,
+                                inputs={"symbol": sym, "start_date": start.isoformat()})  # fmt: skip
+            ledger.resolve(s, fid, o, now=datetime(end.year, end.month, end.day, 17, tzinfo=IST))
+        s.flush()
+        g = next(g for g in ledger.calibration_groups(s, "stock") if g["asset"] == "stock")
+    assert g["scored_forecasts"] == 5 and g["n"] == 3
+    # kept: (0.6, 1), (0.4, 0), (0.5, 1) → Brier ((0.4)² + (0.4)² + (0.5)²) / 3 = 0.57 / 3 = 0.19
+    assert g["brier"] == pytest.approx(0.19) and g["base_rate"] == pytest.approx(2 / 3)
+    from finresearch.evals.calibration_policy import group_policy
+
+    pol = group_policy("stock", g["n"])
+    assert (
+        pol["n_effective"] == 3 and pol["overlap"] == 1 and pol["next_tier"] == {"tier": "shrink", "at_n": 50}
+    )

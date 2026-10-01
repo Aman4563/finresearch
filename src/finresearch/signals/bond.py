@@ -389,9 +389,9 @@ def assess(
                for bp in (-RATE_SHOCK_BP, 0, RATE_SHOCK_BP)}  # fmt: skip
         p_def = C.cumulative_default_rate(grade, hold) or Decimal(0)
         lower_grade = C.next_lower(grade)
-        p_def_low = C.cumulative_default_rate(lower_grade, hold) if lower_grade else p_def
+        p_def_low = _or(C.cumulative_default_rate(lower_grade, hold) if lower_grade else None, p_def)
         p = float(1 - p_def) if irr[0] > alt else 0.0
-        interval = (float(1 - (p_def_low or p_def)) if irr[RATE_SHOCK_BP] > alt else 0.0,
+        interval = (float(1 - p_def_low) if irr[RATE_SHOCK_BP] > alt else 0.0,
                     float(1 - p_def) if irr[-RATE_SHOCK_BP] > alt else 0.0)  # fmt: skip
         event = (f"sold after {hold:g} years, it pays in full and its post-tax return beats the better of the "
                  f"matching G-sec and an FD")  # fmt: skip
@@ -402,10 +402,10 @@ def assess(
     else:
         p_def = C.cumulative_default_rate(grade, years) or Decimal(0)
         lower_grade = C.next_lower(grade)
-        p_def_low = C.cumulative_default_rate(lower_grade, years) if lower_grade else p_def
+        p_def_low = _or(C.cumulative_default_rate(lower_grade, years) if lower_grade else None, p_def)
         beats = ata_eff > alt
         p = float(1 - p_def) if beats else 0.0
-        interval = (float(1 - (p_def_low or p_def)) if beats else 0.0, p)
+        interval = (float(1 - p_def_low) if beats else 0.0, p)
         if not beats:
             caveats.append(f"Even if it pays in full, its post-tax yield {_pp(ata_eff):.2f} % doesn't beat the "
                            f"{alt_name}'s {_pp(alt):.2f} %: the event fails without any default.")  # fmt: skip
@@ -413,6 +413,17 @@ def assess(
         interval = (0.0, max(interval[1], float(1 - p_def)))
         caveats.append("With another coupon frequency the bond would land on the other side of the alternative: "
                        "the outcome hangs on the schedule you haven't confirmed.")  # fmt: skip
+    # a zero-width range is not a range. P = 0 in every scenario means the event fails by arithmetic (the yield does
+    # not beat the alternative even with no default): a certainty under these inputs, not an estimate, so it is shown
+    # without a range and labelled rule-based. A positive P with equal ends means CRISIL's table gives no worse grade
+    # (BB) or the same rate for it (AAA/AA over short tenors): the base rate alone, with no stress range to show.
+    decided = p == 0.0 and interval[1] == 0.0
+    shown_interval: tuple[float, float] | None = interval
+    if round(interval[0], 4) == round(interval[1], 4):
+        shown_interval = None
+        if not decided:
+            caveats.append("No range: one grade worse has the same CRISIL default rate here (or the table has no "
+                           "worse grade), so the probability is the grade's base rate alone.")  # fmt: skip
     if years > 3:
         caveats.append("CRISIL publishes default rates up to 3 years; beyond that the 3-year rate is extended at a "
                        "constant annual rate.")  # fmt: skip
@@ -437,13 +448,21 @@ def assess(
         caveats.append("Little or no trading today: check the last few sessions' volumes before buying.")
     method = (f"§D.4 expected-loss-adjusted post-tax yield vs post-tax FBIL G-sec and FD (effective annual rates); "
               f"EL = PD_annual × LGD from CRISIL {C.CDR_AS_OF}")  # fmt: skip
-    validation = Validation(status="base_rate", metrics={"no_default_rate": round(float(1 - p_def), 6), "years": round(hold or years, 2)},
-                            description="Yields are deterministic arithmetic (golden-tested); the probability is "
-                                        "CRISIL's historical default rate for the grade. CRISIL doesn't publish the "
-                                        "sample behind each average here, so no n is shown.")  # fmt: skip
+    metrics = {"no_default_rate": round(float(1 - p_def), 6), "years": round(hold or years, 2)}
+    if decided:
+        validation = Validation(status="rule_based", metrics=metrics,
+                                description="Decided by arithmetic, not estimated: even if every payment is made, the "
+                                            "post-tax return does not beat the alternative in any scenario checked, "
+                                            "so the event cannot happen under these inputs (0 %, no range).")  # fmt: skip
+    else:
+        validation = Validation(status="base_rate", metrics=metrics,
+                                description="Yields are deterministic arithmetic (golden-tested); the probability is "
+                                            "CRISIL's historical default rate for the grade. CRISIL doesn't publish "
+                                            "the sample behind each average here, so no n is shown.")  # fmt: skip
     return Signal(action=action, score=round(score, 1), event=event, horizon=horizon, method=method,
                   validation=validation, probability=round(p, 4),
-                  probability_interval=(round(interval[0], 4), round(interval[1], 4)),
+                  probability_interval=(None if shown_interval is None
+                                        else (round(shown_interval[0], 4), round(shown_interval[1], 4))),
                   base_rate=None,
                   factors=factors, caveats=caveats, **common)  # fmt: skip
 
@@ -473,3 +492,8 @@ __all__ = [
     "fd_rate_for",
     "holding_period_yield",
 ]  # fmt: skip
+
+
+def _or(x: Decimal | None, default: Decimal) -> Decimal:
+    """x unless it is None (a 0 % default rate is a value, not a missing one)."""
+    return default if x is None else x
