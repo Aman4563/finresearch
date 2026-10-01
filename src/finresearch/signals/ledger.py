@@ -534,10 +534,55 @@ def _method_group(method: str) -> str:
     return method
 
 
+# events that happen once per instrument (an IPO lists once): every forecast of it is a forecast of the same outcome
+POINT_EVENTS = frozenset({"listing_gain"})
+
+
+def _window(f: Forecast) -> tuple[date, date]:
+    start = (f.inputs or {}).get("start_date")
+    return (date.fromisoformat(start) if start else ist_day(f.created_at)), f.resolve_on
+
+
+def independent_events(rows: list[Forecast]) -> list[Forecast]:
+    """One scored forecast per INDEPENDENT outcome, so n, the Brier score, the bins and every Wilson interval count
+    events, not ledger rows. The ledger keeps one row per instrument per IST day, so an IPO viewed on five bidding
+    days is five rows about one listing, and a stock signal viewed daily logs ~250 overlapping 12-month windows a year.
+
+    * point events (`POINT_EVENTS`: the IPO listing-day open): the LATEST resolved forecast per instrument, i.e. the
+      last call before the information cutoff (forecasts made after the listing-day open are already voided).
+    * window events (the stock's 12-month excess return): non-overlapping sampling per instrument. Forecasts are
+      taken in start-date order, keeping one only when it starts on or after the previous kept one's resolution date.
+      Overlapping windows share most of their return path, so their outcomes are serially correlated and counting
+      each as a separate trial overstates n and narrows every interval (Hansen & Hodrick 1980, J. Political Economy
+      88(5) on overlapping observations; Harri & Brorsen 2009, "The Overlapping Data Problem", Quant. Qual. Anal.
+      Soc. Sci. 3(3), which finds non-overlapping samples a valid if less efficient choice). Non-overlapping sampling
+      is used instead of an n / overlap correction because the overlap is not fixed: views are irregular (daily,
+      monthly, never), so no single divisor is right.
+    Stocks resolving over the same months still move together (one market), so even the event count overstates
+    the independent evidence across stocks; that limit is stated, not corrected."""
+    by_key: dict[tuple[str, str, str], list[Forecast]] = {}
+    for f in rows:
+        by_key.setdefault((f.asset, f.instrument, f.event_kind), []).append(f)
+    out: list[Forecast] = []
+    for (_a, _i, kind), fs in by_key.items():
+        if kind in POINT_EVENTS:
+            out.append(max(fs, key=lambda f: (f.created_at, f.id)))
+            continue
+        last_end: date | None = None
+        for f in sorted(fs, key=lambda f: (_window(f), f.created_at, f.id)):
+            start, end = _window(f)
+            if last_end is None or start >= last_end:
+                out.append(f)
+                last_end = end
+    return sorted(out, key=lambda f: f.id)
+
+
 def calibration_groups(session: Session, asset: str | None = None, n_bins: int = 5) -> list[dict[str, Any]]:
     """Calibration per (asset, method) over resolved forecasts with a probability, plus coverage counts (open, no-call,
-    void) so the track record shows what was not scored as well as what was. The last group, asset "all", pools
-    every method (a headline only: methods differ, so read the per-method rows before trusting it)."""
+    void) so the track record shows what was not scored as well as what was. Scores, n and intervals count
+    independent events (`independent_events`); `scored_forecasts` is the number of ledger rows behind them. The last
+    group, asset "all", pools every method (a headline only: methods differ, so read the per-method rows before
+    trusting it); there too each event counts once, as the latest non-shadow call on it."""
     from finresearch.evals.calibration import summarize
 
     q = select(Forecast)
@@ -553,11 +598,12 @@ def calibration_groups(session: Session, asset: str | None = None, n_bins: int =
     groups[("all", "all methods")] = [f for rows in list(groups.values()) for f in rows
                                       if f.validation_status != "shadow"]  # fmt: skip
     for (a, method), rows in sorted(groups.items(), key=lambda kv: (kv[0][0] == "all", kv[0])):
-        scored = [
+        rows_scored = [
             f for f in rows if f.status == "resolved" and f.probability is not None and f.outcome is not None
         ]
+        scored = independent_events(rows_scored)
         summary = summarize([f.probability for f in scored], [int(f.outcome) for f in scored], n_bins)
-        out.append({"asset": a, "method": method, "total": len(rows),
+        out.append({"asset": a, "method": method, "total": len(rows), "scored_forecasts": len(rows_scored),
                     "open": sum(f.status == "open" for f in rows),
                     "resolved": sum(f.status == "resolved" for f in rows),
                     "void": sum(f.status == "void" for f in rows),

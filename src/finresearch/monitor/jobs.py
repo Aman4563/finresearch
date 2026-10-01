@@ -74,6 +74,9 @@ class Deps:
     archive: bool = (
         False  # the daily validation archive after the close (monitor.archive: sector P/E, IV term, G-sec)
     )
+    disclosures: bool = (
+        False  # the daily disclosure refresh (monitor.disclosures: surveillance, pledge, insiders, ratings)
+    )
 
     @classmethod
     def live(cls) -> Deps:
@@ -159,7 +162,7 @@ class Deps:
                    corporate_actions=corporate_actions, forecasts=True, archive_books=True,
                    intraday=live_fetch, bse_stock_snapshot=bse_stock_snapshot, bse_price_history=bse_price_history,
                    bse_corporate_actions=bse_corporate_actions, portfolio_daily=True, brief=True, archive=True,
-                   live_holidays=True)  # fmt: skip
+                   live_holidays=True, disclosures=True)  # fmt: skip
 
 
 def alert(session: Session, watch: Watch, kind: str, message: str, level: str = "info", **data: Any) -> None:

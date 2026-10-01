@@ -1,0 +1,9 @@
+{"longterm": {"data": [
+  {"srno": 1, "symbol": "EXAMPLE", "companyName": "Example Ltd", "isin": "INE000X01011", "series": null,
+   "asmSurvIndicator": "Stage I", "survCode": "LTASM - I (13)", "survDesc": "Long Term ASM Stage I", "asmTime": "30-Sep-2026 18:10"},
+  {"srno": 2, "symbol": "SAMPLEFIN", "companyName": "Sample Finance Ltd", "isin": "INE000Y01019", "series": null,
+   "asmSurvIndicator": "Stage IV", "survCode": "LTASM - IV (16)", "survDesc": "Long Term ASM Stage IV", "asmTime": "30-Sep-2026 18:10"}
+]}, "shortterm": {"data": [
+  {"srno": 1, "symbol": "DEMOTECH", "companyName": "Demo Tech Ltd", "isin": "INE000Z01017", "series": null,
+   "asmSurvIndicator": "Stage II", "survCode": "STASM - II (12)", "survDesc": "Short Term ASM Stage II", "asmTime": "30-Sep-2026 18:10"}
+]}}

@@ -11,6 +11,7 @@ import Link from "next/link";
 import { useState } from "react";
 
 import { Badge, Button, Callout, Card, EmptyState, ErrorNote, InfoTip, PageHeader, SkeletonRows, Stat, Table, cx } from "@/components/ui";
+import { BriefDisclosuresCard } from "@/components/brief/disclosures";
 import { API_URL, api, day, when, useApi } from "@/lib/api";
 
 import {
@@ -285,6 +286,8 @@ export function BriefPage() {
               ) : <p className="py-3 text-sm text-muted">{b.has_portfolio ? "Every holding is priced and the daily pass is current." : "No portfolio yet."}</p>}
             </Card>
           </div>
+
+          <BriefDisclosuresCard brief={b} />
 
           {b.has_portfolio && (
             <Card title="Weekly digest" icon={<TrendingUp className="size-4" />} subtitle="The last seven days, new money removed. Sent on Sundays.">

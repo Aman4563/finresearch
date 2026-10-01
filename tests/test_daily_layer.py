@@ -251,7 +251,10 @@ def test_daily_pass_values_and_every_metric(pf):
                                                                  (date(2026, 9, 30), D("34900.00"), True)]  # fmt: skip
         m, reason = portfolio_metrics(s)
     assert reason is None
-    assert set(m) == set(PORTFOLIO_METRICS) == {x.key for x in metrics_for("portfolio")}
+    # holdings_red_flags is computed by finresearch.disclosures (alerts.compute routes it there), not this module
+    assert (
+        set(m) == set(PORTFOLIO_METRICS) == {x.key for x in metrics_for("portfolio")} - {"holdings_red_flags"}
+    )
     v = {k: x[0] for k, x in m.items()}
     # INFY 10 x 1410 = 14,100; fund 400 units x 52 = 20,800; total 34,900
     assert v["holding_day_move_pct"] == D("6.00") and m["holding_day_move_pct"][2] == "Infosys Ltd -6.00%"

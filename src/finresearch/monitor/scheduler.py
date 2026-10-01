@@ -268,6 +268,21 @@ async def alerts_step(now: datetime) -> dict[str, int]:
     return {k: v for k, v in out.items() if v}
 
 
+def journal_step(now: datetime) -> dict[str, int]:
+    """Journal drafts for newly imported trades and review reminders (portfolio.journal): database only, so inline.
+    Runs before alerts_step, whose delivery pass forwards the reminders."""
+    try:
+        from finresearch.db import session_scope
+        from finresearch.portfolio.journal import review_step
+
+        with session_scope() as s:
+            res = review_step(s, now)
+        return {f"journal_{k}": v for k, v in res.items() if v}
+    except Exception:
+        log.warning("journal step failed; it is retried on the next tick", exc_info=True)
+        return {}
+
+
 _BACKGROUND: dict[str, asyncio.Task] = {}
 
 
@@ -292,6 +307,28 @@ def _spawn_portfolio(deps: jobs.Deps, now: datetime) -> None:
     _BACKGROUND["portfolio"] = asyncio.create_task(run())
 
 
+def _spawn_disclosures(now: datetime) -> None:
+    """Start the daily disclosure refresh (monitor.disclosures) in the background when a pass is due: the evening
+    pass reads a few requests per held or watched stock at polite rates. At most one runs at a time."""
+    from finresearch.monitor.disclosures import disclosures_step, due_passes
+
+    t = _BACKGROUND.get("disclosures")
+    if (t is not None and not t.done()) or not due_passes(now):
+        return
+
+    async def run() -> None:
+        try:
+            res = await disclosures_step(now)
+            if res:
+                log.info(
+                    "disclosure refresh: %s", {k: v if isinstance(v, str) else "done" for k, v in res.items()}
+                )
+        except Exception:
+            log.warning("disclosure refresh failed", exc_info=True)
+
+    _BACKGROUND["disclosures"] = asyncio.create_task(run())
+
+
 async def drain() -> None:
     """Wait for background work started by `tick` (a one-shot `finresearch monitor tick` calls this)."""
     for t in list(_BACKGROUND.values()):
@@ -314,6 +351,8 @@ async def tick(deps: jobs.Deps, now: datetime | None = None) -> dict[str, int]:
     now = now or datetime.now(UTC)
     if deps.portfolio_daily:
         _spawn_portfolio(deps, now)
+    if deps.disclosures:
+        _spawn_disclosures(now)
     out_brief = brief_step(now) if deps.brief else {}
     if deps.holidays is not None or deps.live_holidays:
         await _refresh_holidays(deps)
@@ -335,6 +374,7 @@ async def tick(deps: jobs.Deps, now: datetime | None = None) -> dict[str, int]:
     out = {"added": added, "done": done, "failed": failed, "retried": retried, "missed": missed}
     if deps.forecasts:
         out |= {k: v for k, v in (await forecast_step(deps, now)).items() if k in ("resolved", "void")}
+    out |= journal_step(now)
     out |= await alerts_step(now)
     try:  # broker syncs after the close and the statement inbox (portfolio.connectors.sync)
         from finresearch.portfolio.connectors.sync import connections_step

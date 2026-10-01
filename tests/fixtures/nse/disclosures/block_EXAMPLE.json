@@ -1,0 +1,4 @@
+{"data": [
+  {"BD_DT_DATE": "30-SEP-2026", "BD_DT_ORDER": "2026-09-30T00:00:00", "BD_SYMBOL": "EXAMPLE", "BD_SCRIP_NAME": "Example Ltd",
+   "BD_CLIENT_NAME": "Mock Insurance Co Ltd", "BD_BUY_SELL": "BUY", "BD_QTY_TRD": "300000", "BD_TP_WATP": "505.00", "BD_REMARKS": null}
+]}

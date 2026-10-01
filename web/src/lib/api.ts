@@ -489,6 +489,8 @@ export type ReliabilityBin = { n: number; p_low: number; p_high: number; mean_p:
 export type CalibrationGroup = {
   asset: string; method: string; validation_status: string;
   total: number; open: number; resolved: number; void: number; no_call: number;
+  /** resolved ledger rows behind `n` (several daily rows can be one event) */
+  scored_forecasts?: number;
   n: number; base_rate: number | null; mean_p: number | null; brier: number | null; brier_reference: number | null;
   brier_skill: number | null; log_loss: number | null; hits: number; calls: number; hit_rate: number | null;
   hit_rate_ci: [number, number] | null; bins: ReliabilityBin[];

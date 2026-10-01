@@ -1,8 +1,11 @@
 """Listed-stock signal (docs/dev/RESEARCH_ROADMAP.md §D.2, items 11 and 13).
 
-Event: "the next 12 months' price return beats the NIFTY 50 price index's" (both without dividends), horizon 12
-months. The probability is the hit rate of the stock's momentum + trend bucket in the walk-forward backtest
-(evals/stock_backtest/results.json, finresearch.evals.stock_backtest), with a Wilson interval on an effective n.
+Event (`EVENT`, scored by the ledger's resolver "excess_return_12m"): "the stock's 12-month total return (closes plus
+cash dividends with an ex-date in the window, not reinvested) beats the price return of NIFTYBEES (the Nifty 50 ETF)
+over the same dates", horizon 12 months. The probability is a proxy for it: the hit rate of the stock's momentum +
+trend bucket in the walk-forward backtest (evals/stock_backtest/results.json, finresearch.evals.stock_backtest), which
+measured price return against the NIFTY 50 price index with dividends left out on both sides (NSE serves no total-return
+history), with a Wilson interval on an effective n. The signal's base-rate description and a caveat say so.
 
 The action comes from a transparent composite score whose weights were fixed before the backtest was run
 (pre-registered, "composite v1"). They follow the Indian factor evidence (IIMA four-factor library [39][40]: momentum
@@ -728,7 +731,8 @@ async def stock_signal(instrument: str, ctx: dict[str, Any]) -> Signal:
         interval = tuple(bucket["wilson95"]) if bucket.get("wilson95") else None
         base_rate = {"n": bucket["n"], "p": bucket["p"], "ci": bucket.get("wilson95"),
                      "description": f"{bucket_name}: NIFTY 50 stock-months {bt['stats']['from'][:7]} to "
-                                    f"{bt['stats']['to'][:7]} whose next 12 months' price return beat the NIFTY 50 price index (backtested; "
+                                    f"{bt['stats']['to'][:7]} whose next 12 months' price return beat the NIFTY 50 price index (backtested "
+                                    "on price returns, no dividends: a proxy for the dividend-inclusive event above; "
                                     f"CI on an effective n of {bucket['n_effective']} = stock-months ÷ 12 for the overlapping "
                                     "12-month windows; stocks in the same month move together, so the true n is "
                                     "smaller and the range too narrow)"}  # fmt: skip

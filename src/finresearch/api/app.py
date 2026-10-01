@@ -690,6 +690,10 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
         ids = [r.id for r in profile.rules]
         if len(ids) != len(set(ids)):
             raise HTTPException(422, "rule ids must be unique")
+        from finresearch.suggest.profile import rule_range_errors
+
+        if errs := rule_range_errors(profile.rules):
+            raise HTTPException(422, "; ".join(errs))
         alert_ids = [r.id for r in profile.alert_rules]
         if len(alert_ids) != len(set(alert_ids)):
             raise HTTPException(422, "alert rule ids must be unique")
@@ -1444,6 +1448,16 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
     from finresearch.api.brief import add_brief_routes
 
     add_brief_routes(app, clock=clock)
+
+    # ------------------------------------------------------------------ exchange disclosures (finresearch.disclosures)
+    from finresearch.api.disclosures import add_disclosure_routes
+
+    add_disclosure_routes(app, clock=clock)
+
+    # ------------------------------------------------------------------ decision journal for every trade, behaviour report
+    from finresearch.api.journal import add_journal_routes
+
+    add_journal_routes(app, clock=clock)
 
     # ------------------------------------------------------------------ buy/sell signals (finresearch.signals)
     @app.get("/api/signals")

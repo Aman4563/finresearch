@@ -12,9 +12,11 @@ policy, fixed in advance (evals/experiments/calibration_policy/PREREG.md):
     ≥ 1000               isotonic    pool-adjacent-violators (PAV) step function, linear between block centres
                                      ([31]: isotonic overfits below roughly a thousand cases)
 
-"Effective n" is the number of independent outcomes. Forecasts whose outcome windows overlap (a 12-month stock event
-issued monthly) share most of their information, so the caller divides by the overlap (n/12 for monthly 12-month
-windows), as the stock backtest's Wilson intervals already do.
+"Effective n" is the number of independent outcomes. Forecasts whose outcome windows overlap share most of their
+information. For the live forecast ledger the caller passes a count that is already independent
+(`signals.ledger.independent_events`: one forecast per IPO listing, non-overlapping 12-month windows per stock), so
+`group_policy` uses overlap 1. `fit_policy(..., overlap=12)` remains for samples logged at a fixed monthly cadence
+with 12-month windows (the stock backtest's stock-months), where n/12 is the correction.
 
 Also here, because the IPO calibration experiment uses them: a one-parameter temperature scaling p′ = σ(logit p / T)
 with T minimising log loss, and a Brier-optimal blend of two forecasts on a fixed λ grid.
@@ -199,14 +201,13 @@ def fit_policy(
     return Calibrator(tier=tier, n=n, n_effective=n_eff, base_rate=base, params=params)
 
 
-# overlapping outcome windows per ledger asset: a stock forecast can be logged every month for a 12-month event
-OVERLAP = {"stock": 12.0}
-
-
 def group_policy(asset: str, n_resolved: int) -> dict[str, Any]:
-    """The tier a ledger group (asset, method) has reached, for `/api/calibration`. Informational: nothing applies a
-    calibrator to displayed probabilities yet (evals/experiments/calibration_policy/PREREG.md)."""
-    overlap = OVERLAP.get(asset, 1.0)
+    """The tier a ledger group (asset, method) has reached, for `/api/calibration`. `n_resolved` must already count
+    independent events (signals.ledger.independent_events): the ledger's daily rows are de-duplicated and stock
+    windows de-overlapped there, so no divisor is applied here (a fixed n/12 assumed monthly logging, but signals
+    are logged on every day they are viewed). Informational: nothing applies a calibrator to displayed probabilities
+    yet (evals/experiments/calibration_policy/PREREG.md)."""
+    overlap = 1.0
     n_eff = effective_n(n_resolved, overlap)
     tier = policy_tier(n_eff)
     nxt = next(((name, lo) for name, lo in TIERS if lo > n_eff), None)
