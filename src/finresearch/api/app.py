@@ -1445,6 +1445,11 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
 
     add_brief_routes(app, clock=clock)
 
+    # ------------------------------------------------------------------ decision journal for every trade, behaviour report
+    from finresearch.api.journal import add_journal_routes
+
+    add_journal_routes(app, clock=clock)
+
     # ------------------------------------------------------------------ buy/sell signals (finresearch.signals)
     @app.get("/api/signals")
     def signal_assets() -> dict[str, Any]:

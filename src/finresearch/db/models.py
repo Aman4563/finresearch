@@ -939,3 +939,50 @@ class BrokerSyncLog(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     summary: Mapped[dict[str, Any]] = mapped_column(default=dict)
     error: Mapped[str | None] = mapped_column(Text)  # secrets redacted
+
+
+# --------------------------------------------------------------------------- decision journal for every trade (#5)
+# Personal data: the investor's own reasons for buying and selling. Local database only, never sent to an LLM (no
+# agent, advisor prompt or MCP tool reads this table) and never put in a forwarded alert's text.
+class TradeNote(Base):
+    """One journal entry for a buy or a sell of any asset: the thesis, how long it should take, what would prove it
+    wrong, how confident the investor is, when to look again, and (later) what happened against the thesis.
+
+    `status`: draft (auto-created for a newly imported trade, the thesis still to write) | planned (written before the
+    trade, from the pre-trade checklist) | active (thesis written, trade done) | reviewed (outcome recorded) |
+    cancelled (a planned trade not taken). `txn_ids` lists the portfolio transactions it covers (one entry per
+    holding, side and day, so a day of partial fills is one entry); ids of deleted transactions are ignored on read.
+    """
+
+    __tablename__ = "trade_note"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    status: Mapped[str] = mapped_column(String(12), default="draft", index=True)
+    source: Mapped[str] = mapped_column(String(12), default="manual")  # auto | manual | pretrade
+    side: Mapped[str] = mapped_column(String(4))  # buy | sell
+    asset_type: Mapped[str] = mapped_column(String(10), default="stock")  # stock | mf | other
+    instrument: Mapped[str | None] = mapped_column(String(60))  # "NSE:INFY", "MF:120503", "ISIN:..."
+    name: Mapped[str] = mapped_column(String(300))
+    # no foreign key on purpose: the portfolio tables are truncated and rebuilt by tests and imports without knowing
+    # about the journal; a holding that no longer exists reads as None (portfolio.journal.note_json)
+    holding_id: Mapped[int | None] = mapped_column(Integer, index=True)
+    txn_ids: Mapped[list[Any]] = mapped_column(default=list)
+    trade_day: Mapped[date | None] = mapped_column(Date)  # the executed trade's day (or the planned day)
+    quantity: Mapped[Decimal | None] = mapped_column(Numeric(20, 6))
+    price: Mapped[Decimal | None] = mapped_column(Numeric(20, 6))  # per unit, gross
+    # the thesis
+    thesis: Mapped[str | None] = mapped_column(Text)
+    expected_holding_days: Mapped[int | None] = mapped_column(Integer)
+    invalidation: Mapped[str | None] = mapped_column(
+        Text
+    )  # what would prove the thesis wrong / the exit rule
+    confidence_pct: Mapped[int | None] = mapped_column(Integer)  # 0-100: how likely the thesis plays out
+    review_on: Mapped[date | None] = mapped_column(Date, index=True)
+    review_alerted_on: Mapped[date | None] = mapped_column(Date)  # the review date a reminder was raised for
+    checklist: Mapped[dict[str, Any]] = mapped_column(default=dict)  # the pre-trade checklist as shown
+    # the outcome review
+    outcome_verdict: Mapped[str | None] = mapped_column(String(12))  # right | wrong | mixed | too_early
+    outcome_notes: Mapped[str | None] = mapped_column(Text)
+    outcome: Mapped[dict[str, Any]] = mapped_column(default=dict)  # figures at review time (price, return)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
