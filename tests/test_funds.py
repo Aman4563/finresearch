@@ -166,3 +166,60 @@ async def test_navs_on_keeps_the_last_real_nav_over_a_later_na():
 
     got = (await Fake(client=object()).navs_on(last + timedelta(days=1)))[code]  # type: ignore[arg-type]
     assert got.nav is not None and got.day == last
+
+
+def test_amfi_probe_day_is_the_last_trading_day():
+    import json as _json
+
+    from finresearch.adapters.amfi import probe_day
+    from finresearch.adapters.nse_holidays import parse_holidays
+
+    hol = set(parse_holidays(_json.loads((Path(__file__).parent / "fixtures" / "nse" / "holidays_2026_trading_cm.json")
+                                         .read_text())))  # fmt: skip
+    # Sunday 4-Oct-2026 and Monday 5-Oct: the last trading day is Thursday 1-Oct (Friday 2-Oct is Gandhi Jayanti)
+    assert probe_day(date(2026, 10, 4), hol) == date(2026, 10, 1)
+    assert probe_day(date(2026, 10, 5), hol) == date(2026, 10, 1)
+    assert probe_day(date(2026, 10, 1), hol) == date(2026, 9, 30)
+
+
+async def test_amc_code_map_is_not_saved_when_the_probe_found_few_amcs(tmp_path):
+    from finresearch.adapters.amfi import MIN_AMC_CODES, AmfiClient, SchemeNav
+
+    found = {"n": 3}
+    asked: list[int] = []
+
+    class Fake(AmfiClient):
+        async def history(self, start, end, amc_code=None):
+            asked.append(amc_code)
+            if amc_code is not None and amc_code <= found["n"]:
+                return [
+                    SchemeNav("1", "x", None, None, None, None, Decimal(1), start, None, f"AMC {amc_code}")
+                ]
+            return []
+
+    amfi = Fake(client=object(), cache_dir=tmp_path)  # type: ignore[arg-type]
+    few = await amfi.amc_codes(date(2026, 10, 3))  # a Saturday: only liquid-fund AMCs publish
+    assert len(few) == 3 and not (tmp_path / "amfi_amc_codes.json").exists()
+    found["n"] = MIN_AMC_CODES + 5
+    full = await amfi.amc_codes(date(2026, 10, 1))
+    assert len(full) == MIN_AMC_CODES + 5 and (tmp_path / "amfi_amc_codes.json").exists()
+    asked.clear()
+    assert await amfi.amc_codes(date(2026, 10, 1)) == full and asked == []  # served from the cache
+
+
+async def test_fund_nav_alerts_probe_a_published_day_with_a_cached_code_map(monkeypatch, tmp_path):
+    from finresearch.adapters import amfi as amfi_mod
+    from finresearch.alerts import compute
+    from finresearch.fincalc import dates
+
+    monkeypatch.setattr(dates, "today_ist", lambda: date(2026, 10, 5))
+    seen = {}
+
+    async def scheme_history(self, scheme, start, end, probe):
+        seen.update(cache_dir=self.cache_dir, probe=probe, end=end)
+        return []
+
+    monkeypatch.setattr(amfi_mod.AmfiClient, "scheme_history", scheme_history)
+    await compute._live_navs(object())
+    assert seen["cache_dir"] is not None  # the code map persists between alert passes
+    assert seen["probe"] < seen["end"] == date(2026, 10, 5)  # never today (NAVs are published in the evening)

@@ -89,11 +89,10 @@ class MarketSources:
     async def get_nav_history(self, scheme, start: date, end: date) -> list:
         if self.nav_history is not None:
             return await self.nav_history(scheme, start, end)
-        from finresearch.adapters.amfi import AmfiClient
+        from finresearch.adapters.amfi import AmfiClient, probe_day
         from finresearch.config import get_settings
 
-        today = self.today()
-        probe = today - timedelta(days=3 if today.weekday() == 0 else 1)
+        probe = probe_day(self.today())
         async with AmfiClient(cache_dir=get_settings().state_dir) as amfi:
             return await amfi.scheme_history(scheme, start, end, probe)
 

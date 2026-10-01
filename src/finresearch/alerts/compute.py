@@ -111,12 +111,15 @@ async def _live_scheme(code: str):
 
 
 async def _live_navs(scheme) -> list[tuple[date, Decimal]]:
-    from finresearch.adapters.amfi import AmfiClient
+    from finresearch.adapters.amfi import AmfiClient, probe_day
+    from finresearch.config import get_settings
     from finresearch.fincalc.dates import today_ist
 
     end = today_ist()
-    async with AmfiClient() as amfi:
-        rows = await amfi.scheme_history(scheme, end - timedelta(days=10), end, end)
+    # the AMC-code map is cached in the state dir (it took MAX_AMC_CODE requests on every call), and probed on the
+    # last trading day: today's NAVs are not out before the evening, so probing today found no AMC at all
+    async with AmfiClient(cache_dir=get_settings().state_dir) as amfi:
+        rows = await amfi.scheme_history(scheme, end - timedelta(days=10), end, probe_day(end))
     return sorted({r.day: r.nav for r in rows if r.day and r.nav}.items())
 
 

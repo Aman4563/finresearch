@@ -28,6 +28,29 @@ from finresearch.adapters.http import PoliteClient
 NAV_ALL_URL = "https://www.amfiindia.com/spages/NAVAll.txt"
 HISTORY_URL = "https://portal.amfiindia.com/DownloadNAVHistoryReport_Po.aspx"
 MAX_AMC_CODE = 90
+# The AMC-code map is discovered by probing one day per code (MAX_AMC_CODE requests). It is kept AMC_CODES_TTL_S, and
+# never saved when the probe found fewer than MIN_AMC_CODES of India's ~45 AMCs: a probe day without NAVs (a weekend,
+# a holiday, today before the evening publication) only finds the AMCs with liquid/overnight funds, and saving that
+# map made every other AMC's history fail with "no AMFI code found" for good.
+AMC_CODES_TTL_S = 30 * 86400
+MIN_AMC_CODES = 20
+
+
+def probe_day(today: date, holidays: set[date] | None = None) -> date:
+    """The last NSE trading day before `today`: every AMC has published that day's NAVs by now. (The callers used
+    "yesterday, or Friday on a Monday": a Saturday on a Sunday, a holiday after a holiday, and one used today.)"""
+    from finresearch.fincalc.dates import is_business_day
+
+    if holidays is None:
+        from finresearch.adapters.nse_holidays import trading_holidays
+
+        holidays = trading_holidays()
+    d = today - timedelta(days=1)
+    while not is_business_day(d, holidays):
+        d -= timedelta(days=1)
+    return d
+
+
 TER_URL = "https://www.amfiindia.com/api/populate-te-rdata-revised"
 TER_PAGE = "https://www.amfiindia.com/ter-of-mf-schemes"
 
@@ -302,10 +325,21 @@ class AmfiClient:
                 latest[r.code] = r
         return latest
 
-    async def amc_codes(self, probe_day: date) -> dict[str, int]:
-        """AMC name -> AMFI `mf` code, discovered by asking for one day per code (cached in cache_dir)."""
-        cache = self.cache_dir / "amfi_amc_codes.json" if self.cache_dir else None
-        if cache and cache.exists():
+    def _codes_cache(self) -> Path | None:
+        return self.cache_dir / "amfi_amc_codes.json" if self.cache_dir else None
+
+    def _codes_age_s(self) -> float | None:
+        import time
+
+        cache = self._codes_cache()
+        return time.time() - cache.stat().st_mtime if cache and cache.exists() else None
+
+    async def amc_codes(self, probe_day: date, *, refresh: bool = False) -> dict[str, int]:
+        """AMC name -> AMFI `mf` code, discovered by asking for one day per code (cached in cache_dir for
+        AMC_CODES_TTL_S, and only when the probe found at least MIN_AMC_CODES AMCs)."""
+        cache = self._codes_cache()
+        age = self._codes_age_s()
+        if cache and age is not None and age < AMC_CODES_TTL_S and not refresh:
             return json.loads(cache.read_text())
         codes: dict[str, int] = {}
         for code in range(1, MAX_AMC_CODE + 1):
@@ -313,7 +347,7 @@ class AmfiClient:
             amc = next((r.amc for r in rows if r.amc), None)
             if amc:
                 codes[amc] = code
-        if cache and codes:
+        if cache and len(codes) >= MIN_AMC_CODES:
             cache.parent.mkdir(parents=True, exist_ok=True)
             cache.write_text(json.dumps(codes, indent=1, sort_keys=True))
         return codes
@@ -322,6 +356,11 @@ class AmfiClient:
         self, scheme: SchemeNav, start: date, end: date, probe_day: date
     ) -> list[SchemeNav]:
         codes = await self.amc_codes(probe_day)
+        age = self._codes_age_s()
+        if scheme.amc not in codes and age is not None and age > 86400:
+            codes = await self.amc_codes(
+                probe_day, refresh=True
+            )  # a new or renamed AMC: re-probe, at most daily
         if scheme.amc not in codes:
             raise AmfiError(f"no AMFI code found for {scheme.amc!r}")
         rows = await self.history(start, end, amc_code=codes[scheme.amc])
