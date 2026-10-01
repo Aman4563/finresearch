@@ -779,3 +779,61 @@ def test_empty_secret_keeps_the_saved_one(client):
     client.put("/api/connections/dhan", headers=ORIGIN, json={"config": {"clear_access_token": True}})
     conn = next(c for c in client.get("/api/connections").json()["connections"] if c["key"] == "dhan")
     assert not conn["config"]["access_token_set"]
+
+
+def test_holdings_statement_after_a_short_tradebook_adds_the_older_units(db):
+    """Groww order history from Sep-2025 only: 3 bought and 2 sold in the window, Groww holds 40 at ₹813.37. The 39
+    units bought earlier become one baseline dated before the history, priced so the open lots cost 40 × 813.37."""
+    from finresearch.portfolio.connectors.merge import merge_sync, remember_statement_prices
+    from finresearch.portfolio.importers import parse_tradebook
+    from finresearch.portfolio.service import apply
+
+    csv = ("Stock name,Symbol,ISIN,Type,Quantity,Value,Exchange,Exchange Order Id,Execution date and time,"
+           "Order status\nExample Bank,EXBANK,INE000B01012,BUY,3,3000,NSE,X1,01-09-2025 10:30 AM,Executed\n"
+           "Example Bank,EXBANK,INE000B01012,SELL,2,2400,NSE,X2,02-10-2025 10:30 AM,Executed\n")  # fmt: skip
+    with db() as s:
+        apply(
+            s,
+            parse_tradebook(csv.encode(), "groww.csv"),
+            filename="groww.csv",
+            sha256="b" * 64,
+            saved_path=None,
+        )
+        h = BrokerHolding(name="Example Bank", quantity=D(40), isin="INE000B01012", avg_price=D("813.37"),
+                          last_price=D("959.5"))  # fmt: skip
+        res = merge_sync(s, account="Groww", source="groww_holdings", label="Groww", holdings=[h], trades=[],
+                         today=TODAY, now=NOW)  # fmt: skip
+        remember_statement_prices(s, account="Groww", holdings=[h], day=TODAY, label="Groww")
+        (b,) = res.baselines
+        assert b["units"] == "39.000000" and b["day"] == "2025-08-31"
+        assert _units(s, "Groww") == {"ISIN:INE000B01012": D(40)}
+        assert all(r["ok"] for r in res.reconciliation)
+        from sqlalchemy import select
+
+        from finresearch.db.models import PortfolioHolding, PortfolioLot
+
+        hold = s.scalar(select(PortfolioHolding).where(PortfolioHolding.isin == "INE000B01012"))
+        lots = s.scalars(select(PortfolioLot).where(PortfolioLot.holding_id == hold.id)).all()
+        cost = sum(x.open_quantity * x.cost_per_unit for x in lots if x.open_quantity)
+        assert abs(cost - D(40) * D("813.37")) < D("0.01")  # the 2 sold came out of the older units (FIFO)
+        assert hold.meta["statement_price"] == {"price": "959.5", "day": "2026-09-30", "source": "Groww"}
+        again = merge_sync(s, account="Groww", source="groww_holdings", label="Groww", holdings=[h], trades=[],
+                           today=TODAY, now=NOW)  # fmt: skip
+        assert not again.baselines  # an opening balance now stands for them
+
+
+def test_numeric_tradebook_symbol_is_a_bse_code():
+    from openpyxl import Workbook
+
+    from finresearch.portfolio.importers import parse_tradebook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["Stock name", "Symbol", "ISIN", "Type", "Quantity", "Value", "Exchange", "Exchange Order Id",
+               "Execution date and time", "Order status"])  # fmt: skip
+    ws.append(["Example NCD", 941149, "INE000C07011", "BUY", 30, 30000, "BSE", "X9", "05-01-2026 10:30 AM",
+               "Executed"])  # fmt: skip
+    buf = io.BytesIO()
+    wb.save(buf)
+    (t,) = parse_tradebook(buf.getvalue(), "orders.xlsx").txns
+    assert t.bse_code == "941149" and t.nse_symbol is None

@@ -403,6 +403,15 @@ def parse_tradebook(content: bytes, filename: str = "", broker: str | None = Non
     return res
 
 
+def _symbol(v: Any) -> str:
+    """A tradebook's symbol cell as text. Debt and BSE-only rows carry the BSE scrip code there, which a spreadsheet
+    stores as a number (941149 -> 941149.0): give it back as digits so it is used as a BSE code, not an NSE symbol."""
+    if isinstance(v, float) and v.is_integer():
+        v = int(v)
+    t = str(v or "").strip().upper()
+    return t[:-2] if re.fullmatch(r"\d{5,7}\.0", t) else t
+
+
 def _trade_row(broker: str, r: list[Any], cell, account: str) -> ImportedTxn | None:
     if broker == "zerodha":
         seg = _norm(cell(r, "segment"))
@@ -411,7 +420,7 @@ def _trade_row(broker: str, r: list[Any], cell, account: str) -> ImportedTxn | N
         side = _norm(cell(r, "trade type"))
         qty, price = _dec(cell(r, "quantity")), _dec(cell(r, "price"))
         day = parse_day(cell(r, "trade date"))
-        sym, isin = str(cell(r, "symbol") or "").strip().upper(), str(cell(r, "isin") or "").strip().upper()
+        sym, isin = _symbol(cell(r, "symbol")), str(cell(r, "isin") or "").strip().upper()
         exch = str(cell(r, "exchange") or "").strip().upper() or None
         ext = f"{exch}:{cell(r, 'trade id')}:{cell(r, 'order id')}"
         name = sym or isin
@@ -425,7 +434,7 @@ def _trade_row(broker: str, r: list[Any], cell, account: str) -> ImportedTxn | N
         qty, value = _dec(cell(r, "quantity")), _dec(cell(r, "value"))
         price = (value / qty) if value is not None and qty else None
         day = parse_day(cell(r, "execution date and time"))
-        sym, isin = str(cell(r, "symbol") or "").strip().upper(), str(cell(r, "isin") or "").strip().upper()
+        sym, isin = _symbol(cell(r, "symbol")), str(cell(r, "isin") or "").strip().upper()
         exch = str(cell(r, "exchange") or "").strip().upper() or None
         ext = f"{exch}:{cell(r, 'exchange order id')}"
         name = str(cell(r, "stock name") or sym or isin).strip()
@@ -455,7 +464,8 @@ def _trade_row(broker: str, r: list[Any], cell, account: str) -> ImportedTxn | N
     kind = "buy" if side in ("buy", "b") else "sell"
     return ImportedTxn(account=account, asset_type="stock", name=name, day=day, kind=kind, quantity=qty, price=price,
                        amount=qty * price, source=broker, isin=isin or None,
-                       nse_symbol=sym or None,
+                       nse_symbol=(sym or None) if not sym.isdigit() else None,
+                       bse_code=sym if sym.isdigit() else None,
                        meta={k: v for k, v in meta.items() if v not in (None, "")}, ext=ext)  # fmt: skip
 
 

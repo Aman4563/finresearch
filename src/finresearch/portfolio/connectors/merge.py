@@ -45,7 +45,8 @@ from sqlalchemy.orm import Session
 from finresearch.db.models import PortfolioHolding, PortfolioImport, PortfolioLot, PortfolioTxn
 from finresearch.portfolio.connectors.base import BrokerHolding, BrokerTrade
 from finresearch.portfolio.importers import ImportedTxn, instrument_key
-from finresearch.portfolio.service import add_txns, find_holding, rebuild
+from finresearch.portfolio.lots import Event, build_lots
+from finresearch.portfolio.service import add_txns, events_of, find_holding, rebuild
 
 UNITS_TOL = Decimal("0.001")
 PRICE_TOL = Decimal("0.005")  # 0.5 %: a CSV's Value/Quantity vs a fill price
@@ -151,6 +152,64 @@ def _new_import(s: Session, kind: str, source: str, label: str, now: datetime) -
     return imp
 
 
+def opening_price(events: list[Event], units: Decimal, h: BrokerHolding, day: date) -> Decimal | None:
+    """The per-unit cost of `units` held before `events` such that, after a FIFO replay, the open lots cost what the
+    broker says (its quantity × average price). The open cost is linear in that price, so one replay at price 0 gives
+    it. When every one of those older units was sold inside the history, the broker's average is the best estimate."""
+    if h.avg_price is None:
+        return None
+    ev = Event(-1, day, "opening", units, Decimal(0), Decimal(0),
+               meta={"statement_opening": True, "cost_basis": "broker_average"})  # fmt: skip
+    book = build_lots([ev, *events])
+    left = sum((lot.open_quantity for lot in book.lots if lot.txn_id == -1), Decimal(0))
+    rest = [lot for lot in book.open_lots if lot.txn_id != -1]
+    if any(lot.cost_per_unit is None for lot in rest):
+        return None
+    if left <= UNITS_TOL:
+        return h.avg_price
+    p = (h.quantity * h.avg_price - sum((lot.open_cost or Decimal(0) for lot in rest), Decimal(0))) / left
+    return p.quantize(Decimal("0.0001")) if p > 0 else None
+
+
+def _older_units(
+    s: Session, holding_id: int, h: BrokerHolding, *, account: str, source: str
+) -> ImportedTxn | None:
+    """A baseline for the units the broker holds that the account's history does not explain, dated the day before
+    that history starts. None when the history explains them, or an opening balance already stands for them."""
+    txns = s.scalars(select(PortfolioTxn).where(PortfolioTxn.holding_id == holding_id)).all()
+    if not txns or any(t.kind == "opening" for t in txns):
+        return None
+    evs = events_of(txns)
+    book = build_lots(evs)
+    oversold = sum(
+        (d.quantity for d in book.disposals if d.lot is None), Decimal(0)
+    )  # sales of those older units
+    residual = h.quantity - book.units + oversold
+    if residual <= UNITS_TOL:
+        return None
+    day = min(t.day for t in txns) - timedelta(days=1)
+    price = opening_price(evs, residual, h, day)
+    older = holding_txn(
+        replace(h, quantity=residual, avg_price=price), account=account, source=source, day=day
+    )
+    older.meta["note"] = ("units held before the imported trade history: " + (
+        "cost estimated from the broker's average price" if price is not None else "cost unknown"))  # fmt: skip
+    return older
+
+
+def remember_statement_prices(s: Session, *, account: str, holdings: list[BrokerHolding], day: date,
+                              label: str) -> None:  # fmt: skip
+    """Keep each holding's closing price from the broker's statement: valuation falls back to it when no exchange
+    prices the stock (unlisted shares, an NCD that has not traded)."""
+    for h in holdings:
+        if h.last_price is None or h.last_price <= 0:
+            continue
+        mine = find_holding(s, holding_txn(h, account=account, source="", day=day))
+        if mine is not None:
+            mine.meta = {**(mine.meta or {}), "statement_price": {"price": str(h.last_price), "day": day.isoformat(),
+                                                                  "source": label}}  # fmt: skip
+
+
 # --------------------------------------------------------------------------- the merge
 def merge_sync(s: Session, *, account: str, source: str, label: str, holdings: list[BrokerHolding],
                trades: list[BrokerTrade], today: date, now: datetime, holdings_include_today: bool = True,
@@ -168,7 +227,16 @@ def merge_sync(s: Session, *, account: str, source: str, label: str, holdings: l
         t = holding_txn(h, account=account, source=source, day=snap_day)
         mine = find_holding(s, t)
         if mine is not None and _txn_count(s, mine.id):
-            continue  # the account already has history for it: reconcile only
+            # the account already has history for it (an earlier tradebook): only the units held before that history
+            # are missing, if any (a tradebook that starts after the first purchase). Skipped when this sync brings
+            # trades for it too: those are not in the lots yet, so the gap cannot be measured here.
+            fresh = any(_same_instrument(tr, h) for tr in trades)
+            older = None if fresh else _older_units(s, mine.id, h, account=account, source=source)
+            if older is not None:
+                base_rows.append(older)
+                res.history_used.append({"name": t.name, "trades": _txn_count(s, mine.id),
+                                         "baseline_units": str(older.quantity)})  # fmt: skip
+            continue
         elsewhere = [x for x in _all_matches(s, t) if x.account != account and x.account not in BROKER_ACCOUNTS
                      and _open_units(s, x.id) > UNITS_TOL]  # fmt: skip
         if elsewhere:
