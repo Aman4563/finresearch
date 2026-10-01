@@ -404,7 +404,15 @@ def test_migration_matches_the_model_and_is_the_single_head():
 
 def test_entry_survives_its_trade_being_deleted(client):
     # no foreign key: deleting the transaction (and so the holding) leaves the entry, unlinked
-    a = txn(client, name="Example Textiles", nse_symbol="EXMPL", day="2026-09-25", kind="buy", quantity="4", price="100")
+    a = txn(
+        client,
+        name="Example Textiles",
+        nse_symbol="EXMPL",
+        day="2026-09-25",
+        kind="buy",
+        quantity="4",
+        price="100",
+    )
     nid = notes(client)[0]["id"]
     assert client.delete(f"/api/portfolio/transactions/{a['id']}", headers=ORIGIN).status_code == 200
     n = next(x for x in notes(client) if x["id"] == nid)
