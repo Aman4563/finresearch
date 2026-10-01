@@ -406,7 +406,14 @@ def test_realised_pnl_report_gets_a_specific_message(client):
     ws.append(["Example Bank Ltd", "INE000B01012", 1, "05-01-2026", 500, 500, "06-02-2026", 550, 550, 50, ""])
     buf = io.BytesIO()
     wb.save(buf)
-    r = client.post("/api/portfolio/import/tradebook", headers=ORIGIN, json={
-        "filename": "Stocks_PnL.xlsx", "content_b64": base64.b64encode(buf.getvalue()).decode(), "dry_run": True})
+    r = client.post(
+        "/api/portfolio/import/tradebook",
+        headers=ORIGIN,
+        json={
+            "filename": "Stocks_PnL.xlsx",
+            "content_b64": base64.b64encode(buf.getvalue()).decode(),
+            "dry_run": True,
+        },
+    )
     assert r.status_code == 422
     assert "P&L / capital-gains report" in r.json()["detail"] and "Order history" in r.json()["detail"]
