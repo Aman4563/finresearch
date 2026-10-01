@@ -298,3 +298,86 @@ def test_percent_and_fraction_forms_of_one_figure_do_not_conflict(ledger):
     assert (pct, frac) not in r.conflicts and frac not in claim(pct)[1]["conflict_with"]
     assert (pct, loose) not in r.conflicts  # the same raw figure with a loosely spelt unit
     assert {(pct, other), (frac, other)} <= set(r.conflicts)  # 15 % vs 0.18 is still a conflict
+
+
+# ------------------------------------------------------------------ audit #158
+def test_publish_gate_checks_every_citation_spelling_the_dashboard_links(ledger):
+    """The dashboard (api.insights.norm_cites) renders (C12), (C1/C2), [C1, C2] and a bare C123 as claim links, so the
+    gate must check those claims too: a contradicted claim cited as "(C<id>)" used to publish."""
+    from finresearch.db import session_scope
+    from finresearch.verify.gate import check_report, loose_cite_ids
+
+    ln = line_of(ledger["lines"], "Profit / (Loss) for the year")
+    good = add(ledger, metric="pat", value="535.61", unit="INR million", period="FY2026", cite_line=ln,
+               status="verified")  # fmt: skip
+    bad = add(ledger, metric="pat_x", value="536.61", unit="INR million", period="FY2026", cite_line=ln,
+              status="contradicted")  # fmt: skip
+    high = add(ledger, metric="mcap", value="3095.35", unit="INR crore", period="post-issue", importance="high",
+               status="needs_review")  # fmt: skip
+    clean = f"PAT was ₹535.61 mn [C{good}].\n"
+    with session_scope() as s:
+        assert check_report(s, ledger["run"], clean).ok
+        for cite in (f"(C{bad})", f"(C{good}/C{bad})", f"[C{good}, C{bad}]", f"(C{good}; C{bad})"):
+            g = check_report(s, ledger["run"], clean + f"PAT ₹536.61 mn {cite}.\n")
+            assert not g.ok and f"[C{bad}] is contradicted" in " ".join(g.blocking), cite
+            assert bad in g.cited_claims and any("without brackets" in w for w in g.warnings)
+        g = check_report(s, ledger["run"], clean + f"Market cap ₹3,095 cr (C{high}).\n")
+        assert not g.ok and f"[C{high}] is high-importance" in " ".join(g.blocking)
+        # a "C<digits>" that is not a claim of this run is ordinary text, not a missing citation
+        assert check_report(s, ledger["run"], clean + "Cables are made to grade C99999999 (IS 694).\n").ok
+    assert loose_cite_ids("see C123 and (C45/C46), [C7, C8]; not AC123 or C12x") == {123, 45, 46, 7, 8}
+
+
+def test_quoted_numbers_must_be_whole_numbers_in_the_cited_lines(tmp_path):
+    """The table-row fallback of the citation check matched numbers as substrings of the comma-stripped window, so a
+    made-up quote "12 ... 20" passed against "1,234 ... 2,000"."""
+    from types import SimpleNamespace
+
+    from finresearch.mcp_server.claims import quote_in_lines
+
+    p = tmp_path / "t.txt"
+    p.write_text("Revenue from operations 1,234.50 12,34,567\nProfit for the year 2,000 (5, 120)\nEPS 12.5\n")
+    doc = SimpleNamespace(text_path=str(p))
+    # "12" sits inside 1,234 and "20" inside 2,000, but neither is printed as a number
+    assert quote_in_lines(doc, 1, 3, "Revenue 12 and PAT 20")[0] is False
+    assert quote_in_lines(doc, 1, 3, "EPS 2.5 on revenue 234.50")[0] is False  # tails of 12.5 and 1,234.50
+    # re-flowed table rows still match on whole numbers, with or without grouping commas
+    assert quote_in_lines(doc, 1, 3, "Revenue 1234.50 ... 1234567")[0] is True
+    assert quote_in_lines(doc, 1, 3, "PAT 2,000; EPS 12.5")[0] is True
+    assert quote_in_lines(doc, 1, 3, "loss of 5,120 and PAT 2000")[0] is True  # pdftotext split "5, 120"
+
+
+def test_bse_exchange_facts_are_deterministic_and_win_conflicts(ledger):
+    """verify.stock_baseline records a BSE-only stock's exchange facts with source "bse_equity"; they were missing
+    from DETERMINISTIC_SOURCES, so a conflicting agent claim demoted them."""
+    from finresearch.db import session_scope
+    from finresearch.db.models import Claim
+
+    bse = add(ledger, stream="facts", metric="promoter_holding", value="62.5", unit="%", period="2026-06-30",
+              status="verified")  # fmt: skip
+    with session_scope() as s:
+        s.get(Claim, bse).checks = {"source": "bse_equity"}
+    agent = add(ledger, stream="stock_fundamentals", metric="promoter holding", value="60.1", unit="%",
+                period="2026-06-30", status="verified")  # fmt: skip
+    r = gate(ledger)
+    assert (bse, agent) in r.conflicts
+    assert claim(bse)[0] == "verified" and claim(agent)[0] == "needs_review"
+
+
+@pytest.mark.parametrize("unit", ["years", "users", "hours", "orders", "dealers"])
+def test_units_containing_rs_are_not_rupees(unit):
+    from finresearch.verify.gate import rupee_scale
+    from finresearch.verify.identities import unit_kind
+
+    assert rupee_scale(unit) is None
+    assert unit_kind(unit)[0] != "money" and unit_kind(unit)[1] is None
+
+
+@pytest.mark.parametrize("unit,scale", [("Rs.", 1), ("Rs crore", 10**7), ("INR million", 10**6), ("₹ lakh", 10**5),
+                                        ("rupees", 1), ("crore", 10**7)])  # fmt: skip
+def test_rupee_units_still_scale(unit, scale):
+    from finresearch.verify.gate import rupee_scale
+    from finresearch.verify.identities import unit_kind
+
+    assert rupee_scale(unit) == scale
+    assert unit_kind(unit)[:2] == ("money", "INR")

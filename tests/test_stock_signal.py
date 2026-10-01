@@ -101,6 +101,9 @@ def test_rising_stock_gets_a_backtested_bucket_probability_and_rule_based_action
     assert s.asset == "stock" and s.event == st.EVENT and s.horizon == "12 months"
     assert s.probability == 0.6 and s.probability_interval == (0.502, 0.691)
     assert s.base_rate["n"] == 1200 and "effective n of 100" in s.base_rate["description"]
+    # n/12 counts stock-years, not independent years (audit #158): the label must not claim independence
+    assert "non-overlapping years" not in s.base_rate["description"]
+    assert "stock-months ÷ 12" in s.base_rate["description"]
     assert s.validation.status == "rule_based" and s.validation.n == 100
     assert "Not backtested: the composite weights" in s.validation.description
     assert s.validation.metrics["excess_cagr"] == 0.03

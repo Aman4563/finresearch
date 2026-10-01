@@ -451,6 +451,18 @@ def test_ask_answers_are_checked_and_conversations_resume_the_session(client, se
     assert client.get(f"/api/runs/{rid}/conversations").json()[0]["messages"] == 4
 
 
+def test_ask_check_catches_unusable_claims_cited_without_brackets(seeded):
+    """Audit #158: the dashboard links "(C12)" and a bare "C123" as citations, so the answer check must see them."""
+    from finresearch.agents.ask import check_answer
+    from finresearch.db import session_scope
+
+    rid, ok, bad = seeded["run_id"], seeded["ok"], seeded["bad"]
+    with session_scope() as s:
+        c = check_answer(s, rid, f"PAT was ₹535.61 mn [C{ok}] and GMP ₹90 (C{bad}).")
+        assert c["unusable_claims"] == [bad] and c["ok"] is False and c["cited_claims"] == sorted({ok, bad})
+        assert check_answer(s, rid, f"PAT was ₹535.61 mn [C{ok}]; grade C99999999 cable.")["ok"] is True
+
+
 def test_ask_rejects_unknown_runs_and_foreign_conversations(client, seeded):
     assert client.post("/api/runs/999999/ask", json={"question": "x"}).status_code == 404
     client.router.answers = [{"answer_markdown": "ok"}]
