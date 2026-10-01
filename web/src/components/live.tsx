@@ -52,8 +52,9 @@ function useNow(ms = 1000) {
   return now;
 }
 
+/** "4:00:00 pm IST": market stamps are IST and say so, whatever the viewer's own zone. */
 const time = (d: Date | string) =>
-  new Date(d).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit", second: "2-digit", timeZone: "Asia/Kolkata" });
+  `${new Date(d).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit", second: "2-digit", timeZone: "Asia/Kolkata" })} IST`;
 
 function ago(ms: number) {
   const s = Math.max(0, Math.round(ms / 1000));
@@ -73,7 +74,7 @@ function nextOpenLabel(st: MarketStatus) {
   if (!st.equity.next_open) return "";
   const d = new Date(st.equity.next_open);
   const today = new Date(st.now).toDateString() === d.toDateString();
-  return today ? `opens ${time(d).replace(/:00(?=\s)/, "")}` : `opens ${d.toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", timeZone: "Asia/Kolkata" })}, 9:15 am`;
+  return today ? `opens ${time(d).replace(/:00(?=\s)/, "")}` : `opens ${d.toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", timeZone: "Asia/Kolkata" })}, 9:15 am IST`;
 }
 
 /**
@@ -99,7 +100,7 @@ export function LiveStamp({ session, live, status, updatedAt, everyMs, asOf, asO
         {live ? (autoRefresh ? `Live · updates every ${every}` : "Market open · auto-refresh off") : closed}
       </span>
       {updatedAt && (
-        <span title={updatedAt.toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}>
+        <span title={`${updatedAt.toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })} IST`}>
           Updated <span className="num text-foreground/80">{time(updatedAt)}</span> ({ago(now - updatedAt.getTime())})
         </span>
       )}
@@ -148,7 +149,7 @@ export function Freshness({ mode, sourceLabel, sourceHref, requestHref, asOf, fe
   if (mode === "intraday") {
     if (asOf) {
       const d = new Date(asOf);
-      const stamp = d.toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit", second: "2-digit", timeZone: "Asia/Kolkata" });
+      const stamp = d.toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit", second: "2-digit", timeZone: "Asia/Kolkata" }) + " IST";
       parts.push(<span key="a">{live ? "last price" : "session ended"} <span className="num text-foreground/80">{live ? time(d) : stamp}</span></span>);
     }
     if (live && delayS != null) parts.push(<span key="d">{behind(delayS * 1000)} when fetched</span>);

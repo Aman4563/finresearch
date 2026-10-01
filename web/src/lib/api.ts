@@ -262,8 +262,16 @@ export function useApi<T>(path: string | null, pollMs?: number) {
 export const ALERTS_CHANGED = "finresearch:alerts-changed";
 
 export const pct = (x: number | null | undefined) => (x == null ? "" : `${Math.round(x * 100)}%`);
-export const when = (iso: string | null | undefined) =>
-  iso ? new Date(iso).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" }) : "";
+/** A moment, in India Standard Time and labelled so ("1 Oct 2026, 3:30 pm IST"). Exchange hours, cut-offs and filings
+ * are all IST: the viewer's own time zone would misstate them for anyone abroad (and differ between the server render
+ * and the browser). */
+export const when = (iso: string | null | undefined): string => {
+  if (!iso) return "";
+  // a bare date has no time to show: "1 Oct 2026", not an invented "5:30 am IST"
+  if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) return day(iso);
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso : `${d.toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Kolkata" })} IST`;
+};
 /** A calendar date (YYYY-MM-DD) without inventing a time or shifting it by the viewer's time zone. */
 export const day = (iso: string | null | undefined) =>
   iso ? new Date(`${iso.slice(0, 10)}T00:00:00Z`).toLocaleDateString("en-IN", { dateStyle: "medium", timeZone: "UTC" }) : "";
