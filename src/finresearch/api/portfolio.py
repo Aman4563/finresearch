@@ -401,7 +401,9 @@ def add_portfolio_routes(app: FastAPI, *, scheme_rows: Callable[[], Awaitable[li
             try:  # not a tradebook: maybe a holdings statement (baseline + reconciliation, connectors.merge)
                 hs = parse_holdings_statement(content, filename, broker)
             except StatementError:
-                raise HTTPException(422, str(e)) from None
+                from finresearch.portfolio.importers import realised_report_hint
+
+                raise HTTPException(422, realised_report_hint(content, filename) or str(e)) from None
             return _holdings_statement(hs, sha, filename, dry)
         with session_scope() as s:
             if dry:
