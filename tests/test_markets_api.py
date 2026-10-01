@@ -486,3 +486,18 @@ def test_overview_never_calls_an_earlier_days_quote_an_open_session(app_client):
     c.app.state.markets.quote = quote
     q = c.get("/api/stocks/STALEX/overview").json()["quote"]
     assert q["session"] != "open" and q["price_kind"] == "last_traded"
+
+
+async def test_an_xbrl_block_page_reads_as_unreachable_not_as_no_results():
+    """A filing XBRL answered twice with an HTML page used to surface as an XML ParseError (not transient), so the
+    quarter was dropped silently and the results payload cached for hours with nothing marked unreachable."""
+    from finresearch.adapters.http import is_transient
+    from finresearch.api.markets import _xbrl
+
+    class Gate:
+        async def fetch_bytes(self, url, *, cache_ttl=None):
+            return b"<!DOCTYPE html><html><body>Access Denied</body></html>"
+
+    with pytest.raises(Exception) as ei:
+        await _xbrl(Gate(), "https://nsearchives.nseindia.com/corporate/xbrl/EXAMPLE.xml")
+    assert is_transient(ei.value)

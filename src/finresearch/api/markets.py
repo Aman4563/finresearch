@@ -809,16 +809,27 @@ REVENUE_BASES = ("revenue_from_operations", "interest_earned", "net_premium_inco
 RESULT_SOURCE_RANK = {"nse_integrated_filing": 0, "bse_integrated_filing": 0, "nse_financial_results": 1}
 
 
+def _html_page(data: bytes) -> bool:
+    head = data.lstrip()[:300].lower()
+    return head.startswith(b"<!doctype html") or b"<html" in head
+
+
 async def _xbrl(eq: Any, url: str) -> bytes:
     """A filing's XBRL (its URL carries the filing id and never changes, so it is cached on disk); a cached block
-    page that does not parse is fetched again."""
+    page (a web page, or anything that does not parse) is fetched again. A web page twice raises an error that reads
+    as transient (adapters.http.is_transient): "couldn't reach", never a quarter with no data cached for hours."""
     import xml.etree.ElementTree as ET
 
     data = await eq.fetch_bytes(url, cache_ttl=SHP_XBRL_TTL_S)
     try:
         ET.fromstring(data)
+        bad = _html_page(data)  # well-formed XHTML parses as XML: a block page is recognised by its root
     except ET.ParseError:
+        bad = True
+    if bad:
         data = await eq.fetch_bytes(url, cache_ttl=0)
+        if _html_page(data):
+            raise RuntimeError(f"the exchange returned a block page (HTML) instead of the XBRL at {url}")
     return data
 
 
