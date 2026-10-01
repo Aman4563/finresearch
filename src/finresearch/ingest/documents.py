@@ -173,15 +173,26 @@ def download(
 
 
 # --------------------------------------------------------------------------- extraction
+# Downloaded PDFs are untrusted: a malformed or hostile file can make poppler/tesseract spin forever. Each tool run is
+# bounded (subprocess.TimeoutExpired kills it); the limits are far above a normal 600-page RHP (seconds).
+PDF_INFO_TIMEOUT_S = 60
+PDF_TEXT_TIMEOUT_S = 900
+PAGE_TOOL_TIMEOUT_S = 300  # one page rendered (pdftoppm) or OCR'd (tesseract)
+
+
 def pdf_page_count(pdf: Path) -> int:
-    out = subprocess.run(["pdfinfo", str(pdf)], capture_output=True, text=True, check=True).stdout
+    out = subprocess.run(["pdfinfo", str(pdf)], capture_output=True, text=True, check=True,
+                         timeout=PDF_INFO_TIMEOUT_S).stdout  # fmt: skip
     return int(next(line.split()[-1] for line in out.splitlines() if line.startswith("Pages:")))
 
 
 def extract_layout_pages(pdf: Path) -> list[str]:
     """Text layer per page via pdftotext -layout (pages are \\f-separated)."""
     out = subprocess.run(
-        ["pdftotext", "-layout", "-enc", "UTF-8", str(pdf), "-"], capture_output=True, check=True
+        ["pdftotext", "-layout", "-enc", "UTF-8", str(pdf), "-"],
+        capture_output=True,
+        check=True,
+        timeout=PDF_TEXT_TIMEOUT_S,
     ).stdout.decode("utf-8", errors="replace")
     pages = out.split("\f")
     if pages and not pages[-1].strip():
@@ -214,6 +225,7 @@ def render_page(pdf: Path, page_no: int, out_dir: Path, dpi: int = 200) -> Path:
         ],
         check=True,
         capture_output=True,
+        timeout=PAGE_TOOL_TIMEOUT_S,
     )
     return prefix.with_suffix(".png")
 
@@ -226,6 +238,7 @@ def tesseract_page(image: Path, lang: str = "eng") -> tuple[str, float]:
             ["tesseract", str(image), str(base), "-l", lang, "--psm", "3", "txt", "tsv"],
             check=True,
             capture_output=True,
+            timeout=PAGE_TOOL_TIMEOUT_S,
         )
         text = base.with_suffix(".txt").read_text(errors="replace")
         confs = []

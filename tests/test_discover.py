@@ -305,3 +305,22 @@ def test_a_dropped_download_leaves_no_partial_file_and_unresolvable_hosts_fail_c
 
     with pytest.raises(UnsafeUrl):
         check_public_url("https://files.acme-intranet.com/a.pdf", resolve=nxdomain)
+
+
+def test_a_hanging_pdf_tool_is_killed_at_its_timeout(tmp_path, monkeypatch):
+    import os
+    import subprocess
+    import time
+
+    from finresearch.ingest import documents
+
+    fake = tmp_path / "bin" / "pdfinfo"
+    fake.parent.mkdir()
+    fake.write_text("#!/bin/sh\nsleep 30\n")
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{fake.parent}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setattr(documents, "PDF_INFO_TIMEOUT_S", 0.5)
+    t = time.monotonic()
+    with pytest.raises(subprocess.TimeoutExpired):
+        documents.pdf_page_count(tmp_path / "hostile.pdf")
+    assert time.monotonic() - t < 5
