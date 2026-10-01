@@ -448,6 +448,13 @@ class ResearchPipeline:
             logger.warning(
                 "run %s: ignored verdicts on claims the verifier was not given: %s", self.run_id, ignored
             )
+        if (
+            ignored or rep.cross_stream_conflicts
+        ):  # kept for the reader: what the verifier flagged outside its brief
+            with session_scope() as s:
+                m = (s.get(ResearchRun, self.run_id).manifest or {}).get("verifier_flags") or []
+            self._update_manifest(verifier_flags=[*m, {"ignored_verdicts": ignored,
+                                                       "cross_stream_conflicts": rep.cross_stream_conflicts[:20]}])  # fmt: skip
         with session_scope() as s:
             for v in rep.verdicts:
                 if v.claim_id not in sent:

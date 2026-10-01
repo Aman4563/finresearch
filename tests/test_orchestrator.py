@@ -737,3 +737,23 @@ async def test_a_schema_violation_is_retried_once(company_run, tmp_path):
             s.scalar(select(AgentStep).where(AgentStep.run_id == company_run, AgentStep.key == "critic:r1"))
         )
     assert await pipe2.run() == "failed"
+
+
+def test_verdicts_outside_the_brief_are_kept_in_the_manifest(company_run, tmp_path):
+    from finresearch.db import session_scope
+    from finresearch.db.models import Claim
+
+    with session_scope() as s:
+        other = Claim(run_id=company_run, stream="risks", statement="other stream", claim_type="factual")
+        s.add(other)
+        s.flush()
+        oid = other.id
+    pipe = make(company_run, tmp_path, FakeRunner(company_run))
+    pipe._apply_verdicts(VerificationReport(verdicts=[ClaimVerdict(claim_id=oid, verdict="contradicted", evidence="x")],
+                                            cross_stream_conflicts=[f"C{oid} disagrees with the RHP"], summary="x"),
+                         "[]")  # fmt: skip
+    flags = run_row(company_run)[2]["verifier_flags"]
+    assert flags == [
+        {"ignored_verdicts": [oid], "cross_stream_conflicts": [f"C{oid} disagrees with the RHP"]}
+    ]
+    assert _claims(company_run, "risks") == [(oid, "other stream", "unverified")]

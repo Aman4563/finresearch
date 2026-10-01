@@ -50,7 +50,14 @@ class AskAnswer(BaseModel):
 
 def check_answer(session, run_id: int, text: str) -> dict[str, Any]:
     """Deterministic checks on an answer (never trusts the model's own list of citations)."""
-    ids = sorted({int(x) for x in CLAIM_CITE.findall(text)})
+    from finresearch.verify.gate import loose_cite_ids
+
+    canonical = {int(x) for x in CLAIM_CITE.findall(text)}
+    # "(C12)" / bare "C123" are shown as claim links too (api.insights.norm_cites): check those that are this run's
+    loose = loose_cite_ids(text) - canonical
+    if loose:
+        loose = set(session.scalars(select(Claim.id).where(Claim.id.in_(loose), Claim.run_id == run_id)))
+    ids = sorted(canonical | loose)
     claims = {c.id: c for c in session.scalars(select(Claim).where(Claim.id.in_(ids)))} if ids else {}
     unknown = [i for i in ids if i not in claims or claims[i].run_id != run_id]
     unusable = [
