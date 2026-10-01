@@ -146,10 +146,13 @@ class TtlCache:
                 return value
             value = await make()
             self.entries[key] = (time.time() + (min(ttl, NEGATIVE_TTL_S) if degraded(value) else ttl), value)
-            if len(self.entries) > 500:  # drop expired entries now and then
+            if len(self.entries) > 500:  # drop expired entries (and their idle locks) now and then
                 now = time.time()
                 for k in [k for k, (at, _) in self.entries.items() if at < now]:
                     self.entries.pop(k, None)
+                    lk = self.locks.get(k)
+                    if lk is not None and not lk.locked():
+                        self.locks.pop(k, None)
             return value
 
 

@@ -501,3 +501,16 @@ async def test_an_xbrl_block_page_reads_as_unreachable_not_as_no_results():
     with pytest.raises(Exception) as ei:
         await _xbrl(Gate(), "https://nsearchives.nseindia.com/corporate/xbrl/EXAMPLE.xml")
     assert is_transient(ei.value)
+
+
+async def test_ttl_cache_prunes_idle_locks_with_expired_entries():
+    from finresearch.api.markets import TtlCache
+
+    c = TtlCache()
+
+    async def make():
+        return 1
+
+    for i in range(520):
+        await c.get(("k", i), -1, make)  # already expired
+    assert len(c.locks) <= 20 and len(c.entries) <= 20  # was: one lock per key forever
