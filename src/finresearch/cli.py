@@ -480,6 +480,17 @@ fund_app = typer.Typer(no_args_is_help=True, help="Mutual-fund research reports 
 app.add_typer(fund_app, name="fund")
 
 
+@fund_app.command("rank")
+def fund_rank_now() -> None:
+    """Rank every fund within its SEBI category now (the monitor does this daily). The first run reads up to 61
+    AMFI month-end NAV snapshots, one a second; later runs reuse them from disk."""
+    from finresearch.signals import fund_rank
+
+    res = asyncio.run(fund_rank.refresh())
+    console.print(f"ranked {res['funds']} funds in {res['categories']} categories as of {res['as_of']}: "
+                  f"{fund_rank.store_path()}")  # fmt: skip
+
+
 @fund_app.command("run")
 def fund_run(
     scheme_code: str = typer.Argument(..., help="AMFI scheme code (find it with `finresearch fund search`)"),

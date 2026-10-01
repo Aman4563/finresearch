@@ -2,8 +2,9 @@
 phrase, a unit, a source and the cadence the monitor checks it on.
 
 Only metrics with a working data path are listed. Left out on purpose (not computable today): P/E percentile alerts
-(needs 120 days of daily P/E; shown on the signal instead), fund category-rank (no ranking source) and bond spread
-over G-sec. Promoter pledge, surveillance stages, the F&O ban, insider trades, bulk/block deals, credit-rating actions
+(needs 120 days of daily P/E; shown on the signal instead) and bond spread over G-sec. Fund category rank is
+computable since issue #177: signals.fund_rank ranks every scheme within its SEBI category from AMFI month-end NAVs
+once a day (monitor.fund_ranks), and `category_rank_drop` reads that stored ranking. Promoter pledge, surveillance stages, the F&O ban, insider trades, bulk/block deals, credit-rating actions
 and SEBI orders come from finresearch.disclosures (stored by the monitor's daily disclosure refresh; the checks read
 the database only, so they run on the cheap intraday cadence).
 Portfolio risk metrics that need a reconstructed value history, fund look-through or household data (volatility,
@@ -346,6 +347,23 @@ METRICS: list[MetricSpec] = [
         rebase="on_fire",
         default_op=">=",
         default_value="0.1",
+    ),
+    _m(
+        "fund",
+        "category_rank_drop",
+        "Category rank drop",
+        "fall in category percentile since the last alert",
+        "pp",
+        "daily",
+        "How many percentile points the fund's rank within its SEBI category fell since the rule was created or "
+        "last fired (positive = it fell; 20 = from beating 80 % of its category to beating 60 %). Ranked on the "
+        "3-year CAGR unless the rule's `basis` param names another metric (cagr_1y, cagr_5y, consistency_3y, "
+        "sortino_3y, max_drawdown_3y, ter). Direct-growth plans, as of the last month-end; a regular plan is "
+        "ranked through its scheme's direct plan. Ranks are among surviving schemes.",
+        "signals.fund_rank (AMFI month-end NAVs, NAVAll categories, TER file), computed daily by the monitor",
+        rebase="on_fire",
+        default_op=">=",
+        default_value="20",
     ),
     _m(
         "fund",

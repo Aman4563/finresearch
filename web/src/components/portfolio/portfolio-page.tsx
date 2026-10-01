@@ -11,7 +11,9 @@ import { Fragment, useCallback, useEffect, useState } from "react";
 import { DonutChart, TimeSeriesChart, fmtCompactINR } from "@/components/charts";
 import type { Signal } from "@/components/signal";
 import { Badge, Button, Callout, Card, EmptyState, ErrorNote, Field, InfoTip, Modal, PageHeader, Segmented, SkeletonRows, Stat, Table, cx, inputClass } from "@/components/ui";
+import { RankBadge } from "@/components/markets/category-rank";
 import { TrackedRedFlags } from "@/components/markets/disclosures";
+import type { CategoryRanks } from "@/components/markets/types";
 import { API_URL, api, day, useApi, when } from "@/lib/api";
 
 import { ConcentrationAnalytics } from "./concentration-analytics";
@@ -229,6 +231,9 @@ function Holdings({ snap, onChanged, updating }: { snap: Snapshot; onChanged: ()
   const rows = snap.holdings.filter((h) => showClosed || !h.closed);
   const openH = snap.holdings.find((h) => h.id === open) ?? null;
   const closed = snap.holdings.length - snap.holdings.filter((h) => !h.closed).length;
+  // one request for every fund held: the stored nightly category ranking (no AMFI fetch behind it)
+  const fundCodes = [...new Set(snap.holdings.filter((h) => h.asset_type === "mf" && h.scheme_code && /^\d{1,8}$/.test(h.scheme_code)).map((h) => h.scheme_code!))].sort();
+  const ranks = useApi<CategoryRanks>(fundCodes.length ? `/api/funds/category-ranks?metric=cagr_3y&codes=${fundCodes.slice(0, 200).join(",")}` : null);
   return (
     <Card padded={false} title="Holdings" subtitle={updating
       ? <span className="inline-flex items-center gap-1.5"><span className="size-1.5 rounded-full bg-info animate-pulse-ring" />prices updating… {updating.done} of {updating.total} · cost basis shown</span>
@@ -257,6 +262,7 @@ function Holdings({ snap, onChanged, updating }: { snap: Snapshot; onChanged: ()
                     {(h.sources ?? []).map((src) => <SourceBadge key={src} source={src} />)}
                     {h.broker_baseline && <Badge tone="neutral">broker avg cost</Badge>}
                     {!h.cost_known && <Badge tone="warn">cost unknown</Badge>}
+                    {h.asset_type === "mf" && h.scheme_code && <RankBadge s={ranks.data?.ranks[h.scheme_code]} />}
                     {h.elss && <ElssBadge e={h.elss} open={elssOpen === h.id} onToggle={() => setElssOpen(elssOpen === h.id ? null : h.id)} />}
                     {h.warnings.length > 0 && <Badge tone="warn">{h.warnings.length} note{h.warnings.length > 1 ? "s" : ""}</Badge>}
                   </span>

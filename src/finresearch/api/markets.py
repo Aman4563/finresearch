@@ -658,10 +658,17 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
         return await cache.get(("peers", scheme.code), 12 * 3600, lambda: _peers(scheme))
 
     async def _peers(me) -> dict[str, Any]:
+        from finresearch.adapters.amfi import category_key
         from finresearch.fincalc import funds
+        from finresearch.signals.fund_rank import is_direct_growth
 
         rows = await scheme_rows()
-        peers = [x for x in rows if x.category == me.category and x.is_direct_growth and x.nav and x.day]
+        # by category key: AMFI spells one category several ways ("Equity Scheme - Flexi Cap Fund" and "Equity
+        # Schemes - Flexi Cap Fund"), and matching the raw heading left out every peer under the other spelling;
+        # close-ended series, segregated portfolios and bonus options are not peers (the category ranking's filter)
+        key = category_key(me.category)
+        peers = [x for x in rows if category_key(x.category) == key and x.structure not in ("close", "interval")
+                 and is_direct_growth(x) and x.nav and x.day]  # fmt: skip
         if me.code not in {p.code for p in peers} and me.nav and me.day:
             peers.append(me)
         anchor = me.day or src().today()
@@ -700,6 +707,47 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
             raise HTTPException(404, str(e)) from e
         except ValueError as e:
             raise HTTPException(422, str(e)) from e
+
+    @app.get("/api/funds/category-ranks")
+    async def fund_category_ranks(codes: str, metric: str = "cagr_3y") -> dict[str, Any]:
+        """Each scheme's rank in its SEBI category on one metric ("12 / 34 in Flexi Cap, 3y"), from the stored
+        nightly ranking (signals.fund_rank): nothing is fetched. `codes`: comma-separated AMFI codes (at most 200)."""
+        from finresearch.fincalc.fund_rank import METRIC_KEYS
+        from finresearch.signals import fund_rank
+
+        if metric not in METRIC_KEYS:
+            raise HTTPException(422, f"metric must be one of {', '.join(METRIC_KEYS)}")
+        wanted = [c.strip() for c in codes.split(",") if c.strip()]
+        if len(wanted) > 200 or any(not c.isdigit() or len(c) > 8 for c in wanted):
+            raise HTTPException(422, "codes must be up to 200 comma-separated AMFI scheme codes")
+        data = await asyncio.to_thread(fund_rank.load)
+        if data is None:
+            return {"status": "not_computed", "message": fund_rank.NOT_COMPUTED, "ranks": {}}
+        return {"status": "ok", "as_of": data["as_of"], "metric": metric, "caveats": data["caveats"],
+                "ranks": {c: fund_rank.summary(data, c, metric) for c in wanted}}  # fmt: skip
+
+    @app.get("/api/funds/{code}/category-rank")
+    async def fund_category_rank(code: str) -> dict[str, Any]:
+        """The scheme's rank and percentile on every metric within its SEBI category, with the whole category
+        table, from the stored nightly ranking (signals.fund_rank; month-end NAVs, direct-growth plans). A regular
+        plan or IDCW option is shown through its scheme's direct-growth row (`via`). Nothing is fetched here."""
+        from finresearch.signals import fund_rank
+
+        code = code.strip()
+        if not code.isdigit() or len(code) > 8:
+            raise HTTPException(422, f"{code!r} is not an AMFI scheme code")
+        data = await asyncio.to_thread(fund_rank.load)
+        if data is None:
+            return {"status": "not_computed", "message": fund_rank.NOT_COMPUTED}
+        hit = fund_rank.lookup(data, code)
+        head = {k: data.get(k) for k in ("as_of", "generated_at", "sampling", "mar", "ter_day", "ter_error",
+                                         "metrics", "caveats", "sources")}  # fmt: skip
+        out = {**head, **hit}
+        if hit["status"] in ("ok", "excluded"):
+            cat = data["categories"][hit["category_key"]]
+            out["category"] = {k: cat[k] for k in ("key", "label", "raw_labels", "size", "counts", "ranked",
+                                                   "funds", "excluded")}  # fmt: skip
+        return out
 
     # ------------------------------------------------------------------ listed bonds
     @app.get("/api/bonds/{isin}/analytics")

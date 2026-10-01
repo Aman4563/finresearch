@@ -34,7 +34,7 @@ def _fake_sources(monkeypatch):
         raise AssertionError("a live data source was called in an offline test")
 
     monkeypatch.setattr(compute, "SOURCES", compute.Sources(
-        stock_quote=boom, stock_inputs=boom, signal=boom, fund_scheme=boom, fund_navs=boom, fund_analyse=boom,
+        stock_quote=boom, stock_inputs=boom, signal=boom, fund_scheme=boom, fund_navs=boom, fund_analyse=boom, fund_ranks=boom,
         bonds=boom, bond_freq=boom, fno_expiries=boom, fno_chain=boom, fno_lot=boom,
         iv_series=lambda s: [], today=lambda: TODAY))  # fmt: skip
     from finresearch.alerts import portfolio

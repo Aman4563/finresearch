@@ -329,6 +329,26 @@ def _spawn_disclosures(now: datetime) -> None:
     _BACKGROUND["disclosures"] = asyncio.create_task(run())
 
 
+def _spawn_fund_ranks(now: datetime) -> None:
+    """Start the daily fund category ranking (monitor.fund_ranks) in the background: the first run reads up to 61
+    AMFI month-end snapshots at one request a second. At most one runs at a time."""
+    from finresearch.monitor.fund_ranks import due_slot, fund_ranks_step
+
+    t = _BACKGROUND.get("fund_ranks")
+    if (t is not None and not t.done()) or due_slot(now) is None:
+        return
+
+    async def run() -> None:
+        try:
+            res = await fund_ranks_step(now)
+            if res:
+                log.info("fund category ranking: %s", res)
+        except Exception:
+            log.warning("fund category ranking failed", exc_info=True)
+
+    _BACKGROUND["fund_ranks"] = asyncio.create_task(run())
+
+
 async def drain() -> None:
     """Wait for background work started by `tick` (a one-shot `finresearch monitor tick` calls this)."""
     for t in list(_BACKGROUND.values()):
@@ -353,6 +373,8 @@ async def tick(deps: jobs.Deps, now: datetime | None = None) -> dict[str, int]:
         _spawn_portfolio(deps, now)
     if deps.disclosures:
         _spawn_disclosures(now)
+    if deps.fund_ranks:
+        _spawn_fund_ranks(now)
     out_brief = brief_step(now) if deps.brief else {}
     if deps.holidays is not None or deps.live_holidays:
         await _refresh_holidays(deps)
