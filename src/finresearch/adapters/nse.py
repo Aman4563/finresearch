@@ -502,7 +502,12 @@ class Quote(BaseModel):
     week52_high: Decimal | None = None
     week52_low: Decimal | None = None
     issued_shares: Decimal | None = None
-    industry: str | None = None
+    industry: str | None = None  # NSE's finest level, "basicIndustry" (e.g. "Computers - Software & Consulting")
+    # NSE's coarser classification levels, finest first after basicIndustry: industryInfo ("IT - Software"), sector
+    # and macro ("Information Technology"); the stock peer table (signals.stock_peers) falls back through them
+    industry_info: str | None = None
+    sector: str | None = None
+    macro: str | None = None
     # secInfo: the sectoral index NSE maps the stock to, that index's P/E and the stock's own P/E (monitor.archive)
     sector_index: str | None = None
     sector_pe: Decimal | None = None
@@ -531,6 +536,9 @@ class Quote(BaseModel):
                    week52_high=parse_num(price.get("yearHigh")), week52_low=parse_num(price.get("yearLow")),
                    issued_shares=parse_num(trade.get("issuedSize")),
                    industry=(sec.get("basicIndustry") or None),
+                   industry_info=(str(sec.get("industryInfo") or "").strip() or None),
+                   sector=(str(sec.get("sector") or "").strip() or None),
+                   macro=(str(sec.get("macro") or "").strip() or None),
                    sector_index=(str(sec.get("pdSectorInd") or "").strip().strip("-").strip() or None),
                    sector_pe=parse_num(sec.get("pdSectorPe")) or None,
                    symbol_pe=parse_num(sec.get("pdSymbolPe")) or None)  # fmt: skip

@@ -884,11 +884,14 @@ async def _xbrl(eq: Any, url: str) -> bytes:
 
 
 async def results_from_nse(
-    eq: Any, sym: str, quarters: int, *, annual_facts: dict[date, dict[str, Any]] | None = None
+    eq: Any, sym: str, quarters: int, *, annual_facts: dict[date, dict[str, Any]] | None = None,
+    balance_sheets: dict[date, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Quarterly and annual results from each filing's XBRL (see the /api/stocks/{symbol}/results route). When
     `annual_facts` is given it also receives, per fiscal year end, the full-year P&L and cash-flow facts merged with
-    the year-end balance sheet (Decimal, rupees) and the filing's basis: the inputs of fincalc.forensic."""
+    the year-end balance sheet (Decimal, rupees) and the filing's basis: the inputs of fincalc.forensic. When
+    `balance_sheets` is given it receives every filed statement of assets and liabilities (half-year and year ends)
+    as {end: {"equity_owners", "total_equity", "consolidated", "xbrl"}}: the stock peer table's book value."""
     from finresearch.adapters.http import is_transient
     from finresearch.adapters.nse_equity import INTEGRATED_PAGE, RESULTS_PAGE
     from finresearch.adapters.xbrl import parse_results_xbrl
@@ -943,6 +946,7 @@ async def results_from_nse(
                         annual[y.end] = _result_row(f, y, y.end, annual=True)
                         _annual_facts(annual_facts, f, x, y)  # the full year still feeds the forensic scores
                     _add_periods(periods, f, q, y)  # the half-year and the year still give a TTM EPS
+                    _balance_sheet(balance_sheets, f, x)
                     break
                 if problem:
                     errors.append(f"{end} {f.xbrl}: {problem}; skipped"[:240])
@@ -950,6 +954,7 @@ async def results_from_nse(
                 _fill_owner_profit(x.quarter, errors, end)
             out.append(_result_row(f, x.quarter, end))
             _add_periods(periods, f, x.quarter, y)
+            _balance_sheet(balance_sheets, f, x)
             if y and y.start and y.end and (y.end - y.start).days >= 360 and y.end not in annual:
                 annual[y.end] = _result_row(f, y, y.end, annual=True)
                 _annual_facts(annual_facts, f, x, y)
@@ -1012,6 +1017,16 @@ def _add_periods(periods: dict[tuple[str, str], dict[str, Any]], f: Any, *parts:
                         "source": source,
                         "source_url": (getattr(f, "ixbrl", None) or f.xbrl) if source == "bse_integrated_filing"
                                       else f.xbrl}  # fmt: skip
+
+
+def _balance_sheet(sheets: dict[date, dict[str, Any]] | None, f: Any, x: Any) -> None:
+    """The filing's statement of assets and liabilities (owners' and total equity), keyed by its date; the first
+    filing read for a date wins (results_from_nse reads the consolidated filing first)."""
+    bs = x.balance_sheet
+    if sheets is None or bs is None or bs.end is None or bs.end in sheets:
+        return
+    sheets[bs.end] = {"equity_owners": bs.facts.get("equity_owners"), "total_equity": bs.facts.get("total_equity"),
+                      "consolidated": f.consolidated, "xbrl": f.xbrl}  # fmt: skip
 
 
 def _annual_facts(annual_facts: dict[date, dict[str, Any]] | None, f: Any, x: Any, y: Any) -> None:
