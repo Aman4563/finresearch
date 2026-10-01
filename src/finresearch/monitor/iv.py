@@ -38,6 +38,8 @@ MAX_TRIES, RETRY_S = 3, 600
 _tries: dict[tuple[str, date], tuple[int, float]] = {}
 _missing_logged: list[bool] = []
 _lots: dict[date, dict[str, dict[str, int]]] = {}  # the F&O lot file, fetched once per IST day
+# failed lot-file fetches (count, last try) per day: retried like a symbol, never cached as "no F&O stocks today"
+_lot_tries: dict[date, tuple[int, float]] = {}
 
 
 def pick_expiry(expiries: list[date], today: date, min_dte: int = MIN_DTE) -> date | None:
@@ -94,17 +96,20 @@ async def record_iv(client_factory, now: datetime) -> dict[str, Any]:
     lots = _lots.get(today)
     cands = [x for x in symbols(lots) if x not in done and _tries.get((x, today), (0, 0.0))[0] < MAX_TRIES]
     due = [x for x in cands if time.time() - _tries.get((x, today), (0, 0.0))[1] >= RETRY_S]
-    if not due and (lots is not None or not cands):
+    lot_n, lot_at = _lot_tries.get(today, (0, 0.0))
+    lots_due = lots is None and lot_n < MAX_TRIES and time.time() - lot_at >= RETRY_S
+    if not due and not lots_due:
         return {"recorded": [], "failed": {}, "skipped": "nothing due"}
     out: dict[str, Any] = {"recorded": [], "failed": {}}
     async with client_factory() as f:
-        if lots is None:
+        if lots_due:
+            _lot_tries[today] = (lot_n + 1, time.time())
             try:
                 lots = await f.lot_sizes()
-            except Exception:
-                lots = {}
-            _lots.clear()
-            _lots[today] = lots
+                _lots.clear()
+                _lots[today] = lots
+            except Exception as e:  # the indices still run; the stocks wait for the lot file's retry
+                out["failed"]["lot sizes"] = f"{type(e).__name__}: {e}"[:200]
             cands = [x for x in symbols(lots) if x not in done]
             due = [x for x in cands if _tries.get((x, today), (0, 0.0))[0] < MAX_TRIES
                    and time.time() - _tries.get((x, today), (0, 0.0))[1] >= RETRY_S]  # fmt: skip
@@ -137,3 +142,4 @@ async def record_iv(client_factory, now: datetime) -> dict[str, Any]:
 def reset_tries() -> None:
     _tries.clear()
     _lots.clear()
+    _lot_tries.clear()

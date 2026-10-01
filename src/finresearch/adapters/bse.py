@@ -28,7 +28,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from finresearch.adapters.http import IST, Fetched, FetchRecord, PoliteClient
+from finresearch.adapters.http import IST, Fetched, FetchRecord, PoliteClient, now_ist
 from finresearch.adapters.nse import (
     CategorySubscription,
     IpoDetail,
@@ -295,10 +295,17 @@ def parse_scrip_header(symbol: str, data: dict[str, Any]) -> Quote | None:
     a quote with an open price and no previous close is the listing day, so `listing_date` is set only then."""
     h = (data or {}).get("Header") or {}
     opened = parse_num(h.get("Open"))
-    ason = str(h.get("Ason") or "").replace("|", "").split()
+    ason = str(h.get("Ason") or "").replace("|", "").replace("Sept", "Sep").split()
     as_of = None
-    if len(ason) == 4:
-        as_of = datetime.strptime(" ".join(ason), "%d %b %y %H:%M").replace(tzinfo=IST)
+    if (
+        len(ason) == 4
+    ):  # "29 Sep 26 | 11:30"; a variant (seconds, another month spelling) leaves the time unknown
+        for fmt in ("%d %b %y %H:%M", "%d %b %y %H:%M:%S"):
+            try:
+                as_of = datetime.strptime(" ".join(ason), fmt).replace(tzinfo=IST)
+                break
+            except ValueError:
+                continue
     if opened is None and parse_num(h.get("LTP")) is None:
         return None
     prev = parse_num(h.get("PrevClose"))
@@ -396,7 +403,8 @@ class BseClient:
         if q is not None and q.as_of is not None and q.last_price is not None:
             from finresearch.fincalc.price import session_over
 
-            if session_over(q.as_of):  # the official close is the day's bar (the header has no close field)
+            # the official close is the day's bar (the header has no close field); an earlier day's quote is over too
+            if session_over(q.as_of, now_ist()):
                 from finresearch.adapters.bse_equity import BseEquity
 
                 try:

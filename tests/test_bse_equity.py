@@ -409,3 +409,67 @@ def test_bse_filing_checks():
                       {"profit_attributable_to_owners": d(0), "profit_for_period": d(93120000)})  # fmt: skip
     _fill_owner_profit(dec, errors, date(2025, 12, 31))
     assert dec.facts["profit_attributable_to_owners"] == d(93120000) and "filed as 0" in errors[0]
+
+
+def _bse_offline(handler):
+    import httpx
+
+    from finresearch.adapters.bse import BseClient
+    from finresearch.adapters.bse_equity import BseEquity
+    from finresearch.adapters.http import PoliteClient
+
+    async def nosleep(_s):
+        return None
+
+    pc = PoliteClient(transport=httpx.MockTransport(handler), host_rates={}, default_rate=0, cache_dir=None,
+                      sleep=nosleep, max_retries=0)  # fmt: skip
+    return BseEquity(BseClient(pc))
+
+
+async def test_an_earlier_days_bse_quote_reads_that_days_close():
+    """A header stamped 14:12 on an earlier day (no trade since) is over: its official close is that day's bar. The
+    session check had no `now`, so only a timestamp at or after 15:30 counted as over."""
+    import httpx
+
+    header = json.loads(
+        (Path(__file__).parent / "fixtures" / "prices" / "bse_header_544569_20260930.json").read_text()
+    )
+    header["Header"]["Ason"] = "25 Sep 26 | 14:12"
+    asked = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path.endswith("/getScripHeaderData/w"):
+            return httpx.Response(200, json=header)
+        if "StockPriceCSVDownload" in req.url.path:
+            asked.append((req.url.params.get("FromDate") or req.url.params.get("fromdate"), str(req.url)))
+        return httpx.Response(404)
+
+    async with _bse_offline(handler) as bse:
+        q = await bse.quote("544569")
+    assert q is not None and q.as_of.date().isoformat() == "2026-09-25"
+    assert asked, "the earlier day's bar (official close) was never requested"
+
+
+def test_bse_timestamp_variants_do_not_break_the_quote():
+    from finresearch.adapters.bse import parse_scrip_header
+
+    header = json.loads(
+        (Path(__file__).parent / "fixtures" / "prices" / "bse_header_544569_20260930.json").read_text()
+    )
+    for ason, hm in (("29 Sep 26 | 11:31:05", (11, 31)), ("29 Sept 26 | 11:31", (11, 31)), ("garbage", None)):
+        header["Header"]["Ason"] = ason
+        q = parse_scrip_header("TMCV", header)
+        assert q is not None and ((q.as_of.hour, q.as_of.minute) == hm if hm else q.as_of is None)
+
+
+async def test_a_refused_bhavcopy_is_an_error_not_unpublished():
+    import httpx
+
+    from finresearch.adapters.bse import BseError
+
+    for status in (403, 503):
+        async with _bse_offline(lambda req, st=status: httpx.Response(st, html="<html>denied</html>")) as bse:
+            with pytest.raises(BseError):
+                await bse.bhavcopy(date(2026, 9, 30))
+    async with _bse_offline(lambda req: httpx.Response(404)) as bse:
+        assert await bse.bhavcopy(date(2026, 10, 2)) is None  # a holiday: not published

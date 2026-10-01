@@ -8,6 +8,7 @@ import zipfile
 from pathlib import Path
 
 import httpx
+import pytest
 import respx
 from conftest import minimal_pdf
 
@@ -272,3 +273,54 @@ async def test_sebi_resolve_pdf_only_fetches_sebi_pages():
     for url in ("http://127.0.0.1:8710/api/runs", "https://evil.example/sebi.gov.in", "http://www.sebi.gov.in/x.html",
                 "https://sebi.gov.in.evil.example/x", "https://user@www.sebi.gov.in:8443/x"):  # fmt: skip
         assert "error" in json.loads(await sebi_resolve_pdf(url))
+
+
+def test_a_zip_bomb_is_refused_before_inflating(tmp_path, monkeypatch):
+    from finresearch.ingest import discover
+
+    monkeypatch.setattr(discover, "MAX_BYTES", 10_000)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as z:
+        z.writestr("RHP_X.pdf", b"%PDF-" + b"\0" * 2_000_000)  # 2 MB of zeros: a ~2 KB archive
+    (tmp_path / "bomb.zip").write_bytes(buf.getvalue())
+    assert (tmp_path / "bomb.zip").stat().st_size < 10_000
+    with pytest.raises(ValueError, match="inflate"):
+        _pdfs_from(tmp_path / "bomb.zip", "u")
+
+
+@respx.mock
+def test_a_dropped_download_leaves_no_partial_file_and_unresolvable_hosts_fail_closed(tmp_path):
+    from finresearch.ingest.documents import UnsafeUrl, check_public_url, download
+
+    def boom(_req):
+        raise httpx.ReadError("connection reset mid-body")
+
+    respx.get("https://co.example/cut.pdf").mock(side_effect=boom)
+    with pytest.raises(httpx.ReadError):
+        download("https://co.example/cut.pdf", tmp_path / "cut")
+    assert not list((tmp_path / "cut").iterdir())
+
+    def nxdomain(_h, _p):
+        raise OSError("nodename nor servname provided")
+
+    with pytest.raises(UnsafeUrl):
+        check_public_url("https://files.acme-intranet.com/a.pdf", resolve=nxdomain)
+
+
+def test_a_hanging_pdf_tool_is_killed_at_its_timeout(tmp_path, monkeypatch):
+    import os
+    import subprocess
+    import time
+
+    from finresearch.ingest import documents
+
+    fake = tmp_path / "bin" / "pdfinfo"
+    fake.parent.mkdir()
+    fake.write_text("#!/bin/sh\nsleep 30\n")
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{fake.parent}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setattr(documents, "PDF_INFO_TIMEOUT_S", 0.5)
+    t = time.monotonic()
+    with pytest.raises(subprocess.TimeoutExpired):
+        documents.pdf_page_count(tmp_path / "hostile.pdf")
+    assert time.monotonic() - t < 5

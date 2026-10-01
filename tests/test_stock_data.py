@@ -267,3 +267,20 @@ def test_insurer_results_xbrl_maps_premium_and_the_pnl_account(
     assert f["profit_before_tax"] == Decimal(pbt) and f[tax_key] == Decimal(tax)
     assert f["profit_before_tax"] - f[tax_key] == f["profit_for_period"] == Decimal(pat)
     assert f["eps_basic"] == Decimal(eps)
+
+
+async def test_a_history_row_without_a_date_is_skipped_not_fatal():
+    from finresearch.adapters.nse_equity import NseEquity
+
+    class Fake(NseEquity):
+        def __init__(self):
+            pass
+
+        async def _get(self, *a, **k):
+            return [
+                {"mtimestamp": "29-Sep-2026", "chClosingPrice": 100},
+                {"mtimestamp": "-", "chClosingPrice": 0},
+            ]
+
+    bars = await Fake().history("EXAMPLE", date(2026, 9, 1), date(2026, 9, 30))
+    assert [b.day for b in bars] == [date(2026, 9, 29)]

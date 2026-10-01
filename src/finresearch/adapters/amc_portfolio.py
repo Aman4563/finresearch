@@ -39,6 +39,16 @@ from urllib.parse import urljoin, urlsplit
 
 ISIN_RE = re.compile(r"^[A-Z]{2}[A-Z0-9]{9}[0-9]$")
 MAX_FILE_BYTES = 25 * 1024 * 1024
+# an xlsx (a zip of XML) or a zip of them, inflated: a portfolio workbook is a few MB of XML; a zip bomb is gigabytes
+MAX_INFLATED_BYTES = 400 * 1024 * 1024
+
+
+def _check_inflated(z: zipfile.ZipFile, label: str) -> None:
+    """Refuse an archive whose members would inflate beyond MAX_INFLATED_BYTES (declared sizes; zipfile stops at the
+    declared size, so a lying header fails its CRC check instead of inflating further)."""
+    if sum(i.file_size for i in z.infolist()) > MAX_INFLATED_BYTES:
+        raise AmcPortfolioError(f"{label}: would inflate beyond {MAX_INFLATED_BYTES // (1024 * 1024)} MB")
+
 
 # kinds of holding; only EQUITY_KINDS enter overlap, look-through stock exposure and active share
 EQUITY_KINDS = frozenset({"equity", "foreign_equity"})
@@ -406,6 +416,11 @@ def _xlsx_portfolios(data: bytes, label: str) -> list[SchemePortfolio]:
     from openpyxl import load_workbook
 
     try:
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            _check_inflated(z, label)
+    except zipfile.BadZipFile as e:
+        raise AmcPortfolioError(f"{label}: not a readable Excel workbook (BadZipFile)") from e
+    try:
         wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
     except Exception as e:
         raise AmcPortfolioError(f"{label}: not a readable Excel workbook ({type(e).__name__})") from e
@@ -433,6 +448,7 @@ def parse_file(data: bytes, filename: str = "file") -> list[SchemePortfolio]:
     if data[:2] != b"PK":
         raise AmcPortfolioError(f"{filename}: not an Excel (.xlsx) file or a zip of them")
     with zipfile.ZipFile(io.BytesIO(data)) as z:
+        _check_inflated(z, filename)
         names = z.namelist()
         if "[Content_Types].xml" in names:  # an xlsx workbook itself
             out = _xlsx_portfolios(data, filename)

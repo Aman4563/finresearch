@@ -50,7 +50,7 @@ from urllib.parse import urlsplit
 from pydantic import BaseModel, Field
 
 from finresearch.adapters.bse import BSE_API, BSE_HEADERS, BseClient, BseError, parse_scrip_header
-from finresearch.adapters.http import IST
+from finresearch.adapters.http import IST, now_ist
 from finresearch.adapters.nse import Quote, parse_num
 from finresearch.adapters.nse_equity import (
     INTEGRATED_FINANCIALS,
@@ -563,7 +563,7 @@ class BseEquity:
             except BseError:
                 extra.append(None)
         q = build_quote(code, header or {}, *extra)
-        if q is not None and q.as_of is not None and session_over(q.as_of):
+        if q is not None and q.as_of is not None and session_over(q.as_of, now_ist()):
             # BSE's header has no close field: after the session the official close is the day's bar (the same figure
             # as the bhavcopy's ClsPric). The LTP usually equals it but need not (no trade in the closing session).
             day = q.as_of.date()
@@ -588,10 +588,12 @@ class BseEquity:
         url = BHAVCOPY_URL.format(day=day)
         resp = await self.bse.http.get(url, headers={**BSE_HEADERS, "Accept": "*/*", "Sec-Fetch-Site": "same-origin"},
                                        cache_ttl=BHAVCOPY_TTL_S, cache_if=lambda f: f.content[:7] == b"TradDt,")  # fmt: skip
-        if resp.status == 404 or not resp.content.lstrip(b"\xef\xbb\xbf").startswith(b"TradDt,"):
+        if resp.status == 404:
             return None
-        if not resp.ok:
+        if not resp.ok:  # a 403/5xx is BSE refusing or failing, not "not published": checked before the body
             raise BseError(f"BSE HTTP {resp.status} for {url}")
+        if not resp.content.lstrip(b"\xef\xbb\xbf").startswith(b"TradDt,"):
+            return None
         return parse_bhavcopy(resp.text)
 
     async def announcements(self, code: str, days: int = ANNOUNCEMENT_DAYS, today: date | None = None) -> list[Announcement]:  # fmt: skip

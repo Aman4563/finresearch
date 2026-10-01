@@ -313,6 +313,11 @@ async def test_archive_releases_the_slot_when_the_issue_list_fails(clean):
     async def empty():
         return []
 
+    from finresearch.monitor import jobs
+
+    assert await archive_open_books(Deps(ipo_detail=None, quote=None, current_issues=empty, archive_books=True),
+                                    now, holidays=set()) is None  # released, but retried after ARCHIVE_RETRY_S  # fmt: skip
+    jobs._archive_retry_at.clear()  # five minutes later
     res = await archive_open_books(Deps(ipo_detail=None, quote=None, current_issues=empty, archive_books=True),
                                    now, holidays=set())  # fmt: skip
     assert res == {
@@ -545,3 +550,39 @@ def test_committed_blend_artefact_is_ready_and_consistent():
     assert art["gate"]["passes"] and len(art["gate"]["years_passed"]) >= 5
     assert art["pooled"]["brier"] < art["pooled"]["brier_table"]
     assert 0 < art["calibrator"]["params"]["lambda"] < 1
+
+
+async def test_an_archive_pass_that_nse_refused_entirely_is_retried_in_the_window(clean, monkeypatch):
+    """Regression: a 403 on every issue's detail still finalised the slot with archived=[], so that bidding-day
+    snapshot was lost for good."""
+    import time
+
+    from finresearch.adapters.nse import IpoIssue
+    from finresearch.monitor import jobs
+    from finresearch.monitor.jobs import Deps, archive_open_books
+
+    issues = [IpoIssue(symbol="ORIENTCABL", company="Orient", series="EQ", issue_start=date(2026, 9, 25),
+                       issue_end=date(2026, 9, 29))]  # fmt: skip
+    refuse = [True]
+
+    async def current():
+        return issues
+
+    async def detail(sym):
+        if refuse[0]:
+            raise RuntimeError("NSE refused /api/ipo-detail after re-warm: HTTP 403")
+        return orient()
+
+    deps = Deps(
+        ipo_detail=detail, quote=None, current_issues=current, archive_books=True, archive_spacing_s=0
+    )
+    jobs._archive_retry_at.clear()
+    now = datetime(2026, 9, 29, 11, 2, tzinfo=IST)
+    first = await archive_open_books(deps, now, holidays=set())
+    assert first["archived"] == [] and len(first["errors"]) == 1
+    refuse[0] = False
+    assert await archive_open_books(deps, now, holidays=set()) is None  # not before ARCHIVE_RETRY_S
+    monkeypatch.setattr(time, "time", lambda: jobs._archive_retry_at["2026-09-29T11:00"] + 1)
+    again = await archive_open_books(deps, datetime(2026, 9, 29, 11, 8, tzinfo=IST), holidays=set())
+    assert again is not None and again["archived"] == ["ORIENTCABL"]
+    jobs._archive_retry_at.clear()

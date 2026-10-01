@@ -43,24 +43,28 @@ export function bindingWindow(p: ReturnType<typeof planUsage>) {
 export function PlanTile({ limits, now }: { limits: Limits | null; now: number | null }) {
   const b = bindingWindow(planUsage(limits));
   return (
-    <Link href="/usage" className="group relative block h-full overflow-hidden rounded-xl border border-border bg-card p-4 shadow-card transition duration-200 hover:-translate-y-0.5 hover:border-border-strong hover:shadow-glow">
-      <p className="flex items-center gap-1 text-xs font-medium text-muted">
-        Plan window
-        <InfoTip>
-          Research runs use your Claude plan. It has a rolling 5-hour window and a 7-day weekly allowance; a run stops
-          when either is full, so the fuller one is shown large. FinResearch pauses runs before the 5-hour window reaches
-          {limits ? ` ${Math.round(limits.ceilings.five_hour * 100)}%` : " the ceiling"} and resumes after the reset.
-        </InfoTip>
-      </p>
-      <div className="mt-1 flex items-end justify-between gap-2">
-        <div className="text-xs text-muted">
-          <p className="font-medium text-foreground" title={b.other ? "The fuller of the two windows: it is the one that stops runs" : undefined}>{b.label}{b.other ? " · tighter" : ""}</p>
-          <p>{b.resets && now && b.resets * 1000 > now ? <>resets in <span className="num text-foreground">{countdown(b.resets * 1000, now)}</span></> : "used"}</p>
-          {b.other && <p className="num mt-0.5">{b.other.label} {Math.round(b.other.used * 100)}%</p>}
+    // stretched link under the content (the (?) is a button, which must not sit inside <a>)
+    <div className="group relative h-full overflow-hidden rounded-xl border border-border bg-card p-4 shadow-card transition duration-200 hover:-translate-y-0.5 hover:border-border-strong hover:shadow-glow">
+      <Link href="/usage" className="absolute inset-0 rounded-xl"><span className="sr-only">Plan window usage</span></Link>
+      <div className="pointer-events-none relative [&_button]:pointer-events-auto">
+        <p className="flex items-center gap-1 text-xs font-medium text-muted">
+          Plan window
+          <InfoTip>
+            Research runs use your Claude plan. It has a rolling 5-hour window and a 7-day weekly allowance; a run stops
+            when either is full, so the fuller one is shown large. FinResearch pauses runs before the 5-hour window reaches
+            {limits ? ` ${Math.round(limits.ceilings.five_hour * 100)}%` : " the ceiling"} and resumes after the reset.
+          </InfoTip>
+        </p>
+        <div className="mt-1 flex items-end justify-between gap-2">
+          <div className="text-xs text-muted">
+            <p className="font-medium text-foreground" title={b.other ? "The fuller of the two windows: it is the one that stops runs" : undefined}>{b.label}{b.other ? " · tighter" : ""}</p>
+            <p>{b.resets && now && b.resets * 1000 > now ? <>resets in <span className="num text-foreground">{countdown(b.resets * 1000, now)}</span></> : "used"}</p>
+            {b.other && <p className="num mt-0.5">{b.other.label} {Math.round(b.other.used * 100)}%</p>}
+          </div>
+          <div className="-mb-1 shrink-0"><Gauge value={limits ? b.used : null} size={96} /></div>
         </div>
-        <div className="-mb-1 shrink-0"><Gauge value={limits ? b.used : null} size={96} /></div>
       </div>
-    </Link>
+    </div>
   );
 }
 

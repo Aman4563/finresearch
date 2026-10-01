@@ -3,6 +3,7 @@
 import { CircleHelp, Inbox, TriangleAlert, X } from "lucide-react";
 import Link from "next/link";
 import { type ReactNode, useEffect, useId, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 export const cx = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).join(" ");
 
@@ -143,27 +144,31 @@ export function Stat({ label, value, format, display, delta, deltaLabel, hint, n
   /** a second, untruncated line under the delta (e.g. the last trade under an official close) */
   note?: ReactNode;
 }) {
-  const body = (
+  // a linked tile is a stretched link under the content, not an <a> around it: the help (?) inside is a button, and
+  // a button (or link) inside <a> is invalid HTML that React reports as a hydration error
+  // clicks on the text fall through to the link; buttons and links inside stay clickable
+  const through = href ? "pointer-events-none [&_a]:pointer-events-auto [&_button]:pointer-events-auto" : "";
+  return (
     <div className="group relative overflow-hidden rounded-xl border border-border bg-card p-4 shadow-card transition duration-200 hover:-translate-y-0.5 hover:border-border-strong hover:shadow-glow">
-      <div className="flex items-center justify-between gap-2">
+      {href && <Link href={href} className="absolute inset-0 z-0 rounded-xl"><span className="sr-only">{label}</span></Link>}
+      <div className={cx("relative flex items-center justify-between gap-2", through)}>
         <p className="flex items-center gap-1 text-xs font-medium text-muted">
           {label}
           {help && <InfoTip>{help}</InfoTip>}
         </p>
         {icon && <span className={cx("grid size-7 place-items-center rounded-lg ring-1 ring-inset", TONE[tone])}>{icon}</span>}
       </div>
-      <p className="mt-2 text-2xl font-semibold tracking-tight">
+      <p className={cx("relative mt-2 text-2xl font-semibold tracking-tight", through)}>
         {display ?? <AnimatedNumber value={value} format={format} />}
       </p>
-      <div className="mt-1 flex items-center gap-2 text-xs">
+      <div className={cx("relative mt-1 flex items-center gap-2 text-xs", through)}>
         {delta != null && <Delta value={delta} />}
         {(deltaLabel || hint) && <span className="truncate text-muted">{deltaLabel ?? hint}</span>}
       </div>
-      {note && <p className="mt-0.5 text-[11px] text-muted">{note}</p>}
+      {note && <p className={cx("relative mt-0.5 text-[11px] text-muted", through)}>{note}</p>}
       <span className="pointer-events-none absolute -right-8 -bottom-8 size-24 rounded-full bg-brand/5 transition group-hover:scale-125" />
     </div>
   );
-  return href ? <Link href={href} className="block">{body}</Link> : body;
 }
 
 /** A signed change, green up / red down. `value` is in percent. */
@@ -347,56 +352,139 @@ export function Segmented<T extends string>({ value, onChange, options, size = "
   );
 }
 
-/** A small (?) that explains a term on hover or focus. */
+/** A small (?) that explains a term on hover, focus or tap. The bubble is portalled to <body> with fixed positioning,
+ * clamped to the viewport: inside a KPI tile (overflow-hidden), a scrolling table or near a phone's edge an
+ * in-place bubble was clipped or ran off screen. */
 export function InfoTip({ children, label = "What is this?" }: { children: ReactNode; label?: string }) {
-  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ left: number; width: number; top?: number; bottom?: number } | null>(null);
   const id = useId();
+  const btn = useRef<HTMLButtonElement>(null);
+  const tip = useRef<HTMLSpanElement>(null);
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const openedAt = useRef(0);
+  const show = () => {
+    clearTimeout(closeTimer.current);
+    if (!pos) openedAt.current = Date.now();
+    const el = btn.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const vw = document.documentElement.clientWidth, vh = window.innerHeight;
+    const width = Math.min(256, vw - 16);
+    const left = Math.max(8, Math.min(vw - width - 8, r.left + r.width / 2 - width / 2));
+    // above the (?) when there is room, else below it
+    setPos(r.top > 160 ? { left, width, bottom: vh - r.top + 8 } : { left, width, top: r.bottom + 8 });
+  };
+  // a short grace period lets the pointer travel from the (?) onto the bubble (it can hold a link)
+  const hide = () => { clearTimeout(closeTimer.current); closeTimer.current = setTimeout(() => setPos(null), 120); };
+  const open = pos != null;
+  useEffect(() => {
+    if (!open) return;
+    const close = () => setPos(null);
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && close();
+    const onDown = (e: PointerEvent) => {
+      const t = e.target as Node;
+      if (!btn.current?.contains(t) && !tip.current?.contains(t)) close();
+    };
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("pointerdown", onDown);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("pointerdown", onDown);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [open]);
+  useEffect(() => () => clearTimeout(closeTimer.current), []);
   return (
-    <span className="relative inline-flex" onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
+    // hover only for a real mouse: a tap also sends mouse/focus events right before the click, which would toggle it shut
+    <span className="relative inline-flex" onPointerEnter={(e) => e.pointerType === "mouse" && show()} onPointerLeave={(e) => e.pointerType === "mouse" && hide()}>
       <button
+        ref={btn}
         type="button"
         aria-label={label}
+        aria-expanded={open}
         aria-describedby={open ? id : undefined}
-        onFocus={() => setOpen(true)}
-        onBlur={() => setOpen(false)}
-        onClick={() => setOpen((o) => !o)}
-        className="text-muted/70 transition hover:text-brand"
+        onFocus={show}
+        onBlur={hide}
+        onClick={(e) => {
+          // never let the tap reach a parent link or row handler
+          e.preventDefault();
+          e.stopPropagation();
+          // a second tap closes it; the first one (just opened by focus) keeps it open
+          if (open && Date.now() - openedAt.current > 400) setPos(null);
+          else show();
+        }}
+        className="text-muted transition hover:text-brand"
       >
         <CircleHelp className="size-3.5" />
       </button>
-      {open && (
-        <span
-          id={id}
-          role="tooltip"
-          className="absolute bottom-full left-1/2 z-50 mb-2 w-64 -translate-x-1/2 rounded-lg border border-border bg-card px-3 py-2 text-left text-xs font-normal leading-relaxed text-foreground shadow-pop animate-scale-in"
-        >
-          {children}
-        </span>
-      )}
+      {pos &&
+        createPortal(
+          <span
+            ref={tip}
+            id={id}
+            role="tooltip"
+            onMouseEnter={() => clearTimeout(closeTimer.current)}
+            onMouseLeave={hide}
+            style={{ position: "fixed", left: pos.left, width: pos.width, top: pos.top, bottom: pos.bottom }}
+            className="z-[70] rounded-lg border border-border bg-card px-3 py-2 text-left text-xs font-normal normal-case leading-relaxed tracking-normal text-foreground shadow-pop animate-scale-in"
+          >
+            {children}
+          </span>,
+          document.body,
+        )}
     </span>
   );
 }
 
-/** Centered dialog with a backdrop; closes on Escape or backdrop click. */
+/** Centered dialog with a backdrop; closes on Escape or backdrop click. Focus moves into the dialog, Tab stays inside
+ * it, and focus returns to whatever opened it on close (WAI-ARIA dialog pattern). */
 export function Modal({ open, onClose, title, children, wide }: { open: boolean; onClose: () => void; title?: ReactNode; children: ReactNode; wide?: boolean }) {
+  const box = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+  // callers often pass an inline onClose: keep the latest in a ref so a re-render doesn't re-run the focus effect
+  const closeRef = useRef(onClose);
+  useEffect(() => { closeRef.current = onClose; }, [onClose]);
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    const opener = document.activeElement as HTMLElement | null;
+    const focusables = () =>
+      [...(box.current?.querySelectorAll<HTMLElement>('a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])') ?? [])];
+    // the first field if there is one (forms), else the dialog itself, so a screen reader starts at its title
+    const first = focusables().find((el) => el.matches("input,select,textarea")) ?? box.current;
+    first?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") return closeRef.current();
+      if (e.key !== "Tab") return;
+      const els = focusables();
+      if (!els.length) return;
+      const a = els[0], z = els[els.length - 1];
+      if (e.shiftKey && (document.activeElement === a || document.activeElement === box.current)) { e.preventDefault(); z.focus(); }
+      else if (!e.shiftKey && document.activeElement === z) { e.preventDefault(); a.focus(); }
+    };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      opener?.focus?.();
+    };
+  }, [open]);
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4 pt-[12vh] backdrop-blur-sm animate-fade-in" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4 pt-[12vh] backdrop-blur-sm animate-fade-in" onClick={onClose}>
       <div
+        ref={box}
         role="dialog"
         aria-modal="true"
-        className={cx("w-full rounded-xl border border-border bg-card shadow-pop animate-scale-in", wide ? "max-w-3xl" : "max-w-lg")}
+        aria-labelledby={title ? titleId : undefined}
+        tabIndex={-1}
+        className={cx("w-full rounded-xl border border-border bg-card shadow-pop outline-none animate-scale-in", wide ? "max-w-3xl" : "max-w-lg")}
         onClick={(e) => e.stopPropagation()}
       >
         {title && (
           <div className="flex items-center justify-between border-b border-border px-4 py-3">
-            <h2 className="text-sm font-semibold">{title}</h2>
+            <h2 id={titleId} className="text-sm font-semibold">{title}</h2>
             <button type="button" aria-label="Close" onClick={onClose} className="text-muted hover:text-foreground">
               <X className="size-4" />
             </button>
@@ -409,10 +497,12 @@ export function Modal({ open, onClose, title, children, wide }: { open: boolean;
 }
 
 /** A table with sticky header styling and row hover; pass <thead>/<tbody> children. */
-export function Table({ children, className }: { children: ReactNode; className?: string }) {
+export function Table({ children, className, label = "Table" }: { children: ReactNode; className?: string; label?: string }) {
   return (
-    // focusable so keyboard users can scroll a table wider than the screen (WCAG 2.1.1)
-    <div tabIndex={0} className={cx("-mx-4 overflow-x-auto sm:-mx-5", className)}>
+    // focusable so keyboard users can scroll a table wider than the screen (WCAG 2.1.1), named for screen readers;
+    // `relative` keeps absolutely positioned children (sr-only header text) inside the scroll box: without it they
+    // escape the clip and widen the whole page on a phone
+    <div tabIndex={0} role="region" aria-label={label} className={cx("relative -mx-4 overflow-x-auto sm:-mx-5", className)}>
       <table className="w-full min-w-max text-sm [&_td]:px-4 [&_td]:py-2.5 sm:[&_td]:px-5 [&_th]:px-4 [&_th]:py-2 sm:[&_th]:px-5 [&_th]:text-left [&_th]:text-[11px] [&_th]:font-medium [&_th]:uppercase [&_th]:tracking-wider [&_th]:text-muted [&_thead_tr]:border-b [&_thead_tr]:border-border [&_tbody_tr]:border-b [&_tbody_tr]:border-border/60 [&_tbody_tr:last-child]:border-0 [&_tbody_tr]:transition-colors [&_tbody_tr:hover]:bg-card-hover">
         {children}
       </table>

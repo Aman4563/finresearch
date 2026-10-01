@@ -365,7 +365,10 @@ class NseEquity:
                       cache_ttl: float | None = None) -> list[PriceBar]:  # fmt: skip
         rows = await self._get(symbol, *nse_endpoint("history", symbol, start=start, end=end, series=series),
                                cache_ttl=cache_ttl)  # fmt: skip
-        return sorted((PriceBar.parse(r) for r in rows or []), key=lambda b: b.day)
+        # a row without a parseable date (NSE's placeholder rows) is skipped, as index_history does: it used to fail
+        # validation and abort the whole history
+        return sorted((PriceBar.parse(r) for r in rows or [] if parse_nse_date(r.get("mtimestamp"))),
+                      key=lambda b: b.day)  # fmt: skip
 
     async def index_history(self, index: str, start: date, end: date) -> list[IndexBar]:
         """Daily values of an NSE index (e.g. "NIFTY 50"); like `history`, one request answers ~70 trading days."""

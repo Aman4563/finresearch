@@ -168,10 +168,16 @@ _HOLIDAYS_CHECKED: dict[str, float] = {}
 
 
 async def _refresh_holidays(deps: jobs.Deps) -> None:
-    """Keep NSE's holiday lists fresh (at most one attempt a day; failures keep the cached lists)."""
+    """Keep NSE's holiday lists fresh (at most one attempt a day; failures keep the cached lists). While the current
+    year's list is missing altogether every date calculation treats holidays as trading days, so a failed attempt is
+    then retried within the hour instead of the next day."""
     import time
 
-    if _HOLIDAYS_CHECKED.get("at", 0) > time.time() - 86400:
+    from finresearch.adapters.nse_holidays import cached_years
+    from finresearch.fincalc.dates import today_ist
+
+    every = 86400 if today_ist().year in cached_years() else 3600
+    if _HOLIDAYS_CHECKED.get("at", 0) > time.time() - every:
         return
     _HOLIDAYS_CHECKED["at"] = time.time()
     try:

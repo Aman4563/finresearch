@@ -115,6 +115,10 @@ async def test_archive_step_writes_each_stream_once_a_day(tmp_path):
     assert early["skipped"] == "outside the after-close window" and not list(tmp_path.iterdir())
     weekend = await ar.archive_step(datetime(2026, 10, 3, 17, 0, tzinfo=dates.IST), src)
     assert "skipped" in weekend
+    # Gandhi Jayanti (Friday 2-Oct-2026): NSE serves 1-Oct's figures, which must not be archived as 2-Oct's
+    holiday = await ar.archive_step(datetime(2026, 10, 2, 17, 0, tzinfo=dates.IST), src,
+                                    holidays={date(2026, 10, 2)})  # fmt: skip
+    assert holiday["skipped"] == "exchange holiday" and not list(tmp_path.iterdir())
     res = await ar.archive_step(AFTER_CLOSE, src)
     assert (
         res["archived"]["sector_pe"] == 1
