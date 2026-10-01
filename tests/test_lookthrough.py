@@ -550,3 +550,20 @@ async def test_download_rechecks_every_redirect_hop_against_the_allow_list(tmp_p
          ["Grand Total", None, 100]])))  # fmt: skip
     _key, parsed = await fetch_url(store, good)
     assert parsed and [h.weight for h in parsed[0].holdings] == [D("60"), D("40")]
+
+
+def test_a_portfolio_zip_bomb_is_refused_before_inflating(monkeypatch):
+    import io
+    import zipfile
+
+    import pytest
+
+    from finresearch.adapters import amc_portfolio
+
+    monkeypatch.setattr(amc_portfolio, "MAX_INFLATED_BYTES", 1_000_000)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as z:
+        z.writestr("[Content_Types].xml", b"<x/>")
+        z.writestr("xl/worksheets/sheet1.xml", b"\0" * 5_000_000)  # 5 MB of zeros in a ~5 KB file
+    with pytest.raises(amc_portfolio.AmcPortfolioError, match="inflate"):
+        parse_file(buf.getvalue(), "bomb.xlsx")
