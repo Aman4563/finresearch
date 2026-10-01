@@ -77,7 +77,7 @@ function ElssSchedule({ e }: { e: ElssLock }) {
       </div>
       {e.unknown_units > 0 && <p className="text-xs text-warn">{units(e.unknown_units)} units have no purchase date ({inr(e.unknown_value)}): set the date on the opening balance to know whether they are free.</p>}
       {e.schedule.length > 0 && (
-        <Table label="ELSS unlock schedule">
+        <Table label="ELSS unlock schedule" className="!mx-0">
           <thead><tr><th>Month</th><th>First unlock</th><th className="text-right">Lots</th><th className="text-right">Units unlocking</th><th className="text-right">Value today</th></tr></thead>
           <tbody>{e.schedule.map((m) => (
             <tr key={m.month}><td>{monthLabel(m.month)}</td><td className="num text-xs">{day(m.first)}</td><td className="num text-right">{m.lots}</td>
