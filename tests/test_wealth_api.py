@@ -80,6 +80,23 @@ def seed(c):
     return {"cash": cash, "fd": fd, "epf": epf, "home": home, "loan": loan, "goal": goal}
 
 
+def test_term_cover_counts_goal_money_once(client):
+    """A ₹10 lakh goal funded by a linked ₹4 lakh cash balance, no other money, no loans, no expenses to replace:
+    the family needs ₹10 lakh for the goal and has ₹4 lakh, so the cover gap is ₹6 lakh. (Netting the linked cash
+    from the goal and again from the assets gave ₹2 lakh.)"""
+    r = client.put("/api/wealth/household", headers=ORIGIN, json={
+        "age": 35, "monthly_expenses_inr": "60000", "support_years": 0})  # fmt: skip
+    assert r.status_code == 200, r.text
+    cash = post(client, "/api/wealth/assets", {"kind": "cash", "name": "Savings", "value": "400000",
+                                               "value_date": "2026-09-01"})  # fmt: skip
+    post(client, "/api/wealth/goals", {"name": "House deposit", "target_inr": "1000000", "target_date": "2030-06-30",
+                                       "in_cover": True, "linked_asset_ids": [cash["id"]]})  # fmt: skip
+    t = client.get("/api/wealth").json()["insurance"]["term"]
+    assert t["expenses_pv"] == 0 and t["loans"] == 0 and t["existing"] == 0
+    assert t["goal_gaps"] == pytest.approx(1_000_000) and t["assets"] == pytest.approx(400_000)
+    assert t["gap"] == pytest.approx(600_000)
+
+
 def test_empty_household_asks_for_inputs(client):
     w = client.get("/api/wealth").json()
     assert w["net_worth"]["net_worth"] == 0 and w["history"] == []
@@ -123,7 +140,9 @@ def test_net_worth_and_checks(client):
     # term cover: needs method uses 25 years to retirement and includes the loan and the high-priority goal gap
     t = w["insurance"]["term"]
     assert t["years"] == 25 and t["loans"] == pytest.approx(loan, abs=0.01) and t["existing"] == 10_000_000
-    assert t["goal_gaps"] == pytest.approx(2_500_000 - (fd + 200_000), abs=0.01)  # the goal marked for cover
+    # the goal marked for cover: its full target, because the linked FD and the portfolio share that fund it are
+    # already in the financial assets the cover deducts (netting them here too would count them twice)
+    assert t["goal_gaps"] == pytest.approx(2_500_000, abs=0.01)
     # goals: funding = linked FD + 20 % of the portfolio
     g = w["goals"][0]
     assert g["funded_now"] == pytest.approx(fd + 200_000, abs=0.01)

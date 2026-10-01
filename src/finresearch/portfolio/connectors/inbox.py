@@ -153,11 +153,12 @@ def scan(*, now: datetime | None = None, password: str | None = None) -> dict[st
                         from finresearch.portfolio.connectors.merge import (
                             merge_sync,
                             remember_statement_prices,
+                            statement_day,
                         )
 
                         broker, holdings = hs
                         acc = {"zerodha": "Zerodha", "groww": "Groww", "upstox": "Upstox"}[broker]
-                        as_of = datetime.fromtimestamp(st.st_mtime, UTC).date()
+                        as_of = statement_day(path.name, datetime.fromtimestamp(st.st_mtime, UTC))
                         mr = merge_sync(s, account=acc, source=f"{broker}_holdings", label=f"{acc} holdings file",
                                         holdings=holdings, trades=[], today=as_of, now=now)  # fmt: skip
                         remember_statement_prices(s, account=acc, holdings=holdings, day=as_of, label=acc)
