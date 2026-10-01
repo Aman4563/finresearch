@@ -203,3 +203,15 @@ These are dated entries for bugs we reproduced, what caused them, and how they a
 ### 2026-10-01: an experiment wrote to the live database
 - **Seen:** an agent started a test API without FINRESEARCH_DATABASE_URL, so it used the live DB and logged 4 forecast rows.
 - **Now:** the rows were reviewed and kept (valid, pre-listing). Rule: every non-live server must point at a test DB (the brief now says so).
+
+### 2026-10-01: portfolio audit: phantom losses, double-counted openings, STT in proceeds (#161)
+- **Seen (synthetic data):**
+  - A sale with no price booked a 100 % loss.
+  - A second CAS's opening balance became a second inflow in the value history and blocked XIRR.
+  - CAS STT reduced redemption proceeds, which s.48 (fifth proviso) does not allow.
+  - Month-first tradebook dates were half mis-read.
+  - Older units before a tradebook ignored a split inside it: 50 units instead of 10.
+  - Statements imported between 00:00 and 05:30 IST were dated the previous (UTC) day.
+  - A partial sync lost trades.
+  - Term cover counted goal money twice: a ₹2 lakh gap where the gap is ₹6 lakh.
+- **Now:** each is fixed, and a regression test in tests/test_portfolio_audit.py, test_connectors.py or test_wealth_api.py fails on the old code.
