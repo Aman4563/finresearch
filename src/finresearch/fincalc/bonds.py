@@ -122,9 +122,14 @@ def clean_price(
 def ytm(
     clean: Num, settlement: date, maturity: date, coupon_rate: Num, freq: int, face: Num = 100
 ) -> Decimal:
-    """Yield to maturity for a clean price (bisection between -50% and 100%)."""
+    """Yield to maturity for a clean price (bisection between -50% and 100%). Raises ValueError when the price is
+    outside the prices those two yields give (a wrong price basis or face value, a stale quote): bisection would
+    otherwise return the bound itself, e.g. a "100 % YTM" for a price of 10 on a 9 % bond."""
     target = require_price(clean, "price")
     lo, hi = Decimal("-0.5"), Decimal("1.0")
+    if not clean_price(hi, settlement, maturity, coupon_rate, freq, face) <= target <= clean_price(
+            lo, settlement, maturity, coupon_rate, freq, face):  # fmt: skip
+        raise ValueError(f"no yield between -50 % and 100 % gives the clean price {target}")
     for _ in range(120):
         mid = (lo + hi) / 2
         if clean_price(mid, settlement, maturity, coupon_rate, freq, face) > target:
@@ -197,6 +202,8 @@ def after_tax_ytm(clean: Num, settlement: date, maturity: date, coupon_rate: Num
         return sum(a / (1 + y / freq) ** p for p, a in after)
 
     lo, hi = -0.5, 1.0
+    if not pv(hi) <= paid <= pv(lo):
+        raise ValueError(f"no after-tax yield between -50 % and 100 % gives the price paid {paid:g}")
     for _ in range(200):
         mid = (lo + hi) / 2
         if pv(mid) > paid:
