@@ -11,7 +11,7 @@ import {
   buildEvents, planUsage,
 } from "@/components/dashboard/panels";
 import {
-  LiveDot, SubMeter, TERMS, categoryMins, countdown, daysUntil, inr, int, istAt, lakh, lotCost, lotSourceText, times, useNow,
+  LiveDot, SubMeter, TERMS, biddingOver, categoryMins, countdown, daysUntil, inr, int, istAt, lakh, lotCost, lotSourceText, times, useNow,
 } from "@/components/ipo/lib";
 import { IndexCards } from "@/components/markets/index-cards";
 import { AlertFeed } from "@/components/monitor/alert-feed";
@@ -111,9 +111,12 @@ export default function Dashboard() {
       <PortfolioStrip />
 
       <div className="stagger grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
-        <Stat label="IPOs open now" format={int} value={radar.data ? open.length : null} href="/ipos" tone="gain"
+        <Stat label="IPOs open now" format={int} value={radar.data ? open.filter((i) => !biddingOver(i, now)).length : null} href="/ipos" tone="gain"
           icon={<LiveDot className="size-1.5" />}
-          hint={radar.data ? (closingToday.length ? `${closingToday.length} closing today` : "none closing today") : undefined}
+          // past the 5 PM cut-off today's closers are no longer "open" or "closing": say they closed
+          hint={radar.data ? (closingToday.length
+            ? (closingToday.some((i) => !biddingOver(i, now)) ? `${closingToday.length} closing today` : `${closingToday.length} closed today at 5 PM`)
+            : "none closing today") : undefined}
           help={TERMS.upi} />
         <Stat label="Active watches" format={int} value={watches.data ? activeWatches.length : null} href="/monitor" icon={<Eye className="size-4" />}
           hint={watches.data ? `${activeWatches.filter((w) => w.kind === "ipo").length} IPO · ${activeWatches.filter((w) => w.kind === "stock").length} stock` : undefined} />
@@ -135,7 +138,7 @@ export default function Dashboard() {
           <ErrorNote error={radar.error ?? watches.error} onRetry={() => { radar.reload(); watches.reload(); }} />
           {events && now != null ? <Calendar events={events.events} now={now} /> : !(radar.error || watches.error) && (
             <div className="space-y-3">
-              <div className="flex gap-1.5">{Array.from({ length: 9 }, (_, i) => <Skeleton key={i} className="h-14 w-11 shrink-0" />)}</div>
+              <div className="flex gap-1.5 overflow-hidden">{Array.from({ length: 9 }, (_, i) => <Skeleton key={i} className="h-14 w-11 shrink-0" />)}</div>
               <SkeletonRows rows={5} />
             </div>
           )}
@@ -210,7 +213,7 @@ function ClosingSoon({ issues, now }: { issues: Issue[]; now: number | null }) {
         return (
           <li key={`${i.exchange}-${i.symbol}`} className="grid grid-cols-[1fr_auto] items-center gap-x-4 gap-y-1 py-2.5 sm:grid-cols-[1fr_10rem_5.5rem]">
             <div className="min-w-0">
-              <p className="flex items-center gap-2 truncate text-sm font-medium"><LiveDot /><span className="truncate">{i.company}</span></p>
+              <p className="flex items-center gap-2 truncate text-sm font-medium">{!biddingOver(i, now) && <LiveDot />}<span className="truncate">{i.company}</span></p>
               <p className="num text-xs text-muted">{i.exchange} {i.symbol}{i.series === "SME" ? " · SME" : ""}</p>
               <ApplyLine i={i} />
             </div>

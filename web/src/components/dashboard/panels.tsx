@@ -13,7 +13,7 @@ import { KIND_LABEL } from "@/components/ipo/actions";
 import {
   LiveDot, SUB_HELP, TERMS, categories, countdown, dayLabel, daysUntil, fmtX, istAt, istDate, timeIST, useNow,
 } from "@/components/ipo/lib";
-import { Badge, EmptyState, InfoTip, Segmented, cx } from "@/components/ui";
+import { Badge, EmptyState, InfoTip, ScrollArea, Segmented, cx, onOptionKeys } from "@/components/ui";
 import { watchExchangeLabel, type Decision, type Issue, type RunSummary, type WatchDetail, type WatchSummary } from "@/lib/api";
 
 // ------------------------------------------------------------------ plan window tile
@@ -56,12 +56,13 @@ export function PlanTile({ limits, now }: { limits: Limits | null; now: number |
           </InfoTip>
         </p>
         <div className="mt-1 flex items-end justify-between gap-2">
-          <div className="text-xs text-muted">
-            <p className="font-medium text-foreground" title={b.other ? "The fuller of the two windows: it is the one that stops runs" : undefined}>{b.label}{b.other ? " · tighter" : ""}</p>
+          {/* the gauge shows the fuller (binding) window; the other one is the small line */}
+          <div className="min-w-0 text-xs text-muted">
+            <p className="font-medium text-foreground">{b.label} window</p>
             <p>{b.resets && now && b.resets * 1000 > now ? <>resets in <span className="num text-foreground">{countdown(b.resets * 1000, now)}</span></> : "used"}</p>
-            {b.other && <p className="num mt-0.5">{b.other.label} {Math.round(b.other.used * 100)}%</p>}
+            {b.other && <p className="num mt-0.5 whitespace-nowrap">{b.other.label}: {Math.round(b.other.used * 100)}%</p>}
           </div>
-          <div className="-mb-1 shrink-0"><Gauge value={limits ? b.used : null} size={96} /></div>
+          <div className="-mb-1 shrink-0"><Gauge value={limits ? b.used : null} size={88} /></div>
         </div>
       </div>
     </div>
@@ -133,13 +134,16 @@ export function Calendar({ events, now }: { events: Ev[]; now: number }) {
 
   return (
     <div>
-      <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-2" role="tablist" aria-label="Pick a day">
+      {/* 15 days rarely fit: the strip fades and shows arrows on the side that scrolls; the arrow keys move between
+          days (and scroll), Enter / Space picks one */}
+      <ScrollArea className="-mx-1 flex gap-1.5 px-1 pb-2" role="tablist" aria-label="Pick a day" onKeyDown={(e) => onOptionKeys(e, { activate: false })}>
         {days.map((d, i) => {
           const evs = count(d);
           const active = sel === d;
           const wk = new Date(`${d}T00:00:00Z`).getUTCDay();
           return (
             <button key={d} type="button" role="tab" aria-selected={active} onClick={() => setSel(active ? null : d)}
+              tabIndex={(sel ? active : i === 0) ? 0 : -1}
               className={cx(
                 "flex w-11 shrink-0 flex-col items-center rounded-lg py-1.5 text-[10px] ring-1 ring-inset transition",
                 active ? "bg-brand text-brand-fg ring-brand" : i === 0 ? "bg-brand-soft text-foreground ring-brand/30" : "ring-border hover:bg-background-subtle",
@@ -155,7 +159,7 @@ export function Calendar({ events, now }: { events: Ev[]; now: number }) {
             </button>
           );
         })}
-      </div>
+      </ScrollArea>
       {limited.length === 0 ? (
         <EmptyState icon={<CalendarDays className="size-5" />} title={sel ? `Nothing on ${dayLabel(sel)}` : "Nothing in the next 14 days"}>
           {sel ? "Pick another day or tap it again to see all." : "No bidding, allotment or listing dates ahead. Browse IPOs to find the next issue."}
@@ -181,7 +185,7 @@ export function Calendar({ events, now }: { events: Ev[]; now: number }) {
                         <span className={cx("w-1 self-stretch shrink-0 rounded-full sm:hidden", EV_STYLE[e.kind].dot)} aria-hidden />
                         <div className="min-w-0 flex-1">
                           <p className="flex items-center gap-1.5 truncate text-sm font-medium">
-                            {e.live && n === 0 && <LiveDot />}
+                            {e.live && n === 0 && (e.at == null || e.at > now) && <LiveDot />}
                             <span className="truncate">{e.title}</span>
                           </p>
                           <p className="truncate text-xs text-muted"><span className="sm:hidden">{EV_STYLE[e.kind].label} · </span>{e.sub}</p>
@@ -236,7 +240,8 @@ export function WatchedSubscription({ details }: { details: WatchDetail[] }) {
           <Segmented value={String(cur.id)} onChange={setPick} options={withData.map((d) => ({ value: String(d.id), label: d.label ?? d.nse_symbol ?? "" }))} />
         </div>
       )}
-      <div className="mb-2 flex items-center justify-between gap-3">
+      {/* wraps on a phone: the name first, the trend and stamp under it (a one-line row cut the name to "Orient Cab…") */}
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
         <Link href={`/monitor/${cur.id}`} className="min-w-0 truncate text-sm font-medium hover:text-brand">{cur.company_name ?? cur.label}</Link>
         <div className="flex shrink-0 items-center gap-2 text-xs text-muted">
           <Sparkline values={trend} width={64} height={22} />
@@ -288,7 +293,7 @@ export function RecentRuns({ runs, now }: { runs: RunSummary[]; now: number | nu
               className="group -mx-2 flex items-center gap-3 rounded-lg px-2 py-2.5 transition hover:bg-card-hover">
               <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-brand-soft text-brand">{RUN_ICON[r.kind] ?? <FlaskConical className="size-3.5" />}</span>
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">{r.company_name ?? r.company}</p>
+                <p className="line-clamp-2 text-sm font-medium break-words">{r.company_name ?? r.company}</p>
                 <p className="num text-xs text-muted">
                   #{r.id} · {KIND_LABEL[r.kind as keyof typeof KIND_LABEL] ?? r.kind} · {ago(r.finished_at ?? r.created_at)}
                   {r.status === "running" && done ? ` · ${finished}/${done} steps` : ""}

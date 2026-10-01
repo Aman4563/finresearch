@@ -120,7 +120,7 @@ function Assets({ w, onChanged }: { w: Wealth; onChanged: () => void }) {
       {w.assets.length === 0 ? (
         <div className="px-4 pb-4 sm:px-5"><EmptyState title="No assets entered">Add your savings account, FDs, EPF/PPF, NPS, gold or property to see your whole net worth.</EmptyState></div>
       ) : (
-        <Table className="!mx-0">
+        <Table label="Assets outside the portfolio" className="!mx-0">
           <thead><tr><th>Asset</th><th>Type</th><th className="text-right">Value</th><th>How it is valued</th><th /></tr></thead>
           <tbody>{w.assets.map((a) => (
             <tr key={a.id}>
@@ -267,7 +267,7 @@ function Policies({ w, onChanged }: { w: Wealth; onChanged: () => void }) {
       {w.policies.length === 0 ? (
         <div className="px-4 pb-4 sm:px-5"><EmptyState title="No policies entered">Add term and health cover to compare with the needs-based estimate.</EmptyState></div>
       ) : (
-        <Table className="!mx-0">
+        <Table label="Insurance policies" className="!mx-0">
           <thead><tr><th>Policy</th><th>Type</th><th className="text-right">Cover</th><th className="text-right">Premium / yr</th><th>Ends</th><th /></tr></thead>
           <tbody>{w.policies.map((p) => (
             <tr key={p.id}>

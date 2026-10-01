@@ -21,7 +21,7 @@ function IndexTile({ name, refreshS, selected, onSelect }: { name: string; refre
   const d = r.data;
   const pct = d?.change_pct ?? null;
   const up = (pct ?? 0) >= 0;
-  const asOf = d?.as_of ? new Date(d.as_of).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata" }) : null;
+  const asOf = d?.as_of ? new Date(d.as_of).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata" }) + " IST" : null;
   return (
     <button type="button" onClick={onSelect} aria-pressed={selected}
       className={cx("min-w-0 rounded-lg border p-3 text-left transition hover:border-border-strong",

@@ -112,7 +112,7 @@ export function AlertFeed({ alerts, onRead, limit, showSymbol = true, emptyHint,
                       )}
                       {a.created_at && (
                         <span className="num">
-                          {new Date(a.created_at).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata" })}
+                          {new Date(a.created_at).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata" })} IST
                         </span>
                       )}
                       {!a.read_at && <span className="size-1.5 rounded-full bg-brand" role="img" aria-label="unread" />}

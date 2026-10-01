@@ -233,7 +233,7 @@ export default function WatchView() {
 
           {snaps.length > 0 && (
             <Card title="All snapshots" icon={<Table2 className="size-4" />} subtitle="Every check, oldest first (times subscribed).">
-              <Table>
+              <Table label="All subscription snapshots">
                 <thead>
                   <tr>
                     <th>As of (NSE)</th>
@@ -270,7 +270,7 @@ export default function WatchView() {
           {data.jobs.length === 0 ? (
             <EmptyState title="No checks yet">Checks are planned on the next monitor pass.</EmptyState>
           ) : (
-            <Table>
+            <Table label="Scheduled checks">
               <thead>
                 <tr>
                   <th>Due</th>

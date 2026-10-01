@@ -88,7 +88,7 @@ function AdvanceTaxCard({ at }: { at: AdvanceTax }) {
 function LtTable({ lots }: { lots: LtLot[] }) {
   if (!lots.length) return <p className="py-3 text-sm text-muted">No lot in profit turns long-term in the next 30 days.</p>;
   return (
-    <Table>
+    <Table label="Lots turning long-term soon">
       <thead><tr><th>Holding</th><th className="text-right">Turns long-term</th><th className="text-right">Gain</th><th className="text-right">Tax if sold today</th><th className="text-right">Tax after</th><th className="text-right">Saved by waiting</th></tr></thead>
       <tbody>
         {lots.map((l) => (
@@ -109,7 +109,7 @@ function LtTable({ lots }: { lots: LtLot[] }) {
 function SipTable({ sips }: { sips: Sip[] }) {
   if (!sips.length) return <p className="py-3 text-sm text-muted">No SIP found: three or more regular monthly purchases of a fund are needed to recognise one.</p>;
   return (
-    <Table>
+    <Table label="SIP instalments">
       <thead><tr><th>Fund</th><th className="text-right">Instalment</th><th className="text-right">Last</th><th className="text-right">Next expected</th><th>Status</th></tr></thead>
       <tbody>
         {sips.map((s) => (

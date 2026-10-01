@@ -240,7 +240,7 @@ export default function Usage() {
 
       {runs.data && runs.data.length > 0 && (
         <Card title="Run details" padded>
-          <Table>
+          <Table label="Run details">
             <thead>
               <tr>
                 <th>Run</th>

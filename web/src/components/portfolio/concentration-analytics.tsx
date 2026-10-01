@@ -81,7 +81,7 @@ export function ConcentrationAnalytics({ refresh }: { refresh: number }) {
         </Card>
       </div>
       <Card padded={false} title="Positions" subtitle={`A stock held in several accounts counts once · valued at ${inr(data.total)}`}>
-        <Table className="!mx-0">
+        <Table label="Positions" className="!mx-0">
           <thead><tr><th>Holding</th><th className="text-right">Value</th><th className="text-right">Weight</th><th>Sector</th>
             <th><span className="inline-flex items-center gap-1">Group <InfoTip>{data.group_source}</InfoTip></span></th></tr></thead>
           <tbody>{data.positions.map((p) => (

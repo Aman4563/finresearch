@@ -61,7 +61,7 @@ function Stress({ items }: { items: Scenario[] }) {
                   <>
                     {s.peak && <p className="text-muted">NIFTYBEES peak {day(s.peak)} → trough {day(s.trough)} (found inside {day(s.window?.[0])} to {day(s.window?.[1])}).</p>}
                     <p className="mt-1 text-muted">{s.note}</p>
-                    <Table className="mt-2">
+                    <Table label={`${s.label}: holdings`} className="mt-2">
                       <thead><tr><th>Holding</th><th className="text-right">Move</th><th className="text-right">₹</th><th>How</th></tr></thead>
                       <tbody>{s.positions?.map((p) => (
                         <tr key={p.key}><td className="max-w-[14rem] truncate">{p.name}</td><td className="num text-right">{spct(p.move)}</td>

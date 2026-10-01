@@ -93,7 +93,7 @@ function CsvTable({ text }: { text: string }) {
         {body.length.toLocaleString("en-IN")} rows · {head.length} columns
         {body.length > MAX_ROWS && ` · showing the first ${MAX_ROWS.toLocaleString("en-IN")} (download for all)`}
       </p>
-      <Table>
+      <Table label="CSV file contents">
         <thead>
           <tr>{head.map((h, j) => <th key={j} className={numeric[j] ? "!text-right" : undefined}>{h}</th>)}</tr>
         </thead>

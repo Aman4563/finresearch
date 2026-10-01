@@ -8,6 +8,7 @@ import { BellRing, Briefcase, Landmark, Sunrise, TrendingUp } from "lucide-react
 import Link from "next/link";
 
 import { type Strip, inr } from "@/components/brief/types";
+import { istDate } from "@/components/ipo/lib";
 import { InfoTip, Skeleton, cx } from "@/components/ui";
 import { day, useApi } from "@/lib/api";
 
@@ -20,7 +21,8 @@ function Cell({ icon, label, name, children, hint, href }: { icon: React.ReactNo
       <div className="pointer-events-none relative [&_a]:pointer-events-auto [&_button]:pointer-events-auto">
         <p className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wider text-muted [&_svg]:size-3.5">{icon}{label}</p>
         <div className="mt-1 truncate text-lg font-semibold tracking-tight">{children}</div>
-        {hint && <p className="truncate text-[11px] text-muted">{hint}</p>}
+        {/* up to two lines: on a phone the cell is half the screen wide and one line cut the hint mid-word */}
+        {hint && <p className="line-clamp-2 text-[11px] text-muted">{hint}</p>}
       </div>
     </div>
   );
@@ -61,8 +63,8 @@ export function PortfolioStrip() {
         <span className="num">{inr(data.ltcg_headroom)}</span>
       </Cell>
       <Cell href={data.top_alert ? "/monitor" : "/brief"} name={data.top_alert ? "Your rule fired" : "Alerts"} icon={data.top_alert ? <BellRing /> : <Sunrise />} label={data.top_alert ? "Your rule fired" : "Alerts"}
-        hint={data.top_alert ? day(data.top_alert.at.slice(0, 10)) : data.unpriced ? `${data.unpriced} holding(s) without a fresh price` : "morning brief →"}>
-        <span className={cx("block truncate text-sm font-medium", data.top_alert ? "text-warn" : "text-muted")} title={data.top_alert?.message}>
+        hint={data.top_alert ? day(istDate(Date.parse(data.top_alert.at))) : data.unpriced ? `${data.unpriced} holding(s) without a fresh price` : "morning brief →"}>
+        <span className={cx("line-clamp-2 block text-sm font-medium whitespace-normal", data.top_alert ? "text-warn" : "text-muted")} title={data.top_alert?.message}>
           {data.top_alert ? data.top_alert.message.replace(/^Portfolio: /, "") : "No portfolio rule fired this week"}
         </span>
       </Cell>

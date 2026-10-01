@@ -244,7 +244,7 @@ export default function BondDetail() {
             </div>
 
             <Card title="Price change for common rate moves" icon={<Waves className="size-4" />} subtitle="Exact repricing vs the duration-and-convexity estimate">
-              <Table>
+              <Table label="Price change for common rate moves">
                 <thead>
                   <tr>
                     <th>Yield move</th>

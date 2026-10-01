@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUpRight, Calculator, FileText, FlaskConical, Landmark, TriangleAlert } from "lucide-react";
+import { ArrowUpRight, Calculator, ChevronDown, FileText, FlaskConical, Landmark, TriangleAlert } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -83,7 +83,7 @@ export default function Bonds() {
             </div>
           ) : hits ? (
             <div className="mt-4">
-              <Table>
+              <Table label="Bond search results">
                 <thead>
                   <tr>
                     <th>Bond</th>
@@ -109,12 +109,20 @@ export default function Bonds() {
                         </Link>
                         {(() => {
                           const checks = b.warnings.filter((w) => !w.startsWith("no rating"));
+                          // tap / click / Enter opens the full text: a truncated line with a hover title was unreadable on touch
                           return checks.length ? (
-                            <span className="mt-0.5 flex max-w-[18rem] items-center gap-1 text-[11px] text-warn" title={checks.join("\n")}>
-                              <TriangleAlert className="size-3 shrink-0" />
-                              <span className="truncate">{checks[0]}</span>
-                              {checks.length > 1 && <span className="shrink-0">+{checks.length - 1}</span>}
-                            </span>
+                            <details className="group mt-0.5 max-w-[18rem] text-[11px] text-warn">
+                              <summary className="flex cursor-pointer list-none items-center gap-1 [&::-webkit-details-marker]:hidden">
+                                <TriangleAlert className="size-3 shrink-0" />
+                                <span className="min-w-0 truncate group-open:hidden">{checks[0]}</span>
+                                <span className="hidden group-open:inline">{checks.length === 1 ? "Data check" : `${checks.length} data checks`}</span>
+                                {checks.length > 1 && <span className="shrink-0 group-open:hidden">+{checks.length - 1}</span>}
+                                <ChevronDown className="size-3 shrink-0 transition group-open:rotate-180" aria-hidden />
+                              </summary>
+                              <ul className="mt-1 list-disc space-y-0.5 pl-4 whitespace-normal">
+                                {checks.map((w) => <li key={w}>{w}</li>)}
+                              </ul>
+                            </details>
                           ) : null;
                         })()}
                       </td>
@@ -159,7 +167,7 @@ export default function Bonds() {
               {researched.map((c) => (
                 <li key={c.slug} className="flex items-center gap-2 rounded-lg px-2 py-2 transition hover:bg-card-hover">
                   <Link href={`/bonds/${c.slug.replace(/^bond-/, "").toUpperCase()}`} className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium hover:text-brand">{c.name}</p>
+                    <p className="line-clamp-2 text-sm font-medium break-words hover:text-brand">{c.name}</p>
                     <p className="num text-xs text-muted">{c.slug.replace(/^bond-/, "").toUpperCase()}</p>
                   </Link>
                   <Link href={`/runs/${c.latest_run}/report`}

@@ -38,6 +38,15 @@ export function daysUntil(iso: string | null | undefined, now: number) {
 /** An instant for a calendar date at an IST wall-clock time, e.g. the 5 PM UPI cut-off on the close date. */
 export const istAt = (iso: string, hhmm = "17:00") => Date.parse(`${iso.slice(0, 10)}T${hhmm}:00+05:30`);
 
+/** An issue the exchange still lists as open whose bidding has ended: the 5 PM UPI cut-off on its close date (today
+ * or earlier, IST) has passed. The NSE/BSE phase flips only on the next refresh, so without this the card said
+ * "open" with a live dot next to "Bidding closed today". */
+export function biddingOver(i: Pick<Issue, "phase" | "issue_end">, now: number | null) {
+  if (now == null || !i.issue_end || !(i.phase === "open" || i.phase === "current")) return false;
+  const d = daysUntil(i.issue_end, now);
+  return d != null && d <= 0 && istAt(i.issue_end) <= now;
+}
+
 /** "3d 4h", "2h 15m", "12m" until `target`; "now" when past. */
 export function countdown(target: number, now: number) {
   const s = Math.max(0, Math.round((target - now) / 1000));
@@ -60,8 +69,9 @@ export function relDay(days: number | null) {
 export const dayLabel = (iso: string, opts: Intl.DateTimeFormatOptions = { weekday: "short", day: "numeric", month: "short" }) =>
   new Date(`${iso.slice(0, 10)}T00:00:00Z`).toLocaleDateString("en-IN", { ...opts, timeZone: "UTC" });
 
+/** "7:00 pm IST": a time of day in India Standard Time, labelled so a viewer abroad does not read it as local. */
 export const timeIST = (iso: string) =>
-  new Date(iso).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit", timeZone: IST });
+  `${new Date(iso).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit", timeZone: IST })} IST`;
 
 // ------------------------------------------------------------------ money and bands
 

@@ -61,7 +61,7 @@ function Allocation({ w }: { w: Wealth }) {
           <DonutChart data={data} format={fmtCompactINR} height={130} center={<div><p className="num text-base font-semibold">{fmtCompactINR(total)}</p><p className="text-[11px] text-muted">assets</p></div>} />
           <div>
             {a.comparison.length > 0 && (
-              <Table>
+              <Table label="Allocation across everything">
                 <thead><tr><th>Class</th><th className="text-right">Now</th><th className="text-right">{a.own_target ? "Your target" : "Rule gives"}</th><th className="text-right">Drift</th></tr></thead>
                 <tbody>{a.comparison.map((r) => (
                   <tr key={r.label}><td>{r.label}</td><td className="num text-right">{r.weight_pct.toFixed(1)}%</td><td className="num text-right">{r.target_pct.toFixed(0)}%</td>
@@ -95,7 +95,7 @@ function Emergency({ w }: { w: Wealth }) {
         <p className="mb-1 flex items-center gap-1 text-xs font-medium">Deposit insurance by bank
           <InfoTip>DICGC insures up to ₹5,00,000 per depositor per bank, principal and interest together, for deposits held in the same right and capacity (dicgc.org.in, guide to deposit insurance, read 30-Sep-2026). Joint accounts in a different capacity are insured separately, so this can over-flag. Savings and FD/RD balances only.</InfoTip></p>
         {e.banks.length === 0 ? <p className="text-xs text-muted">No bank deposits entered.</p> : (
-          <Table>
+          <Table label="Deposit insurance by bank">
             <thead><tr><th>Bank</th><th className="text-right">Deposits</th><th className="text-right">Above ₹5 lakh</th></tr></thead>
             <tbody>{e.banks.map((b) => (
               <tr key={b.bank}><td>{b.bank}{b.over_limit && <> <Badge tone="warn">above cover</Badge></>}</td><td className="num text-right">{inr(b.total)}</td>

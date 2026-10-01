@@ -82,7 +82,7 @@ export function CostsAnalytics({ refresh }: { refresh: number }) {
           </Card>
         )}
       <Card padded={false} title="Expense ratios" subtitle={data.ter_source ?? undefined}>
-        <Table className="!mx-0">
+        <Table label="Expense ratios" className="!mx-0">
           <thead><tr><th>Fund</th><th>Plan</th><th className="text-right">Value</th><th className="text-right">TER</th><th className="text-right">Direct / regular</th><th className="text-right">Cost a year</th></tr></thead>
           <tbody>{(data.funds ?? []).map((f) => (
             <tr key={f.key}><td className="max-w-[18rem] truncate">{f.name}</td><td className="text-xs">{f.plan}</td><td className="num text-right">{inr(f.value)}</td>

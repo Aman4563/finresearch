@@ -58,8 +58,8 @@ function ChainTable({ chain, width, onAdd }: { chain: Chain; width: number; onAd
     return v == null ? "—" : <span className={v > 0 ? "text-gain" : v < 0 ? "text-loss" : ""}>{v > 0 ? "+" : ""}{compact(v)}</span>;
   };
   return (
-    <div ref={box} className="-mx-4 max-h-[600px] overflow-auto sm:-mx-5">
-      <table className="num w-full min-w-[720px] text-xs [&_td]:px-2 [&_td]:py-1.5 [&_th]:px-2 [&_th]:py-2 [&_th]:text-[10px] [&_th]:font-medium [&_th]:uppercase [&_th]:tracking-wider [&_th]:text-muted">
+    <div ref={box} tabIndex={0} role="region" aria-label="Option chain" className="-mx-4 max-h-[600px] overflow-auto sm:-mx-5">
+      <table aria-label="Option chain: calls, strike, puts" className="num w-full min-w-[720px] text-xs [&_td]:px-2 [&_td]:py-1.5 [&_th]:px-2 [&_th]:py-2 [&_th]:text-[10px] [&_th]:font-medium [&_th]:uppercase [&_th]:tracking-wider [&_th]:text-muted">
         {/* sticky: the chain opens scrolled to the ATM row, so the column labels must stay in view */}
         <thead className="sticky top-0 z-10 bg-card shadow-[0_1px_0_var(--border)]">
           <tr className="border-b border-border">

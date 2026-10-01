@@ -8,7 +8,7 @@ import { Activity, FlaskConical, Info, ShieldAlert, TrendingDown, TrendingUp } f
 import { useState } from "react";
 
 import { Badge, Card, InfoTip, SkeletonRows, cx } from "@/components/ui";
-import { useApi } from "@/lib/api";
+import { useApi, when } from "@/lib/api";
 
 export type SignalFactor = { name: string; value: number | string | null; contribution: number; explanation: string; source: string | null; unit: string | null };
 export type SignalValidation = { status: "backtested" | "base_rate" | "rule_based" | "uncalibrated" | "shadow"; n: number; metrics: Record<string, number>; description: string };
@@ -181,7 +181,7 @@ export function SignalView({ s, compact }: { s: Signal; compact?: boolean }) {
           )}
         </>
       )}
-      <p className="flex items-start gap-1.5 text-[11px] text-muted"><Info className="mt-0.5 size-3 shrink-0" />{s.disclaimer}{s.as_of && <> · as of {new Date(s.as_of).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Kolkata" })}</>}</p>
+      <p className="flex items-start gap-1.5 text-[11px] text-muted"><Info className="mt-0.5 size-3 shrink-0" />{s.disclaimer}{s.as_of && <> · as of {when(s.as_of)}</>}</p>
     </div>
   );
 }

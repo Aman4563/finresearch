@@ -380,7 +380,7 @@ function IpoCharts({ ins, claims, onOpen }: { ins: Insights; claims: ClaimMap; o
       )}
       {tl.length >= 2 && (
         <ChartCard live title="Subscription over the bidding window" icon={<Activity className="size-4" />} claims={claims} onOpen={onOpen}
-          subtitle={`${tl.length} NSE+BSE combined snapshots saved by the monitor, to ${shortTime(tl[tl.length - 1].as_of)}`}
+          subtitle={`${tl.length} NSE+BSE combined snapshots saved by the monitor, to ${shortTime(tl[tl.length - 1].as_of)} IST`}
           help="Recorded by the IPO monitor from the exchange during bidding, including snapshots after the report was written. Not ledger claims.">
           <TimeSeriesChart data={tl as unknown as Record<string, unknown>[]} x="as_of" xFormat={(v) => shortTime(String(v))} area={false} dots curve="linear" showChange={false} height={260}
             series={[{ key: "total", label: "Total" }, { key: "qib", label: "QIB" }, { key: "nii", label: "NII" }, { key: "retail", label: "Retail" }]}

@@ -1,6 +1,6 @@
 "use client";
 
-import { CircleHelp, Inbox, TriangleAlert, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, CircleHelp, Inbox, TriangleAlert, X } from "lucide-react";
 import Link from "next/link";
 import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -61,8 +61,11 @@ export function Card({
       )}
     >
       {(title || actions) && (
-        <div className={cx("flex items-start justify-between gap-3", padded ? "mb-4" : "px-4 pt-4 pb-3 sm:px-5")}>
-          <div className="flex min-w-0 items-start gap-2.5">
+        // on a phone the title claims ~14rem and the actions wrap below it when they don't fit beside it: before, wide
+        // actions such as a segmented control squeezed the title and subtitle into a narrow column (from sm up the
+        // layout is unchanged)
+        <div className={cx("flex flex-wrap items-start justify-between gap-3", padded ? "mb-4" : "px-4 pt-4 pb-3 sm:px-5")}>
+          <div className="flex min-w-0 flex-1 items-start gap-2.5 max-sm:basis-56">
             {icon && <span className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-lg bg-brand-soft text-brand">{icon}</span>}
             <div className="min-w-0">
               {title && (
@@ -74,7 +77,7 @@ export function Card({
               {subtitle && <p className="mt-0.5 text-xs text-muted">{subtitle}</p>}
             </div>
           </div>
-          {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
+          {actions && <div className="ml-auto flex max-w-full shrink-0 items-center gap-2">{actions}</div>}
         </div>
       )}
       {children}
@@ -161,9 +164,10 @@ export function Stat({ label, value, format, display, delta, deltaLabel, hint, n
       <p className={cx("relative mt-2 text-2xl font-semibold tracking-tight", through)}>
         {display ?? <AnimatedNumber value={value} format={format} />}
       </p>
-      <div className={cx("relative mt-1 flex items-center gap-2 text-xs", through)}>
+      <div className={cx("relative mt-1 flex items-start gap-2 text-xs", through)}>
         {delta != null && <Delta value={delta} />}
-        {(deltaLabel || hint) && <span className="truncate text-muted">{deltaLabel ?? hint}</span>}
+        {/* two lines, not one: in a half-width phone tile a one-line hint lost its end ("as of 1 Oct 2026, 3:40…") */}
+        {(deltaLabel || hint) && <span className="line-clamp-2 min-w-0 text-muted">{deltaLabel ?? hint}</span>}
       </div>
       {note && <p className={cx("relative mt-0.5 text-[11px] text-muted", through)}>{note}</p>}
       <span className="pointer-events-none absolute -right-8 -bottom-8 size-24 rounded-full bg-brand/5 transition group-hover:scale-125" />
@@ -326,18 +330,41 @@ export function Field({ label, hint, children }: { label: ReactNode; hint?: Reac
   );
 }
 
-/** Pill tabs / segmented control. */
-export function Segmented<T extends string>({ value, onChange, options, size = "sm" }: {
+/** Arrow keys for a row of options (WAI-ARIA tabs / radiogroup): Left/Up and Right/Down move to the previous / next
+ * option (wrapping), Home / End to the first / last. With `activate` the option is also chosen (clicked), as tabs
+ * with automatic activation do; without it only focus moves and Enter / Space chooses. Put it on the container's
+ * onKeyDown; pair it with a roving tabIndex (0 on the current option, -1 on the rest) so Tab leaves the group. */
+export function onOptionKeys(e: React.KeyboardEvent<HTMLElement>, { activate = true, selector = '[role="tab"],[role="radio"]' } = {}) {
+  if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(e.key)) return;
+  const items = [...e.currentTarget.querySelectorAll<HTMLElement>(selector)].filter((el) => !el.hasAttribute("disabled"));
+  const i = items.indexOf(document.activeElement as HTMLElement);
+  if (i < 0 || !items.length) return;
+  e.preventDefault();
+  const n = items.length;
+  const next = e.key === "Home" ? 0 : e.key === "End" ? n - 1 : e.key === "ArrowLeft" || e.key === "ArrowUp" ? (i - 1 + n) % n : (i + 1) % n;
+  const el = items[next];
+  el.focus();
+  el.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  if (activate) el.click();
+}
+
+/** Pill tabs / segmented control. Arrow keys move between the options (WAI-ARIA tabs pattern); Tab enters on the
+ * selected one and leaves the group. */
+export function Segmented<T extends string>({ value, onChange, options, size = "sm", label }: {
   value: T; onChange: (v: T) => void; options: { value: T; label: ReactNode }[]; size?: "sm" | "md";
+  /** accessible name of the group, e.g. "Status" */ label?: string;
 }) {
+  const current = options.some((o) => o.value === value) ? value : options[0]?.value;
   return (
-    <div role="tablist" className="inline-flex rounded-lg bg-background-subtle p-0.5 ring-1 ring-inset ring-border">
+    <div role="tablist" aria-label={label} onKeyDown={(e) => onOptionKeys(e)}
+      className="inline-flex rounded-lg bg-background-subtle p-0.5 ring-1 ring-inset ring-border">
       {options.map((o) => (
         <button
           key={o.value}
           type="button"
           role="tab"
           aria-selected={o.value === value}
+          tabIndex={o.value === current ? 0 : -1}
           onClick={() => onChange(o.value)}
           className={cx(
             "rounded-md font-medium transition duration-150",
@@ -348,6 +375,66 @@ export function Segmented<T extends string>({ value, onChange, options, size = "
           {o.label}
         </button>
       ))}
+    </div>
+  );
+}
+
+/** A box that scrolls on one axis and shows it: the edge with more content fades out, and a horizontal strip gets
+ * small prev / next buttons (pointer and touch) on the side that can still scroll. Keyboard users scroll it with the
+ * arrow keys of whatever it holds, or focus it (`focusable`) and use the arrow keys directly. Extra props (role,
+ * aria-label, onKeyDown...) go on the scrolling element. */
+export function ScrollArea({ axis = "x", children, className, focusable, ...rest }: {
+  axis?: "x" | "y"; children: ReactNode; className?: string; focusable?: boolean;
+} & Omit<React.HTMLAttributes<HTMLDivElement>, "className" | "children">) {
+  const box = useRef<HTMLDivElement>(null);
+  const [edges, setEdges] = useState({ start: false, end: false });
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const measure = () => {
+      const pos = axis === "x" ? el.scrollLeft : el.scrollTop;
+      const max = axis === "x" ? el.scrollWidth - el.clientWidth : el.scrollHeight - el.clientHeight;
+      setEdges((e) => {
+        const next = { start: pos > 1, end: pos < max - 1 };
+        return next.start === e.start && next.end === e.end ? e : next;
+      });
+    };
+    measure();
+    el.addEventListener("scroll", measure, { passive: true });
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    for (const c of el.children) ro.observe(c);
+    return () => { el.removeEventListener("scroll", measure); ro.disconnect(); };
+  }, [axis]);
+  const fade = 28;
+  const dir = axis === "x" ? "to right" : "to bottom";
+  const mask = edges.start || edges.end
+    ? `linear-gradient(${dir}, ${edges.start ? "transparent" : "#000"} 0, #000 ${edges.start ? fade : 0}px, #000 calc(100% - ${edges.end ? fade : 0}px), ${edges.end ? "transparent" : "#000"} 100%)`
+    : undefined;
+  const page = (sign: 1 | -1) => box.current?.scrollBy({ left: sign * box.current.clientWidth * 0.8, behavior: "smooth" });
+  const arrow = "absolute top-1/2 z-10 grid size-7 -translate-y-1/2 place-items-center rounded-full border border-border bg-card text-muted shadow-card transition hover:text-foreground";
+  return (
+    <div className="relative">
+      <div
+        ref={box}
+        tabIndex={focusable ? 0 : undefined}
+        {...rest}
+        style={{ maskImage: mask, WebkitMaskImage: mask }}
+        className={cx(axis === "x" ? "overflow-x-auto [scrollbar-width:thin]" : "overflow-y-auto", className)}
+      >
+        {children}
+      </div>
+      {axis === "x" && edges.start && (
+        // pointer / touch affordance; keyboard users move with the arrow keys of the strip itself
+        <button type="button" tabIndex={-1} aria-hidden onClick={() => page(-1)} className={cx(arrow, "-left-2")}>
+          <ChevronLeft className="size-4" />
+        </button>
+      )}
+      {axis === "x" && edges.end && (
+        <button type="button" tabIndex={-1} aria-hidden onClick={() => page(1)} className={cx(arrow, "-right-2")}>
+          <ChevronRight className="size-4" />
+        </button>
+      )}
     </div>
   );
 }

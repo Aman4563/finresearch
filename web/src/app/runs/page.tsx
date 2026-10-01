@@ -6,7 +6,7 @@ import { useMemo, useState } from "react";
 
 import { countdown, useNow } from "@/components/ipo/lib";
 import { KindIcon, KIND, fmtDuration, kindMeta, runSeconds } from "@/components/workspace/run-meta";
-import { Badge, Card, EmptyState, ErrorNote, PageHeader, Segmented, Skeleton, Stat, Table, cx, inputClass } from "@/components/ui";
+import { Badge, Card, EmptyState, ErrorNote, InfoTip, PageHeader, Segmented, Skeleton, Stat, Table, cx, inputClass } from "@/components/ui";
 import { listingLabel, type RunSummary, useApi, when } from "@/lib/api";
 
 type View = "cards" | "table";
@@ -50,6 +50,10 @@ function StepsBar({ steps }: { steps: Record<string, number> }) {
 }
 
 /** Per-run share of the Claude plan's 5-hour window (from /api/usage/runs), the scarcest resource. */
+const PLAN_HELP =
+  "Research runs use your Claude subscription, which allows a fixed amount of work in any rolling 5-hour window. " +
+  "This is the share of one such window the run's agent steps used, added up step by step: 73% means the run alone " +
+  "took about three quarters of a window. Runs pause before the window is full and resume after it resets; see Plan usage.";
 type RunUsage = { run_id: number; five_hour_used: number; minutes: number };
 
 /** A run that is not actually working right now: paused for the plan window (with when it resumes), paused after a
@@ -73,40 +77,47 @@ function RunCard({ r, usage, now }: { r: RunSummary; usage?: RunUsage; now: numb
   const secs = runSeconds(r.created_at, r.finished_at);
   return (
     <Card interactive padded={false} className="group flex flex-col">
-      <Link href={`/runs/${r.id}`} className="flex flex-1 flex-col gap-3 p-4">
-        <div className="flex items-start gap-3">
-          <KindIcon kind={r.kind} />
-          <div className="min-w-0 flex-1">
-            <p className="text-[11px] font-medium uppercase tracking-wider text-muted">
-              {kindMeta(r.kind).label} · <span className="num">#{r.id}</span>
-              {r.key && <> · <span className="num normal-case">{listingLabel(r.key)}</span></>}
-            </p>
-            <p className="line-clamp-2 text-sm font-semibold leading-snug">{r.company_name ?? r.company ?? "Unknown company"}</p>
+      {/* a stretched link under the content, not an <a> around it: the plan line holds a (?) button, and a button
+          inside <a> is invalid HTML (a hydration error); clicks on the text fall through to the link */}
+      <div className="relative flex flex-1 flex-col gap-3 p-4">
+        <Link href={`/runs/${r.id}`} className="absolute inset-0 rounded-t-xl">
+          <span className="sr-only">Run #{r.id}: {r.company_name ?? r.company ?? "unknown company"}</span>
+        </Link>
+        <div className="pointer-events-none relative flex flex-1 flex-col gap-3 [&_a]:pointer-events-auto [&_button]:pointer-events-auto">
+          <div className="flex items-start gap-3">
+            <KindIcon kind={r.kind} />
+            <div className="min-w-0 flex-1">
+              <p className="text-[11px] font-medium uppercase tracking-wider text-muted">
+                {kindMeta(r.kind).label} · <span className="num">#{r.id}</span>
+                {r.key && <> · <span className="num normal-case">{listingLabel(r.key)}</span></>}
+              </p>
+              <p className="line-clamp-2 text-sm font-semibold leading-snug">{r.company_name ?? r.company ?? "Unknown company"}</p>
+            </div>
+            <Badge status={r.status} />
           </div>
-          <Badge status={r.status} />
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <GateBadge gate={r.final_gate} />
-          {r.worker?.alive && <Badge tone="info" dot>worker live</Badge>}
-          <WaitState r={r} now={now} />
-        </div>
-        <StepsBar steps={r.steps} />
-        <div className="mt-auto flex items-center justify-between gap-2 text-xs text-muted">
-          <span className="inline-flex items-center gap-1">
-            <Clock className="size-3.5" /> {when(r.created_at)}
-          </span>
-          <span className="flex items-center gap-3">
-            {usage && usage.five_hour_used > 0 && (
-              <span className="num inline-flex items-center gap-1" title="Share of the Claude plan's 5-hour window this run's steps used, summed step by step">
-                <Gauge className="size-3.5" /> {Math.round(usage.five_hour_used * 100)}% of 5-h
-              </span>
-            )}
+          <div className="flex flex-wrap items-center gap-2">
+            <GateBadge gate={r.final_gate} />
+            {r.worker?.alive && <Badge tone="info" dot>worker live</Badge>}
+            <WaitState r={r} now={now} />
+          </div>
+          <StepsBar steps={r.steps} />
+          {usage && usage.five_hour_used > 0 && (
+            <p className="flex items-center gap-1 text-xs text-muted">
+              <Gauge className="size-3.5 shrink-0" />
+              <span>Claude plan: <span className="num font-medium text-foreground">{Math.round(usage.five_hour_used * 100)}%</span> of a 5-hour window used</span>
+              <InfoTip label="What is the Claude plan window?">{PLAN_HELP}</InfoTip>
+            </p>
+          )}
+          <div className="mt-auto flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs text-muted">
+            <span className="inline-flex items-center gap-1">
+              <Clock className="size-3.5" /> {when(r.created_at)}
+            </span>
             <span className="num inline-flex items-center gap-1" title="Wall clock, start to finish, including any wait for the plan window">
               <Timer className="size-3.5" /> {fmtDuration(secs)}
             </span>
-          </span>
+          </div>
         </div>
-      </Link>
+      </div>
       <div className="flex items-center justify-between border-t border-border px-4 py-2.5 text-xs">
         <Link href={`/runs/${r.id}`} className="inline-flex items-center gap-1 font-medium text-brand hover:underline">
           Pipeline <ArrowRight className="size-3.5 transition group-hover:translate-x-0.5" />
@@ -239,7 +250,7 @@ export default function Runs() {
             </div>
           )}
           {rows.length > 0 && view === "table" && (
-            <Table>
+            <Table label="Research runs">
               <thead>
                 <tr>
                   <th>Run</th>
@@ -248,7 +259,9 @@ export default function Runs() {
                   <th>Gate</th>
                   <th>Steps</th>
                   <th className="!text-right">Duration</th>
-                  <th className="!text-right" title="Share of the Claude plan's 5-hour window this run used">Plan (5-h)</th>
+                  <th className="!text-right">
+                    <span className="inline-flex items-center gap-1">5-hour plan window used <InfoTip label="What is the Claude plan window?">{PLAN_HELP}</InfoTip></span>
+                  </th>
                   <th>Started</th>
                   <th className="!text-right">Report</th>
                 </tr>
