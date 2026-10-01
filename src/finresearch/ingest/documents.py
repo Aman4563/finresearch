@@ -103,8 +103,11 @@ def check_public_url(url: str, *, resolve=socket.getaddrinfo) -> None:
             return  # never resolves (RFC 2606/6761); skip a slow negative DNS lookup
         try:
             addrs = [ipaddress.ip_address(ai[4][0].split("%")[0]) for ai in resolve(host, parts.port or 443)]
-        except (OSError, UnicodeError):
-            return
+        except (OSError, UnicodeError) as e:
+            # fail closed: a name that does not resolve now could resolve to a private address in the fetch itself
+            raise UnsafeUrl(
+                f"could not resolve {host} to check that it is public ({type(e).__name__})"
+            ) from e
     for a in addrs:
         a = getattr(a, "ipv4_mapped", None) or a
         if not a.is_global or a.is_multicast:
@@ -141,14 +144,18 @@ def download(
                 raise ValueError(f"{url}: file larger than {max_bytes // (1024 * 1024)} MB")
             fd, tmp = tempfile.mkstemp(dir=dest_dir, suffix=".download")
             size = 0
-            with open(fd, "wb") as f:
-                for chunk in r.iter_bytes():
-                    size += len(chunk)
-                    if size > max_bytes:
-                        f.close()
-                        Path(tmp).unlink(missing_ok=True)
-                        raise ValueError(f"{url}: file larger than {max_bytes // (1024 * 1024)} MB")
-                    f.write(chunk)
+            try:
+                with open(fd, "wb") as f:
+                    for chunk in r.iter_bytes():
+                        size += len(chunk)
+                        if size > max_bytes:
+                            raise ValueError(f"{url}: file larger than {max_bytes // (1024 * 1024)} MB")
+                        f.write(chunk)
+            except (
+                BaseException
+            ):  # too large, or the connection dropped mid-body: no partial file left behind
+                Path(tmp).unlink(missing_ok=True)
+                raise
         finally:
             r.close()
         prov = {

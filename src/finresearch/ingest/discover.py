@@ -26,6 +26,9 @@ from finresearch.db.models import Company
 from finresearch.ingest.documents import DocKind, download, ingest_pdf
 
 MAX_BYTES = 150 * 1024 * 1024
+ZIP_MAX_TOTAL = (
+    3 * MAX_BYTES
+)  # all the PDFs in one downloaded archive, uncompressed (they are held in memory)
 SAME_TEXT_PAGES = (
     0.9  # share of identical pages that makes two files the same document (e.g. re-signed copies)
 )
@@ -270,7 +273,15 @@ def _pdfs_from(path: Path, url: str) -> list[tuple[str, bytes]]:
         return [(url.rsplit("/", 1)[-1] or "document.pdf", data)]
     if data[:2] == b"PK":
         with zipfile.ZipFile(io.BytesIO(data)) as z:
-            return [(n, z.read(n)) for n in z.namelist() if n.lower().endswith(".pdf")]
+            members = [i for i in z.infolist() if i.filename.lower().endswith(".pdf")]
+            # a zip bomb (a small archive that inflates to gigabytes) must not exhaust memory: the declared sizes
+            # are checked first, and zipfile stops at the declared size (a lying header fails its CRC check)
+            if (
+                any(i.file_size > MAX_BYTES for i in members)
+                or sum(i.file_size for i in members) > ZIP_MAX_TOTAL
+            ):
+                raise ValueError(f"{url}: the archive's PDFs would inflate beyond the download limits")
+            return [(i.filename, z.read(i)) for i in members]
     return []
 
 
@@ -295,7 +306,11 @@ def fetch_and_ingest(session: Session, company: Company, cands: list[Candidate],
             if path.stat().st_size > MAX_BYTES:
                 report.outcomes.append(Outcome(c, "failed", detail="file larger than 150 MB"))
                 continue
-            pdfs = _pdfs_from(path, c.url)
+            try:
+                pdfs = _pdfs_from(path, c.url)
+            except Exception as e:  # a corrupt or oversized archive fails this candidate, not the whole run
+                report.outcomes.append(Outcome(c, "failed", detail=f"archive: {e}"[:300]))
+                continue
             if not pdfs:
                 report.outcomes.append(Outcome(c, "failed", detail="not a PDF or a ZIP of PDFs"))
                 continue

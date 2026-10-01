@@ -32,6 +32,7 @@ from pydantic import BaseModel
 from finresearch.adapters.http import PoliteClient
 
 SEBI_BASE = "https://www.sebi.gov.in"
+SEBI_HOSTS = frozenset({"www.sebi.gov.in", "sebi.gov.in"})
 LISTING_URL = f"{SEBI_BASE}/sebiweb/home/HomeAction.do"
 AJAX_LISTING_URL = f"{SEBI_BASE}/sebiweb/ajax/home/getnewslistinfo.jsp"
 
@@ -212,6 +213,11 @@ def parse_detail_pdfs(html: str, detail_url: str) -> list[str]:
 
     def add(url: str) -> None:
         url = _abs_url(detail_url, url)
+        parts = urlsplit(url)
+        # the page is untrusted input: only SEBI's own documents are offered for download (a link to another host
+        # would be fetched as "the offer document" and cited as SEBI's)
+        if parts.scheme != "https" or (parts.hostname or "").lower() not in SEBI_HOSTS:
+            return
         if url not in out:
             out.append(url)
 
