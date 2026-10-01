@@ -133,3 +133,18 @@ smartConnect.py). Fyers: pypi.org/pypi/fyers-apiv3. SEBI circular page (4-Feb-20
 Direction NBFC-AA (rbi.org.in, id=10598), sahamati.org.in/faq. KFintech CAS page, cdslindia.com CAS login,
 github.com/codereverser/casparser (README, types.py), pypi.org/pypi/casparser. Pages that failed to load (Fyers docs,
 NSE circulars, NSDL CAS, Upstox extended-token and static-IP pages) are marked unverified above.
+
+## Importing files by hand (Portfolio → Import)
+
+Drop the files anywhere on the Import tab, or click the dashed box and choose several at once. Each file goes to the right importer:
+
+- **Spreadsheets** (XLSX/CSV) preview straight away.
+- **PDFs** wait for their password in a masked field on their own row. The password goes once to the local API (127.0.0.1) and is never stored, logged or sent anywhere else. If you'd rather not type it in a browser, use `uv run finresearch portfolio import-cas <file>` in your own Terminal. It asks with a hidden prompt.
+
+What to import:
+
+1. **Groww:** import `Stocks_Order_History_…xlsx` first, then `Stocks_Holdings_Statement_…xlsx`. The holdings statement fills any holding the order history does not explain.
+2. **Mutual funds:** the CAMS/KFintech CAS PDF.
+3. **NSDL/CDSL e-CAS PDF:** used as a units check only.
+
+P&L and capital-gains reports are refused with an explanation: the app computes these itself from the order history. Old `.xls` files must be saved as `.xlsx` or `.csv` first.

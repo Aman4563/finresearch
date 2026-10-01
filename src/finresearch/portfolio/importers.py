@@ -496,6 +496,22 @@ def detect_holdings_statement(rows: list[list[Any]]) -> tuple[str | None, int] |
     return None
 
 
+def realised_report_hint(content: bytes, filename: str = "") -> str | None:
+    """A broker's realised P&L / capital-gains report (buy date + sell date per closed lot) is not a statement the app
+    can import (it has no open positions and repeats trades the order history has): say so and what to use instead."""
+    try:
+        rows = read_table(content, filename)
+    except Exception:  # noqa: BLE001 - unreadable files keep the generic message
+        return None
+    for row in rows[:40]:
+        cells = {_norm(c) for c in row if c is not None}
+        if "buy date" in cells and "sell date" in cells:
+            return ("this is a P&L / capital-gains report (realised trades only), which the app does not import: use "
+                    "the Order history (Groww: Stocks → Reports → Order history; Zerodha: Console → Tradebook) and the "
+                    "Holdings statement instead. The app computes P&L and capital gains itself from those.")  # fmt: skip
+    return None
+
+
 def parse_holdings_statement(content: bytes, filename: str = "", broker: str | None = None):
     """A broker holdings statement → (broker, [BrokerHolding]). Raises StatementError when it is not one."""
     from finresearch.portfolio.connectors.base import BrokerHolding

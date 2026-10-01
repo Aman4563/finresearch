@@ -4,8 +4,8 @@
 // (CSV/XLSX, broker detected from the headers) and a manual form. Every file import previews first (dry run) and
 // shows the reconciliation of the statement's closing units against the lots before anything is written.
 
-import { CheckCircle2, FileSpreadsheet, FileText, KeyRound, PenLine, RefreshCw, ShieldCheck, Trash2, TriangleAlert, Upload } from "lucide-react";
-import { useEffect, useState } from "react";
+import { CheckCircle2, FileSpreadsheet, FileText, FileUp, KeyRound, PenLine, RefreshCw, ShieldCheck, Trash2, TriangleAlert, Upload, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Badge, Button, Callout, Card, ErrorNote, Field, InfoTip, Segmented, Table, cx, inputClass } from "@/components/ui";
 import { api, day, useApi, when } from "@/lib/api";
@@ -110,7 +110,7 @@ function CasImport({ onDone }: { onDone: () => void }) {
   };
 
   return (
-    <Card title="CAS statement (CAMS / KFintech)" icon={<FileText className="size-4" />}
+    <Card title="CAS statement (CAMS / KFintech / NSDL / CDSL)" icon={<FileText className="size-4" />}
       help="The Consolidated Account Statement from CAMS or KFintech (camsonline.com → Statements → CAS, 'Detailed' with transactions). It covers every mutual fund folio in your PAN. NSDL/CDSL statements are read for a units check only (they have no transactions).">
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label="PDF file">
@@ -120,7 +120,7 @@ function CasImport({ onDone }: { onDone: () => void }) {
         <Field label={<span className="inline-flex items-center gap-1"><KeyRound className="size-3" />PDF password</span>}
           hint="Usually your PAN in capitals. Sent once with this upload, used to open the file, then dropped: never stored or logged.">
           <input type="password" autoComplete="off" spellCheck={false} value={password} onChange={(e) => setPassword(e.target.value)}
-            className={cx(inputClass, "w-full")} placeholder="••••••••••" />
+            className={cx(inputClass, "w-full")} placeholder="Type the PDF password" />
         </Field>
       </div>
       <div className="mt-3 flex flex-wrap gap-2">
@@ -157,11 +157,11 @@ function TradebookImport({ onDone }: { onDone: () => void }) {
     }
   };
   return (
-    <Card title="Broker tradebook (equity)" icon={<FileSpreadsheet className="size-4" />}
+    <Card title="Broker tradebook or holdings (equity)" icon={<FileSpreadsheet className="size-4" />}
       help="Zerodha Console → Reports → Tradebook (CSV); Groww → Stocks → Order history (XLSX); Upstox → Reports → Trade book. The broker is recognised from the column headers. F&O rows are skipped. Tradebooks have no charges, bonus/split shares or IPO allotments: add those below or sync corporate actions.">
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label="CSV or XLSX file">
-          <input type="file" accept=".csv,.xlsx,text/csv" className={cx(inputClass, "w-full py-1.5 file:mr-2 file:rounded file:border-0 file:bg-background-subtle file:px-2 file:text-xs")}
+          <input type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className={cx(inputClass, "w-full py-1.5 file:mr-2 file:rounded file:border-0 file:bg-background-subtle file:px-2 file:text-xs")}
             onChange={(e) => { setFile(e.target.files?.[0] ?? null); setPreview(null); }} />
         </Field>
         <Field label="Broker">
@@ -175,6 +175,122 @@ function TradebookImport({ onDone }: { onDone: () => void }) {
       </div>
       {err && <div className="mt-3"><ErrorNote error={err} /></div>}
       {preview && <div className="mt-4"><PreviewView p={preview} /></div>}
+    </Card>
+  );
+}
+
+
+// ---------------------------------------------------------------- drop zone
+// One place for every statement: drop (anywhere on this tab) or pick several files; each is routed by its type. A PDF
+// waits for its password in a masked field on its own row; spreadsheets preview at once. Nothing is written until
+// the row's Import is pressed.
+type FileKind = "pdf" | "sheet" | "bad";
+type Item = { id: number; file: File; kind: FileKind; password: string; busy: boolean; err: string | null; preview: ImportPreview | null; done: boolean };
+
+function kindOf(f: File): FileKind {
+  const n = f.name.toLowerCase();
+  if (n.endsWith(".pdf") || f.type === "application/pdf") return "pdf";
+  if (n.endsWith(".xlsx") || n.endsWith(".csv")) return "sheet";
+  return "bad";
+}
+
+function QuickImport({ onDone }: { onDone: () => void }) {
+  const [items, setItems] = useState<Item[]>([]);
+  const [over, setOver] = useState(false);
+  const seq = useRef(0);
+  const input = useRef<HTMLInputElement>(null);
+  const patch = (id: number, p: Partial<Item>) => setItems((xs) => xs.map((x) => (x.id === id ? { ...x, ...p } : x)));
+
+  const send = useCallback(async (it: Item, dry: boolean) => {
+    if (it.kind === "pdf" && !it.password) return;
+    patch(it.id, { busy: true, err: null });
+    try {
+      const content_b64 = await readB64(it.file);
+      const res = it.kind === "pdf"
+        ? await api<ImportPreview>("/api/portfolio/import/cas", { method: "POST", body: JSON.stringify({ filename: it.file.name, content_b64, password: it.password, dry_run: dry }) })
+        : await api<ImportPreview>("/api/portfolio/import/tradebook", { method: "POST", body: JSON.stringify({ filename: it.file.name, content_b64, broker: null, dry_run: dry }) });
+      patch(it.id, { busy: false, preview: res, ...(dry ? {} : { done: true, password: "" }) });
+      if (!dry) onDone();
+    } catch (e) {
+      patch(it.id, { busy: false, err: (e as Error).message });
+    }
+  }, [onDone]);
+
+  const add = useCallback((files: FileList | File[] | null) => {
+    const fresh = Array.from(files ?? []).map((file): Item => {
+      const kind = kindOf(file);
+      return { id: ++seq.current, file, kind, password: "", busy: false, preview: null, done: false,
+        err: kind === "bad" ? (file.name.toLowerCase().endsWith(".xls") ? "Old .xls format: open it and save as .xlsx or .csv, then drop it again." : "Not a PDF, XLSX or CSV statement.") : null };
+    });
+    if (!fresh.length) return;
+    setItems((xs) => [...xs, ...fresh]);
+    fresh.filter((i) => i.kind === "sheet").forEach((i) => void send(i, true));
+  }, [send]);
+
+  // A file dropped anywhere on this tab comes here instead of the browser opening it (and leaving the app).
+  useEffect(() => {
+    const onOver = (e: DragEvent) => { if (e.dataTransfer?.types.includes("Files")) { e.preventDefault(); setOver(true); } };
+    const onLeave = (e: DragEvent) => { if (!e.relatedTarget) setOver(false); };
+    const onDrop = (e: DragEvent) => {
+      if (!e.dataTransfer?.files.length) return;
+      e.preventDefault();
+      setOver(false);
+      add(e.dataTransfer.files);
+    };
+    window.addEventListener("dragover", onOver);
+    window.addEventListener("dragleave", onLeave);
+    window.addEventListener("drop", onDrop);
+    return () => { window.removeEventListener("dragover", onOver); window.removeEventListener("dragleave", onLeave); window.removeEventListener("drop", onDrop); };
+  }, [add]);
+  useEffect(() => () => setItems([]), []); // passwords go with the rows when the tab closes
+
+  return (
+    <Card title="Import statements" icon={<FileUp className="size-4" />}
+      help="Drop or choose any mix: Groww/Zerodha/Upstox order history or tradebook (XLSX/CSV), a broker holdings statement (XLSX/CSV), a CAMS/KFintech CAS or an NSDL/CDSL e-CAS (PDF). Import the order history before the holdings statement.">
+      <button type="button" onClick={() => input.current?.click()}
+        className={cx("flex w-full flex-col items-center justify-center gap-1.5 rounded-xl border-2 border-dashed px-4 py-8 text-center transition-colors",
+          over ? "border-brand bg-brand-soft" : "border-border hover:border-brand/60 hover:bg-background-subtle")}>
+        <Upload className={cx("size-6", over ? "text-brand" : "text-muted")} />
+        <span className="text-sm font-medium">{over ? "Drop to add" : "Drop statements here, or click to choose files"}</span>
+        <span className="text-xs text-muted">PDF (CAS / e-CAS) · XLSX or CSV (order history, tradebook, holdings) · several at once</span>
+      </button>
+      <input ref={input} type="file" multiple hidden accept=".pdf,.xlsx,.csv,application/pdf,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        onChange={(e) => { add(e.target.files); e.target.value = ""; }} />
+      {items.length > 0 && (
+        <ul className="mt-4 space-y-3">
+          {items.map((it) => (
+            <li key={it.id} className="rounded-lg border border-border p-3">
+              <div className="flex flex-wrap items-center gap-2">
+                {it.kind === "pdf" ? <FileText className="size-4 text-muted" /> : <FileSpreadsheet className="size-4 text-muted" />}
+                <span className="min-w-0 flex-1 truncate text-sm" title={it.file.name}>{it.file.name}</span>
+                {it.done && <Badge tone="gain">imported</Badge>}
+                {it.busy && <span className="text-xs text-muted">reading…</span>}
+                <Button variant="ghost" aria-label="Remove from list" icon={<X className="size-3.5" />} onClick={() => setItems((xs) => xs.filter((x) => x.id !== it.id))} />
+              </div>
+              {it.kind === "pdf" && !it.done && (
+                <form className="mt-2 flex flex-wrap items-end gap-2" onSubmit={(e) => { e.preventDefault(); void send(it, true); }}>
+                  <Field label={<span className="inline-flex items-center gap-1"><KeyRound className="size-3" />PDF password</span>}
+                    hint="Usually your PAN in capitals (NSDL/CDSL: PAN, sometimes with your date of birth). Sent once to this app's local API, then dropped.">
+                    <input type="password" name={`pdf-pw-${it.id}`} autoComplete="new-password" spellCheck={false} value={it.password}
+                      onChange={(e) => patch(it.id, { password: e.target.value })} className={cx(inputClass, "w-64")} placeholder="Type the PDF password" />
+                  </Field>
+                  <Button type="submit" variant="secondary" icon={<RefreshCw className="size-3.5" />} disabled={!it.password || it.busy}>Preview</Button>
+                </form>
+              )}
+              {it.preview?.dry_run && !it.done && (
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  {it.kind === "pdf" && it.preview.holdings_only
+                    ? <span className="text-xs text-muted">A depository statement (NSDL/CDSL) has no transactions: it is used as a units check only, nothing to import.</span>
+                    : <Button icon={<Upload className="size-3.5" />} disabled={it.busy || it.preview.already_imported != null} onClick={() => void send(it, false)}>Import</Button>}
+                  {it.preview.already_imported != null && <span className="text-xs text-muted">already imported</span>}
+                </div>
+              )}
+              {it.err && <div className="mt-2"><ErrorNote error={it.err} /></div>}
+              {it.preview && <div className="mt-3"><PreviewView p={it.preview} /></div>}
+            </li>
+          ))}
+        </ul>
+      )}
     </Card>
   );
 }
@@ -312,6 +428,7 @@ export function ImportPanel({ onChanged }: { onChanged: () => void }) {
       <Callout tone="info" icon={<ShieldCheck className="size-4" />} title="Your data stays on this machine">
         Files are parsed by the local API and kept under <span className="num">data/portfolio/</span> (gitignored); nothing is sent to an LLM. CAS passwords are never stored.
       </Callout>
+      <QuickImport onDone={done} />
       <div className="grid gap-4 xl:grid-cols-2">
         <CasImport onDone={done} />
         <TradebookImport onDone={done} />
