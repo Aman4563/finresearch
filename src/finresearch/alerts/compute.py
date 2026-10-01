@@ -289,6 +289,10 @@ class Reader:
             if metric == "signal_score":
                 return Reading(D(round(sig.score, 1)), "signals.stock composite v1 score")
             return await self._change("stock", key, baseline, "action", sig.action, "signals.stock action")
+        if metric in _DISCLOSURE_STOCK:  # exchange disclosures, from the database (finresearch.disclosures)
+            from finresearch.disclosures.alerts import stock_reading
+
+            return stock_reading(self.session, metric, key, baseline)
         raw = await self._inputs(key)
         today = _today()
         if metric == "pct_vs_200dma":
@@ -402,6 +406,10 @@ class Reader:
         if metric == "signal_action_changed":
             sig = await self._signal("bond", isin)
             return await self._change("bond", isin, baseline, "action", sig.action, "signals.bond action")
+        if metric == "rating_action":  # the agency's action from rating filings (finresearch.disclosures)
+            from finresearch.disclosures.alerts import bond_reading
+
+            return bond_reading(self.session, isin, baseline)
         rows = await self._get(("bonds",), lambda: (SOURCES.bonds or _live_bonds)())
         mine = [b for b in rows if b.isin.upper() == isin]
         if not mine:
@@ -455,6 +463,10 @@ class Reader:
     async def _fno(self, metric: str, sym: str, params: dict[str, str], baseline: dict[str, Any]) -> Reading:
         from finresearch.alerts.registry import NSE_CHAIN
 
+        if metric == "in_ban":  # NSE's F&O ban list, from the database (finresearch.disclosures)
+            from finresearch.disclosures.alerts import fno_ban_reading
+
+            return fno_ban_reading(self.session, sym)
         if metric in ("atm_iv", "iv_percentile"):
             series = (SOURCES.iv_series or _live_iv)(sym)
             if not series:
@@ -529,6 +541,13 @@ class Reader:
     ) -> Reading:
         from finresearch.alerts.portfolio import portfolio_metrics
 
+        if metric == "holdings_red_flags":  # held stocks' disclosure flags (finresearch.disclosures)
+            from finresearch.disclosures.alerts import holdings_red_flags
+
+            v, src, detail = holdings_red_flags(self.session)
+            return (
+                Reading(v, src, detail=detail) if v is not None else unknown(src, "finresearch.disclosures")
+            )
         if ("portfolio",) not in self.memo:
             self.memo[("portfolio",)] = portfolio_metrics(self.session)
         metrics, reason = self.memo[("portfolio",)]
@@ -540,6 +559,9 @@ class Reader:
         detail = rest[0] if rest else None
         return Reading(D(v), src, detail=detail) if v is not None else unknown(src, "finresearch.portfolio")
 
+
+_DISCLOSURE_STOCK = frozenset({"pledge_pct", "pledge_change_pp", "surveillance_stage", "in_fno_ban",
+                               "insider_net_buy_90d", "bulk_block_deals_5d", "rating_action", "sebi_order"})  # fmt: skip
 
 _LEG = re.compile(r"^(buy|sell):(call|put|future):(\d+(?:\.\d+)?):(\d+):(\d+(?:\.\d+)?)$")
 

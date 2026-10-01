@@ -11,6 +11,7 @@ import { Fragment, useCallback, useEffect, useState } from "react";
 import { DonutChart, TimeSeriesChart, fmtCompactINR } from "@/components/charts";
 import type { Signal } from "@/components/signal";
 import { Badge, Button, Callout, Card, EmptyState, ErrorNote, Field, InfoTip, Modal, PageHeader, Segmented, SkeletonRows, Stat, Table, cx, inputClass } from "@/components/ui";
+import { TrackedRedFlags } from "@/components/markets/disclosures";
 import { API_URL, api, day, useApi, when } from "@/lib/api";
 
 import { ConcentrationAnalytics } from "./concentration-analytics";
@@ -450,6 +451,7 @@ export function PortfolioPage() {
             </EmptyState>
           ) : (
             <div key={tab} className="animate-fade-up">
+              {tab === "holdings" && <div className="mb-4"><TrackedRedFlags only="held" /></div>}
               {tab === "holdings" && <Holdings snap={data} onChanged={changed} updating={updating} />}
               {tab === "allocation" && <Allocation snap={data} onChanged={changed} />}
               {tab === "performance" && <PerformanceAnalytics refresh={refresh} />}

@@ -7,6 +7,7 @@ import { useState } from "react";
 
 import { Sparkline } from "@/components/charts";
 import { ensureStock, startResearch, watchStock } from "@/components/markets/actions";
+import { TrackedRedFlags } from "@/components/markets/disclosures";
 import { LinkRow, SearchBox, inr, signedPct, toneOf } from "@/components/markets/common";
 import { ExchangeBadge } from "@/components/markets/exchange";
 import type { StockHistory, StockHit } from "@/components/markets/types";
@@ -185,6 +186,7 @@ export default function Stocks() {
                 ))}
               </ul>
             )}
+            {stockWatches.length > 0 && <div className="mt-3"><TrackedRedFlags only="watched" /></div>}
           </Card>
 
           <Card title="Researched stocks" subtitle="Companies with a stock research report" icon={<FileText className="size-4" />}>

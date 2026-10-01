@@ -14,6 +14,7 @@ import { BondLadderCard } from "@/components/markets/signal-charts";
 import { Facts, Metric, inr, pctOf, ratingLabel, ratingTone, signedPct, toneOf } from "@/components/markets/common";
 import type { BondAnalytics } from "@/components/markets/types";
 import { SignalCard } from "@/components/signal";
+import { BondRatingActionsCard } from "@/components/markets/disclosures";
 import {
   Badge, Button, Callout, Card, ErrorNote, Field, InfoTip, PageHeader, Segmented, Skeleton, Stat, Table, cx, inputClass,
 } from "@/components/ui";
@@ -127,6 +128,7 @@ export default function BondDetail() {
             <BondLadderCard isin={isin} query={signalQuery} />
           </div>
         )}
+        <BondRatingActionsCard isin={isin} />
 
         <div className="grid [&>*]:min-w-0 grid-cols-2 gap-3 lg:grid-cols-5 stagger">
           {!d ? (

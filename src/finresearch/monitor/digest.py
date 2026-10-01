@@ -242,25 +242,57 @@ def build_brief(s: Session, now: datetime) -> dict[str, Any]:
     perf = None
     if settings.daily_performance and has_pf:
         perf = value_change(_snaps(s, today - timedelta(days=6))[-2:])
+    disc = _disclosures(s, now)
+    for x in disc.get("unavailable") or []:
+        health.append({"level": "info", "text": f"Disclosures: {x} unavailable (no recent good read); red flags from it "
+                       "are not shown as 'none'."})  # fmt: skip
     at = advance_tax(s, data, today) if has_pf else None
     quiet = (
-        not rules and not changes and not missed and not [e for e in events if e["day"] == today.isoformat()]
+        not rules
+        and not changes
+        and not missed
+        and not [e for e in events if e["day"] == today.isoformat()]
+        and not _disclosure_items(disc)
     )
     return {
         "day": today.isoformat(), "generated_at": now.isoformat(), "has_portfolio": has_pf,
         "headline": "Nothing needs a decision today: no rule fired and nothing is due. No action needed."
-                    if quiet else _headline(rules, changes, events, missed, today),
+                    if quiet else _headline(rules, changes, events, missed, today, disc),
         "events": events, "rules_fired": rules, "since": since.isoformat(), "signal_changes": changes,
         "sip": sips, "sip_missed": missed, "long_term": lots, "tax_calendar": tax_cal, "advance_tax": at,
-        "health": health, "performance": perf, "settings": settings.model_dump(mode="json"),
+        "health": health, "performance": perf, "settings": settings.model_dump(mode="json"), "disclosures": disc,
         "method": "Deterministic templates over the local database: holdings' events and signals from the monitor's "
                   "daily pass (NSE, AMFI), rule alerts, the dated tax table. Nothing here is sent to an LLM.",
         "behaviour_note": BEHAVIOUR_NOTE, "disclaimer": DISCLAIMER,
     }  # fmt: skip
 
 
-def _headline(rules: list, changes: list, events: list, missed: list, today: date) -> str:
+def _disclosures(s: Session, now: datetime) -> dict[str, Any]:
+    """Red flags, insider buying, deals, rating actions and SEBI orders for holdings and the watchlist
+    (finresearch.disclosures; database only). A failure here never breaks the brief."""
+    try:
+        from finresearch.disclosures.views import brief_section
+
+        with s.begin_nested():
+            return brief_section(s, now)
+    except Exception as e:  # tables missing (not migrated) or a bad row: say so in data health
+        import logging
+
+        logging.getLogger(__name__).warning("disclosures section failed", exc_info=True)
+        return {"error": f"{type(e).__name__}: {e}"[:200], "unavailable": ["exchange disclosures"]}
+
+
+def _disclosure_items(disc: dict[str, Any] | None) -> int:
+    d = disc or {}
+    return len(d.get("flags") or []) + len(d.get("ratings") or []) + len(d.get("sebi_orders") or [])
+
+
+def _headline(rules: list, changes: list, events: list, missed: list, today: date,
+              disc: dict[str, Any] | None = None) -> str:  # fmt: skip
     parts = []
+    if n := _disclosure_items(disc):
+        parts.append(f"{n} red flag{'s' if n != 1 else ''} or rating/SEBI item{'s' if n != 1 else ''} on holdings "
+                     "and the watchlist")  # fmt: skip
     if rules:
         parts.append(
             f"{len(rules)} alert{'s' if len(rules) != 1 else ''} since the last brief (your rules and the monitor)"
@@ -286,6 +318,15 @@ def brief_text(b: dict[str, Any]) -> str:
         lines.append(f"• {date.fromisoformat(e['day']):%d %b}: {e['title']}")
     for x in b["sip_missed"][:2]:
         lines.append(f"• SIP {x['name']}: {x['status']} (last {x['last']})")
+    disc = b.get("disclosures") or {}
+    for f in (disc.get("flags") or [])[:3]:
+        lines.append(f"• Red flag {f['key']}: {f['label']}")
+    for r in (disc.get("ratings") or [])[:2]:
+        lines.append(
+            f"• Rating {r.get('name') or r['key']}: {str(r.get('action', '')).replace('_', ' ')} ({r.get('agency')})"
+        )
+    for o in (disc.get("sebi_orders") or [])[:1]:
+        lines.append(f"• SEBI order may name {o['key']}: {o.get('title', '')[:80]}")
     if b.get("performance"):
         p = b["performance"]
         lines.append(f"• Value {p['twr_pct']:+.2f}% (new money removed) since {p['from']}")

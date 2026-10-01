@@ -1,0 +1,6 @@
+{"data": [
+  {"BD_DT_DATE": "29-SEP-2026", "BD_DT_ORDER": "2026-09-29T00:00:00", "BD_SYMBOL": "EXAMPLE", "BD_SCRIP_NAME": "Example Ltd",
+   "BD_CLIENT_NAME": "Sample Securities Pvt Ltd", "BD_BUY_SELL": "BUY", "BD_QTY_TRD": "1200000", "BD_TP_WATP": "512.35", "BD_REMARKS": "-"},
+  {"BD_DT_DATE": "15-JUL-2026", "BD_DT_ORDER": "2026-07-15T00:00:00", "BD_SYMBOL": "EXAMPLE", "BD_SCRIP_NAME": "Example Ltd",
+   "BD_CLIENT_NAME": "Demo Fund Scheme A", "BD_BUY_SELL": "SELL", "BD_QTY_TRD": "1100000", "BD_TP_WATP": "480.00", "BD_REMARKS": "-"}
+]}
