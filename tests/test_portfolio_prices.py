@@ -89,6 +89,32 @@ async def test_a_failed_quote_degrades_only_its_rows():
     assert out[1].price is None and "RuntimeError" in out[1].error and out[2].price == D(100)
 
 
+async def test_bse_fallback_numeric_codes_and_broker_statement_price():
+    asked: list[tuple[str, str]] = []
+
+    async def quote(sym: str, exch: str = "NSE") -> Quote:
+        asked.append((sym, exch))
+        if exch == "NSE":  # NSE knows the symbols but has no trades in them
+            return Quote(symbol=sym, last_price=None)
+        return Quote(symbol=sym, last_price=D(52))
+
+    hs = [
+        H(1, "stock", "BSE-traded", nse_symbol="AMDX", bse_code="532828"),  # NSE has no price: BSE prices it
+        H(2, "stock", "NCD", nse_symbol="941149.0"),  # a BSE code stored as the symbol: quoted on BSE
+        H(3, "stock", "Unlisted", nse_symbol="NSE$",
+          meta={"statement_price": {"price": "1763.05", "day": "2026-09-30", "source": "Groww"}}),
+    ]  # fmt: skip
+    out = await fetch_prices(hs, quote=quote, scheme_rows=None)
+    assert out[1].price == D(52) and out[1].source.startswith("BSE")
+    assert out[2].price == D(52) and ("941149", "BSE") in asked and ("941149.0", "NSE") not in asked
+    assert (
+        out[3].price == D("1763.05")
+        and out[3].source == "Groww statement close"
+        and out[3].as_of == "2026-09-30"
+    )
+    assert out[3].error  # the reason the live price is missing stays visible
+
+
 @pytest.fixture
 def client(env):
     from sqlalchemy import text

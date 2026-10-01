@@ -534,21 +534,30 @@ def add_portfolio_routes(app: FastAPI, *, scheme_rows: Callable[[], Awaitable[li
 def _holdings_statement(hs, sha: str, filename: str, dry: bool) -> dict[str, Any]:
     """A broker holdings statement: the broker-baseline merge rules (connectors.merge). Dry run = the same merge in a
     savepoint that is rolled back."""
+    import re
     from datetime import UTC, datetime
 
     from finresearch.portfolio.connectors.inbox import _record_sha
-    from finresearch.portfolio.connectors.merge import merge_sync
+    from finresearch.portfolio.connectors.merge import merge_sync, remember_statement_prices
 
     broker, holdings = hs
     acc = {"zerodha": "Zerodha", "groww": "Groww", "upstox": "Upstox"}[broker]
     now = datetime.now(UTC)
+    dated = re.findall(
+        r"(20\d\d-\d\d-\d\d)", filename
+    )  # Groww: Stocks_Holdings_Statement_<id>_<yyyy-mm-dd>.xlsx
+    try:
+        as_of = min(date.fromisoformat(dated[-1]), now.date()) if dated else now.date()
+    except ValueError:
+        as_of = now.date()
     with session_scope() as s:
         prev = _existing(s, sha)
         if not dry and prev is not None:
             raise HTTPException(409, f"this file was already imported (import #{prev})")
         sp = s.begin_nested()
         mr = merge_sync(s, account=acc, source=f"{broker}_holdings", label=f"{acc} holdings file", holdings=holdings,
-                        trades=[], today=now.date(), now=now)  # fmt: skip
+                        trades=[], today=as_of, now=now)  # fmt: skip
+        remember_statement_prices(s, account=acc, holdings=holdings, day=as_of, label=f"{acc}")
         out = mr.as_dict()
         if dry:
             sp.rollback()

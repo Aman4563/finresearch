@@ -150,13 +150,17 @@ def scan(*, now: datetime | None = None, password: str | None = None) -> dict[st
                     except StatementError:
                         hs = parse_holdings_statement(content, path.name)  # raises StatementError if neither
                     if hs is not None:
-                        from finresearch.portfolio.connectors.merge import merge_sync
+                        from finresearch.portfolio.connectors.merge import (
+                            merge_sync,
+                            remember_statement_prices,
+                        )
 
                         broker, holdings = hs
                         acc = {"zerodha": "Zerodha", "groww": "Groww", "upstox": "Upstox"}[broker]
+                        as_of = datetime.fromtimestamp(st.st_mtime, UTC).date()
                         mr = merge_sync(s, account=acc, source=f"{broker}_holdings", label=f"{acc} holdings file",
-                                        holdings=holdings, trades=[], today=datetime.fromtimestamp(st.st_mtime,
-                                        UTC).date(), now=now)  # fmt: skip
+                                        holdings=holdings, trades=[], today=as_of, now=now)  # fmt: skip
+                        remember_statement_prices(s, account=acc, holdings=holdings, day=as_of, label=acc)
                         _record_sha(s, mr.import_ids, sha, path.name, f"{broker}_holdings")
                         _move(path, "processed")
                         imported += 1

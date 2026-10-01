@@ -14,6 +14,7 @@ cut-off may be stale. Market cap = last price × issued shares (NSE quote), else
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import date
@@ -86,11 +87,30 @@ def instrument_of(h: Any, isin_map: dict[str, Any] | None = None) -> tuple[str |
     """(quote id, exchange, listing) for a stock holding: its NSE symbol, else the listing's, else its BSE code."""
     listing = (isin_map or {}).get((h.isin or "").upper())
     sym, exch = h.nse_symbol, "NSE"
+    if sym and re.fullmatch(
+        r"\d{5,7}(\.0)?", sym
+    ):  # a BSE scrip code stored as the symbol (older tradebook imports)
+        return sym.split(".")[0], "BSE", listing
     if not sym and listing is not None:
         sym, exch = (listing.nse_symbol, "NSE") if listing.nse_symbol else (listing.bse_code, "BSE")
     if not sym and h.bse_code:
         sym, exch = h.bse_code, "BSE"
     return sym, exch, listing
+
+
+def bse_fallback(h: Any, listing: Any) -> str | None:
+    """The BSE code to try when NSE has no price for a stock (BSE-only trading, suspended on NSE)."""
+    return h.bse_code or (getattr(listing, "bse_code", None) if listing is not None else None)
+
+
+def broker_statement_price(h: Any, why: str) -> PriceInfo:
+    """Last resort for a stock no exchange prices (unlisted shares, an NCD without trades): the closing price on the
+    broker's last holdings statement, with its date and the reason the live price is missing."""
+    sp = (h.meta or {}).get("statement_price") or {}
+    if sp.get("price"):
+        return PriceInfo(Decimal(sp["price"]), sp.get("day"), f"{sp.get('source') or 'broker'} statement close",
+                         error=why)  # fmt: skip
+    return PriceInfo(error=why)
 
 
 def price_from_quote(q: Any, exch: str, listing: Any = None) -> PriceInfo:
@@ -170,20 +190,38 @@ async def fetch_prices(holdings: Sequence[Any], *, quote: Callable[[str, str], A
         for h in stocks:
             sym, exch, listing = instrument_of(h, isin_map)
             if not sym:
-                emit(h.id, PriceInfo(error="no NSE symbol or BSE code: set one to price this holding"))
+                emit(
+                    h.id,
+                    broker_statement_price(h, "no NSE symbol or BSE code: set one to price this holding"),
+                )
             else:
                 groups.setdefault((sym, exch), []).append((h, listing))
         sem = asyncio.Semaphore(max(1, concurrency))
 
         async def one(key: tuple[str, str], members: list[tuple[Any, Any]]) -> None:
             sym, exch = key
+            err = None
             async with sem:
                 try:
                     q = await quote(sym, exch)
                 except Exception as e:
                     q, err = None, f"no quote from {exch} ({type(e).__name__})"
-            for h, listing in members:
-                emit(h.id, price_from_quote(q, exch, listing) if q is not None else PriceInfo(error=err))
+                p = price_from_quote(q, exch, members[0][1]) if q is not None else PriceInfo(error=err)
+                alt = bse_fallback(*members[0]) if exch == "NSE" else None
+                if p.price is None and alt:
+                    try:
+                        q2 = await quote(alt, "BSE")
+                        p2 = price_from_quote(q2, "BSE", members[0][1])
+                        if p2.price is not None:
+                            p = p2
+                    except Exception:  # keep the NSE result and its reason
+                        pass
+            for h, _listing in members:
+                one_p = p if p.price is not None else broker_statement_price(
+                    h, p.error or f"{exch} has no price for {sym}")  # fmt: skip
+                if one_p.price is None and one_p.error is None:
+                    one_p.error = f"{exch} has no price for {sym}"
+                emit(h.id, one_p)
 
         await asyncio.gather(*(one(k, m) for k, m in groups.items()))
 
