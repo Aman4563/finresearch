@@ -95,3 +95,74 @@ def test_sip_on_a_day_the_month_lacks_falls_on_month_end():
     o = fx.sip_outcome(navs, 1000, date(2025, 4, 1), date(2025, 5, 31), 31)
     assert o.instalments == 2 and o.units == Decimal(100) and o.value == Decimal(2000)
     assert o.xirr == Decimal(0)
+
+
+AMFI_FIX = Path(__file__).parent / "fixtures" / "amfi"
+
+SIX_COL = """Scheme Code;ISIN Div Payout/ ISIN Growth;ISIN Div Reinvestment;Scheme Name;Net Asset Value;Date
+
+Open Ended Schemes(Equity Scheme - Flexi Cap Fund)
+
+Example Mutual Fund
+
+999001;INF000X01011;-;Example Flexi Cap Fund - Direct Plan - Growth;105.5512;30-Sep-2026
+"""
+
+
+def test_amfi_columns_come_from_the_header_line():
+    """AMFI's older NAVAll had six columns (no Plan/Option): positional parsing silently dropped every row."""
+    rows = parse_nav_all(SIX_COL)
+    assert len(rows) == 1
+    r = rows[0]
+    assert (r.code, r.isin_growth, r.isin_reinvest, r.nav, r.day) == (
+        "999001",
+        "INF000X01011",
+        None,
+        Decimal("105.5512"),
+        date(2026, 9, 30),
+    )
+    assert r.name == "Example Flexi Cap Fund - Direct Plan - Growth" and r.plan is None
+    assert r.category == "Equity Scheme - Flexi Cap Fund" and r.amc == "Example Mutual Fund"
+    # the recorded eight-column files read exactly as before
+    full = parse_nav_all((AMFI_FIX / "NAVAll_trimmed.txt").read_text())
+    assert full and all(x.code.isdigit() for x in full) and any(x.plan for x in full)
+
+
+async def test_a_navall_block_page_raises_instead_of_reading_as_no_funds():
+    import httpx
+
+    from finresearch.adapters.amfi import AmfiClient, AmfiError
+    from finresearch.adapters.http import PoliteClient
+
+    async def nosleep(_s):
+        return None
+
+    pc = PoliteClient(transport=httpx.MockTransport(lambda r: httpx.Response(200, html="<html>Maintenance</html>")),
+                      cache_dir=None, sleep=nosleep, default_rate=0, host_rates={})  # fmt: skip
+    async with AmfiClient(pc) as amfi:
+        with pytest.raises(AmfiError) as ei:
+            await amfi.nav_all()
+    await pc.aclose()
+    from finresearch.adapters.http import is_transient
+
+    assert is_transient(ei.value)  # never cached as "no data"
+
+
+async def test_navs_on_keeps_the_last_real_nav_over_a_later_na():
+    from finresearch.adapters.amfi import AmfiClient
+
+    text = (AMFI_FIX / "navhist_axis_sep2026_trimmed.txt").read_text()
+    rows = parse_nav_history(text)
+    code = next(r.code for r in rows if r.nav is not None)
+    last = max(r.day for r in rows if r.code == code)
+    na = next(line for line in text.splitlines() if line.startswith(code + ";"))
+    f = na.split(";")
+    f[-2], f[-1] = "N.A.", (last + timedelta(days=1)).strftime("%d-%b-%Y")
+    text += "\n" + ";".join(f) + "\n"
+
+    class Fake(AmfiClient):
+        async def _text(self, url, params=None):
+            return text
+
+    got = (await Fake(client=object()).navs_on(last + timedelta(days=1)))[code]  # type: ignore[arg-type]
+    assert got.nav is not None and got.day == last
