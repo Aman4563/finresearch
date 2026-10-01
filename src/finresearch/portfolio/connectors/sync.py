@@ -59,7 +59,10 @@ async def sync_now(key: str, *, trigger: str = "manual", now: datetime | None = 
                 raise LookupError(f"{key} is not connected or turned off")
             conn = build(row)
             valid = token_valid(row, now)
-            last_day = row.last_sync_day
+            # trades are read from the last day they were actually read, not the last sync: a sync whose trades read
+            # failed ("partial") still advances last_sync_day, and those days' trades must be asked for again
+            through = (row.state or {}).get("trades_through")
+            last_day = date.fromisoformat(through) if through else row.last_sync_day
         secrets = conn.secret_values()
         if not valid:
             try:
@@ -122,6 +125,8 @@ async def sync_now(key: str, *, trigger: str = "manual", now: datetime | None = 
                                                              "read", "covered_by_baseline")}  # fmt: skip
             state["last_summary"]["baselines"] = len(summary["baselines"])
             state["last_summary"]["conflicts"] = len(summary["conflicts"])
+            if "trades" in data:
+                state["trades_through"] = today.isoformat()
             state.pop("reconnect_alert_day", None)
             state.pop("failed_day", None)
             row.state = state

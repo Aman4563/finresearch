@@ -32,6 +32,7 @@ Merge rules (in order):
 from __future__ import annotations
 
 import hashlib
+import re
 import secrets
 from collections import defaultdict
 from dataclasses import dataclass, field, replace
@@ -45,7 +46,7 @@ from sqlalchemy.orm import Session
 from finresearch.db.models import PortfolioHolding, PortfolioImport, PortfolioLot, PortfolioTxn
 from finresearch.portfolio.connectors.base import BrokerHolding, BrokerTrade
 from finresearch.portfolio.importers import ImportedTxn, instrument_key
-from finresearch.portfolio.lots import Event, build_lots
+from finresearch.portfolio.lots import Event, build_lots, superseded_openings
 from finresearch.portfolio.service import add_txns, events_of, find_holding, rebuild
 
 UNITS_TOL = Decimal("0.001")
@@ -137,9 +138,15 @@ def _txn_count(s: Session, holding_id: int) -> int:
 
 def _baseline_day(s: Session, holding_id: int) -> date | None:
     """The latest broker baseline of a holding, whichever source made it (API sync or a holdings statement)."""
-    rows = s.scalars(select(PortfolioTxn).where(PortfolioTxn.holding_id == holding_id,
-                                                PortfolioTxn.kind == "opening")).all()  # fmt: skip
-    days = [r.day for r in rows if (r.meta or {}).get("baseline")]
+    rows = s.scalars(select(PortfolioTxn).where(PortfolioTxn.holding_id == holding_id)).all()
+    skip = superseded_openings(
+        rows
+    )  # a baseline the lots ignore (older history imported since) covers nothing
+    days = [
+        r.day
+        for i, r in enumerate(rows)
+        if r.kind == "opening" and (r.meta or {}).get("baseline") and i not in skip
+    ]
     return max(days) if days else None
 
 
@@ -152,42 +159,73 @@ def _new_import(s: Session, kind: str, source: str, label: str, now: datetime) -
     return imp
 
 
+def _probe(units: Decimal, price: Decimal, day: date) -> Event:
+    return Event(-1, day, "opening", units, price, None,
+                 meta={"statement_opening": True, "cost_basis": "broker_average"})  # fmt: skip
+
+
 def opening_price(events: list[Event], units: Decimal, h: BrokerHolding, day: date) -> Decimal | None:
     """The per-unit cost of `units` held before `events` such that, after a FIFO replay, the open lots cost what the
-    broker says (its quantity × average price). The open cost is linear in that price, so one replay at price 0 gives
-    it. When every one of those older units was sold inside the history, the broker's average is the best estimate."""
+    broker says (its quantity × average price). The open cost is linear in that price: one replay at price 1 gives
+    the open cost per rupee of opening price (the opening lot's open units, divided by any split inside the history,
+    since a split divides the cost per unit). When every one of those older units was sold inside the history, the
+    broker's average is the best estimate."""
     if h.avg_price is None:
         return None
-    ev = Event(-1, day, "opening", units, Decimal(0), Decimal(0),
-               meta={"statement_opening": True, "cost_basis": "broker_average"})  # fmt: skip
-    book = build_lots([ev, *events])
-    left = sum((lot.open_quantity for lot in book.lots if lot.txn_id == -1), Decimal(0))
+    book = build_lots([_probe(units, Decimal(1), day), *events])
+    mine = [lot for lot in book.lots if lot.txn_id == -1]
+    left = sum((lot.open_quantity for lot in mine), Decimal(0))
     rest = [lot for lot in book.open_lots if lot.txn_id != -1]
     if any(lot.cost_per_unit is None for lot in rest):
         return None
     if left <= UNITS_TOL:
         return h.avg_price
-    p = (h.quantity * h.avg_price - sum((lot.open_cost or Decimal(0) for lot in rest), Decimal(0))) / left
+    per_rupee = sum((lot.open_cost or Decimal(0) for lot in mine), Decimal(0))
+    p = (
+        h.quantity * h.avg_price - sum((lot.open_cost or Decimal(0) for lot in rest), Decimal(0))
+    ) / per_rupee
     return p.quantize(Decimal("0.0001")) if p > 0 else None
+
+
+def older_units(events: list[Event], held: Decimal, day: date) -> Decimal:
+    """How many units held before `events` (an opening on `day`) make the FIFO replay end with `held` units. Without
+    corporate actions that is held - (units the history leaves) + (units it sold beyond its own buys). A split or
+    bonus inside the history multiplies the older units too, so the count is solved on the replay itself (units at
+    the end are affine in the opening units: two replays give the slope)."""
+    book = build_lots(events)
+    oversold = sum(
+        (d.quantity for d in book.disposals if d.lot is None), Decimal(0)
+    )  # sales of the older units
+    x1 = held - book.units + oversold
+    if x1 <= UNITS_TOL:
+        return x1
+    u1 = build_lots([_probe(x1, Decimal(0), day), *events]).units
+    if abs(u1 - held) <= UNITS_TOL:
+        return x1
+    u2 = build_lots([_probe(2 * x1, Decimal(0), day), *events]).units
+    slope = (u2 - u1) / x1
+    if slope <= 0:
+        return x1
+    return (x1 + (held - u1) / slope).quantize(Decimal("0.000001"))
 
 
 def _older_units(
     s: Session, holding_id: int, h: BrokerHolding, *, account: str, source: str
 ) -> ImportedTxn | None:
     """A baseline for the units the broker holds that the account's history does not explain, dated the day before
-    that history starts. None when the history explains them, or an opening balance already stands for them."""
+    that history starts. None when the history explains them, or an opening balance already stands for them (an
+    opening the lots ignore, superseded by older history, does not)."""
     txns = s.scalars(select(PortfolioTxn).where(PortfolioTxn.holding_id == holding_id)).all()
-    if not txns or any(t.kind == "opening" for t in txns):
+    if not txns:
+        return None
+    skip = superseded_openings(txns)
+    if any(t.kind == "opening" and i not in skip for i, t in enumerate(txns)):
         return None
     evs = events_of(txns)
-    book = build_lots(evs)
-    oversold = sum(
-        (d.quantity for d in book.disposals if d.lot is None), Decimal(0)
-    )  # sales of those older units
-    residual = h.quantity - book.units + oversold
+    day = min(t.day for t in txns) - timedelta(days=1)
+    residual = older_units(evs, h.quantity, day)
     if residual <= UNITS_TOL:
         return None
-    day = min(t.day for t in txns) - timedelta(days=1)
     price = opening_price(evs, residual, h, day)
     older = holding_txn(
         replace(h, quantity=residual, avg_price=price), account=account, source=source, day=day
@@ -195,6 +233,21 @@ def _older_units(
     older.meta["note"] = ("units held before the imported trade history: " + (
         "cost estimated from the broker's average price" if price is not None else "cost unknown"))  # fmt: skip
     return older
+
+
+def statement_day(filename: str, when: datetime) -> date:
+    """The date a broker holdings statement is as of: the yyyy-mm-dd in its filename (Groww:
+    Stocks_Holdings_Statement_<id>_<yyyy-mm-dd>.xlsx), else the IST calendar day of `when` (the upload or the file's
+    modification time). Never the UTC day: between 00:00 and 05:30 IST that is yesterday, which would date the
+    baseline a day early and treat that day's trades as already covered by it. Never after `when`'s IST day."""
+    from finresearch.fincalc.dates import to_ist
+
+    day = to_ist(when).date()
+    dated = re.findall(r"(20\d\d-\d\d-\d\d)", filename)
+    try:
+        return min(date.fromisoformat(dated[-1]), day) if dated else day
+    except ValueError:
+        return day
 
 
 def remember_statement_prices(s: Session, *, account: str, holdings: list[BrokerHolding], day: date,
@@ -205,7 +258,10 @@ def remember_statement_prices(s: Session, *, account: str, holdings: list[Broker
         if h.last_price is None or h.last_price <= 0:
             continue
         mine = find_holding(s, holding_txn(h, account=account, source="", day=day))
-        if mine is not None:
+        prev = ((mine.meta or {}).get("statement_price") or {}) if mine is not None else {}
+        if (
+            mine is not None and str(prev.get("day") or "") <= day.isoformat()
+        ):  # an older statement never wins
             mine.meta = {**(mine.meta or {}), "statement_price": {"price": str(h.last_price), "day": day.isoformat(),
                                                                   "source": label}}  # fmt: skip
 

@@ -39,6 +39,26 @@ from typing import Any
 ZERO = Decimal(0)
 EPS = Decimal("0.0005")  # units below this are rounding noise (CAS units have 3 decimals)
 ORDER = {"opening": 0, "split": 1, "bonus": 1, "buy": 2, "sell": 3, "remove": 3, "dividend": 4}
+UNIT_KINDS = (
+    "opening",
+    "buy",
+    "sell",
+    "remove",
+)  # events that move units (a dividend or corporate action alone does not)
+
+
+def superseded_openings(items: Iterable[Any]) -> set[int]:
+    """Positions (in `items`) of statement opening balances that `build_lots` ignores: dated after the holding's first
+    unit-moving event, so earlier transactions already stand for that history and counting the opening would double
+    it. Works on lots.Event and PortfolioTxn alike (`.day`, `.kind`, `.meta`), so the XIRR flows, the value history
+    and the merge rules skip exactly the openings the lots skip."""
+    rows = list(items)
+    days = [x.day for x in rows if x.kind in UNIT_KINDS]
+    if not days:
+        return set()
+    first = min(days)
+    return {i for i, x in enumerate(rows)
+            if x.kind == "opening" and (x.meta or {}).get("statement_opening") and x.day > first}  # fmt: skip
 
 
 @dataclass
@@ -139,15 +159,12 @@ def build_lots(events: Iterable[Event]) -> LotBook:
     evs = sorted(events, key=lambda e: (e.day, ORDER.get(e.kind, 5), e.id or 0))
     warnings: list[str] = []
     # a statement's opening balance stands for the history before the statement. Once an earlier statement (or any
-    # earlier transaction) is imported, that history is present and the opening balance would count it twice.
-    if evs:
-        first = evs[0].day
-        kept = [
-            e for e in evs if not (e.kind == "opening" and e.meta.get("statement_opening") and e.day > first)
-        ]
-        if len(kept) < len(evs):
-            warnings.append("a statement's opening balance was ignored: earlier transactions cover it")
-        evs = kept
+    # earlier transaction) is imported, that history is present and the opening balance would count it twice. Only
+    # unit-moving events count as "earlier": an older dividend row alone must not wipe out the opening's units.
+    drop = superseded_openings(evs)
+    if drop:
+        warnings.append("a statement's opening balance was ignored: earlier transactions cover it")
+        evs = [e for i, e in enumerate(evs) if i not in drop]
     lots: list[Lot] = []
     disposals: list[Disposal] = []
     dividends: list[tuple[date, Decimal]] = []
@@ -233,7 +250,10 @@ def build_lots(events: Iterable[Event]) -> LotBook:
                     warnings.append(
                         f"{e.day}: sold {t.normalize()} more units than the lots hold (missing history?)"
                     )
-                cost = None if lot is None or lot.cost_per_unit is None else lot.cost_per_unit * t
+                # a sale without a price has unknown proceeds: its gain is unknown too (cost None takes the "unknown"
+                # path in tax and P&L), never proceeds 0 against a known cost, which would book a 100 % loss
+                cost = (None if lot is None or lot.cost_per_unit is None or per_unit is None
+                        else lot.cost_per_unit * t)  # fmt: skip
                 disposals.append(Disposal(e.id, lot, lot.acquired if lot else None, e.day, t, cost,
                                           (per_unit * t) if per_unit is not None else ZERO,
                                           bool(e.stt_paid and (lot.stt_paid if lot else True)),

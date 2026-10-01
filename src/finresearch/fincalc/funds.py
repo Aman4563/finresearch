@@ -6,6 +6,7 @@ Risk-free rates are inputs (state the source and date); nothing here assumes one
 
 from __future__ import annotations
 
+import calendar
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
@@ -128,16 +129,14 @@ class SipOutcome:
 
 def sip_outcome(navs: Series, amount: Num, start: date, end: date, day_of_month: int = 1) -> SipOutcome:
     """Monthly SIP of `amount` on `day_of_month` (the next NAV date if that day has none), valued at the last NAV
-    on or before `end`."""
+    on or before `end`. A day the month lacks (the 31st in April, the 29th-31st in February) falls on the month's
+    last day."""
     s = _series(navs)
     amt = require_price(amount, "amount")
     units, invested, flows, n = Decimal(0), Decimal(0), [], 0
     y, m = start.year, start.month
     while True:
-        try:
-            due = date(y, m, day_of_month)
-        except ValueError:
-            due = date(y, m, 28)
+        due = date(y, m, min(day_of_month, calendar.monthrange(y, m)[1]))
         if due > end:
             break
         if due >= start:

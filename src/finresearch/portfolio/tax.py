@@ -175,7 +175,10 @@ def evaluate(row: DisposalRow) -> DisposalRow:
         row.notes.append("Cost unknown (opening balance or transfer-in): enter the cost and date")
         return row
     cost = row.cost
-    if (h.tax_class == "equity" and row.cls.term == "long" and row.acquired is not None
+    # s.55(2)(ac) (s.90(7) of the 2025 Act) steps the cost up only for a long-term capital asset "referred to in
+    # section 112A", i.e. a transfer taxed under the equity regime. An equity holding sold without STT is classified
+    # under the general rules (fincalc.tax.classify) and keeps its actual cost.
+    if (row.cls.bucket == "equity_lt" and row.acquired is not None
             and row.acquired <= GRANDFATHER_DATE):  # fmt: skip
         if h.fmv_2018 is None:
             row.notes.append("Bought before 1-Feb-2018: enter the FMV on 31-Jan-2018 for grandfathering (actual cost "
@@ -192,8 +195,11 @@ def evaluate(row: DisposalRow) -> DisposalRow:
 
 
 def gains_of(rows: Iterable[DisposalRow]) -> list[Gain]:
+    """Capital-gains rows for fincalc.tax.fy_tax. Intraday trades are speculative business income, not capital
+    gains: they are left out here (fy_summary counts them separately) instead of being reported as disposals with an
+    "unknown acquisition date or cost"."""
     return [Gain(r.gain if r.gain is not None else Decimal(0), r.cls, r.sold, str(r.txn_id or ""))
-            for r in rows if r.cls is not None]  # fmt: skip
+            for r in rows if r.cls is not None and r.origin != "intraday"]  # fmt: skip
 
 
 def fy_summary(rows: Sequence[DisposalRow], fy: int, slab: Decimal) -> dict[str, Any]:

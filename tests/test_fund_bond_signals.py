@@ -464,6 +464,9 @@ def test_bond_no_signal_paths():
     assert matured.action == "NO_SIGNAL"
     with pytest.raises(ValueError):
         bond_sig.assess(par_bond(), FLAT_7, p, {"freq": "3"}, TODAY, None)
+    # a price no yield in -50 %..100 % explains (a stale or mis-scaled quote): no signal, not a 100 % "YTM"
+    absurd = bond_sig.assess(par_bond(last_price=Decimal(10)), FLAT_7, p, {"freq": "1"}, TODAY, None)
+    assert absurd.action == "NO_SIGNAL" and "No yield fits" in absurd.caveats[0]
 
 
 def test_bond_sold_early_uses_rate_scenarios():

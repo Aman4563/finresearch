@@ -207,3 +207,14 @@ These are dated entries for bugs we reproduced, what caused them, and how they a
 ### 2026-10-01: fact-checking holes found in the verification audit (#158)
 - **Seen:** the publish gate only checked `[C123]` citations, while the dashboard also links `(C123)`, `(C1/C2)`, `[C1, C2]` and a bare `C123`, so a report citing a contradicted claim in those forms published. The citation check's table-row fallback matched numbers as substrings ("12" inside "1,234"), so a made-up quote could be marked found. A verifier's verdict was applied to any claim of the run, not only those it was given. BSE exchange facts (`bse_equity`) were not deterministic, so a conflicting agent claim demoted them. Units such as "years" or "users" were read as rupees ("rs").
 - **Now:** the gate checks every spelling the dashboard links (and warns to bracket them); quoted numbers must be whole numbers in the cited lines; verdicts outside the verifier's brief are ignored and logged; `bse_equity` is deterministic; "Rs"/"INR" are matched as words. Regression tests fail on the old code.
+### 2026-10-01: portfolio audit: phantom losses, double-counted openings, STT in proceeds (#161)
+- **Seen (synthetic data):**
+  - A sale with no price booked a 100 % loss.
+  - A second CAS's opening balance became a second inflow in the value history and blocked XIRR.
+  - CAS STT reduced redemption proceeds, which s.48 (fifth proviso) does not allow.
+  - Month-first tradebook dates were half mis-read.
+  - Older units before a tradebook ignored a split inside it: 50 units instead of 10.
+  - Statements imported between 00:00 and 05:30 IST were dated the previous (UTC) day.
+  - A partial sync lost trades.
+  - Term cover counted goal money twice: a ₹2 lakh gap where the gap is ₹6 lakh.
+- **Now:** each is fixed, and a regression test in tests/test_portfolio_audit.py, test_connectors.py or test_wealth_api.py fails on the old code.

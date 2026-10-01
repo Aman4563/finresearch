@@ -153,21 +153,58 @@ _DATE_FORMATS = (
     "%d %b %Y",
     "%Y/%m/%d",
     "%d-%m-%y",
+    "%d/%m/%y",
     "%b %d, %Y",
 )
 
 
-def parse_day(v: Any) -> date | None:
-    """A trade date from a tradebook cell: ISO, DD-MM-YYYY, DD/MM/YYYY, 12-Jan-2025, or with a time appended."""
+def infer_month_first(values: list[Any]) -> bool:
+    """Whether a file's numeric dates are month-first. Indian brokers write day-first, but a file opened and re-saved
+    in a US locale is month-first, and a single date like 03-04-2025 cannot tell. The whole column decides: a first
+    field above 12 proves day-first, a second field above 12 proves month-first; both in one file is an error, never
+    a silent mix of 3-Apr and 4-Mar."""
+    day_first = month_first = False
+    for v in values:
+        if isinstance(v, date):
+            continue
+        m = _NUMERIC_DATE.match(_date_text(v))
+        if not m:
+            continue
+        a, b = int(m.group(1)), int(m.group(2))
+        day_first |= a > 12
+        month_first |= b > 12
+    if day_first and month_first:
+        raise StatementError("the file mixes day-first and month-first dates (e.g. 13-01 and 01-13): fix the date "
+                             "column to one format and import again")  # fmt: skip
+    return month_first
+
+
+_MONTH_FIRST = {
+    "%d-%m-%Y": "%m-%d-%Y",
+    "%d/%m/%Y": "%m/%d/%Y",
+    "%d-%m-%y": "%m-%d-%y",
+    "%d/%m/%y": "%m/%d/%y",
+}
+_NUMERIC_DATE = re.compile(r"^(\d{1,2})[-/](\d{1,2})[-/](\d{2}|\d{4})$")
+
+
+def _date_text(v: Any) -> str:
+    t = str(v or "").strip()
+    return re.split(r"[T ]\d{1,2}:\d{2}", t)[0].strip().rstrip(",")
+
+
+def parse_day(v: Any, month_first: bool = False) -> date | None:
+    """A trade date from a tradebook cell: ISO, DD-MM-YYYY, DD/MM/YYYY, 12-Jan-2025, or with a time appended.
+    `month_first` reads numeric dates as MM-DD-YYYY (a file re-saved in a US locale; see `infer_month_first`)."""
     if isinstance(v, datetime):
         return v.date()
     if isinstance(v, date):
         return v
-    t = str(v or "").strip()
+    t = _date_text(v)
     if not t:
         return None
-    t = re.split(r"[T ]\d{1,2}:\d{2}", t)[0].strip().rstrip(",")
-    for fmt in _DATE_FORMATS:
+    formats = [_MONTH_FIRST.get(f, f) for f in _DATE_FORMATS] if month_first else _DATE_FORMATS
+    for fmt in formats:
         try:
             return datetime.strptime(t, fmt).date()
         except ValueError:
@@ -283,10 +320,17 @@ def cas_to_result(d: dict[str, Any]) -> ImportResult:
                 else:
                     res.skipped[ttype] += 1
             for day, ttype, amt in pending:
+                # stamp duty is levied on the purchase and is part of its cost of acquisition. STT is charged on the
+                # redemption and is NOT deductible in computing capital gains (s.48, fifth proviso, inserted by the
+                # Finance (No.2) Act 2004): it is recorded on the sale for reference, never netted off the proceeds.
+                kinds = ("buy",) if ttype == "STAMP_DUTY_TAX" else ("sell",)
                 target = next((x for x in res.txns if x.account == account and x.name == name and x.day == day
-                               and x.kind in ("buy", "sell")), None)  # fmt: skip
+                               and x.kind in kinds), None)  # fmt: skip
                 if target is None:
                     res.skipped[ttype] += 1
+                    continue
+                if ttype == "STT_TAX":
+                    target.meta["stt"] = str(Decimal(target.meta.get("stt") or 0) + amt)
                     continue
                 target.charges += amt
                 target.meta.setdefault("charges_from", []).append(ttype)
@@ -383,11 +427,15 @@ def parse_tradebook(content: bytes, filename: str = "", broker: str | None = Non
         j = col.get(name)
         return r[j] if j is not None and j < len(r) else None
 
+    date_col = {"zerodha": "trade date", "groww": "execution date and time", "upstox": "date"}[detected]
+    month_first = infer_month_first([cell(r, date_col) for r in rows[hi + 1 :]])
+    if month_first:
+        res.warnings.append("dates read as month-day-year (the file has dates such as 01-13-2025)")
     for r in rows[hi + 1 :]:
         if not any(c not in (None, "") for c in r):
             continue
         try:
-            t = _trade_row(detected, r, cell, account)
+            t = _trade_row(detected, r, cell, account, month_first)
         except ValueError as e:
             res.skipped[str(e)] += 1
             continue
@@ -412,14 +460,16 @@ def _symbol(v: Any) -> str:
     return t[:-2] if re.fullmatch(r"\d{5,7}\.0", t) else t
 
 
-def _trade_row(broker: str, r: list[Any], cell, account: str) -> ImportedTxn | None:
+def _trade_row(
+    broker: str, r: list[Any], cell, account: str, month_first: bool = False
+) -> ImportedTxn | None:
     if broker == "zerodha":
         seg = _norm(cell(r, "segment"))
         if seg and seg not in ("eq", "equity"):
             raise ValueError(f"segment {seg.upper()} (not equity delivery)")
         side = _norm(cell(r, "trade type"))
         qty, price = _dec(cell(r, "quantity")), _dec(cell(r, "price"))
-        day = parse_day(cell(r, "trade date"))
+        day = parse_day(cell(r, "trade date"), month_first)
         sym, isin = _symbol(cell(r, "symbol")), str(cell(r, "isin") or "").strip().upper()
         exch = str(cell(r, "exchange") or "").strip().upper() or None
         ext = f"{exch}:{cell(r, 'trade id')}:{cell(r, 'order id')}"
@@ -433,7 +483,7 @@ def _trade_row(broker: str, r: list[Any], cell, account: str) -> ImportedTxn | N
         side = _norm(cell(r, "type"))
         qty, value = _dec(cell(r, "quantity")), _dec(cell(r, "value"))
         price = (value / qty) if value is not None and qty else None
-        day = parse_day(cell(r, "execution date and time"))
+        day = parse_day(cell(r, "execution date and time"), month_first)
         sym, isin = _symbol(cell(r, "symbol")), str(cell(r, "isin") or "").strip().upper()
         exch = str(cell(r, "exchange") or "").strip().upper() or None
         ext = f"{exch}:{cell(r, 'exchange order id')}"
@@ -446,7 +496,7 @@ def _trade_row(broker: str, r: list[Any], cell, account: str) -> ImportedTxn | N
             raise ValueError("derivatives row (not equity delivery)")
         side = _norm(cell(r, "side"))
         qty, price = _dec(cell(r, "quantity")), _dec(cell(r, "price"))
-        day = parse_day(cell(r, "date"))
+        day = parse_day(cell(r, "date"), month_first)
         sym, isin = "", ""
         exch = str(cell(r, "exchange") or "").strip().upper() or None
         ext = f"{exch}:{cell(r, 'trade num')}"

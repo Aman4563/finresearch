@@ -754,9 +754,14 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
                 "analytics": None,
                 "error": "the clean price would be negative: check the price basis",
             }
-        y = b.ytm(clean, s_day, bond.maturity, coupon, freq, face)
+        try:
+            y = b.ytm(clean, s_day, bond.maturity, coupon, freq, face)
+            after = b.after_tax_ytm(
+                clean, s_day, bond.maturity, coupon, freq, tax_rate, face=face, accrued=ai
+            )
+        except ValueError as e:  # the solver's bound is not a yield: say why instead of showing 100 %
+            return {**head, "analytics": None, "error": f"{e}: check the price basis and face value"}
         d = b.duration(y, s_day, bond.maturity, coupon, freq, face)
-        after = b.after_tax_ytm(clean, s_day, bond.maturity, coupon, freq, tax_rate, face=face, accrued=ai)
         flows = b.cash_flows(s_day, bond.maturity, coupon, freq, face)
         per = face * coupon / freq
         yf = float(y)
