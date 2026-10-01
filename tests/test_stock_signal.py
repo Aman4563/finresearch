@@ -104,6 +104,13 @@ def test_rising_stock_gets_a_backtested_bucket_probability_and_rule_based_action
     # n/12 counts stock-years, not independent years (audit #158): the label must not claim independence
     assert "non-overlapping years" not in s.base_rate["description"]
     assert "stock-months ÷ 12" in s.base_rate["description"]
+    # the card's event is exactly what the ledger scores (closes plus cash dividends), and the price-return backtest
+    # behind the probability is labelled a proxy for it (audit follow-up: the label and the definition disagreed)
+    from finresearch.signals import ledger
+
+    assert s.event == ledger.STOCK_EVENT and "plus cash dividends" in s.event
+    assert "no dividends: a proxy for the dividend-inclusive event" in s.base_rate["description"]
+    assert "(both without dividends)" not in (st.__doc__ or "")
     assert s.validation.status == "rule_based" and s.validation.n == 100
     assert "Not backtested: the composite weights" in s.validation.description
     assert s.validation.metrics["excess_cagr"] == 0.03
