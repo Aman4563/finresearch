@@ -71,15 +71,15 @@ def numbers_in(text: str) -> list[Decimal]:
 
 
 FOREIGN_CURRENCY = ("usd", "us$", "$", "eur", "€", "gbp", "£", "jpy", "¥", "dollar", "euro")
+# a rupee amount: "Rs" / "INR" as words ("years", "users", "hours" are not rupees), ₹, or an Indian / million scale
+_RUPEE_RE = re.compile(r"\b(?:inr|rs)\b|₹|rupee|crore|lakh|million|\bmn\b|\bcr\b|billion")
 
 
 def rupee_scale(unit: str | None) -> Decimal | None:
     u = f" {(unit or '').lower()}"
     if any(k in u for k in FOREIGN_CURRENCY):  # live INFY run 8: "USD million" was read as ₹ million
         return None
-    if not any(
-        k in u for k in ("inr", "rs", "₹", "rupee", "crore", "lakh", "million", " mn", " cr", "billion")
-    ):
+    if not _RUPEE_RE.search(u):
         return None
     for key, scale in _SCALE:
         if key in u:
@@ -151,7 +151,9 @@ class GateResult:
 
 
 # claims recorded by the pipeline from primary exchange/AMFI data, not by an agent (checks["source"])
-DETERMINISTIC_SOURCES = {"nse_issue_info", "bse_issue_info", "nse_equity", "amfi", "nse_bonds"}
+# (verify.baseline: <exchange>_issue_info; verify.stock_baseline: nse_equity / bse_equity; orchestrator.fund: amfi;
+# orchestrator.bond: nse_bonds)
+DETERMINISTIC_SOURCES = {"nse_issue_info", "bse_issue_info", "nse_equity", "bse_equity", "amfi", "nse_bonds"}
 
 
 def is_deterministic(c: Claim) -> bool:
@@ -336,6 +338,11 @@ def apply_correction(
 USABLE = {"verified"}
 CAVEAT_OK = {"unverified", "needs_review"}
 _CITE_RE = re.compile(r"\[C(\d+)\]")
+# Other spellings the dashboard also renders as claim links (api.insights.norm_cites / CITE_ANY): "(C12)",
+# "(C12/C15)", "[C12, C15]" and a bare "C123". The gate must check every claim the reader is shown as cited, so these
+# are collected too (only ids that are claims of this run: a bare "C20" may be ordinary text).
+_CITE_GROUP_RE = re.compile(r"[\[(]\s*(C\d+(?:\s*[/,;&]\s*C\d+)*)\s*[\])]")
+_BARE_CITE_RE = re.compile(r"(?<![\w\[])C(\d{2,})(?![\w\]])")
 _RAW_CITE_RE = re.compile(r"\[(?:RHP|DRHP|doc(?:ument)?)\s*L?\s*\d+", re.I)
 _FIGURE_RE = re.compile(r"₹\s?\d|\d[\d,]*\.\d+|\d+(?:\.\d+)?\s?%|\d+(?:\.\d+)?x\b|\b\d{1,3}(?:,\d{2,3})+\b")
 
@@ -354,10 +361,23 @@ class ReportGate:
         )
 
 
+def loose_cite_ids(text: str) -> set[int]:
+    """Claim ids cited in a non-canonical form ("(C12)", "(C1/C2)", "[C1, C2]", bare "C123")."""
+    ids = {int(x) for m in _CITE_GROUP_RE.finditer(text) for x in re.findall(r"C(\d+)", m.group(1))}
+    return ids | {int(x) for x in _BARE_CITE_RE.findall(text)}
+
+
 def check_report(session: Session, run_id: int, report_markdown: str) -> ReportGate:
-    ids = sorted({int(x) for x in _CITE_RE.findall(report_markdown)})
+    canonical = {int(x) for x in _CITE_RE.findall(report_markdown)}
+    loose = loose_cite_ids(report_markdown) - canonical
+    if loose:  # only real claims of this run: those are what the dashboard links
+        loose = set(session.scalars(select(Claim.id).where(Claim.id.in_(loose), Claim.run_id == run_id)))
+    ids = sorted(canonical | loose)
     claims = {c.id: c for c in session.scalars(select(Claim).where(Claim.id.in_(ids)))} if ids else {}
     g = ReportGate(ok=True, cited_claims=ids)
+    if loose:
+        g.warnings.append(f"claims cited without brackets {[f'C{i}' for i in sorted(loose)][:10]} — cite each as "
+                          "[C<id>]")  # fmt: skip
     for i in ids:
         c = claims.get(i)
         if c is None or c.run_id != run_id:

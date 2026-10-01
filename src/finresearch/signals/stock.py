@@ -729,7 +729,9 @@ async def stock_signal(instrument: str, ctx: dict[str, Any]) -> Signal:
         base_rate = {"n": bucket["n"], "p": bucket["p"], "ci": bucket.get("wilson95"),
                      "description": f"{bucket_name}: NIFTY 50 stock-months {bt['stats']['from'][:7]} to "
                                     f"{bt['stats']['to'][:7]} whose next 12 months' price return beat the NIFTY 50 price index (backtested; "
-                                    f"CI on an effective n of {bucket['n_effective']} non-overlapping years)"}  # fmt: skip
+                                    f"CI on an effective n of {bucket['n_effective']} = stock-months ÷ 12 for the overlapping "
+                                    "12-month windows; stocks in the same month move together, so the true n is "
+                                    "smaller and the range too narrow)"}  # fmt: skip
         st = bt["stats"]
         metrics = {k: round(v, 4) for k, v in {
             "strategy_cagr": st["cagr"]["strategy"], "equal_weight_cagr": st["cagr"]["equal_weight_universe"],

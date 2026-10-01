@@ -436,11 +436,22 @@ class ResearchPipeline:
         with session_scope() as s:
             return run_gate(s, self.run_id, stream=stream, facts=self.ctx.facts).summary()
 
-    def _apply_verdicts(self, rep: VerificationReport, *, second_opinion: bool = False) -> None:
+    def _apply_verdicts(self, rep: VerificationReport, claims: str, *, second_opinion: bool = False) -> None:
+        """Apply a verifier's verdicts to the claims it was given (`claims`, the `_claims_text` it read). A verdict on
+        any other claim is ignored: the verifier reads web pages and documents, and an instruction planted there must
+        not be able to re-judge claims outside its brief (house rule 7)."""
         from finresearch.verify.gate import apply_correction, is_deterministic
 
+        sent = {int(c["claim_id"]) for c in json.loads(claims)}
+        ignored = sorted({v.claim_id for v in rep.verdicts} - sent)
+        if ignored:
+            logger.warning(
+                "run %s: ignored verdicts on claims the verifier was not given: %s", self.run_id, ignored
+            )
         with session_scope() as s:
             for v in rep.verdicts:
+                if v.claim_id not in sent:
+                    continue
                 c = s.get(Claim, v.claim_id)
                 if c is None or c.run_id != self.run_id or c.status == "unsupported" or is_deterministic(c):
                     continue  # an exchange/AMFI fact is compared against, never re-judged by a model
@@ -473,13 +484,14 @@ class ResearchPipeline:
         if claims != "[]":
             vkey = f"{key_prefix}verify:{stream}"
             ver = await self.step(vkey, "verify", self.roles["verifier"], target_stream=stream, claims=claims)
-            self._once(vkey, lambda: self._apply_verdicts(ver))
+            self._once(vkey, lambda: self._apply_verdicts(ver, claims))
             high = self._high_verified(stream)
             if high:
                 v2key = f"{key_prefix}verify2:{stream}"
+                claims2 = self._claims_text(ids=high)
                 ver2 = await self.step(v2key, "verify", self.roles["verifier"], target_stream=f"{stream} (second opinion)",
-                                       claims=self._claims_text(ids=high))  # fmt: skip
-                self._once(v2key, lambda: self._apply_verdicts(ver2, second_opinion=True))
+                                       claims=claims2)  # fmt: skip
+                self._once(v2key, lambda: self._apply_verdicts(ver2, claims2, second_opinion=True))
         return rep
 
     async def _cross_stream(self, key_prefix: str = "") -> None:
@@ -496,9 +508,10 @@ class ResearchPipeline:
         ids = sorted({i for pair in conflicts for i in pair})
         if ids:
             key = f"{key_prefix}verify:cross-stream"
+            claims = self._claims_text(ids=ids)
             ver = await self.step(key, "verify", self.roles["verifier"], target_stream="cross-stream conflicts",
-                                  claims=self._claims_text(ids=ids))  # fmt: skip
-            self._once(key, lambda: self._apply_verdicts(ver))
+                                  claims=claims)  # fmt: skip
+            self._once(key, lambda: self._apply_verdicts(ver, claims))
 
     def _identities(self, key: str) -> None:
         """Accounting-identity and scale checks (verify/identities.py) after the streams, before synthesis. Results

@@ -203,3 +203,7 @@ These are dated entries for bugs we reproduced, what caused them, and how they a
 ### 2026-10-01: an experiment wrote to the live database
 - **Seen:** an agent started a test API without FINRESEARCH_DATABASE_URL, so it used the live DB and logged 4 forecast rows.
 - **Now:** the rows were reviewed and kept (valid, pre-listing). Rule: every non-live server must point at a test DB (the brief now says so).
+
+### 2026-10-01: fact-checking holes found in the verification audit (#158)
+- **Seen:** the publish gate only checked `[C123]` citations, while the dashboard also links `(C123)`, `(C1/C2)`, `[C1, C2]` and a bare `C123`, so a report citing a contradicted claim in those forms published. The citation check's table-row fallback matched numbers as substrings ("12" inside "1,234"), so a made-up quote could be marked found. A verifier's verdict was applied to any claim of the run, not only those it was given. BSE exchange facts (`bse_equity`) were not deterministic, so a conflicting agent claim demoted them. Units such as "years" or "users" were read as rupees ("rs").
+- **Now:** the gate checks every spelling the dashboard links (and warns to bracket them); quoted numbers must be whole numbers in the cited lines; verdicts outside the verifier's brief are ignored and logged; `bse_equity` is deterministic; "Rs"/"INR" are matched as words. Regression tests fail on the old code.
