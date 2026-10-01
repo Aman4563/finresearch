@@ -277,8 +277,11 @@ async def listing(session: Session, job: MonitorJob, watch: Watch, deps: Deps, n
         raise NotYet(f"{watch.nse_symbol} has not listed on {exchange} yet")
     # A quote describes its own session: a check that runs after the listing day (a retry, a late confirmation) would
     # read a later day's open and close. Then the listing day's bar from the exchange's price history is used.
-    later = q.as_of is not None and to_ist(q.as_of).date() > q.listing_date
-    bar = await _listing_bar(deps, watch.nse_symbol, q.listing_date, bse) if later else None
+    # The day is the later of NSE's listing date and the watch's: a demerged or relisted company's quote can carry its
+    # original listing date (TMCV), while a listing is never earlier than the date the watch expected.
+    day = max(q.listing_date, watch.listing_date or q.listing_date)
+    later = q.as_of is not None and to_ist(q.as_of).date() > day
+    bar = await _listing_bar(deps, watch.nse_symbol, day, bse) if later else None
     meta = dict(watch.meta or {})
     if q.listing_date != watch.listing_date:
         meta["expected_listing_date"] = watch.listing_date.isoformat()
@@ -326,7 +329,9 @@ class ListingDayPassed(RuntimeError):
 async def _listing_bar(deps: Deps, symbol: str, day: date, bse: bool) -> Any:
     """The listing day's daily bar (open and official close), or ListingDayPassed."""
     # BSE's history is keyed by scrip code; a BSE SME watch carries the issue's symbol, so it has no history to read
-    fetch = (deps.bse_price_history if symbol.isdigit() else None) if bse else deps.price_history
+    fetch = getattr(deps, "bse_price_history", None) if bse else getattr(deps, "price_history", None)
+    if bse and not symbol.isdigit():
+        fetch = None
     if fetch is None:
         raise ListingDayPassed(
             f"{symbol}'s quote is from after its listing day {day} and no price history is set"
