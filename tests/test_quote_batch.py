@@ -211,3 +211,16 @@ def test_the_valuation_after_the_stream_does_not_refetch_a_failed_quote(env):
         assert sorted(asked) == sorted(["INFY", UNKNOWN])  # nothing fetched again
         bad = next(h for h in full["holdings"] if h["nse_symbol"] == UNKNOWN)
         assert bad["price"] is None and "NseNoQuote" in (bad["price_error"] or "")
+
+
+def test_a_holdings_price_from_an_earlier_day_is_not_labelled_in_session():
+    from datetime import datetime
+
+    from finresearch.adapters.http import IST
+    from finresearch.portfolio.valuation import price_from_quote
+
+    q = Quote(
+        symbol="ILLIQ", last_price=12, previous_close=11, as_of=datetime(2026, 9, 25, 14, 12, tzinfo=IST)
+    )
+    p = price_from_quote(q, "NSE")
+    assert p.price == 12 and p.source != "NSE quote: last traded" and p.as_of.startswith("2026-09-25")

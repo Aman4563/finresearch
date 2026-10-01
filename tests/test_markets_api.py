@@ -467,3 +467,22 @@ def test_result_rows_for_banks_and_insurers_have_revenue_and_profit(name, basis,
     assert r["revenue_basis"] == basis and r["bank"] is (basis == "interest_earned")
     assert (r["revenue"], r["profit"], r["total_expenses"]) == (revenue, profit, expenses)
     assert r["label"] == "Q1 FY27" and 0 < r["margin"] < 1 and r["eps"] > 0
+
+
+def test_overview_never_calls_an_earlier_days_quote_an_open_session(app_client):
+    """Regression: the overview built its quote without `now`, so an illiquid stock's last trade from an earlier day
+    (stamped 14:12, before the 15:30 close) read as session "open" with a live-looking last price."""
+    from datetime import datetime
+
+    from finresearch.adapters.http import IST
+
+    c, _, _, _ = app_client
+    stale = quote_fixture().model_copy(update={"symbol": "STALEX", "close_price": None,
+                                              "as_of": datetime(2026, 9, 25, 14, 12, tzinfo=IST)})  # fmt: skip
+
+    async def quote(symbol):
+        return stale
+
+    c.app.state.markets.quote = quote
+    q = c.get("/api/stocks/STALEX/overview").json()["quote"]
+    assert q["session"] != "open" and q["price_kind"] == "last_traded"

@@ -415,7 +415,10 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
             anns = await part("announcements", lambda: eq.announcements(sym), [])
         div_today, action_today = ex_today(actions, q)
         quote = (
-            quote_json(q, sym, dividend_today=div_today, action_today=action_today) if q is not None else None
+            # `now`: a quote from an earlier day (an illiquid stock's last trade) is not today's open session
+            quote_json(q, sym, now=datetime.now(UTC), dividend_today=div_today, action_today=action_today)
+            if q is not None
+            else None
         )
         year_ago = today - timedelta(days=365)
         ttm_dps = sum((a.dividend_per_share for a in actions

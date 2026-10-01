@@ -119,9 +119,11 @@ def broker_statement_price(h: Any, why: str) -> PriceInfo:
 def price_from_quote(q: Any, exch: str, listing: Any = None) -> PriceInfo:
     """The holding's price is the display price (fincalc.price): the last trade in session, the official close after
     it, the previous close when there has been no trade."""
+    from datetime import UTC, datetime
+
     from finresearch.fincalc.price import price_view
 
-    v = price_view(q, exchange=exch)
+    v = price_view(q, exchange=exch, now=datetime.now(UTC))  # an earlier day's quote is never "in session"
     price = v.price
     mcap = getattr(q, "market_cap", None)
     mcap_cr = (mcap / Decimal(10**7)) if mcap else None
