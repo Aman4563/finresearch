@@ -164,13 +164,15 @@ function ProfileMenu() {
   useEffect(() => {
     if (!open) return;
     const close = (e: MouseEvent) => !ref.current?.contains(e.target as Node) && setOpen(false);
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
     window.addEventListener("mousedown", close);
-    return () => window.removeEventListener("mousedown", close);
+    window.addEventListener("keydown", onKey);
+    return () => { window.removeEventListener("mousedown", close); window.removeEventListener("keydown", onKey); };
   }, [open]);
   const name = data?.display_name || "Investor";
   return (
     <div className="relative" ref={ref}>
-      <button type="button" onClick={() => setOpen((o) => !o)} aria-haspopup="menu" aria-expanded={open}
+      <button type="button" onClick={() => setOpen((o) => !o)} aria-haspopup="menu" aria-expanded={open} aria-label={`Account menu: ${name}`}
         className="flex items-center gap-2 rounded-full p-0.5 pr-2 transition hover:bg-background-subtle">
         <span className={cx("grid size-8 place-items-center rounded-full bg-gradient-to-br text-xs font-semibold text-white", AVATAR_GRADIENT[data?.avatar_color ?? "brand"])}>
           {initials(name)}
@@ -248,7 +250,10 @@ function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void 
     ];
     const cos: Cmd[] = (companies ?? []).map((c) => ({
       id: `co-${c.slug}`, label: c.name, hint: c.nse_symbol ? `NSE ${c.nse_symbol}` : c.bse_code ? `BSE ${c.bse_code}` : c.slug, group: "Companies", icon: <BadgeIndianRupee />,
-      run: go(c.latest_run ? `/runs/${c.latest_run}` : `/ipos`),
+      // no report yet: the instrument's own page where there is one (a stock), else its section, never a dead end
+      run: go(c.latest_run ? `/runs/${c.latest_run}`
+        : c.kind === "stock_report" && (c.key || c.nse_symbol) ? `/stocks/${encodeURIComponent((c.key || c.nse_symbol)!)}`
+        : c.kind === "fund_report" ? "/funds" : c.kind === "bond_report" ? "/bonds" : "/ipos"),
     }));
     return [...pages, ...actions, ...cos];
   }, [companies, onClose, router, setTheme, togglePrivacy]);
@@ -258,6 +263,12 @@ function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void 
     const hits = t ? cmds.filter((c) => `${c.label} ${c.hint ?? ""} ${c.group}`.toLowerCase().includes(t)) : cmds.filter((c) => c.group !== "Companies");
     return hits.slice(0, 40);
   }, [cmds, q]);
+
+  // keep the highlighted option visible while arrowing through a long list
+  const listRef = useRef<HTMLUListElement>(null);
+  useEffect(() => {
+    listRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
+  }, [sel]);
 
   if (!open) return null;
   const onKey = (e: React.KeyboardEvent) => {
@@ -269,7 +280,7 @@ function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void 
   let lastGroup = "";
   return (
     <div className="fixed inset-0 z-[60] flex items-start justify-center bg-black/40 p-4 pt-[14vh] backdrop-blur-sm animate-fade-in" onClick={onClose}>
-      <div className="w-full max-w-xl overflow-hidden rounded-xl border border-border bg-card shadow-pop animate-scale-in" onClick={(e) => e.stopPropagation()}>
+      <div role="dialog" aria-modal="true" aria-label="Search or jump to" className="w-full max-w-xl overflow-hidden rounded-xl border border-border bg-card shadow-pop animate-scale-in" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2 border-b border-border px-4">
           <Search className="size-4 text-muted" />
           <input ref={inputRef} value={q} onChange={(e) => { setQ(e.target.value); setSel(0); }} onKeyDown={onKey}
@@ -277,7 +288,7 @@ function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void 
             className="h-12 flex-1 bg-transparent text-sm outline-none placeholder:text-muted" />
           <kbd className="rounded border border-border px-1.5 py-0.5 text-[10px] text-muted">Esc</kbd>
         </div>
-        <ul className="max-h-[50vh] overflow-y-auto p-2" role="listbox">
+        <ul ref={listRef} id="palette-list" className="max-h-[50vh] overflow-y-auto p-2" role="listbox" aria-label="Results">
           {!shown.length && <li className="px-3 py-6 text-center text-sm text-muted">Nothing matches “{q}”.</li>}
           {shown.map((c, i) => {
             const header = c.group !== lastGroup ? c.group : null;
@@ -323,6 +334,13 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, []);
   // eslint-disable-next-line react-hooks/set-state-in-effect -- close the mobile drawer on navigation
   useEffect(() => setMobile(false), [path]);
+  // ...and on Escape, like any other overlay
+  useEffect(() => {
+    if (!mobile) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setMobile(false);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [mobile]);
 
   const toggle = () => {
     setCollapsed((c) => {
@@ -410,14 +428,15 @@ export function AppShell({ children }: { children: ReactNode }) {
       {mobile && (
         <div className="fixed inset-0 z-50 lg:hidden">
           <div className="absolute inset-0 bg-black/40 backdrop-blur-sm animate-fade-in" onClick={() => setMobile(false)} />
-          <aside className="absolute inset-y-0 left-0 w-72 border-r border-border bg-card shadow-pop animate-[fade-up_0.25s_ease-out]">{sidebar(true)}</aside>
+          <aside role="dialog" aria-modal="true" aria-label="Menu" className="absolute inset-y-0 left-0 w-72 border-r border-border bg-card shadow-pop animate-[fade-up_0.25s_ease-out]">{sidebar(true)}</aside>
         </div>
       )}
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="sticky top-0 z-40 flex h-16 items-center gap-3 border-b border-border bg-background/75 px-4 backdrop-blur-xl sm:px-6">
           <a href="#main" className="sr-only z-50 rounded-md bg-brand px-3 py-2 text-sm font-medium text-brand-fg focus:not-sr-only focus:fixed focus:top-2 focus:left-2">Skip to content</a>
-          <button type="button" aria-label="Open menu" onClick={() => setMobile(true)} className="text-muted lg:hidden"><Menu className="size-5" /></button>
-          <div className="min-w-0">
+          <button type="button" aria-label="Open menu" aria-expanded={mobile} onClick={() => setMobile(true)} className="grid size-9 shrink-0 place-items-center rounded-lg text-muted lg:hidden"><Menu className="size-5" /></button>
+          {/* below sm the page's own header already names it; here it only squeezed to "I…" beside the search */}
+          <div className="hidden min-w-0 sm:block">
             <p className="truncate text-sm font-semibold">{current?.label ?? "FinResearch"}</p>
             <p className="hidden truncate text-xs text-muted sm:block">{current?.description}</p>
           </div>

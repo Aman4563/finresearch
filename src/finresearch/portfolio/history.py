@@ -40,7 +40,7 @@ from pathlib import Path
 from typing import Any
 
 from finresearch.portfolio import analytics_math as am
-from finresearch.portfolio.lots import Event, bonus_ratio, build_lots, split_factor
+from finresearch.portfolio.lots import Event, bonus_ratio, build_lots, split_factor, superseded_openings
 
 log = logging.getLogger(__name__)
 
@@ -357,9 +357,13 @@ class _Flow:
 
 
 def flows_of(events: Sequence[Event]) -> list[_Flow]:
-    """External flows of one holding (see the module docstring)."""
+    """External flows of one holding (see the module docstring). A statement opening that the lots ignore (an older
+    statement or tradebook already covers that history) is no flow either: its units are already in the series."""
     out = []
-    for e in events:
+    skip = superseded_openings(events)
+    for i, e in enumerate(events):
+        if i in skip:
+            continue
         reinvest = bool(e.meta.get("reinvest"))
         gross = e.gross()
         q = float(e.quantity) if e.quantity is not None else 0.0

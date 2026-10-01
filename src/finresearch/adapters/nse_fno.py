@@ -16,6 +16,7 @@ from finresearch.adapters.nse import (
     NSE_BASE,
     NseClient,
     NseError,
+    _looks_json,
     parse_nse_date,
     parse_nse_timestamp,
     parse_num,
@@ -138,14 +139,27 @@ class NseFno:
         await self.nse.aclose()
 
     async def _get(self, path: str, params: dict[str, str]) -> Any:
+        """GET an option-chain API with the option-chain page as referer. Like NseClient.get_json, a 401/403 or a
+        block page served with HTTP 200 re-warms the cookies once, and a body that is not JSON raises NseError (a
+        raw JSONDecodeError would not read as transient, so callers would take it for "no data")."""
         if not self.nse._warmed:
             await self.nse.warm_up()
-        resp = await self.nse.http.get(
-            f"{NSE_BASE}{path}", params=params, headers={**API_HEADERS, "Referer": PAGE}
-        )
-        if not resp.ok:
-            raise NseError(f"NSE HTTP {resp.status} for {path}")
-        return resp.json()
+        for attempt in range(2):
+            resp = await self.nse.http.get(
+                f"{NSE_BASE}{path}", params=params, headers={**API_HEADERS, "Referer": PAGE}
+            )
+            if resp.status in (401, 403) or (resp.ok and not _looks_json(resp)):
+                if attempt == 0:
+                    await self.nse.warm_up()
+                    continue
+                raise NseError(f"NSE refused {path} after re-warm: HTTP {resp.status} (block page)")
+            if not resp.ok:
+                raise NseError(f"NSE HTTP {resp.status} for {path}")
+            try:
+                return resp.json()
+            except ValueError as exc:
+                raise NseError(f"NSE returned invalid JSON for {path}") from exc
+        raise NseError(f"NSE refused {path}")  # pragma: no cover - the loop always returns or raises
 
     async def contract_info(self, symbol: str) -> tuple[list[date], list[Decimal]]:
         d = await self._get("/api/option-chain-contract-info", {"symbol": symbol})
@@ -178,11 +192,25 @@ class NseFno:
                     out.update(parse_index_history(d))
                     lo = hi + timedelta(days=1)
             return sorted(out.items())
-        from finresearch.adapters.nse_equity import NseEquity
+        from finresearch.adapters.nse_equity import NseEquity, walk_history
+        from finresearch.fincalc.signals import adjust_for_actions
 
+        # NSE answers a range with only its latest ~70 trading days (walk back for the rest), and its closes are not
+        # adjusted for splits and bonuses: a bonus inside the window would read as a -50 % day and inflate the
+        # realised volatility the F&O risk gate uses (adjusted as the stock signal does, fincalc.signals)
         async with NseEquity() as eq:
-            bars = await eq.history(sym, start, end)
-        return [(b.day, b.close) for b in bars if b.close]
+            bars, _partial = await walk_history(lambda lo, hi: eq.history(sym, lo, hi), start, end)
+            bars = [b for b in bars if b.close]
+            try:
+                actions = [(a.ex_date, a.subject) for a in await eq.corporate_actions(sym) if a.ex_date]
+            except (
+                Exception
+            ):  # unadjusted closes still serve; an unexplained jump is the signal's anomaly to flag
+                actions = []
+        if not bars:
+            return []
+        adj = adjust_for_actions([b.day for b in bars], [float(b.close) for b in bars], actions)
+        return [(d, Decimal(str(round(c, 4)))) for d, c in zip(adj.days, adj.close, strict=True)]
 
     async def lot_sizes(self) -> dict[str, dict[str, int]]:
         resp = await self.nse.http.get(LOTS_URL, headers={"Referer": f"{NSE_BASE}/"})

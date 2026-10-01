@@ -203,3 +203,30 @@ These are dated entries for bugs we reproduced, what caused them, and how they a
 ### 2026-10-01: an experiment wrote to the live database
 - **Seen:** an agent started a test API without FINRESEARCH_DATABASE_URL, so it used the live DB and logged 4 forecast rows.
 - **Now:** the rows were reviewed and kept (valid, pre-listing). Rule: every non-live server must point at a test DB (the brief now says so).
+
+### 2026-10-01: fact-checking holes found in the verification audit (#158)
+- **Seen:** the publish gate only checked `[C123]` citations, while the dashboard also links `(C123)`, `(C1/C2)`, `[C1, C2]` and a bare `C123`, so a report citing a contradicted claim in those forms published. The citation check's table-row fallback matched numbers as substrings ("12" inside "1,234"), so a made-up quote could be marked found. A verifier's verdict was applied to any claim of the run, not only those it was given. BSE exchange facts (`bse_equity`) were not deterministic, so a conflicting agent claim demoted them. Units such as "years" or "users" were read as rupees ("rs").
+- **Now:** the gate checks every spelling the dashboard links (and warns to bracket them); quoted numbers must be whole numbers in the cited lines; verdicts outside the verifier's brief are ignored and logged; `bse_equity` is deterministic; "Rs"/"INR" are matched as words. Regression tests fail on the old code.
+
+### 2026-10-01: portfolio audit: phantom losses, double-counted openings, STT in proceeds (#161)
+- **Seen (synthetic data):**
+  - A sale with no price booked a 100 % loss.
+  - A second CAS's opening balance became a second inflow in the value history and blocked XIRR.
+  - CAS STT reduced redemption proceeds, which s.48 (fifth proviso) does not allow.
+  - Month-first tradebook dates were half mis-read.
+  - Older units before a tradebook ignored a split inside it: 50 units instead of 10.
+  - Statements imported between 00:00 and 05:30 IST were dated the previous (UTC) day.
+  - A partial sync lost trades.
+  - Term cover counted goal money twice: a ₹2 lakh gap where the gap is ₹6 lakh.
+- **Now:** each is fixed, and a regression test in tests/test_portfolio_audit.py, test_connectors.py or test_wealth_api.py fails on the old code.
+### 2026-10-01: first portfolio load took over two minutes (#159)
+- **Seen:** on a test server with 22 synthetic holdings (one unknown NSE symbol), the first GET /api/portfolio took 140.8 s. NSE's quote API answers an unknown symbol with a fast 404, but the batch re-warmed from that symbol's quote page, which NSE never answers (ReadTimeout), retried 3 times at 30 s each. The page's stream and the valuation after it each paid this.
+- **Now:** a fixed warm-up page, no re-warm on a 404, 10 s / 1 retry per request, 20 s per quote, a 45 s budget per load, failed quotes remembered for 30 s. Same holdings: 14.4 s cold, 0.07 s warm.
+
+### 2026-10-01: holidays read as trading days on a fresh install (#159)
+- **Seen:** the monitor never fetched NSE's holiday list (`Deps.live()` did not enable it). A test server with no cached list reported the next open as Friday 2-Oct-2026, which is Gandhi Jayanti.
+- **Now:** the monitor refreshes the list using the IST year. If the year is missing it retries hourly, and /api/market/status reports `holidays_known` and a warning.
+
+### 2026-10-01: listing price taken from the wrong day (#159)
+- **Seen:** a listing-day quote failure (a timeout or 403) became "not listed yet" and was retried the next trading day, which recorded that day's open as the listing price. An NSE open of 0 would have been recorded as a −100% listing.
+- **Now:** network errors are retried within 30 minutes. A quote from after the listing day uses the listing day's bar, or fails rather than record a wrong price.

@@ -28,6 +28,29 @@ from finresearch.adapters.http import PoliteClient
 NAV_ALL_URL = "https://www.amfiindia.com/spages/NAVAll.txt"
 HISTORY_URL = "https://portal.amfiindia.com/DownloadNAVHistoryReport_Po.aspx"
 MAX_AMC_CODE = 90
+# The AMC-code map is discovered by probing one day per code (MAX_AMC_CODE requests). It is kept AMC_CODES_TTL_S, and
+# never saved when the probe found fewer than MIN_AMC_CODES of India's ~45 AMCs: a probe day without NAVs (a weekend,
+# a holiday, today before the evening publication) only finds the AMCs with liquid/overnight funds, and saving that
+# map made every other AMC's history fail with "no AMFI code found" for good.
+AMC_CODES_TTL_S = 30 * 86400
+MIN_AMC_CODES = 20
+
+
+def probe_day(today: date, holidays: set[date] | None = None) -> date:
+    """The last NSE trading day before `today`: every AMC has published that day's NAVs by now. (The callers used
+    "yesterday, or Friday on a Monday": a Saturday on a Sunday, a holiday after a holiday, and one used today.)"""
+    from finresearch.fincalc.dates import is_business_day
+
+    if holidays is None:
+        from finresearch.adapters.nse_holidays import trading_holidays
+
+        holidays = trading_holidays()
+    d = today - timedelta(days=1)
+    while not is_business_day(d, holidays):
+        d -= timedelta(days=1)
+    return d
+
+
 TER_URL = "https://www.amfiindia.com/api/populate-te-rdata-revised"
 TER_PAGE = "https://www.amfiindia.com/ter-of-mf-schemes"
 
@@ -75,12 +98,62 @@ def _category(line: str) -> str | None:
     return None
 
 
+# Column positions when a file has no header line (the layouts of the recorded files, Sep-2026)
+_NAV_ALL_COLS = (
+    "code",
+    "g",
+    "r",
+    "name",
+    "plan",
+    "option",
+    "nav",
+    "day",
+)  # Scheme Code;ISIN Growth;ISIN Reinvest;...
+_HISTORY_COLS = (
+    "code",
+    "name",
+    "plan",
+    "option",
+    "g",
+    "r",
+    "nav",
+    "day",
+)  # Scheme Code;NAV Name;Plan;Option;...
+
+
+def _columns(header: list[str]) -> tuple[str, ...] | None:
+    """The field of each column, from AMFI's header line ("Scheme Code;ISIN Div Payout/ ISIN Growth;ISIN Div
+    Reinvestment;Scheme Name;Plan;Option;Net Asset Value;Date"; older files have no Plan/Option columns). None when a
+    required column is missing."""
+    out = []
+    for h in (x.strip().lower() for x in header):
+        if h == "scheme code":
+            out.append("code")
+        elif "reinvest" in h:
+            out.append("r")
+        elif "growth" in h or "payout" in h:
+            out.append("g")
+        elif h in ("scheme name", "nav name"):
+            out.append("name")
+        elif h in ("plan", "option", "date"):
+            out.append({"date": "day"}.get(h, h))
+        elif h.startswith("net asset value"):
+            out.append("nav")
+        else:
+            out.append("")
+    return tuple(out) if {"code", "name", "nav", "day"} <= set(out) else None
+
+
 def _parse(text: str, history: bool) -> list[SchemeNav]:
     out: list[SchemeNav] = []
     category = amc = None
+    cols = _HISTORY_COLS if history else _NAV_ALL_COLS
     for raw in text.splitlines():
         line = raw.strip()
-        if not line or line.lower().startswith("scheme code"):
+        if not line:
+            continue
+        if line.lower().startswith("scheme code"):  # the header names the columns: read them, never assume
+            cols = _columns(line.split(";")) or cols
             continue
         if ";" not in line:
             cat = _category(line)
@@ -90,17 +163,13 @@ def _parse(text: str, history: bool) -> list[SchemeNav]:
                 amc = line
             continue
         f = [x.strip() for x in line.split(";")]
-        if history:  # Scheme Code;NAV Name;Plan;Option;ISIN Growth;ISIN Reinvest;NAV;Date
-            if len(f) < 8:
-                continue
-            code, name, plan, option, g, r, nav, day = f[:8]
-        else:  # Scheme Code;ISIN Growth;ISIN Reinvest;Scheme Name;Plan;Option;NAV;Date
-            if len(f) < 8:
-                continue
-            code, g, r, name, plan, option, nav, day = f[:8]
-        out.append(SchemeNav(code=code, name=name, plan=plan or None, option=option or None,
+        if len(f) < len(cols):
+            continue
+        v = dict(zip(cols, f, strict=False))
+        g, r = v.get("g", ""), v.get("r", "")
+        out.append(SchemeNav(code=v["code"], name=v["name"], plan=v.get("plan") or None, option=v.get("option") or None,
                              isin_growth=None if g in ("", "-") else g, isin_reinvest=None if r in ("", "-") else r,
-                             nav=_dec(nav), day=_day(day), category=category, amc=amc))  # fmt: skip
+                             nav=_dec(v["nav"]), day=_day(v["day"]), category=category, amc=amc))  # fmt: skip
     return out
 
 
@@ -214,7 +283,12 @@ class AmfiClient:
         return resp.content.decode("utf-8", "replace")
 
     async def nav_all(self) -> list[SchemeNav]:
-        return parse_nav_all(await self._text(NAV_ALL_URL))
+        """Every scheme's latest NAV. A body with no NAV rows (a maintenance or block page served with HTTP 200, or a
+        layout the parser does not know) raises: an empty list would read as "every fund is missing from AMFI"."""
+        rows = parse_nav_all(await self._text(NAV_ALL_URL))
+        if not any(r.nav is not None for r in rows):
+            raise AmfiError(f"AMFI NAVAll had no NAV rows (a block page or a format change) at {NAV_ALL_URL}")
+        return rows
 
     async def history(self, start: date, end: date, amc_code: int | None = None) -> list[SchemeNav]:
         params = {"frmdt": start.strftime("%d-%b-%Y"), "todt": end.strftime("%d-%b-%Y")}
@@ -242,14 +316,30 @@ class AmfiClient:
         rows = await self.history(day - timedelta(days=lookback_days), day)
         latest: dict[str, SchemeNav] = {}
         for r in rows:
-            if r.day and r.day <= day and (r.code not in latest or r.day > latest[r.code].day):
+            if (
+                r.day
+                and r.day <= day
+                and r.nav is not None
+                and (r.code not in latest or r.day > latest[r.code].day)
+            ):
                 latest[r.code] = r
         return latest
 
-    async def amc_codes(self, probe_day: date) -> dict[str, int]:
-        """AMC name -> AMFI `mf` code, discovered by asking for one day per code (cached in cache_dir)."""
-        cache = self.cache_dir / "amfi_amc_codes.json" if self.cache_dir else None
-        if cache and cache.exists():
+    def _codes_cache(self) -> Path | None:
+        return self.cache_dir / "amfi_amc_codes.json" if self.cache_dir else None
+
+    def _codes_age_s(self) -> float | None:
+        import time
+
+        cache = self._codes_cache()
+        return time.time() - cache.stat().st_mtime if cache and cache.exists() else None
+
+    async def amc_codes(self, probe_day: date, *, refresh: bool = False) -> dict[str, int]:
+        """AMC name -> AMFI `mf` code, discovered by asking for one day per code (cached in cache_dir for
+        AMC_CODES_TTL_S, and only when the probe found at least MIN_AMC_CODES AMCs)."""
+        cache = self._codes_cache()
+        age = self._codes_age_s()
+        if cache and age is not None and age < AMC_CODES_TTL_S and not refresh:
             return json.loads(cache.read_text())
         codes: dict[str, int] = {}
         for code in range(1, MAX_AMC_CODE + 1):
@@ -257,7 +347,7 @@ class AmfiClient:
             amc = next((r.amc for r in rows if r.amc), None)
             if amc:
                 codes[amc] = code
-        if cache and codes:
+        if cache and len(codes) >= MIN_AMC_CODES:
             cache.parent.mkdir(parents=True, exist_ok=True)
             cache.write_text(json.dumps(codes, indent=1, sort_keys=True))
         return codes
@@ -266,7 +356,13 @@ class AmfiClient:
         self, scheme: SchemeNav, start: date, end: date, probe_day: date
     ) -> list[SchemeNav]:
         codes = await self.amc_codes(probe_day)
+        age = self._codes_age_s()
+        if scheme.amc not in codes and age is not None and age > 86400:
+            codes = await self.amc_codes(
+                probe_day, refresh=True
+            )  # a new or renamed AMC: re-probe, at most daily
         if scheme.amc not in codes:
             raise AmfiError(f"no AMFI code found for {scheme.amc!r}")
         rows = await self.history(start, end, amc_code=codes[scheme.amc])
-        return sorted((r for r in rows if r.code == scheme.code and r.nav is not None), key=lambda r: r.day)
+        return sorted((r for r in rows if r.code == scheme.code and r.nav is not None and r.day is not None),
+                      key=lambda r: r.day)  # fmt: skip

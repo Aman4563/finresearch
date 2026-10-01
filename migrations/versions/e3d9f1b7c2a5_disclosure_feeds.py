@@ -6,7 +6,7 @@ as history (insider trades, SAST, deals, pledge quarters, rating filings, SEBI o
 de-duplicated by `dedupe_key`. Public market data only.
 
 Revision ID: e3d9f1b7c2a5
-Revises: c6e2a4f8b1d3
+Revises: d8b4f2a6c1e9
 Create Date: 2026-10-01 18:00:00.000000
 
 """
@@ -18,7 +18,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "e3d9f1b7c2a5"
-down_revision: str | Sequence[str] | None = "c6e2a4f8b1d3"
+down_revision: str | Sequence[str] | None = "d8b4f2a6c1e9"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

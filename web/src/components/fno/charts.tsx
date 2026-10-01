@@ -39,9 +39,10 @@ export function OiButterfly({ rows, spot, maxPain, height = 420 }: { rows: OiRow
   return (
     <div style={{ height }} className="animate-fade-in">
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={rows} layout="vertical" stackOffset="sign" barCategoryGap={2} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
+        <BarChart data={rows} layout="vertical" stackOffset="sign" barCategoryGap={2} margin={{ top: 4, right: 18, bottom: 0, left: 0 }}>
           <CartesianGrid horizontal={false} strokeDasharray="3 3" />
-          <XAxis type="number" {...axis} domain={[-max, max]} tickFormatter={compact} />
+          {/* explicit symmetric ticks: Recharts' own picks on an un-rounded ±max read "2.2L 66K 84K 2.2L" */}
+          <XAxis type="number" {...axis} domain={[-max, max]} ticks={[-max, -max / 2, 0, max / 2, max]} interval={0} tickFormatter={compact} />
           <YAxis type="category" dataKey="strike" {...axis} width={52} interval="preserveStartEnd" tickFormatter={(v) => Number(v).toLocaleString("en-IN")} />
           <Tooltip cursor={{ fill: "var(--background-subtle)" }} content={<OiTip />} />
           <ReferenceLine x={0} stroke="var(--border-strong)" />

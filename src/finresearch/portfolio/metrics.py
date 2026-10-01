@@ -135,8 +135,10 @@ def slab_rate(session: Session) -> Decimal:
 
 
 def cached_prices(v: dict[str, Any]) -> dict[int, Decimal]:
+    """Live prices only: a fallback from an old statement (a CAS NAV, a broker statement's close) is not today's
+    price, as in report.tax_view and the daily valuation job."""
     return {int(h): Decimal(str(x["price"])) for h, x in (v.get("holdings") or {}).items()
-            if x.get("price") is not None and not (x.get("price_source") or "").endswith("statement NAV")}  # fmt: skip
+            if x.get("price") is not None and "statement" not in (x.get("price_source") or "")}  # fmt: skip
 
 
 def grouped_weights(v: dict[str, Any]) -> dict[str, tuple[float, str]]:

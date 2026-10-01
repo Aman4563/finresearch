@@ -79,6 +79,7 @@ def export_tables(s: Any) -> dict[str, list[dict[str, Any]]]:
         "portfolio_snapshots": rows_of(s, M.PortfolioSnapshot),
         "portfolio_settings": rows_of(s, M.PortfolioSetting, M.PortfolioSetting.key.not_like("cache:%")),
         "decision_journal": rows_of(s, M.Decision),
+        "trade_journal": rows_of(s, M.TradeNote),
         "watches": rows_of(s, M.Watch),
         "alerts": rows_of(s, M.Alert, limit=5000),
         "alert_rule_state": rows_of(s, M.AlertRuleState),

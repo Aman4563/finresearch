@@ -89,11 +89,10 @@ class MarketSources:
     async def get_nav_history(self, scheme, start: date, end: date) -> list:
         if self.nav_history is not None:
             return await self.nav_history(scheme, start, end)
-        from finresearch.adapters.amfi import AmfiClient
+        from finresearch.adapters.amfi import AmfiClient, probe_day
         from finresearch.config import get_settings
 
-        today = self.today()
-        probe = today - timedelta(days=3 if today.weekday() == 0 else 1)
+        probe = probe_day(self.today())
         async with AmfiClient(cache_dir=get_settings().state_dir) as amfi:
             return await amfi.scheme_history(scheme, start, end, probe)
 
@@ -147,10 +146,13 @@ class TtlCache:
                 return value
             value = await make()
             self.entries[key] = (time.time() + (min(ttl, NEGATIVE_TTL_S) if degraded(value) else ttl), value)
-            if len(self.entries) > 500:  # drop expired entries now and then
+            if len(self.entries) > 500:  # drop expired entries (and their idle locks) now and then
                 now = time.time()
                 for k in [k for k, (at, _) in self.entries.items() if at < now]:
                     self.entries.pop(k, None)
+                    lk = self.locks.get(k)
+                    if lk is not None and not lk.locked():
+                        self.locks.pop(k, None)
             return value
 
 
@@ -415,7 +417,10 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
             anns = await part("announcements", lambda: eq.announcements(sym), [])
         div_today, action_today = ex_today(actions, q)
         quote = (
-            quote_json(q, sym, dividend_today=div_today, action_today=action_today) if q is not None else None
+            # `now`: a quote from an earlier day (an illiquid stock's last trade) is not today's open session
+            quote_json(q, sym, now=datetime.now(UTC), dividend_today=div_today, action_today=action_today)
+            if q is not None
+            else None
         )
         year_ago = today - timedelta(days=365)
         ttm_dps = sum((a.dividend_per_share for a in actions
@@ -754,9 +759,14 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
                 "analytics": None,
                 "error": "the clean price would be negative: check the price basis",
             }
-        y = b.ytm(clean, s_day, bond.maturity, coupon, freq, face)
+        try:
+            y = b.ytm(clean, s_day, bond.maturity, coupon, freq, face)
+            after = b.after_tax_ytm(
+                clean, s_day, bond.maturity, coupon, freq, tax_rate, face=face, accrued=ai
+            )
+        except ValueError as e:  # the solver's bound is not a yield: say why instead of showing 100 %
+            return {**head, "analytics": None, "error": f"{e}: check the price basis and face value"}
         d = b.duration(y, s_day, bond.maturity, coupon, freq, face)
-        after = b.after_tax_ytm(clean, s_day, bond.maturity, coupon, freq, tax_rate, face=face, accrued=ai)
         flows = b.cash_flows(s_day, bond.maturity, coupon, freq, face)
         per = face * coupon / freq
         yf = float(y)
@@ -801,16 +811,27 @@ REVENUE_BASES = ("revenue_from_operations", "interest_earned", "net_premium_inco
 RESULT_SOURCE_RANK = {"nse_integrated_filing": 0, "bse_integrated_filing": 0, "nse_financial_results": 1}
 
 
+def _html_page(data: bytes) -> bool:
+    head = data.lstrip()[:300].lower()
+    return head.startswith(b"<!doctype html") or b"<html" in head
+
+
 async def _xbrl(eq: Any, url: str) -> bytes:
     """A filing's XBRL (its URL carries the filing id and never changes, so it is cached on disk); a cached block
-    page that does not parse is fetched again."""
+    page (a web page, or anything that does not parse) is fetched again. A web page twice raises an error that reads
+    as transient (adapters.http.is_transient): "couldn't reach", never a quarter with no data cached for hours."""
     import xml.etree.ElementTree as ET
 
     data = await eq.fetch_bytes(url, cache_ttl=SHP_XBRL_TTL_S)
     try:
         ET.fromstring(data)
+        bad = _html_page(data)  # well-formed XHTML parses as XML: a block page is recognised by its root
     except ET.ParseError:
+        bad = True
+    if bad:
         data = await eq.fetch_bytes(url, cache_ttl=0)
+        if _html_page(data):
+            raise RuntimeError(f"the exchange returned a block page (HTML) instead of the XBRL at {url}")
     return data
 
 

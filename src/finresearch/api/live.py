@@ -38,10 +38,16 @@ def market_status(now: datetime, holidays: dict[date, str]) -> dict[str, Any]:
     equity_open = trading_day and EQUITY_HOURS[0] <= clock < EQUITY_HOURS[1]
     bidding_open = trading_day and BIDDING_HOURS[0] <= clock < BIDDING_HOURS[1]
     nxt = d if trading_day and clock < EQUITY_HOURS[0] else next_business_day(d, holidays)
+    # NSE lists a dozen or more trading holidays every year: none for this year means the list is not loaded, and
+    # weekdays that are holidays would read as trading days (the monitor fetches it; `finresearch holidays` does too)
+    known = any(h.year == d.year for h in holidays)
     return {
         "now": t.isoformat(),
         "trading_day": trading_day,
         "holiday": holidays.get(d),
+        "holidays_known": known,
+        "warning": None if known else f"NSE's {d.year} holiday list is not loaded: exchange holidays are not "
+                                      "excluded, so a holiday can show as a trading day",
         "equity": {"open": equity_open, "hours": "09:15–15:30 IST",
                    "next_open": None if equity_open else ist_datetime(nxt, 9, 15).isoformat(),
                    "closes_at": ist_datetime(d, 15, 30).isoformat() if equity_open else None},

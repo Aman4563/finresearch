@@ -223,14 +223,15 @@ _SCALE_WORDS = (("crore", Decimal(10) ** 7), (" cr", Decimal(10) ** 7), ("billio
                 (" bn", Decimal(10) ** 9), ("million", Decimal(10) ** 6), (" mn", Decimal(10) ** 6),
                 ("lakh", Decimal(10) ** 5), ("thousand", Decimal(1000)), (" k", Decimal(1000)))  # fmt: skip
 _USD = ("usd", "us$", "$", "dollar")
-_INR = ("inr", "rs", "₹", "rupee")
+# "Rs" / "INR" as words: "years", "users", "hours" are not rupees
+_INR_RE = re.compile(r"\b(?:inr|rs)\b|₹|rupee")
 
 
 def unit_kind(unit: str | None) -> tuple[str, str | None, Decimal]:
     """(kind, currency, factor to base units). kind: money | per_share | pct | multiple | shares | days | other.
     Money is converted to whole rupees / dollars; percentages to fractions."""
     u = f" {(unit or '').lower().strip()} "
-    cur = "USD" if any(k in u for k in _USD) else ("INR" if any(k in u for k in _INR) or
+    cur = "USD" if any(k in u for k in _USD) else ("INR" if _INR_RE.search(u) or
                                                       any(w in u for w, _ in _SCALE_WORDS[:8]) else None)  # fmt: skip
     if "per share" in u or "/share" in u or "/sh" in u:
         return "per_share", cur or "INR", Decimal(1)

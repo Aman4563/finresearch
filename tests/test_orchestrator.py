@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import shutil
 import time
 from pathlib import Path
@@ -523,8 +524,31 @@ def test_a_verifier_cannot_overrule_a_deterministic_exchange_fact(company_run, t
     pipe = make(company_run, tmp_path, FakeRunner(company_run))
     pipe._apply_verdicts(VerificationReport(verdicts=[ClaimVerdict(claim_id=cid, verdict="contradicted",
                                                                    evidence="54 per the RHP", correct_value="54")],
-                                            summary="x"))  # fmt: skip
+                                            summary="x"), pipe._claims_text(ids=[cid]))  # fmt: skip
     assert _claims(company_run, "facts") == [(cid, "Bid lot is 55 equity shares", "verified")]
+
+
+def test_a_verifier_only_judges_the_claims_it_was_given(company_run, tmp_path):
+    """Audit #158: a verdict on a claim outside the verifier's brief (another stream's claim, an already contradicted
+    one) used to be applied too, so one verifier, or an instruction planted in a page it read, could re-judge the
+    whole ledger."""
+    from finresearch.db import session_scope
+    from finresearch.db.models import Claim
+
+    with session_scope() as s:
+        mine = Claim(run_id=company_run, stream="financials", statement="mine", claim_type="factual")
+        other = Claim(run_id=company_run, stream="risks", statement="other stream", claim_type="factual")
+        dead = Claim(run_id=company_run, stream="financials", statement="refuted", claim_type="factual",
+                     status="contradicted")  # fmt: skip
+        s.add_all([mine, other, dead])
+        s.flush()
+        ids = (mine.id, other.id, dead.id)
+    pipe = make(company_run, tmp_path, FakeRunner(company_run))
+    sent = pipe._claims_text("financials")
+    assert {c["claim_id"] for c in json.loads(sent)} == {ids[0]}
+    pipe._apply_verdicts(VerificationReport(verdicts=[ClaimVerdict(claim_id=i, verdict="verified", evidence="ok")
+                                                      for i in ids], summary="x"), sent)  # fmt: skip
+    assert [st for _, _, st in sorted(_claims(company_run))] == ["verified", "unverified", "contradicted"]
 
 
 # ---------------------------------------------------------------- transient failures (run 13, 2026-09-30)
@@ -713,3 +737,23 @@ async def test_a_schema_violation_is_retried_once(company_run, tmp_path):
             s.scalar(select(AgentStep).where(AgentStep.run_id == company_run, AgentStep.key == "critic:r1"))
         )
     assert await pipe2.run() == "failed"
+
+
+def test_verdicts_outside_the_brief_are_kept_in_the_manifest(company_run, tmp_path):
+    from finresearch.db import session_scope
+    from finresearch.db.models import Claim
+
+    with session_scope() as s:
+        other = Claim(run_id=company_run, stream="risks", statement="other stream", claim_type="factual")
+        s.add(other)
+        s.flush()
+        oid = other.id
+    pipe = make(company_run, tmp_path, FakeRunner(company_run))
+    pipe._apply_verdicts(VerificationReport(verdicts=[ClaimVerdict(claim_id=oid, verdict="contradicted", evidence="x")],
+                                            cross_stream_conflicts=[f"C{oid} disagrees with the RHP"], summary="x"),
+                         "[]")  # fmt: skip
+    flags = run_row(company_run)[2]["verifier_flags"]
+    assert flags == [
+        {"ignored_verdicts": [oid], "cross_stream_conflicts": [f"C{oid} disagrees with the RHP"]}
+    ]
+    assert _claims(company_run, "risks") == [(oid, "other stream", "unverified")]

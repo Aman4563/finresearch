@@ -467,3 +467,50 @@ def test_result_rows_for_banks_and_insurers_have_revenue_and_profit(name, basis,
     assert r["revenue_basis"] == basis and r["bank"] is (basis == "interest_earned")
     assert (r["revenue"], r["profit"], r["total_expenses"]) == (revenue, profit, expenses)
     assert r["label"] == "Q1 FY27" and 0 < r["margin"] < 1 and r["eps"] > 0
+
+
+def test_overview_never_calls_an_earlier_days_quote_an_open_session(app_client):
+    """Regression: the overview built its quote without `now`, so an illiquid stock's last trade from an earlier day
+    (stamped 14:12, before the 15:30 close) read as session "open" with a live-looking last price."""
+    from datetime import datetime
+
+    from finresearch.adapters.http import IST
+
+    c, _, _, _ = app_client
+    stale = quote_fixture().model_copy(update={"symbol": "STALEX", "close_price": None,
+                                              "as_of": datetime(2026, 9, 25, 14, 12, tzinfo=IST)})  # fmt: skip
+
+    async def quote(symbol):
+        return stale
+
+    c.app.state.markets.quote = quote
+    q = c.get("/api/stocks/STALEX/overview").json()["quote"]
+    assert q["session"] != "open" and q["price_kind"] == "last_traded"
+
+
+async def test_an_xbrl_block_page_reads_as_unreachable_not_as_no_results():
+    """A filing XBRL answered twice with an HTML page used to surface as an XML ParseError (not transient), so the
+    quarter was dropped silently and the results payload cached for hours with nothing marked unreachable."""
+    from finresearch.adapters.http import is_transient
+    from finresearch.api.markets import _xbrl
+
+    class Gate:
+        async def fetch_bytes(self, url, *, cache_ttl=None):
+            return b"<!DOCTYPE html><html><body>Access Denied</body></html>"
+
+    with pytest.raises(Exception) as ei:
+        await _xbrl(Gate(), "https://nsearchives.nseindia.com/corporate/xbrl/EXAMPLE.xml")
+    assert is_transient(ei.value)
+
+
+async def test_ttl_cache_prunes_idle_locks_with_expired_entries():
+    from finresearch.api.markets import TtlCache
+
+    c = TtlCache()
+
+    async def make():
+        return 1
+
+    for i in range(520):
+        await c.get(("k", i), -1, make)  # already expired
+    assert len(c.locks) <= 20 and len(c.entries) <= 20  # was: one lock per key forever

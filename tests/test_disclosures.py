@@ -725,3 +725,21 @@ def test_a_counted_trade_without_a_value_makes_the_net_incomplete(disc):
 def test_deal_rows_with_renamed_fields_are_refused():
     with pytest.raises(nd.NseError, match="unexpected fields"):
         nd.parse_deals({"data": [{"DEAL_DATE": "30-SEP-2026", "SYM": "EXAMPLE"}]}, "block")
+
+
+def test_pretrade_checklist_reads_the_flags(disc):
+    from finresearch.disclosures import views
+    from finresearch.portfolio import pretrade
+
+    assert views.pretrade_flags("EXAMPLE", "stock") is None  # nothing read yet: unknown, not "none"
+    assert pretrade.red_flag_item("EXAMPLE", "stock")["status"] == "unknown"
+    _refresh_all()
+    flags = views.pretrade_flags("EXAMPLE", "stock")
+    assert {f["label"] for f in flags} == {
+        "ASM long-term Stage I",
+        "F&O ban (2026-10-01)",
+        "Promoter pledge 15.00% of holding",
+    }
+    assert pretrade.red_flag_item("EXAMPLE", "stock")["status"] == "warn"
+    assert views.pretrade_flags("SAMPLEFIN", "stock")[0]["label"].startswith("ASM long-term Stage IV")
+    assert views.pretrade_flags("120503", "mf") == [] and views.pretrade_flags("BSE:999999", "stock") is None

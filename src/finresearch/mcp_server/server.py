@@ -454,11 +454,18 @@ async def bond_analytics(isin: str, coupon_frequency: int, price_basis: str = "d
     if price_basis not in ("dirty", "clean"):
         return json.dumps({"error": "price_basis must be 'dirty' or 'clean'"})
     clean = bond.last_price - ai if price_basis == "dirty" else bond.last_price
-    y = b.ytm(clean, s, bond.maturity, coupon, coupon_frequency, bond.face_value)
+    if clean <= 0:
+        return json.dumps({"error": "the clean price would be negative: check the price basis"})
+    try:
+        y = b.ytm(clean, s, bond.maturity, coupon, coupon_frequency, bond.face_value)
+    except ValueError as e:
+        return json.dumps(
+            {"error": f"{e}: check the price basis and face value", "bond": bond.model_dump(mode="json")}
+        )
     d = b.duration(y, s, bond.maturity, coupon, coupon_frequency, bond.face_value)
     out = {"bond": bond.model_dump(mode="json"), "settlement": s.isoformat(), "coupon_frequency": coupon_frequency,
            "accrued_interest": str(ai.quantize(Decimal("0.0001"))), "clean_price": str(clean.quantize(Decimal("0.0001"))),
-           "ytm": str(y), "current_yield": str(b.current_yield(bond.last_price, coupon, bond.face_value)),
+           "ytm": str(y), "current_yield": str(b.current_yield(clean, coupon, bond.face_value)),
            "macaulay_duration_years": str(d.macaulay), "modified_duration": str(d.modified), "convexity": str(d.convexity),
            "price_basis": price_basis,
            "price_basis_source": "NSE: CM-segment bonds are traded and settled on dirty price (bonds-traded-in-capital-market page)"
@@ -524,7 +531,9 @@ async def amfi_nav_history(scheme_code: str, years: int = 5, risk_free_annual: s
         scheme = next((x for x in await _nav_all(amfi) if x.code == scheme_code), None)
         if scheme is None:
             return json.dumps({"error": f"scheme {scheme_code} is not in AMFI's NAV file"})
-        probe = today - timedelta(days=3 if today.weekday() == 0 else 1)
+        from finresearch.adapters.amfi import probe_day
+
+        probe = probe_day(today)
         # a few extra days so the N-year trailing return finds a NAV on or before its start date
         hist = await amfi.scheme_history(scheme, add_years(today, -years) - timedelta(days=10), today, probe)
     navs = [(h.day, h.nav) for h in hist]

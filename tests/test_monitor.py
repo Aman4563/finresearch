@@ -322,3 +322,70 @@ async def test_slots_left_pending_while_the_monitor_was_down_are_missed_not_run_
     assert status == {"1030": "missed", "1200": "missed", "1330": "missed", "1500": "done", "1600": "done",
                       "1715": "pending"}  # fmt: skip
     assert stats["missed"] == 3 and fake.calls == 2
+
+
+async def test_a_listing_check_after_the_listing_day_reads_that_days_bar_not_todays_session(watched):
+    """Regression: the 10:15 listing check failed on the listing day (a 403/timeout became NotYet, retried on the
+    next trading day), and the retry stored the NEXT day's open as the listing price and in the decision's outcome."""
+    import httpx
+
+    from finresearch.adapters.nse import Quote
+    from finresearch.adapters.nse_equity import PriceBar
+    from finresearch.db import session_scope
+    from finresearch.db.models import Decision, MonitorJob, Watch
+    from finresearch.monitor import jobs
+
+    calls: list[str] = []
+
+    async def down(symbol):
+        calls.append("quote")
+        raise httpx.ConnectTimeout("NSE did not answer")
+
+    # the day after listing (5-Oct): NSE's quote shows 6-Oct's session (open 320), the listing day bar opened at 300
+    later = Quote(symbol="ORIENTCABL", open=Decimal("320"), last_price=Decimal("322"), close_price=Decimal("321"),
+                  listing_date=date(2026, 10, 5), as_of=ist(2026, 10, 6, 10, 15))  # fmt: skip
+
+    async def quote(symbol):
+        return later
+
+    async def history(symbol, start, end):
+        calls.append(f"history {start}..{end}")
+        return [PriceBar(day=date(2026, 10, 5), open=Decimal("300"), high=None, low=None, close=Decimal("305"),
+                         prev_close=None, vwap=None, volume=None, value_inr=None, trades=None)]  # fmt: skip
+
+    with session_scope() as s:
+        w = s.get(Watch, watched["watch_id"])
+        job = MonitorJob(watch_id=w.id, kind="listing", slot="t", due_at=ist(2026, 10, 5, 10, 15),
+                         params={"which": "open"})  # fmt: skip
+        # a network failure is re-raised as itself (the scheduler retries it in 30 minutes), not NotYet (next day)
+        with pytest.raises(httpx.ConnectTimeout):
+            await jobs.listing(s, job, w, jobs.Deps(ipo_detail=None, quote=down), ist(2026, 10, 5, 10, 16))
+        from finresearch.monitor.scheduler import retry_at
+
+        job.kind = "listing"
+        assert retry_at(job, httpx.ConnectTimeout("x"), ist(2026, 10, 5, 10, 16)) == ist(2026, 10, 5, 10, 46)
+        out = await jobs.listing(s, job, w, jobs.Deps(ipo_detail=None, quote=quote, price_history=history),
+                                 ist(2026, 10, 6, 10, 16))  # fmt: skip
+        assert out["price"] == "300" and "history 2026-10-05..2026-10-05" in calls
+        d = s.get(Decision, watched["decision_id"])
+        assert d.listing_price == Decimal("300")
+        job2 = MonitorJob(watch_id=w.id, kind="listing", slot="t2", due_at=ist(2026, 10, 5, 15, 45),
+                          params={"which": "close"})  # fmt: skip
+        out = await jobs.listing(s, job2, w, jobs.Deps(ipo_detail=None, quote=quote, price_history=history),
+                                 ist(2026, 10, 6, 15, 50))  # fmt: skip
+        assert out["price"] == "305"  # the listing day's official close, not 6-Oct's 321
+        # without a usable history the later session is never recorded
+        w.meta = {k: v for k, v in (w.meta or {}).items() if k not in ("listing_open", "listing_close")}
+        with pytest.raises(jobs.ListingDayPassed):
+            await jobs.listing(s, job, w, jobs.Deps(ipo_detail=None, quote=quote), ist(2026, 10, 6, 10, 16))
+        s.rollback()
+
+
+def test_an_open_of_zero_is_not_a_listing_open():
+    """NSE uses 0 for "no trade yet": a quote with open 0 must not record a −100% listing."""
+    from finresearch.adapters.nse import Quote
+
+    fixture = Path(__file__).parent / "fixtures" / "prices" / "nse_quote_INFY_20260930_after_close.json"
+    raw = json.loads(fixture.read_text())
+    raw["equityResponse"][0]["metaData"]["open"] = 0
+    assert Quote.parse(raw).open is None

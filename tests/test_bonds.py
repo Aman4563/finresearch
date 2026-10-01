@@ -183,3 +183,17 @@ def test_accrued_interest_is_actual_actual_per_sebi():
     # annual coupons: 13-Mar-2027 to 10-Mar-2028 is 363 days in the year that contains 29-Feb-2028
     annual = b.accrued_interest(date(2028, 3, 10), m, "0.0898", 1, 1000)
     assert annual == pytest.approx(Decimal(1000) * Decimal("0.0898") * 363 / 366, abs=Decimal("1e-9"))
+
+
+def test_ytm_raises_when_no_yield_in_range_fits():
+    """Bisection used to return its bound: a price of 10 on a 9 % bond read as a 100.000000 % YTM, and an after-tax
+    yield likewise. Both now raise; a par price on a coupon date still yields the coupon exactly."""
+    s, m = date(2026, 10, 1), date(2030, 4, 1)
+    with pytest.raises(ValueError, match="no yield"):
+        b.ytm(10, s, m, "0.09", 1)
+    with pytest.raises(ValueError, match="no yield"):
+        b.ytm(100000, s, m, "0.09", 1)  # above the price at -50 %
+    with pytest.raises(ValueError, match="no after-tax yield"):
+        b.after_tax_ytm(10, s, m, "0.09", 1, "0.3")
+    assert b.ytm(100, date(2026, 4, 1), m, "0.09", 1) == Decimal("0.09")
+    assert b.ytm(100, date(2026, 4, 1), m, "0.09", 2) == Decimal("0.09")

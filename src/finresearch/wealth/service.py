@@ -288,6 +288,7 @@ def overview(s: Session, today: date) -> dict[str, Any]:
     # ---- assets, by class
     rows, values = [], {}
     by_class: dict[str, float] = {}
+    real_estate: dict[int, float] = {}
     for a in b.assets:
         v = asset_value(a, b.vals.get(a.id, []), today)
         rows.append(
@@ -305,6 +306,8 @@ def overview(s: Session, today: date) -> dict[str, Any]:
                 a.kind, v["value"], asset_class=a.asset_class, equity_pct=f(a.equity_pct)
             ).items():
                 by_class[k] = by_class.get(k, 0.0) + x
+                if k == "Real estate":
+                    real_estate[a.id] = real_estate.get(a.id, 0.0) + x
     port_classes: dict[str, float] = {}
     if sn:
         for label, v in (sn.by_asset or {}).items():
@@ -427,11 +430,16 @@ def overview(s: Session, today: date) -> dict[str, Any]:
         else (max(hh.retirement_age - hh.age, 0) if hh.age is not None else None)
     )
     financial_assets = nw["assets"] - by_class.get("Real estate", 0.0)
+    # Each goal's gap counts only money the cover sum does not already deduct: `funded_now` includes linked assets
+    # and a share of the portfolio, which are also inside `financial_assets` (subtracted once in CoverNeed.gap).
+    # Netting them here as well would count them twice and understate the cover. Money outside the app
+    # (current_inr) and linked real estate (left out of financial_assets) do reduce the gap.
     goal_gaps = sum(
-        max(0.0, float(g.target_inr) - gj["funded_now"])
-        for g, gj in zip(b.goals, goals_json, strict=True)
+        max(0.0, float(g.target_inr) - float(g.current_inr or 0)
+            - sum(real_estate.get(int(i), 0.0) for i in (g.linked_asset_ids or [])))
+        for g in b.goals
         if g.in_cover
-    )
+    )  # fmt: skip
     ins: dict[str, Any] = {
         "term_existing": term_cover_existing,
         "health_total": health_total,

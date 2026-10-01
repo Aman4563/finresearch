@@ -4,7 +4,7 @@ the scheduler can retry."""
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -162,7 +162,7 @@ class Deps:
                    corporate_actions=corporate_actions, forecasts=True, archive_books=True,
                    intraday=live_fetch, bse_stock_snapshot=bse_stock_snapshot, bse_price_history=bse_price_history,
                    bse_corporate_actions=bse_corporate_actions, portfolio_daily=True, brief=True, archive=True,
-                   disclosures=True)  # fmt: skip
+                   live_holidays=True, disclosures=True)  # fmt: skip
 
 
 def alert(session: Session, watch: Watch, kind: str, message: str, level: str = "info", **data: Any) -> None:
@@ -266,18 +266,33 @@ async def listing(session: Session, job: MonitorJob, watch: Watch, deps: Deps, n
         return {"which": which, "skipped": "already recorded"}
     bse = bool((watch.meta or {}).get("bse_ipo_no"))  # a BSE SME issue lists on BSE only
     exchange = "BSE" if bse else "NSE"
+    from finresearch.adapters.http import is_transient
+
     try:
         q = await (deps.bse_quote(watch.nse_symbol) if bse else deps.quote(watch.nse_symbol))
     except Exception as e:
+        # a timeout or a 403 on listing day: retried in minutes (RETRY_DELAY), not on the next trading day
+        if is_transient(e):
+            raise
         raise NotYet(f"no {exchange} quote for {watch.nse_symbol} yet: {e}") from e
-    if q is None or q.listing_date is None or q.listing_date > to_ist(now).date() or q.open is None:
+    # an open of 0 is NSE's "no trade yet" placeholder (e.g. a listing special session that has not matched)
+    if q is None or q.listing_date is None or q.listing_date > to_ist(now).date() or not q.open:
         raise NotYet(f"{watch.nse_symbol} has not listed on {exchange} yet")
+    # A quote describes its own session: a check that runs after the listing day (a retry, a late confirmation) would
+    # read a later day's open and close. Then the listing day's bar from the exchange's price history is used.
+    # The day is the later of NSE's listing date and the watch's: a demerged or relisted company's quote can carry its
+    # original listing date (TMCV), while a listing is never earlier than the date the watch expected.
+    day = max(q.listing_date, watch.listing_date or q.listing_date)
+    later = q.as_of is not None and to_ist(q.as_of).date() > day
+    bar = await _listing_bar(deps, watch.nse_symbol, day, bse) if later else None
     meta = dict(watch.meta or {})
     if q.listing_date != watch.listing_date:
         meta["expected_listing_date"] = watch.listing_date.isoformat()
         watch.listing_date = q.listing_date
     meta["listing_confirmed"] = True
-    if which == "close":
+    if bar is not None:
+        price = bar.close if which == "close" else bar.open
+    elif which == "close":
         from finresearch.fincalc.price import OFFICIAL_CLOSE, price_view
 
         v = price_view(q, exchange=exchange, now=now)
@@ -307,6 +322,28 @@ async def listing(session: Session, job: MonitorJob, watch: Watch, deps: Deps, n
           "action" if which == "open" else "info", price=str(price), as_of=q.as_of.isoformat() if q.as_of else None)  # fmt: skip
     return {"price": str(price), "which": which, "listing_date": q.listing_date.isoformat(),
             "gain_pct": f"{gain:.2f}" if gain is not None else None, "decisions_updated": updated}  # fmt: skip
+
+
+class ListingDayPassed(RuntimeError):
+    """The listing day is over and its open/close could not be read from the exchange's price history: never record a
+    later session's price as the listing price (retried, then failed with an alert)."""
+
+
+async def _listing_bar(deps: Deps, symbol: str, day: date, bse: bool) -> Any:
+    """The listing day's daily bar (open and official close), or ListingDayPassed."""
+    # BSE's history is keyed by scrip code; a BSE SME watch carries the issue's symbol, so it has no history to read
+    fetch = getattr(deps, "bse_price_history", None) if bse else getattr(deps, "price_history", None)
+    if bse and not symbol.isdigit():
+        fetch = None
+    if fetch is None:
+        raise ListingDayPassed(
+            f"{symbol}'s quote is from after its listing day {day} and no price history is set"
+        )
+    bars = await fetch(symbol, day, day)
+    bar = next((b for b in bars or [] if b.day == day and b.open and b.close), None)
+    if bar is None:
+        raise ListingDayPassed(f"no {day} bar for {symbol} in the exchange's price history yet")
+    return bar
 
 
 def _upper_band(session: Session, watch: Watch) -> Decimal | None:
@@ -415,6 +452,8 @@ async def stock_daily(session: Session, job: MonitorJob, watch: Watch, deps: Dep
 # IST times of the archive passes on each bidding day; the last follows the 17:00 close (the final book)
 ARCHIVE_TIMES = ((11, 0), (13, 0), (15, 0), (17, 15))
 ARCHIVE_WINDOW_MIN = 45  # a pass still runs up to this long after its time (monitor restarts, slow ticks)
+ARCHIVE_RETRY_S = 300  # a pass NSE refused is retried within the window, at most every 5 minutes
+_archive_retry_at: dict[str, float] = {}  # slot -> earliest time.time() of its next attempt
 
 
 def archive_slot(now: datetime, holidays: set | None = None) -> str | None:
@@ -455,9 +494,17 @@ async def archive_open_books(deps: Deps, now: datetime, *, holidays: set | None 
 
     if not deps.archive_books or deps.current_issues is None:
         return None
+    import time
+
     slot = archive_slot(now, holidays)
-    if slot is None:
+    if slot is None or _archive_retry_at.get(slot, 0.0) > time.time():
         return None
+
+    def release() -> None:  # the next tick in the window (after ARCHIVE_RETRY_S) tries the slot again
+        _archive_retry_at[slot] = time.time() + ARCHIVE_RETRY_S
+        with session_scope() as s:
+            s.execute(delete(SubscriptionArchiveSlot).where(SubscriptionArchiveSlot.slot == slot))
+
     with session_scope() as s:
         claimed = s.execute(insert(SubscriptionArchiveSlot).values(slot=slot, started_at=now, result={})
                             .on_conflict_do_nothing(index_elements=["slot"])
@@ -467,8 +514,7 @@ async def archive_open_books(deps: Deps, now: datetime, *, holidays: set | None 
     try:
         issues = await deps.current_issues()
     except Exception:
-        with session_scope() as s:  # release the slot so the next tick retries within the window
-            s.execute(delete(SubscriptionArchiveSlot).where(SubscriptionArchiveSlot.slot == slot))
+        release()
         raise
     today = to_ist(now).date()
     live = [i for i in issues if i.symbol and (i.issue_start is None or i.issue_start <= today)
@@ -502,6 +548,10 @@ async def archive_open_books(deps: Deps, now: datetime, *, holidays: set | None 
             ).on_conflict_do_nothing(index_elements=["nse_symbol", "as_of", "source"])
              .returning(SubscriptionSnapshotRow.id)).first()  # fmt: skip
         result["archived" if got else "unchanged"].append(issue.symbol)
+    if live and len(result["errors"]) == len(live):
+        # NSE refused every open issue (a 403 wave, an outage): nothing was archived, so the slot is not done
+        release()
+        return result
     with session_scope() as s:
         row = s.get(SubscriptionArchiveSlot, slot)
         if row is not None:

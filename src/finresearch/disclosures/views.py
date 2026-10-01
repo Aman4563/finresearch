@@ -373,6 +373,29 @@ def brief_section(s: Session, now: datetime) -> dict[str, Any]:
             "bonds": len(ov["bonds"]), "bse_only": ov["bse_only"]}  # fmt: skip
 
 
+def pretrade_flags(key: str, asset_type: str) -> list[dict[str, Any]] | None:
+    """The pre-trade checklist's red flags (portfolio.pretrade.RED_FLAGS contract): [{"label", "detail", "level"}],
+    [] when every list was read and nothing is flagged, None when a list is unavailable and nothing is flagged, or
+    for a BSE-only stock (not on NSE's lists). Funds are on no surveillance list: []."""
+    from finresearch.db import session_scope
+    from finresearch.disclosures.alerts import _now
+
+    if asset_type != "stock":
+        return []
+    key = key.upper()
+    if key.startswith("BSE:") or not key:
+        return None
+    now = _now()
+    with session_scope() as s:
+        surv = surveillance(s, key, now, resolve_isin(s, key))
+        pl = pledge(s, key, now)
+    flags = flags_of(key, surv, pl)
+    if not flags and any(not _ok(x) for x in (surv["asm"], surv["gsm"], surv["fno_ban"], pl)):
+        return None
+    return [{"label": f["label"], "detail": f"as of {f['as_of']}" + (" (stale)" if f.get("stale") else ""),
+             "level": "warn", "source_url": f.get("source_url")} for f in flags]  # fmt: skip
+
+
 def _dec(x: Any) -> Decimal | None:
     if x is None or x == "":
         return None

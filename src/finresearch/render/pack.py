@@ -367,7 +367,7 @@ def render_pack(
     title = f"{company_name} — {layout.label} (run {run_id})"
     md_name = "report.md" if gate.ok else "report_NOT_PUBLISHED.md"
     (final / md_name).write_text(report_md)
-    cited = {int(x) for x in re.findall(r"\[C(\d+)\]", report_md)}
+    cited = set(gate.cited_claims)  # every citation spelling the gate checked
     (final / "fact_check_log.md").write_text(
         fact_check_log(claims, cited, gate.ok, gate.blocking, gate.warnings)
     )

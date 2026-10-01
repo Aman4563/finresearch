@@ -761,3 +761,48 @@ def test_api_registry_notifications_and_test_send(clean, monkeypatch):
             c.put("/api/profile", json={**prof, "alert_rules": [{**rule, "metric": "nope"}]}).status_code
             == 422
         )
+
+
+def test_bond_ytm_alert_reads_nse_price_as_dirty(monkeypatch):
+    """NSE's CM-segment bond prices include accrued interest (the bond page and the signal read them so); the alert
+    took them as clean and understated the YTM. Annual 8 % bond, maturity 31-Mar-2030, settlement 30-Sep-2026: 183 days
+    accrued = 1000 x 0.08 x 183/365 = 40.1096, so a dirty 1040.1096 is a clean 1000. Hand bisection of
+    1040.1096 = sum (80 [+1000]) / (1+y)^(182/365 + k), k = 0..3, gives y = 7.9740 %. Read as clean, the old code gave
+    6.6561 % (the same price taken as a clean 104.01096 per 100)."""
+    from finresearch.adapters.nse_bonds import ListedBond
+
+    b = ListedBond(symbol="EXM", series="N2", isin="INE000X07AB2", coupon_pct=Decimal(8), face_value=Decimal(1000),
+                   last_price=Decimal("1040.1096"), close=None, maturity=date(2030, 3, 31),
+                   next_interest_date=date(2027, 3, 31), rating="AA", rating_agency="CRISIL",
+                   traded_value=Decimal(500000), as_of=None)  # fmt: skip
+
+    async def bonds():
+        return [b]
+
+    async def freq(isin):
+        return None
+
+    monkeypatch.setattr(compute, "SOURCES", src(bonds=bonds, bond_freq=freq))
+    y = run(reader().read("bond", "ytm_pct", "INE000X07AB2", {}, {}))
+    assert abs(y.value - Decimal("7.9740")) < Decimal("0.0005"), y
+    assert "dirty price" in y.source and "accrued" in y.source
+
+
+def test_bond_ytm_alert_unknown_when_no_yield_fits(monkeypatch):
+    """A price no yield in -50 %..100 % explains is unknown, not the solver's 100 % bound."""
+    from finresearch.adapters.nse_bonds import ListedBond
+
+    b = ListedBond(symbol="EXM", series="N3", isin="INE000X07AB3", coupon_pct=Decimal(9), face_value=Decimal(1000),
+                   last_price=Decimal(10), close=None, maturity=date(2030, 3, 31),
+                   next_interest_date=date(2027, 3, 31), rating="AA", rating_agency="CRISIL",
+                   traded_value=Decimal(500000), as_of=None)  # fmt: skip
+
+    async def bonds():
+        return [b]
+
+    async def freq(isin):
+        return None
+
+    monkeypatch.setattr(compute, "SOURCES", src(bonds=bonds, bond_freq=freq))
+    y = run(reader().read("bond", "ytm_pct", "INE000X07AB3", {}, {}))
+    assert y.value is None and "no yield" in (y.note or "")

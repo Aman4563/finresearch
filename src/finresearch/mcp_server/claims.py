@@ -49,11 +49,22 @@ def quote_in_lines(doc: Document, line_start: int, line_end: int, quote: str) ->
         return True, "exact"
     if _loose(quote) and _loose(quote) in _loose(window):
         return True, "loose (whitespace/commas)"
-    # table rows: every number in the quote present in the window?
-    nums = re.findall(r"\(?\d[\d,]*\.?\d*\)?", quote)
-    if nums and all(_loose(n) in _loose(window) for n in nums) and len(nums) >= 2:
+    # table rows: every number in the quote present in the window as a whole number (not a substring: "12" must not
+    # match inside "1,234", nor "2.5" inside "12.5")
+    nums = _num_tokens(quote)
+    # the window is also read with "1, 234" rejoined (pdftotext can split a grouped number after its comma)
+    in_window = set(_num_tokens(window)) | set(_num_tokens(re.sub(r"(?<=\d),\s+(?=\d)", ",", window)))
+    if len(nums) >= 2 and set(nums) <= in_window:
         return True, "all quoted numbers present"
     return False, "quote not found in cited lines"
+
+
+_NUM_TOKEN = re.compile(r"\d[\d,]*(?:\.\d+)?")
+
+
+def _num_tokens(s: str) -> list[str]:
+    """Whole numbers in `s` with their grouping commas dropped ("1,234.5" -> "1234.5", "12,34,567" -> "1234567")."""
+    return [m.group(0).rstrip(",").replace(",", "") for m in _NUM_TOKEN.finditer(_norm(s))]
 
 
 def _dec(v: Any) -> Decimal | None:

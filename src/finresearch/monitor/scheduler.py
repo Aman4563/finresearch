@@ -168,10 +168,16 @@ _HOLIDAYS_CHECKED: dict[str, float] = {}
 
 
 async def _refresh_holidays(deps: jobs.Deps) -> None:
-    """Keep NSE's holiday lists fresh (at most one attempt a day; failures keep the cached lists)."""
+    """Keep NSE's holiday lists fresh (at most one attempt a day; failures keep the cached lists). While the current
+    year's list is missing altogether every date calculation treats holidays as trading days, so a failed attempt is
+    then retried within the hour instead of the next day."""
     import time
 
-    if _HOLIDAYS_CHECKED.get("at", 0) > time.time() - 86400:
+    from finresearch.adapters.nse_holidays import cached_years
+    from finresearch.fincalc.dates import today_ist
+
+    every = 86400 if today_ist().year in cached_years() else 3600
+    if _HOLIDAYS_CHECKED.get("at", 0) > time.time() - every:
         return
     _HOLIDAYS_CHECKED["at"] = time.time()
     try:
@@ -260,6 +266,21 @@ async def alerts_step(now: datetime) -> dict[str, int]:
     except Exception:
         log.warning("alert delivery failed", exc_info=True)
     return {k: v for k, v in out.items() if v}
+
+
+def journal_step(now: datetime) -> dict[str, int]:
+    """Journal drafts for newly imported trades and review reminders (portfolio.journal): database only, so inline.
+    Runs before alerts_step, whose delivery pass forwards the reminders."""
+    try:
+        from finresearch.db import session_scope
+        from finresearch.portfolio.journal import review_step
+
+        with session_scope() as s:
+            res = review_step(s, now)
+        return {f"journal_{k}": v for k, v in res.items() if v}
+    except Exception:
+        log.warning("journal step failed; it is retried on the next tick", exc_info=True)
+        return {}
 
 
 _BACKGROUND: dict[str, asyncio.Task] = {}
@@ -353,6 +374,7 @@ async def tick(deps: jobs.Deps, now: datetime | None = None) -> dict[str, int]:
     out = {"added": added, "done": done, "failed": failed, "retried": retried, "missed": missed}
     if deps.forecasts:
         out |= {k: v for k, v in (await forecast_step(deps, now)).items() if k in ("resolved", "void")}
+    out |= journal_step(now)
     out |= await alerts_step(now)
     try:  # broker syncs after the close and the statement inbox (portfolio.connectors.sync)
         from finresearch.portfolio.connectors.sync import connections_step
