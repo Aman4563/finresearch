@@ -239,7 +239,7 @@ export default function Runs() {
             </div>
           )}
           {rows.length > 0 && view === "table" && (
-            <Table>
+            <Table label="Research runs">
               <thead>
                 <tr>
                   <th>Run</th>

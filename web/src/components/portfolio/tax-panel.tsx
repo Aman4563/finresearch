@@ -19,7 +19,7 @@ function Ideas({ title, icon, items, kind, help }: { title: string; icon: React.
   return (
     <Card title={title} icon={icon} help={help}>
       {items.length === 0 ? <p className="text-sm text-muted">{kind === "gain" ? "Nothing to harvest: no long-term equity gains fit in the unused exemption, or no live prices." : "No loss that would lower this year's tax (it needs realised taxable gains and a holding priced below cost)."}</p> : (
-        <Table>
+        <Table label={title}>
           <thead><tr><th>Holding</th><th className="text-right">Sell units</th><th className="text-right">Value</th><th className="text-right">{kind === "gain" ? "Tax-free gain" : "Loss booked"}</th><th className="text-right">{kind === "gain" ? "Future tax saved ≤" : "Tax saved now"}</th><th className="text-right">Est. costs</th></tr></thead>
           <tbody>
             {items.map((i) => (
@@ -88,7 +88,7 @@ export function TaxPanel({ refresh }: { refresh: number }) {
         </Card>
         <Card title="How the tax is computed" subtitle={`${current.label} · gains net within their category, then losses are set off (long-term losses only against long-term gains), then the exemption`}>
           {current.slices.length === 0 ? <p className="text-sm text-muted">No taxable gains in {current.label}.</p> : (
-            <Table>
+            <Table label="How the tax is computed">
               <thead><tr><th>Category</th><th className="text-right">Rate</th><th className="text-right">Gain</th><th className="text-right">Set off</th><th className="text-right">Exempt</th><th className="text-right">Taxable</th></tr></thead>
               <tbody>
                 {current.slices.map((s, i) => (
@@ -126,7 +126,7 @@ export function TaxPanel({ refresh }: { refresh: number }) {
 
       <Card title={`Disposals in ${current.label}`} subtitle="Each sale matched first-in-first-out against a purchase lot, with the rule that applies.">
         {rows.length === 0 ? <EmptyState title="No sales in this year">Sales appear here once imported.</EmptyState> : (
-          <Table>
+          <Table label={`Disposals in ${current.label}`}>
             <thead><tr><th>Holding</th><th>Bought</th><th>Sold</th><th className="text-right">Units</th><th className="text-right">Cost</th><th className="text-right">Sale</th><th className="text-right">Gain</th><th>Term · rate</th></tr></thead>
             <tbody>
               {rows.map((d, i) => (
@@ -153,7 +153,7 @@ export function TaxPanel({ refresh }: { refresh: number }) {
       <Card title="Rule table" subtitle="Keyed by the date of sale, not by section numbers (the Income-tax Act 2025 renumbered them from tax year 2026-27 with the same rates)."
         actions={<button type="button" className="text-xs font-medium text-brand" onClick={() => setShowRules((s) => !s)}>{showRules ? "Hide" : `Show ${data.rules.length} rules`}</button>}>
         {showRules && (
-          <Table>
+          <Table label="Capital gains rule table">
             <thead><tr><th>Rule</th><th>Sales from</th><th>to</th><th className="text-right">LT after</th><th className="text-right">STCG</th><th className="text-right">LTCG</th><th>Status</th><th>Note</th></tr></thead>
             <tbody>
               {data.rules.map((r) => (

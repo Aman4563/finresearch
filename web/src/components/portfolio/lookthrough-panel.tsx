@@ -349,7 +349,7 @@ export function LookthroughPanel() {
           {!d ? <Skeleton className="h-64" /> : d.stocks.length === 0 ? (
             <p className="text-sm text-muted">No equity exposure yet: add a holdings file for your equity funds above.</p>
           ) : (
-            <Table>
+            <Table label="Your true top holdings">
               <thead>
                 <tr><th>Company</th><th>Sector</th><th>Size</th><th className="!text-right">Exposure</th><th className="!text-right">% of portfolio</th><th>Through</th></tr>
               </thead>

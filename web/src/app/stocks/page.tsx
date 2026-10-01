@@ -101,7 +101,7 @@ export default function Stocks() {
           )}
           {hits && hits.length > 0 && (
             <div className="mt-4">
-              <Table>
+              <Table label="Stock search results">
                 <thead>
                   <tr>
                     <th>Stock</th>

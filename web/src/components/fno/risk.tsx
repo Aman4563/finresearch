@@ -91,7 +91,7 @@ export function CostsBreakdown({ a }: { a: Analysis }) {
         </p>
         <p className="num text-sm font-semibold">{paise(a.costs.total_to_expiry ?? e.total)} <span className="text-[11px] font-normal text-muted">to expiry</span></p>
       </div>
-      <table className="num mt-2 w-full text-xs">
+      <table aria-label="Costs" className="num mt-2 w-full text-xs">
         <tbody className="[&_td]:py-1">
           {Object.entries(e.lines).map(([k, v]) => (
             <tr key={k} className="border-b border-border/50">

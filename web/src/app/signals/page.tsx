@@ -290,7 +290,7 @@ function Outcome({ f }: { f: Forecast }) {
 function ForecastTable({ rows, total }: { rows: Forecast[]; total: number }) {
   return (
     <>
-      <Table>
+      <Table label="Recorded forecasts">
         <thead>
           <tr><th>Instrument</th><th>Call</th><th className="text-right">P(event)</th><th>Event</th><th>Made → resolves</th><th>Outcome</th></tr>
         </thead>

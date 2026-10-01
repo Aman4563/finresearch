@@ -102,7 +102,7 @@ function HoldingEditor({ h, onSaved }: { h: Holding; onSaved: () => void }) {
           {data.warnings.length > 0 && <ul className="rounded-lg bg-warn-soft px-3 py-2 text-xs">{data.warnings.map((w) => <li key={w}>{w}</li>)}</ul>}
           <div>
             <p className="mb-1 text-xs font-medium">Open lots (FIFO order)</p>
-            <Table>
+            <Table label="Open lots">
               <thead><tr><th>Acquired</th><th>Origin</th><th className="text-right">Units</th><th className="text-right">Open</th><th className="text-right">Cost / unit</th></tr></thead>
               <tbody>{data.lots.filter((l) => Number(l.open_quantity) > 0).map((l) => (
                 <tr key={l.id}><td className="num text-xs">{l.acquired ? day(l.acquired) : "unknown"}</td><td className="text-xs">{l.origin}</td>
@@ -113,7 +113,7 @@ function HoldingEditor({ h, onSaved }: { h: Holding; onSaved: () => void }) {
           </div>
           <details>
             <summary className="cursor-pointer text-xs font-medium">Transactions ({data.transactions.length})</summary>
-            <Table className="mt-2">
+            <Table label="Transactions" className="mt-2">
               <thead><tr><th>Date</th><th>Kind</th><th className="text-right">Units</th><th className="text-right">Price</th><th className="text-right">Amount</th><th>Source</th><th /></tr></thead>
               <tbody>{data.transactions.map((t) => (
                 <tr key={t.id}>
@@ -186,7 +186,7 @@ function Holdings({ snap, onChanged, updating }: { snap: Snapshot; onChanged: ()
       ? <span className="inline-flex items-center gap-1.5"><span className="size-1.5 rounded-full bg-info animate-pulse-ring" />prices updating… {updating.done} of {updating.total} · cost basis shown</span>
       : `${snap.summary.holdings} open · priced ${day(snap.as_of)}`}
       actions={closed > 0 ? <button type="button" className="text-xs text-brand" onClick={() => setShowClosed((s) => !s)}>{showClosed ? "Hide" : "Show"} {closed} closed</button> : undefined}>
-      <Table className="!mx-0">
+      <Table label="Holdings" className="!mx-0">
         <thead>
           <tr>
             <th>Holding</th><th className="text-right">Value</th><th className="text-right">Unrealised</th>
@@ -270,7 +270,7 @@ function Targets({ snap, onSaved }: { snap: Snapshot; onSaved: () => void }) {
         {msg && <span className="text-xs text-muted">{msg}</span>}
       </div>
       {drift.length > 0 && (
-        <Table className="mt-4">
+        <Table label="Allocation drift against targets" className="mt-4">
           <thead><tr><th>Asset class</th><th className="text-right">Weight</th><th className="text-right">Target</th><th className="text-right">Drift</th></tr></thead>
           <tbody>{drift.map((d) => (
             <tr key={d.label}><td>{d.label}</td><td className="num text-right">{d.weight_pct.toFixed(1)}%</td><td className="num text-right">{d.target_pct.toFixed(1)}%</td>
@@ -327,11 +327,11 @@ function Dividends({ snap }: { snap: Snapshot }) {
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
       <Card title="By financial year" subtitle={d.note}>
-        <Table><thead><tr><th>Year</th><th className="text-right">Amount</th></tr></thead>
+        <Table label="Dividends by financial year"><thead><tr><th>Year</th><th className="text-right">Amount</th></tr></thead>
           <tbody>{d.by_fy.map((y) => <tr key={y.fy}><td>{y.label}</td><td className="num text-right">{inr(y.amount)}</td></tr>)}</tbody></Table>
       </Card>
       <Card title="Payments">
-        <Table><thead><tr><th>Date</th><th>Holding</th><th className="text-right">Amount</th><th /></tr></thead>
+        <Table label="Dividend payments"><thead><tr><th>Date</th><th>Holding</th><th className="text-right">Amount</th><th /></tr></thead>
           <tbody>{d.items.slice(0, 100).map((it, i) => (
             <tr key={i}><td className="num text-xs">{day(it.day)}</td><td className="max-w-[18rem] truncate">{it.name}</td><td className="num text-right">{inr(it.amount, 2)}</td>
               <td>{it.reinvested && <Badge tone="info">reinvested</Badge>}</td></tr>

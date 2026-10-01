@@ -351,7 +351,7 @@ export default function StockDetail() {
                   revenue: r.revenue != null ? r.revenue / 1e7 : null, profit: r.profit != null ? r.profit / 1e7 : null }))} />
                 <p className="mt-3 mb-1 text-[11px] font-medium text-muted">Net margin trend</p>
                 <MarginChart rows={quarters.map((r) => ({ label: r.label, title: `${r.label}, quarter ended ${day(r.period_end)}`, margin: r.margin }))} />
-                <Table className="mt-3">
+                <Table label="Quarterly results" className="mt-3">
                   <thead>
                     <tr>
                       <th>Quarter</th>
@@ -382,7 +382,7 @@ export default function StockDetail() {
                 <details className="mt-3 text-xs">
                   <summary className="cursor-pointer text-muted hover:text-foreground">Full P&amp;L lines{annual.length ? " and annual figures" : ""}</summary>
                   <div className="mt-2 overflow-x-auto">
-                    <Table>
+                    <Table label="Full P&L lines">
                       <thead>
                         <tr>
                           <th>Period</th>

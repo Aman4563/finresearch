@@ -40,7 +40,7 @@ function PreviewView({ p }: { p: ImportPreview }) {
             Reconciliation: statement closing units vs units in your lots
             <InfoTip>After the import, the units your FIFO lots hold should equal what the statement says you hold at its end. A mismatch means a transaction is missing (e.g. an older statement) or a row could not be read.</InfoTip>
           </p>
-          <Table>
+          <Table label="Reconciliation: statement units vs lot units">
             <thead><tr><th>Scheme / security</th><th className="text-right">Statement</th><th className="text-right">Lots</th><th>Check</th></tr></thead>
             <tbody>
               {p.reconciliation.map((r) => (
@@ -58,7 +58,7 @@ function PreviewView({ p }: { p: ImportPreview }) {
       {p.sample && p.sample.length > 0 && (
         <details className="text-xs">
           <summary className="cursor-pointer text-muted">First {p.sample.length} new rows</summary>
-          <Table className="mt-2">
+          <Table label="First new rows" className="mt-2">
             <thead><tr><th>Date</th><th>Kind</th><th>Name</th><th className="text-right">Units</th><th className="text-right">Price</th><th className="text-right">Amount</th></tr></thead>
             <tbody>
               {p.sample.map((t, i) => (
@@ -385,7 +385,7 @@ function ImportsList({ refresh }: { refresh: number }) {
   if (!data?.length) return null;
   return (
     <Card title="Imported files" subtitle="Deleting an import removes every transaction it added; lots are rebuilt.">
-      <Table>
+      <Table label="Imported files">
         <thead><tr><th>File</th><th>Source</th><th>Imported</th><th className="text-right">Rows added</th><th>Units check</th><th /></tr></thead>
         <tbody>
           {data.map((i) => (

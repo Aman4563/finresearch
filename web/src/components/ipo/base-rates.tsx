@@ -107,7 +107,7 @@ export function BaseRatesCard() {
             <span className="ml-auto text-[11px] text-muted"><span className="num">{data.n}</span> issues{data.as_of && <> · listings to <span className="num">{data.as_of}</span></>}{data.source === "snapshot" && <> · <Badge tone="warn">snapshot</Badge></>}</span>
           </div>
           {table ? (
-            <Table>
+            <Table label="How past IPOs listed, by subscription band">
               <thead><tr><th>{by === "qib" ? "QIB" : "Total"} band</th><th>Period</th><th className="!text-right">n</th><th className="!text-right">Above issue</th><th className="!text-right">Below issue (95% CI)</th><th className="!text-right">Median (IQR)</th></tr></thead>
               <tbody>
                 {data.cells.map((c) => (

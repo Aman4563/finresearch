@@ -97,7 +97,7 @@ export default function StockBacktest() {
             <Card title="Probability buckets the signal quotes" icon={<Target className="size-4" />}
               subtitle="Share of stock-months whose next 12 months' price return beat the NIFTY 50 index"
               help="The stock signal's probability is the hit rate of the bucket the stock is in today. Monthly 12-month windows overlap, so the 95% Wilson interval uses an effective sample of n ÷ 12 non-overlapping years; stocks in the same month also move together, so even that is optimistic.">
-              <Table>
+              <Table label="Probability buckets the signal quotes">
                 <thead>
                   <tr><th>Bucket</th><th className="text-right!">Stock-months</th><th className="text-right!">Beat NIFTY 50</th><th className="text-right!">95% CI (n/12)</th><th className="text-right!">Median excess</th></tr>
                 </thead>
@@ -116,7 +116,7 @@ export default function StockBacktest() {
               {periods.length > 0 && (
                 <details className="mt-3 text-xs">
                   <summary className="cursor-pointer text-muted hover:text-foreground">Stability: first half vs second half of the sample</summary>
-                  <Table className="mt-2">
+                  <Table label="Bucket stability: first half vs second half" className="mt-2">
                     <thead><tr><th>Bucket</th>{periods.map(([p]) => <th key={p} className="text-right!">{p}</th>)}</tr></thead>
                     <tbody>
                       {buckets.map(([k]) => (
@@ -144,7 +144,7 @@ export default function StockBacktest() {
               <Card title="Universe and data coverage" icon={<ShieldAlert className="size-4" />}
                 subtitle={`${data.universe.symbols} symbols · ${data.universe.name}${data.universe.constituents_file ? ` · ${data.universe.constituents_file}` : ""}`}>
                 <div className="max-h-[300px] overflow-y-auto">
-                  <Table>
+                  <Table label="Universe and data coverage">
                     <thead><tr><th>Symbol</th><th>From</th><th className="text-right!">Days</th><th>Adjustments</th></tr></thead>
                     <tbody>
                       {coverage.map(([sym, c]) => (

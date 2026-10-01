@@ -302,7 +302,7 @@ export default function IposPage() {
             Pick an open issue above and press Research, or add a stock, fund or bond from its page.
           </EmptyState>
         ) : companies.data ? (
-          <Table>
+          <Table label="Researched companies">
             <thead>
               <tr>
                 <th>Company</th>
@@ -342,7 +342,7 @@ function SkeletonTable() {
 
 function IssueTable({ rows, now }: { rows: Issue[]; now: number | null }) {
   return (
-    <Table>
+    <Table label="IPO screener">
       <thead>
         <tr>
           <th>Issue</th>

@@ -83,7 +83,7 @@ export default function Bonds() {
             </div>
           ) : hits ? (
             <div className="mt-4">
-              <Table>
+              <Table label="Bond search results">
                 <thead>
                   <tr>
                     <th>Bond</th>
