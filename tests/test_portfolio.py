@@ -417,3 +417,36 @@ def test_realised_pnl_report_gets_a_specific_message(client):
     )
     assert r.status_code == 422
     assert "P&L / capital-gains report" in r.json()["detail"] and "Order history" in r.json()["detail"]
+
+
+def test_rebalance_api(client):
+    client.post("/api/portfolio/import/tradebook", headers=ORIGIN,
+                json={"filename": "tb.csv", "content_b64": b64(ZERODHA.encode()), "dry_run": False})  # fmt: skip
+    none = client.get("/api/portfolio/rebalance").json()
+    assert none["status"] == "no_targets" and "not investment advice" in none["disclaimer"]
+    assert (
+        client.put(
+            "/api/portfolio/targets", headers=ORIGIN, json={"Stocks": 50, "Debt funds": 50}
+        ).status_code
+        == 200
+    )
+    out = client.get("/api/portfolio/rebalance").json()
+    # 10 EXMPL left (bought 10-Jun-2024 @150, long-term on 30-Sep-2026) worth 10 x 250 = 2,500, all in Stocks:
+    # sell 1,250 = 5 units; STT 1.25; gain 1,248.75 - 750 = 498.75, inside the exemption -> no tax
+    assert out["status"] == "rebalance"
+    (s,) = out["sells"]
+    assert (s["units"], s["gross"], s["charges"], s["gain"], s["tax"]) == (5.0, 1250.0, 1.25, 498.75, 0.0)
+    assert s["category"] == "Long-term gain within the exemption"
+    assert [(b["asset_class"], b["amount"], b["examples"]) for b in out["buys"]] == [
+        ("Debt funds", 1248.75, [])
+    ]
+    # ₹2,500 of new money fills the debt shortfall: no sale needed
+    cash = client.get("/api/portfolio/rebalance", params={"new_money": 2500}).json()
+    assert cash["status"] == "cash_only" and cash["sells"] == []
+    assert cash["cash_flow"][0]["asset_class"] == "Debt funds" and cash["cash_flow"][0]["amount"] == 2500.0
+    # a 50 pp absolute band with no relative band: the 50 pp drift is not beyond it
+    wide = client.post(
+        "/api/portfolio/rebalance", headers=ORIGIN, json={"band_abs_pp": 50, "band_rel_pct": 0}
+    )
+    assert wide.json()["status"] == "within_bands"
+    assert client.get("/api/portfolio/rebalance", params={"new_money": -1}).status_code == 422
