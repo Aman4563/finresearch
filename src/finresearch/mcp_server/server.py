@@ -559,11 +559,13 @@ async def amfi_nav_history(scheme_code: str, years: int = 5, risk_free_annual: s
 
 @server.tool()
 async def amfi_category_peers(scheme_code: str, limit: int = 25) -> str:
-    """Direct-growth schemes in the same SEBI category with point-to-point 1/3/5-year annualised returns from AMFI
-    NAVs (the scheme itself included), ranked by 3-year return. Cite AMFI's NAV history report."""
-    from finresearch.adapters.amfi import AmfiClient
+    """Direct-growth schemes (one per scheme, open-ended) in the same SEBI category with point-to-point 1/3/5-year
+    annualised returns from AMFI NAVs (the scheme itself included), ranked by 3-year return. Cite AMFI's NAV history
+    report."""
+    from finresearch.adapters.amfi import AmfiClient, category_key
     from finresearch.fincalc import funds
     from finresearch.fincalc.dates import add_years, today_ist
+    from finresearch.signals.fund_rank import category_peers
 
     today = today_ist()
     async with AmfiClient() as amfi:
@@ -571,7 +573,9 @@ async def amfi_category_peers(scheme_code: str, limit: int = 25) -> str:
         me = next((x for x in rows if x.code == scheme_code), None)
         if me is None:
             return json.dumps({"error": f"scheme {scheme_code} is not in AMFI's NAV file"})
-        peers = [x for x in rows if x.category == me.category and x.is_direct_growth and x.nav]
+        # the category ranking's peer rules (#198): AMFI's spelling variants of the heading folded into one
+        # category key, open-ended, one direct-growth row per scheme; the scheme itself included
+        peers = category_peers(rows, me, direct=True) + ([me] if me.nav and me.day else [])
         # anchor on the latest NAV date (as trailing returns do), not today, so both tools agree
         anchor = me.day or today
         past = {y: await amfi.navs_on(add_years(anchor, -y)) for y in (1, 3, 5)}
@@ -584,7 +588,8 @@ async def amfi_category_peers(scheme_code: str, limit: int = 25) -> str:
                                    if old and old.nav and p.day else None)  # fmt: skip
         table.append(row)
     table.sort(key=lambda r: Decimal(r["return_3y"]) if r["return_3y"] else Decimal(-99), reverse=True)
-    return json.dumps({"category": me.category, "peers": len(table), "table": table[:limit]}, indent=1)
+    return json.dumps({"category": me.category, "category_key": category_key(me.category), "peers": len(table),
+                       "table": table[:limit]}, indent=1)  # fmt: skip
 
 
 # --------------------------------------------------------------------------- listed-stock data

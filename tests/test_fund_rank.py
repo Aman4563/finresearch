@@ -293,6 +293,44 @@ async def test_compute_ranks_from_month_end_snapshots_and_records_exclusions(fak
     assert FR.lookup(data, "999999")["status"] == "unknown"
 
 
+async def test_fund_signal_peers_are_the_rank_category_not_the_raw_heading(fake_amfi, monkeypatch):
+    """#198: the fund signal (and its Consistency card, the hit-rate alerts and the MCP peers tool) used the raw AMFI
+    heading, so fund 3 ("Equity Scheme - Flexi Cap Fund") saw only the 4 other direct funds under its own spelling;
+    under the rank rules it sees every scheme of the category key."""
+    from finresearch.signals import fund as fund_sig
+
+    res = await FR.compute()
+    cat = res["categories"]["equity:flexi cap"]
+    rows = await FR.SOURCES.schemes()
+    me = next(x for x in rows if x.code == "200003")
+    # hand count: odd i under "Equity Scheme", even i under "Equity Schemes"; fund 3's spelling holds i = 1, 5, 7, 9
+    old = [x for x in rows if x.category == me.category and x.code != me.code and fund_sig.is_direct(x)]
+    assert len(old) == 4
+    peers = FR.category_peers(rows, me)
+    # the rank card's universe: 10 ranked + 1 excluded (launched after the as-of month-end) = 11; less fund 3 itself
+    assert len(cat["funds"]) == cat["size"] == 10 and len(cat["excluded"]) == 1
+    assert len(peers) == cat["size"] + len(cat["excluded"]) - 1 == 10
+    assert {p.code for p in peers} | {"200003"} == {f["code"] for f in cat["funds"]} | {"200200"}
+    assert "200100" not in {p.code for p in peers}  # fund 3's regular plan is fund 3, not a peer
+    # a regular plan is compared with regular plans only: no other scheme here has one
+    regular = next(x for x in rows if x.code == "200100")
+    assert FR.category_peers(rows, regular) == []
+    # the direct rows, its own scheme left out
+    assert len(FR.category_peers(rows, regular, direct=True)) == 10
+
+    async def snapshot(anchor):
+        return {}
+
+    async def ter(month):
+        raise RuntimeError("AMFI HTTP 503")
+
+    monkeypatch.setattr(fund_sig, "SOURCES", fund_sig.FundSources(FR.SOURCES.schemes, snapshot, ter, None,
+                                                                   lambda: date(2026, 10, 1)))  # fmt: skip
+    monkeypatch.setattr(fund_sig, "_CACHE", fund_sig.TtlCache())
+    a = await fund_sig.analyse("200003")
+    assert a["peers"] == 10 and a["category_key"] == "equity:flexi cap"
+
+
 async def test_empty_early_month_ter_file_falls_back_to_the_previous_month(monkeypatch):
     """Regression: on 1-Oct-2026 AMFI's October TER file downloaded fine but held no rows; the fund signal then
     read every fund's TER as missing instead of falling back to September's file."""
@@ -422,4 +460,36 @@ def test_peers_endpoint_groups_amfi_spelling_variants_and_drops_close_ended(env)
     app.state.markets = MarketSources(navs_on=navs_on, today=lambda: date(2026, 10, 1))
     with TestClient(app) as c:
         r = c.get("/api/funds/100001/peers").json()
-    assert r["peers"] == 3  # 100001, 100005 and 100007 (two codes of one scheme: /peers does not dedupe)
+    # 100001 and 100005: 100007 repeats 100005's growth ISIN, one scheme counted once (the rank rules, #198)
+    assert r["peers"] == 2
+
+
+async def test_mcp_category_peers_use_the_rank_rules(monkeypatch):
+    """#198: the MCP tool matched the raw heading; now the category key, one direct-growth row per scheme, no
+    close-ended series."""
+    import json
+
+    from finresearch.adapters import amfi
+    from finresearch.mcp_server import server
+
+    rows = parse_nav_all(NAV_ALL)
+
+    class FakeAmfi:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return None
+
+        async def nav_all(self):
+            return rows
+
+        async def navs_on(self, day):
+            return {}
+
+    monkeypatch.setattr(amfi, "AmfiClient", FakeAmfi)
+    monkeypatch.setattr(server, "_NAV_ALL", {})
+    out = json.loads(await server.amfi_category_peers("100001"))
+    # the same two schemes as the /peers endpoint: 100001 itself and 100005 (100007 is 100005 again)
+    assert out["peers"] == 2 and out["category_key"] == "equity:flexi cap"
+    assert sorted(r["scheme_code"] for r in out["table"]) == ["100001", "100005"]

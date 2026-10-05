@@ -8,7 +8,9 @@ funds (Carhart 1997 [49]). So this signal does not try to pick winners. It check
 * cost: the direct plan's total expense ratio (TER) against same-category peers from AMFI's daily TER file, and
   whether this is the regular plan (which pays a distributor commission every year);
 * consistency: in how many quarter-end windows the fund's 1- and 3-year returns beat the median of its SEBI category
-  (direct-growth peers compared with direct-growth, regular with regular), from AMFI NAVs;
+  (direct-growth peers compared with direct-growth, regular with regular), from AMFI NAVs. Peers follow the category
+  ranking's rules (signals.fund_rank.category_peers, #198): AMFI's spelling variants of a heading folded into one
+  category key, open-ended schemes only, one row per scheme;
 * downside: its capture of the category's falling quarters and its quarter-end drawdown against the category's;
 * style sanity: how closely its quarterly returns move with the category's (R²), a returns-based stand-in for a
   holdings check (holdings files are not read yet);
@@ -382,8 +384,12 @@ async def _analyse(code: str) -> dict[str, Any]:
     if me is None:
         raise LookupError(f"scheme {code} is not in AMFI's NAV file")
     direct = is_direct(me)
-    peers = [x for x in rows if x.category == me.category and x.code != me.code and x.name != me.name
-             and is_growth(x) and is_direct(x) == direct and x.nav and x.day]  # fmt: skip
+    # the category ranking's peer rules (#198): category key with AMFI's spelling variants folded (matching the raw
+    # heading found 26 Flexi Cap peers out of 46), open-ended, one row per scheme, same plan type as the fund
+    from finresearch.adapters.amfi import category_key
+    from finresearch.signals.fund_rank import category_peers
+
+    peers = category_peers(rows, me)
     last = me.day or SOURCES.today()
     anchors = quarter_ends(add_years(last, -HISTORY_YEARS), min(last, SOURCES.today() - timedelta(days=1)))
     passive = is_passive(me.category, me.name)
@@ -408,6 +414,7 @@ async def _analyse(code: str) -> dict[str, Any]:
     return {"unreachable": unreachable, "scheme": {"scheme_code": me.code, "name": me.name, "plan": me.plan, "option": me.option,
                        "category": me.category, "amc": me.amc, "nav_date": me.day.isoformat() if me.day else None},
             "direct": direct, "growth": is_growth(me), "passive": passive, "peers": len(peers),
+            "category_key": category_key(me.category),
             "anchors": [a.isoformat() for a in anchors],
             "windows_3y": [w.json() for w in w3], "windows_1y": [w.json() for w in w1],
             "quarterly": {k: v for k, v in q.items() if k not in ("fund_q", "median_q")},
@@ -613,8 +620,8 @@ def build_signal(a: dict[str, Any], profile, ctx: dict[str, Any] | None = None) 
                                                                "effective_n": round(n_eff3, 2)},
                             description="The fund's own record against its category median in past windows; no "
                                         "forecast has been scored yet.")  # fmt: skip
-    method = ("§D.3 rules: TER vs category (AMFI TER file), direct vs regular, share of quarter-end 1- and 3-year "
-              "windows at or above the category median (AMFI NAVs, same-plan growth peers), downside capture, "
+    method = ("§D.3 rules v2 (SEBI category_key peers, #198): TER vs category (AMFI TER file), direct vs regular, share of quarter-end 1- and 3-year "
+              "windows at or above the category median (AMFI NAVs, same-plan growth peers, one per scheme), downside capture, "
               "quarter-end drawdown, returns-based style check (R²) and category fit; probability = the historical 3-year "
               "hit rate shrunk to the centre of its Wilson interval on the effective number of windows")  # fmt: skip
     # the point estimate is the Wilson centre, which pulls a thin record towards 50 %: 16 of 16 overlapping windows

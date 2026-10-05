@@ -168,6 +168,50 @@ def universe(rows: list) -> tuple[dict[str, list], dict[str, str]]:
     return picked, alias
 
 
+def category_peers(rows: list, me, *, direct: bool | None = None) -> list:
+    """The fund's category peers under the ranking's rules (#198), for the fund signal, its Consistency card, the
+    fund alerts and the MCP peers tool: the schemes of `universe(rows)` in `me`'s category key (spelling variants
+    folded, open-ended, one per scheme), each represented by its growth row of `me`'s plan type (a direct plan is
+    compared with direct plans, a regular plan with regular plans: the regular plan's higher TER would otherwise
+    count against it), the most recently priced if a scheme has several. `me`'s own scheme is left out. For a
+    direct-growth fund this is its rank category less itself. `direct` overrides the plan type (True: the
+    direct-growth rows whatever `me`'s plan, as the rank card shows them)."""
+    from finresearch.signals.fund import is_direct
+
+    key = category_key(me.category)
+    if key is None:
+        return []
+    picked, alias = universe(rows)
+    reps = {x.code for x in picked.get(key, [])}
+    mine = alias.get(me.code, me.code)
+    direct = is_direct(me) if direct is None else direct
+    best: dict[str, Any] = {}
+    for x in rows:
+        rep = alias.get(x.code)
+        if rep not in reps or rep == mine or x.code == me.code or x.nav is None or x.day is None:
+            continue
+        if category_key(x.category) != key or x.structure in ("close", "interval"):
+            continue
+        if not _plain_growth(x) or is_direct(x) != direct:
+            continue
+        cur = best.get(rep)
+        if cur is None or (-x.day.toordinal(), _code_no(x)) < (-cur.day.toordinal(), _code_no(cur)):
+            best[rep] = x
+    return [best[r] for r in sorted(best)]
+
+
+def _code_no(x) -> int:
+    return int(x.code) if x.code.isdigit() else 0
+
+
+def _plain_growth(x) -> bool:
+    """A growth option that is not a bonus option or a segregated portfolio (either plan)."""
+    from finresearch.signals.fund import is_growth
+
+    text = f"{x.name} {x.option or ''}".lower()
+    return is_growth(x) and "bonus" not in text and not SEGREGATED.search(x.name)
+
+
 def _near(snap: dict, code: str, anchor: date) -> R.Point:
     hit = snap.get(code)
     return hit if hit and 0 <= (anchor - hit[0]).days <= NEAR_DAYS else None
