@@ -3,7 +3,7 @@
 Rules are keyed by the **transfer (trade) date** and the asset's tax class, never by section numbers: the Income-tax
 Act 2025 (tax year 2026-27 onward) renumbered the sections (111A -> 196, 112 -> 197, 112A -> 198, 50AA -> 76) with
 the same rates, so the rows below carry the old and new section only as a note. Research notes with sources:
-scratchpad portfolio-research.md (30-Sep-2026) and docs/dev/RESEARCH_ROADMAP.md §D.7 [55]-[59].
+docs/dev/RESEARCH_ROADMAP.md §D.7 [55]-[59].
 
 Tax classes (``TaxClass``):
 - ``equity``: listed equity shares (STT on sale; on purchase too, with the CBDT Notification 60/2018 carve-outs for
