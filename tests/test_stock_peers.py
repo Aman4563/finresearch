@@ -170,3 +170,96 @@ def test_peers_api_reads_the_store_and_fetches_only_the_company(env, monkeypatch
     assert all("inputs" not in p for p in r["peers"]) and "inputs" not in r["company"]
     s = r["summary"]["pe"]  # 10, 20, 30, 40 (PE has none): median 25, own 25 -> 2 below + 0 ties of 4 = 50
     assert (s["n"], s["median"], s["percentile"]) == (4, 25.0, 50.0)
+
+
+# --------------------------------------------------------------------------- the nightly build's per-stock step
+class FakeEq:
+    def __init__(self, fail=False):
+        import json
+        from pathlib import Path
+        from types import SimpleNamespace
+
+        from finresearch.adapters.nse import Quote
+
+        raw = json.loads((Path(__file__).parent / "fixtures/nse/quote_INFY_20260928.json").read_text())
+        self.calls: list[str] = []
+
+        async def quote(symbol):
+            self.calls.append("quote")
+            if fail:
+                raise RuntimeError("blocked")
+            return Quote.parse(raw)
+
+        self.nse = SimpleNamespace(quote=quote)
+
+    async def history(self, symbol, start, end, *, cache_ttl=None):
+        from types import SimpleNamespace
+
+        self.calls.append("history")
+        return [SimpleNamespace(day=date(2025, 9, 26), close=Decimal("800"))]
+
+    async def corporate_actions(self, symbol):
+        from types import SimpleNamespace
+
+        self.calls.append("actions")
+        return [SimpleNamespace(ex_date=date(2026, 5, 2), subject="Dividend - Rs 20 Per Share")]
+
+
+@pytest.fixture
+def fake_results(monkeypatch):
+    from finresearch.api import markets
+
+    calls = []
+
+    async def results_from_nse(eq, sym, n, *, balance_sheets=None):
+        calls.append(sym)
+        for s in SHEETS:
+            balance_sheets[s.end] = {"equity_owners": s.equity_owners, "total_equity": s.total_equity,
+                                     "consolidated": True, "xbrl": s.source}  # fmt: skip
+        return {"quarters": [{"period_end": q.end.isoformat(), "revenue": float(q.revenue), "profit": float(q.profit),
+                              "eps": float(q.eps), "consolidated": True, "xbrl": q.source} for q in quarters()]}  # fmt: skip
+
+    monkeypatch.setattr(markets, "results_from_nse", results_from_nse)
+    return calls
+
+
+async def test_row_from_live_inputs_and_weekly_results_reuse(fake_results):
+    from finresearch.signals import stock_peers as SP
+
+    today = date(2026, 9, 28)
+    eq = FakeEq()
+    row = SP.compute_row("INFY", await SP.fetch_inputs(eq, "INFY", today), today)
+    m = row["metrics"]
+    assert row["basic_industry"] == "Computers - Software & Consulting" and row["industry"] == "IT - Software"
+    assert m["price"]["value"] == pytest.approx(1003.2)
+    assert m["market_cap"]["value"] == pytest.approx(4058232462 * 1003.2)
+    assert m["pe"]["value"] == pytest.approx(1003.2 / 26)  # TTM EPS 5 + 6 + 7 + 8
+    assert m["pb"]["value"] == pytest.approx(4058232462 * 1003.2 / 480)
+    assert m["return_1y"]["value"] == pytest.approx(1003.2 / 800 - 1)  # a dividend is not a split: no adjustment
+    assert eq.calls == ["quote", "actions", "history"] and fake_results == ["INFY"]
+    eq2 = FakeEq()
+    again = SP.compute_row("INFY", await SP.fetch_inputs(eq2, "INFY", date(2026, 10, 2), row), date(2026, 10, 2))
+    assert fake_results == ["INFY"] and eq2.calls == ["quote", "history"]  # results 4 days old: reused
+    assert again["metrics"]["pe"]["value"] == m["pe"]["value"]
+
+
+async def test_build_keeps_a_failed_stocks_previous_row_marked_stale(env, fake_results, monkeypatch):
+    from finresearch.signals import stock_peers as SP
+
+    monkeypatch.setattr(SP, "PAUSE_S", 0)
+    today = date(2026, 9, 28)
+    data = await SP.build(FakeEq(), today, ["INFY", "OTHER"])
+    SP.save(data)
+    assert set(data["rows"]) == {"INFY", "OTHER"} and not data["failed"]
+    with pytest.raises(RuntimeError):  # most of the universe failing raises: the caller keeps the old store
+        await SP.build(FakeEq(fail=True), today, ["INFY", "OTHER"])
+
+    class OneFails(FakeEq):
+        async def history(self, symbol, start, end, *, cache_ttl=None):
+            if symbol == "OTHER":
+                raise RuntimeError("blocked")
+            return await super().history(symbol, start, end)
+
+    again = await SP.build(OneFails(), today, ["INFY", "OTHER", "THIRD"])
+    assert again["failed"].keys() == {"OTHER"} and again["rows"]["OTHER"]["stale"] is True
+    assert "stale" not in again["rows"]["INFY"] and "THIRD" in again["rows"]
