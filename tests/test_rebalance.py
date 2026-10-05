@@ -144,3 +144,10 @@ def test_unpriced_sgb_and_unknown_cost_are_skipped():
     assert out["sells"] == []
     assert {s["holding_id"] for s in out["skipped"]} == {6, 7, 8}
     assert out["unpriced"] == ["Example Ltd"]
+
+
+def test_fund_without_an_entered_exit_load_is_flagged():
+    fund = pos(5, "Example Flexi Cap Fund", "Equity funds", 100, [(date(2025, 1, 1), 100, 90)], asset_type="mf")
+    out = plan([fund, debt(units=100)], {"Debt funds": 100}, TODAY, [], SLAB)
+    (s,) = out["sells"]
+    assert s["units"] == 100.0 and "no exit load entered" in s["notes"][0]

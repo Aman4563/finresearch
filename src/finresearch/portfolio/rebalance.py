@@ -320,6 +320,8 @@ def _steps(pieces: list[Piece], today: date, base: list[Gain], fy: int,
             "price": _f(p.price, 4), "gross": _f(gross), "charges": _f(charges), "exit_load": 0.0,
             "net": _f(gross - charges), "gain": _f(gain), "short_term": _f(st), "long_term": _f(gain - st),
             "tax": _f(tax),
+            "notes": (["no exit load entered for this fund: assumed none (check the scheme document)"]
+                      if p.asset_type == "mf" and p.exit_load is None else []),
             "lots": [{"acquired": r.acquired.isoformat() if r.acquired else None, "units": _f(r.quantity, 4),
                       "gain": _f(r.gain), "term": r.cls.term if r.cls else None,
                       "bucket": r.cls.bucket if r.cls else None} for r in rows],
@@ -473,3 +475,52 @@ SOURCES = [
     "Finance (No.2) Act 2024: s.111A 20 %, s.112A 12.5 % above ₹1.25 lakh (fincalc.tax rules table)",
     "SEBI (Investment Advisers) Regulations 2013 / (Research Analysts) Regulations 2014: this is not advice",
 ]
+
+
+# --------------------------------------------------------------------------- from the database
+def positions_from_db(s: Any, prices: Mapping[int, Any], today: date) -> list[Position]:
+    """Positions from the stored holdings and lots with the prices of valuation.fetch_prices. The value counts any
+    price (as the allocation on /portfolio does); a sale needs a live one ("statement" prices are not today's)."""
+    from finresearch.api.portfolio_analytics import get_settings_row
+    from finresearch.portfolio import elss
+    from finresearch.portfolio.report import holding_tax, load
+    from finresearch.portfolio.valuation import asset_label
+
+    data = load(s)
+    loads = get_settings_row(s)["exit_loads"]
+    out = []
+    for h in data.holdings:
+        lots = [x for x in data.lots.get(h.id, []) if x.open_quantity > EPS]
+        if not lots:
+            continue
+        lots.sort(key=lambda x: (x.acquired or date.min, x.id))  # FIFO, as pretrade.sell_items
+        pi = prices.get(h.id)
+        category = getattr(pi, "category", None) or h.category
+        ht = holding_tax(h, category)
+        units = sum((x.open_quantity for x in lots), ZERO)
+        price = getattr(pi, "price", None)
+        live = price is not None and "statement" not in (getattr(pi, "source", None) or "")
+        note = "" if live else ("only an old statement price, not today's" if price is not None else
+                                (getattr(pi, "error", None) or "no price"))  # fmt: skip
+        el = loads.get(str(h.id)) if h.asset_type == "mf" else None
+        out.append(Position(
+            holding=ht, asset_type=h.asset_type, asset_class=asset_label(h.asset_type, ht.tax_class),
+            value=price * units if price is not None else None, price=price if live else None,
+            lots=[Lot(x.acquired, x.open_quantity, x.cost_per_unit, x.stt_paid, x.origin) for x in lots],
+            elss=elss.detect(h.asset_type, h.name, category) is not None,
+            exit_load=(Decimal(str(el["pct"])) / 100, int(el.get("days") or 0)) if el else None, price_note=note,
+        ))  # fmt: skip
+    return out
+
+
+def rebalance_view(s: Any, prices: Mapping[int, Any], today: date, slab: Decimal, *, new_money: Decimal = ZERO,
+                   abs_pp: float = DEFAULT_ABS_PP, rel_pct: float = DEFAULT_REL_PCT) -> dict[str, Any]:  # fmt: skip
+    from finresearch.portfolio.metrics import get_targets
+    from finresearch.portfolio.report import disposal_rows, load
+
+    cats = {hid: getattr(p, "category", None) for hid, p in prices.items()}
+    realised = [r for r in disposal_rows(load(s), cats) if r.fy == fiscal_year(today)]
+    out = plan(positions_from_db(s, prices, today), get_targets(s), today, realised, slab, new_money=new_money,
+               abs_pp=abs_pp, rel_pct=rel_pct)  # fmt: skip
+    out["slab_pct"] = float(slab * 100)
+    return out

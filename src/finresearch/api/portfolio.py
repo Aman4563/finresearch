@@ -40,6 +40,12 @@ PRICE_BUDGET_S = 45.0
 FAILED_TTL_S = 30.0
 
 
+class RebalanceParams(BaseModel):
+    new_money: float = Field(0, ge=0, le=1e11)  # ₹ to invest now (a SIP instalment or a lump sum)
+    band_abs_pp: float = Field(5, ge=0.5, le=50)  # absolute band, percentage points
+    band_rel_pct: float = Field(25, ge=0, le=100)  # relative band, % of the target (0 = absolute only)
+
+
 class ManualTxn(BaseModel):
     holding_id: int | None = None
     asset_type: Literal["stock", "mf", "other"] = "stock"
@@ -379,6 +385,31 @@ def add_portfolio_routes(app: FastAPI, *, scheme_rows: Callable[[], Awaitable[li
         return Response(text, media_type="text/csv; charset=utf-8",
                         headers={"Content-Disposition": f'attachment; filename="{name}"',
                                  "Cache-Control": "no-store"})  # fmt: skip
+
+    async def _rebalance(body: RebalanceParams) -> dict[str, Any]:
+        from finresearch.portfolio.rebalance import rebalance_view
+
+        prices, _ = await _prices(_detached_holdings())
+        slab = _slab()
+        with session_scope() as s:
+            return rebalance_view(s, prices, src().today(), slab, new_money=Decimal(str(body.new_money)),
+                                  abs_pp=body.band_abs_pp, rel_pct=body.band_rel_pct)  # fmt: skip
+
+    @app.get("/api/portfolio/rebalance")
+    async def rebalance(
+        new_money: float = Query(0, ge=0, le=1e11),
+        band_abs_pp: float = Query(5, ge=0.5, le=50),
+        band_rel_pct: float = Query(25, ge=0, le=100),
+    ) -> dict[str, Any]:
+        """Illustrative, tax-aware rebalancing steps (portfolio.rebalance): new money to the underweight classes,
+        then FIFO sales (losses and the LTCG exemption first) only when a class is outside its band. Not advice."""
+        return await _rebalance(RebalanceParams(new_money=new_money, band_abs_pp=band_abs_pp,
+                                                band_rel_pct=band_rel_pct))  # fmt: skip
+
+    @app.post("/api/portfolio/rebalance")
+    async def rebalance_post(body: RebalanceParams) -> dict[str, Any]:
+        """As GET, with the parameters in a JSON body. Read-only: nothing is stored or traded."""
+        return await _rebalance(body)
 
     # ------------------------------------------------------------------ imports
     @app.post("/api/portfolio/import/cas")
