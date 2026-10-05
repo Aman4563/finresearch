@@ -3,7 +3,7 @@ view. Reads the database, takes prices from valuation.fetch_prices; all arithmet
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -90,13 +90,28 @@ def _signal(h: PortfolioHolding, price: PriceInfo | None) -> dict[str, str] | No
     return None
 
 
+def xirr_exclusions(excluded: Counter[str]) -> str:
+    """Why the overall XIRR leaves holdings out, from each holding's own reason (cash_flows / no current price)."""
+    from finresearch.portfolio.valuation import NO_PURCHASE_DATE
+
+    phrase = {
+        NO_PURCHASE_DATE: "whose purchase date is unknown (e.g. a broker holdings baseline: import an older order "
+                          "history to include them)",
+        "opening balance with an unknown cost": "without a known cost",
+        "no current price": "without a current price",
+    }  # fmt: skip
+    parts = [f"{n} {phrase.get(why, f'with {why}')}" for why, n in excluded.most_common()]
+    return f"excludes {sum(excluded.values())} holding(s): " + "; ".join(parts)
+
+
 def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str, Any]:
     data = load(s)
     rows, all_flows = [], []
     alloc: dict[str, dict[str, Decimal]] = {"asset": defaultdict(Decimal), "sector": defaultdict(Decimal),
                                             "cap": defaultdict(Decimal)}  # fmt: skip
     tot = defaultdict(Decimal)
-    unknown_cost = unpriced = excluded = 0
+    unknown_cost = unpriced = 0
+    excluded: Counter[str] = Counter()  # holdings left out of the overall XIRR, by the reason cash_flows gave
     for h in data.holdings:
         p = prices.get(h.id) or PriceInfo(error="not priced")
         category = p.category or h.category
@@ -123,7 +138,7 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
             all_flows += flows[:-1] if value else flows
             tot["xirr_value"] += value or ZERO
         elif units > 0 or why_not is not None:
-            excluded += 1
+            excluded[why_not] += 1
         unreal = (value - cost) if value is not None and known and units > 0 else None
         det = elss.detect(h.asset_type, h.name, category) if units > 0 else None
         lock = elss.lockin(open_lots, today, p.price, det) if det is not None else None
@@ -174,7 +189,7 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
         [*all_flows, (today, tot["xirr_value"])] if tot["xirr_value"] else all_flows, today
     )
     if excluded and ox is not None:
-        ox_reason = f"excludes {excluded} holding(s) without a known cost or a price"
+        ox_reason = xirr_exclusions(excluded)
     tl = timeline(data)
     complete = unpriced == 0 and unknown_cost == 0 and tot["value"] > 0
     return {

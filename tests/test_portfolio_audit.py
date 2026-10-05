@@ -82,6 +82,32 @@ def test_net_invested_counts_a_broker_baseline_at_its_cost():
     assert [(r["date"], r["invested"]) for r in tl] == [("2026-09-01", 1000.0), ("2026-10-01", 1600.0)]
 
 
+def test_xirr_exclusion_reason_names_the_real_reason():
+    """#200: the XIRR tile said "excludes 5 holding(s) without a known cost or a price" while every holding had a
+    cost and a price: they were broker baselines (an average price but no purchase date). Each reason is now named."""
+    from collections import Counter
+
+    from finresearch.portfolio.report import xirr_exclusions
+    from finresearch.portfolio.valuation import NO_PURCHASE_DATE
+
+    baseline = _txn(date(2026, 9, 30), "opening", D(10), D(100), D(1000), {"baseline": True})  # cost, no date
+    no_cost = _txn(date(2026, 9, 30), "opening", D(7), meta={"statement_opening": True})
+    assert cash_flows_of([baseline]) == ([], NO_PURCHASE_DATE)
+    assert cash_flows_of([no_cost]) == ([], "opening balance with an unknown cost")
+    dated = _txn(date(2026, 9, 30), "opening", D(10), D(100), D(1000), {"acquired": "2024-01-15"})
+    assert cash_flows_of([dated]) == ([(date(2024, 1, 15), D(-1000))], None)
+    msg = xirr_exclusions(Counter({NO_PURCHASE_DATE: 5}))
+    assert (
+        msg.startswith("excludes 5 holding(s): 5 whose purchase date is unknown")
+        and "older order history" in msg
+    )
+    assert "known cost" not in msg
+    two = xirr_exclusions(Counter({NO_PURCHASE_DATE: 2, "opening balance with an unknown cost": 1}))
+    assert two.startswith("excludes 3 holding(s): 2 whose purchase date") and two.endswith(
+        "; 1 without a known cost"
+    )
+
+
 # --------------------------------------------------------------------------- tax
 def _holding(fmv=None, tax_class="equity"):
     from finresearch.portfolio.tax import HoldingTax

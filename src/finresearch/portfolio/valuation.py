@@ -416,6 +416,9 @@ def xirr_or_reason(flows: list[tuple[date, Decimal]], today: date) -> tuple[floa
         return None, str(e)
 
 
+NO_PURCHASE_DATE = "opening balance with an unknown purchase date"
+
+
 def cash_flows(
     txns: Sequence[Any], value: Decimal | None, today: date
 ) -> tuple[list[tuple[date, Decimal]], str | None]:
@@ -436,8 +439,10 @@ def cash_flows(
             else ((t.quantity or 0) * (t.price or 0) if t.price else None)
         )
         if t.kind == "opening":
-            if t.price is None or not (t.meta or {}).get("acquired"):
+            if t.price is None:
                 return [], "opening balance with an unknown cost"
+            if not (t.meta or {}).get("acquired"):  # e.g. a broker holdings baseline: average price, no date
+                return [], NO_PURCHASE_DATE
             flows.append((date.fromisoformat(t.meta["acquired"]), -(t.quantity * t.price + (t.charges or 0))))
         elif t.kind == "buy" and not reinvest:
             if gross is None:
