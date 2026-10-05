@@ -423,6 +423,20 @@ stock_app = typer.Typer(no_args_is_help=True, help="Listed-stock research report
 app.add_typer(stock_app, name="stock")
 
 
+@stock_app.command("peers")
+def stock_peers_now(
+    symbols: str = typer.Option("", help="comma-separated NSE symbols (default: the whole NIFTY 500)"),
+) -> None:
+    """Build the stock peer dataset now (the monitor does this every weekday evening): ~1,000 polite NSE requests
+    for the NIFTY 500, about 15-20 minutes."""
+    from finresearch.signals import stock_peers
+
+    syms = [s.strip().upper() for s in symbols.split(",") if s.strip()] or None
+    res = asyncio.run(stock_peers.refresh(symbols=syms))
+    console.print(f"peer dataset as of {res['as_of']}: {res['stocks']} stocks, {res['failed']} failed: "
+                  f"{stock_peers.store_path()}")  # fmt: skip
+
+
 @stock_app.command("run")
 def stock_run(
     company: str = typer.Argument(

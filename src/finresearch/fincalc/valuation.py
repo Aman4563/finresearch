@@ -287,13 +287,19 @@ def _quantile(xs: list[Decimal], q: Decimal) -> Decimal:
     return xs[i] if i + 1 >= len(xs) else xs[i] + (xs[i + 1] - xs[i]) * frac
 
 
-def peer_stats(peers: list[Num], own: Num | None = None) -> PeerStats:
-    """Peer multiple distribution (non-positive multiples dropped: a loss-maker's P/E is not meaningful) and the
-    company's percentile rank = share of peers below it + half of ties. Roadmap §C.7 wants ≥ 3 peers; raises
-    ValueError with fewer."""
-    xs = sorted(x for x in (to_decimal(p) for p in peers) if x > 0)
-    if len(xs) < 3:
-        raise ValueError("need at least 3 positive peer multiples")
+def peer_distribution(
+    values: list[Num], own: Num | None = None, *, positive_only: bool = False, min_n: int = 3
+) -> PeerStats:
+    """Quartiles of peer values and the company's percentile rank = share of peers strictly below it + half of the
+    peers equal to it (0-100). `positive_only` drops non-positive values first (a loss-maker's P/E or a negative
+    book's P/B is not meaningful); without it negative values count (a negative ROE or growth is real data and
+    dropping it would bias the median upwards). ValueError with fewer than `min_n` values.
+
+    The percentile only says where the company sits; whether high is good depends on the metric (a high P/E
+    percentile means dearer than peers, not better)."""
+    xs = sorted(x for x in (to_decimal(p) for p in values) if not positive_only or x > 0)
+    if len(xs) < min_n:
+        raise ValueError(f"need at least {min_n} {'positive ' if positive_only else ''}peer values")
     o = opt_decimal(own)
     pct = None
     if o is not None:
@@ -302,6 +308,16 @@ def peer_stats(peers: list[Num], own: Num | None = None) -> PeerStats:
         pct = Decimal(100) * (below + Decimal(ties) / 2) / len(xs)
     return PeerStats(len(xs), _quantile(xs, Decimal("0.25")), _quantile(xs, Decimal("0.5")),
                      _quantile(xs, Decimal("0.75")), o, pct)  # fmt: skip
+
+
+def peer_stats(peers: list[Num], own: Num | None = None) -> PeerStats:
+    """Peer multiple distribution (non-positive multiples dropped: a loss-maker's P/E is not meaningful) and the
+    company's percentile rank = share of peers below it + half of ties. Roadmap §C.7 wants ≥ 3 peers; raises
+    ValueError with fewer."""
+    try:
+        return peer_distribution(peers, own, positive_only=True)
+    except ValueError:
+        raise ValueError("need at least 3 positive peer multiples") from None
 
 
 @dataclass(frozen=True)

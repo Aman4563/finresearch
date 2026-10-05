@@ -314,3 +314,20 @@ export type RankSummary = {
   value: number | null; category_size: number | null;
 };
 export type CategoryRanks = { status: "ok" | "not_computed"; message?: string; as_of?: string; metric?: RankMetricKey; caveats?: string[]; ranks: Record<string, RankSummary> };
+
+// GET /api/stocks/{symbol}/peers (issue #178)
+export type PeerMetricKey = "price" | "market_cap" | "pe" | "pb" | "roe" | "revenue_growth" | "pat_growth" | "pat_margin" | "return_1y";
+export interface PeerValue { value: number | null; period?: string | null; source?: string | null; basis?: string | null; reason?: string | null }
+export interface PeerRow {
+  symbol: string; name: string | null; basic_industry: string | null; industry: string | null; sector: string | null; macro: string | null;
+  price_as_of?: string; results_read?: string | null; stale?: boolean; metrics: Record<PeerMetricKey, PeerValue>;
+}
+export interface PeerSummary { n: number; q1: number | null; median: number | null; q3: number | null; percentile: number | null; reason: string | null }
+export interface StockPeers {
+  status: "ok" | "no_peers" | "not_computed" | "unsupported"; symbol: string; message?: string | null;
+  as_of?: string; generated_at?: string; universe?: string; universe_source?: string;
+  level?: string | null; level_label?: string | null; industry?: string | null; candidates?: number;
+  company?: PeerRow; peers?: PeerRow[]; summary?: Record<PeerMetricKey, PeerSummary>;
+  metrics?: PeerMetricKey[]; valuation_metrics?: PeerMetricKey[]; caveats?: string[];
+  company_live?: boolean; company_error?: string | null;
+}

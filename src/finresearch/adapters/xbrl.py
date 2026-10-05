@@ -55,6 +55,9 @@ KEY_FACTS = {
     "NoncurrentInvestments": "noncurrent_investments",
     "CashAndCashEquivalents": "cash",
     "Equity": "total_equity",
+    # owners' share of equity (total equity less non-controlling interests): the ROE / P/B denominator that matches
+    # profit and EPS attributable to owners (Ind AS 110 / Ind AS 33)
+    "EquityAttributableToOwnersOfParent": "equity_owners",
     "EquityShareCapital": "equity_share_capital",
     "OtherEquity": "other_equity",
     "Liabilities": "total_liabilities",
