@@ -334,7 +334,7 @@ async def build(eq: Any, today: date, symbols: list[str] | None = None,
     if tracked is None and symbols is None:
         try:
             tracked = tracked_symbols()
-        except Exception as e:  # recorded, not hidden: the base still builds, the extras wait for the next night
+        except Exception as e:  # recorded, not hidden: the base still builds; extras wait a night
             tracked, tracked_error = [], f"{type(e).__name__}: {e}"[:200]
             log.warning("stock peers: could not read held/watched symbols: %s", tracked_error)
     base = set(syms)

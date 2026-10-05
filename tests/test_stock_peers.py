@@ -288,3 +288,114 @@ async def test_build_keeps_a_failed_stocks_previous_row_marked_stale(env, fake_r
     again = await SP.build(OneFails(), today, ["INFY", "OTHER", "THIRD"])
     assert again["failed"].keys() == {"OTHER"} and again["rows"]["OTHER"]["stale"] is True
     assert "stale" not in again["rows"]["INFY"] and "THIRD" in again["rows"]
+
+
+# --------------------------------------------------------------------------- #199: held/watched stocks outside the 500
+TEXTILES = {"industry": "Textiles", "industry_info": "Textiles & Apparels", "sector": "Textiles",
+            "macro": "Consumer Discretionary"}  # fmt: skip
+
+
+class UniverseEq(FakeEq):
+    """Per-symbol quotes (INFY's fixture with the classification and issued shares replaced) and a fake NIFTY Total
+    Market list: 20 synthetic textile microcaps and 600 IT fillers."""
+
+    def __init__(self):
+        from types import SimpleNamespace
+
+        super().__init__()
+        base = self.nse.quote
+        self.quoted: list[str] = []
+        self.got: list[str] = []
+        # TX01..TX18 share the held stock's basic industry; TX19, TX20 only its sector. TXi's issued shares are
+        # 1e7 x 1.1^(i-1) against the held stock's 1e7 (same price): |ln(ratio)| grows with i, so the 15 nearest
+        # by market cap are TX01..TX15.
+        self.shares = {"SMALLTEX": 10_000_000} | {
+            f"TX{i:02d}": int(10_000_000 * 1.1 ** (i - 1)) for i in range(1, 21)
+        }
+
+        async def quote(symbol):
+            self.quoted.append(symbol)
+            q = await base(symbol)
+            if symbol in self.shares:
+                other = symbol in ("TX19", "TX20")
+                q = q.model_copy(update={**TEXTILES, "company": f"{symbol} Example Ltd",
+                                         "industry": "Other Textile Products" if other else "Textiles",
+                                         "issued_shares": self.shares[symbol]})  # fmt: skip
+            return q
+
+        async def get(url, **kw):
+            self.got.append(url)
+            lines = ["Company Name,Industry,Symbol,Series,ISIN Code"]
+            lines += [f"{s} Example Ltd.,Textiles,{s},EQ,INE000X0{i:04d}" for i, s in enumerate(self.shares)]
+            lines += [
+                f"Filler {i} Ltd.,Information Technology,FILL{i},EQ,INE000Y0{i:04d}" for i in range(600)
+            ]
+            return SimpleNamespace(ok=True, status=200, text="\n".join(lines))
+
+        self.nse = SimpleNamespace(quote=quote, http=SimpleNamespace(get=get))
+
+
+async def test_held_stock_outside_the_500_gets_industry_peers_from_the_broader_list(
+    env, fake_results, monkeypatch
+):
+    from finresearch.signals import stock_peers as SP
+
+    monkeypatch.setattr(SP, "PAUSE_S", 0)
+    monkeypatch.setattr(SP, "SOURCES", SP.PeerSources(tracked=lambda: ["SMALLTEX", "BIG1", "smalltex"]))
+
+    async def base(eq):
+        return ["BIG1", "BIG2"]  # the NIFTY 500 stand-in (INFY's IT classification)
+
+    monkeypatch.setattr(SP, "universe_symbols", base)
+    today = date(2026, 9, 28)
+    eq = UniverseEq()
+    data = await SP.build(eq, today)
+    rows = data["rows"]
+    expected = {f"TX{i:02d}" for i in range(1, 16)}
+    assert set(rows) == {"BIG1", "BIG2", "SMALLTEX"} | expected
+    assert rows["SMALLTEX"]["origin"] == "tracked" and rows["BIG1"]["origin"] == "base"
+    assert {rows[s]["origin"] for s in expected} == {"industry_peer"}
+    # no duplicate work: BIG1 (held and in the 500) quoted once; the IT fillers never; every textile candidate once
+    # for its classification, then the 15 chosen again for their rows
+    assert eq.quoted.count("BIG1") == 1 and not any(s.startswith("FILL") for s in eq.quoted)
+    assert eq.quoted.count("TX16") == 1 and eq.quoted.count("TX01") == 2 and eq.quoted.count("SMALLTEX") == 1
+    assert eq.got == [SP.BROAD_URL]
+    ext = data["extended"]
+    assert (ext["outside_base"], ext["industry_peers"], ext["quotes"], ext["errors"]) == (1, 15, 20, [])
+
+    SP.save(data)
+    t = SP.peer_table(data, rows["SMALLTEX"], "SMALLTEX")
+    assert t["level"] == "basic_industry" and t["industry"] == "Textiles" and t["candidates"] == 15
+    assert {p["symbol"] for p in t["peers"]} == expected and "origin" not in t["company"]
+    assert t["universe_note"] and "NIFTY Total Market" in t["universe_note"]
+    big = SP.peer_table(data, rows["BIG1"], "BIG1")  # the textile rows do not enter an IT stock's table
+    assert [p["symbol"] for p in big["peers"]] == ["BIG2"]
+
+    # the next night: candidates' classifications come from the disk cache (30 days), no candidate quotes
+    eq2 = UniverseEq()
+    again = await SP.build(eq2, date(2026, 9, 29))
+    assert again["extended"]["quotes"] == 0 and set(again["rows"]) == set(rows)
+    assert eq2.quoted.count("TX16") == 0
+
+
+async def test_nothing_extra_is_requested_without_stocks_outside_the_500(env, fake_results, monkeypatch):
+    from finresearch.signals import stock_peers as SP
+
+    async def base(eq):
+        return ["BIG1", "BIG2"]
+
+    monkeypatch.setattr(SP, "PAUSE_S", 0)
+    monkeypatch.setattr(SP, "universe_symbols", base)
+    monkeypatch.setattr(SP, "SOURCES", SP.PeerSources(tracked=lambda: ["BIG2"]))
+    eq = UniverseEq()
+    data = await SP.build(eq, date(2026, 9, 28))
+    assert eq.got == [] and eq.quoted == ["BIG1", "BIG2"] and data["extended"]["outside_base"] == 0
+
+    def broken():
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(SP, "SOURCES", SP.PeerSources(tracked=broken))
+    data = await SP.build(UniverseEq(), date(2026, 9, 28))  # the base still builds; the reason is recorded
+    assert (
+        set(data["rows"]) == {"BIG1", "BIG2"} and "database unavailable" in data["extended"]["tracked_error"]
+    )
