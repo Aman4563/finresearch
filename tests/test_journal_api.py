@@ -448,3 +448,15 @@ def test_planned_buy_by_symbol_matches_a_trade_imported_with_an_isin(client):
         and got[0]["status"] == "active"
         and got[0]["instrument"] == "ISIN:INE000X01011"
     )
+
+
+def test_checklist_is_incomplete_when_a_check_could_not_be_done():
+    from finresearch.portfolio.pretrade import overall_status
+
+    def it(status):
+        return {"key": status, "label": status, "status": status}
+
+    assert overall_status([it("ok"), it("info")]) == "ok"
+    assert overall_status([it("ok"), it("unknown")]) == "incomplete"  # not "nothing flagged"
+    assert overall_status([it("unknown"), it("warn")]) == "warn"
+    assert overall_status([it("unknown"), it("warn"), it("block")]) == "block"

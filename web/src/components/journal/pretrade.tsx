@@ -22,8 +22,9 @@ export function ChecklistView({ c, compact }: { c: Checklist; compact?: boolean 
     <div className="space-y-2">
       {!compact && (
         <div className="flex flex-wrap items-center gap-2 text-sm">
-          <Badge tone={c.status === "block" ? "loss" : c.status === "warn" ? "warn" : "gain"}>
-            {c.status === "block" ? "cannot be done as entered" : c.status === "warn" ? "check the warnings" : "nothing flagged"}
+          <Badge tone={c.status === "block" ? "loss" : c.status === "warn" ? "warn" : c.status === "incomplete" ? "neutral" : "gain"}>
+            {c.status === "block" ? "cannot be done as entered" : c.status === "warn" ? "check the warnings"
+              : c.status === "incomplete" ? `incomplete: ${c.incomplete?.length ?? "some"} check${c.incomplete?.length === 1 ? "" : "s"} couldn't be done` : "nothing flagged"}
           </Badge>
           <span className="text-muted">
             {c.side} {c.quantity.toLocaleString("en-IN")} × ₹{c.price.toLocaleString("en-IN")} of {c.name || c.instrument}
