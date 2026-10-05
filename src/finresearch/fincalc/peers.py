@@ -158,7 +158,7 @@ def pe_metric(
 
 
 def latest_sheet(sheets: list[BalanceSheet], consolidated: bool | None) -> BalanceSheet | None:
-    """The newest balance sheet on the given basis (the TTM's), else the newest on any basis."""
+    """The newest balance sheet with a book value on the given basis (the TTM's); bases are never mixed."""
     same = [s for s in sheets if s.consolidated == consolidated and s.book[0] is not None]
     return max(same, key=lambda s: s.end) if same else None
 
