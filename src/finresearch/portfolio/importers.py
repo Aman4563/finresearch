@@ -460,6 +460,18 @@ def _symbol(v: Any) -> str:
     return t[:-2] if re.fullmatch(r"\d{5,7}\.0", t) else t
 
 
+# an NSE trading symbol: capitals, digits, "&" and "-" (e.g. M&M, BAJAJ-AUTO). A broker's placeholder such as Groww's
+# "NSE$" for a BSE-only stock is no symbol: the holding is then identified by its ISIN and priced through the ISIN's
+# listing (its BSE scrip code when it trades on BSE only; portfolio.valuation.instrument_of) (#200)
+NSE_SYMBOL_RE = re.compile(r"[A-Z0-9&\-]{1,20}")  # some start with a digit (3MINDIA, 360ONE)
+
+
+def nse_symbol_or_none(sym: str | None) -> str | None:
+    """`sym` when it can be an NSE symbol, else None (blank, a BSE scrip code, or a placeholder like "NSE$")."""
+    t = (sym or "").strip().upper()
+    return t if NSE_SYMBOL_RE.fullmatch(t) and not t.isdigit() else None
+
+
 def _trade_row(
     broker: str, r: list[Any], cell, account: str, month_first: bool = False
 ) -> ImportedTxn | None:
@@ -514,9 +526,10 @@ def _trade_row(
     kind = "buy" if side in ("buy", "b") else "sell"
     return ImportedTxn(account=account, asset_type="stock", name=name, day=day, kind=kind, quantity=qty, price=price,
                        amount=qty * price, source=broker, isin=isin or None,
-                       nse_symbol=(sym or None) if not sym.isdigit() else None,
-                       bse_code=sym if sym.isdigit() else None,
-                       meta={k: v for k, v in meta.items() if v not in (None, "")}, ext=ext)  # fmt: skip
+                       nse_symbol=nse_symbol_or_none(sym), bse_code=sym if sym.isdigit() else None,
+                       meta={k: v for k, v in {**meta, "broker_symbol": sym if sym and not sym.isdigit()
+                                               and not nse_symbol_or_none(sym) else None}.items()
+                             if v not in (None, "")}, ext=ext)  # fmt: skip
 
 
 # --------------------------------------------------------------------------- broker holdings statements
@@ -605,9 +618,7 @@ def parse_holdings_statement(content: bytes, filename: str = "", broker: str | N
         if q <= 0:
             continue
         name = str(at(r, jn) or isin).strip()
-        sym = (
-            name.upper() if broker == "zerodha" and re.fullmatch(r"[A-Z0-9&\-]{1,20}", name.upper()) else None
-        )
+        sym = nse_symbol_or_none(name) if broker == "zerodha" else None
         out.append(BrokerHolding(name=name, quantity=q, isin=isin, symbol=sym, avg_price=_dec(at(r, ja)),
                                  last_price=_dec(at(r, jc))))  # fmt: skip
     if not out:
