@@ -2,7 +2,7 @@
 
 export type BriefEvent = { day: string; kind: string; title: string; path?: string; verified?: boolean; note?: string };
 export type FiredAlert = { id: number; kind: string; level: string; message: string; at: string; path: string };
-export type SignalChange = { instrument: string; name: string; from: string; to: string };
+export type SignalChange = { instrument: string; name: string; from: string; to: string; informational?: boolean; label?: string | null };
 export type Sip = {
   holding_id: number; name: string; account: string; amount: number; day_of_month: number; instalments: number;
   last: string; next_expected: string; days_since: number; status: "on track" | "missed" | "stopped";

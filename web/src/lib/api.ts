@@ -477,6 +477,8 @@ export type Forecast = {
   probability: number | null;
   interval: [number, number] | null;
   action: string;
+  /** a stock-signal row while signals.stock has no proven edge (#193): shown as informational with its factor tilt */
+  call?: { status: "informational"; label: string; composite_action: string; tilt: string | null } | null;
   score: number | null;
   method: string;
   validation_status: string;

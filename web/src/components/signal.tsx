@@ -33,12 +33,19 @@ export type Signal = {
   as_of: string | null;
   disclaimer: string;
   shadow?: SignalShadow | null;
+  /** set when the action is INFORMATIONAL (the stock signal while no pre-registered model has shown an edge, #193) */
+  call?: SignalCall | null;
+};
+export type SignalCall = {
+  status: "informational"; label: string; tilt: string; composite_action: string; promotion_rule: string;
+  universe_base_rate: { p: number; n: number | null; description: string } | null; probability_vs_base: string | null;
 };
 
 const POSITIVE = new Set(["APPLY", "BUY", "ACCUMULATE", "ENTER", "HOLD_AFTER_LISTING"]);
 const NEGATIVE = new Set(["SKIP", "SELL", "REDUCE", "AVOID", "EXIT", "SELL_AT_LISTING"]);
 const LABEL: Record<string, string> = {
   SELL_AT_LISTING: "Sell at listing", HOLD_AFTER_LISTING: "Hold after listing", NO_SIGNAL: "No signal", WAIT: "Wait",
+  INFORMATIONAL: "Informational — no proven edge",
 };
 const VALIDATION: Record<SignalValidation["status"], { label: string; tone: "gain" | "info" | "warn" | "neutral"; help: string }> = {
   backtested: { label: "Backtested", tone: "gain", help: "Checked out of sample on past data; the numbers below are its track record." },
@@ -92,9 +99,10 @@ export function SignalView({ s, compact }: { s: Signal; compact?: boolean }) {
       <div className="flex flex-wrap items-center gap-3">
         <span className={cx("inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-lg font-semibold tracking-tight ring-1 ring-inset",
           tone === "gain" ? "bg-gain-soft text-gain ring-gain/30" : tone === "loss" ? "bg-loss-soft text-loss ring-loss/30" : "bg-background-subtle text-foreground ring-border")}>
-          {tone === "gain" ? <TrendingUp className="size-4" /> : tone === "loss" ? <TrendingDown className="size-4" /> : <Activity className="size-4" />}
-          {LABEL[s.action] ?? s.action.replaceAll("_", " ")}
+          {tone === "gain" ? <TrendingUp className="size-4" /> : tone === "loss" ? <TrendingDown className="size-4" /> : s.call ? <Info className="size-4" /> : <Activity className="size-4" />}
+          {s.call?.label ?? LABEL[s.action] ?? s.action.replaceAll("_", " ")}
         </span>
+        {s.call && <span className="text-sm text-muted">{s.call.tilt}</span>}
         <Badge tone={v.tone}>{v.label}{s.validation.n ? ` · n=${s.validation.n}` : ""}</Badge>
         <InfoTip>{v.help} {s.validation.description}</InfoTip>
         <span className="ml-auto text-xs text-muted">{s.horizon}</span>
@@ -105,6 +113,12 @@ export function SignalView({ s, compact }: { s: Signal; compact?: boolean }) {
           <p className="text-[11px] text-muted">Probability · {s.event}</p>
           <p className="num mt-1 text-2xl font-semibold">{pctText(s.probability)}</p>
           {s.probability_interval && <p className="num text-xs text-muted">range {pctText(s.probability_interval[0])}–{pctText(s.probability_interval[1])}</p>}
+          {s.call?.universe_base_rate && (
+            <p className="mt-1 text-xs text-muted">
+              vs base rate <span className="num font-medium text-foreground">{(s.call.universe_base_rate.p * 100).toFixed(1)}%</span>
+              <InfoTip>{(s.call.universe_base_rate.p * 100).toFixed(1)}% {s.call.universe_base_rate.description}. {s.call.probability_vs_base}</InfoTip>
+            </p>
+          )}
         </div>
         <div className="rounded-lg bg-background-subtle p-3">
           <p className="flex items-center gap-1 text-[11px] text-muted">Score <InfoTip>−100 is strongly negative, +100 strongly positive; the factors below add up to it.</InfoTip></p>
@@ -124,6 +138,17 @@ export function SignalView({ s, compact }: { s: Signal; compact?: boolean }) {
             {LABEL[s.action] ?? s.action.replaceAll("_", " ")} follows the score ({s.score > 0 ? "+" : ""}{s.score.toFixed(0)}); the {pctText(s.probability)} is
             a separate estimate of the event, which is {s.probability! > 0.5 ? "more likely than not" : "less likely than not"}. Neither is strong evidence
             on its own here.
+          </span>
+        </p>
+      )}
+      {s.call && (
+        // #193: the analysis without an instruction, and the rule that would bring calls back
+        <p className="flex items-start gap-1.5 rounded-lg bg-background-subtle px-3 py-2 text-xs text-foreground/90">
+          <Info className="mt-0.5 size-3.5 shrink-0 text-muted" />
+          <span>
+            <span className="font-medium">Not a buy or sell call. </span>
+            The factors below are shown as analysis; the method has not beaten the market in a fair test, so the app
+            makes no call ({s.call.tilt}). {s.call.promotion_rule}
           </span>
         </p>
       )}

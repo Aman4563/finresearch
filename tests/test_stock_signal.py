@@ -525,3 +525,28 @@ def test_pretrade_item_shows_the_tilt_and_the_base_rate():
     assert it["detail"] == ("Informational — no proven edge: factors lean positive (12 months); 58.0% chance it beats "
                             "the Nifty, against a 55.0% base rate (55.0% of NIFTY 50 stock-months beat the index): "
                             "+3.0 pp, within noise of the base rate; not a reason to trade either way")  # fmt: skip
+
+
+def test_ledger_rows_of_the_stock_signal_are_shown_informational():
+    from datetime import date as d
+
+    from finresearch.db.models import Forecast
+    from finresearch.signals.ledger import forecast_json
+
+    def row(**kw):
+        base = dict(id=1, asset="stock", instrument="INFY", name="Example Ltd", source="signal:stock", run_id=None,
+                    event_kind="excess_return_12m", event="e", horizon="12 months", resolve_on=d(2027, 9, 30),
+                    probability=0.6, interval_low=None, interval_high=None, action="BUY", score=61.0, method="m",
+                    validation_status="rule_based", status="open", outcome=None, resolved_at=None,
+                    resolution_value=None, resolution_note=None, last_checked_at=None, created_at=None)  # fmt: skip
+        return Forecast(**{**base, **kw})
+
+    # a row logged before #193 (no call_status) and one after: both informational, the stored action kept as logged
+    for inputs in ({}, {"call_status": "informational"}):
+        out = forecast_json(row(inputs=inputs))
+        assert out["action"] == "BUY" and out["call"]["status"] == "informational"
+        assert (
+            out["call"]["tilt"] == "factors lean strongly positive"
+            and out["call"]["composite_action"] == "BUY"
+        )
+    assert forecast_json(row(asset="ipo", source="signal:ipo", action="APPLY", inputs={}))["call"] is None

@@ -112,7 +112,7 @@ export function PreTradePanel({ onRecorded }: { onRecorded: () => void }) {
   return (
     <Card title="Plan a trade" icon={<ClipboardCheck className="size-4" />}
       subtitle="Run the checklist before you trade, then write down why. The app places no orders."
-      help="Position size and concentration use the last daily valuation; tax uses your lots first-in-first-out and this year's realised gains; the signal shows its probability interval and how it was validated.">
+      help="Position size and concentration use the last daily valuation; tax uses your lots first-in-first-out and this year's realised gains; the signal shows its probability interval and how it was validated (the stock signal is informational: no proven edge, so it never counts for or against a trade).">
       <div className="space-y-4">
         <div className="flex flex-wrap items-end gap-3">
           <Segmented<"buy" | "sell"> value={f.side} onChange={(v) => { setF({ ...f, side: v }); setC(null); }}

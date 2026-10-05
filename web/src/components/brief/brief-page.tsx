@@ -286,13 +286,16 @@ export function BriefPage() {
               ) : <p className="py-3 text-sm text-muted">No rule fired. No action needed.</p>}
             </Card>
             <Card title="Signal changes on holdings" icon={<Radar className="size-4" />}
-              help="Each holding's signal is computed once a day after the close. The stock signal showed no edge over an equal-weight Nifty 50 backtest: read a change as a prompt to review, not a forecast. Scheduled checks never log forecasts.">
+              help="Each holding's signal is computed once a day after the close. The stock signal showed no edge over an equal-weight Nifty 50 backtest, so it is informational: a stock's change is a change in its factor tilt, a prompt to review, not a buy or sell call. Scheduled checks never log forecasts.">
               {b.signal_changes.length ? (
                 <ul className="space-y-1.5 text-sm">
                   {b.signal_changes.map((c) => (
                     <li key={c.instrument} className="flex flex-wrap items-center gap-2">
                       <span className="font-medium">{c.name}</span>
-                      <Badge tone={ACTION_TONE[c.from] ?? "neutral"}>{c.from}</Badge>→<Badge tone={ACTION_TONE[c.to] ?? "neutral"}>{c.to}</Badge>
+                      {c.informational ? <>
+                        <Badge tone="neutral">informational</Badge>
+                        <span className="text-muted" title={`${c.label ?? "Informational — no proven edge"}: a change in the factor tilt, not a buy or sell call`}>{c.from} → {c.to}</span>
+                      </> : <><Badge tone={ACTION_TONE[c.from] ?? "neutral"}>{c.from}</Badge>→<Badge tone={ACTION_TONE[c.to] ?? "neutral"}>{c.to}</Badge></>}
                     </li>
                   ))}
                 </ul>
