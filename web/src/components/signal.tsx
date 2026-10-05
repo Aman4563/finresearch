@@ -115,7 +115,7 @@ export function SignalView({ s, compact }: { s: Signal; compact?: boolean }) {
           {s.probability_interval && <p className="num text-xs text-muted">range {pctText(s.probability_interval[0])}–{pctText(s.probability_interval[1])}</p>}
           {s.call?.universe_base_rate && (
             <p className="mt-1 text-xs text-muted">
-              vs base rate <span className="num font-medium text-foreground">{(s.call.universe_base_rate.p * 100).toFixed(1)}%</span>
+              vs base rate, all stocks <span className="num font-medium text-foreground">{(s.call.universe_base_rate.p * 100).toFixed(1)}%</span>
               <InfoTip>{(s.call.universe_base_rate.p * 100).toFixed(1)}% {s.call.universe_base_rate.description}. {s.call.probability_vs_base}</InfoTip>
             </p>
           )}
@@ -167,7 +167,9 @@ export function SignalView({ s, compact }: { s: Signal; compact?: boolean }) {
       )}
       {s.base_rate && (
         <p className="text-xs text-muted">
-          Base rate: <span className="num text-foreground">{pctText(s.base_rate.p)}</span> of {s.base_rate.n} comparable cases
+          {/* the bucket this instrument is in; the "all stocks" rate above is the unconditional one (#200: both said
+              "base rate" with different numbers) */}
+          Base rate in similar cases: <span className="num text-foreground">{pctText(s.base_rate.p)}</span> of {s.base_rate.n} comparable cases
           {s.base_rate.ci && <> (95% CI {pctText(s.base_rate.ci[0])}–{pctText(s.base_rate.ci[1])})</>}
           {s.base_rate.description && <> · {s.base_rate.description}</>}
         </p>
