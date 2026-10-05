@@ -890,6 +890,22 @@ class PortfolioSnapshot(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class PortfolioAis(Base):
+    """The user's AIS for one financial year (named by its end year), reduced to the rows the AIS check compares
+    (portfolio.ais): category, code, description, source name/TAN, security name/ISIN, date, amount, TDS, quantity,
+    STT. No PAN, name, address, Aadhaar, phone, e-mail or account number is stored, and the file itself is not kept
+    (only its sha256, to recognise it again). A new import for the same year replaces the old one."""
+
+    __tablename__ = "portfolio_ais"
+    fy: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    sha256: Mapped[str] = mapped_column(String(64), index=True)
+    format: Mapped[str] = mapped_column(String(8))  # json | pdf
+    items: Mapped[list[Any]] = mapped_column(default=list)
+    ignored: Mapped[int] = mapped_column(Integer, default=0)  # rows of categories the check does not use
+    warnings: Mapped[list[Any]] = mapped_column(default=list)
+    imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class PortfolioSetting(Base):
     """Small portfolio settings by key (e.g. "targets": target allocation % by asset class)."""
 

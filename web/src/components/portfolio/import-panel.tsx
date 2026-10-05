@@ -10,7 +10,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Badge, Button, Callout, Card, ErrorNote, Field, InfoTip, Segmented, Table, cx, inputClass } from "@/components/ui";
 import { api, day, useApi, when } from "@/lib/api";
 
-import { type ImportPreview, type ImportRow, units } from "./types";
+import { type AisImport, type ImportPreview, type ImportRow, units } from "./types";
 
 function readB64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -183,13 +183,20 @@ function TradebookImport({ onDone }: { onDone: () => void }) {
 // ---------------------------------------------------------------- drop zone
 // One place for every statement: drop (anywhere on this tab) or pick several files; each is routed by its type. A PDF
 // waits for its password in a masked field on its own row; spreadsheets preview at once. Nothing is written until
-// the row's Import is pressed.
-type FileKind = "pdf" | "sheet" | "bad";
-type Item = { id: number; file: File; kind: FileKind; password: string; busy: boolean; err: string | null; preview: ImportPreview | null; done: boolean };
+// the row's Import is pressed. An income-tax AIS (a .json, or a PDF named like one; a PDF row can be switched) goes to
+// /api/portfolio/ais and shows up under Tax → AIS check.
+type FileKind = "pdf" | "sheet" | "ais" | "bad";
+type Item = { id: number; file: File; kind: FileKind; password: string; busy: boolean; err: string | null; preview: ImportPreview | null; done: boolean; ais: AisImport | null; fy: string };
+
+const isPdf = (f: File) => f.name.toLowerCase().endsWith(".pdf") || f.type === "application/pdf";
+const AIS_PW_HINT = "Your PAN in lower case followed by your date of birth as ddmmyyyy (e.g. abcde1234f01011990). Sent once to this app's local API, then dropped.";
+const FY_CHOICES = Array.from({ length: 6 }, (_, i) => new Date().getFullYear() + 1 - i); // FYs by their end year
 
 function kindOf(f: File): FileKind {
   const n = f.name.toLowerCase();
-  if (n.endsWith(".pdf") || f.type === "application/pdf") return "pdf";
+  if (n.endsWith(".json")) return "ais";
+  if (isPdf(f) && /(^|[^a-z])ais([^a-z]|$)|annual.?information/.test(n)) return "ais";
+  if (isPdf(f)) return "pdf";
   if (n.endsWith(".xlsx") || n.endsWith(".csv")) return "sheet";
   return "bad";
 }
@@ -202,10 +209,17 @@ function QuickImport({ onDone }: { onDone: () => void }) {
   const patch = (id: number, p: Partial<Item>) => setItems((xs) => xs.map((x) => (x.id === id ? { ...x, ...p } : x)));
 
   const send = useCallback(async (it: Item, dry: boolean) => {
-    if (it.kind === "pdf" && !it.password) return;
+    if ((it.kind === "pdf" || (it.kind === "ais" && isPdf(it.file))) && !it.password) return;
     patch(it.id, { busy: true, err: null });
     try {
       const content_b64 = await readB64(it.file);
+      if (it.kind === "ais") {
+        const body = { filename: it.file.name, content_b64, dry_run: dry, ...(isPdf(it.file) ? { password: it.password } : {}), ...(it.fy ? { fy: Number(it.fy) } : {}) };
+        const res = await api<AisImport>("/api/portfolio/ais/import", { method: "POST", body: JSON.stringify(body) });
+        patch(it.id, { busy: false, ais: res, ...(dry ? {} : { done: true, password: "" }) });
+        if (!dry) onDone();
+        return;
+      }
       const res = it.kind === "pdf"
         ? await api<ImportPreview>("/api/portfolio/import/cas", { method: "POST", body: JSON.stringify({ filename: it.file.name, content_b64, password: it.password, dry_run: dry }) })
         : await api<ImportPreview>("/api/portfolio/import/tradebook", { method: "POST", body: JSON.stringify({ filename: it.file.name, content_b64, broker: null, dry_run: dry }) });
@@ -219,12 +233,12 @@ function QuickImport({ onDone }: { onDone: () => void }) {
   const add = useCallback((files: FileList | File[] | null) => {
     const fresh = Array.from(files ?? []).map((file): Item => {
       const kind = kindOf(file);
-      return { id: ++seq.current, file, kind, password: "", busy: false, preview: null, done: false,
-        err: kind === "bad" ? (file.name.toLowerCase().endsWith(".xls") ? "Old .xls format: open it and save as .xlsx or .csv, then drop it again." : "Not a PDF, XLSX or CSV statement.") : null };
+      return { id: ++seq.current, file, kind, password: "", busy: false, preview: null, done: false, ais: null, fy: "",
+        err: kind === "bad" ? (file.name.toLowerCase().endsWith(".xls") ? "Old .xls format: open it and save as .xlsx or .csv, then drop it again." : "Not a PDF, XLSX, CSV or AIS JSON statement.") : null };
     });
     if (!fresh.length) return;
     setItems((xs) => [...xs, ...fresh]);
-    fresh.filter((i) => i.kind === "sheet").forEach((i) => void send(i, true));
+    fresh.filter((i) => i.kind === "sheet" || (i.kind === "ais" && !isPdf(i.file))).forEach((i) => void send(i, true));
   }, [send]);
 
   // A file dropped anywhere on this tab comes here instead of the browser opening it (and leaving the app).
@@ -246,31 +260,46 @@ function QuickImport({ onDone }: { onDone: () => void }) {
 
   return (
     <Card title="Import statements" icon={<FileUp className="size-4" />}
-      help="Drop or choose any mix: Groww/Zerodha/Upstox order history or tradebook (XLSX/CSV), a broker holdings statement (XLSX/CSV), a CAMS/KFintech CAS or an NSDL/CDSL e-CAS (PDF). Import the order history before the holdings statement.">
+      help="Drop or choose any mix: Groww/Zerodha/Upstox order history or tradebook (XLSX/CSV), a broker holdings statement (XLSX/CSV), a CAMS/KFintech CAS or an NSDL/CDSL e-CAS (PDF), or your income-tax AIS (JSON or PDF) for the Tax → AIS check. Import the order history before the holdings statement.">
       <button type="button" onClick={() => input.current?.click()}
         className={cx("flex w-full flex-col items-center justify-center gap-1.5 rounded-xl border-2 border-dashed px-4 py-8 text-center transition-colors",
           over ? "border-brand bg-brand-soft" : "border-border hover:border-brand/60 hover:bg-background-subtle")}>
         <Upload className={cx("size-6", over ? "text-brand" : "text-muted")} />
         <span className="text-sm font-medium">{over ? "Drop to add" : "Drop statements here, or click to choose files"}</span>
-        <span className="text-xs text-muted">PDF (CAS / e-CAS) · XLSX or CSV (order history, tradebook, holdings) · several at once</span>
+        <span className="text-xs text-muted">PDF (CAS / e-CAS / AIS) · XLSX or CSV (order history, tradebook, holdings) · AIS JSON · several at once</span>
       </button>
-      <input ref={input} type="file" multiple hidden accept=".pdf,.xlsx,.csv,application/pdf,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      <input ref={input} type="file" multiple hidden accept=".pdf,.xlsx,.csv,.json,application/json,application/pdf,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         onChange={(e) => { add(e.target.files); e.target.value = ""; }} />
       {items.length > 0 && (
         <ul className="mt-4 space-y-3">
           {items.map((it) => (
             <li key={it.id} className="rounded-lg border border-border p-3">
               <div className="flex flex-wrap items-center gap-2">
-                {it.kind === "pdf" ? <FileText className="size-4 text-muted" /> : <FileSpreadsheet className="size-4 text-muted" />}
+                {isPdf(it.file) ? <FileText className="size-4 text-muted" /> : <FileSpreadsheet className="size-4 text-muted" />}
                 <span className="min-w-0 flex-1 truncate text-sm" title={it.file.name}>{it.file.name}</span>
+                {isPdf(it.file) && !it.done && (
+                  <Segmented label="Statement type" value={it.kind === "ais" ? "ais" : "pdf"} onChange={(v) => patch(it.id, { kind: v, preview: null, ais: null, err: null })}
+                    options={[{ value: "pdf", label: "CAS" }, { value: "ais", label: "AIS" }]} />
+                )}
                 {it.done && <Badge tone="gain">imported</Badge>}
                 {it.busy && <span className="text-xs text-muted">reading…</span>}
                 <Button variant="ghost" aria-label="Remove from list" icon={<X className="size-3.5" />} onClick={() => setItems((xs) => xs.filter((x) => x.id !== it.id))} />
               </div>
-              {it.kind === "pdf" && !it.done && (
+              {it.kind === "ais" && !it.done && it.err?.startsWith("fy:") && (
+                <div className="mt-2 flex flex-wrap items-end gap-2">
+                  <Field label="Financial year of this AIS">
+                    <select value={it.fy} onChange={(e) => patch(it.id, { fy: e.target.value })} className={cx(inputClass, "w-40")}>
+                      <option value="">Choose…</option>
+                      {FY_CHOICES.map((y) => <option key={y} value={y}>FY {y - 1}-{String(y % 100).padStart(2, "0")}</option>)}
+                    </select>
+                  </Field>
+                  <Button variant="secondary" icon={<RefreshCw className="size-3.5" />} disabled={!it.fy || it.busy} onClick={() => void send(it, true)}>Preview</Button>
+                </div>
+              )}
+              {isPdf(it.file) && it.kind !== "bad" && !it.done && (
                 <form className="mt-2 flex flex-wrap items-end gap-2" onSubmit={(e) => { e.preventDefault(); void send(it, true); }}>
                   <Field label={<span className="inline-flex items-center gap-1"><KeyRound className="size-3" />PDF password</span>}
-                    hint="Usually your PAN in capitals (NSDL/CDSL: PAN, sometimes with your date of birth). Sent once to this app's local API, then dropped.">
+                    hint={it.kind === "ais" ? AIS_PW_HINT : "Usually your PAN in capitals (NSDL/CDSL: PAN, sometimes with your date of birth). Sent once to this app's local API, then dropped."}>
                     <input type="password" name={`pdf-pw-${it.id}`} autoComplete="new-password" spellCheck={false} value={it.password}
                       onChange={(e) => patch(it.id, { password: e.target.value })} className={cx(inputClass, "w-64")} placeholder="Type the PDF password" />
                   </Field>
@@ -285,7 +314,22 @@ function QuickImport({ onDone }: { onDone: () => void }) {
                   {it.preview.already_imported != null && <span className="text-xs text-muted">already imported</span>}
                 </div>
               )}
-              {it.err && <div className="mt-2"><ErrorNote error={it.err} /></div>}
+              {it.ais && (
+                <div className="mt-2 space-y-2 text-xs">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge tone="info">AIS FY {it.ais.fy - 1}-{String(it.ais.fy % 100).padStart(2, "0")}</Badge>
+                    <span className="num">{it.ais.rows} rows kept · {it.ais.ignored} other rows not used</span>
+                    <span className="num">· {it.ais.check.counts.mismatch} differ · {it.ais.check.counts.only_ais} only in AIS · {it.ais.check.counts.only_app} only in app · {it.ais.check.counts.matched} match</span>
+                    {it.ais.already_imported != null && <Badge tone="warn">already imported</Badge>}
+                    {it.ais.dry_run
+                      ? <Button icon={<Upload className="size-3.5" />} disabled={it.busy} onClick={() => void send(it, false)}>{it.ais.already_imported != null ? "Import again" : "Import"}</Button>
+                      : <span className="text-gain">saved: see Tax → AIS check</span>}
+                  </div>
+                  {it.ais.warnings.map((w) => <p key={w} className="text-muted">{w}</p>)}
+                  <p className="text-muted">Kept: category, source name/TAN, security, date and amounts. Not kept: PAN, name, address, account numbers or the file.</p>
+                </div>
+              )}
+              {it.err && !(it.kind === "ais" && it.err.startsWith("fy:")) && <div className="mt-2"><ErrorNote error={it.err} /></div>}
               {it.preview && <div className="mt-3"><PreviewView p={it.preview} /></div>}
             </li>
           ))}

@@ -489,6 +489,77 @@ def add_portfolio_routes(app: FastAPI, *, scheme_rows: Callable[[], Awaitable[li
                 **apply(s, res, filename=filename, sha256=sha, saved_path=save_upload(content, sha, ext)),
             }
 
+    # ------------------------------------------------------------------ AIS check
+    @app.get("/api/portfolio/ais")
+    def ais_list() -> dict[str, Any]:
+        """The imported AIS years (no identifiers are stored) and the years the app has dividends or trades in."""
+        from finresearch.portfolio.ais_store import statements
+
+        with session_scope() as s:
+            return statements(s)
+
+    @app.get("/api/portfolio/ais/{fy}")
+    def ais_check(fy: int) -> dict[str, Any]:
+        """The AIS check for one financial year (named by its end year: 2026 = FY 2025-26)."""
+        from finresearch.portfolio.ais_store import check
+
+        if not 2000 <= fy <= 2100:
+            raise HTTPException(422, "fy must be a year such as 2026 (FY 2025-26)")
+        with session_scope() as s:
+            try:
+                return check(s, fy)
+            except LookupError as e:
+                raise HTTPException(404, str(e)) from None
+
+    @app.post("/api/portfolio/ais/import")
+    async def ais_import(request: Request) -> dict[str, Any]:
+        """Body: {"filename", "content_b64", "password" (PDF only), "fy" (when the file does not say), "dry_run"}.
+        The AIS is reduced to the rows the check needs and the file is not saved; the password is never stored,
+        logged or echoed (same handling as the CAS import)."""
+        from finresearch.portfolio.ais_store import check, known_sha, parse_file, save
+        from finresearch.portfolio.importers import StatementError
+
+        body = await _body(request)
+        password = body.pop("password", None)
+        if password is not None and not isinstance(password, str):
+            raise HTTPException(422, "password must be a string")
+        content = _decode(body.get("content_b64"))
+        dry = body.get("dry_run", True) is not False
+        try:
+            st = parse_file(content, password or None)
+        except StatementError as e:
+            raise HTTPException(422, str(e)) from None
+        finally:
+            del password
+        fy_in = body.get("fy")
+        if fy_in is not None and (not isinstance(fy_in, int) or not 2000 <= fy_in <= 2100):
+            raise HTTPException(422, "fy must be a year such as 2026 (FY 2025-26)")
+        if st.fy is not None and fy_in is not None and st.fy != fy_in:
+            raise HTTPException(422, f"this AIS is for FY {st.fy - 1}-{st.fy % 100:02d}, not the year chosen")
+        fy = st.fy or fy_in
+        if fy is None:
+            raise HTTPException(422, "fy: the financial year could not be read from the file; choose it")
+        sha = hashlib.sha256(content).hexdigest()
+        summary = {"fy": fy, "format": st.format, "rows": len(st.items), "ignored": st.ignored,
+                   "warnings": st.warnings}  # fmt: skip
+        with session_scope() as s:
+            prev = known_sha(s, sha)
+            if not dry:
+                save(s, st, fy, sha)
+            return {"dry_run": dry, "already_imported": prev, **summary, "check": check(s, fy, st.items)}
+
+    @app.delete("/api/portfolio/ais/{fy}")
+    def ais_delete(fy: int) -> dict[str, Any]:
+        """Forget the AIS stored for one financial year."""
+        from finresearch.db.models import PortfolioAis
+
+        with session_scope() as s:
+            row = s.get(PortfolioAis, fy)
+            if row is None:
+                raise HTTPException(404, "no AIS imported for that year")
+            s.delete(row)
+        return {"deleted": fy}
+
     @app.delete("/api/portfolio/imports/{import_id}")
     def delete_import(import_id: int) -> dict[str, Any]:
         """Remove an import and every transaction it added (lots are rebuilt). The saved file is deleted too."""
