@@ -217,3 +217,7 @@ def test_pdf_summary_rows_and_password():
     out = reconcile(st.items, _app(), 2026)
     r = next(r for r in out["rows"] if r["category"] == "sale")
     assert (r["match"], r["app_amount"], r["diff"]) == ("total", 12345 + 10000 + 5000, 22845 - 27345)
+
+
+def test_tolerance_label_reads_plainly():
+    assert reconcile([], [], 2026)["tolerance"] == "max(₹1, 0.1 % of the AIS amount)"

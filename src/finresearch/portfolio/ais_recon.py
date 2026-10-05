@@ -246,14 +246,17 @@ def _only_app(entries: list[AppEntry]) -> list[dict[str, Any]]:
         by[(e.category, e.holding_id)].append(e)
     out = []
     for (cat, _), es in by.items():
+        cause = ("The AIS has no matching row: the payer/exchange may not have reported it yet (the AIS fills in "
+                 "through the year), reported it under another name, or in another FY.")  # fmt: skip
+        if cat == "purchase":
+            cause += " Purchases are reported less completely than sales (which purchases are reported is unverified)."
         out.append({"category": cat, "label": es[0].name, "isin": es[0].isin, "match": None, "status": "only_app",
                     "ais_amount": None, "app_amount": _money(sum((e.amount for e in es), Decimal(0))), "diff": None,
                     "ais_tds": None, "ais_quantity": None, "app_quantity": _money(_sum(e.quantity for e in es)),
                     "holdings": [es[0].name], "duplicates_dropped": 0, "ais_rows": [],
                     "app_rows": [{"day": e.day.isoformat(), "name": e.name, "amount": _money(e.amount),
                                   "quantity": _money(e.quantity)} for e in sorted(es, key=lambda e: e.day)],
-                    "cause": "The AIS has no matching row: the payer/exchange may not have reported it yet (the AIS "
-                             "fills in through the year), reported it under another name, or in another FY.",
+                    "cause": cause,
                     "action": "Nothing to file if your record is right: report the income in the ITR anyway. "
                               "Re-download the AIS later to see if it appears."})  # fmt: skip
     return out
@@ -291,7 +294,7 @@ def reconcile(items: list[AisItem], app: list[AppEntry], fy: int) -> dict[str, A
         totals[c] = {"ais": _money(sum((Decimal(str(r["ais_amount"] or 0)) for r in rs), Decimal(0))),
                      "app": _money(sum((Decimal(str(r["app_amount"] or 0)) for r in rs), Decimal(0)))}  # fmt: skip
     return {"fy": fy, "label": fy_label(fy), "counts": counts, "totals": totals, "rows": rows, "info": info,
-            "tolerance": f"max(₹{ABS_TOL}, {REL_TOL * 100:g} % of the AIS amount)",
+            "tolerance": f"max(₹{ABS_TOL:f}, {float(REL_TOL * 100):g} % of the AIS amount)",
             "notes": [FORMAT_NOTE,
                       "Sale values are compared gross (units × price, before brokerage and STT); the AIS shows STT "
                       "in its own column.",
