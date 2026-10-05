@@ -151,7 +151,7 @@ async def test_a_renamed_nse_symbol_is_priced_through_its_isin():
     assert out[4].price is None and out[4].note is None  # the listing has the same symbol: no second quote
     assert out[5].price == D("212.40") and out[5].note is None
     assert sorted(asked) == ["FINECO", "GONECO", "NEWCO", "OLDCO", "SAMECO"]  # NEWCO once for both holdings
-    assert loads == 1  # the listings are loaded once, and only because a quote 404'd
+    assert loads == 1  # the listings are loaded once (for every holding with an ISIN)
 
 
 @pytest.fixture
@@ -203,3 +203,58 @@ def test_cached_view_first_then_stream_then_cache_reuse(client):
     assert full["summary"]["value"] == 8 * 10 * 100 + 10 * 50
     again = c.get("/api/portfolio?prices=cached").json()
     assert again["pending"] == 0 and len(f.quotes) == 8
+
+
+async def test_a_bse_only_isin_is_priced_on_bse_even_with_an_nse_looking_symbol():
+    """#200: a broker statement stored "NSE$" as the NSE symbol of a BSE-only company. NSE's quote API still answered
+    for "NSE$" (a last trade with no official close), so the holding showed a price that was not the company's BSE
+    close. The ISIN listing says BSE only: quote BSE by its scrip code and never NSE."""
+    from datetime import UTC, datetime
+
+    from finresearch.adapters.bse_equity import Listing, Listings
+
+    asked: list[tuple[str, str]] = []
+
+    async def quote(sym: str, exch: str = "NSE") -> Quote:
+        asked.append((sym, exch))
+        at = datetime(2026, 10, 1, 10, 30, tzinfo=UTC)  # 16:00 IST: the session is over
+        if exch == "NSE":
+            return Quote(symbol=sym, last_price=D("1741.30"), as_of=at)  # no official close yet
+        return Quote(symbol=sym, last_price=D("1723.50"), close_price=D("1723.50"), as_of=at)
+
+    async def listings() -> Listings:
+        return Listings(rows=[Listing(key="BSE:599901", symbol="EXAMPLE", name="Example Exchange Ltd",
+                                      isin="INE000X01045", exchange="BSE", exchanges=["BSE"], bse_code="599901")])  # fmt: skip
+
+    hs = [H(1, "stock", "Example Exchange Ltd", nse_symbol="NSE$", isin="INE000X01045")]
+    out = await fetch_prices(hs, quote=quote, scheme_rows=None, listings=listings)
+    assert out[1].price == D("1723.50") and out[1].source == "BSE quote: close (official)"
+    assert asked == [("599901", "BSE")]
+
+
+async def test_after_the_session_bse_official_close_beats_an_nse_last_trade():
+    """#200: after 15:30 IST with NSE's official close not yet published, a stock listed on both exchanges takes BSE's
+    published official close (when BSE has one) instead of NSE's last trade; before the close NSE's live price stays."""
+    from datetime import UTC, datetime
+
+    def make(at: datetime, bse_close: D | None):
+        async def quote(sym: str, exch: str = "NSE") -> Quote:
+            if exch == "NSE":
+                return Quote(symbol=sym, last_price=D("501.00"), as_of=at)
+            return Quote(symbol=sym, last_price=D("500.00"), close_price=bse_close, as_of=at)
+
+        return quote
+
+    hs = [H(1, "stock", "Example Ltd", nse_symbol="EXAMPLE", bse_code="599902")]
+    today = datetime.now(
+        UTC
+    ).date()  # price_from_quote compares with the real clock: an earlier day is "over"
+    after = datetime(today.year, today.month, today.day, 10, 30, tzinfo=UTC)  # 16:00 IST
+    out = await fetch_prices(hs, quote=make(after, D("499.80")), scheme_rows=None)
+    assert out[1].price == D("499.80") and out[1].source == "BSE quote: close (official)"
+    # BSE has no official close either: keep NSE's last trade and its "close not yet published" label
+    out = await fetch_prices(hs, quote=make(after, None), scheme_rows=None)
+    assert out[1].price == D("501.00") and out[1].source.startswith("NSE quote: last traded")
+    live = datetime(today.year, today.month, today.day, 6, 0, tzinfo=UTC)  # 11:30 IST, in session
+    out = await fetch_prices(hs, quote=make(live, D("499.80")), scheme_rows=None)
+    assert out[1].price == D("501.00") and out[1].source == "NSE quote: last traded"

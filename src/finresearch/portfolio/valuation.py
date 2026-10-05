@@ -23,6 +23,7 @@ from decimal import Decimal
 from typing import Any
 
 from finresearch.fincalc.funds import xirr
+from finresearch.fincalc.price import LAST_TRADED, OFFICIAL_CLOSE
 
 log = logging.getLogger(__name__)
 
@@ -47,6 +48,8 @@ class PriceInfo:
     scheme_code: str | None = None
     error: str | None = None
     note: str | None = None  # e.g. the symbol was renamed and the holding was priced under its new one
+    kind: str | None = None  # fincalc.price kind: last_traded | official_close | previous_close
+    close_pending: bool = False  # after the session, the exchange has not published its official close yet
 
 
 def cap_bucket(market_cap_cr: Decimal | None) -> str:
@@ -95,6 +98,10 @@ def instrument_of(h: Any, isin_map: dict[str, Any] | None = None) -> tuple[str |
         r"\d{5,7}(\.0)?", sym
     ):  # a BSE scrip code stored as the symbol (older tradebook imports)
         return sym.split(".")[0], "BSE", listing
+    if listing is not None and not listing.nse_symbol and listing.bse_code:
+        # the ISIN is listed on BSE only: a stored "NSE symbol" (e.g. a broker's "NSE$") is no NSE listing, and NSE's
+        # quote API can still answer for it with a price that is not this company's official close (#200)
+        return listing.bse_code, "BSE", listing
     if not sym and listing is not None:
         sym, exch = (listing.nse_symbol, "NSE") if listing.nse_symbol else (listing.bse_code, "BSE")
     if not sym and h.bse_code:
@@ -132,12 +139,15 @@ def price_from_quote(q: Any, exch: str, listing: Any = None) -> PriceInfo:
         mcap_cr = price * q.issued_shares / Decimal(10**7)
     if mcap_cr is None and listing is not None:
         mcap_cr = listing.market_cap_cr
+
     return PriceInfo(
         price,
         q.as_of.isoformat() if q.as_of else None,
         f"{exch} quote: {v.label.lower()}",
         q.industry,
         mcap_cr,
+        kind=v.kind,
+        close_pending=v.kind == LAST_TRADED and v.session == "closing",
     )
 
 
@@ -224,7 +234,9 @@ async def fetch_prices(holdings: Sequence[Any], *, quote: Callable[[str, str], A
 
     async def price_stocks() -> None:
         isin_map: dict[str, Any] = {}
-        if listings is not None and any(not h.nse_symbol and not h.bse_code and h.isin for h in stocks):
+        # every stock with an ISIN is matched to its listing: a BSE-only ISIN is priced on BSE even when the holding
+        # carries an NSE-looking symbol (instrument_of)
+        if listings is not None and any(h.isin for h in stocks):
             isin_map = await isin_index()
         groups: dict[tuple[str, str], list[tuple[Any, Any]]] = {}
         for h in stocks:
@@ -254,11 +266,13 @@ async def fetch_prices(holdings: Sequence[Any], *, quote: Callable[[str, str], A
                 if no_such_symbol and (hit := await renamed(sym, members)) is not None:
                     p = hit[2]
                 alt = bse_fallback(*members[0]) if exch == "NSE" else None
-                if p.price is None and alt:
+                # BSE when NSE has no price, or when NSE's session is over but its official close is not out yet
+                # and BSE has published its own official close (the exchanges' closes are their own figures)
+                if alt and (p.price is None or p.close_pending):
                     try:
                         q2 = await quote(alt, "BSE")
                         p2 = price_from_quote(q2, "BSE", members[0][1])
-                        if p2.price is not None:
+                        if p2.price is not None and (p.price is None or p2.kind == OFFICIAL_CLOSE):
                             p = p2
                     except Exception:  # keep the NSE result and its reason
                         pass
