@@ -357,7 +357,7 @@ export function Segmented<T extends string>({ value, onChange, options, size = "
   const current = options.some((o) => o.value === value) ? value : options[0]?.value;
   return (
     <div role="tablist" aria-label={label} onKeyDown={(e) => onOptionKeys(e)}
-      className="inline-flex rounded-lg bg-background-subtle p-0.5 ring-1 ring-inset ring-border">
+      className="inline-flex max-w-full flex-wrap rounded-lg bg-background-subtle p-0.5 ring-1 ring-inset ring-border">
       {options.map((o) => (
         <button
           key={o.value}
@@ -367,7 +367,7 @@ export function Segmented<T extends string>({ value, onChange, options, size = "
           tabIndex={o.value === current ? 0 : -1}
           onClick={() => onChange(o.value)}
           className={cx(
-            "rounded-md font-medium transition duration-150",
+            "whitespace-nowrap rounded-md font-medium transition duration-150",
             size === "sm" ? "px-2.5 py-1 text-xs" : "px-3.5 py-1.5 text-sm",
             o.value === value ? "bg-card text-foreground shadow-sm" : "text-muted hover:text-foreground",
           )}
