@@ -540,6 +540,24 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
         out["company_error"] = live_error
         return out
 
+    @app.get("/api/stocks/{symbol}/surprises")
+    async def stock_surprises(symbol: str, retry: bool = False) -> dict[str, Any]:
+        """Earnings surprise (SUE, seasonal random walk) of the latest quarters, the latest one's decile against the
+        pre-registered experiment's events and its [0,+1] reaction vs NIFTYBEES (signals.stock_surprise; #181).
+        Experimental and informational: not part of the stock signal unless the experiment passed. NSE only."""
+        from finresearch.signals import stock_surprise as SS
+
+        inst = await _inst(symbol, None)
+        if inst.exchange != "NSE":
+            return {"status": "unsupported", "symbol": inst.id,
+                    "message": "The earnings-surprise panel reads NSE filings (NSE-listed stocks only)."}  # fmt: skip
+
+        async def build() -> dict[str, Any]:
+            async with src().open_equity("NSE") as eq:
+                return await SS.live(eq, inst.id)
+
+        return await cache.get(("surprises", inst.id), 6 * 3600, build, retry=retry)
+
     @app.get("/api/stocks/{symbol}/shareholding")
     async def stock_shareholding(symbol: str, quarters: int = Query(8, ge=1, le=12),
                                  exchange: str | None = None, retry: bool = False) -> dict[str, Any]:  # fmt: skip

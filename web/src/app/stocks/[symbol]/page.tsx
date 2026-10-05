@@ -18,6 +18,7 @@ import { ShareholdingSplit } from "@/components/markets/shareholding";
 import { ForensicCard, SinceReport, StockSignalCard } from "@/components/markets/stock-signal";
 import { StockDisclosuresCard } from "@/components/markets/disclosures";
 import { StockPeersCard } from "@/components/markets/peers";
+import { StockSurpriseCard } from "@/components/markets/surprise";
 import { Metric, RangeBar, Timeline, crore, inr, pctOf, signedPct, toneOf } from "@/components/markets/common";
 import type { StockHistory, StockOverview, StockResults, StockShareholding } from "@/components/markets/types";
 import {
@@ -206,6 +207,7 @@ export default function StockDetail() {
             </div>
             <StockDisclosuresCard symbol={stockKey} isin={ov.data?.quote?.isin} />
             {!onBse && <StockPeersCard symbol={stockKey} />}
+            {!onBse && <StockSurpriseCard symbol={stockKey} />}
           </>
         )}
 
