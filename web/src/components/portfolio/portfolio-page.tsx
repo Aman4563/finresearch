@@ -353,7 +353,7 @@ function Allocation({ snap, onChanged }: { snap: Snapshot; onChanged: () => void
   const total = snap.summary.value;
   const center = <div><p className="num text-lg font-semibold">{fmtCompactINR(total)}</p><p className="text-[11px] text-muted">valued</p></div>;
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
       <Card title="By asset class" icon={<PieChart className="size-4" />}><DonutChart data={donut(snap.allocation.asset)} center={center} format={fmtCompactINR} height={170} /></Card>
       <Card title="By sector" icon={<PieChart className="size-4" />} help="Stocks use NSE's industry (or your own label). Funds are not looked through to their holdings.">
         <DonutChart data={donut(snap.allocation.sector)} center={center} format={fmtCompactINR} height={170} />
@@ -372,7 +372,7 @@ function Pnl({ snap }: { snap: Snapshot }) {
   const tl = snap.timeline;
   if (tl.length < 2) return <EmptyState title="Not enough history yet">Import a statement or tradebook with at least two months of activity.</EmptyState>;
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
       <Card title="Net invested over time" help="Cumulative purchases minus sale proceeds at each month end. The daily value line is on the Performance tab.">
         <TimeSeriesChart data={tl} series={[{ key: "invested", label: "Net invested", color: "var(--chart-1)" }]} format={fmtCompactINR} ranges={["1Y", "3Y", "ALL"]} defaultRange="ALL" showChange={false} />
       </Card>

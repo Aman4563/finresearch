@@ -827,3 +827,22 @@ def test_daily_pass_listings_come_from_a_fresh_stored_isin_map(disc, monkeypatch
 
     assert instrument_of(H(), rows)[:2] == ("599901", "BSE")
     assert (rows["INE000X01011"].nse_symbol, rows["INE000X01011"].bse_code) == ("EXAMPLE", "599900")
+
+
+def test_isin_only_holdings_get_a_signal_key_through_the_isin_map():
+    """#200: holdings from a broker holdings statement (ISIN only) showed no signal and the checklist said "no exchange
+    symbol"; a BSE-only company under Groww's "NSE$" was looked up as an NSE symbol."""
+    from types import SimpleNamespace as NS
+
+    from finresearch.disclosures.store import stock_key
+    from finresearch.portfolio.report import _signal
+
+    m = {"INE000X01011": ["EXAMPLE", "599900"], "INE000X01029": [None, "599901"]}
+    h = NS(asset_type="stock", isin="INE000X01011", nse_symbol=None, bse_code=None, scheme_code=None)
+    assert _signal(h, None, m) == {"asset": "stock", "instrument": "EXAMPLE", "href": "/stocks/EXAMPLE"}
+    assert _signal(h, None, {}) is None  # no map yet: nothing to read a signal for
+    assert stock_key("INE000X01029", "NSE$", None, m) == "BSE:599901"
+    assert (
+        stock_key("INE000X09999", "OWNSYM", None, m) == "OWNSYM"
+        and stock_key(None, None, "500325", m) == "BSE:500325"
+    )

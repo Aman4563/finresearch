@@ -93,6 +93,17 @@ def isin_map(s: Session) -> dict[str, list[str | None]]:
     return dict((row.payload or {}).get("map") or {}) if row is not None else {}
 
 
+def stock_key(
+    isin: str | None, nse_symbol: str | None, bse_code: str | None, m: dict[str, list[str | None]]
+) -> str | None:
+    """A stock holding's exchange key ("<NSE symbol>" or "BSE:<code>"): the ISIN map decides when it knows the ISIN
+    (a holding with only an ISIN gets its symbol; a BSE-only company stays BSE-only whatever symbol a broker wrote),
+    else the holding's own symbol or code (#200)."""
+    ent = m.get((isin or "").upper()) if isin else None
+    sym, bse = (ent[0], bse_code or ent[1]) if ent else (nse_symbol, bse_code)
+    return sym.upper() if sym else (f"BSE:{bse}" if bse else None)
+
+
 def nse_symbol_for_isin(
     s: Session, isin: str | None, m: dict[str, list[str | None]] | None = None
 ) -> str | None:
@@ -200,10 +211,9 @@ def tracked(s: Session) -> Tracked:
         # the ISIN map (today's listings) decides when it knows the ISIN: a holding with only an ISIN (a broker
         # holdings statement) gets its NSE symbol, and a BSE-only company stays BSE-only whatever symbol the broker
         # wrote (e.g. Groww's "NSE$")
-        ent = imap.get(isin) if isin and h.asset_type == "stock" else None
-        sym, bse = (ent[0], h.bse_code or ent[1]) if ent else (h.nse_symbol, h.bse_code)
-        if h.asset_type == "stock" and (sym or bse):
-            add(sym.upper() if sym else f"BSE:{bse}", isin, h.name, "held")
+        key = stock_key(isin, h.nse_symbol, h.bse_code, imap) if h.asset_type == "stock" else None
+        if key:
+            add(key, isin, h.name, "held")
         elif isin and isin.startswith("INE") and isin[7:9] in _DEBT_TYPES:
             b = t.bonds.setdefault(isin, {"name": h.name, "held": False, "tracked": False})
             b["held"] = True

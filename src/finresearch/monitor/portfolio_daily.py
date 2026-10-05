@@ -419,11 +419,17 @@ async def events_pass(deps: Any, now: datetime, today: date, val: dict[str, Any]
     with session_scope() as s:
         v = cache.read(s, cache.VALUATION)
     by_sym: dict[str, list[str]] = {}
+
+    def nse_of(h: dict[str, Any]) -> str | None:
+        # the snapshot's signal key resolves ISIN-only holdings through the ISIN map (#200); "BSE:..." is not on NSE
+        key = (h.get("signal") or {}).get("instrument") or h.get("nse_symbol")
+        return None if not key or key.startswith("BSE:") else key
+
     for hid, h in (v.get("holdings") or {}).items():
-        if h["asset_type"] == "stock" and h.get("nse_symbol"):
-            by_sym.setdefault(h["nse_symbol"], []).append(hid)
+        if h["asset_type"] == "stock" and nse_of(h):
+            by_sym.setdefault(nse_of(h), []).append(hid)
     bse_only = sorted({h["name"] for h in (v.get("holdings") or {}).values()
-                       if h["asset_type"] == "stock" and not h.get("nse_symbol")})  # fmt: skip
+                       if h["asset_type"] == "stock" and not nse_of(h)})  # fmt: skip
     symbols = sorted(by_sym)[:MAX_INSTRUMENTS]
     if deps.pf_stock_events is not None:
         raw = {}

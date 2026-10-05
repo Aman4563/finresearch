@@ -71,7 +71,7 @@ export function ConcentrationAnalytics({ refresh }: { refresh: number }) {
       </div>
       {data.funds_note && <p className="text-xs text-muted">{data.funds_note}</p>}
       {data.funds_note && <LookthroughConcentration />}
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card title="By sector" icon={<PieChart className="size-4" />} subtitle={`dashed line: ${lim.sector_pct} % rule of thumb`} help={`Stocks by NSE industry (or your own label on the holding). Rule of thumb [W]: no sector above ${lim.sector_pct} %.`}>
           {bar(data.sectors ?? [], lim.sector_pct)}
         </Card>

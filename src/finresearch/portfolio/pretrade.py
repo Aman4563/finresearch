@@ -332,9 +332,10 @@ async def signal_item(
 
     asset, code = None, None
     if p.asset_type == "stock":
-        sym = (h.nse_symbol if h else None) or p.nse_symbol
-        bse = (h.bse_code if h else None) or p.bse_code
-        asset, code = "stock", (sym.upper() if sym else (f"BSE:{bse}" if bse else None))
+        from finresearch.disclosures.store import isin_map, stock_key
+
+        asset, code = "stock", stock_key((h.isin if h else None) or p.isin, (h.nse_symbol if h else None) or p.nse_symbol,
+                                         (h.bse_code if h else None) or p.bse_code, isin_map(s))  # fmt: skip
     elif p.asset_type == "mf":
         asset, code = "fund", (h.scheme_code if h else None) or p.scheme_code
     if not code:
