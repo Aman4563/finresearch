@@ -2,7 +2,9 @@
 
 After the close the quote's price is the official close, so the stored peer prices are that day's closes. About
 500 quotes plus 500 small history requests a night at NSE's polite rate (adapters.http: 2/s) and PAUSE_S between
-stocks: roughly 15-20 minutes; results are re-read weekly per stock. Weekends are skipped (no new prices). Each run is
+stocks: roughly 15-20 minutes; results are re-read weekly per stock. Held and watched stocks outside the NIFTY 500
+and their industry peers add a bounded number (signals.stock_peers module docstring: about 300-500 for 10 such
+stocks). Weekends are skipped (no new prices). Each run is
 claimed in `alert_eval_slot` ("stock_peers:<day>"), so two monitor processes never run it twice; a failed run is
 retried (monitor.disclosures.MAX_ATTEMPTS). Pages only read the stored file.
 """

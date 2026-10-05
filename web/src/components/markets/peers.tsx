@@ -87,7 +87,7 @@ export function StockPeersCard({ symbol }: { symbol: string }) {
   const ariaSort = (key: SortKey) => (sort.key !== key ? "none" : sort.desc ? "descending" : "ascending");
   const ok = d?.status === "ok" && d.company && d.peers && d.summary;
   const subtitle = ok
-    ? <>{d.peers!.length} of {d.candidates} {d.universe} stocks in NSE {d.level_label} “{d.industry}” · peers as of {day(d.as_of!)}</>
+    ? <>{d.peers!.length} of {d.candidates} {d.universe_note ? "" : `${d.universe} `}stocks in NSE {d.level_label} “{d.industry}” · peers as of {day(d.as_of!)}</>
     : "Same NSE industry, nearest by market cap";
 
   return (
@@ -158,7 +158,7 @@ export function StockPeersCard({ symbol }: { symbol: string }) {
               Hover a value for its period and basis, a dash for why it is missing. n/m = not meaningful (e.g. a loss makes P/E meaningless).
             </p>
             <ul className="list-disc pl-4">{(d.caveats ?? []).map((c) => <li key={c}>{c}</li>)}</ul>
-            <p>Source: NSE quotes and each company&apos;s results XBRL (NSE Integrated Filing / Financial Results); universe: <a className="text-brand hover:underline" href={d.universe_source} target="_blank" rel="noreferrer">{d.universe} constituents</a>. Computed by FinResearch. Not investment advice.</p>
+            <p>Source: NSE quotes and each company&apos;s results XBRL (NSE Integrated Filing / Financial Results); universe: <a className="text-brand hover:underline" href={d.universe_source} target="_blank" rel="noreferrer">{d.universe} constituents</a>{d.universe_note ? `, ${d.universe_note}` : ""}. Computed by FinResearch. Not investment advice.</p>
           </div>
         </div>
       )}

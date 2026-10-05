@@ -350,8 +350,9 @@ def _spawn_fund_ranks(now: datetime) -> None:
 
 
 def _spawn_stock_peers(now: datetime) -> None:
-    """Start the nightly stock peer build (monitor.stock_peers) in the background: ~1,000 polite NSE requests. At
-    most one runs at a time."""
+    """Start the nightly stock peer build (monitor.stock_peers) in the background: ~1,000 polite NSE requests for the
+    NIFTY 500, plus a bounded few hundred when held/watched stocks fall outside it (signals.stock_peers). At most one
+    runs at a time."""
     from finresearch.monitor.stock_peers import due_slot, stock_peers_step
 
     t = _BACKGROUND.get("stock_peers")
