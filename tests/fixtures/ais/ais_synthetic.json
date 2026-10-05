@@ -1,0 +1,45 @@
+{
+  "_comment": "SYNTHETIC AIS fixture (format unverified): fake PAN, names and numbers. Field names follow the ones the AIS app shows (infoCode, infoDesc, infoSrc, amountPaidCredited, salesConsideration, dividendAmount ...), not a published schema.",
+  "financialYear": "2025-26",
+  "aisGeneralInfo": {
+    "pan": "ABCDE1234F", "name": "Test Investor", "dateOfBirth": "01/01/1990", "mobile": "9876543210",
+    "email": "test.investor@example.com", "address": "12 Example Street, Testnagar 400001",
+    "aadhaar": "XXXX XXXX 1234", "amount": "1"
+  },
+  "tdsTcsInfo": [
+    {"infoCode": "TDS-194", "infoDesc": "Dividend", "infoSrc": "EXAMPLE LIMITED (MUMA12345B)", "count": 1, "amountReported": "1500.00",
+     "details": [{"quarter": "Q2", "dateOfPaymentCredit": "10/07/2025", "amountPaidCredited": "1,500.00", "tdsDeducted": "0.00", "status": "Active"}]},
+    {"infoCode": "TDS-194", "infoDesc": "Dividend", "infoSrc": "SAMPLE INDUSTRIES LIMITED (MUMS54321C)", "count": 1, "amountReported": "10000.00",
+     "details": [{"quarter": "Q2", "dateOfPaymentCredit": "20/08/2025", "amountPaidCredited": "10,000.00", "tdsDeducted": "1,000.00", "status": "Active"}]},
+    {"infoCode": "TDS-194K", "infoDesc": "Income in respect of units of Mutual Fund", "infoSrc": "ALPHA MUTUAL FUND (MUMA99999Z)", "count": 1, "amountReported": "6000.00",
+     "details": [{"quarter": "Q3", "dateOfPaymentCredit": "15/12/2025", "amountPaidCredited": "6000.00", "tdsDeducted": "600.00", "status": "Active"}]},
+    {"infoCode": "TDS-194A", "infoDesc": "Interest other than 'Interest on securities'", "infoSrc": "EXAMPLE BANK LTD (DELE11111A)", "count": 1, "amountReported": "3200.00",
+     "details": [{"quarter": "Q4", "dateOfPaymentCredit": "31/03/2026", "amountPaidCredited": "3200.00", "tdsDeducted": "320.00", "status": "Active"}]},
+    {"infoCode": "TDS-192", "infoDesc": "Salary received (Section 192)", "infoSrc": "EXAMPLE EMPLOYER PVT LTD (BLRE22222B)", "count": 1, "amountReported": "900000.00",
+     "details": [{"quarter": "Q4", "dateOfPaymentCredit": "31/03/2026", "amountPaidCredited": "900000.00", "tdsDeducted": "45000.00"}]}
+  ],
+  "sftInfo": [
+    {"infoCode": "SFT-015", "infoDesc": "Dividend income", "infoSrc": "EXAMPLE LIMITED", "count": 1,
+     "details": [{"transactionDate": "10/07/2025", "dividendAmount": "1500.00", "accountNumber": "123456789012"}]},
+    {"infoCode": "SFT-015", "infoDesc": "Dividend income", "infoSrc": "SAMPLE INDUSTRIES LIMITED", "count": 1,
+     "details": [{"transactionDate": "20/08/2025", "dividendAmount": "10000.00"}]},
+    {"infoCode": "SFT-015", "infoDesc": "Dividend income", "infoSrc": "DEMO POWER LIMITED", "count": 1,
+     "details": [{"transactionDate": "05/09/2025", "dividendAmount": "800.00"}]},
+    {"infoCode": "SFT-016", "infoDesc": "Interest income", "infoSrc": "EXAMPLE BANK LTD", "count": 1,
+     "details": [{"accountNumber": "XXXXXX4321", "accountType": "Savings", "transactionDate": "31/03/2026", "transactionAmount": "3200.00"}]},
+    {"infoCode": "SFT-017", "infoDesc": "Sale of securities and units of mutual fund", "infoSrc": "NATIONAL SECURITIES DEPOSITORY LIMITED", "count": 2,
+     "details": [
+       {"transactionDate": "03/11/2025", "securityName": "EXAMPLE LIMITED", "isin": "INE000X01011", "securityClass": "Equity Share", "quantity": "10", "sellPricePerUnit": "1234.50", "salesConsideration": "12,345.00", "stt": "12.35", "clientId": "IN30012345678901"},
+       {"transactionDate": "12/01/2026", "securityName": "SAMPLE INDUSTRIES LIMITED", "isin": "INE000X01029", "securityClass": "Equity Share", "quantity": "5", "sellPricePerUnit": "2100.00", "salesConsideration": "10500.00", "stt": "10.50"}
+     ]},
+    {"infoCode": "SFT-017", "infoDesc": "Sale of securities and units of mutual fund", "infoSrc": "COMPUTER AGE MANAGEMENT SERVICES LIMITED", "count": 1,
+     "details": [{"transactionDate": "20/02/2026", "securityName": "Gamma Bluechip Fund - Direct Plan - Growth", "securityClass": "MF units", "quantity": "100", "salesConsideration": "4999.95", "stt": "0.05"}]},
+    {"infoCode": "SFT-018", "infoDesc": "Purchase of securities and units of mutual funds", "infoSrc": "COMPUTER AGE MANAGEMENT SERVICES LIMITED", "count": 1,
+     "details": [{"transactionDate": "05/06/2025", "securityName": "Gamma Bluechip Fund Direct Growth", "quantity": "400", "totalPurchaseAmount": "20000.00"}]},
+    {"infoCode": "SFT-OM", "infoDesc": "Off market transactions", "infoSrc": "CENTRAL DEPOSITORY SERVICES (INDIA) LIMITED", "count": 1,
+     "details": [{"transactionDate": "14/03/2026", "transactionType": "Debit", "securityName": "EXAMPLE LIMITED", "isin": "INE000X01011", "transferQuantity": "5", "transactionAmount": "6000.00", "transfereeName": "Some Relative", "clientId": "1201090000123456"}]}
+  ],
+  "otherInfo": [
+    {"infoCode": "OI-IR", "infoDesc": "Interest on income tax refund", "count": 1, "details": [{"transactionDate": "10/10/2025", "transactionAmount": "450.00"}]}
+  ]
+}
