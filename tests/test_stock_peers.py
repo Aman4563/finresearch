@@ -56,7 +56,7 @@ def test_missing_eps_and_gaps_give_reasons():
 
 
 def test_basis_is_the_latest_quarters_and_never_mixed():
-    qs = quarters()[:-1] + [P.Quarter(ENDS[-1], Decimal(1), Decimal(1), Decimal(1), False)]
+    qs = [*quarters()[:-1], P.Quarter(ENDS[-1], Decimal(1), Decimal(1), Decimal(1), False)]
     _, pe = P.pe_metric(Decimal(520), qs)  # latest is standalone: only one standalone quarter on file
     assert pe.value is None and "standalone" in pe.reason
 
@@ -64,7 +64,9 @@ def test_basis_is_the_latest_quarters_and_never_mixed():
 def test_pb_roe_growth_margin():
     qs = quarters()
     assert v(P.pb_metric(Decimal(5200), SHEETS, True)) == pytest.approx(5200 / 480)
-    roe = P.roe_metric(qs, SHEETS, True)  # TTM to Mar-2026: 10 + 12 + 12 + 14 = 48; average equity (400 + 480) / 2
+    roe = P.roe_metric(
+        qs, SHEETS, True
+    )  # TTM to Mar-2026: 10 + 12 + 12 + 14 = 48; average equity (400 + 480) / 2
     assert v(roe) == pytest.approx(48 / 440)
     assert v(P.growth_metric(qs, "revenue")) == pytest.approx(460 / 400 - 1)  # 110+110+120+120 vs 4 x 100
     assert v(P.growth_metric(qs, "profit")) == pytest.approx(52 / 40 - 1)  # 12+12+14+14 vs 4 x 10
@@ -85,7 +87,10 @@ def test_growth_off_a_loss_is_not_meaningful():
 
 
 def test_one_year_return_adjusts_for_a_bonus():
-    bars = [(date(2025, 10, 3), 200), (date(2025, 10, 6), 205)]  # 5-Oct-2025 was a Sunday: Friday's close counts
+    bars = [
+        (date(2025, 10, 3), 200),
+        (date(2025, 10, 6), 205),
+    ]  # 5-Oct-2025 was a Sunday: Friday's close counts
     m = P.return_1y(Decimal(120), date(2026, 10, 5), bars, [(date(2026, 1, 15), "Bonus 1:1")])
     assert v(m) == pytest.approx(120 / (200 / 2) - 1)  # 1:1 bonus halves the old close: 0.20
     assert "x2" in m.basis
@@ -107,7 +112,12 @@ def test_summary_quartiles_and_percentile_skip_missing():
 
 
 def test_summary_keeps_negative_growth_but_drops_non_positive_multiples():
-    peers = [_row("A", pe=-5, roe=-0.1), _row("B", pe=10, roe=0.1), _row("C", pe=20, roe=0.2), _row("D", pe=30, roe=0.3)]
+    peers = [
+        _row("A", pe=-5, roe=-0.1),
+        _row("B", pe=10, roe=0.1),
+        _row("C", pe=20, roe=0.2),
+        _row("D", pe=30, roe=0.3),
+    ]
     s = P.summarise({}, peers)
     assert s["pe"]["n"] == 3 and s["pe"]["median"] == 20
     assert s["roe"]["n"] == 4 and s["roe"]["median"] == pytest.approx(0.15)
@@ -119,16 +129,25 @@ def test_finest_level_with_five_peers_and_fallback():
     uni = [{"symbol": f"S{i}", "basic_industry": "Cement" if i < 3 else "Other", "industry": "Cement & Products",
             "sector": "Construction Materials", "macro": "Commodities"} for i in range(7)]  # fmt: skip
     lvl, peers = P.choose_level(own, [*uni, {"symbol": "ME", **own}], "ME")
-    assert lvl == "industry" and len(peers) == 7  # 3 cement peers < 5, so one level coarser; the company excluded
+    assert (
+        lvl == "industry" and len(peers) == 7
+    )  # 3 cement peers < 5, so one level coarser; the company excluded
     lvl, peers = P.choose_level(own, uni[:2], "ME")
     assert lvl == "basic_industry" and len(peers) == 2  # nothing reaches 5: the level with the most peers
     assert P.choose_level({}, uni, "ME") == (None, [])
 
 
 def test_nearest_by_market_cap_on_a_log_scale():
-    peers = [{"symbol": s, "market_cap": m} for s, m in (("A", 50), ("B", 200), ("C", 400), ("D", 90), ("E", None))]
+    peers = [
+        {"symbol": s, "market_cap": m} for s, m in (("A", 50), ("B", 200), ("C", 400), ("D", 90), ("E", None))
+    ]
     got = [p["symbol"] for p in P.nearest_by_mcap(peers, 100, cap=4)]
-    assert got == ["D", "A", "B", "C"]  # |ln .9| < |ln .5| = |ln 2| (tie: by symbol) < ln 4; no market cap last
+    assert got == [
+        "D",
+        "A",
+        "B",
+        "C",
+    ]  # |ln .9| < |ln .5| = |ln 2| (tie: by symbol) < ln 4; no market cap last
 
 
 # --------------------------------------------------------------------------- API (stored peers, live company row)
@@ -162,7 +181,9 @@ def test_peers_api_reads_the_store_and_fetches_only_the_company(env, monkeypatch
                  "universe": "NIFTY 500", "universe_source": SP.UNIVERSE_URL, "rows": rows, "failed": {}})  # fmt: skip
         r = c.get("/api/stocks/EXAMPLE/peers").json()
     assert calls == ["EXAMPLE"]  # the company only; peers come from the store
-    assert r["status"] == "ok" and r["level"] == "industry"  # 2 basic-industry peers < 5; 5 share the industry
+    assert (
+        r["status"] == "ok" and r["level"] == "industry"
+    )  # 2 basic-industry peers < 5; 5 share the industry
     assert r["industry"] == "Cement & Products" and r["candidates"] == 5
     assert r["company"]["metrics"]["market_cap"]["value"] == 100.0  # the live row, not the stored 1.0
     # |ln(m / 100)|: PA .105, PC = PD = ln 2 (.693, by symbol), PB ln 4, PE ln 10
@@ -235,10 +256,14 @@ async def test_row_from_live_inputs_and_weekly_results_reuse(fake_results):
     assert m["market_cap"]["value"] == pytest.approx(4058232462 * 1003.2)
     assert m["pe"]["value"] == pytest.approx(1003.2 / 26)  # TTM EPS 5 + 6 + 7 + 8
     assert m["pb"]["value"] == pytest.approx(4058232462 * 1003.2 / 480)
-    assert m["return_1y"]["value"] == pytest.approx(1003.2 / 800 - 1)  # a dividend is not a split: no adjustment
+    assert m["return_1y"]["value"] == pytest.approx(
+        1003.2 / 800 - 1
+    )  # a dividend is not a split: no adjustment
     assert eq.calls == ["quote", "actions", "history"] and fake_results == ["INFY"]
     eq2 = FakeEq()
-    again = SP.compute_row("INFY", await SP.fetch_inputs(eq2, "INFY", date(2026, 10, 2), row), date(2026, 10, 2))
+    again = SP.compute_row(
+        "INFY", await SP.fetch_inputs(eq2, "INFY", date(2026, 10, 2), row), date(2026, 10, 2)
+    )
     assert fake_results == ["INFY"] and eq2.calls == ["quote", "history"]  # results 4 days old: reused
     assert again["metrics"]["pe"]["value"] == m["pe"]["value"]
 

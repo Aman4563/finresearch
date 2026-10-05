@@ -287,8 +287,9 @@ def _quantile(xs: list[Decimal], q: Decimal) -> Decimal:
     return xs[i] if i + 1 >= len(xs) else xs[i] + (xs[i + 1] - xs[i]) * frac
 
 
-def peer_distribution(values: list[Num], own: Num | None = None, *, positive_only: bool = False,
-                      min_n: int = 3) -> PeerStats:
+def peer_distribution(
+    values: list[Num], own: Num | None = None, *, positive_only: bool = False, min_n: int = 3
+) -> PeerStats:
     """Quartiles of peer values and the company's percentile rank = share of peers strictly below it + half of the
     peers equal to it (0-100). `positive_only` drops non-positive values first (a loss-maker's P/E or a negative
     book's P/B is not meaningful); without it negative values count (a negative ROE or growth is real data and

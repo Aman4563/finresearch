@@ -918,7 +918,11 @@ async def _xbrl(eq: Any, url: str) -> bytes:
 
 
 async def results_from_nse(
-    eq: Any, sym: str, quarters: int, *, annual_facts: dict[date, dict[str, Any]] | None = None,
+    eq: Any,
+    sym: str,
+    quarters: int,
+    *,
+    annual_facts: dict[date, dict[str, Any]] | None = None,
     balance_sheets: dict[date, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Quarterly and annual results from each filing's XBRL (see the /api/stocks/{symbol}/results route). When

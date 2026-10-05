@@ -28,7 +28,9 @@ log = logging.getLogger(__name__)
 
 UNIVERSE_URL = "https://nsearchives.nseindia.com/content/indices/ind_nifty500list.csv"
 UNIVERSE_NAME = "NIFTY 500"
-RESULTS_MAX_AGE_DAYS = 7  # results change once a quarter; a week-old copy misses at most a few days of new filings
+RESULTS_MAX_AGE_DAYS = (
+    7  # results change once a quarter; a week-old copy misses at most a few days of new filings
+)
 QUARTERS = 8  # current TTM + the twelve months before (growth)
 HISTORY_TTL_S = 30 * 86400  # bars a year old never change
 PAUSE_S = 0.5  # between stocks, on top of the client's per-host limit
@@ -45,7 +47,9 @@ def _levels(q: Any) -> dict[str, str | None]:
             "sector": getattr(q, "sector", None), "macro": getattr(q, "macro", None)}  # fmt: skip
 
 
-async def fetch_inputs(eq: Any, symbol: str, today: date, old: dict[str, Any] | None = None) -> dict[str, Any]:
+async def fetch_inputs(
+    eq: Any, symbol: str, today: date, old: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """The raw inputs of one stock's metrics. `old` is its previous stored row: its results and corporate actions
     are reused while younger than RESULTS_MAX_AGE_DAYS."""
     from finresearch.api.markets import results_from_nse
@@ -92,7 +96,9 @@ def compute_row(symbol: str, inputs: dict[str, Any], today: date) -> dict[str, A
     px = view.price if view else None
     asof = q.as_of.strftime("%d %b %Y %H:%M IST") if q.as_of else today.isoformat()
     m: dict[str, P.Metric] = {}
-    m["price"] = P.Metric(px, asof, page, view.label if view else None) if px else P.missing("no price", asof, page)
+    m["price"] = (
+        P.Metric(px, asof, page, view.label if view else None) if px else P.missing("no price", asof, page)
+    )
     mcap = market_cap(q.issued_shares, px) if px and q.issued_shares else None
     m["market_cap"] = P.Metric(mcap, asof, page, "issued shares x price (NSE issuedSize)") if mcap else \
         P.missing("no issued-share count or price on the quote", asof, page)  # fmt: skip
@@ -112,7 +118,9 @@ def compute_row(symbol: str, inputs: dict[str, Any], today: date) -> dict[str, A
                               end=P.add_years(today, -1))  # fmt: skip
     acts = inputs.get("actions")
     if acts is None:
-        m["return_1y"] = P.missing("corporate actions could not be read, so splits/bonuses are unchecked", source=hist_url)
+        m["return_1y"] = P.missing(
+            "corporate actions could not be read, so splits/bonuses are unchecked", source=hist_url
+        )
     else:
         bars = [(date.fromisoformat(d), c) for d, c in inputs.get("bars") or []]
         m["return_1y"] = P.return_1y(px, today, bars, [(date.fromisoformat(d), s) for d, s in acts], hist_url)

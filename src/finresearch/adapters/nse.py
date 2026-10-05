@@ -502,7 +502,9 @@ class Quote(BaseModel):
     week52_high: Decimal | None = None
     week52_low: Decimal | None = None
     issued_shares: Decimal | None = None
-    industry: str | None = None  # NSE's finest level, "basicIndustry" (e.g. "Computers - Software & Consulting")
+    industry: str | None = (
+        None  # NSE's finest level, "basicIndustry" (e.g. "Computers - Software & Consulting")
+    )
     # NSE's coarser classification levels, finest first after basicIndustry: industryInfo ("IT - Software"), sector
     # and macro ("Information Technology"); the stock peer table (signals.stock_peers) falls back through them
     industry_info: str | None = None

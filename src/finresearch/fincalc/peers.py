@@ -26,6 +26,7 @@ Ratios and returns are fractions (0.12 = 12 %); multiples are plain; money is in
 
 from __future__ import annotations
 
+import itertools
 from dataclasses import asdict, dataclass
 from datetime import date
 from decimal import Decimal
@@ -85,7 +86,10 @@ class BalanceSheet:
     def book(self) -> tuple[Decimal | None, str]:
         if self.equity_owners is not None:
             return self.equity_owners, "equity attributable to owners"
-        return self.total_equity, "total equity (the filing gives no owners' line; includes minority interests)"
+        return (
+            self.total_equity,
+            "total equity (the filing gives no owners' line; includes minority interests)",
+        )
 
 
 def basis_word(consolidated: bool | None) -> str:
@@ -94,7 +98,7 @@ def basis_word(consolidated: bool | None) -> str:
 
 def _consecutive(qs: list[Quarter]) -> bool:
     lo, hi = QUARTER_GAP_DAYS
-    return all(lo <= (b.end - a.end).days <= hi for a, b in zip(qs, qs[1:], strict=False))
+    return all(lo <= (b.end - a.end).days <= hi for a, b in itertools.pairwise(qs))
 
 
 def ttm_window(quarters: list[Quarter], *, end: date | None = None) -> tuple[list[Quarter] | None, str]:
@@ -113,7 +117,10 @@ def ttm_window(quarters: list[Quarter], *, end: date | None = None) -> tuple[lis
     if len(win) < 4:
         return None, f"fewer than four {basis_word(basis)} quarters on file"
     if not _consecutive(win):
-        return None, f"the four latest {basis_word(basis)} quarters are not consecutive (a quarter is missing)"
+        return (
+            None,
+            f"the four latest {basis_word(basis)} quarters are not consecutive (a quarter is missing)",
+        )
     return win, ""
 
 
@@ -127,7 +134,9 @@ def ttm_sum(win: list[Quarter], field: str) -> Decimal | None:
 
 
 # --------------------------------------------------------------------------- per-company metrics
-def pe_metric(price: Num | None, quarters: list[Quarter], price_asof: str | None = None) -> tuple[Metric, Metric]:
+def pe_metric(
+    price: Num | None, quarters: list[Quarter], price_asof: str | None = None
+) -> tuple[Metric, Metric]:
     """(TTM EPS, trailing P/E)."""
     from finresearch.fincalc.valuation import pe
 
@@ -177,7 +186,9 @@ def roe_metric(quarters: list[Quarter], sheets: list[BalanceSheet], consolidated
     if bs is None:
         return missing(f"no {basis_word(consolidated)} balance sheet on file")
     start = add_years(bs.end, -1)
-    opening = next((s for s in sheets if s.consolidated == bs.consolidated and abs((s.end - start).days) <= 3), None)
+    opening = next(
+        (s for s in sheets if s.consolidated == bs.consolidated and abs((s.end - start).days) <= 3), None
+    )
     if opening is None or opening.book[0] is None:
         return missing(f"no balance sheet at {start:%d %b %Y} for the opening equity", source=bs.source)
     win, why = ttm_window([q for q in quarters if q.consolidated == bs.consolidated], end=bs.end)
@@ -200,9 +211,15 @@ def growth_metric(quarters: list[Quarter], field: str) -> Metric:
     if win is None:
         return missing(why)
     # the prior window: the four quarters before the current window, ending exactly one quarter before it starts
-    prior, why2 = ttm_window([q for q in quarters if q.end < win[0].end and q.consolidated == win[-1].consolidated])
+    prior, why2 = ttm_window(
+        [q for q in quarters if q.end < win[0].end and q.consolidated == win[-1].consolidated]
+    )
     period, src = f"{ttm_label(win)} vs the twelve months before", win[-1].source
-    if prior is None or prior[-1].consolidated != win[-1].consolidated or not _consecutive([prior[-1], win[0]]):
+    if (
+        prior is None
+        or prior[-1].consolidated != win[-1].consolidated
+        or not _consecutive([prior[-1], win[0]])
+    ):
         return missing(f"no comparable prior twelve months ({why2 or 'basis or gap'})", period, src)
     now, before = ttm_sum(win, field), ttm_sum(prior, field)
     if now is None or before is None:
@@ -239,7 +256,9 @@ def return_1y(price: Num | None, today: date, bars: list[tuple[date, Num]], acti
         return missing(f"no close on or before {start:%d %b %Y} on file", source=source)
     day, close = max(old)
     if (start - day).days > 10:
-        return missing(f"the last close before {start:%d %b %Y} is from {day:%d %b %Y} (suspended?)", source=source)
+        return missing(
+            f"the last close before {start:%d %b %Y} is from {day:%d %b %Y} (suspended?)", source=source
+        )
     if price is None or close is None or close <= 0:
         return missing("no price", source=source)
     factor, applied = Decimal(1), []
@@ -251,7 +270,9 @@ def return_1y(price: Num | None, today: date, bars: list[tuple[date, Num]], acti
     basis = "price ÷ close a year ago - 1 (price return, no dividends)"
     if applied:
         basis += "; old close divided by split/bonus " + ", ".join(sorted(applied))
-    return Metric(Decimal(str(price)) / (close / factor) - 1, f"{day:%d %b %Y} to {today:%d %b %Y}", source, basis)
+    return Metric(
+        Decimal(str(price)) / (close / factor) - 1, f"{day:%d %b %Y} to {today:%d %b %Y}", source, basis
+    )
 
 
 # --------------------------------------------------------------------------- peer set and summary
@@ -279,7 +300,9 @@ def choose_level(own: dict[str, str | None], universe: list[dict[str, Any]], sym
     return best
 
 
-def nearest_by_mcap(peers: list[dict[str, Any]], own_mcap: Num | None, cap: int = MAX_PEERS) -> list[dict[str, Any]]:
+def nearest_by_mcap(
+    peers: list[dict[str, Any]], own_mcap: Num | None, cap: int = MAX_PEERS
+) -> list[dict[str, Any]]:
     """The `cap` peers closest in market cap on a log scale (|ln(peer / own)|: twice and half as big are equally
     near); peers without a market cap go last. Without the company's own market cap, the largest `cap`."""
     import math
@@ -291,11 +314,26 @@ def nearest_by_mcap(peers: list[dict[str, Any]], own_mcap: Num | None, cap: int 
     o = float(own_mcap) if own_mcap else None
     if o is None or o <= 0:
         return sorted(peers, key=lambda p: (mc(p) is None, -(mc(p) or 0), p["symbol"]))[:cap]
-    return sorted(peers, key=lambda p: (mc(p) is None, abs(math.log(mc(p) / o)) if mc(p) else 0, p["symbol"]))[:cap]
+    return sorted(
+        peers, key=lambda p: (mc(p) is None, abs(math.log(mc(p) / o)) if mc(p) else 0, p["symbol"])
+    )[:cap]
 
 
-METRICS = ("price", "market_cap", "pe", "pb", "roe", "revenue_growth", "pat_growth", "pat_margin", "return_1y")
-VALUATION = ("pe", "pb")  # where a high percentile means dearer, not better (no "better/worse" is implied anywhere)
+METRICS = (
+    "price",
+    "market_cap",
+    "pe",
+    "pb",
+    "roe",
+    "revenue_growth",
+    "pat_growth",
+    "pat_margin",
+    "return_1y",
+)
+VALUATION = (
+    "pe",
+    "pb",
+)  # where a high percentile means dearer, not better (no "better/worse" is implied anywhere)
 MIN_SUMMARY = 3  # fewer peer values than this: no median/IQR (fincalc.valuation.peer_distribution)
 
 
