@@ -232,7 +232,8 @@ def render(out: dict[str, Any]) -> str:
            "SUE stays informational (\"experimental — not part of the signal\"); signals/stock.py is unchanged."), "",
         "## Coverage", "",
         f"- Stocks harvested: {cov['harvested']} of {cov['universe']} point-in-time Nifty 50 members since Apr-2021 "
-        f"(not harvested: {', '.join(cov['missing']) or 'none'}).",
+        f"(not harvested: {', '.join(cov['missing']) or 'none'}). Fewer than the 13 quarters a SUE needs (quarters "
+        "read): " + (", ".join(f"{k} {v}" for k, v in sorted(cov.get("thin", {}).items())) or "none") + ".",
         f"- Events with an EPS SUE: {r['n_events']} from {r['n_stocks']} stocks over {len(r['seasons'])} seasons "
         f"({r['seasons'][0] if r['seasons'] else '—'} to {r['seasons'][-1] if r['seasons'] else '—'}); "
         f"with a complete [+2,+60] window: {r['n_with_drift']}.",
@@ -261,6 +262,14 @@ def render(out: dict[str, Any]) -> str:
     for d in r["deciles"]:
         ms = "—" if d["mean_sue"] is None else f"{d['mean_sue']:+.2f}"
         lines.append(f"| {d['decile']} | {d['n']} | {ms} | {_pp(d['reaction'])} | {_pp(d['drift'])} |")
+    lines += ["", "## Reading (written after the run; post hoc, not a test)", "",
+              "- A null at this power: the clustered SE of D10 - D1 is about 1.2 pp, so a drift of 2-3 pp could exist "
+              "and not be detected. The two halves point in opposite directions (-3.0 pp, t -1.64; +3.0 pp, t 2.18); "
+              "the second half alone is not a pre-registered test and one half of two clearing 1.96 is expected by "
+              "chance about one time in ten.",
+              "- The decile means are not monotonic in SUE for either window, and the [0,+1] reaction spread is "
+              "small (+0.5 pp): for Nifty 50 names the seasonal random walk is a weak proxy for the news the market "
+              "trades on (no consensus data)."]  # fmt: skip
     lines += ["", "## Limits", ""] + [f"- {x}" for x in out["limits"]]
     return "\n".join(lines) + "\n"
 
@@ -295,7 +304,8 @@ def main() -> None:
     out = {
         "generated": date.today().isoformat(),
         "coverage": {"universe": len(uni), "harvested": sum(s in data for s in uni),
-                     "missing": [s for s in uni if s not in data]},
+                     "missing": [s for s in uni if s not in data],
+                     "thin": {s: len(data[s]["quarters"]) for s in uni if s in data and len(data[s]["quarters"]) < 13}},
         "drops": drops, "results": results, "limits": LIMITS,
         "events": [{k: (round(v, 6) if isinstance(v, float) else v) for k, v in e.items()} for e in events],
     }  # fmt: skip
