@@ -27,7 +27,12 @@ def test_parse_reads_fy_and_categories_and_skips_salary():
     cats = sorted(i.category for i in st.items)
     assert cats == sorted(["dividend"] * 6 + ["interest"] * 3 + ["sale"] * 3 + ["purchase", "off_market"])
     sale = next(i for i in st.items if i.isin == "INE000X01011" and i.category == "sale")
-    assert (sale.amount, sale.quantity, sale.stt, sale.day) == (D("12345.00"), D("10"), D("12.35"), date(2025, 11, 3))
+    assert (sale.amount, sale.quantity, sale.stt, sale.day) == (
+        D("12345.00"),
+        D("10"),
+        D("12.35"),
+        date(2025, 11, 3),
+    )
     div = next(i for i in st.items if i.part == "tds" and i.source == "SAMPLE INDUSTRIES LIMITED")
     assert (div.tan, div.tds, div.code) == ("MUMS54321C", D("1000.00"), "194")
 
@@ -94,7 +99,12 @@ def test_reconcile_hand_computed():
     assert out["counts"] == {"mismatch": 2, "only_ais": 1, "only_app": 1, "matched": 5}
     # Example Ltd dividend: TDS-194 and SFT-015 report the same ₹1,500 -> counted once, equals the app
     r = rows[("dividend", "EXAMPLE LIMITED")]
-    assert (r["status"], r["ais_amount"], r["app_amount"], r["duplicates_dropped"]) == ("matched", 1500, 1500, 1)
+    assert (r["status"], r["ais_amount"], r["app_amount"], r["duplicates_dropped"]) == (
+        "matched",
+        1500,
+        1500,
+        1,
+    )
     # Sample: AIS gross ₹10,000 (TDS ₹1,000), app ₹9,000 = 90 % -> the net-of-TDS cause
     r = rows[("dividend", "SAMPLE INDUSTRIES LIMITED")]
     assert (r["status"], r["diff"], r["ais_tds"]) == ("mismatch", 1000, 1000)
