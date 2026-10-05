@@ -153,3 +153,11 @@ def test_fund_without_an_entered_exit_load_is_flagged():
     out = plan([fund, debt(units=100)], {"Debt funds": 100}, TODAY, [], SLAB)
     (s,) = out["sells"]
     assert s["units"] == 100.0 and "no exit load entered" in s["notes"][0]
+
+
+def test_no_stt_on_a_non_equity_exchange_holding():
+    gold = pos(10, "Example Gold ETF", "Gold & international funds", 100, [(date(2023, 1, 1), 100, 50)],
+               tax_class="other_mf")  # fmt: skip
+    out = plan([gold, debt(units=100)], {"Debt funds": 100}, TODAY, [], SLAB)
+    (s,) = out["sells"]
+    assert s["charges"] == 0.0 and s["gross"] == 10000.0

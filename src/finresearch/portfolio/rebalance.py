@@ -185,8 +185,10 @@ def sellable(p: Position, today: date) -> Sellable:
 
 
 def sell_charges(p: Position, gross: Decimal) -> Decimal:
-    if p.asset_type == "stock":
-        return gross * STT_DELIVERY
+    if p.asset_type == "stock" and p.holding.tax_class == "equity":
+        return (
+            gross * STT_DELIVERY
+        )  # an equity ETF bought as a "stock" pays 0.001 %, overstated here (stated)
     if p.asset_type == "mf" and p.holding.tax_class == "equity":
         return gross * STT_EQUITY_MF_SELL
     return ZERO
