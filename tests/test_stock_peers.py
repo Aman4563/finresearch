@@ -129,3 +129,44 @@ def test_nearest_by_market_cap_on_a_log_scale():
     peers = [{"symbol": s, "market_cap": m} for s, m in (("A", 50), ("B", 200), ("C", 400), ("D", 90), ("E", None))]
     got = [p["symbol"] for p in P.nearest_by_mcap(peers, 100, cap=4)]
     assert got == ["D", "A", "B", "C"]  # |ln .9| < |ln .5| = |ln 2| (tie: by symbol) < ln 4; no market cap last
+
+
+# --------------------------------------------------------------------------- API (stored peers, live company row)
+def _stored(sym, mcap, pe, basic="Cement", industry="Cement & Products"):
+    metrics = {m: {"value": None, "reason": "not in this test"} for m in P.METRICS}
+    metrics["market_cap"] = {"value": mcap}
+    metrics["pe"] = {"value": pe}
+    return {"symbol": sym, "name": f"{sym} Ltd", "basic_industry": basic, "industry": industry,
+            "sector": "Construction Materials", "macro": "Commodities", "metrics": metrics, "inputs": {"x": 1}}  # fmt: skip
+
+
+def test_peers_api_reads_the_store_and_fetches_only_the_company(env, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from finresearch.api import create_app
+    from finresearch.signals import stock_peers as SP
+
+    calls: list[str] = []
+
+    async def live_row(eq, symbol, today):
+        calls.append(symbol)
+        return _stored(symbol, 100.0, 25.0)
+
+    monkeypatch.setattr(SP, "live_row", live_row)
+    with TestClient(create_app()) as c:
+        assert c.get("/api/stocks/EXAMPLE/peers").json()["status"] == "not_computed"
+        rows = {s: _stored(s, m, pe, basic="Cement" if i < 2 else "Other")
+                for i, (s, m, pe) in enumerate((("PA", 90.0, 10.0), ("PB", 400.0, 20.0), ("PC", 50.0, 30.0),
+                                                ("PD", 200.0, 40.0), ("PE", 1000.0, None), ("EXAMPLE", 1.0, 1.0)))}  # fmt: skip
+        SP.save({"version": 1, "as_of": "2026-10-05", "generated_at": "2026-10-05T01:00:00+00:00",
+                 "universe": "NIFTY 500", "universe_source": SP.UNIVERSE_URL, "rows": rows, "failed": {}})  # fmt: skip
+        r = c.get("/api/stocks/EXAMPLE/peers").json()
+    assert calls == ["EXAMPLE"]  # the company only; peers come from the store
+    assert r["status"] == "ok" and r["level"] == "industry"  # 2 basic-industry peers < 5; 5 share the industry
+    assert r["industry"] == "Cement & Products" and r["candidates"] == 5
+    assert r["company"]["metrics"]["market_cap"]["value"] == 100.0  # the live row, not the stored 1.0
+    # |ln(m / 100)|: PA .105, PC = PD = ln 2 (.693, by symbol), PB ln 4, PE ln 10
+    assert [p["symbol"] for p in r["peers"]] == ["PA", "PC", "PD", "PB", "PE"]
+    assert all("inputs" not in p for p in r["peers"]) and "inputs" not in r["company"]
+    s = r["summary"]["pe"]  # 10, 20, 30, 40 (PE has none): median 25, own 25 -> 2 below + 0 ties of 4 = 50
+    assert (s["n"], s["median"], s["percentile"]) == (4, 25.0, 50.0)
