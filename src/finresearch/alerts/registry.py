@@ -204,10 +204,12 @@ METRICS: list[MetricSpec] = [
         "the signal's action",
         "flag",
         "daily",
-        "Fires when the stock signal's action (BUY / ACCUMULATE / HOLD / REDUCE / SELL) differs from the last check.",
+        "Fires when the stock signal changes from the last check. While the signal is informational (no proven "
+        "edge, signals.stock.CALLS_ENABLED off) that is its factor tilt (lean positive / mixed / lean negative), "
+        "never a BUY or SELL instruction.",
         "finresearch.signals.stock (composite v1; the forecast ledger is not written by these checks)",
         event=True,
-        event_text="the stock signal's action changed",
+        event_text="the stock signal changed",
         rebase="always",
         default_op="==",
         default_value="1",
@@ -580,6 +582,7 @@ METRICS: list[MetricSpec] = [
         "flag",
         "daily",
         "Fires when the signal of a stock or fund you hold moves to another action (for example HOLD to REDUCE). "
+        "The stock signal is informational (no proven edge): for a stock this is a change in its factor tilt. "
         "Signals are computed once a day and never written to the forecast ledger by this check.",
         f"{_PF}: signals.stock / signals.fund",
         event=True,
@@ -596,7 +599,8 @@ METRICS: list[MetricSpec] = [
         "pct",
         "daily",
         "The part of your portfolio's value in holdings whose current signal is REDUCE or SELL. The stock signal "
-        "showed no edge over an equal-weight Nifty 50 backtest: treat this as risk hygiene, not a forecast.",
+        "showed no edge over an equal-weight Nifty 50 backtest, so it is informational and stocks do not count "
+        "here until a pre-registered model passes (signals.stock.CALLS_ENABLED); funds and bonds still do.",
         f"{_PF}: holdings' signals and weights",
         default_op=">=",
         default_value="10",
@@ -1110,7 +1114,7 @@ TEMPLATES: list[Template] = [
         "stock-signal-change",
         "stock",
         "Signal changed",
-        "The stock signal moved to another action.",
+        "The stock signal's factor tilt moved (informational: no proven edge).",
         "signal_action_changed",
         "==",
         "1",

@@ -337,10 +337,18 @@ async def signals_pass(deps: Any, now: datetime, today: date, val: dict[str, Any
                       "event": sig.event, "horizon": sig.horizon, "method": sig.method,
                       "validation": sig.validation.status, "n": sig.validation.n, "sizing": sig.sizing,
                       "holding_ids": inst[(asset, code)], "weight_pct": round(weight[(asset, code)], 4),
-                      "day": today.isoformat()}  # fmt: skip
-        old = (before.get(key) or {}).get("action")
-        if old and old != sig.action and prev.get("day") != today.isoformat():
-            changes.append({"instrument": key, "name": items[key]["name"], "from": old, "to": sig.action})
+                      "day": today.isoformat(), "call": getattr(sig, "call", None)}  # fmt: skip
+        # an informational signal (the stock signal while no model has shown an edge, #193) changes by its factor
+        # tilt, and the brief says so; a reading cached before it (no tilt) is not compared
+        call = items[key]["call"] or {}
+        informational = call.get("status") == "informational"
+        new = call.get("tilt") if informational else sig.action
+        old_item = before.get(key) or {}
+        old = ((old_item.get("call") or {}).get("tilt") if informational else
+               (None if (old_item.get("call") or {}).get("status") == "informational" else old_item.get("action")))  # fmt: skip
+        if old and new and old != new and prev.get("day") != today.isoformat():
+            changes.append({"instrument": key, "name": items[key]["name"], "from": old, "to": new,
+                            **({"informational": True, "label": call.get("label")} if informational else {})})  # fmt: skip
     if prev.get("day") == today.isoformat() and not changes:
         changes = prev.get("changes") or []
     out = {"day": today.isoformat(), "at": now.isoformat(), "items": items, "changes": changes, "errors": errors,

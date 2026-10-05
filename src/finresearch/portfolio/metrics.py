@@ -403,8 +403,15 @@ def alert_metrics(session: Session) -> Out:
         fresh = sg["day"] == today.isoformat()
         out["holding_signal_changed"] = (Decimal(int(bool(ch) and fresh)), f"holdings' signals of {sg['day']} "
                                          "(signals.* providers; not logged in the forecast ledger)",
-                                         "; ".join(f"{c['name']} {c['from']} -> {c['to']}" for c in ch[:3]) or None)  # fmt: skip
-        neg = [x for x in (sg.get("items") or {}).values() if x.get("action") in NEGATIVE_ACTIONS]
+                                         "; ".join(f"{c['name']} {'(informational) ' if c.get('informational') else ''}"
+                                                   f"{c['from']} -> {c['to']}" for c in ch[:3]) or None)  # fmt: skip
+        # an informational signal is no instruction (#193): a stock never counts here while signals.stock shows no
+        # proven edge, also from a reading cached before that switch
+        from finresearch.signals.stock import CALLS_ENABLED
+
+        neg = [x for x in (sg.get("items") or {}).values() if x.get("action") in NEGATIVE_ACTIONS
+               and not ((x.get("call") or {}).get("status") == "informational"
+                        or (x.get("asset") == "stock" and not CALLS_ENABLED))]  # fmt: skip
         out["reduce_signal_weight_pct"] = (_q(sum(x.get("weight_pct") or 0 for x in neg)),
                                            f"holdings' signals of {sg['day']}: share of the portfolio whose signal "
                                            "says REDUCE or SELL", ", ".join(f"{x['name']} {x['action']}" for x in neg[:3]) or None)  # fmt: skip

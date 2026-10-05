@@ -187,10 +187,14 @@ def fake_deps(price, nav, action, ter):
 
     async def signal(asset, inst):
         calls.append((asset, inst))
+        # the stock signal is informational (#193): its composite action travels in `call` with the factor tilt
+        neg = action["v"] == "REDUCE"
+        call = {"status": "informational", "label": "Informational — no proven edge", "composite_action": action["v"],
+                "tilt": "factors lean negative" if neg else "factors are mixed"} if asset == "stock" else None  # fmt: skip
         return Signal(asset=asset, instrument=inst, name="Infosys" if asset == "stock" else "Example Flexi Cap",
-                      action=action["v"] if asset == "stock" else "HOLD", score=-25.0 if action["v"] == "REDUCE" else 0.0,
+                      action="INFORMATIONAL" if asset == "stock" else "HOLD", score=-25.0 if neg else 0.0,
                       event="12-month excess return", horizon="12 months", method="rule-based composite v1",
-                      validation=Validation("rule_based"))  # fmt: skip
+                      validation=Validation("rule_based"), call=call)  # fmt: skip
 
     async def events(sym):
         bm = [BoardMeeting.parse(r) for r in json.loads((FIX / "board_meetings_INFY.json").read_text())]
@@ -258,8 +262,12 @@ def test_daily_pass_values_and_every_metric(pf):
     v = {k: x[0] for k, x in m.items()}
     # INFY 10 x 1410 = 14,100; fund 400 units x 52 = 20,800; total 34,900
     assert v["holding_day_move_pct"] == D("6.00") and m["holding_day_move_pct"][2] == "Infosys Ltd -6.00%"
-    assert v["holding_signal_changed"] == 1 and m["holding_signal_changed"][2] == "Infosys HOLD -> REDUCE"
-    assert v["reduce_signal_weight_pct"] == D("40.40")  # 14,100 / 34,900
+    assert v["holding_signal_changed"] == 1
+    assert (
+        m["holding_signal_changed"][2] == "Infosys (informational) factors are mixed -> factors lean negative"
+    )
+    # the stock's composite REDUCE is informational (#193), so it is not "weight under REDUCE/SELL" (was 40.40 %)
+    assert v["reduce_signal_weight_pct"] == D("0.00")
     assert v["max_position_pct"] == D("59.60") and m["max_position_pct"][2].startswith("Example Flexi Cap")
     assert v["max_sector_pct"] == D("40.40") and m["max_sector_pct"][2] == "Computers - Software"
     assert v["n_effective"] == D(str(round(1 / (0.4040114613**2 + 0.5959885387**2), 2)))
@@ -296,7 +304,7 @@ def test_portfolio_rule_fires_once_with_detail_then_clears(pf, monkeypatch):
     assert res["fired"] == 2
     with session_scope() as s:
         msgs = sorted(a.message for a in s.query(Alert).filter(Alert.kind == "rule_alert"))
-        assert msgs == ["Portfolio: a holding's signal action changed (Infosys HOLD -> REDUCE)",
+        assert msgs == ["Portfolio: a holding's signal action changed (Infosys (informational) factors are mixed -> factors lean negative)",
                         "Portfolio: largest one-day move of a holding (either way) is 6% (is at least your 5%); "
                         "Infosys Ltd -6.00%"]  # fmt: skip
         again = run(engine.evaluate(s, rules, now + timedelta(hours=1)))
@@ -407,7 +415,9 @@ def test_brief_is_built_sent_once_and_pushed(pf):
         b = build_brief(s, t)
     text = a.message
     assert text.startswith("Morning brief Thu 01 Oct") and text.endswith("Personal research, not advice.")
-    assert "• Signal Infosys: HOLD → REDUCE" in text  # yesterday's after-close change is news this morning
+    assert (
+        "• Signal Infosys (informational, no proven edge): factors are mixed → factors lean negative" in text
+    )  # yesterday's after-close change is news this morning
     kinds = {e["kind"] for e in b["events"]}
     assert kinds == {
         "corporate_action"

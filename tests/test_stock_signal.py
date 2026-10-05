@@ -511,3 +511,17 @@ def test_the_switch_restores_calls_once_a_model_passes(sources, monkeypatch):
     assert s.action == "BUY" and s.call is None and not any(c.startswith("Informational") for c in s.caveats)
     ((sig, kw),) = sources["logged"]
     assert sig.action == "BUY" and kw["inputs"]["call_status"] == "call"
+
+
+def test_pretrade_item_shows_the_tilt_and_the_base_rate():
+    from finresearch.portfolio.pretrade import _informational_item
+
+    call = st.call_view(25.0, "ACCUMULATE", 0.58, (0.50, 0.66), BACKTEST)
+    got = {"action": "INFORMATIONAL", "score": 25.0, "probability": 0.58, "probability_interval": [0.50, 0.66],
+           "horizon": "12 months", "call": call}  # fmt: skip
+    it = _informational_item(got, call, st, "daily pass 2026-09-30")
+    # 58 % vs the fixture's 55 % base rate: +3.0 pp, and 0.55 is inside 50-66 %
+    assert it["status"] == "info" and it["value"] == "INFORMATIONAL" and it["tilt"] == "factors lean positive"
+    assert it["detail"] == ("Informational — no proven edge: factors lean positive (12 months); 58.0% chance it beats "
+                            "the Nifty, against a 55.0% base rate (55.0% of NIFTY 50 stock-months beat the index): "
+                            "+3.0 pp, within noise of the base rate; not a reason to trade either way")  # fmt: skip

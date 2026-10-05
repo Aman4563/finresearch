@@ -349,7 +349,7 @@ async def signal_item(
             got = {"action": sig.action, "score": sig.score, "probability": sig.probability,
                    "probability_interval": list(sig.probability_interval) if sig.probability_interval else None,
                    "event": sig.event, "horizon": sig.horizon, "validation": sig.validation.status,
-                   "n": sig.validation.n}  # fmt: skip
+                   "n": sig.validation.n, "call": getattr(sig, "call", None)}  # fmt: skip
             src = "live signal"
         except Exception as e:
             return item(
@@ -360,10 +360,16 @@ async def signal_item(
             "signal", "Signal", "unknown", None, "not computed yet for this instrument", "cache:signals"
         )
     action = str(got.get("action") or "")
+    prob, ci = got.get("probability"), got.get("probability_interval")
+    if asset == "stock":
+        from finresearch.signals import stock as stock_signal
+
+        call = got.get("call") or {}
+        if call.get("status") == "informational" or not stock_signal.CALLS_ENABLED:
+            return _informational_item(got, call, stock_signal, src)
     against = (p.side == "buy" and action in ("SELL", "REDUCE", "AVOID")) or (
         p.side == "sell" and action in ("BUY",)
     )
-    prob, ci = got.get("probability"), got.get("probability_interval")
     unc = []
     if prob is not None:
         unc.append(f"P({got.get('event') or 'event'}) = {prob:.0%}" + (f" (95 % interval {ci[0]:.0%}–{ci[1]:.0%})"
@@ -375,6 +381,38 @@ async def signal_item(
                 f"{action} ({got.get('horizon') or ''}); " + "; ".join(unc) +
                 (". The signal points the other way" if against else ""),
                 src, probability=prob, probability_interval=ci, validation=got.get("validation"), n=got.get("n"))  # fmt: skip
+
+
+def _informational_item(
+    got: dict[str, Any], call: dict[str, Any], stock_signal: Any, src: str
+) -> dict[str, Any]:
+    """The stock signal while it has no proven edge (#193): its factor tilt and probability next to the base rate,
+    never "the signal points the other way". A reading cached before the switch (no `call`) gets its tilt from the
+    score on the same cut-offs."""
+    score = got.get("score")
+    by_action = {
+        "BUY": 50.0,
+        "ACCUMULATE": 20.0,
+        "HOLD": 0.0,
+        "REDUCE": -20.0,
+        "SELL": -50.0,
+    }  # cut-off scores
+    if score is None:
+        score = by_action.get(str(call.get("composite_action") or got.get("action") or ""))
+    tilt = call.get("tilt") or (
+        stock_signal.tilt(float(score)) if score is not None else "factor tilt unknown"
+    )
+    prob, ci = got.get("probability"), got.get("probability_interval")
+    parts = [f"{stock_signal.INFORMATIONAL_LABEL}: {tilt} ({got.get('horizon') or ''})"]
+    if call.get("probability_vs_base"):
+        parts.append(call["probability_vs_base"])
+    elif prob is not None:
+        parts.append(f"P({got.get('event') or 'event'}) = {prob:.0%}" + (f" (95 % interval {ci[0]:.0%}–{ci[1]:.0%})"
+                     if ci else ""))  # fmt: skip
+    parts.append("not a reason to trade either way")
+    return item("signal", "Signal", "info", "INFORMATIONAL", "; ".join(parts), src, probability=prob,
+                probability_interval=ci, validation=got.get("validation"), n=got.get("n"), tilt=tilt,
+                informational=True)  # fmt: skip
 
 
 def red_flag_item(key: str, asset_type: str) -> dict[str, Any]:

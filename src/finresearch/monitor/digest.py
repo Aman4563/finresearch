@@ -333,7 +333,8 @@ def brief_text(b: dict[str, Any]) -> str:
     for r in b["rules_fired"][:4]:
         lines.append(f"• {r['message']}")
     for c in b["signal_changes"][:3]:
-        lines.append(f"• Signal {c['name']}: {c['from']} → {c['to']}")
+        tag = " (informational, no proven edge)" if c.get("informational") else ""
+        lines.append(f"• Signal {c['name']}{tag}: {c['from']} → {c['to']}")
     for e in b["events"][:5]:
         lines.append(f"• {date.fromisoformat(e['day']):%d %b}: {e['title']}")
     for x in b["sip_missed"][:2]:
