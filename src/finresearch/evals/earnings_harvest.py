@@ -33,7 +33,7 @@ FIRST_QUARTER = date(
 )  # NSE results XBRL starts around the Sep-2018 quarter; older filings are HTML
 PRICE_START = date(2021, 6, 1)  # the first SUE is the Sep-2021 quarter (announced from Oct-2021)
 MEMBERS_SINCE = date(2021, 4, 1)
-PAUSE_S = 0.6  # on top of the client's own 2 requests/s per host
+PAUSE_S = 0.5  # on top of the client's own 2 requests/s per host: about one request a second
 MARKET = "NIFTYBEES"  # the benchmark (ADDENDUM 2: the NIFTY 50 index series has months of holes)
 SEED = 181  # stocks are fetched in a fixed shuffled order, so a harvest cut short is a random subset
 
@@ -110,10 +110,14 @@ def universe() -> list[str]:
 
 
 async def _polite(eq: Any, make: Any) -> Any:
-    from finresearch.evals.stock_harvest import _polite as p
-
+    """One request after a pause; one retry with a fresh NSE session after a longer pause (as evals.stock_harvest)."""
     await asyncio.sleep(PAUSE_S)
-    return await p(eq, make)
+    try:
+        return await make()
+    except Exception:
+        await asyncio.sleep(8)
+        eq.nse._warmed = False
+        return await make()
 
 
 def _quarter_facts(data: bytes) -> dict[str, Any] | None:
