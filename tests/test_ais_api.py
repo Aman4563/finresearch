@@ -125,3 +125,34 @@ def test_pdf_password_and_year_errors_are_safe(client):
     assert _post(client, json.dumps(no_year).encode(), fy=2026).status_code == 200
     assert client.post("/api/portfolio/ais/import", headers={"Origin": "https://evil.example"},
                        json={}).status_code == 403  # fmt: skip
+
+
+def test_inbox_imports_ais_json_and_leaves_ais_pdf_waiting(client):
+    import os
+    from datetime import UTC, datetime
+
+    from finresearch.portfolio.connectors.inbox import ensure_dirs, scan
+
+    now = datetime(2026, 10, 5, 12, tzinfo=UTC)
+    root = ensure_dirs()
+    (root / "ais_2025-26.json").write_bytes(FIX.read_bytes())
+    (root / "AIS_2025-26.pdf").write_bytes(_pdf(AIS_PDF_LINES, PDF_PW))
+    (root / "other.json").write_text('{"hello": "world"}')
+    old = now.timestamp() - 60
+    for p in root.iterdir():
+        if p.is_file():
+            os.utime(p, (old, old))
+    by = {f["file"]: f for f in scan(now=now)["files"]}
+    assert (
+        by["ais_2025-26.json"]["status"] == "imported" and by["ais_2025-26.json"]["kind"] == "AIS FY 2025-26"
+    )
+    assert by["AIS_2025-26.pdf"]["status"] == "waiting" and (root / "AIS_2025-26.pdf").exists()
+    assert by["other.json"]["status"] == "failed"
+    assert [s["fy"] for s in client.get("/api/portfolio/ais").json()["statements"]] == [2026]
+    assert (root / "processed" / "ais_2025-26.json").exists()  # the user's own file moves; no copy is made
+    assert not (root.parent / "imports").exists() or not any((root.parent / "imports").iterdir())
+    for s in SECRETS:
+        assert s not in _stored_text()
+    (root / "again.json").write_bytes(FIX.read_bytes())
+    os.utime(root / "again.json", (old, old))
+    assert {f["file"]: f for f in scan(now=now)["files"]}["again.json"]["status"] == "duplicate"

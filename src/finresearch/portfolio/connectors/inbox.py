@@ -9,6 +9,9 @@ as the Portfolio page's Import tab:
 * Broker tradebooks (Zerodha/Groww/Upstox CSV/XLSX) → transactions.
 * Broker holdings statements (Zerodha/Groww/Upstox holdings XLSX/CSV) → the broker-baseline merge rules
   (connectors.merge): a baseline only for holdings the account has no history for, reconciliation for the rest.
+* The income-tax AIS as JSON → stored for the Tax → AIS check (portfolio.ais_store; identifiers stripped; the file
+  moves to processed/ like any other but no copy is saved). An AIS PDF (a file named *ais*.pdf) waits: its
+  password (PAN + date of birth) is not kept.
 
 A processed file moves to inbox/processed/ (and a copy is kept like any upload); a file that cannot be imported moves
 to inbox/failed/ with the reason in the sync log. A PDF waiting for a password stays put and is retried when the
@@ -31,7 +34,7 @@ from finresearch.db.models import BrokerConnection, BrokerSyncLog
 from finresearch.portfolio.connectors import INBOX_KEY
 
 SETTLE_S = 5.0
-EXTS = (".pdf", ".csv", ".xlsx", ".xls")
+EXTS = (".pdf", ".csv", ".xlsx", ".xls", ".json")
 MAX_BYTES = 15 * 1024 * 1024
 
 
@@ -107,6 +110,13 @@ def scan(*, now: datetime | None = None, password: str | None = None) -> dict[st
                     results.append(
                         {**entry, "status": "duplicate", "note": f"already imported (import #{prev})"}
                     )
+                    continue
+                if path.suffix.lower() == ".json" or (
+                    content.startswith(b"%PDF") and "ais" in path.name.lower()
+                ):
+                    results.append({**entry, **_ais(s, path, content, sha, before)})
+                    if results[-1]["status"] == "waiting":
+                        waiting[path.name] = "ais pdf"
                     continue
                 if content.startswith(b"%PDF"):
                     if not pw:
@@ -199,6 +209,32 @@ def scan(*, now: datetime | None = None, password: str | None = None) -> dict[st
                                 finished_at=datetime.now(UTC), summary=_slim(r),
                                 error=r.get("note") if status != "ok" else None))  # fmt: skip
     return {"imported": imported, "files": [_slim(r) for r in results], "inbox": str(root)}
+
+
+def _ais(s, path: Path, content: bytes, sha: str, before: dict[str, Any]) -> dict[str, Any]:
+    """An AIS: JSON imports (identifiers stripped, the file is not kept); a PDF needs its own password (PAN + date
+    of birth), which the inbox does not keep, so it waits for the Portfolio page's import."""
+    from finresearch.portfolio.ais import looks_like_ais_json, parse_ais_json
+    from finresearch.portfolio.ais_store import known_sha, save
+    from finresearch.portfolio.importers import StatementError
+
+    if content.startswith(b"%PDF"):
+        return {"status": "waiting", "logged": before.get(path.name) == "ais pdf",
+                "note": "an AIS PDF needs its password (PAN + date of birth): import it on Portfolio → Import, or drop "
+                        "the AIS JSON here instead"}  # fmt: skip
+    if (fy := known_sha(s, sha)) is not None:
+        _move(path, "processed")
+        return {"status": "duplicate", "note": f"this AIS is already imported (FY {fy - 1}-{fy % 100:02d})"}
+    if not looks_like_ais_json(content):
+        raise StatementError("not an AIS JSON (the inbox reads JSON files only as an AIS)")
+    st = parse_ais_json(content)
+    if st.fy is None:
+        raise StatementError(
+            "the AIS year could not be read: import it on Portfolio → Import and choose the year"
+        )
+    save(s, st, st.fy, sha)
+    _move(path, "processed")
+    return {"status": "imported", "kind": f"AIS FY {st.fy - 1}-{st.fy % 100:02d}", "rows": len(st.items)}
 
 
 def _record_sha(s, import_ids: list[int], sha: str, name: str, source: str = "inbox") -> None:
