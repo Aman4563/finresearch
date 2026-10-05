@@ -139,3 +139,81 @@ def test_charges_sized_difference_is_explained():
     app = [AppEntry(1, "Example Ltd", None, "stock", "sale", date(2025, 5, 2), D("49940"), D("10"), D("60"))]
     r = reconcile(ais, app, 2026)["rows"][0]
     assert r["status"] == "mismatch" and "charges" in r["cause"]
+
+
+def test_rows_without_a_security_compare_the_year_total():
+    from finresearch.portfolio.ais import AisItem
+
+    ais = [
+        AisItem("sale", "sft", D("30000"), source="NSDL"),
+        AisItem("sale", "sft", D("5000"), source="CAMS"),
+    ]
+    app = [AppEntry(1, "Example Ltd", None, "stock", "sale", date(2025, 5, 2), D("30000")),
+           AppEntry(2, "Gamma Fund", None, "mf", "sale", date(2025, 9, 2), D("5000.40"))]  # fmt: skip
+    out = reconcile(ais, app, 2026)
+    assert len(out["rows"]) == 1
+    r = out["rows"][0]
+    assert (r["status"], r["match"], r["ais_amount"], r["app_amount"]) == ("matched", "total", 35000, 35000.4)
+
+
+def _pdf(lines: list[str], password: str) -> bytes:
+    """A one-page text PDF, AES-encrypted with pypdf (a synthetic stand-in for the AIS PDF)."""
+    import io
+
+    from pypdf import PdfWriter
+    from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
+
+    def esc(t: str) -> str:
+        return t.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+    w = PdfWriter()
+    page = w.add_blank_page(612, 792)
+    ops = "BT /F1 9 Tf 12 TL 40 760 Td " + " ".join(f"({esc(t)}) Tj T*" for t in lines) + " ET"
+    stream = DecodedStreamObject()
+    stream.set_data(ops.encode("latin-1"))
+    font = DictionaryObject({NameObject("/Type"): NameObject("/Font"), NameObject("/Subtype"): NameObject("/Type1"),
+                             NameObject("/BaseFont"): NameObject("/Helvetica")})  # fmt: skip
+    page[NameObject("/Resources")] = DictionaryObject(
+        {NameObject("/Font"): DictionaryObject({NameObject("/F1"): w._add_object(font)})}
+    )
+    page[NameObject("/Contents")] = w._add_object(stream)
+    w.encrypt(password, algorithm="AES-256")
+    buf = io.BytesIO()
+    w.write(buf)
+    return buf.getvalue()
+
+
+AIS_PDF_LINES = [
+    "Annual Information Statement (AIS)", "Financial Year 2025-26 Assessment Year 2026-27",
+    "PAN ABCDE1234F Name Test Investor Mobile 9876543210", "Address 12 Example Street, Testnagar 400001",
+    "SR. NO. INFORMATION CODE INFORMATION DESCRIPTION INFORMATION SOURCE COUNT AMOUNT",
+    "1 TDS-194 Dividend EXAMPLE LIMITED (MUMA12345B) 1 1,500.00",
+    "2 TDS-192 Salary received (Section 192) EXAMPLE EMPLOYER PVT LTD (BLRE22222B) 1 9,00,000.00",
+    "1 SFT-015 Dividend income EXAMPLE LIMITED 1 1,500.00",
+    "2 SFT-017 Sale of securities and units of mutual fund NATIONAL SECURITIES DEPOSITORY LIMITED 2 22,845.00",
+    "3 SFT-016 Interest income EXAMPLE BANK LTD 1 3,200.00",
+]  # fmt: skip
+PDF_PW = "abcde1234f01011990"  # the documented form: PAN in lower case + date of birth ddmmyyyy (fake)
+
+
+def test_pdf_summary_rows_and_password():
+    from finresearch.portfolio.ais_pdf import parse_ais_pdf
+
+    blob = _pdf(AIS_PDF_LINES, PDF_PW)
+    with pytest.raises(StatementError) as e:
+        parse_ais_pdf(blob, "wrongpassword1")
+    assert "wrongpassword1" not in str(e.value)
+    st = parse_ais_pdf(blob, PDF_PW)
+    assert (st.fy, st.format, st.ignored) == (2026, "pdf", 1)
+    got = sorted((i.category, i.source, i.tan or "", i.amount) for i in st.items)
+    assert got == [("dividend", "EXAMPLE LIMITED", "", D("1500.00")),
+                   ("dividend", "EXAMPLE LIMITED", "MUMA12345B", D("1500.00")),
+                   ("interest", "EXAMPLE BANK LTD", "", D("3200.00")),
+                   ("sale", "NATIONAL SECURITIES DEPOSITORY LIMITED", "", D("22845.00"))]  # fmt: skip
+    dumped = json.dumps([i.to_json() for i in st.items])
+    for s in SECRETS:
+        assert s not in dumped, s
+    # the year total: 12,345 + 10,500 = 22,845 in the AIS against the app's gross sales
+    out = reconcile(st.items, _app(), 2026)
+    r = next(r for r in out["rows"] if r["category"] == "sale")
+    assert (r["match"], r["app_amount"], r["diff"]) == ("total", 12345 + 10000 + 5000, 22845 - 27345)

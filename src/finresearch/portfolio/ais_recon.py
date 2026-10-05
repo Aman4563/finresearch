@@ -111,6 +111,11 @@ class _Group:
     deduped: int = 0
 
     @property
+    def whole_year(self) -> bool:
+        """A sale/purchase row without a security (the PDF summary): compared with the app's total for the year."""
+        return self.category in ("sale", "purchase") and not any(i.security or i.isin for i in self.items)
+
+    @property
     def amc(self) -> bool:
         return bool(tokens(self.label) & _AMC_WORDS) and bool(amc_brand(self.label))
 
@@ -122,6 +127,8 @@ def _groups(items: Iterable[AisItem], categories: tuple[str, ...]) -> list[_Grou
             continue
         label = i.security or i.source or i.description or "(unnamed)"
         key = i.isin or " ".join(sorted(tokens(label))) or label
+        if i.category in ("sale", "purchase") and not (i.security or i.isin):  # one row for the year's total
+            label, key = f"All {i.category}s this year (AIS gives no security detail)", "*"
         g = by.setdefault((i.category, key), _Group(i.category, label, i.isin, []))
         g.items.append(i)
     for g in by.values():
@@ -131,14 +138,15 @@ def _groups(items: Iterable[AisItem], categories: tuple[str, ...]) -> list[_Grou
 
 
 def _assign(groups: list[_Group], app: list[AppEntry]) -> list[AppEntry]:
-    """Attach app entries to AIS groups: ISIN first, then exact normalised name, then (MF dividends) the AMC brand.
-    Each app entry is used once. Returns the entries left over (only in the app)."""
+    """Attach app entries to AIS groups: ISIN first, then exact normalised name, then (MF dividends) the AMC brand,
+    then (sale/purchase rows with no security) everything left in that category. Each app entry is used once. Returns the entries left over (only in the app)."""
     left = list(app)
     passes = (
         ("isin", lambda g, e: bool(g.isin) and g.isin == e.isin),
-        ("name", lambda g, e: names_match(g.label, e.name)),
+        ("name", lambda g, e: not g.whole_year and names_match(g.label, e.name)),
         ("amc", lambda g, e: g.category == "dividend" and e.asset_type == "mf" and g.amc
                               and amc_brand(g.label) <= tokens(e.name)),
+        ("total", lambda g, e: g.whole_year),
     )  # fmt: skip
     for how, ok in passes:
         for g in groups:
