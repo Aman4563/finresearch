@@ -22,6 +22,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Any
 
+from finresearch.disclosures.store import bse_only_isin
 from finresearch.fincalc.funds import xirr
 from finresearch.fincalc.price import LAST_TRADED, OFFICIAL_CLOSE
 
@@ -98,7 +99,7 @@ def instrument_of(h: Any, isin_map: dict[str, Any] | None = None) -> tuple[str |
         r"\d{5,7}(\.0)?", sym
     ):  # a BSE scrip code stored as the symbol (older tradebook imports)
         return sym.split(".")[0], "BSE", listing
-    if listing is not None and not listing.nse_symbol and listing.bse_code:
+    if listing is not None and not listing.nse_symbol and listing.bse_code and bse_only_isin(h.isin):
         # the ISIN is listed on BSE only: a stored "NSE symbol" (e.g. a broker's "NSE$") is no NSE listing, and NSE's
         # quote API can still answer for it with a price that is not this company's official close (#200)
         return listing.bse_code, "BSE", listing

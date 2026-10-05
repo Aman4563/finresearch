@@ -842,6 +842,7 @@ def test_isin_only_holdings_get_a_signal_key_through_the_isin_map():
     assert _signal(h, None, m) == {"asset": "stock", "instrument": "EXAMPLE", "href": "/stocks/EXAMPLE"}
     assert _signal(h, None, {}) is None  # no map yet: nothing to read a signal for
     assert stock_key("INE000X01029", "NSE$", None, m) == "BSE:599901"
+    assert stock_key("INF000X01011", "EXBEES", None, {"INF000X01011": [None, "590103"]}) == "EXBEES"  # an ETF
     assert (
         stock_key("INE000X09999", "OWNSYM", None, m) == "OWNSYM"
         and stock_key(None, None, "500325", m) == "BSE:500325"

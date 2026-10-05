@@ -230,6 +230,16 @@ async def test_a_bse_only_isin_is_priced_on_bse_even_with_an_nse_looking_symbol(
     out = await fetch_prices(hs, quote=quote, scheme_rows=None, listings=listings)
     assert out[1].price == D("1723.50") and out[1].source == "BSE quote: close (official)"
     assert asked == [("599901", "BSE")]
+    # an ETF (INF... ISIN) is never in NSE's equity list: its absence is no "BSE only", NSE still quotes it
+    asked.clear()
+
+    async def etf_listings() -> Listings:
+        return Listings(rows=[Listing(key="BSE:590103", symbol="EXBEES", name="Example Nifty ETF", isin="INF000X01011",
+                                      exchange="BSE", exchanges=["BSE"], bse_code="590103")])  # fmt: skip
+
+    etf = [H(2, "stock", "Example Nifty ETF", nse_symbol="EXBEES", isin="INF000X01011")]
+    await fetch_prices(etf, quote=quote, scheme_rows=None, listings=etf_listings)
+    assert asked[0] == ("EXBEES", "NSE")
 
 
 async def test_after_the_session_bse_official_close_beats_an_nse_last_trade():

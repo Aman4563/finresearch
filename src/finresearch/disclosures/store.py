@@ -100,8 +100,19 @@ def stock_key(
     (a holding with only an ISIN gets its symbol; a BSE-only company stays BSE-only whatever symbol a broker wrote),
     else the holding's own symbol or code (#200)."""
     ent = m.get((isin or "").upper()) if isin else None
+    if (
+        ent and not ent[0] and nse_symbol and not bse_only_isin(isin)
+    ):  # an ETF: NSE's equity list does not cover it
+        ent = None
     sym, bse = (ent[0], bse_code or ent[1]) if ent else (nse_symbol, bse_code)
     return sym.upper() if sym else (f"BSE:{bse}" if bse else None)
+
+
+def bse_only_isin(isin: str | None) -> bool:
+    """Whether an ISIN missing from NSE's list means "not on NSE": true for company securities (INE...). NSE's equity
+    list (EQUITY_L.csv) has no ETFs or other fund units (INF...), so an ETF's absence from it says nothing (#200:
+    NIFTYBEES was quoted on BSE)."""
+    return (isin or "").upper().startswith("INE")
 
 
 def nse_symbol_for_isin(
