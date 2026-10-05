@@ -1,7 +1,7 @@
 "use client";
 
 // The Tax tab: realised capital gains per financial year from the dated rule table (fincalc/tax.py), the ₹1.25 lakh
-// LTCG exemption meter, harvesting ideas and a CSV for your CA. A personal estimate: verify with a CA.
+// LTCG exemption meter, harvesting ideas, a CSV for your CA and the AIS check. A personal estimate: verify with a CA.
 
 import { CalendarClock, Download, Leaf, Scale, Scissors, ShieldAlert, TrendingDown, TrendingUp } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -9,6 +9,7 @@ import { useMemo, useState } from "react";
 import { Badge, Callout, Card, EmptyState, ErrorNote, InfoTip, Progress, Segmented, SkeletonRows, Stat, Table, cx } from "@/components/ui";
 import { API_URL, day, useApi } from "@/lib/api";
 
+import { AisCheck } from "./ais-check";
 import { type HarvestIdea, TAX_CLASS_LABEL, type TaxView, inr, signed, units } from "./types";
 
 const BUCKET: Record<string, string> = {
@@ -149,6 +150,8 @@ export function TaxPanel({ refresh }: { refresh: number }) {
           </Table>
         )}
       </Card>
+
+      <AisCheck refresh={refresh} preferFy={current.fy} />
 
       <Card title="Rule table" subtitle="Keyed by the date of sale, not by section numbers (the Income-tax Act 2025 renumbered them from tax year 2026-27 with the same rates)."
         actions={<button type="button" className="text-xs font-medium text-brand" onClick={() => setShowRules((s) => !s)}>{showRules ? "Hide" : `Show ${data.rules.length} rules`}</button>}>

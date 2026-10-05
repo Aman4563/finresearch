@@ -184,3 +184,25 @@ export const signed = (v: number | null | undefined, d = 0) => (v == null ? "—
 export const pctx = (v: number | null | undefined, d = 1) => (v == null ? "—" : `${v > 0 ? "+" : ""}${v.toFixed(d)}%`);
 export const units = (v: number | string | null | undefined) =>
   v == null ? "—" : Number(v).toLocaleString("en-IN", { maximumFractionDigits: 3 });
+
+// AIS check (/api/portfolio/ais): the user's AIS for one FY against the app's dividends and trades
+export type AisStatus = "matched" | "mismatch" | "only_ais" | "only_app";
+export type AisCategory = "dividend" | "sale" | "purchase";
+export type AisSourceRow = { day: string | null; code: string | null; part: string; source: string | null; tan: string | null; security: string | null; amount: number | null; tds: number | null; quantity: number | null; stt: number | null };
+export type AisRow = {
+  category: AisCategory; label: string; isin: string | null; match: "isin" | "name" | "amc" | "total" | null; status: AisStatus;
+  ais_amount: number | null; app_amount: number | null; diff: number | null; ais_tds: number | null;
+  ais_quantity: number | null; app_quantity: number | null; holdings: string[]; duplicates_dropped: number;
+  ais_rows: AisSourceRow[]; app_rows: { day: string; name: string; amount: number | null; quantity: number | null }[];
+  cause: string | null; action: string | null;
+};
+export type AisInfo = { category: "interest" | "off_market"; label: string; ais_amount: number | null; ais_tds: number | null; duplicates_dropped: number; ais_rows: AisSourceRow[]; note: string };
+export type AisCheck = {
+  fy: number; label: string; counts: Record<AisStatus, number>; totals: Record<AisCategory, { ais: number; app: number }>;
+  rows: AisRow[]; info: AisInfo[]; tolerance: string; notes: string[];
+};
+export type AisList = {
+  statements: { fy: number; label: string; format: string; rows: number; ignored: number; imported_at: string | null; warnings: string[] }[];
+  app_years: { fy: number; label: string }[];
+};
+export type AisImport = { dry_run: boolean; already_imported: number | null; fy: number; format: string; rows: number; ignored: number; warnings: string[]; check: AisCheck };
