@@ -298,6 +298,16 @@ class Reader:
             sig = await self._signal("stock", key)
             if metric == "signal_score":
                 return Reading(D(round(sig.score, 1)), "signals.stock composite v1 score")
+            call = getattr(sig, "call", None)
+            if call and call.get("status") == "informational":
+                # no proven edge (signals.stock.CALLS_ENABLED off, #193): the change is in the factor tilt, and
+                # the alert says it is informational, never "now BUY"
+                r = await self._change(
+                    "stock", key, baseline, "tilt", call.get("tilt"), "signals.stock factor tilt"
+                )
+                if r.detail:
+                    r.detail = f"informational, no proven edge: {r.detail}"
+                return r
             return await self._change("stock", key, baseline, "action", sig.action, "signals.stock action")
         if metric in _DISCLOSURE_STOCK:  # exchange disclosures, from the database (finresearch.disclosures)
             from finresearch.disclosures.alerts import stock_reading

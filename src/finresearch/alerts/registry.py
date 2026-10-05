@@ -204,10 +204,12 @@ METRICS: list[MetricSpec] = [
         "the signal's action",
         "flag",
         "daily",
-        "Fires when the stock signal's action (BUY / ACCUMULATE / HOLD / REDUCE / SELL) differs from the last check.",
+        "Fires when the stock signal changes from the last check. While the signal is informational (no proven "
+        "edge, signals.stock.CALLS_ENABLED off) that is its factor tilt (lean positive / mixed / lean negative), "
+        "never a BUY or SELL instruction.",
         "finresearch.signals.stock (composite v1; the forecast ledger is not written by these checks)",
         event=True,
-        event_text="the stock signal's action changed",
+        event_text="the stock signal changed",
         rebase="always",
         default_op="==",
         default_value="1",
@@ -580,6 +582,7 @@ METRICS: list[MetricSpec] = [
         "flag",
         "daily",
         "Fires when the signal of a stock or fund you hold moves to another action (for example HOLD to REDUCE). "
+        "The stock signal is informational (no proven edge): for a stock this is a change in its factor tilt. "
         "Signals are computed once a day and never written to the forecast ledger by this check.",
         f"{_PF}: signals.stock / signals.fund",
         event=True,
@@ -596,7 +599,8 @@ METRICS: list[MetricSpec] = [
         "pct",
         "daily",
         "The part of your portfolio's value in holdings whose current signal is REDUCE or SELL. The stock signal "
-        "showed no edge over an equal-weight Nifty 50 backtest: treat this as risk hygiene, not a forecast.",
+        "showed no edge over an equal-weight Nifty 50 backtest, so it is informational and stocks do not count "
+        "here until a pre-registered model passes (signals.stock.CALLS_ENABLED); funds and bonds still do.",
         f"{_PF}: holdings' signals and weights",
         default_op=">=",
         default_value="10",
@@ -668,10 +672,11 @@ METRICS: list[MetricSpec] = [
         "pct",
         "daily",
         "The biggest holding's share of the portfolio (a fund counts as one holding: its stocks are not looked "
-        "through). The default 10 % is a rule of thumb; set your own (Profile has a max position too).",
+        "through). The suggested threshold is your single-stock limit (portfolio.limits.position_limit: the "
+        "profile's max position, else 5 / 8 / 10 % by risk appetite), the same one /portfolio flags.",
         f"{_PF}: holding values",
         default_op=">=",
-        default_value="10",
+        default_value="8",
         allows_all=False,
     ),
     _m(
@@ -1109,7 +1114,7 @@ TEMPLATES: list[Template] = [
         "stock-signal-change",
         "stock",
         "Signal changed",
-        "The stock signal moved to another action.",
+        "The stock signal's factor tilt moved (informational: no proven edge).",
         "signal_action_changed",
         "==",
         "1",
@@ -1323,10 +1328,10 @@ TEMPLATES: list[Template] = [
         "pf-concentration",
         "portfolio",
         "Position too big",
-        "One holding is over 10 % of the portfolio (a rule of thumb).",
+        "One holding is over your single-stock limit (by default 8 %, the medium-risk rule of thumb).",
         "max_position_pct",
         ">=",
-        "10",
+        "8",
     ),
     Template(
         "pf-red-flags",
@@ -1351,6 +1356,18 @@ TEMPLATES: list[Template] = [
 ]
 
 
-def registry_json() -> dict[str, Any]:
-    return {"kinds": list(KINDS), "metrics": [m.json() for m in METRICS],
-            "templates": [asdict(t) for t in TEMPLATES], "ops": OP_PHRASE}  # fmt: skip
+def registry_json(limit: Any = None) -> dict[str, Any]:
+    """The catalogue for the rule builder. `limit` (a portfolio.limits.PositionLimit, from the profile) fills the
+    "Largest position" default and the "Position too big" template with the one single-stock limit (#194)."""
+    metrics = [m.json() for m in METRICS]
+    templates = [asdict(t) for t in TEMPLATES]
+    if limit is not None:
+        v = f"{limit.pct:g}"
+        for m in metrics:
+            if m["key"] == "max_position_pct" and m["kind"] == "portfolio":
+                m["default_value"] = v
+        for t in templates:
+            if t["id"] == "pf-concentration":
+                t["value"] = v
+                t["why"] = f"One holding is over your single-stock limit ({limit.rule})."
+    return {"kinds": list(KINDS), "metrics": metrics, "templates": templates, "ops": OP_PHRASE}

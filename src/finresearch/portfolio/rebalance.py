@@ -48,6 +48,12 @@ from typing import Any
 from finresearch.fincalc.dates import fiscal_year
 from finresearch.fincalc.tax import Gain, fy_label, fy_tax, tax_delta
 from finresearch.portfolio.elss import unlock_date
+from finresearch.portfolio.limits import (  # one band helper (#195)
+    DEFAULT_ABS_PP,
+    DEFAULT_REL_PCT,
+    band_pp,
+    band_rule,
+)
 from finresearch.portfolio.metrics import ASSET_CLASSES
 from finresearch.portfolio.tax import (
     STAMP_DELIVERY_BUY,
@@ -63,8 +69,6 @@ ZERO = Decimal(0)
 EPS = Decimal("0.0005")  # units below this are rounding noise (portfolio.lots.EPS)
 STT_EQUITY_MF_SELL = Decimal("0.00001")  # 0.001 % on redeeming equity-oriented fund units (as portfolio.tax)
 MF_UNIT_STEP = Decimal("0.001")  # fund units are allotted to 3 decimals
-DEFAULT_ABS_PP = 5.0
-DEFAULT_REL_PCT = 25.0
 FUND_CLASSES = ("Equity funds", "Debt funds", "Gold & international funds")
 DISCLAIMER = ("Illustrative, not investment advice. FinResearch is not a SEBI-registered investment adviser or "
               "research analyst; these steps show what your own targets imply under the stated assumptions. Check "
@@ -104,13 +108,6 @@ class Position:
 
 
 # --------------------------------------------------------------------------- bands and cash flow
-def band_pp(target_pct: float, abs_pp: float = DEFAULT_ABS_PP, rel_pct: float = DEFAULT_REL_PCT) -> float:
-    """The band half-width in pp: the tighter of the absolute and relative bands (0 % target: absolute only)."""
-    if target_pct <= 0 or rel_pct <= 0:
-        return abs_pp
-    return min(abs_pp, rel_pct / 100 * target_pct)
-
-
 def weights(values: Mapping[str, Decimal]) -> dict[str, float]:
     total = sum(values.values(), ZERO)
     return {k: (float(v / total * 100) if total > 0 else 0.0) for k, v in values.items()}
@@ -338,7 +335,7 @@ def plan(positions: Sequence[Position], targets: Mapping[str, float], today: dat
     fy = fiscal_year(today)
     base = gains_of([r for r in realised if r.fy == fy])
     head = {"as_of": today.isoformat(), "fy": fy, "fy_label": fy_label(fy), "disclaimer": DISCLAIMER,
-            "bands": {"abs_pp": abs_pp, "rel_pct": rel_pct}, "new_money": _f(new_money), "targets": dict(targets),
+            "bands": {"abs_pp": abs_pp, "rel_pct": rel_pct, "rule": band_rule(abs_pp, rel_pct)}, "new_money": _f(new_money), "targets": dict(targets),
             "assumptions": ASSUMPTIONS, "sources": SOURCES}  # fmt: skip
     classes = [
         k for k in ASSET_CLASSES if k in targets or any(p.asset_class == k and p.value for p in positions)
@@ -450,7 +447,8 @@ def _finish(head: dict[str, Any], positions: Sequence[Position], classes: list[s
 ASSUMPTIONS = [
     "Targets are yours (Targets panel); a class without a target counts as 0 %.",
     "Bands: a class is outside when |weight - target| exceeds the absolute band (default 5 pp) or the relative band "
-    "(default 25 % of the target), whichever is tighter; a 0 % target uses the absolute band only.",
+    "(default 25 % of the target), whichever is tighter; a 0 % target uses the absolute band only. The defaults come "
+    "from your profile, and /wealth uses the same band (portfolio.limits.band_pp).",
     "New money goes to the underweight classes first, largest rupee shortfall first; beyond every shortfall it is "
     "split by the target weights.",
     "Sales happen only when a class is still outside its band after the new money, and then every overweight class "

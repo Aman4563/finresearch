@@ -309,6 +309,35 @@ export function ProfilePage() {
             </div>
           </Card>
 
+          {/* ------------------------------------------------------------ portfolio limits (portfolio.limits) */}
+          <Card icon={<ShieldAlert className="size-4" />} title="Portfolio limits"
+            help="One position limit and one rebalancing band, used everywhere: the stock signal's sizing, the pre-trade checklist, /portfolio concentration, the Rebalance card and the Wealth page.">
+            <div className="grid gap-4 sm:grid-cols-3">
+              <Labelled label={<Label tip="The most of your portfolio one stock may take. Empty = by risk appetite: low 5 %, medium 8 %, high 10 % (rules of thumb).">Max single stock</Label>}
+                hint={p.max_position_pct ? "your own limit" : `empty = ${({ low: 5, medium: 8, high: 10 } as const)[p.risk_appetite] ?? 8} % — your risk profile: ${p.risk_appetite}`}>
+                <div className="relative w-28">
+                  <input aria-label="Max single stock in percent" className={cx(inputClass, "num w-full pr-7")} inputMode="decimal" value={p.max_position_pct ?? ""}
+                    onChange={(e) => { const v = e.target.value.replace(/[%\s]/g, ""); set("max_position_pct", v === "" ? null : v); }} />
+                  <span className="pointer-events-none absolute inset-y-0 right-3 grid place-items-center text-sm text-muted">%</span>
+                </div>
+              </Labelled>
+              <Labelled label={<Label tip="Rebalancing band, absolute part: a class is outside when its drift exceeds this many percentage points (or the relative band, whichever is tighter).">Band: absolute</Label>} hint="pp (default 5)">
+                <div className="relative w-28">
+                  <input aria-label="Rebalancing band, absolute, in percentage points" className={cx(inputClass, "num w-full pr-8")} inputMode="decimal" value={p.rebalance_band_abs_pp ?? "5"}
+                    onChange={(e) => set("rebalance_band_abs_pp", e.target.value.replace(/[%\s]/g, ""))} />
+                  <span className="pointer-events-none absolute inset-y-0 right-3 grid place-items-center text-sm text-muted">pp</span>
+                </div>
+              </Labelled>
+              <Labelled label={<Label tip="Rebalancing band, relative part: a share of the target (25 % of a 10 % target = 2.5 pp). The tighter of the two bands applies; a 0 % target uses the absolute band only. 0 = absolute band only (the 5/25 rule of thumb).">Band: relative</Label>} hint="% of the target (default 25)">
+                <div className="relative w-28">
+                  <input aria-label="Rebalancing band, relative, in percent of the target" className={cx(inputClass, "num w-full pr-7")} inputMode="decimal" value={p.rebalance_band_rel_pct ?? "25"}
+                    onChange={(e) => set("rebalance_band_rel_pct", e.target.value.replace(/[%\s]/g, ""))} />
+                  <span className="pointer-events-none absolute inset-y-0 right-3 grid place-items-center text-sm text-muted">%</span>
+                </div>
+              </Labelled>
+            </div>
+          </Card>
+
           {/* ------------------------------------------------------------ F&O budget */}
           {p.fno_capital_inr != null && (
             <Card icon={<ShieldAlert className="size-4" />} title="F&O risk budget"

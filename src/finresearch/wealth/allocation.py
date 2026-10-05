@@ -7,13 +7,18 @@ international part of that portfolio bucket is equity in reality, a stated appro
 
 Glide path (a rule of thumb [W], never a recommendation): equity % = clamp(100 - age, 20, 80), then -10 for a low
 and +10 for a high risk appetite; gold 10 % (a common diversifier rule of thumb [W]); the rest debt and cash. Bands
-("5/25" rule of thumb [W]): a class is outside its band when |weight - target| > max(5 pp, 25 % of the target).
+("5/25" rule of thumb [W], portfolio.limits.band_pp, shared with the Rebalance card): a class is outside its band when
+|weight - target| exceeds the TIGHTER of ±5 pp and 25 % of the target (a 0 % target: ±5 pp only); both widths are
+settable on the profile. (Before #195 this used the looser max(5 pp, 25 %), so /wealth and the Rebalance card could
+disagree on the same drift.)
 Real estate is not part of the comparison (illiquid, self-valued); the comparison is over financial assets.
 """
 
 from __future__ import annotations
 
 from typing import Any
+
+from finresearch.portfolio.limits import DEFAULT_ABS_PP, DEFAULT_REL_PCT, band_pp
 
 CLASSES = ("Equity", "Debt", "Gold", "Cash", "Real estate", "Other")
 FINANCIAL = ("Equity", "Debt", "Gold", "Cash", "Other")
@@ -74,11 +79,8 @@ def glide_target(
     return {"Equity": e, "Gold": g, "Debt + cash": round(100 - e - g, 6)}
 
 
-def band_pp(target: float) -> float:
-    return max(5.0, 0.25 * target)
-
-
-def compare(weights: dict[str, float], target: dict[str, float]) -> list[dict[str, Any]]:
+def compare(weights: dict[str, float], target: dict[str, float], abs_pp: float = DEFAULT_ABS_PP,
+            rel_pct: float = DEFAULT_REL_PCT) -> list[dict[str, Any]]:  # fmt: skip
     """Weight vs target per class (Debt and Cash compared together), with the 5/25 band and a status."""
     w = {
         "Equity": weights.get("Equity", 0.0),
@@ -88,7 +90,7 @@ def compare(weights: dict[str, float], target: dict[str, float]) -> list[dict[st
     rows = []
     for k, t in target.items():
         d = w.get(k, 0.0) - t
-        b = band_pp(t)
+        b = band_pp(t, abs_pp, rel_pct)
         rows.append(
             {
                 "label": k,

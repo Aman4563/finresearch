@@ -7,7 +7,10 @@ trend bucket in the walk-forward backtest (evals/stock_backtest/results.json, fi
 measured price return against the NIFTY 50 price index with dividends left out on both sides (NSE serves no total-return
 history), with a Wilson interval on an effective n. The signal's base-rate description and a caveat say so.
 
-The action comes from a transparent composite score whose weights were fixed before the backtest was run
+While CALLS_ENABLED is False (decision #193, see the PROMOTION RULE below) the signal's action is INFORMATIONAL:
+the composite's action is kept in `Signal.call` and the forecast ledger, never shown as an instruction.
+
+The composite action comes from a transparent composite score whose weights were fixed before the backtest was run
 (pre-registered, "composite v1"). They follow the Indian factor evidence (IIMA four-factor library [39][40]: momentum
 and value premia are supported in India, size is not) and treat forensic scores as screening flags only:
 
@@ -44,13 +47,14 @@ import logging
 import math
 import os
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
 from finresearch.fincalc import forensic as fz
 from finresearch.fincalc import signals as sg
+from finresearch.portfolio.limits import position_limit
 from finresearch.signals.base import Factor, Signal, Validation, action_for_score, clip_score
 from finresearch.signals.registry import register
 
@@ -70,9 +74,57 @@ LOG_FORECASTS = os.environ.get("FINRESEARCH_LOG_SIGNALS", "1") != "0"  # "0" for
 METHOD = ("Composite v1 (pre-registered weights: momentum 40, trend 20, valuation vs own history 10, shareholding "
           "10, forensic flags -10 each). Probability: backtested hit rate of the stock's momentum + trend bucket, "
           "NIFTY 50 universe, monthly walk-forward.")  # fmt: skip
+# ---- calls are informational until a model shows an edge (decision #193)
+# The momentum + trend rule showed no edge on the point-in-time NIFTY 50 (evals/experiments/stock_pit_universe:
+# -3.1 pp a year vs the equal-weight members, Newey–West t -0.97; no pre-registered variant passed), and its ~56 %
+# "chance of beating the Nifty" sits on a 55.7 % base rate (all NIFTY 50 stock-months, survivorship-flattered). So the
+# composite's BUY / ACCUMULATE / HOLD / REDUCE / SELL is not shown as an instruction: the signal's action is
+# INFORMATIONAL and `Signal.call` carries the label, the factor tilt and the probability next to its base rate.
+# The forecast ledger still logs the composite action, probability and validation exactly as before (plus
+# inputs.call_status), so the calls keep being scored out of sample.
+# PROMOTION RULE: set CALLS_ENABLED = True only when a model pre-registered in evals/experiments (PREREG.md committed
+# before its run) passes its bar on the point-in-time universe: net excess return vs the equal-weight PIT universe
+# > 0 AND Newey–West t > 2.39 (Bonferroni for the variants tested, stock_pit_universe/PREREG.md "Pass bar"), and
+# signals/stock.py then implements that model ("composite v2") with its validation text pointing at the results.
+CALLS_ENABLED = False
+INFORMATIONAL_LABEL = "Informational — no proven edge"
+PROMOTION_RULE = ("Calls return only when a pre-registered model beats the equal-weight point-in-time NIFTY 50 after "
+                  "costs with a Newey–West t above 2.39 (evals/experiments/stock_pit_universe/PREREG.md).")  # fmt: skip
+
+
+def tilt(score: float) -> str:
+    """The factor tilt in words, on the composite's fixed cut-offs (+50 / +20 / -20 / -50, base.action_for_score)."""
+    if score >= 50:
+        return "factors lean strongly positive"
+    if score >= 20:
+        return "factors lean positive"
+    if score > -20:
+        return "factors are mixed"
+    if score > -50:
+        return "factors lean negative"
+    return "factors lean strongly negative"
+
+
+def call_view(score: float, composite_action: str, prob: float | None, interval: tuple[float, float] | None,
+              bt: dict[str, Any] | None) -> dict[str, Any]:  # fmt: skip
+    """`Signal.call` for an informational stock signal: label, tilt and the probability next to its base rate."""
+    allb = ((bt or {}).get("buckets") or {}).get("all") or {}
+    base = {"p": allb["p"], "n": allb.get("n"),
+            "description": "of all NIFTY 50 stock-months in the backtest beat the index over the next 12 months "
+                           "(today's members, so survivorship-flattered)"} if allb.get("p") is not None else None  # fmt: skip
+    vs = None
+    if prob is not None and base:
+        noise = interval is not None and interval[0] <= base["p"] <= interval[1]
+        vs = (f"{prob:.1%} chance it beats the Nifty, against a {base['p']:.1%} base rate "
+              f"({base['p']:.1%} of NIFTY 50 stock-months beat the index): {(prob - base['p']) * 100:+.1f} pp"
+              + (", within noise of the base rate" if noise else ""))  # fmt: skip
+    return {"status": "informational", "label": INFORMATIONAL_LABEL, "tilt": tilt(score),
+            "composite_action": composite_action, "universe_base_rate": base, "probability_vs_base": vs,
+            "promotion_rule": PROMOTION_RULE}  # fmt: skip
+
+
 HISTORY_DAYS = 1100  # three years: momentum needs 13 months; the rest feeds the P/E history
 RESULT_QUARTERS = 12
-CAPS = {"low": 0.05, "medium": 0.08, "high": 0.10}  # single-stock cap when the profile sets none
 RISK_BUDGET = {"low": 0.015, "medium": 0.02, "high": 0.025}  # weight x volatility (annual) per position
 ATR_K = 2.5  # stop = price - k x ATR(14); roadmap §D.2 suggests k = 2-3
 CACHE_S = 1800
@@ -650,15 +702,15 @@ def no_signal_factors(f: Features, fz_scores: list[dict[str, Any]], shp_source: 
 
 
 def sizing(f: Features, bucket: dict[str, Any] | None, profile: Any) -> dict[str, Any]:
-    risk = getattr(profile, "risk_appetite", "medium") or "medium"
-    explicit = getattr(profile, "max_position_pct", None)
-    cap = float(explicit) / 100 if explicit else CAPS.get(risk, 0.08)
+    lim = position_limit(profile)  # the same limit as /portfolio and the pre-trade checklist (#194)
+    risk, cap = lim.risk, lim.pct / 100
     # Judgment (audit #137): Kelly's μ is the bucket's mean 12-month return in excess of the NIFTY 50 (not of cash) and
     # σ the stock's own volatility (not the tracking error). Both choices make the ceiling smaller than an
     # excess-over-cash / tracking-error Kelly; the backtest's μ is survivorship-flattered, so the ceiling is loose anyway.
     mean_excess = bucket.get("mean_excess_12m") if bucket else None
     s = sg.position_size(f.vol, risk_budget=RISK_BUDGET.get(risk, 0.02), cap=cap, mean_excess=mean_excess)
-    s["cap_source"] = "profile max_position_pct" if explicit else f"default for a {risk}-risk profile"
+    s["cap_source"] = lim.rule
+    s["cap_rule"] = lim.to_json()
     s["risk_budget"] = RISK_BUDGET.get(risk, 0.02)
     if f.atr14 and f.price:
         stop = f.price - ATR_K * f.atr14
@@ -751,9 +803,15 @@ async def stock_signal(instrument: str, ctx: dict[str, Any]) -> Signal:
                      "The backtest artefact is missing; the probability is not available."))  # fmt: skip
     if bt is None:
         caveats.insert(0, "No backtest results on disk (evals/stock_backtest/results.json): no probability.")
-    sig = Signal(**base, action=action_for_score(score), score=round(score, 1), validation=validation,
-                 probability=prob, probability_interval=interval, base_rate=base_rate, factors=factors,
-                 caveats=caveats, sizing=sizing(f, bucket, _profile()))  # fmt: skip
+    composite_action = action_for_score(score)
+    call = None
+    if not CALLS_ENABLED:  # decision #193: analysis and factors, no instruction
+        call = call_view(score, composite_action, prob, interval, bt)
+        caveats.insert(1, f"{INFORMATIONAL_LABEL}: the composite would read {composite_action}, but no model has "
+                          f"shown an edge, so it is not a recommendation. {PROMOTION_RULE}")  # fmt: skip
+    sig = Signal(**base, action=composite_action if CALLS_ENABLED else "INFORMATIONAL", score=round(score, 1),
+                 validation=validation, probability=prob, probability_interval=interval, base_rate=base_rate,
+                 factors=factors, caveats=caveats, sizing=sizing(f, bucket, _profile()), call=call)  # fmt: skip
     # ctx log=0: a scheduled alert check, not a viewed signal. A signal missing inputs the exchange could not serve
     # just now is not logged: the day's forecast is recorded from complete inputs on a later view
     if str(ctx.get("log", "1")) != "0" and not raw.get("unreachable"):
@@ -799,9 +857,12 @@ def _log(sig: Signal, bucket_name: str) -> None:
         else:
             from finresearch.signals.ledger import record as rec
 
-        rec(sig, source="signal:stock", resolve_on=add_years(today, 1), event_kind=EVENT_KIND,
+        # the ledger keeps the composite's action (unchanged since v1) so it is still scored; call_status records
+        # that it was shown as informational (#193)
+        logged = replace(sig, action=sig.call["composite_action"]) if sig.call else sig
+        rec(logged, source="signal:stock", resolve_on=add_years(today, 1), event_kind=EVENT_KIND,
             inputs={"symbol": sig.instrument, "benchmark": "NIFTYBEES", "start_date": today.isoformat(),
-                    "bucket": bucket_name,
+                    "bucket": bucket_name, "call_status": sig.call["status"] if sig.call else "call",
                     **({"exchange": "BSE", "benchmark_exchange": "NSE"} if sig.instrument.startswith("BSE:") else {})})  # fmt: skip
     except Exception:  # the database may be down; the signal still shows
         logging.getLogger(__name__).warning("could not log the %s signal", sig.instrument, exc_info=True)

@@ -191,6 +191,27 @@ def test_signal_action_change_is_a_change_flag(monkeypatch):
     assert changed.value == 1 and changed.detail == "HOLD -> REDUCE"
 
 
+def test_informational_stock_signal_change_is_the_tilt_and_says_so(monkeypatch):
+    # #193: the stock signal is informational, so the change flag follows the factor tilt and the alert text says
+    # "informational, no proven edge" (never "HOLD -> BUY")
+    tilts = iter(["factors are mixed", "factors are mixed", "factors lean positive"])
+
+    async def sig(asset, inst):
+        return SimpleNamespace(action="INFORMATIONAL", score=25.0,
+                               call={"status": "informational", "tilt": next(tilts), "composite_action": "ACCUMULATE"})  # fmt: skip
+
+    monkeypatch.setattr(compute, "SOURCES", src(signal=sig))
+    first = run(reader().read("stock", "signal_action_changed", "INFY", {}, {}))
+    assert first.value == 0 and first.baseline == {"tilt": "factors are mixed"}
+    # a baseline stored before #193 ({"action": "HOLD"}) has no tilt: recorded again, no false alert
+    same = run(reader().read("stock", "signal_action_changed", "INFY", {}, {"action": "HOLD"}))
+    assert same.value == 0
+    changed = run(reader().read("stock", "signal_action_changed", "INFY", {}, same.baseline))
+    assert changed.value == 1
+    assert changed.detail == "informational, no proven edge: factors are mixed -> factors lean positive"
+    assert "BUY" not in changed.detail and "ACCUMULATE" not in changed.detail
+
+
 def test_live_signal_checks_do_not_log_forecasts():
     import inspect
 

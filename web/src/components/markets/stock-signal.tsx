@@ -37,7 +37,7 @@ export function StockSignalCard({ symbol }: { symbol: string }) {
                   <Scale className="size-3.5" /> Position size ceiling
                   <InfoTip>
                     Volatility-scaled: the weight whose yearly swing equals {pctOf(sz.risk_budget ?? null, 1)} of the portfolio
-                    ({pctOf(sz.vol_scaled ?? null, 1)}), capped by your single-stock limit ({pctOf(sz.profile_cap ?? null, 0)}, {sz.cap_source})
+                    ({pctOf(sz.vol_scaled ?? null, 1)}), capped by your single-stock limit ({sz.cap_source ?? pctOf(sz.profile_cap ?? null, 0)})
                     {sz.quarter_kelly != null && <> and by a quarter-Kelly ceiling ({pctOf(sz.quarter_kelly, 1)}) from the bucket&apos;s backtested edge</>}.
                     Kelly is noisy, so it can only lower the size, never raise it.
                   </InfoTip>

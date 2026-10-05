@@ -196,7 +196,7 @@ function EmptyChartNote({ next, scored }: { next: Forecast | null; scored: Forec
     return <>No resolved forecasts yet. The first {next.probability == null ? "outcome" : "one"} comes when {who(next)} {resolvesText(next)}.</>;
   }
   return (
-    <>No resolved forecasts yet. The first outcome comes when {who(next)} {resolvesText(next)}, but its verdict ({next.action}) was a no call, so it
+    <>No resolved forecasts yet. The first outcome comes when {who(next)} {resolvesText(next)}, but its verdict ({next.call?.status === "informational" ? "informational" : next.action}) was a no call, so it
       is recorded, not scored. The first scored one resolves when {who(scored)} {resolvesText(scored)}.</>
   );
 }
@@ -305,7 +305,9 @@ function ForecastTable({ rows, total }: { rows: Forecast[]; total: number }) {
                     : <span className="line-clamp-2 max-w-44 font-medium whitespace-normal" title={f.source}>{f.name ?? f.instrument}</span>}
                 </div>
               </td>
-              <td><span className="inline-flex items-center gap-1"><Badge status={f.action}>{f.action}</Badge>{f.validation_status === "shadow" && <span title="Shadow test: logged for out-of-sample scoring, not used for the call."><Badge tone="neutral">shadow</Badge></span>}</span></td>
+              <td><span className="inline-flex items-center gap-1">{f.call?.status === "informational"
+                ? <span title={`${f.call.label}. Logged composite: ${f.call.composite_action} (scored out of sample, not a recommendation).`}><Badge tone="neutral">informational</Badge> <span className="text-[11px] text-muted">{f.call.tilt}</span></span>
+                : <Badge status={f.action}>{f.action}</Badge>}{f.validation_status === "shadow" && <span title="Shadow test: logged for out-of-sample scoring, not used for the call."><Badge tone="neutral">shadow</Badge></span>}</span></td>
               <td className="num text-right">{f.probability == null ? <span className="text-muted">no call</span> : pc(f.probability)}</td>
               <td>
                 <span className="inline-flex max-w-44 items-center gap-1">

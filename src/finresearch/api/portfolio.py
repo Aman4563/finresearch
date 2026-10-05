@@ -42,8 +42,11 @@ FAILED_TTL_S = 30.0
 
 class RebalanceParams(BaseModel):
     new_money: float = Field(0, ge=0, le=1e11)  # ₹ to invest now (a SIP instalment or a lump sum)
-    band_abs_pp: float = Field(5, ge=0.5, le=50)  # absolute band, percentage points
-    band_rel_pct: float = Field(25, ge=0, le=100)  # relative band, % of the target (0 = absolute only)
+    # None = the profile's band (portfolio.limits.bands: 5 pp / 25 % unless the user set their own), as /wealth uses
+    band_abs_pp: float | None = Field(None, ge=0.5, le=50)  # absolute band, percentage points
+    band_rel_pct: float | None = Field(
+        None, ge=0, le=100
+    )  # relative band, % of the target (0 = absolute only)
 
 
 class ManualTxn(BaseModel):
@@ -387,19 +390,26 @@ def add_portfolio_routes(app: FastAPI, *, scheme_rows: Callable[[], Awaitable[li
                                  "Cache-Control": "no-store"})  # fmt: skip
 
     async def _rebalance(body: RebalanceParams) -> dict[str, Any]:
+        from finresearch.portfolio.limits import bands
         from finresearch.portfolio.rebalance import rebalance_view
+        from finresearch.suggest.advisor import load_profile
 
         prices, _ = await _prices(_detached_holdings())
         slab = _slab()
         with session_scope() as s:
+            abs_pp, rel_pct = bands(load_profile(s))
+            if body.band_abs_pp is not None:
+                abs_pp = body.band_abs_pp
+            if body.band_rel_pct is not None:
+                rel_pct = body.band_rel_pct
             return rebalance_view(s, prices, src().today(), slab, new_money=Decimal(str(body.new_money)),
-                                  abs_pp=body.band_abs_pp, rel_pct=body.band_rel_pct)  # fmt: skip
+                                  abs_pp=abs_pp, rel_pct=rel_pct)  # fmt: skip
 
     @app.get("/api/portfolio/rebalance")
     async def rebalance(
         new_money: float = Query(0, ge=0, le=1e11),
-        band_abs_pp: float = Query(5, ge=0.5, le=50),
-        band_rel_pct: float = Query(25, ge=0, le=100),
+        band_abs_pp: float | None = Query(None, ge=0.5, le=50),
+        band_rel_pct: float | None = Query(None, ge=0, le=100),
     ) -> dict[str, Any]:
         """Illustrative, tax-aware rebalancing steps (portfolio.rebalance): new money to the underweight classes,
         then FIFO sales (losses and the LTCG exemption first) only when a class is outside its band. Not advice."""

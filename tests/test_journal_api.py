@@ -245,8 +245,11 @@ def test_checklist_sale_tax_long_term_soon_and_block(client):
         and lt["lots"][0]["days"] == 16
     )
     assert lt["value"] == pytest.approx(104.0)
-    assert it["signal"]["value"] == "REDUCE" and it["signal"]["probability_interval"] == [0.31, 0.54]
-    assert it["signal"]["status"] == "info"  # selling while the signal says REDUCE is not "against" it
+    # the stock signal is informational (#193); a reading cached before that (composite REDUCE) shows its tilt
+    assert it["signal"]["value"] == "INFORMATIONAL" and it["signal"]["probability_interval"] == [0.31, 0.54]
+    assert it["signal"]["status"] == "info" and it["signal"]["tilt"] == "factors lean negative"
+    assert it["signal"]["detail"].startswith("Informational — no proven edge: factors lean negative")
+    assert "REDUCE" not in it["signal"]["detail"]
     assert it["red_flags"]["status"] == "unknown"
     assert out["status"] == "warn"
     over = client.post("/api/journal/pretrade", headers=ORIGIN,
@@ -286,11 +289,15 @@ def test_checklist_buy_concentration_hand_computed(client):
     # weight 1500 / 10000 = 15 % -> 2250 / 10750 = 20.93 %, above the medium-risk default 8 %
     assert c["weight_before"] == pytest.approx(15.0) and c["value"] == pytest.approx(20.93, abs=0.01)
     assert c["status"] == "warn" and c["limit_pct"] == pytest.approx(8.0)
+    assert (
+        c["limit_source"] == "8 % — your risk profile: medium"
+        and "8 % — your risk profile: medium" in c["detail"]
+    )
     # N_eff = 1 / Σw²: 1 / (0.15² + 0.85²) = 1.342; 1 / (0.2093² + 0.7907²) = 1.495
     assert c["n_effective_before"] == pytest.approx(1.34, abs=0.01)
     assert c["n_effective_after"] == pytest.approx(1.49, abs=0.01)
-    # buying while the signal says REDUCE is flagged
-    assert it["signal"]["status"] == "warn"
+    # buying against an informational stock signal is not flagged (#193: no proven edge, no instruction)
+    assert it["signal"]["status"] == "info" and "not a reason to trade either way" in it["signal"]["detail"]
     assert "no journal entry" in it["thesis"]["detail"]
 
 

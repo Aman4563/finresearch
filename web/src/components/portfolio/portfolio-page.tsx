@@ -49,8 +49,10 @@ function SignalBadge({ s }: { s: NonNullable<Holding["signal"]> }) {
   if (typeof state === "string") return <span className="text-[11px] text-muted" title={state}>no signal</span>;
   const tone = POSITIVE.has(state.action) ? "gain" : NEGATIVE.has(state.action) ? "loss" : "neutral";
   return (
-    <Link href={s.href} title={`${state.method} · ${state.validation.status}`} className="inline-flex">
-      <Badge tone={tone}>{state.action.replaceAll("_", " ").toLowerCase()}{state.validation.status === "uncalibrated" ? " ·?" : ""}</Badge>
+    <Link href={s.href} title={state.call ? `${state.call.label}: ${state.call.tilt}. Not a buy or sell call.` : `${state.method} · ${state.validation.status}`} className="inline-flex">
+      {state.call
+        ? <Badge tone="neutral">informational · {state.call.tilt.replace(/^factors /, "")}</Badge>
+        : <Badge tone={tone}>{state.action.replaceAll("_", " ").toLowerCase()}{state.validation.status === "uncalibrated" ? " ·?" : ""}</Badge>}
     </Link>
   );
 }

@@ -324,6 +324,10 @@ export type Profile = {
   /** notify-only alert rules for every asset kind (optional: older API builds omit them) */
   alert_rules?: AlertRule[];
   notes: string;
+  // portfolio limits (finresearch.portfolio.limits): null = 5 / 8 / 10 % by risk appetite; bands 5 pp / 25 %
+  max_position_pct?: string | null;
+  rebalance_band_abs_pp?: string;
+  rebalance_band_rel_pct?: string;
   // F&O analysis budget (optional: older API builds omit them)
   fno_capital_inr?: string;
   fno_max_loss_pct?: string;
@@ -473,6 +477,8 @@ export type Forecast = {
   probability: number | null;
   interval: [number, number] | null;
   action: string;
+  /** a stock-signal row while signals.stock has no proven edge (#193): shown as informational with its factor tilt */
+  call?: { status: "informational"; label: string; composite_action: string; tilt: string | null } | null;
   score: number | null;
   method: string;
   validation_status: string;

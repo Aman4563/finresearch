@@ -106,7 +106,8 @@ def test_glide_rule_of_thumb():
 
 
 def test_bands_and_compare():
-    assert allocation.band_pp(70) == 17.5 and allocation.band_pp(10) == 5
+    # the tighter of 5 pp and 25 % of the target (#195): 70 % -> min(5, 17.5) = 5; 10 % -> min(5, 2.5) = 2.5
+    assert allocation.band_pp(70) == 5 and allocation.band_pp(10) == 2.5 and allocation.band_pp(0) == 5
     rows = allocation.compare(
         {"Equity": 50, "Debt": 30, "Cash": 10, "Gold": 10}, {"Equity": 70, "Gold": 10, "Debt + cash": 20}
     )
@@ -114,6 +115,21 @@ def test_bands_and_compare():
     assert by["Equity"]["drift_pp"] == -20 and by["Equity"]["outside_band"]
     assert by["Debt + cash"]["weight_pct"] == 40 and by["Debt + cash"]["outside_band"]
     assert not by["Gold"]["outside_band"]
+    # gold 13 % against a 10 % target: 3 pp drift > 2.5 pp band -> outside (the old looser max(5, 2.5) said inside)
+    gold = allocation.compare(
+        {"Equity": 67, "Gold": 13, "Debt": 20}, {"Equity": 70, "Gold": 10, "Debt + cash": 20}
+    )
+    assert {r["label"]: r["outside_band"] for r in gold} == {
+        "Equity": False,
+        "Gold": True,
+        "Debt + cash": False,
+    }
+    # user-set bands from the profile: ±2 pp absolute only -> equity's 3 pp drift is outside too
+    own = allocation.compare(
+        {"Equity": 67, "Gold": 13, "Debt": 20}, {"Equity": 70, "Gold": 10, "Debt + cash": 20}, 2, 0
+    )
+    assert {r["label"]: r["band_pp"] for r in own} == {"Equity": 2, "Gold": 2, "Debt + cash": 2}
+    assert [r["label"] for r in own if r["outside_band"]] == ["Equity", "Gold"]
 
 
 def test_split_asset():

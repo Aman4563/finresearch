@@ -377,6 +377,8 @@ def test_stress_scenario_uses_own_moves_and_proxies():
 
 def test_concentration_flags_and_status(tmp_path):
     from finresearch.portfolio.analytics import concentration
+    from finresearch.portfolio.limits import position_limit
+    from finresearch.suggest.profile import Profile
 
     h = build(synthetic(), tmp_path)
     c = concentration(h, {"NSE:AAA": "IT", "NSE:BBB": "IT"}, {"NSE:BBB": "Tata"}, None)
@@ -387,11 +389,34 @@ def test_concentration_flags_and_status(tmp_path):
     assert all("you should" not in f["text"].lower() for f in c["flags"])
     assert c["n_effective"] == pytest.approx(1 / sum((x / 3235) ** 2 for x in (1200, 1025, 1010)), abs=0.01)
     assert c["funds_note"] and "not looked through" in c["funds_note"]
-    calm = concentration(h, {"NSE:AAA": "IT", "NSE:BBB": "Banks"}, {}, 50)
+    calm = concentration(
+        h, {"NSE:AAA": "IT", "NSE:BBB": "Banks"}, {}, position_limit(Profile(max_position_pct=50))
+    )
     assert {f["kind"] for f in calm["flags"]} == {
         "sector"
     }  # IT 37 % > 25 %; 37 % stock is inside your 50 % limit
-    assert calm["limits"]["stock_source"] == "your profile's max position"
+    assert calm["limits"]["stock_source"] == "50 % — your profile's max position"
+
+
+def test_concentration_uses_the_one_position_limit(tmp_path):
+    # one helper (#194): with no max position a low-risk profile gets 5 %, not the old flat 10 % rule of thumb
+    from finresearch.portfolio.analytics import concentration
+    from finresearch.portfolio.limits import position_limit
+    from finresearch.suggest.profile import Profile
+
+    h = build(synthetic(), tmp_path)
+    # weights: AAA 1200 / 3235 = 37.1 %, BBB 1025 / 3235 = 31.7 %, the fund 1010 / 3235 = 31.2 %
+    for prof, pct, rule in ((Profile(risk_appetite="low"), 5.0, "5 % — your risk profile: low"),
+                            (Profile(risk_appetite="medium"), 8.0, "8 % — your risk profile: medium"),
+                            (Profile(risk_appetite="high"), 10.0, "10 % — your risk profile: high"),
+                            (Profile(risk_appetite="low", max_position_pct=35), 35.0,
+                             "35 % — your profile's max position")):  # fmt: skip
+        c = concentration(h, {}, {}, position_limit(prof))
+        assert c["limits"]["stock_pct"] == pct and c["limits"]["stock_source"] == rule
+        flagged = {f["label"] for f in c["flags"] if f["kind"] == "stock"}
+        # 37.1 % and 31.7 % are both above 5 / 8 / 10 %; only AAA is above 35 % (the fund is not a single stock)
+        assert flagged == ({"AAA Ltd"} if pct == 35 else {"AAA Ltd", "BBB Ltd"})
+        assert all(rule in f["text"] for f in c["flags"] if f["kind"] == "stock")
 
 
 def test_group_seed_map():

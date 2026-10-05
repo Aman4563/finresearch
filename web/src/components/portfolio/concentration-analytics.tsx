@@ -60,7 +60,7 @@ export function ConcentrationAnalytics({ refresh }: { refresh: number }) {
   return (
     <div className="space-y-4">
       {flags.length === 0
-        ? <Callout tone="gain" icon={<CheckCircle2 className="size-4" />} title={data.status}>No single stock above {lim.stock_pct}% ({lim.stock_source}), no sector above {lim.sector_pct}% and no business group above {lim.group_pct}% (rules of thumb).</Callout>
+        ? <Callout tone="gain" icon={<CheckCircle2 className="size-4" />} title={data.status}>No single stock above your limit ({lim.stock_source}), no sector above {lim.sector_pct}% and no business group above {lim.group_pct}% (rules of thumb).</Callout>
         : <Callout tone="warn" icon={<TriangleAlert className="size-4" />} title={data.status}><ul className="list-disc space-y-0.5 pl-4">{flags.map((f) => <li key={f.kind + f.label}>{f.text}</li>)}</ul></Callout>}
       <div className="stagger grid gap-3 sm:grid-cols-3">
         <Stat label="Effective number of holdings" display={<span className="num">{data.n_effective?.toFixed(1)}</span>} icon={<Layers className="size-4" />}

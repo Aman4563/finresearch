@@ -275,6 +275,10 @@ class Profile(BaseModel):
     rules: list[Rule] = Field(default_factory=list)
     # the most of the portfolio one stock may take (percent); None = by risk appetite (low 5, medium 8, high 10)
     max_position_pct: Decimal | None = Field(None, gt=0, le=100)
+    # rebalancing band (portfolio.limits.band_pp, /wealth and the Rebalance card): a class is outside when its drift
+    # exceeds the tighter of ±abs pp and rel % of its target (0 = absolute only); the 5/25 rule of thumb [W]
+    rebalance_band_abs_pp: Decimal = Field(Decimal(5), ge=Decimal("0.5"), le=50)
+    rebalance_band_rel_pct: Decimal = Field(Decimal(25), ge=0, le=100)
     notes: str = ""
     # F&O analysis (the /fno page and the F&O signal); the signal never proposes a position whose maximum loss is
     # above fno_max_loss_pct of fno_capital_inr, and by default only defined-risk strategies

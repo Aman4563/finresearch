@@ -518,7 +518,26 @@ def forecast_json(f: Forecast) -> dict[str, Any]:
             "status": f.status, "outcome": f.outcome, "resolved_at": f.resolved_at.isoformat() if f.resolved_at else None,
             "resolution_value": f.resolution_value, "resolution_note": f.resolution_note,
             "last_checked_at": f.last_checked_at.isoformat() if f.last_checked_at else None,
-            "inputs": f.inputs or {}}  # fmt: skip
+            "inputs": f.inputs or {}, "call": _call_of(f)}  # fmt: skip
+
+
+def _call_of(f: Forecast) -> dict[str, Any] | None:
+    """How a logged stock-signal forecast is shown while signals.stock has no proven edge (#193): informational with
+    its factor tilt. The stored action is the composite's and stays as logged; rows from before the switch (no
+    inputs.call_status) are shown the same way, since the same rule never had an edge either."""
+    if f.source != "signal:stock":
+        return None
+    from finresearch.signals import stock
+
+    status = (f.inputs or {}).get("call_status")
+    if stock.CALLS_ENABLED and status != "informational":
+        return None
+    return {
+        "status": "informational",
+        "label": stock.INFORMATIONAL_LABEL,
+        "composite_action": f.action,
+        "tilt": stock.tilt(f.score) if f.score is not None else None,
+    }
 
 
 _LEGACY_IPO_BAND_METHOD = "empirical base rate by final QIB band × regime ("

@@ -118,11 +118,23 @@ def test_rising_stock_gets_a_backtested_bucket_probability_and_rule_based_action
     assert names[:2] == ["Momentum (12-1 month, risk-adjusted)", "Trend (price vs 200-day average)"]
     assert s.factors[0].contribution == 40 and s.factors[1].contribution == 20  # both saturated
     assert s.score == round(sum(f.contribution for f in s.factors), 1)
-    assert s.action in ("BUY", "ACCUMULATE") and "not investment advice" in s.disclaimer.lower()
+    # informational, not an instruction (#193): score 61 >= 50 would be a composite BUY
+    assert s.action == "INFORMATIONAL" and "not investment advice" in s.disclaimer.lower()
+    assert s.call["label"] == "Informational — no proven edge" and s.call["composite_action"] == "BUY"
+    assert s.call["tilt"] == "factors lean strongly positive"
+    assert s.call["universe_base_rate"]["p"] == 0.55 and s.call["universe_base_rate"]["n"] == 5000
+    # 60 % vs the 55 % all-months base rate: +5.0 pp, and 0.55 lies inside the bucket's 50.2-69.1 % interval
+    assert s.call["probability_vs_base"] == ("60.0% chance it beats the Nifty, against a 55.0% base rate (55.0% of "
+                                             "NIFTY 50 stock-months beat the index): +5.0 pp, within noise of the "
+                                             "base rate")  # fmt: skip
+    assert "2.39" in s.call["promotion_rule"] and any(c.startswith("Informational") for c in s.caveats)
     assert any("Survivorship" in c for c in s.caveats) and any("Costs" in c for c in s.caveats)
     # logged in the forecast ledger under the event its resolver scores, resolving in a year
     ((sig, kw),) = sources["logged"]
-    assert sig is s and kw["event_kind"] == "excess_return_12m" and kw["resolve_on"] == date(2027, 9, 30)
+    assert kw["event_kind"] == "excess_return_12m" and kw["resolve_on"] == date(2027, 9, 30)
+    # the ledger row is unchanged: the composite action, probability and validation, plus the call status
+    assert sig.action == "BUY" and sig.probability == s.probability and sig.validation.status == "rule_based"
+    assert sig.score == s.score and kw["inputs"]["call_status"] == "informational"
     assert kw["inputs"]["benchmark"] == "NIFTYBEES" and kw["inputs"]["start_date"] == "2026-09-30"
     from finresearch.signals.ledger import STOCK_EVENT
 
@@ -136,12 +148,20 @@ def test_rising_stock_gets_a_backtested_bucket_probability_and_rule_based_action
 def test_sizing_is_capped_by_the_profile_and_never_above_it(sources):
     s = run()
     z = s.sizing
-    assert z["profile_cap"] == 0.08 and z["weight"] <= 0.08 and z["cap_source"].startswith("default")
+    assert (
+        z["profile_cap"] == 0.08
+        and z["weight"] <= 0.08
+        and z["cap_source"] == "8 % — your risk profile: medium"
+    )
     assert z["stop_price"] < float(sources["raw"]["quote"].last_price) and 0 < z["stop_distance"] < 0.2
     sources["profile"] = Profile(risk_appetite="high", max_position_pct=Decimal(3))
     st._cache.clear()
     z = run().sizing
-    assert z["weight"] <= 0.03 and z["cap_source"] == "profile max_position_pct"
+    assert z["weight"] <= 0.03 and z["cap_source"] == "3 % — your profile's max position"
+    sources["profile"] = Profile(risk_appetite="low")  # no max position: 5 % by risk appetite (#194)
+    st._cache.clear()
+    z = run().sizing
+    assert z["profile_cap"] == 0.05 and z["cap_source"] == "5 % — your risk profile: low"
 
 
 def _factor(s, name):
@@ -228,7 +248,8 @@ def test_no_red_flag_is_shown_as_a_zero_factor(sources):
 def test_falling_stock_and_short_history(sources):
     sources["raw"] = raw(daily=-0.0012)
     s = run()
-    assert s.probability == 0.4 and s.score < 0 and s.action in ("REDUCE", "SELL")
+    assert s.probability == 0.4 and s.score < 0 and s.action == "INFORMATIONAL"
+    assert s.call["composite_action"] == "SELL" and s.call["tilt"] == "factors lean strongly negative"  # -59
     assert (
         s.sizing["weight"] == 0 and s.sizing["binding"] == "quarter-Kelly ceiling"
     )  # negative edge: no position
@@ -475,3 +496,57 @@ def test_recently_listed_stock_gets_a_reasoned_no_signal_with_every_factor(sourc
     f = st.forensic(r)
     assert f["prior_year_end"] is None and any("restructured" in n for n in f["notes"])
     assert not sources["logged"]
+
+
+def test_tilt_words_follow_the_fixed_cut_offs():
+    assert [st.tilt(x) for x in (50, 49.9, 20, 19.9, -19.9, -20, -49.9, -50)] == [
+        "factors lean strongly positive", "factors lean positive", "factors lean positive", "factors are mixed",
+        "factors are mixed", "factors lean negative", "factors lean negative", "factors lean strongly negative"]  # fmt: skip
+
+
+def test_the_switch_restores_calls_once_a_model_passes(sources, monkeypatch):
+    # the single switch (#193): with CALLS_ENABLED the composite's action is the signal's action again
+    monkeypatch.setattr(st, "CALLS_ENABLED", True)
+    s = run()
+    assert s.action == "BUY" and s.call is None and not any(c.startswith("Informational") for c in s.caveats)
+    ((sig, kw),) = sources["logged"]
+    assert sig.action == "BUY" and kw["inputs"]["call_status"] == "call"
+
+
+def test_pretrade_item_shows_the_tilt_and_the_base_rate():
+    from finresearch.portfolio.pretrade import _informational_item
+
+    call = st.call_view(25.0, "ACCUMULATE", 0.58, (0.50, 0.66), BACKTEST)
+    got = {"action": "INFORMATIONAL", "score": 25.0, "probability": 0.58, "probability_interval": [0.50, 0.66],
+           "horizon": "12 months", "call": call}  # fmt: skip
+    it = _informational_item(got, call, st, "daily pass 2026-09-30")
+    # 58 % vs the fixture's 55 % base rate: +3.0 pp, and 0.55 is inside 50-66 %
+    assert it["status"] == "info" and it["value"] == "INFORMATIONAL" and it["tilt"] == "factors lean positive"
+    assert it["detail"] == ("Informational — no proven edge: factors lean positive (12 months); 58.0% chance it beats "
+                            "the Nifty, against a 55.0% base rate (55.0% of NIFTY 50 stock-months beat the index): "
+                            "+3.0 pp, within noise of the base rate; not a reason to trade either way")  # fmt: skip
+
+
+def test_ledger_rows_of_the_stock_signal_are_shown_informational():
+    from datetime import date as d
+
+    from finresearch.db.models import Forecast
+    from finresearch.signals.ledger import forecast_json
+
+    def row(**kw):
+        base = dict(id=1, asset="stock", instrument="INFY", name="Example Ltd", source="signal:stock", run_id=None,
+                    event_kind="excess_return_12m", event="e", horizon="12 months", resolve_on=d(2027, 9, 30),
+                    probability=0.6, interval_low=None, interval_high=None, action="BUY", score=61.0, method="m",
+                    validation_status="rule_based", status="open", outcome=None, resolved_at=None,
+                    resolution_value=None, resolution_note=None, last_checked_at=None, created_at=None)  # fmt: skip
+        return Forecast(**{**base, **kw})
+
+    # a row logged before #193 (no call_status) and one after: both informational, the stored action kept as logged
+    for inputs in ({}, {"call_status": "informational"}):
+        out = forecast_json(row(inputs=inputs))
+        assert out["action"] == "BUY" and out["call"]["status"] == "informational"
+        assert (
+            out["call"]["tilt"] == "factors lean strongly positive"
+            and out["call"]["composite_action"] == "BUY"
+        )
+    assert forecast_json(row(asset="ipo", source="signal:ipo", action="APPLY", inputs={}))["call"] is None
