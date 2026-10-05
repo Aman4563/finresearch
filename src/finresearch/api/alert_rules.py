@@ -29,8 +29,12 @@ def add_alert_rule_routes(app: FastAPI, clock: Callable[[], datetime] | None = N
     def alert_registry() -> dict[str, Any]:
         """Every alert metric by asset kind (label, unit, cadence, description, source) and the templates."""
         from finresearch.alerts.registry import registry_json
+        from finresearch.portfolio.limits import position_limit
+        from finresearch.suggest.advisor import load_profile
 
-        return registry_json()
+        with session_scope() as s:
+            limit = position_limit(load_profile(s))
+        return registry_json(limit)
 
     @app.get("/api/alert-rules/state")
     def alert_rule_state() -> list[dict[str, Any]]:

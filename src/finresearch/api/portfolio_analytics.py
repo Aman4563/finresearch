@@ -217,17 +217,19 @@ def add_portfolio_analytics_routes(app: FastAPI, *, scheme_rows: Callable[[], Aw
 
     @app.get("/api/portfolio/analytics/concentration")
     async def concentration() -> dict[str, Any]:
-        """Single-stock, sector and business-group weights with your limits (profile max position, else rules of
-        thumb), HHI and the effective number of holdings."""
+        """Single-stock, sector and business-group weights with your limits (portfolio.limits.position_limit: the
+        profile's max position, else 5 / 8 / 10 % by risk appetite; sector and group rules of thumb), HHI and the
+        effective number of holdings."""
         from finresearch.portfolio.analytics import concentration as conc
+        from finresearch.portfolio.limits import position_limit
         from finresearch.suggest.advisor import load_profile
 
         hist, _, _ = await history()
         sectors = await _sectors(hist) if hist.ok else {}
         with session_scope() as s:
             st = get_settings_row(s)
-            mp = load_profile(s).max_position_pct
-        return conc(hist, sectors, st["groups"], float(mp) if mp else None)
+            lim = position_limit(load_profile(s))
+        return conc(hist, sectors, st["groups"], lim)
 
     @app.get("/api/portfolio/analytics/costs")
     async def costs() -> dict[str, Any]:

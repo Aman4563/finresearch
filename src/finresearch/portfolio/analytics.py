@@ -27,6 +27,7 @@ from finresearch.portfolio.history import (
     parse_benchmark_actions,
     returns_of,
 )
+from finresearch.portfolio.limits import PositionLimit, position_limit
 from finresearch.signals.base import DISCLAIMER
 
 MIN_VOL, WARN_VOL = 60, 250  # trading days of returns
@@ -38,8 +39,8 @@ MIN_XIRR_DAYS = 60  # as valuation.MIN_XIRR_DAYS: annualising a few weeks mislea
 MIN_COMPARE_DAYS = 365  # beat/lag wording only after a year, and even then it is noise under ~3-5 years [K]
 MAX_POINTS = 1200  # chart rows sent to the page (every k-th day beyond that; the last day is always kept)
 
-# rules of thumb [W], labelled as such in the UI; the profile's max position % replaces the single-stock default
-STOCK_LIMIT_PCT = 10.0
+# rules of thumb [W], labelled as such in the UI. The single-stock limit is portfolio.limits.position_limit (the
+# profile's max position, else 5 / 8 / 10 % by risk appetite), the same one the stock signal and pre-trade use (#194)
 SECTOR_LIMIT_PCT = 25.0
 GROUP_LIMIT_PCT = 20.0
 TRIVIAL_VALUE = 5000.0  # a regular→direct row below this value, or ...
@@ -513,15 +514,15 @@ def group_of(p: Any, overrides: dict[str, str | None]) -> tuple[str | None, str]
 
 
 def concentration(h: History, sectors: dict[str, str], overrides: dict[str, str | None],
-                  max_position_pct: float | None) -> dict[str, Any]:  # fmt: skip
+                  limit: PositionLimit | None = None) -> dict[str, Any]:  # fmt: skip
     out = base(h)
     pos = [p for p in h.positions if p.value > 0]
     if not pos:
         out.update(available=False, reason=out["reason"] or "no priced holdings today")
         return out
     total = sum(p.value for p in pos)
-    stock_limit = float(max_position_pct) if max_position_pct else STOCK_LIMIT_PCT
-    stock_src = "your profile's max position" if max_position_pct else "rule of thumb [W]"
+    lim = limit or position_limit(None)
+    stock_limit, stock_src = lim.pct, lim.rule
     rows = []
     for p in pos:
         g, gsrc = group_of(p, overrides)
@@ -546,7 +547,7 @@ def concentration(h: History, sectors: dict[str, str], overrides: dict[str, str 
     for x in rows:
         if x["asset_type"] == "stock" and (x["weight_pct"] or 0) > stock_limit:
             flags.append({"kind": "stock", "label": x["name"], "weight_pct": x["weight_pct"], "limit_pct": stock_limit,
-                          "text": f"Your limit ({stock_limit:g} %, {stock_src}) is exceeded: {x['name']} is "
+                          "text": f"Your limit ({stock_src}) is exceeded: {x['name']} is "
                                   f"{x['weight_pct']:.1f} % of the portfolio. Consider reviewing it."})  # fmt: skip
     for s in sectors_rows:
         if s["label"].startswith("Funds") or s["label"] == "Unclassified":
@@ -568,7 +569,7 @@ def concentration(h: History, sectors: dict[str, str], overrides: dict[str, str 
         sectors=sectors_rows, groups=groups_rows, flags=flags,
         status="Within your limits: no action needed." if not flags else f"{len(flags)} limit(s) exceeded.",
         hhi=_r(am.hhi(w), 4), n_effective=_r(am.n_effective(w), 2), top5_pct=_r(am.top_share(w, 5) * 100, 2),
-        limits={"stock_pct": stock_limit, "stock_source": stock_src, "sector_pct": SECTOR_LIMIT_PCT,
+        limits={"stock_pct": stock_limit, "stock_source": stock_src, "stock_rule": lim.to_json(), "sector_pct": SECTOR_LIMIT_PCT,
                 "group_pct": GROUP_LIMIT_PCT},
         group_source=GROUP_SOURCE,
         funds_note=(f"{funds} fund(s) count as single positions: their own holdings are not looked through here, so "

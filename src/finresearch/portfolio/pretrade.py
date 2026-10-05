@@ -11,7 +11,8 @@ data) only when `live_signal` is passed. Personal data: never sent to an LLM.
 Items:
 - position size: the trade's value against the portfolio's value (the latest daily valuation);
 - concentration after the trade: the instrument's and its sector's weight after, against the profile's single-stock
-  limit (else the risk-appetite default the stock signal uses, signals.stock.CAPS) and the 25 % sector rule of thumb
+  limit (else 5 / 8 / 10 % by risk appetite: portfolio.limits.position_limit, shared with the stock signal and
+  /portfolio) and the 25 % sector rule of thumb
   (portfolio.analytics.SECTOR_LIMIT_PCT); HHI and the effective number of holdings before and after (a buy is
   assumed to bring new money; a sale's proceeds leave the portfolio);
 - tax (sales): the open lots the sale takes first-in-first-out (CBDT Circular 768), each taxed with the dated rules
@@ -108,14 +109,12 @@ def _key_of(p: Plan, h: PortfolioHolding | None) -> str:
 
 
 def stock_limit(s: Session) -> tuple[float, str]:
-    from finresearch.signals.stock import CAPS
+    """(limit %, the rule that applied) from portfolio.limits.position_limit, shared with /portfolio and the signal."""
+    from finresearch.portfolio.limits import position_limit
     from finresearch.suggest.advisor import load_profile
 
-    prof = load_profile(s)
-    if prof.max_position_pct:
-        return float(prof.max_position_pct), "your profile's max position"
-    risk = prof.risk_appetite or "medium"
-    return CAPS.get(risk, 0.08) * 100, f"default for a {risk}-risk profile (signals.stock.CAPS)"
+    lim = position_limit(load_profile(s))
+    return lim.pct, lim.rule
 
 
 # --------------------------------------------------------------------------- size and concentration
@@ -179,7 +178,7 @@ def concentration_items(s: Session, p: Plan, key: str, h: PortfolioHolding | Non
     is_stock = p.asset_type == "stock"
     if is_stock and w_after > Decimal(str(limit)):
         status = "warn"
-        notes.append(f"above your single-stock limit of {limit:g} % ({limit_src})")
+        notes.append(f"above your single-stock limit ({limit_src})")
     if is_stock and sec_after is not None and sec_after > Decimal(str(SECTOR_LIMIT_PCT)):
         status = "warn"
         notes.append(

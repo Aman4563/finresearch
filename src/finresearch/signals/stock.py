@@ -51,6 +51,7 @@ from typing import Any
 
 from finresearch.fincalc import forensic as fz
 from finresearch.fincalc import signals as sg
+from finresearch.portfolio.limits import position_limit
 from finresearch.signals.base import Factor, Signal, Validation, action_for_score, clip_score
 from finresearch.signals.registry import register
 
@@ -72,7 +73,6 @@ METHOD = ("Composite v1 (pre-registered weights: momentum 40, trend 20, valuatio
           "NIFTY 50 universe, monthly walk-forward.")  # fmt: skip
 HISTORY_DAYS = 1100  # three years: momentum needs 13 months; the rest feeds the P/E history
 RESULT_QUARTERS = 12
-CAPS = {"low": 0.05, "medium": 0.08, "high": 0.10}  # single-stock cap when the profile sets none
 RISK_BUDGET = {"low": 0.015, "medium": 0.02, "high": 0.025}  # weight x volatility (annual) per position
 ATR_K = 2.5  # stop = price - k x ATR(14); roadmap §D.2 suggests k = 2-3
 CACHE_S = 1800
@@ -650,15 +650,15 @@ def no_signal_factors(f: Features, fz_scores: list[dict[str, Any]], shp_source: 
 
 
 def sizing(f: Features, bucket: dict[str, Any] | None, profile: Any) -> dict[str, Any]:
-    risk = getattr(profile, "risk_appetite", "medium") or "medium"
-    explicit = getattr(profile, "max_position_pct", None)
-    cap = float(explicit) / 100 if explicit else CAPS.get(risk, 0.08)
+    lim = position_limit(profile)  # the same limit as /portfolio and the pre-trade checklist (#194)
+    risk, cap = lim.risk, lim.pct / 100
     # Judgment (audit #137): Kelly's μ is the bucket's mean 12-month return in excess of the NIFTY 50 (not of cash) and
     # σ the stock's own volatility (not the tracking error). Both choices make the ceiling smaller than an
     # excess-over-cash / tracking-error Kelly; the backtest's μ is survivorship-flattered, so the ceiling is loose anyway.
     mean_excess = bucket.get("mean_excess_12m") if bucket else None
     s = sg.position_size(f.vol, risk_budget=RISK_BUDGET.get(risk, 0.02), cap=cap, mean_excess=mean_excess)
-    s["cap_source"] = "profile max_position_pct" if explicit else f"default for a {risk}-risk profile"
+    s["cap_source"] = lim.rule
+    s["cap_rule"] = lim.to_json()
     s["risk_budget"] = RISK_BUDGET.get(risk, 0.02)
     if f.atr14 and f.price:
         stop = f.price - ATR_K * f.atr14

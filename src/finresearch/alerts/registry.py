@@ -668,10 +668,11 @@ METRICS: list[MetricSpec] = [
         "pct",
         "daily",
         "The biggest holding's share of the portfolio (a fund counts as one holding: its stocks are not looked "
-        "through). The default 10 % is a rule of thumb; set your own (Profile has a max position too).",
+        "through). The suggested threshold is your single-stock limit (portfolio.limits.position_limit: the "
+        "profile's max position, else 5 / 8 / 10 % by risk appetite), the same one /portfolio flags.",
         f"{_PF}: holding values",
         default_op=">=",
-        default_value="10",
+        default_value="8",
         allows_all=False,
     ),
     _m(
@@ -1323,10 +1324,10 @@ TEMPLATES: list[Template] = [
         "pf-concentration",
         "portfolio",
         "Position too big",
-        "One holding is over 10 % of the portfolio (a rule of thumb).",
+        "One holding is over your single-stock limit (by default 8 %, the medium-risk rule of thumb).",
         "max_position_pct",
         ">=",
-        "10",
+        "8",
     ),
     Template(
         "pf-red-flags",
@@ -1351,6 +1352,18 @@ TEMPLATES: list[Template] = [
 ]
 
 
-def registry_json() -> dict[str, Any]:
-    return {"kinds": list(KINDS), "metrics": [m.json() for m in METRICS],
-            "templates": [asdict(t) for t in TEMPLATES], "ops": OP_PHRASE}  # fmt: skip
+def registry_json(limit: Any = None) -> dict[str, Any]:
+    """The catalogue for the rule builder. `limit` (a portfolio.limits.PositionLimit, from the profile) fills the
+    "Largest position" default and the "Position too big" template with the one single-stock limit (#194)."""
+    metrics = [m.json() for m in METRICS]
+    templates = [asdict(t) for t in TEMPLATES]
+    if limit is not None:
+        v = f"{limit.pct:g}"
+        for m in metrics:
+            if m["key"] == "max_position_pct" and m["kind"] == "portfolio":
+                m["default_value"] = v
+        for t in templates:
+            if t["id"] == "pf-concentration":
+                t["value"] = v
+                t["why"] = f"One holding is over your single-stock limit ({limit.rule})."
+    return {"kinds": list(KINDS), "metrics": metrics, "templates": templates, "ops": OP_PHRASE}

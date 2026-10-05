@@ -48,3 +48,25 @@ def test_wealth_page_and_rebalance_card_agree_on_a_breach():
     assert wealth["Debt + cash"]["band_pp"] == rows["Debt funds"]["band_pp"] == 2.5
     assert wealth["Equity"]["outside_band"] is rows["Stocks"]["outside_before"] is False
     assert wealth["Debt + cash"]["outside_band"] is rows["Debt funds"]["outside_before"] is True
+
+
+# --------------------------------------------------------------------------- position limit (#194)
+def test_position_limit_by_profile_then_risk():
+    assert limits.position_limit(Profile(risk_appetite="low")).to_json() == {
+        "pct": 5.0, "source": "risk", "risk": "low", "rule": "5 % — your risk profile: low"}  # fmt: skip
+    assert limits.position_limit(Profile()).pct == 8.0  # medium is the default appetite
+    assert limits.position_limit(Profile(risk_appetite="high")).pct == 10.0
+    own = limits.position_limit(Profile(risk_appetite="low", max_position_pct=D("12.5")))
+    assert (own.pct, own.source, own.rule) == (12.5, "profile", "12.5 % — your profile's max position")
+    assert limits.position_limit(None).rule == "8 % — your risk profile: medium"  # no profile: medium default
+
+
+def test_alert_catalogue_suggests_the_same_limit():
+    from finresearch.alerts.registry import registry_json
+
+    out = registry_json(limits.position_limit(Profile(risk_appetite="low")))
+    metric = next(m for m in out["metrics"] if m["key"] == "max_position_pct" and m["kind"] == "portfolio")
+    tpl = next(t for t in out["templates"] if t["id"] == "pf-concentration")
+    assert metric["default_value"] == tpl["value"] == "5" and "5 % — your risk profile: low" in tpl["why"]
+    plain = registry_json()  # without a profile: the medium default, never the old flat 10
+    assert next(t for t in plain["templates"] if t["id"] == "pf-concentration")["value"] == "8"

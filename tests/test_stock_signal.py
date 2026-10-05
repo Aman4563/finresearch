@@ -136,12 +136,20 @@ def test_rising_stock_gets_a_backtested_bucket_probability_and_rule_based_action
 def test_sizing_is_capped_by_the_profile_and_never_above_it(sources):
     s = run()
     z = s.sizing
-    assert z["profile_cap"] == 0.08 and z["weight"] <= 0.08 and z["cap_source"].startswith("default")
+    assert (
+        z["profile_cap"] == 0.08
+        and z["weight"] <= 0.08
+        and z["cap_source"] == "8 % — your risk profile: medium"
+    )
     assert z["stop_price"] < float(sources["raw"]["quote"].last_price) and 0 < z["stop_distance"] < 0.2
     sources["profile"] = Profile(risk_appetite="high", max_position_pct=Decimal(3))
     st._cache.clear()
     z = run().sizing
-    assert z["weight"] <= 0.03 and z["cap_source"] == "profile max_position_pct"
+    assert z["weight"] <= 0.03 and z["cap_source"] == "3 % — your profile's max position"
+    sources["profile"] = Profile(risk_appetite="low")  # no max position: 5 % by risk appetite (#194)
+    st._cache.clear()
+    z = run().sizing
+    assert z["profile_cap"] == 0.05 and z["cap_source"] == "5 % — your risk profile: low"
 
 
 def _factor(s, name):
