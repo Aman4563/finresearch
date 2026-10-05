@@ -7,7 +7,7 @@ NSE client plus PAUSE_S between requests:
 - the XBRL of the first-reported filing per quarter end on the stock's basis (cached on disk for good through
   api.markets._xbrl: a filing's URL carries its id and never changes, and the stock peer job shares that cache);
 - corporate actions (split/bonus ex-dates) and the daily EQ-series closes from PRICE_START.
-Plus the NIFTY 50 price index. Raw data goes to data/cache/earnings_surprise/ (gitignored); a stock already on disk
+Plus NIFTYBEES (the benchmark) and the NIFTY 50 price index (kept, unused: ADDENDUM 2). Raw data goes to data/cache/earnings_surprise/ (gitignored); a stock already on disk
 is skipped, so an interrupted harvest resumes where it stopped.
 
     uv run python -m finresearch.evals.earnings_harvest [--symbols A,B] [--max-minutes 60]
@@ -28,10 +28,13 @@ from typing import Any
 from finresearch.config import REPO_ROOT
 
 DATA_DIR = REPO_ROOT / "data" / "cache" / "earnings_surprise"
-FIRST_QUARTER = date(2018, 6, 30)  # NSE results XBRL starts around the Sep-2018 quarter; older filings are HTML
+FIRST_QUARTER = date(
+    2018, 6, 30
+)  # NSE results XBRL starts around the Sep-2018 quarter; older filings are HTML
 PRICE_START = date(2021, 6, 1)  # the first SUE is the Sep-2021 quarter (announced from Oct-2021)
 MEMBERS_SINCE = date(2021, 4, 1)
 PAUSE_S = 0.6  # on top of the client's own 2 requests/s per host
+MARKET = "NIFTYBEES"  # the benchmark (ADDENDUM 2: the NIFTY 50 index series has months of holes)
 SEED = 181  # stocks are fetched in a fixed shuffled order, so a harvest cut short is a random subset
 
 
@@ -103,7 +106,7 @@ def universe() -> list[str]:
     start = max(d for d, _ in periods if d <= MEMBERS_SINCE)
     syms = sorted({U.data_symbol(s) for d, m in periods if d >= start for s in m})
     random.Random(SEED).shuffle(syms)
-    return syms
+    return [*syms, MARKET]
 
 
 async def _polite(eq: Any, make: Any) -> Any:
@@ -175,19 +178,29 @@ async def harvest(symbols: list[str], end: date, max_minutes: float, out: Path =
         idx = out / "index_NIFTY50.json"
         if not idx.exists():
             bars, partial = await _walk_forward(eq, PRICE_START, end)
-            _write(idx, {"partial": partial, "bars": [[b.day.isoformat(), float(b.close)] for b in bars if b.close]})
+            _write(
+                idx,
+                {"partial": partial, "bars": [[b.day.isoformat(), float(b.close)] for b in bars if b.close]},
+            )
             print(f"NIFTY 50: {len(bars)} days{' (partial)' if partial else ''}", file=sys.stderr, flush=True)
         for i, sym in enumerate(symbols, 1):
             p = out / "stocks" / f"{sym}.json"
             if p.exists():
                 continue
             if time.monotonic() > deadline:
-                print(f"time budget reached; {len(symbols) - i + 1} stocks left (run again to resume)", file=sys.stderr)
+                print(
+                    f"time budget reached; {len(symbols) - i + 1} stocks left (run again to resume)",
+                    file=sys.stderr,
+                )
                 break
             try:
                 data = await harvest_symbol(eq, sym, end)
             except Exception as e:  # keep going; coverage is reported
-                print(f"[{i}/{len(symbols)}] {sym}: FAILED {type(e).__name__}: {e}"[:300], file=sys.stderr, flush=True)
+                print(
+                    f"[{i}/{len(symbols)}] {sym}: FAILED {type(e).__name__}: {e}"[:300],
+                    file=sys.stderr,
+                    flush=True,
+                )
                 continue
             _write(p, data)
             print(f"[{i}/{len(symbols)}] {sym}: {len(data['quarters'])} quarters, {len(data['prices'])} days, "
