@@ -109,3 +109,5 @@ def test_alert_catalogue_has_a_separate_fund_threshold():
     assert fund["default_value"] == f"{limits.FUND_LIMIT_PCT:g}" == "25"
     tpl = next(t for t in out["templates"] if t["id"] == "pf-concentration")
     assert tpl["value"] == "8" and "funds and ETFs not counted" in tpl["why"]
+    ftpl = next(t for t in out["templates"] if t["id"] == "pf-fund-concentration")
+    assert (ftpl["metric"], ftpl["value"]) == ("max_fund_pct", "25")

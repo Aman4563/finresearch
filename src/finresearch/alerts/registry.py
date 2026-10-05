@@ -1351,6 +1351,16 @@ TEMPLATES: list[Template] = [
         "8",
     ),
     Template(
+        "pf-fund-concentration",
+        "portfolio",
+        "One fund or ETF too big",
+        "A single fund or ETF is over 25 % of the portfolio (a rule of thumb; diversified funds are not held to the "
+        "single-stock limit).",
+        "max_fund_pct",
+        ">=",
+        "25",
+    ),
+    Template(
         "pf-red-flags",
         "portfolio",
         "Red flag on a holding",
