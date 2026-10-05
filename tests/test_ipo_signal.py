@@ -146,6 +146,23 @@ async def test_after_listing_default_is_sell_unless_the_stock_signal_says_buy():
 
     s = await sig_ipo.compute("ORIENTCABL", {}, sources(listed, stock=buy))
     assert s.action == "HOLD_AFTER_LISTING"
+
+    # the stock signal shown as informational (#193) keeps its composite BUY for this IPO rule: behaviour unchanged
+    async def informational_buy(symbol):
+        return SimpleNamespace(
+            action="INFORMATIONAL", call={"status": "informational", "composite_action": "BUY"}
+        )
+
+    s = await sig_ipo.compute("ORIENTCABL", {}, sources(listed, stock=informational_buy))
+    assert s.action == "HOLD_AFTER_LISTING" and "rates it BUY" in s.method
+
+    async def informational_reduce(symbol):
+        return SimpleNamespace(
+            action="INFORMATIONAL", call={"status": "informational", "composite_action": "REDUCE"}
+        )
+
+    s = await sig_ipo.compute("ORIENTCABL", {}, sources(listed, stock=informational_reduce))
+    assert s.action == "SELL_AT_LISTING"
     rows = [*history(), {"symbol": "ORIENTCABL", "series": "EQ", "listing_date": "2026-10-02", "qib_times": 2,
                          "return_open": 0.05, "list_open": 285.6, "issue_price": 272, "post_2022": True}]  # fmt: skip
     s = await sig_ipo.compute("ORIENTCABL", {}, sources(orient(qib="150"), rows=rows))

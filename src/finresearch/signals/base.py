@@ -21,6 +21,7 @@ Action = Literal[
     "BUY", "ACCUMULATE", "HOLD", "REDUCE", "SELL", "AVOID",  # stocks, funds, bonds
     "ENTER", "WAIT", "EXIT",  # F&O strategies
     "NO_SIGNAL",  # not enough data to say anything honest
+    "INFORMATIONAL",  # analysis shown, no call: the method has not shown an edge (see `Signal.call`)
 ]  # fmt: skip
 # "shadow": computed and logged for out-of-sample scoring alongside the live call, never used for it
 ValidationStatus = Literal["backtested", "base_rate", "rule_based", "uncalibrated", "shadow"]
@@ -83,6 +84,9 @@ class Signal:
     # an alternative method computed alongside and logged as validation "shadow" (never used for the action):
     # {"method", "probability", "probability_interval", "description", ...}
     shadow: dict[str, Any] | None = None
+    # how the call is presented when the action is INFORMATIONAL (signals.stock while no pre-registered model has
+    # passed): {"status": "informational", "label", "tilt", "composite_action", "universe_base_rate", "promotion_rule"}
+    call: dict[str, Any] | None = None
 
     def to_json(self) -> dict[str, Any]:
         out = asdict(self)

@@ -873,8 +873,12 @@ async def _after_listing(
             st = await src.stock_signal(symbol)
         except Exception:
             st = None
-        if st is not None and getattr(st, "action", None) in ("BUY", "ACCUMULATE"):
-            action, why = "HOLD_AFTER_LISTING", f"the stock signal rates it {st.action} at the current price"
+        # the stock signal's composite action, also while it is shown as informational (signals.stock #193): this
+        # IPO rule is unchanged by that presentation decision
+        composite = ((getattr(st, "call", None) or {}).get("composite_action") or getattr(st, "action", None)
+                     if st is not None else None)  # fmt: skip
+        if composite in ("BUY", "ACCUMULATE"):
+            action, why = "HOLD_AFTER_LISTING", f"the stock signal rates it {composite} at the current price"
     ret = listed.get("return_open")
     factors = [Factor("Long-run IPO returns", -0.312, -30.0, LONG_RUN, "RESEARCH_ROADMAP §D.1 [36]", "BHAR")]
     if ret is not None:
