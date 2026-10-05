@@ -27,7 +27,7 @@ from finresearch.portfolio.history import (
     parse_benchmark_actions,
     returns_of,
 )
-from finresearch.portfolio.limits import PositionLimit, position_limit
+from finresearch.portfolio.limits import PositionLimit, is_fund_like, position_limit
 from finresearch.signals.base import DISCLAIMER
 
 MIN_VOL, WARN_VOL = 60, 250  # trading days of returns
@@ -545,7 +545,9 @@ def concentration(h: History, sectors: dict[str, str], overrides: dict[str, str 
     groups_rows = agg("group", True)
     flags = []
     for x in rows:
-        if x["asset_type"] == "stock" and (x["weight_pct"] or 0) > stock_limit:
+        # ETFs are held as listed shares but are diversified funds: not held to the single-stock limit (#200)
+        etf = is_fund_like(x["asset_type"], x["key"].split(":", 1)[-1], x["name"])
+        if x["asset_type"] == "stock" and not etf and (x["weight_pct"] or 0) > stock_limit:
             flags.append({"kind": "stock", "label": x["name"], "weight_pct": x["weight_pct"], "limit_pct": stock_limit,
                           "text": f"Your limit ({stock_src}) is exceeded: {x['name']} is "
                                   f"{x['weight_pct']:.1f} % of the portfolio. Consider reviewing it."})  # fmt: skip

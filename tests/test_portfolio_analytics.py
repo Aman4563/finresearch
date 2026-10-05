@@ -632,3 +632,18 @@ def test_api_empty_portfolio(env):
         for path in ("performance", "risk", "concentration", "costs"):
             j = c.get(f"/api/portfolio/analytics/{path}").json()
             assert j["available"] is False and j["reason"] and j["disclaimer"]
+
+
+def test_concentration_never_holds_an_etf_to_the_single_stock_limit(tmp_path):
+    # #200: an ETF is held as a listed share but is a diversified fund; BBB renamed as an ETF (31.7 %) is not flagged
+    import dataclasses
+
+    from finresearch.portfolio.analytics import concentration
+    from finresearch.portfolio.limits import position_limit
+    from finresearch.suggest.profile import Profile
+
+    h = build(synthetic(), tmp_path)
+    h.positions = [dataclasses.replace(p, name="Example Nifty 50 ETF") if p.name == "BBB Ltd" else p
+                   for p in h.positions]  # fmt: skip
+    c = concentration(h, {}, {}, position_limit(Profile(risk_appetite="low")))
+    assert {f["label"] for f in c["flags"] if f["kind"] == "stock"} == {"AAA Ltd"}
