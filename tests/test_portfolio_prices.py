@@ -256,9 +256,10 @@ async def test_after_the_session_bse_official_close_beats_an_nse_last_trade():
         return quote
 
     hs = [H(1, "stock", "Example Ltd", nse_symbol="EXAMPLE", bse_code="599902")]
-    today = datetime.now(
-        UTC
-    ).date()  # price_from_quote compares with the real clock: an earlier day is "over"
+    from finresearch.fincalc.dates import to_ist
+
+    # price_from_quote compares with the real clock: an earlier IST day is "over", so use today's IST date
+    today = to_ist(datetime.now(UTC)).date()
     after = datetime(today.year, today.month, today.day, 10, 30, tzinfo=UTC)  # 16:00 IST
     out = await fetch_prices(hs, quote=make(after, D("499.80")), scheme_rows=None)
     assert out[1].price == D("499.80") and out[1].source == "BSE quote: close (official)"
