@@ -319,7 +319,7 @@ function QuickImport({ onDone }: { onDone: () => void }) {
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge tone="info">AIS FY {it.ais.fy - 1}-{String(it.ais.fy % 100).padStart(2, "0")}</Badge>
                     <span className="num">{it.ais.rows} rows kept · {it.ais.ignored} other rows not used</span>
-                    <span className="num">{it.ais.check.counts.mismatch} differ · {it.ais.check.counts.only_ais} only in AIS · {it.ais.check.counts.only_app} only in app · {it.ais.check.counts.matched} match</span>
+                    <span className="num">· {it.ais.check.counts.mismatch} differ · {it.ais.check.counts.only_ais} only in AIS · {it.ais.check.counts.only_app} only in app · {it.ais.check.counts.matched} match</span>
                     {it.ais.already_imported != null && <Badge tone="warn">already imported</Badge>}
                     {it.ais.dry_run
                       ? <Button icon={<Upload className="size-3.5" />} disabled={it.busy} onClick={() => void send(it, false)}>{it.ais.already_imported != null ? "Import again" : "Import"}</Button>
