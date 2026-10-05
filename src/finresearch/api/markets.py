@@ -506,6 +506,40 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
         out["exchange"] = inst.exchange
         return out
 
+    @app.get("/api/stocks/{symbol}/peers")
+    async def stock_peers(symbol: str, retry: bool = False) -> dict[str, Any]:
+        """The company against up to 15 NSE-industry peers (signals.stock_peers): price, market cap, trailing P/E,
+        P/B, ROE, revenue and PAT growth, PAT margin and 1-year return, with the peers' median, IQR and the
+        company's percentile. Peers come from the nightly build (nothing fetched for them here); only the company's
+        own row is fetched live (cached an hour). NSE-listed stocks only."""
+        from finresearch.fincalc.dates import today_ist
+        from finresearch.signals import stock_peers as SP
+
+        inst = await _inst(symbol, None)
+        if inst.exchange != "NSE":
+            return {"status": "unsupported", "symbol": inst.id,
+                    "message": "Peer tables cover NSE-listed stocks (NSE's industry classification)."}  # fmt: skip
+        data = await asyncio.to_thread(SP.load)
+        if data is None:
+            return {"status": "not_computed", "symbol": inst.id, "message": SP.NOT_COMPUTED}
+
+        async def own() -> dict[str, Any]:
+            async with src().open_equity("NSE") as eq:
+                return await SP.live_row(eq, inst.id, today_ist())
+
+        live_error = None
+        try:
+            row = await cache.get(("peers_own", inst.id), 3600, own, retry=retry)
+        except Exception as e:  # the stored row stands in, and the page says so
+            live_error = f"{type(e).__name__}: {e}"[:200]
+            row = (data.get("rows") or {}).get(inst.id)
+            if row is None:
+                raise HTTPException(502, f"couldn't read {inst.id} from NSE: {live_error}") from e
+        out = SP.peer_table(data, row, inst.id)
+        out["company_live"] = live_error is None
+        out["company_error"] = live_error
+        return out
+
     @app.get("/api/stocks/{symbol}/shareholding")
     async def stock_shareholding(symbol: str, quarters: int = Query(8, ge=1, le=12),
                                  exchange: str | None = None, retry: bool = False) -> dict[str, Any]:  # fmt: skip

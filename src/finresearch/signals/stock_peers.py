@@ -199,3 +199,43 @@ async def refresh(today: date | None = None, symbols: list[str] | None = None) -
         data = await build(eq, day, symbols)
     save(data)
     return {"as_of": data["as_of"], "stocks": len(data["rows"]), "failed": len(data["failed"])}
+
+
+# --------------------------------------------------------------------------- one stock's peer table
+CAVEATS = [
+    "Peers share the company's NSE classification at the finest level with at least "
+    f"{P.MIN_PEERS} listed peers in the {UNIVERSE_NAME}; the {P.MAX_PEERS} nearest by market cap (log scale) are shown.",
+    "Percentiles say where the company sits among these peers (0 = lowest, 100 = highest). For P/E and P/B a high "
+    "percentile means priced higher than peers, not better; no metric here is labelled better or worse.",
+    "TTM = the latest four consecutive quarters on one basis (consolidated when filed). EPS is summed as filed.",
+    "Peers' prices are from the nightly build; the company's own row is fetched live.",
+]
+
+
+def _public(row: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in row.items() if k != "inputs"}
+
+
+def peer_table(data: dict[str, Any], own: dict[str, Any], symbol: str) -> dict[str, Any]:
+    """The company's row, its peers' rows, the level used and the per-metric summary."""
+    rows = [r for r in data["rows"].values() if r.get("symbol")]
+    level, candidates = P.choose_level(own, rows, symbol)
+    own_mcap = own["metrics"]["market_cap"]["value"]
+    peers = P.nearest_by_mcap([{**r, "market_cap": r["metrics"]["market_cap"]["value"]} for r in candidates],
+                              own_mcap)  # fmt: skip
+    peers = [_public({k: v for k, v in p.items() if k != "market_cap"}) for p in peers]
+    summary = P.summarise(own["metrics"], [p["metrics"] for p in peers])
+    return {"status": "ok" if level else "no_peers", "symbol": symbol, "as_of": data["as_of"],
+            "generated_at": data["generated_at"], "universe": data["universe"],
+            "universe_source": data["universe_source"],
+            "level": level, "level_label": P.LEVEL_LABELS.get(level or ""), "industry": own.get(level) if level else None,
+            "candidates": len(candidates), "company": _public(own), "peers": peers, "summary": summary,
+            "metrics": list(P.METRICS), "valuation_metrics": list(P.VALUATION), "caveats": CAVEATS,
+            "message": None if level else "No other NIFTY 500 stock shares any of this company's NSE classification "
+                                          "levels."}  # fmt: skip
+
+
+async def live_row(eq: Any, symbol: str, today: date) -> dict[str, Any]:
+    """The company's own row, fetched now (its stored row, if any, supplies results younger than a week)."""
+    old = ((load() or {}).get("rows") or {}).get(symbol)
+    return compute_row(symbol, await fetch_inputs(eq, symbol, today, old), today)
