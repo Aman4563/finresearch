@@ -743,3 +743,87 @@ def test_pretrade_checklist_reads_the_flags(disc):
     assert pretrade.red_flag_item("EXAMPLE", "stock")["status"] == "warn"
     assert views.pretrade_flags("SAMPLEFIN", "stock")[0]["label"].startswith("ASM long-term Stage IV")
     assert views.pretrade_flags("120503", "mf") == [] and views.pretrade_flags("BSE:999999", "stock") is None
+
+
+def _isin_map(now=NOW):
+    from finresearch.adapters.bse_equity import Listing, Listings
+    from finresearch.db import session_scope
+    from finresearch.disclosures import store
+
+    rows = [Listing(key="EXAMPLE", symbol="EXAMPLE", name="Example Ltd", isin="INE000X01011", exchange="both",
+                    exchanges=["NSE", "BSE"], nse_symbol="EXAMPLE", bse_code="599900"),
+            Listing(key="BSE:599901", symbol="EXBSE", name="Example BSE Ltd", isin="INE000X01029", exchange="BSE",
+                    exchanges=["BSE"], bse_code="599901")]  # fmt: skip
+    with session_scope() as s:
+        return store.record_isin_map(s, Listings(rows=rows), now)
+
+
+def test_pretrade_flags_resolve_isin_and_nse_keys(disc):
+    """#200: the checklist passes the instrument key; "ISIN:..." (a holding from a holdings statement) and "NSE:..."
+    read as "unavailable" because NSE's lists are by symbol. Both now resolve to the symbol's flags."""
+    from finresearch.disclosures import views
+
+    _refresh_all()
+    want = views.pretrade_flags("EXAMPLE", "stock")
+    assert want and views.pretrade_flags("NSE:EXAMPLE", "stock") == want
+    assert views.pretrade_flags("ISIN:INE000X01011", "stock") is None  # no ISIN map yet: unknown, not "none"
+    assert _isin_map() is True and _isin_map() is False  # a fresh map is not rewritten
+    assert views.pretrade_flags("ISIN:INE000X01011", "stock") == want
+    assert views.pretrade_flags("ISIN:INE000X01029", "stock") is None  # BSE only: not on NSE's lists
+    assert views.pretrade_flags("ISIN:INE000X09999", "stock") is None  # unknown ISIN
+
+
+def test_isin_only_holdings_are_tracked_under_their_nse_symbol(disc):
+    """#200: holdings imported from a broker holdings statement carry only an ISIN and got no disclosures; a broker
+    placeholder symbol ("NSE$") on a BSE-only company was tracked as an NSE symbol."""
+    from finresearch.db import session_scope
+    from finresearch.db.models import PortfolioHolding, PortfolioLot, Watch
+    from finresearch.disclosures import store
+    from finresearch.portfolio.pretrade import _flag_key
+
+    with session_scope() as s:
+        s.query(Watch).delete()
+        for i, (isin, sym) in enumerate(
+            (("INE000X01011", None), ("INE000X01029", "NSE$"), ("INE000X01037", "OWNSYM"))
+        ):
+            h = PortfolioHolding(ikey=f"ISIN:{isin}", account="Demat", asset_type="stock", name=f"Example {i}",
+                                 isin=isin, nse_symbol=sym, meta={})  # fmt: skip
+            s.add(h)
+            s.flush()
+            s.add(PortfolioLot(holding_id=h.id, origin="buy", quantity=Decimal(1), open_quantity=Decimal(1)))
+    with session_scope() as s:
+        before = store.tracked(s)
+        # no ISIN map stored yet: the holdings' own symbols are all there is (the ISIN-only one is not tracked)
+        assert set(before.stocks) == {"NSE$", "OWNSYM"} and not before.bse_only
+        own = s.query(PortfolioHolding).filter(PortfolioHolding.isin == "INE000X01037").one()
+        assert _flag_key(s, "ISIN:INE000X01037", own) == "NSE:OWNSYM"  # map does not know it: own symbol
+    _isin_map()
+    with session_scope() as s:
+        t = store.tracked(s)
+        assert set(t.stocks) == {"EXAMPLE", "OWNSYM"} and t.stocks["EXAMPLE"]["held"]
+        assert set(t.bse_only) == {"BSE:599901"}
+        own = s.query(PortfolioHolding).filter(PortfolioHolding.isin == "INE000X01011").one()
+        assert _flag_key(s, "ISIN:INE000X01011", own) == "ISIN:INE000X01011"  # the map resolves it downstream
+
+
+def test_daily_pass_listings_come_from_a_fresh_stored_isin_map(disc, monkeypatch):
+    """#200: the daily pass priced without ISIN lookups; it now rebuilds the listings from the stored map (no
+    download while it is fresh), so a BSE-only ISIN is quoted on BSE there too."""
+    from datetime import UTC, datetime
+
+    from finresearch.adapters import http
+    from finresearch.monitor.portfolio_daily import _live_listings
+    from finresearch.portfolio.valuation import instrument_of
+
+    def no_network(*a, **k):
+        raise AssertionError("downloaded although the stored map is fresh")
+
+    monkeypatch.setattr(http, "PoliteClient", no_network)
+    assert _isin_map(datetime.now(UTC)) is True
+    rows = {r.isin: r for r in run(_live_listings()).rows}
+
+    class H:
+        isin, nse_symbol, bse_code = "INE000X01029", "NSE$", None
+
+    assert instrument_of(H(), rows)[:2] == ("599901", "BSE")
+    assert (rows["INE000X01011"].nse_symbol, rows["INE000X01011"].bse_code) == ("EXAMPLE", "599900")

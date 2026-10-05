@@ -182,9 +182,11 @@ def test_cleared_band_and_fno_fields_save_as_the_defaults(api):
     r = api.put("/api/profile", json=blank)
     assert r.status_code == 200, r.text
     got = r.json()
-    assert (got["rebalance_band_abs_pp"], got["rebalance_band_rel_pct"]) == ("5", "25")  # the 5/25 rule of thumb
-    assert (got["fno_capital_inr"], got["fno_max_loss_pct"], got["fno_brokerage_per_order_inr"]) == ("0", "2", "20")
-    assert api.put("/api/profile", json={**p, "rebalance_band_abs_pp": "0.1"}).status_code == 422  # still range-checked
+    # the 5/25 rule of thumb; F&O capital 0 = not set, 2 % max loss, ₹20 per order
+    assert (got["rebalance_band_abs_pp"], got["rebalance_band_rel_pct"]) == ("5", "25")
+    assert (got["fno_capital_inr"], got["fno_max_loss_pct"], got["fno_brokerage_per_order_inr"]) == ("0", "2", "20")  # fmt: skip
+    bad = api.put("/api/profile", json={**p, "rebalance_band_abs_pp": "0.1"})
+    assert bad.status_code == 422  # still range-checked
 
 
 def test_probability_rule_threshold_is_range_checked_on_save_and_repaired_on_load(api, caplog):

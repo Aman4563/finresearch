@@ -917,7 +917,19 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
             if require_bse:
                 raise
             bse_rows, err = [], f"BSE scrip list unavailable: {type(e).__name__}: {e}"[:200]
-        return merge_listings(nse_rows, bse_rows), err
+        merged = merge_listings(nse_rows, bse_rows)
+        if err is None:  # both lists: keep the ISIN map for the synchronous lookups (disclosures.store, #200)
+            await asyncio.to_thread(_store_isin_map, merged)
+        return merged, err
+
+    def _store_isin_map(listings: Any) -> None:
+        from finresearch.disclosures.store import record_isin_map
+
+        try:
+            with session_scope() as s:
+                record_isin_map(s, listings, datetime.now(UTC))
+        except Exception:  # a cache write never fails the listings read
+            logging.getLogger(__name__).warning("could not store the ISIN map", exc_info=True)
 
     async def _listings_strict():
         return (await _listings())[0]

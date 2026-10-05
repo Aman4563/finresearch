@@ -66,6 +66,9 @@ class Deps:
     portfolio_daily: bool = False
     pf_quote: Any = None  # async (symbol, exchange) -> Quote
     pf_scheme_rows: Any = None  # async () -> list[SchemeNav] (AMFI NAVAll)
+    pf_listings: Any = (
+        None  # async () -> Listings (NSE + BSE by ISIN); None = the stored ISIN map, else NSE + BSE
+    )
     pf_signal: Any = None  # async (asset, instrument) -> Signal (never logged in the forecast ledger)
     pf_stock_events: Any = None  # async (symbol) -> {"actions", "board_meetings", "results"}
     pf_ter: Any = None  # async (month) -> {ter_key(name): SchemeTer}

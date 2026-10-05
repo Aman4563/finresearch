@@ -462,6 +462,19 @@ def activity_item(s: Session, day: date) -> dict[str, Any]:
 
 
 # --------------------------------------------------------------------------- the checklist
+def _flag_key(s: Session, key: str, h: PortfolioHolding | None) -> str:
+    """The key the red-flag lookup resolves (disclosures.views.pretrade_flags): an "ISIN:" key goes through the stored
+    ISIN map; when the map does not know the ISIN yet, the holding's own NSE symbol is used if it is a real one."""
+    from finresearch.disclosures.store import isin_map
+    from finresearch.portfolio.importers import nse_symbol_or_none
+
+    if key.startswith("ISIN:") and h is not None and key[5:] not in isin_map(s):
+        sym = nse_symbol_or_none(h.nse_symbol)
+        if sym:
+            return f"NSE:{sym}"
+    return key
+
+
 async def checklist(s: Session, p: Plan, *, live_signal: SignalFetch | None = None) -> dict[str, Any]:
     h = s.get(PortfolioHolding, p.holding_id) if p.holding_id else None
     if p.holding_id and h is None:
@@ -475,7 +488,7 @@ async def checklist(s: Session, p: Plan, *, live_signal: SignalFetch | None = No
         items += sell_items(s, p, h)
     items += concentration_items(s, p, key, h)
     items.append(await signal_item(s, p, h, live_signal))
-    items.append(red_flag_item(key, p.asset_type))
+    items.append(red_flag_item(_flag_key(s, key, h), p.asset_type))
     items.append(thesis_item(s, p, key, h))
     items.append(activity_item(s, p.day))
     worst = "block" if any(i["status"] == "block" for i in items) else \

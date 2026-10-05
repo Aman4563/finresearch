@@ -382,11 +382,18 @@ def pretrade_flags(key: str, asset_type: str) -> list[dict[str, Any]] | None:
 
     if asset_type != "stock":
         return []
-    key = key.upper()
-    if key.startswith("BSE:") or not key:
-        return None
+    key = (key or "").upper()
     now = _now()
     with session_scope() as s:
+        # the checklist passes the portfolio's instrument key: "NSE:<symbol>", "ISIN:<isin>" (a holding imported from
+        # a holdings statement) or "BSE:<code>"; NSE's lists are by symbol, so an ISIN is resolved through the stored
+        # ISIN map (a BSE-only or unknown ISIN has no NSE symbol: unavailable) (#200)
+        if key.startswith("NSE:"):
+            key = key[4:]
+        elif key.startswith("ISIN:"):
+            key = (store.nse_symbol_for_isin(s, key[5:]) or "").upper()
+        if key.startswith("BSE:") or not key:
+            return None
         surv = surveillance(s, key, now, resolve_isin(s, key))
         pl = pledge(s, key, now)
     flags = flags_of(key, surv, pl)

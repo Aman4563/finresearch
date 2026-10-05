@@ -185,6 +185,40 @@ async def _live_nav_rows() -> list:
         return await amfi.nav_all()
 
 
+async def _live_listings() -> Any:
+    """NSE + BSE listings merged by ISIN for the valuation's ISIN lookups (a holding with only an ISIN, a BSE-only
+    company under a broker's placeholder symbol: portfolio.valuation.instrument_of). The stored ISIN map is used while
+    fresh (the API writes it whenever it loads the listings); else both lists are downloaded and the map stored."""
+    from datetime import UTC
+
+    from finresearch.adapters.bse_equity import BseEquity, Listing, Listings, merge_listings
+    from finresearch.adapters.http import PoliteClient
+    from finresearch.adapters.nse_equity import EQUITY_LIST_URL, parse_equity_list
+    from finresearch.disclosures import store
+
+    now = datetime.now(UTC)
+    with session_scope() as s:
+        row = store.feed(s, store.ISIN_MAP)
+        fresh = row is not None and row.ok_at is not None and now - row.ok_at < store.ISIN_MAP_FRESH
+        m = store.isin_map(s) if fresh else {}
+    if m:
+        return Listings(rows=[Listing(key=nse or f"BSE:{bse}", symbol=nse or bse or isin, name=isin, isin=isin,
+                                      exchange="both" if nse and bse else ("NSE" if nse else "BSE"),
+                                      exchanges=[x for x, c in (("NSE", nse), ("BSE", bse)) if c], nse_symbol=nse,
+                                      bse_code=bse) for isin, (nse, bse) in m.items()])  # fmt: skip
+    async with PoliteClient() as c:
+        resp = await c.get(EQUITY_LIST_URL, headers={"Referer": "https://www.nseindia.com/"})
+    if not resp.ok:
+        raise RuntimeError(f"NSE equity list unavailable (HTTP {resp.status})")
+    nse_rows = parse_equity_list(resp.content.decode("utf-8", "replace"))
+    async with BseEquity() as bse_client:
+        bse_rows = await bse_client.scrips()
+    listings = merge_listings(nse_rows, bse_rows)
+    with session_scope() as s:
+        store.record_isin_map(s, listings, now, force=True)
+    return listings
+
+
 def plan_of(*names: str | None) -> str | None:
     """ "direct" / "regular" from a scheme name (AMFI names say "Direct Plan" or "Regular Plan"), else None."""
     text = " ".join(n for n in names if n).lower()
@@ -218,11 +252,16 @@ async def valuation_pass(deps: Any, now: datetime, today: date) -> dict[str, Any
         nav_rows = await (deps.pf_scheme_rows or _live_nav_rows)()
         return nav_rows
 
-    if deps.pf_quote is not None:
-        prices = await fetch_prices(holdings, quote=deps.pf_quote, scheme_rows=rows)
+    # the ISIN lookups the portfolio page does too (#200): without them a BSE-only stock under a placeholder symbol
+    # was quoted on NSE and a holding with only an ISIN had no live price in the daily pass
+    if deps.pf_quote is not None:  # a test seam: its listings too (None = no ISIN lookups)
+        prices = await fetch_prices(
+            holdings, quote=deps.pf_quote, scheme_rows=rows, listings=deps.pf_listings
+        )
     else:
         async with QuoteBatch() as batch:
-            prices = await fetch_prices(holdings, quote=batch.quote, scheme_rows=rows)
+            prices = await fetch_prices(holdings, quote=batch.quote, scheme_rows=rows,
+                                        listings=deps.pf_listings or _live_listings)  # fmt: skip
     names = {r.code: r.name for r in nav_rows}
     with session_scope() as s:
         snap = snapshot(s, prices, today)

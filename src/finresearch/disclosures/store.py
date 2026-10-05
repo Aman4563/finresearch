@@ -6,7 +6,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -64,6 +64,41 @@ def record_ok(s: Session, dataset: str, key: str, *, payload: dict[str, Any], ur
         now,
     )
     s.flush()
+
+
+# --------------------------------------------------------------------------- ISIN -> exchange symbols
+# NSE's equity list merged with BSE's scrip master by ISIN (adapters.bse_equity.merge_listings), kept as a market feed
+# so synchronous code (tracked(), the pre-trade red flags) can find a holding's NSE symbol from its ISIN alone: broker
+# holdings statements carry only the ISIN (#200). Written by the API whenever it loads the listings and by the daily
+# portfolio pass; at most once per ISIN_MAP_FRESH.
+ISIN_MAP = "isin_map"
+ISIN_MAP_FRESH = timedelta(hours=20)
+
+
+def record_isin_map(s: Session, listings: Any, now: datetime, *, force: bool = False) -> bool:
+    """Store {ISIN: [NSE symbol | None, BSE code | None]} from a Listings; skipped while the stored map is fresh."""
+    row = feed(s, ISIN_MAP)
+    if not force and row is not None and row.ok_at is not None and now - row.ok_at < ISIN_MAP_FRESH:
+        return False
+    m = {r.isin.upper(): [r.nse_symbol, r.bse_code] for r in getattr(listings, "rows", []) or [] if r.isin}
+    if not m:
+        return False
+    record_ok(s, ISIN_MAP, MARKET, payload={"map": m}, url=None, as_of=now.isoformat(), now=now)
+    return True
+
+
+def isin_map(s: Session) -> dict[str, list[str | None]]:
+    """{ISIN: [NSE symbol | None, BSE code | None]} as last stored ({} before the first load)."""
+    row = feed(s, ISIN_MAP)
+    return dict((row.payload or {}).get("map") or {}) if row is not None else {}
+
+
+def nse_symbol_for_isin(
+    s: Session, isin: str | None, m: dict[str, list[str | None]] | None = None
+) -> str | None:
+    """The NSE symbol of an ISIN from the stored map; None when unknown or listed on BSE only."""
+    hit = (isin_map(s) if m is None else m).get((isin or "").upper()) if isin else None
+    return hit[0] if hit else None
 
 
 def record_error(s: Session, dataset: str, key: str, error: str, now: datetime) -> None:
@@ -159,10 +194,16 @@ def tracked(s: Session) -> Tracked:
         v[how] = True
 
     open_ids = set(s.scalars(select(PortfolioLot.holding_id).where(PortfolioLot.open_quantity > 0)))
+    imap = isin_map(s) if open_ids else {}
     for h in s.scalars(select(PortfolioHolding).where(PortfolioHolding.id.in_(open_ids))) if open_ids else []:
         isin = (h.isin or "").upper() or None
-        if h.asset_type == "stock" and (h.nse_symbol or h.bse_code):
-            add(h.nse_symbol.upper() if h.nse_symbol else f"BSE:{h.bse_code}", isin, h.name, "held")
+        # the ISIN map (today's listings) decides when it knows the ISIN: a holding with only an ISIN (a broker
+        # holdings statement) gets its NSE symbol, and a BSE-only company stays BSE-only whatever symbol the broker
+        # wrote (e.g. Groww's "NSE$")
+        ent = imap.get(isin) if isin and h.asset_type == "stock" else None
+        sym, bse = (ent[0], h.bse_code or ent[1]) if ent else (h.nse_symbol, h.bse_code)
+        if h.asset_type == "stock" and (sym or bse):
+            add(sym.upper() if sym else f"BSE:{bse}", isin, h.name, "held")
         elif isin and isin.startswith("INE") and isin[7:9] in _DEBT_TYPES:
             b = t.bonds.setdefault(isin, {"name": h.name, "held": False, "tracked": False})
             b["held"] = True
