@@ -114,7 +114,10 @@ export type HoldingDetail = {
   elss?: ElssLock | null;
 };
 
-export type Reconciliation = { name: string; account: string; ikey: string; statement_units: string; lot_units: string; diff: string; ok: boolean; as_of: string | null };
+// a CAS reconciliation sends statement_units / lot_units; a broker holdings statement (connectors.merge) sends
+// broker_units / app_units and a status ("not_at_broker": the app holds units the statement does not list)
+export type Reconciliation = { name: string; account: string; ikey: string; statement_units?: string; lot_units?: string;
+  broker_units?: string; app_units?: string; status?: string; diff: string; ok: boolean; as_of?: string | null };
 
 export type ImportPreview = {
   dry_run: boolean;

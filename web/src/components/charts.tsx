@@ -234,8 +234,9 @@ export function DonutChart({ data, height = 200, center, format = fmtDefault, on
   const [active, setActive] = useState<number | null>(null);
   const total = data.reduce((a, d) => a + d.value, 0);
   return (
-    <div className="flex items-center gap-4">
-      <div className="relative shrink-0" style={{ height, width: height }}>
+    // the legend goes under the donut on a phone: beside it, long names ("Plastic Products - Industrial") had ~30 px
+    <div className="flex min-w-0 flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:gap-4">
+      <div className="relative mx-auto shrink-0 sm:mx-0" style={{ height, width: height }}>
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
             <Pie data={data} dataKey="value" nameKey="name" innerRadius="68%" outerRadius="92%" paddingAngle={2} stroke="none"
@@ -261,9 +262,9 @@ export function DonutChart({ data, height = 200, center, format = fmtDefault, on
           <li key={d.name} className={cx("flex items-center gap-2 transition-opacity", active != null && active !== i && "opacity-40", onSliceClick && "cursor-pointer")}
             onMouseEnter={() => setActive(i)} onMouseLeave={() => setActive(null)} onClick={onSliceClick ? () => onSliceClick(i) : undefined}>
             <span className="size-2.5 shrink-0 rounded-sm" style={{ background: d.color ?? CHART_COLORS[i % 6] }} />
-            <span className="truncate text-muted">{d.name}</span>
-            <span className="num ml-auto font-medium">{format(d.value)}</span>
-            <span className="num w-10 text-right text-muted">{total ? Math.round((d.value / total) * 100) : 0}%</span>
+            <span className="min-w-0 truncate text-muted" title={d.name}>{d.name}</span>
+            <span className="num ml-auto shrink-0 font-medium">{format(d.value)}</span>
+            <span className="num w-10 shrink-0 text-right text-muted">{total ? Math.round((d.value / total) * 100) : 0}%</span>
           </li>
         ))}
       </ul>

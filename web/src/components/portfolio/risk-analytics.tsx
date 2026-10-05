@@ -96,7 +96,7 @@ export function RiskAnalytics({ refresh }: { refresh: number }) {
       <Callout tone="info" icon={<ShieldAlert className="size-4" />} title="What these numbers can and cannot say">
         They describe the past {r.window.returns} trading days of your time-weighted returns ({day(r.window.start)} to {day(r.window.end)}). Short histories give noisy estimates, and a window without a crisis understates the tails: read the stress scenarios alongside.
       </Callout>
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card title="Volatility and market sensitivity" icon={<Activity className="size-4" />}>
           <MetricRow label="Volatility (annualised)" m={r.volatility} format={(v) => pct(v)} help="How much daily returns swing, scaled to a year. About two years in three land within ± this much of the average (if returns were normal, which they are not quite)." />
           <MetricRow label="Beta vs NIFTYBEES" m={r.beta} format={(v) => v.toFixed(2)} help="How much your portfolio moved per 1 % move of the Nifty 50 ETF: 1.2 means about 1.2 % on average. Needs 120 trading days." />

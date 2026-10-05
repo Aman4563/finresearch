@@ -256,10 +256,11 @@ export default function StockDetail() {
               ) : (
                 <div className="grid [&>*]:min-w-0 grid-cols-2 gap-2">
                   <Metric label="Open" value={inr(q?.open)} />
-                  <Metric label="Previous close" value={inr(q?.previous_close)}
-                    sub={q?.reference_kind === "base_price" && q.reference_price !== q.previous_close ? `ex-date: base ${inr(q.reference_price)}` : undefined}
+                  <Metric label={q?.reference_kind === "listing_price" ? "Issue price" : "Previous close"} value={inr(q?.previous_close)}
+                    sub={q?.reference_kind === "base_price" && q.reference_price !== q.previous_close ? `ex-date: base ${inr(q.reference_price)}`
+                      : q?.reference_kind === "listing_price" ? `listing day: discovered ${inr(q.reference_price)}` : undefined}
                     help="The last session's close. On an ex-date (dividend, split, bonus) the exchange adjusts it into a base price, and the day change is measured from that." />
-                  <Metric label="Day change" value={<Delta value={q?.change_pct} />} sub={q?.change_pct != null ? `vs ${q?.reference_kind === "base_price" ? "adjusted base" : q?.reference_kind === "previous_close_less_dividend" ? "prev. close − dividend" : "previous close"}` : undefined} />
+                  <Metric label="Day change" value={<Delta value={q?.change_pct} />} sub={q?.change_pct != null ? `vs ${q?.reference_kind === "listing_price" ? "listing price" : q?.reference_kind === "base_price" ? "adjusted base" : q?.reference_kind === "previous_close_less_dividend" ? "prev. close − dividend" : "previous close"}` : undefined} />
                   {q?.price_kind === "official_close" && (
                     <Metric label="Last traded" value={inr(q.last_price)} sub={q.last_differs ? "≠ official close" : "= official close"}
                       help="The last trade of the session. The official close is computed by the exchange from the closing trades, so the two can differ." />

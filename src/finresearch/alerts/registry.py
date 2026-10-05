@@ -581,12 +581,12 @@ METRICS: list[MetricSpec] = [
         "a holding's signal",
         "flag",
         "daily",
-        "Fires when the signal of a stock or fund you hold moves to another action (for example HOLD to REDUCE). "
+        "Fires when the signal of a stock or fund you hold changes (a fund's action, for example HOLD to REDUCE). "
         "The stock signal is informational (no proven edge): for a stock this is a change in its factor tilt. "
         "Signals are computed once a day and never written to the forecast ledger by this check.",
         f"{_PF}: signals.stock / signals.fund",
         event=True,
-        event_text="a holding's signal action changed",
+        event_text="a holding's signal tilt changed (stocks: informational, no proven edge)",
         default_op="==",
         default_value="1",
         allows_all=False,
@@ -668,15 +668,31 @@ METRICS: list[MetricSpec] = [
         "portfolio",
         "max_position_pct",
         "Largest position",
-        "largest single position",
+        "largest single-stock position",
         "pct",
         "daily",
-        "The biggest holding's share of the portfolio (a fund counts as one holding: its stocks are not looked "
-        "through). The suggested threshold is your single-stock limit (portfolio.limits.position_limit: the "
-        "profile's max position, else 5 / 8 / 10 % by risk appetite), the same one /portfolio flags.",
+        "The biggest single stock's share of the whole portfolio. Mutual funds and ETFs are diversified and are "
+        "not counted here (see Largest fund or ETF). The suggested threshold is your single-stock limit "
+        "(portfolio.limits.position_limit: the profile's max position, else 5 / 8 / 10 % by risk appetite), the same "
+        "one /portfolio flags.",
         f"{_PF}: holding values",
         default_op=">=",
         default_value="8",
+        allows_all=False,
+    ),
+    _m(
+        "portfolio",
+        "max_fund_pct",
+        "Largest fund or ETF",
+        "largest single fund or ETF",
+        "pct",
+        "daily",
+        "The biggest mutual fund or ETF's share of the whole portfolio. A diversified fund is not held to the "
+        "single-stock limit; the default 25 % is a rule of thumb (portfolio.limits.FUND_LIMIT_PCT). ETFs are "
+        "recognised by their symbol or name (BEES / ETF).",
+        f"{_PF}: holding values",
+        default_op=">=",
+        default_value="25",
         allows_all=False,
     ),
     _m(
@@ -1328,10 +1344,21 @@ TEMPLATES: list[Template] = [
         "pf-concentration",
         "portfolio",
         "Position too big",
-        "One holding is over your single-stock limit (by default 8 %, the medium-risk rule of thumb).",
+        "One stock is over your single-stock limit (by default 8 %, the medium-risk rule of thumb; funds and "
+        "ETFs are not counted).",
         "max_position_pct",
         ">=",
         "8",
+    ),
+    Template(
+        "pf-fund-concentration",
+        "portfolio",
+        "One fund or ETF too big",
+        "A single fund or ETF is over 25 % of the portfolio (a rule of thumb; diversified funds are not held to the "
+        "single-stock limit).",
+        "max_fund_pct",
+        ">=",
+        "25",
     ),
     Template(
         "pf-red-flags",
@@ -1369,5 +1396,7 @@ def registry_json(limit: Any = None) -> dict[str, Any]:
         for t in templates:
             if t["id"] == "pf-concentration":
                 t["value"] = v
-                t["why"] = f"One holding is over your single-stock limit ({limit.rule})."
+                t["why"] = (
+                    f"One stock is over your single-stock limit ({limit.rule}; funds and ETFs not counted)."
+                )
     return {"kinds": list(KINDS), "metrics": metrics, "templates": templates, "ops": OP_PHRASE}

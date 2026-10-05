@@ -268,7 +268,9 @@ def test_daily_pass_values_and_every_metric(pf):
     )
     # the stock's composite REDUCE is informational (#193), so it is not "weight under REDUCE/SELL" (was 40.40 %)
     assert v["reduce_signal_weight_pct"] == D("0.00")
-    assert v["max_position_pct"] == D("59.60") and m["max_position_pct"][2].startswith("Example Flexi Cap")
+    # the single-stock metric counts stocks only (the fund is diversified): INFY 14,100 / 34,900 = 40.40 %
+    assert v["max_position_pct"] == D("40.40") and m["max_position_pct"][2] == "Infosys Ltd"
+    assert v["max_fund_pct"] == D("59.60") and m["max_fund_pct"][2].startswith("Example Flexi Cap")
     assert v["max_sector_pct"] == D("40.40") and m["max_sector_pct"][2] == "Computers - Software"
     assert v["n_effective"] == D(str(round(1 / (0.4040114613**2 + 0.5959885387**2), 2)))
     # INFY lot bought 10-Oct-2025: long-term from 11-Oct-2026; ₹100 gain -> STCG 20 % + cess = ₹20.80 saved by waiting
@@ -304,7 +306,7 @@ def test_portfolio_rule_fires_once_with_detail_then_clears(pf, monkeypatch):
     assert res["fired"] == 2
     with session_scope() as s:
         msgs = sorted(a.message for a in s.query(Alert).filter(Alert.kind == "rule_alert"))
-        assert msgs == ["Portfolio: a holding's signal action changed (Infosys (informational) factors are mixed -> factors lean negative)",
+        assert msgs == ["Portfolio: a holding's signal tilt changed (stocks: informational, no proven edge) (Infosys (informational) factors are mixed -> factors lean negative)",
                         "Portfolio: largest one-day move of a holding (either way) is 6% (is at least your 5%); "
                         "Infosys Ltd -6.00%"]  # fmt: skip
         again = run(engine.evaluate(s, rules, now + timedelta(hours=1)))

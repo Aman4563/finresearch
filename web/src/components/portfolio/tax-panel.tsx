@@ -75,7 +75,7 @@ export function TaxPanel({ refresh }: { refresh: number }) {
           hint={isCurrent ? "harvesting must settle before FY end" : current.label} />
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)]">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)]">
         <Card title="LTCG exemption meter" icon={<Leaf className="size-4" />}
           help="Long-term gains on listed equity and equity funds are tax-free up to ₹1.25 lakh a financial year (₹1 lakh before FY 2024-25), after setting off losses. In FY 2024-25 one ₹1.25 lakh limit covers gains before and after 23-Jul-2024.">
           <p className="num text-2xl font-semibold">{inr(current.exemption.used)} <span className="text-sm font-normal text-muted">of {inr(current.exemption.limit)} used</span></p>

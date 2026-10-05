@@ -319,3 +319,25 @@ def test_audit_flags_a_real_mismatch_and_survives_a_failing_source():
     assert "NSE quote close = NSE history close" in mism
     assert any(c.status == "error" and "HTTP 403" in c.note for c in rep.checks)
     assert rep.as_json()["summary"]["mismatch"] >= 1
+
+
+def test_listing_day_change_is_from_the_discovered_price_not_a_corporate_action():
+    """#200: on its listing day NSE's previous close is the issue price (272) and the base price the pre-open call
+    auction price (450). The change (-10 % at 405) is from 450, and the note must not call it a corporate action."""
+    from datetime import UTC, date, datetime
+
+    from finresearch.adapters.nse import Quote
+    from finresearch.fincalc.price import REF_LABELS, price_view
+
+    at = datetime(2026, 10, 5, 10, 30, tzinfo=UTC)  # 16:00 IST
+    q = Quote(symbol="EXAMPLE", last_price=D(405), close_price=D(405), previous_close=D(272), base_price=D(450),
+              listing_date=date(2026, 10, 5), as_of=at)  # fmt: skip
+    v = price_view(q, now=at)
+    assert (v.reference, v.reference_kind) == (D(450), "listing_price") and v.change == D(-45)
+    assert any("issue price was ₹272" in n for n in v.notes) and not any(
+        "corporate action" in n for n in v.notes
+    )
+    assert "pre-open call auction" in REF_LABELS["listing_price"]
+    later = Quote(symbol="EXAMPLE", last_price=D(410), previous_close=D(405), base_price=D(405),
+                  listing_date=date(2026, 10, 5), as_of=datetime(2026, 10, 6, 5, 0, tzinfo=UTC))  # fmt: skip
+    assert price_view(later, now=datetime(2026, 10, 6, 5, 0, tzinfo=UTC)).reference_kind == "previous_close"

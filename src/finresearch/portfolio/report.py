@@ -3,7 +3,7 @@ view. Reads the database, takes prices from valuation.fetch_prices; all arithmet
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -80,14 +80,31 @@ def _f(x: Decimal | None, nd: int = 2) -> float | None:
     return None if x is None else round(float(x), nd)
 
 
-def _signal(h: PortfolioHolding, price: PriceInfo | None) -> dict[str, str] | None:
-    if h.asset_type == "stock" and (h.nse_symbol or h.bse_code):
-        key = h.nse_symbol or f"BSE:{h.bse_code}"
+def _signal(h: PortfolioHolding, price: PriceInfo | None,
+            imap: dict[str, list[str | None]] | None = None) -> dict[str, str] | None:  # fmt: skip
+    from finresearch.disclosures.store import stock_key
+
+    key = stock_key(h.isin, h.nse_symbol, h.bse_code, imap or {}) if h.asset_type == "stock" else None
+    if key:  # an ISIN-only holding (a broker holdings statement) resolves through the ISIN map (#200)
         return {"asset": "stock", "instrument": key, "href": f"/stocks/{key}"}
     code = h.scheme_code or (price.scheme_code if price else None)
     if h.asset_type == "mf" and code:
         return {"asset": "fund", "instrument": code, "href": f"/funds/{code}"}
     return None
+
+
+def xirr_exclusions(excluded: Counter[str]) -> str:
+    """Why the overall XIRR leaves holdings out, from each holding's own reason (cash_flows / no current price)."""
+    from finresearch.portfolio.valuation import NO_PURCHASE_DATE
+
+    phrase = {
+        NO_PURCHASE_DATE: "whose purchase date is unknown (e.g. a broker holdings baseline: import an older order "
+                          "history to include them)",
+        "opening balance with an unknown cost": "without a known cost",
+        "no current price": "without a current price",
+    }  # fmt: skip
+    parts = [f"{n} {phrase.get(why, f'with {why}')}" for why, n in excluded.most_common()]
+    return f"excludes {sum(excluded.values())} holding(s): " + "; ".join(parts)
 
 
 def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str, Any]:
@@ -96,7 +113,11 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
     alloc: dict[str, dict[str, Decimal]] = {"asset": defaultdict(Decimal), "sector": defaultdict(Decimal),
                                             "cap": defaultdict(Decimal)}  # fmt: skip
     tot = defaultdict(Decimal)
-    unknown_cost = unpriced = excluded = 0
+    unknown_cost = unpriced = 0
+    from finresearch.disclosures.store import isin_map
+
+    imap = isin_map(s)
+    excluded: Counter[str] = Counter()  # holdings left out of the overall XIRR, by the reason cash_flows gave
     for h in data.holdings:
         p = prices.get(h.id) or PriceInfo(error="not priced")
         category = p.category or h.category
@@ -123,7 +144,7 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
             all_flows += flows[:-1] if value else flows
             tot["xirr_value"] += value or ZERO
         elif units > 0 or why_not is not None:
-            excluded += 1
+            excluded[why_not] += 1
         unreal = (value - cost) if value is not None and known and units > 0 else None
         det = elss.detect(h.asset_type, h.name, category) if units > 0 else None
         lock = elss.lockin(open_lots, today, p.price, det) if det is not None else None
@@ -164,7 +185,7 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
             "market_cap_cr": _f(p.market_cap_cr), "cap_bucket": (cap_bucket(p.market_cap_cr) if h.asset_type == "stock" and eff == "equity"
                                                                   else "Not equity" if h.asset_type == "stock"
                                                                   else fund_cap_bucket(category, eff)),
-            "lots": len(open_lots), "closed": units <= 0, "signal": _signal(h, p), "elss": lock,
+            "lots": len(open_lots), "closed": units <= 0, "signal": _signal(h, p, imap), "elss": lock,
             "warnings": (h.meta or {}).get("lot_warnings") or [],
             "sources": sorted({t.source for t in data.txns.get(h.id, [])}),
             "broker_baseline": any(t.kind == "opening" and (t.meta or {}).get("baseline")
@@ -174,7 +195,7 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
         [*all_flows, (today, tot["xirr_value"])] if tot["xirr_value"] else all_flows, today
     )
     if excluded and ox is not None:
-        ox_reason = f"excludes {excluded} holding(s) without a known cost or a price"
+        ox_reason = xirr_exclusions(excluded)
     tl = timeline(data)
     complete = unpriced == 0 and unknown_cost == 0 and tot["value"] > 0
     return {

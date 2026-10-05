@@ -82,6 +82,32 @@ def test_net_invested_counts_a_broker_baseline_at_its_cost():
     assert [(r["date"], r["invested"]) for r in tl] == [("2026-09-01", 1000.0), ("2026-10-01", 1600.0)]
 
 
+def test_xirr_exclusion_reason_names_the_real_reason():
+    """#200: the XIRR tile said "excludes 5 holding(s) without a known cost or a price" while every holding had a
+    cost and a price: they were broker baselines (an average price but no purchase date). Each reason is now named."""
+    from collections import Counter
+
+    from finresearch.portfolio.report import xirr_exclusions
+    from finresearch.portfolio.valuation import NO_PURCHASE_DATE
+
+    baseline = _txn(date(2026, 9, 30), "opening", D(10), D(100), D(1000), {"baseline": True})  # cost, no date
+    no_cost = _txn(date(2026, 9, 30), "opening", D(7), meta={"statement_opening": True})
+    assert cash_flows_of([baseline]) == ([], NO_PURCHASE_DATE)
+    assert cash_flows_of([no_cost]) == ([], "opening balance with an unknown cost")
+    dated = _txn(date(2026, 9, 30), "opening", D(10), D(100), D(1000), {"acquired": "2024-01-15"})
+    assert cash_flows_of([dated]) == ([(date(2024, 1, 15), D(-1000))], None)
+    msg = xirr_exclusions(Counter({NO_PURCHASE_DATE: 5}))
+    assert (
+        msg.startswith("excludes 5 holding(s): 5 whose purchase date is unknown")
+        and "older order history" in msg
+    )
+    assert "known cost" not in msg
+    two = xirr_exclusions(Counter({NO_PURCHASE_DATE: 2, "opening balance with an unknown cost": 1}))
+    assert two.startswith("excludes 3 holding(s): 2 whose purchase date") and two.endswith(
+        "; 1 without a known cost"
+    )
+
+
 # --------------------------------------------------------------------------- tax
 def _holding(fmv=None, tax_class="equity"):
     from finresearch.portfolio.tax import HoldingTax
@@ -164,6 +190,23 @@ def test_month_first_tradebook_dates_are_read_as_such():
         date(2025, 9, 1),
         date(2025, 9, 13),
     ]
+
+
+def test_a_groww_placeholder_symbol_is_not_stored_as_an_nse_symbol():
+    """#200: Groww's order history writes "NSE$" in Symbol for a BSE-only stock; it was stored as the NSE symbol and
+    priced from NSE's quote API. It is no symbol: the ISIN identifies the stock (priced via its listing's BSE code)."""
+    from finresearch.portfolio.importers import instrument_key, nse_symbol_or_none, parse_tradebook
+
+    csv = GROWW_HEAD + ("Example Exchange Ltd,NSE$,INE000X01045,BUY,2,3400,BSE,X1,01-09-2025 10:30 AM,Executed\n"
+                        "Example Ltd,M&M,INE000X01052,BUY,1,3000,NSE,X2,01-09-2025 10:30 AM,Executed\n"
+                        "Example Ltd,3MINDIA,INE000X01060,BUY,1,3000,NSE,X3,01-09-2025 10:30 AM,Executed\n")  # fmt: skip
+    t1, t2, t3 = parse_tradebook(csv.encode(), "groww.csv").txns
+    assert t1.nse_symbol is None and t1.bse_code is None and t1.isin == "INE000X01045"
+    assert t1.meta["broker_symbol"] == "NSE$"
+    assert instrument_key("stock", t1.isin, t1.nse_symbol, t1.bse_code, None, t1.name) == "ISIN:INE000X01045"
+    assert (t2.nse_symbol, t3.nse_symbol) == ("M&M", "3MINDIA") and "broker_symbol" not in t2.meta
+    assert [nse_symbol_or_none(x) for x in ("BAJAJ-AUTO", "532828", "NSE$", "", "A B")] == ["BAJAJ-AUTO", None, None,
+                                                                                           None, None]  # fmt: skip
 
 
 def test_a_file_mixing_day_first_and_month_first_is_refused():

@@ -1,4 +1,4 @@
-"""One place for the two personal limits every page uses (decisions #194 and #195).
+"""One place for the personal limits every page uses (decisions #194 and #195).
 
 1. Single-stock position limit (`position_limit`): the profile's max position % when set, else a default by risk
    appetite: low 5 %, medium 8 %, high 10 % (rules of thumb [W], the same values signals.stock has always used as
@@ -14,10 +14,18 @@
    A 0 % target (or a relative band of 0) uses the absolute band only. Both widths are settable on the profile
    (`rebalance_band_abs_pp`, `rebalance_band_rel_pct`). Used by /wealth (wealth.allocation) and the Rebalance card
    (portfolio.rebalance) so the two never disagree on a breach.
+
+3. Fund / ETF position threshold (`FUND_LIMIT_PCT`, 25 %): the single-stock limit is about one company's risk, so it
+   never applies to a diversified mutual fund or an ETF (one scheme already holds dozens of stocks under SEBI's
+   diversification limits, e.g. at most 10 % of a scheme's NAV in the shares of one company: SEBI (Mutual Funds)
+   Regulations 1996, Seventh Schedule, clause 11). A fund or ETF only counts as concentrated above 25 % of the
+   portfolio, the same rule of thumb [W] as the sector limit. ETFs arrive as listed "stock" holdings, so `is_fund_like` also matches
+   ETF symbols/names (BEES / ETF / IETF suffix or "ETF" in the name) [unverified heuristic].
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -26,6 +34,19 @@ CAPS = {"low": 0.05, "medium": 0.08, "high": 0.10}
 DEFAULT_RISK = "medium"
 DEFAULT_ABS_PP = 5.0
 DEFAULT_REL_PCT = 25.0
+# a single fund or ETF above this share of the portfolio is concentrated; rule of thumb [W] (see 3. above)
+FUND_LIMIT_PCT = 25.0
+_ETF_SYMBOL = re.compile(r"(BEES|ETF|IETF)$")
+_ETF_NAME = re.compile(r"\bETF\b|\bBEES\b", re.I)
+
+
+def is_fund_like(asset_type: str | None, symbol: str | None = None, name: str | None = None) -> bool:
+    """True for a mutual fund or an ETF (held as a listed share): these never count against the single-stock limit."""
+    if asset_type == "mf":
+        return True
+    if asset_type != "stock":
+        return False
+    return bool(_ETF_SYMBOL.search((symbol or "").upper()) or _ETF_NAME.search(name or ""))
 
 
 @dataclass(frozen=True)

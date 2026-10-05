@@ -61,7 +61,7 @@ export function PerformanceAnalytics({ refresh }: { refresh: number }) {
         ) : b.verdict && <Callout tone="info" title="Against the index">{b.verdict}</Callout>
       )}
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card title="Growth of ₹100" icon={<LineIcon className="size-4" />}
           help={`Both lines start at 100 on ${day(data.start)}. Yours is the time-weighted index (flows removed); the other is ${b?.label ?? "NIFTYBEES"}. One axis, so the two can be compared directly.`}>
           <TimeSeriesChart data={data.series} area={false} series={[{ key: "portfolio", label: "Your portfolio (TWR)", color: "var(--chart-1)" },

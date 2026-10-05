@@ -70,3 +70,44 @@ def test_alert_catalogue_suggests_the_same_limit():
     assert metric["default_value"] == tpl["value"] == "5" and "5 % — your risk profile: low" in tpl["why"]
     plain = registry_json()  # without a profile: the medium default, never the old flat 10
     assert next(t for t in plain["templates"] if t["id"] == "pf-concentration")["value"] == "8"
+
+
+# --------------------------------------------------------------------------- funds vs the single-stock limit (#200)
+def test_a_diversified_fund_never_counts_against_the_single_stock_limit():
+    from finresearch.portfolio.metrics import grouped_weights
+
+    # medium profile (8 %): a 9 % flexi-cap fund and a 12 % Nifty ETF must not read as "position too big";
+    # the largest single stock is the 4 % one (the same INE000X0 stock in two accounts adds up: 2.5 + 1.5)
+    v = {"holdings": {
+        "1": {"asset_type": "mf", "name": "Example Flexi Cap Fund - Direct Growth", "scheme_code": "100001",
+              "weight_pct": 9.0},
+        "2": {"asset_type": "stock", "name": "Example Nifty 50 ETF", "nse_symbol": "EXNIFTYBEES", "weight_pct": 12.0},
+        "3": {"asset_type": "stock", "name": "Example Ltd", "nse_symbol": "EXAMPLE", "weight_pct": 2.5},
+        "4": {"asset_type": "stock", "name": "Example Ltd", "nse_symbol": "EXAMPLE", "weight_pct": 1.5},
+        "5": {"asset_type": "other", "name": "Example FD", "weight_pct": 30.0},
+    }}  # fmt: skip
+    stocks, funds = grouped_weights(v, "stock"), grouped_weights(v, "fund")
+    assert stocks == {"EXAMPLE": (4.0, "Example Ltd")}
+    assert funds == {"100001": (9.0, "Example Flexi Cap Fund - Direct Growth"),
+                     "EXNIFTYBEES": (12.0, "Example Nifty 50 ETF")}  # fmt: skip
+    assert max(w for w, _ in stocks.values()) < limits.position_limit(Profile()).pct  # 4 < 8: no alert
+    assert len(grouped_weights(v)) == 4  # n_effective still counts every holding
+
+
+def test_etf_recognition():
+    assert limits.is_fund_like("mf")
+    assert limits.is_fund_like("stock", "NIFTYBEES") and limits.is_fund_like("stock", "MON100", "Example ETF")
+    assert not limits.is_fund_like("stock", "INFY", "Infosys Ltd")
+    assert not limits.is_fund_like("other", None, "Example ETF FD")
+
+
+def test_alert_catalogue_has_a_separate_fund_threshold():
+    from finresearch.alerts.registry import registry_json
+
+    out = registry_json(limits.position_limit(Profile(risk_appetite="medium")))
+    fund = next(m for m in out["metrics"] if m["key"] == "max_fund_pct" and m["kind"] == "portfolio")
+    assert fund["default_value"] == f"{limits.FUND_LIMIT_PCT:g}" == "25"
+    tpl = next(t for t in out["templates"] if t["id"] == "pf-concentration")
+    assert tpl["value"] == "8" and "funds and ETFs not counted" in tpl["why"]
+    ftpl = next(t for t in out["templates"] if t["id"] == "pf-fund-concentration")
+    assert (ftpl["metric"], ftpl["value"]) == ("max_fund_pct", "25")

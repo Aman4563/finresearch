@@ -68,7 +68,10 @@ METRICS: tuple[MetricDef, ...] = (
     MetricDef("cagr_1y", "1-year return", True, "fraction"),
     MetricDef("cagr_3y", "3-year CAGR", True, "fraction"),
     MetricDef("cagr_5y", "5-year CAGR", True, "fraction"),
-    MetricDef("consistency_3y", "Consistency vs category median (3 years)", True, "fraction"),
+    # 1-year windows, so it differs from the Consistency card's default 3-year windows (#200: 60 % here vs 16/16 there)
+    MetricDef(
+        "consistency_3y", "Consistency: 1-year windows above the median (last 3 years)", True, "fraction"
+    ),
     MetricDef("sortino_3y", "Sortino ratio (3 years, monthly)", True, "ratio"),
     MetricDef("max_drawdown_3y", "Max drawdown (3 years, month-end)", True, "fraction"),
     MetricDef("ter", "Expense ratio (direct plan)", False, "pct"),

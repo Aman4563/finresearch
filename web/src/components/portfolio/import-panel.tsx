@@ -46,9 +46,9 @@ function PreviewView({ p }: { p: ImportPreview }) {
               {p.reconciliation.map((r) => (
                 <tr key={`${r.ikey}|${r.account}`}>
                   <td className="max-w-[18rem] truncate">{r.name}<span className="block text-[11px] text-muted">{r.account}</span></td>
-                  <td className="num text-right">{units(r.statement_units)}</td>
-                  <td className="num text-right">{units(r.lot_units)}</td>
-                  <td>{r.ok ? <Badge tone="gain">matches</Badge> : <Badge tone="loss">off by {units(r.diff)}</Badge>}</td>
+                  <td className="num text-right">{units(r.statement_units ?? r.broker_units ?? null)}</td>
+                  <td className="num text-right">{units(r.lot_units ?? r.app_units ?? null)}</td>
+                  <td>{r.ok ? <Badge tone="gain">matches</Badge> : r.status === "not_at_broker" ? <Badge tone="warn">not in this statement</Badge> : <Badge tone="loss">off by {units(r.diff)}</Badge>}</td>
                 </tr>
               ))}
             </tbody>
