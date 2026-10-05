@@ -292,3 +292,29 @@ def nearest_by_mcap(peers: list[dict[str, Any]], own_mcap: Num | None, cap: int 
     if o is None or o <= 0:
         return sorted(peers, key=lambda p: (mc(p) is None, -(mc(p) or 0), p["symbol"]))[:cap]
     return sorted(peers, key=lambda p: (mc(p) is None, abs(math.log(mc(p) / o)) if mc(p) else 0, p["symbol"]))[:cap]
+
+
+METRICS = ("price", "market_cap", "pe", "pb", "roe", "revenue_growth", "pat_growth", "pat_margin", "return_1y")
+VALUATION = ("pe", "pb")  # where a high percentile means dearer, not better (no "better/worse" is implied anywhere)
+MIN_SUMMARY = 3  # fewer peer values than this: no median/IQR (fincalc.valuation.peer_distribution)
+
+
+def summarise(own: dict[str, Any], peers: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Per metric: how many peers have a value, the peers' quartiles (Q1, median, Q3; the company is not one of
+    them) and the company's percentile among them (share below + half of ties, 0-100). Rows hold
+    {metric: {"value": float | None, ...}}; a missing value is skipped, never counted as 0."""
+    from finresearch.fincalc.valuation import peer_distribution
+
+    out: dict[str, dict[str, Any]] = {}
+    for m in METRICS:
+        vals = [p[m]["value"] for p in peers if (p.get(m) or {}).get("value") is not None]
+        o = (own.get(m) or {}).get("value")
+        try:
+            st = peer_distribution(vals, o, positive_only=m in VALUATION, min_n=MIN_SUMMARY)
+        except ValueError:
+            out[m] = {"n": len(vals), "q1": None, "median": None, "q3": None, "percentile": None,
+                      "reason": f"fewer than {MIN_SUMMARY} peers with a value"}  # fmt: skip
+            continue
+        out[m] = {"n": st.n, "q1": float(st.q1), "median": float(st.median), "q3": float(st.q3),
+                  "percentile": None if st.percentile is None else float(st.percentile), "reason": None}  # fmt: skip
+    return out
