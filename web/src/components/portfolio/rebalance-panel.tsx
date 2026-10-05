@@ -5,6 +5,7 @@
 // is portfolio/rebalance.py; this card only shows it.
 
 import { Scale, ShieldAlert } from "lucide-react";
+import Link from "next/link";
 import { useState } from "react";
 
 import { Badge, Button, Callout, Card, ErrorNote, Field, SkeletonRows, Stat, Table, cx, inputClass } from "@/components/ui";
@@ -25,7 +26,7 @@ type SellStep = {
 };
 export type RebalancePlan = {
   status: "no_targets" | "no_value" | "within_bands" | "cash_only" | "rebalance"; message: string; disclaimer: string;
-  fy_label: string; slab_pct?: number; bands: { abs_pp: number; rel_pct: number }; new_money: number;
+  fy_label: string; slab_pct?: number; bands: { abs_pp: number; rel_pct: number; rule?: string }; new_money: number;
   allocation?: AllocRow[]; cash_flow?: ClassMove[]; sells?: SellStep[]; buys?: ClassMove[];
   unfilled?: { asset_class: string; amount: number; why: string[] }[];
   skipped?: { holding_id: number; name: string; asset_class: string; units: number; reason: string }[];
@@ -35,12 +36,16 @@ export type RebalancePlan = {
 };
 
 export function RebalancePanel() {
-  const [form, setForm] = useState({ money: "", abs: "5", rel: "25" });
-  const [q, setQ] = useState("new_money=0&band_abs_pp=5&band_rel_pct=25");
+  // empty band fields = your profile's band (the same one /wealth uses); a typed value overrides it for this plan only
+  const [form, setForm] = useState({ money: "", abs: "", rel: "" });
+  const [q, setQ] = useState("new_money=0");
   const { data, error } = useApi<RebalancePlan>(`/api/portfolio/rebalance?${q}`);
-  const apply = () => setQ(new URLSearchParams({
-    new_money: String(Number(form.money) || 0), band_abs_pp: String(Number(form.abs) || 5), band_rel_pct: String(Number(form.rel) || 0),
-  }).toString());
+  const apply = () => {
+    const p = new URLSearchParams({ new_money: String(Number(form.money) || 0) });
+    if (form.abs.trim() !== "" && Number(form.abs) > 0) p.set("band_abs_pp", String(Number(form.abs)));
+    if (form.rel.trim() !== "" && Number.isFinite(Number(form.rel))) p.set("band_rel_pct", String(Number(form.rel)));
+    setQ(p.toString());
+  };
   return (
     <Card title="Rebalance (illustrative)" icon={<Scale className="size-4" />}
       help="New money goes to the underweight classes first (no sale, no tax). Only if a class is still outside its band are holdings sold, oldest lots first (FIFO), cheapest tax first; the proceeds are then bought into the underweight classes.">
@@ -49,10 +54,14 @@ export function RebalancePanel() {
       </Callout>
       <div className="mt-3 grid gap-3 sm:grid-cols-4">
         <Field label="New money (₹, optional)"><input inputMode="decimal" value={form.money} placeholder="e.g. a SIP instalment" onChange={(e) => setForm({ ...form, money: e.target.value })} className={cx(inputClass, "w-full num")} /></Field>
-        <Field label="Band: absolute (pp)"><input inputMode="decimal" value={form.abs} onChange={(e) => setForm({ ...form, abs: e.target.value })} className={cx(inputClass, "w-full num")} /></Field>
-        <Field label="Band: relative (% of target)"><input inputMode="decimal" value={form.rel} onChange={(e) => setForm({ ...form, rel: e.target.value })} className={cx(inputClass, "w-full num")} /></Field>
+        <Field label="Band: absolute (pp)"><input inputMode="decimal" value={form.abs} placeholder={data ? String(data.bands.abs_pp) : "5"} onChange={(e) => setForm({ ...form, abs: e.target.value })} className={cx(inputClass, "w-full num")} /></Field>
+        <Field label="Band: relative (% of target)"><input inputMode="decimal" value={form.rel} placeholder={data ? String(data.bands.rel_pct) : "25"} onChange={(e) => setForm({ ...form, rel: e.target.value })} className={cx(inputClass, "w-full num")} /></Field>
         <div className="flex items-end"><Button onClick={apply}>Update plan</Button></div>
       </div>
+      <p className="mt-2 text-[11px] text-muted">
+        A class is outside its band when its drift exceeds {data?.bands.rule ?? "the tighter of ±5 pp and 25 % of the target"}.
+        Empty fields use the band on your <Link href="/profile" className="text-brand hover:underline">profile</Link>, the same one the Wealth page uses.
+      </p>
       <ErrorNote error={error} />
       {!data && !error && <SkeletonRows rows={4} />}
       {data && <PlanBody p={data} />}

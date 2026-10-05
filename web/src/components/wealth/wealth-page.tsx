@@ -62,10 +62,11 @@ function Allocation({ w }: { w: Wealth }) {
           <div>
             {a.comparison.length > 0 && (
               <Table label="Allocation across everything">
-                <thead><tr><th>Class</th><th className="text-right">Now</th><th className="text-right">{a.own_target ? "Your target" : "Rule gives"}</th><th className="text-right">Drift</th></tr></thead>
+                <thead><tr><th>Class</th><th className="text-right">Now</th><th className="text-right">{a.own_target ? "Your target" : "Rule gives"}</th><th className="text-right">Drift</th><th className="text-right" title="Outside when the drift exceeds this: the tighter of the absolute and relative bands on your profile (same as the Rebalance card)">Band</th></tr></thead>
                 <tbody>{a.comparison.map((r) => (
                   <tr key={r.label}><td>{r.label}</td><td className="num text-right">{r.weight_pct.toFixed(1)}%</td><td className="num text-right">{r.target_pct.toFixed(0)}%</td>
-                    <td className={cx("num text-right", r.outside_band ? "font-medium text-warn" : "text-muted")} title={`band ±${r.band_pp.toFixed(1)} pp`}>{r.drift_pp > 0 ? "+" : ""}{r.drift_pp.toFixed(1)} pp</td></tr>
+                    <td className={cx("num text-right", r.outside_band ? "font-medium text-warn" : "text-muted")} title={`band ±${r.band_pp.toFixed(1)} pp`}>{r.drift_pp > 0 ? "+" : ""}{r.drift_pp.toFixed(1)} pp</td>
+                    <td className="num text-right text-muted">±{r.band_pp.toFixed(1)} pp{r.outside_band ? " · outside" : ""}</td></tr>
                 ))}</tbody>
               </Table>
             )}

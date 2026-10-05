@@ -70,7 +70,7 @@ export type Wealth = {
   allocation: {
     by_class: Record<string, number>; weights_financial: Record<string, number>; target: Record<string, number> | null;
     comparison: { label: string; weight_pct: number; target_pct: number; drift_pp: number; band_pp: number; outside_band: boolean }[];
-    message: string; rule: string; risk_appetite: string; own_target: boolean;
+    message: string; rule: string; risk_appetite: string; own_target: boolean; bands?: { abs_pp: number; rel_pct: number };
   };
   emergency: {
     liquid: number; monthly_expenses: number | null; months: number | null; target_months: number; target_why: string;

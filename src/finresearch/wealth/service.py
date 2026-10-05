@@ -25,6 +25,7 @@ from finresearch.db.models import (
     WealthValuation,
 )
 from finresearch.fincalc.numbers import format_inr
+from finresearch.portfolio import limits
 from finresearch.wealth import DISCLAIMER, PRIVACY, allocation, calc, household
 from finresearch.wealth.goals import DEFAULT_ASSUMPTIONS, assumptions_from
 
@@ -355,7 +356,8 @@ def overview(s: Session, today: date) -> dict[str, Any]:
     total_fin = sum(v for k, v in by_class.items() if k in allocation.FINANCIAL)
     w_fin = allocation.weights(by_class, allocation.FINANCIAL)
     target = allocation.glide_target(hh.age, prof.risk_appetite, f(hh.target_equity_pct))
-    comparison = allocation.compare(w_fin, target) if target and total_fin > 0 else []
+    abs_pp, rel_pct = limits.bands(prof)
+    comparison = allocation.compare(w_fin, target, abs_pp, rel_pct) if target and total_fin > 0 else []
     outside = [r for r in comparison if r["outside_band"]]
     if not target:
         alloc_msg = "Add your age (or your own equity target) to compare with a glide path."
@@ -516,7 +518,9 @@ def overview(s: Session, today: date) -> dict[str, Any]:
             "comparison": comparison,
             "message": alloc_msg,
             "rule": "Equity % = clamp(100 − age, 20, 80) ± 10 for low/high risk appetite; gold 10 %; rest "
-            "debt and cash. Bands: max(5 pp, 25 % of target). Rules of thumb, not advice.",
+            f"debt and cash. Bands: {limits.band_rule(abs_pp, rel_pct)}, set on your profile (the same band as "
+            "the Rebalance card). Rules of thumb, not advice.",
+            "bands": {"abs_pp": abs_pp, "rel_pct": rel_pct},
             "risk_appetite": prof.risk_appetite,
             "own_target": hh.target_equity_pct is not None,
         },
