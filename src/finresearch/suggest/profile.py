@@ -11,7 +11,7 @@ from __future__ import annotations
 from decimal import Decimal, InvalidOperation
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 
 Metric = Literal[
     "qib_times",  # combined NSE+BSE subscription, qualified institutional buyers (ex-anchor)
@@ -265,6 +265,10 @@ class Household(BaseModel):
     target_equity_pct: Decimal | None = Field(None, ge=0, le=100)  # None = the age rule of thumb
 
 
+# number fields with a default that the profile form may send back empty: blank = the default, never a 422
+DEFAULTABLE = ("rebalance_band_abs_pp", "rebalance_band_rel_pct", "fno_capital_inr", "fno_max_loss_pct", "fno_brokerage_per_order_inr")  # fmt: skip
+
+
 class Profile(BaseModel):
     capital_per_ipo_inr: Decimal = Field(Decimal(15000), ge=0)
     risk_appetite: Literal["low", "medium", "high"] = "medium"
@@ -302,6 +306,14 @@ class Profile(BaseModel):
     @classmethod
     def _strip_name(cls, v: str) -> str:
         return " ".join(v.split())
+
+    @field_validator(*DEFAULTABLE, mode="before")
+    @classmethod
+    def _blank_is_default(cls, v: Any, info: ValidationInfo) -> Any:
+        """A cleared number field (an empty string or null from the form) means "use the default" (#200)."""
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return cls.model_fields[info.field_name].default
+        return v
 
 
 # personal financial data: never sent to an LLM

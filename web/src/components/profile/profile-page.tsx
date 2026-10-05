@@ -54,6 +54,9 @@ const inWords = (v: string) => {
 };
 
 const isNum = (v: string | null | undefined) => v != null && /^\d+(\.\d+)?$/.test(v.trim());
+// number fields where an empty box means "use the default" (#200): sent as null, the API fills the default
+const DEFAULTABLE = ["rebalance_band_abs_pp", "rebalance_band_rel_pct", "fno_capital_inr", "fno_max_loss_pct", "fno_brokerage_per_order_inr"] as const;
+const blank = (v: string | null | undefined) => v == null || v.trim() === "";
 
 function Label({ children, tip }: { children: ReactNode; tip: ReactNode }) {
   return (
@@ -95,15 +98,18 @@ export function ProfilePage() {
     p.holdings.some((h) => !h.symbol.trim()) ? "Every holding needs a symbol (or remove the empty row)." :
     p.holdings.some((h) => h.value_inr && !isNum(h.value_inr)) ? "Holding values must be numbers of rupees." :
     (p.display_name ?? "").length > 60 ? "Your name can be at most 60 characters." :
-    p.fno_capital_inr != null && !isNum(p.fno_capital_inr) ? "F&O capital must be a number of rupees (0 = not set)." :
-    p.fno_max_loss_pct != null && (!isNum(p.fno_max_loss_pct) || Number(p.fno_max_loss_pct) <= 0 || Number(p.fno_max_loss_pct) > 100) ? "Max loss per strategy must be a percentage above 0 and at most 100." :
-    p.fno_brokerage_per_order_inr != null && (!isNum(p.fno_brokerage_per_order_inr) || Number(p.fno_brokerage_per_order_inr) > 1000) ? "Brokerage per order must be between ₹0 and ₹1,000." :
+    !blank(p.rebalance_band_abs_pp) && (!isNum(p.rebalance_band_abs_pp) || Number(p.rebalance_band_abs_pp) < 0.5 || Number(p.rebalance_band_abs_pp) > 50) ? "Band: absolute must be between 0.5 and 50 pp (empty = 5)." :
+    !blank(p.rebalance_band_rel_pct) && (!isNum(p.rebalance_band_rel_pct) || Number(p.rebalance_band_rel_pct) > 100) ? "Band: relative must be between 0 and 100 % (empty = 25)." :
+    !blank(p.fno_capital_inr) && !isNum(p.fno_capital_inr) ? "F&O capital must be a number of rupees (0 = not set)." :
+    !blank(p.fno_max_loss_pct) && (!isNum(p.fno_max_loss_pct) || Number(p.fno_max_loss_pct) <= 0 || Number(p.fno_max_loss_pct) > 100) ? "Max loss per strategy must be a percentage above 0 and at most 100." :
+    !blank(p.fno_brokerage_per_order_inr) && (!isNum(p.fno_brokerage_per_order_inr) || Number(p.fno_brokerage_per_order_inr) > 1000) ? "Brokerage per order must be between ₹0 and ₹1,000." :
     prefs.watch?.quiet_start && prefs.watch.quiet_start === prefs.watch.quiet_end ? "Quiet hours must start and end at different times." : null;
 
   const save = async () => {
     setSaving(true);
     try {
-      const body = { ...p, holdings: p.holdings.map((h) => ({ ...h, value_inr: h.value_inr || null, sector: h.sector || null })) };
+      const cleared = Object.fromEntries(DEFAULTABLE.filter((k) => blank(p[k])).map((k) => [k, null]));
+      const body = { ...p, ...cleared, holdings: p.holdings.map((h) => ({ ...h, value_inr: h.value_inr || null, sector: h.sector || null })) };
       const saved = withDefaults(await api<Profile>("/api/profile", { method: "PUT", body: JSON.stringify(body) }));
       commit(saved);
       applyReduceMotion(!!saved.preferences?.reduce_motion);
@@ -323,14 +329,14 @@ export function ProfilePage() {
               </Labelled>
               <Labelled label={<Label tip="Rebalancing band, absolute part: a class is outside when its drift exceeds this many percentage points (or the relative band, whichever is tighter).">Band: absolute</Label>} hint="pp (default 5)">
                 <div className="relative w-28">
-                  <input aria-label="Rebalancing band, absolute, in percentage points" className={cx(inputClass, "num w-full pr-8")} inputMode="decimal" value={p.rebalance_band_abs_pp ?? "5"}
+                  <input aria-label="Rebalancing band, absolute, in percentage points" className={cx(inputClass, "num w-full pr-8")} inputMode="decimal" value={p.rebalance_band_abs_pp ?? "5"} placeholder="5"
                     onChange={(e) => set("rebalance_band_abs_pp", e.target.value.replace(/[%\s]/g, ""))} />
                   <span className="pointer-events-none absolute inset-y-0 right-3 grid place-items-center text-sm text-muted">pp</span>
                 </div>
               </Labelled>
               <Labelled label={<Label tip="Rebalancing band, relative part: a share of the target (25 % of a 10 % target = 2.5 pp). The tighter of the two bands applies; a 0 % target uses the absolute band only. 0 = absolute band only (the 5/25 rule of thumb).">Band: relative</Label>} hint="% of the target (default 25)">
                 <div className="relative w-28">
-                  <input aria-label="Rebalancing band, relative, in percent of the target" className={cx(inputClass, "num w-full pr-7")} inputMode="decimal" value={p.rebalance_band_rel_pct ?? "25"}
+                  <input aria-label="Rebalancing band, relative, in percent of the target" className={cx(inputClass, "num w-full pr-7")} inputMode="decimal" value={p.rebalance_band_rel_pct ?? "25"} placeholder="25"
                     onChange={(e) => set("rebalance_band_rel_pct", e.target.value.replace(/[%\s]/g, ""))} />
                   <span className="pointer-events-none absolute inset-y-0 right-3 grid place-items-center text-sm text-muted">%</span>
                 </div>
@@ -348,13 +354,13 @@ export function ProfilePage() {
                   hint={inWords(p.fno_capital_inr) ? `= ₹${inWords(p.fno_capital_inr)}` : "0 = not set"}>
                   <div className="relative">
                     <span className="pointer-events-none absolute inset-y-0 left-3 grid place-items-center text-sm text-muted">₹</span>
-                    <input aria-label="F&O capital in rupees" className={cx(inputClass, "num w-full pl-7")} inputMode="decimal" value={p.fno_capital_inr}
+                    <input aria-label="F&O capital in rupees" className={cx(inputClass, "num w-full pl-7")} inputMode="decimal" value={p.fno_capital_inr} placeholder="0"
                       onChange={(e) => set("fno_capital_inr", e.target.value.replace(/[,\s₹]/g, ""))} />
                   </div>
                 </Labelled>
                 <Labelled label={<Label tip="The most one strategy may lose, as a share of your F&O capital. The research roadmap suggests 2% or less.">Max loss per strategy</Label>} hint="% of F&O capital">
                   <div className="relative w-28">
-                    <input aria-label="Max loss per strategy in percent" className={cx(inputClass, "num w-full pr-7")} inputMode="decimal" value={p.fno_max_loss_pct ?? "2"}
+                    <input aria-label="Max loss per strategy in percent" className={cx(inputClass, "num w-full pr-7")} inputMode="decimal" value={p.fno_max_loss_pct ?? "2"} placeholder="2"
                       onChange={(e) => set("fno_max_loss_pct", e.target.value.replace(/[%\s]/g, ""))} />
                     <span className="pointer-events-none absolute inset-y-0 right-3 grid place-items-center text-sm text-muted">%</span>
                   </div>
@@ -362,7 +368,7 @@ export function ProfilePage() {
                 <Labelled label={<Label tip="Your broker's flat charge per executed order. Used in the cost breakdown (statutory charges come from a dated table).">Brokerage per order</Label>} hint="₹ per executed order">
                   <div className="relative w-28">
                     <span className="pointer-events-none absolute inset-y-0 left-3 grid place-items-center text-sm text-muted">₹</span>
-                    <input aria-label="Brokerage per order in rupees" className={cx(inputClass, "num w-full pl-7")} inputMode="decimal" value={p.fno_brokerage_per_order_inr ?? "20"}
+                    <input aria-label="Brokerage per order in rupees" className={cx(inputClass, "num w-full pl-7")} inputMode="decimal" value={p.fno_brokerage_per_order_inr ?? "20"} placeholder="20"
                       onChange={(e) => set("fno_brokerage_per_order_inr", e.target.value.replace(/[,\s₹]/g, ""))} />
                   </div>
                 </Labelled>

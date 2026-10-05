@@ -174,6 +174,19 @@ def test_profile_round_trip_and_validation(api):
     assert api.put("/api/profile", json={**p, "category": "whale"}).status_code == 422
 
 
+def test_cleared_band_and_fno_fields_save_as_the_defaults(api):
+    """#200: clearing a band (or F&O) field on /profile sent "" and the save failed with a 422; blank = the default."""
+    p = api.get("/api/profile").json()
+    blank = {**p, "rebalance_band_abs_pp": "", "rebalance_band_rel_pct": None, "fno_capital_inr": "",
+             "fno_max_loss_pct": " ", "fno_brokerage_per_order_inr": None}  # fmt: skip
+    r = api.put("/api/profile", json=blank)
+    assert r.status_code == 200, r.text
+    got = r.json()
+    assert (got["rebalance_band_abs_pp"], got["rebalance_band_rel_pct"]) == ("5", "25")  # the 5/25 rule of thumb
+    assert (got["fno_capital_inr"], got["fno_max_loss_pct"], got["fno_brokerage_per_order_inr"]) == ("0", "2", "20")
+    assert api.put("/api/profile", json={**p, "rebalance_band_abs_pp": "0.1"}).status_code == 422  # still range-checked
+
+
 def test_probability_rule_threshold_is_range_checked_on_save_and_repaired_on_load(api, caplog):
     """Audit follow-up: `p_listing_gain < 60` (meant as 60 %) made every IPO SKIP, since P is a fraction 0..1."""
     from finresearch.db import session_scope
