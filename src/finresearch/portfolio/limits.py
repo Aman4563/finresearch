@@ -8,7 +8,7 @@
 
 2. Rebalancing band (`band_pp`): a class is outside its band when |weight - target| exceeds the TIGHTER of an
    absolute band (default ±5 pp) and a relative band (default 25 % of the target), the "5/25" rule of thumb [W]
-   (Swedroe's 5/25 rule; Vanguard's example rebalances at a 5-point drift: Jaconetti, Kinniry & Zilbering, "Best
+   (Vanguard's example rebalances at a 5-point drift: Jaconetti, Kinniry & Zilbering, "Best
    practices for portfolio rebalancing", Vanguard 2010, and
    https://investor.vanguard.com/investor-resources-education/portfolio-management/rebalancing-your-portfolio).
    A 0 % target (or a relative band of 0) uses the absolute band only. Both widths are settable on the profile
