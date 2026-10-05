@@ -110,7 +110,7 @@ def build_events(data: dict[str, dict[str, Any]], members: Callable[[date], froz
                 continue
             rsue, _ = S.sue(rev_q, end, per_share=False)
             i = sessions.index(t0)
-            span = sessions[max(0, i - 1): i + DRIFT[1] + 1]
+            span = sessions[max(0, i - 1) : i + DRIFT[1] + 1]
             bad = any(span[0] <= a <= span[-1] for a in anomalies)
             reaction = None if bad else S.abnormal_return(closes, market, sessions, t0, *REACTION)
             drift = None if bad else S.abnormal_return(closes, market, sessions, t0, *DRIFT)
@@ -141,3 +141,169 @@ def assign_tradable(events: list[dict[str, Any]]) -> None:
         ref = [x["sue"] for x in events if lo <= x["t0"] < e["t0"]]
         e["breakpoint"] = statistics.quantiles(ref, n=10)[8] if len(ref) >= MIN_REFERENCE else None
         e["trade"] = e["breakpoint"] is not None and e["sue"] >= e["breakpoint"]
+
+
+def _est(e: S.Estimate | None) -> dict[str, Any] | None:
+    return None if e is None else {"value": e.value, "se": e.se, "t": e.t, "n": e.n, "clusters": e.clusters}
+
+
+def spread(events: list[dict[str, Any]], dec: str = "decile", y: str = "drift") -> S.Estimate | None:
+    """mean y of the top decile minus the bottom decile, clustered by the month of t0."""
+    hi = [e for e in events if e.get(dec) == 10 and e.get(y) is not None]
+    lo = [e for e in events if e.get(dec) == 1 and e.get(y) is not None]
+    if len(hi) < 2 or len(lo) < 2:
+        return None
+    return S.clustered_diff(
+        [e[y] for e in hi], [e["month"] for e in hi], [e[y] for e in lo], [e["month"] for e in lo]
+    )
+
+
+def _mean(xs: list[float]) -> float | None:
+    return sum(xs) / len(xs) if xs else None
+
+
+def evaluate(events: list[dict[str, Any]]) -> dict[str, Any]:
+    assign_season_deciles(events)
+    assign_season_deciles(events, "revenue_sue", "revenue_decile")
+    assign_tradable(events)
+    seasons = sorted({e["quarter_end"] for e in events})
+    halves = {"first": set(seasons[: len(seasons) // 2]), "second": set(seasons[len(seasons) // 2 :])}
+    primary = spread(events)
+    by_half = {h: spread([e for e in events if e["quarter_end"] in ss]) for h, ss in halves.items()}
+    trades = [e for e in events if e["trade"] and e["drift"] is not None]
+    for e in trades:
+        e["net"] = e["drift"] - ROUND_TRIP
+    tradable = (
+        S.clustered_mean([e["net"] for e in trades], [e["month"] for e in trades])
+        if len(trades) > 1
+        else None
+    )
+    trade_halves = {
+        h: _mean([e["net"] for e in trades if e["quarter_end"] in ss]) for h, ss in halves.items()
+    }
+    primary_pass = bool(primary and primary.value > 0 and primary.t is not None and primary.t > T_BAR)
+    tradable_pass = bool(tradable and tradable.value > 0 and tradable.t is not None and tradable.t > T_BAR
+                         and all(v is not None and v > 0 for v in trade_halves.values()))  # fmt: skip
+    deciles = []
+    for k in range(1, 11):
+        es = [e for e in events if e.get("decile") == k]
+        deciles.append({"decile": k, "n": len(es),
+                        "mean_sue": _mean([e["sue"] for e in es]),
+                        "drift": _mean([e["drift"] for e in es if e["drift"] is not None]),
+                        "reaction": _mean([e["reaction"] for e in es if e["reaction"] is not None])})  # fmt: skip
+    sues = sorted(e["sue"] for e in events)
+    return {
+        "seasons": seasons, "halves": {h: sorted(ss) for h, ss in halves.items()},
+        "n_events": len(events), "n_with_drift": sum(e["drift"] is not None for e in events),
+        "n_stocks": len({e["symbol"] for e in events}),
+        "primary": _est(primary), "primary_by_half": {h: _est(v) for h, v in by_half.items()},
+        "reaction_spread": _est(spread(events, y="reaction")),
+        "revenue_spread": _est(spread(events, "revenue_decile")),
+        "tradable": _est(tradable), "tradable_by_half": trade_halves, "n_trades": len(trades),
+        "round_trip_cost": ROUND_TRIP, "deciles": deciles,
+        "passes": {"primary": primary_pass, "tradable": tradable_pass, "promote": primary_pass and tradable_pass},
+        "reference": {"n": len(sues), "cutoffs": statistics.quantiles(sues, n=10) if len(sues) >= 10 else [],
+                      "period": f"{seasons[0]}..{seasons[-1]}" if seasons else None,
+                      "universe": "point-in-time Nifty 50"},
+    }  # fmt: skip
+
+
+def _pp(x: float | None) -> str:
+    return "—" if x is None else f"{x * 100:+.2f} pp"
+
+
+def _t(e: dict[str, Any] | None) -> str:
+    return "—" if not e or e["t"] is None else f"{e['t']:.2f}"
+
+
+def render(out: dict[str, Any]) -> str:
+    r = out["results"]
+    cov = out["coverage"]
+    p, tr = r["primary"], r["tradable"]
+    lines = [
+        "# Earnings surprise (SUE) and post-announcement drift: results", "",
+        f"Generated {out['generated']} by `finresearch.evals.earnings_surprise`. Pre-registration: `PREREG.md`; "
+        "changes made before any outcome was computed: `ADDENDUM.md` (re-uploaded broadcast dates; NIFTYBEES as the "
+        "benchmark).", "",
+        f"**Verdict: {'PASSES' if r['passes']['promote'] else 'does not pass'}.** Primary test "
+        f"{'passes' if r['passes']['primary'] else 'fails'}; tradable test "
+        f"{'passes' if r['passes']['tradable'] else 'fails'}. "
+        + ("SUE may enter the stock signal in a separate PR." if r["passes"]["promote"] else
+           "SUE stays informational (\"experimental — not part of the signal\"); signals/stock.py is unchanged."), "",
+        "## Coverage", "",
+        f"- Stocks harvested: {cov['harvested']} of {cov['universe']} point-in-time Nifty 50 members since Apr-2021 "
+        f"(not harvested: {', '.join(cov['missing']) or 'none'}).",
+        f"- Events with an EPS SUE: {r['n_events']} from {r['n_stocks']} stocks over {len(r['seasons'])} seasons "
+        f"({r['seasons'][0] if r['seasons'] else '—'} to {r['seasons'][-1] if r['seasons'] else '—'}); "
+        f"with a complete [+2,+60] window: {r['n_with_drift']}.",
+        "- Candidates dropped: " + "; ".join(f"{k}: {v}" for k, v in sorted(out["drops"].items())) + ".", "",
+        "## Tests (bar: t > 1.96)", "",
+        "| Test | Estimate | Clustered SE | t | Events | Months | Passes |", "|---|---|---|---|---|---|---|",
+    ]  # fmt: skip
+    for name, e, ok in (("Primary: drift [+2,+60] D10 - D1 (gross)", p, r["passes"]["primary"]),
+                        ("Tradable: long top decile, net of round trip", tr, r["passes"]["tradable"])):  # fmt: skip
+        lines.append(f"| {name} | {_pp(e and e['value'])} | {_pp(e and e['se'])} | {_t(e)} | "
+                     f"{e['n'] if e else 0} | {e['clusters'] if e else 0} | {'yes' if ok else 'no'} |")  # fmt: skip
+    lines += ["", f"Round trip cost: {r['round_trip_cost'] * 100:.3f} % (evals.stock_backtest COST_BUY + COST_SELL). "
+              f"Tradable trades: {r['n_trades']}; mean net by half: "
+              + ", ".join(f"{h} {_pp(v)}" for h, v in r["tradable_by_half"].items()) + ".", "",
+              "## Descriptive (not gated)", "",
+              "| Half | Seasons | D10 - D1 drift | t |", "|---|---|---|---|"]  # fmt: skip
+    for h, e in r["primary_by_half"].items():
+        ss = r["halves"][h]
+        lines.append(
+            f"| {h} | {ss[0] if ss else '—'} to {ss[-1] if ss else '—'} | {_pp(e and e['value'])} | {_t(e)} |"
+        )
+    rs, vs = r["reaction_spread"], r["revenue_spread"]
+    lines += ["", f"- [0,+1] reaction D10 - D1: {_pp(rs and rs['value'])} (t {_t(rs)}).",
+              f"- Revenue SUE, drift D10 - D1: {_pp(vs and vs['value'])} (t {_t(vs)}).", "",
+              "| SUE decile | Events | Mean SUE | Mean [0,+1] | Mean [+2,+60] |", "|---|---|---|---|---|"]  # fmt: skip
+    for d in r["deciles"]:
+        ms = "—" if d["mean_sue"] is None else f"{d['mean_sue']:+.2f}"
+        lines.append(f"| {d['decile']} | {d['n']} | {ms} | {_pp(d['reaction'])} | {_pp(d['drift'])} |")
+    lines += ["", "## Limits", ""] + [f"- {x}" for x in out["limits"]]
+    return "\n".join(lines) + "\n"
+
+
+LIMITS = [
+    "Universe: the point-in-time Nifty 50 only (large caps, about 50 events a season, so a decile is about five "
+    "stocks). Post-earnings drift is usually reported to be stronger in small caps; NIFTY 500 was not harvested.",
+    "History: NSE serves results XBRL from about the Sep-2018 quarter (older filings are HTML and were not parsed), "
+    "so the sample is about 19 seasons and the test has low power (PREREG: minimum detectable effect ≈ 4-6 pp).",
+    "SUE is a seasonal random walk on basic EPS as first reported; no analyst consensus is available. One-off items "
+    "(exceptional gains, impairments) are inside EPS and count as surprise.",
+    "Announcement time is NSE's broadcast time. A re-upload past the legal deadline is detected and dropped "
+    "(ADDENDUM 1); one inside the deadline is not detectable and would make t0 late.",
+    "Returns are market-adjusted (no beta) price returns; dividends are excluded from stocks while NIFTYBEES tracks "
+    "the index's total return (ADDENDUM 2), a ≈ 0.3 pp drag on every 60-session window that cancels in D10 - D1.",
+    "Standard errors are clustered by the calendar month of t0; windows that overlap across months are only "
+    "partly covered by that clustering.",
+]
+
+
+def main() -> None:
+    from finresearch.evals.earnings_harvest import universe
+
+    data = load()
+    if MARKET not in data:
+        raise SystemExit(
+            f"{MARKET} (the benchmark) is not harvested yet: run finresearch.evals.earnings_harvest"
+        )
+    events, drops = build_events(data, membership())
+    results = evaluate(events)
+    uni = [s for s in universe() if s != MARKET]
+    out = {
+        "generated": date.today().isoformat(),
+        "coverage": {"universe": len(uni), "harvested": sum(s in data for s in uni),
+                     "missing": [s for s in uni if s not in data]},
+        "drops": drops, "results": results, "limits": LIMITS,
+        "events": [{k: (round(v, 6) if isinstance(v, float) else v) for k, v in e.items()} for e in events],
+    }  # fmt: skip
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    (OUT_DIR / "results.json").write_text(json.dumps(out, indent=1) + "\n")
+    (OUT_DIR / "RESULTS.md").write_text(render(out))
+    print((OUT_DIR / "RESULTS.md").read_text()[:1500])
+
+
+if __name__ == "__main__":
+    main()
