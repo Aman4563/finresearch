@@ -532,8 +532,12 @@ def _call_of(f: Forecast) -> dict[str, Any] | None:
     status = (f.inputs or {}).get("call_status")
     if stock.CALLS_ENABLED and status != "informational":
         return None
-    return {"status": "informational", "label": stock.INFORMATIONAL_LABEL, "composite_action": f.action,
-            "tilt": stock.tilt(f.score) if f.score is not None else None}
+    return {
+        "status": "informational",
+        "label": stock.INFORMATIONAL_LABEL,
+        "composite_action": f.action,
+        "tilt": stock.tilt(f.score) if f.score is not None else None,
+    }
 
 
 _LEGACY_IPO_BAND_METHOD = "empirical base rate by final QIB band × regime ("
