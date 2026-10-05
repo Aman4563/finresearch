@@ -35,7 +35,7 @@ export type CheckStatus = "ok" | "warn" | "block" | "info" | "unknown";
 export type CheckItem = { key: string; label: string; status: CheckStatus; value: unknown; detail: string; source: string } & Record<string, unknown>;
 export type Checklist = {
   side: "buy" | "sell"; instrument: string; name: string; holding_id: number | null; asset_type: string;
-  quantity: number; price: number; value: number | null; day: string; status: "ok" | "warn" | "block"; items: CheckItem[]; note: string;
+  quantity: number; price: number; value: number | null; day: string; status: "ok" | "warn" | "block" | "incomplete"; items: CheckItem[]; incomplete?: string[]; note: string;
 };
 
 export type HoldingLite = { id: number; name: string; account: string; asset_type: string; units: number | null; price: number | null; closed: boolean; nse_symbol?: string | null;

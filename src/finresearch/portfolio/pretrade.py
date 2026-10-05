@@ -416,6 +416,16 @@ def _informational_item(
                 informational=True)  # fmt: skip
 
 
+def overall_status(items: list[dict[str, Any]]) -> str:
+    """block > warn > incomplete > ok. A check that could not be done ("unknown": data unavailable, no signal yet)
+    makes the checklist incomplete: "nothing flagged" would imply it was checked and found clean."""
+    statuses = {i["status"] for i in items}
+    for s in ("block", "warn"):
+        if s in statuses:
+            return s
+    return "incomplete" if "unknown" in statuses else "ok"
+
+
 def red_flag_item(key: str, asset_type: str) -> dict[str, Any]:
     if RED_FLAGS is not None:
         flags = RED_FLAGS(key, asset_type)
@@ -492,9 +502,9 @@ async def checklist(s: Session, p: Plan, *, live_signal: SignalFetch | None = No
     items.append(red_flag_item(_flag_key(s, key, h), p.asset_type))
     items.append(thesis_item(s, p, key, h))
     items.append(activity_item(s, p.day))
-    worst = "block" if any(i["status"] == "block" for i in items) else \
-        "warn" if any(i["status"] == "warn" for i in items) else "ok"  # fmt: skip
+    worst = overall_status(items)
     return {"side": p.side, "instrument": key, "name": p.name, "holding_id": h.id if h else None,
             "asset_type": p.asset_type, "quantity": float(p.quantity), "price": float(p.price),
             "value": _f(p.quantity * p.price), "day": p.day.isoformat(), "status": worst, "items": items,
+            "incomplete": [i["label"] for i in items if i["status"] == "unknown"],
             "note": "A checklist, not advice: it shows what the trade does; the decision is yours."}  # fmt: skip
