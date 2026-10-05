@@ -245,8 +245,9 @@ async def industry_peers(
     """For each held/watched row outside the base: candidates from the broader list whose sector (the list's
     `Industry` column, NSE's sector level) matches the row's sector or macro, at most BROAD_POOL_MAX of them; each
     candidate's NSE classification and market cap from a quote cached on disk for CLASS_TTL_DAYS; then the finest
-    level shared (fincalc.peers.choose_level) and the BROAD_PER_STOCK nearest by market cap. Nothing is requested
-    when `owns` is empty."""
+    level shared (fincalc.peers.choose_level; none when only the macro level is shared) and the BROAD_PER_STOCK
+    nearest by market cap. The pool is cut at BROAD_POOL_MAX in the list's (alphabetical) order. Nothing is
+    requested when `owns` is empty."""
     out: dict[str, Any] = {"symbols": [], "quotes": 0, "errors": []}
     if not owns:
         return out
@@ -270,16 +271,17 @@ async def industry_peers(
             c = cache.get(sym)
             if not c or c.get("read", "") < fresh_after:
                 try:
-                    c = _classify(sym, await eq.nse.quote(sym), today)
-                except Exception as e:
+                    c = cache[sym] = _classify(sym, await eq.nse.quote(sym), today)
+                except Exception as e:  # recorded; an older cached classification is still used
                     out["errors"].append(f"{sym}: {type(e).__name__}: {e}"[:200])
-                    continue
                 finally:
                     out["quotes"] += 1
                     await asyncio.sleep(PAUSE_S)
-                cache[sym] = c
-            cands.append(c)
-        _, same = P.choose_level(own, cands, own["symbol"])
+            if c:
+                cands.append(c)
+        level, same = P.choose_level(own, cands, own["symbol"])
+        if level == "macro":  # too broad to be worth full rows ("Consumer Discretionary"); the base covers it
+            continue
         for c in P.nearest_by_mcap(same, own["metrics"]["market_cap"]["value"], BROAD_PER_STOCK):
             chosen[c["symbol"]] = None
     path = _class_path()
@@ -340,7 +342,7 @@ async def build(eq: Any, today: date, symbols: list[str] | None = None,
     base = set(syms)
     extras = [x for x in dict.fromkeys(t.strip().upper() for t in tracked or []) if x and x not in base]
     await _fetch_rows(eq, extras, today, old, rows, failed, "tracked")
-    broad = await industry_peers(eq, today, [rows[x] for x in extras if x in rows and not rows[x].get("stale")],
+    broad = await industry_peers(eq, today, [rows[x] for x in extras if x in rows],
                                  exclude=set(rows))  # fmt: skip
     await _fetch_rows(eq, broad["symbols"], today, old, rows, failed, "industry_peer")
     return {"version": STORE_VERSION, "as_of": today.isoformat(), "generated_at": datetime.now(UTC).isoformat(),
