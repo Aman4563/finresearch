@@ -889,4 +889,4 @@ These are deterministic, saved as baseline claims with `fincalc:` citations. Non
   - `past_issues`: 1,466 rows, 462 EQ listings.
   - `ipo-detail` returned `activeCat` for LAURUSLABS (2016), PRINCEPIPE (2019), INNOVACAP (2023) and ELEVATE (2026).
   - INNOVACAP listing-day OHLC was returned.
-- **Screenshots:** in `scratchpad/gap/*.png`.
+- **Screenshots:** taken during the review, not kept in the repository.

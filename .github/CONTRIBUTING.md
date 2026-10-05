@@ -2,7 +2,7 @@
 
 By participating you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md). Report security problems privately as described in [SECURITY.md](SECURITY.md), never in a public issue.
 
-FinResearch is a personal, local-first research engine that produces deep, fact-checked investment research. It starts with Indian IPOs and will extend to stocks, mutual funds, bonds and F&O.
+FinResearch is a personal, local-first investment research app for Indian markets: fact-checked research reports on IPOs, stocks, mutual funds and bonds, live market data and signals, and a local portfolio and tax tracker.
 
 Most changes touch one of these areas:
 - the Claude Bridge (`bridge/`);
@@ -10,13 +10,16 @@ Most changes touch one of these areas:
 - data sources (`adapters/`);
 - calculations (`fincalc/`);
 - the MCP tools and claim ledger (`mcp_server/`, `db/`);
-- later, the research agents and the app.
+- the research agents and pipeline (`agents/`, `orchestrator/`, `verify/`);
+- signals and accuracy (`signals/`, `evals/`);
+- the portfolio, wealth and alerts (`portfolio/`, `wealth/`, `alerts/`);
+- the app (`api/`, `web/`).
 
 This guide covers the workflow, the gates a change must pass, and the constraints that are easy to break.
 
 ## Getting set up
 
-See **Setup** in the [README](../README.md). You need:
+See **Quick start** in the [README](../README.md) and [docs/USAGE.md](../docs/USAGE.md). You need:
 - macOS with Homebrew `postgresql@17`, `pgvector`, `tesseract` and `poppler`;
 - Ollama with the models listed there;
 - `uv`;

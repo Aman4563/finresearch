@@ -522,7 +522,7 @@ def _trade_row(
 # --------------------------------------------------------------------------- broker holdings statements
 # A holdings statement is a snapshot (instrument, quantity, average price) with no dates: it feeds the broker-baseline
 # merge rules (connectors.merge), exactly like a holdings API response. Column names are matched loosely (normalised,
-# first match wins) because brokers rename them; see docs/dev/BROKER_SETUP.md for how to download each.
+# first match wins) because brokers rename them; see docs/BROKER_SETUP.md for how to download each.
 #   Zerodha Console → Portfolio → Holdings → download (XLSX): Symbol, ISIN, Sector, Quantity Available, Quantity
 #     Discrepant, Quantity Long Term, Quantity Pledged (Margin), Quantity Pledged (Loan), Average Price, Previous
 #     Closing Price, Unrealized P&L ... [U: from open-source importers and Zerodha support pages, not a raw file]
