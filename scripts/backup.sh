@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Nightly backup of the FinResearch database (docs/dev/BACKUPS.md; roadmap §E Phase 1 item 6).
+# Nightly backup of the FinResearch database (docs/BACKUPS.md; roadmap §E Phase 1 item 6).
 #
 # Writes data/backups/finresearch-<UTC timestamp>.dump (pg_dump custom format, compressed) plus a manifest of the
 # document files under data/docs (path, bytes), checks the dump with pg_restore --list, and keeps the newest $KEEP

@@ -2,7 +2,7 @@
 
 See `base` (the contract and the read-only HTTP layer), `merge` (how broker data joins the portfolio without double
 counting or overwriting), `sync` (one sync and the monitor's daily schedule), `store` (local, masked credentials),
-`inbox` (CAS/tradebook/holdings files dropped into a folder), and docs/dev/BROKER_SETUP.md for the per-broker setup.
+`inbox` (CAS/tradebook/holdings files dropped into a folder), and docs/BROKER_SETUP.md for the per-broker setup.
 Research and sources: the PR's brokers-research notes (official API docs, SEBI's 2025 retail API framework).
 """
 
@@ -18,7 +18,7 @@ _REGISTRY = {
     "dhan": "dhan:DhanConnector",
 }
 # Not implemented: Angel One SmartAPI and Fyers (their docs could not be read to verify the response fields: see
-# docs/dev/BROKER_SETUP.md), and the RBI Account Aggregator (data flows only to regulated FIUs, not individuals).
+# docs/BROKER_SETUP.md), and the RBI Account Aggregator (data flows only to regulated FIUs, not individuals).
 INBOX_KEY = "cas_inbox"
 
 

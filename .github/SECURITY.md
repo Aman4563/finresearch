@@ -15,6 +15,7 @@ Only the latest release on `main` is supported.
   - gitleaks runs in pre-commit and CI, and GitHub secret scanning with push protection is enabled.
   - Agent sandboxes block credential locations.
 - **Claude is used only through the official Claude Code CLI or Agent SDK**, under the operator's own login and for their own use. The project never extracts OAuth tokens and never re-exposes a subscription as an API.
-- **Local services bind to `127.0.0.1` only.** That covers the database, the local model server and the MCP server, which uses stdio.
+- **Local services bind to `127.0.0.1` only.** That covers the API, the web app, the database, the local model server and the MCP server, which uses stdio.
 - **Fetched web content is untrusted data, never instructions.** Agents that read news, broker notes or grey-market sites get only the tools their role needs, never unrestricted shell access. Every figure in a report must trace to a cited primary source that is checked deterministically.
+- **Personal financial data never leaves the machine.** Portfolio, statements, AIS and journal data stay in the local database and `data/`, are never sent to a model, and statement passwords are used once and never stored. Broker connections are read-only and never place orders.
 - **Downloaded documents and research data stay out of the repository.** They are kept under the gitignored `data/` directory.
