@@ -63,7 +63,9 @@ def _stored_text() -> str:
     with session_scope() as s:
         rows = s.execute(text("SELECT * FROM portfolio_ais")).mappings().all()
         imports = s.execute(text("SELECT * FROM portfolio_import")).mappings().all()
-    return json.dumps([dict(r) for r in [*rows, *imports]], default=str)
+        logs = s.execute(text("SELECT * FROM broker_sync_log")).mappings().all()
+        conns = s.execute(text("SELECT * FROM broker_connection")).mappings().all()
+    return json.dumps([dict(r) for r in [*rows, *imports, *logs, *conns]], default=str)
 
 
 def test_json_import_dry_run_then_store_and_check(client):
@@ -135,21 +137,28 @@ def test_inbox_imports_ais_json_and_leaves_ais_pdf_waiting(client):
 
     now = datetime(2026, 10, 5, 12, tzinfo=UTC)
     root = ensure_dirs()
-    (root / "ais_2025-26.json").write_bytes(FIX.read_bytes())
-    (root / "AIS_2025-26.pdf").write_bytes(_pdf(AIS_PDF_LINES, PDF_PW))
+    (root / "AIS_ABCDE1234F_2025-26.json").write_bytes(
+        FIX.read_bytes()
+    )  # the PAN in a file name is never logged
+    (root / "AIS_ABCDE1234F_2025-26.pdf").write_bytes(_pdf(AIS_PDF_LINES, PDF_PW))
+    (root / "cas_appraisal.pdf").write_bytes(b"%PDF-1.4 synthetic")  # "ais" inside a word: not an AIS
     (root / "other.json").write_text('{"hello": "world"}')
     old = now.timestamp() - 60
     for p in root.iterdir():
         if p.is_file():
             os.utime(p, (old, old))
     by = {f["file"]: f for f in scan(now=now)["files"]}
-    assert (
-        by["ais_2025-26.json"]["status"] == "imported" and by["ais_2025-26.json"]["kind"] == "AIS FY 2025-26"
-    )
-    assert by["AIS_2025-26.pdf"]["status"] == "waiting" and (root / "AIS_2025-26.pdf").exists()
+    got = by["AIS_x_2025-26.json"]
+    assert got["status"] == "imported" and got["kind"] == "AIS FY 2025-26"
+    assert by["AIS_x_2025-26.pdf"]["status"] == "waiting" and (root / "AIS_ABCDE1234F_2025-26.pdf").exists()
+    assert "AIS" not in by["cas_appraisal.pdf"].get(
+        "note", ""
+    )  # handled as a CAS (waits for the CAS password)
     assert by["other.json"]["status"] == "failed"
     assert [s["fy"] for s in client.get("/api/portfolio/ais").json()["statements"]] == [2026]
-    assert (root / "processed" / "ais_2025-26.json").exists()  # the user's own file moves; no copy is made
+    assert (
+        root / "processed" / "AIS_ABCDE1234F_2025-26.json"
+    ).exists()  # the user's own file moves; no copy is made
     assert not (root.parent / "imports").exists() or not any((root.parent / "imports").iterdir())
     for s in SECRETS:
         assert s not in _stored_text()

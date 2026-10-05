@@ -42,9 +42,9 @@ FORMAT_NOTE = ("AIS format unverified: the JSON layout is read by field names re
                "published schema; check any row marked only-in-AIS against the AIS on the portal.")  # fmt: skip
 CATEGORIES = ("dividend", "interest", "sale", "purchase", "off_market")
 
-_PAN = re.compile(r"\b[A-Z]{5}\d{4}[A-Z]\b", re.I)
-_TAN = re.compile(r"\b[A-Z]{4}\d{5}[A-Z]\b")
-_ISIN = re.compile(r"\bIN[EF0-9][A-Z0-9]{8}\d\b")
+_PAN = re.compile(r"(?<![A-Za-z0-9])[A-Z]{5}\d{4}[A-Z](?![A-Za-z0-9])", re.I)  # also inside "AIS_<PAN>_..."
+_TAN = re.compile(r"(?<![A-Za-z0-9])[A-Z]{4}\d{5}[A-Z](?![A-Za-z0-9])")
+_ISIN = re.compile(r"(?<![A-Za-z0-9])IN[EF0-9][A-Z0-9]{8}\d(?![A-Za-z0-9])")
 _EMAIL = re.compile(r"\S+@\S+")
 _MASKED = re.compile(r"(?<![A-Za-z])[Xx*]{3,}[\dXx* -]*\d")  # XXXXXX1234, XXXX XXXX 1234
 _DIGITS = re.compile(r"\d[\d -]{4,}\d")  # account, Aadhaar, mobile, folio numbers (6+ digits)
@@ -65,6 +65,11 @@ def scrub(text: Any) -> str | None:
     t = re.sub(r"\(\s*\)|\[\s*\]", " ", t)
     t = re.sub(r"\s+", " ", t).strip(" -,:;/")
     return t or None
+
+
+def scrub_filename(name: str) -> str:
+    """A file name safe to log: a PAN-shaped token or a long number (account, Aadhaar, phone) becomes "x"."""
+    return re.sub(r"\d{9,}", "x", _PAN.sub("x", name))[:200]
 
 
 @dataclass
@@ -246,6 +251,9 @@ def _find_fy(node: Any, depth: int = 0) -> int | None:
         if isinstance(v, dict) and (fy := _find_fy(v, depth + 1)) is not None:
             return fy
     return None
+
+
+AIS_FILENAME = re.compile(r"(^|[^a-z])ais([^a-z]|$)|annual.?information", re.I)  # the drop zone uses the same
 
 
 def looks_like_ais_json(content: bytes) -> bool:

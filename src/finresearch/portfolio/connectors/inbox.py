@@ -31,6 +31,7 @@ from typing import Any
 from finresearch.config import get_settings
 from finresearch.db import session_scope
 from finresearch.db.models import BrokerConnection, BrokerSyncLog
+from finresearch.portfolio.ais import AIS_FILENAME, scrub_filename
 from finresearch.portfolio.connectors import INBOX_KEY
 
 SETTLE_S = 5.0
@@ -112,11 +113,16 @@ def scan(*, now: datetime | None = None, password: str | None = None) -> dict[st
                     )
                     continue
                 if path.suffix.lower() == ".json" or (
-                    content.startswith(b"%PDF") and "ais" in path.name.lower()
+                    content.startswith(b"%PDF") and AIS_FILENAME.search(path.name)
                 ):
-                    results.append({**entry, **_ais(s, path, content, sha, before)})
+                    safe = scrub_filename(path.name)  # an AIS download may carry the PAN in its name
+                    try:
+                        results.append({"file": safe, **_ais(s, path, content, sha, before.get(safe))})
+                    except StatementError as e:
+                        _move(path, "failed")
+                        results.append({"file": safe, "status": "failed", "note": str(e)})
                     if results[-1]["status"] == "waiting":
-                        waiting[path.name] = "ais pdf"
+                        waiting[safe] = "ais pdf"
                     continue
                 if content.startswith(b"%PDF"):
                     if not pw:
@@ -211,7 +217,7 @@ def scan(*, now: datetime | None = None, password: str | None = None) -> dict[st
     return {"imported": imported, "files": [_slim(r) for r in results], "inbox": str(root)}
 
 
-def _ais(s, path: Path, content: bytes, sha: str, before: dict[str, Any]) -> dict[str, Any]:
+def _ais(s, path: Path, content: bytes, sha: str, before: str | None) -> dict[str, Any]:
     """An AIS: JSON imports (identifiers stripped, the file is not kept); a PDF needs its own password (PAN + date
     of birth), which the inbox does not keep, so it waits for the Portfolio page's import."""
     from finresearch.portfolio.ais import looks_like_ais_json, parse_ais_json
@@ -219,7 +225,7 @@ def _ais(s, path: Path, content: bytes, sha: str, before: dict[str, Any]) -> dic
     from finresearch.portfolio.importers import StatementError
 
     if content.startswith(b"%PDF"):
-        return {"status": "waiting", "logged": before.get(path.name) == "ais pdf",
+        return {"status": "waiting", "logged": before == "ais pdf",
                 "note": "an AIS PDF needs its password (PAN + date of birth): import it on Portfolio → Import, or drop "
                         "the AIS JSON here instead"}  # fmt: skip
     if (fy := known_sha(s, sha)) is not None:
