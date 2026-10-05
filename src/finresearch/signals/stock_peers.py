@@ -120,3 +120,82 @@ def compute_row(symbol: str, inputs: dict[str, Any], today: date) -> dict[str, A
             "results_read": inputs.get("results_read"), "eps_ttm": eps.json(),
             "metrics": {k: v.json() for k, v in m.items()},
             "inputs": {k: inputs.get(k) for k in ("quarters", "sheets", "actions", "results_errors", "bars")}}  # fmt: skip
+
+
+# --------------------------------------------------------------------------- the nightly build and the store
+def store_path() -> Path:
+    from finresearch.config import get_settings
+
+    return get_settings().state_dir / "stock_peers" / "latest.json"
+
+
+def save(data: dict[str, Any]) -> Path:
+    """Written atomically (temp file renamed over the old one): the API never reads half a file."""
+    path = store_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(f".{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(data, separators=(",", ":")))
+    os.replace(tmp, path)
+    return path
+
+
+_LOADED: dict[str, Any] = {}
+
+
+def load() -> dict[str, Any] | None:
+    """The stored dataset, re-read only when the file changed; None before the first build."""
+    path = store_path()
+    try:
+        mtime = path.stat().st_mtime
+    except FileNotFoundError:
+        return None
+    if _LOADED.get("path") != str(path) or _LOADED.get("mtime") != mtime:
+        _LOADED.update(path=str(path), mtime=mtime, data=json.loads(path.read_text()))
+    return _LOADED["data"]
+
+
+async def universe_symbols(eq: Any) -> list[str]:
+    from finresearch.evals.stock_harvest import parse_constituents
+
+    resp = await eq.nse.http.get(UNIVERSE_URL, headers={"Referer": "https://www.nseindia.com/"}, cache_ttl=86400,
+                                 cache_if=lambda f: f.content.lstrip(b"\xef\xbb\xbf")[:12] == b"Company Name")  # fmt: skip
+    if not resp.ok:
+        raise RuntimeError(f"HTTP {resp.status} for {UNIVERSE_URL}")
+    rows = parse_constituents(resp.text)
+    if len(rows) < 400:  # a block page or a truncated file must not shrink the universe
+        raise RuntimeError(f"{UNIVERSE_URL} listed only {len(rows)} stocks")
+    return [r["symbol"] for r in rows]
+
+
+async def build(eq: Any, today: date, symbols: list[str] | None = None) -> dict[str, Any]:
+    """Every universe stock's row; a stock that fails keeps its previous row (marked stale) or is listed in
+    `failed`. Raises when most of the universe failed (the old store is then kept as it is)."""
+    old = (load() or {}).get("rows", {})
+    syms = symbols or await universe_symbols(eq)
+    rows: dict[str, Any] = {}
+    failed: dict[str, str] = {}
+    for sym in syms:
+        try:
+            inputs = await fetch_inputs(eq, sym, today, old.get(sym))
+            rows[sym] = compute_row(sym, inputs, today)
+        except Exception as e:
+            failed[sym] = f"{type(e).__name__}: {e}"[:200]
+            if sym in old:
+                rows[sym] = {**old[sym], "stale": True}
+        await asyncio.sleep(PAUSE_S)
+    if len(failed) > len(syms) / 2:
+        raise RuntimeError(f"{len(failed)} of {len(syms)} stocks failed, e.g. {next(iter(failed.items()))}")
+    return {"version": STORE_VERSION, "as_of": today.isoformat(), "generated_at": datetime.now(UTC).isoformat(),
+            "universe": UNIVERSE_NAME, "universe_source": UNIVERSE_URL, "rows": rows, "failed": failed}  # fmt: skip
+
+
+async def refresh(today: date | None = None, symbols: list[str] | None = None) -> dict[str, Any]:
+    """Build and store the dataset; a short summary back."""
+    from finresearch.adapters.nse_equity import NseEquity
+    from finresearch.fincalc.dates import today_ist
+
+    day = today or today_ist()
+    async with NseEquity() as eq:
+        data = await build(eq, day, symbols)
+    save(data)
+    return {"as_of": data["as_of"], "stocks": len(data["rows"]), "failed": len(data["failed"])}
