@@ -20,6 +20,7 @@ import { ConcentrationAnalytics } from "./concentration-analytics";
 import { CostsAnalytics } from "./costs-analytics";
 import { ImportPanel } from "./import-panel";
 import { PerformanceAnalytics } from "./performance-analytics";
+import { RebalancePanel } from "./rebalance-panel";
 import { RiskAnalytics } from "./risk-analytics";
 import { TaxPanel } from "./tax-panel";
 import { ASSET_CLASSES, type ElssLock, type Holding, type HoldingDetail, type Snapshot, TAX_CLASS_LABEL, type TaxClass, inr, pctx, signed, units } from "./types";
@@ -360,6 +361,7 @@ function Allocation({ snap, onChanged }: { snap: Snapshot; onChanged: () => void
         <DonutChart data={donut(snap.allocation.cap)} center={center} format={fmtCompactINR} height={170} />
       </Card>
       <div className="lg:col-span-2"><Targets snap={snap} onSaved={onChanged} /></div>
+      {Object.keys(snap.targets ?? {}).length > 0 && <div className="lg:col-span-2"><RebalancePanel key={JSON.stringify(snap.targets)} /></div>}
     </div>
   );
 }
