@@ -47,6 +47,7 @@ LAST_TRADED, OFFICIAL_CLOSE, PREVIOUS_CLOSE = "last_traded", "official_close", "
 LABELS = {LAST_TRADED: "Last traded", OFFICIAL_CLOSE: "Close (official)", PREVIOUS_CLOSE: "Previous close"}
 REF_LABELS = {
     "base_price": "previous close adjusted for today's corporate action (exchange base price)",
+    "listing_price": "the listing day's base price (the price discovered in the pre-open call auction)",
     "previous_close": "previous close",
     "previous_close_less_dividend": "previous close less today's ex-dividend",
 }
@@ -144,7 +145,20 @@ def price_view(q: Any, *, exchange: str | None = None, now: datetime | None = No
         kind, price, session = PREVIOUS_CLOSE, prev, "closed" if over else "open"
         notes.append("No trade yet in this session: showing the previous close.")
     comparable = True
-    if base is not None:
+    listing_day = getattr(q, "listing_date", None)
+    if (
+        base is not None
+        and as_of is not None
+        and listing_day is not None
+        and to_ist(as_of).date() == listing_day
+    ):
+        # listing day: NSE's "previous close" is the issue price and the base price is the price discovered in the
+        # special pre-open session (SEBI circular CIR/MRD/DP/01/2012, call auction for IPO listings), not a
+        # corporate-action adjustment (#200: Orient Cables read "-10 % today, previous close ₹272 adjusted ...")
+        ref, ref_kind = base, "listing_price"
+        notes.append(f"Listing day: change measured from ₹{base}, the price discovered in the pre-open call auction"
+                     + (f"; the issue price was ₹{prev}." if prev is not None else "."))  # fmt: skip
+    elif base is not None:
         # the base price equals the previous close except on an ex-date; the label says "adjusted" only then
         ref, ref_kind = base, ("previous_close" if base == prev else "base_price")
         if prev is not None and base != prev:
