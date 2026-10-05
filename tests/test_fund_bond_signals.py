@@ -257,6 +257,13 @@ def test_fund_buy_when_cheap_consistent_and_suitable():
     assert s.score == pytest.approx(sum(f.contribution for f in s.factors))  # the factors add up to the score
 
 
+def test_fund_signal_method_records_the_peer_rule_version():
+    """#198: forecasts already logged keep their recorded method; new ones carry v2 within the ledger's 200 stored
+    characters (signals.ledger keeps method[:200], so a version note at the end would be cut off)."""
+    s = fund_sig.build_signal(analysis(10, 13), LONG_MEDIUM_HIGH)
+    assert s.method[:200].startswith("§D.3 rules v2 (SEBI category_key peers")
+
+
 def test_fund_switch_review_suggests_an_index_fund_when_expensive_and_lagging():
     s = fund_sig.build_signal(analysis(3, 13, ter_pct=0.9), LONG_MEDIUM_HIGH)
     assert s.action == "REDUCE"

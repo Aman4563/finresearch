@@ -425,10 +425,14 @@ app.add_typer(stock_app, name="stock")
 
 @stock_app.command("peers")
 def stock_peers_now(
-    symbols: str = typer.Option("", help="comma-separated NSE symbols (default: the whole NIFTY 500)"),
+    symbols: str = typer.Option(
+        "",
+        help="comma-separated NSE symbols (default: the NIFTY 500 plus held/watched stocks outside it and their "
+        "industry peers)",
+    ),
 ) -> None:
     """Build the stock peer dataset now (the monitor does this every weekday evening): ~1,000 polite NSE requests
-    for the NIFTY 500, about 15-20 minutes."""
+    for the NIFTY 500, about 15-20 minutes, plus a bounded few hundred for held/watched stocks outside it."""
     from finresearch.signals import stock_peers
 
     syms = [s.strip().upper() for s in symbols.split(",") if s.strip()] or None

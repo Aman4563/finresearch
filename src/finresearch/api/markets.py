@@ -710,18 +710,14 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
         return await cache.get(("peers", scheme.code), 12 * 3600, lambda: _peers(scheme))
 
     async def _peers(me) -> dict[str, Any]:
-        from finresearch.adapters.amfi import category_key
         from finresearch.fincalc import funds
-        from finresearch.signals.fund_rank import is_direct_growth
+        from finresearch.signals.fund_rank import category_peers
 
         rows = await scheme_rows()
-        # by category key: AMFI spells one category several ways ("Equity Scheme - Flexi Cap Fund" and "Equity
-        # Schemes - Flexi Cap Fund"), and matching the raw heading left out every peer under the other spelling;
-        # close-ended series, segregated portfolios and bonus options are not peers (the category ranking's filter)
-        key = category_key(me.category)
-        peers = [x for x in rows if category_key(x.category) == key and x.structure not in ("close", "interval")
-                 and is_direct_growth(x) and x.nav and x.day]  # fmt: skip
-        if me.code not in {p.code for p in peers} and me.nav and me.day:
+        # the category ranking's peer rules (#198): category key with AMFI's spellings folded, open-ended, one
+        # direct-growth row per scheme (close-ended series, segregated portfolios and bonus options are not peers)
+        peers = category_peers(rows, me, direct=True)
+        if me.nav and me.day:
             peers.append(me)
         anchor = me.day or src().today()
         out: dict[str, Any] = {

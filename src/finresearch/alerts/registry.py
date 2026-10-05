@@ -307,7 +307,7 @@ METRICS: list[MetricSpec] = [
         "pct",
         "daily",
         "In how many quarter-end 3-year windows the fund's return was at or above its SEBI category's median, in %.",
-        "signals.fund.analyse (AMFI NAV history, same-plan growth peers)",
+        "signals.fund.analyse (AMFI NAV history; same-plan growth peers, one per scheme, in the SEBI category key)",
         default_op="<",
         default_value="40",
     ),

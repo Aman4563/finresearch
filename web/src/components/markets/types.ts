@@ -325,7 +325,7 @@ export interface PeerRow {
 export interface PeerSummary { n: number; q1: number | null; median: number | null; q3: number | null; percentile: number | null; reason: string | null }
 export interface StockPeers {
   status: "ok" | "no_peers" | "not_computed" | "unsupported"; symbol: string; message?: string | null;
-  as_of?: string; generated_at?: string; universe?: string; universe_source?: string;
+  as_of?: string; generated_at?: string; universe?: string; universe_source?: string; universe_note?: string | null;
   level?: string | null; level_label?: string | null; industry?: string | null; candidates?: number;
   company?: PeerRow; peers?: PeerRow[]; summary?: Record<PeerMetricKey, PeerSummary>;
   metrics?: PeerMetricKey[]; valuation_metrics?: PeerMetricKey[]; caveats?: string[];
