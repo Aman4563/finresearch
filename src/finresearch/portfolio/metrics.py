@@ -104,7 +104,7 @@ def drawdown(snaps: list[tuple[date, float, float]]) -> tuple[float | None, str]
 PORTFOLIO_METRICS = (
     "allocation_drift_pp", "ltcg_headroom_inr", "drawdown_pct", "holding_day_move_pct", "holding_signal_changed",
     "reduce_signal_weight_pct", "days_to_next_lt_lot", "lt_wait_tax_saved_inr", "ltcg_used_pct",
-    "max_position_pct", "max_sector_pct", "n_effective", "sip_missed", "dividend_received",
+    "max_position_pct", "max_fund_pct", "max_sector_pct", "n_effective", "sip_missed", "dividend_received",
     "days_to_holding_ex_date", "days_to_holding_results_meeting", "days_since_holding_results",
     "fund_ter_change_pp", "advance_tax_due_inr", "regular_plan_value_inr", "unpriced_holdings",
     "days_to_elss_unlock",
@@ -142,12 +142,19 @@ def cached_prices(v: dict[str, Any]) -> dict[int, Decimal]:
             if x.get("price") is not None and "statement" not in (x.get("price_source") or "")}  # fmt: skip
 
 
-def grouped_weights(v: dict[str, Any]) -> dict[str, tuple[float, str]]:
-    """Weight % per instrument (a stock or fund held in several accounts counts once) -> (weight, name)."""
+def grouped_weights(v: dict[str, Any], only: str | None = None) -> dict[str, tuple[float, str]]:
+    """Weight % per instrument (a stock or fund held in several accounts counts once) -> (weight, name).
+    `only="stock"` keeps single stocks, `only="fund"` mutual funds and ETFs (portfolio.limits.is_fund_like)."""
+    from finresearch.portfolio.limits import is_fund_like
+
     out: dict[str, tuple[float, str]] = {}
     for h in (v.get("holdings") or {}).values():
         if not h.get("weight_pct"):
             continue
+        if only is not None:
+            fund = is_fund_like(h.get("asset_type"), h.get("nse_symbol"), h.get("name"))
+            if fund != (only == "fund") or (only == "stock" and h.get("asset_type") != "stock"):
+                continue
         key = h.get("nse_symbol") or h.get("bse_code") or h.get("scheme_code") or h["name"]
         w, _ = out.get(key, (0.0, h["name"]))
         out[key] = (w + h["weight_pct"], h["name"])
@@ -326,7 +333,7 @@ def alert_metrics(session: Session) -> Out:
     vday = v.get("day")
     ran_today = vday == today.isoformat()
     if stale:
-        for k in ("holding_day_move_pct", "max_position_pct", "max_sector_pct", "n_effective",
+        for k in ("holding_day_move_pct", "max_position_pct", "max_fund_pct", "max_sector_pct", "n_effective",
                   "regular_plan_value_inr", "unpriced_holdings", "days_to_next_lt_lot", "lt_wait_tax_saved_inr",
                   "dividend_received"):  # fmt: skip
             out[k] = (None, stale)
@@ -340,20 +347,24 @@ def alert_metrics(session: Session) -> Out:
             out["holding_day_move_pct"] = (_q(abs(mv)), f"{src} vs {v.get('moves_vs')} (price change per holding)",
                                            f"{v['holdings'][hid]['name']} {mv:+.2f}%")  # fmt: skip
         gw = grouped_weights(v)
+        # the single-stock limit is for single stocks: a diversified fund or ETF is checked against its own
+        # threshold (max_fund_pct, portfolio.limits.FUND_LIMIT_PCT), never against the stock limit
+        for key, only, what in (("max_position_pct", "stock", "single stock"),
+                                ("max_fund_pct", "fund", "fund or ETF")):  # fmt: skip
+            part = grouped_weights(v, only)
+            if part:
+                w, name = max(part.values(), key=lambda x: x[0])
+                out[key] = (_q(w), f"{src}: largest {what} by value (share of the whole portfolio)", name)
+            else:
+                out[key] = (None, f"{src}: no priced {what} held")
         if gw:
-            k, (w, name) = max(gw.items(), key=lambda kv: kv[1][0])
-            out["max_position_pct"] = (
-                _q(w),
-                f"{src}: largest position by value (funds without look-through)",
-                name,
-            )
             ne = n_effective([w for w, _ in gw.values()])
             out["n_effective"] = (
                 _q(ne),
                 f"{src}: 1 / Σ weight² over {len(gw)} holdings (funds count as one each)",
             )
         else:
-            out["max_position_pct"] = out["n_effective"] = (None, f"{src}: no priced holding")
+            out["n_effective"] = (None, f"{src}: no priced holding")
         sectors = {k: x for k, x in (v.get("sectors") or {}).items()
                    if x and k not in ("Funds (no look-through)", "Unclassified")}  # fmt: skip
         if sectors and v.get("value"):
