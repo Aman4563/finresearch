@@ -388,7 +388,7 @@ function Dividends({ snap }: { snap: Snapshot }) {
   const d = snap.dividends;
   if (!d.items.length) return <EmptyState icon={<Coins className="size-5" />} title="No dividends recorded">Dividends come from CAS statements (IDCW payouts and reinvestments) or can be added by hand.</EmptyState>;
   return (
-    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
       <Card title="By financial year" subtitle={d.note}>
         <Table label="Dividends by financial year"><thead><tr><th>Year</th><th className="text-right">Amount</th></tr></thead>
           <tbody>{d.by_fy.map((y) => <tr key={y.fy}><td>{y.label}</td><td className="num text-right">{inr(y.amount)}</td></tr>)}</tbody></Table>
