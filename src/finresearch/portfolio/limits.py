@@ -39,6 +39,19 @@ FUND_LIMIT_PCT = 25.0
 _ETF_SYMBOL = re.compile(r"(BEES|ETF|IETF)$")
 _ETF_NAME = re.compile(r"\bETF\b|\bBEES\b", re.I)
 
+# Sector labels that are not a business sector: funds and ETFs are not looked through here, so they are grouped by
+# what they hold instead of NSE's industry for an ETF ("Mutual Fund Scheme - ETF", which would lump gold, silver,
+# debt and index ETFs into one fake sector). These never count towards a sector-concentration flag or alert.
+FUNDS_SECTOR = "Funds (no look-through)"
+COMMODITY_SECTOR = "Commodities (gold/silver)"
+DEBT_ETF_SECTOR = "Debt ETFs"
+UNCLASSIFIED_SECTOR = "Unclassified"
+NOT_A_SECTOR = frozenset({FUNDS_SECTOR, COMMODITY_SECTOR, DEBT_ETF_SECTOR, UNCLASSIFIED_SECTOR})
+_COMMODITY = re.compile(r"\b(gold|silver)\b|GOLDBEES|SILVERBEES|GOLDETF|SILVERETF|GOLDIETF|SILVERIETF", re.I)
+_DEBT = re.compile(
+    r"\b(liquid|gilt|g-?sec|bond|debt|sdl|overnight|money market)\b|LIQUIDBEES|LIQUIDETF", re.I
+)
+
 
 def is_fund_like(asset_type: str | None, symbol: str | None = None, name: str | None = None) -> bool:
     """True for a mutual fund or an ETF (held as a listed share): these never count against the single-stock limit."""
@@ -47,6 +60,29 @@ def is_fund_like(asset_type: str | None, symbol: str | None = None, name: str | 
     if asset_type != "stock":
         return False
     return bool(_ETF_SYMBOL.search((symbol or "").upper()) or _ETF_NAME.search(name or ""))
+
+
+def sector_label(asset_type: str | None, sector: str | None, symbol: str | None = None, name: str | None = None,
+                 tax_class: str | None = None) -> str:  # fmt: skip
+    """The sector a holding counts towards: a stock's NSE industry (or the user's own label), but funds, ETFs and
+    Sovereign Gold Bonds are grouped by what they hold, never by NSE's "Mutual Fund Scheme - ETF" industry."""
+    if asset_type == "mf":
+        return FUNDS_SECTOR
+    if tax_class == "sgb":
+        return COMMODITY_SECTOR
+    if is_fund_like(asset_type, symbol, name):
+        text = f"{symbol or ''} {name or ''}"
+        if _COMMODITY.search(text):
+            return COMMODITY_SECTOR
+        if tax_class == "debt_mf" or _DEBT.search(text):
+            return DEBT_ETF_SECTOR
+        return FUNDS_SECTOR
+    return sector or UNCLASSIFIED_SECTOR
+
+
+def is_real_sector(label: str | None) -> bool:
+    """True for a business sector (counts towards sector concentration); False for the groupings above."""
+    return bool(label) and label not in NOT_A_SECTOR and not label.startswith("Funds")
 
 
 @dataclass(frozen=True)
