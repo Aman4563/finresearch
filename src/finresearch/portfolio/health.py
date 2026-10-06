@@ -144,7 +144,8 @@ def lookthrough(lt: dict[str, Any] | None, has_funds: bool, error: str | None) -
             else (lt.get("concentration") or {}).get("fund_coverage_pct")
         )
     detail = (f"look-through could not be computed ({error})" if error else
-              "fund value covered by a month-end fund portfolio" if cov is not None else "coverage not reported")  # fmt: skip
+              "fund value covered by a month-end fund portfolio" if cov is not None else
+              "the look-through reported no coverage (for example, the funds have no current value yet)")  # fmt: skip
     return _row(
         "lookthrough",
         "Fund look-through coverage",
