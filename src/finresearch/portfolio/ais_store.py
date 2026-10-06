@@ -10,14 +10,18 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from finresearch.db.models import PortfolioAis, PortfolioHolding, PortfolioTxn
+from finresearch.db.models import PortfolioAis, PortfolioHolding, PortfolioSetting, PortfolioTxn
 from finresearch.fincalc.dates import fiscal_year
 from finresearch.fincalc.tax import fy_label
 from finresearch.portfolio.ais import AisItem, AisStatement, parse_ais_json
-from finresearch.portfolio.ais_recon import AppEntry, reconcile
+from finresearch.portfolio.ais_recon import COMPARED, AppEntry, reconcile, within
 from finresearch.portfolio.importers import StatementError
 
 _KIND = {"dividend": "dividend", "sell": "sale", "buy": "purchase"}
+# Set once per format (json | pdf) by the first saved import that validates (#216); never cleared. Until then the AIS
+# card calls the check "Experimental": the parsers were built from field names and a summary-row pattern, not from a
+# real downloaded AIS.
+VALIDATED_KEY = "ais_format_validated"
 
 
 def app_entries(s: Session) -> list[AppEntry]:
@@ -57,7 +61,45 @@ def save(s: Session, st: AisStatement, fy: int, sha: str) -> PortfolioAis:
     row.imported_at = datetime.now(UTC)
     s.add(row)
     s.flush()
+    record_validation(s, st, fy)
     return row
+
+
+def validation_gaps(st: AisStatement, result: dict[str, Any]) -> list[str]:
+    """Why a saved import does not (yet) validate the format; empty = it does. Validated means: every row the parser
+    met was understood (no unrecognised rows), at least one AIS row was compared, and for each compared category (dividend,
+    sale, purchase) the AIS total equals the app's total within the check's own tolerance."""
+    gaps = []
+    if st.unrecognised:
+        gaps.append(f"{st.unrecognised} row(s) could not be recognised")
+    if not any(r.get("category") in COMPARED and r.get("ais_amount") for r in result.get("rows", [])):
+        gaps.append("no dividend, sale or purchase row in the AIS to compare")
+    for c, tot in (result.get("totals") or {}).items():
+        ais, app = Decimal(str(tot.get("ais") or 0)), Decimal(str(tot.get("app") or 0))
+        if not within(ais, app):
+            gaps.append(f"{c} totals differ")
+    return gaps
+
+
+def record_validation(s: Session, st: AisStatement, fy: int) -> dict[str, Any] | None:
+    """Mark the statement's format as validated the first time a saved import passes `validation_gaps`."""
+    row = s.get(PortfolioSetting, VALIDATED_KEY)
+    done = dict(row.value or {}) if row else {}
+    if st.format in done or validation_gaps(st, check(s, fy, st.items)):
+        return None
+    done[st.format] = {"validated_at": datetime.now(UTC).isoformat(), "fy": fy}
+    if row is None:
+        s.add(PortfolioSetting(key=VALIDATED_KEY, value=done))
+    else:
+        row.value = done
+    s.flush()
+    return done[st.format]
+
+
+def validated(s: Session) -> dict[str, Any]:
+    """{format: {"validated_at", "fy"}} for the formats a real import has validated (#216)."""
+    row = s.get(PortfolioSetting, VALIDATED_KEY)
+    return dict(row.value or {}) if row else {}
 
 
 def check(s: Session, fy: int, items: list[AisItem] | None = None) -> dict[str, Any]:
@@ -78,7 +120,8 @@ def statements(s: Session) -> dict[str, Any]:
     return {"statements": [{"fy": r.fy, "label": fy_label(r.fy), "format": r.format, "rows": len(r.items or []),
                             "ignored": r.ignored, "imported_at": r.imported_at.isoformat() if r.imported_at else None,
                             "warnings": r.warnings or []} for r in rows],
-            "app_years": [{"fy": y, "label": fy_label(y)} for y in sorted(years, reverse=True)]}  # fmt: skip
+            "app_years": [{"fy": y, "label": fy_label(y)} for y in sorted(years, reverse=True)],
+            "validated": validated(s)}  # fmt: skip
 
 
 def known_sha(s: Session, sha: str) -> int | None:

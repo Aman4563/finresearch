@@ -108,6 +108,9 @@ class AisStatement:
     items: list[AisItem]
     format: str  # json | pdf
     ignored: int = 0  # rows in categories this check does not use (salary, rent, cash deposits ...)
+    # of `ignored`: rows the parser could not place at all (no AIS-shaped information code and a description it
+    # does not classify). Rows with a code such as SFT-005 or 192 are understood, just not compared.
+    unrecognised: int = 0
     warnings: list[str] = field(default_factory=list)
 
 
@@ -285,12 +288,18 @@ def _item(raw: dict[str, Any]) -> AisItem | None:
                    quantity=_dec(raw.get("quantity")), stt=_dec(raw.get("stt")))  # fmt: skip
 
 
+# an AIS information code after _code(): SFT-015, 194A (a TDS section), TCS-206C
+_KNOWN_CODE = re.compile(r"SFT-\d{3}|TCS-?[0-9A-Z]{2,6}|\d{3}[A-Z]{0,3}")
+
+
 def statement_from_records(records: list[dict[str, Any]], fy: int | None, fmt: str) -> AisStatement:
-    items, ignored = [], 0
+    items, ignored, unrecognised = [], 0, 0
     for raw in records:
         it = _item(raw)
         if it is None:
             ignored += 1
+            if not _KNOWN_CODE.fullmatch(_code(raw.get("code")) or ""):
+                unrecognised += 1
         else:
             items.append(it)
     if fy is None:
@@ -300,7 +309,9 @@ def statement_from_records(records: list[dict[str, Any]], fy: int | None, fmt: s
     warnings = [FORMAT_NOTE]
     if fy is None:
         warnings.append("The financial year could not be read from the file: choose it when importing.")
-    return AisStatement(fy=fy, items=items, format=fmt, ignored=ignored, warnings=warnings)
+    return AisStatement(
+        fy=fy, items=items, format=fmt, ignored=ignored, unrecognised=unrecognised, warnings=warnings
+    )
 
 
 def parse_ais_json(content: bytes) -> AisStatement:

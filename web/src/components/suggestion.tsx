@@ -22,7 +22,7 @@ export function DecisionCard({ d }: { d: Decision }) {
           {m.lot_cost?.value && d.lots > 0 && ` · ₹${(Number(m.lot_cost.value) * d.lots).toLocaleString("en-IN")}`}
         </span>
         <span className="text-xs text-muted">
-          {when(d.inputs.at)} · {d.suggestion.model} · agent said {d.suggestion.agent.action} ({d.suggestion.agent.confidence})
+          {when(d.inputs.at)} · {d.suggestion.model} · {d.suggestion.tier === "local-rules" ? "rules said" : "agent said"} {d.suggestion.agent.action} ({d.suggestion.agent.confidence})
         </span>
       </div>
       {d.suggestion.conditions.length > 0 && (
@@ -105,7 +105,8 @@ export function SuggestionPanel({ runId }: { runId: string }) {
         <Button onClick={run} disabled={busy} icon={busy ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}>
           {busy ? "Checking live data and asking the advisor…" : latest ? "Refresh with live data" : "Get my suggestion"}
         </Button>
-        <span className="text-xs text-muted">Uses your profile, your rules and live subscription data; takes about a minute and a little of your Claude plan.</span>
+        <span className="text-xs text-muted">Uses your profile, your rules and live subscription data; takes about a minute and a little of your Claude plan.
+          <InfoTip>Sent to Claude: the report and your IPO settings (capital per IPO, risk appetite, horizon, tax slab, category, max position, the holdings and notes typed on the profile page, your rules). Never sent: your portfolio, statements, AIS, journal, wealth or household data. Choose &ldquo;Keep local&rdquo; on the profile page to have the suggestion written by fixed rules on this Mac, with nothing sent.</InfoTip></span>
       </div>
       <ErrorNote error={error ?? list.error} />
       {!list.data && !list.error && <SkeletonRows rows={3} />}

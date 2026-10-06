@@ -1423,6 +1423,9 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
     from finresearch.api.lookthrough import add_lookthrough_routes
 
     add_lookthrough_routes(app, scheme_rows=_scheme_rows)
+    from finresearch.api.portfolio_health import add_portfolio_health_routes  # data-health panel (#219)
+
+    add_portfolio_health_routes(app)
 
     # ------------------------------------------------------------------ live data while the market is open
     from finresearch.api.live import add_live_routes
@@ -1494,7 +1497,21 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
             raise HTTPException(404, str(e)) from e
         except ValueError as e:
             raise HTTPException(422, str(e)) from e
-        return sig.to_json()
+        from finresearch.signals.reliability import reliability, scored_events
+
+        out = sig.to_json()
+        try:  # #218: base-rate n, validation and ledger calibration beside the probability
+            with session_scope() as s:
+                scored: int | None = scored_events(s, sig.asset, sig.method)
+        except (
+            Exception
+        ):  # the ledger is unreadable: calibration is unknown, never "established", and the signal stands
+            logging.getLogger(__name__).warning(
+                "forecast ledger unreadable for the reliability line", exc_info=True
+            )
+            scored = None
+        out["reliability"] = reliability(out, scored)
+        return out
 
     # ------------------------------------------------------------------ forecast ledger and calibration
     @app.get("/api/forecasts")

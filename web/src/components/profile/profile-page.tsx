@@ -293,6 +293,12 @@ export function ProfilePage() {
               </div>
               {capWarn && <Callout tone="warn">{capWarn}</Callout>}
 
+              <Labelled label={<Label tip="Off: the IPO advisor (Claude) writes the suggestion and receives the report plus these IPO settings: capital per IPO, risk appetite, horizon, tax slab, category, max position, the holdings and notes you type on this page, and your rules. On: the suggestion is written by fixed rules on this Mac from the same inputs, and nothing is sent. Your portfolio, statements, AIS, journal and wealth data are never sent either way.">Keep the personal IPO suggestion local</Label>}
+                hint={p.local_suggestion ? "Rule-based suggestion on this Mac; no model call" : "Claude writes the suggestion from the IPO settings above"}>
+                <div><Segmented value={p.local_suggestion ? "local" : "claude"} onChange={(v) => set("local_suggestion", v === "local")}
+                  options={[{ value: "claude", label: "Ask Claude" }, { value: "local", label: "Keep local" }]} /></div>
+              </Labelled>
+
               <div className="grid gap-4 sm:grid-cols-2">
                 <Labelled label={<Label tip="How much short-term loss you can live with. Low risk makes the advisor stricter about weak demand and expensive valuations; high risk lets it consider speculative issues.">Risk appetite</Label>}>
                   <div><Segmented value={p.risk_appetite} onChange={(v) => set("risk_appetite", v)}

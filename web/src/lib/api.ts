@@ -333,6 +333,8 @@ export type Profile = {
   fno_max_loss_pct?: string;
   fno_brokerage_per_order_inr?: string;
   fno_defined_risk_only?: boolean;
+  /** #215: write the IPO suggestion by fixed rules on this machine; nothing is sent to Claude */
+  local_suggestion?: boolean;
   fno_experience?: "none" | "some" | "experienced";
   // identity and dashboard preferences (optional: older API builds omit them)
   display_name?: string;
@@ -352,6 +354,7 @@ export type Decision = {
     warnings: string[];
     enforcement_notes: string[];
     model?: string;
+    tier?: string; // "local-rules" when written without a model (#215)
     agent: { action: string; lots: number; exit_plan: string; watch: string[]; rationale_markdown: string; confidence: string };
   };
   inputs: {

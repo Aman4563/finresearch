@@ -35,7 +35,7 @@ Python, not the model, does all the arithmetic and checks every quote before any
 - **Bonds and NCDs:** yield to maturity on the exchange's dirty price, accrued interest, after-tax yield.
 - **F&O:** option chain, greeks, implied volatility and strategy payoffs (analysis only).
 
-**Your portfolio** (kept on your machine, never sent to an AI model)
+**Your portfolio** (kept on your machine, never sent to an AI model; see [Privacy](#privacy-and-data-sources))
 - Import CAMS/KFintech CAS and NSDL/CDSL e-CAS PDFs, broker tradebooks and holdings statements (Groww, Zerodha,
   Upstox), or connect a broker read-only; a watched inbox folder imports statements automatically.
 - FIFO lots, realised and unrealised P&L, XIRR, allocation, risk, concentration and costs.
@@ -102,8 +102,17 @@ Release notes are on the [Releases](https://github.com/Aman4563/finresearch/rele
 
 - Services bind to `127.0.0.1` only. Your portfolio, statements and journal stay in the local database and the
   gitignored `data/` folder; statement passwords are used once and never stored.
-- Claude is used only through the official Claude Code CLI or Agent SDK under your own login. Personal financial
-  data is never sent to a model.
+- Claude is used only through the official Claude Code CLI or Agent SDK under your own login. What it receives:
+  - **Research runs** (IPO, stock, fund, bond): public documents and market data, through the FinResearch MCP tools.
+  - **Ask about this report:** the report and the question you type.
+  - **The personal IPO suggestion:** the report, live subscription figures, your rules and lot limits, and these
+    profile fields: capital per IPO, risk appetite, horizon, tax slab, category, max position, the holdings and notes
+    you type on the profile page. Turn on *Keep the personal IPO suggestion local* (profile) and it is written by
+    fixed rules on your machine instead, with no model call.
+- Never sent to a model: your portfolio, statements, AIS, journal, wealth and household data, broker credentials,
+  the profile's F&O, rebalancing and display settings. A test builds every model task with synthetic personal data
+  in the database and checks none of it appears (`tests/test_privacy_llm.py`). The local Ollama fallback receives
+  the same prompts, on your machine.
 - Market data comes from public NSE, BSE, AMFI, SEBI and FBIL pages, fetched politely with caching and rate limits,
   for personal use.
 

@@ -78,6 +78,9 @@ export function AisCheck({ refresh, preferFy }: { refresh: number; preferFy?: nu
   const check = useApi<Check>(fy ? `/api/portfolio/ais/${fy}?r=${refresh}-${bump}` : null);
   const [err, setErr] = useState<string | null>(null);
   const stmt = years.find((s) => s.fy === fy);
+  // #216: "Experimental" until a saved import of this format parsed with no unrecognised rows and matching totals
+  const valid = list.data?.validated ?? {};
+  const proof = stmt ? valid[stmt.format] : Object.values(valid)[0];
 
   const forget = async () => {
     if (!fy || !window.confirm(`Forget the AIS for FY ${fy - 1}-${String(fy % 100).padStart(2, "0")}? Your transactions are not touched.`)) return;
@@ -90,6 +93,14 @@ export function AisCheck({ refresh, preferFy }: { refresh: number; preferFy?: nu
       subtitle="Your Annual Information Statement against the app: dividends, sale values and purchases per security, before you file the ITR."
       help="Import the AIS (JSON or PDF from the income-tax portal → AIS) on the Import tab or drop the JSON in the statement inbox. Only the rows this check needs are kept: no PAN, name, address or account numbers, and the file itself is not saved."
       actions={stmt && <Button variant="ghost" icon={<Trash2 className="size-3.5" />} onClick={() => void forget()}>Forget</Button>}>
+      {list.data && (proof ? (
+        <p className="mb-3 text-[11px] text-muted">AIS format first validated on {new Date(proof.validated_at).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}{stmt ? ` (${stmt.format.toUpperCase()})` : ""}.</p>
+      ) : (
+        <p className="mb-3 flex flex-wrap items-center gap-1.5 text-xs text-foreground/90" data-testid="ais-experimental">
+          <Badge tone="warn">Experimental</Badge>
+          <span>The AIS format isn&apos;t yet validated on a real AIS file{stmt ? ` (${stmt.format.toUpperCase()})` : ""}. It is marked validated after the first import with no unrecognised rows and matching totals; until then, check every row against the AIS on the portal.</span>
+        </p>
+      ))}
       {!list.data ? <SkeletonRows rows={3} /> : years.length === 0 ? (
         <EmptyState title="No AIS imported yet">
           Download your AIS from the income-tax portal (AIS → Download → JSON, or the PDF, whose password is your PAN in lower case followed by your date of birth as ddmmyyyy) and drop it on the Import tab.

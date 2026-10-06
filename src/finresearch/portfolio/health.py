@@ -1,0 +1,236 @@
+"""Portfolio data health (#219): how complete the data behind each analysis is, what a gap blocks, and how to fix it.
+
+One row per input, each with a coverage % (None = could not be measured), a status and a fix link:
+
+    row               coverage measured as                                              weight
+    purchase_dates    open lots with a known acquisition date, weighted by value          20
+                      (units x price; units x cost when unpriced; lots with neither are counted, not weighed)
+    priced            open holdings with a current price, by count                       20
+    dividends         completed FYs with stock holdings that have >= 1 dividend recorded  10
+    lookthrough       fund value covered by a month-end fund portfolio (/api/lookthrough) 10
+    ais               AIS imported for the last completed FY (yes/no)                    10
+    history           daily returns in the value history, against the 120 that beta and  10
+                      risk contribution need (volatility needs 60; VaR and Sharpe 250)
+    targets           target allocation set (yes/no)                                      10
+    goals_age         age set (half) and at least one goal (half)                        10
+
+Overall = Σ weight x coverage / Σ weight over the rows that apply (a row that does not apply, e.g. look-through without
+funds, drops out). A row that could not be measured counts as 0 %: unknown is never treated as complete. The weights
+are a simple, stated judgement (prices and dates feed nearly every figure, so they count double), not a model.
+Personal data: computed locally, never sent to an LLM.
+"""
+
+from __future__ import annotations
+
+from collections import defaultdict
+from datetime import date
+from decimal import Decimal
+from typing import Any
+
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
+from finresearch.db.models import PortfolioAis, PortfolioHolding, PortfolioLot, PortfolioTxn
+from finresearch.fincalc.dates import fiscal_year
+from finresearch.fincalc.tax import fy_label
+
+WEIGHTS = {"purchase_dates": 20, "priced": 20, "dividends": 10, "lookthrough": 10, "ais": 10, "history": 10,
+           "targets": 10, "goals_age": 10}  # fmt: skip
+HISTORY_NEED = {
+    "volatility": 60,
+    "beta and risk contribution": 120,
+    "VaR and Sharpe": 250,
+}  # portfolio.analytics
+HISTORY_FULL = 120
+OPEN = Decimal("0.0005")
+HOW = ("Overall = Σ weight × coverage ÷ Σ weight of the rows that apply. Weights: purchase dates 20, prices 20, "
+       "dividends 10, fund look-through 10, AIS 10, performance history 10, targets 10, goals and age 10. A check that "
+       "could not run counts as 0 %.")  # fmt: skip
+
+
+def _status(cov: float | None) -> str:
+    if cov is None:
+        return "unknown"
+    return "ok" if cov >= 99.5 else "missing" if cov <= 0 else "partial"
+
+
+def _row(key: str, label: str, cov: float | None, detail: str, blocks: str, fix: str, href: str,
+         applies: bool = True) -> dict[str, Any]:  # fmt: skip
+    return {"key": key, "label": label, "weight": WEIGHTS[key],
+            "coverage_pct": None if cov is None else round(cov, 1),
+            "status": _status(cov) if applies else "not_applicable", "detail": detail, "blocks": blocks,
+            "fix": fix, "href": href}  # fmt: skip
+
+
+def purchase_dates(lots: list[PortfolioLot], price: dict[int, float | None]) -> dict[str, Any]:
+    known = total = Decimal(0)
+    unweighed = 0
+    for lot in lots:
+        p = price.get(lot.holding_id)
+        unit = Decimal(str(p)) if p is not None else lot.cost_per_unit
+        if unit is None:
+            unweighed += 1
+            continue
+        w = lot.open_quantity * unit
+        total += w
+        known += w if lot.acquired is not None else 0
+    undated = sum(1 for lot in lots if lot.acquired is None)
+    cov = float(known * 100 / total) if total > 0 else (None if lots else 100.0)
+    detail = f"{undated} of {len(lots)} open lot(s) have no purchase date"
+    if unweighed:
+        detail += f"; {unweighed} lot(s) without a price or cost could not be weighed"
+        cov = None if total == 0 else cov
+    return _row("purchase_dates", "Purchase dates known", cov, detail,
+                "XIRR, the short/long-term tax split, LTCG harvesting and lots turning long-term",
+                "Import an older tradebook or CAS, or open the holding and enter the purchase date",
+                "/portfolio#import", applies=bool(lots))  # fmt: skip
+
+
+def priced(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    held = [r for r in rows if not r.get("closed")]
+    pending = sum(1 for r in held if r.get("pending"))
+    ok = sum(1 for r in held if r.get("value") is not None and not r.get("pending"))
+    cov = (ok * 100 / len(held)) if held and not pending else None if held else 100.0
+    detail = f"{ok} of {len(held)} holding(s) priced" + (f"; {pending} still loading" if pending else "")
+    return _row("priced", "Holdings with a current price", cov, detail,
+                "current value, unrealised P&L, allocation, risk and XIRR for the unpriced holdings",
+                "Check the NSE symbol, ISIN or AMFI scheme code on the unpriced holding", "/portfolio#holdings",
+                applies=bool(held))  # fmt: skip
+
+
+def dividends(s: Session, today: date) -> dict[str, Any]:
+    """Completed FYs in which a stock was held, and whether any dividend is recorded for that FY. A year without one
+    can be genuine (not every stock pays), so this reads "recorded", not "missing"."""
+    stocks = {h.id for h in s.scalars(select(PortfolioHolding).where(PortfolioHolding.asset_type == "stock"))}
+    spans: dict[int, list[date]] = defaultdict(list)
+    paid: set[int] = set()
+    open_ids = {
+        h for (h,) in s.execute(select(PortfolioLot.holding_id).where(PortfolioLot.open_quantity > OPEN))
+    }
+    for t in s.scalars(select(PortfolioTxn).where(PortfolioTxn.holding_id.in_(stocks))):
+        if t.kind == "dividend":
+            paid.add(fiscal_year(t.day))
+        elif t.kind in ("buy", "opening", "sell"):
+            spans[t.holding_id].append(t.day)
+    last_done = fiscal_year(today) - 1
+    years: set[int] = set()
+    for hid, days in spans.items():
+        start, end = (
+            fiscal_year(min(days)),
+            (fiscal_year(today) if hid in open_ids else fiscal_year(max(days))),
+        )
+        years |= set(range(start, min(end, last_done) + 1))
+    per_fy = [{"fy": y, "label": fy_label(y), "recorded": y in paid} for y in sorted(years)]
+    cov = (sum(x["recorded"] for x in per_fy) * 100 / len(per_fy)) if per_fy else None
+    detail = ", ".join(f"{x['label']}: {'yes' if x['recorded'] else 'none recorded'}" for x in per_fy) or \
+        "no completed financial year with stock holdings"  # fmt: skip
+    row = _row("dividends", "Dividends recorded per FY", cov, detail,
+               "dividend income for tax, total return and the AIS dividend match",
+               "Import the broker's dividend report or add the dividends by hand (a year with none may be genuine)",
+               "/portfolio#import", applies=bool(per_fy))  # fmt: skip
+    row["per_fy"] = per_fy
+    return row
+
+
+def lookthrough(lt: dict[str, Any] | None, has_funds: bool, error: str | None) -> dict[str, Any]:
+    """Coverage as /api/lookthrough reports it: a top-level `coverage.pct` if present, else
+    `concentration.fund_coverage_pct` (fund value with a month-end portfolio)."""
+    cov = None
+    if lt:
+        top = lt.get("coverage")
+        cov = (
+            top.get("pct")
+            if isinstance(top, dict)
+            else (lt.get("concentration") or {}).get("fund_coverage_pct")
+        )
+    detail = (f"look-through could not be computed ({error})" if error else
+              "fund value covered by a month-end fund portfolio" if cov is not None else
+              "the look-through reported no coverage (for example, the funds have no current value yet)")  # fmt: skip
+    return _row(
+        "lookthrough",
+        "Fund look-through coverage",
+        None if cov is None else float(cov),
+        detail,
+        "true stock and sector exposure through funds, and fund overlap",
+        "Fetch or upload the funds' month-end portfolio files",
+        "/portfolio/lookthrough",
+        applies=has_funds,
+    )
+
+
+def ais(s: Session, today: date, has_holdings: bool) -> dict[str, Any]:
+    fy = fiscal_year(today) - 1
+    have = s.get(PortfolioAis, fy) is not None
+    return _row("ais", f"AIS imported for {fy_label(fy)}", 100.0 if have else 0.0,
+                "imported" if have else f"no AIS for {fy_label(fy)}, the last completed year",
+                "the AIS check of dividends, sales and purchases before filing the ITR",
+                "Download the AIS (JSON or PDF) from the income-tax portal and import it", "/portfolio#import",
+                applies=has_holdings)  # fmt: skip
+
+
+def history(perf: dict[str, Any] | None, error: str | None, has_holdings: bool) -> dict[str, Any]:
+    days = None
+    if perf is not None:
+        days = ((perf.get("summary") or {}).get("days") or 0) if perf.get("available", True) else 0
+    returns = max(0, days - 1) if days is not None else None
+    cov = None if returns is None else min(returns, HISTORY_FULL) * 100 / HISTORY_FULL
+    if returns is None:
+        detail = f"the value history could not be built ({error or 'no answer'})"
+    else:
+        short = [f"{k} ({n})" for k, n in HISTORY_NEED.items() if returns < n]
+        detail = f"{returns} daily returns" + (f"; too short for {', '.join(short)}" if short else "")
+    return _row("history", "Performance history length", cov, detail,
+                "volatility (60 days of returns), beta and risk contribution (120), VaR and Sharpe (250)",
+                "Import older transactions: the daily history is rebuilt from them", "/portfolio#import",
+                applies=has_holdings)  # fmt: skip
+
+
+def targets(t: dict[str, float]) -> dict[str, Any]:
+    return _row("targets", "Target allocation set", 100.0 if t else 0.0, "set" if t else "no target allocation",
+                "allocation drift, rebalancing suggestions and drift alerts", "Set targets on the Allocation tab",
+                "/portfolio#allocation")  # fmt: skip
+
+
+def goals_age(age: int | None, goals: int) -> dict[str, Any]:
+    cov = (50.0 if age is not None else 0.0) + (50.0 if goals else 0.0)
+    detail = f"age {'set' if age is not None else 'not set'}; {goals} goal(s)"
+    return _row("goals_age", "Goals and age set", cov, detail,
+                "the equity glide path, goal funding and the household checks",
+                "Add your age and goals on the Wealth page", "/wealth")  # fmt: skip
+
+
+def overall(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    use = [r for r in rows if r["status"] != "not_applicable"]
+    w = sum(r["weight"] for r in use)
+    pct = round(sum(r["weight"] * (r["coverage_pct"] or 0) for r in use) / w, 1) if w else None
+    unknown = [r["label"] for r in use if r["status"] == "unknown"]
+    if pct is None:
+        verdict = "No portfolio data yet"
+    elif pct >= 90:
+        verdict = "Data mostly complete: the analysis is as reliable as its methods allow"
+    elif pct >= 60:
+        verdict = "Analysis partially reliable: some figures rest on incomplete data"
+    else:
+        verdict = "Analysis unreliable: key data is missing"
+    if unknown:
+        verdict += f" ({len(unknown)} check(s) could not run and count as 0 %)"
+    return {"pct": pct, "verdict": verdict, "unknown": unknown, "how": HOW}
+
+
+def compute(s: Session, snap: dict[str, Any], today: date, *, lt: dict[str, Any] | None, lt_error: str | None,
+            perf: dict[str, Any] | None, perf_error: str | None) -> dict[str, Any]:  # fmt: skip
+    from finresearch.db.models import WealthGoal
+    from finresearch.portfolio.metrics import get_targets
+    from finresearch.suggest.advisor import load_profile
+
+    rows_in = snap.get("holdings") or []
+    held = [r for r in rows_in if not r.get("closed")]
+    price = {r["id"]: r.get("price") for r in rows_in if not r.get("pending")}
+    lots = list(s.scalars(select(PortfolioLot).where(PortfolioLot.open_quantity > OPEN)))
+    has_funds = any(r.get("asset_type") == "mf" for r in held)
+    goals = s.scalar(select(func.count()).select_from(WealthGoal)) or 0
+    rows = [purchase_dates(lots, price), priced(rows_in), dividends(s, today),
+            lookthrough(lt, has_funds, lt_error), ais(s, today, bool(held)), history(perf, perf_error, bool(held)),
+            targets(get_targets(s)), goals_age(load_profile(s).household.age, goals)]  # fmt: skip
+    return {"as_of": today.isoformat(), "rows": rows, "overall": overall(rows),
+            "privacy": "Computed on this machine from your local database; never sent to an LLM."}  # fmt: skip

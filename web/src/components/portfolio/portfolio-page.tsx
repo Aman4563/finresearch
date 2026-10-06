@@ -17,6 +17,7 @@ import type { CategoryRanks } from "@/components/markets/types";
 import { API_URL, api, day, useApi, when } from "@/lib/api";
 
 import { ConcentrationAnalytics } from "./concentration-analytics";
+import { DataHealth } from "./data-health";
 import { CostsAnalytics } from "./costs-analytics";
 import { ImportPanel } from "./import-panel";
 import { CoverageLine, EconomicSectors } from "./lookthrough-panel";
@@ -514,6 +515,7 @@ export function PortfolioPage() {
               help="Money-weighted annual return over every cash flow: purchases, sales, dividends paid out and today's value." />
           </div>
           <SyncStrip />
+          {!empty && <DataHealth refresh={refresh} />}
           <div className="mb-4 overflow-x-auto"><Segmented value={tab} onChange={go} options={TABS} /></div>
           {empty && tab !== "import" ? (
             <EmptyState icon={<Briefcase className="size-5" />} title="No holdings yet" action={<Button onClick={() => go("import")}>Import a statement</Button>}>

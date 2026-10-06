@@ -155,7 +155,7 @@ export type Faq = { q: string; a: string; link?: Link };
 
 export const FAQ: Faq[] = [
   { q: "Does it use my Claude plan?",
-    a: "Only for AI work: research runs, “Ask about this report” and personal suggestions go through the official Claude Code CLI on your own login, and count against your plan's 5-hour and 7-day windows. Browsing pages, prices, NAVs, option chains and monitor checks are plain data requests and use none of it. The Plan usage page shows how much is left.",
+    a: "Only for AI work: research runs, “Ask about this report” and personal suggestions go through the official Claude Code CLI on your own login, and count against your plan's 5-hour and 7-day windows. Claude receives public documents and market data, the question you type in Ask, and for a personal suggestion your IPO settings (capital per IPO, risk appetite, horizon, tax slab, category, max position, typed holdings and notes, rules); choose “Keep local” on the profile page to send none. Your portfolio, statements, AIS, journal and wealth data are never sent. Browsing pages, prices, NAVs, option chains and monitor checks are plain data requests and use none of it. The Plan usage page shows how much is left.",
     link: { href: "/usage", label: "Open Plan usage" } },
   { q: "Is this investment advice?",
     a: "No. FinResearch is a personal research tool, not a SEBI-registered adviser or research analyst. It shows cited evidence and a reasoned view; you decide, and you are responsible for your investments.",

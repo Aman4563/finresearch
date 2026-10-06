@@ -21,7 +21,10 @@ FinResearch is a single-user app that runs entirely on one Mac. The invariants e
   access time. Interim and unverified figures are labelled as such.
 - Nothing is silently truncated or invented: tools paginate, engines refuse over-long inputs, and a missing value
   is `None` with a reason, never 0.
-- Personal data stays local and is never sent to a model.
+- Portfolio, statement, AIS, journal, wealth and household data stay local and are never sent to a model. The only
+  personal inputs a model sees are the IPO profile fields the advisor uses (`suggest.profile.ADVISOR_FIELDS`:
+  capital per IPO, risk appetite, horizon, tax slab, category, max position, typed holdings and notes, rules), and
+  the profile setting `local_suggestion` replaces even that with a rule-based suggestion written locally.
 
 ## Claude Bridge (`bridge/`)
 
