@@ -112,18 +112,31 @@ def test_lookthrough_aggregation_reconciles_every_rupee():
     assert got["Y"] == (
         D(60000),
         "IT - Software",
-        "Mid Cap",
+        "Mid cap",
         {"Direct": D(5000), "Fund 1": D(30000), "Fund 2": D(25000)},
     )
-    assert got["X"][0:3] == (D(60000), "Banks", "Large Cap")  # the funds' industry label wins over NSE's
+    assert got["X"][0:3] == (D(60000), "Banks", "Large cap")  # the funds' industry label wins over NSE's
     assert got["USZ000000001"][2] == "Foreign"
     assert [s.key for s in ex.stocks] == ["X", "Y", "USZ000000001"]  # ties by key
     assert ex.equity == D(130000)
     assert ex.sectors == {"Banks": D(60000), "IT - Software": D(60000), "Software": D(10000)}
-    assert ex.caps == {"Large Cap": D(60000), "Mid Cap": D(60000), "Foreign": D(10000)}
+    assert ex.caps == {"Large cap": D(60000), "Mid cap": D(60000), "Foreign": D(10000)}
     assert ex.redundancy.quantize(D("0.0001")) == D(
         "92.3077"
     )  # X and Y reached by >= 2 routes: 120000 / 130000
+
+
+def test_cap_buckets_have_one_spelling():
+    """#214: a direct stock off AMFI's list fell back to the app's 'Large cap' while fund holdings on the list read
+    AMFI's 'Large Cap': the look-through showed two large-cap buckets."""
+    direct = [DirectInput("INE00ZZ01011", "New Listing", D(1000), cap="Large cap"),
+              DirectInput("INE00ZY01013", "Small Co", D(500), cap="Small cap")]  # fmt: skip
+    fund = FundInput("Fund", D(2000), [FundLine("INE00ZX01015", "Listed Co", D(100), "equity", "Banks")])
+    ex = lookthrough(direct, [fund], cap_of={"INE00ZX01015": "Large Cap"}.get)
+    assert ex.caps == {"Large cap": D(3000), "Small cap": D(500)}
+    s = style_series([("2026-08", [FundLine("INE00ZX01015", "Listed Co", D(100), "equity")])],
+                     cap_of={"INE00ZX01015": "Mid Cap"}.get)  # fmt: skip
+    assert s[0].caps == {"Mid cap": D(100)}
 
 
 def test_style_series_months_ordered_with_drift():
@@ -134,7 +147,7 @@ def test_style_series_months_ordered_with_drift():
     assert s[0].drift is None and s[0].equity_pct == 90
     # normalised: Jul X 55.56 Y 44.44, Aug X 50 Z 50 -> ½(5.56 + 44.44 + 50) = 50
     assert s[1].drift.quantize(D("0.01")) == D("50.00")
-    assert s[1].caps == {"Large Cap": D(50), "Unclassified": D(50)}
+    assert s[1].caps == {"Large cap": D(50), "Unclassified": D(50)}
 
 
 # ----------------------------------------------------------------------------------------------- parser
@@ -470,7 +483,7 @@ def test_api_fetch_upload_lookthrough_and_overlap(client):
     # direct 7,000 + 88,000 x 7.63 % from PPFCF = 13,714.40; Axis Midcap does not hold it in the trimmed file
     assert hdfc["value"] == pytest.approx(7000 + 88000 * 0.0763)
     assert {x["source"] for x in hdfc["routes"]} == {"Direct", "Parag Parikh Flexi Cap Fund"}
-    assert hdfc["cap"] == "Large Cap" and lt["cap_list"]["as_of"] == "2025-12-31"
+    assert hdfc["cap"] == "Large cap" and lt["cap_list"]["as_of"] == "2025-12-31"
     buckets = {b["kind"]: b["value"] for b in lt["buckets"]}
     assert buckets["arbitrage"] > 0 and buckets["foreign_equity"] > 0 and buckets["no_file"] == 1000.0
     assert len(lt["overlap"]) == 1 and lt["overlap"][0]["common"] >= 1

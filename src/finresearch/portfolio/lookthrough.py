@@ -51,6 +51,7 @@ from finresearch.fincalc.lookthrough import (
     FundInput,
     FundLine,
     active_share,
+    cap_label,
     combine,
     hhi,
     lookthrough,
@@ -544,7 +545,7 @@ def fund_detail(
     top = sorted((h for h in p.holdings if h.kind in EQUITY_KINDS), key=lambda h: -h.weight)[:15]
     out.update({
         "top": [{"isin": h.isin, "name": h.name, "industry": h.industry, "weight": _f(h.weight),
-                 "cap": "Foreign" if h.kind == "foreign_equity" else (cap_of(h.isin) or "Unclassified")} for h in top],
+                 "cap": "Foreign" if h.kind == "foreign_equity" else (cap_label(cap_of(h.isin)) or "Unclassified")} for h in top],
         "kinds": [{"kind": k, "label": BUCKET_LABEL.get(k, k), "pct": _f(v)}
                   for k, v in sorted(by_kind.items(), key=lambda kv: -kv[1])],
         "remainder_pct": _f(Decimal(100) - sum(by_kind.values(), ZERO)),
