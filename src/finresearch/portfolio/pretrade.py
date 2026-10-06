@@ -232,7 +232,14 @@ def sell_items(s: Session, p: Plan, h: PortfolioHolding | None) -> list[dict[str
     from finresearch.fincalc.dates import fiscal_year
     from finresearch.fincalc.tax import tax_delta
     from finresearch.portfolio.report import disposal_rows, holding_tax, load
-    from finresearch.portfolio.tax import DisposalRow, evaluate, gains_of, rules_note, unclassified
+    from finresearch.portfolio.tax import (
+        DisposalRow,
+        evaluate,
+        gains_of,
+        is_unclassified,
+        rules_note,
+        unclassified,
+    )
     from finresearch.portfolio.tax_watch import lt_date
     from finresearch.suggest.advisor import load_profile
 
@@ -295,7 +302,8 @@ def sell_items(s: Session, p: Plan, h: PortfolioHolding | None) -> list[dict[str
                   + "): enter the purchase date and cost of the oldest lots")  # fmt: skip
         if sale_unk["no_cost"]:
             detail += f"; the gain of the {sale_unk['no_cost']} lot(s) without a cost is unknown too"
-        detail += f". Classified part: gain {_inr(gain - (sale_unk['gain'] or 0))}, tax change {_inr(tax)} incl. cess"
+        known = sum((r.gain for r in rows if r.gain is not None and not is_unclassified(r)), ZERO)
+        detail += f". Classified part: gain {_inr(known)}, tax change {_inr(tax)} incl. cess"
     else:
         detail = (f"gain {_inr(gain)} (short-term {_inr(st)}, long-term {_inr(lt)}); this year's tax changes by "
                   f"{_inr(tax)} incl. cess at your {float(slab * 100):g} % slab")  # fmt: skip

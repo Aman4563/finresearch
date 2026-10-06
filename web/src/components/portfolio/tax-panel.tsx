@@ -16,10 +16,10 @@ const BUCKET: Record<string, string> = {
   equity_st: "Equity STCG", equity_lt: "Equity LTCG", slab_st: "STCG at slab rate", other_lt: "Other LTCG",
 };
 
-function Ideas({ title, icon, items, kind, help }: { title: string; icon: React.ReactNode; items: HarvestIdea[]; kind: "gain" | "loss"; help: string }) {
+function Ideas({ title, icon, items, kind, help, empty }: { title: string; icon: React.ReactNode; items: HarvestIdea[]; kind: "gain" | "loss"; help: string; empty?: string }) {
   return (
     <Card title={title} icon={icon} help={help}>
-      {items.length === 0 ? <p className="text-sm text-muted">{kind === "gain" ? "Nothing to harvest: no long-term equity gains fit in the unused exemption, or no live prices." : "No loss that would lower this year's tax (it needs realised taxable gains and a holding priced below cost)."}</p> : (
+      {items.length === 0 ? <p className={cx("text-sm", empty ? "text-warn" : "text-muted")}>{empty ? empty : kind === "gain" ? "Nothing to harvest: no long-term equity gains fit in the unused exemption, or no live prices." : "No loss that would lower this year's tax (it needs realised taxable gains and a holding priced below cost)."}</p> : (
         <Table label={title}>
           <thead><tr><th>Holding</th><th className="text-right">Sell units</th><th className="text-right">Value</th><th className="text-right">{kind === "gain" ? "Tax-free gain" : "Loss booked"}</th><th className="text-right">{kind === "gain" ? "Future tax saved ≤" : "Tax saved now"}</th><th className="text-right">Est. costs</th></tr></thead>
           <tbody>
@@ -29,7 +29,7 @@ function Ideas({ title, icon, items, kind, help }: { title: string; icon: React.
                 <td className="num text-right">{units(i.sell_units)}</td>
                 <td className="num text-right">{inr(i.value)}</td>
                 <td className={cx("num text-right", kind === "gain" ? "text-gain" : "text-loss")}>{inr(kind === "gain" ? i.gain : i.loss)}</td>
-                <td className="num text-right font-medium">{inr(kind === "gain" ? i.future_tax_saved_up_to : i.tax_saved)}</td>
+                <td className="num text-right font-medium">{inr(kind === "gain" ? i.future_tax_saved_up_to : i.tax_saved)}{i.estimate && <span className="block text-[10px] font-normal text-warn">estimate</span>}</td>
                 <td className="num text-right text-muted">{inr(i.est_costs)}</td>
               </tr>
             ))}
@@ -50,12 +50,26 @@ export function TaxPanel({ refresh }: { refresh: number }) {
   if (error) return <ErrorNote error={error} onRetry={reload} />;
   if (!data || !current) return <Card><SkeletonRows rows={6} /></Card>;
   const isCurrent = current.fy === data.harvest.fy;
+  const unk = current.unclassified;
 
   return (
     <div className="space-y-4">
       <Callout tone="warn" icon={<ShieldAlert className="size-4" />} title="Verify with a chartered accountant">
         {data.verify}
       </Callout>
+      {!current.complete && (
+        <Callout tone="warn" icon={<ShieldAlert className="size-4" />}
+          title={`Tax incomplete: ${unk.count} disposal(s) / ${inr(unk.gain ?? 0)} of gains can't be classified`}>
+          {unk.detail}. The year&apos;s tax and the exemption left are not shown as a figure until they are: a gain of
+          unknown term may be short- or long-term (or a loss), so the tax on the rest is neither a floor nor a ceiling.
+          The rows marked &ldquo;unknown&rdquo; below need a purchase date (and cost).
+        </Callout>
+      )}
+      {!current.rules_verified && current.rules_note && (
+        <Callout tone="warn" icon={<ShieldAlert className="size-4" />} title={`Rules not verified for ${current.label}`}>
+          {current.rules_note}.
+        </Callout>
+      )}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <Segmented value={String(current.fy)} onChange={(v) => setFy(Number(v))}
           options={data.fys.slice(0, 5).map((f) => ({ value: String(f.fy), label: f.label.replace("FY ", "FY") }))} />
@@ -70,7 +84,8 @@ export function TaxPanel({ refresh }: { refresh: number }) {
         <Stat label="Long-term gains" value={current.ltcg} format={(n) => inr(n)} icon={<Leaf className="size-4" />} tone={current.ltcg >= 0 ? "gain" : "loss"}
           help="LTCG: held longer than the threshold. Listed equity: 12.5 % above ₹1.25 lakh a year (10 % above ₹1 lakh for sales before 23-Jul-2024)." />
         <Stat label="Estimated tax + cess" value={current.total} format={(n) => inr(n)} icon={<Scale className="size-4" />} tone="warn"
-          hint={`slab ${current.slab_rate_pct}% from your profile`} help="Before surcharge and rebates; 4 % health and education cess included." />
+          display={current.total == null ? <span className="text-warn">incomplete</span> : undefined}
+          hint={current.total == null ? `${inr(current.total_classified)} on the classified disposals only; ${unk.count} can't be classified` : `slab ${current.slab_rate_pct}% from your profile${current.rules_verified ? "" : " · rules not verified"}`} help="Before surcharge and rebates; 4 % health and education cess included." />
         <Stat label={isCurrent ? "Days to 31 March" : "Disposals"} value={isCurrent ? data.harvest.days_left : current.disposals} icon={<CalendarClock className="size-4" />}
           hint={isCurrent ? "harvesting must settle before FY end" : current.label} />
       </div>
@@ -81,6 +96,7 @@ export function TaxPanel({ refresh }: { refresh: number }) {
           <p className="num text-2xl font-semibold">{inr(current.exemption.used)} <span className="text-sm font-normal text-muted">of {inr(current.exemption.limit)} used</span></p>
           <Progress className="mt-3" value={current.exemption.used} max={current.exemption.limit} tone="gain" />
           <p className="mt-2 text-xs text-muted">{inr(current.exemption.remaining)} left in {current.label}{isCurrent ? ` · ${data.harvest.days_left} days to go` : ""}.</p>
+          {!current.exemption.complete && <p className="mt-1 text-xs font-medium text-warn">Not final: {unk.count} unclassified disposal(s) may use part of the exemption, so less may be left.</p>}
           {(current.losses_carried.short > 0 || current.losses_carried.long > 0) && (
             <p className="mt-2 text-xs">Unabsorbed losses: short-term {inr(current.losses_carried.short)}, long-term {inr(current.losses_carried.long)} (carry forward up to 8 years if you file on time).</p>
           )}
@@ -105,7 +121,9 @@ export function TaxPanel({ refresh }: { refresh: number }) {
               </tbody>
             </Table>
           )}
-          <p className="mt-3 text-xs text-muted">Tax {inr(current.tax)} + cess {inr(current.cess)} = <span className="num font-medium text-foreground">{inr(current.total)}</span></p>
+          {current.total == null
+            ? <p className="mt-3 text-xs text-warn">Tax on the classified disposals only: {inr(current.total_classified)} incl. cess. Not the year&apos;s tax: {unk.count} disposal(s) are left out.</p>
+            : <p className="mt-3 text-xs text-muted">Tax {inr(current.tax)} + cess {inr(current.cess)} = <span className="num font-medium text-foreground">{inr(current.total)}</span></p>}
         </Card>
       </div>
 
@@ -113,6 +131,7 @@ export function TaxPanel({ refresh }: { refresh: number }) {
         <>
           <div className="space-y-4">
             <Ideas title="Gain harvesting" icon={<Leaf className="size-4" />} items={data.harvest.gain_harvest} kind="gain"
+              empty={data.harvest.complete ? undefined : "Not suggested: this year's unused exemption is unknown while a disposal can't be classified (see above)."}
               help="Sell long-term equity lots whose gain fits in this year's unused exemption (tax-free), then buy back on a later day at the higher price: your cost rises, so future LTCG is lower." />
             <Ideas title="Tax-loss harvesting" icon={<Scissors className="size-4" />} items={data.harvest.loss_harvest} kind="loss"
               help="Sell holdings priced below cost to set the loss off against gains already booked this year. The saving is the change in this year's tax computed by the same rules." />
@@ -153,7 +172,7 @@ export function TaxPanel({ refresh }: { refresh: number }) {
 
       <AisCheck refresh={refresh} preferFy={current.fy} />
 
-      <Card title="Rule table" subtitle="Keyed by the date of sale, not by section numbers (the Income-tax Act 2025 renumbered them from tax year 2026-27 with the same rates)."
+      <Card title="Rule table" subtitle={`Keyed by the date of sale, not by section numbers (the Income-tax Act 2025 renumbered them from tax year 2026-27 with the same rates). Verified through ${data.rules_verified_through.label}: later years assume the latest rows continue and are flagged.`}
         actions={<button type="button" className="text-xs font-medium text-brand" onClick={() => setShowRules((s) => !s)}>{showRules ? "Hide" : `Show ${data.rules.length} rules`}</button>}>
         {showRules && (
           <Table label="Capital gains rule table">
