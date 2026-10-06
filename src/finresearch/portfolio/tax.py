@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import csv
 import io
+import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import date
@@ -68,8 +69,30 @@ EQUITY_INDEX_WORDS = ("nifty", "sensex", "bse ", "midcap", "smallcap", "next 50"
                       "value", "alpha", "equity")  # fmt: skip
 
 
+# A debenture or bond held as a listed security (an NCD bought on the exchange arrives as a "stock" holding). Indian
+# ISINs carry the security type in characters 8-9: "01" equity shares, "07"/"08" debentures and bonds (observed on
+# exchange-listed NCDs and bonds, e.g. INE027E07998, INE549K07IQ3) [unverified against NSDL's code list]; the name
+# catches the rest. ETFs are excluded first ("Bharat Bond ETF" is a fund unit).
+_DEBT_NAME = re.compile(r"\bNCDs?\b|-NCD\b|\bdebentures?\b|\bbonds?\b|\bnon[- ]convertible\b", re.I)
+
+
+def is_debt_security(isin: str | None, name: str | None, symbol: str | None = None) -> bool:
+    """True for a listed debenture/bond (NCD) held like a share: taxed as an 'other' listed security, never equity."""
+    n, sym = name or "", (symbol or "").upper()
+    if (
+        re.search(r"\bETF\b|\bBEES\b", n, re.I)
+        or sym.endswith(("BEES", "ETF", "IETF"))
+        or "sovereign gold" in n.lower()
+    ):
+        return False
+    code = (isin or "").upper()
+    if len(code) == 12 and code.startswith("INE") and code[7:9] in ("07", "08"):
+        return True
+    return bool(_DEBT_NAME.search(n))
+
+
 def auto_tax_class(asset_type: str, name: str, category: str | None, cas_type: str | None,
-                   symbol: str | None) -> tuple[str, str]:  # fmt: skip
+                   symbol: str | None, isin: str | None = None) -> tuple[str, str]:  # fmt: skip
     """(tax class, why) from what the app knows. The >65 % tests need the fund's holdings, which the app does not
     have, so this maps SEBI categories and names; the user can override it per holding."""
     n = f" {name.lower()} "
@@ -80,6 +103,11 @@ def auto_tax_class(asset_type: str, name: str, category: str | None, cas_type: s
         metal = any(w in n or w.upper() in sym for w in ("gold", "silver"))
         if metal and ("etf" in n or "bees" in n or sym.endswith(("BEES", "ETF", "IETF"))):
             return "other_mf", "gold/silver ETF (a fund unit, not equity)"
+        if is_debt_security(isin, name, symbol):
+            return (
+                "other",
+                "listed debenture/bond (NCD): an 'other' listed security, not equity (no STT, no s.112A)",
+            )
         if sym in ("LIQUIDBEES", "LIQUIDCASE", "LIQUIDETF") or any(
             w in n for w in ("liquid", "gilt", "bharat bond")
         ):

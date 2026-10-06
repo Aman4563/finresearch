@@ -16,7 +16,7 @@ from finresearch.db.models import PortfolioDisposal, PortfolioHolding, Portfolio
 from finresearch.fincalc.dates import fiscal_year
 from finresearch.fincalc.tax import RULES, VERIFY_NOTE, fy_label
 from finresearch.portfolio import elss
-from finresearch.portfolio.limits import sector_label
+from finresearch.portfolio.limits import BONDS_SECTOR, sector_label
 from finresearch.portfolio.tax import (
     DisposalRow,
     HoldingTax,
@@ -25,6 +25,7 @@ from finresearch.portfolio.tax import (
     evaluate,
     fy_summary,
     harvest,
+    is_debt_security,
     is_listed,
 )
 from finresearch.portfolio.valuation import (
@@ -67,7 +68,7 @@ def load(s: Session) -> Loaded:
 def tax_class_of(h: PortfolioHolding, category: str | None = None) -> tuple[str, str, str]:
     """(effective class, automatic class, why the automatic class)."""
     auto, why = auto_tax_class(h.asset_type, h.name, category or h.category, (h.meta or {}).get("cas_type"),
-                               h.nse_symbol)  # fmt: skip
+                               h.nse_symbol, h.isin)  # fmt: skip
     return (h.tax_class or auto), auto, why
 
 
@@ -154,10 +155,11 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
             unpriced += 1 if value is None else 0
         if value is not None:
             tot["value"] += value
-            label = asset_label(h.asset_type, eff)
+            debt = h.asset_type == "stock" and is_debt_security(h.isin, h.name, h.nse_symbol)
+            label = BONDS_SECTOR if debt else asset_label(h.asset_type, eff)
             alloc["asset"][label] += value
             alloc["sector"][sector_label(h.asset_type, h.sector or (p.industry if h.asset_type == "stock" else None),
-                                         h.nse_symbol, h.name, eff)] += value  # fmt: skip
+                                         h.nse_symbol, h.name, eff, h.isin)] += value  # fmt: skip
             bucket = cap_bucket(p.market_cap_cr) if h.asset_type == "stock" and eff == "equity" else (
                 fund_cap_bucket(category, eff) if h.asset_type == "mf" else "Not equity")  # fmt: skip
             alloc["cap"][bucket] += value
