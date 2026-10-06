@@ -21,7 +21,7 @@ type ClassMove = { asset_class: string; amount: number; stamp: number; examples:
 type SellStep = {
   step: number; holding_id: number; name: string; account: string; asset_class: string; category: string; units: number;
   price: number; gross: number; charges: number; exit_load: number; net: number; gain: number; short_term: number;
-  long_term: number; tax: number; notes: string[];
+  long_term: number; tax: number | null; notes: string[];
   lots: { acquired: string | null; units: number; gain: number | null; term: string | null }[];
 };
 export type RebalancePlan = {
@@ -30,8 +30,10 @@ export type RebalancePlan = {
   allocation?: AllocRow[]; cash_flow?: ClassMove[]; sells?: SellStep[]; buys?: ClassMove[];
   unfilled?: { asset_class: string; amount: number; why: string[] }[];
   skipped?: { holding_id: number; name: string; asset_class: string; units: number; reason: string }[];
-  totals?: { sold_gross: number; sell_charges: number; stamp_duty: number; exit_load: number; gain: number; tax: number;
-    bought: number; exemption_before: number; exemption_after: number; tax_so_far: number };
+  totals?: { sold_gross: number; sell_charges: number; stamp_duty: number; exit_load: number; gain: number; tax: number | null;
+    bought: number; exemption_before: number | null; exemption_after: number | null; tax_so_far: number | null; tax_estimate?: boolean };
+  /** unclassified disposals this year (#213) and tax rules past their verified year (#220) */
+  tax_complete?: boolean; rules_verified?: boolean; rules_note?: string | null; tax_warnings?: string[];
   unpriced: string[]; assumptions: string[]; sources: string[];
 };
 
@@ -119,7 +121,7 @@ function Sells({ rows }: { rows: SellStep[] }) {
           <td className="num text-right">{units(s.units)}</td>
           <td className="num text-right">{inr(s.gross)}</td>
           <td className={cx("num text-right", s.gain < 0 ? "text-loss" : "text-gain")}>{signed(s.gain)}</td>
-          <td className="num text-right font-medium">{inr(s.tax)}</td>
+          <td className="num text-right font-medium">{s.tax == null ? <span className="text-warn">unknown</span> : inr(s.tax)}</td>
           <td className="num text-right text-muted">{inr(s.charges, 2)}</td>
           <td className="num text-right text-muted">{inr(s.exit_load)}</td>
         </tr>
@@ -133,13 +135,16 @@ function PlanBody({ p }: { p: RebalancePlan }) {
   return (
     <div className="mt-4">
       <p className="text-sm">{p.message}</p>
+      {(p.tax_warnings ?? []).map((w) => <p key={w} className="mt-1 text-xs font-medium text-warn">{w}</p>)}
       {p.unpriced.length > 0 && <p className="mt-1 text-xs text-warn">Not in the allocation (no price): {p.unpriced.join(", ")}.</p>}
       {t && (p.sells?.length || p.cash_flow?.length) ? (
         <div className="mt-3 grid gap-3 sm:grid-cols-4">
           <Stat label="Sold" value={t.sold_gross} format={(n) => inr(n)} />
-          <Stat label={`Tax this year (${p.fy_label})`} value={t.tax} format={(n) => inr(n)} hint={p.slab_pct != null ? `incl. 4 % cess; slab ${p.slab_pct} %` : "incl. 4 % cess"} />
+          <Stat label={`Tax this year (${p.fy_label})`} value={t.tax} format={(n) => inr(n)} display={t.tax == null ? <span className="text-warn">unknown</span> : undefined}
+            hint={(t.tax_estimate ? "estimate (tax incomplete); " : "") + (p.slab_pct != null ? `incl. 4 % cess; slab ${p.slab_pct} %` : "incl. 4 % cess")} />
           <Stat label="Charges" value={t.sell_charges + t.stamp_duty} format={(n) => inr(n, 2)} hint="STT + stamp duty" />
-          <Stat label="LTCG exemption left" value={t.exemption_after} format={(n) => inr(n)} hint={`${inr(t.exemption_before)} before`} />
+          <Stat label="LTCG exemption left" value={t.exemption_after} format={(n) => inr(n)} display={t.exemption_after == null ? <span className="text-warn">unknown</span> : undefined}
+            hint={t.exemption_before == null ? "tax incomplete: see above" : `${inr(t.exemption_before)} before`} />
         </div>
       ) : null}
       {p.allocation && <Bars rows={p.allocation} />}

@@ -22,7 +22,7 @@ from typing import Any
 
 from finresearch.fincalc.dates import fiscal_year
 from finresearch.fincalc.tax import tax_delta
-from finresearch.portfolio.tax import DisposalRow, HoldingTax, evaluate, gains_of
+from finresearch.portfolio.tax import DisposalRow, HoldingTax, evaluate, gains_of, rules_note, unclassified
 
 WINDOW_DAYS = 30
 
@@ -51,7 +51,10 @@ def turning_long_term(lots: list[dict[str, Any]], base_rows: list[DisposalRow], 
     """`lots`: dicts with holding (HoldingTax), acquired, quantity, cost_per_unit, stt_paid, price, older_lots.
     `base_rows`: realised disposals (for this year's set-off and exemption). Largest saving first."""
     fy = fiscal_year(today)
-    base_now = gains_of([r for r in base_rows if r.fy == fy])
+    base_rows_now = [r for r in base_rows if r.fy == fy]
+    base_now = gains_of(base_rows_now)
+    # this year's unclassified disposals are left out of the set-off and exemption: the figures are then estimates
+    year_unk = unclassified(base_rows_now)["count"]
     out = []
     for lot in lots:
         h: HoldingTax = lot["holding"]
@@ -77,14 +80,17 @@ def turning_long_term(lots: list[dict[str, Any]], base_rows: list[DisposalRow], 
                     "tax_now": float(tax_now.quantize(Decimal("0.01"))),
                     "tax_later": float(tax_later.quantize(Decimal("0.01"))),
                     "saved": float((tax_now - tax_later).quantize(Decimal("0.01"))),
-                    "older_lots": lot.get("older_lots", 0), "price": float(price)})  # fmt: skip
+                    "older_lots": lot.get("older_lots", 0),
+                    "older_unknown": lot.get("older_unknown", 0), "estimate": bool(year_unk),
+                    "price": float(price), **rules_note([fy, fy_later])})  # fmt: skip
     return sorted(out, key=lambda x: (-x["saved"], x["days"]))
 
 
 def open_lots_with_prices(data: Any, prices: dict[int, Decimal], categories: dict[int, str | None] | None = None
                           ) -> list[dict[str, Any]]:  # fmt: skip
     """Open lots of every holding (a report.Loaded) in FIFO order, with the holding's price and how many older open
-    lots precede each one."""
+    lots precede each one (`older_unknown`: how many of those have no date or cost, so their tax is unknown and
+    FIFO sells them first)."""
     from finresearch.portfolio.report import holding_tax
 
     categories = categories or {}
@@ -96,5 +102,7 @@ def open_lots_with_prices(data: Any, prices: dict[int, Decimal], categories: dic
         for i, lot in enumerate(open_lots):
             out.append({"holding": ht, "acquired": lot.acquired, "quantity": lot.open_quantity,
                         "cost_per_unit": lot.cost_per_unit, "stt_paid": lot.stt_paid, "price": prices.get(h.id),
-                        "older_lots": i})  # fmt: skip
+                        "older_lots": i,
+                        "older_unknown": sum(1 for x in open_lots[:i]
+                                             if x.acquired is None or x.cost_per_unit is None)})  # fmt: skip
     return out
