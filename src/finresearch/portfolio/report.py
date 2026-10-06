@@ -16,6 +16,7 @@ from finresearch.db.models import PortfolioDisposal, PortfolioHolding, Portfolio
 from finresearch.fincalc.dates import fiscal_year
 from finresearch.fincalc.tax import RULES, VERIFY_NOTE, fy_label
 from finresearch.portfolio import elss
+from finresearch.portfolio.limits import sector_label
 from finresearch.portfolio.tax import (
     DisposalRow,
     HoldingTax,
@@ -155,10 +156,8 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
             tot["value"] += value
             label = asset_label(h.asset_type, eff)
             alloc["asset"][label] += value
-            sector = h.sector or (p.industry if h.asset_type == "stock" else None)
-            alloc["sector"][
-                sector or ("Funds (no look-through)" if h.asset_type == "mf" else "Unclassified")
-            ] += value
+            alloc["sector"][sector_label(h.asset_type, h.sector or (p.industry if h.asset_type == "stock" else None),
+                                         h.nse_symbol, h.name, eff)] += value  # fmt: skip
             bucket = cap_bucket(p.market_cap_cr) if h.asset_type == "stock" and eff == "equity" else (
                 fund_cap_bucket(category, eff) if h.asset_type == "mf" else "Not equity")  # fmt: skip
             alloc["cap"][bucket] += value

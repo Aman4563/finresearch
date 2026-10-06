@@ -27,7 +27,7 @@ from finresearch.portfolio.history import (
     parse_benchmark_actions,
     returns_of,
 )
-from finresearch.portfolio.limits import PositionLimit, is_fund_like, position_limit
+from finresearch.portfolio.limits import PositionLimit, is_fund_like, is_real_sector, position_limit
 from finresearch.signals.base import DISCLAIMER
 
 MIN_VOL, WARN_VOL = 60, 250  # trading days of returns
@@ -315,7 +315,7 @@ def risk(
                     cvar_1d={**metric(c1, "fraction", n=len(common)), "inr": _r(c1 * tot, 0)})  # fmt: skip
         hypo["positions"] = sorted(
             [{"key": p.key, "name": p.name, "weight": _r(wi, 4), "risk_share": _r(c, 4),
-              "sector": sectors.get(p.key) or _default_sector(p)}
+              "sector": _sector(p, sectors)}
              for p, wi, c in zip(keep, w, rc, strict=True)], key=lambda x: -(x["risk_share"] or 0))  # fmt: skip
         by: dict[str, list[float]] = {}
         for x in hypo["positions"]:
@@ -334,10 +334,13 @@ def risk(
     return out
 
 
-def _default_sector(p: Any) -> str:
-    if p.asset_type == "mf":
-        return "Funds (not looked through)"
-    return p.sector or "Unclassified"
+def _sector(p: Any, sectors: dict[str, str]) -> str:
+    """The position's sector for the risk and concentration views (portfolio.limits.sector_label: ETFs and funds are
+    grouped by what they hold, never as a sector of their own)."""
+    from finresearch.portfolio.limits import sector_label
+
+    return sector_label(p.asset_type, sectors.get(p.key) or getattr(p, "sector", None), p.key.split(":", 1)[-1],
+                        p.name, getattr(p, "tax_class", None))  # fmt: skip
 
 
 # --------------------------------------------------------------------------- stress scenarios
@@ -527,7 +530,7 @@ def concentration(h: History, sectors: dict[str, str], overrides: dict[str, str 
     for p in pos:
         g, gsrc = group_of(p, overrides)
         rows.append({"key": p.key, "name": p.name, "asset_type": p.asset_type, "value": _r(p.value),
-                     "weight_pct": _r(p.value / total * 100, 2), "sector": sectors.get(p.key) or _default_sector(p),
+                     "weight_pct": _r(p.value / total * 100, 2), "sector": _sector(p, sectors),
                      "group": g, "group_source": gsrc, "accounts": len(p.holding_ids)})  # fmt: skip
     w = [p.value for p in pos]
 
@@ -552,7 +555,7 @@ def concentration(h: History, sectors: dict[str, str], overrides: dict[str, str 
                           "text": f"Your limit ({stock_src}) is exceeded: {x['name']} is "
                                   f"{x['weight_pct']:.1f} % of the portfolio. Consider reviewing it."})  # fmt: skip
     for s in sectors_rows:
-        if s["label"].startswith("Funds") or s["label"] == "Unclassified":
+        if not is_real_sector(s["label"]):
             continue
         if (s["weight_pct"] or 0) > SECTOR_LIMIT_PCT:
             flags.append({"kind": "sector", "label": s["label"], "weight_pct": s["weight_pct"], "limit_pct": SECTOR_LIMIT_PCT,

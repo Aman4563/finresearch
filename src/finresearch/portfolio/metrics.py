@@ -365,8 +365,9 @@ def alert_metrics(session: Session) -> Out:
             )
         else:
             out["n_effective"] = (None, f"{src}: no priced holding")
-        sectors = {k: x for k, x in (v.get("sectors") or {}).items()
-                   if x and k not in ("Funds (no look-through)", "Unclassified")}  # fmt: skip
+        from finresearch.portfolio.limits import is_real_sector
+
+        sectors = {k: x for k, x in (v.get("sectors") or {}).items() if x and is_real_sector(k)}
         if sectors and v.get("value"):
             k, x = max(sectors.items(), key=lambda kv: kv[1])
             out["max_sector_pct"] = (_q(x / v["value"] * 100), f"{src}: largest sector of directly held stocks, as % "

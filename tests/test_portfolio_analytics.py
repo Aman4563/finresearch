@@ -600,7 +600,7 @@ def test_api_routes_end_to_end(api):
     r2 = api.get("/api/portfolio/analytics/risk?rf=7").json()
     assert r2["risk_free"]["rate"] == pytest.approx(0.07) and r2["risk_free"]["user_set"]
     c = api.get("/api/portfolio/analytics/concentration").json()
-    assert {x["sector"] for x in c["positions"]} == {"IT - Software", "Banks", "Funds (not looked through)"}
+    assert {x["sector"] for x in c["positions"]} == {"IT - Software", "Banks", "Funds (no look-through)"}
     k = api.get("/api/portfolio/analytics/costs").json()
     assert k["available"] and k["funds"][0]["plan"] == "Regular" and k["switches"]
     hid = k["switches"][0]["holding_ids"][0]
