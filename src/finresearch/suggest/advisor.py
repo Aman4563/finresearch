@@ -18,7 +18,13 @@ from finresearch.config import get_settings
 from finresearch.db import session_scope
 from finresearch.db.models import AgentStep, Decision, InvestorProfile, ResearchRun
 from finresearch.fincalc.dates import now_ist
-from finresearch.suggest.profile import UI_FIELDS, Profile, default_profile, normalize_stored_rules
+from finresearch.suggest.profile import (
+    ADVISOR_FIELDS,
+    UI_FIELDS,
+    Profile,
+    default_profile,
+    normalize_stored_rules,
+)
 from finresearch.suggest.rules import Inputs, gather, is_sme, lot_limits
 
 log = logging.getLogger(__name__)
@@ -111,6 +117,43 @@ def enforce(s: Suggestion, inputs: Inputs, limits: dict[str, int | None], profil
             "enforcement_notes": notes, "agent": s.model_dump(mode="json")}  # fmt: skip
 
 
+# --------------------------------------------------------------------------- local (rule-based) suggestion, #215
+LOCAL_MODEL = "local rules (no model call)"
+_EXIT = {
+    "listing": "Sell on listing day: the plan is the listing gain, so exit at the open or on the first sign of weakness.",
+    "short": "Hold for weeks, not years: exit on a set target or stop decided before listing, not on the day's mood.",
+    "long": "Hold for the long term only while the business case in the report still holds; review at each result.",
+}  # fmt: skip
+
+
+def local_suggestion(
+    synth: dict[str, Any], inputs: Inputs, limits: dict[str, int | None], profile: Profile
+) -> Suggestion:
+    """A deterministic suggestion from the same inputs the advisor agent gets (the report's verdict and confidence,
+    the rules' statuses and the lot limits), written without any model call. `enforce` then applies the rules and
+    limits exactly as for the agent's suggestion. The lot count is the category's minimum application: in an
+    oversubscribed book a bigger retail bid does not improve the odds (allotment is a lottery over minimum lots)."""
+    verdict = str(synth.get("overall_verdict") or "")
+    action: Literal["APPLY", "APPLY-CONDITIONAL", "SKIP"] = (
+        "SKIP" if verdict in ("AVOID", "NEUTRAL") else
+        "APPLY-CONDITIONAL" if verdict == "APPLY-CONDITIONAL" or not verdict.startswith("APPLY") else "APPLY")  # fmt: skip
+    conditions = [synth["condition"]] if action == "APPLY-CONDITIONAL" and synth.get("condition") else []
+    lots = int(limits.get("min_lots") or 1) if action != "SKIP" else 0
+    rules = inputs.to_json()["rules"]
+    lines = ["Written on this machine by fixed rules, not by a model (profile setting \"keep the personal IPO "
+             "suggestion local\").", "",
+             f"- Report verdict: **{verdict or 'not stated'}** (confidence {synth.get('confidence') or 'not stated'}).",
+             f"- Action from the verdict: {action}; lots: the category's minimum application ({lots}).",
+             "- Your rules: " + ("; ".join(f"{r['rule']['id']} {r['status']}" for r in rules) or "none") + ".",
+             f"- Lot limits: by capital {limits.get('by_capital')}, by category {limits.get('by_category')}.",
+             f"- Horizon {profile.horizon}, risk appetite {profile.risk_appetite}."]  # fmt: skip
+    conf = synth.get("confidence")
+    return Suggestion(action=action, category=profile.category, lots=lots, conditions=conditions,
+                      exit_plan=_EXIT[profile.horizon], watch=["The allotment status, then the listing-day open"],
+                      rationale_markdown="\n".join(lines),
+                      confidence=conf if conf in ("low", "medium", "high") else "low")  # fmt: skip
+
+
 # --------------------------------------------------------------------------- suggestion flow
 def _synthesis(session, run_id: int) -> dict[str, Any]:
     st = session.scalars(select(AgentStep).where(AgentStep.run_id == run_id, AgentStep.stage == "synthesis",
@@ -132,8 +175,6 @@ async def fetch_live(symbol: str | None):
 
 
 async def suggest(run_id: int, *, router=None, live_detail=None, fetch=fetch_live) -> dict[str, Any]:
-    from finresearch.bridge import build_router
-    from finresearch.mcp_server.config import write_mcp_config
     from finresearch.suggest.rules import company_of
     from finresearch.verify.gate import check_report
 
@@ -161,16 +202,12 @@ async def suggest(run_id: int, *, router=None, live_detail=None, fetch=fetch_liv
         limits = lot_limits(profile, inputs.metrics["lot_cost"].value, sme=is_sme(issue_info, live_detail))
         system = _prompt(run_id, co, now, profile, inputs, limits, synth)
 
-    ws = get_settings().runs_dir / str(run_id) / "advisor"
-    ws.mkdir(parents=True, exist_ok=True)
-    task = AgentTask(name=f"run{run_id}-advisor", prompt="Write the personal suggestion now.", system_prompt=system,
-                     json_schema=json_schema_for(Suggestion), model_class=ModelClass.DEEP, effort="high",
-                     capabilities={Capability.TOOLS}, allowed_tools=ADVISOR_TOOLS, mcp_config=write_mcp_config(),
-                     max_turns=30, timeout_s=900, run_dir=ws, allow_degraded=False)  # fmt: skip
-    result = await (router or build_router()).run(task)
-    agent = Suggestion.model_validate(result.structured_output)
+    if profile.local_suggestion:  # #215: written here by fixed rules; nothing is sent to a model
+        agent, model, tier = local_suggestion(synth, inputs, limits, profile), LOCAL_MODEL, "local-rules"
+    else:
+        agent, model, tier = await _agent_suggestion(run_id, system, router)
     final = enforce(agent, inputs, limits, profile)
-    final["model"], final["tier"] = result.model, str(result.tier)
+    final["model"], final["tier"] = model, tier
     with session_scope() as s:
         d = Decision(run_id=run_id, company_id=company_id, action=final["action"], lots=final["lots"],
                      category=final["category"], suggestion=final,
@@ -179,6 +216,25 @@ async def suggest(run_id: int, *, router=None, live_detail=None, fetch=fetch_liv
         s.add(d)
         s.flush()
         return decision_json(d)
+
+
+async def _agent_suggestion(run_id: int, system: str, router) -> tuple[Suggestion, str, str]:
+    from finresearch.bridge import build_router
+    from finresearch.mcp_server.config import write_mcp_config
+
+    ws = get_settings().runs_dir / str(run_id) / "advisor"
+    ws.mkdir(parents=True, exist_ok=True)
+    task = AgentTask(name=f"run{run_id}-advisor", prompt="Write the personal suggestion now.", system_prompt=system,
+                     json_schema=json_schema_for(Suggestion), model_class=ModelClass.DEEP, effort="high",
+                     capabilities={Capability.TOOLS}, allowed_tools=ADVISOR_TOOLS, mcp_config=write_mcp_config(),
+                     max_turns=30, timeout_s=900, run_dir=ws, allow_degraded=False)  # fmt: skip
+    result = await (router or build_router()).run(task)
+    return Suggestion.model_validate(result.structured_output), result.model, str(result.tier)
+
+
+def advisor_profile(profile: Profile) -> dict[str, Any]:
+    """The profile as the advisor prompt carries it to Claude: ADVISOR_FIELDS only (#215)."""
+    return profile.model_dump(mode="json", include=set(ADVISOR_FIELDS))
 
 
 def _prompt(run_id, co, now, profile: Profile, inputs: Inputs, limits, synth) -> str:
@@ -190,7 +246,7 @@ def _prompt(run_id, co, now, profile: Profile, inputs: Inputs, limits, synth) ->
                                           "condition")}  # fmt: skip
     return tmpl.format(company_name=co.name if co else "?", nse_symbol=(co.stock_key if co else None) or "n/a",
                        run_id=run_id, now_ist=now.strftime("%H:%M"), today=now.date().isoformat(),
-                       profile=json.dumps(profile.model_dump(mode="json", exclude=UI_FIELDS), indent=1),
+                       profile=json.dumps(advisor_profile(profile), indent=1),
                        metrics=json.dumps(inputs.to_json()["metrics"], indent=1),
                        rules=json.dumps(inputs.to_json()["rules"], indent=1), limits=json.dumps(limits),
                        verdict=json.dumps(verdict), report=report)  # fmt: skip

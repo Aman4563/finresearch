@@ -301,6 +301,10 @@ class Profile(BaseModel):
     alert_rules: list[AlertRule] = Field(default_factory=list, max_length=200)
     # household finances for /wealth (finresearch.wealth); private, never in the advisor prompt
     household: Household = Field(default_factory=Household)
+    # #215 "Keep the personal IPO suggestion local": the suggestion is written by fixed rules on this machine from the
+    # same inputs (report verdict, rules, lot limits), and no model call is made. Off = the advisor agent (Claude)
+    # writes it from ADVISOR_FIELDS of this profile.
+    local_suggestion: bool = False
 
     @field_validator("display_name")
     @classmethod
@@ -318,8 +322,19 @@ class Profile(BaseModel):
 
 # personal financial data: never sent to an LLM
 PRIVATE_FIELDS = {"household"}
-# not investment inputs (or private): kept out of the advisor prompt
-UI_FIELDS = {"display_name", "avatar_color", "preferences", "alert_rules", *PRIVATE_FIELDS}
+# not investment inputs (or private): kept out of the stored decision inputs
+UI_FIELDS = {
+    "display_name",
+    "avatar_color",
+    "preferences",
+    "alert_rules",
+    "local_suggestion",
+    *PRIVATE_FIELDS,
+}
+# Exactly the profile fields the IPO advisor prompt carries to Claude (#215), an allow-list so a new field is never
+# sent by default. F&O, rebalancing, identity, preferences, alert rules and household data are not sent.
+ADVISOR_FIELDS = ("capital_per_ipo_inr", "risk_appetite", "horizon", "tax_slab_pct", "category", "max_position_pct",
+                  "holdings", "rules", "notes")  # fmt: skip
 
 
 DEFAULT_RULES = [
