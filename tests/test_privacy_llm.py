@@ -48,9 +48,8 @@ def world(env, tmp_path):
     from fastapi.testclient import TestClient
 
     from finresearch.api import create_app
+    from finresearch.db import models as M
     from finresearch.db import session_scope
-    from finresearch.db.models import (AgentStep, Claim, InvestorProfile, PortfolioAis, ResearchRun, TradeNote,
-                                       WealthAsset, WealthGoal)  # fmt: skip
     from finresearch.ingest.documents import get_or_create_company
     from finresearch.suggest.advisor import save_profile
     from finresearch.suggest.profile import default_profile
@@ -61,26 +60,28 @@ def world(env, tmp_path):
                          "kind": "buy", "quantity": 1, "price": 734519})  # fmt: skip
         assert r.status_code == 201, r.text
     with session_scope() as s:
-        s.query(InvestorProfile).delete()
-        p = default_profile().model_copy(update={"display_name": "Marker Display Kakapo", "fno_capital_inr": D(6677889)})
+        s.query(M.InvestorProfile).delete()
+        p = default_profile().model_copy(
+            update={"display_name": "Marker Display Kakapo", "fno_capital_inr": D(6677889)}
+        )
         p.household.monthly_income_inr = D(8812345)
         save_profile(s, p)
-        s.add(TradeNote(side="buy", name="Zyxwv Phantom Industries Ltd", thesis="MARKER-JOURNAL-QUOKKA"))
-        s.merge(PortfolioAis(fy=2026, sha256="1" * 64, format="json", ignored=0, warnings=[],
+        s.add(M.TradeNote(side="buy", name="Zyxwv Phantom Industries Ltd", thesis="MARKER-JOURNAL-QUOKKA"))
+        s.merge(M.PortfolioAis(fy=2026, sha256="1" * 64, format="json", ignored=0, warnings=[],
                              items=[{"category": "dividend", "part": "tds", "amount": "918273",
                                      "source": "MARKER-AIS-WOMBAT"}]))  # fmt: skip
-        s.add(WealthAsset(kind="fd", name="MARKER-WEALTH-NUMBAT", principal=D(4455667)))
-        s.add(WealthGoal(name="MARKER-GOAL-BILBY", target_inr=D(100000), target_date=date(2031, 1, 1)))
+        s.add(M.WealthAsset(kind="fd", name="MARKER-WEALTH-NUMBAT", principal=D(4455667)))
+        s.add(M.WealthGoal(name="MARKER-GOAL-BILBY", target_inr=D(100000), target_date=date(2031, 1, 1)))
         co = get_or_create_company(s, "priv-" + tmp_path.name[-8:], "Privacy Test Co")
         co.nse_symbol = "PRIVTEST"
-        run = ResearchRun(company_id=co.id, kind="ipo_report", status="done",
+        run = M.ResearchRun(company_id=co.id, kind="ipo_report", status="done",
                           manifest={"facts": {"issue_close": "2026-09-29"}})  # fmt: skip
         s.add(run)
         s.flush()
         for metric, value in (("price_band_upper", 272), ("lot_size", 55)):
-            s.add(Claim(run_id=run.id, stream="facts", statement=metric, claim_type="numeric", metric=metric,
+            s.add(M.Claim(run_id=run.id, stream="facts", statement=metric, claim_type="numeric", metric=metric,
                         value=D(value), unit="x", period="offer", status="verified"))  # fmt: skip
-        s.add(AgentStep(run_id=run.id, key="synthesis", stage="synthesis", role="synthesizer", status="done",
+        s.add(M.AgentStep(run_id=run.id, key="synthesis", stage="synthesis", role="synthesizer", status="done",
                         output={"report_markdown": "# Privacy Test Co\nNo figures.", "overall_verdict": "APPLY",
                                 "confidence": "medium"}))  # fmt: skip
         out = {"run_id": run.id, "slug": co.slug}
@@ -122,7 +123,11 @@ async def test_no_agent_task_or_agent_tool_carries_personal_data(world):
     for name in ROLES:  # every research role of every kind (IPO, stock, fund, bond, discovery)
         t = build_task(name, ctx, plan="(plan)", claims="(claims)")
         texts += [t.system_prompt or "", t.prompt]
-    texts += [docs, server.list_claims(world["run_id"]), server.identity_checks(world["run_id"], only_failing=False)]
+    texts += [
+        docs,
+        server.list_claims(world["run_id"]),
+        server.identity_checks(world["run_id"], only_failing=False),
+    ]
     assert len(texts) > 2 * len(ROLES)
     _assert_clean(texts)
 
