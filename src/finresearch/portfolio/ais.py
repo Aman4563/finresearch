@@ -309,8 +309,9 @@ def statement_from_records(records: list[dict[str, Any]], fy: int | None, fmt: s
     warnings = [FORMAT_NOTE]
     if fy is None:
         warnings.append("The financial year could not be read from the file: choose it when importing.")
-    return AisStatement(fy=fy, items=items, format=fmt, ignored=ignored, unrecognised=unrecognised,
-                        warnings=warnings)
+    return AisStatement(
+        fy=fy, items=items, format=fmt, ignored=ignored, unrecognised=unrecognised, warnings=warnings
+    )
 
 
 def parse_ais_json(content: bytes) -> AisStatement:
