@@ -39,6 +39,9 @@ def client(env):
         for t in APP:
             assert c.post("/api/portfolio/transactions", headers=ORIGIN, json=t).status_code == 201
         yield c
+    with session_scope() as s:  # later test files expect no portfolio (e.g. the alert rules' "not set up")
+        s.execute(text("TRUNCATE portfolio_disposal, portfolio_lot, portfolio_txn, portfolio_holding, "
+                       "portfolio_import, portfolio_ais, portfolio_setting"))  # fmt: skip
 
 
 def _post(c, blob: bytes, **kw):

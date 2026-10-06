@@ -228,12 +228,17 @@ def test_household_is_private_and_survives_a_profile_save(client):
     client.put("/api/wealth/household", headers=ORIGIN, json={"age": 40, "monthly_income_inr": "123456"})
     prof = client.get("/api/profile").json()
     assert prof["household"]["monthly_income_inr"] == "123456"
-    # the advisor prompt is built from model_dump(exclude=UI_FIELDS): the household never reaches the LLM
-    assert "household" in UI_FIELDS
-    dumped = Profile.model_validate(prof).model_dump(mode="json", exclude=UI_FIELDS)
+    # the advisor prompt carries only the ADVISOR_FIELDS allow-list (#215): the household never reaches the LLM
+    from finresearch.suggest.advisor import advisor_profile
+    from finresearch.suggest.profile import ADVISOR_FIELDS
+
+    assert "household" in UI_FIELDS and "household" not in ADVISOR_FIELDS
+    dumped = advisor_profile(Profile.model_validate(prof))
     assert "household" not in dumped and "123456" not in str(dumped)
-    advisor = (ROOT / "src/finresearch/suggest/advisor.py").read_text()
-    assert advisor.count('model_dump(mode="json", exclude=UI_FIELDS)') == 2
+    stored = Profile.model_validate(prof).model_dump(
+        mode="json", exclude=UI_FIELDS
+    )  # the decision's stored inputs
+    assert "household" not in stored and "123456" not in str(stored)
     # the profile page PUTs the whole profile back: the household survives
     assert client.put("/api/profile", headers=ORIGIN, json=prof).status_code == 200
     assert client.get("/api/wealth/household").json()["age"] == 40
