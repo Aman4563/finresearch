@@ -430,6 +430,16 @@ def test_api_fetch_upload_lookthrough_and_overlap(client):
     r = c.post("/api/lookthrough/fetch", headers=ORIGIN, json={"scheme_code": "122639", "months": 2})
     assert r.status_code == 200, r.text
     assert r.json()["months"] == ["2026-08", "2026-07"] and r.json()["errors"] == []
+    # #214 coverage on the portfolio cards: Axis (13,700, paste/upload) + the liquid fund (1,000, no adapter) are not
+    # looked through: 14,700 / 109,700 = 13.40 % of the portfolio; before the fetch it was 102,700 / 109,700 = 93.62 %
+    assert lt0["coverage"]["not_looked_through_pct"] == 93.62
+    cov = c.get("/api/portfolio").json()["lookthrough_coverage"]
+    assert (cov["not_looked_through_pct"], cov["fund_pct"], cov["looked_through"], cov["funds_total"]) == (
+        13.4, 93.62, 1, 3)  # fmt: skip
+    assert cov["text"].startswith(
+        "Direct stocks only — 13 % of the portfolio is in funds not looked through (2 of 3"
+    )
+    assert c.get("/api/lookthrough").json()["coverage"]["not_looked_through_pct"] == 13.4
     # Axis: no automatic discovery -> a pasted link off the allow-list is refused; the file is uploaded instead
     assert c.post("/api/lookthrough/fetch", headers=ORIGIN, json={"scheme_code": "120505"}).status_code == 422
     assert (

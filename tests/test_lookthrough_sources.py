@@ -171,3 +171,34 @@ async def test_tata_redirect_to_www_passes_the_hop_check(tmp_path):
     respx.get(www).mock(return_value=httpx.Response(200, content=tata_xlsx()))
     _sha, ps = await fetch_url(PortfolioStore(tmp_path), TATA_AUG)
     assert {p.sheet for p in ps} == {"TEXFLX", "TEXSML"}
+
+
+# ----------------------------------------------------------------------------------------------- coverage
+def test_coverage_share_of_portfolio_in_funds_not_looked_through(tmp_path):
+    from finresearch.portfolio.lookthrough import FundValue, PortfolioStore, coverage
+
+    store = PortfolioStore(tmp_path)
+    store.add_file(quant_xlsx(), "quant_Example_Flexi_Cap_Fund_31_Aug_2026.xlsx")
+    today = date(2026, 10, 6)
+    funds = [FundValue("1", "quant Example Flexi Cap Fund - Direct Plan - Growth", D(100), "quant Mutual Fund"),
+             FundValue("2", "Tata Example Small Cap Fund - Direct Plan - Growth", D(200), "Tata Mutual Fund"),
+             FundValue("3", "HDFC Example Flexi Cap Fund - Direct Plan", D(150), "HDFC Mutual Fund"),
+             FundValue("4", "Example House Bluechip Fund - Direct", D(20), None)]  # fmt: skip
+    c = coverage(D(1000), funds, store, today)  # 530 in direct stocks
+    # by hand: funds 100 + 200 + 150 + 20 = 470 of 1000 = 47 %; not looked through 200 + 150 + 20 = 370 = 37 %
+    assert (c["fund_pct"], c["not_looked_through_pct"]) == (47.0, 37.0)
+    assert (c["funds_total"], c["looked_through"], c["not_fetched"], c["unsupported"]) == (4, 1, 1, 2)
+    assert c["text"] == ("Direct stocks only — 37 % of the portfolio is in funds not looked through (3 of 4 funds: "
+                         "2 unsupported, 1 not fetched)")  # fmt: skip
+    st = {f["code"]: f for f in c["funds"]}
+    assert st["1"]["status"] == "looked_through" and st["1"]["month"] == "2026-08"
+    assert "Akamai" in st["3"]["reason"] and "no adapter" in st["4"]["reason"]
+    # a fund without a price: the share is unknown, never 0 (and never "all looked through")
+    u = coverage(
+        D(880), [*funds[:3], FundValue("4", "Example House Bluechip Fund", None, None)], store, today
+    )
+    assert u["not_looked_through_pct"] is None and u["unpriced"] == 1 and "unknown" in u["text"]
+    # every fund looked through: 0 % blind, said as such
+    a = coverage(D(630), funds[:1], store, today)
+    assert a["not_looked_through_pct"] == 0.0 and "all 1 are looked through" in a["text"]
+    assert coverage(D(500), [], store, today)["text"] is None  # no funds: nothing to say
