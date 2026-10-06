@@ -22,7 +22,7 @@ from decimal import Decimal as D
 
 import numpy as np
 import pytest
-from cas_synth import PASSWORD, build_cas, sample_statement
+from cas_synth import build_cas, sample_statement
 from fastapi.testclient import TestClient
 
 from finresearch.adapters.amfi import SchemeNav
@@ -32,6 +32,7 @@ from finresearch.portfolio.analytics_math import risk_contributions
 from finresearch.portfolio.lots import Event, build_lots
 
 TODAY = date(2026, 9, 30)
+PASSWORD = "ABCDE1234F"  # invented, PAN-shaped (as tests/test_portfolio.py)
 ORIGIN = {"Origin": "http://127.0.0.1:3000", "X-FinResearch": "1"}
 ELSS = ("Example ELSS Tax Saver Fund - Direct Plan - Growth", "999901", "Equity Scheme - ELSS")
 SPLIT_TXNS = [  # (day, kind, quantity, price, meta)
@@ -192,7 +193,10 @@ def test_portfolio_invariants(client):
             disp = s.scalars(select(PortfolioDisposal).where(PortfolioDisposal.holding_id == h.id)).all()
             assert all(d.lot_id is not None for d in disp)  # no oversell in this portfolio
             for lot in lots:
-                out = sum((d.quantity * _factor_after(splits[h.id], d.sold) for d in disp if d.lot_id == lot.id), D(0))
+                out = sum(
+                    (d.quantity * _factor_after(splits[h.id], d.sold) for d in disp if d.lot_id == lot.id),
+                    D(0),
+                )
                 assert lot.quantity == lot.open_quantity + out, (h.name, lot.acquired)
             # disposal gain = proceeds - cost wherever the cost is known (the opening units' cost is not)
             for d in disp:
@@ -203,7 +207,10 @@ def test_portfolio_invariants(client):
                     assert abs(d.cost - want) <= D("0.01"), (h.name, d.sold)
         split_lots = [x for h in holdings if h.name == "Example Split Ltd"
                       for x in s.scalars(select(PortfolioLot).where(PortfolioLot.holding_id == h.id))]  # fmt: skip
-        assert sum((x.quantity for x in split_lots), D(0)) == 105 and sum((x.open_quantity for x in split_lots), D(0)) == 50
+        assert (
+            sum((x.quantity for x in split_lots), D(0)) == 105
+            and sum((x.open_quantity for x in split_lots), D(0)) == 50
+        )
     snap = client.get("/api/portfolio").json()
     rows = [h for h in snap["holdings"] if h["value"] is not None]
     assert len(rows) == 5  # every holding is priced
@@ -218,8 +225,14 @@ def test_portfolio_invariants(client):
     # the tax view: gain = sale value - cost for tax, and = proceeds - cost (no grandfathering here)
     tax = client.get("/api/portfolio/tax").json()
     for d in tax["disposals"]:
-        if d["cost"] is not None and d["term"] != "exempt":
-            assert d["tax_cost"] == d["cost"] and d["gain"] == pytest.approx(d["proceeds"] - d["cost"], abs=0.01)
+        if (
+            d["bucket"] == "intraday"
+        ):  # business income, outside the capital-gains view (its ₹50 is checked above)
+            assert (d["sold"], d["cost"], d["proceeds"], d["gain"]) == ("2025-02-03", 1500.0, 1550.0, None)
+        elif d["cost"] is not None and d["term"] != "exempt":
+            assert d["tax_cost"] == d["cost"] and d["gain"] == pytest.approx(
+                d["proceeds"] - d["cost"], abs=0.01
+            )
         else:
             assert d["gain"] is None and d["term"] == "unknown"  # the 50 opening units: never a ₹0 gain
     realised = sum(h["realised"] for h in snap["holdings"])
