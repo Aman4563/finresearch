@@ -189,9 +189,10 @@ def _is_pct_text(v: Any) -> bool:
 
 
 def _industry(v: Any) -> str | None:
-    """'Computer Software: Prepackaged Software ##' -> without the footnote markers (#, *, ^, ~)."""
+    """'Computer Software: Prepackaged Software ##' -> without the footnote markers (#, *, ^, ~); quant writes 'N.A.'
+    in its RATING/INDUSTRY columns for rows without one: that is no label, not a sector called "N.A."."""
     t = re.sub(r"[\s#*^~$@]+$", "", _text(v)).strip()
-    return t or None
+    return None if not t or re.fullmatch(r"n\.?\s*a\.?|-+|nil", t, re.I) else t
 
 
 def _text(v: Any) -> str:
@@ -207,7 +208,7 @@ _DATE_RES = [
     re.compile(
         r"as\s+(?:on|at)\s+(\d{1,2})(?:st|nd|rd|th)?[\s-]+([A-Za-z]+)[\s,-]+(\d{4})", re.I
     ),  # 31 Aug 2026
-    re.compile(r"as\s+(?:on|at)\s+(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})", re.I),  # 31/08/2026
+    re.compile(r"as\s+(?:on|at)\s+(\d{1,2})[/.-](\d{1,2})[/.-](\d{4}|\d{2})\b", re.I),  # 31/08/2026, Tata 31-08-26
 ]
 
 
@@ -221,13 +222,15 @@ def parse_as_of(text: str) -> date | None:
                 return date(int(m.group(3)), _MONTHS[m.group(1)[:3].lower()], int(m.group(2)))
             if i == 1:
                 return date(int(m.group(3)), _MONTHS[m.group(2)[:3].lower()], int(m.group(1)))
-            return date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+            y = int(m.group(3))
+            return date(y + 2000 if y < 100 else y, int(m.group(2)), int(m.group(1)))
         except (KeyError, ValueError):
             continue
     return None
 
 
-# header aliases: SEBI Format 4C wording as each AMC prints it (PPFAS, Axis, Nippon India, DSP files of Aug-2026)
+# header aliases: SEBI Format 4C wording as each AMC prints it (PPFAS, Axis, Nippon India, DSP files of Aug-2026;
+# quant and Tata files of Aug-2026, read 06-Oct-2026: 'ISIN CODE', 'MKT VAL(Rs. Lacs)', separate RATING and INDUSTRY)
 HEADER_ALIASES: dict[str, tuple[str, ...]] = {
     "name": ("name of the instrument", "name of instrument", "name", "instrument name", "security name", "name of security",
              "company name", "issuer"),
@@ -235,7 +238,7 @@ HEADER_ALIASES: dict[str, tuple[str, ...]] = {
     "industry": ("industry / rating", "industry/rating", "rating/industry", "rating / industry", "industry",
                  "sector", "rating"),
     "quantity": ("quantity", "no. of shares", "units"),
-    "value": ("market/fair value", "market value", "fair value", "market/ fair value"),
+    "value": ("market/fair value", "market value", "fair value", "market/ fair value", "mkt val"),
     "weight": ("% to net assets", "% to nav", "% of net assets", "% to aum", "% of nav", "% to net asset",
                "percentage to nav", "% to net assets", "% net assets"),
 }  # fmt: skip
@@ -247,6 +250,11 @@ def _header_map(row: tuple) -> dict[str, int] | None:
     for i, c in enumerate(row):
         t = _text(c).lower()
         if not t:
+            continue
+        # quant prints RATING before INDUSTRY: an industry/sector column wins over a rating-only one
+        if "industry" in cols and t.startswith(("industry", "sector")) and _text(row[cols["industry"]]).lower(
+        ).startswith("rating"):  # fmt: skip
+            cols["industry"] = i
             continue
         for fld, aliases in HEADER_ALIASES.items():
             if fld in cols:
@@ -260,6 +268,11 @@ def _header_map(row: tuple) -> dict[str, int] | None:
 
 
 _STOP = re.compile(r"^(grand total|net assets?$|total net assets)", re.I)
+_TOTAL = re.compile(r"^(sub\s*-?\s*total|total)\b|\btotal$", re.I)  # Tata: 'EQUITY & EQUITY RELATED TOTAL'
+_FUNDLIKE = re.compile(r"\b(fund|etf|fof|plan|scheme|bees)\b", re.I)
+_BLURB = re.compile(r"^[^A-Za-z0-9]|[•:]|^(an?|this|investors?|investment|long term)\b|mutual fund$", re.I)
+# quant: 'Total Exposure due to futures (non hedging positions) as a %age of net assets' (25.3 in Aug-2026 Flexi Cap)
+_NON_HEDGE = re.compile(r"exposure.*futures.*non[\s-]*hedg|non[\s-]*hedg.*exposure", re.I)
 
 
 def _section(label: str, current: str) -> str:
@@ -274,7 +287,7 @@ def _section(label: str, current: str) -> str:
     if re.search(r"government securities|treasury bill|t-bill|state development|\bsdl\b|\bg-?sec", t):
         return "govt"
     if re.search(r"money market|certificate of deposit|commercial paper|debt instrument|bonds?\b|ncd|debenture|"
-                 r"securitised|pass through|triparty|treps|reverse repo", t):  # fmt: skip
+                 r"securitised|pass through|triparty|treps|\brepo\b", t):  # fmt: skip
         return "debt"
     if re.search(r"mutual fund|units of|exchange traded fund|\betf\b|fund units", t):
         return "mf_units"
@@ -289,6 +302,8 @@ def _kind(isin: str, section: str) -> str:
     if section == "arbitrage":
         return "arbitrage"
     if section in ("equity", "foreign_equity"):
+        if isin.startswith("INF"):  # Tata lists ETF units under "Equity & equity related": fund units, not a stock
+            return "mf_units"
         return "equity" if domestic else "foreign_equity"
     if section:
         return section
@@ -345,7 +360,10 @@ def parse_sheet(rows: list[tuple], sheet: str) -> SchemePortfolio | None:
     as_of = next((d for t in top_texts if (d := parse_as_of(t))), None)
     names = [t for t in top_texts if not re.search(r"portfolio|statement|as on|as at|^index$", t, re.I)
              and not re.fullmatch(r"[A-Z0-9_]{2,12}", t)]  # fmt: skip
-    scheme_name = clean_scheme_name(max(names, key=len)) if names else sheet
+    # the longest title line, among lines that read like a scheme name: quant and Tata put the scheme's description
+    # and SEBI's suitability blurb ("*Investors should consult ...", "• Long term ...") above the table
+    fundlike = [n for t in names if (n := clean_scheme_name(t)) and _FUNDLIKE.search(n) and not _BLURB.search(n)]
+    scheme_name = max(fundlike, key=len) if fundlike else clean_scheme_name(max(names, key=len)) if names else sheet
 
     def cell(row: tuple, fld: str) -> Any:
         i = cols.get(fld)
@@ -372,12 +390,15 @@ def parse_sheet(rows: list[tuple], sheet: str) -> SchemePortfolio | None:
                 grand_weight = nums[-1] if nums else None
             end = r_i
             break
-        if r_i > header_at + 1 and _header_map(row):  # a second table (derivatives) starts: holdings are over
-            end = r_i
+        if r_i > header_at + 1 and (again := _header_map(row)):
+            if (again["isin"], again["weight"]) == (cols["isin"], cols["weight"]):
+                cols = again  # Tata repeats the header above its debt block (RATINGS for INDUSTRY): carry on
+                continue
+            end = r_i  # a second table (derivatives) starts: holdings are over
             break
         isin = _text(cell(row, "isin")).upper()
         if not ISIN_RE.match(isin):
-            if not re.match(r"^(sub\s*-?\s*total|total)\b", label, re.I):
+            if not _TOTAL.search(label):
                 section = _section(label, section)
             continue
         w = _num(cell(row, "weight"))
@@ -408,6 +429,14 @@ def parse_sheet(rows: list[tuple], sheet: str) -> SchemePortfolio | None:
     total = sum((h.weight for h in holdings), Decimal(0))
     if total > Decimal("110") or total < Decimal("1"):
         warnings.append(f"ISIN holdings add up to {total:.2f} % of net assets: check the file")
+    for row in rows[end:]:  # unhedged stock futures have no ISIN line: their exposure is outside look-through equity
+        texts = [_text(c) for c in row if _text(c)]
+        if texts and _NON_HEDGE.search(texts[0]):
+            got = next((n for c in row[1:] if not isinstance(c, str) and (n := _num(c)) is not None), None)
+            if got:
+                warnings.append(f"{got} % of net assets in non-hedging derivative positions (stock futures): this "
+                                "exposure has no ISIN line, so it is not in the look-through equity")  # fmt: skip
+            break
     return SchemePortfolio(sheet=sheet, scheme_name=scheme_name, as_of=as_of, holdings=holdings,
                            benchmark=_benchmark(rows, end), grand_total_lakh=grand, warnings=warnings)  # fmt: skip
 

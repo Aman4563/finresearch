@@ -54,7 +54,7 @@ from finresearch.fincalc.lookthrough import (
 )
 
 ZERO = Decimal(0)
-PARSER_VERSION = 2  # bump when parsing changes: stored files are re-parsed from the kept originals
+PARSER_VERSION = 3  # bump when parsing changes: stored files are re-parsed from the kept originals
 STALE_DAYS = (
     45  # a month-end portfolio older than this is flagged (SEBI: published within 10 days of month-end)
 )
