@@ -1423,6 +1423,9 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
     from finresearch.api.lookthrough import add_lookthrough_routes
 
     add_lookthrough_routes(app, scheme_rows=_scheme_rows)
+    from finresearch.api.portfolio_health import add_portfolio_health_routes  # data-health panel (#219)
+
+    add_portfolio_health_routes(app)
 
     # ------------------------------------------------------------------ live data while the market is open
     from finresearch.api.live import add_live_routes
