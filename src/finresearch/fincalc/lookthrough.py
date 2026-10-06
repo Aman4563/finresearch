@@ -24,6 +24,7 @@ Formulas
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
@@ -113,6 +114,15 @@ def hhi(weights: Mapping[str, Decimal]) -> tuple[Decimal, Decimal] | None:
 
 
 # ----------------------------------------------------------------------------------------------- look-through
+def cap_label(label: str | None) -> str | None:
+    """One spelling per market-cap bucket: AMFI's list says 'Large Cap', the app's own buckets (portfolio.valuation)
+    'Large cap'; without this the two showed as separate buckets (#214)."""
+    if not label:
+        return label
+    m = re.fullmatch(r"\s*(large|mid|small)[\s-]*cap\s*", label, re.I)
+    return f"{m.group(1).capitalize()} cap" if m else label
+
+
 @dataclass(frozen=True)
 class FundLine:
     isin: str
@@ -187,7 +197,7 @@ def lookthrough(direct: Iterable[DirectInput], funds: Iterable[FundInput],
         if kind == "foreign_equity":
             return "Foreign"
         got = cap_of(key) if cap_of else None
-        return got or fallback or "Unclassified"
+        return cap_label(got or fallback) or "Unclassified"
 
     def add(
         key: str, name: str, value: Decimal, route: str, kind: str, sector: str | None, cap_fb: str | None
@@ -263,7 +273,7 @@ def style_series(months: list[tuple[str, list[FundLine]]], cap_of: Callable[[str
             bucket = (
                 "Foreign"
                 if ln.kind == "foreign_equity"
-                else ((cap_of(ln.isin) if cap_of else None) or "Unclassified")
+                else (cap_label(cap_of(ln.isin) if cap_of else None) or "Unclassified")
             )
             caps[bucket] += share
             sectors[ln.industry or "Unclassified"] += share

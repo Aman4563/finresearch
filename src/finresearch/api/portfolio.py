@@ -14,6 +14,7 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+import logging
 import time
 from collections.abc import Awaitable, Callable
 from datetime import date
@@ -29,6 +30,7 @@ from sqlalchemy import select
 from finresearch.config import get_settings
 from finresearch.db import session_scope
 
+log = logging.getLogger(__name__)
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024
 _MISS = object()
 PRICE_TTL_S = 600
@@ -247,7 +249,19 @@ def add_portfolio_routes(app: FastAPI, *, scheme_rows: Callable[[], Awaitable[li
             targets = get_targets(s)
             snap["targets"] = targets
             snap["drift"] = drift(by_asset, targets)
-            return snap
+        snap["lookthrough_coverage"] = _coverage(snap["holdings"], today)
+        return snap
+
+    def _coverage(rows: list[dict[str, Any]], today: Any) -> dict[str, Any] | None:
+        """The share of the portfolio in funds not looked through (#214), for the sector and cap cards; None when the
+        look-through store cannot be read (the card then says coverage is unknown)."""
+        from finresearch.portfolio.lookthrough import PortfolioStore, coverage_from_rows
+
+        try:
+            return coverage_from_rows(rows, PortfolioStore(), today)
+        except Exception:
+            log.warning("look-through coverage failed", exc_info=True)
+            return None
 
     @app.get("/api/portfolio/targets")
     def targets() -> dict[str, Any]:

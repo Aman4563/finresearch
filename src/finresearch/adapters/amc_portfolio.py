@@ -21,19 +21,23 @@ What the files can and cannot tell (limits, stated in the UI):
   Not every AMC labels them separately; where it does not, hedged longs count as equity [limit];
 - derivatives, TREPS, cash and net receivables have no ISIN; they are the remainder "cash & others".
 
-Where the files are (checked 30-Sep-2026, see AMC_SOURCES): PPFAS, Nippon India and DSP publish static links on a
-plain HTML page, so the app can discover and download them. Axis publishes static, public file URLs but lists them
-through an API that needs a site token, so Axis files come in by pasted URL or upload. Any other AMC: upload.
+Where the files are (checked 30-Sep-2026 and 06-Oct-2026, see AMC_SOURCES): PPFAS, Nippon India and DSP publish
+static links on a plain HTML page; Tata embeds its document list as JSON in its page; quant lists each month's files
+through the page's own JSON POST. The app discovers and downloads all five. Axis publishes static, public file URLs
+but lists them through an API that needs a site token, so Axis files come in by pasted URL or upload. HDFC, SBI,
+ICICI Prudential, Kotak and Mirae block or script their pages (AMC_UNSUPPORTED says how): upload. Any other AMC: upload.
 """
 
 from __future__ import annotations
 
 import io
+import json
 import re
 import zipfile
 from dataclasses import asdict, dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
+from html import unescape
 from typing import Any
 from urllib.parse import urljoin, urlsplit
 
@@ -189,9 +193,10 @@ def _is_pct_text(v: Any) -> bool:
 
 
 def _industry(v: Any) -> str | None:
-    """'Computer Software: Prepackaged Software ##' -> without the footnote markers (#, *, ^, ~)."""
+    """'Computer Software: Prepackaged Software ##' -> without the footnote markers (#, *, ^, ~); quant writes 'N.A.'
+    in its RATING/INDUSTRY columns for rows without one: that is no label, not a sector called "N.A."."""
     t = re.sub(r"[\s#*^~$@]+$", "", _text(v)).strip()
-    return t or None
+    return None if not t or re.fullmatch(r"n\.?\s*a\.?|-+|nil", t, re.I) else t
 
 
 def _text(v: Any) -> str:
@@ -207,7 +212,9 @@ _DATE_RES = [
     re.compile(
         r"as\s+(?:on|at)\s+(\d{1,2})(?:st|nd|rd|th)?[\s-]+([A-Za-z]+)[\s,-]+(\d{4})", re.I
     ),  # 31 Aug 2026
-    re.compile(r"as\s+(?:on|at)\s+(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})", re.I),  # 31/08/2026
+    re.compile(
+        r"as\s+(?:on|at)\s+(\d{1,2})[/.-](\d{1,2})[/.-](\d{4}|\d{2})\b", re.I
+    ),  # 31/08/2026, Tata 31-08-26
 ]
 
 
@@ -221,13 +228,15 @@ def parse_as_of(text: str) -> date | None:
                 return date(int(m.group(3)), _MONTHS[m.group(1)[:3].lower()], int(m.group(2)))
             if i == 1:
                 return date(int(m.group(3)), _MONTHS[m.group(2)[:3].lower()], int(m.group(1)))
-            return date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+            y = int(m.group(3))
+            return date(y + 2000 if y < 100 else y, int(m.group(2)), int(m.group(1)))
         except (KeyError, ValueError):
             continue
     return None
 
 
-# header aliases: SEBI Format 4C wording as each AMC prints it (PPFAS, Axis, Nippon India, DSP files of Aug-2026)
+# header aliases: SEBI Format 4C wording as each AMC prints it (PPFAS, Axis, Nippon India, DSP files of Aug-2026;
+# quant and Tata files of Aug-2026, read 06-Oct-2026: 'ISIN CODE', 'MKT VAL(Rs. Lacs)', separate RATING and INDUSTRY)
 HEADER_ALIASES: dict[str, tuple[str, ...]] = {
     "name": ("name of the instrument", "name of instrument", "name", "instrument name", "security name", "name of security",
              "company name", "issuer"),
@@ -235,7 +244,7 @@ HEADER_ALIASES: dict[str, tuple[str, ...]] = {
     "industry": ("industry / rating", "industry/rating", "rating/industry", "rating / industry", "industry",
                  "sector", "rating"),
     "quantity": ("quantity", "no. of shares", "units"),
-    "value": ("market/fair value", "market value", "fair value", "market/ fair value"),
+    "value": ("market/fair value", "market value", "fair value", "market/ fair value", "mkt val"),
     "weight": ("% to net assets", "% to nav", "% of net assets", "% to aum", "% of nav", "% to net asset",
                "percentage to nav", "% to net assets", "% net assets"),
 }  # fmt: skip
@@ -247,6 +256,11 @@ def _header_map(row: tuple) -> dict[str, int] | None:
     for i, c in enumerate(row):
         t = _text(c).lower()
         if not t:
+            continue
+        # quant prints RATING before INDUSTRY: an industry/sector column wins over a rating-only one
+        if "industry" in cols and t.startswith(("industry", "sector")) and _text(row[cols["industry"]]).lower(
+        ).startswith("rating"):  # fmt: skip
+            cols["industry"] = i
             continue
         for fld, aliases in HEADER_ALIASES.items():
             if fld in cols:
@@ -260,6 +274,11 @@ def _header_map(row: tuple) -> dict[str, int] | None:
 
 
 _STOP = re.compile(r"^(grand total|net assets?$|total net assets)", re.I)
+_TOTAL = re.compile(r"^(sub\s*-?\s*total|total)\b|\btotal$", re.I)  # Tata: 'EQUITY & EQUITY RELATED TOTAL'
+_FUNDLIKE = re.compile(r"\b(fund|etf|fof|plan|scheme|bees)\b", re.I)
+_BLURB = re.compile(r"^[^A-Za-z0-9]|[•:]|^(an?|this|investors?|investment|long term)\b|mutual fund$", re.I)
+# quant: 'Total Exposure due to futures (non hedging positions) as a %age of net assets' (25.3 in Aug-2026 Flexi Cap)
+_NON_HEDGE = re.compile(r"exposure.*futures.*non[\s-]*hedg|non[\s-]*hedg.*exposure", re.I)
 
 
 def _section(label: str, current: str) -> str:
@@ -274,7 +293,7 @@ def _section(label: str, current: str) -> str:
     if re.search(r"government securities|treasury bill|t-bill|state development|\bsdl\b|\bg-?sec", t):
         return "govt"
     if re.search(r"money market|certificate of deposit|commercial paper|debt instrument|bonds?\b|ncd|debenture|"
-                 r"securitised|pass through|triparty|treps|reverse repo", t):  # fmt: skip
+                 r"securitised|pass through|triparty|treps|\brepo\b", t):  # fmt: skip
         return "debt"
     if re.search(r"mutual fund|units of|exchange traded fund|\betf\b|fund units", t):
         return "mf_units"
@@ -289,6 +308,10 @@ def _kind(isin: str, section: str) -> str:
     if section == "arbitrage":
         return "arbitrage"
     if section in ("equity", "foreign_equity"):
+        if isin.startswith(
+            "INF"
+        ):  # Tata lists ETF units under "Equity & equity related": fund units, not a stock
+            return "mf_units"
         return "equity" if domestic else "foreign_equity"
     if section:
         return section
@@ -345,7 +368,14 @@ def parse_sheet(rows: list[tuple], sheet: str) -> SchemePortfolio | None:
     as_of = next((d for t in top_texts if (d := parse_as_of(t))), None)
     names = [t for t in top_texts if not re.search(r"portfolio|statement|as on|as at|^index$", t, re.I)
              and not re.fullmatch(r"[A-Z0-9_]{2,12}", t)]  # fmt: skip
-    scheme_name = clean_scheme_name(max(names, key=len)) if names else sheet
+    # the longest title line, among lines that read like a scheme name: quant and Tata put the scheme's description
+    # and SEBI's suitability blurb ("*Investors should consult ...", "• Long term ...") above the table
+    fundlike = [
+        n for t in names if (n := clean_scheme_name(t)) and _FUNDLIKE.search(n) and not _BLURB.search(n)
+    ]
+    scheme_name = (
+        max(fundlike, key=len) if fundlike else clean_scheme_name(max(names, key=len)) if names else sheet
+    )
 
     def cell(row: tuple, fld: str) -> Any:
         i = cols.get(fld)
@@ -372,12 +402,15 @@ def parse_sheet(rows: list[tuple], sheet: str) -> SchemePortfolio | None:
                 grand_weight = nums[-1] if nums else None
             end = r_i
             break
-        if r_i > header_at + 1 and _header_map(row):  # a second table (derivatives) starts: holdings are over
-            end = r_i
+        if r_i > header_at + 1 and (again := _header_map(row)):
+            if (again["isin"], again["weight"]) == (cols["isin"], cols["weight"]):
+                cols = again  # Tata repeats the header above its debt block (RATINGS for INDUSTRY): carry on
+                continue
+            end = r_i  # a second table (derivatives) starts: holdings are over
             break
         isin = _text(cell(row, "isin")).upper()
         if not ISIN_RE.match(isin):
-            if not re.match(r"^(sub\s*-?\s*total|total)\b", label, re.I):
+            if not _TOTAL.search(label):
                 section = _section(label, section)
             continue
         w = _num(cell(row, "weight"))
@@ -408,6 +441,16 @@ def parse_sheet(rows: list[tuple], sheet: str) -> SchemePortfolio | None:
     total = sum((h.weight for h in holdings), Decimal(0))
     if total > Decimal("110") or total < Decimal("1"):
         warnings.append(f"ISIN holdings add up to {total:.2f} % of net assets: check the file")
+    for row in rows[
+        end:
+    ]:  # unhedged stock futures have no ISIN line: their exposure is outside look-through equity
+        texts = [_text(c) for c in row if _text(c)]
+        if texts and _NON_HEDGE.search(texts[0]):
+            got = next((n for c in row[1:] if not isinstance(c, str) and (n := _num(c)) is not None), None)
+            if got:
+                warnings.append(f"{got} % of net assets in non-hedging derivative positions (stock futures): this "
+                                "exposure has no ISIN line, so it is not in the look-through equity")  # fmt: skip
+            break
     return SchemePortfolio(sheet=sheet, scheme_name=scheme_name, as_of=as_of, holdings=holdings,
                            benchmark=_benchmark(rows, end), grand_total_lakh=grand, warnings=warnings)  # fmt: skip
 
@@ -529,6 +572,16 @@ AMC_SOURCES: dict[str, AmcSource] = {
                       "Statutory disclosures → Portfolios → Monthly Scheme Portfolios. The file links are public but "
                       "the list needs the site's own token, so copy the file's link (or download it) and paste/upload "
                       "it here.", ("www.axismf.com",)),
+    # checked 06-Oct-2026: the page's month list is a JSON POST (the page's own submit_event2 call), answering an HTML
+    # list of /Admin/disclouser/quant_<Scheme>_<DD>_<Mon>_<YYYY>.xlsx links, one per scheme
+    "quant": AmcSource("quant Mutual Fund", "https://quantmutual.com/statutory-disclosures", "auto",
+                       "Monthly portfolio – fund-wise: one xlsx per scheme per month, listed month by month.",
+                       ("quantmutual.com",)),
+    # checked 06-Oct-2026: the page embeds its documents as JSON ("Portfolio as on 31st August, 2026" -> a
+    # betacms.tatamutualfund.com/system/files/<upload month>/Monthly Portfolio as on ….xlsx link that redirects to www)
+    "tata": AmcSource("Tata Mutual Fund", "https://www.tatamutualfund.com/schemes-related/portfolio", "auto",
+                      "One workbook for all schemes per month (one sheet per scheme code; some older months are .xls).",
+                      ("www.tatamutualfund.com", "betacms.tatamutualfund.com", "tatamutualfund.com")),
 }  # fmt: skip
 ALLOWED_HOSTS = frozenset(h for s in AMC_SOURCES.values() for h in s.hosts) | {
     "www.amfiindia.com",
@@ -536,13 +589,57 @@ ALLOWED_HOSTS = frozenset(h for s in AMC_SOURCES.values() for h in s.hosts) | {
 }
 
 
-def source_for_amc(amc: str | None, scheme_name: str = "") -> str | None:
-    t = f"{amc or ''} {scheme_name}".lower()
-    for key, words in (("ppfas", ("ppfas", "parag parikh")), ("nippon", ("nippon",)), ("dsp", ("dsp ",)),
-                       ("axis", ("axis ",))):  # fmt: skip
-        if any(w in t + " " for w in words):
-            return key
+@dataclass(frozen=True)
+class Unsupported:
+    amc: str
+    page: str  # the monthly-portfolio page AMFI lists for the house (amfiindia.com/online-center/portfolio-disclosure)
+    reason: str
+
+
+# Large houses the app cannot fetch from (checked 06-Oct-2026 with one polite GET each): their files still work as an
+# upload. The page URLs are the ones AMFI's portfolio-disclosure page links to.
+AMC_UNSUPPORTED: dict[str, Unsupported] = {
+    "hdfc": Unsupported("HDFC Mutual Fund", "https://www.hdfcfund.com/statutory-disclosure/portfolio/monthly-portfolio",
+                        "the site answers HTTP 403 (Akamai bot protection) to any non-browser client, the home page "
+                        "too, so the file links cannot be read; no HDFC file layout was seen [unverified layout]"),
+    "sbi": Unsupported("SBI Mutual Fund", "https://www.sbimf.com/portfolios",
+                       "the page is filled in by JavaScript from an undocumented API: no file links in the HTML"),
+    "icici": Unsupported("ICICI Prudential Mutual Fund",
+                         "https://www.icicipruamc.com/news-and-media/downloads?currentTabFilter=Disclosures",
+                         "a JavaScript app behind bot protection (F5 TSbd): no file links in the HTML"),
+    "kotak": Unsupported("Kotak Mahindra Mutual Fund", "https://www.kotakmf.com/Information/forms-and-downloads",
+                         "every request is redirected to a bot check (Radware validate.perfdrive.com)"),
+    "mirae": Unsupported("Mirae Asset Mutual Fund", "https://www.miraeassetmf.co.in/downloads/portfolio",
+                         "the page is filled in by JavaScript (with reCAPTCHA): no file links in the HTML"),
+}  # fmt: skip
+UNKNOWN_HOUSE = "this fund house has no adapter: download its monthly portfolio file and upload it"
+
+# words that name a house in AMFI's AMC heading or in a scheme name; word boundaries, so 'quant' never matches
+# 'Quantum Mutual Fund' and 'tata' never matches a scheme that merely holds Tata shares by name
+_HOUSE_WORDS: tuple[tuple[str, str], ...] = (
+    ("ppfas", r"\bppfas\b|\bparag parikh\b"), ("nippon", r"\bnippon\b"), ("dsp", r"\bdsp\b"),
+    ("axis", r"^axis\b"), ("quant", r"^quant\b"), ("tata", r"^tata\b"), ("hdfc", r"^hdfc\b"),
+    ("sbi", r"^sbi\b"), ("icici", r"^icici\b"), ("kotak", r"^kotak\b"), ("mirae", r"^mirae\b"),
+)  # fmt: skip
+
+
+def house_for(amc: str | None, scheme_name: str = "") -> str | None:
+    """The fund house's key (in AMC_SOURCES or AMC_UNSUPPORTED) from AMFI's AMC heading, else from the scheme name.
+    The AMC heading wins: a scheme name can mention another house's index or partner."""
+    for text in (amc, scheme_name):
+        t = re.sub(r"\s+", " ", (text or "").lower()).strip()
+        if not t:
+            continue
+        for key, rx in _HOUSE_WORDS:
+            if re.search(rx, t):
+                return key
     return None
+
+
+def source_for_amc(amc: str | None, scheme_name: str = "") -> str | None:
+    """The key of a supported source (AMC_SOURCES), or None."""
+    key = house_for(amc, scheme_name)
+    return key if key in AMC_SOURCES else None
 
 
 def check_url(url: str) -> str:
@@ -590,6 +687,29 @@ def discover_links(source: str, html: str, page_url: str) -> list[FileLink]:
             yr = re.findall(r"(20\d{2})", name)
             if mw and yr:
                 links.append(FileLink(m.group(1), _ym(mw.group(1), yr[-1]), "all"))
+    elif (
+        source == "quant"
+    ):  # the JSON answer of QUANT_LIST_URL: {"d": "<ul><li>►<a href='…'>scheme</a></li>…"}
+        try:
+            body = json.loads(html).get("d") or ""
+        except (ValueError, AttributeError):
+            body = html
+        for m in re.finditer(r"href=['\"](/Admin/disclouser/[^'\"]*?_(\d{1,2})_([A-Za-z]{3,9})_(\d{4})\.xlsx)['\"][^>]*>"
+                             r"([^<]+)</a>", body):  # fmt: skip
+            links.append(FileLink(urljoin(page_url, m.group(1)), _ym(m.group(3), m.group(4)),
+                                  scheme_key(unescape(m.group(5)))))  # fmt: skip
+    elif source == "tata":  # the page's embedded document list (JSON inside the HTML, quotes escaped)
+        text = html.replace('\\"', '"')
+        for obj in re.findall(r"\{[^{}]*\}", text):
+            t = re.search(r'"field_document_title"\s*:\s*"([^"]*)"', obj)
+            u = re.search(r'"field_media_document"\s*:\s*"(https://[^"]+?\.xlsx?)"', obj, re.I)
+            d = parse_as_of(t.group(1)) if t else None
+            # month-end portfolios only (the page also lists half-yearly and other statements)
+            if u and d and re.search(r"portfolio", t.group(1), re.I) and (d + timedelta(days=1)).day == 1:
+                links.append(FileLink(u.group(1), d.strftime("%Y-%m"), "all"))
+        links.sort(
+            key=lambda x: "monthly" not in x.url.lower()
+        )  # the 'Monthly Portfolio …' file first in a month
     seen: dict[tuple[str, str], FileLink] = {}
     for link in links:
         seen.setdefault((link.month, link.label), link)
@@ -610,10 +730,21 @@ def pick_links(source: str, links: list[FileLink], key: str, months: int) -> lis
         chosen = (
             mine or links
         )  # unknown scheme: fall back to every PPFAS file of the month (matched after parsing)
+    elif source == "quant":  # one file per scheme: only this scheme's (never all ~30 of the month)
+        chosen = [x for x in links if x.label == key]
     else:
         chosen = links
     wanted = sorted({x.month for x in chosen}, reverse=True)[: max(1, months)]
     return [x for x in chosen if x.month in wanted]
+
+
+QUANT_LIST_URL = "https://quantmutual.com/statutorydisclosures.aspx/displaydisclouser2"
+QUANT_CATEGORY = "MONTHLY PORTFOLIO - FUND - WISE"
+
+
+def quant_list_body(year: int, month: int) -> bytes:
+    """The body quant's page posts for one month's fund-wise list (its submit_event2(id=month, cat, tab=year))."""
+    return f"{{id:'{month}',cat:'{QUANT_CATEGORY}',tab:'{year}'}}".encode()
 
 
 def fetched_at_now() -> str:

@@ -229,7 +229,23 @@ def add_portfolio_analytics_routes(app: FastAPI, *, scheme_rows: Callable[[], Aw
         with session_scope() as s:
             st = get_settings_row(s)
             lim = position_limit(load_profile(s))
-        return conc(hist, sectors, st["groups"], lim)
+        return conc(hist, sectors, st["groups"], lim, coverage=_coverage(hist))
+
+    def _coverage(hist: Any) -> dict[str, Any] | None:
+        """Which held funds are looked through (#214), from the same positions and values as the figures here."""
+        from decimal import Decimal
+
+        from finresearch.portfolio import lookthrough as lt
+
+        try:
+            pos = [p for p in hist.positions if p.value > 0]
+            funds = [lt.FundValue(getattr(p.scheme, "code", None), getattr(p.scheme, "name", None) or p.name,
+                                  Decimal(str(p.value)), getattr(p.scheme, "amc", None))
+                     for p in pos if p.asset_type == "mf"]  # fmt: skip
+            total = sum((Decimal(str(p.value)) for p in pos), Decimal(0))
+            return lt.coverage(total, funds, lt.PortfolioStore(), src().today())
+        except Exception:
+            return None
 
     @app.get("/api/portfolio/analytics/costs")
     async def costs() -> dict[str, Any]:

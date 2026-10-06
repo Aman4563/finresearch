@@ -97,6 +97,8 @@ export type Snapshot = {
   pending?: number;
   targets?: Record<string, number>;
   drift?: { label: string; weight_pct: number; target_pct: number; drift_pp: number }[];
+  /** #214: the share of the portfolio in funds not looked through; null = unknown (shown as such) */
+  lookthrough_coverage?: import("./lookthrough-panel").Coverage | null;
 };
 
 export const ASSET_CLASSES = ["Stocks", "Equity funds", "Debt funds", "Gold & international funds", "Sovereign Gold Bonds", "Other"] as const;
