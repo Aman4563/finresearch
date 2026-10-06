@@ -58,3 +58,23 @@ def test_a_large_etf_does_not_raise_a_sector_flag():
     got = [_sector(p, sectors) for p in pos]
     assert got == [COMMODITY_SECTOR, FUNDS_SECTOR, "Public Sector Bank"]
     assert [g for g in got if is_real_sector(g)] == ["Public Sector Bank"]
+
+
+def test_listed_ncds_are_not_equity():
+    """A listed NCD bought on the exchange arrives as a 'stock' holding: it is an 'other' listed security (slab STCG,
+    12.5 % LTCG after 12 months, no s.112A exemption), labelled Bonds & NCDs, never equity or a business sector."""
+    from finresearch.portfolio.limits import BONDS_SECTOR
+    from finresearch.portfolio.tax import auto_tax_class, is_debt_security
+
+    assert auto_tax_class("stock", "MFL-7-7-32-NCD", None, None, "941149", "INE000X07AB1")[0] == "other"
+    assert auto_tax_class("stock", "Example Finance 9.5% NCD 2028", None, None, None, None)[0] == "other"
+    assert auto_tax_class("stock", "Example Bank Ltd", None, None, "EXBANK", "INE000X01011")[0] == "equity"
+    assert not is_debt_security(
+        "INE000X01011", "Example Bharat Bond ETF", "EXBBETF"
+    )  # a fund unit, not a bond
+    assert not is_debt_security(None, "Sovereign Gold Bond 2030", "SGBX30")  # SGBs keep their own class
+    assert sector_label("stock", "-", "941149", "MFL-7-7-32-NCD", "other", "INE000X07AB1") == BONDS_SECTOR
+    assert (
+        sector_label("stock", "-", "EXAMPLE", "Example Ltd", "equity") == "Unclassified"
+    )  # BSE's "-" is no sector
+    assert not is_real_sector(BONDS_SECTOR)

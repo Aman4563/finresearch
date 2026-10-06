@@ -45,8 +45,9 @@ _ETF_NAME = re.compile(r"\bETF\b|\bBEES\b", re.I)
 FUNDS_SECTOR = "Funds (no look-through)"
 COMMODITY_SECTOR = "Commodities (gold/silver)"
 DEBT_ETF_SECTOR = "Debt ETFs"
+BONDS_SECTOR = "Bonds & NCDs"
 UNCLASSIFIED_SECTOR = "Unclassified"
-NOT_A_SECTOR = frozenset({FUNDS_SECTOR, COMMODITY_SECTOR, DEBT_ETF_SECTOR, UNCLASSIFIED_SECTOR})
+NOT_A_SECTOR = frozenset({FUNDS_SECTOR, COMMODITY_SECTOR, DEBT_ETF_SECTOR, BONDS_SECTOR, UNCLASSIFIED_SECTOR})
 _COMMODITY = re.compile(r"\b(gold|silver)\b|GOLDBEES|SILVERBEES|GOLDETF|SILVERETF|GOLDIETF|SILVERIETF", re.I)
 _DEBT = re.compile(
     r"\b(liquid|gilt|g-?sec|bond|debt|sdl|overnight|money market)\b|LIQUIDBEES|LIQUIDETF", re.I
@@ -63,13 +64,17 @@ def is_fund_like(asset_type: str | None, symbol: str | None = None, name: str | 
 
 
 def sector_label(asset_type: str | None, sector: str | None, symbol: str | None = None, name: str | None = None,
-                 tax_class: str | None = None) -> str:  # fmt: skip
+                 tax_class: str | None = None, isin: str | None = None) -> str:  # fmt: skip
     """The sector a holding counts towards: a stock's NSE industry (or the user's own label), but funds, ETFs and
     Sovereign Gold Bonds are grouped by what they hold, never by NSE's "Mutual Fund Scheme - ETF" industry."""
     if asset_type == "mf":
         return FUNDS_SECTOR
     if tax_class == "sgb":
         return COMMODITY_SECTOR
+    from finresearch.portfolio.tax import is_debt_security
+
+    if asset_type == "stock" and is_debt_security(isin, name, symbol):
+        return BONDS_SECTOR
     if is_fund_like(asset_type, symbol, name):
         text = f"{symbol or ''} {name or ''}"
         if _COMMODITY.search(text):
@@ -77,7 +82,7 @@ def sector_label(asset_type: str | None, sector: str | None, symbol: str | None 
         if tax_class == "debt_mf" or _DEBT.search(text):
             return DEBT_ETF_SECTOR
         return FUNDS_SECTOR
-    return sector or UNCLASSIFIED_SECTOR
+    return sector if sector and sector.strip(" -–") else UNCLASSIFIED_SECTOR  # BSE gives "-" when it has none
 
 
 def is_real_sector(label: str | None) -> bool:
