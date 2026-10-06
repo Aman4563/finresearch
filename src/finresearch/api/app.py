@@ -1494,7 +1494,14 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
             raise HTTPException(404, str(e)) from e
         except ValueError as e:
             raise HTTPException(422, str(e)) from e
-        return sig.to_json()
+        from finresearch.signals.reliability import reliability, scored_events
+
+        out = sig.to_json()
+        with (
+            session_scope() as s
+        ):  # #218: base-rate n, validation and ledger calibration beside the probability
+            out["reliability"] = reliability(out, scored_events(s, sig.asset, sig.method))
+        return out
 
     # ------------------------------------------------------------------ forecast ledger and calibration
     @app.get("/api/forecasts")

@@ -35,7 +35,28 @@ export type Signal = {
   shadow?: SignalShadow | null;
   /** set when the action is INFORMATIONAL (the stock signal while no pre-registered model has shown an edge, #193) */
   call?: SignalCall | null;
+  /** how the probability is supported (#218): set by /api/signals/{asset}/{instrument} */
+  reliability?: SignalReliability | null;
 };
+export type SignalReliability = {
+  base_rate_n: number | null;
+  validation: { status: SignalValidation["status"]; n: number; label: string };
+  calibration: { scored: number; established: boolean; tier: string; needed: number; label: string };
+  /** the support alone ("base rate from … · calibration …"); `summary` leads with the probability */
+  support: string; summary: string; how: string;
+};
+
+/** "base rate from 54 past IPOs · calibration not established: 1 scored": the support beside a probability, so a big
+ *  number is not read as proven accuracy (#218). */
+export function ReliabilityLine({ r, className }: { r: SignalReliability; className?: string }) {
+  return (
+    <p className={cx("flex flex-wrap items-center gap-x-1.5 text-[11px] text-muted", className)} data-testid="reliability">
+      <span>{r.support}</span>
+      {!r.calibration.established && <Badge tone="warn">accuracy unproven</Badge>}
+      <InfoTip>{`Method: ${r.validation.label}. ${r.how} Calibration needs ${r.calibration.needed} scored outcomes; it has ${r.calibration.scored}.`}</InfoTip>
+    </p>
+  );
+}
 export type SignalCall = {
   status: "informational"; label: string; tilt: string; composite_action: string; promotion_rule: string;
   universe_base_rate: { p: number; n: number | null; description: string } | null; probability_vs_base: string | null;
@@ -113,6 +134,7 @@ export function SignalView({ s, compact }: { s: Signal; compact?: boolean }) {
           <p className="text-[11px] text-muted">Probability · {s.event}</p>
           <p className="num mt-1 text-2xl font-semibold">{pctText(s.probability)}</p>
           {s.probability_interval && <p className="num text-xs text-muted">range {pctText(s.probability_interval[0])}–{pctText(s.probability_interval[1])}</p>}
+          {s.reliability && s.probability != null && <ReliabilityLine r={s.reliability} className="mt-1" />}
           {s.call?.universe_base_rate && (
             <p className="mt-1 text-xs text-muted">
               vs base rate, all stocks <span className="num font-medium text-foreground">{(s.call.universe_base_rate.p * 100).toFixed(1)}%</span>
