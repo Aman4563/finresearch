@@ -171,3 +171,16 @@ def test_health_api_rows_and_overall(client, monkeypatch):
     assert body["overall"]["pct"] == round(expected, 1) == 58.3
     assert body["overall"]["verdict"] == ("Analysis unreliable: key data is missing (1 check(s) could not run and "
                                           "count as 0 %)")  # fmt: skip
+
+
+def test_lookthrough_coverage_from_the_api_coverage_block():
+    """/api/lookthrough reports coverage as fund_pct and not_looked_through_pct (% of the portfolio): 47.09 % in funds,
+    7.41 % of the portfolio not looked through -> (47.09 - 7.41) / 47.09 = 84.27 % of fund value covered."""
+    from finresearch.portfolio.health import lookthrough
+
+    row = lookthrough({"coverage": {"fund_pct": 47.09, "not_looked_through_pct": 7.41}}, True, None)
+    assert row["coverage_pct"] == 84.3 and row["status"] != "unknown"
+    assert (
+        lookthrough({"coverage": {"fund_pct": 0, "not_looked_through_pct": 0}}, True, None)["coverage_pct"]
+        is None
+    )
