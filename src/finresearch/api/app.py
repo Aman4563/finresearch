@@ -1500,10 +1500,17 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
         from finresearch.signals.reliability import reliability, scored_events
 
         out = sig.to_json()
-        with (
-            session_scope() as s
-        ):  # #218: base-rate n, validation and ledger calibration beside the probability
-            out["reliability"] = reliability(out, scored_events(s, sig.asset, sig.method))
+        try:  # #218: base-rate n, validation and ledger calibration beside the probability
+            with session_scope() as s:
+                scored: int | None = scored_events(s, sig.asset, sig.method)
+        except (
+            Exception
+        ):  # the ledger is unreadable: calibration is unknown, never "established", and the signal stands
+            logging.getLogger(__name__).warning(
+                "forecast ledger unreadable for the reliability line", exc_info=True
+            )
+            scored = None
+        out["reliability"] = reliability(out, scored)
         return out
 
     # ------------------------------------------------------------------ forecast ledger and calibration

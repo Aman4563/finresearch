@@ -116,3 +116,12 @@ def test_signal_api_returns_the_reliability_beside_the_probability(ledger, monke
     assert body["probability"] == 0.963
     assert body["reliability"]["summary"] == ("96 % (range 92–99 %) · base rate from 54 past IPOs · calibration not "
                                               "established: 1 scored")  # fmt: skip
+
+
+def test_an_unreadable_ledger_makes_calibration_unknown_not_established():
+    from finresearch.signals.reliability import reliability
+
+    r = reliability({"asset": "ipo", "probability": 0.96, "probability_interval": [0.92, 0.99],
+                     "validation": {"status": "base_rate", "n": 54}}, None)  # fmt: skip
+    assert r["calibration"]["established"] is False and r["calibration"]["scored"] is None
+    assert "calibration unknown" in r["support"]

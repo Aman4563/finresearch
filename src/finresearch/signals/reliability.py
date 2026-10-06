@@ -44,19 +44,21 @@ def _pct(p: float) -> str:
     return f"{p * 100:.0f} %"
 
 
-def reliability(sig: dict[str, Any], scored: int) -> dict[str, Any]:
-    """The support for `sig` (a `Signal.to_json()`), given `scored` independent scored outcomes of its method."""
+def reliability(sig: dict[str, Any], scored: int | None) -> dict[str, Any]:
+    """The support for `sig` (a `Signal.to_json()`), given `scored` independent scored outcomes of its method (None:
+    the forecast ledger could not be read, so calibration is unknown)."""
     br = sig.get("base_rate") or {}
     val = sig.get("validation") or {}
     status = val.get("status") or "uncalibrated"
     n_base = br.get("n") if br.get("n") is not None else (val.get("n") or None) if status in ("base_rate", "backtested") else None  # fmt: skip
-    established = scored >= CALIBRATION_MIN_N
+    established = scored is not None and scored >= CALIBRATION_MIN_N
     calibration = {
         "scored": scored,
         "established": established,
-        "tier": policy_tier(scored),
+        "tier": policy_tier(scored) if scored is not None else None,
         "needed": CALIBRATION_MIN_N,
-        "label": (f"calibration established: {scored} scored" if established
+        "label": ("calibration unknown: the forecast ledger could not be read" if scored is None
+                  else f"calibration established: {scored} scored" if established
                   else f"calibration not established: {scored} scored"),
     }  # fmt: skip
     noun = CASES.get(sig.get("asset") or "", "comparable past cases")
