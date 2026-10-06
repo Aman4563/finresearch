@@ -55,8 +55,17 @@ def quote_in_lines(doc: Document, line_start: int, line_end: int, quote: str) ->
     # the window is also read with "1, 234" rejoined (pdftotext can split a grouped number after its comma)
     in_window = set(_num_tokens(window)) | set(_num_tokens(re.sub(r"(?<=\d),\s+(?=\d)", ",", window)))
     if len(nums) >= 2 and set(nums) <= in_window:
-        return True, "all quoted numbers present"
+        # a figure quoted as negative ("-512.40", "(512.40)") must be printed negative there too (issue #217)
+        if _negatives(quote) <= _negatives(window) | _negatives(re.sub(r"(?<=\d),\s+(?=\d)", ",", window)):
+            return True, "all quoted numbers present"
+        return False, "a number quoted as negative is not negative in the cited lines"
     return False, "quote not found in cited lines"
+
+
+def _negatives(s: str) -> set[Decimal]:
+    from finresearch.verify.values import tokens
+
+    return {abs(t.value) for ln in s.split("\n") for t in tokens(ln) if t.neg}
 
 
 _NUM_TOKEN = re.compile(r"\d[\d,]*(?:\.\d+)?")

@@ -31,6 +31,7 @@ from sqlalchemy.orm import Session
 from finresearch.db.models import Citation, Claim, Document
 from finresearch.fincalc.dates import bidding_day_number, to_ist
 from finresearch.ingest.text import read_lines
+from finresearch.verify.values import HARD, ValueCheck, check_text, check_value
 
 LINE_TOLERANCE = 2
 REL_TOL = Decimal("0.0005")  # 0.05% — printed figures are rounded to 2 dp
@@ -111,16 +112,44 @@ def _matches(a: Decimal, b: Decimal) -> bool:
     return denom != 0 and abs(a - b) / denom <= REL_TOL
 
 
+def _doc_lines(session: Session, document_id: int, cache: dict[int, list[str]]) -> list[str]:
+    if document_id not in cache:
+        doc = session.get(Document, document_id)
+        cache[document_id] = read_lines(doc.text_path) if doc and doc.text_path else []
+    return cache[document_id]
+
+
 def cited_window(session: Session, cit: Citation, cache: dict[int, list[str]]) -> str:
     if cit.document_id is None or cit.line_start is None:
         return cit.quote or ""
-    if cit.document_id not in cache:
-        doc = session.get(Document, cit.document_id)
-        cache[cit.document_id] = read_lines(doc.text_path) if doc and doc.text_path else []
-    lines = cache[cit.document_id]
+    lines = _doc_lines(session, cit.document_id, cache)
     a = max(1, cit.line_start - LINE_TOLERANCE)
     b = min(len(lines), (cit.line_end or cit.line_start) + LINE_TOLERANCE)
     return "\n".join(lines[a - 1 : b])
+
+
+def value_check(session: Session, c: Claim, cache: dict[int, list[str]]) -> ValueCheck | None:
+    """The best `verify.values` check of a numeric claim over its document citations; None without any."""
+    results = []
+    for ct in c.citations:
+        if not ct.document_id:
+            continue
+        kw = {"statement": c.statement or "", "metric": c.metric or ""}
+        if ct.line_start is None:
+            results.append(check_text(ct.quote or "", Decimal(c.value), c.unit, c.period, **kw))
+        else:
+            lines = _doc_lines(session, ct.document_id, cache)
+            results.append(check_value(lines, ct.line_start, ct.line_end, Decimal(c.value), c.unit, c.period,
+                                       tolerance=LINE_TOLERANCE, **kw))  # fmt: skip
+    return min(results, key=ValueCheck.rank) if results else None
+
+
+def value_found(vc: ValueCheck, importance: str | None) -> bool:
+    """A pass, except that a warning (unit unknown / period unverified) is never a pass for a high-importance claim."""
+    return vc.found and not (importance == "high" and vc.warnings)
+
+
+_VALUE_KEYS = ("value_in_source", "value_check", "value_warnings", "value_detail", "source_unit", "source_period")
 
 
 def _norm_key(s: str | None) -> str:
@@ -144,10 +173,13 @@ class GateResult:
     conflicts: list[tuple[int, int]] = field(default_factory=list)
     live_flags: list[int] = field(default_factory=list)
     day_label_errors: list[int] = field(default_factory=list)
+    value_mismatches: list[int] = field(default_factory=list)  # sign / unit / period / basis mismatch
+    value_warnings: list[int] = field(default_factory=list)  # unit unknown / period unverified
 
     def summary(self) -> dict[str, Any]:
         return {"checked": self.checked, "derived": self.derived, "conflicts": self.conflicts,
-                "live_flags": self.live_flags, "day_label_errors": self.day_label_errors}  # fmt: skip
+                "live_flags": self.live_flags, "day_label_errors": self.day_label_errors,
+                "value_mismatches": self.value_mismatches, "value_warnings": self.value_warnings}  # fmt: skip
 
 
 # claims recorded by the pipeline from primary exchange/AMFI data, not by an agent (checks["source"])
@@ -191,7 +223,8 @@ def _downgrade(c: Claim, note: str, *, force: bool = False) -> None:
     overrides a contradiction."""
     if c.status == "unverified" or (force and c.status == "verified"):
         c.status = "needs_review"
-    c.verifier_note = ((c.verifier_note + " | ") if c.verifier_note else "") + note
+    if note not in (c.verifier_note or ""):  # the gate runs per stream and again across streams
+        c.verifier_note = ((c.verifier_note + " | ") if c.verifier_note else "") + note
 
 
 def run_gate(session: Session, run_id: int, *, stream: str | None = None, facts: dict[str, Any] | None = None,
@@ -215,19 +248,27 @@ def run_gate(session: Session, run_id: int, *, stream: str | None = None, facts:
         checks = dict(c.checks or {})
         text = f"{c.statement} {c.period or ''} {c.metric or ''}"
 
-        # 1. value present at the cited lines (or a unit conversion of it)
-        if c.claim_type == "numeric" and c.value is not None:
-            windows = [cited_window(session, ct, cache) for ct in c.citations if ct.document_id]
-            if windows:
-                found = any(_matches(n, f) for w in windows for n in numbers_in(w)
-                            for f in candidate_forms(Decimal(c.value), c.unit))  # fmt: skip
-                checks["value_in_source"] = found
-                if not found:
-                    res.derived.append(c.id)
-                    if c.status == "unverified":
-                        _downgrade(
-                            c, "gate: value not printed at cited lines (derived) — verifier must confirm"
-                        )
+        # 1. value printed at the cited lines with the same sign, unit and period (verify.values)
+        vc = value_check(session, c, cache) if c.claim_type == "numeric" and c.value is not None else None
+        if vc is not None:
+            for k in _VALUE_KEYS:
+                checks.pop(k, None)
+            checks.update(value_in_source=value_found(vc, c.importance), **vc.to_checks())
+            if vc.status == "not_found":
+                res.derived.append(c.id)
+                if c.status == "unverified":
+                    _downgrade(c, "gate: value not printed at cited lines (derived) — verifier must confirm")
+            elif vc.status != "pass":
+                # the figure is printed at the cited lines but with the opposite sign, in another unit or in another
+                # period's column: a verifier's "verified" is withdrawn too (the gate runs again after the verifiers)
+                res.value_mismatches.append(c.id)
+                _downgrade(c, f"gate: {vc.status.replace('_', ' ')} — {vc.detail}",
+                           force=vc.status in HARD and not is_deterministic(c))  # fmt: skip
+            elif vc.warnings:
+                res.value_warnings.append(c.id)
+                if c.importance == "high":
+                    _downgrade(c, f"gate: value printed at cited lines but {' and '.join(vc.warnings)} — a "
+                                  "high-importance figure needs a verifier to confirm it")  # fmt: skip
 
         # 2. live figures need a timestamp while bidding is open; web sources must be fresh
         if LIVE_RE.search(text) and (c.claim_type == "numeric" or _LIVE_FIGURE_RE.search(c.statement)):
@@ -321,14 +362,9 @@ def apply_correction(
     session.flush()
     session.refresh(corr)
     if new_val is not None:
-        windows = [cited_window(session, ct, {}) for ct in corr.citations if ct.document_id]
-        found = any(
-            _matches(n, f)
-            for w in windows
-            for n in numbers_in(w)
-            for f in candidate_forms(new_val, corr.unit)
-        )
-        corr.checks = {"value_in_source": found}
+        vc = value_check(session, corr, {})
+        found = vc is not None and value_found(vc, corr.importance)
+        corr.checks = {"value_in_source": found, **(vc.to_checks() if vc else {})}
         if found:
             corr.status = "verified"
     return corr
@@ -394,6 +430,15 @@ def check_report(session: Session, run_id: int, report_markdown: str) -> ReportG
             )
         elif c.status in CAVEAT_OK:
             g.warnings.append(f"[C{i}] is '{c.status}' — keep only with an UNVERIFIED caveat")
+        vstatus = (c.checks or {}).get("value_check") if c is not None else None
+        if vstatus in HARD and c.status not in ("contradicted", "unsupported"):
+            # the source prints this figure with the other sign / in another unit / in another period's column; a
+            # later verifier pass (cross-stream conflicts) can re-verify a claim after the gate, so this is checked here
+            msg = f"[C{i}] fails the value check ({vstatus}): {c.checks.get('value_detail') or ''}"[:300]
+            if c.importance == "high":
+                g.blocking.append(msg + " — correct the figure or drop it")
+            else:
+                g.warnings.append(msg + " — recheck the figure or caveat it")
         if (
             c is not None
             and (c.checks or {}).get("source_language") == "hi"

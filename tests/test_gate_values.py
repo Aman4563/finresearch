@@ -131,7 +131,7 @@ def test_a_negative_growth_claim_against_a_positive_growth_row(make_ledger):
     led = make_ledger(LAKH_PNL)
     neg = add(led, metric="revenue_growth", value="-20.62", unit="%", period="FY2026", cite="Revenue growth",
               statement="Revenue declined 20.62% in Fiscal 2026.")  # fmt: skip
-    pos = add(led, metric="revenue_growth", value="20.62", unit="%", period="FY2026", cite="Revenue growth")
+    pos = add(led, metric="revenue_growth_yoy", value="20.62", unit="%", period="FY2026", cite="Revenue growth")
     margin_flip = add(led, metric="ebitda_margin", value="2.35", unit="%", period="FY2025", cite="EBITDA margin")
     gate(led)
     assert claim(neg)[1]["value_check"] == "sign_mismatch" and claim(neg)[0] == "needs_review"
@@ -211,7 +211,7 @@ def test_the_neighbouring_year_column_does_not_verify_a_claim(make_ledger):
     fy24 = add(led, metric="revenue", value="87.654", unit="INR crore", period="FY2023-24", cite="Revenue from")
     r = gate(led)
     st, chk, note = claim(neighbour)
-    assert chk["value_check"] == "period_mismatch" and st == "needs_review" and "Fiscal 2025" in note
+    assert chk["value_check"] == "period_mismatch" and st == "needs_review" and "FY2025 column" in note
     assert neighbour in r.value_mismatches
     assert claim(right)[1]["value_check"] == "pass" and claim(right)[1]["source_period"] == "FY2025"
     assert claim(fy24)[1]["value_check"] == "pass"
