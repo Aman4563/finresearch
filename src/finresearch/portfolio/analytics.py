@@ -517,7 +517,9 @@ def group_of(p: Any, overrides: dict[str, str | None]) -> tuple[str | None, str]
 
 
 def concentration(h: History, sectors: dict[str, str], overrides: dict[str, str | None],
-                  limit: PositionLimit | None = None) -> dict[str, Any]:  # fmt: skip
+                  limit: PositionLimit | None = None, coverage: dict[str, Any] | None = None) -> dict[str, Any]:  # fmt: skip
+    """`coverage`: portfolio.lookthrough.coverage for the held funds (#214); the flags and the N_eff note say whether
+    the funds were looked through (they never are in these figures: one fund = one position)."""
     out = base(h)
     pos = [p for p in h.positions if p.value > 0]
     if not pos:
@@ -546,6 +548,16 @@ def concentration(h: History, sectors: dict[str, str], overrides: dict[str, str 
 
     sectors_rows = agg("sector", False)
     groups_rows = agg("group", True)
+    funds = sum(1 for p in pos if p.asset_type == "mf")
+    if not funds:
+        scope = ""
+    elif coverage and coverage.get("funds_total"):
+        missing = coverage["funds_total"] - coverage["looked_through"]
+        scope = (f" Direct holdings only: {missing} of {coverage['funds_total']} funds are not looked through, so "
+                 "exposure through them is not counted." if missing else
+                 " Direct holdings only: your funds are looked through on the Look-through page, not here.")  # fmt: skip
+    else:
+        scope = " Direct holdings only: funds are not looked through here (look-through coverage unknown)."
     flags = []
     for x in rows:
         # ETFs are held as listed shares but are diversified funds: not held to the single-stock limit (#200)
@@ -560,7 +572,7 @@ def concentration(h: History, sectors: dict[str, str], overrides: dict[str, str 
         if (s["weight_pct"] or 0) > SECTOR_LIMIT_PCT:
             flags.append({"kind": "sector", "label": s["label"], "weight_pct": s["weight_pct"], "limit_pct": SECTOR_LIMIT_PCT,
                           "text": f"{s['label']} is {s['weight_pct']:.1f} % of the portfolio, above the "
-                                  f"{SECTOR_LIMIT_PCT:g} % rule of thumb [W]. Consider reviewing it."})  # fmt: skip
+                                  f"{SECTOR_LIMIT_PCT:g} % rule of thumb [W]. Consider reviewing it.{scope}"})  # fmt: skip
     for g in groups_rows:
         if g["label"] == "No group mapped":
             continue
@@ -568,7 +580,6 @@ def concentration(h: History, sectors: dict[str, str], overrides: dict[str, str 
             flags.append({"kind": "group", "label": g["label"], "weight_pct": g["weight_pct"], "limit_pct": GROUP_LIMIT_PCT,
                           "text": f"The {g['label']} group is {g['weight_pct']:.1f} % of the portfolio, above the "
                                   f"{GROUP_LIMIT_PCT:g} % rule of thumb [W]. Consider reviewing it."})  # fmt: skip
-    funds = sum(1 for p in pos if p.asset_type == "mf")
     out.update(
         available=True, total=_r(total), positions=sorted(rows, key=lambda x: -(x["value"] or 0)),
         sectors=sectors_rows, groups=groups_rows, flags=flags,
@@ -579,7 +590,8 @@ def concentration(h: History, sectors: dict[str, str], overrides: dict[str, str 
         group_source=GROUP_SOURCE,
         funds_note=(f"{funds} fund(s) count as single positions: their own holdings are not looked through here, so "
                     "stock and sector exposure through funds is not included and N_eff understates diversification."
-                    if funds else None),
+                    + scope if funds else None),
+        lookthrough_coverage=coverage,
         valued_at="last daily close or NAV in the price history",
     )  # fmt: skip
     return out

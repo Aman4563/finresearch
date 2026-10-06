@@ -37,6 +37,7 @@ from finresearch.fincalc.tax import (
     fy_label,
     fy_tax,
     tax_delta,
+    unverified_note,
 )
 
 STT_DELIVERY = Decimal("0.001")  # each side of a delivery equity trade (Budget 2024 memo p.46) [V]
@@ -202,6 +203,9 @@ def evaluate(row: DisposalRow) -> DisposalRow:
         )
         row.notes.append("Cost unknown (opening balance or transfer-in): enter the cost and date")
         return row
+    if row.cls.term == "unknown":
+        row.notes.append(f"Term unknown ({row.cls.reason}): the gain can't be classified short- or long-term, so it is "
+                         "left out of the tax")  # fmt: skip
     cost = row.cost
     # s.55(2)(ac) (s.90(7) of the 2025 Act) steps the cost up only for a long-term capital asset "referred to in
     # section 112A", i.e. a transfer taxed under the equity regime. An equity holding sold without STT is classified
@@ -230,6 +234,36 @@ def gains_of(rows: Iterable[DisposalRow]) -> list[Gain]:
             for r in rows if r.cls is not None and r.origin != "intraday"]  # fmt: skip
 
 
+def is_unclassified(r: DisposalRow) -> bool:
+    """A capital-gains disposal whose term (short / long / exempt) is not known: no acquisition date, no cost, or no
+    rule. Its tax cannot be computed, and it must never count as ₹0. Intraday trades are business income, not this."""
+    return r.origin != "intraday" and (r.cls is None or r.cls.term == "unknown")
+
+
+def unclassified(rows: Iterable[DisposalRow]) -> dict[str, Any]:
+    """What could not be classified: {count, gain (the known gains among them), no_cost (count without a cost),
+    no_date (count without an acquisition date), detail}. `count` 0 means complete."""
+    bad = [r for r in rows if is_unclassified(r)]
+    gain = sum((r.gain for r in bad if r.gain is not None), Decimal(0))
+    no_cost = sum(1 for r in bad if r.cost is None)
+    no_date = sum(1 for r in bad if r.acquired is None)
+    detail = ""
+    if bad:
+        why = [f"{n} without {w}" for n, w in ((no_date, "an acquisition date"), (no_cost, "a cost")) if n]
+        detail = (f"Tax incomplete: {len(bad)} disposal(s) / ₹{float(gain):,.0f} of gains can't be classified short- "
+                  f"or long-term ({'; '.join(why) or 'no rule'}), so they are not in the tax. Enter the dates and "
+                  "costs for a full figure")  # fmt: skip
+        if no_cost:
+            detail += f" (the gain of the {no_cost} without a cost is unknown too)"
+    return {"count": len(bad), "gain": _f(gain), "no_cost": no_cost, "no_date": no_date, "detail": detail}
+
+
+def rules_note(fys: Iterable[int]) -> dict[str, Any]:
+    """{rules_verified, rules_note} for outputs that use the rules of the given financial years (#220)."""
+    notes = [n for fy in sorted(set(fys)) if (n := unverified_note(fy)) is not None]
+    return {"rules_verified": not notes, "rules_note": "; ".join(notes) or None}
+
+
 def fy_summary(rows: Sequence[DisposalRow], fy: int, slab: Decimal) -> dict[str, Any]:
     ev = [r for r in rows if r.fy == fy]
     t = fy_tax(gains_of(ev), fy, slab)
@@ -238,17 +272,23 @@ def fy_summary(rows: Sequence[DisposalRow], fy: int, slab: Decimal) -> dict[str,
     eq_lt = sum(
         (r.gain for r in ev if r.gain is not None and r.cls and r.cls.bucket == "equity_lt"), Decimal(0)
     )
+    unk = unclassified(ev)
+    complete = unk["count"] == 0
+    # an unclassified gain may be short or long, equity or not, a gain or a loss: the tax on the rest is neither a
+    # lower nor an upper bound of the year's tax, so it is never shown as the year's figure (#213)
     return {"fy": fy, "label": t.label, "disposals": len(ev), "stcg": _f(st), "ltcg": _f(lt), "equity_ltcg": _f(eq_lt),
-            "exempt": _f(t.exempt_total), "unknown": t.unknown_count,
+            "exempt": _f(t.exempt_total), "unknown": unk["count"], "complete": complete, "unclassified": unk,
+            **rules_note([fy]),
             "intraday": sum(1 for r in ev if r.origin == "intraday"),
             "exemption": {"limit": _f(t.exemption_limit), "used": _f(t.exemption_used),
-                          "remaining": _f(t.exemption_remaining)},
+                          "remaining": _f(t.exemption_remaining), "complete": complete},
             "slices": [{"bucket": s.bucket, "rate_pct": None if s.rate is None else float(s.rate * 100),
                         "slab": s.rate is None, "long": s.long, "gain": _f(s.amount), "set_off": _f(s.set_off),
                         "exempted": _f(s.exempted), "taxable": _f(s.taxable)} for s in t.slices],
             "losses_carried": {"short": _f(t.losses_unabsorbed_short), "long": _f(t.losses_unabsorbed_long)},
-            "tax": _f(t.tax), "cess": _f(t.cess), "total": _f(t.total), "slab_rate_pct": float(slab * 100),
-            "notes": t.notes}  # fmt: skip
+            "tax": _f(t.tax) if complete else None, "cess": _f(t.cess) if complete else None,
+            "total": _f(t.total) if complete else None, "total_classified": _f(t.total),
+            "slab_rate_pct": float(slab * 100), "notes": t.notes}  # fmt: skip
 
 
 def _f(x: Decimal | None) -> float | None:
@@ -284,7 +324,11 @@ def harvest(rows: Sequence[DisposalRow], lots_by_holding: dict[int, list[OpenLot
     base = [r for r in rows if r.fy == fy]
     base_gains = gains_of(base)
     now = fy_tax(base_gains, fy, slab)
-    headroom = now.exemption_remaining
+    unk = unclassified(base)
+    complete = unk["count"] == 0
+    # with an unclassified disposal this year the unused exemption is not known (it may be equity LTCG, or a loss set
+    # off first): "tax-free" gain harvesting could then be taxable, so none is suggested (#213)
+    headroom = now.exemption_remaining if complete else Decimal(0)
     gain_ideas, loss_ideas = [], []
     for hid, lots in lots_by_holding.items():
         price = prices.get(hid)
@@ -343,15 +387,23 @@ def harvest(rows: Sequence[DisposalRow], lots_by_holding: dict[int, list[OpenLot
                 loss_ideas.append({"holding_id": hid, "name": h.name, "account": h.account, "sell_units": _f(best_q),
                                    "price": _f(price), "value": _f(value), "loss": _f(best),
                                    "short_term": any(r.cls and r.cls.term == "short" for r in chosen),
-                                   "tax_saved": _f(-delta),
+                                   "tax_saved": _f(-delta), "estimate": not complete,
                                    "est_costs": _f(_round_trip_cost(h.tax_class, value, asset_types.get(hid, "stock"))),
                                    "why": "Booking this loss lowers this year's tax on gains already realised"})  # fmt: skip
     gain_ideas.sort(key=lambda x: -(x["gain"] or 0))
     loss_ideas.sort(key=lambda x: -(x["tax_saved"] or 0))
     fy_end = date(fy, 3, 31)
+    notes = list(HARVEST_NOTES)
+    if not complete:
+        notes.insert(0, unk["detail"] + ". Gain harvesting is not suggested (the unused exemption is unknown) and the "
+                     "loss-harvesting savings are estimates that leave those disposals out.")  # fmt: skip
+    rn = rules_note([fy])
+    if rn["rules_note"]:
+        notes.insert(0, rn["rules_note"])
     return {"fy": fy, "label": fy_label(fy), "days_left": (fy_end - today).days, "deadline": fy_end.isoformat(),
-            "exemption_remaining": _f(headroom), "tax_so_far": _f(now.total), "gain_harvest": gain_ideas[:20],
-            "loss_harvest": loss_ideas[:20], "notes": HARVEST_NOTES, "verify": VERIFY_NOTE}  # fmt: skip
+            "exemption_remaining": _f(headroom) if complete else None, "tax_so_far": _f(now.total) if complete else None,
+            "complete": complete, "unclassified": unk, **rn, "gain_harvest": gain_ideas[:20],
+            "loss_harvest": loss_ideas[:20], "notes": notes, "verify": VERIFY_NOTE}  # fmt: skip
 
 
 # --------------------------------------------------------------------------- CSV for a CA
@@ -367,6 +419,13 @@ def export_csv(rows: Sequence[DisposalRow], fy: int | None = None) -> str:
 
     w.writerow(["# Personal estimate from FinResearch's dated rule table. " + VERIFY_NOTE])
     w.writerow(["# PERSONAL – NOT FOR DISTRIBUTION. " + DISCLAIMER])
+    fys = sorted({r.fy for r in rows if fy is None or r.fy == fy})
+    for y in fys:  # what the CA must know before using the figures (#213, #220)
+        unk = unclassified(r for r in rows if r.fy == y)
+        if unk["count"]:
+            w.writerow([f"# {fy_label(y)}: " + unk["detail"]])
+        if (stale := unverified_note(y)) is not None:
+            w.writerow([f"# {stale}"])
     w.writerow(CSV_COLUMNS)
     for r in sorted(rows, key=lambda r: (r.sold, r.holding.name)):
         if fy is not None and r.fy != fy:

@@ -59,8 +59,8 @@ export function PortfolioStrip() {
       </Cell>
       <Cell href="/portfolio" icon={<Landmark />} name="LTCG headroom"
         label={<>LTCG headroom <InfoTip>How much of this financial year&apos;s ₹1.25 lakh exemption on equity long-term gains is still unused.</InfoTip></>}
-        hint={data.ltcg_limit ? `of ${inr(data.ltcg_limit)} this year` : undefined}>
-        <span className="num">{inr(data.ltcg_headroom)}</span>
+        hint={data.ltcg_headroom === null ? "tax incomplete: a sale can't be classified (Tax tab)" : data.ltcg_limit ? `of ${inr(data.ltcg_limit)} this year` : undefined}>
+        {data.ltcg_headroom === null ? <span className="text-warn">unknown</span> : <span className="num">{inr(data.ltcg_headroom)}</span>}
       </Cell>
       <Cell href={data.top_alert ? "/monitor" : "/brief"} name={data.top_alert ? "Your rule fired" : "Alerts"} icon={data.top_alert ? <BellRing /> : <Sunrise />} label={data.top_alert ? "Your rule fired" : "Alerts"}
         hint={data.top_alert ? day(istDate(Date.parse(data.top_alert.at))) : data.unpriced ? `${data.unpriced} holding(s) without a fresh price` : "morning brief →"}>

@@ -61,6 +61,8 @@ function Events({ items, empty }: { items: BriefEvent[]; empty: string }) {
 function AdvanceTaxCard({ at }: { at: AdvanceTax }) {
   return (
     <div className="space-y-3">
+      {at.complete === false && <p className="text-xs font-medium text-warn">Incomplete: {at.unclassified?.detail}. The figures below leave them out.</p>}
+      {at.rules_note && <p className="text-xs text-warn">{at.rules_note}</p>}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <div><p className="text-[11px] text-muted">Tax on realised gains</p><p className="num text-sm font-medium">{inr(at.capital_gains_tax)}</p></div>
         <div><p className="text-[11px] text-muted">Tax on dividends (slab + cess)</p><p className="num text-sm font-medium">{inr(at.dividend_tax)}</p></div>
@@ -94,7 +96,10 @@ function LtTable({ lots }: { lots: LtLot[] }) {
       <tbody>
         {lots.map((l) => (
           <tr key={`${l.holding_id}-${l.acquired}`}>
-            <td><p className="font-medium">{l.name}</p><p className="text-[11px] text-muted">{l.account} · bought {day(l.acquired)}{l.older_lots ? ` · ${l.older_lots} older lot(s) sell first (FIFO)` : ""}</p></td>
+            <td><p className="font-medium">{l.name}</p><p className="text-[11px] text-muted">{l.account} · bought {day(l.acquired)}{l.older_lots ? ` · ${l.older_lots} older lot(s) sell first (FIFO)` : ""}</p>
+              {(l.older_unknown ?? 0) > 0 && <p className="text-[11px] text-warn">{l.older_unknown} of the older lots have no date or cost: their tax is unknown and they sell first</p>}
+              {l.estimate && <p className="text-[11px] text-warn">Estimate: this year&apos;s unclassified disposals are left out</p>}
+              {l.rules_note && <p className="text-[11px] text-warn">{l.rules_note}</p>}</td>
             <td className="num text-right">{day(l.lt_date)} <span className="text-muted">({l.days}d)</span></td>
             <td className="num text-right">{inr(l.gain)}</td>
             <td className="num text-right">{inr(l.tax_now)}</td>

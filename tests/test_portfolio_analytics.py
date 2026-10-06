@@ -398,6 +398,26 @@ def test_concentration_flags_and_status(tmp_path):
     assert calm["limits"]["stock_source"] == "50 % — your profile's max position"
 
 
+def test_concentration_flags_say_whether_funds_were_looked_through(tmp_path):
+    """#214: the sector flag and the N_eff note read as portfolio-wide although the funds' holdings are left out."""
+    from finresearch.portfolio.analytics import concentration
+
+    h = build(synthetic(), tmp_path)
+    cov = {"funds_total": 1, "looked_through": 0, "not_fetched": 0, "unsupported": 1}
+    c = concentration(h, {"NSE:AAA": "IT", "NSE:BBB": "IT"}, {}, None, coverage=cov)
+    sector = next(f for f in c["flags"] if f["kind"] == "sector")
+    assert sector["text"].endswith("Direct holdings only: 1 of 1 funds are not looked through, so exposure through "
+                                   "them is not counted.")  # fmt: skip
+    assert "1 of 1 funds are not looked through" in c["funds_note"] and c["lookthrough_coverage"] == cov
+    seen = concentration(
+        h, {"NSE:AAA": "IT", "NSE:BBB": "IT"}, {}, None, coverage={**cov, "looked_through": 1}
+    )
+    assert "looked through on the Look-through page, not here" in seen["funds_note"]
+    # no coverage figure (the store could not be read): unknown, never "all looked through"
+    unknown = concentration(h, {"NSE:AAA": "IT", "NSE:BBB": "IT"}, {}, None)
+    assert "coverage unknown" in next(f for f in unknown["flags"] if f["kind"] == "sector")["text"]
+
+
 def test_concentration_uses_the_one_position_limit(tmp_path):
     # one helper (#194): with no max position a low-risk profile gets 5 %, not the old flat 10 % rule of thumb
     from finresearch.portfolio.analytics import concentration

@@ -11,7 +11,7 @@ import { BarsChart } from "@/components/charts";
 import { Badge, Button, Callout, Card, ErrorNote, InfoTip, Stat, Table, cx, inputClass } from "@/components/ui";
 import { api, useApi } from "@/lib/api";
 
-import { LookthroughConcentration } from "./lookthrough-panel";
+import { type Coverage, CoverageLine, LookthroughConcentration } from "./lookthrough-panel";
 import { AnalyticsFooter, type AnalyticsBase, Loading, NotEnough } from "./shared-analytics";
 import { inr } from "./types";
 
@@ -22,6 +22,8 @@ type Conc = AnalyticsBase & {
   sectors?: Row[]; groups?: Row[];
   flags?: { kind: string; label: string; weight_pct: number; limit_pct: number; text: string }[];
   limits?: { stock_pct: number; stock_source: string; sector_pct: number; group_pct: number };
+  /** #214: which funds are looked through (null: unknown) */
+  lookthrough_coverage?: Coverage | null;
 };
 
 function GroupEditor({ k, current, onSaved }: { k: string; current: string | null; onSaved: () => void }) {
@@ -57,6 +59,9 @@ export function ConcentrationAnalytics({ refresh }: { refresh: number }) {
   if (!data.available || !data.positions) return <NotEnough data={data} what="concentration figures" />;
   const flags = data.flags ?? [], lim = data.limits!;
   const stocks = data.positions.filter((p) => p.asset_type === "stock");
+  const hasFunds = data.positions.some((p) => p.asset_type === "mf");
+  const cov = data.lookthrough_coverage;
+  const scope = !hasFunds ? "" : cov && cov.funds_total ? ` · funds as one position each; ${cov.funds_total - cov.looked_through} of ${cov.funds_total} not looked through` : " · funds as one position each; look-through unknown";
   return (
     <div className="space-y-4">
       {flags.length === 0
@@ -64,16 +69,18 @@ export function ConcentrationAnalytics({ refresh }: { refresh: number }) {
         : <Callout tone="warn" icon={<TriangleAlert className="size-4" />} title={data.status}><ul className="list-disc space-y-0.5 pl-4">{flags.map((f) => <li key={f.kind + f.label}>{f.text}</li>)}</ul></Callout>}
       <div className="stagger grid gap-3 sm:grid-cols-3">
         <Stat label="Effective number of holdings" display={<span className="num">{data.n_effective?.toFixed(1)}</span>} icon={<Layers className="size-4" />}
-          hint={`${data.positions.length} positions`} help="1 ÷ HHI: the number of equal-sized holdings that would be as concentrated as yours. Ten holdings where one is 60 % behave like about two." />
+          hint={`${data.positions.length} positions${scope}`} help="1 ÷ HHI: the number of equal-sized holdings that would be as concentrated as yours. Ten holdings where one is 60 % behave like about two." />
         <Stat label="Largest five" display={<span className="num">{data.top5_pct?.toFixed(1)}%</span>} icon={<PieChart className="size-4" />} hint="share of the portfolio" />
         <Stat label="HHI" display={<span className="num">{data.hhi?.toFixed(3)}</span>} icon={<Building2 className="size-4" />}
           hint="0 = spread out, 1 = one holding" help="Herfindahl–Hirschman index: the sum of squared weights. Funds count as one position each here." />
       </div>
+      {hasFunds && <CoverageLine coverage={cov ?? null} />}
       {data.funds_note && <p className="text-xs text-muted">{data.funds_note}</p>}
       {data.funds_note && <LookthroughConcentration />}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card title="By sector" icon={<PieChart className="size-4" />} subtitle={`dashed line: ${lim.sector_pct} % rule of thumb`} help={`Stocks by NSE industry (or your own label on the holding). Rule of thumb [W]: no sector above ${lim.sector_pct} %.`}>
           {bar(data.sectors ?? [], lim.sector_pct)}
+          {hasFunds && <CoverageLine coverage={cov ?? null} className="mt-2" />}
         </Card>
         <Card title="By business group (stocks)" icon={<Building2 className="size-4" />} subtitle={`dashed line: ${lim.group_pct} % rule of thumb`} help={`${data.group_source} Rule of thumb [W]: no group above ${lim.group_pct} %.`}
           actions={<button type="button" className="text-xs text-brand" onClick={() => setEdit((e) => !e)}>{edit ? "Done" : "Correct groups"}</button>}>

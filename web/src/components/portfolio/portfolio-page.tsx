@@ -20,6 +20,7 @@ import { ConcentrationAnalytics } from "./concentration-analytics";
 import { DataHealth } from "./data-health";
 import { CostsAnalytics } from "./costs-analytics";
 import { ImportPanel } from "./import-panel";
+import { CoverageLine, EconomicSectors } from "./lookthrough-panel";
 import { PerformanceAnalytics } from "./performance-analytics";
 import { RebalancePanel } from "./rebalance-panel";
 import { RiskAnalytics } from "./risk-analytics";
@@ -353,15 +354,22 @@ function Allocation({ snap, onChanged }: { snap: Snapshot; onChanged: () => void
   };
   const total = snap.summary.value;
   const center = <div><p className="num text-lg font-semibold">{fmtCompactINR(total)}</p><p className="text-[11px] text-muted">valued</p></div>;
+  const cov = snap.lookthrough_coverage;
+  const [sectorView, setSectorView] = useState<"direct" | "economic">("direct");
+  const hasFunds = snap.holdings.some((h) => h.asset_type === "mf" && !h.closed);
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
       <Card title="By asset class" icon={<PieChart className="size-4" />}><DonutChart data={donut(snap.allocation.asset)} center={center} format={fmtCompactINR} height={170} /></Card>
-      <Card title="By sector" icon={<PieChart className="size-4" />} help="Stocks use NSE's industry (or your own label). Funds are not looked through to their holdings.">
-        <DonutChart data={donut(snap.allocation.sector)} center={center} format={fmtCompactINR} height={170} />
+      <Card title="By sector" icon={<PieChart className="size-4" />} help="Stocks use NSE's industry (or your own label). Funds are one slice here; 'Economic exposure' looks through the funds whose month-end portfolios are stored."
+        actions={cov && cov.looked_through > 0 ? <Segmented<"direct" | "economic"> label="Sector view" value={sectorView} onChange={setSectorView}
+          options={[{ value: "direct", label: "Holdings" }, { value: "economic", label: "Economic exposure" }]} /> : undefined}>
+        {sectorView === "economic" && cov && cov.looked_through > 0 ? <EconomicSectors /> : <DonutChart data={donut(snap.allocation.sector)} center={center} format={fmtCompactINR} height={170} />}
+        <CoverageLine coverage={cov} hasFunds={hasFunds} className="mt-2" />
       </Card>
       <Card title="By market cap" icon={<PieChart className="size-4" />}
         help={`SEBI: large cap = top 100 companies by market cap, mid = 101-250, small = the rest. Cut-offs: ${snap.cap_list.note} (large ≥ ₹${Number(snap.cap_list.large_min_cr).toLocaleString("en-IN")} cr, mid ≥ ₹${Number(snap.cap_list.mid_min_cr).toLocaleString("en-IN")} cr). Funds by their SEBI category.`}>
         <DonutChart data={donut(snap.allocation.cap)} center={center} format={fmtCompactINR} height={170} />
+        <CoverageLine coverage={cov} hasFunds={hasFunds} className="mt-2" />
       </Card>
       <div className="lg:col-span-2"><Targets snap={snap} onSaved={onChanged} /></div>
       {Object.keys(snap.targets ?? {}).length > 0 && <div className="lg:col-span-2"><RebalancePanel key={JSON.stringify(snap.targets)} /></div>}

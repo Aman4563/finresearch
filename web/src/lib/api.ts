@@ -409,6 +409,8 @@ export type MonitorSchedule = {
   forecasts: { after: string; every_min: number };
   /** the daily layer (monitor.portfolio_daily, monitor.digest); older API builds omit it */
   portfolio?: { close_pass: string; nav_pass: string; max_instruments: number; brief: string; digest: string; digest_day: string };
+  /** the monthly fund look-through fetch (monitor.lookthrough_fetch, #214); older API builds omit it */
+  lookthrough?: { from_day: number; to_day: number; after: string; sebi_days: number };
   equity_hours: [string, string];
 };
 

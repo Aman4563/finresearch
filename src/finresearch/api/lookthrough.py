@@ -31,7 +31,12 @@ NAV_TTL_S = 6 * 3600
 def add_lookthrough_routes(app: FastAPI, *, scheme_rows: Callable[[], Awaitable[list]], store_root: Path | None = None,
                            http: Callable[[], Any] | None = None) -> None:  # fmt: skip
     """`http()` returns a PoliteClient-like object (tests pass one with a mock transport); default: a live client."""
-    from finresearch.adapters.amc_portfolio import AMC_SOURCES, AmcPortfolioError, source_for_amc
+    from finresearch.adapters.amc_portfolio import (
+        AMC_SOURCES,
+        AMC_UNSUPPORTED,
+        AmcPortfolioError,
+        source_for_amc,
+    )
     from finresearch.api.markets import MarketSources, TtlCache
     from finresearch.portfolio import lookthrough as lt
 
@@ -104,15 +109,7 @@ def add_lookthrough_routes(app: FastAPI, *, scheme_rows: Callable[[], Awaitable[
             return hs
 
     def held_mf_codes() -> list[tuple[str | None, str]]:
-        """(scheme code, name) of mutual funds with open units: no prices needed for overlap."""
-        from finresearch.db.models import PortfolioHolding, PortfolioLot
-
-        with session_scope() as s:
-            open_ids = {
-                h for (h,) in s.execute(select(PortfolioLot.holding_id).where(PortfolioLot.open_quantity > 0))
-            }
-            return [(h.scheme_code, h.name) for h in s.scalars(select(PortfolioHolding).where(
-                PortfolioHolding.asset_type == "mf")) if h.id in open_ids]  # fmt: skip
+        return lt.held_mf_codes()
 
     def err(e: Exception, status: int = 422) -> HTTPException:
         return HTTPException(status, str(e))
@@ -138,6 +135,8 @@ def add_lookthrough_routes(app: FastAPI, *, scheme_rows: Callable[[], Awaitable[
         return {
             "sources": [{"key": k, "amc": v.amc, "page": v.page, "mode": v.mode, "note": v.note, "hosts": list(v.hosts)}
                         for k, v in AMC_SOURCES.items()],
+            "unsupported": [{"key": k, "amc": v.amc, "page": v.page, "reason": v.reason}
+                            for k, v in AMC_UNSUPPORTED.items()],
             "files": [{"sha": sha, **{k: m.get(k) for k in ("filename", "url", "amc", "fetched_at", "size")},
                        "schemes": len(m.get("schemes", [])),
                        "months": sorted({(x.get("as_of") or "")[:7] for x in m.get("schemes", []) if x.get("as_of")})}

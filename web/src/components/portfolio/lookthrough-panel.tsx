@@ -29,10 +29,16 @@ type Mix = { label: string; value: number | null; pct_equity: number | null };
 type Bucket = { kind: string; label: string; value: number | null; pct: number | null };
 type HeldFundRow = { code: string | null; name: string; key: string | null; value: number | null; pct: number | null; amc: string | null; source: string | null; file: FileStatus };
 type CapMeta = { as_of?: string | null; title?: string; url?: string; fetched_at?: string } | null;
+/** How much of the portfolio the look-through can see (#214; API: portfolio.lookthrough.coverage). */
+export type Coverage = {
+  funds_total: number; looked_through: number; not_fetched: number; unsupported: number; stale: number; unpriced: number;
+  fund_pct: number | null; not_looked_through_pct: number | null; text: string | null;
+  funds: { code: string | null; name: string; value: number | null; status: "looked_through" | "not_fetched" | "unsupported"; reason: string; month: string | null; stale: boolean }[];
+};
 export type LookThrough = {
   as_of: string; total: number | null; equity: number | null; equity_pct: number | null; reconciliation: number | null;
   stocks: StockRow[]; stocks_count: number; sectors: Mix[]; caps: Mix[]; buckets: Bucket[]; redundancy_pct: number | null;
-  funds: HeldFundRow[]; overlap: ({ a: string; b: string } & OverlapPair)[]; unpriced: number; cap_list: CapMeta;
+  funds: HeldFundRow[]; overlap: ({ a: string; b: string } & OverlapPair)[]; unpriced: number; cap_list: CapMeta; coverage: Coverage;
   concentration: {
     hhi: number | null; n_effective: number | null; top5_pct_equity: number | null; largest: string | null; largest_pct: number | null;
     top_sector: string | null; top_sector_pct: number | null; fund_coverage_pct: number | null; how: string;
@@ -40,6 +46,7 @@ export type LookThrough = {
   limits: string[]; disclaimer: string;
 };
 type Source = { key: string; amc: string; page: string; mode: "auto" | "url"; note: string };
+type UnsupportedHouse = { key: string; amc: string; page: string; reason: string };
 type UploadedScheme = { sheet: string; name: string; key: string; as_of: string | null; holdings: number; benchmark: string | null; warnings: string[]; codes: string[] };
 
 const inr = (v: number | null | undefined) => (v == null ? "—" : `₹${Math.round(v).toLocaleString("en-IN")}`);
@@ -261,15 +268,49 @@ export function LookthroughConcentration() {
   );
 }
 
+// ------------------------------------------------------------------ coverage (shared with the allocation and concentration cards)
+/** A visible line (not a tooltip) saying what a direct-holdings card leaves out: the share of the portfolio in funds whose
+ * holdings are not looked through. `coverage` null = the API could not tell: said as unknown, never as covered. */
+export function CoverageLine({ coverage, hasFunds = true, className }: { coverage: Coverage | null | undefined; hasFunds?: boolean; className?: string }) {
+  if (coverage === undefined || (coverage && !coverage.text) || (!coverage && !hasFunds)) return null;
+  const blind = coverage?.not_looked_through_pct;
+  return (
+    <p className={cx("text-xs", blind != null && blind > 0 ? "text-warn" : "text-muted", className)}>
+      {coverage?.text ?? "Direct stocks only — funds are not looked through here (coverage unknown)"}{" "}
+      <Link href="/portfolio/lookthrough" className="whitespace-nowrap font-medium text-brand hover:underline">Look-through →</Link>
+    </p>
+  );
+}
+
+/** Sector exposure through the funds as well (direct + via funds), from /api/lookthrough, loaded on demand. */
+export function EconomicSectors() {
+  const { data: d, error } = useApi<LookThrough>("/api/lookthrough?top=5");
+  if (error) return <p className="text-xs text-warn">Could not load the look-through: {error}</p>;
+  if (!d) return <Skeleton className="h-40" />;
+  if (d.sectors.length === 0) return <p className="text-sm text-muted">No looked-through equity yet.</p>;
+  return (
+    <div>
+      <BarsChart layout="vertical" data={d.sectors.slice(0, 8).map((x) => ({ label: x.label.length > 24 ? `${x.label.slice(0, 22)}…` : x.label, pct: x.pct_equity ?? 0 }))} x="label"
+        series={[{ key: "pct", label: "% of looked-through equity" }]} format={(v) => `${v.toFixed(1)}%`} labelWidth={150}
+        height={Math.max(140, Math.min(8, d.sectors.length) * 26 + 20)} />
+      <p className="mt-1 text-[11px] text-muted">
+        Economic exposure: % of your equity seen through the funds&apos; month-end portfolios ({d.coverage.looked_through} of {d.coverage.funds_total} funds).
+        {d.coverage.not_looked_through_pct ? ` Funds not looked through (${d.coverage.not_looked_through_pct.toFixed(0)} % of the portfolio) are left out.` : ""}
+      </p>
+    </div>
+  );
+}
+
 // ------------------------------------------------------------------ the page
 export function LookthroughPanel() {
   const lt = useApi<LookThrough>("/api/lookthrough?top=30");
-  const sources = useApi<{ sources: Source[] }>("/api/lookthrough/sources");
+  const sources = useApi<{ sources: Source[]; unsupported: UnsupportedHouse[] }>("/api/lookthrough/sources");
   const d = lt.data;
   const srcBy = new Map((sources.data?.sources ?? []).map((s) => [s.key, s]));
   const funds = d?.funds ?? [];
   const withFile = funds.filter((f) => f.file.available).length;
   const stale = funds.filter((f) => f.file.stale).length;
+  const whyBy = new Map((d?.coverage?.funds ?? []).map((f) => [f.code ?? f.name, f.reason]));
 
   return (
     <div>
@@ -308,13 +349,15 @@ export function LookthroughPanel() {
           )}
         </div>
 
+        {d && <CoverageLine coverage={d.coverage} hasFunds={funds.length > 0} />}
+
         <Callout tone="info" title="Personal arithmetic, not advice">
           {d?.disclaimer ?? "Arithmetic on published month-end portfolios."} Numbers use each fund&apos;s latest stored month-end file; see the limits below.
         </Callout>
 
         <Card title="Holdings files" icon={<FileSpreadsheet className="size-4" />}
           subtitle="SEBI requires every fund house to publish each scheme's month-end portfolio (with ISINs) within 10 days"
-          help="SEBI Master Circular for Mutual Funds, para 6.1.1. PPFAS, Nippon India and DSP publish plain links the app can fetch; for Axis paste the file's link; for any other fund house download the xlsx from its website and upload it.">
+          help="SEBI Master Circular for Mutual Funds, para 6.1.1. PPFAS, Nippon India, DSP, quant and Tata: the app finds the files itself (and the monitor fetches held funds' files each month from the 11th); for Axis paste the file's link; for any other fund house download the xlsx from its website and upload it. The list of fund houses is below.">
           {!d ? <Skeleton className="h-24" /> : funds.length === 0 ? (
             <p className="text-sm text-muted">No mutual funds in the portfolio.</p>
           ) : (
@@ -332,6 +375,8 @@ export function LookthroughPanel() {
                         <span className="num">{inr(f.value)}</span> · {pct(f.pct)} of the portfolio{f.amc ? ` · ${f.amc}` : ""}
                         {f.file.available && <> · equity <span className="num">{pct(f.file.equity_pct)}</span> of the fund</>}
                       </p>
+                      {!f.file.available && whyBy.get(f.code ?? f.name) && <p className="mt-0.5 text-xs text-warn">{whyBy.get(f.code ?? f.name)}</p>}
+                      {f.file.warnings?.map((w) => <p key={w} className="mt-0.5 text-xs text-warn">{w}</p>)}
                     </div>
                     <div className="lg:max-w-[460px] lg:flex-1">
                       <HoldingsFileActions code={f.code} auto={s?.mode === "auto"} urlMode={s?.mode === "url"} page={s?.page} onDone={lt.reload} compact />
@@ -418,6 +463,22 @@ export function LookthroughPanel() {
           help="SEBI's method (Master Circular for MFs, Annexure 1A): for each stock both funds hold, take the smaller weight; add them up. 0% = nothing in common, 100% = identical. Overlap does not predict returns; it shows paying twice for the same exposure.">
           {!d ? <Skeleton className="h-40" /> : <OverlapHeatmap funds={d.funds} pairs={d.overlap} />}
         </Card>
+
+        {sources.data && (
+          <Card title="Fund houses" icon={<FileSpreadsheet className="size-4" />}
+            subtitle="Which fund houses' monthly portfolios the app can fetch (checked 06-Oct-2026)"
+            help="Every fund house's file can be uploaded. 'Automatic': found on the house's page by the app and by the monthly monitor fetch. 'Paste a link': the file is public but its list is not.">
+            <ul className="space-y-1 text-xs">
+              {sources.data.sources.map((x) => (
+                <li key={x.key}><span className="font-medium">{x.amc}</span> <Badge tone={x.mode === "auto" ? "gain" : "info"}>{x.mode === "auto" ? "automatic" : "paste a link"}</Badge> <span className="text-muted">{x.note}</span></li>
+              ))}
+              {(sources.data.unsupported ?? []).map((x) => (
+                <li key={x.key}><a href={x.page} target="_blank" rel="noreferrer" className="font-medium hover:text-brand">{x.amc}</a> <Badge tone="warn">upload only</Badge> <span className="text-muted">{x.reason}</span></li>
+              ))}
+              <li className="text-muted">Any other fund house: upload its monthly portfolio file.</li>
+            </ul>
+          </Card>
+        )}
 
         {d && (
           <Card title="Method and limits" icon={<FileSpreadsheet className="size-4" />}>
