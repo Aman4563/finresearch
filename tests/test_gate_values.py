@@ -121,7 +121,9 @@ def test_a_profit_claimed_against_a_bracketed_loss_is_a_sign_mismatch(make_ledge
     r = gate(led)
     st, chk, note = claim(flip)
     assert chk["value_in_source"] is False and chk["value_check"] == "sign_mismatch"
-    assert st == "needs_review" and "sign" in note  # a verified claim is demoted: the source shows the opposite sign
+    assert (
+        st == "needs_review" and "sign" in note
+    )  # a verified claim is demoted: the source shows the opposite sign
     assert flip in r.value_mismatches
     for ok in (loss_word, signed):
         assert claim(ok)[1]["value_in_source"] is True and claim(ok)[1]["value_check"] == "pass", ok
@@ -131,8 +133,12 @@ def test_a_negative_growth_claim_against_a_positive_growth_row(make_ledger):
     led = make_ledger(LAKH_PNL)
     neg = add(led, metric="revenue_growth", value="-20.62", unit="%", period="FY2026", cite="Revenue growth",
               statement="Revenue declined 20.62% in Fiscal 2026.")  # fmt: skip
-    pos = add(led, metric="revenue_growth_yoy", value="20.62", unit="%", period="FY2026", cite="Revenue growth")
-    margin_flip = add(led, metric="ebitda_margin", value="2.35", unit="%", period="FY2025", cite="EBITDA margin")
+    pos = add(
+        led, metric="revenue_growth_yoy", value="20.62", unit="%", period="FY2026", cite="Revenue growth"
+    )
+    margin_flip = add(
+        led, metric="ebitda_margin", value="2.35", unit="%", period="FY2025", cite="EBITDA margin"
+    )
     gate(led)
     assert claim(neg)[1]["value_check"] == "sign_mismatch" and claim(neg)[0] == "needs_review"
     assert claim(pos)[1]["value_check"] == "pass" and claim(pos)[0] == "unverified"
@@ -175,8 +181,12 @@ def test_a_crore_claim_does_not_verify_against_the_same_digits_in_a_lakh_table(m
     led = make_ledger(LAKH_PNL)
     wrong = add(led, metric="revenue", value="12345.60", unit="INR crore", period="FY2026", cite="Revenue from",
                 importance="high", status="verified")  # fmt: skip
-    crore = add(led, metric="revenue", value="123.456", unit="INR crore", period="FY2026", cite="Revenue from")
-    million = add(led, metric="revenue", value="1234.56", unit="INR million", period="FY2026", cite="Revenue from")
+    crore = add(
+        led, metric="revenue", value="123.456", unit="INR crore", period="FY2026", cite="Revenue from"
+    )
+    million = add(
+        led, metric="revenue", value="1234.56", unit="INR million", period="FY2026", cite="Revenue from"
+    )
     r = gate(led)
     st, chk, note = claim(wrong)
     assert chk["value_check"] == "unit_mismatch" and chk["value_in_source"] is False
@@ -207,8 +217,12 @@ def test_the_neighbouring_year_column_does_not_verify_a_claim(make_ledger):
     led = make_ledger(LAKH_PNL)
     neighbour = add(led, metric="revenue", value="10234.50", unit="INR lakh", period="FY2026",
                     cite="Revenue from", importance="high", status="verified")  # fmt: skip
-    right = add(led, metric="revenue", value="10234.50", unit="INR lakh", period="FY2025", cite="Revenue from")
-    fy24 = add(led, metric="revenue", value="87.654", unit="INR crore", period="FY2023-24", cite="Revenue from")
+    right = add(
+        led, metric="revenue", value="10234.50", unit="INR lakh", period="FY2025", cite="Revenue from"
+    )
+    fy24 = add(
+        led, metric="revenue", value="87.654", unit="INR crore", period="FY2023-24", cite="Revenue from"
+    )
     r = gate(led)
     st, chk, note = claim(neighbour)
     assert chk["value_check"] == "period_mismatch" and st == "needs_review" and "FY2025 column" in note
@@ -246,8 +260,17 @@ def test_quarter_and_year_columns_on_the_orient_layout(make_ledger):
                    cite="Revenue from Operations")  # fmt: skip
     q1 = add(led, metric="revenue", value="4891.56", unit="INR million", period="Q1 FY2027",
              cite="Revenue from Operations")  # fmt: skip
-    fy = add(led, metric="revenue", value="1171.654", unit="INR crore", period="FY2026", cite="Revenue from Operations")
-    eps = add(led, metric="basic_eps", value="5.27", unit="INR per share", period="FY2026", cite="Basic (in ₹)")
+    fy = add(
+        led,
+        metric="revenue",
+        value="1171.654",
+        unit="INR crore",
+        period="FY2026",
+        cite="Revenue from Operations",
+    )
+    eps = add(
+        led, metric="basic_eps", value="5.27", unit="INR per share", period="FY2026", cite="Basic (in ₹)"
+    )
     gate(led)
     assert claim(q1_as_fy)[1]["value_check"] == "period_mismatch"
     for ok in (q1, fy, eps):
@@ -293,13 +316,17 @@ def test_publish_gate_blocks_a_cited_high_importance_hard_mismatch_even_if_rever
     led = make_ledger(LAKH_PNL)
     hi = add(led, metric="revenue", value="10234.50", unit="INR lakh", period="FY2026", cite="Revenue from",
              importance="high")  # fmt: skip
-    lo = add(led, metric="other_income", value="198.70", unit="INR lakh", period="FY2026", cite="Other income")
+    lo = add(
+        led, metric="other_income", value="198.70", unit="INR lakh", period="FY2026", cite="Other income"
+    )
     gate(led)
     with session_scope() as s:  # a later verifier pass (cross-stream conflicts) marks both verified again
         for i in (hi, lo):
             s.get(Claim, i).status = "verified"
     with session_scope() as s:
-        g = check_report(s, led["run"], f"Revenue ₹10,234.50 lakh [C{hi}]; other income ₹198.70 lakh [C{lo}].\n")
+        g = check_report(
+            s, led["run"], f"Revenue ₹10,234.50 lakh [C{hi}]; other income ₹198.70 lakh [C{lo}].\n"
+        )
     assert not g.ok and any(f"[C{hi}]" in b and "period_mismatch" in b for b in g.blocking)
     assert any(f"[C{lo}]" in w and "period_mismatch" in w for w in g.warnings)
 

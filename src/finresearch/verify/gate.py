@@ -149,7 +149,14 @@ def value_found(vc: ValueCheck, importance: str | None) -> bool:
     return vc.found and not (importance == "high" and vc.warnings)
 
 
-_VALUE_KEYS = ("value_in_source", "value_check", "value_warnings", "value_detail", "source_unit", "source_period")
+_VALUE_KEYS = (
+    "value_in_source",
+    "value_check",
+    "value_warnings",
+    "value_detail",
+    "source_unit",
+    "source_period",
+)
 
 
 def _norm_key(s: str | None) -> str:

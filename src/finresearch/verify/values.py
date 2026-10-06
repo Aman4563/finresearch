@@ -172,7 +172,9 @@ _DECLS = [re.compile(p, re.I) for p in (
     rf"(?:^|[\s(]){_CUR}\s*in\s+{_SC}",
     rf"(?:^|[\s(])in\s+{_CUR}\s*{_SC}",
 )]  # fmt: skip
-_RUPEE_ONLY = re.compile(rf"\(\s*(?:in\s+)?{_CUR}\s*(?:\)|,|except|unless)", re.I)  # "(In ₹ except share data)"
+_RUPEE_ONLY = re.compile(
+    rf"\(\s*(?:in\s+)?{_CUR}\s*(?:\)|,|except|unless)", re.I
+)  # "(In ₹ except share data)"
 _PCT_DECL = re.compile(r"\(\s*(?:in\s+)?(?:%|per\s?cent|percent)\s*\)|%|\bper\s?cent\b|\bpercent", re.I)
 _PER_SHARE = re.compile(r"per\s+(?:equity\s+)?share|\beps\b", re.I)
 
@@ -276,7 +278,9 @@ def period_of(text: str | None, *, bare_year: bool = False) -> Period | None:
     rest = re.sub(rf"\b{_FY}\b", " ", rest, flags=re.I)
     dates = [(int(m.group(1)), int(m.group(2))) for m in re.finditer(r"\b(20\d{2})-(\d{2})-\d{2}\b", rest)]
     rest = re.sub(r"\b20\d{2}-\d{2}-\d{2}\b", " ", rest)
-    for m in re.finditer(rf"\b(?:\d{{1,2}}(?:st|nd|rd|th)?[-\s]+)?{_MONTH}[-\s]*(?:\d{{1,2}},?\s*)?[-\s']*{_Y}\b", rest, re.I):
+    for m in re.finditer(
+        rf"\b(?:\d{{1,2}}(?:st|nd|rd|th)?[-\s]+)?{_MONTH}[-\s]*(?:\d{{1,2}},?\s*)?[-\s']*{_Y}\b", rest, re.I
+    ):
         dates.append((_yr(m.group(2)), _MON[m.group(1).lower()[:3]]))
     rest = re.sub(rf"\b{_MONTH}[-\s]*(?:\d{{1,2}},?\s*)?[-\s']*{_Y}\b", " ", rest, flags=re.I)
     dur = next((n for rx, n in _DUR if rx.search(t)), None)
@@ -399,7 +403,9 @@ def table_unit(lines: list[str], idx: int) -> Unit | None:
     return None
 
 
-_BASIS_TITLE = re.compile(r"statement|balance sheet|profit and loss|cash flows?|financial|results|information", re.I)
+_BASIS_TITLE = re.compile(
+    r"statement|balance sheet|profit and loss|cash flows?|financial|results|information", re.I
+)
 
 
 def page_basis(lines: list[str], idx: int) -> str | None:
@@ -428,7 +434,9 @@ def unit_of(lines: list[str], idx: int, t: Tok, row: list[Tok]) -> Unit | None:
         if col and not declared_unit(label, "row"):
             # "Basic EPS (in ₹)" or "% of revenue" over the column; a ₹ scale over it is as weak as a table's
             # (it often spans the whole header: "(in ₹ million, unless otherwise specified)")
-            return Unit(col.kind, col.cur, col.scale, "table") if col.kind == "money" and col.scale != 1 else col
+            return (
+                Unit(col.kind, col.cur, col.scale, "table") if col.kind == "money" and col.scale != 1 else col
+            )
     else:  # prose: the words since the previous number ("100.00% 1,65,59,99,376": the % is the previous one's)
         prev = max((x.end for x in tokens(line) if x.end <= t.start), default=0)
         label = line[prev : t.start].lstrip(" %")
@@ -513,7 +521,9 @@ def _unit_verdict(c: _Claim, u: Unit | None, v: Decimal) -> str:
     if c.kind == "other":
         return "ok"
     explicit = u is not None and u.level in ("adjacent", "row")
-    if u is None or (not explicit and u.kind == "money" and (c.kind != "money" or c.factor == 1) and u.scale != 1):
+    if u is None or (
+        not explicit and u.kind == "money" and (c.kind != "money" or c.factor == 1) and u.scale != 1
+    ):
         # a table-level ₹ scale does not apply to per-share or % rows ("except per share data"), nor to a bare "INR"
         # claim, which is usually a per-share figure (dividend, price)
         return "unknown"
