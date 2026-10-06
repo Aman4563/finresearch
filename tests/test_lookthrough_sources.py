@@ -24,7 +24,12 @@ def test_quant_layout_rating_before_industry_and_unhedged_futures():
                                                              "NIFTY 500 TRI")  # fmt: skip
     a = by_isin(p, "INE00QA01011")
     # RATING ('N.A.') sits before INDUSTRY: the industry column is read, and 'N.A.' is no industry
-    assert (a.industry, a.weight, a.value_lakh, a.kind) == ("Auto Components", D("40.0"), D("400.0"), "equity")
+    assert (a.industry, a.weight, a.value_lakh, a.kind) == (
+        "Auto Components",
+        D("40.0"),
+        D("400.0"),
+        "equity",
+    )
     assert by_isin(p, "IN002026X099").industry is None and by_isin(p, "IN002026X099").kind == "govt"
     assert by_isin(p, "INCBLO010926").kind == "debt"  # TREPS
     assert p.grand_total_lakh == D("1000.0")
@@ -42,7 +47,9 @@ def test_tata_layout_second_header_totals_and_two_digit_year():
     assert (p.scheme_name, p.key, p.as_of) == ("TATA EXAMPLE FLEXI CAP FUND", "tata example flexicap fund",
                                                date(2026, 8, 31))  # fmt: skip
     # the repeated header above the debt block used to end the table: the G-Sec, NET ASSETS = 100 were lost
-    assert by_isin(p, "IN0020240019").kind == "govt" and p.grand_total_lakh == D("1000.0") and p.warnings == []
+    assert (
+        by_isin(p, "IN0020240019").kind == "govt" and p.grand_total_lakh == D("1000.0") and p.warnings == []
+    )
     assert (by_isin(p, "INE00TA01014").industry, by_isin(p, "INE00TA01014").weight) == ("Banks", D("55.0"))
     assert by_isin(p, "INE00TA01014").value_lakh == D("550.0")  # 'MKT VAL(Rs. Lacs)'
     assert by_isin(p, "INF00TC01AB3").kind == "mf_units"  # ETF units listed under equity are not a stock

@@ -208,7 +208,9 @@ _DATE_RES = [
     re.compile(
         r"as\s+(?:on|at)\s+(\d{1,2})(?:st|nd|rd|th)?[\s-]+([A-Za-z]+)[\s,-]+(\d{4})", re.I
     ),  # 31 Aug 2026
-    re.compile(r"as\s+(?:on|at)\s+(\d{1,2})[/.-](\d{1,2})[/.-](\d{4}|\d{2})\b", re.I),  # 31/08/2026, Tata 31-08-26
+    re.compile(
+        r"as\s+(?:on|at)\s+(\d{1,2})[/.-](\d{1,2})[/.-](\d{4}|\d{2})\b", re.I
+    ),  # 31/08/2026, Tata 31-08-26
 ]
 
 
@@ -302,7 +304,9 @@ def _kind(isin: str, section: str) -> str:
     if section == "arbitrage":
         return "arbitrage"
     if section in ("equity", "foreign_equity"):
-        if isin.startswith("INF"):  # Tata lists ETF units under "Equity & equity related": fund units, not a stock
+        if isin.startswith(
+            "INF"
+        ):  # Tata lists ETF units under "Equity & equity related": fund units, not a stock
             return "mf_units"
         return "equity" if domestic else "foreign_equity"
     if section:
@@ -362,8 +366,12 @@ def parse_sheet(rows: list[tuple], sheet: str) -> SchemePortfolio | None:
              and not re.fullmatch(r"[A-Z0-9_]{2,12}", t)]  # fmt: skip
     # the longest title line, among lines that read like a scheme name: quant and Tata put the scheme's description
     # and SEBI's suitability blurb ("*Investors should consult ...", "• Long term ...") above the table
-    fundlike = [n for t in names if (n := clean_scheme_name(t)) and _FUNDLIKE.search(n) and not _BLURB.search(n)]
-    scheme_name = max(fundlike, key=len) if fundlike else clean_scheme_name(max(names, key=len)) if names else sheet
+    fundlike = [
+        n for t in names if (n := clean_scheme_name(t)) and _FUNDLIKE.search(n) and not _BLURB.search(n)
+    ]
+    scheme_name = (
+        max(fundlike, key=len) if fundlike else clean_scheme_name(max(names, key=len)) if names else sheet
+    )
 
     def cell(row: tuple, fld: str) -> Any:
         i = cols.get(fld)
@@ -429,7 +437,9 @@ def parse_sheet(rows: list[tuple], sheet: str) -> SchemePortfolio | None:
     total = sum((h.weight for h in holdings), Decimal(0))
     if total > Decimal("110") or total < Decimal("1"):
         warnings.append(f"ISIN holdings add up to {total:.2f} % of net assets: check the file")
-    for row in rows[end:]:  # unhedged stock futures have no ISIN line: their exposure is outside look-through equity
+    for row in rows[
+        end:
+    ]:  # unhedged stock futures have no ISIN line: their exposure is outside look-through equity
         texts = [_text(c) for c in row if _text(c)]
         if texts and _NON_HEDGE.search(texts[0]):
             got = next((n for c in row[1:] if not isinstance(c, str) and (n := _num(c)) is not None), None)

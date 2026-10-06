@@ -66,8 +66,17 @@ def _tata_scheme(upper: str, proper: str) -> list[list]:
     """One Tata scheme sheet: an 'Index' link cell, the name twice, the description and suitability blurb, the date
     as 'Portfolio as on 31-08-26', then the equity header, and a second header (RATINGS) above the debt block."""
     n = None
-    head = [n, "NAME OF THE INSTRUMENT", "YIELD ( IN % )", "INDUSTRY", "ISIN CODE", "QUANTITY", "MKT VAL(Rs. Lacs)",
-            "% to NAV", ""]
+    head = [
+        n,
+        "NAME OF THE INSTRUMENT",
+        "YIELD ( IN % )",
+        "INDUSTRY",
+        "ISIN CODE",
+        "QUANTITY",
+        "MKT VAL(Rs. Lacs)",
+        "% to NAV",
+        "",
+    ]
     return [
         ["Index", upper], [n], [n, proper], [n, "(An open ended equity scheme investing across market caps)"],
         [n, "This product is suitable for investors who are seeking*:"], [n, "•Long Term Capital Appreciation"],
