@@ -765,3 +765,18 @@ def coverage_from_rows(rows: Iterable[dict[str, Any]], store: PortfolioStore, to
                                Decimal(str(r["value"])) if r.get("value") is not None else None,
                                getattr(nav, "amc", None)))  # fmt: skip
     return coverage(total, funds, store, today)
+
+
+def held_mf_codes() -> list[tuple[str | None, str]]:
+    """(scheme code, name) of the mutual funds with open units, from the database (no prices needed)."""
+    from sqlalchemy import select
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import PortfolioHolding, PortfolioLot
+
+    with session_scope() as s:
+        open_ids = {
+            h for (h,) in s.execute(select(PortfolioLot.holding_id).where(PortfolioLot.open_quantity > 0))
+        }
+        return [(h.scheme_code, h.name) for h in s.scalars(select(PortfolioHolding).where(
+            PortfolioHolding.asset_type == "mf")) if h.id in open_ids]  # fmt: skip

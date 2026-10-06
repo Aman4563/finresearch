@@ -349,6 +349,26 @@ def _spawn_fund_ranks(now: datetime) -> None:
     _BACKGROUND["fund_ranks"] = asyncio.create_task(run())
 
 
+def _spawn_lookthrough(now: datetime) -> None:
+    """Start the monthly fund look-through fetch (monitor.lookthrough_fetch) in the background on IST days 11-25: a
+    few polite requests per fund house, none once the month's portfolios are stored. At most one runs at a time."""
+    from finresearch.monitor.lookthrough_fetch import due_slot, lookthrough_step
+
+    t = _BACKGROUND.get("lookthrough")
+    if (t is not None and not t.done()) or due_slot(now) is None:
+        return
+
+    async def run() -> None:
+        try:
+            res = await lookthrough_step(now)
+            if res:
+                log.info("fund look-through fetch: %s", res)
+        except Exception:
+            log.warning("fund look-through fetch failed", exc_info=True)
+
+    _BACKGROUND["lookthrough"] = asyncio.create_task(run())
+
+
 def _spawn_stock_peers(now: datetime) -> None:
     """Start the nightly stock peer build (monitor.stock_peers) in the background: ~1,000 polite NSE requests for the
     NIFTY 500, plus a bounded few hundred when held/watched stocks fall outside it (signals.stock_peers). At most one
@@ -398,6 +418,8 @@ async def tick(deps: jobs.Deps, now: datetime | None = None) -> dict[str, int]:
         _spawn_fund_ranks(now)
     if deps.stock_peers:
         _spawn_stock_peers(now)
+    if deps.lookthrough:
+        _spawn_lookthrough(now)
     out_brief = brief_step(now) if deps.brief else {}
     if deps.holidays is not None or deps.live_holidays:
         await _refresh_holidays(deps)
@@ -461,6 +483,7 @@ def schedule_json(ww=None, *, running: bool | None = None) -> dict:
     from finresearch.fincalc.ipo import lock_in_schedule
     from finresearch.monitor import digest as dg
     from finresearch.monitor import intraday, iv
+    from finresearch.monitor import lookthrough_fetch as ltf
     from finresearch.monitor import portfolio_daily as pd
     from finresearch.monitor.plan import ALLOTMENT_TIME, LISTING_TIMES, LOCKIN_TIME
     from finresearch.signals.ledger import READY_AFTER_IST
@@ -489,6 +512,9 @@ def schedule_json(ww=None, *, running: bool | None = None) -> dict:
                       "nav_pass": hm((pd.NAV_AT.hour, pd.NAV_AT.minute)), "max_instruments": pd.MAX_INSTRUMENTS,
                       "brief": hm((dg.BRIEF_AT.hour, dg.BRIEF_AT.minute)),
                       "digest": hm((dg.DIGEST_AT.hour, dg.DIGEST_AT.minute)), "digest_day": "Sunday"},
+        "lookthrough": {"from_day": ltf.FIRST_DAY, "to_day": ltf.LAST_DAY, "after": hm((ltf.RUN_AFTER.hour,
+                                                                               ltf.RUN_AFTER.minute)),
+                        "sebi_days": 10},
         "equity_hours": [hm((EQUITY_HOURS[0].hour, EQUITY_HOURS[0].minute)),
                          hm((EQUITY_HOURS[1].hour, EQUITY_HOURS[1].minute))],
     }  # fmt: skip

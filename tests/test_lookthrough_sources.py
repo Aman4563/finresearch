@@ -202,3 +202,110 @@ def test_coverage_share_of_portfolio_in_funds_not_looked_through(tmp_path):
     a = coverage(D(630), funds[:1], store, today)
     assert a["not_looked_through_pct"] == 0.0 and "all 1 are looked through" in a["text"]
     assert coverage(D(500), [], store, today)["text"] is None  # no funds: nothing to say
+
+
+# ----------------------------------------------------------------------------------------------- monthly fetch
+def test_monthly_fetch_window_after_sebis_ten_days():
+    from datetime import UTC, datetime
+
+    from finresearch.monitor.lookthrough_fetch import due_slot, target_month
+
+    ist = lambda d, h: datetime(2026, 10, d, h - 6, 0, tzinfo=UTC)  # noqa: E731  (IST = UTC + 5:30; h:30 IST)
+    assert due_slot(ist(10, 12)) is None  # day 10: SEBI's deadline day, files may still be coming
+    assert due_slot(ist(11, 7)) is None  # 07:30 IST, before RUN_AFTER
+    assert due_slot(ist(11, 9)) == "lookthrough:2026-10-11"
+    assert due_slot(ist(25, 9)) == "lookthrough:2026-10-25" and due_slot(ist(26, 9)) is None
+    assert (target_month(date(2026, 10, 11)), target_month(date(2026, 1, 11))) == ("2026-09", "2025-12")
+
+
+HELD = [("1", "quant Example Flexi Cap Fund - Direct Plan - Growth"),
+        ("2", "Tata Example Small Cap Fund - Direct Plan - Growth"),
+        ("3", "HDFC Example Flexi Cap Fund - Direct Plan - Growth"),
+        ("4", "Axis Example Midcap Fund - Direct Growth"),
+        ("5", "Tata Example Flexi Cap Fund - Regular Plan - Growth"),
+        ("6", "Example House Bluechip Fund - Direct")]  # fmt: skip
+
+
+async def test_monthly_fetch_reasons_per_fund_and_once_a_day(env, tmp_path):
+    from datetime import UTC, datetime
+
+    from finresearch.monitor.lookthrough_fetch import lookthrough_step
+    from finresearch.portfolio.lookthrough import PortfolioStore
+
+    store = PortfolioStore(tmp_path / "lt")
+    routes = {AMC_SOURCES["tata"].page: (FIX / "page_tata.html").read_bytes(), TATA_AUG: tata_xlsx(),
+              QUANT_FILE: quant_xlsx()}  # fmt: skip
+    posts = {quant_list_body(2026, 8): (FIX / "quant_list_2026-08.json").read_bytes()}
+    # 12-Sep-2026 09:30 IST: the August portfolios are due
+    http, seen = fake_amc_client(routes, posts)
+    now = datetime(2026, 9, 12, 4, 0, tzinfo=UTC)
+    res = await lookthrough_step(now, held=HELD, store=store, client=http)
+    assert res["lookthrough"] == {"fetched": 2, "up_to_date": 1, "unsupported": 2, "manual": 1}
+    # quant: one list request + its own file; Tata: one page + one workbook for both Tata funds
+    assert seen == [
+        f"POST {QUANT_LIST_URL}",
+        f"GET {QUANT_FILE}",
+        f"GET {AMC_SOURCES['tata'].page}",
+        f"GET {TATA_AUG}",
+    ]
+    assert await lookthrough_step(now, held=HELD, store=store, client=http) == {}  # claimed: once a day
+    # 12-Oct-2026: September is due; neither house has published it (quant's September list is empty)
+    seen.clear()
+    later = await lookthrough_step(
+        datetime(2026, 10, 12, 4, 0, tzinfo=UTC), held=HELD, store=store, client=http
+    )
+    assert later["lookthrough"] == {"not_published": 3, "unsupported": 2, "manual": 1}
+    # quant: September's list (empty) and August's; Tata: its page once for both funds
+    assert seen == [f"POST {QUANT_LIST_URL}", f"POST {QUANT_LIST_URL}", f"GET {AMC_SOURCES['tata'].page}"]
+    await http.aclose()
+    assert (
+        f"GET {QUANT_FILE}" not in seen and f"GET {TATA_AUG}" not in seen
+    )  # stored files are not re-downloaded
+
+
+async def test_monthly_fetch_reason_lines():
+    import tempfile
+    from pathlib import Path as P
+
+    from finresearch.monitor.lookthrough_fetch import fetch_held
+    from finresearch.portfolio.lookthrough import PortfolioStore
+
+    http, _ = fake_amc_client({}, {})
+    with tempfile.TemporaryDirectory() as d:
+        lines = {x["code"]: x for x in await fetch_held(date(2026, 10, 12), HELD[:4] + HELD[5:],
+                                                         store=PortfolioStore(P(d)), client=http)}  # fmt: skip
+    await http.aclose()
+    assert (
+        lines["1"]["status"] == "not_published"
+        and "has not published the 2026-09 portfolio" in lines["1"]["reason"]
+    )
+    assert lines["2"]["status"] == "error" and "HTTP 404" in lines["2"]["reason"]  # the page itself failed
+    assert lines["3"]["status"] == "unsupported" and "Akamai" in lines["3"]["reason"]
+    assert lines["4"]["status"] == "manual" and "paste the file link" in lines["4"]["reason"]
+    assert lines["6"]["status"] == "unsupported" and "no adapter" in lines["6"]["reason"]
+
+
+async def test_monthly_fetch_says_when_the_house_file_lacks_the_scheme(tmp_path):
+    from finresearch.monitor.lookthrough_fetch import fetch_held
+    from finresearch.portfolio.lookthrough import PortfolioStore
+
+    http, _ = fake_amc_client(
+        {AMC_SOURCES["tata"].page: (FIX / "page_tata.html").read_bytes(), TATA_AUG: tata_xlsx()}
+    )
+    [line] = await fetch_held(date(2026, 9, 12), [("7", "Tata Example Mid Cap Fund - Direct")],
+                              store=PortfolioStore(tmp_path), client=http)  # fmt: skip
+    await http.aclose()
+    # the August workbook arrived, but has no such scheme: not "not published", which would be retried forever
+    assert line["status"] == "not_matched" and "link it on the Look-through page" in line["reason"]
+
+
+def test_monitor_runs_the_fetch_and_shows_it_in_the_schedule(env, monkeypatch):
+    from finresearch.monitor import jobs, scheduler
+
+    assert jobs.Deps(None, None).lookthrough is False  # tests opt in; Deps.live() turns it on
+    assert scheduler.schedule_json()["lookthrough"] == {
+        "from_day": 11,
+        "to_day": 25,
+        "after": "08:00",
+        "sebi_days": 10,
+    }

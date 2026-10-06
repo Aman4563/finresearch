@@ -109,15 +109,7 @@ def add_lookthrough_routes(app: FastAPI, *, scheme_rows: Callable[[], Awaitable[
             return hs
 
     def held_mf_codes() -> list[tuple[str | None, str]]:
-        """(scheme code, name) of mutual funds with open units: no prices needed for overlap."""
-        from finresearch.db.models import PortfolioHolding, PortfolioLot
-
-        with session_scope() as s:
-            open_ids = {
-                h for (h,) in s.execute(select(PortfolioLot.holding_id).where(PortfolioLot.open_quantity > 0))
-            }
-            return [(h.scheme_code, h.name) for h in s.scalars(select(PortfolioHolding).where(
-                PortfolioHolding.asset_type == "mf")) if h.id in open_ids]  # fmt: skip
+        return lt.held_mf_codes()
 
     def err(e: Exception, status: int = 422) -> HTTPException:
         return HTTPException(status, str(e))
