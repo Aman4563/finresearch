@@ -63,9 +63,15 @@ def quote_in_lines(doc: Document, line_start: int, line_end: int, quote: str) ->
 
 
 def _negatives(s: str) -> set[Decimal]:
-    from finresearch.verify.values import tokens
+    from finresearch.verify.values import has_value_like, tokens
 
-    return {abs(t.value) for ln in s.split("\n") for t in tokens(ln) if t.neg}
+    # figures only: a footnote marker " (1) " is not a negative one
+    return {
+        abs(t.value)
+        for ln in s.split("\n")
+        for t in tokens(ln)
+        if t.neg and (abs(t.value) >= 10 or has_value_like(ln[t.start : t.end]))
+    }
 
 
 _NUM_TOKEN = re.compile(r"\d[\d,]*(?:\.\d+)?")

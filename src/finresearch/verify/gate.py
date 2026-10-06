@@ -40,7 +40,7 @@ from sqlalchemy.orm import Session
 from finresearch.db.models import Citation, Claim, Document
 from finresearch.fincalc.dates import bidding_day_number, to_ist
 from finresearch.ingest.text import read_lines
-from finresearch.verify.values import HARD, ValueCheck, check_text, check_value
+from finresearch.verify.values import HARD, WARN_PERIOD, ValueCheck, check_text, check_value
 
 LINE_TOLERANCE = 2
 REL_TOL = Decimal("0.0005")  # 0.05% — printed figures are rounded to 2 dp
@@ -379,7 +379,8 @@ def apply_correction(
     session.refresh(corr)
     if new_val is not None:
         vc = value_check(session, corr, {})
-        found = vc is not None and value_found(vc, corr.importance)
+        # the gate itself grants "verified" here, so a column it could not read is not enough at any importance
+        found = vc is not None and value_found(vc, corr.importance) and WARN_PERIOD not in vc.warnings
         corr.checks = {"value_in_source": found, **(vc.to_checks() if vc else {})}
         if found:
             corr.status = "verified"

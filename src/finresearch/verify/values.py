@@ -134,9 +134,12 @@ def row_sign(label: str, printed_neg: bool) -> int:
     return polarity(_BRACKETED.sub(" ", label)) if bracketed else polarity(label)
 
 
-def sign_conflict(claim_neg: bool, claim_word: int, src: int, printed_neg: bool, label: str) -> bool:
+def sign_conflict(
+    claim_neg: bool, claim_word: int, src: int, printed_neg: bool, label: str, *, rate: bool = False
+) -> bool:
     """Opposite signs. `src` is the source's sign (-1 / 0 / +1, 0 = no evidence: an unsigned figure in a plain row);
-    a source with no evidence only conflicts with an explicitly negative claimed value."""
+    a source with no evidence only conflicts with an explicitly negative claimed value. `rate`: the claim is a % /
+    fraction, for which a bracketed or minus figure is always the sign (no outflow convention)."""
     c = -1 if claim_neg or claim_word < 0 else claim_word
     if c < 0:
         return src > 0 or (claim_neg and src == 0)
@@ -144,7 +147,7 @@ def sign_conflict(claim_neg: bool, claim_word: int, src: int, printed_neg: bool,
         return src < 0
     # a bare claim against a bracketed figure whose row says the unbracketed reading is positive ("Profit / (Loss)",
     # "Net cash generated from / (used in)"); outflow rows ("Income taxes paid (8,648)") carry no such word
-    return printed_neg and src < 0 and bool(POS_RE.search(_BRACKETED.sub(" ", label)))
+    return printed_neg and src < 0 and (rate or bool(POS_RE.search(_BRACKETED.sub(" ", label))))
 
 
 # --------------------------------------------------------------------------- units
@@ -571,7 +574,7 @@ def _judge(lines: list[str], idx: int, t: Tok, row: list[Tok], c: _Claim) -> Val
         res.warnings.append(WARN_UNIT)
     label, word = _src_label(lines, idx, t, row)
     src = row_sign(label, t.neg) if row else (-1 if t.neg else word)
-    if sign_conflict(c.neg, c.word, src, t.neg, label):
+    if sign_conflict(c.neg, c.word, src, t.neg, label, rate=c.kind == "pct"):
         shown = f"({v})" if t.neg else str(v)
         res.status = "sign_mismatch"
         res.detail = f"the source prints {shown} next to '{' '.join(label.split())[-60:]}': the opposite sign"

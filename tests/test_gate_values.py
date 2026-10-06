@@ -115,9 +115,11 @@ def test_a_profit_claimed_against_a_bracketed_loss_is_a_sign_mismatch(make_ledge
     led = make_ledger(LAKH_PNL)
     flip = add(led, metric="pat", value="512.40", unit="INR lakh", period="FY2025", cite="for the year",
                statement="Profit after tax was ₹512.40 lakh in Fiscal 2025.", status="verified")  # fmt: skip
-    loss_word = add(led, metric="pat", value="512.40", unit="INR lakh", period="FY2025", cite="for the year",
+    loss_word = add(led, metric="net_loss", value="512.40", unit="INR lakh", period="FY2025", cite="for the year",
                     statement="The company reported a net loss of ₹512.40 lakh in Fiscal 2025.")  # fmt: skip
-    signed = add(led, metric="pat", value="-512.40", unit="INR lakh", period="FY2025", cite="for the year")
+    signed = add(
+        led, metric="pat_signed", value="-512.40", unit="INR lakh", period="FY2025", cite="for the year"
+    )
     r = gate(led)
     st, chk, note = claim(flip)
     assert chk["value_in_source"] is False and chk["value_check"] == "sign_mismatch"
@@ -142,8 +144,8 @@ def test_a_negative_growth_claim_against_a_positive_growth_row(make_ledger):
     gate(led)
     assert claim(neg)[1]["value_check"] == "sign_mismatch" and claim(neg)[0] == "needs_review"
     assert claim(pos)[1]["value_check"] == "pass" and claim(pos)[0] == "unverified"
-    # "(2.35)" in a plain margin row is a negative margin; a bare 2.35 % claim has no sign evidence either way
-    assert claim(margin_flip)[1]["value_check"] == "pass"
+    # "(2.35)" in a margin row is a negative margin: brackets on a rate are its sign (no outflow convention)
+    assert claim(margin_flip)[1]["value_check"] == "sign_mismatch"
 
 
 def test_prose_level_after_a_decline_is_not_negative(make_ledger):
@@ -174,6 +176,9 @@ def test_a_negative_quote_must_be_negative_in_the_cited_lines(tmp_path):
     assert quote_in_lines(doc, 1, 1, "Profit for the year 987.20 and (512.40)")[0] is False
     assert quote_in_lines(doc, 1, 1, "Loss -512.40 vs 987.20")[0] is False
     assert quote_in_lines(doc, 1, 1, "Profit 987.20 and 512.40")[0] is True
+    # a footnote marker is not a negative figure
+    p.write_text(row("Income tax expense(1)", "3,253", "2,816") + "\n")
+    assert quote_in_lines(doc, 1, 1, "Income tax expense (1): 3,253 vs 2,816")[0] is True
 
 
 # ------------------------------------------------------------------ 2. source units
@@ -306,6 +311,13 @@ def test_a_sign_flipped_or_neighbouring_correction_is_not_auto_verified(make_led
         assert flip.status == "needs_review" and flip.checks["value_check"] == "sign_mismatch"
         assert right.status == "verified" and right.checks["value_in_source"] is True
         assert col.status == "needs_review" and col.checks["value_check"] == "period_mismatch"
+    # the gate grants "verified" to a correction only when it could read the period's column
+    led2 = make_ledger(AR_STANDALONE)
+    bad3 = add(led2, metric="other_financial_assets", value="4000", unit="INR crore", period="FY2026",
+               cite="Other financial assets", status="contradicted")  # fmt: skip
+    with session_scope() as s:
+        c3 = apply_correction(s, s.get(Claim, bad3), "4,321", "the note shows 4,321")
+        assert c3.status == "needs_review" and "period unverified" in c3.checks["value_warnings"]
 
 
 def test_publish_gate_blocks_a_cited_high_importance_hard_mismatch_even_if_reverified(make_ledger):
