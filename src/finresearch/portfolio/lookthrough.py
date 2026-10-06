@@ -72,6 +72,8 @@ LIMITS = [
     "Hedged arbitrage positions are excluded from equity only where the fund house labels them (PPFAS does); "
     "elsewhere a hedged long counts as equity.",
     "Units of other mutual funds (fund-of-funds, liquid-fund parking) are not looked through.",
+    "Unhedged stock futures have no ISIN line in the file, so their exposure is not in the look-through equity; "
+    "where the file states it (quant: 25.3 % of its Flexi Cap fund in Aug-2026), the fund's file shows a warning.",
     "Market-cap buckets use AMFI's list by ISIN; stocks not on it (new listings, foreign shares) are shown apart.",
     "Sector names follow the fund houses' industry labels; a direct stock not held by any fund keeps its NSE label.",
 ]
