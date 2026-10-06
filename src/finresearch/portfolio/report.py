@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from finresearch.db.models import PortfolioDisposal, PortfolioHolding, PortfolioLot, PortfolioTxn
 from finresearch.fincalc.dates import fiscal_year
-from finresearch.fincalc.tax import RULES, VERIFY_NOTE, fy_label
+from finresearch.fincalc.tax import RULES, VERIFIED_SOURCE, VERIFIED_THROUGH_FY, VERIFY_NOTE, fy_label
 from finresearch.portfolio import elss
 from finresearch.portfolio.limits import BONDS_SECTOR, sector_label
 from finresearch.portfolio.tax import (
@@ -325,6 +325,8 @@ def tax_view(s: Session, prices: dict[int, PriceInfo], today: date, slab: Decima
             "disposals": [disposal_json(r) for r in sorted(rows, key=lambda r: (r.sold, r.holding.name), reverse=True)],
             "harvest": harvest(rows, lots_by, px, types, today, slab),
             "rules": [r.to_json() for r in RULES], "verify": VERIFY_NOTE,
+            "rules_verified_through": {"fy": VERIFIED_THROUGH_FY, "label": fy_label(VERIFIED_THROUGH_FY),
+                                       "source": VERIFIED_SOURCE},
             "caveats": ["Surcharge (capped at 15 % on these gains) and the s.87A rebate (not available against "
                         "special-rate tax) are not modelled.",
                         "Losses carried forward from earlier years are not included.",

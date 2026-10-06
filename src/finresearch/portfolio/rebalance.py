@@ -63,6 +63,9 @@ from finresearch.portfolio.tax import (
     HoldingTax,
     evaluate,
     gains_of,
+    is_unclassified,
+    rules_note,
+    unclassified,
 )
 
 ZERO = Decimal(0)
@@ -309,7 +312,8 @@ def _steps(pieces: list[Piece], today: date, base: list[Gain], fy: int,
         charges = sell_charges(p, gross)
         rows = [_row(p, x.lot, x.units, today, (x.units * p.price) - charges * x.units / units) for x in g]
         gs = gains_of(rows)
-        tax = tax_delta(prior, gs, fy, slab)
+        # a lot whose term can't be determined adds nothing to tax_delta: the step's tax is then unknown (#213)
+        tax = None if any(is_unclassified(r) for r in rows) else tax_delta(prior, gs, fy, slab)
         prior += gs
         gain = sum((r.gain or ZERO for r in rows), ZERO)
         st = sum((r.gain or ZERO for r in rows if r.cls and r.cls.term == "short"), ZERO)
@@ -333,8 +337,10 @@ def plan(positions: Sequence[Position], targets: Mapping[str, float], today: dat
          rel_pct: float = DEFAULT_REL_PCT) -> dict[str, Any]:  # fmt: skip
     """The rebalancing plan. `realised`: the disposals already booked (any year; this FY's are used)."""
     fy = fiscal_year(today)
-    base = gains_of([r for r in realised if r.fy == fy])
-    head = {"as_of": today.isoformat(), "fy": fy, "fy_label": fy_label(fy), "disclaimer": DISCLAIMER,
+    base_rows = [r for r in realised if r.fy == fy]
+    base = gains_of(base_rows)
+    unk = unclassified(base_rows)
+    head = {"tax_complete": unk["count"] == 0, "unclassified": unk, **rules_note([fy]),"as_of": today.isoformat(), "fy": fy, "fy_label": fy_label(fy), "disclaimer": DISCLAIMER,
             "bands": {"abs_pp": abs_pp, "rel_pct": rel_pct, "rule": band_rule(abs_pp, rel_pct)}, "new_money": _f(new_money), "targets": dict(targets),
             "assumptions": ASSUMPTIONS, "sources": SOURCES}  # fmt: skip
     classes = [
@@ -423,13 +429,22 @@ def _finish(head: dict[str, Any], positions: Sequence[Position], classes: list[s
                       "outside_before": abs(w0.get(k, 0.0) - t) > b, "outside_after_cash": k in hit,
                       "outside_after": abs(w3.get(k, 0.0) - t) > b})  # fmt: skip
     before, after = fy_tax(base, fy, slab), fy_tax(base + plan_gains, fy, slab)
+    complete = bool(head["tax_complete"])  # this year's realised disposals are all classified
+    step_unknown = any(s["tax"] is None for s in steps)
     stamp = sum((Decimal(str(r["stamp"])) for r in cash_rows + buy_rows), ZERO)
     totals = {"sold_gross": _f(sum((Decimal(str(s["gross"])) for s in steps), ZERO)),
               "sell_charges": _f(sum((Decimal(str(s["charges"])) for s in steps), ZERO)), "stamp_duty": _f(stamp),
               "exit_load": 0.0, "gain": _f(sum((Decimal(str(s["gain"])) for s in steps), ZERO)),
-              "tax": _f(after.total - before.total), "bought": _f(sum(buys.values(), ZERO)),
-              "new_money": head["new_money"], "exemption_before": _f(before.exemption_remaining),
-              "exemption_after": _f(after.exemption_remaining), "tax_so_far": _f(before.total)}  # fmt: skip
+              "tax": None if step_unknown else _f(after.total - before.total), "bought": _f(sum(buys.values(), ZERO)),
+              "new_money": head["new_money"],
+              # with an unclassified disposal this year the exemption and the year's tax are unknown (#213); the
+              # plan's tax change is then an estimate that leaves those disposals out
+              "exemption_before": _f(before.exemption_remaining) if complete else None,
+              "exemption_after": _f(after.exemption_remaining) if complete else None,
+              "tax_so_far": _f(before.total) if complete else None, "tax_estimate": not complete}  # fmt: skip
+    warnings = [x for x in ((head["unclassified"]["detail"] + ". The plan's tax is an estimate that leaves them out "
+                             "(and may misjudge the unused exemption)") if not complete else "",
+                            head["rules_note"] or "") if x]  # fmt: skip
     if steps or unfilled:
         status = "rebalance"
     elif cash_rows:
@@ -440,7 +455,7 @@ def _finish(head: dict[str, Any], positions: Sequence[Position], classes: list[s
            "cash_only": "The new money alone keeps every class inside its band: no sale needed.",
            "rebalance": "A class is outside its band after the new money: the steps below sell back to target."}  # fmt: skip
     return {**head, "status": status, "message": msg[status], "outside": hit, "allocation": alloc,
-            "cash_flow": cash_rows, "sells": steps, "buys": buy_rows, "unfilled": unfilled, "skipped": skipped,
+            "tax_warnings": warnings, "cash_flow": cash_rows, "sells": steps, "buys": buy_rows, "unfilled": unfilled, "skipped": skipped,
             "totals": totals}  # fmt: skip
 
 

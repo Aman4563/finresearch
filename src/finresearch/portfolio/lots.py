@@ -263,8 +263,11 @@ def build_lots(events: Iterable[Event]) -> LotBook:
             if f is None:
                 warnings.append(f"{e.day}: split without a valid from/to ratio skipped")
                 continue
+            # every lot held before the split, closed ones included: `quantity` is the split-adjusted units acquired,
+            # so acquired = open + disposed (in today's units) holds for each lot (#221; a lot sold out before the
+            # split kept its pre-split count). Disposals keep the units of their own day; costs already booked stay.
             for lot in lots:
-                if lot.open_quantity > EPS and (lot.acquired is None or lot.acquired < e.day):
+                if lot.acquired is None or lot.acquired < e.day:
                     lot.quantity *= f
                     lot.open_quantity *= f
                     if lot.cost_per_unit is not None:

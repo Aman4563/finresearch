@@ -244,7 +244,7 @@ def advance_tax(session: Session, data: Any, today: date) -> dict[str, Any]:
     from finresearch.fincalc.tax import fy_tax
     from finresearch.fincalc.tax_calendar import advance_tax_estimate
     from finresearch.portfolio.report import disposal_rows
-    from finresearch.portfolio.tax import gains_of
+    from finresearch.portfolio.tax import gains_of, rules_note, unclassified
 
     fy = fiscal_year(today)
     slab = slab_rate(session)
@@ -252,7 +252,14 @@ def advance_tax(session: Session, data: Any, today: date) -> dict[str, Any]:
     cg = fy_tax(gains_of(rows), fy, slab).total
     divs = sum((abs(t.amount) for ts in data.txns.values() for t in ts
                 if t.kind == "dividend" and t.amount and fiscal_year(t.day) == fy), Decimal(0))  # fmt: skip
-    return advance_tax_estimate(cg, divs, slab, today, fy)
+    unk = unclassified(rows)
+    # with an unclassified disposal the capital-gains tax leaves it out: the estimate is incomplete, never "complete"
+    return {
+        **advance_tax_estimate(cg, divs, slab, today, fy),
+        "complete": unk["count"] == 0,
+        "unclassified": unk,
+        **rules_note([fy]),
+    }
 
 
 def _fresh(v: dict[str, Any], today: date) -> str | None:
@@ -282,11 +289,17 @@ def alert_metrics(session: Session) -> Out:
     fy = fiscal_year(today)
     summary = fy_summary(disposal_rows(data), fy, Decimal("0.30"))  # the headroom does not depend on the slab
     ex = summary["exemption"]
-    out["ltcg_headroom_inr"] = (Decimal(str(ex["remaining"])),
-                                f"{fy_label(fy)}: ₹{ex['used']:,.0f} of ₹{ex['limit']:,.0f} "
-                                "used by realised equity LTCG (fincalc.tax)")  # fmt: skip
-    out["ltcg_used_pct"] = (_q(Decimal(str(ex["used"])) / Decimal(str(ex["limit"])) * 100),
-                            f"{fy_label(fy)}: ₹{ex['used']:,.0f} of the ₹{ex['limit']:,.0f} exemption used (fincalc.tax)")  # fmt: skip
+    # an unclassified disposal may use the exemption: the headroom is unknown, not the full limit (#213)
+    if not ex["complete"]:
+        why = f"{fy_label(fy)}: unknown: " + summary["unclassified"]["detail"]
+        out["ltcg_headroom_inr"] = (None, why)
+        out["ltcg_used_pct"] = (None, why)
+    else:
+        out["ltcg_headroom_inr"] = (Decimal(str(ex["remaining"])),
+                                    f"{fy_label(fy)}: ₹{ex['used']:,.0f} of ₹{ex['limit']:,.0f} "
+                                    "used by realised equity LTCG (fincalc.tax)")  # fmt: skip
+        out["ltcg_used_pct"] = (_q(Decimal(str(ex["used"])) / Decimal(str(ex["limit"])) * 100),
+                                f"{fy_label(fy)}: ₹{ex['used']:,.0f} of the ₹{ex['limit']:,.0f} exemption used (fincalc.tax)")  # fmt: skip
     snaps = session.scalars(select(PortfolioSnapshot).where(PortfolioSnapshot.complete.is_(True))
                             .order_by(PortfolioSnapshot.day)).all()  # fmt: skip
     if not snaps:

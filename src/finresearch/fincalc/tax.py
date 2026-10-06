@@ -59,6 +59,17 @@ APRIL_1_2025 = date(2025, 4, 1)  # second specified-MF definition (> 65 % debt) 
 APRIL_1_2026 = date(2026, 4, 1)  # Income-tax Act 2025 in force (tax year 2026-27); SGB exemption narrowed
 GRANDFATHER_DATE = date(2018, 1, 31)  # FMV date for equity acquired before 1-Feb-2018 (s.55(2)(ac) / s.90(7))
 CESS = Decimal("0.04")  # health and education cess on the tax
+# The rule table was last checked against the primary sources above (Finance (No.2) Act 2024, the Budget 2025 and
+# Budget 2026 memoranda and the Income-tax Act 2025 renumbering) for transfers up to the end of this financial year
+# (named by its end year, as fincalc.dates.fiscal_year: 2027 = FY 2026-27, tax year 2026-27). The open-ended rows
+# (effective_to None) are only an assumption beyond it: a later Finance Act may change rates, thresholds or the
+# exemption, so results for sales after it carry RULES_UNVERIFIED and are not presented as checked. Bump this (and the
+# rows) after reading the next Budget memo and Finance Act.
+VERIFIED_THROUGH_FY = 2027
+VERIFIED_SOURCE = (
+    "Rules checked on 6-Oct-2026 against the Finance (No.2) Act 2024, the Budget 2025 and Budget 2026 memoranda "
+    "(Income-tax Act 2025 from tax year 2026-27): " + BUDGET_2026_MEMO
+)
 VERIFY_NOTE = (
     "Personal estimate from a dated rule table, before surcharge and rebates. Tax law changes and has edge cases "
     "(grandfathering, set-off order, carry-forward, residential status): verify with a chartered accountant before "
@@ -150,6 +161,20 @@ RULES: tuple[TaxRule, ...] = (
             "continuously until redemption on maturity. Enactment and the treatment of early (5-year) redemption are "
             "not verified", exempt=True),
 )  # fmt: skip
+
+
+def rules_verified(fy: int) -> bool:
+    """True when the rule table has been checked for sales in financial year `fy` (named by its end year)."""
+    return fy <= VERIFIED_THROUGH_FY
+
+
+def unverified_note(fy: int) -> str | None:
+    """The warning for a financial year beyond VERIFIED_THROUGH_FY, else None."""
+    if rules_verified(fy):
+        return None
+    return (f"Rules not verified for {fy_label(fy)}: the table was last checked through "
+            f"{fy_label(VERIFIED_THROUGH_FY)}; the latest rates are assumed to continue, which a later Finance Act "
+            "may change")  # fmt: skip
 
 
 def rule_for(key: str, sold: date) -> TaxRule | None:
@@ -279,9 +304,17 @@ class FyTax:
     losses_unabsorbed_long: Decimal
     exempt_total: Decimal
     unknown_count: int
+    # the known gains of the unclassified disposals (their cost is known, the term is not)
+    unknown_gain: Decimal
     tax: Decimal
     cess: Decimal
     notes: list[str] = field(default_factory=list)
+    rules_verified: bool = True
+
+    @property
+    def complete(self) -> bool:
+        """False when a disposal could not be classified: the tax then leaves it out and is not the year's figure."""
+        return self.unknown_count == 0
 
     @property
     def exemption_remaining(self) -> Decimal:
@@ -374,13 +407,15 @@ def fy_tax(gains: Iterable[Gain], fy: int, slab_rate: Decimal | float | str = De
         notes.append(
             f"{len(unknown)} disposal(s) have an unknown acquisition date or cost and are not in the total"
         )
+    if (stale := unverified_note(fy)) is not None:
+        notes.append(stale)
     if loss_long > 0 or loss_short > 0:
         notes.append("Unabsorbed losses can be carried forward for 8 years if the return is filed on time")
     return FyTax(fy=fy, label=fy_label(fy), slab_rate=slab,
                  gross={f"{b}@{'slab' if r is None else r}": a for (b, r, _), a in net.items()}, slices=slices,
                  exemption_limit=limit, exemption_used=used, losses_unabsorbed_short=loss_short,
                  losses_unabsorbed_long=loss_long, exempt_total=exempt_total, unknown_count=len(unknown),
-                 tax=tax.quantize(Decimal("0.01")), cess=(tax * CESS).quantize(Decimal("0.01")), notes=notes)  # fmt: skip
+                 unknown_gain=sum((g.amount for g in unknown), Decimal(0)), rules_verified=rules_verified(fy), tax=tax.quantize(Decimal("0.01")), cess=(tax * CESS).quantize(Decimal("0.01")), notes=notes)  # fmt: skip
 
 
 def tax_delta(

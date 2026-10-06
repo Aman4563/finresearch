@@ -232,7 +232,14 @@ def sell_items(s: Session, p: Plan, h: PortfolioHolding | None) -> list[dict[str
     from finresearch.fincalc.dates import fiscal_year
     from finresearch.fincalc.tax import tax_delta
     from finresearch.portfolio.report import disposal_rows, holding_tax, load
-    from finresearch.portfolio.tax import DisposalRow, evaluate, gains_of
+    from finresearch.portfolio.tax import (
+        DisposalRow,
+        evaluate,
+        gains_of,
+        is_unclassified,
+        rules_note,
+        unclassified,
+    )
     from finresearch.portfolio.tax_watch import lt_date
     from finresearch.suggest.advisor import load_profile
 
@@ -257,17 +264,16 @@ def sell_items(s: Session, p: Plan, h: PortfolioHolding | None) -> list[dict[str
         t = min(left, lot.open_quantity)
         pieces.append((lot, t))
         left -= t
-    rows, unknown, near = [], 0, []
+    rows, near = [], []
     fy = fiscal_year(p.day)
-    base = gains_of([r for r in disposal_rows(data) if r.fy == fy])
+    base_rows = [r for r in disposal_rows(data) if r.fy == fy]
+    base = gains_of(base_rows)
     slab = Decimal(str(load_profile(s).tax_slab_pct)) / 100
     for lot, t in pieces:
         proceeds = p.price * t - (p.charges * t / p.quantity if p.quantity else ZERO)
         cost = lot.cost_per_unit * t if lot.cost_per_unit is not None else None
         row = evaluate(DisposalRow(ht, lot.acquired, p.day, t, cost, proceeds, lot.stt_paid, lot.origin))
         rows.append(row)
-        if row.gain is None:
-            unknown += 1
         if lot.acquired is not None and cost is not None and row.gain is not None and row.gain > 0:
             d = lt_date(ht, lot.acquired, p.day)
             if d is not None and (d - p.day).days <= NEAR_LT_DAYS:
@@ -279,27 +285,53 @@ def sell_items(s: Session, p: Plan, h: PortfolioHolding | None) -> list[dict[str
                 t_later = tax_delta(base if fy_l == fy else [], gains_of([later]), fy_l, slab)
                 near.append({"acquired": lot.acquired.isoformat(), "units": float(t), "long_term_from": d.isoformat(),
                              "days": (d - p.day).days, "tax_now": _f(t_now), "tax_later": _f(t_later),
-                             "saved": _f(t_now - t_later)})  # fmt: skip
+                             "saved": _f(t_now - t_later), **rules_note([fy, fy_l])})  # fmt: skip
     tax = tax_delta(base, gains_of(rows), fy, slab)
     st = sum((r.gain for r in rows if r.gain is not None and r.cls and r.cls.term == "short"), ZERO)
     lt = sum((r.gain for r in rows if r.gain is not None and r.cls and r.cls.term == "long"), ZERO)
     gain = sum((r.gain for r in rows if r.gain is not None), ZERO)
-    status = "unknown" if unknown else "ok"
-    detail = (f"gain {_inr(gain)} (short-term {_inr(st)}, long-term {_inr(lt)}); this year's tax changes by "
-              f"{_inr(tax)} incl. cess at your {float(slab * 100):g} % slab")  # fmt: skip
-    if unknown:
-        detail += f"; {unknown} lot(s) have an unknown cost or date: enter them for a full figure"
+    # a lot whose term can't be determined (no acquisition date, no cost) adds nothing to tax_delta: its tax is
+    # unknown, never ₹0 (#213). FIFO takes undated lots (an opening balance) first, so this is common
+    sale_unk, year_unk, rn = unclassified(rows), unclassified(base_rows), rules_note([fy])
+    status = "unknown" if sale_unk["count"] or year_unk["count"] or not rn["rules_verified"] else "ok"
+    if sale_unk["count"]:
+        detail = (f"tax unknown: {sale_unk['count']} of {len(rows)} lot(s) sold ({_inr(sale_unk['gain'] or 0)} of "
+                  f"gain) can't be classified short- or long-term ("
+                  + "; ".join(f"{n} without {w}" for n, w in ((sale_unk["no_date"], "an acquisition date"),
+                                                              (sale_unk["no_cost"], "a cost")) if n)
+                  + "): enter the purchase date and cost of the oldest lots")  # fmt: skip
+        if sale_unk["no_cost"]:
+            detail += f"; the gain of the {sale_unk['no_cost']} lot(s) without a cost is unknown too"
+        known = sum((r.gain for r in rows if r.gain is not None and not is_unclassified(r)), ZERO)
+        detail += f". Classified part: gain {_inr(known)}, tax change {_inr(tax)} incl. cess"
+    else:
+        detail = (f"gain {_inr(gain)} (short-term {_inr(st)}, long-term {_inr(lt)}); this year's tax changes by "
+                  f"{_inr(tax)} incl. cess at your {float(slab * 100):g} % slab")  # fmt: skip
+    if year_unk["count"]:
+        detail += (f"; an estimate: {year_unk['count']} disposal(s) already booked this year "
+                   f"({_inr(year_unk['gain'] or 0)}) can't be classified and are left out of the year's set-off and "
+                   "exemption")  # fmt: skip
+    if rn["rules_note"]:
+        detail += f"; {rn['rules_note']}"
     if not p.charges:
         detail += "; charges not entered (they reduce the gain)"
-    out.append(item("tax", "Tax on this sale", status, _f(tax), detail,
+    out.append(item("tax", "Tax on this sale", status, None if sale_unk["count"] else _f(tax), detail,
                     "portfolio.tax (dated rules) + fincalc.tax.tax_delta over this year's realised gains",
-                    gain=_f(gain), short_term=_f(st), long_term=_f(lt), lots=len(pieces), fy=fy))  # fmt: skip
+                    gain=_f(gain) if not sale_unk["no_cost"] else None, short_term=_f(st), long_term=_f(lt),
+                    unclassified=sale_unk, year_unclassified=year_unk, classified_tax=_f(tax), lots=len(pieces),
+                    fy=fy, **rn))  # fmt: skip
     if near:
         saved = sum((Decimal(str(x["saved"] or 0)) for x in near), ZERO)
-        out.append(item("long_term_soon", "Turns long-term soon", "warn" if saved > 0 else "info", _f(saved),
-                        f"{len(near)} lot(s) turn long-term within {NEAR_LT_DAYS} days; waiting would save about "
-                        f"{_inr(saved)} at today's price (the price may move)",
-                        "portfolio.tax_watch.lt_date", lots=near))  # fmt: skip
+        why = (f"{len(near)} lot(s) turn long-term within {NEAR_LT_DAYS} days; waiting would save about "
+               f"{_inr(saved)} at today's price (the price may move)")  # fmt: skip
+        if year_unk["count"]:
+            why += "; an estimate: this year's unclassified disposals are left out"
+        stale = sorted({x["rules_note"] for x in near if x["rules_note"]})
+        if stale:
+            why += "; " + "; ".join(stale)
+        out.append(item("long_term_soon", "Turns long-term soon", "warn" if saved > 0 else "info", _f(saved), why,
+                        "portfolio.tax_watch.lt_date", lots=near, rules_verified=not stale,
+                        estimate=bool(year_unk["count"])))  # fmt: skip
     if h.asset_type == "mf":
         st_row = get_settings_row(s)["exit_loads"].get(str(h.id))
         if not st_row:
