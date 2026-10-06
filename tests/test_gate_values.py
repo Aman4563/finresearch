@@ -302,3 +302,62 @@ def test_publish_gate_blocks_a_cited_high_importance_hard_mismatch_even_if_rever
         g = check_report(s, led["run"], f"Revenue ₹10,234.50 lakh [C{hi}]; other income ₹198.70 lakh [C{lo}].\n")
     assert not g.ok and any(f"[C{hi}]" in b and "period_mismatch" in b for b in g.blocking)
     assert any(f"[C{lo}]" in w and "period_mismatch" in w for w in g.warnings)
+
+
+# ------------------------------------------------------------------ layouts met when replaying recorded runs
+KEY_TRENDS = "\n".join([
+    "Key trends",
+    row("     In ₹ crore, except per equity share data*", "FY 2026", "FY 2025", "FY 2024"),
+    row("     Revenues", "1,78,650", "1,62,990", "1,53,670"),
+    row("     Basic earnings per share (in ₹)", "71.58", "64.50", "63.39"),
+    row("     Market capitalization", "5,07,192", "6,52,332", "6,21,821"),
+    row("     In US$ million, except per equity share data*", "FY 2026", "FY 2025", "FY 2024"),
+    row("     Revenues", "20,158", "19,277", "18,562"),
+    row("     Basic earnings per share (in US$)", "0.81", "0.77", "0.76"),
+    "\fConsolidated Statement of Cash Flows",
+    "(In ₹ crore)".rjust(W_LABEL + 3 * W_COL),
+    row("Particulars", "FY 2026", "FY 2025", "FY 2024"),
+    row("Expenditure on property, plant and equipment", "(2,727)", "(2,237)", "(2,201)"),
+    row("(Gain)/loss on foreign currency translation", "(32.30)", "(36.00)", "11.20"),
+    "",
+    "   Guidance for FY26: Revenue growth of 2%-3% in constant currency. The Board declared an interim dividend of",
+    "   ₹23/- per equity share.",
+])  # fmt: skip
+
+
+def test_layouts_from_recorded_runs(make_ledger):
+    """Replaying Infosys run 9 and Orient run 5 against their source texts: a "2%-3%" range, a bracketed outflow
+    and "₹23/-" were read as missing figures before; a row label "(in ₹)" was read as the table's unit; the bracket
+    in "(Gain)/loss" marks the gain."""
+    led = make_ledger(KEY_TRENDS)
+    usd = add(led, metric="revenue", value="20158", unit="USD million", period="FY2026", cite="20,158")
+    as_inr = add(led, metric="revenue", value="20158", unit="INR crore", period="FY2026", cite="20,158")
+    mcap = add(led, metric="market_cap", value="507192", unit="INR crore", period="FY2026", cite="Market cap")
+    eps = add(led, metric="basic_eps", value="71.58", unit="INR per share", period="FY2026", cite="(in ₹)")
+    capex = add(led, metric="capex", value="2727", unit="INR crore", period="FY2026", cite="Expenditure on")
+    gain = add(led, metric="forex_gain", value="32.30", unit="INR crore", period="FY2026", cite="(Gain)/loss",
+               statement="Foreign currency gain was ₹32.30 crore in FY2026.")  # fmt: skip
+    loss = add(led, metric="forex_loss", value="32.30", unit="INR crore", period="FY2026", cite="(Gain)/loss",
+               statement="Foreign currency loss of ₹32.30 crore in FY2026.")  # fmt: skip
+    guide = add(led, metric="fy26_revenue_growth_guidance_high", value="3", unit="%", period="FY2026",
+                cite="Guidance for FY26")  # fmt: skip
+    div = add(led, metric="interim_dividend", value="23", unit="INR per share", period="FY2026", cite="₹23/-")
+    gate(led)
+    for ok in (usd, mcap, eps, capex, gain, guide, div):
+        assert claim(ok)[1]["value_check"] == "pass", (ok, claim(ok))
+    assert claim(usd)[1]["source_unit"] == "USD million" and claim(mcap)[1]["source_unit"] == "INR crore"
+    assert claim(as_inr)[1]["value_check"] == "unit_mismatch"  # the US$ table's digits claimed as ₹ crore
+    assert claim(loss)[1]["value_check"] == "sign_mismatch"
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("Revenue growth of 2%-3% in constant currency", ["2", "3"]),
+    ("FY2025-26 and 10 - 12 days", ["26", "10", "12"]),
+    ("Other income   937   -7.7%   (1,234)  ( 56.10 )", ["937", "-7.7", "-1234", "-56.10"]),
+    ("final dividend of ₹25/- on 16/10/2025, cost(1)", ["25", "1"]),
+    ("loss of −84.20 and –12.5", ["-84.20", "-12.5"]),
+])  # fmt: skip
+def test_number_tokens_read_signs_but_not_ranges(text, expected):
+    from finresearch.verify.values import tokens
+
+    assert [str(t.value) for t in tokens(text)] == expected

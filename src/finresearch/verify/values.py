@@ -65,7 +65,8 @@ def tokens(line: str) -> list[Tok]:
     for m in _NUM.finditer(line):
         raw = m.group(0).rstrip(",")
         a, b = m.start(), m.start() + len(raw)
-        if (a and (line[a - 1].isalpha() or line[a - 1] in "./")) or (b < len(line) and line[b] == "/"):
+        glued = a and (line[a - 1].isalpha() or (line[a - 1] in "./" and a > 1 and line[a - 2].isdigit()))
+        if glued or re.match(r"/\d", line[b : b + 2]):  # "FY2026", "Q1", "2.4.2", "16/10/2025"; not "₹25/-"
             continue
         try:
             v = Decimal(raw.replace(",", ""))
@@ -81,8 +82,8 @@ def tokens(line: str) -> list[Tok]:
         if not neg and lead and lead[-1] in "-−–":
             prev = lead[:-1]
             gap = len(prev) - len(prev.rstrip())
-            # a minus, not a range / hyphen: "2025-26" and "10 - 12" are ranges; a table cell "937   -7.7%" is not
-            if not prev.strip() or not prev.rstrip()[-1].isdigit() or gap >= 2:
+            # a minus, not a range / hyphen: "2025-26", "2%-3%" and "10 - 12" are ranges; a cell "937   -7.7%" is not
+            if not prev.strip() or prev.rstrip()[-1] not in "0123456789%" or gap >= 2:
                 neg, a = True, len(lead) - 1
         out.append(Tok(-v if neg else v, a, b, neg))
     return out
@@ -120,18 +121,30 @@ def near_polarity(before: str, after: str = "") -> int:
     return polarity(" ".join(seg + tail))
 
 
-def sign_conflict(claim_neg: bool, claim_word: int, src_neg: bool, src_word: int, src_label: str) -> bool:
-    """Opposite signs on the two sides. `src_word` is the polarity next to the number (prose) or of the row label
-    (table); a source with no sign evidence is "plain" and only conflicts with an explicitly negative claim value."""
+_BRACKETED = re.compile(r"\(([^()]*)\)")
+
+
+def row_sign(label: str, printed_neg: bool) -> int:
+    """The sign a table row gives its figure. A bracketed word in the label says what a bracketed figure means:
+    "Profit / (Loss)" (1,234) is a loss, "(Gain)/loss on foreign currency" (32.30) a gain, "from / (used in)" (500)
+    an outflow; an unbracketed figure then takes the other word."""
+    bracketed = polarity(" ".join(_BRACKETED.findall(label)))
+    if printed_neg:
+        return bracketed or -1
+    return polarity(_BRACKETED.sub(" ", label)) if bracketed else polarity(label)
+
+
+def sign_conflict(claim_neg: bool, claim_word: int, src: int, printed_neg: bool, label: str) -> bool:
+    """Opposite signs. `src` is the source's sign (-1 / 0 / +1, 0 = no evidence: an unsigned figure in a plain row);
+    a source with no evidence only conflicts with an explicitly negative claimed value."""
     c = -1 if claim_neg or claim_word < 0 else claim_word
-    s = -1 if src_neg else src_word
     if c < 0:
-        return s > 0 or (claim_neg and s == 0)
+        return src > 0 or (claim_neg and src == 0)
     if c > 0:
-        return s < 0
-    # a bare claim against a bracketed figure whose row says what the sign means ("Profit / (Loss)",
+        return src < 0
+    # a bare claim against a bracketed figure whose row says the unbracketed reading is positive ("Profit / (Loss)",
     # "Net cash generated from / (used in)"); outflow rows ("Income taxes paid (8,648)") carry no such word
-    return src_neg and bool(POS_RE.search(src_label))
+    return printed_neg and src < 0 and bool(POS_RE.search(_BRACKETED.sub(" ", label)))
 
 
 # --------------------------------------------------------------------------- units
@@ -176,8 +189,9 @@ def _scale(tok: str) -> Decimal:
     return Decimal(next(s for k, s in _SCALES if t.startswith(k)))
 
 
-def declared_unit(text: str, level: str = "table") -> Unit | None:
-    """A unit declaration in a table / page header or a row label."""
+def declared_unit(text: str, level: str = "table", *, per_share_words: bool = True) -> Unit | None:
+    """A unit declaration in a table / page header or a row label. `per_share_words`: "per share" in a row label
+    makes it a per-share row (in prose it belongs to another figure: "Buyback at ₹1,800 per share  18,000")."""
     for rx in _DECLS:
         m = rx.search(text)
         if m:
@@ -186,9 +200,10 @@ def declared_unit(text: str, level: str = "table") -> Unit | None:
         if _PCT_DECL.search(text):
             return Unit("pct", level=level)
         m = _RUPEE_ONLY.search(text)
-        if m or _PER_SHARE.search(text):
+        if m or (per_share_words and _PER_SHARE.search(text)):
             return Unit("per_share", _cur(m.group(1)) if m else None, Decimal(1), level)
-    elif _RUPEE_ONLY.search(text):
+    elif _RUPEE_ONLY.search(text) and (re.search(r"except|unless", text, re.I) or len(text.split()) <= 4):
+        # "(In ₹ except share data)"; not a row label such as "Basic earnings per share (in ₹)"
         return Unit("money", _cur(_RUPEE_ONLY.search(text).group(1)), Decimal(1), level)
     elif re.search(r"\(\s*(?:in\s+)?(?:%|per\s?cent)\s*\)", text, re.I):
         return Unit("pct", level=level)
@@ -199,8 +214,10 @@ _ADJ_AFTER = re.compile(rf"^\s?(?:(%|per\s?cent\b|percent\b)|{_SC})", re.I)
 _ADJ_BEFORE = re.compile(rf"{_CUR}\s?$", re.I)
 
 
-def adjacent_unit(line: str, t: Tok) -> Unit | None:
+def adjacent_unit(line: str, t: Tok, next_line: str = "") -> Unit | None:
     after, before = line[t.end :], line[: t.start]
+    if not after.strip():
+        after = " " + next_line.lstrip()  # "`1,326" at the end of a line, "crore" wrapped onto the next
     m = _ADJ_AFTER.match(after)
     cur = _ADJ_BEFORE.search(before)
     if m and m.group(1):
@@ -340,9 +357,9 @@ def _header_lines(lines: list[str], idx: int) -> list[str]:
     return []
 
 
-def column_periods(lines: list[str], idx: int, row: list[Tok]) -> list[Period | None]:
-    """The period of each cell of a table row, from the header phrases above the cells. A phrase is a run of
-    words separated by single spaces; it belongs to every cell whose centre it spans, else to the nearest cell."""
+def column_headers(lines: list[str], idx: int, row: list[Tok]) -> list[str]:
+    """The header text over each cell of a table row. A phrase (words separated by single spaces) belongs to every
+    cell whose centre it spans, else to the nearest cell if it sits over it."""
     centres = [(t.start + t.end) / 2 for t in row]
     left = row[0].start - 2
     texts: list[list[str]] = [[] for _ in row]
@@ -357,12 +374,13 @@ def column_periods(lines: list[str], idx: int, row: list[Tok]) -> list[Period | 
                 spanned = [near] if abs(centres[near] - (a + b) / 2) <= 8 + (b - a) / 2 else []
             for i in spanned:
                 texts[i].append(m.group(0))
-    out: list[Period | None] = []
-    for words in texts:
-        txt = " ".join(words)
-        growth = re.search(r"%|growth|\byoy\b|\bqoq\b|change|variance|note", txt, re.I)
-        out.append(None if growth else period_of(txt, bare_year=True))
-    return out
+    return [" ".join(words) for words in texts]
+
+
+def column_period(header: str) -> Period | None:
+    if re.search(r"%|growth|\byoy\b|\bqoq\b|change|variance|\bnote\b", header, re.I):
+        return None  # a growth / share / note column, not a period's level
+    return period_of(header, bare_year=True)
 
 
 def _above(lines: list[str], idx: int, n: int):
@@ -396,13 +414,25 @@ def page_basis(lines: list[str], idx: int) -> str | None:
 
 def unit_of(lines: list[str], idx: int, t: Tok, row: list[Tok]) -> Unit | None:
     line = lines[idx]
-    adj = adjacent_unit(line, t)
+    adj = adjacent_unit(line, t, lines[idx + 1] if idx + 1 < len(lines) else "")
+    if adj and adj.kind == "money" and adj.scale == 1:
+        # "₹ 1,326" with no scale word: the scale of the page's declaration if there is one, else rupees
+        tab = table_unit(lines, idx)
+        if tab and tab.kind == "money":
+            return Unit("money", adj.cur or tab.cur, tab.scale, "table")
     if adj:
         return adj
-    label = row_label(line, row) if row else line[: t.start]
-    if not row:  # prose: the words just before the number
-        label = label[-60:]
-    return declared_unit(label, "row") or table_unit(lines, idx)
+    if row:
+        label = row_label(line, row)
+        col = declared_unit(column_headers(lines, idx, row)[row.index(t)], "row") if t in row else None
+        if col and not declared_unit(label, "row"):
+            # "Basic EPS (in ₹)" or "% of revenue" over the column; a ₹ scale over it is as weak as a table's
+            # (it often spans the whole header: "(in ₹ million, unless otherwise specified)")
+            return Unit(col.kind, col.cur, col.scale, "table") if col.kind == "money" and col.scale != 1 else col
+    else:  # prose: the words since the previous number ("100.00% 1,65,59,99,376": the % is the previous one's)
+        prev = max((x.end for x in tokens(line) if x.end <= t.start), default=0)
+        label = line[prev : t.start].lstrip(" %")
+    return declared_unit(label, "row", per_share_words=bool(row)) or table_unit(lines, idx)
 
 
 # --------------------------------------------------------------------------- the check
@@ -483,8 +513,10 @@ def _unit_verdict(c: _Claim, u: Unit | None, v: Decimal) -> str:
     if c.kind == "other":
         return "ok"
     explicit = u is not None and u.level in ("adjacent", "row")
-    if u is None or (c.kind != "money" and not explicit and u.kind == "money"):
-        return "unknown"  # a table-level ₹ scale does not apply to per-share or % rows
+    if u is None or (not explicit and u.kind == "money" and (c.kind != "money" or c.factor == 1) and u.scale != 1):
+        # a table-level ₹ scale does not apply to per-share or % rows ("except per share data"), nor to a bare "INR"
+        # claim, which is usually a per-share figure (dividend, price)
+        return "unknown"
     if u.cur and c.cur and u.cur != c.cur:
         return "mismatch"
     if c.kind == "money":
@@ -528,7 +560,8 @@ def _judge(lines: list[str], idx: int, t: Tok, row: list[Tok], c: _Claim) -> Val
     if unit == "unknown":
         res.warnings.append(WARN_UNIT)
     label, word = _src_label(lines, idx, t, row)
-    if sign_conflict(c.neg, c.word, t.neg, word, label):
+    src = row_sign(label, t.neg) if row else (-1 if t.neg else word)
+    if sign_conflict(c.neg, c.word, src, t.neg, label):
         shown = f"({v})" if t.neg else str(v)
         res.status = "sign_mismatch"
         res.detail = f"the source prints {shown} next to '{' '.join(label.split())[-60:]}': the opposite sign"
@@ -538,7 +571,7 @@ def _judge(lines: list[str], idx: int, t: Tok, row: list[Tok], c: _Claim) -> Val
         if own:
             col: Period | None = own
         else:
-            cps = column_periods(lines, idx, row)
+            cps = [column_period(h) for h in column_headers(lines, idx, row)]
             col = cps[row.index(t)] if len({p for p in cps if p}) >= 2 else None
         if col:
             res.source_period = period_label(col)
