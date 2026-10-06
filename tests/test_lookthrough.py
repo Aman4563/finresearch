@@ -487,7 +487,10 @@ def test_api_fetch_upload_lookthrough_and_overlap(client):
         == 404
     )
     src = c.get("/api/lookthrough/sources").json()
-    assert {s["key"] for s in src["sources"]} == {"ppfas", "nippon", "dsp", "axis"} and len(src["files"]) == 3
+    assert {s["key"] for s in src["sources"]} == {"ppfas", "nippon", "dsp", "axis", "quant", "tata"} and len(
+        src["files"]
+    ) == 3
+    assert {u["key"] for u in src["unsupported"]} == {"hdfc", "sbi", "icici", "kotak", "mirae"}
     assert c.delete(f"/api/lookthrough/files/{src['files'][0]['sha']}", headers=ORIGIN).status_code == 200
     assert all(u.startswith("https://") for u in c.seen)
 

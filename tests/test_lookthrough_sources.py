@@ -5,10 +5,24 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal as D
+from pathlib import Path
 
+import respx
 from amc_synthetic import quant_xlsx, tata_xlsx
 
-from finresearch.adapters.amc_portfolio import parse_as_of, parse_file
+from finresearch.adapters.amc_portfolio import (
+    AMC_SOURCES,
+    AMC_UNSUPPORTED,
+    QUANT_LIST_URL,
+    check_url,
+    discover_links,
+    house_for,
+    parse_as_of,
+    parse_file,
+    pick_links,
+    quant_list_body,
+    source_for_amc,
+)
 
 
 def by_isin(p, isin):
@@ -55,3 +69,105 @@ def test_tata_layout_second_header_totals_and_two_digit_year():
     assert by_isin(p, "INF00TC01AB3").kind == "mf_units"  # ETF units listed under equity are not a stock
     assert p.weight_of("equity") == D("85.0")
     assert parse_as_of("Portfolio as on 31-08-26") == date(2026, 8, 31)
+
+
+# ----------------------------------------------------------------------------------------------- discovery
+FIX = Path(__file__).parent / "fixtures" / "amc"
+QUANT_FILE = "https://quantmutual.com/Admin/disclouser/quant_Example_Flexi_Cap_Fund_31_Aug_2026.xlsx"
+TATA_AUG = "https://betacms.tatamutualfund.com/system/files/2026-09/Monthly%20Portfolio%20as%20on%2031st%20August%202026.xlsx"
+
+
+def test_quant_and_tata_discovery():
+    q = discover_links("quant", (FIX / "quant_list_2026-08.json").read_text(), AMC_SOURCES["quant"].page)
+    assert [(x.label, x.month) for x in q] == [("quant example liquid fund", "2026-08"),
+                                               ("quant example large and midcap fund", "2026-08"),
+                                               ("quant example flexicap fund", "2026-08")]  # fmt: skip
+    # one file per scheme: only the held scheme's file is picked, never the whole month
+    assert [x.url for x in pick_links("quant", q, "quant example flexicap fund", 1)] == [QUANT_FILE]
+    assert pick_links("quant", q, "quant example small cap fund", 1) == []
+    assert quant_list_body(2026, 8) == b"{id:'8',cat:'MONTHLY PORTFOLIO - FUND - WISE',tab:'2026'}"
+    t = discover_links("tata", (FIX / "page_tata.html").read_text(), AMC_SOURCES["tata"].page)
+    # month-end portfolios only: the 15-Aug fortnightly file and the AAUM disclosure are not monthly portfolios
+    assert [(x.month, x.url) for x in t] == [("2026-08", TATA_AUG), ("2026-07", TATA_AUG.replace("2026-09", "2026-08")
+                                                                     .replace("August", "July"))]  # fmt: skip
+    assert all(check_url(x.url) for x in t)
+
+
+def test_house_matching_uses_word_boundaries_and_the_amc_heading_first():
+    assert (
+        house_for("quant Mutual Fund") == "quant"
+        and house_for(None, "quant Small Cap Fund - Direct Growth") == "quant"
+    )
+    assert house_for("Quantum Mutual Fund", "Quantum Long Term Equity Value Fund") is None  # not quant
+    assert (
+        house_for("Tata Mutual Fund") == "tata"
+        and house_for(None, "HDFC Flexi Cap Fund - Direct Plan") == "hdfc"
+    )
+    # the AMC heading wins over words in the scheme name
+    assert house_for("Nippon India Mutual Fund", "Nippon India ETF Nifty 50 BeES") == "nippon"
+    assert house_for("DSP Mutual Fund", "DSP Nifty HDFC Group ETF") == "dsp"
+    assert source_for_amc("HDFC Mutual Fund") is None and "hdfc" in AMC_UNSUPPORTED
+    assert source_for_amc("Tata Mutual Fund") == "tata" and source_for_amc(None, "PPFAS Flexi") == "ppfas"
+    assert house_for("Example Asset Mutual Fund", "Example Bluechip Fund") is None
+
+
+def fake_amc_client(routes: dict[str, bytes], posts: dict[bytes, bytes] | None = None):
+    """A PoliteClient whose transport answers from `routes` (GET by URL) and `posts` (quant's list, by body)."""
+    import httpx
+
+    from finresearch.adapters.http import PoliteClient
+
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url).split("?")[0]
+        seen.append(f"{request.method} {url}")
+        if request.method == "POST":
+            body = (posts or {}).get(request.content)
+            return httpx.Response(200, content=body if body is not None else b'{"d":"<ul></ul>"}')
+        body = routes.get(url)
+        return httpx.Response(200, content=body) if body is not None else httpx.Response(404, content=b"nope")
+
+    async def no_sleep(_s: float) -> None:
+        return None
+
+    return PoliteClient(cache_dir=None, transport=httpx.MockTransport(handler), sleep=no_sleep), seen
+
+
+async def test_fetch_scheme_quant_posts_one_month_and_downloads_one_file(tmp_path):
+    from finresearch.portfolio.lookthrough import PortfolioStore, fetch_scheme
+
+    store = PortfolioStore(tmp_path)
+    http, seen = fake_amc_client({QUANT_FILE: quant_xlsx()},
+                                 {quant_list_body(2026, 8): (FIX / "quant_list_2026-08.json").read_bytes()})  # fmt: skip
+    res = await fetch_scheme(store, "quant example flexicap fund", "quant Mutual Fund", client=http,
+                             today=date(2026, 10, 6))  # fmt: skip
+    await http.aclose()
+    # September's list is empty (not published by 06-Oct), August's has the scheme: two POSTs, one download
+    assert seen == [f"POST {QUANT_LIST_URL}", f"POST {QUANT_LIST_URL}", f"GET {QUANT_FILE}"]
+    assert res["months"] == ["2026-08"] and res["matched"] and res["errors"] == []
+
+
+async def test_fetch_scheme_tata_reads_the_house_workbook(tmp_path):
+    from finresearch.portfolio.lookthrough import PortfolioStore, fetch_scheme
+
+    store = PortfolioStore(tmp_path)
+    page = AMC_SOURCES["tata"].page
+    http, seen = fake_amc_client({page: (FIX / "page_tata.html").read_bytes(), TATA_AUG: tata_xlsx()})
+    res = await fetch_scheme(store, "tata example smallcap fund", "Tata Mutual Fund", client=http)
+    await http.aclose()
+    assert seen == [f"GET {page}", f"GET {TATA_AUG}"] and res["months"] == ["2026-08"]
+    assert store.latest("tata example flexicap fund") is not None  # one workbook brings every Tata scheme
+
+
+@respx.mock
+async def test_tata_redirect_to_www_passes_the_hop_check(tmp_path):
+    import httpx
+
+    from finresearch.portfolio.lookthrough import PortfolioStore, fetch_url
+
+    www = TATA_AUG.replace("betacms.", "www.")
+    respx.get(TATA_AUG).mock(return_value=httpx.Response(302, headers={"location": www}))
+    respx.get(www).mock(return_value=httpx.Response(200, content=tata_xlsx()))
+    _sha, ps = await fetch_url(PortfolioStore(tmp_path), TATA_AUG)
+    assert {p.sheet for p in ps} == {"TEXFLX", "TEXSML"}

@@ -31,7 +31,12 @@ NAV_TTL_S = 6 * 3600
 def add_lookthrough_routes(app: FastAPI, *, scheme_rows: Callable[[], Awaitable[list]], store_root: Path | None = None,
                            http: Callable[[], Any] | None = None) -> None:  # fmt: skip
     """`http()` returns a PoliteClient-like object (tests pass one with a mock transport); default: a live client."""
-    from finresearch.adapters.amc_portfolio import AMC_SOURCES, AmcPortfolioError, source_for_amc
+    from finresearch.adapters.amc_portfolio import (
+        AMC_SOURCES,
+        AMC_UNSUPPORTED,
+        AmcPortfolioError,
+        source_for_amc,
+    )
     from finresearch.api.markets import MarketSources, TtlCache
     from finresearch.portfolio import lookthrough as lt
 
@@ -138,6 +143,8 @@ def add_lookthrough_routes(app: FastAPI, *, scheme_rows: Callable[[], Awaitable[
         return {
             "sources": [{"key": k, "amc": v.amc, "page": v.page, "mode": v.mode, "note": v.note, "hosts": list(v.hosts)}
                         for k, v in AMC_SOURCES.items()],
+            "unsupported": [{"key": k, "amc": v.amc, "page": v.page, "reason": v.reason}
+                            for k, v in AMC_UNSUPPORTED.items()],
             "files": [{"sha": sha, **{k: m.get(k) for k in ("filename", "url", "amc", "fetched_at", "size")},
                        "schemes": len(m.get("schemes", [])),
                        "months": sorted({(x.get("as_of") or "")[:7] for x in m.get("schemes", []) if x.get("as_of")})}

@@ -240,10 +240,14 @@ class PoliteClient:
         url: str,
         *,
         data: Mapping[str, Any] | None = None,
+        content: bytes | None = None,
         headers: Mapping[str, str] | None = None,
         cache_ttl: float | None = None,
     ) -> Fetched:
-        return await self.request("POST", url, data=data, headers=headers, cache_ttl=cache_ttl)
+        """`content`: a raw body (e.g. JSON) instead of form `data`; such a POST is never cached."""
+        return await self.request(
+            "POST", url, data=data, content=content, headers=headers, cache_ttl=None if content else cache_ttl
+        )
 
     async def request(
         self,
@@ -252,6 +256,7 @@ class PoliteClient:
         *,
         params: Mapping[str, Any] | None = None,
         data: Mapping[str, Any] | None = None,
+        content: bytes | None = None,
         headers: Mapping[str, str] | None = None,
         cache_ttl: float | None = None,
         cache_if: Callable[[Fetched], bool] | None = None,
@@ -276,7 +281,9 @@ class PoliteClient:
                 await self._sleep(self._backoff(attempt, resp))
             await self._limiter.wait(host)
             try:
-                resp = await self._client.request(method, url, params=params, data=data, headers=headers)
+                resp = await self._client.request(
+                    method, url, params=params, data=data, content=content, headers=headers
+                )
             except (httpx.TimeoutException, httpx.TransportError) as exc:
                 last_exc, resp = exc, None
                 continue

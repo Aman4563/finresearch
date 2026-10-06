@@ -28,6 +28,7 @@ from typing import Any
 from finresearch.adapters.amc_portfolio import (
     AMC_SOURCES,
     AMFI_CAP_LIST_URLS,
+    QUANT_LIST_URL,
     AmcPortfolioError,
     SchemePortfolio,
     check_url,
@@ -36,6 +37,7 @@ from finresearch.adapters.amc_portfolio import (
     parse_amfi_cap_list,
     parse_file,
     pick_links,
+    quant_list_body,
     scheme_key,
     source_for_amc,
 )
@@ -310,9 +312,42 @@ async def _download_checked(url: str) -> tuple[str, bytes]:
     raise AmcPortfolioError(f"{url}: more than {MAX_REDIRECTS} redirects")
 
 
-async def fetch_scheme(store: PortfolioStore, key: str, amc: str | None, *, months: int = 1, client: Any = None
-                       ) -> dict[str, Any]:  # fmt: skip
-    """Find and download a scheme's latest `months` monthly files from its AMC's page (PPFAS, Nippon, DSP)."""
+def months_back(today: date, n: int) -> list[tuple[int, int]]:
+    """(year, month) of the `n` calendar months before `today`'s month, newest first (the month in progress has no
+    month-end portfolio yet)."""
+    y, m, out = today.year, today.month, []
+    for _ in range(n):
+        y, m = (y, m - 1) if m > 1 else (y - 1, 12)
+        out.append((y, m))
+    return out
+
+
+async def _links(http: Any, source: str, key: str, months: int, today: date) -> list[Any]:
+    """The scheme's monthly file links: one GET of the house's page, or (quant) one POST per month, newest first,
+    until `months` months list the scheme (at most months + 1 requests)."""
+    src = AMC_SOURCES[source]
+    if source != "quant":
+        page = await http.get(src.page)
+        if not page.ok:
+            raise AmcPortfolioError(f"{src.amc}'s disclosure page answered HTTP {page.status}")
+        return pick_links(source, discover_links(source, page.text, src.page), key, months)
+    got: list[Any] = []
+    for y, m in months_back(today, months + 1):
+        page = await http.post(QUANT_LIST_URL, content=quant_list_body(y, m),
+                               headers={"Content-Type": "application/json; charset=utf-8", "Referer": src.page,
+                                        "X-Requested-With": "XMLHttpRequest"})  # fmt: skip
+        if not page.ok:
+            raise AmcPortfolioError(f"{src.amc}'s monthly list answered HTTP {page.status}")
+        got += pick_links(source, discover_links(source, page.text, src.page), key, months)
+        if len({x.month for x in got}) >= months:
+            break
+    return got
+
+
+async def fetch_scheme(store: PortfolioStore, key: str, amc: str | None, *, months: int = 1, client: Any = None,
+                       today: date | None = None) -> dict[str, Any]:  # fmt: skip
+    """Find and download a scheme's latest `months` monthly files from its fund house (PPFAS, Nippon, DSP, quant,
+    Tata)."""
     source = source_for_amc(amc, key)
     if source is None or AMC_SOURCES[source].mode != "auto":
         raise AmcPortfolioError("this fund house's files cannot be found automatically: paste the file link or "
@@ -322,13 +357,11 @@ async def fetch_scheme(store: PortfolioStore, key: str, amc: str | None, *, mont
     http = client or _client()
     fetched, errors = [], []
     try:
-        page = await http.get(src.page)
-        if not page.ok:
-            raise AmcPortfolioError(f"{src.amc}'s disclosure page answered HTTP {page.status}")
-        links = pick_links(source, discover_links(source, page.text, src.page), key, months)
+        links = await _links(http, source, key, months, today or date.today())
         if not links:
             raise AmcPortfolioError(
-                f"no monthly portfolio links found on {src.page} (the page may have changed)"
+                f"no monthly portfolio file for this scheme found on {src.page} (not published yet, or the page "
+                "has changed)"
             )
         have = {m.get("url") for m in store.index()["files"].values()}
         for link in links:
