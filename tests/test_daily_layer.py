@@ -80,7 +80,8 @@ def test_lot_turning_long_term_tax_saved_golden():
     # ₹50,000 gain: STCG 20 % + 4 % cess = ₹10,400 today; after 16-Oct it is LTCG inside the ₹1.25 lakh exemption
     assert got == [{"holding_id": 1, "name": "Example Ltd", "account": "Manual", "acquired": "2025-10-15",
                     "quantity": 100.0, "lt_date": "2026-10-16", "days": 16, "gain": 50000.0, "tax_now": 10400.0,
-                    "tax_later": 0.0, "saved": 10400.0, "older_lots": 0, "price": 1500.0}]  # fmt: skip
+                    "tax_later": 0.0, "saved": 10400.0, "older_lots": 0, "older_unknown": 0, "estimate": False,
+                    "price": 1500.0, "rules_verified": True, "rules_note": None}]  # fmt: skip
     assert turning_long_term(lots, [], date(2026, 9, 1), D("0.30")) == []  # 45 days away: outside the window
     loss = [{**lots[0], "price": D(900)}]
     assert turning_long_term(loss, [], date(2026, 9, 30), D("0.30")) == []  # a loss is not listed
