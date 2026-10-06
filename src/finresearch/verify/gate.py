@@ -1,9 +1,18 @@
 """Deterministic verification gate: checks that need no LLM, run on every claim before and after the verifiers.
 
 Checks (results stored in claim.checks; a failing check never silently passes a claim):
-* value_in_source  — a numeric claim's value (or its unit conversion: ₹ rupees/lakh/million/crore, % vs fraction)
-                     appears among the numbers at its cited lines. Otherwise the figure is "derived" and must be
-                     confirmed by a verifier (status needs_review if it was merely unverified).
+* value_in_source  — a numeric claim's value is printed at its cited lines with the same sign, in the same unit
+                     (both sides normalised: ₹ rupees/lakh/million/crore, US$, % vs fraction) and, in a multi-period
+                     table, in the column of the claim's period (verify.values; issue #217). Results:
+                     - not printed: the figure is "derived" and must be confirmed by a verifier (status
+                       needs_review if it was merely unverified);
+                     - sign / unit / period mismatch (printed, but as a loss, in lakh, or in the neighbouring year's
+                       column): needs_review even if a verifier passed it (the gate runs again after the verifiers),
+                       and the publish gate blocks a cited high-importance one;
+                     - basis mismatch (consolidated claim on a standalone page or vice versa): needs_review if
+                       unverified;
+                     - "unit unknown" / "period unverified" warnings: a pass for normal claims, never for
+                       high-importance ones (value_in_source false, needs_review until a verifier confirms).
 * conflicts        — the same metric + period stated with different values by different claims (after unit
                      normalisation, >0.5% apart) -> both needs_review with a cross-reference, except a
                      deterministic exchange/AMFI fact (checks.source), which keeps its status.
