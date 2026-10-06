@@ -132,17 +132,26 @@ def dividends(s: Session, today: date) -> dict[str, Any]:
     return row
 
 
+def _fund_coverage(top: dict[str, Any]) -> float | None:
+    """Share of fund value that is looked through, from /api/lookthrough's `coverage` block: `pct` when given, else
+    (fund % of the portfolio - % in funds not looked through) / fund % (both are % of the whole portfolio)."""
+    if top.get("pct") is not None:
+        return float(top["pct"])
+    fund, missing = top.get("fund_pct"), top.get("not_looked_through_pct")
+    if fund is None or missing is None or fund <= 0:
+        return None
+    return max(0.0, (float(fund) - float(missing)) / float(fund) * 100)
+
+
 def lookthrough(lt: dict[str, Any] | None, has_funds: bool, error: str | None) -> dict[str, Any]:
     """Coverage as /api/lookthrough reports it: a top-level `coverage.pct` if present, else
     `concentration.fund_coverage_pct` (fund value with a month-end portfolio)."""
     cov = None
     if lt:
         top = lt.get("coverage")
-        cov = (
-            top.get("pct")
-            if isinstance(top, dict)
-            else (lt.get("concentration") or {}).get("fund_coverage_pct")
-        )
+        cov = _fund_coverage(top) if isinstance(top, dict) else None
+        if cov is None:
+            cov = (lt.get("concentration") or {}).get("fund_coverage_pct")
     detail = (f"look-through could not be computed ({error})" if error else
               "fund value covered by a month-end fund portfolio" if cov is not None else
               "the look-through reported no coverage (for example, the funds have no current value yet)")  # fmt: skip
