@@ -135,6 +135,9 @@ def strip(s: Any, now: datetime) -> dict[str, Any]:
         ([start[-1]] if start else []) + [r for r in rows if r[0] > today - timedelta(days=7)]
     )
     ex = fy_summary(disposal_rows(data), fiscal_year(today), Decimal("0.30"))["exemption"]
+    # an unclassified disposal may have used the exemption: the headroom is unknown (#213)
+    if not ex["complete"]:
+        ex = {**ex, "remaining": None}
     alert = s.scalars(select(Alert).where(Alert.kind == "rule_alert", Alert.created_at >= now - timedelta(days=7))
                       .order_by(Alert.id.desc()).limit(50)).all()  # fmt: skip
     pf = next((a for a in alert if (a.data or {}).get("rule_kind") == "portfolio"), None)

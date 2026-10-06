@@ -27,15 +27,20 @@ from typing import Any
 
 from finresearch.adapters.amc_portfolio import (
     AMC_SOURCES,
+    AMC_UNSUPPORTED,
     AMFI_CAP_LIST_URLS,
+    QUANT_LIST_URL,
+    UNKNOWN_HOUSE,
     AmcPortfolioError,
     SchemePortfolio,
     check_url,
     discover_links,
     fetched_at_now,
+    house_for,
     parse_amfi_cap_list,
     parse_file,
     pick_links,
+    quant_list_body,
     scheme_key,
     source_for_amc,
 )
@@ -46,6 +51,7 @@ from finresearch.fincalc.lookthrough import (
     FundInput,
     FundLine,
     active_share,
+    cap_label,
     combine,
     hhi,
     lookthrough,
@@ -54,7 +60,7 @@ from finresearch.fincalc.lookthrough import (
 )
 
 ZERO = Decimal(0)
-PARSER_VERSION = 2  # bump when parsing changes: stored files are re-parsed from the kept originals
+PARSER_VERSION = 3  # bump when parsing changes: stored files are re-parsed from the kept originals
 STALE_DAYS = (
     45  # a month-end portfolio older than this is flagged (SEBI: published within 10 days of month-end)
 )
@@ -66,6 +72,8 @@ LIMITS = [
     "Hedged arbitrage positions are excluded from equity only where the fund house labels them (PPFAS does); "
     "elsewhere a hedged long counts as equity.",
     "Units of other mutual funds (fund-of-funds, liquid-fund parking) are not looked through.",
+    "Unhedged stock futures have no ISIN line in the file, so their exposure is not in the look-through equity; "
+    "where the file states it (quant: 25.3 % of its Flexi Cap fund in Aug-2026), the fund's file shows a warning.",
     "Market-cap buckets use AMFI's list by ISIN; stocks not on it (new listings, foreign shares) are shown apart.",
     "Sector names follow the fund houses' industry labels; a direct stock not held by any fund keeps its NSE label.",
 ]
@@ -209,6 +217,14 @@ class PortfolioStore:
                 out.append(Found(sha, p, meta))
         return out
 
+    def newest(self, key: str | None) -> tuple[bool, date | None]:
+        """(any stored file holds this scheme, its newest portfolio date) from the index alone: nothing is parsed,
+        so pages can ask cheaply (a Tata workbook holds 65 schemes)."""
+        dates = [s.get("as_of") for m in self.index()["files"].values() for s in m.get("schemes", [])
+                 if key and s.get("key") == key]  # fmt: skip
+        known = [d for d in dates if d]
+        return bool(dates), (date.fromisoformat(max(known)) if known else None)
+
     def latest(self, key: str | None) -> Found | None:
         if not key:
             return None
@@ -310,9 +326,42 @@ async def _download_checked(url: str) -> tuple[str, bytes]:
     raise AmcPortfolioError(f"{url}: more than {MAX_REDIRECTS} redirects")
 
 
-async def fetch_scheme(store: PortfolioStore, key: str, amc: str | None, *, months: int = 1, client: Any = None
-                       ) -> dict[str, Any]:  # fmt: skip
-    """Find and download a scheme's latest `months` monthly files from its AMC's page (PPFAS, Nippon, DSP)."""
+def months_back(today: date, n: int) -> list[tuple[int, int]]:
+    """(year, month) of the `n` calendar months before `today`'s month, newest first (the month in progress has no
+    month-end portfolio yet)."""
+    y, m, out = today.year, today.month, []
+    for _ in range(n):
+        y, m = (y, m - 1) if m > 1 else (y - 1, 12)
+        out.append((y, m))
+    return out
+
+
+async def _links(http: Any, source: str, key: str, months: int, today: date) -> list[Any]:
+    """The scheme's monthly file links: one GET of the house's page, or (quant) one POST per month, newest first,
+    until `months` months list the scheme (at most months + 1 requests)."""
+    src = AMC_SOURCES[source]
+    if source != "quant":
+        page = await http.get(src.page)
+        if not page.ok:
+            raise AmcPortfolioError(f"{src.amc}'s disclosure page answered HTTP {page.status}")
+        return pick_links(source, discover_links(source, page.text, src.page), key, months)
+    got: list[Any] = []
+    for y, m in months_back(today, months + 1):
+        page = await http.post(QUANT_LIST_URL, content=quant_list_body(y, m),
+                               headers={"Content-Type": "application/json; charset=utf-8", "Referer": src.page,
+                                        "X-Requested-With": "XMLHttpRequest"})  # fmt: skip
+        if not page.ok:
+            raise AmcPortfolioError(f"{src.amc}'s monthly list answered HTTP {page.status}")
+        got += pick_links(source, discover_links(source, page.text, src.page), key, months)
+        if len({x.month for x in got}) >= months:
+            break
+    return got
+
+
+async def fetch_scheme(store: PortfolioStore, key: str, amc: str | None, *, months: int = 1, client: Any = None,
+                       today: date | None = None) -> dict[str, Any]:  # fmt: skip
+    """Find and download a scheme's latest `months` monthly files from its fund house (PPFAS, Nippon, DSP, quant,
+    Tata)."""
     source = source_for_amc(amc, key)
     if source is None or AMC_SOURCES[source].mode != "auto":
         raise AmcPortfolioError("this fund house's files cannot be found automatically: paste the file link or "
@@ -322,13 +371,11 @@ async def fetch_scheme(store: PortfolioStore, key: str, amc: str | None, *, mont
     http = client or _client()
     fetched, errors = [], []
     try:
-        page = await http.get(src.page)
-        if not page.ok:
-            raise AmcPortfolioError(f"{src.amc}'s disclosure page answered HTTP {page.status}")
-        links = pick_links(source, discover_links(source, page.text, src.page), key, months)
+        links = await _links(http, source, key, months, today or date.today())
         if not links:
             raise AmcPortfolioError(
-                f"no monthly portfolio links found on {src.page} (the page may have changed)"
+                f"no monthly portfolio file for this scheme found on {src.page} (not published yet, or the page "
+                "has changed)"
             )
         have = {m.get("url") for m in store.index()["files"].values()}
         for link in links:
@@ -500,7 +547,7 @@ def fund_detail(
     top = sorted((h for h in p.holdings if h.kind in EQUITY_KINDS), key=lambda h: -h.weight)[:15]
     out.update({
         "top": [{"isin": h.isin, "name": h.name, "industry": h.industry, "weight": _f(h.weight),
-                 "cap": "Foreign" if h.kind == "foreign_equity" else (cap_of(h.isin) or "Unclassified")} for h in top],
+                 "cap": "Foreign" if h.kind == "foreign_equity" else (cap_label(cap_of(h.isin)) or "Unclassified")} for h in top],
         "kinds": [{"kind": k, "label": BUCKET_LABEL.get(k, k), "pct": _f(v)}
                   for k, v in sorted(by_kind.items(), key=lambda kv: -kv[1])],
         "remainder_pct": _f(Decimal(100) - sum(by_kind.values(), ZERO)),
@@ -613,6 +660,125 @@ def lookthrough_exposure(session: Any, prices: dict[int, Any], today: date, *, s
                    "amc": f.amc, "source": source_for_amc(f.amc, f.key or ""),
                    "file": file_status(f.found, today)} for f in funds],
         "overlap": matrix,
+        "coverage": coverage_from_rows(rows, store, today, amfi),
         "unpriced": unpriced,
         "cap_list": cap_meta, "limits": LIMITS, "disclaimer": DISCLAIMER,
     }  # fmt: skip
+
+
+# ----------------------------------------------------------------------------------------------- coverage (#214)
+@dataclass(frozen=True)
+class FundValue:
+    code: str | None
+    name: str
+    value: Decimal | None  # None: no price today
+    amc: str | None = None
+
+
+def fund_status(store: PortfolioStore, code: str | None, name: str, amc: str | None, today: date
+                ) -> tuple[str, str, date | None]:  # fmt: skip
+    """(status, reason, portfolio date) of one held fund: looked_through | not_fetched | unsupported."""
+    have, as_of = store.newest(store.key_for(code, name))
+    if have:
+        old = as_of is None or (today - as_of).days > STALE_DAYS
+        return "looked_through", (as_of.strftime("%b %Y") if as_of else "undated") + " portfolio" + (
+            " (stale)" if old else ""), as_of  # fmt: skip
+    house = house_for(amc, name)
+    if house in AMC_SOURCES:
+        src = AMC_SOURCES[house]
+        if src.mode == "auto":
+            return (
+                "not_fetched",
+                f"{src.amc}: supported, no file fetched yet (the monthly job or Fetch)",
+                None,
+            )
+        return "not_fetched", f"{src.amc}: paste the file link or upload the file", None
+    if house in AMC_UNSUPPORTED:
+        u = AMC_UNSUPPORTED[house]
+        return "unsupported", f"{u.amc}: {u.reason}", None
+    return "unsupported", UNKNOWN_HOUSE, None
+
+
+def coverage(total: Decimal | None, funds: Iterable[FundValue], store: PortfolioStore, today: date
+             ) -> dict[str, Any]:  # fmt: skip
+    """How much of the portfolio the look-through can see: the share of the portfolio's value in funds whose holdings
+    are NOT looked through, and why per fund. Unknown stays unknown: a fund without a price (or no portfolio value)
+    makes the share None, never 0."""
+    by_key: dict[str, dict[str, Any]] = {}
+    for f in funds:
+        status, reason, as_of = fund_status(store, f.code, f.name, f.amc, today)
+        k = store.key_for(f.code, f.name) or f.code or f.name
+        cur = by_key.get(k)
+        if cur is None:
+            by_key[k] = {"code": f.code, "name": f.name, "value": f.value, "status": status, "reason": reason,
+                         "month": as_of.strftime("%Y-%m") if as_of else None,
+                         "stale": status == "looked_through" and (as_of is None or (today - as_of).days > STALE_DAYS)}  # fmt: skip
+        else:  # the same scheme in two folios/plans
+            cur["value"] = None if cur["value"] is None or f.value is None else cur["value"] + f.value
+    rows = list(by_key.values())
+    unpriced = sum(1 for r in rows if r["value"] is None)
+    fund_value = sum((r["value"] for r in rows if r["value"] is not None), ZERO)
+    seen = sum((r["value"] for r in rows if r["value"] is not None and r["status"] == "looked_through"), ZERO)
+    blind = fund_value - seen
+    known = bool(total) and total > 0 and not unpriced  # type: ignore[operator]
+    n = {
+        s: sum(1 for r in rows if r["status"] == s) for s in ("looked_through", "not_fetched", "unsupported")
+    }
+    blind_pct = _f(blind * 100 / total) if known else None  # type: ignore[operator]
+    fund_pct = _f(fund_value * 100 / total) if known else None  # type: ignore[operator]
+    missing = n["not_fetched"] + n["unsupported"]
+    why = ", ".join(f"{v} {k.replace('_', ' ')}" for k, v in (("unsupported", n["unsupported"]),
+                                                               ("not_fetched", n["not_fetched"])) if v)  # fmt: skip
+    if not rows:
+        text = None
+    elif blind_pct is None:
+        text = (
+            f"Direct stocks only — the share of the portfolio in funds not looked through is unknown "
+            f"({unpriced} fund(s) without a price today; {missing} of {len(rows)} funds not looked through)"
+        )
+    elif missing:
+        text = (
+            f"Direct stocks only — {blind_pct:.0f} % of the portfolio is in funds not looked through "
+            f"({missing} of {len(rows)} funds: {why})"
+        )
+    else:
+        text = (
+            f"Direct stocks only — funds are {fund_pct:.0f} % of the portfolio; all {len(rows)} are looked "
+            "through on the Look-through page"
+        )
+    return {"funds_total": len(rows), "looked_through": n["looked_through"], "not_fetched": n["not_fetched"],
+            "unsupported": n["unsupported"], "stale": sum(1 for r in rows if r["stale"]), "unpriced": unpriced,
+            "fund_pct": fund_pct, "not_looked_through_pct": blind_pct, "text": text,
+            "funds": [{**r, "value": _f(r["value"])} for r in rows]}  # fmt: skip
+
+
+def coverage_from_rows(rows: Iterable[dict[str, Any]], store: PortfolioStore, today: date,
+                       amfi: dict[str, Any] | None = None) -> dict[str, Any]:  # fmt: skip
+    """`coverage` over report.snapshot rows (open holdings; the total is the priced value, as on the cards)."""
+    amfi = amfi or {}
+    rows = [r for r in rows if not r.get("closed")]
+    total = sum((Decimal(str(r["value"])) for r in rows if r.get("value") is not None), ZERO)
+    funds = []
+    for r in rows:
+        if r.get("asset_type") != "mf":
+            continue
+        nav = amfi.get(r.get("scheme_code") or "")
+        funds.append(FundValue(r.get("scheme_code"), getattr(nav, "name", None) or r.get("name") or "Fund",
+                               Decimal(str(r["value"])) if r.get("value") is not None else None,
+                               getattr(nav, "amc", None)))  # fmt: skip
+    return coverage(total, funds, store, today)
+
+
+def held_mf_codes() -> list[tuple[str | None, str]]:
+    """(scheme code, name) of the mutual funds with open units, from the database (no prices needed)."""
+    from sqlalchemy import select
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import PortfolioHolding, PortfolioLot
+
+    with session_scope() as s:
+        open_ids = {
+            h for (h,) in s.execute(select(PortfolioLot.holding_id).where(PortfolioLot.open_quantity > 0))
+        }
+        return [(h.scheme_code, h.name) for h in s.scalars(select(PortfolioHolding).where(
+            PortfolioHolding.asset_type == "mf")) if h.id in open_ids]  # fmt: skip

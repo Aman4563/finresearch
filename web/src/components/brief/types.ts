@@ -10,6 +10,8 @@ export type Sip = {
 export type LtLot = {
   holding_id: number; name: string; account: string; acquired: string; quantity: number; lt_date: string; days: number;
   gain: number; tax_now: number; tax_later: number; saved: number; older_lots: number; price: number;
+  /** older lots without a date or cost: FIFO sells them first and their tax is unknown */
+  older_unknown?: number; estimate?: boolean; rules_verified?: boolean; rules_note?: string | null;
 };
 export type ElssUnlock = {
   holding_id: number; name: string; account: string; day: string; days: number; units: number; value: number | null; verified: boolean;
@@ -17,7 +19,8 @@ export type ElssUnlock = {
 export type TaxItem = { day: string; kind: string; title: string; verified: boolean; note: string };
 export type AdvanceTax = {
   fy: number; capital_gains_tax: number; dividends: number; dividend_tax: number; total: number; threshold: number;
-  below_threshold: boolean; next: { due: string; cumulative_pct: number; amount: number; days: number } | null;
+  below_threshold: boolean; complete?: boolean; unclassified?: { count: number; gain: number | null; detail: string };
+  rules_verified?: boolean; rules_note?: string | null; next: { due: string; cumulative_pct: number; amount: number; days: number } | null;
   schedule: { due: string; cumulative_pct: number; label: string; amount: number; past: boolean }[];
   status: string; note: string; caveats: string[];
 };
@@ -56,7 +59,7 @@ export type CalendarView = {
 
 export type Strip = {
   has_portfolio: boolean; value?: number | null; as_of?: string | null; complete?: boolean; holdings?: number;
-  week?: ValueChange | null; ltcg_headroom?: number; ltcg_limit?: number;
+  week?: ValueChange | null; ltcg_headroom?: number | null; ltcg_limit?: number;
   top_alert?: { message: string; at: string; level: string } | null;
   net_worth?: { net_worth: number; liabilities: number; assets: number; date: string } | null; unpriced?: number; daily_pass?: string | null; note?: string;
 };

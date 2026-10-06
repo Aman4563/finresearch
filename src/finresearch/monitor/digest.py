@@ -200,7 +200,9 @@ def build_brief(s: Session, now: datetime) -> dict[str, Any]:
     for x in lots:
         if (date.fromisoformat(x["lt_date"]) - today).days <= EVENT_DAYS:
             events.append({"day": x["lt_date"], "kind": "long_term", "title": f"{x['name']}: a lot turns long-term "
-                           f"(tax on a sale: {_inr(x['tax_now'])} now vs {_inr(x['tax_later'])} after)",
+                           f"(tax on a sale: {_inr(x['tax_now'])} now vs {_inr(x['tax_later'])} after"
+                           + ("; an estimate: this year's tax is incomplete" if x.get("estimate") else "")
+                           + (f"; {x['rules_note']}" if x.get("rules_note") else "") + ")",
                            "path": "/portfolio"})  # fmt: skip
     elss_month = elss_this_month(s, data, today) if has_pf else []
     for x in elss_month:

@@ -83,6 +83,13 @@ export function HowMonitoringWorks() {
                 the weekly digest on {s.portfolio.digest_day} at <T>{s.portfolio.digest}</T>.
               </Row>
             )}
+            {s.lookthrough && (
+              <Row head="Fund look-through">
+                fund houses publish each month-end portfolio within {s.lookthrough.sebi_days} days (SEBI); from day {s.lookthrough.from_day} to
+                day {s.lookthrough.to_day} of the month, once a day after <T>{s.lookthrough.after}</T>, the latest file of every held fund whose
+                fund house the app can read is fetched (nothing once it is stored); the log says why for each other fund.
+              </Row>
+            )}
             <Row head="Forecasts">
               signals and verdicts logged in the forecast ledger are scored once their date has passed, checked every {s.forecasts.every_min} minutes
               after <T>{s.forecasts.after}</T>.

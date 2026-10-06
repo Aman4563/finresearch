@@ -97,6 +97,8 @@ export type Snapshot = {
   pending?: number;
   targets?: Record<string, number>;
   drift?: { label: string; weight_pct: number; target_pct: number; drift_pp: number }[];
+  /** #214: the share of the portfolio in funds not looked through; null = unknown (shown as such) */
+  lookthrough_coverage?: import("./lookthrough-panel").Coverage | null;
 };
 
 export const ASSET_CLASSES = ["Stocks", "Equity funds", "Debt funds", "Gold & international funds", "Sovereign Gold Bonds", "Other"] as const;
@@ -144,11 +146,15 @@ export type ImportRow = { id: number; kind: string; source: string; filename: st
 export type FySummary = {
   fy: number; label: string; disposals: number; stcg: number; ltcg: number; equity_ltcg: number; exempt: number; unknown: number;
   intraday: number;
-  exemption: { limit: number; used: number; remaining: number };
+  /** false when a disposal can't be classified short/long-term (#213): tax, cess and total are then null */
+  complete: boolean; unclassified: Unclassified; rules_verified: boolean; rules_note: string | null;
+  exemption: { limit: number; used: number; remaining: number; complete: boolean };
   slices: { bucket: string; rate_pct: number | null; slab: boolean; long: boolean; gain: number; set_off: number; exempted: number; taxable: number }[];
   losses_carried: { short: number; long: number };
-  tax: number; cess: number; total: number; slab_rate_pct: number; notes: string[];
+  tax: number | null; cess: number | null; total: number | null; total_classified: number; slab_rate_pct: number; notes: string[];
 };
+
+export type Unclassified = { count: number; gain: number | null; no_cost: number; no_date: number; detail: string };
 
 export type DisposalRow = {
   holding_id: number; name: string; account: string; fy: number; fy_label: string; tax_class: TaxClass; acquired: string | null;
@@ -159,7 +165,7 @@ export type DisposalRow = {
 
 export type HarvestIdea = {
   holding_id: number; name: string; account: string; sell_units: number; price: number; value: number; est_costs: number; why: string;
-  gain?: number; future_tax_saved_up_to?: number; loss?: number; short_term?: boolean; tax_saved?: number;
+  gain?: number; future_tax_saved_up_to?: number; loss?: number; short_term?: boolean; tax_saved?: number; estimate?: boolean;
 };
 
 export type TaxRule = {
@@ -173,10 +179,12 @@ export type TaxView = {
   fys: FySummary[];
   disposals: DisposalRow[];
   harvest: {
-    fy: number; label: string; days_left: number; deadline: string; exemption_remaining: number; tax_so_far: number;
+    fy: number; label: string; days_left: number; deadline: string; exemption_remaining: number | null; tax_so_far: number | null;
+    complete: boolean; unclassified: Unclassified; rules_verified: boolean; rules_note: string | null;
     gain_harvest: HarvestIdea[]; loss_harvest: HarvestIdea[]; notes: string[]; verify: string;
   };
   rules: TaxRule[];
+  rules_verified_through: { fy: number; label: string; source: string };
   verify: string;
   caveats: string[];
 };
