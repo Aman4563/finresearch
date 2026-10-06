@@ -207,5 +207,7 @@ export type AisCheck = {
 export type AisList = {
   statements: { fy: number; label: string; format: string; rows: number; ignored: number; imported_at: string | null; warnings: string[] }[];
   app_years: { fy: number; label: string }[];
+  /** formats (json | pdf) a saved import has validated: no unrecognised rows and matching totals (#216) */
+  validated?: Record<string, { validated_at: string; fy: number }>;
 };
 export type AisImport = { dry_run: boolean; already_imported: number | null; fy: number; format: string; rows: number; ignored: number; warnings: string[]; check: AisCheck };
