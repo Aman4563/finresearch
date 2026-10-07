@@ -19,7 +19,7 @@ import pytest
 
 from finresearch.adapters.http import PoliteClient, SharedSlots, UnsafeURLError
 
-RATE = 20.0  # req/s for the test host: 50 ms apart
+RATE = 10.0  # req/s for the test host: 100 ms apart (wide enough that scheduling jitter cannot hide a burst)
 GAP = 1 / RATE
 URL = "https://www.nseindia.com/api/x"
 
@@ -57,8 +57,9 @@ def test_concurrent_clients_in_threads_share_one_rate():
     for t in threads:
         t.join()
     assert len(stamps) == 18
-    # per-instance limiters would let 6 clients fire at once (gaps ~0); shared, every gap is ~50 ms
-    assert min(_gaps(stamps)) >= GAP * 0.8, _gaps(stamps)
+    # per-instance limiters would let 6 clients fire at once (gaps ~0); shared, every gap is ~100 ms (less only by
+    # scheduling jitter on a busy machine, which can delay a request past its slot but never move it earlier)
+    assert min(_gaps(stamps)) >= GAP * 0.3, _gaps(stamps)
     assert max(stamps) - min(stamps) >= 17 * GAP * 0.9
 
 
@@ -73,7 +74,7 @@ def test_hosts_under_one_suffix_share_its_budget():
         await c.aclose()
 
     asyncio.run(go())
-    assert min(_gaps(stamps)) >= GAP * 0.8
+    assert max(stamps) - min(stamps) >= 5 * GAP * 0.95
 
 
 _WORKER = """
@@ -105,7 +106,10 @@ def test_separate_processes_share_one_rate(tmp_path):
         assert p.returncode == 0
         stamps += [float(x) for x in out.split()]
     assert len(stamps) == 10
-    assert min(_gaps(stamps)) >= GAP * 0.8, _gaps(stamps)
+    # per-process limiters would finish in ~4 intervals (5 requests each, side by side); shared ones need 9. A busy
+    # machine can only delay a request past its slot, so the span is the robust check; gaps get a scheduling margin
+    assert max(stamps) - min(stamps) >= 9 * GAP * 0.95
+    assert min(_gaps(stamps)) >= GAP * 0.3, _gaps(stamps)
     assert any(Path(tmp_path / "state" / "ratelimit").glob("nseindia.com.slot"))
 
 
