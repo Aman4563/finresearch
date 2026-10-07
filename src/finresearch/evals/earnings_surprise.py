@@ -16,6 +16,7 @@ from typing import Any
 from finresearch.config import REPO_ROOT
 from finresearch.evals.earnings_harvest import DATA_DIR, MARKET
 from finresearch.evals.stock_backtest import COST_BUY, COST_SELL
+from finresearch.evals.timing import Feature, check
 from finresearch.fincalc import surprise as S
 from finresearch.fincalc.signals import adjust_for_actions
 
@@ -104,6 +105,10 @@ def build_events(data: dict[str, dict[str, Any]], members: Callable[[date], froz
             if sym not in members(t0):
                 drop("not a Nifty 50 member at t0")
                 continue
+            # point-in-time invariant (#244): the surprise is known from the broadcast, by the close of the event
+            # session t0 (the drift trade enters at the next close)
+            check([Feature("sue", inf["announced"], "NSE broadcast time")],
+                  datetime.combine(t0, S.MARKET_CLOSE, S.IST), context=f"{sym} {end}")  # fmt: skip
             sue, why = S.sue(eps_q, end, acts)
             if sue is None:
                 drop(f"no EPS SUE: {why.split(' (')[0] if why else '?'}")

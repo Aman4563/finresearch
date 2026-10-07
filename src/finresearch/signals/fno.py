@@ -49,7 +49,7 @@ RISK_NOTICE = {
     "url": SEBI_STUDY_URL,
     "date": "2026-08-20",
 }  # fmt: skip
-RATE = 0.065  # risk-free rate default for greeks and discounting (the existing /fno default; state it)
+RATE = 0.065  # analyse()'s default only; the API and the signal pass FBIL's par yield at the expiry (signals.rates)
 EV_TOLERANCE = 1.0  # EV_rw must be ≥ −EV_TOLERANCE × costs
 DRAWDOWN_PCT, DRAWDOWN_REPEATS = 0.20, 20  # risk-of-ruin style check: P(20 % drawdown within 20 repeats)
 MIN_DTE_FOR_IV = 7  # the IV series reads the nearest expiry at least a week away
@@ -530,9 +530,13 @@ async def fno_signal(instrument: str, ctx: dict[str, Any]) -> Signal:
                          "budget. Set it (and the % limit) on the profile page.")  # fmt: skip
     series = iv_series(sym)
     drift = float(ctx["drift"]) if ctx.get("drift") not in (None, "") else None
+    from finresearch.signals.rates import risk_free
+
+    rinfo = await risk_free(max((expiry - today).days, 0.5) / 365)  # FBIL par yield at the expiry (#244)
     a = analyse(chain, lot, legs, today=today, closes=closes, iv_series=[v for _, v, _ in series], capital=capital,
                 max_loss_pct=float(profile.fno_max_loss_pct), brokerage=float(profile.fno_brokerage_per_order_inr),
-                drift=drift)  # fmt: skip
+                rate=rinfo["rate"], drift=drift)  # fmt: skip
+    a["rate_source"] = rinfo
     if a["risk_neutral"] is None:
         return no_signal(f"the chain has no ATM implied volatility for {sym} {expiry:%d-%b-%Y}")
     held = str(ctx.get("held", "")).lower() in ("1", "true", "yes")
@@ -551,6 +555,7 @@ async def fno_signal(instrument: str, ctx: dict[str, Any]) -> Signal:
                          + (f"these legs risk ₹{_inr(loss)}, so at most {multiple}× them." if loss else
                             "the loss of these legs is unlimited, so no size fits."))}  # fmt: skip
     caveat = caveats(a, notice)
+    caveat.append(f"Risk-free rate {rinfo['rate']:.2%} (continuous): {rinfo['source']}; {rinfo['note']}.")
     if failed:
         caveat.insert(0, "Not passing: " + "; ".join(failed) + ".")
     return Signal(

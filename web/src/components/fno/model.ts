@@ -18,6 +18,7 @@ export type Leg = { right: "call" | "put" | "future"; strike: string; side: "buy
 export type ChargeRate = { key: string; rate_pct: number; basis: string; effective_from: string; source: string; status: "verified" | "secondary" | "unconfirmed"; note: string };
 export type Costs = { lines: Record<string, number>; total: number; turnover: number; orders: number; rates: ChargeRate[] };
 export type Outcome = { vol: number; drift: number; pop: number; ev: number; ev_gross: number; quantiles: Record<string, number>; window?: string } | null;
+export type RateInfo = { rate: number; par_yield: number | null; tenor_years: number | null; as_of: string | null; fallback: boolean; source: string; note: string };
 export type RiskNotice = { headline: string; text: string; source: string; url: string; date: string };
 export type Analysis = {
   spot: number;
@@ -50,7 +51,12 @@ export type Result = {
   max_profit: number | null;
   max_loss: number | null;
   net_premium: number;
-  probability_of_profit: number | null;
+  /** risk-neutral model probability after costs (lognormal), not a forecast (#244) */
+  model_probability_of_profit: number | null;
+  /** @deprecated use model_probability_of_profit; kept by the API for one release */
+  probability_of_profit?: number | null;
+  /** where the risk-free rate came from: FBIL's par yield at the expiry, its dated fallback curve, or the fixed 6.5 % */
+  rate?: RateInfo;
   net_greeks: Record<string, number>;
   curve: [number, number][];
   lot_size: number;

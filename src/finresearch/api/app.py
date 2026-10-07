@@ -119,7 +119,13 @@ class Strategy(BaseModel):
     symbol: str
     expiry: date
     legs: list[StrategyLeg] = Field(min_length=1, max_length=8)
-    rate: Decimal = Field(Decimal("0.065"), description="Risk-free rate for greeks (state its source)")
+    rate: Decimal | None = Field(
+        None,
+        ge=-1,
+        le=1,
+        description="Risk-free rate for greeks (continuous, fraction); "
+        "default: FBIL's G-sec par yield at the expiry (signals.rates)",
+    )
     drift: Decimal | None = Field(None, ge=-1, le=1, description="Real-world annual drift; default = rate")
     charge_overrides: dict[str, Decimal] | None = Field(
         None, description="fincalc.charges keys -> rate (fraction)"
@@ -1167,6 +1173,10 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
             raise HTTPException(422, f"no NSE lot size for {sym} {body.expiry:%b-%y}")
         spot = float(chain.underlying)
         t = max((body.expiry - now_ist().date()).days, 0.5) / 365
+        from finresearch.signals.rates import risk_free, user_rate
+
+        rinfo = user_rate(float(body.rate)) if body.rate is not None else await risk_free(t)
+        rate = rinfo["rate"]
         by_strike = {r.strike: r for r in chain.rows}
         legs, greeks, notes = [], {"delta": 0.0, "gamma": 0.0, "vega": 0.0, "theta": 0.0}, []
         for leg in body.legs:
@@ -1190,12 +1200,12 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
             iv = (
                 float(quote.iv) / 100
                 if quote and quote.iv
-                else o.implied_vol(leg.right, premium, spot, float(leg.strike), t, float(body.rate))
+                else o.implied_vol(leg.right, premium, spot, float(leg.strike), t, rate)
             )
             if not iv:
                 notes.append(f"no implied volatility for {leg.right} {leg.strike}; its greeks are left out")
                 continue
-            g = o.greeks(leg.right, spot, float(leg.strike), t, float(body.rate), iv)
+            g = o.greeks(leg.right, spot, float(leg.strike), t, rate, iv)
             for k in greeks:
                 greeks[k] += getattr(g, k) * qty
         from finresearch.fincalc.charges import KEYS
@@ -1216,7 +1226,7 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
             a = fs.analyse(chain, lot, legs_in, today=today, closes=closes,
                            iv_series=[v for _, v, _ in fs.iv_series(sym)], capital=float(profile.fno_capital_inr),
                            max_loss_pct=float(profile.fno_max_loss_pct),
-                           brokerage=float(profile.fno_brokerage_per_order_inr), rate=float(body.rate),
+                           brokerage=float(profile.fno_brokerage_per_order_inr), rate=rate,
                            drift=None if body.drift is None else float(body.drift),
                            overrides=body.charge_overrides)  # fmt: skip
         except ValueError as e:
@@ -1225,7 +1235,11 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
         return {"symbol": sym, "expiry": body.expiry.isoformat(), "spot": spot, "lot_size": lot, "as_of": _iso(chain.as_of),
                 "breakevens": prof.breakevens, "max_profit": _money(prof.max_profit), "max_loss": _money(prof.max_loss),
                 "net_premium": _money(prof.net_premium),
-                "probability_of_profit": None if rn is None else rn["pop"],  # risk-neutral, after costs
+                # risk-neutral, after costs: a model probability under a lognormal price, not a forecast (#244)
+                "model_probability_of_profit": None if rn is None else rn["pop"],
+                "probability_of_profit": None if rn is None else rn["pop"],  # deprecated alias, one release
+                "deprecated": {"probability_of_profit": "use model_probability_of_profit; removed in the next release"},
+                "rate": rinfo,
                 "net_greeks": {k: round(v, 4) for k, v in greeks.items()},
                 "curve": [(round(x, 2), round(y, 2)) for x, y in prof.curve[:: max(1, len(prof.curve) // 120)]],
                 "analysis": {k: v for k, v in a.items() if k not in ("legs", "breakevens", "max_profit", "net_premium")},
