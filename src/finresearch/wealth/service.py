@@ -137,8 +137,11 @@ def _book(s: Session, first: date | None, ser: Any, why: str | None) -> Book:
         goals=list(s.scalars(select(WealthGoal).order_by(WealthGoal.target_date, WealthGoal.id))),
         policies=list(s.scalars(select(WealthPolicy).order_by(WealthPolicy.id))),
         snaps=list(s.scalars(select(PortfolioSnapshot).order_by(PortfolioSnapshot.day))),
-        has_portfolio=s.scalar(select(PortfolioLot.id).where(PortfolioLot.open_quantity > OPEN).limit(1)) is not None,
-        first_txn=first, series=ser, series_why=why,
+        has_portfolio=s.scalar(select(PortfolioLot.id).where(PortfolioLot.open_quantity > OPEN).limit(1))
+        is not None,
+        first_txn=first,
+        series=ser,
+        series_why=why,
     )
 
 
@@ -254,7 +257,10 @@ def portfolio_value_on(b: Book, on: date, today: date | None = None) -> tuple[fl
     sn = portfolio_on(b.snaps, on)
     if sn is None:
         if b.has_portfolio:
-            return None, "portfolio: no valuation on or before this day (open /portfolio): left out of the total"
+            return (
+                None,
+                "portfolio: no valuation on or before this day (open /portfolio): left out of the total",
+            )
         return 0.0, None
     if not sn.complete:
         return f(sn.value), (f"portfolio: the valuation of {sn.day.isoformat()} is incomplete (a holding without a "
@@ -320,7 +326,11 @@ def history(b: Book, today: date, max_points: int = 120) -> list[dict[str, Any]]
     """Month-end net worth from the earliest dated entry to today, plus today. Each month uses only what was known
     on that day: the portfolio's reconstructed value (portfolio.series; today: the latest "as shown" valuation),
     manual values dated on or before it (FD/RD/loan schedules from their start dates)."""
-    starts = [sn.day for sn in b.snaps] + [ln.start_date for ln in b.loans] + ([b.first_txn] if b.first_txn else [])
+    starts = (
+        [sn.day for sn in b.snaps]
+        + [ln.start_date for ln in b.loans]
+        + ([b.first_txn] if b.first_txn else [])
+    )
     starts += [v.day for vs in b.vals.values() for v in vs]
     starts += [a.start_date for a in b.assets if a.start_date and a.kind in ("fd", "rd")]
     starts = [d for d in starts if d <= today]

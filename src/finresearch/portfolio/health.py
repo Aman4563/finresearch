@@ -92,7 +92,9 @@ def priced(rows: list[dict[str, Any]]) -> dict[str, Any]:
     pending = sum(1 for r in held if r.get("pending"))
     # a statement price past its age limit (valuation.statement_stale) is not a current price (#238)
     stale = sum(1 for r in held if r.get("price_stale") and not r.get("pending"))
-    ok = sum(1 for r in held if r.get("value") is not None and not r.get("pending") and not r.get("price_stale"))
+    ok = sum(
+        1 for r in held if r.get("value") is not None and not r.get("pending") and not r.get("price_stale")
+    )
     cov = (ok * 100 / len(held)) if held and not pending else None if held else 100.0
     detail = f"{ok} of {len(held)} holding(s) priced" + (f"; {pending} still loading" if pending else "")
     if stale:
@@ -194,7 +196,9 @@ def history(perf: dict[str, Any] | None, error: str | None, has_holdings: bool) 
         short = [f"{k} ({n})" for k, n in HISTORY_NEED.items() if returns < n]
         detail = f"{returns} daily returns" + (f"; too short for {', '.join(short)}" if short else "")
         rec = (perf or {}).get("reconciliation") or {}
-        if rec.get("differ"):  # the "as shown" snapshots against the canonical history (portfolio.series, #239)
+        if rec.get(
+            "differ"
+        ):  # the "as shown" snapshots against the canonical history (portfolio.series, #239)
             detail += (f"; {len(rec['differ'])} of {rec['checked']} saved valuation day(s) differ from it by more "
                        f"than {rec['tolerance_pct']:g} % (latest {rec['differ'][-1]['day']}: "
                        f"{rec['differ'][-1]['reason']})")  # fmt: skip

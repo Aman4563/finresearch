@@ -176,7 +176,9 @@ async def daily_pass(deps: Any, now: datetime, *, full: bool = True) -> dict[str
     return res
 
 
-HISTORY_TIMEOUT_S = 600  # the first build reads years of closes (later ones only the missing days: PriceStore)
+HISTORY_TIMEOUT_S = (
+    600  # the first build reads years of closes (later ones only the missing days: PriceStore)
+)
 
 
 async def live_history(holdings: list[Any], today: date) -> Any:

@@ -63,7 +63,12 @@ def test_each_difference_carries_its_reason(snap, series_kw, added, reason):
     out = one(ser(**series_kw), snap, added)
     (d,) = out["differ"]
     # 90,000 vs 1,00,000: -₹10,000, -10 %
-    assert (d["snapshot"], d["reconstructed"], d["diff"], d["diff_pct"]) == (90_000.0, 100_000.0, -10_000.0, -10.0)
+    assert (d["snapshot"], d["reconstructed"], d["diff"], d["diff_pct"]) == (
+        90_000.0,
+        100_000.0,
+        -10_000.0,
+        -10.0,
+    )
     assert d["reason"].startswith(reason)
     assert out["ok"] is False and out["canonical"].startswith("reconstructed")
 
@@ -77,7 +82,11 @@ def test_days_outside_the_series_and_an_unbuilt_today_are_not_compared():
 
 def test_series_rows_and_value_on():
     s = ser(value=[1.0, 2.0, 3.0, 4.0], complete=[True, False, True, True])
-    assert s.rows() == [(FRI, 1.0, 100_000.0), (TUE, 3.0, 100_000.0), (WED, 4.0, 100_000.0)]  # complete days only
+    assert s.rows() == [
+        (FRI, 1.0, 100_000.0),
+        (TUE, 3.0, 100_000.0),
+        (WED, 4.0, 100_000.0),
+    ]  # complete days only
     assert s.rows(TUE) == [(TUE, 3.0, 100_000.0), (WED, 4.0, 100_000.0)]
     assert s.value_on(date(2026, 9, 27)) == (1.0, True, FRI)  # Sunday -> Friday's close
     assert s.value_on(MON) == (2.0, False, MON)
@@ -141,18 +150,38 @@ def test_wealth_history_reads_past_months_from_the_series(db):
         # the series starts on 3-Aug (e.g. prices only from then): July's month-end is unknown, not ₹0
         _store(s, [date(2026, 8, 3), date(2026, 8, 31), date(2026, 9, 30)], [1000.0, 1100.0, 1200.0])
         # an "as shown" snapshot of 31-Aug that differs (it was taken mid-session): past days ignore it
-        s.add(PortfolioSnapshot(day=date(2026, 8, 31), value=D(5000), invested=D(1000), by_asset={}, complete=True))
-        s.add(PortfolioSnapshot(day=date(2026, 10, 5), value=D(1250), invested=D(1000), by_asset={}, complete=True))
+        s.add(
+            PortfolioSnapshot(
+                day=date(2026, 8, 31), value=D(5000), invested=D(1000), by_asset={}, complete=True
+            )
+        )
+        s.add(
+            PortfolioSnapshot(
+                day=date(2026, 10, 5), value=D(1250), invested=D(1000), by_asset={}, complete=True
+            )
+        )
     with session_scope() as s:
         pts = {p["date"]: p for p in history(load(s), today)}
     assert min(pts) == "2026-07-31"  # the chart starts with the first trade (1-Jul), not the first snapshot
     jul = pts["2026-07-31"]
-    assert jul["portfolio"] is None and not jul["complete"] and "before the reconstructed value history" in jul["missing"][0]
+    assert (
+        jul["portfolio"] is None
+        and not jul["complete"]
+        and "before the reconstructed value history" in jul["missing"][0]
+    )
     aug = pts["2026-08-31"]
-    assert (aug["portfolio"], aug["portfolio_day"], aug["portfolio_source"]) == (1100.0, "2026-08-31", "reconstructed")
+    assert (aug["portfolio"], aug["portfolio_day"], aug["portfolio_source"]) == (
+        1100.0,
+        "2026-08-31",
+        "reconstructed",
+    )
     assert pts["2026-09-30"]["portfolio"] == 1200.0
     now = pts["2026-10-05"]  # today: the latest "as shown" valuation
-    assert (now["portfolio"], now["portfolio_day"], now["portfolio_source"]) == (1250.0, "2026-10-05", "as shown")
+    assert (now["portfolio"], now["portfolio_day"], now["portfolio_source"]) == (
+        1250.0,
+        "2026-10-05",
+        "as shown",
+    )
 
 
 def test_data_health_names_the_reconciliation_differences():

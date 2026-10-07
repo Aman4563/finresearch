@@ -401,6 +401,11 @@ class QuoteBatch:
 # is "stale": still shown with its date, but the holding no longer counts as priced for `complete`, the headline and
 # the XIRR say so, and data health counts it (#238). Days are counted Monday-Friday without the exchange holiday list,
 # so a holiday counts as a trading day: a price can turn stale a day early, never late.
+# The other age limits answer different questions and stay separate: metrics.FRESH_DAYS (5 calendar days) is how old
+# the daily pass's whole valuation may be for alerts; monitor.portfolio_daily flags every statement price, and any
+# live price older than STALE_PRICE_DAYS (4 calendar days), for the alert inputs, stricter than this headline rule;
+# history.STALE_DAYS (10 calendar days) is how far the reconstruction forward-fills a missing close before a day
+# counts as incomplete.
 STATEMENT_MAX_AGE_TRADING_DAYS = 5
 
 

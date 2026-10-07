@@ -54,7 +54,9 @@ class Series:
     excluded: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
-    def rows(self, since: date | None = None, *, complete_only: bool = True) -> list[tuple[date, float, float]]:
+    def rows(
+        self, since: date | None = None, *, complete_only: bool = True
+    ) -> list[tuple[date, float, float]]:
         """(day, value, cumulative net invested) rows, the shape metrics.drawdown and digest.value_change take."""
         return [(d, v, i) for d, v, i, c in zip(self.days, self.value, self.invested, self.complete, strict=True)
                 if (since is None or d >= since) and (c or not complete_only)]  # fmt: skip
@@ -143,7 +145,9 @@ def _reason(sn: Snap, ser: Series, i: int, added: list[tuple[date, datetime]]) -
             return (f"{len(late)} transaction(s) dated on or before this day were added after the snapshot was taken "
                     "(a backdated import or edit): the reconstruction includes them")  # fmt: skip
     if ser.days[i] != sn.day:
-        return f"no prices on {sn.day.isoformat()} (not a trading day): compared with the close of {ser.days[i]}"
+        return (
+            f"no prices on {sn.day.isoformat()} (not a trading day): compared with the close of {ser.days[i]}"
+        )
     if sn.updated_at is not None:
         ist = to_ist(sn.updated_at)
         if ist.date() == sn.day and ist.time() < CLOSE_IST:
@@ -184,5 +188,7 @@ def reconcile_db(s: Session, ser: Series, today: date) -> dict[str, Any]:
 
     snaps = [Snap(x.day, float(x.value), bool(x.complete), x.updated_at)
              for x in s.scalars(select(PortfolioSnapshot).order_by(PortfolioSnapshot.day))]  # fmt: skip
-    added = [(d, at) for d, at in s.execute(select(PortfolioTxn.day, PortfolioTxn.created_at)) if at is not None]
+    added = [
+        (d, at) for d, at in s.execute(select(PortfolioTxn.day, PortfolioTxn.created_at)) if at is not None
+    ]
     return reconcile(ser, snaps, added, today)

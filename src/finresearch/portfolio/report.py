@@ -214,7 +214,9 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
     tl = timeline(data)
     realised_unknown = int(tot["realised_unknown"])
     # complete: every open holding has a current (not stale) price and a known cost, and every sale a known cost
-    complete = unpriced == 0 and stale == 0 and unknown_cost == 0 and realised_unknown == 0 and tot["value"] > 0
+    complete = (
+        unpriced == 0 and stale == 0 and unknown_cost == 0 and realised_unknown == 0 and tot["value"] > 0
+    )
     return {
         "as_of": today.isoformat(), "holdings": rows, "complete": complete,
         "invested": tl[-1]["invested"] if tl else 0.0,

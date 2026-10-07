@@ -90,7 +90,15 @@ def test_advance_tax_alert_is_unknown_when_the_year_has_an_unclassified_sale(cli
 
 def priced_holding(c, day: str = "2026-10-05") -> int:
     """Example Beta: 5 units bought at ₹100, priced only by a broker statement close of ₹120 on `day`."""
-    t = add(c, name="Example Beta Ltd", isin="INE000Y01012", day="2026-01-05", kind="buy", quantity="5", price="100")
+    t = add(
+        c,
+        name="Example Beta Ltd",
+        isin="INE000Y01012",
+        day="2026-01-05",
+        kind="buy",
+        quantity="5",
+        price="100",
+    )
     set_meta(holding_id=t["holding_id"], statement_price={"price": "120", "day": day, "source": "Zerodha"})
     return t["holding_id"]
 
@@ -124,7 +132,9 @@ def test_statement_price_age_limit_counts_weekdays():
     why = statement_stale(p("2026-09-25"), TODAY)
     assert why == "Zerodha statement close of 2026-09-25 is 6 trading days old (over 5)"
     assert statement_stale(p(None), TODAY) == "Zerodha statement close with no date"
-    assert statement_stale(PriceInfo(D("120"), "2026-01-01", "NSE quote"), TODAY) is None  # live: not this rule
+    assert (
+        statement_stale(PriceInfo(D("120"), "2026-01-01", "NSE quote"), TODAY) is None
+    )  # live: not this rule
     assert statement_stale(p("2026-08-01", "CAMS statement NAV"), TODAY) is not None  # fund NAVs too
 
 
@@ -160,9 +170,14 @@ def test_xirr_reason_names_the_stale_price(client):
     snap = client.get("/api/portfolio").json()
     (row,) = snap["holdings"]
     assert row["xirr"] is not None
-    assert row["xirr_reason"].startswith("today's value uses an old price: Zerodha statement close of 2026-08-06")
+    assert row["xirr_reason"].startswith(
+        "today's value uses an old price: Zerodha statement close of 2026-08-06"
+    )
     assert snap["summary"]["xirr"] is not None
-    assert "1 holding(s) valued at a statement price more than 5 trading days old" in snap["summary"]["xirr_reason"]
+    assert (
+        "1 holding(s) valued at a statement price more than 5 trading days old"
+        in snap["summary"]["xirr_reason"]
+    )
 
 
 # --------------------------------------------------------------------------- (a) net worth without a valuation
@@ -189,7 +204,11 @@ def test_net_worth_says_when_the_valuation_was_incomplete(client):
 
     add(client, day="2026-01-05", kind="buy", quantity="5", price="100")
     with session_scope() as s:
-        s.add(PortfolioSnapshot(day=date(2026, 10, 2), value=D(600), invested=D(500), by_asset={}, complete=False))
+        s.add(
+            PortfolioSnapshot(
+                day=date(2026, 10, 2), value=D(600), invested=D(500), by_asset={}, complete=False
+            )
+        )
     with session_scope() as s:
         nw = net_worth_on(load(s), TODAY)
     assert nw["portfolio"] == 600.0 and nw["complete"] is False

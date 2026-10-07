@@ -641,13 +641,11 @@ def test_performance_stores_the_canonical_history_and_reconciles_snapshots(api):
     10,000 × 10.1 = 1,02,625."""
     from datetime import datetime, timezone
 
-    from finresearch.db import session_scope
-    from finresearch.db.models import PortfolioSnapshot
-    from finresearch.portfolio import series
-
     from sqlalchemy import update
 
-    from finresearch.db.models import PortfolioTxn
+    from finresearch.db import session_scope
+    from finresearch.db.models import PortfolioSnapshot, PortfolioTxn
+    from finresearch.portfolio import series
 
     ist = timezone(timedelta(hours=5, minutes=30))
     with session_scope() as s:  # the trades were entered on 5-Jan, before either snapshot
@@ -661,7 +659,12 @@ def test_performance_stores_the_canonical_history_and_reconciles_snapshots(api):
     rec = p["reconciliation"]
     assert rec["checked"] == 2 and rec["ok"] is False
     (d,) = rec["differ"]
-    assert (d["day"], d["snapshot"], d["reconstructed"], d["diff"]) == ("2026-01-08", 110000.0, 102625.0, 7375.0)
+    assert (d["day"], d["snapshot"], d["reconstructed"], d["diff"]) == (
+        "2026-01-08",
+        110000.0,
+        102625.0,
+        7375.0,
+    )
     assert d["diff_pct"] == 7.19 and d["reason"].startswith("the price basis differs")
     with session_scope() as s:
         ser, why = series.load(s)

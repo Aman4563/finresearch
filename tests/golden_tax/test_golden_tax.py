@@ -143,17 +143,23 @@ def compare(case: dict[str, Any], got: dict[str, Any]) -> dict[str, tuple[Any, A
 @pytest.mark.parametrize("path", CASES, ids=[p.stem for p in CASES])
 def test_golden_case(path: Path):
     case = json.loads(path.read_text())
-    assert case["derivation"] and case["rules"], "every case documents its hand derivation and the rule it applies"
+    assert case["derivation"] and case["rules"], (
+        "every case documents its hand derivation and the rule it applies"
+    )
     diffs = compare(case, run_engine(case))
     known = case.get("known_divergence") or {}
     for field, d in known.items():
-        assert field in diffs, f"{field}: documented as a divergence but the engine now agrees; remove the entry"
+        assert field in diffs, (
+            f"{field}: documented as a divergence but the engine now agrees; remove the entry"
+        )
         engine_now = diffs.pop(field)[1]
         assert engine_now == _norm(field.rsplit(".", 1)[-1], d["engine"]), (
-            f"{field}: the engine moved from its documented value {d['engine']} to {engine_now}")
+            f"{field}: the engine moved from its documented value {d['engine']} to {engine_now}"
+        )
         assert d.get("reason"), f"{field}: a known divergence needs its reason"
     assert not diffs, "engine disagrees with the hand derivation:\n" + "\n".join(
-        f"  {k}: expected {a}, engine {b}" for k, (a, b) in sorted(diffs.items()))
+        f"  {k}: expected {a}, engine {b}" for k, (a, b) in sorted(diffs.items())
+    )
 
 
 def test_corpus_size_and_coverage():
