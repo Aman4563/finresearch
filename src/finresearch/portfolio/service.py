@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
 from typing import Any
@@ -23,6 +23,7 @@ from finresearch.db.models import (
     PortfolioLot,
     PortfolioTxn,
 )
+from finresearch.portfolio.dedupe import Check, check, check_fund_baselines, fund_baseline_holdings
 from finresearch.portfolio.importers import (
     ClosingBalance,
     ImportedTxn,
@@ -43,6 +44,18 @@ def events_of(txns: Iterable[PortfolioTxn]) -> list[Event]:
 def rebuild(s: Session, holding_id: int) -> LotBook:
     """Replace a holding's lots and disposals with a fresh FIFO replay of its transactions."""
     txns = s.scalars(select(PortfolioTxn).where(PortfolioTxn.holding_id == holding_id)).all()
+    h = s.get(PortfolioHolding, holding_id)
+    if (
+        h is not None and h.asset_type == "mf"
+    ):  # a broker fund baseline a CAS covers is ignored (portfolio.dedupe)
+        from finresearch.portfolio.dedupe import superseded_baselines
+
+        sup = superseded_baselines(s, h, txns)
+        for t in txns:
+            m = dict(t.meta or {})
+            if sup.get(t.id) != m.get("superseded_by"):
+                m.pop("superseded_by", None)
+                t.meta = {**m, **({"superseded_by": sup[t.id]} if t.id in sup else {})}
     book = build_lots(events_of(txns))
     s.execute(delete(PortfolioDisposal).where(PortfolioDisposal.holding_id == holding_id))
     s.execute(delete(PortfolioLot).where(PortfolioLot.holding_id == holding_id))
@@ -60,7 +73,6 @@ def rebuild(s: Session, holding_id: int) -> LotBook:
                                 acquired=d.acquired, sold=d.sold, quantity=d.quantity, cost=d.cost,
                                 proceeds=d.proceeds, stt_paid=d.stt_paid,
                                 origin="intraday" if d.intraday else d.origin))  # fmt: skip
-    h = s.get(PortfolioHolding, holding_id)
     if h is not None:
         h.meta = {**(h.meta or {}), "lot_warnings": book.warnings[:20]}
         h.updated_at = func.now()
@@ -107,31 +119,46 @@ def get_or_create_holding(s: Session, t: ImportedTxn) -> PortfolioHolding:
 @dataclass
 class Applied:
     added: int
-    duplicates: int
+    duplicates: int  # the same source imported it before (dedupe_key)
     holdings: set[int]
+    cross_source: list[dict[str, Any]] = field(default_factory=list)  # another source has it: skipped
+    conflicts: list[dict[str, Any]] = field(default_factory=list)  # partial overlaps: skipped, review
+    superseded_baselines: list[dict[str, Any]] = field(default_factory=list)
 
 
-def add_txns(s: Session, txns: list[ImportedTxn], import_id: int | None = None) -> Applied:
+class DuplicateEntry(ValueError):
+    """A manual entry that another source already has (portfolio.dedupe). The message names that source."""
+
+
+def _split(s: Session, txns: list[ImportedTxn]) -> tuple[list[tuple[ImportedTxn, str]], int, Check]:
+    """(rows to add with their dedupe keys, same-source duplicates, the cross-source check of the rest)."""
     keys = assign_dedupe_keys(txns)
     existing = (
         set(s.scalars(select(PortfolioTxn.dedupe_key).where(PortfolioTxn.dedupe_key.in_(keys))))
         if keys
         else set()
     )
-    added, dup, touched = 0, 0, set()
-    for t, key in zip(txns, keys, strict=True):
-        if key in existing:
-            dup += 1
-            continue
+    fresh = [(t, k) for t, k in zip(txns, keys, strict=True) if k not in existing]
+    chk = check(s, [t for t, _ in fresh])
+    ok = {id(t) for t in chk.new}
+    return [(t, k) for t, k in fresh if id(t) in ok], len(txns) - len(fresh), chk
+
+
+def add_txns(s: Session, txns: list[ImportedTxn], import_id: int | None = None) -> Applied:
+    """Add new rows: same-source duplicates (dedupe_key) and rows another source already has (portfolio.dedupe) are
+    skipped; partial overlaps are skipped and reported as conflicts."""
+    rows, dup, chk = _split(s, txns)
+    baselines = check_fund_baselines(s, [t for t, _ in rows], chk)
+    added, touched = 0, set()
+    for t, key in rows:
         h = get_or_create_holding(s, t)
         s.add(PortfolioTxn(holding_id=h.id, import_id=import_id, day=t.day, kind=t.kind, quantity=t.quantity,
                            price=t.price, amount=t.amount, charges=t.charges, stt_paid=t.stt_paid, source=t.source,
                            dedupe_key=key, meta=t.meta))  # fmt: skip
-        existing.add(key)
         touched.add(h.id)
         added += 1
     s.flush()
-    return Applied(added, dup, touched)
+    return Applied(added, dup, touched, chk.cross_source, chk.conflicts, baselines)
 
 
 def reconcile(closing: list[ClosingBalance], units: dict[tuple[str, str], Decimal], *,
@@ -162,14 +189,19 @@ def lot_units(s: Session, keys: Iterable[tuple[str, str]] | None = None) -> dict
 
 def preview(s: Session, res: ImportResult) -> dict[str, Any]:
     """What an import would do, without writing: new vs duplicate rows per holding and the reconciliation of the
-    statement's closing units against existing + new transactions (in memory)."""
+    statement's closing units against existing + new transactions (in memory). A row another source already has is
+    "already present from <source>", never "new" (portfolio.dedupe)."""
+    rows, dup, chk = _split(s, res.txns)
+    new = [t for t, _ in rows]
+    baselines = check_fund_baselines(s, new, chk)
     keys = assign_dedupe_keys(res.txns)
-    existing = (
+    seen = (
         set(s.scalars(select(PortfolioTxn.dedupe_key).where(PortfolioTxn.dedupe_key.in_(keys))))
         if keys
         else set()
     )
-    new = [t for t, k in zip(res.txns, keys, strict=True) if k not in existing]
+    status = {id(t): ("already imported" if k in seen else chk.status.get(id(t), "new"))
+              for t, k in zip(res.txns, keys, strict=True)}  # fmt: skip
     groups: dict[tuple[str, str], list[ImportedTxn]] = {}
     for t in new:
         groups.setdefault((t.ikey, t.account), []).append(t)
@@ -202,7 +234,10 @@ def preview(s: Session, res: ImportResult) -> dict[str, Any]:
         units = lot_units(s)
     rec = reconcile(res.closing, units, by_instrument=res.holdings_only)
     return {"kind": res.kind, "source": res.source, "period": list(res.period) if res.period else None,
-            "rows": len(res.txns), "new_rows": len(new), "duplicates": len(res.txns) - len(new),
+            "rows": len(res.txns), "new_rows": len(new), "duplicates": dup,
+            "cross_source": chk.cross_source[:100], "conflicts": chk.conflicts[:100],
+            "superseded_baselines": baselines[:50],
+            "rows_preview": [{**_txn_preview(t), "status": status[id(t)]} for t in res.txns[:200]],
             "holdings": holdings, "reconciliation": rec, "reconciled": all(r["ok"] for r in rec),
             "warnings": res.warnings, "skipped": dict(res.skipped), "holdings_only": res.holdings_only,
             "sample": [_txn_preview(t) for t in new[:50]]}  # fmt: skip
@@ -228,6 +263,9 @@ def apply(
     applied = add_txns(s, res.txns, imp.id)
     for hid in applied.holdings:
         rebuild(s, hid)
+    touched = [h for hid in applied.holdings if (h := s.get(PortfolioHolding, hid)) is not None]
+    for hid in fund_baseline_holdings(s, touched) - applied.holdings:
+        rebuild(s, hid)  # a broker fund baseline this CAS now covers (or no longer covers)
     for c in res.closing:  # remember the statement's own valuation (a fallback price) per holding
         h = s.scalar(
             select(PortfolioHolding).where(
@@ -242,7 +280,9 @@ def apply(
     s.flush()
     rec = reconcile(res.closing, lot_units(s, [(c.ikey, c.account) for c in res.closing]))
     imp.summary = {"period": list(res.period) if res.period else None, "rows": len(res.txns), "added": applied.added,
-                   "duplicates": applied.duplicates, "holdings": len(applied.holdings), "reconciliation": rec,
+                   "duplicates": applied.duplicates, "cross_source": applied.cross_source[:100],
+                   "conflicts": applied.conflicts[:100], "superseded_baselines": applied.superseded_baselines[:50],
+                   "holdings": len(applied.holdings), "reconciliation": rec,
                    "reconciled": all(r["ok"] for r in rec), "warnings": res.warnings[:50],
                    "skipped": dict(res.skipped)}  # fmt: skip
     return {"import_id": imp.id, **imp.summary}
@@ -253,11 +293,17 @@ def delete_import(s: Session, import_id: int) -> int:
     if imp is None:
         raise LookupError(f"unknown import {import_id}")
     hids = set(s.scalars(select(PortfolioTxn.holding_id).where(PortfolioTxn.import_id == import_id)))
+    funds = (
+        fund_baseline_holdings(s, [h for hid in hids if (h := s.get(PortfolioHolding, hid)) is not None])
+        - hids
+    )
     s.execute(delete(PortfolioTxn).where(PortfolioTxn.import_id == import_id))
     s.delete(imp)
     s.flush()
     for hid in hids:
         _rebuild_or_drop(s, hid)
+    for hid in funds:  # a broker fund baseline the deleted CAS had superseded counts again
+        rebuild(s, hid)
     return len(hids)
 
 
@@ -275,17 +321,32 @@ def _rebuild_or_drop(s: Session, holding_id: int) -> None:
 # --------------------------------------------------------------------------- manual entries
 def manual_txn(s: Session, body: dict[str, Any]) -> PortfolioTxn:
     """Add one transaction from the manual form. `holding_id` targets an existing holding; otherwise the instrument
-    fields (asset_type, name, and a symbol/ISIN/scheme code) and `account` create or find one."""
+    fields (asset_type, name, and a symbol/ISIN/scheme code) and `account` create or find one. A buy or sell that
+    another source already has (portfolio.dedupe) raises DuplicateEntry unless `allow_duplicate` (a second, real
+    trade the user confirms)."""
     hid = body.get("holding_id")
     if hid:
         h = s.get(PortfolioHolding, int(hid))
         if h is None:
             raise LookupError(f"unknown holding {hid}")
+        t = ImportedTxn(account=h.account, asset_type=h.asset_type, name=h.name, day=body["day"], kind=body["kind"],
+                        isin=h.isin, nse_symbol=h.nse_symbol, bse_code=h.bse_code, scheme_code=h.scheme_code,
+                        source="manual")  # fmt: skip
     else:
         t = ImportedTxn(account=(body.get("account") or "Manual")[:80], asset_type=body["asset_type"],
                         name=body["name"], day=body["day"], kind=body["kind"], isin=body.get("isin") or None,
                         nse_symbol=(body.get("nse_symbol") or "").upper() or None, bse_code=body.get("bse_code") or None,
                         scheme_code=body.get("scheme_code") or None, source="manual")  # fmt: skip
+        h = None
+    if not body.get("allow_duplicate"):
+        t.quantity, t.price, t.amount = body.get("quantity"), body.get("price"), body.get("amount")
+        chk = check(s, [t])
+        if not chk.new:
+            hit = (chk.cross_source or chk.conflicts)[0]
+            what = hit.get("label") or hit["why"]
+            raise DuplicateEntry(f"{t.kind} of {_s(t.quantity)} on {t.day.isoformat()}: {what} (in "
+                                 f"{', '.join(hit['accounts'])}). Add it anyway only if it is a second, real trade")  # fmt: skip
+    if h is None:
         h = get_or_create_holding(s, t)
     meta = dict(body.get("meta") or {})
     row = PortfolioTxn(holding_id=h.id, day=body["day"], kind=body["kind"], quantity=body.get("quantity"),

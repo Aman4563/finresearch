@@ -45,12 +45,12 @@ from sqlalchemy.orm import Session
 
 from finresearch.db.models import PortfolioHolding, PortfolioImport, PortfolioLot, PortfolioTxn
 from finresearch.portfolio.connectors.base import BrokerHolding, BrokerTrade
+from finresearch.portfolio.dedupe import instrument_holdings
 from finresearch.portfolio.importers import ImportedTxn, instrument_key
 from finresearch.portfolio.lots import Event, build_lots, superseded_openings
 from finresearch.portfolio.service import add_txns, events_of, find_holding, rebuild
 
 UNITS_TOL = Decimal("0.001")
-PRICE_TOL = Decimal("0.005")  # 0.5 %: a CSV's Value/Quantity vs a fill price
 BROKER_ACCOUNTS = {"Groww", "Zerodha", "Upstox", "Dhan"}
 
 
@@ -115,14 +115,7 @@ def holding_ikey(h: BrokerHolding) -> str:
 
 
 # --------------------------------------------------------------------------- database helpers
-def _all_matches(s: Session, t: ImportedTxn) -> list[PortfolioHolding]:
-    from sqlalchemy import or_
-
-    ids = [(col, v) for col, v in ((PortfolioHolding.isin, t.isin), (PortfolioHolding.nse_symbol, t.nse_symbol),
-                                   (PortfolioHolding.bse_code, t.bse_code),
-                                   (PortfolioHolding.scheme_code, t.scheme_code)) if v]  # fmt: skip
-    conds = [PortfolioHolding.ikey == t.ikey, *[col == v for col, v in ids]]
-    return list(s.scalars(select(PortfolioHolding).where(or_(*conds)).order_by(PortfolioHolding.id)))
+_all_matches = instrument_holdings  # every holding of the instrument, in any account
 
 
 def _open_units(s: Session, holding_id: int) -> Decimal:
@@ -356,7 +349,7 @@ def merge_sync(s: Session, *, account: str, source: str, label: str, holdings: l
     groups: dict[tuple[str, date, str], list[ImportedTxn]] = defaultdict(list)
     for t in txns:
         groups[(t.ikey, t.day, t.kind)].append(t)
-    for (_ik, day, kind), rows in groups.items():
+    for (_ik, day, _kind), rows in groups.items():
         h = find_holding(s, rows[0])
         if h is None:
             keep += rows
@@ -365,36 +358,14 @@ def merge_sync(s: Session, *, account: str, source: str, label: str, holdings: l
         if bday is not None and day <= bday:
             res.covered_by_baseline += len(rows)
             continue
-        others = s.scalars(select(PortfolioTxn).where(PortfolioTxn.holding_id == h.id, PortfolioTxn.day == day,
-                                                      PortfolioTxn.kind == kind,
-                                                      PortfolioTxn.source != source)).all()  # fmt: skip
-        if not others:
-            keep += rows
-            continue
-        other_ids = {str((o.meta or {}).get("order_id") or "") for o in others} - {""}
-        by_id = [r for r in rows if r.meta.get("order_id") and str(r.meta["order_id"]) in other_ids]
-        rest = [r for r in rows if r not in by_id]
-        srcs = sorted({o.source for o in others})
-        if by_id:
-            res.cross_source += [{"name": r.name, "day": day.isoformat(), "kind": kind, "units": str(r.quantity),
-                                  "matched": "order id", "sources": srcs} for r in by_id]  # fmt: skip
-        if not rest:
-            continue
-        other_q = sum((o.quantity or Decimal(0) for o in others if str((o.meta or {}).get("order_id") or "")
-                       not in {str(r.meta.get("order_id")) for r in by_id}), Decimal(0))  # fmt: skip
-        api_q = sum((r.quantity or Decimal(0) for r in rest), Decimal(0))
-        if other_q >= api_q - UNITS_TOL:
-            res.cross_source += [{"name": r.name, "day": day.isoformat(), "kind": kind, "units": str(r.quantity),
-                                  "matched": "same day and units", "sources": srcs} for r in rest]  # fmt: skip
-        else:
-            res.conflicts.append({"name": rest[0].name, "day": day.isoformat(), "kind": kind,
-                                  "api_units": str(api_q), "other_units": str(other_q), "sources": srcs,
-                                  "why": "another source has part of this day's trades: not added, review"})  # fmt: skip
+        keep += rows  # rows other sources already have are caught by add_txns (portfolio.dedupe, rule 2)
     if keep:
         imp = _new_import(s, "api", source, label, now)
         applied = add_txns(s, keep, imp.id)
         res.added += applied.added
         res.duplicates += applied.duplicates
+        res.cross_source += applied.cross_source
+        res.conflicts += applied.conflicts
         touched |= applied.holdings
         if applied.added:
             res.import_ids.append(imp.id)

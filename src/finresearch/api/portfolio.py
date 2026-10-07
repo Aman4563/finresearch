@@ -69,6 +69,7 @@ class ManualTxn(BaseModel):
     stt_paid: bool = True
     note: str | None = Field(None, max_length=2000)
     meta: dict[str, Any] = Field(default_factory=dict)
+    allow_duplicate: bool = False  # add it although another source has the same trade (a second, real trade)
 
     @field_validator("meta")
     @classmethod
@@ -604,7 +605,7 @@ def add_portfolio_routes(app: FastAPI, *, scheme_rows: Callable[[], Awaitable[li
     # ------------------------------------------------------------------ manual edits
     @app.post("/api/portfolio/transactions", status_code=201)
     def add_txn(body: ManualTxn) -> dict[str, Any]:
-        from finresearch.portfolio.service import manual_txn
+        from finresearch.portfolio.service import DuplicateEntry, manual_txn
 
         if body.holding_id is None and not body.name.strip():
             raise HTTPException(422, "name: say what you bought (or pick an existing holding)")
@@ -623,6 +624,8 @@ def add_portfolio_routes(app: FastAPI, *, scheme_rows: Callable[[], Awaitable[li
                 t = manual_txn(s, body.model_dump())
             except LookupError as e:
                 raise HTTPException(404, str(e)) from e
+            except DuplicateEntry as e:
+                raise HTTPException(409, str(e)) from e
             return {"id": t.id, "holding_id": t.holding_id}
 
     @app.put("/api/portfolio/transactions/{txn_id}")

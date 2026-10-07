@@ -106,7 +106,9 @@ def test_D_coin_mf_baseline_then_cas(db):
 
     fund = "ISIN:INF000K01NT8"
     with db() as s:
-        mf = BrokerHolding(name="EX FUND", quantity=D(100), isin="INF000K01NT8", asset_type="mf", avg_price=D(50))
+        mf = BrokerHolding(
+            name="EX FUND", quantity=D(100), isin="INF000K01NT8", asset_type="mf", avg_price=D(50)
+        )
         assert len(_sync(s, mf_holdings=[mf]).baselines) == 1
         res = ImportResult("cas", "CAMS", [ImportedTxn(account="EX AMC · folio 1", asset_type="mf", name="EX FUND",
                                                        isin="INF000K01NT8", day=date(2025, 1, 1), kind="buy",
@@ -125,7 +127,9 @@ def test_D_partial_cas_is_a_conflict_not_a_merge(db):
     from finresearch.portfolio.service import apply
 
     with db() as s:
-        mf = BrokerHolding(name="EX FUND", quantity=D(100), isin="INF000K01NT8", asset_type="mf", avg_price=D(50))
+        mf = BrokerHolding(
+            name="EX FUND", quantity=D(100), isin="INF000K01NT8", asset_type="mf", avg_price=D(50)
+        )
         _sync(s, mf_holdings=[mf])
         res = ImportResult("cas", "CAMS", [ImportedTxn(account="EX AMC · folio 1", asset_type="mf", name="EX FUND",
                                                        isin="INF000K01NT8", day=date(2025, 1, 1), kind="buy",
@@ -139,7 +143,9 @@ def test_E_groww_api_then_groww_order_csv(db):
     csv = ("Stock name,Symbol,ISIN,Type,Quantity,Value,Exchange,Exchange Order Id,Execution date and time,Order status\n"
            f"Example Ltd,EXMPL,{ISIN},BUY,10,1000,NSE,X1,30-09-2026 10:30 AM,Executed\n")  # fmt: skip
     with db() as s:
-        _sync(s, account="Groww", source="groww_api", trades=[_trade(tid="G1", oid="G1")])  # Groww's own order id
+        _sync(
+            s, account="Groww", source="groww_api", trades=[_trade(tid="G1", oid="G1")]
+        )  # Groww's own order id
         out = _apply(s, csv.encode(), "g.csv", "e")
         assert out["added"] == 0 and _total(s) == D(10)
         assert out["cross_source"][0]["sources"] == ["groww_api"]
@@ -151,7 +157,9 @@ def test_preview_shows_already_present_not_new(db):
 
     with db() as s:
         _sync(s, trades=[_trade()])
-        p = preview(s, parse_tradebook(_zcsv(("buy", 10, 100, "T1", "O1"), ("buy", 5, 101, "T9", "O9")), "t.csv"))
+        p = preview(
+            s, parse_tradebook(_zcsv(("buy", 10, 100, "T1", "O1"), ("buy", 5, 101, "T9", "O9")), "t.csv")
+        )
         assert (p["new_rows"], p["duplicates"]) == (1, 0) and len(p["cross_source"]) == 1
         assert sorted(r["status"] for r in p["rows_preview"]) == ["already present from zerodha_api", "new"]
         assert p["holdings"][0]["units_after"] == "15.000"
@@ -174,9 +182,13 @@ def test_manual_entry_api_returns_409(client_api):
     c, headers = client_api
     body = {"asset_type": "stock", "name": "EXMPL", "isin": ISIN, "account": "Manual", "day": TODAY.isoformat(),
             "kind": "buy", "quantity": "10", "price": "100"}  # fmt: skip
-    assert c.post("/api/portfolio/transactions", headers=headers, json=body).status_code == 201
-    r = c.post("/api/portfolio/transactions", headers=headers, json={**body, "account": "Zerodha"})
-    assert r.status_code == 409 and "already present from manual" in r.json()["detail"]
+    import base64
+
+    tb = {"filename": "t.csv", "content_b64": base64.b64encode(_zcsv(("buy", 10, 100, "T1", "O1"))).decode(),
+          "dry_run": False}  # fmt: skip
+    assert c.post("/api/portfolio/import/tradebook", headers=headers, json=tb).json()["added"] == 1
+    r = c.post("/api/portfolio/transactions", headers=headers, json=body)
+    assert r.status_code == 409 and "already present from zerodha (in Zerodha)" in r.json()["detail"]
     ok = c.post("/api/portfolio/transactions", headers=headers, json={**body, "allow_duplicate": True})
     assert ok.status_code == 201
 
@@ -244,7 +256,10 @@ def test_fills_of_one_order_cover_a_manual_entry(db):
     with db() as s:
         _manual(s, "Zerodha")
         out = _apply(s, _zcsv(("buy", 4, 100, "T1", "O1"), ("buy", 6, 100, "T2", "O1")), "t.csv", "7")
-        assert out["added"] == 0 and [c["matched"] for c in out["cross_source"]] == ["same day, side and total units"] * 2
+        assert (
+            out["added"] == 0
+            and [c["matched"] for c in out["cross_source"]] == ["same day, side and total units"] * 2
+        )
         assert _total(s) == D(10)
 
 
