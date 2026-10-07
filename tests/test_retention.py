@@ -123,7 +123,29 @@ def test_log_files_rotate_by_size(tmp_path):
     cfg = uvicorn_log_config(tmp_path / "serve.log", max_bytes=1000, backups=2)
     assert cfg["handlers"]["file"]["class"] == "logging.handlers.RotatingFileHandler"
     assert cfg["handlers"]["file"]["maxBytes"] == 1000 and cfg["root"]["handlers"] == ["file"]
-    assert all(lg["handlers"] == ["file"] for lg in cfg["loggers"].values())
+    assert all(lg.get("handlers") in (None, ["file"]) for lg in cfg["loggers"].values())
+    import logging
+    import logging.config
+
+    saved = {n: (lg.handlers[:], lg.propagate, lg.level) for n in ("", "uvicorn", "uvicorn.error", "uvicorn.access")
+             for lg in [logging.getLogger(n)]}  # fmt: skip
+    try:  # what uvicorn.run(log_config=...) does at startup: a bad config would stop `serve` before it binds
+        logging.config.dictConfig(cfg)
+        logging.getLogger("uvicorn.error").info("started")
+        logging.getLogger("uvicorn.access").info("GET /api/health 200")
+        for h in logging.getLogger("uvicorn").handlers + logging.getLogger("uvicorn.access").handlers:
+            h.flush()
+        text = (tmp_path / "serve.log").read_text()
+        assert (
+            text.count("started") == 1 and "GET /api/health 200" in text
+        )  # once each: no duplicate handlers
+    finally:
+        for n, (hs, prop, lvl) in saved.items():
+            lg = logging.getLogger(n)
+            for h in lg.handlers:
+                h.close()
+            lg.handlers[:], lg.propagate, lg.level = hs, prop, lvl
+            lg.disabled = False
 
 
 def test_the_policy_is_documented_with_the_code_constants():

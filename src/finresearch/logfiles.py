@@ -44,8 +44,11 @@ def uvicorn_log_config(
     cfg["handlers"] = {"file": {"class": "logging.handlers.RotatingFileHandler", "filename": str(path),
                                 "maxBytes": max_bytes or LOG_MAX_BYTES, "backupCount": backups or LOG_BACKUPS,
                                 "encoding": "utf-8", "formatter": "plain"}}  # fmt: skip
-    for name in cfg["loggers"]:
-        cfg["loggers"][name]["handlers"] = ["file"]
+    for logger in cfg[
+        "loggers"
+    ].values():  # uvicorn.error has no handler of its own (it propagates): keep it so
+        if logger.get("handlers"):
+            logger["handlers"] = ["file"]
     cfg["root"] = {"handlers": ["file"], "level": "INFO"}
     return cfg
 
