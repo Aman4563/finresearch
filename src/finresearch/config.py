@@ -69,6 +69,13 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://localhost/finresearch"
     test_database_url: str = "postgresql+psycopg://localhost/finresearch_test"
 
+    # ---- secrets (finresearch.secrets): auto = the macOS Keychain, except a *_test database or off macOS (a 0600
+    # file under state_dir); "memory" for tests
+    secrets_backend: str = "auto"
+    # the local API token (finresearch.api.auth). Normally bootstrapped by `finresearch serve` into the Keychain and
+    # state_dir/api_token; this setting overrides both (tests)
+    api_token: SecretStr | None = None
+
     # ---- paths
     state_dir: Path = REPO_ROOT / "data" / "state"
     runs_dir: Path = REPO_ROOT / "data" / "runs"

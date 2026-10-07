@@ -17,8 +17,14 @@ def _isolate_data_dirs(tmp_path, monkeypatch):
     for var, sub in (("FINRESEARCH_RUNS_DIR", "runs"), ("FINRESEARCH_STATE_DIR", "state"),
                      ("FINRESEARCH_DOCS_DIR", "docs"), ("FINRESEARCH_REPORTS_DIR", "reports"), ("FINRESEARCH_PORTFOLIO_DIR", "portfolio")):  # fmt: skip
         monkeypatch.setenv(var, str(tmp_path / "_iso" / sub))
+    # secrets go to a per-test memory store, never the user's Keychain (finresearch.secrets refuses it under pytest)
+    monkeypatch.setenv("FINRESEARCH_SECRETS_BACKEND", "memory")
     config.get_settings.cache_clear()
+    from finresearch import secrets
+
+    secrets.reset_memory()
     yield
+    secrets.reset_memory()
     config.get_settings.cache_clear()
 
 
