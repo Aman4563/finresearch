@@ -3,7 +3,8 @@
 #
 # Writes data/backups/finresearch-<UTC timestamp>.dump (pg_dump custom format, compressed) plus a manifest of the
 # document files under data/docs (path, bytes), checks the dump with pg_restore --list, and keeps the newest $KEEP
-# dumps. data/ is gitignored, so backups never reach git.
+# dumps. data/ is gitignored, so backups never reach git. The database holds no secrets (they are in the macOS
+# Keychain; rows keep references), and the script refuses to dump if `finresearch secrets check` finds any left.
 #
 # Environment (all optional):
 #   FINRESEARCH_DATABASE_URL  database to dump; default: the app's own setting (read through finresearch.config,
@@ -18,7 +19,7 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BACKUP_DIR="${BACKUP_DIR:-$REPO/data/backups}"
 DOCS_DIR="${DOCS_DIR:-$REPO/data/docs}"
 KEEP="${KEEP:-14}"
-PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"  # launchd starts with a minimal PATH
+PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$PATH"  # launchd starts with a minimal PATH (uv: ~/.local/bin)
 
 command -v pg_dump >/dev/null || { echo "backup: pg_dump not found" >&2; exit 2; }
 command -v pg_restore >/dev/null || { echo "backup: pg_restore not found" >&2; exit 2; }
@@ -36,6 +37,12 @@ STAMP="$(date -u +%Y%m%dT%H%M%SZ)-$$"  # the pid keeps two runs in one second ap
 OUT="$BACKUP_DIR/finresearch-$STAMP.dump"
 TMP="$OUT.partial"
 trap 'rm -f "$TMP"' EXIT
+
+# secrets live in the Keychain (issue #245): refuse to write a dump while any is still plain text in the database
+if ! (cd "$REPO" && uv run --quiet finresearch secrets check); then
+  echo "backup: REFUSED: plaintext secrets are still in the database; run 'uv run finresearch secrets migrate --apply'" >&2
+  exit 3
+fi
 
 pg_dump --format=custom --compress=6 --no-owner --no-privileges --file="$TMP" "$URL"
 pg_restore --list "$TMP" >/dev/null  # a truncated or corrupt archive fails here, before it replaces anything

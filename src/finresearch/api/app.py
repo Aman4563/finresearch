@@ -1,7 +1,8 @@
 """FastAPI app: companies, documents, runs, steps, claims, reports, packs, limits and live run events.
 
 Security: the server binds to 127.0.0.1 (see `finresearch serve`), accepts only localhost Host headers (DNS
-rebinding) and allows CORS only from the local dashboard origins. Document and pack files are served only from
+rebinding), requires the local API token on every route but /api/health (finresearch.api.auth) and allows CORS
+only from the local dashboard origins. Document and pack files are served only from
 inside the configured data directories.
 """
 
@@ -262,12 +263,22 @@ def _latest_report(s, run_id: int) -> str | None:
 # --------------------------------------------------------------------------- app
 def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=None, live_fetch=None,
                monitor: bool = False, monitor_deps=None, nse_detail=None, equity_list=None,
-               nav_all=None, fno_client=None, bonds=None, clock=None, bse_scrips=None) -> FastAPI:  # fmt: skip
+               nav_all=None, fno_client=None, bonds=None, clock=None, bse_scrips=None,
+               api_token: str | None = None) -> FastAPI:  # fmt: skip
     """Test seams: `router` (bridge for chat and suggestions), `live_fetch` / `nse_detail` / `bonds` (NSE),
     `equity_list` / `bse_scrips` (the NSE equity list text and BSE's scrip-master rows, for stock search),
     `monitor_deps`, `clock` (() -> aware datetime, for the live routes' market hours).
 
-    With monitor=True (as `finresearch serve` does) the monitoring scheduler runs inside the API process."""
+    With monitor=True (as `finresearch serve` does) the monitoring scheduler runs inside the API process.
+
+    `api_token`: the local API token every route but /api/health requires (finresearch.api.auth); by default the one
+    `finresearch serve` bootstrapped (or FINRESEARCH_API_TOKEN). Without one the app refuses to start: it never
+    serves personal data unauthenticated."""
+    from finresearch.api.auth import ApiTokenGuard, current
+
+    api_token = api_token or current()
+    if not api_token:
+        raise RuntimeError("no local API token: start the API with `uv run finresearch serve` (it creates one)")
     spawner = spawner or Spawner()
 
     @contextlib.asynccontextmanager
@@ -300,10 +311,13 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=LOCAL_HOSTS)
     app.add_middleware(CsrfGuard)
     app.add_middleware(CatchAll)
+    # inside CORS, so a 401 carries CORS headers and the dashboard can tell "not authorised" from "not running"
+    app.add_middleware(ApiTokenGuard, token=api_token)
+    # credentials: the browser sends the app's token cookie with cross-origin calls from :3100 to the API
     # the in-app PDF viewer (pdf.js) reads the length/range headers to stream big documents in chunks
     app.add_middleware(CORSMiddleware, allow_origins=DASHBOARD_ORIGINS,
                        allow_methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"], allow_headers=["*"],
-                       expose_headers=EXPOSED_HEADERS)  # fmt: skip
+                       allow_credentials=True, expose_headers=EXPOSED_HEADERS)  # fmt: skip
 
     @app.exception_handler(ValueError)
     async def _value_error(_req: Request, e: ValueError) -> JSONResponse:
