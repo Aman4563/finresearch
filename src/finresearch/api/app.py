@@ -217,13 +217,15 @@ def _download_name(title: str, suffix: str) -> str:
 
 def _content_disposition(kind: str, filename: str) -> str:
     """RFC 6266 header: a quoted ASCII `filename` for every browser plus RFC 5987 `filename*` when it isn't ASCII."""
-    if (
-        len(filename) > 200
-    ):  # bounded: the whitespace regex below is quadratic on long runs (CodeQL py/polynomial-redos)
-        stem, dot, ext = filename.rpartition(".")
-        filename = stem[:180] + dot + ext[:15] if dot else filename[:200]
-    ascii_name = filename.encode("ascii", "ignore").decode().replace("\\", "_").replace('"', "'")
-    ascii_name = re.sub(r"\s+(?=\.[^.]*$)", "", re.sub(r"\s+", " ", ascii_name)).strip() or "file"
+    # whitespace collapsed with split/join and the gap before the extension removed with rpartition: no regex, so
+    # linear on any input (CodeQL py/polynomial-redos flagged the earlier lookahead regex)
+    ascii_name = " ".join(
+        filename.encode("ascii", "ignore").decode().replace("\\", "_").replace('"', "'").split()
+    )
+    stem, dot, ext = ascii_name.rpartition(".")
+    if dot:
+        ascii_name = stem.rstrip() + dot + ext
+    ascii_name = ascii_name.strip() or "file"
     if ascii_name == filename:
         return f'{kind}; filename="{filename}"'
     if ascii_name.startswith("."):  # the whole stem was non-ASCII

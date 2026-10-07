@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import threading
 from collections.abc import Callable, Iterable
@@ -102,7 +103,7 @@ class Found:
 
 
 FILE_ID = re.compile(r"[0-9a-f]{16}")  # stored files are named by the first 16 hex of their sha256
-FILE_EXTS = (".xlsx", ".xls", ".xlsm", ".zip", ".csv")
+FILE_EXTS = {e: e for e in (".xlsx", ".xls", ".xlsm", ".zip", ".csv")}  # stored-file extensions (constants)
 
 
 class PortfolioStore:
@@ -139,10 +140,9 @@ class PortfolioStore:
         """Parse and keep a file (idempotent by content hash). Raises AmcPortfolioError for unreadable files."""
         portfolios = parse_file(data, filename)
         sha = hashlib.sha256(data).hexdigest()[:16]
-        ext = Path(filename).suffix.lower()
-        ext = (
-            ext if ext in FILE_EXTS else ".xlsx"
-        )  # a fixed allow-list: the stored name never carries user text
+        ext = FILE_EXTS.get(
+            Path(filename).suffix.lower(), ".xlsx"
+        )  # a constant from the map, never user text
         with self._lock:
             (self.root / "files").mkdir(parents=True, exist_ok=True)
             (self.root / "parsed").mkdir(parents=True, exist_ok=True)
@@ -160,6 +160,12 @@ class PortfolioStore:
         self._parsed[sha] = portfolios
         return sha, portfolios
 
+    def _inside(self, sub: str, name: str) -> Path | None:
+        """`root/sub/name` only if it resolves inside `root/sub` (CodeQL py/path-injection: normalised + prefix-checked)."""
+        base = os.path.realpath(self.root / sub)
+        path = os.path.realpath(os.path.join(base, name))
+        return Path(path) if path.startswith(base + os.sep) else None
+
     def delete_file(self, sha: str) -> bool:
         if not FILE_ID.fullmatch(
             sha or ""
@@ -172,7 +178,8 @@ class PortfolioStore:
                 return False
             for p in (self.root / "files").glob(f"{sha}.*"):
                 p.unlink(missing_ok=True)
-            (self.root / "parsed" / f"{sha}.json").unlink(missing_ok=True)
+            if (pj := self._inside("parsed", f"{sha}.json")) is not None:
+                pj.unlink(missing_ok=True)
             self._write_index(idx)
         self._parsed.pop(sha, None)
         return True
@@ -186,7 +193,9 @@ class PortfolioStore:
         if not FILE_ID.fullmatch(sha or ""):
             return []
         if sha not in self._parsed:
-            p = self.root / "parsed" / f"{sha}.json"
+            p = self._inside("parsed", f"{sha}.json")
+            if p is None:
+                return []
             data = json.loads(p.read_text()) if p.exists() else None
             if isinstance(data, dict) and data.get("parser") == PARSER_VERSION:
                 self._parsed[sha] = [SchemePortfolio.from_json(d) for d in data["schemes"]]
