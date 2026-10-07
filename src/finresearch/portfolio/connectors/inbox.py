@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
@@ -80,10 +81,16 @@ def scan(*, now: datetime | None = None, password: str | None = None) -> dict[st
     root = ensure_dirs()
     with session_scope() as s:
         row = s.get(BrokerConnection, INBOX_KEY)
-        saved_pw = str((row.config or {}).get("password") or "") if row else ""
-        waiting = dict((row.state or {}).get("waiting") or {}) if row else {}
+        cfg = dict(row.config or {}) if row else {}
+        saved_pw = str(cfg.get("password") or "")
+        # older versions stored "wrong:<12 hex of sha256(password)>": scrub them (they could be brute-forced back to a
+        # PAN-derived password); those files are simply tried again once
+        waiting = {k: ("wrong:legacy" if re.fullmatch(r"wrong:[0-9a-f]{12}", str(v)) else v)
+                   for k, v in dict((row.state or {}).get("waiting") or {}).items()} if row else {}  # fmt: skip
         before = dict(waiting)
-        pw_fp = hashlib.sha256(saved_pw.encode()).hexdigest()[:12] if saved_pw else ""
+        pw_fp = (
+            str(cfg.get("password_rev") or "saved") if saved_pw else ""
+        )  # a random revision id, not a hash
     pw = password or saved_pw
     results: list[dict[str, Any]] = []
     imported = 0

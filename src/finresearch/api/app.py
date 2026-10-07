@@ -32,6 +32,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from finresearch.adapters.amfi import AmfiError
 from finresearch.adapters.nse import NseError
 from finresearch.adapters.sebi import SebiError
+from finresearch.api.errors import public_error
 from finresearch.api.workers import (
     Spawner,
     WorkerBusy,
@@ -216,6 +217,11 @@ def _download_name(title: str, suffix: str) -> str:
 
 def _content_disposition(kind: str, filename: str) -> str:
     """RFC 6266 header: a quoted ASCII `filename` for every browser plus RFC 5987 `filename*` when it isn't ASCII."""
+    if (
+        len(filename) > 200
+    ):  # bounded: the whitespace regex below is quadratic on long runs (CodeQL py/polynomial-redos)
+        stem, dot, ext = filename.rpartition(".")
+        filename = stem[:180] + dot + ext[:15] if dot else filename[:200]
     ascii_name = filename.encode("ascii", "ignore").decode().replace("\\", "_").replace('"', "'")
     ascii_name = re.sub(r"\s+(?=\.[^.]*$)", "", re.sub(r"\s+", " ", ascii_name)).strip() or "file"
     if ascii_name == filename:
@@ -1269,7 +1275,7 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
                         try:
                             issues += [(phase, i) for i in await fetch()]
                         except Exception as e:
-                            errors.append(f"{phase}: {e}"[:200])
+                            errors.append(f"{phase}: {public_error(e, 180)}")
                     wanted = {i.symbol: i.series for _, i in issues}
 
                     async def one(sym: str, series: str | None) -> None:
@@ -1281,7 +1287,7 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
 
                     await asyncio.gather(*(one(s, ser) for s, ser in wanted.items()))
             except Exception as e:  # warm-up or connection failure
-                errors.append(f"NSE: {type(e).__name__}: {e}"[:200])
+                errors.append(f"NSE: {public_error(e, 190)}")
             return issues, terms
 
         async def bse_side() -> list[tuple[Any, Any]]:
@@ -1290,7 +1296,7 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
                 notes.extend(f"bse: {e}" for e in detail_errors)
                 return rows
             except Exception as e:
-                errors.append(f"bse: {e}"[:200])
+                errors.append(f"bse: {public_error(e, 190)}")
                 return []
 
         (issues, nse_terms), bse_rows = await asyncio.gather(nse_side(), bse_side())
@@ -1593,7 +1599,7 @@ class CatchAll:
             if started:  # e.g. an event stream already under way: nothing left to answer with
                 raise
             logging.getLogger("finresearch.api").exception("unhandled error on %s", scope.get("path"))
-            resp = JSONResponse({"detail": f"server error: {type(e).__name__}: {e}"[:1000]}, status_code=500)
+            resp = JSONResponse({"detail": f"server error: {public_error(e, 1000)}"}, status_code=500)
             await resp(scope, receive, send)
 
 

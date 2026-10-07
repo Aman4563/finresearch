@@ -30,7 +30,7 @@ const num = (x: number | null | undefined, digits = 2) => (x == null ? "—" : `
 function decileText(q: SurpriseQuarter, s: StockSurprises): string {
   if (q.decile == null) return "no reference yet";
   const ref = s.reference;
-  return `decile ${q.decile} of 10 vs ${ref?.n ?? "?"} ${ref?.universe ?? ""} results${ref?.period ? ` (${ref.period.replace("..", " to ")})` : ""}`;
+  return `decile ${q.decile} of 10 vs ${ref?.n ?? "?"} ${ref?.universe ?? ""} results${ref?.period ? ` (${ref.period.replaceAll("..", " to ")})` : ""}`;
 }
 
 export function StockSurpriseCard({ symbol }: { symbol: string }) {

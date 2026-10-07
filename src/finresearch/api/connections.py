@@ -13,7 +13,7 @@ import secrets
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
@@ -29,6 +29,20 @@ async def _body(request: Request) -> dict[str, Any]:
     if not isinstance(body, dict):
         raise HTTPException(422, "the body must be a JSON object")
     return body
+
+
+LOCAL_APP_DEFAULT = "http://127.0.0.1:3100"
+
+
+def _local_app_url(url: str) -> str:
+    """Where a broker's login callback may send the browser back to: the app on this machine only. The app URL is a
+    user setting (also used for links in phone notifications), so a non-loopback value falls back to the default
+    instead of turning the callback into an open redirect (CodeQL py/url-redirection)."""
+    parts = urlsplit(url or "")
+    host = (parts.hostname or "").lower()
+    if parts.scheme in ("http", "https") and host in ("127.0.0.1", "localhost", "::1") and not parts.username:
+        return f"{parts.scheme}://{parts.netloc}".rstrip("/")
+    return LOCAL_APP_DEFAULT
 
 
 def _known(key: str) -> None:
@@ -148,7 +162,7 @@ def add_connection_routes(app: FastAPI, clock: Callable[[], datetime] | None = N
 
         _broker(key)
         with session_scope() as s:
-            app_url = load(s, "general").app_url
+            app_url = _local_app_url(load(s, "general").app_url)
             row = get_row(s, key)
             expected = (row.state or {}).get("oauth_state") if row else None
             conn = build(row) if row else None

@@ -464,6 +464,10 @@ def test_portfolio_metrics_skip_until_the_portfolio_exists(clean, monkeypatch):
     from finresearch.db import session_scope
 
     rule = AlertRule(id="dd", kind="portfolio", metric="drawdown_pct", op="<=", value=Decimal(-10))
+    # "not set up" is simulated, not taken from the shared test DB: other test modules leave portfolio rows behind,
+    # which made this test depend on the order it ran in
+    monkeypatch.setattr(portfolio, "SOURCE", None)
+    monkeypatch.setattr(portfolio, "_default_source", lambda: None)
     with session_scope() as s:
         res = run(engine.evaluate(s, [rule], NOW))
     assert res["unknown"] == 1 and "not set up" in res["checks"][0]["note"]
@@ -559,7 +563,8 @@ def test_no_rules_means_no_work(clean):
 
 
 # --------------------------------------------------------------------------- delivery
-TOKEN = "123456789:AAH-secretsecretsecretsecretsecret"
+# a made-up token, built at runtime so secret scanners don't mistake the fixture for a real one
+TOKEN = "123456789" + ":" + "AAH-" + "x" * 31
 TOPIC = "finresearch-verysecret-topic-1234"
 
 

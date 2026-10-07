@@ -26,6 +26,7 @@ from typing import Annotated, Any
 
 from fastapi import FastAPI, HTTPException, Query
 
+from finresearch.api.errors import public_error
 from finresearch.fincalc.dates import add_years, today_ist
 
 SYMBOL_RE = re.compile(r"^[A-Z0-9&\-]{1,20}$")
@@ -212,7 +213,7 @@ async def resolve_stock(
     try:
         index = await listings()
     except Exception as e:
-        raise HTTPException(502, f"could not load the NSE/BSE listings: {e}") from e
+        raise HTTPException(502, f"could not load the NSE/BSE listings: {public_error(e)}") from e
     if code is not None:  # BSE:<code> read on NSE
         row = index.by_code(code)
         if row is None or not row.nse_symbol:
@@ -401,7 +402,7 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
             try:
                 return await make()
             except Exception as e:  # one refused section must not blank the whole page
-                errors.append(f"{name}: {type(e).__name__}: {e}"[:240])
+                errors.append(f"{name}: {public_error(e, 220)}")
                 if is_transient(
                     e
                 ):  # not "no data": the page says "couldn't reach" and the cache keeps it briefly
@@ -531,7 +532,7 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
         try:
             row = await cache.get(("peers_own", inst.id), 3600, own, retry=retry)
         except Exception as e:  # the stored row stands in, and the page says so
-            live_error = f"{type(e).__name__}: {e}"[:200]
+            live_error = public_error(e, 200)
             row = (data.get("rows") or {}).get(inst.id)
             if row is None:
                 raise HTTPException(502, f"couldn't read {inst.id} from NSE: {live_error}") from e
@@ -960,14 +961,14 @@ async def results_from_nse(
         try:
             filings += [f.as_result_filing() for f in await eq.integrated_filings(sym)]
         except Exception as e:
-            errors.append(f"integrated filing index: {type(e).__name__}: {e}"[:200])
+            errors.append(f"integrated filing index: {public_error(e, 170)}")
             if is_transient(e):
                 unreachable.append("integrated filing index")
     if len({f.period_to for f in filings if f.period_to and _official(f.xbrl)}) < quarters:
         try:  # the older index holds the quarters before integrated filing began (up to Dec-2024)
             filings += await eq.results(sym, "Quarterly")
         except Exception as e:
-            errors.append(f"financial results index: {type(e).__name__}: {e}"[:200])
+            errors.append(f"financial results index: {public_error(e, 170)}")
             if is_transient(e):
                 unreachable.append("financial results index")
     ranked = _rank_result_filings(filings)
@@ -976,7 +977,7 @@ async def results_from_nse(
             try:
                 x = parse_results_xbrl(await _xbrl(eq, f.xbrl))
             except Exception as e:
-                errors.append(f"{end} {f.xbrl}: {type(e).__name__}: {e}"[:200])
+                errors.append(f"{end} {f.xbrl}: {public_error(e, 160)}")
                 if is_transient(e):
                     unreachable.append(f"{end} XBRL")
                 continue
@@ -1118,7 +1119,7 @@ async def shareholding_from_nse(eq: Any, sym: str, quarters: int) -> dict[str, A
             except ParseError:  # a cached block page: fetch it again
                 p = parse_shareholding_xbrl(await eq.fetch_bytes(h.xbrl, cache_ttl=0))
         except Exception as e:
-            errors.append(f"{end}: {type(e).__name__}: {e}"[:200])
+            errors.append(f"{end}: {public_error(e, 180)}")
             if is_transient(e):
                 unreachable.append(f"{end} XBRL")
             continue
