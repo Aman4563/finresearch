@@ -388,7 +388,9 @@ def test_alert_metrics_contract(client):
     }
     with session_scope() as s:
         assert portfolio_metrics(s)[0]["allocation_drift_pp"][0] is None
-    assert client.post("/api/portfolio/snapshot", headers=ORIGIN).json()["recorded"] is True  # what the page does
+    assert (
+        client.post("/api/portfolio/snapshot", headers=ORIGIN).json()["recorded"] is True
+    )  # what the page does
     with session_scope() as s:
         m, reason = portfolio_metrics(s)
     assert reason is None
