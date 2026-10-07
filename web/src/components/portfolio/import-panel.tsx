@@ -8,7 +8,7 @@ import { CheckCircle2, FileSpreadsheet, FileText, FileUp, KeyRound, PenLine, Ref
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Badge, Button, Callout, Card, ErrorNote, Field, InfoTip, Segmented, Table, cx, inputClass } from "@/components/ui";
-import { api, day, useApi, when } from "@/lib/api";
+import { ApiError, api, day, useApi, when } from "@/lib/api";
 
 import { type AisImport, type ImportPreview, type ImportRow, units } from "./types";
 
@@ -21,6 +21,43 @@ function readB64(file: File): Promise<string> {
   });
 }
 
+// #236: rows another source (an API sync, a manual entry, another statement) already has are listed as "already
+// present from <source>", never as new; partial overlaps are conflicts that are not added.
+function CrossSourceView({ p }: { p: ImportPreview }) {
+  const dup = p.cross_source ?? [];
+  const bad = p.conflicts ?? [];
+  const sup = p.superseded_baselines ?? [];
+  if (!dup.length && !bad.length && !sup.length) return null;
+  return (
+    <div className="space-y-2 text-xs">
+      {bad.length > 0 && (
+        <Callout tone="warn" icon={<TriangleAlert className="size-4" />} title={`${bad.length} partial overlap${bad.length > 1 ? "s" : ""} with another source: not added`}>
+          <ul className="space-y-0.5">
+            {bad.slice(0, 20).map((c, i) => <li key={i}><span className="num">{day(c.day)}</span> {c.kind} {c.name}: {units(c.units)} here vs {units(c.other_units ?? null)} — {c.why}</li>)}
+          </ul>
+        </Callout>
+      )}
+      {sup.length > 0 && (
+        <p className="text-muted">{sup.map((x) => `${x.name}: ${x.label} (${x.account}, ${units(x.units)} units)`).join("; ")}</p>
+      )}
+      {dup.length > 0 && (
+        <details>
+          <summary className="cursor-pointer text-muted">{dup.length} row{dup.length > 1 ? "s" : ""} already present from another source (skipped)</summary>
+          <Table label="Rows already present from another source" className="mt-2">
+            <thead><tr><th>Date</th><th>Kind</th><th>Name</th><th className="text-right">Units</th><th>Status</th><th>Matched on</th></tr></thead>
+            <tbody>
+              {dup.slice(0, 50).map((c, i) => (
+                <tr key={i}><td className="num">{day(c.day)}</td><td>{c.kind}</td><td className="max-w-[14rem] truncate">{c.name}</td>
+                  <td className="num text-right">{units(c.units)}</td><td>{c.label}{c.accounts?.length ? ` (${c.accounts.join(", ")})` : ""}</td><td className="text-muted">{c.matched}</td></tr>
+              ))}
+            </tbody>
+          </Table>
+        </details>
+      )}
+    </div>
+  );
+}
+
 function PreviewView({ p }: { p: ImportPreview }) {
   const skipped = Object.entries(p.skipped ?? {});
   return (
@@ -31,6 +68,8 @@ function PreviewView({ p }: { p: ImportPreview }) {
         <span className="num">{p.rows} rows</span>
         {p.dry_run ? <span className="num text-muted">{p.new_rows ?? 0} new · {p.duplicates} already imported</span>
           : <span className="num text-gain">{p.added ?? 0} added · {p.duplicates} duplicates skipped</span>}
+        {(p.cross_source?.length ?? 0) > 0 && <span className="num text-muted">· {p.cross_source!.length} already present from another source</span>}
+        {(p.conflicts?.length ?? 0) > 0 && <Badge tone="warn">{p.conflicts!.length} conflict{p.conflicts!.length > 1 ? "s" : ""}: not added</Badge>}
         {p.already_imported != null && <Badge tone="warn">this file is import #{p.already_imported}</Badge>}
       </div>
       {p.reconciliation.length > 0 && (
@@ -48,13 +87,15 @@ function PreviewView({ p }: { p: ImportPreview }) {
                   <td className="max-w-[18rem] truncate">{r.name}<span className="block text-[11px] text-muted">{r.account}</span></td>
                   <td className="num text-right">{units(r.statement_units ?? r.broker_units ?? null)}</td>
                   <td className="num text-right">{units(r.lot_units ?? r.app_units ?? null)}</td>
-                  <td>{r.ok ? <Badge tone="gain">matches</Badge> : r.status === "not_at_broker" ? <Badge tone="warn">not in this statement</Badge> : <Badge tone="loss">off by {units(r.diff)}</Badge>}</td>
+                  <td>{r.ok ? <Badge tone="gain">matches</Badge> : r.status === "not_at_broker" ? <Badge tone="warn">not in this statement</Badge> : <Badge tone="loss">off by {units(r.diff)}</Badge>}
+                    {r.pending_action && <span className="block text-[11px] text-warn">{r.pending_action}</span>}</td>
                 </tr>
               ))}
             </tbody>
           </Table>
         </div>
       )}
+      <CrossSourceView p={p} />
       {p.sample && p.sample.length > 0 && (
         <details className="text-xs">
           <summary className="cursor-pointer text-muted">First {p.sample.length} new rows</summary>
@@ -351,10 +392,11 @@ function ManualForm({ onDone }: { onDone: () => void }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
+  const [dup, setDup] = useState<string | null>(null); // #236: another source already has this trade (409)
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setF((x) => ({ ...x, [k]: e.target.type === "checkbox" ? (e.target as HTMLInputElement).checked : e.target.value }));
-  const submit = async () => {
-    setBusy(true); setErr(null); setOk(null);
+  const submit = async (allowDuplicate = false) => {
+    setBusy(true); setErr(null); setOk(null); setDup(null);
     const meta = f.kind === "bonus" ? { a: f.a, b: f.b } : f.kind === "split" ? { from: f.from, to: f.to } : {};
     const nz = (v: string) => (v.trim() ? v.trim() : null);
     try {
@@ -362,13 +404,14 @@ function ManualForm({ onDone }: { onDone: () => void }) {
         method: "POST",
         body: JSON.stringify({ asset_type: f.asset_type, name: f.name, nse_symbol: nz(f.nse_symbol), scheme_code: nz(f.scheme_code),
           account: f.account || "Manual", day: f.day, kind: f.kind, quantity: nz(f.quantity), price: nz(f.price), amount: nz(f.amount),
-          charges: nz(f.charges) ?? "0", stt_paid: f.stt_paid, note: nz(f.note), meta }),
+          charges: nz(f.charges) ?? "0", stt_paid: f.stt_paid, note: nz(f.note), meta, allow_duplicate: allowDuplicate }),
       });
       setOk(`Added a ${f.kind} of ${f.name}`);
       setF((x) => ({ ...x, quantity: "", price: "", amount: "", charges: "", note: "" }));
       onDone();
     } catch (e) {
-      setErr((e as Error).message);
+      if (e instanceof ApiError && e.status === 409) setDup(e.message);
+      else setErr((e as Error).message);
     } finally {
       setBusy(false);
     }
@@ -409,9 +452,17 @@ function ManualForm({ onDone }: { onDone: () => void }) {
           <div className="flex items-center gap-1.5"><input value={f.from} onChange={set("from")} className={cx(inputClass, "w-16 num")} /> → <input value={f.to} onChange={set("to")} className={cx(inputClass, "w-16 num")} /></div></Field>}
       </div>
       <div className="mt-3 flex items-center gap-3">
-        <Button onClick={submit} disabled={busy || !f.name.trim() || !f.day}>Add</Button>
+        <Button onClick={() => submit()} disabled={busy || !f.name.trim() || !f.day}>Add</Button>
         {ok && <span className="text-xs text-gain">{ok}</span>}
       </div>
+      {dup && (
+        <div className="mt-3">
+          <Callout tone="warn" icon={<TriangleAlert className="size-4" />} title="Already in your portfolio: not added">
+            <p>{dup}.</p>
+            <Button className="mt-2" variant="secondary" disabled={busy} onClick={() => submit(true)}>Add anyway (a second, real trade)</Button>
+          </Callout>
+        </div>
+      )}
       {err && <div className="mt-3"><ErrorNote error={err} /></div>}
     </Card>
   );
@@ -459,9 +510,11 @@ export function ImportPanel({ onChanged }: { onChanged: () => void }) {
   const runSync = async () => {
     setSync("Checking NSE corporate actions…");
     try {
-      const r = await api<{ checked: number; added: Record<string, string[]>; errors: string[] }>("/api/portfolio/actions/sync", { method: "POST" });
+      const r = await api<{ checked: number; added: Record<string, string[]>; pending?: Record<string, string[]>; errors: string[] }>("/api/portfolio/actions/sync", { method: "POST" });
       const n = Object.values(r.added).flat().length;
-      setSync(`${r.checked} stocks checked · ${n} split/bonus event${n === 1 ? "" : "s"} added${r.errors.length ? ` · ${r.errors.length} failed` : ""}`);
+      const pending = Object.entries(r.pending ?? {}).map(([name, xs]) => `${name}: ${xs.join(", ")}`);
+      setSync(`${r.checked} stocks checked · ${n} split/bonus event${n === 1 ? "" : "s"} added${r.errors.length ? ` · ${r.errors.length} failed` : ""}`
+        + (pending.length ? ` · not modelled, needs your cost allocation (see the holding): ${pending.join("; ")}` : ""));
       done();
     } catch (e) {
       setSync((e as Error).message);
@@ -478,7 +531,7 @@ export function ImportPanel({ onChanged }: { onChanged: () => void }) {
         <TradebookImport onDone={done} />
       </div>
       <ManualForm onDone={done} />
-      <Card title="Splits and bonuses" subtitle="Tradebooks don't include them. This reads NSE's corporate actions for your stocks and adds each split or bonus after your first purchase, once.">
+      <Card title="Splits and bonuses" subtitle="Tradebooks don't include them. This reads NSE's corporate actions for your stocks and adds each split or bonus after your first purchase, once. A demerger, rights issue, merger, ISIN change, buyback, capital reduction or consolidation is not modelled: it is flagged on the holding, whose cost and later tax years stay incomplete until you enter the cost allocation or mark it resolved.">
         <div className="flex flex-wrap items-center gap-3">
           <Button variant="secondary" icon={<RefreshCw className="size-3.5" />} onClick={runSync}>Sync corporate actions</Button>
           {sync && <span className="text-xs text-muted">{sync}</span>}
