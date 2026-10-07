@@ -29,7 +29,7 @@ export type TradeNote = {
   reviewed_at: string | null;
 };
 
-export type NotesResponse = { notes: TradeNote[]; due: number[]; synced: { drafts: number; matched: number }; today: string; privacy: string };
+export type NotesResponse = { notes: TradeNote[]; due: number[]; today: string; privacy: string };
 
 export type CheckStatus = "ok" | "warn" | "block" | "info" | "unknown";
 export type CheckItem = { key: string; label: string; status: CheckStatus; value: unknown; detail: string; source: string } & Record<string, unknown>;

@@ -142,8 +142,8 @@ def add_live_routes(app: FastAPI, *, monitor_deps=None, clock=None) -> None:
 
     @app.get("/api/watches/{watch_id}/live")
     async def watch_live(watch_id: int) -> dict[str, Any]:
-        """A watched IPO's subscription book now, while bidding is on. Each new exchange timestamp is recorded as a
-        snapshot, so the chart fills in between the scheduled checks. Outside bidding hours: `live: false`."""
+        """A watched IPO's subscription book now, while bidding is on. Read-only (#247): the monitor's scheduled
+        checks and the archive slots record the snapshots behind the chart. Outside bidding hours: `live: false`."""
         from finresearch.db import session_scope
         from finresearch.db.models import Watch
         from finresearch.monitor.jobs import Deps, NotYet, fetch_book
@@ -167,7 +167,7 @@ def add_live_routes(app: FastAPI, *, monitor_deps=None, clock=None) -> None:
             deps = monitor_deps or Deps.live()
             with session_scope() as s:
                 w = s.get(Watch, watch_id)
-                _, snap, total, source = await fetch_book(s, w, deps, t)
+                _, snap, total, source = await fetch_book(s, w, deps, t, record=False)
                 return {"as_of": snap.as_of.isoformat() if snap.as_of else None, "source": source,
                         "total_times": str(total),
                         "categories": [c.model_dump(mode="json") for c in snap.categories],

@@ -117,16 +117,25 @@ def add_journal_routes(app: FastAPI, *, clock: Callable[[], datetime] | None = N
         return set(s.scalars(select(PortfolioTxn.id))), set(s.scalars(select(PortfolioHolding.id)))
 
     # ------------------------------------------------------------------ entries
+    @app.post("/api/journal/sync")
+    def sync() -> dict[str, Any]:
+        """Draft entries for trades imported since the last sync and attach trades to planned notes (idempotent).
+        The monitor does this every minute; the journal page calls it on open so a fresh import shows at once.
+        The GET routes never write (#247)."""
+        from finresearch.portfolio.journal import sync_drafts
+
+        with session_scope() as s:
+            return {"synced": sync_drafts(s, today())}
+
     @app.get("/api/journal/notes")
     def notes(status: Status | None = None, holding_id: int | None = None) -> dict[str, Any]:
-        """Every entry, newest trade first, after drafting entries for trades imported since the last look."""
+        """Every entry, newest trade first. Read-only: drafts for new trades come from POST /api/journal/sync."""
         from sqlalchemy import select
 
         from finresearch.db.models import TradeNote
-        from finresearch.portfolio.journal import PRIVACY, due, note_json, sync_drafts
+        from finresearch.portfolio.journal import PRIVACY, due, note_json
 
         with session_scope() as s:
-            synced = sync_drafts(s, today())
             q = select(TradeNote)
             if status:
                 q = q.where(TradeNote.status == status)
@@ -135,7 +144,7 @@ def add_journal_routes(app: FastAPI, *, clock: Callable[[], datetime] | None = N
             rows = s.scalars(q.order_by(TradeNote.trade_day.desc().nulls_first(), TradeNote.id.desc())).all()
             live = _live(s)
             due_ids = [n.id for n in due(s, today())]
-            return {"notes": [note_json(n, live) for n in rows], "due": due_ids, "synced": synced,
+            return {"notes": [note_json(n, live) for n in rows], "due": due_ids,
                     "today": today().isoformat(), "privacy": PRIVACY}  # fmt: skip
 
     @app.get("/api/journal/summary")
@@ -143,10 +152,9 @@ def add_journal_routes(app: FastAPI, *, clock: Callable[[], datetime] | None = N
         from sqlalchemy import func, select
 
         from finresearch.db.models import Decision, TradeNote
-        from finresearch.portfolio.journal import due, sync_drafts
+        from finresearch.portfolio.journal import due
 
         with session_scope() as s:
-            sync_drafts(s, today())
             by = dict(s.execute(select(TradeNote.status, func.count()).group_by(TradeNote.status)).all())
             return {"by_status": {k: int(by.get(k, 0)) for k in ("draft", "planned", "active", "reviewed", "cancelled")},
                     "due": len(due(s, today())), "ipo_decisions": s.scalar(select(func.count()).select_from(Decision)) or 0}  # fmt: skip

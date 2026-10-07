@@ -1,7 +1,7 @@
 "use client";
 
 import { AlarmClock, Check, ChevronDown, FilePenLine, NotebookPen, Pencil, Trash2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { Badge, Button, Card, EmptyState, ErrorNote, Field, Segmented, Skeleton, cx, inputClass } from "@/components/ui";
 import { api, day, useApi } from "@/lib/api";
@@ -175,7 +175,17 @@ function NoteRow({ n, due, onSaved }: { n: TradeNote; due: boolean; onSaved: () 
 
 /** Every buy and sell with its thesis: drafts for imported trades, planned trades, reviews due and past reviews. */
 export function TradeJournal({ refreshKey }: { refreshKey?: number }) {
-  const { data, error, reload } = useApi<NotesResponse>(`/api/journal/notes${refreshKey ? `?r=${refreshKey}` : ""}`);
+  // drafts for newly imported trades are made by an explicit POST (GETs never write, #247), then the list is read;
+  // a failed sync still shows the entries (the monitor syncs every minute too)
+  const [syncedFor, setSyncedFor] = useState<number | null>(null);
+  const key = refreshKey ?? 0;
+  useEffect(() => {
+    let alive = true;
+    api("/api/journal/sync", { method: "POST" }).catch(() => undefined).finally(() => alive && setSyncedFor(key));
+    return () => { alive = false; };
+  }, [key]);
+  const { data, error, reload } = useApi<NotesResponse>(
+    syncedFor === key ? `/api/journal/notes${refreshKey ? `?r=${refreshKey}` : ""}` : null);
   const [filter, setFilter] = useState<Filter>("open");
   const due = useMemo(() => new Set(data?.due ?? []), [data]);
   const counts = useMemo(() => {

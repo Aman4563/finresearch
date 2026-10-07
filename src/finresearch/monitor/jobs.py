@@ -190,9 +190,10 @@ def _fmt(x: Decimal | None) -> str:
     return "n/a" if x is None else f"{x:.2f}x"
 
 
-async def fetch_book(session: Session, watch: Watch, deps: Deps, now: datetime):
-    """The watch's current subscription book from the exchange, recorded as a snapshot (once per exchange timestamp).
-    Returns (detail, snapshot, total, source). Used by the scheduled checks and the live view."""
+async def fetch_book(session: Session, watch: Watch, deps: Deps, now: datetime, *, record: bool = True):
+    """The watch's current subscription book from the exchange, recorded as a snapshot (once per exchange timestamp)
+    when `record`. Returns (detail, snapshot, total, source). Used by the scheduled checks (recorded) and the live
+    view (GET /api/watches/{id}/live: never recorded, #247)."""
     bse_ipo_no = (watch.meta or {}).get("bse_ipo_no")  # a BSE SME issue: BSE publishes the whole book
     detail = await (deps.bse_ipo_detail(bse_ipo_no) if bse_ipo_no else deps.ipo_detail(watch.nse_symbol))
     snap = detail.combined
@@ -205,6 +206,8 @@ async def fetch_book(session: Session, watch: Watch, deps: Deps, now: datetime):
         total, source = (row.times_subscribed, "nse_current_issues") if row else (None, source)
     if total is None:
         raise NotYet("the exchange has not published a subscription total yet")
+    if not record:
+        return detail, snap, total, source
     session.execute(insert(SubscriptionSnapshotRow).values(
         nse_symbol=watch.nse_symbol, as_of=snap.as_of or now, source=source, total_times=total,
         categories=[c.model_dump(mode="json") for c in snap.categories], raw={},

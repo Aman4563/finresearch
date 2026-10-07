@@ -87,7 +87,9 @@ def test_quote_is_live_in_session_and_cached_briefly(live_app):
     assert c.get("/api/market/status").json()["ipo_bidding"]["open"]
 
 
-def test_watch_live_book_only_in_bidding_hours_and_recorded(live_app):
+def test_watch_live_book_only_in_bidding_hours_and_read_only(live_app):
+    """#247: the GET once stored each new exchange timestamp as a subscription snapshot; it is now read-only (the
+    monitor's scheduled checks record the book)."""
     from finresearch.db import session_scope
     from finresearch.db.models import SubscriptionSnapshotRow, Watch
     from finresearch.ingest.documents import get_or_create_company
@@ -108,7 +110,7 @@ def test_watch_live_book_only_in_bidding_hours_and_recorded(live_app):
     c.get(f"/api/watches/{wid}/live")
     assert calls["book"] == 1  # one exchange call a minute at most
     with session_scope() as s:
-        assert s.query(SubscriptionSnapshotRow).filter_by(nse_symbol="LIVECO").count() == 1
+        assert s.query(SubscriptionSnapshotRow).filter_by(nse_symbol="LIVECO").count() == 0
     now["t"] = at(2026, 9, 30, 11, 0)  # the day after the close
     assert c.get(f"/api/watches/{wid}/live").json() == {
         "live": False,
