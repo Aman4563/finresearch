@@ -24,7 +24,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from finresearch.db.models import Alert, AlertEvalSlot, NotificationSetting, PortfolioSnapshot, Watch
+from finresearch.db.models import Alert, AlertEvalSlot, NotificationSetting, Watch
 from finresearch.signals.base import DISCLAIMER
 
 BRIEF_KIND, DIGEST_KIND = "morning_brief", "weekly_digest"
@@ -114,9 +114,12 @@ def contributors(hist: dict[str, dict[str, list]], names: dict[str, str], start:
 
 
 def _snaps(s: Session, since: date) -> list[tuple[date, float, float]]:
-    rows = s.scalars(select(PortfolioSnapshot).where(PortfolioSnapshot.day >= since, PortfolioSnapshot.complete.is_(True))
-                     .order_by(PortfolioSnapshot.day)).all()  # fmt: skip
-    return [(r.day, float(r.value), float(r.invested)) for r in rows]
+    """(day, value, invested) of the complete days since `since`, from the canonical reconstructed value history
+    (portfolio.series, #239); empty when it is not built or out of date (the value change then says nothing)."""
+    from finresearch.portfolio import series
+
+    ser, _why = series.load(s)
+    return ser.rows(since) if ser is not None else []
 
 
 def ipo_events(s: Session, today: date, days: int = EVENT_DAYS) -> list[dict[str, Any]]:

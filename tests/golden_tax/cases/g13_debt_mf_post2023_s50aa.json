@@ -1,0 +1,37 @@
+{
+  "id": "g13_debt_mf_post2023_s50aa",
+  "title": "Debt MF bought Jun-2023 and redeemed after 27 months: s.50AA deems it short-term, taxed at slab",
+  "covers": ["s.50AA specified mutual fund", "deemed STCG regardless of holding period"],
+  "rules": [
+    "Income-tax Act 1961 s.50AA (inserted by Finance Act 2023 w.e.f. AY 2024-25; definition of 'specified mutual fund' amended by Finance (No.2) Act 2024 w.e.f. AY 2026-27 to a fund investing > 65 % in debt/money-market instruments): gain on units acquired on/after 1-Apr-2023 is deemed short-term capital gain",
+    "Deemed STCG on a non-s.111A asset: slab rate",
+    "Health and Education Cess 4 % (Finance Act 2025 s.2)"
+  ],
+  "derivation": [
+    "Buy 2023-06-01: 1,000 units @ 20.00 -> cost 20,000.00 (acquired after 1-Apr-2023; fund is a debt fund, > 65 % debt under both the old and new definitions).",
+    "Redeem 2025-09-01: 1,000 @ 23.00 -> proceeds 23,000.00; gain 3,000.00.",
+    "Held 27 months, but s.50AA deems short-term -> term short, rate slab.",
+    "FY 2025-26 (fy 2026): tax 3,000 x 0.30 = 900.00; cess 36.00; total 936.00. exemption_used 0.00."
+  ],
+  "interpretive": false,
+  "slab_rate": "0.30",
+  "holdings": [
+    {"name": "LIMA CORPORATE BOND FUND - GROWTH", "tax_class": "debt_mf", "listed": false, "fmv_2018": null, "sgb_original_subscriber": false,
+     "events": [
+       {"day": "2023-06-01", "kind": "buy", "quantity": "1000", "price": "20.00", "charges": "0", "stt_paid": false},
+       {"day": "2025-09-01", "kind": "sell", "quantity": "1000", "price": "23.00", "charges": "0", "stt_paid": false}
+     ]}
+  ],
+  "expected": {
+    "disposals": [
+      {"holding": "LIMA CORPORATE BOND FUND - GROWTH", "sold": "2025-09-01", "acquired": "2023-06-01", "quantity": "1000",
+       "cost": "20000.00", "tax_cost": "20000.00", "proceeds": "23000.00", "gain": "3000.00", "term": "short", "rate": "slab"}
+    ],
+    "open_lots": [],
+    "fy": [
+      {"fy": 2026, "exemption_used": "0.00", "tax": "900.00", "cess": "36.00", "total": "936.00",
+       "complete": true, "unknown_count": 0, "intraday_count": 0, "exempt_total": "0.00",
+       "losses_carried_short": "0.00", "losses_carried_long": "0.00"}
+    ]
+  }
+}

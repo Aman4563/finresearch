@@ -391,7 +391,8 @@ def test_alert_metrics_contract(client):
     assert reason is None
     assert m["allocation_drift_pp"][0] == D("40.0")
     assert m["ltcg_headroom_inr"][0] == D("125000.0")  # no sales in the current financial year
-    assert m["drawdown_pct"][0] is None and "two days" in m["drawdown_pct"][1]
+    # the drawdown reads the reconstructed value history (#239), which nothing has built yet in this test
+    assert m["drawdown_pct"][0] is None and "no reconstructed value history yet" in m["drawdown_pct"][1]
 
 
 def test_realised_pnl_report_gets_a_specific_message(client):

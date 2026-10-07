@@ -1,0 +1,45 @@
+{
+  "id": "g03_intraday_plus_delivery",
+  "title": "Same-day buy 50 / sell 80: 50 matched as intraday (speculative, s.43(5)), remaining 30 sold FIFO from an older delivery lot",
+  "covers": ["intraday netting", "speculative transaction excluded from CG", "FIFO of the unmatched remainder"],
+  "rules": [
+    "Income-tax Act 1961 s.43(5): a transaction in shares settled otherwise than by actual delivery is speculative; s.28 / Explanation 2 - speculative business income, not capital gains",
+    "Data-model rule (brief): the same-day matched quantity of one holding is intraday; only the excess goes through FIFO capital gains",
+    "Income-tax Act 1961 s.2(42A) first proviso; s.112A(1) as amended by Finance (No.2) Act 2024: 12.5 % above Rs 1,25,000 for transfers on/after 23-Jul-2024",
+    "CBDT Circular No. 768 dated 24-Jun-1998: FIFO"
+  ],
+  "derivation": [
+    "Delivery lot: 100 @ 500.00 on 2024-01-10 (cost 50,000.00).",
+    "2025-06-10: buy 50 @ 600.00 and sell 80 @ 610.00, same holding, same day -> matched quantity min(50, 80) = 50 is intraday.",
+    "Intraday row: 50 units, cost 50 x 600 = 30,000.00, proceeds 50 x 610 = 30,500.00 (speculative profit 500 is business income, outside capital gains). gain is reported null because it is not a capital gain; tax_cost omitted (not applicable); term intraday, rate null.",
+    "Unmatched sale quantity 80 - 50 = 30 goes FIFO to the 2024-01-10 lot: cost 30 x 500 = 15,000.00, proceeds 30 x 610 = 18,300.00, gain 3,300.00.",
+    "Held 2024-01-10 -> 2025-06-10 (> 12 months) -> long, s.112A 12.5 %.",
+    "FY 2025-26 (fy 2026): LTCG 3,300 <= 1,25,000 -> exemption_used 3,300.00, tax 0.00, cess 0.00, total 0.00; intraday_count 1.",
+    "Row order within the same sale date: intraday row first, then FIFO row (ordering convention only).",
+    "Open lot: 100 - 30 = 70 @ 500.00 acquired 2024-01-10; the same-day buy lot is fully consumed by the intraday match."
+  ],
+  "interpretive": false,
+  "slab_rate": "0.30",
+  "holdings": [
+    {"name": "CHARLIE LTD", "tax_class": "equity", "listed": true, "fmv_2018": null, "sgb_original_subscriber": false,
+     "events": [
+       {"day": "2024-01-10", "kind": "buy", "quantity": "100", "price": "500.00", "charges": "0"},
+       {"day": "2025-06-10", "kind": "buy", "quantity": "50", "price": "600.00", "charges": "0"},
+       {"day": "2025-06-10", "kind": "sell", "quantity": "80", "price": "610.00", "charges": "0"}
+     ]}
+  ],
+  "expected": {
+    "disposals": [
+      {"holding": "CHARLIE LTD", "sold": "2025-06-10", "acquired": "2025-06-10", "quantity": "50",
+       "cost": "30000.00", "proceeds": "30500.00", "gain": null, "term": "intraday", "rate": null},
+      {"holding": "CHARLIE LTD", "sold": "2025-06-10", "acquired": "2024-01-10", "quantity": "30",
+       "cost": "15000.00", "tax_cost": "15000.00", "proceeds": "18300.00", "gain": "3300.00", "term": "long", "rate": "0.125"}
+    ],
+    "open_lots": [ {"holding": "CHARLIE LTD", "acquired": "2024-01-10", "quantity": "70", "cost_per_unit": "500.00"} ],
+    "fy": [
+      {"fy": 2026, "exemption_used": "3300.00", "tax": "0.00", "cess": "0.00", "total": "0.00",
+       "complete": true, "unknown_count": 0, "intraday_count": 1, "exempt_total": "0.00",
+       "losses_carried_short": "0.00", "losses_carried_long": "0.00"}
+    ]
+  }
+}

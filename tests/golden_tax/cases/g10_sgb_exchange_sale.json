@@ -1,0 +1,40 @@
+{
+  "id": "g10_sgb_exchange_sale",
+  "title": "SGB bought and sold on the exchange: listed non-equity security, LT after 12 months, 12.5 % under s.112, no Rs 1.25 lakh exemption",
+  "covers": ["SGB exchange sale", "s.112 12.5 % no indexation", "no s.112A threshold for non-equity"],
+  "rules": [
+    "Income-tax Act 1961 s.47(viic) covers only redemption by RBI, not a sale on the exchange -> taxable transfer",
+    "Income-tax Act 1961 s.2(42A) first proviso (as amended by Finance (No.2) Act 2024): listed security -> long-term if held more than 12 months",
+    "Income-tax Act 1961 s.112(1) as amended by Finance (No.2) Act 2024: LTCG on transfer on/after 23-Jul-2024 taxed at 12.5 % without indexation (s.48 second proviso indexation only for transfers before 23-Jul-2024)",
+    "s.112A threshold applies only to s.112A assets (STT-paid equity) - not to SGB",
+    "Health and Education Cess 4 % (Finance (No.2) Act 2024 s.2)"
+  ],
+  "derivation": [
+    "Buy on exchange 2023-03-10: 10 @ 5,500.00 -> cost 55,000.00 (not an original subscriber).",
+    "Sale on exchange 2025-02-10: 10 @ 8,500.00 -> proceeds 85,000.00; not an RBI redemption -> taxable.",
+    "Held 2023-03-10 -> 2025-02-10 (23 months > 12) -> long; transfer after 23-Jul-2024 -> 12.5 % without indexation.",
+    "Gain 85,000 - 55,000 = 30,000.00.",
+    "FY 2024-25 (fy 2025): tax 30,000 x 0.125 = 3,750.00; cess 150.00; total 3,900.00; exemption_used 0.00 (no s.112A gain)."
+  ],
+  "interpretive": false,
+  "slab_rate": "0.30",
+  "holdings": [
+    {"name": "SGB 2020-21 SERIES Y", "tax_class": "sgb", "listed": true, "fmv_2018": null, "sgb_original_subscriber": false,
+     "events": [
+       {"day": "2023-03-10", "kind": "buy", "quantity": "10", "price": "5500.00", "charges": "0", "stt_paid": false},
+       {"day": "2025-02-10", "kind": "sell", "quantity": "10", "price": "8500.00", "charges": "0", "stt_paid": false}
+     ]}
+  ],
+  "expected": {
+    "disposals": [
+      {"holding": "SGB 2020-21 SERIES Y", "sold": "2025-02-10", "acquired": "2023-03-10", "quantity": "10",
+       "cost": "55000.00", "tax_cost": "55000.00", "proceeds": "85000.00", "gain": "30000.00", "term": "long", "rate": "0.125"}
+    ],
+    "open_lots": [],
+    "fy": [
+      {"fy": 2025, "exemption_used": "0.00", "tax": "3750.00", "cess": "150.00", "total": "3900.00",
+       "complete": true, "unknown_count": 0, "intraday_count": 0, "exempt_total": "0.00",
+       "losses_carried_short": "0.00", "losses_carried_long": "0.00"}
+    ]
+  }
+}

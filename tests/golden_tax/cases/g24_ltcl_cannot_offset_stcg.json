@@ -1,0 +1,45 @@
+{
+  "id": "g24_ltcl_cannot_offset_stcg",
+  "title": "Equity LTCL of Rs 30,000 cannot be set off against STCG of Rs 40,000; STCG fully taxed, LTCL carried forward",
+  "covers": ["long-term loss", "LTCL only against LTCG", "losses_carried_long"],
+  "rules": [
+    "Income-tax Act 1961 s.70(3): long-term capital loss can be set off only against long-term capital gain",
+    "Income-tax Act 1961 s.74(1)(b): unabsorbed LTCL carried forward (8 AYs) against LTCG only",
+    "Income-tax Act 1961 s.111A(1) as amended by Finance (No.2) Act 2024: STCG 20 % on/after 23-Jul-2024",
+    "Health and Education Cess 4 % (Finance Act 2025 s.2)"
+  ],
+  "derivation": [
+    "YANKEE LTD: 100 @ 1,000.00 bought 2023-01-10, sold 2025-05-10 @ 700.00 -> proceeds 70,000.00, cost 1,00,000.00, gain -30,000.00, long (12.5 % bucket).",
+    "ZULU LTD: 100 @ 400.00 bought 2025-01-20, sold 2025-06-20 @ 800.00 -> proceeds 80,000.00, cost 40,000.00, STCG 40,000.00, short 20 %.",
+    "FY 2025-26 (fy 2026): no LTCG to absorb the LTCL; it may not reduce STCG -> losses_carried_long 30,000.00; exemption_used 0.00.",
+    "Tax 40,000 x 0.20 = 8,000.00; cess 320.00; total 8,320.00."
+  ],
+  "interpretive": false,
+  "slab_rate": "0.30",
+  "holdings": [
+    {"name": "YANKEE LTD", "tax_class": "equity", "listed": true, "fmv_2018": null, "sgb_original_subscriber": false,
+     "events": [
+       {"day": "2023-01-10", "kind": "buy", "quantity": "100", "price": "1000.00", "charges": "0"},
+       {"day": "2025-05-10", "kind": "sell", "quantity": "100", "price": "700.00", "charges": "0"}
+     ]},
+    {"name": "ZULU LTD", "tax_class": "equity", "listed": true, "fmv_2018": null, "sgb_original_subscriber": false,
+     "events": [
+       {"day": "2025-01-20", "kind": "buy", "quantity": "100", "price": "400.00", "charges": "0"},
+       {"day": "2025-06-20", "kind": "sell", "quantity": "100", "price": "800.00", "charges": "0"}
+     ]}
+  ],
+  "expected": {
+    "disposals": [
+      {"holding": "YANKEE LTD", "sold": "2025-05-10", "acquired": "2023-01-10", "quantity": "100",
+       "cost": "100000.00", "tax_cost": "100000.00", "proceeds": "70000.00", "gain": "-30000.00", "term": "long", "rate": "0.125"},
+      {"holding": "ZULU LTD", "sold": "2025-06-20", "acquired": "2025-01-20", "quantity": "100",
+       "cost": "40000.00", "tax_cost": "40000.00", "proceeds": "80000.00", "gain": "40000.00", "term": "short", "rate": "0.20"}
+    ],
+    "open_lots": [],
+    "fy": [
+      {"fy": 2026, "exemption_used": "0.00", "tax": "8000.00", "cess": "320.00", "total": "8320.00",
+       "complete": true, "unknown_count": 0, "intraday_count": 0, "exempt_total": "0.00",
+       "losses_carried_short": "0.00", "losses_carried_long": "30000.00"}
+    ]
+  }
+}

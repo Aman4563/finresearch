@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from finresearch.db.models import (
+    PortfolioLot,
     PortfolioSetting,
     PortfolioSnapshot,
     WealthAsset,
@@ -28,6 +29,8 @@ from finresearch.fincalc.numbers import format_inr
 from finresearch.portfolio import limits
 from finresearch.wealth import DISCLAIMER, PRIVACY, allocation, calc, household
 from finresearch.wealth.goals import DEFAULT_ASSUMPTIONS, assumptions_from
+
+OPEN = Decimal("0.0005")  # units below this are rounding noise (portfolio.lots.EPS)
 
 ASSET_KINDS = ("fd", "rd", "epf", "ppf", "nps", "gold", "sgb", "real_estate", "cash", "other")
 LOAN_KINDS = ("home", "car", "personal", "education", "other")
@@ -105,9 +108,25 @@ class Book:
     goals: list[WealthGoal]
     policies: list[WealthPolicy]
     snaps: list[PortfolioSnapshot]
+    # open portfolio lots exist: a day without a portfolio valuation then has an unknown portfolio value, not ₹0
+    has_portfolio: bool = False
+    first_txn: date | None = None  # the portfolio's first transaction: before it the portfolio is ₹0, known
+    series: Any = None  # portfolio.series.Series: the canonical reconstructed value history (#239), or None
+    series_why: str | None = None  # why there is no usable series
 
 
 def load(s: Session) -> Book:
+    from sqlalchemy import func
+
+    from finresearch.db.models import PortfolioTxn
+    from finresearch.portfolio import series
+
+    first = s.scalar(select(func.min(PortfolioTxn.day)).where(PortfolioTxn.kind.in_(("buy", "opening"))))
+    ser, why = series.load(s) if first is not None else (None, None)
+    return _book(s, first, ser, why)
+
+
+def _book(s: Session, first: date | None, ser: Any, why: str | None) -> Book:
     vals: dict[int, list[WealthValuation]] = {}
     for v in s.scalars(select(WealthValuation).order_by(WealthValuation.day)):
         vals.setdefault(v.asset_id, []).append(v)
@@ -118,6 +137,11 @@ def load(s: Session) -> Book:
         goals=list(s.scalars(select(WealthGoal).order_by(WealthGoal.target_date, WealthGoal.id))),
         policies=list(s.scalars(select(WealthPolicy).order_by(WealthPolicy.id))),
         snaps=list(s.scalars(select(PortfolioSnapshot).order_by(PortfolioSnapshot.day))),
+        has_portfolio=s.scalar(select(PortfolioLot.id).where(PortfolioLot.open_quantity > OPEN).limit(1))
+        is not None,
+        first_txn=first,
+        series=ser,
+        series_why=why,
     )
 
 
@@ -201,9 +225,57 @@ def portfolio_on(snaps: list[PortfolioSnapshot], on: date) -> PortfolioSnapshot 
     return got
 
 
-def net_worth_on(b: Book, on: date) -> dict[str, Any]:
+def _past_value(b: Book, on: date) -> tuple[float | None, str | None, str | None]:
+    """A past day's portfolio value from the canonical reconstructed history (portfolio.series, #239)."""
+    if b.first_txn is None or on < b.first_txn:
+        return 0.0, None, None  # nothing bought yet: ₹0 is known
+    if b.series is None:
+        return None, f"portfolio: {b.series_why or 'no value history'}: left out of the total", None
+    got = b.series.value_on(on)
+    if got is None:
+        return None, (f"portfolio: before the reconstructed value history starts ({b.series.start_reason}): left out "
+                      "of the total"), None  # fmt: skip
+    v, complete, d = got
+    why = None
+    if not complete:
+        why = f"portfolio: the reconstructed value of {d.isoformat()} used a price more than 10 days old"
+    elif b.series.excluded:
+        why = "portfolio: the reconstructed value leaves out " + "; ".join(b.series.excluded)
+    return v, why, d.isoformat()
+
+
+def portfolio_value_on(b: Book, on: date, today: date | None = None) -> tuple[float | None, str | None]:
+    """(the portfolio's value on a day, why it is unknown or incomplete). Value None = unknown, never ₹0 (#238).
+
+    One rule for every reader (#239): a past day (before `today`) reads the canonical reconstructed history
+    (transactions × official closes, portfolio.series); today reads the latest "as shown" valuation (the portfolio
+    page or the daily pass), whose day is returned with it. An incomplete valuation keeps its value (what was priced)
+    with the reason."""
+    if today is not None and on < today:
+        v, why, _ = _past_value(b, on)
+        return v, why
     sn = portfolio_on(b.snaps, on)
-    port = f(sn.value) if sn else 0.0
+    if sn is None:
+        if b.has_portfolio:
+            return (
+                None,
+                "portfolio: no valuation on or before this day (open /portfolio): left out of the total",
+            )
+        return 0.0, None
+    if not sn.complete:
+        return f(sn.value), (f"portfolio: the valuation of {sn.day.isoformat()} is incomplete (a holding without a "
+                             "current price or cost, or a sale without a cost): it counts only what was priced")  # fmt: skip
+    return f(sn.value), None
+
+
+def net_worth_on(b: Book, on: date, today: date | None = None) -> dict[str, Any]:
+    """Net worth on a day (`today` given and `on` earlier: a past day, valued from the reconstructed history).
+    `complete` False (with `missing` saying why) when a part is unknown: the totals then add up only the known parts
+    and must be read as such."""
+    past = today is not None and on < today
+    sn = None if past else portfolio_on(b.snaps, on)
+    port_value, port_why = portfolio_value_on(b, on, today)
+    port = port_value or 0.0
     manual = 0.0
     real_estate = locked = 0.0
     for a in b.assets:
@@ -224,7 +296,7 @@ def net_worth_on(b: Book, on: date) -> dict[str, Any]:
     total = port + manual
     return {
         "date": on.isoformat(),
-        "portfolio": round(port, 2),
+        "portfolio": None if port_value is None else round(port, 2),
         "manual": round(manual, 2),
         "assets": round(total, 2),
         "liabilities": round(loans, 2),
@@ -232,7 +304,10 @@ def net_worth_on(b: Book, on: date) -> dict[str, Any]:
         # liquid: without real estate and retirement lock-ins, and without home loans (secured on the property that
         # is left out); other loans still count
         "liquid_net_worth": round(total - real_estate - locked - (loans - home), 2),
-        "portfolio_day": sn.day.isoformat() if sn else None,
+        "portfolio_day": _past_value(b, on)[2] if past else (sn.day.isoformat() if sn else None),
+        "portfolio_source": "reconstructed" if past else "as shown",
+        "complete": port_why is None,
+        "missing": [port_why] if port_why else [],
     }
 
 
@@ -249,16 +324,20 @@ def _month_ends(start: date, end: date) -> list[date]:
 
 def history(b: Book, today: date, max_points: int = 120) -> list[dict[str, Any]]:
     """Month-end net worth from the earliest dated entry to today, plus today. Each month uses only what was known
-    on that day: the portfolio snapshot on or before it, manual values dated on or before it (FD/RD/loan schedules
-    from their start dates)."""
-    starts = [sn.day for sn in b.snaps] + [ln.start_date for ln in b.loans]
+    on that day: the portfolio's reconstructed value (portfolio.series; today: the latest "as shown" valuation),
+    manual values dated on or before it (FD/RD/loan schedules from their start dates)."""
+    starts = (
+        [sn.day for sn in b.snaps]
+        + [ln.start_date for ln in b.loans]
+        + ([b.first_txn] if b.first_txn else [])
+    )
     starts += [v.day for vs in b.vals.values() for v in vs]
     starts += [a.start_date for a in b.assets if a.start_date and a.kind in ("fd", "rd")]
     starts = [d for d in starts if d <= today]
     if not starts:
         return []
     days = [*_month_ends(min(starts), today)[-max_points:], today]
-    return [net_worth_on(b, d) for d in days]
+    return [net_worth_on(b, d, today) for d in days]
 
 
 # --------------------------------------------------------------------------- overview
@@ -284,7 +363,7 @@ def overview(s: Session, today: date) -> dict[str, Any]:
     asm = get_assumptions(s)
     b = load(s)
     sn = portfolio_on(b.snaps, today)
-    port_value = f(sn.value) if sn else 0.0
+    port_value, port_why = portfolio_value_on(b, today)
 
     # ---- assets, by class
     rows, values = [], {}
@@ -411,7 +490,7 @@ def overview(s: Session, today: date) -> dict[str, Any]:
         for i in g.linked_asset_ids or []:
             linked_count[int(i)] = linked_count.get(int(i), 0) + 1
     for g in b.goals:
-        fund = goal_funding(g, values, port_value)
+        fund = goal_funding(g, values, port_value or 0.0)
         goals_json.append(
             {
                 **goal_json(g),
@@ -504,7 +583,8 @@ def overview(s: Session, today: date) -> dict[str, Any]:
         "portfolio": {
             "value": port_value,
             "day": sn.day.isoformat() if sn else None,
-            "complete": bool(sn.complete) if sn else None,
+            "complete": bool(sn.complete) if sn else (False if b.has_portfolio else None),
+            "why": port_why,
             "by_class": port_classes,
         },
         "assets": rows,

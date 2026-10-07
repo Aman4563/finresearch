@@ -26,7 +26,8 @@ def client(env):
 
     with session_scope() as s:
         s.execute(text("TRUNCATE wealth_valuation, wealth_asset, wealth_loan, wealth_goal, wealth_policy, "
-                       "portfolio_snapshot, portfolio_setting, investor_profile"))  # fmt: skip
+                       "portfolio_snapshot, portfolio_setting, investor_profile, portfolio_disposal, portfolio_lot, "
+                       "portfolio_txn, portfolio_holding, portfolio_import CASCADE"))  # fmt: skip
     app = create_app()
     app.state.wealth_today = TODAY
     with TestClient(app) as c:

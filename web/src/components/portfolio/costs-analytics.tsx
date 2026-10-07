@@ -15,7 +15,7 @@ import { inr } from "./types";
 type Switch = {
   key: string; name: string; holding_ids: number[]; value: number; yearly_saving: number; ten_year_difference: number;
   break_even_years: number | null; text: string; exit_load_input: { pct: number; days: number } | null;
-  costs: { value: number; gain: number; tax: number; exit_load: number | null; exit_load_known: boolean; stamp: number; unknown_cost_lots: number; total: number };
+  costs: { value: number; gain: number; tax: number; exit_load: number | null; exit_load_known: boolean; stamp: number; unknown_cost_lots: number; total: number; year_unclassified?: number; complete?: boolean; estimate?: boolean };
 };
 type Costs = AnalyticsBase & {
   ter_source?: string | null; weighted_ter_pct?: number | null; yearly_cost?: number; matched_value?: number; status?: string; suppressed?: number;
@@ -67,7 +67,7 @@ export function CostsAnalytics({ refresh }: { refresh: number }) {
                 <div key={s.key} className="rounded-lg border border-border p-3">
                   <p className="text-sm font-medium">{s.name} <span className="text-xs font-normal text-muted">· {inr(s.value)}</span></p>
                   <div className="mt-2 grid gap-2 text-xs sm:grid-cols-5">
-                    <div><p className="text-muted">Tax now <InfoTip>{a.tax}</InfoTip></p><p className="num font-medium">{inr(s.costs.tax)}</p></div>
+                    <div><p className="text-muted">Tax now <InfoTip>{a.tax}</InfoTip></p><p className="num font-medium">{inr(s.costs.tax)}{s.costs.estimate && <Badge tone="warn">estimate, incomplete</Badge>}</p></div>
                     <div><p className="text-muted">Exit load <InfoTip>{a.exit_load}</InfoTip></p><p className="num font-medium">{s.costs.exit_load_known ? inr(s.costs.exit_load) : <Badge tone="warn">unknown</Badge>}</p></div>
                     <div><p className="text-muted">Stamp duty</p><p className="num font-medium">{inr(s.costs.stamp)}</p></div>
                     <div><p className="text-muted">Saving a year</p><p className="num font-medium text-gain">{inr(s.yearly_saving)}</p></div>

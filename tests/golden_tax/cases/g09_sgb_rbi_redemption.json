@@ -1,0 +1,38 @@
+{
+  "id": "g09_sgb_rbi_redemption",
+  "title": "Sovereign Gold Bond redeemed by RBI at maturity (Nov-2025, before 1-Apr-2026): exempt under s.47(viic)",
+  "covers": ["SGB redemption exempt", "exempt_total"],
+  "rules": [
+    "Income-tax Act 1961 s.47(viic) (inserted by Finance Act 2016 w.e.f. AY 2017-18): any redemption by an individual of Sovereign Gold Bonds issued by RBI under the Sovereign Gold Bond Scheme, 2015 is not a transfer -> no capital gain",
+    "The clause as worded has no original-subscriber condition, so sgb_original_subscriber does not change the answer for redemptions before 1-Apr-2026 (see INDEX.md on the position after 1-Apr-2026)"
+  ],
+  "derivation": [
+    "Subscription 2017-11-20: 10 units @ 3,000.00 -> cost 30,000.00 (no STT on SGB).",
+    "RBI redemption 2025-11-20 (8-year maturity; meta rbi_redemption + held_to_maturity): 10 @ 12,000.00 -> proceeds 1,20,000.00.",
+    "s.47(viic): not a transfer -> taxable gain 0.00, term exempt, rate null.",
+    "Economic gain 1,20,000 - 30,000 = 90,000.00 -> exempt_total 90,000.00 for FY 2025-26 (fy 2026).",
+    "No other capital gains -> exemption_used 0.00 (no s.112A gain), tax 0.00, cess 0.00, total 0.00."
+  ],
+  "interpretive": false,
+  "slab_rate": "0.30",
+  "holdings": [
+    {"name": "SGB 2017-18 SERIES X", "tax_class": "sgb", "listed": true, "fmv_2018": null, "sgb_original_subscriber": true,
+     "events": [
+       {"day": "2017-11-20", "kind": "buy", "quantity": "10", "price": "3000.00", "charges": "0", "stt_paid": false},
+       {"day": "2025-11-20", "kind": "sell", "quantity": "10", "price": "12000.00", "charges": "0", "stt_paid": false,
+        "meta": {"rbi_redemption": true, "held_to_maturity": true}}
+     ]}
+  ],
+  "expected": {
+    "disposals": [
+      {"holding": "SGB 2017-18 SERIES X", "sold": "2025-11-20", "acquired": "2017-11-20", "quantity": "10",
+       "cost": "30000.00", "proceeds": "120000.00", "gain": "0.00", "term": "exempt", "rate": null}
+    ],
+    "open_lots": [],
+    "fy": [
+      {"fy": 2026, "exemption_used": "0.00", "tax": "0.00", "cess": "0.00", "total": "0.00",
+       "complete": true, "unknown_count": 0, "intraday_count": 0, "exempt_total": "90000.00",
+       "losses_carried_short": "0.00", "losses_carried_long": "0.00"}
+    ]
+  }
+}

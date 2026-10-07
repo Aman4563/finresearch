@@ -73,6 +73,10 @@ class Deps:
     pf_stock_events: Any = None  # async (symbol) -> {"actions", "board_meetings", "results"}
     pf_ter: Any = None  # async (month) -> {ter_key(name): SchemeTer}
     pf_spacing_s: float = 1.0  # pause between instruments in the signals and events steps
+    # async (holdings: list[history.HoldingIn], today) -> history.History: the canonical value history (#239) the
+    # daily pass stores for the alerts, brief, digest and net worth. None = not built by the pass (the Performance tab
+    # still builds and stores it); the live app wires portfolio_daily.live_history
+    pf_history: Any = None
     brief: bool = False  # build the 08:30 brief and the weekly digest (monitor.digest)
     archive: bool = (
         False  # the daily validation archive after the close (monitor.archive: sector P/E, IV term, G-sec)
@@ -164,6 +168,7 @@ class Deps:
 
         from finresearch.adapters.nse_fno import NseFno
         from finresearch.monitor.intraday import live_fetch
+        from finresearch.monitor.portfolio_daily import live_history
 
         return cls(ipo_detail=ipo_detail, quote=quote, current_issues=current_issues, stock_snapshot=stock_snapshot,
                    bse_ipo_detail=bse_ipo_detail, bse_quote=bse_quote, fno=NseFno, price_history=price_history,
@@ -171,7 +176,7 @@ class Deps:
                    intraday=live_fetch, bse_stock_snapshot=bse_stock_snapshot, bse_price_history=bse_price_history,
                    bse_corporate_actions=bse_corporate_actions, portfolio_daily=True, brief=True, archive=True,
                    live_holidays=True, disclosures=True, fund_ranks=True, stock_peers=True,
-                   lookthrough=True)  # fmt: skip
+                   lookthrough=True, pf_history=live_history)  # fmt: skip
 
 
 def alert(session: Session, watch: Watch, kind: str, message: str, level: str = "info", **data: Any) -> None:

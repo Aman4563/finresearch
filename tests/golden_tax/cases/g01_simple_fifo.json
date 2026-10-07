@@ -1,0 +1,42 @@
+{
+  "id": "g01_simple_fifo",
+  "title": "One equity lot, partial long-term sale after 23-Jul-2024, gain inside the Rs 1.25 lakh s.112A threshold",
+  "covers": ["simple FIFO", "partial sale", "s.112A post-23-Jul-2024 rate", "open lot remainder"],
+  "rules": [
+    "Income-tax Act 1961 s.2(42A) first proviso (listed equity share): short-term if held not more than 12 months; period counted excluding the day of acquisition (General Clauses Act 1897 s.9)",
+    "Income-tax Act 1961 s.48: gain = full value of consideration - transfer expenses - cost of acquisition (incl. acquisition expenses)",
+    "Income-tax Act 1961 s.112A(1) as amended by Finance (No.2) Act 2024 (No.15 of 2024): LTCG exceeding Rs 1,25,000 taxed at 12.5 % for transfers on/after 23-Jul-2024",
+    "CBDT Circular No. 768 dated 24-Jun-1998: FIFO for demat shares",
+    "Health and Education Cess 4 % of tax (Finance Act 2018 s.2(11); continued by Finance (No.2) Act 2024 s.2)"
+  ],
+  "derivation": [
+    "Lot: 100 @ 50.00 bought 2023-05-10, charges 0 -> cost 5,000.00 (50.00/unit).",
+    "Sale 2024-09-02 of 60 @ 80.00, charges 0 -> proceeds 60 x 80 = 4,800.00.",
+    "FIFO: all 60 from the 2023-05-10 lot; cost 60 x 50 = 3,000.00. No fmv_2018 -> tax_cost = 3,000.00.",
+    "Holding 2023-05-10 -> 2024-09-02 = 15 months+ > 12 months -> long-term (s.2(42A)).",
+    "Gain 4,800 - 3,000 = 1,800.00, STT paid both legs -> s.112A, transfer on/after 23-Jul-2024 -> 12.5 %.",
+    "FY 2024-25 (fy 2025): total s.112A LTCG 1,800 <= 1,25,000 -> exemption_used 1,800.00, taxable 0 -> tax 0.00, cess 0.00, total 0.00.",
+    "Open lot: 100 - 60 = 40 units acquired 2023-05-10 @ 50.00."
+  ],
+  "interpretive": false,
+  "slab_rate": "0.30",
+  "holdings": [
+    {"name": "ALPHA LTD", "tax_class": "equity", "listed": true, "fmv_2018": null, "sgb_original_subscriber": false,
+     "events": [
+       {"day": "2023-05-10", "kind": "buy", "quantity": "100", "price": "50.00", "charges": "0"},
+       {"day": "2024-09-02", "kind": "sell", "quantity": "60", "price": "80.00", "charges": "0"}
+     ]}
+  ],
+  "expected": {
+    "disposals": [
+      {"holding": "ALPHA LTD", "sold": "2024-09-02", "acquired": "2023-05-10", "quantity": "60",
+       "cost": "3000.00", "tax_cost": "3000.00", "proceeds": "4800.00", "gain": "1800.00", "term": "long", "rate": "0.125"}
+    ],
+    "open_lots": [ {"holding": "ALPHA LTD", "acquired": "2023-05-10", "quantity": "40", "cost_per_unit": "50.00"} ],
+    "fy": [
+      {"fy": 2025, "exemption_used": "1800.00", "tax": "0.00", "cess": "0.00", "total": "0.00",
+       "complete": true, "unknown_count": 0, "intraday_count": 0, "exempt_total": "0.00",
+       "losses_carried_short": "0.00", "losses_carried_long": "0.00"}
+    ]
+  }
+}
