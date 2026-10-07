@@ -163,3 +163,43 @@ def test_xirr_reason_names_the_stale_price(client):
     assert row["xirr_reason"].startswith("today's value uses an old price: Zerodha statement close of 2026-08-06")
     assert snap["summary"]["xirr"] is not None
     assert "1 holding(s) valued at a statement price more than 5 trading days old" in snap["summary"]["xirr_reason"]
+
+
+# --------------------------------------------------------------------------- (a) net worth without a valuation
+def test_net_worth_portfolio_is_unknown_without_a_valuation(client):
+    from finresearch.db import session_scope
+    from finresearch.wealth.service import load, net_worth_on
+
+    add(client, day="2026-01-05", kind="buy", quantity="5", price="100")  # held, never valued
+    r = client.post("/api/wealth/assets", headers=ORIGIN, json={"kind": "cash", "name": "Savings",
+                                                                 "value": "300000", "value_date": "2026-09-01"})  # fmt: skip
+    assert r.status_code == 200, r.text
+    with session_scope() as s:
+        nw = net_worth_on(load(s), TODAY)
+    # main: portfolio 0.0 and nothing said; the cash ₹3,00,000 is the only known part
+    assert nw["portfolio"] is None and nw["portfolio_day"] is None
+    assert nw["complete"] is False and "no valuation on or before this day" in nw["missing"][0]
+    assert nw["net_worth"] == 300_000.0  # the known parts only, flagged by `complete`
+
+
+def test_net_worth_says_when_the_valuation_was_incomplete(client):
+    from finresearch.db import session_scope
+    from finresearch.db.models import PortfolioSnapshot
+    from finresearch.wealth.service import load, net_worth_on
+
+    add(client, day="2026-01-05", kind="buy", quantity="5", price="100")
+    with session_scope() as s:
+        s.add(PortfolioSnapshot(day=date(2026, 10, 2), value=D(600), invested=D(500), by_asset={}, complete=False))
+    with session_scope() as s:
+        nw = net_worth_on(load(s), TODAY)
+    assert nw["portfolio"] == 600.0 and nw["complete"] is False
+    assert "valuation of 2026-10-02 is incomplete" in nw["missing"][0]
+
+
+def test_net_worth_without_any_holdings_is_complete_at_zero(client):
+    from finresearch.db import session_scope
+    from finresearch.wealth.service import load, net_worth_on
+
+    with session_scope() as s:
+        nw = net_worth_on(load(s), TODAY)
+    assert nw["portfolio"] == 0.0 and nw["complete"] is True and nw["missing"] == []

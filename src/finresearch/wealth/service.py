@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from finresearch.db.models import (
+    PortfolioLot,
     PortfolioSetting,
     PortfolioSnapshot,
     WealthAsset,
@@ -28,6 +29,8 @@ from finresearch.fincalc.numbers import format_inr
 from finresearch.portfolio import limits
 from finresearch.wealth import DISCLAIMER, PRIVACY, allocation, calc, household
 from finresearch.wealth.goals import DEFAULT_ASSUMPTIONS, assumptions_from
+
+OPEN = Decimal("0.0005")  # units below this are rounding noise (portfolio.lots.EPS)
 
 ASSET_KINDS = ("fd", "rd", "epf", "ppf", "nps", "gold", "sgb", "real_estate", "cash", "other")
 LOAN_KINDS = ("home", "car", "personal", "education", "other")
@@ -105,6 +108,8 @@ class Book:
     goals: list[WealthGoal]
     policies: list[WealthPolicy]
     snaps: list[PortfolioSnapshot]
+    # open portfolio lots exist: a day without a portfolio valuation then has an unknown portfolio value, not ₹0
+    has_portfolio: bool = False
 
 
 def load(s: Session) -> Book:
@@ -118,6 +123,7 @@ def load(s: Session) -> Book:
         goals=list(s.scalars(select(WealthGoal).order_by(WealthGoal.target_date, WealthGoal.id))),
         policies=list(s.scalars(select(WealthPolicy).order_by(WealthPolicy.id))),
         snaps=list(s.scalars(select(PortfolioSnapshot).order_by(PortfolioSnapshot.day))),
+        has_portfolio=s.scalar(select(PortfolioLot.id).where(PortfolioLot.open_quantity > OPEN).limit(1)) is not None,
     )
 
 
@@ -201,9 +207,27 @@ def portfolio_on(snaps: list[PortfolioSnapshot], on: date) -> PortfolioSnapshot 
     return got
 
 
-def net_worth_on(b: Book, on: date) -> dict[str, Any]:
+def portfolio_value_on(b: Book, on: date) -> tuple[float | None, str | None]:
+    """(the portfolio's value on a day, why it is unknown or incomplete). Value None = unknown: there are holdings but
+    no valuation on or before the day, which is never ₹0 (#238). An incomplete valuation keeps its value (what was
+    priced) with the reason."""
     sn = portfolio_on(b.snaps, on)
-    port = f(sn.value) if sn else 0.0
+    if sn is None:
+        if b.has_portfolio:
+            return None, "portfolio: no valuation on or before this day (open /portfolio): left out of the total"
+        return 0.0, None
+    if not sn.complete:
+        return f(sn.value), (f"portfolio: the valuation of {sn.day.isoformat()} is incomplete (a holding without a "
+                             "current price or cost, or a sale without a cost): it counts only what was priced")  # fmt: skip
+    return f(sn.value), None
+
+
+def net_worth_on(b: Book, on: date) -> dict[str, Any]:
+    """Net worth on a day. `complete` False (with `missing` saying why) when a part is unknown: the totals then add up
+    only the known parts and must be read as such."""
+    sn = portfolio_on(b.snaps, on)
+    port_value, port_why = portfolio_value_on(b, on)
+    port = port_value or 0.0
     manual = 0.0
     real_estate = locked = 0.0
     for a in b.assets:
@@ -224,7 +248,7 @@ def net_worth_on(b: Book, on: date) -> dict[str, Any]:
     total = port + manual
     return {
         "date": on.isoformat(),
-        "portfolio": round(port, 2),
+        "portfolio": None if port_value is None else round(port, 2),
         "manual": round(manual, 2),
         "assets": round(total, 2),
         "liabilities": round(loans, 2),
@@ -233,6 +257,8 @@ def net_worth_on(b: Book, on: date) -> dict[str, Any]:
         # is left out); other loans still count
         "liquid_net_worth": round(total - real_estate - locked - (loans - home), 2),
         "portfolio_day": sn.day.isoformat() if sn else None,
+        "complete": port_why is None,
+        "missing": [port_why] if port_why else [],
     }
 
 
@@ -284,7 +310,7 @@ def overview(s: Session, today: date) -> dict[str, Any]:
     asm = get_assumptions(s)
     b = load(s)
     sn = portfolio_on(b.snaps, today)
-    port_value = f(sn.value) if sn else 0.0
+    port_value, port_why = portfolio_value_on(b, today)
 
     # ---- assets, by class
     rows, values = [], {}
@@ -411,7 +437,7 @@ def overview(s: Session, today: date) -> dict[str, Any]:
         for i in g.linked_asset_ids or []:
             linked_count[int(i)] = linked_count.get(int(i), 0) + 1
     for g in b.goals:
-        fund = goal_funding(g, values, port_value)
+        fund = goal_funding(g, values, port_value or 0.0)
         goals_json.append(
             {
                 **goal_json(g),
@@ -504,7 +530,8 @@ def overview(s: Session, today: date) -> dict[str, Any]:
         "portfolio": {
             "value": port_value,
             "day": sn.day.isoformat() if sn else None,
-            "complete": bool(sn.complete) if sn else None,
+            "complete": bool(sn.complete) if sn else (False if b.has_portfolio else None),
+            "why": port_why,
             "by_class": port_classes,
         },
         "assets": rows,
