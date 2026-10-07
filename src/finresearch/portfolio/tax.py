@@ -230,8 +230,17 @@ def gains_of(rows: Iterable[DisposalRow]) -> list[Gain]:
     """Capital-gains rows for fincalc.tax.fy_tax. Intraday trades are speculative business income, not capital
     gains: they are left out here (fy_summary counts them separately) instead of being reported as disposals with an
     "unknown acquisition date or cost"."""
-    return [Gain(r.gain if r.gain is not None else Decimal(0), r.cls, r.sold, str(r.txn_id or ""))
+    return [Gain(_amount(r), r.cls, r.sold, str(r.txn_id or ""))
             for r in rows if r.cls is not None and r.origin != "intraday"]  # fmt: skip
+
+
+def _amount(r: DisposalRow) -> Decimal:
+    """The Gain amount fy_tax sees. An exempt transfer (an SGB redeemed by RBI) has no taxable gain (`r.gain` 0), but
+    fy_tax reports the exempt gain itself (`exempt_total`), which is proceeds - cost: before #240's golden case g09
+    it was always ₹0. fy_tax never taxes an exempt Gain, so this changes no tax."""
+    if r.cls is not None and r.cls.term == "exempt" and r.tax_cost is not None:
+        return r.proceeds - r.tax_cost
+    return r.gain if r.gain is not None else Decimal(0)
 
 
 def is_unclassified(r: DisposalRow) -> bool:

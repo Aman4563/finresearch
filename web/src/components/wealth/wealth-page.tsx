@@ -30,7 +30,7 @@ function NetWorth({ w }: { w: Wealth }) {
   const h = w.history;
   return (
     <Card title="Net worth over time" icon={<Wallet className="size-4" />}
-      help="Month ends, using only what was known on each day: the portfolio snapshot on or before it (saved when /portfolio is valued), your dated values, FD/RD growth and each loan's amortisation schedule. Real estate is your own estimate.">
+      help="Month ends, using only what was known on each day: the portfolio's value rebuilt from your transactions and each day's closing prices (today: the latest valuation of /portfolio), your dated values, FD/RD growth and each loan's amortisation schedule. Real estate is your own estimate. A month whose portfolio value is unknown counts only the known parts.">
       {h.length < 2 ? (
         <EmptyState title="Not enough history yet">The line starts from the first dated entry (a value, an FD, a loan or a portfolio snapshot).</EmptyState>
       ) : (
@@ -38,9 +38,12 @@ function NetWorth({ w }: { w: Wealth }) {
           series={[{ key: "net_worth", label: "Net worth", color: "var(--chart-1)" }, { key: "liquid_net_worth", label: "Liquid net worth", color: "var(--chart-2)", dashed: true },
             { key: "liabilities", label: "Loans", color: "var(--loss)" }]} />
       )}
+      {h.some((p) => !p.complete) && (
+        <p className="mt-2 text-xs text-warn">{h.filter((p) => !p.complete).length} point(s) are incomplete (the portfolio value is unknown or partial on those days): they add up the known parts only.</p>
+      )}
       <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
-        <span className="text-muted">Portfolio<span className="num block text-sm font-medium text-foreground">{inr(w.net_worth.portfolio)}</span>
-          {w.portfolio.day ? `snapshot ${day(w.portfolio.day)}` : <Link href="/portfolio" className="text-brand">no snapshot yet</Link>}</span>
+        <span className="text-muted">Portfolio<span className="num block text-sm font-medium text-foreground">{w.net_worth.portfolio == null ? "unknown" : inr(w.net_worth.portfolio)}</span>
+          {w.portfolio.day ? `as shown ${day(w.portfolio.day)}${w.portfolio.complete === false ? " (incomplete)" : ""}` : <Link href="/portfolio" className="text-brand">no valuation yet</Link>}</span>
         <span className="text-muted">Other assets<span className="num block text-sm font-medium text-foreground">{inr(w.net_worth.manual)}</span></span>
         <span className="text-muted">Loans<span className="num block text-sm font-medium text-loss">{inr(w.net_worth.liabilities)}</span></span>
         <span className="text-muted">Debt / assets<span className="num block text-sm font-medium text-foreground">{pc(w.debt.debt_to_assets_pct)}</span></span>
@@ -180,7 +183,8 @@ export function WealthPage() {
         <>
           <div className="stagger mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <Stat label="Net worth" value={nw.net_worth} format={(n) => inr(n)} icon={<Wallet className="size-4" />}
-              hint={`assets ${fmtCompactINR(nw.assets)} − loans ${fmtCompactINR(nw.liabilities)}`} help="Portfolio (latest snapshot) + your other assets − outstanding loans." />
+              hint={nw.complete ? `assets ${fmtCompactINR(nw.assets)} − loans ${fmtCompactINR(nw.liabilities)}` : `incomplete: ${nw.missing.join("; ")}`}
+              help="Portfolio (its latest valuation on /portfolio) + your other assets − outstanding loans. When the portfolio value is unknown or partial, the figure adds up the known parts only and says so." />
             <Stat label="Liquid net worth" value={nw.liquid_net_worth} format={(n) => inr(n)} icon={<Scale className="size-4" />} tone="accent"
               hint="without property, EPF/PPF/NPS, home loans" help="Net worth without real estate and retirement lock-ins (EPF, PPF, NPS), and without home loans (secured on the property left out); other loans still count. Closer to what you could use within weeks." />
             <Stat label="Emergency fund" display={<span className="num">{w.emergency.months == null ? "—" : `${w.emergency.months.toFixed(1)} mo`}</span>} icon={<LifeBuoy className="size-4" />}

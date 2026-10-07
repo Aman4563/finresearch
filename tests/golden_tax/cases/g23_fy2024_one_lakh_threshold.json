@@ -1,0 +1,37 @@
+{
+  "id": "g23_fy2024_one_lakh_threshold",
+  "title": "FY 2023-24 equity LTCG of Rs 1.5 lakh: old Rs 1 lakh threshold, 10 %",
+  "covers": ["pre-Finance (No.2) Act 2024 s.112A", "Rs 1 lakh threshold", "10 % rate"],
+  "rules": [
+    "Income-tax Act 1961 s.112A(1) as inserted by Finance Act 2018 (in force for FY 2023-24): 10 % on LTCG exceeding Rs 1,00,000",
+    "Income-tax Act 1961 s.2(42A) first proviso: listed equity long-term if held more than 12 months",
+    "Health and Education Cess 4 % (Finance Act 2023 s.2)"
+  ],
+  "derivation": [
+    "Buy 2022-04-01: 1,000 @ 100.00 -> cost 1,00,000.00.",
+    "Sell 2023-12-01: 1,000 @ 250.00 -> proceeds 2,50,000.00; gain 1,50,000.00; held 20 months -> long 10 %.",
+    "FY 2023-24 (fy 2024): exemption_used 1,00,000.00; taxable 50,000.",
+    "Tax 50,000 x 0.10 = 5,000.00; cess 200.00; total 5,200.00."
+  ],
+  "interpretive": false,
+  "slab_rate": "0.30",
+  "holdings": [
+    {"name": "XRAY LTD", "tax_class": "equity", "listed": true, "fmv_2018": null, "sgb_original_subscriber": false,
+     "events": [
+       {"day": "2022-04-01", "kind": "buy", "quantity": "1000", "price": "100.00", "charges": "0"},
+       {"day": "2023-12-01", "kind": "sell", "quantity": "1000", "price": "250.00", "charges": "0"}
+     ]}
+  ],
+  "expected": {
+    "disposals": [
+      {"holding": "XRAY LTD", "sold": "2023-12-01", "acquired": "2022-04-01", "quantity": "1000",
+       "cost": "100000.00", "tax_cost": "100000.00", "proceeds": "250000.00", "gain": "150000.00", "term": "long", "rate": "0.10"}
+    ],
+    "open_lots": [],
+    "fy": [
+      {"fy": 2024, "exemption_used": "100000.00", "tax": "5000.00", "cess": "200.00", "total": "5200.00",
+       "complete": true, "unknown_count": 0, "intraday_count": 0, "exempt_total": "0.00",
+       "losses_carried_short": "0.00", "losses_carried_long": "0.00"}
+    ]
+  }
+}

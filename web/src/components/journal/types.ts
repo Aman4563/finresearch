@@ -56,6 +56,6 @@ export type Behaviour = {
   turnover: { months: { month: string; value: number | null; sales: number | null; purchases: number | null; turnover: number | null; unpriced: string[] }[]; mean_monthly: number | null; annual: number | null; annual_sales: number | null; n_months: number; source: string; note: string };
   holding_periods: { realised: { winners: Side; losers: Side; skipped: number; reading: string | null }; open: { in_profit: Side; in_loss: Side; unknown: number }; weighting: string };
   frequency_vs_returns: { fy: number; label: string; from: string; to: string; trades: number; turnover_annual: number | null; twr: number | null; benchmark: number | null; excess: number | null }[];
-  churn: { charges: number; tax: number; tax_short_term: number; total: number; drag_pct_a_year: number | null; near_long_term: { name: string; sold: string; long_term_from: string; days_short: number; gain: number }[]; how: string };
+  churn: { charges: number; tax: number; tax_short_term: number; total: number; drag_pct_a_year: number | null; near_long_term: { name: string; sold: string; long_term_from: string; days_short: number; gain: number }[]; how: string; complete?: boolean; estimate?: boolean; incomplete_note?: string | null };
   warnings: string[]; privacy: string; disclaimer: string;
 };

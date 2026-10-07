@@ -1,0 +1,50 @@
+{
+  "id": "g20_cross_fy_lots",
+  "title": "Lots bought in FY 2023-24 and FY 2024-25; sales in FY 2024-25 (pre-23-Jul) and FY 2025-26 -> two FY blocks",
+  "covers": ["cross-FY lots", "two FY blocks", "FIFO continuity across years"],
+  "rules": [
+    "Income-tax Act 1961 s.112A(1) / s.111A(1) as amended by Finance (No.2) Act 2024: 10 % LTCG before 23-Jul-2024; 12.5 % / 20 % on/after",
+    "Threshold is per FY (Rs 1,25,000 for FY 2024-25 and FY 2025-26)",
+    "CBDT Circular No. 768 dated 24-Jun-1998: FIFO",
+    "Health and Education Cess 4 % (Finance Act 2025 s.2)"
+  ],
+  "derivation": [
+    "L1: 100 @ 100.00 on 2023-04-15.",
+    "Sale 2024-06-01 (FY 2024-25, before 23-Jul): 50 @ 150.00 from L1 -> proceeds 7,500, cost 5,000, gain 2,500.00; held 2023-04-15 -> 2024-06-01 > 12 months -> long 10 %.",
+    "L2: 100 @ 150.00 on 2024-12-01.",
+    "Sale 2025-06-01 (FY 2025-26): 100 @ 200.00. FIFO: L1 remaining 50 -> proceeds 10,000, cost 5,000, gain 5,000.00, long 12.5 %; L2 50 -> proceeds 10,000, cost 7,500, gain 2,500.00, held 2024-12-01 -> 2025-06-01 (6 months) -> short 20 %.",
+    "fy 2025: LTCG 2,500 exempt -> exemption_used 2,500.00; tax 0.00.",
+    "fy 2026: LTCG 5,000 exempt -> exemption_used 5,000.00; STCG tax 2,500 x 0.20 = 500.00; cess 20.00; total 520.00.",
+    "Open lot: L2 50 @ 150.00 acquired 2024-12-01."
+  ],
+  "interpretive": false,
+  "slab_rate": "0.30",
+  "holdings": [
+    {"name": "UNIFORM LTD", "tax_class": "equity", "listed": true, "fmv_2018": null, "sgb_original_subscriber": false,
+     "events": [
+       {"day": "2023-04-15", "kind": "buy", "quantity": "100", "price": "100.00", "charges": "0"},
+       {"day": "2024-06-01", "kind": "sell", "quantity": "50", "price": "150.00", "charges": "0"},
+       {"day": "2024-12-01", "kind": "buy", "quantity": "100", "price": "150.00", "charges": "0"},
+       {"day": "2025-06-01", "kind": "sell", "quantity": "100", "price": "200.00", "charges": "0"}
+     ]}
+  ],
+  "expected": {
+    "disposals": [
+      {"holding": "UNIFORM LTD", "sold": "2024-06-01", "acquired": "2023-04-15", "quantity": "50",
+       "cost": "5000.00", "tax_cost": "5000.00", "proceeds": "7500.00", "gain": "2500.00", "term": "long", "rate": "0.10"},
+      {"holding": "UNIFORM LTD", "sold": "2025-06-01", "acquired": "2023-04-15", "quantity": "50",
+       "cost": "5000.00", "tax_cost": "5000.00", "proceeds": "10000.00", "gain": "5000.00", "term": "long", "rate": "0.125"},
+      {"holding": "UNIFORM LTD", "sold": "2025-06-01", "acquired": "2024-12-01", "quantity": "50",
+       "cost": "7500.00", "tax_cost": "7500.00", "proceeds": "10000.00", "gain": "2500.00", "term": "short", "rate": "0.20"}
+    ],
+    "open_lots": [ {"holding": "UNIFORM LTD", "acquired": "2024-12-01", "quantity": "50", "cost_per_unit": "150.00"} ],
+    "fy": [
+      {"fy": 2025, "exemption_used": "2500.00", "tax": "0.00", "cess": "0.00", "total": "0.00",
+       "complete": true, "unknown_count": 0, "intraday_count": 0, "exempt_total": "0.00",
+       "losses_carried_short": "0.00", "losses_carried_long": "0.00"},
+      {"fy": 2026, "exemption_used": "5000.00", "tax": "500.00", "cess": "20.00", "total": "520.00",
+       "complete": true, "unknown_count": 0, "intraday_count": 0, "exempt_total": "0.00",
+       "losses_carried_short": "0.00", "losses_carried_long": "0.00"}
+    ]
+  }
+}

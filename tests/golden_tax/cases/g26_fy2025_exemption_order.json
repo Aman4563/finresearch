@@ -1,0 +1,46 @@
+{
+  "id": "g26_fy2025_exemption_order",
+  "title": "FY 2024-25 LTCG Rs 1 lakh at 10 % (pre-23-Jul) + Rs 1 lakh at 12.5 % (post): Rs 1.25 lakh threshold applied to the 12.5 % part first",
+  "covers": ["s.112A threshold allocation between 10 % and 12.5 % parts", "interpretive"],
+  "rules": [
+    "Income-tax Act 1961 s.112A(1) as amended by Finance (No.2) Act 2024: tax on LTCG 'exceeding one lakh twenty-five thousand rupees' at 10 % (transfer before 23-Jul-2024) and 12.5 % (on/after); the Act does not say which part the Rs 1,25,000 is set against",
+    "No statutory ordering rule and no CBDT circular on this point was located in this session; the expected value adopts the order most beneficial to the assessee (general interpretive principle that, where a provision admits two readings, the one favourable to the assessee is preferred - CIT v. Vegetable Products Ltd (1973) 88 ITR 192 (SC))",
+    "Health and Education Cess 4 % (Finance (No.2) Act 2024 s.2)"
+  ],
+  "derivation": [
+    "ASTER LTD: 1,000 @ 100.00 bought 2023-01-02, sold 2024-06-03 @ 200.00 -> proceeds 2,00,000.00, cost 1,00,000.00, LTCG 1,00,000.00, transfer before 23-Jul-2024 -> 10 %.",
+    "BIRCH LTD: 1,000 @ 300.00 bought 2023-02-01, sold 2024-11-04 @ 400.00 -> proceeds 4,00,000.00, cost 3,00,000.00, LTCG 1,00,000.00, transfer after 23-Jul-2024 -> 12.5 %.",
+    "Total LTCG 2,00,000; threshold 1,25,000 -> taxable 75,000; exemption_used 1,25,000.00.",
+    "Beneficial order (chosen): threshold first against the 12.5 % part: 1,00,000 fully covered; remaining 25,000 against the 10 % part -> 75,000 at 10 % = 7,500.00.",
+    "Other order: 1,00,000 of 10 % part covered, 25,000 of 12.5 % part -> 75,000 at 12.5 % = 9,375.00 (cess 375.00, total 9,750.00).",
+    "Expected (beneficial): tax 7,500.00; cess 300.00; total 7,800.00."
+  ],
+  "interpretive": true,
+  "slab_rate": "0.30",
+  "holdings": [
+    {"name": "ASTER LTD", "tax_class": "equity", "listed": true, "fmv_2018": null, "sgb_original_subscriber": false,
+     "events": [
+       {"day": "2023-01-02", "kind": "buy", "quantity": "1000", "price": "100.00", "charges": "0"},
+       {"day": "2024-06-03", "kind": "sell", "quantity": "1000", "price": "200.00", "charges": "0"}
+     ]},
+    {"name": "BIRCH LTD", "tax_class": "equity", "listed": true, "fmv_2018": null, "sgb_original_subscriber": false,
+     "events": [
+       {"day": "2023-02-01", "kind": "buy", "quantity": "1000", "price": "300.00", "charges": "0"},
+       {"day": "2024-11-04", "kind": "sell", "quantity": "1000", "price": "400.00", "charges": "0"}
+     ]}
+  ],
+  "expected": {
+    "disposals": [
+      {"holding": "ASTER LTD", "sold": "2024-06-03", "acquired": "2023-01-02", "quantity": "1000",
+       "cost": "100000.00", "tax_cost": "100000.00", "proceeds": "200000.00", "gain": "100000.00", "term": "long", "rate": "0.10"},
+      {"holding": "BIRCH LTD", "sold": "2024-11-04", "acquired": "2023-02-01", "quantity": "1000",
+       "cost": "300000.00", "tax_cost": "300000.00", "proceeds": "400000.00", "gain": "100000.00", "term": "long", "rate": "0.125"}
+    ],
+    "open_lots": [],
+    "fy": [
+      {"fy": 2025, "exemption_used": "125000.00", "tax": "7500.00", "cess": "300.00", "total": "7800.00",
+       "complete": true, "unknown_count": 0, "intraday_count": 0, "exempt_total": "0.00",
+       "losses_carried_short": "0.00", "losses_carried_long": "0.00"}
+    ]
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "id": "g15_unknown_cost",
+  "title": "Opening balance with no price and no acquisition date is sold: cost, gain and term unknown -> FY 2025-26 incomplete",
+  "covers": ["unknown cost", "year incomplete", "unknown_count"],
+  "rules": [
+    "Income-tax Act 1961 s.48 needs the cost of acquisition; s.2(42A) needs the acquisition date - neither is known from the data, so neither the gain nor its character can be determined",
+    "Brief rule: FY with an unclassifiable capital-gains disposal -> complete false, tax/cess/total null, exemption_used omitted"
+  ],
+  "derivation": [
+    "Opening 2025-04-01: 100 units, no price, no meta.acquired -> cost unknown, date unknown.",
+    "Sale 2025-06-01: 100 @ 500.00 -> proceeds 50,000.00 (known).",
+    "cost null, tax_cost null, gain null, acquired null, term unknown, rate null.",
+    "FY 2025-26 (fy 2026): unknown_count 1 -> complete false; tax, cess, total null."
+  ],
+  "interpretive": false,
+  "slab_rate": "0.30",
+  "holdings": [
+    {"name": "NOVEMBER LTD", "tax_class": "equity", "listed": true, "fmv_2018": null, "sgb_original_subscriber": false,
+     "events": [
+       {"day": "2025-04-01", "kind": "opening", "quantity": "100"},
+       {"day": "2025-06-01", "kind": "sell", "quantity": "100", "price": "500.00", "charges": "0"}
+     ]}
+  ],
+  "expected": {
+    "disposals": [
+      {"holding": "NOVEMBER LTD", "sold": "2025-06-01", "acquired": null, "quantity": "100",
+       "cost": null, "tax_cost": null, "proceeds": "50000.00", "gain": null, "term": "unknown", "rate": null}
+    ],
+    "open_lots": [],
+    "fy": [
+      {"fy": 2026, "tax": null, "cess": null, "total": null,
+       "complete": false, "unknown_count": 1, "intraday_count": 0, "exempt_total": "0.00"}
+    ]
+  }
+}

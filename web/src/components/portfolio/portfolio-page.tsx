@@ -281,7 +281,7 @@ function Holdings({ snap, onChanged, updating }: { snap: Snapshot; onChanged: ()
                 <td className="num text-right">{inr(h.avg_cost, 2)}</td>
                 <td className="num text-right" title={h.price_source ? `${h.price_source}${h.price_as_of ? ` · as of ${h.price_as_of}` : ""}` : undefined}>
                   {h.pending ? <span className="skeleton inline-block h-3 w-14 rounded align-middle" aria-label="price updating" /> : h.price == null ? <span className="text-xs text-muted" title={h.price_error ?? ""}>no price</span> : inr(h.price, 2)}
-                  {h.price_source?.includes("statement") && <span className="block text-[10px] text-warn">statement NAV {day(h.price_as_of)}</span>}
+                  {h.price_source?.includes("statement") && <span className="block text-[10px] text-warn" title={h.price_stale_reason ?? undefined}>{h.price_stale ? "old " : ""}statement {h.price_source.includes("NAV") ? "NAV" : "close"} {day(h.price_as_of)}</span>}
                   {!h.pending && h.price_note && <span className="block text-[10px] text-warn" title={h.price_note}>symbol changed</span>}
                   {!h.pending && h.price_source?.includes("close (official)") && <span className="block text-[10px] text-muted">close {day(h.price_as_of)}</span>}
                 </td>
@@ -505,11 +505,12 @@ export function PortfolioPage() {
         <>
           <div className="stagger mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <Stat label="Current value" value={s!.value} display={updating ? <span className="skeleton inline-block h-7 w-32 rounded" aria-label="updating" /> : undefined} format={(n) => inr(n)} icon={<Wallet className="size-4" />}
-              hint={updating ? `prices updating… ${updating.done}/${updating.total}` : s!.unpriced ? `${s!.unpriced} holding(s) without a price` : `cost ${inr(s!.cost)}`} />
+              hint={updating ? `prices updating… ${updating.done}/${updating.total}` : s!.unpriced ? `${s!.unpriced} holding(s) without a price` : s!.stale_note ? `incomplete: ${s!.stale_note}` : `cost ${inr(s!.cost)}`} />
             <Stat label="Unrealised P&L" value={s!.unrealised} display={updating ? <span className="skeleton inline-block h-7 w-32 rounded" aria-label="updating" /> : undefined} format={(n) => signed(n)} icon={<BadgeIndianRupee className="size-4" />} tone={s!.unrealised >= 0 ? "gain" : "loss"}
               hint={updating ? "waiting for prices" : s!.unknown_cost ? `${s!.unknown_cost} holding(s) with unknown cost excluded` : "value − cost of open lots"} />
             <Stat label="Realised P&L" value={s!.realised} format={(n) => signed(n)} icon={<Receipt className="size-4" />} tone={s!.realised >= 0 ? "gain" : "loss"}
-              hint={`+ dividends ${inr(s!.dividends)}`} />
+              hint={s!.realised_unknown ? `incomplete: ${s!.realised_unknown} sale(s) with unknown cost not included` : `+ dividends ${inr(s!.dividends)}`}
+              help={s!.realised_note ?? undefined} />
             <Stat label="XIRR" display={updating ? <span className="skeleton inline-block h-7 w-32 rounded" aria-label="updating" /> : s!.xirr == null ? <span className="text-muted">—</span> : <span className="num">{pctx(s!.xirr * 100)}</span>}
               icon={<Activity className="size-4" />} hint={updating ? "waiting for prices" : s!.xirr_reason ?? "annualised, all holdings"}
               help="Money-weighted annual return over every cash flow: purchases, sales, dividends paid out and today's value." />

@@ -1,0 +1,36 @@
+{
+  "id": "g18_exemption_exhausted",
+  "title": "Equity LTCG of Rs 2.25 lakh in FY 2025-26: Rs 1.25 lakh exempt, Rs 1 lakh taxed at 12.5 %",
+  "covers": ["s.112A threshold exhausted"],
+  "rules": [
+    "Income-tax Act 1961 s.112A(1) as amended by Finance (No.2) Act 2024: 12.5 % on LTCG exceeding Rs 1,25,000 (transfers on/after 23-Jul-2024)",
+    "Health and Education Cess 4 % (Finance Act 2025 s.2)"
+  ],
+  "derivation": [
+    "Buy 2023-06-01: 1,000 @ 200.00 -> cost 2,00,000.00.",
+    "Sell 2025-07-01: 1,000 @ 425.00 -> proceeds 4,25,000.00; gain 2,25,000.00; held > 12 months -> long 12.5 %.",
+    "FY 2025-26 (fy 2026): exemption_used 1,25,000.00; taxable 2,25,000 - 1,25,000 = 1,00,000.",
+    "Tax 1,00,000 x 0.125 = 12,500.00; cess 500.00; total 13,000.00."
+  ],
+  "interpretive": false,
+  "slab_rate": "0.30",
+  "holdings": [
+    {"name": "ROMEO LTD", "tax_class": "equity", "listed": true, "fmv_2018": null, "sgb_original_subscriber": false,
+     "events": [
+       {"day": "2023-06-01", "kind": "buy", "quantity": "1000", "price": "200.00", "charges": "0"},
+       {"day": "2025-07-01", "kind": "sell", "quantity": "1000", "price": "425.00", "charges": "0"}
+     ]}
+  ],
+  "expected": {
+    "disposals": [
+      {"holding": "ROMEO LTD", "sold": "2025-07-01", "acquired": "2023-06-01", "quantity": "1000",
+       "cost": "200000.00", "tax_cost": "200000.00", "proceeds": "425000.00", "gain": "225000.00", "term": "long", "rate": "0.125"}
+    ],
+    "open_lots": [],
+    "fy": [
+      {"fy": 2026, "exemption_used": "125000.00", "tax": "12500.00", "cess": "500.00", "total": "13000.00",
+       "complete": true, "unknown_count": 0, "intraday_count": 0, "exempt_total": "0.00",
+       "losses_carried_short": "0.00", "losses_carried_long": "0.00"}
+    ]
+  }
+}

@@ -51,10 +51,15 @@ export type Holding = {
   price_error: string | null;
   /** e.g. "NSE symbol changed: OLD is now NEW (matched by ISIN …)" */
   price_note?: string | null;
+  /** a statement price older than 5 trading days: still shown, but not a current price (#238) */
+  price_stale?: boolean;
+  price_stale_reason?: string | null;
   value: number | null;
   unrealised: number | null;
   unrealised_pct: number | null;
   realised: number;
+  /** sales whose cost is unknown: their gain is not in `realised` */
+  realised_unknown?: number;
   dividends: number;
   xirr: number | null;
   xirr_reason: string | null;
@@ -82,6 +87,8 @@ export type Snapshot = {
   summary: {
     value: number; cost: number; unrealised: number; realised: number; dividends: number; xirr: number | null;
     xirr_reason: string | null; holdings: number; unknown_cost: number; unpriced: number;
+    stale?: number; stale_note?: string | null;
+    realised_unknown?: number; realised_unknown_proceeds?: number; realised_note?: string | null;
   };
   allocation: { asset: Slice[]; sector: Slice[]; cap: Slice[] };
   cap_list: Record<string, string>;
