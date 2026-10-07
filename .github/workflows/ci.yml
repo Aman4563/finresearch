@@ -49,7 +49,7 @@ jobs:
       - run: uv run pytest -q   # offline: fake Claude CLI, mocked Ollama/HTTP, real Postgres service
   web:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: web
@@ -63,6 +63,15 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm build
+        # the smoke tests answer every /api/ call from fixtures (web/e2e/mock-api.ts); pointing the build at an unused
+        # port makes sure a missed route can never reach a real API
+        env: { NEXT_PUBLIC_FINRESEARCH_API: "http://127.0.0.1:8799" }
+      # #248: Playwright smoke tests on the built app (desktop + 390 px phone) against the mocked API layer
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with: { name: playwright-report, path: web/playwright-report, retention-days: 7 }
   secrets:
     runs-on: ubuntu-latest
     timeout-minutes: 10
