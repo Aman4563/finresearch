@@ -19,14 +19,29 @@ Merge rules (in order):
    residual units, dated the day before the first trade (cost = the broker's average × quantity less the trades'
    cost when there were no sales in the window, otherwise unknown).
 2. **Trades** — each executed equity fill becomes a buy/sell. Re-syncing the same trade is a no-op (`dedupe_key` on the
-   broker's trade id). Before adding, rows from *other* sources for the same holding and day are checked: the same
-   exchange order id, or other-source units that already cover the day, mark the API row a duplicate ("already there
-   from the Groww CSV"); a partial overlap is not added and is reported as a conflict to review.
+   broker's trade id). Rows another source already has are skipped by the cross-source reconciliation that every
+   import path shares (portfolio.dedupe, #236; tradebook and CAS uploads, the inbox, manual entries, holdings
+   statements and this sync). Per instrument (ISIN / symbol / scheme code), account, day and side, incoming rows are
+   compared with *other-source* rows of the same account, and with manual entries in any account:
+   a. the same exchange trade id, or the same order id with equal total units → already present;
+   b. two different exchange trade ids (Zerodha, Dhan: the exchange's own ids) → different trades, never merged
+      (Groww's API ids are Groww's order ids, Upstox's unverified: there only a shared value counts);
+   c. the same units at a price within 0.5 % → already present, one row against one row, so two genuine buys of 10
+      against one stored buy of 10 leave one new;
+   d. what is left adding up to the same units at the same average price (fills vs one order) → already present;
+   e. anything else left on both sides is a partial overlap: a **conflict**, not added, reported for review.
+   Two broker accounts are never matched (the same buy in two demat accounts is two trades). Previews say "already
+   present from <source>" for such rows, never "new"; a manual entry that matches is refused unless confirmed.
 3. **Never overwrite** — a sync never edits or deletes rows from another source (manual, CAS, CSV). Differences
    between the broker's quantities and the app's lots are reported (sync log + Connections page), never "fixed".
 4. **Positions and funds** are stored on the connection for display; they never become lots.
 5. **Mutual funds from a broker** (Kite Coin) are reconciled by instrument across every account (a CAS is the better
-   source for fund history); a baseline is created only for a fund the app does not hold anywhere.
+   source for fund history); a baseline is created only for a fund the app does not hold anywhere. When a CAS imported
+   later covers the baseline's units on its day, the baseline is superseded (`meta.superseded_by`, set by
+   service.rebuild; lots, XIRR and history ignore it; deleting the CAS brings it back); a CAS with fewer units is a
+   conflict. The baseline's units, cost and date are never edited (only that derived marker is set and cleared).
+6. **Unsupported corporate actions** (#237): a reconciliation row whose holding has an unresolved demerger, rights
+   issue, merger ... (service.record_unsupported) names it in `pending_action`: it may explain the difference.
 """
 
 from __future__ import annotations
@@ -45,12 +60,12 @@ from sqlalchemy.orm import Session
 
 from finresearch.db.models import PortfolioHolding, PortfolioImport, PortfolioLot, PortfolioTxn
 from finresearch.portfolio.connectors.base import BrokerHolding, BrokerTrade
+from finresearch.portfolio.dedupe import instrument_holdings
 from finresearch.portfolio.importers import ImportedTxn, instrument_key
 from finresearch.portfolio.lots import Event, build_lots, superseded_openings
-from finresearch.portfolio.service import add_txns, events_of, find_holding, rebuild
+from finresearch.portfolio.service import actions_of, add_txns, events_of, find_holding, rebuild
 
 UNITS_TOL = Decimal("0.001")
-PRICE_TOL = Decimal("0.005")  # 0.5 %: a CSV's Value/Quantity vs a fill price
 BROKER_ACCOUNTS = {"Groww", "Zerodha", "Upstox", "Dhan"}
 
 
@@ -115,14 +130,7 @@ def holding_ikey(h: BrokerHolding) -> str:
 
 
 # --------------------------------------------------------------------------- database helpers
-def _all_matches(s: Session, t: ImportedTxn) -> list[PortfolioHolding]:
-    from sqlalchemy import or_
-
-    ids = [(col, v) for col, v in ((PortfolioHolding.isin, t.isin), (PortfolioHolding.nse_symbol, t.nse_symbol),
-                                   (PortfolioHolding.bse_code, t.bse_code),
-                                   (PortfolioHolding.scheme_code, t.scheme_code)) if v]  # fmt: skip
-    conds = [PortfolioHolding.ikey == t.ikey, *[col == v for col, v in ids]]
-    return list(s.scalars(select(PortfolioHolding).where(or_(*conds)).order_by(PortfolioHolding.id)))
+_all_matches = instrument_holdings  # every holding of the instrument, in any account
 
 
 def _open_units(s: Session, holding_id: int) -> Decimal:
@@ -356,7 +364,7 @@ def merge_sync(s: Session, *, account: str, source: str, label: str, holdings: l
     groups: dict[tuple[str, date, str], list[ImportedTxn]] = defaultdict(list)
     for t in txns:
         groups[(t.ikey, t.day, t.kind)].append(t)
-    for (_ik, day, kind), rows in groups.items():
+    for (_ik, day, _kind), rows in groups.items():
         h = find_holding(s, rows[0])
         if h is None:
             keep += rows
@@ -365,36 +373,14 @@ def merge_sync(s: Session, *, account: str, source: str, label: str, holdings: l
         if bday is not None and day <= bday:
             res.covered_by_baseline += len(rows)
             continue
-        others = s.scalars(select(PortfolioTxn).where(PortfolioTxn.holding_id == h.id, PortfolioTxn.day == day,
-                                                      PortfolioTxn.kind == kind,
-                                                      PortfolioTxn.source != source)).all()  # fmt: skip
-        if not others:
-            keep += rows
-            continue
-        other_ids = {str((o.meta or {}).get("order_id") or "") for o in others} - {""}
-        by_id = [r for r in rows if r.meta.get("order_id") and str(r.meta["order_id"]) in other_ids]
-        rest = [r for r in rows if r not in by_id]
-        srcs = sorted({o.source for o in others})
-        if by_id:
-            res.cross_source += [{"name": r.name, "day": day.isoformat(), "kind": kind, "units": str(r.quantity),
-                                  "matched": "order id", "sources": srcs} for r in by_id]  # fmt: skip
-        if not rest:
-            continue
-        other_q = sum((o.quantity or Decimal(0) for o in others if str((o.meta or {}).get("order_id") or "")
-                       not in {str(r.meta.get("order_id")) for r in by_id}), Decimal(0))  # fmt: skip
-        api_q = sum((r.quantity or Decimal(0) for r in rest), Decimal(0))
-        if other_q >= api_q - UNITS_TOL:
-            res.cross_source += [{"name": r.name, "day": day.isoformat(), "kind": kind, "units": str(r.quantity),
-                                  "matched": "same day and units", "sources": srcs} for r in rest]  # fmt: skip
-        else:
-            res.conflicts.append({"name": rest[0].name, "day": day.isoformat(), "kind": kind,
-                                  "api_units": str(api_q), "other_units": str(other_q), "sources": srcs,
-                                  "why": "another source has part of this day's trades: not added, review"})  # fmt: skip
+        keep += rows  # rows other sources already have are caught by add_txns (portfolio.dedupe, rule 2)
     if keep:
         imp = _new_import(s, "api", source, label, now)
         applied = add_txns(s, keep, imp.id)
         res.added += applied.added
         res.duplicates += applied.duplicates
+        res.cross_source += applied.cross_source
+        res.conflicts += applied.conflicts
         touched |= applied.holdings
         if applied.added:
             res.import_ids.append(imp.id)
@@ -432,11 +418,13 @@ def reconcile_snapshot(s: Session, *, account: str, holdings: list[BrokerHolding
         have = sum((_open_units(s, x.id) for x in matches), Decimal(0))
         seen |= {x.id for x in matches}
         diff = have - h.quantity
+        acts = "; ".join(a["reason"] for x in matches for a in actions_of(x.meta)) or None
         out.append({"name": t.name, "ikey": t.ikey, "account": account, "broker_units": str(h.quantity),
                     "app_units": str(have.quantize(Decimal("0.001"))), "diff": str(diff.quantize(Decimal("0.001"))),
                     "ok": abs(diff) <= UNITS_TOL,
                     "status": "ok" if abs(diff) <= UNITS_TOL else ("missing_in_app" if not matches else "differs"),
-                    "broker_avg_price": str(h.avg_price) if h.avg_price is not None else None})  # fmt: skip
+                    "broker_avg_price": str(h.avg_price) if h.avg_price is not None else None,
+                    "pending_action": acts if abs(diff) > UNITS_TOL else None})  # fmt: skip
     if not by_instrument:
         for x in s.scalars(select(PortfolioHolding).where(PortfolioHolding.account == account)):
             if x.id in seen:
@@ -446,5 +434,6 @@ def reconcile_snapshot(s: Session, *, account: str, holdings: list[BrokerHolding
                 out.append({"name": x.name, "ikey": x.ikey, "account": account, "broker_units": "0",
                             "app_units": str(units.quantize(Decimal("0.001"))),
                             "diff": str(units.quantize(Decimal("0.001"))), "ok": False, "status": "not_at_broker",
-                            "broker_avg_price": None})  # fmt: skip
+                            "broker_avg_price": None,
+                            "pending_action": "; ".join(a["reason"] for a in actions_of(x.meta)) or None})  # fmt: skip
     return out

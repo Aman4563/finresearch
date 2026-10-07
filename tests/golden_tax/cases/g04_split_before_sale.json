@@ -1,0 +1,41 @@
+{
+  "id": "g04_split_before_sale",
+  "title": "Split 10->2 (1 share becomes 5) before a partial long-term sale; cost and holding period carry over from the original purchase",
+  "covers": ["split before sale", "cost re-denomination", "holding period from original acquisition"],
+  "rules": [
+    "Sub-division of shares (Companies Act 2013 s.61(1)(d)) is not an acquisition of a new asset: original cost is spread over the new number of shares and the period of holding runs from the original purchase (settled practice; no specific clause in s.2(42A)/s.55 - see INDEX.md)",
+    "Income-tax Act 1961 s.2(42A) first proviso: listed equity long-term if held more than 12 months",
+    "Income-tax Act 1961 s.112A(1) as amended by Finance (No.2) Act 2024: 12.5 % above Rs 1,25,000 for transfers on/after 23-Jul-2024",
+    "CBDT Circular No. 768 dated 24-Jun-1998: FIFO"
+  ],
+  "derivation": [
+    "Buy 2023-02-01: 100 @ 1,000.00 (face value 10) -> cost 1,00,000.00.",
+    "Split 2024-03-15 face value 10 -> 2: ratio 10/2 = 5 -> 100 x 5 = 500 shares; cost per share 1,000 / 5 = 200.00; acquisition date stays 2023-02-01.",
+    "Sale 2024-12-10: 200 @ 300.00 -> proceeds 60,000.00; cost 200 x 200 = 40,000.00; gain 20,000.00.",
+    "Held 2023-02-01 -> 2024-12-10 (> 12 months) -> long, s.112A 12.5 %.",
+    "FY 2024-25 (fy 2025): LTCG 20,000 <= 1,25,000 -> exemption_used 20,000.00, tax 0.00.",
+    "Open lot: 500 - 200 = 300 shares @ 200.00 acquired 2023-02-01."
+  ],
+  "interpretive": false,
+  "slab_rate": "0.30",
+  "holdings": [
+    {"name": "DELTA LTD", "tax_class": "equity", "listed": true, "fmv_2018": null, "sgb_original_subscriber": false,
+     "events": [
+       {"day": "2023-02-01", "kind": "buy", "quantity": "100", "price": "1000.00", "charges": "0"},
+       {"day": "2024-03-15", "kind": "split", "meta": {"from": 10, "to": 2}},
+       {"day": "2024-12-10", "kind": "sell", "quantity": "200", "price": "300.00", "charges": "0"}
+     ]}
+  ],
+  "expected": {
+    "disposals": [
+      {"holding": "DELTA LTD", "sold": "2024-12-10", "acquired": "2023-02-01", "quantity": "200",
+       "cost": "40000.00", "tax_cost": "40000.00", "proceeds": "60000.00", "gain": "20000.00", "term": "long", "rate": "0.125"}
+    ],
+    "open_lots": [ {"holding": "DELTA LTD", "acquired": "2023-02-01", "quantity": "300", "cost_per_unit": "200.00"} ],
+    "fy": [
+      {"fy": 2025, "exemption_used": "20000.00", "tax": "0.00", "cess": "0.00", "total": "0.00",
+       "complete": true, "unknown_count": 0, "intraday_count": 0, "exempt_total": "0.00",
+       "losses_carried_short": "0.00", "losses_carried_long": "0.00"}
+    ]
+  }
+}

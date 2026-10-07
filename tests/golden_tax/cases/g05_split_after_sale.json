@@ -1,0 +1,39 @@
+{
+  "id": "g05_split_after_sale",
+  "title": "Partial sale in pre-split units, then a 10->2 split re-denominates only the remaining open lot",
+  "covers": ["split after sale", "earlier disposal keeps pre-split quantity", "open lot re-denominated"],
+  "rules": [
+    "Sub-division of shares (Companies Act 2013 s.61(1)(d)): no new asset; cost spread over new shares, holding period from original purchase (settled practice - see INDEX.md)",
+    "Income-tax Act 1961 s.2(42A) first proviso; s.112A(1) as amended by Finance (No.2) Act 2024: 12.5 % above Rs 1,25,000 for transfers on/after 23-Jul-2024",
+    "CBDT Circular No. 768 dated 24-Jun-1998: FIFO"
+  ],
+  "derivation": [
+    "Buy 2023-02-01: 100 @ 1,000.00.",
+    "Sale 2024-08-20 (before the split): 40 @ 1,300.00 -> proceeds 52,000.00; cost 40 x 1,000 = 40,000.00; gain 12,000.00. Quantity stays 40 (pre-split units).",
+    "Held 2023-02-01 -> 2024-08-20 (> 12 months) -> long, s.112A 12.5 % (transfer after 23-Jul-2024).",
+    "Split 2025-01-15 face value 10 -> 2 (x5): remaining 60 -> 300 shares; cost per share 1,000 / 5 = 200.00; acquired date unchanged 2023-02-01.",
+    "FY 2024-25 (fy 2025): LTCG 12,000 <= 1,25,000 -> exemption_used 12,000.00, tax 0.00."
+  ],
+  "interpretive": false,
+  "slab_rate": "0.30",
+  "holdings": [
+    {"name": "ECHO LTD", "tax_class": "equity", "listed": true, "fmv_2018": null, "sgb_original_subscriber": false,
+     "events": [
+       {"day": "2023-02-01", "kind": "buy", "quantity": "100", "price": "1000.00", "charges": "0"},
+       {"day": "2024-08-20", "kind": "sell", "quantity": "40", "price": "1300.00", "charges": "0"},
+       {"day": "2025-01-15", "kind": "split", "meta": {"from": 10, "to": 2}}
+     ]}
+  ],
+  "expected": {
+    "disposals": [
+      {"holding": "ECHO LTD", "sold": "2024-08-20", "acquired": "2023-02-01", "quantity": "40",
+       "cost": "40000.00", "tax_cost": "40000.00", "proceeds": "52000.00", "gain": "12000.00", "term": "long", "rate": "0.125"}
+    ],
+    "open_lots": [ {"holding": "ECHO LTD", "acquired": "2023-02-01", "quantity": "300", "cost_per_unit": "200.00"} ],
+    "fy": [
+      {"fy": 2025, "exemption_used": "12000.00", "tax": "0.00", "cess": "0.00", "total": "0.00",
+       "complete": true, "unknown_count": 0, "intraday_count": 0, "exempt_total": "0.00",
+       "losses_carried_short": "0.00", "losses_carried_long": "0.00"}
+    ]
+  }
+}

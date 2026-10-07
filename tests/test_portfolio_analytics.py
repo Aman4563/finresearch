@@ -635,6 +635,43 @@ def test_api_routes_end_to_end(api):
     ] == pytest.approx(1010)
 
 
+def test_performance_stores_the_canonical_history_and_reconciles_snapshots(api):
+    """#239: the Performance build is stored as the canonical series, and each "as shown" snapshot is compared with
+    it. Reconstructed (fixture closes): 7-Jan 10 × 55 + 5 × 210 + 10,000 × 10.0 = 1,01,600; 8-Jan 10 × 60 + 5 × 205 +
+    10,000 × 10.1 = 1,02,625."""
+    from datetime import datetime, timezone
+
+    from sqlalchemy import update
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import PortfolioSnapshot, PortfolioTxn
+    from finresearch.portfolio import series
+
+    ist = timezone(timedelta(hours=5, minutes=30))
+    with session_scope() as s:  # the trades were entered on 5-Jan, before either snapshot
+        s.execute(update(PortfolioTxn).values(created_at=datetime(2026, 1, 5, 9, 0, tzinfo=ist)))
+        # 7-Jan: 1,02,108 is 0.5 % above (inside the 1 % tolerance); 8-Jan: 1,10,000 is 7,375 above, after the close
+        s.add(PortfolioSnapshot(day=DAYS[2], value=D(102108), invested=D(0), by_asset={}, complete=True,
+                                updated_at=datetime(2026, 1, 7, 16, 0, tzinfo=ist)))  # fmt: skip
+        s.add(PortfolioSnapshot(day=DAYS[3], value=D(110000), invested=D(0), by_asset={}, complete=True,
+                                updated_at=datetime(2026, 1, 8, 16, 0, tzinfo=ist)))  # fmt: skip
+    p = api.get("/api/portfolio/analytics/performance").json()
+    rec = p["reconciliation"]
+    assert rec["checked"] == 2 and rec["ok"] is False
+    (d,) = rec["differ"]
+    assert (d["day"], d["snapshot"], d["reconstructed"], d["diff"]) == (
+        "2026-01-08",
+        110000.0,
+        102625.0,
+        7375.0,
+    )
+    assert d["diff_pct"] == 7.19 and d["reason"].startswith("the price basis differs")
+    with session_scope() as s:
+        ser, why = series.load(s)
+    assert why is None and ser.days[-1] == DAYS[-1] and ser.value[-1] == pytest.approx(102625.0)
+    assert ser.value_on(DAYS[2]) == (pytest.approx(101600.0), True, DAYS[2])
+
+
 def test_api_empty_portfolio(env):
     from fastapi.testclient import TestClient
     from sqlalchemy import text

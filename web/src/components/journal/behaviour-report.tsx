@@ -84,7 +84,7 @@ export function BehaviourReport() {
               hint={`winners sold · losers ${days(data.holding_periods.realised.losers.median_days)}`} help={data.holding_periods.weighting} />
             <Stat label="Cost of churn" value={data.churn.total} format={inr} tone="loss" icon={<Wallet className="size-4" />}
               help={data.churn.how}
-              hint={`charges ${inr(data.churn.charges)} · tax ${inr(data.churn.tax)}${data.churn.drag_pct_a_year != null ? ` · ${data.churn.drag_pct_a_year.toFixed(2)}%/yr of value` : ""}`} />
+              hint={data.churn.estimate ? `estimate, incomplete: ${data.churn.incomplete_note ?? "some sales could not be classified"}` : `charges ${inr(data.churn.charges)} · tax ${inr(data.churn.tax)}${data.churn.drag_pct_a_year != null ? ` · ${data.churn.drag_pct_a_year.toFixed(2)}%/yr of value` : ""}`} />
           </div>
           <DispositionCard d={data.disposition} title="Disposition effect (stocks)" />
           {(data.disposition_funds.sale_days > 0) && <DispositionCard d={data.disposition_funds} title="Disposition effect (funds, variant)" />}

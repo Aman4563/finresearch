@@ -395,6 +395,39 @@ class QuoteBatch:
             return await self._nse.quote(symbol, warm=False)
 
 
+# A broker statement's close or a CAS statement's NAV is a last-resort price. Listed stocks trade and funds publish a NAV
+# every business day, so a statement figure older than one trading week no longer stands for today's value (a week's
+# move is routinely several per cent; the alert layer uses the same horizon, metrics.FRESH_DAYS). Beyond it the price
+# is "stale": still shown with its date, but the holding no longer counts as priced for `complete`, the headline and
+# the XIRR say so, and data health counts it (#238). Days are counted Monday-Friday without the exchange holiday list,
+# so a holiday counts as a trading day: a price can turn stale a day early, never late.
+# The other age limits answer different questions and stay separate: metrics.FRESH_DAYS (5 calendar days) is how old
+# the daily pass's whole valuation may be for alerts; monitor.portfolio_daily flags every statement price, and any
+# live price older than STALE_PRICE_DAYS (4 calendar days), for the alert inputs, stricter than this headline rule;
+# history.STALE_DAYS (10 calendar days) is how far the reconstruction forward-fills a missing close before a day
+# counts as incomplete.
+STATEMENT_MAX_AGE_TRADING_DAYS = 5
+
+
+def statement_stale(p: PriceInfo, today: date) -> str | None:
+    """Why a statement price is too old to stand for today's value, else None (live prices are never stale here)."""
+    from finresearch.fincalc.dates import business_days_between
+
+    if p.price is None or "statement" not in (p.source or ""):
+        return None
+    if not p.as_of:
+        return f"{p.source} with no date"
+    try:
+        day = date.fromisoformat(p.as_of[:10])
+    except ValueError:
+        return f"{p.source} with an unreadable date ({p.as_of})"
+    age = business_days_between(day, today)
+    if age <= STATEMENT_MAX_AGE_TRADING_DAYS:
+        return None
+    return (f"{p.source} of {day.isoformat()} is {age} trading days old (over "
+            f"{STATEMENT_MAX_AGE_TRADING_DAYS})")  # fmt: skip
+
+
 def _statement_price(h: Any, why: str) -> PriceInfo:
     sn = (h.meta or {}).get("statement_nav") or {}
     if sn.get("nav"):

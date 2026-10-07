@@ -62,7 +62,8 @@ export function TaxPanel({ refresh }: { refresh: number }) {
           title={`Tax incomplete: ${unk.count} disposal(s) / ${inr(unk.gain ?? 0)} of gains can't be classified`}>
           {unk.detail}. The year&apos;s tax and the exemption left are not shown as a figure until they are: a gain of
           unknown term may be short- or long-term (or a loss), so the tax on the rest is neither a floor nor a ceiling.
-          The rows marked &ldquo;unknown&rdquo; below need a purchase date (and cost).
+          {unk.count > (unk.corporate_action ?? 0) && <> The rows marked &ldquo;unknown&rdquo; below need a purchase date (and cost).</>}
+          {(unk.corporate_action ?? 0) > 0 && <> {unk.corporate_action} sale(s) follow a corporate action the app does not model (a demerger, rights issue, merger …): open the holding, enter the cost allocation and mark it resolved.</>}
         </Callout>
       )}
       {!current.rules_verified && current.rules_note && (

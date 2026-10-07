@@ -482,14 +482,26 @@ def frequency_vs_returns(trades: Sequence[tuple[date, str, str]], start: date, e
 
 # --------------------------------------------------------------------------- cost of churn
 def churn_cost(charges: Decimal, by_fy: dict[int, tuple[Decimal, Decimal]], near_lt: list[dict[str, Any]],
-               avg_value: float | None, years: float) -> dict[str, Any]:  # fmt: skip
-    """`by_fy`: fy -> (tax on the window's disposals, of which on short-term gains)."""
+               avg_value: float | None, years: float,
+               unclassified_by_fy: dict[int, int] | None = None) -> dict[str, Any]:  # fmt: skip
+    """`by_fy`: fy -> (tax on the window's disposals, of which on short-term gains). `unclassified_by_fy`: fy -> how
+    many of that year's capital-gains disposals could not be classified (portfolio.tax.unclassified). Such a year's
+    tax leaves them out, so its change is an estimate, never the figure (#238): `complete` False, `estimate` True."""
+    from finresearch.fincalc.tax import fy_label
+
+    unk = {fy: n for fy, n in (unclassified_by_fy or {}).items() if n}
     tax = sum((t for t, _ in by_fy.values()), ZERO)
     st = sum((s for _, s in by_fy.values()), ZERO)
     total = charges + tax
     drag = float(total) / avg_value / years if avg_value and years > 0 else None
+    note = None
+    if unk:
+        note = (f"Estimate: {sum(unk.values())} disposal(s) in {', '.join(fy_label(fy) for fy in sorted(unk))} have "
+                "an unknown cost or purchase date and are left out of the tax, so the tax and total are incomplete")  # fmt: skip
     return {"charges": float(charges), "tax": float(tax), "tax_short_term": float(st), "total": float(total),
-            "by_fy": [{"fy": fy, "tax": float(t), "tax_short_term": float(s)} for fy, (t, s) in sorted(by_fy.items())],
+            "complete": not unk, "estimate": bool(unk), "incomplete_note": note,
+            "by_fy": [{"fy": fy, "tax": float(t), "tax_short_term": float(s), "complete": fy not in unk,
+                       "unclassified": unk.get(fy, 0)} for fy, (t, s) in sorted(by_fy.items())],
             "drag_pct_a_year": drag * 100 if drag is not None else None,
             "near_long_term": near_lt,
             "how": "charges on buys and sells in the window + the change in each year's capital-gains tax (incl. "
@@ -535,7 +547,7 @@ def build_report(data: Any, hist: Any, start: date, end: date, today: date, slab
     from finresearch.fincalc.tax import tax_delta
     from finresearch.portfolio.history import returns_of
     from finresearch.portfolio.report import disposal_rows
-    from finresearch.portfolio.tax import gains_of
+    from finresearch.portfolio.tax import gains_of, unclassified
     from finresearch.portfolio.tax_watch import lt_date
 
     groups, hk = groups_of(data)
@@ -607,7 +619,9 @@ def build_report(data: Any, hist: Any, start: date, end: date, today: date, slab
     charges = sum((t.charges or ZERO for ts in data.txns.values() for t in ts
                    if t.kind in ("buy", "sell") and start <= t.day <= end), ZERO)  # fmt: skip
     by_fy: dict[int, tuple[Decimal, Decimal]] = {}
+    unk_by_fy: dict[int, int] = {}
     for fy in sorted({r.fy for r in window}):
+        unk_by_fy[fy] = unclassified(r for r in rows if r.fy == fy)["count"]
         w = [r for r in window if r.fy == fy]
         base = [r for r in rows if r.fy == fy and not (start <= r.sold <= end)]
         tax = tax_delta(gains_of(base), gains_of(w), fy, slab)
@@ -626,7 +640,7 @@ def build_report(data: Any, hist: Any, start: date, end: date, today: date, slab
     vals = [v for d, v in zip(hist.days, hist.value, strict=False) if start <= d <= end] if ok else []
     avg_value = sum(vals) / len(vals) if vals else None
     years = max((min(end, today) - start).days, 1) / 365.25
-    churn = churn_cost(charges, by_fy, near, avg_value, years)
+    churn = churn_cost(charges, by_fy, near, avg_value, years, unk_by_fy)
 
     warnings = []
     if not ok:

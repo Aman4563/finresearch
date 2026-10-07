@@ -209,8 +209,19 @@ def fake_deps(price, nav, action, ter):
         return {"example flexi cap fund": SchemeTer("Example Flexi Cap Fund", "Equity", date(2026, 9, 1),
                                                     D(ter["v"]), D("0.60"))}  # fmt: skip
 
+    closes: dict = {}
+
+    async def history(holdings, today):
+        # the reconstructed value history (#239) at the fakes' closes: INFY 10 shares + 400 fund units, no new money
+        from finresearch.portfolio.history import History
+
+        closes[today] = 10 * float(price["v"]) + 400 * float(nav["v"])
+        days = sorted(closes)
+        return History(days=days, value=[closes[d] for d in days], invested=[35000.0] * len(days),
+                       complete=[True] * len(days), start_reason="first transaction on 2025-10-10")  # fmt: skip
+
     d = Deps(ipo_detail=None, quote=None, portfolio_daily=True, pf_quote=quote, pf_scheme_rows=rows, pf_signal=signal,
-             pf_stock_events=events, pf_ter=ter_file, pf_spacing_s=0)  # fmt: skip
+             pf_stock_events=events, pf_ter=ter_file, pf_spacing_s=0, pf_history=history)  # fmt: skip
     return d, calls
 
 
@@ -286,7 +297,9 @@ def test_daily_pass_values_and_every_metric(pf):
     assert v["regular_plan_value_inr"] == D("20800.00")
     assert v["unpriced_holdings"] == 0
     assert v["advance_tax_due_inr"] == 0 and "below the ₹10,000 threshold" in m["advance_tax_due_inr"][1]
-    assert v["drawdown_pct"] == D("-0.29")  # 34,900 / 35,000 - 1 with no new money
+    # 34,900 / 35,000 - 1 with no new money, from the reconstructed history the pass stored (#239), not the snapshots
+    assert v["drawdown_pct"] == D("-0.29") and "reconstructed from transactions" in m["drawdown_pct"][1]
+    assert r2["close"]["history"] == {"stored": True, "days": 2, "checked": 2, "differ": 0}
     for k, x in m.items():
         assert x[1], k  # every reading says where it came from
 

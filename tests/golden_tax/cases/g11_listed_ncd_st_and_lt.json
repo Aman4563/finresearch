@@ -1,0 +1,44 @@
+{
+  "id": "g11_listed_ncd_st_and_lt",
+  "title": "Listed NCD: one sale short-term (slab), one long-term (12.5 %), both in FY 2024-25 after 23-Jul-2024",
+  "covers": ["listed NCD", "ST at slab", "LT 12.5 % s.112", "12-month rule for listed securities"],
+  "rules": [
+    "Income-tax Act 1961 s.2(42A) first proviso: a security (other than a unit) listed on a recognised stock exchange is short-term if held not more than 12 months",
+    "STCG on a non-STT asset: normal slab rate (no s.111A)",
+    "Income-tax Act 1961 s.112(1) as amended by Finance (No.2) Act 2024: 12.5 % without indexation for transfers on/after 23-Jul-2024 (indexation was in any case denied for bonds/debentures by s.48 third proviso)",
+    "s.50AA as amended by Finance (No.2) Act 2024 covers only UNLISTED bonds/debentures -> not applicable to a listed NCD",
+    "Accrued interest ignored (clean price round numbers)",
+    "Health and Education Cess 4 % (Finance (No.2) Act 2024 s.2)"
+  ],
+  "derivation": [
+    "Buy 2024-01-15: 100 @ 1,000.00 -> cost 1,00,000.00.",
+    "Sale 1, 2024-11-15: 50 @ 1,050.00 -> proceeds 52,500.00; cost 50,000.00; gain 2,500.00. Held 2024-01-15 -> 2024-11-15 = 10 months -> short, slab 30 %.",
+    "Sale 2, 2025-03-01: 50 @ 1,100.00 -> proceeds 55,000.00; cost 50,000.00; gain 5,000.00. Held 2024-01-15 -> 2025-03-01 > 12 months -> long, 12.5 %.",
+    "FY 2024-25 (fy 2025): slab tax 2,500 x 0.30 = 750.00; LT tax 5,000 x 0.125 = 625.00; tax 1,375.00.",
+    "Cess 1,375 x 0.04 = 55.00; total 1,430.00 (check 1,430 / 1.04 = 1,375). exemption_used 0.00 (no s.112A gain)."
+  ],
+  "interpretive": false,
+  "slab_rate": "0.30",
+  "holdings": [
+    {"name": "JULIET FINANCE NCD 9% 2027", "tax_class": "other", "listed": true, "fmv_2018": null, "sgb_original_subscriber": false,
+     "events": [
+       {"day": "2024-01-15", "kind": "buy", "quantity": "100", "price": "1000.00", "charges": "0", "stt_paid": false},
+       {"day": "2024-11-15", "kind": "sell", "quantity": "50", "price": "1050.00", "charges": "0", "stt_paid": false},
+       {"day": "2025-03-01", "kind": "sell", "quantity": "50", "price": "1100.00", "charges": "0", "stt_paid": false}
+     ]}
+  ],
+  "expected": {
+    "disposals": [
+      {"holding": "JULIET FINANCE NCD 9% 2027", "sold": "2024-11-15", "acquired": "2024-01-15", "quantity": "50",
+       "cost": "50000.00", "tax_cost": "50000.00", "proceeds": "52500.00", "gain": "2500.00", "term": "short", "rate": "slab"},
+      {"holding": "JULIET FINANCE NCD 9% 2027", "sold": "2025-03-01", "acquired": "2024-01-15", "quantity": "50",
+       "cost": "50000.00", "tax_cost": "50000.00", "proceeds": "55000.00", "gain": "5000.00", "term": "long", "rate": "0.125"}
+    ],
+    "open_lots": [],
+    "fy": [
+      {"fy": 2025, "exemption_used": "0.00", "tax": "1375.00", "cess": "55.00", "total": "1430.00",
+       "complete": true, "unknown_count": 0, "intraday_count": 0, "exempt_total": "0.00",
+       "losses_carried_short": "0.00", "losses_carried_long": "0.00"}
+    ]
+  }
+}

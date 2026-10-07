@@ -71,7 +71,8 @@ pre-registered test (`evals/experiments/*/PREREG.md`).
 Statements are parsed locally (casparser for CAS, broker-specific readers for tradebooks and holdings statements),
 de-duplicated and replayed into FIFO lots. Read-only broker connectors and the inbox folder go through the same merge
 rules, which never overwrite another source. The tax engine applies the capital-gains rules in force on each trade
-date. Analytics, the AIS check, rebalancing, ELSS lock-ins and the decision journal all read the same lots.
+date. The portfolio's past values come from one canonical history rebuilt from the transactions and
+official closes (`portfolio.series`); the saved snapshots are the "as shown" record, reconciled against it. Analytics, the AIS check, rebalancing, ELSS lock-ins and the decision journal all read the same lots.
 
 ## Module map
 

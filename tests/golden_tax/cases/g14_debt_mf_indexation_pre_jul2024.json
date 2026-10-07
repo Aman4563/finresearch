@@ -1,0 +1,108 @@
+{
+  "id": "g14_debt_mf_indexation_pre_jul2024",
+  "title": "Debt MF bought Jun-2020, redeemed Jan-2024 (> 36 months, before 23-Jul-2024): LTCG 20 % with CII indexation",
+  "covers": [
+    "old 36-month regime",
+    "indexation with CII",
+    "20 % s.112"
+  ],
+  "rules": [
+    "Income-tax Act 1961 s.2(42A) (pre-Finance (No.2) Act 2024): unlisted MF units (non-equity) short-term if held not more than 36 months",
+    "Income-tax Act 1961 s.48 second proviso and Explanation (iii)/(v): indexed cost = cost x CII(year of transfer) / CII(year of acquisition)",
+    "CII (base 2001-02 = 100, CBDT Notification No. 44/2017 dated 5-Jun-2017 and annual notifications): FY 2020-21 = 301, FY 2023-24 = 348 (values confirmed; the specific notification numbers - recalled as No. 32/2020 for 301 and No. 21/2023 dated 10-Apr-2023 for 348 - were NOT verified in this session)",
+    "Income-tax Act 1961 s.112(1)(a) (pre-Finance (No.2) Act 2024): 20 % on LTCG after indexation; the 10 % no-indexation proviso applies only to listed securities other than units -> not available for MF units",
+    "s.50AA not applicable (acquired before 1-Apr-2023)",
+    "Health and Education Cess 4 % (Finance Act 2023 s.2)"
+  ],
+  "derivation": [
+    "Buy 2020-06-01 (FY 2020-21, CII 301): 1,000 @ 30.10 -> cost 30,100.00.",
+    "Redeem 2024-01-15 (FY 2023-24, CII 348): 1,000 @ 40.00 -> proceeds 40,000.00.",
+    "Held 2020-06-01 -> 2024-01-15 = 43 months > 36 -> long.",
+    "Indexed cost = 30,100 x 348 / 301 = 100 x 348 = 34,800.00 (30,100 / 301 = 100 exactly) -> tax_cost 34,800.00.",
+    "LTCG = 40,000 - 34,800 = 5,200.00 at 20 %.",
+    "FY 2023-24 (fy 2024): tax 5,200 x 0.20 = 1,040.00; cess 1,040 x 0.04 = 41.60; total 1,081.60 (check 1,081.60 / 1.04 = 1,040). exemption_used 0.00."
+  ],
+  "interpretive": false,
+  "slab_rate": "0.30",
+  "holdings": [
+    {
+      "name": "MIKE GILT FUND - GROWTH",
+      "tax_class": "debt_mf",
+      "listed": false,
+      "fmv_2018": null,
+      "sgb_original_subscriber": false,
+      "events": [
+        {
+          "day": "2020-06-01",
+          "kind": "buy",
+          "quantity": "1000",
+          "price": "30.10",
+          "charges": "0",
+          "stt_paid": false
+        },
+        {
+          "day": "2024-01-15",
+          "kind": "sell",
+          "quantity": "1000",
+          "price": "40.00",
+          "charges": "0",
+          "stt_paid": false
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "disposals": [
+      {
+        "holding": "MIKE GILT FUND - GROWTH",
+        "sold": "2024-01-15",
+        "acquired": "2020-06-01",
+        "quantity": "1000",
+        "cost": "30100.00",
+        "tax_cost": "34800.00",
+        "proceeds": "40000.00",
+        "gain": "5200.00",
+        "term": "long",
+        "rate": "0.20"
+      }
+    ],
+    "open_lots": [],
+    "fy": [
+      {
+        "fy": 2024,
+        "exemption_used": "0.00",
+        "tax": "1040.00",
+        "cess": "41.60",
+        "total": "1081.60",
+        "complete": true,
+        "unknown_count": 0,
+        "intraday_count": 0,
+        "exempt_total": "0.00",
+        "losses_carried_short": "0.00",
+        "losses_carried_long": "0.00"
+      }
+    ]
+  },
+  "known_divergence": {
+    "disposals[0].tax_cost": {
+      "engine": "30100.00",
+      "reason": "The engine does not model indexation (fincalc.tax rule 'other-unlisted-pre2024', status 'uncertain': 'LTCG 20 % WITH indexation, which is not modelled (the unindexed gain is shown)'; caveat 'Indexation for transfers before 23-Jul-2024 is not modelled' on the tax view). The hand derivation applies s.48 second proviso with CII 301 -> 348. The engine overstates the gain, i.e. errs towards more tax, and says so on the rule and the tax view."
+    },
+    "disposals[0].gain": {
+      "engine": "9900.00",
+      "reason": "same as tax_cost: unindexed gain 40,000 - 30,100 (indexed: 40,000 - 34,800 = 5,200)"
+    },
+    "fy[2024].tax": {
+      "engine": "1980.00",
+      "reason": "20 % of the unindexed 9,900 instead of the indexed 5,200 (needs indexation: not modelled)"
+    },
+    "fy[2024].cess": {
+      "engine": "79.20",
+      "reason": "4 % of the engine's tax"
+    },
+    "fy[2024].total": {
+      "engine": "2059.20",
+      "reason": "tax + cess on the unindexed gain"
+    }
+  }
+}

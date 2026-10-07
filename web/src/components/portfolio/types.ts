@@ -51,10 +51,15 @@ export type Holding = {
   price_error: string | null;
   /** e.g. "NSE symbol changed: OLD is now NEW (matched by ISIN …)" */
   price_note?: string | null;
+  /** a statement price older than 5 trading days: still shown, but not a current price (#238) */
+  price_stale?: boolean;
+  price_stale_reason?: string | null;
   value: number | null;
   unrealised: number | null;
   unrealised_pct: number | null;
   realised: number;
+  /** sales whose cost is unknown: their gain is not in `realised` */
+  realised_unknown?: number;
   dividends: number;
   xirr: number | null;
   xirr_reason: string | null;
@@ -72,6 +77,20 @@ export type Holding = {
   pending?: boolean;
   /** ELSS lock-in, for a fund recognised as ELSS (else null) */
   elss?: ElssLock | null;
+  /** #237: unresolved unsupported corporate actions (demerger, rights ...): the cost is unknown until resolved */
+  pending_actions?: PendingAction[];
+};
+
+/** A corporate action the lots do not model (finresearch.portfolio.service.record_unsupported, #237). */
+export type PendingAction = {
+  key: string; type: string; ex_date: string; subject: string; source: string; source_url: string | null;
+  detected: string; status: "pending" | "resolved"; note?: string; resolved?: string; reason: string;
+};
+
+/** #236: a row another source already has (skipped), or a partial overlap (a conflict: not added). */
+export type CrossSource = {
+  name: string; account: string; day: string; kind: string; units: string; matched?: string; sources: string[];
+  accounts?: string[]; label?: string; other_units?: string; why?: string;
 };
 
 export type Slice = { label: string; value: number };
@@ -82,6 +101,8 @@ export type Snapshot = {
   summary: {
     value: number; cost: number; unrealised: number; realised: number; dividends: number; xirr: number | null;
     xirr_reason: string | null; holdings: number; unknown_cost: number; unpriced: number;
+    stale?: number; stale_note?: string | null;
+    realised_unknown?: number; realised_unknown_proceeds?: number; realised_note?: string | null;
   };
   allocation: { asset: Slice[]; sector: Slice[]; cap: Slice[] };
   cap_list: Record<string, string>;
@@ -114,12 +135,15 @@ export type HoldingDetail = {
   disposals: { id: number; acquired: string | null; sold: string; quantity: string; cost: string | null; proceeds: string; origin: string }[];
   warnings: string[];
   elss?: ElssLock | null;
+  pending_actions?: PendingAction[];
 };
 
 // a CAS reconciliation sends statement_units / lot_units; a broker holdings statement (connectors.merge) sends
 // broker_units / app_units and a status ("not_at_broker": the app holds units the statement does not list)
 export type Reconciliation = { name: string; account: string; ikey: string; statement_units?: string; lot_units?: string;
-  broker_units?: string; app_units?: string; status?: string; diff: string; ok: boolean; as_of?: string | null };
+  broker_units?: string; app_units?: string; status?: string; diff: string; ok: boolean; as_of?: string | null;
+  /** #237: an unresolved corporate action on this holding that may explain the difference */
+  pending_action?: string | null };
 
 export type ImportPreview = {
   dry_run: boolean;
@@ -139,6 +163,11 @@ export type ImportPreview = {
   holdings_only?: boolean;
   already_imported?: number | null;
   sample?: { day: string; kind: string; name: string; account: string; quantity: string | null; price: string | null; amount: string | null }[];
+  /** #236: rows another source already has (never shown as new), partial overlaps, fund baselines a CAS replaces */
+  cross_source?: CrossSource[];
+  conflicts?: CrossSource[];
+  superseded_baselines?: (CrossSource & { cas_units?: string })[];
+  rows_preview?: { day: string; kind: string; name: string; account: string; quantity: string | null; price: string | null; amount: string | null; status: string }[];
 };
 
 export type ImportRow = { id: number; kind: string; source: string; filename: string; created_at: string | null; summary: Partial<ImportPreview> };
@@ -154,7 +183,7 @@ export type FySummary = {
   tax: number | null; cess: number | null; total: number | null; total_classified: number; slab_rate_pct: number; notes: string[];
 };
 
-export type Unclassified = { count: number; gain: number | null; no_cost: number; no_date: number; detail: string };
+export type Unclassified = { count: number; gain: number | null; no_cost: number; no_date: number; detail: string; corporate_action?: number };
 
 export type DisposalRow = {
   holding_id: number; name: string; account: string; fy: number; fy_label: string; tax_class: TaxClass; acquired: string | null;
