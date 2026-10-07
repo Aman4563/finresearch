@@ -137,9 +137,8 @@ def feature_timing(row: Any) -> tuple[list[Any], Any] | None:
     if close is None:
         return None
     opened = ist_datetime(_day(row, "ipo_start") or close)
-    after_close = ist_datetime(close, 17, 0) + timedelta(
-        minutes=1
-    )  # a lower bound: the final book comes later
+    # one minute after the 17:00 close is a lower bound: the final book is published later than that
+    after_close = ist_datetime(close, 17, 0) + timedelta(minutes=1)
     feats = [
         Feature(n, after_close, "final combined book, published after the 17:00 bid close")
         for n in FINAL_BOOK
