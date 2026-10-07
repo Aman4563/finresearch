@@ -27,18 +27,16 @@ class LookAheadError(ValueError):
 class Feature:
     name: str
     available_at: datetime  # when the value was first knowable (aware datetime)
-    basis: str = (
-        ""  # how that time is known, e.g. "NSE broadcast time" or "final book, after the 17:00 close"
-    )
+    # how that time is known, e.g. "NSE broadcast time" or "final book, after the 17:00 close"
+    basis: str = ""
 
 
 @dataclass
 class TimingReport:
     decision: str  # the decision point in words
     checked: int = 0  # observations checked
-    late: dict[str, int] = field(
-        default_factory=dict
-    )  # feature -> observations where it arrived after the decision
+    # feature -> observations where it arrived after the decision
+    late: dict[str, int] = field(default_factory=dict)
 
     @property
     def usable_at_decision(self) -> bool:
