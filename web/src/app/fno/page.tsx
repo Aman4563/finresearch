@@ -458,7 +458,7 @@ export default function Fno() {
                       </div>
                       {result.analysis && (
                         <div className="grid gap-3 xl:grid-cols-2">
-                          <ProbabilityPanel a={result.analysis} />
+                          <ProbabilityPanel a={result.analysis} rate={result.rate} />
                           <CostsBreakdown a={result.analysis} />
                         </div>
                       )}

@@ -8,7 +8,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 
 import { Badge, Card, InfoTip, cx } from "@/components/ui";
-import { parseVerdict, verdictTone } from "@/components/workspace/report-parts";
+import { parseVerdict } from "@/components/workspace/report-parts";
 import { AccuracyCard } from "@/components/workspace/report/accuracy";
 import { KindIcon, kindMeta } from "@/components/workspace/run-meta";
 import {
@@ -33,7 +33,9 @@ const firstSentence = (s: string) => {
 function VerdictHero({ report, ins, claims, onOpen, title }: { report: Report; ins: Insights | null; claims: ClaimMap; onOpen: OpenClaim; title: string }) {
   const v = useMemo(() => parseVerdict(report.markdown), [report.markdown]);
   const word = ins?.verdict.word ?? v?.word ?? null;
-  const tone = verdictTone(word);
+  // a report's bottom line is a research view, never painted as a green "go" or a red "stop" (#241)
+  const tone = "neutral";
+  const stockView = report.kind === "stock_report" && (ins?.verdict.policy === "informational" || /^(Favourable|Mixed|Unfavourable)$/i.test(word ?? ""));
   const conf = ins?.verdict.confidence ?? v?.confidence ?? null;
   const words = report.markdown.split(/\s+/).length;
   const vd = ins?.verdict;
@@ -41,7 +43,8 @@ function VerdictHero({ report, ins, claims, onOpen, title }: { report: Report; i
   const zone: { label: string; text: string }[] = [];
   if (vd?.listing) zone.push({ label: "Listing view", text: vd.listing });
   if (vd?.long_term) zone.push({ label: "Long-term view", text: vd.long_term });
-  if (vd?.entry_zone) zone.push({ label: "Entry zone", text: vd.entry_zone });
+  if (vd?.entry_zone) zone.push({ label: report.kind === "stock_report" ? "Price range discussed (context, not an instruction)" : "Entry zone", text: vd.entry_zone });
+  if (vd?.price_context) zone.push({ label: "Price range discussed (context, not an instruction)", text: vd.price_context });
   if (vd?.price_or_yield) zone.push({ label: "Price / yield it applies at", text: vd.price_or_yield });
   if (vd?.suits) zone.push({ label: "Suits", text: vd.suits });
   const fair = v?.rows.find((r) => /fair.value/i.test(r.label));
@@ -60,12 +63,21 @@ function VerdictHero({ report, ins, claims, onOpen, title }: { report: Report; i
           </div>
           <div>
             <p className="flex items-center gap-1 text-[11px] font-medium uppercase tracking-wider text-muted">
-              The call
-              <InfoTip>The report&apos;s own bottom line. Read the reasoning and check the cited evidence before you act.</InfoTip>
+              {stockView ? "Research view" : "The report's view"}
+              <InfoTip>
+                {stockView
+                  ? "Informational, no validated edge: FinResearch has not shown that its stock research beats the index, so a stock report gives a research view (favourable, mixed or unfavourable), not a buy or sell call."
+                  : "The report's own researched or rule-based view, not advice. Read the reasoning and check the cited evidence before you act."}
+              </InfoTip>
             </p>
             <p className={cx("mt-1 inline-flex rounded-xl px-3 py-1.5 text-2xl font-bold tracking-tight ring-1 ring-inset", TONE_RING[tone].split(" ").slice(1).join(" "))}>
               {word ?? "See report"}
             </p>
+            {stockView && (
+              <p className="mt-1 text-xs text-muted">
+                Informational, no validated edge{ins?.verdict.original_word ? ` (the report's original label was ${ins.verdict.original_word})` : ""}.
+              </p>
+            )}
           </div>
           <ConfidenceMeter level={conf} />
           <div className="flex flex-wrap gap-1.5">
@@ -246,9 +258,20 @@ function QualityCard({ q, onEvidence }: { q: Insights["quality"]; onEvidence: ()
         <p className="text-[11px] text-muted">
           All <span className="num">{q.total}</span> claims in the ledger, <span className="num">{q.verified_pct ?? 0}%</span> verified. Contradicted ones were caught and left out.
         </p>
+        {q.cited_by_grade && (
+          <p className="text-[11px] text-muted" title="A: quote found at the document lines. B: quote found on a stored copy of the web page. C: web source, quote not checked. D: re-computed by fincalc from cited inputs. U: unsupported.">
+            Evidence of the cited claims:{" "}
+            {(["A", "B", "D", "C", "U"] as const).filter((g) => q.cited_by_grade?.[g]).map((g) => (
+              <span key={g} className="mr-2">
+                {g} <span className="num text-foreground">{q.cited_by_grade?.[g]}</span>
+              </span>
+            ))}
+            <span>(A document, B checked web page, D fincalc, C unchecked web, U unsupported)</span>
+          </p>
+        )}
       </div>
       <p className="mt-2 rounded-md bg-background-subtle/70 px-2 py-1.5 text-[11px] text-muted">
-        A verified citation is not a correct forecast. How past calls turned out is tracked on{" "}
+        A verified citation is not a correct forecast. How past views turned out is tracked on{" "}
         <Link href="/signals" className="font-medium text-brand hover:underline">Signals</Link>.
       </p>
       <button type="button" onClick={onEvidence} className="mt-3 text-xs font-medium text-brand hover:underline">
@@ -264,7 +287,7 @@ export function SummaryTab({ report, ins, claims, onOpen, title, goTab, extra }:
   const [allRisks, setAllRisks] = useState(false);
   const word = ins?.verdict.word ?? parseVerdict(report.markdown)?.word;
   const bullets: string[] = [];
-  if (word) bullets.push(`The report's call is **${word}**${ins?.verdict.confidence ? ` with ${ins.verdict.confidence} confidence` : ""}${ins?.verdict.horizon ? `, for a ${ins.verdict.horizon} horizon` : ""}.`);
+  if (word) bullets.push(`${report.kind === "stock_report" ? "The research view (informational, no validated edge) is" : "The report's view is"} **${word}**${ins?.verdict.confidence ? ` with ${ins.verdict.confidence} confidence` : ""}${ins?.verdict.horizon ? `, for a ${ins.verdict.horizon} horizon` : ""}.`);
   bullets.push(...(ins?.plain_english ?? []).slice(0, 4));
   if (ins?.verdict.condition) bullets.push(`**What would change the view:** ${firstSentence(ins.verdict.condition)}`);
   const risks = ins?.risks ?? [];

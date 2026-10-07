@@ -69,8 +69,8 @@ export default function Signals() {
 
   return (
     <div className="space-y-6">
-      <PageHeader icon={<Radar className="size-5" />} eyebrow="Research" title="Signals"
-        description="Buy/sell signals for what you research and watch, and an honest track record: every call is logged as a probability before the outcome, then scored." />
+      <PageHeader icon={<Radar className="size-5" />} eyebrow="Research" title="Signals (research heuristics)"
+        description="Rule-based research views for what you research and watch, not buy/sell advice, and an honest track record: every view is logged as a probability before the outcome, then scored." />
 
       <div className="stagger grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat label="Instruments" value={companies.data ? instruments.length : null} icon={<Target className="size-4" />}

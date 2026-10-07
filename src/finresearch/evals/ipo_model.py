@@ -104,6 +104,71 @@ def raw_features(r: Any) -> dict[str, float | None]:
             "post_2022": _f(r, "post_2022") or 0.0}  # fmt: skip
 
 
+# ---------------------------------------------------------------- decision-time availability (#244, evals.timing)
+# The decision: a retail bid must be placed before the UPI mandate cut-off, 17:00 IST on the issue's closing day
+# (docs/dev/RESEARCH_ROADMAP.md §B "5 pm UPI cut-off"; db.models.IpoHistory). When each feature is first knowable:
+#   subscription (QIB / NII / retail ×)  the FINAL combined book, published only after bidding closes at 17:00 —
+#                                        after the decision (the harvest has no intraday history: roadmap item 15
+#                                        archives it only from 28-Sep-2026); DECLARED below, so the model is labelled
+#   Nifty 20-session return              to the closing day's close, 15:30 IST (NSE equity close)
+#   IPO listings in the last 90 days     strictly before the closing day
+#   public book, OFS share, regime       from the RHP / price-band notice, before the issue opens (the book uses the
+#                                        issue price, the upper band for nearly every book-built issue)
+DECISION = "issue close day, 17:00 IST (UPI mandate cut-off)"
+FINAL_BOOK = ("ln_qib", "ln_nii", "ln_retail")  # the final combined book: published after the 17:00 close
+POST_DECISION = FINAL_BOOK  # declared late features; anything late and not listed here raises LookAheadError
+
+
+def _day(row: Any, key: str) -> date | None:
+    v = row.get(key) if isinstance(row, dict) else getattr(row, key, None)
+    if v is None or isinstance(v, date):
+        return v
+    return date.fromisoformat(str(v)[:10])
+
+
+def feature_timing(row: Any) -> tuple[list[Any], Any] | None:
+    """(features with their availability, decision time) for one issue; None without a closing date."""
+    from datetime import timedelta
+
+    from finresearch.evals.timing import Feature
+    from finresearch.fincalc.dates import ist_datetime
+
+    close = _day(row, "ipo_end")
+    if close is None:
+        return None
+    opened = ist_datetime(_day(row, "ipo_start") or close)
+    # one minute after the 17:00 close is a lower bound: the final book is published later than that
+    after_close = ist_datetime(close, 17, 0) + timedelta(minutes=1)
+    feats = [
+        Feature(n, after_close, "final combined book, published after the 17:00 bid close")
+        for n in FINAL_BOOK
+    ]
+    feats += [Feature("nifty20", ist_datetime(close, 15, 30), "Nifty 50 close on the closing day"),
+              Feature("ipo_count_90d", ist_datetime(close), "listings strictly before the closing day"),
+              *(Feature(n, opened, "RHP / price-band notice") for n in
+                ("ln_book_cr", "ofs_share", "ofs_missing", "post_2022"))]  # fmt: skip
+    return feats, ist_datetime(close, 17, 0)
+
+
+def decision_point(rows: Iterable[Any]) -> dict[str, Any]:
+    """Checks every row's features against the decision time (raising on an undeclared late feature) and says
+    whether the model could be used at the decision point; it cannot while POST_DECISION is not empty."""
+    from finresearch.evals.timing import TimingReport, check
+
+    rep = TimingReport(DECISION)
+    for r in rows:
+        t = feature_timing(r)
+        if t is not None:
+            sym = r.get("symbol") if isinstance(r, dict) else getattr(r, "symbol", None)
+            check(t[0], t[1], allow=POST_DECISION, report=rep, context=str(sym or "?"))
+    return rep.to_dict()
+
+
+def usable_at_decision() -> bool:
+    """False while the model trains on features published after the decision (final subscription book)."""
+    return not POST_DECISION
+
+
 def matrix(feats: list[dict[str, float | None]], ofs_median: float) -> np.ndarray:
     rows = []
     for f in feats:
@@ -258,6 +323,8 @@ def walk_forward(rows: list[Any], *, years: Iterable[int] = TEST_YEARS, l2: floa
         p["bss_vs_table"] = m.brier_skill(p["brier_model"], p["brier_table"])
         p["bss_vs_climatology"] = m.brier_skill(p["brier_model"], p["brier_climatology"])
     report["final_model"] = fit(data, l2=l2) if passes and len(data) >= 30 else None
+    # trained on the final book: even a passing model is labelled and may only run as a shadow test (#244)
+    report["decision_point"] = decision_point(data)
     if data:
         years_seen = sorted({_year(r) for r in data})
         report["data"] = {"first_year": years_seen[0], "last_year": years_seen[-1],

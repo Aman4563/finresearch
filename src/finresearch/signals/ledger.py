@@ -22,7 +22,9 @@ Research-run verdicts → probabilities (fixed map v1, until outcomes say otherw
   open (09:00 IST on the listing date, when the pre-open auction starts) is voided at resolution: its outcome was
   already known. The price-history resolver reads the first bar on or after the known listing date.
 * Stock report (`verdict`), event "12-month total return (price + cash dividends, NSE closes) above the price
-  return of NIFTYBEES, the Nifty 50 ETF": BUY, ACCUMULATE → map; REDUCE, AVOID → 1 − map; HOLD → no call.
+  return of NIFTYBEES, the Nifty 50 ETF": BUY, ACCUMULATE → map; REDUCE, AVOID → 1 − map; HOLD → no call. Since #241
+  a stock report states a research view instead (FAVOURABLE → map, UNFAVOURABLE → 1 − map, MIXED → no call); it is
+  still scored, so the track record shows whether the views have an edge, but shown as informational.
   NIFTYBEES stands in for the Nifty 50 TRI because the app has no index-history adapter; it tracks the index less
   its expense ratio. A split, bonus, rights issue, consolidation, demerger or scheme of arrangement in the window
   (of the stock, or a split/consolidation of NIFTYBEES itself) voids the forecast rather than score unadjusted prices.
@@ -70,8 +72,8 @@ STOCK_EVENT_BSE = ("12-month total return (BSE closes plus cash dividends) above
 BENCHMARK = "NIFTYBEES"
 IPO_UP = ("APPLY", "APPLY (listing gains only)", "APPLY (long term)")
 IPO_DOWN = ("AVOID",)
-STOCK_UP = ("BUY", "ACCUMULATE")
-STOCK_DOWN = ("REDUCE", "AVOID")
+STOCK_UP = ("BUY", "ACCUMULATE", "FAVOURABLE")
+STOCK_DOWN = ("REDUCE", "AVOID", "UNFAVOURABLE")
 CHECK_EVERY = timedelta(hours=6)
 VOID_AFTER = timedelta(days=60)
 READY_AFTER_IST = (16, 30)  # resolve after the close, when NSE has published the day's prices
@@ -525,9 +527,17 @@ def _call_of(f: Forecast) -> dict[str, Any] | None:
     """How a logged stock-signal forecast is shown while signals.stock has no proven edge (#193): informational with
     its factor tilt. The stored action is the composite's and stays as logged; rows from before the switch (no
     inputs.call_status) are shown the same way, since the same rule never had an edge either."""
+    from finresearch.signals import stock
+
+    if f.asset == "stock" and (f.source or "").startswith("run:"):
+        # a stock research report's verdict (#241): its research view, informational under the same policy
+        view = stock.report_view(f.action)
+        if view is None:
+            return None
+        return {"status": "informational", "label": view["label"], "composite_action": f.action,
+                "tilt": f"research view: {view['view']}"}  # fmt: skip
     if f.source != "signal:stock":
         return None
-    from finresearch.signals import stock
 
     status = (f.inputs or {}).get("call_status")
     if stock.CALLS_ENABLED and status != "informational":

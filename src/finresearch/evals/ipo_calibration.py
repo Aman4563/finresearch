@@ -166,6 +166,9 @@ def run(rows: list[Any], *, live_features_filled: bool | None = None) -> dict[st
     out: dict[str, Any] = {"experiment": "E-IPO-1 post-hoc calibration", "prereg": "PREREG.md",
                            "oof_years": sorted({o.year for o in oof}), "n_oof": len(oof), **main,
                            "live_features_filled": filled}  # fmt: skip
+    # the model's subscription features are the FINAL book, published after the 17:00 UPI cut-off (#244): whatever
+    # passes, it is labelled and may only run as a shadow test (scored live on the book seen before the cut-off)
+    out["decision_point"] = im.decision_point(im.usable(rows))
     passing = [v for v in VARIANTS if main["verdicts"][v]["passes"]]
     out["passing_variants"] = passing
     out["live_parity"] = None
@@ -188,6 +191,9 @@ def run(rows: list[Any], *, live_features_filled: bool | None = None) -> dict[st
             v = shippable[0]
             out["decision"] = {"ship": v, "reason": f"{VARIANT_NAMES[v]} passed the bar and the live-parity check",
                                "calibrator": deployed_calibrator(oof_live, v)}  # fmt: skip
+            if not out["decision_point"]["usable_at_decision"]:
+                out["decision"] |= {"mode": "shadow", "reason": out["decision"]["reason"] + "; it "
+                                    + out["decision_point"]["label"] + ", so it runs as a shadow test only"}  # fmt: skip
         else:
             out["decision"] = {"ship": None, "reason": "passed the bar but not the live-parity check "
                                f"({', '.join(passing)}); signals unchanged until the live features are filled"}  # fmt: skip
@@ -214,6 +220,7 @@ def signal_artefact(rows: list[Any], res: dict[str, Any], data_note: str) -> dic
             "folds": [{"year": f["year"], "n_test": f["n_test"], "brier_table": f["brier_table"],
                        "brier": f[v]["brier"], "bss_vs_table": f[v]["bss_vs_table"]} for f in res["folds"]],
             "variants_tested": list(VARIANTS), "data": data_note, "generated": date.today().isoformat(),
+            "decision_point": res.get("decision_point") or im.decision_point(im.usable(rows)),
             "source": "evals/experiments/ipo_calibration (PREREG.md, ADDENDUM.md, RESULTS.md)"}  # fmt: skip
 
 

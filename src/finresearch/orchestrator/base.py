@@ -31,6 +31,7 @@ import asyncio
 import json
 import logging
 import random
+import re
 import subprocess
 import time
 from collections.abc import Awaitable, Callable
@@ -52,6 +53,7 @@ from finresearch.db import session_scope
 from finresearch.db.models import AgentStep, Claim, Company, ResearchRun
 
 logger = logging.getLogger(__name__)
+_MASK_RE = re.compile(r"\d[\d,]*(?:\.\d+)?")  # figures in a statement shown to the blind second verifier
 RoleRunner = Callable[..., Awaitable[tuple[BaseModel, AgentResult]]]
 DEFAULT_COST = {"stream": 0.08, "verify": 0.04, "plan": 0.03, "case": 0.03, "synthesis": 0.06, "critic": 0.03}
 
@@ -416,6 +418,57 @@ class ResearchPipeline:
                                                "url": x.url, "quote": (x.quote or "")[:300]} for x in c.citations]}
                                for c in rows], indent=1)  # fmt: skip
 
+    def _blind_claims_text(self, ids: list[int]) -> str:
+        """What the blind second verifier sees: the claim's metric, unit, period and statement with its figures masked,
+        and WHERE each citation points (document lines, URL, or a fincalc call's function and arguments). Never the
+        value, the status, the gate notes, the first verifier's evidence or the quotes (which carry the figure)."""
+        with session_scope() as s:
+            rows = s.scalars(select(Claim).where(Claim.run_id == self.run_id, Claim.id.in_(ids))
+                             .order_by(Claim.id)).all()  # fmt: skip
+            out = []
+            for c in rows:
+                cites = []
+                for x in c.citations:
+                    if x.document_id is not None or x.line_start is not None:
+                        cites.append({"document_id": x.document_id, "lines": [x.line_start, x.line_end]})
+                    elif x.computation:
+                        cites.append(
+                            {"fincalc": x.computation.get("function"), "args": x.computation.get("args")}
+                        )
+                    elif x.url:
+                        cites.append({"url": x.url})
+                out.append({"claim_id": c.id, "metric": c.metric, "unit": c.unit, "period": c.period,
+                            "has_figure": c.value is not None,
+                            "statement": _MASK_RE.sub("[N]", c.statement or ""), "citations": cites})  # fmt: skip
+            return json.dumps(out, indent=1, ensure_ascii=False)
+
+    def _apply_blind(self, rep: BaseModel, items: str) -> None:
+        """A high-importance claim stays verified only if the blind second verifier's own reading agrees with it
+        (verify.second_opinion). Which verifiers agreed is recorded in claim.checks["verifiers"]."""
+        from finresearch.verify.second_opinion import agrees
+
+        sent = {int(c["claim_id"]) for c in json.loads(items)}
+        found = {f.claim_id: f for f in rep.findings if f.claim_id in sent}
+        with session_scope() as s:
+            for cid in sorted(sent):
+                c = s.get(Claim, cid)
+                if c is None or c.status != "verified":
+                    continue
+                ok, why = agrees(c, found.get(cid))
+                checks = dict(c.checks or {})
+                v = dict(checks.get("verifiers") or {"first": {"role": "verifier", "verdict": "verified"}})
+                v["second"] = {"role": "verifier_blind", "model_class": ROLES["verifier_blind"].model_class.value,
+                               "agrees": ok, "detail": why[:500],
+                               "derived_value": found[cid].derived_value if cid in found else None}  # fmt: skip
+                v["agreed"] = ["verifier", "verifier_blind"] if ok else ["verifier"]
+                checks["verifiers"] = v
+                c.checks = checks
+                if not ok:
+                    c.status = "needs_review"
+                    c.verifier_note = (
+                        f"{c.verifier_note or ''} | independent second verifier disagrees: {why}"[:4000]
+                    )
+
     def _once(self, key: str, fn: Callable[[], None]) -> None:
         """Run post-processing for a step exactly once, even across resumes."""
         with session_scope() as s:
@@ -436,7 +489,7 @@ class ResearchPipeline:
         with session_scope() as s:
             return run_gate(s, self.run_id, stream=stream, facts=self.ctx.facts).summary()
 
-    def _apply_verdicts(self, rep: VerificationReport, claims: str, *, second_opinion: bool = False) -> None:
+    def _apply_verdicts(self, rep: VerificationReport, claims: str) -> None:
         """Apply a verifier's verdicts to the claims it was given (`claims`, the `_claims_text` it read). A verdict on
         any other claim is ignored: the verifier reads web pages and documents, and an instruction planted there must
         not be able to re-judge claims outside its brief (house rule 7)."""
@@ -463,18 +516,14 @@ class ResearchPipeline:
                 if c is None or c.run_id != self.run_id or c.status == "unsupported" or is_deterministic(c):
                     continue  # an exchange/AMFI fact is compared against, never re-judged by a model
                 note = (f"correct: {v.correct_value}. " if v.correct_value else "") + v.evidence[:2000]
-                if second_opinion:
-                    # a high-importance claim stays verified only if the second, independent verifier agrees
-                    if c.status == "verified" and v.verdict != "verified":
-                        c.status = "needs_review"
-                        c.verifier_note = f"{c.verifier_note or ''} | second verifier disagrees: {note}"[
-                            :4000
-                        ]
-                    continue
                 if c.status == "contradicted" and (c.checks or {}).get("day_label_ok") is False:
                     continue  # a deterministic contradiction is not overridden by a model
                 c.status = v.verdict
                 c.verifier_note = note
+                c.checks = {
+                    **(c.checks or {}),
+                    "verifiers": {"first": {"role": "verifier", "verdict": v.verdict}},
+                }
                 if v.verdict == "contradicted":
                     apply_correction(s, c, v.correct_value, v.evidence)
 
@@ -494,11 +543,13 @@ class ResearchPipeline:
             self._once(vkey, lambda: self._apply_verdicts(ver, claims))
             high = self._high_verified(stream)
             if high:
-                v2key = f"{key_prefix}verify2:{stream}"
-                claims2 = self._claims_text(ids=high)
-                ver2 = await self.step(v2key, "verify", self.roles["verifier"], target_stream=f"{stream} (second opinion)",
-                                       claims=claims2)  # fmt: skip
-                self._once(v2key, lambda: self._apply_verdicts(ver2, claims2, second_opinion=True))
+                # the independent second opinion (#243): another role, prompt and model tier, blind to the claimed
+                # figure, the status and the first verifier's reasoning; it re-derives the value from the source
+                v2key = f"{key_prefix}blind:{stream}"
+                items = self._blind_claims_text(high)
+                ver2 = await self.step(v2key, "verify", self.roles.get("verifier_blind", "verifier_blind"),
+                                       target_stream=stream, claims=items)  # fmt: skip
+                self._once(v2key, lambda: self._apply_blind(ver2, items))
         return rep
 
     async def _cross_stream(self, key_prefix: str = "") -> None:

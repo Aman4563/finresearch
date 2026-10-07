@@ -22,6 +22,18 @@ def _isolate_data_dirs(tmp_path, monkeypatch):
     config.get_settings.cache_clear()
 
 
+@pytest.fixture(autouse=True)
+def _offline_rate_curve(monkeypatch):
+    """F&O maths reads FBIL's par curve (signals.rates); tests use FBIL's dated fallback curve, never the network."""
+    from finresearch.adapters.fbil import FALLBACK_CURVE
+    from finresearch.signals import rates
+
+    async def curve():
+        return FALLBACK_CURVE
+
+    monkeypatch.setattr(rates, "CURVE", curve)
+
+
 @pytest.fixture(scope="session")
 def db_url():
     from finresearch.config import Settings

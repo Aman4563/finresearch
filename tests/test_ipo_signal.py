@@ -169,7 +169,7 @@ async def test_after_listing_default_is_sell_unless_the_stock_signal_says_buy():
     assert s.action == "SELL_AT_LISTING" and s.sizing["listing"]["return_open"] == 0.05
 
 
-async def test_model_is_used_only_when_its_walk_forward_passed():
+async def test_model_is_used_only_when_its_walk_forward_passed(monkeypatch):
     from test_ipo_model import _synthetic
 
     from finresearch.evals import ipo_model as im
@@ -180,6 +180,12 @@ async def test_model_is_used_only_when_its_walk_forward_passed():
     rep = im.walk_forward(rows)
     assert rep["gate"]["passes"]
     snapshot_rows = history()
+    # #244: even a passing model trains on the final book (after the 17:00 UPI cut-off), so it is not the call
+    s = await sig_ipo.compute("ORIENTCABL", {}, sources(orient(qib="150", retail="20"), rows=snapshot_rows,
+                                                         artefact=rep))  # fmt: skip
+    assert s.validation.status == "base_rate" and "uses post-cutoff data" in s.validation.description
+    # once its features are known at the decision point (an intraday history), a passing model makes the call
+    monkeypatch.setattr(im, "POST_DECISION", ())
     s = await sig_ipo.compute("ORIENTCABL", {}, sources(orient(qib="150", retail="20"), rows=snapshot_rows,
                                                          artefact=rep))  # fmt: skip
     assert s.validation.status == "backtested" and "walk-forward" in s.validation.description

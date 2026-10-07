@@ -46,6 +46,7 @@ import json
 import logging
 import math
 import os
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
@@ -90,6 +91,59 @@ CALLS_ENABLED = False
 INFORMATIONAL_LABEL = "Informational — no proven edge"
 PROMOTION_RULE = ("Calls return only when a pre-registered model beats the equal-weight point-in-time NIFTY 50 after "
                   "costs with a Newey–West t above 2.39 (evals/experiments/stock_pit_universe/PREREG.md).")  # fmt: skip
+
+
+# Stock RESEARCH REPORT verdicts follow the same policy (#241): while CALLS_ENABLED is False a report's conclusion is a
+# research view (favourable / mixed / unfavourable), shown in neutral colours, never BUY…AVOID, and its price range is
+# context, not an entry instruction. Reports written before the switch said BUY/ACCUMULATE/HOLD/REDUCE/AVOID; they are
+# shown with the same view words (the original label is kept beside it).
+REPORT_VIEW = {"BUY": "favourable", "ACCUMULATE": "favourable", "FAVOURABLE": "favourable", "HOLD": "mixed",
+               "MIXED": "mixed", "REDUCE": "unfavourable", "AVOID": "unfavourable", "UNFAVOURABLE": "unfavourable"}  # fmt: skip
+VIEW_NOTE = "informational, no validated edge"
+PRICE_CONTEXT_LABEL = "Price range discussed (context, not an instruction)"
+
+
+def report_view(word: str | None) -> dict[str, Any] | None:
+    """How a stock report's verdict word is shown under the policy; None when calls are enabled or the word is
+    unknown (it is then shown as written)."""
+    view = REPORT_VIEW.get((word or "").strip().upper())
+    if CALLS_ENABLED or view is None:
+        return None
+    return {"view": view, "word": view.capitalize(), "label": f"Research view: {view} — {VIEW_NOTE}",
+            "original": word if word and word.upper() not in ("FAVOURABLE", "MIXED", "UNFAVOURABLE") else None,
+            "policy": "informational", "promotion_rule": PROMOTION_RULE}  # fmt: skip
+
+
+_VERDICT_HEAD = re.compile(r"^#{2,3}\s.*(verdict|research view)", re.I)
+_BOLD_WORD = re.compile(r"\*\*(BUY|ACCUMULATE|HOLD|REDUCE|AVOID)\*\*")
+
+
+def neutral_report_markdown(md: str) -> str:
+    """A stock report's markdown as the reader shows it under the policy: in the verdict box (the first table under a
+    heading naming the verdict) the BUY…AVOID word becomes the research view and an "Entry zone" row is relabelled as
+    price context. The rest of the text is the report as written. Unchanged when calls are enabled."""
+    if CALLS_ENABLED:
+        return md
+    lines = md.split("\n")
+    start = next((i for i, ln in enumerate(lines) if _VERDICT_HEAD.match(ln)), None)
+    if start is None:
+        return md
+    seen_table = False
+    for i in range(start + 1, len(lines)):
+        ln = lines[i]
+        if re.match(r"^#{1,3}\s", ln):
+            break
+        if not ln.lstrip().startswith("|"):
+            if seen_table:
+                break
+            continue
+        seen_table = True
+        ln = _BOLD_WORD.sub(lambda m: f"**{report_view(m.group(1))['word']}** (research view, {VIEW_NOTE}; the "
+                                      f"report said {m.group(1)})", ln)  # fmt: skip
+        lines[i] = re.sub(r"^(\|\s*\**)\s*entry zone\s*(\**\s*\|)",
+                          lambda m: m.group(1) + PRICE_CONTEXT_LABEL + (m.group(2) if m.group(2)[0] == "*" else " |"),
+                          ln, flags=re.I)  # fmt: skip
+    return "\n".join(lines)
 
 
 def tilt(score: float) -> str:

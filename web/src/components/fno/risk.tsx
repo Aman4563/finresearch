@@ -6,7 +6,7 @@
 import { ExternalLink, Gauge, ShieldAlert, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import type { Analysis, IvHistory, Outcome, RiskNotice } from "@/components/fno/model";
+import type { Analysis, IvHistory, Outcome, RateInfo, RiskNotice } from "@/components/fno/model";
 import { fmtINR } from "@/components/charts";
 import { Badge, InfoTip, Stat, cx } from "@/components/ui";
 import { day, useApi } from "@/lib/api";
@@ -142,18 +142,24 @@ function PopTile({ label, o, help, tone }: { label: string; o: Outcome; help: st
 }
 
 /** Risk-neutral vs real-world chance of profit (after costs), expected values, capital check and drawdown risk. */
-export function ProbabilityPanel({ a }: { a: Analysis }) {
+export function ProbabilityPanel({ a, rate }: { a: Analysis; rate?: RateInfo }) {
+  const rateText = `${(a.rate * 100).toFixed(2)}%${rate ? `, ${rate.source}${rate.fallback ? " — fallback" : ""}` : ""}`;
   const rw = a.real_world;
   const cc = a.capital_check;
   return (
     <div className="space-y-2">
       <div className="grid grid-cols-2 gap-2">
         <PopTile label="Chance of profit · risk-neutral" o={a.risk_neutral} tone="info"
-          help={`Model probability that the P&L after costs is positive at expiry with σ = ATM implied volatility and drift = the risk-free rate (${(a.rate * 100).toFixed(1)}%), N(d₂)-based. What option prices imply; not a forecast.`} />
+          help={`Model probability that the P&L after costs is positive at expiry with σ = ATM implied volatility and drift = the risk-free rate (${rateText}), N(d₂)-based. What option prices imply; not a forecast.`} />
         <PopTile label="Chance of profit · real-world" o={rw} tone="accent"
           help={`The same with σ = realised volatility (${rw?.window ?? "20/60-day"}; the less favourable of the two windows) and a stated drift of ${(a.drift * 100).toFixed(1)}% a year (no directional view). A model probability, not a forecast.`} />
       </div>
       <p className="text-[11px] leading-relaxed text-muted">{a.fair_price_note}</p>
+      {rate && (
+        <p className={cx("text-[11px] leading-relaxed", rate.fallback ? "text-warn" : "text-muted")}>
+          Risk-free rate <span className="num">{(rate.rate * 100).toFixed(2)}%</span>: {rate.source} ({rate.note}).
+        </p>
+      )}
       <p className={cx("flex items-start gap-1.5 rounded-lg px-2.5 py-1.5 text-xs", cc.within ? "bg-background-subtle text-foreground/90" : "bg-warn-soft text-foreground/90")}>
         <ShieldAlert className={cx("mt-0.5 size-3.5 shrink-0", cc.within ? "text-muted" : "text-warn")} />
         <span>

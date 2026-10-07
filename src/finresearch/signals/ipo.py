@@ -46,6 +46,7 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
 
+from finresearch.evals.timing import POST_CUTOFF_LABEL
 from finresearch.fincalc import ipo as fipo
 from finresearch.signals.base import Factor, Signal, Validation, clip_score
 from finresearch.signals.registry import register
@@ -360,7 +361,13 @@ def reliability_interval(artefact: dict[str, Any], p: float) -> tuple[float, flo
 
 
 def model_ready(artefact: dict[str, Any] | None) -> bool:
-    return bool(artefact and (artefact.get("gate") or {}).get("passes") and artefact.get("final_model"))
+    """The fitted model makes the call only if it passed its bar AND its features are known at the decision point.
+    It trains on the final order book, published after the 17:00 UPI cut-off (evals.ipo_model.POST_DECISION, #244),
+    so it is never the call while that holds."""
+    from finresearch.evals.ipo_model import usable_at_decision
+
+    return bool(artefact and (artefact.get("gate") or {}).get("passes") and artefact.get("final_model")
+                and usable_at_decision())  # fmt: skip
 
 
 def calibrated_ready(blend: dict[str, Any] | None) -> bool:
@@ -631,7 +638,9 @@ async def compute(
                        f"{sum(1 for f in folds if f['bss_table_vs_climatology'] > 0)} of {len(folds)} years"
                        if folds else "")  # fmt: skip
         why = (f"the fitted model did not pass the bar (Brier skill > 0 vs this table in {len(g.get('years_passed', []))}"
-               f" of {len(g.get('years_evaluated', []))} test years; {GATE_TEXT})" if g
+               f" of {len(g.get('years_evaluated', []))} test years; {GATE_TEXT})" if g and not g.get("passes")
+               else f"the fitted model {POST_CUTOFF_LABEL} (it trains on the final book, published after the 17:00 "
+                    "UPI cut-off), so it is not used for the call" if g
                else "no walk-forward report for the fitted model yet")  # fmt: skip
         method = (
             BASE_RATE_METHOD  # the band is an input (base_rate, factors), not part of the method: calibration
@@ -812,6 +821,10 @@ SHADOW_TEXT = ("Shadow test: logged for out-of-sample scoring, not used for the 
                "table only if, after at least 30 resolved live IPO forecasts where both methods forecast, its Brier "
                "score is lower with a paired-bootstrap 90% interval that excludes 0 "
                "(evals/experiments/ipo_calibration/SHADOW.md).")  # fmt: skip
+# #244: the model was fitted and backtested on the FINAL order book, published after the 17:00 UPI cut-off
+POST_CUTOFF_CAVEAT = ("The model " + POST_CUTOFF_LABEL + ": it was trained and backtested on the final subscription "
+                      "book, published after the 17:00 UPI cut-off, so its backtest overstates what is knowable when "
+                      "you bid. Its live shadow forecasts use the book as it stood, which is the honest test.")  # fmt: skip
 
 
 async def _shadow_blend(blend: dict[str, Any], cell: dict[str, Any], p_cell: float, p_regime: float, book: Book,
@@ -845,7 +858,7 @@ async def _shadow_blend(blend: dict[str, Any], cell: dict[str, Any], p_cell: flo
                         f"{len(g['years_passed'])} of {len(g['years_evaluated'])} years, narrowest {narrow['year']} "
                         f"({narrow['bss_vs_table']:+.3f}); pooled Brier {pooled['brier']:.4f} vs "
                         f"{pooled['brier_table']:.4f} (n = {pooled['n']}); λ = {lam:.2f}",
-            "caveats": [BLEND_CAVEAT, *notes]}  # fmt: skip
+            "decision_point": POST_CUTOFF_LABEL, "caveats": [POST_CUTOFF_CAVEAT, BLEND_CAVEAT, *notes]}  # fmt: skip
 
 
 def shadow_signal(sig: Signal, shadow: dict[str, Any]) -> Signal:
