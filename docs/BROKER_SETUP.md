@@ -57,8 +57,9 @@ scheme code), account, trade day and side, the incoming rows are compared with r
 (re-importing the same source is caught separately):
 
 1. **Same id** — the same exchange trade id, or the same order id with the same total units → already present.
-2. **Different exchange trade ids** (Zerodha, Dhan) → different trades, never merged. Groww's API ids are Groww's own
-   order ids, not the exchange's, so for Groww (and Upstox, unverified) only a shared id counts.
+2. **Different exchange trade ids** (Zerodha [U: Kite's trade id taken to be the exchange's], Dhan) → different
+   trades, never merged. Groww's API ids are Groww's own order ids, not the exchange's, so for Groww (and Upstox,
+   unverified) only a shared id counts.
 3. **Same quantity at a price within 0.5 %** → already present, matched one row to one row: two real buys of 10 on
    the same day against one stored buy of 10 leave one of them new.
 4. **What is left adds up** to the same units at the same average price (several fills against one order, or one

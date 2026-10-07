@@ -269,3 +269,21 @@ def test_two_broker_accounts_are_never_matched(db):
         _apply(s, _zcsv(("buy", 10, 100, "T1", "O1")), "t.csv", "8")
         r = _sync(s, account="Groww", source="groww_api", trades=[_trade(tid="G1", oid="G1")])
         assert r.added == 1 and _total(s) == D(20)
+
+
+def test_inbox_log_never_hides_conflicts():
+    from finresearch.portfolio.connectors.inbox import _log_status, _slim
+
+    r = {
+        "file": "t.csv",
+        "status": "imported",
+        "added": 0,
+        "conflicts": [{"name": "EXMPL"}],
+        "cross_source": [],
+    }
+    assert _log_status(r) == (
+        "partial",
+        "1 conflict(s) with another source: not added, review them in the import's result",
+    )
+    assert _slim(r)["conflicts"] == [{"name": "EXMPL"}]
+    assert _log_status({**r, "conflicts": []}) == ("ok", None)

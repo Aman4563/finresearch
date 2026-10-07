@@ -42,9 +42,10 @@ PRICE_TOL = Decimal(
     "0.005"
 )  # 0.5 %: a CSV's Value/Quantity, a typed price or an order's average vs a fill price
 TRADE_KINDS = ("buy", "sell")
-# sources whose `trade_id` is the exchange's own trade id (Kite /trades and Console tradebook: exchange trade id;
-# Dhan: exchangeTradeId), so two different values are two different trades. Groww's API ids are Groww's own order
-# ids and Upstox's are unverified: for those only a shared value counts.
+# sources whose `trade_id` is the exchange's own trade id, so two different values are two different trades. Dhan:
+# the API field is exchangeTradeId. Zerodha: Kite /trades `trade_id` and the Console tradebook's `trade_id` are taken
+# to be the exchange trade id [U: not stated in the docs read for connectors/zerodha.py; a shared value still matches
+# either way]. Groww's API ids are Groww's own order ids and Upstox's are unverified: there only a shared value counts.
 EXCHANGE_TRADE_ID = {"zerodha", "zerodha_api", "dhan_api"}
 ID_FIELDS = ("trade_id", "order_id", "trade_num")
 
