@@ -203,3 +203,50 @@ def test_net_worth_without_any_holdings_is_complete_at_zero(client):
     with session_scope() as s:
         nw = net_worth_on(load(s), TODAY)
     assert nw["portfolio"] == 0.0 and nw["complete"] is True and nw["missing"] == []
+
+
+# --------------------------------------------------------------------------- (e) switch cost and churn cost
+def _unknown_gain(sold: date):
+    from finresearch.fincalc.tax import Gain, classify
+
+    return Gain(D(500), classify("equity", None, sold), sold)  # a sale this year without a purchase date
+
+
+def test_switch_cost_is_an_estimate_when_the_year_has_an_unclassified_sale():
+    from finresearch.portfolio.analytics import FundLots, _switch_text, switch_cost
+    from finresearch.portfolio.tax import HoldingTax
+
+    ht = HoldingTax(3, "Test Flexi Cap Fund", "Test", None, "equity", False, None)
+    fl = [FundLots(3, ht, [(date(2025, 1, 6), D(5000), D(10))])]
+    today = date(2026, 1, 8)
+    ok = switch_cost(fl, 20.0, today, [], D("0.30"), None)
+    assert ok["complete"] is True and ok["estimate"] is False and ok["year_unclassified"] == 0
+    sw = switch_cost(fl, 20.0, today, [_unknown_gain(date(2025, 12, 1))], D("0.30"), None)
+    # main: the same "tax" with no flag; the ₹500 of unclassified gain is simply not in the year's tax
+    assert sw["complete"] is False and sw["estimate"] is True and sw["year_unclassified"] == 1
+    text = _switch_text("Test Flexi Cap Fund", sw, 1000.0, None)
+    assert "(estimate, incomplete)" in text and "left out of the year's tax" in text
+
+
+def test_churn_cost_is_an_estimate_when_a_year_has_an_unclassified_sale(client):
+    from finresearch.portfolio.history import History
+
+    undated_sale(client)  # sold 1-Jun-2026, purchase date unknown
+    a = add(client, name="Example Gamma Ltd", isin="INE000Z01013", day="2026-05-04", kind="buy", quantity="10",
+            price="100")  # fmt: skip
+    add(client, holding_id=a["holding_id"], day="2026-06-02", kind="sell", quantity="10", price="120")
+
+    async def no_history():
+        return History(reason="offline test"), TODAY, "fp"
+
+    client.app.state.journal_today = TODAY
+    client.app.state.portfolio_history = no_history
+    r = client.get("/api/portfolio/behaviour")
+    assert r.status_code == 200, r.text
+    ch = r.json()["churn"]
+    # Gamma: STCG 200 at 20 % = 40 + cess 1.60 = 41.60 (the classified part); Alpha's ₹500 cannot be classified
+    assert ch["tax"] == pytest.approx(41.60, abs=0.005)
+    assert ch["complete"] is False and ch["estimate"] is True  # main: no flag at all
+    assert "1 disposal(s) in FY 2026-27" in ch["incomplete_note"]
+    assert ch["by_fy"] == [{"fy": 2027, "tax": pytest.approx(41.6), "tax_short_term": pytest.approx(41.6),
+                            "complete": False, "unclassified": 1}]  # fmt: skip

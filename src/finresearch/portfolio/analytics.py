@@ -645,10 +645,15 @@ def switch_cost(fl: Sequence[FundLots], nav: float, today: date, base_gains: Seq
                 load += q * px * pct
     proceeds = units * px
     tax = tax_delta(list(base_gains), gains_of(rows), fy, slab)
+    # an unclassified disposal already in this year (or a switched lot without a cost or date) is left out of the
+    # year's tax, so the change is an estimate, never the figure (#238)
+    base_unknown = sum(1 for g in base_gains if g.classification.term == "unknown")
+    complete = unknown == 0 and base_unknown == 0
     stamp = (proceeds - load) * STAMP_MF_BUY
     gain = sum((r.gain for r in rows if r.gain is not None), Decimal(0))
     return {"value": float(proceeds), "gain": float(gain), "tax": float(tax), "exit_load": float(load) if pct is not None else None,
             "exit_load_known": pct is not None, "stamp": float(stamp), "unknown_cost_lots": unknown,
+            "year_unclassified": base_unknown, "complete": complete, "estimate": not complete,
             "total": float(tax + stamp + (load if pct is not None else 0))}  # fmt: skip
 
 
@@ -726,10 +731,14 @@ def costs(h: History, table: dict[str, Any] | None, table_note: str | None, lots
 
 def _switch_text(name: str, sw: dict[str, Any], saving: float, be: float | None) -> str:
     load = f"exit load ₹{sw['exit_load']:,.0f}" if sw["exit_load_known"] else "exit load unknown (enter it)"
-    parts = [f"Switching {name} to its direct plan costs about ₹{sw['total']:,.0f} now: tax ₹{sw['tax']:,.0f}, {load}, "
+    est = "" if sw.get("complete", True) else " (estimate, incomplete)"
+    parts = [f"Switching {name} to its direct plan costs about ₹{sw['total']:,.0f}{est} now: tax ₹{sw['tax']:,.0f}, {load}, "
              f"stamp duty ₹{sw['stamp']:,.0f}."]  # fmt: skip
     if sw["unknown_cost_lots"]:
         parts.append(f"{sw['unknown_cost_lots']} lot(s) have an unknown cost, so the tax is incomplete.")
+    if sw.get("year_unclassified"):
+        parts.append(f"{sw['year_unclassified']} sale(s) this year have an unknown cost or purchase date and are "
+                     "left out of the year's tax, so the tax is an estimate.")  # fmt: skip
     tail = "."
     if be is not None:
         tail = (
