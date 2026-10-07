@@ -126,10 +126,10 @@ def strip(s: Any, now: datetime) -> dict[str, Any]:
     if not data.holdings:
         return {"has_portfolio": False}
     last = s.scalars(select(PortfolioSnapshot).order_by(PortfolioSnapshot.day.desc())).first()
-    snaps = s.scalars(select(PortfolioSnapshot).where(PortfolioSnapshot.day >= today - timedelta(days=11),
-                                                      PortfolioSnapshot.complete.is_(True))
-                      .order_by(PortfolioSnapshot.day)).all()  # fmt: skip
-    rows = [(x.day, float(x.value), float(x.invested)) for x in snaps]
+    from finresearch.portfolio import series
+
+    ser, _why = series.load(s)  # the week's change reads the canonical value history (#239)
+    rows = ser.rows(today - timedelta(days=11)) if ser is not None else []
     start = [r for r in rows if r[0] <= today - timedelta(days=7)]
     week = value_change(
         ([start[-1]] if start else []) + [r for r in rows if r[0] > today - timedelta(days=7)]

@@ -11,7 +11,8 @@ portfolio was last valued (the /portfolio page or GET /api/portfolio), so the so
   complete snapshot and the targets saved on /portfolio (Allocation tab).
 - drawdown_pct: how far a time-weighted value index sits below its peak, in % (0 at a new high). The index chains
   day-to-day returns with net new money removed ((V_t - flow_t) / V_{t-1}), so buying more or selling does not look
-  like a gain or a loss. Only days on which every holding was priced count.
+  like a gain or a loss. Only days on which every holding was priced count. It reads the canonical reconstructed
+  value history (portfolio.series, #239); the snapshots below are the "as shown" record (current allocation only).
 
 The daily-layer metrics (PORTFOLIO_METRICS below) read what the monitor's daily portfolio pass stored
 (monitor.portfolio_daily -> portfolio.cache) plus the transactions; each says the date of the data it used, and
@@ -26,7 +27,7 @@ from decimal import Decimal
 from itertools import pairwise
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -78,13 +79,13 @@ def drift(by_asset: dict[str, float], targets: dict[str, float]) -> list[dict[st
 
 def record_snapshot(s: Session, day: date, value: float, invested: float, by_asset: dict[str, float],
                     complete: bool) -> None:  # fmt: skip
-    """Upsert the day's value (the latest valuation of the day wins)."""
+    """Upsert the day's "as shown" value (the latest valuation of the day wins, and `updated_at` says when it was
+    taken). Past values are read from the reconstructed history (portfolio.series), not from these rows."""
     vals = {"day": day, "value": Decimal(str(round(value, 2))), "invested": Decimal(str(round(invested, 2))),
             "by_asset": {k: round(v, 2) for k, v in by_asset.items()}, "complete": complete}  # fmt: skip
     stmt = insert(PortfolioSnapshot).values(**vals)
-    s.execute(
-        stmt.on_conflict_do_update(index_elements=["day"], set_={k: v for k, v in vals.items() if k != "day"})
-    )
+    s.execute(stmt.on_conflict_do_update(index_elements=["day"], set_={
+        **{k: v for k, v in vals.items() if k != "day"}, "updated_at": func.now()}))  # fmt: skip
 
 
 def drawdown(snaps: list[tuple[date, float, float]]) -> tuple[float | None, str]:
@@ -318,8 +319,16 @@ def alert_metrics(session: Session) -> Out:
             out["allocation_drift_pp"] = (Decimal(str(abs(top["drift_pp"]))),
                                           f"{top['label']} {top['weight_pct']:g} % vs target {top['target_pct']:g} % "
                                           f"(valuation of {last.day.isoformat()})")  # fmt: skip
-    dd, how = drawdown([(x.day, float(x.value), float(x.invested)) for x in snaps])
-    out["drawdown_pct"] = (None if dd is None else Decimal(str(dd)), how)
+    # the drawdown reads the canonical value history (portfolio.series, #239), not the "as shown" snapshots
+    from finresearch.portfolio import series
+
+    ser, why = series.load(session)
+    if ser is None:
+        out["drawdown_pct"] = (None, why)
+    else:
+        dd, how = drawdown(ser.rows())
+        out["drawdown_pct"] = (None if dd is None else Decimal(str(dd)),
+                               f"{how}; reconstructed from transactions and closes (built {ser.built_on})")  # fmt: skip
 
     # ------------------------------------------------------------------ from transactions and lots (no prices)
     sips = sip_health(data.holdings, data.txns, today)
