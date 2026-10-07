@@ -22,8 +22,8 @@ let cached: { mtime: number; token: string | null } | null = null;
 /** The token, re-read when the file changes; null while the API has never started (the API then answers 401). */
 function readToken(): string | null {
   try {
-    const mtime = statSync(TOKEN_FILE).mtimeMs;
-    if (cached?.mtime !== mtime) cached = { mtime, token: readFileSync(TOKEN_FILE, "utf8").trim() || null };
+    const mtime = statSync(/* turbopackIgnore: true */ TOKEN_FILE).mtimeMs;
+    if (cached?.mtime !== mtime) cached = { mtime, token: readFileSync(/* turbopackIgnore: true */ TOKEN_FILE, "utf8").trim() || null };
     return cached.token;
   } catch {
     cached = null;
@@ -32,10 +32,16 @@ function readToken(): string | null {
 }
 
 export function proxy(request: NextRequest) {
-  if (request.nextUrl.hostname === "localhost" && API_URL.hostname === "127.0.0.1") {
-    const url = request.nextUrl.clone();
-    url.hostname = "127.0.0.1";
-    return NextResponse.redirect(url);
+  // the Host header, not nextUrl: Next normalises nextUrl's host to "localhost" in development
+  const [host, port] = (request.headers.get("host") ?? "").split(":");
+  if (host === "localhost" && API_URL.hostname === "127.0.0.1") {
+    const { pathname, search } = request.nextUrl;
+    // not a 3xx: Next treats localhost and 127.0.0.1 as one origin and rewrites such a Location to a relative URL
+    // (NextURL normalises loopback hosts), which would loop; a refresh page moves the browser instead
+    const safePort = /^\d{1,5}$/.test(port ?? "") ? `:${port}` : ""; // never anything but a port after the host
+    const to = `http://127.0.0.1${safePort}${pathname}${search}`.replace(/[<>"&]/g, "");
+    const html = `<!doctype html><meta http-equiv="refresh" content="0;url=${to}"><a href="${to}">Continue to ${to}</a>`;
+    return new NextResponse(html, { status: 200, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
   }
   const response = NextResponse.next();
   const token = readToken();
