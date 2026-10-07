@@ -379,13 +379,16 @@ def test_alert_metrics_contract(client):
         ).status_code
         == 200
     )
-    snap = client.get("/api/portfolio").json()  # values the portfolio and records the day's snapshot
+    snap = client.get("/api/portfolio").json()  # values the portfolio; a GET records nothing (#247)
     assert snap["complete"] and snap["drift"][0] == {
         "label": "Stocks",
         "weight_pct": 100.0,
         "target_pct": 60.0,
         "drift_pp": 40.0,
     }
+    with session_scope() as s:
+        assert portfolio_metrics(s)[0]["allocation_drift_pp"][0] is None
+    assert client.post("/api/portfolio/snapshot", headers=ORIGIN).json()["recorded"] is True  # what the page does
     with session_scope() as s:
         m, reason = portfolio_metrics(s)
     assert reason is None
