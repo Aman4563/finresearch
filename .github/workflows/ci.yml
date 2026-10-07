@@ -35,6 +35,17 @@ jobs:
       - run: uv sync --locked
       - run: uv run ruff check .
       - run: uv run ruff format --check .
+      # #247: the tests build their schema with create_all, so the migrations get their own check on the empty
+      # service database: apply every migration, compare with the models, round-trip the latest one
+      - name: Migrations apply on an empty database and match the models
+        env:
+          FINRESEARCH_DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/finresearch_test
+        run: |
+          uv run alembic upgrade head
+          uv run alembic check
+          uv run alembic downgrade -1
+          uv run alembic upgrade head
+          uv run alembic check
       - run: uv run pytest -q   # offline: fake Claude CLI, mocked Ollama/HTTP, real Postgres service
   web:
     runs-on: ubuntu-latest
