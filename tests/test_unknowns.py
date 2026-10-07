@@ -147,7 +147,12 @@ def test_old_statement_price_is_not_complete_and_is_flagged(client):
     sm = snap["summary"]
     assert sm["stale"] == 1 and "more than 5 trading days old" in sm["stale_note"]
     assert snap["complete"] is False  # main: True
-    # the snapshot records the incompleteness the alerts and net worth read
+    # the snapshot records the incompleteness the alerts and net worth read (recorded by POST since #247)
+    assert client.post("/api/portfolio/snapshot", headers=ORIGIN).json() == {
+        "recorded": True,
+        "day": "2026-10-05",
+        "complete": False,
+    }
     from finresearch.db import session_scope
     from finresearch.db.models import PortfolioSnapshot
 
