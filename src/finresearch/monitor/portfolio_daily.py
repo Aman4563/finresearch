@@ -195,9 +195,15 @@ async def live_history(holdings: list[Any], today: date) -> Any:
             for i in (r.isin_growth, r.isin_reinvest):
                 if i:
                     schemes[f"ISIN:{i.upper()}"] = r
+    isin_map = None  # a stock with only an ISIN resolves through the listings, as the Performance tab does
+    if any(h.asset_type == "stock" and not h.nse_symbol and not h.bse_code and h.isin for h in holdings):
+        try:
+            isin_map = {r.isin.upper(): r for r in (await _live_listings()).rows if r.isin}
+        except Exception:  # without it those holdings are excluded and named in the history
+            log.warning("listings for the value history unavailable", exc_info=True)
     async with Fetcher(MarketSources()) as f:
         return await build(holdings, fetch=f, store=PriceStore(get_settings().state_dir / "portfolio_history"),
-                           schemes=schemes, today=today, benchmark=False)  # fmt: skip
+                           schemes=schemes, today=today, isin_map=isin_map, benchmark=False)  # fmt: skip
 
 
 async def history_pass(deps: Any, today: date) -> dict[str, Any]:

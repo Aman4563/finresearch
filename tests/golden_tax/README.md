@@ -10,6 +10,15 @@ Never edit an expectation to match the engine. When they disagree: fix the engin
 the field under the case's `known_divergence` with the engine's value and the reason. The runner then requires
 exactly that engine value, so any further change still fails.
 
+## Scope of independence
+
+The tax arithmetic (terms, rates, grandfathering, set-off, exemption, cess) was derived from the law alone. The input
+model was not: the case schema and its input conventions were set by a brief written by someone who had read the
+engine. These are the meaning of an `opening` row and of `broker_average`, that a bonus is dated on its allotment
+day, that same-day buy/sell quantities net as speculative (intraday), and that sell charges are deducted from the
+consideration. So a case can catch a wrong rule, rate, date or formula, but it cannot catch a wrong input
+convention.
+
 ## Engine vs hand derivation (first run, 7-Oct-2026)
 
 | case | field | hand | engine | outcome |

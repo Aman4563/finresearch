@@ -192,3 +192,14 @@ def test_data_health_names_the_reconciliation_differences():
     row = history(perf, None, True)
     assert row["detail"].endswith("; 1 of 2 saved valuation day(s) differ from it by more than 1 % (latest "
                                   "2026-09-29: the snapshot was incomplete)")  # fmt: skip
+
+
+def test_the_live_monitor_builds_the_value_history():
+    # no network: only that the live deps wire the builder the daily pass calls (#239)
+    from finresearch.monitor.jobs import Deps
+    from finresearch.monitor.portfolio_daily import live_history
+
+    assert Deps.live().pf_history is live_history
+    assert (
+        Deps(ipo_detail=None, quote=None).pf_history is None
+    )  # tests and partial deps: the pass skips it and says so
