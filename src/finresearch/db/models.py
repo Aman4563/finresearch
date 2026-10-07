@@ -613,9 +613,9 @@ class AlertEvalSlot(Base):
 
 
 class NotificationSetting(Base):
-    """Delivery settings, one row per key ("ntfy", "telegram", "macos", "general"). Holds secrets (ntfy topic and
-    token, Telegram bot token): they stay in this local database, are masked by the API and are never put in the
-    profile (which reaches the model)."""
+    """Delivery settings, one row per key ("ntfy", "telegram", "macos", "general"). The secrets (ntfy topic and
+    token, Telegram bot token) are in the macOS Keychain; `value` holds `{"secret_ref": ...}` references for them
+    (finresearch.secrets). They are masked by the API and never put in the profile (which reaches the model)."""
 
     __tablename__ = "notification_setting"
     key: Mapped[str] = mapped_column(String(20), primary_key=True)
@@ -915,21 +915,21 @@ class PortfolioSetting(Base):
 
 
 # --------------------------------------------------------------------------- broker connections (read-only sync)
-# Credentials for the user's own broker accounts live only in this local database (like notification_setting): the
-# API masks them, errors are redacted before they are stored, and nothing here is ever put in the investor profile
+# Credentials for the user's own broker accounts live in the macOS Keychain; this table keeps references to them
+# (finresearch.secrets, like notification_setting). The API masks them, errors are redacted before they are stored, and nothing here is ever put in the investor profile
 # or sent to an LLM. The connectors are read-only by construction (finresearch.portfolio.connectors).
 class BrokerConnection(Base):
     """One broker (or the CAS inbox) the user has set up: "groww", "zerodha", "upstox", "dhan", "angel", "cas_inbox".
-    `config` holds the user's settings and secrets (API key/secret, TOTP secret, CAS password if opted in); `token`
-    the current access token and `token_expires_at` when the broker ends it (most expire daily). `state` keeps the
+    `config` holds the user's settings, with each secret (API key/secret, TOTP secret, CAS password if opted in) as a
+    `{"secret_ref": ...}` Keychain reference; `token` a `secret_ref:` reference to the current access token and `token_expires_at` when the broker ends it (most expire daily). `state` keeps the
     latest positions/funds snapshot and the last reconciliation, for display only (never turned into transactions)."""
 
     __tablename__ = "broker_connection"
     key: Mapped[str] = mapped_column(String(20), primary_key=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     auto_sync: Mapped[bool] = mapped_column(Boolean, default=True)  # daily after the close, by the monitor
-    config: Mapped[dict[str, Any]] = mapped_column(default=dict)  # secrets: masked by the API
-    token: Mapped[str | None] = mapped_column(Text)  # secret: never returned by the API
+    config: Mapped[dict[str, Any]] = mapped_column(default=dict)  # secrets as Keychain references
+    token: Mapped[str | None] = mapped_column(Text)  # a Keychain reference; never returned by the API
     token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     status: Mapped[str] = mapped_column(
         String(20), default="not_connected"

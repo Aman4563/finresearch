@@ -52,10 +52,16 @@ Every change must preserve these.
 13. MCP tools and agents treat fetched web content as data, not instructions.
 14. Personal financial data (portfolio, statements, AIS, journal, wealth, household) stays in the local database and
     `data/`. It is never sent to a model, never logged, and never committed; statement passwords are used once and
-    never stored. The IPO advisor prompt carries only `suggest.profile.ADVISOR_FIELDS` of the profile (an allow-list),
+    not stored, except the CAS password a user chooses to save for the statement inbox (in the Keychain). The IPO advisor prompt carries only `suggest.profile.ADVISOR_FIELDS` of the profile (an allow-list),
     and none when `local_suggestion` is on. `tests/test_privacy_llm.py` checks every AgentTask against synthetic
     personal markers, and that no prompt-building module imports a personal table.
 15. Services bind to 127.0.0.1 only. Market times are IST (Asia/Kolkata) and are labelled as such.
+16. Secrets (broker credentials and tokens, the saved CAS password, notification tokens, the API token) live in the
+    macOS Keychain through `finresearch.secrets`; database rows hold only `{"secret_ref": ...}` references. Tests use
+    the memory backend and never touch the Keychain. `finresearch secrets check` fails while any plaintext is left.
+17. Every API route except `/api/health` (and the brokers' OAuth callback) requires the local API token. Agents'
+    WebFetch is denied loopback and private addresses (`finresearch.fetch_guard`), and the polite HTTP client's
+    per-host rate limit is shared by all clients and processes.
 
 ## 3. Known sharp edges
 
