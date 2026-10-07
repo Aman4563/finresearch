@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 
 from sqlalchemy import delete, select, text
@@ -19,6 +20,7 @@ QUERY_INSTRUCTION = (
     "Instruct: Given a question about a company's offer document, retrieve passages that answer it\nQuery: "
 )
 OFFER_DOC_KINDS = {"RHP", "DRHP", "ABRIDGED_PROSPECTUS", "ADDENDUM"}
+log = logging.getLogger(__name__)
 
 
 def page_spans(session: Session, doc: Document) -> list[tuple[int, int, int]]:
@@ -82,7 +84,11 @@ def make_chunks(lines: list[str], ranges: list[tuple[int | None, int, int]]) -> 
 
 
 def index_document(session: Session, doc: Document, *, embedder=None, batch: int = 32, progress=None) -> int:
-    """(Re)build sections and chunks; embed with the local embedding model if given. Returns chunk count."""
+    """(Re)build sections and chunks; embed with the local embedding model if given. Returns chunk count.
+
+    When embedding fails (the local model is down, out of memory, a bad batch), the document is still indexed for
+    full-text search, keyword-only, instead of being dropped: hybrid_search's full-text half finds it, and
+    `provenance["index"]` says so ("keyword_only" with the error), so re-indexing with the embedder adds vectors."""
     sections = build_sections(session, doc)
     session.execute(delete(Chunk).where(Chunk.document_id == doc.id))
     lines = read_lines(doc.text_path)
@@ -99,13 +105,25 @@ def index_document(session: Session, doc: Document, *, embedder=None, batch: int
 
     vectors: list[list[float] | None] = [None] * len(drafts)
     model = None
+    status: dict[str, str] = {"mode": "keyword_only", "reason": "no embedder"}
     if embedder is not None:
         model = embedder.embed_model
-        for k in range(0, len(drafts), batch):
-            vecs = asyncio.run(embedder.embed([d.text for d in drafts[k : k + batch]]))
-            vectors[k : k + batch] = vecs
-            if progress:
-                progress(f"embedded {min(k + batch, len(drafts))}/{len(drafts)}")
+        try:
+            for k in range(0, len(drafts), batch):
+                vecs = asyncio.run(embedder.embed([d.text for d in drafts[k : k + batch]]))
+                if len(vecs) != len(drafts[k : k + batch]):
+                    raise ValueError(
+                        f"the embedder returned {len(vecs)} vectors for {len(drafts[k : k + batch])}"
+                    )
+                vectors[k : k + batch] = vecs
+                if progress:
+                    progress(f"embedded {min(k + batch, len(drafts))}/{len(drafts)}")
+            status = {"mode": "hybrid", "embed_model": str(model)}
+        except Exception as e:  # keep the document searchable by keywords rather than lose it (#248)
+            log.warning("embedding failed for document %s; indexed keyword-only", doc.id, exc_info=True)
+            vectors = [None] * len(drafts)
+            status = {"mode": "keyword_only", "reason": f"embedding failed: {type(e).__name__}: {e}"[:300]}
+    doc.provenance = {**(doc.provenance or {}), "index": status}
     for d, v in zip(drafts, vectors, strict=True):
         session.add(
             Chunk(

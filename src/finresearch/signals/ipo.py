@@ -747,7 +747,8 @@ async def compute(
                  expected_return={k: round(v, 4) for k, v in quantiles.items() if v is not None}, base_rate=base,
                  factors=factors, caveats=caveats, sizing=sizing, sources=list(SOURCES_CITED), as_of=now)  # fmt: skip
     sig.shadow = shadow
-    if src.record is not None:
+    # ctx log=0: a GET or a scheduled check, not a logged view (#247: only POST /api/signals/ipo/{symbol} logs)
+    if src.record is not None and str(ctx.get("log", "1")) != "0":
         resolve_on = expected_listing(detail, today)
         inputs = {
             "symbol": symbol,

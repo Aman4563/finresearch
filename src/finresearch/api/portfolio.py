@@ -240,8 +240,11 @@ def add_portfolio_routes(app: FastAPI, *, scheme_rows: Callable[[], Awaitable[li
 
         `prices=cached` answers at once from the 10-minute price cache without any network call: holdings whose price
         is not cached come back with `pending: true` (cost basis only) and `pending` counts them; the page then reads
-        /api/portfolio/prices/stream and finally this route again (by then every price is cached)."""
-        from finresearch.portfolio.metrics import drift, get_targets, record_snapshot
+        /api/portfolio/prices/stream and finally this route again (by then every price is cached).
+
+        Read-only (#247): the day's value history is recorded by the monitor's daily pass and by
+        POST /api/portfolio/snapshot, which the page calls once every price is in."""
+        from finresearch.portfolio.metrics import drift, get_targets
         from finresearch.portfolio.report import snapshot
 
         cached_only = prices == "cached"
@@ -255,17 +258,31 @@ def add_portfolio_routes(app: FastAPI, *, scheme_rows: Callable[[], Awaitable[li
                     row["price_error"] = None
             snap["pending"] = len(waiting)
             by_asset = {r["label"]: r["value"] for r in snap["allocation"]["asset"]}
-            if (
-                snap["summary"]["value"] and not waiting
-            ):  # the value history behind the drawdown and drift alerts
-                record_snapshot(
-                    s, today, snap["summary"]["value"], snap["invested"], by_asset, snap["complete"]
-                )
             targets = get_targets(s)
             snap["targets"] = targets
             snap["drift"] = drift(by_asset, targets)
         snap["lookthrough_coverage"] = _coverage(snap["holdings"], today)
         return snap
+
+    @app.post("/api/portfolio/snapshot")
+    async def portfolio_snapshot() -> dict[str, Any]:
+        """Record today's value in the history behind the drawdown and drift alerts (the latest valuation of a day
+        wins). Uses cached prices only (no network): nothing is recorded while any holding has no cached price, as
+        GET /api/portfolio once did on every load (#247 moved the write here)."""
+        from finresearch.portfolio.metrics import record_snapshot
+        from finresearch.portfolio.report import snapshot
+
+        got, waiting = await _prices(_detached_holdings(), cached_only=True)
+        today = src().today()
+        with session_scope() as s:
+            snap = snapshot(s, got, today)
+            if waiting:
+                return {"recorded": False, "reason": f"{len(waiting)} holding(s) have no current price yet"}
+            if not snap["summary"]["value"]:
+                return {"recorded": False, "reason": "no holding has a value"}
+            by_asset = {r["label"]: r["value"] for r in snap["allocation"]["asset"]}
+            record_snapshot(s, today, snap["summary"]["value"], snap["invested"], by_asset, snap["complete"])
+            return {"recorded": True, "day": today.isoformat(), "complete": snap["complete"]}
 
     def _coverage(rows: list[dict[str, Any]], today: Any) -> dict[str, Any] | None:
         """The share of the portfolio in funds not looked through (#214), for the sector and cap cards; None when the

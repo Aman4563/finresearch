@@ -686,22 +686,22 @@ def test_monitor_passes_and_retry_reads_only_what_failed(disc):
     from finresearch.monitor import disclosures as md
 
     ist = lambda h, m: datetime(2026, 10, 1, h, m, tzinfo=UTC) - timedelta(hours=5, minutes=30)  # noqa: E731
-    assert md.due_passes(ist(7, 59)) == []
-    assert md.due_passes(ist(8, 5)) == [("morning", "disclosures:morning:2026-10-01")]
-    assert md.due_passes(ist(19, 31)) == [("evening", "disclosures:evening:2026-10-01")]
-    assert md.due_passes(datetime(2026, 10, 3, 14, 30, tzinfo=UTC)) == []  # Saturday
+    assert md.due_passes(ist(7, 59), set()) == []
+    assert md.due_passes(ist(8, 5), set()) == [("morning", "disclosures:morning:2026-10-01")]
+    assert md.due_passes(ist(19, 31), set()) == [("evening", "disclosures:evening:2026-10-01")]
+    assert md.due_passes(datetime(2026, 10, 3, 14, 30, tzinfo=UTC), set()) == []  # Saturday
     disc.down = True
-    res = run(md.disclosures_step(ist(19, 31), spacing_s=0))
+    res = run(md.disclosures_step(ist(19, 31), spacing_s=0, holidays=set()))
     assert res["evening"]["market"]["asm"].startswith("ConnectError")
-    assert run(md.disclosures_step(ist(19, 40), spacing_s=0)) == {}  # retry not due yet
+    assert run(md.disclosures_step(ist(19, 40), spacing_s=0, holidays=set())) == {}  # retry not due yet
     disc.down = False
     disc.calls.clear()
-    res = run(md.disclosures_step(ist(20, 15), spacing_s=0))
+    res = run(md.disclosures_step(ist(20, 15), spacing_s=0, holidays=set()))
     assert (
         sum(1 for u in disc.calls if u.startswith(nd.INSIDER_PAGE)) <= 1
     )  # one NSE session for the whole pass
     assert set(res["evening"]["market"].values()) == {"ok"} and res["evening"]["stocks_failed"] == {}
-    assert run(md.disclosures_step(ist(21, 0), spacing_s=0)) == {}  # done for the day
+    assert run(md.disclosures_step(ist(21, 0), spacing_s=0, holidays=set())) == {}  # done for the day
 
 
 def test_a_counted_trade_without_a_value_makes_the_net_incomplete(disc):

@@ -30,6 +30,7 @@ from starlette.datastructures import Headers
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from finresearch import __version__
 from finresearch.adapters.amfi import AmfiError
 from finresearch.adapters.nse import NseError
 from finresearch.adapters.sebi import SebiError
@@ -319,7 +320,7 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(stop.wait(), timeout=every_s)
 
-    app = FastAPI(title="FinResearch", version="0.3.0", docs_url="/api/docs", openapi_url="/api/openapi.json",
+    app = FastAPI(title="FinResearch", version=__version__, docs_url="/api/docs", openapi_url="/api/openapi.json",
                   lifespan=lifespan)  # fmt: skip
     # the last added middleware is outermost: CORS wraps the error and CSRF layers so their responses carry CORS
     # headers (a bare 500 without them looks like "API not reachable" in the dashboard)
@@ -351,7 +352,7 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
     def health() -> dict[str, Any]:
         with session_scope() as s:
             s.execute(select(1))
-        return {"ok": True}
+        return {"ok": True, "version": __version__}
 
     # ------------------------------------------------------------------ companies & documents
     @app.get("/api/companies")
@@ -1536,14 +1537,24 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
 
     @app.get("/api/signals/{asset}/{instrument}")
     async def signal(asset: str, instrument: str, request: Request) -> dict[str, Any]:
-        """The signal for one instrument. Query parameters are passed to the provider as its context."""
+        """The signal for one instrument. Query parameters are passed to the provider as its context. Read-only
+        (#247): it never writes the forecast ledger; POST to the same path logs the viewed signal."""
+        return await _signal(asset, instrument, {**request.query_params, "log": "0"})
+
+    @app.post("/api/signals/{asset}/{instrument}")
+    async def signal_logged(asset: str, instrument: str, request: Request) -> dict[str, Any]:
+        """The same signal, logged in the forecast ledger (signals.ledger: one open forecast per instrument, method
+        and IST day) by the providers that log (stock, IPO). The app's signal views call this once per view."""
+        return await _signal(asset, instrument, {**request.query_params, "log": "1"})
+
+    async def _signal(asset: str, instrument: str, ctx: dict[str, Any]) -> dict[str, Any]:
         from finresearch.signals import get_provider
 
         provider = get_provider(asset)
         if provider is None:
             raise HTTPException(404, f"no signal provider for {asset!r} yet")
         try:
-            sig = await provider(instrument, dict(request.query_params))
+            sig = await provider(instrument, ctx)
         except LookupError as e:
             raise HTTPException(404, str(e)) from e
         except ValueError as e:

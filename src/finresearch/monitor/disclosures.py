@@ -1,6 +1,6 @@
 """The monitor's daily disclosure refresh (finresearch.disclosures): no intraday polling.
 
-When (IST, weekdays):
+When (IST, NSE trading days; an unknown holiday list skips the pass, monitor.market_days):
 - "evening" pass from EVENING (19:30): every market-wide feed (ASM, GSM, F&O ban list for the next trade date, credit
   ratings, SEBI orders) and each held or watched NSE stock's feeds (pledge, SAST, insider filings, bulk/block deals),
   at most MAX_STOCKS stocks with `spacing_s` between them. NSE publishes the next day's ban list, the day's bulk and
@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, time, timedelta
+from datetime import date, datetime, time, timedelta
 from typing import Any
 
 from sqlalchemy import select
@@ -38,9 +38,15 @@ SPACING_S = 1.5
 MORNING_FEEDS = ("asm", "gsm", "fno_ban")
 
 
-def due_passes(now: datetime) -> list[tuple[str, str]]:
+def due_passes(now: datetime, holidays: set[date] | None = None) -> list[tuple[str, str]]:
+    """The passes due at `now` on trading days. NSE holidays are skipped (the exchange publishes nothing new); an
+    unknown holiday list skips them too (monitor.market_days fails closed)."""
+    from finresearch.monitor.market_days import market_day
+
     ist = to_ist(now)
-    if ist.weekday() >= 5:
+    if not (MORNING <= ist.time() < time(9, 15) or ist.time() >= EVENING):
+        return []
+    if not market_day(ist.date(), holidays, job="disclosures"):
         return []
     day = ist.date().isoformat()
     out = []
@@ -121,10 +127,11 @@ async def _run(kind: str, now: datetime, feeds: tuple[str, ...], d: Any, spacing
     return out
 
 
-async def disclosures_step(now: datetime, *, spacing_s: float = SPACING_S) -> dict[str, Any]:
+async def disclosures_step(now: datetime, *, spacing_s: float = SPACING_S,
+                           holidays: set[date] | None = None) -> dict[str, Any]:  # fmt: skip
     """The monitor's disclosure work for this tick: run whichever pass is due and not yet done."""
     out: dict[str, Any] = {}
-    for kind, slot in due_passes(now):
+    for kind, slot in due_passes(now, holidays):
         if not claim(slot, now):
             continue
         with session_scope() as s:

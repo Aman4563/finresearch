@@ -47,9 +47,36 @@ def txn(c, **kw) -> dict:
 
 
 def notes(c, **params) -> list[dict]:
+    """What the journal page shows: it syncs drafts (POST), then reads the entries (GET)."""
+    assert c.post("/api/journal/sync", headers=ORIGIN).status_code == 200
     r = c.get("/api/journal/notes", params=params)
     assert r.status_code == 200, r.text
     return r.json()["notes"]
+
+
+def test_journal_gets_never_create_drafts(client):
+    """#247: GET /api/journal/notes and /summary drafted entries and moved the sync cursor (a prefetch or a retry
+    created records). Only POST /api/journal/sync (and the monitor) does now."""
+    from finresearch.db import session_scope
+    from finresearch.db.models import PortfolioSetting, TradeNote
+
+    txn(
+        client,
+        name="Example Textiles",
+        nse_symbol="EXMPL",
+        day="2026-09-25",
+        kind="buy",
+        quantity="4",
+        price="100",
+    )
+    assert client.get("/api/journal/notes").json()["notes"] == []
+    assert client.get("/api/journal/summary").json()["by_status"]["draft"] == 0
+    with session_scope() as s:
+        assert s.query(TradeNote).count() == 0 and s.query(PortfolioSetting).count() == 0
+    r = client.post("/api/journal/sync", headers=ORIGIN)
+    assert r.status_code == 200 and r.json()["synced"] == {"drafts": 1, "matched": 0}
+    assert [n["status"] for n in client.get("/api/journal/notes").json()["notes"]] == ["draft"]
+    assert client.post("/api/journal/sync", headers=ORIGIN).json()["synced"] == {"drafts": 0, "matched": 0}
 
 
 # --------------------------------------------------------------------------- drafts

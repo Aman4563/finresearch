@@ -247,7 +247,8 @@ export function SignalCard({ asset, instrument, query, title = "Signal", compact
   asset: Signal["asset"]; instrument: string; query?: Record<string, string>; title?: string; compact?: boolean;
 }) {
   const qs = query && Object.keys(query).length ? `?${new URLSearchParams(query)}` : "";
-  const { data, error } = useApi<Signal>(`/api/signals/${asset}/${encodeURIComponent(instrument)}${qs}`);
+  // POST: viewing a signal logs it in the forecast ledger (stock, IPO); the GET of the same path never writes (#247)
+  const { data, error } = useApi<Signal>(`/api/signals/${asset}/${encodeURIComponent(instrument)}${qs}`, undefined, "POST");
   return (
     <Card title={title} icon={<Activity className="size-4" />}
       help="A personal, research-backed estimate: the probability of a stated event with its range, the factors behind it and how it was validated. Not investment advice.">

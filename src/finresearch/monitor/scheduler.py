@@ -169,8 +169,9 @@ _HOLIDAYS_CHECKED: dict[str, float] = {}
 
 async def _refresh_holidays(deps: jobs.Deps) -> None:
     """Keep NSE's holiday lists fresh (at most one attempt a day; failures keep the cached lists). While the current
-    year's list is missing altogether every date calculation treats holidays as trading days, so a failed attempt is
-    then retried within the hour instead of the next day."""
+    year's list is missing altogether a failed attempt is retried within the hour instead of the next day: the
+    after-close market jobs (stock peers, disclosures, IV history) fail closed and stay paused, with one warning
+    alert a day (monitor.market_days), and the IPO watch plan still treats unknown holidays as trading days."""
     import time
 
     from finresearch.adapters.nse_holidays import cached_years
@@ -390,6 +391,26 @@ def _spawn_stock_peers(now: datetime) -> None:
     _BACKGROUND["stock_peers"] = asyncio.create_task(run())
 
 
+def _spawn_retention(now: datetime) -> None:
+    """Start the weekly prune (monitor.retention) in the background: file deletes in the HTTP cache and one DELETE
+    on intraday_series. At most one runs at a time; it never touches packs, reports, backups or documents."""
+    from finresearch.monitor.retention import _DONE, due_slot, retention_step
+
+    t = _BACKGROUND.get("retention")
+    if (t is not None and not t.done()) or (slot := due_slot(now)) is None or slot in _DONE:
+        return
+
+    async def run() -> None:
+        try:
+            res = await retention_step(now)
+            if res:
+                log.info("retention prune: %s", res)
+        except Exception:
+            log.warning("retention prune failed", exc_info=True)
+
+    _BACKGROUND["retention"] = asyncio.create_task(run())
+
+
 async def drain() -> None:
     """Wait for background work started by `tick` (a one-shot `finresearch monitor tick` calls this)."""
     for t in list(_BACKGROUND.values()):
@@ -420,6 +441,8 @@ async def tick(deps: jobs.Deps, now: datetime | None = None) -> dict[str, int]:
         _spawn_stock_peers(now)
     if deps.lookthrough:
         _spawn_lookthrough(now)
+    if deps.retention:
+        _spawn_retention(now)
     out_brief = brief_step(now) if deps.brief else {}
     if deps.holidays is not None or deps.live_holidays:
         await _refresh_holidays(deps)

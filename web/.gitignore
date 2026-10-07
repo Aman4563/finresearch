@@ -42,3 +42,8 @@ next-env.d.ts
 
 # pdf.js worker and assets, copied from node_modules by scripts/copy-pdfjs-assets.mjs
 /public/pdfjs/
+
+# playwright (#248)
+/test-results/
+/playwright-report/
+/blob-report/

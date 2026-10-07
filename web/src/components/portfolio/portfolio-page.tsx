@@ -41,7 +41,7 @@ function SignalBadge({ s }: { s: NonNullable<Holding["signal"]> }) {
   const load = async () => {
     setState("loading");
     try {
-      setState(await api<Signal>(`/api/signals/${s.asset}/${encodeURIComponent(s.instrument)}`));
+      setState(await api<Signal>(`/api/signals/${s.asset}/${encodeURIComponent(s.instrument)}`, { method: "POST" })); // a logged view (#247)
     } catch (e) {
       setState((e as Error).message);
     }
@@ -501,6 +501,8 @@ function useProgressivePortfolio(refresh: number) {
           const full = await api<Snapshot>(`/api/portfolio?r=${refresh}`);
           if (alive) setData(full);
         }
+        // every price is cached now: record the day's value (GETs never write, #247; it refuses while any is missing)
+        if (alive) void api("/api/portfolio/snapshot", { method: "POST" }).catch(() => undefined);
       } catch (e) {
         if (alive && (e as Error).name !== "AbortError") setError((e as Error).message);
       } finally {

@@ -340,7 +340,21 @@ def test_events_stream_step_changes_until_the_run_finishes(client, seeded):
 
 def test_only_localhost_hosts_are_accepted(client):
     assert client.get("/api/health", headers={"host": "evil.example"}).status_code == 400
-    assert client.get("/api/health").json() == {"ok": True}
+    assert client.get("/api/health").json()["ok"] is True
+
+
+def test_one_version_source_for_openapi_and_health(client):
+    """#247: OpenAPI once said 0.3.0 while the package was 0.16.0. Both now read the package metadata, whose source
+    is pyproject.toml (read here independently)."""
+    import tomllib
+    from pathlib import Path
+
+    from finresearch import __version__
+
+    project = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())["project"]["version"]
+    assert __version__ == project
+    assert client.get("/api/openapi.json").json()["info"]["version"] == project
+    assert client.get("/api/health").json() == {"ok": True, "version": project}
 
 
 def test_limits_reads_the_isolated_state(client, env):

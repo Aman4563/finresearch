@@ -20,7 +20,7 @@ type Sizing = {
 };
 
 export function StockSignalCard({ symbol }: { symbol: string }) {
-  const { data, error, reload } = useApi<Signal>(`/api/signals/stock/${encodeURIComponent(symbol)}`);
+  const { data, error, reload } = useApi<Signal>(`/api/signals/stock/${encodeURIComponent(symbol)}`, undefined, "POST"); // a logged view (#247)
   const sz = (data?.sizing ?? null) as Sizing | null;
   return (
     <Card title="Signal" icon={<Activity className="size-4" />}

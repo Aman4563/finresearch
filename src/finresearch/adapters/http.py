@@ -439,7 +439,7 @@ class PoliteClient:
         if self.on_record is not None:
             self.on_record(fetched)
         if key is not None and fetched.ok and (cache_if is None or cache_if(fetched)):
-            self._cache_write(key, fetched)
+            self._cache_write(key, fetched, cache_ttl)
         return fetched
 
     def _backoff(self, attempt: int, resp: httpx.Response | None) -> float:
@@ -485,10 +485,12 @@ class PoliteClient:
             return None  # corrupted / partially written; refetch rather than trust it
         return Fetched(record=record.model_copy(update={"from_cache": True}), content=body)
 
-    def _cache_write(self, key: str, fetched: Fetched) -> None:
+    def _cache_write(self, key: str, fetched: Fetched, ttl: float | None = None) -> None:
         paths = self._cache_paths(key)
         if paths is None:
             return
         paths[0].parent.mkdir(parents=True, exist_ok=True)
         paths[1].write_bytes(fetched.content)
-        paths[0].write_text(fetched.record.model_dump_json(indent=1))
+        meta = fetched.record.model_dump(mode="json")
+        meta["cache_ttl_s"] = ttl  # for the weekly prune (monitor.retention); reads still check their own TTL
+        paths[0].write_text(json.dumps(meta, indent=1))
