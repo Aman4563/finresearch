@@ -1,0 +1,47 @@
+{
+  "id": "g02_two_lots_mixed_term_with_charges",
+  "title": "Sale spanning two lots: older lot long-term (12.5 %), newer lot short-term (20 %); buy and sell charges under s.48",
+  "covers": ["several lots", "sale spanning two lots", "LT + ST in one sale", "buy charges added to cost", "sell charges deducted from consideration"],
+  "rules": [
+    "Income-tax Act 1961 s.48 (i) expenditure in connection with transfer deducted; (ii) cost of acquisition includes incidental acquisition cost (brokerage/stamp). STT is NOT deductible (s.48 fifth proviso, inserted by Finance Act 2004) - the charges here are brokerage/stamp only",
+    "Income-tax Act 1961 s.2(42A) first proviso: listed equity short-term if held not more than 12 months (day of acquisition excluded, General Clauses Act 1897 s.9)",
+    "Income-tax Act 1961 s.111A(1) as amended by Finance (No.2) Act 2024: STCG 20 % for transfers on/after 23-Jul-2024",
+    "Income-tax Act 1961 s.112A(1) as amended by Finance (No.2) Act 2024: LTCG above Rs 1,25,000 at 12.5 % for transfers on/after 23-Jul-2024",
+    "CBDT Circular No. 768 dated 24-Jun-1998: FIFO",
+    "Health and Education Cess 4 % (Finance Act 2018 s.2(11); Finance Act 2025 s.2)"
+  ],
+  "derivation": [
+    "Lot A: 100 @ 200.00 on 2024-03-01, buy charges 20.00 -> cost 20,000 + 20 = 20,020.00 (200.20/unit).",
+    "Lot B: 100 @ 250.00 on 2025-01-10, charges 0 -> cost 25,000.00 (250.00/unit).",
+    "Sale 2025-05-20: 150 @ 300.00 = 45,000.00 gross, sell charges 30.00; charges apportioned by quantity: 100/150 x 30 = 20.00 to lot A part, 50/150 x 30 = 10.00 to lot B part.",
+    "Row 1 (lot A, 100 units): proceeds 30,000 - 20 = 29,980.00; cost 20,020.00; gain 9,960.00. Held 2024-03-01 -> 2025-05-20 (> 12 months) -> long, s.112A 12.5 %.",
+    "Row 2 (lot B, 50 units): proceeds 15,000 - 10 = 14,990.00; cost 50 x 250 = 12,500.00; gain 2,490.00. Held 2025-01-10 -> 2025-05-20 (< 12 months) -> short, s.111A 20 %.",
+    "FY 2025-26 (fy 2026): LTCG 9,960 <= 1,25,000 -> exemption_used 9,960.00, LT tax 0.",
+    "STCG tax 2,490 x 0.20 = 498.00; cess 498 x 0.04 = 19.92; total 517.92 (check 517.92 / 1.04 = 498.00).",
+    "Open lot: lot B 100 - 50 = 50 units @ 250.00 acquired 2025-01-10."
+  ],
+  "interpretive": false,
+  "slab_rate": "0.30",
+  "holdings": [
+    {"name": "BRAVO LTD", "tax_class": "equity", "listed": true, "fmv_2018": null, "sgb_original_subscriber": false,
+     "events": [
+       {"day": "2024-03-01", "kind": "buy", "quantity": "100", "price": "200.00", "charges": "20.00"},
+       {"day": "2025-01-10", "kind": "buy", "quantity": "100", "price": "250.00", "charges": "0"},
+       {"day": "2025-05-20", "kind": "sell", "quantity": "150", "price": "300.00", "charges": "30.00"}
+     ]}
+  ],
+  "expected": {
+    "disposals": [
+      {"holding": "BRAVO LTD", "sold": "2025-05-20", "acquired": "2024-03-01", "quantity": "100",
+       "cost": "20020.00", "tax_cost": "20020.00", "proceeds": "29980.00", "gain": "9960.00", "term": "long", "rate": "0.125"},
+      {"holding": "BRAVO LTD", "sold": "2025-05-20", "acquired": "2025-01-10", "quantity": "50",
+       "cost": "12500.00", "tax_cost": "12500.00", "proceeds": "14990.00", "gain": "2490.00", "term": "short", "rate": "0.20"}
+    ],
+    "open_lots": [ {"holding": "BRAVO LTD", "acquired": "2025-01-10", "quantity": "50", "cost_per_unit": "250.00"} ],
+    "fy": [
+      {"fy": 2026, "exemption_used": "9960.00", "tax": "498.00", "cess": "19.92", "total": "517.92",
+       "complete": true, "unknown_count": 0, "intraday_count": 0, "exempt_total": "0.00",
+       "losses_carried_short": "0.00", "losses_carried_long": "0.00"}
+    ]
+  }
+}

@@ -55,14 +55,16 @@ export type ClassAssumption = { mu_pct: number; sigma_pct: number; note: string;
 export type Assumptions = { equity: ClassAssumption; debt: ClassAssumption; gold: ClassAssumption; inflation_pct: number; seed: number; n: number };
 
 export type NetWorthPoint = {
-  date: string; portfolio: number; manual: number; assets: number; liabilities: number; net_worth: number;
-  liquid_net_worth: number; portfolio_day: string | null;
+  // portfolio null = unknown (holdings but no valuation for that day): the totals then add up the known parts only
+  date: string; portfolio: number | null; manual: number; assets: number; liabilities: number; net_worth: number;
+  liquid_net_worth: number; portfolio_day: string | null; portfolio_source?: "reconstructed" | "as shown";
+  complete: boolean; missing: string[];
 };
 
 export type Wealth = {
   as_of: string;
   net_worth: NetWorthPoint;
-  portfolio: { value: number; day: string | null; complete: boolean | null; by_class: Record<string, number> };
+  portfolio: { value: number | null; day: string | null; complete: boolean | null; why?: string | null; by_class: Record<string, number> };
   assets: Asset[];
   loans: Loan[];
   goals: Goal[];

@@ -1,0 +1,41 @@
+{
+  "id": "g25_twelve_month_boundary",
+  "title": "Sold exactly on the 12-month anniversary (short-term) and one day later (long-term)",
+  "covers": ["holding-period boundary", "'more than twelve months'"],
+  "rules": [
+    "Income-tax Act 1961 s.2(42A) first proviso: listed equity is short-term if held for not more than 12 months immediately preceding the date of transfer",
+    "General Clauses Act 1897 s.9: day of acquisition excluded -> bought 2024-08-01, held exactly 12 months on 2025-08-01 (not more than 12) -> short; on 2025-08-02 more than 12 -> long",
+    "Income-tax Act 1961 s.111A / s.112A as amended by Finance (No.2) Act 2024: 20 % / 12.5 % above Rs 1,25,000",
+    "Health and Education Cess 4 % (Finance Act 2025 s.2)"
+  ],
+  "derivation": [
+    "Buy 2024-08-01: 100 @ 100.00.",
+    "Sale 2025-08-01: 50 @ 150.00 -> proceeds 7,500, cost 5,000, gain 2,500.00; exactly 12 months -> short 20 %.",
+    "Sale 2025-08-02: 50 @ 150.00 -> proceeds 7,500, cost 5,000, gain 2,500.00; 12 months + 1 day -> long 12.5 %.",
+    "FY 2025-26 (fy 2026): LTCG 2,500 exempt -> exemption_used 2,500.00; STCG tax 2,500 x 0.20 = 500.00; cess 20.00; total 520.00."
+  ],
+  "interpretive": false,
+  "slab_rate": "0.30",
+  "holdings": [
+    {"name": "AMBER LTD", "tax_class": "equity", "listed": true, "fmv_2018": null, "sgb_original_subscriber": false,
+     "events": [
+       {"day": "2024-08-01", "kind": "buy", "quantity": "100", "price": "100.00", "charges": "0"},
+       {"day": "2025-08-01", "kind": "sell", "quantity": "50", "price": "150.00", "charges": "0"},
+       {"day": "2025-08-02", "kind": "sell", "quantity": "50", "price": "150.00", "charges": "0"}
+     ]}
+  ],
+  "expected": {
+    "disposals": [
+      {"holding": "AMBER LTD", "sold": "2025-08-01", "acquired": "2024-08-01", "quantity": "50",
+       "cost": "5000.00", "tax_cost": "5000.00", "proceeds": "7500.00", "gain": "2500.00", "term": "short", "rate": "0.20"},
+      {"holding": "AMBER LTD", "sold": "2025-08-02", "acquired": "2024-08-01", "quantity": "50",
+       "cost": "5000.00", "tax_cost": "5000.00", "proceeds": "7500.00", "gain": "2500.00", "term": "long", "rate": "0.125"}
+    ],
+    "open_lots": [],
+    "fy": [
+      {"fy": 2026, "exemption_used": "2500.00", "tax": "500.00", "cess": "20.00", "total": "520.00",
+       "complete": true, "unknown_count": 0, "intraday_count": 0, "exempt_total": "0.00",
+       "losses_carried_short": "0.00", "losses_carried_long": "0.00"}
+    ]
+  }
+}

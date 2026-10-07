@@ -491,7 +491,7 @@ def test_cross_source_duplicates_and_conflicts_are_not_added(db):
         res = merge_sync(s, account="Groww", source="groww_api", label="Groww",
                          holdings=[_h("INE000A01011", "EXMPL", 15, 110)], trades=trades, today=TODAY, now=NOW)  # fmt: skip
         assert not res.baselines  # the account already has history for it
-        assert [c["matched"] for c in res.cross_source] == ["same day and units", "same day and units"]
+        assert [c["matched"] for c in res.cross_source] == ["same day, side and total units"] * 2
         assert len(res.conflicts) == 1 and res.conflicts[0]["day"] == "2026-09-02"
         assert res.added == 1
         assert _units(s, "Groww") == {"ISIN:INE000A01011": D(15)}

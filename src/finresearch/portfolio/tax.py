@@ -159,6 +159,9 @@ class HoldingTax:
     listed: bool
     fmv_2018: Decimal | None
     sgb_original: bool = False
+    # unresolved unsupported corporate actions (#237): (ex-date, reason). A sale on or after the ex-date cannot be
+    # classified until the user enters the cost allocation (portfolio.service.record_unsupported)
+    blocked: tuple[tuple[date, str], ...] = ()
 
 
 @dataclass
@@ -193,6 +196,11 @@ def evaluate(row: DisposalRow) -> DisposalRow:
             "unknown", None, None, "intraday", "intraday trade: speculative business income"
         )
         row.notes.append("Intraday (same-day buy and sell): speculative business income, not capital gains")
+        return row
+    why = next((r for d, r in h.blocked if row.sold >= d), None)
+    if why is not None:  # the cost of what was sold depends on a split the app does not model: never guessed
+        row.cls = Classification("unknown", None, None, "unknown", why)
+        row.notes.append(why)
         return row
     row.cls = classify(h.tax_class, row.acquired, row.sold, listed=h.listed, stt_paid=row.stt_paid,
                        rbi_redemption=row.rbi_redemption, original_subscriber=h.sgb_original,
@@ -230,8 +238,17 @@ def gains_of(rows: Iterable[DisposalRow]) -> list[Gain]:
     """Capital-gains rows for fincalc.tax.fy_tax. Intraday trades are speculative business income, not capital
     gains: they are left out here (fy_summary counts them separately) instead of being reported as disposals with an
     "unknown acquisition date or cost"."""
-    return [Gain(r.gain if r.gain is not None else Decimal(0), r.cls, r.sold, str(r.txn_id or ""))
+    return [Gain(_amount(r), r.cls, r.sold, str(r.txn_id or ""))
             for r in rows if r.cls is not None and r.origin != "intraday"]  # fmt: skip
+
+
+def _amount(r: DisposalRow) -> Decimal:
+    """The Gain amount fy_tax sees. An exempt transfer (an SGB redeemed by RBI) has no taxable gain (`r.gain` 0), but
+    fy_tax reports the exempt gain itself (`exempt_total`), which is proceeds - cost: before #240's golden case g09
+    it was always ₹0. fy_tax never taxes an exempt Gain, so this changes no tax."""
+    if r.cls is not None and r.cls.term == "exempt" and r.tax_cost is not None:
+        return r.proceeds - r.tax_cost
+    return r.gain if r.gain is not None else Decimal(0)
 
 
 def is_unclassified(r: DisposalRow) -> bool:
@@ -247,15 +264,23 @@ def unclassified(rows: Iterable[DisposalRow]) -> dict[str, Any]:
     gain = sum((r.gain for r in bad if r.gain is not None), Decimal(0))
     no_cost = sum(1 for r in bad if r.cost is None)
     no_date = sum(1 for r in bad if r.acquired is None)
+    actions = sorted(
+        {r.cls.reason for r in bad if r.cls and r.cls.reason.startswith("unsupported corporate action")}
+    )
+    n_ca = sum(1 for r in bad if r.cls and r.cls.reason in actions)
     detail = ""
     if bad:
         why = [f"{n} without {w}" for n, w in ((no_date, "an acquisition date"), (no_cost, "a cost")) if n]
+        why += [f"{n_ca} after an unsupported corporate action"] if n_ca else []
         detail = (f"Tax incomplete: {len(bad)} disposal(s) / ₹{float(gain):,.0f} of gains can't be classified short- "
                   f"or long-term ({'; '.join(why) or 'no rule'}), so they are not in the tax. Enter the dates and "
                   "costs for a full figure")  # fmt: skip
         if no_cost:
             detail += f" (the gain of the {no_cost} without a cost is unknown too)"
-    return {"count": len(bad), "gain": _f(gain), "no_cost": no_cost, "no_date": no_date, "detail": detail}
+        if actions:
+            detail += ". Why: " + "; ".join(actions)
+    return {"count": len(bad), "gain": _f(gain), "no_cost": no_cost, "no_date": no_date, "corporate_action": n_ca,
+            "detail": detail}  # fmt: skip
 
 
 def rules_note(fys: Iterable[int]) -> dict[str, Any]:

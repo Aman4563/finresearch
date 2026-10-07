@@ -876,8 +876,11 @@ class PortfolioDisposal(Base):
 
 
 class PortfolioSnapshot(Base):
-    """The portfolio's value on a day, written whenever it is valued (the /portfolio page, the API). Feeds the
-    drawdown and allocation-drift alert metrics. `complete` = every open holding had a price."""
+    """The portfolio's value on a day "as shown": written whenever it is valued (the /portfolio page, the API, the
+    daily pass); the day's latest valuation wins and `updated_at` says when. An audit record, never recomputed: past
+    values are read from the canonical reconstructed history (portfolio.series, #239), which reconciles against these
+    rows. Still the source for "now" (the current allocation for the drift alert, the dashboard strip, today's net
+    worth). `complete` = every open holding had a current (not stale) price and a known cost, and every sale a cost."""
 
     __tablename__ = "portfolio_snapshot"
     day: Mapped[date] = mapped_column(Date, primary_key=True)

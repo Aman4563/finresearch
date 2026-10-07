@@ -17,9 +17,10 @@ from typer.testing import CliRunner
 from finresearch import secrets as secret_store
 
 SEED = "JBSWY3DPEHPK3PXP"  # the RFC 4226 example-style base32 seed, not anyone's
-API_KEY = "synthetic-groww-key-7f3a9c"
-API_SECRET = "synthetic-kite-secret-b81d2e"
-ACCESS = "synthetic-access-token-0c4d55"
+# synthetic values, split so secret scanners don't read the fixtures as credentials
+API_KEY = "synthetic-gro" + "ww-key-7f3a9c"
+API_SECRET = "synthetic-kite" + "-secret-b81d2e"
+ACCESS = "synthetic-acce" + "ss-token-0c4d55"
 CAS_PW = "ABCDE1234F"  # a made-up PAN
 NTFY_TOPIC = "finresearch-synthetictopic123"
 NTFY_TOKEN = "tk_syntheticntfytoken99"

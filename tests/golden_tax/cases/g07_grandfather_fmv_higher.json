@@ -1,0 +1,40 @@
+{
+  "id": "g07_grandfather_fmv_higher",
+  "title": "Bought 2016, FMV on 31-Jan-2018 above cost, sold 2025 above FMV: tax cost = FMV; LTCG exceeds Rs 1.25 lakh",
+  "covers": ["grandfathering s.55(2)(ac)", "FMV > actual cost", "s.112A threshold partly used"],
+  "rules": [
+    "Income-tax Act 1961 s.112A(2)/(1) read with s.55(2)(ac) (inserted by Finance Act 2018): for an equity share acquired before 1-Feb-2018, cost of acquisition = higher of (a) actual cost and (b) lower of FMV on 31-Jan-2018 and full value of consideration",
+    "Income-tax Act 1961 s.112A(1) as amended by Finance (No.2) Act 2024: 12.5 % on LTCG exceeding Rs 1,25,000 (transfers on/after 23-Jul-2024)",
+    "Health and Education Cess 4 % (Finance Act 2025 s.2)"
+  ],
+  "derivation": [
+    "Buy 2016-06-01: 400 @ 500.00 -> actual cost 2,00,000.00. FMV 31-Jan-2018 = 800.00/share. Charges 0 so gross consideration = net proceeds.",
+    "Sale 2025-05-15: 400 @ 1,200.00 -> full value of consideration 4,80,000.00.",
+    "Per share: lower of FMV 800 and sale 1,200 = 800; higher of actual 500 and 800 = 800 -> tax_cost 400 x 800 = 3,20,000.00.",
+    "Gain 4,80,000 - 3,20,000 = 1,60,000.00; held 2016 -> 2025 -> long, 12.5 %.",
+    "FY 2025-26 (fy 2026): taxable LTCG 1,60,000 - 1,25,000 = 35,000; exemption_used 1,25,000.00.",
+    "Tax 35,000 x 0.125 = 4,375.00; cess 4,375 x 0.04 = 175.00; total 4,550.00 (check 4,550 / 1.04 = 4,375).",
+    "(Without grandfathering the gain would be 2,80,000 - this case detects a missing s.55(2)(ac).)"
+  ],
+  "interpretive": false,
+  "slab_rate": "0.30",
+  "holdings": [
+    {"name": "GOLF LTD", "tax_class": "equity", "listed": true, "fmv_2018": "800.00", "sgb_original_subscriber": false,
+     "events": [
+       {"day": "2016-06-01", "kind": "buy", "quantity": "400", "price": "500.00", "charges": "0"},
+       {"day": "2025-05-15", "kind": "sell", "quantity": "400", "price": "1200.00", "charges": "0"}
+     ]}
+  ],
+  "expected": {
+    "disposals": [
+      {"holding": "GOLF LTD", "sold": "2025-05-15", "acquired": "2016-06-01", "quantity": "400",
+       "cost": "200000.00", "tax_cost": "320000.00", "proceeds": "480000.00", "gain": "160000.00", "term": "long", "rate": "0.125"}
+    ],
+    "open_lots": [],
+    "fy": [
+      {"fy": 2026, "exemption_used": "125000.00", "tax": "4375.00", "cess": "175.00", "total": "4550.00",
+       "complete": true, "unknown_count": 0, "intraday_count": 0, "exempt_total": "0.00",
+       "losses_carried_short": "0.00", "losses_carried_long": "0.00"}
+    ]
+  }
+}

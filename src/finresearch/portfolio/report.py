@@ -30,11 +30,13 @@ from finresearch.portfolio.tax import (
 )
 from finresearch.portfolio.valuation import (
     CAP_LIST,
+    STATEMENT_MAX_AGE_TRADING_DAYS,
     PriceInfo,
     asset_label,
     cap_bucket,
     cash_flows,
     fund_cap_bucket,
+    statement_stale,
     xirr_or_reason,
 )
 
@@ -74,8 +76,11 @@ def tax_class_of(h: PortfolioHolding, category: str | None = None) -> tuple[str,
 
 def holding_tax(h: PortfolioHolding, category: str | None = None) -> HoldingTax:
     eff, _, _ = tax_class_of(h, category)
+    from finresearch.portfolio.service import actions_of
+
+    blocked = tuple((date.fromisoformat(a["ex_date"]), a["reason"]) for a in actions_of(h.meta))
     return HoldingTax(h.id, h.name, h.account, h.isin, eff, is_listed(h.asset_type, h.name, h.meta), h.fmv_2018,
-                      bool((h.meta or {}).get("sgb_original_subscriber")))  # fmt: skip
+                      bool((h.meta or {}).get("sgb_original_subscriber")), blocked)  # fmt: skip
 
 
 def _f(x: Decimal | None, nd: int = 2) -> float | None:
@@ -115,8 +120,9 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
     alloc: dict[str, dict[str, Decimal]] = {"asset": defaultdict(Decimal), "sector": defaultdict(Decimal),
                                             "cap": defaultdict(Decimal)}  # fmt: skip
     tot = defaultdict(Decimal)
-    unknown_cost = unpriced = 0
+    unknown_cost = unpriced = stale = with_actions = 0
     from finresearch.disclosures.store import isin_map
+    from finresearch.portfolio.service import actions_of
 
     imap = isin_map(s)
     excluded: Counter[str] = Counter()  # holdings left out of the overall XIRR, by the reason cash_flows gave
@@ -127,14 +133,23 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
         open_lots = [lot for lot in data.lots.get(h.id, []) if lot.open_quantity > Decimal("0.0005")]
         units = sum((lot.open_quantity for lot in open_lots), ZERO)
         known = all(lot.cost_per_unit is not None for lot in open_lots)
+        actions = actions_of(h.meta)
+        # an unsupported corporate action past its ex-date (#237): the open lots' cost is not what they say until the
+        # user enters the allocation, so it is unknown, never the pre-action cost
+        if units > 0 and any(a["ex_date"] <= today.isoformat() for a in actions):
+            known = False
+        with_actions += 1 if actions and units > 0 else 0
         cost = sum(
             (lot.cost_per_unit * lot.open_quantity for lot in open_lots if lot.cost_per_unit is not None),
             ZERO,
         )
         value = p.price * units if p.price is not None and units > 0 else None
-        realised = sum(
-            (d.proceeds - d.cost for d in data.disposals.get(h.id, []) if d.cost is not None), ZERO
-        )
+        stale_why = statement_stale(p, today) if value is not None else None
+        disp = data.disposals.get(h.id, [])
+        realised = sum((d.proceeds - d.cost for d in disp if d.cost is not None), ZERO)
+        # a sale out of a lot whose cost is unknown (an opening balance, a transfer-in, units beyond the lots) has an
+        # unknown gain: it is not in `realised`, and it is counted so the figure never reads as the whole story (#238)
+        no_cost = [d for d in disp if d.cost is None]
         divs = sum(
             (abs(t.amount) for t in data.txns.get(h.id, []) if t.kind == "dividend" and t.amount), ZERO
         )
@@ -142,6 +157,8 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
         if why_not is None and units > 0 and value is None:
             why_not = "no current price"  # without today's value the flows alone would read as a large loss
         x, x_reason = xirr_or_reason(flows, today) if why_not is None else (None, why_not)
+        if stale_why and x is not None:
+            x_reason = f"today's value uses an old price: {stale_why}"
         if why_not is None:
             all_flows += flows[:-1] if value else flows
             tot["xirr_value"] += value or ZERO
@@ -153,6 +170,7 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
         if units > 0:
             unknown_cost += 0 if known else 1
             unpriced += 1 if value is None else 0
+            stale += 1 if stale_why else 0
         if value is not None:
             tot["value"] += value
             debt = h.asset_type == "stock" and is_debt_security(h.isin, h.name, h.nse_symbol)
@@ -166,6 +184,8 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
         if known:
             tot["cost"] += cost
         tot["realised"] += realised
+        tot["realised_unknown"] += len(no_cost)
+        tot["realised_unknown_proceeds"] += sum((d.proceeds for d in no_cost), ZERO)
         tot["dividends"] += divs
         if unreal is not None:
             tot["unrealised"] += unreal
@@ -179,15 +199,15 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
             "units": _f(units, 4), "cost": _f(cost) if known else None, "cost_known": known,
             "avg_cost": _f(cost / units, 4) if known and units > 0 else None,
             "price": _f(p.price, 4), "price_as_of": p.as_of, "price_source": p.source, "price_error": p.error,
-            "price_note": p.note,
+            "price_note": p.note, "price_stale": stale_why is not None, "price_stale_reason": stale_why,
             "value": _f(value), "unrealised": _f(unreal),
             "unrealised_pct": _f(unreal / cost * 100) if unreal is not None and cost > 0 else None,
-            "realised": _f(realised), "dividends": _f(divs), "xirr": x, "xirr_reason": x_reason,
+            "realised": _f(realised), "realised_unknown": len(no_cost), "dividends": _f(divs), "xirr": x, "xirr_reason": x_reason,
             "market_cap_cr": _f(p.market_cap_cr), "cap_bucket": (cap_bucket(p.market_cap_cr) if h.asset_type == "stock" and eff == "equity"
                                                                   else "Not equity" if h.asset_type == "stock"
                                                                   else fund_cap_bucket(category, eff)),
             "lots": len(open_lots), "closed": units <= 0, "signal": _signal(h, p, imap), "elss": lock,
-            "warnings": (h.meta or {}).get("lot_warnings") or [],
+            "warnings": (h.meta or {}).get("lot_warnings") or [], "pending_actions": actions,
             "sources": sorted({t.source for t in data.txns.get(h.id, [])}),
             "broker_baseline": any(t.kind == "opening" and (t.meta or {}).get("baseline")
                                    for t in data.txns.get(h.id, [])),
@@ -197,15 +217,29 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
     )
     if excluded and ox is not None:
         ox_reason = xirr_exclusions(excluded)
+    stale_note = (f"{stale} holding(s) valued at a statement price more than {STATEMENT_MAX_AGE_TRADING_DAYS} "
+                  "trading days old") if stale else None  # fmt: skip
+    if stale_note and ox is not None:
+        ox_reason = f"{ox_reason}; {stale_note}" if ox_reason else stale_note
     tl = timeline(data)
-    complete = unpriced == 0 and unknown_cost == 0 and tot["value"] > 0
+    realised_unknown = int(tot["realised_unknown"])
+    # complete: every open holding has a current (not stale) price and a known cost, and every sale a known cost
+    complete = (
+        unpriced == 0 and stale == 0 and unknown_cost == 0 and realised_unknown == 0 and tot["value"] > 0
+    )
     return {
         "as_of": today.isoformat(), "holdings": rows, "complete": complete,
         "invested": tl[-1]["invested"] if tl else 0.0,
         "summary": {"value": _f(tot["value"]), "cost": _f(tot["cost"]), "unrealised": _f(tot["unrealised"]),
-                    "realised": _f(tot["realised"]), "dividends": _f(tot["dividends"]), "xirr": ox,
+                    "realised": _f(tot["realised"]), "realised_unknown": realised_unknown,
+                    "realised_unknown_proceeds": _f(tot["realised_unknown_proceeds"]),
+                    "realised_note": (f"excludes {realised_unknown} sale(s) whose cost is unknown "
+                                      f"(₹{float(tot['realised_unknown_proceeds']):,.0f} of proceeds): enter the cost "
+                                      "and date of those units for the full figure") if realised_unknown else None,
+                    "dividends": _f(tot["dividends"]), "xirr": ox,
                     "xirr_reason": ox_reason, "holdings": sum(1 for r in rows if not r["closed"]),
-                    "unknown_cost": unknown_cost, "unpriced": unpriced},
+                    "unknown_cost": unknown_cost, "unpriced": unpriced, "stale": stale, "stale_note": stale_note,
+                    "pending_actions": with_actions},
         "allocation": {k: [{"label": lab, "value": _f(v)} for lab, v in sorted(d.items(), key=lambda kv: -kv[1])]
                        for k, d in alloc.items()},
         "cap_list": {k: str(v) for k, v in CAP_LIST.items()},

@@ -1,0 +1,46 @@
+{
+  "id": "g06_bonus_nil_cost",
+  "title": "1:1 bonus = nil-cost lot dated on allotment; later sale consumes all originals (LT) and half the bonus (ST)",
+  "covers": ["bonus nil cost", "bonus holding period from allotment", "FIFO across original + bonus lots"],
+  "rules": [
+    "Income-tax Act 1961 s.55(2)(aa)(iiia): cost of bonus shares allotted without payment is nil",
+    "Bonus shares are a separate asset acquired on the date of allotment; period of holding runs from allotment (s.2(42A); CBDT Circular No. 768 FIFO by acquisition date)",
+    "Income-tax Act 1961 s.111A(1) / s.112A(1) as amended by Finance (No.2) Act 2024: 20 % STCG; 12.5 % LTCG above Rs 1,25,000 (transfers on/after 23-Jul-2024)",
+    "s.94(8) (bonus stripping) not modelled per brief; it would not apply anyway since the original shares are sold at a gain",
+    "Health and Education Cess 4 % (Finance Act 2025 s.2)"
+  ],
+  "derivation": [
+    "Lot 1: 100 @ 400.00 on 2024-03-01 (cost 40,000.00).",
+    "Bonus 1:1 allotted 2024-11-15 -> new lot of 100 x 1/1 = 100 shares, cost 0.00, acquired 2024-11-15.",
+    "Sale 2025-06-10: 150 @ 500.00. FIFO: lot 1 (100) then bonus lot (50).",
+    "Row 1: 100 units, proceeds 50,000.00, cost 40,000.00, gain 10,000.00; held 2024-03-01 -> 2025-06-10 (> 12 months) -> long 12.5 %.",
+    "Row 2: 50 bonus units, proceeds 25,000.00, cost 0.00, gain 25,000.00; held 2024-11-15 -> 2025-06-10 (< 12 months) -> short 20 %.",
+    "FY 2025-26 (fy 2026): LTCG 10,000 exempt within 1,25,000 -> exemption_used 10,000.00.",
+    "STCG tax 25,000 x 0.20 = 5,000.00; cess 200.00; total 5,200.00.",
+    "Open lot: bonus lot 100 - 50 = 50 @ 0.00 acquired 2024-11-15."
+  ],
+  "interpretive": false,
+  "slab_rate": "0.30",
+  "holdings": [
+    {"name": "FOXTROT LTD", "tax_class": "equity", "listed": true, "fmv_2018": null, "sgb_original_subscriber": false,
+     "events": [
+       {"day": "2024-03-01", "kind": "buy", "quantity": "100", "price": "400.00", "charges": "0"},
+       {"day": "2024-11-15", "kind": "bonus", "meta": {"a": 1, "b": 1}},
+       {"day": "2025-06-10", "kind": "sell", "quantity": "150", "price": "500.00", "charges": "0"}
+     ]}
+  ],
+  "expected": {
+    "disposals": [
+      {"holding": "FOXTROT LTD", "sold": "2025-06-10", "acquired": "2024-03-01", "quantity": "100",
+       "cost": "40000.00", "tax_cost": "40000.00", "proceeds": "50000.00", "gain": "10000.00", "term": "long", "rate": "0.125"},
+      {"holding": "FOXTROT LTD", "sold": "2025-06-10", "acquired": "2024-11-15", "quantity": "50",
+       "cost": "0.00", "tax_cost": "0.00", "proceeds": "25000.00", "gain": "25000.00", "term": "short", "rate": "0.20"}
+    ],
+    "open_lots": [ {"holding": "FOXTROT LTD", "acquired": "2024-11-15", "quantity": "50", "cost_per_unit": "0.00"} ],
+    "fy": [
+      {"fy": 2026, "exemption_used": "10000.00", "tax": "5000.00", "cess": "200.00", "total": "5200.00",
+       "complete": true, "unknown_count": 0, "intraday_count": 0, "exempt_total": "0.00",
+       "losses_carried_short": "0.00", "losses_carried_long": "0.00"}
+    ]
+  }
+}

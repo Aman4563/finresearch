@@ -297,9 +297,12 @@ def sell_items(s: Session, p: Plan, h: PortfolioHolding | None) -> list[dict[str
     if sale_unk["count"]:
         detail = (f"tax unknown: {sale_unk['count']} of {len(rows)} lot(s) sold ({_inr(sale_unk['gain'] or 0)} of "
                   f"gain) can't be classified short- or long-term ("
-                  + "; ".join(f"{n} without {w}" for n, w in ((sale_unk["no_date"], "an acquisition date"),
-                                                              (sale_unk["no_cost"], "a cost")) if n)
-                  + "): enter the purchase date and cost of the oldest lots")  # fmt: skip
+                  + "; ".join([*(f"{n} without {w}" for n, w in ((sale_unk["no_date"], "an acquisition date"),
+                                                                 (sale_unk["no_cost"], "a cost")) if n),
+                               *([f"{sale_unk['corporate_action']} after an unsupported corporate action"]
+                                 if sale_unk.get("corporate_action") else [])])
+                  + "): " + ("enter the cost allocation of the corporate action" if sale_unk.get("corporate_action")
+                             else "enter the purchase date and cost of the oldest lots"))  # fmt: skip
         if sale_unk["no_cost"]:
             detail += f"; the gain of the {sale_unk['no_cost']} lot(s) without a cost is unknown too"
         known = sum((r.gain for r in rows if r.gain is not None and not is_unclassified(r)), ZERO)

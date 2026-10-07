@@ -1,0 +1,38 @@
+{
+  "id": "g12_debt_mf_pre2023_lt_post_jul2024",
+  "title": "Debt MF bought Mar-2022 (before s.50AA), sold Oct-2024 after 31 months: long-term under the new 24-month rule, 12.5 % without indexation",
+  "covers": ["debt MF grandfathered from s.50AA", "24-month rule for unlisted units from 23-Jul-2024", "12.5 % no indexation"],
+  "rules": [
+    "Income-tax Act 1961 s.50AA (inserted by Finance Act 2023) applies only to specified MF units acquired on or after 1-Apr-2023 -> not to this lot",
+    "Income-tax Act 1961 s.2(42A) as amended by Finance (No.2) Act 2024: for transfers on/after 23-Jul-2024 an asset other than a listed security is short-term if held not more than 24 months (was 36 months for debt MF units before)",
+    "Income-tax Act 1961 s.112(1) as amended by Finance (No.2) Act 2024: 12.5 % without indexation for transfers on/after 23-Jul-2024",
+    "Health and Education Cess 4 % (Finance (No.2) Act 2024 s.2)"
+  ],
+  "derivation": [
+    "Buy 2022-03-01: 1,000 units @ 20.00 -> cost 20,000.00 (acquired before 1-Apr-2023 -> s.50AA not applicable).",
+    "Redeem 2024-10-01: 1,000 @ 25.00 -> proceeds 25,000.00; gain 5,000.00.",
+    "Held 2022-03-01 -> 2024-10-01 = 31 months. Transfer on/after 23-Jul-2024 -> threshold 24 months -> long (under the pre-23-Jul-2024 36-month rule it would have been short).",
+    "s.112 at 12.5 %, no indexation: tax 5,000 x 0.125 = 625.00; cess 25.00; total 650.00 for FY 2024-25 (fy 2025). exemption_used 0.00."
+  ],
+  "interpretive": false,
+  "slab_rate": "0.30",
+  "holdings": [
+    {"name": "KILO SHORT DURATION FUND - GROWTH", "tax_class": "debt_mf", "listed": false, "fmv_2018": null, "sgb_original_subscriber": false,
+     "events": [
+       {"day": "2022-03-01", "kind": "buy", "quantity": "1000", "price": "20.00", "charges": "0", "stt_paid": false},
+       {"day": "2024-10-01", "kind": "sell", "quantity": "1000", "price": "25.00", "charges": "0", "stt_paid": false}
+     ]}
+  ],
+  "expected": {
+    "disposals": [
+      {"holding": "KILO SHORT DURATION FUND - GROWTH", "sold": "2024-10-01", "acquired": "2022-03-01", "quantity": "1000",
+       "cost": "20000.00", "tax_cost": "20000.00", "proceeds": "25000.00", "gain": "5000.00", "term": "long", "rate": "0.125"}
+    ],
+    "open_lots": [],
+    "fy": [
+      {"fy": 2025, "exemption_used": "0.00", "tax": "625.00", "cess": "25.00", "total": "650.00",
+       "complete": true, "unknown_count": 0, "intraday_count": 0, "exempt_total": "0.00",
+       "losses_carried_short": "0.00", "losses_carried_long": "0.00"}
+    ]
+  }
+}

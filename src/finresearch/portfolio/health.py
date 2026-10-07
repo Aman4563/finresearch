@@ -6,13 +6,16 @@ One row per input, each with a coverage % (None = could not be measured), a stat
     purchase_dates    open lots with a known acquisition date, weighted by value          20
                       (units x price; units x cost when unpriced; lots with neither are counted, not weighed)
     priced            open holdings with a current price, by count                       20
+                      (a statement price past its age limit is not current: valuation.statement_stale)
     dividends         completed FYs with stock holdings that have >= 1 dividend recorded  10
     lookthrough       fund value covered by a month-end fund portfolio (/api/lookthrough) 10
     ais               AIS imported for the last completed FY (yes/no)                    10
     history           daily returns in the value history, against the 120 that beta and  10
                       risk contribution need (volatility needs 60; VaR and Sharpe 250)
-    targets           target allocation set (yes/no)                                      10
-    goals_age         age set (half) and at least one goal (half)                        10
+    corporate_actions held stocks without an unresolved unsupported corporate action    10
+                      (demerger, rights, merger ... recorded by "Sync corporate actions", #237)
+    targets           target allocation set (yes/no)                                       5
+    goals_age         age set (half) and at least one goal (half)                         5
 
 Overall = Σ weight x coverage / Σ weight over the rows that apply (a row that does not apply, e.g. look-through without
 funds, drops out). A row that could not be measured counts as 0 %: unknown is never treated as complete. The weights
@@ -34,8 +37,8 @@ from finresearch.db.models import PortfolioAis, PortfolioHolding, PortfolioLot, 
 from finresearch.fincalc.dates import fiscal_year
 from finresearch.fincalc.tax import fy_label
 
-WEIGHTS = {"purchase_dates": 20, "priced": 20, "dividends": 10, "lookthrough": 10, "ais": 10, "history": 10,
-           "targets": 10, "goals_age": 10}  # fmt: skip
+WEIGHTS = {"purchase_dates": 20, "priced": 20, "corporate_actions": 10, "dividends": 10, "lookthrough": 10, "ais": 10,
+           "history": 10, "targets": 5, "goals_age": 5}  # fmt: skip
 HISTORY_NEED = {
     "volatility": 60,
     "beta and risk contribution": 120,
@@ -44,8 +47,8 @@ HISTORY_NEED = {
 HISTORY_FULL = 120
 OPEN = Decimal("0.0005")
 HOW = ("Overall = Σ weight × coverage ÷ Σ weight of the rows that apply. Weights: purchase dates 20, prices 20, "
-       "dividends 10, fund look-through 10, AIS 10, performance history 10, targets 10, goals and age 10. A check that "
-       "could not run counts as 0 %.")  # fmt: skip
+       "corporate actions resolved 10, dividends 10, fund look-through 10, AIS 10, performance history 10, targets 5, "
+       "goals and age 5. A check that could not run counts as 0 %.")  # fmt: skip
 
 
 def _status(cov: float | None) -> str:
@@ -89,13 +92,34 @@ def purchase_dates(lots: list[PortfolioLot], price: dict[int, float | None]) -> 
 def priced(rows: list[dict[str, Any]]) -> dict[str, Any]:
     held = [r for r in rows if not r.get("closed")]
     pending = sum(1 for r in held if r.get("pending"))
-    ok = sum(1 for r in held if r.get("value") is not None and not r.get("pending"))
+    # a statement price past its age limit (valuation.statement_stale) is not a current price (#238)
+    stale = sum(1 for r in held if r.get("price_stale") and not r.get("pending"))
+    ok = sum(
+        1 for r in held if r.get("value") is not None and not r.get("pending") and not r.get("price_stale")
+    )
     cov = (ok * 100 / len(held)) if held and not pending else None if held else 100.0
     detail = f"{ok} of {len(held)} holding(s) priced" + (f"; {pending} still loading" if pending else "")
+    if stale:
+        detail += f"; {stale} only by an old statement price"
     return _row("priced", "Holdings with a current price", cov, detail,
                 "current value, unrealised P&L, allocation, risk and XIRR for the unpriced holdings",
                 "Check the NSE symbol, ISIN or AMFI scheme code on the unpriced holding", "/portfolio#holdings",
                 applies=bool(held))  # fmt: skip
+
+
+def corporate_actions(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Held stocks without an unresolved unsupported corporate action (#237). Only what "Sync corporate actions" has
+    recorded is known; an action the exchange feed never listed cannot be seen here."""
+    held = [r for r in rows if r.get("asset_type") == "stock" and not r.get("closed")]
+    bad = [r for r in held if r.get("pending_actions")]
+    cov = (len(held) - len(bad)) * 100 / len(held) if held else 100.0
+    detail = (f"{len(bad)} of {len(held)} stock holding(s) have an unresolved corporate action: "
+              + "; ".join(f"{r.get('name') or r.get('id')}: {r['pending_actions'][0]['reason']}" for r in bad[:5])
+              if bad else f"none recorded for {len(held)} stock holding(s) (from the last corporate-action sync)")  # fmt: skip
+    return _row("corporate_actions", "Corporate actions resolved", cov, detail,
+                "the cost, unrealised P&L and the tax of every sale after the action's ex-date for those holdings",
+                "Open the holding: enter the cost allocation as a manual transaction, or mark the action resolved",
+                "/portfolio#holdings", applies=bool(held))  # fmt: skip
 
 
 def dividends(s: Session, today: date) -> dict[str, Any]:
@@ -188,6 +212,13 @@ def history(perf: dict[str, Any] | None, error: str | None, has_holdings: bool) 
     else:
         short = [f"{k} ({n})" for k, n in HISTORY_NEED.items() if returns < n]
         detail = f"{returns} daily returns" + (f"; too short for {', '.join(short)}" if short else "")
+        rec = (perf or {}).get("reconciliation") or {}
+        if rec.get(
+            "differ"
+        ):  # the "as shown" snapshots against the canonical history (portfolio.series, #239)
+            detail += (f"; {len(rec['differ'])} of {rec['checked']} saved valuation day(s) differ from it by more "
+                       f"than {rec['tolerance_pct']:g} % (latest {rec['differ'][-1]['day']}: "
+                       f"{rec['differ'][-1]['reason']})")  # fmt: skip
     return _row("history", "Performance history length", cov, detail,
                 "volatility (60 days of returns), beta and risk contribution (120), VaR and Sharpe (250)",
                 "Import older transactions: the daily history is rebuilt from them", "/portfolio#import",
@@ -238,7 +269,7 @@ def compute(s: Session, snap: dict[str, Any], today: date, *, lt: dict[str, Any]
     lots = list(s.scalars(select(PortfolioLot).where(PortfolioLot.open_quantity > OPEN)))
     has_funds = any(r.get("asset_type") == "mf" for r in held)
     goals = s.scalar(select(func.count()).select_from(WealthGoal)) or 0
-    rows = [purchase_dates(lots, price), priced(rows_in), dividends(s, today),
+    rows = [purchase_dates(lots, price), priced(rows_in), corporate_actions(rows_in), dividends(s, today),
             lookthrough(lt, has_funds, lt_error), ais(s, today, bool(held)), history(perf, perf_error, bool(held)),
             targets(get_targets(s)), goals_age(load_profile(s).household.age, goals)]  # fmt: skip
     return {"as_of": today.isoformat(), "rows": rows, "overall": overall(rows),

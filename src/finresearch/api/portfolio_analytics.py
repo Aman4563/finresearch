@@ -3,7 +3,9 @@
 Every route is a GET that reads the local database and public price history, except PUT .../settings, which stores
 the user's business-group corrections and exit loads in `portfolio_setting` ("analytics"). The daily value history is
 rebuilt from the transactions (`portfolio.history`), cached in memory for 30 minutes per transaction set and on disk
-per instrument, so only the first build after new transactions reads prices from NSE/BSE/AMFI.
+per instrument, so only the first build after new transactions reads prices from NSE/BSE/AMFI. Each build is also
+stored as the canonical value history the alerts, brief, digest and net worth read (`portfolio.series`, #239), and
+the performance payload reconciles the "as shown" snapshots against it.
 
 Privacy: personal data stays in the local database; nothing here calls an LLM.
 
@@ -13,6 +15,7 @@ Test seams: `app.state.markets` (a `MarketSources` with fake NSE/AMFI) and `app.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -23,6 +26,8 @@ from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from finresearch.db import session_scope
+
+log = logging.getLogger(__name__)
 
 HISTORY_TTL_S = 1800
 SETTINGS_KEY = "analytics"
@@ -115,6 +120,13 @@ def add_portfolio_analytics_routes(app: FastAPI, *, scheme_rows: Callable[[], Aw
                 )
             if note:
                 hist.warnings.append(note)
+            try:  # the canonical value history the alerts, brief, digest and net worth read (portfolio.series)
+                from finresearch.portfolio import series
+
+                with session_scope() as s:
+                    series.save(s, hist, fp, today)
+            except Exception:  # storing it never fails the request
+                log.warning("could not store the value history", exc_info=True)
             return hist
 
         return await cache.get(key, HISTORY_TTL_S, make), today, fp
@@ -186,8 +198,14 @@ def add_portfolio_analytics_routes(app: FastAPI, *, scheme_rows: Callable[[], Aw
         direct-index-equivalent value and XIRR, ₹ difference and the Kaplan–Schoar PME."""
         from finresearch.portfolio.analytics import performance as perf
 
-        hist, _, _ = await history()
-        return perf(hist)
+        hist, today, fp = await history()
+        out = perf(hist)
+        if hist.ok:  # the "as shown" snapshots against this (canonical) series, day by day (#239)
+            from finresearch.portfolio import series
+
+            with session_scope() as s:
+                out["reconciliation"] = series.reconcile_db(s, series.from_history(hist, fp, today), today)
+        return out
 
     @app.get("/api/portfolio/analytics/risk")
     async def risk(

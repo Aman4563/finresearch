@@ -217,11 +217,9 @@ def scan(*, now: datetime | None = None, password: str | None = None) -> dict[st
         for r in results:
             if r["status"] == "waiting" and r.get("logged"):
                 continue
-            status = {"imported": "ok", "reconciled": "ok", "duplicate": "ok", "waiting": "partial"}.get(r["status"],
-                                                                                                       "error")  # fmt: skip
+            status, error = _log_status(r)
             s.add(BrokerSyncLog(key=INBOX_KEY, trigger="inbox", status=status, started_at=now,
-                                finished_at=datetime.now(UTC), summary=_slim(r),
-                                error=r.get("note") if status != "ok" else None))  # fmt: skip
+                                finished_at=datetime.now(UTC), summary=_slim(r), error=error))  # fmt: skip
     return {"imported": imported, "files": [_slim(r) for r in results], "inbox": str(root)}
 
 
@@ -272,10 +270,27 @@ def _fail(path: Path, why: str) -> dict[str, Any]:
     return {"file": path.name, "status": "failed", "note": why}
 
 
+def _log_status(r: dict[str, Any]) -> tuple[str, str | None]:
+    """The sync-log status and error of one inbox file. An import with cross-source conflicts (#236: rows another
+    source has in part, not added) is "partial", so the unattended inbox never hides them behind an "ok"."""
+    status = {"imported": "ok", "reconciled": "ok", "duplicate": "ok", "waiting": "partial"}.get(
+        r["status"], "error"
+    )
+    if status == "ok" and r.get("conflicts"):
+        n = len(r["conflicts"])
+        return (
+            "partial",
+            f"{n} conflict(s) with another source: not added, review them in the import's result",
+        )
+    return status, (r.get("note") if status != "ok" else None)
+
+
 def _slim(r: dict[str, Any]) -> dict[str, Any]:
     keep = ("file", "status", "kind", "note", "added", "duplicates", "reconciled", "differences", "import_id",
-            "import_ids", "baselines", "reconciliation", "rows")  # fmt: skip
+            "import_ids", "baselines", "reconciliation", "rows", "cross_source", "conflicts",
+            "superseded_baselines")  # fmt: skip
     out = {k: r[k] for k in keep if k in r}
-    if isinstance(out.get("reconciliation"), list):
-        out["reconciliation"] = out["reconciliation"][:100]
+    for k in ("reconciliation", "cross_source", "conflicts"):
+        if isinstance(out.get(k), list):
+            out[k] = out[k][:100]
     return out

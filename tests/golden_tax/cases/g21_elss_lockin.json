@@ -1,0 +1,43 @@
+{
+  "id": "g21_elss_lockin",
+  "title": "ELSS lots allotted on four dates incl. 29-Feb-2024 and 31-Mar/31-Dec: first redeemable day after the 3-year lock-in",
+  "covers": ["ELSS lock-in", "leap-day allotment", "General Clauses Act s.9 'from' excludes first day"],
+  "rules": [
+    "Income-tax Act 1961 s.80C(2)(xiii) and the Equity Linked Saving Scheme, 2005 (Ministry of Finance notification of 3-Nov-2005; S.O. number recalled as 1563(E), not verified): units locked in for three years from the date of allotment",
+    "General Clauses Act 1897 s.9: in a period expressed as 'from' a day, the first day is excluded; s.3(66): 'year' = year reckoned by the British calendar",
+    "Brief convention (example 2023-01-10 -> 2026-01-11): first redeemable day = anniversary + 1 day"
+  ],
+  "derivation": [
+    "2023-01-10: period starts 2023-01-11, three years end 2026-01-10 -> redeemable from 2026-01-11.",
+    "2023-03-31: period starts 2023-04-01, ends 2026-03-31 -> redeemable from 2026-04-01.",
+    "2024-02-29: period starts 2024-03-01; three calendar years later the period ends on the day before 2027-03-01, i.e. 2027-02-28 -> redeemable from 2027-03-01. (Alternative reading: treat 2027-03-01 as the 'anniversary' of 29-Feb and add a day -> 2027-03-02. The first reading is preferred because counting from the excluded first day 2024-03-01 needs no leap-day roll; marked interpretive.)",
+    "2024-12-31: period starts 2025-01-01, ends 2027-12-31 -> redeemable from 2028-01-01.",
+    "No sales -> no disposals and no FY blocks; all four lots remain open at cost."
+  ],
+  "interpretive": true,
+  "slab_rate": "0.30",
+  "holdings": [
+    {"name": "VICTOR TAX SAVER (ELSS) FUND - GROWTH", "tax_class": "equity", "listed": false, "fmv_2018": null, "sgb_original_subscriber": false, "elss": true,
+     "events": [
+       {"day": "2023-01-10", "kind": "buy", "quantity": "100", "price": "50.00", "charges": "0"},
+       {"day": "2023-03-31", "kind": "buy", "quantity": "100", "price": "55.00", "charges": "0"},
+       {"day": "2024-02-29", "kind": "buy", "quantity": "100", "price": "60.00", "charges": "0"},
+       {"day": "2024-12-31", "kind": "buy", "quantity": "100", "price": "70.00", "charges": "0"}
+     ]}
+  ],
+  "expected": {
+    "disposals": [],
+    "open_lots": [
+      {"holding": "VICTOR TAX SAVER (ELSS) FUND - GROWTH", "acquired": "2023-01-10", "quantity": "100", "cost_per_unit": "50.00"},
+      {"holding": "VICTOR TAX SAVER (ELSS) FUND - GROWTH", "acquired": "2023-03-31", "quantity": "100", "cost_per_unit": "55.00"},
+      {"holding": "VICTOR TAX SAVER (ELSS) FUND - GROWTH", "acquired": "2024-02-29", "quantity": "100", "cost_per_unit": "60.00"},
+      {"holding": "VICTOR TAX SAVER (ELSS) FUND - GROWTH", "acquired": "2024-12-31", "quantity": "100", "cost_per_unit": "70.00"}
+    ],
+    "elss_unlock": [
+      {"acquired": "2023-01-10", "redeemable_from": "2026-01-11"},
+      {"acquired": "2023-03-31", "redeemable_from": "2026-04-01"},
+      {"acquired": "2024-02-29", "redeemable_from": "2027-03-01"},
+      {"acquired": "2024-12-31", "redeemable_from": "2028-01-01"}
+    ]
+  }
+}

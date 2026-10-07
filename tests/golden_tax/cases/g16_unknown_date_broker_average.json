@@ -1,0 +1,37 @@
+{
+  "id": "g16_unknown_date_broker_average",
+  "title": "Opening at broker-average cost with no acquisition date is sold: gain known, term unknown -> FY 2025-26 incomplete",
+  "covers": ["broker_average opening", "unknown date", "gain known but term unknown", "year incomplete"],
+  "rules": [
+    "Income-tax Act 1961 s.48: gain computable from the known (true average) cost",
+    "Income-tax Act 1961 s.2(42A): short/long cannot be determined without the acquisition date -> rate (15/20 % vs 10/12.5 %) and s.112A threshold use unknown",
+    "Brief rule: FY with an unclassifiable disposal -> complete false, tax/cess/total null"
+  ],
+  "derivation": [
+    "Opening 2025-04-01: 100 units @ 300.00, meta cost_basis broker_average, no acquired date -> cost 30,000.00, date unknown.",
+    "Sale 2025-07-01: 100 @ 450.00 -> proceeds 45,000.00.",
+    "Gain on the stated cost = 45,000 - 30,000 = 15,000.00 (fmv_2018 is null, so no grandfathering adjustment is applied; if the shares were in fact bought before 1-Feb-2018 s.55(2)(ac) could change the taxable gain - see INDEX.md).",
+    "Term unknown, rate null, acquired null; tax_cost omitted (not asserted).",
+    "FY 2025-26 (fy 2026): unknown_count 1 -> complete false; tax, cess, total null."
+  ],
+  "interpretive": false,
+  "slab_rate": "0.30",
+  "holdings": [
+    {"name": "OSCAR LTD", "tax_class": "equity", "listed": true, "fmv_2018": null, "sgb_original_subscriber": false,
+     "events": [
+       {"day": "2025-04-01", "kind": "opening", "quantity": "100", "price": "300.00", "meta": {"cost_basis": "broker_average"}},
+       {"day": "2025-07-01", "kind": "sell", "quantity": "100", "price": "450.00", "charges": "0"}
+     ]}
+  ],
+  "expected": {
+    "disposals": [
+      {"holding": "OSCAR LTD", "sold": "2025-07-01", "acquired": null, "quantity": "100",
+       "cost": "30000.00", "proceeds": "45000.00", "gain": "15000.00", "term": "unknown", "rate": null}
+    ],
+    "open_lots": [],
+    "fy": [
+      {"fy": 2026, "tax": null, "cess": null, "total": null,
+       "complete": false, "unknown_count": 1, "intraday_count": 0, "exempt_total": "0.00"}
+    ]
+  }
+}

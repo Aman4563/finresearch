@@ -157,6 +157,11 @@ async def daily_pass(deps: Any, now: datetime, *, full: bool = True) -> dict[str
     res: dict[str, Any] = {}
     val = await valuation_pass(deps, now, today)
     res["valuation"] = {k: val.get(k) for k in ("value", "complete", "holdings", "unpriced")}
+    try:
+        res["history"] = await history_pass(deps, today)
+    except Exception as e:  # the value history never fails the pass; the next one rebuilds it
+        log.warning("portfolio value history failed", exc_info=True)
+        res["history"] = {"error": f"{type(e).__name__}: {e}"[:300]}
     if not full:
         return res
     for name, fn in (("signals", signals_pass), ("events", events_pass), ("ter", ter_pass)):
@@ -169,6 +174,56 @@ async def daily_pass(deps: Any, now: datetime, *, full: bool = True) -> dict[str
             log.warning("portfolio %s step failed", name, exc_info=True)
             res[name] = {"error": f"{type(e).__name__}: {e}"[:300]}
     return res
+
+
+HISTORY_TIMEOUT_S = (
+    600  # the first build reads years of closes (later ones only the missing days: PriceStore)
+)
+
+
+async def live_history(holdings: list[Any], today: date) -> Any:
+    """Build the reconstructed value history with the live sources (NSE/BSE closes, AMFI NAV history), as the
+    Performance tab does, without the benchmark (the stored series does not need it)."""
+    from finresearch.api.markets import MarketSources
+    from finresearch.config import get_settings
+    from finresearch.portfolio.history import Fetcher, PriceStore, build
+
+    schemes: dict[str, Any] = {}
+    if any(h.asset_type == "mf" for h in holdings):
+        for r in await _live_nav_rows():
+            schemes[r.code] = r
+            for i in (r.isin_growth, r.isin_reinvest):
+                if i:
+                    schemes[f"ISIN:{i.upper()}"] = r
+    isin_map = None  # a stock with only an ISIN resolves through the listings, as the Performance tab does
+    if any(h.asset_type == "stock" and not h.nse_symbol and not h.bse_code and h.isin for h in holdings):
+        try:
+            isin_map = {r.isin.upper(): r for r in (await _live_listings()).rows if r.isin}
+        except Exception:  # without it those holdings are excluded and named in the history
+            log.warning("listings for the value history unavailable", exc_info=True)
+    async with Fetcher(MarketSources()) as f:
+        return await build(holdings, fetch=f, store=PriceStore(get_settings().state_dir / "portfolio_history"),
+                           schemes=schemes, today=today, isin_map=isin_map, benchmark=False)  # fmt: skip
+
+
+async def history_pass(deps: Any, today: date) -> dict[str, Any]:
+    """Rebuild the canonical value history (portfolio.series, #239), store it, and reconcile the day's snapshots
+    against it. Skipped (with the reason) when the deps have no builder."""
+    from finresearch.portfolio import series
+    from finresearch.portfolio.history import fingerprint, holdings_from
+    from finresearch.portfolio.report import load
+
+    if deps.pf_history is None:
+        return {"skipped": "no value-history builder configured"}
+    with session_scope() as s:
+        hs = holdings_from(load(s))
+    fp = fingerprint(hs)
+    hist = await asyncio.wait_for(deps.pf_history(hs, today), HISTORY_TIMEOUT_S)
+    with session_scope() as s:
+        if not series.save(s, hist, fp, today):
+            return {"stored": False, "reason": hist.reason or "fewer than two days of prices"}
+        rec = series.reconcile_db(s, series.from_history(hist, fp, today), today)
+    return {"stored": True, "days": len(hist.days), "checked": rec["checked"], "differ": len(rec["differ"])}
 
 
 def _detached_holdings() -> list[Any]:

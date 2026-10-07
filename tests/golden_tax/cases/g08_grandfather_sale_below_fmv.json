@@ -1,0 +1,46 @@
+{
+  "id": "g08_grandfather_sale_below_fmv",
+  "title": "Grandfathering with sale price below FMV: (a) cost capped at sale price -> nil gain; (b) FMV below actual cost -> actual cost, long-term loss",
+  "covers": ["grandfathering min(FMV, sale)", "nil gain not a loss", "LTCL when actual cost exceeds sale", "LTCL carried forward"],
+  "rules": [
+    "Income-tax Act 1961 s.55(2)(ac) (Finance Act 2018): cost = max(actual cost, min(FMV on 31-Jan-2018, full value of consideration))",
+    "Income-tax Act 1961 s.112A(1) as amended by Finance (No.2) Act 2024: 12.5 % for transfers on/after 23-Jul-2024",
+    "Income-tax Act 1961 s.70(3) and s.74(1): LTCL set off only against LTCG; unabsorbed LTCL carried forward"
+  ],
+  "derivation": [
+    "HOTEL LTD: buy 2017-01-10 100 @ 300.00 (actual 30,000.00); FMV 900.00; sold 2024-10-01 100 @ 700.00 (consideration 70,000.00, charges 0).",
+    "Per share: min(900, 700) = 700; max(300, 700) = 700 -> tax_cost 70,000.00; gain 70,000 - 70,000 = 0.00; long, 12.5 %.",
+    "INDIA LTD: buy 2017-06-01 100 @ 800.00 (actual 80,000.00); FMV 600.00; sold 2024-10-01 100 @ 500.00 (consideration 50,000.00).",
+    "Per share: min(600, 500) = 500; max(800, 500) = 800 -> tax_cost 80,000.00; gain 50,000 - 80,000 = -30,000.00 (long-term loss), rate 12.5 % bucket.",
+    "FY 2024-25 (fy 2025): net LTCG 0 + (-30,000) = -30,000 -> nothing taxable; exemption_used 0.00; tax 0.00.",
+    "No other gains in the year -> losses_carried_long 30,000.00."
+  ],
+  "interpretive": false,
+  "slab_rate": "0.30",
+  "holdings": [
+    {"name": "HOTEL LTD", "tax_class": "equity", "listed": true, "fmv_2018": "900.00", "sgb_original_subscriber": false,
+     "events": [
+       {"day": "2017-01-10", "kind": "buy", "quantity": "100", "price": "300.00", "charges": "0"},
+       {"day": "2024-10-01", "kind": "sell", "quantity": "100", "price": "700.00", "charges": "0"}
+     ]},
+    {"name": "INDIA LTD", "tax_class": "equity", "listed": true, "fmv_2018": "600.00", "sgb_original_subscriber": false,
+     "events": [
+       {"day": "2017-06-01", "kind": "buy", "quantity": "100", "price": "800.00", "charges": "0"},
+       {"day": "2024-10-01", "kind": "sell", "quantity": "100", "price": "500.00", "charges": "0"}
+     ]}
+  ],
+  "expected": {
+    "disposals": [
+      {"holding": "HOTEL LTD", "sold": "2024-10-01", "acquired": "2017-01-10", "quantity": "100",
+       "cost": "30000.00", "tax_cost": "70000.00", "proceeds": "70000.00", "gain": "0.00", "term": "long", "rate": "0.125"},
+      {"holding": "INDIA LTD", "sold": "2024-10-01", "acquired": "2017-06-01", "quantity": "100",
+       "cost": "80000.00", "tax_cost": "80000.00", "proceeds": "50000.00", "gain": "-30000.00", "term": "long", "rate": "0.125"}
+    ],
+    "open_lots": [],
+    "fy": [
+      {"fy": 2025, "exemption_used": "0.00", "tax": "0.00", "cess": "0.00", "total": "0.00",
+       "complete": true, "unknown_count": 0, "intraday_count": 0, "exempt_total": "0.00",
+       "losses_carried_short": "0.00", "losses_carried_long": "30000.00"}
+    ]
+  }
+}

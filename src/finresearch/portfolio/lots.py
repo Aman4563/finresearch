@@ -53,12 +53,14 @@ def superseded_openings(items: Iterable[Any]) -> set[int]:
     it. Works on lots.Event and PortfolioTxn alike (`.day`, `.kind`, `.meta`), so the XIRR flows, the value history
     and the merge rules skip exactly the openings the lots skip."""
     rows = list(items)
-    days = [x.day for x in rows if x.kind in UNIT_KINDS]
+    # a broker fund baseline that a CAS in another folio covers (portfolio.dedupe, set by service.rebuild)
+    out = {i for i, x in enumerate(rows) if x.kind == "opening" and (x.meta or {}).get("superseded_by")}
+    days = [x.day for i, x in enumerate(rows) if x.kind in UNIT_KINDS and i not in out]
     if not days:
-        return set()
+        return out
     first = min(days)
-    return {i for i, x in enumerate(rows)
-            if x.kind == "opening" and (x.meta or {}).get("statement_opening") and x.day > first}  # fmt: skip
+    return out | {i for i, x in enumerate(rows)
+                  if x.kind == "opening" and (x.meta or {}).get("statement_opening") and x.day > first}  # fmt: skip
 
 
 @dataclass
@@ -162,8 +164,11 @@ def build_lots(events: Iterable[Event]) -> LotBook:
     # earlier transaction) is imported, that history is present and the opening balance would count it twice. Only
     # unit-moving events count as "earlier": an older dividend row alone must not wipe out the opening's units.
     drop = superseded_openings(evs)
+    for i in sorted(drop):
+        by = (evs[i].meta or {}).get("superseded_by")
+        warnings.append(f"the broker's fund baseline was ignored: the CAS history in {by} covers it" if by
+                        else "a statement's opening balance was ignored: earlier transactions cover it")  # fmt: skip
     if drop:
-        warnings.append("a statement's opening balance was ignored: earlier transactions cover it")
         evs = [e for i, e in enumerate(evs) if i not in drop]
     lots: list[Lot] = []
     disposals: list[Disposal] = []

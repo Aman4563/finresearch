@@ -1,0 +1,45 @@
+{
+  "id": "g22_equity_sale_without_stt",
+  "title": "Off-market sale of listed shares without STT: s.111A/s.112A unavailable; LT part at 12.5 % under s.112 (no threshold), ST part at slab",
+  "covers": ["no STT on transfer", "s.112 instead of s.112A", "slab STCG for equity"],
+  "rules": [
+    "Income-tax Act 1961 s.111A(1): applies only where the transfer is chargeable to STT -> not here; STCG at slab",
+    "Income-tax Act 1961 s.112A(1)(b)(ii): requires STT on transfer -> not here; LTCG falls under s.112",
+    "Income-tax Act 1961 s.112(1) as amended by Finance (No.2) Act 2024: 12.5 % without indexation for transfers on/after 23-Jul-2024, no Rs 1,25,000 threshold; s.55(2)(ac) grandfathering not relevant (fmv_2018 null)",
+    "Income-tax Act 1961 s.2(42A) first proviso: listed shares -> 12 months",
+    "CBDT Circular No. 768 dated 24-Jun-1998: FIFO",
+    "Health and Education Cess 4 % (Finance Act 2025 s.2)"
+  ],
+  "derivation": [
+    "L1: 100 @ 100.00 on 2023-04-10 (cost 10,000.00). L2: 50 @ 200.00 on 2025-01-15 (cost 10,000.00).",
+    "Off-market sale 2025-06-02: 150 @ 240.00, stt_paid false -> proceeds 36,000.00.",
+    "Row 1 (L1, 100): proceeds 24,000.00, cost 10,000.00, gain 14,000.00; held > 12 months -> long; s.112 12.5 %.",
+    "Row 2 (L2, 50): proceeds 12,000.00, cost 10,000.00, gain 2,000.00; held 2025-01-15 -> 2025-06-02 -> short; slab 30 %.",
+    "FY 2025-26 (fy 2026): s.112 tax 14,000 x 0.125 = 1,750.00; slab tax 2,000 x 0.30 = 600.00; tax 2,350.00.",
+    "Cess 2,350 x 0.04 = 94.00; total 2,444.00 (check 2,444 / 1.04 = 2,350). exemption_used 0.00 (no s.112A gain)."
+  ],
+  "interpretive": false,
+  "slab_rate": "0.30",
+  "holdings": [
+    {"name": "WHISKEY LTD", "tax_class": "equity", "listed": true, "fmv_2018": null, "sgb_original_subscriber": false,
+     "events": [
+       {"day": "2023-04-10", "kind": "buy", "quantity": "100", "price": "100.00", "charges": "0"},
+       {"day": "2025-01-15", "kind": "buy", "quantity": "50", "price": "200.00", "charges": "0"},
+       {"day": "2025-06-02", "kind": "sell", "quantity": "150", "price": "240.00", "charges": "0", "stt_paid": false}
+     ]}
+  ],
+  "expected": {
+    "disposals": [
+      {"holding": "WHISKEY LTD", "sold": "2025-06-02", "acquired": "2023-04-10", "quantity": "100",
+       "cost": "10000.00", "tax_cost": "10000.00", "proceeds": "24000.00", "gain": "14000.00", "term": "long", "rate": "0.125"},
+      {"holding": "WHISKEY LTD", "sold": "2025-06-02", "acquired": "2025-01-15", "quantity": "50",
+       "cost": "10000.00", "tax_cost": "10000.00", "proceeds": "12000.00", "gain": "2000.00", "term": "short", "rate": "slab"}
+    ],
+    "open_lots": [],
+    "fy": [
+      {"fy": 2026, "exemption_used": "0.00", "tax": "2350.00", "cess": "94.00", "total": "2444.00",
+       "complete": true, "unknown_count": 0, "intraday_count": 0, "exempt_total": "0.00",
+       "losses_carried_short": "0.00", "losses_carried_long": "0.00"}
+    ]
+  }
+}
