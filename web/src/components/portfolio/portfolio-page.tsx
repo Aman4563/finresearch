@@ -25,7 +25,7 @@ import { PerformanceAnalytics } from "./performance-analytics";
 import { RebalancePanel } from "./rebalance-panel";
 import { RiskAnalytics } from "./risk-analytics";
 import { TaxPanel } from "./tax-panel";
-import { ASSET_CLASSES, type ElssLock, type Holding, type HoldingDetail, type Snapshot, TAX_CLASS_LABEL, type TaxClass, inr, pctx, signed, units } from "./types";
+import { ASSET_CLASSES, type ElssLock, type Holding, type HoldingDetail, type PendingAction, type Snapshot, TAX_CLASS_LABEL, type TaxClass, inr, pctx, signed, units } from "./types";
 
 type Tab = "holdings" | "allocation" | "performance" | "risk" | "concentration" | "costs" | "pnl" | "dividends" | "tax" | "import";
 const TABS: { value: Tab; label: string }[] = [
@@ -99,6 +99,41 @@ function ElssSchedule({ e }: { e: ElssLock }) {
   );
 }
 
+// #237: a corporate action the lots do not model (demerger, rights, merger ...). The holding's cost and the tax of
+// every later sale stay incomplete until the user enters the cost allocation (manual transactions, the opening
+// balance editor below) and marks it resolved with a note. The app never guesses the split.
+function PendingActions({ h, actions, onSaved }: { h: Holding; actions: PendingAction[]; onSaved: () => void }) {
+  const [notes, setNotes] = useState<Record<string, string>>({});
+  const [msg, setMsg] = useState<string | null>(null);
+  const resolve = async (key: string) => {
+    setMsg(null);
+    try {
+      await api(`/api/portfolio/holdings/${h.id}/actions/resolve`, { method: "POST", body: JSON.stringify({ key, note: notes[key] ?? "" }) });
+      onSaved();
+    } catch (e) { setMsg((e as Error).message); }
+  };
+  return (
+    <div className="space-y-2 rounded-lg border border-warn/40 bg-warn-soft px-3 py-3 text-xs">
+      <p className="font-medium">Corporate actions the app does not model</p>
+      {actions.map((a) => (
+        <div key={a.key} className="space-y-1">
+          <p>{a.status === "resolved" ? <Badge tone="gain">resolved</Badge> : <Badge tone="warn">pending</Badge>} {a.reason}</p>
+          <p className="text-muted">Exchange subject: &ldquo;{a.subject}&rdquo;{a.source_url && <> · <a href={a.source_url} target="_blank" rel="noreferrer" className="text-brand hover:underline">source</a></>}</p>
+          {a.status === "resolved" ? <p className="text-muted">Note: {a.note} ({a.resolved})</p> : (
+            <div className="flex flex-wrap items-center gap-2">
+              <input value={notes[a.key] ?? ""} onChange={(e) => setNotes({ ...notes, [a.key]: e.target.value })} className={cx(inputClass, "min-w-[16rem] flex-1")}
+                placeholder="How you resolved it, e.g. cost split per the company's circular, entered by hand" />
+              <Button variant="secondary" disabled={!(notes[a.key] ?? "").trim()} onClick={() => resolve(a.key)}>Mark resolved</Button>
+            </div>
+          )}
+        </div>
+      ))}
+      <p className="text-muted">Enter the cost allocation first: edit this holding&apos;s cost (opening balances below) and add the new company&apos;s shares on the Import tab with the original purchase date. Until resolved, this holding&apos;s cost and the tax of every sale on or after the ex-date are shown as incomplete.</p>
+      {msg && <p className="text-loss">{msg}</p>}
+    </div>
+  );
+}
+
 function HoldingEditor({ h, onSaved }: { h: Holding; onSaved: () => void }) {
   const { data, error, reload } = useApi<HoldingDetail>(`/api/portfolio/holdings/${h.id}`);
   const [f, setF] = useState({ tax_class: h.tax_class_override ?? "", nse_symbol: h.nse_symbol ?? "", scheme_code: h.scheme_code ?? "",
@@ -147,6 +182,7 @@ function HoldingEditor({ h, onSaved }: { h: Holding; onSaved: () => void }) {
       <div className="flex items-center gap-3"><Button onClick={save}>Save</Button>{msg && <span className="text-xs text-muted">{msg}</span>}</div>
       {error ? <ErrorNote error={error} onRetry={reload} /> : !data ? <SkeletonRows rows={3} /> : (
         <>
+          {(data.pending_actions ?? []).length > 0 && <PendingActions h={h} actions={data.pending_actions!} onSaved={() => { reload(); onSaved(); }} />}
           {data.warnings.length > 0 && <ul className="rounded-lg bg-warn-soft px-3 py-2 text-xs">{data.warnings.map((w) => <li key={w}>{w}</li>)}</ul>}
           {(data.elss ?? h.elss) && (
             <div className="rounded-lg border border-border px-3 py-3">
@@ -267,6 +303,7 @@ function Holdings({ snap, onChanged, updating }: { snap: Snapshot; onChanged: ()
                     {(h.sources ?? []).map((src) => <SourceBadge key={src} source={src} />)}
                     {h.broker_baseline && <Badge tone="neutral">broker avg cost</Badge>}
                     {!h.cost_known && <Badge tone="warn">cost unknown</Badge>}
+                    {(h.pending_actions ?? []).map((a) => <Badge key={a.key} tone="warn">{a.type.replaceAll("_", " ")} {a.ex_date}: not modelled</Badge>)}
                     {h.asset_type === "mf" && h.scheme_code && <RankBadge s={ranks.data?.ranks[h.scheme_code]} />}
                     {h.elss && <ElssBadge e={h.elss} open={elssOpen === h.id} onToggle={() => setElssOpen(elssOpen === h.id ? null : h.id)} />}
                     {h.warnings.length > 0 && <Badge tone="warn">{h.warnings.length} note{h.warnings.length > 1 ? "s" : ""}</Badge>}

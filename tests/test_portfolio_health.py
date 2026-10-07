@@ -167,10 +167,16 @@ def test_health_api_rows_and_overall(client, monkeypatch):
     assert rows["history"]["coverage_pct"] == 100.0
     assert rows["targets"]["coverage_pct"] == 0.0
     assert rows["goals_age"]["coverage_pct"] == 50.0  # a goal, no age
-    expected = (20 * 100 + 20 * 50 + 10 * 100 / 3 + 10 * 0 + 10 * 100 + 10 * 100 + 10 * 0 + 10 * 50) / 100
-    assert body["overall"]["pct"] == round(expected, 1) == 58.3
-    assert body["overall"]["verdict"] == ("Analysis unreliable: key data is missing (1 check(s) could not run and "
-                                          "count as 0 %)")  # fmt: skip
+    assert (
+        rows["corporate_actions"]["coverage_pct"] == 100.0
+    )  # no unsupported corporate action recorded (#237)
+    # purchase dates, priced, corporate actions, dividends, look-through, AIS, history, targets, goals and age
+    expected = (
+        20 * 100 + 20 * 50 + 10 * 100 + 10 * 100 / 3 + 10 * 0 + 10 * 100 + 10 * 100 + 5 * 0 + 5 * 50
+    ) / 100
+    assert body["overall"]["pct"] == round(expected, 1) == 65.8
+    assert body["overall"]["verdict"] == ("Analysis partially reliable: some figures rest on incomplete data (1 "
+                                          "check(s) could not run and count as 0 %)")  # fmt: skip
 
 
 def test_lookthrough_coverage_from_the_api_coverage_block():
