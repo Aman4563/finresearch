@@ -26,6 +26,38 @@ The monitor inside `serve` runs the scheduled jobs: live refresh in market hours
 checks, the nightly portfolio valuation, fund ranks, the stock peer dataset, disclosures, the statement inbox and
 forecast scoring. `uv run finresearch monitor run` runs it without the API.
 
+The after-close market jobs (stock peers, disclosures, IV history) skip NSE holidays. If NSE's holiday list for the
+year can't be loaded, they don't run at all (they fail closed): the monitor logs it, raises one warning alert a day,
+and tries the list again every hour.
+
+### Logs and retention
+
+```bash
+uv run finresearch serve --log-file ../data/logs/serve.log                 # API + monitor logs, rotated by size
+cd web && pnpm start 2>&1 | uv run finresearch logpipe ../data/logs/web.log  # the app's output, rotated by size
+uv run finresearch prune                                                      # run the retention policy now
+```
+
+Each log file is capped at 10 MB and keeps 5 older files (`serve.log.1` … `.5`). A shell redirection
+(`> serve.log`) is never rotated, so use the commands above.
+
+Retention (the monitor runs it weekly, early on Monday IST; `monitor/retention.py`):
+- HTTP cache (`data/cache/http`): an entry is deleted once it is past the TTL it was cached with. Entries cached
+  before the TTL was stored are deleted after 60 days (the longest TTL in use is 45 days).
+- Intraday 1-minute series (`intraday_series`): rows older than 400 days are deleted. The charts use at most 5
+  sessions.
+- Never deleted: research packs and reports, backups (`scripts/backup.sh` keeps the newest 14), documents, run
+  transcripts and the validation archive (`data/archive`).
+
+### GET requests never change data
+
+Reading a page never writes. The portfolio value history is recorded by the monitor's daily pass and by
+`POST /api/portfolio/snapshot`. Journal drafts for new trades are created by the monitor and `POST /api/journal/sync`.
+Signals are logged in the forecast ledger by `POST /api/signals/{asset}/{instrument}`. IPO subscription snapshots are
+recorded by the monitor's scheduled checks. The app calls these POST routes when you open the page. The one exception
+is the broker OAuth flow: `GET /api/connections/{key}/login-url` and the `/callback` the broker redirects to must be
+GET, and they store the login state and the token.
+
 ## Research reports
 
 ```bash

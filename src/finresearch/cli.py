@@ -731,13 +731,43 @@ def ipo_status(run_id: int) -> None:
 def serve(
     port: int = typer.Option(8710, help="Port on 127.0.0.1"),
     monitor: bool = typer.Option(True, help="Run the monitoring scheduler inside the API process"),
+    log_file: Path | None = typer.Option(
+        None,
+        help="Write logs to this file, rotated by size (e.g. data/logs/serve.log); default: the terminal",
+    ),
 ) -> None:
     """Start the local API for the research app (always bound to 127.0.0.1)."""
     import uvicorn
 
     from finresearch.api import create_app
 
-    uvicorn.run(create_app(monitor=monitor), host="127.0.0.1", port=port, log_level="info")
+    if log_file is None:
+        uvicorn.run(create_app(monitor=monitor), host="127.0.0.1", port=port, log_level="info")
+        return
+    from finresearch.logfiles import uvicorn_log_config
+
+    uvicorn.run(create_app(monitor=monitor), host="127.0.0.1", port=port, log_level="info",
+                log_config=uvicorn_log_config(log_file))  # fmt: skip
+
+
+@app.command()
+def logpipe(path: Path = typer.Argument(..., help="Log file to write, rotated by size")) -> None:
+    """Copy stdin into a size-capped, rotated log file (for the web app's output; finresearch.logfiles)."""
+    from finresearch.logfiles import stdin_pipe
+
+    stdin_pipe(path)
+
+
+@app.command()
+def prune() -> None:
+    """Run the retention policy now: expired HTTP cache entries and old intraday series (monitor.retention).
+    Never touches research packs, reports, backups, documents or run transcripts."""
+    from datetime import UTC, datetime
+
+    from finresearch.monitor.retention import prune as run
+
+    res = run(datetime.now(UTC))
+    console.print(res)
 
 
 monitor_app = typer.Typer(

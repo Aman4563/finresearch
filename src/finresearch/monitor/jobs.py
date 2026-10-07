@@ -89,6 +89,9 @@ class Deps:
     lookthrough: bool = (
         False  # the monthly fund portfolio fetch for held funds (monitor.lookthrough_fetch, #214)
     )
+    retention: bool = (
+        False  # the weekly prune of the HTTP cache and old intraday series (monitor.retention, #247)
+    )
 
     @classmethod
     def live(cls) -> Deps:
@@ -176,7 +179,7 @@ class Deps:
                    intraday=live_fetch, bse_stock_snapshot=bse_stock_snapshot, bse_price_history=bse_price_history,
                    bse_corporate_actions=bse_corporate_actions, portfolio_daily=True, brief=True, archive=True,
                    live_holidays=True, disclosures=True, fund_ranks=True, stock_peers=True,
-                   lookthrough=True, pf_history=live_history)  # fmt: skip
+                   lookthrough=True, pf_history=live_history, retention=True)  # fmt: skip
 
 
 def alert(session: Session, watch: Watch, kind: str, message: str, level: str = "info", **data: Any) -> None:

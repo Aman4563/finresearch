@@ -391,6 +391,26 @@ def _spawn_stock_peers(now: datetime) -> None:
     _BACKGROUND["stock_peers"] = asyncio.create_task(run())
 
 
+def _spawn_retention(now: datetime) -> None:
+    """Start the weekly prune (monitor.retention) in the background: file deletes in the HTTP cache and one DELETE
+    on intraday_series. At most one runs at a time; it never touches packs, reports, backups or documents."""
+    from finresearch.monitor.retention import due_slot, retention_step
+
+    t = _BACKGROUND.get("retention")
+    if (t is not None and not t.done()) or due_slot(now) is None:
+        return
+
+    async def run() -> None:
+        try:
+            res = await retention_step(now)
+            if res:
+                log.info("retention prune: %s", res)
+        except Exception:
+            log.warning("retention prune failed", exc_info=True)
+
+    _BACKGROUND["retention"] = asyncio.create_task(run())
+
+
 async def drain() -> None:
     """Wait for background work started by `tick` (a one-shot `finresearch monitor tick` calls this)."""
     for t in list(_BACKGROUND.values()):
@@ -421,6 +441,8 @@ async def tick(deps: jobs.Deps, now: datetime | None = None) -> dict[str, int]:
         _spawn_stock_peers(now)
     if deps.lookthrough:
         _spawn_lookthrough(now)
+    if deps.retention:
+        _spawn_retention(now)
     out_brief = brief_step(now) if deps.brief else {}
     if deps.holidays is not None or deps.live_holidays:
         await _refresh_holidays(deps)
