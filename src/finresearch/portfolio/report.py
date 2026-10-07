@@ -132,9 +132,11 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
             ZERO,
         )
         value = p.price * units if p.price is not None and units > 0 else None
-        realised = sum(
-            (d.proceeds - d.cost for d in data.disposals.get(h.id, []) if d.cost is not None), ZERO
-        )
+        disp = data.disposals.get(h.id, [])
+        realised = sum((d.proceeds - d.cost for d in disp if d.cost is not None), ZERO)
+        # a sale out of a lot whose cost is unknown (an opening balance, a transfer-in, units beyond the lots) has an
+        # unknown gain: it is not in `realised`, and it is counted so the figure never reads as the whole story (#238)
+        no_cost = [d for d in disp if d.cost is None]
         divs = sum(
             (abs(t.amount) for t in data.txns.get(h.id, []) if t.kind == "dividend" and t.amount), ZERO
         )
@@ -166,6 +168,8 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
         if known:
             tot["cost"] += cost
         tot["realised"] += realised
+        tot["realised_unknown"] += len(no_cost)
+        tot["realised_unknown_proceeds"] += sum((d.proceeds for d in no_cost), ZERO)
         tot["dividends"] += divs
         if unreal is not None:
             tot["unrealised"] += unreal
@@ -182,7 +186,7 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
             "price_note": p.note,
             "value": _f(value), "unrealised": _f(unreal),
             "unrealised_pct": _f(unreal / cost * 100) if unreal is not None and cost > 0 else None,
-            "realised": _f(realised), "dividends": _f(divs), "xirr": x, "xirr_reason": x_reason,
+            "realised": _f(realised), "realised_unknown": len(no_cost), "dividends": _f(divs), "xirr": x, "xirr_reason": x_reason,
             "market_cap_cr": _f(p.market_cap_cr), "cap_bucket": (cap_bucket(p.market_cap_cr) if h.asset_type == "stock" and eff == "equity"
                                                                   else "Not equity" if h.asset_type == "stock"
                                                                   else fund_cap_bucket(category, eff)),
@@ -198,12 +202,18 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
     if excluded and ox is not None:
         ox_reason = xirr_exclusions(excluded)
     tl = timeline(data)
-    complete = unpriced == 0 and unknown_cost == 0 and tot["value"] > 0
+    realised_unknown = int(tot["realised_unknown"])
+    complete = unpriced == 0 and unknown_cost == 0 and realised_unknown == 0 and tot["value"] > 0
     return {
         "as_of": today.isoformat(), "holdings": rows, "complete": complete,
         "invested": tl[-1]["invested"] if tl else 0.0,
         "summary": {"value": _f(tot["value"]), "cost": _f(tot["cost"]), "unrealised": _f(tot["unrealised"]),
-                    "realised": _f(tot["realised"]), "dividends": _f(tot["dividends"]), "xirr": ox,
+                    "realised": _f(tot["realised"]), "realised_unknown": realised_unknown,
+                    "realised_unknown_proceeds": _f(tot["realised_unknown_proceeds"]),
+                    "realised_note": (f"excludes {realised_unknown} sale(s) whose cost is unknown "
+                                      f"(₹{float(tot['realised_unknown_proceeds']):,.0f} of proceeds): enter the cost "
+                                      "and date of those units for the full figure") if realised_unknown else None,
+                    "dividends": _f(tot["dividends"]), "xirr": ox,
                     "xirr_reason": ox_reason, "holdings": sum(1 for r in rows if not r["closed"]),
                     "unknown_cost": unknown_cost, "unpriced": unpriced},
         "allocation": {k: [{"label": lab, "value": _f(v)} for lab, v in sorted(d.items(), key=lambda kv: -kv[1])]

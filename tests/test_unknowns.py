@@ -86,3 +86,27 @@ def test_advance_tax_alert_is_unknown_when_the_year_has_an_unclassified_sale(cli
     assert value is None
     assert "FY 2026-27: unknown" in why and "without an acquisition date" in why
     assert m["ltcg_headroom_inr"][0] is None  # the existing #213 guard, for comparison
+
+
+def priced_holding(c, day: str = "2026-10-05") -> int:
+    """Example Beta: 5 units bought at ₹100, priced only by a broker statement close of ₹120 on `day`."""
+    t = add(c, name="Example Beta Ltd", isin="INE000Y01012", day="2026-01-05", kind="buy", quantity="5", price="100")
+    set_meta(holding_id=t["holding_id"], statement_price={"price": "120", "day": day, "source": "Zerodha"})
+    return t["holding_id"]
+
+
+# --------------------------------------------------------------------------- (c) realised P&L
+def test_realised_pnl_counts_sales_whose_cost_is_unknown(client):
+    t = add(client, day="2026-04-10", kind="opening", quantity="10")  # a CAS opening balance: cost unknown
+    add(client, holding_id=t["holding_id"], day="2026-06-01", kind="sell", quantity="10", price="150")
+    priced_holding(client)
+    snap = client.get("/api/portfolio").json()
+    sm = snap["summary"]
+    # Beta: 5 × 120 = ₹600 value, cost ₹500. Alpha: closed, gain unknown (proceeds 10 × 150 = ₹1,500)
+    assert sm["value"] == 600.0 and sm["unknown_cost"] == 0  # no OPEN lot has an unknown cost
+    assert sm["realised"] == 0.0  # the known part: nothing
+    assert sm["realised_unknown"] == 1 and sm["realised_unknown_proceeds"] == 1500.0
+    assert "1 sale(s) whose cost is unknown" in sm["realised_note"]
+    assert snap["complete"] is False  # main: True
+    alpha = next(r for r in snap["holdings"] if r["name"] == "Example Alpha Ltd")
+    assert alpha["realised_unknown"] == 1
