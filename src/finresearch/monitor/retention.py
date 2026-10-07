@@ -123,10 +123,21 @@ async def retention_step(now: datetime, *, cache_dir: Path | None = None) -> dic
     """The monitor's weekly prune: claimed per ISO week; a failure is retried (monitor.disclosures.MAX_ATTEMPTS)."""
     import asyncio
 
-    from finresearch.monitor.disclosures import claim, finish
+    from finresearch.db import session_scope
+    from finresearch.db.models import AlertEvalSlot
+    from finresearch.monitor.disclosures import MAX_ATTEMPTS, claim, finish
 
     slot = due_slot(now)
-    if slot is None or slot in _DONE or not claim(slot, now):
+    if slot is None or slot in _DONE:
+        return {}
+    if not claim(slot, now):  # another process holds or finished the week (a failed run is retried by claim)
+        with session_scope() as s:
+            row = s.get(AlertEvalSlot, slot)
+            r = (row.result or {}) if row is not None else {}
+            if (
+                r.get("status") == "done" or int(r.get("attempts", 1)) >= MAX_ATTEMPTS
+            ):  # nothing left this week
+                _DONE.add(slot)
         return {}
     try:
         res = await asyncio.to_thread(prune, now, cache_dir=cache_dir)

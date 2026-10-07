@@ -394,10 +394,10 @@ def _spawn_stock_peers(now: datetime) -> None:
 def _spawn_retention(now: datetime) -> None:
     """Start the weekly prune (monitor.retention) in the background: file deletes in the HTTP cache and one DELETE
     on intraday_series. At most one runs at a time; it never touches packs, reports, backups or documents."""
-    from finresearch.monitor.retention import due_slot, retention_step
+    from finresearch.monitor.retention import _DONE, due_slot, retention_step
 
     t = _BACKGROUND.get("retention")
-    if (t is not None and not t.done()) or due_slot(now) is None:
+    if (t is not None and not t.done()) or (slot := due_slot(now)) is None or slot in _DONE:
         return
 
     async def run() -> None:

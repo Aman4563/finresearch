@@ -104,6 +104,7 @@ async def test_the_weekly_job_runs_once_a_week(env, tmp_path):
     assert res["retention"]["http_cache"]["entries"] == 1
     retention._DONE.clear()  # another monitor process: the week's slot is already claimed
     assert await retention.retention_step(NOW + timedelta(hours=5), cache_dir=cache) == {}
+    assert "retention:2026-W42" in retention._DONE  # and it stops asking for the rest of the week
     retention._DONE.clear()
 
 

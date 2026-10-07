@@ -49,14 +49,23 @@ Retention (the monitor runs it weekly, early on Monday IST; `monitor/retention.p
 - Never deleted: research packs and reports, backups (`scripts/backup.sh` keeps the newest 14), documents, run
   transcripts and the validation archive (`data/archive`).
 
-### GET requests never change data
+### Which requests write
 
-Reading a page never writes. The portfolio value history is recorded by the monitor's daily pass and by
-`POST /api/portfolio/snapshot`. Journal drafts for new trades are created by the monitor and `POST /api/journal/sync`.
-Signals are logged in the forecast ledger by `POST /api/signals/{asset}/{instrument}`. IPO subscription snapshots are
-recorded by the monitor's scheduled checks. The app calls these POST routes when you open the page. The one exception
-is the broker OAuth flow: `GET /api/connections/{key}/login-url` and the `/callback` the broker redirects to must be
-GET, and they store the login state and the token.
+GET requests don't change your records, the alert inputs or the forecast ledger:
+- The portfolio value history (behind the drawdown and drift alerts) is recorded by the monitor's daily pass and by
+  `POST /api/portfolio/snapshot`, which the portfolio page calls once every price is in.
+- Journal drafts for new trades are created by the monitor (every minute) and by `POST /api/journal/sync`, which the
+  journal page calls when it opens.
+- A viewed stock or IPO signal is logged in the forecast ledger by `POST /api/signals/{asset}/{instrument}`, which
+  the signal views call. `GET` on the same path never logs. The monitor's own signal checks don't log either.
+- IPO subscription snapshots are recorded by the monitor's scheduled checks and archive slots.
+  `GET /api/watches/{id}/live` only reads.
+
+Some GETs still write caches, by design. They store fetched market data, never your records: the intraday series
+archive, the disclosure feed refresh, the ISIN map, the fund cap list, and the HTTP and price caches. The broker OAuth
+flow is the one exception that stores state: `GET /api/connections/{key}/login-url` stores the one-time login state,
+and the broker's redirect to `GET /api/connections/{key}/callback` stores the token. An OAuth redirect is always a
+GET.
 
 ## Research reports
 
