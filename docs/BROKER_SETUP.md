@@ -40,15 +40,41 @@ whitelisting is required" to read orders and trades. The other brokers' docs pag
    own import on the Portfolio → Import tab, so you can delete them in one click. When you later import a full
    tradebook for that account, the baseline is ignored automatically (the older history replaces it).
 2. **Trades** — each executed equity trade becomes a buy/sell in the broker's account ("Groww", "Zerodha", …, the same
-   account the CSV importers use). Re-syncing is idempotent. A trade already present from another source (your CSV on
-   the same day with the same units, or the same exchange order id) is skipped; a partial overlap is **not** added and
-   is listed as a conflict to review.
+   account the CSV importers use). Re-syncing is idempotent. A trade already present from another source is skipped
+   and a partial overlap is **not** added and is listed as a conflict to review (the rules below).
 3. **Nothing is overwritten** — manual, CAS and CSV rows are never edited or deleted by a sync. Differences between the
    broker's quantities and your lots are listed (Profile → Connections → "differences to review" and the sync log).
 4. Positions and cash are shown on the Connections card; they never become lots.
 5. Best first sync: **before 09:15 or on a holiday** (no trades today), so the baseline and today's trades cannot overlap.
    A buy made today usually appears in the broker's holdings only the next day; the reconciliation shows that one-day
    difference and it clears on the next sync.
+
+## The same trade from two sources (every import path)
+
+A tradebook upload, a CAS, a manual entry, an API sync, the statement inbox and a holdings statement all go through one
+check before anything is written (`portfolio/dedupe.py`; #236). For each instrument (ISIN, NSE symbol, BSE code or AMFI
+scheme code), account, trade day and side, the incoming rows are compared with rows that came from *another* source
+(re-importing the same source is caught separately):
+
+1. **Same id** — the same exchange trade id, or the same order id with the same total units → already present.
+2. **Different exchange trade ids** (Zerodha, Dhan) → different trades, never merged. Groww's API ids are Groww's own
+   order ids, not the exchange's, so for Groww (and Upstox, unverified) only a shared id counts.
+3. **Same quantity at a price within 0.5 %** → already present, matched one row to one row: two real buys of 10 on
+   the same day against one stored buy of 10 leave one of them new.
+4. **What is left adds up** to the same units at the same average price (several fills against one order, or one
+   manual entry) → already present.
+5. **Anything else** left on both sides (6 units here, 10 there; the same units at another price) is a **conflict**:
+   not added, listed on the import result for you to review. Nothing is ever merged silently or overwritten.
+
+Only the same account is compared, plus manual entries in any account (a manual buy is often kept under "Manual"):
+the same buy in two demat accounts is two trades. The import preview says "already present from zerodha_api" (or
+manual, groww, cas …) for such rows instead of "new", and lists the conflicts. A manual entry is checked against
+earlier imports too: the form answers "already present from …" and offers **Add anyway** for a genuine second trade.
+
+**Mutual funds:** a broker's fund holdings (Kite Coin) become a baseline only for a fund the app does not hold yet. When
+a CAS arrives later and its history covers the baseline's units on the baseline's day, the baseline is ignored by the
+lots, XIRR and history (it stays stored; deleting the CAS import brings it back). A CAS with fewer units than the
+baseline is a conflict to review.
 
 Schedule: with the monitor running (`uv run finresearch serve`, the default), each enabled connection syncs once per
 trading day after **16:00 IST** (missed days are caught up; a failed scheduled attempt is not retried until the next
@@ -146,5 +172,12 @@ What to import:
 1. **Groww:** import `Stocks_Order_History_…xlsx` first, then `Stocks_Holdings_Statement_…xlsx`. The holdings statement fills any holding the order history does not explain.
 2. **Mutual funds:** the CAMS/KFintech CAS PDF.
 3. **NSDL/CDSL e-CAS PDF:** used as a units check only.
+
+**Corporate actions:** "Sync corporate actions" adds splits and bonuses. A demerger, rights issue, merger or
+amalgamation, scheme of arrangement, ISIN change, buyback, capital reduction or consolidation on a stock you held on its
+ex-date is not modelled: it is recorded on the holding (type, ex-date, NSE/BSE subject and source URL), the holding's
+cost shows as unknown and every tax year with a sale on or after the ex-date shows as incomplete, until you enter the
+cost allocation by hand and mark it resolved with a note (or add a manual transaction that resolves it). The app never
+guesses a cost-split ratio.
 
 P&L and capital-gains reports are refused with an explanation: the app computes these itself from the order history. Old `.xls` files must be saved as `.xlsx` or `.csv` first.

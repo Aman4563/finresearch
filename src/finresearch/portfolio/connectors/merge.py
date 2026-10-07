@@ -19,14 +19,29 @@ Merge rules (in order):
    residual units, dated the day before the first trade (cost = the broker's average × quantity less the trades'
    cost when there were no sales in the window, otherwise unknown).
 2. **Trades** — each executed equity fill becomes a buy/sell. Re-syncing the same trade is a no-op (`dedupe_key` on the
-   broker's trade id). Before adding, rows from *other* sources for the same holding and day are checked: the same
-   exchange order id, or other-source units that already cover the day, mark the API row a duplicate ("already there
-   from the Groww CSV"); a partial overlap is not added and is reported as a conflict to review.
+   broker's trade id). Rows another source already has are skipped by the cross-source reconciliation that every
+   import path shares (portfolio.dedupe, #236; tradebook and CAS uploads, the inbox, manual entries, holdings
+   statements and this sync). Per instrument (ISIN / symbol / scheme code), account, day and side, incoming rows are
+   compared with *other-source* rows of the same account, and with manual entries in any account:
+   a. the same exchange trade id, or the same order id with equal total units → already present;
+   b. two different exchange trade ids (Zerodha, Dhan: the exchange's own ids) → different trades, never merged
+      (Groww's API ids are Groww's order ids, Upstox's unverified: there only a shared value counts);
+   c. the same units at a price within 0.5 % → already present, one row against one row, so two genuine buys of 10
+      against one stored buy of 10 leave one new;
+   d. what is left adding up to the same units at the same average price (fills vs one order) → already present;
+   e. anything else left on both sides is a partial overlap: a **conflict**, not added, reported for review.
+   Two broker accounts are never matched (the same buy in two demat accounts is two trades). Previews say "already
+   present from <source>" for such rows, never "new"; a manual entry that matches is refused unless confirmed.
 3. **Never overwrite** — a sync never edits or deletes rows from another source (manual, CAS, CSV). Differences
    between the broker's quantities and the app's lots are reported (sync log + Connections page), never "fixed".
 4. **Positions and funds** are stored on the connection for display; they never become lots.
 5. **Mutual funds from a broker** (Kite Coin) are reconciled by instrument across every account (a CAS is the better
-   source for fund history); a baseline is created only for a fund the app does not hold anywhere.
+   source for fund history); a baseline is created only for a fund the app does not hold anywhere. When a CAS imported
+   later covers the baseline's units on its day, the baseline is superseded (`meta.superseded_by`, set by
+   service.rebuild; lots, XIRR and history ignore it; deleting the CAS brings it back); a CAS with fewer units is a
+   conflict. The baseline's units, cost and date are never edited (only that derived marker is set and cleared).
+6. **Unsupported corporate actions** (#237): a reconciliation row whose holding has an unresolved demerger, rights
+   issue, merger ... (service.record_unsupported) names it in `pending_action`: it may explain the difference.
 """
 
 from __future__ import annotations

@@ -493,7 +493,7 @@ UNSUPPORTED_ACTIONS: tuple[tuple[str, str, re.Pattern[str]], ...] = (
         "capital_reduction",
         "capital reduction",
         re.compile(r"\bcapital reduction\b|\breduction (?:of|in) (?:share )?capital\b", re.I),
-    ),  # fmt: skip
+    ),
     ("buyback", "buyback", re.compile(r"\bbuy[- ]?back\b", re.I)),
     ("isin_change", "ISIN change", re.compile(r"\b(?:change (?:in|of) isin|isin change|new isin)\b", re.I)),
     ("rights", "rights issue", re.compile(r"\brights?\b", re.I)),
