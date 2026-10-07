@@ -269,3 +269,30 @@ async def test_after_the_session_bse_official_close_beats_an_nse_last_trade():
     live = datetime(today.year, today.month, today.day, 6, 0, tzinfo=UTC)  # 11:30 IST, in session
     out = await fetch_prices(hs, quote=make(live, D("499.80")), scheme_rows=None)
     assert out[1].price == D("501.00") and out[1].source == "NSE quote: last traded"
+
+
+def test_portfolio_gets_never_record_a_snapshot_the_post_does(client):
+    """#247: GET /api/portfolio (and /api/portfolio/health, which calls it) upserted the day's portfolio_snapshot,
+    the value history behind the drawdown and drift alerts, so a prefetch or a retry changed alert inputs. Only
+    POST /api/portfolio/snapshot (and the monitor's daily pass) records it, and only once every price is cached."""
+    from finresearch.db import session_scope
+    from finresearch.db.models import PortfolioSnapshot
+
+    c, f = client
+
+    def snaps():
+        with session_scope() as s:
+            return [(x.day, x.value, x.complete) for x in s.query(PortfolioSnapshot)]
+
+    early = c.post(
+        "/api/portfolio/snapshot", headers=ORIGIN
+    ).json()  # nothing cached yet: refused, no network
+    assert early == {"recorded": False, "reason": "9 holding(s) have no current price yet"} and f.quotes == []
+    full = c.get("/api/portfolio").json()  # live prices, every holding valued
+    assert full["pending"] == 0 and full["complete"]
+    c.get("/api/portfolio?prices=cached")
+    c.get("/api/portfolio/health")
+    assert snaps() == []
+    r = c.post("/api/portfolio/snapshot", headers=ORIGIN).json()
+    assert r == {"recorded": True, "day": "2026-09-30", "complete": True}
+    assert snaps() == [(date(2026, 9, 30), D("8500.00"), True)]  # 8 stocks x 10 x 100 + 10 units x 50

@@ -60,7 +60,15 @@ def test_journal_gets_never_create_drafts(client):
     from finresearch.db import session_scope
     from finresearch.db.models import PortfolioSetting, TradeNote
 
-    txn(client, name="Example Textiles", nse_symbol="EXMPL", day="2026-09-25", kind="buy", quantity="4", price="100")
+    txn(
+        client,
+        name="Example Textiles",
+        nse_symbol="EXMPL",
+        day="2026-09-25",
+        kind="buy",
+        quantity="4",
+        price="100",
+    )
     assert client.get("/api/journal/notes").json()["notes"] == []
     assert client.get("/api/journal/summary").json()["by_status"]["draft"] == 0
     with session_scope() as s:
