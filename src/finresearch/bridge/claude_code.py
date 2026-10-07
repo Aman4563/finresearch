@@ -32,6 +32,7 @@ from finresearch.bridge.types import (
     TransientError,
     transient_kind,
 )
+from finresearch.fetch_guard import DENY_RULES, write_sandbox_settings
 
 # Env vars that would silently switch the CLI away from the subscription login.
 _AUTH_OVERRIDES = (
@@ -145,6 +146,8 @@ class ClaudeCodeEngine:
         cmd += ["--tools", ",".join(builtin)]
         if task.allowed_tools:
             cmd += ["--allowedTools", ",".join(task.allowed_tools)]
+        if "WebFetch" in builtin:  # never this machine or the local network (finresearch.fetch_guard, #246)
+            cmd += ["--disallowedTools", ",".join(DENY_RULES)]
         if task.json_schema is not None:
             cmd += ["--json-schema", json.dumps(task.json_schema, separators=(",", ":"))]
         if task.effort:
@@ -170,6 +173,8 @@ class ClaudeCodeEngine:
         transcript_path = transcripts / f"{task.name}-{self.tier.value}-{int(time.time() * 1000)}.jsonl"
 
         cmd = self.build_command(task)
+        # the sandbox's project settings: WebFetch deny rules and the private-address hook (finresearch.fetch_guard)
+        write_sandbox_settings(run_dir)
         started = time.monotonic()
         try:
             proc = await asyncio.create_subprocess_exec(
