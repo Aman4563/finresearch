@@ -69,15 +69,30 @@ class ManualTxn(BaseModel):
     stt_paid: bool = True
     note: str | None = Field(None, max_length=2000)
     meta: dict[str, Any] = Field(default_factory=dict)
+    allow_duplicate: bool = False  # add it although another source has the same trade (a second, real trade)
 
     @field_validator("meta")
     @classmethod
     def _meta_keys(cls, v: dict[str, Any]) -> dict[str, Any]:
-        allowed = {"a", "b", "from", "to", "acquired", "rbi_redemption", "held_to_maturity"}
+        allowed = {
+            "a",
+            "b",
+            "from",
+            "to",
+            "acquired",
+            "rbi_redemption",
+            "held_to_maturity",
+            "resolves_action",
+        }
         bad = set(v) - allowed
         if bad:
             raise ValueError(f"unsupported meta keys: {sorted(bad)}")
         return v
+
+
+class ResolveAction(BaseModel):
+    key: str = Field(max_length=80)  # "<type>:<ex-date>", as GET /api/portfolio/holdings/{id} lists it
+    note: str = Field(max_length=2000)
 
 
 class TxnUpdate(BaseModel):
@@ -340,6 +355,7 @@ def add_portfolio_routes(app: FastAPI, *, scheme_rows: Callable[[], Awaitable[li
     @app.get("/api/portfolio/holdings/{holding_id}")
     def holding(holding_id: int) -> dict[str, Any]:
         from finresearch.db.models import PortfolioDisposal, PortfolioHolding, PortfolioLot, PortfolioTxn
+        from finresearch.portfolio.service import actions_of
 
         with session_scope() as s:
             h = s.get(PortfolioHolding, holding_id)
@@ -369,6 +385,7 @@ def add_portfolio_routes(app: FastAPI, *, scheme_rows: Callable[[], Awaitable[li
                                "sold": d.sold.isoformat(), "quantity": _n(d.quantity), "cost": _n(d.cost),
                                "proceeds": _n(d.proceeds), "origin": d.origin} for d in disp],
                 "warnings": (h.meta or {}).get("lot_warnings") or [],
+                "pending_actions": actions_of(h.meta, open_only=False),
             }  # fmt: skip
 
     @app.get("/api/portfolio/imports")
@@ -604,7 +621,7 @@ def add_portfolio_routes(app: FastAPI, *, scheme_rows: Callable[[], Awaitable[li
     # ------------------------------------------------------------------ manual edits
     @app.post("/api/portfolio/transactions", status_code=201)
     def add_txn(body: ManualTxn) -> dict[str, Any]:
-        from finresearch.portfolio.service import manual_txn
+        from finresearch.portfolio.service import DuplicateEntry, manual_txn
 
         if body.holding_id is None and not body.name.strip():
             raise HTTPException(422, "name: say what you bought (or pick an existing holding)")
@@ -623,6 +640,8 @@ def add_portfolio_routes(app: FastAPI, *, scheme_rows: Callable[[], Awaitable[li
                 t = manual_txn(s, body.model_dump())
             except LookupError as e:
                 raise HTTPException(404, str(e)) from e
+            except DuplicateEntry as e:
+                raise HTTPException(409, str(e)) from e
             return {"id": t.id, "holding_id": t.holding_id}
 
     @app.put("/api/portfolio/transactions/{txn_id}")
@@ -665,9 +684,14 @@ def add_portfolio_routes(app: FastAPI, *, scheme_rows: Callable[[], Awaitable[li
     @app.post("/api/portfolio/actions/sync")
     async def sync_actions() -> dict[str, Any]:
         """Fetch NSE corporate actions for every stock holding with an NSE symbol and add splits and bonuses (after
-        the first purchase, each once). BSE-only holdings: BSE's corporate-action feed."""
+        the first purchase, each once). BSE-only holdings: BSE's corporate-action feed. Any other action that changes
+        the cost or the units of a stock held on its ex-date (demerger, rights, merger, ISIN change, buyback, capital
+        reduction, consolidation) is recorded as `pending` on the holding, which makes its cost and later tax years
+        incomplete until it is resolved (#237)."""
+        from finresearch.adapters.bse_equity import bse_source_url
+        from finresearch.adapters.nse_equity import nse_source_url
         from finresearch.db.models import PortfolioHolding
-        from finresearch.portfolio.service import apply_actions
+        from finresearch.portfolio.service import apply_actions, record_unsupported
 
         with session_scope() as s:
             targets = [(h.id, h.nse_symbol, h.bse_code) for h in s.scalars(select(PortfolioHolding))
@@ -686,13 +710,41 @@ def add_portfolio_routes(app: FastAPI, *, scheme_rows: Callable[[], Awaitable[li
                 errors.append(f"{key[0]} {key[1]}: {type(e).__name__}")
                 fetched[key] = []
         added: dict[str, list[str]] = {}
+        pending: dict[str, list[str]] = {}
         with session_scope() as s:
             for hid, sym, code in targets:
                 h = s.get(PortfolioHolding, hid)
-                got = apply_actions(s, h, fetched[("NSE", sym) if sym else ("BSE", code)])
+                acts = fetched[("NSE", sym) if sym else ("BSE", code)]
+                got = apply_actions(s, h, acts)
                 if got:
                     added[h.name] = got
-        return {"checked": len(targets), "added": added, "errors": errors}
+                url = (
+                    nse_source_url("corporate_actions", sym)
+                    if sym
+                    else bse_source_url("corporate_actions", code)
+                )
+                rec = record_unsupported(
+                    s, h, acts, source_url=url, source="nse_actions" if sym else "bse_actions"
+                )
+                if rec:
+                    pending[h.name] = rec
+        return {"checked": len(targets), "added": added, "pending": pending, "errors": errors}
+
+    @app.post("/api/portfolio/holdings/{holding_id}/actions/resolve")
+    def resolve_action(holding_id: int, body: ResolveAction) -> dict[str, Any]:
+        """Mark a recorded corporate action resolved with a note (the cost allocation entered by hand, or why none
+        is needed). Its holding's cost and later tax years count as complete again."""
+        from finresearch.portfolio.service import actions_of
+        from finresearch.portfolio.service import resolve_action as resolve
+
+        with session_scope() as s:
+            try:
+                h = resolve(s, holding_id, body.key, body.note)
+            except LookupError as e:
+                raise HTTPException(404, str(e)) from e
+            except ValueError as e:
+                raise HTTPException(422, str(e)) from e
+            return {"id": h.id, "pending_actions": actions_of(h.meta, open_only=False)}
 
 
 def _holdings_statement(hs, sha: str, filename: str, dry: bool) -> dict[str, Any]:
