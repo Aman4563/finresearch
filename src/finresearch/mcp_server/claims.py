@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections.abc import Callable
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -62,6 +63,99 @@ def quote_in_lines(doc: Document, line_start: int, line_end: int, quote: str) ->
     return False, "quote not found in cited lines"
 
 
+def quote_in_text(quote: str, text: str) -> tuple[bool, str]:
+    """True if `quote` occurs in a stored page's text, exactly or ignoring whitespace, commas and ₹ (#242). Unlike a
+    document window there is no numbers-only fallback: a page is long, so loose number matches would prove nothing."""
+    if not quote:
+        return False, "no quote given"
+    if _norm(quote) in _norm(text):
+        return True, "exact (stored page)"
+    if _loose(quote) and _loose(quote) in _loose(text):
+        return True, "loose (whitespace/commas, stored page)"
+    return False, "quote not found on the stored page"
+
+
+def _web_citation(
+    session: Session, run_id: int, url: str, quote: str, at: datetime
+) -> tuple[Citation, dict[str, Any]]:
+    """A web citation, checked against the latest stored snapshot of the page (verify.web) when there is one."""
+    from finresearch.verify import web
+
+    if not re.match(r"https?://", url, re.I):
+        raise ValueError(f"a url citation must be an http(s) URL, got {url[:80]!r}; for a computed figure cite "
+                         '{"fincalc": {"function": ..., "args": {...}}, "inputs": [claim ids]}')  # fmt: skip
+    snap = web.latest(session, url, run_id)
+    if snap is None:
+        return (Citation(url=url, quote=quote or None, accessed_at=at),
+                {"url": url, "quote_found": None,
+                 "match": "unchecked web quote (grade C): fetch the page with fetch_page, then save the claim"})  # fmt: skip
+    found, how = quote_in_text(quote, snap.text)
+    return (Citation(url=url, quote=quote or None, accessed_at=at, quote_found=found, snapshot_sha256=snap.sha256),
+            {"url": url, "quote_found": found, "match": how, "snapshot_sha256": snap.sha256})  # fmt: skip
+
+
+def _close(stated: Decimal, result: Decimal) -> bool:
+    """`stated` equals `result` rounded to the stated precision (half a unit of its last decimal), or within 0.05 %."""
+    exp = stated.as_tuple().exponent
+    half = Decimal(5) * Decimal(10) ** (exp - 1) if isinstance(exp, int) else Decimal(0)
+    return abs(stated - result) <= max(half, abs(result) * Decimal("0.0005"))
+
+
+def _computed_citation(session: Session, run_id: int, c: dict[str, Any], value: Decimal | None, unit: str | None,
+                       fincalc: Callable[[str, dict[str, Any]], Any] | None) -> tuple[Citation, dict[str, Any]]:  # fmt: skip
+    """A figure computed by fincalc: the call is executed again and must reproduce the claim's value, and its inputs
+    must be claims of this run that are not unsupported or contradicted (grade D, #242)."""
+    import json
+
+    from sqlalchemy import select
+
+    spec, inputs = c.get("fincalc"), c.get("inputs")
+    if not isinstance(spec, dict) or not isinstance(spec.get("function"), str) or not isinstance(
+            spec.get("args") or {}, dict):  # fmt: skip
+        raise ValueError('a fincalc citation is {"fincalc": {"function": "growth.cagr", "args": {...}}, '
+                         '"inputs": [claim ids of the inputs]}')  # fmt: skip
+    try:
+        ids = [int(x) for x in inputs or []]
+    except (TypeError, ValueError) as e:
+        raise ValueError(f"fincalc inputs must be claim ids, got {inputs!r}") from e
+    fn, args, key = spec["function"], spec.get("args") or {}, spec.get("result_key")
+    if fincalc is None:
+        raise ValueError("fincalc citations are checked by the MCP server's save_claim")
+    try:
+        result = fincalc(fn, args)
+    except (ValueError, TypeError, ArithmeticError) as e:
+        raise ValueError(f"the fincalc citation does not run: {type(e).__name__}: {e}") from e
+    if isinstance(result, dict):
+        if key not in result:
+            raise ValueError(
+                f"{fn} returns several values {sorted(result)[:12]}: name the one cited as result_key"
+            )
+        result = result[key]
+    rd = (
+        _dec(result)
+        if isinstance(result, int | float | str | Decimal) and not isinstance(result, bool)
+        else None
+    )
+    pct = "%" in (unit or "") or "percent" in (unit or "").lower()
+    matches = (
+        value is not None and rd is not None and (_close(value, rd) or (pct and _close(value, rd * 100)))
+    )
+    rows = {x.id: x for x in session.scalars(select(Claim).where(Claim.id.in_(ids)))} if ids else {}
+    bad = [i for i in ids if i not in rows or rows[i].run_id != run_id
+           or rows[i].status in ("unsupported", "contradicted")]  # fmt: skip
+    inputs_ok = bool(ids) and not bad
+    detail = (
+        "fincalc reproduces the value" if matches else f"fincalc gives {result}, not the stated {value}"
+    ) + ("; inputs cited" if inputs_ok else f"; inputs not usable ({'none cited' if not ids else bad})")
+    url = f"fincalc:{fn}({json.dumps(args, sort_keys=True, default=str)})"[:2000]
+    comp = {"function": fn, "args": args, "result_key": key, "result": str(result), "inputs": ids,
+            "matches": bool(matches), "inputs_ok": inputs_ok, "detail": detail}  # fmt: skip
+    found = bool(matches) and inputs_ok
+    return (Citation(url=url, quote=(c.get("quote") or f"{fn} = {result}")[:1000], quote_found=found,
+                     computation=comp, accessed_at=datetime.now(UTC)),
+            {"fincalc": fn, "quote_found": found, "match": detail})  # fmt: skip
+
+
 def _negatives(s: str) -> set[Decimal]:
     from finresearch.verify.values import has_value_like, tokens
 
@@ -104,7 +198,10 @@ def save_claim(
     unit: str | None = None,
     period: str | None = None,
     importance: str = "normal",
+    fincalc: Callable[[str, dict[str, Any]], Any] | None = None,
 ) -> dict[str, Any]:
+    """Validate and store one claim with its citations (see the save_claim MCP tool). `fincalc` runs a computed
+    figure's fincalc citation again (mcp_server.server.run_fincalc)."""
     if claim_type not in CLAIM_TYPES:
         raise ValueError(f"claim_type must be one of {sorted(CLAIM_TYPES)}")
     if importance not in IMPORTANCE:
@@ -148,16 +245,18 @@ def save_claim(
                                     quote_found=found),
                            {"document_id": doc.id, "lines": f"{ls}-{le}", "page": page, "quote_found": found,
                             "match": how}))  # fmt: skip
+        elif c.get("fincalc"):
+            parsed.append(_computed_citation(session, run_id, c, _dec(value), unit, fincalc))
         elif c.get("url"):
             accessed = c.get("accessed_at")
             try:
                 at = datetime.fromisoformat(accessed) if accessed else datetime.now(UTC)
             except (TypeError, ValueError) as e:
                 raise ValueError(f"accessed_at must be an ISO date-time, got {accessed!r}") from e
-            parsed.append((Citation(url=c["url"], quote=c.get("quote"), accessed_at=at),
-                           {"url": c["url"], "quote_found": None, "match": "web source (verified later)"}))  # fmt: skip
+            parsed.append(_web_citation(session, run_id, c["url"], (c.get("quote") or "").strip(), at))
         else:
-            raise ValueError("each citation needs document_id+line_start(+line_end)+quote, or url")
+            raise ValueError("each citation needs document_id+line_start(+line_end)+quote, url(+quote), or "
+                             "fincalc+inputs")  # fmt: skip
 
     claim = Claim(
         run_id=run_id,
@@ -175,9 +274,16 @@ def save_claim(
     session.flush()
     checks = [chk for _, chk in parsed]
     doc_checks = [x for x in checks if "document_id" in x]
+    checked = [x for x in checks if x["quote_found"] is not None]
     if doc_checks and not any(x["quote_found"] for x in doc_checks):
         claim.status = "unsupported"
         claim.verifier_note = "no cited quote was found at the cited lines"
+    elif checked and len(checked) == len(checks) and not any(x["quote_found"] for x in checked):
+        # every citation was checked (web quote against its stored page, fincalc re-run) and none held (#242)
+        claim.status = "unsupported"
+        claim.verifier_note = (
+            "no citation could be confirmed: " + "; ".join(str(x.get("match")) for x in checked)
+        )[:1500]
     out: dict[str, Any] = {"claim_id": claim.id, "status": claim.status, "citation_checks": checks}
     if any(DEVANAGARI.search(c.get("quote") or "") for c in citations):
         # live run 7: the agent kept the Hindi quote but did not mark its English statement as a translation, even
