@@ -127,7 +127,11 @@ class ApiTokenGuard:
         return cookie is not None and hmac.compare_digest(cookie.encode(), self._token)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] in ("http", "websocket"):
+        # no websocket routes today; an unauthenticated one would be closed as a policy violation
+        if scope["type"] == "websocket":
+            if not self._ok(HTTPConnection(scope)):
+                return await send({"type": "websocket.close", "code": 1008})
+        elif scope["type"] == "http":
             conn = HTTPConnection(scope)
             if not exempt(scope.get("method", "GET"), scope["path"]) and not self._ok(conn):
                 resp = JSONResponse({"detail": "unauthorized: the local API token is missing or wrong (reload the "
