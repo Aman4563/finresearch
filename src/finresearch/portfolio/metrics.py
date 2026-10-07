@@ -330,7 +330,11 @@ def alert_metrics(session: Session) -> Out:
     out["days_to_elss_unlock"] = elss_unlock_metric(session, data, today)
     at = advance_tax(session, data, today)
     nxt = at["next"]
-    if nxt is None:
+    if not at["complete"]:
+        # an unclassified disposal is left out of the year's tax, so the instalment would be understated and the
+        # threshold alert could stay silent: unknown, never a number (as ltcg_headroom_inr, #213)
+        out["advance_tax_due_inr"] = (None, f"{fy_label(fy)}: unknown: " + at["unclassified"]["detail"])
+    elif nxt is None:
         out["advance_tax_due_inr"] = (Decimal(0), "no advance-tax instalment left this financial year")
     else:
         out["advance_tax_due_inr"] = (
