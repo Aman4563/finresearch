@@ -107,7 +107,7 @@ def test_fno_api_chain_and_strategy(env, monkeypatch):
             {"right": "call", "strike": "23000", "side": "sell", "lots": 1}]}  # fmt: skip
         r = c.post("/api/fno/strategy", json=body).json()
         assert r["lot_size"] == 65 and r["max_profit"] > 0 and r["max_loss"] < 0 and len(r["breakevens"]) == 1
-        assert 22800 < r["breakevens"][0] < 23000 and 0 < r["probability_of_profit"] < 1
+        assert 22800 < r["breakevens"][0] < 23000 and 0 < r["model_probability_of_profit"] < 1
         assert r["net_greeks"]["delta"] > 0 and "Analysis only" in r["disclaimer"]
         bad = {**body, "legs": [{"right": "call", "strike": "99999", "side": "buy", "lots": 1}]}
         assert c.post("/api/fno/strategy", json=bad).status_code == 422

@@ -45,7 +45,8 @@ def export_run(session: Session, run_id: int) -> dict[str, Any]:
                        "citations": [{"document_title": titles.get(x.document_id), "page_no": x.page_no,
                                       "line_start": x.line_start, "line_end": x.line_end, "quote": x.quote,
                                       "quote_found": x.quote_found, "url": x.url,
-                                      "accessed_at": _dt(x.accessed_at)} for x in c.citations]})  # fmt: skip
+                                      "accessed_at": _dt(x.accessed_at), "snapshot_sha256": x.snapshot_sha256,
+                                      "computation": x.computation} for x in c.citations]})  # fmt: skip
     steps = session.scalars(select(AgentStep).where(AgentStep.run_id == run_id).order_by(AgentStep.id)).all()
     synth = next((s for s in sorted(steps, key=lambda x: (x.finished_at or datetime.min.replace(tzinfo=UTC), x.id),
                                     reverse=True) if s.stage == "synthesis" and s.status == "done"), None)  # fmt: skip
@@ -92,7 +93,8 @@ def import_run(session: Session, data: dict[str, Any], *, slug_suffix: str = "")
             session.add(Citation(claim_id=claim.id, page_no=ct["page_no"], line_start=ct["line_start"],
                                  line_end=ct["line_end"], quote=ct["quote"], quote_found=ct["quote_found"],
                                  url=ct["url"], accessed_at=datetime.fromisoformat(ct["accessed_at"])
-                                 if ct["accessed_at"] else None))  # fmt: skip
+                                 if ct["accessed_at"] else None, snapshot_sha256=ct.get("snapshot_sha256"),
+                                 computation=ct.get("computation")))  # fmt: skip
     for x in data["claims"]:
         if x["corrects_claim_id"] in ids:
             session.get(Claim, ids[x["id"]]).corrects_claim_id = ids[x["corrects_claim_id"]]

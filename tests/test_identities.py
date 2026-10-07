@@ -263,11 +263,12 @@ def test_replayed_live_runs_are_not_blocked_by_the_identity_policy(env, tmp_path
         cited = {int(x) for x in re.findall(r"\[C(\d+)\]", report)}
         blocking, _ = identity_findings(s, run_id, cited)
         assert blocking == []
-        assert check_report(s, run_id, report).ok
+        # the only blocks left are evidence grades (#242: unchecked web quotes), never the identity policy
+        assert not [b for b in check_report(s, run_id, report).blocking if "evidence is grade" not in b]
 
 
 def _db_run(s, tmp_path, rows):
-    from finresearch.db.models import Claim, ResearchRun
+    from finresearch.db.models import Citation, Claim, ResearchRun
     from finresearch.ingest.documents import get_or_create_company
 
     co = get_or_create_company(s, "ident-" + tmp_path.name[-8:], "Ident Ltd")
@@ -279,6 +280,8 @@ def _db_run(s, tmp_path, rows):
         cl = Claim(run_id=run.id, stream="financials", statement=r["statement"] or r["metric"], claim_type="numeric",
                    metric=r["metric"], value=r["value"], unit=r["unit"], period=r["period"],
                    importance=r["importance"], status=r["status"])  # fmt: skip
+        # a document citation whose quote was found: evidence grade A, so only the identity policy decides
+        cl.citations = [Citation(line_start=1, line_end=1, quote=r["metric"], quote_found=True)]
         s.add(cl)
         s.flush()
         ids.append(cl.id)

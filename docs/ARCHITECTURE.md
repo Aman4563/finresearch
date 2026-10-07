@@ -55,12 +55,19 @@ adversarial verifiers, bull and bear analysts, a synthesiser and a completeness 
 FinResearch MCP tools: documents, sections, search, tables, `fincalc`, live market data and the claim ledger.
 
 Every finding is saved as an atomic claim (metric, value, unit, period) with citations. The verification gate:
-- checks each quoted value against its cited lines;
+- checks each quoted value against its cited lines, and each web quote against the page text the `fetch_page` tool
+  stored (`verify/web.py`); a fincalc citation is run again and must reproduce the value;
+- grades every claim's evidence (`verify/evidence.py`): A document quote verified, B web quote verified on a stored
+  copy of the page, C web quote unchecked, D computed by fincalc from cited inputs, U unsupported;
 - catches conflicts between streams, stale live figures and wrong bidding-day labels;
-- turns verifier corrections into new, re-checked claims, and gives high-importance claims a second verifier;
+- turns verifier corrections into new, re-checked claims, and gives verified high-importance claims an independent
+  second verifier (`verifier_blind`: its own prompt, the STANDARD model tier, no ledger access) that is never shown
+  the figure, the status or the first verifier's reasoning; it re-derives the value, the orchestrator compares
+  (`verify/second_opinion.py`) and a disagreement makes the claim needs_review;
 - treats web and PDF content as untrusted data, never as instructions.
 
-The publish gate releases a report only if every citation in it is sound; otherwise it is rendered as a marked draft.
+The publish gate releases a report only if every citation in it is sound and every high-importance claim it cites is
+verified with evidence grade A, B or D; otherwise it is rendered as a marked draft.
 
 ## Markets, signals and accuracy (`adapters/`, `fincalc/`, `signals/`, `evals/`, `disclosures/`)
 

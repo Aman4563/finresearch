@@ -112,9 +112,15 @@ def evidence_appendix(claims: list[ClaimView]) -> str:
     for c in claims:
         cites = []
         for ct in c.citations:
-            if ct.get("url"):
+            grade = (f" <small>evidence {ct['grade']}: {_html.escape(ct.get('grade_label') or '')}</small>"
+                     if ct.get("grade") else "")  # fmt: skip
+            if ct.get("url") and not str(ct["url"]).lower().startswith(("http://", "https://")):
+                # a computed figure: only a fincalc call save_claim re-ran is "deterministic" (grade D, #242)
+                cites.append(f"<div>🧮 <code>{_html.escape(str(ct['url'])[:200])}</code>{grade}</div>")
+            elif ct.get("url"):
                 cites.append(f'<div>🌐 <a href="{_html.escape(ct["url"])}">{_html.escape(ct["url"][:90])}</a> '
-                             f'<span class="quote">accessed {_html.escape(str(ct.get("accessed_at") or "?"))}</span></div>')  # fmt: skip
+                             f'<span class="quote">accessed {_html.escape(str(ct.get("accessed_at") or "?"))}</span>'
+                             f"{grade}</div>")  # fmt: skip
             else:
                 found = {True: "✓ quote found", False: "✗ quote NOT found", None: ""}[ct.get("quote_found")]
                 cites.append(f"<div>📄 {_html.escape(ct.get('doc_title') or '?')} — page {ct.get('page')}, lines "

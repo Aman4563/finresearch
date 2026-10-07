@@ -205,8 +205,29 @@ class Citation(Base):
     quote_found: Mapped[bool | None] = mapped_column()  # deterministic check: quote present in cited lines
     url: Mapped[str | None] = mapped_column(Text)
     accessed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # a web quote checked against the page text the `fetch_page` MCP tool stored (WebSnapshot.sha256); quote_found
+    # then says whether the quote is on that page (#242). None: no snapshot, the quote is unchecked (grade C).
+    snapshot_sha256: Mapped[str | None] = mapped_column(String(64))
+    # a figure computed by fincalc: {"function", "args", "inputs": [claim ids], "result", "matches", "inputs_ok",
+    # "detail"}, re-executed by save_claim (#242). quote_found = matches and inputs_ok.
+    computation: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
 
     claim: Mapped[Claim] = relationship(back_populates="citations")
+
+
+class WebSnapshot(Base):
+    """The text of a web page as the `fetch_page` MCP tool returned it to an agent (#242): web quotes are checked
+    against it, and its sha256 is stored on the citation, so a B-grade web citation names the exact text it was
+    checked against. Exchange tools store their JSON responses the same way (run_id None)."""
+
+    __tablename__ = "web_snapshot"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_id: Mapped[int | None] = mapped_column(ForeignKey("research_run.id", ondelete="CASCADE"), index=True)
+    url: Mapped[str] = mapped_column(Text, index=True)
+    sha256: Mapped[str] = mapped_column(String(64), index=True)
+    content_type: Mapped[str | None] = mapped_column(String(120))
+    text: Mapped[str] = mapped_column(Text)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class AgentStep(Base):

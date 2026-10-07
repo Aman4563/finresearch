@@ -312,9 +312,12 @@ def test_synthesis_parts_pass_through_with_citations():
               cl("x", "1", "x", "FY26", stream="stock_news", status="contradicted", id=1426)]  # fmt: skip
     out = build_insights(run_id=1, kind="stock_report", claims=claims, synthesis=syn,
                          report_markdown="# T\n\nCheap [C1425].")  # fmt: skip
-    assert (
-        out["verdict"]["word"] == "ACCUMULATE" and out["verdict"]["entry_zone"] == "₹889–1,000 [C1626][C1627]"
-    )
+    # a stock report states a research view, informational under signals.stock's policy (#241): the old ACCUMULATE
+    # reads "Favourable", and its entry zone is price context, never an entry instruction
+    v = out["verdict"]
+    assert v["word"] == "Favourable" and v["original_word"] == "ACCUMULATE" and v["policy"] == "informational"
+    assert v["entry_zone"] is None and v["price_context"] == "₹889–1,000 [C1626][C1627]"
+    assert v["view_label"] == "Research view: favourable — informational, no validated edge"
     assert out["pros"] == [{"text": "Cheap at 13.5x", "weight": "high", "claim_ids": [1425]}]
     assert out["cons"][0]["claim_ids"] == [1328]
     assert len(out["scenarios"]) == 1 and out["scenarios"][0]["rationale"] == "EPS +5% [C1635]"
@@ -357,7 +360,8 @@ def test_insights_route_on_replayed_infosys_run(client, env, tmp_path):
     r = client.get(f"/api/runs/{run_id}/insights")
     assert r.status_code == 200
     out = r.json()
-    assert out["kind"] == "stock_report" and out["verdict"]["word"] == "ACCUMULATE"
+    assert out["kind"] == "stock_report" and out["verdict"]["word"] == "Favourable"
+    assert out["verdict"]["original_word"] == "ACCUMULATE"
     rev = next(
         x
         for x in out["financials"]["series"]

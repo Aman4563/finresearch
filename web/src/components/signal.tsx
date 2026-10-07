@@ -1,10 +1,11 @@
 "use client";
 
-// One buy/sell signal (finresearch.signals.base.Signal), the same way for every asset class: the action, the score,
+// One signal (finresearch.signals.base.Signal), a research heuristic and not a buy/sell instruction, shown the same way
+// for every asset class: the action (a rule-based view, #241), the score,
 // the probability of a stated event with its range, the factors that moved it, how the method was validated, and the
 // caveats. A signal is a probability with a range, never a command.
 
-import { Activity, FlaskConical, Info, ShieldAlert, TrendingDown, TrendingUp } from "lucide-react";
+import { Activity, FlaskConical, Info, ShieldAlert } from "lucide-react";
 import { useState } from "react";
 
 import { Badge, Card, InfoTip, SkeletonRows, cx } from "@/components/ui";
@@ -76,6 +77,10 @@ const VALIDATION: Record<SignalValidation["status"], { label: string; tone: "gai
   shadow: { label: "Shadow test", tone: "neutral", help: "Shadow test: logged for out-of-sample scoring, not used for the call." },
 };
 
+/** What an action is (#241): every non-stock signal's action (APPLY, BUY, ENTER, ...) comes from fixed rules, even when
+ *  its probability has a backtest or base rate behind it: a rule-based view, never advice. */
+export const VIEW_LABEL = "Rule-based view";
+
 /** An alternative method computed beside the call and logged as a shadow test (never used for the action). */
 export type SignalShadow = {
   method: string; probability: number; probability_interval: [number, number] | null; status: "shadow";
@@ -110,6 +115,8 @@ function ScoreBar({ score }: { score: number }) {
 
 export function SignalView({ s, compact }: { s: Signal; compact?: boolean }) {
   const [open, setOpen] = useState(!compact);
+  // the action's direction, used only to flag a probability on the other side of 50 %; the chip itself stays neutral:
+  // a rule-based view is not a green "go" or a red "stop" (#241)
   const tone = POSITIVE.has(s.action) ? "gain" : NEGATIVE.has(s.action) ? "loss" : "neutral";
   const v = VALIDATION[s.validation.status];
   const maxAbs = Math.max(1, ...s.factors.map((f) => Math.abs(f.contribution)));
@@ -118,9 +125,9 @@ export function SignalView({ s, compact }: { s: Signal; compact?: boolean }) {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
-        <span className={cx("inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-lg font-semibold tracking-tight ring-1 ring-inset",
-          tone === "gain" ? "bg-gain-soft text-gain ring-gain/30" : tone === "loss" ? "bg-loss-soft text-loss ring-loss/30" : "bg-background-subtle text-foreground ring-border")}>
-          {tone === "gain" ? <TrendingUp className="size-4" /> : tone === "loss" ? <TrendingDown className="size-4" /> : s.call ? <Info className="size-4" /> : <Activity className="size-4" />}
+        {!s.call && <span className="text-[11px] font-medium uppercase tracking-wider text-muted">{VIEW_LABEL}</span>}
+        <span className="inline-flex items-center gap-1.5 rounded-lg bg-background-subtle px-3 py-1.5 text-lg font-semibold tracking-tight text-foreground ring-1 ring-inset ring-border">
+          {s.call ? <Info className="size-4" /> : <Activity className="size-4" />}
           {s.call?.label ?? LABEL[s.action] ?? s.action.replaceAll("_", " ")}
         </span>
         {s.call && <span className="text-sm text-muted">{s.call.tilt}</span>}
