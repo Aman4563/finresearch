@@ -112,7 +112,9 @@ def index_document(session: Session, doc: Document, *, embedder=None, batch: int
             for k in range(0, len(drafts), batch):
                 vecs = asyncio.run(embedder.embed([d.text for d in drafts[k : k + batch]]))
                 if len(vecs) != len(drafts[k : k + batch]):
-                    raise ValueError(f"the embedder returned {len(vecs)} vectors for {len(drafts[k : k + batch])}")
+                    raise ValueError(
+                        f"the embedder returned {len(vecs)} vectors for {len(drafts[k : k + batch])}"
+                    )
                 vectors[k : k + batch] = vecs
                 if progress:
                     progress(f"embedded {min(k + batch, len(drafts))}/{len(drafts)}")
