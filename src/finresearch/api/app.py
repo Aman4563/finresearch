@@ -29,6 +29,7 @@ from starlette.datastructures import Headers
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from finresearch import __version__
 from finresearch.adapters.amfi import AmfiError
 from finresearch.adapters.nse import NseError
 from finresearch.adapters.sebi import SebiError
@@ -293,7 +294,7 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(stop.wait(), timeout=every_s)
 
-    app = FastAPI(title="FinResearch", version="0.3.0", docs_url="/api/docs", openapi_url="/api/openapi.json",
+    app = FastAPI(title="FinResearch", version=__version__, docs_url="/api/docs", openapi_url="/api/openapi.json",
                   lifespan=lifespan)  # fmt: skip
     # the last added middleware is outermost: CORS wraps the error and CSRF layers so their responses carry CORS
     # headers (a bare 500 without them looks like "API not reachable" in the dashboard)
@@ -322,7 +323,7 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
     def health() -> dict[str, Any]:
         with session_scope() as s:
             s.execute(select(1))
-        return {"ok": True}
+        return {"ok": True, "version": __version__}
 
     # ------------------------------------------------------------------ companies & documents
     @app.get("/api/companies")
