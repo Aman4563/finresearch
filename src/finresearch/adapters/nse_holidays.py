@@ -80,6 +80,14 @@ def trading_holidays(state_dir: Path | None = None) -> set[date]:
     return set(load_holidays("trading", state_dir))
 
 
+def known_trading_holidays(day: date, state_dir: Path | None = None) -> set[date] | None:
+    """The trading holidays when `day`'s year list is cached, else None: unknown, which a market job must treat as
+    "not a trading day" (fail closed, #247), never as "no holidays"."""
+    if day.year not in cached_years(state_dir):
+        return None
+    return trading_holidays(state_dir)
+
+
 def settlement_holidays(state_dir: Path | None = None) -> set[date]:
     """Days on which T+N settlement does not advance: trading or clearing holidays."""
     return set(load_holidays("trading", state_dir)) | set(load_holidays("clearing", state_dir))

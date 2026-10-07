@@ -259,13 +259,13 @@ async def test_monitor_records_daily_atm_iv_once(env):
         # a BSE-only watch has no NSE options: left out explicitly (even if a lot file named its code)
         s.add(Watch(company_id=bse_co.id, kind="stock", exchange="BSE", bse_code="526433"))
     assert "526433" not in iv.symbols({"INFY": {}, "526433": {}}) and "INFY" in iv.symbols({"INFY": {}})
-    early = await iv.record_iv(FakeFno, datetime(2026, 9, 29, 15, 0, tzinfo=dates.IST))
+    early = await iv.record_iv(FakeFno, datetime(2026, 9, 29, 15, 0, tzinfo=dates.IST), set())
     assert early["recorded"] == [] and FakeFno.calls == {}
     # the fixture chain is stamped 28-Sep 15:30; record as that day
-    first = await iv.record_iv(FakeFno, datetime(2026, 9, 28, 16, 0, tzinfo=dates.IST))
+    first = await iv.record_iv(FakeFno, datetime(2026, 9, 28, 16, 0, tzinfo=dates.IST), set())
     assert first["recorded"] == ["NIFTY", "BANKNIFTY", "FINNIFTY", "INFY"] and first["failed"] == {}
     calls = dict(FakeFno.calls)
-    again = await iv.record_iv(FakeFno, datetime(2026, 9, 28, 16, 1, tzinfo=dates.IST).astimezone(UTC))
+    again = await iv.record_iv(FakeFno, datetime(2026, 9, 28, 16, 1, tzinfo=dates.IST).astimezone(UTC), set())
     assert again["recorded"] == [] and FakeFno.calls == calls  # no network once everything is recorded
     with session_scope() as s:
         rows = s.scalars(
@@ -296,12 +296,12 @@ async def test_a_failed_lot_file_is_retried_not_cached_as_no_fno_stocks(env, mon
             return {"INFY": {"OCT-26": 400}}
 
     monkeypatch.setattr(iv, "insert", lambda _m: _Ins(recorded))
-    first = await iv.record_iv(Flaky, datetime(2026, 9, 30, 16, 0, tzinfo=dates.IST))
+    first = await iv.record_iv(Flaky, datetime(2026, 9, 30, 16, 0, tzinfo=dates.IST), set())
     assert "lot sizes" in first["failed"] and "INFY" not in first["recorded"]
     Flaky.fail = False
     clock = _time.time() + iv.RETRY_S + 1
     monkeypatch.setattr(iv.time, "time", lambda: clock)
-    second = await iv.record_iv(Flaky, datetime(2026, 9, 30, 16, 11, tzinfo=dates.IST))
+    second = await iv.record_iv(Flaky, datetime(2026, 9, 30, 16, 11, tzinfo=dates.IST), set())
     assert "INFY" in second["recorded"]
     iv.reset_tries()
 

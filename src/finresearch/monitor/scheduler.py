@@ -169,8 +169,9 @@ _HOLIDAYS_CHECKED: dict[str, float] = {}
 
 async def _refresh_holidays(deps: jobs.Deps) -> None:
     """Keep NSE's holiday lists fresh (at most one attempt a day; failures keep the cached lists). While the current
-    year's list is missing altogether every date calculation treats holidays as trading days, so a failed attempt is
-    then retried within the hour instead of the next day."""
+    year's list is missing altogether a failed attempt is retried within the hour instead of the next day: the
+    after-close market jobs (stock peers, disclosures, IV history) fail closed and stay paused, with one warning
+    alert a day (monitor.market_days), and the IPO watch plan still treats unknown holidays as trading days."""
     import time
 
     from finresearch.adapters.nse_holidays import cached_years

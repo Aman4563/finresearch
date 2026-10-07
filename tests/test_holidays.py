@@ -173,3 +173,58 @@ async def test_a_missing_year_is_retried_within_the_hour(tmp_path, monkeypatch):
     await scheduler._refresh_holidays(Deps(ipo_detail=None, quote=None, holidays=fails))
     assert calls == ["trading"]  # nothing cached for this year: tried again after an hour, not a day
     config.get_settings.cache_clear()
+
+
+def _ist(d: date, hh: int, mm: int) -> datetime:
+    from finresearch.fincalc.dates import IST
+
+    return datetime(d.year, d.month, d.day, hh, mm, tzinfo=IST)
+
+
+class _NoNetwork:
+    """An F&O client factory that fails the test if a job reaches the exchange."""
+
+    def __call__(self):
+        raise AssertionError("the IV job read NSE on a day it must skip")
+
+
+async def test_market_jobs_fail_closed_when_the_holiday_list_is_unknown(env):
+    """#247: stock peers, disclosures and IV history checked only for weekends, and an unknown holiday list meant
+    "no holidays". With no list cached, a weekday is not a trading day for these jobs, and one alert says why."""
+    from sqlalchemy import select
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import Alert
+    from finresearch.monitor import disclosures, iv, market_days, stock_peers
+
+    market_days._ALERTED.clear()
+    thu = date(2026, 10, 1)
+    assert h.cached_years() == set()  # a fresh install: nothing cached
+    assert stock_peers.due_slot(_ist(thu, 19, 45)) is None
+    assert disclosures.due_passes(_ist(thu, 19, 45)) == []
+    assert disclosures.due_passes(_ist(thu, 8, 5)) == []
+    res = await iv.record_iv(_NoNetwork(), _ist(thu, 16, 0))
+    assert res["recorded"] == [] and "holiday list" in res["skipped"]
+    with session_scope() as s:
+        alerts = s.scalars(select(Alert).where(Alert.kind == "holidays_unknown")).all()
+        assert len(alerts) == 1 and alerts[0].level == "warn" and "2026 holiday list" in alerts[0].message
+    market_days._ALERTED.clear()  # a second monitor process: the slot still dedupes the alert
+    assert stock_peers.due_slot(_ist(thu, 20, 0)) is None
+    with session_scope() as s:
+        assert len(s.scalars(select(Alert).where(Alert.kind == "holidays_unknown")).all()) == 1
+    market_days._ALERTED.clear()
+
+
+async def test_market_jobs_skip_nse_holidays(cached):
+    """With NSE's 2026 list cached: Gandhi Jayanti (Fri 2-Oct-2026, circular NSE/CMTR/71775) is skipped by all
+    three jobs; the Thursday before is a normal session."""
+    from finresearch.monitor import disclosures, iv, stock_peers
+
+    thu, fri = date(2026, 10, 1), date(2026, 10, 2)
+    assert date(2026, 10, 2) in h.trading_holidays()
+    assert stock_peers.due_slot(_ist(thu, 19, 45)) == "stock_peers:2026-10-01"
+    assert stock_peers.due_slot(_ist(fri, 19, 45)) is None
+    assert disclosures.due_passes(_ist(thu, 19, 45)) == [("evening", "disclosures:evening:2026-10-01")]
+    assert disclosures.due_passes(_ist(fri, 19, 45)) == [] and disclosures.due_passes(_ist(fri, 8, 5)) == []
+    res = await iv.record_iv(_NoNetwork(), _ist(fri, 16, 0))
+    assert res["recorded"] == [] and "not a trading day" in res["skipped"]

@@ -78,13 +78,18 @@ def symbols(lots: dict[str, dict[str, int]] | None) -> list[str]:
     return [*INDEX_SYMBOLS, *(x for x in extra if x not in INDEX_SYMBOLS)]
 
 
-async def record_iv(client_factory, now: datetime) -> dict[str, Any]:
+async def record_iv(client_factory, now: datetime, holidays: set[date] | None = None) -> dict[str, Any]:
     """Record today's ATM IV for every symbol not yet recorded. Returns {"recorded": [...], "failed": {...}}. Makes
-    no network call once every symbol is recorded or out of tries for the day (the monitor ticks every minute)."""
+    no network call once every symbol is recorded or out of tries for the day (the monitor ticks every minute), on an
+    NSE holiday, or while the holiday list is unknown (monitor.market_days fails closed)."""
+    from finresearch.monitor.market_days import market_day
+
     local = to_ist(now)
     today = local.date()
     if local.weekday() >= 5 or (local.hour, local.minute) < START:
         return {"recorded": [], "failed": {}, "skipped": "outside the after-close window"}
+    if not market_day(today, holidays, job="IV history"):
+        return {"recorded": [], "failed": {}, "skipped": "not a trading day (or the holiday list is unknown)"}
     try:
         with session_scope() as s:
             done = set(s.scalars(select(IvHistory.symbol).where(IvHistory.day == today)).all())
