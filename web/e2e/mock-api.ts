@@ -6,11 +6,15 @@ import { type Page, expect } from "@playwright/test";
 
 export type Routes = Record<string, unknown>;
 
-const CORS = {
-  "access-control-allow-origin": "*",
+// The app sends its calls with credentials (the API token cookie, issue #246), so like the real API the mock must echo
+// the page's origin and allow credentials: a wildcard origin is refused by the browser for credentialed requests.
+const cors = (origin: string | undefined) => ({
+  "access-control-allow-origin": origin ?? "http://127.0.0.1",
+  "access-control-allow-credentials": "true",
   "access-control-allow-methods": "GET, HEAD, POST, PUT, PATCH, DELETE",
-  "access-control-allow-headers": "*",
-};
+  "access-control-allow-headers": "content-type, x-finresearch, authorization",
+  vary: "Origin",
+});
 
 /** Shell calls every page makes (health dot, alert badge, profile name). */
 export const SHELL: Routes = {
@@ -29,6 +33,7 @@ export async function mockApi(page: Page, routes: Routes) {
   await page.route(/\/api\//, async (route) => {
     const req = route.request();
     const url = new URL(req.url());
+    const CORS = cors(req.headers()["origin"]);
     if (req.method() === "OPTIONS") return route.fulfill({ status: 204, headers: CORS });
     const key = `${req.method()} ${url.pathname}`;
     if (!(key in all)) {
