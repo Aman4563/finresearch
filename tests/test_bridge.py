@@ -319,3 +319,11 @@ async def test_a_silent_stream_is_given_up_as_transient(fake_claude):
     with pytest.raises(TransientError) as ei:
         await fake_claude("silent").run(task(idle_timeout_s=1))
     assert ei.value.kind == "idle" and "printed nothing" in str(ei.value)
+
+
+async def test_run_writes_the_fetch_guard_into_the_sandbox(fake_claude, tmp_path):
+    # #246b: the sandbox's own .claude/settings.json is what `claude -p --setting-sources project,local` loads
+    await fake_claude("ok").run(task(run_dir=tmp_path / "ws"))
+    data = json.loads((tmp_path / "ws" / ".claude" / "settings.json").read_text())
+    assert "WebFetch(domain:127.0.0.1)" in data["permissions"]["deny"]
+    assert "finresearch.fetch_guard" in data["hooks"]["PreToolUse"][0]["hooks"][0]["command"]

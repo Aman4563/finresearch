@@ -10,7 +10,6 @@ import { ReliabilityLine, ShadowLine, type Signal, SignalView, pctText } from "@
 import { Badge, InfoTip, Modal, Skeleton, cx } from "@/components/ui";
 import { useApi } from "@/lib/api";
 
-const TONE: Record<string, "gain" | "loss" | "neutral"> = { APPLY: "gain", SKIP: "loss", SELL_AT_LISTING: "loss", HOLD_AFTER_LISTING: "gain" };
 const LABEL: Record<string, string> = { APPLY: "Apply", SKIP: "Skip", NO_SIGNAL: "No signal", SELL_AT_LISTING: "Sell at listing", HOLD_AFTER_LISTING: "Hold" };
 
 const inr0 = (v: number) => `${v < 0 ? "−" : ""}₹${Math.abs(v).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
@@ -33,7 +32,7 @@ export function IpoSignalLine({ symbol, series, company, closed }: { symbol: str
         <InfoTip>Share of comparable past issues that opened above the issue price, with its 95% range. Built on FINAL subscription, so it is optimistic before the close. Personal research, not advice.</InfoTip>
         {closed && !s.action.includes("LISTING")
           ? <Badge tone="neutral">Closed · awaiting listing</Badge>
-          : <Badge tone={TONE[s.action] ?? "neutral"}>{LABEL[s.action] ?? s.action}</Badge>}
+          : <Badge tone="neutral">{/* a rule-based view, not advice: no green "go" / red "stop" (#241) */}Rule-based view: {LABEL[s.action] ?? s.action}</Badge>}
         <button type="button" onClick={() => setOpen(true)} className="ml-auto font-medium text-brand hover:underline">Details</button>
       </div>
       {reason ? (

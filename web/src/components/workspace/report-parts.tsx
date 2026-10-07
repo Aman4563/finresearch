@@ -102,7 +102,7 @@ const cells = (line: string) =>
 /** Reads the first table under a heading containing "verdict". */
 export function parseVerdict(md: string): VerdictInfo | null {
   const lines = md.split("\n");
-  const start = lines.findIndex((l) => /^#{2,3}\s.*verdict/i.test(l));
+  const start = lines.findIndex((l) => /^#{2,3}\s.*(verdict|research view)/i.test(l));
   if (start < 0) return null;
   const rows: { label: string; value: string }[] = [];
   let inTable = false;
@@ -118,8 +118,8 @@ export function parseVerdict(md: string): VerdictInfo | null {
   }
   if (rows.length) rows.shift(); // header row
   const text = rows.map((r) => `${r.label} ${r.value}`).join(" ");
-  const vRow = rows.find((r) => /^(overall verdict|verdict)$/i.test(r.label)) ?? rows.find((r) => /^\*\*[A-Z]{3,}/.test(r.value));
-  const word = vRow?.value.match(/\*\*([A-Z][A-Z-]+(?: [A-Z][A-Z-]+)*)/)?.[1] ?? null;
+  const vRow = rows.find((r) => /^(overall verdict|verdict|view|research view)$/i.test(r.label)) ?? rows.find((r) => /^\*\*[A-Z]{3,}/.test(r.value));
+  const word = vRow?.value.match(/\*\*(Favourable|Mixed|Unfavourable|[A-Z][A-Z-]+(?: [A-Z][A-Z-]+)*)\*\*/)?.[1] ?? null;
   const conf = rows.find((r) => /^confidence$/i.test(r.label))?.value ?? text.match(/Confidence:?\**\s*\**([A-Za-z-]+)/i)?.[1] ?? null;
   return {
     word,
@@ -128,9 +128,3 @@ export function parseVerdict(md: string): VerdictInfo | null {
   };
 }
 
-export function verdictTone(word: string | null): "gain" | "loss" | "warn" | "neutral" {
-  if (!word) return "neutral";
-  if (/^(APPLY|BUY|ACCUMULATE|SUBSCRIBE|INVEST|STRONG BUY|SIP ONLY)$/.test(word) || /^APPLY \(/.test(word)) return "gain";
-  if (/AVOID|SKIP|SELL|EXIT|REDEEM|REDUCE|SWITCH/.test(word)) return "loss";
-  return "warn";
-}

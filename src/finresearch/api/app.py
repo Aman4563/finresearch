@@ -1,7 +1,8 @@
 """FastAPI app: companies, documents, runs, steps, claims, reports, packs, limits and live run events.
 
 Security: the server binds to 127.0.0.1 (see `finresearch serve`), accepts only localhost Host headers (DNS
-rebinding) and allows CORS only from the local dashboard origins. Document and pack files are served only from
+rebinding), requires the local API token on every route but /api/health (finresearch.api.auth) and allows CORS
+only from the local dashboard origins. Document and pack files are served only from
 inside the configured data directories.
 """
 
@@ -120,7 +121,13 @@ class Strategy(BaseModel):
     symbol: str
     expiry: date
     legs: list[StrategyLeg] = Field(min_length=1, max_length=8)
-    rate: Decimal = Field(Decimal("0.065"), description="Risk-free rate for greeks (state its source)")
+    rate: Decimal | None = Field(
+        None,
+        ge=-1,
+        le=1,
+        description="Risk-free rate for greeks (continuous, fraction); "
+        "default: FBIL's G-sec par yield at the expiry (signals.rates)",
+    )
     drift: Decimal | None = Field(None, ge=-1, le=1, description="Real-world annual drift; default = rate")
     charge_overrides: dict[str, Decimal] | None = Field(
         None, description="fincalc.charges keys -> rate (fraction)"
@@ -164,14 +171,21 @@ def step_json(st: AgentStep) -> dict[str, Any]:
 
 
 def claim_json(c: Claim, docs: dict[int, str]) -> dict[str, Any]:
+    """A ledger claim. `evidence` is its grade (verify.evidence, #242: A document-verified, B web quote checked on a
+    stored page, C web unchecked, D fincalc-computed, U unsupported); each citation carries its own grade."""
+    from finresearch.verify.evidence import citation_json, claim_grade
+
+    ev = claim_grade(c)
     return {"id": c.id, "run_id": c.run_id, "stream": c.stream, "statement": c.statement,
+            "evidence_grade": ev["grade"], "evidence_label": ev["label"],
             "claim_type": c.claim_type, "metric": c.metric,
             "value": str(c.value.normalize()) if c.value is not None else None, "unit": c.unit,
             "period": c.period, "importance": c.importance, "status": c.status, "verifier_note": c.verifier_note,
             "checks": c.checks or {}, "corrects_claim_id": c.corrects_claim_id,
             "citations": [{"document_id": x.document_id, "document_title": docs.get(x.document_id),
                            "page": x.page_no, "line_start": x.line_start, "line_end": x.line_end, "quote": x.quote,
-                           "quote_found": x.quote_found, "url": x.url, "accessed_at": _iso(x.accessed_at)}
+                           "quote_found": x.quote_found, "url": x.url, "accessed_at": _iso(x.accessed_at),
+                           **citation_json(x)}
                           for x in c.citations]}  # fmt: skip
 
 
@@ -263,12 +277,24 @@ def _latest_report(s, run_id: int) -> str | None:
 # --------------------------------------------------------------------------- app
 def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=None, live_fetch=None,
                monitor: bool = False, monitor_deps=None, nse_detail=None, equity_list=None,
-               nav_all=None, fno_client=None, bonds=None, clock=None, bse_scrips=None) -> FastAPI:  # fmt: skip
+               nav_all=None, fno_client=None, bonds=None, clock=None, bse_scrips=None,
+               api_token: str | None = None) -> FastAPI:  # fmt: skip
     """Test seams: `router` (bridge for chat and suggestions), `live_fetch` / `nse_detail` / `bonds` (NSE),
     `equity_list` / `bse_scrips` (the NSE equity list text and BSE's scrip-master rows, for stock search),
     `monitor_deps`, `clock` (() -> aware datetime, for the live routes' market hours).
 
-    With monitor=True (as `finresearch serve` does) the monitoring scheduler runs inside the API process."""
+    With monitor=True (as `finresearch serve` does) the monitoring scheduler runs inside the API process.
+
+    `api_token`: the local API token every route but /api/health requires (finresearch.api.auth); by default the one
+    `finresearch serve` bootstrapped (or FINRESEARCH_API_TOKEN). Without one the app refuses to start: it never
+    serves personal data unauthenticated."""
+    from finresearch.api.auth import ApiTokenGuard, current
+
+    api_token = api_token or current()
+    if not api_token:
+        raise RuntimeError(
+            "no local API token: start the API with `uv run finresearch serve` (it creates one)"
+        )
     spawner = spawner or Spawner()
 
     @contextlib.asynccontextmanager
@@ -301,10 +327,13 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=LOCAL_HOSTS)
     app.add_middleware(CsrfGuard)
     app.add_middleware(CatchAll)
+    # inside CORS, so a 401 carries CORS headers and the dashboard can tell "not authorised" from "not running"
+    app.add_middleware(ApiTokenGuard, token=api_token)
+    # credentials: the browser sends the app's token cookie with cross-origin calls from :3100 to the API
     # the in-app PDF viewer (pdf.js) reads the length/range headers to stream big documents in chunks
     app.add_middleware(CORSMiddleware, allow_origins=DASHBOARD_ORIGINS,
                        allow_methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"], allow_headers=["*"],
-                       expose_headers=EXPOSED_HEADERS)  # fmt: skip
+                       allow_credentials=True, expose_headers=EXPOSED_HEADERS)  # fmt: skip
 
     @app.exception_handler(ValueError)
     async def _value_error(_req: Request, e: ValueError) -> JSONResponse:
@@ -533,6 +562,12 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
                 s.scalars(select(Claim).where(Claim.id.in_(ids), Claim.run_id == run_id)).all() if ids else []
             )
             docs = _doc_titles(s, rows)
+            if (
+                kind == "stock_report"
+            ):  # the verdict box as a research view, also for reports written before #241
+                from finresearch.signals.stock import neutral_report_markdown
+
+                md = neutral_report_markdown(md)
             return {"run_id": run_id, "kind": kind, "markdown": md, "published": gate.ok,
                     "gate": {"ok": gate.ok, "blocking": gate.blocking, "warnings": gate.warnings},
                     "claims": {str(c.id): claim_json(c, docs) for c in rows}}  # fmt: skip
@@ -1155,6 +1190,10 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
             raise HTTPException(422, f"no NSE lot size for {sym} {body.expiry:%b-%y}")
         spot = float(chain.underlying)
         t = max((body.expiry - now_ist().date()).days, 0.5) / 365
+        from finresearch.signals.rates import risk_free, user_rate
+
+        rinfo = user_rate(float(body.rate)) if body.rate is not None else await risk_free(t)
+        rate = rinfo["rate"]
         by_strike = {r.strike: r for r in chain.rows}
         legs, greeks, notes = [], {"delta": 0.0, "gamma": 0.0, "vega": 0.0, "theta": 0.0}, []
         for leg in body.legs:
@@ -1178,12 +1217,12 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
             iv = (
                 float(quote.iv) / 100
                 if quote and quote.iv
-                else o.implied_vol(leg.right, premium, spot, float(leg.strike), t, float(body.rate))
+                else o.implied_vol(leg.right, premium, spot, float(leg.strike), t, rate)
             )
             if not iv:
                 notes.append(f"no implied volatility for {leg.right} {leg.strike}; its greeks are left out")
                 continue
-            g = o.greeks(leg.right, spot, float(leg.strike), t, float(body.rate), iv)
+            g = o.greeks(leg.right, spot, float(leg.strike), t, rate, iv)
             for k in greeks:
                 greeks[k] += getattr(g, k) * qty
         from finresearch.fincalc.charges import KEYS
@@ -1204,7 +1243,7 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
             a = fs.analyse(chain, lot, legs_in, today=today, closes=closes,
                            iv_series=[v for _, v, _ in fs.iv_series(sym)], capital=float(profile.fno_capital_inr),
                            max_loss_pct=float(profile.fno_max_loss_pct),
-                           brokerage=float(profile.fno_brokerage_per_order_inr), rate=float(body.rate),
+                           brokerage=float(profile.fno_brokerage_per_order_inr), rate=rate,
                            drift=None if body.drift is None else float(body.drift),
                            overrides=body.charge_overrides)  # fmt: skip
         except ValueError as e:
@@ -1213,7 +1252,11 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
         return {"symbol": sym, "expiry": body.expiry.isoformat(), "spot": spot, "lot_size": lot, "as_of": _iso(chain.as_of),
                 "breakevens": prof.breakevens, "max_profit": _money(prof.max_profit), "max_loss": _money(prof.max_loss),
                 "net_premium": _money(prof.net_premium),
-                "probability_of_profit": None if rn is None else rn["pop"],  # risk-neutral, after costs
+                # risk-neutral, after costs: a model probability under a lognormal price, not a forecast (#244)
+                "model_probability_of_profit": None if rn is None else rn["pop"],
+                "probability_of_profit": None if rn is None else rn["pop"],  # deprecated alias, one release
+                "deprecated": {"probability_of_profit": "use model_probability_of_profit; removed in the next release"},
+                "rate": rinfo,
                 "net_greeks": {k: round(v, 4) for k, v in greeks.items()},
                 "curve": [(round(x, 2), round(y, 2)) for x, y in prof.curve[:: max(1, len(prof.curve) // 120)]],
                 "analysis": {k: v for k, v in a.items() if k not in ("legs", "breakevens", "max_profit", "net_premium")},

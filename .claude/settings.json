@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "deny": [
+      "WebFetch(domain:localhost)",
+      "WebFetch(domain:*.localhost)",
+      "WebFetch(domain:127.0.0.1)",
+      "WebFetch(domain:0.0.0.0)",
+      "WebFetch(domain:*.local)",
+      "WebFetch(domain:*.internal)"
+    ]
+  }
+}

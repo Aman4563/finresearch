@@ -26,6 +26,17 @@ FinResearch is a single-user app that runs entirely on one Mac. The invariants e
   capital per IPO, risk appetite, horizon, tax slab, category, max position, typed holdings and notes, rules), and
   the profile setting `local_suggestion` replaces even that with a rule-based suggestion written locally.
 
+## Security on the Mac
+
+- Services bind to 127.0.0.1. The API requires a per-install token on every route except `/api/health` (and the
+  brokers' OAuth callback): a bearer header from the CLI and scripts, or an httpOnly SameSite=Strict cookie that the
+  Next.js server (`web/src/proxy.ts`) sets for 127.0.0.1 from `data/state/api_token` (`api/auth.py`).
+- Postgres uses scram-sha-256 password authentication; the password is in `~/.pgpass`.
+- Secrets (broker credentials and access tokens, the optional saved CAS password, ntfy/Telegram tokens, the API
+  token) live in the macOS Keychain (`secrets.py`); database rows keep references only, so backups hold none.
+- Research agents' WebFetch is denied this machine and private networks (`fetch_guard.py`), and every NSE/BSE/SEBI
+  request shares one per-host rate limit across all clients and processes (`adapters/http.py`).
+
 ## Claude Bridge (`bridge/`)
 
 Every model task goes through one interface with three tiers:
@@ -44,12 +55,19 @@ adversarial verifiers, bull and bear analysts, a synthesiser and a completeness 
 FinResearch MCP tools: documents, sections, search, tables, `fincalc`, live market data and the claim ledger.
 
 Every finding is saved as an atomic claim (metric, value, unit, period) with citations. The verification gate:
-- checks each quoted value against its cited lines;
+- checks each quoted value against its cited lines, and each web quote against the page text the `fetch_page` tool
+  stored (`verify/web.py`); a fincalc citation is run again and must reproduce the value;
+- grades every claim's evidence (`verify/evidence.py`): A document quote verified, B web quote verified on a stored
+  copy of the page, C web quote unchecked, D computed by fincalc from cited inputs, U unsupported;
 - catches conflicts between streams, stale live figures and wrong bidding-day labels;
-- turns verifier corrections into new, re-checked claims, and gives high-importance claims a second verifier;
+- turns verifier corrections into new, re-checked claims, and gives verified high-importance claims an independent
+  second verifier (`verifier_blind`: its own prompt, the STANDARD model tier, no ledger access) that is never shown
+  the figure, the status or the first verifier's reasoning; it re-derives the value, the orchestrator compares
+  (`verify/second_opinion.py`) and a disagreement makes the claim needs_review;
 - treats web and PDF content as untrusted data, never as instructions.
 
-The publish gate releases a report only if every citation in it is sound; otherwise it is rendered as a marked draft.
+The publish gate releases a report only if every citation in it is sound and every high-importance claim it cites is
+verified with evidence grade A, B or D; otherwise it is rendered as a marked draft.
 
 ## Markets, signals and accuracy (`adapters/`, `fincalc/`, `signals/`, `evals/`, `disclosures/`)
 
@@ -90,6 +108,8 @@ src/finresearch/
   suggest/       investor profile, personal rules and the advisor
   verify/        verification and publish gates
   wealth/        household balance sheet, goals and allocation
+  secrets.py     Keychain-backed secret store (database rows keep references)
+  fetch_guard.py WebFetch guard for agent sandboxes (no loopback or private addresses)
   cli.py         finresearch command line
 web/             Next.js app (design notes in web/DESIGN.md)
 tests/           offline tests with recorded fixtures

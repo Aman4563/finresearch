@@ -13,6 +13,8 @@ import pytest
 from sqlalchemy import select
 
 from finresearch.agents.schemas import (
+    BlindFinding,
+    BlindVerificationReport,
     CaseReport,
     ClaimVerdict,
     CriticReport,
@@ -66,9 +68,9 @@ class FakeRunner:
 
     async def __call__(self, role, ctx, **extra):
         from finresearch.db import session_scope
-        from finresearch.db.models import Claim
+        from finresearch.db.models import Citation, Claim
 
-        key = role if role not in ("verifier",) else f"verifier:{extra.get('target_stream')}"
+        key = role if role not in ("verifier", "verifier_blind") else f"{role}:{extra.get('target_stream')}"
         self.calls.append(key)
         if key in self.fail_on:
             self.fail_on.discard(key)
@@ -84,6 +86,8 @@ class FakeRunner:
         elif role in STREAMS:
             with session_scope() as s:
                 c = Claim(run_id=self.run_id, stream=role, statement=f"{role} fact", claim_type="factual")
+                # a document quote found at its lines: evidence grade A (#242)
+                c.citations = [Citation(line_start=1, line_end=1, quote=f"{role} fact", quote_found=True)]
                 s.add(c)
                 s.flush()
                 cid = c.id
@@ -96,6 +100,12 @@ class FakeRunner:
             ids = [c["claim_id"] for c in json.loads(extra["claims"])]
             out = VerificationReport(verdicts=[ClaimVerdict(claim_id=i, verdict="verified", evidence="ok") for i in ids],
                                      summary="ok")  # fmt: skip
+        elif role == "verifier_blind":
+            import json
+
+            ids = [c["claim_id"] for c in json.loads(extra["claims"])]
+            out = BlindVerificationReport(findings=[BlindFinding(claim_id=i, supports_statement="yes", evidence="read")
+                                                    for i in ids], summary="ok")  # fmt: skip
         elif role in ("bull", "bear"):
             out = CaseReport(
                 thesis=role, points=[], listing_view="-", long_term_view="-", strongest_counterargument="-"
@@ -232,6 +242,7 @@ class GateRunner(FakeRunner):
     def __init__(self, run_id, *, bad_drafts=0, second_disagrees=False, **kw):
         super().__init__(run_id, **kw)
         self.bad_drafts, self.second_disagrees, self.revisions = bad_drafts, second_disagrees, []
+        self.blind_inputs: list[str] = []
 
     async def __call__(self, role, ctx, **extra):
         import json
@@ -253,12 +264,13 @@ class GateRunner(FakeRunner):
                             executive_summary="-", reasons_for=[], reasons_against=[], scenarios=[],
                             action_checklist=[], report_markdown=f"# Report\nRevenue ₹1,171.65 cr {cite}.\n")  # fmt: skip
             return out, AgentResult(task_name="s", tier=Tier.CLAUDE_MAX, model="fake", ok=True)
-        if role == "verifier" and "second opinion" in extra.get("target_stream", ""):
+        if role == "verifier_blind":
             self.calls.append("verifier:second")
+            self.blind_inputs.append(extra["claims"])
             ids = [c["claim_id"] for c in json.loads(extra["claims"])]
-            verdict = "contradicted" if self.second_disagrees else "verified"
-            out = VerificationReport(verdicts=[ClaimVerdict(claim_id=i, verdict=verdict, evidence="2nd") for i in ids],
-                                     summary="2nd")  # fmt: skip
+            ok = "no" if self.second_disagrees else "yes"
+            out = BlindVerificationReport(findings=[BlindFinding(claim_id=i, supports_statement=ok, evidence="2nd")
+                                                    for i in ids], summary="2nd")  # fmt: skip
             return out, AgentResult(task_name="v2", tier=Tier.CLAUDE_MAX, model="fake", ok=True)
         out, res = await super().__call__(role, ctx, **extra)
         if role in STREAMS:
@@ -293,13 +305,35 @@ async def test_second_verifier_disagreement_downgrades_high_importance_claims(co
 
     runner = GateRunner(company_run, second_disagrees=True, bad_drafts=0)
     status = await make(company_run, tmp_path, runner).run()
-    assert "verifier:second" in runner.calls and all(f"verify2:{s}" in steps(company_run) for s in STREAMS)
+    assert "verifier:second" in runner.calls and all(f"blind:{s}" in steps(company_run) for s in STREAMS)
     with session_scope() as s:
         highs = s.scalars(select(Claim).where(Claim.run_id == company_run, Claim.importance == "high")).all()
         assert highs and all(
-            c.status == "needs_review" and "second verifier disagrees" in c.verifier_note for c in highs
+            c.status == "needs_review" and "independent second verifier disagrees" in c.verifier_note
+            for c in highs
         )
+        assert all(c.checks["verifiers"]["agreed"] == ["verifier"] for c in highs)
+        assert all(c.checks["verifiers"]["second"]["agrees"] is False for c in highs)
     assert status == "blocked"  # the report cites a high-importance claim that is no longer verified
+
+
+async def test_second_verifier_is_blind_to_the_first_verdict_and_records_agreement(company_run, tmp_path):
+    from finresearch.db import session_scope
+    from finresearch.db.models import Claim
+
+    runner = GateRunner(company_run, second_disagrees=False, bad_drafts=0)
+    assert await make(company_run, tmp_path, runner).run() == "done"
+    assert runner.blind_inputs
+    for items in runner.blind_inputs:
+        for it in json.loads(items):
+            # no status, value, gate notes, first verifier's evidence ("ok") or quotes
+            assert set(it) == {"claim_id", "metric", "unit", "period", "has_figure", "statement", "citations"}
+            assert all(set(c) <= {"document_id", "lines", "url", "fincalc", "args"} for c in it["citations"])
+    with session_scope() as s:
+        highs = s.scalars(select(Claim).where(Claim.run_id == company_run, Claim.importance == "high")).all()
+        assert highs and all(c.status == "verified" for c in highs)
+        assert all(c.checks["verifiers"]["agreed"] == ["verifier", "verifier_blind"] for c in highs)
+        assert all(c.checks["verifiers"]["second"]["model_class"] == "standard" for c in highs)
 
 
 # --------------------------------------------------------------------------- research kinds

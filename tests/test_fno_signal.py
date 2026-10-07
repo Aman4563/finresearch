@@ -216,8 +216,22 @@ def test_strategy_api_iv_and_risk_notice(app_client):
         and an["expected_move"]["move"] > 0
     )
     assert (
-        r["probability_of_profit"] == an["risk_neutral"]["pop"] and r["risk_notice"]["date"] == "2026-08-20"
+        r["model_probability_of_profit"] == an["risk_neutral"]["pop"]
+        and r["risk_notice"]["date"] == "2026-08-20"
     )
+    # the old name stays one release as a deprecated alias (#244)
+    assert (
+        r["probability_of_profit"] == r["model_probability_of_profit"]
+        and "probability_of_profit" in r["deprecated"]
+    )
+    # the rate is FBIL's par yield at the expiry (here the dated fallback curve: tests never reach FBIL), not 6.5 %
+    rate = r["rate"]
+    assert rate["fallback"] is True and "FBIL fallback curve of 23-Sep-2026" in rate["source"]
+    assert (
+        rate["par_yield"] == 0.0534 and an["rate"] == rate["rate"]
+    )  # 0.25-year point of the 23-Sep-2026 curve
+    mine = c.post("/api/fno/strategy", json={**body, "rate": "0.07"}).json()["rate"]
+    assert mine["rate"] == 0.07 and mine["source"] == "your input"
     assert an["capital_check"]["message"] == "No F&O capital set in the profile."
     over = c.post("/api/fno/strategy", json={**body, "charge_overrides": {"stt_option_sell": "0"}}).json()
     assert over["analysis"]["costs"]["entry"]["lines"]["stt"] == 0

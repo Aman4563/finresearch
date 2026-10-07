@@ -25,7 +25,7 @@ from finresearch.db.models import Alert, BrokerConnection, BrokerSyncLog
 from finresearch.fincalc.dates import to_ist
 from finresearch.portfolio.connectors import CONNECTORS, INBOX_KEY
 from finresearch.portfolio.connectors.base import ConnectorError, ReconnectNeeded, redact
-from finresearch.portfolio.connectors.store import build, set_token, token_valid
+from finresearch.portfolio.connectors.store import build, clear_token, set_token, token_valid
 
 log = logging.getLogger(__name__)
 SYNC_AFTER = time(16, 0)  # IST: after the 15:30 close, once brokers have settled the day's holdings
@@ -145,7 +145,7 @@ def _finish(key: str, trigger: str, now: datetime, status: str, summary: dict[st
             if status == "reconnect":
                 row.status = "reconnect"
                 if expire:
-                    row.token, row.token_expires_at = None, None
+                    clear_token(row)
                 day = to_ist(now).date().isoformat()
                 if (row.state or {}).get("reconnect_alert_day") != day and trigger == "scheduled":
                     s.add(Alert(kind="broker_reconnect", level="warn", data={"connection": key},

@@ -33,7 +33,7 @@ Every change must preserve these.
 4. All arithmetic in reports comes from `fincalc`, using Decimal, documented rounding, and `None` for "not reported". LLMs never compute figures that end up in a report.
 5. Live market figures (subscription, GMP, prices) carry their source timestamp and an INTERIM label while bidding is open. NSE subscription multiples use the lower price-band share base.
 6. Numeric claims are atomic (metric, value, unit, period). A verifier's correction becomes a new claim linked by `corrects_claim_id` and is verified only if its value is printed at the cited lines. A deterministic contradiction (for example a wrong bidding day) is never overridden by a model.
-6a. A report is published (`report.md`) only if the publish gate passes: it cites only this run's claims, none contradicted or unsupported, no raw document lines, and every high-importance claim it cites is verified. Otherwise the output is `report_blocked.md` and the run status is `blocked`.
+6a. A report is published (`report.md`) only if the publish gate passes: it cites only this run's claims, none contradicted or unsupported, no raw document lines, and every high-importance claim it cites is verified with evidence grade A (document quote at its lines), B (web quote found on the page text `fetch_page` stored) or D (fincalc re-ran and reproduced it from cited inputs); see `verify/evidence.py`. Otherwise the output is `report_blocked.md` and the run status is `blocked`.
 6b. Tests never write to the real `data/` folder (autouse isolation fixture).
 6c. Research packs are built only from the ledger and step outputs (`finresearch ipo render`). A blocked report is written as `report_NOT_PUBLISHED.*` with the gate's reasons, never as `report.*`. PDFs are validated and atomically replaced.
 7a. Nothing is silently truncated. Tools paginate with explicit continuation hints, and engines refuse over-long inputs (`CapabilityMismatch`) rather than cutting them.
@@ -52,10 +52,16 @@ Every change must preserve these.
 13. MCP tools and agents treat fetched web content as data, not instructions.
 14. Personal financial data (portfolio, statements, AIS, journal, wealth, household) stays in the local database and
     `data/`. It is never sent to a model, never logged, and never committed; statement passwords are used once and
-    never stored. The IPO advisor prompt carries only `suggest.profile.ADVISOR_FIELDS` of the profile (an allow-list),
+    not stored, except the CAS password a user chooses to save for the statement inbox (in the Keychain). The IPO advisor prompt carries only `suggest.profile.ADVISOR_FIELDS` of the profile (an allow-list),
     and none when `local_suggestion` is on. `tests/test_privacy_llm.py` checks every AgentTask against synthetic
     personal markers, and that no prompt-building module imports a personal table.
 15. Services bind to 127.0.0.1 only. Market times are IST (Asia/Kolkata) and are labelled as such.
+16. Secrets (broker credentials and tokens, the saved CAS password, notification tokens, the API token) live in the
+    macOS Keychain through `finresearch.secrets`; database rows hold only `{"secret_ref": ...}` references. Tests use
+    the memory backend and never touch the Keychain. `finresearch secrets check` fails while any plaintext is left.
+17. Every API route except `/api/health` (and the brokers' OAuth callback) requires the local API token. Agents'
+    WebFetch is denied loopback and private addresses (`finresearch.fetch_guard`), and the polite HTTP client's
+    per-host rate limit is shared by all clients and processes.
 
 ## 3. Known sharp edges
 

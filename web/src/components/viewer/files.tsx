@@ -17,7 +17,7 @@ function useText(url: string, attempt: number) {
   const key = `${url}#${attempt}`;
   useEffect(() => {
     let dead = false;
-    fetch(url, { cache: "no-store" })
+    fetch(url, { cache: "no-store", credentials: "include" })
       .then(async (r) => {
         if (!r.ok) throw new Error(r.status === 404 ? "The file was not found (404)." : `The API answered ${r.status}.`);
         return r.text();

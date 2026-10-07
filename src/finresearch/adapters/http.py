@@ -2,7 +2,8 @@
 
 Why a wrapper instead of bare httpx:
 - NSE and SEBI block or throttle obvious bots, so every request carries browser-like headers and a
-  per-host rate limit (NSE ≤ 2 req/s, everyone else ≤ 1 req/s by default).
+  per-host rate limit (NSE ≤ 2 req/s, everyone else ≤ 1 req/s by default), shared by every client in every
+  FinResearch process on the Mac (`SharedSlots`), not kept per client.
 - Transient failures (429, 5xx, timeouts) are common on exchange sites during IPO rush hours, so they
   are retried with exponential backoff. 401/403 are *not* retried here: they mean "cookie expired",
   which only the site adapter knows how to fix (NSE re-warms its session).
@@ -16,10 +17,14 @@ Why a wrapper instead of bare httpx:
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import hashlib
 import ipaddress
 import json
+import logging
+import os
 import re
+import threading
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime, timedelta, timezone
@@ -113,11 +118,96 @@ class Fetched(BaseModel):
         return json.loads(self.content)
 
 
+class SharedSlots:
+    """Request slots per host shared by every client in this process and by every FinResearch process on the Mac
+    (the API with its monitor, `monitor run`, research workers and their MCP servers), issue #246.
+
+    Each request reserves the next free slot: under a thread lock and an exclusive `flock` on
+    `<state_dir>/ratelimit/<host>.slot`, read the host's next free time (wall clock, comparable across processes),
+    take max(now, it) and store that plus the interval. The caller then sleeps until its slot outside every lock, so
+    nothing is held across an await and threads with their own event loops share it safely. Before #246 each client
+    kept its own spacing, so ~14 live NSE clients reached ~28 req/s against the intended 2.
+
+    If the state dir cannot be written, the slots are kept in this process only (logged once).
+    """
+
+    MAX_AHEAD_S = (
+        600.0  # a stored slot further ahead than this is a clock jump or a corrupt file: start again
+    )
+
+    def __init__(self, directory: Path | Callable[[], Path] | None = None, *,
+                 clock: Callable[[], float] = time.time) -> None:  # fmt: skip
+        self._directory = directory
+        self._clock = clock
+        self._mutex = threading.Lock()
+        self._memory: dict[str, float] = {}
+        self._warned = False
+
+    def _dir(self) -> Path:
+        if callable(self._directory):
+            return self._directory()
+        if self._directory is not None:
+            return self._directory
+        from finresearch.config import get_settings
+
+        return Path(get_settings().state_dir) / "ratelimit"
+
+    def _update(self, key: str, fn: Callable[[float, float], tuple[float, float]]) -> float:
+        """Apply fn(now, next_free) -> (result, new next_free) atomically for `key`; return the result."""
+        safe = re.sub(r"[^A-Za-z0-9._-]", "_", key)[:120]
+        with self._mutex:
+            now = self._clock()
+            try:
+                d = self._dir()
+                d.mkdir(parents=True, exist_ok=True)
+                fd = os.open(d / f"{safe}.slot", os.O_RDWR | os.O_CREAT, 0o600)
+            except OSError as e:
+                if not self._warned:
+                    self._warned = True
+                    logging.getLogger(__name__).warning("rate limit kept per process only: %s", e)
+                nxt = self._memory.get(key, 0.0)
+                out, self._memory[key] = fn(now, nxt if nxt - now <= self.MAX_AHEAD_S else 0.0)
+                return out
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX)
+                raw = os.pread(fd, 64, 0)
+                try:
+                    nxt = float(raw.decode() or 0)
+                except ValueError:
+                    nxt = 0.0
+                if nxt - now > self.MAX_AHEAD_S:
+                    nxt = 0.0
+                out, new = fn(now, nxt)
+                data = repr(new).encode()
+                os.ftruncate(fd, 0)
+                os.pwrite(fd, data, 0)
+                return out
+            finally:
+                os.close(fd)  # also releases the flock
+
+    def reserve(self, key: str, interval: float) -> float:
+        """Reserve the next slot for `key`; returns how long to wait for it (0 = now)."""
+
+        def take(now: float, nxt: float) -> tuple[float, float]:
+            slot = max(now, nxt)
+            return slot - now, slot + interval
+
+        return self._update(key, take)
+
+    def hold_off(self, key: str, seconds: float) -> None:
+        """Push the host's next slot `seconds` from now (a 429's Retry-After), for every client."""
+        self._update(key, lambda now, nxt: (0.0, max(nxt, now + seconds)))
+
+
+SHARED_SLOTS = SharedSlots()  # the process-wide (and cross-process) default
+
+
 class HostRateLimiter:
     """Minimum spacing between requests to the same host.
 
-    One lock per host serialises the "wait then stamp" step, so concurrent tasks queue politely
-    instead of bursting.
+    By default the spacing is shared by every client (`SharedSlots`): a host configured by suffix
+    ("nseindia.com") is one budget for www., archives. and the rest. A test that injects its own `clock` gets a private
+    limiter with the old per-instance behaviour (one asyncio lock per host serialises "wait then stamp").
     """
 
     def __init__(
@@ -126,27 +216,38 @@ class HostRateLimiter:
         default_rate: float = DEFAULT_RATE,
         *,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
-        clock: Callable[[], float] = time.monotonic,
+        clock: Callable[[], float] | None = None,
+        slots: SharedSlots | None = None,
     ) -> None:
         self._rates = dict(DEFAULT_HOST_RATES if rates is None else rates)
         self._default = default_rate
         self._sleep = sleep
-        self._clock = clock
+        self._shared = slots if slots is not None else (SHARED_SLOTS if clock is None else None)
+        self._clock = clock or time.monotonic
         self._last: dict[str, float] = {}
         self._locks: dict[str, asyncio.Lock] = {}
 
     def rate_for(self, host: str) -> float:
+        return self._match(host)[1]
+
+    def _match(self, host: str) -> tuple[str, float]:
+        """(the key the spacing is kept under, requests per second)."""
         host = host.lower()
         for suffix, rate in self._rates.items():
             if host == suffix or host.endswith("." + suffix):
-                return rate
-        return self._default
+                return suffix, rate
+        return host, self._default
 
     async def wait(self, host: str) -> None:
-        rate = self.rate_for(host)
+        key, rate = self._match(host)
         if rate <= 0:
             return
         interval = 1.0 / rate
+        if self._shared is not None:
+            delay = self._shared.reserve(key, interval)
+            if delay > 0:
+                await self._sleep(delay)
+            return
         lock = self._locks.setdefault(host, asyncio.Lock())
         async with lock:
             last = self._last.get(host)
@@ -155,6 +256,10 @@ class HostRateLimiter:
                 if delay > 0:
                     await self._sleep(delay)
             self._last[host] = self._clock()
+
+    def hold_off(self, host: str, seconds: float) -> None:
+        if self._shared is not None and seconds > 0:
+            self._shared.hold_off(self._match(host)[0], seconds)
 
 
 def cache_key(method: str, url: str, params: Mapping[str, Any] | None, data: Mapping[str, Any] | None) -> str:
@@ -193,6 +298,10 @@ def check_public_url(url: str) -> str:
     return url
 
 
+async def _check_request(request: httpx.Request) -> None:
+    check_public_url(str(request.url))
+
+
 class PoliteClient:
     """Async httpx wrapper: browser headers, per-host rate limit, retries, opt-in disk cache, recorder hook.
 
@@ -214,16 +323,21 @@ class PoliteClient:
         | None = None,  # gets body + record, so raw bytes can be archived
         transport: httpx.AsyncBaseTransport | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
-        clock: Callable[[], float] = time.monotonic,
+        clock: Callable[[], float] | None = None,
         wall_clock: Callable[[], datetime] = now_ist,
+        slots: SharedSlots | None = None,
     ) -> None:
         self._client = httpx.AsyncClient(
             headers={**BROWSER_HEADERS, **(headers or {})},
             timeout=timeout,
             follow_redirects=True,
             transport=transport,
+            # every request, redirects included, is checked: an official host redirecting to 127.0.0.1 or a private
+            # address is refused (the agents' MCP tools fetch through this client)
+            event_hooks={"request": [_check_request]},
         )
-        self._limiter = HostRateLimiter(host_rates, default_rate, sleep=sleep, clock=clock)
+        # clock=None (production): the process-wide, cross-process limiter; a test clock gets a private one
+        self._limiter = HostRateLimiter(host_rates, default_rate, sleep=sleep, clock=clock, slots=slots)
         self.max_retries = max_retries
         self.backoff_base = backoff_base
         self.backoff_max = backoff_max
@@ -315,6 +429,8 @@ class PoliteClient:
                 continue
             if resp.status_code not in RETRY_STATUSES:
                 break
+            if resp.status_code == 429:  # every client of this host backs off, not just this one
+                self._limiter.hold_off(host, self._backoff(attempt + 1, resp))
         if resp is None:
             assert last_exc is not None
             raise last_exc

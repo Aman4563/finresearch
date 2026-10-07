@@ -1,5 +1,9 @@
 """Connection settings in the local database: masked for the API, secrets kept when the masked value comes back.
 
+Secrets (fields declared `secret=True`, and the access token) live in the macOS Keychain (finresearch.secrets): the
+row's `config` keeps `{"secret_ref": ..., "hint": "••••"}` for each and `token` keeps `secret_ref:<ref>`. Read them
+only through `config_of` / `token_of` / `build`.
+
 Mirrors monitor.notify's secret handling (same mask, same "send the masked value back to keep it" rule). A secret is
 never returned by the API, never logged, never put in the investor profile (which reaches the model) and never
 committed (the database and data/ are local). "Disconnect" deletes the row: credentials and token are gone, the
@@ -14,6 +18,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from finresearch import secrets as secret_store
 from finresearch.db.models import BrokerConnection
 from finresearch.monitor.notify import MASK
 from finresearch.portfolio.connectors import CONNECTORS, INBOX_KEY, connector_class
@@ -34,8 +39,32 @@ def get_row(s: Session, key: str) -> BrokerConnection | None:
     return s.get(BrokerConnection, key)
 
 
+def secret_names(key: str) -> set[str]:
+    return {f.name for f in fields_of(key) if f.secret}
+
+
+def config_of(row: BrokerConnection | None) -> dict[str, Any]:
+    """The row's settings with its secrets read from the secret store."""
+    if row is None:
+        return {}
+    cfg = dict(row.config or {})
+    for name in secret_names(row.key) & set(cfg):
+        cfg[name] = secret_store.resolve(cfg[name])
+    return cfg
+
+
+def token_of(row: BrokerConnection) -> str | None:
+    return secret_store.resolve(row.token) or None if row.token else None
+
+
+def clear_token(row: BrokerConnection) -> None:
+    """Forget the access token: its Keychain item too."""
+    secret_store.drop(row.token)
+    row.token, row.token_expires_at = None, None
+
+
 def build(row: BrokerConnection) -> BrokerConnector:
-    return connector_class(row.key)(row.config or {}, row.token)
+    return connector_class(row.key)(config_of(row), token_of(row))
 
 
 def token_valid(row: BrokerConnection, now: datetime) -> bool:
@@ -74,11 +103,13 @@ def status_of(row: BrokerConnection | None, key: str, now: datetime) -> tuple[st
 def public_one(s: Session, key: str, now: datetime | None = None) -> dict[str, Any]:
     now = now or datetime.now(UTC)
     row = get_row(s, key)
-    cfg = dict(row.config or {}) if row else {}
+    cfg = (
+        dict(row.config or {}) if row else {}
+    )  # secrets stay references here: only whether one is set is shown
     fields = fields_of(key)
     shown: dict[str, Any] = {}
     for f in fields:
-        v = str(cfg.get(f.name) or "")
+        v = "set" if secret_store.is_ref(cfg.get(f.name)) else str(cfg.get(f.name) or "")
         shown[f.name] = (
             (MASK if v else "") if f.secret else v
         )  # no characters of a secret, not even the last four
@@ -113,7 +144,9 @@ def update(s: Session, key: str, body: dict[str, Any]) -> BrokerConnection:
             key=key, enabled=True, auto_sync=True, config={}, state={}, status="not_connected"
         )
         s.add(row)
-    cfg = dict(row.config or {})
+    stored = dict(row.config or {})
+    before = config_of(row)  # secrets resolved, so "changed?" compares values, not references
+    cfg = dict(before)
     changed_credential = False
     for name, v in (body.get("config") or {}).items():
         if name.startswith("clear_") and v is True and name[6:] in fields and fields[name[6:]].secret:
@@ -136,7 +169,7 @@ def update(s: Session, key: str, body: dict[str, Any]) -> BrokerConnection:
             cfg.pop(name, None)
     if key != INBOX_KEY:
         _validate(key, cfg)
-    elif cfg.get("password") != (row.config or {}).get("password"):
+    elif cfg.get("password") != before.get("password"):
         # the inbox remembers which files failed with which saved password by a random revision id, never by a hash
         # of the password: a CAS password is usually PAN-derived (low entropy), so even a truncated hash stored in
         # the database could be brute-forced back (CodeQL py/weak-sensitive-data-hashing)
@@ -144,12 +177,20 @@ def update(s: Session, key: str, body: dict[str, Any]) -> BrokerConnection:
             cfg["password_rev"] = secrets.token_hex(8)
         else:
             cfg.pop("password_rev", None)
+    for name in secret_names(key):  # the row keeps references; the values go to the Keychain
+        if name in cfg or name in stored:
+            ref = secret_store.keep(f"broker.{key}", name, str(cfg.get(name) or ""), stored.get(name))
+            if ref:
+                cfg[name] = ref
+            else:
+                cfg.pop(name, None)
     row.config = cfg
     for flag in ("enabled", "auto_sync"):
         if isinstance(body.get(flag), bool):
             setattr(row, flag, body[flag])
     if changed_credential and key != INBOX_KEY:
-        row.token, row.token_expires_at, row.last_error = None, None, None
+        clear_token(row)
+        row.last_error = None
         row.status = "not_connected"
     row.updated_at = datetime.now(UTC)
     s.flush()
@@ -170,7 +211,8 @@ def set_token(s: Session, key: str, grant: TokenGrant) -> None:
     row = get_row(s, key)
     if row is None:
         raise LookupError(key)
-    row.token, row.token_expires_at = grant.token, grant.expires_at
+    row.token = secret_store.keep_text(f"broker.{key}", "token", grant.token, row.token)
+    row.token_expires_at = grant.expires_at
     row.status, row.last_error = "connected", None
     if grant.extra:
         row.state = {**(row.state or {}), **{k: v for k, v in grant.extra.items() if k in ("connected_as",)}}
@@ -181,6 +223,9 @@ def disconnect(s: Session, key: str) -> bool:
     row = get_row(s, key)
     if row is None:
         return False
+    for name in secret_names(key):
+        secret_store.drop((row.config or {}).get(name))
+    secret_store.drop(row.token)
     s.delete(row)
     return True
 

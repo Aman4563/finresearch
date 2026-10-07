@@ -22,7 +22,8 @@ Checks (results stored in claim.checks; a failing check never silently passes a 
                      a mismatch is a deterministic contradiction with the correct day recorded.
 
 The publish gate (check_report) inspects a synthesized report: it may only cite usable claims, must not cite raw
-document lines, and high-importance claims it relies on must be verified. It also applies the accounting-identity
+document lines, and high-importance claims it relies on must be verified AND carry evidence grade A, B or D
+(verify.evidence, #242: a verified web-only claim whose quote was never checked is grade C and blocks). It also applies the accounting-identity
 severity policy (see `identity_findings`) to the checks in `verify.identities`.
 """
 
@@ -40,6 +41,7 @@ from sqlalchemy.orm import Session
 from finresearch.db.models import Citation, Claim, Document
 from finresearch.fincalc.dates import bidding_day_number, to_ist
 from finresearch.ingest.text import read_lines
+from finresearch.verify.evidence import STRONG, claim_grade
 from finresearch.verify.values import HARD, WARN_PERIOD, ValueCheck, check_text, check_value
 
 LINE_TOLERANCE = 2
@@ -374,7 +376,8 @@ def apply_correction(
     for ct in claim.citations:
         session.add(Citation(claim_id=corr.id, document_id=ct.document_id, page_no=ct.page_no,
                              line_start=ct.line_start, line_end=ct.line_end, quote=ct.quote,
-                             quote_found=ct.quote_found, url=ct.url, accessed_at=ct.accessed_at))  # fmt: skip
+                             quote_found=ct.quote_found, url=ct.url, accessed_at=ct.accessed_at,
+                             snapshot_sha256=ct.snapshot_sha256, computation=ct.computation))  # fmt: skip
     session.flush()
     session.refresh(corr)
     if new_val is not None:
@@ -447,6 +450,13 @@ def check_report(session: Session, run_id: int, report_markdown: str) -> ReportG
             )
         elif c.status in CAVEAT_OK:
             g.warnings.append(f"[C{i}] is '{c.status}' — keep only with an UNVERIFIED caveat")
+        if c is not None and c.run_id == run_id and c.importance == "high" and c.status in USABLE:
+            # a verifier's "verified" is not evidence by itself: the citation must be checked too (#242)
+            ev = claim_grade(c)
+            if ev["grade"] not in STRONG:
+                g.blocking.append(f"[C{i}] is high-importance but its evidence is grade {ev['grade']} ({ev['label']}) "
+                                  "— cite the document lines, fetch the page with fetch_page and save it again, "
+                                  "cite the fincalc call with its inputs, or drop the figure")  # fmt: skip
         vstatus = (c.checks or {}).get("value_check") if c is not None else None
         if vstatus in HARD and c.status not in ("contradicted", "unsupported"):
             # the source prints this figure with the other sign / in another unit / in another period's column; a

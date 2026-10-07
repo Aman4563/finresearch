@@ -34,7 +34,7 @@ export const NAV: { group: string; items: NavItem[] }[] = [
       { href: "/funds", label: "Mutual funds", icon: <PieChart />, keys: "g f", description: "AMFI NAVs, returns and fund research" },
       { href: "/bonds", label: "Bonds", icon: <Landmark />, keys: "g b", description: "Listed bonds and NCDs, yields" },
       { href: "/fno", label: "F&O", icon: <Activity />, keys: "g o", description: "Option chains, greeks, strategy payoffs" },
-      { href: "/signals", label: "Signals", icon: <Radar />, keys: "g g", description: "Buy/sell signals and their track record" },
+      { href: "/signals", label: "Signals (research heuristics)", icon: <Radar />, keys: "g g", description: "Rule-based research views and their track record, not buy/sell advice" },
     ],
   },
   {

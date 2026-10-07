@@ -29,6 +29,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from finresearch import secrets as secret_store
 from finresearch.config import get_settings
 from finresearch.db import session_scope
 from finresearch.db.models import BrokerConnection, BrokerSyncLog
@@ -82,7 +83,7 @@ def scan(*, now: datetime | None = None, password: str | None = None) -> dict[st
     with session_scope() as s:
         row = s.get(BrokerConnection, INBOX_KEY)
         cfg = dict(row.config or {}) if row else {}
-        saved_pw = str(cfg.get("password") or "")
+        saved_pw = secret_store.resolve(cfg.get("password"))  # a Keychain reference since #245
         # older versions stored "wrong:<12 hex of sha256(password)>": scrub them (they could be brute-forced back to a
         # PAN-derived password); those files are simply tried again once
         waiting = {k: ("wrong:legacy" if re.fullmatch(r"wrong:[0-9a-f]{12}", str(v)) else v)

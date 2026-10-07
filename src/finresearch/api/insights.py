@@ -656,9 +656,22 @@ def case_points(points: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
 
 
 def verdict_block(kind: str, syn: dict[str, Any]) -> dict[str, Any]:
+    """The report's bottom line. A stock report's verdict is a research view under signals.stock's policy (#241):
+    `word` is the view ("Favourable"), `policy` "informational", `original_word` what an older report said, and its
+    price range is `price_context`, never an `entry_zone` instruction. Other kinds keep their word and are labelled
+    a view, not advice, by the reader."""
     word = syn.get("overall_verdict") or syn.get("verdict")
-    return {"word": word, "confidence": syn.get("confidence"), "horizon": syn.get("horizon"),
-            "entry_zone": norm_cites(syn["entry_zone"]) if syn.get("entry_zone") else None,
+    view = None
+    if kind == "stock_report":
+        from finresearch.signals.stock import report_view
+
+        view = report_view(word)
+    zone = norm_cites(syn["entry_zone"]) if syn.get("entry_zone") else None
+    return {"word": view["word"] if view else word, "confidence": syn.get("confidence"), "horizon": syn.get("horizon"),
+            "policy": view["policy"] if view else None, "view_label": view["label"] if view else None,
+            "original_word": view["original"] if view else None,
+            "price_context": zone if view else None,
+            "entry_zone": None if view else zone,
             "price_or_yield": norm_cites(syn["price_or_yield"]) if syn.get("price_or_yield") else None,
             "suits": norm_cites(syn["suits"]) if syn.get("suits") else None,
             "condition": norm_cites(syn["condition"]) if syn.get("condition") else None,
@@ -845,7 +858,13 @@ def quality(raw: list[dict[str, Any]], cited: set[int]) -> dict[str, Any]:
     cited_rows = [x for x in raw if int(x["id"]) in cited]
     cv = sum(1 for x in cited_rows if x.get("status") == "verified")
     n = len(raw)
+    # evidence grades of the claims the report cites (#242); claims serialised before grades have none
+    by_grade = dict.fromkeys("ABCDU", 0)
+    for x in cited_rows:
+        if x.get("evidence_grade") in by_grade:
+            by_grade[x["evidence_grade"]] += 1
     return {"total": n, "by_status": totals, "verified_pct": round(100 * totals["verified"] / n, 1) if n else None,
+            "cited_by_grade": by_grade,
             "cited": len(cited_rows), "cited_verified_pct": round(100 * cv / len(cited_rows), 1) if cited_rows else None,
             "by_stream": [{"stream": k, **v} for k, v in sorted(by_stream.items(), key=lambda kv: -kv[1]["total"])]}  # fmt: skip
 

@@ -10,9 +10,9 @@ Research and sources: the PR's alerts-research notes. In short:
 - macOS: terminal-notifier when installed (a click opens the app page), else `osascript` `display notification`
   with the text passed as arguments (never spliced into the script). Only shows on this Mac.
 
-Secrets (ntfy topic and token, Telegram bot token) are stored in the local database table `notification_setting`,
-never in the repo or the investor profile (the profile reaches the model); the API returns them masked, and every
-error written to the delivery log is redacted.
+Secrets (ntfy topic and token, Telegram bot token) are kept in the macOS Keychain (finresearch.secrets); the
+`notification_setting` row holds only a reference. They never go in the repo or the investor profile (the profile
+reaches the model); the API returns them masked, and every error written to the delivery log is redacted.
 
 Delivery: `queue` adds one `alert_delivery` row per chosen, configured channel; `deliver_due` (every monitor tick)
 sends due rows, at most one message a second per channel. A failure is retried after 30 s, 2 min and 8 min (or the
@@ -39,6 +39,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from finresearch import secrets as secret_store
 from finresearch.db.models import Alert, AlertDelivery, NotificationSetting
 
 log = logging.getLogger(__name__)
@@ -126,8 +127,13 @@ SECRETS = {"ntfy": ("topic", "token"), "telegram": ("bot_token",)}
 
 
 def load(session: Session, key: str) -> Any:
+    """The settings with their secrets read from the secret store (the row keeps only references)."""
     row = session.get(NotificationSetting, key)
-    return MODELS[key].model_validate(row.value if row else {})
+    value = dict(row.value or {}) if row else {}
+    for f in SECRETS.get(key, ()):
+        if f in value:
+            value[f] = secret_store.resolve(value[f])
+    return MODELS[key].model_validate(value)
 
 
 def _store(session: Session, key: str, model: BaseModel, extra: dict[str, Any] | None = None) -> None:
@@ -135,6 +141,9 @@ def _store(session: Session, key: str, model: BaseModel, extra: dict[str, Any] |
 
     row = session.get(NotificationSetting, key)
     value = {**model.model_dump(mode="json"), **(extra or {})}
+    old = dict(row.value or {}) if row else {}
+    for f in SECRETS.get(key, ()):  # the row keeps a reference; the value goes to the Keychain
+        value[f] = secret_store.keep(f"notify.{key}", f, str(value.get(f) or ""), old.get(f))
     if row is None:
         session.add(NotificationSetting(key=key, value=value))
     else:

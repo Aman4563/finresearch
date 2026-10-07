@@ -19,6 +19,9 @@ if args[:2] == ["auth", "status"]:
     sys.exit(0)
 
 prompt = sys.stdin.read()
+if os.environ.get("FAKE_CLAUDE_ARGV_LOG"):  # lets a test see exactly what an agent was given (model, prompts)
+    with open(os.environ["FAKE_CLAUDE_ARGV_LOG"], "a") as f:
+        f.write(json.dumps({"argv": args, "stdin": prompt}) + "\n")
 leak = "ANTHROPIC_API_KEY" in os.environ  # the Max tier must never see an API key
 schema = json.loads(args[args.index("--json-schema") + 1]) if "--json-schema" in args else None
 rl_ok = {

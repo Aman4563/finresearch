@@ -1,0 +1,6 @@
+# Reviewed false positives (gitleaks fingerprints: commit:file:rule:line). Each is synthetic or prose, never a credential.
+# docs prose listing the kinds of secrets kept in the Keychain ("…tokens, the API…"), PR #253
+73179fb4c228d59671b0518baa56e8fc3cb3610c:docs/ARCHITECTURE.md:generic-api-key:35
+# made-up fixtures ("synthetic-…") in the secret-store tests, PR #253; now assembled at runtime
+d60427f5801b7964d473af47529d40a57a526e28:tests/test_secrets.py:generic-api-key:20
+d60427f5801b7964d473af47529d40a57a526e28:tests/test_secrets.py:generic-api-key:21
