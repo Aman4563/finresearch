@@ -48,7 +48,7 @@ from finresearch.portfolio.connectors.base import BrokerHolding, BrokerTrade
 from finresearch.portfolio.dedupe import instrument_holdings
 from finresearch.portfolio.importers import ImportedTxn, instrument_key
 from finresearch.portfolio.lots import Event, build_lots, superseded_openings
-from finresearch.portfolio.service import add_txns, events_of, find_holding, rebuild
+from finresearch.portfolio.service import actions_of, add_txns, events_of, find_holding, rebuild
 
 UNITS_TOL = Decimal("0.001")
 BROKER_ACCOUNTS = {"Groww", "Zerodha", "Upstox", "Dhan"}
@@ -403,11 +403,13 @@ def reconcile_snapshot(s: Session, *, account: str, holdings: list[BrokerHolding
         have = sum((_open_units(s, x.id) for x in matches), Decimal(0))
         seen |= {x.id for x in matches}
         diff = have - h.quantity
+        acts = "; ".join(a["reason"] for x in matches for a in actions_of(x.meta)) or None
         out.append({"name": t.name, "ikey": t.ikey, "account": account, "broker_units": str(h.quantity),
                     "app_units": str(have.quantize(Decimal("0.001"))), "diff": str(diff.quantize(Decimal("0.001"))),
                     "ok": abs(diff) <= UNITS_TOL,
                     "status": "ok" if abs(diff) <= UNITS_TOL else ("missing_in_app" if not matches else "differs"),
-                    "broker_avg_price": str(h.avg_price) if h.avg_price is not None else None})  # fmt: skip
+                    "broker_avg_price": str(h.avg_price) if h.avg_price is not None else None,
+                    "pending_action": acts if abs(diff) > UNITS_TOL else None})  # fmt: skip
     if not by_instrument:
         for x in s.scalars(select(PortfolioHolding).where(PortfolioHolding.account == account)):
             if x.id in seen:
@@ -417,5 +419,6 @@ def reconcile_snapshot(s: Session, *, account: str, holdings: list[BrokerHolding
                 out.append({"name": x.name, "ikey": x.ikey, "account": account, "broker_units": "0",
                             "app_units": str(units.quantize(Decimal("0.001"))),
                             "diff": str(units.quantize(Decimal("0.001"))), "ok": False, "status": "not_at_broker",
-                            "broker_avg_price": None})  # fmt: skip
+                            "broker_avg_price": None,
+                            "pending_action": "; ".join(a["reason"] for a in actions_of(x.meta)) or None})  # fmt: skip
     return out

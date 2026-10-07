@@ -74,8 +74,11 @@ def tax_class_of(h: PortfolioHolding, category: str | None = None) -> tuple[str,
 
 def holding_tax(h: PortfolioHolding, category: str | None = None) -> HoldingTax:
     eff, _, _ = tax_class_of(h, category)
+    from finresearch.portfolio.service import actions_of
+
+    blocked = tuple((date.fromisoformat(a["ex_date"]), a["reason"]) for a in actions_of(h.meta))
     return HoldingTax(h.id, h.name, h.account, h.isin, eff, is_listed(h.asset_type, h.name, h.meta), h.fmv_2018,
-                      bool((h.meta or {}).get("sgb_original_subscriber")))  # fmt: skip
+                      bool((h.meta or {}).get("sgb_original_subscriber")), blocked)  # fmt: skip
 
 
 def _f(x: Decimal | None, nd: int = 2) -> float | None:
@@ -115,8 +118,9 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
     alloc: dict[str, dict[str, Decimal]] = {"asset": defaultdict(Decimal), "sector": defaultdict(Decimal),
                                             "cap": defaultdict(Decimal)}  # fmt: skip
     tot = defaultdict(Decimal)
-    unknown_cost = unpriced = 0
+    unknown_cost = unpriced = with_actions = 0
     from finresearch.disclosures.store import isin_map
+    from finresearch.portfolio.service import actions_of
 
     imap = isin_map(s)
     excluded: Counter[str] = Counter()  # holdings left out of the overall XIRR, by the reason cash_flows gave
@@ -127,6 +131,12 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
         open_lots = [lot for lot in data.lots.get(h.id, []) if lot.open_quantity > Decimal("0.0005")]
         units = sum((lot.open_quantity for lot in open_lots), ZERO)
         known = all(lot.cost_per_unit is not None for lot in open_lots)
+        actions = actions_of(h.meta)
+        # an unsupported corporate action past its ex-date (#237): the open lots' cost is not what they say until the
+        # user enters the allocation, so it is unknown, never the pre-action cost
+        if units > 0 and any(a["ex_date"] <= today.isoformat() for a in actions):
+            known = False
+        with_actions += 1 if actions and units > 0 else 0
         cost = sum(
             (lot.cost_per_unit * lot.open_quantity for lot in open_lots if lot.cost_per_unit is not None),
             ZERO,
@@ -187,7 +197,7 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
                                                                   else "Not equity" if h.asset_type == "stock"
                                                                   else fund_cap_bucket(category, eff)),
             "lots": len(open_lots), "closed": units <= 0, "signal": _signal(h, p, imap), "elss": lock,
-            "warnings": (h.meta or {}).get("lot_warnings") or [],
+            "warnings": (h.meta or {}).get("lot_warnings") or [], "pending_actions": actions,
             "sources": sorted({t.source for t in data.txns.get(h.id, [])}),
             "broker_baseline": any(t.kind == "opening" and (t.meta or {}).get("baseline")
                                    for t in data.txns.get(h.id, [])),
@@ -205,7 +215,7 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
         "summary": {"value": _f(tot["value"]), "cost": _f(tot["cost"]), "unrealised": _f(tot["unrealised"]),
                     "realised": _f(tot["realised"]), "dividends": _f(tot["dividends"]), "xirr": ox,
                     "xirr_reason": ox_reason, "holdings": sum(1 for r in rows if not r["closed"]),
-                    "unknown_cost": unknown_cost, "unpriced": unpriced},
+                    "unknown_cost": unknown_cost, "unpriced": unpriced, "pending_actions": with_actions},
         "allocation": {k: [{"label": lab, "value": _f(v)} for lab, v in sorted(d.items(), key=lambda kv: -kv[1])]
                        for k, d in alloc.items()},
         "cap_list": {k: str(v) for k, v in CAP_LIST.items()},

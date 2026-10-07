@@ -73,8 +73,9 @@ def rebuild(s: Session, holding_id: int) -> LotBook:
                                 acquired=d.acquired, sold=d.sold, quantity=d.quantity, cost=d.cost,
                                 proceeds=d.proceeds, stt_paid=d.stt_paid,
                                 origin="intraday" if d.intraday else d.origin))  # fmt: skip
-    if h is not None:
-        h.meta = {**(h.meta or {}), "lot_warnings": book.warnings[:20]}
+    if h is not None:  # an unsupported corporate action is the first thing the holding's notes say (#237)
+        notes = [a["reason"] for a in actions_of(h.meta)]
+        h.meta = {**(h.meta or {}), "lot_warnings": [*notes, *book.warnings][:20]}
         h.updated_at = func.now()
     return book
 
@@ -346,9 +347,15 @@ def manual_txn(s: Session, body: dict[str, Any]) -> PortfolioTxn:
             what = hit.get("label") or hit["why"]
             raise DuplicateEntry(f"{t.kind} of {_s(t.quantity)} on {t.day.isoformat()}: {what} (in "
                                  f"{', '.join(hit['accounts'])}). Add it anyway only if it is a second, real trade")  # fmt: skip
+    meta = dict(body.get("meta") or {})
+    resolves = str(meta.get("resolves_action") or "")  # "<holding id>:<action key>" (#237)
+    if resolves:
+        rid, _, rkey = resolves.partition(":")
+        target = s.get(PortfolioHolding, int(rid)) if rid.isdigit() else None
+        if target is None or not any(a.get("key") == rkey for a in actions_of(target.meta, open_only=False)):
+            raise LookupError(f"no corporate action {resolves!r} to resolve")
     if h is None:
         h = get_or_create_holding(s, t)
-    meta = dict(body.get("meta") or {})
     row = PortfolioTxn(holding_id=h.id, day=body["day"], kind=body["kind"], quantity=body.get("quantity"),
                        price=body.get("price"), amount=body.get("amount"), charges=body.get("charges") or Decimal(0),
                        stt_paid=body.get("stt_paid", True), source="manual",
@@ -356,6 +363,9 @@ def manual_txn(s: Session, body: dict[str, Any]) -> PortfolioTxn:
     s.add(row)
     s.flush()
     rebuild(s, h.id)
+    if resolves:
+        note = f"resolved by manual transaction #{row.id} ({row.kind} {row.day.isoformat()})"
+        resolve_action(s, int(rid), rkey, note + (f": {row.note}" if row.note else ""))
     return row
 
 
@@ -468,6 +478,101 @@ def apply_actions(
         s.flush()
         rebuild(s, holding.id)
     return added
+
+
+# Corporate actions the lots do not model (#237). A bonus or split is applied above; anything else that can change the
+# cost or the units of a held stock is recorded on the holding as a *pending* action. Until the user resolves it (enters
+# the cost allocation by hand, or marks it resolved with a note), the holding's cost is unknown and every sale on or
+# after the ex-date is unclassified (portfolio.tax.evaluate), so the tax of those years is incomplete (#213). The app
+# never invents a cost-split ratio. Subjects as NSE prints them (/api/corporates-corporateActions), matched in order.
+UNSUPPORTED_ACTIONS: tuple[tuple[str, str, re.Pattern[str]], ...] = (
+    ("demerger", "demerger", re.compile(r"\bde-?merger\b", re.I)),
+    ("merger", "merger/amalgamation", re.compile(r"\bamalgamation\b|\bmerger\b", re.I)),
+    ("consolidation", "consolidation", re.compile(r"\bconsolidat", re.I)),
+    (
+        "capital_reduction",
+        "capital reduction",
+        re.compile(r"\bcapital reduction\b|\breduction (?:of|in) (?:share )?capital\b", re.I),
+    ),  # fmt: skip
+    ("buyback", "buyback", re.compile(r"\bbuy[- ]?back\b", re.I)),
+    ("isin_change", "ISIN change", re.compile(r"\b(?:change (?:in|of) isin|isin change|new isin)\b", re.I)),
+    ("rights", "rights issue", re.compile(r"\brights?\b", re.I)),
+    ("scheme_of_arrangement", "scheme of arrangement", re.compile(r"\bscheme of arrangement\b", re.I)),
+)
+ACTION_LABEL = {k: label for k, label, _ in UNSUPPORTED_ACTIONS}
+
+
+def classify_action(subject: str) -> str | None:
+    """The unsupported corporate-action type of an exchange subject, or None (a dividend, a meeting, a bonus or split,
+    which parse_action models). A face-value split from a smaller to a larger value is a consolidation."""
+    for kind, _, rx in UNSUPPORTED_ACTIONS:
+        if rx.search(subject):
+            return kind
+    if (m := _SPLIT.search(subject)) and Decimal(m.group(1)) < Decimal(m.group(2)):
+        return "consolidation"
+    return None
+
+
+def action_reason(a: dict[str, Any]) -> str:
+    label = ACTION_LABEL.get(a.get("type") or "", a.get("type") or "corporate action")
+    return (f"unsupported corporate action: {label} on {a.get('ex_date')} — cost split not modelled; enter the cost "
+            "allocation manually")  # fmt: skip
+
+
+def actions_of(meta: dict[str, Any] | None, *, open_only: bool = True) -> list[dict[str, Any]]:
+    """A holding's recorded corporate actions (unresolved only by default), each with its `reason`."""
+    out = [dict(a) for a in (meta or {}).get("pending_actions") or []]
+    return [{**a, "reason": action_reason(a)} for a in out if not open_only or a.get("status") != "resolved"]
+
+
+def _held_before(s: Session, holding_id: int, day: date) -> bool:
+    txns = s.scalars(
+        select(PortfolioTxn).where(PortfolioTxn.holding_id == holding_id, PortfolioTxn.day < day)
+    ).all()
+    return build_lots(events_of(txns)).units > Decimal("0.0005")
+
+
+def record_unsupported(s: Session, holding: PortfolioHolding, actions: Iterable[tuple[date | None, str]], *,
+                       source_url: str | None, source: str = "nse_actions") -> list[str]:  # fmt: skip
+    """Record the unsupported corporate actions (ex-date, subject) of a stock that was held at the ex-date, each once
+    (NSE repeats some rows; a resolved action is never reopened). Returns what was recorded."""
+    have = list((holding.meta or {}).get("pending_actions") or [])
+    keys = {a.get("key") for a in have}
+    added: list[str] = []
+    for ex, subject in actions:
+        kind = classify_action(subject) if ex is not None else None
+        if kind is None or f"{kind}:{ex}" in keys:
+            continue
+        keys.add(f"{kind}:{ex}")
+        if not _held_before(s, holding.id, ex):  # type: ignore[arg-type]
+            continue
+        have.append({"key": f"{kind}:{ex}", "type": kind, "ex_date": ex.isoformat(),  # type: ignore[union-attr]
+                     "subject": " ".join(subject.split())[:300], "source": source, "source_url": source_url,
+                     "detected": date.today().isoformat(), "status": "pending"})  # fmt: skip
+        added.append(f"{kind} {ex.isoformat()}")  # type: ignore[union-attr]
+    if added:
+        holding.meta = {**(holding.meta or {}), "pending_actions": have}
+        s.flush()
+        rebuild(s, holding.id)
+    return added
+
+
+def resolve_action(s: Session, holding_id: int, key: str, note: str) -> PortfolioHolding:
+    """Mark a recorded corporate action resolved, with the user's note (what was entered, or why nothing changes)."""
+    if not (note or "").strip():
+        raise ValueError("note: say how it was resolved (the cost allocation entered, or why none is needed)")
+    h = s.get(PortfolioHolding, holding_id)
+    if h is None:
+        raise LookupError(f"unknown holding {holding_id}")
+    have = [dict(a) for a in (h.meta or {}).get("pending_actions") or []]
+    hit = next((a for a in have if a.get("key") == key), None)
+    if hit is None:
+        raise LookupError(f"no corporate action {key!r} on holding {holding_id}")
+    hit.update(status="resolved", note=note.strip()[:2000], resolved=date.today().isoformat())
+    h.meta = {**(h.meta or {}), "pending_actions": have}
+    s.flush()
+    rebuild(s, h.id)
+    return h
 
 
 def save_upload(content: bytes, sha: str, ext: str) -> str:

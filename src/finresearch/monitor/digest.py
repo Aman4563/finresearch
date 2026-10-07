@@ -253,6 +253,11 @@ def build_brief(s: Session, now: datetime) -> dict[str, Any]:
         if ev.get("bse_only"):
             health.append({"level": "info", "text": f"{len(ev['bse_only'])} BSE-only stock(s): corporate actions and "
                            "results dates are read from NSE only, so they are not in this calendar."})  # fmt: skip
+        from finresearch.portfolio.service import actions_of
+
+        for h in data.holdings:  # #237: a demerger, rights issue ... the lots do not model
+            health += [{"level": "warn", "text": f"{h.name}: {a['reason']} (open the holding to resolve it)."}
+                       for a in actions_of(h.meta)]  # fmt: skip
         unknown_cost = sum(1 for h in data.holdings for lot in data.lots.get(h.id, [])
                            if lot.open_quantity > 0 and lot.cost_per_unit is None)  # fmt: skip
         if unknown_cost:
