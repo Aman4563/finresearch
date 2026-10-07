@@ -232,7 +232,10 @@ def _walk(node: Any, ctx: dict[str, Any], part: str, out: list[dict[str, Any]], 
 
 def _fy_from(v: Any, assessment: bool) -> int | None:
     """'2025-26', '2025-2026', 'FY 2025-26' -> 2026 (named by the end year); an assessment year is one later."""
-    m = re.search(r"(20\d\d)\s*[-/]\s*(\d{2,4})", str(v))
+    v = str(v)[
+        :40
+    ]  # a period label is short; bounding it keeps the regexes linear (CodeQL py/polynomial-redos)
+    m = re.search(r"(20\d\d)\s*[-/]\s*(\d{2,4})", v)
     if m:
         end = int(m.group(1)) + 1
     elif re.fullmatch(r"\s*20\d\d\s*", str(v)):

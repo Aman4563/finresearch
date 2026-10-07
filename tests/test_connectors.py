@@ -962,3 +962,21 @@ def test_trades_missed_by_a_partial_sync_are_read_again(db, monkeypatch):
     assert asked == [date(2026, 9, 17)] * 3
     run(sync.sync_now("groww", now=datetime(2026, 10, 2, 11, 0, tzinfo=UTC)))
     assert asked[-1] == date(2026, 9, 28)  # 1-Oct read them: from 1-Oct - 3 days
+
+
+def test_inbox_password_is_tracked_by_a_random_revision_not_a_hash(db):
+    """CodeQL py/weak-sensitive-data-hashing: a CAS password is usually PAN-derived, so even a truncated hash of it
+    stored in the database could be brute-forced; the inbox keys failed files to a random revision id instead."""
+    import hashlib
+
+    from finresearch.portfolio.connectors.store import INBOX_KEY, update
+
+    with db() as s:
+        row = update(s, INBOX_KEY, {"config": {"password": "ABCDE1234F"}})
+        rev1 = row.config["password_rev"]
+        assert len(rev1) == 16 and hashlib.sha256(b"ABCDE1234F").hexdigest()[:12] not in rev1
+        assert (
+            update(s, INBOX_KEY, {"config": {"password": "ABCDE1234F"}}).config["password_rev"] == rev1
+        )  # unchanged
+        assert update(s, INBOX_KEY, {"config": {"password": "XYZAB9876C"}}).config["password_rev"] != rev1
+        assert "password_rev" not in update(s, INBOX_KEY, {"config": {"clear_password": True}}).config

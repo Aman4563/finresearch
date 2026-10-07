@@ -101,6 +101,10 @@ class Found:
         return self.portfolio.month or "unknown"
 
 
+FILE_ID = re.compile(r"[0-9a-f]{16}")  # stored files are named by the first 16 hex of their sha256
+FILE_EXTS = (".xlsx", ".xls", ".xlsm", ".zip", ".csv")
+
+
 class PortfolioStore:
     """AMC files and their parsed portfolios on disk; every read goes through the index."""
 
@@ -135,7 +139,10 @@ class PortfolioStore:
         """Parse and keep a file (idempotent by content hash). Raises AmcPortfolioError for unreadable files."""
         portfolios = parse_file(data, filename)
         sha = hashlib.sha256(data).hexdigest()[:16]
-        ext = (Path(filename).suffix or ".xlsx").lower()[:6]
+        ext = Path(filename).suffix.lower()
+        ext = (
+            ext if ext in FILE_EXTS else ".xlsx"
+        )  # a fixed allow-list: the stored name never carries user text
         with self._lock:
             (self.root / "files").mkdir(parents=True, exist_ok=True)
             (self.root / "parsed").mkdir(parents=True, exist_ok=True)
@@ -154,6 +161,10 @@ class PortfolioStore:
         return sha, portfolios
 
     def delete_file(self, sha: str) -> bool:
+        if not FILE_ID.fullmatch(
+            sha or ""
+        ):  # ids are our own sha256 prefixes: anything else never reaches a path
+            return False
         with self._lock:
             idx = self.index()
             meta = idx["files"].pop(sha, None)
@@ -172,6 +183,8 @@ class PortfolioStore:
 
     def parsed(self, sha: str) -> list[SchemePortfolio]:
         """A file's portfolios; re-parsed from the kept original when the parser has changed since."""
+        if not FILE_ID.fullmatch(sha or ""):
+            return []
         if sha not in self._parsed:
             p = self.root / "parsed" / f"{sha}.json"
             data = json.loads(p.read_text()) if p.exists() else None

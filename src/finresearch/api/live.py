@@ -16,6 +16,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException
 
+from finresearch.api.errors import public_error
 from finresearch.fincalc.dates import is_business_day, ist_datetime, next_business_day, to_ist
 
 EQUITY_HOURS = (time(9, 15), time(15, 30))
@@ -136,7 +137,7 @@ def add_live_routes(app: FastAPI, *, monitor_deps=None, clock=None) -> None:
         try:
             out = await cache.get(key, QUOTE_TTL_LIVE_S if live else QUOTE_TTL_CLOSED_S, make)
         except Exception as e:  # the exchange refused or is down: say so, the page keeps its last figures
-            raise HTTPException(502, f"{ex} quote for {sym} failed: {e}") from e
+            raise HTTPException(502, f"{ex} quote for {sym} failed: {public_error(e)}") from e
         return {**out, "live": live, "market": st["equity"]}
 
     @app.get("/api/watches/{watch_id}/live")
@@ -175,9 +176,9 @@ def add_live_routes(app: FastAPI, *, monitor_deps=None, clock=None) -> None:
         try:
             book = await cache.get(("book", watch_id), BOOK_TTL_S, make)
         except NotYet as e:
-            return {"live": True, "book": None, "reason": str(e)}
+            return {"live": True, "book": None, "reason": public_error(e)}
         except Exception as e:
-            raise HTTPException(502, f"live subscription fetch failed: {e}") from e
+            raise HTTPException(502, f"live subscription fetch failed: {public_error(e)}") from e
         return {"live": True, "book": book}
 
 

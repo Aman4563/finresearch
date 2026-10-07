@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import ipaddress
 import json
 import re
 import time
@@ -168,6 +169,30 @@ def cache_key(method: str, url: str, params: Mapping[str, Any] | None, data: Map
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
+class UnsafeURLError(ValueError):
+    """A URL the shared client refuses: not http(s), or aimed at this machine or a private network."""
+
+
+def check_public_url(url: str) -> str:
+    """Defence in depth against SSRF (CodeQL py/full-ssrf): this client only talks to public data sources, so it refuses
+    other schemes, `localhost` names and private, loopback, link-local or reserved IP literals. Callers that take a URL
+    from the user still allow-list hosts first (adapters.amc_portfolio.check_url, ingest.documents). A public name
+    that resolves to a private address is not caught here (that needs resolution at connect time)."""
+    parts = urlsplit(url)
+    host = (parts.hostname or "").lower().rstrip(".")
+    if parts.scheme not in ("http", "https") or not host:
+        raise UnsafeURLError(f"refusing a non-http(s) URL: {parts.scheme or '?'}://")
+    if host == "localhost" or host.endswith(".localhost"):
+        raise UnsafeURLError("refusing a URL on this machine (localhost)")
+    try:
+        ip = ipaddress.ip_address(host.strip("[]"))
+    except ValueError:
+        return url
+    if not ip.is_global or ip.is_multicast:
+        raise UnsafeURLError(f"refusing a URL on a private, loopback or reserved address ({ip})")
+    return url
+
+
 class PoliteClient:
     """Async httpx wrapper: browser headers, per-host rate limit, retries, opt-in disk cache, recorder hook.
 
@@ -269,6 +294,7 @@ class PoliteClient:
         An exception is raised only when every attempt failed at the transport level (timeout,
         connection reset); a final 429/5xx is returned so the caller can decide.
         """
+        check_public_url(url)
         key = cache_key(method, url, params, data) if cache_ttl is not None else None
         if key is not None and (hit := self._cache_read(key, cache_ttl or 0)) is not None:
             return hit

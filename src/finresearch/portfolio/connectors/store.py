@@ -8,6 +8,7 @@ imported transactions stay (delete their imports on the Portfolio page if you wa
 
 from __future__ import annotations
 
+import secrets
 from datetime import UTC, datetime
 from typing import Any
 
@@ -135,6 +136,14 @@ def update(s: Session, key: str, body: dict[str, Any]) -> BrokerConnection:
             cfg.pop(name, None)
     if key != INBOX_KEY:
         _validate(key, cfg)
+    elif cfg.get("password") != (row.config or {}).get("password"):
+        # the inbox remembers which files failed with which saved password by a random revision id, never by a hash
+        # of the password: a CAS password is usually PAN-derived (low entropy), so even a truncated hash stored in
+        # the database could be brute-forced back (CodeQL py/weak-sensitive-data-hashing)
+        if cfg.get("password"):
+            cfg["password_rev"] = secrets.token_hex(8)
+        else:
+            cfg.pop("password_rev", None)
     row.config = cfg
     for flag in ("enabled", "auto_sync"):
         if isinstance(body.get(flag), bool):
