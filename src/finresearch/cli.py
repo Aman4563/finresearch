@@ -732,12 +732,75 @@ def serve(
     port: int = typer.Option(8710, help="Port on 127.0.0.1"),
     monitor: bool = typer.Option(True, help="Run the monitoring scheduler inside the API process"),
 ) -> None:
-    """Start the local API for the research app (always bound to 127.0.0.1)."""
+    """Start the local API for the research app (always bound to 127.0.0.1). The first start creates the local API
+    token (Keychain + data/state/api_token, mode 0600) that every route but /api/health requires."""
     import uvicorn
 
     from finresearch.api import create_app
+    from finresearch.api.auth import bootstrap, token_file
 
-    uvicorn.run(create_app(monitor=monitor), host="127.0.0.1", port=port, log_level="info")
+    token = bootstrap()
+    console.print(
+        f"API token: {token_file()} (0600; the web app reads it, CLI clients send it as a bearer token)"
+    )
+    uvicorn.run(create_app(monitor=monitor, api_token=token), host="127.0.0.1", port=port, log_level="info")
+
+
+secrets_app = typer.Typer(
+    no_args_is_help=True, help="Secrets in the macOS Keychain (the database keeps references)"
+)
+app.add_typer(secrets_app, name="secrets")
+
+
+def _secret_report(rep, verb: str) -> None:
+    counts = rep.counts()
+    for table in ("broker_connection", "notification_setting"):
+        fields = sorted({f"{p.key}.{p.field}" for p in rep.found if p.table == table})
+        console.print(f"{table}: {counts.get(table, 0)} plaintext secret field(s) {verb}"
+                      + (f" ({', '.join(fields)})" if fields else ""))  # fmt: skip
+    if rep.unknown:
+        console.print(
+            f"[yellow]broker_connection rows of unknown connectors (not classified): {', '.join(rep.unknown)}"
+        )
+
+
+@secrets_app.command("check")
+def secrets_check() -> None:
+    """Exit 1 if any secret is still stored as plain text in the database (counts and field names only)."""
+    from finresearch.db import session_scope
+    from finresearch.secrets_migrate import scan
+
+    with session_scope() as s:
+        rep = scan(s)
+    _secret_report(rep, "left")
+    if rep.found or rep.unknown:
+        console.print(
+            "[red bold]plaintext secrets in the database: run `uv run finresearch secrets migrate --apply`"
+        )
+        raise typer.Exit(1)
+    console.print("[green]no plaintext secrets in the database")
+
+
+@secrets_app.command("migrate")
+def secrets_migrate(
+    apply: bool = typer.Option(False, "--apply", help="Move them (default: a dry run that only counts)"),
+) -> None:
+    """Move plaintext secrets from the database into the Keychain and keep references. Idempotent; prints counts and
+    field names only, never a value."""
+    from finresearch.db import get_engine, session_scope
+    from finresearch.secrets import backend
+    from finresearch.secrets_migrate import migrate, vacuum
+
+    with session_scope() as s:
+        rep = migrate(s, apply=apply)
+    _secret_report(rep, "moved" if apply else "would be moved")
+    console.print(f"secret store: {backend().name}")
+    if not apply:
+        console.print("dry run: nothing changed (add --apply)")
+        return
+    if rep.moved:
+        vacuum(get_engine())  # the old row versions still held the plaintext in the table files
+    console.print(f"[green]moved {rep.moved} secret field(s)")
 
 
 monitor_app = typer.Typer(

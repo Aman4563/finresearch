@@ -205,6 +205,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       ...init,
       headers: safe ? (init?.headers ?? {}) : { "Content-Type": "application/json", "X-FinResearch": "1", ...(init?.headers ?? {}) },
       cache: "no-store",
+      credentials: "include", // the API token cookie (set by src/proxy.ts) goes with every call
     });
   } catch {
     throw new ApiError(0, `FinResearch API not reachable at ${API_URL} — run \`uv run finresearch serve\``);
@@ -214,6 +215,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     try {
       detail = (await res.json()).detail ?? detail;
     } catch {}
+    if (res.status === 401) detail = "The API refused the app's token. Reload the page; if it persists, restart `uv run finresearch serve` and the app.";
     throw new ApiError(res.status, typeof detail === "string" ? detail : JSON.stringify(detail));
   }
   return res.json() as Promise<T>;

@@ -5,6 +5,8 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import create_engine, text
 
+TEST_API_TOKEN = "test-token-not-a-secret"
+
 
 @pytest.fixture(autouse=True)
 def _isolate_data_dirs(tmp_path, monkeypatch):
@@ -17,8 +19,24 @@ def _isolate_data_dirs(tmp_path, monkeypatch):
     for var, sub in (("FINRESEARCH_RUNS_DIR", "runs"), ("FINRESEARCH_STATE_DIR", "state"),
                      ("FINRESEARCH_DOCS_DIR", "docs"), ("FINRESEARCH_REPORTS_DIR", "reports"), ("FINRESEARCH_PORTFOLIO_DIR", "portfolio")):  # fmt: skip
         monkeypatch.setenv(var, str(tmp_path / "_iso" / sub))
+    # secrets go to a per-test memory store, never the user's Keychain (finresearch.secrets refuses it under pytest)
+    monkeypatch.setenv("FINRESEARCH_SECRETS_BACKEND", "memory")
+    # the local API token (#246): every TestClient sends it unless the test passes its own Authorization header
+    monkeypatch.setenv("FINRESEARCH_API_TOKEN", TEST_API_TOKEN)
+    from starlette.testclient import TestClient
+
+    init = TestClient.__init__
+
+    def _with_token(self, *a, headers=None, **kw):
+        init(self, *a, headers={"Authorization": f"Bearer {TEST_API_TOKEN}", **(headers or {})}, **kw)
+
+    monkeypatch.setattr(TestClient, "__init__", _with_token)
     config.get_settings.cache_clear()
+    from finresearch import secrets
+
+    secrets.reset_memory()
     yield
+    secrets.reset_memory()
     config.get_settings.cache_clear()
 
 

@@ -15,6 +15,12 @@ database. `scripts/backup.sh` takes a nightly `pg_dump` so a disk failure or a b
   file backup (Time Machine or similar). The PDFs themselves are not copied.
 - Keeps the newest `KEEP` dumps (default 14) and their manifests, and deletes older ones.
 - `data/` is gitignored, and the files are created with `umask 077`.
+- Holds no secrets. Broker credentials and tokens, the opt-in CAS password and notification tokens live in the macOS
+  Keychain; the database keeps only references (`{"secret_ref": ...}`). Before dumping, the script runs
+  `finresearch secrets check` and refuses (exit 3) if any secret is still stored as plain text; run
+  `uv run finresearch secrets migrate --apply` once to move them. A restore therefore needs the same Keychain (the
+  login keychain is in Time Machine); on a new Mac, re-enter the broker and notification credentials. Dumps taken
+  before the migration still contain the old plaintext: delete them once a new dump exists.
 
 | Variable | Default |
 |---|---|

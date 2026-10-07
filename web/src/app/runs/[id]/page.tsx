@@ -19,7 +19,7 @@ function useRunEvents(id: string) {
   const [epoch, setEpoch] = useState(0);
 
   useEffect(() => {
-    const es = new EventSource(`${API_URL}/api/runs/${id}/events`);
+    const es = new EventSource(`${API_URL}/api/runs/${id}/events`, { withCredentials: true });
     es.addEventListener("open", () => {
       setLive(true);
       setError(null);

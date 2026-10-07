@@ -101,7 +101,9 @@ Release notes are on the [Releases](https://github.com/Aman4563/finresearch/rele
 ## Privacy and data sources
 
 - Services bind to `127.0.0.1` only. Your portfolio, statements and journal stay in the local database and the
-  gitignored `data/` folder; statement passwords are used once and never stored.
+  gitignored `data/` folder. Statement passwords are used once and not stored, unless you choose to save the CAS
+  password in the statement inbox settings. Saved credentials and tokens are kept in the macOS Keychain, not in the
+  database. The local API requires a per-install token, and Postgres uses password (scram-sha-256) authentication.
 - Claude is used only through the official Claude Code CLI or Agent SDK under your own login. What it receives:
   - **Research runs** (IPO, stock, fund, bond): public documents and market data, through the FinResearch MCP tools.
   - **Ask about this report:** the report and the question you type.
