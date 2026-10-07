@@ -1,0 +1,98 @@
+[
+ {
+  "query": "Who is the book running lead manager?",
+  "section": "DEFINITIONS",
+  "key": "Example Capital Markets",
+  "line": 34
+ },
+ {
+  "query": "customer concentration top five customers share of revenue",
+  "section": "RISK_FACTORS",
+  "key": "61.4%",
+  "line": 72
+ },
+ {
+  "query": "foundry shutdown risk",
+  "section": "RISK_FACTORS",
+  "key": "Nashik foundry",
+  "line": 79
+ },
+ {
+  "query": "fresh issue and offer for sale share count",
+  "section": "THE_OFFER",
+  "key": "offer for sale of 4,000,000",
+  "line": 96
+ },
+ {
+  "query": "authorised share capital",
+  "section": "CAPITAL_STRUCTURE",
+  "key": "authorised share capital is Rs. 500 million",
+  "line": 113
+ },
+ {
+  "query": "use of net proceeds to repay debt",
+  "section": "OBJECTS_OF_THE_OFFER",
+  "key": "repay term loans",
+  "line": 130
+ },
+ {
+  "query": "capital expenditure for the new valve assembly line",
+  "section": "OBJECTS_OF_THE_OFFER",
+  "key": "valve assembly line",
+  "line": 137
+ },
+ {
+  "query": "P/E at the upper end of the price band",
+  "section": "BASIS_FOR_OFFER_PRICE",
+  "key": "28.6 times",
+  "line": 154
+ },
+ {
+  "query": "installed capacity and capacity utilisation",
+  "section": "OUR_BUSINESS",
+  "key": "capacity utilisation of 78%",
+  "line": 171
+ },
+ {
+  "query": "export revenue share by geography",
+  "section": "OUR_BUSINESS",
+  "key": "Middle East and Africa",
+  "line": 178
+ },
+ {
+  "query": "who is the managing director",
+  "section": "OUR_MANAGEMENT",
+  "key": "Managing Director",
+  "line": 198
+ },
+ {
+  "query": "promoter shareholding before the offer",
+  "section": "PROMOTERS",
+  "key": "81.7%",
+  "line": 215
+ },
+ {
+  "query": "revenue from operations fiscal 2026",
+  "section": "RESTATED_FINANCIALS",
+  "key": "3,912.40",
+  "line": 232
+ },
+ {
+  "query": "profit after tax",
+  "section": "RESTATED_FINANCIALS",
+  "key": "402.75",
+  "line": 239
+ },
+ {
+  "query": "pending tax demand litigation",
+  "section": "LITIGATION",
+  "key": "37.2 million",
+  "line": 256
+ },
+ {
+  "query": "UPI bid limit for retail investors",
+  "section": "OFFER_PROCEDURE",
+  "key": "Rs. 500,000",
+  "line": 273
+ }
+]
