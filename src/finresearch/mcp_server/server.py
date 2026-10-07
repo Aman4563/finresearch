@@ -636,7 +636,10 @@ def _snapshot_response(source: str | None, text: str) -> str:
     if source and re.match(r"https?://", source):
         from finresearch.verify import web
 
-        with contextlib.suppress(Exception), session_scope() as s:  # a failed snapshot only leaves the quote unchecked
+        with (
+            contextlib.suppress(Exception),
+            session_scope() as s,
+        ):  # a failed snapshot only leaves the quote unchecked
             web.store(s, source, text, run_id=None, content_type="application/json")
     return text
 
@@ -960,8 +963,10 @@ def save_claim(run_id: int, stream: str, statement: str, claim_type: str, citati
 
 @server.tool()
 def list_claims(run_id: int, stream: str | None = None, status: str | None = None) -> str:
-    """Claims recorded for a run (optionally filtered by stream or status) with their citation checks."""
+    """Claims recorded for a run (optionally filtered by stream or status) with their citation checks and evidence
+    grade (A document, B web checked on the stored page, C web unchecked, D fincalc, U unsupported)."""
     from finresearch.db.models import Claim
+    from finresearch.verify.evidence import citation_grade, claim_grade
 
     with session_scope() as s:
         q = select(Claim).where(Claim.run_id == run_id)
@@ -983,6 +988,7 @@ def list_claims(run_id: int, stream: str | None = None, status: str | None = Non
                     "period": c.period,
                     "status": c.status,
                     "importance": c.importance,
+                    "evidence_grade": claim_grade(c)["grade"],
                     "citations": [
                         {
                             "document_id": x.document_id,
@@ -990,6 +996,7 @@ def list_claims(run_id: int, stream: str | None = None, status: str | None = Non
                             "lines": [x.line_start, x.line_end],
                             "quote_found": x.quote_found,
                             "url": x.url,
+                            "grade": citation_grade(x)[0],
                         }
                         for x in c.citations
                     ],

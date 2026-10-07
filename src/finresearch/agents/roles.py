@@ -42,7 +42,11 @@ BONDS = [f"{MCP}nse_bond_search", f"{MCP}bond_analytics"]
 FUNDS = [f"{MCP}{t}" for t in ("amfi_scheme_search", "amfi_nav_history", "amfi_category_peers")]
 EQUITY = [f"{MCP}{t}" for t in ("nse_price_history", "nse_announcements", "nse_results_filings", "nse_results_facts",
                                  "nse_shareholding", "nse_corporate_actions")]  # fmt: skip
-WEB = ["WebSearch", "WebFetch"]
+WEB = [
+    "WebSearch",
+    "WebFetch",
+    f"{MCP}fetch_page",
+]  # fetch_page stores the text, so web quotes can be checked
 SKILL = ["Skill"]
 
 STREAMS = ("financials", "business", "risks", "valuation", "news30", "demand", "major")

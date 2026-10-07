@@ -137,6 +137,8 @@ def _safe(name: str) -> str:
 
 
 def load_claims(session, run_id: int) -> dict[int, ClaimView]:
+    from finresearch.verify.evidence import citation_grade
+
     docs = {d.id: d.title for d in session.scalars(select(Document))}
     out: dict[int, ClaimView] = {}
     for c in session.scalars(select(Claim).where(Claim.run_id == run_id).order_by(Claim.id)):
@@ -146,7 +148,8 @@ def load_claims(session, run_id: int) -> dict[int, ClaimView]:
             importance=c.importance, note=c.verifier_note, corrects=c.corrects_claim_id,
             citations=[{"doc_title": docs.get(x.document_id), "page": x.page_no, "lines": f"{x.line_start}-{x.line_end}",
                         "quote": x.quote, "quote_found": x.quote_found, "url": x.url,
-                        "accessed_at": x.accessed_at.isoformat() if x.accessed_at else None} for x in c.citations],
+                        "accessed_at": x.accessed_at.isoformat() if x.accessed_at else None,
+                        "grade": citation_grade(x)[0], "grade_label": citation_grade(x)[1]} for x in c.citations],
         )  # fmt: skip
     return out
 

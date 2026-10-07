@@ -15,7 +15,15 @@ export type Citation = {
   quote_found: boolean | null;
   url: string | null;
   accessed_at: string | null;
+  /** Evidence grade (#242): A document quote verified, B web quote checked on a stored copy of the page, C web
+   * quote not checked, D re-computed by fincalc from cited inputs, U unsupported. Absent from older APIs. */
+  grade?: EvidenceGrade;
+  grade_label?: string;
+  snapshot_sha256?: string | null;
+  computation?: { function: string; args: Record<string, unknown>; inputs: number[]; result: string; matches: boolean; inputs_ok: boolean; detail: string } | null;
 };
+
+export type EvidenceGrade = "A" | "B" | "C" | "D" | "U";
 
 export type Claim = {
   id: number;
@@ -33,6 +41,8 @@ export type Claim = {
   checks?: { source_language?: string; translation_marked?: boolean } & Record<string, unknown>;
   corrects_claim_id: number | null;
   citations: Citation[];
+  evidence_grade?: EvidenceGrade;
+  evidence_label?: string;
 };
 
 export type Step = {

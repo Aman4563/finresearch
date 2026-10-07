@@ -163,14 +163,21 @@ def step_json(st: AgentStep) -> dict[str, Any]:
 
 
 def claim_json(c: Claim, docs: dict[int, str]) -> dict[str, Any]:
+    """A ledger claim. `evidence` is its grade (verify.evidence, #242: A document-verified, B web quote checked on a
+    stored page, C web unchecked, D fincalc-computed, U unsupported); each citation carries its own grade."""
+    from finresearch.verify.evidence import citation_json, claim_grade
+
+    ev = claim_grade(c)
     return {"id": c.id, "run_id": c.run_id, "stream": c.stream, "statement": c.statement,
+            "evidence_grade": ev["grade"], "evidence_label": ev["label"],
             "claim_type": c.claim_type, "metric": c.metric,
             "value": str(c.value.normalize()) if c.value is not None else None, "unit": c.unit,
             "period": c.period, "importance": c.importance, "status": c.status, "verifier_note": c.verifier_note,
             "checks": c.checks or {}, "corrects_claim_id": c.corrects_claim_id,
             "citations": [{"document_id": x.document_id, "document_title": docs.get(x.document_id),
                            "page": x.page_no, "line_start": x.line_start, "line_end": x.line_end, "quote": x.quote,
-                           "quote_found": x.quote_found, "url": x.url, "accessed_at": _iso(x.accessed_at)}
+                           "quote_found": x.quote_found, "url": x.url, "accessed_at": _iso(x.accessed_at),
+                           **citation_json(x)}
                           for x in c.citations]}  # fmt: skip
 
 

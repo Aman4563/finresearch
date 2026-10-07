@@ -845,7 +845,13 @@ def quality(raw: list[dict[str, Any]], cited: set[int]) -> dict[str, Any]:
     cited_rows = [x for x in raw if int(x["id"]) in cited]
     cv = sum(1 for x in cited_rows if x.get("status") == "verified")
     n = len(raw)
+    # evidence grades of the claims the report cites (#242); claims serialised before grades have none
+    by_grade = dict.fromkeys("ABCDU", 0)
+    for x in cited_rows:
+        if x.get("evidence_grade") in by_grade:
+            by_grade[x["evidence_grade"]] += 1
     return {"total": n, "by_status": totals, "verified_pct": round(100 * totals["verified"] / n, 1) if n else None,
+            "cited_by_grade": by_grade,
             "cited": len(cited_rows), "cited_verified_pct": round(100 * cv / len(cited_rows), 1) if cited_rows else None,
             "by_stream": [{"stream": k, **v} for k, v in sorted(by_stream.items(), key=lambda kv: -kv[1]["total"])]}  # fmt: skip
 

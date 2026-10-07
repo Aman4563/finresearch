@@ -4,7 +4,7 @@ import { FileSearch, X } from "lucide-react";
 import Link from "next/link";
 
 import { Badge, SkeletonRows } from "@/components/ui";
-import { type Citation, type Claim, useApi, when } from "@/lib/api";
+import { type Citation, type Claim, type EvidenceGrade, useApi, when } from "@/lib/api";
 import { viewerHref } from "@/lib/viewer";
 
 const CHIP: Record<string, string> = {
@@ -24,11 +24,14 @@ function host(url: string) {
   }
 }
 
-// agents cite computed figures as "fincalc: ..." / "fincalc ipo.x(...)"; anything that is not a web URL is a calculation
-const isCalc = (url: string) => !/^https?:\/\//.test(url);
+// A citation that is not a web URL is a calculation. Only one save_claim re-ran through fincalc (`computation`, grade
+// D) is a deterministic calculation; a free-text "fincalc: ..." note typed by an agent was never checked (#242).
+const isWeb = (url: string) => /^https?:\/\//.test(url);
+const calcText = (url: string) => url.replace(/^fincalc:?\s*/, "");
 
 function citeLabel(c: Citation) {
-  if (c.url) return isCalc(c.url) ? `computed: ${c.url.replace(/^fincalc:?\s*/, "").slice(0, 72)}` : host(c.url);
+  if (c.url && !isWeb(c.url)) return `${c.computation ? "computed" : "calculation note"}: ${calcText(c.url).slice(0, 72)}`;
+  if (c.url) return host(c.url);
   return `${c.document_title ?? "document"} p${c.page ?? "?"} L${c.line_start}${c.line_end && c.line_end !== c.line_start ? `–${c.line_end}` : ""}`;
 }
 
@@ -51,7 +54,9 @@ export function CiteChip({ id, claim, onOpen }: { id: number; claim?: Claim; onO
         {claim ? (
           <>
             <span className="mb-1 flex items-center gap-1">
-              <Badge status={claim.status} /> <span className="text-muted">{claim.stream}</span>
+              <Badge status={claim.status} />
+              {claim.evidence_grade && <Badge tone={GRADE_TONE[claim.evidence_grade]}>evidence {claim.evidence_grade}</Badge>}
+              <span className="text-muted">{claim.stream}</span>
             </span>
             <span className="block">{claim.statement}</span>
             {claim.citations[0] && (
@@ -65,6 +70,22 @@ export function CiteChip({ id, claim, onOpen }: { id: number; claim?: Claim; onO
           <span className="text-loss">C{id} is not in this run&apos;s claim ledger.</span>
         )}
       </span>
+    </span>
+  );
+}
+
+const GRADE_TONE: Record<EvidenceGrade, "gain" | "info" | "warn" | "loss"> = { A: "gain", B: "gain", D: "info", C: "warn", U: "loss" };
+const GRADE_HELP =
+  "Evidence grade. A: the quote was found at the cited document lines. B: the quote was found on a stored copy of the web page. " +
+  "C: a web source whose quote was not checked. D: re-computed by fincalc from cited input claims. U: unsupported. " +
+  "A high-importance figure needs A, B or D to be published.";
+
+/** The evidence grade (#242) with its plain label; "verified" by a model alone is not evidence. */
+export function GradeBadge({ grade, label }: { grade: EvidenceGrade; label?: string }) {
+  return (
+    <span className="inline-flex items-center gap-1" title={GRADE_HELP}>
+      <Badge tone={GRADE_TONE[grade]}>evidence {grade}</Badge>
+      {label && <span className="text-[11px] text-muted">{label}</span>}
     </span>
   );
 }
@@ -116,6 +137,7 @@ export function EvidencePanel({ id, claim: given, onClose, embedded }: { id: num
         <div className="space-y-3">
           <div className="flex flex-wrap items-center gap-2">
             <Badge status={claim.status} />
+            {claim.evidence_grade && <GradeBadge grade={claim.evidence_grade} label={claim.evidence_label} />}
             <span className="text-muted">
               {claim.stream} · {claim.importance} importance
             </span>
@@ -136,16 +158,27 @@ export function EvidencePanel({ id, claim: given, onClose, embedded }: { id: num
           {claim.corrects_claim_id && <p className="text-xs text-muted">Corrects C{claim.corrects_claim_id}</p>}
           {claim.citations.map((c, i) => (
             <div key={i} className="border-t border-border pt-2">
-              {c.url && isCalc(c.url) ? (
+              {c.grade && <p className="mb-1"><GradeBadge grade={c.grade} label={c.grade_label} /></p>}
+              {c.url && !isWeb(c.url) ? (
                 <p className="text-xs">
-                  Deterministic calculation <code className="break-all">{c.url.replace(/^fincalc:?\s*/, "")}</code>
+                  {c.computation?.matches && c.computation.inputs_ok ? "Deterministic calculation (fincalc re-ran it)" : c.computation ? "Calculation that did not check out" : "Calculation note, not re-checked"}{" "}
+                  <code className="break-all">{calcText(c.url)}</code>
+                  {c.computation && (
+                    <span className="mt-0.5 block text-muted">
+                      {c.computation.detail}
+                      {c.computation.inputs.length > 0 && <> · inputs {c.computation.inputs.map((i) => `C${i}`).join(", ")}</>}
+                    </span>
+                  )}
                 </p>
               ) : c.url ? (
                 <p className="text-xs">
-                  <a className="break-all text-brand underline underline-offset-2" href={/^https?:\/\//.test(c.url) ? c.url : undefined} target="_blank" rel="noreferrer noopener">
+                  <a className="break-all text-brand underline underline-offset-2" href={c.url} target="_blank" rel="noreferrer noopener">
                     {c.url}
                   </a>{" "}
-                  <span className="text-muted">accessed {when(c.accessed_at)}</span>
+                  <span className="text-muted">accessed {when(c.accessed_at)}</span>{" "}
+                  {c.quote_found != null && (
+                    <Badge tone={c.quote_found ? "gain" : "loss"}>{c.quote_found ? "quote found on stored page" : "quote not on stored page"}</Badge>
+                  )}
                 </p>
               ) : (
                 <p className="text-xs">
