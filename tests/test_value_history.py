@@ -153,3 +153,13 @@ def test_wealth_history_reads_past_months_from_the_series(db):
     assert pts["2026-09-30"]["portfolio"] == 1200.0
     now = pts["2026-10-05"]  # today: the latest "as shown" valuation
     assert (now["portfolio"], now["portfolio_day"], now["portfolio_source"]) == (1250.0, "2026-10-05", "as shown")
+
+
+def test_data_health_names_the_reconciliation_differences():
+    from finresearch.portfolio.health import history
+
+    perf = {"summary": {"days": 3}, "reconciliation": {"checked": 2, "tolerance_pct": 1.0, "differ": [
+        {"day": "2026-09-29", "reason": "the snapshot was incomplete"}]}}  # fmt: skip
+    row = history(perf, None, True)
+    assert row["detail"].endswith("; 1 of 2 saved valuation day(s) differ from it by more than 1 % (latest "
+                                  "2026-09-29: the snapshot was incomplete)")  # fmt: skip

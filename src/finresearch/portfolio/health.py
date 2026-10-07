@@ -193,6 +193,11 @@ def history(perf: dict[str, Any] | None, error: str | None, has_holdings: bool) 
     else:
         short = [f"{k} ({n})" for k, n in HISTORY_NEED.items() if returns < n]
         detail = f"{returns} daily returns" + (f"; too short for {', '.join(short)}" if short else "")
+        rec = (perf or {}).get("reconciliation") or {}
+        if rec.get("differ"):  # the "as shown" snapshots against the canonical history (portfolio.series, #239)
+            detail += (f"; {len(rec['differ'])} of {rec['checked']} saved valuation day(s) differ from it by more "
+                       f"than {rec['tolerance_pct']:g} % (latest {rec['differ'][-1]['day']}: "
+                       f"{rec['differ'][-1]['reason']})")  # fmt: skip
     return _row("history", "Performance history length", cov, detail,
                 "volatility (60 days of returns), beta and risk contribution (120), VaR and Sharpe (250)",
                 "Import older transactions: the daily history is rebuilt from them", "/portfolio#import",
