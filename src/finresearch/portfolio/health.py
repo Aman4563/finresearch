@@ -6,6 +6,7 @@ One row per input, each with a coverage % (None = could not be measured), a stat
     purchase_dates    open lots with a known acquisition date, weighted by value          20
                       (units x price; units x cost when unpriced; lots with neither are counted, not weighed)
     priced            open holdings with a current price, by count                       20
+                      (a statement price past its age limit is not current: valuation.statement_stale)
     dividends         completed FYs with stock holdings that have >= 1 dividend recorded  10
     lookthrough       fund value covered by a month-end fund portfolio (/api/lookthrough) 10
     ais               AIS imported for the last completed FY (yes/no)                    10
@@ -89,9 +90,13 @@ def purchase_dates(lots: list[PortfolioLot], price: dict[int, float | None]) -> 
 def priced(rows: list[dict[str, Any]]) -> dict[str, Any]:
     held = [r for r in rows if not r.get("closed")]
     pending = sum(1 for r in held if r.get("pending"))
-    ok = sum(1 for r in held if r.get("value") is not None and not r.get("pending"))
+    # a statement price past its age limit (valuation.statement_stale) is not a current price (#238)
+    stale = sum(1 for r in held if r.get("price_stale") and not r.get("pending"))
+    ok = sum(1 for r in held if r.get("value") is not None and not r.get("pending") and not r.get("price_stale"))
     cov = (ok * 100 / len(held)) if held and not pending else None if held else 100.0
     detail = f"{ok} of {len(held)} holding(s) priced" + (f"; {pending} still loading" if pending else "")
+    if stale:
+        detail += f"; {stale} only by an old statement price"
     return _row("priced", "Holdings with a current price", cov, detail,
                 "current value, unrealised P&L, allocation, risk and XIRR for the unpriced holdings",
                 "Check the NSE symbol, ISIN or AMFI scheme code on the unpriced holding", "/portfolio#holdings",

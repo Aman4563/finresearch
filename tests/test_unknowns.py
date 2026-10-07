@@ -110,3 +110,56 @@ def test_realised_pnl_counts_sales_whose_cost_is_unknown(client):
     assert snap["complete"] is False  # main: True
     alpha = next(r for r in snap["holdings"] if r["name"] == "Example Alpha Ltd")
     assert alpha["realised_unknown"] == 1
+
+
+# --------------------------------------------------------------------------- (b) stale statement prices
+def test_statement_price_age_limit_counts_weekdays():
+    from finresearch.portfolio.valuation import PriceInfo, statement_stale
+
+    def p(day, source="Zerodha statement close"):
+        return PriceInfo(D("120"), day, source)
+
+    # Mon 5-Oct-2026: Mon 28-Sep is 5 weekdays back (29, 30, 1, 2, 5 Oct) -> still current; Fri 25-Sep is 6 -> stale
+    assert statement_stale(p("2026-09-28"), TODAY) is None
+    why = statement_stale(p("2026-09-25"), TODAY)
+    assert why == "Zerodha statement close of 2026-09-25 is 6 trading days old (over 5)"
+    assert statement_stale(p(None), TODAY) == "Zerodha statement close with no date"
+    assert statement_stale(PriceInfo(D("120"), "2026-01-01", "NSE quote"), TODAY) is None  # live: not this rule
+    assert statement_stale(p("2026-08-01", "CAMS statement NAV"), TODAY) is not None  # fund NAVs too
+
+
+def test_old_statement_price_is_not_complete_and_is_flagged(client):
+    hid = priced_holding(client, day="2026-08-06")  # 2 months old
+    snap = client.get("/api/portfolio").json()
+    (row,) = snap["holdings"]
+    assert row["value"] == 600.0 and row["price_stale"] is True  # still shown, with its date
+    assert "2026-08-06" in row["price_stale_reason"]
+    sm = snap["summary"]
+    assert sm["stale"] == 1 and "more than 5 trading days old" in sm["stale_note"]
+    assert snap["complete"] is False  # main: True
+    # the snapshot records the incompleteness the alerts and net worth read
+    from finresearch.db import session_scope
+    from finresearch.db.models import PortfolioSnapshot
+
+    with session_scope() as s:
+        (sn,) = s.query(PortfolioSnapshot).all()
+        assert (sn.value, sn.complete) == (D("600.00"), False)
+    # data health counts it as not priced
+    from finresearch.portfolio.health import priced
+
+    h = priced(snap["holdings"])
+    assert h["coverage_pct"] == 0.0 and "1 only by an old statement price" in h["detail"]
+    # a fresh one (dated today) is complete
+    set_meta(holding_id=hid, statement_price={"price": "120", "day": "2026-10-05", "source": "Zerodha"})
+    snap = client.get("/api/portfolio").json()
+    assert snap["complete"] is True and snap["summary"]["stale"] == 0
+
+
+def test_xirr_reason_names_the_stale_price(client):
+    priced_holding(client, day="2026-08-06")  # bought 5-Jan-2026 (> 60 days): the XIRR is computed
+    snap = client.get("/api/portfolio").json()
+    (row,) = snap["holdings"]
+    assert row["xirr"] is not None
+    assert row["xirr_reason"].startswith("today's value uses an old price: Zerodha statement close of 2026-08-06")
+    assert snap["summary"]["xirr"] is not None
+    assert "1 holding(s) valued at a statement price more than 5 trading days old" in snap["summary"]["xirr_reason"]
