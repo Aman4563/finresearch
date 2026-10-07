@@ -45,7 +45,9 @@ def _raw_rows(session_scope) -> str:
     with session_scope() as s:
         a = s.execute(text("SELECT coalesce(string_agg(config::text || coalesce(token, ''), '|'), '') "
                            "FROM broker_connection")).scalar()  # fmt: skip
-        b = s.execute(text("SELECT coalesce(string_agg(value::text, '|'), '') FROM notification_setting")).scalar()
+        b = s.execute(
+            text("SELECT coalesce(string_agg(value::text, '|'), '') FROM notification_setting")
+        ).scalar()
     return a + "|" + b
 
 
@@ -108,7 +110,11 @@ def _plant_plaintext(db) -> None:
         s.add(BrokerConnection(key="cas_inbox", config={"password": CAS_PW, "password_rev": "r1"}, state={}))
         s.add(NotificationSetting(key="ntfy", value={"enabled": True, "server": "https://ntfy.sh",
                                                      "topic": NTFY_TOPIC, "token": NTFY_TOKEN}))  # fmt: skip
-        s.add(NotificationSetting(key="telegram", value={"enabled": True, "bot_token": TG_TOKEN, "chat_id": "1"}))
+        s.add(
+            NotificationSetting(
+                key="telegram", value={"enabled": True, "bot_token": TG_TOKEN, "chat_id": "1"}
+            )
+        )
         s.add(NotificationSetting(key="general", value={"app_url": "http://127.0.0.1:3100"}))
 
 
@@ -124,7 +130,9 @@ def test_migrate_moves_plaintext_once_and_check_passes_after(db):
     assert rep.counts() == {"broker_connection": 4, "notification_setting": 3}
     with db() as s:
         dry = migrate(s, apply=False)
-    assert dry.moved == 0 and all(v in _raw_rows(db) for v in (API_KEY, SEED, ACCESS, CAS_PW, NTFY_TOKEN, TG_TOKEN))
+    assert dry.moved == 0 and all(
+        v in _raw_rows(db) for v in (API_KEY, SEED, ACCESS, CAS_PW, NTFY_TOKEN, TG_TOKEN)
+    )
     with db() as s:
         assert migrate(s, apply=True).moved == 7
     raw = _raw_rows(db)
@@ -143,7 +151,11 @@ def test_secrets_cli_check_fails_on_plaintext_and_never_prints_values(db):
     _plant_plaintext(db)
     runner = CliRunner()
     bad = runner.invoke(app, ["secrets", "check"])
-    assert bad.exit_code == 1 and "broker_connection: 4" in bad.output and "notification_setting: 3" in bad.output
+    assert (
+        bad.exit_code == 1
+        and "broker_connection: 4" in bad.output
+        and "notification_setting: 3" in bad.output
+    )
     dry = runner.invoke(app, ["secrets", "migrate"])
     assert dry.exit_code == 0 and "dry run" in dry.output
     assert runner.invoke(app, ["secrets", "check"]).exit_code == 1
@@ -182,7 +194,7 @@ def test_keychain_backend_passes_values_on_stdin_never_argv():
     fake = FakeSecurity()
     kc = secret_store.KeychainBackend(run=fake)
     ref = "finresearch/finresearch/broker.groww/api_key"
-    value = "synthetic secret with spaces ₹ and \"quotes\""
+    value = 'synthetic secret with spaces ₹ and "quotes"'
     kc.set(ref, value)
     assert kc.get(ref) == value
     assert not any(value in " ".join(a) or "b64:" in " ".join(a) for a in fake.argv)

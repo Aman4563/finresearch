@@ -35,7 +35,9 @@ class Plain:
 @dataclass
 class Report:
     found: list[Plain] = field(default_factory=list)
-    unknown: list[str] = field(default_factory=list)  # broker rows whose connector is unknown (cannot classify)
+    unknown: list[str] = field(
+        default_factory=list
+    )  # broker rows whose connector is unknown (cannot classify)
     moved: int = 0
 
     def counts(self) -> dict[str, int]:
@@ -74,7 +76,11 @@ def scan(s: Session) -> Report:
             rep.found.append(Plain("broker_connection", row.key, "token"))
     for row in s.scalars(select(NotificationSetting).order_by(NotificationSetting.key)):
         value = row.value or {}
-        rep.found += [Plain("notification_setting", row.key, f) for f in SECRETS.get(row.key, ()) if _plain(value.get(f))]
+        rep.found += [
+            Plain("notification_setting", row.key, f)
+            for f in SECRETS.get(row.key, ())
+            if _plain(value.get(f))
+        ]
     return rep
 
 

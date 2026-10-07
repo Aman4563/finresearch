@@ -103,7 +103,9 @@ def status_of(row: BrokerConnection | None, key: str, now: datetime) -> tuple[st
 def public_one(s: Session, key: str, now: datetime | None = None) -> dict[str, Any]:
     now = now or datetime.now(UTC)
     row = get_row(s, key)
-    cfg = dict(row.config or {}) if row else {}  # secrets stay references here: only whether one is set is shown
+    cfg = (
+        dict(row.config or {}) if row else {}
+    )  # secrets stay references here: only whether one is set is shown
     fields = fields_of(key)
     shown: dict[str, Any] = {}
     for f in fields:

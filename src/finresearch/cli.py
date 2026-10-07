@@ -740,11 +740,15 @@ def serve(
     from finresearch.api.auth import bootstrap, token_file
 
     token = bootstrap()
-    console.print(f"API token: {token_file()} (0600; the web app reads it, CLI clients send it as a bearer token)")
+    console.print(
+        f"API token: {token_file()} (0600; the web app reads it, CLI clients send it as a bearer token)"
+    )
     uvicorn.run(create_app(monitor=monitor, api_token=token), host="127.0.0.1", port=port, log_level="info")
 
 
-secrets_app = typer.Typer(no_args_is_help=True, help="Secrets in the macOS Keychain (the database keeps references)")
+secrets_app = typer.Typer(
+    no_args_is_help=True, help="Secrets in the macOS Keychain (the database keeps references)"
+)
 app.add_typer(secrets_app, name="secrets")
 
 
@@ -755,7 +759,9 @@ def _secret_report(rep, verb: str) -> None:
         console.print(f"{table}: {counts.get(table, 0)} plaintext secret field(s) {verb}"
                       + (f" ({', '.join(fields)})" if fields else ""))  # fmt: skip
     if rep.unknown:
-        console.print(f"[yellow]broker_connection rows of unknown connectors (not classified): {', '.join(rep.unknown)}")
+        console.print(
+            f"[yellow]broker_connection rows of unknown connectors (not classified): {', '.join(rep.unknown)}"
+        )
 
 
 @secrets_app.command("check")
@@ -768,7 +774,9 @@ def secrets_check() -> None:
         rep = scan(s)
     _secret_report(rep, "left")
     if rep.found or rep.unknown:
-        console.print("[red bold]plaintext secrets in the database: run `uv run finresearch secrets migrate --apply`")
+        console.print(
+            "[red bold]plaintext secrets in the database: run `uv run finresearch secrets migrate --apply`"
+        )
         raise typer.Exit(1)
     console.print("[green]no plaintext secrets in the database")
 

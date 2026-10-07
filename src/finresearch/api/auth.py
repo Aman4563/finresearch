@@ -105,7 +105,9 @@ def client_headers() -> dict[str, str]:
 
 
 def exempt(method: str, path: str) -> bool:
-    return method == "OPTIONS" or path in EXEMPT or (method in ("GET", "HEAD") and bool(_CALLBACK.match(path)))
+    return (
+        method == "OPTIONS" or path in EXEMPT or (method in ("GET", "HEAD") and bool(_CALLBACK.match(path)))
+    )
 
 
 class ApiTokenGuard:

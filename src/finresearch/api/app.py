@@ -278,7 +278,9 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
 
     api_token = api_token or current()
     if not api_token:
-        raise RuntimeError("no local API token: start the API with `uv run finresearch serve` (it creates one)")
+        raise RuntimeError(
+            "no local API token: start the API with `uv run finresearch serve` (it creates one)"
+        )
     spawner = spawner or Spawner()
 
     @contextlib.asynccontextmanager

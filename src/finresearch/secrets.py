@@ -41,7 +41,8 @@ REF_KEY = "secret_ref"
 TEXT_PREFIX = "secret_ref:"  # a reference in a text column (broker_connection.token)
 SECURITY_BIN = "/usr/bin/security"
 _NAME = re.compile(r"^[A-Za-z0-9._-]{1,80}(/[A-Za-z0-9._-]{1,80})*$")
-_CACHE_S = 60.0  # a value read from the Keychain is reused for a minute (one `security` call each, not per alert)
+# a value read from the Keychain is reused for a minute (one `security` call each, not one per alert)
+_CACHE_S = 60.0
 
 
 class SecretStoreError(RuntimeError):
@@ -57,7 +58,7 @@ class Backend(Protocol):
 
 
 def _split(ref: str) -> tuple[str, str]:
-    """"finresearch/<db>/<scope>/<field>" -> (service "finresearch/<db>", account "<scope>/<field>")."""
+    """Split a reference finresearch/<db>/<scope>/<field> into (service, account)."""
     parts = ref.split("/")
     if len(parts) < 4 or not _NAME.match(ref):
         raise SecretStoreError(f"not a secret reference: {ref[:80]!r}")
