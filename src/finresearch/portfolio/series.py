@@ -142,11 +142,12 @@ def _reason(sn: Snap, ser: Series, i: int, added: list[tuple[date, datetime]]) -
         if late:
             return (f"{len(late)} transaction(s) dated on or before this day were added after the snapshot was taken "
                     "(a backdated import or edit): the reconstruction includes them")  # fmt: skip
+    if ser.days[i] != sn.day:
+        return f"no prices on {sn.day.isoformat()} (not a trading day): compared with the close of {ser.days[i]}"
+    if sn.updated_at is not None:
         ist = to_ist(sn.updated_at)
         if ist.date() == sn.day and ist.time() < CLOSE_IST:
             return "the snapshot was taken during the session (last traded prices); the reconstruction uses the close"
-    if ser.days[i] != sn.day:
-        return f"no prices on {sn.day.isoformat()} (not a trading day): compared with the close of {ser.days[i]}"
     return ("the price basis differs: the snapshot used the price shown at the time (last trade, previous close or a "
             "statement price), the reconstruction the official close or NAV")  # fmt: skip
 

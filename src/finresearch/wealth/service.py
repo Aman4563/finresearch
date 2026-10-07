@@ -318,9 +318,9 @@ def _month_ends(start: date, end: date) -> list[date]:
 
 def history(b: Book, today: date, max_points: int = 120) -> list[dict[str, Any]]:
     """Month-end net worth from the earliest dated entry to today, plus today. Each month uses only what was known
-    on that day: the portfolio snapshot on or before it, manual values dated on or before it (FD/RD/loan schedules
-    from their start dates)."""
-    starts = [sn.day for sn in b.snaps] + [ln.start_date for ln in b.loans]
+    on that day: the portfolio's reconstructed value (portfolio.series; today: the latest "as shown" valuation),
+    manual values dated on or before it (FD/RD/loan schedules from their start dates)."""
+    starts = [sn.day for sn in b.snaps] + [ln.start_date for ln in b.loans] + ([b.first_txn] if b.first_txn else [])
     starts += [v.day for vs in b.vals.values() for v in vs]
     starts += [a.start_date for a in b.assets if a.start_date and a.kind in ("fd", "rd")]
     starts = [d for d in starts if d <= today]
