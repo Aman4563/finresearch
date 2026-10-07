@@ -113,13 +113,10 @@ def test_agreement_rules():
     )
     assert parse_figure("n/a") is None
     num = NS(claim_type="numeric", value=Decimal("12.5"), unit="%")
-    f = lambda v, sup="yes", u=None: BlindFinding(
-        claim_id=1,
-        derived_value=v,
-        derived_unit=u,  # noqa: E731
-        supports_statement=sup,
-        evidence="e",
-    )
+
+    def f(v, sup="yes", u=None):
+        return BlindFinding(claim_id=1, derived_value=v, derived_unit=u, supports_statement=sup, evidence="e")
+
     assert (
         agrees(num, f("12.5"))[0] and agrees(num, f("12.53"))[0]
     )  # 0.24 % apart: within the 0.5 % tolerance

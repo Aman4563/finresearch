@@ -9,7 +9,7 @@ from __future__ import annotations
 import copy
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 Impact = Literal["positive", "negative", "neutral", "mixed"]
 
@@ -139,15 +139,29 @@ class StockScenario(BaseModel):
 
 
 class StockSynthesis(BaseModel):
-    verdict: Literal["BUY", "ACCUMULATE", "HOLD", "REDUCE", "AVOID"]
-    horizon: str = Field(description="Holding period the verdict is for, e.g. '3-5 years'")
+    # A research view, not a call (#241): stock calls are informational until a pre-registered model shows an edge
+    # (signals.stock.CALLS_ENABLED). A stored output from before the switch (BUY…AVOID) still loads, mapped to its view.
+    verdict: Literal["FAVOURABLE", "MIXED", "UNFAVOURABLE"] = Field(
+        description="Research view: FAVOURABLE / MIXED / UNFAVOURABLE (informational, no validated edge; not a call)"
+    )
+    horizon: str = Field(description="Holding period the view is for, e.g. '3-5 years'")
     confidence: Literal["low", "medium", "high"]
     condition: str | None = Field(
-        default=None, description="What would change the verdict, with the datum to watch"
+        default=None, description="What would change the view, with the datum to watch"
     )
     entry_zone: str | None = Field(
-        default=None, description="Price range where the verdict applies (fincalc-backed)"
+        default=None,
+        description="Price range the valuation discusses (fincalc-backed): context, never an instruction "
+        "to buy or sell",
     )
+
+    @field_validator("verdict", mode="before")
+    @classmethod
+    def _legacy_verdict(cls, v: object) -> object:
+        legacy = {"BUY": "FAVOURABLE", "ACCUMULATE": "FAVOURABLE", "HOLD": "MIXED", "REDUCE": "UNFAVOURABLE",
+                  "AVOID": "UNFAVOURABLE"}  # fmt: skip
+        return legacy.get(v.strip().upper(), v.strip().upper()) if isinstance(v, str) else v
+
     executive_summary: str
     reasons_for: list[CasePoint]
     reasons_against: list[CasePoint]

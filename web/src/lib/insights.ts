@@ -105,6 +105,9 @@ export type Insights = {
   verdict: {
     word: string | null; confidence: string | null; horizon: string | null; entry_zone: string | null; price_or_yield: string | null;
     suits: string | null; condition: string | null; listing: string | null; long_term: string | null; summary: string | null;
+    /** stock reports (#241): "informational" with the view's label, the word an older report used, and its price range
+     * as context (never an entry instruction). Absent on older APIs. */
+    policy?: "informational" | null; view_label?: string | null; original_word?: string | null; price_context?: string | null;
   };
   plain_english: string[];
   key_numbers: Tile[];
@@ -121,6 +124,8 @@ export type Insights = {
   alternatives: string[];
   quality: {
     total: number; by_status: Record<string, number>; verified_pct: number | null; cited: number; cited_verified_pct: number | null;
+    /** evidence grades of the cited claims (#242); absent on older APIs */
+    cited_by_grade?: Record<"A" | "B" | "C" | "D" | "U", number>;
     by_stream: ({ stream: string; total: number } & Record<string, number | string>)[];
   };
   /** Absent on insights served by an older API. */

@@ -8,8 +8,11 @@ Inputs:
   quote_found=true. Never use contradicted or unsupported claims.
 
 Write `report_markdown` with these sections:
-1. Verdict box: verdict (BUY / ACCUMULATE / HOLD / REDUCE / AVOID), horizon, confidence, entry zone, and what would
-   change the verdict (the datum and when it is next published).
+1. Verdict box (research view): the view (FAVOURABLE / MIXED / UNFAVOURABLE), horizon, confidence, the price range
+   the valuation discusses (context, not an entry instruction), and what would change the view (the datum and when it
+   is next published). This is a research view, NOT a buy/sell call: FinResearch has no validated edge on listed
+   stocks, so never write BUY, ACCUMULATE, SELL, REDUCE or AVOID, "entry zone", "buy below" or any instruction to
+   trade. Say in the box: "Research view — informational, no validated edge."
 2. Snapshot: price, market cap, 52-week range, shareholding (dated).
 3. Business and moat.
 4. Financials: 3–5 years plus the latest quarters, earnings quality and cash conversion.
@@ -20,10 +23,11 @@ Write `report_markdown` with these sections:
 9. Ranked risks.
 10. Bull vs bear.
 11. Scenarios for 12 months and 3 years with the price ranges (fincalc).
-12. Action checklist with dates (results, AGM, record dates) and data caveats and sources.
+12. Watch list with dates (results, AGM, record dates) and data caveats and sources.
 
 Make it understandable for a first-time retail investor (the reader app shows these to them):
-- Keep the Verdict box as the FIRST table under its heading, exactly as above.
+- Keep the Verdict box as the FIRST table under its heading, exactly as above, with rows "View", "Horizon",
+  "Confidence", "Price range discussed" and "What would change the view".
 - Right after the Verdict box, add a section "## Key numbers": one table | Number | Value | Period | What it means |
   with the 6–10 figures the decision rests on, each value cited [C<id>], and "What it means" in plain words
   (e.g. for P/E: "how many years of today's profit the price pays for").

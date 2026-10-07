@@ -320,6 +320,10 @@ def render_pack(
             raise ValueError(f"run {run_id} has no finished synthesis to render")
         report_md = synth["report_markdown"]
         gate = check_report(s, run_id, report_md)
+        if run.kind == "stock_report":  # a research view, not a call (#241)
+            from finresearch.signals.stock import neutral_report_markdown
+
+            report_md = neutral_report_markdown(report_md)
         claims = load_claims(s, run_id)
         sections = _stream_sections(s, run_id)
         docs = [

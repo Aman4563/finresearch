@@ -7,7 +7,6 @@ import { Loader2, Sparkles } from "lucide-react";
 import { Badge, Button, ErrorNote, InfoTip, SkeletonRows } from "@/components/ui";
 import { api, type Decision, useApi, when } from "@/lib/api";
 
-const ACTION: Record<string, string> = { APPLY: "done", "APPLY-CONDITIONAL": "unverified", SKIP: "blocked" };
 const RULE: Record<string, string> = { fired: "blocked", clear: "done", unknown: "unverified" };
 const num = (v: string | null) => (v == null ? "unknown" : Number.isInteger(Number(v)) ? v : Number(v).toFixed(2));
 
@@ -16,7 +15,7 @@ export function DecisionCard({ d }: { d: Decision }) {
   return (
     <div className="space-y-3 text-sm">
       <div className="flex flex-wrap items-center gap-2">
-        <Badge status={ACTION[d.action]}>{d.action}</Badge>
+        <Badge tone="neutral">Suggested view: {d.action}</Badge>
         <span>
           {d.lots} lot{d.lots === 1 ? "" : "s"} · {d.category}
           {m.lot_cost?.value && d.lots > 0 && ` · ₹${(Number(m.lot_cost.value) * d.lots).toLocaleString("en-IN")}`}

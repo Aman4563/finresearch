@@ -539,6 +539,12 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
                 s.scalars(select(Claim).where(Claim.id.in_(ids), Claim.run_id == run_id)).all() if ids else []
             )
             docs = _doc_titles(s, rows)
+            if (
+                kind == "stock_report"
+            ):  # the verdict box as a research view, also for reports written before #241
+                from finresearch.signals.stock import neutral_report_markdown
+
+                md = neutral_report_markdown(md)
             return {"run_id": run_id, "kind": kind, "markdown": md, "published": gate.ok,
                     "gate": {"ok": gate.ok, "blocking": gate.blocking, "warnings": gate.warnings},
                     "claims": {str(c.id): claim_json(c, docs) for c in rows}}  # fmt: skip

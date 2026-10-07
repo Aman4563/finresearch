@@ -656,9 +656,22 @@ def case_points(points: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
 
 
 def verdict_block(kind: str, syn: dict[str, Any]) -> dict[str, Any]:
+    """The report's bottom line. A stock report's verdict is a research view under signals.stock's policy (#241):
+    `word` is the view ("Favourable"), `policy` "informational", `original_word` what an older report said, and its
+    price range is `price_context`, never an `entry_zone` instruction. Other kinds keep their word and are labelled
+    a view, not advice, by the reader."""
     word = syn.get("overall_verdict") or syn.get("verdict")
-    return {"word": word, "confidence": syn.get("confidence"), "horizon": syn.get("horizon"),
-            "entry_zone": norm_cites(syn["entry_zone"]) if syn.get("entry_zone") else None,
+    view = None
+    if kind == "stock_report":
+        from finresearch.signals.stock import report_view
+
+        view = report_view(word)
+    zone = norm_cites(syn["entry_zone"]) if syn.get("entry_zone") else None
+    return {"word": view["word"] if view else word, "confidence": syn.get("confidence"), "horizon": syn.get("horizon"),
+            "policy": view["policy"] if view else None, "view_label": view["label"] if view else None,
+            "original_word": view["original"] if view else None,
+            "price_context": zone if view else None,
+            "entry_zone": None if view else zone,
             "price_or_yield": norm_cites(syn["price_or_yield"]) if syn.get("price_or_yield") else None,
             "suits": norm_cites(syn["suits"]) if syn.get("suits") else None,
             "condition": norm_cites(syn["condition"]) if syn.get("condition") else None,
