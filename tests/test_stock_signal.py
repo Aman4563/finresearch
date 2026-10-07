@@ -308,6 +308,19 @@ def client(sources, monkeypatch):
         yield c
 
 
+def test_signal_get_never_logs_the_post_does(client, sources):
+    """#247: GET /api/signals/stock/{symbol} logged a forecast on every view (a prefetch or a retry changed the
+    calibration record); now only POST to the same path logs, and a query-string log=1 cannot force it."""
+    client.get("/api/signals/stock/INFY")
+    client.get("/api/signals/stock/INFY", params={"log": "1"})
+    assert sources["logged"] == []
+    r = client.post(
+        "/api/signals/stock/INFY", headers={"Origin": "http://127.0.0.1:3000", "X-FinResearch": "1"}
+    )
+    assert r.status_code == 200 and r.json()["instrument"] == "INFY"
+    assert len(sources["logged"]) == 1 and sources["logged"][0][1]["source"] == "signal:stock"
+
+
 def test_signal_forensic_and_backtest_routes(client):
     j = client.get("/api/signals/stock/infy").json()
     assert (

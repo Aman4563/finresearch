@@ -17,7 +17,7 @@ const inr0 = (v: number) => `${v < 0 ? "−" : ""}₹${Math.abs(v).toLocaleStrin
 
 export function IpoSignalLine({ symbol, series, company, closed }: { symbol: string; series: string | null; company: string; closed?: boolean }) {
   const q = series ? `?series=${encodeURIComponent(series)}` : "";
-  const { data: s, error } = useApi<Signal>(`/api/signals/ipo/${encodeURIComponent(symbol)}${q}`);
+  const { data: s, error } = useApi<Signal>(`/api/signals/ipo/${encodeURIComponent(symbol)}${q}`, undefined, "POST"); // a logged view (#247)
   const [open, setOpen] = useState(false);
   if (error) return null; // the card still shows the exchange data; the signal is optional
   if (!s) return <Skeleton className="mt-3 h-12 rounded-lg" />;

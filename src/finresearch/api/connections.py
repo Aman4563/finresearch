@@ -134,7 +134,10 @@ def add_connection_routes(app: FastAPI, clock: Callable[[], datetime] | None = N
     @app.get("/api/connections/{key}/login-url")
     def login_url(key: str, request: Request) -> dict[str, Any]:
         """The broker's login page for a browser-login broker, with a one-time state; after you log in the broker
-        redirects to this API's callback, which stores the day's token and sends you back to Profile."""
+        redirects to this API's callback, which stores the day's token and sends you back to Profile.
+
+        One of the two documented exceptions to "GETs never write" (#247, docs/USAGE.md): it stores the one-time
+        OAuth state the callback checks, and the page opens it as a plain link."""
         from finresearch.portfolio.connectors.store import build, get_row
 
         _broker(key)
@@ -155,7 +158,9 @@ def add_connection_routes(app: FastAPI, clock: Callable[[], datetime] | None = N
                              tokenId: str | None = Query(None, max_length=4000),
                              state: str | None = Query(None, max_length=200)) -> RedirectResponse:  # fmt: skip
         """Where the broker sends the browser after login. Verifies the state, exchanges the code for the day's
-        token and redirects to Profile → Connections with ?connected=<key> or ?connect_error=<message>."""
+        token and redirects to Profile → Connections with ?connected=<key> or ?connect_error=<message>.
+
+        A GET that writes by necessity (#247's documented exception): the broker's OAuth redirect is always a GET."""
         from finresearch.monitor.notify import load
         from finresearch.portfolio.connectors.base import ConnectorError, redact
         from finresearch.portfolio.connectors.store import build, get_row, set_token

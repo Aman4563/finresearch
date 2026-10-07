@@ -59,7 +59,7 @@ def test_signal_route_dispatches_to_the_provider_with_query_context(client):
     assert (
         r.status_code == 200
         and r.json()["instrument"] == "INFY"
-        and seen == {"horizon": "12m", "instrument": "INFY"}
+        and seen == {"horizon": "12m", "log": "0", "instrument": "INFY"}  # a GET never logs (#247)
     )
     assert client.get("/api/signals/stock/MISSING").status_code == 404
     assert client.get("/api/signals/fund/120505").status_code == 404  # no provider registered

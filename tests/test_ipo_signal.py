@@ -215,6 +215,16 @@ async def test_apply_and_skip_are_logged_in_the_forecast_ledger_to_resolve_on_li
     assert logged == []  # NO_SIGNAL and after-listing calls are not forecasts of the listing event
 
 
+async def test_a_signal_computed_with_log_0_is_not_logged():
+    """#247: GET /api/signals/ipo/{symbol} passes log=0 and must not write the ledger; only POST (log=1) logs."""
+    logged = []
+    src = sources(orient(qib="150"), record=lambda *a: logged.append(a))
+    s = await sig_ipo.compute("ORIENTCABL", {"log": "0"}, src)
+    assert s.action != "NO_SIGNAL" and logged == []
+    await sig_ipo.compute("ORIENTCABL", {"log": "1"}, src)
+    assert len(logged) == 1
+
+
 async def test_record_live_writes_a_listing_gain_forecast(clean):
     from sqlalchemy import select
 

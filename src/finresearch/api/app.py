@@ -1494,14 +1494,24 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
 
     @app.get("/api/signals/{asset}/{instrument}")
     async def signal(asset: str, instrument: str, request: Request) -> dict[str, Any]:
-        """The signal for one instrument. Query parameters are passed to the provider as its context."""
+        """The signal for one instrument. Query parameters are passed to the provider as its context. Read-only
+        (#247): it never writes the forecast ledger; POST to the same path logs the viewed signal."""
+        return await _signal(asset, instrument, {**request.query_params, "log": "0"})
+
+    @app.post("/api/signals/{asset}/{instrument}")
+    async def signal_logged(asset: str, instrument: str, request: Request) -> dict[str, Any]:
+        """The same signal, logged in the forecast ledger (signals.ledger: one open forecast per instrument, method
+        and IST day) by the providers that log (stock, IPO). The app's signal views call this once per view."""
+        return await _signal(asset, instrument, {**request.query_params, "log": "1"})
+
+    async def _signal(asset: str, instrument: str, ctx: dict[str, Any]) -> dict[str, Any]:
         from finresearch.signals import get_provider
 
         provider = get_provider(asset)
         if provider is None:
             raise HTTPException(404, f"no signal provider for {asset!r} yet")
         try:
-            sig = await provider(instrument, dict(request.query_params))
+            sig = await provider(instrument, ctx)
         except LookupError as e:
             raise HTTPException(404, str(e)) from e
         except ValueError as e:

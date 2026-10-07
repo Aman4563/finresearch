@@ -221,7 +221,9 @@ export function useRetryApi<T>(path: string, pollMs?: number) {
 
 /** Fetch once (and on `reload`), optionally polling every `pollMs`. Polling pauses while the tab is hidden and
  * catches up when it is shown again. `updatedAt` is when the last successful response arrived. */
-export function useApi<T>(path: string | null, pollMs?: number) {
+/** `method` "POST" is for reads the API records on purpose (a viewed signal goes into the forecast ledger): GETs never
+ * write (#247), so such a view is an explicit POST. */
+export function useApi<T>(path: string | null, pollMs?: number, method: "GET" | "POST" = "GET") {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
@@ -234,7 +236,7 @@ export function useApi<T>(path: string | null, pollMs?: number) {
     let last = 0;
     const load = () => {
       last = Date.now();
-      return api<T>(path)
+      return api<T>(path, method === "POST" ? { method } : undefined)
         .then((d) => {
           if (alive) {
             setData(d);
@@ -253,7 +255,7 @@ export function useApi<T>(path: string | null, pollMs?: number) {
       if (timer) clearInterval(timer);
       document.removeEventListener("visibilitychange", onShow);
     };
-  }, [path, pollMs, tick]);
+  }, [path, pollMs, tick, method]);
 
   return { data, error, reload, updatedAt };
 }

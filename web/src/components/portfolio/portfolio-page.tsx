@@ -41,7 +41,7 @@ function SignalBadge({ s }: { s: NonNullable<Holding["signal"]> }) {
   const load = async () => {
     setState("loading");
     try {
-      setState(await api<Signal>(`/api/signals/${s.asset}/${encodeURIComponent(s.instrument)}`));
+      setState(await api<Signal>(`/api/signals/${s.asset}/${encodeURIComponent(s.instrument)}`, { method: "POST" })); // a logged view (#247)
     } catch (e) {
       setState((e as Error).message);
     }
