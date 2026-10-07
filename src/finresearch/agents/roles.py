@@ -14,6 +14,7 @@ from importlib import resources
 from pydantic import BaseModel
 
 from finresearch.agents.schemas import (
+    BlindVerificationReport,
     BondSynthesis,
     CaseReport,
     CriticReport,
@@ -111,6 +112,11 @@ ROLES: dict[str, Role] = {
     "verifier": Role("verifier", "verifier.md", VerificationReport, ModelClass.DEEP,
                      [*DOC_READ, *CALC, *CHECKS, *LEDGER_READ, *WEB], effort="high", max_turns=60, timeout_s=2400,
                      needs_web=True, skills=["indian-fin-glossary", "rhp-navigator"]),
+    # the independent second opinion (#243): its own prompt, a different model tier (STANDARD, the first verifier is
+    # DEEP), and no ledger or identity tools, which would show it the claimed figures and their statuses
+    "verifier_blind": Role("verifier_blind", "verifier_blind.md", BlindVerificationReport, ModelClass.STANDARD,
+                           [*DOC_READ, *CALC, *WEB], effort="high", max_turns=60, timeout_s=2400, needs_web=True,
+                           skills=["indian-fin-glossary", "rhp-navigator"]),
     "bull": Role("bull", "case_bull.md", CaseReport, ModelClass.DEEP, [*LEDGER_READ, *DOC_READ],
                  effort="medium", max_turns=25, timeout_s=1200, skills=["indian-fin-glossary"]),
     "bear": Role("bear", "case_bear.md", CaseReport, ModelClass.DEEP, [*LEDGER_READ, *DOC_READ],

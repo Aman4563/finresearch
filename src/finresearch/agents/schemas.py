@@ -62,6 +62,30 @@ class VerificationReport(BaseModel):
     summary: str
 
 
+class BlindFinding(BaseModel):
+    """The independent second verifier's reading of one claim (#243). It is never told the claimed figure, the
+    claim's status or the first verifier's reasoning, so `derived_value` is its own reading of the cited source."""
+
+    claim_id: int
+    derived_value: str | None = Field(
+        default=None,
+        description="The figure for this metric and period as YOU read or computed it from the cited "
+        "source, digits only (e.g. '1234.56'); null if the claim has no figure or the source does not give one",
+    )
+    derived_unit: str | None = Field(
+        default=None, description="Unit of derived_value as printed (e.g. 'INR million')"
+    )
+    supports_statement: Literal["yes", "no", "cannot_tell"] = Field(
+        description="Does the cited source support the statement, figures masked as [N]?"
+    )
+    evidence: str = Field(description="Where you read it: document lines or URL, and what is printed there")
+
+
+class BlindVerificationReport(BaseModel):
+    findings: list[BlindFinding]
+    summary: str
+
+
 class CasePoint(BaseModel):
     point: str
     weight: Literal["high", "medium", "low"]
