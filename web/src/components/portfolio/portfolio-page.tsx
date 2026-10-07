@@ -434,7 +434,7 @@ function useProgressivePortfolio(refresh: number) {
         const total = first.pending ?? 0;
         if (total > 0) {
           setUpdating({ done: 0, total });
-          const res = await fetch(`${API_URL}/api/portfolio/prices/stream`, { signal: ctl.signal, cache: "no-store" });
+          const res = await fetch(`${API_URL}/api/portfolio/prices/stream`, { signal: ctl.signal, cache: "no-store", credentials: "include" });
           const reader = res.body?.getReader();
           const dec = new TextDecoder();
           let buf = "", done = 0;

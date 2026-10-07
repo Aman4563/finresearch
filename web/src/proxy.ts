@@ -1,0 +1,51 @@
+// Hands the browser the local API token (issue #246) as an httpOnly, SameSite=Strict cookie for 127.0.0.1.
+//
+// `finresearch serve` writes the token to data/state/api_token (mode 0600). This proxy runs in the Next.js server
+// (Node runtime), reads that file and sets `finresearch_token_<api port>` on page responses. Cookies are scoped to the
+// host, not the port, so the browser then sends the cookie with its calls to the API on 127.0.0.1:8710 (api.ts uses
+// credentials: "include"; the API's CORS allows credentials for the dashboard origins only). The token never reaches
+// page JavaScript.
+//
+// A cookie set for "localhost" would not be sent to 127.0.0.1, so a visit to localhost is redirected to 127.0.0.1.
+import { readFileSync, statSync } from "node:fs";
+import path from "node:path";
+import { NextResponse, type NextRequest } from "next/server";
+
+const API_URL = new URL(process.env.NEXT_PUBLIC_FINRESEARCH_API ?? "http://127.0.0.1:8710");
+const COOKIE = `finresearch_token_${API_URL.port || (API_URL.protocol === "https:" ? "443" : "80")}`;
+const TOKEN_FILE =
+  process.env.FINRESEARCH_API_TOKEN_FILE ??
+  path.join(process.env.FINRESEARCH_STATE_DIR ?? path.join(process.cwd(), "..", "data", "state"), "api_token");
+
+let cached: { mtime: number; token: string | null } | null = null;
+
+/** The token, re-read when the file changes; null while the API has never started (the API then answers 401). */
+function readToken(): string | null {
+  try {
+    const mtime = statSync(TOKEN_FILE).mtimeMs;
+    if (cached?.mtime !== mtime) cached = { mtime, token: readFileSync(TOKEN_FILE, "utf8").trim() || null };
+    return cached.token;
+  } catch {
+    cached = null;
+    return null;
+  }
+}
+
+export function proxy(request: NextRequest) {
+  if (request.nextUrl.hostname === "localhost" && API_URL.hostname === "127.0.0.1") {
+    const url = request.nextUrl.clone();
+    url.hostname = "127.0.0.1";
+    return NextResponse.redirect(url);
+  }
+  const response = NextResponse.next();
+  const token = readToken();
+  if (token && request.cookies.get(COOKIE)?.value !== token) {
+    response.cookies.set({ name: COOKIE, value: token, httpOnly: true, sameSite: "strict", path: "/", secure: false });
+  }
+  return response;
+}
+
+export const config = {
+  // pages and their data requests; not the static bundles, images or the pdf.js assets
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|pdfjs/).*)"],
+};

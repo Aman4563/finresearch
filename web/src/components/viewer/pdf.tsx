@@ -165,6 +165,7 @@ function usePdfDocument(url: string, attempt: number) {
         if (dead) return;
         task = pdfjs.getDocument({
           url,
+          withCredentials: true, // the API token cookie
           rangeChunkSize: 1 << 18,
           disableAutoFetch: true, // fetch only the byte ranges the visible pages need
           disableStream: true,

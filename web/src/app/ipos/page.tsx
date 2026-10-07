@@ -69,7 +69,7 @@ export default function IposPage() {
   const refresh = async () => {
     setRefreshing(true);
     try {
-      const r = await fetch(`${API_URL}/api/ipos?refresh=true`, { cache: "no-store" });
+      const r = await fetch(`${API_URL}/api/ipos?refresh=true`, { cache: "no-store", credentials: "include" });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       setRefreshed(await r.json());
       setRefreshError(null);
