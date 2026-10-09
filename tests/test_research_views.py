@@ -83,3 +83,12 @@ def test_stock_report_views_are_scored_and_shown_informational():
     call = _call_of(row)
     assert call["status"] == "informational" and call["tilt"] == "research view: favourable"
     assert _call_of(NS(asset="ipo", source="run:5", action="APPLY", score=None, inputs={})) is None
+
+
+def test_since_report_levels_read_as_context_not_instructions():
+    from finresearch.api.insights import _level_label
+
+    assert _level_label("entry_zone") == "Price range discussed"
+    assert _level_label("entry_zone_pe") == "Price range discussed"
+    assert _level_label("max_buy_price") == "Price ceiling discussed"
+    assert _level_label("fair_value_pe") != "Price range discussed"  # other estimates keep their own label

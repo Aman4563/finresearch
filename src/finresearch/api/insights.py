@@ -869,6 +869,14 @@ def quality(raw: list[dict[str, Any]], cited: set[int]) -> dict[str, Any]:
             "by_stream": [{"stream": k, **v} for k, v in sorted(by_stream.items(), key=lambda kv: -kv[1]["total"])]}  # fmt: skip
 
 
+# a report's buy-side levels are shown as context, never as instructions (informational policy, #241/#252)
+_CONTEXT_LABELS = {"entry_zone": "Price range discussed", "max_buy_price": "Price ceiling discussed"}
+
+
+def _level_label(group: str) -> str:
+    return next((v for k, v in _CONTEXT_LABELS.items() if group.startswith(k)), None) or humanise(group)
+
+
 def fair_values(claims: list[C]) -> list[dict[str, Any]]:
     """Fair-value / entry-zone estimates. Each is tagged with its `group` and `role` (low / mid / high, from the
     metric name or the period) so a low and a high of the same estimate can be drawn as one range; a lone value
@@ -894,7 +902,7 @@ def fair_values(claims: list[C]) -> list[dict[str, Any]]:
             continue  # the best-ranked claim (verified first) for each end of the range
         seen.add(key)
         basis = f"{mult.group(1)}{'.' + mult.group(2) if mult.group(2) else ''}x" if mult else None
-        out.append({**p, "label": humanise(group), "group": group, "role": role, "basis": basis})
+        out.append({**p, "label": _level_label(group), "group": group, "role": role, "basis": basis})
     return sorted(out, key=lambda f: (f["group"], f["value"]))
 
 
