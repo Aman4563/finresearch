@@ -80,11 +80,13 @@ def sync_slots(now: datetime) -> int:
                     w.active = False
                     continue
             planned = {sl.slot for sl in slots}
+            # a stock watch that was an IPO keeps the IPO's pending lock-in checks (monitor.watch._reset, #291)
+            kept = [MonitorJob.kind != "lockin"] if w.kind == "stock" else []
             # dates can move (holiday lists refreshed, NSE confirms a listing date): pending checks for slots that are
             # no longer planned are cancelled instead of running on the wrong day
             s.execute(update(MonitorJob).where(MonitorJob.watch_id == w.id, MonitorJob.status == "pending",
                                                MonitorJob.attempts == 0, MonitorJob.slot.not_in(planned),
-                                               MonitorJob.due_at > now)
+                                               MonitorJob.due_at > now, *kept)
                       .values(status="cancelled", finished_at=now))  # fmt: skip
             # a listing check keyed to the old expected date may already be retrying: its event now has a new slot
             s.execute(update(MonitorJob).where(MonitorJob.watch_id == w.id, MonitorJob.status == "pending",
@@ -418,6 +420,18 @@ async def drain() -> None:
             await t
 
 
+async def phase_step_safe(deps: jobs.Deps, now: datetime) -> dict[str, int]:
+    """IPO watch phases (monitor.phase): archive, withdraw, convert to a stock watch. A failure leaves every phase
+    as it was and is retried on the next tick; it never stops the checks."""
+    try:
+        from finresearch.monitor.phase import phase_step
+
+        return await phase_step(now, deps)
+    except Exception:
+        log.warning("IPO phase step failed; it is retried on the next tick", exc_info=True)
+        return {}
+
+
 def brief_step(now: datetime) -> dict[str, int]:
     """The 08:30 brief and the Sunday digest (monitor.digest): database only, so it runs inline."""
     try:
@@ -453,6 +467,7 @@ async def tick(deps: jobs.Deps, now: datetime | None = None) -> dict[str, int]:
     if deps.archive:
         await _archive_data(deps, now)
     _recover_stale(now)
+    phases = await phase_step_safe(deps, now)
     added = sync_slots(now)
     missed = _expire_missed(now)
     done = failed = retried = 0
@@ -462,6 +477,7 @@ async def tick(deps: jobs.Deps, now: datetime | None = None) -> dict[str, int]:
         failed += st == "failed"
         retried += st == "pending"
     out = {"added": added, "done": done, "failed": failed, "retried": retried, "missed": missed}
+    out |= {k: v for k, v in phases.items() if v}
     if deps.forecasts:
         out |= {k: v for k, v in (await forecast_step(deps, now)).items() if k in ("resolved", "void")}
     out |= journal_step(now)
