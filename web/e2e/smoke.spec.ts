@@ -72,6 +72,8 @@ test("connections: the Groww card says which market data Groww supplies and toda
     auto_sync: true, config: { api_key: "••••••••", api_key_set: true }, status: "connected", next_step: "Syncs after the close.",
     token_set: true, connected_as: null, token_expires_at: "2026-10-10T06:00:00+05:30", last_sync_at: "2026-10-09T16:05:00+05:30",
     last_error: null, positions: [], funds: null, last_summary: null,
+    t1_semantics: { result: "separate", day: "2026-10-12", evidence: { separate: 2, included: 0, unknown: 0 } },
+    orders_poll: { at: "2026-10-09T10:45:00+05:30", status: "ok", orders: 1, added: 1, updated: 0 },
   };
   const api = await mockApi(page, {
     "GET /api/profile": { capital_per_ipo_inr: "15000", risk_appetite: "medium", horizon: "listing", tax_slab_pct: "30",
@@ -85,6 +87,7 @@ test("connections: the Groww card says which market data Groww supplies and toda
       calls_today: { day: "2026-10-09", total: 42, categories: [
         { category: "live", label: "Live and historical data", calls: 37, per_second: 10, per_minute: 300, daily_cap: null },
         { category: "auth", label: "Login (token)", calls: 1, per_second: 5, per_minute: 30, daily_cap: 150 }] },
+      close_check: { checked: 26, matched: 25, since: "2026-10-09", last_day: "2026-10-12", tolerance_inr: 0.01 },
     },
   });
   await page.goto("/profile#connections");
@@ -94,6 +97,9 @@ test("connections: the Groww card says which market data Groww supplies and toda
   await expect(card.getByText(/mutual-fund NAVs stay on AMFI/i)).toBeVisible();
   await expect(card.getByText(/calls today/i)).toBeVisible();
   await expect(card.getByText(/Login \(token\) 1 of 150/)).toBeVisible();
+  await expect(card.getByTestId("groww-close-check")).toContainText("Groww close matched the official close on 25 of 26 stock-days");
+  await expect(page.getByTestId("groww-t1")).toContainText("T1 handling: confirmed separate on 2026-10-12");
+  await expect(page.getByText(/Orders read in session/)).toContainText("1 new, 0 updated");
   if (phone(page)) await expectNoHorizontalOverflow(page);
   api.expectClean(["GET /api/"]); // the profile page's other cards may stay unanswered here
 });
