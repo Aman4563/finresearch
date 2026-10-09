@@ -34,6 +34,8 @@ export type Holding = {
   scheme_code: string | null;
   category: string | null;
   sector: string | null;
+  /** the display sector every view groups by (portfolio.limits.sector_label); `sector` is the raw/own label */
+  sector_label?: string;
   tax_class: TaxClass;
   tax_class_auto: TaxClass;
   tax_class_why: string;
