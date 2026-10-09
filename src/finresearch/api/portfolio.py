@@ -273,7 +273,7 @@ def add_portfolio_routes(app: FastAPI, *, scheme_rows: Callable[[], Awaitable[li
         """Record today's value in the history behind the drawdown and drift alerts (the latest valuation of a day
         wins). Uses cached prices only (no network): nothing is recorded while any holding has no cached price, as
         GET /api/portfolio once did on every load (#247 moved the write here)."""
-        from finresearch.portfolio.metrics import record_snapshot
+        from finresearch.portfolio.metrics import record_snapshot, valuation_gaps
         from finresearch.portfolio.report import snapshot
 
         got, waiting = await _prices(_detached_holdings(), cached_only=True)
@@ -285,7 +285,8 @@ def add_portfolio_routes(app: FastAPI, *, scheme_rows: Callable[[], Awaitable[li
             if not snap["summary"]["value"]:
                 return {"recorded": False, "reason": "no holding has a value"}
             by_asset = {r["label"]: r["value"] for r in snap["allocation"]["asset"]}
-            record_snapshot(s, today, snap["summary"]["value"], snap["invested"], by_asset, snap["complete"])
+            record_snapshot(s, today, snap["summary"]["value"], snap["invested"], by_asset, snap["complete"],
+                            valuation_gaps(s, snap))  # fmt: skip
             return {"recorded": True, "day": today.isoformat(), "complete": snap["complete"]}
 
     def _coverage(rows: list[dict[str, Any]], today: Any) -> dict[str, Any] | None:

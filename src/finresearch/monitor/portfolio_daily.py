@@ -334,7 +334,7 @@ def day_move(prev: list | None, cur: list | None) -> float | None:
 
 
 async def valuation_pass(deps: Any, now: datetime, today: date) -> dict[str, Any]:
-    from finresearch.portfolio.metrics import record_snapshot
+    from finresearch.portfolio.metrics import record_snapshot, valuation_gaps
     from finresearch.portfolio.report import snapshot
     from finresearch.portfolio.valuation import QuoteBatch, fetch_prices
 
@@ -362,7 +362,9 @@ async def valuation_pass(deps: Any, now: datetime, today: date) -> dict[str, Any
         by_asset = {r["label"]: r["value"] for r in snap["allocation"]["asset"]}
         value = snap["summary"]["value"] or 0.0
         if value:
-            record_snapshot(s, today, value, snap["invested"], by_asset, snap["complete"])
+            record_snapshot(
+                s, today, value, snap["invested"], by_asset, snap["complete"], valuation_gaps(s, snap)
+            )
         prev = cache.read(s, cache.VALUATION)
         hist: dict[str, dict[str, list]] = dict(prev.get("history") or {})
         cur: dict[str, Any] = {}

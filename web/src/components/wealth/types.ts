@@ -39,6 +39,9 @@ export type Goal = {
   portfolio_pct: number; equity_pct: number | null; gold_pct: number; in_cover: boolean; notes: string | null;
   /** null = unknown (the earmarked portfolio has no valuation), never ₹0; funded_complete false = a lower bound (#262) */
   funded_now: number | null; funded_complete?: boolean; funded_why?: string | null; months_left: number; shared_links: number[];
+  /** "lower": funded_now is at least this; only the named unpriced holdings are left out; share = their part of the
+   * earmarked portfolio at their last known prices, null = unknown (#286) */
+  funded_bound?: "lower" | null; funded_unpriced?: string[]; funded_unpriced_share_pct?: number | null;
 };
 
 export type Policy = {
@@ -106,6 +109,11 @@ export type GoalPlan = {
   /** false: not simulated, because the money set aside today is unknown or incomplete (only goal_id, name, start,
    * linked, message, funded_why and disclaimer are present), #262 */
   funded_complete?: boolean; funded_why?: string | null;
+  /** "lower" (#286): simulated from the priced part only, so start, every chance and the outcomes are lower bounds and
+   * the SIPs upper bounds (a null SIP is then unknown, not "not reachable"); unpriced names what is left out and
+   * unpriced_share_pct its share of the earmarked portfolio at last known prices (null = unknown). bound_why: why a
+   * partial amount was not used as a bound. */
+  bound?: "lower" | null; bound_why?: string | null; unpriced?: string[]; unpriced_share_pct?: number | null;
 };
 
 export const inr = (v: number | null | undefined, d = 0) =>
