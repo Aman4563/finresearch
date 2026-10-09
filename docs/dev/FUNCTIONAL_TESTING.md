@@ -288,3 +288,9 @@ These are dated entries for bugs we reproduced, what caused them, and how they a
 - **Reproduced:** with no NSE holiday list cached, the stock peers, disclosures and IV jobs ran on any weekday, and they ran on cached holidays too (they only checked for weekends). Now they skip holidays, fail closed on an unknown list and raise one alert a day (test_holidays).
 - **Reproduced:** `index_document` with an embedder that fails on its second batch raised, and discovery rolled the whole document back. Now the document is stored keyword-only and found by full-text search (test_retrieval).
 - **Found by the new eval:** full-text search alone finds only 8 of 16 natural-language gold queries in the top 5 (`websearch_to_tsquery` ANDs every word). Not changed here: see the PR's "needs decision".
+
+### 2026-10-09: unknown read as ₹0 or ok in goals, XIRR, the week's change and data health (#262, #263, #264)
+- **Reproduced (synthetic, tests/test_unknowns.py):** holdings never valued and a goal earmarking 50 % of the portfolio: `funded_now` was ₹10,000 (other savings only, the portfolio counted as ₹0) and the goal plan simulated from it; an incomplete valuation was simulated as if complete.
+- **Reproduced (tests/test_corp_actions.py):** a held stock with a pending demerger still showed a per-holding XIRR (−12.75 %) and fed the overall XIRR; the corporate-actions health row read "ok, 100 %" for stocks whose actions were never synced.
+- **Reproduced (tests/test_value_history.py):** a stored value history made out of date by a backdated trade left the dashboard week, the digest and the brief's daily line empty with no reason; a history ending 5 days ago still printed a two-day "week".
+- **Reproduced (tests/test_monitor.py, tests/test_bse_only.py, tests/test_sector_labels.py):** listing alert "open ₹1300.250000 (… ₹272 upper band)"; look-through's top holdings showed NSE's "Mutual Fund Scheme - ETF" and BSE's "-" as sectors (the open point of 2026-10-0x above).
