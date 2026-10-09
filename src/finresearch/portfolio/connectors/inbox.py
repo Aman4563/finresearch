@@ -91,6 +91,7 @@ def scan(*, now: datetime | None = None, password: str | None = None) -> dict[st
         waiting = {k: ("wrong:legacy" if re.fullmatch(r"wrong:[0-9a-f]{12}", str(v)) else v)
                    for k, v in dict((row.state or {}).get("waiting") or {}).items()} if row else {}  # fmt: skip
         before = dict(waiting)
+        alerted = {"depository_alerted": (row.state or {}).get("depository_alerted")} if row else {}
         pw_fp = str(cfg.get("password_rev") or "saved") if saved else ""  # a random revision id, not a hash
     pws = list(dict.fromkeys([password] if password else saved))  # never logged; each value is in logredact
     del saved
@@ -157,11 +158,18 @@ def scan(*, now: datetime | None = None, password: str | None = None) -> dict[st
                             continue
                         raise
                     if res.holdings_only:  # NSDL/CDSL demat CAS: reconcile only
+                        from finresearch.portfolio.cas_followup import record_depository, units_alert
+
                         out = preview(s, res)
+                        diffs = record_depository(s, res)  # fund units + newer NAV on the holdings (#296)
+                        units_alert(s, res, diffs, alerted)
                         _move(path, "processed")
                         results.append({**entry, "status": "reconciled", "kind": f"{res.source} demat CAS",
                                         "reconciliation": out["reconciliation"], "reconciled": out["reconciled"],
-                                        "note": "holdings only (no transactions): compared with your lots"})  # fmt: skip
+                                        "unit_differences": diffs,
+                                        "note": "holdings only (no transactions): compared with your lots"
+                                                + (f"; {len(diffs)} fund(s) differ: import a fresh detailed "
+                                                   "CAMS/KFintech CAS" if diffs else "")})  # fmt: skip
                         waiting.pop(path.name, None)
                         continue
                     out = apply(
@@ -212,7 +220,7 @@ def scan(*, now: datetime | None = None, password: str | None = None) -> dict[st
     with session_scope() as s:
         row = s.get(BrokerConnection, INBOX_KEY)
         if row is not None:
-            row.state = {**(row.state or {}), "waiting": waiting, "last_scan": now.isoformat()}
+            row.state = {**(row.state or {}), **alerted, "waiting": waiting, "last_scan": now.isoformat()}
             if results:
                 row.last_sync_at = now
         for r in results:
@@ -301,15 +309,21 @@ def _log_status(r: dict[str, Any]) -> tuple[str, str | None]:
             "partial",
             f"{n} conflict(s) with another source: not added, review them in the import's result",
         )
+    if status == "ok" and r.get(
+        "gaps"
+    ):  # #296: a CAS after a gap whose opening balances the lots do not explain
+        return "partial", "; ".join(r["gaps"][:3])
+    if status == "ok" and r.get("unit_differences"):  # #296: a depository statement disagrees with the lots
+        return "partial", r.get("note")
     return status, (r.get("note") if status != "ok" else None)
 
 
 def _slim(r: dict[str, Any]) -> dict[str, Any]:
     keep = ("file", "status", "kind", "note", "added", "duplicates", "reconciled", "differences", "import_id",
             "import_ids", "baselines", "reconciliation", "rows", "cross_source", "conflicts",
-            "superseded_baselines")  # fmt: skip
+            "superseded_baselines", "unit_differences", "gaps")  # fmt: skip
     out = {k: r[k] for k in keep if k in r}
-    for k in ("reconciliation", "cross_source", "conflicts"):
+    for k in ("reconciliation", "cross_source", "conflicts", "unit_differences"):
         if isinstance(out.get(k), list):
             out[k] = out[k][:100]
     return out

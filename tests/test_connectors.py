@@ -1373,3 +1373,81 @@ def test_inbox_tries_each_saved_password_in_turn(db, client, monkeypatch):
     assert scan(now=NOW)["files"] == [] and tried == []  # the same set already failed
     client.put("/api/connections/cas_inbox", headers=ORIGIN, json={"config": {"password_2": pan}})
     assert scan(now=NOW)["files"][0]["status"] == "imported" and tried == [cas_pw, pan]
+
+
+def _apply(db, res, name="cas.pdf"):
+    from finresearch.portfolio.service import apply
+
+    with db() as s:
+        return apply(s, res, filename=name, sha256=name.ljust(64, "0"), saved_path=None)
+
+
+def _demat(units, nav="55.5", period=("01-Aug-2026", "31-Aug-2026"), folio="999 / 1"):
+    from finresearch.portfolio.importers import ClosingBalance, ImportResult
+
+    res = ImportResult("cas", "NSDL", [], holdings_only=True, period=period)
+    res.closing.append(ClosingBalance("ISIN:INF000X01011", "Example demat", "Example Flexi Cap Fund", D(units),
+                                      D(nav), folio=folio))  # fmt: skip
+    res.closing.append(
+        ClosingBalance("ISIN:INE000A01011", "Example demat", "Example Ltd", D(3))
+    )  # a share: skipped
+    return res
+
+
+def test_depository_ecas_records_units_and_nav_and_alerts_once(db, client, monkeypatch):
+    from sqlalchemy import select
+
+    from finresearch.db.models import Alert, PortfolioHolding
+    from finresearch.portfolio import importers
+    from finresearch.portfolio.connectors.inbox import ensure_dirs, scan
+
+    # lots: 10 units bought in February, 2 more in September (after the e-CAS day: not counted on 31 Aug)
+    _apply(db, _cas(txns=[(date(2026, 2, 1), "buy", "10", "1000"), (date(2026, 9, 2), "buy", "2", "220")]))
+    statements = iter(
+        [_demat("12.5"), _demat("12.5"), _demat("10", nav="56", period=("01-Sep-2026", "30-Sep-2026"))]
+    )
+    monkeypatch.setattr(importers, "parse_cas", lambda content, pw: next(statements))
+    client.put(
+        "/api/connections/cas_inbox",
+        headers=ORIGIN,
+        json={"enabled": True, "config": {"pan": _fake_pan("q")}},
+    )
+    root = ensure_dirs()
+    _drop(root, "nsdl-aug.pdf")
+    got = scan(now=NOW)["files"][0]
+    assert got["status"] == "reconciled" and "import a fresh detailed CAMS/KFintech CAS" in got["note"]
+    assert got["unit_differences"] == [{"name": "Example Flexi Cap Fund", "statement_units": "12.5",
+                                        "lot_units": "10.000", "day": "2026-08-31", "scope": "folio"}]  # fmt: skip
+    with db() as s:
+        h = s.scalar(select(PortfolioHolding).where(PortfolioHolding.isin == "INF000X01011"))
+        assert h.meta["depository_units"] == {"units": "12.5", "day": "2026-08-31", "source": "NSDL",
+                                              "lot_units": "10.000", "scope": "folio"}  # fmt: skip
+        assert h.meta["statement_nav"] == {"nav": "55.5", "day": "2026-08-31", "source": "NSDL"}
+        alerts = s.scalars(select(Alert).where(Alert.kind == "cas_units_mismatch")).all()
+        assert len(alerts) == 1 and "Example Flexi Cap Fund" in alerts[0].message
+        assert [x["url"] for x in alerts[0].data["links"]][0].startswith("https://www.camsonline.com/")
+    # the same statement again (another copy): no second alert
+    _drop(root, "nsdl-aug-copy.pdf", b"%PDF-1.4 copy")
+    scan(now=NOW)
+    # September agrees with the lots on 30 Sep (12 units)? No: it says 10, so it alerts again for the new statement
+    _drop(root, "nsdl-sep.pdf", b"%PDF-1.4 sep")
+    sep = scan(now=NOW)["files"][0]
+    assert sep["unit_differences"][0]["lot_units"] == "12.000"
+    with db() as s:
+        assert len(s.scalars(select(Alert).where(Alert.kind == "cas_units_mismatch")).all()) == 2
+        h = s.scalar(select(PortfolioHolding).where(PortfolioHolding.isin == "INF000X01011"))
+        assert h.meta["statement_nav"]["nav"] == "56" and h.meta["depository_units"]["day"] == "2026-09-30"
+    logs = client.get("/api/connections/log?limit=30").json()
+    assert any(lg["status"] == "partial" for lg in logs)
+
+
+def test_depository_units_matching_the_lots_raise_no_alert(db, monkeypatch):
+    from sqlalchemy import func, select
+
+    from finresearch.db.models import Alert
+    from finresearch.portfolio.cas_followup import record_depository
+
+    _apply(db, _cas(txns=[(date(2026, 2, 1), "buy", "10", "1000")]))
+    with db() as s:
+        assert record_depository(s, _demat("10.0004")) == []  # within the 3-decimal tolerance
+        assert s.scalar(select(func.count()).select_from(Alert)) == 0

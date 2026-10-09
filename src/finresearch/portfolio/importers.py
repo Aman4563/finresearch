@@ -83,6 +83,7 @@ class ClosingBalance:
     value: Decimal | None = None
     day: date | None = None
     cost: Decimal | None = None
+    folio: str | None = None  # a depository statement's MF folio, when it prints one (#296)
 
 
 @dataclass
@@ -362,7 +363,8 @@ def _demat_holdings(data: Any, file_type: str) -> ImportResult:
             ik = instrument_key("mf", m.get("isin"), None, None, m.get("amfi"), m.get("name") or "")
             res.closing.append(ClosingBalance(ik, account, m.get("name") or m.get("isin") or "",
                                               _dec(m.get("balance")) or Decimal(0), _dec(m.get("nav")),
-                                              _dec(m.get("value")), cost=_dec(m.get("total_cost"))))  # fmt: skip
+                                              _dec(m.get("value")), cost=_dec(m.get("total_cost")),
+                                              folio=(str(m["folio"]) if m.get("folio") else None)))  # fmt: skip
     res.warnings.append("NSDL/CDSL statements list holdings only (no transactions): used to reconcile units, not "
                         "imported as lots. Import your broker tradebooks for the cost basis.")  # fmt: skip
     return res
