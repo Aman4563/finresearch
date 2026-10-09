@@ -14,11 +14,18 @@ https://groww.in/trade-api/docs/curl/portfolio (holdings/positions), https://gro
 * Holdings ``GET /holdings/user`` → ``payload.holdings[]``: isin, trading_symbol, quantity, average_price,
   t1_quantity, pledge_quantity, demat_free_quantity ... No price (the app prices holdings itself). In the docs sample
   the free/locked/pledged parts add up to ``quantity`` and ``t1_quantity`` is separate, so the total held is taken as
-  ``quantity + t1_quantity`` [U: inferred from the sample].
+  ``quantity + t1_quantity`` [U: inferred from the sample; re-read 9-Oct-2026, the docs only say "The net quantity
+  of the holding" and "The T1 quantity of the holding", not whether one includes the other].
 * Positions ``GET /positions/user?segment=CASH`` → ``payload.positions[]``.
 * Trades: the order list ``GET /order/list?segment=CASH&page=&page_size=100`` covers **today only**; an order with
-  ``filled_quantity > 0`` becomes one trade at ``average_fill_price``. History before the first sync comes from the
+  ``filled_quantity > 0`` becomes one trade at ``average_fill_price``, dated by ``trade_date`` ("Date on which trade
+  has taken place"), else ``exchange_time``, else ``created_at`` (when it was placed: an after-market order would be a
+  day early). The row is the order's fills *so far*, keyed by ``groww_order_id``: a later read with more fills
+  updates it in place (merge.upsert_orders, #266). ``GET /order/trades/{groww_order_id}`` lists the fills themselves
+  (exchange trade ids) but is not used: one request per order. History before the first sync comes from the
   holdings baseline or a Groww order-history export (Import tab).
+* A response without the expected ``payload.<key>`` is a failed read (ConnectorError), never "nothing": a renamed
+  field must not read as "no orders today" (#266).
 * Funds ``GET /margins/detail/user`` → clear_cash, net_margin_used, ...
 * No mutual-fund endpoint exists in the Trade API: use a CAS for Groww mutual funds.
 * Cost: a paid Trading API subscription (₹499 + GST a month early-bird, ₹2000 standard, per the docs page).
@@ -197,7 +204,9 @@ class GrowwConnector(BrokerConnector):
                 body = await http.auth_post("/token/api/access",
                                             json={"key_type": "totp", "totp": totp(seed, at + TOTP_STEP_S)})  # fmt: skip
             except ReconnectNeeded as e:
-                raise ReconnectNeeded(f"Groww refused the TOTP login ({e}): check the key and secret") from None
+                raise ReconnectNeeded(
+                    f"Groww refused the TOTP login ({e}): check the key and secret"
+                ) from None
         tok = token_from(body)
         if not tok:
             raise ConnectorError("Groww's login answer had no access token")

@@ -19,7 +19,8 @@ Merge rules (in order):
    residual units, dated the day before the first trade (cost = the broker's average × quantity less the trades'
    cost when there were no sales in the window, otherwise unknown).
 2. **Trades** — each executed equity fill becomes a buy/sell. Re-syncing the same trade is a no-op (`dedupe_key` on the
-   broker's trade id). Rows another source already has are skipped by the cross-source reconciliation that every
+   broker's trade id). A broker that reports orders with their fills so far (Groww, `fills_aggregated`) is keyed by
+   order id instead: the same order read again with more fills updates its row in place (`upsert_orders`, #266). Rows another source already has are skipped by the cross-source reconciliation that every
    import path shares (portfolio.dedupe, #236; tradebook and CAS uploads, the inbox, manual entries, holdings
    statements and this sync). Per instrument (ISIN / symbol / scheme code), account, day and side, incoming rows are
    compared with *other-source* rows of the same account, and with manual entries in any account:

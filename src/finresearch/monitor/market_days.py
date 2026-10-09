@@ -7,7 +7,8 @@ a holiday's date. The day is logged and one warning alert per IST day says why t
 soon as the list is refreshed (monitor.scheduler._refresh_holidays retries hourly while the year is missing).
 
 Not covered here (needs a decision, see the PR): the IPO watch plan (monitor.plan) and the intraday archive fall back
-to "no holidays", because skipping a bidding-day check loses data that cannot be fetched later.
+to "no holidays", because skipping a bidding-day check loses data that cannot be fetched later. Broker syncs
+(portfolio.connectors.sync._holidays) do the same for that reason: Groww's order list answers today only (#266).
 """
 
 from __future__ import annotations

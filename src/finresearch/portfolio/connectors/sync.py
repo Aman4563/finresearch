@@ -4,7 +4,11 @@
 `merge.merge_sync` (baselines, trades, reconciliation) → store positions/funds on the connection → one
 `broker_sync_log` row. A read failure of one kind (say positions) is recorded and the rest still merges; an expired
 session marks the connection "reconnect" and raises an in-app alert once a day (forwarded to the phone when the
-user forwards warnings). Nothing here ever retries a login on its own beyond the one headless attempt per sync.
+user forwards warnings). Nothing here ever retries a login on its own beyond the one headless attempt per sync (a
+connector may resend its TOTP once with the next step's code). Any other failure still ends in a log row and, for a
+scheduled sync, the day's `failed_day` (#266). One sync or login per connection at a time across processes (`claim`:
+a Postgres advisory lock). A today-only trades endpoint (Groww) that failed is read again the same day, a bounded
+number of times (TRADES_RETRIES); `trades_through` only moves when the trades were read.
 
 Schedule (`connections_step`, from the monitor tick): once per trading day after SYNC_AFTER IST for every enabled
 connection with auto-sync, and the statement inbox every INBOX_EVERY.
@@ -59,7 +63,9 @@ def _db_lock(key: str) -> Any:
 
     c = get_engine().connect()
     try:
-        got = c.execute(text("SELECT pg_try_advisory_lock(hashtext(:k))"), {"k": f"broker_sync:{key}"}).scalar()
+        got = c.execute(
+            text("SELECT pg_try_advisory_lock(hashtext(:k))"), {"k": f"broker_sync:{key}"}
+        ).scalar()
         c.commit()
     except Exception:
         c.close()
@@ -109,7 +115,8 @@ async def sync_now(key: str, *, trigger: str = "manual", now: datetime | None = 
         raise LookupError(f"unknown connection {key}")
     now = now or datetime.now(UTC)
     async with claim(key):
-        secrets: list[str] = []  # filled by _sync as soon as the connector is built: the failure text is redacted
+        # filled by _sync as soon as the connector is built, so an unexpected failure's text is redacted too
+        secrets: list[str] = []
         try:
             return await _sync(key, trigger, now, secrets)
         except LookupError:
@@ -142,7 +149,9 @@ async def _sync(key: str, trigger: str, now: datetime, secrets_out: list[str]) -
         try:
             grant = await conn.login()
         except ReconnectNeeded as e:
-            return await _finish_async(key, trigger, now, "reconnect", {}, redact(str(e), *secrets), today=None)
+            return await _finish_async(
+                key, trigger, now, "reconnect", {}, redact(str(e), *secrets), today=None
+            )
         except ConnectorError as e:
             return await _finish_async(key, trigger, now, "error", {}, redact(str(e), *secrets), today=None)
         conn.token = grant.token
@@ -191,13 +200,13 @@ async def _sync(key: str, trigger: str, now: datetime, secrets_out: list[str]) -
             summary["reconciliation"], summary["reconciled"], summary["differences"] = [], None, None
         summary["read"] = {k: (len(v) if isinstance(v, list) else 1) for k, v in data.items()}
         # the days the trades read covers: none when it failed; a today-only endpoint covers today whatever was asked
-        summary["trades_since"] = ((today if today_only else since).isoformat() if have_trades else None)
+        summary["trades_since"] = (today if today_only else since).isoformat() if have_trades else None
         row = s.get(BrokerConnection, key)
         state = dict(row.state or {})
         if "positions" in data:
-            state["positions"] = [
-                {k: _json_dec(v) for k, v in vars(p).items()} for p in data["positions"]
-            ][:200]
+            state["positions"] = [{k: _json_dec(v) for k, v in vars(p).items()} for p in data["positions"]][
+                :200
+            ]
         if "funds" in data:
             state["funds"] = {k: _json_dec(v) for k, v in (data["funds"] or {}).items()}
         state["last_summary"] = {k: summary[k] for k in ("added", "duplicates", "updated", "differences",
@@ -296,8 +305,9 @@ def due(row: BrokerConnection, now: datetime, holidays: set[date] | None = None)
     retry = (row.state or {}).get("trades_retry") or {}
     if retry.get("day") == d.isoformat() and int(retry.get("attempts", 0)) <= TRADES_RETRIES:
         try:
+            # today's orders could not be read: a today-only endpoint must be asked again today
             if now >= datetime.fromisoformat(retry["next_at"]):
-                return True  # today's orders could not be read: a today-only endpoint must be asked again today
+                return True
         except (KeyError, TypeError, ValueError):
             return True
     trading = d.weekday() < 5 and d not in (holidays or set())
@@ -332,7 +342,9 @@ def _holidays(day: date) -> set[date]:
     if got is None:
         if day not in _HOLIDAYS_WARNED:
             _HOLIDAYS_WARNED.add(day)
-            log.warning("NSE %s holiday list unknown: broker syncs treat every weekday as a trading day", day.year)
+            log.warning(
+                "NSE %s holiday list unknown: broker syncs treat every weekday as a trading day", day.year
+            )
         return set()
     return set(got)
 

@@ -770,7 +770,8 @@ def test_failed_scheduled_sync_is_not_retried_the_same_day(client, transport):
         from sqlalchemy import func, select
 
         assert s.scalar(select(func.count()).select_from(BrokerSyncLog)) == 1
-    assert len(rec.requests) == 2  # the code, then one retry with the next 30-second step's code (#266); no more
+    # the code, then one retry with the next 30-second step's code (#266); no more
+    assert len(rec.requests) == 2
     conn = next(c for c in client.get("/api/connections").json()["connections"] if c["key"] == "groww")
     assert conn["status"] == "error" and "refused" in conn["next_step"]  # the failure is visible, not "ready"
     assert GROWW_KEY not in json.dumps(conn)
@@ -1161,7 +1162,8 @@ def test_a_failed_trades_read_is_retried_the_same_day_then_capped(client, transp
                 assert not due(row, t + timedelta(hours=2))
     transport(GROWW)  # the next day works again and clears the retry
     out = run(sync_now("groww", trigger="scheduled", now=datetime(2026, 10, 1, 11, 0, tzinfo=UTC)))
-    assert out["status"] == "ok" and out["summary"]["trades_since"] == "2026-10-01"  # today-only: today, not -3 days
+    # today-only: the read covers today, not "from 3 days before the last read"
+    assert out["status"] == "ok" and out["summary"]["trades_since"] == "2026-10-01"
 
 
 def test_another_process_holding_the_connection_blocks_sync_and_login(client, transport):
@@ -1254,7 +1256,9 @@ def test_broker_schedule_uses_the_known_holiday_list(monkeypatch):
 
     row = BrokerConnection(key="groww", enabled=True, auto_sync=True, status="connected", last_sync_day=None)
     at = datetime(2026, 9, 30, 16, 5, tzinfo=IST)
-    monkeypatch.setattr(nse_holidays, "known_trading_holidays", lambda day, state_dir=None: {date(2026, 9, 30)})
+    monkeypatch.setattr(
+        nse_holidays, "known_trading_holidays", lambda day, state_dir=None: {date(2026, 9, 30)}
+    )
     assert not sync.due(row, at, sync._holidays(date(2026, 9, 30)))
     monkeypatch.setattr(nse_holidays, "known_trading_holidays", lambda day, state_dir=None: None)
     assert sync._holidays(date(2026, 9, 30)) == set() and sync.due(row, at, set())
