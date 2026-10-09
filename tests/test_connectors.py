@@ -1338,7 +1338,9 @@ def test_inbox_tries_each_saved_password_in_turn(db, client, monkeypatch):
     def fake_parse(content, password):
         tried.append(password)
         if password != pan:
-            raise importers.StatementError("wrong password for this PDF (CAS PDFs are usually locked with your PAN)")
+            raise importers.StatementError(
+                "wrong password for this PDF (CAS PDFs are usually locked with your PAN)"
+            )
         return _cas(txns=[(date(2026, 2, 1), "buy", "10", "1000")], closing=["10"])
 
     monkeypatch.setattr(importers, "parse_cas", fake_parse)
@@ -1353,7 +1355,11 @@ def test_inbox_tries_each_saved_password_in_turn(db, client, monkeypatch):
     listing = client.get("/api/connections").text
     assert cas_pw not in listing and pan not in listing  # write-only
     inbox = next(c for c in client.get("/api/connections").json()["connections"] if c["key"] == "cas_inbox")
-    assert inbox["config"]["pan_set"] and inbox["config"]["password_set"] and not inbox["config"]["password_2_set"]
+    assert (
+        inbox["config"]["pan_set"]
+        and inbox["config"]["password_set"]
+        and not inbox["config"]["password_2_set"]
+    )
     logs = client.get("/api/connections/log?limit=30").text
     assert cas_pw not in logs and pan not in logs
 
