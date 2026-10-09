@@ -257,3 +257,55 @@ async def test_mcp_bond_analytics_answers_matured_instead_of_crashing_and_search
     assert out["status"] == "matured"
     assert json.loads(await nse_bond_search("EXOLDNCD")) == []  # matures today: left out
     assert json.loads(await nse_bond_search("875NHAI29"))[0]["isin"] == "INE906B07DF8"
+
+
+def test_ended_fund_and_delisted_stock_watch_stop_once_with_one_alert(lc):
+    """#293: a fund AMFI stopped listing and a watched stock gone from NSE's and BSE's lists end after 10 passes: one
+    alert each, the stock's watch stops (its daily check no longer fails), neither is fetched or targeted again."""
+    from finresearch.alerts.engine import targets
+    from finresearch.db import session_scope
+    from finresearch.db.models import Alert, MonitorJob, Watch
+    from finresearch.disclosures.store import tracked
+    from finresearch.suggest.profile import AlertRule
+
+    with session_scope() as s:
+        _company(s, "mf-999901", "Example Merged Fund - Direct Growth")
+        _company(s, "mf-999902", "Example Live Fund - Direct Growth")
+        co = _company(s, "eol-gone", "Example Delisted Ltd", nse_symbol="EXGONE", isin="INE0EO101011")
+        w = Watch(company_id=co.id, kind="stock", nse_symbol="EXGONE", exchange="NSE", meta={})
+        s.add(w)
+        s.flush()
+        s.add(MonitorJob(watch_id=w.id, kind="stock_daily", slot="EXGONE:stock:2026-11-01", result={}, params={},
+                         due_at=datetime(2026, 11, 1, 11, tzinfo=UTC)))  # fmt: skip
+        _hold(s, "stock", "Example Held Ltd", isin="INE0EO101029", sym="EXHELD")
+    navs = [NS(code="999902")]
+    stocks = [NS(nse_symbol="EXHELD", bse_code=None, isin="INE0EO101029")]
+    for d in _trading_days(10):
+        res = _pass(d, navs=navs, stocks=stocks)
+    assert res["fund"]["ended"] == ["999901"] and res["stock"]["ended"] == ["EXGONE"]
+    again = _pass(_trading_days(11)[-1], navs=navs, stocks=stocks)  # an 11th pass: nothing new
+    assert again["fund"]["ended"] == [] and again["stock"]["ended"] == []
+    with session_scope() as s:
+        t = tracked(s, TODAY)
+        assert set(t.funds) == {"999902"} and set(t.stocks) == {"EXHELD"}
+        w = s.query(Watch).one()
+        assert w.active is False and w.meta["ended"]["reason"] == "missing"
+        assert s.query(MonitorJob).one().status == "cancelled"
+        alerts = s.query(Alert).filter(Alert.kind == L.ALERT_KIND).all()
+        assert sorted(a.data["instrument"] for a in alerts) == ["999901", "EXGONE"]
+        assert [x.instrument for x in targets(s, AlertRule(id="f", kind="fund", metric="nav"))] == ["999902"]
+        assert [x.instrument for x in targets(s, AlertRule(id="s", kind="stock", metric="price"))] == ["EXHELD"]
+
+
+def test_a_renamed_stock_is_found_by_its_isin_and_never_ends(lc):
+    from finresearch.db import session_scope
+    from finresearch.db.models import Watch
+
+    with session_scope() as s:
+        co = _company(s, "eol-renamed", "Example Renamed Ltd", nse_symbol="EXOLD", isin="INE0EO101037")
+        s.add(Watch(company_id=co.id, kind="stock", nse_symbol="EXOLD", exchange="NSE", meta={}))
+    for d in _trading_days(12):
+        res = _pass(d, stocks=[NS(nse_symbol="EXNEW", bse_code=None, isin="INE0EO101037")])
+    assert res["stock"]["missing"] == [] and res["stock"]["ended"] == []
+    with session_scope() as s:
+        assert s.query(Watch).one().active is True
