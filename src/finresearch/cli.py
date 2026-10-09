@@ -28,6 +28,8 @@ eval_app = typer.Typer(no_args_is_help=True, help="Evaluate runs against gold se
 app.add_typer(eval_app, name="eval")
 audit_app = typer.Typer(no_args_is_help=True, help="Read-only data audits against the exchanges' own figures")
 app.add_typer(audit_app, name="audit")
+evidence_app = typer.Typer(no_args_is_help=True, help="Evidence grades of stored claims (no LLM, no network)")
+app.add_typer(evidence_app, name="evidence")
 console = Console()
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -1056,3 +1058,45 @@ def audit_prices(
         out.write_text(json.dumps(report.as_json(), indent=1) + "\n" if out.suffix == ".json" else md)
     if strict and report.mismatches:
         raise typer.Exit(1)
+
+
+@evidence_app.command("regrade")
+def evidence_regrade(
+    apply: bool = typer.Option(
+        False, "--apply/--dry-run", help="Write the changes (default: dry run, writes nothing)"
+    ),
+    all_d: bool = typer.Option(
+        False, "--all", help="Re-check every grade-D citation, not only those saved before #265"
+    ),
+    reason: str | None = typer.Option(None, help="Why, recorded on each changed citation (default: #285)"),
+) -> None:
+    """Re-check grade-D (fincalc) citations saved before #265: run the stored call again and bind every argument to a
+    cited input claim or declared constant. Prints each citation (still D / now U with the reason) and every report
+    whose publish gate changes. --apply writes all changes in one transaction, each stamped with who/when/why and its
+    previous fields (computation.regrade.before) so it can be reverted; running it again changes nothing."""
+    from finresearch.db import session_scope
+    from finresearch.verify.regrade import DEFAULT_REASON, regrade
+
+    with session_scope() as s:
+        res = regrade(s, all_d=all_d, apply=apply, reason=reason or DEFAULT_REASON)
+        if not apply:
+            s.rollback()
+    t = Table(title=f"grade-D citations re-checked ({'APPLIED' if apply else 'dry run, nothing written'})")
+    for col in ("run", "claim", "citation", "importance", "result", "reason"):
+        t.add_column(col)
+    for r in res.citations:
+        result = ("still D" if r.grade == "D" else "[red]downgraded to U[/]") if r.changed else "unchanged"
+        t.add_row(str(r.run_id), f"C{r.claim_id}", str(r.citation_id), r.importance, result, r.reason[:160])
+    console.print(t)
+    down = sum(1 for r in res.changed if r.grade == "U")
+    console.print(f"{len(res.citations)} checked · {len(res.changed)} changed ({down} downgraded to U)")
+    label = {True: "PASSED", False: "BLOCKED", None: "no report"}
+    for g in res.gates:
+        if g.changes:
+            console.print(f"run {g.run_id}: publish gate {label[g.before_ok]} -> [red]{label[g.after_ok]}[/]")
+            for b in g.new_blocking[:10]:
+                console.print(f"  [red]blocking[/] {b[:200]}")
+        else:
+            console.print(f"run {g.run_id}: publish gate unchanged ({label[g.after_ok]})")
+    if not apply and res.changed:
+        console.print("dry run: re-run with --apply to write these changes (back up the database first)")
