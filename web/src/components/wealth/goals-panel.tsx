@@ -56,7 +56,7 @@ function GoalForm({ g, w, onSaved, close }: { g: Goal | null; w: Wealth; onSaved
         {n("monthly_sip", "Monthly SIP towards it (₹)")}
         {n("step_up_pct", "SIP step-up each year, %")}
         {n("current_inr", "Other savings for it (₹)", "Money not entered as an asset")}
-        {n("portfolio_pct", "Share of the portfolio earmarked, %", `Portfolio ${inr(w.portfolio.value)}${w.portfolio.day ? ` on ${day(w.portfolio.day)}` : " (no snapshot yet)"}`)}
+        {n("portfolio_pct", "Share of the portfolio earmarked, %", `Portfolio ${w.portfolio.value == null ? "unknown" : inr(w.portfolio.value)}${w.portfolio.day ? ` on ${day(w.portfolio.day)}` : " (no snapshot yet)"}${w.portfolio.value != null && w.portfolio.complete === false ? " (incomplete)" : ""}`)}
         {n("equity_pct", "Equity %, fixed", "Blank = glide by time left (rule of thumb)")}
         {n("gold_pct", "Gold %")}
       </div>
@@ -89,6 +89,10 @@ function PlanView({ g, w, refresh }: { g: Goal; w: Wealth; refresh: number }) {
   if (g.months_left <= 0) return <Callout tone="warn">The goal date is less than a month away; there is nothing to simulate.</Callout>;
   if (error) return <ErrorNote error={error} onRetry={reload} />;
   if (!p) return <SkeletonRows rows={4} />;
+  if (p.funded_complete === false) {
+    // never a P(success) or a "SIP for 75 %" computed from ₹0 or from part of the money (#262)
+    return <Callout tone="warn" title={`Set aside today: ${p.start == null ? "unknown" : `${inr(p.start)} or more (incomplete)`}`}>{p.message}</Callout>;
+  }
   const fan = p.fan.map((r) => ({ date: addMonths(w.as_of, r.month), p10: r.p10, p50: r.p50, p90: r.p90, target: r.target }));
   const tone = p.p_success >= 0.75 ? "gain" : p.p_success >= 0.5 ? "warn" : "loss";
   return (

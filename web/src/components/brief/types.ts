@@ -35,7 +35,7 @@ export type Brief = {
   day: string; generated_at: string; has_portfolio: boolean; headline: string; events: BriefEvent[];
   rules_fired: FiredAlert[]; since: string; signal_changes: SignalChange[]; sip: Sip[]; sip_missed: Sip[];
   long_term: LtLot[]; tax_calendar: TaxItem[]; advance_tax: AdvanceTax | null; elss_unlocks?: ElssUnlock[];
-  health: { level: "warn" | "info"; text: string }[]; performance: ValueChange | null; settings: BriefSettings;
+  health: { level: "warn" | "info"; text: string }[]; performance: ValueChange | null; performance_why?: string | null; settings: BriefSettings;
   method: string; behaviour_note: string; disclaimer: string;
   history: { id: number; kind: string; at: string; message: string }[];
 };
@@ -46,7 +46,7 @@ export type HeldSignal = {
   validation: string; n: number; weight_pct: number; method: string;
 };
 export type Digest = {
-  day: string; window_days: number; value: ValueChange | null;
+  day: string; window_days: number; value: ValueChange | null; value_why?: string | null;
   contributors: { from: string; to: string; top: Contributor[]; bottom: Contributor[] } | null;
   signals: HeldSignal[]; benchmark: string; method: string; behaviour_note: string; disclaimer: string;
   elss_unlocks?: ElssUnlock[];
@@ -59,7 +59,8 @@ export type CalendarView = {
 
 export type Strip = {
   has_portfolio: boolean; value?: number | null; as_of?: string | null; complete?: boolean; holdings?: number;
-  week?: ValueChange | null; ltcg_headroom?: number | null; ltcg_limit?: number;
+  /** why `week` is null ("unavailable: the value history is out of date ..."), #264 */
+  week?: ValueChange | null; week_why?: string | null; ltcg_headroom?: number | null; ltcg_limit?: number;
   top_alert?: { message: string; at: string; level: string } | null;
   net_worth?: { net_worth: number; liabilities: number; assets: number; date: string } | null; unpriced?: number; daily_pass?: string | null; note?: string;
 };

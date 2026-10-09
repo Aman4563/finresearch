@@ -18,7 +18,10 @@ test("portfolio: unknown cost, stale price and incomplete tax are labelled", asy
   await page.goto("/portfolio");
   const holdings = page.getByRole("region", { name: "Holdings" });
   await expect(holdings.getByText("Example Opening Balance Fund")).toBeVisible();
-  await expect(holdings.getByText(/cost unknown/i)).toBeVisible();
+  await expect(holdings.getByText(/cost unknown/i).first()).toBeVisible();
+  // #263: the demerged holding's return reads "incomplete", not a percentage or a bare dash
+  const demerged = holdings.getByRole("row").filter({ hasText: "Example Demerge Ltd" });
+  await expect(demerged.getByText(/^incomplete$/)).toBeVisible();
   await expect(page.getByText(/some costs are unknown/i)).toBeVisible();
   // the fund's price is a statement NAV from June: shown with its date, never as today's price
   await expect(holdings.getByText(/statement NAV|stale/i)).toBeVisible();

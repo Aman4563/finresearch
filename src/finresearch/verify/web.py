@@ -86,10 +86,10 @@ def page_text(body: str, content_type: str) -> str:
 
 
 async def _fetch(url: str) -> tuple[str, str]:
-    from finresearch.adapters.http import PoliteClient
+    """Every hop's host is resolved and must be public, and the body is capped (adapters.http.fetch_public, #259)."""
+    from finresearch.adapters.http import fetch_public
 
-    async with PoliteClient(cache_dir=None, max_retries=1, timeout=20.0) as c:
-        r = await c.get(url)
+    r = await fetch_public(url)
     if not r.ok:
         raise ValueError(f"HTTP {r.status} for {url}")
     return r.text, r.record.content_type or ""
