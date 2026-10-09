@@ -1564,3 +1564,21 @@ def test_a_summary_cas_is_refused_with_a_hint_to_request_a_detailed_one(db, clie
     got = scan(now=NOW)["files"][0]
     assert got["status"] == "failed" and "request a Detailed CAS" in got["note"]
     assert (root / "failed" / "summary.pdf").exists()
+
+
+def test_setup_mail_prints_the_steps_and_a_filled_in_script(env):
+    from typer.testing import CliRunner
+
+    from finresearch.cli import app
+    from finresearch.portfolio.connectors.inbox import inbox_dir
+
+    r = CliRunner().invoke(app, ["inbox", "setup-mail"])
+    assert r.exit_code == 0, r.output
+    assert f"Statement inbox: {inbox_dir()}" in r.output and "Run AppleScript" in r.output
+    assert inbox_dir().is_dir() and oct(inbox_dir().stat().st_mode & 0o777) == "0o700"
+    for d in ("camsonline.com", "kfintech.com", "nsdl.co.in", "cdslstatement.com"):
+        assert d in r.output
+    sc = CliRunner().invoke(app, ["inbox", "setup-mail", "--script"])
+    assert sc.exit_code == 0 and f'property INBOX_PATH : "{inbox_dir()}"' in sc.output
+    assert "__FINRESEARCH_INBOX__" not in sc.output and "on perform mail action with messages" in sc.output
+    assert 'property ALLOWED_DOMAINS : {"camsonline.com", "kfintech.com", "nsdl.co.in", "nsdl.com", "cdslstatement.com", "cdslindia.com"}' in sc.output  # fmt: skip
