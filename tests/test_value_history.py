@@ -203,3 +203,107 @@ def test_the_live_monitor_builds_the_value_history():
     assert (
         Deps(ipo_detail=None, quote=None).pf_history is None
     )  # tests and partial deps: the pass skips it and says so
+
+
+# --------------------------------------------------------------------------- the week's change says why it is missing
+def _week_series(s, last: date, n: int = 10):
+    """n consecutive days ending on `last`, value 1,000 rising by 10 a day, invested flat at 1,000."""
+    days = [last - timedelta(days=n - 1 - i) for i in range(n)]
+    _store(s, days, [1000.0 + 10 * i for i in range(n)])
+
+
+def test_week_change_reads_the_series_and_says_why_when_it_cannot(db):
+    """#264: the dashboard strip, the weekly digest and the brief's daily line were silently empty when the stored
+    value history was out of date. Now each carries the reason."""
+    from datetime import UTC
+
+    from finresearch.api.brief import strip
+    from finresearch.db import session_scope
+    from finresearch.monitor.digest import build_brief, build_digest, digest_text, save_settings
+
+    now = datetime(2026, 10, 1, 3, 0, tzinfo=UTC)  # 08:30 IST on Thu 1-Oct
+    with session_scope() as s:
+        _buy(s, date(2026, 9, 1))
+        _week_series(s, date(2026, 9, 30))  # 21-Sep .. 30-Sep
+        save_settings(s, {"daily_performance": True})
+    with session_scope() as s:
+        week = strip(s, now)
+        # from 24-Sep (1,030: the last day on or before 1-Oct minus 7) to 30-Sep (1,090): +60, no new money
+        assert (week["week"]["from"], week["week"]["change"], week["week_why"]) == ("2026-09-24", 60.0, None)
+        brief = build_brief(s, now)
+        assert brief["performance"]["from"] == "2026-09-29" and brief["performance_why"] is None
+        _buy(s, date(2026, 9, 15))  # a backdated trade: the stored history is now out of date
+    with session_scope() as s:
+        week = strip(s, now)
+        assert week["week"] is None and week["week_why"].startswith("unavailable: the value history built on")
+        assert "out of date" in week["week_why"]
+        d = build_digest(s, now)
+        assert d["value"] is None and "out of date" in d["value_why"]
+        assert "Weekly change unavailable: the value history built on" in digest_text(d)
+        brief = build_brief(s, now)
+        assert brief["performance"] is None and "out of date" in brief["performance_why"]
+
+
+def test_week_change_is_unavailable_when_the_history_ends_too_long_ago(db):
+    from datetime import UTC
+
+    from finresearch.api.brief import strip
+    from finresearch.db import session_scope
+
+    now = datetime(2026, 10, 1, 3, 0, tzinfo=UTC)  # 1-Oct IST
+    with session_scope() as s:
+        _buy(s, date(2026, 9, 1))
+        # ends 26-Sep, 5 days before 1-Oct (more than HISTORY_MAX_AGE_DAYS = 4): the old code still printed a "week"
+        # of 24-Sep .. 26-Sep as if it were the last seven days
+        _week_series(s, date(2026, 9, 26))
+    with session_scope() as s:
+        week = strip(s, now)
+    assert week["week"] is None
+    assert week["week_why"].startswith(
+        "unavailable: the value history is out of date (its last day is 2026-09-26"
+    )
+
+
+def test_the_monitor_rebuilds_a_missing_or_out_of_date_series_on_any_tick(db):
+    """#260: GET performance/risk no longer store the series, so the monitor rebuilds it as soon as it is missing or
+    the transactions changed (before the close, no daily pass due), once per transaction set and day."""
+    import asyncio
+    from datetime import datetime, timedelta, timezone
+    from types import SimpleNamespace
+
+    from finresearch.db import session_scope
+    from finresearch.monitor.portfolio_daily import portfolio_step
+    from finresearch.portfolio import series
+    from finresearch.portfolio.history import History
+
+    built: list[int] = []
+
+    async def pf_history(holdings, today):
+        built.append(len(holdings))
+        return History(days=[date(2026, 8, 3), today], value=[1000.0, 1250.0], invested=[1000.0, 1000.0],
+                       complete=[True, True], start_reason="first transaction on 2026-08-03")  # fmt: skip
+
+    deps = SimpleNamespace(portfolio_daily=True, pf_history=pf_history)
+    ist = timezone(timedelta(hours=5, minutes=30))
+    morning = datetime(2026, 9, 2, 10, 0, tzinfo=ist)  # a Wednesday, before the close: no daily pass is due
+
+    def tick(at):
+        return asyncio.run(portfolio_step(deps, at, holidays=set(), stock_time=(18, 0)))
+
+    with session_scope() as s:
+        _buy(s, date(2026, 8, 3))
+    out = tick(morning)
+    assert out["history"]["stored"] is True and built == [1]
+    with session_scope() as s:
+        ser, why = series.load(s)
+    assert why is None and ser.value == [1000.0, 1250.0] and ser.days[-1] == date(2026, 9, 2)
+    assert tick(morning + timedelta(minutes=1)) == {} and built == [1]  # current: nothing to do
+    with session_scope() as s:
+        _buy(s, date(2026, 8, 10))  # the transactions changed: the stored series is out of date
+    assert tick(morning + timedelta(minutes=2))["history"]["stored"] is True and built == [1, 1]
+    with session_scope() as s:
+        assert series.load(s)[1] is None
+    deps.pf_history = None  # no builder (tests, partial deps): nothing claimed, nothing run
+    with session_scope() as s:
+        _buy(s, date(2026, 8, 11))
+    assert tick(morning + timedelta(minutes=3)) == {}

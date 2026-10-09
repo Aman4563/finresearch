@@ -2,6 +2,7 @@
 // typed with the app's own response types (`satisfies`), so `pnpm typecheck` fails when a shape drifts.
 import type { Holding, Snapshot, TaxView } from "@/components/portfolio/types";
 import type { Signal } from "@/components/signal";
+import type { GoalPlan, Wealth } from "@/components/wealth/types";
 import type { Claim, Report } from "@/lib/api";
 
 const holding = (h: Partial<Holding> & Pick<Holding, "id" | "name" | "asset_type">): Holding => ({
@@ -27,6 +28,13 @@ export const HOLDINGS: Holding[] = [
     tax_class_auto: "other_mf", units: 20, cost: null, cost_known: false, avg_cost: null, price: 40, value: 800,
     unrealised: null, unrealised_pct: null, xirr: null, xirr_reason: "cost unknown",
     warnings: ["Opening balance: cost and purchase date are not in the statement"] }),
+  // an unresolved demerger (#263): the holding's XIRR is incomplete, never a number
+  holding({ id: 4, name: "Example Demerge Ltd", asset_type: "stock", nse_symbol: "EXDEMO", isin: "INE000D01019",
+    cost: null, cost_known: false, avg_cost: null, unrealised: null, unrealised_pct: null, xirr: null,
+    xirr_reason: "unsupported corporate action: demerger on 2024-06-03 — cost split not modelled; enter the cost allocation manually",
+    pending_actions: [{ key: "demerger:2024-06-03", type: "demerger", ex_date: "2024-06-03", subject: "Demerger",
+      source: "nse_actions", source_url: null, detected: "2026-10-01", status: "pending",
+      reason: "unsupported corporate action: demerger on 2024-06-03 — cost split not modelled; enter the cost allocation manually" }] }),
 ];
 
 export const SNAPSHOT = {
@@ -112,3 +120,43 @@ export const SIGNAL = {
     universe_base_rate: null, probability_vs_base: null },
   reliability: null,
 } satisfies Signal;
+
+// ------------------------------------------------------------------ /wealth: a goal on a lower bound (#286)
+const nw = { date: "2026-10-09", portfolio: 600, manual: 0, assets: 600, liabilities: 0, net_worth: 600, liquid_net_worth: 600,
+  portfolio_day: "2026-10-09", portfolio_source: "as shown" as const, complete: false,
+  missing: ["portfolio: the valuation of 2026-10-09 is incomplete (a holding without a current price or cost, or a sale without a cost): it counts only what was priced"] };
+const cls = (mu: number, sd: number) => ({ mu_pct: mu, sigma_pct: sd, note: "assumption", default: { mu_pct: mu, sigma_pct: sd } });
+
+export const WEALTH = {
+  as_of: "2026-10-09", net_worth: nw,
+  portfolio: { value: 600, day: "2026-10-09", complete: false, why: nw.missing[0], by_class: { Equity: 600 } },
+  assets: [], loans: [], policies: [],
+  goals: [{ id: 1, name: "Example education goal", target_inr: 1000000, target_date: "2036-10-09", priority: "high", inflation_pct: 6,
+    current_inr: 10000, monthly_sip: 5000, step_up_pct: 0, linked_asset_ids: [], portfolio_pct: 50, equity_pct: null, gold_pct: 0,
+    in_cover: true, notes: null, funded_now: 10300, funded_complete: false, funded_why: nw.missing[0], months_left: 120,
+    shared_links: [], funded_bound: "lower", funded_unpriced: ["Example Beta Ltd"], funded_unpriced_share_pct: 45.45 }],
+  allocation: { by_class: { Equity: 600 }, weights_financial: { Equity: 100 }, target: null, comparison: [], message: "Add your age.",
+    rule: "rule of thumb", risk_appetite: "medium", own_target: false },
+  emergency: { liquid: 0, monthly_expenses: null, months: null, target_months: 6, target_why: "rule of thumb", message: "Add expenses.",
+    banks: [], dicgc_limit: 500000, dicgc_source: "DICGC" },
+  insurance: { term_existing: 0, health_total: 0, health_employer: 0, health_rule_inr: 1000000, term_message: "Add your age.",
+    term: null, income_multiple: null },
+  debt: { total_emi: 0, monthly_income: null, foir_pct: null, message: "No active loans.", weighted_rate_pct: null, debt_to_assets_pct: 0 },
+  household: { age: null, retirement_age: 60, monthly_income_inr: null, monthly_expenses_inr: null, dependants: 0, earners: 1,
+    emergency_months_target: null, support_years: null, tax_regime: "new", target_equity_pct: null },
+  tax_slab_pct: 30,
+  assumptions: { equity: cls(11, 17), debt: cls(7, 2.5), gold: cls(8, 15), inflation_pct: 6, seed: 20260930, n: 5000 },
+  history: [nw], rates: {}, privacy: "Stays on this computer.", disclaimer: "Not advice.",
+} satisfies Wealth;
+
+const fanRow = (month: number, k: number) => ({ month, p10: 400000 * k, p50: 600000 * k, p90: 900000 * k, target: 1000000 * 1.06 ** (month / 12) });
+export const GOAL_PLAN_LOWER = {
+  goal_id: 1, name: "Example education goal", months: 120, target_today: 1000000, target_nominal: 1790847.7, start: 10300,
+  sip0: 5000, step_up_pct: 0, n: 5000, seed: 20260930, p_success: 0.42, p_ci: [0.406, 0.434], p_haircut: 0.35,
+  p_plus_year: 0.5, p_step_up_plus5: 0.71, sip_for_75: 7400, sip_for_90: null,
+  fan: [fanRow(0, 0.01), fanRow(60, 0.5), fanRow(120, 1)], terminal_pcts: { p10: 400000, p50: 600000, p90: 900000 },
+  assumptions: { equity: { mu_pct: 11, sigma_pct: 17, note: "assumption" } }, equity_path: "glide", linked: [],
+  message: "At least 42.0 % on these assumptions, counting only the priced holdings; the true chance is higher if the unpriced ones are worth anything. The numbers imply a starting SIP of at most ₹7,400 for 75 %.",
+  method: "Seeded lognormal Monte Carlo.", disclaimer: "Not advice.", funded_complete: false, funded_why: nw.missing[0],
+  bound: "lower", unpriced: ["Example Beta Ltd"], unpriced_share_pct: 45.45,
+} satisfies GoalPlan;

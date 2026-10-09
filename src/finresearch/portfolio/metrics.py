@@ -77,15 +77,44 @@ def drift(by_asset: dict[str, float], targets: dict[str, float]) -> list[dict[st
     return sorted(rows, key=lambda r: (-abs(r["drift_pp"]), -r["drift_pp"]))  # ties: overweight first
 
 
+def valuation_gaps(s: Session, snap: dict[str, Any]) -> dict[str, Any]:
+    """What a valuation (portfolio.report.snapshot) left out, for record_snapshot: each open holding without a price
+    (name, units, and its last known price from the daily pass's valuation history, None when there is none), how many
+    holdings were priced, and how many were valued at a stale price or have an unknown cost (#286)."""
+    from finresearch.portfolio import cache
+
+    hist = cache.read(s, cache.VALUATION).get("history") or {}
+    unpriced = []
+    for r in snap["holdings"]:
+        if r["closed"] or r["value"] is not None:
+            continue
+        last = next(((d, hist[d][str(r["id"])][0]) for d in sorted(hist, reverse=True)
+                     if (hist[d].get(str(r["id"])) or [None])[0] is not None), (None, None))  # fmt: skip
+        units = r["units"]
+        unpriced.append({"holding_id": r["id"], "name": r["name"], "units": units, "last_price": last[1],
+                         "last_as_of": last[0],
+                         "last_value": None if last[1] is None or units is None else round(last[1] * units, 2)})  # fmt: skip
+    sm = snap["summary"]
+    return {"priced": sum(1 for r in snap["holdings"] if not r["closed"] and r["value"] is not None),
+            "unpriced": unpriced, "stale": int(sm.get("stale") or 0), "unknown_cost": int(sm.get("unknown_cost") or 0),
+            "realised_unknown": int(sm.get("realised_unknown") or 0)}  # fmt: skip
+
+
 def record_snapshot(s: Session, day: date, value: float, invested: float, by_asset: dict[str, float],
-                    complete: bool) -> None:  # fmt: skip
+                    complete: bool, gaps: dict[str, Any] | None = None) -> None:  # fmt: skip
     """Upsert the day's "as shown" value (the latest valuation of the day wins, and `updated_at` says when it was
-    taken). Past values are read from the reconstructed history (portfolio.series), not from these rows."""
+    taken). Past values are read from the reconstructed history (portfolio.series), not from these rows.
+
+    `gaps` (valuation_gaps) is stored beside it under cache.GAPS with the day and value it describes, so a reader can
+    tell which holdings an incomplete value leaves out; without it the gaps of this valuation are unknown (None)."""
+    from finresearch.portfolio import cache
+
     vals = {"day": day, "value": Decimal(str(round(value, 2))), "invested": Decimal(str(round(invested, 2))),
             "by_asset": {k: round(v, 2) for k, v in by_asset.items()}, "complete": complete}  # fmt: skip
     stmt = insert(PortfolioSnapshot).values(**vals)
     s.execute(stmt.on_conflict_do_update(index_elements=["day"], set_={
         **{k: v for k, v in vals.items() if k != "day"}, "updated_at": func.now()}))  # fmt: skip
+    cache.write(s, cache.GAPS, {"day": day.isoformat(), "value": round(value, 2), "gaps": gaps})
 
 
 def drawdown(snaps: list[tuple[date, float, float]]) -> tuple[float | None, str]:

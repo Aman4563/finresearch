@@ -336,16 +336,20 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
                        allow_credentials=True, expose_headers=EXPOSED_HEADERS)  # fmt: skip
 
     @app.exception_handler(ValueError)
-    async def _value_error(_req: Request, e: ValueError) -> JSONResponse:
-        return JSONResponse({"detail": f"{type(e).__name__}: {e}"[:1000]}, status_code=422)
+    async def _value_error(req: Request, e: ValueError) -> JSONResponse:
+        # the message says what was wrong with the input, but may quote a local path, a URL or a token (#261): the
+        # client gets the redacted text, the server log the full exception
+        logging.getLogger("finresearch.api").warning("422 on %s", req.url.path, exc_info=e)
+        return JSONResponse({"detail": public_error(e, 1000, drop_query=True)}, status_code=422)
 
     @app.exception_handler(NseError)
     @app.exception_handler(SebiError)
     @app.exception_handler(AmfiError)
     @app.exception_handler(httpx.HTTPError)
-    async def _upstream_error(_req: Request, e: Exception) -> JSONResponse:
+    async def _upstream_error(req: Request, e: Exception) -> JSONResponse:
+        logging.getLogger("finresearch.api").warning("upstream failure on %s", req.url.path, exc_info=e)
         return JSONResponse(
-            {"detail": f"upstream source failed: {type(e).__name__}: {e}"[:1000]}, status_code=502
+            {"detail": f"upstream source failed: {public_error(e, 1000, drop_query=True)}"}, status_code=502
         )
 
     @app.get("/api/health")

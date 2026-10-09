@@ -80,6 +80,8 @@ uv run finresearch docs search "largest customer share of revenue" --company ori
 uv run finresearch ipo run orient-cables --wait     # full multi-agent run (finds the offer documents first if needed)
 uv run finresearch ipo status <run_id>             # steps, models, turns, time and plan-window usage
 uv run finresearch ipo render <run_id>             # rebuild the research pack
+uv run finresearch evidence regrade                # re-check grade-D (fincalc) citations saved before #265; dry run
+uv run finresearch evidence regrade --apply        # write it (back up first: scripts/backup.sh); reversible, idempotent
 
 # listed stocks, mutual funds, bonds
 uv run finresearch docs discover infosys --name "Infosys Limited" --nse-symbol INFY --kind stock

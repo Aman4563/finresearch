@@ -152,7 +152,9 @@ async def test_listing_waits_for_nse_then_updates_the_journal(watched):
         assert d.outcome["listing_gain_pct"] == "10.29"
         w = s.get(Watch, watched["watch_id"])
         assert w.listing_date == date(2026, 10, 5) and w.meta["expected_listing_date"] == "2026-10-02"
-        assert "+10.29% vs the ₹272 upper band" in s.query(Alert).filter_by(kind="listing_open").one().message
+        assert (
+            "+10.29% vs the ₹272.00 upper band" in s.query(Alert).filter_by(kind="listing_open").one().message
+        )
     # regression: the confirmed date moved the planned listing slots; the old ones must not alert again
     await tick(deps(fake), ist(2026, 10, 5, 10, 17))
     fake.q = fake.q.model_copy(update={"close_price": Decimal("305")})
@@ -161,7 +163,7 @@ async def test_listing_waits_for_nse_then_updates_the_journal(watched):
     with session_scope() as s:
         kinds = [a.kind for a in s.query(Alert)]
         assert kinds.count("listing_open") == 1 and kinds.count("listing_close") == 1
-        assert "close ₹305" in s.query(Alert).filter_by(kind="listing_close").one().message
+        assert "close ₹305.00" in s.query(Alert).filter_by(kind="listing_close").one().message
         assert not s.query(MonitorJob).filter_by(kind="listing", status="pending").count()
 
 
@@ -186,6 +188,31 @@ async def test_listing_compares_the_ist_date(watched):
         out = await jobs.listing(s, job, w, jobs.Deps(ipo_detail=None, quote=quote), now)
         s.rollback()
     assert out["listing_date"] == "2026-10-05"
+
+
+async def test_listing_alert_formats_rupees_not_raw_decimals(watched):
+    """#264: NSE quotes carry six decimals; the alert printed "open ₹300.000000 (... ₹272 upper band)"."""
+    from finresearch.adapters.nse import Quote
+    from finresearch.db import session_scope
+    from finresearch.db.models import Alert, MonitorJob, Watch
+    from finresearch.monitor import jobs
+
+    q = Quote(symbol="ORIENTCABL", open=Decimal("1300.250000"), last_price=Decimal("1300.25"), close_price=None,
+              listing_date=date(2026, 10, 5), as_of=ist(2026, 10, 5, 10, 15))  # fmt: skip
+
+    async def quote(symbol):
+        return q
+
+    with session_scope() as s:
+        w = s.get(Watch, watched["watch_id"])
+        job = MonitorJob(watch_id=w.id, kind="listing", slot="x", due_at=ist(2026, 10, 5, 10, 15),
+                         params={"which": "open"})  # fmt: skip
+        out = await jobs.listing(s, job, w, jobs.Deps(ipo_detail=None, quote=quote), ist(2026, 10, 5, 10, 16))
+        msg = s.query(Alert).filter_by(kind="listing_open").one().message
+        s.rollback()
+    # (1300.25 / 272 - 1) x 100 = 378.033... -> +378.03 %; the raw price stays in the job result
+    assert "open ₹1,300.25 (+378.03% vs the ₹272.00 upper band)" in msg, msg
+    assert "000" not in msg.replace("1,300", "") and out["price"] == "1300.250000"
 
 
 def test_stopping_a_watch_cancels_its_checks(watched):

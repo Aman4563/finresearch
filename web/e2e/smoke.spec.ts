@@ -3,7 +3,7 @@
 // break them; what they pin down is that an unknown or stale value is labelled as such.
 import { type Page, expect, test } from "@playwright/test";
 
-import { CLAIM, DOC_LINES, REPORT, SIGNAL, SNAPSHOT, TAX } from "./fixtures";
+import { CLAIM, DOC_LINES, GOAL_PLAN_LOWER, REPORT, SIGNAL, SNAPSHOT, TAX, WEALTH } from "./fixtures";
 import { expectNoHorizontalOverflow, mockApi } from "./mock-api";
 
 const phone = (page: Page) => (page.viewportSize()?.width ?? 1280) < 640;
@@ -18,7 +18,10 @@ test("portfolio: unknown cost, stale price and incomplete tax are labelled", asy
   await page.goto("/portfolio");
   const holdings = page.getByRole("region", { name: "Holdings" });
   await expect(holdings.getByText("Example Opening Balance Fund")).toBeVisible();
-  await expect(holdings.getByText(/cost unknown/i)).toBeVisible();
+  await expect(holdings.getByText(/cost unknown/i).first()).toBeVisible();
+  // #263: the demerged holding's return reads "incomplete", not a percentage or a bare dash
+  const demerged = holdings.getByRole("row").filter({ hasText: "Example Demerge Ltd" });
+  await expect(demerged.getByText(/^incomplete$/)).toBeVisible();
   await expect(page.getByText(/some costs are unknown/i)).toBeVisible();
   // the fund's price is a statement NAV from June: shown with its date, never as today's price
   await expect(holdings.getByText(/statement NAV|stale/i)).toBeVisible();
@@ -102,4 +105,21 @@ test("connections: the Groww card says which market data Groww supplies and toda
   await expect(page.getByText(/Orders read in session/)).toContainText("1 new, 0 updated");
   if (phone(page)) await expectNoHorizontalOverflow(page);
   api.expectClean(["GET /api/"]); // the profile page's other cards may stay unanswered here
+});
+
+test("wealth: a goal run on the priced part reads 'at least' / 'at most' and names the unpriced holding", async ({ page }) => {
+  const api = await mockApi(page, {
+    "GET /api/wealth": WEALTH,
+    "GET /api/wealth/goals/1/plan": GOAL_PLAN_LOWER,
+  });
+  await page.goto("/wealth#goals");
+  await expect(page.getByText(/lower bound: part of the earmarked portfolio has no price/i)).toBeVisible();
+  await expect(page.getByText(/Example Beta Ltd/)).toBeVisible();
+  await expect(page.getByText(/45\.5 % of the earmarked portfolio/)).toBeVisible();
+  await expect(page.getByText(/^at least ₹10,300$/)).toBeVisible(); // set aside today
+  await expect(page.getByText(/^at most ₹7,400$/)).toBeVisible(); // SIP for 75 %
+  await expect(page.getByText(/^unknown$/)).toBeVisible(); // SIP for 90 %: none found from the priced part, not "not reachable"
+  await expect(page.getByText(/not reachable/i)).toHaveCount(0);
+  if (phone(page)) await expectNoHorizontalOverflow(page);
+  api.expectClean();
 });

@@ -159,8 +159,8 @@ function DigestCard() {
   return (
     <div className="space-y-4">
       {!v ? (
-        <EmptyState icon={<TrendingUp className="size-5" />} title="Not enough daily valuations this week">
-          The monitor values your portfolio after each close while <code>finresearch serve</code> runs. The digest compares the last seven days.
+        <EmptyState icon={<TrendingUp className="size-5" />} title={data.value_why ? "Weekly change unavailable" : "Not enough daily valuations this week"}>
+          {data.value_why ? <>{data.value_why.replace(/^unavailable: /, "")}.</> : <>The monitor values your portfolio after each close while <code>finresearch serve</code> runs. The digest compares the last seven days.</>}
         </EmptyState>
       ) : (
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -267,9 +267,9 @@ export function BriefPage() {
           <Callout tone={b.rules_fired.length || b.signal_changes.length || b.sip_missed.length ? "warn" : "gain"} title="Today">
             {b.headline}
           </Callout>
-          {b.performance && (
+          {b.performance ? (
             <p className="num text-sm text-muted">Since {day(b.performance.from)}: {b.performance.twr_pct > 0 ? "+" : ""}{b.performance.twr_pct}% with new money removed (market move {inr(b.performance.market)}).</p>
-          )}
+          ) : b.performance_why ? <p className="text-sm text-muted">Daily change {b.performance_why}.</p> : null}
           <div className="grid gap-4 lg:grid-cols-2 [&>*]:min-w-0">
             <Card title="Next 7 days" icon={<CalendarDays className="size-4" />} subtitle="Holdings' ex-dates and results meetings, watched IPOs, SIPs, lots turning long-term, tax dates.">
               <Events items={b.events} empty="Nothing dated in the next 7 days." />

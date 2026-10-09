@@ -7,7 +7,10 @@ data: rebuilt by the next pass, left out of the data export, and personal (never
                    HISTORY_DAYS earlier valuation days (price, units) for day moves and the weekly digest;
 - cache:signals    each holding's signal (action, score, validation) today and the changes since the last pass;
 - cache:events     corporate actions, board meetings and the latest results filing of stock holdings (NSE);
-- cache:ter        each held fund's TER from AMFI's file, with the previous value when it changed.
+- cache:ter        each held fund's TER from AMFI's file, with the previous value when it changed;
+- cache:valuation_gaps  what the latest recorded snapshot left out (portfolio.metrics.record_snapshot): the holdings
+                   without a price (name, units, last known price from the valuation history), and how many were
+                   valued at a stale price or have an unknown cost. Read by the goal plan's lower bound (#286).
 """
 
 from __future__ import annotations
@@ -20,6 +23,7 @@ from finresearch.db.models import PortfolioSetting
 
 PREFIX = "cache:"
 VALUATION, SIGNALS, EVENTS, TER = "cache:valuation", "cache:signals", "cache:events", "cache:ter"
+GAPS = "cache:valuation_gaps"
 HISTORY_DAYS = 10
 
 

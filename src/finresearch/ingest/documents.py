@@ -108,9 +108,10 @@ def check_public_url(url: str, *, resolve=socket.getaddrinfo) -> None:
             raise UnsafeUrl(
                 f"could not resolve {host} to check that it is public ({type(e).__name__})"
             ) from e
+    from finresearch.adapters.http import is_public_ip  # one address policy for every agent-chosen URL (#259)
+
     for a in addrs:
-        a = getattr(a, "ipv4_mapped", None) or a
-        if not a.is_global or a.is_multicast:
+        if not is_public_ip(a):
             raise UnsafeUrl(f"{host} resolves to a non-public address ({a})")
 
 

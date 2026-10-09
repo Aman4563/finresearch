@@ -338,7 +338,9 @@ def fincalc_call(function: str, args: dict[str, Any]) -> str:
     """Call a finance function, e.g. function="growth.cagr", args={"start": "6577.67", "end": "11716.54",
     "years": 2}. Pass numbers as strings to keep precision; dates as "YYYY-MM-DD". Returns JSON result.
     To save the result as a claim, cite {"fincalc": {"function": ..., "args": {...}}, "inputs": [<claim ids of the
-    inputs>]}: save_claim runs it again and grades the figure D (deterministic) only if it reproduces the value."""
+    inputs>]}: save_claim runs it again and grades the figure D (deterministic) only if it reproduces the value and
+    every numeric argument is one cited input's value (any ₹ scale or %/fraction, within 0.05%) or is declared in
+    "constants": {"<arg>": "<why, with source>"} (e.g. cagr years)."""
     if function not in _fincalc_catalog():
         return f"unknown function {function!r}; call fincalc_functions()"
     try:
@@ -933,11 +935,13 @@ def save_claim(run_id: int, stream: str, statement: str, claim_type: str, citati
     claim_type: numeric | factual | opinion. importance: high | normal | low.
     citations: [{"document_id": 1, "line_start": 1650, "line_end": 1665, "quote": "<exact text at those lines>"}]
                or [{"url": "https://...", "accessed_at": "2026-09-28T14:00:00+05:30", "quote": "..."}]
-               or [{"fincalc": {"function": "growth.cagr", "args": {...}}, "inputs": [12, 15]}] for a computed figure.
+               or [{"fincalc": {"function": "growth.cagr", "args": {...}}, "inputs": [12, 15],
+                    "constants": {"years": "FY2023 to FY2026 = 3 fiscal years"}}] for a computed figure: each numeric
+               argument must be the value of one cited input claim (any ₹ scale or %/fraction) or a declared constant.
     The server checks each document quote really appears at the cited lines, a web quote against the page text
     fetch_page (or an exchange tool) returned, and re-runs a fincalc citation. Evidence grades: A document quote
     verified, B web quote verified on the stored page, C web quote unchecked (no fetch_page), D fincalc reproduces
-    the value from cited inputs, U unsupported. A high-importance figure needs A, B or D to be published. A claim
+    the value from the cited inputs' own values, U unsupported. A high-importance figure needs A, B or D to be published. A claim
     whose quotes are all missing is stored as 'unsupported' — fix the citation and save again."""
     with session_scope() as s:
         try:

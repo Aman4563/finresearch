@@ -284,7 +284,7 @@ function Holdings({ snap, onChanged, updating }: { snap: Snapshot; onChanged: ()
         <thead>
           <tr>
             <th>Holding</th><th className="text-right">Value</th><th className="text-right">Unrealised</th>
-            <th className="text-right"><span className="inline-flex items-center gap-1">XIRR <InfoTip>Annualised return on your actual cash flows (buys, sales, dividends paid out, today&apos;s value). Not shown for holdings younger than 60 days or with an unknown cost.</InfoTip></span></th>
+            <th className="text-right"><span className="inline-flex items-center gap-1">XIRR <InfoTip>Annualised return on your actual cash flows (buys, sales, dividends paid out, today&apos;s value). Not shown for holdings younger than 60 days or with an unknown cost; &quot;incomplete&quot; after a corporate action the app does not model (demerger, rights ...).</InfoTip></span></th>
             <th className="text-right">Units</th><th className="text-right">Avg cost</th><th className="text-right">Price</th>
             <th className="text-right">Realised</th><th>Signal</th>
           </tr>
@@ -313,7 +313,10 @@ function Holdings({ snap, onChanged, updating }: { snap: Snapshot; onChanged: ()
                 <td className={cx("num text-right", (h.unrealised ?? 0) >= 0 ? "text-gain" : "text-loss")}>
                   {h.pending ? <span className="skeleton inline-block h-3 w-14 rounded align-middle" /> : <>{signed(h.unrealised)}<span className="block text-[10px]">{pctx(h.unrealised_pct)}</span></>}
                 </td>
-                <td className="num text-right" title={h.xirr_reason ?? ""}>{h.pending ? <span className="text-xs text-muted">…</span> : h.xirr == null ? <span className="text-xs text-muted">—</span> : pctx(h.xirr * 100)}</td>
+                <td className="num text-right" title={h.xirr_reason ?? ""}>{h.pending ? <span className="text-xs text-muted">…</span> : h.xirr == null
+                  // an unresolved demerger, rights issue ... (#263): the return is incomplete, not merely not shown
+                  ? (h.xirr_reason?.startsWith("unsupported corporate action") ? <span className="text-xs text-warn">incomplete</span> : <span className="text-xs text-muted">—</span>)
+                  : pctx(h.xirr * 100)}</td>
                 <td className="num text-right">{units(h.units)}</td>
                 <td className="num text-right">{inr(h.avg_cost, 2)}</td>
                 <td className="num text-right" title={h.price_source ? `${h.price_source}${h.price_as_of ? ` · as of ${h.price_as_of}` : ""}` : undefined}>

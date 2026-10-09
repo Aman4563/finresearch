@@ -116,7 +116,7 @@ def strip(s: Any, now: datetime) -> dict[str, Any]:
     and the latest portfolio alert. Daily P&L is deliberately not shown (see monitor.digest)."""
     from finresearch.db.models import Alert, PortfolioSnapshot
     from finresearch.fincalc.dates import fiscal_year, to_ist
-    from finresearch.monitor.digest import BEHAVIOUR_NOTE, value_change
+    from finresearch.monitor.digest import BEHAVIOUR_NOTE, window_change
     from finresearch.portfolio import cache
     from finresearch.portfolio.report import disposal_rows, load
     from finresearch.portfolio.tax import fy_summary
@@ -126,14 +126,8 @@ def strip(s: Any, now: datetime) -> dict[str, Any]:
     if not data.holdings:
         return {"has_portfolio": False}
     last = s.scalars(select(PortfolioSnapshot).order_by(PortfolioSnapshot.day.desc())).first()
-    from finresearch.portfolio import series
-
-    ser, _why = series.load(s)  # the week's change reads the canonical value history (#239)
-    rows = ser.rows(today - timedelta(days=11)) if ser is not None else []
-    start = [r for r in rows if r[0] <= today - timedelta(days=7)]
-    week = value_change(
-        ([start[-1]] if start else []) + [r for r in rows if r[0] > today - timedelta(days=7)]
-    )
+    # the week's change reads the canonical value history (#239); when it cannot, the strip says why (#264)
+    week, week_why = window_change(s, today, 7)
     ex = fy_summary(disposal_rows(data), fiscal_year(today), Decimal("0.30"))["exemption"]
     # an unclassified disposal may have used the exemption: the headroom is unknown (#213)
     if not ex["complete"]:
@@ -157,7 +151,7 @@ def strip(s: Any, now: datetime) -> dict[str, Any]:
         "value": float(last.value) if last else None, "as_of": last.day.isoformat() if last else None,
         "complete": bool(last.complete) if last else False,
         "holdings": sum(1 for h in data.holdings if any(lot.open_quantity > 0 for lot in data.lots.get(h.id, []))),
-        "week": week, "ltcg_headroom": ex["remaining"], "ltcg_limit": ex["limit"],
+        "week": week, "week_why": week_why, "ltcg_headroom": ex["remaining"], "ltcg_limit": ex["limit"],
         "top_alert": {"message": pf.message, "at": pf.created_at.isoformat(), "level": pf.level} if pf else None,
         "unpriced": len(v.get("unpriced") or []) + len(v.get("stale") or []), "daily_pass": v.get("day"),
         "note": BEHAVIOUR_NOTE,
