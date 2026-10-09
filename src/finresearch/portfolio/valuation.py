@@ -19,7 +19,7 @@ import re
 import time as _time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -29,9 +29,8 @@ from finresearch.fincalc.funds import xirr
 from finresearch.fincalc.price import LAST_TRADED, OFFICIAL_CLOSE
 
 log = logging.getLogger(__name__)
-GROWW_CLOSE_PROVENANCE = (
-    "Groww daily close"  # = adapters.groww_market.CLOSE_PROVENANCE (not imported: no cycle)
-)
+# = adapters.groww_market.CLOSE_PROVENANCE (not imported at module level: that module imports the connectors)
+GROWW_CLOSE_PROVENANCE = "Groww daily close"
 
 CAP_LIST = {
     "as_of": "2025-12-31",
@@ -40,9 +39,8 @@ CAP_LIST = {
     "source": "https://www.amfiindia.com/Themes/Theme1/downloads/AverageMarketCapitalization31Dec2025.xlsx",
     "note": "AMFI list for the six months ended 31-Dec-2025 (the Jun-2026 list could not be verified)",
 }
-GROWW_CLOSE = (
-    "groww_daily_close"  # PriceInfo.kind of a Groww daily close: never the exchange's official close
-)
+# PriceInfo.kind of a Groww daily close: never the exchange's official close (#283)
+GROWW_CLOSE = "groww_daily_close"
 MIN_XIRR_DAYS = 60  # annualising a return over a few weeks is misleading: show the absolute return instead
 
 
@@ -57,9 +55,8 @@ class PriceInfo:
     scheme_code: str | None = None
     error: str | None = None
     note: str | None = None  # e.g. the symbol was renamed and the holding was priced under its new one
-    kind: str | None = (
-        None  # fincalc.price kind (last_traded | official_close | previous_close) or GROWW_CLOSE
-    )
+    # fincalc.price kind (last_traded | official_close | previous_close), or GROWW_CLOSE
+    kind: str | None = None
     close_pending: bool = False  # after the session, the exchange has not published its official close yet
 
 
@@ -339,8 +336,8 @@ async def fetch_prices(holdings: Sequence[Any], *, quote: Callable[[str, str], A
             day on the same exchange), else Groww's close, labelled, unless the exchange already describes a later
             day (Groww has not posted today's candle yet: the exchange's last trade stays, "close not yet out")."""
             gday = to_ist(gq.as_of).date() if gq.as_of else None
+            pday = _ist_day(p.as_of) if p.price is not None else None
             if p.kind == OFFICIAL_CLOSE:
-                pday = date.fromisoformat(p.as_of[:10]) if p.as_of else None
                 # not BSE's close standing in for NSE's: that one is not remembered, nor compared with Groww's NSE close
                 same_exchange = q is not None and (p.source or "").startswith(f"{key[1]} quote")
                 if memo is None and same_exchange and pday is not None and (gday is None or pday >= gday):
@@ -350,7 +347,6 @@ async def fetch_prices(holdings: Sequence[Any], *, quote: Callable[[str, str], A
                         checks.append({"day": pday, "exchange": key[1], "symbol": key[0], "source": p.source,
                                        "groww_close": gq.close_price, "official_close": p.price})  # fmt: skip
                 return p
-            pday = date.fromisoformat(p.as_of[:10]) if p.price is not None and p.as_of else None
             if pday is not None and gday is not None and pday > gday:
                 return p
             g = price_from_quote(gq, key[1], listing)
@@ -383,6 +379,17 @@ async def fetch_prices(holdings: Sequence[Any], *, quote: Callable[[str, str], A
         if h.id not in out:
             emit(h.id, PriceInfo(error="no price source for this kind of holding"))
     return out
+
+
+def _ist_day(as_of: str | None) -> date | None:
+    """The IST trading day of a PriceInfo's `as_of` (ISO text, with or without a zone)."""
+    if not as_of:
+        return None
+    try:
+        dt = datetime.fromisoformat(as_of)
+    except ValueError:
+        return None
+    return to_ist(dt).date() if dt.tzinfo else dt.date()
 
 
 # industry and market cap per (symbol, exchange) from the last exchange quote: Groww's LTP carries neither, and they
