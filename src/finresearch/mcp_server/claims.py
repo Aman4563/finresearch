@@ -101,10 +101,90 @@ def _close(stated: Decimal, result: Decimal) -> bool:
     return abs(stated - result) <= max(half, abs(result) * Decimal("0.0005"))
 
 
+_ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+# fincalc arguments documented as positive magnitudes (ratios.fcf: "capex is the (positive) purchase of PP&E";
+# EBIT/EBITDA add back finance cost and depreciation), while the cash-flow statement / P&L claim may carry the sign
+_MAGNITUDE_ARGS = frozenset({"capex", "finance_cost", "depreciation"})
+
+
+def _numeric_leaves(args: Any, path: str = "") -> list[tuple[str, Decimal]]:
+    """Every numeric argument of a fincalc call with its path ("old", "quarters[2]", "bids.qib"); dates, bools and
+    words ("floor", "crore") are not figures."""
+    if isinstance(args, dict):
+        return [x for k, v in args.items() for x in _numeric_leaves(v, f"{path}.{k}" if path else str(k))]
+    if isinstance(args, list | tuple):
+        return [x for i, v in enumerate(args) for x in _numeric_leaves(v, f"{path}[{i}]")]
+    if (
+        isinstance(args, bool)
+        or args is None
+        or (isinstance(args, str) and _ISO_DATE.fullmatch(args.strip()))
+    ):
+        return []
+    if isinstance(args, int | float | Decimal | str):
+        try:
+            return [(path, Decimal(str(args).replace(",", "").strip()))]
+        except InvalidOperation:
+            return []
+    return []
+
+
+def _arg_matches(arg: Decimal, form: Decimal) -> bool:
+    """`arg` equals a cited value within REL_TOL (0.05 % of the larger, the gate's rounding tolerance); zero only
+    matches zero."""
+    from finresearch.verify.gate import REL_TOL
+
+    if arg == form:
+        return True
+    d = max(abs(arg), abs(form))
+    return d != 0 and abs(arg - form) / d <= REL_TOL
+
+
+def bind_args(args: dict[str, Any], claims: list[Claim], constants: dict[str, str]) -> dict[str, Any]:
+    """Bind each numeric argument of a fincalc call to a distinct cited input claim whose value matches it, in the
+    claim's own unit or any ₹ scale (crore claim -> rupee argument) or %/fraction (verify.gate.candidate_forms),
+    within REL_TOL; or to a constant the citation declares with a reason (#265). Sign is kept, except for the
+    magnitude arguments in _MAGNITUDE_ARGS. One claim binds one argument, so pct_change(old=200, new=200) cannot
+    lean twice on the 200 claim. Returns {"bound": {path: claim id | "constant"}, "unbound": [paths], "ok": bool}."""
+    from finresearch.verify.gate import candidate_forms
+
+    leaves = _numeric_leaves(args)
+    forms = {c.id: [f for f in candidate_forms(c.value, c.unit) if (f < 0) == (c.value < 0) or f == 0]
+             for c in claims if c.value is not None}  # fmt: skip
+
+    def fits(path: str, a: Decimal, cid: int) -> bool:
+        mag = path.rsplit(".", 1)[-1].split("[")[0] in _MAGNITUDE_ARGS
+        return any(_arg_matches(abs(a) if mag else a, abs(f) if mag else f) for f in forms[cid])
+
+    cand = {p: [cid for cid in forms if fits(p, a, cid)] for p, a in leaves}
+    owner: dict[int, str] = {}  # claim id -> argument path (maximum bipartite matching, augmenting paths)
+
+    def assign(p: str, seen: set[int]) -> bool:
+        for cid in cand[p]:
+            if cid not in seen:
+                seen.add(cid)
+                if cid not in owner or assign(owner[cid], seen):
+                    owner[cid] = p
+                    return True
+        return False
+
+    for p, _ in leaves:
+        assign(p, set())
+    bound: dict[str, Any] = {p: cid for cid, p in owner.items()}
+    for p, _ in leaves:
+        top = p.split(".")[0].split("[")[0]
+        if p not in bound and (constants.get(p) or constants.get(top) or "").strip():
+            bound[p] = "constant"
+    unbound = [p for p, _ in leaves if p not in bound]
+    return {"bound": bound, "unbound": unbound,
+            "ok": not unbound and any(v != "constant" for v in bound.values())}  # fmt: skip
+
+
 def _computed_citation(session: Session, run_id: int, c: dict[str, Any], value: Decimal | None, unit: str | None,
                        fincalc: Callable[[str, dict[str, Any]], Any] | None) -> tuple[Citation, dict[str, Any]]:  # fmt: skip
     """A figure computed by fincalc: the call is executed again and must reproduce the claim's value, and its inputs
-    must be claims of this run that are not unsupported or contradicted (grade D, #242)."""
+    must be claims of this run that are not unsupported or contradicted (grade D, #242), and every numeric argument
+    must be one of those inputs' values or a declared constant (bind_args, #265): a correct calculation on figures
+    nobody cited is not evidence."""
     import json
 
     from sqlalchemy import select
@@ -118,6 +198,11 @@ def _computed_citation(session: Session, run_id: int, c: dict[str, Any], value: 
         ids = [int(x) for x in inputs or []]
     except (TypeError, ValueError) as e:
         raise ValueError(f"fincalc inputs must be claim ids, got {inputs!r}") from e
+    constants = c.get("constants") or {}
+    if not isinstance(constants, dict) or not all(isinstance(k, str) and isinstance(v, str) and v.strip()
+                                                  for k, v in constants.items()):  # fmt: skip
+        raise ValueError('fincalc "constants" is {"<argument>": "<why this value, with its source>"} for arguments '
+                         'that are not a cited claim, e.g. {"years": "FY2023 to FY2026 is 3 fiscal years"}')  # fmt: skip
     fn, args, key = spec["function"], spec.get("args") or {}, spec.get("result_key")
     if fincalc is None:
         raise ValueError("fincalc citations are checked by the MCP server's save_claim")
@@ -144,13 +229,26 @@ def _computed_citation(session: Session, run_id: int, c: dict[str, Any], value: 
     bad = [i for i in ids if i not in rows or rows[i].run_id != run_id
            or rows[i].status in ("unsupported", "contradicted")]  # fmt: skip
     inputs_ok = bool(ids) and not bad
+    binding = bind_args(args, [rows[i] for i in ids if i in rows and i not in bad], constants)
     detail = (
         "fincalc reproduces the value" if matches else f"fincalc gives {result}, not the stated {value}"
     ) + ("; inputs cited" if inputs_ok else f"; inputs not usable ({'none cited' if not ids else bad})")
+    if binding["ok"]:
+        detail += "; every argument is a cited input's value (within 0.05%) or a declared constant"
+    elif binding["unbound"]:
+        seen = ", ".join(f"[C{i}] {rows[i].value.normalize():f} {rows[i].unit or ''}".strip()
+                         for i in ids if i in rows and rows[i].value is not None) or "none"  # fmt: skip
+        detail += (f"; argument(s) {', '.join(binding['unbound'])} match no cited input claim (within 0.05%, any ₹ "
+                   f"scale or %/fraction; each claim binds one argument) and are not declared constants; cited "
+                   f"values: {seen}")  # fmt: skip
+    else:
+        detail += "; no argument is bound to a cited input claim (constants only)"
     url = f"fincalc:{fn}({json.dumps(args, sort_keys=True, default=str)})"[:2000]
     comp = {"function": fn, "args": args, "result_key": key, "result": str(result), "inputs": ids,
-            "matches": bool(matches), "inputs_ok": inputs_ok, "detail": detail}  # fmt: skip
-    found = bool(matches) and inputs_ok
+            "matches": bool(matches), "inputs_ok": inputs_ok, "constants": constants or None,
+            "bindings": {k: binding["bound"][k] for k in sorted(binding["bound"])},
+            "args_bound": binding["ok"], "detail": detail}  # fmt: skip
+    found = bool(matches) and inputs_ok and binding["ok"]
     return (Citation(url=url, quote=(c.get("quote") or f"{fn} = {result}")[:1000], quote_found=found,
                      computation=comp, accessed_at=datetime.now(UTC)),
             {"fincalc": fn, "quote_found": found, "match": detail})  # fmt: skip
