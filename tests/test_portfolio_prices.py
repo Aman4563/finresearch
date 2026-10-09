@@ -296,3 +296,31 @@ def test_portfolio_gets_never_record_a_snapshot_the_post_does(client):
     r = c.post("/api/portfolio/snapshot", headers=ORIGIN).json()
     assert r == {"recorded": True, "day": "2026-09-30", "complete": True}
     assert snaps() == [(date(2026, 9, 30), D("8500.00"), True)]  # 8 stocks x 10 x 100 + 10 units x 50
+
+
+# --------------------------------------------------------------------------- #295: ISIN first, never a guessed NAV
+def _nav(code: str, isin: str, nav: str) -> SchemeNav:
+    return SchemeNav(code, f"Example Scheme {code}", "Direct", "Growth", isin, None, D(nav), date(2026, 10, 5),
+                     "Equity Scheme - Flexi Cap Fund", "Example MF")  # fmt: skip
+
+
+def test_fund_prices_match_the_isin_first_and_refuse_a_code_isin_conflict():
+    from finresearch.portfolio.valuation import fund_prices
+
+    rows = [_nav("111111", "INF000Z01011", "10"), _nav("222222", "INF000Z01029", "20")]
+    got = fund_prices([H(1, "mf", "by ISIN", isin="inf000z01029"),
+                       H(2, "mf", "code and ISIN disagree", isin="INF000Z01029", scheme_code="111111"),
+                       H(3, "mf", "ISIN not in the file", isin="INF000Z09999", scheme_code="111111"),
+                       H(4, "mf", "both agree", isin="INF000Z01011", scheme_code="111111")], rows, None)  # fmt: skip
+    assert (got[1].price, got[1].scheme_code) == (D(20), "222222")
+    # main priced it at the code's ₹10 (another scheme's NAV): now unknown, naming both schemes
+    assert got[2].price is None and got[2].scheme_code is None
+    assert "ISIN INF000Z01029 is AMFI scheme 222222" in got[2].error and "scheme code 111111" in got[2].error
+    assert got[3].price == D(10) and got[4].price == D(10)
+
+
+def test_nav_all_url_is_amfis_portal_address():
+    from finresearch.adapters.amfi import NAV_ALL_URL
+
+    # www.amfiindia.com/spages/NAVAll.txt answers 302 to this address (curl -I, 9-Oct-2026)
+    assert NAV_ALL_URL == "https://portal.amfiindia.com/spages/NAVAll.txt"
