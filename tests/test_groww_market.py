@@ -585,6 +585,10 @@ def test_after_the_session_the_official_close_wins_and_groww_is_checked_against_
         "Groww daily close (not the exchange's official close)",
     )
     assert out[3].industry == "Example Industry"
+    with session_scope() as s:  # a valuation (a GET) writes nothing: the monitor tick stores the comparisons
+        assert s.scalar(select(GrowwCloseCheck.id)) is None
+    assert run(groww_market.close_check_step(market=m)) == {"groww_close_checks": 2}
+    assert m.pending_checks == {}
     with session_scope() as s:
         rows = {r.symbol: r for r in s.scalars(select(GrowwCloseCheck))}
     assert sorted(rows) == ["EXSTK0", "EXSTK1"]  # EXSTK2: nothing to compare yet, which is not a mismatch
@@ -606,6 +610,7 @@ def test_after_the_session_the_official_close_wins_and_groww_is_checked_against_
     asked.clear()
     out = run(fetch_prices(hs, quote=quote, scheme_rows=None, prefetch=Prefetch(m)))
     assert asked == [] and [str(out[i].price) for i in (1, 2, 3)] == ["103.50", "103.70", "104.10"]
+    assert run(groww_market.close_check_step(market=m)) == {"groww_close_checks": 1}  # EXSTK2's, once
     with session_scope() as s:
         assert s.scalar(select(GrowwCloseCheck.matched).where(GrowwCloseCheck.symbol == "EXSTK2")) is False
 

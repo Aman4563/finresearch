@@ -373,6 +373,9 @@ class GrowwMarket:
         # (symbol, exchange) -> (valid until, the exchange quote carrying its official close): after the session the
         # official close does not change until the next open, so it is asked for once (#283)
         self.official: dict[tuple[str, str], tuple[float, Any]] = {}
+        # Groww-vs-official close comparisons waiting for the monitor tick to store them (`close_check_step`): a
+        # valuation behind a GET never writes to the database (#247)
+        self.pending_checks: dict[tuple[Any, str, str], dict[str, Any]] = {}
         self._instruments_failed = -1e18
         self.supplied: dict[
             str, str
@@ -809,13 +812,32 @@ class Prefetch:
         m.official[key] = (next_open(m.clock(), m.holidays()).timestamp(), quote)
 
     async def record(self, checks: list[dict[str, Any]]) -> None:
-        """Store the day's Groww-close-vs-official-close comparisons; a database failure never affects a price."""
-        if not checks or self.cached_only:
-            return
-        try:
-            await asyncio.to_thread(record_close_checks, checks)
-        except Exception as e:
-            log.info("Groww close check not stored (%s)", type(e).__name__)
+        """Queue the comparisons of Groww's close with the official close; the monitor tick stores them."""
+        m = self.market or MARKET
+        for c in checks:
+            if len(m.pending_checks) < MAX_PENDING_CHECKS:
+                m.pending_checks[(c["day"], c["exchange"], c["symbol"])] = c
+
+
+MAX_PENDING_CHECKS = 5000  # with no monitor running nothing is stored: the queue stays bounded
+
+
+async def close_check_step(now: datetime | None = None, market: GrowwMarket | None = None) -> dict[str, int]:
+    """The monitor tick's hook: store the queued Groww-vs-official close comparisons (#283). A database failure keeps
+    them queued for the next tick and never affects a price."""
+    m = market or MARKET
+    batch = dict(m.pending_checks)
+    if not batch:
+        return {}
+    try:
+        await asyncio.to_thread(record_close_checks, list(batch.values()))
+    except Exception as e:
+        log.info("Groww close checks not stored yet (%s)", type(e).__name__)
+        return {}
+    for k, v in batch.items():
+        if m.pending_checks.get(k) is v:
+            del m.pending_checks[k]
+    return {"groww_close_checks": len(batch)}
 
 
 def record_close_checks(checks: list[dict[str, Any]]) -> None:

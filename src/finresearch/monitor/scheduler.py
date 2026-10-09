@@ -478,6 +478,12 @@ async def tick(deps: jobs.Deps, now: datetime | None = None) -> dict[str, int]:
         out |= await session_step(now)
     except Exception:
         log.warning("Groww market-data session step failed; it is retried on the next tick", exc_info=True)
+    try:  # Groww's daily close vs the exchange's official close, queued by the valuations (#283)
+        from finresearch.adapters.groww_market import close_check_step
+
+        out |= await close_check_step(now)
+    except Exception:
+        log.warning("Groww close checks not stored; retried on the next tick", exc_info=True)
     out |= {f"{k}_sent": v for k, v in out_brief.items()}
     try:
         res = await jobs.archive_open_books(deps, now)
