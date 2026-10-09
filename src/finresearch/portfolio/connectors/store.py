@@ -13,7 +13,7 @@ imported transactions stay (delete their imports on the Portfolio page if you wa
 from __future__ import annotations
 
 import secrets
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -47,8 +47,12 @@ def config_of(row: BrokerConnection | None) -> dict[str, Any]:
     """The row's settings with its secrets read from the secret store."""
     if row is None:
         return {}
-    cfg = dict(row.config or {})
-    for name in secret_names(row.key) & set(cfg):
+    return _resolved(row.key, row.config)
+
+
+def _resolved(key: str, config: dict[str, Any] | None) -> dict[str, Any]:
+    cfg = dict(config or {})
+    for name in secret_names(key) & set(cfg):
         cfg[name] = secret_store.resolve(cfg[name])
     return cfg
 
@@ -61,14 +65,27 @@ def clear_token(row: BrokerConnection) -> None:
     """Forget the access token: its Keychain item too."""
     secret_store.drop(row.token)
     row.token, row.token_expires_at = None, None
+    row.state = {k: v for k, v in (row.state or {}).items() if k != "token_rev"}
 
 
 def build(row: BrokerConnection) -> BrokerConnector:
     return connector_class(row.key)(config_of(row), token_of(row))
 
 
+def build_from(key: str, config: dict[str, Any] | None, token: str | None) -> BrokerConnector:
+    """`build` from a row's plain column values (no session): the secret-store reads (a Keychain subprocess each)
+    can then run in a worker thread, off the event loop (sync.sync_now)."""
+    tok = (secret_store.resolve(token) or None) if token else None
+    return connector_class(key)(_resolved(key, config), tok)
+
+
+# a token about to expire is treated as expired: a sync that starts a minute before the broker ends the session
+# (Groww, Zerodha 06:00 IST) would otherwise fail half-way and lose the day's scheduled attempt (#266)
+TOKEN_MARGIN = timedelta(minutes=5)
+
+
 def token_valid(row: BrokerConnection, now: datetime) -> bool:
-    return bool(row.token) and (row.token_expires_at is None or row.token_expires_at > now)
+    return bool(row.token) and (row.token_expires_at is None or row.token_expires_at - TOKEN_MARGIN > now)
 
 
 def missing_fields(key: str, config: dict[str, Any]) -> list[str]:
@@ -207,16 +224,20 @@ def _validate(key: str, cfg: dict[str, Any]) -> None:
                              "(letters A-Z and digits 2-7), not the 6-digit code")  # fmt: skip
 
 
-def set_token(s: Session, key: str, grant: TokenGrant) -> None:
+def set_token(s: Session, key: str, grant: TokenGrant) -> str:
+    """Store a fresh access token; returns its revision (`state.token_rev`)."""
     row = get_row(s, key)
     if row is None:
         raise LookupError(key)
     row.token = secret_store.keep_text(f"broker.{key}", "token", grant.token, row.token)
     row.token_expires_at = grant.expires_at
     row.status, row.last_error = "connected", None
-    if grant.extra:
-        row.state = {**(row.state or {}), **{k: v for k, v in grant.extra.items() if k in ("connected_as",)}}
+    # which login this token came from: the Keychain reference stays the same across logins, so a sync that finds
+    # its token refused clears it only while it is still the one it used (sync._finish), never a newer one
+    row.state = {**(row.state or {}), **{k: v for k, v in (grant.extra or {}).items() if k in ("connected_as",)},
+                 "token_rev": (rev := secrets.token_hex(8))}  # fmt: skip
     row.updated_at = datetime.now(UTC)
+    return rev
 
 
 def disconnect(s: Session, key: str) -> bool:

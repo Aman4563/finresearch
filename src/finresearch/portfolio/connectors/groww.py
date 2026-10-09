@@ -26,6 +26,7 @@ https://groww.in/trade-api/docs/curl/portfolio (holdings/positions), https://gro
 
 from __future__ import annotations
 
+import time
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any, ClassVar
@@ -48,6 +49,7 @@ from finresearch.portfolio.connectors.totp import totp
 BASE = "https://api.groww.in/v1"
 READ_PATHS = (r"/holdings/user", r"/positions/user", r"/order/list", r"/margins/detail/user", r"/user/detail")
 AUTH_PATHS = (r"/token/api/access",)
+TOTP_STEP_S = 30
 
 
 def next_six_am(now: datetime) -> datetime:
@@ -56,15 +58,33 @@ def next_six_am(now: datetime) -> datetime:
     return six if ist < six else six + timedelta(days=1)
 
 
-def _payload(body: Any, key: str) -> list[dict[str, Any]]:
-    if not isinstance(body, dict) or str(body.get("status", "SUCCESS")).upper() != "SUCCESS":
-        msg = (body.get("error") or {}) if isinstance(body, dict) else {}
-        raise ConnectorError(
-            f"Groww answered {msg.get('message') if isinstance(msg, dict) else msg or 'FAILURE'}"
-        )
-    p = body.get("payload") or {}
-    rows = p.get(key) if isinstance(p, dict) else None
-    return [r for r in rows or [] if isinstance(r, dict)]
+def _status_ok(body: Any) -> dict[str, Any]:
+    """The response as a dict, or ConnectorError for a FAILURE answer or a body that is not an object."""
+    if not isinstance(body, dict):
+        raise ConnectorError("Groww answered an unexpected response shape (not an object)")
+    if str(body.get("status", "SUCCESS")).upper() != "SUCCESS":
+        err = body.get("error")
+        msg = err.get("message") if isinstance(err, dict) else err
+        raise ConnectorError(f"Groww answered {msg or 'FAILURE'}")
+    return body
+
+
+def _payload(body: Any, *keys: str) -> list[dict[str, Any]]:
+    """The rows under ``payload.<key>`` (the first of `keys` present). A key that is present but empty (or null) is
+    an empty list; a missing payload or a missing key is a ConnectorError: a renamed field must never read as "no
+    holdings" or "no orders today" (the order list is today-only, so a silently empty read loses the day's trades)."""
+    p = _status_ok(body).get("payload")
+    if not isinstance(p, dict):
+        raise ConnectorError("Groww answered an unexpected response shape (no payload)")
+    for key in keys:
+        if key in p:
+            rows = p[key]
+            if rows is None:
+                return []
+            if not isinstance(rows, list):
+                raise ConnectorError(f"Groww answered an unexpected response shape ({key} is not a list)")
+            return [r for r in rows if isinstance(r, dict)]
+    raise ConnectorError(f"Groww answered an unexpected response shape (no {' or '.join(keys)})")
 
 
 def map_holding(r: dict[str, Any]) -> BrokerHolding:
@@ -87,7 +107,10 @@ def map_order(r: dict[str, Any]) -> BrokerTrade | None:
     side = str(r.get("transaction_type") or "").upper()
     if filled <= 0 or not price or side not in ("BUY", "SELL"):
         return None
-    created = str(r.get("created_at") or "")
+    # the day the trade took place: `trade_date` ("Date on which trade has taken place"), else `exchange_time` (when
+    # the order reached the exchange), else `created_at` (when it was placed: an after-market or GTT order placed
+    # the evening before would be dated a day early). Field descriptions from the order-list docs, read 9-Oct-2026.
+    created = str(r.get("trade_date") or r.get("exchange_time") or r.get("created_at") or "")
     day = _day(created)
     if day is None:
         return None
@@ -128,6 +151,8 @@ class GrowwConnector(BrokerConnector):
     auth_kind: ClassVar[str] = "totp"
     capabilities: ClassVar[frozenset[str]] = frozenset({"holdings", "positions", "trades", "funds"})
     holdings_include_today: ClassVar[bool] = False
+    trades_today_only: ClassVar[bool] = True
+    fills_aggregated: ClassVar[bool] = True
     docs_url: ClassVar[str] = "https://groww.in/trade-api/docs/curl"
     cost: ClassVar[str] = "Paid: Groww Trading API subscription (₹499 + GST/month early-bird; ₹2000 standard)"
     token_note: ClassVar[str] = (
@@ -158,14 +183,21 @@ class GrowwConnector(BrokerConnector):
         http = ReadOnlyHttp(BASE, read_paths=(), auth_paths=AUTH_PATHS, secrets=self.secret_values(),
                             headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json",
                                      "Accept": "application/json", "X-API-VERSION": "1.0"})  # fmt: skip
+        at = time.time()
         try:
-            code = totp(seed)
+            code = totp(seed, at)
         except ValueError as e:
             raise ReconnectNeeded(str(e)) from None
         try:
             body = await http.auth_post("/token/api/access", json={"key_type": "totp", "totp": code})
-        except ReconnectNeeded as e:
-            raise ReconnectNeeded(f"Groww refused the TOTP login ({e}): check the key and secret") from None
+        except ReconnectNeeded:
+            # a code made at the end of its 30-second step can arrive after the step has turned: one retry with the
+            # next step's code, never more (token generation is capped at 150 a day)
+            try:
+                body = await http.auth_post("/token/api/access",
+                                            json={"key_type": "totp", "totp": totp(seed, at + TOTP_STEP_S)})  # fmt: skip
+            except ReconnectNeeded as e:
+                raise ReconnectNeeded(f"Groww refused the TOTP login ({e}): check the key and secret") from None
         tok = token_from(body)
         if not tok:
             raise ConnectorError("Groww's login answer had no access token")
@@ -183,16 +215,15 @@ class GrowwConnector(BrokerConnector):
         http, out = self._http(), []
         for page in range(0, 20):
             body = await http.get("/order/list", {"segment": "CASH", "page": page, "page_size": 100})
-            rows = _payload(body, "order_list") or _payload(body, "orders")
+            rows = _payload(body, "order_list", "orders")
             out += [t for t in (map_order(r) for r in rows) if t is not None and since <= t.day <= until]
             if len(rows) < 100:
                 break
         return out
 
     async def funds(self) -> dict[str, Any]:
-        body = await self._http().get("/margins/detail/user")
-        p = body.get("payload") if isinstance(body, dict) else None
+        p = _status_ok(await self._http().get("/margins/detail/user")).get("payload")
         if not isinstance(p, dict):
-            return {}
+            raise ConnectorError("Groww answered an unexpected response shape (no payload)")
         return {"cash": dec(p.get("clear_cash")), "margin_used": dec(p.get("net_margin_used")),
                 "collateral_available": dec(p.get("collateral_available"))}  # fmt: skip

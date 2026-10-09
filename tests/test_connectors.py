@@ -456,7 +456,11 @@ def test_baseline_trades_and_idempotent_resync(db):
             D("480.5"),
         ]  # P&L works on the baseline; its date is unknown
         rec = {r["ikey"]: r for r in res.reconciliation}
-        assert rec["ISIN:INE000A01011"]["diff"] == "2.000"  # today's buy not in the broker's holdings yet
+        # Groww's holdings exclude today's buy (holdings_include_today False), so they stand for the end of 29-Sep:
+        # the app's units on that day are 7 (baseline) + 3 (28-Sep) = 10 = the broker's 10, not 12 - 10 = 2 off.
+        # Before #266 this compared against today's lots and reported a difference on every trading day.
+        assert rec["ISIN:INE000A01011"]["diff"] == "0.000" and rec["ISIN:INE000A01011"]["ok"]
+        assert res.as_dict()["reconciled"]
     # the next day the broker's holdings include it; the same trades come back in the overlap window
     holdings2 = [_h("INE000A01011", "EXMPL", 12, "101.67"), _h("INE000B01012", "EXBANK", 5, "480.5")]
     with db() as s:
@@ -766,7 +770,7 @@ def test_failed_scheduled_sync_is_not_retried_the_same_day(client, transport):
         from sqlalchemy import func, select
 
         assert s.scalar(select(func.count()).select_from(BrokerSyncLog)) == 1
-    assert len(rec.requests) == 1
+    assert len(rec.requests) == 2  # the code, then one retry with the next 30-second step's code (#266); no more
     conn = next(c for c in client.get("/api/connections").json()["connections"] if c["key"] == "groww")
     assert conn["status"] == "error" and "refused" in conn["next_step"]  # the failure is visible, not "ready"
     assert GROWW_KEY not in json.dumps(conn)
@@ -955,7 +959,7 @@ def test_trades_missed_by_a_partial_sync_are_read_again(db, monkeypatch):
                 raise base.ConnectorError("trades endpoint down")
             return []
 
-    monkeypatch.setattr(sync, "build", lambda row: Fake())
+    monkeypatch.setattr(sync, "build_from", lambda *cols: Fake())
     monkeypatch.setattr(sync, "token_valid", lambda row, now: True)
     with db() as s:
         s.add(BrokerConnection(key="groww", enabled=True, auto_sync=True, status="connected",
