@@ -72,9 +72,21 @@ LIVE_BOND, MATURED_BOND, GONE_BOND = "INE0EO107011", "INE0EO107029", "INE0EO1070
 @pytest.fixture
 def lc(env, monkeypatch):
     from finresearch.db import session_scope
-    from finresearch.db.models import (Alert, AlertEvalSlot, AlertRuleState, Company, DisclosureFeed, InvestorProfile,
-                                       MonitorJob, PortfolioDisposal, PortfolioHolding, PortfolioLot, PortfolioSetting,
-                                       PortfolioTxn, Watch)  # fmt: skip
+    from finresearch.db.models import (
+        Alert,
+        AlertEvalSlot,
+        AlertRuleState,
+        Company,
+        DisclosureFeed,
+        InvestorProfile,
+        MonitorJob,
+        PortfolioDisposal,
+        PortfolioHolding,
+        PortfolioLot,
+        PortfolioSetting,
+        PortfolioTxn,  # fmt: skip
+        Watch,
+    )
 
     def wipe():
         with session_scope() as s:
