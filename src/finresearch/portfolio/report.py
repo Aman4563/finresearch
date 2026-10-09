@@ -171,13 +171,16 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
             unknown_cost += 0 if known else 1
             unpriced += 1 if value is None else 0
             stale += 1 if stale_why else 0
+        # the display sector every view groups by (limits.sector_label): an ETF or fund by what it holds, never NSE's
+        # "Mutual Fund Scheme - ETF" industry; a blank or "-" industry is Unclassified (#264)
+        sector = sector_label(h.asset_type, h.sector or (p.industry if h.asset_type == "stock" else None),
+                              h.nse_symbol, h.name, eff, h.isin)  # fmt: skip
         if value is not None:
             tot["value"] += value
             debt = h.asset_type == "stock" and is_debt_security(h.isin, h.name, h.nse_symbol)
             label = BONDS_SECTOR if debt else asset_label(h.asset_type, eff)
             alloc["asset"][label] += value
-            alloc["sector"][sector_label(h.asset_type, h.sector or (p.industry if h.asset_type == "stock" else None),
-                                         h.nse_symbol, h.name, eff, h.isin)] += value  # fmt: skip
+            alloc["sector"][sector] += value
             bucket = cap_bucket(p.market_cap_cr) if h.asset_type == "stock" and eff == "equity" else (
                 fund_cap_bucket(category, eff) if h.asset_type == "mf" else "Not equity")  # fmt: skip
             alloc["cap"][bucket] += value
@@ -192,7 +195,7 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
         rows.append({
             "id": h.id, "name": h.name, "account": h.account, "asset_type": h.asset_type, "ikey": h.ikey,
             "isin": h.isin, "nse_symbol": h.nse_symbol, "bse_code": h.bse_code,
-            "scheme_code": h.scheme_code or p.scheme_code, "category": category, "sector": h.sector or p.industry,
+            "scheme_code": h.scheme_code or p.scheme_code, "category": category, "sector": h.sector or p.industry, "sector_label": sector,
             "tax_class": eff, "tax_class_auto": auto, "tax_class_why": why, "tax_class_override": h.tax_class,
             "listed": is_listed(h.asset_type, h.name, h.meta), "fmv_2018": _f(h.fmv_2018, 4),
             "sgb_original_subscriber": bool((h.meta or {}).get("sgb_original_subscriber")),
