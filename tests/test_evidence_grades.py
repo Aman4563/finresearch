@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from decimal import Decimal
 
 import pytest
 
@@ -209,6 +210,14 @@ def test_fincalc_argument_tolerance_edges(env, tmp_path):
         run_id, [_calc("ratios.net_debt", {"debt": "10000", "cash": "-4000"}, ids)], value="14000", **kw
     )
     assert _grade(neg["claim_id"]) == ("U", "unsupported")
+    from finresearch.db.models import Claim
+    from finresearch.mcp_server.claims import bind_args
+
+    held = [
+        Claim(id=1, value=Decimal("4000"), unit="INR crore"),
+        Claim(id=2, value=Decimal("10000"), unit=None),
+    ]
+    assert bind_args({"debt": "NaN", "cash": "Infinity"}, held, {})["unbound"] == ["debt", "cash"]
     # ...except for the arguments fincalc documents as positive magnitudes: capex printed (512.40) in the cash flow
     cfo = _save(run_id, [{"url": URL, "quote": "c"}], statement="CFO", metric="cfo", value="2000")
     capex = _save(run_id, [{"url": URL, "quote": "p"}], statement="Capex", metric="capex", value="-512.40")
