@@ -159,13 +159,22 @@ def price_from_quote(q: Any, exch: str, listing: Any = None) -> PriceInfo:
 
 
 def fund_prices(funds: Sequence[Any], rows: list, err: str | None) -> dict[int, PriceInfo]:
+    """Each fund's AMFI NAV, matched by ISIN first (the statement's own identifier of the plan and option) and by the
+    stored scheme code when the ISIN is not in the file. When the ISIN and the scheme code name two different schemes,
+    one of them is wrong and either NAV could be the wrong plan's: the price is unknown, with the reason."""
     by_code = {r.code: r for r in rows}
-    by_isin = {i: r for r in rows for i in (r.isin_growth, r.isin_reinvest) if i}
+    by_isin = {i.upper(): r for r in rows for i in (r.isin_growth, r.isin_reinvest) if i}
     out = {}
     for h in funds:
-        r = by_code.get(h.scheme_code or "") or by_isin.get(h.isin or "")
+        ri = by_isin.get((h.isin or "").upper())
+        rc = by_code.get(h.scheme_code or "")
+        if ri is not None and rc is not None and ri.code != rc.code:
+            out[h.id] = PriceInfo(error=f"ISIN {h.isin} is AMFI scheme {ri.code} ({ri.name}) but the stored scheme "
+                                        f"code {rc.code} is {rc.name}: fix the scheme code (price not guessed)")  # fmt: skip
+            continue
+        r = ri or rc
         if r is not None and r.nav is not None:
-            out[h.id] = PriceInfo(r.nav, r.day.isoformat() if r.day else None, "AMFI NAVAll", category=r.category,
+            out[h.id] = PriceInfo(r.nav, r.day.isoformat() if r.day else None, AMFI_SOURCE, category=r.category,
                                   scheme_code=r.code)  # fmt: skip
         else:
             out[h.id] = _statement_price(h, err or "not found in AMFI's NAV file (set the scheme code)")
@@ -456,14 +465,21 @@ class QuoteBatch:
 # live price older than STALE_PRICE_DAYS (4 calendar days), for the alert inputs, stricter than this headline rule;
 # history.STALE_DAYS (10 calendar days) is how far the reconstruction forward-fills a missing close before a day
 # counts as incomplete.
+# The same horizon applies to AMFI's own NAV: open-ended schemes publish a NAV every business day (AMFI's daily NAVAll
+# file, https://portal.amfiindia.com/spages/NAVAll.txt; the SEBI rule behind it was not re-read [U]), so a NAVAll row
+# more than a trading week old means the scheme stopped publishing, typically because it was merged into another or
+# wound up. Its last NAV is no current value.
 STATEMENT_MAX_AGE_TRADING_DAYS = 5
+AMFI_SOURCE = "AMFI NAVAll"
 
 
-def statement_stale(p: PriceInfo, today: date) -> str | None:
-    """Why a statement price is too old to stand for today's value, else None (live prices are never stale here)."""
+def price_stale(p: PriceInfo, today: date) -> str | None:
+    """Why a price is too old to stand for today's value, else None: a statement price (a broker's close, a CAS NAV)
+    or an AMFI NAV older than STATEMENT_MAX_AGE_TRADING_DAYS. Exchange quotes are never stale here."""
     from finresearch.fincalc.dates import business_days_between
 
-    if p.price is None or "statement" not in (p.source or ""):
+    amfi = p.source == AMFI_SOURCE
+    if p.price is None or not (amfi or "statement" in (p.source or "")):
         return None
     if not p.as_of:
         return f"{p.source} with no date"
@@ -474,8 +490,13 @@ def statement_stale(p: PriceInfo, today: date) -> str | None:
     age = business_days_between(day, today)
     if age <= STATEMENT_MAX_AGE_TRADING_DAYS:
         return None
+    if amfi:
+        return f"NAV of {day.isoformat()}: scheme may be merged or wound up ({age} trading days without a new NAV)"
     return (f"{p.source} of {day.isoformat()} is {age} trading days old (over "
             f"{STATEMENT_MAX_AGE_TRADING_DAYS})")  # fmt: skip
+
+
+statement_stale = price_stale  # the name before AMFI NAVs were checked too
 
 
 def _statement_price(h: Any, why: str) -> PriceInfo:

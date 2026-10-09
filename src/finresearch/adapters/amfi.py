@@ -25,7 +25,8 @@ from pathlib import Path
 
 from finresearch.adapters.http import PoliteClient
 
-NAV_ALL_URL = "https://www.amfiindia.com/spages/NAVAll.txt"
+# www.amfiindia.com/spages/NAVAll.txt answers 302 to this address (checked 9-Oct-2026): fetch it directly
+NAV_ALL_URL = "https://portal.amfiindia.com/spages/NAVAll.txt"
 HISTORY_URL = "https://portal.amfiindia.com/DownloadNAVHistoryReport_Po.aspx"
 MAX_AMC_CODE = 90
 # The AMC-code map is discovered by probing one day per code (MAX_AMC_CODE requests). It is kept AMC_CODES_TTL_S, and
