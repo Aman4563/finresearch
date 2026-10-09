@@ -251,7 +251,9 @@ def cas_to_result(d: dict[str, Any]) -> ImportResult:
     source = str(d.get("file_type") or "CAS")
     if str(d.get("cas_type")) == "SUMMARY":
         raise StatementError(
-            "this is a CAS summary (holdings only): download the detailed CAS with transactions"
+            "this is a Summary CAS (balances only, no transactions), which cannot build lots: request a Detailed "
+            "CAS instead (CAMS or KFintech mailback form, Statement type: Detailed, with transactions, for the "
+            "period you need) and import that"
         )
     period = d.get("statement_period") or {}
     start = parse_day(period.get("from") or period.get("from_"))

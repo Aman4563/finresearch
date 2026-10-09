@@ -1530,3 +1530,37 @@ def test_monthly_cas_reminder_once_a_month_with_the_from_date(db, monkeypatch):
         assert reminder_step(s, datetime(2026, 12, 2, 9, 0, tzinfo=UTC)) == {
             "cas_reminders": 1
         }  # November not covered
+
+
+def test_a_summary_cas_is_refused_with_a_hint_to_request_a_detailed_one(db, client, monkeypatch):
+    """casparser reads a CAMS/KFintech Summary CAS too (cas_type SUMMARY); it has no transactions, so it is refused:
+    in the inbox the file moves to failed/ with the hint, never imported as an empty statement."""
+    import casparser
+
+    from finresearch.portfolio.connectors.inbox import ensure_dirs, scan
+    from finresearch.portfolio.importers import StatementError, cas_to_result, parse_cas
+
+    summary = {"file_type": "CAMS", "cas_type": "SUMMARY", "statement_period": {"from": "01-Jan-2026", "to": "30-Jun-2026"},
+               "folios": [{"amc": "Example AMC", "folio": "1", "schemes": [{"scheme": "Example Fund", "close": "5"}]}]}  # fmt: skip
+    with pytest.raises(StatementError, match=r"Summary CAS.*request a Detailed CAS"):
+        cas_to_result(summary)
+
+    class Data:  # what casparser.read_cas_pdf returns, through parse_cas
+        file_type = "CAMS"
+
+        def model_dump(self, **kw):
+            return summary
+
+    monkeypatch.setattr(casparser, "read_cas_pdf", lambda f, pw: Data())
+    with pytest.raises(StatementError, match="Statement type: Detailed"):
+        parse_cas(b"%PDF-1.4", "x")
+    client.put(
+        "/api/connections/cas_inbox",
+        headers=ORIGIN,
+        json={"enabled": True, "config": {"pan": _fake_pan("s")}},
+    )
+    root = ensure_dirs()
+    _drop(root, "summary.pdf")
+    got = scan(now=NOW)["files"][0]
+    assert got["status"] == "failed" and "request a Detailed CAS" in got["note"]
+    assert (root / "failed" / "summary.pdf").exists()
