@@ -89,30 +89,45 @@ function PlanView({ g, w, refresh }: { g: Goal; w: Wealth; refresh: number }) {
   if (g.months_left <= 0) return <Callout tone="warn">The goal date is less than a month away; there is nothing to simulate.</Callout>;
   if (error) return <ErrorNote error={error} onRetry={reload} />;
   if (!p) return <SkeletonRows rows={4} />;
-  if (p.funded_complete === false) {
-    // never a P(success) or a "SIP for 75 %" computed from ₹0 or from part of the money (#262)
+  if (p.funded_complete === false && p.bound !== "lower") {
+    // never a P(success) or a "SIP for 75 %" computed from ₹0 or from part of the money (#262), unless that part is a
+    // true lower bound (#286, below)
     return <Callout tone="warn" title={`Set aside today: ${p.start == null ? "unknown" : `${inr(p.start)} or more (incomplete)`}`}>{p.message}</Callout>;
   }
   const fan = p.fan.map((r) => ({ date: addMonths(w.as_of, r.month), p10: r.p10, p50: r.p50, p90: r.p90, target: r.target }));
-  const tone = p.p_success >= 0.75 ? "gain" : p.p_success >= 0.5 ? "warn" : "loss";
+  // a lower bound (#286): run on the priced part only, so chances and outcomes read "at least", SIPs "at most"
+  const lb = p.bound === "lower";
+  const least = (s: string) => (lb ? `at least ${s}` : s);
+  const sip = (v: number | null) => (v == null ? (lb ? "unknown" : "not reachable") : lb ? `at most ${inr(v)}` : inr(v));
+  const tone = p.p_success >= 0.75 ? "gain" : lb ? "neutral" : p.p_success >= 0.5 ? "warn" : "loss";
+  const unpriced = p.unpriced ?? [];
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)]">
+      {lb && (
+        <div className="lg:col-span-2">
+          <Callout tone="warn" title="Lower bound: part of the earmarked portfolio has no price today">
+            {unpriced.length} holding{unpriced.length === 1 ? "" : "s"} without a price {unpriced.length === 1 ? "is" : "are"} counted as nothing: {unpriced.join(", ")}
+            {" "}({p.unpriced_share_pct == null ? "share of the earmark unknown: no earlier price" : `about ${p.unpriced_share_pct.toFixed(1)} % of the earmarked portfolio at their last known prices`}).
+            {" "}So the money set aside, the chances and the outcomes below are at least what is shown, and the SIPs needed at most.
+          </Callout>
+        </div>
+      )}
       <div className="space-y-3">
         <div>
           <p className="flex items-center gap-1 text-xs text-muted">P(goal met) <InfoTip>Share of {p.n.toLocaleString("en-IN")} simulated paths that reach the inflated target. The range in brackets is the simulation&apos;s own 95 % interval; the haircut row shows the same with equity returns 2 pp lower. A model output under stated assumptions, not a forecast.</InfoTip></p>
-          <p className="num text-3xl font-semibold"><span className={cx(tone === "gain" ? "text-gain" : tone === "warn" ? "text-warn" : "text-loss")}>{prob(p.p_success)}</span>
+          <p className="num text-3xl font-semibold"><span className={cx(tone === "gain" ? "text-gain" : tone === "warn" ? "text-warn" : tone === "loss" ? "text-loss" : "")}>{lb && <span className="text-base font-normal text-muted">at least </span>}{prob(p.p_success)}</span>
             <span className="ml-2 text-sm font-normal text-muted">({prob(p.p_ci[0])}–{prob(p.p_ci[1])})</span></p>
-          <p className="text-xs text-muted">Equity −2 pp: <span className="num">{prob(p.p_haircut)}</span> · uncalibrated model</p>
+          <p className="text-xs text-muted">Equity −2 pp: <span className="num">{least(prob(p.p_haircut))}</span> · uncalibrated model</p>
         </div>
         <dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs">
           <dt className="text-muted">Target on {day(g.target_date)}</dt><dd className="num text-right">{inr(p.target_nominal)}</dd>
-          <dt className="text-muted">Set aside today</dt><dd className="num text-right">{inr(p.start)}</dd>
+          <dt className="text-muted">Set aside today</dt><dd className="num text-right">{least(inr(p.start))}</dd>
           <dt className="text-muted">SIP now (step-up {p.step_up_pct} %)</dt><dd className="num text-right">{inr(p.sip0)}</dd>
-          <dt className="text-muted">SIP for 75 %</dt><dd className="num text-right">{p.sip_for_75 == null ? "not reachable" : inr(p.sip_for_75)}</dd>
-          <dt className="text-muted">SIP for 90 %</dt><dd className="num text-right">{p.sip_for_90 == null ? "not reachable" : inr(p.sip_for_90)}</dd>
-          <dt className="text-muted">One year later</dt><dd className="num text-right">{prob(p.p_plus_year)}</dd>
-          <dt className="text-muted">Step-up +5 pp</dt><dd className="num text-right">{prob(p.p_step_up_plus5)}</dd>
-          <dt className="text-muted">Outcome P10 / P50 / P90</dt><dd className="num text-right">{fmtCompactINR(p.terminal_pcts.p10)} / {fmtCompactINR(p.terminal_pcts.p50)} / {fmtCompactINR(p.terminal_pcts.p90)}</dd>
+          <dt className="text-muted">SIP for 75 %</dt><dd className="num text-right">{sip(p.sip_for_75)}</dd>
+          <dt className="text-muted">SIP for 90 %</dt><dd className="num text-right">{sip(p.sip_for_90)}</dd>
+          <dt className="text-muted">One year later</dt><dd className="num text-right">{least(prob(p.p_plus_year))}</dd>
+          <dt className="text-muted">Step-up +5 pp</dt><dd className="num text-right">{least(prob(p.p_step_up_plus5))}</dd>
+          <dt className="text-muted">Outcome P10 / P50 / P90</dt><dd className="num text-right">{lb ? "at least " : ""}{fmtCompactINR(p.terminal_pcts.p10)} / {fmtCompactINR(p.terminal_pcts.p50)} / {fmtCompactINR(p.terminal_pcts.p90)}</dd>
         </dl>
         <p className="text-sm">{p.message}</p>
       </div>
