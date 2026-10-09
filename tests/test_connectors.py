@@ -1451,3 +1451,39 @@ def test_depository_units_matching_the_lots_raise_no_alert(db, monkeypatch):
     with db() as s:
         assert record_depository(s, _demat("10.0004")) == []  # within the 3-decimal tolerance
         assert s.scalar(select(func.count()).select_from(Alert)) == 0
+
+
+def test_a_cas_after_a_gap_whose_opening_differs_from_the_lots_warns(db, client, monkeypatch):
+    from finresearch.portfolio import importers
+    from finresearch.portfolio.connectors.inbox import ensure_dirs, scan
+
+    first = _cas(txns=[(date(2026, 2, 1), "buy", "100", "10000")], closing=["100"])
+    _apply(db, first)
+    # no gap (starts the day after 30 Jun) and the opening matches: silent
+    assert not [w for w in _apply(db, _cas(period=("01-Jul-2026", "31-Jul-2026"), opening="100", closing=["100"]),
+                                  "jul.pdf")["warnings"] if w.startswith("Statement gap")]  # fmt: skip
+    # a gap (August missing) and the opening (120) is not the 100 the lots hold: a warning naming both, via the inbox
+    later = _cas(period=("01-Sep-2026", "30-Sep-2026"), opening="120", closing=["120"])
+    monkeypatch.setattr(importers, "parse_cas", lambda content, pw: later)
+    client.put(
+        "/api/connections/cas_inbox",
+        headers=ORIGIN,
+        json={"enabled": True, "config": {"pan": _fake_pan("z")}},
+    )
+    root = ensure_dirs()
+    _drop(root, "sep.pdf")
+    got = scan(now=NOW)["files"][0]
+    assert got["status"] == "imported" and len(got["gaps"]) == 1
+    gap = got["gaps"][0]
+    assert "starts 01 Sep 2026" in gap and "end 31 Jul 2026" in gap and "opens with 120 units" in gap
+    assert "lots hold 100" in gap and "from 01 Aug 2026" in gap
+    log = client.get("/api/connections/log?limit=5").json()[0]
+    assert log["status"] == "partial" and "Statement gap" in log["error"]
+
+
+def test_a_gap_with_a_matching_opening_or_a_first_cas_is_silent(db):
+    _apply(
+        db, _cas(opening="5", txns=[(date(2026, 2, 1), "buy", "10", "1000")], closing=["15"])
+    )  # first: no gap
+    out = _apply(db, _cas(period=("01-Sep-2026", "30-Sep-2026"), opening="15", closing=["15"]), "sep.pdf")
+    assert not [w for w in out["warnings"] if w.startswith("Statement gap")]

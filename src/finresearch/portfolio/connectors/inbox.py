@@ -77,7 +77,7 @@ def scan(*, now: datetime | None = None, password: str | None = None) -> dict[st
         parse_holdings_statement,
         parse_tradebook,
     )
-    from finresearch.portfolio.service import apply, preview, save_upload
+    from finresearch.portfolio.service import GAP_PREFIX, apply, preview, save_upload
 
     now = now or datetime.now(UTC)
     root = ensure_dirs()
@@ -176,6 +176,8 @@ def scan(*, now: datetime | None = None, password: str | None = None) -> dict[st
                         s, res, filename=path.name, sha256=sha, saved_path=save_upload(content, sha, ".pdf")
                     )
                     kind = f"{res.source} CAS"
+                    if gaps := [w for w in out.get("warnings") or [] if w.startswith(GAP_PREFIX)]:
+                        out = {**out, "gaps": gaps}  # never an unattended "ok" (#296)
                 else:
                     hs = None
                     try:
