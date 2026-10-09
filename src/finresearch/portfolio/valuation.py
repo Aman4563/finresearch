@@ -24,10 +24,14 @@ from decimal import Decimal
 from typing import Any
 
 from finresearch.disclosures.store import bse_only_isin
+from finresearch.fincalc.dates import to_ist
 from finresearch.fincalc.funds import xirr
 from finresearch.fincalc.price import LAST_TRADED, OFFICIAL_CLOSE
 
 log = logging.getLogger(__name__)
+GROWW_CLOSE_PROVENANCE = (
+    "Groww daily close"  # = adapters.groww_market.CLOSE_PROVENANCE (not imported: no cycle)
+)
 
 CAP_LIST = {
     "as_of": "2025-12-31",
@@ -36,6 +40,9 @@ CAP_LIST = {
     "source": "https://www.amfiindia.com/Themes/Theme1/downloads/AverageMarketCapitalization31Dec2025.xlsx",
     "note": "AMFI list for the six months ended 31-Dec-2025 (the Jun-2026 list could not be verified)",
 }
+GROWW_CLOSE = (
+    "groww_daily_close"  # PriceInfo.kind of a Groww daily close: never the exchange's official close
+)
 MIN_XIRR_DAYS = 60  # annualising a return over a few weeks is misleading: show the absolute return instead
 
 
@@ -50,7 +57,9 @@ class PriceInfo:
     scheme_code: str | None = None
     error: str | None = None
     note: str | None = None  # e.g. the symbol was renamed and the holding was priced under its new one
-    kind: str | None = None  # fincalc.price kind: last_traded | official_close | previous_close
+    kind: str | None = (
+        None  # fincalc.price kind (last_traded | official_close | previous_close) or GROWW_CLOSE
+    )
     close_pending: bool = False  # after the session, the exchange has not published its official close yet
 
 
@@ -143,17 +152,20 @@ def price_from_quote(q: Any, exch: str, listing: Any = None) -> PriceInfo:
         mcap_cr = listing.market_cap_cr
 
     origin = getattr(q, "provenance", None) or f"{exch} quote"  # "Groww LTP" / "Groww daily close" (#267)
-    label = v.label.lower()
+    source, kind = f"{origin}: {v.label.lower()}", v.kind
     if origin.startswith("Groww") and v.kind == OFFICIAL_CLOSE:
-        # whether Groww's daily candle close is the exchange's published close is not documented [U]
-        label = "daily close (not verified as the exchange's official close)"
+        # Groww's daily candle close is not documented as the exchange's published close [U]: it is used only when
+        # the official close is not available (fetch_prices) and says so (#283)
+        from finresearch.adapters.groww_market import CLOSE_FALLBACK_LABEL
+
+        source, kind = CLOSE_FALLBACK_LABEL, GROWW_CLOSE
     return PriceInfo(
         price,
         q.as_of.isoformat() if q.as_of else None,
-        f"{origin}: {label}",
+        source,
         q.industry,
         mcap_cr,
-        kind=v.kind,
+        kind=kind,
         close_pending=v.kind == LAST_TRADED and v.session == "closing",
     )
 
@@ -281,13 +293,19 @@ async def fetch_prices(holdings: Sequence[Any], *, quote: Callable[[str, str], A
             no_such_symbol = False
             async with sem:
                 q = pre.get(key)
+                # after the session Groww answers with its daily close: the exchange's official close comes first, and
+                # the Groww close is only the fallback (#283); in session Groww's LTP is the price
+                groww_close = q if getattr(q, "provenance", None) == GROWW_CLOSE_PROVENANCE else None
+                memo = None
+                if groww_close is not None:
+                    q = memo = prefetch.official(key) if hasattr(prefetch, "official") else None
                 try:
                     q = q if q is not None else await quote(sym, exch)
                 except Exception as e:
                     q, err = None, f"no quote from {exch} ({type(e).__name__})"
                     no_such_symbol = exch == "NSE" and isinstance(e, NseNoQuote)
                 p = price_from_quote(q, exch, members[0][1]) if q is not None else PriceInfo(error=err)
-                if key in pre:
+                if q is not None and q is pre.get(key):
                     await _fill_meta(p, key, quote, getattr(prefetch, "backfill", True))
                 elif p.price is not None and p.industry:
                     _META[key] = (_time.monotonic() + META_TTL_S, p.industry, p.market_cap_cr)
@@ -304,6 +322,8 @@ async def fetch_prices(holdings: Sequence[Any], *, quote: Callable[[str, str], A
                             p = p2
                     except Exception:  # keep the NSE result and its reason
                         pass
+                if groww_close is not None:
+                    p = after_close(key, p, q, groww_close, memo, members[0][1])
             for h, _listing in members:
                 one_p = p if p.price is not None else broker_statement_price(
                     h, p.error or f"{exch} has no price for {sym}")  # fmt: skip
@@ -311,7 +331,37 @@ async def fetch_prices(holdings: Sequence[Any], *, quote: Callable[[str, str], A
                     one_p.error = f"{exch} has no price for {sym}"
                 emit(h.id, one_p)
 
+        def after_close(
+            key: tuple[str, str], p: PriceInfo, q: Any, gq: Any, memo: Any, listing: Any
+        ) -> PriceInfo:
+            """The price after the session when Groww answered with its daily close `gq`: the exchange's official
+            close when there is one (remembered until the next open, and compared with Groww's close of the same
+            day on the same exchange), else Groww's close, labelled, unless the exchange already describes a later
+            day (Groww has not posted today's candle yet: the exchange's last trade stays, "close not yet out")."""
+            gday = to_ist(gq.as_of).date() if gq.as_of else None
+            if p.kind == OFFICIAL_CLOSE:
+                pday = date.fromisoformat(p.as_of[:10]) if p.as_of else None
+                # not BSE's close standing in for NSE's: that one is not remembered, nor compared with Groww's NSE close
+                same_exchange = q is not None and (p.source or "").startswith(f"{key[1]} quote")
+                if memo is None and same_exchange and pday is not None and (gday is None or pday >= gday):
+                    if hasattr(prefetch, "remember_official"):
+                        prefetch.remember_official(key, q)
+                    if pday == gday:
+                        checks.append({"day": pday, "exchange": key[1], "symbol": key[0], "source": p.source,
+                                       "groww_close": gq.close_price, "official_close": p.price})  # fmt: skip
+                return p
+            pday = date.fromisoformat(p.as_of[:10]) if p.price is not None and p.as_of else None
+            if pday is not None and gday is not None and pday > gday:
+                return p
+            g = price_from_quote(gq, key[1], listing)
+            g.industry, g.market_cap_cr = p.industry or g.industry, p.market_cap_cr or g.market_cap_cr
+            g.note = p.note
+            return g
+
+        checks: list[dict[str, Any]] = []
         await asyncio.gather(*(one(k, m) for k, m in groups.items()))
+        if checks and hasattr(prefetch, "record"):
+            await prefetch.record(checks)
 
     work = asyncio.gather(price_funds(), price_stocks())
     if budget_s is None:

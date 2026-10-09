@@ -19,7 +19,9 @@ Official docs (read 9-Oct-2026), and the growwapi 1.5.0 SDK source where the pag
   and FNO instruments are available from 2020").
 * Whether daily closes are adjusted for splits/bonuses is not stated [U]: they are used only where both readings give
   the same number (see `portfolio.history.Fetcher`), and whether a day's 1day close equals the exchange's official
-  close is not stated either [U] (it is labelled "Groww daily close").
+  close is not stated either [U]: after the session the valuation uses the exchange's official close and a Groww
+  close only when that is not out, labelled CLOSE_FALLBACK_LABEL; each stock-day with both is compared and stored
+  (`groww_close_check`, #283) for the agreement rate on the Groww card.
 * Option chain ``GET /v1/option-chain/exchange/{NSE|BSE}/underlying/{NIFTY}?expiry_date=YYYY-MM-DD`` →
   ``payload.underlying_ltp`` and ``payload.strikes[strike][CE|PE]`` = {greeks: {delta, gamma, theta, vega, rho, iv},
   trading_symbol, ltp, open_interest, volume}. No change in OI, bid or ask: those stay unknown (None), never 0.
@@ -58,6 +60,10 @@ MARKET_PATHS = (r"/live-data/ltp", r"/historical/candles", r"/historical/expirie
                 r"/option-chain/exchange/(NSE|BSE)/underlying/[A-Z0-9&_-]{1,30}")  # fmt: skip
 ASSET_PATHS = (r"/instruments/instrument\.csv",)
 SOURCE = "Groww"
+LTP_PROVENANCE, CLOSE_PROVENANCE = f"{SOURCE} LTP", f"{SOURCE} daily close"
+# the label of a Groww close used as a price: only when the exchange's official close is not available (#283)
+CLOSE_FALLBACK_LABEL = "Groww daily close (not the exchange's official close)"
+CLOSE_MATCH_TOL = 0.01  # ₹: a Groww close within one paisa of the official close counts as the same figure
 BATCH = 50  # instruments per LTP call (docs)
 GROWW_FROM = date(2020, 1, 1)  # earliest daily candle Groww serves (docs)
 CANDLE_WINDOW_DAYS = 180
@@ -364,6 +370,9 @@ class GrowwMarket:
         self._windows: dict[tuple, tuple[float, dict]] = {}  # candle windows asked lately
         self._inflight: dict[tuple[int, Any], asyncio.Future] = {}
         self._instruments: Instruments | None = None
+        # (symbol, exchange) -> (valid until, the exchange quote carrying its official close): after the session the
+        # official close does not change until the next open, so it is asked for once (#283)
+        self.official: dict[tuple[str, str], tuple[float, Any]] = {}
         self._instruments_failed = -1e18
         self.supplied: dict[
             str, str
@@ -618,14 +627,14 @@ class GrowwMarket:
                 if got is None:
                     return it, None
                 return it, GrowwQuote(exchange=it[1], symbol=it[0], last_price=got[0], previous_close=prev,
-                                      as_of=to_ist(got[1]), provenance=f"{SOURCE} LTP")  # fmt: skip
+                                      as_of=to_ist(got[1]), provenance=LTP_PROVENANCE)  # fmt: skip
             days = sorted(d for d in cl if d <= today)
             if not days:
                 return it, None
             last = days[-1]
             prior = cl[days[-2]] if len(days) > 1 else None
             return it, GrowwQuote(exchange=it[1], symbol=it[0], close_price=cl[last], previous_close=prior,
-                                  as_of=datetime.combine(last, CLOSE, IST), provenance=f"{SOURCE} daily close")  # fmt: skip
+                                  as_of=datetime.combine(last, CLOSE, IST), provenance=CLOSE_PROVENANCE)  # fmt: skip
 
         got = await asyncio.gather(*(one(it, r) for it, r in rows.items()))
         if any(q is not None for _, q in got):
@@ -739,12 +748,17 @@ class GrowwMarket:
         tok = self.token()
         return {"active": bool(tok), "session": self.session.state, "phase": phase(self.clock(), self.holidays()),
                 "supplies": SUPPLIES, "last_answered": dict(self.supplied), "calls_today": BUDGET.today(),
+                "close_check": close_check_stats(),
                 "instruments_day": self._instruments.day.isoformat() if self._instruments and self._instruments.day
                 else None}  # fmt: skip
 
 
 SUPPLIES = [
-    {"kind": "prices", "label": "Stock prices for the portfolio (live LTP in session, daily close after it)"},
+    {
+        "kind": "prices",
+        "label": "Portfolio stock prices in session (live LTP); after it the exchange's official "
+        "close, Groww's daily close only when that is not out",
+    },
     {"kind": "indices", "label": "Index values on the market charts (in session)"},
     {"kind": "candles", "label": "Daily price history for performance, risk and charts (from 2020)"},
     {"kind": "option_chain", "label": "F&O option chains with IV"},
@@ -782,6 +796,66 @@ class Prefetch:
 
     async def __call__(self, items: list[tuple[str, str]]) -> dict[tuple[str, str], Any]:
         return await (self.market or MARKET).quotes(items, cached_only=self.cached_only)
+
+    # ---- the official close after the session (#283): remembered until the next open, compared with Groww's close
+    def official(self, key: tuple[str, str]) -> Any:
+        """The exchange quote whose official close was seen since the last session ended, else None."""
+        m = self.market or MARKET
+        hit = m.official.get(key)
+        return hit[1] if hit is not None and hit[0] > m._now_s() else None
+
+    def remember_official(self, key: tuple[str, str], quote: Any) -> None:
+        m = self.market or MARKET
+        m.official[key] = (next_open(m.clock(), m.holidays()).timestamp(), quote)
+
+    async def record(self, checks: list[dict[str, Any]]) -> None:
+        """Store the day's Groww-close-vs-official-close comparisons; a database failure never affects a price."""
+        if not checks or self.cached_only:
+            return
+        try:
+            await asyncio.to_thread(record_close_checks, checks)
+        except Exception as e:
+            log.info("Groww close check not stored (%s)", type(e).__name__)
+
+
+def record_close_checks(checks: list[dict[str, Any]]) -> None:
+    """Upsert one row per (day, exchange, symbol): {day, exchange, symbol, groww_close, official_close, source}."""
+    from decimal import Decimal
+
+    from sqlalchemy.dialects.postgresql import insert
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import GrowwCloseCheck
+
+    rows = {}
+    for c in checks:
+        g, o = Decimal(str(c["groww_close"])), Decimal(str(c["official_close"]))
+        rows[(c["day"], c["exchange"], c["symbol"])] = {
+            "day": c["day"], "exchange": c["exchange"], "symbol": c["symbol"][:40], "groww_close": g,
+            "official_close": o, "official_source": str(c["source"])[:80],
+            "matched": abs(g - o) <= Decimal(str(CLOSE_MATCH_TOL))}  # fmt: skip
+    with session_scope() as s:
+        stmt = insert(GrowwCloseCheck).values(list(rows.values()))
+        s.execute(stmt.on_conflict_do_update(
+            index_elements=["day", "exchange", "symbol"],
+            set_={k: stmt.excluded[k] for k in ("groww_close", "official_close", "official_source", "matched")}))  # fmt: skip
+
+
+def close_check_stats() -> dict[str, Any] | None:
+    """{matched, checked, since, last_day} over every stored stock-day, or None when the database cannot say."""
+    try:
+        from sqlalchemy import func, select
+
+        from finresearch.db import session_scope
+        from finresearch.db.models import GrowwCloseCheck as C
+
+        with session_scope() as s:
+            n, ok, lo, hi = s.execute(select(func.count(), func.count().filter(C.matched.is_(True)), func.min(C.day),
+                                             func.max(C.day))).one()  # fmt: skip
+    except Exception:
+        return None
+    return {"checked": int(n), "matched": int(ok), "since": lo.isoformat() if lo else None,
+            "last_day": hi.isoformat() if hi else None, "tolerance_inr": CLOSE_MATCH_TOL}  # fmt: skip
 
 
 def _count(cat: str) -> None:

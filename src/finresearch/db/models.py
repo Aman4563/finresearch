@@ -1072,3 +1072,21 @@ class TradeNote(Base):
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class GrowwCloseCheck(Base):
+    """Groww's daily close against the exchange's official close, per stock and trading day (#283): written when the
+    valuation has both for the same day and exchange. The agreement rate on the Groww card comes from these rows, so
+    the label on a Groww close says what is known about it. Prices are public market data (no holding size)."""
+
+    __tablename__ = "groww_close_check"
+    __table_args__ = (UniqueConstraint("day", "exchange", "symbol"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    day: Mapped[date] = mapped_column(Date, index=True)
+    exchange: Mapped[str] = mapped_column(String(3))  # NSE | BSE
+    symbol: Mapped[str] = mapped_column(String(40))  # NSE symbol or BSE scrip code
+    groww_close: Mapped[Decimal] = mapped_column(Numeric(14, 4))
+    official_close: Mapped[Decimal] = mapped_column(Numeric(14, 4))
+    official_source: Mapped[str] = mapped_column(String(80))  # e.g. "NSE quote: close (official)"
+    matched: Mapped[bool] = mapped_column(Boolean)  # |Groww - official| <= ₹0.01
+    checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

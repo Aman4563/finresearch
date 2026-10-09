@@ -512,8 +512,8 @@ def test_groww_daily_close_is_not_labelled_official(groww):
     _g, client = groww()
     m, _ = client(FRI_17)
     p = price_from_quote(run(m.quotes([("EXSTK0", "NSE")]))[("EXSTK0", "NSE")], "NSE")
-    assert str(p.price) == "103.5" and p.source.startswith("Groww daily close")
-    assert "official close" not in p.source.replace("not verified as the exchange's official close", "")
+    assert str(p.price) == "103.5" and p.kind == "groww_daily_close"
+    assert p.source == "Groww daily close (not the exchange's official close)"  # never "Close (official)"
 
 
 def test_the_daily_login_runs_from_the_monitor_tick_once_never_from_a_read(monkeypatch):
@@ -533,3 +533,104 @@ def test_the_daily_login_runs_from_the_monitor_tick_once_never_from_a_read(monke
     assert calls == [1]
     monkeypatch.setattr(groww_market, "_read_token", lambda now: (None, None, "off", False))
     assert run(groww_market.session_step(FRI_10 + timedelta(days=3))) == {}  # connection or auto-sync off
+
+
+# ------------------------------------------------------------------ #283: after the session the official close first
+def _nse_quote(sym, *, close, last, at):
+    from decimal import Decimal
+
+    from finresearch.adapters.nse import Quote
+
+    return Quote(symbol=sym, last_price=Decimal(last), close_price=Decimal(close), previous_close=Decimal("101"),
+                 as_of=at, industry="Example Industry")  # fmt: skip
+
+
+def test_after_the_session_the_official_close_wins_and_groww_is_checked_against_it(groww, env):
+    from sqlalchemy import select, text
+
+    from finresearch.adapters.groww_market import Prefetch
+    from finresearch.db import session_scope
+    from finresearch.db.models import GrowwCloseCheck
+    from finresearch.portfolio import valuation
+    from finresearch.portfolio.valuation import fetch_prices
+
+    with session_scope() as s:
+        s.execute(text("TRUNCATE groww_close_check"))
+    _g, client = groww()  # Groww's daily close for 9-Oct is 103.5 for every stock
+    m, clock = client(FRI_17)
+    closed = datetime(2026, 10, 9, 16, 0, tzinfo=IST)
+    nse = {
+        "EXSTK0": _nse_quote("EXSTK0", close="103.50", last="103.55", at=closed),  # agrees with Groww
+        "EXSTK1": _nse_quote("EXSTK1", close="103.70", last="103.70", at=closed),  # differs by 0.20
+        "EXSTK2": _nse_quote("EXSTK2", close="0", last="104", at=closed),
+    }  # NSE's close not published yet
+    asked: list[str] = []
+
+    async def quote(sym, exch="NSE"):
+        asked.append(sym)
+        return nse[sym]
+
+    hs = [_H(1, "stock", "EXSTK0"), _H(2, "stock", "EXSTK1"), _H(3, "stock", "EXSTK2")]
+    valuation._META.clear()
+    out = run(fetch_prices(hs, quote=quote, scheme_rows=None, prefetch=Prefetch(m)))
+    assert (str(out[1].price), out[1].source, out[1].kind) == (
+        "103.50",
+        "NSE quote: close (official)",
+        "official_close",
+    )
+    assert (str(out[2].price), out[2].source) == ("103.70", "NSE quote: close (official)")
+    # no official close yet: Groww's close of the same day, saying exactly what it is
+    assert (str(out[3].price), out[3].source) == (
+        "103.5",
+        "Groww daily close (not the exchange's official close)",
+    )
+    assert out[3].industry == "Example Industry"
+    with session_scope() as s:
+        rows = {r.symbol: r for r in s.scalars(select(GrowwCloseCheck))}
+    assert sorted(rows) == ["EXSTK0", "EXSTK1"]  # EXSTK2: nothing to compare yet, which is not a mismatch
+    assert (rows["EXSTK0"].matched, rows["EXSTK1"].matched) == (True, False)
+    assert rows["EXSTK0"].day == date(2026, 10, 9) and str(rows["EXSTK1"].official_close) == "103.7000"
+    st = m.status()["close_check"]
+    assert (st["matched"], st["checked"], st["since"]) == (1, 2, "2026-10-09")
+
+    # the official close is fixed until the next open: refreshes (and Saturday) ask NSE only for the pending one
+    asked.clear()
+    nse["EXSTK2"] = _nse_quote("EXSTK2", close="104.10", last="104", at=closed)  # now published
+    out = run(fetch_prices(hs, quote=quote, scheme_rows=None, prefetch=Prefetch(m)))
+    assert (
+        asked == ["EXSTK2"]
+        and str(out[3].price) == "104.10"
+        and out[3].source == "NSE quote: close (official)"
+    )
+    clock.t = SAT
+    asked.clear()
+    out = run(fetch_prices(hs, quote=quote, scheme_rows=None, prefetch=Prefetch(m)))
+    assert asked == [] and [str(out[i].price) for i in (1, 2, 3)] == ["103.50", "103.70", "104.10"]
+    with session_scope() as s:
+        assert s.scalar(select(GrowwCloseCheck.matched).where(GrowwCloseCheck.symbol == "EXSTK2")) is False
+
+
+def test_a_groww_close_older_than_the_exchange_quote_is_never_tonights_price(groww, env):
+    from finresearch.adapters.groww_market import Prefetch
+    from finresearch.portfolio.valuation import fetch_prices
+
+    g, client = groww()
+    del g.closes[
+        date(2026, 10, 9)
+    ]  # Groww has not posted today's candle yet: its latest close is Thursday's 101
+    m, _ = client(FRI_17)
+    closed = datetime(2026, 10, 9, 16, 0, tzinfo=IST)
+    nse = {"EXSTK0": _nse_quote("EXSTK0", close="0", last="104", at=closed)}
+
+    async def quote(sym, exch="NSE"):
+        if sym not in nse:
+            raise LookupError("NSE did not answer")
+        return nse[sym]
+
+    hs = [_H(1, "stock", "EXSTK0"), _H(2, "stock", "EXSTK1")]
+    out = run(fetch_prices(hs, quote=quote, scheme_rows=None, prefetch=Prefetch(m)))
+    # today's last trade with "close not yet published", not Thursday's Groww close
+    assert str(out[1].price) == "104" and out[1].source == "NSE quote: last traded (close not yet published)"
+    # NSE did not answer at all: Groww's latest close, dated and labelled (never a blank or a 0)
+    assert str(out[2].price) == "101.0" and out[2].as_of.startswith("2026-10-08")
+    assert out[2].source == "Groww daily close (not the exchange's official close)"
