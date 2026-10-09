@@ -98,7 +98,7 @@ def purchase_dates(lots: list[PortfolioLot], price: dict[int, float | None]) -> 
 def priced(rows: list[dict[str, Any]]) -> dict[str, Any]:
     held = [r for r in rows if not r.get("closed")]
     pending = sum(1 for r in held if r.get("pending"))
-    # a statement price past its age limit (valuation.statement_stale) is not a current price (#238)
+    # a statement price or AMFI NAV past its age limit (valuation.price_stale) is not a current price (#238)
     stale = sum(1 for r in held if r.get("price_stale") and not r.get("pending"))
     ok = sum(
         1 for r in held if r.get("value") is not None and not r.get("pending") and not r.get("price_stale")
@@ -106,7 +106,7 @@ def priced(rows: list[dict[str, Any]]) -> dict[str, Any]:
     cov = (ok * 100 / len(held)) if held and not pending else None if held else 100.0
     detail = f"{ok} of {len(held)} holding(s) priced" + (f"; {pending} still loading" if pending else "")
     if stale:
-        detail += f"; {stale} only by an old statement price"
+        detail += f"; {stale} only by an old price (a statement price or an AMFI NAV that stopped updating)"
     return _row("priced", "Holdings with a current price", cov, detail,
                 "current value, unrealised P&L, allocation, risk and XIRR for the unpriced holdings",
                 "Check the NSE symbol, ISIN or AMFI scheme code on the unpriced holding", "/portfolio#holdings",
