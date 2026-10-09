@@ -55,4 +55,5 @@ def test_lookthrough_direct_holdings_use_the_display_sector(db, tmp_path):
     assert "Mutual Fund Scheme - ETF" not in labels and "-" not in labels
     assert by_name.get("Example Bse Only Ltd") == UNCLASSIFIED_SECTOR
     assert by_name.get("Example Software Ltd") == "Computers - Software & Consulting"
-    assert by_name["Example Nifty 50 ETF"] == FUNDS_SECTOR  # an ETF held directly: grouped as a fund, not a sector
+    # an ETF held directly is grouped as a fund, not as a sector
+    assert by_name["Example Nifty 50 ETF"] == FUNDS_SECTOR
