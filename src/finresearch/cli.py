@@ -563,6 +563,30 @@ def bond_search(query: str) -> None:
                       f"{'; '.join(r['warnings'])}")  # fmt: skip
 
 
+@bond_app.command("backfill-maturity")
+def bond_backfill_maturity(
+    offline: bool = typer.Option(False, help="Use only the stored research claims (no NSE request)"),
+) -> None:
+    """Store the maturity of every library bond that has none (#293): from NSE's bond list, else from the bond
+    research's verified NSE maturity claim. A bond found in neither stays unknown; nothing is guessed."""
+    from finresearch.db import session_scope
+    from finresearch.orchestrator.bond import backfill_maturities
+
+    rows = None
+    if not offline:
+        from finresearch.adapters.nse_bonds import live_bonds
+
+        try:
+            rows = asyncio.run(asyncio.wait_for(live_bonds(), 60))
+        except Exception as e:  # the claims still answer; the bonds they do not cover stay unknown
+            console.print(f"[yellow]NSE's bond list unavailable ({type(e).__name__}); using stored claims only[/]")
+    with session_scope() as s:
+        res = backfill_maturities(s, rows)
+    for r in res:
+        console.print(f"{r['slug']:<22} {r['maturity'] or 'unknown':<11} {r['source']}")
+    console.print(f"{sum(1 for r in res if r['maturity'])} of {len(res)} library bonds have a known maturity")
+
+
 @bond_app.command("run")
 def bond_run(
     isin: str,

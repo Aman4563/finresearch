@@ -174,14 +174,21 @@ def records(s: Session, dataset: str, *, symbol: str | None = None, isin: str | 
 # --------------------------------------------------------------------------- what the user tracks
 @dataclass
 class Tracked:
-    """Instruments to read disclosures for. Stocks by NSE symbol (BSE-only stocks are listed apart: NSE's feeds do
-    not cover them); bonds by ISIN."""
+    """What the user owns or follows (#293: one answer for every fetch-targeting job): open holdings (stocks, funds by
+    AMFI scheme code, bonds by ISIN) and watched instruments (stock watches, funds and bonds added to the library).
+    Stocks by NSE symbol (BSE-only stocks are listed apart: NSE's feeds do not cover them); bonds by ISIN.
 
-    stocks: dict[str, dict[str, Any]] = field(default_factory=dict)  # symbol -> {isin, name, held, watched}
+    Each entry carries `weight`: the holding's share of the portfolio in % from the monitor's last valuation (summed
+    over accounts), None when not held or not valued yet (unknown, never 0). Instruments that have ended (a matured or
+    delisted bond, a fund AMFI dropped, a delisted stock: monitor.lifecycle) are left out and listed in `ended`."""
+
+    stocks: dict[str, dict[str, Any]] = field(default_factory=dict)  # symbol -> {isin, name, held, watched, weight}
     bse_only: dict[str, dict[str, Any]] = field(
         default_factory=dict
-    )  # "BSE:<code>" -> {isin, name, held, watched}
-    bonds: dict[str, dict[str, Any]] = field(default_factory=dict)  # isin -> {name, held, tracked}
+    )  # "BSE:<code>" -> {isin, name, held, watched, weight}
+    bonds: dict[str, dict[str, Any]] = field(default_factory=dict)  # isin -> {name, held, tracked, weight}
+    funds: dict[str, dict[str, Any]] = field(default_factory=dict)  # AMFI code -> {name, held, tracked, weight}
+    ended: dict[str, dict[str, Any]] = field(default_factory=dict)  # lifecycle key -> why it ended
 
     def issuers(self) -> dict[str, list[str]]:
         """{ISIN issuer code: [instrument keys]} over every tracked instrument with an ISIN."""
@@ -196,6 +203,13 @@ class Tracked:
                 out.setdefault(code, []).append(isin)
         return out
 
+    def stock_keys(self, *, nse_only: bool = False) -> list[str]:
+        """Stock keys by priority: held by weight (largest first; an unvalued holding after the valued ones), then
+        watched-only, each group alphabetical on ties. `nse_only` leaves out BSE-only stocks."""
+        items = [*self.stocks.items(), *([] if nse_only else self.bse_only.items())]
+        return [k for k, _ in sorted(items, key=lambda kv: (not kv[1]["held"], kv[1].get("weight") is None,
+                                                             -(kv[1].get("weight") or 0), kv[0]))]  # fmt: skip
+
 
 _DEBT_TYPES = (
     "07",
@@ -203,31 +217,62 @@ _DEBT_TYPES = (
 )  # ISIN security-type code of debentures / bonds (see adapters.nse_disclosures.issuer_code)
 
 
-def tracked(s: Session) -> Tracked:
+def holding_weights(s: Session) -> dict[int, float]:
+    """{holding id: weight %} from the monitor's last valuation (portfolio.cache); {} before the first one."""
+    from finresearch.portfolio import cache
+
+    v = cache.read(s, cache.VALUATION)
+    return {int(h): float(x["weight_pct"]) for h, x in (v.get("holdings") or {}).items()
+            if x.get("weight_pct") is not None}  # fmt: skip
+
+
+def tracked(s: Session, today: date | None = None) -> Tracked:
     from finresearch.db.models import Company, PortfolioHolding, PortfolioLot, Watch
+    from finresearch.fincalc.dates import today_ist
+    from finresearch.monitor import lifecycle
 
     t = Tracked()
+    gone = lifecycle.ended_keys(s, today or today_ist())
+    weights = holding_weights(s)
 
-    def add(key: str, isin: str | None, name: str | None, how: str) -> None:
+    def weigh(v: dict[str, Any], w: float | None) -> None:
+        if w is not None:
+            v["weight"] = round((v.get("weight") or 0) + w, 4)
+
+    def add(key: str, isin: str | None, name: str | None, how: str, w: float | None = None) -> None:
+        if (why := gone.get(lifecycle.key("stock", key))) is not None:
+            t.ended[lifecycle.key("stock", key)] = why
+            return
         bucket = t.bse_only if key.startswith("BSE:") else t.stocks
-        v = bucket.setdefault(key, {"isin": None, "name": None, "held": False, "watched": False})
+        v = bucket.setdefault(key, {"isin": None, "name": None, "held": False, "watched": False, "weight": None})
         v["isin"] = v["isin"] or (isin.upper() if isin else None)
         v["name"] = v["name"] or name
         v[how] = True
+        weigh(v, w)
+
+    def other(bucket: dict, kind: str, ident: str, name: str | None, how: str, w: float | None = None) -> None:
+        if (why := gone.get(lifecycle.key(kind, ident))) is not None:
+            t.ended[lifecycle.key(kind, ident)] = why
+            return
+        v = bucket.setdefault(ident, {"name": name, "held": False, "tracked": False, "weight": None})
+        v[how] = True
+        weigh(v, w)
 
     open_ids = set(s.scalars(select(PortfolioLot.holding_id).where(PortfolioLot.open_quantity > 0)))
     imap = isin_map(s) if open_ids else {}
     for h in s.scalars(select(PortfolioHolding).where(PortfolioHolding.id.in_(open_ids))) if open_ids else []:
         isin = (h.isin or "").upper() or None
+        w = weights.get(h.id)
         # the ISIN map (today's listings) decides when it knows the ISIN: a holding with only an ISIN (a broker
         # holdings statement) gets its NSE symbol, and a BSE-only company stays BSE-only whatever symbol the broker
         # wrote (e.g. Groww's "NSE$")
         key = stock_key(isin, h.nse_symbol, h.bse_code, imap) if h.asset_type == "stock" else None
         if key:
-            add(key, isin, h.name, "held")
+            add(key, isin, h.name, "held", w)
         elif isin and isin.startswith("INE") and isin[7:9] in _DEBT_TYPES:
-            b = t.bonds.setdefault(isin, {"name": h.name, "held": False, "tracked": False})
-            b["held"] = True
+            other(t.bonds, "bond", isin, h.name, "held", w)
+        elif h.asset_type == "mf" and h.scheme_code:
+            other(t.funds, "fund", h.scheme_code.strip(), h.name, "held", w)
     for w in s.scalars(select(Watch).where(Watch.kind == "stock", Watch.active.is_(True))):
         comp = s.get(Company, w.company_id)
         key = (
@@ -237,8 +282,9 @@ def tracked(s: Session) -> Tracked:
         )
         if key:
             add(key, comp.isin if comp else None, comp.name if comp else None, "watched")
-    for c in s.scalars(select(Company).where(Company.slug.like("bond-%"))):
-        isin = c.slug[5:].upper()
-        b = t.bonds.setdefault(isin, {"name": c.name, "held": False, "tracked": False})
-        b["tracked"] = True
+    for c in s.scalars(select(Company).where(Company.slug.like("bond-%") | Company.slug.like("mf-%"))):
+        if c.slug.startswith("bond-"):
+            other(t.bonds, "bond", c.slug[5:].upper(), c.name, "tracked")
+        else:
+            other(t.funds, "fund", c.slug[3:], c.name, "tracked")
     return t

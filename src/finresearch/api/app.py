@@ -372,9 +372,20 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
                     select(ResearchRun.id, ResearchRun.kind).where(ResearchRun.id.in_(runs.values()))
                 ).all()
             )
+            from finresearch.fincalc.dates import today_ist
+            from finresearch.monitor import lifecycle
+
+            gone = lifecycle.ended_keys(s, today_ist())  # matured or delisted instruments (#293): listed apart
+
+            def ended(c: Company) -> dict[str, Any] | None:
+                kind, ident = ("bond", c.slug[5:]) if c.slug.startswith("bond-") else (
+                    ("fund", c.slug[3:]) if c.slug.startswith("mf-") else ("stock", c.stock_key or ""))  # fmt: skip
+                return gone.get(lifecycle.key(kind, ident)) if ident else None
+
             return [{"slug": c.slug, "name": c.name, "nse_symbol": c.nse_symbol, "bse_code": c.bse_code, "isin": c.isin,
                      "exchange": c.exchange, "key": c.stock_key, "documents": docs.get(c.id, 0),
-                     "latest_run": runs.get(c.id), "kind": kinds.get(runs.get(c.id)) or company_kind(c)}
+                     "latest_run": runs.get(c.id), "kind": kinds.get(runs.get(c.id)) or company_kind(c),
+                     "ended": ended(c)}
                     for c in s.scalars(select(Company).order_by(Company.name))]  # fmt: skip
 
     @app.get("/api/companies/{slug}")
@@ -1123,10 +1134,12 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
 
     @app.get("/api/bonds")
     async def bond_list(q: str = "", limit: int = Query(50, ge=1, le=200)) -> list[dict[str, Any]]:
-        """NSE capital-market bonds matching a symbol or ISIN (no query: the most traded)."""
-        from finresearch.adapters.nse_bonds import search_bonds
+        """NSE capital-market bonds matching a symbol or ISIN (no query: the most traded). Matured bonds (maturity on
+        or before today, IST) are left out (#293)."""
+        from finresearch.adapters.nse_bonds import search_bonds, without_matured
+        from finresearch.fincalc.dates import today_ist
 
-        rows = await _bond_rows()
+        rows = without_matured(await _bond_rows(), today_ist())
         hits = (search_bonds(rows, q, limit) if q.strip() else
                 sorted(rows, key=lambda b: -(b.traded_value or 0))[:limit])  # fmt: skip
         with session_scope() as s:

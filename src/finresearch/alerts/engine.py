@@ -29,7 +29,7 @@ from sqlalchemy.orm import Session
 
 from finresearch.alerts.compute import Reader, Reading
 from finresearch.alerts.registry import OP_PHRASE, MetricSpec, fmt_value, sentence, spec
-from finresearch.db.models import Alert, AlertEvalSlot, AlertRuleState, Company, Watch
+from finresearch.db.models import Alert, AlertEvalSlot, AlertRuleState, Watch
 from finresearch.suggest.profile import AlertRule
 from finresearch.suggest.rules import OPS
 
@@ -63,7 +63,11 @@ def app_path(kind: str, instrument: str, watch_id: int | None) -> str:
 
 
 def targets(session: Session, r: AlertRule) -> list[Target]:
-    """The instruments a rule applies to: its own, or every watch of its kind."""
+    """The instruments a rule applies to: its own, or (#293) everything of its kind the user owns or follows
+    (disclosures.store.tracked: open holdings and watched instruments, without those that have ended), largest
+    holdings first."""
+    from finresearch.disclosures.store import tracked
+
     if r.kind == "portfolio":
         return [Target("PORTFOLIO")]
     if r.kind in ("ipo", "stock"):
@@ -72,14 +76,21 @@ def targets(session: Session, r: AlertRule) -> list[Target]:
         if r.instrument:
             w = next((w for w in watches if w.key == r.instrument or w.nse_symbol == r.instrument), None)
             return [Target(r.instrument, w.id if w else None, w.label if w else None)]
-        return [Target(w.key, w.id, w.label) for w in watches if w.active and w.key]
+        if r.kind == "ipo":
+            return [Target(w.key, w.id, w.label) for w in watches if w.active and w.key]
+        by_key = {w.key.upper(): w for w in watches if w.active and w.key}
+        out = []
+        for k in tracked(session).stock_keys():
+            w = by_key.get(k)
+            out.append(Target(k, w.id if w else None, w.label if w else None))
+        return out
     if r.instrument:
         return [Target(r.instrument)]
-    prefix = {"fund": "mf-", "bond": "bond-"}.get(r.kind)
-    if prefix is None:
+    t = tracked(session)
+    bucket = {"fund": t.funds, "bond": t.bonds}.get(r.kind)
+    if bucket is None:
         return []
-    slugs = session.scalars(select(Company.slug).where(Company.slug.like(f"{prefix}%"))).all()
-    return [Target(s[len(prefix) :].upper()) for s in sorted(slugs)]
+    return [Target(k) for k in sorted(bucket, key=lambda k: (not bucket[k]["held"], -(bucket[k].get("weight") or 0), k))]
 
 
 def _state(session: Session, rule: AlertRule, inst: str) -> AlertRuleState:

@@ -430,11 +430,13 @@ def valuation_monte_carlo(cash_flow: str, shares: str, growth: dict[str, Any], d
 @server.tool()
 async def nse_bond_search(query: str) -> str:
     """Find listed bonds / NCDs traded on NSE by symbol fragment (e.g. "NHAI", "SCL") or ISIN: coupon, face value,
-    last price, maturity, rating and warnings (partly redeemed face value, stale interest dates). Cite
+    last price, maturity, rating and warnings (partly redeemed face value, stale interest dates). Bonds that have
+    matured (maturity on or before today, IST) are left out (#293). Cite
     https://www.nseindia.com/market-data/bonds-traded-in-capital-market with the access time."""
-    from finresearch.adapters.nse_bonds import live_bonds, search_bonds
+    from finresearch.adapters.nse_bonds import live_bonds, search_bonds, without_matured
+    from finresearch.fincalc.dates import today_ist
 
-    hits = search_bonds(await live_bonds(), query)
+    hits = search_bonds(without_matured(await live_bonds(), today_ist()), query)
     return json.dumps([{**b.model_dump(mode="json"), "warnings": b.warnings} for b in hits], indent=1)
 
 
@@ -464,6 +466,11 @@ async def bond_analytics(isin: str, coupon_frequency: int, price_basis: str = "d
             {"error": "price, coupon, maturity or face value missing", "bond": bond.model_dump(mode="json")}
         )
     s = _date.fromisoformat(settlement) if settlement else today_ist()
+    if bond.maturity <= s:  # no cash flows are left to value (#293: fincalc's coupon schedule raised here)
+        return json.dumps({"status": "matured", "matured_on": bond.maturity.isoformat(), "settlement": s.isoformat(),
+                           "answer": f"{bond.symbol} ({bond.isin}) matured on {bond.maturity}: it has no yield, "
+                                     "duration or accrued interest left to compute",
+                           "bond": bond.model_dump(mode="json")})  # fmt: skip
     coupon = bond.coupon_pct / 100
     ai = b.accrued_interest(s, bond.maturity, coupon, coupon_frequency, bond.face_value)
     if price_basis not in ("dirty", "clean"):
