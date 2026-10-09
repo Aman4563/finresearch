@@ -126,3 +126,69 @@ async def read_lists(src: Sources) -> tuple[list[Listing] | None, list[Listing] 
         errors.append(f"BSE: {type(e).__name__}: {e}"[:200])
         bse = None
     return nse, bse, errors
+
+
+# --------------------------------------------------------------------------- storing
+
+
+def _boards_wanted() -> str:
+    """The profile's `preferences.ipo_alert_boards`; "mainboard" when the profile cannot be read."""
+    try:
+        from finresearch.db import session_scope
+        from finresearch.suggest.advisor import load_profile
+
+        with session_scope() as s:
+            return load_profile(s).preferences.ipo_alert_boards
+    except Exception:
+        log.warning("could not read the profile's IPO alert boards; using mainboard", exc_info=True)
+        return "mainboard"
+
+
+def _wanted(board: str, boards: str) -> bool:
+    return boards == "all" or (boards == "mainboard" and board == "mainboard")
+
+
+def _message(row: Any) -> str:
+    board = {"mainboard": "mainboard", "sme": "SME"}.get(row.board, row.board)
+    dates = (f"bidding {row.open_date:%d-%b} to {row.close_date:%d-%b-%Y}" if row.open_date and row.close_date
+             else "dates not announced yet")  # fmt: skip
+    band = f", price band {row.price_band}" if row.price_band else ""
+    lot = ""
+    if row.lot_size and row.price_high:
+        lot = f", lot {row.lot_size} (₹{row.lot_size * row.price_high:,.0f} at the upper band)"
+    elif row.lot_size:
+        lot = f", lot {row.lot_size}"
+    return f"New IPO on {row.exchange} ({board}): {row.name}, {dates}{band}{lot}."
+
+
+def store(session, exchange: str, listings: list[Listing] | None, now: datetime) -> list[int]:
+    """Upsert one exchange's listings; mark its missing rows off_list (only when `listings` is not None, i.e. every
+    list of that exchange was read). Returns the ids of rows inserted now."""
+    from sqlalchemy import select
+
+    from finresearch.db.models import IpoIssue
+
+    if listings is None:
+        return []
+    today = to_ist(now).date()
+    existing = {r.issue_key: r for r in session.scalars(select(IpoIssue).where(IpoIssue.exchange == exchange))}
+    new: list[int] = []
+    for x in listings:
+        r = existing.pop(x.issue_key, None)
+        status = phase(x.open_date, x.close_date, today, x.listed_as)
+        if r is None:
+            r = IpoIssue(exchange=exchange, issue_key=x.issue_key, first_seen=now, lot_size=x.lot_size)
+            session.add(r)
+        r.symbol = x.symbol or r.symbol
+        r.name, r.board, r.series = x.name[:300], x.board, (x.series or None) and str(x.series)[:10]
+        r.open_date, r.close_date, r.price_band = x.open_date, x.close_date, (x.price_band or None) and x.price_band[:80]
+        r.price_low, r.price_high = x.price_low, x.price_high
+        r.lot_size = x.lot_size or r.lot_size
+        r.status, r.exchange_status, r.last_seen, r.off_list_at, r.raw = status, x.exchange_status, now, None, x.raw
+        if r.id is None:
+            session.flush()
+            new.append(r.id)
+    for r in existing.values():  # dropped off the lists: marked, never deleted
+        if r.status != "off_list":
+            r.status, r.off_list_at = "off_list", now
+    return new
