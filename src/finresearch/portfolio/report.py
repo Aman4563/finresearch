@@ -100,6 +100,10 @@ def _signal(h: PortfolioHolding, price: PriceInfo | None,
     return None
 
 
+# the prefix of service.action_reason (portfolio.tax keys on it too)
+CA_EXCLUDED = "unsupported corporate action"
+
+
 def xirr_exclusions(excluded: Counter[str]) -> str:
     """Why the overall XIRR leaves holdings out, from each holding's own reason (cash_flows / no current price)."""
     from finresearch.portfolio.valuation import NO_PURCHASE_DATE
@@ -109,6 +113,7 @@ def xirr_exclusions(excluded: Counter[str]) -> str:
                           "history to include them)",
         "opening balance with an unknown cost": "without a known cost",
         "no current price": "without a current price",
+        CA_EXCLUDED: "with an unresolved unsupported corporate action (demerger, rights, merger ...: open the holding)",
     }  # fmt: skip
     parts = [f"{n} {phrase.get(why, f'with {why}')}" for why, n in excluded.most_common()]
     return f"excludes {sum(excluded.values())} holding(s): " + "; ".join(parts)
@@ -136,7 +141,8 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
         actions = actions_of(h.meta)
         # an unsupported corporate action past its ex-date (#237): the open lots' cost is not what they say until the
         # user enters the allocation, so it is unknown, never the pre-action cost
-        if units > 0 and any(a["ex_date"] <= today.isoformat() for a in actions):
+        past_actions = [a for a in actions if a["ex_date"] <= today.isoformat()] if units > 0 else []
+        if past_actions:
             known = False
         with_actions += 1 if actions and units > 0 else 0
         cost = sum(
@@ -156,6 +162,10 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
         flows, why_not = cash_flows(data.txns.get(h.id, []), value, today)
         if why_not is None and units > 0 and value is None:
             why_not = "no current price"  # without today's value the flows alone would read as a large loss
+        if why_not is None and past_actions:
+            # the flows miss what the action gave or took (a demerged company's shares, rights paid for, a buyback),
+            # so the XIRR would be a number for a return that did not happen: incomplete, with the reason (#263)
+            why_not = past_actions[0]["reason"]
         x, x_reason = xirr_or_reason(flows, today) if why_not is None else (None, why_not)
         if stale_why and x is not None:
             x_reason = f"today's value uses an old price: {stale_why}"
@@ -163,7 +173,7 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
             all_flows += flows[:-1] if value else flows
             tot["xirr_value"] += value or ZERO
         elif units > 0 or why_not is not None:
-            excluded[why_not] += 1
+            excluded[CA_EXCLUDED if why_not.startswith(CA_EXCLUDED) else why_not] += 1
         unreal = (value - cost) if value is not None and known and units > 0 else None
         det = elss.detect(h.asset_type, h.name, category) if units > 0 else None
         lock = elss.lockin(open_lots, today, p.price, det) if det is not None else None

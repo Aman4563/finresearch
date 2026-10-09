@@ -118,6 +118,35 @@ def test_demerger_marks_the_holding_and_later_tax_years_incomplete_until_resolve
         assert record_unsupported(s, h, acts, source_url=URL) == []
 
 
+def test_unsupported_action_makes_the_holding_xirr_incomplete_not_a_number(db):
+    """#263: a demerged holding's cash flows miss the new company's shares, so its XIRR (and its share of the overall
+    XIRR) would read as a loss that never happened. It is None with the reason, and left out of the overall XIRR."""
+    from finresearch.db.models import PortfolioHolding
+    from finresearch.portfolio.report import snapshot
+    from finresearch.portfolio.service import manual_txn, record_unsupported
+    from finresearch.portfolio.valuation import PriceInfo
+
+    today = date(2026, 9, 30)
+    with db() as s:
+        hid = _txn(s, date(2023, 1, 2), "buy", 100, 100).holding_id
+        other = manual_txn(s, {"asset_type": "stock", "name": "Example Plain Ltd", "account": "Manual",
+                               "isin": "INE000F01011", "nse_symbol": "EXPLAIN", "day": date(2023, 1, 2), "kind": "buy",
+                               "quantity": D(10), "price": D(100)}).holding_id  # fmt: skip
+        prices = {hid: PriceInfo(price=D(60)), other: PriceInfo(price=D(121))}
+        before = {r["id"]: r for r in snapshot(s, prices, today)["holdings"]}
+        assert before[hid]["xirr"] is not None  # no action recorded yet: a plain XIRR
+        record_unsupported(s, s.get(PortfolioHolding, hid), [(EX, "Demerger")], source_url=URL)
+        snap = snapshot(s, prices, today)
+        rows = {r["id"]: r for r in snap["holdings"]}
+        assert rows[hid]["xirr"] is None and rows[hid]["xirr_reason"] == REASON
+        assert rows[other]["xirr"] is not None
+        # the overall XIRR is the plain holding's alone: 1,000 on 2-Jan-2023 grew to 1,210 on 30-Sep-2026
+        # (1,367 days): 1.21 ** (365 / 1367) - 1 = 0.05221...
+        assert abs(snap["summary"]["xirr"] - (1.21 ** (365 / 1367) - 1)) < 1e-4
+        assert "1 holding(s)" in snap["summary"]["xirr_reason"]
+        assert "unsupported corporate action" in snap["summary"]["xirr_reason"]
+
+
 def test_action_not_held_on_its_ex_date_is_ignored(db):
     from finresearch.db.models import PortfolioHolding
     from finresearch.portfolio.service import record_unsupported
