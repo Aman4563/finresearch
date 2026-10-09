@@ -192,3 +192,68 @@ def store(session, exchange: str, listings: list[Listing] | None, now: datetime)
         if r.status != "off_list":
             r.status, r.off_list_at = "off_list", now
     return new
+
+
+async def fill_lots(src: Sources, rows: list[Any]) -> int:
+    """Lots (and a BSE row's NSE symbol) for upcoming/open rows that have none, at most MAX_LOT_LOOKUPS. A failed
+    lookup leaves the lot unknown (None), never 0."""
+    n = 0
+    for r in [r for r in rows if r.lot_size is None and r.status in ("upcoming", "open")][:MAX_LOT_LOOKUPS]:
+        try:
+            if r.exchange == "NSE":
+                r.lot_size = await src.nse_lot(r.issue_key, r.series)
+            else:
+                d = await src.bse_detail(r.issue_key)
+                if d is not None:
+                    r.lot_size = d.market_lot or None
+                    r.symbol = r.symbol or (d.symbol or None)
+            n += 1
+        except Exception as e:
+            log.info("IPO registry: no lot for %s %s (%s)", r.exchange, r.issue_key, type(e).__name__)
+    return n
+
+
+def link_duplicates(rows: list[Any]) -> None:
+    """A BSE row for an issue that is on NSE too (same symbol or company name) points at the NSE row."""
+    from finresearch.adapters.bse import name_key
+
+    nse = [r for r in rows if r.exchange == "NSE"]
+    by_symbol = {r.symbol.upper(): r for r in nse if r.symbol}
+    by_name = {name_key(r.name): r for r in nse}
+    for r in rows:
+        if r.exchange != "BSE" or r.duplicate_of is not None:
+            continue
+        twin = (by_symbol.get(r.symbol.upper()) if r.symbol else None) or by_name.get(name_key(r.name))
+        if twin is not None:
+            r.duplicate_of = twin.id
+
+
+def raise_alerts(session, new_ids: list[int], boards: str, now: datetime) -> int:
+    """One alert per newly seen issue the preference covers. An issue already alerted on the other exchange (a BSE
+    row linked to an NSE row, either way round) is not alerted again. `alerted_at` is set under a row-level guard, so
+    a row is alerted at most once."""
+    from sqlalchemy import select, update
+
+    from finresearch.adapters.bse import name_key
+    from finresearch.db.models import Alert, IpoIssue
+
+    if boards == "off" or not new_ids:
+        return 0
+    rows = list(session.scalars(select(IpoIssue)))
+    n = 0
+    for r in [r for r in rows if r.id in set(new_ids)]:
+        if r.duplicate_of is not None or not _wanted(r.board, boards):
+            continue
+        twins = [o for o in rows if o.id != r.id and o.exchange != r.exchange and o.alerted_at is not None
+                 and (o.duplicate_of == r.id or name_key(o.name) == name_key(r.name))]  # fmt: skip
+        if twins:
+            continue
+        got = session.execute(update(IpoIssue).where(IpoIssue.id == r.id, IpoIssue.alerted_at.is_(None))
+                              .values(alerted_at=now).returning(IpoIssue.id)).first()  # fmt: skip
+        if got is None:
+            continue
+        session.add(Alert(kind=ALERT_KIND, level="info", message=_message(r),
+                          data={"path": "/ipos", "exchange": r.exchange, "symbol": r.symbol, "board": r.board,
+                                "issue_id": r.id, "open_date": r.open_date.isoformat() if r.open_date else None}))  # fmt: skip
+        n += 1
+    return n
