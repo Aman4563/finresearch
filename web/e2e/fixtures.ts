@@ -27,13 +27,6 @@ export const HOLDINGS: Holding[] = [
     tax_class_auto: "other_mf", units: 20, cost: null, cost_known: false, avg_cost: null, price: 40, value: 800,
     unrealised: null, unrealised_pct: null, xirr: null, xirr_reason: "cost unknown",
     warnings: ["Opening balance: cost and purchase date are not in the statement"] }),
-  // an unresolved demerger (#263): the holding's XIRR is incomplete, never a number
-  holding({ id: 4, name: "Example Demerge Ltd", asset_type: "stock", nse_symbol: "EXDEMO", isin: "INE000D01019",
-    cost: null, cost_known: false, avg_cost: null, unrealised: null, unrealised_pct: null, xirr: null,
-    xirr_reason: "unsupported corporate action: demerger on 2024-06-03 — cost split not modelled; enter the cost allocation manually",
-    pending_actions: [{ key: "demerger:2024-06-03", type: "demerger", ex_date: "2024-06-03", subject: "Demerger",
-      source: "nse_actions", source_url: null, detected: "2026-10-01", status: "pending",
-      reason: "unsupported corporate action: demerger on 2024-06-03 — cost split not modelled; enter the cost allocation manually" }] }),
 ];
 
 export const SNAPSHOT = {

@@ -265,7 +265,7 @@ export default function Fno() {
         icon={<Activity className="size-5" />}
         eyebrow="Research"
         title="F&O analytics"
-        description="NSE option chain, open interest and a strategy builder that shows what you could make or lose at expiry. Analysis only: no orders are placed."
+        description="Option chain (from your Groww API when connected, else NSE), open interest and a strategy builder that shows what you could make or lose at expiry. Analysis only: no orders are placed."
       />
       <RiskBanner />
       {chain && (
@@ -325,7 +325,7 @@ export default function Fno() {
         <>
           <div className="stagger grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
             <Stat label={`${chain.symbol} spot`} value={spot} format={(v) => v.toLocaleString("en-IN", { maximumFractionDigits: 2 })} icon={<TrendingUp className="size-4" />}
-              hint={chain.as_of ? `as of ${when(chain.as_of)}` : undefined} />
+              hint={[chain.as_of ? `as of ${when(chain.as_of)}` : null, chain.source_label ? `source: ${chain.source_label}` : null].filter(Boolean).join(" · ") || undefined} />
             <Stat label="ATM strike" value={n(chain.atm_strike)} format={(v) => v.toLocaleString("en-IN")} tone="accent" icon={<Crosshair className="size-4" />}
               help="At the money: the strike closest to the current price. IV (implied volatility) is how much movement option prices are expecting, as a yearly %."
               hint={`IV call ${chain.atm_iv.call ?? "—"}% · put ${chain.atm_iv.put ?? "—"}%`} />

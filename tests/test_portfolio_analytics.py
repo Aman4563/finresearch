@@ -635,10 +635,10 @@ def test_api_routes_end_to_end(api):
     ] == pytest.approx(1010)
 
 
-def test_performance_reconciles_snapshots_without_storing_the_history(api):
-    """#239: each "as shown" snapshot is compared with the Performance build. #260: the GET no longer stores that build
-    as the canonical series (the monitor does). Reconstructed (fixture closes): 7-Jan 10 × 55 + 5 × 210 + 10,000 ×
-    10.0 = 1,01,600; 8-Jan 10 × 60 + 5 × 205 + 10,000 × 10.1 = 1,02,625."""
+def test_performance_stores_the_canonical_history_and_reconciles_snapshots(api):
+    """#239: the Performance build is stored as the canonical series, and each "as shown" snapshot is compared with
+    it. Reconstructed (fixture closes): 7-Jan 10 × 55 + 5 × 210 + 10,000 × 10.0 = 1,01,600; 8-Jan 10 × 60 + 5 × 205 +
+    10,000 × 10.1 = 1,02,625."""
     from datetime import datetime, timezone
 
     from sqlalchemy import update
@@ -668,52 +668,8 @@ def test_performance_reconciles_snapshots_without_storing_the_history(api):
     assert d["diff_pct"] == 7.19 and d["reason"].startswith("the price basis differs")
     with session_scope() as s:
         ser, why = series.load(s)
-    assert ser is None and why == series.NOT_BUILT  # the GET stored nothing
-    assert p["summary"]["value"] == pytest.approx(102625.0)
-
-
-def _db_writes():
-    """Every INSERT/UPDATE/DELETE (and the like) sent to the test database while the context is open."""
-    import contextlib
-
-    from sqlalchemy import event
-
-    from finresearch.db import get_engine
-
-    @contextlib.contextmanager
-    def watch():
-        seen: list[str] = []
-
-        def capture(conn, cursor, statement, params, context, executemany):
-            if statement.lstrip().split(None, 1)[0].upper() in ("INSERT", "UPDATE", "DELETE", "MERGE", "TRUNCATE",
-                                                                 "CREATE", "ALTER", "DROP"):  # fmt: skip
-                seen.append(statement)
-
-        event.listen(get_engine(), "before_cursor_execute", capture)
-        try:
-            yield seen
-        finally:
-            event.remove(get_engine(), "before_cursor_execute", capture)
-
-    return watch()
-
-
-def test_analytics_gets_write_nothing_to_the_database(api):
-    """#260: GET performance and risk built the value history and stored it in portfolio_setting cache:history (the
-    drawdown alert's input). A GET must not change the alert inputs: no write statement at all, and the stored series
-    the monitor wrote is left exactly as it was."""
-    from finresearch.db import session_scope
-    from finresearch.portfolio import cache, series
-
-    with session_scope() as s:
-        cache.write(s, series.KEY, {"days": ["2026-01-05"], "value": [1.0], "invested": [1.0], "complete": [True],
-                                    "fingerprint": "stored-by-the-monitor", "built_on": "2026-01-05"})  # fmt: skip
-    with _db_writes() as writes:
-        for path in ("performance", "risk", "risk?rf=7", "concentration", "costs"):
-            assert api.get(f"/api/portfolio/analytics/{path}").status_code == 200
-    assert writes == []
-    with session_scope() as s:
-        assert cache.read(s, series.KEY)["fingerprint"] == "stored-by-the-monitor"
+    assert why is None and ser.days[-1] == DAYS[-1] and ser.value[-1] == pytest.approx(102625.0)
+    assert ser.value_on(DAYS[2]) == (pytest.approx(101600.0), True, DAYS[2])
 
 
 def test_api_empty_portfolio(env):

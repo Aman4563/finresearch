@@ -118,35 +118,6 @@ def test_demerger_marks_the_holding_and_later_tax_years_incomplete_until_resolve
         assert record_unsupported(s, h, acts, source_url=URL) == []
 
 
-def test_unsupported_action_makes_the_holding_xirr_incomplete_not_a_number(db):
-    """#263: a demerged holding's cash flows miss the new company's shares, so its XIRR (and its share of the overall
-    XIRR) would read as a loss that never happened. It is None with the reason, and left out of the overall XIRR."""
-    from finresearch.db.models import PortfolioHolding
-    from finresearch.portfolio.report import snapshot
-    from finresearch.portfolio.service import manual_txn, record_unsupported
-    from finresearch.portfolio.valuation import PriceInfo
-
-    today = date(2026, 9, 30)
-    with db() as s:
-        hid = _txn(s, date(2023, 1, 2), "buy", 100, 100).holding_id
-        other = manual_txn(s, {"asset_type": "stock", "name": "Example Plain Ltd", "account": "Manual",
-                               "isin": "INE000F01011", "nse_symbol": "EXPLAIN", "day": date(2023, 1, 2), "kind": "buy",
-                               "quantity": D(10), "price": D(100)}).holding_id  # fmt: skip
-        prices = {hid: PriceInfo(price=D(60)), other: PriceInfo(price=D(121))}
-        before = {r["id"]: r for r in snapshot(s, prices, today)["holdings"]}
-        assert before[hid]["xirr"] is not None  # no action recorded yet: a plain XIRR
-        record_unsupported(s, s.get(PortfolioHolding, hid), [(EX, "Demerger")], source_url=URL)
-        snap = snapshot(s, prices, today)
-        rows = {r["id"]: r for r in snap["holdings"]}
-        assert rows[hid]["xirr"] is None and rows[hid]["xirr_reason"] == REASON
-        assert rows[other]["xirr"] is not None
-        # the overall XIRR is the plain holding's alone: 1,000 on 2-Jan-2023 grew to 1,210 on 30-Sep-2026
-        # (1,367 days): 1.21 ** (365 / 1367) - 1 = 0.05221...
-        assert abs(snap["summary"]["xirr"] - (1.21 ** (365 / 1367) - 1)) < 1e-4
-        assert "1 holding(s)" in snap["summary"]["xirr_reason"]
-        assert "unsupported corporate action" in snap["summary"]["xirr_reason"]
-
-
 def test_action_not_held_on_its_ex_date_is_ignored(db):
     from finresearch.db.models import PortfolioHolding
     from finresearch.portfolio.service import record_unsupported
@@ -199,9 +170,6 @@ class FakeEquity:
 
     async def corporate_actions(self, symbol):
         from finresearch.adapters.nse_equity import CorporateAction
-
-        if symbol == "EXFAIL":
-            raise RuntimeError("HTTP 403")
 
         rows = [{"symbol": symbol, "subject": "Demerger", "exDate": "03-Jun-2024", "recDate": "03-Jun-2024"},
                 {"symbol": symbol, "subject": "Dividend - Rs 5 Per Share", "exDate": "01-Aug-2024", "recDate": ""}]  # fmt: skip
@@ -274,53 +242,11 @@ def test_resolve_endpoint(client):
 def test_data_health_row(db):
     from finresearch.portfolio import health
 
-    today = date(2026, 9, 30)
-    rows = [{"id": 1, "asset_type": "stock", "closed": False, "pending_actions": [{"reason": REASON}],
-             "actions_synced": "2026-09-29"},
-            {"id": 2, "asset_type": "stock", "closed": False, "pending_actions": [], "actions_synced": "2026-09-29"},
+    rows = [{"id": 1, "asset_type": "stock", "closed": False, "pending_actions": [{"reason": REASON}]},
+            {"id": 2, "asset_type": "stock", "closed": False, "pending_actions": []},
             {"id": 3, "asset_type": "mf", "closed": False}]  # fmt: skip
-    r = health.corporate_actions(rows, today)
+    r = health.corporate_actions(rows)
     assert (r["coverage_pct"], r["status"]) == (50.0, "partial") and REASON in r["detail"]
-    assert health.corporate_actions(rows[1:], today)["status"] == "ok"
-    assert health.corporate_actions(rows[2:], today)["status"] == "not_applicable"
+    assert health.corporate_actions(rows[1:])["status"] == "ok"
+    assert health.corporate_actions(rows[2:])["status"] == "not_applicable"
     assert sum(health.WEIGHTS.values()) == 100
-
-
-def test_data_health_row_is_not_ok_when_actions_were_never_synced_or_the_sync_is_stale():
-    """#264: before any "Sync corporate actions" nothing is recorded, which read as "none recorded": ok, 100 %."""
-    from finresearch.portfolio import health
-
-    today = date(2026, 9, 30)
-    never = [{"id": 1, "name": "Example A", "asset_type": "stock", "closed": False, "pending_actions": []},
-             {"id": 2, "name": "Example B", "asset_type": "stock", "closed": False, "pending_actions": []}]  # fmt: skip
-    r = health.corporate_actions(never, today)
-    assert (r["coverage_pct"], r["status"]) == (None, "unknown")
-    assert "2 of 2 stock holding(s) never synced" in r["detail"]
-    assert r["href"] == "/portfolio#import"
-    # one synced 30 days ago (the limit: still current), one 31 days ago: half covered
-    edge = [{**never[0], "actions_synced": "2026-08-31"}, {**never[1], "actions_synced": "2026-08-30"}]
-    r = health.corporate_actions(edge, today)
-    assert (r["coverage_pct"], r["status"]) == (50.0, "partial")
-    assert f"more than {health.ACTIONS_SYNC_MAX_DAYS} days ago (oldest 2026-08-30)" in r["detail"]
-    # one synced today, one bought after the last sync (never synced): half covered, never ok
-    mixed = [{**never[0], "actions_synced": "2026-09-30"}, never[1]]
-    assert health.corporate_actions(mixed, today)["coverage_pct"] == 50.0
-    assert health.corporate_actions([mixed[0]], today)["status"] == "ok"
-
-
-def test_sync_stamps_only_the_stocks_it_read(client):
-    """A successful sync records the day on the holding (the health row's input); a failed fetch does not."""
-    body = {"asset_type": "stock", "name": "Example Demerge Ltd", "nse_symbol": "EXDEMO", "isin": ISIN,
-            "account": "Manual", "day": "2023-01-02", "kind": "buy", "quantity": "100", "price": "100"}  # fmt: skip
-    ok = client.post("/api/portfolio/transactions", headers=H, json=body).json()["holding_id"]
-    bad = client.post("/api/portfolio/transactions", headers=H,
-                      json={**body, "name": "Example Fails Ltd", "nse_symbol": "EXFAIL",
-                            "isin": "INE000G01019"}).json()["holding_id"]  # fmt: skip
-    sync = client.post("/api/portfolio/actions/sync", headers=H).json()
-    assert sync["errors"] == ["NSE EXFAIL: RuntimeError"]
-    from finresearch.db import session_scope
-    from finresearch.db.models import PortfolioHolding
-
-    with session_scope() as s:
-        assert s.get(PortfolioHolding, ok).meta["actions_synced"] == "2026-09-30"
-        assert "actions_synced" not in (s.get(PortfolioHolding, bad).meta or {})

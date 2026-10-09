@@ -51,6 +51,8 @@ FINAL_AFTER_DAYS = 5  # a fetched range that ended this many days ago has every 
 RISK_LOOKBACK_DAYS = (
     380  # current holdings' prices are read for a year even if bought last week (risk contribution)
 )
+# Groww's daily candles serve ranges starting at most this many days back (the daily top-up); see Fetcher._groww
+GROWW_HISTORY_DAYS = 31
 STALE_DAYS = 10  # a forward-filled price older than this (calendar days) marks the day incomplete
 JUMP = 0.40  # a one-day move beyond ±40 % with no split/bonus recorded is probably a missing corporate action
 
@@ -215,8 +217,13 @@ class Fetcher:
     shared by every stock in a build, so NSE's cookie warm-up happens once and the polite client's rate limit
     (2 requests per second) applies to the whole build."""
 
-    def __init__(self, sources: Any) -> None:
+    def __init__(self, sources: Any, groww: Any = "groww") -> None:
         self.sources = sources
+        # Groww's daily candles first (#267): `groww` is an adapters.groww_market.GrowwMarket (default: the process's),
+        # None turns it off. `split_days` (filled by `build`) are the split/bonus ex-dates per instrument key.
+        self.groww = groww
+        self.split_days: dict[str, set[date]] = {}
+        self.provenance: dict[str, str] = {}  # instrument key -> where its last fetched closes came from
         self._eq: dict[str, Any] = {}
         self._cms: dict[str, Any] = {}
         self._lock = asyncio.Lock()
@@ -243,6 +250,37 @@ class Fetcher:
             return {
                 r.day: float(r.nav) for r in rows if r.day and r.nav is not None and start <= r.day <= end
             }, True
+        got = await self._groww(inst, start, end)
+        if got is not None:
+            return got
+        self.provenance[inst.key] = "BSE" if inst.kind == "bse" else "NSE"
+        return await self._exchange(inst, start, end)
+
+    async def _groww(self, inst: Instrument, start: date, end: date) -> tuple[dict[date, float], bool] | None:
+        """Closes from Groww, or None to use the exchange. Whether Groww's daily closes are adjusted for splits and
+        bonuses is not documented [U], and this history multiplies units by RAW closes. Adjusted and raw closes agree
+        on every day after the instrument's latest split/bonus, so Groww is asked only for a recent range
+        (GROWW_HISTORY_DAYS: the daily top-up of the cached closes) with no recorded split/bonus on or after its start;
+        older backfills stay on the exchange's raw closes."""
+        from finresearch.adapters import groww_market
+
+        market = groww_market.MARKET if self.groww == "groww" else self.groww
+        today = self.sources.today() if hasattr(self.sources, "today") else date.today()
+        if market is None or start < today - timedelta(days=GROWW_HISTORY_DAYS):
+            return None
+        if any(d >= start for d in self.split_days.get(inst.key, ())):
+            return None
+        try:
+            got = await market.history_closes("BSE" if inst.kind == "bse" else "NSE", inst.ident, start, end)
+        except Exception as e:  # Groww failed: the exchange answers this range
+            log.info("Groww history for %s failed (%s): using the exchange", inst.key, type(e).__name__)
+            return None
+        if got is None:
+            return None
+        self.provenance[inst.key] = "Groww"
+        return got, True
+
+    async def _exchange(self, inst: Instrument, start: date, end: date) -> tuple[dict[date, float], bool]:
         from finresearch.adapters.nse_equity import walk_history
 
         eq = await self._equity("BSE" if inst.kind == "bse" else "NSE")
@@ -489,6 +527,13 @@ async def build(holdings: Sequence[HoldingIn], *, fetch: Any, store: PriceStore,
             _, a, b = need[inst.key]
             lo, hi = min(lo, a), max(hi, b)
         need[inst.key] = (inst, lo, hi)
+    splits = getattr(fetch, "split_days", None)
+    if isinstance(
+        splits, dict
+    ):  # the Fetcher keeps Groww off ranges a split/bonus could make ambiguous (#267)
+        for h in live:
+            if h.id in insts:
+                splits.setdefault(insts[h.id].key, set()).update(unit_factors(h.events))
     closes: dict[str, dict[date, float]] = {}
     for key, (inst, lo, hi) in need.items():
         try:

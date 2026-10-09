@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import time as _time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import date
@@ -141,10 +142,15 @@ def price_from_quote(q: Any, exch: str, listing: Any = None) -> PriceInfo:
     if mcap_cr is None and listing is not None:
         mcap_cr = listing.market_cap_cr
 
+    origin = getattr(q, "provenance", None) or f"{exch} quote"  # "Groww LTP" / "Groww daily close" (#267)
+    label = v.label.lower()
+    if origin.startswith("Groww") and v.kind == OFFICIAL_CLOSE:
+        # whether Groww's daily candle close is the exchange's published close is not documented [U]
+        label = "daily close (not verified as the exchange's official close)"
     return PriceInfo(
         price,
         q.as_of.isoformat() if q.as_of else None,
-        f"{exch} quote: {v.label.lower()}",
+        f"{origin}: {label}",
         q.industry,
         mcap_cr,
         kind=v.kind,
@@ -169,8 +175,8 @@ def fund_prices(funds: Sequence[Any], rows: list, err: str | None) -> dict[int, 
 async def fetch_prices(holdings: Sequence[Any], *, quote: Callable[[str, str], Awaitable[Any]],
                        scheme_rows: Callable[[], Awaitable[list]] | None,
                        listings: Callable[[], Awaitable[Any]] | None = None, on_price: OnPrice | None = None,
-                       concurrency: int = QUOTE_CONCURRENCY,
-                       budget_s: float | None = None) -> dict[int, PriceInfo]:  # fmt: skip
+                       concurrency: int = QUOTE_CONCURRENCY, budget_s: float | None = None,
+                       prefetch: Any = "groww") -> dict[int, PriceInfo]:  # fmt: skip
     """holding id -> PriceInfo, fetched concurrently: one AMFI NAVAll download prices every fund while the stock
     quotes run, at most `concurrency` at a time, one request per distinct instrument (a stock held in two accounts
     is quoted once). `quote(id, exchange)` should be cached and rate-limited by the caller (the API passes a shared
@@ -178,8 +184,18 @@ async def fetch_prices(holdings: Sequence[Any], *, quote: Callable[[str, str], A
 
     `budget_s` bounds the whole call: whatever is still being fetched then is cancelled, and those rows fall back to
     their last statement price (or none) with a "did not answer in time" reason, so one slow source never holds the
-    page. Nothing unfinished is cached (the caller's cache stores only completed fetches)."""
+    page. Nothing unfinished is cached (the caller's cache stores only completed fetches).
+
+    `prefetch(items) -> {(symbol, exchange): quote}` is asked first for every stock at once: by default Groww's market
+    data (`adapters.groww_market.Prefetch`, the user's paid API, #267), which answers only while the Groww connection is
+    on and its session valid. A stock it does not answer takes the `quote` path (NSE, then BSE) as before; None turns
+    the step off. A Groww-priced stock's industry comes from the last exchange quote seen (`_META`), or one exchange
+    quote when there is none yet (unless `prefetch.backfill` is False)."""
     out: dict[int, PriceInfo] = {}
+    if prefetch == "groww":
+        from finresearch.adapters.groww_market import Prefetch
+
+        prefetch = Prefetch()
 
     def emit(hid: int, p: PriceInfo) -> None:
         out[hid] = p
@@ -250,6 +266,12 @@ async def fetch_prices(holdings: Sequence[Any], *, quote: Callable[[str, str], A
             else:
                 groups.setdefault((sym, exch), []).append((h, listing))
         sem = asyncio.Semaphore(max(1, concurrency))
+        pre: dict[tuple[str, str], Any] = {}
+        if prefetch is not None and groups:
+            try:
+                pre = await prefetch(list(groups)) or {}
+            except Exception as e:  # Groww failed as a whole: every stock takes the exchange path
+                log.info("price prefetch failed (%s): using the exchanges", type(e).__name__)
 
         async def one(key: tuple[str, str], members: list[tuple[Any, Any]]) -> None:
             from finresearch.adapters.nse import NseNoQuote
@@ -258,12 +280,17 @@ async def fetch_prices(holdings: Sequence[Any], *, quote: Callable[[str, str], A
             err = None
             no_such_symbol = False
             async with sem:
+                q = pre.get(key)
                 try:
-                    q = await quote(sym, exch)
+                    q = q if q is not None else await quote(sym, exch)
                 except Exception as e:
                     q, err = None, f"no quote from {exch} ({type(e).__name__})"
                     no_such_symbol = exch == "NSE" and isinstance(e, NseNoQuote)
                 p = price_from_quote(q, exch, members[0][1]) if q is not None else PriceInfo(error=err)
+                if key in pre:
+                    await _fill_meta(p, key, quote, getattr(prefetch, "backfill", True))
+                elif p.price is not None and p.industry:
+                    _META[key] = (_time.monotonic() + META_TTL_S, p.industry, p.market_cap_cr)
                 if no_such_symbol and (hit := await renamed(sym, members)) is not None:
                     p = hit[2]
                 alt = bse_fallback(*members[0]) if exch == "NSE" else None
@@ -306,6 +333,29 @@ async def fetch_prices(holdings: Sequence[Any], *, quote: Callable[[str, str], A
         if h.id not in out:
             emit(h.id, PriceInfo(error="no price source for this kind of holding"))
     return out
+
+
+# industry and market cap per (symbol, exchange) from the last exchange quote: Groww's LTP carries neither, and they
+# change rarely, so one exchange quote a day is enough for the sector and cap breakdowns of Groww-priced stocks
+META_TTL_S = 24 * 3600.0
+_META: dict[tuple[str, str], tuple[float, str | None, Decimal | None]] = {}
+
+
+async def _fill_meta(p: PriceInfo, key: tuple[str, str], quote: Callable[[str, str], Awaitable[Any]],
+                     backfill: bool) -> None:  # fmt: skip
+    hit = _META.get(key)
+    if (hit is None or hit[0] <= _time.monotonic()) and backfill:
+        try:
+            q = await quote(*key)
+            hit = (_time.monotonic() + META_TTL_S, getattr(q, "industry", None), None)
+            ex = price_from_quote(q, key[1])
+            hit = (hit[0], hit[1], ex.market_cap_cr)
+            _META[key] = hit
+        except Exception:  # the price stands; only the sector/cap labels stay unknown
+            return
+    if hit is not None and hit[0] > _time.monotonic():
+        p.industry = p.industry or hit[1]
+        p.market_cap_cr = p.market_cap_cr or hit[2]
 
 
 # A cold first load once took over 120 s (reproduced 1-Oct-2026 with one unknown symbol among 21 holdings): NSE's quote

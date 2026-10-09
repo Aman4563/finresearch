@@ -41,6 +41,24 @@ def _isolate_data_dirs(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_groww_session(monkeypatch):
+    """Groww market data (#267) is off in every test unless the test installs its own client: the process-wide client
+    would otherwise read the configured database's Groww row (the live one when a test has no `env`)."""
+    from finresearch.adapters import groww_market
+
+    class _Off:
+        state = "not_connected"
+
+        def token(self):
+            return None
+
+        def forget(self):
+            pass
+
+    monkeypatch.setattr(groww_market, "MARKET", groww_market.GrowwMarket(session=_Off()))
+
+
+@pytest.fixture(autouse=True)
 def _offline_rate_curve(monkeypatch):
     """F&O maths reads FBIL's par curve (signals.rates); tests use FBIL's dated fallback curve, never the network."""
     from finresearch.adapters.fbil import FALLBACK_CURVE

@@ -209,8 +209,7 @@ class Citation(Base):
     # then says whether the quote is on that page (#242). None: no snapshot, the quote is unchecked (grade C).
     snapshot_sha256: Mapped[str | None] = mapped_column(String(64))
     # a figure computed by fincalc: {"function", "args", "inputs": [claim ids], "result", "matches", "inputs_ok",
-    # "constants", "bindings", "args_bound", "detail"}, re-executed by save_claim (#242). quote_found = matches and
-    # inputs_ok and args_bound (every numeric argument is a cited input's value or a declared constant, #265).
+    # "detail"}, re-executed by save_claim (#242). quote_found = matches and inputs_ok.
     computation: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
 
     claim: Mapped[Claim] = relationship(back_populates="citations")

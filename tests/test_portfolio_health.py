@@ -113,8 +113,8 @@ def _snap():
 
     with session_scope() as s:
         hs = list(s.query(PortfolioHolding).order_by(PortfolioHolding.id))
-        rows = [{"id": h.id, "asset_type": h.asset_type, "closed": False, "price": 120.0, "value": 1200.0,
-                 "actions_synced": TODAY.isoformat()} for h in hs if h.asset_type == "stock"]  # fmt: skip
+        rows = [{"id": h.id, "asset_type": h.asset_type, "closed": False, "price": 120.0, "value": 1200.0}
+                for h in hs if h.asset_type == "stock"]  # fmt: skip
         rows += [{"id": h.id, "asset_type": "mf", "closed": False, "price": None, "value": None}
                  for h in hs if h.asset_type == "mf"]  # fmt: skip
     return {"as_of": TODAY.isoformat(), "holdings": rows}
@@ -169,7 +169,7 @@ def test_health_api_rows_and_overall(client, monkeypatch):
     assert rows["goals_age"]["coverage_pct"] == 50.0  # a goal, no age
     assert (
         rows["corporate_actions"]["coverage_pct"] == 100.0
-    )  # synced today, no unsupported corporate action recorded (#237, #264)
+    )  # no unsupported corporate action recorded (#237)
     # purchase dates, priced, corporate actions, dividends, look-through, AIS, history, targets, goals and age
     expected = (
         20 * 100 + 20 * 50 + 10 * 100 + 10 * 100 / 3 + 10 * 0 + 10 * 100 + 10 * 100 + 5 * 0 + 5 * 50

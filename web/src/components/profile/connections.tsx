@@ -76,6 +76,37 @@ function Differences({ log }: { log: SyncLog | undefined }) {
   );
 }
 
+type MarketData = {
+  active: boolean; session: string; phase: string; instruments_day: string | null;
+  supplies: { kind: string; label: string }[]; last_answered: Record<string, string>;
+  calls_today: { day: string; total: number; categories: { category: string; label: string; calls: number; per_second: number | null; per_minute: number | null; daily_cap: number | null }[] };
+};
+
+// Groww's paid Trade API also supplies market data (#267): which data it is supplying now and today's calls by Groww's
+// rate categories. Counts and labels only: the API never returns a key, secret or token.
+function GrowwMarketData() {
+  const { data } = useApi<MarketData>("/api/connections/groww/market-data", 60000);
+  if (!data) return null;
+  return (
+    <div className="space-y-1.5 rounded-lg bg-background-subtle/60 px-3 py-2 text-xs ring-1 ring-inset ring-border" data-testid="groww-market-data">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-medium text-foreground">Market data from Groww</span>
+        <Badge tone={data.active ? "gain" : "neutral"} dot={data.active}>{data.active ? "in use" : "not in use: NSE/BSE/AMFI"}</Badge>
+        <InfoTip>When the Groww session is valid, prices, index values, recent daily closes and option chains come from Groww first; anything Groww cannot answer falls back to NSE, BSE or AMFI, and each price says where it came from.</InfoTip>
+      </div>
+      <ul className="space-y-0.5 text-muted">
+        {data.supplies.map((s) => (
+          <li key={s.kind}>{s.label}{data.last_answered[s.kind] && <span className="num"> · last {when(data.last_answered[s.kind])}</span>}</li>
+        ))}
+      </ul>
+      <p className="text-muted">
+        Calls today: <span className="num text-foreground">{data.calls_today.total}</span>
+        {" "}({data.calls_today.categories.map((c) => `${c.label} ${c.calls}${c.daily_cap ? ` of ${c.daily_cap}` : ""}`).join(" · ")})
+      </p>
+    </div>
+  );
+}
+
 function BrokerRow({ c, log, onChanged }: { c: Connection; log?: SyncLog; onChanged: () => void }) {
   const [open, setOpen] = useState(false);
   const [cfg, setCfg] = useState<Record<string, string>>({});
@@ -175,6 +206,7 @@ function BrokerRow({ c, log, onChanged }: { c: Connection; log?: SyncLog; onChan
       {(c.last_error || err) && <div className="pl-12"><ErrorNote error={err ?? c.last_error} /></div>}
       {note && <p className="pl-12 text-xs text-gain">{note}</p>}
       <div className="pl-12"><Differences log={log} /></div>
+      {c.key === "groww" && c.configured && <div className="pl-12"><GrowwMarketData /></div>}
 
       {open && (
         <div className="ml-12 space-y-3 rounded-xl bg-background-subtle/60 p-3 ring-1 ring-inset ring-border animate-fade-in">

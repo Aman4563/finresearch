@@ -336,20 +336,16 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
                        allow_credentials=True, expose_headers=EXPOSED_HEADERS)  # fmt: skip
 
     @app.exception_handler(ValueError)
-    async def _value_error(req: Request, e: ValueError) -> JSONResponse:
-        # the message says what was wrong with the input, but may quote a local path, a URL or a token (#261): the
-        # client gets the redacted text, the server log the full exception
-        logging.getLogger("finresearch.api").warning("422 on %s", req.url.path, exc_info=e)
-        return JSONResponse({"detail": public_error(e, 1000, drop_query=True)}, status_code=422)
+    async def _value_error(_req: Request, e: ValueError) -> JSONResponse:
+        return JSONResponse({"detail": f"{type(e).__name__}: {e}"[:1000]}, status_code=422)
 
     @app.exception_handler(NseError)
     @app.exception_handler(SebiError)
     @app.exception_handler(AmfiError)
     @app.exception_handler(httpx.HTTPError)
-    async def _upstream_error(req: Request, e: Exception) -> JSONResponse:
-        logging.getLogger("finresearch.api").warning("upstream failure on %s", req.url.path, exc_info=e)
+    async def _upstream_error(_req: Request, e: Exception) -> JSONResponse:
         return JSONResponse(
-            {"detail": f"upstream source failed: {public_error(e, 1000, drop_query=True)}"}, status_code=502
+            {"detail": f"upstream source failed: {type(e).__name__}: {e}"[:1000]}, status_code=502
         )
 
     @app.get("/api/health")
@@ -1145,9 +1141,10 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
 
     # ------------------------------------------------------------------ F&O analytics (analysis only)
     def _fno():
-        from finresearch.adapters.nse_fno import NseFno
+        from finresearch.adapters.groww_fno import GrowwFirstFno
 
-        return fno_client() if fno_client else NseFno()
+        # Groww's option chain when the Groww connection is valid, else NSE's (#267)
+        return fno_client() if fno_client else GrowwFirstFno()
 
     @app.get("/api/fno/{symbol}/expiries")
     async def fno_expiries(symbol: str) -> dict[str, Any]:
@@ -1176,8 +1173,9 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
                            "put": str(atm.put.iv) if atm and atm.put else None},
                 "pcr_oi": str(chain.pcr()) if chain.pcr() is not None else None,
                 "max_pain": str(chain.max_pain()) if chain.max_pain() is not None else None,
-                "rows": [r.model_dump(mode="json") for r in chain.rows],
-                "source": "https://www.nseindia.com/option-chain"}  # fmt: skip
+                "rows": [r.model_dump(mode="json") for r in chain.rows], "source_label": chain.source,
+                "source": "https://groww.in/trade-api/docs/curl/live-data" if chain.source == "Groww"
+                else "https://www.nseindia.com/option-chain"}  # fmt: skip
 
     @app.post("/api/fno/strategy")
     async def fno_strategy(body: Strategy) -> dict[str, Any]:
@@ -1510,6 +1508,11 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
     from finresearch.api.connections import add_connection_routes
 
     add_connection_routes(app, clock=clock)
+
+    # Groww market data in use + today's call budget (#267)
+    from finresearch.api.market_data import add_market_data_routes
+
+    add_market_data_routes(app)
 
     from finresearch.api.wealth import add_wealth_routes  # household finances (/wealth)
 

@@ -275,6 +275,7 @@ def ref_of(v: Any) -> str | None:
 def put(scope: str, field: str, value: str, hint: str = "") -> dict[str, str]:
     """Store `value` and return the JSON reference a row keeps instead."""
     ref = ref_for(scope, field)
+    _no_logs(value)
     backend().set(ref, value)
     return {REF_KEY: ref, "hint": hint}
 
@@ -295,7 +296,15 @@ def resolve(v: Any) -> str:
     if got is None:
         log.warning("secret %s is missing from the %s store", ref, backend().name)
         return ""
+    _no_logs(got)
     return got
+
+
+def _no_logs(value: str) -> None:
+    """Every secret this process reads or stores is redacted from its log lines from then on (logredact, #269)."""
+    from finresearch import logredact
+
+    logredact.register(value)
 
 
 def drop(v: Any) -> None:

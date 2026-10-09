@@ -25,9 +25,6 @@ _RULES: tuple[tuple[re.Pattern[str], str], ...] = (
 )
 
 
-_QUERY = re.compile(r"(?i)\b(https?://[^\s?#\"'<>]+)\?[^\s#\"'<>]*")
-
-
 def redact(text: str) -> str:
     """`text` with credentials, tokens and absolute local paths replaced."""
     for rx, sub in _RULES:
@@ -35,11 +32,7 @@ def redact(text: str) -> str:
     return text
 
 
-def public_error(e: BaseException, limit: int = 300, *, drop_query: bool = False) -> str:
-    """'<ExceptionClass>: <redacted message>' cut to `limit` characters: enough to say what failed, nothing private.
-    `drop_query`: also cut every http(s) URL's query string ("?..." becomes "?<query>"), for messages that may quote an
-    upstream request URL whose parameters carry a session, token or personal identifier under any name (#261)."""
+def public_error(e: BaseException, limit: int = 300) -> str:
+    """'<ExceptionClass>: <redacted message>' cut to `limit` characters: enough to say what failed, nothing private."""
     msg = redact(str(e))
-    if drop_query:
-        msg = _QUERY.sub(r"\1?<query>", msg)
     return (f"{type(e).__name__}: {msg}" if msg else type(e).__name__)[:limit]

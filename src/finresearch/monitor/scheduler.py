@@ -472,6 +472,12 @@ async def tick(deps: jobs.Deps, now: datetime | None = None) -> dict[str, int]:
         out |= await connections_step(now)
     except Exception:
         log.warning("broker connection step failed; it is retried on the next tick", exc_info=True)
+    try:  # the Groww session for market data in market hours: one login a day via the sync (#267)
+        from finresearch.adapters.groww_market import session_step
+
+        out |= await session_step(now)
+    except Exception:
+        log.warning("Groww market-data session step failed; it is retried on the next tick", exc_info=True)
     out |= {f"{k}_sent": v for k, v in out_brief.items()}
     try:
         res = await jobs.archive_open_books(deps, now)

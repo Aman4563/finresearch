@@ -12,10 +12,8 @@ One row per input, each with a coverage % (None = could not be measured), a stat
     ais               AIS imported for the last completed FY (yes/no)                    10
     history           daily returns in the value history, against the 120 that beta and  10
                       risk contribution need (volatility needs 60; VaR and Sharpe 250)
-    corporate_actions held stocks whose corporate actions were synced in the last           10
-                      ACTIONS_SYNC_MAX_DAYS and show no unresolved unsupported action (demerger, rights,
-                      merger ... recorded by "Sync corporate actions", #237). Never synced or synced too
-                      long ago = not known to be clean (#264); none synced at all = unknown
+    corporate_actions held stocks without an unresolved unsupported corporate action    10
+                      (demerger, rights, merger ... recorded by "Sync corporate actions", #237)
     targets           target allocation set (yes/no)                                       5
     goals_age         age set (half) and at least one goal (half)                         5
 
@@ -47,13 +45,9 @@ HISTORY_NEED = {
     "VaR and Sharpe": 250,
 }  # portfolio.analytics
 HISTORY_FULL = 120
-# A held stock's corporate actions count as checked for this many days after a successful "Sync corporate actions".
-# A stated judgement, not a rule: exchanges announce an action's record date a few working days to weeks ahead, so a
-# month-old read can miss an action announced since.
-ACTIONS_SYNC_MAX_DAYS = 30
 OPEN = Decimal("0.0005")
 HOW = ("Overall = Σ weight × coverage ÷ Σ weight of the rows that apply. Weights: purchase dates 20, prices 20, "
-       "corporate actions synced and resolved 10, dividends 10, fund look-through 10, AIS 10, performance history 10, targets 5, "
+       "corporate actions resolved 10, dividends 10, fund look-through 10, AIS 10, performance history 10, targets 5, "
        "goals and age 5. A check that could not run counts as 0 %.")  # fmt: skip
 
 
@@ -113,47 +107,19 @@ def priced(rows: list[dict[str, Any]]) -> dict[str, Any]:
                 applies=bool(held))  # fmt: skip
 
 
-def corporate_actions(rows: list[dict[str, Any]], today: date) -> dict[str, Any]:
-    """Held stocks whose corporate actions are known to be clean: synced within ACTIONS_SYNC_MAX_DAYS (the holding's
-    `actions_synced`) and without an unresolved unsupported corporate action (#237). A stock never synced, or synced
-    too long ago, is not known to be clean, so it does not count as covered; when no held stock was ever synced the
-    row is unknown, never ok (#264). An action the exchange feed never listed cannot be seen here."""
+def corporate_actions(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Held stocks without an unresolved unsupported corporate action (#237). Only what "Sync corporate actions" has
+    recorded is known; an action the exchange feed never listed cannot be seen here."""
     held = [r for r in rows if r.get("asset_type") == "stock" and not r.get("closed")]
     bad = [r for r in held if r.get("pending_actions")]
-
-    def fresh(r: dict[str, Any]) -> bool:
-        d = r.get("actions_synced")
-        return d is not None and (today - date.fromisoformat(d)).days <= ACTIONS_SYNC_MAX_DAYS
-
-    never = [r for r in held if not r.get("actions_synced") and not r.get("pending_actions")]
-    stale = [r for r in held if r.get("actions_synced") and not fresh(r) and not r.get("pending_actions")]
-    clean = [r for r in held if fresh(r) and not r.get("pending_actions")]
-    if not held:
-        cov: float | None = 100.0
-    elif not any(r.get("actions_synced") for r in held) and not bad:
-        cov = None  # never synced: unknown, not "none recorded"
-    else:
-        cov = len(clean) * 100 / len(held)
-    parts = []
-    if bad:
-        parts.append(f"{len(bad)} of {len(held)} stock holding(s) have an unresolved corporate action: "
-                     + "; ".join(f"{r.get('name') or r.get('id')}: {r['pending_actions'][0]['reason']}"
-                                 for r in bad[:5]))  # fmt: skip
-    if never:
-        parts.append(f"{len(never)} of {len(held)} stock holding(s) never synced, so their corporate actions are "
-                     "unknown")  # fmt: skip
-    if stale:
-        parts.append(f"{len(stale)} of {len(held)} stock holding(s) last synced more than {ACTIONS_SYNC_MAX_DAYS} "
-                     f"days ago (oldest {min(r['actions_synced'] for r in stale)})")  # fmt: skip
-    if clean and not parts:
-        parts.append(
-            f"none recorded for {len(held)} stock holding(s) (synced within {ACTIONS_SYNC_MAX_DAYS} days)"
-        )
-    return _row("corporate_actions", "Corporate actions synced and resolved", cov, "; ".join(parts),
-                "the cost, unrealised P&L, XIRR and the tax of every sale after an action's ex-date for those holdings",
-                "Open the holding: enter the cost allocation as a manual transaction, or mark the action resolved" if bad
-                else "Run \"Sync corporate actions\" on the Import tab",
-                "/portfolio#holdings" if bad else "/portfolio#import", applies=bool(held))  # fmt: skip
+    cov = (len(held) - len(bad)) * 100 / len(held) if held else 100.0
+    detail = (f"{len(bad)} of {len(held)} stock holding(s) have an unresolved corporate action: "
+              + "; ".join(f"{r.get('name') or r.get('id')}: {r['pending_actions'][0]['reason']}" for r in bad[:5])
+              if bad else f"none recorded for {len(held)} stock holding(s) (from the last corporate-action sync)")  # fmt: skip
+    return _row("corporate_actions", "Corporate actions resolved", cov, detail,
+                "the cost, unrealised P&L and the tax of every sale after the action's ex-date for those holdings",
+                "Open the holding: enter the cost allocation as a manual transaction, or mark the action resolved",
+                "/portfolio#holdings", applies=bool(held))  # fmt: skip
 
 
 def dividends(s: Session, today: date) -> dict[str, Any]:
@@ -303,7 +269,7 @@ def compute(s: Session, snap: dict[str, Any], today: date, *, lt: dict[str, Any]
     lots = list(s.scalars(select(PortfolioLot).where(PortfolioLot.open_quantity > OPEN)))
     has_funds = any(r.get("asset_type") == "mf" for r in held)
     goals = s.scalar(select(func.count()).select_from(WealthGoal)) or 0
-    rows = [purchase_dates(lots, price), priced(rows_in), corporate_actions(rows_in, today), dividends(s, today),
+    rows = [purchase_dates(lots, price), priced(rows_in), corporate_actions(rows_in), dividends(s, today),
             lookthrough(lt, has_funds, lt_error), ais(s, today, bool(held)), history(perf, perf_error, bool(held)),
             targets(get_targets(s)), goals_age(load_profile(s).household.age, goals)]  # fmt: skip
     return {"as_of": today.isoformat(), "rows": rows, "overall": overall(rows),

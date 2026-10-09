@@ -28,6 +28,9 @@ import httpx
 # test seam: an httpx transport (httpx.MockTransport with recorded responses); None = the network
 TRANSPORT: httpx.AsyncBaseTransport | None = None
 TIMEOUT_S = 20.0
+# per-host call budgets (shared rate slots, daily counts): host -> "module:before,after" (#267). Groww's categories
+# and limits live in adapters.groww_budget; every Groww request, the sync's included, goes through them.
+HOST_BUDGETS = {"api.groww.in": "finresearch.adapters.groww_budget:before_request,after_response"}
 
 # names no connector may expose (read-only enforcement is tested against this)
 FORBIDDEN_ATTR = re.compile(r"(place|modify|cancel|exit_|convert|gtt|basket|amo|order(?!_id))", re.I)
@@ -140,19 +143,30 @@ class ReadOnlyHttp:
                         headers: dict[str, str] | None = None) -> Any:  # fmt: skip
         return await self._send("POST", path, json=json, data=data, params=params, headers=headers)
 
-    async def _send(self, method: str, path: str, **kw: Any) -> Any:
+    async def get_bytes(self, path: str, params: dict[str, Any] | None = None) -> bytes:
+        """A GET whose body is not JSON (Groww's instruments CSV); same allowlist and checks."""
+        return await self._send("GET", path, params=params, raw=True)
+
+    async def _send(self, method: str, path: str, *, raw: bool = False, **kw: Any) -> Any:
         self._check(method, path)
         extra = kw.pop("headers", None) or {}
+        hooks = _budget(self.base_url)
+        if hooks is not None:
+            await hooks[0](method, path)
         try:
             async with httpx.AsyncClient(timeout=TIMEOUT_S, transport=TRANSPORT, follow_redirects=False) as c:
                 r = await c.request(method, self.base_url + path, headers={**self.headers, **extra}, **kw)
         except httpx.HTTPError as e:
             raise ConnectorError(self.redact(f"network error: {type(e).__name__}")) from None
+        if hooks is not None:
+            hooks[1](method, path, r.status_code, r.headers.get("Retry-After"))
         if r.status_code in (401, 403):
             raise ReconnectNeeded(self.redact(f"the broker refused the session (HTTP {r.status_code}): "
                                               f"{_brief(r)}"))  # fmt: skip
         if r.status_code >= 400:
             raise ConnectorError(self.redact(f"HTTP {r.status_code} from {path}: {_brief(r)}"))
+        if raw:
+            return r.content
         try:
             return r.json()
         except ValueError:
@@ -160,6 +174,19 @@ class ReadOnlyHttp:
 
     def redact(self, text: str) -> str:
         return redact(text, *self.secrets, *(v for k, v in self.headers.items() if _secret_header(k)))
+
+
+def _budget(base_url: str) -> tuple[Any, Any] | None:
+    from importlib import import_module
+    from urllib.parse import urlsplit
+
+    spec = HOST_BUDGETS.get(urlsplit(base_url).hostname or "")
+    if spec is None:
+        return None
+    mod, names = spec.split(":")
+    m = import_module(mod)
+    before, after = names.split(",")
+    return getattr(m, before), getattr(m, after)
 
 
 def _secret_header(name: str) -> bool:

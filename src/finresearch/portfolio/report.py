@@ -100,10 +100,6 @@ def _signal(h: PortfolioHolding, price: PriceInfo | None,
     return None
 
 
-# the prefix of service.action_reason (portfolio.tax keys on it too)
-CA_EXCLUDED = "unsupported corporate action"
-
-
 def xirr_exclusions(excluded: Counter[str]) -> str:
     """Why the overall XIRR leaves holdings out, from each holding's own reason (cash_flows / no current price)."""
     from finresearch.portfolio.valuation import NO_PURCHASE_DATE
@@ -113,7 +109,6 @@ def xirr_exclusions(excluded: Counter[str]) -> str:
                           "history to include them)",
         "opening balance with an unknown cost": "without a known cost",
         "no current price": "without a current price",
-        CA_EXCLUDED: "with an unresolved unsupported corporate action (demerger, rights, merger ...: open the holding)",
     }  # fmt: skip
     parts = [f"{n} {phrase.get(why, f'with {why}')}" for why, n in excluded.most_common()]
     return f"excludes {sum(excluded.values())} holding(s): " + "; ".join(parts)
@@ -141,8 +136,7 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
         actions = actions_of(h.meta)
         # an unsupported corporate action past its ex-date (#237): the open lots' cost is not what they say until the
         # user enters the allocation, so it is unknown, never the pre-action cost
-        past_actions = [a for a in actions if a["ex_date"] <= today.isoformat()] if units > 0 else []
-        if past_actions:
+        if units > 0 and any(a["ex_date"] <= today.isoformat() for a in actions):
             known = False
         with_actions += 1 if actions and units > 0 else 0
         cost = sum(
@@ -162,10 +156,6 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
         flows, why_not = cash_flows(data.txns.get(h.id, []), value, today)
         if why_not is None and units > 0 and value is None:
             why_not = "no current price"  # without today's value the flows alone would read as a large loss
-        if why_not is None and past_actions:
-            # the flows miss what the action gave or took (a demerged company's shares, rights paid for, a buyback),
-            # so the XIRR would be a number for a return that did not happen: incomplete, with the reason (#263)
-            why_not = past_actions[0]["reason"]
         x, x_reason = xirr_or_reason(flows, today) if why_not is None else (None, why_not)
         if stale_why and x is not None:
             x_reason = f"today's value uses an old price: {stale_why}"
@@ -173,7 +163,7 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
             all_flows += flows[:-1] if value else flows
             tot["xirr_value"] += value or ZERO
         elif units > 0 or why_not is not None:
-            excluded[CA_EXCLUDED if why_not.startswith(CA_EXCLUDED) else why_not] += 1
+            excluded[why_not] += 1
         unreal = (value - cost) if value is not None and known and units > 0 else None
         det = elss.detect(h.asset_type, h.name, category) if units > 0 else None
         lock = elss.lockin(open_lots, today, p.price, det) if det is not None else None
@@ -181,16 +171,13 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
             unknown_cost += 0 if known else 1
             unpriced += 1 if value is None else 0
             stale += 1 if stale_why else 0
-        # the display sector every view groups by (limits.sector_label): an ETF or fund by what it holds, never NSE's
-        # "Mutual Fund Scheme - ETF" industry; a blank or "-" industry is Unclassified (#264)
-        sector = sector_label(h.asset_type, h.sector or (p.industry if h.asset_type == "stock" else None),
-                              h.nse_symbol, h.name, eff, h.isin)  # fmt: skip
         if value is not None:
             tot["value"] += value
             debt = h.asset_type == "stock" and is_debt_security(h.isin, h.name, h.nse_symbol)
             label = BONDS_SECTOR if debt else asset_label(h.asset_type, eff)
             alloc["asset"][label] += value
-            alloc["sector"][sector] += value
+            alloc["sector"][sector_label(h.asset_type, h.sector or (p.industry if h.asset_type == "stock" else None),
+                                         h.nse_symbol, h.name, eff, h.isin)] += value  # fmt: skip
             bucket = cap_bucket(p.market_cap_cr) if h.asset_type == "stock" and eff == "equity" else (
                 fund_cap_bucket(category, eff) if h.asset_type == "mf" else "Not equity")  # fmt: skip
             alloc["cap"][bucket] += value
@@ -205,7 +192,7 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
         rows.append({
             "id": h.id, "name": h.name, "account": h.account, "asset_type": h.asset_type, "ikey": h.ikey,
             "isin": h.isin, "nse_symbol": h.nse_symbol, "bse_code": h.bse_code,
-            "scheme_code": h.scheme_code or p.scheme_code, "category": category, "sector": h.sector or p.industry, "sector_label": sector,
+            "scheme_code": h.scheme_code or p.scheme_code, "category": category, "sector": h.sector or p.industry,
             "tax_class": eff, "tax_class_auto": auto, "tax_class_why": why, "tax_class_override": h.tax_class,
             "listed": is_listed(h.asset_type, h.name, h.meta), "fmv_2018": _f(h.fmv_2018, 4),
             "sgb_original_subscriber": bool((h.meta or {}).get("sgb_original_subscriber")),
@@ -221,7 +208,6 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
                                                                   else fund_cap_bucket(category, eff)),
             "lots": len(open_lots), "closed": units <= 0, "signal": _signal(h, p, imap), "elss": lock,
             "warnings": (h.meta or {}).get("lot_warnings") or [], "pending_actions": actions,
-            "actions_synced": (h.meta or {}).get("actions_synced"),
             "sources": sorted({t.source for t in data.txns.get(h.id, [])}),
             "broker_baseline": any(t.kind == "opening" and (t.meta or {}).get("baseline")
                                    for t in data.txns.get(h.id, [])),

@@ -100,6 +100,21 @@ warnings in Profile → Notifications).
    answer (the app tries `token`, `access_token`, `accessToken`) and the order-list key (`order_list`/`orders`). If
    the first sync fails, the error on the card says which step.
 
+
+**Market data from Groww (#267).** While the Groww connection is on and its session is valid, the app also reads
+market data from the same paid API, first, and falls back to NSE/BSE (AMFI for funds) on any error or unknown
+instrument; every price says where it came from ("Groww LTP", "Groww daily close", "NSE quote", ...):
+- portfolio prices: the batched LTP (50 stocks a call) in session, Groww's daily close after 16:00 IST;
+- the latest value on index and stock charts in session; the F&O option chain (with IV; change in OI, bid and ask
+  are not in Groww's chain and show as unknown);
+- the daily top-up of the price history used by performance, risk and the charts (older history and any range across
+  a recorded split/bonus stay on the exchange's raw closes until Groww's adjustment rule is verified).
+Calls share one budget per Groww rate category across every FinResearch process (Live Data 10/s and 300/min, Non
+Trading 20/s and 500/min, Auth 5/s and 30/min, at most 140 of the 150 daily logins); LTP is cached 15 s in session,
+closes until the next open (no calls on weekends or holidays once cached), the instruments file is read once a day.
+When the session has expired during market hours, one background login a day runs through the normal sync (only if
+"Sync daily after the close" is on). The Groww card in Profile → Connections shows what Groww is supplying and today's
+calls by category. Expect roughly 120-130 calls on a trading day for 20 stocks (simulated with the real client).
 ## Dhan (TOTP, hands-free, free)
 
 1. web.dhan.co → My Profile → note your **Client ID**.

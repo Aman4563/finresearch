@@ -13,6 +13,7 @@ export type Chain = {
   pcr_oi: string | null;
   max_pain: string | null;
   rows: Row[];
+  source_label?: string; // "Groww" (the user's Groww API) or "NSE"
 };
 export type Leg = { right: "call" | "put" | "future"; strike: string; side: "buy" | "sell"; lots: number };
 export type ChargeRate = { key: string; rate_pct: number; basis: string; effective_from: string; source: string; status: "verified" | "secondary" | "unconfirmed"; note: string };

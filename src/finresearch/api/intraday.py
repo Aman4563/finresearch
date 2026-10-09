@@ -173,6 +173,21 @@ def add_intraday_routes(app: FastAPI, *, fetch=None, clock=None) -> None:
         as_of = last_ticks[-1].at if last_ticks else None
         fetched = got["fetched_at"] if got else None
         delay = round((fetched - as_of).total_seconds()) if fetched and as_of and live else None
+        live_source = None
+        if live and today_day is not None:
+            # the latest value from the user's Groww API when connected (#267); the candles stay the exchange's samples
+            from finresearch.adapters import groww_market
+
+            gv = await groww_market.MARKET.live_value(kind, sym)
+            if gv is not None:
+                from decimal import Decimal
+
+                ref = prev_close if prev_close is not None else last_traded
+                last = last_traded = Decimal(str(gv[0])) if isinstance(ref, Decimal) else gv[0]
+                last_kind, live_source = "last_traded", groww_market.SOURCE
+                fetched = gv[1]
+                as_of = gv[1]
+                delay = 0
         change = (last - prev_close) if last is not None and prev_close else None
         page, request = await _links(kind, sym)
         has_volume = any(c.volume is not None for c in candles)
@@ -183,6 +198,10 @@ def add_intraday_routes(app: FastAPI, *, fetch=None, clock=None) -> None:
                          "watched.")  # fmt: skip
         if error:
             notes.append(f"{ex} did not answer just now ({error}); showing archived sessions.")
+        if live_source:
+            notes.append(
+                f"Latest value from your {live_source} API (LTP); the candles are {ex}'s 1-minute samples."
+            )
         return {
             "symbol": sym, "kind": kind, "interval": interval, "days_requested": days,
             "sessions": [{"day": d.isoformat(), "prev_close": _num(pc), "samples": len(ts), "complete": c}
@@ -197,7 +216,7 @@ def add_intraday_routes(app: FastAPI, *, fetch=None, clock=None) -> None:
             "delay_s": delay, "live": live, "market": st["equity"],
             "refresh_s": QUOTE_TTL_LIVE_S, "source": page or request, "exchange": ex,
             "quote_page": page, "data_request": request,
-            "source_label": BSE_SOURCE_LABEL if ex == "BSE" else SOURCE_LABEL,
+            "source_label": BSE_SOURCE_LABEL if ex == "BSE" else SOURCE_LABEL, "last_source": live_source or ex,
             "has_volume": has_volume, "notes": notes,
         }  # fmt: skip
 

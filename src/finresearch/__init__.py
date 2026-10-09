@@ -13,3 +13,13 @@ def _version() -> str:
 
 
 __version__ = _version()
+
+
+def _quiet_secrets() -> None:
+    """Every FinResearch process (API, monitor, CLI, MCP server) redacts secrets from its logs (logredact, #269)."""
+    from finresearch import logredact
+
+    logredact.install()
+
+
+_quiet_secrets()

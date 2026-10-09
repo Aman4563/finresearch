@@ -341,28 +341,14 @@ def history(b: Book, today: date, max_points: int = 120) -> list[dict[str, Any]]
 
 
 # --------------------------------------------------------------------------- overview
-def goal_funding(g: WealthGoal, values: dict[int, float], portfolio: float | None, portfolio_why: str | None = None,
-                 unvalued: set[int] | frozenset[int] = frozenset()) -> dict[str, Any]:  # fmt: skip
-    """Money set aside for a goal today: other savings + linked assets + the earmarked share of the portfolio.
-
-    Unknown never becomes ₹0 (#262): when the goal earmarks a share of the portfolio and the portfolio's value is
-    unknown (`portfolio` None: holdings without a valuation), `start` is None; an incomplete valuation (`portfolio_why`
-    set: a holding without a price or cost) or a linked asset without a value (`unvalued`) keeps the known sum but
-    `complete` is False with the reasons, so it is read as a lower bound, never as the whole."""
+def goal_funding(g: WealthGoal, values: dict[int, float], portfolio: float) -> dict[str, Any]:
     linked = [int(i) for i in (g.linked_asset_ids or []) if int(i) in values]
-    missing = [int(i) for i in (g.linked_asset_ids or []) if int(i) in unvalued]
-    pct = float(g.portfolio_pct or 0)
-    why = []
-    if pct > 0 and (portfolio is None or portfolio_why):
-        why.append(portfolio_why or "portfolio: value unknown")
-    if missing:
-        why.append(f"{len(missing)} linked asset(s) without a value yet: left out")
-    start = None
-    if not (pct > 0 and portfolio is None):
-        start = round(
-            float(g.current_inr or 0) + sum(values[i] for i in linked) + (portfolio or 0.0) * pct / 100, 2
-        )
-    return {"start": start, "linked": linked, "complete": not why, "why": "; ".join(why) or None}
+    start = (
+        float(g.current_inr or 0)
+        + sum(values[i] for i in linked)
+        + portfolio * float(g.portfolio_pct or 0) / 100
+    )
+    return {"start": round(start, 2), "linked": linked}
 
 
 def _months_until(today: date, d: date) -> int:
@@ -503,16 +489,12 @@ def overview(s: Session, today: date) -> dict[str, Any]:
     for g in b.goals:
         for i in g.linked_asset_ids or []:
             linked_count[int(i)] = linked_count.get(int(i), 0) + 1
-    unvalued = {a.id for a in b.assets if a.id not in values}
     for g in b.goals:
-        fund = goal_funding(g, values, port_value, port_why, unvalued)
+        fund = goal_funding(g, values, port_value or 0.0)
         goals_json.append(
             {
                 **goal_json(g),
-                # None = unknown (the earmarked portfolio has no valuation), never ₹0; incomplete = a lower bound
                 "funded_now": fund["start"],
-                "funded_complete": fund["complete"],
-                "funded_why": fund["why"],
                 "months_left": _months_until(today, g.target_date),
                 "shared_links": [i for i in fund["linked"] if linked_count.get(i, 0) > 1],
             }
@@ -666,18 +648,8 @@ def goal_plan(
     values = {
         a.id: v for a in b.assets if (v := asset_value(a, b.vals.get(a.id, []), today)["value"]) is not None
     }
-    port_value, port_why = portfolio_value_on(b, today)  # the same rule as the overview (#238, #239)
-    unvalued = {a.id for a in b.assets if a.id not in values}
-    fund = goal_funding(g, values, port_value, port_why, unvalued)
-    if not fund["complete"]:
-        # the simulation starts from the money set aside today: from an unknown or partial start its P(success) and
-        # "SIP for 75 %" would be a shortfall computed from ₹0 or from part of the money (#262). Say why instead.
-        return {"goal_id": g.id, "name": g.name, "funded_complete": False, "funded_why": fund["why"],
-                "start": fund["start"], "linked": fund["linked"],
-                "message": "Not simulated: the money set aside for this goal is "
-                           + ("unknown" if fund["start"] is None else "incomplete")
-                           + f" ({fund['why']}). Value the portfolio (open /portfolio) or the linked assets first.",
-                "disclaimer": DISCLAIMER}  # fmt: skip
+    sn = portfolio_on(b.snaps, today)
+    fund = goal_funding(g, values, f(sn.value) if sn else 0.0)
     months = calc.months_between(today, g.target_date)
     a = assumptions_from({k: asm[k] for k in DEFAULT_ASSUMPTIONS})
     p = plan(
@@ -710,8 +682,6 @@ def goal_plan(
         {
             "goal_id": g.id,
             "name": g.name,
-            "funded_complete": True,
-            "funded_why": None,
             "message": msg,
             "linked": fund["linked"],
             "method": "Seeded lognormal Monte Carlo, monthly steps, SIP added at month end, rebalanced monthly; "
