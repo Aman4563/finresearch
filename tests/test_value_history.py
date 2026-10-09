@@ -262,3 +262,48 @@ def test_week_change_is_unavailable_when_the_history_ends_too_long_ago(db):
     assert week["week_why"].startswith(
         "unavailable: the value history is out of date (its last day is 2026-09-26"
     )
+
+
+def test_the_monitor_rebuilds_a_missing_or_out_of_date_series_on_any_tick(db):
+    """#260: GET performance/risk no longer store the series, so the monitor rebuilds it as soon as it is missing or
+    the transactions changed (before the close, no daily pass due), once per transaction set and day."""
+    import asyncio
+    from datetime import datetime, timedelta, timezone
+    from types import SimpleNamespace
+
+    from finresearch.db import session_scope
+    from finresearch.monitor.portfolio_daily import portfolio_step
+    from finresearch.portfolio import series
+    from finresearch.portfolio.history import History
+
+    built: list[int] = []
+
+    async def pf_history(holdings, today):
+        built.append(len(holdings))
+        return History(days=[date(2026, 8, 3), today], value=[1000.0, 1250.0], invested=[1000.0, 1000.0],
+                       complete=[True, True], start_reason="first transaction on 2026-08-03")  # fmt: skip
+
+    deps = SimpleNamespace(portfolio_daily=True, pf_history=pf_history)
+    ist = timezone(timedelta(hours=5, minutes=30))
+    morning = datetime(2026, 9, 2, 10, 0, tzinfo=ist)  # a Wednesday, before the close: no daily pass is due
+
+    def tick(at):
+        return asyncio.run(portfolio_step(deps, at, holidays=set(), stock_time=(18, 0)))
+
+    with session_scope() as s:
+        _buy(s, date(2026, 8, 3))
+    out = tick(morning)
+    assert out["history"]["stored"] is True and built == [1]
+    with session_scope() as s:
+        ser, why = series.load(s)
+    assert why is None and ser.value == [1000.0, 1250.0] and ser.days[-1] == date(2026, 9, 2)
+    assert tick(morning + timedelta(minutes=1)) == {} and built == [1]  # current: nothing to do
+    with session_scope() as s:
+        _buy(s, date(2026, 8, 10))  # the transactions changed: the stored series is out of date
+    assert tick(morning + timedelta(minutes=2))["history"]["stored"] is True and built == [1, 1]
+    with session_scope() as s:
+        assert series.load(s)[1] is None
+    deps.pf_history = None  # no builder (tests, partial deps): nothing claimed, nothing run
+    with session_scope() as s:
+        _buy(s, date(2026, 8, 11))
+    assert tick(morning + timedelta(minutes=3)) == {}
