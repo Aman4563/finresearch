@@ -145,7 +145,42 @@ async def portfolio_step(deps: Any, now: datetime, *, holidays: set | None = Non
             continue
         _finish(slot, res, now)
         out[kind] = res
+    if not out and (got := await stale_history_step(deps, now)):  # a daily pass this tick rebuilds it anyway
+        out["history"] = got
     return out
+
+
+def history_slot(day: date, fp: str) -> str:
+    return f"pf_hist:{day.isoformat()}:{fp}"
+
+
+async def stale_history_step(deps: Any, now: datetime) -> dict[str, Any] | None:
+    """Rebuild the canonical value history as soon as it is missing or out of date (transactions changed since the
+        last build), on any tick, once per transaction set and day ("pf_hist:<day>:<fingerprint>"). Until #260 opening the
+        Performance tab rebuilt and stored it; GETs no longer write, so the monitor keeps the drawdown alert's input
+        current between daily passes. A set the daily pass already built today is not built again, even when that build
+    stored nothing (too few prices). None when nothing was due."""
+    from finresearch.fincalc.dates import to_ist
+    from finresearch.portfolio import series
+
+    if getattr(deps, "pf_history", None) is None:
+        return None
+    with session_scope() as s:
+        fp = series.current_fingerprint(s)
+        ser, _why = series.load(s, fp)
+    if ser is not None:
+        return None
+    slot = history_slot(to_ist(now).date(), fp)
+    if not claim(slot, now):
+        return None
+    try:
+        res = await history_pass(deps, to_ist(now).date())
+    except Exception as e:
+        log.warning("portfolio value history rebuild failed; retried later", exc_info=True)
+        _finish(slot, {}, now, f"{type(e).__name__}: {e}")
+        return {"error": f"{type(e).__name__}: {e}"[:300]}
+    _finish(slot, res, now)
+    return res
 
 
 # --------------------------------------------------------------------------- the pass
@@ -220,6 +255,10 @@ async def history_pass(deps: Any, today: date) -> dict[str, Any]:
     fp = fingerprint(hs)
     hist = await asyncio.wait_for(deps.pf_history(hs, today), HISTORY_TIMEOUT_S)
     with session_scope() as s:
+        # this transaction set was built today: the tick's rebuild (stale_history_step) skips it; a build that raised
+        # is not marked, so the tick tries again
+        s.execute(insert(AlertEvalSlot).values(slot=history_slot(today, fp), result={"status": "done", "attempts": 1})
+                  .on_conflict_do_nothing(index_elements=["slot"]))  # fmt: skip
         if not series.save(s, hist, fp, today):
             return {"stored": False, "reason": hist.reason or "fewer than two days of prices"}
         rec = series.reconcile_db(s, series.from_history(hist, fp, today), today)
