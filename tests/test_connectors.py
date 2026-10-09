@@ -989,3 +989,302 @@ def test_inbox_password_is_tracked_by_a_random_revision_not_a_hash(db):
         )  # unchanged
         assert update(s, INBOX_KEY, {"config": {"password": "XYZAB9876C"}}).config["password_rev"] != rev1
         assert "password_rev" not in update(s, INBOX_KEY, {"config": {"clear_password": True}}).config
+
+
+# ------------------------------------------------------------------ #266 broker sync hardening
+def _groww_with_orders(orders):
+    return {**GROWW, "/v1/order/list": {"status": "SUCCESS", "payload": {"order_list": orders}}}
+
+
+def _order(oid, filled, avg, status="OPEN", **extra):
+    return {"groww_order_id": oid, "trading_symbol": "NEWCO", "order_status": status, "quantity": 100,
+            "filled_quantity": filled, "average_fill_price": avg, "exchange": "NSE", "transaction_type": "BUY",
+            "created_at": "2026-09-30T10:00:00", "product": "CNC", **extra}  # fmt: skip
+
+
+def _connect_groww(client):
+    r = client.put("/api/connections/groww", headers=ORIGIN,
+                   json={"config": {"api_key": GROWW_KEY, "totp_secret": SEED}, "auto_sync": True})  # fmt: skip
+    assert r.status_code == 200, r.text
+
+
+def test_an_order_synced_part_filled_then_filled_is_one_row(client, transport):
+    """#266: 40 of 100 filled @100.5 at a pre-close Sync now, all 100 @100.3 at the after-close sync. Groww reports
+    the order, not its fills, so this is one buy of 100 @100.3 (amount 10,030), never 140."""
+    from sqlalchemy import select
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import PortfolioTxn
+    from finresearch.portfolio.connectors.sync import sync_now
+
+    _connect_groww(client)
+    transport(_groww_with_orders([_order("GO9", 40, "100.5")]))
+    first = run(sync_now("groww", now=datetime(2026, 9, 30, 5, 30, tzinfo=UTC)))  # 11:00 IST
+    assert first["status"] == "ok" and first["summary"]["added"] == 1
+    transport(_groww_with_orders([_order("GO9", 100, "100.3", "EXECUTED")]))
+    second = run(sync_now("groww", trigger="scheduled", now=NOW))  # 16:30 IST
+    assert second["status"] == "ok" and second["summary"]["added"] == 0 and second["summary"]["updated"] == 1
+    third = run(sync_now("groww", now=NOW))
+    assert third["summary"]["updated"] == 0 and third["summary"]["duplicates"] == 1  # the same read again
+    with session_scope() as s:
+        rows = [t for t in s.scalars(select(PortfolioTxn).where(PortfolioTxn.source == "groww_api"))
+                if (t.meta or {}).get("order_id") == "GO9"]  # fmt: skip
+        assert [(r.quantity, r.price, r.amount) for r in rows] == [(D(100), D("100.3"), D("10030"))]
+        assert _units(s, "Groww")["NSE:NEWCO"] == D(100)
+
+
+def test_an_order_stored_twice_before_the_fix_is_a_conflict_not_a_guess(db):
+    from finresearch.portfolio.connectors.merge import merge_sync
+    from finresearch.portfolio.importers import ImportedTxn
+    from finresearch.portfolio.service import add_txns, rebuild
+
+    with db() as s:
+        for q, p in (("40", "100.5"), ("100", "100.3")):  # what a sync before #266 left behind
+            for hid in add_txns(s, [ImportedTxn(account="Groww", asset_type="stock", name="NEWCO", day=TODAY, kind="buy",
+                                     quantity=D(q), price=D(p), amount=D(q) * D(p), source="groww_api",
+                                     nse_symbol="NEWCO", meta={"order_id": "GO9"}, ext=q)]).holdings:  # fmt: skip
+                rebuild(s, hid)
+        t = _t(TODAY, "buy", "NEWCO", None, 100, "100.3", "GO9", "GO9")
+        res = merge_sync(s, account="Groww", source="groww_api", label="Groww", holdings=[], trades=[t],
+                         today=TODAY, now=NOW, order_keyed=True)  # fmt: skip
+        assert res.added == 0 and res.updated == 0 and "stored 2 times" in res.conflicts[0]["why"]
+        assert _units(s, "Groww")["NSE:NEWCO"] == D(140)  # left for the user to review, never edited blindly
+
+
+def test_an_unexpected_failure_is_logged_and_not_retried_every_tick(client, transport, monkeypatch):
+    """#266: the login works but storing the token fails (a locked Keychain): before, the exception escaped _finish,
+    so no log row, no failed_day, and the next tick logged in again (Groww caps logins at 150 a day)."""
+    from sqlalchemy import func, select
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import BrokerConnection, BrokerSyncLog
+    from finresearch.portfolio.connectors import sync
+    from finresearch.secrets import SecretStoreError
+
+    _connect_groww(client)
+    rec = transport(GROWW)
+
+    def broken(s, key, grant):
+        raise SecretStoreError(f"Keychain write failed for {grant.token}")
+
+    monkeypatch.setattr(sync, "set_token", broken)
+    out = run(sync.sync_now("groww", trigger="scheduled", now=NOW))
+    assert out["status"] == "error" and "SecretStoreError" in out["error"] and ACCESS not in json.dumps(out)
+    with session_scope() as s:
+        row = s.get(BrokerConnection, "groww")
+        assert not sync.due(row, datetime(2026, 9, 30, 11, 1, tzinfo=UTC))  # no login on the next tick
+        assert s.scalar(select(func.count()).select_from(BrokerSyncLog)) == 1
+    assert len([r for r in rec.requests if r.method == "POST"]) == 1
+
+
+def test_secret_reads_run_off_the_event_loop(client, transport, monkeypatch):
+    import threading
+
+    from finresearch.portfolio.connectors import store, sync
+
+    _connect_groww(client)
+    transport(GROWW)
+    seen: list[bool] = []
+    real = store.build_from
+
+    def spy(*cols):
+        seen.append(threading.current_thread() is threading.main_thread())
+        return real(*cols)
+
+    monkeypatch.setattr(sync, "build_from", spy)
+    assert run(sync.sync_now("groww", now=NOW))["status"] == "ok"
+    assert seen == [False]  # a Keychain prompt can no longer freeze the API
+
+
+@pytest.mark.parametrize("body", [
+    {"status": "SUCCESS", "payload": {"orders_v2": []}},  # the list renamed
+    {"status": "SUCCESS"},  # no payload
+    {"status": "SUCCESS", "payload": {"order_list": "x"}},
+])  # fmt: skip
+def test_a_changed_order_list_shape_is_a_failed_read_not_no_trades(client, transport, body):
+    """#266: before, any of these read as "no orders today": status ok and trades_through moved to today, and the
+    order list answers today only, so the day's trades were lost without a word."""
+    from finresearch.db import session_scope
+    from finresearch.db.models import BrokerConnection
+    from finresearch.portfolio.connectors.sync import sync_now
+
+    _connect_groww(client)
+    transport({**GROWW, "/v1/order/list": body})
+    out = run(sync_now("groww", now=NOW))
+    assert out["status"] == "partial" and "unexpected response shape" in out["error"]
+    assert out["summary"]["trades_since"] is None  # no claim of coverage
+    with session_scope() as s:
+        assert "trades_through" not in (s.get(BrokerConnection, "groww").state or {})
+
+
+def test_an_empty_order_list_is_still_a_good_read(transport):
+    from finresearch.portfolio.connectors.groww import GrowwConnector
+
+    transport({**GROWW, "/v1/order/list": {"status": "SUCCESS", "payload": {"order_list": []}}})
+    assert run(GrowwConnector({}, ACCESS).trades(TODAY, TODAY)) == []
+
+
+def test_groww_funds_checks_the_status(transport):
+    from finresearch.portfolio.connectors.base import ConnectorError
+    from finresearch.portfolio.connectors.groww import GrowwConnector
+
+    transport({**GROWW, "/v1/margins/detail/user": {"status": "FAILURE", "error": {"message": "down"},
+                                                     "payload": {"clear_cash": 0}}})  # fmt: skip
+    with pytest.raises(ConnectorError, match="down"):
+        run(GrowwConnector({}, ACCESS).funds())  # before: {"cash": 0}, an unknown balance shown as ₹0
+
+
+def test_a_failed_trades_read_is_retried_the_same_day_then_capped(client, transport):
+    """#266: Groww's order list answers today only. A failed read at 16:30 IST is read again at +10, +20 and +40
+    minutes; the 4th failure stops the day's scheduled attempts and says what to do."""
+    from datetime import timedelta
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import BrokerConnection
+    from finresearch.portfolio.connectors.sync import due, sync_now
+
+    _connect_groww(client)
+    transport({**GROWW, "/v1/order/list": {"status": "FAILURE", "error": {"message": "busy"}}})
+    t, gaps = NOW, [10, 20, 40]
+    for i in range(4):
+        out = run(sync_now("groww", trigger="scheduled", now=t))
+        assert out["status"] == "partial" and out["summary"]["trades_since"] is None
+        with session_scope() as s:
+            row = s.get(BrokerConnection, "groww")
+            assert "trades_through" not in row.state
+            if i < 3:
+                nxt = t + timedelta(minutes=gaps[i])
+                assert not due(row, nxt - timedelta(minutes=1)) and due(row, nxt)
+                t = nxt
+            else:
+                assert "after 4 attempts" in out["error"] and row.state["failed_day"] == "2026-09-30"
+                assert not due(row, t + timedelta(hours=2))
+    transport(GROWW)  # the next day works again and clears the retry
+    out = run(sync_now("groww", trigger="scheduled", now=datetime(2026, 10, 1, 11, 0, tzinfo=UTC)))
+    assert out["status"] == "ok" and out["summary"]["trades_since"] == "2026-10-01"  # today-only: today, not -3 days
+
+
+def test_another_process_holding_the_connection_blocks_sync_and_login(client, transport):
+    from sqlalchemy import text
+
+    from finresearch.db import get_engine
+    from finresearch.portfolio.connectors.sync import SyncBusy, sync_now
+
+    _connect_groww(client)
+    rec = transport(GROWW)
+    other = get_engine().connect()  # another process's sync
+    try:
+        assert other.execute(text("SELECT pg_try_advisory_lock(hashtext('broker_sync:groww'))")).scalar()
+        other.commit()
+        with pytest.raises(SyncBusy):
+            run(sync_now("groww", now=NOW))
+        assert client.post("/api/connections/groww/sync", headers=ORIGIN).status_code == 409
+        assert client.post("/api/connections/groww/login", headers=ORIGIN).status_code == 409
+        assert rec.requests == []  # no second login, no reads
+    finally:
+        other.execute(text("SELECT pg_advisory_unlock(hashtext('broker_sync:groww'))"))
+        other.commit()
+        other.close()
+    assert run(sync_now("groww", now=NOW))["status"] == "ok"  # released: works again
+
+
+def test_a_refused_token_is_cleared_only_if_it_is_still_the_one_used(client, transport):
+    from finresearch.db import session_scope
+    from finresearch.db.models import BrokerConnection
+    from finresearch.portfolio.connectors.base import TokenGrant
+    from finresearch.portfolio.connectors.store import set_token
+    from finresearch.portfolio.connectors.sync import _finish
+
+    _connect_groww(client)
+    with session_scope() as s:
+        old = set_token(s, "groww", TokenGrant("tok-old-123456", datetime(2026, 10, 1, 0, 30, tzinfo=UTC)))
+    with session_scope() as s:
+        new = set_token(s, "groww", TokenGrant("tok-new-123456", datetime(2026, 10, 1, 0, 30, tzinfo=UTC)))
+    assert old != new
+    _finish("groww", "manual", NOW, "reconnect", {}, "refused", today=None, expire=True, token_rev=old)
+    with session_scope() as s:
+        assert s.get(BrokerConnection, "groww").token  # a Log in after the sync started: its token stays
+    _finish("groww", "manual", NOW, "reconnect", {}, "refused", today=None, expire=True, token_rev=new)
+    with session_scope() as s:
+        assert s.get(BrokerConnection, "groww").token is None
+
+
+def test_groww_dates_a_trade_by_its_trade_date_not_order_creation():
+    """An after-market order placed on the evening of 29-Sep fills on 30-Sep: `created_at` is the 29th, `trade_date`
+    ("Date on which trade has taken place", order-list docs) the 30th."""
+    from finresearch.portfolio.connectors.groww import map_order
+
+    amo = _order("GO7", 5, 200, "EXECUTED", created_at="2026-09-29T19:30:00", exchange_time="2026-09-30T09:15:02",
+                 trade_date="2026-09-30T09:15:02")  # fmt: skip
+    assert map_order(amo).day == date(2026, 9, 30)
+    del amo["trade_date"]
+    assert map_order(amo).day == date(2026, 9, 30)  # exchange_time next
+    del amo["exchange_time"]
+    assert map_order(amo).day == date(2026, 9, 29)  # only the creation time is left (documented fallback)
+
+
+def test_a_stock_bought_today_is_not_missing_at_the_broker(db):
+    """Groww's holdings at 16:30 exclude today's buys: a new stock bought today is no reconciliation difference."""
+    from finresearch.portfolio.connectors.merge import merge_sync
+
+    with db() as s:
+        res = merge_sync(s, account="Groww", source="groww_api", label="Groww",
+                         holdings=[_h("INE000B01012", "EXBANK", 5, "480.5")],
+                         trades=[_t(TODAY, "buy", "NEWCO", None, 3, 50, "GO5", "GO5")], today=TODAY, now=NOW,
+                         holdings_include_today=False)  # fmt: skip
+        assert res.added == 1 and all(r["ok"] for r in res.reconciliation), res.reconciliation
+
+
+def test_differences_are_unknown_when_holdings_were_not_read(client, transport):
+    from finresearch.portfolio.connectors.sync import sync_now
+
+    _connect_groww(client)
+    transport({**GROWW, "/v1/holdings/user": {"status": "FAILURE", "error": {"message": "down"}}})
+    out = run(sync_now("groww", now=NOW))
+    assert out["status"] == "partial"
+    assert out["summary"]["reconciled"] is None and out["summary"]["differences"] is None  # not 0
+
+
+def test_broker_schedule_uses_the_known_holiday_list(monkeypatch):
+    """#266: a known holiday skips the after-close sync; an unknown list (not cached for the year) does not pause
+    broker syncs (Groww's today-only order list cannot be fetched later), weekdays then count as trading days."""
+    from finresearch.adapters import nse_holidays
+    from finresearch.db.models import BrokerConnection
+    from finresearch.portfolio.connectors import sync
+
+    row = BrokerConnection(key="groww", enabled=True, auto_sync=True, status="connected", last_sync_day=None)
+    at = datetime(2026, 9, 30, 16, 5, tzinfo=IST)
+    monkeypatch.setattr(nse_holidays, "known_trading_holidays", lambda day, state_dir=None: {date(2026, 9, 30)})
+    assert not sync.due(row, at, sync._holidays(date(2026, 9, 30)))
+    monkeypatch.setattr(nse_holidays, "known_trading_holidays", lambda day, state_dir=None: None)
+    assert sync._holidays(date(2026, 9, 30)) == set() and sync.due(row, at, set())
+
+
+def test_a_token_about_to_expire_counts_as_expired():
+    from datetime import timedelta
+
+    from finresearch.db.models import BrokerConnection
+    from finresearch.portfolio.connectors.store import token_valid
+
+    row = BrokerConnection(key="groww", token="secret_ref:x", token_expires_at=NOW + timedelta(minutes=2))
+    assert not token_valid(row, NOW)  # a sync now would fail half-way at 06:00 IST
+    row.token_expires_at = NOW + timedelta(minutes=10)
+    assert token_valid(row, NOW)
+
+
+def test_groww_retries_a_refused_totp_once_with_the_next_step(monkeypatch):
+    from finresearch.portfolio.connectors import groww
+    from finresearch.portfolio.connectors.groww import GrowwConnector
+
+    sent: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(json.loads(request.content)["totp"])
+        if len(sent) == 1:
+            return httpx.Response(401, json={"message": "invalid totp"})
+        return httpx.Response(200, json={"token": ACCESS})
+
+    monkeypatch.setattr(base, "TRANSPORT", httpx.MockTransport(handler))
+    monkeypatch.setattr(groww.time, "time", lambda: 1_790_000_029.0)  # 1 s before a step turns
+    assert run(GrowwConnector({"api_key": GROWW_KEY, "totp_secret": SEED}).login()).token == ACCESS
+    assert sent == [totp(SEED, 1_790_000_029.0), totp(SEED, 1_790_000_059.0)] and sent[0] != sent[1]
