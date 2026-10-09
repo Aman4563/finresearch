@@ -3,10 +3,9 @@
 Every route is a GET that reads the local database and public price history, except PUT .../settings, which stores
 the user's business-group corrections and exit loads in `portfolio_setting` ("analytics"). The daily value history is
 rebuilt from the transactions (`portfolio.history`), cached in memory for 30 minutes per transaction set and on disk
-per instrument, so only the first build after new transactions reads prices from NSE/BSE/AMFI. The GETs write
-nothing to the database (#260): the canonical value history the alerts, brief, digest and net worth read
-(`portfolio.series`, #239) is stored by the monitor (daily pass, and as soon as the transactions change), and the
-performance payload reconciles the "as shown" snapshots against this build.
+per instrument, so only the first build after new transactions reads prices from NSE/BSE/AMFI. Each build is also
+stored as the canonical value history the alerts, brief, digest and net worth read (`portfolio.series`, #239), and
+the performance payload reconciles the "as shown" snapshots against it.
 
 Privacy: personal data stays in the local database; nothing here calls an LLM.
 
@@ -121,7 +120,13 @@ def add_portfolio_analytics_routes(app: FastAPI, *, scheme_rows: Callable[[], Aw
                 )
             if note:
                 hist.warnings.append(note)
-            # read-only (#260): the canonical series the alerts read (portfolio.series) is stored by the monitor
+            try:  # the canonical value history the alerts, brief, digest and net worth read (portfolio.series)
+                from finresearch.portfolio import series
+
+                with session_scope() as s:
+                    series.save(s, hist, fp, today)
+            except Exception:  # storing it never fails the request
+                log.warning("could not store the value history", exc_info=True)
             return hist
 
         return await cache.get(key, HISTORY_TTL_S, make), today, fp

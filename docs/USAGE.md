@@ -53,9 +53,7 @@ Retention (the monitor runs it weekly, early on Monday IST; `monitor/retention.p
 
 GET requests don't change your records, the alert inputs or the forecast ledger:
 - The portfolio value history (behind the drawdown and drift alerts) is recorded by the monitor's daily pass and by
-  `POST /api/portfolio/snapshot`, which the portfolio page calls once every price is in. The reconstructed value
-  history the drawdown alert reads is stored by the monitor only: after each close, and within minutes of a change to
-  your transactions. The Performance and Risk tabs build the same history to show it but never store it.
+  `POST /api/portfolio/snapshot`, which the portfolio page calls once every price is in.
 - Journal drafts for new trades are created by the monitor (every minute) and by `POST /api/journal/sync`, which the
   journal page calls when it opens.
 - A viewed stock or IPO signal is logged in the forecast ledger by `POST /api/signals/{asset}/{instrument}`, which

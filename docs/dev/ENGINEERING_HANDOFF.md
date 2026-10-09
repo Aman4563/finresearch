@@ -59,9 +59,13 @@ Every change must preserve these.
 16. Secrets (broker credentials and tokens, the saved CAS password, notification tokens, the API token) live in the
     macOS Keychain through `finresearch.secrets`; database rows hold only `{"secret_ref": ...}` references. Tests use
     the memory backend and never touch the Keychain. `finresearch secrets check` fails while any plaintext is left.
+    Every log record is redacted as it is created (`logredact`: any secret the process read or stored, bearer
+    tokens, key=value secrets) and httpx/httpcore/vendor SDK loggers stay at WARNING (#269).
 17. Every API route except `/api/health` (and the brokers' OAuth callback) requires the local API token. Agents'
     WebFetch is denied loopback and private addresses (`finresearch.fetch_guard`), and the polite HTTP client's
     per-host rate limit is shared by all clients and processes.
+18. Broker market data (Groww, #267) is read-only (GET allowlist), shares one rate budget per Groww category across
+    processes (`adapters.groww_budget`), and always falls back to NSE/BSE/AMFI: a failed Groww call is never a price.
 
 ## 3. Known sharp edges
 

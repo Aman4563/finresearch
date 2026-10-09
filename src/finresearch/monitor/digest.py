@@ -113,39 +113,13 @@ def contributors(hist: dict[str, dict[str, list]], names: dict[str, str], start:
     }
 
 
-# The value history is rebuilt after each close (portfolio.series), so a window that ends more than this many days
-# before today (a Friday close read on a Tuesday after a Monday holiday is 4) is out of date: the same allowance the
-# brief's "last daily valuation" health line uses.
-HISTORY_MAX_AGE_DAYS = 4
-
-
-def window_change(s: Session, today: date, days: int, *, last_two: bool = False) -> tuple[dict[str, Any] | None,
-                                                                                          str | None]:  # fmt: skip
-    """(value_change over the last `days` days, None) or (None, why it is unavailable), from the canonical
-    reconstructed value history (portfolio.series, #239). Never a silent empty: a history that is not built, out of
-    date (transactions changed) or ends too long before today says so, and so does a window with fewer than two
-    complete days (#264). There is no fallback to the "as shown" snapshots: they are not the canonical past."""
+def _snaps(s: Session, since: date) -> list[tuple[date, float, float]]:
+    """(day, value, invested) of the complete days since `since`, from the canonical reconstructed value history
+    (portfolio.series, #239); empty when it is not built or out of date (the value change then says nothing)."""
     from finresearch.portfolio import series
 
-    ser, why = series.load(s)
-    if ser is None:
-        return None, f"unavailable: {why}"
-    rows = ser.rows(today - timedelta(days=days + 4))
-    if last_two:  # the brief's daily line: the last two complete days within the window
-        window = [r for r in rows if r[0] >= today - timedelta(days=days)][-2:]
-    else:  # the window's change: from the last day on or before its start (a weekend start reads Friday's close)
-        start = [r for r in rows if r[0] <= today - timedelta(days=days)]
-        window = ([start[-1]] if start else []) + [r for r in rows if r[0] > today - timedelta(days=days)]
-    last = ser.days[-1] if ser.days else None
-    if last is None or (today - last).days > HISTORY_MAX_AGE_DAYS:
-        return None, (f"unavailable: the value history is out of date (its last day is "
-                      f"{last.isoformat() if last else 'none'}, built on {ser.built_on}); it is rebuilt by the daily "
-                      "portfolio pass after the close or when the Performance tab is opened")  # fmt: skip
-    vc = value_change(window)
-    if vc is None:
-        return None, (f"unavailable: fewer than two complete valuation days in the last {days} days of the value "
-                      "history (a day with an unpriced holding is not complete)")  # fmt: skip
-    return vc, None
+    ser, _why = series.load(s)
+    return ser.rows(since) if ser is not None else []
 
 
 def ipo_events(s: Session, today: date, days: int = EVENT_DAYS) -> list[dict[str, Any]]:
@@ -294,9 +268,9 @@ def build_brief(s: Session, now: datetime) -> dict[str, Any]:
                            "skip them until the cost is entered."})  # fmt: skip
     missed = [x for x in sips if x["status"] != "on track"]
 
-    perf = perf_why = None
+    perf = None
     if settings.daily_performance and has_pf:
-        perf, perf_why = window_change(s, today, 6, last_two=True)
+        perf = value_change(_snaps(s, today - timedelta(days=6))[-2:])
     disc = _disclosures(s, now)
     for x in disc.get("unavailable") or []:
         health.append({"level": "info", "text": f"Disclosures: {x} unavailable (no recent good read); red flags from it "
@@ -316,7 +290,7 @@ def build_brief(s: Session, now: datetime) -> dict[str, Any]:
         "events": events, "rules_fired": rules, "since": since.isoformat(), "signal_changes": changes,
         "sip": sips, "sip_missed": missed, "long_term": lots, "tax_calendar": tax_cal, "advance_tax": at,
         "elss_unlocks": elss_month,
-        "health": health, "performance": perf, "performance_why": perf_why, "settings": settings.model_dump(mode="json"), "disclosures": disc,
+        "health": health, "performance": perf, "settings": settings.model_dump(mode="json"), "disclosures": disc,
         "method": "Deterministic templates over the local database: holdings' events and signals from the monitor's "
                   "daily pass (NSE, AMFI), rule alerts, the dated tax table. Nothing here is sent to an LLM.",
         "behaviour_note": BEHAVIOUR_NOTE, "disclaimer": DISCLAIMER,
@@ -401,7 +375,10 @@ def build_digest(s: Session, now: datetime, days: int = 7) -> dict[str, Any]:
     from finresearch.portfolio.report import load
 
     today = to_ist(now).date()
-    vc, vc_why = window_change(s, today, days)
+    snaps = _snaps(s, today - timedelta(days=days + 4))
+    start = [r for r in snaps if r[0] <= today - timedelta(days=days)]
+    window = ([start[-1]] if start else []) + [r for r in snaps if r[0] > today - timedelta(days=days)]
+    vc = value_change(window)
     v = cache.read(s, cache.VALUATION)
     hist = v.get("history") or {}
     contrib = None
@@ -415,7 +392,7 @@ def build_digest(s: Session, now: datetime, days: int = 7) -> dict[str, Any]:
     sg = cache.read(s, cache.SIGNALS)
     data = load(s)
     return {
-        "day": today.isoformat(), "generated_at": now.isoformat(), "window_days": days, "value": vc, "value_why": vc_why,
+        "day": today.isoformat(), "generated_at": now.isoformat(), "window_days": days, "value": vc,
         "elss_unlocks": elss_this_month(s, data, today) if data.holdings else [],
         "contributors": contrib, "signals": sorted((sg.get("items") or {}).values(), key=lambda x: -(x.get("weight_pct") or 0))[:10],
         "benchmark": "Comparison with NIFTYBEES over the same window needs the portfolio value history "
@@ -431,9 +408,9 @@ def digest_text(d: dict[str, Any]) -> str:
     lines = [f"Weekly digest to {date.fromisoformat(d['day']):%d %b}"]
     vc = d.get("value")
     if not vc:
-        lines.append(f"Weekly change {d['value_why']}." if d.get("value_why") else
-                     "Not enough daily valuations this week to compare (the monitor values the portfolio after each "
-                     "close).")  # fmt: skip
+        lines.append(
+            "Not enough daily valuations this week to compare (the monitor values the portfolio after each close)."
+        )
     else:
         lines.append(f"Time-weighted return {vc['twr_pct']:+.2f}% ({vc['from']} to {vc['to']}): market move "
                      f"{_inr(vc['market'])}, new money {_inr(vc['new_money'])}.")  # fmt: skip

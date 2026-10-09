@@ -4,8 +4,7 @@
     B  web quote verified against a stored snapshot of the page (fetch_page / exchange tool text, snapshot_sha256);
        also exchange/AMFI facts the pipeline itself fetched and recorded (verify.gate.DETERMINISTIC_SOURCES)
     C  web citation whose quote was not checked (no stored snapshot)
-    D  computed by fincalc: save_claim re-ran the call, it reproduced the value, its input claims are cited, and
-       every numeric argument is one of those claims' values or a declared constant (#265)
+    D  computed by fincalc: save_claim re-ran the call, it reproduced the value, and its input claims are cited
     U  unsupported: a checked citation that failed, or a free-text calculation note nobody re-ran
 
 A claim's grade is the best of its citations' (A, B, D are "checked"; C is weaker; U worst). The publish gate

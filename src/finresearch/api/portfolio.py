@@ -204,8 +204,12 @@ def add_portfolio_routes(app: FastAPI, *, scheme_rows: Callable[[], Awaitable[li
                     return got
                 return await cache.get(("navall",), 6 * 3600, scheme_rows)
 
+            from finresearch.adapters.groww_market import Prefetch
+
+            # Groww first when connected (#267); the instant first paint reads only what Groww data is cached
             prices = await fetch_prices(holdings, quote=quote, scheme_rows=rows, listings=sources.listings,
-                                        on_price=on_price, budget_s=None if cached_only else PRICE_BUDGET_S)  # fmt: skip
+                                        on_price=on_price, budget_s=None if cached_only else PRICE_BUDGET_S,
+                                        prefetch=Prefetch(cached_only=cached_only))  # fmt: skip
         waiting: set[int] = set()
         if pending:
             from finresearch.portfolio.valuation import instrument_of
@@ -715,7 +719,6 @@ def add_portfolio_routes(app: FastAPI, *, scheme_rows: Callable[[], Awaitable[li
                        if h.asset_type == "stock" and (h.nse_symbol or h.bse_code)]  # fmt: skip
         fetched: dict[tuple[str, str], list[tuple[date | None, str]]] = {}
         errors: list[str] = []
-        failed: set[tuple[str, str]] = set()
         for _, sym, code in targets:
             key = ("NSE", sym) if sym else ("BSE", code)
             if key in fetched:
@@ -726,11 +729,9 @@ def add_portfolio_routes(app: FastAPI, *, scheme_rows: Callable[[], Awaitable[li
                 fetched[key] = [(a.ex_date, a.subject) for a in acts]
             except Exception as e:
                 errors.append(f"{key[0]} {key[1]}: {type(e).__name__}")
-                failed.add(key)
                 fetched[key] = []
         added: dict[str, list[str]] = {}
         pending: dict[str, list[str]] = {}
-        synced_on = src().today().isoformat()
         with session_scope() as s:
             for hid, sym, code in targets:
                 h = s.get(PortfolioHolding, hid)
@@ -748,10 +749,6 @@ def add_portfolio_routes(app: FastAPI, *, scheme_rows: Callable[[], Awaitable[li
                 )
                 if rec:
                     pending[h.name] = rec
-                # when this stock's actions were last read (a failed fetch is not a sync): the data-health row reads
-                # a stock never synced, or synced too long ago, as unknown, never as "no corporate action" (#264)
-                if (("NSE", sym) if sym else ("BSE", code)) not in failed:
-                    h.meta = {**(h.meta or {}), "actions_synced": synced_on}
         return {"checked": len(targets), "added": added, "pending": pending, "errors": errors}
 
     @app.post("/api/portfolio/holdings/{holding_id}/actions/resolve")

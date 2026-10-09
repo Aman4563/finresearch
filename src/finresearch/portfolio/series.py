@@ -13,9 +13,8 @@ the current allocation (allocation_drift_pp) and the dashboard strip. Past = rec
 
 Where the series lives. history.build is async and needs the network; the alert metrics, brief, digest and wealth
 pages are synchronous and read only the database. So every build is persisted here, in portfolio.cache under
-KEY (no schema change), by the monitor (monitor.portfolio_daily): the daily pass after the close, and on any tick
-once the stored series is missing or out of date. The performance/risk API builds the same history but, as a GET,
-never stores it (#260). A stored series whose transaction fingerprint no longer matches
+KEY (no schema change), by its two builders: the performance/risk API (api.portfolio_analytics) and the monitor's
+daily pass after the close (monitor.portfolio_daily). A stored series whose transaction fingerprint no longer matches
 the database is out of date and is not used (None with the reason): there is no silent fallback to snapshots.
 
 Reconciliation (`reconcile`) compares each snapshot with the series on the same day and reports every day where they
@@ -39,8 +38,8 @@ KEY = "cache:history"
 TOLERANCE_PCT = 1.0
 TOLERANCE_INR = 100.0
 CLOSE_IST = time(15, 30)  # NSE's session ends; a snapshot written before it used intraday prices
-NOT_BUILT = ("no reconstructed value history yet: the monitor (`finresearch serve`) builds it within minutes of a "
-             "change to the transactions and again after each close")  # fmt: skip
+NOT_BUILT = ("no reconstructed value history yet: it is built by the daily portfolio pass after the close "
+             "(`finresearch serve`) or when the Performance tab is opened")  # fmt: skip
 
 
 @dataclass
@@ -116,7 +115,7 @@ def load(s: Session, fingerprint: str | None = None) -> tuple[Series | None, str
     fp = fingerprint if fingerprint is not None else current_fingerprint(s)
     if ser.fingerprint != fp:
         return None, (f"the value history built on {ser.built_on} is out of date (transactions changed since); it is "
-                      "rebuilt by the monitor within minutes")  # fmt: skip
+                      "rebuilt by the next daily pass or when the Performance tab is opened")  # fmt: skip
     return ser, None
 
 

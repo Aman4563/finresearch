@@ -629,7 +629,7 @@ def lookthrough_exposure(session: Any, prices: dict[int, Any], today: date, *, s
             continue
         equity = r["asset_type"] == "stock" and r.get("tax_class") == "equity"
         direct.append(DirectInput(key=(r.get("isin") or r.get("nse_symbol") or r.get("bse_code") or r["name"]).upper(),
-                                  name=r["name"], value=Decimal(str(r["value"])), sector=r.get("sector_label"),
+                                  name=r["name"], value=Decimal(str(r["value"])), sector=r.get("sector"),
                                   equity=equity, cap=r.get("cap_bucket") if equity else None))  # fmt: skip
     fin = [
         FundInput(f.name, f.value, lines_of(f.found.portfolio) if f.found else None)

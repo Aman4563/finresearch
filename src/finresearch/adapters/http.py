@@ -24,14 +24,13 @@ import json
 import logging
 import os
 import re
-import socket
 import threading
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urlsplit
 
 import httpx
 from pydantic import BaseModel, Field
@@ -279,36 +278,11 @@ class UnsafeURLError(ValueError):
     """A URL the shared client refuses: not http(s), or aimed at this machine or a private network."""
 
 
-_NAT64 = ipaddress.ip_network("64:ff9b::/96")
-
-
-def is_public_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
-    """Whether `ip` is a routable public unicast address. IPv4 inside IPv6 (mapped ::ffff:a.b.c.d, 6to4 2002::/16,
-    Teredo) is judged by the IPv4 address it carries. `is_global` is False for private, loopback, link-local,
-    unspecified, reserved, documentation and shared/CGNAT (100.64.0.0/10, RFC 6598) space; multicast is checked too
-    because some multicast ranges count as global."""
-    if isinstance(ip, ipaddress.IPv6Address):
-        inner = ip.ipv4_mapped or ip.sixtofour or (ip.teredo[1] if ip.teredo else None)
-        if (
-            inner is None and ip in _NAT64
-        ):  # 64:ff9b::/96 (RFC 6052) carries the IPv4 address in its last 32 bits
-            inner = ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
-        if (
-            inner is not None
-        ):  # judged by the carried address alone: older Pythons call all of ::ffff:0:0/96 reserved
-            return is_public_ip(inner)
-    return ip.is_global and not (ip.is_multicast or ip.is_loopback or ip.is_link_local or ip.is_unspecified
-                                 or ip.is_reserved or ip.is_private)  # fmt: skip
-
-
-def check_public_url(url: str, *, resolve: Callable[..., list] | None = None) -> str:
+def check_public_url(url: str) -> str:
     """Defence in depth against SSRF (CodeQL py/full-ssrf): this client only talks to public data sources, so it refuses
     other schemes, `localhost` names and private, loopback, link-local or reserved IP literals. Callers that take a URL
-    from the user still allow-list hosts first (adapters.amc_portfolio.check_url, ingest.documents).
-
-    `resolve` (socket.getaddrinfo or a fake): also resolve a host name and refuse it unless EVERY address it resolves
-    to is public (#259); a name that does not resolve is refused too (fail closed). Used for agent-chosen URLs
-    (fetch_page), on every redirect hop. Without it a name is not resolved (the exchange adapters' fixed hosts)."""
+    from the user still allow-list hosts first (adapters.amc_portfolio.check_url, ingest.documents). A public name
+    that resolves to a private address is not caught here (that needs resolution at connect time)."""
     parts = urlsplit(url)
     host = (parts.hostname or "").lower().rstrip(".")
     if parts.scheme not in ("http", "https") or not host:
@@ -316,27 +290,11 @@ def check_public_url(url: str, *, resolve: Callable[..., list] | None = None) ->
     if host == "localhost" or host.endswith(".localhost"):
         raise UnsafeURLError("refusing a URL on this machine (localhost)")
     try:
-        addrs = [ipaddress.ip_address(host.strip("[]"))]
+        ip = ipaddress.ip_address(host.strip("[]"))
     except ValueError:
-        if resolve is None:
-            return url
-        if host.endswith((".local", ".internal", ".home.arpa", ".lan")):
-            raise UnsafeURLError(f"refusing a local network name ({host})") from None
-        try:
-            port = parts.port or (443 if parts.scheme == "https" else 80)
-            infos = resolve(host, port)
-            addrs = [ipaddress.ip_address(str(ai[4][0]).split("%")[0]) for ai in infos]
-        except (OSError, UnicodeError, ValueError) as e:
-            raise UnsafeURLError(
-                f"could not resolve {host} to check that it is public ({type(e).__name__})"
-            ) from e
-        if not addrs:
-            raise UnsafeURLError(f"{host} resolved to no address") from None
-    for ip in addrs:
-        if not is_public_ip(ip):
-            raise UnsafeURLError(
-                f"refusing a URL on a private, loopback or reserved address ({host} -> {ip})"
-            )
+        return url
+    if not ip.is_global or ip.is_multicast:
+        raise UnsafeURLError(f"refusing a URL on a private, loopback or reserved address ({ip})")
     return url
 
 
@@ -536,61 +494,3 @@ class PoliteClient:
         meta = fetched.record.model_dump(mode="json")
         meta["cache_ttl_s"] = ttl  # for the weekly prune (monitor.retention); reads still check their own TTL
         paths[0].write_text(json.dumps(meta, indent=1))
-
-
-# --------------------------------------------------------------------------- agent-chosen URLs (fetch_page, #259)
-MAX_PUBLIC_BYTES = (
-    5 * 1024 * 1024
-)  # a web page an agent reads; an RHP or annual report goes through ingest.documents
-MAX_PUBLIC_REDIRECTS = 5
-
-
-class ResponseTooLarge(ValueError):
-    """The body passed the size cap; nothing of it is returned."""
-
-
-async def fetch_public(url: str, *, max_bytes: int = MAX_PUBLIC_BYTES, max_redirects: int = MAX_PUBLIC_REDIRECTS,
-                       resolve: Callable[..., list] | None = None, timeout: float = 20.0,
-                       transport: httpx.AsyncBaseTransport | None = None,
-                       limiter: HostRateLimiter | None = None) -> Fetched:  # fmt: skip
-    """GET a URL an agent chose, failing closed (#259): before each request (the first and every redirect hop, at most
-    `max_redirects`) the host name is resolved and every address must be public (check_public_url with `resolve`);
-    redirects are followed here, not by httpx, so no hop escapes the check. The body is streamed and the fetch is
-    aborted once it passes `max_bytes` (decoded bytes, so a compressed bomb is caught too); a declared Content-Length
-    over the cap is refused before reading. Browser headers and the shared per-host rate limit as PoliteClient.
-
-    Left open: the name is resolved again when connecting, so a DNS server that answers public then private (DNS
-    rebinding) within the TTL is not caught; that needs connecting to the checked address itself."""
-    resolve = resolve or socket.getaddrinfo  # looked up per call, so a test's fake DNS reaches fetch_page
-    limiter = limiter or HostRateLimiter()
-    async with httpx.AsyncClient(headers=BROWSER_HEADERS, timeout=timeout, follow_redirects=False,
-                                 transport=transport) as client:  # fmt: skip
-        target = url
-        for _hop in range(max_redirects + 1):
-            await asyncio.to_thread(check_public_url, target, resolve=resolve)
-            await limiter.wait(urlsplit(target).hostname or "")
-            resp = await client.send(client.build_request("GET", target), stream=True)
-            if not resp.is_redirect:
-                break
-            await resp.aclose()
-            target = urljoin(target, resp.headers.get("location", ""))
-        else:
-            raise UnsafeURLError(f"more than {max_redirects} redirects from {url}")
-        try:
-            declared = resp.headers.get("content-length", "")
-            if declared.strip().isdigit() and int(declared) > max_bytes:
-                raise ResponseTooLarge(
-                    f"response is {int(declared):,} bytes, over the {max_bytes:,}-byte cap"
-                )
-            body = bytearray()
-            async for chunk in resp.aiter_bytes():
-                body += chunk
-                if len(body) > max_bytes:
-                    raise ResponseTooLarge(f"response passed the {max_bytes:,}-byte cap; fetch aborted")
-        finally:
-            await resp.aclose()
-    content = bytes(body)
-    record = FetchRecord(url=str(resp.request.url), status=resp.status_code,
-                         content_type=resp.headers.get("content-type"), fetched_at=now_ist(),
-                         sha256=hashlib.sha256(content).hexdigest(), size=len(content))  # fmt: skip
-    return Fetched(record=record, content=content)

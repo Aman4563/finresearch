@@ -63,6 +63,7 @@ class OptionChain(BaseModel):
     underlying: Decimal | None
     as_of: datetime | None
     rows: list[ChainRow]
+    source: str = "NSE"  # "Groww" when adapters.groww_fno read it from the user's Groww API (#267)
 
     def atm(self) -> ChainRow | None:
         if not self.rows or self.underlying is None:
