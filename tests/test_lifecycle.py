@@ -231,3 +231,29 @@ def test_library_bond_maturity_is_stored_and_backfilled_unknown_stays_unknown(lc
                                                      "source": "unknown"}  # fmt: skip
         gone = s.query(Company).filter(Company.slug == f"bond-{GONE_BOND.lower()}").one()
         assert "maturity" not in (gone.meta or {})
+
+
+async def test_mcp_bond_analytics_answers_matured_instead_of_crashing_and_search_drops_matured(monkeypatch):
+    """#293: bond_analytics raised ValueError (fincalc's coupon schedule) on a matured bond; it now says so."""
+    import json
+
+    from finresearch.adapters import nse_bonds
+    from finresearch.fincalc.dates import today_ist
+    from finresearch.mcp_server.server import bond_analytics, nse_bond_search
+
+    from pathlib import Path
+
+    fix = Path(__file__).parent / "fixtures" / "nse" / "bonds_live_trimmed.json"
+    rows = nse_bonds.parse_live_bonds(json.loads(fix.read_text()))
+    old = rows[0].model_copy(update={"isin": "INE0EO107052", "symbol": "EXOLDNCD", "maturity": today_ist()})
+
+    async def fake_live(client=None):
+        return [*rows, old]
+
+    monkeypatch.setattr(nse_bonds, "live_bonds", fake_live)
+    out = json.loads(await bond_analytics("INE906B07DF8", 1, "dirty", settlement="2029-02-05"))
+    assert out["status"] == "matured" and out["matured_on"] == "2029-02-05" and "ytm" not in out
+    out = json.loads(await bond_analytics("INE0EO107052", 1, "dirty"))
+    assert out["status"] == "matured"
+    assert json.loads(await nse_bond_search("EXOLDNCD")) == []  # matures today: left out
+    assert json.loads(await nse_bond_search("875NHAI29"))[0]["isin"] == "INE906B07DF8"
