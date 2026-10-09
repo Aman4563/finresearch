@@ -15,7 +15,8 @@ https://groww.in/trade-api/docs/curl/portfolio (holdings/positions), https://gro
   t1_quantity, pledge_quantity, demat_free_quantity ... No price (the app prices holdings itself). In the docs sample
   the free/locked/pledged parts add up to ``quantity`` and ``t1_quantity`` is separate, so the total held is taken as
   ``quantity + t1_quantity`` [U: inferred from the sample; re-read 9-Oct-2026, the docs only say "The net quantity
-  of the holding" and "The T1 quantity of the holding", not whether one includes the other].
+  of the holding" and "The T1 quantity of the holding", not whether one includes the other]. Each sync tests both
+  readings on every row with T1 shares (`t1_check`, #282) and the connection keeps the first decisive result.
 * Positions ``GET /positions/user?segment=CASH`` → ``payload.positions[]``.
 * Trades: the order list ``GET /order/list?segment=CASH&page=&page_size=100`` covers **today only**; an order with
   ``filled_quantity > 0`` becomes one trade at ``average_fill_price``, dated by ``trade_date`` ("Date on which trade
@@ -94,12 +95,52 @@ def _payload(body: Any, *keys: str) -> list[dict[str, Any]]:
     raise ConnectorError(f"Groww answered an unexpected response shape (no {' or '.join(keys)})")
 
 
-def map_holding(r: dict[str, Any]) -> BrokerHolding:
-    q = (dec(r.get("quantity")) or Decimal(0)) + (dec(r.get("t1_quantity")) or Decimal(0))
+# The parts of a holding that sit in the demat account (holdings docs, read 9-Oct-2026). On 9-Oct-2026 every live
+# holding (none with T1) had quantity == demat_free_quantity and the other parts 0, so `quantity` behaves like "shares
+# in demat" (#282). corporate_action_additional_quantity is left out of the sum: whether Groww counts it in
+# `quantity` is not stated [U], and on a row where it is not 0 neither hypothesis below may fit (then: unknown).
+DEMAT_PARTS = ("demat_free_quantity", "demat_locked_quantity", "groww_locked_quantity", "pledge_quantity",
+               "repledge_quantity", "active_demat_transfer_quantity")  # fmt: skip
+T1_SEPARATE, T1_INCLUDED, T1_UNKNOWN = "separate", "included", "unknown"
+
+
+def t1_check(r: dict[str, Any]) -> tuple[str | None, str | None]:
+    """(finding, reason) for a holding row with T1 shares, (None, None) without: both hypotheses are tested on the
+    row's own numbers. quantity == the demat parts → T1 is separate (the total is quantity + T1); quantity == the
+    demat parts + T1 → T1 is included (the total is quantity); neither, or a part missing from the row → unknown."""
+    t1 = dec(r.get("t1_quantity")) or Decimal(0)
+    if t1 <= 0:
+        return None, None
+    qty = dec(r.get("quantity")) or Decimal(0)
+    missing = [k for k in DEMAT_PARTS if dec(r.get(k)) is None]
+    if missing:
+        return T1_UNKNOWN, f"T1 {t1} with demat parts missing from Groww's answer ({', '.join(missing)})"
+    parts = sum((dec(r.get(k)) or Decimal(0) for k in DEMAT_PARTS), Decimal(0))
+    if qty == parts:
+        return T1_SEPARATE, None
+    if qty == parts + t1:
+        return T1_INCLUDED, None
+    return T1_UNKNOWN, (f"quantity {qty} is neither the demat parts {parts} (T1 separate) nor the demat parts plus "
+                        f"T1 {parts + t1} (T1 included)")  # fmt: skip
+
+
+def map_holding(r: dict[str, Any], semantics: str | None = None) -> BrokerHolding:
+    """`semantics`: what an earlier sync confirmed about T1 (connection state `t1_semantics`, #282). A row whose own
+    numbers decide it is counted that way; a row they do not decide keeps quantity + T1 unless "included" was
+    confirmed, and its reconciliation says unknown. A row that contradicts the confirmed rule follows the rule and is
+    marked unknown too."""
+    qty, t1 = dec(r.get("quantity")) or Decimal(0), dec(r.get("t1_quantity")) or Decimal(0)
+    check, reason = t1_check(r)
+    if check in (T1_SEPARATE, T1_INCLUDED) and semantics in (T1_SEPARATE, T1_INCLUDED) and check != semantics:
+        reason = f"T1 {t1}: these numbers fit T1 {check}, but T1 {semantics} was confirmed earlier"
+        check = T1_UNKNOWN
+    included = check == T1_INCLUDED or (check == T1_UNKNOWN and semantics == T1_INCLUDED)
+    q = qty if included else qty + t1
     sym = str(r.get("trading_symbol") or "").strip().upper() or None
     return BrokerHolding(name=sym or str(r.get("isin") or ""), quantity=q, isin=(r.get("isin") or None), symbol=sym,
                          exchange="NSE", avg_price=dec(r.get("average_price")), pledged=dec(r.get("pledge_quantity")),
-                         t1_quantity=dec(r.get("t1_quantity")), raw_keys=tuple(sorted(r)))  # fmt: skip
+                         t1_quantity=dec(r.get("t1_quantity")), t1_check=check, t1_reason=reason,
+                         raw_keys=tuple(sorted(r)))  # fmt: skip
 
 
 def map_position(r: dict[str, Any]) -> BrokerPosition:
@@ -212,9 +253,12 @@ class GrowwConnector(BrokerConnector):
             raise ConnectorError("Groww's login answer had no access token")
         return TokenGrant(tok, next_six_am(datetime.now(IST)))
 
+    # set by the sync from the connection state before reading holdings (#282)
+    t1_semantics: str | None = None
+
     async def holdings(self) -> list[BrokerHolding]:
         rows = _payload(await self._http().get("/holdings/user"), "holdings")
-        return [h for h in (map_holding(r) for r in rows) if h.quantity > 0]
+        return [h for h in (map_holding(r, self.t1_semantics) for r in rows) if h.quantity > 0]
 
     async def positions(self) -> list[BrokerPosition]:
         rows = _payload(await self._http().get("/positions/user", {"segment": "CASH"}), "positions")

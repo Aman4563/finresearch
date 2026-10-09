@@ -1293,3 +1293,86 @@ def test_groww_retries_a_refused_totp_once_with_the_next_step(monkeypatch):
     monkeypatch.setattr(groww.time, "time", lambda: 1_790_000_029.0)  # 1 s before a step turns
     assert run(GrowwConnector({"api_key": GROWW_KEY, "totp_secret": SEED}).login()).token == ACCESS
     assert sent == [totp(SEED, 1_790_000_029.0), totp(SEED, 1_790_000_059.0)] and sent[0] != sent[1]
+
+
+# ------------------------------------------------------------------ #282 Groww T1: inside `quantity` or not?
+def _g_row(qty, t1, free, **parts):
+    row = {"isin": "INE000A01011", "trading_symbol": "EXMPL", "quantity": qty, "average_price": 100, "t1_quantity": t1,
+           "demat_free_quantity": free, "demat_locked_quantity": 0, "groww_locked_quantity": 0, "pledge_quantity": 0,
+           "repledge_quantity": 0, "active_demat_transfer_quantity": 0}  # fmt: skip
+    return {**row, **parts}
+
+
+def test_groww_t1_check_tests_both_hypotheses_on_the_row():
+    from finresearch.portfolio.connectors.groww import map_holding
+
+    sep = map_holding(_g_row(10, 3, 10))  # quantity = the demat parts: T1 is outside it
+    assert (sep.quantity, sep.t1_check, sep.t1_reason) == (D(13), "separate", None)
+    inc = map_holding(_g_row(13, 3, 10))  # quantity = demat parts + T1: T1 is inside it
+    assert (inc.quantity, inc.t1_check) == (D(13), "included")
+    unk = map_holding(_g_row(12, 3, 10))  # neither 10 nor 13: today's behaviour (12 + 3) and "unknown"
+    assert (unk.quantity, unk.t1_check) == (D(15), "unknown")
+    assert "neither the demat parts 10" in unk.t1_reason
+    # the confirmed rule decides an unclear row
+    assert map_holding(_g_row(12, 3, 10), "included").quantity == D(12)
+    locked = map_holding(_g_row(10, 2, 6, pledge_quantity=4))  # 6 free + 4 pledged = 10: still separate
+    assert (locked.quantity, locked.t1_check) == (D(12), "separate")
+    no_parts = map_holding({"trading_symbol": "EXMPL", "quantity": 10, "t1_quantity": 2})
+    assert no_parts.t1_check == "unknown" and "demat_free_quantity" in no_parts.t1_reason  # missing is not 0
+    against = map_holding(_g_row(10, 3, 10), "included")  # fits "separate" but "included" was confirmed
+    assert (against.quantity, against.t1_check) == (D(10), "unknown")
+    assert "confirmed earlier" in against.t1_reason
+    plain = map_holding(_g_row(10, 0, 10))
+    assert (plain.quantity, plain.t1_check) == (D(10), None)  # no T1: nothing to check
+
+
+def test_t1_state_keeps_the_first_decisive_finding():
+    from finresearch.portfolio.connectors.sync import t1_state
+
+    def hs(*checks):
+        return [BrokerHolding(name="X", quantity=D(1), t1_check=c) for c in checks]
+
+    d1, d2, d3 = date(2026, 10, 12), date(2026, 10, 13), date(2026, 10, 14)
+    assert t1_state(None, hs(None, None), d1) == {}  # no T1 anywhere: nothing learned
+    st = t1_state(None, hs("unknown"), d1)
+    assert "result" not in st and st["last_seen"]["evidence"] == {"separate": 0, "included": 0, "unknown": 1}
+    mixed = t1_state(st, hs("separate", "included"), d2)
+    assert "result" not in mixed and mixed["conflict"] == "2026-10-13"
+    st = t1_state(st, hs("separate", "separate", "unknown"), d2)
+    assert (st["result"], st["day"], st["evidence"]) == ("separate", "2026-10-13",
+                                                        {"separate": 2, "included": 0, "unknown": 1})  # fmt: skip
+    st = t1_state(st, hs("unknown"), d3)
+    assert (st["result"], st["day"], st["last_seen"]["day"]) == ("separate", "2026-10-13", "2026-10-14")
+
+
+def test_groww_sync_records_t1_semantics_and_marks_unclear_rows_unknown(client, transport):
+    from finresearch.db import session_scope
+    from finresearch.db.models import BrokerConnection
+    from finresearch.portfolio.connectors.sync import sync_now
+
+    def with_holdings(*rows):
+        return {**GROWW, "/v1/holdings/user": {"status": "SUCCESS", "payload": {"holdings": list(rows)}},
+                "/v1/order/list": {"status": "SUCCESS", "payload": {"order_list": []}}}  # fmt: skip
+
+    _connect_groww(client)
+    transport(with_holdings(_g_row(12, 3, 10)))  # neither hypothesis: unknown, nothing stored
+    out = run(sync_now("groww", now=NOW))
+    rec = {r["name"]: r for r in out["summary"]["reconciliation"]}
+    assert rec["EXMPL"]["status"] == "unknown" and rec["EXMPL"]["ok"] is False and rec["EXMPL"]["reason"]
+    assert out["summary"]["differences"] == 1  # unknown is never counted as reconciled
+    with session_scope() as s:
+        assert "result" not in s.get(BrokerConnection, "groww").state["t1_semantics"]
+    transport(with_holdings(_g_row(10, 3, 10)))  # decisive: separate
+    out = run(sync_now("groww", now=NOW))
+    assert {r["name"]: r for r in out["summary"]["reconciliation"]}["EXMPL"]["status"] != "unknown"
+    with session_scope() as s:
+        st = s.get(BrokerConnection, "groww").state["t1_semantics"]
+        assert (st["result"], st["day"], st["evidence"]["separate"]) == ("separate", "2026-09-30", 1)
+    transport(with_holdings(_g_row(13, 3, 10)))  # fits "included" now: contradicts the stored rule
+    out = run(sync_now("groww", now=NOW))
+    row = {r["name"]: r for r in out["summary"]["reconciliation"]}["EXMPL"]
+    assert row["status"] == "unknown" and row["broker_units"] == "16"  # the stored rule (13 + 3), flagged
+    with session_scope() as s:
+        assert s.get(BrokerConnection, "groww").state["t1_semantics"]["result"] == "separate"  # kept
+    groww = next(c for c in client.get("/api/connections").json()["connections"] if c["key"] == "groww")
+    assert groww["t1_semantics"]["result"] == "separate" and groww["t1_semantics"]["day"] == "2026-09-30"

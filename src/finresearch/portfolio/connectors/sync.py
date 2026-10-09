@@ -165,6 +165,10 @@ async def _sync(key: str, trigger: str, now: datetime, secrets_out: list[str]) -
     data: dict[str, Any] = {}
     errors: list[str] = []
     caps = conn.capabilities
+    # Groww: whether T1 shares are inside `quantity` is checked on the data (#282)
+    t1_aware = hasattr(conn, "t1_semantics")
+    if t1_aware:
+        conn.t1_semantics = (state0.get("t1_semantics") or {}).get("result")
     today_only = bool(getattr(conn, "trades_today_only", False))
     since = (
         (last_day - timedelta(days=OVERLAP_DAYS))
@@ -219,6 +223,8 @@ async def _sync(key: str, trigger: str, now: datetime, secrets_out: list[str]) -
         state["last_summary"]["conflicts"] = len(summary["conflicts"])
         if have_trades:
             state["trades_through"] = today.isoformat()
+        if t1_aware and have_holdings:
+            state["t1_semantics"] = t1_state(state.get("t1_semantics"), data["holdings"], today)
         state.pop("reconnect_alert_day", None)
         state.pop("failed_day", None)
         state.pop("trades_retry", None)
@@ -237,6 +243,27 @@ async def _sync(key: str, trigger: str, now: datetime, secrets_out: list[str]) -
         row.state = state
     status = "partial" if errors else "ok"
     return await _finish_async(key, trigger, now, status, summary, "; ".join(errors) or None, today=today)
+
+
+def t1_state(prev: dict[str, Any] | None, holdings: list[Any], today: date) -> dict[str, Any]:
+    """The connection's record of how the broker reports T1 shares (#282). The first sync whose holdings decide it
+    (rows with T1 whose numbers fit exactly one hypothesis, and all fitting the same one) stores `result`, its `day`
+    and the `evidence` counts; later syncs keep that result and only update `last_seen`. Rows that fit different
+    hypotheses in one sync decide nothing (`conflict`)."""
+    out = dict(prev or {})
+    seen = {k: sum(1 for h in holdings if getattr(h, "t1_check", None) == k)
+            for k in ("separate", "included", "unknown")}  # fmt: skip
+    if not any(seen.values()):
+        return out  # no holding with T1 shares in this sync: nothing learned
+    out["last_seen"] = {"day": today.isoformat(), "evidence": seen}
+    decisive = [k for k in ("separate", "included") if seen[k]]
+    if not out.get("result"):
+        if len(decisive) == 1:
+            out.update(result=decisive[0], day=today.isoformat(), evidence=seen)
+            out.pop("conflict", None)
+        elif len(decisive) == 2:
+            out["conflict"] = today.isoformat()
+    return out
 
 
 def _store_token(key: str, grant: Any) -> str:

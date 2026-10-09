@@ -499,12 +499,16 @@ def reconcile_snapshot(s: Session, *, account: str, holdings: list[BrokerHolding
         seen |= {x.id for x in matches}
         diff = have - h.quantity
         acts = "; ".join(a["reason"] for x in matches for a in actions_of(x.meta)) or None
-        out.append({"name": t.name, "ikey": t.ikey, "account": account, "broker_units": str(h.quantity),
-                    "app_units": str(have.quantize(Decimal("0.001"))), "diff": str(diff.quantize(Decimal("0.001"))),
-                    "ok": abs(diff) <= UNITS_TOL,
-                    "status": "ok" if abs(diff) <= UNITS_TOL else ("missing_in_app" if not matches else "differs"),
-                    "broker_avg_price": str(h.avg_price) if h.avg_price is not None else None,
-                    "pending_action": acts if abs(diff) > UNITS_TOL else None})  # fmt: skip
+        row = {"name": t.name, "ikey": t.ikey, "account": account, "broker_units": str(h.quantity),
+               "app_units": str(have.quantize(Decimal("0.001"))), "diff": str(diff.quantize(Decimal("0.001"))),
+               "ok": abs(diff) <= UNITS_TOL,
+               "status": "ok" if abs(diff) <= UNITS_TOL else ("missing_in_app" if not matches else "differs"),
+               "broker_avg_price": str(h.avg_price) if h.avg_price is not None else None,
+               "pending_action": acts if abs(diff) > UNITS_TOL else None}  # fmt: skip
+        if getattr(h, "t1_check", None) == "unknown":
+            # the broker's own total is uncertain (#282): a match would not prove anything, so never "ok"
+            row.update(ok=False, status="unknown", reason=h.t1_reason)
+        out.append(row)
     if not by_instrument:
         for x in s.scalars(select(PortfolioHolding).where(PortfolioHolding.account == account)):
             if x.id in seen:

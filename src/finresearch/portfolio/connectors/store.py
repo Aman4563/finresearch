@@ -144,7 +144,9 @@ def public_one(s: Session, key: str, now: datetime | None = None) -> dict[str, A
             "token_expires_at": _iso(row.token_expires_at) if row else None,
             "last_sync_at": _iso(row.last_sync_at) if row else None, "last_error": row.last_error if row else None,
             "positions": state.get("positions") or [], "funds": state.get("funds") or None,
-            "last_summary": state.get("last_summary") or None}  # fmt: skip
+            "last_summary": state.get("last_summary") or None,
+            # Groww (#282, #284): what the syncs learned about T1 shares, and the last in-session order-list read
+            "t1_semantics": state.get("t1_semantics") or None, "orders_poll": state.get("orders_poll") or None}  # fmt: skip
 
 
 def public(s: Session, now: datetime | None = None) -> list[dict[str, Any]]:

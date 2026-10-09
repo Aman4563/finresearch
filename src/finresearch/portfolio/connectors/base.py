@@ -83,7 +83,11 @@ class BrokerHolding:
     asset_type: str = "stock"  # stock | mf
     scheme_code: str | None = None
     pledged: Decimal | None = None
-    t1_quantity: Decimal | None = None  # bought, not yet delivered (T+1): included in quantity
+    t1_quantity: Decimal | None = None  # bought, not yet delivered (T+1); `quantity` is the total held
+    # Groww (#282): whether this row's numbers show T1 shares inside the broker's own quantity ("included"), outside it
+    # ("separate"), or neither ("unknown": the reconciliation then says unknown, with `t1_reason`); None when no T1
+    t1_check: str | None = None
+    t1_reason: str | None = None
     raw_keys: tuple[str, ...] = ()  # which broker fields were present (for the mapping tests)
 
 
