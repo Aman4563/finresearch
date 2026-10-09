@@ -496,8 +496,11 @@ def xirr_or_reason(flows: list[tuple[date, Decimal]], today: date) -> tuple[floa
         return None, f"held under {MIN_XIRR_DAYS} days: see the absolute return"
     try:
         return float(xirr(flows)), None
-    except ValueError as e:
-        return None, str(e)
+    except ValueError:
+        # fixed wording, never the exception text (it reaches the API)
+        if not (any(a < 0 for _, a in flows) and any(a > 0 for _, a in flows)):
+            return None, "needs at least one investment and one current value"
+        return None, "no XIRR between -99.99 % and 1000 %"
 
 
 NO_PURCHASE_DATE = "opening balance with an unknown purchase date"

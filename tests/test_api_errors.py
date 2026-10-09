@@ -24,3 +24,17 @@ def test_public_error_keeps_the_class_and_a_bounded_message():
     out = public_error(e, 120)
     assert out.startswith("RuntimeError: NSE HTTP 503") and len(out) == 120
     assert public_error(ValueError()) == "ValueError"
+
+
+def test_xirr_reason_is_fixed_text_never_the_exception():
+    """Code scanning #28: the XIRR reason reaches the API, so it is our own fixed wording."""
+    from datetime import date
+    from decimal import Decimal
+
+    from finresearch.portfolio.valuation import xirr_or_reason
+
+    today = date(2026, 10, 9)
+    _, why = xirr_or_reason([(date(2025, 1, 1), Decimal(100)), (today, Decimal(50))], today)
+    assert why == "needs at least one investment and one current value"
+    _, why = xirr_or_reason([(date(2025, 1, 1), Decimal(-1)), (today, Decimal("1e12"))], today)
+    assert why == "no XIRR between -99.99 % and 1000 %"
