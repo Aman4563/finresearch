@@ -1376,3 +1376,91 @@ def test_groww_sync_records_t1_semantics_and_marks_unclear_rows_unknown(client, 
         assert s.get(BrokerConnection, "groww").state["t1_semantics"]["result"] == "separate"  # kept
     groww = next(c for c in client.get("/api/connections").json()["connections"] if c["key"] == "groww")
     assert groww["t1_semantics"]["result"] == "separate" and groww["t1_semantics"]["day"] == "2026-09-30"
+
+
+# ------------------------------------------------------------------ #284 Groww: the order list read in session
+def _ist(h, m, day=TODAY):
+    return datetime(day.year, day.month, day.day, h, m, tzinfo=IST)
+
+
+def _logged_in_groww(client, transport):
+    from finresearch.portfolio.connectors.sync import sync_now
+
+    _connect_groww(client)
+    transport(_groww_with_orders([]))
+    assert (
+        run(sync_now("groww", now=_ist(9, 5)))["status"] == "ok"
+    )  # the morning login (and an empty order list)
+
+
+def test_orders_are_polled_every_30_minutes_in_session_and_fills_upsert_one_row(client, transport):
+    from sqlalchemy import select
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import BrokerConnection, PortfolioTxn
+    from finresearch.portfolio.connectors.sync import orders_step
+
+    _logged_in_groww(client, transport)
+    rec = transport(_groww_with_orders([_order("GO9", 40, "100.5")]))
+    assert run(orders_step(_ist(10, 0), set())) == {"orders_polled": 1}
+    assert run(orders_step(_ist(10, 10), set())) == {}  # 10 minutes later: not yet
+    rec2 = transport(_groww_with_orders([_order("GO9", 100, "100.3", "EXECUTED")]))
+    assert run(orders_step(_ist(10, 31), set())) == {"orders_polled": 1}
+    # orders only, one Non-Trading call each: no login, holdings, positions or funds
+    assert [r.url.path for r in rec.requests + rec2.requests] == ["/v1/order/list", "/v1/order/list"]
+    with session_scope() as s:
+        rows = [t for t in s.scalars(select(PortfolioTxn).where(PortfolioTxn.source == "groww_api"))
+                if (t.meta or {}).get("order_id") == "GO9"]  # fmt: skip
+        assert [(r.quantity, r.price, r.amount) for r in rows] == [(D(100), D("100.3"), D("10030"))]
+        poll = s.get(BrokerConnection, "groww").state["orders_poll"]
+        assert (poll["status"], poll["updated"], poll["added"]) == ("ok", 1, 0)
+        row = s.get(BrokerConnection, "groww")
+        assert (
+            row.last_sync_day == TODAY and row.state.get("trades_through") == "2026-09-30"
+        )  # the 09:05 sync's
+    # the after-close sync still runs and reads the same order again: still one row of 100
+    from finresearch.portfolio.connectors.sync import sync_now
+
+    out = run(sync_now("groww", trigger="scheduled", now=_ist(16, 30)))
+    assert out["summary"]["added"] == 0 and out["summary"]["duplicates"] >= 1
+    assert run(orders_step(_ist(16, 31), set())) == {}  # after 16:00: no poll
+
+
+def test_order_poll_skips_a_running_sync_a_closed_day_and_an_expired_session(client, transport, monkeypatch):
+    from sqlalchemy import text
+
+    from finresearch.db import get_engine, session_scope
+    from finresearch.db.models import BrokerConnection
+    from finresearch.portfolio.connectors.sync import connections_step, orders_step
+
+    _logged_in_groww(client, transport)
+    rec = transport(_groww_with_orders([_order("GO9", 40, "100.5")]))
+    other = get_engine().connect()  # another process is syncing Groww
+    try:
+        assert other.execute(text("SELECT pg_try_advisory_lock(hashtext('broker_sync:groww'))")).scalar()
+        other.commit()
+        assert run(orders_step(_ist(10, 0), set())) == {}
+    finally:
+        other.execute(text("SELECT pg_advisory_unlock(hashtext('broker_sync:groww'))"))
+        other.commit()
+        other.close()
+    with session_scope() as s:
+        assert "orders_poll" not in (
+            s.get(BrokerConnection, "groww").state or {}
+        )  # not stamped: next tick tries
+    assert run(orders_step(_ist(10, 0), {TODAY})) == {}  # an exchange holiday
+    assert run(orders_step(_ist(10, 0, date(2026, 10, 3)), set())) == {}  # a Saturday
+    assert run(orders_step(_ist(9, 0), set())) == {}  # before the open
+    assert rec.requests == []
+    with session_scope() as s:  # the session expired: wait for the daily login, never log in from here
+        row = s.get(BrokerConnection, "groww")
+        row.token_expires_at = datetime(2026, 9, 30, 4, 0, tzinfo=UTC)
+    assert run(orders_step(_ist(10, 0), set())) == {} and rec.requests == []
+    with session_scope() as s:
+        s.get(BrokerConnection, "groww").token_expires_at = datetime(2026, 10, 1, 0, 30, tzinfo=UTC)
+    # through the monitor's hook: polled in session, and no scheduled sync (that is owed after 16:00)
+    from finresearch.portfolio.connectors import sync as sync_mod
+
+    monkeypatch.setattr(sync_mod, "_holidays", lambda day: set())
+    assert run(connections_step(_ist(11, 0).astimezone(UTC))).get("orders_polled") == 1
+    assert [r.url.path for r in rec.requests] == ["/v1/order/list"]

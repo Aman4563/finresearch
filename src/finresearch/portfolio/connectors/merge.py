@@ -419,6 +419,28 @@ def merge_sync(s: Session, *, account: str, source: str, label: str, holdings: l
             s.delete(imp)
 
     # 2. trades
+    touched |= _merge_trades(s, res, trades, account=account, source=source, label=label, now=now,
+                             fresh_baseline=fresh_baseline, order_keyed=order_keyed)  # fmt: skip
+    s.flush()
+    for hid in touched:
+        rebuild(s, hid)
+    s.flush()
+
+    # 3. reconciliation (never "fixed" automatically). A snapshot that excludes today's trades is compared with the
+    # lots as of its own day: today's buys and sells are not in it yet, which is no difference.
+    res.reconciliation = reconcile_snapshot(s, account=account, holdings=holdings,
+                                            as_of=None if holdings_include_today else snap_day)  # fmt: skip
+    if mf_holdings:
+        res.reconciliation += reconcile_snapshot(s, account=f"{account} MF", holdings=mf_holdings,
+                                                 by_instrument=True)  # fmt: skip
+    return res
+
+
+def _merge_trades(s: Session, res: MergeResult, trades: list[BrokerTrade], *, account: str, source: str, label: str,
+                  now: datetime, fresh_baseline: dict[str, date], order_keyed: bool) -> set[int]:  # fmt: skip
+    """Step 2 of the merge: add the trades (or update an order's stored row), skipping days a baseline covers.
+    Returns the holdings touched (to rebuild)."""
+    touched: set[int] = set()
     txns = [trade_txn(t, account=account, source=source) for t in trades]
     keep: list[ImportedTxn] = []
     groups: dict[tuple[str, date, str], list[ImportedTxn]] = defaultdict(list)
@@ -455,18 +477,20 @@ def merge_sync(s: Session, *, account: str, source: str, label: str, holdings: l
                            "period": [min(days).isoformat(), max(days).isoformat()]}  # fmt: skip
         else:
             s.delete(imp)
+    return touched
+
+
+def merge_orders(s: Session, *, account: str, source: str, label: str, trades: list[BrokerTrade],
+                 now: datetime, order_keyed: bool = True) -> MergeResult:  # fmt: skip
+    """Only the trades of an order-list read (Groww's in-session poll, #284): no baselines and no reconciliation (no
+    holdings were read), the same order-id upsert as the full sync so a part-filled order stays one row."""
+    res = MergeResult()
+    touched = _merge_trades(s, res, trades, account=account, source=source, label=label, now=now,
+                            fresh_baseline={}, order_keyed=order_keyed)  # fmt: skip
     s.flush()
     for hid in touched:
         rebuild(s, hid)
     s.flush()
-
-    # 3. reconciliation (never "fixed" automatically). A snapshot that excludes today's trades is compared with the
-    # lots as of its own day: today's buys and sells are not in it yet, which is no difference.
-    res.reconciliation = reconcile_snapshot(s, account=account, holdings=holdings,
-                                            as_of=None if holdings_include_today else snap_day)  # fmt: skip
-    if mf_holdings:
-        res.reconciliation += reconcile_snapshot(s, account=f"{account} MF", holdings=mf_holdings,
-                                                 by_instrument=True)  # fmt: skip
     return res
 
 
