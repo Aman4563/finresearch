@@ -225,3 +225,31 @@ def test_an_unpriced_item_that_could_be_negative_is_not_a_lower_bound(unpriced):
     gaps = {"priced": 1, "unpriced": unpriced, "stale": 0}
     assert _lower_bound(gaps, 600.0) == "a holding without a price could be worth less than ₹0"
     assert _lower_bound({**gaps, "unpriced": [{"name": "X", "units": 3.0, "last_price": 5.0}]}, 600.0) is None
+
+
+def test_a_valuation_incomplete_only_for_cost_basis_is_complete_for_the_goal(client):
+    add(client, day="2026-01-05", kind="buy", quantity="5", price="100")  # Example Alpha Ltd, cost known
+    # a statement opening balance: its cost is unknown, its units and today's price are not
+    add(client, day="2026-04-10", kind="opening", quantity="10", name="Example Beta Ltd", isin="INE000Y01012")
+    _value({"Example Alpha Ltd": 120.0, "Example Beta Ltd": 50.0})  # 600 + 500 = ₹1,100, every holding priced
+    from finresearch.db import session_scope
+    from finresearch.portfolio import cache
+
+    with session_scope() as s:
+        gaps = cache.read(s, cache.GAPS)["gaps"]
+    # the snapshot itself is incomplete (an unknown cost), which made #262 stop at "not simulated"
+    assert (gaps["unknown_cost"], gaps["unpriced"], gaps["stale"], gaps["priced"]) == (1, [], 0, 2)
+    gid = _goal(client)
+    g = _overview_goal(gid)
+    # 10,000 other savings + 50 % of ₹1,100 = 10,550, complete: the current value does not depend on cost
+    assert (g["funded_now"], g["funded_complete"], g["funded_why"], g["funded_bound"]) == (
+        10550.0,
+        True,
+        None,
+        None,
+    )
+    p = _plan(gid)
+    assert (p["funded_complete"], p["bound"], p["start"]) == (True, None, 10550.0) and 0 <= p[
+        "p_success"
+    ] <= 1
+    assert not p["message"].startswith(("Not simulated", "At least"))

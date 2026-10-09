@@ -384,6 +384,9 @@ def goal_funding(g: WealthGoal, values: dict[int, float], portfolio: float | Non
     set: a holding without a price or cost) or a linked asset without a value (`unvalued`) keeps the known sum but
     `complete` is False with the reasons, so it is never read as the whole.
 
+    A valuation whose only gap is cost basis (`gaps`: every open holding priced, none stale) counts as complete: the
+    current value does not depend on cost.
+
     `bound` "lower" (#286): the only gap is earmarked holdings without a price (`gaps`, see _lower_bound), so `start`
     is a true lower bound of the money set aside; `unpriced` names them and `unpriced_share_pct` is their share of the
     earmarked portfolio at their last known prices (None = unknown: one of them has no known price). Otherwise
@@ -392,7 +395,12 @@ def goal_funding(g: WealthGoal, values: dict[int, float], portfolio: float | Non
     missing = [int(i) for i in (g.linked_asset_ids or []) if int(i) in unvalued]
     pct = float(g.portfolio_pct or 0)
     why = []
-    if pct > 0 and (portfolio is None or portfolio_why):
+    # a valuation incomplete only for cost basis (an unknown lot cost or a sale without a cost: every open holding
+    # priced, none at a stale price) has a complete current value, which does not depend on cost
+    value_complete = (
+        gaps is not None and gaps.get("priced", 0) > 0 and not gaps.get("unpriced") and not gaps.get("stale")
+    )
+    if pct > 0 and (portfolio is None or (portfolio_why and not value_complete)):
         why.append(portfolio_why or "portfolio: value unknown")
     if missing:
         why.append(f"{len(missing)} linked asset(s) without a value yet: left out")
