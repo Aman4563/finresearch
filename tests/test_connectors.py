@@ -1425,11 +1425,11 @@ def test_depository_ecas_records_units_and_nav_and_alerts_once(db, client, monke
         assert h.meta["statement_nav"] == {"nav": "55.5", "day": "2026-08-31", "source": "NSDL"}
         alerts = s.scalars(select(Alert).where(Alert.kind == "cas_units_mismatch")).all()
         assert len(alerts) == 1 and "Example Flexi Cap Fund" in alerts[0].message
-        assert [x["url"] for x in alerts[0].data["links"]][0].startswith("https://www.camsonline.com/")
+        assert alerts[0].data["links"][0]["url"].startswith("https://www.camsonline.com/")
     # the same statement again (another copy): no second alert
     _drop(root, "nsdl-aug-copy.pdf", b"%PDF-1.4 copy")
     scan(now=NOW)
-    # September agrees with the lots on 30 Sep (12 units)? No: it says 10, so it alerts again for the new statement
+    # September says 10 while the lots hold 12 on 30 Sep: a new statement, so a new alert
     _drop(root, "nsdl-sep.pdf", b"%PDF-1.4 sep")
     sep = scan(now=NOW)["files"][0]
     assert sep["unit_differences"][0]["lot_units"] == "12.000"
