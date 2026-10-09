@@ -192,7 +192,7 @@ async def test_bse_watch_runs_the_daily_check_from_bse_and_labels_alerts(client)
         assert watch.meta["stock_initialised"] and watch.exchange == "BSE"
         msgs = {k: (a.message, a.data) for k, a in alerts.items()}
     assert (
-        msgs["big_move"][0].startswith("BSE 526433 closed at ₹1100")
+        msgs["big_move"][0].startswith("BSE 526433 closed at ₹1,100.00")
         and msgs["big_move"][1]["exchange"] == "BSE"
     )
     assert msgs["ex_date_soon"][0].startswith("BSE 526433: Interim Dividend")

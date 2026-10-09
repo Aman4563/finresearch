@@ -13,6 +13,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from finresearch.db.models import Alert, Decision, MonitorJob, ResearchRun, SubscriptionSnapshotRow, Watch
+from finresearch.fincalc.numbers import format_inr
 
 
 class NotYet(RuntimeError):
@@ -337,8 +338,10 @@ async def listing(session: Session, job: MonitorJob, watch: Watch, deps: Deps, n
                 d.issue_price = d.issue_price or upper
                 d.outcome = record_outcome(d)
                 updated.append(d.id)
-    alert(session, watch, f"listing_{which}", f"{watch.nse_symbol} listed on {q.listing_date}: {which} ₹{price}"
-          + (f" ({gain:+.2f}% vs the ₹{upper} upper band)" if gain is not None else ""),
+    # rupees to the paisa with Indian grouping: NSE prints prices with six decimals ("₹272.000000", #264)
+    alert(session, watch, f"listing_{which}", f"{watch.nse_symbol} listed on {q.listing_date}: {which} "
+          f"{format_inr(price, 'inr')}" + (f" ({gain:+.2f}% vs the {format_inr(upper, 'inr')} upper band)"
+                                           if gain is not None else ""),
           "action" if which == "open" else "info", price=str(price), as_of=q.as_of.isoformat() if q.as_of else None)  # fmt: skip
     return {"price": str(price), "which": which, "listing_date": q.listing_date.isoformat(),
             "gain_pct": f"{gain:.2f}" if gain is not None else None, "decisions_updated": updated}  # fmt: skip
@@ -458,7 +461,7 @@ async def stock_daily(session: Session, job: MonitorJob, watch: Watch, deps: Dep
         out["last_close"], out["day_move"] = str(bars[-1].close), f"{move:.4f}"
         if abs(move) >= BIG_MOVE and meta.get("big_move_alerted") != bars[-1].day.isoformat():
             meta["big_move_alerted"] = bars[-1].day.isoformat()
-            say("big_move", f"{sym} closed at ₹{bars[-1].close} on {bars[-1].day}, {move * 100:+.2f}% on the day",
+            say("big_move", f"{sym} closed at {format_inr(bars[-1].close, 'inr')} on {bars[-1].day}, {move * 100:+.2f}% on the day",
                 "warn")  # fmt: skip
     meta.update(stock_initialised=True, seen_results=sorted(seen_results), seen_actions=sorted(seen_actions),
                 ex_soon_alerted=sorted(soon))  # fmt: skip
