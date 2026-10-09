@@ -1052,7 +1052,7 @@ def test_an_order_stored_twice_before_the_fix_is_a_conflict_not_a_guess(db):
         assert _units(s, "Groww")["NSE:NEWCO"] == D(140)  # left for the user to review, never edited blindly
 
 
-def test_an_unexpected_failure_is_logged_and_not_retried_every_tick(client, transport, monkeypatch):
+def test_an_unexpected_failure_is_logged_and_not_retried_every_tick(client, transport, monkeypatch, caplog):
     """#266: the login works but storing the token fails (a locked Keychain): before, the exception escaped _finish,
     so no log row, no failed_day, and the next tick logged in again (Groww caps logins at 150 a day)."""
     from sqlalchemy import func, select
@@ -1071,6 +1071,7 @@ def test_an_unexpected_failure_is_logged_and_not_retried_every_tick(client, tran
     monkeypatch.setattr(sync, "set_token", broken)
     out = run(sync.sync_now("groww", trigger="scheduled", now=NOW))
     assert out["status"] == "error" and "SecretStoreError" in out["error"] and ACCESS not in json.dumps(out)
+    assert "SecretStoreError" in caplog.text and ACCESS not in caplog.text  # the log is redacted too
     with session_scope() as s:
         row = s.get(BrokerConnection, "groww")
         assert not sync.due(row, datetime(2026, 9, 30, 11, 1, tzinfo=UTC))  # no login on the next tick

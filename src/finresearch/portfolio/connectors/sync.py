@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import traceback
 from collections.abc import AsyncIterator
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
@@ -122,7 +123,9 @@ async def sync_now(key: str, *, trigger: str = "manual", now: datetime | None = 
         except LookupError:
             raise
         except Exception as e:  # anything unexpected still ends in a log row, a status and failed_day (#266)
-            log.warning("%s sync failed: %s", key, type(e).__name__, exc_info=True)
+            # the frames (file, line) but never the raw message: it may carry a token or a PIN (redacted here)
+            log.warning("%s sync failed: %s: %s\n%s", key, type(e).__name__, redact(str(e), *secrets)[:300],
+                        "".join(traceback.format_tb(e.__traceback__)))  # fmt: skip
             return await _finish_async(key, trigger, now, "error", {},
                                        redact(f"sync failed unexpectedly ({type(e).__name__})", *secrets),
                                        today=None)  # fmt: skip
