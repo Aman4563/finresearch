@@ -37,8 +37,7 @@ export type Goal = {
   id: number; name: string; target_inr: number; target_date: string; priority: "high" | "medium" | "low";
   inflation_pct: number; current_inr: number; monthly_sip: number; step_up_pct: number; linked_asset_ids: number[];
   portfolio_pct: number; equity_pct: number | null; gold_pct: number; in_cover: boolean; notes: string | null;
-  /** null = unknown (the earmarked portfolio has no valuation), never ₹0; funded_complete false = a lower bound (#262) */
-  funded_now: number | null; funded_complete?: boolean; funded_why?: string | null; months_left: number; shared_links: number[];
+  funded_now: number; months_left: number; shared_links: number[];
 };
 
 export type Policy = {
@@ -103,9 +102,6 @@ export type GoalPlan = {
   terminal_pcts: { p10: number; p50: number; p90: number };
   assumptions: Record<string, { mu_pct: number; sigma_pct: number; note: string }>;
   equity_path: string; message: string; method: string; disclaimer: string; linked: number[];
-  /** false: not simulated, because the money set aside today is unknown or incomplete (only goal_id, name, start,
-   * linked, message, funded_why and disclaimer are present), #262 */
-  funded_complete?: boolean; funded_why?: string | null;
 };
 
 export const inr = (v: number | null | undefined, d = 0) =>

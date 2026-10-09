@@ -54,9 +54,8 @@ export function PortfolioStrip() {
       </Cell>
       <Cell href="/brief" icon={<TrendingUp />} name="This week"
         label={<>This week <InfoTip>Return over the last seven days with new money removed (time-weighted), from the daily valuations. Daily P&amp;L is not shown by default: frequent checks tend to raise loss aversion.</InfoTip></>}
-        hint={w ? `market move ${inr(w.market)} · new money ${inr(w.new_money)}` : data.week_why ?? "needs two daily valuations"}>
-        {w ? <span className={cx("num", w.twr_pct >= 0 ? "text-gain" : "text-loss")}>{w.twr_pct > 0 ? "+" : ""}{w.twr_pct.toFixed(2)}%</span>
-          : <span className="text-sm text-muted" title={data.week_why ?? undefined}>{data.week_why ? "unavailable" : "—"}</span>}
+        hint={w ? `market move ${inr(w.market)} · new money ${inr(w.new_money)}` : "needs two daily valuations"}>
+        {w ? <span className={cx("num", w.twr_pct >= 0 ? "text-gain" : "text-loss")}>{w.twr_pct > 0 ? "+" : ""}{w.twr_pct.toFixed(2)}%</span> : <span className="text-muted">—</span>}
       </Cell>
       <Cell href="/portfolio" icon={<Landmark />} name="LTCG headroom"
         label={<>LTCG headroom <InfoTip>How much of this financial year&apos;s ₹1.25 lakh exemption on equity long-term gains is still unused.</InfoTip></>}

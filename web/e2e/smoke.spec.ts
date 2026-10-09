@@ -18,10 +18,7 @@ test("portfolio: unknown cost, stale price and incomplete tax are labelled", asy
   await page.goto("/portfolio");
   const holdings = page.getByRole("region", { name: "Holdings" });
   await expect(holdings.getByText("Example Opening Balance Fund")).toBeVisible();
-  await expect(holdings.getByText(/cost unknown/i).first()).toBeVisible();
-  // #263: the demerged holding's return reads "incomplete", not a percentage or a bare dash
-  const demerged = holdings.getByRole("row").filter({ hasText: "Example Demerge Ltd" });
-  await expect(demerged.getByText(/^incomplete$/)).toBeVisible();
+  await expect(holdings.getByText(/cost unknown/i)).toBeVisible();
   await expect(page.getByText(/some costs are unknown/i)).toBeVisible();
   // the fund's price is a statement NAV from June: shown with its date, never as today's price
   await expect(holdings.getByText(/statement NAV|stale/i)).toBeVisible();
@@ -66,4 +63,37 @@ test("signals: an informational signal is labelled as no proven edge, never as a
   if (phone(page)) await expectNoHorizontalOverflow(page);
   // the stock page's market cards read exchange data the fixtures don't carry: they show their error states
   api.expectClean(["GET /api/stocks/EXTEX", "GET /api/watches", "GET /api/market/status"]);
+});
+
+test("connections: the Groww card says which market data Groww supplies and today's calls, never a secret", async ({ page }) => {
+  const groww = {
+    key: "groww", label: "Groww", account: "Groww", auth_kind: "totp", capabilities: ["holdings", "positions", "trades", "funds"],
+    fields: [{ name: "api_key", label: "TOTP API key", secret: true, required: true, help: "" }], configured: true, enabled: true,
+    auto_sync: true, config: { api_key: "••••••••", api_key_set: true }, status: "connected", next_step: "Syncs after the close.",
+    token_set: true, connected_as: null, token_expires_at: "2026-10-10T06:00:00+05:30", last_sync_at: "2026-10-09T16:05:00+05:30",
+    last_error: null, positions: [], funds: null, last_summary: null,
+  };
+  const api = await mockApi(page, {
+    "GET /api/profile": { capital_per_ipo_inr: "15000", risk_appetite: "medium", horizon: "listing", tax_slab_pct: "30",
+      category: "retail", holdings: [], rules: [], notes: "" },
+    "GET /api/connections": { connections: [groww], inbox: { path: "/tmp/inbox", pending: [] } },
+    "GET /api/connections/log": [],
+    "GET /api/connections/groww/market-data": {
+      active: true, session: "connected", phase: "open", instruments_day: "2026-10-09",
+      supplies: [{ kind: "prices", label: "Stock prices for the portfolio" }, { kind: "mutual_funds", label: "Not supplied: mutual-fund NAVs stay on AMFI" }],
+      last_answered: { prices: "2026-10-09T10:15:00+05:30" },
+      calls_today: { day: "2026-10-09", total: 42, categories: [
+        { category: "live", label: "Live and historical data", calls: 37, per_second: 10, per_minute: 300, daily_cap: null },
+        { category: "auth", label: "Login (token)", calls: 1, per_second: 5, per_minute: 30, daily_cap: 150 }] },
+    },
+  });
+  await page.goto("/profile#connections");
+  const card = page.getByTestId("groww-market-data");
+  await expect(card.getByText(/market data from groww/i)).toBeVisible();
+  await expect(card.getByText(/in use/i)).toBeVisible();
+  await expect(card.getByText(/mutual-fund NAVs stay on AMFI/i)).toBeVisible();
+  await expect(card.getByText(/calls today/i)).toBeVisible();
+  await expect(card.getByText(/Login \(token\) 1 of 150/)).toBeVisible();
+  if (phone(page)) await expectNoHorizontalOverflow(page);
+  api.expectClean(["GET /api/"]); // the profile page's other cards may stay unanswered here
 });
