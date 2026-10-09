@@ -1081,6 +1081,9 @@ def evidence_regrade(
         res = regrade(s, all_d=all_d, apply=apply, reason=reason or DEFAULT_REASON)
         if not apply:
             s.rollback()
+    if apply:  # each written change is also printed (the stamp on the row is the durable audit record)
+        for r in res.changed:
+            console.print(f"applied: run {r.run_id} C{r.claim_id} citation {r.citation_id} -> {r.grade}")
     t = Table(title=f"grade-D citations re-checked ({'APPLIED' if apply else 'dry run, nothing written'})")
     for col in ("run", "claim", "citation", "importance", "result", "reason"):
         t.add_column(col)
