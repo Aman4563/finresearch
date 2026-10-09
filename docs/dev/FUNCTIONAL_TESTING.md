@@ -288,3 +288,7 @@ These are dated entries for bugs we reproduced, what caused them, and how they a
 - **Reproduced:** with no NSE holiday list cached, the stock peers, disclosures and IV jobs ran on any weekday, and they ran on cached holidays too (they only checked for weekends). Now they skip holidays, fail closed on an unknown list and raise one alert a day (test_holidays).
 - **Reproduced:** `index_document` with an embedder that fails on its second batch raised, and discovery rolled the whole document back. Now the document is stored keyword-only and found by full-text search (test_retrieval).
 - **Found by the new eval:** full-text search alone finds only 8 of 16 natural-language gold queries in the top 5 (`websearch_to_tsquery` ANDs every word). Not changed here: see the PR's "needs decision".
+
+### 2026-10-09: grade-D fincalc citations did not check their arguments (#265)
+- **Reproduced (synthetic, test DB):** claims 200 and 230 cited as inputs, call `growth.pct_change(old=100, new=115)` = 15 %, stated 15 %: graded D. Also `pct_change(old=200, new=200)` leaning twice on the 200 claim, and `ttm` with two quarters repeated, were D. Now U with the unbound arguments named (`test_correct_fincalc_on_inputs_that_are_not_the_cited_claims_is_not_grade_d`, `test_fincalc_list_arguments_need_one_cited_claim_per_element`, tolerance edges and constants tests fail on the old code).
+- No recorded eval fixture (`tests/fixtures/eval`) carries a fincalc computation, so no replayed report changes grade.
