@@ -350,7 +350,12 @@ async def fetch_prices(holdings: Sequence[Any], *, quote: Callable[[str, str], A
             if pday is not None and gday is not None and pday > gday:
                 return p
             g = price_from_quote(gq, key[1], listing)
-            g.industry, g.market_cap_cr = p.industry or g.industry, p.market_cap_cr or g.market_cap_cr
+            hit = _META.get(
+                key
+            )  # the sector/cap last seen from an exchange quote, as the Groww LTP path uses
+            seen = hit if hit is not None and hit[0] > _time.monotonic() else (0.0, None, None)
+            g.industry = p.industry or g.industry or seen[1]
+            g.market_cap_cr = p.market_cap_cr or g.market_cap_cr or seen[2]
             g.note = p.note
             return g
 

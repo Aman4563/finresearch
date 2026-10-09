@@ -35,7 +35,7 @@ type RecRow = { name: string; ikey: string; account: string; broker_units: strin
 export type SyncLog = {
   id: number; key: string; trigger: string; status: string; started_at: string; error: string | null;
   summary: {
-    added?: number; duplicates?: number; baselines?: { name: string; units: string }[]; conflicts?: { name: string; day: string; why: string }[];
+    added?: number; duplicates?: number; updated?: number; baselines?: { name: string; units: string }[]; conflicts?: { name: string; day: string; why: string }[];
     cross_source?: { name: string; day: string; matched: string; sources: string[] }[]; reconciliation?: RecRow[]; differences?: number | null;
     baseline_skipped?: { name: string; held_in: string[]; why: string }[]; file?: string; kind?: string; note?: string; status?: string;
   };
@@ -352,7 +352,8 @@ export function ConnectionsCard() {
     if (ok || bad) history.replaceState(null, "", `${window.location.pathname}#connections`);
   }, []);
   const refresh = () => { reload(); logs.reload(); };
-  const latest = (key: string) => logs.data?.find((l) => l.key === key && l.trigger !== "inbox");
+  // an in-session order read (#284) reads no holdings: the row keeps showing the last full sync's differences
+  const latest = (key: string) => logs.data?.find((l) => l.key === key && l.trigger !== "inbox" && l.trigger !== "intraday");
   const brokers = data?.connections.filter((c) => c.key !== "cas_inbox") ?? [];
   const inbox = data?.connections.find((c) => c.key === "cas_inbox");
 
@@ -386,7 +387,7 @@ export function ConnectionsCard() {
                     <Badge tone={l.status === "ok" ? "gain" : l.status === "partial" || l.status === "reconnect" ? "warn" : "loss"}>{l.status}</Badge>
                     <span className="font-medium">{l.key === "cas_inbox" ? "Inbox" : data?.connections.find((c) => c.key === l.key)?.label ?? l.key}</span>
                     <span className="min-w-0 flex-1 truncate text-muted">
-                      {l.trigger} · {l.summary.file ? `${l.summary.file} ${l.summary.kind ?? ""}` : `${l.summary.added ?? 0} new, ${l.summary.baselines?.length ?? 0} baseline(s), ${l.summary.differences == null ? "reconciliation unknown" : `${l.summary.differences} difference(s)`}`}
+                      {l.trigger} · {l.summary.file ? `${l.summary.file} ${l.summary.kind ?? ""}` : `${l.summary.added ?? 0} new, ${l.trigger === "intraday" ? `${l.summary.updated ?? 0} updated (orders only)` : `${l.summary.baselines?.length ?? 0} baseline(s), ${l.summary.differences == null ? "reconciliation unknown" : `${l.summary.differences} difference(s)`}`}`}
                     </span>
                     <span className="num text-muted">{when(l.started_at)}</span>
                   </div>

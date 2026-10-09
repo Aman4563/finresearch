@@ -632,6 +632,13 @@ def test_a_groww_close_older_than_the_exchange_quote_is_never_tonights_price(gro
             raise LookupError("NSE did not answer")
         return nse[sym]
 
+    import time as _t
+    from decimal import Decimal
+
+    from finresearch.portfolio import valuation
+
+    valuation._META.clear()
+    valuation._META[("EXSTK1", "NSE")] = (_t.monotonic() + 3600, "Example Industry", Decimal("50000"))
     hs = [_H(1, "stock", "EXSTK0"), _H(2, "stock", "EXSTK1")]
     out = run(fetch_prices(hs, quote=quote, scheme_rows=None, prefetch=Prefetch(m)))
     # today's last trade with "close not yet published", not Thursday's Groww close
@@ -639,3 +646,4 @@ def test_a_groww_close_older_than_the_exchange_quote_is_never_tonights_price(gro
     # NSE did not answer at all: Groww's latest close, dated and labelled (never a blank or a 0)
     assert str(out[2].price) == "101.0" and out[2].as_of.startswith("2026-10-08")
     assert out[2].source == "Groww daily close (not the exchange's official close)"
+    assert (out[2].industry, out[2].market_cap_cr) == ("Example Industry", Decimal("50000"))  # sector kept
