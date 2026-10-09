@@ -133,6 +133,8 @@ def _arg_matches(arg: Decimal, form: Decimal) -> bool:
     matches zero."""
     from finresearch.verify.gate import REL_TOL
 
+    if not arg.is_finite():  # "NaN" / "Infinity" parse as Decimal but no claim holds them: never bound
+        return False
     if arg == form:
         return True
     d = max(abs(arg), abs(form))
