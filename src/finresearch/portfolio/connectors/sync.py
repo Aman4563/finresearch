@@ -193,7 +193,11 @@ def due(row: BrokerConnection, now: datetime, holidays: set[date] | None = None)
     d = ist.date()
     trading = d.weekday() < 5 and d not in (holidays or set())
     if trading and ist.time() >= SYNC_AFTER:
-        return row.last_sync_day != d
+        # a manual "Sync now" before the close also sets last_sync_day: the after-close read is still owed
+        early = row.last_sync_at is not None and to_ist(row.last_sync_at) < datetime.combine(
+            d, SYNC_AFTER, ist.tzinfo
+        )
+        return row.last_sync_day != d or early
     # not after today's close: catch up if the last scheduled sync is older than the previous weekday
     prev = d - timedelta(days=1)
     while prev.weekday() >= 5 or prev in (holidays or set()):

@@ -702,6 +702,11 @@ def test_scheduled_sync_is_due_once_after_the_close():
     assert due(row, at(16, 5))
     row.last_sync_day = date(2026, 9, 30)
     assert not due(row, at(18, 0))
+    row.last_sync_at = datetime(2026, 9, 30, 15, 50, tzinfo=IST)  # a manual "Sync now" before the close
+    assert due(row, at(16, 5))  # the after-close read is still owed
+    row.last_sync_at = datetime(2026, 9, 30, 16, 6, tzinfo=IST)
+    assert not due(row, at(18, 0))
+    row.last_sync_at = None
     row.last_sync_day = date(2026, 9, 25)  # the monitor was off for days: catch up at once
     assert due(row, at(10, 0))
     row.last_sync_day = date(2026, 9, 29)
