@@ -253,23 +253,22 @@ def test_ipo_and_stock_watches_convert_in_place(watched):
         watch_stock(slug)  # an active IPO watch that has not listed
     with session_scope() as s:
         s.get(Watch, wid).meta = {"listing_confirmed": True, "rule_status": {"qib-floor": "clear"}}
-    w = watch_stock(slug)  # listed: becomes a stock watch
-    assert (w["id"], w["kind"], w["active"], w["open_date"], w["listing_date"], w["meta"]) == (
-        wid,
-        "stock",
-        True,
-        None,
-        None,
-        {},
-    )
-    with session_scope() as s:
-        assert not s.query(MonitorJob).filter(MonitorJob.watch_id == wid, MonitorJob.status == "pending",
-                                              MonitorJob.kind != "stock_daily").count()  # fmt: skip
+    w = watch_stock(slug)  # listed: becomes a stock watch that keeps its IPO dates and listing record (#291)
+    assert (w["id"], w["kind"], w["active"], w["open_date"], w["listing_date"]) == (wid, "stock", True, "2026-09-25",
+                                                                                     "2026-10-02")  # fmt: skip
+    assert w["meta"]["listing_confirmed"] is True and w["meta"]["ipo"]["listing_confirmed"] is True
+    assert w["meta"]["ipo"]["close_date"] == "2026-09-29" and "rule_status" not in w["meta"]
+    with session_scope() as s:  # only the lock-ins outlive the conversion
+        assert {j.kind for j in s.query(MonitorJob).filter(MonitorJob.watch_id == wid, MonitorJob.status == "pending",
+                                                           MonitorJob.kind != "stock_daily")} == {"lockin"}  # fmt: skip
     with pytest.raises(ValueError, match="stop that watch first"):
         upsert_watch(slug, orient_detail().issue_info)  # an active stock watch
     stop_watch(wid)
-    w = upsert_watch(slug, orient_detail().issue_info)  # inactive: back to an IPO watch
-    assert (w["kind"], w["active"], w["listing_date"], w["meta"]) == ("ipo", True, "2026-10-02", {})
+    w = upsert_watch(
+        slug, orient_detail().issue_info
+    )  # inactive: back to an IPO watch, the old record kept aside
+    assert (w["kind"], w["active"], w["listing_date"]) == ("ipo", True, "2026-10-02")
+    assert list(w["meta"]) == ["ipo_history"] and w["meta"]["ipo_history"][0]["listing_confirmed"] is True
     sync_slots(ist(2026, 9, 29, 10, 0))  # the checks cancelled by the conversion are planned again
     with session_scope() as s:
         job = s.query(MonitorJob).filter_by(slot="ORIENTCABL:subscription:2026-09-29:1030").one()

@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 
 from finresearch.db import session_scope
 from finresearch.db.models import Company, Forecast, PortfolioHolding, PortfolioLot, Watch
-from finresearch.fincalc.dates import business_days_between, to_ist
+from finresearch.fincalc.dates import business_days_between, to_ist, today_ist
 
 log = logging.getLogger(__name__)
 
@@ -229,3 +229,43 @@ def _withdraw(s: Session, w: Watch, meta: dict[str, Any]) -> None:
     alert(s, w, "ipo_withdrawn", f"{w.nse_symbol} has not listed {WITHDRAWN_AFTER_TRADING_DAYS}+ trading days after "
           f"its expected listing date ({w.listing_date}) and is no longer on NSE's issue lists: treated as withdrawn. "
           "Its remaining checks are cancelled; check the registrar for any refund.", "warn")  # fmt: skip
+
+
+# the /api/watches order within active and stopped watches: issues still taking bids, then waiting for allotment or
+# listing, then announced; stock watches; then recently listed and the archive
+PHASE_RANK = {
+    "open": 0,
+    "closed": 1,
+    "allotted": 2,
+    "announced": 3,
+    None: 4,
+    "listed": 5,
+    "archived": 6,
+    "withdrawn": 7,
+}
+
+
+def sort_key(w: Watch, phase: str | None) -> tuple:
+    return (not w.active, PHASE_RANK.get(phase, 4), -(w.close_date or date.min).toordinal(), w.id)
+
+
+def set_keep_watching(watch_id: int, keep: bool) -> dict | None:
+    """The investor's "keep watching after listing" choice for an IPO watch. Ticked on an archived watch that is still
+    active, it becomes a stock watch at once (otherwise on archive). None if there is no such watch."""
+    from finresearch.monitor.watch import watch_json, watch_stock
+
+    with session_scope() as s:
+        w = s.get(Watch, watch_id)
+        if w is None:
+            return None
+        if w.kind != "ipo":
+            raise ValueError(
+                "only an IPO watch has a keep-watching choice; this one is already a stock watch"
+            )
+        w.meta = {**(w.meta or {}), "keep_watching": keep}
+        co = s.get(Company, w.company_id)
+        convert = keep and w.active and phase_of(w, today_ist()) == "archived"
+        if not convert:
+            return watch_json(w, co)
+        slug = co.slug
+    return watch_stock(slug)
