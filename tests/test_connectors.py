@@ -1487,3 +1487,46 @@ def test_a_gap_with_a_matching_opening_or_a_first_cas_is_silent(db):
     )  # first: no gap
     out = _apply(db, _cas(period=("01-Sep-2026", "30-Sep-2026"), opening="15", closing=["15"]), "sep.pdf")
     assert not [w for w in out["warnings"] if w.startswith("Statement gap")]
+
+
+def test_monthly_cas_reminder_once_a_month_with_the_from_date(db, monkeypatch):
+    from sqlalchemy import select
+
+    from finresearch.db.models import Alert
+    from finresearch.portfolio.cas_followup import reminder_step
+    from finresearch.portfolio.connectors import sync
+
+    def reminders():
+        with db() as s:
+            return [(a.message, a.data) for a in s.scalars(select(Alert).where(Alert.kind == "cas_reminder"))]
+
+    with db() as s:
+        assert reminder_step(s, NOW) == {}  # no CAS imported yet: nothing to remind about
+    _apply(db, _cas(txns=[(date(2026, 2, 1), "buy", "10", "1000")]))  # covers up to 30 Jun 2026
+    monkeypatch.setattr(sync, "_LAST_INBOX", {})
+    out = run(sync.connections_step(NOW))  # the monitor's hook, 30 Sep 2026
+    assert out.get("cas_reminders") == 1
+    [(msg, data)] = reminders()
+    assert (
+        data["from"] == "2026-07-01" and data["last_covered"] == "2026-06-30" and data["month"] == "2026-09"
+    )
+    assert "30 Jun 2026" in msg and "from 01 Jul 2026" in msg
+    assert [x["url"] for x in data["links"]] == ["https://www.camsonline.com/Investors/Statements/Consolidated-Account-Statement",
+                                                 "https://mfs.kfintech.com/investor/General/ConsolidatedAccountStatement"]  # fmt: skip
+    with db() as s:  # later the same month: not again
+        assert reminder_step(s, datetime(2026, 9, 30, 18, 0, tzinfo=UTC)) == {}  # 23:30 IST, still September
+        # 1 Oct IST (18:30 UTC on 30 Sep) is a new month: once more
+        assert reminder_step(s, datetime(2026, 9, 30, 18, 31, tzinfo=UTC)) == {"cas_reminders": 1}
+        assert reminder_step(s, datetime(2026, 10, 20, 9, 0, tzinfo=UTC)) == {}
+    assert [d["month"] for _, d in reminders()] == ["2026-09", "2026-10"]
+    # a CAS that covers the whole of last month: no reminder in November
+    _apply(
+        db,
+        _cas(period=("01-Jul-2026", "31-Oct-2026"), txns=[(date(2026, 8, 1), "buy", "1", "100")]),
+        "oct.pdf",
+    )
+    with db() as s:
+        assert reminder_step(s, datetime(2026, 11, 5, 9, 0, tzinfo=UTC)) == {}
+        assert reminder_step(s, datetime(2026, 12, 2, 9, 0, tzinfo=UTC)) == {
+            "cas_reminders": 1
+        }  # November not covered
