@@ -112,24 +112,36 @@ def add_connection_routes(app: FastAPI, clock: Callable[[], datetime] | None = N
     async def login(key: str) -> dict[str, Any]:
         """A headless login now (TOTP / API secret brokers): stores the day's access token. Browser-login brokers
         answer 409 with the next step (use the login URL)."""
+        import asyncio
+
         from finresearch.portfolio.connectors.base import ConnectorError, ReconnectNeeded, redact
-        from finresearch.portfolio.connectors.store import build, get_row, public_one, set_token
+        from finresearch.portfolio.connectors.store import build_from, get_row, public_one, set_token
+        from finresearch.portfolio.connectors.sync import SyncBusy, claim
 
         _broker(key)
         with session_scope() as s:
             row = get_row(s, key)
             if row is None:
                 raise HTTPException(404, "save the connection's settings first")
-            conn = build(row)
+            cols = (row.key, dict(row.config or {}), row.token)
         try:
-            grant = await conn.login()
-        except ReconnectNeeded as e:
-            raise HTTPException(409, redact(str(e), *conn.secret_values())) from None
-        except ConnectorError as e:
-            raise HTTPException(502, redact(str(e), *conn.secret_values())) from None
-        with session_scope() as s:
-            set_token(s, key, grant)
-            return public_one(s, key, now())
+            async with claim(key):  # never alongside a running sync (in this or another process, #266)
+                conn = await asyncio.to_thread(build_from, *cols)
+                try:
+                    grant = await conn.login()
+                except ReconnectNeeded as e:
+                    raise HTTPException(409, redact(str(e), *conn.secret_values())) from None
+                except ConnectorError as e:
+                    raise HTTPException(502, redact(str(e), *conn.secret_values())) from None
+
+                def store() -> dict[str, Any]:
+                    with session_scope() as s:
+                        set_token(s, key, grant)
+                        return public_one(s, key, now())
+
+                return await asyncio.to_thread(store)
+        except SyncBusy as e:
+            raise HTTPException(409, f"{e}: try again in a minute") from None
 
     @app.get("/api/connections/{key}/login-url")
     def login_url(key: str, request: Request) -> dict[str, Any]:
@@ -201,13 +213,15 @@ def add_connection_routes(app: FastAPI, clock: Callable[[], datetime] | None = N
     @app.post("/api/connections/{key}/sync")
     async def sync(key: str) -> dict[str, Any]:
         """Sync now: read holdings, positions, trades (and funds/MF where offered) and merge them. Read-only."""
-        from finresearch.portfolio.connectors.sync import sync_now
+        from finresearch.portfolio.connectors.sync import SyncBusy, sync_now
 
         _broker(key)
         try:
             return await sync_now(key, trigger="manual", now=now())
         except LookupError as e:
             raise HTTPException(404, str(e)) from None
+        except SyncBusy as e:
+            raise HTTPException(409, f"{e}: try again in a minute") from None
 
     @app.get("/api/connections/log")
     def sync_log(key: str | None = Query(None, max_length=20), limit: int = Query(20, ge=1, le=200)) -> list:

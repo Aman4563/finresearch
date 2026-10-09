@@ -23,14 +23,15 @@ export type Connection = {
   status: "connected" | "ready" | "reconnect" | "error" | "incomplete" | "not_connected" | "off"; next_step: string;
   token_set: boolean; connected_as: string | null; token_expires_at: string | null; last_sync_at: string | null;
   last_error: string | null; positions: Position[]; funds: Record<string, number | null> | null; callback_url?: string;
-  last_summary: { added: number; duplicates: number; differences: number; baselines: number; conflicts: number; reconciled: boolean | null } | null;
+  // differences/reconciled null: the holdings were not read, so the reconciliation is unknown (never "0 differences")
+  last_summary: { added: number; duplicates: number; updated?: number; differences: number | null; baselines: number; conflicts: number; reconciled: boolean | null } | null;
 };
 type RecRow = { name: string; ikey: string; account: string; broker_units: string; app_units: string; diff: string; ok: boolean; status: string };
 export type SyncLog = {
   id: number; key: string; trigger: string; status: string; started_at: string; error: string | null;
   summary: {
     added?: number; duplicates?: number; baselines?: { name: string; units: string }[]; conflicts?: { name: string; day: string; why: string }[];
-    cross_source?: { name: string; day: string; matched: string; sources: string[] }[]; reconciliation?: RecRow[]; differences?: number;
+    cross_source?: { name: string; day: string; matched: string; sources: string[] }[]; reconciliation?: RecRow[]; differences?: number | null;
     baseline_skipped?: { name: string; held_in: string[]; why: string }[]; file?: string; kind?: string; note?: string; status?: string;
   };
 };
@@ -194,7 +195,10 @@ function BrokerRow({ c, log, onChanged }: { c: Connection; log?: SyncLog; onChan
         <span>Session: <span className="text-foreground">{c.token_set && c.token_expires_at ? `until ${when(c.token_expires_at)}` : c.token_set ? "active" : "none"}</span></span>
         {c.last_summary && (
           <span className="sm:col-span-2">Last result: {c.last_summary.added} new trade(s), {c.last_summary.duplicates} already there,
-            {" "}{c.last_summary.baselines} baseline(s){c.last_summary.differences ? <>, <span className="text-warn">{c.last_summary.differences} difference(s)</span></> : ", reconciled"}.</span>
+            {c.last_summary.updated ? ` ${c.last_summary.updated} updated with later fills,` : ""}
+            {" "}{c.last_summary.baselines} baseline(s){c.last_summary.reconciled == null || c.last_summary.differences == null
+              ? <>, <span className="text-warn">holdings not read: not reconciled</span></>
+              : c.last_summary.differences ? <>, <span className="text-warn">{c.last_summary.differences} difference(s)</span></> : ", reconciled"}.</span>
         )}
         {c.funds && (c.funds.cash != null || c.funds.net != null) && <span>Cash available: <span className="num text-foreground">{inr(c.funds.cash ?? c.funds.net)}</span></span>}
         {c.positions.length > 0 && <span>Open positions: <span className="text-foreground">{c.positions.map((p) => `${p.symbol} ${p.quantity}${p.product ? ` ${p.product}` : ""}`).slice(0, 4).join(", ")}</span></span>}
@@ -356,7 +360,7 @@ export function ConnectionsCard() {
                     <Badge tone={l.status === "ok" ? "gain" : l.status === "partial" || l.status === "reconnect" ? "warn" : "loss"}>{l.status}</Badge>
                     <span className="font-medium">{l.key === "cas_inbox" ? "Inbox" : data?.connections.find((c) => c.key === l.key)?.label ?? l.key}</span>
                     <span className="min-w-0 flex-1 truncate text-muted">
-                      {l.trigger} · {l.summary.file ? `${l.summary.file} ${l.summary.kind ?? ""}` : `${l.summary.added ?? 0} new, ${l.summary.baselines?.length ?? 0} baseline(s), ${l.summary.differences ?? 0} difference(s)`}
+                      {l.trigger} · {l.summary.file ? `${l.summary.file} ${l.summary.kind ?? ""}` : `${l.summary.added ?? 0} new, ${l.summary.baselines?.length ?? 0} baseline(s), ${l.summary.differences == null ? "reconciliation unknown" : `${l.summary.differences} difference(s)`}`}
                     </span>
                     <span className="num text-muted">{when(l.started_at)}</span>
                   </div>

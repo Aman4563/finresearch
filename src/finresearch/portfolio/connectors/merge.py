@@ -19,7 +19,8 @@ Merge rules (in order):
    residual units, dated the day before the first trade (cost = the broker's average × quantity less the trades'
    cost when there were no sales in the window, otherwise unknown).
 2. **Trades** — each executed equity fill becomes a buy/sell. Re-syncing the same trade is a no-op (`dedupe_key` on the
-   broker's trade id). Rows another source already has are skipped by the cross-source reconciliation that every
+   broker's trade id). A broker that reports orders with their fills so far (Groww, `fills_aggregated`) is keyed by
+   order id instead: the same order read again with more fills updates its row in place (`upsert_orders`, #266). Rows another source already has are skipped by the cross-source reconciliation that every
    import path shares (portfolio.dedupe, #236; tradebook and CAS uploads, the inbox, manual entries, holdings
    statements and this sync). Per instrument (ISIN / symbol / scheme code), account, day and side, incoming rows are
    compared with *other-source* rows of the same account, and with manual entries in any account:
@@ -73,6 +74,7 @@ BROKER_ACCOUNTS = {"Groww", "Zerodha", "Upstox", "Dhan"}
 class MergeResult:
     added: int = 0
     duplicates: int = 0  # same source, already imported (idempotent re-sync)
+    updated: int = 0  # an order read again with more fills: its stored row updated in place (upsert_orders)
     cross_source: list[dict[str, Any]] = field(default_factory=list)  # skipped: another source has it
     conflicts: list[dict[str, Any]] = field(default_factory=list)  # partial overlaps: not added, review
     covered_by_baseline: int = 0
@@ -87,7 +89,8 @@ class MergeResult:
 
     def as_dict(self) -> dict[str, Any]:
         rec_bad = [r for r in self.reconciliation if not r["ok"]]
-        return {"added": self.added, "duplicates": self.duplicates, "cross_source": self.cross_source[:50],
+        return {"added": self.added, "duplicates": self.duplicates, "updated": self.updated,
+                "cross_source": self.cross_source[:50],
                 "conflicts": self.conflicts[:50], "covered_by_baseline": self.covered_by_baseline,
                 "baselines": self.baselines[:100], "baseline_skipped": self.baseline_skipped[:50],
                 "history_used": self.history_used[:100],
@@ -274,10 +277,67 @@ def remember_statement_prices(s: Session, *, account: str, holdings: list[Broker
                                                                   "source": label}}  # fmt: skip
 
 
+@dataclass
+class Upserted:
+    updated: int = 0
+    same: int = 0
+    conflicts: list[dict[str, Any]] = field(default_factory=list)
+    holdings: set[int] = field(default_factory=set)
+
+
+def _q6(v: Decimal | None) -> Decimal | None:
+    return None if v is None else v.quantize(Decimal("0.000001"))  # portfolio_txn keeps 6 decimals
+
+
+def upsert_orders(s: Session, rows: list[ImportedTxn], *, account: str,
+                  source: str) -> tuple[list[ImportedTxn], Upserted]:  # fmt: skip
+    """Rows of a broker that reports orders, not fills (Groww: filled quantity and average fill price *so far*). A
+    row whose order id this source already stored in this account is that same order read again: unchanged → a
+    duplicate; more fills (or a corrected day) → the stored row takes the new quantity, price, amount and day, so an
+    order synced at 40 filled and again at 100 is one row of 100, never 140 (#266). Returns the rows still to add.
+    Two stored rows for one order (left by syncs before #266) are not guessed at: reported as a conflict."""
+    out, up = [], Upserted()
+    for t in rows:
+        oid = str((t.meta or {}).get("order_id") or "")
+        if not oid:
+            out.append(t)
+            continue
+        old = s.scalars(select(PortfolioTxn).join(PortfolioHolding, PortfolioHolding.id == PortfolioTxn.holding_id)
+                        .where(PortfolioTxn.source == source, PortfolioHolding.account == account,
+                               PortfolioTxn.kind == t.kind, PortfolioTxn.meta["order_id"].astext == oid)
+                        .order_by(PortfolioTxn.id)).all()  # fmt: skip
+        if not old:
+            out.append(t)
+            continue
+        if len(old) > 1:
+            up.conflicts.append({"name": t.name, "account": account, "day": t.day.isoformat(), "kind": t.kind,
+                                 "units": str(t.quantity), "other_units": str(sum(o.quantity or 0 for o in old)),
+                                 "sources": [source],
+                                 "why": f"order {oid} is stored {len(old)} times (synced before its fills were "
+                                        "complete): delete the extra rows, then sync again"})  # fmt: skip
+            continue
+        row = old[0]
+        if (_q6(row.quantity), _q6(row.price), row.day) == (_q6(t.quantity), _q6(t.price), t.day):
+            up.same += 1
+            continue
+        row.quantity, row.price, row.amount, row.day = t.quantity, t.price, t.amount, t.day
+        row.meta = {**(row.meta or {}), **t.meta}
+        key = t.dedupe_key(0)
+        if s.scalar(select(PortfolioTxn.id).where(PortfolioTxn.dedupe_key == key)) is None:
+            row.dedupe_key = key  # a later identical read is then a plain same-source duplicate too
+        up.updated += 1
+        up.holdings.add(row.holding_id)
+    s.flush()
+    return out, up
+
+
 # --------------------------------------------------------------------------- the merge
 def merge_sync(s: Session, *, account: str, source: str, label: str, holdings: list[BrokerHolding],
                trades: list[BrokerTrade], today: date, now: datetime, holdings_include_today: bool = True,
-               mf_holdings: list[BrokerHolding] | None = None, allow_baseline: bool = True) -> MergeResult:  # fmt: skip
+               mf_holdings: list[BrokerHolding] | None = None, allow_baseline: bool = True,
+               order_keyed: bool = False) -> MergeResult:  # fmt: skip
+    """`order_keyed`: the broker reports one row per order, not per fill (BrokerConnector.fills_aggregated), so
+    a stored row of the same order id is updated in place instead of a second row being added (upsert_orders)."""
     res = MergeResult()
     snap_day = today if holdings_include_today else today - timedelta(days=1)
     touched: set[int] = set()
@@ -374,6 +434,12 @@ def merge_sync(s: Session, *, account: str, source: str, label: str, holdings: l
             res.covered_by_baseline += len(rows)
             continue
         keep += rows  # rows other sources already have are caught by add_txns (portfolio.dedupe, rule 2)
+    if order_keyed and keep:
+        keep, up = upsert_orders(s, keep, account=account, source=source)
+        res.updated += up.updated
+        res.duplicates += up.same
+        res.conflicts += up.conflicts
+        touched |= up.holdings
     if keep:
         imp = _new_import(s, "api", source, label, now)
         applied = add_txns(s, keep, imp.id)
@@ -394,18 +460,32 @@ def merge_sync(s: Session, *, account: str, source: str, label: str, holdings: l
         rebuild(s, hid)
     s.flush()
 
-    # 3. reconciliation (never "fixed" automatically)
-    res.reconciliation = reconcile_snapshot(s, account=account, holdings=holdings)
+    # 3. reconciliation (never "fixed" automatically). A snapshot that excludes today's trades is compared with the
+    # lots as of its own day: today's buys and sells are not in it yet, which is no difference.
+    res.reconciliation = reconcile_snapshot(s, account=account, holdings=holdings,
+                                            as_of=None if holdings_include_today else snap_day)  # fmt: skip
     if mf_holdings:
         res.reconciliation += reconcile_snapshot(s, account=f"{account} MF", holdings=mf_holdings,
                                                  by_instrument=True)  # fmt: skip
     return res
 
 
-def reconcile_snapshot(s: Session, *, account: str, holdings: list[BrokerHolding],
-                       by_instrument: bool = False) -> list[dict[str, Any]]:  # fmt: skip
+def _units_as_of(s: Session, holding_id: int, as_of: date | None) -> Decimal:
+    """The holding's open units now (its lots), or at the end of `as_of` (a FIFO replay of the rows up to that day)."""
+    if as_of is None:
+        return _open_units(s, holding_id)
+    txns = s.scalars(select(PortfolioTxn).where(PortfolioTxn.holding_id == holding_id,
+                                                PortfolioTxn.day <= as_of)).all()  # fmt: skip
+    return build_lots(events_of(txns)).units if txns else Decimal(0)
+
+
+def reconcile_snapshot(s: Session, *, account: str, holdings: list[BrokerHolding], by_instrument: bool = False,
+                       as_of: date | None = None) -> list[dict[str, Any]]:  # fmt: skip
     """Broker quantity vs the app's open lot units, per instrument; plus instruments the app holds in this account
-    that the broker no longer reports."""
+    that the broker no longer reports. `as_of`: the day the broker's snapshot stands for when it excludes today's
+    trades (BrokerConnector.holdings_include_today False): the app's units are then those at the end of that day."""
+    if by_instrument:
+        as_of = None  # fund holdings (Kite Coin) are reported as of now
     out: list[dict[str, Any]] = []
     seen: set[int] = set()
     for h in holdings:
@@ -415,7 +495,7 @@ def reconcile_snapshot(s: Session, *, account: str, holdings: list[BrokerHolding
         else:
             one = find_holding(s, t)
             matches = [one] if one else []
-        have = sum((_open_units(s, x.id) for x in matches), Decimal(0))
+        have = sum((_units_as_of(s, x.id, as_of) for x in matches), Decimal(0))
         seen |= {x.id for x in matches}
         diff = have - h.quantity
         acts = "; ".join(a["reason"] for x in matches for a in actions_of(x.meta)) or None
@@ -429,7 +509,7 @@ def reconcile_snapshot(s: Session, *, account: str, holdings: list[BrokerHolding
         for x in s.scalars(select(PortfolioHolding).where(PortfolioHolding.account == account)):
             if x.id in seen:
                 continue
-            units = _open_units(s, x.id)
+            units = _units_as_of(s, x.id, as_of)
             if units > UNITS_TOL:
                 out.append({"name": x.name, "ikey": x.ikey, "account": account, "broker_units": "0",
                             "app_units": str(units.quantize(Decimal("0.001"))),
