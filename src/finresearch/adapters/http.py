@@ -293,8 +293,8 @@ def is_public_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
             inner is None and ip in _NAT64
         ):  # 64:ff9b::/96 (RFC 6052) carries the IPv4 address in its last 32 bits
             inner = ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
-        if inner is not None and not is_public_ip(inner):
-            return False
+        if inner is not None:  # judged by the carried address alone: older Pythons call all of ::ffff:0:0/96 reserved
+            return is_public_ip(inner)
     return ip.is_global and not (ip.is_multicast or ip.is_loopback or ip.is_link_local or ip.is_unspecified
                                  or ip.is_reserved or ip.is_private)  # fmt: skip
 
