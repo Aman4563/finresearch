@@ -217,6 +217,12 @@ class BrokerConnector(ABC):
     # False: today's delivery buys show in positions until tomorrow
     holdings_include_today: ClassVar[bool] = True
     first_sync_days: ClassVar[int] = 30  # trade history requested on the first sync (clamped by the broker)
+    # the trades endpoint only ever answers today's orders (Groww): a failed read cannot be made up on a later day,
+    # so sync retries it the same day (sync.TRADES_RETRIES) and never claims coverage of earlier days
+    trades_today_only: ClassVar[bool] = False
+    # one BrokerTrade per *order* (its filled quantity and average fill price so far), keyed by the broker's order
+    # id: a re-read of the same order with more fills updates the stored row in place (merge.upsert_orders)
+    fills_aggregated: ClassVar[bool] = False
 
     def __init__(self, config: dict[str, Any], token: str | None = None) -> None:
         self.config = dict(config or {})
