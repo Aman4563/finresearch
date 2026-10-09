@@ -366,6 +366,9 @@ def test_failed_pass_is_retried_later_and_capped(pf):
         raise ConnectionError("AMFI down")
 
     deps.pf_scheme_rows = down
+    deps.pf_history = (
+        None  # only the daily pass's retries here, not the stale-history rebuild between passes (#260)
+    )
     t = datetime(2026, 9, 30, tzinfo=UTC) + IST_1630
     # fetch_prices degrades a failed NAV file to the statement price, so force a failure in the snapshot write
     import finresearch.portfolio.report as report
