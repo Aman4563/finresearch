@@ -1293,3 +1293,77 @@ def test_groww_retries_a_refused_totp_once_with_the_next_step(monkeypatch):
     monkeypatch.setattr(groww.time, "time", lambda: 1_790_000_029.0)  # 1 s before a step turns
     assert run(GrowwConnector({"api_key": GROWW_KEY, "totp_secret": SEED}).login()).token == ACCESS
     assert sent == [totp(SEED, 1_790_000_029.0), totp(SEED, 1_790_000_059.0)] and sent[0] != sent[1]
+
+
+# ------------------------------------------------------------------ #296 CAS emails into the inbox
+def _fake_pan(seed: str) -> str:
+    """A made-up PAN-shaped password, built at runtime (no PAN-like literal in the repo)."""
+    return (seed * 5)[:5].upper() + "0000" + seed[0].upper()
+
+
+def _drop(root, name: str, content: bytes = b"%PDF-1.4 synthetic") -> None:
+    import os
+
+    (root / name).write_bytes(content)
+    old = NOW.timestamp() - 60
+    os.utime(root / name, (old, old))
+
+
+def _cas(period=("01-Jan-2026", "30-Jun-2026"), txns=(), closing=(), opening=None, source="CAMS"):
+    """A synthetic CAMS ImportResult for one fund in one folio (the parser itself is tested elsewhere)."""
+    from finresearch.portfolio.importers import ClosingBalance, ImportedTxn, ImportResult, parse_day
+
+    common = dict(account="Example AMC · folio 999/1", asset_type="mf", name="Example Flexi Cap Fund",
+                  isin="INF000X01011", source="cas")  # fmt: skip
+    rows = []
+    if opening is not None:
+        rows.append(ImportedTxn(**common, day=parse_day(period[0]), kind="opening", quantity=D(opening),
+                                meta={"statement_opening": True}, ext="opening"))  # fmt: skip
+    for day, kind, q, amt in txns:
+        rows.append(ImportedTxn(**common, day=day, kind=kind, quantity=D(q), amount=D(amt), price=D(amt) / D(q),
+                                ext=f"{kind}{day}"))  # fmt: skip
+    res = ImportResult("cas", source, rows, period=period)
+    for units in closing:
+        res.closing.append(ClosingBalance("ISIN:INF000X01011", common["account"], common["name"], D(units)))
+    return res
+
+
+def test_inbox_tries_each_saved_password_in_turn(db, client, monkeypatch):
+    from finresearch.portfolio import importers
+    from finresearch.portfolio.connectors.inbox import ensure_dirs, scan
+
+    cas_pw, pan = "Chosen#" + "pw1", _fake_pan("abcde")
+    tried: list[str] = []
+
+    def fake_parse(content, password):
+        tried.append(password)
+        if password != pan:
+            raise importers.StatementError("wrong password for this PDF (CAS PDFs are usually locked with your PAN)")
+        return _cas(txns=[(date(2026, 2, 1), "buy", "10", "1000")], closing=["10"])
+
+    monkeypatch.setattr(importers, "parse_cas", fake_parse)
+    root = ensure_dirs()
+    _drop(root, "statement.pdf")
+    r = client.put("/api/connections/cas_inbox", headers=ORIGIN,
+                   json={"enabled": True, "config": {"password": cas_pw, "pan": pan}})  # fmt: skip
+    assert r.status_code == 200, r.text
+    out = scan(now=NOW)
+    assert tried == [cas_pw, pan]  # the CAS password first, then the PAN
+    assert out["files"][0]["status"] == "imported" and out["files"][0]["added"] == 1
+    listing = client.get("/api/connections").text
+    assert cas_pw not in listing and pan not in listing  # write-only
+    inbox = next(c for c in client.get("/api/connections").json()["connections"] if c["key"] == "cas_inbox")
+    assert inbox["config"]["pan_set"] and inbox["config"]["password_set"] and not inbox["config"]["password_2_set"]
+    logs = client.get("/api/connections/log?limit=30").text
+    assert cas_pw not in logs and pan not in logs
+
+    # every password refused: the file waits, and only a changed password set retries it
+    tried.clear()
+    _drop(root, "other.pdf", b"%PDF-1.4 another")
+    client.put("/api/connections/cas_inbox", headers=ORIGIN, json={"config": {"clear_pan": True}})
+    got = scan(now=NOW)["files"][0]
+    assert got["status"] == "waiting" and "tried 1 saved password" in got["note"] and tried == [cas_pw]
+    tried.clear()
+    assert scan(now=NOW)["files"] == [] and tried == []  # the same set already failed
+    client.put("/api/connections/cas_inbox", headers=ORIGIN, json={"config": {"password_2": pan}})
+    assert scan(now=NOW)["files"][0]["status"] == "imported" and tried == [cas_pw, pan]

@@ -35,6 +35,7 @@ from finresearch.db import session_scope
 from finresearch.db.models import BrokerConnection, BrokerSyncLog
 from finresearch.portfolio.ais import AIS_FILENAME, scrub_filename
 from finresearch.portfolio.connectors import INBOX_KEY
+from finresearch.portfolio.connectors.store import INBOX_PASSWORDS
 
 SETTLE_S = 5.0
 EXTS = (".pdf", ".csv", ".xlsx", ".xls", ".json")
@@ -83,16 +84,16 @@ def scan(*, now: datetime | None = None, password: str | None = None) -> dict[st
     with session_scope() as s:
         row = s.get(BrokerConnection, INBOX_KEY)
         cfg = dict(row.config or {}) if row else {}
-        saved_pw = secret_store.resolve(cfg.get("password"))  # a Keychain reference since #245
+        # Keychain references since #245; several since #296 (CAS password, PAN, others), tried in this order
+        saved = [v for n in INBOX_PASSWORDS if (v := secret_store.resolve(cfg.get(n)))]
         # older versions stored "wrong:<12 hex of sha256(password)>": scrub them (they could be brute-forced back to a
         # PAN-derived password); those files are simply tried again once
         waiting = {k: ("wrong:legacy" if re.fullmatch(r"wrong:[0-9a-f]{12}", str(v)) else v)
                    for k, v in dict((row.state or {}).get("waiting") or {}).items()} if row else {}  # fmt: skip
         before = dict(waiting)
-        pw_fp = (
-            str(cfg.get("password_rev") or "saved") if saved_pw else ""
-        )  # a random revision id, not a hash
-    pw = password or saved_pw
+        pw_fp = str(cfg.get("password_rev") or "saved") if saved else ""  # a random revision id, not a hash
+    pws = list(dict.fromkeys([password] if password else saved))  # never logged; each value is in logredact
+    del saved
     results: list[dict[str, Any]] = []
     imported = 0
     for path in sorted(root.iterdir()):
@@ -133,7 +134,7 @@ def scan(*, now: datetime | None = None, password: str | None = None) -> dict[st
                         waiting[safe] = "ais pdf"
                     continue
                 if content.startswith(b"%PDF"):
-                    if not pw:
+                    if not pws:
                         waiting[path.name] = "no password saved"
                         results.append({**entry, "status": "waiting", "logged": before.get(path.name) == "no password saved", "note": "no CAS password saved: save it in "
                                         "Connections → Statement inbox, or import the file on the Portfolio page"})  # fmt: skip
@@ -141,7 +142,7 @@ def scan(*, now: datetime | None = None, password: str | None = None) -> dict[st
                     if waiting.get(path.name) == f"wrong:{pw_fp}" and not password:
                         continue  # the same password already failed: wait for a new one
                     try:
-                        res = parse_cas(content, pw)
+                        res = _parse_any(parse_cas, content, pws)
                     except StatementError as e:
                         if "password" in str(e):
                             waiting[path.name] = f"wrong:{pw_fp}"
@@ -221,6 +222,24 @@ def scan(*, now: datetime | None = None, password: str | None = None) -> dict[st
             s.add(BrokerSyncLog(key=INBOX_KEY, trigger="inbox", status=status, started_at=now,
                                 finished_at=datetime.now(UTC), summary=_slim(r), error=error))  # fmt: skip
     return {"imported": imported, "files": [_slim(r) for r in results], "inbox": str(root)}
+
+
+def _parse_any(parse_cas, content: bytes, pws: list[str]):
+    """Try each saved password in turn. A wrong password moves on to the next; any other error (not a CAS, a summary
+    CAS) is the file's answer. Only when every password is refused does the wrong-password error stand."""
+    from finresearch.portfolio.importers import StatementError
+
+    wrong: StatementError | None = None
+    for pw in pws:
+        try:
+            return parse_cas(content, pw)
+        except StatementError as e:
+            if "password" not in str(e):
+                raise
+            wrong = e
+    assert wrong is not None
+    n = len(pws)
+    raise StatementError(f"{wrong} (tried {n} saved password{'s' if n > 1 else ''})") from wrong
 
 
 def _ais(s, path: Path, content: bytes, sha: str, before: str | None) -> dict[str, Any]:
