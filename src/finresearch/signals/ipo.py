@@ -750,16 +750,31 @@ async def compute(
     # ctx log=0: a GET or a scheduled check, not a logged view (#247: only POST /api/signals/ipo/{symbol} logs)
     if src.record is not None and str(ctx.get("log", "1")) != "0":
         resolve_on = expected_listing(detail, today)
+        stated = _stated_listing(detail)
         inputs = {
             "symbol": symbol,
             "issue_price": _s(upper),
             "qib_times": book.qib,
             "book_as_of": _s(book.as_of),
+            # the resolver requires the listing-day bar ON this date (#292); only NSE's own stated date is logged here,
+            # never the T+3 estimate (a one-day slip would then wait until the forecast is voided)
+            "listing_date": stated,
+            "listing_date_basis": "NSE ipo-detail metaInfo.listingDate" if stated else None,
+            "expected_listing": _s(resolve_on),
         }
         src.record(sig, resolve_on, inputs)
         if shadow is not None:  # logged as its own method: scored out of sample, never used for the call
             src.record(shadow_signal(sig, shadow), resolve_on, {**inputs, "shadow_of": sig.method})
     return sig
+
+
+def _stated_listing(detail) -> str | None:
+    """The listing date NSE's issue page states (`metaInfo.listingDate`, ISO), or None before NSE publishes one."""
+    meta = ((getattr(detail, "raw", None) or {}).get("metaInfo") or {}) if detail is not None else {}
+    try:
+        return date.fromisoformat(str(meta.get("listingDate") or "")[:10]).isoformat()
+    except ValueError:
+        return None
 
 
 def _inr(x: float) -> str:

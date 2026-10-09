@@ -20,7 +20,8 @@ Research-run verdicts → probabilities (fixed map v1, until outcomes say otherw
   APPLY-CONDITIONAL and NEUTRAL → no call (logged with probability None, resolved for coverage, never scored:
   the condition is free text, and scoring it as 0.5 would only add noise). A forecast made after the listing-day
   open (09:00 IST on the listing date, when the pre-open auction starts) is voided at resolution: its outcome was
-  already known. The price-history resolver reads the first bar on or after the known listing date.
+  already known. The listing open comes from the IPO harvest's listing bar (ipo_history), the monitor's quote, or NSE's
+  daily history ON the listing date (EQ, else the T2T "BE" series); a later session's open is never scored (#292).
 * Stock report (`verdict`), event "12-month total return (price + cash dividends, NSE closes) above the price
   return of NIFTYBEES, the Nifty 50 ETF": BUY, ACCUMULATE → map; REDUCE, AVOID → 1 − map; HOLD → no call. Since #241
   a stock report states a research view instead (FAVOURABLE → map, UNFAVOURABLE → 1 − map, MIXED → no call); it is
@@ -249,6 +250,7 @@ def record_run(session: Session, run_id: int) -> int | None:
         issue = _ipo_issue_price(session, run)
         inputs |= {"symbol": co.nse_symbol, "issue_price": str(issue) if issue is not None else None,
                    "issue_price_basis": "upper end of the price band (ledger fact or NSE issue info)",
+                   "listing_date": listing.isoformat() if listing else None,
                    "listing_date_basis": "watch / NSE" if listing else "unknown; checked from a week after the report",
                    "bse_ipo_no": bse_no, "listing_verdict": syn.get("verdict_listing")}  # fmt: skip
         event_kind, event, horizon, asset = "listing_gain", IPO_EVENT, "listing day", "ipo"
@@ -375,21 +377,66 @@ def _dec(x: Any) -> Decimal | None:
 LISTING_OPEN_IST = time(9, 0)
 
 
-def _history_listing(session: Session, symbol: str | None) -> date | None:
-    """The listing date the IPO harvest recorded for a mainboard symbol, if any (newest issue first)."""
+def _history_row(session: Session, symbol: str | None):
+    """The IPO harvest's row for an NSE symbol (newest listing first), if any. BSE-only symbols have none."""
     if not symbol or symbol.startswith("BSE:"):
         return None
     from finresearch.db.models import IpoHistory
 
-    return session.scalar(select(IpoHistory.listing_date).where(IpoHistory.symbol == symbol,
-                                                                IpoHistory.listing_date.is_not(None))
-                          .order_by(IpoHistory.listing_date.desc()))  # fmt: skip
+    return session.scalars(select(IpoHistory).where(IpoHistory.symbol == symbol,
+                                                     IpoHistory.listing_date.is_not(None))
+                           .order_by(IpoHistory.listing_date.desc())).first()  # fmt: skip
+
+
+def _history_open(row, listing: date) -> tuple[Decimal | None, str | None]:
+    """The harvest's listing open when its stored bar is ON the listing date (the harvest itself accepts the first bar
+    on or after it); else None. Returns (open, series)."""
+    if row is None or row.listing_date != listing or row.list_open is None:
+        return None, None
+    from finresearch.evals.ipo_history import listing_bar
+
+    bar = listing_bar((row.raw or {}).get("bars") or [], listing)
+    if bar is None or bar.get("day") != listing.isoformat():
+        return None, None
+    return _dec(row.list_open), ((row.source or {}).get("history") or {}).get("series")
+
+
+def _is_listing_bar(bar, issue: Decimal | None) -> bool:
+    """NSE sets the listing day's previous close to the issue price; a later session's previous close is the last
+    traded price. Used only when the listing date is unknown."""
+    prev = _dec(getattr(bar, "prev_close", None))
+    return prev is not None and issue is not None and issue > 0 and abs(prev / issue - 1) <= Decimal("0.01")
+
+
+async def _nse_listing_open(deps: Any, symbol: str, listing: date | None, since: date, until: date,
+                            issue: Decimal | None) -> tuple[Decimal, date, str] | None:  # fmt: skip
+    """The listing-day open from NSE's daily history: EQ first, then the T2T (BE) series, where an issue that listed in
+    trade-for-trade has its first sessions (its EQ rows start ~10 sessions later). With a known listing date the first
+    bar must be ON that date; without one, the first bar after the forecast must carry the listing-day marker
+    (previous close = issue price). A later session's open is never returned as the listing open."""
+    start = listing or since
+    end = max(start, until) + timedelta(days=10)
+    sources = [("EQ", deps.price_history)]
+    if getattr(deps, "t2t_price_history", None) is not None:
+        sources.append(("BE", deps.t2t_price_history))
+    for series, fetch in sources:
+        bars = [b for b in await fetch(symbol, start, end) if b.open is not None and b.day >= start]
+        if not bars:
+            continue
+        first = bars[0]
+        if listing is not None and first.day == listing:
+            return first.open, first.day, series
+        if listing is None and _is_listing_bar(first, issue):
+            return first.open, first.day, series
+    return None
 
 
 @resolver("ipo", "listing_gain")
 async def resolve_listing_gain(f: Forecast, deps: Any, session: Session) -> Resolution:
-    """Listing-day open vs the issue price: first from the monitor's own listing check (NSE or BSE quote on the
-    listing day, stored on the watch), else from NSE's daily history (the first traded day after the forecast)."""
+    """Listing-day open vs the issue price. The listing date: the watch's, else the IPO harvest's (NSE's own), else
+    the one NSE stated when the forecast was logged (inputs). The open, in order: the harvest's listing bar
+    (ipo_history.list_open, when its bar is on the listing date), the monitor's quote on the listing day (watch),
+    NSE's daily history (EQ, then the T2T BE series) on exactly the listing date. Otherwise it keeps waiting (#292)."""
     from finresearch.fincalc.ipo import listing_gain
 
     inp = f.inputs or {}
@@ -400,7 +447,14 @@ async def resolve_listing_gain(f: Forecast, deps: Any, session: Session) -> Reso
         from finresearch.monitor.jobs import _upper_band
 
         issue = _upper_band(session, watch)
-    listing = (watch.listing_date if watch is not None else None) or _history_listing(session, symbol)
+    hist = _history_row(session, symbol)
+    stated = None
+    if inp.get("listing_date"):
+        try:
+            stated = date.fromisoformat(str(inp["listing_date"])[:10])
+        except ValueError:
+            stated = None
+    listing = (watch.listing_date if watch is not None else None) or (hist.listing_date if hist else None) or stated
     if listing is not None and to_ist(f.created_at) >= datetime.combine(
         listing, LISTING_OPEN_IST, tzinfo=IST
     ):
@@ -410,17 +464,20 @@ async def resolve_listing_gain(f: Forecast, deps: Any, session: Session) -> Reso
             None, None, f"void: forecast made after the listing-day open ({listing}, 09:00 IST)"
         )
     open_price, listed_on, basis = None, None, None
-    if watch is not None and (watch.meta or {}).get("listing_open") is not None:
+    h_open, h_series = _history_open(hist, listing) if listing is not None else (None, None)
+    if h_open is not None:
+        open_price, listed_on = h_open, listing
+        basis = f"NSE listing-day bar ({h_series or 'EQ'} series) from the IPO history harvest"
+    elif watch is not None and (watch.meta or {}).get("listing_open") is not None:
         open_price, listed_on = _dec(watch.meta["listing_open"]), watch.listing_date
         basis = "exchange quote on the listing day (monitor)"
     elif symbol and not symbol.startswith("BSE:") and getattr(deps, "price_history", None) is not None:
-        # the first traded day on or after the known listing date (a stray earlier row is not the listing), else the
-        # first on or after the forecast
-        start = max(listing, ist_day(f.created_at)) if listing else ist_day(f.created_at)
-        bars = [b for b in await deps.price_history(symbol, start, max(start, f.resolve_on) + timedelta(days=10))
-                if b.open is not None and b.day >= start]  # fmt: skip
-        if bars:
-            open_price, listed_on, basis = bars[0].open, bars[0].day, "NSE daily history (first traded day)"
+        got = await _nse_listing_open(deps, symbol, listing, ist_day(f.created_at), f.resolve_on, issue)
+        if got is not None:
+            open_price, listed_on, series = got
+            basis = f"NSE daily history ({series} series, listing day)"
+        elif listing is not None:
+            raise NotYet(f"{f.instrument}: NSE has no {listing} (listing day) bar in the EQ or BE series yet")
     if open_price is None:
         raise NotYet(f"{f.instrument} has no listing-day open yet")
     if issue is None:
