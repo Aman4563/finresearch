@@ -265,6 +265,8 @@ def test_current_setup_gives_the_rule_legs_at_the_last_close():
     got = setup.current_setup(spec, h)
     assert got["status"] == "entry" and got["as_of"] == "2025-01-15" and got["expiry"] == "2025-02-27"
     assert [lg["side"] for lg in got["legs"]] == ["sell", "buy"] and got["max_loss"] > 0
-    late = setup.current_setup(spec, fs.history(date(2025, 1, 2), date(2025, 1, 31)))  # 27 days to Feb; Mar 27 - 45 days = Feb 10
+    late = setup.current_setup(
+        spec, fs.history(date(2025, 1, 2), date(2025, 1, 31))
+    )  # 27 days to Feb; Mar 27 - 45 days = Feb 10
     assert late["status"] == "wait" and "window opens on 10-Feb-2025" in late["reason"]
     assert setup.current_setup(replace(spec, underlying="BANKNIFTY"), h)["status"] == "no_data"

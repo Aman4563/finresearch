@@ -54,11 +54,19 @@ def test_db_history_reads_what_was_stored_read_only(bt_db):
     assert h.sessions("NIFTY", date(2025, 3, 1), date(2025, 3, 31)) == sorted(mem.days["NIFTY"])
     d = date(2025, 3, 5)
     got, want = h.day("NIFTY", d), mem.day("NIFTY", d)
-    assert got.options == want.options and got.futures == want.futures and got.spot == pytest.approx(want.spot, abs=0.005)
-    assert got.iv30 is not None and abs(got.iv30 - 15.0) < 0.2  # no derived series: computed from the day itself
+    assert (
+        got.options == want.options
+        and got.futures == want.futures
+        and got.spot == pytest.approx(want.spot, abs=0.005)
+    )
+    assert (
+        got.iv30 is not None and abs(got.iv30 - 15.0) < 0.2
+    )  # no derived series: computed from the day itself
     assert h.lot("NIFTY", date(2025, 3, 27), d) == 50
     with pytest.raises(InternalError), h._s() as s:  # every session is READ ONLY
-        s.execute(insert(FnoBhav).values(day=d, symbol="X", instrument="IDF", expiry=d, strike=0, option_type="XX"))
+        s.execute(
+            insert(FnoBhav).values(day=d, symbol="X", instrument="IDF", expiry=d, strike=0, option_type="XX")
+        )
 
 
 def test_report_is_saved_and_served_with_candidates_setup(bt_db):
@@ -76,7 +84,9 @@ def test_report_is_saved_and_served_with_candidates_setup(bt_db):
     by["nifty_pcs_m"]["status"] = "candidate"  # pretend it passed, to exercise the candidate path
     with session_scope() as s:
         run_id = bstore.save(s, rep)
-    store_days([mem.day("NIFTY", date(2025, 1, 15))])  # the app's F&O history: one close, no derived IV series
+    store_days(
+        [mem.day("NIFTY", date(2025, 1, 15))]
+    )  # the app's F&O history: one close, no derived IV series
     with TestClient(create_app()) as c:
         body = c.get("/api/fno/backtests").json()
         assert body["registration"]["matches_code"] is True and len(body["registration"]["specs"]) == 8
@@ -84,7 +94,10 @@ def test_report_is_saved_and_served_with_candidates_setup(bt_db):
         assert run["id"] == run_id and run["oos_evaluated"] is True
         assert {s["key"]: s["status"] for s in run["strategies"]}["stock_cc_m"] == "no_data"
         (cand,) = run["candidates"]
-        assert cand["key"] == "nifty_pcs_m" and cand["oos"]["trades"] == by["nifty_pcs_m"]["windows"]["oos"]["trades"]
+        assert (
+            cand["key"] == "nifty_pcs_m"
+            and cand["oos"]["trades"] == by["nifty_pcs_m"]["windows"]["oos"]["trades"]
+        )
         # IV percentile needs a year of stored IVs: unknown, so the setup says wait (never a default "enter")
         assert cand["setup"]["status"] == "wait" and "IV percentile unknown" in cand["setup"]["reason"]
         tr = c.get(f"/api/fno/backtests/{run_id}/nifty_dcs_m/trades").json()
