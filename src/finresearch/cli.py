@@ -1262,7 +1262,8 @@ def fno_derive(
 
 
 backtest_app = typer.Typer(
-    no_args_is_help=True, help="Backtest the pre-registered F&O strategies on the stored bhavcopy history (#307)"
+    no_args_is_help=True,
+    help="Backtest the pre-registered F&O strategies on the stored bhavcopy history (#307)",
 )
 fno_app.add_typer(backtest_app, name="backtest")
 
@@ -1275,7 +1276,9 @@ def fno_backtest_run(
         "default: the app's database",
     ),
     in_sample_only: bool = typer.Option(False, help="Replay 2022-01..2024-06 only (never reads a later day)"),
-    json_out: Path | None = typer.Option(None, "--json", help="Also write the full report (every trade) here"),
+    json_out: Path | None = typer.Option(
+        None, "--json", help="Also write the full report (every trade) here"
+    ),
     store: bool = typer.Option(True, help="Save the report in the app's database (fno_backtest_run)"),
 ) -> None:
     """Replay the pre-registered strategies (src/finresearch/backtest/specs.py) with real costs and slippage and judge
@@ -1334,7 +1337,18 @@ def _backtest_table(rep: dict) -> None:
     span = "out of sample " + " to ".join(rep["windows"]["oos"]) if oos else "in-sample only"
     t = Table(title=f"F&O backtest {rep['version']} on {rep['source']} · registration "
               f"{rep['registration_hash'][:12]} · {rep['variants_tried']} variants · {span}")  # fmt: skip
-    for c in ("strategy", "status", "trades", "₹/trade", "t", "CI low", "max DD %", "DSR", "win %", "reasons"):
+    for c in (
+        "strategy",
+        "status",
+        "trades",
+        "₹/trade",
+        "t",
+        "CI low",
+        "max DD %",
+        "DSR",
+        "win %",
+        "reasons",
+    ):
         t.add_column(c)
     for r in rep["strategies"]:
         w = (r.get("windows") or {}).get("oos" if oos else "is") or {}

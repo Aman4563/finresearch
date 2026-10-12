@@ -612,6 +612,7 @@ async def fno_signal(instrument: str, ctx: dict[str, Any]) -> Signal:
                             "the loss of these legs is unlimited, so no size fits."))}  # fmt: skip
     caveat = caveats(a, notice)
     caveat.append(f"Risk-free rate {rinfo['rate']:.2%} (continuous): {rinfo['source']}; {rinfo['note']}.")
+    caveat.append(backtest_caveat())
     if failed:
         caveat.insert(0, "Not passing: " + "; ".join(failed) + ".")
     return Signal(
@@ -626,3 +627,61 @@ async def fno_signal(instrument: str, ctx: dict[str, Any]) -> Signal:
         sources=[notice["url"], "https://www.nseindia.com/option-chain", ch.BUDGET_2026, ch.ZERODHA_CHARGES],
         as_of=chain.as_of,
     )  # fmt: skip
+
+
+# --------------------------------------------------------------------------- backtest evidence (#307)
+BACKTEST_NOTE = ("A 'candidate' passed every criterion pre-registered before its out-of-sample run (specs.py, "
+                 "evals/experiments/fno_backtest/PREREG.md). It is evidence from the past with stated limits, not a "
+                 "guarantee: SEBI found most retail F&O traders lose.")  # fmt: skip
+
+
+def backtest_evidence(with_setups: bool = True) -> dict[str, Any] | None:
+    """The latest saved backtest (finresearch.backtest.store) with each strategy's status; for each candidate, its
+    current setup (the rule's legs at the last stored close of the app's F&O history). None when no run is saved."""
+    from dataclasses import replace
+
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from finresearch.backtest import setup, specs
+    from finresearch.backtest import store as bstore
+    from finresearch.backtest.dbhistory import DbHistory
+    from finresearch.db import session_scope
+
+    try:
+        with session_scope() as s:
+            run = bstore.latest_run(s)
+            rep = bstore.run_json(s, run) if run else None
+    except SQLAlchemyError:  # the #307 migration has not run on this database yet
+        return None
+    if rep is None:
+        return None
+    candidates = []
+    for r in rep["strategies"]:
+        if r["status"] != "candidate":
+            continue
+        c = {"key": r["key"], "name": r["name"], "oos": (r.get("windows") or {}).get("oos"),
+             "criteria": r.get("criteria"), "setup": None}  # fmt: skip
+        if with_setups:
+            try:
+                spec = replace(specs.by_key(r["key"]), underlying=r["underlying"])
+                c["setup"] = setup.current_setup(spec, DbHistory())
+            except (KeyError, SQLAlchemyError, ValueError) as e:
+                c["setup"] = {
+                    "status": "unknown",
+                    "reason": f"setup could not be computed: {type(e).__name__}",
+                }
+        candidates.append(c)
+    rep["candidates"] = candidates
+    rep["note"] = BACKTEST_NOTE
+    return rep
+
+
+def backtest_caveat() -> str:
+    """One line for the strategy signal: what the pre-registered backtest found (or that none is saved)."""
+    ev = backtest_evidence(with_setups=False)
+    if not ev:
+        return "No pre-registered backtest is saved yet (finresearch fno backtest run): no strategy has historical evidence."
+    n = len(ev["candidates"])
+    return (f"Pre-registered backtest ({ev['source']}, {ev['variants_tried']} variants): {n} candidate"
+            f"{'' if n == 1 else 's'} out of sample" + (f" ({', '.join(c['key'] for c in ev['candidates'])})" if n else
+            "; nothing passed") + ". See /fno/backtests.")  # fmt: skip

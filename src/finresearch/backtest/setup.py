@@ -28,7 +28,11 @@ def current_setup(spec: Spec, history: Any, book: Book = BOOK) -> dict[str, Any]
     st = engine.SpecState(spec)
     p = engine.try_enter(st, x, sym, h, ivs, book)
     if p is None:
-        later = [e for e in x.expiries() if (e - last).days > spec.dte_max]
+        later = [
+            e
+            for e in x.expiries()
+            if (e - last).days > spec.dte_max and (spec.expiry_kind == "any" or x.is_monthly(e))
+        ]
         why = "; ".join(st.skips) or (
             f"no expiry {spec.dte_min}-{spec.dte_max} days away at this close"
             + (f"; the window opens on {later[0] - timedelta(days=spec.dte_max):%d-%b-%Y}" if later else "")

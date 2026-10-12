@@ -255,3 +255,16 @@ def test_decisions_up_to_a_day_ignore_every_later_price():
         differs |= a[key]["equity"][-1] != b[key]["equity"][-1]
         assert a[key]["max_day_read"] <= end
     assert differs  # the crash after T did change the later results
+
+
+def test_current_setup_gives_the_rule_legs_at_the_last_close():
+    from finresearch.backtest import setup
+
+    h = fs.history(date(2025, 1, 2), date(2025, 1, 15))
+    spec = replace(specs.by_key("nifty_pcs_m"), iv_pct_min=None)
+    got = setup.current_setup(spec, h)
+    assert got["status"] == "entry" and got["as_of"] == "2025-01-15" and got["expiry"] == "2025-02-27"
+    assert [lg["side"] for lg in got["legs"]] == ["sell", "buy"] and got["max_loss"] > 0
+    late = setup.current_setup(spec, fs.history(date(2025, 1, 2), date(2025, 1, 31)))  # 27 days to Feb; Mar 27 - 45 days = Feb 10
+    assert late["status"] == "wait" and "window opens on 10-Feb-2025" in late["reason"]
+    assert setup.current_setup(replace(spec, underlying="BANKNIFTY"), h)["status"] == "no_data"
