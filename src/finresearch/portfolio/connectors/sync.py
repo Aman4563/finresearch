@@ -38,6 +38,7 @@ from finresearch.portfolio.connectors.store import build_from, clear_token, set_
 log = logging.getLogger(__name__)
 SYNC_AFTER = time(16, 0)  # IST: after the 15:30 close, once brokers have settled the day's holdings
 INBOX_EVERY = timedelta(minutes=5)
+REMINDER_EVERY = timedelta(hours=1)  # the monthly CAS reminder is checked hourly (cas_followup.reminder_step)
 OVERLAP_DAYS = 3  # re-read a few days each sync: late fills and holidays are covered, duplicates are no-ops
 HEADLESS = ("totp", "password_totp", "key_secret")
 # a today-only trades endpoint (Groww) that failed is read again the same day: up to TRADES_RETRIES more syncs,
@@ -504,4 +505,14 @@ async def connections_step(now: datetime) -> dict[str, int]:
                 out["inbox_imported"] = got["imported"]
         except Exception:
             log.warning("statement inbox scan failed", exc_info=True)
+    last = _LAST_INBOX.get("reminder_at")
+    if last is None or now - last >= REMINDER_EVERY:  # the monthly "request a fresh CAS" reminder (#296)
+        _LAST_INBOX["reminder_at"] = now
+        try:
+            from finresearch.portfolio.cas_followup import reminder_step
+
+            with session_scope() as s:
+                out |= reminder_step(s, now)
+        except Exception:
+            log.warning("CAS reminder step failed", exc_info=True)
     return out

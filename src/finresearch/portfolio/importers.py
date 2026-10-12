@@ -85,6 +85,7 @@ class ClosingBalance:
     cost: Decimal | None = None
     # ISO days of rejected purchases in the statement (MISC rows)
     rejected: list[str] = field(default_factory=list)
+    folio: str | None = None  # a depository statement's MF folio, when it prints one (#296)
 
 
 @dataclass
@@ -278,7 +279,9 @@ def cas_to_result(d: dict[str, Any]) -> ImportResult:
     source = str(d.get("file_type") or "CAS")
     if str(d.get("cas_type")) == "SUMMARY":
         raise StatementError(
-            "this is a CAS summary (holdings only): download the detailed CAS with transactions"
+            "this is a Summary CAS (balances only, no transactions), which cannot build lots: request a Detailed "
+            "CAS instead (CAMS or KFintech mailback form, Statement type: Detailed, with transactions, for the "
+            "period you need) and import that"
         )
     period = d.get("statement_period") or {}
     start = parse_day(period.get("from") or period.get("from_"))
@@ -396,7 +399,8 @@ def _demat_holdings(data: Any, file_type: str) -> ImportResult:
             ik = instrument_key("mf", m.get("isin"), None, None, m.get("amfi"), m.get("name") or "")
             res.closing.append(ClosingBalance(ik, account, m.get("name") or m.get("isin") or "",
                                               _dec(m.get("balance")) or Decimal(0), _dec(m.get("nav")),
-                                              _dec(m.get("value")), cost=_dec(m.get("total_cost"))))  # fmt: skip
+                                              _dec(m.get("value")), cost=_dec(m.get("total_cost")),
+                                              folio=(str(m["folio"]) if m.get("folio") else None)))  # fmt: skip
     res.warnings.append("NSDL/CDSL statements list holdings only (no transactions): used to reconcile units, not "
                         "imported as lots. Import your broker tradebooks for the cost basis.")  # fmt: skip
     return res
