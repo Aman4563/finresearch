@@ -57,7 +57,9 @@ class Position:
     lot: int
     legs: list[Leg]
     premium: float  # ₹ received (+, credit) or paid (−, debit) at the fills
-    max_loss: float | None  # ₹ defined maximum loss at the entry fills, before costs and exit slippage (None: overlay)
+    max_loss: (
+        float | None
+    )  # ₹ defined maximum loss at the entry fills, before costs and exit slippage (None: overlay)
     margin: float | None  # ₹ approximate margin at entry (None: unknown)
     entry_costs: float
     iv30: float | None
@@ -274,17 +276,22 @@ def try_enter(st: SpecState, x: Day, sym: str, h: Clocked, ivs: list[float], boo
         lots = min(
             book.max_lots, math.floor(book.capital * book.max_loss_pct / 100 / (loss_unit * lot + one[1]))
         )  # type: ignore[operator]
+    needs_margin = spec.kind != "covered_call"
+    if needs_margin and any(p.margin is None for p in st.open):
+        st.skips["margin of an open position unknown"] += 1  # unknown is never counted as 0
+        return None
     used = sum(p.margin or 0.0 for p in st.open)
     while lots >= 1:
         legs, costs, mg = build(lots)
-        if mg is None or used + mg <= book.capital:
+        if not needs_margin or (mg is not None and used + mg <= book.capital):
             break
+        if mg is None:
+            st.skips["margin unknown (a leg's IV cannot be solved)"] += 1
+            return None
         lots -= 1
     if lots < 1:
         st.skips["max loss or margin above the budget for one lot"] += 1
         return None
-    if mg is None and spec.kind != "covered_call":
-        st.notes["margin unknown (traded; excluded from return on margin)"] += 1
     p = Position(spec.key, sym, expiry, d, (expiry - d).days, lots, lot, legs, prem_unit * lots * lot,
                  None if loss_unit is None else loss_unit * lots * lot, mg, costs, x.iv30, pct,
                  x.futures.get(expiry) if spec.role == "overlay" else None)  # fmt: skip

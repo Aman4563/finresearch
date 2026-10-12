@@ -160,6 +160,13 @@ def _finish(rows: list[dict[str, Any]], oos: bool, crit: Criteria) -> None:
         checks = judge(r["windows"]["is"], w, r["windows"]["oos_stress"], crit)
         r["criteria"] = checks
         failed = [x["criterion"] for x in checks if not x["pass"]]
+        if r["role"] == "overlay" and not crit.judge_overlays:
+            r["status"] = "overlay_reported"
+            r["reasons"] = [
+                "an overlay on a held stock: reported with its evidence, never a candidate (at most one "
+                "trade a month cannot reach the trade-count criterion)"
+            ] + [f"would fail: {x}" for x in failed]
+            continue
         r["status"] = "candidate" if not failed else "fails"
         r["reasons"] = [f"fails: {x}" for x in failed] or [
             "passes every pre-registered criterion out of sample"

@@ -13,7 +13,9 @@ from finresearch.backtest import evaluate, metrics, prereg, specs
 
 def test_clustered_t_equals_the_ordinary_t_with_one_trade_per_expiry():
     # mean 15, deviations 85, -65, 15, -35: s^2 = 12900 / 3 = 4300, se = sqrt(4300 / 4) = 32.787
-    assert metrics.clustered_t([100, -50, 30, -20], ["a", "b", "c", "d"]) == pytest.approx(15 / 32.78719, rel=1e-5)
+    assert metrics.clustered_t([100, -50, 30, -20], ["a", "b", "c", "d"]) == pytest.approx(
+        15 / 32.78719, rel=1e-5
+    )
 
 
 def test_clustered_t_groups_trades_on_the_same_expiry():
@@ -36,7 +38,13 @@ def test_trade_stats_and_cvar():
                "exercise_stt": 0.0, "margin": 50_000.0, "days_held": 73} for i, x in enumerate(nets)]  # fmt: skip
     s = metrics.trade_stats(trades)
     assert (s["trades"], s["wins"], s["losses"], s["win_rate"]) == (20, 19, 1, 0.95)
-    assert (s["expectancy"], s["avg_win"], s["avg_loss"], s["worst_trade"], s["cvar_5"]) == (50.0, 100.0, -900.0, -900.0, -900.0)
+    assert (s["expectancy"], s["avg_win"], s["avg_loss"], s["worst_trade"], s["cvar_5"]) == (
+        50.0,
+        100.0,
+        -900.0,
+        -900.0,
+        -900.0,
+    )
     assert s["costs"] == 300.0
     # ₹1,000 net over 20 x 50,000 x 73/365 = 2,00,000 rupee-years of margin = 0.5 % a year
     assert s["return_on_margin_annual"] == pytest.approx(0.005)
@@ -45,7 +53,12 @@ def test_trade_stats_and_cvar():
 
 def test_equity_stats():
     d0 = date(2024, 1, 1)
-    eq = [(d0, 100.0), (d0 + timedelta(days=1), 110.0), (d0 + timedelta(days=2), 99.0), (d0 + timedelta(days=365), 120.0)]
+    eq = [
+        (d0, 100.0),
+        (d0 + timedelta(days=1), 110.0),
+        (d0 + timedelta(days=2), 99.0),
+        (d0 + timedelta(days=365), 120.0),
+    ]
     s = metrics.equity_stats(eq, 100.0)
     assert s["max_drawdown_pct"] == 11.0 and s["max_drawdown"] == 11.0
     assert s["cagr"] == pytest.approx(1.2 ** (365 / 365) - 1)
@@ -71,7 +84,7 @@ def test_deflated_sharpe_against_hand_values():
 # --------------------------------------------------------------------------- pre-registration
 def test_registration_hash_is_recorded():
     """specs.py is registered as committed: any edit must become a new, re-registered variant."""
-    assert prereg.HASH == specs.registration_hash()
+    assert specs.registration_hash() == prereg.HASH
 
 
 def test_out_of_sample_refused_after_a_spec_changes(monkeypatch):
@@ -81,7 +94,9 @@ def test_out_of_sample_refused_after_a_spec_changes(monkeypatch):
     h = fs.history(date(2023, 1, 2), date(2023, 3, 31))
     with pytest.raises(evaluate.PreregistrationError):
         evaluate.evaluate(h, stock=None, source="synthetic")
-    rep = evaluate.evaluate(h, stock=None, source="synthetic", oos=False, spec_list=changed)  # in-sample: allowed
+    rep = evaluate.evaluate(
+        h, stock=None, source="synthetic", oos=False, spec_list=changed
+    )  # in-sample: allowed
     assert rep["oos_evaluated"] is False
     assert {r["status"] for r in rep["strategies"]} <= {"in_sample_only", "no_data"}
 
@@ -101,5 +116,9 @@ def test_report_judges_every_criterion(monkeypatch):
     assert by["stock_cc_m"]["status"] == "no_data" and by["banknifty_ic_m"]["status"] == "no_data"
     dcs = by["nifty_dcs_m"]
     assert dcs["status"] == "fails" and len(dcs["criteria"]) == 8
-    assert any(c["criterion"] == "OOS trades" and not c["pass"] for c in dcs["criteria"])  # 7 months: < 30 trades
-    assert dcs["windows"]["oos"]["trades"] == len([t for t in dcs["trades"] if t["entry_day"] >= "2024-07-01"])
+    assert any(
+        c["criterion"] == "OOS trades" and not c["pass"] for c in dcs["criteria"]
+    )  # 7 months: < 30 trades
+    assert dcs["windows"]["oos"]["trades"] == len(
+        [t for t in dcs["trades"] if t["entry_day"] >= "2024-07-01"]
+    )

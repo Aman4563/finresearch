@@ -119,3 +119,14 @@ def computed_iv30(x: Day) -> float | None:
     if not opts:
         return None
     return fh.day_summary(x.day, opts, x.futures, x.spot).iv_30d
+
+
+def top_stock(h: DbHistory, start: date, end: date) -> str | None:
+    """specs' STOCK_RULE: the stock underlying with the most option contracts traded from `start` to `end` (the
+    in-sample window) among those stored; None when no stock options are stored."""
+    with h._s() as s:
+        row = s.execute(select(FnoBhav.symbol, func.sum(FnoBhav.contracts).label("n"))
+                        .where(FnoBhav.instrument == "STO", FnoBhav.day.between(start, end))
+                        .group_by(FnoBhav.symbol).order_by(func.sum(FnoBhav.contracts).desc(), FnoBhav.symbol)
+                        .limit(1)).first()  # fmt: skip
+    return row[0] if row and row[1] else None

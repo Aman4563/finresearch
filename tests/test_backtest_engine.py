@@ -28,7 +28,14 @@ def charges(sell_value: float, buy_value: float, orders: int, stt_sell: float = 
     buys, ₹20 a order, GST 18 % on brokerage + exchange + SEBI (rates for a trade date from 1-Oct-2024 to 31-Mar-2026)."""
     turnover = sell_value + buy_value
     exch, sebi, brokerage = turnover * 0.0003553, turnover * 0.000001, 20.0 * orders
-    return sell_value * stt_sell + exch + sebi + buy_value * 0.00003 + brokerage + 0.18 * (brokerage + exch + sebi)
+    return (
+        sell_value * stt_sell
+        + exch
+        + sebi
+        + buy_value * 0.00003
+        + brokerage
+        + 0.18 * (brokerage + exch + sebi)
+    )
 
 
 @pytest.mark.parametrize(
@@ -78,6 +85,7 @@ def put_day(contracts_short: int = 500, contracts_wing: int = 50) -> Day:
 def test_put_credit_entry_strikes_fills_size_and_costs():
     x = put_day()
     t = (EXP - D0).days / 365
+
     # the traded OTM put (>= 10 contracts) whose Black-76 |delta| = e^(-rT) N(-d1) is nearest 0.20
     def pdelta(k: float) -> float:
         d1 = (math.log(F / k) + VOL * VOL * t / 2) / (VOL * math.sqrt(t))
@@ -90,8 +98,16 @@ def test_put_credit_entry_strikes_fills_size_and_costs():
     assert p is not None, st.skips
     assert [(lg.strike, lg.side) for lg in p.legs] == [(short_k, "sell"), (wing_k, "buy")]
     s_ref, w_ref = x.options[(EXP, "put", float(short_k))].close, x.options[(EXP, "put", float(wing_k))].close
-    s_fill = round(s_ref - max(0.02 * s_ref, 0.10), 2) if short_k % 200 == 0 else round(s_ref - max(0.04 * s_ref, 0.1), 2)
-    w_fill = round(w_ref + max(0.02 * w_ref, 0.10), 2) if wing_k % 200 == 0 else round(w_ref + max(0.04 * w_ref, 0.1), 2)
+    s_fill = (
+        round(s_ref - max(0.02 * s_ref, 0.10), 2)
+        if short_k % 200 == 0
+        else round(s_ref - max(0.04 * s_ref, 0.1), 2)
+    )
+    w_fill = (
+        round(w_ref + max(0.02 * w_ref, 0.10), 2)
+        if wing_k % 200 == 0
+        else round(w_ref + max(0.04 * w_ref, 0.1), 2)
+    )
     assert (p.legs[0].entry, p.legs[1].entry) == (pytest.approx(s_fill), pytest.approx(w_fill))
     credit = s_fill - w_fill
     one_lot_costs = charges(s_fill * LOT, w_fill * LOT, 2)
@@ -105,7 +121,13 @@ def test_put_credit_entry_strikes_fills_size_and_costs():
 
 def test_entry_refused_without_lot_size_or_iv_or_liquidity():
     x = put_day()
-    x2 = Day(D0, "NIFTY", options={k: replace(q, lot=None) for k, q in x.options.items()}, futures=x.futures, iv30=15.0)
+    x2 = Day(
+        D0,
+        "NIFTY",
+        options={k: replace(q, lot=None) for k, q in x.options.items()},
+        futures=x.futures,
+        iv30=15.0,
+    )
     st = engine.SpecState(replace(specs.by_key("nifty_pcs_m"), iv_pct_min=None))
     assert engine.try_enter(st, x2, "NIFTY", clk(x2), [15.0], BOOK) is None
     assert st.skips == {"lot size unknown": 1}  # never a default lot
@@ -120,7 +142,9 @@ def test_entry_refused_without_lot_size_or_iv_or_liquidity():
 
 
 # --------------------------------------------------------------------------- expiry settlement and management
-def position(legs: list[engine.Leg], expiry: date, premium: float, entry_costs: float = 50.0) -> engine.Position:
+def position(
+    legs: list[engine.Leg], expiry: date, premium: float, entry_costs: float = 50.0
+) -> engine.Position:
     return engine.Position("t", "NIFTY", expiry, date(2025, 1, 2), 30, 1, 75, legs, premium, None, None,
                            entry_costs, 15.0, 0.5)  # fmt: skip
 
@@ -134,7 +158,9 @@ def test_expiry_settlement_charges_exercise_stt_on_itm_longs_only(expiry, stt_ra
     tr = engine.settle(p, x)
     # long 20000 C worth 250, short 20400 C worth 0: (250 - 300) x 75 + (120 - 0) x 75
     assert tr["gross"] == pytest.approx(5250.0)
-    assert tr["exercise_stt"] == pytest.approx(250 * 75 * stt_rate, abs=0.005)  # Finance (No. 2) Act 2024 / Finance Bill 2026
+    assert tr["exercise_stt"] == pytest.approx(
+        250 * 75 * stt_rate, abs=0.005
+    )  # Finance (No. 2) Act 2024 / Finance Bill 2026
     assert tr["net"] == pytest.approx(5250.0 - 50.0 - 250 * 75 * stt_rate, abs=0.01)
     assert tr["exit_costs"] == 0 and tr["reason"] == "expiry"
     # a short leg that finishes in the money pays no exercise STT (the writer is assigned)
@@ -180,14 +206,22 @@ def test_full_run_exits_and_costs_are_consistent():
         hold = specs.by_key(key).hold_to_expiry
         for t in r["trades"]:
             assert t["exit_day"] <= t["expiry"] if hold else t["exit_day"] < t["expiry"]
-            assert t["net"] == pytest.approx(t["gross"] - t["entry_costs"] - t["exit_costs"] - t["exercise_stt"], abs=0.02)
+            assert t["net"] == pytest.approx(
+                t["gross"] - t["entry_costs"] - t["exit_costs"] - t["exercise_stt"], abs=0.02
+            )
             # defined risk holds up to the exit's slippage (at most 15 % of the price or ₹0.10 a unit per leg)
-            slip = 0 if t["reason"] == "expiry" else sum(x["qty"] * max(0.15 * x["exit"] / 0.85, 0.1) for x in t["legs"])
+            slip = (
+                0
+                if t["reason"] == "expiry"
+                else sum(x["qty"] * max(0.15 * x["exit"] / 0.85, 0.1) for x in t["legs"])
+            )
             assert t["max_loss"] is not None and t["gross"] >= -t["max_loss"] - slip - 1e-6
             assert t["exercise_stt"] == 0 or t["reason"] == "expiry"
         assert not r["open_at_end"]  # entries stopped a month before the data ends
         # the equity curve ends at the capital plus every closed trade's net P&L (to the paisa per trade)
-        assert r["equity"][-1][1] == pytest.approx(BOOK.capital + sum(t["net"] for t in r["trades"]), abs=0.01 * len(r["trades"]))
+        assert r["equity"][-1][1] == pytest.approx(
+            BOOK.capital + sum(t["net"] for t in r["trades"]), abs=0.01 * len(r["trades"])
+        )
 
 
 # --------------------------------------------------------------------------- no look-ahead

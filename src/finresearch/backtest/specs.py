@@ -41,7 +41,9 @@ class Spec:
     )
     underlying: str  # an index, or "STOCK_RULE" (see the module docstring)
     role: str  # candidate | control | overlay
-    expiry_kind: str  # monthly (a future with that expiry trades) | any (the nearest expiry in the DTE window)
+    expiry_kind: (
+        str  # monthly (a future with that expiry trades) | any (the nearest expiry in the DTE window)
+    )
     dte_min: int
     dte_max: int
     anchor_delta: float  # |delta| of the short leg (sellers, overlays) or of the bought leg (debit spreads)
@@ -112,15 +114,20 @@ class Criteria:
 
     min_oos_trades: int = 30
     min_t_stat: float = 2.0  # expectancy after costs, expiry-clustered standard error
-    bootstrap_ci: float = (
-        0.95  # and the expiry-cluster bootstrap CI of the expectancy must exclude 0 (above it)
-    )
+    # AND (not or) the expiry-cluster bootstrap CI of the expectancy at this level must lie above 0
+    bootstrap_ci: float = 0.95
     max_drawdown_pct: float = 20.0  # of capital, on the daily marked equity
-    min_deflated_sharpe: float = 0.95  # Bailey & López de Prado 2014, N = VARIANTS_TRIED
+    # Bailey & López de Prado 2014 with N = VARIANTS_TRIED and V = the variance of the OOS daily Sharpe ratios of
+    # every evaluated variant (controls included). With ~560 OOS days this needs an annualised Sharpe of roughly 1.2
+    # or more even for N = 1: deliberately strict (the paper's own 95 % line)
+    min_deflated_sharpe: float = 0.95
     in_sample_expectancy_positive: bool = True
     stress_slippage_mult: float = 2.0  # expectancy must stay > 0 with slippage × this
     bootstrap_draws: int = 5000
     bootstrap_seed: int = 307
+    # overlays (covered call, protective put on a held stock) trade at most once a month, so they cannot reach
+    # min_oos_trades in the OOS window: they are REPORTED with their evidence, never made candidates by this run
+    judge_overlays: bool = False
 
 
 BOOK, CRITERIA = Book(), Criteria()
