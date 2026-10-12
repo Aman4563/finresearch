@@ -1696,8 +1696,9 @@ def test_orders_are_polled_every_30_minutes_in_session_and_fills_upsert_one_row(
     assert run(orders_step(_ist(10, 10), set())) == {}  # 10 minutes later: not yet
     rec2 = transport(_groww_with_orders([_order("GO9", 100, "100.3", "EXECUTED")]))
     assert run(orders_step(_ist(10, 31), set())) == {"orders_polled": 1}
-    # orders only, one Non-Trading call each: no login, holdings, positions or funds
-    assert [r.url.path for r in rec.requests + rec2.requests] == ["/v1/order/list", "/v1/order/list"]
+    # orders and the F&O positions (#308), one Non-Trading call each: no login, holdings, cash positions or funds
+    reads = [(r.url.path, r.url.params.get("segment")) for r in rec.requests + rec2.requests]
+    assert reads == [("/v1/order/list", "CASH"), ("/v1/positions/user", "FNO")] * 2
     with session_scope() as s:
         rows = [t for t in s.scalars(select(PortfolioTxn).where(PortfolioTxn.source == "groww_api"))
                 if (t.meta or {}).get("order_id") == "GO9"]  # fmt: skip
@@ -1753,4 +1754,4 @@ def test_order_poll_skips_a_running_sync_a_closed_day_and_an_expired_session(cli
 
     monkeypatch.setattr(sync_mod, "_holidays", lambda day: set())
     assert run(connections_step(_ist(11, 0).astimezone(UTC))).get("orders_polled") == 1
-    assert [r.url.path for r in rec.requests] == ["/v1/order/list"]
+    assert [r.url.path for r in rec.requests] == ["/v1/order/list", "/v1/positions/user"]  # + F&O positions (#308)

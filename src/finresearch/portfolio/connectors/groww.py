@@ -18,6 +18,16 @@ https://groww.in/trade-api/docs/curl/portfolio (holdings/positions), https://gro
   of the holding" and "The T1 quantity of the holding", not whether one includes the other]. Each sync tests both
   readings on every row with T1 shares (`t1_check`, #282) and the connection keeps the first decisive result.
 * Positions ``GET /positions/user?segment=CASH`` → ``payload.positions[]``.
+* F&O positions (#308) ``GET /positions/user?segment=FNO`` (docs re-read 12-Oct-2026: ``segment`` "CASH, FNO") → the
+  same ``payload.positions[]`` rows: trading_symbol ("NIFTY25OCT24000CE", the instruments file's FNO symbol), exchange,
+  quantity ("Net quantity of instruments"), net_price ("Net average price in rupees"), realised_pnl, product, and the
+  credit/debit quantities and prices, today's and carried forward. Not stated [U]: whether ``quantity`` is negative
+  for a net short, and how it relates to the credit/debit quantities (the docs sample, credit 10 / debit 5 / carry
+  forward 8 and 3, says quantity 15, which neither reading explains). So a row's direction counts as known only when
+  the sign of ``quantity`` matches (credit + carry-forward credit) − (debit + carry-forward debit), "credit" read as
+  bought [U]; otherwise the position is shown with its direction, P&L and greeks unknown. Whether ``net_price`` is the
+  average of the open quantity (and so the base of unrealised P&L) is not stated either [U]. No LTP in the answer:
+  the app prices contracts with the LTP endpoint (segment FNO). Read during the sync and the in-session order poll.
 * Trades: the order list ``GET /order/list?segment=CASH&page=&page_size=100`` covers **today only**; an order with
   ``filled_quantity > 0`` becomes one trade at ``average_fill_price``, dated by ``trade_date`` ("Date on which trade
   has taken place"), else ``exchange_time``, else ``created_at`` (when it was placed: an after-market order would be a
@@ -149,6 +159,30 @@ def map_position(r: dict[str, Any]) -> BrokerPosition:
                           pnl=dec(r.get("realised_pnl")), segment="CASH")  # fmt: skip
 
 
+def map_fno_position(r: dict[str, Any]) -> BrokerPosition:
+    """An F&O position row; see the module docstring for which fields are confirmed. `quantity` is signed (long +,
+    short -) only when `direction_known`."""
+    qty = dec(r.get("quantity")) or Decimal(0)
+    parts = [dec(r.get(k)) for k in ("credit_quantity", "carry_forward_credit_quantity", "debit_quantity",
+                                     "carry_forward_debit_quantity")]  # fmt: skip
+    note = None
+    if any(p is None for p in parts):
+        buy = sell = None
+        known = False
+        note = "Groww's answer lacks the credit/debit quantities, so whether this is a long or a short is unknown"
+    else:
+        buy, sell = parts[0] + parts[1], parts[2] + parts[3]
+        net = buy - sell
+        known = qty != 0 and net != 0 and (qty > 0) == (net > 0)
+        if not known:
+            note = (f"quantity {qty} does not match bought {buy} − sold {sell}: long or short is unknown, so P&L and "
+                    "greeks are not shown")  # fmt: skip
+    return BrokerPosition(symbol=str(r.get("trading_symbol") or "").strip().upper(), quantity=qty,
+                          product=r.get("product"), exchange=r.get("exchange"), avg_price=dec(r.get("net_price")),
+                          pnl=dec(r.get("realised_pnl")), segment="FNO", direction_known=known, note=note,
+                          buy_quantity=buy, sell_quantity=sell)  # fmt: skip
+
+
 def map_order(r: dict[str, Any]) -> BrokerTrade | None:
     filled = dec(r.get("filled_quantity")) or Decimal(0)
     price = dec(r.get("average_fill_price"))
@@ -197,7 +231,7 @@ class GrowwConnector(BrokerConnector):
     label: ClassVar[str] = "Groww"
     account: ClassVar[str] = "Groww"
     auth_kind: ClassVar[str] = "totp"
-    capabilities: ClassVar[frozenset[str]] = frozenset({"holdings", "positions", "trades", "funds"})
+    capabilities: ClassVar[frozenset[str]] = frozenset({"holdings", "positions", "fno_positions", "trades", "funds"})
     holdings_include_today: ClassVar[bool] = False
     trades_today_only: ClassVar[bool] = True
     fills_aggregated: ClassVar[bool] = True
@@ -263,6 +297,11 @@ class GrowwConnector(BrokerConnector):
     async def positions(self) -> list[BrokerPosition]:
         rows = _payload(await self._http().get("/positions/user", {"segment": "CASH"}), "positions")
         return [p for p in (map_position(r) for r in rows) if p.quantity != 0]
+
+    async def fno_positions(self) -> list[BrokerPosition]:
+        """Open F&O positions (segment FNO, #308): read-only, the same allow-listed GET as the cash positions."""
+        rows = _payload(await self._http().get("/positions/user", {"segment": "FNO"}), "positions")
+        return [p for p in (map_fno_position(r) for r in rows) if p.quantity != 0]
 
     async def trades(self, since: date, until: date) -> list[BrokerTrade]:
         http, out = self._http(), []

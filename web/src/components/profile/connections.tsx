@@ -42,7 +42,7 @@ export type SyncLog = {
 };
 type Listing = { connections: Connection[]; inbox: { path: string; pending: { name: string; bytes: number }[] } };
 
-const CAP: Record<string, string> = { holdings: "Holdings", positions: "Positions", trades: "Trades", mf: "Mutual funds", funds: "Funds",
+const CAP: Record<string, string> = { holdings: "Holdings", positions: "Positions", fno_positions: "F&O positions", trades: "Trades", mf: "Mutual funds", funds: "Funds",
   cas: "CAS PDFs", tradebook: "Tradebooks", holdings_statement: "Holdings statements" };
 const TONE: Record<Connection["status"], "gain" | "info" | "warn" | "loss" | "neutral"> = {
   connected: "gain", ready: "info", reconnect: "warn", error: "loss", incomplete: "warn", not_connected: "neutral", off: "neutral" };
