@@ -22,7 +22,8 @@ export const HOLDINGS: Holding[] = [
   holding({ id: 2, name: "Example Flexi Cap Fund", asset_type: "mf", scheme_code: "990001", tax_class: "other_mf",
     tax_class_auto: "other_mf", units: 50, cost: 2500, avg_cost: 50, price: 61.2, price_as_of: "2026-06-30",
     price_source: "CAS statement NAV", value: 3060, unrealised: 560, unrealised_pct: 22.4, xirr: null,
-    xirr_reason: "price is a statement NAV" }),
+    xirr_reason: "price is a statement NAV", units_as_of: "2026-06-28", units_source: "CAMS CAS",
+    units_warning: "units are 100 days old (over 35): import a newer statement" }),
   // an opening balance with no cost: P&L and tax are unknown, never zero
   holding({ id: 3, name: "Example Opening Balance Fund", asset_type: "mf", scheme_code: "990002", tax_class: "other_mf",
     tax_class_auto: "other_mf", units: 20, cost: null, cost_known: false, avg_cost: null, price: 40, value: 800,

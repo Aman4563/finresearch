@@ -29,6 +29,7 @@ from finresearch.portfolio.importers import (
     ImportedTxn,
     ImportResult,
     assign_dedupe_keys,
+    parse_day,
 )
 from finresearch.portfolio.lots import Event, LotBook, build_lots
 
@@ -268,17 +269,35 @@ def apply(
     touched = [h for hid in applied.holdings if (h := s.get(PortfolioHolding, hid)) is not None]
     for hid in fund_baseline_holdings(s, touched) - applied.holdings:
         rebuild(s, hid)  # a broker fund baseline this CAS now covers (or no longer covers)
+    # the statement's end: the day its closing units are known at. Units never change between statements on their own,
+    # so today's NAV × these units is only today's value if nothing was bought or sold since (report: units_as_of)
+    end = parse_day(res.period[1]) if res.period else None
+    if end is None and res.closing:
+        res.warnings.append(
+            "the statement's end date could not be read: its funds' units carry no 'as of' date"
+        )
     for c in res.closing:  # remember the statement's own valuation (a fallback price) per holding
         h = s.scalar(
             select(PortfolioHolding).where(
                 PortfolioHolding.ikey == c.ikey, PortfolioHolding.account == c.account
             )
         )
-        if h is not None and c.nav is not None and c.day is not None:
+        if h is None:
+            continue
+        if c.nav is not None and c.day is not None:
             prev = (h.meta or {}).get("statement_nav") or {}
             if not prev or prev.get("day", "") <= c.day.isoformat():
                 h.meta = {**(h.meta or {}), "statement_nav": {"nav": str(c.nav), "day": c.day.isoformat(),
                                                               "source": res.source}}  # fmt: skip
+        # the newest statement wins: importing an older CAS later never rolls the date back
+        if end is not None:
+            prev = (h.meta or {}).get("statement_units") or {}
+            if not prev or prev.get("day", "") <= end.isoformat():
+                h.meta = {**(h.meta or {}), "statement_units": {"units": str(c.units), "day": end.isoformat(),
+                                                                "source": f"{res.source} {res.kind.upper()}"}}  # fmt: skip
+        if c.rejected:
+            got = sorted({*((h.meta or {}).get("sip_rejections") or []), *c.rejected})
+            h.meta = {**(h.meta or {}), "sip_rejections": got}
     s.flush()
     rec = reconcile(res.closing, lot_units(s, [(c.ikey, c.account) for c in res.closing]))
     imp.summary = {"period": list(res.period) if res.period else None, "rows": len(res.txns), "added": applied.added,
