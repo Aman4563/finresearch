@@ -57,7 +57,7 @@ class Position:
     lot: int
     legs: list[Leg]
     premium: float  # ₹ received (+, credit) or paid (−, debit) at the fills
-    max_loss: float | None  # ₹ defined maximum loss before costs (None: an overlay's open-ended leg)
+    max_loss: float | None  # ₹ defined maximum loss at the entry fills, before costs and exit slippage (None: overlay)
     margin: float | None  # ₹ approximate margin at entry (None: unknown)
     entry_costs: float
     iv30: float | None
@@ -225,12 +225,8 @@ def try_enter(st: SpecState, x: Day, sym: str, h: Clocked, ivs: list[float], boo
         return None
     if st.last_entry is not None and (d - st.last_entry).days < spec.min_days_between:
         return None
-    want_monthly = spec.expiry_kind == "monthly"
-    exps = [
-        e
-        for e in x.expiries()
-        if spec.dte_min <= (e - d).days <= spec.dte_max and x.is_monthly(e) == want_monthly
-    ]
+    exps = [e for e in x.expiries() if spec.dte_min <= (e - d).days <= spec.dte_max
+            and (spec.expiry_kind == "any" or x.is_monthly(e))]  # fmt: skip
     exps = [e for e in exps if sum(p.expiry == e for p in st.open) < spec.max_per_expiry]
     if not exps:
         return None
@@ -347,10 +343,11 @@ def run(specs: list[Spec], history: History, start: date, end: date, book: Book 
                 continue
             nxt = days[i + 1] if i + 1 < len(days) else None
             for st in states:
+                had_open = bool(st.open)
                 manage(st, x, nxt, book)
                 if d <= end:
                     try_enter(st, x, sym, h, ivs, book)
-                if d <= end or st.open:
+                if d <= end or had_open or st.open:
                     st.equity.append(
                         (d, book.capital + st.realised + sum(p.gross() - p.entry_costs for p in st.open))
                     )

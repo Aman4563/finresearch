@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from datetime import date
 
 SPEC_VERSION = "2026-10-12.1"
@@ -41,7 +41,7 @@ class Spec:
     )
     underlying: str  # an index, or "STOCK_RULE" (see the module docstring)
     role: str  # candidate | control | overlay
-    expiry_kind: str  # monthly | weekly
+    expiry_kind: str  # monthly (a future with that expiry trades) | any (the nearest expiry in the DTE window)
     dte_min: int
     dte_max: int
     anchor_delta: float  # |delta| of the short leg (sellers, overlays) or of the bought leg (debit spreads)
@@ -68,7 +68,7 @@ SPECS: tuple[Spec, ...] = (
     Spec("banknifty_ic_m", "BANKNIFTY iron condor, monthly", "iron_condor", "BANKNIFTY", "candidate", "monthly",
          30, 45, 0.16, 2.5, exit_dte=7, **SELL, rationale="Neutral premium sale on the second index (monthly only "
          "since SEBI's 2024 circular)."),
-    Spec("nifty_ic_w", "NIFTY short iron condor, weekly", "iron_condor", "NIFTY", "candidate", "weekly", 4, 9,
+    Spec("nifty_ic_w", "NIFTY short iron condor, weekly", "iron_condor", "NIFTY", "candidate", "any", 4, 9,
          0.15, 1.0, max_concurrent=1, max_per_expiry=1, min_days_between=3, exit_dte=None, **SELL,
          rationale="The weekly expiry that remains after SEBI's 2024 circular; gamma risk is highest here."),
     Spec("nifty_dcs_m", "NIFTY debit call spread, monthly (control)", "debit_call", "NIFTY", "control", "monthly",
@@ -129,15 +129,6 @@ DEFLATED_SHARPE_SOURCE = ("Bailey, D. H. & López de Prado, M. (2014), The Defla
                           "40(5), 94-107, https://doi.org/10.3905/jpm.2014.40.5.094")  # fmt: skip
 
 
-@dataclass(frozen=True)
-class Registration:
-    specs: tuple[Spec, ...] = SPECS
-    book: Book = BOOK
-    criteria: Criteria = CRITERIA
-    windows: dict = field(default_factory=lambda: {"is": [IS_START.isoformat(), IS_END.isoformat()],
-                                                   "oos_from": OOS_START.isoformat()})  # fmt: skip
-
-
 def canonical(obj: object) -> str:
     return json.dumps(obj, sort_keys=True, separators=(",", ":"), default=str)
 
@@ -146,10 +137,15 @@ def spec_hash(spec: Spec) -> str:
     return hashlib.sha256(canonical(asdict(spec)).encode()).hexdigest()
 
 
-def registration_hash(reg: Registration | None = None) -> str:
-    reg = reg or Registration()
-    body = {"version": SPEC_VERSION, "variants_tried": VARIANTS_TRIED, **asdict(reg)}
-    return hashlib.sha256(canonical(body).encode()).hexdigest()
+def registration() -> dict:
+    """What the registration covers, read from this module at call time."""
+    return {"version": SPEC_VERSION, "variants_tried": VARIANTS_TRIED, "specs": [asdict(s) for s in SPECS],
+            "book": asdict(BOOK), "criteria": asdict(CRITERIA), "is": [IS_START, IS_END], "oos_from": OOS_START,
+            "iv_warmup_days": IV_WARMUP_DAYS}  # fmt: skip
+
+
+def registration_hash() -> str:
+    return hashlib.sha256(canonical(registration()).encode()).hexdigest()
 
 
 def by_key(key: str) -> Spec:
