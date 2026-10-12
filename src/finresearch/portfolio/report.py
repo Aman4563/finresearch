@@ -324,7 +324,7 @@ def timeline(data: Loaded) -> list[dict[str, Any]]:
     as invested on its day, at that cost: its units are in the value, so leaving the cost out would make the value
     jump with no money put in (the drawdown/weekly-change metrics read `invested` from here). Openings with an unknown
     cost, and statement openings the lots ignore (an older statement covers them), are not counted."""
-    from finresearch.portfolio.lots import superseded_openings
+    from finresearch.portfolio.lots import opening_basis, superseded_openings
 
     by_month: dict[str, dict[str, Decimal]] = defaultdict(lambda: defaultdict(Decimal))
     for h in data.holdings:
@@ -335,12 +335,16 @@ def timeline(data: Loaded) -> list[dict[str, Any]]:
             gross = abs(t.amount) if t.amount is not None else ((t.quantity or 0) * (t.price or 0))
             meta = t.meta or {}
             if t.kind == "opening":
+                price, amount, acquired = opening_basis(
+                    t.kind, t.price, t.amount, meta
+                )  # IPO allotment (#294)
                 if (
                     i not in skip
-                    and t.price is not None
-                    and (meta.get("acquired") or meta.get("cost_basis") == "broker_average")
+                    and price is not None
+                    and (acquired or meta.get("cost_basis") == "broker_average")
                 ):
-                    by_month[m]["invested"] += gross + (t.charges or 0)  # the lot's cost (lots.build_lots)
+                    cost = abs(amount) if amount is not None else (t.quantity or 0) * price
+                    by_month[m]["invested"] += cost + (t.charges or 0)  # the lot's cost (lots.build_lots)
             elif t.kind == "buy" and not meta.get("reinvest"):
                 by_month[m]["invested"] += gross + (t.charges or 0)
             elif t.kind in ("sell", "redemption"):

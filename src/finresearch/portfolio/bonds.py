@@ -284,7 +284,9 @@ def due_events(t: BondTerms, today: date, units: Decimal) -> list[tuple[str, dat
     nc, _ = next_coupon(t, today)
     if nc is not None and (nc - today).days <= COUPON_ALERT_DAYS and nc != t.maturity:
         what = "interest" if t.kind == "sgb" else "coupon"
-        out.append(("coupon", nc, "info", f"{what} due on {nc.isoformat()}: record it as interest when credited"))
+        out.append(
+            ("coupon", nc, "info", f"{what} due on {nc.isoformat()}: record it as interest when credited")
+        )
     if t.maturity is not None:
         left = (t.maturity - today).days
         if 0 <= left <= MATURITY_ALERT_DAYS:

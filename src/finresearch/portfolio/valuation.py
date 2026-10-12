@@ -600,7 +600,7 @@ def cash_flows(
     """Investor cash flows for XIRR: buys out (amount + charges), sales, redemptions, paid-out dividends and interest in, the current value
     in today. Reinvested dividends are neither (the units were bought with the dividend). An opening balance with no
     cost makes XIRR impossible."""
-    from finresearch.portfolio.lots import superseded_openings
+    from finresearch.portfolio.lots import opening_basis, superseded_openings
 
     flows: list[tuple[date, Decimal]] = []
     skip = superseded_openings(txns)  # openings the lots ignore: earlier rows already hold that history
@@ -614,11 +614,14 @@ def cash_flows(
             else ((t.quantity or 0) * (t.price or 0) if t.price else None)
         )
         if t.kind == "opening":
-            if t.price is None:
+            price, _, acquired = opening_basis(
+                t.kind, t.price, t.amount, t.meta
+            )  # an IPO allotment fills both
+            if price is None:
                 return [], "opening balance with an unknown cost"
-            if not (t.meta or {}).get("acquired"):  # e.g. a broker holdings baseline: average price, no date
+            if not acquired:  # e.g. a broker holdings baseline: average price, no date
                 return [], NO_PURCHASE_DATE
-            flows.append((date.fromisoformat(t.meta["acquired"]), -(t.quantity * t.price + (t.charges or 0))))
+            flows.append((date.fromisoformat(acquired), -(t.quantity * price + (t.charges or 0))))
         elif t.kind == "buy" and not reinvest:
             if gross is None:
                 return [], "a purchase without an amount"

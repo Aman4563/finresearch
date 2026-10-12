@@ -299,3 +299,110 @@ def test_events_step_raises_each_alert_once(client):  # noqa: F811
         assert (
             bonds.events_step(s, date(2026, 10, 21)) == 1
         )  # past maturity, still held: record the redemption
+
+
+# --------------------------------------------------------------------------- IPO allotment
+def _ipo(s, slug, *, isin, symbol="EXIPO", lot="60"):
+    from finresearch.db.models import Decision, ResearchRun, Watch
+    from finresearch.ingest.documents import get_or_create_company
+
+    co = get_or_create_company(s, slug, "Example Ipo Ltd")
+    co.isin, co.nse_symbol = isin, symbol
+    run = ResearchRun(company_id=co.id, kind="ipo_report", status="done", manifest={})
+    s.add(run)
+    s.flush()
+    d = Decision(run_id=run.id, company_id=co.id, action="APPLY", lots=1, category="retail", suggestion={},
+                 inputs={"metrics": {"lot_size": {"value": lot}}})  # fmt: skip
+    s.add(d)
+    s.add(Watch(company_id=co.id, nse_symbol=symbol or "EXIPO", allotment_date=date(2025, 9, 1), listing_date=date(2025, 9, 3),
+                meta={"listing_confirmed": True}))  # fmt: skip
+    s.flush()
+    return d.id
+
+
+def _fake_isin(tmp_path) -> str:
+    """A made-up equity ISIN per test (the test database keeps other tests' journal decisions)."""
+    import hashlib
+
+    return "INE9" + str(int(hashlib.sha1(str(tmp_path).encode()).hexdigest(), 16))[:5] + "015"
+
+
+def _baseline(s, units, avg, isin, day=date(2025, 9, 10)):
+    from finresearch.portfolio.connectors.base import BrokerHolding
+    from finresearch.portfolio.connectors.merge import holding_txn
+    from finresearch.portfolio.service import add_txns, rebuild
+
+    t = holding_txn(BrokerHolding("EXAMPLE IPO LTD", D(units), isin=isin, symbol=None,
+                                  avg_price=None if avg is None else D(avg)), account="Zerodha",
+                    source="zerodha_api", day=day)  # fmt: skip
+    for hid in add_txns(s, [t]).holdings:
+        rebuild(s, hid)
+
+
+def test_ipo_allotment_fills_the_baseline_date_and_cost_once(client, tmp_path):  # noqa: F811
+    from sqlalchemy import func, select
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import PortfolioHolding, PortfolioLot, PortfolioTxn
+
+    with session_scope() as s:
+        isin = _fake_isin(tmp_path)
+        did = _ipo(s, "ipo-fill-" + tmp_path.name[-8:], isin=isin, symbol=None)
+        _baseline(
+            s, "60", "250", isin
+        )  # the broker's holdings: 60 shares at an average of ₹250, no purchase date
+        hid = s.scalar(select(PortfolioHolding.id))
+        (lot,) = s.scalars(select(PortfolioLot).where(PortfolioLot.holding_id == hid)).all()
+        assert (lot.acquired, lot.cost_per_unit) == (None, D(250))  # no allotment in the journal yet
+    # the investor records the allotment (1 lot of 60 at ₹250): the baseline now stands for it
+    r = client.patch(f"/api/decisions/{did}", headers=ORIGIN, json={"allotted_lots": 1, "issue_price": "250"})
+    assert r.status_code == 200
+    with session_scope() as s:
+        lots = s.scalars(select(PortfolioLot).where(PortfolioLot.holding_id == hid)).all()
+        assert [(x.acquired, x.open_quantity, x.cost_per_unit) for x in lots] == [
+            (date(2025, 9, 1), D(60), D(250))
+        ]
+        assert (
+            s.scalar(select(func.count()).select_from(PortfolioTxn)) == 1
+        )  # never a second lot or transaction
+        t = s.scalar(select(PortfolioTxn))
+        assert (t.price, t.day, "acquired" in t.meta) == (
+            D(250),
+            date(2025, 9, 10),
+            False,
+        )  # the row is untouched
+        assert t.meta["ipo_allotment"]["acquired_source"] == "IPO watch's allotment date"
+    h = _holding(client, hid)
+    assert (
+        h["units"] == 60.0
+        and h["cost"] == 15000.0
+        and h["xirr_reason"] != "opening balance with an unknown purchase date"
+    )
+    # the allotment is removed from the journal: the fill goes too
+    client.patch(f"/api/decisions/{did}", headers=ORIGIN, json={"allotted_lots": 0})
+    with session_scope() as s:
+        (lot,) = s.scalars(select(PortfolioLot).where(PortfolioLot.holding_id == hid)).all()
+        assert lot.acquired is None and "ipo_allotment" not in s.scalar(select(PortfolioTxn)).meta
+
+
+@pytest.mark.parametrize("units,avg,why", [
+    ("120", "250", None),  # 120 shares held but 60 allotted: bought more on the market, not this allotment
+    ("60", "237.5", "differs from the journal's issue price"),  # ₹12.50 retail discount vs an upper-band issue price
+])  # fmt: skip
+def test_ipo_allotment_is_not_applied_when_it_does_not_fit(client, tmp_path, units, avg, why):  # noqa: F811
+    from sqlalchemy import select
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import PortfolioHolding, PortfolioLot
+
+    with session_scope() as s:
+        isin = _fake_isin(tmp_path)
+        did = _ipo(s, "ipo-nofit-" + tmp_path.name[-8:], isin=isin, symbol=None)
+        _baseline(s, units, avg, isin)
+        hid = s.scalar(select(PortfolioHolding.id))
+    client.patch(f"/api/decisions/{did}", headers=ORIGIN, json={"allotted_lots": 1, "issue_price": "250"})
+    with session_scope() as s:
+        (lot,) = s.scalars(select(PortfolioLot).where(PortfolioLot.holding_id == hid)).all()
+        assert lot.acquired is None and lot.cost_per_unit == D(avg)
+        notes = s.get(PortfolioHolding, hid).meta["lot_warnings"]
+        assert (why is None and notes == []) or any(why in n for n in notes), notes

@@ -73,6 +73,18 @@ def superseded_openings(items: Iterable[Any]) -> set[int]:
                   if x.kind == "opening" and (x.meta or {}).get("statement_opening") and x.day > first}  # fmt: skip
 
 
+def opening_basis(kind: str, price: Decimal | None, amount: Decimal | None,
+                  meta: dict[str, Any] | None) -> tuple[Decimal | None, Decimal | None, str | None]:  # fmt: skip
+    """(price, amount, acquired ISO date) an opening stands for. An IPO allotment the decision journal recorded
+    (`meta.ipo_allotment`, a derived marker portfolio.ipo_fill sets and clears on rebuild, #294) supplies the
+    allotment date and the issue price of a broker or CAS baseline that has no date; the stored row is never edited."""
+    m = meta or {}
+    fill = m.get("ipo_allotment") if kind == "opening" else None
+    if fill:
+        return Decimal(str(fill["price"])), None, fill["acquired"]
+    return price, amount, m.get("acquired")
+
+
 @dataclass
 class Event:
     id: int | None
