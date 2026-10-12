@@ -254,3 +254,48 @@ def test_ais_interest_from_a_bond_issuer_is_compared_and_bank_interest_stays_inf
     # the bank's savings interest has no app side: information only, never an "only in AIS" problem
     assert [(i["category"], i["label"]) for i in out["info"]] == [("interest", "EXAMPLE BANK LTD")]
     assert out["totals"]["interest"] == {"ais": 4500 + 1250, "app": 4500 + 1125 + 800}
+
+
+# --------------------------------------------------------------------------- alerts
+def test_due_events_one_per_kind():
+    t = bonds.terms_of("sgb", {"issue_date": "2018-02-12"})  # coupons 12-Feb/12-Aug; maturity 12-Feb-2026
+    assert bonds.due_events(t, date(2023, 2, 6), D(10)) == [  # 6 days before
+        ("coupon", date(2023, 2, 12), "info", "interest due on 2023-02-12: record it as interest when credited"),
+        ("window", date(2023, 2, 12), "info", "early-redemption window on 2023-02-12 (ask your bank, SHCIL or post "
+                                              "office before that coupon date, RBI SGB FAQ)")]  # fmt: skip
+    assert [e[0] for e in bonds.due_events(t, date(2023, 2, 1), D(10))] == [
+        "window"
+    ]  # the coupon is 11 days off
+    assert [e[0] for e in bonds.due_events(t, date(2026, 1, 20), D(10))] == ["maturity"]  # 23 days before
+    assert [e[0] for e in bonds.due_events(t, date(2026, 3, 1), D(10))] == ["redeem"]
+    assert bonds.due_events(t, date(2026, 3, 1), D(0)) == []  # redeemed: nothing
+    assert (
+        bonds.due_events(bonds.terms_of("bond", {}), date(2026, 3, 1), D(10)) == []
+    )  # unknown dates: nothing
+
+
+def test_events_step_raises_each_alert_once(client):  # noqa: F811
+    from sqlalchemy import select
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import Alert
+
+    hid = client.post("/api/portfolio/transactions", headers=ORIGIN, json=NCD).json()["holding_id"]
+    client.put(f"/api/portfolio/holdings/{hid}", headers=ORIGIN,
+               json={"bond_terms": {"maturity": "2026-10-20", "freq": 2}})  # fmt: skip
+    # TODAY-ish 2026-10-15: the maturity is 5 days away (the coupon due that day is part of the maturity event)
+    with session_scope() as s:
+        assert bonds.events_step(s, date(2026, 10, 15)) == 1
+        assert bonds.events_step(s, date(2026, 10, 16)) == 0  # the same event: never twice
+    with session_scope() as s:
+        a = s.scalars(select(Alert).where(Alert.kind == bonds.ALERT_KIND)).all()
+        assert [(x.data["event"], x.data["day"], x.data["holding_id"]) for x in a] == [
+            ("maturity", "2026-10-20", hid)
+        ]
+        assert a[0].message.startswith("Example Finance NCD 9% 2026: matures on 2026-10-20") and "10" not in (
+            a[0].message.split(":", 1)[1].replace("2026-10-20", "")
+        )  # no units or amounts in a forwarded alert
+    with session_scope() as s:
+        assert (
+            bonds.events_step(s, date(2026, 10, 21)) == 1
+        )  # past maturity, still held: record the redemption

@@ -268,3 +268,68 @@ def price_basis(t: BondTerms, source: str | None) -> str | None:
     """ "dirty" for an NCD priced from an NSE quote (NSE's capital-market bond prices include accrued interest), else
     None: no basis is claimed that the app does not know."""
     return "dirty" if t.kind == "bond" and (source or "").startswith("NSE quote") else None
+
+
+# --------------------------------------------------------------------------- alerts
+ALERT_KIND = "bond_event"
+
+
+def due_events(t: BondTerms, today: date, units: Decimal) -> list[tuple[str, date, str, str]]:
+    """(event, day, level, message tail) of a held bond's events due for an alert today: a coupon within
+    COUPON_ALERT_DAYS, the maturity within MATURITY_ALERT_DAYS, a maturity passed with units still held, and an
+    SGB's next early-redemption window within MATURITY_ALERT_DAYS. Unknown dates raise nothing."""
+    if units <= 0:
+        return []
+    out: list[tuple[str, date, str, str]] = []
+    nc, _ = next_coupon(t, today)
+    if nc is not None and (nc - today).days <= COUPON_ALERT_DAYS and nc != t.maturity:
+        what = "interest" if t.kind == "sgb" else "coupon"
+        out.append(("coupon", nc, "info", f"{what} due on {nc.isoformat()}: record it as interest when credited"))
+    if t.maturity is not None:
+        left = (t.maturity - today).days
+        if 0 <= left <= MATURITY_ALERT_DAYS:
+            out.append(("maturity", t.maturity, "info", f"matures on {t.maturity.isoformat()} (the last "
+                        "interest is paid with the principal)"))  # fmt: skip
+        elif left < 0:
+            out.append(("redeem", t.maturity, "warn", f"matured on {t.maturity.isoformat()} and is still held in the "
+                        "app: record the redemption and the last interest"))  # fmt: skip
+    win = sgb_windows(t, today, 1)
+    if win and (win[0] - today).days <= MATURITY_ALERT_DAYS:
+        out.append(("window", win[0], "info", f"early-redemption window on {win[0].isoformat()} (ask your bank, "
+                    "SHCIL or post office before that coupon date, RBI SGB FAQ)"))  # fmt: skip
+    return out
+
+
+def events_step(s: Any, today: date) -> int:
+    """Raise one alert per held bond event (claimed in alert_eval_slot, so a second monitor process or a later pass
+    never repeats it). The message names the instrument and the date only, never units or amounts: alerts may be
+    forwarded to the phone. Returns the number raised."""
+    from sqlalchemy import func, select
+    from sqlalchemy.dialects.postgresql import insert
+
+    from finresearch.db.models import Alert, AlertEvalSlot, PortfolioHolding, PortfolioLot
+    from finresearch.portfolio.report import tax_class_of
+
+    units = dict(s.execute(select(PortfolioLot.holding_id, func.sum(PortfolioLot.open_quantity))
+                           .group_by(PortfolioLot.holding_id)).all())  # fmt: skip
+    held = [h for h in s.scalars(select(PortfolioHolding).where(PortfolioHolding.asset_type == "stock"))
+            if (units.get(h.id) or 0) > Decimal("0.0005")]  # fmt: skip
+    if not held:
+        return 0
+    library, n = library_maturities(s), 0
+    for h in held:
+        t = holding_terms(h, library, tax_class_of(h)[0])
+        if t is None:
+            continue
+        for event, day, level, tail in due_events(t, today, units[h.id]):
+            slot = f"bond:{event}:{h.id}:{day.isoformat()}"
+            got = s.execute(insert(AlertEvalSlot).values(slot=slot, result={"status": "done"})
+                            .on_conflict_do_nothing(index_elements=["slot"]).returning(AlertEvalSlot.slot)).first()  # fmt: skip
+            if got is None:
+                continue
+            s.add(Alert(kind=ALERT_KIND, level=level, message=f"{h.name}: {tail}.",
+                        data={"holding_id": h.id, "event": event, "day": day.isoformat(), "bond": t.kind,
+                              "path": "/portfolio"}))  # fmt: skip
+            n += 1
+    s.flush()
+    return n
