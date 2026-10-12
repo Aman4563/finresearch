@@ -462,6 +462,103 @@ class IvHistory(Base):
     recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class FnoBhav(Base):
+    """One F&O contract's end-of-day row from NSE's bhavcopy (#306, adapters.nse_fno_bhav): index options of
+    fno_store.INDEX_OPTIONS, stock options of held/watched underlyings, and every future. Contracts with neither open
+    interest nor a trade that day are not stored (their settlement price is NSE's theoretical value and nobody could
+    have held or traded them); the day's manifest counts them. `right` is CE/PE, XX for futures (strike 0). OI in units,
+    `contracts` in contracts, turnover in rupees. `underlying` and `lot_size` are only in the UDiFF file (2024 on)."""
+
+    __tablename__ = "fno_bhav"
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(30), primary_key=True)
+    instrument: Mapped[str] = mapped_column(String(3), primary_key=True)  # IDF / IDO / STF / STO
+    expiry: Mapped[date] = mapped_column(Date, primary_key=True)
+    strike: Mapped[Decimal] = mapped_column(Numeric(12, 2), primary_key=True)
+    right: Mapped[str] = mapped_column(String(2), primary_key=True)
+    open: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    high: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    low: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    close: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    settle: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    oi: Mapped[int | None] = mapped_column(BigInteger)
+    chg_oi: Mapped[int | None] = mapped_column(BigInteger)
+    contracts: Mapped[int | None] = mapped_column(BigInteger)
+    turnover: Mapped[Decimal | None] = mapped_column(Numeric(20, 2))
+    underlying: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    lot_size: Mapped[int | None] = mapped_column(Integer)
+
+    __table_args__ = (Index("ix_fno_bhav_symbol_day", "symbol", "day"),)
+
+
+class FnoBhavDay(Base):
+    """The backfill manifest: one row per calendar day tried. status loaded / no_file (every route answered 404: a
+    holiday, a weekend or not yet published) / failed. Resume skips loaded days and old no_file days."""
+
+    __tablename__ = "fno_bhav_day"
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    status: Mapped[str] = mapped_column(String(10))
+    format: Mapped[str | None] = mapped_column(String(10))
+    url: Mapped[str | None] = mapped_column(String(200))
+    rows_total: Mapped[int | None] = mapped_column(Integer)  # rows in NSE's file
+    rows_kept: Mapped[int | None] = mapped_column(Integer)
+    rows_dead: Mapped[int | None] = mapped_column(
+        Integer
+    )  # kept underlyings' contracts with no OI and no trade
+    stock_symbols: Mapped[list[str] | None] = mapped_column(JSONB)  # the stock underlyings kept that day
+    attempts: Mapped[int] = mapped_column(Integer, default=1)
+    error: Mapped[str | None] = mapped_column(String(300))
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class FnoIvEod(Base):
+    """Derived end-of-day volatility series per underlying (#306, fincalc.fno_history): Black-76 IVs from the
+    bhavcopy's settlement prices of traded contracts. IVs and realised volatility are annual %."""
+
+    __tablename__ = "fno_iv_eod"
+    __table_args__ = (UniqueConstraint("symbol", "day"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(30), index=True)
+    day: Mapped[date] = mapped_column(Date)
+    near_expiry: Mapped[date | None] = mapped_column(Date)
+    forward: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))  # the near expiry's forward
+    forward_source: Mapped[str | None] = mapped_column(String(12))  # future / parity / spot
+    atm_strike: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    near_iv: Mapped[Decimal | None] = mapped_column(Numeric(8, 3))
+    next_expiry: Mapped[date | None] = mapped_column(Date)
+    next_iv: Mapped[Decimal | None] = mapped_column(Numeric(8, 3))
+    iv_30d: Mapped[Decimal | None] = mapped_column(Numeric(8, 3))
+    iv_30d_method: Mapped[str | None] = mapped_column(String(12))  # interpolated / flat
+    skew_25d: Mapped[Decimal | None] = mapped_column(
+        Numeric(8, 3)
+    )  # near expiry, put IV − call IV, vol points
+    rv_20: Mapped[Decimal | None] = mapped_column(Numeric(8, 3))
+    underlying: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    rate: Mapped[Decimal] = mapped_column(Numeric(6, 4))
+    computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class FnoContract(Base):
+    """Expiry calendar and lot-size history per underlying, rebuilt from fno_bhav (#306). kind = monthly when a future
+    with that expiry traded, else weekly. lot_source: bhavcopy (UDiFF NewBrdLotQty), inferred_oi_gcd (pre-2024: the
+    greatest common divisor of the contract's open-interest figures, which are whole lots) or None (unknown)."""
+
+    __tablename__ = "fno_contract"
+    __table_args__ = (UniqueConstraint("symbol", "expiry"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(30), index=True)
+    expiry: Mapped[date] = mapped_column(Date)
+    underlying_kind: Mapped[str] = mapped_column(String(5))  # index / stock
+    kind: Mapped[str] = mapped_column(String(7))  # monthly / weekly
+    first_seen: Mapped[date] = mapped_column(Date)
+    last_seen: Mapped[date] = mapped_column(Date)
+    lot_size: Mapped[int | None] = mapped_column(Integer)  # on last_seen
+    lot_source: Mapped[str | None] = mapped_column(String(16))
+    lot_changes: Mapped[list[Any] | None] = mapped_column(
+        JSONB
+    )  # [[day, lot], ...] when it changed in its life
+
+
 # --------------------------------------------------------------------------- forecast ledger (calibration)
 class Forecast(Base):
     """One probability forecast of a defined, checkable event, logged before the outcome is known and scored after.
