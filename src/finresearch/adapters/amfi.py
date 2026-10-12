@@ -52,6 +52,52 @@ def probe_day(today: date, holidays: set[date] | None = None) -> date:
     return d
 
 
+# The scheme master: every scheme AMFI knows, open, closed or interval (checked 12-Oct-2026: HTTP 200, text/csv, ~16,400
+# rows). A comma-separated file with a header "AMC,Code,Scheme Name,Scheme Type,Scheme Category,Scheme NAV Name,Scheme
+# Minimum Amount,Launch Date, Closure Date,ISIN Div Payout/ ISIN GrowthISIN Div Reinvestment"; the last column holds one
+# or two 12-character ISINs run together with no separator (or nothing).
+SCHEME_MASTER_URL = "https://portal.amfiindia.com/DownloadSchemeData_Po.aspx"
+SCHEME_MASTER_PARAMS = {"mf": "0"}  # 0 = every AMC
+_ISIN = re.compile(r"IN[A-Z0-9]{9}[0-9]")
+
+
+@dataclass(frozen=True)
+class SchemeMaster:
+    code: str
+    name: str  # the scheme NAV name (plan and option)
+    amc: str
+    scheme_type: str  # Open Ended | Close Ended | Interval Fund
+    category: str
+    isins: tuple[str, ...]
+    closure: date | None
+
+
+def parse_scheme_master(text: str) -> list[SchemeMaster]:
+    """The scheme master's rows; the header names the columns (an unknown layout raises AmfiError, never "no
+    schemes")."""
+    import csv
+
+    rows = csv.reader(io.StringIO(text.lstrip("\ufeff")))
+    head = [h.strip().lower() for h in next(rows, [])]
+
+    def col(*words: str) -> int:
+        for i, h in enumerate(head):
+            if all(w in h for w in words):
+                return i
+        raise AmfiError(f"AMFI scheme master: no column like {' '.join(words)!r} in {head[:10]}")
+
+    ic, iamc, itype, icat, inav, iclose, iisin = (col("code"), col("amc"), col("scheme type"), col("category"),
+                                                   col("nav name"), col("closure"), col("isin"))  # fmt: skip
+    out = []
+    for r in rows:
+        if len(r) <= max(ic, iisin) or not r[ic].strip().isdigit():
+            continue
+        out.append(SchemeMaster(code=r[ic].strip(), name=r[inav].strip(), amc=r[iamc].strip(),
+                                scheme_type=r[itype].strip(), category=r[icat].strip(),
+                                isins=tuple(_ISIN.findall(r[iisin].upper())), closure=_day(r[iclose])))  # fmt: skip
+    return out
+
+
 TER_URL = "https://www.amfiindia.com/api/populate-te-rdata-revised"
 TER_PAGE = "https://www.amfiindia.com/ter-of-mf-schemes"
 
@@ -341,6 +387,10 @@ class AmfiClient:
         if not any(r.nav is not None for r in rows):
             raise AmfiError(f"AMFI NAVAll had no NAV rows (a block page or a format change) at {NAV_ALL_URL}")
         return rows
+
+    async def scheme_master(self) -> list[SchemeMaster]:
+        """Every scheme in AMFI's scheme master (parse_scheme_master)."""
+        return parse_scheme_master(await self._text(SCHEME_MASTER_URL, SCHEME_MASTER_PARAMS))
 
     async def history(self, start: date, end: date, amc_code: int | None = None) -> list[SchemeNav]:
         params = {"frmdt": start.strftime("%d-%b-%Y"), "todt": end.strftime("%d-%b-%Y")}
