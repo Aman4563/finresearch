@@ -307,7 +307,7 @@ def alert_metrics(session: Session) -> Out:
     from finresearch.fincalc.tax import fy_label
     from finresearch.portfolio import cache
     from finresearch.portfolio.report import disposal_rows, load
-    from finresearch.portfolio.sip import sip_health
+    from finresearch.portfolio.sip import LATE, NOT_YET, sip_health
     from finresearch.portfolio.tax import fy_summary
 
     out: Out = {}
@@ -361,9 +361,12 @@ def alert_metrics(session: Session) -> Out:
 
     # ------------------------------------------------------------------ from transactions and lots (no prices)
     sips = sip_health(data.holdings, data.txns, today)
-    late = [x for x in sips if x.status != "on track"]
+    late = [x for x in sips if x.status in LATE]
+    waiting = sum(1 for x in sips if x.status == NOT_YET)
     out["sip_missed"] = (Decimal(len(late)), f"{len(sips)} SIP(s) inferred from monthly purchases; "
-                         f"{len(late)} missed or stopped (no instalment for over 35 days)",
+                         f"{len(late)} missed, stopped or rejected (no instalment for over 35 days, counted up to the "
+                         "last statement's end)" + (f"; {waiting} due after the last statement, not known yet: import "
+                                                     "a newer CAS" if waiting else ""),
                          ", ".join(f"{x.name}: {x.status}, last {x.last}" for x in late[:3]) or None)  # fmt: skip
     out["days_to_elss_unlock"] = elss_unlock_metric(session, data, today)
     at = advance_tax(session, data, today)

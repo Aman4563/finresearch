@@ -480,6 +480,22 @@ def load_profile():
         return _load(s)
 
 
+class ExpiredContract(ValueError):
+    """A contract whose expiry has passed: nothing is left to trade or analyse (#293)."""
+
+
+def live_expiries(expiries: list[date], today: date) -> list[date]:
+    """The expiries still tradable on `today` (an expiry today still trades until the close), soonest first. NSE's and
+    Groww's contract lists can keep a just-expired date for a while."""
+    return sorted(e for e in expiries if e >= today)
+
+
+def check_expiry(expiry: date, today: date) -> date:
+    if expiry < today:
+        raise ExpiredContract(f"the {expiry:%d-%b-%Y} contract expired before today ({today:%d-%b-%Y})")
+    return expiry
+
+
 # --------------------------------------------------------------------------- the provider
 @register("fno")
 async def fno_signal(instrument: str, ctx: dict[str, Any]) -> Signal:
@@ -491,11 +507,12 @@ async def fno_signal(instrument: str, ctx: dict[str, Any]) -> Signal:
     notice = risk_notice()
     async with _client() as f:
         if ctx.get("expiry"):
-            expiry = date.fromisoformat(ctx["expiry"])
+            expiry = check_expiry(date.fromisoformat(ctx["expiry"]), today)
         else:
             expiries, _ = await f.contract_info(sym)
+            expiries = live_expiries(expiries, today)
             if not expiries:
-                raise LookupError(f"no F&O expiries for {sym}")
+                raise LookupError(f"no F&O expiries for {sym} on or after {today}")
             expiry = expiries[0]
         chain = await f.option_chain(sym, expiry)
         try:

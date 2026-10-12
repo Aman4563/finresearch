@@ -83,6 +83,9 @@ class ClosingBalance:
     value: Decimal | None = None
     day: date | None = None
     cost: Decimal | None = None
+    # ISO days of rejected purchases in the statement (MISC rows)
+    rejected: list[str] = field(default_factory=list)
+    folio: str | None = None  # a depository statement's MF folio, when it prints one (#296)
 
 
 @dataclass
@@ -218,6 +221,32 @@ SELL_TYPES = {"REDEMPTION", "SWITCH_OUT"}
 CHARGE_TYPES = {"STT_TAX", "STAMP_DUTY_TAX"}
 
 
+# The rate each charge row is levied at, to tell same-day trades apart. Stamp duty on a mutual-fund purchase: 0.005 % of
+# the consideration (Indian Stamp Act, 1899, Schedule I as amended by the Finance Act 2019, in force from 1-Jul-2020;
+# AMFI's note of 30-Jun-2020). STT on the redemption of an equity-oriented fund's units: 0.001 % of the value
+# (Finance (No.2) Act 2004, s.98 entry (e), as amended by the Finance Act 2013).
+CHARGE_RATES = {"STAMP_DUTY_TAX": Decimal("0.00005"), "STT_TAX": Decimal("0.00001")}
+
+
+def charge_target(txns: list[ImportedTxn], account: str, name: str, day: date, ttype: str,
+                  amt: Decimal) -> ImportedTxn | None:  # fmt: skip
+    """The same-day trade a stamp-duty (purchase) or STT (redemption) row belongs to: among that scheme's trades of
+    the day that carry no such charge yet, the one whose amount × the charge's rate is closest to the charge. Two
+    SIPs on one day each get their own stamp duty, instead of both landing on the first purchase."""
+    kind = "buy" if ttype == "STAMP_DUTY_TAX" else "sell"
+    same = [x for x in txns if x.account == account and x.name == name and x.day == day and x.kind == kind]
+    if not same:
+        return None
+    # every trade already charged (a second charge row for one trade): the closest of all, as before, never dropped
+    free = [x for x in same if ttype not in (x.meta.get("charges_from") or [])] or same
+
+    def gap(x: ImportedTxn) -> Decimal:
+        gross = x.amount if x.amount is not None else (x.quantity or 0) * (x.price or 0)
+        return abs(abs(gross) * CHARGE_RATES[ttype] - amt)
+
+    return min(free, key=gap)
+
+
 def _cas_day(v: Any) -> date | None:
     if isinstance(v, date):
         return v
@@ -250,7 +279,9 @@ def cas_to_result(d: dict[str, Any]) -> ImportResult:
     source = str(d.get("file_type") or "CAS")
     if str(d.get("cas_type")) == "SUMMARY":
         raise StatementError(
-            "this is a CAS summary (holdings only): download the detailed CAS with transactions"
+            "this is a Summary CAS (balances only, no transactions), which cannot build lots: request a Detailed "
+            "CAS instead (CAMS or KFintech mailback form, Statement type: Detailed, with transactions, for the "
+            "period you need) and import that"
         )
     period = d.get("statement_period") or {}
     start = parse_day(period.get("from") or period.get("from_"))
@@ -276,6 +307,7 @@ def cas_to_result(d: dict[str, Any]) -> ImportResult:
             pending: list[
                 tuple[date, str, Decimal]
             ] = []  # stamp duty / STT rows to attach to a same-day trade
+            rejected: list[date] = []  # days of rejected purchases (MISC rows)
             for t in sc.get("transactions") or []:
                 ttype = str(t.get("type") or "UNKNOWN")
                 day = _cas_day(t.get("date"))
@@ -317,20 +349,25 @@ def cas_to_result(d: dict[str, Any]) -> ImportResult:
                                                 meta={**meta, "reversal": ttype == "REVERSAL"}, ext=desc))  # fmt: skip
                 elif ttype in CHARGE_TYPES and amount:
                     pending.append((day, ttype, abs(amount)))
+                elif ttype == "MISC" and "reject" in desc.lower():
+                    # e.g. "*** SIP Purchase Rejected - Insufficient Balance ***": no units moved, but the instalment
+                    # was not invested; surfaced so the SIP reads "rejected", not on track
+                    rejected.append(day)
+                    res.warnings.append(f"{name}: a purchase was rejected on {day.isoformat()} ({desc})")
+                    res.skipped[ttype] += 1
                 else:
                     res.skipped[ttype] += 1
             for day, ttype, amt in pending:
                 # stamp duty is levied on the purchase and is part of its cost of acquisition. STT is charged on the
                 # redemption and is NOT deductible in computing capital gains (s.48, fifth proviso, inserted by the
                 # Finance (No.2) Act 2004): it is recorded on the sale for reference, never netted off the proceeds.
-                kinds = ("buy",) if ttype == "STAMP_DUTY_TAX" else ("sell",)
-                target = next((x for x in res.txns if x.account == account and x.name == name and x.day == day
-                               and x.kind in kinds), None)  # fmt: skip
+                target = charge_target(res.txns, account, name, day, ttype, amt)
                 if target is None:
                     res.skipped[ttype] += 1
                     continue
                 if ttype == "STT_TAX":
                     target.meta["stt"] = str(Decimal(target.meta.get("stt") or 0) + amt)
+                    target.meta.setdefault("charges_from", []).append(ttype)
                     continue
                 target.charges += amt
                 target.meta.setdefault("charges_from", []).append(ttype)
@@ -338,7 +375,7 @@ def cas_to_result(d: dict[str, Any]) -> ImportResult:
             ik = instrument_key("mf", common["isin"], None, None, common["scheme_code"], name)
             res.closing.append(ClosingBalance(ik, account, name, _dec(sc.get("close")) or Decimal(0),
                                               _dec(val.get("nav")), _dec(val.get("value")), _cas_day(val.get("date")),
-                                              _dec(val.get("cost"))))  # fmt: skip
+                                              _dec(val.get("cost")), rejected=[d.isoformat() for d in rejected]))  # fmt: skip
             calc, close = _dec(sc.get("close_calculated")), _dec(sc.get("close"))
             if calc is not None and close is not None and abs(calc - close) > Decimal("0.001"):
                 res.warnings.append(f"{name}: the statement's closing units {close} differ from its transactions "
@@ -362,7 +399,8 @@ def _demat_holdings(data: Any, file_type: str) -> ImportResult:
             ik = instrument_key("mf", m.get("isin"), None, None, m.get("amfi"), m.get("name") or "")
             res.closing.append(ClosingBalance(ik, account, m.get("name") or m.get("isin") or "",
                                               _dec(m.get("balance")) or Decimal(0), _dec(m.get("nav")),
-                                              _dec(m.get("value")), cost=_dec(m.get("total_cost"))))  # fmt: skip
+                                              _dec(m.get("value")), cost=_dec(m.get("total_cost")),
+                                              folio=(str(m["folio"]) if m.get("folio") else None)))  # fmt: skip
     res.warnings.append("NSDL/CDSL statements list holdings only (no transactions): used to reconcile units, not "
                         "imported as lots. Import your broker tradebooks for the cost basis.")  # fmt: skip
     return res

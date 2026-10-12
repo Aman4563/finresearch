@@ -151,7 +151,11 @@ def window_change(s: Session, today: date, days: int, *, last_two: bool = False)
 def ipo_events(s: Session, today: date, days: int = EVENT_DAYS) -> list[dict[str, Any]]:
     end = today + timedelta(days=days)
     out = []
+    from finresearch.monitor.phase import DONE, phase_of
+
     for w in s.scalars(select(Watch).where(Watch.kind == "ipo", Watch.active.is_(True))):
+        if phase_of(w, today) in DONE:  # listed or archived: its dates are history (lock-ins run as checks)
+            continue
         name = w.nse_symbol or w.label or f"watch {w.id}"
         for d, what in ((w.open_date, "opens for bidding"), (w.close_date, "closes (UPI mandate by 5 PM)"),
                         (w.allotment_date, "basis of allotment"), (w.listing_date, "lists")):  # fmt: skip
@@ -208,7 +212,7 @@ def build_brief(s: Session, now: datetime) -> dict[str, Any]:
     from finresearch.portfolio import cache
     from finresearch.portfolio.metrics import advance_tax, lt_watch
     from finresearch.portfolio.report import load
-    from finresearch.portfolio.sip import sip_health
+    from finresearch.portfolio.sip import LATE, NOT_YET, sip_health
 
     today = to_ist(now).date()
     settings = load_settings(s)
@@ -292,7 +296,11 @@ def build_brief(s: Session, now: datetime) -> dict[str, Any]:
         if unknown_cost:
             health.append({"level": "info", "text": f"{unknown_cost} open lot(s) have an unknown cost: tax and XIRR "
                            "skip them until the cost is entered."})  # fmt: skip
-    missed = [x for x in sips if x["status"] != "on track"]
+    missed = [x for x in sips if x["status"] in LATE]
+    # an instalment due after the last statement is unknown, not missed: say so instead of dropping it
+    if waiting := [x for x in sips if x["status"] == NOT_YET]:
+        health.append({"level": "info", "text": f"{len(waiting)} SIP instalment(s) fall after the last imported "
+                       "statement: import a newer CAS to see whether they went through."})  # fmt: skip
 
     perf = perf_why = None
     if settings.daily_performance and has_pf:

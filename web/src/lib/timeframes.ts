@@ -25,6 +25,8 @@ export type WatchWindows = {
   stock_daily_time: string;
   quiet_start: string | null;
   quiet_end: string | null;
+  /** trading days after its listing before a listed IPO watch is archived (monitor.phase); older API builds omit it */
+  ipo_archive_trading_days?: number;
 };
 
 export const INTRADAY_RANGES: ChartRange[] = ["1D", "5D"];
@@ -57,6 +59,7 @@ export const DEFAULT_WATCH: WatchWindows = {
   stock_daily_time: "16:30",
   quiet_start: null,
   quiet_end: null,
+  ipo_archive_trading_days: 10,
 };
 
 // the choices the API accepts (suggest/profile.py)

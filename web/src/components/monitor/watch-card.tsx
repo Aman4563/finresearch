@@ -9,7 +9,7 @@ import {
   LiveDot, Stepper, SubMeter, countdown, currentStage, dayLabel, daysUntil, stagesFor, times, timeIST,
 } from "@/components/ipo/lib";
 import { Badge, Button, Modal, cx } from "@/components/ui";
-import { api, watchExchangeLabel, when, type WatchSummary } from "@/lib/api";
+import { api, isLiveIpo, watchExchangeLabel, when, type WatchPhase, type WatchSummary } from "@/lib/api";
 
 export const JOB_LABEL: Record<string, string> = {
   subscription: "Subscription check",
@@ -84,11 +84,54 @@ export function StopWatch({ w, onDone, onError }: { w: WatchSummary; onDone: () 
   );
 }
 
+const PHASE_LABEL: Record<WatchPhase, string> = {
+  announced: "announced", open: "bidding", closed: "bidding closed", allotted: "allotted", listed: "listed",
+  archived: "archived", withdrawn: "withdrawn",
+};
+
+/** The IPO's lifecycle phase (monitor.phase, #291). */
+export function PhaseBadge({ phase }: { phase: WatchPhase }) {
+  const tone = phase === "open" ? "gain" : phase === "listed" ? "info" : phase === "withdrawn" ? "loss" : "neutral";
+  return <Badge tone={tone}>{PHASE_LABEL[phase]}</Badge>;
+}
+
+/** The listing gain recorded on the watch (vs the upper price band); unknown when the issue price was not found. */
+export function listingGain(w: WatchSummary): number | null {
+  const g = w.meta?.listing_gain_pct;
+  return typeof g === "string" && g !== "" ? Number(g) : null;
+}
+
+/** "Keep watching as a stock after it is archived": ticked on an archived watch, it becomes a stock watch at once. */
+export function KeepWatching({ w, onDone, onError }: { w: WatchSummary; onDone: () => void; onError: (e: string) => void }) {
+  const [busy, setBusy] = useState(false);
+  const on = w.meta?.keep_watching === true;
+  const toggle = async () => {
+    setBusy(true);
+    try {
+      await api(`/api/watches/${w.id}/keep`, { method: "POST", body: JSON.stringify({ keep: !on }) });
+      onDone();
+    } catch (e) {
+      onError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <label className="-mt-2 flex items-center gap-2 text-xs text-muted">
+      <input type="checkbox" checked={on} onChange={toggle} disabled={busy} className="size-3.5 accent-[var(--brand)]" />
+      Keep watching as a stock after it is archived (a stock you hold is kept automatically)
+    </label>
+  );
+}
+
 export function WatchCard({ w, now, onChange, onError }: {
   w: WatchSummary; now: number | null; onChange: () => void; onError: (e: string) => void;
 }) {
   const sub = times(w.last_subscription?.total_times);
-  const bidding = w.kind === "ipo" && now != null && (daysUntil(w.open_date, now) ?? 1) <= 0 && (daysUntil(w.close_date, now) ?? -1) >= 0;
+  // a listed, archived or withdrawn IPO shows its listing result instead of the subscription meter (#291)
+  const listed = w.kind === "ipo" && !isLiveIpo(w);
+  const gain = listingGain(w);
+  const bidding = !listed && w.kind === "ipo" && now != null && (daysUntil(w.open_date, now) ?? 1) <= 0 && (daysUntil(w.close_date, now) ?? -1) >= 0;
   return (
     <article className={cx(
       "flex flex-col rounded-xl border border-border bg-card p-4 shadow-card transition duration-200 hover:-translate-y-0.5 hover:border-border-strong hover:shadow-glow",
@@ -104,7 +147,8 @@ export function WatchCard({ w, now, onChange, onError }: {
         </div>
         <div className="flex shrink-0 flex-wrap justify-end gap-1">
           {!w.active && <Badge status="closed">stopped</Badge>}
-          {w.active && <Badge tone={bidding ? "gain" : "info"} dot={bidding}>{bidding ? "bidding" : "watching"}</Badge>}
+          {w.active && listed && <Badge tone="info">{w.phase === "withdrawn" ? "withdrawn" : "listed"}</Badge>}
+          {w.active && !listed && <Badge tone={bidding ? "gain" : "info"} dot={bidding}>{bidding ? "bidding" : "watching"}</Badge>}
           {!!w.unread_alerts && <Badge tone="loss"><BellDot className="size-3" />{w.unread_alerts} new</Badge>}
         </div>
       </div>
@@ -112,6 +156,19 @@ export function WatchCard({ w, now, onChange, onError }: {
       {w.kind === "ipo" ? (
         <>
           <Stepper className="mt-5" stages={stagesFor(w)} current={now == null ? -1 : currentStage(w, now)} />
+          {listed ? (
+            <div className="mt-4 rounded-lg bg-background-subtle/60 p-3">
+              <p className="mb-1.5 flex justify-between text-[11px] text-muted">
+                <span>{w.phase === "withdrawn" ? "Did not list" : "Listing gain (open vs upper band)"}</span>
+                {w.listing_date && w.phase !== "withdrawn" && <span className="num">{dayLabel(w.listing_date, { day: "numeric", month: "short" })}</span>}
+              </p>
+              {w.phase === "withdrawn" ? <p className="text-xs text-muted">Withdrawn: no listing on NSE.</p> : (
+                <p className={cx("num text-xl font-semibold", gain == null ? "text-muted" : gain >= 0 ? "text-gain" : "text-loss")}>
+                  {gain == null ? "unknown" : `${gain >= 0 ? "+" : ""}${gain.toFixed(2)}%`}
+                </p>
+              )}
+            </div>
+          ) : (
           <div className="mt-4 rounded-lg bg-background-subtle/60 p-3">
             <p className="mb-1.5 flex justify-between text-[11px] text-muted">
               <span>Last subscription (total)</span>
@@ -119,6 +176,7 @@ export function WatchCard({ w, now, onChange, onError }: {
             </p>
             {w.last_subscription ? <SubMeter value={sub} /> : <p className="text-xs text-muted">No snapshot yet: the first check records one.</p>}
           </div>
+          )}
         </>
       ) : (
         <p className="mt-4 flex items-start gap-2 rounded-lg bg-background-subtle/60 p-3 text-xs text-muted">

@@ -14,7 +14,7 @@ import {
   LiveDot, SUB_HELP, TERMS, categories, countdown, dayLabel, daysUntil, fmtX, istAt, istDate, timeIST, useNow,
 } from "@/components/ipo/lib";
 import { Badge, EmptyState, InfoTip, ScrollArea, Segmented, cx, onOptionKeys } from "@/components/ui";
-import { watchExchangeLabel, type Decision, type Issue, type RunSummary, type WatchDetail, type WatchSummary } from "@/lib/api";
+import { isLiveIpo, watchExchangeLabel, type Decision, type Issue, type RunSummary, type WatchDetail, type WatchSummary } from "@/lib/api";
 
 // ------------------------------------------------------------------ plan window tile
 
@@ -102,19 +102,23 @@ export function buildEvents(issues: Issue[], watches: WatchSummary[], details: W
     if (i.phase === "upcoming" && within(i.issue_start))
       push({ day: i.issue_start!, at: istAt(i.issue_start!, "10:00"), kind: "open", title: i.company, sub: `${i.exchange} ${i.symbol}${i.series === "SME" ? " · SME" : ""}`, href: "/ipos" }, `open:${i.symbol}`);
   }
-  for (const w of watches.filter((x) => x.kind === "ipo" && x.active)) {
+  // an IPO in progress only: a listed or archived watch's dates are history (its lock-ins are listed below)
+  for (const w of watches.filter((x) => x.active && isLiveIpo(x))) {
     const name = w.company_name ?? w.label;
     if (within(w.close_date)) push({ day: w.close_date!, at: istAt(w.close_date!), kind: "close", title: name, sub: `${watchExchangeLabel(w)} · watched`, href: `/monitor/${w.id}`, live: true }, `close:${w.nse_symbol}`);
     if (within(w.allotment_date)) push({ day: w.allotment_date!, kind: "allot", title: name, sub: "basis of allotment; check the registrar", href: `/monitor/${w.id}` }, `allot:${w.nse_symbol}`);
     if (within(w.listing_date))
       push({ day: w.listing_date!, at: istAt(w.listing_date!, "10:00"), kind: "list", title: name, sub: w.meta?.listing_confirmed ? "confirmed by NSE" : "expected date", href: `/monitor/${w.id}` }, `list:${w.nse_symbol}`);
   }
-  for (const d of details) {
-    for (const j of d.jobs.filter((x) => x.kind === "lockin" && x.status === "pending")) {
-      const day = j.due_at.slice(0, 10);
-      if (within(day)) push({ day, kind: "lockin", title: d.company_name ?? d.label, sub: j.slot.split(":").pop() ?? "", href: `/monitor/${d.id}` }, `lock:${j.id}`);
+  // lock-in ends from the list itself (#291): listed and archived IPOs keep them but their details are not polled
+  const lockins = (w: { id: number; company_name: string | null; label: string }, jobs: { id: number; due_at: string; slot: string }[]) => {
+    for (const j of jobs) {
+      const day = istDate(Date.parse(j.due_at));
+      if (within(day)) push({ day, kind: "lockin", title: w.company_name ?? w.label, sub: j.slot.split(":").pop() ?? "", href: `/monitor/${w.id}` }, `lock:${j.id}`);
     }
-  }
+  };
+  for (const w of watches.filter((x) => x.active)) lockins(w, w.pending_lockins ?? []);
+  for (const d of details) lockins(d, d.jobs.filter((x) => x.kind === "lockin" && x.status === "pending"));
   out.sort((a, b) => a.day.localeCompare(b.day) || (a.at ?? 0) - (b.at ?? 0));
   return { events: out, today };
 }

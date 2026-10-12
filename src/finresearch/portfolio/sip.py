@@ -8,7 +8,10 @@ A holding is treated as a SIP when its last purchases (reinvested dividends excl
 Status from the days since the last instalment (the research plan's "expected monthly buy absent for > 35 days"):
 - "on track": ≤ 35 days;
 - "missed": 36-65 days (one instalment is missing);
-- "stopped": > 65 days (two or more are missing).
+- "stopped": > 65 days (two or more are missing);
+- "rejected": the statement shows a purchase rejected after the last instalment (a MISC row, e.g. insufficient balance);
+- "not in a statement yet": the instalment is due after the end of the last imported statement (meta.statement_units),
+  so the statement cannot show it: it is unknown, not missed. Missed and stopped count days only up to that end.
 
 The next expected date is the last instalment plus one calendar month. Inference errors are possible for irregular
 manual investing (say so in the UI); a SIP is a discipline, not an edge (lump sum beats averaging in rising markets
@@ -42,13 +45,29 @@ class Sip:
     last: date
     next_expected: date
     days_since: int
-    status: str  # on track | missed | stopped
+    status: str  # on track | missed | stopped | rejected | not in a statement yet
+    statement_end: date | None = None  # the last imported statement's end (transactions are known up to it)
 
     def json(self) -> dict[str, Any]:
         return {"holding_id": self.holding_id, "name": self.name, "account": self.account,
                 "amount": float(self.amount), "day_of_month": self.day_of_month, "instalments": self.instalments,
                 "last": self.last.isoformat(), "next_expected": self.next_expected.isoformat(),
-                "days_since": self.days_since, "status": self.status}  # fmt: skip
+                "days_since": self.days_since, "status": self.status,
+                "statement_end": self.statement_end.isoformat() if self.statement_end else None}  # fmt: skip
+
+
+NOT_YET = "not in a statement yet"
+LATE = ("stopped", "rejected", "missed")  # what the alert counts; NOT_YET is unknown, reported separately
+ORDER = {**{s: i for i, s in enumerate(LATE)}, NOT_YET: len(LATE), "on track": len(LATE) + 1}
+
+
+def statement_end(h: Any) -> date | None:
+    """The end of the last imported statement that carried this holding (service.apply), else None."""
+    day = ((h.meta or {}).get("statement_units") or {}).get("day")
+    try:
+        return date.fromisoformat(day) if day else None
+    except ValueError:
+        return None
 
 
 def infer_sip(buys: list[tuple[date, Decimal]]) -> tuple[int, Decimal, int, date] | None:
@@ -89,24 +108,42 @@ def status_for(days_since: int) -> str:
     return "stopped"
 
 
+def fund_buys(txns: list[Any]) -> list[tuple[date, Decimal]]:
+    """(day, amount) of a fund's purchases, reinvested dividends excluded: infer_sip's input."""
+    buys = []
+    for t in txns:
+        if t.kind != "buy" or (t.meta or {}).get("reinvest"):
+            continue
+        amt = abs(t.amount) if t.amount is not None else (t.quantity or 0) * (t.price or 0)
+        buys.append((t.day, Decimal(str(amt))))
+    return buys
+
+
+def sip_status(last: date, today: date, end: date | None, rejections: list[str]) -> str:
+    """A SIP's status (module docstring). `end` = the last statement's end; `rejections` = ISO days of rejected
+    purchases."""
+    if any(last.isoformat() < r <= today.isoformat() for r in rejections):
+        return "rejected"
+    if end is None or end >= today:
+        return status_for((today - last).days)
+    covered = status_for((end - last).days)  # what the statement can show
+    if covered != "on track":
+        return covered
+    return NOT_YET if status_for((today - last).days) != "on track" else "on track"
+
+
 def sip_health(holdings: list[Any], txns: dict[int, list[Any]], today: date) -> list[Sip]:
     """Inferred SIPs across mutual-fund holdings (a `report.Loaded`'s holdings and txns)."""
     out = []
     for h in holdings:
         if h.asset_type != "mf":
             continue
-        buys = []
-        for t in txns.get(h.id, []):
-            if t.kind != "buy" or (t.meta or {}).get("reinvest"):
-                continue
-            amt = abs(t.amount) if t.amount is not None else (t.quantity or 0) * (t.price or 0)
-            buys.append((t.day, Decimal(str(amt))))
-        got = infer_sip(buys)
+        got = infer_sip(fund_buys(txns.get(h.id, [])))
         if got is None:
             continue
         n, amount, dom, last = got
-        days = (today - last).days
-        out.append(
-            Sip(h.id, h.name, h.account, amount, dom, n, last, add_months(last, 1), days, status_for(days))
-        )
-    return sorted(out, key=lambda s: ({"stopped": 0, "missed": 1, "on track": 2}[s.status], s.next_expected))
+        end = statement_end(h)
+        status = sip_status(last, today, end, (h.meta or {}).get("sip_rejections") or [])
+        out.append(Sip(h.id, h.name, h.account, amount, dom, n, last, add_months(last, 1), (today - last).days,
+                       status, end))  # fmt: skip
+    return sorted(out, key=lambda s: (ORDER[s.status], s.next_expected))

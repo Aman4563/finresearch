@@ -155,11 +155,17 @@ export default function Fno() {
     setLoading("expiries");
     try {
       const e = await api<{ expiries: string[] }>(`/api/fno/${encodeURIComponent(sym)}/expiries`);
-      setExpiries(e.expiries);
+      // the API already drops past expiries (#293); a page left open past an expiry must not offer it either
+      const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date());
+      const live = e.expiries.filter((x) => x >= today);
+      setExpiries(live);
       setChain(null);
       setError(null);
-      if (e.expiries[0]) await loadChain(sym, e.expiries[0]);
-      else setExpiry("");
+      if (live[0]) await loadChain(sym, live[0]);
+      else {
+        setExpiry("");
+        setError(`No live expiries for ${sym} today`);
+      }
     } catch (err) {
       setError((err as Error).message);
     } finally {

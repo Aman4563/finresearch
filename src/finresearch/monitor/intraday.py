@@ -4,7 +4,7 @@ NSE's and BSE's quote pages serve only the current session's 1-minute series (ad
 adapters.bse_intraday; BSE rows are keyed "BSE:<scrip code>"); nothing older is published at 1-minute resolution. Two writers keep `intraday_series`:
 - the intraday API stores every series it fetches (at most every few minutes per symbol), so a symbol you look at
   archives itself;
-- after the close (from 15:45 IST on trading days) the monitor fetches the full session once for watched stocks (NSE
+- after the close (from 15:45 IST on trading days) the monitor fetches the full session once for held and watched stocks (#293; NSE
   watches from NSE; BSE-only watches, Watch.exchange "BSE", from BSE's series under "BSE:<scrip code>"), the main
   indices and every symbol viewed today whose row is not complete yet (at most 3 tries, 10 minutes apart).
 
@@ -28,7 +28,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from finresearch.adapters.http import IST
 from finresearch.adapters.nse_intraday import IntradaySeries
 from finresearch.db import session_scope
-from finresearch.db.models import IntradaySeriesRow, Watch
+from finresearch.db.models import IntradaySeriesRow
 from finresearch.fincalc.candles import Tick
 from finresearch.fincalc.dates import is_business_day, to_ist
 
@@ -94,16 +94,19 @@ def load_days(session, kind: str, symbol: str, n: int, before: date | None = Non
 
 
 def targets(today: date) -> list[tuple[str, str]]:
-    """(kind, symbol) to complete today: main indices, active stock watches (an NSE watch by its NSE symbol, a
-    BSE-only watch by "BSE:<scrip code>", which live_fetch reads from BSE), and anything viewed today."""
+    """(kind, symbol) to complete today: main indices, every stock the user holds or watches (disclosures.store.tracked,
+    #293: largest holdings first, ended instruments left out; an NSE stock by its NSE symbol, a BSE-only one by
+    "BSE:<scrip code>", which live_fetch reads from BSE), and anything viewed today."""
+    from finresearch.adapters.bse_equity import scrip_code_of
+    from finresearch.disclosures.store import tracked
+
     with session_scope() as s:
-        watched = s.execute(select(Watch.exchange, Watch.nse_symbol, Watch.bse_code)
-                            .where(Watch.active.is_(True), Watch.kind == "stock")).all()  # fmt: skip
+        keys = tracked(s).stock_keys()
         rows = s.execute(select(IntradaySeriesRow.kind, IntradaySeriesRow.symbol, IntradaySeriesRow.complete)
                          .where(IntradaySeriesRow.day == today)).all()  # fmt: skip
     done = {(k, sym) for k, sym, c in rows if c}
     want = [("index", x) for x in ARCHIVE_INDICES]
-    want += [("equity", k) for k in sorted({_watch_key(*w) for w in watched} - {None})]
+    want += [("equity", k) for k in keys if not k.startswith("BSE:") or scrip_code_of(k)]
     want += [(k, sym) for k, sym, c in rows if not c]
     out: list[tuple[str, str]] = []
     for t in want:

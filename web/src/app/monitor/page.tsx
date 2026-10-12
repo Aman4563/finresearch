@@ -11,7 +11,21 @@ import { WatchCard, jobLabel } from "@/components/monitor/watch-card";
 import {
   Button, Card, EmptyState, ErrorNote, Field, PageHeader, Segmented, Skeleton, Stat, cx, inputClass,
 } from "@/components/ui";
-import { api, type AlertItem, type Company, useApi, type WatchSummary } from "@/lib/api";
+import { api, isLiveIpo, type AlertItem, type Company, useApi, type WatchSummary } from "@/lib/api";
+
+type Group = "active" | "listed" | "archive";
+const GROUPS: { value: Group; label: string; empty: string }[] = [
+  { value: "active", label: "Active", empty: "No IPO in progress and no stock watched" },
+  { value: "listed", label: "Recently listed", empty: "No recently listed IPO" },
+  { value: "archive", label: "Archive", empty: "Nothing archived or stopped" },
+];
+
+/** Active: IPOs in progress and stock watches; Recently listed: listed IPOs (still checked for lock-ins until archived);
+ * Archive: archived or withdrawn IPOs and stopped watches (#291). */
+function groupOf(w: WatchSummary): Group {
+  if (!w.active || w.phase === "archived" || w.phase === "withdrawn") return "archive";
+  return w.phase === "listed" ? "listed" : "active";
+}
 
 export default function Monitor() {
   const watches = useApi<WatchSummary[]>("/api/watches", 60000);
@@ -22,7 +36,7 @@ export default function Monitor() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [added, setAdded] = useState<string | null>(null);
-  const [show, setShow] = useState<"active" | "all">("active");
+  const [show, setShow] = useState<Group>("active");
   const [alertView, setAlertView] = useState<"unread" | "all">("all");
 
   // IPOs need an NSE symbol (or a BSE SME issue number, set by the IPO page); listed stocks an NSE symbol or a BSE code
@@ -48,14 +62,19 @@ export default function Monitor() {
     }
   };
 
-  const list = useMemo(() => (watches.data ?? []).filter((w) => show === "all" || w.active), [watches.data, show]);
+  const groups = useMemo(() => {
+    const g: Record<Group, WatchSummary[]> = { active: [], listed: [], archive: [] };
+    for (const w of watches.data ?? []) g[groupOf(w)].push(w);
+    return g;
+  }, [watches.data]);
+  const list = groups[show];
   const kpi = useMemo(() => {
     const active = (watches.data ?? []).filter((w) => w.active);
     const next = active
       .map((w) => w.next_check)
       .filter((n): n is NonNullable<typeof n> => !!n)
       .sort((a, b) => a.due_at.localeCompare(b.due_at))[0];
-    const bidding = now == null ? 0 : active.filter((w) => w.kind === "ipo" && (daysUntil(w.open_date, now) ?? 1) <= 0 && (daysUntil(w.close_date, now) ?? -1) >= 0).length;
+    const bidding = now == null ? 0 : active.filter((w) => w.kind === "ipo" && isLiveIpo(w) && (daysUntil(w.open_date, now) ?? 1) <= 0 && (daysUntil(w.close_date, now) ?? -1) >= 0).length;
     return { active: active.length, bidding, next, stopped: (watches.data ?? []).length - active.length };
   }, [watches.data, now]);
   const unread = (alerts.data ?? []).filter((a) => !a.read_at);
@@ -118,15 +137,15 @@ export default function Monitor() {
       <section>
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-sm font-semibold tracking-tight">Watches</h2>
-          <Segmented value={show} onChange={setShow} options={[{ value: "active", label: "Active" }, { value: "all", label: "All" }]} />
+          <Segmented value={show} onChange={setShow} options={GROUPS.map((g) => ({ value: g.value, label: `${g.label}${groups[g.value].length ? ` (${groups[g.value].length})` : ""}` }))} />
         </div>
         <ErrorNote error={watches.error} onRetry={watches.reload} />
         {!watches.data && !watches.error ? (
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-72 rounded-xl" />)}</div>
         ) : watches.data && list.length === 0 ? (
-          <EmptyState icon={<Eye className="size-5" />} title={watches.data.length ? "No active watches" : "You are not watching anything yet"}>
+          <EmptyState icon={<Eye className="size-5" />} title={watches.data.length ? GROUPS.find((g) => g.value === show)!.empty : "You are not watching anything yet"}>
             {watches.data.length
-              ? "Switch to All to see stopped watches, or pick a company above to watch it."
+              ? "Switch groups to see the others, or pick a company above to watch it."
               : "Pick a researched IPO above and press Watch: FinResearch tracks its subscription, your rules, allotment and listing for you."}
           </EmptyState>
         ) : (

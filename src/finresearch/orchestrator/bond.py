@@ -124,5 +124,55 @@ async def ensure_bond_company(isin: str, *, bonds=None) -> dict[str, Any]:
         co = get_or_create_company(
             s, slug, f"{bond.symbol} {bond.series or ''} ({bond.coupon_pct}% maturing {bond.maturity})"
         )
-        co.meta = {**(co.meta or {}), "isin": bond.isin, "symbol": bond.symbol, "series": bond.series}
+        co.meta = {**(co.meta or {}), "isin": bond.isin, "symbol": bond.symbol, "series": bond.series,
+                   **maturity_meta(bond.maturity, "NSE capital-market bond list")}  # fmt: skip
         return {"slug": slug, "name": co.name, "isin": bond.isin}
+
+
+def maturity_meta(maturity, source: str) -> dict[str, Any]:
+    """Company.meta keys for a known maturity (#293); nothing for an unknown one, so unknown stays unknown."""
+    return {"maturity": maturity.isoformat(), "maturity_source": source} if maturity else {}
+
+
+def claimed_maturity(session, slug: str):
+    """The maturity date a verified `maturity_year` claim of the bond's research recorded (bond_facts puts the full
+    date in the claim's period), or None."""
+    from datetime import date
+
+    from sqlalchemy import select
+
+    periods = session.scalars(select(Claim.period).join(ResearchRun, ResearchRun.id == Claim.run_id)
+                              .join(Company, Company.id == ResearchRun.company_id)
+                              .where(Company.slug == slug, Claim.metric == "maturity_year",
+                                     Claim.status == "verified").order_by(Claim.id.desc())).all()  # fmt: skip
+    for p in periods:
+        try:
+            return date.fromisoformat((p or "")[:10])
+        except ValueError:
+            continue
+    return None
+
+
+def backfill_maturities(session, rows: list | None) -> list[dict[str, Any]]:
+    """Store the maturity of every library bond (Company "bond-<isin>") that has none: from NSE's bond list when the
+    bond is in it, else from its research's verified NSE maturity claim. A bond found in neither stays unknown (it is
+    never treated as matured). Returns one {slug, maturity, source} per bond looked at."""
+    from sqlalchemy import select
+
+    by_isin = {b.isin.upper(): b for b in rows or [] if b.maturity}
+    out = []
+    for co in session.scalars(select(Company).where(Company.slug.like("bond-%")).order_by(Company.slug)):
+        meta = dict(co.meta or {})
+        if meta.get("maturity"):
+            out.append({"slug": co.slug, "maturity": meta["maturity"], "source": "already stored"})
+            continue
+        hit = by_isin.get(co.slug[5:].upper())
+        mat, src = (hit.maturity, "NSE capital-market bond list") if hit else (claimed_maturity(session, co.slug),
+                                                                              "verified research claim (NSE list)")  # fmt: skip
+        if mat is None:
+            out.append({"slug": co.slug, "maturity": None, "source": "unknown"})
+            continue
+        co.meta = {**meta, **maturity_meta(mat, src)}
+        out.append({"slug": co.slug, "maturity": mat.isoformat(), "source": src})
+    session.flush()
+    return out

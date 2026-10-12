@@ -80,11 +80,13 @@ def sync_slots(now: datetime) -> int:
                     w.active = False
                     continue
             planned = {sl.slot for sl in slots}
+            # a stock watch that was an IPO keeps the IPO's pending lock-in checks (monitor.watch._reset, #291)
+            kept = [MonitorJob.kind != "lockin"] if w.kind == "stock" else []
             # dates can move (holiday lists refreshed, NSE confirms a listing date): pending checks for slots that are
             # no longer planned are cancelled instead of running on the wrong day
             s.execute(update(MonitorJob).where(MonitorJob.watch_id == w.id, MonitorJob.status == "pending",
                                                MonitorJob.attempts == 0, MonitorJob.slot.not_in(planned),
-                                               MonitorJob.due_at > now)
+                                               MonitorJob.due_at > now, *kept)
                       .values(status="cancelled", finished_at=now))  # fmt: skip
             # a listing check keyed to the old expected date may already be retrying: its event now has a new slot
             s.execute(update(MonitorJob).where(MonitorJob.watch_id == w.id, MonitorJob.status == "pending",
@@ -451,11 +453,45 @@ def _spawn_retention(now: datetime) -> None:
     _BACKGROUND["retention"] = asyncio.create_task(run())
 
 
+def _spawn_lifecycle(now: datetime) -> None:
+    """Start the daily end-of-life pass (monitor.lifecycle, #293) in the background: at most one NSE bond list, one
+    AMFI NAVAll (shared with the fund ranking's cache) and the stored ISIN map. At most one runs at a time."""
+    from finresearch.fincalc.dates import to_ist
+    from finresearch.monitor.lifecycle import START, lifecycle_step
+
+    t = _BACKGROUND.get("lifecycle")
+    ist = to_ist(now)
+    if (t is not None and not t.done()) or (ist.hour, ist.minute) < START:
+        return
+
+    async def run() -> None:
+        try:
+            res = await lifecycle_step(now)
+            if res:
+                log.info("instrument lifecycle: %s", res)
+        except Exception:
+            log.warning("instrument lifecycle pass failed", exc_info=True)
+
+    _BACKGROUND["lifecycle"] = asyncio.create_task(run())
+
+
 async def drain() -> None:
     """Wait for background work started by `tick` (a one-shot `finresearch monitor tick` calls this)."""
     for t in list(_BACKGROUND.values()):
         with contextlib.suppress(Exception):
             await t
+
+
+async def phase_step_safe(deps: jobs.Deps, now: datetime) -> dict[str, int]:
+    """IPO watch phases (monitor.phase): archive, withdraw, convert to a stock watch. A failure leaves every phase
+    as it was and is retried on the next tick; it never stops the checks."""
+    try:
+        from finresearch.monitor.phase import phase_step
+
+        return await phase_step(now, deps)
+    except Exception:
+        log.warning("IPO phase step failed; it is retried on the next tick", exc_info=True)
+        return {}
 
 
 def brief_step(now: datetime) -> dict[str, int]:
@@ -483,6 +519,8 @@ async def tick(deps: jobs.Deps, now: datetime | None = None) -> dict[str, int]:
         _spawn_lookthrough(now)
     if deps.retention:
         _spawn_retention(now)
+    if deps.lifecycle:
+        _spawn_lifecycle(now)
     if deps.ipo_harvest:
         _spawn_ipo_harvest(now)
     if deps.ipo_registry:
@@ -497,6 +535,7 @@ async def tick(deps: jobs.Deps, now: datetime | None = None) -> dict[str, int]:
     if deps.archive:
         await _archive_data(deps, now)
     _recover_stale(now)
+    phases = await phase_step_safe(deps, now)
     added = sync_slots(now)
     missed = _expire_missed(now)
     done = failed = retried = 0
@@ -506,6 +545,7 @@ async def tick(deps: jobs.Deps, now: datetime | None = None) -> dict[str, int]:
         failed += st == "failed"
         retried += st == "pending"
     out = {"added": added, "done": done, "failed": failed, "retried": retried, "missed": missed}
+    out |= {k: v for k, v in phases.items() if v}
     if deps.forecasts:
         out |= {k: v for k, v in (await forecast_step(deps, now)).items() if k in ("resolved", "void")}
     out |= journal_step(now)

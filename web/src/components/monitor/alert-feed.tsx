@@ -26,7 +26,27 @@ const KIND: Record<string, string> = {
   listing_open: "Listed (open)",
   listing_close: "Listed (close)",
   lockin: "Lock-in ends",
+  cas_reminder: "Request a CAS",
+  cas_units_mismatch: "Fund units differ",
 };
+
+/** External links an alert carries (`data.links`: the CAMS/KFintech mailback forms, #296). Only https links. */
+function AlertLinks({ data }: { data: Record<string, unknown> }) {
+  const links = Array.isArray(data.links)
+    ? (data.links as { label?: unknown; url?: unknown }[]).filter((l) => typeof l?.url === "string" && l.url.startsWith("https://"))
+    : [];
+  if (!links.length) return null;
+  return (
+    <p className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px]">
+      {links.map((l) => (
+        <a key={String(l.url)} href={String(l.url)} target="_blank" rel="noopener noreferrer" className="font-medium text-brand hover:underline">
+          {String(l.label ?? l.url)}
+        </a>
+      ))}
+      {typeof data.from === "string" && <span className="text-muted">period from <span className="num">{data.from}</span></span>}
+    </p>
+  );
+}
 
 const kindLabel = (k: string) => KIND[k] ?? k.replaceAll("_", " ").replace(/^./, (c) => c.toUpperCase());
 
@@ -119,6 +139,7 @@ export function AlertFeed({ alerts, onRead, limit, showSymbol = true, emptyHint,
                     </p>
                     <p className="mt-0.5 text-sm break-words">{a.message}</p>
                     {a.kind === "rule_alert" && a.data?.rule_id != null && <RuleSource data={a.data} />}
+                    {a.data?.links != null && <AlertLinks data={a.data} />}
                   </div>
                   {!a.read_at && (
                     <button

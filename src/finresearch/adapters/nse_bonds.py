@@ -70,6 +70,11 @@ def search_bonds(bonds: list[ListedBond], query: str, limit: int = 20) -> list[L
     )[:limit]
 
 
+def without_matured(bonds: list[ListedBond], today: date) -> list[ListedBond]:
+    """The bonds still alive on `today`: a maturity on or before it has ended (#293). An unknown maturity is kept."""
+    return [b for b in bonds if b.maturity is None or b.maturity > today]
+
+
 async def live_bonds(client: NseClient | None = None) -> list[ListedBond]:
     async with client or NseClient() as nse:
         data, _ = await nse.get_json("/api/liveBonds-traded-on-cm", {"type": "bonds"})
