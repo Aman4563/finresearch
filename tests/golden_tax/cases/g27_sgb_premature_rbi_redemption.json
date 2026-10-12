@@ -1,0 +1,92 @@
+{
+ "id": "g27_sgb_premature_rbi_redemption",
+ "title": "SGB redeemed prematurely by RBI after the 5th year (Aug-2025, before 1-Apr-2026): still exempt under s.47(viic); coupon is not a capital-gains event",
+ "covers": [
+  "SGB premature RBI redemption exempt",
+  "s.47(viic) not limited to maturity",
+  "interest event ignored for capital gains",
+  "exempt_total"
+ ],
+ "rules": [
+  "Income-tax Act 1961 s.47(viic) (inserted by Finance Act 2016 w.e.f. AY 2017-18): 'any redemption of Sovereign Gold Bond issued by the Reserve Bank of India under the Sovereign Gold Bond Scheme, 2015, by an individual' is not a transfer. The clause is not limited to redemption on maturity",
+  "Sovereign Gold Bond Scheme 2015 (and each tranche's Government of India notification): early encashment is allowed after the 5th year on coupon dates and is effected by RBI as a redemption of the bond (premature redemption), so it is a 'redemption' within s.47(viic), unlike a sale on the exchange (contrast g10)",
+  "Coupon interest (2.5 % p.a.) is income from other sources (s.56), not a capital-gains event; it does not change the lot",
+  "Transfer on 12-Aug-2025 is before 1-Apr-2026 -> Income-tax Act 1961 governs; the Finance Act 2026 / Income-tax Act 2025 position (g28) does not apply"
+ ],
+ "derivation": [
+  "Subscription 2018-02-12 at original issue: 20 units @ 3,000.00 -> cost 60,000.00 (no STT, no charges).",
+  "Interest 2024-08-12 of 750.00: income from other sources; ignored for capital gains; lot unchanged.",
+  "Premature redemption by RBI 2025-08-12 (held_to_maturity false): 20 @ 9,500.00 -> proceeds 1,90,000.00.",
+  "s.47(viic) covers 'any redemption' by an individual, including RBI premature redemption under the Scheme -> not a transfer: gain 0.00, term exempt, rate null.",
+  "Economic gain 1,90,000 - 60,000 = 1,30,000.00 -> exempt_total 1,30,000.00 for FY 2025-26 (fy 2026).",
+  "No taxable capital gains -> exemption_used 0.00, tax 0.00, cess 0.00, total 0.00; no losses."
+ ],
+ "interpretive": false,
+ "derived_by": "independent derivation agent (#294) that did not read the engine; inputs and conventions set by the implementer",
+ "slab_rate": "0.30",
+ "holdings": [
+  {
+   "name": "SGB 2017-18 SERIES XIV",
+   "tax_class": "sgb",
+   "listed": true,
+   "sgb_original_subscriber": true,
+   "events": [
+    {
+     "day": "2018-02-12",
+     "kind": "buy",
+     "quantity": "20",
+     "price": "3000.00",
+     "charges": "0",
+     "stt_paid": false
+    },
+    {
+     "day": "2024-08-12",
+     "kind": "interest",
+     "amount": "750.00"
+    },
+    {
+     "day": "2025-08-12",
+     "kind": "redemption",
+     "quantity": "20",
+     "price": "9500.00",
+     "charges": "0",
+     "stt_paid": false,
+     "meta": {
+      "held_to_maturity": false
+     }
+    }
+   ]
+  }
+ ],
+ "expected": {
+  "disposals": [
+   {
+    "holding": "SGB 2017-18 SERIES XIV",
+    "sold": "2025-08-12",
+    "acquired": "2018-02-12",
+    "quantity": "20",
+    "cost": "60000.00",
+    "proceeds": "190000.00",
+    "gain": "0.00",
+    "term": "exempt",
+    "rate": null
+   }
+  ],
+  "open_lots": [],
+  "fy": [
+   {
+    "fy": 2026,
+    "exemption_used": "0.00",
+    "tax": "0.00",
+    "cess": "0.00",
+    "total": "0.00",
+    "complete": true,
+    "unknown_count": 0,
+    "intraday_count": 0,
+    "exempt_total": "130000.00",
+    "losses_carried_short": "0.00",
+    "losses_carried_long": "0.00"
+   }
+  ]
+ }
+}
