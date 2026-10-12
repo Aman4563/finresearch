@@ -5,7 +5,7 @@
   stock options are exercised at (NSE F&O final settlement: the closing price of the underlying on expiry day). Index
   closes from NSE's index history, stock closes from NSE's (unadjusted) equity history. None until it is published.
 * board_meetings(symbol): NSE board meetings (results dates) of a stock underlying.
-* expiries(symbol): the contract's live expiries (NSE contract info).
+* expiries(symbol): the contract's live expiries (NSE contract info); lot_size(symbol, expiry): NSE's lot size.
 """
 
 from __future__ import annotations
@@ -31,6 +31,13 @@ class LiveSources:
         async with GrowwFirstFno() as f:
             exp, _ = await f.contract_info(symbol)
         return exp
+
+    async def lot_size(self, symbol: str, expiry: date) -> int | None:
+        from finresearch.adapters.groww_fno import GrowwFirstFno
+        from finresearch.adapters.nse_fno import lot_size_for
+
+        async with GrowwFirstFno() as f:
+            return lot_size_for(await f.lot_sizes(), symbol.upper(), expiry)
 
     async def settlement(self, symbol: str, expiry: date) -> tuple[float, str] | None:
         from finresearch.adapters.nse_equity import NseEquity
