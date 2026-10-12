@@ -91,6 +91,7 @@ def lc(env, monkeypatch):
         AlertRuleState,
         Company,
         DisclosureFeed,
+        IntradaySeriesRow,
         InvestorProfile,
         MonitorJob,
         PortfolioDisposal,
@@ -104,7 +105,8 @@ def lc(env, monkeypatch):
     def wipe():
         with session_scope() as s:
             for m in (Alert, AlertRuleState, AlertEvalSlot, MonitorJob, Watch, DisclosureFeed, InvestorProfile,
-                      PortfolioSetting, PortfolioDisposal, PortfolioLot, PortfolioTxn, PortfolioHolding):  # fmt: skip
+                      PortfolioSetting, PortfolioDisposal, PortfolioLot, PortfolioTxn, PortfolioHolding,
+                      IntradaySeriesRow):  # fmt: skip
                 s.query(m).delete()
             s.query(Company).filter(Company.slug.like("eol-%") | Company.slug.like("bond-ine0eo%")
                                     | Company.slug.like("mf-99990%")).delete(synchronize_session=False)  # fmt: skip
