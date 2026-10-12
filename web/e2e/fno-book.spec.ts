@@ -22,7 +22,7 @@ const BOOK: PaperBook = {
   trades: [
     base,
     { ...base, id: 2, status: "awaiting_settlement", expiry: "2026-10-06", days_to_expiry: -6,
-      note: "waiting for NSE's close of NIFTY on 06-Oct-2026 to settle (checked 07-Oct 03:30 UTC)" },
+      note: "waiting for NSE's close of NIFTY on 06-Oct-2026 to settle (checked 07-Oct 09:00 IST)" },
     { ...base, id: 3, status: "closed", closed_at: "2026-10-09T09:00:00+00:00", close_reason: "square_off", exit_costs: 67.95,
       gross_pnl: -127.5, net_pnl: -253.87 },
   ],

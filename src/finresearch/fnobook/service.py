@@ -298,7 +298,8 @@ async def settle_step(now: datetime, sources: Any) -> dict[str, int]:
                 continue
             if got is None:
                 st.status = book.AWAITING
-                st.note = f"waiting for NSE's close of {sym} on {exp:%d-%b-%Y} to settle (checked {now:%d-%b %H:%M} UTC)"
+                st.note = (f"waiting for NSE's close of {sym} on {exp:%d-%b-%Y} to settle (checked "
+                           f"{to_ist(now):%d-%b %H:%M} IST)")  # fmt: skip
                 out["paper_awaiting"] += 1
             else:
                 book.settle_at_expiry(st, got[0], got[1], now)
