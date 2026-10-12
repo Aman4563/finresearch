@@ -375,7 +375,9 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
             from finresearch.fincalc.dates import today_ist
             from finresearch.monitor import lifecycle
 
-            gone = lifecycle.ended_keys(s, today_ist())  # matured or delisted instruments (#293): listed apart
+            gone = lifecycle.ended_keys(
+                s, today_ist()
+            )  # matured or delisted instruments (#293): listed apart
 
             def ended(c: Company) -> dict[str, Any] | None:
                 kind, ident = ("bond", c.slug[5:]) if c.slug.startswith("bond-") else (

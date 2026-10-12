@@ -579,7 +579,9 @@ def bond_backfill_maturity(
         try:
             rows = asyncio.run(asyncio.wait_for(live_bonds(), 60))
         except Exception as e:  # the claims still answer; the bonds they do not cover stay unknown
-            console.print(f"[yellow]NSE's bond list unavailable ({type(e).__name__}); using stored claims only[/]")
+            console.print(
+                f"[yellow]NSE's bond list unavailable ({type(e).__name__}); using stored claims only[/]"
+            )
     with session_scope() as s:
         res = backfill_maturities(s, rows)
     for r in res:

@@ -526,7 +526,9 @@ async def events_pass(deps: Any, now: datetime, today: date, val: dict[str, Any]
     bse_only = sorted({h["name"] for h in (v.get("holdings") or {}).values()
                        if h["asset_type"] == "stock" and not nse_of(h)})  # fmt: skip
     # the largest positions first (#293: the cap once cut alphabetically); the rest are counted in "skipped"
-    weight = {sym: sum((v["holdings"][h].get("weight_pct") or 0) for h in hids) for sym, hids in by_sym.items()}
+    weight = {
+        sym: sum((v["holdings"][h].get("weight_pct") or 0) for h in hids) for sym, hids in by_sym.items()
+    }
     symbols = sorted(by_sym, key=lambda x: (-weight[x], x))[:MAX_INSTRUMENTS]
     skipped = sorted(set(by_sym) - set(symbols))
     if deps.pf_stock_events is not None:

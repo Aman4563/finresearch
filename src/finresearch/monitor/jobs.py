@@ -93,7 +93,9 @@ class Deps:
     retention: bool = (
         False  # the weekly prune of the HTTP cache and old intraday series (monitor.retention, #247)
     )
-    lifecycle: bool = False  # the daily end-of-life pass (monitor.lifecycle, #293: matured/delisted instruments)
+    lifecycle: bool = (
+        False  # the daily end-of-life pass (monitor.lifecycle, #293: matured/delisted instruments)
+    )
 
     @classmethod
     def live(cls) -> Deps:
@@ -400,7 +402,11 @@ def held_now(session: Session, watch: Watch) -> bool:
     from finresearch.disclosures.store import tracked
 
     t = tracked(session)
-    return bool((t.stocks.get((watch.key or "").upper()) or t.bse_only.get((watch.key or "").upper()) or {}).get("held"))
+    return bool(
+        (t.stocks.get((watch.key or "").upper()) or t.bse_only.get((watch.key or "").upper()) or {}).get(
+            "held"
+        )
+    )
 
 
 def ex_date_message(sym: str, ca: Any, held: bool) -> str:

@@ -23,8 +23,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 DATASET = "lifecycle"
-END_AFTER_PASSES = 10  # consecutive passes (trading days for bonds and stocks) missing from a complete source list
-KEEP_MISSING = END_AFTER_PASSES  # missing days kept in the state (only the run since the last sighting matters)
+END_AFTER_PASSES = (
+    10  # consecutive passes (trading days for bonds and stocks) missing from a complete source list
+)
+KEEP_MISSING = (
+    END_AFTER_PASSES  # missing days kept in the state (only the run since the last sighting matters)
+)
 
 
 def key(kind: str, ident: str) -> str:
@@ -77,7 +81,9 @@ def save(s: Session, k: str, state: dict[str, Any], now: datetime) -> None:
     record_ok(s, DATASET, k, payload=state, url=None, as_of=state.get("checked_on"), now=now)
 
 
-def ended(state: dict[str, Any] | None, today: date, maturity: str | date | None = None) -> dict[str, Any] | None:
+def ended(
+    state: dict[str, Any] | None, today: date, maturity: str | date | None = None
+) -> dict[str, Any] | None:
     """Why an instrument has ended ({"on", "reason", "detail"}), or None while it is live or unknown."""
     st = state or {}
     mat = maturity or st.get("maturity")
@@ -118,12 +124,18 @@ def _candidates(s: Session, kind: str, live: dict[str, dict[str, Any]]) -> dict[
     return out
 
 
-def _alert(s: Session, kind: str, ident: str, v: dict[str, Any], why: dict[str, Any], watch_id: int | None) -> None:
+def _alert(
+    s: Session, kind: str, ident: str, v: dict[str, Any], why: dict[str, Any], watch_id: int | None
+) -> None:
     from finresearch.db.models import Alert
 
     what = {"bond": "bond", "fund": "fund", "stock": "stock"}[kind]
     path = {"bond": f"/bonds/{ident}", "fund": f"/funds/{ident}", "stock": f"/stocks/{ident}"}[kind]
-    held = " You still hold it: record its redemption, merger or delisting in the portfolio." if v.get("held") else ""
+    held = (
+        " You still hold it: record its redemption, merger or delisting in the portfolio."
+        if v.get("held")
+        else ""
+    )
     s.add(Alert(watch_id=watch_id, kind=ALERT_KIND, level="warn",
                 message=f"{v.get('name') or ident}: this {what} has ended ({why['detail']}); the app no longer "
                         f"fetches it. Its research stays readable.{held}",
@@ -157,7 +169,14 @@ def observe(s: Session, kind: str, present: set[str], rows_n: int, today: date, 
             out["missing"].append(ident)
         if st.get("ended") and not old.get("ended"):
             out["ended"].append(ident)
-            _alert(s, kind, ident, v, st["ended"], _stop_watches(s, ident, st["ended"]) if kind == "stock" else None)
+            _alert(
+                s,
+                kind,
+                ident,
+                v,
+                st["ended"],
+                _stop_watches(s, ident, st["ended"]) if kind == "stock" else None,
+            )
     s.flush()
     return out
 
@@ -257,7 +276,10 @@ def _fill_bond_meta(s: Session, extra: dict[str, dict[str, Any]], maturity_meta)
     for co in s.scalars(select(Company).where(Company.slug.like("bond-%"))):
         mat = (extra.get(co.slug[5:].upper()) or {}).get("maturity")
         if mat and not (co.meta or {}).get("maturity"):
-            co.meta = {**(co.meta or {}), **maturity_meta(date.fromisoformat(mat), "NSE capital-market bond list")}
+            co.meta = {
+                **(co.meta or {}),
+                **maturity_meta(date.fromisoformat(mat), "NSE capital-market bond list"),
+            }
 
 
 async def lifecycle_step(now: datetime, src: Sources | None = None, *,

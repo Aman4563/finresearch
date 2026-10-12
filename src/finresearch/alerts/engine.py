@@ -90,7 +90,10 @@ def targets(session: Session, r: AlertRule) -> list[Target]:
     bucket = {"fund": t.funds, "bond": t.bonds}.get(r.kind)
     if bucket is None:
         return []
-    return [Target(k) for k in sorted(bucket, key=lambda k: (not bucket[k]["held"], -(bucket[k].get("weight") or 0), k))]
+    return [
+        Target(k)
+        for k in sorted(bucket, key=lambda k: (not bucket[k]["held"], -(bucket[k].get("weight") or 0), k))
+    ]
 
 
 def _state(session: Session, rule: AlertRule, inst: str) -> AlertRuleState:

@@ -182,12 +182,16 @@ class Tracked:
     over accounts), None when not held or not valued yet (unknown, never 0). Instruments that have ended (a matured or
     delisted bond, a fund AMFI dropped, a delisted stock: monitor.lifecycle) are left out and listed in `ended`."""
 
-    stocks: dict[str, dict[str, Any]] = field(default_factory=dict)  # symbol -> {isin, name, held, watched, weight}
+    stocks: dict[str, dict[str, Any]] = field(
+        default_factory=dict
+    )  # symbol -> {isin, name, held, watched, weight}
     bse_only: dict[str, dict[str, Any]] = field(
         default_factory=dict
     )  # "BSE:<code>" -> {isin, name, held, watched, weight}
     bonds: dict[str, dict[str, Any]] = field(default_factory=dict)  # isin -> {name, held, tracked, weight}
-    funds: dict[str, dict[str, Any]] = field(default_factory=dict)  # AMFI code -> {name, held, tracked, weight}
+    funds: dict[str, dict[str, Any]] = field(
+        default_factory=dict
+    )  # AMFI code -> {name, held, tracked, weight}
     ended: dict[str, dict[str, Any]] = field(default_factory=dict)  # lifecycle key -> why it ended
 
     def issuers(self) -> dict[str, list[str]]:
@@ -244,13 +248,17 @@ def tracked(s: Session, today: date | None = None) -> Tracked:
             t.ended[lifecycle.key("stock", key)] = why
             return
         bucket = t.bse_only if key.startswith("BSE:") else t.stocks
-        v = bucket.setdefault(key, {"isin": None, "name": None, "held": False, "watched": False, "weight": None})
+        v = bucket.setdefault(
+            key, {"isin": None, "name": None, "held": False, "watched": False, "weight": None}
+        )
         v["isin"] = v["isin"] or (isin.upper() if isin else None)
         v["name"] = v["name"] or name
         v[how] = True
         weigh(v, w)
 
-    def other(bucket: dict, kind: str, ident: str, name: str | None, how: str, w: float | None = None) -> None:
+    def other(
+        bucket: dict, kind: str, ident: str, name: str | None, how: str, w: float | None = None
+    ) -> None:
         if (why := gone.get(lifecycle.key(kind, ident))) is not None:
             t.ended[lifecycle.key(kind, ident)] = why
             return

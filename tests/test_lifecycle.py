@@ -54,7 +54,10 @@ def test_reappearing_revives_a_missing_instrument_but_not_a_matured_bond():
         st = L.note_pass(st, present=False, day=d, source="x")
     st = L.note_pass(st, present=True, day=D0 + timedelta(days=11), source="x")
     assert st["ended"] is None and st["revived"]["revived_on"] == "2026-10-12"
-    assert L.ended({"maturity": "2026-10-05", "last_seen": "2026-10-12"}, D0 + timedelta(days=11))["reason"] == "matured"
+    assert (
+        L.ended({"maturity": "2026-10-05", "last_seen": "2026-10-12"}, D0 + timedelta(days=11))["reason"]
+        == "matured"
+    )
 
 
 def test_maturity_unknown_is_never_matured():
@@ -66,7 +69,11 @@ def test_maturity_unknown_is_never_matured():
 
 # --------------------------------------------------------------------------- the daily pass (database)
 TODAY = date(2026, 10, 9)
-LIVE_BOND, MATURED_BOND, GONE_BOND = "INE0EO107011", "INE0EO107029", "INE0EO107037"  # synthetic debenture ISINs
+LIVE_BOND, MATURED_BOND, GONE_BOND = (
+    "INE0EO107011",
+    "INE0EO107029",
+    "INE0EO107037",
+)  # synthetic debenture ISINs
 
 
 @pytest.fixture
@@ -293,7 +300,9 @@ def test_ended_fund_and_delisted_stock_watch_stop_once_with_one_alert(lc):
         alerts = s.query(Alert).filter(Alert.kind == L.ALERT_KIND).all()
         assert sorted(a.data["instrument"] for a in alerts) == ["999901", "EXGONE"]
         assert [x.instrument for x in targets(s, AlertRule(id="f", kind="fund", metric="nav"))] == ["999902"]
-        assert [x.instrument for x in targets(s, AlertRule(id="s", kind="stock", metric="price"))] == ["EXHELD"]
+        assert [x.instrument for x in targets(s, AlertRule(id="s", kind="stock", metric="price"))] == [
+            "EXHELD"
+        ]
 
 
 def test_a_renamed_stock_is_found_by_its_isin_and_never_ends(lc):
@@ -348,7 +357,9 @@ async def test_fno_signal_picks_the_first_live_expiry_and_rejects_a_past_one(mon
         await fno.fno_signal("NIFTY", {"expiry": "2026-10-06", "log": "0"})
     try:
         await fno.fno_signal("NIFTY", {"log": "0"})
-    except Exception:  # the rest of the signal is test_fno_signal's business; only the expiry chosen matters here
+    except (
+        Exception
+    ):  # the rest of the signal is test_fno_signal's business; only the expiry chosen matters here
         pass
     assert asked == [date(2026, 10, 13)]
 
@@ -363,8 +374,12 @@ def test_rules_pinned_to_an_expired_contract_are_disabled_once_with_a_note(lc):
     with session_scope() as s:
         p = load_profile(s)
         p.alert_rules = [
-            AlertRule(id="old", kind="fno", metric="spot", instrument="NIFTY", params={"expiry": "2026-10-06"}),
-            AlertRule(id="live", kind="fno", metric="spot", instrument="NIFTY", params={"expiry": "2026-10-13"}),
+            AlertRule(
+                id="old", kind="fno", metric="spot", instrument="NIFTY", params={"expiry": "2026-10-06"}
+            ),
+            AlertRule(
+                id="live", kind="fno", metric="spot", instrument="NIFTY", params={"expiry": "2026-10-13"}
+            ),
             AlertRule(id="any", kind="fno", metric="days_to_expiry", instrument="NIFTY"),
         ]
         save_profile(s, p)
@@ -376,3 +391,80 @@ def test_rules_pinned_to_an_expired_contract_are_disabled_once_with_a_note(lc):
         assert rules["old"].enabled is False and "contract expired" in rules["old"].description
         assert rules["live"].enabled and rules["any"].enabled
         assert s.query(Alert).filter(Alert.kind == EXPIRED_KIND).count() == 1
+
+
+# --------------------------------------------------------------------------- portfolio-aware targeting
+def _valuation_cache(s, weights: dict[int, float]):
+    from finresearch.portfolio import cache
+
+    cache.write(s, cache.VALUATION, {"holdings": {str(h): {"weight_pct": w} for h, w in weights.items()}})
+
+
+def test_held_stocks_get_iv_intraday_sector_pe_and_alert_coverage_by_weight(lc):
+    """#293: the IV recorder, the after-close intraday archive, the sector-P/E archive and stock alert rules read
+    only stock watches; open holdings are covered now, largest first. A sold-out holding is not."""
+    from finresearch.alerts.engine import targets
+    from finresearch.db import session_scope
+    from finresearch.monitor import archive, intraday, iv
+    from finresearch.suggest.profile import AlertRule
+
+    with session_scope() as s:
+        small = _hold(s, "stock", "Example Small Ltd", sym="EXSMALL")
+        big = _hold(s, "stock", "Example Big Ltd", sym="EXBIG")
+        _hold(s, "stock", "Example Sold Ltd", sym="EXSOLD", open_qty="0")
+        _valuation_cache(s, {small.id: 5.0, big.id: 30.0})
+    lots = {"EXBIG": {}, "EXSMALL": {}, "EXSOLD": {}}
+    assert iv.symbols(lots)[3:] == ["EXBIG", "EXSMALL"]
+    assert [k for kind, k in intraday.targets(TODAY) if kind == "equity"] == ["EXBIG", "EXSMALL"]
+    assert archive._live_watched() == ["EXBIG", "EXSMALL"]
+    with session_scope() as s:
+        got = targets(s, AlertRule(id="s", kind="stock", metric="price"))
+    assert [t.instrument for t in got] == ["EXBIG", "EXSMALL"] and all(t.watch_id is None for t in got)
+
+
+def test_has_holdings_counts_open_lots_only(lc):
+    from finresearch.db import session_scope
+    from finresearch.monitor.portfolio_daily import has_holdings
+
+    with session_scope() as s:
+        _hold(s, "stock", "Example Sold Ltd", sym="EXSOLD", open_qty="0")
+        _hold(s, "mf", "Example Redeemed Fund", code="999903", open_qty="0")
+    assert has_holdings() == (False, False)  # only sold-out holdings: the daily passes do not start
+    with session_scope() as s:
+        _hold(s, "mf", "Example Fund", code="999904")
+    assert has_holdings() == (True, True)
+
+
+async def test_events_cap_keeps_the_largest_positions_and_counts_the_rest(lc, monkeypatch):
+    from finresearch.db import session_scope
+    from finresearch.monitor import portfolio_daily as pd
+    from finresearch.portfolio import cache
+
+    monkeypatch.setattr(pd, "MAX_INSTRUMENTS", 2)
+    holdings = {str(i): {"asset_type": "stock", "name": f"Example {sym}", "nse_symbol": sym, "weight_pct": w,
+                         "signal": {"instrument": sym}}
+                for i, (sym, w) in enumerate((("AAA", 1.0), ("ZZZ", 40.0), ("MMM", 20.0)))}  # fmt: skip
+    with session_scope() as s:
+        cache.write(s, cache.VALUATION, {"holdings": holdings})
+    asked = []
+
+    async def events(sym):
+        asked.append(sym)
+        return {"actions": [], "board_meetings": [], "results": []}
+
+    deps = NS(pf_stock_events=events, pf_spacing_s=0)
+    res = await pd.events_pass(deps, datetime(2026, 10, 9, 11, tzinfo=UTC), TODAY, {})
+    assert asked == ["ZZZ", "MMM"] and res["skipped"] == 1 and res["skipped_symbols"] == ["AAA"]
+
+
+def test_ex_date_reminder_tells_a_holder_to_keep_not_to_buy():
+    from finresearch.monitor.jobs import ex_date_message
+
+    ca = NS(
+        subject="Interim Dividend - Rs 5 Per Share",
+        ex_date=date(2026, 10, 14),
+        record_date=date(2026, 10, 14),
+    )
+    held = ex_date_message("EXHELD", ca, True)
+    assert "you hold it" in held and "buy before" not in held and "record date 2026-10-14" in held
+    assert ex_date_message("EXWATCH", ca, False).endswith("buy before then to be entitled")
