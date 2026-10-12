@@ -27,7 +27,9 @@ https://groww.in/trade-api/docs/curl/portfolio (holdings/positions), https://gro
   the sign of ``quantity`` matches (credit + carry-forward credit) − (debit + carry-forward debit), "credit" read as
   bought [U]; otherwise the position is shown with its direction, P&L and greeks unknown. Whether ``net_price`` is the
   average of the open quantity (and so the base of unrealised P&L) is not stated either [U]. No LTP in the answer:
-  the app prices contracts with the LTP endpoint (segment FNO). Read during the sync and the in-session order poll.
+  the app prices contracts with the LTP endpoint (segment FNO) under "NSE_" + trading_symbol, the shape of the docs'
+  one F&O example ("NSE_NIFTY25OCT24000CE") [U: inferred from that example]. Read during the sync and the
+  in-session order poll.
 * Trades: the order list ``GET /order/list?segment=CASH&page=&page_size=100`` covers **today only**; an order with
   ``filled_quantity > 0`` becomes one trade at ``average_fill_price``, dated by ``trade_date`` ("Date on which trade
   has taken place"), else ``exchange_time``, else ``created_at`` (when it was placed: an after-market order would be a

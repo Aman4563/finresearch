@@ -155,13 +155,16 @@ def test_llm_paths_never_import_personal_tables():
     """Static guard: the modules that build prompts or serve the agents' tools import no personal model or module."""
     personal = {"PortfolioHolding", "PortfolioTxn", "PortfolioLot", "PortfolioDisposal", "PortfolioImport",
                 "PortfolioAis", "PortfolioSnapshot", "PortfolioSetting", "TradeNote", "WealthAsset", "WealthGoal",
-                "WealthLoan", "WealthPolicy", "WealthValuation", "BrokerConnection", "Decision"}  # fmt: skip
+                "WealthLoan", "WealthPolicy", "WealthValuation", "BrokerConnection", "Decision",
+                "PaperStrategy", "PaperLeg", "FnoExitRule"}  # fmt: skip
     bad = []
     for pkg in ("agents", "orchestrator", "mcp_server", "bridge", "verify", "ingest", "render"):
         for f in (SRC / pkg).rglob("*.py"):
             for node in ast.walk(ast.parse(f.read_text())):
                 if isinstance(node, ast.ImportFrom) and node.module:
-                    if node.module.startswith(("finresearch.portfolio", "finresearch.wealth")):
+                    if node.module.startswith(
+                        ("finresearch.portfolio", "finresearch.wealth", "finresearch.fnobook")
+                    ):
                         bad.append(f"{f.name}: {node.module}")
                     if node.module == "finresearch.db.models":
                         bad += [f"{f.name}: {a.name}" for a in node.names if a.name in personal]
