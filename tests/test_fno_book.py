@@ -154,3 +154,199 @@ def test_paper_results_count_every_trade():
     # cumulative 100, 50, 250, −50, 0, 0: the peak 250 to the trough −50
     assert r.max_drawdown == pytest.approx(300) and r.curve[-1] == 0
     assert results([]).win_rate is None
+
+
+# ------------------------------------------------------------------ fakes for the live pieces (no network)
+from datetime import UTC, date, datetime, timedelta  # noqa: E402
+
+from finresearch.fincalc.dates import IST  # noqa: E402
+
+INSTRUMENTS_CSV = (
+    "exchange,exchange_token,trading_symbol,groww_symbol,name,instrument_type,segment,series,isin,underlying_symbol,"
+    "underlying_exchange_token,lot_size,expiry_date,strike_price,tick_size,freeze_quantity,is_reserved,buy_allowed,"
+    "sell_allowed\n"
+    "NSE,1,NIFTY26OCT25000CE,NSE-NIFTY-27Oct26-25000-CE,NIFTY,CE,FNO,,,NIFTY,26000,75,2026-10-27,25000,0.05,1800,0,1,1\n"
+    "NSE,2,NIFTY26OCT25200CE,NSE-NIFTY-27Oct26-25200-CE,NIFTY,CE,FNO,,,NIFTY,26000,75,2026-10-27,25200,0.05,1800,0,1,1\n"
+    "NSE,3,NIFTY26OCT24500PE,NSE-NIFTY-27Oct26-24500-PE,NIFTY,PE,FNO,,,NIFTY,26000,75,2026-10-27,24500,0.05,1800,0,1,1\n"
+    "NSE,4,NIFTY26OCT25500CE,NSE-NIFTY-27Oct26-25500-CE,NIFTY,CE,FNO,,,NIFTY,26000,75,2026-10-27,25500,0.05,1800,0,1,1\n"
+    "NSE,9,EXMPL,NSE-EXMPL,EXAMPLE LTD,EQ,CASH,EQ,INE000A01011,,,1,,,0.05,,0,1,1\n"
+)  # fmt: skip
+
+
+def at_ist(d: date, h: int, m: int = 0) -> datetime:
+    return datetime(d.year, d.month, d.day, h, m, tzinfo=IST).astimezone(UTC)
+
+
+class FakeMarket:
+    """GrowwMarket's surface the book uses: a session, the instruments file and a segment-aware LTP."""
+
+    def __init__(self, prices: dict[str, float] | None = None, session: bool = True) -> None:
+        from finresearch.adapters.groww_market import Instruments
+
+        self.prices, self.session, self.calls = dict(prices or {}), session, []
+        self.inst = Instruments.parse(INSTRUMENTS_CSV)
+
+    def token(self):
+        return "tok" if self.session else None
+
+    async def instruments(self):
+        return self.inst
+
+    async def ltp(self, keys, *, cached_only=False, segment="CASH"):
+        self.calls.append((segment, sorted(keys)))
+        return {k: (self.prices[k], datetime.now(UTC)) for k in keys if k in self.prices}
+
+
+def make_chain(spot: float, quotes: dict[tuple[str, float], tuple[float, float | None]], expiry: date = EXPIRY,
+               source: str = "NSE"):  # fmt: skip
+    """An option chain: {(right, strike): (last price, IV %)}."""
+    from finresearch.adapters.nse_fno import ChainRow, OptionChain, OptionQuote
+
+    def q(right, k):
+        got = quotes.get((right, k))
+        if got is None:
+            return None
+        return OptionQuote(last_price=D(str(got[0])), iv=None if got[1] is None else D(str(got[1])), oi=None,
+                           change_in_oi=None, volume=None, bid=None, ask=None)  # fmt: skip
+
+    strikes = sorted({k for _, k in quotes})
+    return OptionChain(symbol="NIFTY", expiry=expiry, underlying=D(str(spot)), as_of=None, source=source,
+                       rows=[ChainRow(strike=D(str(k)), call=q("call", k), put=q("put", k)) for k in strikes])  # fmt: skip
+
+
+class FakeSources:
+    def __init__(self, chain=None, settlement=None, meetings=None, lot=75, expiries=(EXPIRY,)):
+        self._chain, self._settle, self._meetings, self._lot, self._exp = chain, settlement, meetings, lot, expiries
+        self.calls: list[str] = []
+
+    async def chain(self, symbol, expiry):
+        self.calls.append(f"chain:{symbol}")
+        if self._chain is None:
+            raise RuntimeError("no chain")
+        return self._chain
+
+    async def settlement(self, symbol, expiry):
+        self.calls.append(f"settle:{symbol}")
+        return self._settle
+
+    async def board_meetings(self, symbol):
+        self.calls.append(f"meetings:{symbol}")
+        if isinstance(self._meetings, Exception):
+            raise self._meetings
+        return self._meetings or []
+
+    async def lot_size(self, symbol, expiry):
+        return self._lot
+
+    async def expiries(self, symbol):
+        return list(self._exp)
+
+
+@pytest.fixture
+def offline(monkeypatch):
+    """No NSE holidays, a fresh step memory and the book's sources/market replaced per test."""
+    from finresearch.adapters import groww_market
+    from finresearch.fnobook import events, service
+
+    monkeypatch.setattr(groww_market, "_holidays", lambda: set())
+    service._LAST.clear()
+    events._CACHE.clear()
+
+
+@pytest.fixture
+def book_db(env, offline):
+    """The test database with an empty paper book, no F&O alerts and no Groww connection."""
+    from sqlalchemy import delete
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import Alert, BrokerConnection, FnoExitRule, PaperLeg, PaperStrategy
+
+    with session_scope() as s:
+        for m in (FnoExitRule, PaperLeg, PaperStrategy):
+            s.execute(delete(m))
+        s.execute(delete(Alert).where(Alert.kind == "fno_exit"))
+        s.execute(delete(BrokerConnection).where(BrokerConnection.key == "groww"))
+    return env
+
+
+def _record_spread(s, now):
+    from finresearch.fnobook import book
+    from finresearch.signals.fno import LegIn
+
+    quotes = [book.Quote(120.0, "Groww LTP", "NIFTY26OCT25000CE"), book.Quote(50.0, "Groww LTP", "NIFTY26OCT25200CE")]
+    return book.record(s, symbol="NIFTY", expiry=EXPIRY, lot=75, legs_in=[LegIn("call", 25000, "buy", 1),
+                       LegIn("call", 25200, "sell", 1)], quotes=quotes, slippage_pct=1.0, brokerage=20, now=now)  # fmt: skip
+
+
+# ------------------------------------------------------------------ 3. the book: record, mark, rules once, settle
+def test_paper_record_marks_and_fires_a_profit_rule_once(book_db):
+    from sqlalchemy import func, select
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import Alert, FnoExitRule, PaperStrategy
+    from finresearch.fnobook import service
+
+    t0 = at_ist(TRADE_DAY, 10)
+    with session_scope() as s:
+        st = _record_spread(s, t0)
+        assert [x.entry_price for x in st.legs] == [D("121.20"), D("49.50")]
+        assert st.entry_costs == D("58.42") and st.mtm_gross is None  # not marked yet: unknown, not 0
+        sid = st.id
+        s.add(FnoExitRule(paper_id=sid, kind="profit", threshold=D(50), status="armed", created_at=t0))
+        s.add(FnoExitRule(paper_id=sid, kind="delta", threshold=D("0.3"), status="armed", created_at=t0))
+    market = FakeMarket({"NSE_NIFTY26OCT25000CE": 180.0, "NSE_NIFTY26OCT25200CE": 70.0})
+    src = FakeSources(chain=None)  # no chain: the short leg's delta is unknown
+    got = run(service.step(t0, market=market, sources=src))
+    assert got == {"paper_marked": 1, "exit_rules_fired": 1}
+    assert market.calls == [("FNO", ["NSE_NIFTY26OCT25000CE", "NSE_NIFTY26OCT25200CE"])]  # one LTP batch
+    with session_scope() as s:
+        st = s.get(PaperStrategy, sid)
+        # (180 − 121.20) × 75 − (70 − 49.50) × 75 = 4,410 − 1,537.50
+        assert st.mtm_gross == D("2872.50") and st.mtm_source == "Groww LTP"
+        profit, delta = s.scalars(select(FnoExitRule).order_by(FnoExitRule.id)).all()
+        # base: the debit paid (121.20 − 49.50) × 75 = 5,377.50; 2,872.50 / 5,377.50 = 53.42 %
+        assert profit.status == "fired" and float(profit.last_value) == pytest.approx(2872.5 / 5377.5 * 100, abs=1e-3)
+        assert delta.status == "armed" and delta.last_value is None and "unknown" in delta.note
+        alerts = s.scalars(select(Alert).where(Alert.kind == "fno_exit")).all()
+        assert len(alerts) == 1 and "profit target 50%" in alerts[0].message and "nothing was traded" in alerts[0].message
+    # 2 minutes later: not due (no call); 6 minutes later: re-read, still true, no second alert
+    assert run(service.step(t0 + timedelta(minutes=2), market=market, sources=src)) == {}
+    assert len(market.calls) == 1
+    run(service.step(t0 + timedelta(minutes=6), market=market, sources=src))
+    with session_scope() as s:
+        assert s.scalar(select(func.count()).select_from(Alert).where(Alert.kind == "fno_exit")) == 1
+
+
+def test_step_does_nothing_without_open_trades_or_rules(book_db):
+    from finresearch.fnobook import service
+
+    market, src = FakeMarket(), FakeSources()
+    assert run(service.step(at_ist(TRADE_DAY, 10), market=market, sources=src)) == {}
+    assert market.calls == [] and src.calls == []
+
+
+def test_paper_settles_at_expiry_close_with_exercise_stt(book_db):
+    from finresearch.db import session_scope
+    from finresearch.db.models import PaperStrategy
+    from finresearch.fnobook import service
+
+    with session_scope() as s:
+        sid = _record_spread(s, at_ist(TRADE_DAY, 10)).id
+    # the day after expiry, NSE's close not out yet: waits
+    t1 = at_ist(EXPIRY + timedelta(days=1), 9, 0)
+    got = run(service.step(t1, market=FakeMarket(session=False), sources=FakeSources(settlement=None)))
+    assert got == {"paper_awaiting": 1}
+    with session_scope() as s:
+        st = s.get(PaperStrategy, sid)
+        assert st.status == "awaiting_settlement" and st.net_pnl is None and "waiting" in st.note
+    service._LAST.clear()
+    src = FakeSources(settlement=(25150.0, "NSE index history (NIFTY 50) close"))
+    assert run(service.step(t1 + timedelta(hours=2), market=FakeMarket(session=False), sources=src)) == {
+        "paper_settled": 1}  # fmt: skip
+    with session_scope() as s:
+        st = s.get(PaperStrategy, sid)
+        assert st.status == "closed" and st.close_reason == "expiry" and st.settlement_price == D("25150.00")
+        # gross (150 − 121.20) × 75 + 49.50 × 75 = 5,872.50; exercise STT 150 × 75 × 0.15 % = 16.875
+        assert float(st.gross_pnl) == pytest.approx(5872.5) and float(st.exit_costs) == pytest.approx(16.88, abs=0.01)
+        assert float(st.net_pnl) == pytest.approx(5872.5 - 58.42 - 16.875, abs=0.01)
+        assert [x.exit_price for x in st.legs] == [D("150.00"), D("0.00")]
