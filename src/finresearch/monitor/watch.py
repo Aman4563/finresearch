@@ -10,6 +10,8 @@ from sqlalchemy import select, update
 
 from finresearch.db import session_scope
 from finresearch.db.models import Company, MonitorJob, Watch
+from finresearch.fincalc.dates import today_ist
+from finresearch.monitor.phase import DONE, LISTING_KEYS, phase_of
 from finresearch.monitor.plan import expected_dates
 
 _PERIOD = re.compile(r"(\d{1,2}-[A-Za-z]{3}-\d{4})\s*to\s*(\d{1,2}-[A-Za-z]{3}-\d{4})")
@@ -55,6 +57,15 @@ def upsert_watch(company_slug: str, issue_info: dict[str, str]) -> dict:
             s.add(w)
         else:
             w.open_date, w.close_date, w.active = open_date, close_date, True
+            meta = dict(w.meta or {})
+            if (
+                meta.get("phase") == "withdrawn"
+            ):  # watched again: the withdrawn verdict is undone, the dates decide
+                for k in ("phase", "phase_at", "withdrawn_checked"):
+                    meta.pop(k, None)
+                meta["phase_history"] = [*(meta.get("phase_history") or []),
+                                         {"phase": "rewatched", "day": today_ist().isoformat()}]  # fmt: skip
+                w.meta = meta
             if not (w.meta or {}).get("listing_confirmed"):
                 w.allotment_date, w.listing_date = allotment, listing
         w.anchor_shares = parse_anchor_shares(issue_info.get("Issue Size")) or w.anchor_shares
@@ -103,7 +114,7 @@ def watch_json(w: Watch, co: Company | None = None) -> dict:
             "open_date": iso(w.open_date), "close_date": iso(w.close_date),
             "allotment_date": iso(w.allotment_date), "listing_date": iso(w.listing_date),
             "anchor_shares": str(w.anchor_shares) if w.anchor_shares is not None else None, "active": w.active,
-            "meta": w.meta or {}}  # fmt: skip
+            "phase": phase_of(w, today_ist()), "meta": w.meta or {}}  # fmt: skip
 
 
 def watch_stock(company_slug: str) -> dict:
@@ -122,7 +133,8 @@ def watch_stock(company_slug: str) -> dict:
                       bse_code=co.bse_code if exchange == "BSE" else None, meta={})  # fmt: skip
             s.add(w)
         elif w.kind != "stock":
-            if w.active and not (w.meta or {}).get("listing_confirmed"):
+            listed = (w.meta or {}).get("listing_confirmed") or phase_of(w, today_ist()) in DONE
+            if w.active and not listed:
                 raise ValueError(f"{company_slug} is already watched as an IPO; stop that watch first")
             _reset(s, w, "stock")  # stopped, or listed: the same row becomes a stock watch
         if exchange == "BSE":  # an NSE watch is never touched; a BSE-only company's watch reads BSE
@@ -132,16 +144,39 @@ def watch_stock(company_slug: str) -> dict:
         return watch_json(w, co)
 
 
-def _cancel_pending(s, watch_id: int) -> None:
+def _cancel_pending(s, watch_id: int, keep: tuple[str, ...] = ()) -> None:
     now = datetime.now(UTC)
-    s.execute(update(MonitorJob).where(MonitorJob.watch_id == watch_id, MonitorJob.status == "pending")
+    s.execute(update(MonitorJob).where(MonitorJob.watch_id == watch_id, MonitorJob.status == "pending",
+                                       MonitorJob.kind.not_in(keep))
               .values(status="cancelled", finished_at=now))  # fmt: skip
 
 
 def _reset(s, w: Watch, kind: str) -> None:
-    """Turn a watch into the other kind in place (company_id is unique): its old checks, dates and state go."""
+    """Turn a watch into the other kind in place (company_id is unique).
+
+    IPO -> stock (a listed or stopped IPO): the listing record is history, never wiped (#291). The row keeps its IPO
+    dates and the listing keys stay at the top of `meta`, because the forecast resolver
+    (signals.ledger.resolve_listing_gain) and the IPO backtest read `meta.listing_open` and `listing_date` from the
+    watch; a full copy of the IPO's record goes to `meta.ipo`. Pending lock-in checks keep running (sync_slots keeps
+    them on a stock watch); the other pending IPO checks are cancelled.
+
+    stock -> IPO (a new issue by the same company): the old checks and dates go, and the previous IPO record moves to
+    `meta.ipo_history`, so the new issue's listing is planned and recorded afresh."""
+    old = dict(w.meta or {})
+    if kind == "stock" and w.kind == "ipo":
+        _cancel_pending(s, w.id, keep=("lockin",))
+        record = {k: old[k] for k in (*LISTING_KEYS, "bse_ipo_no", "phase", "phase_at", "phase_history", "keep_watching")
+                  if k in old}  # fmt: skip
+        record |= {"symbol": w.nse_symbol, "anchor_shares": str(w.anchor_shares) if w.anchor_shares is not None else None,
+                   **{k: getattr(w, k).isoformat() if getattr(w, k) else None
+                      for k in ("open_date", "close_date", "allotment_date", "listing_date")}}  # fmt: skip
+        w.kind, w.meta = kind, {**{k: old[k] for k in LISTING_KEYS if k in old}, "ipo": record}
+        return
     _cancel_pending(s, w.id)
-    w.kind, w.meta, w.anchor_shares = kind, {}, None
+    history = list(old.get("ipo_history") or [])
+    if old.get("ipo"):
+        history.append(old["ipo"])
+    w.kind, w.meta, w.anchor_shares = kind, ({"ipo_history": history} if history else {}), None
     w.open_date = w.close_date = w.allotment_date = w.listing_date = None
 
 

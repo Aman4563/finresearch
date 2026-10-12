@@ -28,7 +28,15 @@ INBOX_FIELDS = (
     FieldSpec("password", "CAS PDF password (optional)", secret=True, required=False,
               help="Saved only if you type it here. CAMS/KFintech/NSDL/CDSL statements are usually locked with your "
                    "PAN in capitals. Without it, PDFs wait in the inbox until you import them by hand."),
+    # #296: statements arrive locked with different passwords (a KFintech mailback CAS with the one you chose when
+    # requesting it, an NSDL/CDSL e-CAS with your PAN): the inbox tries each saved one in turn
+    FieldSpec("pan", "PAN as a PDF password (optional)", secret=True, required=False,
+              help="NSDL/CDSL e-CAS and CAMS statements are usually locked with the PAN in capitals."),
+    FieldSpec("password_2", "Another CAS password (optional)", secret=True, required=False,
+              help="For example the password you chose on a KFintech or CAMS mailback request."),
+    FieldSpec("password_3", "Another CAS password (optional)", secret=True, required=False, help=""),
 )  # fmt: skip
+INBOX_PASSWORDS = tuple(f.name for f in INBOX_FIELDS)  # tried in this order
 
 
 def fields_of(key: str) -> tuple[FieldSpec, ...]:
@@ -188,11 +196,12 @@ def update(s: Session, key: str, body: dict[str, Any]) -> BrokerConnection:
             cfg.pop(name, None)
     if key != INBOX_KEY:
         _validate(key, cfg)
-    elif cfg.get("password") != before.get("password"):
-        # the inbox remembers which files failed with which saved password by a random revision id, never by a hash
-        # of the password: a CAS password is usually PAN-derived (low entropy), so even a truncated hash stored in
-        # the database could be brute-forced back (CodeQL py/weak-sensitive-data-hashing)
-        if cfg.get("password"):
+    elif any(cfg.get(n) != before.get(n) for n in INBOX_PASSWORDS):
+        # the inbox remembers which files failed with which saved passwords by a random revision id, never by a hash
+        # of a password: a CAS password is usually PAN-derived (low entropy), so even a truncated hash stored in
+        # the database could be brute-forced back (CodeQL py/weak-sensitive-data-hashing). One revision covers the
+        # whole set: any change retries the waiting files once.
+        if any(cfg.get(n) for n in INBOX_PASSWORDS):
             cfg["password_rev"] = secrets.token_hex(8)
         else:
             cfg.pop("password_rev", None)

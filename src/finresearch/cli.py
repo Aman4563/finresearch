@@ -1129,3 +1129,52 @@ def evidence_regrade(
             console.print(f"run {g.run_id}: publish gate unchanged ({label[g.after_ok]})")
     if not apply and res.changed:
         console.print("dry run: re-run with --apply to write these changes (back up the database first)")
+
+
+inbox_app = typer.Typer(no_args_is_help=True, help="The statement inbox folder (CAS PDFs, tradebooks)")
+app.add_typer(inbox_app, name="inbox")
+MAIL_SCRIPT = "save_cas_attachments.applescript"
+
+
+@inbox_app.command("setup-mail")
+def inbox_setup_mail(
+    script: bool = typer.Option(
+        False, "--script", help="Print only the AppleScript, with your inbox folder filled in"
+    ),
+) -> None:
+    """How to let Apple Mail save CAS emails' PDFs into the statement inbox (#296). Prints the steps and the inbox
+    path; with --script, the rule script to save. Mail itself is never touched: you install the rule."""
+    from finresearch.config import REPO_ROOT
+    from finresearch.portfolio.connectors.inbox import ensure_dirs
+
+    root = ensure_dirs()  # the folder must exist (0700) before Mail saves into it
+    src = (REPO_ROOT / "scripts" / "mail" / MAIL_SCRIPT).read_text()
+    if '"' in str(root) or "\\" in str(root):
+        raise typer.BadParameter(f"the inbox path {root} contains a quote or backslash: move the data folder")
+    if script:
+        typer.echo(src.replace("__FINRESEARCH_INBOX__", str(root)), nl=False)
+        return
+    dest = Path.home() / "Library" / "Application Scripts" / "com.apple.mail" / MAIL_SCRIPT
+    typer.echo(f"""Statement inbox: {root}
+
+1. Save the rule script where Mail looks for rule scripts (one command, in your own Terminal):
+     mkdir -p "{dest.parent}" && cd "{REPO_ROOT}" && uv run finresearch inbox setup-mail --script > "{dest}"
+2. Mail -> Settings -> Rules -> Add Rule. Name: FinResearch CAS. "If ANY of the following conditions are met"
+   (the script itself re-checks that the address's domain is exactly one of these):
+     From  contains  camsonline.com
+     From  contains  kfintech.com
+     From  contains  nsdl.co.in
+     From  contains  nsdl.com
+     From  contains  cdslstatement.com
+     From  contains  cdslindia.com
+   Perform: Run AppleScript -> {MAIL_SCRIPT}. Click OK; choose "Don't Apply" for existing mail (or Apply to
+   drop the statements you already have into the inbox).
+3. Profile -> Connections -> Statement inbox: turn it on and save the PDF passwords (the CAS password you chose on
+   the mailback form, and the PAN for NSDL/CDSL e-CAS). They go to the Keychain; PDFs without a working password
+   wait in the folder.
+4. Check: the next CAS email leaves a file named like camsonline.com-<date>-1.pdf in the folder (owner-only, 0600)
+   and the inbox imports it within 5 minutes (Profile -> Connections shows the log).
+
+The script re-checks the sender domain and saves PDFs only. Mail does not verify who sent a message, so the domain
+list is a filter, not proof; the app still opens a PDF only with your saved passwords. To stop: delete the rule.
+Details: docs/BROKER_SETUP.md, "CAS emails straight into the inbox".""")

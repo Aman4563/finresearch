@@ -1295,6 +1295,296 @@ def test_groww_retries_a_refused_totp_once_with_the_next_step(monkeypatch):
     assert sent == [totp(SEED, 1_790_000_029.0), totp(SEED, 1_790_000_059.0)] and sent[0] != sent[1]
 
 
+# ------------------------------------------------------------------ #296 CAS emails into the inbox
+def _fake_pan(seed: str) -> str:
+    """A made-up PAN-shaped password, built at runtime (no PAN-like literal in the repo)."""
+    return (seed * 5)[:5].upper() + "0000" + seed[0].upper()
+
+
+def _drop(root, name: str, content: bytes = b"%PDF-1.4 synthetic") -> None:
+    import os
+
+    (root / name).write_bytes(content)
+    old = NOW.timestamp() - 60
+    os.utime(root / name, (old, old))
+
+
+def _cas(period=("01-Jan-2026", "30-Jun-2026"), txns=(), closing=(), opening=None, source="CAMS"):
+    """A synthetic CAMS ImportResult for one fund in one folio (the parser itself is tested elsewhere)."""
+    from finresearch.portfolio.importers import ClosingBalance, ImportedTxn, ImportResult, parse_day
+
+    common = dict(account="Example AMC · folio 999/1", asset_type="mf", name="Example Flexi Cap Fund",
+                  isin="INF000X01011", source="cas")  # fmt: skip
+    rows = []
+    if opening is not None:
+        rows.append(ImportedTxn(**common, day=parse_day(period[0]), kind="opening", quantity=D(opening),
+                                meta={"statement_opening": True}, ext="opening"))  # fmt: skip
+    for day, kind, q, amt in txns:
+        rows.append(ImportedTxn(**common, day=day, kind=kind, quantity=D(q), amount=D(amt), price=D(amt) / D(q),
+                                ext=f"{kind}{day}"))  # fmt: skip
+    res = ImportResult("cas", source, rows, period=period)
+    for units in closing:
+        res.closing.append(ClosingBalance("ISIN:INF000X01011", common["account"], common["name"], D(units)))
+    return res
+
+
+def test_inbox_tries_each_saved_password_in_turn(db, client, monkeypatch):
+    from finresearch.portfolio import importers
+    from finresearch.portfolio.connectors.inbox import ensure_dirs, scan
+
+    cas_pw, pan = "Chosen#" + "pw1", _fake_pan("abcde")
+    tried: list[str] = []
+
+    def fake_parse(content, password):
+        tried.append(password)
+        if password != pan:
+            raise importers.StatementError(
+                "wrong password for this PDF (CAS PDFs are usually locked with your PAN)"
+            )
+        return _cas(txns=[(date(2026, 2, 1), "buy", "10", "1000")], closing=["10"])
+
+    monkeypatch.setattr(importers, "parse_cas", fake_parse)
+    root = ensure_dirs()
+    _drop(root, "statement.pdf")
+    r = client.put("/api/connections/cas_inbox", headers=ORIGIN,
+                   json={"enabled": True, "config": {"password": cas_pw, "pan": pan}})  # fmt: skip
+    assert r.status_code == 200, r.text
+    out = scan(now=NOW)
+    assert tried == [cas_pw, pan]  # the CAS password first, then the PAN
+    assert out["files"][0]["status"] == "imported" and out["files"][0]["added"] == 1
+    listing = client.get("/api/connections").text
+    assert cas_pw not in listing and pan not in listing  # write-only
+    inbox = next(c for c in client.get("/api/connections").json()["connections"] if c["key"] == "cas_inbox")
+    assert (
+        inbox["config"]["pan_set"]
+        and inbox["config"]["password_set"]
+        and not inbox["config"]["password_2_set"]
+    )
+    logs = client.get("/api/connections/log?limit=30").text
+    assert cas_pw not in logs and pan not in logs
+
+    # every password refused: the file waits, and only a changed password set retries it
+    tried.clear()
+    _drop(root, "other.pdf", b"%PDF-1.4 another")
+    client.put("/api/connections/cas_inbox", headers=ORIGIN, json={"config": {"clear_pan": True}})
+    got = scan(now=NOW)["files"][0]
+    assert got["status"] == "waiting" and "tried 1 saved password" in got["note"] and tried == [cas_pw]
+    tried.clear()
+    assert scan(now=NOW)["files"] == [] and tried == []  # the same set already failed
+    client.put("/api/connections/cas_inbox", headers=ORIGIN, json={"config": {"password_2": pan}})
+    assert scan(now=NOW)["files"][0]["status"] == "imported" and tried == [cas_pw, pan]
+
+
+def _apply(db, res, name="cas.pdf"):
+    from finresearch.portfolio.service import apply
+
+    with db() as s:
+        return apply(s, res, filename=name, sha256=name.ljust(64, "0"), saved_path=None)
+
+
+def _demat(units, nav="55.5", period=("01-Aug-2026", "31-Aug-2026"), folio="999 / 1"):
+    from finresearch.portfolio.importers import ClosingBalance, ImportResult
+
+    res = ImportResult("cas", "NSDL", [], holdings_only=True, period=period)
+    res.closing.append(ClosingBalance("ISIN:INF000X01011", "Example demat", "Example Flexi Cap Fund", D(units),
+                                      D(nav), folio=folio))  # fmt: skip
+    res.closing.append(
+        ClosingBalance("ISIN:INE000A01011", "Example demat", "Example Ltd", D(3))
+    )  # a share: skipped
+    return res
+
+
+def test_depository_ecas_records_units_and_nav_and_alerts_once(db, client, monkeypatch):
+    from sqlalchemy import select
+
+    from finresearch.db.models import Alert, PortfolioHolding
+    from finresearch.portfolio import importers
+    from finresearch.portfolio.connectors.inbox import ensure_dirs, scan
+
+    # lots: 10 units bought in February, 2 more in September (after the e-CAS day: not counted on 31 Aug)
+    _apply(db, _cas(txns=[(date(2026, 2, 1), "buy", "10", "1000"), (date(2026, 9, 2), "buy", "2", "220")]))
+    statements = iter(
+        [_demat("12.5"), _demat("12.5"), _demat("10", nav="56", period=("01-Sep-2026", "30-Sep-2026"))]
+    )
+    monkeypatch.setattr(importers, "parse_cas", lambda content, pw: next(statements))
+    client.put(
+        "/api/connections/cas_inbox",
+        headers=ORIGIN,
+        json={"enabled": True, "config": {"pan": _fake_pan("q")}},
+    )
+    root = ensure_dirs()
+    _drop(root, "nsdl-aug.pdf")
+    got = scan(now=NOW)["files"][0]
+    assert got["status"] == "reconciled" and "import a fresh detailed CAMS/KFintech CAS" in got["note"]
+    assert got["unit_differences"] == [{"name": "Example Flexi Cap Fund", "statement_units": "12.5",
+                                        "lot_units": "10.000", "day": "2026-08-31", "scope": "folio"}]  # fmt: skip
+    with db() as s:
+        h = s.scalar(select(PortfolioHolding).where(PortfolioHolding.isin == "INF000X01011"))
+        assert h.meta["depository_units"] == {"units": "12.5", "day": "2026-08-31", "source": "NSDL",
+                                              "lot_units": "10.000", "scope": "folio"}  # fmt: skip
+        assert h.meta["statement_nav"] == {"nav": "55.5", "day": "2026-08-31", "source": "NSDL"}
+        alerts = s.scalars(select(Alert).where(Alert.kind == "cas_units_mismatch")).all()
+        assert len(alerts) == 1 and "Example Flexi Cap Fund" not in alerts[0].message
+        assert alerts[0].data["funds"][0]["name"] == "Example Flexi Cap Fund"
+        assert alerts[0].data["links"][0]["url"].startswith("https://www.camsonline.com/")
+    # the same statement again (another copy): no second alert
+    _drop(root, "nsdl-aug-copy.pdf", b"%PDF-1.4 copy")
+    scan(now=NOW)
+    # September says 10 while the lots hold 12 on 30 Sep: a new statement, so a new alert
+    _drop(root, "nsdl-sep.pdf", b"%PDF-1.4 sep")
+    sep = scan(now=NOW)["files"][0]
+    assert sep["unit_differences"][0]["lot_units"] == "12.000"
+    with db() as s:
+        assert len(s.scalars(select(Alert).where(Alert.kind == "cas_units_mismatch")).all()) == 2
+        h = s.scalar(select(PortfolioHolding).where(PortfolioHolding.isin == "INF000X01011"))
+        assert h.meta["statement_nav"]["nav"] == "56" and h.meta["depository_units"]["day"] == "2026-09-30"
+    logs = client.get("/api/connections/log?limit=30").json()
+    assert any(lg["status"] == "partial" for lg in logs)
+
+
+def test_depository_units_matching_the_lots_raise_no_alert(db, monkeypatch):
+    from sqlalchemy import func, select
+
+    from finresearch.db.models import Alert
+    from finresearch.portfolio.cas_followup import record_depository
+
+    _apply(db, _cas(txns=[(date(2026, 2, 1), "buy", "10", "1000")]))
+    with db() as s:
+        assert record_depository(s, _demat("10.0004")) == []  # within the 3-decimal tolerance
+        assert s.scalar(select(func.count()).select_from(Alert)) == 0
+
+
+def test_a_cas_after_a_gap_whose_opening_differs_from_the_lots_warns(db, client, monkeypatch):
+    from finresearch.portfolio import importers
+    from finresearch.portfolio.connectors.inbox import ensure_dirs, scan
+
+    first = _cas(txns=[(date(2026, 2, 1), "buy", "100", "10000")], closing=["100"])
+    _apply(db, first)
+    # no gap (starts the day after 30 Jun) and the opening matches: silent
+    assert not [w for w in _apply(db, _cas(period=("01-Jul-2026", "31-Jul-2026"), opening="100", closing=["100"]),
+                                  "jul.pdf")["warnings"] if w.startswith("Statement gap")]  # fmt: skip
+    # a gap (August missing) and the opening (120) is not the 100 the lots hold: a warning naming both, via the inbox
+    later = _cas(period=("01-Sep-2026", "30-Sep-2026"), opening="120", closing=["120"])
+    monkeypatch.setattr(importers, "parse_cas", lambda content, pw: later)
+    client.put(
+        "/api/connections/cas_inbox",
+        headers=ORIGIN,
+        json={"enabled": True, "config": {"pan": _fake_pan("z")}},
+    )
+    root = ensure_dirs()
+    _drop(root, "sep.pdf")
+    got = scan(now=NOW)["files"][0]
+    assert got["status"] == "imported" and len(got["gaps"]) == 1
+    gap = got["gaps"][0]
+    assert "starts 01 Sep 2026" in gap and "end 31 Jul 2026" in gap and "opens with 120 units" in gap
+    assert "lots hold 100" in gap and "from 01 Aug 2026" in gap
+    log = client.get("/api/connections/log?limit=5").json()[0]
+    assert log["status"] == "partial" and "Statement gap" in log["error"]
+
+
+def test_a_gap_with_a_matching_opening_or_a_first_cas_is_silent(db):
+    _apply(
+        db, _cas(opening="5", txns=[(date(2026, 2, 1), "buy", "10", "1000")], closing=["15"])
+    )  # first: no gap
+    out = _apply(db, _cas(period=("01-Sep-2026", "30-Sep-2026"), opening="15", closing=["15"]), "sep.pdf")
+    assert not [w for w in out["warnings"] if w.startswith("Statement gap")]
+
+
+def test_monthly_cas_reminder_once_a_month_with_the_from_date(db, monkeypatch):
+    from sqlalchemy import select
+
+    from finresearch.db.models import Alert
+    from finresearch.portfolio.cas_followup import reminder_step
+    from finresearch.portfolio.connectors import sync
+
+    def reminders():
+        with db() as s:
+            return [(a.message, a.data) for a in s.scalars(select(Alert).where(Alert.kind == "cas_reminder"))]
+
+    with db() as s:
+        assert reminder_step(s, NOW) == {}  # no CAS imported yet: nothing to remind about
+    _apply(db, _cas(txns=[(date(2026, 2, 1), "buy", "10", "1000")]))  # covers up to 30 Jun 2026
+    monkeypatch.setattr(sync, "_LAST_INBOX", {})
+    out = run(sync.connections_step(NOW))  # the monitor's hook, 30 Sep 2026
+    assert out.get("cas_reminders") == 1
+    [(msg, data)] = reminders()
+    assert (
+        data["from"] == "2026-07-01" and data["last_covered"] == "2026-06-30" and data["month"] == "2026-09"
+    )
+    assert "30 Jun 2026" in msg and "from 01 Jul 2026" in msg
+    assert [x["url"] for x in data["links"]] == ["https://www.camsonline.com/Investors/Statements/Consolidated-Account-Statement",
+                                                 "https://mfs.kfintech.com/investor/General/ConsolidatedAccountStatement"]  # fmt: skip
+    with db() as s:  # later the same month: not again
+        assert reminder_step(s, datetime(2026, 9, 30, 18, 0, tzinfo=UTC)) == {}  # 23:30 IST, still September
+        # 1 Oct IST (18:30 UTC on 30 Sep) is a new month: once more
+        assert reminder_step(s, datetime(2026, 9, 30, 18, 31, tzinfo=UTC)) == {"cas_reminders": 1}
+        assert reminder_step(s, datetime(2026, 10, 20, 9, 0, tzinfo=UTC)) == {}
+    assert [d["month"] for _, d in reminders()] == ["2026-09", "2026-10"]
+    # a CAS that covers the whole of last month: no reminder in November
+    _apply(
+        db,
+        _cas(period=("01-Jul-2026", "31-Oct-2026"), txns=[(date(2026, 8, 1), "buy", "1", "100")]),
+        "oct.pdf",
+    )
+    with db() as s:
+        assert reminder_step(s, datetime(2026, 11, 5, 9, 0, tzinfo=UTC)) == {}
+        assert reminder_step(s, datetime(2026, 12, 2, 9, 0, tzinfo=UTC)) == {
+            "cas_reminders": 1
+        }  # November not covered
+
+
+def test_a_summary_cas_is_refused_with_a_hint_to_request_a_detailed_one(db, client, monkeypatch):
+    """casparser reads a CAMS/KFintech Summary CAS too (cas_type SUMMARY); it has no transactions, so it is refused:
+    in the inbox the file moves to failed/ with the hint, never imported as an empty statement."""
+    import casparser
+
+    from finresearch.portfolio.connectors.inbox import ensure_dirs, scan
+    from finresearch.portfolio.importers import StatementError, cas_to_result, parse_cas
+
+    summary = {"file_type": "CAMS", "cas_type": "SUMMARY", "statement_period": {"from": "01-Jan-2026", "to": "30-Jun-2026"},
+               "folios": [{"amc": "Example AMC", "folio": "1", "schemes": [{"scheme": "Example Fund", "close": "5"}]}]}  # fmt: skip
+    with pytest.raises(StatementError, match=r"Summary CAS.*request a Detailed CAS"):
+        cas_to_result(summary)
+
+    class Data:  # what casparser.read_cas_pdf returns, through parse_cas
+        file_type = "CAMS"
+
+        def model_dump(self, **kw):
+            return summary
+
+    monkeypatch.setattr(casparser, "read_cas_pdf", lambda f, pw: Data())
+    with pytest.raises(StatementError, match="Statement type: Detailed"):
+        parse_cas(b"%PDF-1.4", "x")
+    client.put(
+        "/api/connections/cas_inbox",
+        headers=ORIGIN,
+        json={"enabled": True, "config": {"pan": _fake_pan("s")}},
+    )
+    root = ensure_dirs()
+    _drop(root, "summary.pdf")
+    got = scan(now=NOW)["files"][0]
+    assert got["status"] == "failed" and "request a Detailed CAS" in got["note"]
+    assert (root / "failed" / "summary.pdf").exists()
+
+
+def test_setup_mail_prints_the_steps_and_a_filled_in_script(env):
+    from typer.testing import CliRunner
+
+    from finresearch.cli import app
+    from finresearch.portfolio.connectors.inbox import inbox_dir
+
+    r = CliRunner().invoke(app, ["inbox", "setup-mail"])
+    assert r.exit_code == 0, r.output
+    assert f"Statement inbox: {inbox_dir()}" in r.output and "Run AppleScript" in r.output
+    assert inbox_dir().is_dir() and oct(inbox_dir().stat().st_mode & 0o777) == "0o700"
+    for d in ("camsonline.com", "kfintech.com", "nsdl.co.in", "cdslstatement.com"):
+        assert d in r.output
+    sc = CliRunner().invoke(app, ["inbox", "setup-mail", "--script"])
+    assert sc.exit_code == 0 and f'property INBOX_PATH : "{inbox_dir()}"' in sc.output
+    assert "__FINRESEARCH_INBOX__" not in sc.output and "on perform mail action with messages" in sc.output
+    assert 'property ALLOWED_DOMAINS : {"camsonline.com", "kfintech.com", "nsdl.co.in", "nsdl.com", "cdslstatement.com", "cdslindia.com"}' in sc.output  # fmt: skip
+
+
 # ------------------------------------------------------------------ #282 Groww T1: inside `quantity` or not?
 def _g_row(qty, t1, free, **parts):
     row = {"isin": "INE000A01011", "trading_symbol": "EXMPL", "quantity": qty, "average_price": 100, "t1_quantity": t1,

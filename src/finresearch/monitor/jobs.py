@@ -96,6 +96,9 @@ class Deps:
     lifecycle: bool = (
         False  # the daily end-of-life pass (monitor.lifecycle, #293: matured/delisted instruments)
     )
+    # async () -> set of symbols on NSE's current, upcoming and past issue lists: an IPO watch long past its expected
+    # listing date and on none of them is withdrawn (monitor.phase, #291); None = never judged withdrawn
+    ipo_symbols: Any = None
 
     @classmethod
     def live(cls) -> Deps:
@@ -112,6 +115,11 @@ class Deps:
         async def current_issues():
             async with NseClient() as nse:
                 return await nse.current_issues()
+
+        async def ipo_symbols():
+            async with NseClient() as nse:
+                rows = [*await nse.current_issues(), *await nse.upcoming_issues(), *await nse.past_issues()]
+            return {r.symbol for r in rows}
 
         async def stock_snapshot(symbol: str):
             from datetime import timedelta
@@ -183,7 +191,8 @@ class Deps:
                    intraday=live_fetch, bse_stock_snapshot=bse_stock_snapshot, bse_price_history=bse_price_history,
                    bse_corporate_actions=bse_corporate_actions, portfolio_daily=True, brief=True, archive=True,
                    live_holidays=True, disclosures=True, fund_ranks=True, stock_peers=True,
-                   lookthrough=True, pf_history=live_history, retention=True, lifecycle=True)  # fmt: skip
+                   lookthrough=True, pf_history=live_history, retention=True, lifecycle=True,
+                   ipo_symbols=ipo_symbols)  # fmt: skip
 
 
 def alert(session: Session, watch: Watch, kind: str, message: str, level: str = "info", **data: Any) -> None:

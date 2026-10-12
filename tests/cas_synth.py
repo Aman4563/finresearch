@@ -164,3 +164,32 @@ def sample_statement(start: str = "01-Apr-2025") -> Statement:
          ("05-Sep-2025", "Purchase", "10,100.00", "100.000", "101.0000", "300.000")],
         "300.000", "29-Sep-2026", "105.0000", "31,500.00", "30,100.00")  # fmt: skip
     return Statement(start=start, schemes=[flexi, debt])
+
+
+def sip_statement() -> Statement:
+    """Three invented schemes for #295 (statement 01-Apr-2026 to 29-Sep-2026).
+    Midcap: two purchases on 05-Jul-2026 (₹10,000 and ₹40,000) whose stamp-duty rows come after both, the larger
+    first (₹2.00 = 40,000 × 0.005 %, ₹0.50 = 10,000 × 0.005 %). Index: SIP instalments 05-Jun, 06-Jul, 05-Aug, then
+    a rejected instalment on 05-Sep (a dated "***" row without amount or units). Value: SIP instalments 05-Jul,
+    05-Aug, 05-Sep (the next one is due 05-Oct, after the statement)."""
+    midcap = Scheme(
+        "EXMC", "Example Midcap Fund - Direct Plan - Growth", "INF000X01035", "0.000",
+        [("05-Jul-2026", "Purchase", "10,000.00", "100.000", "100.0000", "100.000"),
+         ("05-Jul-2026", "Purchase", "40,000.00", "400.000", "100.0000", "500.000"),
+         ("05-Jul-2026", "*** Stamp Duty ***", "2.00", "", "", ""),
+         ("05-Jul-2026", "*** Stamp Duty ***", "0.50", "", "", "")],
+        "500.000", "29-Sep-2026", "110.0000", "55,000.00", "50,002.50")  # fmt: skip
+    index = Scheme(
+        "EXIX", "Example Index Fund - Direct Plan - Growth", "INF000X01043", "0.000",
+        [("05-Jun-2026", "SIP Purchase Instalment 1/24", "5,000.00", "50.000", "100.0000", "50.000"),
+         ("06-Jul-2026", "SIP Purchase Instalment 2/24", "5,000.00", "50.000", "100.0000", "100.000"),
+         ("05-Aug-2026", "SIP Purchase Instalment 3/24", "5,000.00", "50.000", "100.0000", "150.000"),
+         ("05-Sep-2026", "*** SIP Purchase Rejected - Insufficient Balance ***", "", "", "", "")],
+        "150.000", "29-Sep-2026", "104.0000", "15,600.00", "15,000.00")  # fmt: skip
+    value = Scheme(
+        "EXVF", "Example Value Fund - Direct Plan - Growth", "INF000X01050", "0.000",
+        [("05-Jul-2026", "SIP Purchase Instalment 1/12", "3,000.00", "30.000", "100.0000", "30.000"),
+         ("05-Aug-2026", "SIP Purchase Instalment 2/12", "3,000.00", "30.000", "100.0000", "60.000"),
+         ("05-Sep-2026", "SIP Purchase Instalment 3/12", "3,000.00", "30.000", "100.0000", "90.000")],
+        "90.000", "29-Sep-2026", "102.0000", "9,180.00", "9,000.00")  # fmt: skip
+    return Statement(start="01-Apr-2026", end="29-Sep-2026", schemes=[midcap, index, value])

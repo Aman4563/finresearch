@@ -430,6 +430,13 @@ export type MonitorSchedule = {
   equity_hours: [string, string];
 };
 
+export type WatchPhase = "announced" | "open" | "closed" | "allotted" | "listed" | "archived" | "withdrawn";
+/** Phases of an IPO still in progress: their details are polled and they appear in the calendar. */
+export const LIVE_PHASES: readonly WatchPhase[] = ["announced", "open", "closed", "allotted"];
+/** An IPO watch whose book or dates can still change: a live phase, or no phase yet (an older API build). */
+export const isLiveIpo = (w: Pick<WatchSummary, "kind" | "phase">) =>
+  w.kind === "ipo" && (w.phase == null || LIVE_PHASES.includes(w.phase));
+
 export type WatchSummary = {
   id: number;
   kind: "ipo" | "stock";
@@ -449,8 +456,12 @@ export type WatchSummary = {
   listing_date: string | null;
   anchor_shares: string | null;
   active: boolean;
+  /** IPO lifecycle (#291); null for a stock watch (or an API build before phases) */
+  phase?: WatchPhase | null;
   meta: Record<string, unknown>;
   unread_alerts?: number;
+  /** pending lock-in end checks (also for listed and archived IPOs, whose details are not polled) */
+  pending_lockins?: { id: number; due_at: string; slot: string }[];
   next_check?: { kind: string; due_at: string } | null;
   last_subscription?: { as_of: string; total_times: string } | null;
 };

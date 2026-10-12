@@ -163,7 +163,7 @@ def test_old_statement_price_is_not_complete_and_is_flagged(client):
     from finresearch.portfolio.health import priced
 
     h = priced(snap["holdings"])
-    assert h["coverage_pct"] == 0.0 and "1 only by an old statement price" in h["detail"]
+    assert h["coverage_pct"] == 0.0 and "1 only by an old price" in h["detail"]
     # a fresh one (dated today) is complete
     set_meta(holding_id=hid, statement_price={"price": "120", "day": "2026-10-05", "source": "Zerodha"})
     snap = client.get("/api/portfolio").json()
@@ -179,10 +179,7 @@ def test_xirr_reason_names_the_stale_price(client):
         "today's value uses an old price: Zerodha statement close of 2026-08-06"
     )
     assert snap["summary"]["xirr"] is not None
-    assert (
-        "1 holding(s) valued at a statement price more than 5 trading days old"
-        in snap["summary"]["xirr_reason"]
-    )
+    assert "1 holding(s) valued at a price more than 5 trading days old" in snap["summary"]["xirr_reason"]
 
 
 # --------------------------------------------------------------------------- (a) net worth without a valuation
@@ -355,3 +352,67 @@ def test_goal_funding_from_a_complete_valuation_is_simulated(client):
     assert (g["funded_now"], g["funded_complete"], g["funded_why"]) == (10300.0, True, None)
     p = _plan(gid)
     assert p["funded_complete"] is True and p["start"] == 10300.0 and 0 <= p["p_success"] <= 1
+
+
+# --------------------------------------------------------------------------- #295: an AMFI NAV that stopped updating
+def test_amfi_nav_age_limit():
+    from finresearch.portfolio.valuation import PriceInfo, price_stale
+
+    def p(day):
+        return PriceInfo(D("50"), day, "AMFI NAVAll")
+
+    # Mon 5-Oct-2026: Mon 28-Sep is 5 weekdays back -> current; Fri 18-Sep is 11 (21-25, 28-30 Sep, 1, 2, 5 Oct)
+    assert price_stale(p("2026-09-28"), TODAY) is None
+    assert price_stale(p("2026-09-18"), TODAY) == (
+        "NAV of 2026-09-18: scheme may be merged or wound up (11 trading days without a new NAV)"
+    )  # main: None (only statement prices were checked)
+
+
+@pytest.fixture
+def fund_client(env, monkeypatch):
+    """A client whose AMFI file has one invented fund (code 100009) whose last NAV, ₹50, is of Fri 18-Sep-2026."""
+    from fastapi.testclient import TestClient
+    from sqlalchemy import text
+
+    from finresearch.adapters.amfi import SchemeNav
+    from finresearch.api import create_app
+    from finresearch.api.markets import MarketSources
+    from finresearch.db import session_scope
+    from finresearch.fincalc import dates
+
+    async def nav_all():
+        return [SchemeNav("100009", "Example Closed Theme Fund - Direct Plan - Growth", "Direct", "Growth",
+                          "INF000Q01011", None, D("50"), date(2026, 9, 18), "Equity Scheme - Thematic Fund", "Example MF")]  # fmt: skip
+
+    async def quote(symbol):
+        raise LookupError(symbol)
+
+    monkeypatch.setattr(dates, "today_ist", lambda: TODAY)
+    with session_scope() as s:
+        s.execute(text("TRUNCATE portfolio_disposal, portfolio_lot, portfolio_txn, portfolio_holding, "
+                       "portfolio_import, portfolio_snapshot, portfolio_setting CASCADE"))  # fmt: skip
+    app = create_app(nav_all=nav_all)
+    app.state.markets = MarketSources(quote=quote, today=lambda: TODAY)
+    with TestClient(app) as c:
+        yield c
+
+
+def test_fund_whose_amfi_nav_stopped_is_stale_and_not_complete(fund_client):
+    c = fund_client
+    add(c, asset_type="mf", name="Example Closed Theme Fund - Direct Plan - Growth", isin="INF000Q01011",
+        scheme_code="100009", account="MF", day="2026-01-05", kind="buy", quantity="10", price="40")  # fmt: skip
+    snap = c.get("/api/portfolio").json()
+    (row,) = snap["holdings"]
+    assert (
+        row["price"] == 50.0 and row["price_source"] == "AMFI NAVAll" and row["value"] == 500.0
+    )  # still shown
+    assert row["price_stale"] is True
+    assert row["price_stale_reason"].startswith("NAV of 2026-09-18: scheme may be merged or wound up")
+    assert snap["summary"]["stale"] == 1 and snap["complete"] is False  # main: complete True
+    from finresearch.portfolio.health import priced
+
+    assert "1 only by an old price" in priced(snap["holdings"])["detail"]
+    # no statement imported: the units' date is unknown, never today
+    assert row["units_as_of"] is None and row["units_warning"].startswith(
+        "units not confirmed by a statement"
+    )
