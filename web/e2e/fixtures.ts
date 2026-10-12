@@ -1,6 +1,6 @@
 // Synthetic API answers for the smoke tests: made-up companies (Example …), fake ISINs, no personal data. Each is
 // typed with the app's own response types (`satisfies`), so `pnpm typecheck` fails when a shape drifts.
-import type { Holding, Snapshot, TaxView } from "@/components/portfolio/types";
+import type { BondView, Holding, HoldingDetail, Snapshot, TaxView } from "@/components/portfolio/types";
 import type { Signal } from "@/components/signal";
 import type { GoalPlan, Wealth } from "@/components/wealth/types";
 import type { Claim, Report, WatchDetail, WatchSummary } from "@/lib/api";
@@ -54,6 +54,39 @@ export const SNAPSHOT = {
   drift: [],
   lookthrough_coverage: null,
 } satisfies Snapshot;
+
+// ------------------------------------------------------------------ held bonds (#294)
+const bond = (b: Partial<BondView> & Pick<BondView, "kind">): BondView => ({
+  issue_date: null, maturity: null, coupon_pct: null, freq: null, face_value: null, redemption_price: null,
+  next_coupon: null, next_coupon_reason: null, matured: false, status: null, redemption_windows: [], sources: {}, ...b,
+});
+
+export const BOND_HOLDINGS: Holding[] = [
+  // past its maturity, face value unknown: no value, never its last traded price
+  holding({ id: 5, name: "Example Finance NCD 9% 2026", asset_type: "stock", isin: "INE000Z07011", tax_class: "other",
+    tax_class_auto: "other", price: null, value: null, unrealised: null, unrealised_pct: null, xirr: null,
+    xirr_reason: "no current price", price_source: null, price_as_of: null,
+    price_error: "matured — record redemption: matured on 2026-06-30; the redemption value is unknown (enter it, or record the redemption)",
+    bond: bond({ kind: "bond", maturity: "2026-06-30", matured: true, status: "matured — record redemption",
+      next_coupon_reason: "matured on 2026-06-30", sources: { maturity: "NSE's capital-market bond list" } }) }),
+  holding({ id: 6, name: "SGB 2020-21 SERIES V", asset_type: "stock", tax_class: "sgb", tax_class_auto: "sgb",
+    bond: bond({ kind: "sgb", issue_date: "2020-08-11", maturity: "2028-08-11", freq: 2, next_coupon: "2027-02-11",
+      redemption_windows: ["2027-02-11", "2027-08-11"], sources: { issue_date: "entered", maturity: "issue date + 8 years (RBI SGB FAQ)", freq: "half-yearly (RBI SGB FAQ)" } }) }),
+];
+
+export const BOND_SNAPSHOT = {
+  ...SNAPSHOT, holdings: BOND_HOLDINGS,
+  summary: { ...SNAPSHOT.summary, holdings: 2, unknown_cost: 0, unpriced: 1, matured_bonds: 1,
+    matured_note: "1 bond(s) past maturity: record the redemption (and the last coupon) to close them" },
+} satisfies Snapshot;
+
+export const BOND_DETAIL = {
+  id: 5, name: "Example Finance NCD 9% 2026", account: "Example Broker", asset_type: "stock",
+  transactions: [{ id: 51, day: "2024-03-01", kind: "buy", quantity: "10", price: "1020", amount: null, charges: "0",
+    stt_paid: false, source: "manual", import_id: null, note: null, meta: {} }],
+  lots: [{ id: 501, acquired: "2024-03-01", origin: "buy", quantity: "10", open_quantity: "10", cost_per_unit: "1020", stt_paid: false }],
+  disposals: [], warnings: [], pending_actions: [],
+} satisfies HoldingDetail;
 
 const unclassified = { count: 1, gain: null, no_cost: 1, no_date: 1,
   detail: "1 disposal of Example Opening Balance Fund has no purchase date or cost" };
