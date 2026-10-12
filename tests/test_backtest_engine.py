@@ -330,7 +330,7 @@ def test_overlays_on_a_synthetic_stock():
     h = fs.history(date(2022, 1, 3), date(2022, 12, 30), sym="FAKESTOCK", vol=0.30, lot=250)
     sp = [engine.resolve(specs.by_key(k), "FAKESTOCK") for k in ("stock_cc_m", "stock_pp_m")]
     res = engine.run(sp, h, date(2022, 2, 1), date(2022, 11, 30), warmup_days=40)
-    for key, r in res.items():
+    for r in res.values():
         assert r["trades"] and all(
             t["lots"] == 1 and t["lot"] == 250 for t in r["trades"]
         )  # one lot, never sized up
