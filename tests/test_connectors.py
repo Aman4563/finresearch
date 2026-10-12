@@ -1293,3 +1293,174 @@ def test_groww_retries_a_refused_totp_once_with_the_next_step(monkeypatch):
     monkeypatch.setattr(groww.time, "time", lambda: 1_790_000_029.0)  # 1 s before a step turns
     assert run(GrowwConnector({"api_key": GROWW_KEY, "totp_secret": SEED}).login()).token == ACCESS
     assert sent == [totp(SEED, 1_790_000_029.0), totp(SEED, 1_790_000_059.0)] and sent[0] != sent[1]
+
+
+# ------------------------------------------------------------------ #282 Groww T1: inside `quantity` or not?
+def _g_row(qty, t1, free, **parts):
+    row = {"isin": "INE000A01011", "trading_symbol": "EXMPL", "quantity": qty, "average_price": 100, "t1_quantity": t1,
+           "demat_free_quantity": free, "demat_locked_quantity": 0, "groww_locked_quantity": 0, "pledge_quantity": 0,
+           "repledge_quantity": 0, "active_demat_transfer_quantity": 0}  # fmt: skip
+    return {**row, **parts}
+
+
+def test_groww_t1_check_tests_both_hypotheses_on_the_row():
+    from finresearch.portfolio.connectors.groww import map_holding
+
+    sep = map_holding(_g_row(10, 3, 10))  # quantity = the demat parts: T1 is outside it
+    assert (sep.quantity, sep.t1_check, sep.t1_reason) == (D(13), "separate", None)
+    inc = map_holding(_g_row(13, 3, 10))  # quantity = demat parts + T1: T1 is inside it
+    assert (inc.quantity, inc.t1_check) == (D(13), "included")
+    unk = map_holding(_g_row(12, 3, 10))  # neither 10 nor 13: today's behaviour (12 + 3) and "unknown"
+    assert (unk.quantity, unk.t1_check) == (D(15), "unknown")
+    assert "neither the demat parts 10" in unk.t1_reason
+    # the confirmed rule decides an unclear row
+    assert map_holding(_g_row(12, 3, 10), "included").quantity == D(12)
+    locked = map_holding(_g_row(10, 2, 6, pledge_quantity=4))  # 6 free + 4 pledged = 10: still separate
+    assert (locked.quantity, locked.t1_check) == (D(12), "separate")
+    no_parts = map_holding({"trading_symbol": "EXMPL", "quantity": 10, "t1_quantity": 2})
+    assert no_parts.t1_check == "unknown" and "demat_free_quantity" in no_parts.t1_reason  # missing is not 0
+    against = map_holding(_g_row(10, 3, 10), "included")  # fits "separate" but "included" was confirmed
+    assert (against.quantity, against.t1_check) == (D(10), "unknown")
+    assert "confirmed earlier" in against.t1_reason
+    plain = map_holding(_g_row(10, 0, 10))
+    assert (plain.quantity, plain.t1_check) == (D(10), None)  # no T1: nothing to check
+
+
+def test_t1_state_keeps_the_first_decisive_finding():
+    from finresearch.portfolio.connectors.sync import t1_state
+
+    def hs(*checks):
+        return [BrokerHolding(name="X", quantity=D(1), t1_check=c) for c in checks]
+
+    d1, d2, d3 = date(2026, 10, 12), date(2026, 10, 13), date(2026, 10, 14)
+    assert t1_state(None, hs(None, None), d1) == {}  # no T1 anywhere: nothing learned
+    st = t1_state(None, hs("unknown"), d1)
+    assert "result" not in st and st["last_seen"]["evidence"] == {"separate": 0, "included": 0, "unknown": 1}
+    mixed = t1_state(st, hs("separate", "included"), d2)
+    assert "result" not in mixed and mixed["conflict"] == "2026-10-13"
+    st = t1_state(st, hs("separate", "separate", "unknown"), d2)
+    assert (st["result"], st["day"], st["evidence"]) == ("separate", "2026-10-13",
+                                                        {"separate": 2, "included": 0, "unknown": 1})  # fmt: skip
+    st = t1_state(st, hs("unknown"), d3)
+    assert (st["result"], st["day"], st["last_seen"]["day"]) == ("separate", "2026-10-13", "2026-10-14")
+
+
+def test_groww_sync_records_t1_semantics_and_marks_unclear_rows_unknown(client, transport):
+    from finresearch.db import session_scope
+    from finresearch.db.models import BrokerConnection
+    from finresearch.portfolio.connectors.sync import sync_now
+
+    def with_holdings(*rows):
+        return {**GROWW, "/v1/holdings/user": {"status": "SUCCESS", "payload": {"holdings": list(rows)}},
+                "/v1/order/list": {"status": "SUCCESS", "payload": {"order_list": []}}}  # fmt: skip
+
+    _connect_groww(client)
+    transport(with_holdings(_g_row(12, 3, 10)))  # neither hypothesis: unknown, nothing stored
+    out = run(sync_now("groww", now=NOW))
+    rec = {r["name"]: r for r in out["summary"]["reconciliation"]}
+    assert rec["EXMPL"]["status"] == "unknown" and rec["EXMPL"]["ok"] is False and rec["EXMPL"]["reason"]
+    assert out["summary"]["differences"] == 1  # unknown is never counted as reconciled
+    with session_scope() as s:
+        assert "result" not in s.get(BrokerConnection, "groww").state["t1_semantics"]
+    transport(with_holdings(_g_row(10, 3, 10)))  # decisive: separate
+    out = run(sync_now("groww", now=NOW))
+    assert {r["name"]: r for r in out["summary"]["reconciliation"]}["EXMPL"]["status"] != "unknown"
+    with session_scope() as s:
+        st = s.get(BrokerConnection, "groww").state["t1_semantics"]
+        assert (st["result"], st["day"], st["evidence"]["separate"]) == ("separate", "2026-09-30", 1)
+    transport(with_holdings(_g_row(13, 3, 10)))  # fits "included" now: contradicts the stored rule
+    out = run(sync_now("groww", now=NOW))
+    row = {r["name"]: r for r in out["summary"]["reconciliation"]}["EXMPL"]
+    assert row["status"] == "unknown" and row["broker_units"] == "16"  # the stored rule (13 + 3), flagged
+    with session_scope() as s:
+        assert s.get(BrokerConnection, "groww").state["t1_semantics"]["result"] == "separate"  # kept
+    groww = next(c for c in client.get("/api/connections").json()["connections"] if c["key"] == "groww")
+    assert groww["t1_semantics"]["result"] == "separate" and groww["t1_semantics"]["day"] == "2026-09-30"
+
+
+# ------------------------------------------------------------------ #284 Groww: the order list read in session
+def _ist(h, m, day=TODAY):
+    return datetime(day.year, day.month, day.day, h, m, tzinfo=IST)
+
+
+def _logged_in_groww(client, transport):
+    from finresearch.portfolio.connectors.sync import sync_now
+
+    _connect_groww(client)
+    transport(_groww_with_orders([]))
+    assert (
+        run(sync_now("groww", now=_ist(9, 5)))["status"] == "ok"
+    )  # the morning login (and an empty order list)
+
+
+def test_orders_are_polled_every_30_minutes_in_session_and_fills_upsert_one_row(client, transport):
+    from sqlalchemy import select
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import BrokerConnection, PortfolioTxn
+    from finresearch.portfolio.connectors.sync import orders_step
+
+    _logged_in_groww(client, transport)
+    rec = transport(_groww_with_orders([_order("GO9", 40, "100.5")]))
+    assert run(orders_step(_ist(10, 0), set())) == {"orders_polled": 1}
+    assert run(orders_step(_ist(10, 10), set())) == {}  # 10 minutes later: not yet
+    rec2 = transport(_groww_with_orders([_order("GO9", 100, "100.3", "EXECUTED")]))
+    assert run(orders_step(_ist(10, 31), set())) == {"orders_polled": 1}
+    # orders only, one Non-Trading call each: no login, holdings, positions or funds
+    assert [r.url.path for r in rec.requests + rec2.requests] == ["/v1/order/list", "/v1/order/list"]
+    with session_scope() as s:
+        rows = [t for t in s.scalars(select(PortfolioTxn).where(PortfolioTxn.source == "groww_api"))
+                if (t.meta or {}).get("order_id") == "GO9"]  # fmt: skip
+        assert [(r.quantity, r.price, r.amount) for r in rows] == [(D(100), D("100.3"), D("10030"))]
+        poll = s.get(BrokerConnection, "groww").state["orders_poll"]
+        assert (poll["status"], poll["updated"], poll["added"]) == ("ok", 1, 0)
+        row = s.get(BrokerConnection, "groww")
+        assert (
+            row.last_sync_day == TODAY and row.state.get("trades_through") == "2026-09-30"
+        )  # the 09:05 sync's
+    # the after-close sync still runs and reads the same order again: still one row of 100
+    from finresearch.portfolio.connectors.sync import sync_now
+
+    out = run(sync_now("groww", trigger="scheduled", now=_ist(16, 30)))
+    assert out["summary"]["added"] == 0 and out["summary"]["duplicates"] >= 1
+    assert run(orders_step(_ist(16, 31), set())) == {}  # after 16:00: no poll
+
+
+def test_order_poll_skips_a_running_sync_a_closed_day_and_an_expired_session(client, transport, monkeypatch):
+    from sqlalchemy import text
+
+    from finresearch.db import get_engine, session_scope
+    from finresearch.db.models import BrokerConnection
+    from finresearch.portfolio.connectors.sync import connections_step, orders_step
+
+    _logged_in_groww(client, transport)
+    rec = transport(_groww_with_orders([_order("GO9", 40, "100.5")]))
+    other = get_engine().connect()  # another process is syncing Groww
+    try:
+        assert other.execute(text("SELECT pg_try_advisory_lock(hashtext('broker_sync:groww'))")).scalar()
+        other.commit()
+        assert run(orders_step(_ist(10, 0), set())) == {}
+    finally:
+        other.execute(text("SELECT pg_advisory_unlock(hashtext('broker_sync:groww'))"))
+        other.commit()
+        other.close()
+    with session_scope() as s:
+        assert "orders_poll" not in (
+            s.get(BrokerConnection, "groww").state or {}
+        )  # not stamped: next tick tries
+    assert run(orders_step(_ist(10, 0), {TODAY})) == {}  # an exchange holiday
+    assert run(orders_step(_ist(10, 0, date(2026, 10, 3)), set())) == {}  # a Saturday
+    assert run(orders_step(_ist(9, 0), set())) == {}  # before the open
+    assert rec.requests == []
+    with session_scope() as s:  # the session expired: wait for the daily login, never log in from here
+        row = s.get(BrokerConnection, "groww")
+        row.token_expires_at = datetime(2026, 9, 30, 4, 0, tzinfo=UTC)
+    assert run(orders_step(_ist(10, 0), set())) == {} and rec.requests == []
+    with session_scope() as s:
+        s.get(BrokerConnection, "groww").token_expires_at = datetime(2026, 10, 1, 0, 30, tzinfo=UTC)
+    # through the monitor's hook: polled in session, and no scheduled sync (that is owed after 16:00)
+    from finresearch.portfolio.connectors import sync as sync_mod
+
+    monkeypatch.setattr(sync_mod, "_holidays", lambda day: set())
+    assert run(connections_step(_ist(11, 0).astimezone(UTC))).get("orders_polled") == 1
+    assert [r.url.path for r in rec.requests] == ["/v1/order/list"]
