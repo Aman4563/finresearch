@@ -397,12 +397,12 @@ def db(env):
     from finresearch.db import session_scope
 
     with session_scope() as s:
-        s.execute(text("TRUNCATE portfolio_disposal, portfolio_lot, portfolio_txn, portfolio_holding, portfolio_import, "
+        s.execute(text("TRUNCATE portfolio_expected_txn, portfolio_disposal, portfolio_lot, portfolio_txn, portfolio_holding, portfolio_import, "
                        "portfolio_snapshot, portfolio_setting, broker_connection, broker_sync_log, alert CASCADE"))  # fmt: skip
     yield session_scope
     # leave no connections behind: other tests run the monitor tick, which would try to sync them
     with session_scope() as s:
-        s.execute(text("TRUNCATE broker_connection, broker_sync_log, portfolio_disposal, portfolio_lot, portfolio_txn, "
+        s.execute(text("TRUNCATE broker_connection, broker_sync_log, portfolio_expected_txn, portfolio_disposal, portfolio_lot, portfolio_txn, "
                        "portfolio_holding, portfolio_import, alert CASCADE"))  # fmt: skip
 
 

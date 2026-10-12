@@ -96,14 +96,14 @@ def client(env):
     from finresearch.db import session_scope
 
     with session_scope() as s:
-        s.execute(text("TRUNCATE portfolio_disposal, portfolio_lot, portfolio_txn, portfolio_holding, "
+        s.execute(text("TRUNCATE portfolio_expected_txn, portfolio_disposal, portfolio_lot, portfolio_txn, portfolio_holding, "
                        "portfolio_import, portfolio_ais, portfolio_setting, wealth_goal, investor_profile"))  # fmt: skip
     with TestClient(create_app()) as c:
         for t in TXNS:
             assert c.post("/api/portfolio/transactions", headers=ORIGIN, json=t).status_code == 201
         yield c
     with session_scope() as s:
-        s.execute(text("TRUNCATE portfolio_disposal, portfolio_lot, portfolio_txn, portfolio_holding, "
+        s.execute(text("TRUNCATE portfolio_expected_txn, portfolio_disposal, portfolio_lot, portfolio_txn, portfolio_holding, "
                        "portfolio_import, portfolio_ais, portfolio_setting, wealth_goal, investor_profile"))  # fmt: skip
 
 

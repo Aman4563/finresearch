@@ -162,6 +162,11 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
     from finresearch.portfolio.service import actions_of
 
     imap = isin_map(s)
+    # #297: expected SIP instalments after a fund's statement units, shown apart; never in any total below
+    from finresearch.portfolio.sip_estimates import expected_rows, holding_estimate, portfolio_estimate
+
+    pending = expected_rows(s, [h.id for h in data.holdings if h.asset_type == "mf"])
+    estimates: list[dict[str, Any]] = []
     excluded: Counter[str] = Counter()  # holdings left out of the overall XIRR, by the reason cash_flows gave
     for h in data.holdings:
         p = prices.get(h.id) or PriceInfo(error="not priced")
@@ -259,6 +264,11 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
                                    for t in data.txns.get(h.id, [])),
             **units_as_of(h, data.txns.get(h.id, []), today, units),
         })  # fmt: skip
+        est = holding_estimate(pending.get(h.id, []), ((h.meta or {}).get("statement_units") or {}).get("day"),
+                               p.price) if units > 0 else None  # fmt: skip
+        rows[-1]["sip_estimate"] = est
+        if est is not None:
+            estimates.append(est)
     ox, ox_reason = xirr_or_reason(
         [*all_flows, (today, tot["xirr_value"])] if tot["xirr_value"] else all_flows, today
     )
@@ -289,6 +299,7 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
                     "pending_actions": with_actions},
         "allocation": {k: [{"label": lab, "value": _f(v)} for lab, v in sorted(d.items(), key=lambda kv: -kv[1])]
                        for k, d in alloc.items()},
+        "estimated": portfolio_estimate(estimates),  # #297: a separate line, never part of `summary`
         "cap_list": {k: str(v) for k, v in CAP_LIST.items()},
         "timeline": tl,
         "dividends": dividends(data),
