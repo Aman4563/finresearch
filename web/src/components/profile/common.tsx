@@ -52,6 +52,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   number_format: "lakh_crore",
   compact_tables: false,
   reduce_motion: false,
+  ipo_alert_boards: "mainboard",
 };
 
 /** Fill the optional identity fields so older API builds (without them) still render and save cleanly. */
