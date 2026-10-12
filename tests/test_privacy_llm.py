@@ -89,7 +89,7 @@ def world(env, tmp_path):
     from sqlalchemy import text
 
     with session_scope() as s:  # leave no synthetic personal data for later tests
-        s.execute(text("TRUNCATE portfolio_disposal, portfolio_lot, portfolio_txn, portfolio_holding, portfolio_import, "
+        s.execute(text("TRUNCATE portfolio_expected_txn, portfolio_disposal, portfolio_lot, portfolio_txn, portfolio_holding, portfolio_import, "
                        "portfolio_ais, trade_note, wealth_asset, wealth_goal, investor_profile CASCADE"))  # fmt: skip
 
 

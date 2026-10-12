@@ -17,6 +17,13 @@ https://kite.trade/docs/connect/v3/portfolio/ (holdings/positions), https://kite
   order_id, exchange_order_id, tradingsymbol, exchange, product, average_price, quantity, transaction_type,
   fill_timestamp). There is no ISIN on a trade: the symbol joins it to the holding.
 * MF holdings ``GET /mf/holdings`` → Coin funds (folio, fund, tradingsymbol = the ISIN, quantity, average_price).
+* MF SIPs ``GET /mf/sips`` → active and paused Coin SIPs (sip_id, tradingsymbol = the ISIN, fund, status ACTIVE |
+  PAUSED | CANCELLED, frequency weekly | monthly | quarterly, instalment_amount, instalment_day, next_instalment
+  "YYYY-MM-DD", last_instalment "YYYY-MM-DD hh:mm:ss"). MF orders ``GET /mf/orders`` → the last 7 days' orders
+  (order_id, tradingsymbol, status COMPLETE | REJECTED | CANCELLED | OPEN, status_message, transaction_type, variety
+  regular | sip | amc_sip, amount, quantity, average_price, order_timestamp, exchange_timestamp "YYYY-MM-DD"). Read
+  12-Oct-2026 at https://kite.trade/docs/connect/v3/mutual-funds/. Used only for SIP estimates (portfolio.sip_estimates,
+  #297), never as transactions.
 * Funds ``GET /user/margins`` [U: response field names from memory].
 * Cost: the free "Personal" plan covers portfolio APIs; Connect (₹500/month) adds market data.
 """
@@ -24,6 +31,7 @@ https://kite.trade/docs/connect/v3/portfolio/ (holdings/positions), https://kite
 from __future__ import annotations
 
 import hashlib
+from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, ClassVar
@@ -46,8 +54,8 @@ from finresearch.portfolio.connectors.groww import next_six_am
 
 BASE = "https://api.kite.trade"
 LOGIN = "https://kite.zerodha.com/connect/login"
-READ_PATHS = (r"/portfolio/holdings", r"/portfolio/positions", r"/trades", r"/mf/holdings", r"/user/margins",
-              r"/user/profile")  # fmt: skip
+READ_PATHS = (r"/portfolio/holdings", r"/portfolio/positions", r"/trades", r"/mf/holdings", r"/mf/sips", r"/mf/orders",
+              r"/user/margins", r"/user/profile")  # fmt: skip
 AUTH_PATHS = (r"/session/token",)
 
 
@@ -78,6 +86,64 @@ def map_mf(r: dict[str, Any]) -> BrokerHolding:
     return BrokerHolding(name=str(r.get("fund") or isin or ""), quantity=dec(r.get("quantity")) or Decimal(0),
                          isin=isin, avg_price=dec(r.get("average_price")), last_price=dec(r.get("last_price")),
                          asset_type="mf", raw_keys=tuple(sorted(r)))  # fmt: skip
+
+
+@dataclass(frozen=True)
+class KiteSip:
+    """A Coin SIP (GET /mf/sips): the basis of expected instalments, never a transaction."""
+
+    sip_id: str
+    isin: str | None
+    fund: str
+    status: str  # ACTIVE | PAUSED | CANCELLED
+    frequency: str  # weekly | monthly | quarterly
+    amount: Decimal | None
+    instalment_day: int | None
+    next_instalment: date | None
+    last_instalment: date | None
+
+
+@dataclass(frozen=True)
+class KiteMfOrder:
+    """A Coin order of the last 7 days (GET /mf/orders); `day` = the exchange day, else the order's day."""
+
+    order_id: str
+    isin: str | None
+    status: str  # COMPLETE | REJECTED | CANCELLED | OPEN
+    side: str  # BUY | SELL
+    variety: str | None
+    amount: Decimal | None
+    quantity: Decimal | None
+    average_price: Decimal | None
+    day: date
+
+
+def _iso_day(v: Any) -> date | None:
+    try:
+        return date.fromisoformat(str(v)[:10]) if v else None
+    except ValueError:
+        return None
+
+
+def map_sip(r: dict[str, Any]) -> KiteSip:
+    day = r.get("instalment_day")
+    return KiteSip(sip_id=str(r.get("sip_id") or ""), isin=str(r.get("tradingsymbol") or "").strip().upper() or None,
+                   fund=str(r.get("fund") or ""), status=str(r.get("status") or "").upper(),
+                   frequency=str(r.get("frequency") or "").lower(), amount=dec(r.get("instalment_amount")),
+                   instalment_day=int(day) if isinstance(day, int | float) and day else None,
+                   next_instalment=_iso_day(r.get("next_instalment")),
+                   last_instalment=_iso_day(r.get("last_instalment")))  # fmt: skip
+
+
+def map_mf_order(r: dict[str, Any]) -> KiteMfOrder | None:
+    day = _iso_day(r.get("exchange_timestamp")) or _iso_day(r.get("order_timestamp"))
+    if day is None:
+        return None
+    return KiteMfOrder(order_id=str(r.get("order_id") or ""),
+                       isin=str(r.get("tradingsymbol") or "").strip().upper() or None,
+                       status=str(r.get("status") or "").upper(), side=str(r.get("transaction_type") or "").upper(),
+                       variety=r.get("variety"), amount=dec(r.get("amount")), quantity=dec(r.get("quantity")),
+                       average_price=dec(r.get("average_price")), day=day)  # fmt: skip
 
 
 def map_position(r: dict[str, Any]) -> BrokerPosition:
@@ -166,6 +232,15 @@ class ZerodhaConnector(BrokerConnector):
     async def mf_holdings(self) -> list[BrokerHolding]:
         rows = _data(await self._http().get("/mf/holdings")) or []
         return [h for h in (map_mf(r) for r in rows if isinstance(r, dict)) if h.quantity > 0]
+
+    async def mf_sips(self) -> list[KiteSip]:
+        rows = _data(await self._http().get("/mf/sips")) or []
+        return [map_sip(r) for r in rows if isinstance(r, dict)]
+
+    async def mf_activity(self) -> list[KiteMfOrder]:
+        """GET /mf/orders, read-only (named so no connector attribute looks like an order action: base.FORBIDDEN_ATTR)."""
+        rows = _data(await self._http().get("/mf/orders")) or []
+        return [o for o in (map_mf_order(r) for r in rows if isinstance(r, dict)) if o is not None]
 
     async def funds(self) -> dict[str, Any]:
         data = _data(await self._http().get("/user/margins")) or {}

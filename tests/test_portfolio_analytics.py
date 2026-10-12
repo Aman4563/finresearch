@@ -569,7 +569,7 @@ def api(env):
     from finresearch.db import session_scope
 
     with session_scope() as s:
-        s.execute(text("TRUNCATE portfolio_disposal, portfolio_lot, portfolio_txn, portfolio_holding, portfolio_import, "
+        s.execute(text("TRUNCATE portfolio_expected_txn, portfolio_disposal, portfolio_lot, portfolio_txn, portfolio_holding, portfolio_import, "
                        "portfolio_snapshot, portfolio_setting"))  # fmt: skip
     scheme = SchemeNav("111", "Test Flexi Cap Fund - Regular Plan - Growth", "Regular", "Growth", None, None, D(10),
                        DAYS[-1], "Equity Scheme - Flexi Cap Fund", "X AMC")  # fmt: skip
@@ -726,7 +726,7 @@ def test_api_empty_portfolio(env):
     with session_scope() as s:
         s.execute(
             text(
-                "TRUNCATE portfolio_disposal, portfolio_lot, portfolio_txn, portfolio_holding, portfolio_import"
+                "TRUNCATE portfolio_expected_txn, portfolio_disposal, portfolio_lot, portfolio_txn, portfolio_holding, portfolio_import"
             )
         )
     with TestClient(create_app()) as c:

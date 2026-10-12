@@ -23,7 +23,11 @@ export const HOLDINGS: Holding[] = [
     tax_class_auto: "other_mf", units: 50, cost: 2500, avg_cost: 50, price: 61.2, price_as_of: "2026-06-30",
     price_source: "CAS statement NAV", value: 3060, unrealised: 560, unrealised_pct: 22.4, xirr: null,
     xirr_reason: "price is a statement NAV", units_as_of: "2026-06-28", units_source: "CAMS CAS",
-    units_warning: "units are 100 days old (over 35): import a newer statement" }),
+    units_warning: "units are 100 days old (over 35): import a newer statement",
+    // #297: SIP instalments after those units, estimated (one NAV still unknown): never added to the units or value
+    sip_estimate: { instalments: 2, since: "2026-06-28", units: null, units_unknown: 1, amount: 4000,
+      estimated_value: null, basis: ["sip-inference"], days: ["2026-09-05", "2026-10-05"],
+      label: "units estimated for 1 of 2 instalments (2 instalments since 2026-06-28; 1 NAV unknown), waiting for statement" } }),
   // an opening balance with no cost: P&L and tax are unknown, never zero
   holding({ id: 3, name: "Example Opening Balance Fund", asset_type: "mf", scheme_code: "990002", tax_class: "other_mf",
     tax_class_auto: "other_mf", units: 20, cost: null, cost_known: false, avg_cost: null, price: 40, value: 800,
@@ -49,6 +53,8 @@ export const SNAPSHOT = {
   dividends: { items: [], by_fy: [], note: "" },
   privacy: "Synthetic e2e data.",
   complete: false,
+  estimated: { funds: 1, instalments: 2, amount: 4000, estimated_value: null, value_unknown_funds: 1,
+    note: "2 SIP instalments in 1 fund after the last statement: estimated, waiting for statement" },
   pending: 0,
   targets: {},
   drift: [],

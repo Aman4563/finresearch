@@ -144,7 +144,7 @@ def client(env):
     with session_scope() as s:  # the test database is shared by the session: start every test empty
         s.execute(
             text(
-                "TRUNCATE portfolio_disposal, portfolio_lot, portfolio_txn, portfolio_holding, portfolio_import, "
+                "TRUNCATE portfolio_expected_txn, portfolio_disposal, portfolio_lot, portfolio_txn, portfolio_holding, portfolio_import, "
                 "portfolio_snapshot, portfolio_setting"
             )
         )

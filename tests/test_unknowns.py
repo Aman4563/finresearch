@@ -29,7 +29,7 @@ def client(env, monkeypatch):
 
     monkeypatch.setattr(dates, "today_ist", lambda: TODAY)
     with session_scope() as s:
-        s.execute(text("TRUNCATE trade_note, alert, portfolio_disposal, portfolio_lot, portfolio_txn, "
+        s.execute(text("TRUNCATE trade_note, alert, portfolio_expected_txn, portfolio_disposal, portfolio_lot, portfolio_txn, "
                        "portfolio_holding, portfolio_import, portfolio_snapshot, portfolio_setting, investor_profile, "
                        "wealth_asset, wealth_valuation, wealth_loan, wealth_goal, wealth_policy CASCADE"))  # fmt: skip
     app = create_app()
@@ -389,7 +389,7 @@ def fund_client(env, monkeypatch):
 
     monkeypatch.setattr(dates, "today_ist", lambda: TODAY)
     with session_scope() as s:
-        s.execute(text("TRUNCATE portfolio_disposal, portfolio_lot, portfolio_txn, portfolio_holding, "
+        s.execute(text("TRUNCATE portfolio_expected_txn, portfolio_disposal, portfolio_lot, portfolio_txn, portfolio_holding, "
                        "portfolio_import, portfolio_snapshot, portfolio_setting CASCADE"))  # fmt: skip
     app = create_app(nav_all=nav_all)
     app.state.markets = MarketSources(quote=quote, today=lambda: TODAY)
