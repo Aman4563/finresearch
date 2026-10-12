@@ -29,6 +29,9 @@ test("portfolio: unknown cost, stale price and incomplete tax are labelled", asy
   // #295: the fund's units carry their statement's date, flagged when old
   await expect(holdings.getByText(/units as of 28 Jun.*\(CAMS CAS\)/)).toBeVisible();
   await expect(holdings.getByText(/units date unknown/)).toBeVisible(); // the opening-balance fund: no statement date
+  // #297: expected SIP instalments are an estimate beside the units, and a separate line under the totals
+  await expect(holdings.getByText(/units estimated for 1 of 2 instalments.*waiting for statement/)).toBeVisible();
+  await expect(page.getByText(/Estimated: .*4,000 in 2 SIP instalments.*estimated value unknown.*not in the totals/)).toBeVisible();
   if (phone(page)) await expectNoHorizontalOverflow(page);
 
   await page.goto("/portfolio#tax");

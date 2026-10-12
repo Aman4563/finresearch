@@ -79,6 +79,8 @@ export type Holding = {
   units_source?: string | null;
   /** units over 35 days old, or a SIP instalment due after them; or no statement at all */
   units_warning?: string | null;
+  /** #297: SIP instalments expected after the statement units: an ESTIMATE, never in units, value, P&L or tax */
+  sip_estimate?: SipEstimate | null;
   value: number | null;
   unrealised: number | null;
   unrealised_pct: number | null;
@@ -110,6 +112,18 @@ export type Holding = {
   elss?: ElssLock | null;
   /** #237: unresolved unsupported corporate actions (demerger, rights ...): the cost is unknown until resolved */
   pending_actions?: PendingAction[];
+};
+
+/** #297 (finresearch.portfolio.sip_estimates.holding_estimate): `units` is null when any instalment's NAV is unknown. */
+export type SipEstimate = {
+  instalments: number; since: string | null; units: number | null; units_unknown: number; amount: number;
+  estimated_value: number | null; basis: string[]; days: string[]; label: string;
+};
+
+/** #297: the portfolio's separate "estimated" line (never part of `summary`). */
+export type PortfolioEstimate = {
+  funds: number; instalments: number; amount: number; estimated_value: number | null; value_unknown_funds: number;
+  note: string;
 };
 
 /** A corporate action the lots do not model (finresearch.portfolio.service.record_unsupported, #237). */
@@ -146,6 +160,8 @@ export type Snapshot = {
   };
   privacy: string;
   complete: boolean;
+  /** #297: SIP instalments after the last statements, estimated; null = none */
+  estimated?: PortfolioEstimate | null;
   /** holdings whose price was not cached yet (prices=cached) */
   pending?: number;
   targets?: Record<string, number>;

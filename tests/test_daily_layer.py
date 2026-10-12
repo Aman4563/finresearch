@@ -152,7 +152,7 @@ def pf(env, monkeypatch):
     from finresearch.portfolio.service import manual_txn
 
     with session_scope() as s:
-        s.execute(text("TRUNCATE portfolio_disposal, portfolio_lot, portfolio_txn, portfolio_holding, portfolio_import, "
+        s.execute(text("TRUNCATE portfolio_expected_txn, portfolio_disposal, portfolio_lot, portfolio_txn, portfolio_holding, portfolio_import, "
                        "portfolio_snapshot, portfolio_setting, alert_delivery, alert, alert_rule_state, alert_eval_slot, "
                        "notification_setting, investor_profile, wealth_valuation, wealth_asset CASCADE"))  # fmt: skip
         manual_txn(s, {"asset_type": "stock", "name": "Infosys Ltd", "nse_symbol": "INFY", "day": date(2025, 10, 10),

@@ -162,7 +162,7 @@ def client(env):
     from finresearch.db import session_scope
 
     with session_scope() as s:
-        s.execute(text("TRUNCATE portfolio_disposal, portfolio_lot, portfolio_txn, portfolio_holding, portfolio_import, "
+        s.execute(text("TRUNCATE portfolio_expected_txn, portfolio_disposal, portfolio_lot, portfolio_txn, portfolio_holding, portfolio_import, "
                        "portfolio_snapshot, portfolio_setting"))  # fmt: skip
     f = Fakes()
     app = create_app(nav_all=f.rows)

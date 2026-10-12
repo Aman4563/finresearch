@@ -24,7 +24,7 @@ def db(env):
     from finresearch.db import session_scope
 
     with session_scope() as s:
-        s.execute(text("TRUNCATE portfolio_disposal, portfolio_lot, portfolio_txn, portfolio_holding, portfolio_import, "
+        s.execute(text("TRUNCATE portfolio_expected_txn, portfolio_disposal, portfolio_lot, portfolio_txn, portfolio_holding, portfolio_import, "
                        "portfolio_snapshot, portfolio_setting CASCADE"))  # fmt: skip
     yield session_scope
 
@@ -202,7 +202,7 @@ def client_api(env):
     from finresearch.db import session_scope
 
     with session_scope() as s:
-        s.execute(text("TRUNCATE portfolio_disposal, portfolio_lot, portfolio_txn, portfolio_holding, portfolio_import "
+        s.execute(text("TRUNCATE portfolio_expected_txn, portfolio_disposal, portfolio_lot, portfolio_txn, portfolio_holding, portfolio_import "
                        "CASCADE"))  # fmt: skip
     with TestClient(create_app()) as c:
         yield c, {"Origin": "http://127.0.0.1:3000", "X-FinResearch": "1"}

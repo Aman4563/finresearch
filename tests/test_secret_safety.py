@@ -65,7 +65,7 @@ def app_client(env, monkeypatch):
 
     def wipe():
         with session_scope() as s:
-            s.execute(text("TRUNCATE broker_connection, broker_sync_log, portfolio_disposal, portfolio_lot, "
+            s.execute(text("TRUNCATE broker_connection, broker_sync_log, portfolio_expected_txn, portfolio_disposal, portfolio_lot, "
                            "portfolio_txn, portfolio_holding, portfolio_import, alert CASCADE"))  # fmt: skip
 
     wipe()
