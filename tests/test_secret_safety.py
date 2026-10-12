@@ -144,7 +144,8 @@ def test_sync_and_market_data_never_expose_a_secret(app_client, caplog, monkeypa
         if f.is_file() and f.name != "secrets.json":
             _scan(f"state file {f.name}", f.read_text(errors="replace"))
     usage = {row["category"]: row["calls"] for row in groww_budget.BUDGET.today()["categories"]}
-    assert usage["auth"] == 1 and usage["non_trading"] == 4 and usage["instruments"] == 1
+    # non-trading: holdings, positions, order list, funds and the F&O positions (#308)
+    assert usage["auth"] == 1 and usage["non_trading"] == 5 and usage["instruments"] == 1
 
 
 def test_log_records_are_redacted_whatever_the_handler(caplog):
