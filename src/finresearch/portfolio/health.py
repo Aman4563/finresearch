@@ -168,7 +168,7 @@ def dividends(s: Session, today: date) -> dict[str, Any]:
     for t in s.scalars(select(PortfolioTxn).where(PortfolioTxn.holding_id.in_(stocks))):
         if t.kind == "dividend":
             paid.add(fiscal_year(t.day))
-        elif t.kind in ("buy", "opening", "sell"):
+        elif t.kind in ("buy", "opening", "sell", "redemption"):
             spans[t.holding_id].append(t.day)
     last_done = fiscal_year(today) - 1
     years: set[int] = set()

@@ -27,6 +27,7 @@ from finresearch.portfolio.tax import (
     harvest,
     is_debt_security,
     is_listed,
+    redemption_flags,
 )
 from finresearch.portfolio.valuation import (
     CAP_LIST,
@@ -80,7 +81,8 @@ def holding_tax(h: PortfolioHolding, category: str | None = None) -> HoldingTax:
 
     blocked = tuple((date.fromisoformat(a["ex_date"]), a["reason"]) for a in actions_of(h.meta))
     return HoldingTax(h.id, h.name, h.account, h.isin, eff, is_listed(h.asset_type, h.name, h.meta), h.fmv_2018,
-                      bool((h.meta or {}).get("sgb_original_subscriber")), blocked)  # fmt: skip
+                      bool((h.meta or {}).get("sgb_original_subscriber")), blocked,
+                      debt=h.asset_type == "stock" and is_debt_security(h.isin, h.name, h.nse_symbol))  # fmt: skip
 
 
 def _f(x: Decimal | None, nd: int = 2) -> float | None:
@@ -191,6 +193,9 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
         divs = sum(
             (abs(t.amount) for t in data.txns.get(h.id, []) if t.kind == "dividend" and t.amount), ZERO
         )
+        interest = sum(
+            (abs(t.amount) for t in data.txns.get(h.id, []) if t.kind == "interest" and t.amount), ZERO
+        )
         flows, why_not = cash_flows(data.txns.get(h.id, []), value, today)
         if why_not is None and units > 0 and value is None:
             why_not = "no current price"  # without today's value the flows alone would read as a large loss
@@ -232,6 +237,7 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
         tot["realised_unknown"] += len(no_cost)
         tot["realised_unknown_proceeds"] += sum((d.proceeds for d in no_cost), ZERO)
         tot["dividends"] += divs
+        tot["interest"] += interest
         if unreal is not None:
             tot["unrealised"] += unreal
         rows.append({
@@ -247,7 +253,7 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
             "price_note": p.note, "price_stale": stale_why is not None, "price_stale_reason": stale_why,
             "value": _f(value), "unrealised": _f(unreal),
             "unrealised_pct": _f(unreal / cost * 100) if unreal is not None and cost > 0 else None,
-            "realised": _f(realised), "realised_unknown": len(no_cost), "dividends": _f(divs), "xirr": x, "xirr_reason": x_reason,
+            "realised": _f(realised), "realised_unknown": len(no_cost), "dividends": _f(divs), "interest": _f(interest), "xirr": x, "xirr_reason": x_reason,
             "market_cap_cr": _f(p.market_cap_cr), "cap_bucket": (cap_bucket(p.market_cap_cr) if h.asset_type == "stock" and eff == "equity"
                                                                   else "Not equity" if h.asset_type == "stock"
                                                                   else fund_cap_bucket(category, eff)),
@@ -283,7 +289,7 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
                     "realised_note": (f"excludes {realised_unknown} sale(s) whose cost is unknown "
                                       f"(₹{float(tot['realised_unknown_proceeds']):,.0f} of proceeds): enter the cost "
                                       "and date of those units for the full figure") if realised_unknown else None,
-                    "dividends": _f(tot["dividends"]), "xirr": ox,
+                    "dividends": _f(tot["dividends"]), "interest": _f(tot["interest"]), "xirr": ox,
                     "xirr_reason": ox_reason, "holdings": sum(1 for r in rows if not r["closed"]),
                     "unknown_cost": unknown_cost, "unpriced": unpriced, "stale": stale, "stale_note": stale_note,
                     "pending_actions": with_actions},
@@ -323,19 +329,21 @@ def timeline(data: Loaded) -> list[dict[str, Any]]:
                     by_month[m]["invested"] += gross + (t.charges or 0)  # the lot's cost (lots.build_lots)
             elif t.kind == "buy" and not meta.get("reinvest"):
                 by_month[m]["invested"] += gross + (t.charges or 0)
-            elif t.kind == "sell":
+            elif t.kind in ("sell", "redemption"):
                 by_month[m]["invested"] -= gross - (t.charges or 0)
             elif t.kind == "dividend" and t.amount:
                 by_month[m]["dividends"] += abs(t.amount)
+            elif t.kind == "interest" and t.amount:
+                by_month[m]["interest"] += abs(t.amount)
         for d in data.disposals.get(h.id, []):
             if d.cost is not None:
                 by_month[d.sold.strftime("%Y-%m")]["realised"] += d.proceeds - d.cost
     out, acc = [], defaultdict(Decimal)
     for m in sorted(by_month):
-        for k in ("invested", "realised", "dividends"):
+        for k in ("invested", "realised", "dividends", "interest"):
             acc[k] += by_month[m][k]
         out.append({"date": f"{m}-01", "invested": _f(acc["invested"]), "realised": _f(acc["realised"]),
-                    "dividends": _f(acc["dividends"])})  # fmt: skip
+                    "dividends": _f(acc["dividends"]), "interest": _f(acc["interest"])})  # fmt: skip
     return out
 
 
@@ -355,15 +363,15 @@ def dividends(data: Loaded) -> dict[str, Any]:
 # --------------------------------------------------------------------------- tax
 def disposal_rows(data: Loaded, categories: dict[int, str | None] | None = None) -> list[DisposalRow]:
     categories = categories or {}
-    txn_meta = {t.id: t.meta or {} for ts in data.txns.values() for t in ts}
+    txn_of = {t.id: t for ts in data.txns.values() for t in ts}
     out = []
     for h in data.holdings:
         ht = holding_tax(h, categories.get(h.id))
         for d in data.disposals.get(h.id, []):
-            m = txn_meta.get(d.txn_id, {})
+            t = txn_of.get(d.txn_id)
+            rbi, htm = redemption_flags(t.kind if t else "sell", t.meta if t else None, ht.tax_class)
             out.append(evaluate(DisposalRow(ht, d.acquired, d.sold, d.quantity, d.cost, d.proceeds, d.stt_paid,
-                                            d.origin, rbi_redemption=bool(m.get("rbi_redemption")),
-                                            held_to_maturity=bool(m.get("held_to_maturity")), txn_id=d.txn_id)))  # fmt: skip
+                                            d.origin, rbi_redemption=rbi, held_to_maturity=htm, txn_id=d.txn_id)))  # fmt: skip
     return out
 
 

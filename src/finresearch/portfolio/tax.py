@@ -77,8 +77,36 @@ EQUITY_INDEX_WORDS = ("nifty", "sensex", "bse ", "midcap", "smallcap", "next 50"
 _DEBT_NAME = re.compile(r"\bNCDs?\b|-NCD\b|\bdebentures?\b|\bbonds?\b|\bnon[- ]convertible\b", re.I)
 
 
+# Government securities (#294). Indian ISINs of government securities carry a digit after "IN" (companies "INE",
+# funds "INF"): "IN00" the Central Government (dated G-secs, T-bills, SGBs), "IN" + a state code a State Development
+# Loan; the same rule the fund look-through uses (adapters.amc_portfolio) [S: NSDL's ISIN structure, not re-read].
+# A T-bill's ISIN has X (91-day), Y (182-day) or Z (364-day) in the ninth character, e.g. IN002025Z123 [S: observed
+# on RBI/CCIL T-bill ISINs]. Names catch the rest. An SGB is a Central Government security too, but is taxed under
+# its own rules (tax class "sgb"), so `sovereign_kind` names it first.
+_SGB_NAME = re.compile(r"sovereign gold|\bSGB\b", re.I)
+_TBILL_NAME = re.compile(r"\bT[- ]?BILLS?\b|treasury bill|\b(91|182|364)[- ]?(D|DAY|DAYS)\b", re.I)
+_SDL_NAME = re.compile(r"\bSDL\b|state development loan", re.I)
+_GSEC_NAME = re.compile(r"\bG[- ]?SEC\b|\bGOI\b|government of india|\bGS\s?20\d\d\b", re.I)
+
+
+def sovereign_kind(isin: str | None, name: str | None, symbol: str | None = None) -> str | None:
+    """"sgb", "tbill", "gsec" (a Central Government dated security), "sdl" (a State Development Loan) or None."""
+    n, sym, code = name or "", (symbol or "").upper(), (isin or "").upper()
+    if sym.startswith("SGB") or _SGB_NAME.search(n):
+        return "sgb"
+    gov = len(code) == 12 and code.startswith("IN") and code[2].isdigit()
+    if (gov and code[8] in "XYZ") or _TBILL_NAME.search(n):
+        return "tbill"
+    if (gov and not code.startswith("IN00")) or _SDL_NAME.search(n):
+        return "sdl"
+    if gov or _GSEC_NAME.search(n):
+        return "gsec"
+    return None
+
+
 def is_debt_security(isin: str | None, name: str | None, symbol: str | None = None) -> bool:
-    """True for a listed debenture/bond (NCD) held like a share: taxed as an 'other' listed security, never equity."""
+    """True for a listed debenture/bond (NCD) or a Government security (G-sec, SDL, T-bill) held like a share: taxed
+    as an 'other' listed security, never equity. An SGB is not one here (tax class "sgb")."""
     n, sym = name or "", (symbol or "").upper()
     if (
         re.search(r"\bETF\b|\bBEES\b", n, re.I)
@@ -86,10 +114,32 @@ def is_debt_security(isin: str | None, name: str | None, symbol: str | None = No
         or "sovereign gold" in n.lower()
     ):
         return False
+    kind = sovereign_kind(isin, name, symbol)
+    if kind == "sgb":
+        return False
+    if kind is not None:
+        return True
     code = (isin or "").upper()
     if len(code) == 12 and code.startswith("INE") and code[7:9] in ("07", "08"):
         return True
     return bool(_DEBT_NAME.search(n))
+
+
+# Why a Government security is an "other" listed security (#294; rules as on 12-Oct-2026). Dated G-secs, SDLs and
+# T-bills trade on NSE and BSE and are treated as listed securities: long-term when held more than 12 months
+# (s.2(42A) first proviso), LTCG at 12.5 % without indexation for transfers on or after 23-Jul-2024 (s.112 as amended
+# by the Finance (No.2) Act 2024; s.197 of the 2025 Act), STCG at the slab rate; never s.111A/s.112A (no STT), so no
+# ₹1.25 lakh exemption. [S: that a G-sec counts as "listed" for the 12-month rule is the common reading, not a ruling.]
+# A T-bill (91/182/364 days) is issued at a discount and redeemed at face: held to maturity it is always short-term,
+# and the discount is taxed at the slab rate as a short-term capital gain here (some treat it as interest, "Income from
+# other sources", also at the slab rate: same tax, different head; losses then differ).
+SOVEREIGN_WHY = {
+    "gsec": "Central Government security (G-sec): an 'other' listed security (12 months; LTCG 12.5 % under s.112, no "
+            "s.112A exemption)",
+    "sdl": "State Development Loan: an 'other' listed security (12 months; LTCG 12.5 % under s.112, no s.112A "
+           "exemption)",
+    "tbill": "Treasury bill: a discount instrument of at most 364 days, so its gain is short-term at the slab rate",
+}  # fmt: skip
 
 
 def auto_tax_class(asset_type: str, name: str, category: str | None, cas_type: str | None,
@@ -104,6 +154,9 @@ def auto_tax_class(asset_type: str, name: str, category: str | None, cas_type: s
         metal = any(w in n or w.upper() in sym for w in ("gold", "silver"))
         if metal and ("etf" in n or "bees" in n or sym.endswith(("BEES", "ETF", "IETF"))):
             return "other_mf", "gold/silver ETF (a fund unit, not equity)"
+        sov = sovereign_kind(isin, name, symbol)
+        if sov in SOVEREIGN_WHY:
+            return "other", SOVEREIGN_WHY[sov]
         if is_debt_security(isin, name, symbol):
             return (
                 "other",
@@ -162,6 +215,7 @@ class HoldingTax:
     # unresolved unsupported corporate actions (#237): (ex-date, reason). A sale on or after the ex-date cannot be
     # classified until the user enters the cost allocation (portfolio.service.record_unsupported)
     blocked: tuple[tuple[date, str], ...] = ()
+    debt: bool = False  # a bond or debenture (an unlisted one is taxed under s.50AA from 23-Jul-2024)
 
 
 @dataclass
@@ -188,6 +242,19 @@ class DisposalRow:
         return fiscal_year(self.sold)
 
 
+def redemption_flags(kind: str, meta: dict[str, Any] | None, tax_class: str) -> tuple[bool, bool]:
+    """(rbi_redemption, held_to_maturity) of a disposal from its transaction (#294). A `redemption` of an SGB is a
+    redemption by RBI, at maturity or early on a coupon date after the fifth year (RBI SGB FAQ, rbi.org.in
+    FAQs.aspx?Id=1658, read 12-Oct-2026): exempt for an individual under s.47(viic) of the 1961 Act, which covers "any
+    redemption" (early ones too), for redemptions up to 31-Mar-2026. From 1-Apr-2026 the exemption needs an original
+    subscriber who held to maturity (fincalc.tax rule sgb-redemption-2026, [U]): `held_to_maturity` is only what the
+    transaction says, never assumed, so an unconfirmed redemption errs towards tax. An exchange sale (`sell`) of an
+    SGB is a transfer of a listed security unless its meta says RBI redeemed it (older manual entries)."""
+    m = meta or {}
+    rbi = bool(m.get("rbi_redemption")) or (kind == "redemption" and tax_class == "sgb")
+    return rbi, bool(m.get("held_to_maturity"))
+
+
 def evaluate(row: DisposalRow) -> DisposalRow:
     """Classify a disposal and compute its taxable gain (grandfathering applied where it can be)."""
     h = row.holding
@@ -204,7 +271,7 @@ def evaluate(row: DisposalRow) -> DisposalRow:
         return row
     row.cls = classify(h.tax_class, row.acquired, row.sold, listed=h.listed, stt_paid=row.stt_paid,
                        rbi_redemption=row.rbi_redemption, original_subscriber=h.sgb_original,
-                       held_to_maturity=row.held_to_maturity)  # fmt: skip
+                       held_to_maturity=row.held_to_maturity, debt=h.debt)  # fmt: skip
     if row.cost is None:
         row.cls = Classification(
             "unknown", row.cls.rule, None, "unknown", "cost unknown: enter it to compute tax"

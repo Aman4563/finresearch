@@ -33,7 +33,7 @@ def lt_date(h: HoldingTax, acquired: date, today: date, horizon: int = 800) -> d
     from finresearch.fincalc.tax import classify
 
     def term(d: date) -> str:
-        return classify(h.tax_class, acquired, d, listed=h.listed).term
+        return classify(h.tax_class, acquired, d, listed=h.listed, debt=h.debt).term
 
     if term(today) != "short":
         return None

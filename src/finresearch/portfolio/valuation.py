@@ -597,7 +597,7 @@ NO_PURCHASE_DATE = "opening balance with an unknown purchase date"
 def cash_flows(
     txns: Sequence[Any], value: Decimal | None, today: date
 ) -> tuple[list[tuple[date, Decimal]], str | None]:
-    """Investor cash flows for XIRR: buys out (amount + charges), sales and paid-out dividends in, the current value
+    """Investor cash flows for XIRR: buys out (amount + charges), sales, redemptions, paid-out dividends and interest in, the current value
     in today. Reinvested dividends are neither (the units were bought with the dividend). An opening balance with no
     cost makes XIRR impossible."""
     from finresearch.portfolio.lots import superseded_openings
@@ -623,13 +623,13 @@ def cash_flows(
             if gross is None:
                 return [], "a purchase without an amount"
             flows.append((t.day, -(gross + (t.charges or 0))))
-        elif t.kind == "sell":
+        elif t.kind in ("sell", "redemption"):  # a bond's redemption (#294) returns cash like a sale
             if (
                 gross is None
             ):  # dropping it would leave the units' value out of the flows: XIRR would read a loss
                 return [], "a sale without an amount"
             flows.append((t.day, gross - (t.charges or 0)))
-        elif t.kind == "dividend" and not reinvest and t.amount:
+        elif t.kind in ("dividend", "interest") and not reinvest and t.amount:  # a bond's coupon is a return too
             flows.append((t.day, abs(t.amount)))
     if value:
         flows.append((today, value))
