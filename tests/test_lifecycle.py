@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace as NS
@@ -322,11 +323,10 @@ def test_a_renamed_stock_is_found_by_its_isin_and_never_ends(lc):
 # --------------------------------------------------------------------------- F&O: past expiries
 def test_fno_api_drops_past_expiries_and_refuses_an_expired_contract(env, monkeypatch):
     from starlette.testclient import TestClient
+    from test_fno import FakeFno  # expiries 2026-10-06 and 2026-10-13
 
     from finresearch.api import create_app
     from finresearch.fincalc import dates
-
-    from test_fno import FakeFno  # expiries 2026-10-06 and 2026-10-13
 
     monkeypatch.setattr(dates, "now_ist", lambda: datetime(2026, 10, 7, 10, tzinfo=dates.IST))
     with TestClient(create_app(fno_client=FakeFno)) as c:
@@ -339,10 +339,10 @@ def test_fno_api_drops_past_expiries_and_refuses_an_expired_contract(env, monkey
 
 
 async def test_fno_signal_picks_the_first_live_expiry_and_rejects_a_past_one(monkeypatch):
+    from test_fno import FakeFno
+
     from finresearch.fincalc import dates
     from finresearch.signals import fno
-
-    from test_fno import FakeFno
 
     asked = []
 
@@ -355,12 +355,9 @@ async def test_fno_signal_picks_the_first_live_expiry_and_rejects_a_past_one(mon
     monkeypatch.setattr(fno, "_client", Spy)
     with pytest.raises(fno.ExpiredContract):
         await fno.fno_signal("NIFTY", {"expiry": "2026-10-06", "log": "0"})
-    try:
+    # the rest of the signal is test_fno_signal's business; only the expiry chosen matters here
+    with contextlib.suppress(Exception):
         await fno.fno_signal("NIFTY", {"log": "0"})
-    except (
-        Exception
-    ):  # the rest of the signal is test_fno_signal's business; only the expiry chosen matters here
-        pass
     assert asked == [date(2026, 10, 13)]
 
 
