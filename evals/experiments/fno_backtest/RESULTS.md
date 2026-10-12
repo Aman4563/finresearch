@@ -28,9 +28,13 @@ Reading it:
   not survive.
 - The monthly premium sellers win 70-86 % of trades but one loss erases 3-5 wins (average loss ₹10.9-12.5k against
   average win ₹2.5-3.9k); none has a positive expectancy distinguishable from zero.
-- Option buying (the controls) behaved as a coin flip with a directional bet: the debit call spread lost most in 2025-26
-  (−₹17k and −₹43k a trade), when the debit put spread gained; both carry drawdowns of 30-94 % of capital at this sizing.
-- By IV regime, sellers did better when the 30-day IV was in the top third of its year and worse in the middle
+- Option buying (the controls) was a directional bet, not an edge: the debit call spread lost 25 of 30 OOS trades
+  (−₹17k and −₹43k a trade in 2025 and 2026), the debit put spread won 16 of 30; holding both would have cost about
+  ₹6.3k per pair of trades. Both carry drawdowns of 30-94 % of capital at this sizing.
+- The deflated Sharpe column reads 0.00-0.09 even for a Sharpe-1.07 control because the variance of the trials'
+  Sharpe ratios includes the two controls (as registered), which makes the expected best-of-8 Sharpe large. The
+  sellers fail on the t-statistic and the bootstrap CI independently of it.
+- POST HOC, not a finding: by IV regime, sellers did better when the 30-day IV was in the top third of its year and worse in the middle
   third (e.g. weekly condor ₹3,729 vs −₹432 a trade), but this split was not pre-registered: it is a hypothesis for
   a new, separately registered variant, not a finding.
 
@@ -39,8 +43,10 @@ Reading it:
 The first run (same hash) left 4 debit-spread trades of the NIFTY June-2023 expiry unsettled: NSE moved that expiry
 from Thursday 29th to Wednesday 28th for a holiday and the bhavcopy relabels the contracts with the new date on their
 last day. The engine now settles a contract on its real last session (and never enters on the last session before
-expiry day). This changed in-sample figures of three specs slightly and the out-of-sample figures by at most one
-trade; the verdicts were the same before and after. Specs and criteria were not touched.
+expiry day). This was found after the out-of-sample figures had been seen; it is an engine change only (specs and
+criteria untouched) and every verdict was the same before and after. Changes: in-sample ₹/trade BANKNIFTY monthly
+condor ₹1,024 → ₹1,816 (30 → 31 trades), debit call spread −₹5,183 → −₹3,614, debit put spread ₹7,396 → ₹7,390;
+out of sample only the weekly condor moved (114 → 113 trades, ₹787 → ₹741, t 0.82 → 0.76).
 
 ## Known data caveats in this run
 
