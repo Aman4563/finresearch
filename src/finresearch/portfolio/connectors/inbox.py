@@ -3,9 +3,11 @@
 For people (and brokers) without an API. Every file goes through the same importers and the same idempotent pipeline
 as the Portfolio page's Import tab:
 
-* CAMS/KFintech detailed CAS (PDF) → transactions (password: the one saved in Connections → Statement inbox, only if
-  the user chose to save it; otherwise the file waits and the page says why).
-* NSDL/CDSL e-CAS (PDF, demat) → holdings only: reconciled against the lots, recorded in the sync log, not imported.
+* CAMS/KFintech detailed CAS (PDF) → transactions (passwords: the ones saved in Connections → Statement inbox, tried in
+  turn, only if the user chose to save them; otherwise the file waits and the page says why). A CAS after a gap whose
+  opening units the lots do not hold is logged "partial" (service.statement_gap_warnings).
+* NSDL/CDSL e-CAS (PDF, demat) → holdings only: reconciled against the lots, recorded in the sync log, not imported;
+  fund units and NAV are kept on the holdings and a difference raises one alert (portfolio.cas_followup).
 * Broker tradebooks (Zerodha/Groww/Upstox CSV/XLSX) → transactions.
 * Broker holdings statements (Zerodha/Groww/Upstox holdings XLSX/CSV) → the broker-baseline merge rules
   (connectors.merge): a baseline only for holdings the account has no history for, reconciliation for the rest.
