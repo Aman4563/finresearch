@@ -1424,7 +1424,8 @@ def test_depository_ecas_records_units_and_nav_and_alerts_once(db, client, monke
                                               "lot_units": "10.000", "scope": "folio"}  # fmt: skip
         assert h.meta["statement_nav"] == {"nav": "55.5", "day": "2026-08-31", "source": "NSDL"}
         alerts = s.scalars(select(Alert).where(Alert.kind == "cas_units_mismatch")).all()
-        assert len(alerts) == 1 and "Example Flexi Cap Fund" in alerts[0].message
+        assert len(alerts) == 1 and "Example Flexi Cap Fund" not in alerts[0].message
+        assert alerts[0].data["funds"][0]["name"] == "Example Flexi Cap Fund"
         assert alerts[0].data["links"][0]["url"].startswith("https://www.camsonline.com/")
     # the same statement again (another copy): no second alert
     _drop(root, "nsdl-aug-copy.pdf", b"%PDF-1.4 copy")

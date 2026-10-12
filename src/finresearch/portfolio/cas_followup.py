@@ -95,18 +95,16 @@ def record_depository(s: Session, res: ImportResult) -> list[dict[str, Any]]:
 
 def units_alert(s: Session, res: ImportResult, diffs: list[dict[str, Any]], state: dict[str, Any]) -> bool:
     """One alert for a depository statement whose fund units differ from the lots; never twice for the same
-    statement (`state["depository_alerted"]`, the inbox row's state, keyed by source and statement day)."""
+    statement (`state["depository_alerted"]`, the inbox row's state, keyed by source and statement day). The message
+    names no fund: a warn alert can be forwarded to the phone (monitor.notify), so the funds stay in `data`."""
     if not diffs:
         return False
     key = f"{res.source}:{diffs[0]['day'] or (res.period[1] if res.period else '')}"
     if state.get("depository_alerted") == key:
         return False
-    names = ", ".join(d["name"] for d in diffs[:3]) + (
-        f" and {len(diffs) - 3} more" if len(diffs) > 3 else ""
-    )
     when = f" on {diffs[0]['day']}" if diffs[0]["day"] else ""
     s.add(Alert(kind=UNITS_ALERT, level="warn",
-                message=f"{res.source} e-CAS{when}: units of {len(diffs)} fund(s) differ from your lots ({names}). "
+                message=f"{res.source} e-CAS{when}: units of {len(diffs)} fund(s) differ from your lots (Portfolio lists them). "
                         "Import a fresh detailed CAMS/KFintech CAS so the transactions behind them are recorded.",
                 data={"path": "/portfolio", "source": res.source, "day": diffs[0]["day"], "funds": diffs[:20],
                       "links": list(MAILBACK)}))  # fmt: skip
