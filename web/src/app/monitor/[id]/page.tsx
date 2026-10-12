@@ -71,12 +71,6 @@ export default function WatchView() {
   // polled every minute only while the IPO is in progress (#291): a listed, archived or withdrawn IPO (or a stock watch,
   // checked once a day) is read once; an announced issue starts polling the day before it opens
   const { data, error, reload, updatedAt } = useApi<WatchDetail>(`/api/watches/${id}`);
-  const poll = data != null && shouldPoll(data, Date.now());
-  useEffect(() => {
-    if (!poll) return;
-    const t = setInterval(() => !document.hidden && reload(), 60000);
-    return () => clearInterval(t);
-  }, [poll, reload]);
   // while bidding is on, read the exchange's book every minute (profile: 1, 2 or 5 min, or off); each new exchange
   // timestamp becomes a snapshot
   const bookMs = useTimeFrames().tf.ipo_book_refresh_s * 1000;
@@ -87,6 +81,12 @@ export default function WatchView() {
     if (bookAsOf) reload();
   }, [bookAsOf, reload]);
   const now = useNow(30000);
+  const poll = data != null && now != null && shouldPoll(data, now);
+  useEffect(() => {
+    if (!poll) return;
+    const t = setInterval(() => !document.hidden && reload(), 60000);
+    return () => clearInterval(t);
+  }, [poll, reload]);
   const [focus, setFocus] = useState<string>("all");
   const [stopError, setStopError] = useState<string | null>(null);
 
