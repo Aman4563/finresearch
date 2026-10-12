@@ -412,8 +412,14 @@ def tax_view(s: Session, prices: dict[int, PriceInfo], today: date, slab: Decima
     fys = sorted({r.fy for r in rows} | {fiscal_year(today)}, reverse=True)
     lots_by: dict[int, list[OpenLot]] = {}
     px: dict[int, Decimal] = {}
+    from finresearch.portfolio import bonds
+
+    library = bonds.library_maturities(s)
     for h in data.holdings:
         ht = holding_tax(h, cats.get(h.id))
+        terms = bonds.holding_terms(h, library, ht.tax_class)
+        if terms is not None and bonds.matured(terms, today):
+            continue  # a bond past maturity cannot be sold or bought back: never a harvesting idea (#294)
         open_ = [lot for lot in data.lots.get(h.id, []) if lot.open_quantity > Decimal("0.0005")]
         if elss.detect(h.asset_type, h.name, cats.get(h.id) or h.category) is not None:
             # an ELSS lot within its 3-year lock-in cannot be redeemed, so harvesting never suggests it. The locked

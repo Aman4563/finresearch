@@ -210,7 +210,7 @@ function HoldingEditor({ h, onSaved }: { h: Holding; onSaved: () => void }) {
               <tbody>{data.transactions.map((t) => (
                 <tr key={t.id}>
                   <td className="num text-xs">{day(t.day)}</td>
-                  <td className="text-xs">{t.kind}{t.kind === "bonus" && ` ${t.meta.a}:${t.meta.b}`}{t.kind === "split" && ` ₹${t.meta.from}→₹${t.meta.to}`}{t.meta.reinvest ? " (reinvested)" : ""}</td>
+                  <td className="text-xs">{t.kind}{t.kind === "bonus" && ` ${t.meta.a}:${t.meta.b}`}{t.kind === "split" && ` ₹${t.meta.from}→₹${t.meta.to}`}{t.meta.reinvest ? " (reinvested)" : ""}{t.meta.ipo_allotment ? " (IPO allotment from the journal: date and issue price)" : ""}</td>
                   <td className="num text-right">{units(t.quantity)}</td>
                   <td className="num text-right">{t.price ?? "—"}</td>
                   <td className="num text-right">{t.amount ?? "—"}</td>
@@ -505,6 +505,8 @@ function useProgressivePortfolio(refresh: number) {
                 ...d,
                 holdings: d.holdings.map((h) => {
                   if (h.id !== e.id || !h.pending) return h;
+                  // a bond past maturity keeps the snapshot's redemption value (or none): never the stream's quote (#294)
+                  if (h.bond?.matured) return { ...h, pending: false };
                   const value = e.price == null ? null : e.price * h.units;
                   const unrealised = value != null && h.cost_known && h.cost != null ? value - h.cost : null;
                   return { ...h, pending: false, price: e.price, price_as_of: e.as_of, price_source: e.source, price_error: e.error, price_note: e.note ?? null, value, unrealised,

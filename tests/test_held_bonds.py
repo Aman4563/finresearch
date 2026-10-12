@@ -48,6 +48,8 @@ def test_redemption_on_a_buy_day_is_never_intraday():
     ("IN0020170101", "SGB 2017-18 SERIES X", "SGBNOV25", "sgb"),
     ("INE000A01011", "Example Textiles Ltd", "EXMPL", None),
     ("INE027E07998", "Example Finance NCD", None, None),  # a corporate NCD: debt, not sovereign
+    ("IN9000X01019", "Example Ltd Partly Paid 9.5%", None, None),  # IN9: a partly paid-up share, never a G-sec
+    ("IN1000X01011", "Example Industries Ltd", None, None),  # IN + digit alone, no coupon or SDL words: not assumed
 ])  # fmt: skip
 def test_sovereign_kind(isin, name, symbol, kind):
     assert sovereign_kind(isin, name, symbol) == kind
@@ -56,13 +58,19 @@ def test_sovereign_kind(isin, name, symbol, kind):
 def test_government_securities_are_other_listed_never_equity():
     # before #294 an IN00 ISIN with a plain name ("7.18% GOI 2033") fell through to "equity"
     for isin, name in (("IN0020230085", "7.18% GOI 2033"), ("IN002025Z123", "364 DAY TBILL"),
-                       ("IN1520230123", "Example State 2033")):  # fmt: skip
+                       ("IN1520230123", "7.20% Example State 2033")):  # fmt: skip
         cls, why = auto_tax_class("stock", name, None, None, None, isin)
         assert cls == "other" and ("s.112A" in why or "slab" in why), (name, cls, why)
         assert is_debt_security(isin, name)
     assert auto_tax_class("stock", "SGB 2017-18 SERIES X", None, None, "SGBNOV25", "IN0020170101")[0] == "sgb"
     assert not is_debt_security("IN0020170101", "SGB 2017-18 SERIES X", "SGBNOV25")
     assert auto_tax_class("stock", "Example Gilt ETF", None, None, "GILTBEES", "INF000000001")[0] == "debt_mf"
+    # a partly paid-up share (IN9...) stays equity: before this fix any "IN" + digit ISIN read as a government security
+    assert (
+        auto_tax_class("stock", "Example Ltd Partly Paid", None, None, "EXPP", "IN9000X01019")[0] == "equity"
+    )
+    assert not is_debt_security("IN9000X01019", "Example Ltd Partly Paid")
+    assert bonds.bond_kind("stock", "IN9000X01019", "Example Ltd Partly Paid", "EXPP") is None
 
 
 def test_s50aa_unlisted_debenture_from_23_jul_2024():
@@ -185,6 +193,8 @@ def test_matured_bond_is_never_valued_at_its_last_price(client):  # noqa: F811
     h = next(x for x in snap["holdings"] if x["id"] == hid)
     assert (h["value"], h["price"], h["price_stale"]) == (10000.0, 1000.0, False)
     assert h["price_source"].startswith("redemption value at maturity") and snap["complete"] is False
+    harvest = client.get("/api/portfolio/tax").json()["harvest"]  # a matured bond is never a harvesting idea
+    assert hid not in [x["holding_id"] for x in harvest["gain_harvest"] + harvest["loss_harvest"]]
     assert client.put(f"/api/portfolio/holdings/{hid}", headers=ORIGIN,
                       json={"bond_terms": {"freq": 5}}).status_code == 422  # fmt: skip
 

@@ -206,8 +206,7 @@ def view(t: BondTerms, today: date, units: Decimal) -> dict[str, Any]:
             "coupon_pct": _num(t.coupon_pct), "freq": t.freq, "face_value": _num(t.face_value),
             "redemption_price": _num(t.redemption_price), "next_coupon": _iso(nc), "next_coupon_reason": why,
             "matured": done, "status": MATURED if done else None,
-            "redemption_windows": [d.isoformat() for d in sgb_windows(t, today)], "sources": dict(t.sources),
-            "entered": {k: v for k, v in (("issue_date", t.issue_date), ("maturity", t.maturity)) if v}}  # fmt: skip
+            "redemption_windows": [d.isoformat() for d in sgb_windows(t, today)], "sources": dict(t.sources)}  # fmt: skip
 
 
 def _iso(d: date | None) -> str | None:

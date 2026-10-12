@@ -407,7 +407,7 @@ def add_portfolio_routes(app: FastAPI, *, scheme_rows: Callable[[], Awaitable[li
                                   "note": t.note, "meta": {k: v for k, v in (t.meta or {}).items()
                                                            if k in ("a", "b", "from", "to", "acquired", "reinvest",
                                                                     "subject", "description", "cas_type_txn",
-                                                                    "exchange", "rbi_redemption", "held_to_maturity",
+                                                                    "exchange", "rbi_redemption", "held_to_maturity", "ipo_allotment",
                                                                     "note")}}
                                  for t in txns],
                 "lots": [{"id": x.id, "acquired": x.acquired.isoformat() if x.acquired else None, "origin": x.origin,

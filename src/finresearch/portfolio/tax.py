@@ -77,15 +77,18 @@ EQUITY_INDEX_WORDS = ("nifty", "sensex", "bse ", "midcap", "smallcap", "next 50"
 _DEBT_NAME = re.compile(r"\bNCDs?\b|-NCD\b|\bdebentures?\b|\bbonds?\b|\bnon[- ]convertible\b", re.I)
 
 
-# Government securities (#294). Indian ISINs of government securities carry a digit after "IN" (companies "INE",
-# funds "INF"): "IN00" the Central Government (dated G-secs, T-bills, SGBs), "IN" + a state code a State Development
-# Loan; the same rule the fund look-through uses (adapters.amc_portfolio) [S: NSDL's ISIN structure, not re-read].
+# Government securities (#294). Indian ISINs of Central Government securities start "IN00" (dated G-secs, T-bills,
+# SGBs) [S: NSDL's ISIN structure, not re-read]. Other "IN" + digit prefixes are NOT taken as government on their own:
+# "IN9" is a partly paid-up share (e.g. a rights issue's partly paid shares, IN9155A01020) and must stay equity, and
+# the state-code range of SDL ISINs could not be cited, so an SDL needs its name ("SDL", "state development loan") or
+# a coupon in its name with an "IN" + digit 1-8 ISIN [S].
 # A T-bill's ISIN has X (91-day), Y (182-day) or Z (364-day) in the ninth character, e.g. IN002025Z123 [S: observed
 # on RBI/CCIL T-bill ISINs]. Names catch the rest. An SGB is a Central Government security too, but is taxed under
 # its own rules (tax class "sgb"), so `sovereign_kind` names it first.
 _SGB_NAME = re.compile(r"sovereign gold|\bSGB\b", re.I)
 _TBILL_NAME = re.compile(r"\bT[- ]?BILLS?\b|treasury bill|\b(91|182|364)[- ]?(D|DAY|DAYS)\b", re.I)
 _SDL_NAME = re.compile(r"\bSDL\b|state development loan", re.I)
+_COUPON = re.compile(r"\d+(\.\d+)?\s?%")
 _GSEC_NAME = re.compile(r"\bG[- ]?SEC\b|\bGOI\b|government of india|\bGS\s?20\d\d\b", re.I)
 
 
@@ -94,12 +97,15 @@ def sovereign_kind(isin: str | None, name: str | None, symbol: str | None = None
     n, sym, code = name or "", (symbol or "").upper(), (isin or "").upper()
     if sym.startswith("SGB") or _SGB_NAME.search(n):
         return "sgb"
-    gov = len(code) == 12 and code.startswith("IN") and code[2].isdigit()
-    if (gov and code[8] in "XYZ") or _TBILL_NAME.search(n):
+    if len(code) == 12 and code.startswith("IN9"):
+        return None  # a partly paid-up share, not a government security
+    central = len(code) == 12 and code.startswith("IN00")
+    state = len(code) == 12 and code[:2] == "IN" and code[2] in "12345678" and bool(_COUPON.search(n))
+    if (central and code[8] in "XYZ") or _TBILL_NAME.search(n):
         return "tbill"
-    if (gov and not code.startswith("IN00")) or _SDL_NAME.search(n):
+    if state or _SDL_NAME.search(n):
         return "sdl"
-    if gov or _GSEC_NAME.search(n):
+    if central or _GSEC_NAME.search(n):
         return "gsec"
     return None
 

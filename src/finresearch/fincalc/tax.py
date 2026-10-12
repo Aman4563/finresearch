@@ -85,7 +85,7 @@ VERIFY_NOTE = (
 @dataclass(frozen=True)
 class TaxRule:
     id: str
-    tax_class: str  # equity | other_listed | other_unlisted | specified_mf | other_mf_old | sgb_redemption
+    tax_class: str  # equity | other_listed | other_unlisted | specified_mf | other_mf_new | unlisted_debt | sgb_redemption
     effective_from: date  # transfer date
     effective_to: date | None  # inclusive; None = open-ended
     long_term_months: int | None  # None: no long-term treatment (deemed short-term or exempt)
@@ -156,11 +156,12 @@ RULES: tuple[TaxRule, ...] = (
             "Gold/international fund units acquired on or after 1-Apr-2023 met the first specified-MF definition "
             "(<= 35 % domestic equity): slab rate for transfers up to 31-Mar-2025; after that they follow the other-"
             "asset rules (inference from the two definitions; check the fund's own tax note)"),
-    TaxRule("unlisted-debt-50aa", "unlisted_debt", JULY_23_2024, None, None, None, None, Decimal(0), "verified",
+    TaxRule("unlisted-debt-50aa", "unlisted_debt", JULY_23_2024, None, None, None, None, Decimal(0), "secondary",
             BUDGET_2024_MEMO,
             "s.50AA as amended by the Finance (No.2) Act 2024 (s.76 of the 2025 Act): an unlisted bond or unlisted "
             "debenture transferred, redeemed or matured on or after 23-Jul-2024 is short-term at the slab rate "
-            "whatever the holding period"),
+            "whatever the holding period (research note RESEARCH_ROADMAP §D.4 [55]; the memo was not re-read for "
+            "#294)"),
     TaxRule("sgb-redemption", "sgb_redemption", date(2015, 11, 1), date(2026, 3, 31), None, None, None,
             Decimal(0), "secondary", BUDGET_2026_MEMO,
             "IT Act 1961 s.47(viic): redemption of SGBs by RBI is not a transfer for an individual, including a "
