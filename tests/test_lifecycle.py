@@ -308,3 +308,71 @@ def test_a_renamed_stock_is_found_by_its_isin_and_never_ends(lc):
     assert res["stock"]["missing"] == [] and res["stock"]["ended"] == []
     with session_scope() as s:
         assert s.query(Watch).one().active is True
+
+
+# --------------------------------------------------------------------------- F&O: past expiries
+def test_fno_api_drops_past_expiries_and_refuses_an_expired_contract(env, monkeypatch):
+    from starlette.testclient import TestClient
+
+    from finresearch.api import create_app
+    from finresearch.fincalc import dates
+
+    from test_fno import FakeFno  # expiries 2026-10-06 and 2026-10-13
+
+    monkeypatch.setattr(dates, "now_ist", lambda: datetime(2026, 10, 7, 10, tzinfo=dates.IST))
+    with TestClient(create_app(fno_client=FakeFno)) as c:
+        assert c.get("/api/fno/NIFTY/expiries").json()["expiries"] == ["2026-10-13"]
+        r = c.get("/api/fno/NIFTY/chain", params={"expiry": "2026-10-06"})
+        assert r.status_code == 422 and "expired" in r.json()["detail"]
+        body = {"symbol": "NIFTY", "expiry": "2026-10-06",
+                "legs": [{"right": "call", "strike": "22800", "side": "buy", "lots": 1}]}  # fmt: skip
+        assert c.post("/api/fno/strategy", json=body).status_code == 422
+
+
+async def test_fno_signal_picks_the_first_live_expiry_and_rejects_a_past_one(monkeypatch):
+    from finresearch.fincalc import dates
+    from finresearch.signals import fno
+
+    from test_fno import FakeFno
+
+    asked = []
+
+    class Spy(FakeFno):
+        async def option_chain(self, symbol, expiry):
+            asked.append(expiry)
+            return await super().option_chain(symbol, expiry)
+
+    monkeypatch.setattr(dates, "now_ist", lambda: datetime(2026, 10, 7, 10, tzinfo=dates.IST))
+    monkeypatch.setattr(fno, "_client", Spy)
+    with pytest.raises(fno.ExpiredContract):
+        await fno.fno_signal("NIFTY", {"expiry": "2026-10-06", "log": "0"})
+    try:
+        await fno.fno_signal("NIFTY", {"log": "0"})
+    except Exception:  # the rest of the signal is test_fno_signal's business; only the expiry chosen matters here
+        pass
+    assert asked == [date(2026, 10, 13)]
+
+
+def test_rules_pinned_to_an_expired_contract_are_disabled_once_with_a_note(lc):
+    from finresearch.alerts.engine import EXPIRED_KIND, retire_expired
+    from finresearch.db import session_scope
+    from finresearch.db.models import Alert
+    from finresearch.suggest.advisor import load_profile, save_profile
+    from finresearch.suggest.profile import AlertRule
+
+    with session_scope() as s:
+        p = load_profile(s)
+        p.alert_rules = [
+            AlertRule(id="old", kind="fno", metric="spot", instrument="NIFTY", params={"expiry": "2026-10-06"}),
+            AlertRule(id="live", kind="fno", metric="spot", instrument="NIFTY", params={"expiry": "2026-10-13"}),
+            AlertRule(id="any", kind="fno", metric="days_to_expiry", instrument="NIFTY"),
+        ]
+        save_profile(s, p)
+    with session_scope() as s:
+        assert retire_expired(s, date(2026, 10, 7)) == ["old"]
+    with session_scope() as s:
+        assert retire_expired(s, date(2026, 10, 7)) == []  # already off: no second alert
+        rules = {r.id: r for r in load_profile(s).alert_rules}
+        assert rules["old"].enabled is False and "contract expired" in rules["old"].description
+        assert rules["live"].enabled and rules["any"].enabled
+        assert s.query(Alert).filter(Alert.kind == EXPIRED_KIND).count() == 1

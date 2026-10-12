@@ -1165,23 +1165,23 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
 
     def _live_expiry(expiry: date) -> None:
         """A past expiry has nothing left to analyse (#293): 422, never a stale chain."""
-        from finresearch.fincalc.dates import today_ist
+        from finresearch.fincalc import dates
         from finresearch.signals.fno import ExpiredContract, check_expiry
 
         try:
-            check_expiry(expiry, today_ist())
+            check_expiry(expiry, dates.now_ist().date())
         except ExpiredContract as e:
             raise HTTPException(422, str(e)) from e
 
     @app.get("/api/fno/{symbol}/expiries")
     async def fno_expiries(symbol: str) -> dict[str, Any]:
         """The contract's expiries still tradable today (IST; past ones are dropped, #293) and its strikes."""
-        from finresearch.fincalc.dates import today_ist
+        from finresearch.fincalc import dates
         from finresearch.signals.fno import live_expiries
 
         async with _fno() as f:
             expiries, strikes = await f.contract_info(symbol.upper())
-        expiries = live_expiries(expiries, today_ist())
+        expiries = live_expiries(expiries, dates.now_ist().date())
         return {
             "symbol": symbol.upper(),
             "expiries": [e.isoformat() for e in expiries],
