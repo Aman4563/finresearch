@@ -170,7 +170,7 @@ def client(env):
         raise LookupError("offline test")
 
     with session_scope() as s:
-        s.execute(text("TRUNCATE trade_note, alert, portfolio_disposal, portfolio_lot, portfolio_txn, "
+        s.execute(text("TRUNCATE trade_note, alert, portfolio_expected_txn, portfolio_disposal, portfolio_lot, portfolio_txn, "
                        "portfolio_holding, portfolio_import, portfolio_snapshot, portfolio_setting, investor_profile "
                        "CASCADE"))  # fmt: skip
     app = create_app(nav_all=nav_all)

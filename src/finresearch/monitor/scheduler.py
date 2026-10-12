@@ -433,6 +433,47 @@ def _spawn_ipo_registry(now: datetime) -> None:
     _BACKGROUND["ipo_registry"] = asyncio.create_task(run())
 
 
+def _spawn_sip_estimates(now: datetime) -> None:
+    """Start the nightly SIP-estimate pass (monitor.sip_estimates, #297) in the background on trading days from 23:30
+    IST: one AMFI request per instalment day without units, two Kite GETs when Zerodha is connected. At most one runs
+    at a time."""
+    from finresearch.monitor.sip_estimates import due_slot, sip_estimates_step
+
+    t = _BACKGROUND.get("sip_estimates")
+    if (t is not None and not t.done()) or due_slot(now) is None:
+        return
+
+    async def run() -> None:
+        try:
+            res = await sip_estimates_step(now)
+            if res:
+                log.info("SIP estimates: %s", res)
+        except Exception:
+            log.warning("SIP estimates failed", exc_info=True)
+
+    _BACKGROUND["sip_estimates"] = asyncio.create_task(run())
+
+
+def _spawn_scheme_master(now: datetime) -> None:
+    """Start the weekly AMFI scheme-master check (monitor.scheme_master, #297) in the background: one scheme-master
+    download and NAVAll (shared cache) a week. At most one runs at a time."""
+    from finresearch.monitor.scheme_master import due_slot, scheme_master_step
+
+    t = _BACKGROUND.get("scheme_master")
+    if (t is not None and not t.done()) or due_slot(now) is None:
+        return
+
+    async def run() -> None:
+        try:
+            res = await scheme_master_step(now)
+            if res:
+                log.info("AMFI scheme-master check: %s", res)
+        except Exception:
+            log.warning("AMFI scheme-master check failed", exc_info=True)
+
+    _BACKGROUND["scheme_master"] = asyncio.create_task(run())
+
+
 def _spawn_retention(now: datetime) -> None:
     """Start the weekly prune (monitor.retention) in the background: file deletes in the HTTP cache and one DELETE
     on intraday_series. At most one runs at a time; it never touches packs, reports, backups or documents."""
@@ -525,6 +566,10 @@ async def tick(deps: jobs.Deps, now: datetime | None = None) -> dict[str, int]:
         _spawn_ipo_harvest(now)
     if deps.ipo_registry:
         _spawn_ipo_registry(now)
+    if deps.sip_estimates:
+        _spawn_sip_estimates(now)
+    if deps.scheme_master:
+        _spawn_scheme_master(now)
     out_brief = brief_step(now) if deps.brief else {}
     if deps.holidays is not None or deps.live_holidays:
         await _refresh_holidays(deps)
@@ -604,6 +649,8 @@ def schedule_json(ww=None, *, running: bool | None = None) -> dict:
     from finresearch.monitor import intraday, iv
     from finresearch.monitor import lookthrough_fetch as ltf
     from finresearch.monitor import portfolio_daily as pd
+    from finresearch.monitor import scheme_master as sm
+    from finresearch.monitor import sip_estimates as sipe
     from finresearch.monitor.plan import ALLOTMENT_TIME, LISTING_TIMES, LOCKIN_TIME
     from finresearch.signals.ledger import READY_AFTER_IST
     from finresearch.suggest.profile import IPO_FINAL_CHECK
@@ -634,6 +681,8 @@ def schedule_json(ww=None, *, running: bool | None = None) -> dict:
         "lookthrough": {"from_day": ltf.FIRST_DAY, "to_day": ltf.LAST_DAY, "after": hm((ltf.RUN_AFTER.hour,
                                                                                ltf.RUN_AFTER.minute)),
                         "sebi_days": 10},
+        "sip_estimates": {"after": hm((sipe.RUN_AFTER.hour, sipe.RUN_AFTER.minute)), "trading_days": True},
+        "scheme_master": {"weekly_from": f"{sm.WEEKDAY_NAME} {hm((sm.RUN_AFTER.hour, sm.RUN_AFTER.minute))}"},
         "equity_hours": [hm((EQUITY_HOURS[0].hour, EQUITY_HOURS[0].minute)),
                          hm((EQUITY_HOURS[1].hour, EQUITY_HOURS[1].minute))],
     }  # fmt: skip
