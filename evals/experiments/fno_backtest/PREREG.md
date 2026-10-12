@@ -2,7 +2,7 @@
 
 Registered 12-Oct-2026, before any backtest was run on real data. The market-data copy of the F&O history
 (`finresearch_fnohist`) was not yet available to this branch: no in-sample or out-of-sample figure on real prices had
-been computed. The registration is `src/finresearch/backtest/specs.py` (specs, book, slippage model, pass criteria,
+been computed. Registration commit: ebc0925 (pushed 12-Oct-2026). The registration is `src/finresearch/backtest/specs.py` (specs, book, slippage model, pass criteria,
 windows); its SHA-256 (`specs.registration_hash()`) is recorded in `src/finresearch/backtest/prereg.py`, and the
 evaluator refuses an out-of-sample run whose hash differs. Nothing below changes after the first real run; anything
 added later goes in an ADDENDUM.md and is labelled post hoc.

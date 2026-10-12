@@ -82,6 +82,8 @@ class History(Protocol):
 
     def latest(self, symbol: str) -> date | None: ...
 
+    def iv_history(self, symbol: str, start: date, end: date) -> list[float]: ...
+
 
 class Clocked:
     """A History that refuses any day after the clock (see the module docstring). `max_seen` is the latest day read."""
@@ -111,6 +113,11 @@ class Clocked:
     def latest(self, symbol: str) -> date | None:
         return self.inner.latest(symbol)
 
+    def iv_history(self, symbol: str, start: date, end: date) -> list[float]:
+        if self.clock is None or end > self.clock:
+            raise LookAheadError(f"{symbol} IV to {end} requested at the close of {self.clock}")
+        return self.inner.iv_history(symbol, start, end)
+
 
 class MemoryHistory:
     """Synthetic days for tests: {symbol: {day: Day}} and lot sizes {(symbol, expiry): lot}."""
@@ -136,6 +143,13 @@ class MemoryHistory:
 
     def latest(self, symbol: str) -> date | None:
         return max(self.days.get(symbol, {}), default=None)
+
+    def iv_history(self, symbol: str, start: date, end: date) -> list[float]:
+        return [
+            x.iv30
+            for d, x in sorted(self.days.get(symbol, {}).items())
+            if start <= d <= end and x.iv30 is not None
+        ]
 
 
 def within(d: date, expiry: date) -> bool:

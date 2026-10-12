@@ -91,6 +91,15 @@ class DbHistory:
         out.iv30 = iv if self.has_iv(symbol) else computed_iv30(out)
         return out
 
+    def iv_history(self, symbol: str, start: date, end: date) -> list[float]:
+        """The stored 30-day IVs from `start` to `end` (oldest first); [] without a derived series."""
+        if not self.has_iv(symbol):
+            return []
+        with self._s() as s:
+            return [float(v) for v in s.scalars(select(FnoIvEod.iv_30d).where(
+                FnoIvEod.symbol == symbol, FnoIvEod.day.between(start, end), FnoIvEod.iv_30d.is_not(None))
+                .order_by(FnoIvEod.day))]  # fmt: skip
+
     def lot(self, symbol: str, expiry: date, d: date) -> int | None:
         if (symbol, expiry, d) in self._row_lots:
             return self._row_lots[(symbol, expiry, d)]

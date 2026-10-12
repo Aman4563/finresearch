@@ -559,6 +559,43 @@ class FnoContract(Base):
     )  # [[day, lot], ...] when it changed in its life
 
 
+class FnoBacktestRun(Base):
+    """One evaluation of the pre-registered F&O strategies (#307, finresearch.backtest.evaluate): which registration
+    (hash), which history (`source`, a database name without credentials), the windows, book and criteria used.
+    Public market data and fixed rules only; `stock_rule_symbol` is the stock the overlay rule picked."""
+
+    __tablename__ = "fno_backtest_run"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    version: Mapped[str] = mapped_column(String(30))
+    registration_hash: Mapped[str] = mapped_column(String(64))
+    registered_hash: Mapped[str] = mapped_column(String(64))
+    oos_evaluated: Mapped[bool] = mapped_column(Boolean)
+    source: Mapped[str] = mapped_column(String(200))
+    variants_tried: Mapped[int] = mapped_column(Integer)
+    stock_rule_symbol: Mapped[str | None] = mapped_column(String(30))
+    detail: Mapped[dict[str, Any]] = mapped_column(JSONB)  # windows, book, criteria, generated_at, sources
+
+
+class FnoBacktestResult(Base):
+    """One strategy's evidence in a run: status candidate / fails / overlay_reported / in_sample_only / no_data, the
+    criteria with their values, window statistics, by-year and by-IV-regime tables, the (thinned) equity curve and
+    every trade."""
+
+    __tablename__ = "fno_backtest_result"
+    __table_args__ = (UniqueConstraint("run_id", "key"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("fno_backtest_run.id", ondelete="CASCADE"), index=True)
+    key: Mapped[str] = mapped_column(String(40))
+    name: Mapped[str] = mapped_column(String(120))
+    role: Mapped[str] = mapped_column(String(12))
+    status: Mapped[str] = mapped_column(String(20))
+    spec_hash: Mapped[str] = mapped_column(String(64))
+    underlying: Mapped[str | None] = mapped_column(String(30))
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB)  # the evaluate.evaluate() row, minus the trades
+    trades: Mapped[list[Any]] = mapped_column(JSONB)
+
+
 # --------------------------------------------------------------------------- forecast ledger (calibration)
 class Forecast(Base):
     """One probability forecast of a defined, checkable event, logged before the outcome is known and scored after.
