@@ -236,12 +236,11 @@ def test_library_bond_maturity_is_stored_and_backfilled_unknown_stays_unknown(lc
 async def test_mcp_bond_analytics_answers_matured_instead_of_crashing_and_search_drops_matured(monkeypatch):
     """#293: bond_analytics raised ValueError (fincalc's coupon schedule) on a matured bond; it now says so."""
     import json
+    from pathlib import Path
 
     from finresearch.adapters import nse_bonds
     from finresearch.fincalc.dates import today_ist
     from finresearch.mcp_server.server import bond_analytics, nse_bond_search
-
-    from pathlib import Path
 
     fix = Path(__file__).parent / "fixtures" / "nse" / "bonds_live_trimmed.json"
     rows = nse_bonds.parse_live_bonds(json.loads(fix.read_text()))

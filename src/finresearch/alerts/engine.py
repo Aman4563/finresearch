@@ -280,9 +280,8 @@ def _claim(slot: str, now: datetime) -> bool:
 async def rules_step(now: datetime, *, holidays: set | None = None) -> dict[str, Any]:
     """The monitor's alert-rule work for this tick (see the module docstring). No rules = no network, no rows."""
     from finresearch.db import session_scope
-    from finresearch.suggest.advisor import load_profile
-
     from finresearch.fincalc.dates import to_ist
+    from finresearch.suggest.advisor import load_profile
 
     with session_scope() as s:
         retire_expired(s, to_ist(now).date())
