@@ -91,7 +91,8 @@ def fills(s: Session, h: Any, txns: list[Any]) -> tuple[dict[int, dict[str, Any]
 
     if h.asset_type != "stock":
         return {}, []
-    cands = [t for i, t in enumerate(txns) if i not in superseded_openings(txns) and t.kind == "opening"
+    skip = superseded_openings(txns)
+    cands = [t for i, t in enumerate(txns) if i not in skip and t.kind == "opening"
              and not (t.meta or {}).get("acquired") and t.quantity]  # fmt: skip
     if not cands:
         return {}, []
