@@ -203,3 +203,24 @@ def test_infer_lot_needs_enough_points():
 
     assert infer_lot([25 * k for k in (3, 7, 10, 11, 13, 17, 19, 23, 29, 31)]) == 25
     assert infer_lot([50, 100, 150]) is None  # too few: 50 could be two lots of 25
+
+
+@respx.mock
+async def test_a_derivation_error_keeps_the_day_loaded(clean, monkeypatch):
+    from finresearch.db import session_scope
+    from finresearch.db.models import FnoBhav, FnoBhavDay
+    from finresearch.fnohist import derive, store
+
+    def boom(s, day):
+        raise ZeroDivisionError("odd day")
+
+    monkeypatch.setattr(derive, "derive_day", boom)
+    respx.get(fb.url_for(D_UDIFF, "udiff")).mock(return_value=httpx.Response(200, content=zipped(UDIFF)))
+    async with client() as http:
+        res = await store.backfill(D_UDIFF, D_UDIFF, today=date(2026, 10, 12), stocks=[], http=http, holidays=set(),
+                                   keep_raw=False)  # fmt: skip
+    assert res["loaded"] == 1 and res["failed"] == {} and "2026-09-30" in res["derive_failed"]
+    assert count(FnoBhav) == 274
+    with session_scope() as s:
+        m = s.get(FnoBhavDay, D_UDIFF)
+        assert m.status == "loaded" and m.error.startswith("derive: ZeroDivisionError")

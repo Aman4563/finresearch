@@ -32,7 +32,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import delete, insert, select
+from sqlalchemy import delete, insert, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -188,8 +188,17 @@ async def backfill(start: date, end: date | None = None, *, today: date | None =
                         status = "no_file"
                     else:
                         out["rows"] += load_day(s, day, *got, stocks)["kept"]
-                        if derive:
+                # the derived rows in their own transaction: a derivation error never un-loads the day
+                if got is not None and derive:
+                    try:
+                        with session_scope() as s:
                             dv.derive_day(s, day)
+                    except Exception as e:
+                        log.warning("F&O IV derivation failed for %s", day, exc_info=True)
+                        msg = f"derive: {type(e).__name__}: {e}"[:300]
+                        out.setdefault("derive_failed", {})[day.isoformat()] = msg
+                        with session_scope() as s:
+                            s.execute(update(FnoBhavDay).where(FnoBhavDay.day == day).values(error=msg))
                 out[status] += 1
                 streak = 0
             except (
