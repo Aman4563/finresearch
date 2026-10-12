@@ -56,11 +56,12 @@ def at(y, m, d, h=12) -> datetime:
     return datetime(y, m, d, h, tzinfo=IST)
 
 
-def forecast(s, symbol: str, method: str, *, issue="100", created=at(2026, 9, 30), resolve_on=date(2026, 10, 6),
+def forecast(s, symbol: str, method: str, *, issue="100", created: datetime | None = None, resolve_on=date(2026, 10, 6),
              listing: str | None = None) -> int:  # fmt: skip
     from finresearch.db.models import Forecast
     from finresearch.signals import ledger
 
+    created = created or at(2026, 9, 30)
     f = Forecast(created_at=created, asset="ipo", instrument=symbol, name=f"{symbol} Ltd", source="signal:ipo",
                  event_kind="listing_gain", event=ledger.IPO_EVENT, horizon="listing day", resolve_on=resolve_on,
                  probability=0.7, action="APPLY", method=method, validation_status="validated",
@@ -86,10 +87,10 @@ def bar_json(day: date, open_: str, prev: str) -> dict:
     return {"day": day.isoformat(), "open": open_, "close": open_, "prev_close": prev}
 
 
-async def _resolve(deps, now=at(2026, 10, 9, 18), recheck=False):
+async def _resolve(deps, now: datetime | None = None, recheck=False):
     from finresearch.signals import ledger
 
-    return await ledger.resolve_due(deps, now, recheck=recheck)
+    return await ledger.resolve_due(deps, now or at(2026, 10, 9, 18), recheck=recheck)
 
 
 # --------------------------------------------------------------------------- forecast resolver
