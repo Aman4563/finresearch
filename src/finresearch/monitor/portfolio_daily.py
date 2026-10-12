@@ -422,13 +422,27 @@ async def valuation_pass(deps: Any, now: datetime, today: date) -> dict[str, Any
     return {**val, "holdings": len(cur), "unpriced": len(unpriced)}
 
 
+def _ended() -> set[str]:
+    """Lifecycle keys of instruments that have ended (monitor.lifecycle, #293): never fetched again."""
+    from finresearch.fincalc.dates import today_ist
+    from finresearch.monitor import lifecycle
+
+    with session_scope() as s:
+        return set(lifecycle.ended_keys(s, today_ist()))
+
+
 def _instruments(val: dict[str, Any]) -> dict[tuple[str, str], list[str]]:
+    from finresearch.monitor import lifecycle
+
     out: dict[tuple[str, str], list[str]] = {}
     with session_scope() as s:
         v = cache.read(s, cache.VALUATION)
+    gone = _ended()
     for hid, h in (v.get("holdings") or {}).items():
         sig = h.get("signal")
         if sig and sig.get("asset") and sig.get("instrument"):
+            if lifecycle.key(sig["asset"], sig["instrument"]) in gone:
+                continue
             out.setdefault((sig["asset"], sig["instrument"]), []).append(hid)
     return out
 
@@ -520,8 +534,9 @@ async def events_pass(deps: Any, now: datetime, today: date, val: dict[str, Any]
         key = (h.get("signal") or {}).get("instrument") or h.get("nse_symbol")
         return None if not key or key.startswith("BSE:") else key
 
+    gone = _ended()
     for hid, h in (v.get("holdings") or {}).items():
-        if h["asset_type"] == "stock" and nse_of(h):
+        if h["asset_type"] == "stock" and nse_of(h) and f"stock:{nse_of(h).upper()}" not in gone:
             by_sym.setdefault(nse_of(h), []).append(hid)
     bse_only = sorted({h["name"] for h in (v.get("holdings") or {}).values()
                        if h["asset_type"] == "stock" and not nse_of(h)})  # fmt: skip

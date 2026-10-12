@@ -465,3 +465,30 @@ def test_ex_date_reminder_tells_a_holder_to_keep_not_to_buy():
     held = ex_date_message("EXHELD", ca, True)
     assert "you hold it" in held and "buy before" not in held and "record date 2026-10-14" in held
     assert ex_date_message("EXWATCH", ca, False).endswith("buy before then to be entitled")
+
+
+async def test_an_ended_fund_or_stock_is_not_fetched_by_the_daily_signal_and_events_passes(lc):
+    from finresearch.db import session_scope
+    from finresearch.monitor import portfolio_daily as pd
+    from finresearch.portfolio import cache
+
+    holdings = {"1": {"asset_type": "mf", "name": "Example Merged Fund", "weight_pct": 10.0,
+                      "signal": {"asset": "fund", "instrument": "999901"}},
+                "2": {"asset_type": "stock", "name": "Example Gone Ltd", "nse_symbol": "EXGONE", "weight_pct": 5.0,
+                      "signal": {"asset": "stock", "instrument": "EXGONE"}},
+                "3": {"asset_type": "stock", "name": "Example Live Ltd", "nse_symbol": "EXLIVE", "weight_pct": 5.0,
+                      "signal": {"asset": "stock", "instrument": "EXLIVE"}}}  # fmt: skip
+    now = datetime(2026, 10, 9, 11, tzinfo=UTC)
+    with session_scope() as s:
+        cache.write(s, cache.VALUATION, {"holdings": holdings})
+        for k in ("fund:999901", "stock:EXGONE"):
+            L.save(s, k, {"ended": {"on": "2026-10-01", "reason": "missing", "detail": "gone"}}, now)
+    assert set(pd._instruments({})) == {("stock", "EXLIVE")}
+    asked = []
+
+    async def events(sym):
+        asked.append(sym)
+        return {"actions": [], "board_meetings": [], "results": []}
+
+    await pd.events_pass(NS(pf_stock_events=events, pf_spacing_s=0), now, TODAY, {})
+    assert asked == ["EXLIVE"]
