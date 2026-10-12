@@ -98,7 +98,9 @@ def settle(legs: Sequence[PaperLeg], settlement_price: float, expiry: date,
         raise ValueError("no settlement price")
     finals = [intrinsic(x.right, x.strike, settlement_price) for x in legs]
     gross = sum((v - x.entry) * x.qty * x.sign for x, v in zip(legs, finals, strict=True))
-    base = sum(v * x.qty for x, v in zip(legs, finals, strict=True) if x.right != "future" and x.side == "buy")
+    base = sum(
+        v * x.qty for x, v in zip(legs, finals, strict=True) if x.right != "future" and x.side == "buy"
+    )
     return Settlement(settlement_price, finals, gross, ch.exercise_stt(base, expiry, overrides), base)
 
 
