@@ -77,6 +77,11 @@ LIVE_BOND, MATURED_BOND, GONE_BOND = (
 )  # synthetic debenture ISINs
 
 
+def mine(xs):
+    """This file's synthetic instruments only: other tests leave their own companies, watches and series behind."""
+    return [x for x in xs if str(x).upper().startswith(("INE0EO", "99990", "EX"))]
+
+
 @pytest.fixture
 def lc(env, monkeypatch):
     from finresearch.db import session_scope
@@ -180,7 +185,7 @@ def test_matured_and_missing_bonds_leave_tracked_and_alert_targets_one_missing_d
         _company(s, f"bond-{GONE_BOND.lower()}", "Example Vanishing NCD")  # maturity unknown
         _hold(s, "stock", "Example Held NCD", isin="INE0EO107045")  # a held debenture (no library company)
         t = tracked(s, TODAY)
-        assert set(t.bonds) == {LIVE_BOND, GONE_BOND, "INE0EO107045"}
+        assert set(mine(t.bonds)) == {LIVE_BOND, GONE_BOND, "INE0EO107045"}
         assert t.ended[f"bond:{MATURED_BOND}"]["reason"] == "matured"
     listed = [_bond(LIVE_BOND, date(2030, 3, 31)), _bond("INE0EO107045", date(2031, 1, 1))]
     days = _trading_days(10)
@@ -193,14 +198,19 @@ def test_matured_and_missing_bonds_leave_tracked_and_alert_targets_one_missing_d
         assert GONE_BOND in tracked(s, days[8]).bonds  # 9 missing trading days: not yet
         assert s.query(Alert).filter(Alert.kind == L.ALERT_KIND).count() == 0
     res = _pass(days[9], bonds=listed)
-    assert res["bond"]["ended"] == [GONE_BOND]
+    assert mine(res["bond"]["ended"]) == [GONE_BOND]
     _pass(days[9], bonds=listed)  # the same day's retry: no second alert
     with session_scope() as s:
         t = tracked(s, days[9])
-        assert set(t.bonds) == {LIVE_BOND, "INE0EO107045"}
+        assert set(mine(t.bonds)) == {LIVE_BOND, "INE0EO107045"}
         assert t.ended[f"bond:{GONE_BOND}"]["reason"] == "missing"
-        assert [x.instrument for x in targets(s, _bond_rule())] == ["INE0EO107045", LIVE_BOND]  # held first
-        alerts = s.query(Alert).filter(Alert.kind == L.ALERT_KIND).all()
+        assert mine(x.instrument for x in targets(s, _bond_rule())) == [
+            "INE0EO107045",
+            LIVE_BOND,
+        ]  # held first
+        alerts = [
+            a for a in s.query(Alert).filter(Alert.kind == L.ALERT_KIND) if mine([a.data["instrument"]])
+        ]
         assert len(alerts) == 1 and alerts[0].data["instrument"] == GONE_BOND
         assert "Example Vanishing NCD" in alerts[0].message
         # the held bond's maturity came from the list; nothing was guessed for the vanished one
@@ -289,21 +299,22 @@ def test_ended_fund_and_delisted_stock_watch_stop_once_with_one_alert(lc):
     stocks = [NS(nse_symbol="EXHELD", bse_code=None, isin="INE0EO101029")]
     for d in _trading_days(10):
         res = _pass(d, navs=navs, stocks=stocks)
-    assert res["fund"]["ended"] == ["999901"] and res["stock"]["ended"] == ["EXGONE"]
+    assert mine(res["fund"]["ended"]) == ["999901"] and mine(res["stock"]["ended"]) == ["EXGONE"]
     again = _pass(_trading_days(11)[-1], navs=navs, stocks=stocks)  # an 11th pass: nothing new
-    assert again["fund"]["ended"] == [] and again["stock"]["ended"] == []
+    assert mine(again["fund"]["ended"]) == [] and mine(again["stock"]["ended"]) == []
     with session_scope() as s:
         t = tracked(s, TODAY)
-        assert set(t.funds) == {"999902"} and set(t.stocks) == {"EXHELD"}
+        assert set(mine(t.funds)) == {"999902"} and set(mine(t.stocks)) == {"EXHELD"}
         w = s.query(Watch).one()
         assert w.active is False and w.meta["ended"]["reason"] == "missing"
         assert s.query(MonitorJob).one().status == "cancelled"
         alerts = s.query(Alert).filter(Alert.kind == L.ALERT_KIND).all()
-        assert sorted(a.data["instrument"] for a in alerts) == ["999901", "EXGONE"]
-        assert [x.instrument for x in targets(s, AlertRule(id="f", kind="fund", metric="nav"))] == ["999902"]
-        assert [x.instrument for x in targets(s, AlertRule(id="s", kind="stock", metric="price"))] == [
-            "EXHELD"
+        assert sorted(mine(a.data["instrument"] for a in alerts)) == ["999901", "EXGONE"]
+        assert mine(x.instrument for x in targets(s, AlertRule(id="f", kind="fund", metric="nav"))) == [
+            "999902"
         ]
+        stock_rule = AlertRule(id="s", kind="stock", metric="price")
+        assert mine(x.instrument for x in targets(s, stock_rule)) == ["EXHELD"]
 
 
 def test_a_renamed_stock_is_found_by_its_isin_and_never_ends(lc):
@@ -315,7 +326,7 @@ def test_a_renamed_stock_is_found_by_its_isin_and_never_ends(lc):
         s.add(Watch(company_id=co.id, kind="stock", nse_symbol="EXOLD", exchange="NSE", meta={}))
     for d in _trading_days(12):
         res = _pass(d, stocks=[NS(nse_symbol="EXNEW", bse_code=None, isin="INE0EO101037")])
-    assert res["stock"]["missing"] == [] and res["stock"]["ended"] == []
+    assert mine(res["stock"]["missing"]) == [] and mine(res["stock"]["ended"]) == []
     with session_scope() as s:
         assert s.query(Watch).one().active is True
 
@@ -411,11 +422,12 @@ def test_held_stocks_get_iv_intraday_sector_pe_and_alert_coverage_by_weight(lc):
         _hold(s, "stock", "Example Sold Ltd", sym="EXSOLD", open_qty="0")
         _valuation_cache(s, {small.id: 5.0, big.id: 30.0})
     lots = {"EXBIG": {}, "EXSMALL": {}, "EXSOLD": {}}
-    assert iv.symbols(lots)[3:] == ["EXBIG", "EXSMALL"]
-    assert [k for kind, k in intraday.targets(TODAY) if kind == "equity"] == ["EXBIG", "EXSMALL"]
-    assert archive._live_watched() == ["EXBIG", "EXSMALL"]
+    assert mine(iv.symbols(lots)) == ["EXBIG", "EXSMALL"]
+    assert mine(k for kind, k in intraday.targets(TODAY) if kind == "equity") == ["EXBIG", "EXSMALL"]
+    assert mine(archive._live_watched()) == ["EXBIG", "EXSMALL"]
     with session_scope() as s:
         got = targets(s, AlertRule(id="s", kind="stock", metric="price"))
+    got = [t for t in got if mine([t.instrument])]
     assert [t.instrument for t in got] == ["EXBIG", "EXSMALL"] and all(t.watch_id is None for t in got)
 
 
@@ -483,7 +495,7 @@ async def test_an_ended_fund_or_stock_is_not_fetched_by_the_daily_signal_and_eve
         cache.write(s, cache.VALUATION, {"holdings": holdings})
         for k in ("fund:999901", "stock:EXGONE"):
             L.save(s, k, {"ended": {"on": "2026-10-01", "reason": "missing", "detail": "gone"}}, now)
-    assert set(pd._instruments({})) == {("stock", "EXLIVE")}
+    assert {x for x in pd._instruments({}) if mine([x[1]])} == {("stock", "EXLIVE")}
     asked = []
 
     async def events(sym):
