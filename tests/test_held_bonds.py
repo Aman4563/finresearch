@@ -227,3 +227,30 @@ def test_sgb_redemption_by_rbi_is_exempt(client):  # noqa: F811
     assert (d["term"], d["gain"], d["rule"]) == ("exempt", 0.0, "sgb-redemption")
     fy = next(x for x in tax["fys"] if x["fy"] == 2026)
     assert fy["exempt"] == 90000.0 and fy["total"] == 0.0  # 10 × (12,000 - 3,000), s.47(viic)
+
+
+# --------------------------------------------------------------------------- AIS
+def test_ais_interest_from_a_bond_issuer_is_compared_and_bank_interest_stays_information():
+    from finresearch.portfolio.ais import AisItem
+    from finresearch.portfolio.ais_recon import AppEntry, reconcile
+
+    ais = [AisItem("interest", "sft", D("4500"), code="SFT-016", source="EXAMPLE FINANCE LIMITED",
+                   day=date(2025, 9, 30)),
+           AisItem("interest", "sft", D("3200"), code="SFT-016", source="EXAMPLE BANK LTD"),
+           AisItem("interest", "sft", D("1250"), code="SFT-016", source="EXAMPLE HOUSING LIMITED")]  # fmt: skip
+    app = [AppEntry(1, "Example Finance NCD 9% 2026", "INE000Z07011", "stock", "interest", date(2025, 9, 30),
+                    D("4500")),
+           AppEntry(2, "Example Housing NCD 10% 2027", "INE000Y07012", "stock", "interest", date(2025, 6, 1),
+                    D("1125")),  # recorded net of 10 % TDS: AIS 1,250 gross
+           AppEntry(3, "Example Power NCD 8% 2028", "INE000W07013", "stock", "interest", date(2025, 8, 1),
+                    D("800"))]  # fmt: skip
+    out = reconcile(ais, app, 2026)
+    rows = {(r["category"], r["label"]): r for r in out["rows"]}
+    fin = rows[("interest", "EXAMPLE FINANCE LIMITED")]
+    assert (fin["status"], fin["match"], fin["app_amount"]) == ("matched", "payer", 4500.0)
+    housing = rows[("interest", "EXAMPLE HOUSING LIMITED")]
+    assert housing["status"] == "mismatch" and housing["diff"] == 125.0 and "TDS" in housing["cause"]
+    assert rows[("interest", "Example Power NCD 8% 2028")]["status"] == "only_app"
+    # the bank's savings interest has no app side: information only, never an "only in AIS" problem
+    assert [(i["category"], i["label"]) for i in out["info"]] == [("interest", "EXAMPLE BANK LTD")]
+    assert out["totals"]["interest"] == {"ais": 4500 + 1250, "app": 4500 + 1125 + 800}

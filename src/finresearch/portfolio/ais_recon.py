@@ -6,9 +6,11 @@ Compared, per security (ISIN when the AIS has it, else the normalised name):
   (units x price, before charges). Disposal `proceeds` are net of charges (models.PortfolioDisposal), while the AIS
   reports the consideration with STT in its own column (SFT-STT, AIS app bundle) [V], so the gross is the like-for-like
   figure;
-* purchases: AIS purchase rows vs the app's buys (gross).
-Interest and off-market transfers have no app side (the app tracks no bank, deposit or bond interest): they are listed
-for the user to check by hand.
+* purchases: AIS purchase rows vs the app's buys (gross);
+* interest (#294): an AIS interest row (SFT-016, TDS s.193/194A [U]) whose payer matches a holding's recorded bond
+  coupon or SGB interest (`interest` transactions; ISIN, else the exact normalised name) is compared like a dividend.
+  Interest the app cannot have (savings, deposits) and interest from payers no holding matches stay listed for the
+  user to check by hand, as do off-market transfers.
 
 The same dividend or interest can be reported twice, once by the payer's TDS return and once in its SFT (the AIS help
 says only the "processed" value is de-duplicated) [V]: a TDS row with an SFT twin (same amount, same or unknown date)
@@ -37,6 +39,7 @@ TDS_RATE = Decimal(
     "0.10"
 )  # s.194 / s.194K TDS on dividends for a resident with a PAN (Income-tax Act 1961) [V]
 COMPARED = ("dividend", "sale", "purchase")
+ROW_CATEGORIES = (*COMPARED, "interest")  # interest rows only where a holding's interest matches (#294)
 _GENERIC = {"LIMITED", "LTD", "THE", "PLAN", "OPTION", "OPT", "INDIA", "CO", "COMPANY", "CORPORATION", "CORP",
             "AND", "INC", "PVT", "PRIVATE"}  # fmt: skip
 _AMC_WORDS = {"MUTUAL", "FUND", "MF", "AMC", "ASSET", "MANAGEMENT", "INVESTMENT", "MANAGERS", "TRUSTEE"}
@@ -50,7 +53,7 @@ class AppEntry:
     name: str
     isin: str | None
     asset_type: str  # stock | mf | other
-    category: str  # dividend | sale | purchase
+    category: str  # dividend | sale | purchase | interest
     day: date
     amount: Decimal  # gross
     quantity: Decimal | None = None
@@ -146,6 +149,9 @@ def _assign(groups: list[_Group], app: list[AppEntry]) -> list[AppEntry]:
         ("name", lambda g, e: not g.whole_year and names_match(g.label, e.name)),
         ("amc", lambda g, e: g.category == "dividend" and e.asset_type == "mf" and g.amc
                               and amc_brand(g.label) <= tokens(e.name)),
+        # a bond's interest payer is its issuer ("Example Finance Ltd" for "Example Finance NCD 9% 2026"): the payer's
+        # words all in the holding's name, and only against holdings that recorded interest (#294)
+        ("payer", lambda g, e: g.category == "interest" and bool(tokens(g.label)) and tokens(g.label) <= tokens(e.name)),
         ("total", lambda g, e: g.whole_year),
     )  # fmt: skip
     for how, ok in passes:
@@ -190,6 +196,12 @@ def _explain(g: _Group, ais: Decimal, app: Decimal, status: str) -> tuple[str, s
                 "the AIS reports it gross.",
                 "Record the gross dividend in the app: dividends are taxed gross and the TDS is a credit against "
                 "your tax (it shows in Form 26AS).")  # fmt: skip
+    if c == "interest":
+        return ("The amounts differ: a coupon missing on one side, one paid in another FY, or the app has it net of "
+                "TDS (s.193 on listed debentures since 1-Apr-2023; none on SGB interest, RBI SGB FAQ) while the AIS "
+                "reports it gross.",
+                "Record each coupon as an interest transaction at its gross amount (the TDS is a credit in Form "
+                "26AS); if the AIS is wrong, give feedback. " + FEEDBACK)  # fmt: skip
     if c == "dividend":
         return ("The amounts differ: a dividend missing on one side, a different record date or FY, or a payer "
                 "reporting the wrong amount.",
@@ -263,9 +275,10 @@ def _only_app(entries: list[AppEntry]) -> list[dict[str, Any]]:
 
 
 INFO_NOTES = {
-    "interest": "The app does not track bank, deposit or bond interest. Check these against your bank/bond statements: "
-                "interest is taxed at your slab rate under 'Income from other sources' (savings interest may get "
-                "s.80TTA/80TTB relief).",
+    "interest": "No holding's recorded bond or SGB interest matches this payer (the app does not track bank or deposit "
+                "interest). Check it against your bank/bond statements, or record a bond's coupons as interest on its "
+                "holding: interest is taxed at your slab rate under 'Income from other sources' (savings interest may "
+                "get s.80TTA/80TTB relief).",
     "off_market": "Off-market transfers (a gift, a move between your own demat accounts) are not sales. Make sure the "
                   "app has the transfer with the original cost and date, or the lots and gains will be wrong.",
 }  # fmt: skip
@@ -275,21 +288,24 @@ _ORDER = {"mismatch": 0, "only_ais": 1, "only_app": 2, "matched": 3}
 def reconcile(items: list[AisItem], app: list[AppEntry], fy: int) -> dict[str, Any]:
     """The AIS check for one financial year (named by its end year). `items` are that year's AIS rows; `app` may hold
     any years (only `fy` is used)."""
-    app_fy = [e for e in app if fiscal_year(e.day) == fy and e.category in COMPARED]
+    app_fy = [e for e in app if fiscal_year(e.day) == fy and e.category in ROW_CATEGORIES]
     groups = _groups(items, COMPARED)
-    left = _assign(groups, app_fy)
-    rows = [_row(g) for g in groups] + _only_app(left)
-    rows.sort(key=lambda r: (_ORDER[r["status"]], COMPARED.index(r["category"]), -(r["ais_amount"] or 0),
+    left = _assign(groups, [e for e in app_fy if e.category in COMPARED])
+    # interest: only payers matched to a holding's recorded interest become rows; the rest stay information (#294)
+    interest = _groups(items, ("interest",))
+    left += _assign(interest, [e for e in app_fy if e.category == "interest"])
+    rows = [_row(g) for g in groups] + [_row(g) for g in interest if g.app] + _only_app(left)
+    rows.sort(key=lambda r: (_ORDER[r["status"]], ROW_CATEGORIES.index(r["category"]), -(r["ais_amount"] or 0),
                              -(r["app_amount"] or 0)))  # fmt: skip
     info = []
-    for g in _groups(items, ("interest", "off_market")):
+    for g in [g for g in interest if not g.app] + _groups(items, ("off_market",)):
         total = sum((i.amount for i in g.items), Decimal(0))
         info.append({"category": g.category, "label": g.label, "ais_amount": _money(total),
                      "ais_tds": _money(_sum(i.tds for i in g.items)), "duplicates_dropped": g.deduped,
                      "ais_rows": [_ais_json(i) for i in g.items], "note": INFO_NOTES[g.category]})  # fmt: skip
     counts = {s: sum(1 for r in rows if r["status"] == s) for s in _ORDER}
     totals = {}
-    for c in COMPARED:
+    for c in ROW_CATEGORIES:
         rs = [r for r in rows if r["category"] == c]
         totals[c] = {"ais": _money(sum((Decimal(str(r["ais_amount"] or 0)) for r in rs), Decimal(0))),
                      "app": _money(sum((Decimal(str(r["app_amount"] or 0)) for r in rs), Decimal(0)))}  # fmt: skip
@@ -299,5 +315,6 @@ def reconcile(items: list[AisItem], app: list[AppEntry], fy: int) -> dict[str, A
                       "Sale values are compared gross (units × price, before brokerage and STT); the AIS shows STT "
                       "in its own column.",
                       "Dividends reported twice (the payer's TDS return and its SFT) are counted once.",
-                      "Interest and off-market transfers are listed for you to check: the app has no record of them.",
+                      "Bond and SGB interest recorded on a holding is compared with the AIS; other interest (bank, "
+                      "deposits) and off-market transfers are listed for you to check.",
                       "A personal check, not tax advice: the ITR must report income even if the AIS misses it."]}  # fmt: skip
