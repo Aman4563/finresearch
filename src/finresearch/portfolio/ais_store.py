@@ -17,7 +17,7 @@ from finresearch.portfolio.ais import AisItem, AisStatement, parse_ais_json
 from finresearch.portfolio.ais_recon import COMPARED, AppEntry, reconcile, within
 from finresearch.portfolio.importers import StatementError
 
-_KIND = {"dividend": "dividend", "sell": "sale", "buy": "purchase"}
+_KIND = {"dividend": "dividend", "sell": "sale", "buy": "purchase", "interest": "interest"}
 # Set once per format (json | pdf) by the first saved import that validates (#216); never cleared. Until then the AIS
 # card calls the check "Experimental": the parsers were built from field names and a summary-row pattern, not from a
 # real downloaded AIS.
@@ -25,7 +25,7 @@ VALIDATED_KEY = "ais_format_validated"
 
 
 def app_entries(s: Session) -> list[AppEntry]:
-    """Dividends, sells and buys at their gross value (units x price when the amount is missing); a sale's charges
+    """Dividends, bond/SGB interest (#294), sells and buys at their gross value (units x price when the amount is missing); a sale's charges
     ride along so a charges-sized difference can be explained."""
     hs = {h.id: h for h in s.scalars(select(PortfolioHolding))}
     out = []

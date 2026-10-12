@@ -832,10 +832,18 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
             d = s.get(Decision, decision_id)
             if d is None:
                 raise HTTPException(404, f"unknown decision {decision_id}")
-            for k, v in body.model_dump(exclude_unset=True).items():
+            changes = body.model_dump(exclude_unset=True)
+            for k, v in changes.items():
                 setattr(d, k, v)
             d.outcome = record_outcome(d)
             s.flush()
+            if {"allotted_lots", "issue_price"} & set(
+                changes
+            ):  # a broker baseline may stand for this allotment (#294)
+                from finresearch.portfolio.ipo_fill import rebuild_company
+
+                run = s.get(ResearchRun, d.run_id)
+                rebuild_company(s, d.company_id or (run.company_id if run else None))
             return decision_json(d)
 
     # ------------------------------------------------------------------ monitoring

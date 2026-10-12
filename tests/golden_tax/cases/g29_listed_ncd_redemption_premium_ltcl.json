@@ -1,0 +1,120 @@
+{
+ "id": "g29_listed_ncd_redemption_premium_ltcl",
+ "title": "Listed NCD bought at a premium and redeemed at par: LTCL of Rs 600 set off against s.112A equity LTCG before the Rs 1.25 lakh exemption",
+ "covers": [
+  "listed NCD redemption is a transfer",
+  "LTCL on redemption",
+  "LTCL set off against s.112A LTCG (s.70(3))",
+  "set-off before s.112A threshold"
+ ],
+ "rules": [
+  "Income-tax Act 1961 s.2(47)(ii): redemption at maturity extinguishes the rights in the debenture -> transfer; FIFO lot matching",
+  "Income-tax Act 1961 s.2(42A) first proviso: listed security (other than a unit) held more than 12 months -> long-term",
+  "s.50AA as amended by Finance (No.2) Act 2024 covers only unlisted bonds/debentures (and market-linked debentures) -> not applicable to a listed NCD",
+  "Income-tax Act 1961 s.70(3): a long-term capital loss is set off only against long-term capital gains of the same year, including s.112A gains; set-off is mandatory, not optional",
+  "Income-tax Act 1961 s.112A(1) as amended by Finance (No.2) Act 2024: 12.5 % on LTCG exceeding Rs 1,25,000; the threshold applies to s.112A LTCG included in total income, i.e. after s.70 set-off (s.74 brought-forward losses would also come before it; none here)",
+  "Health and Education Cess 4 %"
+ ],
+ "derivation": [
+  "KILO FINANCE NCD: buy 2023-06-15, 10 @ 1,060.00 -> cost 10,600.00 (clean price; accrued interest ignored).",
+  "Redemption 2025-06-15 at par: 10 @ 1,000.00 -> proceeds 10,000.00; held exactly 24 months (> 12, listed) -> long; loss 10,000 - 10,600 = -600.00 (rate bucket 12.5 %).",
+  "LIMA LTD: buy 2022-04-01, 1,000 @ 300.00 -> cost 3,00,000.00; sold 2025-09-01 @ 500.00 -> proceeds 5,00,000.00; LTCG 2,00,000.00 (s.112A, 12.5 %).",
+  "FY 2025-26 (fy 2026): s.70(3) LTCL 600 set off against LTCG -> 2,00,000 - 600 = 1,99,400.",
+  "s.112A threshold: exemption_used 1,25,000.00; taxable 74,400 (same result if the threshold were applied first: 2,00,000 - 1,25,000 - 600 = 74,400).",
+  "Tax 74,400 x 0.125 = 9,300.00; cess 372.00; total 9,672.00 (check 9,672 / 1.04 = 9,300). No loss carried."
+ ],
+ "interpretive": false,
+ "derived_by": "independent derivation agent (#294) that did not read the engine; inputs and conventions set by the implementer",
+ "slab_rate": "0.30",
+ "holdings": [
+  {
+   "name": "KILO FINANCE NCD 8.5% 2025",
+   "tax_class": "other",
+   "listed": true,
+   "debt_security": true,
+   "events": [
+    {
+     "day": "2023-06-15",
+     "kind": "buy",
+     "quantity": "10",
+     "price": "1060.00",
+     "charges": "0",
+     "stt_paid": false
+    },
+    {
+     "day": "2025-06-15",
+     "kind": "redemption",
+     "quantity": "10",
+     "price": "1000.00",
+     "charges": "0",
+     "stt_paid": false
+    }
+   ]
+  },
+  {
+   "name": "LIMA LTD",
+   "tax_class": "equity",
+   "listed": true,
+   "events": [
+    {
+     "day": "2022-04-01",
+     "kind": "buy",
+     "quantity": "1000",
+     "price": "300.00",
+     "charges": "0"
+    },
+    {
+     "day": "2025-09-01",
+     "kind": "sell",
+     "quantity": "1000",
+     "price": "500.00",
+     "charges": "0"
+    }
+   ]
+  }
+ ],
+ "expected": {
+  "disposals": [
+   {
+    "holding": "KILO FINANCE NCD 8.5% 2025",
+    "sold": "2025-06-15",
+    "acquired": "2023-06-15",
+    "quantity": "10",
+    "cost": "10600.00",
+    "tax_cost": "10600.00",
+    "proceeds": "10000.00",
+    "gain": "-600.00",
+    "term": "long",
+    "rate": "0.125"
+   },
+   {
+    "holding": "LIMA LTD",
+    "sold": "2025-09-01",
+    "acquired": "2022-04-01",
+    "quantity": "1000",
+    "cost": "300000.00",
+    "tax_cost": "300000.00",
+    "proceeds": "500000.00",
+    "gain": "200000.00",
+    "term": "long",
+    "rate": "0.125"
+   }
+  ],
+  "open_lots": [],
+  "fy": [
+   {
+    "fy": 2026,
+    "exemption_used": "125000.00",
+    "tax": "9300.00",
+    "cess": "372.00",
+    "total": "9672.00",
+    "complete": true,
+    "unknown_count": 0,
+    "intraday_count": 0,
+    "exempt_total": "0.00",
+    "losses_carried_short": "0.00",
+    "losses_carried_long": "0.00"
+   }
+  ]
+ }
+}

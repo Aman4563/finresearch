@@ -159,7 +159,16 @@ def corporate_actions(rows: list[dict[str, Any]], today: date) -> dict[str, Any]
 def dividends(s: Session, today: date) -> dict[str, Any]:
     """Completed FYs in which a stock was held, and whether any dividend is recorded for that FY. A year without one
     can be genuine (not every stock pays), so this reads "recorded", not "missing"."""
-    stocks = {h.id for h in s.scalars(select(PortfolioHolding).where(PortfolioHolding.asset_type == "stock"))}
+    from finresearch.portfolio.tax import is_debt_security, sovereign_kind
+
+    # bonds and SGBs held like shares pay interest, not dividends (#294): they are not asked about dividends
+    stocks = {
+        h.id
+        for h in s.scalars(select(PortfolioHolding).where(PortfolioHolding.asset_type == "stock"))
+        if not (
+            is_debt_security(h.isin, h.name, h.nse_symbol) or sovereign_kind(h.isin, h.name, h.nse_symbol)
+        )
+    }
     spans: dict[int, list[date]] = defaultdict(list)
     paid: set[int] = set()
     open_ids = {
@@ -168,7 +177,7 @@ def dividends(s: Session, today: date) -> dict[str, Any]:
     for t in s.scalars(select(PortfolioTxn).where(PortfolioTxn.holding_id.in_(stocks))):
         if t.kind == "dividend":
             paid.add(fiscal_year(t.day))
-        elif t.kind in ("buy", "opening", "sell"):
+        elif t.kind in ("buy", "opening", "sell", "redemption"):
             spans[t.holding_id].append(t.day)
     last_done = fiscal_year(today) - 1
     years: set[int] = set()

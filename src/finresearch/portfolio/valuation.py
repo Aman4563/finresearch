@@ -597,10 +597,10 @@ NO_PURCHASE_DATE = "opening balance with an unknown purchase date"
 def cash_flows(
     txns: Sequence[Any], value: Decimal | None, today: date
 ) -> tuple[list[tuple[date, Decimal]], str | None]:
-    """Investor cash flows for XIRR: buys out (amount + charges), sales and paid-out dividends in, the current value
+    """Investor cash flows for XIRR: buys out (amount + charges), sales, redemptions, paid-out dividends and interest in, the current value
     in today. Reinvested dividends are neither (the units were bought with the dividend). An opening balance with no
     cost makes XIRR impossible."""
-    from finresearch.portfolio.lots import superseded_openings
+    from finresearch.portfolio.lots import opening_basis, superseded_openings
 
     flows: list[tuple[date, Decimal]] = []
     skip = superseded_openings(txns)  # openings the lots ignore: earlier rows already hold that history
@@ -614,22 +614,27 @@ def cash_flows(
             else ((t.quantity or 0) * (t.price or 0) if t.price else None)
         )
         if t.kind == "opening":
-            if t.price is None:
+            price, _, acquired = opening_basis(
+                t.kind, t.price, t.amount, t.meta
+            )  # an IPO allotment fills both
+            if price is None:
                 return [], "opening balance with an unknown cost"
-            if not (t.meta or {}).get("acquired"):  # e.g. a broker holdings baseline: average price, no date
+            if not acquired:  # e.g. a broker holdings baseline: average price, no date
                 return [], NO_PURCHASE_DATE
-            flows.append((date.fromisoformat(t.meta["acquired"]), -(t.quantity * t.price + (t.charges or 0))))
+            flows.append((date.fromisoformat(acquired), -(t.quantity * price + (t.charges or 0))))
         elif t.kind == "buy" and not reinvest:
             if gross is None:
                 return [], "a purchase without an amount"
             flows.append((t.day, -(gross + (t.charges or 0))))
-        elif t.kind == "sell":
+        elif t.kind in ("sell", "redemption"):  # a bond's redemption (#294) returns cash like a sale
             if (
                 gross is None
             ):  # dropping it would leave the units' value out of the flows: XIRR would read a loss
                 return [], "a sale without an amount"
             flows.append((t.day, gross - (t.charges or 0)))
-        elif t.kind == "dividend" and not reinvest and t.amount:
+        elif (
+            t.kind in ("dividend", "interest") and not reinvest and t.amount
+        ):  # a bond's coupon is a return too
             flows.append((t.day, abs(t.amount)))
     if value:
         flows.append((today, value))

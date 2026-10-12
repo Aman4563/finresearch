@@ -40,7 +40,16 @@ from pathlib import Path
 from typing import Any
 
 from finresearch.portfolio import analytics_math as am
-from finresearch.portfolio.lots import Event, bonus_ratio, build_lots, split_factor, superseded_openings
+from finresearch.portfolio.lots import (
+    INCOME_KINDS,
+    SELL_KINDS,
+    UNIT_KINDS,
+    Event,
+    bonus_ratio,
+    build_lots,
+    split_factor,
+    superseded_openings,
+)
 
 log = logging.getLogger(__name__)
 
@@ -360,7 +369,7 @@ def units_by_day(events: Sequence[Event]) -> list[tuple[date, float]]:
     """(event day, units after every event of that day), replaying `build_lots` on each prefix: exactly the lots'
     splits, bonuses, opening-balance and removal rules."""
     evs = sorted(events, key=lambda e: e.day)
-    days = sorted({e.day for e in evs if e.kind != "dividend"})
+    days = sorted({e.day for e in evs if e.kind not in INCOME_KINDS})
     out = []
     for d in days:
         out.append((d, float(build_lots([e for e in evs if e.day <= d]).units)))
@@ -407,11 +416,11 @@ def flows_of(events: Sequence[Event]) -> list[_Flow]:
         q = float(e.quantity) if e.quantity is not None else 0.0
         if e.kind == "buy" and not reinvest:
             out.append(_Flow(e.day, float(gross + e.charges)) if gross is not None else _Flow(e.day, None, q))
-        elif e.kind == "sell":
+        elif e.kind in SELL_KINDS:  # a sale or a bond's redemption (#294): units out for cash
             out.append(
                 _Flow(e.day, -float(gross - e.charges)) if gross is not None else _Flow(e.day, None, -q)
             )
-        elif e.kind == "dividend" and not reinvest and e.amount:
+        elif e.kind in INCOME_KINDS and not reinvest and e.amount:  # a dividend or a bond's interest
             out.append(_Flow(e.day, -float(abs(e.amount))))
         elif e.kind == "opening":
             out.append(_Flow(e.day, None, q))
@@ -470,7 +479,7 @@ async def build(holdings: Sequence[HoldingIn], *, fetch: Any, store: PriceStore,
                 benchmark: bool = True) -> History:  # fmt: skip
     """Rebuild the daily series. `fetch` is a `Fetcher` (or a fake with the same call and `actions`)."""
     hist = History()
-    live = [h for h in holdings if any(e.kind in ("buy", "opening", "sell", "remove") for e in h.events)]
+    live = [h for h in holdings if any(e.kind in UNIT_KINDS for e in h.events)]
     if not live:
         hist.reason = "no transactions yet: import a statement or tradebook, or add transactions by hand"
         return hist

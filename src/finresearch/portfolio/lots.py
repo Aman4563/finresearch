@@ -22,6 +22,12 @@ Events (``Event.kind``):
   event's day (s.55(2)(aa)(iiia): cost of bonus shares is nil; the holding period starts at allotment. The event's
   day is the ex-date from the exchange; allotment is usually a day or two later, which rarely matters).
 - ``dividend``: income only; lots are untouched.
+- ``redemption`` (#294): the issuer (or RBI, for a Sovereign Gold Bond) redeems a bond's units at maturity or early.
+  Matched FIFO and proceeds net of charges exactly like a sale (a redemption is a transfer, s.2(47) "extinguishment of
+  any rights": the gain is a capital gain under the bond's rules), but never netted as intraday. Its tax (an SGB's
+  s.47(viic) exemption, an unlisted debenture's s.50AA) is decided by portfolio.tax from the transaction's kind.
+- ``interest`` (#294): a bond's coupon or an SGB's 2.5 % interest. Income ("Income from other sources", slab rate),
+  never a lot change; kept apart from dividends (``LotBook.interest``).
 
 Same-day buys and sells in one holding are intraday trades (speculative business income, not capital gains): the
 netted quantity is matched buy-against-sell first and flagged ``intraday``; only the remainder goes through FIFO.
@@ -38,13 +44,17 @@ from typing import Any
 
 ZERO = Decimal(0)
 EPS = Decimal("0.0005")  # units below this are rounding noise (CAS units have 3 decimals)
-ORDER = {"opening": 0, "split": 1, "bonus": 1, "buy": 2, "sell": 3, "remove": 3, "dividend": 4}
+ORDER = {"opening": 0, "split": 1, "bonus": 1, "buy": 2, "sell": 3, "redemption": 3, "remove": 3, "dividend": 4,
+         "interest": 4}  # fmt: skip
 UNIT_KINDS = (
     "opening",
     "buy",
     "sell",
+    "redemption",
     "remove",
-)  # events that move units (a dividend or corporate action alone does not)
+)  # events that move units (a dividend, interest or corporate action alone does not)
+SELL_KINDS = ("sell", "redemption")  # units leave for cash: a taxable transfer (a disposal)
+INCOME_KINDS = ("dividend", "interest")  # cash in, no units: income, never a lot change
 
 
 def superseded_openings(items: Iterable[Any]) -> set[int]:
@@ -61,6 +71,18 @@ def superseded_openings(items: Iterable[Any]) -> set[int]:
     first = min(days)
     return out | {i for i, x in enumerate(rows)
                   if x.kind == "opening" and (x.meta or {}).get("statement_opening") and x.day > first}  # fmt: skip
+
+
+def opening_basis(kind: str, price: Decimal | None, amount: Decimal | None,
+                  meta: dict[str, Any] | None) -> tuple[Decimal | None, Decimal | None, str | None]:  # fmt: skip
+    """(price, amount, acquired ISO date) an opening stands for. An IPO allotment the decision journal recorded
+    (`meta.ipo_allotment`, a derived marker portfolio.ipo_fill sets and clears on rebuild, #294) supplies the
+    allotment date and the issue price of a broker or CAS baseline that has no date; the stored row is never edited."""
+    m = meta or {}
+    fill = m.get("ipo_allotment") if kind == "opening" else None
+    if fill:
+        return Decimal(str(fill["price"])), None, fill["acquired"]
+    return price, amount, m.get("acquired")
 
 
 @dataclass
@@ -122,6 +144,7 @@ class LotBook:
     disposals: list[Disposal]
     dividends: list[tuple[date, Decimal]]
     warnings: list[str]
+    interest: list[tuple[date, Decimal]] = field(default_factory=list)
 
     @property
     def open_lots(self) -> list[Lot]:
@@ -173,6 +196,7 @@ def build_lots(events: Iterable[Event]) -> LotBook:
     lots: list[Lot] = []
     disposals: list[Disposal] = []
     dividends: list[tuple[date, Decimal]] = []
+    interest: list[tuple[date, Decimal]] = []
 
     # same-day buys and sells: the netted quantity is intraday
     by_day: dict[date, dict[str, Decimal]] = {}
@@ -220,7 +244,7 @@ def build_lots(events: Iterable[Event]) -> LotBook:
             lots.append(lot)
             if e.day in intraday_left and e.kind == "buy":
                 intraday_buys.setdefault(e.day, []).append(lot)
-        elif e.kind in ("sell", "remove"):
+        elif e.kind in (*SELL_KINDS, "remove"):
             if not q or q <= 0:
                 warnings.append(f"{e.day}: {e.kind} without units skipped")
                 continue
@@ -291,6 +315,9 @@ def build_lots(events: Iterable[Event]) -> LotBook:
         elif e.kind == "dividend":
             if e.amount:
                 dividends.append((e.day, abs(e.amount)))
+        elif e.kind == "interest":
+            if e.amount:
+                interest.append((e.day, abs(e.amount)))
         else:
             warnings.append(f"{e.day}: unknown event kind {e.kind!r} skipped")
-    return LotBook(lots, disposals, dividends, warnings)
+    return LotBook(lots, disposals, dividends, warnings, interest)

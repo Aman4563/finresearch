@@ -28,9 +28,14 @@ Not modelled (shown as caveats): surcharge (capped at 15 % on these gains), the 
 tax at special rates), indexation for pre-23-Jul-2024 transfers of other assets, set-off of the unused basic
 exemption, carry-forward of losses across years (8 years), the s.94(7)/(8) dividend and bonus-stripping rules, and
 share buybacks (taxed as dividend with the cost as a capital loss from 1-Oct-2024; as capital gains from tax year
-2026-27, promoters at an effective 30 %, Budget 2026 memo p.63, enactment not verified [U]). Also not modelled:
-unlisted bonds and debentures transferred on or after 23-Jul-2024 are slab-rate STCG under s.50AA whatever the
-holding period, which ``other`` (24-month rule) does not capture.
+2026-27, promoters at an effective 30 %, Budget 2026 memo p.63, enactment not verified [U]).
+
+Unlisted bonds and debentures (#294): transferred, redeemed or matured on or after 23-Jul-2024 they are short-term at
+the slab rate whatever the holding period (s.50AA as amended by the Finance (No.2) Act 2024, Budget 2024 memo; s.76 of
+the 2025 Act). ``classify(..., debt=True, listed=False)`` applies it. Listed bonds, NCDs and Government securities stay
+under the 12-month listed-security rule (s.2(42A) first proviso) with LTCG at 12.5 % under s.112, never s.112A (no
+STT, no ₹1.25 lakh exemption). Market-linked debentures (s.50AA from 1-Apr-2023) and deep-discount bonds (CBDT
+Circular 2/2002: the discount accrues as interest) are not modelled.
 """
 
 from __future__ import annotations
@@ -80,7 +85,7 @@ VERIFY_NOTE = (
 @dataclass(frozen=True)
 class TaxRule:
     id: str
-    tax_class: str  # equity | other_listed | other_unlisted | specified_mf | other_mf_old | sgb_redemption
+    tax_class: str  # equity | other_listed | other_unlisted | specified_mf | other_mf_new | unlisted_debt | sgb_redemption
     effective_from: date  # transfer date
     effective_to: date | None  # inclusive; None = open-ended
     long_term_months: int | None  # None: no long-term treatment (deemed short-term or exempt)
@@ -151,6 +156,12 @@ RULES: tuple[TaxRule, ...] = (
             "Gold/international fund units acquired on or after 1-Apr-2023 met the first specified-MF definition "
             "(<= 35 % domestic equity): slab rate for transfers up to 31-Mar-2025; after that they follow the other-"
             "asset rules (inference from the two definitions; check the fund's own tax note)"),
+    TaxRule("unlisted-debt-50aa", "unlisted_debt", JULY_23_2024, None, None, None, None, Decimal(0), "secondary",
+            BUDGET_2024_MEMO,
+            "s.50AA as amended by the Finance (No.2) Act 2024 (s.76 of the 2025 Act): an unlisted bond or unlisted "
+            "debenture transferred, redeemed or matured on or after 23-Jul-2024 is short-term at the slab rate "
+            "whatever the holding period (research note RESEARCH_ROADMAP §D.4 [55]; the memo was not re-read for "
+            "#294)"),
     TaxRule("sgb-redemption", "sgb_redemption", date(2015, 11, 1), date(2026, 3, 31), None, None, None,
             Decimal(0), "secondary", BUDGET_2026_MEMO,
             "IT Act 1961 s.47(viic): redemption of SGBs by RBI is not a transfer for an individual, including a "
@@ -215,8 +226,9 @@ class Classification:
 
 def classify(tax_class: str, acquired: date | None, sold: date, *, listed: bool = True, stt_paid: bool = True,
              rbi_redemption: bool = False, original_subscriber: bool = False,
-             held_to_maturity: bool = False) -> Classification:  # fmt: skip
-    """The term and rate of one disposal. `acquired` None means the acquisition date is unknown."""
+             held_to_maturity: bool = False, debt: bool = False) -> Classification:  # fmt: skip
+    """The term and rate of one disposal. `acquired` None means the acquisition date is unknown. `debt`: the asset
+    is a bond or debenture (an unlisted one falls under s.50AA from 23-Jul-2024)."""
     days = (sold - acquired).days if acquired else None
     if tax_class not in TAX_CLASSES:
         raise ValueError(f"unknown tax class {tax_class!r}")
@@ -226,6 +238,10 @@ def classify(tax_class: str, acquired: date | None, sold: date, *, listed: bool 
             return Classification("exempt", rule, Decimal(0), "exempt", rule.note, days)
         tax_class = "other"
         listed = True
+    # s.50AA deems the gain short-term whatever the holding period, so the acquisition date is not needed
+    if tax_class == "other" and debt and not listed and sold >= JULY_23_2024:
+        rule = rule_for("unlisted_debt", sold)
+        return Classification("short", rule, None, "slab_st", rule.note if rule else "", days)
     if acquired is None:
         return Classification(
             "unknown", None, None, "unknown", "acquisition date unknown: enter it to classify", None
