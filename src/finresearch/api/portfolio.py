@@ -164,8 +164,11 @@ def add_portfolio_routes(app: FastAPI, *, scheme_rows: Callable[[], Awaitable[li
         """(prices, ids still pending). Live: one shared NSE/BSE session for the whole valuation (QuoteBatch) behind
         the 10-minute quote cache and the 6-hour NAVAll cache. `cached_only`: no network at all; holdings without a
         cached price are returned as pending (the page shows cost basis at once, then streams the prices)."""
+        from finresearch.portfolio.pricing_scope import to_price
         from finresearch.portfolio.valuation import QuoteBatch, fetch_prices
 
+        # a sold-out stock is never quoted (#293): its realised P&L comes from its sales, not a price
+        holdings = to_price(holdings)
         sources = src()
         pending: set[tuple] = set()
 

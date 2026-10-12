@@ -106,16 +106,14 @@ def _finish(slot: str, result: dict[str, Any], now: datetime, error: str | None 
 
 
 def has_holdings() -> tuple[bool, bool]:
-    """(any open holding, any mutual fund)."""
+    """(any open holding, any open mutual fund): a holding counts only while it has an open lot (#293: sold-out
+    holdings no longer start the daily passes)."""
+    from finresearch.db.models import PortfolioLot
+
     with session_scope() as s:
-        n = s.scalar(select(func.count()).select_from(PortfolioHolding)) or 0
-        mf = (
-            s.scalar(
-                select(func.count()).select_from(PortfolioHolding).where(PortfolioHolding.asset_type == "mf")
-            )
-            or 0
-        )
-    return n > 0, mf > 0
+        open_ids = select(PortfolioLot.holding_id).where(PortfolioLot.open_quantity > 0)
+        types = set(s.scalars(select(PortfolioHolding.asset_type).where(PortfolioHolding.id.in_(open_ids))))
+    return bool(types), "mf" in types
 
 
 async def portfolio_step(deps: Any, now: datetime, *, holidays: set | None = None,
@@ -335,10 +333,11 @@ def day_move(prev: list | None, cur: list | None) -> float | None:
 
 async def valuation_pass(deps: Any, now: datetime, today: date) -> dict[str, Any]:
     from finresearch.portfolio.metrics import record_snapshot, valuation_gaps
+    from finresearch.portfolio.pricing_scope import to_price
     from finresearch.portfolio.report import snapshot
     from finresearch.portfolio.valuation import QuoteBatch, fetch_prices
 
-    holdings = _detached_holdings()
+    holdings = to_price(_detached_holdings())  # closed stock holdings are never quoted (#293)
     nav_rows: list = []
 
     async def rows() -> list:
@@ -526,7 +525,10 @@ async def events_pass(deps: Any, now: datetime, today: date, val: dict[str, Any]
             by_sym.setdefault(nse_of(h), []).append(hid)
     bse_only = sorted({h["name"] for h in (v.get("holdings") or {}).values()
                        if h["asset_type"] == "stock" and not nse_of(h)})  # fmt: skip
-    symbols = sorted(by_sym)[:MAX_INSTRUMENTS]
+    # the largest positions first (#293: the cap once cut alphabetically); the rest are counted in "skipped"
+    weight = {sym: sum((v["holdings"][h].get("weight_pct") or 0) for h in hids) for sym, hids in by_sym.items()}
+    symbols = sorted(by_sym, key=lambda x: (-weight[x], x))[:MAX_INSTRUMENTS]
+    skipped = sorted(set(by_sym) - set(symbols))
     if deps.pf_stock_events is not None:
         raw = {}
         for sym in symbols:
@@ -561,7 +563,8 @@ async def events_pass(deps: Any, now: datetime, today: date, val: dict[str, Any]
                        "last_results_period": next((r.period_to.isoformat() for r in got["results"]
                                                     if r.filed_at == last and r.period_to), None)}  # fmt: skip
     out = {"day": today.isoformat(), "at": now.isoformat(), "stocks": stocks, "errors": errors,
-           "bse_only": bse_only, "source": "NSE corporate actions, board meetings and financial-results filings"}  # fmt: skip
+           "bse_only": bse_only, "skipped": len(skipped), "skipped_symbols": skipped,
+           "source": "NSE corporate actions, board meetings and financial-results filings"}  # fmt: skip
     with session_scope() as s:
         cache.write(s, cache.EVENTS, out)
     return {**out, "stocks": len(stocks), "errors_n": len(errors)}
