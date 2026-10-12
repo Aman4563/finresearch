@@ -374,6 +374,10 @@ def ipo_harvest(
         None, "--import", help="Load rows from a JSONL export instead of NSE"
     ),
     reparse: bool = typer.Option(False, help="Re-derive every row from its stored raw payloads (no network)"),
+    retry_days: int | None = typer.Option(
+        None,
+        help="Incremental (the monitor's nightly mode): retry partial rows only if listed in the last N days",
+    ),
 ) -> None:
     """Harvest past NSE issues (final category book, issue info, listing-day prices, Nifty mood) into ipo_history,
     then print the coverage report. Resumable: complete rows are skipped; NSE payloads are disk-cached."""
@@ -393,7 +397,7 @@ def ipo_harvest(
             console.print(f"re-derived {ih.reparse(s)} rows")
     else:
         console.print(asyncio.run(ih.harvest(series=series, limit=limit, refresh=refresh, delay=delay,
-                                             log=console.print)))  # fmt: skip
+                                             retry_days=retry_days, log=console.print)))  # fmt: skip
     with session_scope() as s:
         rows = s.scalars(select(IpoHistory)).all()
         console.print_json(json.dumps(ih.coverage(rows), default=str))

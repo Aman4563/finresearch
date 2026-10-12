@@ -447,3 +447,49 @@ def test_registry_slots_and_preference_default():
     assert [phase(d, d + timedelta(2), x, "upcoming") for x in (d - timedelta(1), d, d + timedelta(3))] == [
         "upcoming", "open", "closed"]  # fmt: skip
     assert phase(None, None, d, "current") == "open"
+
+
+async def test_a_stale_stated_listing_date_never_voids_an_early_forecast(db):
+    """The logged date may be indicative: listing slipped from 6-Oct to 8-Oct and the forecast was made on 7-Oct. It is
+    not voided as hindsight; it waits, and resolves once the harvest confirms 8-Oct."""
+    from finresearch.db import session_scope
+    from finresearch.db.models import Forecast
+
+    sym = "SL" + db
+    with session_scope() as s:
+        fid = forecast(
+            s, sym, "m", created=at(2026, 10, 7, 11), listing="2026-10-06", resolve_on=date(2026, 10, 6)
+        )
+    deps = Deps({sym: [Bar(date(2026, 10, 8), Decimal("104"), prev_close=Decimal("100"))]})
+    assert (await _resolve(deps))["waiting"] == 1
+    with session_scope() as s:
+        assert s.get(Forecast, fid).status == "open"
+        history_row(s, sym, date(2026, 10, 8), [bar_json(date(2026, 10, 8), "104", "100")], list_open="104")
+    assert (await _resolve(deps, at(2026, 10, 9, 18), recheck=True))["resolved"] == 1
+    with session_scope() as s:
+        assert (s.get(Forecast, fid).status, s.get(Forecast, fid).outcome) == ("resolved", 1)
+
+
+def test_cli_passes_retry_days_and_recheck(db, monkeypatch):
+    from typer.testing import CliRunner
+
+    from finresearch import cli
+
+    seen = {}
+
+    async def fake_harvest(**kw):
+        seen["harvest"] = kw
+        return {"series": kw["series"], "fetched": 0}
+
+    async def fake_resolve(deps, now=None, *, recheck=False):
+        seen["recheck"] = recheck
+        return {"resolved": 0}
+
+    monkeypatch.setattr("finresearch.evals.ipo_history.harvest", fake_harvest)
+    monkeypatch.setattr("finresearch.signals.ledger.resolve_due", fake_resolve)
+    r = CliRunner().invoke(cli.app, ["ipo", "harvest", "--series", "EQ", "--retry-days", "14"])
+    assert r.exit_code == 0, r.output
+    assert seen["harvest"]["retry_days"] == 14 and seen["harvest"]["series"] == "EQ"
+    r = CliRunner().invoke(cli.app, ["forecasts", "resolve", "--recheck"])
+    assert r.exit_code == 0, r.output
+    assert seen["recheck"] is True

@@ -456,16 +456,17 @@ async def resolve_listing_gain(f: Forecast, deps: Any, session: Session) -> Reso
             stated = date.fromisoformat(str(inp["listing_date"])[:10])
         except ValueError:
             stated = None
-    listing = (
-        (watch.listing_date if watch is not None else None) or (hist.listing_date if hist else None) or stated
-    )
-    if listing is not None and to_ist(f.created_at) >= datetime.combine(
-        listing, LISTING_OPEN_IST, tzinfo=IST
+    # a confirmed date (the watch's, or NSE's via the harvest) can void a hindsight forecast; the date stated when the
+    # forecast was logged may be indicative, so it only picks the bar (a wrong one waits for the harvest)
+    confirmed = (watch.listing_date if watch is not None else None) or (hist.listing_date if hist else None)
+    listing = confirmed or stated
+    if confirmed is not None and to_ist(f.created_at) >= datetime.combine(
+        confirmed, LISTING_OPEN_IST, tzinfo=IST
     ):
         # the listing-day open (pre-open call auction 09:00-09:08, trading from 09:15) was already known: scoring it
         # would put a hindsight "forecast" in the calibration
         return Resolution(
-            None, None, f"void: forecast made after the listing-day open ({listing}, 09:00 IST)"
+            None, None, f"void: forecast made after the listing-day open ({confirmed}, 09:00 IST)"
         )
     open_price, listed_on, basis = None, None, None
     h_open, h_series = _history_open(hist, listing) if listing is not None else (None, None)
