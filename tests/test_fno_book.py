@@ -83,3 +83,74 @@ def test_allow_lists_still_block_writes_and_order_paths():
             with pytest.raises(ForbiddenRequest):
                 http._check(method, path)
         assert not any(__import__("re").fullmatch(p, "/margins/detail/orders") for p in paths)
+
+
+# ------------------------------------------------------------------ 2. paper fill / MTM / settlement math
+# Rates in force on 12-Oct-2026 (fincalc.charges): option STT 0.15 % sell side, exercise STT 0.15 % of intrinsic,
+# exchange 0.03553 % both sides, SEBI ₹10/crore, stamp 0.003 % buy side, GST 18 % on brokerage + exchange + SEBI;
+# brokerage ₹20 an order. Expected values are worked out by hand below, not with the code under test.
+TRADE_DAY = __import__("datetime").date(2026, 10, 12)
+EXPIRY = __import__("datetime").date(2026, 10, 27)
+
+
+def _spread():
+    from finresearch.fincalc.paper import PaperLeg, fill_price
+
+    # bull call spread, 75 units, 1 % slippage on LTPs 120 (buy) and 50 (sell)
+    b, s = fill_price(120, "buy", 1.0), fill_price(50, "sell", 1.0)
+    assert (b, s) == (121.2, 49.5)
+    return [PaperLeg("call", 25000, "buy", 75, b), PaperLeg("call", 25200, "sell", 75, s)]
+
+
+def test_paper_entry_costs_match_hand_computation():
+    from finresearch.fincalc.paper import entry_costs
+
+    c = entry_costs(_spread(), TRADE_DAY, 20)
+    turnover = 121.2 * 75 + 49.5 * 75  # 12,802.50
+    exch, sebi = turnover * 0.0003553, turnover * 0.000001
+    stt, stamp = 49.5 * 75 * 0.0015, 121.2 * 75 * 0.00003
+    gst = (40 + exch + sebi) * 0.18
+    assert c.turnover == pytest.approx(12802.5)
+    assert c.total == pytest.approx(exch + sebi + stt + stamp + 40 + gst)
+    assert c.total == pytest.approx(58.424056285, abs=1e-6)
+
+
+def test_paper_mark_to_market_and_square_off():
+    from finresearch.fincalc.paper import gross_pnl, square_off_costs
+
+    legs = _spread()
+    assert gross_pnl(legs, [130, 60]) == pytest.approx((130 - 121.2) * 75 - (60 - 49.5) * 75)  # −127.50
+    assert gross_pnl(legs, [130, None]) is None  # a missing price is unknown, never 0
+    c = square_off_costs(legs, [130, 60], TRADE_DAY, 20)
+    # closing: sell the long at 130 (STT), buy back the short at 60 (stamp)
+    exch = (9750 + 4500) * 0.0003553
+    sebi = 14250 * 0.000001
+    assert c.total == pytest.approx(exch + sebi + 9750 * 0.0015 + 4500 * 0.00003 + 40 + (40 + exch + sebi) * 0.18)
+    assert c.total == pytest.approx(67.9511845, abs=1e-6)
+
+
+def test_paper_expiry_settlement_with_exercise_stt():
+    from finresearch.fincalc.paper import PaperLeg, settle
+
+    st = settle(_spread(), 25150, EXPIRY)
+    assert st.final_values == [150, 0]
+    assert st.gross == pytest.approx((150 - 121.2) * 75 + 49.5 * 75)  # 5,872.50
+    assert st.itm_long_intrinsic == pytest.approx(150 * 75)
+    assert st.exercise_stt == pytest.approx(150 * 75 * 0.0015)  # 16.875
+    # a short put that finishes in the money: the writer pays no exercise STT
+    short = settle([PaperLeg("put", 24500, "sell", 75, 80.0)], 24400, EXPIRY)
+    assert short.gross == pytest.approx(-(100 - 80) * 75) and short.exercise_stt == 0
+    with pytest.raises(ValueError):
+        settle(_spread(), 0, EXPIRY)
+
+
+def test_paper_results_count_every_trade():
+    from finresearch.fincalc.paper import results
+
+    r = results([100, -50, 200, -300, 50, 0])
+    assert (r.closed, r.wins, r.losses) == (6, 3, 2)
+    assert r.win_rate == pytest.approx(3 / 6) and r.expectancy == pytest.approx(0 / 6)
+    assert r.avg_win == pytest.approx(350 / 3) and r.avg_loss == pytest.approx(-175)
+    # cumulative 100, 50, 250, −50, 0, 0: the peak 250 to the trough −50
+    assert r.max_drawdown == pytest.approx(300) and r.curve[-1] == 0
+    assert results([]).win_rate is None
