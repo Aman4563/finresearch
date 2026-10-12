@@ -93,6 +93,9 @@ class Deps:
     retention: bool = (
         False  # the weekly prune of the HTTP cache and old intraday series (monitor.retention, #247)
     )
+    lifecycle: bool = (
+        False  # the daily end-of-life pass (monitor.lifecycle, #293: matured/delisted instruments)
+    )
     # async () -> set of symbols on NSE's current, upcoming and past issue lists: an IPO watch long past its expected
     # listing date and on none of them is withdrawn (monitor.phase, #291); None = never judged withdrawn
     ipo_symbols: Any = None
@@ -188,7 +191,7 @@ class Deps:
                    intraday=live_fetch, bse_stock_snapshot=bse_stock_snapshot, bse_price_history=bse_price_history,
                    bse_corporate_actions=bse_corporate_actions, portfolio_daily=True, brief=True, archive=True,
                    live_holidays=True, disclosures=True, fund_ranks=True, stock_peers=True,
-                   lookthrough=True, pf_history=live_history, retention=True,
+                   lookthrough=True, pf_history=live_history, retention=True, lifecycle=True,
                    ipo_symbols=ipo_symbols)  # fmt: skip
 
 
@@ -403,6 +406,28 @@ BIG_MOVE = Decimal("0.05")  # a daily move of 5% or more raises an alert
 EX_DATE_SOON_DAYS = 7
 
 
+def held_now(session: Session, watch: Watch) -> bool:
+    """Whether the watched stock is also an open holding (disclosures.store.tracked)."""
+    from finresearch.disclosures.store import tracked
+
+    t = tracked(session)
+    return bool(
+        (t.stocks.get((watch.key or "").upper()) or t.bse_only.get((watch.key or "").upper()) or {}).get(
+            "held"
+        )
+    )
+
+
+def ex_date_message(sym: str, ca: Any, held: bool) -> str:
+    """The ex-date reminder. Someone who already holds the stock is entitled by keeping it through the record date
+    (#293: "buy before then" read as advice to buy more); someone who only watches it must buy before the ex-date."""
+    if held:
+        rec = f" (record date {ca.record_date})" if ca.record_date else ""
+        return (f"{sym}: {ca.subject} goes ex on {ca.ex_date}{rec}; you hold it, so the units you still hold at the "
+                "start of the ex-date are entitled: selling before then gives up the entitlement")  # fmt: skip
+    return f"{sym}: {ca.subject} goes ex on {ca.ex_date}; buy before then to be entitled"
+
+
 async def stock_daily(session: Session, job: MonitorJob, watch: Watch, deps: Deps, now: datetime) -> dict:
     """After-close check of a watched stock: new results filings, corporate actions and ex-dates, promoter-holding
     changes and large price moves. The first check records what exists without alerting on history, except an
@@ -454,8 +479,7 @@ async def stock_daily(session: Session, job: MonitorJob, watch: Watch, deps: Dep
             and key not in soon
         ):
             soon.add(key)
-            say("ex_date_soon", f"{sym}: {ca.subject} goes ex on {ca.ex_date}; buy before then to be entitled",
-                "action", always=True)  # fmt: skip
+            say("ex_date_soon", ex_date_message(sym, ca, held_now(session, watch)), "action", always=True)
     latest = next((sh for sh in snap["shareholding"] if sh.promoter_pct is not None), None)
     if latest:
         prev = meta.get("promoter_pct")

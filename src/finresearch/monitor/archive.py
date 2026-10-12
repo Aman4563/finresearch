@@ -53,7 +53,7 @@ class ArchiveSources:
     fno: Any = None  # the monitor's option-chain client factory (async context manager)
     bonds: Callable[[], Awaitable[list[Any]]] | None = None  # -> list[adapters.nse_bonds.ListedBond]
     par_curve: Callable[[], Awaitable[Any]] | None = None  # -> adapters.fbil.ParCurve
-    watched: Callable[[], list[str]] | None = None  # active NSE stock watches
+    watched: Callable[[], list[str]] | None = None  # held and watched NSE stocks (tracked(), by weight)
     near_iv: Callable[[str, date], dict[str, Any] | None] | None = None  # iv_history row (symbol, day)
     out_dir: Path = field(default_factory=lambda: ARCHIVE_DIR)
 
@@ -160,15 +160,13 @@ async def _live_curve():
 
 
 def _live_watched() -> list[str]:
-    from sqlalchemy import select
-
+    """NSE stocks the user holds or watches (disclosures.store.tracked, #293), largest holdings first, without ended
+    ones; BSE-only stocks have no NSE quote."""
     from finresearch.db import session_scope
-    from finresearch.db.models import Watch
+    from finresearch.disclosures.store import tracked
 
     with session_scope() as s:
-        rows = s.scalars(select(Watch.nse_symbol).where(Watch.active.is_(True), Watch.kind == "stock",
-                                                        Watch.exchange != "BSE")).all()  # fmt: skip
-    return sorted({r.upper() for r in rows if r})
+        return tracked(s).stock_keys(nse_only=True)
 
 
 def _live_near_iv(symbol: str, day: date) -> dict[str, Any] | None:

@@ -298,6 +298,22 @@ def test_portfolio_gets_never_record_a_snapshot_the_post_does(client):
     assert snaps() == [(date(2026, 9, 30), D("8500.00"), True)]  # 8 stocks x 10 x 100 + 10 units x 50
 
 
+def test_a_sold_out_stock_is_never_quoted_and_keeps_its_realised_gain(client):
+    """#293: four sold-out holdings were still quoted on every load and daily pass. A closed stock is no longer asked
+    about; its realised P&L comes from its sale: 10 units bought at 90 and sold at 150 = (150 - 90) x 10 = 600."""
+    c, f = client
+    r = c.post("/api/portfolio/transactions", headers=ORIGIN,
+               json={"asset_type": "stock", "name": "S0", "nse_symbol": "SYM0", "day": "2026-03-02", "kind": "sell",
+                     "quantity": "10", "price": "150"})  # fmt: skip
+    assert r.status_code == 201
+    full = c.get("/api/portfolio").json()
+    assert "SYM0" not in f.quotes and len(f.quotes) == 7
+    s0 = next(h for h in full["holdings"] if h["name"] == "S0")
+    assert s0["closed"] and s0["realised"] == 600.0 and s0["price"] is None and s0["value"] is None
+    assert full["summary"]["realised"] == 600.0 and full["complete"]  # a closed row never makes it incomplete
+    assert full["summary"]["value"] == 7 * 10 * 100 + 10 * 50
+
+
 # --------------------------------------------------------------------------- #295: ISIN first, never a guessed NAV
 def _nav(code: str, isin: str, nav: str) -> SchemeNav:
     return SchemeNav(code, f"Example Scheme {code}", "Direct", "Growth", isin, None, D(nav), date(2026, 10, 5),

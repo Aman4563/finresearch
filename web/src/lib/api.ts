@@ -119,6 +119,8 @@ export type Company = {
   documents: number;
   latest_run: number | null;
   kind: ResearchKind;
+  /** set once the instrument has ended (#293): a matured or delisted bond, a fund AMFI dropped, a delisted stock */
+  ended?: { on: string; reason: "matured" | "missing"; detail: string } | null;
 };
 
 export type ResearchKind = "ipo_report" | "stock_report" | "fund_report" | "bond_report";

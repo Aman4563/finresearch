@@ -29,7 +29,7 @@ from sqlalchemy.orm import Session
 
 from finresearch.alerts.compute import Reader, Reading
 from finresearch.alerts.registry import OP_PHRASE, MetricSpec, fmt_value, sentence, spec
-from finresearch.db.models import Alert, AlertEvalSlot, AlertRuleState, Company, Watch
+from finresearch.db.models import Alert, AlertEvalSlot, AlertRuleState, Watch
 from finresearch.suggest.profile import AlertRule
 from finresearch.suggest.rules import OPS
 
@@ -63,7 +63,11 @@ def app_path(kind: str, instrument: str, watch_id: int | None) -> str:
 
 
 def targets(session: Session, r: AlertRule) -> list[Target]:
-    """The instruments a rule applies to: its own, or every watch of its kind."""
+    """The instruments a rule applies to: its own, or (#293) everything of its kind the user owns or follows
+    (disclosures.store.tracked: open holdings and watched instruments, without those that have ended), largest
+    holdings first."""
+    from finresearch.disclosures.store import tracked
+
     if r.kind == "portfolio":
         return [Target("PORTFOLIO")]
     if r.kind in ("ipo", "stock"):
@@ -72,19 +76,29 @@ def targets(session: Session, r: AlertRule) -> list[Target]:
         if r.instrument:
             w = next((w for w in watches if w.key == r.instrument or w.nse_symbol == r.instrument), None)
             return [Target(r.instrument, w.id if w else None, w.label if w else None)]
-        from finresearch.fincalc.dates import today_ist
-        from finresearch.monitor.phase import DONE, phase_of
+        if r.kind == "ipo":
+            from finresearch.fincalc.dates import today_ist
+            from finresearch.monitor.phase import DONE, phase_of
 
-        # an IPO rule (subscription, bidding days) means nothing once the issue has listed or was withdrawn
-        live = [w for w in watches if w.active and w.key and phase_of(w, today_ist()) not in DONE]
-        return [Target(w.key, w.id, w.label) for w in live]
+            # an IPO rule (subscription, bidding days) means nothing once the issue has listed or was withdrawn
+            live = [w for w in watches if w.active and w.key and phase_of(w, today_ist()) not in DONE]
+            return [Target(w.key, w.id, w.label) for w in live]
+        by_key = {w.key.upper(): w for w in watches if w.active and w.key}
+        out = []
+        for k in tracked(session).stock_keys():
+            w = by_key.get(k)
+            out.append(Target(k, w.id if w else None, w.label if w else None))
+        return out
     if r.instrument:
         return [Target(r.instrument)]
-    prefix = {"fund": "mf-", "bond": "bond-"}.get(r.kind)
-    if prefix is None:
+    t = tracked(session)
+    bucket = {"fund": t.funds, "bond": t.bonds}.get(r.kind)
+    if bucket is None:
         return []
-    slugs = session.scalars(select(Company.slug).where(Company.slug.like(f"{prefix}%"))).all()
-    return [Target(s[len(prefix) :].upper()) for s in sorted(slugs)]
+    return [
+        Target(k)
+        for k in sorted(bucket, key=lambda k: (not bucket[k]["held"], -(bucket[k].get("weight") or 0), k))
+    ]
 
 
 def _state(session: Session, rule: AlertRule, inst: str) -> AlertRuleState:
@@ -163,6 +177,8 @@ async def evaluate(
     session: Session, rules: list[AlertRule], now: datetime, *, cadence: str | None = None
 ) -> dict:
     """Evaluate `rules` (only metrics of `cadence`, when given) for all their targets. Returns counts and details."""
+    from finresearch.fincalc.dates import to_ist
+
     reader = Reader(session)
     out: dict[str, Any] = {
         "fired": 0,
@@ -176,6 +192,8 @@ async def evaluate(
         m = spec(rule.kind, rule.metric)
         if m is None or not rule.enabled or (cadence and m.cadence != cadence):
             continue
+        if expired_contract(rule, to_ist(now).date()):  # retired by rules_step; never read a dead chain
+            continue
         for t in targets(session, rule):
             st = session.scalars(select(AlertRuleState).where(AlertRuleState.rule_id == rule.id,
                                                               AlertRuleState.instrument == t.instrument)).first()  # fmt: skip
@@ -187,6 +205,41 @@ async def evaluate(
                                   "value": None if reading.value is None else str(reading.value),
                                   "note": reading.note, "source": reading.source})  # fmt: skip
     return out
+
+
+EXPIRED_KIND = "rule_disabled"
+
+
+def expired_contract(rule: AlertRule, today) -> str | None:
+    """The ISO expiry of an F&O rule pinned (params `expiry`) to a contract that has expired, else None."""
+    from datetime import date as _date
+
+    exp = (rule.params or {}).get("expiry") if rule.kind == "fno" else None
+    try:
+        return exp if exp and _date.fromisoformat(exp) < today else None
+    except ValueError:
+        return None
+
+
+def retire_expired(session: Session, today) -> list[str]:
+    """Disable every enabled F&O rule pinned to an expired contract (#293), with a note in its description and one
+    in-app alert each; it would otherwise read a chain that no longer exists on every pass. Returns their ids."""
+    from finresearch.suggest.advisor import load_profile, save_profile
+
+    profile = load_profile(session)
+    done = []
+    for r in profile.alert_rules:
+        if r.enabled and (exp := expired_contract(r, today)):
+            note = f"[auto-disabled {today.isoformat()}: the {exp} contract expired]"
+            r.enabled, r.description = False, f"{note} {r.description}".strip()[:300]
+            session.add(Alert(kind=EXPIRED_KIND, level="info",
+                              message=f"Alert rule {r.id} ({r.instrument or 'F&O'}) was turned off: its {exp} "
+                                      "contract has expired. Edit it with a live expiry to use it again.",
+                              data={"rule_id": r.id, "rule_kind": r.kind, "expiry": exp, "path": "/rules"}))  # fmt: skip
+            done.append(r.id)
+    if done:
+        save_profile(session, profile)
+    return done
 
 
 def prune_states(session: Session, rules: list[AlertRule]) -> int:
@@ -235,9 +288,11 @@ def _claim(slot: str, now: datetime) -> bool:
 async def rules_step(now: datetime, *, holidays: set | None = None) -> dict[str, Any]:
     """The monitor's alert-rule work for this tick (see the module docstring). No rules = no network, no rows."""
     from finresearch.db import session_scope
+    from finresearch.fincalc.dates import to_ist
     from finresearch.suggest.advisor import load_profile
 
     with session_scope() as s:
+        retire_expired(s, to_ist(now).date())
         profile = load_profile(s)
         rules = [r for r in profile.alert_rules if r.enabled]
         prune_states(s, profile.alert_rules)

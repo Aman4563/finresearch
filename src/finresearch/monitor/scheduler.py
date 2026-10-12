@@ -413,6 +413,28 @@ def _spawn_retention(now: datetime) -> None:
     _BACKGROUND["retention"] = asyncio.create_task(run())
 
 
+def _spawn_lifecycle(now: datetime) -> None:
+    """Start the daily end-of-life pass (monitor.lifecycle, #293) in the background: at most one NSE bond list, one
+    AMFI NAVAll (shared with the fund ranking's cache) and the stored ISIN map. At most one runs at a time."""
+    from finresearch.fincalc.dates import to_ist
+    from finresearch.monitor.lifecycle import START, lifecycle_step
+
+    t = _BACKGROUND.get("lifecycle")
+    ist = to_ist(now)
+    if (t is not None and not t.done()) or (ist.hour, ist.minute) < START:
+        return
+
+    async def run() -> None:
+        try:
+            res = await lifecycle_step(now)
+            if res:
+                log.info("instrument lifecycle: %s", res)
+        except Exception:
+            log.warning("instrument lifecycle pass failed", exc_info=True)
+
+    _BACKGROUND["lifecycle"] = asyncio.create_task(run())
+
+
 async def drain() -> None:
     """Wait for background work started by `tick` (a one-shot `finresearch monitor tick` calls this)."""
     for t in list(_BACKGROUND.values()):
@@ -457,6 +479,8 @@ async def tick(deps: jobs.Deps, now: datetime | None = None) -> dict[str, int]:
         _spawn_lookthrough(now)
     if deps.retention:
         _spawn_retention(now)
+    if deps.lifecycle:
+        _spawn_lifecycle(now)
     out_brief = brief_step(now) if deps.brief else {}
     if deps.holidays is not None or deps.live_holidays:
         await _refresh_holidays(deps)

@@ -20,7 +20,10 @@ export default function Bonds() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const companies = useApi<Company[]>("/api/companies");
-  const researched = (companies.data ?? []).filter((c) => c.kind === "bond_report" && c.latest_run);
+  const library = (companies.data ?? []).filter((c) => c.kind === "bond_report" && c.latest_run);
+  // matured or delisted bonds (#293) are no longer fetched; their research stays readable under "Ended"
+  const researched = library.filter((c) => !c.ended);
+  const ended = library.filter((c) => c.ended);
 
   const search = async (query = q) => {
     setSearching(true);
@@ -158,7 +161,7 @@ export default function Bonds() {
             <ErrorNote error={companies.error} onRetry={companies.reload} />
           ) : !companies.data ? (
             <SkeletonRows rows={2} />
-          ) : researched.length === 0 ? (
+          ) : researched.length === 0 && ended.length === 0 ? (
             <EmptyState icon={<FlaskConical className="size-5" />} title="No bond research yet">
               Pick a bond above and press Research for a cited look at the issuer, rating, security and pricing against alternatives.
             </EmptyState>
@@ -179,6 +182,29 @@ export default function Bonds() {
             </ul>
           )}
         </Card>
+
+        {ended.length > 0 && (
+          <Card title="Ended" subtitle="Matured or no longer on NSE's list: not fetched any more; the research stays readable"
+            icon={<FileText className="size-4" />}>
+            <ul className="-mx-2">
+              {ended.map((c) => (
+                <li key={c.slug} className="flex items-center gap-2 rounded-lg px-2 py-2 transition hover:bg-card-hover">
+                  <div className="min-w-0 flex-1">
+                    <p className="line-clamp-2 text-sm font-medium break-words text-muted">{c.name}</p>
+                    <p className="num text-xs text-muted">
+                      {c.slug.replace(/^bond-/, "").toUpperCase()} · <Badge tone="neutral">{c.ended?.reason === "matured" ? "matured" : "ended"}</Badge>{" "}
+                      {c.ended?.detail}
+                    </p>
+                  </div>
+                  <Link href={`/runs/${c.latest_run}/report`}
+                    className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-brand ring-1 ring-inset ring-brand/25 transition hover:bg-brand-soft">
+                    Report (run {c.latest_run}) <ArrowUpRight className="size-3" />
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </Card>
+        )}
       </div>
     </div>
   );

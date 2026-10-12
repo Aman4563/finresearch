@@ -376,9 +376,22 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
                     select(ResearchRun.id, ResearchRun.kind).where(ResearchRun.id.in_(runs.values()))
                 ).all()
             )
+            from finresearch.fincalc.dates import today_ist
+            from finresearch.monitor import lifecycle
+
+            gone = lifecycle.ended_keys(
+                s, today_ist()
+            )  # matured or delisted instruments (#293): listed apart
+
+            def ended(c: Company) -> dict[str, Any] | None:
+                kind, ident = ("bond", c.slug[5:]) if c.slug.startswith("bond-") else (
+                    ("fund", c.slug[3:]) if c.slug.startswith("mf-") else ("stock", c.stock_key or ""))  # fmt: skip
+                return gone.get(lifecycle.key(kind, ident)) if ident else None
+
             return [{"slug": c.slug, "name": c.name, "nse_symbol": c.nse_symbol, "bse_code": c.bse_code, "isin": c.isin,
                      "exchange": c.exchange, "key": c.stock_key, "documents": docs.get(c.id, 0),
-                     "latest_run": runs.get(c.id), "kind": kinds.get(runs.get(c.id)) or company_kind(c)}
+                     "latest_run": runs.get(c.id), "kind": kinds.get(runs.get(c.id)) or company_kind(c),
+                     "ended": ended(c)}
                     for c in s.scalars(select(Company).order_by(Company.name))]  # fmt: skip
 
     @app.get("/api/companies/{slug}")
@@ -1151,10 +1164,12 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
 
     @app.get("/api/bonds")
     async def bond_list(q: str = "", limit: int = Query(50, ge=1, le=200)) -> list[dict[str, Any]]:
-        """NSE capital-market bonds matching a symbol or ISIN (no query: the most traded)."""
-        from finresearch.adapters.nse_bonds import search_bonds
+        """NSE capital-market bonds matching a symbol or ISIN (no query: the most traded). Matured bonds (maturity on
+        or before today, IST) are left out (#293)."""
+        from finresearch.adapters.nse_bonds import search_bonds, without_matured
+        from finresearch.fincalc.dates import today_ist
 
-        rows = await _bond_rows()
+        rows = without_matured(await _bond_rows(), today_ist())
         hits = (search_bonds(rows, q, limit) if q.strip() else
                 sorted(rows, key=lambda b: -(b.traded_value or 0))[:limit])  # fmt: skip
         with session_scope() as s:
@@ -1178,10 +1193,25 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
         # Groww's option chain when the Groww connection is valid, else NSE's (#267)
         return fno_client() if fno_client else GrowwFirstFno()
 
+    def _live_expiry(expiry: date) -> None:
+        """A past expiry has nothing left to analyse (#293): 422, never a stale chain."""
+        from finresearch.fincalc import dates
+        from finresearch.signals.fno import ExpiredContract, check_expiry
+
+        try:
+            check_expiry(expiry, dates.now_ist().date())
+        except ExpiredContract as e:
+            raise HTTPException(422, str(e)) from e
+
     @app.get("/api/fno/{symbol}/expiries")
     async def fno_expiries(symbol: str) -> dict[str, Any]:
+        """The contract's expiries still tradable today (IST; past ones are dropped, #293) and its strikes."""
+        from finresearch.fincalc import dates
+        from finresearch.signals.fno import live_expiries
+
         async with _fno() as f:
             expiries, strikes = await f.contract_info(symbol.upper())
+        expiries = live_expiries(expiries, dates.now_ist().date())
         return {
             "symbol": symbol.upper(),
             "expiries": [e.isoformat() for e in expiries],
@@ -1192,6 +1222,7 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
     async def fno_chain(symbol: str, expiry: date) -> dict[str, Any]:
         from finresearch.adapters.nse_fno import lot_size_for
 
+        _live_expiry(expiry)
         async with _fno() as f:
             chain = await f.option_chain(symbol.upper(), expiry)
             try:
@@ -1217,6 +1248,7 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
         from finresearch.fincalc.dates import now_ist
 
         sym = body.symbol.upper()
+        _live_expiry(body.expiry)
         async with _fno() as f:
             chain = await f.option_chain(sym, body.expiry)
             lot = lot_size_for(await f.lot_sizes(), sym, body.expiry)
