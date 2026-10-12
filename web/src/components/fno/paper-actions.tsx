@@ -65,8 +65,8 @@ export function PaperActions({ symbol, expiry, legs }: { symbol: string; expiry:
         </Callout>
       )}
       {margin && (
-        <Callout tone="warn" title={`≈ ₹${inr(margin.total)} margin (approximate)`}>
-          Scan risk ₹{inr(margin.scan_risk)} (worst move {margin.worst_move_pct}%) + exposure ₹{inr(margin.exposure)} + premium ₹{inr(margin.premium_paid)}. {margin.label}. {margin.note}
+        <Callout tone="warn" title={`≈ ${inr(margin.total)} margin (approximate)`}>
+          Scan risk {inr(margin.scan_risk)} (worst move {margin.worst_move_pct}%) + exposure {inr(margin.exposure)} + premium {inr(margin.premium_paid)}. {margin.label}. {margin.note}
         </Callout>
       )}
     </div>

@@ -9,7 +9,7 @@ import { api, day, when } from "@/lib/api";
 import type { ExitRule, PaperTrade } from "./book-types";
 import { ExitRules } from "./exit-rules";
 
-export const rs = (x: number | null | undefined) => (x == null ? "unknown" : `${x < 0 ? "−" : x > 0 ? "+" : ""}₹${fmtINR(Math.abs(Math.round(x)))}`);
+export const rs = (x: number | null | undefined) => (x == null ? "unknown" : `${x < 0 ? "−" : x > 0 ? "+" : ""}${fmtINR(Math.abs(Math.round(x)))}`);
 export const pnlTone = (x: number | null | undefined) => (x == null ? "text-muted" : x > 0 ? "text-gain" : x < 0 ? "text-loss" : "");
 const STATUS_TONE = { open: "info", awaiting_settlement: "warn", closed: "neutral" } as const;
 
@@ -36,7 +36,8 @@ export function PaperTradeCard({ t, rules, onChange }: { t: PaperTrade; rules: E
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <p className="text-sm font-semibold">#{t.id} {t.symbol} <span className="font-normal text-muted">{day(t.expiry)}</span> {t.label && <span className="font-normal">· {t.label}</span>}</p>
         <Badge tone={STATUS_TONE[t.status]}>{t.status.replaceAll("_", " ")}</Badge>
-        <span className={cx("num text-sm font-semibold", pnlTone(shown))}>{t.status === "closed" ? "net" : "net if closed now"} {rs(shown)}</span>
+        {t.status === "awaiting_settlement" ? <span className="text-sm font-semibold text-warn">net: waiting for the settlement price</span>
+          : <span className={cx("num text-sm font-semibold", pnlTone(shown))}>{t.status === "closed" ? "net" : "net if closed now"} {rs(shown)}</span>}
         {t.status !== "closed" && <span className="num text-muted">MTM {rs(t.mtm_gross)} {t.mtm_at ? `· ${when(t.mtm_at)} (${t.mtm_source})` : "· not marked yet"}</span>}
         {t.status === "open" && <Button variant="ghost" className="ml-auto" onClick={close} disabled={busy}>Square off (paper)</Button>}
       </div>
