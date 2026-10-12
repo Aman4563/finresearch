@@ -929,6 +929,35 @@ class PortfolioDisposal(Base):
     origin: Mapped[str] = mapped_column(String(12), default="buy")
 
 
+class PortfolioExpectedTxn(Base):
+    """An expected SIP instalment after a fund's statement units (#297, portfolio.sip_estimates): an ESTIMATE, never a
+    transaction. It never enters portfolio_txn, lots, tax, XIRR or a snapshot's `complete`; the next CAS confirms it
+    (a matching buy), marks it missed, or rejected. `est_units` is None while that day's AMFI NAV is unknown."""
+
+    __tablename__ = "portfolio_expected_txn"
+    __table_args__ = (UniqueConstraint("holding_id", "expected_day"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    holding_id: Mapped[int] = mapped_column(
+        ForeignKey("portfolio_holding.id", ondelete="CASCADE"), index=True
+    )
+    expected_day: Mapped[date] = mapped_column(Date)
+    amount: Mapped[Decimal] = mapped_column(Numeric(20, 4))  # the instalment (gross, before stamp duty)
+    est_units: Mapped[Decimal | None] = mapped_column(
+        Numeric(20, 6)
+    )  # None: the NAV for nav_day is not known yet
+    est_nav: Mapped[Decimal | None] = mapped_column(Numeric(20, 6))
+    nav_day: Mapped[date | None] = mapped_column(
+        Date
+    )  # the day whose NAV applies (the next business day on a holiday)
+    status: Mapped[str] = mapped_column(
+        String(12), default="expected"
+    )  # expected | confirmed | missed | rejected
+    basis: Mapped[str] = mapped_column(String(20))  # sip-inference | kite
+    matched_txn_id: Mapped[int | None] = mapped_column(ForeignKey("portfolio_txn.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class PortfolioSnapshot(Base):
     """The portfolio's value on a day "as shown": written whenever it is valued (the /portfolio page, the API, the
     daily pass); the day's latest valuation wins and `updated_at` says when. An audit record, never recomputed: past
