@@ -249,14 +249,17 @@ function BrokerRow({ c, log, onChanged }: { c: Connection; log?: SyncLog; onChan
 }
 
 function InboxRow({ c, inbox, log, onChanged }: { c: Connection; inbox: Listing["inbox"]; log: SyncLog[]; onChanged: () => void }) {
-  const [pw, setPw] = useState(String(c.config.password ?? ""));
+  // every saved PDF password (#296: CAS password, PAN, others): write-only, tried in turn by the inbox
+  const pwFields = c.fields.filter((f) => f.secret);
+  const saved = () => Object.fromEntries(pwFields.map((f) => [f.name, String(c.config[f.name] ?? "")]));
+  const [pws, setPws] = useState<Record<string, string>>(saved);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [result, setResult] = useState<string | null>(null);
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- reseed from the saved (masked) password
-    setPw(String(c.config.password ?? ""));
-  }, [c]);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reseed from the saved (masked) passwords
+    setPws(saved());
+  }, [c]); // eslint-disable-line react-hooks/exhaustive-deps
   const put = async (body: object, what: string) => {
     setBusy(what); setErr(null);
     try {
@@ -294,16 +297,28 @@ function InboxRow({ c, inbox, log, onChanged }: { c: Connection; inbox: Listing[
       </div>
       <div className="space-y-3 pl-12">
         <Field label="Folder"><Copyable text={inbox.path} /></Field>
-        <div className="max-w-md">
-          <SecretInput label="CAS PDF password (optional, saved only if you enter it)" value={pw} isSet={Boolean(c.config.password_set)} set={setPw}
-            placeholder="usually your PAN in capitals" hint="Without it, PDFs wait in the folder until you import them on the portfolio page." />
-          {pw !== String(c.config.password ?? "") && (
-            <div className="mt-2 flex gap-2">
-              <Button onClick={() => put({ config: { password: pw } }, "pw")} disabled={busy !== null} icon={<Save className="size-3.5" />}>Save password</Button>
-              {c.config.password_set && <Button variant="ghost" onClick={() => put({ config: { clear_password: true } }, "pw")}>Remove saved password</Button>}
-            </div>
-          )}
+        <p className="max-w-2xl text-xs text-muted">PDF passwords are saved only if you enter them (in the Keychain, never shown again). The inbox tries each in turn; without a working one, PDFs wait in the folder until you import them on the portfolio page.</p>
+        <div className="grid max-w-3xl gap-3 sm:grid-cols-2">
+          {pwFields.map((f) => {
+            const v = pws[f.name] ?? "";
+            const isSet = Boolean(c.config[`${f.name}_set`]);
+            return (
+              <div key={f.name}>
+                <SecretInput label={f.label} value={v} isSet={isSet} set={(x) => setPws((p) => ({ ...p, [f.name]: x }))}
+                  placeholder={f.name === "pan" ? "PAN in capitals" : "the password on the PDF"} hint={f.help || undefined} />
+                {(v !== String(c.config[f.name] ?? "") || isSet) && (
+                  <div className="mt-2 flex gap-2">
+                    {v !== String(c.config[f.name] ?? "") && (
+                      <Button onClick={() => put({ config: { [f.name]: v } }, f.name)} disabled={busy !== null} icon={<Save className="size-3.5" />}>Save</Button>
+                    )}
+                    {isSet && <Button variant="ghost" onClick={() => put({ config: { [`clear_${f.name}`]: true } }, f.name)} disabled={busy !== null}>Remove</Button>}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
+        <p className="text-xs text-muted">CAS emails straight into this folder: run <code className="num">uv run finresearch inbox setup-mail</code> for an Apple Mail rule.</p>
         {inbox.pending.length > 0 && <p className="text-xs text-muted">Waiting: <span className="text-foreground">{inbox.pending.map((f) => f.name).join(", ")}</span></p>}
         {result && <p className="text-xs text-muted">{result}</p>}
         <ErrorNote error={err} />
