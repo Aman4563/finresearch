@@ -57,6 +57,15 @@ def upsert_watch(company_slug: str, issue_info: dict[str, str]) -> dict:
             s.add(w)
         else:
             w.open_date, w.close_date, w.active = open_date, close_date, True
+            meta = dict(w.meta or {})
+            if (
+                meta.get("phase") == "withdrawn"
+            ):  # watched again: the withdrawn verdict is undone, the dates decide
+                for k in ("phase", "phase_at", "withdrawn_checked"):
+                    meta.pop(k, None)
+                meta["phase_history"] = [*(meta.get("phase_history") or []),
+                                         {"phase": "rewatched", "day": today_ist().isoformat()}]  # fmt: skip
+                w.meta = meta
             if not (w.meta or {}).get("listing_confirmed"):
                 w.allotment_date, w.listing_date = allotment, listing
         w.anchor_shares = parse_anchor_shares(issue_info.get("Issue Size")) or w.anchor_shares

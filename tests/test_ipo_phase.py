@@ -351,6 +351,15 @@ async def test_an_issue_that_never_lists_is_withdrawn_only_on_clear_evidence(ipo
     with session_scope() as s:
         assert not s.query(MonitorJob).filter_by(watch_id=wid, status="pending").count()
         assert "treated as withdrawn" in s.query(Alert).filter_by(kind="ipo_withdrawn").one().message
+    # a wrong verdict is undone by watching the issue again: the dates decide the phase, the checks come back
+    from finresearch.monitor.watch import upsert_watch
+
+    w = upsert_watch(ipo["slug"], orient_detail().issue_info)
+    assert (w["phase"], w["active"], w["meta"]["phase_history"][-1]["phase"]) == (
+        "allotted",
+        True,
+        "rewatched",
+    )
 
 
 async def test_listed_and_archived_ipos_leave_the_brief_and_the_ipo_alert_rules(ipo):
