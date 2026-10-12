@@ -90,7 +90,7 @@ _GSEC_NAME = re.compile(r"\bG[- ]?SEC\b|\bGOI\b|government of india|\bGS\s?20\d\
 
 
 def sovereign_kind(isin: str | None, name: str | None, symbol: str | None = None) -> str | None:
-    """"sgb", "tbill", "gsec" (a Central Government dated security), "sdl" (a State Development Loan) or None."""
+    """ "sgb", "tbill", "gsec" (a Central Government dated security), "sdl" (a State Development Loan) or None."""
     n, sym, code = name or "", (symbol or "").upper(), (isin or "").upper()
     if sym.startswith("SGB") or _SGB_NAME.search(n):
         return "sgb"

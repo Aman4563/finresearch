@@ -61,7 +61,8 @@ class ManualTxn(BaseModel):
     bse_code: str | None = Field(None, max_length=20)
     scheme_code: str | None = Field(None, max_length=20)
     day: date
-    kind: Literal["buy", "sell", "dividend", "bonus", "split", "opening"]
+    # redemption: a bond's units redeemed by the issuer or RBI; interest: a bond's coupon or an SGB's interest (#294)
+    kind: Literal["buy", "sell", "dividend", "bonus", "split", "opening", "redemption", "interest"]
     quantity: Decimal | None = Field(None, gt=0)
     price: Decimal | None = Field(None, ge=0)
     amount: Decimal | None = Field(None, ge=0)
@@ -97,7 +98,9 @@ class ResolveAction(BaseModel):
 
 class TxnUpdate(BaseModel):
     day: date | None = None
-    kind: Literal["buy", "sell", "dividend", "bonus", "split", "opening"] | None = None
+    kind: Literal["buy", "sell", "dividend", "bonus", "split", "opening", "redemption", "interest"] | None = (
+        None
+    )
     quantity: Decimal | None = Field(None, gt=0)
     price: Decimal | None = Field(None, ge=0)
     amount: Decimal | None = Field(None, ge=0)
@@ -117,6 +120,9 @@ class HoldingUpdate(BaseModel):
     tax_class: Literal["equity", "debt_mf", "other_mf", "sgb", "other"] | None = None
     fmv_2018: Decimal | None = Field(None, ge=0)
     flags: dict[str, bool] | None = None
+    # a held bond's terms (#294): issue_date, maturity, coupon_pct, freq, face_value, redemption_price
+    # (portfolio.bonds.clean_terms validates them; an empty value removes that term)
+    bond_terms: dict[str, Any] | None = None
 
 
 def _decode(content_b64: Any) -> bytes:
@@ -401,7 +407,8 @@ def add_portfolio_routes(app: FastAPI, *, scheme_rows: Callable[[], Awaitable[li
                                   "note": t.note, "meta": {k: v for k, v in (t.meta or {}).items()
                                                            if k in ("a", "b", "from", "to", "acquired", "reinvest",
                                                                     "subject", "description", "cas_type_txn",
-                                                                    "exchange", "rbi_redemption", "note")}}
+                                                                    "exchange", "rbi_redemption", "held_to_maturity",
+                                                                    "note")}}
                                  for t in txns],
                 "lots": [{"id": x.id, "acquired": x.acquired.isoformat() if x.acquired else None, "origin": x.origin,
                           "quantity": _n(x.quantity), "open_quantity": _n(x.open_quantity),
@@ -650,12 +657,14 @@ def add_portfolio_routes(app: FastAPI, *, scheme_rows: Callable[[], Awaitable[li
 
         if body.holding_id is None and not body.name.strip():
             raise HTTPException(422, "name: say what you bought (or pick an existing holding)")
-        if body.kind in ("buy", "sell", "opening") and body.quantity is None:
-            raise HTTPException(422, "quantity is required for a buy, sell or opening balance")
-        if body.kind in ("buy", "sell") and body.price is None and body.amount is None:
-            raise HTTPException(422, "price or amount is required for a buy or sell")
-        if body.kind == "dividend" and not body.amount:
-            raise HTTPException(422, "amount is required for a dividend")
+        if body.kind in ("buy", "sell", "opening", "redemption") and body.quantity is None:
+            raise HTTPException(422, "quantity is required for a buy, sell, redemption or opening balance")
+        if body.kind in ("buy", "sell", "redemption") and body.price is None and body.amount is None:
+            raise HTTPException(422, f"price or amount is required for a {body.kind}")
+        if body.kind in ("dividend", "interest") and not body.amount:
+            raise HTTPException(
+                422, f"amount is required for {'a dividend' if body.kind == 'dividend' else 'interest'}"
+            )
         if body.kind == "split" and not ({"from", "to"} <= set(body.meta)):
             raise HTTPException(422, "a split needs meta.from and meta.to (face value before and after)")
         if body.kind == "bonus" and not ({"a", "b"} <= set(body.meta)):
@@ -704,6 +713,8 @@ def add_portfolio_routes(app: FastAPI, *, scheme_rows: Callable[[], Awaitable[li
                 h = update_holding(s, holding_id, data)
             except LookupError as e:
                 raise HTTPException(404, str(e)) from e
+            except ValueError as e:  # bad bond terms: the message names the field
+                raise HTTPException(422, str(e)) from e
             return {"id": h.id}
 
     @app.post("/api/portfolio/actions/sync")

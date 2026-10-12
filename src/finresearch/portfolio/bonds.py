@@ -131,7 +131,10 @@ def terms_of(kind: str, entered: dict[str, Any] | None, library_maturity: Any = 
             src["maturity"] = library_source or "bond library"
     if kind == "sgb":
         if maturity is None and issue is not None:
-            maturity, src["maturity"] = add_months(issue, SGB_TENOR_MONTHS), "issue date + 8 years (RBI SGB FAQ)"
+            maturity, src["maturity"] = (
+                add_months(issue, SGB_TENOR_MONTHS),
+                "issue date + 8 years (RBI SGB FAQ)",
+            )
         if freq is None:
             freq, src["freq"] = SGB_FREQ, "half-yearly (RBI SGB FAQ)"
     elif kind in ("gsec", "sdl"):
@@ -213,3 +216,55 @@ def _iso(d: date | None) -> str | None:
 
 def _num(x: Decimal | None) -> float | None:
     return None if x is None else float(x)
+
+
+# --------------------------------------------------------------------------- database
+def library_maturities(s: Any) -> dict[str, tuple[str, str]]:
+    """{ISIN: (maturity, source)} from the bond library (#293): Company "bond-<isin>" meta, then the lifecycle state
+    NSE's bond list filled."""
+    from sqlalchemy import select
+
+    from finresearch.db.models import Company
+    from finresearch.monitor.lifecycle import states
+
+    out: dict[str, tuple[str, str]] = {}
+    for slug, meta in s.execute(select(Company.slug, Company.meta).where(Company.slug.like("bond-%"))):
+        m = meta or {}
+        if m.get("maturity"):
+            out[slug[5:].upper()] = (m["maturity"], m.get("maturity_source") or "bond library")
+    for k, st in states(s, "bond").items():
+        isin = k.split(":", 1)[1]
+        if st.get("maturity") and isin not in out:
+            out[isin] = (st["maturity"], st.get("source") or "NSE's capital-market bond list")
+    return out
+
+
+def holding_terms(
+    h: Any, library: dict[str, tuple[str, str]], tax_class: str | None = None
+) -> BondTerms | None:
+    """A holding's BondTerms, or None when it is not a bond."""
+    kind = bond_kind(h.asset_type, h.isin, h.name, h.nse_symbol, tax_class)
+    if kind is None:
+        return None
+    lib = library.get((h.isin or "").upper())
+    return terms_of(kind, (h.meta or {}).get("bond_terms"), lib[0] if lib else None, lib[1] if lib else None)
+
+
+def matured_price(t: BondTerms, today: date) -> Any:
+    """The PriceInfo of a held bond past its maturity: its redemption value when known, else no price, with the
+    reason. Never a traded or statement price (there is no market for a matured bond)."""
+    from finresearch.portfolio.valuation import PriceInfo
+
+    assert t.maturity is not None
+    amount, src = redemption_value(t)
+    why = f"{MATURED}: matured on {t.maturity.isoformat()}"
+    if amount is None:
+        return PriceInfo(error=f"{why}; the redemption value is unknown (enter it, or record the redemption)")
+    return PriceInfo(amount, t.maturity.isoformat(), f"redemption value at maturity: {src}", note=why,
+                     kind="redemption_value")  # fmt: skip
+
+
+def price_basis(t: BondTerms, source: str | None) -> str | None:
+    """ "dirty" for an NCD priced from an NSE quote (NSE's capital-market bond prices include accrued interest), else
+    None: no basis is claimed that the app does not know."""
+    return "dirty" if t.kind == "bond" and (source or "").startswith("NSE quote") else None

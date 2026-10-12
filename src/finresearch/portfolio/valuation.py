@@ -629,7 +629,9 @@ def cash_flows(
             ):  # dropping it would leave the units' value out of the flows: XIRR would read a loss
                 return [], "a sale without an amount"
             flows.append((t.day, gross - (t.charges or 0)))
-        elif t.kind in ("dividend", "interest") and not reinvest and t.amount:  # a bond's coupon is a return too
+        elif (
+            t.kind in ("dividend", "interest") and not reinvest and t.amount
+        ):  # a bond's coupon is a return too
             flows.append((t.day, abs(t.amount)))
     if value:
         flows.append((today, value))

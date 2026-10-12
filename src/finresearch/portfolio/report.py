@@ -164,6 +164,10 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
     from finresearch.portfolio.service import actions_of
 
     imap = isin_map(s)
+    from finresearch.portfolio import bonds
+
+    library = bonds.library_maturities(s)
+    matured_n = 0
     excluded: Counter[str] = Counter()  # holdings left out of the overall XIRR, by the reason cash_flows gave
     for h in data.holdings:
         p = prices.get(h.id) or PriceInfo(error="not priced")
@@ -183,6 +187,12 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
             (lot.cost_per_unit * lot.open_quantity for lot in open_lots if lot.cost_per_unit is not None),
             ZERO,
         )
+        # a held bond past its maturity (#294): valued at its redemption value when known, else unknown; never at the
+        # last traded or statement price, which no longer stands for anything
+        terms = bonds.holding_terms(h, library, eff)
+        if terms is not None and units > 0 and bonds.matured(terms, today):
+            p = bonds.matured_price(terms, today)
+            matured_n += 1
         value = p.price * units if p.price is not None and units > 0 else None
         stale_why = price_stale(p, today) if value is not None else None
         disp = data.disposals.get(h.id, [])
@@ -257,6 +267,8 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
             "market_cap_cr": _f(p.market_cap_cr), "cap_bucket": (cap_bucket(p.market_cap_cr) if h.asset_type == "stock" and eff == "equity"
                                                                   else "Not equity" if h.asset_type == "stock"
                                                                   else fund_cap_bucket(category, eff)),
+            "bond": bonds.view(terms, today, units) if terms is not None else None,
+            "price_basis": bonds.price_basis(terms, p.source) if terms is not None else None,
             "lots": len(open_lots), "closed": units <= 0, "signal": _signal(h, p, imap), "elss": lock,
             "warnings": (h.meta or {}).get("lot_warnings") or [], "pending_actions": actions,
             "actions_synced": (h.meta or {}).get("actions_synced"),
@@ -277,9 +289,9 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
     tl = timeline(data)
     realised_unknown = int(tot["realised_unknown"])
     # complete: every open holding has a current (not stale) price and a known cost, and every sale a known cost
-    complete = (
-        unpriced == 0 and stale == 0 and unknown_cost == 0 and realised_unknown == 0 and tot["value"] > 0
-    )
+    # ... and no bond held past its maturity: its units are still in the lots until the redemption is recorded (#294)
+    complete = (unpriced == 0 and stale == 0 and unknown_cost == 0 and realised_unknown == 0 and matured_n == 0
+                and tot["value"] > 0)  # fmt: skip
     return {
         "as_of": today.isoformat(), "holdings": rows, "complete": complete,
         "invested": tl[-1]["invested"] if tl else 0.0,
@@ -292,7 +304,9 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
                     "dividends": _f(tot["dividends"]), "interest": _f(tot["interest"]), "xirr": ox,
                     "xirr_reason": ox_reason, "holdings": sum(1 for r in rows if not r["closed"]),
                     "unknown_cost": unknown_cost, "unpriced": unpriced, "stale": stale, "stale_note": stale_note,
-                    "pending_actions": with_actions},
+                    "pending_actions": with_actions, "matured_bonds": matured_n,
+                    "matured_note": (f"{matured_n} bond(s) past maturity: record the redemption (and the last "
+                                     "coupon) to close them") if matured_n else None},
         "allocation": {k: [{"label": lab, "value": _f(v)} for lab, v in sorted(d.items(), key=lambda kv: -kv[1])]
                        for k, d in alloc.items()},
         "cap_list": {k: str(v) for k, v in CAP_LIST.items()},

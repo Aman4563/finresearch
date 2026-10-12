@@ -442,6 +442,12 @@ def update_holding(s: Session, holding_id: int, body: dict[str, Any]) -> Portfol
     if "flags" in body:  # SGB original-subscriber flag, listed override ...
         h.meta = {**(h.meta or {}), **{k: v for k, v in (body["flags"] or {}).items()
                                        if k in ("sgb_original_subscriber", "listed")}}  # fmt: skip
+    if "bond_terms" in body:  # a held bond's terms (#294), validated; {} or None clears them
+        from finresearch.portfolio.bonds import clean_terms
+
+        terms = clean_terms(body["bond_terms"] or {})
+        m = {k: v for k, v in (h.meta or {}).items() if k != "bond_terms"}
+        h.meta = {**m, **({"bond_terms": terms} if terms else {})}
     h.updated_at = func.now()
     s.flush()
     return h
