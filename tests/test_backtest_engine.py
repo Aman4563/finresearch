@@ -270,3 +270,54 @@ def test_current_setup_gives_the_rule_legs_at_the_last_close():
     )  # 27 days to Feb; Mar 27 - 45 days = Feb 10
     assert late["status"] == "wait" and "window opens on 10-Feb-2025" in late["reason"]
     assert setup.current_setup(replace(spec, underlying="BANKNIFTY"), h)["status"] == "no_data"
+
+
+def holiday_moved(h: MemoryHistory, expiry: date) -> MemoryHistory:
+    """Thursday `expiry` becomes a holiday: no session that day, and on Wednesday NSE's bhavcopy relabels the
+    expiring contracts (and the future) with Wednesday's date (NIFTY June 2023: 29th -> 28th)."""
+    from datetime import timedelta
+
+    wed = expiry - timedelta(days=1)
+    days = h.days["NIFTY"]
+    del days[expiry]
+    x = days[wed]
+    s = x.spot
+    for (e, right, k), q in list(x.options.items()):
+        if e == expiry:
+            del x.options[(e, right, k)]
+            v = round(
+                max(0.0, s - k) if right == "call" else max(0.0, k - s), 2
+            )  # the last session: intrinsic
+            if v >= 0.05:
+                x.options[(wed, right, k)] = replace(q, expiry=wed, close=v, settle=v)
+    if expiry in x.futures:
+        x.futures[wed] = round(s, 2)
+        del x.futures[expiry]
+    return h
+
+
+def test_an_expiry_moved_earlier_by_a_holiday_settles_on_its_real_last_session():
+    exp = date(2022, 6, 30)  # the June monthly
+    h = holiday_moved(fs.history(date(2022, 3, 1), date(2022, 8, 31)), exp)
+    sp = [replace(specs.by_key(k), iv_pct_min=None) for k in ("nifty_dcs_m", "nifty_ic_w")]
+    res = engine.run(sp, h, date(2022, 5, 2), date(2022, 7, 29), warmup_days=30)
+    june = [t for t in res["nifty_dcs_m"]["trades"] if t["expiry"] == exp.isoformat()]
+    assert june and all(t["reason"] == "expiry" and t["exit_day"] == "2022-06-29" for t in june)
+    assert all("expiry moved to 2022-06-29 (holiday)" in t["flags"] for t in june)
+    s = h.days["NIFTY"][date(2022, 6, 29)].spot  # settled at that day's final price, with exercise STT if ITM
+    for t in june:
+        long = next(x for x in t["legs"] if x["side"] == "buy")
+        assert long["exit"] == pytest.approx(max(0.0, s - long["strike"]), abs=0.01)
+    wk = [t for t in res["nifty_ic_w"]["trades"] if t["expiry"] == exp.isoformat()]
+    # the weekly condor is out by Tuesday's close (the session before the real last session), never stranded
+    assert all(t["exit_day"] <= "2022-06-28" for t in wk)
+    assert all(t["reason"] != "expiry_unsettled" for r in res.values() for t in r["trades"])
+
+
+def test_no_entry_on_the_last_session_before_expiry_day():
+    x = put_day()
+    st = engine.SpecState(replace(specs.by_key("nifty_pcs_m"), iv_pct_min=None))
+    # the next session is the expiry day itself (a long holiday in between): the spread could never be managed
+    assert engine.try_enter(st, x, "NIFTY", clk(x), [15.0], BOOK, next_session=EXP) is None
+    assert st.skips == {"no session left before expiry day": 1}
+    assert engine.try_enter(st, x, "NIFTY", clk(x), [15.0], BOOK, next_session=date(2025, 1, 13)) is not None

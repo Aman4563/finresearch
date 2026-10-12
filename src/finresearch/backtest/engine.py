@@ -14,7 +14,9 @@ marked gross P&L − their entry costs, recorded at every session from the windo
 from __future__ import annotations
 
 import math
+from bisect import bisect_right
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import date
 from typing import Any
@@ -103,11 +105,25 @@ class SpecState:
 
 
 # --------------------------------------------------------------------------- management
+def row_expiry(p: Position, x: Day) -> date:
+    """The expiry date today's rows carry for the position's contracts. When a holiday moves an expiry earlier (NIFTY
+    June 2023: Thursday 29th to Wednesday 28th), NSE's bhavcopy relabels the contracts with the new date on their last
+    day, so on that day the rows sit under today's date."""
+    if p.expiry in x.futures or any((p.expiry, lg.right, lg.strike) in x.options for lg in p.legs):
+        return p.expiry
+    return (
+        x.day
+        if x.day < p.expiry and any((x.day, lg.right, lg.strike) in x.options for lg in p.legs)
+        else p.expiry
+    )
+
+
 def mark(p: Position, x: Day) -> dict[int, Quote | None]:
     """Update each leg's mark to today's reference price; a leg with no row today keeps its last mark (flagged)."""
     out: dict[int, Quote | None] = {}
+    key = row_expiry(p, x)
     for i, leg in enumerate(p.legs):
-        q = x.options.get((p.expiry, leg.right, leg.strike))
+        q = x.options.get((key, leg.right, leg.strike))
         out[i] = q
         if q is not None and q.ref is not None:
             leg.mark = q.ref
@@ -116,7 +132,9 @@ def mark(p: Position, x: Day) -> dict[int, Quote | None]:
     return out
 
 
-def exit_reason(p: Position, spec: Spec, d: date, next_session: date | None) -> str | None:
+def exit_reason(p: Position, spec: Spec, d: date, next_session: date | None,
+                expiry_day: date | None = None) -> str | None:  # fmt: skip
+    """`expiry_day`: the session the contract really expires on (the last session on or before its expiry date)."""
     g = p.gross()
     basis = abs(p.premium)
     if spec.profit_take_pct is not None and basis > 0 and g >= spec.profit_take_pct / 100 * basis:
@@ -125,7 +143,7 @@ def exit_reason(p: Position, spec: Spec, d: date, next_session: date | None) -> 
         return "stop"
     if spec.exit_dte is not None and (p.expiry - d).days <= spec.exit_dte:
         return "dte"
-    if not spec.hold_to_expiry and next_session is not None and next_session >= p.expiry:
+    if not spec.hold_to_expiry and next_session is not None and next_session >= (expiry_day or p.expiry):
         return "before_expiry_day"
     return None
 
@@ -143,12 +161,13 @@ def square_off(
         orders.append(ch.TradeLeg("option", side, leg.exit, leg.qty))  # type: ignore[arg-type]
     gross = sum(leg.sign * (leg.exit - leg.entry) * leg.qty for leg in p.legs)  # type: ignore[operator]
     costs = ch.order_costs(orders, x.day, book.brokerage_per_order).total
-    return _trade(p, x.day, reason, gross, costs, 0.0, x.futures.get(p.expiry))
+    return _trade(p, x.day, reason, gross, costs, 0.0, x.futures.get(row_expiry(p, x)))
 
 
 def settle(p: Position, x: Day) -> dict[str, Any] | None:
     """Expiry-day settlement at the final settlement price (pricing.settlement_price); STT on in-the-money longs."""
-    got = px.settlement_price(x, p.expiry)
+    key = row_expiry(p, x)
+    got = px.settlement_price(x, key)
     if got is None:
         return None
     s, source = got
@@ -158,7 +177,9 @@ def settle(p: Position, x: Day) -> dict[str, Any] | None:
         leg.exit = v
     if source != "future":
         p.flags.append(f"settled at {source} {s:.2f}")
-    return _trade(p, x.day, "expiry", st.gross, 0.0, st.exercise_stt, x.futures.get(p.expiry))
+    if x.day != p.expiry:
+        p.flags.append(f"expiry moved to {x.day} (holiday)")
+    return _trade(p, x.day, "expiry", st.gross, 0.0, st.exercise_stt, x.futures.get(key))
 
 
 # --------------------------------------------------------------------------- entry
@@ -220,8 +241,10 @@ def margin(spec: Spec, sym: str, legs: list[Leg], fwd: float, t: float, book: Bo
     return ma.estimate(ml, px.discounted_spot(fwd, t, book.rate), t, book.rate, kind).total
 
 
-def try_enter(st: SpecState, x: Day, sym: str, h: Clocked, ivs: list[float], book: Book) -> Position | None:
-    """One entry decision at this close (module docstring); a refusal is counted in st.skips by reason."""
+def try_enter(st: SpecState, x: Day, sym: str, h: Clocked, ivs: list[float], book: Book,
+              next_session: date | None = None, expiry_day: Callable[[date], date] = lambda e: e) -> Position | None:  # fmt: skip
+    """One entry decision at this close (module docstring); a refusal is counted in st.skips by reason. A spec that
+    must be out before expiry day never enters on the last session before it (it could not be managed)."""
     spec, d = st.spec, x.day
     if len(st.open) >= spec.max_concurrent:
         return None
@@ -234,6 +257,9 @@ def try_enter(st: SpecState, x: Day, sym: str, h: Clocked, ivs: list[float], boo
         return None
     st.entries_considered += 1
     expiry = exps[0]
+    if not spec.hold_to_expiry and next_session is not None and next_session >= expiry_day(expiry):
+        st.skips["no session left before expiry day"] += 1
+        return None
     stats = vol.iv_stats(ivs) if x.iv30 is not None else None  # today's IV unknown -> the filter is unknown
     pct = stats.percentile if stats else None
     if spec.iv_pct_min is not None and (pct is None or pct < spec.iv_pct_min):
@@ -301,19 +327,22 @@ def try_enter(st: SpecState, x: Day, sym: str, h: Clocked, ivs: list[float], boo
 
 
 # --------------------------------------------------------------------------- the loop
-def manage(st: SpecState, x: Day, next_session: date | None, book: Book) -> None:
+def manage(st: SpecState, x: Day, next_session: date | None, book: Book,
+           expiry_day: Callable[[date], date] = lambda e: e) -> None:  # fmt: skip
+    """`expiry_day(e)`: the last session on or before expiry date e (the exchange calendar, not prices)."""
     for p in list(st.open):
         if p.entry_day >= x.day:
             continue
         tr = None
-        if x.day >= p.expiry:
-            tr = settle(p, x) if x.day == p.expiry else None
+        eday = expiry_day(p.expiry)
+        if x.day >= eday:
+            tr = settle(p, x) if x.day == eday else None
             if tr is None:  # no settlement price on expiry day, or expiry day missing from the data
                 p.flags.append("no settlement price: closed at the day's prices")
                 tr = square_off(p, x, mark(p, x), "expiry_unsettled", book)
         else:
             quotes = mark(p, x)
-            reason = exit_reason(p, st.spec, x.day, next_session)
+            reason = exit_reason(p, st.spec, x.day, next_session, eday)
             if reason:
                 tr = square_off(p, x, quotes, reason, book)
         if tr is not None:
@@ -339,6 +368,12 @@ def run(specs: list[Spec], history: History, start: date, end: date, book: Book 
         last = data_end or history.latest(sym)
         days = h.sessions(sym, start - timedelta(days=warmup_days), last) if last else []
         ivs: list[float] = []
+
+        def eday(e: date, days: list[date] = days) -> date:
+            if not days or e > days[-1]:
+                return e  # beyond the stored calendar: the date itself
+            return days[bisect_right(days, e) - 1]
+
         for i, d in enumerate(days):
             h.advance(d)
             x = h.day(sym, d)
@@ -351,9 +386,9 @@ def run(specs: list[Spec], history: History, start: date, end: date, book: Book 
             nxt = days[i + 1] if i + 1 < len(days) else None
             for st in states:
                 had_open = bool(st.open)
-                manage(st, x, nxt, book)
+                manage(st, x, nxt, book, eday)
                 if d <= end:
-                    try_enter(st, x, sym, h, ivs, book)
+                    try_enter(st, x, sym, h, ivs, book, nxt, eday)
                 if d <= end or had_open or st.open:
                     st.equity.append(
                         (d, book.capital + st.realised + sum(p.gross() - p.entry_costs for p in st.open))

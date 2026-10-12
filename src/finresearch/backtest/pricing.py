@@ -94,11 +94,9 @@ def wing(x: Day, expiry: date, right: str, anchor: float, target: float) -> Quot
 
 
 def settlement_price(x: Day, expiry: date) -> tuple[float, str] | None:
-    """The final settlement price on expiry day: the expiring future's settlement price (NSE settles index and stock
+    """The final settlement price (call it only on the contract's last session, which a holiday can move earlier): the expiring future's settlement price (NSE settles index and stock
     futures at the underlying's closing value), else the bhavcopy's underlying value (UDiFF), else the median of
     K ± settlement price of the expiring options worth more than ₹1 (on expiry day NSE settles them at intrinsic)."""
-    if x.day != expiry:
-        return None
     if expiry in x.futures:
         return x.futures[expiry], "future"
     if x.spot:
