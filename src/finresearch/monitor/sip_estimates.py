@@ -137,6 +137,7 @@ async def run(today: date, now: datetime, src: Sources | None = None,
     with session_scope() as s:
         data = load(s)
         plans, kite_isins, notes = plans_for(data, today, kite[0] if kite else None)
+        out["pruned"] = se.prune(s, plans)  # projections tonight's plans no longer contain
         out["planned"] = se.store_plans(s, plans, holidays)
         if kite is not None:
             out |= se.apply_kite_orders(s, kite_isins, kite[1])

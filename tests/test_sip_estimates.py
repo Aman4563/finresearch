@@ -36,9 +36,10 @@ def test_instalment_days_and_nav_day():
     # last 05-Sep, statement to 29-Sep, today 10-Nov: 05-Oct and 05-Nov
     assert se.inferred_days(date(2026, 9, 5), date(2026, 9, 29), date(2026, 11, 10)) == [date(2026, 10, 5),
                                                                                          date(2026, 11, 5)]  # fmt: skip
-    assert (
-        se.inferred_days(date(2026, 9, 5), date(2026, 10, 5), date(2026, 11, 4)) == []
-    )  # 05-Oct is in the statement
+    # a statement to 08-Oct covers 05-Oct + 3 days: nothing left; one to 07-Oct may not show a 05-Oct SIP allotted
+    # on 08-Oct, so 05-Oct is still expected
+    assert se.inferred_days(date(2026, 9, 5), date(2026, 10, 8), date(2026, 11, 4)) == []
+    assert se.inferred_days(date(2026, 9, 5), date(2026, 10, 7), date(2026, 11, 4)) == [date(2026, 10, 5)]
     # Kite: next instalment 10-Dec, statement to 29-Sep, today 15-Nov: 10-Oct and 10-Nov
     assert se.kite_days(date(2026, 12, 10), date(2026, 9, 29), date(2026, 11, 15)) == [date(2026, 10, 10),
                                                                                        date(2026, 11, 10)]  # fmt: skip
@@ -161,11 +162,13 @@ def test_estimates_are_shown_apart_and_never_enter_the_totals(client):  # noqa: 
     assert done["summary"] == before["summary"] and done["complete"] == before["complete"]
 
 
-def next_statement(rows: list[tuple[str, str, str, str, str, str]], close: str) -> bytes:
-    """The Value Fund from 01-Oct to 10-Nov-2026 (opening 90 units), with `rows`."""
+def next_statement(
+    rows: list[tuple[str, str, str, str, str, str]], close: str, end: str = "10-Nov-2026"
+) -> bytes:
+    """The Value Fund from 01-Oct-2026 to `end` (opening 90 units), with `rows`."""
     value = Scheme("EXVF", "Example Value Fund - Direct Plan - Growth", "INF000X01050", "90.000", rows, close,
-                   "10-Nov-2026", "105.0000", f"{D(close) * 105:,.2f}", "12,000.00")  # fmt: skip
-    return build_cas(Statement(start="01-Oct-2026", end="10-Nov-2026", schemes=[value]))
+                   end, "105.0000", f"{D(close) * 105:,.2f}", "12,000.00")  # fmt: skip
+    return build_cas(Statement(start="01-Oct-2026", end=end, schemes=[value]))
 
 
 def _statuses() -> dict[date, tuple[str, bool]]:

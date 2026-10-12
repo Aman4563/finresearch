@@ -61,19 +61,21 @@ def nav_day(day: date, holidays: Iterable[date] = ()) -> date:
 
 
 def inferred_days(last: date, as_of: date, today: date) -> list[date]:
-    """Monthly instalment days after the last one seen, after the statement's end (`as_of`), up to today."""
+    """Monthly instalment days after the last one seen, up to today, that the statement to `as_of` cannot have shown
+    yet: after `as_of` − MATCH_DAYS (an instalment due a day before the statement's end can be allotted after it)."""
     out, k = [], 1
     while (d := add_months(last, k)) <= today:
-        if d > as_of:
+        if d > as_of - timedelta(days=MATCH_DAYS):
             out.append(d)
         k += 1
     return out
 
 
 def kite_days(next_instalment: date, as_of: date, today: date) -> list[date]:
-    """A Kite monthly SIP's past instalment days: one month apart before its next instalment, after `as_of`."""
+    """A Kite monthly SIP's past instalment days: one month apart before its next instalment, after `as_of` −
+    MATCH_DAYS (inferred_days)."""
     out, k = [], 1
-    while (d := add_months(next_instalment, -k)) > as_of:
+    while (d := add_months(next_instalment, -k)) > as_of - timedelta(days=MATCH_DAYS):
         if d <= today:
             out.append(d)
         k += 1
@@ -119,21 +121,49 @@ def plan_kite(h: Any, sip: Any, today: date) -> Plan | None:
 
 
 def store_plans(s: Any, plans: Iterable[Plan], holidays: Iterable[date] = ()) -> int:
-    """Insert the planned instalments not stored yet (holding, day unique); returns how many were added. A stored
-    row keeps its status: a later plan never reopens a confirmed, missed or rejected instalment."""
+    """Insert the planned instalments not stored yet; returns how many were added. A planned day within MATCH_DAYS of
+    a stored row (any status) is that same instalment (the inferred day moves when the last instalment was a day or
+    two late, or the basis switches between Kite and the inference): never a second row. A stored row keeps its
+    status: a later plan never reopens a confirmed, missed or rejected instalment."""
+    from sqlalchemy import select
     from sqlalchemy.dialects.postgresql import insert
 
     from finresearch.db.models import PortfolioExpectedTxn
 
     hol, added = set(holidays), 0
     for p in plans:
+        have = list(s.scalars(select(PortfolioExpectedTxn.expected_day)
+                              .where(PortfolioExpectedTxn.holding_id == p.holding_id)))  # fmt: skip
         for d in p.days:
+            if any(abs((d - x).days) <= MATCH_DAYS for x in have):
+                continue
             got = s.execute(insert(PortfolioExpectedTxn).values(
                 holding_id=p.holding_id, expected_day=d, amount=p.amount, nav_day=nav_day(d, hol), status=EXPECTED,
                 basis=p.basis).on_conflict_do_nothing(index_elements=["holding_id", "expected_day"])
                 .returning(PortfolioExpectedTxn.id)).first()  # fmt: skip
             added += got is not None
+            have.append(d)
     return added
+
+
+def prune(s: Any, plans: Iterable[Plan]) -> int:
+    """Delete still-expected rows that tonight's plans no longer contain (no planned day within MATCH_DAYS): the SIP
+    stopped, was paused or now reads missed in a statement, or the fund was sold. Rows are projections; only
+    confirmed, missed and rejected rows are facts, and those are never touched. Returns how many were deleted."""
+    from sqlalchemy import select
+
+    from finresearch.db.models import PortfolioExpectedTxn
+
+    days: dict[int, list[date]] = {}
+    for p in plans:
+        days.setdefault(p.holding_id, []).extend(p.days)
+    gone = 0
+    for r in s.scalars(select(PortfolioExpectedTxn).where(PortfolioExpectedTxn.status == EXPECTED)):
+        if not any(abs((d - r.expected_day).days) <= MATCH_DAYS for d in days.get(r.holding_id, [])):
+            s.delete(r)
+            gone += 1
+    s.flush()
+    return gone
 
 
 def _nav_for(rows: list[Any], code: str | None, isin: str | None, day: date) -> Decimal | None:

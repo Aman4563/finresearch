@@ -248,3 +248,65 @@ def test_schedule_lists_the_new_jobs():
     sj = scheduler.schedule_json(WatchWindows())
     assert sj["sip_estimates"] == {"after": "23:30", "trading_days": True}
     assert sj["scheme_master"] == {"weekly_from": "Monday 07:00"}
+
+
+# --------------------------------------------------------------------------- projections follow the statements
+def _night(day: date) -> dict:
+    async def navs(d):
+        return []
+
+    async def kite(now):
+        return None
+
+    return asyncio.run(job.run(day, ist(day.year, day.month, day.day, 23, 30), job.Sources(navs=navs, kite=kite),
+                               holidays=set()))  # fmt: skip
+
+
+def test_a_late_instalment_moves_the_inferred_day_without_a_second_row(clean):
+    from test_sip_estimates import BUY_07OCT, next_statement
+
+    import_sip_cas(clean)
+    assert _night(date(2026, 11, 12))["planned"] == 2  # 05-Oct and 05-Nov
+    # the next CAS ends 06-Nov: the October instalment was allotted on 07-Oct (confirms 05-Oct); 05-Nov + 3 days is
+    # after its end, so 05-Nov is still expected
+    done = post_cas(
+        clean, next_statement([BUY_07OCT], "118.776", end="06-Nov-2026"), dry=False, name="c2.pdf"
+    ).json()
+    assert done["reconciled"], done
+    # tonight the inference starts from 07-Oct and plans 07-Nov: the same instalment as 05-Nov, not a second one
+    res = _night(date(2026, 11, 12))
+    assert (res["planned"], res["pruned"]) == (0, 0)
+    assert {d: st for d, (_, st, *_) in _rows().items()} == {date(2026, 10, 5): "confirmed",
+                                                             date(2026, 11, 5): "expected"}  # fmt: skip
+
+
+def test_a_sip_the_statement_shows_missed_loses_its_projections(clean):
+    from test_sip_estimates import next_statement
+
+    import_sip_cas(clean)
+    _night(date(2026, 11, 12))
+    # a CAS to 07-Nov with no October buy: 05-Oct missed; 05-Nov not yet covered (05-Nov + 3 > 07-Nov) ...
+    done = post_cas(clean, next_statement([], "90.000", end="07-Nov-2026"), dry=False, name="c3.pdf").json()
+    assert done["reconciled"], done
+    assert {d: st for d, (_, st, *_) in _rows().items()} == {date(2026, 10, 5): "missed",
+                                                             date(2026, 11, 5): "expected"}  # fmt: skip
+    # ... but the SIP now reads "missed" (63 days from 05-Sep to 07-Nov), so nothing is projected and 05-Nov goes
+    res = _night(date(2026, 11, 12))
+    assert (res["planned"], res["pruned"]) == (0, 1)
+    assert {d: st for d, (_, st, *_) in _rows().items()} == {date(2026, 10, 5): "missed"}
+    snap = clean.get("/api/portfolio").json()
+    assert snap["estimated"] is None and all(h["sip_estimate"] is None for h in snap["holdings"])
+
+
+def test_a_kite_sip_on_a_fund_held_in_two_folios_falls_back_to_the_inference():
+    from types import SimpleNamespace as NS
+
+    from finresearch.portfolio.report import Loaded
+
+    lot = NS(open_quantity=D(1))
+    a = NS(id=1, asset_type="mf", isin=VALUE_ISIN, name="x", meta={})
+    b = NS(id=2, asset_type="mf", isin=VALUE_ISIN, name="y", meta={})
+    plans, kite_isins, notes = job.plans_for(Loaded([a, b], {}, {1: [lot], 2: [lot]}, {}), date(2026, 11, 12),
+                                             [kite_sip()])  # fmt: skip
+    assert plans == [] and kite_isins == {}  # no statement units and no buys: nothing inferred either
+    assert notes == [f"holding {i}: a Kite SIP on an ISIN held in 2 folios: inferred instead" for i in (1, 2)]
