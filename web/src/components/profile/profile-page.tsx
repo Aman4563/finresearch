@@ -472,6 +472,13 @@ export function ProfilePage() {
                 <div><Segmented value={prefs.number_format} onChange={(v) => setPref("number_format", v)}
                   options={[{ value: "lakh_crore", label: "₹12.5 lakh" }, { value: "million", label: "₹1.25 million" }]} /></div>
               </Labelled>
+              <Labelled
+                label={<Label tip="The monitor reads NSE's and BSE's issue lists twice a day and raises one in-app alert when it first sees an IPO of these boards.">New IPO alerts</Label>}
+                hint="Saved with your profile."
+              >
+                <div><Segmented value={prefs.ipo_alert_boards ?? "mainboard"} onChange={(v) => setPref("ipo_alert_boards", v)}
+                  options={[{ value: "mainboard", label: "Mainboard" }, { value: "all", label: "Mainboard + SME" }, { value: "off", label: "Off" }]} /></div>
+              </Labelled>
               <div className="space-y-4 border-t border-border pt-4">
                 <Switch checked={prefs.compact_tables} onChange={(v) => setPref("compact_tables", v)}
                   label="Compact tables" description="Tighter rows to see more at once. Saved with your profile." />

@@ -478,6 +478,8 @@ export type Preferences = {
   number_format: "lakh_crore" | "million";
   compact_tables: boolean;
   reduce_motion: boolean;
+  // which newly listed IPOs raise an in-app alert (the monitor's issue registry, #292); older API builds omit it
+  ipo_alert_boards?: "off" | "mainboard" | "all";
   // chart defaults, refresh cadences and the monitor's watch windows (optional: older API builds omit them)
   time_frames?: import("@/lib/timeframes").TimeFrames;
   watch?: import("@/lib/timeframes").WatchWindows;

@@ -374,6 +374,10 @@ def ipo_harvest(
         None, "--import", help="Load rows from a JSONL export instead of NSE"
     ),
     reparse: bool = typer.Option(False, help="Re-derive every row from its stored raw payloads (no network)"),
+    retry_days: int | None = typer.Option(
+        None,
+        help="Incremental (the monitor's nightly mode): retry partial rows only if listed in the last N days",
+    ),
 ) -> None:
     """Harvest past NSE issues (final category book, issue info, listing-day prices, Nifty mood) into ipo_history,
     then print the coverage report. Resumable: complete rows are skipped; NSE payloads are disk-cached."""
@@ -393,7 +397,7 @@ def ipo_harvest(
             console.print(f"re-derived {ih.reparse(s)} rows")
     else:
         console.print(asyncio.run(ih.harvest(series=series, limit=limit, refresh=refresh, delay=delay,
-                                             log=console.print)))  # fmt: skip
+                                             retry_days=retry_days, log=console.print)))  # fmt: skip
     with session_scope() as s:
         rows = s.scalars(select(IpoHistory)).all()
         console.print_json(json.dumps(ih.coverage(rows), default=str))
@@ -951,12 +955,16 @@ def forecasts_backfill() -> None:
 
 
 @forecasts_app.command("resolve")
-def forecasts_resolve() -> None:
+def forecasts_resolve(
+    recheck: bool = typer.Option(
+        False, help="Also try forecasts checked in the last 6 hours (e.g. after a harvest)"
+    ),
+) -> None:
     """Resolve every due forecast now (NSE, politely), as the monitor does after the close."""
     from finresearch.monitor.jobs import Deps
     from finresearch.signals.ledger import resolve_due
 
-    console.print(asyncio.run(resolve_due(Deps.live())))
+    console.print(asyncio.run(resolve_due(Deps.live(), recheck=recheck)))
 
 
 @forecasts_app.command("calibration")

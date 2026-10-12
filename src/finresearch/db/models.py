@@ -567,6 +567,38 @@ class IpoHistory(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class IpoIssue(Base):
+    """One current or upcoming public issue as NSE or BSE lists it (the issue registry, monitor.ipo_registry, #292).
+
+    Refreshed twice a day from NSE's ipo-current-issue + all-upcoming-issues and BSE's public-issue list (IPOs only).
+    `issue_key` is the NSE symbol or the BSE IPO number. A row that drops off its exchange's lists is marked
+    (`status` "off_list", `off_list_at`), never deleted; `alerted_at` records the one new-issue alert."""
+
+    __tablename__ = "ipo_issue"
+    __table_args__ = (UniqueConstraint("exchange", "issue_key"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    exchange: Mapped[str] = mapped_column(String(5))  # NSE | BSE
+    issue_key: Mapped[str] = mapped_column(String(40))  # NSE symbol | BSE IPO_NO
+    symbol: Mapped[str | None] = mapped_column(String(30), index=True)
+    name: Mapped[str] = mapped_column(String(300))
+    board: Mapped[str] = mapped_column(String(20))  # mainboard | sme | other (NSE series / BSE platform)
+    series: Mapped[str | None] = mapped_column(String(10))  # NSE series (EQ, SME) or BSE platform as listed
+    open_date: Mapped[date | None] = mapped_column(Date)
+    close_date: Mapped[date | None] = mapped_column(Date)
+    price_band: Mapped[str | None] = mapped_column(String(80))  # the exchange's own text
+    price_low: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    price_high: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    lot_size: Mapped[int | None] = mapped_column(Integer)  # None until the issue page states it
+    status: Mapped[str] = mapped_column(String(20))  # upcoming | open | closed | off_list
+    exchange_status: Mapped[str | None] = mapped_column(String(40))  # the list's own status text
+    duplicate_of: Mapped[int | None] = mapped_column(Integer)  # a BSE row for an issue already on NSE
+    first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    off_list_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    alerted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    raw: Mapped[dict[str, Any]] = mapped_column(default=dict)  # the last list row, for audit
+
+
 class SubscriptionArchiveSlot(Base):
     """One archive pass of every open issue's subscription book (item 15). The unique slot key means two monitor
     processes never archive the same slot twice."""

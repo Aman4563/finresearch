@@ -45,6 +45,9 @@ class Deps:
     price_history: Any = (
         None  # async (symbol, start, end) -> list[PriceBar] (NSE daily history); resolves forecasts
     )
+    # async (symbol, start, end) -> list[PriceBar] from NSE's T2T (BE) series: an issue that listed in trade-for-trade
+    # has no EQ row for its listing day (signals.ledger.resolve_listing_gain, #292)
+    t2t_price_history: Any = None
     corporate_actions: Any = None  # async (symbol) -> list[CorporateAction]; splits void, dividends count
     forecasts: bool = (
         False  # log finished runs' verdicts and resolve due forecasts once a day (signals.ledger)
@@ -99,6 +102,12 @@ class Deps:
     # async () -> set of symbols on NSE's current, upcoming and past issue lists: an IPO watch long past its expected
     # listing date and on none of them is withdrawn (monitor.phase, #291); None = never judged withdrawn
     ipo_symbols: Any = None
+    ipo_harvest: bool = (
+        False  # the nightly incremental ipo_history harvest, EQ and SME (monitor.ipo_harvest, #292)
+    )
+    ipo_registry: bool = (
+        False  # the twice-daily NSE + BSE issue registry and new-issue alerts (monitor.ipo_registry)
+    )
 
     @classmethod
     def live(cls) -> Deps:
@@ -175,6 +184,12 @@ class Deps:
             async with NseEquity() as eq:
                 return await eq.history(symbol, start, end)
 
+        async def t2t_price_history(symbol: str, start, end):
+            from finresearch.adapters.nse_equity import NseEquity
+
+            async with NseEquity() as eq:
+                return await eq.history(symbol, start, end, "BE")
+
         async def corporate_actions(symbol: str):
             from finresearch.adapters.nse_equity import NseEquity
 
@@ -187,12 +202,12 @@ class Deps:
 
         return cls(ipo_detail=ipo_detail, quote=quote, current_issues=current_issues, stock_snapshot=stock_snapshot,
                    bse_ipo_detail=bse_ipo_detail, bse_quote=bse_quote, fno=NseFno, price_history=price_history,
-                   corporate_actions=corporate_actions, forecasts=True, archive_books=True,
+                   t2t_price_history=t2t_price_history, corporate_actions=corporate_actions, forecasts=True, archive_books=True,
                    intraday=live_fetch, bse_stock_snapshot=bse_stock_snapshot, bse_price_history=bse_price_history,
                    bse_corporate_actions=bse_corporate_actions, portfolio_daily=True, brief=True, archive=True,
                    live_holidays=True, disclosures=True, fund_ranks=True, stock_peers=True,
                    lookthrough=True, pf_history=live_history, retention=True, lifecycle=True,
-                   ipo_symbols=ipo_symbols)  # fmt: skip
+                   ipo_symbols=ipo_symbols, ipo_harvest=True, ipo_registry=True)  # fmt: skip
 
 
 def alert(session: Session, watch: Watch, kind: str, message: str, level: str = "info", **data: Any) -> None:

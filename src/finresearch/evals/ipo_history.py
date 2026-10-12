@@ -48,6 +48,8 @@ from finresearch.adapters.nse import NseClient, PastIssue, parse_num, parse_pric
 REFORM_DATE = date(2022, 4, 4)
 DETAIL_TTL_S = 45 * 86400  # a closed issue's book and issue page do not change
 HISTORY_TTL_S = 45 * 86400
+RECENT_DAYS = 10  # listings this recent: their price payloads are cached for RECENT_TTL_S only
+RECENT_TTL_S = 6 * 3600
 NIFTY_CHUNK_DAYS = 90  # NSE's index-history API returns at most ~70 sessions per call
 NIFTY_SESSIONS = 20
 IPO_WINDOW_DAYS = 90
@@ -286,6 +288,9 @@ def derive(x: Inputs, nifty: list[tuple[date, Decimal]], listings: list[date]) -
         with contextlib.suppress(ValueError):
             listing = date.fromisoformat(x.meta_listing[:10])
     bar = listing_bar(x.bars, listing)
+    if bar is not None and listing is not None and bar.get("day") != listing.isoformat():
+        missing.append(f"check: NSE's first bar is {bar.get('day')}, after the listing date {listing} (a T2T listing "
+                       "or a slipped date); the resolver never scores it as the listing open")  # fmt: skip
     late = listing - x.ipo_end if listing and x.ipo_end else None
     if bar is not None and late is not None and late.days > MAX_LISTING_GAP_DAYS:
         # e.g. CAMS and Protean listed on BSE first and moved to NSE months later: NSE's first bar is not the IPO
@@ -396,12 +401,13 @@ async def fetch_nifty(nse: NseClient, start: date, end: date, *, today: date | N
 
 
 async def fetch_inputs(
-    nse: NseClient, p: PastIssue, series: str, *, eq=None
+    nse: NseClient, p: PastIssue, series: str, *, eq=None, today: date | None = None
 ) -> tuple[Inputs, dict[str, Any]]:
     """ipo-detail (cached) + the listing week's bars (cached). Errors in the price call are kept as a missing field."""
     from finresearch.adapters.nse_equity import NseEquity
 
-    source: dict[str, Any] = {}
+    source: dict[str, Any] = {"security_type": p.security_type}
+    today = today or datetime.now(IST).date()
     data, resp = await nse.get_json("/api/ipo-detail", {"symbol": p.symbol, "series": series},
                                     cache_ttl=DETAIL_TTL_S)  # fmt: skip
     data = data if isinstance(data, dict) else {}
@@ -419,19 +425,31 @@ async def fetch_inputs(
         wanted = ["EQ", "BE"] if series == "EQ" else ["SM", "ST", "EQ"]
         active = [str(s).strip() for s in meta.get("activeSeries") or [] if str(s).strip()]
         tried: list[str] = []
+        # a listing in the last few days: NSE may not have published the day's bar yet, and an empty answer must not
+        # be cached for weeks (the nightly harvest retries it)
+        ttl = RECENT_TTL_S if listing >= today - timedelta(days=RECENT_DAYS) else HISTORY_TTL_S
+        later: tuple[str, list[dict[str, Any]]] | None = None
         for ser in dict.fromkeys([*[s for s in active if s in wanted], *wanted]):
             tried.append(ser)
             try:
-                got = await eq.history(
-                    p.symbol, listing, listing + timedelta(days=7), ser, cache_ttl=HISTORY_TTL_S
-                )
+                got = await eq.history(p.symbol, listing, listing + timedelta(days=7), ser, cache_ttl=ttl)
             except Exception as e:
                 source.setdefault("history_errors", []).append(f"{ser}: {type(e).__name__}: {e}"[:200])
                 continue
-            if got:
+            if got and got[0].day == listing:
                 bars = [_bar_json(b) for b in got]
                 source["history"] = {"series": ser, "from": listing.isoformat()}
                 break
+            if got and later is None:
+                # e.g. an issue that listed in the T2T (BE) series: its EQ rows start ~10 sessions later (#292)
+                later = (ser, [_bar_json(b) for b in got])
+        if not bars and later is not None:
+            bars = later[1]
+            source["history"] = {
+                "series": later[0],
+                "from": listing.isoformat(),
+                "first_bar_after_listing": True,
+            }
         source["history_series_tried"] = tried
     x = Inputs(symbol=p.symbol, series=series, company=p.company, ipo_start=p.ipo_start, ipo_end=p.ipo_end,
                listing_date=p.listing_date, list_issue_price=p.issue_price, price_range=p.price_range,
@@ -467,10 +485,16 @@ def _s(v: Decimal | None) -> str | None:
     return None if v is None else str(v)
 
 
+# NSE's public-past-issues `securityType` per board: a mainboard IPO that lists in the trade-for-trade segment is
+# typed "BE" (e.g. SHAHINVEST, SRIT, NITYAS, VNL, listed 6-8 Oct 2026; their bars are in the BE series), #292
+BOARD_TYPES = {"EQ": ("EQ", "BE"), "SME": ("SME",)}
+
+
 def eligible(rows: list[PastIssue], series: str, today: date) -> list[PastIssue]:
-    """Past IPOs of one board that have listed. NSE's list also carries debt, rights, InvIT and pending rows, and
+    """Past IPOs of one board that have listed (mainboard: securityType EQ or BE, see BOARD_TYPES). NSE's list also carries debt, rights, InvIT and pending rows, and
     further public offers (FPOs) whose "listing date" is the company's original listing, years before the offer."""
-    return [r for r in rows if (r.security_type or "").upper() == series and r.symbol and r.listing_date
+    return [r for r in rows if (r.security_type or "").upper() in BOARD_TYPES.get(series, (series,)) and r.symbol
+            and r.listing_date
             and r.listing_date <= today and (r.ipo_start is None or r.listing_date >= r.ipo_start)]  # fmt: skip
 
 
@@ -494,8 +518,12 @@ def _upsert(session: Session, symbol: str, series: str, row: dict[str, Any], sou
 
 async def harvest(*, series: str = "EQ", limit: int | None = None, refresh: bool = False, delay: float = 2.0,
                   client: NseClient | None = None, session_factory=None, today: date | None = None,
-                  log: Callable[[str], None] = print) -> dict[str, Any]:  # fmt: skip
-    """Fill `ipo_history` for one board. Resumable and idempotent (upsert by symbol, series and issue start)."""
+                  retry_days: int | None = None, log: Callable[[str], None] = print) -> dict[str, Any]:  # fmt: skip
+    """Fill `ipo_history` for one board. Resumable and idempotent (upsert by symbol, series and issue start).
+
+    `retry_days` (the monitor's nightly run, #292): rows already stored but not complete are retried only when they
+    listed in the last `retry_days` days; older partial rows stay as they are (their gaps are NSE's, not transient).
+    The Nifty history is then read only from the earliest issue to fetch, and not at all when nothing is new."""
     from finresearch.adapters.nse_equity import NseEquity
     from finresearch.db import session_scope
     from finresearch.db.models import IpoHistory
@@ -514,16 +542,29 @@ async def harvest(*, series: str = "EQ", limit: int | None = None, refresh: bool
             done = {(r.symbol, r.ipo_start) for r in s.scalars(select(IpoHistory).where(
                 IpoHistory.series == series, IpoHistory.status == "complete"))}  # fmt: skip
         todo = [r for r in past if refresh or (r.symbol, r.ipo_start) not in done]
+        if retry_days is not None and not refresh:
+            with factory() as s:
+                stored = {(r.symbol, r.ipo_start) for r in s.scalars(select(IpoHistory).where(
+                    IpoHistory.series == series))}  # fmt: skip
+            cutoff = today - timedelta(days=retry_days)
+            todo = [
+                r
+                for r in todo
+                if (r.symbol, r.ipo_start) not in stored or (r.listing_date or date.min) >= cutoff
+            ]
         if limit is not None:
             todo = todo[:limit]
         log(f"{series}: {len(past)} listed issues on NSE, {len(done)} already complete, {len(todo)} to fetch")
-        first = min((r.ipo_start or r.listing_date for r in past), default=today) - timedelta(days=60)
+        if retry_days is not None and not todo:
+            return {"series": series, "fetched": 0}
+        pool = todo if retry_days is not None else past
+        first = min((r.ipo_start or r.listing_date for r in pool), default=today) - timedelta(days=60)
         nifty = await fetch_nifty(nse, first, today, today=today, log=log)
         log(f"nifty: {len(nifty)} closes {nifty[0][0] if nifty else '-'}..{nifty[-1][0] if nifty else '-'}")
         eq = NseEquity(nse)
         for i, p in enumerate(todo, 1):
             try:
-                x, source = await fetch_inputs(nse, p, series, eq=eq)
+                x, source = await fetch_inputs(nse, p, series, eq=eq, today=today)
             except Exception as e:
                 stats["error"] += 1
                 log(f"[{i}/{len(todo)}] {p.symbol}: error {type(e).__name__}: {e}"[:300])

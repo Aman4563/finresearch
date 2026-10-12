@@ -393,6 +393,46 @@ def _spawn_stock_peers(now: datetime) -> None:
     _BACKGROUND["stock_peers"] = asyncio.create_task(run())
 
 
+def _spawn_ipo_harvest(now: datetime) -> None:
+    """Start the nightly incremental IPO history harvest (monitor.ipo_harvest, #292) in the background on trading
+    days: one list request per board, plus a few per newly listed issue. At most one runs at a time."""
+    from finresearch.monitor.ipo_harvest import due_slot, ipo_harvest_step
+
+    t = _BACKGROUND.get("ipo_harvest")
+    if (t is not None and not t.done()) or due_slot(now) is None:
+        return
+
+    async def run() -> None:
+        try:
+            res = await ipo_harvest_step(now)
+            if res:
+                log.info("IPO history harvest: %s", res)
+        except Exception:
+            log.warning("IPO history harvest failed", exc_info=True)
+
+    _BACKGROUND["ipo_harvest"] = asyncio.create_task(run())
+
+
+def _spawn_ipo_registry(now: datetime) -> None:
+    """Start the twice-daily IPO issue registry refresh (monitor.ipo_registry, #292) in the background: three list
+    requests plus a lot lookup per new issue. At most one runs at a time."""
+    from finresearch.monitor.ipo_registry import due_slot, ipo_registry_step
+
+    t = _BACKGROUND.get("ipo_registry")
+    if (t is not None and not t.done()) or due_slot(now) is None:
+        return
+
+    async def run() -> None:
+        try:
+            res = await ipo_registry_step(now)
+            if res:
+                log.info("IPO issue registry: %s", res)
+        except Exception:
+            log.warning("IPO issue registry refresh failed", exc_info=True)
+
+    _BACKGROUND["ipo_registry"] = asyncio.create_task(run())
+
+
 def _spawn_retention(now: datetime) -> None:
     """Start the weekly prune (monitor.retention) in the background: file deletes in the HTTP cache and one DELETE
     on intraday_series. At most one runs at a time; it never touches packs, reports, backups or documents."""
@@ -481,6 +521,10 @@ async def tick(deps: jobs.Deps, now: datetime | None = None) -> dict[str, int]:
         _spawn_retention(now)
     if deps.lifecycle:
         _spawn_lifecycle(now)
+    if deps.ipo_harvest:
+        _spawn_ipo_harvest(now)
+    if deps.ipo_registry:
+        _spawn_ipo_registry(now)
     out_brief = brief_step(now) if deps.brief else {}
     if deps.holidays is not None or deps.live_holidays:
         await _refresh_holidays(deps)

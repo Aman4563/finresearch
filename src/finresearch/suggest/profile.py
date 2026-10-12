@@ -242,6 +242,9 @@ class Preferences(BaseModel):
     reduce_motion: bool = False
     time_frames: TimeFrames = Field(default_factory=TimeFrames)
     watch: WatchWindows = Field(default_factory=WatchWindows)
+    # one in-app alert when the issue registry first sees a new IPO (monitor.ipo_registry, #292): mainboard issues
+    # only (the default), every board (SME too) or none
+    ipo_alert_boards: Literal["off", "mainboard", "all"] = "mainboard"
 
 
 class Household(BaseModel):

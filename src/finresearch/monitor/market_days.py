@@ -60,7 +60,7 @@ def unknown_holidays(day: date, job: str) -> None:
             if got is not None:
                 s.add(Alert(kind=ALERT_KIND, level="warn",
                             message=f"NSE's {day.year} holiday list is not loaded, so the after-close market jobs "
-                                    "(stock peers, disclosures, IV history) are paused until it is refreshed.",
+                                    "(stock peers, disclosures, IV history, IPO history harvest) are paused until it is refreshed.",
                             data={"day": day.isoformat(), "job": job}))  # fmt: skip
         _ALERTED.add(day)
     except Exception:
