@@ -79,6 +79,27 @@ KITE = {
         {"folio": "3108290884", "average_price": 78.43, "last_price": 84.86, "last_price_date": "",
          "pledged_quantity": 0, "fund": "EXAMPLE TAX PLAN - DIRECT PLAN", "tradingsymbol": "INF000K01NT8",
          "pnl": 0, "quantity": 382.488}]},
+    # Coin SIPs and orders (#297): field names as on kite.trade/docs/connect/v3/mutual-funds/ (read 12-Oct-2026)
+    "/mf/sips": {"status": "success", "data": [
+        {"sip_id": "100000000000001", "tradingsymbol": "INF000K01NT8", "fund": "EXAMPLE TAX PLAN - DIRECT PLAN",
+         "dividend_type": "growth", "transaction_type": "BUY", "status": "ACTIVE", "sip_type": "sip",
+         "created": "2026-01-10 09:00:00", "frequency": "monthly", "instalment_amount": 2000, "instalments": -1,
+         "last_instalment": "2026-10-10 05:56:27", "pending_instalments": -1, "instalment_day": 10,
+         "completed_instalments": 10, "next_instalment": "2026-11-10", "trigger_price": 0, "step_up": {}, "tag": ""},
+        {"sip_id": "100000000000002", "tradingsymbol": "INF000K01XX1", "fund": "EXAMPLE LIQUID FUND",
+         "status": "PAUSED", "frequency": "weekly", "instalment_amount": 500.0, "instalment_day": 0,
+         "next_instalment": "", "last_instalment": ""}]},
+    "/mf/orders": {"status": "success", "data": [
+        {"order_id": "aaaaaaaa-0000-0000-0000-000000000001", "exchange_order_id": "254657127",
+         "tradingsymbol": "INF000K01NT8", "status": "COMPLETE", "status_message": "", "folio": None,
+         "fund": "EXAMPLE TAX PLAN - DIRECT PLAN", "order_timestamp": "2026-10-09 08:33:07",
+         "exchange_timestamp": "2026-10-10", "settlement_id": "1", "transaction_type": "BUY", "amount": 2000.0,
+         "variety": "sip", "purchase_type": "ADDITIONAL", "quantity": 23.567, "price": 0, "last_price": 84.86,
+         "average_price": 84.8584, "placed_by": "AB1234", "last_price_date": "2026-10-09", "tag": None},
+        {"order_id": "aaaaaaaa-0000-0000-0000-000000000002", "exchange_order_id": None,
+         "tradingsymbol": "INF000K01XX1", "status": "REJECTED", "status_message": "AMC SIP: Insufficient balance.",
+         "order_timestamp": "2026-10-08 08:33:07", "exchange_timestamp": None, "transaction_type": "BUY",
+         "amount": 500.0, "variety": "amc_sip", "quantity": 0.0, "average_price": 0.0}]},
     "/user/margins": {"status": "success", "data": {"equity": {"net": 5000.5, "available": {"live_balance": 4000},
                                                                 "utilised": {"debits": 1000.5}}}},
 }  # fmt: skip
@@ -279,6 +300,15 @@ def test_zerodha_oauth_and_reads(transport):
     mf = run(c.mf_holdings())
     assert (mf[0].asset_type, mf[0].isin, mf[0].quantity) == ("mf", "INF000K01NT8", D("382.488"))
     assert run(c.funds()) == {"net": D("5000.5"), "cash": D(4000), "margin_used": D("1000.5")}
+    sips = run(c.mf_sips())  # #297: read-only GETs, the basis of SIP estimates
+    assert [(x.isin, x.status, x.frequency, x.amount, x.instalment_day, x.next_instalment, x.last_instalment)
+            for x in sips] == [
+        ("INF000K01NT8", "ACTIVE", "monthly", D(2000), 10, date(2026, 11, 10), date(2026, 10, 10)),
+        ("INF000K01XX1", "PAUSED", "weekly", D(500), None, None, None)]  # fmt: skip
+    orders = run(c.mf_activity())
+    assert [(o.isin, o.status, o.side, o.quantity, o.average_price, o.day) for o in orders] == [
+        ("INF000K01NT8", "COMPLETE", "BUY", D("23.567"), D("84.8584"), date(2026, 10, 10)),  # the exchange day
+        ("INF000K01XX1", "REJECTED", "BUY", D(0), D(0), date(2026, 10, 8))]  # no exchange day: the order's  # fmt: skip
     assert all(r.method == "GET" and r.headers["authorization"] == f"token kitekey:{ACCESS}"
                for r in rec.requests[1:])  # fmt: skip
 
