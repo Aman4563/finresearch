@@ -121,11 +121,15 @@ def test_unknown_terms_stay_unknown():
     assert nc is None and "frequency unknown" in why  # never a guessed schedule
     assert bonds.redemption_value(bond) == (None, None)  # no face value entered
     assert bonds.next_coupon(bonds.terms_of("bond", {}), date(2026, 9, 30))[1].startswith("maturity unknown")
-    assert not bonds.matured(bonds.terms_of("bond", {}), date(2099, 1, 1))  # unknown maturity is never matured
+    assert not bonds.matured(
+        bonds.terms_of("bond", {}), date(2099, 1, 1)
+    )  # unknown maturity is never matured
     tb = bonds.terms_of("tbill", {"maturity": "2026-05-14"})
     assert bonds.next_coupon(tb, date(2026, 1, 1))[0] is None and tb.face_value == D(100)
     g = bonds.terms_of("gsec", {"maturity": "2033-09-19", "coupon_pct": "7.18"})
-    assert (g.freq, g.face_value) == (2, D(100)) and bonds.next_coupon(g, date(2026, 9, 30))[0] == date(2027, 3, 19)
+    assert (g.freq, g.face_value) == (2, D(100)) and bonds.next_coupon(g, date(2026, 9, 30))[0] == date(
+        2027, 3, 19
+    )
 
 
 def test_clean_terms_validates():
@@ -138,7 +142,8 @@ def test_clean_terms_validates():
 
 
 # --------------------------------------------------------------------------- through the API
-from test_portfolio import ORIGIN, client  # noqa: E402,F401  (TODAY there is 2026-09-30)
+# the portfolio API fixture (TODAY there is 2026-09-30); tests taking it carry a noqa for F811
+from test_portfolio import ORIGIN, client  # noqa: E402,F401
 
 NCD = {"asset_type": "stock", "name": "Example Finance NCD 9% 2026", "nse_symbol": "EXMPL", "isin": "INE000Z07011",
        "account": "Manual", "day": "2024-03-01", "kind": "buy", "quantity": "10", "price": "1020"}  # fmt: skip
@@ -148,20 +153,31 @@ def _holding(c, hid):
     return next(x for x in c.get("/api/portfolio").json()["holdings"] if x["id"] == hid)
 
 
-def test_matured_bond_is_never_valued_at_its_last_price(client):
+def test_matured_bond_is_never_valued_at_its_last_price(client):  # noqa: F811
     hid = client.post("/api/portfolio/transactions", headers=ORIGIN, json=NCD).json()["holding_id"]
     h = _holding(client, hid)
     # before any terms: a listed NCD priced from its NSE quote (250 in the fake), labelled dirty
-    assert (h["value"], h["price_basis"], h["bond"]["kind"], h["bond"]["matured"]) == (2500.0, "dirty", "bond", False)
+    assert (h["value"], h["price_basis"], h["bond"]["kind"], h["bond"]["matured"]) == (
+        2500.0,
+        "dirty",
+        "bond",
+        False,
+    )
     assert h["tax_class"] == "other"
     # matured on 30-Jun-2026 (before TODAY), face value unknown: the quote is ignored and the value is unknown
-    r = client.put(f"/api/portfolio/holdings/{hid}", headers=ORIGIN, json={"bond_terms": {"maturity": "2026-06-30"}})
+    r = client.put(
+        f"/api/portfolio/holdings/{hid}", headers=ORIGIN, json={"bond_terms": {"maturity": "2026-06-30"}}
+    )
     assert r.status_code == 200
     snap = client.get("/api/portfolio").json()
     h = next(x for x in snap["holdings"] if x["id"] == hid)
     assert h["value"] is None and h["price"] is None and h["bond"]["status"] == "matured — record redemption"
     assert "matured on 2026-06-30" in h["price_error"] and "redemption value is unknown" in h["price_error"]
-    assert snap["complete"] is False and snap["summary"]["matured_bonds"] == 1 and snap["summary"]["unpriced"] == 1
+    assert (
+        snap["complete"] is False
+        and snap["summary"]["matured_bonds"] == 1
+        and snap["summary"]["unpriced"] == 1
+    )
     # face value ₹1,000 entered: valued at 10 × 1,000 = 10,000 (the amount the issuer owes), still incomplete
     client.put(f"/api/portfolio/holdings/{hid}", headers=ORIGIN,
                json={"bond_terms": {"maturity": "2026-06-30", "face_value": "1000"}})  # fmt: skip
@@ -193,11 +209,13 @@ def test_matured_bond_is_never_valued_at_its_last_price(client):
     assert (d["term"], d["gain"], d["rate_pct"], d["rule"]) == ("long", -200.0, 12.5, "other-listed-2024")
 
 
-def test_sgb_redemption_by_rbi_is_exempt(client):
+def test_sgb_redemption_by_rbi_is_exempt(client):  # noqa: F811
     body = {"asset_type": "stock", "name": "SGB 2017-18 SERIES X", "nse_symbol": "SGBNOV25", "account": "Manual",
             "day": "2017-11-20", "kind": "buy", "quantity": "10", "price": "3000", "stt_paid": False}  # fmt: skip
     hid = client.post("/api/portfolio/transactions", headers=ORIGIN, json=body).json()["holding_id"]
-    client.put(f"/api/portfolio/holdings/{hid}", headers=ORIGIN, json={"bond_terms": {"issue_date": "2017-11-20"}})
+    client.put(
+        f"/api/portfolio/holdings/{hid}", headers=ORIGIN, json={"bond_terms": {"issue_date": "2017-11-20"}}
+    )
     h = _holding(client, hid)
     # issue + 8 years = 20-Nov-2025, before TODAY: matured, and an SGB's redemption value is never its face
     assert h["bond"]["maturity"] == "2025-11-20" and h["bond"]["matured"] and h["value"] is None
