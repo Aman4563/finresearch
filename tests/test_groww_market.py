@@ -117,7 +117,12 @@ def groww(monkeypatch):
         monkeypatch.setattr(base, "TRANSPORT", httpx.MockTransport(g))
 
         def client(t: datetime = FRI_10, token: str | None = TOKEN) -> tuple[GrowwMarket, Clock]:
+            from finresearch.portfolio import valuation
+
             clock = Clock(t)
+            # the valuation's session test reads the wall clock: pin it to this market clock, so the labels do not
+            # depend on when the suite runs (in session, after the close, another day)
+            monkeypatch.setattr(valuation, "_now", clock)
             return GrowwMarket(session=FakeSession(token), clock=clock, holidays=set), clock
 
         return g, client
@@ -329,9 +334,7 @@ def test_valuation_prefers_groww_and_falls_back_per_stock(groww):
     ]
     valuation._META.clear()
     out = run(fetch_prices(hs, quote=nse, scheme_rows=navs, prefetch=Prefetch(m)))
-    # price_from_quote reads the wall clock: once 9-Oct-2026 is past, this Friday-10:00 LTP is "close not yet
-    # published" (an earlier day's quote is never "in session"); either way it is Groww's LTP
-    assert out[1].source.startswith("Groww LTP: last traded") and str(out[1].price) == "200.25"
+    assert out[1].source == "Groww LTP: last traded" and str(out[1].price) == "200.25"
     assert out[1].industry == "Example Industry"  # one exchange quote for the sector label, then remembered
     assert out[2].source.startswith("NSE quote") and str(out[2].price) == "99.5"  # Groww had no price: NSE
     assert out[3].price is None and out[3].error  # neither source: unknown, never 0
