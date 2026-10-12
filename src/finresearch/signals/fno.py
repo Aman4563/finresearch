@@ -10,7 +10,8 @@ only when every answer is acceptable:
    than the fair-price expectation, which is minus the costs (EV_rw ≥ −costs).
 3. Budget: the maximum loss is within the profile's F&O risk budget (fno_max_loss_pct of fno_capital_inr).
 4. IV context fits the strategy: premium sellers (net short vega) want IV high, buyers want it low. IV percentile
-   over the recorded history once there are 60 days; until then the ratio of ATM IV to 20-day realised volatility is
+   of the 30-day IV derived from NSE's F&O bhavcopy history (#306, a year back as soon as it is backfilled), else of
+   the monitor's recorded ATM IV once there are 60 days; until then the ratio of ATM IV to 20-day realised volatility is
    used as a stated proxy (implied variance above realised is the variance risk premium, Carr & Wu 2009 [52]; no
    India-specific VRP study was verified [W]).
 
@@ -149,7 +150,8 @@ def _r(x: float | None, d: int = 4) -> float | None:
 
 def analyse(chain, lot: int, legs_in: list[LegIn], *, today: date, closes: list[float], iv_series: list[float],
             capital: float, max_loss_pct: float, brokerage: float, rate: float = RATE, drift: float | None = None,
-            overrides: dict[str, Any] | None = None) -> dict[str, Any]:  # fmt: skip
+            overrides: dict[str, Any] | None = None, iv_source: dict[str, Any] | None = None,
+            iv_as_of: date | None = None) -> dict[str, Any]:  # fmt: skip
     """Everything the page and the signal show for one strategy. Raises ValueError when a leg has no premium."""
     spot = float(chain.underlying)
     days = (chain.expiry - today).days
@@ -297,6 +299,9 @@ def analyse(chain, lot: int, legs_in: list[LegIn], *, today: date, closes: list[
             "status": stats.status,
             "skew_25d": _r(skew, 3),
             "iv_rv_ratio": _r(iv / rv20, 3) if iv and rv20 else None,
+            # which series the rank and percentile come from (#306) and its last day
+            "source": (iv_source or {}).get("source", "recorded"),
+            "as_of": iv_as_of.isoformat() if iv_as_of else None,
         },
         "notes": notes,
     }
@@ -343,7 +348,11 @@ def assess(
         ok, value, how = (
             (ivc["percentile"] >= 0.5) if seller else (ivc["percentile"] <= 0.5),
             round(ivc["percentile"] * 100),
-            f"IV percentile over {ivc['n']} recorded days",
+            (
+                f"IV percentile of the 30-day IV over {ivc['n']} days of NSE's F&O bhavcopy (as of {ivc['as_of']})"
+                if ivc.get("source") == "bhavcopy"
+                else f"IV percentile over {ivc['n']} recorded days"
+            ),
         )
         unit = "percentile"
     elif ivc["iv_rv_ratio"] is not None:
@@ -455,21 +464,50 @@ async def underlying_closes(f, symbol: str, today: date) -> list[float]:
     return closes
 
 
-def iv_series(symbol: str) -> list[tuple[date, float, float | None]]:
-    """The recorded daily ATM IV (and skew) for `symbol`, oldest first; [] when the table does not exist yet."""
+BHAV_METHOD = ("30-day constant-maturity ATM IV from NSE's end-of-day F&O bhavcopy (fincalc.fno_history): Black-76 on "
+               "each expiry's forward (its future's settlement price, else put-call parity, else spot × e^(rT)) with "
+               "settlement prices of traded contracts, total variance interpolated to 30 days; as of the last "
+               "published bhavcopy (the previous close until about 19:30 IST).")  # fmt: skip
+LIVE_METHOD = ("ATM IV = mean of call and put IV at the strike nearest the underlying, nearest expiry at least 7 days "
+               "away, recorded after the close by the monitor from NSE's option chain.")  # fmt: skip
+
+
+def iv_series_info(symbol: str) -> tuple[list[tuple[date, float, float | None]], dict[str, Any]]:
+    """The daily IV series that IV rank and percentile use, oldest first, with its source (#306): the bhavcopy-derived
+    30-day IV once it has MIN_DAYS days (available as soon as `finresearch fno backfill` has run), else the monitor's
+    recorded ATM IV (iv_history, from 30-Sep-2026). The two are never spliced: different contracts and pricing."""
     from sqlalchemy import select
     from sqlalchemy.exc import SQLAlchemyError
 
     from finresearch.db import session_scope
-    from finresearch.db.models import IvHistory
+    from finresearch.db.models import FnoIvEod, IvHistory
 
+    sym = symbol.upper()
     try:
         with session_scope() as s:
-            rows = s.execute(select(IvHistory.day, IvHistory.atm_iv, IvHistory.skew_25d)
-                             .where(IvHistory.symbol == symbol.upper()).order_by(IvHistory.day)).all()  # fmt: skip
+            bhav = s.execute(select(FnoIvEod.day, FnoIvEod.iv_30d, FnoIvEod.skew_25d)
+                             .where(FnoIvEod.symbol == sym, FnoIvEod.iv_30d.is_not(None))
+                             .order_by(FnoIvEod.day)).all()  # fmt: skip
+    except SQLAlchemyError:  # the #306 migration has not run on this database yet
+        bhav = []
+    if len(bhav) >= vol.MIN_DAYS:
+        rows = [(d, float(v), None if k is None else float(k)) for d, v, k in bhav]
+        return rows, {"source": "bhavcopy", "label": "NSE F&O bhavcopy, 30-day IV", "method": BHAV_METHOD,
+                      "url": "https://nsearchives.nseindia.com/content/fo/"}  # fmt: skip
+    try:
+        with session_scope() as s:
+            live = s.execute(select(IvHistory.day, IvHistory.atm_iv, IvHistory.skew_25d)
+                             .where(IvHistory.symbol == sym).order_by(IvHistory.day)).all()  # fmt: skip
     except SQLAlchemyError:
-        return []
-    return [(d, float(v), None if k is None else float(k)) for d, v, k in rows]
+        live = []
+    rows = [(d, float(v), None if k is None else float(k)) for d, v, k in live]
+    return rows, {"source": "recorded", "label": "recorded daily ATM IV", "method": LIVE_METHOD,
+                  "url": "https://www.nseindia.com/option-chain"}  # fmt: skip
+
+
+def iv_series(symbol: str) -> list[tuple[date, float, float | None]]:
+    """The IV series for rank and percentile (see iv_series_info), oldest first; [] when no table exists yet."""
+    return iv_series_info(symbol)[0]
 
 
 def load_profile():
@@ -545,14 +583,15 @@ async def fno_signal(instrument: str, ctx: dict[str, Any]) -> Signal:
     if capital <= 0:
         return no_signal("F&O capital is not set in your profile, so the maximum loss cannot be checked against a "
                          "budget. Set it (and the % limit) on the profile page.")  # fmt: skip
-    series = iv_series(sym)
+    series, src = iv_series_info(sym)
     drift = float(ctx["drift"]) if ctx.get("drift") not in (None, "") else None
     from finresearch.signals.rates import risk_free
 
     rinfo = await risk_free(max((expiry - today).days, 0.5) / 365)  # FBIL par yield at the expiry (#244)
     a = analyse(chain, lot, legs, today=today, closes=closes, iv_series=[v for _, v, _ in series], capital=capital,
                 max_loss_pct=float(profile.fno_max_loss_pct), brokerage=float(profile.fno_brokerage_per_order_inr),
-                rate=rinfo["rate"], drift=drift)  # fmt: skip
+                rate=rinfo["rate"], drift=drift, iv_source=src,
+                iv_as_of=series[-1][0] if series else None)  # fmt: skip
     a["rate_source"] = rinfo
     if a["risk_neutral"] is None:
         return no_signal(f"the chain has no ATM implied volatility for {sym} {expiry:%d-%b-%Y}")

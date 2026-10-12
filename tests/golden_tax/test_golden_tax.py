@@ -23,7 +23,15 @@ import pytest
 
 from finresearch.portfolio import elss
 from finresearch.portfolio.lots import Event, build_lots
-from finresearch.portfolio.tax import DisposalRow, HoldingTax, evaluate, fy_summary
+from finresearch.portfolio.tax import (
+    DisposalRow,
+    HoldingTax,
+    auto_tax_class,
+    evaluate,
+    fy_summary,
+    is_debt_security,
+    redemption_flags,
+)
 
 CASES = sorted((Path(__file__).parent / "cases").glob("g*.json"))
 CENT = Decimal("0.01")
@@ -46,22 +54,28 @@ def run_engine(case: dict[str, Any]) -> dict[str, Any]:
     slab = Decimal(case.get("slab_rate", "0.30"))
     disposals, open_lots, rows, unlock = [], [], [], []
     for hid, h in enumerate(case["holdings"], start=1):
-        evs, meta_of = [], {}
+        evs, meta_of, kind_of = [], {}, {}
         for i, e in enumerate(h["events"], start=1):
             meta = dict(e.get("meta") or {})
-            meta_of[i] = meta
+            meta_of[i], kind_of[i] = meta, e["kind"]
             evs.append(Event(i, date.fromisoformat(e["day"]), e["kind"], _dec(e.get("quantity")), _dec(e.get("price")),
                              _dec(e.get("amount")), _dec(e.get("charges")) or Decimal(0),
                              bool(e.get("stt_paid", True)), meta))  # fmt: skip
         book = build_lots(evs)
-        ht = HoldingTax(hid, h["name"], "Demat", None, h["tax_class"], bool(h.get("listed", True)),
-                        _dec(h.get("fmv_2018")), bool(h.get("sgb_original_subscriber")))  # fmt: skip
+        # #294: "auto" classifies the instrument as the app does (portfolio.tax.auto_tax_class from the ISIN and
+        # name); a debt security is a bond or debenture (s.50AA for an unlisted one)
+        isin, sym = h.get("isin"), h.get("symbol")
+        tax_class = h["tax_class"]
+        if tax_class == "auto":
+            tax_class = auto_tax_class(h.get("asset_type", "stock"), h["name"], None, None, sym, isin)[0]
+        debt = bool(h.get("debt_security")) or is_debt_security(isin, h["name"], sym)
+        ht = HoldingTax(hid, h["name"], "Demat", isin, tax_class, bool(h.get("listed", True)),
+                        _dec(h.get("fmv_2018")), bool(h.get("sgb_original_subscriber")), debt=debt)  # fmt: skip
         for d in book.disposals:
-            m = meta_of.get(d.txn_id, {})
+            rbi, htm = redemption_flags(kind_of.get(d.txn_id, "sell"), meta_of.get(d.txn_id), tax_class)
             r = evaluate(DisposalRow(ht, d.acquired, d.sold, d.quantity, d.cost, d.proceeds, d.stt_paid,
-                                     "intraday" if d.intraday else d.origin,
-                                     rbi_redemption=bool(m.get("rbi_redemption")),
-                                     held_to_maturity=bool(m.get("held_to_maturity")), txn_id=d.txn_id))  # fmt: skip
+                                     "intraday" if d.intraday else d.origin, rbi_redemption=rbi,
+                                     held_to_maturity=htm, txn_id=d.txn_id))  # fmt: skip
             rows.append(r)
             c = r.cls
             intraday = r.origin == "intraday"
@@ -163,8 +177,9 @@ def test_golden_case(path: Path):
 
 
 def test_corpus_size_and_coverage():
-    assert len(CASES) >= 25
+    assert len(CASES) >= 31
     covers = " ".join(" ".join(json.loads(p.read_text())["covers"]) for p in CASES).lower()
     for topic in ("fifo", "intraday", "split", "bonus", "grandfather", "sgb", "ncd", "debt mf", "unknown cost",
-                  "unknown date", "elss", "stt", "set", "threshold"):  # fmt: skip
+                  "unknown date", "elss", "stt", "set", "threshold", "redemption", "s.50aa", "t-bill",
+                  "g-sec"):  # fmt: skip
         assert topic in covers, topic

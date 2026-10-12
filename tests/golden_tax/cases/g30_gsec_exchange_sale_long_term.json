@@ -1,0 +1,88 @@
+{
+ "id": "g30_gsec_exchange_sale_long_term",
+ "title": "Dated G-sec (IN0020230085) sold on the exchange after ~14 months in Mar-2025: listed security convention, LT 12.5 % under s.112, no s.112A exemption",
+ "covers": [
+  "tax_class auto -> Government security",
+  "G-sec treated as listed (12-month rule)",
+  "LT 12.5 % after 23-Jul-2024",
+  "no s.112A threshold for G-sec"
+ ],
+ "rules": [
+  "ISIN prefix IN00 -> Government of India dated security (not equity, not a fund unit) -> 'other' non-equity security",
+  "Convention adopted: a G-sec is treated as a security listed on a recognised stock exchange for Income-tax Act 1961 s.2(42A) first proviso (12-month rule). View: defensible - G-secs are 'securities' under SCRA s.2(h) and are admitted to trading on NSE/BSE (retail G-sec / NDS-OM access); but primary trading is on RBI's NDS-OM, not a recognised stock exchange, so a 24-month reading is arguable",
+  "Income-tax Act 1961 s.112(1) as amended by Finance (No.2) Act 2024: LTCG on transfer on/after 23-Jul-2024 at 12.5 % without indexation",
+  "s.112A applies only to STT-paid equity shares / equity-oriented fund units / business-trust units -> no Rs 1.25 lakh exemption for a G-sec",
+  "s.50AA (unlisted bonds/debentures, market-linked debentures) not applicable under the listed convention",
+  "Health and Education Cess 4 %"
+ ],
+ "derivation": [
+  "Buy 2024-01-10: 100 @ 99.50 -> cost 9,950.00.",
+  "Sale on exchange 2025-03-20: 100 @ 101.20 -> proceeds 10,120.00 (clean price; accrued interest ignored).",
+  "Held 2024-01-10 -> 2025-03-20 (about 14 months > 12; listed convention) -> long; transfer after 23-Jul-2024 -> 12.5 %.",
+  "Gain 10,120 - 9,950 = 170.00.",
+  "FY 2024-25 (fy 2025): tax 170 x 0.125 = 21.25; cess 0.85; total 22.10; exemption_used 0.00.",
+  "Alternative (G-sec not 'listed'): 14 months <= 24 -> short at slab: tax 51.00, cess 2.04, total 53.04 (s.50AA, if it reached a G-sec as an 'unlisted bond', would give the same slab result)."
+ ],
+ "interpretive": true,
+ "derived_by": "independent derivation agent (#294) that did not read the engine; inputs and conventions set by the implementer",
+ "slab_rate": "0.30",
+ "holdings": [
+  {
+   "name": "7.18% GOI 2033",
+   "tax_class": "auto",
+   "asset_type": "stock",
+   "isin": "IN0020230085",
+   "symbol": "718GS2033",
+   "events": [
+    {
+     "day": "2024-01-10",
+     "kind": "buy",
+     "quantity": "100",
+     "price": "99.50",
+     "charges": "0",
+     "stt_paid": false
+    },
+    {
+     "day": "2025-03-20",
+     "kind": "sell",
+     "quantity": "100",
+     "price": "101.20",
+     "charges": "0",
+     "stt_paid": false
+    }
+   ]
+  }
+ ],
+ "expected": {
+  "disposals": [
+   {
+    "holding": "7.18% GOI 2033",
+    "sold": "2025-03-20",
+    "acquired": "2024-01-10",
+    "quantity": "100",
+    "cost": "9950.00",
+    "tax_cost": "9950.00",
+    "proceeds": "10120.00",
+    "gain": "170.00",
+    "term": "long",
+    "rate": "0.125"
+   }
+  ],
+  "open_lots": [],
+  "fy": [
+   {
+    "fy": 2025,
+    "exemption_used": "0.00",
+    "tax": "21.25",
+    "cess": "0.85",
+    "total": "22.10",
+    "complete": true,
+    "unknown_count": 0,
+    "intraday_count": 0,
+    "exempt_total": "0.00",
+    "losses_carried_short": "0.00",
+    "losses_carried_long": "0.00"
+   }
+  ]
+ }
+}

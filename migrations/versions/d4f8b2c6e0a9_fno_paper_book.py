@@ -1,7 +1,7 @@
 """F&O paper book and exit rules (#308): paper_strategy, paper_leg, fno_exit_rule
 
 Revision ID: d4f8b2c6e0a9
-Revises: a7c3e9b1d5f2
+Revises: a7c4e9f2b1d6
 Create Date: 2026-10-12 12:00:00.000000
 
 """
@@ -13,7 +13,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "d4f8b2c6e0a9"
-down_revision: str | Sequence[str] | None = "a7c3e9b1d5f2"
+down_revision: str | Sequence[str] | None = "a7c4e9f2b1d6"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

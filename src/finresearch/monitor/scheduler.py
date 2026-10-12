@@ -286,6 +286,29 @@ def journal_step(now: datetime) -> dict[str, int]:
         return {}
 
 
+_BOND_EVENTS_AT: list[datetime] = []  # the last bond-events pass in this process (at most one an hour)
+
+
+def bond_events_step(now: datetime) -> dict[str, int]:
+    """Coupon, maturity and SGB early-redemption alerts for held bonds (portfolio.bonds, #294): database only, so
+    inline, at most hourly; each event is claimed once in alert_eval_slot. Runs before alerts_step, whose delivery
+    pass forwards them."""
+    if _BOND_EVENTS_AT and (now - _BOND_EVENTS_AT[-1]).total_seconds() < 3600:
+        return {}
+    try:
+        from finresearch.db import session_scope
+        from finresearch.fincalc.dates import to_ist
+        from finresearch.portfolio.bonds import events_step
+
+        with session_scope() as s:
+            n = events_step(s, to_ist(now).date())
+        _BOND_EVENTS_AT[:] = [now]
+        return {"bond_events": n} if n else {}
+    except Exception:
+        log.warning("bond events step failed; it is retried on the next tick", exc_info=True)
+        return {}
+
+
 _BACKGROUND: dict[str, asyncio.Task] = {}
 
 
@@ -433,6 +456,26 @@ def _spawn_ipo_registry(now: datetime) -> None:
     _BACKGROUND["ipo_registry"] = asyncio.create_task(run())
 
 
+def _spawn_fno_bhav(now: datetime) -> None:
+    """Start the nightly F&O bhavcopy update (monitor.fno_bhav, #306) in the background on trading days: usually one
+    NSE download plus the derived IV rows. At most one runs at a time."""
+    from finresearch.monitor.fno_bhav import due_slot, fno_bhav_step
+
+    t = _BACKGROUND.get("fno_bhav")
+    if (t is not None and not t.done()) or due_slot(now) is None:
+        return
+
+    async def run() -> None:
+        try:
+            res = await fno_bhav_step(now)
+            if res:
+                log.info("F&O bhavcopy update: %s", res)
+        except Exception:
+            log.warning("F&O bhavcopy update failed", exc_info=True)
+
+    _BACKGROUND["fno_bhav"] = asyncio.create_task(run())
+
+
 def _spawn_sip_estimates(now: datetime) -> None:
     """Start the nightly SIP-estimate pass (monitor.sip_estimates, #297) in the background on trading days from 23:30
     IST: one AMFI request per instalment day without units, two Kite GETs when Zerodha is connected. At most one runs
@@ -570,6 +613,8 @@ async def tick(deps: jobs.Deps, now: datetime | None = None) -> dict[str, int]:
         _spawn_sip_estimates(now)
     if deps.scheme_master:
         _spawn_scheme_master(now)
+    if deps.fno_bhav:
+        _spawn_fno_bhav(now)
     out_brief = brief_step(now) if deps.brief else {}
     if deps.holidays is not None or deps.live_holidays:
         await _refresh_holidays(deps)
@@ -594,6 +639,7 @@ async def tick(deps: jobs.Deps, now: datetime | None = None) -> dict[str, int]:
     if deps.forecasts:
         out |= {k: v for k, v in (await forecast_step(deps, now)).items() if k in ("resolved", "void")}
     out |= journal_step(now)
+    out |= bond_events_step(now)
     out |= await alerts_step(now)
     try:  # broker syncs after the close and the statement inbox (portfolio.connectors.sync)
         from finresearch.portfolio.connectors.sync import connections_step
@@ -652,6 +698,7 @@ def schedule_json(ww=None, *, running: bool | None = None) -> dict:
     from finresearch.api.live import BIDDING_HOURS, EQUITY_HOURS
     from finresearch.fincalc.ipo import lock_in_schedule
     from finresearch.monitor import digest as dg
+    from finresearch.monitor import fno_bhav as fb
     from finresearch.monitor import intraday, iv
     from finresearch.monitor import lookthrough_fetch as ltf
     from finresearch.monitor import portfolio_daily as pd
@@ -679,6 +726,7 @@ def schedule_json(ww=None, *, running: bool | None = None) -> dict:
         "intraday": {"from": hm(intraday.START), "indices": list(intraday.ARCHIVE_INDICES),
                      "max_tries": intraday.MAX_TRIES, "retry_min": intraday.RETRY_S // 60},
         "iv": {"from": hm(iv.START), "indices": list(iv.INDEX_SYMBOLS)},
+        "fno_bhav": {"after": hm((fb.RUN_AFTER.hour, fb.RUN_AFTER.minute)), "lookback_days": fb.LOOKBACK_DAYS},
         "forecasts": {"after": hm(READY_AFTER_IST), "every_min": int(FORECAST_EVERY.total_seconds() // 60)},
         "portfolio": {"close_pass": hm((pd.close_time(ww.stock_time()).hour, pd.close_time(ww.stock_time()).minute)),
                       "nav_pass": hm((pd.NAV_AT.hour, pd.NAV_AT.minute)), "max_instruments": pd.MAX_INSTRUMENTS,

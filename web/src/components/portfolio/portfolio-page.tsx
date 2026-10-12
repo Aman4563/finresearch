@@ -16,6 +16,7 @@ import { TrackedRedFlags } from "@/components/markets/disclosures";
 import type { CategoryRanks } from "@/components/markets/types";
 import { API_URL, api, day, useApi, when } from "@/lib/api";
 
+import { BondBadges, BondPanel } from "./bond-panel";
 import { ConcentrationAnalytics } from "./concentration-analytics";
 import { DataHealth } from "./data-health";
 import { CostsAnalytics } from "./costs-analytics";
@@ -183,6 +184,7 @@ function HoldingEditor({ h, onSaved }: { h: Holding; onSaved: () => void }) {
       {error ? <ErrorNote error={error} onRetry={reload} /> : !data ? <SkeletonRows rows={3} /> : (
         <>
           {(data.pending_actions ?? []).length > 0 && <PendingActions h={h} actions={data.pending_actions!} onSaved={() => { reload(); onSaved(); }} />}
+          {h.bond && !h.closed && <BondPanel h={h} onSaved={() => { reload(); onSaved(); }} />}
           {data.warnings.length > 0 && <ul className="rounded-lg bg-warn-soft px-3 py-2 text-xs">{data.warnings.map((w) => <li key={w}>{w}</li>)}</ul>}
           {(data.elss ?? h.elss) && (
             <div className="rounded-lg border border-border px-3 py-3">
@@ -208,7 +210,7 @@ function HoldingEditor({ h, onSaved }: { h: Holding; onSaved: () => void }) {
               <tbody>{data.transactions.map((t) => (
                 <tr key={t.id}>
                   <td className="num text-xs">{day(t.day)}</td>
-                  <td className="text-xs">{t.kind}{t.kind === "bonus" && ` ${t.meta.a}:${t.meta.b}`}{t.kind === "split" && ` ₹${t.meta.from}→₹${t.meta.to}`}{t.meta.reinvest ? " (reinvested)" : ""}</td>
+                  <td className="text-xs">{t.kind}{t.kind === "bonus" && ` ${t.meta.a}:${t.meta.b}`}{t.kind === "split" && ` ₹${t.meta.from}→₹${t.meta.to}`}{t.meta.reinvest ? " (reinvested)" : ""}{t.meta.ipo_allotment ? " (IPO allotment from the journal: date and issue price)" : ""}</td>
                   <td className="num text-right">{units(t.quantity)}</td>
                   <td className="num text-right">{t.price ?? "—"}</td>
                   <td className="num text-right">{t.amount ?? "—"}</td>
@@ -302,6 +304,7 @@ function Holdings({ snap, onChanged, updating }: { snap: Snapshot; onChanged: ()
                     <span className="truncate">{h.account}</span>·<span>{TAX_CLASS_LABEL[h.tax_class]}</span>
                     {(h.sources ?? []).map((src) => <SourceBadge key={src} source={src} />)}
                     {h.broker_baseline && <Badge tone="neutral">broker avg cost</Badge>}
+                    {h.bond && !h.closed && <BondBadges b={h.bond} />}
                     {!h.cost_known && <Badge tone="warn">cost unknown</Badge>}
                     {(h.pending_actions ?? []).map((a) => <Badge key={a.key} tone="warn">{a.type.replaceAll("_", " ")} {a.ex_date}: not modelled</Badge>)}
                     {h.asset_type === "mf" && h.scheme_code && <RankBadge s={ranks.data?.ranks[h.scheme_code]} />}
@@ -334,7 +337,9 @@ function Holdings({ snap, onChanged, updating }: { snap: Snapshot; onChanged: ()
                 <td className="num text-right" title={h.price_source ? `${h.price_source}${h.price_as_of ? ` · as of ${h.price_as_of}` : ""}` : undefined}>
                   {h.pending ? <span className="skeleton inline-block h-3 w-14 rounded align-middle" aria-label="price updating" /> : h.price == null ? <span className="text-xs text-muted" title={h.price_error ?? ""}>no price</span> : inr(h.price, 2)}
                   {h.price_source?.includes("statement") && <span className="block text-[10px] text-warn" title={h.price_stale_reason ?? undefined}>{h.price_stale ? "old " : ""}statement {h.price_source.includes("NAV") ? "NAV" : "close"} {day(h.price_as_of)}</span>}
-                  {!h.pending && h.price_note && <span className="block text-[10px] text-warn" title={h.price_note}>symbol changed</span>}
+                  {!h.pending && h.price_basis === "dirty" && <span className="block text-[10px] text-muted" title="NSE's bond prices include accrued interest">dirty price</span>}
+                  {!h.pending && h.bond?.matured && <span className="block text-[10px] text-warn" title={h.price_error ?? h.price_note ?? undefined}>{h.price == null ? "matured: value unknown" : "redemption value"}</span>}
+                  {!h.pending && h.price_note && !h.bond?.matured && <span className="block text-[10px] text-warn" title={h.price_note}>symbol changed</span>}
                   {!h.pending && h.price_source?.includes("close (official)") && <span className="block text-[10px] text-muted">close {day(h.price_as_of)}</span>}
                 </td>
                 <td className={cx("num text-right", h.realised > 0 ? "text-gain" : h.realised < 0 ? "text-loss" : "text-muted")}>{h.realised ? signed(h.realised) : "—"}</td>
@@ -505,6 +510,8 @@ function useProgressivePortfolio(refresh: number) {
                 ...d,
                 holdings: d.holdings.map((h) => {
                   if (h.id !== e.id || !h.pending) return h;
+                  // a bond past maturity keeps the snapshot's redemption value (or none): never the stream's quote (#294)
+                  if (h.bond?.matured) return { ...h, pending: false };
                   const value = e.price == null ? null : e.price * h.units;
                   const unrealised = value != null && h.cost_known && h.cost != null ? value - h.cost : null;
                   return { ...h, pending: false, price: e.price, price_as_of: e.as_of, price_source: e.source, price_error: e.error, price_note: e.note ?? null, value, unrealised,
@@ -559,11 +566,11 @@ export function PortfolioPage() {
         <>
           <div className="stagger mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <Stat label="Current value" value={s!.value} display={updating ? <span className="skeleton inline-block h-7 w-32 rounded" aria-label="updating" /> : undefined} format={(n) => inr(n)} icon={<Wallet className="size-4" />}
-              hint={updating ? `prices updating… ${updating.done}/${updating.total}` : s!.unpriced ? `${s!.unpriced} holding(s) without a price` : s!.stale_note ? `incomplete: ${s!.stale_note}` : `cost ${inr(s!.cost)}`} />
+              hint={updating ? `prices updating… ${updating.done}/${updating.total}` : s!.matured_note ? `incomplete: ${s!.matured_note}` : s!.unpriced ? `${s!.unpriced} holding(s) without a price` : s!.stale_note ? `incomplete: ${s!.stale_note}` : `cost ${inr(s!.cost)}`} />
             <Stat label="Unrealised P&L" value={s!.unrealised} display={updating ? <span className="skeleton inline-block h-7 w-32 rounded" aria-label="updating" /> : undefined} format={(n) => signed(n)} icon={<BadgeIndianRupee className="size-4" />} tone={s!.unrealised >= 0 ? "gain" : "loss"}
               hint={updating ? "waiting for prices" : s!.unknown_cost ? `${s!.unknown_cost} holding(s) with unknown cost excluded` : "value − cost of open lots"} />
             <Stat label="Realised P&L" value={s!.realised} format={(n) => signed(n)} icon={<Receipt className="size-4" />} tone={s!.realised >= 0 ? "gain" : "loss"}
-              hint={s!.realised_unknown ? `incomplete: ${s!.realised_unknown} sale(s) with unknown cost not included` : `+ dividends ${inr(s!.dividends)}`}
+              hint={s!.realised_unknown ? `incomplete: ${s!.realised_unknown} sale(s) with unknown cost not included` : `+ dividends ${inr(s!.dividends)}${s!.interest ? ` · interest ${inr(s!.interest)}` : ""}`}
               help={s!.realised_note ?? undefined} />
             <Stat label="XIRR" display={updating ? <span className="skeleton inline-block h-7 w-32 rounded" aria-label="updating" /> : s!.xirr == null ? <span className="text-muted">—</span> : <span className="num">{pctx(s!.xirr * 100)}</span>}
               icon={<Activity className="size-4" />} hint={updating ? "waiting for prices" : s!.xirr_reason ?? "annualised, all holdings"}
