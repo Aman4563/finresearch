@@ -195,3 +195,115 @@ async def test_recheck_tries_forecasts_checked_in_the_last_hours(db):
     later = at(2026, 10, 9, 19)
     assert (await _resolve(Deps(), later))["resolved"] == 0  # checked an hour ago: not due yet
     assert (await _resolve(Deps(), later, recheck=True))["resolved"] == 1
+
+
+# --------------------------------------------------------------------------- nightly incremental harvest
+async def test_incremental_harvest_is_idempotent_and_retries_only_recent_partials(db):
+    import respx
+    from test_ipo_history import client, mock_nse
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import IpoHistory
+    from finresearch.evals import ipo_history as ih
+
+    quiet = lambda _m: None  # noqa: E731
+    with respx.mock(assert_all_called=False) as router:
+        routes = mock_nse(router)
+        out = await ih.harvest(client=client(), today=date(2026, 9, 30), retry_days=10, log=quiet)
+        assert out == {"series": "EQ", "fetched": 3, "complete": 3}
+        calls = {k: r.call_count for k, r in routes.items()}
+        again = await ih.harvest(client=client(), today=date(2026, 9, 30), retry_days=10, log=quiet)
+        # nothing new: no issue page, no price history and no Nifty request (only the past-issues list)
+        assert again == {"series": "EQ", "fetched": 0}
+        assert {k: r.call_count for k, r in routes.items()} == calls
+        with session_scope() as s:
+            s.scalar(select(IpoHistory).where(IpoHistory.symbol == "SWIGGY")).status = "partial"
+        # a partial row listed long ago (13-Nov-2024) is left alone by the nightly run ...
+        assert (await ih.harvest(client=client(), today=date(2026, 9, 30), retry_days=10, log=quiet))["fetched"] == 0
+        # ... and retried while its listing is recent
+        out = await ih.harvest(client=client(), today=date(2024, 11, 15), retry_days=10, log=quiet)
+        assert out["fetched"] == 1 and out.get("complete") == 1
+    with session_scope() as s:
+        assert s.query(IpoHistory).count() == 3  # upserts, no duplicates
+
+
+class _Detail:
+    record = type("R", (), {"url": "https://www.nseindia.com/api/ipo-detail", "sha256": "x",
+                            "fetched_at": datetime(2026, 9, 25, tzinfo=UTC)})()  # fmt: skip
+
+
+class _Nse:
+    async def get_json(self, path, params=None, cache_ttl=None):
+        return {"metaInfo": {"listingDate": "2026-09-21", "activeSeries": ["EQ"]}}, _Detail()
+
+
+class _Eq:
+    def __init__(self):
+        self.ttl = []
+
+    async def history(self, symbol, start, end, series, cache_ttl=None):
+        self.ttl.append((series, cache_ttl))
+        if series == "EQ":  # EQ rows begin after the T2T period
+            return [Bar(date(2026, 9, 25), Decimal("153.15"), Decimal("150"), Decimal("150.10"))]
+        return [Bar(date(2026, 9, 21), Decimal("115"), Decimal("120.75"), Decimal("50"))]
+
+
+def _bars_with_fields(bars):
+    for b in bars:
+        for k in ("high", "low", "vwap", "volume"):
+            setattr(b, k, None)
+    return bars
+
+
+async def test_harvest_takes_the_series_with_the_listing_day_bar(monkeypatch):
+    from finresearch.adapters.nse import PastIssue
+    from finresearch.evals import ipo_history as ih
+
+    eq = _Eq()
+    orig = eq.history
+
+    async def history(*a, **kw):
+        return _bars_with_fields(await orig(*a, **kw))
+
+    eq.history = history
+    p = PastIssue(symbol="T2TX", company="T2T Example Ltd", security_type="EQ", ipo_start=date(2026, 9, 15),
+                  ipo_end=date(2026, 9, 17), listing_date=date(2026, 9, 21), issue_price=Decimal(50))  # fmt: skip
+    x, source = await ih.fetch_inputs(_Nse(), p, "EQ", eq=eq, today=date(2026, 9, 25))
+    assert source["history"]["series"] == "BE" and x.bars[0]["day"] == "2026-09-21"
+    assert all(ttl == ih.RECENT_TTL_S for _, ttl in eq.ttl)  # a recent listing is not cached for weeks
+    row = ih.derive(x, [], [])
+    assert (row["list_open"], row["list_prev_close"]) == (Decimal("115"), Decimal("50"))
+    assert not any("after the listing date" in m for m in row["missing"])
+
+
+# --------------------------------------------------------------------------- the monitor's harvest job
+def test_harvest_job_runs_after_the_close_on_trading_days_and_fails_closed(monkeypatch):
+    from finresearch.adapters import nse_holidays
+    from finresearch.monitor import ipo_harvest as job
+
+    fri = datetime(2026, 10, 9, 15, 30, tzinfo=UTC)  # 21:00 IST
+    assert job.due_slot(fri, set()) == "ipo_harvest:2026-10-09"
+    assert job.due_slot(fri - timedelta(hours=1), set()) is None  # before 20:30 IST
+    assert job.due_slot(fri, {date(2026, 10, 9)}) is None  # an NSE holiday
+    assert job.due_slot(fri + timedelta(days=1), set()) is None  # Saturday
+    monkeypatch.setattr(nse_holidays, "known_trading_holidays", lambda _d: None)
+    monkeypatch.setattr("finresearch.monitor.market_days.unknown_holidays", lambda *_a: None)
+    assert job.due_slot(fri) is None  # holiday list unknown: the job does not run
+
+
+async def test_harvest_job_claims_its_night_once(db, monkeypatch):
+    from finresearch.monitor import ipo_harvest as job
+
+    runs = []
+
+    async def fake_harvest(**kw):
+        runs.append((kw["series"], kw["retry_days"], kw["today"]))
+        return {"series": kw["series"], "fetched": 0}
+
+    monkeypatch.setattr("finresearch.evals.ipo_history.harvest", fake_harvest)
+    now = datetime(2026, 10, 9, 15, 30, tzinfo=UTC)
+    out = await job.ipo_harvest_step(now, set())
+    assert out["ipo_harvest"]["failed"] == [] and [r[0] for r in runs] == ["EQ", "SME"]
+    assert runs[0][1:] == (job.RETRY_DAYS, date(2026, 10, 9))
+    assert await job.ipo_harvest_step(now + timedelta(minutes=5), set()) == {}  # claimed: never twice a night
+    assert len(runs) == 2
