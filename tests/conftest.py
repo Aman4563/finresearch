@@ -56,6 +56,24 @@ def _no_groww_session(monkeypatch):
             pass
 
     monkeypatch.setattr(groww_market, "MARKET", groww_market.GrowwMarket(session=_Off()))
+    # the Groww-vs-official close checks (#283) are written by any after-close valuation with a Groww client: only to
+    # a test database (`env`), never to the configured one
+    real_record, real_stats = groww_market.record_close_checks, groww_market.close_check_stats
+
+    def on_test_db() -> bool:
+        from sqlalchemy.engine import make_url
+
+        from finresearch.config import get_settings
+
+        return (make_url(get_settings().database_url).database or "").endswith("_test")
+
+    def record(checks):
+        if not on_test_db():
+            raise RuntimeError("no test database: close checks not stored")
+        real_record(checks)
+
+    monkeypatch.setattr(groww_market, "record_close_checks", record)
+    monkeypatch.setattr(groww_market, "close_check_stats", lambda: real_stats() if on_test_db() else None)
 
 
 @pytest.fixture(autouse=True)
