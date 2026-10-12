@@ -103,6 +103,12 @@ class BrokerPosition:
     last_price: Decimal | None = None
     pnl: Decimal | None = None
     segment: str | None = None
+    # F&O (#308): whether the sign of `quantity` (long + / short -) is confirmed by the broker's own buy and sell
+    # quantities; False = the direction is unknown, so P&L and greeks are unknown too (never guessed)
+    direction_known: bool | None = None
+    note: str | None = None
+    buy_quantity: Decimal | None = None
+    sell_quantity: Decimal | None = None
 
 
 @dataclass
@@ -283,6 +289,10 @@ class BrokerConnector(ABC):
     async def holdings(self) -> list[BrokerHolding]: ...
 
     async def positions(self) -> list[BrokerPosition]:
+        return []
+
+    async def fno_positions(self) -> list[BrokerPosition]:
+        """Open F&O positions (only brokers with the "fno_positions" capability read them, #308)."""
         return []
 
     async def trades(self, since: date, until: date) -> list[BrokerTrade]:

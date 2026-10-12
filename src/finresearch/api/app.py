@@ -1624,6 +1624,10 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
     from finresearch.api.journal import add_journal_routes
 
     add_journal_routes(app, clock=clock)
+    # F&O positions, paper book, exit rules, margin approximation, event strip (#308)
+    from finresearch.api.fno_book import add_fno_book_routes
+
+    add_fno_book_routes(app, clock=clock)
 
     # ------------------------------------------------------------------ buy/sell signals (finresearch.signals)
     @app.get("/api/signals")

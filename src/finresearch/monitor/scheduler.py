@@ -653,6 +653,12 @@ async def tick(deps: jobs.Deps, now: datetime | None = None) -> dict[str, int]:
         out |= await session_step(now)
     except Exception:
         log.warning("Groww market-data session step failed; it is retried on the next tick", exc_info=True)
+    try:  # F&O paper book and exit rules (#308): nothing without open paper trades or armed rules
+        from finresearch.fnobook.service import step as fno_book_step
+
+        out |= await fno_book_step(now)
+    except Exception:
+        log.warning("F&O paper book step failed; it is retried on the next tick", exc_info=True)
     try:  # Groww's daily close vs the exchange's official close, queued by the valuations (#283)
         from finresearch.adapters.groww_market import close_check_step
 

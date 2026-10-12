@@ -4,6 +4,9 @@ import { Activity, Calculator, Crosshair, Layers, Loader2, Minus, Plus, RefreshC
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { InteractivePayoff, OiButterfly } from "@/components/fno/charts";
+import { EventStrip } from "@/components/fno/events";
+import { PaperActions } from "@/components/fno/paper-actions";
+import { MyPositions } from "@/components/fno/positions";
 import { CostsBreakdown, IvTile, ProbabilityPanel, RiskBanner } from "@/components/fno/risk";
 import { SignalCard } from "@/components/signal";
 import { type Chain, type Leg, type PresetKey, PRESETS, type Result, n, payoffCurve, pnlAt, premiumOf, presetLegs } from "@/components/fno/model";
@@ -320,6 +323,8 @@ export default function Fno() {
         </div>
       </Card>
 
+      <MyPositions />
+
       {loading === "chain" || (loading === "expiries" && !chain) ? (
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -343,6 +348,7 @@ export default function Fno() {
               hint={chain.lot_size ? `lot size ${chain.lot_size} · expires ${day(chain.expiry)}` : `expires ${day(chain.expiry)}`} />
             <IvTile symbol={chain.symbol} atmIv={atmIv} rv20={fresh ? result?.analysis?.vols.realised_20d : null} />
           </div>
+          <EventStrip symbol={chain.symbol} />
 
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,22rem)_minmax(0,1fr)]">
             <Card title="Open interest by strike" icon={<Layers className="size-4" />} 
@@ -446,6 +452,7 @@ export default function Fno() {
                     <InteractivePayoff points={curve.points} spot={spot} breakevens={fresh ? result!.breakevens : curve.breakevens}
                       what={{ spot: whatSpot, pnl: Math.round(whatPnl) }} onPick={setWhat} band={an?.expected_move ?? null} />
                   )}
+                  <PaperActions symbol={chain.symbol} expiry={chain.expiry} legs={legs} />
                   {result && !fresh && (
                     <Callout tone="warn">The numbers below are for the previous legs. Press Analyse to update them.</Callout>
                   )}

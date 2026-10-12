@@ -1140,6 +1140,82 @@ class BrokerSyncLog(Base):
     error: Mapped[str | None] = mapped_column(Text)  # secrets redacted
 
 
+# --------------------------------------------------------------------------- F&O paper book and exit rules (#308)
+# The user's own plans: personal data (never sent to a model). Rows are never deleted: a paper trade stays in the book
+# once recorded, like a forecast in the ledger, so the results count every trade.
+class PaperStrategy(Base):
+    """One paper-traded F&O strategy: entered at Groww's LTP ± slippage with costs, marked to market in session, closed
+    by the user (square-off at the LTP) or settled at expiry at the underlying's close with exercise STT
+    (`fincalc.paper`). status: open | awaiting_settlement (expired, no settlement price yet) | closed."""
+
+    __tablename__ = "paper_strategy"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(30), index=True)
+    expiry: Mapped[date] = mapped_column(Date)
+    label: Mapped[str] = mapped_column(String(120), default="")
+    status: Mapped[str] = mapped_column(String(20), default="open", index=True)
+    opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    lot_size: Mapped[int] = mapped_column(Integer)
+    slippage_pct: Mapped[Decimal] = mapped_column(Numeric(6, 3))
+    brokerage_per_order: Mapped[Decimal] = mapped_column(Numeric(10, 2))
+    spot_at_entry: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    price_source: Mapped[str] = mapped_column(String(80))  # where the entry reference prices came from
+    entry_costs: Mapped[Decimal] = mapped_column(Numeric(14, 2))
+    entry_detail: Mapped[dict[str, Any]] = mapped_column(default=dict)  # charges lines and rates used
+    mtm_gross: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))  # None = not marked yet (never 0)
+    mtm_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    mtm_source: Mapped[str | None] = mapped_column(String(80))
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    close_reason: Mapped[str | None] = mapped_column(String(20))  # square_off | expiry
+    exit_costs: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    exit_detail: Mapped[dict[str, Any]] = mapped_column(default=dict)
+    settlement_price: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    settlement_source: Mapped[str | None] = mapped_column(String(200))
+    gross_pnl: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    net_pnl: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    note: Mapped[str | None] = mapped_column(Text)
+    legs: Mapped[list[PaperLeg]] = relationship(back_populates="strategy", order_by="PaperLeg.id")
+
+
+class PaperLeg(Base):
+    __tablename__ = "paper_leg"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    strategy_id: Mapped[int] = mapped_column(ForeignKey("paper_strategy.id"), index=True)
+    right: Mapped[str] = mapped_column(String(6))  # call | put | future
+    strike: Mapped[Decimal] = mapped_column(Numeric(14, 2))
+    side: Mapped[str] = mapped_column(String(4))  # buy | sell
+    lots: Mapped[int] = mapped_column(Integer)
+    qty: Mapped[int] = mapped_column(Integer)  # units = lots × lot size
+    ref_price: Mapped[Decimal] = mapped_column(Numeric(14, 2))  # the LTP the fill was made from
+    entry_price: Mapped[Decimal] = mapped_column(Numeric(14, 2))  # after slippage
+    trading_symbol: Mapped[str | None] = mapped_column(String(60))  # Groww's; None = not listed
+    last_price: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    last_price_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    exit_price: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    strategy: Mapped[PaperStrategy] = relationship(back_populates="legs")
+
+
+class FnoExitRule(Base):
+    """An exit rule on a paper strategy or a real Groww F&O position group (underlying + expiry): profit target %,
+    stop %, DTE, short-strike delta breach or an event before expiry. It raises one alert when it triggers and never
+    again (status fired); it never trades. status: armed | fired; `last_value` is the latest reading (None =
+    unknown)."""
+
+    __tablename__ = "fno_exit_rule"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    paper_id: Mapped[int | None] = mapped_column(ForeignKey("paper_strategy.id"), index=True)
+    position_key: Mapped[str | None] = mapped_column(String(60), index=True)  # real: "NIFTY:2026-10-27"
+    kind: Mapped[str] = mapped_column(String(10))  # profit | stop | dte | delta | event
+    threshold: Mapped[Decimal] = mapped_column(Numeric(12, 4))
+    status: Mapped[str] = mapped_column(String(10), default="armed")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_value: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    note: Mapped[str | None] = mapped_column(Text)
+    fired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    alert_id: Mapped[int | None] = mapped_column(Integer)
+
+
 # --------------------------------------------------------------------------- exchange disclosures (finresearch.disclosures)
 # Public market data (no personal data): NSE surveillance lists, the F&O ban list, promoter pledge, insider (PIT) and
 # SAST disclosures, bulk/block deals, credit ratings, and SEBI orders that name a tracked company (PAN-scrubbed).

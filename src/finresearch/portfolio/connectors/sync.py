@@ -178,7 +178,8 @@ async def _sync(key: str, trigger: str, now: datetime, secrets_out: list[str]) -
         else today - timedelta(days=conn.first_sync_days)
     )
     steps = [("holdings", conn.holdings), ("positions", conn.positions), ("mf", conn.mf_holdings),
-             ("funds", conn.funds), ("trades", lambda: conn.trades(since, today))]  # fmt: skip
+             ("funds", conn.funds), ("trades", lambda: conn.trades(since, today)),
+             ("fno_positions", lambda: conn.fno_positions())]  # fmt: skip
     for name, fn in steps:
         if name not in caps:
             continue
@@ -216,6 +217,8 @@ async def _sync(key: str, trigger: str, now: datetime, secrets_out: list[str]) -
             state["positions"] = [{k: _json_dec(v) for k, v in vars(p).items()} for p in data["positions"]][
                 :200
             ]
+        if "fno_positions" in data:  # F&O positions (#308): shown on /fno, never turned into lots
+            state["fno_positions"] = fno_state(data["fno_positions"], now)
         if "funds" in data:
             state["funds"] = {k: _json_dec(v) for k, v in (data["funds"] or {}).items()}
         state["last_summary"] = {k: summary[k] for k in ("added", "duplicates", "updated", "differences",
@@ -245,6 +248,14 @@ async def _sync(key: str, trigger: str, now: datetime, secrets_out: list[str]) -
         row.state = state
     status = "partial" if errors else "ok"
     return await _finish_async(key, trigger, now, status, summary, "; ".join(errors) or None, today=today)
+
+
+def fno_state(positions: list[Any], now: datetime) -> dict[str, Any]:
+    """What the connection keeps of an F&O positions read: the rows (at most 200) and when they were read."""
+    return {
+        "at": now.isoformat(),
+        "rows": [{k: _json_dec(v) for k, v in vars(p).items()} for p in positions][:200],
+    }
 
 
 def t1_state(prev: dict[str, Any] | None, holdings: list[Any], today: date) -> dict[str, Any]:
@@ -384,8 +395,9 @@ def _holidays(day: date) -> set[date]:
 # ------------------------------------------------------------------ in-session order-list poll (#284)
 # During market hours a connector whose order list answers today only (Groww) is read every ORDERS_POLL_EVERY, so a
 # Mac asleep at 16:00 loses at most the fills since the last poll, not the whole day (Groww's order list cannot be
-# read for an earlier day). Orders only: no holdings, positions or funds. It never logs in: with no valid session it
-# waits (the market-data session step does the one daily login); one Non-Trading call per page of 100 orders.
+# read for an earlier day). Orders, and F&O positions where the broker has them (#308: one more Non-Trading call); no
+# holdings, cash positions or funds. It never logs in: with no valid session it waits (the market-data session step
+# does the one daily login); one Non-Trading call per page of 100 orders.
 ORDERS_POLL_EVERY = timedelta(minutes=30)
 
 
@@ -435,6 +447,14 @@ async def poll_orders(key: str, now: datetime, holidays: set[date]) -> dict[str,
             poll |= {"status": "error", "error": msg[:300]}
             log.info("%s in-session order read failed: %s", key, msg[:300])
             trades = None
+        fno = None
+        if "fno_positions" in conn.capabilities:  # one more Non-Trading call per poll (#308)
+            try:
+                fno = await conn.fno_positions()
+            except Exception as e:
+                msg = redact(str(e), *secrets) if isinstance(e, ConnectorError) else type(e).__name__
+                poll["fno_error"] = msg[:300]
+                log.info("%s in-session F&O positions read failed: %s", key, msg[:300])
         with session_scope() as s:
             if trades is not None:
                 res = merge_orders(s, account=conn.account, source=conn.source, label=conn.label, trades=trades,
@@ -448,7 +468,8 @@ async def poll_orders(key: str, now: datetime, holidays: set[date]) -> dict[str,
                                         | {"conflicts": res.conflicts, "orders": len(trades)}))  # fmt: skip
             row = s.get(BrokerConnection, key)
             if row is not None:
-                row.state = {**(row.state or {}), "orders_poll": poll}
+                extra = {"fno_positions": fno_state(fno, now)} if fno is not None else {}
+                row.state = {**(row.state or {}), "orders_poll": poll, **extra}
         return poll
 
 

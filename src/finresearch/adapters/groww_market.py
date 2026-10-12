@@ -148,8 +148,19 @@ class Instruments:
         self.day = day
         self.by_symbol: dict[tuple[str, str], dict[str, str]] = {}
         self.by_token: dict[tuple[str, str], dict[str, str]] = {}
+        # F&O contracts (#308): by trading symbol, and by (underlying, expiry, strike, CE/PE/FUT)
+        self.fno_by_symbol: dict[str, dict[str, str]] = {}
+        self.fno_by_contract: dict[tuple[str, str, str, str], dict[str, str]] = {}
         for r in rows:
-            if (r.get("segment") or "").upper() != "CASH":
+            seg = (r.get("segment") or "").upper()
+            if seg == "FNO":
+                sym = (r.get("trading_symbol") or "").strip().upper()
+                if sym:
+                    self.fno_by_symbol.setdefault(sym, r)
+                    self.fno_by_contract.setdefault(fno_key(r.get("underlying_symbol"), r.get("expiry_date"),
+                                                            r.get("strike_price"), r.get("instrument_type")), r)  # fmt: skip
+                continue
+            if seg != "CASH":
                 continue
             ex = (r.get("exchange") or "").upper()
             sym = (r.get("trading_symbol") or "").strip().upper()
@@ -173,6 +184,15 @@ class Instruments:
             return self.by_token.get(("BSE", s))
         return self.by_symbol.get((ex, s))
 
+    def contract(self, trading_symbol: str) -> dict[str, str] | None:
+        """An F&O row by its trading symbol ("NIFTY25OCT24000CE")."""
+        return self.fno_by_symbol.get(trading_symbol.strip().upper())
+
+    def fno_symbol(self, underlying: str, expiry: date, strike: Any, kind: str) -> str | None:
+        """The trading symbol of a contract (kind CE, PE or FUT; strike ignored for FUT), None when not listed."""
+        r = self.fno_by_contract.get(fno_key(underlying, expiry.isoformat(), strike, kind))
+        return (r.get("trading_symbol") or "").strip().upper() or None if r else None
+
     def index(self, name: str) -> dict[str, str] | None:
         nm = " ".join(name.upper().split())
         for ex in ("NSE", "BSE"):
@@ -181,6 +201,24 @@ class Instruments:
                 if r is not None and (r.get("instrument_type") or "").upper() in ("IDX", "INDEX", ""):
                     return r
         return None
+
+
+def _strike_text(v: Any) -> str:
+    from decimal import Decimal, InvalidOperation
+
+    try:
+        d = Decimal(str(v).strip())
+    except (InvalidOperation, ValueError):
+        return ""
+    return format(d.normalize(), "f") if d else ""
+
+
+def fno_key(underlying: Any, expiry: Any, strike: Any, kind: Any) -> tuple[str, str, str, str]:
+    """(underlying, ISO expiry, strike as plain text, CE/PE/FUT). The file's expiry_date is shown as "2025-12-24" in
+    the docs; only its first 10 characters are used [U: other formats not seen]."""
+    k = str(kind or "").strip().upper()
+    return (str(underlying or "").strip().upper(), str(expiry or "").strip()[:10],
+            "" if k == "FUT" else _strike_text(strike), k)  # fmt: skip
 
 
 def exchange_symbol(row: dict[str, str]) -> str:
@@ -353,6 +391,11 @@ def _dir() -> Path:
     return Path(get_settings().state_dir) / "groww_market"
 
 
+def _ck(segment: str, key: str) -> str:
+    """The LTP cache key: the bare exchange symbol for CASH (as before #308), segment-prefixed otherwise."""
+    return key if segment == "CASH" else f"{segment}|{key}"
+
+
 # --------------------------------------------------------------------------- the client
 class GrowwMarket:
     """Groww market data with caches that know the market's hours, batching and in-flight coalescing. One per process
@@ -475,19 +518,23 @@ class GrowwMarket:
             os.close(lock)
 
     # ---- LTP (batched, cached in session, coalesced per instrument)
-    async def ltp(self, keys: list[str], *, cached_only: bool = False) -> dict[str, tuple[float, datetime]]:
+    async def ltp(self, keys: list[str], *, cached_only: bool = False,
+                  segment: str = "CASH") -> dict[str, tuple[float, datetime]]:  # fmt: skip
         """{"NSE_INFY": (price, fetched at)} for the keys Groww priced. Only asked in session (09:15-16:00 IST on a
         trading day); 50 keys a call; a key fetched in the last LTP_TTL_S is served from memory, and a key another
-        request is already fetching is awaited, not asked again. Unpriced keys are simply absent."""
+        request is already fetching is awaited, not asked again. Unpriced keys are simply absent. `segment` "FNO"
+        prices F&O contracts ("NSE_NIFTY25OCT24000CE", docs read 12-Oct-2026), one segment per call (#308)."""
+        if segment not in ("CASH", "FNO"):
+            raise ValueError(f"unknown Groww segment {segment!r}")
         now_s, out = self._now_s(), {}
         todo, waits = [], {}
         for k in dict.fromkeys(keys):
-            hit = self._ltp.get(k)
+            hit = self._ltp.get(_ck(segment, k))
             if hit is not None and hit[0] > now_s:
                 if hit[1] is not None:
                     out[k] = (hit[1], hit[2])
                 continue
-            fut = self._inflight.get((id(asyncio.get_running_loop()), ("ltp", k)))
+            fut = self._inflight.get((id(asyncio.get_running_loop()), ("ltp", _ck(segment, k))))
             if fut is not None:
                 waits[k] = fut
             else:
@@ -498,15 +545,15 @@ class GrowwMarket:
             loop = asyncio.get_running_loop()
             futs = {k: loop.create_future() for k in todo}
             for k, f in futs.items():
-                self._inflight[(id(loop), ("ltp", k))] = f
+                self._inflight[(id(loop), ("ltp", _ck(segment, k)))] = f
             try:
                 for i in range(0, len(todo), BATCH):
-                    await self._ltp_batch(todo[i : i + BATCH], futs)
+                    await self._ltp_batch(todo[i : i + BATCH], futs, segment)
             finally:
                 for k, f in futs.items():
                     if not f.done():
                         f.set_result(None)
-                    self._inflight.pop((id(loop), ("ltp", k)), None)
+                    self._inflight.pop((id(loop), ("ltp", _ck(segment, k))), None)
             waits.update(futs)
         for k, f in waits.items():
             got = await asyncio.shield(f)
@@ -514,20 +561,24 @@ class GrowwMarket:
                 out[k] = got
         return out
 
-    async def _ltp_batch(self, chunk: list[str], futs: dict[str, asyncio.Future]) -> None:
+    async def _ltp_batch(
+        self, chunk: list[str], futs: dict[str, asyncio.Future], segment: str = "CASH"
+    ) -> None:
         now = self.clock()
         try:
-            payload = await self._get("/live-data/ltp", {"segment": "CASH", "exchange_symbols": tuple(chunk)})
+            payload = await self._get(
+                "/live-data/ltp", {"segment": segment, "exchange_symbols": tuple(chunk)}
+            )
         except Exception as e:  # ConnectorError and anything unexpected: these keys fall back for a minute
             log.info("Groww LTP failed (%s): falling back", type(e).__name__)
             for k in chunk:
-                self._ltp[k] = (self._now_s() + FAIL_TTL_S, None, now)
+                self._ltp[_ck(segment, k)] = (self._now_s() + FAIL_TTL_S, None, now)
             return
         ttl = ltp_ttl(now, self.holidays()) or LTP_TTL_S
         prices = payload if isinstance(payload, dict) else {}
         for k in chunk:
             p = _num(prices.get(k))
-            self._ltp[k] = (self._now_s() + (ttl if p is not None else FAIL_TTL_S), p, now)
+            self._ltp[_ck(segment, k)] = (self._now_s() + (ttl if p is not None else FAIL_TTL_S), p, now)
             futs[k].set_result((p, now) if p is not None else None)
         self._mark("ltp")
 
