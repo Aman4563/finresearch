@@ -71,6 +71,7 @@ class Bar:
     day: date
     open: Decimal | None
     close: Decimal | None
+    prev_close: Decimal | None = None
 
 
 @dataclass
@@ -229,7 +230,8 @@ async def test_ipo_forecast_resolves_from_the_watch_or_nse_history(ledger_db):
         s.scalar(select(Watch).where(Watch.nse_symbol == a)).meta = {"listing_open": "290.50"}
         fb = ledger.record_run(s, make_run(s, ledger_db, "ipo_report", "AVOID", "high", at(2026, 9, 28), b,
                                            None, upper="100"))  # fmt: skip
-    deps = FakeDeps({b: [Bar(date(2026, 10, 1), Decimal("96"), Decimal("99"))]})
+    # no listing date known: the first bar counts only with the listing-day marker (previous close = issue price, #292)
+    deps = FakeDeps({b: [Bar(date(2026, 10, 1), Decimal("96"), Decimal("99"), Decimal("100"))]})
     # before the close on the listing date nothing is due
     assert (await ledger.resolve_due(deps, at(2026, 10, 5, 11)))["resolved"] == 0
     stats = await ledger.resolve_due(deps, at(2026, 10, 5, 17))
