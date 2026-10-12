@@ -75,7 +75,8 @@ export default function WatchView() {
   // timestamp becomes a snapshot
   const bookMs = useTimeFrames().tf.ipo_book_refresh_s * 1000;
   const book = useLive<{ live: boolean; book?: { as_of: string | null; total_times: string } | null; reason?: string }>(
-    `/api/watches/${id}/live`, { session: "ipo", everyMs: bookMs, active: !!data && bookBidding(data) && bookMs > 0 });
+    // not even read once for a watch whose bidding is over (or not yet open)
+    data && bookBidding(data) ? `/api/watches/${id}/live` : null, { session: "ipo", everyMs: bookMs, active: !!data && bookBidding(data) && bookMs > 0 });
   const bookAsOf = book.data?.book?.as_of;
   useEffect(() => {
     if (bookAsOf) reload();

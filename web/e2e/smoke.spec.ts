@@ -126,7 +126,7 @@ test("monitor: an archived IPO watch is read once, never polled, and shows its l
     "GET /api/companies": [],
   });
   await page.goto("/monitor");
-  await page.getByRole("radio", { name: /Archive/ }).or(page.getByRole("button", { name: /Archive/ })).first().click();
+  await page.getByRole("tab", { name: /^Archive/ }).click(); // an archived IPO is in the Archive group, not Active
   await expect(page.getByText("Example Listed Ltd").first()).toBeVisible();
   await expect(page.getByText("+20.00%").first()).toBeVisible(); // the listing gain replaces the subscription meter
   await page.goto("/monitor/77");
