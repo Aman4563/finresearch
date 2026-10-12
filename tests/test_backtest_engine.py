@@ -321,3 +321,37 @@ def test_no_entry_on_the_last_session_before_expiry_day():
     assert engine.try_enter(st, x, "NIFTY", clk(x), [15.0], BOOK, next_session=EXP) is None
     assert st.skips == {"no session left before expiry day": 1}
     assert engine.try_enter(st, x, "NIFTY", clk(x), [15.0], BOOK, next_session=date(2025, 1, 13)) is not None
+
+
+def test_overlays_on_a_synthetic_stock():
+    """Covered call / protective put (the real-data copy has no stock options, so only synthetic data tests them)."""
+    from finresearch.backtest import evaluate
+
+    h = fs.history(date(2022, 1, 3), date(2022, 12, 30), sym="FAKESTOCK", vol=0.30, lot=250)
+    sp = [engine.resolve(specs.by_key(k), "FAKESTOCK") for k in ("stock_cc_m", "stock_pp_m")]
+    res = engine.run(sp, h, date(2022, 2, 1), date(2022, 11, 30), warmup_days=40)
+    for key, r in res.items():
+        assert r["trades"] and all(
+            t["lots"] == 1 and t["lot"] == 250 for t in r["trades"]
+        )  # one lot, never sized up
+        for t in r["trades"]:
+            assert t["exit_day"] < t["expiry"]  # physically settled: out before expiry day
+            # the held stock's P&L over the holding: the same-expiry future, entry close to exit close, x 250 units
+            fut = {d: x.futures[date.fromisoformat(t["expiry"])] for d, x in h.days["FAKESTOCK"].items()
+                   if date.fromisoformat(t["expiry"]) in x.futures}  # fmt: skip
+            exp = (fut[date.fromisoformat(t["exit_day"])] - fut[date.fromisoformat(t["entry_day"])]) * 250
+            assert t["stock_pnl"] == pytest.approx(exp, abs=0.01)
+        ov = evaluate.overlay(r["trades"])
+        assert ov["with_overlay_total"] == pytest.approx(
+            ov["stock_total"] + sum(t["net"] for t in r["trades"]), abs=0.05
+        )
+    assert all(
+        t["legs"][0]["side"] == "sell" and t["legs"][0]["right"] == "call"
+        for t in res["stock_cc_m"]["trades"]
+    )
+    assert all(
+        t["legs"][0]["side"] == "buy" and t["legs"][0]["right"] == "put" for t in res["stock_pp_m"]["trades"]
+    )
+    assert all(
+        t["margin"] is None for t in res["stock_cc_m"]["trades"]
+    )  # the pledged stock, not an estimate of 0

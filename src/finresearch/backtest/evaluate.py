@@ -106,7 +106,13 @@ def evaluate(history: History, *, stock: str | None, source: str, oos: bool = Tr
                                "spec_hash": specs.spec_hash(s)}  # fmt: skip
         r = main.get(s.key)
         if c is None or r is None or not latest.get(c.underlying):
-            row.update(status="no_data", reasons=["no stored option history for this underlying"])
+            why = (
+                "no stock options are stored, so the overlay rule has no stock to test (covered only by the "
+                "synthetic tests)"
+                if s.underlying == "STOCK_RULE"
+                else "no stored option history for this underlying"
+            )
+            row.update(status="no_data", reasons=[why])
             out.append(row)
             continue
         hi = latest[c.underlying] or specs.IS_END
