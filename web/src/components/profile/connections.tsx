@@ -25,12 +25,17 @@ export type Connection = {
   last_error: string | null; positions: Position[]; funds: Record<string, number | null> | null; callback_url?: string;
   // differences/reconciled null: the holdings were not read, so the reconciliation is unknown (never "0 differences")
   last_summary: { added: number; duplicates: number; updated?: number; differences: number | null; baselines: number; conflicts: number; reconciled: boolean | null } | null;
+  // Groww (#282): whether T1 shares are inside the broker's quantity, from the first sync whose numbers decided it
+  t1_semantics?: { result?: "separate" | "included"; day?: string; conflict?: string; evidence?: Record<string, number>;
+    last_seen?: { day: string; evidence: Record<string, number> } } | null;
+  // Groww (#284): the last in-session order-list read
+  orders_poll?: { at: string; status: string; orders?: number; added?: number; updated?: number; error?: string } | null;
 };
-type RecRow = { name: string; ikey: string; account: string; broker_units: string; app_units: string; diff: string; ok: boolean; status: string };
+type RecRow = { name: string; ikey: string; account: string; broker_units: string; app_units: string; diff: string; ok: boolean; status: string; reason?: string | null };
 export type SyncLog = {
   id: number; key: string; trigger: string; status: string; started_at: string; error: string | null;
   summary: {
-    added?: number; duplicates?: number; baselines?: { name: string; units: string }[]; conflicts?: { name: string; day: string; why: string }[];
+    added?: number; duplicates?: number; updated?: number; baselines?: { name: string; units: string }[]; conflicts?: { name: string; day: string; why: string }[];
     cross_source?: { name: string; day: string; matched: string; sources: string[] }[]; reconciliation?: RecRow[]; differences?: number | null;
     baseline_skipped?: { name: string; held_in: string[]; why: string }[]; file?: string; kind?: string; note?: string; status?: string;
   };
@@ -63,7 +68,7 @@ function Differences({ log }: { log: SyncLog | undefined }) {
   const s = log.summary;
   const bad = (s.reconciliation ?? []).filter((r) => !r.ok);
   const items = [
-    ...bad.map((r) => `${r.name}: broker ${r.broker_units}, app ${r.app_units} (${r.status.replaceAll("_", " ")})`),
+    ...bad.map((r) => `${r.name}: broker ${r.broker_units}, app ${r.app_units} (${r.status.replaceAll("_", " ")}${r.reason ? `: ${r.reason}` : ""})`),
     ...(s.conflicts ?? []).map((c) => `${c.name} ${c.day}: ${c.why}`),
     ...(s.baseline_skipped ?? []).map((b) => `${b.name}: ${b.why} (${b.held_in.join(", ")})`),
   ];
@@ -80,6 +85,8 @@ type MarketData = {
   active: boolean; session: string; phase: string; instruments_day: string | null;
   supplies: { kind: string; label: string }[]; last_answered: Record<string, string>;
   calls_today: { day: string; total: number; categories: { category: string; label: string; calls: number; per_second: number | null; per_minute: number | null; daily_cap: number | null }[] };
+  // #283: Groww's daily close against the exchange's official close, per stock-day (null: the database could not say)
+  close_check?: { checked: number; matched: number; since: string | null; last_day: string | null; tolerance_inr: number } | null;
 };
 
 // Groww's paid Trade API also supplies market data (#267): which data it is supplying now and today's calls by Groww's
@@ -99,6 +106,13 @@ function GrowwMarketData() {
           <li key={s.kind}>{s.label}{data.last_answered[s.kind] && <span className="num"> · last {when(data.last_answered[s.kind])}</span>}</li>
         ))}
       </ul>
+      <p className="text-muted" data-testid="groww-close-check">
+        {data.close_check == null ? "Groww close vs the official close: unknown (could not be read)."
+          : data.close_check.checked === 0 ? "Groww close vs the official close: not compared yet (needs an evening with both)."
+          : <>Groww close matched the official close on <span className="num text-foreground">{data.close_check.matched}</span> of <span className="num text-foreground">{data.close_check.checked}</span> stock-days
+            {data.close_check.since && <> since {data.close_check.since}</>} (within ₹{data.close_check.tolerance_inr}).</>}
+        <InfoTip>After the session prices use the exchange&apos;s official close. Groww&apos;s daily close is used only when that is not out yet, and is labelled so. Each evening with both, the two are compared per stock.</InfoTip>
+      </p>
       <p className="text-muted">
         Calls today: <span className="num text-foreground">{data.calls_today.total}</span>
         {" "}({data.calls_today.categories.map((c) => `${c.label} ${c.calls}${c.daily_cap ? ` of ${c.daily_cap}` : ""}`).join(" · ")})
@@ -201,6 +215,18 @@ function BrokerRow({ c, log, onChanged }: { c: Connection; log?: SyncLog; onChan
               : c.last_summary.differences ? <>, <span className="text-warn">{c.last_summary.differences} difference(s)</span></> : ", reconciled"}.</span>
         )}
         {c.funds && (c.funds.cash != null || c.funds.net != null) && <span>Cash available: <span className="num text-foreground">{inr(c.funds.cash ?? c.funds.net)}</span></span>}
+        {c.key === "groww" && (
+          <span data-testid="groww-t1">T1 handling: <span className="text-foreground">{c.t1_semantics?.result
+            ? `confirmed ${c.t1_semantics.result} on ${c.t1_semantics.day}`
+            : c.t1_semantics?.conflict ? `unconfirmed (holdings disagreed on ${c.t1_semantics.conflict})` : "unconfirmed"}</span>
+            <InfoTip>Groww reports T1 shares (bought, not yet delivered) separately. Whether its quantity already includes them is checked on every sync with T1 shares; until a sync decides it, the app counts quantity + T1.</InfoTip>
+          </span>
+        )}
+        {c.key === "groww" && c.orders_poll && (
+          <span>Orders read in session: <span className="num text-foreground">{when(c.orders_poll.at)}</span>
+            {c.orders_poll.status === "error" ? <span className="text-warn"> (failed: {c.orders_poll.error})</span>
+              : c.orders_poll.status === "ok" ? ` (${c.orders_poll.added ?? 0} new, ${c.orders_poll.updated ?? 0} updated)` : ""}</span>
+        )}
         {c.positions.length > 0 && <span>Open positions: <span className="text-foreground">{c.positions.map((p) => `${p.symbol} ${p.quantity}${p.product ? ` ${p.product}` : ""}`).slice(0, 4).join(", ")}</span></span>}
       </div>
       {(c.last_error || err) && <div className="pl-12"><ErrorNote error={err ?? c.last_error} /></div>}
@@ -341,7 +367,8 @@ export function ConnectionsCard() {
     if (ok || bad) history.replaceState(null, "", `${window.location.pathname}#connections`);
   }, []);
   const refresh = () => { reload(); logs.reload(); };
-  const latest = (key: string) => logs.data?.find((l) => l.key === key && l.trigger !== "inbox");
+  // an in-session order read (#284) reads no holdings: the row keeps showing the last full sync's differences
+  const latest = (key: string) => logs.data?.find((l) => l.key === key && l.trigger !== "inbox" && l.trigger !== "intraday");
   const brokers = data?.connections.filter((c) => c.key !== "cas_inbox") ?? [];
   const inbox = data?.connections.find((c) => c.key === "cas_inbox");
 
@@ -375,7 +402,7 @@ export function ConnectionsCard() {
                     <Badge tone={l.status === "ok" ? "gain" : l.status === "partial" || l.status === "reconnect" ? "warn" : "loss"}>{l.status}</Badge>
                     <span className="font-medium">{l.key === "cas_inbox" ? "Inbox" : data?.connections.find((c) => c.key === l.key)?.label ?? l.key}</span>
                     <span className="min-w-0 flex-1 truncate text-muted">
-                      {l.trigger} · {l.summary.file ? `${l.summary.file} ${l.summary.kind ?? ""}` : `${l.summary.added ?? 0} new, ${l.summary.baselines?.length ?? 0} baseline(s), ${l.summary.differences == null ? "reconciliation unknown" : `${l.summary.differences} difference(s)`}`}
+                      {l.trigger} · {l.summary.file ? `${l.summary.file} ${l.summary.kind ?? ""}` : `${l.summary.added ?? 0} new, ${l.trigger === "intraday" ? `${l.summary.updated ?? 0} updated (orders only)` : `${l.summary.baselines?.length ?? 0} baseline(s), ${l.summary.differences == null ? "reconciliation unknown" : `${l.summary.differences} difference(s)`}`}`}
                     </span>
                     <span className="num text-muted">{when(l.started_at)}</span>
                   </div>
