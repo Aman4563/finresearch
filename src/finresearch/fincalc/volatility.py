@@ -48,16 +48,23 @@ def _iv_at_delta(points: list[tuple[float, float]], target: float) -> float | No
     return None
 
 
-def skew_25d(rows: Sequence[StrikeIv], spot: float, t_years: float, rate: float) -> float | None:
-    """25-delta put IV − 25-delta call IV (volatility points). None when the chain does not span both deltas."""
+def skew_25d(
+    rows: Sequence[StrikeIv], spot: float, t_years: float, rate: float, div_yield: float = 0.0
+) -> float | None:
+    """25-delta put IV − 25-delta call IV (volatility points). None when the chain does not span both deltas. With
+    `spot` a forward and `div_yield` = `rate` the deltas are Black-76's (fincalc.fno_history)."""
     if t_years <= 0 or spot <= 0:
         return None
     calls, puts = [], []
     for r in rows:
         if r.call_iv and r.call_iv > 0:
-            calls.append((greeks("call", spot, r.strike, t_years, rate, r.call_iv / 100).delta, r.call_iv))
+            calls.append(
+                (greeks("call", spot, r.strike, t_years, rate, r.call_iv / 100, div_yield).delta, r.call_iv)
+            )
         if r.put_iv and r.put_iv > 0:
-            puts.append((greeks("put", spot, r.strike, t_years, rate, r.put_iv / 100).delta, r.put_iv))
+            puts.append(
+                (greeks("put", spot, r.strike, t_years, rate, r.put_iv / 100, div_yield).delta, r.put_iv)
+            )
     c, p = _iv_at_delta(calls, 0.25), _iv_at_delta(puts, -0.25)
     return None if c is None or p is None else p - c
 

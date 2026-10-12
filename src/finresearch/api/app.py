@@ -1313,9 +1313,11 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
             profile = load_profile(s)
         legs_in = [fs.LegIn(x.right, float(x.strike), x.side, x.lots, float(x.premium) if x.premium is not None else None)
                    for x in body.legs]  # fmt: skip
+        series, src = fs.iv_series_info(sym)
         try:
-            a = fs.analyse(chain, lot, legs_in, today=today, closes=closes,
-                           iv_series=[v for _, v, _ in fs.iv_series(sym)], capital=float(profile.fno_capital_inr),
+            a = fs.analyse(chain, lot, legs_in, today=today, closes=closes, iv_source=src,
+                           iv_as_of=series[-1][0] if series else None,
+                           iv_series=[v for _, v, _ in series], capital=float(profile.fno_capital_inr),
                            max_loss_pct=float(profile.fno_max_loss_pct),
                            brokerage=float(profile.fno_brokerage_per_order_inr), rate=rate,
                            drift=None if body.drift is None else float(body.drift),
@@ -1348,20 +1350,38 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
 
     @app.get("/api/fno/{symbol}/iv")
     def fno_iv(symbol: str, days: int = Query(252, ge=1, le=1000)) -> dict[str, Any]:
-        """Recorded daily ATM IV with IV rank / percentile (from 60 days) and the latest 25-delta skew."""
+        """Daily IV with IV rank / percentile over the last 252 days and the latest 25-delta skew: the 30-day IV derived
+        from NSE's F&O bhavcopy history when it has 60+ days (#306), else the monitor's recorded ATM IV. With the
+        bhavcopy series also the term structure (near / next expiry ATM IV) and 20-day realised volatility."""
         from finresearch.fincalc.volatility import MIN_DAYS, WINDOW, iv_stats
-        from finresearch.signals.fno import iv_series
+        from finresearch.signals.fno import iv_series_info
 
-        rows = iv_series(symbol)
+        rows, src = iv_series_info(symbol)
         st = iv_stats([v for _, v, _ in rows])
-        return {"symbol": symbol.upper(), "n": st.n, "min_days": MIN_DAYS, "window": WINDOW, "status": st.status,
-                "current": st.current, "rank": st.rank, "percentile": st.percentile, "low": st.low, "high": st.high,
-                "skew_25d": rows[-1][2] if rows else None, "last_day": rows[-1][0].isoformat() if rows else None,
-                "series": [{"day": d.isoformat(), "atm_iv": v, "skew_25d": k} for d, v, k in rows[-days:]],
-                "method": "ATM IV = mean of call and put IV at the strike nearest the underlying, nearest expiry at "
-                          "least 7 days away, recorded after the close by the monitor. IVR = (IV − min)/(max − min) "
-                          "and IVP = share of days below today, over the last 252 recorded days.",
-                "source": "https://www.nseindia.com/option-chain"}  # fmt: skip
+        out = {"symbol": symbol.upper(), "n": st.n, "min_days": MIN_DAYS, "window": WINDOW, "status": st.status,
+               "current": st.current, "rank": st.rank, "percentile": st.percentile, "low": st.low, "high": st.high,
+               "skew_25d": rows[-1][2] if rows else None, "last_day": rows[-1][0].isoformat() if rows else None,
+               "series": [{"day": d.isoformat(), "atm_iv": v, "skew_25d": k} for d, v, k in rows[-days:]],
+               "source_kind": src["source"], "source_label": src["label"], "as_of": rows[-1][0].isoformat() if rows else None,
+               "method": src["method"] + " IVR = (IV − min)/(max − min) and IVP = share of days below today, over the "
+                         "last 252 days.", "source": src["url"], "term": None, "rv_20": None}  # fmt: skip
+        if src["source"] == "bhavcopy":
+            from finresearch.fnohist.derive import iv_eod_series
+
+            with session_scope() as s:
+                eod = iv_eod_series(s, symbol)
+            last = eod[-1]
+            f = lambda x: None if x is None else float(x)  # noqa: E731
+            out["term"] = {"day": last.day.isoformat(), "near_expiry": _iso(last.near_expiry), "near_iv": f(last.near_iv),
+                           "next_expiry": _iso(last.next_expiry), "next_iv": f(last.next_iv), "iv_30d": f(last.iv_30d),
+                           "iv_30d_method": last.iv_30d_method, "forward": f(last.forward),
+                           "forward_source": last.forward_source, "atm_strike": f(last.atm_strike)}  # fmt: skip
+            out["rv_20"] = f(last.rv_20)
+            by_day = {r.day: r for r in eod}
+            for item in out["series"]:
+                r = by_day.get(date.fromisoformat(item["day"]))
+                item |= {"near_iv": f(r.near_iv), "next_iv": f(r.next_iv), "rv_20": f(r.rv_20)} if r else {}
+        return out
 
     # ------------------------------------------------------------------ IPO radar
     radar_cache: dict[str, Any] = {}

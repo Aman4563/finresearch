@@ -1186,3 +1186,104 @@ def inbox_setup_mail(
 The script re-checks the sender domain and saves PDFs only. Mail does not verify who sent a message, so the domain
 list is a filter, not proof; the app still opens a PDF only with your saved passwords. To stop: delete the rule.
 Details: docs/BROKER_SETUP.md, "CAS emails straight into the inbox".""")
+
+
+fno_app = typer.Typer(
+    no_args_is_help=True, help="Historical F&O data: NSE's F&O bhavcopy backfill and IV history"
+)
+app.add_typer(fno_app, name="fno")
+
+
+@fno_app.command("backfill")
+def fno_backfill(
+    start: str = typer.Option(..., "--from", help="First day, YYYY-MM-DD (e.g. 2022-01-01)"),
+    end: str | None = typer.Option(None, "--to", help="Last day (default today, IST)"),
+    symbols: str = typer.Option(
+        "", help="Extra stock underlyings for options, comma-separated (held/watched always)"
+    ),
+    delay: float = typer.Option(
+        0.5, min=0.0, help="Extra seconds between downloads, on top of the shared NSE limit"
+    ),
+    keep_raw: bool = typer.Option(
+        True, help="Keep each day's zip under data/fno_bhav/ (re-filtering needs no download)"
+    ),
+) -> None:
+    """Download and store NSE's daily F&O bhavcopy for [from, to]: index options (NIFTY, BANKNIFTY, FINNIFTY,
+    MIDCPNIFTY), held/watched stock options and every future, then the derived IV series. Resumable and idempotent:
+    loaded days are skipped, failed days retried; re-run the same command to continue."""
+    from datetime import date as _date
+
+    from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn, TimeRemainingColumn
+
+    from finresearch.fnohist import store
+
+    extra = [x.strip().upper() for x in symbols.split(",") if x.strip()]
+    stocks = sorted({*store.tracked_stocks(), *extra})
+    console.print(f"stock underlyings: {', '.join(stocks) or 'none'}")
+    with Progress(TextColumn("{task.description}"), BarColumn(), MofNCompleteColumn(), TimeRemainingColumn(),
+                  console=console) as bar:  # fmt: skip
+        task = bar.add_task("F&O bhavcopy", total=None)
+
+        def progress(i: int, n: int, day, status: str) -> None:
+            bar.update(task, total=n, completed=i, description=f"F&O bhavcopy {day} {status}")
+
+        res = asyncio.run(store.backfill(_date.fromisoformat(start), _date.fromisoformat(end) if end else None,
+                                         stocks=stocks, pause=delay, keep_raw=keep_raw, progress=progress))  # fmt: skip
+    console.print_json(json.dumps({k: v for k, v in res.items() if k != "stocks"}, default=str))
+
+
+@fno_app.command("derive")
+def fno_derive(
+    start: str = typer.Option(..., "--from", help="First day, YYYY-MM-DD"),
+    end: str | None = typer.Option(None, "--to", help="Last day (default today)"),
+) -> None:
+    """Recompute the derived IV rows and the contract calendar from stored rows (no network)."""
+    from datetime import date as _date
+    from datetime import timedelta
+
+    from sqlalchemy import select
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import FnoBhavDay
+    from finresearch.fincalc.dates import today_ist
+    from finresearch.fnohist import derive
+
+    lo, hi = _date.fromisoformat(start), _date.fromisoformat(end) if end else today_ist()
+    with session_scope() as s:
+        days = s.scalars(select(FnoBhavDay.day).where(FnoBhavDay.status == "loaded", FnoBhavDay.day.between(lo, hi))
+                         .order_by(FnoBhavDay.day)).all()  # fmt: skip
+    n = 0
+    for d in days:
+        with session_scope() as s:
+            n += derive.derive_day(s, d)
+    with session_scope() as s:
+        c = derive.rebuild_contracts(s, since=lo - timedelta(days=120))
+    console.print(f"{len(days)} days, {n} IV rows, {c} contracts")
+
+
+@fno_app.command("status")
+def fno_status() -> None:
+    """Backfill coverage: days by status, rows stored, and the IV series per underlying."""
+    from sqlalchemy import func, select
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import FnoBhav, FnoBhavDay, FnoIvEod
+
+    with session_scope() as s:
+        days = s.execute(select(FnoBhavDay.status, func.count(), func.min(FnoBhavDay.day), func.max(FnoBhavDay.day))
+                         .group_by(FnoBhavDay.status)).all()  # fmt: skip
+        rows = s.scalar(select(func.count()).select_from(FnoBhav))
+        iv = s.execute(select(FnoIvEod.symbol, func.count(FnoIvEod.iv_30d), func.min(FnoIvEod.day),
+                              func.max(FnoIvEod.day)).group_by(FnoIvEod.symbol).order_by(FnoIvEod.symbol)).all()  # fmt: skip
+    t = Table(title=f"F&O bhavcopy: {rows:,} contract-days stored")
+    for c in ("status", "days", "first", "last"):
+        t.add_column(c)
+    for r in days:
+        t.add_row(*(str(x) for x in r))
+    console.print(t)
+    t = Table(title="Derived IV series (days with a 30-day IV)")
+    for c in ("underlying", "days", "first", "last"):
+        t.add_column(c)
+    for r in iv:
+        t.add_row(*(str(x) for x in r))
+    console.print(t)

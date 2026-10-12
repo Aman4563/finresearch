@@ -98,6 +98,7 @@ src/finresearch/
   disclosures/   surveillance, pledge, insider, deal, rating and SEBI-order feeds
   evals/         backtests, calibration and pre-registered experiments
   fincalc/       deterministic finance and tax calculations
+  fnohist/       NSE F&O bhavcopy history: backfill, derived IV series, contract calendar
   ingest/        document store, OCR, section mapper, table rebuild, chunks and search
   mcp_server/    FinResearch MCP server and claim ledger
   monitor/       scheduler and jobs: live refresh, IPO checks, nightly data, notifications
