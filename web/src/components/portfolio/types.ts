@@ -56,6 +56,11 @@ export type Holding = {
   /** a statement price older than 5 trading days: still shown, but not a current price (#238) */
   price_stale?: boolean;
   price_stale_reason?: string | null;
+  /** a fund's units: the end of the statement they come from, and which (#295); null = no statement */
+  units_as_of?: string | null;
+  units_source?: string | null;
+  /** units over 35 days old, or a SIP instalment due after them; or no statement at all */
+  units_warning?: string | null;
   value: number | null;
   unrealised: number | null;
   unrealised_pct: number | null;
