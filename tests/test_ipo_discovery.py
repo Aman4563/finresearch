@@ -71,7 +71,9 @@ def forecast(s, symbol: str, method: str, *, issue="100", created=at(2026, 9, 30
     return f.id
 
 
-def history_row(s, symbol: str, listing: date, bars: list[dict], *, list_open: str | None, series="EQ") -> None:
+def history_row(
+    s, symbol: str, listing: date, bars: list[dict], *, list_open: str | None, series="EQ"
+) -> None:
     from finresearch.db.models import IpoHistory
 
     s.add(IpoHistory(symbol=symbol, series="EQ", company=f"{symbol} Ltd", ipo_start=listing - timedelta(days=6),
@@ -160,7 +162,9 @@ async def test_t2t_listing_resolves_from_the_be_series(db):
     # without a BE source configured the same forecast would only wait (never the EQ bar of 5-Oct)
     with session_scope() as s:
         g = forecast(s, "TN" + db, "m", issue="50", created=at(2026, 9, 15), listing=listing.isoformat())
-    await _resolve(Deps({"TN" + db: [Bar(date(2026, 10, 5), Decimal("153.15"), prev_close=Decimal("150.10"))]}))
+    await _resolve(
+        Deps({"TN" + db: [Bar(date(2026, 10, 5), Decimal("153.15"), prev_close=Decimal("150.10"))]})
+    )
     with session_scope() as s:
         assert s.get(Forecast, g).status == "open"
 
@@ -219,7 +223,9 @@ async def test_incremental_harvest_is_idempotent_and_retries_only_recent_partial
         with session_scope() as s:
             s.scalar(select(IpoHistory).where(IpoHistory.symbol == "SWIGGY")).status = "partial"
         # a partial row listed long ago (13-Nov-2024) is left alone by the nightly run ...
-        assert (await ih.harvest(client=client(), today=date(2026, 9, 30), retry_days=10, log=quiet))["fetched"] == 0
+        assert (await ih.harvest(client=client(), today=date(2026, 9, 30), retry_days=10, log=quiet))[
+            "fetched"
+        ] == 0
         # ... and retried while its listing is recent
         out = await ih.harvest(client=client(), today=date(2024, 11, 15), retry_days=10, log=quiet)
         assert out["fetched"] == 1 and out.get("complete") == 1
@@ -307,3 +313,136 @@ async def test_harvest_job_claims_its_night_once(db, monkeypatch):
     assert runs[0][1:] == (job.RETRY_DAYS, date(2026, 10, 9))
     assert await job.ipo_harvest_step(now + timedelta(minutes=5), set()) == {}  # claimed: never twice a night
     assert len(runs) == 2
+
+
+# --------------------------------------------------------------------------- issue registry
+def nse_issue(symbol, company, series="EQ", start="15-Oct-2026", end="17-Oct-2026", band="Rs.95 to Rs.100"):
+    from finresearch.adapters.nse import IpoIssue
+
+    return IpoIssue.parse({"symbol": symbol, "companyName": company, "series": series, "issueStartDate": start,
+                           "issueEndDate": end, "issuePrice": band, "status": "Forthcoming"})  # fmt: skip
+
+
+def bse_issue(ipo_no, company, platform="SME", status="F"):
+    from finresearch.adapters.bse import BseIssue
+
+    return BseIssue.parse({"IPO_NO": ipo_no, "Scrip_cd": "", "Scrip_Name": company, "IR_flag": "IPO",
+                           "eXCHANGE_PLATFORM": platform, "Status": status, "Start_Dt": "2026-10-15T00:00:00",
+                           "End_Dt": "2026-10-17T00:00:00", "Price_Band": "50.00 - 52.00"})  # fmt: skip
+
+
+class Lists:
+    def __init__(self):
+        self.current, self.upcoming, self.bse = [], [], []
+        self.fail: set[str] = set()
+        self.lot_calls = []
+
+    def sources(self):
+        from finresearch.monitor.ipo_registry import Sources
+
+        async def get(name):
+            if name in self.fail:
+                raise RuntimeError(f"{name} down")
+            return getattr(self, name)
+
+        async def nse_lot(symbol, series):
+            self.lot_calls.append(symbol)
+            return 150
+
+        async def bse_detail(ipo_no):
+            self.lot_calls.append(ipo_no)
+            return type("D", (), {"market_lot": 2400, "symbol": None})()
+
+        return Sources(nse_current=lambda: get("current"), nse_upcoming=lambda: get("upcoming"),
+                       bse_issues=lambda: get("bse"), nse_lot=nse_lot, bse_detail=bse_detail)  # fmt: skip
+
+
+def _alerts(s):
+    from finresearch.db.models import Alert
+
+    return list(s.scalars(select(Alert).where(Alert.kind == "new_issue").order_by(Alert.id)))
+
+
+async def test_registry_alerts_once_per_new_issue_and_marks_dropped_rows(db):
+    from finresearch.db import session_scope
+    from finresearch.db.models import IpoIssue
+    from finresearch.monitor.ipo_registry import refresh
+
+    L = Lists()
+    L.upcoming = [nse_issue("OLDCO", "Old Co Ltd")]
+    now = datetime(2026, 10, 10, 3, 30, tzinfo=UTC)
+    first = await refresh(now, L.sources(), boards="mainboard")
+    assert first["new"] == 1 and first["alerted"] == 0  # the first refresh only seeds the registry
+    # a mainboard IPO (also on BSE's list), an NSE SME IPO and a BSE-only SME IPO appear
+    L.upcoming += [
+        nse_issue("NEWMAIN", "Newmain Industries Limited"),
+        nse_issue("SMEONE", "Smeone Ltd", "SME"),
+    ]
+    L.bse = [bse_issue(9001, "NEWMAIN INDUSTRIES LTD", "MainBoard"), bse_issue(9002, "Bsesme Agro Ltd")]
+    later = now + timedelta(hours=9)
+    out = await refresh(later, L.sources(), boards="mainboard")
+    assert out["new"] == 4 and out["alerted"] == 1  # mainboard only (the default); the BSE twin is linked
+    with session_scope() as s:
+        (a,) = _alerts(s)
+        assert a.level == "info" and "NEWMAIN" not in a.message and "Newmain Industries Limited" in a.message
+        assert "lot 150" in a.message and "₹15,000" in a.message  # 150 x ₹100 upper band
+        assert a.data["path"] == "/ipos" and a.data["board"] == "mainboard"
+        rows = {(r.exchange, r.issue_key): r for r in s.scalars(select(IpoIssue))}
+        assert rows[("BSE", "9001")].duplicate_of == rows[("NSE", "NEWMAIN")].id
+        assert rows[("NSE", "SMEONE")].board == "sme" and rows[("BSE", "9002")].lot_size == 2400
+        assert (
+            rows[("NSE", "NEWMAIN")].status == "upcoming" and rows[("NSE", "NEWMAIN")].alerted_at is not None
+        )
+    # refreshed again: nothing new, no second alert; OLDCO left NSE's lists -> marked, not deleted
+    L.upcoming = [i for i in L.upcoming if i.symbol != "OLDCO"]
+    out = await refresh(later + timedelta(hours=12), L.sources(), boards="all")
+    assert (out["new"], out["alerted"]) == (0, 0)
+    with session_scope() as s:
+        assert len(_alerts(s)) == 1
+        old = s.scalar(select(IpoIssue).where(IpoIssue.issue_key == "OLDCO"))
+        assert old.status == "off_list" and old.off_list_at is not None
+
+
+async def test_registry_never_marks_rows_when_a_list_failed_and_follows_the_setting(db):
+    from finresearch.db import session_scope
+    from finresearch.db.models import IpoIssue
+    from finresearch.monitor.ipo_registry import refresh
+
+    L = Lists()
+    L.current = [nse_issue("KEEP", "Keep Ltd")]
+    L.bse = [bse_issue(9100, "Seed Sme Ltd")]
+    now = datetime(2026, 10, 10, 3, 30, tzinfo=UTC)
+    await refresh(now, L.sources(), boards="all")
+    L.fail = {"current"}  # NSE's current list fails: KEEP is not on the upcoming list, but must not be marked
+    L.upcoming = [nse_issue("SMETWO", "Smetwo Ltd", "SME")]
+    L.bse.append(bse_issue(9101, "Another Sme Ltd"))
+    out = await refresh(now + timedelta(hours=9), L.sources(), boards="off")
+    assert out["errors"] and out["nse"] is None and out["alerted"] == 0  # "off": recorded, never alerted
+    with session_scope() as s:
+        assert s.scalar(select(IpoIssue).where(IpoIssue.issue_key == "KEEP")).status != "off_list"
+        assert (
+            s.scalar(select(IpoIssue).where(IpoIssue.issue_key == "9101")) is not None
+        )  # BSE's list was read
+        # an exchange whose lists were not all read stores nothing that refresh (all or nothing per exchange)
+        assert s.scalar(select(IpoIssue).where(IpoIssue.issue_key == "SMETWO")) is None
+        assert _alerts(s) == []
+    L.fail = set()
+    L.upcoming.append(nse_issue("SMETHREE", "Smethree Ltd", "SME"))
+    out = await refresh(now + timedelta(hours=20), L.sources(), boards="all")
+    with session_scope() as s:
+        # both NSE SME issues are first seen now; BSE 9101 was seen (alerts off) and is never alerted later
+        assert [a.data["symbol"] for a in _alerts(s)] == ["SMETWO", "SMETHREE"]
+
+
+def test_registry_slots_and_preference_default():
+    from finresearch.monitor.ipo_registry import due_slot, phase
+    from finresearch.suggest.profile import default_profile
+
+    assert default_profile().preferences.ipo_alert_boards == "mainboard"
+    assert due_slot(datetime(2026, 10, 10, 3, 0, tzinfo=UTC)) is None  # 08:30 IST
+    assert due_slot(datetime(2026, 10, 10, 3, 30, tzinfo=UTC)) == "ipo_registry:2026-10-10:am"
+    assert due_slot(datetime(2026, 10, 10, 13, 0, tzinfo=UTC)) == "ipo_registry:2026-10-10:pm"  # 18:30 IST
+    d = date(2026, 10, 15)
+    assert [phase(d, d + timedelta(2), x, "upcoming") for x in (d - timedelta(1), d, d + timedelta(3))] == [
+        "upcoming", "open", "closed"]  # fmt: skip
+    assert phase(None, None, d, "current") == "open"
