@@ -11,7 +11,8 @@ a Postgres advisory lock). A today-only trades endpoint (Groww) that failed is r
 number of times (TRADES_RETRIES); `trades_through` only moves when the trades were read.
 
 Schedule (`connections_step`, from the monitor tick): once per trading day after SYNC_AFTER IST for every enabled
-connection with auto-sync, and the statement inbox every INBOX_EVERY.
+connection with auto-sync, in market hours an order-list read every ORDERS_POLL_EVERY for a today-only connector
+with a valid session (Groww, #284), and the statement inbox every INBOX_EVERY.
 """
 
 from __future__ import annotations
@@ -165,6 +166,10 @@ async def _sync(key: str, trigger: str, now: datetime, secrets_out: list[str]) -
     data: dict[str, Any] = {}
     errors: list[str] = []
     caps = conn.capabilities
+    # Groww: whether T1 shares are inside `quantity` is checked on the data (#282)
+    t1_aware = hasattr(conn, "t1_semantics")
+    if t1_aware:
+        conn.t1_semantics = (state0.get("t1_semantics") or {}).get("result")
     today_only = bool(getattr(conn, "trades_today_only", False))
     since = (
         (last_day - timedelta(days=OVERLAP_DAYS))
@@ -219,6 +224,8 @@ async def _sync(key: str, trigger: str, now: datetime, secrets_out: list[str]) -
         state["last_summary"]["conflicts"] = len(summary["conflicts"])
         if have_trades:
             state["trades_through"] = today.isoformat()
+        if t1_aware and have_holdings:
+            state["t1_semantics"] = t1_state(state.get("t1_semantics"), data["holdings"], today)
         state.pop("reconnect_alert_day", None)
         state.pop("failed_day", None)
         state.pop("trades_retry", None)
@@ -237,6 +244,27 @@ async def _sync(key: str, trigger: str, now: datetime, secrets_out: list[str]) -
         row.state = state
     status = "partial" if errors else "ok"
     return await _finish_async(key, trigger, now, status, summary, "; ".join(errors) or None, today=today)
+
+
+def t1_state(prev: dict[str, Any] | None, holdings: list[Any], today: date) -> dict[str, Any]:
+    """The connection's record of how the broker reports T1 shares (#282). The first sync whose holdings decide it
+    (rows with T1 whose numbers fit exactly one hypothesis, and all fitting the same one) stores `result`, its `day`
+    and the `evidence` counts; later syncs keep that result and only update `last_seen`. Rows that fit different
+    hypotheses in one sync decide nothing (`conflict`)."""
+    out = dict(prev or {})
+    seen = {k: sum(1 for h in holdings if getattr(h, "t1_check", None) == k)
+            for k in ("separate", "included", "unknown")}  # fmt: skip
+    if not any(seen.values()):
+        return out  # no holding with T1 shares in this sync: nothing learned
+    out["last_seen"] = {"day": today.isoformat(), "evidence": seen}
+    decisive = [k for k in ("separate", "included") if seen[k]]
+    if not out.get("result"):
+        if len(decisive) == 1:
+            out.update(result=decisive[0], day=today.isoformat(), evidence=seen)
+            out.pop("conflict", None)
+        elif len(decisive) == 2:
+            out["conflict"] = today.isoformat()
+    return out
 
 
 def _store_token(key: str, grant: Any) -> str:
@@ -352,6 +380,99 @@ def _holidays(day: date) -> set[date]:
     return set(got)
 
 
+# ------------------------------------------------------------------ in-session order-list poll (#284)
+# During market hours a connector whose order list answers today only (Groww) is read every ORDERS_POLL_EVERY, so a
+# Mac asleep at 16:00 loses at most the fills since the last poll, not the whole day (Groww's order list cannot be
+# read for an earlier day). Orders only: no holdings, positions or funds. It never logs in: with no valid session it
+# waits (the market-data session step does the one daily login); one Non-Trading call per page of 100 orders.
+ORDERS_POLL_EVERY = timedelta(minutes=30)
+
+
+def poll_due(row: BrokerConnection, now: datetime, holidays: set[date]) -> bool:
+    """An in-session order-list read is due: a today-only connector, on and auto-syncing, with a valid session, in
+    market hours (09:15-16:00 IST on a trading day) and not read in the last ORDERS_POLL_EVERY."""
+    from finresearch.adapters.groww_market import phase
+
+    if row.key not in CONNECTORS or not getattr(CONNECTORS[row.key], "trades_today_only", False):
+        return False
+    if not (row.enabled and row.auto_sync) or not token_valid(row, now):
+        return False
+    if phase(now, holidays) not in ("open", "closing"):
+        return False
+    last = ((row.state or {}).get("orders_poll") or {}).get("at")
+    try:
+        return last is None or now - datetime.fromisoformat(last) >= ORDERS_POLL_EVERY
+    except (TypeError, ValueError):
+        return True
+
+
+async def poll_orders(key: str, now: datetime, holidays: set[date]) -> dict[str, Any] | None:
+    """Read today's order list once and upsert its fills (merge.merge_orders: an order read at 40 filled and later
+    at 100 is one row of 100). None when it was not due after all (another process polled first). Raises SyncBusy
+    when a sync or login holds the connection."""
+    from finresearch.portfolio.connectors.merge import merge_orders
+
+    today = to_ist(now).date()
+    async with claim(key):
+        with session_scope() as s:
+            row = s.get(BrokerConnection, key)
+            if row is None or not poll_due(row, now, holidays):
+                return None
+            cols = (row.key, dict(row.config or {}), row.token)
+            # stamped before the read: a failing read is tried again in ORDERS_POLL_EVERY, not on every tick
+            row.state = {**(row.state or {}), "orders_poll": {"at": now.isoformat(), "day": today.isoformat(),
+                                                              "status": "reading"}}  # fmt: skip
+        conn = await asyncio.to_thread(build_from, *cols)
+        secrets = conn.secret_values()
+        poll: dict[str, Any] = {"at": now.isoformat(), "day": today.isoformat()}
+        try:
+            trades = await conn.trades(today, today)
+        except (
+            Exception
+        ) as e:  # never a login, a token change or an alert from here: the daily sync owns those
+            msg = redact(str(e), *secrets) if isinstance(e, ConnectorError) else type(e).__name__
+            poll |= {"status": "error", "error": msg[:300]}
+            log.info("%s in-session order read failed: %s", key, msg[:300])
+            trades = None
+        with session_scope() as s:
+            if trades is not None:
+                res = merge_orders(s, account=conn.account, source=conn.source, label=conn.label, trades=trades,
+                                   now=now, order_keyed=bool(getattr(conn, "fills_aggregated", False)))  # fmt: skip
+                poll |= {"status": "ok", "orders": len(trades), "added": res.added, "updated": res.updated,
+                         "duplicates": res.duplicates, "conflicts": len(res.conflicts)}  # fmt: skip
+                if res.added or res.updated or res.conflicts:  # a quiet poll leaves no log row (~14 a day)
+                    s.add(BrokerSyncLog(key=key, trigger="intraday", status="ok", started_at=now,
+                                        finished_at=datetime.now(UTC), error=None,
+                                        summary={k: poll[k] for k in ("added", "updated", "duplicates")}
+                                        | {"conflicts": res.conflicts, "orders": len(trades)}))  # fmt: skip
+            row = s.get(BrokerConnection, key)
+            if row is not None:
+                row.state = {**(row.state or {}), "orders_poll": poll}
+        return poll
+
+
+async def orders_step(
+    now: datetime, holidays: set[date], skip: set[str] | frozenset[str] = frozenset()
+) -> dict[str, int]:
+    """The monitor's in-session order poll for every due connection (`skip`: synced in this tick already)."""
+    out: dict[str, int] = {}
+    with session_scope() as s:
+        keys = [r.key for r in s.scalars(select(BrokerConnection))
+                if r.key not in skip and poll_due(r, now, holidays)]  # fmt: skip
+    for key in keys:
+        try:
+            got = await poll_orders(key, now, holidays)
+        except SyncBusy:
+            log.info("in-session %s order read skipped: a sync is running", key)
+            continue
+        except Exception:
+            log.warning("in-session %s order read failed", key, exc_info=True)
+            continue
+        if got is not None and got.get("status") == "ok":
+            out["orders_polled"] = out.get("orders_polled", 0) + 1
+    return out
+
+
 async def connections_step(now: datetime) -> dict[str, int]:
     """The monitor's hook: scheduled syncs and the statement inbox. Failures never break the tick."""
     out: dict[str, int] = {}
@@ -368,6 +489,10 @@ async def connections_step(now: datetime) -> dict[str, int]:
             log.info("scheduled %s sync skipped: another process is syncing it", key)
         except Exception:
             log.warning("scheduled %s sync failed", key, exc_info=True)
+    try:
+        out |= await orders_step(now, holidays, skip=set(dues))
+    except Exception:
+        log.warning("in-session order poll failed", exc_info=True)
     last = _LAST_INBOX.get("at")
     if inbox_on and (last is None or now - last >= INBOX_EVERY):
         _LAST_INBOX["at"] = now

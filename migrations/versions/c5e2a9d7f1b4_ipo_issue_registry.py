@@ -1,7 +1,7 @@
 """IPO issue registry (#292): current and upcoming NSE and BSE issues, refreshed by the monitor
 
 Revision ID: c5e2a9d7f1b4
-Revises: b8e1d4c7a2f6
+Revises: c3f9a1e5d7b2
 Create Date: 2026-10-09 12:00:00.000000
 
 """
@@ -13,7 +13,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "c5e2a9d7f1b4"
-down_revision: str | Sequence[str] | None = "b8e1d4c7a2f6"
+down_revision: str | Sequence[str] | None = "c3f9a1e5d7b2"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
