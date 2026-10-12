@@ -406,7 +406,7 @@ async def fetch_inputs(
     """ipo-detail (cached) + the listing week's bars (cached). Errors in the price call are kept as a missing field."""
     from finresearch.adapters.nse_equity import NseEquity
 
-    source: dict[str, Any] = {}
+    source: dict[str, Any] = {"security_type": p.security_type}
     today = today or datetime.now(IST).date()
     data, resp = await nse.get_json("/api/ipo-detail", {"symbol": p.symbol, "series": series},
                                     cache_ttl=DETAIL_TTL_S)  # fmt: skip
@@ -485,10 +485,16 @@ def _s(v: Decimal | None) -> str | None:
     return None if v is None else str(v)
 
 
+# NSE's public-past-issues `securityType` per board: a mainboard IPO that lists in the trade-for-trade segment is
+# typed "BE" (e.g. SHAHINVEST, SRIT, NITYAS, VNL, listed 6-8 Oct 2026; their bars are in the BE series), #292
+BOARD_TYPES = {"EQ": ("EQ", "BE"), "SME": ("SME",)}
+
+
 def eligible(rows: list[PastIssue], series: str, today: date) -> list[PastIssue]:
-    """Past IPOs of one board that have listed. NSE's list also carries debt, rights, InvIT and pending rows, and
+    """Past IPOs of one board that have listed (mainboard: securityType EQ or BE, see BOARD_TYPES). NSE's list also carries debt, rights, InvIT and pending rows, and
     further public offers (FPOs) whose "listing date" is the company's original listing, years before the offer."""
-    return [r for r in rows if (r.security_type or "").upper() == series and r.symbol and r.listing_date
+    return [r for r in rows if (r.security_type or "").upper() in BOARD_TYPES.get(series, (series,)) and r.symbol
+            and r.listing_date
             and r.listing_date <= today and (r.ipo_start is None or r.listing_date >= r.ipo_start)]  # fmt: skip
 
 

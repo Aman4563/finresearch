@@ -493,3 +493,24 @@ def test_cli_passes_retry_days_and_recheck(db, monkeypatch):
     r = CliRunner().invoke(cli.app, ["forecasts", "resolve", "--recheck"])
     assert r.exit_code == 0, r.output
     assert seen["recheck"] is True
+
+
+def test_mainboard_harvest_includes_issues_typed_be_by_nse():
+    """NSE's past-issues list types a mainboard IPO that listed in trade-for-trade as "BE" (SHAHINVEST, SRIT, NITYAS
+    and VNL, listed 6-8 Oct 2026): the EQ (mainboard) harvest must include them; the SME harvest must not."""
+    from finresearch.adapters.nse import PastIssue
+    from finresearch.evals import ipo_history as ih
+    from finresearch.monitor.ipo_registry import nse_board
+
+    row = PastIssue.parse({"company": "Example Home Limited", "ipoEndDate": "30-SEP-2026", "ipoStartDate": "28-SEP-2026",
+                           "issuePrice": "   167", "listingDate": "06-OCT-2026", "priceRange": "Rs.159 to Rs.167",
+                           "securityType": "BE", "symbol": "EXAMPLEBE"})  # fmt: skip
+    assert [r.symbol for r in ih.eligible([row], "EQ", date(2026, 10, 12))] == ["EXAMPLEBE"]
+    assert ih.eligible([row], "SME", date(2026, 10, 12)) == []
+    assert ih.eligible([row], "EQ", date(2026, 10, 5)) == []  # not listed yet
+    assert (nse_board("BE"), nse_board("EQ"), nse_board("SME"), nse_board("RR")) == (
+        "mainboard",
+        "mainboard",
+        "sme",
+        "other",
+    )

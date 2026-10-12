@@ -61,7 +61,7 @@ class Listing:
 
 def nse_board(series: str | None) -> str:
     s = (series or "").upper()
-    return "mainboard" if s == "EQ" else "sme" if s == "SME" else "other"
+    return "mainboard" if s in ("EQ", "BE") else "sme" if s == "SME" else "other"  # BE: a T2T mainboard listing
 
 
 def bse_board(platform: str | None) -> str:
