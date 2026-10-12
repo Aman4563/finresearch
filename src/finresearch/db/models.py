@@ -466,8 +466,8 @@ class FnoBhav(Base):
     """One F&O contract's end-of-day row from NSE's bhavcopy (#306, adapters.nse_fno_bhav): index options of
     fnohist.store.INDEX_OPTIONS, stock options of held/watched underlyings, and every future. Contracts with neither open
     interest nor a trade that day are not stored (their settlement price is NSE's theoretical value and nobody could
-    have held or traded them); the day's manifest counts them. `right` is CE/PE, XX for futures (strike 0). OI in units,
-    `contracts` in contracts, turnover in rupees. `underlying` and `lot_size` are only in the UDiFF file (2024 on)."""
+    have held or traded them); the day's manifest counts them. `option_type` is CE/PE, XX for futures (strike 0); the
+    column is not called `right`, a reserved word in SQL. OI in units, `contracts` in contracts, turnover in rupees. `underlying` and `lot_size` are only in the UDiFF file (2024 on)."""
 
     __tablename__ = "fno_bhav"
     day: Mapped[date] = mapped_column(Date, primary_key=True)
@@ -475,7 +475,7 @@ class FnoBhav(Base):
     instrument: Mapped[str] = mapped_column(String(3), primary_key=True)  # IDF / IDO / STF / STO
     expiry: Mapped[date] = mapped_column(Date, primary_key=True)
     strike: Mapped[Decimal] = mapped_column(Numeric(12, 2), primary_key=True)
-    right: Mapped[str] = mapped_column(String(2), primary_key=True)
+    option_type: Mapped[str] = mapped_column(String(2), primary_key=True)
     open: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
     high: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
     low: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))

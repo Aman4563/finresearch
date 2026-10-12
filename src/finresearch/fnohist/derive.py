@@ -35,20 +35,22 @@ def _q(x: float | None, places: int = 3) -> Decimal | None:
 
 def derive_day(s: Session, day: date, rate: float = fh.RATE) -> int:
     """Compute and upsert fno_iv_eod for every underlying with options stored on `day`. Returns rows written."""
-    rows = s.execute(select(FnoBhav.symbol, FnoBhav.instrument, FnoBhav.expiry, FnoBhav.strike, FnoBhav.right,
-                            FnoBhav.settle, FnoBhav.contracts, FnoBhav.underlying)
+    rows = s.execute(select(FnoBhav.symbol, FnoBhav.instrument, FnoBhav.expiry, FnoBhav.strike, FnoBhav.option_type,
+                            FnoBhav.settle, FnoBhav.contracts, FnoBhav.underlying, FnoBhav.close)
                      .where(FnoBhav.day == day)).all()  # fmt: skip
     opts: dict[str, dict[date, list[fh.OptQuote]]] = defaultdict(lambda: defaultdict(list))
     futs: dict[str, dict[date, float]] = defaultdict(dict)
     spot: dict[str, float] = {}
-    for sym, kind, exp, strike, right, settle, contracts, und in rows:
+    for sym, kind, exp, strike, right, settle, contracts, und, close in rows:
         if und is not None:
             spot[sym] = float(und)
         if settle is None or settle <= 0:
             continue
         if kind in ("IDF", "STF"):
             futs[sym][exp] = float(settle)
-        elif (contracts or 0) > 0 and right in RIGHTS:  # traded only: an untraded settle is NSE's model price
+        elif right in RIGHTS and fh.market_settle(
+            float(settle), None if close is None else float(close), contracts
+        ):
             opts[sym][exp].append(fh.OptQuote(float(strike), RIGHTS[right], float(settle)))
     if not opts:
         return 0

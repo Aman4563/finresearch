@@ -66,6 +66,8 @@ def test_constant_maturity_total_variance():
     )
     assert fh.constant_maturity([(35, 18.0), (63, 19.0)]) == (18.0, "flat")
     assert fh.constant_maturity([(3, 18.0), (10, 19.0)]) is None
+    assert fh.constant_maturity([(2, 30.0), (29, 15.9)]) == (15.9, "flat")  # longest expiry 1 day short of 30
+    assert fh.constant_maturity([(2, 30.0), (22, 15.9)]) is None  # 8 days short: no stand-in
 
 
 def test_front_future_returns_stay_within_one_contract():
@@ -103,3 +105,22 @@ def test_iv_rank_and_percentile_math():
     st = iv_stats(series)
     assert st.rank == pytest.approx((12 - 10) / (19.9 - 10)) and st.status == "ok"
     assert st.percentile == pytest.approx(20 / 100)  # 10.0 .. 11.9: 20 of the 100 earlier days are below 12
+
+
+def test_illiquid_expiries_are_left_out():
+    day, exp = date(2024, 7, 5), date(2024, 8, 8)
+    t = 34 / 365
+    one_call = [fh.OptQuote(24350, "call", fh.black76_price("call", 24333.1, 24350, t, fh.RATE, 0.197))]
+    assert (
+        fh.expiry_iv(day, exp, one_call, spot=24300.0) is None
+    )  # 5-Jul-2024: a lone call is not an ATM level
+    far = _chain(24400.0, t, fh.RATE, lambda k: 0.12, [23000])  # the only two-sided strike is 5.7 % away
+    assert fh.expiry_iv(day, exp, far, future=24400.0) is None
+
+
+def test_market_settle_screens_model_prices():
+    assert fh.market_settle(316.25, 316.25, 47709)
+    assert not fh.market_settle(
+        442.05, 355.00, 89
+    )  # NIFTY 8-Aug-2024 24500 CE on 10-Jul-2024: a model settle
+    assert not fh.market_settle(3248.5, 1897.1, 0) and not fh.market_settle(100.0, 100.0, 9)

@@ -8,17 +8,23 @@ the need for a dividend assumption. The forward of an expiry is, in order:
   1. `future`: the settlement price of the future with the same expiry (monthly expiries have one);
   2. `parity`: put-call parity at the traded strike where |C − P| is smallest, F = K + e^(rT)(C − P);
   3. `spot`: the bhavcopy's underlying value × e^(rT) (UDiFF days only; dividend-free assumption, stated).
-Prices are settlement prices of contracts that traded that day (a contract with no trade carries NSE's theoretical
-settlement price, which would only return NSE's own model volatility).
+Prices are settlement prices that are market prices (`market_settle`): at least MIN_CONTRACTS (10) contracts traded
+that day and the settlement price equal to the close. A contract with no trade carries NSE's theoretical settlement
+price (NSE's own model volatility); one or two trades in a far expiry gave IVs 5-7 points off the curve on 5-Jul-2024
+(NIFTY 8-Aug-2024: one call, 1 contract, 19.7 % against ~12 %); and NIFTY 8-Aug-2024 24500 CE on 10-Jul-2024 (89
+contracts) settled at 442.05 against a close of 355.00, a model price that moved that day's parity forward by ~80
+points.
 
 T = calendar days from the trade date to expiry / 365 (fincalc.options convention), so the expiry day itself (T = 0)
 is never used. The rate is a constant (RATE, the monitor's 6.5 %): Black-76 IV depends on r only through the
 discount factor e^(−rT), so ±1 % in r moves a 30-day ATM IV by well under 0.1 vol point.
 
-- ATM IV: mean of the call and put IV at the traded strike nearest the forward (either alone if only one traded).
+- ATM IV: mean of the call and put IV at the strike nearest the forward where both traded; an expiry without such a
+  strike within ATM_BAND (3 %) of the forward is left out, so illiquid expiries do not enter the term structure.
 - Near / next: the first expiry at least MIN_DTE (7) days away (as monitor.iv) and the one after it.
 - 30-day constant maturity: linear interpolation of total variance σ²T between the expiries bracketing 30 days;
-  flat (the first expiry's IV) when every expiry is beyond 30 days; None when every expiry is shorter.
+  flat (the nearest expiry's IV) when every expiry is beyond 30 days or the longest is 23-29 days away (on
+  28-Sep-2026 FINNIFTY's November options had no trades, leaving only the 29-day October expiry); None otherwise.
 - Skew: 25-delta put IV − 25-delta call IV of the near expiry (fincalc.volatility.skew_25d with Black-76 deltas).
 - Realised volatility: 20-day close-to-close of the front future's settlement price, each return taken within one
   contract (no roll jump), sample standard deviation × √252. Futures cover the whole history (the legacy file has no
@@ -40,6 +46,9 @@ RATE = 0.065
 MIN_DTE = 7
 TARGET_DTE = 30
 RV_WINDOW = 20
+MIN_CONTRACTS = 10  # contracts traded that day for a settlement price to count as a market price
+ATM_BAND = 0.03  # the ATM strike (both sides traded) must be within 3 % of the forward
+FLAT_WITHIN = 7  # days: a longest expiry this close below 30 days stands in for the 30-day IV ("flat")
 
 
 def black76_price(right: Right, fwd: float, strike: float, t_years: float, rate: float, vol: float) -> float:
@@ -60,6 +69,19 @@ class OptQuote:
     strike: float
     right: Right
     price: float  # settlement price of a contract that traded
+
+
+def market_settle(settle: float, close: float | None, contracts: int | None) -> bool:
+    """A settlement price that is a market price: at least MIN_CONTRACTS traded and equal to the close (within 0.5 %
+    + 5 paise). Where NSE's option settlement price differs from the close it is NSE's own (theoretical) value: about
+    8 % of traded option rows away from expiry in June-July 2024 and September-October 2026, almost all thinly traded
+    (4 of them with 1,000+ contracts)."""
+    return (
+        (contracts or 0) >= MIN_CONTRACTS
+        and close is not None
+        and close > 0
+        and abs(settle - close) <= 0.005 * close + 0.05
+    )
 
 
 def parity_forward(quotes: Sequence[OptQuote], t_years: float, rate: float) -> float | None:
@@ -113,7 +135,12 @@ def expiry_iv(day: date, expiry: date, quotes: Sequence[OptQuote], *, future: fl
             by_strike.setdefault(q.strike, {})[q.right] = iv * 100
     if not by_strike:
         return None
-    atm = min(by_strike, key=lambda k: (abs(k - fwd), k))
+    pairs = [k for k, v in by_strike.items() if "call" in v and "put" in v]
+    if not pairs:
+        return None
+    atm = min(pairs, key=lambda k: (abs(k - fwd), k))
+    if abs(atm - fwd) > ATM_BAND * fwd:  # a far-off strike's IV is skew, not the ATM level
+        return None
     ivs = list(by_strike[atm].values())
     rows = [StrikeIv(k, v.get("call"), v.get("put")) for k, v in sorted(by_strike.items())]
     return ExpiryIv(
@@ -125,7 +152,8 @@ def constant_maturity(
     points: Sequence[tuple[int, float]], target: int = TARGET_DTE
 ) -> tuple[float, str] | None:
     """IV (%) at `target` days from (dte, IV %) points: total variance σ²T linear in T between the bracketing expiries;
-    the first expiry's IV when all are longer ("flat"); None when all are shorter."""
+    the first expiry's IV when all are longer, or the longest one's when it is at most FLAT_WITHIN days short ("flat");
+    None otherwise."""
     pts = sorted((d, v) for d, v in points if d > 0 and v and v > 0)
     if not pts:
         return None
@@ -136,6 +164,8 @@ def constant_maturity(
             w0, w1 = v0 * v0 * d0, v1 * v1 * d1
             var = (w0 + (w1 - w0) * (target - d0) / (d1 - d0)) / target
             return (math.sqrt(var), "interpolated") if var > 0 else None
+    if pts[-1][0] >= target - FLAT_WITHIN:  # e.g. one 29-day monthly whose next month had no trades
+        return (pts[-1][1], "flat")
     return None
 
 

@@ -44,7 +44,7 @@ INDEX_OPTIONS = ("NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY")
 RECHECK_DAYS = 3
 CHUNK = 2000
 MAX_CONSECUTIVE_FAILURES = 5  # NSE refusing: stop the run rather than hammer it
-COLUMNS = ("day", "symbol", "instrument", "expiry", "strike", "right", "open", "high", "low", "close", "settle", "oi",
+COLUMNS = ("day", "symbol", "instrument", "expiry", "strike", "open", "high", "low", "close", "settle", "oi",
            "chg_oi", "contracts", "turnover", "underlying", "lot_size")  # fmt: skip
 
 
@@ -107,7 +107,10 @@ def load_day(
     live = [r for r in rows if (r.oi or 0) > 0 or (r.contracts or 0) > 0]
     s.execute(delete(FnoBhav).where(FnoBhav.day == day))
     for i in range(0, len(live), CHUNK):
-        s.execute(insert(FnoBhav), [{c: getattr(r, c) for c in COLUMNS} for r in live[i : i + CHUNK]])
+        s.execute(
+            insert(FnoBhav),
+            [{**{c: getattr(r, c) for c in COLUMNS}, "option_type": r.right} for r in live[i : i + CHUNK]],
+        )
     _manifest(s, day, status="loaded", format=fmt, url=url, rows_total=total, rows_kept=len(live),
               rows_dead=len(rows) - len(live), stock_symbols=stocks, error=None)  # fmt: skip
     return {"total": total, "kept": len(live), "dead": len(rows) - len(live)}

@@ -27,7 +27,7 @@ def upgrade() -> None:
         sa.Column("instrument", sa.String(length=3), nullable=False),
         sa.Column("expiry", sa.Date(), nullable=False),
         sa.Column("strike", sa.Numeric(precision=12, scale=2), nullable=False),
-        sa.Column("right", sa.String(length=2), nullable=False),
+        sa.Column("option_type", sa.String(length=2), nullable=False),
         *(price(n) for n in ("open", "high", "low", "close", "settle")),
         sa.Column("oi", sa.BigInteger(), nullable=True),
         sa.Column("chg_oi", sa.BigInteger(), nullable=True),
@@ -35,7 +35,7 @@ def upgrade() -> None:
         sa.Column("turnover", sa.Numeric(precision=20, scale=2), nullable=True),
         price("underlying"),
         sa.Column("lot_size", sa.Integer(), nullable=True),
-        sa.PrimaryKeyConstraint("day", "symbol", "instrument", "expiry", "strike", "right"),
+        sa.PrimaryKeyConstraint("day", "symbol", "instrument", "expiry", "strike", "option_type"),
     )
     op.create_index("ix_fno_bhav_symbol_day", "fno_bhav", ["symbol", "day"], unique=False)
     op.create_table(
