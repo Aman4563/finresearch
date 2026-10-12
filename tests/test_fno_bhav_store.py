@@ -46,7 +46,9 @@ def clean(env):
 
     with session_scope() as s:
         s.execute(text("TRUNCATE fno_bhav, fno_bhav_day, fno_iv_eod, fno_contract"))
-    return env
+    yield env
+    with session_scope() as s:  # the database is shared by the session: leave nothing for other tests
+        s.execute(text("TRUNCATE fno_bhav, fno_bhav_day, fno_iv_eod, fno_contract"))
 
 
 def count(model) -> int:

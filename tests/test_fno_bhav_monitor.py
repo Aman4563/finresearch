@@ -45,8 +45,12 @@ def clean(env):
     from finresearch.db import session_scope
 
     with session_scope() as s:
-        s.execute(text("TRUNCATE fno_bhav, fno_bhav_day, fno_iv_eod, fno_contract, alert_eval_slot"))
-    return env
+        s.execute(text("TRUNCATE fno_bhav, fno_bhav_day, fno_iv_eod, fno_contract"))
+        s.execute(text("DELETE FROM alert_eval_slot WHERE slot LIKE 'fno_bhav:%'"))
+    yield env
+    with session_scope() as s:
+        s.execute(text("TRUNCATE fno_bhav, fno_bhav_day, fno_iv_eod, fno_contract"))
+        s.execute(text("DELETE FROM alert_eval_slot WHERE slot LIKE 'fno_bhav:%'"))
 
 
 @respx.mock
