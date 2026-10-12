@@ -19,7 +19,9 @@ from finresearch.db import session_scope
 
 class PaperLegIn(BaseModel):
     right: Literal["call", "put", "future"]
-    strike: Decimal = Field(gt=0, description="Strike (a future: any positive number; it fills at the live price)")
+    strike: Decimal = Field(
+        gt=0, description="Strike (a future: any positive number; it fills at the live price)"
+    )
     side: Literal["buy", "sell"]
     lots: int = Field(1, ge=1, le=100)
 
@@ -28,13 +30,17 @@ class PaperIn(BaseModel):
     symbol: str = Field(min_length=1, max_length=30)
     expiry: date
     legs: list[PaperLegIn] = Field(min_length=1, max_length=8)
-    slippage_pct: Decimal | None = Field(None, ge=0, le=20, description="Default: fnobook.book.DEFAULT_SLIPPAGE_PCT")
+    slippage_pct: Decimal | None = Field(
+        None, ge=0, le=20, description="Default: fnobook.book.DEFAULT_SLIPPAGE_PCT"
+    )
     label: str = Field("", max_length=120)
 
 
 class ExitRuleIn(BaseModel):
     paper_id: int | None = None
-    position_key: str | None = Field(None, max_length=60, description='A Groww position group: "NIFTY:2026-10-27"')
+    position_key: str | None = Field(
+        None, max_length=60, description='A Groww position group: "NIFTY:2026-10-27"'
+    )
     kind: Literal["profit", "stop", "dte", "delta", "event"]
     threshold: Decimal = Field(ge=0, le=10000)
 
@@ -108,7 +114,9 @@ def add_fno_book_routes(app: FastAPI, clock: Callable[[], datetime] | None = Non
         if not lot:
             raise HTTPException(422, f"no NSE lot size for {sym} {body.expiry:%b-%y}: not recorded")
         try:
-            quotes, chain = await service.quotes(sym, body.expiry, [(x.right, float(x.strike)) for x in body.legs], t)
+            quotes, chain = await service.quotes(
+                sym, body.expiry, [(x.right, float(x.strike)) for x in body.legs], t
+            )
         except service.OutOfSession as e:
             raise HTTPException(409, str(e)) from e
         slip = float(body.slippage_pct) if body.slippage_pct is not None else book.DEFAULT_SLIPPAGE_PCT
@@ -193,7 +201,9 @@ def add_fno_book_routes(app: FastAPI, clock: Callable[[], datetime] | None = Non
         except Exception:
             lot = None
         if chain is None or not chain.underlying or not lot:
-            raise HTTPException(422, f"no option chain or lot size for {sym} {body.expiry}: no margin estimate")
+            raise HTTPException(
+                422, f"no option chain or lot size for {sym} {body.expiry}: no margin estimate"
+            )
         spot = float(chain.underlying)
         t = service._t(body.expiry, today())
         legs = []
@@ -204,7 +214,9 @@ def add_fno_book_routes(app: FastAPI, clock: Callable[[], datetime] | None = Non
                 legs.append(ma.MarginLeg("future", spot, qty, spot, None))
                 continue
             price = service._chain_price(chain, x.right, k)
-            iv = positions.chain_iv(chain, x.right, k) or positions.implied(x.right, price, spot, k, t, service.RATE)
+            iv = positions.chain_iv(chain, x.right, k) or positions.implied(
+                x.right, price, spot, k, t, service.RATE
+            )
             legs.append(ma.MarginLeg(x.right, k, qty, price or 0.0, iv))
         kind = "index" if events.is_index(sym) else "stock"
         try:

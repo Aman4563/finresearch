@@ -561,10 +561,14 @@ class GrowwMarket:
                 out[k] = got
         return out
 
-    async def _ltp_batch(self, chunk: list[str], futs: dict[str, asyncio.Future], segment: str = "CASH") -> None:
+    async def _ltp_batch(
+        self, chunk: list[str], futs: dict[str, asyncio.Future], segment: str = "CASH"
+    ) -> None:
         now = self.clock()
         try:
-            payload = await self._get("/live-data/ltp", {"segment": segment, "exchange_symbols": tuple(chunk)})
+            payload = await self._get(
+                "/live-data/ltp", {"segment": segment, "exchange_symbols": tuple(chunk)}
+            )
         except Exception as e:  # ConnectorError and anything unexpected: these keys fall back for a minute
             log.info("Groww LTP failed (%s): falling back", type(e).__name__)
             for k in chunk:

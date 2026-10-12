@@ -252,7 +252,10 @@ async def _sync(key: str, trigger: str, now: datetime, secrets_out: list[str]) -
 
 def fno_state(positions: list[Any], now: datetime) -> dict[str, Any]:
     """What the connection keeps of an F&O positions read: the rows (at most 200) and when they were read."""
-    return {"at": now.isoformat(), "rows": [{k: _json_dec(v) for k, v in vars(p).items()} for p in positions][:200]}
+    return {
+        "at": now.isoformat(),
+        "rows": [{k: _json_dec(v) for k, v in vars(p).items()} for p in positions][:200],
+    }
 
 
 def t1_state(prev: dict[str, Any] | None, holdings: list[Any], today: date) -> dict[str, Any]:

@@ -125,7 +125,9 @@ def test_paper_mark_to_market_and_square_off():
     # closing: sell the long at 130 (STT), buy back the short at 60 (stamp)
     exch = (9750 + 4500) * 0.0003553
     sebi = 14250 * 0.000001
-    assert c.total == pytest.approx(exch + sebi + 9750 * 0.0015 + 4500 * 0.00003 + 40 + (40 + exch + sebi) * 0.18)
+    assert c.total == pytest.approx(
+        exch + sebi + 9750 * 0.0015 + 4500 * 0.00003 + 40 + (40 + exch + sebi) * 0.18
+    )
     assert c.total == pytest.approx(67.9511845, abs=1e-6)
 
 
@@ -216,7 +218,13 @@ def make_chain(spot: float, quotes: dict[tuple[str, float], tuple[float, float |
 
 class FakeSources:
     def __init__(self, chain=None, settlement=None, meetings=None, lot=75, expiries=(EXPIRY,)):
-        self._chain, self._settle, self._meetings, self._lot, self._exp = chain, settlement, meetings, lot, expiries
+        self._chain, self._settle, self._meetings, self._lot, self._exp = (
+            chain,
+            settlement,
+            meetings,
+            lot,
+            expiries,
+        )
         self.calls: list[str] = []
 
     async def chain(self, symbol, expiry):
@@ -273,7 +281,10 @@ def _record_spread(s, now):
     from finresearch.fnobook import book
     from finresearch.signals.fno import LegIn
 
-    quotes = [book.Quote(120.0, "Groww LTP", "NIFTY26OCT25000CE"), book.Quote(50.0, "Groww LTP", "NIFTY26OCT25200CE")]
+    quotes = [
+        book.Quote(120.0, "Groww LTP", "NIFTY26OCT25000CE"),
+        book.Quote(50.0, "Groww LTP", "NIFTY26OCT25200CE"),
+    ]
     return book.record(s, symbol="NIFTY", expiry=EXPIRY, lot=75, legs_in=[LegIn("call", 25000, "buy", 1),
                        LegIn("call", 25200, "sell", 1)], quotes=quotes, slippage_pct=1.0, brokerage=20, now=now)  # fmt: skip
 
@@ -305,10 +316,16 @@ def test_paper_record_marks_and_fires_a_profit_rule_once(book_db):
         assert st.mtm_gross == D("2872.50") and st.mtm_source == "Groww LTP"
         profit, delta = s.scalars(select(FnoExitRule).order_by(FnoExitRule.id)).all()
         # base: the debit paid (121.20 − 49.50) × 75 = 5,377.50; 2,872.50 / 5,377.50 = 53.42 %
-        assert profit.status == "fired" and float(profit.last_value) == pytest.approx(2872.5 / 5377.5 * 100, abs=1e-3)
+        assert profit.status == "fired" and float(profit.last_value) == pytest.approx(
+            2872.5 / 5377.5 * 100, abs=1e-3
+        )
         assert delta.status == "armed" and delta.last_value is None and "unknown" in delta.note
         alerts = s.scalars(select(Alert).where(Alert.kind == "fno_exit")).all()
-        assert len(alerts) == 1 and "profit target 50%" in alerts[0].message and "nothing was traded" in alerts[0].message
+        assert (
+            len(alerts) == 1
+            and "profit target 50%" in alerts[0].message
+            and "nothing was traded" in alerts[0].message
+        )
     # 2 minutes later: not due (no call); 6 minutes later: re-read, still true, no second alert
     assert run(service.step(t0 + timedelta(minutes=2), market=market, sources=src)) == {}
     assert len(market.calls) == 1
@@ -347,6 +364,230 @@ def test_paper_settles_at_expiry_close_with_exercise_stt(book_db):
         st = s.get(PaperStrategy, sid)
         assert st.status == "closed" and st.close_reason == "expiry" and st.settlement_price == D("25150.00")
         # gross (150 − 121.20) × 75 + 49.50 × 75 = 5,872.50; exercise STT 150 × 75 × 0.15 % = 16.875
-        assert float(st.gross_pnl) == pytest.approx(5872.5) and float(st.exit_costs) == pytest.approx(16.88, abs=0.01)
+        assert float(st.gross_pnl) == pytest.approx(5872.5) and float(st.exit_costs) == pytest.approx(
+            16.88, abs=0.01
+        )
         assert float(st.net_pnl) == pytest.approx(5872.5 - 58.42 - 16.875, abs=0.01)
         assert [x.exit_price for x in st.legs] == [D("150.00"), D("0.00")]
+
+
+def _store_groww_positions(rows, now):
+    from finresearch.db import session_scope
+    from finresearch.db.models import BrokerConnection
+    from finresearch.portfolio.connectors.groww import map_fno_position
+    from finresearch.portfolio.connectors.sync import fno_state
+
+    with session_scope() as s:
+        s.add(BrokerConnection(key="groww", enabled=True, auto_sync=True, status="connected",
+                               state={"fno_positions": fno_state([p for p in map(map_fno_position, rows) if p.quantity],
+                                                                   now)}))  # fmt: skip
+
+
+def _bs_delta(right, spot, strike, t, rate, vol):
+    """Black-Scholes delta written out here (independent of fincalc.options)."""
+    import math
+
+    d1 = (math.log(spot / strike) + (rate + vol * vol / 2) * t) / (vol * math.sqrt(t))
+    n = 0.5 * (1 + math.erf(d1 / math.sqrt(2)))
+    return n if right == "call" else n - 1
+
+
+# ------------------------------------------------------------------ 4. real positions: P&L, greeks, unknowns
+def test_positions_view_prices_known_legs_and_keeps_unknowns_unknown(book_db):
+    from finresearch.fnobook import service
+
+    t0 = at_ist(TRADE_DAY, 11)
+    _store_groww_positions(FNO_ROWS, t0)
+    market = FakeMarket(
+        {"NSE_NIFTY26OCT25000CE": 130.0, "NSE_NIFTY26OCT24500PE": 70.5, "NSE_NIFTY26OCT25500CE": 20.0}
+    )
+    chain = make_chain(
+        24900, {("call", 25000): (130, 14.0), ("put", 24500): (70.5, 16.0), ("call", 25500): (20, 13.0)}
+    )
+    v = run(service.positions_view(t0, market=market, sources=FakeSources(chain=chain)))
+    assert v["status"] == "ok" and v["ltp_source"] == "Groww LTP"
+    g = next(x for x in v["groups"] if x["key"] == "NIFTY:2026-10-27")
+    assert g["days_to_expiry"] == 15 and g["spot"] == 24900
+    legs = {x["symbol"]: x for x in g["legs"]}
+    assert legs["NIFTY26OCT25000CE"]["unrealised_pnl"] == pytest.approx((130 - 120) * 75)
+    assert legs["NIFTY26OCT24500PE"]["unrealised_pnl"] == pytest.approx((70.5 - 80.5) * -75)
+    # the row whose direction is not confirmed: no P&L, no greeks, so no group totals and no max loss
+    assert legs["NIFTY26OCT25500CE"]["unrealised_pnl"] is None and legs["NIFTY26OCT25500CE"]["greeks"] is None
+    assert g["unrealised_pnl"] is None and g["net_greeks"] is None and g["max_loss"] is None
+    t = 15 / 365
+    assert legs["NIFTY26OCT25000CE"]["greeks"]["delta"] == pytest.approx(
+        75 * _bs_delta("call", 24900, 25000, t, service.RATE, 0.14), abs=1e-3)  # fmt: skip
+    assert legs["NIFTY26OCT24500PE"]["greeks"]["delta"] == pytest.approx(
+        -75 * _bs_delta("put", 24900, 24500, t, service.RATE, 0.16), abs=1e-3)  # fmt: skip
+    # a contract the instruments file does not list stays unresolved
+    un = next(x for x in v["groups"] if x["key"] == "unresolved")
+    assert [x["symbol"] for x in un["legs"]] == ["NIFTY26OCT24000PE"] and un["max_loss"] is None
+
+
+def test_positions_view_max_loss_of_a_defined_risk_group_and_real_rules(book_db):
+    from sqlalchemy import select
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import Alert, FnoExitRule
+    from finresearch.fnobook import service
+
+    t0 = at_ist(TRADE_DAY, 11)
+    # a bull call spread held at Groww: long 25000 CE at 120, short 25200 CE at 50 (both confirmed)
+    rows = [FNO_ROWS[0], {**FNO_ROWS[0], "trading_symbol": "NIFTY26OCT25200CE", "credit_quantity": 0,
+                          "debit_quantity": 75, "quantity": -75, "net_price": 50}]  # fmt: skip
+    _store_groww_positions(rows, t0)
+    market = FakeMarket({"NSE_NIFTY26OCT25000CE": 100.0, "NSE_NIFTY26OCT25200CE": 40.0})
+    chain = make_chain(24900, {("call", 25000): (100, 14.0), ("call", 25200): (40, 13.5)})
+    src = FakeSources(chain=chain)
+    v = run(service.positions_view(t0, market=market, sources=src))
+    (g,) = v["groups"]
+    assert g["max_loss"] == pytest.approx(-(120 - 50) * 75)  # the net debit
+    assert g["unrealised_pnl"] == pytest.approx((100 - 120) * 75 + (40 - 50) * -75)  # −1,500 + 750
+    with session_scope() as s:
+        for kind, thr in (("dte", 15), ("stop", 20), ("event", 3)):
+            s.add(FnoExitRule(position_key="NIFTY:2026-10-27", kind=kind, threshold=D(thr), status="armed",
+                              created_at=t0))  # fmt: skip
+    got = run(service.step(t0, market=market, sources=src))
+    assert got["exit_rules_fired"] == 1
+    with session_scope() as s:
+        dte, stop, event = s.scalars(select(FnoExitRule).order_by(FnoExitRule.id)).all()
+        assert dte.status == "fired" and float(dte.last_value) == 15
+        # −750 on a debit of (120 − 50) × 75 = 5,250 is −14.3 %: inside the 20 % stop
+        assert stop.status == "armed" and float(stop.last_value) == pytest.approx(-750 / 5250 * 100, abs=1e-3)
+        # an index's event is RBI policy, and there is no RBI source: unknown, never "no event"
+        assert event.status == "armed" and event.last_value is None and "could not be read" in event.note
+        (a,) = s.scalars(select(Alert).where(Alert.kind == "fno_exit")).all()
+        assert a.data["position_key"] == "NIFTY:2026-10-27" and a.data["path"] == "/fno?symbol=NIFTY"
+
+
+# ------------------------------------------------------------------ 5. API: paper trade from the builder, close, book
+@pytest.fixture
+def api(book_db, monkeypatch):
+    from finresearch.adapters import groww_market
+    from finresearch.fnobook import sources
+
+    market = FakeMarket({"NSE_NIFTY26OCT25000CE": 120.0})  # Groww prices one leg; the chain the other
+    chain = make_chain(24950, {("call", 25000): (119, 14.0), ("call", 25200): (50, 13.5)})
+    monkeypatch.setattr(groww_market, "MARKET", market)
+    monkeypatch.setattr(sources, "SOURCES", FakeSources(chain=chain))
+
+    def client(when):
+        from starlette.testclient import TestClient
+
+        from finresearch.api import create_app
+
+        return TestClient(create_app(clock=lambda: when))
+
+    return client
+
+
+SPREAD = {"symbol": "nifty", "expiry": EXPIRY.isoformat(), "slippage_pct": "1", "label": "test spread",
+          "legs": [{"right": "call", "strike": "25000", "side": "buy"}, {"right": "call", "strike": "25200",
+                                                                          "side": "sell"}]}  # fmt: skip
+
+
+def test_api_paper_trade_open_close_and_book(api):
+    with api(at_ist(TRADE_DAY, 10)) as c:
+        r = c.post("/api/fno/paper", json=SPREAD)
+        assert r.status_code == 201, r.text
+        t = r.json()
+        assert [x["entry_price"] for x in t["legs"]] == [121.2, 49.5]
+        assert [x["trading_symbol"] for x in t["legs"]] == ["NIFTY26OCT25000CE", "NIFTY26OCT25200CE"]
+        assert t["price_source"] == "Groww LTP, NSE option chain last price" and t["entry_costs"] == 58.42
+        assert t["mtm_gross"] is None and t["spot_at_entry"] == 24950
+        bad = c.post("/api/fno/exit-rules", json={"paper_id": t["id"], "position_key": "X", "kind": "dte",
+                                                  "threshold": 3})  # fmt: skip
+        assert bad.status_code == 422
+        assert (
+            c.post(
+                "/api/fno/exit-rules", json={"paper_id": t["id"], "kind": "delta", "threshold": 2}
+            ).status_code
+            == 422
+        )
+        rule = c.post(
+            "/api/fno/exit-rules", json={"paper_id": t["id"], "kind": "stop", "threshold": 50}
+        ).json()
+        assert rule["status"] == "armed" and rule["phrase"] == "stop 50%"
+        closed = c.post(f"/api/fno/paper/{t['id']}/close").json()
+        # closes at 120 (Groww) and 50 (chain): (120 − 121.20) × 75 − (50 − 49.50) × 75 = −127.50
+        assert closed["status"] == "closed" and closed["gross_pnl"] == -127.5
+        exit_ = (120 + 50) * 75 * 0.0003553
+        sebi = (120 + 50) * 75 * 0.000001
+        costs = exit_ + sebi + 120 * 75 * 0.0015 + 50 * 75 * 0.00003 + 40 + (40 + exit_ + sebi) * 0.18
+        assert closed["exit_costs"] == pytest.approx(round(costs, 2), abs=0.01)
+        assert closed["net_pnl"] == pytest.approx(-127.5 - 58.42 - costs, abs=0.01)
+        assert c.post(f"/api/fno/paper/{t['id']}/close").status_code == 409  # closed: stays closed
+        book = c.get("/api/fno/paper").json()
+        assert book["counts"] == {"open": 0, "awaiting_settlement": 0, "closed": 1, "all": 1}
+        assert book["results"]["wins"] == 0 and book["results"]["win_rate"] == 0
+        assert book["results"]["max_drawdown"] == pytest.approx(-closed["net_pnl"])
+        assert book["rules"][0]["kind"] == "stop" and book["default_slippage_pct"] == 0.5
+        # no route deletes a paper trade
+        assert c.delete(f"/api/fno/paper/{t['id']}").status_code in (404, 405)
+
+
+def test_api_paper_trade_refused_out_of_session_and_without_a_price(api, monkeypatch):
+    from finresearch.fnobook import sources
+
+    with api(at_ist(TRADE_DAY, 17)) as c:
+        r = c.post("/api/fno/paper", json=SPREAD)
+        assert r.status_code == 409 and "market hours" in r.json()["detail"]
+    monkeypatch.setattr(sources, "SOURCES", FakeSources(chain=None))  # no chain: the 25200 CE has no price
+    with api(at_ist(TRADE_DAY, 10)) as c:
+        r = c.post("/api/fno/paper", json=SPREAD)
+        assert r.status_code == 422 and "no live price" in r.json()["detail"]
+        assert c.get("/api/fno/paper").json()["counts"]["all"] == 0
+
+
+def test_api_positions_without_a_groww_connection(api):
+    with api(at_ist(TRADE_DAY, 10)) as c:
+        v = c.get("/api/fno/positions").json()
+        assert v["status"] == "not_connected" and v["groups"] == []
+
+
+# ------------------------------------------------------------------ 6. margin approximation, labelled
+def test_margin_approximation_is_labelled_and_adds_up(api):
+    from finresearch.fincalc import margin_approx as ma
+
+    long_only = ma.estimate([ma.MarginLeg("call", 25000, 75, 120.0, 0.14)], 24900, 15 / 365, 0.065, "index")
+    assert long_only.total == pytest.approx(120 * 75) and long_only.scan_risk == 0
+    legs = [ma.MarginLeg("call", 25500, -75, 20.0, 0.13), ma.MarginLeg("put", 24500, -75, 70.5, 0.16)]
+    e = ma.estimate(legs, 24900, 15 / 365, 0.065, "index")
+    assert e.exposure == pytest.approx((25500 + 24500) * 75 * 0.02)  # 2 % of the short strikes' notional
+    assert e.premium_paid == 0 and e.scan_risk > 0 and e.total == pytest.approx(e.scan_risk + e.exposure)
+    with pytest.raises(ValueError):
+        ma.estimate([ma.MarginLeg("put", 24500, -75, 70.5, None)], 24900, 0.04, 0.065, "index")
+    with api(at_ist(TRADE_DAY, 10)) as c:
+        r = c.post("/api/fno/margin", json={k: SPREAD[k] for k in ("symbol", "expiry", "legs")}).json()
+        assert r["status"] == "approximate" and "approximate" in r["label"]
+        assert r["groww_calculator"]["available"] is False
+        assert all(v["status"] == "unconfirmed" for v in r["assumptions"].values())
+
+
+# ------------------------------------------------------------------ 7. events strip
+class _Meeting:
+    def __init__(self, day, results):
+        self.day, self.results = day, results
+
+
+def test_event_strip_and_event_dates(api, monkeypatch):
+    from finresearch.fnobook import events, sources
+
+    with api(at_ist(TRADE_DAY, 10)) as c:
+        nifty = c.get("/api/fno/NIFTY/events").json()
+        assert nifty["results"]["status"] == "n/a" and nifty["rbi"]["status"] == "no_source"
+        assert [x["kind"] for x in nifty["items"]] == ["expiry"]
+    src = FakeSources(meetings=[_Meeting(date(2026, 10, 20), True), _Meeting(date(2026, 10, 15), False),
+                                _Meeting(date(2026, 7, 20), True)])  # fmt: skip
+    monkeypatch.setattr(sources, "SOURCES", src)
+    with api(at_ist(TRADE_DAY, 10)) as c:
+        st = c.get("/api/fno/EXMPL/events").json()
+        assert st["results"]["next"] == "2026-10-20" and [x["kind"] for x in st["items"]] == [
+            "results",
+            "expiry",
+        ]
+    assert run(events.event_dates("EXMPL", TRADE_DAY, src)) == [(date(2026, 10, 20), "results")]
+    assert run(events.event_dates("NIFTY", TRADE_DAY, src)) is None  # RBI unknown: unknown, not "no event"
+    events._CACHE.clear()
+    bad = FakeSources(meetings=RuntimeError("NSE down"))
+    assert run(events.event_dates("EXMPL", TRADE_DAY, bad)) is None

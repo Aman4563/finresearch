@@ -1062,7 +1062,9 @@ class PaperLeg(Base):
     qty: Mapped[int] = mapped_column(Integer)  # units = lots × lot size
     ref_price: Mapped[Decimal] = mapped_column(Numeric(14, 2))  # the LTP the fill was made from
     entry_price: Mapped[Decimal] = mapped_column(Numeric(14, 2))  # after slippage
-    trading_symbol: Mapped[str | None] = mapped_column(String(60))  # Groww's (instruments file); None = unknown
+    trading_symbol: Mapped[str | None] = mapped_column(
+        String(60)
+    )  # Groww's (instruments file); None = unknown
     last_price: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
     last_price_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     exit_price: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))

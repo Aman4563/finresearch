@@ -231,7 +231,9 @@ class GrowwConnector(BrokerConnector):
     label: ClassVar[str] = "Groww"
     account: ClassVar[str] = "Groww"
     auth_kind: ClassVar[str] = "totp"
-    capabilities: ClassVar[frozenset[str]] = frozenset({"holdings", "positions", "fno_positions", "trades", "funds"})
+    capabilities: ClassVar[frozenset[str]] = frozenset(
+        {"holdings", "positions", "fno_positions", "trades", "funds"}
+    )
     holdings_include_today: ClassVar[bool] = False
     trades_today_only: ClassVar[bool] = True
     fills_aggregated: ClassVar[bool] = True

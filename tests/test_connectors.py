@@ -1754,4 +1754,7 @@ def test_order_poll_skips_a_running_sync_a_closed_day_and_an_expired_session(cli
 
     monkeypatch.setattr(sync_mod, "_holidays", lambda day: set())
     assert run(connections_step(_ist(11, 0).astimezone(UTC))).get("orders_polled") == 1
-    assert [r.url.path for r in rec.requests] == ["/v1/order/list", "/v1/positions/user"]  # + F&O positions (#308)
+    assert [r.url.path for r in rec.requests] == [
+        "/v1/order/list",
+        "/v1/positions/user",
+    ]  # + F&O positions (#308)

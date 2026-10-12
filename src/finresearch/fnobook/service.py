@@ -180,7 +180,9 @@ async def _group(key: str, gl: list[dict[str, Any]], ltp: dict[str, float], toda
         else:
             for k in tot:
                 tot[k] += getattr(g, k) * x["qty"]
-    ml, why = pos.max_loss(gl, spot) if first["contract_known"] else (None, "contract not in the instruments file")
+    ml, why = (
+        pos.max_loss(gl, spot) if first["contract_known"] else (None, "contract not in the instruments file")
+    )
     return {"key": key, "underlying": first["underlying"], "expiry": first["expiry"].isoformat() if first["expiry"]
             else None, "days_to_expiry": (first["expiry"] - today).days if first["expiry"] else None, "spot": spot,
             "chain_source": getattr(chain, "source", None), "legs": [{**x, "expiry": x["expiry"].isoformat()
@@ -252,7 +254,9 @@ async def step(now: datetime, *, market: Any = None, sources: Any = None) -> dic
     from finresearch.db.models import FnoExitRule, PaperStrategy
 
     with session_scope() as s:
-        live = s.scalar(select(PaperStrategy.id).where(PaperStrategy.status.in_((book.OPEN, book.AWAITING))).limit(1))
+        live = s.scalar(
+            select(PaperStrategy.id).where(PaperStrategy.status.in_((book.OPEN, book.AWAITING))).limit(1)
+        )
         armed = s.scalar(select(FnoExitRule.id).where(FnoExitRule.status == "armed").limit(1))
     if live is None and armed is None:
         return {}
@@ -367,7 +371,9 @@ async def market_pass(now: datetime, market: Any, sources: Any, rate: float = RA
     return {"paper_marked": len(marks), "exit_rules_fired": res.get("fired", 0)}
 
 
-async def real_snapshots(now: datetime, market: Any, sources: Any, rate: float = RATE) -> dict[str, exits.Snapshot]:
+async def real_snapshots(
+    now: datetime, market: Any, sources: Any, rate: float = RATE
+) -> dict[str, exits.Snapshot]:
     """Exit-rule snapshots of the user's Groww F&O position groups (underlying + expiry)."""
     view = await positions_view(now, rate=rate, market=market, sources=sources)
     today = to_ist(now).date()
