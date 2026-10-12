@@ -96,8 +96,12 @@ class Deps:
     retention: bool = (
         False  # the weekly prune of the HTTP cache and old intraday series (monitor.retention, #247)
     )
-    ipo_harvest: bool = False  # the nightly incremental ipo_history harvest, EQ and SME (monitor.ipo_harvest, #292)
-    ipo_registry: bool = False  # the twice-daily NSE + BSE issue registry and new-issue alerts (monitor.ipo_registry)
+    ipo_harvest: bool = (
+        False  # the nightly incremental ipo_history harvest, EQ and SME (monitor.ipo_harvest, #292)
+    )
+    ipo_registry: bool = (
+        False  # the twice-daily NSE + BSE issue registry and new-issue alerts (monitor.ipo_registry)
+    )
 
     @classmethod
     def live(cls) -> Deps:

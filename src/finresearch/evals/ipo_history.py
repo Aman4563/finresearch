@@ -445,7 +445,11 @@ async def fetch_inputs(
                 later = (ser, [_bar_json(b) for b in got])
         if not bars and later is not None:
             bars = later[1]
-            source["history"] = {"series": later[0], "from": listing.isoformat(), "first_bar_after_listing": True}
+            source["history"] = {
+                "series": later[0],
+                "from": listing.isoformat(),
+                "first_bar_after_listing": True,
+            }
         source["history_series_tried"] = tried
     x = Inputs(symbol=p.symbol, series=series, company=p.company, ipo_start=p.ipo_start, ipo_end=p.ipo_end,
                listing_date=p.listing_date, list_issue_price=p.issue_price, price_range=p.price_range,
@@ -537,7 +541,11 @@ async def harvest(*, series: str = "EQ", limit: int | None = None, refresh: bool
                 stored = {(r.symbol, r.ipo_start) for r in s.scalars(select(IpoHistory).where(
                     IpoHistory.series == series))}  # fmt: skip
             cutoff = today - timedelta(days=retry_days)
-            todo = [r for r in todo if (r.symbol, r.ipo_start) not in stored or (r.listing_date or date.min) >= cutoff]
+            todo = [
+                r
+                for r in todo
+                if (r.symbol, r.ipo_start) not in stored or (r.listing_date or date.min) >= cutoff
+            ]
         if limit is not None:
             todo = todo[:limit]
         log(f"{series}: {len(past)} listed issues on NSE, {len(done)} already complete, {len(todo)} to fetch")

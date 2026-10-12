@@ -30,7 +30,10 @@ from finresearch.fincalc.dates import to_ist
 
 log = logging.getLogger(__name__)
 
-SLOTS = (("am", time(8, 45)), ("pm", time(18, 0)))  # IST: before the bidding day, after the exchanges' evening updates
+SLOTS = (
+    ("am", time(8, 45)),
+    ("pm", time(18, 0)),
+)  # IST: before the bidding day, after the exchanges' evening updates
 MAX_LOT_LOOKUPS = 10
 ALERT_KIND = "new_issue"
 
@@ -171,7 +174,9 @@ def store(session, exchange: str, listings: list[Listing] | None, now: datetime)
     if listings is None:
         return []
     today = to_ist(now).date()
-    existing = {r.issue_key: r for r in session.scalars(select(IpoIssue).where(IpoIssue.exchange == exchange))}
+    existing = {
+        r.issue_key: r for r in session.scalars(select(IpoIssue).where(IpoIssue.exchange == exchange))
+    }
     new: list[int] = []
     for x in listings:
         r = existing.pop(x.issue_key, None)
@@ -181,10 +186,20 @@ def store(session, exchange: str, listings: list[Listing] | None, now: datetime)
             session.add(r)
         r.symbol = x.symbol or r.symbol
         r.name, r.board, r.series = x.name[:300], x.board, (x.series or None) and str(x.series)[:10]
-        r.open_date, r.close_date, r.price_band = x.open_date, x.close_date, (x.price_band or None) and x.price_band[:80]
+        r.open_date, r.close_date, r.price_band = (
+            x.open_date,
+            x.close_date,
+            (x.price_band or None) and x.price_band[:80],
+        )
         r.price_low, r.price_high = x.price_low, x.price_high
         r.lot_size = x.lot_size or r.lot_size
-        r.status, r.exchange_status, r.last_seen, r.off_list_at, r.raw = status, x.exchange_status, now, None, x.raw
+        r.status, r.exchange_status, r.last_seen, r.off_list_at, r.raw = (
+            status,
+            x.exchange_status,
+            now,
+            None,
+            x.raw,
+        )
         if r.id is None:
             session.flush()
             new.append(r.id)
@@ -271,7 +286,7 @@ async def refresh(now: datetime, src: Sources, *, boards: str | None = None) -> 
 
     nse, bse, errors = await read_lists(src)
     with session_scope() as s:
-        seeded = {ex: not s.scalar(select(func.count()).select_from(IpoIssue).where(IpoIssue.exchange == ex))
+        first = {ex: not s.scalar(select(func.count()).select_from(IpoIssue).where(IpoIssue.exchange == ex))
                   for ex in ("NSE", "BSE")}  # fmt: skip
         new_nse, new_bse = store(s, "NSE", nse, now), store(s, "BSE", bse, now)
         rows = list(s.scalars(select(IpoIssue)))
@@ -279,7 +294,7 @@ async def refresh(now: datetime, src: Sources, *, boards: str | None = None) -> 
         link_duplicates(rows)
         s.flush()
         # the first refresh of an exchange only seeds the registry: those issues are already on the IPOs page
-        new = [*([] if seeded["NSE"] else new_nse), *([] if seeded["BSE"] else new_bse)]
+        new = [*([] if first["NSE"] else new_nse), *([] if first["BSE"] else new_bse)]
         alerted = raise_alerts(s, new, boards if boards is not None else _boards_wanted(), now)
     return {"nse": None if nse is None else len(nse), "bse": None if bse is None else len(bse),
             "new": len(new_nse) + len(new_bse), "alerted": alerted, "lot_lookups": lots, "errors": errors}  # fmt: skip

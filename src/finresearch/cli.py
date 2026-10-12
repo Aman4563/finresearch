@@ -925,12 +925,16 @@ def forecasts_backfill() -> None:
 
 
 @forecasts_app.command("resolve")
-def forecasts_resolve() -> None:
+def forecasts_resolve(
+    recheck: bool = typer.Option(
+        False, help="Also try forecasts checked in the last 6 hours (e.g. after a harvest)"
+    ),
+) -> None:
     """Resolve every due forecast now (NSE, politely), as the monitor does after the close."""
     from finresearch.monitor.jobs import Deps
     from finresearch.signals.ledger import resolve_due
 
-    console.print(asyncio.run(resolve_due(Deps.live())))
+    console.print(asyncio.run(resolve_due(Deps.live(), recheck=recheck)))
 
 
 @forecasts_app.command("calibration")

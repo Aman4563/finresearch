@@ -322,22 +322,24 @@ def resolve(session: Session, forecast_id: int, outcome: int | None, *, value: f
     return f
 
 
-def due(session: Session, now: datetime) -> list[Forecast]:
+def due(session: Session, now: datetime, *, recheck: bool = False) -> list[Forecast]:
+    """Open forecasts whose date has passed (after the close), not checked in the last CHECK_EVERY unless `recheck`
+    (`finresearch forecasts resolve --recheck`: a manual pass right after new data, e.g. an IPO harvest)."""
     ist = to_ist(now)
     last_day = ist.date() if (ist.hour, ist.minute) >= READY_AFTER_IST else ist.date() - timedelta(days=1)
-    q = (select(Forecast).where(Forecast.status == "open", Forecast.resolve_on <= last_day)
-         .where((Forecast.last_checked_at.is_(None)) | (Forecast.last_checked_at < now - CHECK_EVERY))
-         .order_by(Forecast.resolve_on, Forecast.id))  # fmt: skip
-    return list(session.scalars(q))
+    q = select(Forecast).where(Forecast.status == "open", Forecast.resolve_on <= last_day)
+    if not recheck:
+        q = q.where((Forecast.last_checked_at.is_(None)) | (Forecast.last_checked_at < now - CHECK_EVERY))
+    return list(session.scalars(q.order_by(Forecast.resolve_on, Forecast.id)))
 
 
-async def resolve_due(deps: Any, now: datetime | None = None) -> dict[str, int]:
+async def resolve_due(deps: Any, now: datetime | None = None, *, recheck: bool = False) -> dict[str, int]:
     """Try every due forecast once; each in its own transaction so one failure does not undo the others."""
     from finresearch.db import session_scope
 
     now = now or datetime.now(UTC)
     with session_scope() as s:
-        ids = [f.id for f in due(s, now)]
+        ids = [f.id for f in due(s, now, recheck=recheck)]
     stats = {"resolved": 0, "void": 0, "waiting": 0, "errors": 0}
     for fid in ids:
         with session_scope() as s:
@@ -454,7 +456,9 @@ async def resolve_listing_gain(f: Forecast, deps: Any, session: Session) -> Reso
             stated = date.fromisoformat(str(inp["listing_date"])[:10])
         except ValueError:
             stated = None
-    listing = (watch.listing_date if watch is not None else None) or (hist.listing_date if hist else None) or stated
+    listing = (
+        (watch.listing_date if watch is not None else None) or (hist.listing_date if hist else None) or stated
+    )
     if listing is not None and to_ist(f.created_at) >= datetime.combine(
         listing, LISTING_OPEN_IST, tzinfo=IST
     ):
