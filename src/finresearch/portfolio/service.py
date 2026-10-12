@@ -29,6 +29,7 @@ from finresearch.portfolio.importers import (
     ImportedTxn,
     ImportResult,
     assign_dedupe_keys,
+    parse_day,
 )
 from finresearch.portfolio.lots import Event, LotBook, build_lots
 
@@ -257,6 +258,7 @@ def apply(
         raise ValueError(
             "a depository (NSDL/CDSL) statement has no transactions to import; use it to reconcile"
         )
+    res.warnings[:0] = statement_gap_warnings(s, res)  # #296: before this import counts as covered
     imp = PortfolioImport(kind=res.kind, source=res.source, filename=filename[:300], sha256=sha256,
                           saved_path=saved_path, summary={})  # fmt: skip
     s.add(imp)
@@ -267,17 +269,35 @@ def apply(
     touched = [h for hid in applied.holdings if (h := s.get(PortfolioHolding, hid)) is not None]
     for hid in fund_baseline_holdings(s, touched) - applied.holdings:
         rebuild(s, hid)  # a broker fund baseline this CAS now covers (or no longer covers)
+    # the statement's end: the day its closing units are known at. Units never change between statements on their own,
+    # so today's NAV × these units is only today's value if nothing was bought or sold since (report: units_as_of)
+    end = parse_day(res.period[1]) if res.period else None
+    if end is None and res.closing:
+        res.warnings.append(
+            "the statement's end date could not be read: its funds' units carry no 'as of' date"
+        )
     for c in res.closing:  # remember the statement's own valuation (a fallback price) per holding
         h = s.scalar(
             select(PortfolioHolding).where(
                 PortfolioHolding.ikey == c.ikey, PortfolioHolding.account == c.account
             )
         )
-        if h is not None and c.nav is not None and c.day is not None:
+        if h is None:
+            continue
+        if c.nav is not None and c.day is not None:
             prev = (h.meta or {}).get("statement_nav") or {}
             if not prev or prev.get("day", "") <= c.day.isoformat():
                 h.meta = {**(h.meta or {}), "statement_nav": {"nav": str(c.nav), "day": c.day.isoformat(),
                                                               "source": res.source}}  # fmt: skip
+        # the newest statement wins: importing an older CAS later never rolls the date back
+        if end is not None:
+            prev = (h.meta or {}).get("statement_units") or {}
+            if not prev or prev.get("day", "") <= end.isoformat():
+                h.meta = {**(h.meta or {}), "statement_units": {"units": str(c.units), "day": end.isoformat(),
+                                                                "source": f"{res.source} {res.kind.upper()}"}}  # fmt: skip
+        if c.rejected:
+            got = sorted({*((h.meta or {}).get("sip_rejections") or []), *c.rejected})
+            h.meta = {**(h.meta or {}), "sip_rejections": got}
     s.flush()
     rec = reconcile(res.closing, lot_units(s, [(c.ikey, c.account) for c in res.closing]))
     imp.summary = {"period": list(res.period) if res.period else None, "rows": len(res.txns), "added": applied.added,
@@ -593,3 +613,39 @@ def save_upload(content: bytes, sha: str, ext: str) -> str:
 
 def _s(v: Decimal | None) -> str | None:
     return None if v is None else format(v.normalize(), "f")
+
+
+# --------------------------------------------------------------------------- statement gaps (#296)
+GAP_PREFIX = "Statement gap: "
+
+
+def statement_gap_warnings(s: Session, res: ImportResult) -> list[str]:
+    """A detailed CAS that starts after the day the imported ones end leaves a gap. Its opening balance is then
+    ignored by the lots (lots.superseded_openings: earlier transactions stand for that history), so a fund whose
+    opening units differ from the units the lots hold before the start would be wrong without a word: say so."""
+    from datetime import timedelta
+
+    from finresearch.portfolio.cas_followup import last_covered_day
+    from finresearch.portfolio.importers import parse_day
+    from finresearch.portfolio.lots import UNIT_KINDS
+
+    start = parse_day(res.period[0]) if res.kind == "cas" and not res.holdings_only and res.period else None
+    last = last_covered_day(s) if start else None
+    if start is None or last is None or start <= last + timedelta(days=1):
+        return []
+    opening = {(t.ikey, t.account): t.quantity or Decimal(0) for t in res.txns
+               if t.kind == "opening" and t.meta.get("statement_opening")}  # fmt: skip
+    out = []
+    for c in res.closing:
+        h = s.scalar(select(PortfolioHolding).where(PortfolioHolding.ikey == c.ikey,
+                                                    PortfolioHolding.account == c.account))  # fmt: skip
+        prior = s.scalars(select(PortfolioTxn).where(PortfolioTxn.holding_id == h.id, PortfolioTxn.day < start)).all() if h else []  # fmt: skip
+        if not any(t.kind in UNIT_KINDS for t in prior):
+            continue  # nothing before this statement: its opening balance is used as it is
+        have, want = build_lots(events_of(prior)).units, opening.get((c.ikey, c.account), Decimal(0))
+        if abs(have - want) > UNITS_TOLERANCE:
+            out.append(f"{GAP_PREFIX}{c.name} ({c.account}): this CAS starts {start:%d %b %Y} but the imported ones end "
+                       f"{last:%d %b %Y}; it opens with {_s(want)} units while your lots hold "
+                       f"{_s(have.quantize(Decimal('0.001')))}. Import a detailed CAS from {last + timedelta(days=1):%d %b %Y} "
+                       "to fill the gap.")  # fmt: skip
+    return out

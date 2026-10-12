@@ -3,9 +3,11 @@
 For people (and brokers) without an API. Every file goes through the same importers and the same idempotent pipeline
 as the Portfolio page's Import tab:
 
-* CAMS/KFintech detailed CAS (PDF) → transactions (password: the one saved in Connections → Statement inbox, only if
-  the user chose to save it; otherwise the file waits and the page says why).
-* NSDL/CDSL e-CAS (PDF, demat) → holdings only: reconciled against the lots, recorded in the sync log, not imported.
+* CAMS/KFintech detailed CAS (PDF) → transactions (passwords: the ones saved in Connections → Statement inbox, tried in
+  turn, only if the user chose to save them; otherwise the file waits and the page says why). A CAS after a gap whose
+  opening units the lots do not hold is logged "partial" (service.statement_gap_warnings).
+* NSDL/CDSL e-CAS (PDF, demat) → holdings only: reconciled against the lots, recorded in the sync log, not imported;
+  fund units and NAV are kept on the holdings and a difference raises one alert (portfolio.cas_followup).
 * Broker tradebooks (Zerodha/Groww/Upstox CSV/XLSX) → transactions.
 * Broker holdings statements (Zerodha/Groww/Upstox holdings XLSX/CSV) → the broker-baseline merge rules
   (connectors.merge): a baseline only for holdings the account has no history for, reconciliation for the rest.
@@ -35,6 +37,7 @@ from finresearch.db import session_scope
 from finresearch.db.models import BrokerConnection, BrokerSyncLog
 from finresearch.portfolio.ais import AIS_FILENAME, scrub_filename
 from finresearch.portfolio.connectors import INBOX_KEY
+from finresearch.portfolio.connectors.store import INBOX_PASSWORDS
 
 SETTLE_S = 5.0
 EXTS = (".pdf", ".csv", ".xlsx", ".xls", ".json")
@@ -76,23 +79,24 @@ def scan(*, now: datetime | None = None, password: str | None = None) -> dict[st
         parse_holdings_statement,
         parse_tradebook,
     )
-    from finresearch.portfolio.service import apply, preview, save_upload
+    from finresearch.portfolio.service import GAP_PREFIX, apply, preview, save_upload
 
     now = now or datetime.now(UTC)
     root = ensure_dirs()
     with session_scope() as s:
         row = s.get(BrokerConnection, INBOX_KEY)
         cfg = dict(row.config or {}) if row else {}
-        saved_pw = secret_store.resolve(cfg.get("password"))  # a Keychain reference since #245
+        # Keychain references since #245; several since #296 (CAS password, PAN, others), tried in this order
+        saved = [v for n in INBOX_PASSWORDS if (v := secret_store.resolve(cfg.get(n)))]
         # older versions stored "wrong:<12 hex of sha256(password)>": scrub them (they could be brute-forced back to a
         # PAN-derived password); those files are simply tried again once
         waiting = {k: ("wrong:legacy" if re.fullmatch(r"wrong:[0-9a-f]{12}", str(v)) else v)
                    for k, v in dict((row.state or {}).get("waiting") or {}).items()} if row else {}  # fmt: skip
         before = dict(waiting)
-        pw_fp = (
-            str(cfg.get("password_rev") or "saved") if saved_pw else ""
-        )  # a random revision id, not a hash
-    pw = password or saved_pw
+        alerted = {"depository_alerted": (row.state or {}).get("depository_alerted")} if row else {}
+        pw_fp = str(cfg.get("password_rev") or "saved") if saved else ""  # a random revision id, not a hash
+    pws = list(dict.fromkeys([password] if password else saved))  # never logged; each value is in logredact
+    del saved
     results: list[dict[str, Any]] = []
     imported = 0
     for path in sorted(root.iterdir()):
@@ -133,7 +137,7 @@ def scan(*, now: datetime | None = None, password: str | None = None) -> dict[st
                         waiting[safe] = "ais pdf"
                     continue
                 if content.startswith(b"%PDF"):
-                    if not pw:
+                    if not pws:
                         waiting[path.name] = "no password saved"
                         results.append({**entry, "status": "waiting", "logged": before.get(path.name) == "no password saved", "note": "no CAS password saved: save it in "
                                         "Connections → Statement inbox, or import the file on the Portfolio page"})  # fmt: skip
@@ -141,7 +145,7 @@ def scan(*, now: datetime | None = None, password: str | None = None) -> dict[st
                     if waiting.get(path.name) == f"wrong:{pw_fp}" and not password:
                         continue  # the same password already failed: wait for a new one
                     try:
-                        res = parse_cas(content, pw)
+                        res = _parse_any(parse_cas, content, pws)
                     except StatementError as e:
                         if "password" in str(e):
                             waiting[path.name] = f"wrong:{pw_fp}"
@@ -156,17 +160,26 @@ def scan(*, now: datetime | None = None, password: str | None = None) -> dict[st
                             continue
                         raise
                     if res.holdings_only:  # NSDL/CDSL demat CAS: reconcile only
+                        from finresearch.portfolio.cas_followup import record_depository, units_alert
+
                         out = preview(s, res)
+                        diffs = record_depository(s, res)  # fund units + newer NAV on the holdings (#296)
+                        units_alert(s, res, diffs, alerted)
                         _move(path, "processed")
                         results.append({**entry, "status": "reconciled", "kind": f"{res.source} demat CAS",
                                         "reconciliation": out["reconciliation"], "reconciled": out["reconciled"],
-                                        "note": "holdings only (no transactions): compared with your lots"})  # fmt: skip
+                                        "unit_differences": diffs,
+                                        "note": "holdings only (no transactions): compared with your lots"
+                                                + (f"; {len(diffs)} fund(s) differ: import a fresh detailed "
+                                                   "CAMS/KFintech CAS" if diffs else "")})  # fmt: skip
                         waiting.pop(path.name, None)
                         continue
                     out = apply(
                         s, res, filename=path.name, sha256=sha, saved_path=save_upload(content, sha, ".pdf")
                     )
                     kind = f"{res.source} CAS"
+                    if gaps := [w for w in out.get("warnings") or [] if w.startswith(GAP_PREFIX)]:
+                        out = {**out, "gaps": gaps}  # never an unattended "ok" (#296)
                 else:
                     hs = None
                     try:
@@ -211,7 +224,7 @@ def scan(*, now: datetime | None = None, password: str | None = None) -> dict[st
     with session_scope() as s:
         row = s.get(BrokerConnection, INBOX_KEY)
         if row is not None:
-            row.state = {**(row.state or {}), "waiting": waiting, "last_scan": now.isoformat()}
+            row.state = {**(row.state or {}), **alerted, "waiting": waiting, "last_scan": now.isoformat()}
             if results:
                 row.last_sync_at = now
         for r in results:
@@ -221,6 +234,24 @@ def scan(*, now: datetime | None = None, password: str | None = None) -> dict[st
             s.add(BrokerSyncLog(key=INBOX_KEY, trigger="inbox", status=status, started_at=now,
                                 finished_at=datetime.now(UTC), summary=_slim(r), error=error))  # fmt: skip
     return {"imported": imported, "files": [_slim(r) for r in results], "inbox": str(root)}
+
+
+def _parse_any(parse_cas, content: bytes, pws: list[str]):
+    """Try each saved password in turn. A wrong password moves on to the next; any other error (not a CAS, a summary
+    CAS) is the file's answer. Only when every password is refused does the wrong-password error stand."""
+    from finresearch.portfolio.importers import StatementError
+
+    wrong: StatementError | None = None
+    for pw in pws:
+        try:
+            return parse_cas(content, pw)
+        except StatementError as e:
+            if "password" not in str(e):
+                raise
+            wrong = e
+    assert wrong is not None
+    n = len(pws)
+    raise StatementError(f"{wrong} (tried {n} saved password{'s' if n > 1 else ''})") from wrong
 
 
 def _ais(s, path: Path, content: bytes, sha: str, before: str | None) -> dict[str, Any]:
@@ -282,15 +313,21 @@ def _log_status(r: dict[str, Any]) -> tuple[str, str | None]:
             "partial",
             f"{n} conflict(s) with another source: not added, review them in the import's result",
         )
+    if status == "ok" and r.get(
+        "gaps"
+    ):  # #296: a CAS after a gap whose opening balances the lots do not explain
+        return "partial", "; ".join(r["gaps"][:3])
+    if status == "ok" and r.get("unit_differences"):  # #296: a depository statement disagrees with the lots
+        return "partial", r.get("note")
     return status, (r.get("note") if status != "ok" else None)
 
 
 def _slim(r: dict[str, Any]) -> dict[str, Any]:
     keep = ("file", "status", "kind", "note", "added", "duplicates", "reconciled", "differences", "import_id",
             "import_ids", "baselines", "reconciliation", "rows", "cross_source", "conflicts",
-            "superseded_baselines")  # fmt: skip
+            "superseded_baselines", "unit_differences", "gaps")  # fmt: skip
     out = {k: r[k] for k in keep if k in r}
-    for k in ("reconciliation", "cross_source", "conflicts"):
+    for k in ("reconciliation", "cross_source", "conflicts", "unit_differences"):
         if isinstance(out.get(k), list):
             out[k] = out[k][:100]
     return out

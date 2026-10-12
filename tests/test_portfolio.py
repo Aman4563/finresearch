@@ -12,7 +12,7 @@ from datetime import date
 from decimal import Decimal as D
 
 import pytest
-from cas_synth import build_cas, sample_statement
+from cas_synth import build_cas, sample_statement, sip_statement
 from fastapi.testclient import TestClient
 
 from finresearch.adapters.amfi import SchemeNav
@@ -456,3 +456,77 @@ def test_rebalance_api(client):
     )
     assert wide.json()["status"] == "within_bands"
     assert client.get("/api/portfolio/rebalance", params={"new_money": -1}).status_code == 422
+
+
+# --------------------------------------------------------------------------- #295: units as of, charges, SIP status
+def test_cas_stamp_duty_goes_to_the_same_day_buy_it_was_levied_on():
+    res = parse_cas(build_cas(sip_statement()), PASSWORD)
+    charges = {
+        t.amount: t.charges for t in res.txns if t.kind == "buy" and t.name.startswith("Example Midcap")
+    }
+    # 40,000 × 0.005 % = ₹2.00 and 10,000 × 0.005 % = ₹0.50 (main put both rows, ₹2.50, on the first purchase)
+    assert charges == {D("10000.00"): D("0.50"), D("40000.00"): D("2.00")}
+
+
+def test_cas_rejected_purchase_is_a_warning_and_kept_for_the_sip():
+    res = parse_cas(build_cas(sip_statement()), PASSWORD)
+    assert any("a purchase was rejected on 2026-09-05" in w for w in res.warnings), (
+        res.warnings
+    )  # main: no warning
+    index = next(c for c in res.closing if c.name.startswith("Example Index"))
+    assert index.rejected == ["2026-09-05"] and index.units == D("150.000")  # no units moved
+
+
+def test_fund_units_carry_the_statement_end_and_a_warning_when_old(client):
+    from finresearch.db import session_scope
+    from finresearch.portfolio.report import snapshot
+
+    done = post_cas(client, build_cas(sip_statement()), dry=False).json()
+    assert done["reconciled"], done
+    rows = {h["name"].split(" - ")[0]: h for h in client.get("/api/portfolio").json()["holdings"]}
+    for r in rows.values():  # TODAY 30-Sep-2026: one day after the statement, no SIP due since
+        assert (r["units_as_of"], r["units_source"], r["units_warning"]) == ("2026-09-29", "CAMS CAS", None)
+    with session_scope() as s:
+        later = {h["name"].split(" - ")[0]: h for h in snapshot(s, {}, date(2026, 10, 10))["holdings"]}
+        old = {h["name"].split(" - ")[0]: h for h in snapshot(s, {}, date(2026, 11, 10))["holdings"]}
+    # Value fund: instalments on the 5th, the next due 05-Oct-2026 falls after the units (29-Sep)
+    assert later["Example Value Fund"]["units_warning"].startswith("a SIP instalment was due on 2026-10-05")
+    assert later["Example Midcap Fund"]["units_warning"] is None  # 11 days old, no SIP
+    # 29-Sep -> 10-Nov-2026 = 1 + 31 + 10 = 42 days > 35
+    assert (
+        old["Example Midcap Fund"]["units_warning"]
+        == "units are 42 days old (over 35): import a newer statement"
+    )
+
+
+def test_sip_status_counts_only_up_to_the_statement_end(client):
+    from finresearch.db import session_scope
+    from finresearch.portfolio.report import load
+    from finresearch.portfolio.sip import sip_health
+
+    post_cas(client, build_cas(sip_statement()), dry=False)
+    with session_scope() as s:
+        data = load(s)
+        st = {x.name.split(" - ")[0]: x for x in sip_health(data.holdings, data.txns, date(2026, 10, 20))}
+    # Value: last 05-Sep; 45 days to 20-Oct would read "missed" (main), but the statement ends 29-Sep (24 days):
+    # the 05-Oct instalment cannot be in it
+    assert st["Example Value Fund"].status == "not in a statement yet"
+    assert st["Example Value Fund"].statement_end == date(2026, 9, 29)
+    # Index: last instalment 05-Aug, the 05-Sep one rejected (main: "stopped", 76 days)
+    assert st["Example Index Fund"].status == "rejected"
+    assert "Example Midcap Fund" not in st  # two purchases: no SIP
+
+
+def test_sip_status_rule():
+    from finresearch.portfolio.sip import sip_status
+
+    last = date(2026, 9, 5)
+    assert sip_status(last, date(2026, 10, 20), None, []) == "missed"  # no statement: days to today (45)
+    assert sip_status(last, date(2026, 10, 20), date(2026, 9, 29), []) == "not in a statement yet"
+    assert sip_status(last, date(2026, 11, 12), date(2026, 10, 15), []) == "missed"  # 40 days covered
+    assert sip_status(last, date(2026, 12, 20), date(2026, 11, 30), []) == "stopped"  # 86 days covered
+    assert sip_status(last, date(2026, 10, 1), date(2026, 9, 29), []) == "on track"
+    assert (
+        sip_status(last, date(2026, 10, 1), None, ["2026-09-05"]) == "on track"
+    )  # the last instalment's day
+    assert sip_status(last, date(2026, 10, 9), None, ["2026-10-06"]) == "rejected"

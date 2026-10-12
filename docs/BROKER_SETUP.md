@@ -158,10 +158,45 @@ calls by category. Expect roughly 120-130 calls on a trading day for 20 stocks (
    - Broker **tradebooks**: Zerodha Console tradebook (CSV/XLSX), Groww stock order history (XLSX), Upstox trade book.
    - Broker **holdings statements**: Zerodha Console holdings (XLSX), Groww holdings statement, or any sheet with ISIN,
      quantity and average-price columns → the same baseline/reconciliation rules as an API sync.
-3. PDFs need the password (usually your PAN in capitals). Save it in the inbox settings **only if you want** hands-free
-   PDF imports; otherwise PDFs wait in the folder and you import them on Portfolio → Import.
+3. PDFs need their password. Save them in the inbox settings **only if you want** hands-free PDF imports: the CAS
+   password (the one you chose on a CAMS/KFintech mailback request), the PAN in capitals (NSDL/CDSL e-CAS), and up to
+   two more. They go to the Keychain, are never shown again, and the inbox tries each in turn. Without a working one,
+   PDFs wait in the folder and you import them on Portfolio → Import. A **Summary** CAS is refused (it has no
+   transactions): request a **Detailed** one.
 4. Imported files move to `inbox/processed/`, unreadable ones to `inbox/failed/`; the sync log says why. The same file
    twice is recognised and not imported again.
+
+### CAS emails straight into the inbox (Apple Mail rule)
+
+`uv run finresearch inbox setup-mail` prints the inbox path and these steps (FinResearch never touches Mail):
+
+1. Save the rule script: `mkdir -p ~/Library/Application\ Scripts/com.apple.mail && uv run finresearch inbox
+   setup-mail --script > ~/Library/Application\ Scripts/com.apple.mail/save_cas_attachments.applescript`
+   (Mail runs rule scripts only from that folder; `--script` fills in your inbox path).
+2. Mail → Settings → Rules → Add Rule, "If **any**": From contains `camsonline.com`, `kfintech.com`, `nsdl.co.in`,
+   `nsdl.com`, `cdslstatement.com`, `cdslindia.com`. Perform: **Run AppleScript** → `save_cas_attachments`.
+3. Save the PDF passwords in Profile → Connections → Statement inbox and turn the inbox on.
+
+The script ([scripts/mail/save_cas_attachments.applescript](../scripts/mail/save_cas_attachments.applescript))
+re-checks that the sender's domain is one of those (or a subdomain), saves only `.pdf`/`application/pdf`
+attachments that start with `%PDF`, names them `<domain>-<yyyymmdd-hhmmss>-<n>.pdf` (a statement's own name can carry
+the PAN), sets them to 0600 and moves them in only when complete. Mail does not authenticate senders: the domain list
+is a filter, and the app still opens a PDF only with your saved passwords.
+
+Sender addresses (community-sourced, 2026-10-09; confirm against a statement you received):
+`donotreply@camsonline.com` (CAMS), `samfS@kfintech.com` / `service@kfintech.com` (KFintech), `NSDL-CAS@nsdl.co.in`
+(NSDL), `eCAS@cdslstatement.com` (CDSL). Sources: github.com/CASParser/agent-toolkit
+(skills/casparser/references/cas-types.md), github.com/shivarya/expense-tracker-scraper (src/config/senders.ts),
+github.com/thezooperman/CodeChallenges (mail_filter.txt). `nsdl.com` and `cdslindia.com` are the depositories' main
+domains, allowed as well.
+
+**Keeping funds current.** Once a month the monitor posts an in-app reminder (when last month is not covered yet)
+linking the [CAMS](https://www.camsonline.com/Investors/Statements/Consolidated-Account-Statement) and
+[KFintech](https://mfs.kfintech.com/investor/General/ConsolidatedAccountStatement) mailback forms with the date to
+request from (the day after your last imported statement ends). The forms have a captcha, so you fill them in. A CAS
+that starts after a gap and opens with units your lots don't hold is flagged ("Statement gap"); an NSDL/CDSL e-CAS
+whose fund units differ from your lots on its date raises one alert asking for a fresh detailed CAS (the e-CAS units
+and NAV are kept on each holding as `depository_units` / `statement_nav`).
 
 ## Sources read (30-Sep-2026)
 

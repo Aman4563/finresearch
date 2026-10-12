@@ -36,7 +36,7 @@ from finresearch.portfolio.valuation import (
     cap_bucket,
     cash_flows,
     fund_cap_bucket,
-    statement_stale,
+    price_stale,
     xirr_or_reason,
 )
 
@@ -119,6 +119,38 @@ def xirr_exclusions(excluded: Counter[str]) -> str:
     return f"excludes {sum(excluded.values())} holding(s): " + "; ".join(parts)
 
 
+UNITS_MAX_AGE_DAYS = 35  # a monthly SIP's longest gap (portfolio.sip): older units may miss an instalment
+
+
+def units_as_of(h: PortfolioHolding, txns: list[PortfolioTxn], today: date, units: Decimal) -> dict[str, Any]:
+    """A fund's units are what its last statement said (service.apply stores the statement's end): today's NAV × them
+    is today's value only if nothing was bought or sold since. The day and source, and a warning when the units are
+    over UNITS_MAX_AGE_DAYS old or an inferred SIP instalment fell due after them. No statement: unknown, never today."""
+    if h.asset_type != "mf":
+        return {}
+    from finresearch.fincalc.tax import add_months
+    from finresearch.portfolio.sip import fund_buys, infer_sip
+
+    su = (h.meta or {}).get("statement_units") or {}
+    day, src = su.get("day"), su.get("source")
+    if units <= 0:
+        return {"units_as_of": day, "units_source": src, "units_warning": None}
+    if not day:
+        return {"units_as_of": None, "units_source": None,
+                "units_warning": "units not confirmed by a statement: import a recent CAS to date them"}  # fmt: skip
+    as_of = date.fromisoformat(day)
+    warn = None
+    sip = infer_sip(fund_buys(txns))
+    due = add_months(sip[3], 1) if sip else None
+    if due is not None and as_of < due <= today:
+        warn = (f"a SIP instalment was due on {due.isoformat()}, after these units ({day}): import a newer statement "
+                "or add it")  # fmt: skip
+    elif (today - as_of).days > UNITS_MAX_AGE_DAYS:
+        age = (today - as_of).days
+        warn = f"units are {age} days old (over {UNITS_MAX_AGE_DAYS}): import a newer statement"
+    return {"units_as_of": day, "units_source": src, "units_warning": warn}
+
+
 def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str, Any]:
     data = load(s)
     rows, all_flows = [], []
@@ -150,7 +182,7 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
             ZERO,
         )
         value = p.price * units if p.price is not None and units > 0 else None
-        stale_why = statement_stale(p, today) if value is not None else None
+        stale_why = price_stale(p, today) if value is not None else None
         disp = data.disposals.get(h.id, [])
         realised = sum((d.proceeds - d.cost for d in disp if d.cost is not None), ZERO)
         # a sale out of a lot whose cost is unknown (an opening balance, a transfer-in, units beyond the lots) has an
@@ -225,14 +257,15 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
             "sources": sorted({t.source for t in data.txns.get(h.id, [])}),
             "broker_baseline": any(t.kind == "opening" and (t.meta or {}).get("baseline")
                                    for t in data.txns.get(h.id, [])),
+            **units_as_of(h, data.txns.get(h.id, []), today, units),
         })  # fmt: skip
     ox, ox_reason = xirr_or_reason(
         [*all_flows, (today, tot["xirr_value"])] if tot["xirr_value"] else all_flows, today
     )
     if excluded and ox is not None:
         ox_reason = xirr_exclusions(excluded)
-    stale_note = (f"{stale} holding(s) valued at a statement price more than {STATEMENT_MAX_AGE_TRADING_DAYS} "
-                  "trading days old") if stale else None  # fmt: skip
+    stale_note = (f"{stale} holding(s) valued at a price more than {STATEMENT_MAX_AGE_TRADING_DAYS} trading days old "
+                  "(a statement price, or an AMFI NAV that stopped updating)") if stale else None  # fmt: skip
     if stale_note and ox is not None:
         ox_reason = f"{ox_reason}; {stale_note}" if ox_reason else stale_note
     tl = timeline(data)

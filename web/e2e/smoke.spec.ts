@@ -26,6 +26,9 @@ test("portfolio: unknown cost, stale price and incomplete tax are labelled", asy
   // the fund's price is a statement NAV from June: shown with its date, never as today's price
   await expect(holdings.getByText(/statement NAV|stale/i)).toBeVisible();
   await expect(holdings.getByText(/30 Jun/)).toBeVisible();
+  // #295: the fund's units carry their statement's date, flagged when old
+  await expect(holdings.getByText(/units as of 28 Jun.*\(CAMS CAS\)/)).toBeVisible();
+  await expect(holdings.getByText(/units date unknown/)).toBeVisible(); // the opening-balance fund: no statement date
   if (phone(page)) await expectNoHorizontalOverflow(page);
 
   await page.goto("/portfolio#tax");

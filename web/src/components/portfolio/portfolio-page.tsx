@@ -317,7 +317,14 @@ function Holdings({ snap, onChanged, updating }: { snap: Snapshot; onChanged: ()
                   // an unresolved demerger, rights issue ... (#263): the return is incomplete, not merely not shown
                   ? (h.xirr_reason?.startsWith("unsupported corporate action") ? <span className="text-xs text-warn">incomplete</span> : <span className="text-xs text-muted">—</span>)
                   : pctx(h.xirr * 100)}</td>
-                <td className="num text-right">{units(h.units)}</td>
+                <td className="num text-right">{units(h.units)}
+                  {/* a fund's units are what its last statement said (#295): today's NAV × them is not today's value if
+                      a SIP or a redemption happened since */}
+                  {h.asset_type === "mf" && !h.closed && <span className={cx("block text-[10px]", h.units_warning ? "text-warn" : "text-muted")} title={h.units_warning ?? undefined}>
+                    {h.units_as_of ? <>units as of {day(h.units_as_of)}{h.units_source ? ` (${h.units_source})` : ""}</> : "units date unknown"}
+                    {h.units_warning && <span className="sr-only">: {h.units_warning}</span>}
+                  </span>}
+                </td>
                 <td className="num text-right">{inr(h.avg_cost, 2)}</td>
                 <td className="num text-right" title={h.price_source ? `${h.price_source}${h.price_as_of ? ` · as of ${h.price_as_of}` : ""}` : undefined}>
                   {h.pending ? <span className="skeleton inline-block h-3 w-14 rounded align-middle" aria-label="price updating" /> : h.price == null ? <span className="text-xs text-muted" title={h.price_error ?? ""}>no price</span> : inr(h.price, 2)}
