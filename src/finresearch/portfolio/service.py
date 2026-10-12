@@ -298,6 +298,10 @@ def apply(
         if c.rejected:
             got = sorted({*((h.meta or {}).get("sip_rejections") or []), *c.rejected})
             h.meta = {**(h.meta or {}), "sip_rejections": got}
+        if res.kind == "cas" and end is not None:  # #297: expected SIP instalments this statement now covers
+            from finresearch.portfolio.sip_estimates import reconcile as reconcile_expected
+
+            reconcile_expected(s, h.id, end, (h.meta or {}).get("sip_rejections") or [])
     s.flush()
     rec = reconcile(res.closing, lot_units(s, [(c.ikey, c.account) for c in res.closing]))
     imp.summary = {"period": list(res.period) if res.period else None, "rows": len(res.txns), "added": applied.added,
@@ -318,6 +322,9 @@ def delete_import(s: Session, import_id: int) -> int:
         fund_baseline_holdings(s, [h for hid in hids if (h := s.get(PortfolioHolding, hid)) is not None])
         - hids
     )
+    from finresearch.portfolio.sip_estimates import reopen_unmatched
+
+    reopen_unmatched(s, s.scalars(select(PortfolioTxn.id).where(PortfolioTxn.import_id == import_id)).all())
     s.execute(delete(PortfolioTxn).where(PortfolioTxn.import_id == import_id))
     s.delete(imp)
     s.flush()

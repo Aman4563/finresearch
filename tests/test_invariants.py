@@ -133,7 +133,7 @@ def client(env):
         return Quote(symbol=symbol, last_price=p, issued_shares=shares, industry=ind)
 
     with session_scope() as s:
-        s.execute(text("TRUNCATE portfolio_disposal, portfolio_lot, portfolio_txn, portfolio_holding, "
+        s.execute(text("TRUNCATE portfolio_expected_txn, portfolio_disposal, portfolio_lot, portfolio_txn, portfolio_holding, "
                        "portfolio_import, portfolio_snapshot, portfolio_setting"))  # fmt: skip
     app = create_app(nav_all=nav_all)
     app.state.markets = MarketSources(quote=quote, equity=lambda: _NoActions(), today=lambda: TODAY)

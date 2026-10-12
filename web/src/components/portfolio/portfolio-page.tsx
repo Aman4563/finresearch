@@ -324,6 +324,11 @@ function Holdings({ snap, onChanged, updating }: { snap: Snapshot; onChanged: ()
                     {h.units_as_of ? <>units as of {day(h.units_as_of)}{h.units_source ? ` (${h.units_source})` : ""}</> : "units date unknown"}
                     {h.units_warning && <span className="sr-only">: {h.units_warning}</span>}
                   </span>}
+                  {/* #297: expected SIP instalments since those units: an estimate, never added to the units above */}
+                  {h.sip_estimate && <span className="block text-[10px] italic text-muted"
+                    title={`Estimated from ${h.sip_estimate.basis.join(" / ")}: ₹${h.sip_estimate.amount.toLocaleString("en-IN")} on ${h.sip_estimate.days.join(", ")}${h.sip_estimate.estimated_value != null ? ` · estimated value ${inr(h.sip_estimate.estimated_value)}` : ""}. Not in the units, value, P&L, XIRR or tax until a statement confirms it.`}>
+                    {h.sip_estimate.label}
+                  </span>}
                 </td>
                 <td className="num text-right">{inr(h.avg_cost, 2)}</td>
                 <td className="num text-right" title={h.price_source ? `${h.price_source}${h.price_as_of ? ` · as of ${h.price_as_of}` : ""}` : undefined}>
@@ -564,6 +569,14 @@ export function PortfolioPage() {
               icon={<Activity className="size-4" />} hint={updating ? "waiting for prices" : s!.xirr_reason ?? "annualised, all holdings"}
               help="Money-weighted annual return over every cash flow: purchases, sales, dividends paid out and today's value." />
           </div>
+          {data.estimated && (
+            // #297: a separate "estimated" line: never part of the value, P&L, XIRR or completeness above
+            <p className="-mt-2 mb-4 flex items-start gap-1.5 text-xs text-muted" title={data.estimated.note}>
+              <Info className="mt-0.5 size-3 shrink-0" />
+              <span>Estimated: {inr(data.estimated.amount)} in {data.estimated.instalments} SIP instalment{data.estimated.instalments > 1 ? "s" : ""} across {data.estimated.funds} fund{data.estimated.funds > 1 ? "s" : ""} since the last statements
+                {data.estimated.estimated_value != null ? <> · estimated value {inr(data.estimated.estimated_value)}</> : " · estimated value unknown (a NAV is missing)"}, waiting for statement; not in the totals above.</span>
+            </p>
+          )}
           <SyncStrip />
           {!empty && <DataHealth refresh={refresh} />}
           <div className="mb-4 overflow-x-auto"><Segmented value={tab} onChange={go} options={TABS} /></div>

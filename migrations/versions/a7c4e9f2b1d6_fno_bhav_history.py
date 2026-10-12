@@ -1,7 +1,7 @@
 """F&O history backbone (#306): NSE F&O bhavcopy rows, the backfill manifest, derived IV series, contract calendar
 
 Revision ID: a7c4e9f2b1d6
-Revises: c5e2a9d7f1b4
+Revises: a7c3e9b1d5f2
 Create Date: 2026-10-12 12:00:00.000000
 
 """
@@ -13,7 +13,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "a7c4e9f2b1d6"
-down_revision: str | Sequence[str] | None = "c5e2a9d7f1b4"
+down_revision: str | Sequence[str] | None = "a7c3e9b1d5f2"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
