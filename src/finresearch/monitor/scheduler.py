@@ -286,6 +286,29 @@ def journal_step(now: datetime) -> dict[str, int]:
         return {}
 
 
+_BOND_EVENTS_AT: list[datetime] = []  # the last bond-events pass in this process (at most one an hour)
+
+
+def bond_events_step(now: datetime) -> dict[str, int]:
+    """Coupon, maturity and SGB early-redemption alerts for held bonds (portfolio.bonds, #294): database only, so
+    inline, at most hourly; each event is claimed once in alert_eval_slot. Runs before alerts_step, whose delivery
+    pass forwards them."""
+    if _BOND_EVENTS_AT and (now - _BOND_EVENTS_AT[-1]).total_seconds() < 3600:
+        return {}
+    try:
+        from finresearch.db import session_scope
+        from finresearch.fincalc.dates import to_ist
+        from finresearch.portfolio.bonds import events_step
+
+        with session_scope() as s:
+            n = events_step(s, to_ist(now).date())
+        _BOND_EVENTS_AT[:] = [now]
+        return {"bond_events": n} if n else {}
+    except Exception:
+        log.warning("bond events step failed; it is retried on the next tick", exc_info=True)
+        return {}
+
+
 _BACKGROUND: dict[str, asyncio.Task] = {}
 
 
@@ -594,6 +617,7 @@ async def tick(deps: jobs.Deps, now: datetime | None = None) -> dict[str, int]:
     if deps.forecasts:
         out |= {k: v for k, v in (await forecast_step(deps, now)).items() if k in ("resolved", "void")}
     out |= journal_step(now)
+    out |= bond_events_step(now)
     out |= await alerts_step(now)
     try:  # broker syncs after the close and the statement inbox (portfolio.connectors.sync)
         from finresearch.portfolio.connectors.sync import connections_step

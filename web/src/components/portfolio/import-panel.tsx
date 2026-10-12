@@ -383,6 +383,7 @@ function QuickImport({ onDone }: { onDone: () => void }) {
 const KINDS = [
   { value: "buy", label: "Buy" }, { value: "sell", label: "Sell" }, { value: "dividend", label: "Dividend" },
   { value: "bonus", label: "Bonus" }, { value: "split", label: "Split" },
+  { value: "redemption", label: "Bond redemption" }, { value: "interest", label: "Bond interest / coupon" },
 ] as const;
 type Kind = (typeof KINDS)[number]["value"];
 
@@ -404,7 +405,7 @@ function ManualForm({ onDone }: { onDone: () => void }) {
         method: "POST",
         body: JSON.stringify({ asset_type: f.asset_type, name: f.name, nse_symbol: nz(f.nse_symbol), scheme_code: nz(f.scheme_code),
           account: f.account || "Manual", day: f.day, kind: f.kind, quantity: nz(f.quantity), price: nz(f.price), amount: nz(f.amount),
-          charges: nz(f.charges) ?? "0", stt_paid: f.stt_paid, note: nz(f.note), meta, allow_duplicate: allowDuplicate }),
+          charges: nz(f.charges) ?? "0", stt_paid: f.kind === "redemption" ? false : f.stt_paid, note: nz(f.note), meta, allow_duplicate: allowDuplicate }),
       });
       setOk(`Added a ${f.kind} of ${f.name}`);
       setF((x) => ({ ...x, quantity: "", price: "", amount: "", charges: "", note: "" }));
@@ -416,7 +417,8 @@ function ManualForm({ onDone }: { onDone: () => void }) {
       setBusy(false);
     }
   };
-  const trade = f.kind === "buy" || f.kind === "sell";
+  // a redemption moves units out at a price like a sale, but no STT is ever levied on it (#294)
+  const trade = f.kind === "buy" || f.kind === "sell" || f.kind === "redemption";
   return (
     <Card title="Add a transaction by hand" icon={<PenLine className="size-4" />}
       help="For anything a file does not have: IPO allotments, gifts, an older purchase, a bonus or split. The same name + symbol + account adds to an existing holding.">
@@ -441,11 +443,11 @@ function ManualForm({ onDone }: { onDone: () => void }) {
           <Field label="Units"><input inputMode="decimal" value={f.quantity} onChange={set("quantity")} className={cx(inputClass, "w-full num")} /></Field>
           <Field label="Price per unit (₹)"><input inputMode="decimal" value={f.price} onChange={set("price")} className={cx(inputClass, "w-full num")} /></Field>
           <Field label="Charges (₹)" hint="Brokerage and stamp duty add to the cost."><input inputMode="decimal" value={f.charges} onChange={set("charges")} className={cx(inputClass, "w-full num")} /></Field>
-          <Field label={<span className="inline-flex items-center gap-1">STT paid <InfoTip>The 20 % / 12.5 % equity rates need STT on the sale (and, for shares, on the purchase, except IPO, bonus, rights and gift shares, which still qualify). Untick for an off-market sale.</InfoTip></span>}>
+          {f.kind !== "redemption" && <Field label={<span className="inline-flex items-center gap-1">STT paid <InfoTip>The 20 % / 12.5 % equity rates need STT on the sale (and, for shares, on the purchase, except IPO, bonus, rights and gift shares, which still qualify). Untick for an off-market sale.</InfoTip></span>}>
             <label className="flex h-9 items-center gap-2 text-sm"><input type="checkbox" checked={f.stt_paid} onChange={set("stt_paid")} /> Yes</label>
-          </Field>
+          </Field>}
         </>}
-        {f.kind === "dividend" && <Field label="Amount (₹)"><input inputMode="decimal" value={f.amount} onChange={set("amount")} className={cx(inputClass, "w-full num")} /></Field>}
+        {(f.kind === "dividend" || f.kind === "interest") && <Field label={f.kind === "interest" ? "Interest received, before TDS (₹)" : "Amount (₹)"}><input inputMode="decimal" value={f.amount} onChange={set("amount")} className={cx(inputClass, "w-full num")} /></Field>}
         {f.kind === "bonus" && <Field label="Ratio (new : held)" hint="1 : 1 = one new share for every share held">
           <div className="flex items-center gap-1.5"><input value={f.a} onChange={set("a")} className={cx(inputClass, "w-16 num")} /> : <input value={f.b} onChange={set("b")} className={cx(inputClass, "w-16 num")} /></div></Field>}
         {f.kind === "split" && <Field label="Face value from → to (₹)" hint="10 → 2 turns 1 share into 5">

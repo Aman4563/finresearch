@@ -29,6 +29,19 @@ convention.
 The two interpretive cases (g21 ELSS 29-Feb allotment, g26 order of the FY 2024-25 exemption between the 10 % and
 12.5 % parts) agree with the engine.
 
+## Bond cases g27-g32 (#294, 12-Oct-2026)
+
+The implementer wrote the inputs and a conventions brief (`redemption`: the issuer or RBI redeems, a transfer under
+s.2(47) unless a provision says otherwise; `interest`: income, not a capital-gains event; `debt_security`; tax class
+`auto` = the app's classification from the ISIN and name; G-secs and T-bills treated as listed; the post-1-Apr-2026
+SGB position as stated in fincalc.tax). A separate agent that did not open the engine derived the expected values
+from the law; every value agreed with the engine on the first run, so there is no `known_divergence`. The runner maps
+`redemption` and `interest` events, `tax_class: "auto"` (portfolio.tax.auto_tax_class) and `debt_security`, and takes
+the SGB flags from portfolio.tax.redemption_flags. Its uncertainty notes: g27 a narrower reading of s.47(viic) would
+cover only redemption on maturity; g28 under the old wording the redemption would be exempt (exempt_total 80,000);
+g30 if a G-sec were not "listed" (most trading is on RBI's NDS-OM) the 24-month rule would make it short-term at slab
+(total 53.04); g31 and g32 the discount or premium could be taxed as interest at the same slab rate.
+
 ## Cases and conventions (from the derivation author)
 
 These cases were derived by hand from the law, without looking at the code under test. Every transfer date is on or
@@ -63,6 +76,12 @@ the sections, and its changes could not be checked in this session. Charges are 
 | g24_ltcl_cannot_offset_stcg.json | LTCL not set off against STCG, carried forward |
 | g25_twelve_month_boundary.json | sale on the 12-month anniversary (ST) vs the next day (LT) |
 | g26_fy2025_exemption_order.json | extra: FY 2024-25 threshold split between the 10 % and 12.5 % parts (interpretive) |
+| g27_sgb_premature_rbi_redemption.json | #294: SGB redeemed early by RBI (after year 5, before 1-Apr-2026) exempt under s.47(viic); an interest row changes no lot |
+| g28_sgb_secondary_buyer_redemption_after_apr2026.json | #294: SGB bought on the exchange, redeemed at maturity in tax year 2026-27: LTCG 12.5 % (interpretive: the 2026 rule is unverified) |
+| g29_listed_ncd_redemption_premium_ltcl.json | #294: listed NCD bought at a premium, redeemed at face: LTCL set off against s.112A LTCG before the threshold |
+| g30_gsec_exchange_sale_long_term.json | #294: dated G-sec (IN00 ISIN, tax class auto) sold after 12 months: 12.5 % under s.112, no s.112A threshold (interpretive: G-sec as listed) |
+| g31_tbill_held_to_maturity.json | #294: 364-day T-bill (tax class auto) redeemed at face: STCG at slab (interpretive: head of income) |
+| g32_unlisted_debenture_s50aa.json | #294: unlisted debenture redeemed after 23-Jul-2024: s.50AA deemed STCG at slab despite 36 months |
 
 ## Points where the law is uncertain, or where a convention was chosen
 

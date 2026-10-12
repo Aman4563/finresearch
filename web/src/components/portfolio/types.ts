@@ -22,6 +22,24 @@ export type ElssLock = {
   rule: string; source: string; notes: string[];
 };
 
+/** A held bond's terms and dates (finresearch.portfolio.bonds.view, #294). Unknown values are null, never guessed. */
+export type BondView = {
+  kind: "sgb" | "gsec" | "sdl" | "tbill" | "bond";
+  issue_date: string | null; maturity: string | null; coupon_pct: number | null; freq: number | null;
+  face_value: number | null; redemption_price: number | null;
+  next_coupon: string | null; next_coupon_reason: string | null;
+  /** past its maturity with units still held: valued at its redemption value only when known */
+  matured: boolean; status: string | null;
+  /** an SGB's next early-redemption dates (coupon dates after the fifth year) */
+  redemption_windows: string[];
+  /** where each term came from: "entered", the bond library, or the instrument's rule */
+  sources: Record<string, string>;
+};
+
+export const BOND_KIND_LABEL: Record<BondView["kind"], string> = {
+  sgb: "SGB", gsec: "G-sec", sdl: "SDL", tbill: "T-bill", bond: "Bond / NCD",
+};
+
 export type Holding = {
   id: number;
   name: string;
@@ -70,6 +88,12 @@ export type Holding = {
   /** sales whose cost is unknown: their gain is not in `realised` */
   realised_unknown?: number;
   dividends: number;
+  /** bond coupons / SGB interest recorded (#294) */
+  interest?: number;
+  /** a held bond (null for anything else) */
+  bond?: BondView | null;
+  /** "dirty" for an NCD priced from an NSE quote (includes accrued interest); null = not claimed */
+  price_basis?: string | null;
   xirr: number | null;
   xirr_reason: string | null;
   market_cap_cr: number | null;
@@ -124,6 +148,7 @@ export type Snapshot = {
     xirr_reason: string | null; holdings: number; unknown_cost: number; unpriced: number;
     stale?: number; stale_note?: string | null;
     realised_unknown?: number; realised_unknown_proceeds?: number; realised_note?: string | null;
+    interest?: number; matured_bonds?: number; matured_note?: string | null;
   };
   allocation: { asset: Slice[]; sector: Slice[]; cap: Slice[] };
   cap_list: Record<string, string>;

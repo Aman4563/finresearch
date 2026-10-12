@@ -378,8 +378,9 @@ async def valuation_pass(deps: Any, now: datetime, today: date) -> dict[str, Any
                 unpriced.append(
                     {"holding_id": r["id"], "name": r["name"], "why": r["price_error"] or "no price"}
                 )
-            elif (r["price_source"] and "statement" in r["price_source"]) or (
-                    as_of and (today - date.fromisoformat(as_of)).days > STALE_PRICE_DAYS):  # fmt: skip
+            elif not (r.get("bond") or {}).get("matured") and (  # a matured bond's redemption value is dated at
+                    (r["price_source"] and "statement" in r["price_source"])  # its maturity, not stale (#294)
+                    or (as_of and (today - date.fromisoformat(as_of)).days > STALE_PRICE_DAYS)):  # fmt: skip
                 stale.append(
                     {"holding_id": r["id"], "name": r["name"], "as_of": as_of, "source": r["price_source"]}
                 )

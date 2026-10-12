@@ -1,0 +1,88 @@
+{
+ "id": "g31_tbill_held_to_maturity",
+ "title": "364-day T-bill bought at a discount, redeemed at par on 14-May-2026 (tax year 2026-27): discount taxed as STCG at slab (alternative view: income from other sources, same tax)",
+ "covers": [
+  "tax_class auto -> Treasury Bill",
+  "T-bill redemption is a transfer",
+  "holding period < 12 months -> short",
+  "slab rate",
+  "Income-tax Act 2025"
+ ],
+ "rules": [
+  "ISIN IN002025Z123: IN00 = Government of India; 'Z' in position 9 = 364-day Treasury Bill (zero-coupon discount instrument)",
+  "Convention adopted: a T-bill is treated as a listed security for the 12-month rule (as for G-secs, g30). Here nothing turns on it: 364 days is short-term under either the 12- or 24-month rule",
+  "Redemption at maturity extinguishes the bill -> transfer (1961 Act s.2(47)(ii); counterpart in the Income-tax Act 2025 (in force from 1-Apr-2026; tax year 2026-27))",
+  "STCG on a non-STT asset: normal slab rates (no s.111A); slab given as 30 %",
+  "Alternative view (flagged): the discount on a T-bill is in substance interest/discount income taxable as income from other sources (or interest on accrual, cf. the treatment of deep discount bonds in CBDT Circular 2/2002, as recalled). Tax at slab is identical (1,740.00 + cess); the difference is only the head of income (matters for set-off of capital losses and for reporting). s.2(48) 'zero coupon bond' requires notification and does not cover T-bills",
+  "Health and Education Cess 4 %"
+ ],
+ "derivation": [
+  "Buy 2025-05-15: 1,000 @ 94.20 -> cost 94,200.00.",
+  "Redemption at par 2026-05-14: 1,000 @ 100.00 -> proceeds 1,00,000.00. Transfer after 31-Mar-2026 -> Income-tax Act 2025, tax year 2026-27 (fy 2027).",
+  "Held 2025-05-15 -> 2026-05-14 = 364 days (not more than 12 months) -> short, slab.",
+  "Gain 1,00,000 - 94,200 = 5,800.00.",
+  "fy 2027: tax 5,800 x 0.30 = 1,740.00; cess 69.60; total 1,809.60; exemption_used 0.00."
+ ],
+ "interpretive": true,
+ "derived_by": "independent derivation agent (#294) that did not read the engine; inputs and conventions set by the implementer",
+ "slab_rate": "0.30",
+ "holdings": [
+  {
+   "name": "364 DAY TBILL 14-MAY-2026",
+   "tax_class": "auto",
+   "asset_type": "stock",
+   "isin": "IN002025Z123",
+   "symbol": "364D140526",
+   "events": [
+    {
+     "day": "2025-05-15",
+     "kind": "buy",
+     "quantity": "1000",
+     "price": "94.20",
+     "charges": "0",
+     "stt_paid": false
+    },
+    {
+     "day": "2026-05-14",
+     "kind": "redemption",
+     "quantity": "1000",
+     "price": "100.00",
+     "charges": "0",
+     "stt_paid": false
+    }
+   ]
+  }
+ ],
+ "expected": {
+  "disposals": [
+   {
+    "holding": "364 DAY TBILL 14-MAY-2026",
+    "sold": "2026-05-14",
+    "acquired": "2025-05-15",
+    "quantity": "1000",
+    "cost": "94200.00",
+    "tax_cost": "94200.00",
+    "proceeds": "100000.00",
+    "gain": "5800.00",
+    "term": "short",
+    "rate": "slab"
+   }
+  ],
+  "open_lots": [],
+  "fy": [
+   {
+    "fy": 2027,
+    "exemption_used": "0.00",
+    "tax": "1740.00",
+    "cess": "69.60",
+    "total": "1809.60",
+    "complete": true,
+    "unknown_count": 0,
+    "intraday_count": 0,
+    "exempt_total": "0.00",
+    "losses_carried_short": "0.00",
+    "losses_carried_long": "0.00"
+   }
+  ]
+ }
+}

@@ -3,7 +3,7 @@
 // break them; what they pin down is that an unknown or stale value is labelled as such.
 import { type Page, expect, test } from "@playwright/test";
 
-import { ARCHIVED_WATCH, ARCHIVED_WATCHES, CLAIM, DOC_LINES, GOAL_PLAN_LOWER, REPORT, SIGNAL, SNAPSHOT, TAX, WEALTH } from "./fixtures";
+import { ARCHIVED_WATCH, ARCHIVED_WATCHES, BOND_DETAIL, BOND_SNAPSHOT, CLAIM, DOC_LINES, GOAL_PLAN_LOWER, REPORT, SIGNAL, SNAPSHOT, TAX, WEALTH } from "./fixtures";
 import { expectNoHorizontalOverflow, mockApi } from "./mock-api";
 
 const phone = (page: Page) => (page.viewportSize()?.width ?? 1280) < 640;
@@ -41,6 +41,31 @@ test("portfolio: unknown cost, stale price and incomplete tax are labelled", asy
   // cards outside this test's scope fall back to their error / unknown states
   api.expectClean(["GET /api/funds/category-ranks", "GET /api/lookthrough", "GET /api/portfolio/health",
     "GET /api/disclosures/tracked", "GET /api/portfolio/ais"]);
+});
+
+test("portfolio: a matured bond says so and offers to record its redemption (#294)", async ({ page }) => {
+  const api = await mockApi(page, {
+    "GET /api/portfolio": BOND_SNAPSHOT,
+    "POST /api/portfolio/snapshot": { recorded: false, reason: "e2e" },
+    "GET /api/connections/summary": [],
+    "GET /api/portfolio/holdings/5": BOND_DETAIL,
+  });
+  await page.goto("/portfolio");
+  const holdings = page.getByRole("region", { name: "Holdings" });
+  const ncd = holdings.getByRole("row").filter({ hasText: "Example Finance NCD" });
+  await expect(ncd.getByText(/matured — record redemption/).first()).toBeVisible();
+  await expect(ncd.getByText(/matured: value unknown/)).toBeVisible(); // never the last traded price
+  const sgb = holdings.getByRole("row").filter({ hasText: "SGB 2020-21" });
+  await expect(sgb.getByText(/matures 11 Aug 2028/)).toBeVisible();
+  await expect(sgb.getByText(/next coupon 11 Feb 2027/)).toBeVisible();
+  await expect(page.getByText(/past maturity: record the redemption/)).toBeVisible();
+  if (phone(page)) await expectNoHorizontalOverflow(page);
+  await ncd.click();
+  const panel = page.getByTestId("bond-panel");
+  await expect(panel.getByText(/Record redemption \/ coupon/)).toBeVisible();
+  await expect(panel.getByRole("button", { name: "Record" })).toBeVisible();
+  api.expectClean(["GET /api/funds/category-ranks", "GET /api/lookthrough", "GET /api/portfolio/health",
+    "GET /api/disclosures/tracked", "GET /api/portfolio/ais", "GET /api/portfolio/tax"]);
 });
 
 test("research: a blocked report is marked not published, and a citation opens its evidence", async ({ page }) => {

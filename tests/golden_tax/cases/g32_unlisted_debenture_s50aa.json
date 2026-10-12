@@ -1,0 +1,86 @@
+{
+ "id": "g32_unlisted_debenture_s50aa",
+ "title": "Unlisted debenture held 3 years, redeemed at a premium on 10-Jan-2025: s.50AA (as amended w.e.f. 23-Jul-2024) deems the gain short-term at slab regardless of holding period",
+ "covers": [
+  "s.50AA unlisted debenture",
+  "redemption/maturity on or after 23-Jul-2024",
+  "deemed STCG at slab",
+  "no grandfathering by acquisition date"
+ ],
+ "rules": [
+  "Income-tax Act 1961 s.50AA as amended by Finance (No.2) Act 2024 w.e.f. 23-Jul-2024: capital gain on transfer, redemption or maturity of an unlisted bond or unlisted debenture (on or after 23-Jul-2024) is deemed to arise from a short-term capital asset, whatever the period of holding and whatever the date of acquisition",
+  "Gain = full value of consideration on redemption - cost of acquisition - transfer expenses; no indexation",
+  "Without s.50AA the debenture (36 months > 24, unlisted) would be long-term at 12.5 %: tax 125.00 - s.50AA overrides this",
+  "STCG on a non-STT asset taxed at normal slab rates (30 % given)",
+  "Health and Education Cess 4 %"
+ ],
+ "derivation": [
+  "Buy 2022-01-10: 5 @ 10,000.00 -> cost 50,000.00.",
+  "Redemption 2025-01-10 at 2 % premium: 5 @ 10,200.00 -> proceeds 51,000.00.",
+  "Unlisted debenture redeemed after 23-Jul-2024 -> s.50AA: deemed short-term, slab (held 36 months is irrelevant).",
+  "Gain 51,000 - 50,000 = 1,000.00.",
+  "FY 2024-25 (fy 2025): tax 1,000 x 0.30 = 300.00; cess 12.00; total 312.00; exemption_used 0.00.",
+  "Note: some treat a redemption premium as interest (income from other sources); tax at slab would be the same 300.00."
+ ],
+ "interpretive": false,
+ "derived_by": "independent derivation agent (#294) that did not read the engine; inputs and conventions set by the implementer",
+ "slab_rate": "0.30",
+ "holdings": [
+  {
+   "name": "MIKE INFRA UNLISTED NCD 2025",
+   "tax_class": "other",
+   "listed": false,
+   "debt_security": true,
+   "events": [
+    {
+     "day": "2022-01-10",
+     "kind": "buy",
+     "quantity": "5",
+     "price": "10000.00",
+     "charges": "0",
+     "stt_paid": false
+    },
+    {
+     "day": "2025-01-10",
+     "kind": "redemption",
+     "quantity": "5",
+     "price": "10200.00",
+     "charges": "0",
+     "stt_paid": false
+    }
+   ]
+  }
+ ],
+ "expected": {
+  "disposals": [
+   {
+    "holding": "MIKE INFRA UNLISTED NCD 2025",
+    "sold": "2025-01-10",
+    "acquired": "2022-01-10",
+    "quantity": "5",
+    "cost": "50000.00",
+    "tax_cost": "50000.00",
+    "proceeds": "51000.00",
+    "gain": "1000.00",
+    "term": "short",
+    "rate": "slab"
+   }
+  ],
+  "open_lots": [],
+  "fy": [
+   {
+    "fy": 2025,
+    "exemption_used": "0.00",
+    "tax": "300.00",
+    "cess": "12.00",
+    "total": "312.00",
+    "complete": true,
+    "unknown_count": 0,
+    "intraday_count": 0,
+    "exempt_total": "0.00",
+    "losses_carried_short": "0.00",
+    "losses_carried_long": "0.00"
+   }
+  ]
+ }
+}

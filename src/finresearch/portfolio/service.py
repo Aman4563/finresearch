@@ -31,15 +31,23 @@ from finresearch.portfolio.importers import (
     assign_dedupe_keys,
     parse_day,
 )
-from finresearch.portfolio.lots import Event, LotBook, build_lots
+from finresearch.portfolio.lots import Event, LotBook, build_lots, opening_basis
 
 UNITS_TOLERANCE = Decimal("0.001")  # CAS units are printed to 3 decimals
 
 
 # --------------------------------------------------------------------------- lots
 def events_of(txns: Iterable[PortfolioTxn]) -> list[Event]:
-    return [Event(t.id, t.day, t.kind, t.quantity, t.price, t.amount, t.charges or Decimal(0), t.stt_paid,
-                  dict(t.meta or {})) for t in txns]  # fmt: skip
+    out = []
+    for t in txns:
+        meta = dict(t.meta or {})
+        price, amount, acquired = opening_basis(t.kind, t.price, t.amount, meta)
+        if acquired:  # an IPO allotment's date for a baseline (lots.opening_basis)
+            meta["acquired"] = acquired
+        out.append(
+            Event(t.id, t.day, t.kind, t.quantity, price, amount, t.charges or Decimal(0), t.stt_paid, meta)
+        )
+    return out
 
 
 def rebuild(s: Session, holding_id: int) -> LotBook:
@@ -57,6 +65,13 @@ def rebuild(s: Session, holding_id: int) -> LotBook:
             if sup.get(t.id) != m.get("superseded_by"):
                 m.pop("superseded_by", None)
                 t.meta = {**m, **({"superseded_by": sup[t.id]} if t.id in sup else {})}
+    fill_warnings: list[str] = []
+    if (
+        h is not None and h.asset_type == "stock"
+    ):  # an IPO allotment the journal records fills a dateless baseline
+        from finresearch.portfolio import ipo_fill
+
+        fill_warnings = ipo_fill.apply(s, h, list(txns))
     book = build_lots(events_of(txns))
     s.execute(delete(PortfolioDisposal).where(PortfolioDisposal.holding_id == holding_id))
     s.execute(delete(PortfolioLot).where(PortfolioLot.holding_id == holding_id))
@@ -76,7 +91,7 @@ def rebuild(s: Session, holding_id: int) -> LotBook:
                                 origin="intraday" if d.intraday else d.origin))  # fmt: skip
     if h is not None:  # an unsupported corporate action is the first thing the holding's notes say (#237)
         notes = [a["reason"] for a in actions_of(h.meta)]
-        h.meta = {**(h.meta or {}), "lot_warnings": [*notes, *book.warnings][:20]}
+        h.meta = {**(h.meta or {}), "lot_warnings": [*notes, *fill_warnings, *book.warnings][:20]}
         h.updated_at = func.now()
     return book
 
@@ -449,6 +464,12 @@ def update_holding(s: Session, holding_id: int, body: dict[str, Any]) -> Portfol
     if "flags" in body:  # SGB original-subscriber flag, listed override ...
         h.meta = {**(h.meta or {}), **{k: v for k, v in (body["flags"] or {}).items()
                                        if k in ("sgb_original_subscriber", "listed")}}  # fmt: skip
+    if "bond_terms" in body:  # a held bond's terms (#294), validated; {} or None clears them
+        from finresearch.portfolio.bonds import clean_terms
+
+        terms = clean_terms(body["bond_terms"] or {})
+        m = {k: v for k, v in (h.meta or {}).items() if k != "bond_terms"}
+        h.meta = {**m, **({"bond_terms": terms} if terms else {})}
     h.updated_at = func.now()
     s.flush()
     return h

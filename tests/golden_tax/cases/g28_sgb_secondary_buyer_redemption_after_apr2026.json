@@ -1,0 +1,92 @@
+{
+ "id": "g28_sgb_secondary_buyer_redemption_after_apr2026",
+ "title": "SGB bought on the exchange, redeemed by RBI on maturity in Nov-2026 (tax year 2026-27): not exempt for a secondary buyer under the Finance Act 2026 position; LT 12.5 %, no Rs 1.25 lakh exemption",
+ "covers": [
+  "SGB redemption after 1-Apr-2026",
+  "original-subscriber condition",
+  "Income-tax Act 2025",
+  "LT 12.5 % non-equity listed",
+  "no s.112A threshold"
+ ],
+ "rules": [
+  "Position adopted per brief (UNVERIFIED): from 1-Apr-2026 (Finance Act 2026 / Income-tax Act 2025 (in force from 1-Apr-2026; tax year 2026-27)) redemption of an SGB is not a transfer only for an individual who subscribed at the original issue and held it continuously until redemption on maturity; any other redemption is a transfer of a listed security",
+  "Redemption is an extinguishment of rights -> transfer (Income-tax Act 1961 s.2(47)(ii) and its counterpart in the 2025 Act)",
+  "Holding period: listed security -> long-term if held more than 12 months (1961 Act s.2(42A) first proviso as amended by Finance (No.2) Act 2024; carried into the 2025 Act - section number not verified)",
+  "Rate: 12.5 % without indexation on LTCG of a non-s.112A asset (1961 Act s.112(1) as amended by Finance (No.2) Act 2024; believed to be s.197 of the 2025 Act - unverified)",
+  "s.112A exemption of Rs 1.25 lakh applies only to STT-paid equity shares / equity-oriented fund units / business-trust units -> not to SGB",
+  "Health and Education Cess 4 %"
+ ],
+ "derivation": [
+  "Buy on exchange 2021-03-10: 10 @ 4,500.00 -> cost 45,000.00 (not an original subscriber).",
+  "RBI redemption on maturity 2026-11-20: 10 @ 12,500.00 -> proceeds 1,25,000.00. Transfer after 31-Mar-2026 -> Income-tax Act 2025, tax year 2026-27 (fy 2027).",
+  "Holder is not an original subscriber -> the (assumed) Finance Act 2026 condition fails -> redemption is a transfer of a listed security.",
+  "Held 2021-03-10 -> 2026-11-20 (about 68 months > 12) -> long; 12.5 % without indexation.",
+  "Gain 1,25,000 - 45,000 = 80,000.00.",
+  "fy 2027: tax 80,000 x 0.125 = 10,000.00; cess 400.00; total 10,400.00; exemption_used 0.00 (not a s.112A asset).",
+  "Had the 1961 Act s.47(viic) wording continued (any redemption by an individual), the answer would be exempt with exempt_total 80,000.00 and tax 0.00."
+ ],
+ "interpretive": true,
+ "derived_by": "independent derivation agent (#294) that did not read the engine; inputs and conventions set by the implementer",
+ "slab_rate": "0.30",
+ "holdings": [
+  {
+   "name": "SGB 2018-19 SERIES VI",
+   "tax_class": "sgb",
+   "listed": true,
+   "sgb_original_subscriber": false,
+   "events": [
+    {
+     "day": "2021-03-10",
+     "kind": "buy",
+     "quantity": "10",
+     "price": "4500.00",
+     "charges": "0",
+     "stt_paid": false
+    },
+    {
+     "day": "2026-11-20",
+     "kind": "redemption",
+     "quantity": "10",
+     "price": "12500.00",
+     "charges": "0",
+     "stt_paid": false,
+     "meta": {
+      "held_to_maturity": true
+     }
+    }
+   ]
+  }
+ ],
+ "expected": {
+  "disposals": [
+   {
+    "holding": "SGB 2018-19 SERIES VI",
+    "sold": "2026-11-20",
+    "acquired": "2021-03-10",
+    "quantity": "10",
+    "cost": "45000.00",
+    "tax_cost": "45000.00",
+    "proceeds": "125000.00",
+    "gain": "80000.00",
+    "term": "long",
+    "rate": "0.125"
+   }
+  ],
+  "open_lots": [],
+  "fy": [
+   {
+    "fy": 2027,
+    "exemption_used": "0.00",
+    "tax": "10000.00",
+    "cess": "400.00",
+    "total": "10400.00",
+    "complete": true,
+    "unknown_count": 0,
+    "intraday_count": 0,
+    "exempt_total": "0.00",
+    "losses_carried_short": "0.00",
+    "losses_carried_long": "0.00"
+   }
+  ]
+ }
+}
