@@ -31,6 +31,7 @@ import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
+from itertools import pairwise
 
 from finresearch.fincalc.options import Right, bs_price, implied_vol
 from finresearch.fincalc.volatility import StrikeIv, skew_25d
@@ -130,7 +131,7 @@ def constant_maturity(
         return None
     if pts[0][0] >= target:
         return (pts[0][1], "interpolated" if pts[0][0] == target else "flat")
-    for (d0, v0), (d1, v1) in zip(pts, pts[1:], strict=False):
+    for (d0, v0), (d1, v1) in pairwise(pts):
         if d0 <= target <= d1:
             w0, w1 = v0 * v0 * d0, v1 * v1 * d1
             var = (w0 + (w1 - w0) * (target - d0) / (d1 - d0)) / target
@@ -147,7 +148,7 @@ def front_future_returns(futs: Sequence[tuple[date, date, float]]) -> list[tuple
             by_day.setdefault(d, {})[e] = p
     days = sorted(by_day)
     out = []
-    for d0, d1 in zip(days, days[1:], strict=False):
+    for d0, d1 in pairwise(days):
         common = sorted(e for e in by_day[d1] if e in by_day[d0] and e > d0)
         if common:
             e = common[0]
