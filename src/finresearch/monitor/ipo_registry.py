@@ -257,3 +257,73 @@ def raise_alerts(session, new_ids: list[int], boards: str, now: datetime) -> int
                                 "issue_id": r.id, "open_date": r.open_date.isoformat() if r.open_date else None}))  # fmt: skip
         n += 1
     return n
+
+
+# --------------------------------------------------------------------------- refresh and schedule
+
+
+async def refresh(now: datetime, src: Sources, *, boards: str | None = None) -> dict[str, Any]:
+    """Read the lists, store them, fill lots, link duplicates and raise the new-issue alerts."""
+    from sqlalchemy import func, select
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import IpoIssue
+
+    nse, bse, errors = await read_lists(src)
+    with session_scope() as s:
+        seeded = {ex: not s.scalar(select(func.count()).select_from(IpoIssue).where(IpoIssue.exchange == ex))
+                  for ex in ("NSE", "BSE")}  # fmt: skip
+        new_nse, new_bse = store(s, "NSE", nse, now), store(s, "BSE", bse, now)
+        rows = list(s.scalars(select(IpoIssue)))
+        lots = await fill_lots(src, rows)
+        link_duplicates(rows)
+        s.flush()
+        # the first refresh of an exchange only seeds the registry: those issues are already on the IPOs page
+        new = [*([] if seeded["NSE"] else new_nse), *([] if seeded["BSE"] else new_bse)]
+        alerted = raise_alerts(s, new, boards if boards is not None else _boards_wanted(), now)
+    return {"nse": None if nse is None else len(nse), "bse": None if bse is None else len(bse),
+            "new": len(new_nse) + len(new_bse), "alerted": alerted, "lot_lookups": lots, "errors": errors}  # fmt: skip
+
+
+def live_sources(nse: Any, bse: Any) -> Sources:
+    async def nse_lot(symbol: str, series: str | None) -> int | None:
+        return (await nse.issue_terms(symbol, series)).lot_size  # disk-cached for 6 h by the adapter
+
+    async def bse_detail(ipo_no: str):
+        from finresearch.adapters.bse import DETAIL_TTL_S
+
+        return await bse.issue_detail(ipo_no, cache_ttl=DETAIL_TTL_S)
+
+    return Sources(nse_current=nse.current_issues, nse_upcoming=nse.upcoming_issues, bse_issues=bse.public_issues,
+                   nse_lot=nse_lot, bse_detail=bse_detail)  # fmt: skip
+
+
+def due_slot(now: datetime) -> str | None:
+    """The latest of today's two slots (IST) whose time has passed."""
+    ist = to_ist(now)
+    passed = [name for name, at in SLOTS if ist.time() >= at]
+    return f"ipo_registry:{ist.date().isoformat()}:{passed[-1]}" if passed else None
+
+
+async def ipo_registry_step(now: datetime, src: Sources | None = None) -> dict[str, Any]:
+    from finresearch.monitor.disclosures import claim, finish
+
+    slot = due_slot(now)
+    if slot is None or not claim(slot, now):
+        return {}
+    try:
+        if src is not None:
+            res = await refresh(now, src)
+        else:
+            from finresearch.adapters.bse import BseClient
+            from finresearch.adapters.nse import NseClient
+
+            async with NseClient() as nse, BseClient() as bse:
+                res = await refresh(now, live_sources(nse, bse))
+    except Exception as e:
+        log.warning("IPO registry refresh failed; retried later", exc_info=True)
+        finish(slot, {"error": f"{type(e).__name__}: {e}"[:300]}, now, failed=True)
+        return {"ipo_registry": "failed"}
+    # a list that failed is retried (the other exchange's rows are stored already)
+    finish(slot, res, now, failed=bool(res["errors"]))
+    return {"ipo_registry": res}
