@@ -464,7 +464,7 @@ class IvHistory(Base):
 
 class FnoBhav(Base):
     """One F&O contract's end-of-day row from NSE's bhavcopy (#306, adapters.nse_fno_bhav): index options of
-    fno_store.INDEX_OPTIONS, stock options of held/watched underlyings, and every future. Contracts with neither open
+    fnohist.store.INDEX_OPTIONS, stock options of held/watched underlyings, and every future. Contracts with neither open
     interest nor a trade that day are not stored (their settlement price is NSE's theoretical value and nobody could
     have held or traded them); the day's manifest counts them. `right` is CE/PE, XX for futures (strike 0). OI in units,
     `contracts` in contracts, turnover in rupees. `underlying` and `lot_size` are only in the UDiFF file (2024 on)."""

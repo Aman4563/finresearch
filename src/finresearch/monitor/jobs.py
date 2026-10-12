@@ -108,6 +108,9 @@ class Deps:
     ipo_registry: bool = (
         False  # the twice-daily NSE + BSE issue registry and new-issue alerts (monitor.ipo_registry)
     )
+    fno_bhav: bool = (
+        False  # the nightly NSE F&O bhavcopy update and derived IV series (monitor.fno_bhav, #306)
+    )
 
     @classmethod
     def live(cls) -> Deps:
@@ -207,7 +210,7 @@ class Deps:
                    bse_corporate_actions=bse_corporate_actions, portfolio_daily=True, brief=True, archive=True,
                    live_holidays=True, disclosures=True, fund_ranks=True, stock_peers=True,
                    lookthrough=True, pf_history=live_history, retention=True, lifecycle=True,
-                   ipo_symbols=ipo_symbols, ipo_harvest=True, ipo_registry=True)  # fmt: skip
+                   ipo_symbols=ipo_symbols, ipo_harvest=True, ipo_registry=True, fno_bhav=True)  # fmt: skip
 
 
 def alert(session: Session, watch: Watch, kind: str, message: str, level: str = "info", **data: Any) -> None:
