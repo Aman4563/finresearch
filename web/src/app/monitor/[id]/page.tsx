@@ -11,15 +11,15 @@ import { LinkButton } from "@/components/dashboard/link-button";
 import { BarsChart } from "@/components/charts";
 import { SubscriptionTimeChart } from "@/components/monitor/subscription-chart";
 import {
-  SUB_HELP, Stepper, TERMS, Term, categories, countdown, currentStage, fmtX, inr, stagesFor, times, timeIST, useNow,
+  SUB_HELP, Stepper, TERMS, Term, categories, countdown, currentStage, daysUntil, fmtX, inr, stagesFor, times, timeIST, useNow,
 } from "@/components/ipo/lib";
 import { AlertFeed } from "@/components/monitor/alert-feed";
-import { NextCheck, RuleChips, StopWatch, jobLabel } from "@/components/monitor/watch-card";
+import { KeepWatching, NextCheck, PhaseBadge, RuleChips, StopWatch, jobLabel } from "@/components/monitor/watch-card";
 import {
   Badge, Card, EmptyState, ErrorNote, PageHeader, Segmented, Skeleton, Stat, Table, cx,
 } from "@/components/ui";
 import { LiveStamp, sessionOpen, useLive } from "@/components/live";
-import { useApi, watchExchangeLabel, when, type WatchDetail } from "@/lib/api";
+import { isLiveIpo, useApi, watchExchangeLabel, when, type WatchDetail } from "@/lib/api";
 import { useTimeFrames } from "@/lib/timeframes";
 
 type Snap = WatchDetail["subscription"][number];
@@ -57,19 +57,37 @@ function jobDetail(j: Job) {
   return null;
 }
 
+/** Whether the watch can still change within the minute: an active IPO in progress, or one opening within a day. */
+function shouldPoll(w: WatchDetail, now: number) {
+  if (!w.active || !isLiveIpo(w)) return false;
+  return w.phase !== "announced" || (daysUntil(w.open_date, now) ?? 0) <= 1;
+}
+
+/** The exchange's live book is read only while bidding can be on (phase "open"; no phase = an older API build). */
+const bookBidding = (w: WatchDetail) => w.kind === "ipo" && w.active && (w.phase == null || w.phase === "open");
+
 export default function WatchView() {
   const { id } = useParams<{ id: string }>();
-  const { data, error, reload, updatedAt } = useApi<WatchDetail>(`/api/watches/${id}`, 60000);
+  // polled every minute only while the IPO is in progress (#291): a listed, archived or withdrawn IPO (or a stock watch,
+  // checked once a day) is read once; an announced issue starts polling the day before it opens
+  const { data, error, reload, updatedAt } = useApi<WatchDetail>(`/api/watches/${id}`);
   // while bidding is on, read the exchange's book every minute (profile: 1, 2 or 5 min, or off); each new exchange
   // timestamp becomes a snapshot
   const bookMs = useTimeFrames().tf.ipo_book_refresh_s * 1000;
   const book = useLive<{ live: boolean; book?: { as_of: string | null; total_times: string } | null; reason?: string }>(
-    `/api/watches/${id}/live`, { session: "ipo", everyMs: bookMs, active: data?.kind === "ipo" && data.active && bookMs > 0 });
+    // not even read once for a watch whose bidding is over (or not yet open)
+    data && bookBidding(data) ? `/api/watches/${id}/live` : null, { session: "ipo", everyMs: bookMs, active: !!data && bookBidding(data) && bookMs > 0 });
   const bookAsOf = book.data?.book?.as_of;
   useEffect(() => {
     if (bookAsOf) reload();
   }, [bookAsOf, reload]);
   const now = useNow(30000);
+  const poll = data != null && now != null && shouldPoll(data, now);
+  useEffect(() => {
+    if (!poll) return;
+    const t = setInterval(() => !document.hidden && reload(), 60000);
+    return () => clearInterval(t);
+  }, [poll, reload]);
   const [focus, setFocus] = useState<string>("all");
   const [stopError, setStopError] = useState<string | null>(null);
 
@@ -105,8 +123,11 @@ export default function WatchView() {
   const listingOpen = data.meta.listing_open as string | undefined;
   const listingClose = data.meta.listing_close as string | undefined;
   const openJob = listingJobs.find((j) => j.result.which === "open");
-  const gain = openJob?.result.gain_pct != null ? Number(openJob.result.gain_pct) : null;
-  const upper = gain != null && listingOpen ? Number(listingOpen) / (1 + gain / 100) : null;
+  // the listing check's result, else the gain the monitor recorded on the watch (kept when it became a stock watch)
+  const gainRaw = openJob?.result.gain_pct ?? data.meta.listing_gain_pct;
+  const gain = gainRaw != null ? Number(gainRaw) : null;
+  const upperRaw = data.meta.issue_price_upper as string | undefined;
+  const upper = upperRaw ? Number(upperRaw) : gain != null && listingOpen ? Number(listingOpen) / (1 + gain / 100) : null;
   const pending = data.jobs.filter((j) => j.status === "pending");
   const series = focus === "all" ? SERIES : SERIES.filter((s) => s.key === focus);
 
@@ -122,6 +143,7 @@ export default function WatchView() {
             <span className="num">{watchExchangeLabel(data)}</span>
             {data.kind === "stock" && <Link href={`/stocks/${encodeURIComponent(data.key ?? data.nse_symbol ?? "")}`} className="text-xs font-medium text-brand hover:underline">Stock page</Link>}
             {data.active ? <Badge status="live">watching</Badge> : <Badge status="closed">stopped</Badge>}
+            {data.phase && <PhaseBadge phase={data.phase} />}
             {data.active && <NextCheck next={pending[0] ? { kind: pending[0].kind, due_at: pending[0].due_at } : null} now={now} />}
           </span>
         }
@@ -129,11 +151,14 @@ export default function WatchView() {
           <StopWatch w={data} onDone={reload} onError={setStopError} />
         )}
       />
-      {ipo && data.active && (
+      {bookBidding(data) && (
         <LiveStamp session="ipo" live={bookMs > 0 ? book.live && !!book.data?.live : sessionOpen(book.status, "ipo")} autoRefresh={bookMs > 0}
           status={book.status} everyMs={bookMs || 60000}
           updatedAt={book.updatedAt ?? updatedAt} asOf={bookAsOf ?? last?.as_of} asOfLabel="Exchange book as of"
           onRefresh={book.reload} className="-mt-4" />
+      )}
+      {ipo && data.active && (data.phase === "listed" || data.phase === "archived") && (
+        <KeepWatching w={data} onDone={reload} onError={setStopError} />
       )}
       <ErrorNote error={stopError} />
       <ErrorNote error={error} onRetry={reload} />
@@ -160,7 +185,7 @@ export default function WatchView() {
         </Card>
       )}
 
-      {ipo && (listingOpen || listingJobs.length > 0) && (
+      {(listingOpen || (ipo && listingJobs.length > 0)) && (
         <Card title="Listing result" icon={<PartyPopper className="size-4" />} className="animate-scale-in"
           help="Listing gain = (listing price − upper price band) ÷ upper band. Retail allottees paid the upper band.">
           <div className="grid gap-4 sm:grid-cols-3">

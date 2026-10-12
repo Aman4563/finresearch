@@ -26,6 +26,7 @@ export const SHELL: Routes = {
 export async function mockApi(page: Page, routes: Routes) {
   const all: Routes = { ...SHELL, ...routes };
   const unrouted: string[] = [];
+  const hits: Record<string, number> = {};
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   // the first-run welcome tour would cover the page: mark it seen, as after a first visit (components/help/welcome.tsx)
@@ -36,6 +37,7 @@ export async function mockApi(page: Page, routes: Routes) {
     const CORS = cors(req.headers()["origin"]);
     if (req.method() === "OPTIONS") return route.fulfill({ status: 204, headers: CORS });
     const key = `${req.method()} ${url.pathname}`;
+    hits[key] = (hits[key] ?? 0) + 1;
     if (!(key in all)) {
       unrouted.push(key);
       return route.fulfill({ status: 404, headers: CORS, contentType: "application/json", body: JSON.stringify({ detail: "not in the e2e fixtures" }) });
@@ -45,6 +47,8 @@ export async function mockApi(page: Page, routes: Routes) {
     return route.fulfill({ status, headers: CORS, contentType: "application/json", body: JSON.stringify(body) });
   });
   return {
+    /** How many times the page has called `METHOD /path` so far (to check what it polls). */
+    count: (key: string) => hits[key] ?? 0,
     /** No uncaught page error, and every unanswered API call is one this page may leave unanswered. */
     expectClean(optional: string[] = []) {
       expect(errors, "uncaught errors in the page").toEqual([]);

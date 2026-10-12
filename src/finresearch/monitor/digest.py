@@ -151,7 +151,11 @@ def window_change(s: Session, today: date, days: int, *, last_two: bool = False)
 def ipo_events(s: Session, today: date, days: int = EVENT_DAYS) -> list[dict[str, Any]]:
     end = today + timedelta(days=days)
     out = []
+    from finresearch.monitor.phase import DONE, phase_of
+
     for w in s.scalars(select(Watch).where(Watch.kind == "ipo", Watch.active.is_(True))):
+        if phase_of(w, today) in DONE:  # listed or archived: its dates are history (lock-ins run as checks)
+            continue
         name = w.nse_symbol or w.label or f"watch {w.id}"
         for d, what in ((w.open_date, "opens for bidding"), (w.close_date, "closes (UPI mandate by 5 PM)"),
                         (w.allotment_date, "basis of allotment"), (w.listing_date, "lists")):  # fmt: skip

@@ -109,6 +109,10 @@ class WatchBody(BaseModel):
     kind: Literal["ipo", "stock"] = "ipo"
 
 
+class KeepWatchingBody(BaseModel):
+    keep: bool
+
+
 class StrategyLeg(BaseModel):
     right: Literal["call", "put", "future"]
     strike: Decimal = Field(gt=0, description="Strike (for a future: the entry price)")
@@ -824,22 +828,33 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
     # ------------------------------------------------------------------ monitoring
     @app.get("/api/watches")
     def watches() -> list[dict[str, Any]]:
+        """Every watch with its IPO phase (#291), ordered: active before stopped, then by phase (bidding, awaiting
+        allotment or listing, announced, stock watches, recently listed, archived), then the latest close first."""
+        from finresearch.fincalc.dates import today_ist
+        from finresearch.monitor.phase import phase_of, sort_key
         from finresearch.monitor.watch import watch_json
 
         with session_scope() as s:
+            today = today_ist()
+            rows = [(w, co, phase_of(w, today)) for w, co in s.execute(select(Watch, Company)
+                    .join(Company, Company.id == Watch.company_id))]  # fmt: skip
             out = []
-            for w, co in s.execute(select(Watch, Company).join(Company, Company.id == Watch.company_id)
-                                   .order_by(Watch.active.desc(), Watch.close_date.desc())):  # fmt: skip
+            for w, co, _ in sorted(rows, key=lambda r: sort_key(r[0], r[2])):
                 nxt = s.scalars(select(MonitorJob).where(MonitorJob.watch_id == w.id, MonitorJob.status == "pending")
                                 .order_by(MonitorJob.due_at)).first()  # fmt: skip
                 last = s.scalars(select(SubscriptionSnapshotRow).where(SubscriptionSnapshotRow.nse_symbol == w.nse_symbol)
                                  .order_by(SubscriptionSnapshotRow.as_of.desc())).first() if w.nse_symbol else None  # fmt: skip
                 unread = s.scalar(select(func.count()).select_from(Alert).where(Alert.watch_id == w.id,
                                                                                Alert.read_at.is_(None)))  # fmt: skip
+                # pending lock-in ends, so the dashboard calendar needs no per-watch detail poll for a listed IPO
+                lockins = s.scalars(select(MonitorJob).where(MonitorJob.watch_id == w.id, MonitorJob.kind == "lockin",
+                                                             MonitorJob.status == "pending")
+                                    .order_by(MonitorJob.due_at)).all() if w.active else []  # fmt: skip
                 out.append({**watch_json(w, co), "unread_alerts": unread,
                             "next_check": {"kind": nxt.kind, "due_at": _iso(nxt.due_at)} if nxt else None,
                             "last_subscription": {"as_of": _iso(last.as_of), "total_times": str(last.total_times)}
-                            if last else None})  # fmt: skip
+                            if last else None,
+                            "pending_lockins": [{"id": j.id, "due_at": _iso(j.due_at), "slot": j.slot} for j in lockins]})  # fmt: skip
             return out
 
     @app.get("/api/monitor/schedule")
@@ -867,6 +882,19 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
         from finresearch.monitor.watch import stop_watch
 
         out = stop_watch(watch_id)
+        if out is None:
+            raise HTTPException(404, f"unknown watch {watch_id}")
+        return out
+
+    @app.post("/api/watches/{watch_id}/keep")
+    def keep_watching(watch_id: int, body: KeepWatchingBody) -> dict[str, Any]:
+        """Keep watching a listed IPO as a stock after it is archived (#291); at once if it is archived already."""
+        from finresearch.monitor.phase import set_keep_watching
+
+        try:
+            out = set_keep_watching(watch_id, body.keep)
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from e
         if out is None:
             raise HTTPException(404, f"unknown watch {watch_id}")
         return out

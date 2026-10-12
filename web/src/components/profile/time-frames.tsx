@@ -151,6 +151,14 @@ export function TimeFramesCard({ tf, watch, onTf, onWatch }: {
               </select>
               <span className="block text-[11px] text-muted">After the 3:30 pm close. Later catches more results filed in the evening.</span>
             </label>
+            <label className="block space-y-1.5">
+              <span className="block text-xs font-medium text-muted">Archive a listed IPO after</span>
+              <select aria-label="Archive a listed IPO after" className={cx(inputClass, "w-full")} value={watch.ipo_archive_trading_days ?? 10}
+                onChange={(e) => onWatch({ ...watch, ipo_archive_trading_days: Number(e.target.value) })}>
+                {[5, 10, 15, 20, 30, 60].map((n) => <option key={n} value={n}>{n} trading days{n === 10 ? " (default)" : ""}</option>)}
+              </select>
+              <span className="block text-[11px] text-muted">Once the listing-day close is recorded and its forecasts have resolved (at most 60 days). Lock-in alerts still run.</span>
+            </label>
             <div className="space-y-2">
               <Switch checked={quiet} label="Quiet hours"
                 description="The alert bell shows no count or animation for new info alerts in this window. Alerts are still recorded; warnings still show."

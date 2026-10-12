@@ -3,7 +3,7 @@
 // break them; what they pin down is that an unknown or stale value is labelled as such.
 import { type Page, expect, test } from "@playwright/test";
 
-import { CLAIM, DOC_LINES, GOAL_PLAN_LOWER, REPORT, SIGNAL, SNAPSHOT, TAX, WEALTH } from "./fixtures";
+import { ARCHIVED_WATCH, ARCHIVED_WATCHES, CLAIM, DOC_LINES, GOAL_PLAN_LOWER, REPORT, SIGNAL, SNAPSHOT, TAX, WEALTH } from "./fixtures";
 import { expectNoHorizontalOverflow, mockApi } from "./mock-api";
 
 const phone = (page: Page) => (page.viewportSize()?.width ?? 1280) < 640;
@@ -125,4 +125,24 @@ test("wealth: a goal run on the priced part reads 'at least' / 'at most' and nam
   await expect(page.getByText(/not reachable/i)).toHaveCount(0);
   if (phone(page)) await expectNoHorizontalOverflow(page);
   api.expectClean();
+});
+
+test("monitor: an archived IPO watch is read once, never polled, and shows its listing gain", async ({ page }) => {
+  await page.clock.install({ time: new Date("2026-10-12T05:00:00Z") });
+  const api = await mockApi(page, {
+    "GET /api/watches": ARCHIVED_WATCHES,
+    "GET /api/watches/77": ARCHIVED_WATCH,
+    "GET /api/companies": [],
+  });
+  await page.goto("/monitor");
+  await page.getByRole("tab", { name: /^Archive/ }).click(); // an archived IPO is in the Archive group, not Active
+  await expect(page.getByText("Example Listed Ltd").first()).toBeVisible();
+  await expect(page.getByText("+20.00%").first()).toBeVisible(); // the listing gain replaces the subscription meter
+  await page.goto("/monitor/77");
+  await expect(page.getByRole("heading", { name: "Example Listed Ltd" })).toBeVisible();
+  await page.clock.fastForward("05:00"); // five minutes: a polled page would have fetched five more times
+  await page.waitForTimeout(200);
+  expect(api.count("GET /api/watches/77")).toBe(1);
+  expect(api.count("GET /api/watches/77/live")).toBe(0);
+  api.expectClean(["GET /api/"]);
 });

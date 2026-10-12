@@ -72,7 +72,12 @@ def targets(session: Session, r: AlertRule) -> list[Target]:
         if r.instrument:
             w = next((w for w in watches if w.key == r.instrument or w.nse_symbol == r.instrument), None)
             return [Target(r.instrument, w.id if w else None, w.label if w else None)]
-        return [Target(w.key, w.id, w.label) for w in watches if w.active and w.key]
+        from finresearch.fincalc.dates import today_ist
+        from finresearch.monitor.phase import DONE, phase_of
+
+        # an IPO rule (subscription, bidding days) means nothing once the issue has listed or was withdrawn
+        live = [w for w in watches if w.active and w.key and phase_of(w, today_ist()) not in DONE]
+        return [Target(w.key, w.id, w.label) for w in live]
     if r.instrument:
         return [Target(r.instrument)]
     prefix = {"fund": "mf-", "bond": "bond-"}.get(r.kind)

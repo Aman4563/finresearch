@@ -3,7 +3,7 @@
 import type { Holding, Snapshot, TaxView } from "@/components/portfolio/types";
 import type { Signal } from "@/components/signal";
 import type { GoalPlan, Wealth } from "@/components/wealth/types";
-import type { Claim, Report } from "@/lib/api";
+import type { Claim, Report, WatchDetail, WatchSummary } from "@/lib/api";
 
 const holding = (h: Partial<Holding> & Pick<Holding, "id" | "name" | "asset_type">): Holding => ({
   account: "Example Broker", ikey: `e2e-${h.id}`, isin: null, nse_symbol: null, bse_code: null, scheme_code: null,
@@ -161,3 +161,23 @@ export const GOAL_PLAN_LOWER = {
   method: "Seeded lognormal Monte Carlo.", disclaimer: "Not advice.", funded_complete: false, funded_why: nw.missing[0],
   bound: "lower", unpriced: ["Example Beta Ltd"], unpriced_share_pct: 45.45,
 } satisfies GoalPlan;
+
+// #291: an IPO that listed weeks ago and was archived; its lock-in checks still run, its book never changes
+const ARCHIVED_BASE: WatchSummary = {
+  id: 77, kind: "ipo", company: "example-listed", company_name: "Example Listed Ltd", nse_symbol: "EXLIST",
+  exchange: "NSE", bse_code: null, key: "EXLIST", label: "EXLIST", open_date: "2026-09-01", close_date: "2026-09-03",
+  allotment_date: "2026-09-04", listing_date: "2026-09-08", anchor_shares: "1000000", active: true, phase: "archived",
+  meta: { phase: "archived", listing_confirmed: true, listing_open: "120", listing_close: "118.5",
+    listing_gain_pct: "20.00", issue_price_upper: "100" },
+  unread_alerts: 0, next_check: { kind: "lockin", due_at: "2026-10-04T03:30:00Z" },
+  last_subscription: { as_of: "2026-09-03T11:30:00Z", total_times: "12.5" },
+  pending_lockins: [{ id: 901, due_at: "2026-10-04T03:30:00Z", slot: "EXLIST:lockin:2026-10-04:anchor (50%)" }],
+};
+export const ARCHIVED_WATCHES: WatchSummary[] = [ARCHIVED_BASE];
+export const ARCHIVED_WATCH: WatchDetail = {
+  ...ARCHIVED_BASE,
+  jobs: [{ id: 901, kind: "lockin", slot: "EXLIST:lockin:2026-10-04:anchor (50%)", due_at: "2026-10-04T03:30:00Z",
+    status: "pending", attempts: 0, error: null, result: {} }],
+  subscription: [{ as_of: "2026-09-03T11:30:00Z", source: "nse_combined", total_times: "12.5", categories: [] }],
+  alerts: [],
+};

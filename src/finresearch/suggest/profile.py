@@ -201,6 +201,8 @@ class WatchWindows(BaseModel):
         None, pattern=_HHMM
     )  # alerts badge stays quiet from ... (the alerts are kept)
     quiet_end: str | None = Field(None, pattern=_HHMM)  # ... until (may cross midnight)
+    # a listed IPO watch moves to the archive this many exchange trading days after its listing (monitor.phase)
+    ipo_archive_trading_days: int = Field(10, ge=1, le=60)
 
     @field_validator("ipo_check_times")
     @classmethod
