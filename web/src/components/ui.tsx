@@ -9,7 +9,7 @@ export const cx = (...c: (string | false | null | undefined)[]) => c.filter(Bool
 
 // ------------------------------------------------------------------ status badges
 
-type Tone = "neutral" | "brand" | "gain" | "loss" | "warn" | "info" | "accent";
+export type Tone = "neutral" | "brand" | "gain" | "loss" | "warn" | "info" | "accent";
 
 const TONE: Record<Tone, string> = {
   neutral: "bg-background-subtle text-muted ring-border",

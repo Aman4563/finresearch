@@ -1261,6 +1261,104 @@ def fno_derive(
     console.print(f"{len(days)} days, {n} IV rows, {c} contracts")
 
 
+backtest_app = typer.Typer(
+    no_args_is_help=True,
+    help="Backtest the pre-registered F&O strategies on the stored bhavcopy history (#307)",
+)
+fno_app.add_typer(backtest_app, name="backtest")
+
+
+@backtest_app.command("run")
+def fno_backtest_run(
+    history_url: str | None = typer.Option(
+        None,
+        help="Database holding the F&O history, read only (e.g. postgresql+psycopg://localhost/finresearch_fnohist); "
+        "default: the app's database",
+    ),
+    in_sample_only: bool = typer.Option(False, help="Replay 2022-01..2024-06 only (never reads a later day)"),
+    json_out: Path | None = typer.Option(
+        None, "--json", help="Also write the full report (every trade) here"
+    ),
+    store: bool = typer.Option(True, help="Save the report in the app's database (fno_backtest_run)"),
+) -> None:
+    """Replay the pre-registered strategies (src/finresearch/backtest/specs.py) with real costs and slippage and judge
+    them against the pass criteria stated before the out-of-sample run. Refuses out of sample if specs.py changed
+    after its registration (backtest/prereg.py)."""
+    from sqlalchemy.engine import make_url
+
+    from finresearch.backtest import dbhistory, evaluate, specs
+    from finresearch.backtest import store as bstore
+    from finresearch.db import session_scope
+
+    url = history_url or get_settings().database_url
+    h = dbhistory.DbHistory(history_url)
+    stock = dbhistory.top_stock(h, specs.IS_START, specs.IS_END)
+    try:
+        rep = evaluate.evaluate(h, stock=stock, source=make_url(url).database or "?", oos=not in_sample_only)
+    except evaluate.PreregistrationError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(2) from e
+    rep = json.loads(json.dumps(rep, default=str))
+    if json_out:
+        json_out.write_text(json.dumps(rep, indent=1))
+        console.print(f"report: {json_out}")
+    if store:
+        with session_scope() as s:
+            console.print(f"saved as run {bstore.save(s, rep)}")
+    _backtest_table(rep)
+
+
+@backtest_app.command("report")
+def fno_backtest_report(
+    json_in: Path | None = typer.Option(None, "--json", help="Read a report written by `run --json` instead"),
+) -> None:
+    """The latest saved evaluation: each strategy's status and out-of-sample evidence."""
+    from finresearch.backtest import store as bstore
+    from finresearch.db import session_scope
+
+    if json_in:
+        rep = json.loads(json_in.read_text())
+    else:
+        with session_scope() as s:
+            run = bstore.latest_run(s)
+            if run is None:
+                console.print("no backtest saved yet: run `finresearch fno backtest run`")
+                raise typer.Exit(1)
+            rep = bstore.run_json(s, run)
+    _backtest_table(rep)
+
+
+def _num(v: float | None, d: int = 2) -> str:
+    return "—" if v is None else f"{v:,.{d}f}"
+
+
+def _backtest_table(rep: dict) -> None:
+    oos = rep.get("oos_evaluated")
+    span = "out of sample " + " to ".join(rep["windows"]["oos"]) if oos else "in-sample only"
+    t = Table(title=f"F&O backtest {rep['version']} on {rep['source']} · registration "
+              f"{rep['registration_hash'][:12]} · {rep['variants_tried']} variants · {span}")  # fmt: skip
+    for c in (
+        "strategy",
+        "status",
+        "trades",
+        "₹/trade",
+        "t",
+        "CI low",
+        "max DD %",
+        "DSR",
+        "win %",
+        "reasons",
+    ):
+        t.add_column(c)
+    for r in rep["strategies"]:
+        w = (r.get("windows") or {}).get("oos" if oos else "is") or {}
+        win = None if w.get("win_rate") is None else w["win_rate"] * 100
+        t.add_row(r["key"], r["status"], str(w.get("trades", "—")), _num(w.get("expectancy"), 0),
+                  _num(w.get("t_stat")), _num(w.get("ci_low"), 0), _num(w.get("max_drawdown_pct"), 1),
+                  _num(w.get("deflated_sharpe")), _num(win, 0), "; ".join(r.get("reasons", []))[:160])  # fmt: skip
+    console.print(t)
+
+
 @fno_app.command("status")
 def fno_status() -> None:
     """Backfill coverage: days by status, rows stored, and the IV series per underlying."""
