@@ -1359,6 +1359,21 @@ def _backtest_table(rep: dict) -> None:
     console.print(t)
 
 
+lab_app = typer.Typer(no_args_is_help=True, help="F&O Strategy Lab background work (#318)")
+fno_app.add_typer(lab_app, name="lab")
+
+
+@lab_app.command("run-job")
+def fno_lab_run_job(run_id: int) -> None:
+    """Run one queued Strategy Lab backtest (the API starts this worker; it stops itself after the runtime cap)."""
+    from finresearch.stratlab import jobs
+
+    status = jobs.execute(run_id)
+    console.print(f"lab run {run_id}: {status}")
+    if status != "done":
+        raise typer.Exit(1)
+
+
 @fno_app.command("status")
 def fno_status() -> None:
     """Backfill coverage: days by status, rows stored, and the IV series per underlying."""

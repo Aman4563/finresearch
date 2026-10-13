@@ -1632,6 +1632,10 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
     from finresearch.api.fno_backtests import add_fno_backtest_routes
 
     add_fno_backtest_routes(app)
+    # F&O Strategy Lab: user strategies, background backtests, variants count, paper hand-off (#318)
+    from finresearch.api.fno_lab import add_fno_lab_routes
+
+    add_fno_lab_routes(app, clock=clock)
 
     # ------------------------------------------------------------------ buy/sell signals (finresearch.signals)
     @app.get("/api/signals")
