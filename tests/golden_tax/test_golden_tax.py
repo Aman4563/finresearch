@@ -30,6 +30,7 @@ from finresearch.portfolio.tax import (
     evaluate,
     fy_summary,
     is_debt_security,
+    lot_subscription,
     redemption_flags,
 )
 
@@ -70,12 +71,17 @@ def run_engine(case: dict[str, Any]) -> dict[str, Any]:
             tax_class = auto_tax_class(h.get("asset_type", "stock"), h["name"], None, None, sym, isin)[0]
         debt = bool(h.get("debt_security")) or is_debt_security(isin, h["name"], sym)
         ht = HoldingTax(hid, h["name"], "Demat", isin, tax_class, bool(h.get("listed", True)),
-                        _dec(h.get("fmv_2018")), bool(h.get("sgb_original_subscriber")), debt=debt)  # fmt: skip
+                        _dec(h.get("fmv_2018")), h.get("sgb_original_subscriber"), debt=debt)  # fmt: skip
         for d in book.disposals:
             rbi, htm = redemption_flags(kind_of.get(d.txn_id, "sell"), meta_of.get(d.txn_id), tax_class)
+            # #316: the lot's acquiring event says whether its units were subscribed at issue or bought on the exchange
+            lot_txn = d.lot.txn_id if d.lot is not None else None
+            sub = (
+                lot_subscription(kind_of.get(lot_txn), meta_of.get(lot_txn)) if lot_txn is not None else None
+            )
             r = evaluate(DisposalRow(ht, d.acquired, d.sold, d.quantity, d.cost, d.proceeds, d.stt_paid,
                                      "intraday" if d.intraday else d.origin, rbi_redemption=rbi,
-                                     held_to_maturity=htm, txn_id=d.txn_id))  # fmt: skip
+                                     held_to_maturity=htm, txn_id=d.txn_id, subscribed=sub))  # fmt: skip
             rows.append(r)
             c = r.cls
             intraday = r.origin == "intraday"

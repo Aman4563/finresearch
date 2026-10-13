@@ -95,14 +95,20 @@ def test_redemption_flags():
     assert redemption_flags("sell", {"rbi_redemption": True}, "sgb") == (True, False)
 
 
-def test_sgb_redemption_after_apr_2026_needs_original_subscriber_held_to_maturity():
+def test_sgb_redemption_after_apr_2026_needs_the_original_subscriber():
     bought, sold = date(2018, 11, 20), date(2026, 11, 20)
     assert classify("sgb", bought, sold, rbi_redemption=True, original_subscriber=True,
                     held_to_maturity=True).term == "exempt"  # fmt: skip
-    # premature (not held to maturity) or a secondary-market buyer: a listed security held > 12 months
+    # #316: a premature RBI redemption (after year 5) by the original subscriber is exempt too (was taxed before)
     c = classify("sgb", bought, sold, rbi_redemption=True, original_subscriber=True, held_to_maturity=False)
-    assert (c.term, c.rate) == ("long", D("0.125"))
-    assert classify("sgb", bought, sold, rbi_redemption=True, held_to_maturity=True).term == "long"
+    assert (c.term, c.rate) == ("exempt", D(0))
+    # a secondary-market buyer: a listed security held > 12 months, at maturity or early
+    for htm in (True, False):
+        c = classify(
+            "sgb", bought, sold, rbi_redemption=True, original_subscriber=False, held_to_maturity=htm
+        )
+        assert (c.term, c.rate) == ("long", D("0.125"))
+    assert classify("sgb", bought, sold, rbi_redemption=True, held_to_maturity=True).term == "unknown"
     # before 1-Apr-2026 any RBI redemption (early ones too) is exempt under s.47(viic)
     assert classify("sgb", bought, date(2025, 11, 20), rbi_redemption=True).term == "exempt"
 
