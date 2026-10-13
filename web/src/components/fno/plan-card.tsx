@@ -98,9 +98,10 @@ function PlanDetail({ plan }: { plan: TradePlan }) {
         <Row label="Costs to expiry">{rs(plan.costs)}</Row>
       </div>
       <div>
-        <Row label="Entry (limit)" help="Limit-price guidance from the live bid/ask: the mid is the patient price, the far side fills now. Unknown when the chain has no bid/ask (Groww's has none).">
+        <Row label="Entry (limit)" help="Limit-price guidance from the live bid/ask: the mid is the patient price, the far side fills now. Groww's chain has no bid/ask, so it is read from NSE's chain (named below with its time); unknown when neither has it.">
           {e?.status === "ok" ? `net ${px(Math.abs(e.net_mid!))} ${e.net_mid! >= 0 ? "credit" : "debit"} (fill now ${px(Math.abs(e.net_fill_now!))})` : "unknown (no live bid/ask)"}
         </Row>
+        {e?.status === "ok" && e.source && <p className="text-[11px] text-muted">{e.source}{e.slippage_inr != null ? ` · filling now instead of at the mid costs ${rs(e.slippage_inr)}` : ""}</p>}
         {e?.legs.map((l) => (
           <p key={`${l.side}${l.right}${l.strike}`} className="num text-[11px] text-muted">
             {l.side} {l.strike} {l.right}: {l.status === "ok" ? `limit ${px(l.limit_from)}–${px(l.limit_to)} (bid ${px(l.bid)} / ask ${px(l.ask)})` : `no bid/ask; last ${px(l.last)}`}
