@@ -1,0 +1,88 @@
+{
+ "id": "g35_sgb_exchange_bought_lot_redeemed_after_apr2026",
+ "title": "SGB lot bought on the exchange (a broker trade) redeemed by RBI in Sep-2026: taxable even though the holding setting says original subscriber; LT 12.5 %",
+ "covers": [
+  "SGB secondary-market lot",
+  "lot acquisition source overrides the holding setting",
+  "LT 12.5 % non-equity listed"
+ ],
+ "rules": [
+  "https://cleartax.in/s/sovereign-gold-bonds (secondary source, read 13-Oct-2026: 'The exclusion from capital gains taxation at redemption is now available only to investors who originally subscribed to the SGB and held it continuously till redemption. Investors who purchase SGBs from the secondary market are not eligible ... even if the bonds are held till redemption'). The Budget 2026 memorandum (indiabudget.gov.in/doc/memo.pdf) returned HTTP 403 on 13-Oct-2026 and was not re-read",
+  "A lot acquired by an exchange trade (trade id / order id on the buy) was bought in the secondary market, so its holder is not the original subscriber of those units",
+  "Listed security (SGBs trade on NSE/BSE): long-term if held more than 12 months (Income-tax Act 1961 s.2(42A) first proviso as amended by Finance (No.2) Act 2024; carried into the 2025 Act); LTCG 12.5 % without indexation (s.112 / s.197), no s.112A Rs 1.25 lakh exemption (not STT-paid equity); 4 % cess"
+ ],
+ "derivation": [
+  "Exchange buy 2022-01-12 (trade id T-1, order id O-1): 12 @ 4,800.00 -> cost 57,600.00.",
+  "RBI redemption 2026-09-14: 12 @ 11,500.00 -> proceeds 1,38,000.00; fy 2027.",
+  "Secondary-market units -> not exempt -> transfer of a listed security; held 2022-01-12 -> 2026-09-14 (> 12 months) -> long, 12.5 %.",
+  "Gain 1,38,000 - 57,600 = 80,400.00; tax 80,400 x 0.125 = 10,050.00; cess 402.00; total 10,452.00."
+ ],
+ "interpretive": false,
+ "derived_by": "implementer (#316), by hand from the cited rule before the engine change",
+ "slab_rate": "0.30",
+ "holdings": [
+  {
+   "name": "SGB 2019-20 SERIES II",
+   "tax_class": "sgb",
+   "listed": true,
+   "sgb_original_subscriber": true,
+   "events": [
+    {
+     "day": "2022-01-12",
+     "kind": "buy",
+     "quantity": "12",
+     "price": "4800.00",
+     "charges": "0",
+     "stt_paid": false,
+     "meta": {
+      "exchange": "NSE",
+      "trade_id": "T-1",
+      "order_id": "O-1"
+     }
+    },
+    {
+     "day": "2026-09-14",
+     "kind": "redemption",
+     "quantity": "12",
+     "price": "11500.00",
+     "charges": "0",
+     "stt_paid": false,
+     "meta": {
+      "held_to_maturity": false
+     }
+    }
+   ]
+  }
+ ],
+ "expected": {
+  "disposals": [
+   {
+    "holding": "SGB 2019-20 SERIES II",
+    "sold": "2026-09-14",
+    "acquired": "2022-01-12",
+    "quantity": "12",
+    "cost": "57600.00",
+    "proceeds": "138000.00",
+    "gain": "80400.00",
+    "term": "long",
+    "rate": "0.125"
+   }
+  ],
+  "open_lots": [],
+  "fy": [
+   {
+    "fy": 2027,
+    "exemption_used": "0.00",
+    "tax": "10050.00",
+    "cess": "402.00",
+    "total": "10452.00",
+    "complete": true,
+    "unknown_count": 0,
+    "intraday_count": 0,
+    "exempt_total": "0.00",
+    "losses_carried_short": "0.00",
+    "losses_carried_long": "0.00"
+   }
+  ]
+ }
+}

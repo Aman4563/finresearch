@@ -1,6 +1,7 @@
 "use client";
 
 import { Activity, Calculator, Crosshair, Layers, Loader2, Minus, Plus, RefreshCw, Search, Sparkles, Target, Trash2, TrendingUp } from "lucide-react";
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { InteractivePayoff, OiButterfly } from "@/components/fno/charts";
@@ -518,6 +519,7 @@ export default function Fno() {
           </EmptyState>
         )
       )}
+      <p className="text-xs text-muted">Learn more: <Link className="text-brand hover:underline" href="/learn/options#iv-rank">What is IV rank?</Link> · <Link className="text-brand hover:underline" href="/learn/options#greeks">the greeks</Link> · <Link className="text-brand hover:underline" href="/learn/strategies">strategy catalogue</Link> · <Link className="text-brand hover:underline" href="/learn/risk#sizing">position sizing</Link></p>
     </div>
   );
 }

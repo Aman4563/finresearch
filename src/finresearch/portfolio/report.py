@@ -25,8 +25,10 @@ from finresearch.portfolio.tax import (
     evaluate,
     fy_summary,
     harvest,
+    holding_subscriber,
     is_debt_security,
     is_listed,
+    lot_subscription,
     redemption_flags,
 )
 from finresearch.portfolio.valuation import (
@@ -81,7 +83,7 @@ def holding_tax(h: PortfolioHolding, category: str | None = None) -> HoldingTax:
 
     blocked = tuple((date.fromisoformat(a["ex_date"]), a["reason"]) for a in actions_of(h.meta))
     return HoldingTax(h.id, h.name, h.account, h.isin, eff, is_listed(h.asset_type, h.name, h.meta), h.fmv_2018,
-                      bool((h.meta or {}).get("sgb_original_subscriber")), blocked,
+                      holding_subscriber(h.meta), blocked,
                       debt=h.asset_type == "stock" and is_debt_security(h.isin, h.name, h.nse_symbol))  # fmt: skip
 
 
@@ -262,7 +264,7 @@ def snapshot(s: Session, prices: dict[int, PriceInfo], today: date) -> dict[str,
             "scheme_code": h.scheme_code or p.scheme_code, "category": category, "sector": h.sector or p.industry, "sector_label": sector,
             "tax_class": eff, "tax_class_auto": auto, "tax_class_why": why, "tax_class_override": h.tax_class,
             "listed": is_listed(h.asset_type, h.name, h.meta), "fmv_2018": _f(h.fmv_2018, 4),
-            "sgb_original_subscriber": bool((h.meta or {}).get("sgb_original_subscriber")),
+            "sgb_original_subscriber": holding_subscriber(h.meta),  # True / False / None not set (#316)
             "units": _f(units, 4), "cost": _f(cost) if known else None, "cost_known": known,
             "avg_cost": _f(cost / units, 4) if known and units > 0 else None,
             "price": _f(p.price, 4), "price_as_of": p.as_of, "price_source": p.source, "price_error": p.error,
@@ -394,14 +396,19 @@ def dividends(data: Loaded) -> dict[str, Any]:
 def disposal_rows(data: Loaded, categories: dict[int, str | None] | None = None) -> list[DisposalRow]:
     categories = categories or {}
     txn_of = {t.id: t for ts in data.txns.values() for t in ts}
+    lot_of = {x.id: x for xs in data.lots.values() for x in xs}
     out = []
     for h in data.holdings:
         ht = holding_tax(h, categories.get(h.id))
         for d in data.disposals.get(h.id, []):
             t = txn_of.get(d.txn_id)
             rbi, htm = redemption_flags(t.kind if t else "sell", t.meta if t else None, ht.tax_class)
+            lot = lot_of.get(d.lot_id) if d.lot_id is not None else None
+            bought = txn_of.get(lot.txn_id) if lot is not None and lot.txn_id is not None else None
+            sub = lot_subscription(bought.kind, bought.meta) if bought is not None else None
             out.append(evaluate(DisposalRow(ht, d.acquired, d.sold, d.quantity, d.cost, d.proceeds, d.stt_paid,
-                                            d.origin, rbi_redemption=rbi, held_to_maturity=htm, txn_id=d.txn_id)))  # fmt: skip
+                                            d.origin, rbi_redemption=rbi, held_to_maturity=htm, txn_id=d.txn_id,
+                                            subscribed=sub)))  # fmt: skip
     return out
 
 
@@ -414,7 +421,8 @@ def disposal_json(r: DisposalRow) -> dict[str, Any]:
             "gain": _f(r.gain), "term": c.term if c else None, "bucket": c.bucket if c else None,
             "rate_pct": None if c is None or c.rate is None else float(c.rate * 100),
             "slab": bool(c and c.rate is None and c.term == "short"), "rule": c.rule.id if c and c.rule else None,
-            "holding_days": c.holding_days if c else None, "stt_paid": r.stt_paid, "notes": r.notes}  # fmt: skip
+            "holding_days": c.holding_days if c else None, "stt_paid": r.stt_paid, "notes": r.notes,
+            "reason": c.reason if c else None}  # fmt: skip
 
 
 def tax_view(s: Session, prices: dict[int, PriceInfo], today: date, slab: Decimal) -> dict[str, Any]:
