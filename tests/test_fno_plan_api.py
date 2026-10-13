@@ -223,3 +223,32 @@ def test_context_never_changes_the_verdict():
     assert skewed.pcr() != chain().pcr()
     again = tpl.build(skewed, 65, legs, x)
     assert (again["action"], again["failed"]) == (base["action"], base["failed"])
+
+
+def test_capital_unset_says_so_and_related_specs_do_not_borrow_paper_trades(client):
+    from finresearch.signals import tradeplan as tpl
+
+    _profile("0")  # the default: not set
+    card = client.post("/api/fno/plan", json={"symbol": "NIFTY", "expiry": "2026-10-06", "legs": PCS}).json()
+    assert card["action"] == "AVOID" and card["reasons"][0].startswith("F&O capital is not set")
+    # a paper trade tagged with the NIFTY monthly recipe but of another shape: it must not count for a card that only
+    # relates to that recipe (7 days to expiry is outside its 30-45 day window)
+    tagged = {"symbol": "NIFTY", "label": "plan:nifty_pcs_m", "status": "closed", "net_pnl": -500.0,
+              "legs": [tpl.tp.PlanLeg("call", 23000, "sell"), tpl.tp.PlanLeg("call", 23200, "buy")]}  # fmt: skip
+    from finresearch.adapters.nse_fno import parse_index_history
+
+    closes = [
+        float(c)
+        for _, c in parse_index_history(
+            json.loads((FNO / "indices_history_NIFTY50_202606_202609.json").read_text())
+        )
+    ]
+    x = tpl.Inputs(today=date(2026, 9, 29), closes=closes, iv_series=[], capital=1_000_000, max_loss_pct=2,
+                   brokerage=20, defined_risk_only=True, rate=0.065, paper=[tagged])  # fmt: skip
+    got = tpl.build(chain(), 65, [fs.LegIn("put", 22600, "sell"), fs.LegIn("put", 22400, "buy")], x)
+    assert got["evidence"]["match"] == "related" and got["paper"]["trades"] == 0
+    # 60 lots a leg with room for 3 sets would exceed the paper book's 100-lot limit: capped
+    big = tpl.build(chain(), 65, [fs.LegIn("put", 22600, "sell", 60), fs.LegIn("put", 22400, "buy", 60)],
+                    tpl.Inputs(today=date(2026, 9, 29), closes=closes, iv_series=[], capital=1e9, max_loss_pct=2,
+                               brokerage=20, defined_risk_only=True, rate=0.065))  # fmt: skip
+    assert max(x["lots"] for x in big["legs"]) <= 100

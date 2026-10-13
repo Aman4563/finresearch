@@ -265,11 +265,15 @@ def build(chain, lot: int, legs_in: list[fs.LegIn], x: Inputs, *, spec: Any | No
     ev = _evidence(kind, sym, dte, x, spec)
     a0 = _analyse(chain, lot, legs_in, x)
     sz = tp.size(a0["max_loss"], a0["costs"]["entry"]["total"], x.budget, proven=ev["level"] == "proven")
-    m = max(sz.suggested, 1)
+    # the paper book takes at most 100 lots a leg (api/fno_book.PaperLegIn): never size a plan beyond it
+    m = max(1, min(sz.suggested, 100 // max(y.lots for y in legs_in)))
     legs = [fs.LegIn(y.right, y.strike, y.side, y.lots * m, y.premium) for y in legs_in]
     a = _analyse(chain, lot, legs, x) if m > 1 else a0
     _, factors, failed = fs.assess(a, defined_risk_only=x.defined_risk_only)
     reasons = [f"{f.name}: {f.explanation}" for f in factors if f.name in failed]
+    if x.capital <= 0:
+        reasons.insert(0, "F&O capital is not set in your profile, so no size fits a budget: set F&O capital and the "
+                          "max-loss % on the profile page.")  # fmt: skip
     if sz.suggested == 0 and a0["max_loss"] is not None and "Max loss within your F&O budget" not in failed:
         failed.append("Max loss within your F&O budget")  # max loss fits but max loss + entry costs does not
         reasons.append(f"Sizing: {sz.reason}.")
@@ -310,7 +314,7 @@ def build(chain, lot: int, legs_in: list[fs.LegIn], x: Inputs, *, spec: Any | No
         "kind": kind, "action": action, "qualifier": qualifier, "label": label, "failed": failed, "reasons": reasons,
         "legs": [{"right": y.right, "strike": y.strike, "side": y.side, "lots": y.lots, "qty": al["qty"],
                   "last": al["premium"]} for y, al in zip(legs, a["legs"], strict=True)],
-        "size": {"multiple": sz.multiple, "suggested": sz.suggested, "budget": round(sz.budget, 2),
+        "size": {"multiple": sz.multiple, "suggested": m if sz.suggested else 0, "budget": round(sz.budget, 2),
                  "risk_per_set": None if sz.risk_per_multiple is None else round(sz.risk_per_multiple, 2),
                  "reason": sz.reason, "capital": x.capital, "max_loss_pct": x.max_loss_pct},
         "entry": {**limits, "levels_priced_at": entry_src},
@@ -328,7 +332,8 @@ def build(chain, lot: int, legs_in: list[fs.LegIn], x: Inputs, *, spec: Any | No
         "adjustments": {"rules": ADJUST[family], "note": ADJUST_NOTE},
         "invalidation": _invalidation(kind, legs, spot, x.events, x.today, expiry, x.is_index),
         "evidence": {k: v for k, v in ev.items() if k != "spec"},
-        "paper": paper_record(x.paper, sym, kind, ev["spec_key"]),
+        # the plan:<spec> tag only counts for an exact match: a related spec's trades are another underlying's
+        "paper": paper_record(x.paper, sym, kind, ev["spec_key"] if ev["match"] == "exact" else None),
         "iv_context": a["iv_context"], "checks": [asdict(f) for f in factors],
         "notes": a["notes"],
         "disclaimer": "A plan to act on by hand, at your own risk: nothing is ordered. Model levels assume today's "
