@@ -1,0 +1,84 @@
+{
+ "id": "g33_sgb_original_subscriber_maturity_after_apr2026",
+ "title": "SGB subscribed at issue (the lot's own record says so), redeemed by RBI on maturity in Nov-2026: exempt for the original subscriber",
+ "covers": [
+  "SGB redemption after 1-Apr-2026",
+  "original subscriber from the lot's acquisition source",
+  "SGB maturity exempt"
+ ],
+ "rules": [
+  "https://cleartax.in/s/sovereign-gold-bonds (secondary source, read 13-Oct-2026: 'The exclusion from capital gains taxation at redemption is now available only to investors who originally subscribed to the SGB and held it continuously till redemption. Investors who purchase SGBs from the secondary market are not eligible ... even if the bonds are held till redemption'). The Budget 2026 memorandum (indiabudget.gov.in/doc/memo.pdf) returned HTTP 403 on 13-Oct-2026 and was not re-read",
+  "Holder subscribed at the original issue (lot meta sgb_subscription true) and held continuously until RBI redemption -> the redemption is not a taxable transfer"
+ ],
+ "derivation": [
+  "Subscription at issue 2018-11-15: 15 @ 3,100.00 -> cost 46,500.00.",
+  "RBI redemption on maturity 2026-11-15: 15 @ 12,800.00 -> proceeds 1,92,000.00; tax year 2026-27 (fy 2027).",
+  "Original subscriber, held continuously -> exempt: gain 0.00, term exempt, rate null.",
+  "Economic gain 1,92,000 - 46,500 = 1,45,500.00 -> exempt_total 1,45,500.00; tax 0.00, cess 0.00, total 0.00."
+ ],
+ "interpretive": false,
+ "derived_by": "implementer (#316), by hand from the cited rule before the engine change",
+ "slab_rate": "0.30",
+ "holdings": [
+  {
+   "name": "SGB 2018-19 SERIES IV",
+   "tax_class": "sgb",
+   "listed": true,
+   "events": [
+    {
+     "day": "2018-11-15",
+     "kind": "buy",
+     "quantity": "15",
+     "price": "3100.00",
+     "charges": "0",
+     "stt_paid": false,
+     "meta": {
+      "sgb_subscription": true
+     }
+    },
+    {
+     "day": "2026-11-15",
+     "kind": "redemption",
+     "quantity": "15",
+     "price": "12800.00",
+     "charges": "0",
+     "stt_paid": false,
+     "meta": {
+      "held_to_maturity": true
+     }
+    }
+   ]
+  }
+ ],
+ "expected": {
+  "disposals": [
+   {
+    "holding": "SGB 2018-19 SERIES IV",
+    "sold": "2026-11-15",
+    "acquired": "2018-11-15",
+    "quantity": "15",
+    "cost": "46500.00",
+    "proceeds": "192000.00",
+    "gain": "0.00",
+    "term": "exempt",
+    "rate": null
+   }
+  ],
+  "open_lots": [],
+  "fy": [
+   {
+    "fy": 2027,
+    "exemption_used": "0.00",
+    "tax": "0.00",
+    "cess": "0.00",
+    "total": "0.00",
+    "complete": true,
+    "unknown_count": 0,
+    "intraday_count": 0,
+    "exempt_total": "145500.00",
+    "losses_carried_short": "0.00",
+    "losses_carried_long": "0.00"
+   }
+  ]
+ }
+}

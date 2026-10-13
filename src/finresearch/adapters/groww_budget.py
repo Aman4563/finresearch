@@ -38,7 +38,7 @@ from finresearch.portfolio.connectors.base import ConnectorError
 
 # (per second, per minute) from the docs table above
 LIMITS: dict[str, tuple[float, float]] = {"auth": (5, 30), "live": (10, 300), "non_trading": (20, 500)}
-LABELS = {"auth": "Login (token)", "live": "Live and historical data", "non_trading": "Holdings, positions, orders",
+LABELS = {"auth": "Login (token)", "live": "Live and historical data", "non_trading": "Holdings, positions, orders, margin",
           "instruments": "Instruments file"}  # fmt: skip
 TOKEN_DAILY_CAP = 150  # /token/api/access per 24 hours (docs)
 AUTH_DAILY_GUARD = 140  # stop short of the cap: the user's own scripts may also log in with the same key

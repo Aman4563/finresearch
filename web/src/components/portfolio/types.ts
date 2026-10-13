@@ -60,7 +60,7 @@ export type Holding = {
   tax_class_override: TaxClass | null;
   listed: boolean;
   fmv_2018: number | null;
-  sgb_original_subscriber: boolean;
+  sgb_original_subscriber: boolean | null; // subscribed at issue: null = not set (#316)
   units: number;
   cost: number | null;
   cost_known: boolean;

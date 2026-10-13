@@ -131,18 +131,26 @@ class BrokerTrade:
 
 
 class ReadOnlyHttp:
-    """GET-only client with a per-connector path allowlist; POST only to the authentication paths."""
+    """GET-only client with a per-connector path allowlist; POST only to the authentication paths and, through
+    `calc_post` alone, to the calculator paths (`calc_paths`, #316: Groww's basket margin calculator, which computes
+    and places nothing). Each POST kind has its own list, so `auth_post` cannot reach a calculator path and
+    `calc_post` cannot reach a login path."""
 
     def __init__(self, base_url: str, *, read_paths: tuple[str, ...], auth_paths: tuple[str, ...] = (),
-                 headers: dict[str, str] | None = None, secrets: tuple[str, ...] = ()) -> None:  # fmt: skip
+                 calc_paths: tuple[str, ...] = (), headers: dict[str, str] | None = None,
+                 secrets: tuple[str, ...] = ()) -> None:  # fmt: skip
         self.base_url = base_url.rstrip("/")
         self._read = [re.compile(p) for p in read_paths]
         self._auth = [re.compile(p) for p in auth_paths]
+        self._calc = [re.compile(p) for p in calc_paths]
         self.headers = dict(headers or {})
         self.secrets = tuple(s for s in secrets if s)
 
-    def _check(self, method: str, path: str) -> None:
-        allowed = self._read if method == "GET" else self._auth if method == "POST" else []
+    def _check(self, method: str, path: str, kind: str | None = None) -> None:
+        if kind == "calc":
+            allowed = self._calc if method == "POST" else []
+        else:
+            allowed = self._read if method == "GET" else self._auth if method == "POST" else []
         if not any(p.fullmatch(path) for p in allowed):
             raise ForbiddenRequest(f"{method} {path} is not an allowed read-only request")
 
@@ -153,12 +161,18 @@ class ReadOnlyHttp:
                         headers: dict[str, str] | None = None) -> Any:  # fmt: skip
         return await self._send("POST", path, json=json, data=data, params=params, headers=headers)
 
+    async def calc_post(self, path: str, *, json: Any, params: dict[str, Any] | None = None) -> Any:
+        """A POST to a calculator path only (`calc_paths`): it asks for a figure and changes nothing at the broker."""
+        return await self._send("POST", path, json=json, params=params, kind="calc")
+
     async def get_bytes(self, path: str, params: dict[str, Any] | None = None) -> bytes:
         """A GET whose body is not JSON (Groww's instruments CSV); same allowlist and checks."""
         return await self._send("GET", path, params=params, raw=True)
 
-    async def _send(self, method: str, path: str, *, raw: bool = False, **kw: Any) -> Any:
-        self._check(method, path)
+    async def _send(
+        self, method: str, path: str, *, raw: bool = False, kind: str | None = None, **kw: Any
+    ) -> Any:
+        self._check(method, path, kind)
         extra = kw.pop("headers", None) or {}
         hooks = _budget(self.base_url)
         if hooks is not None:

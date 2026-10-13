@@ -15,9 +15,12 @@ Tax classes (``TaxClass``):
 - ``other_mf``: fund units that are neither equity-oriented nor debt (gold ETFs/FoFs, international FoFs). They were
   specified funds under the first definition, so units acquired on or after 1-Apr-2023 and sold before 1-Apr-2025
   are slab-rate STCG; otherwise ``other`` rules apply. [S] (inference from the two definitions)
-- ``sgb``: Sovereign Gold Bonds. RBI redemption is exempt for individuals; from tax year 2026-27 only for an
-  original subscriber who held to maturity (Budget 2026 memo, M26 p.63; enactment not verified [U]). An exchange
-  sale is an ``other`` listed security.
+- ``sgb``: Sovereign Gold Bonds. Redemption by RBI is exempt for an individual (s.47(viic) of the 1961 Act: "any
+  redemption", premature ones too). From tax year 2026-27 only for the original subscriber who held the bond
+  continuously until RBI redeemed it, at maturity OR early after the fifth year (#316; CLEARTAX_SGB, a secondary
+  source: the Budget 2026 memo returned HTTP 403 on 13-Oct-2026 and was not re-read). A secondary-market buyer is
+  taxed on redemption; whether the holder subscribed at issue is never assumed (``original_subscriber`` None ->
+  term "unknown"). An exchange sale is always an ``other`` listed security (12 months, s.2(42A)).
 - ``other``: any other listed or unlisted security (``listed`` decides the holding threshold).
 
 Holding period: long-term when held **more than** N months, counted in calendar months: bought 15-Jan-2025, sold
@@ -57,6 +60,12 @@ BUDGET_2024_MEMO = "https://www.indiabudget.gov.in/budget2024-25/doc/memo.pdf"
 FINANCE_BILL_2024 = "https://www.indiabudget.gov.in/budget2024-25/doc/Finance_Bill.pdf"
 BUDGET_2026_MEMO = "https://www.indiabudget.gov.in/doc/memo.pdf"
 BUDGET_2025_MEMO = "https://www.indiabudget.gov.in/budget2025-26/doc/memo.pdf"
+CLEARTAX_SGB = "https://cleartax.in/s/sovereign-gold-bonds"  # secondary; read 13-Oct-2026 (#316)
+# Why an SGB redemption after 1-Apr-2026 is not classified: the exemption turns on a fact the app may not have
+SGB_SUBSCRIBER_UNKNOWN = (
+    "unknown: tell us whether you subscribed at issue (an SGB redeemed by RBI from 1-Apr-2026 is "
+    "tax-free only for the original subscriber; a secondary-market buyer pays LTCG)"
+)
 
 JULY_23_2024 = date(2024, 7, 23)  # Finance (No.2) Act 2024: new rates for transfers on or after this day
 APRIL_1_2023 = date(2023, 4, 1)  # s.50AA: specified-MF units acquired on or after this day are always STCG
@@ -167,10 +176,10 @@ RULES: tuple[TaxRule, ...] = (
             "IT Act 1961 s.47(viic): redemption of SGBs by RBI is not a transfer for an individual, including a "
             "secondary-market buyer", exempt=True),
     TaxRule("sgb-redemption-2026", "sgb_redemption", APRIL_1_2026, None, None, None, None, Decimal(0),
-            "uncertain", BUDGET_2026_MEMO,
-            "Finance Bill 2026 (s.70(1)(x) of the 2025 Act): exempt only if subscribed at the original issue and held "
-            "continuously until redemption on maturity. Enactment and the treatment of early (5-year) redemption are "
-            "not verified", exempt=True),
+            "secondary", CLEARTAX_SGB,
+            "Budget 2026 (s.70(1)(x) of the 2025 Act, per ClearTax; the Budget memo returned HTTP 403 on 13-Oct-2026): "
+            "exempt only for the original subscriber who held the SGB continuously until RBI redeemed it, at maturity "
+            "or early after the fifth year (#316); a secondary-market buyer is taxed on redemption", exempt=True),
 )  # fmt: skip
 
 
@@ -225,17 +234,23 @@ class Classification:
 
 
 def classify(tax_class: str, acquired: date | None, sold: date, *, listed: bool = True, stt_paid: bool = True,
-             rbi_redemption: bool = False, original_subscriber: bool = False,
+             rbi_redemption: bool = False, original_subscriber: bool | None = None,
              held_to_maturity: bool = False, debt: bool = False) -> Classification:  # fmt: skip
     """The term and rate of one disposal. `acquired` None means the acquisition date is unknown. `debt`: the asset
-    is a bond or debenture (an unlisted one falls under s.50AA from 23-Jul-2024)."""
+    is a bond or debenture (an unlisted one falls under s.50AA from 23-Jul-2024). `original_subscriber` (SGB redeemed
+    by RBI): True subscribed at issue, False bought in the secondary market, None not known. `held_to_maturity` no
+    longer changes the answer (#316: a premature RBI redemption after year 5 qualifies like maturity); it is kept for
+    callers and the transaction record."""
     days = (sold - acquired).days if acquired else None
     if tax_class not in TAX_CLASSES:
         raise ValueError(f"unknown tax class {tax_class!r}")
     if tax_class == "sgb" and rbi_redemption:
         rule = rule_for("sgb_redemption", sold)
-        if rule and (rule.id == "sgb-redemption" or (original_subscriber and held_to_maturity)):
+        if rule and (rule.id == "sgb-redemption" or original_subscriber is True):
             return Classification("exempt", rule, Decimal(0), "exempt", rule.note, days)
+        # who subscribed is never assumed either way: exempt and a 12.5 % LTCG are both possible
+        if rule and original_subscriber is None:
+            return Classification("unknown", rule, None, "unknown", SGB_SUBSCRIBER_UNKNOWN, days)
         tax_class = "other"
         listed = True
     # s.50AA deems the gain short-term whatever the holding period, so the acquisition date is not needed
@@ -421,7 +436,8 @@ def fy_tax(gains: Iterable[Gain], fy: int, slab_rate: Decimal | float | str = De
     notes = []
     if unknown:
         notes.append(
-            f"{len(unknown)} disposal(s) have an unknown acquisition date or cost and are not in the total"
+            f"{len(unknown)} disposal(s) could not be classified (unknown acquisition date or cost, or whether an SGB "
+            "was subscribed at issue) and are not in the total"
         )
     if (stale := unverified_note(fy)) is not None:
         notes.append(stale)

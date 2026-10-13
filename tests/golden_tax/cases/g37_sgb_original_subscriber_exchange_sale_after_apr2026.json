@@ -1,0 +1,81 @@
+{
+ "id": "g37_sgb_original_subscriber_exchange_sale_after_apr2026",
+ "title": "SGB original subscriber sells on the exchange in Jun-2026: always taxable (only RBI redemption can be exempt); LT 12.5 %",
+ "covers": [
+  "SGB exchange sale after 1-Apr-2026",
+  "original subscriber does not exempt an exchange sale"
+ ],
+ "rules": [
+  "https://cleartax.in/s/sovereign-gold-bonds (secondary source, read 13-Oct-2026: 'The exclusion from capital gains taxation at redemption is now available only to investors who originally subscribed to the SGB and held it continuously till redemption. Investors who purchase SGBs from the secondary market are not eligible ... even if the bonds are held till redemption'). The Budget 2026 memorandum (indiabudget.gov.in/doc/memo.pdf) returned HTTP 403 on 13-Oct-2026 and was not re-read",
+  "An exchange sale is a transfer to another investor, not a redemption by RBI: s.47(viic) (and its 2025 Act counterpart) never applies",
+  "Listed security (SGBs trade on NSE/BSE): long-term if held more than 12 months (Income-tax Act 1961 s.2(42A) first proviso as amended by Finance (No.2) Act 2024; carried into the 2025 Act); LTCG 12.5 % without indexation (s.112 / s.197), no s.112A Rs 1.25 lakh exemption (not STT-paid equity); 4 % cess"
+ ],
+ "derivation": [
+  "Subscription 2019-03-05: 10 @ 3,250.00 -> cost 32,500.00 (holding setting: subscribed at issue).",
+  "Exchange sale 2026-06-18: 10 @ 12,100.00 -> proceeds 1,21,000.00; fy 2027.",
+  "Held > 12 months -> long, 12.5 %; gain 88,500.00; tax 11,062.50; cess 442.50; total 11,505.00."
+ ],
+ "interpretive": false,
+ "derived_by": "implementer (#316), by hand from the cited rule before the engine change",
+ "slab_rate": "0.30",
+ "holdings": [
+  {
+   "name": "SGB 2018-19 SERIES IX",
+   "tax_class": "sgb",
+   "listed": true,
+   "sgb_original_subscriber": true,
+   "events": [
+    {
+     "day": "2019-03-05",
+     "kind": "buy",
+     "quantity": "10",
+     "price": "3250.00",
+     "charges": "0",
+     "stt_paid": false,
+     "meta": {
+      "sgb_subscription": true
+     }
+    },
+    {
+     "day": "2026-06-18",
+     "kind": "sell",
+     "quantity": "10",
+     "price": "12100.00",
+     "charges": "0",
+     "stt_paid": false
+    }
+   ]
+  }
+ ],
+ "expected": {
+  "disposals": [
+   {
+    "holding": "SGB 2018-19 SERIES IX",
+    "sold": "2026-06-18",
+    "acquired": "2019-03-05",
+    "quantity": "10",
+    "cost": "32500.00",
+    "proceeds": "121000.00",
+    "gain": "88500.00",
+    "term": "long",
+    "rate": "0.125"
+   }
+  ],
+  "open_lots": [],
+  "fy": [
+   {
+    "fy": 2027,
+    "exemption_used": "0.00",
+    "tax": "11062.50",
+    "cess": "442.50",
+    "total": "11505.00",
+    "complete": true,
+    "unknown_count": 0,
+    "intraday_count": 0,
+    "exempt_total": "0.00",
+    "losses_carried_short": "0.00",
+    "losses_carried_long": "0.00"
+   }
+  ]
+ }
+}

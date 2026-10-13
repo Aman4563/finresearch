@@ -112,11 +112,15 @@ def test_sgb_redemption_original_vs_secondary_buyer():
     buy = date(2018, 1, 1)
     # up to 31-Mar-2026 RBI redemption is exempt for any individual, including a secondary buyer
     assert classify("sgb", buy, date(2026, 2, 1), rbi_redemption=True).term == "exempt"
-    # from 1-Apr-2026 only an original subscriber who held to maturity [U: Finance Bill 2026]
+    # from 1-Apr-2026 only the original subscriber, at maturity or on a premature RBI redemption (#316)
     assert classify("sgb", buy, date(2026, 6, 1), rbi_redemption=True, original_subscriber=True,
                     held_to_maturity=True).term == "exempt"  # fmt: skip
-    sec = classify("sgb", buy, date(2026, 6, 1), rbi_redemption=True)
+    sec = classify("sgb", buy, date(2026, 6, 1), rbi_redemption=True, original_subscriber=False)
     assert (sec.term, sec.rate) == ("long", D("0.125"))
+    # who subscribed is never assumed: unknown, not exempt and not a guessed 12.5 %
+    unk = classify("sgb", buy, date(2026, 6, 1), rbi_redemption=True)
+    assert (unk.term, unk.rate, unk.bucket) == ("unknown", None, "unknown")
+    assert "subscribed at issue" in unk.reason
 
 
 def test_unknown_acquisition_date():
