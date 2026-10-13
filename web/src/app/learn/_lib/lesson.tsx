@@ -6,6 +6,7 @@ import { useMemo } from "react";
 
 import { Badge, Callout, Card, PageHeader } from "@/components/ui";
 
+import { DISCLAIMER } from "./disclaimer";
 import { citeOrder, Md } from "./md";
 import { MODULES } from "./modules";
 import { Quiz } from "./quiz";
@@ -14,9 +15,6 @@ import { SOURCES, type SourceStatus } from "./sources";
 import type { Module } from "./types";
 
 const TONE: Record<SourceStatus, "gain" | "neutral" | "info" | "warn"> = { verified: "gain", secondary: "neutral", reference: "info", unverified: "warn" };
-
-export const DISCLAIMER =
-  "Education, not advice. FinResearch is not a SEBI-registered investment adviser or research analyst; it places no orders and makes no promise of profit. Most individual F&O traders lose money: read the SEBI study cited in module 2 before you trade.";
 
 export function SourceList({ ids }: { ids: string[] }) {
   return (
