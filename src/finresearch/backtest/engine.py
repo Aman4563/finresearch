@@ -187,20 +187,33 @@ def choose_legs(spec: Spec, x: Day, expiry: date, fwd: float, book: Book) -> lis
     """The (quote, side) legs the spec's rule picks at this close, or the reason none can be picked."""
     r, a, m = book.rate, spec.anchor_delta, book.min_contracts_anchor
     w = (spec.width_pct or 0) / 100 * fwd
+    otm = getattr(spec, "otm_pct", None)  # Strategy Lab (#318): the anchor by % out of the money
+
+    def anchor(right: str, otm_only: bool = True) -> Quote | None:
+        if otm is not None:
+            return px.by_otm(x, expiry, right, otm, fwd, m)
+        return px.by_delta(x, expiry, right, a, fwd, r, m, otm_only=otm_only)
+
+    def miss(right: str) -> str:
+        return (
+            f"no traded {right} {otm:g}% out of the money"
+            if otm is not None
+            else f"no traded {right} near {a:g} delta"
+        )
 
     def credit(right: str) -> list[tuple[Quote, str]] | str:
-        short = px.by_delta(x, expiry, right, a, fwd, r, m)
+        short = anchor(right)
         if short is None:
-            return f"no traded {right} near {a:g} delta"
+            return miss(right)
         far = px.wing(
             x, expiry, right, short.strike, short.strike - w if right == "put" else short.strike + w
         )
         return [(short, "sell"), (far, "buy")] if far else f"no traded {right} wing"
 
     def debit(right: str) -> list[tuple[Quote, str]] | str:
-        near = px.by_delta(x, expiry, right, a, fwd, r, m, otm_only=False)
+        near = anchor(right, otm_only=False)
         if near is None:
-            return f"no traded {right} near {a:g} delta"
+            return miss(right)
         far = px.wing(x, expiry, right, near.strike, near.strike + w if right == "call" else near.strike - w)
         return [(near, "buy"), (far, "sell")] if far else f"no traded {right} wing"
 
@@ -241,10 +254,15 @@ def margin(spec: Spec, sym: str, legs: list[Leg], fwd: float, t: float, book: Bo
     return ma.estimate(ml, px.discounted_spot(fwd, t, book.rate), t, book.rate, kind).total
 
 
+Gate = Callable[[SpecState, Day, vol.IvStats | None], str | None]
+
+
 def try_enter(st: SpecState, x: Day, sym: str, h: Clocked, ivs: list[float], book: Book,
-              next_session: date | None = None, expiry_day: Callable[[date], date] = lambda e: e) -> Position | None:  # fmt: skip
+              next_session: date | None = None, expiry_day: Callable[[date], date] = lambda e: e,
+              gate: Gate | None = None) -> Position | None:  # fmt: skip
     """One entry decision at this close (module docstring); a refusal is counted in st.skips by reason. A spec that
-    must be out before expiry day never enters on the last session before it (it could not be managed)."""
+    must be out before expiry day never enters on the last session before it (it could not be managed). `gate`
+    (Strategy Lab filters, #318) sees today's IV statistics and returns a refusal reason or None."""
     spec, d = st.spec, x.day
     if len(st.open) >= spec.max_concurrent:
         return None
@@ -264,6 +282,10 @@ def try_enter(st: SpecState, x: Day, sym: str, h: Clocked, ivs: list[float], boo
     pct = stats.percentile if stats else None
     if spec.iv_pct_min is not None and (pct is None or pct < spec.iv_pct_min):
         st.skips["IV percentile unknown" if pct is None else "IV percentile below the filter"] += 1
+        return None
+    why = gate(st, x, stats) if gate is not None else None
+    if why:
+        st.skips[why] += 1
         return None
     fwd = px.forward(x, expiry, book.rate)
     if fwd is None:
@@ -352,10 +374,14 @@ def manage(st: SpecState, x: Day, next_session: date | None, book: Book,
 
 
 def run(specs: list[Spec], history: History, start: date, end: date, book: Book = BOOK,
-        warmup_days: int = 400, data_end: date | None = None) -> dict[str, dict[str, Any]]:  # fmt: skip
+        warmup_days: int = 400, data_end: date | None = None, *, gate: Gate | None = None,
+        on_day: Callable[[Day], None] | None = None,
+        progress: Callable[[int, int, date], None] | None = None) -> dict[str, dict[str, Any]]:  # fmt: skip
     """Replay `specs` (concrete underlyings) with entries from `start` to `end`; open positions are managed after
     `end` until they close or the data ends (`data_end`, default the latest stored day). Returns per spec key:
-    trades, the daily equity curve, refusals and the positions still open at the end."""
+    trades, the daily equity curve, refusals and the positions still open at the end.
+    Strategy Lab hooks (#318): `gate` (try_enter), `on_day(x)` at every session read (warm-up included, before any
+    decision of that close) and `progress(i, n, day)` per session, which may raise to stop the run."""
     from datetime import timedelta
 
     h = Clocked(history)
@@ -375,10 +401,14 @@ def run(specs: list[Spec], history: History, start: date, end: date, book: Book 
             return days[bisect_right(days, e) - 1]
 
         for i, d in enumerate(days):
+            if progress is not None:
+                progress(i, len(days), d)
             h.advance(d)
             x = h.day(sym, d)
             if x is None:
                 continue
+            if on_day is not None:
+                on_day(x)
             if x.iv30 is not None:
                 ivs.append(x.iv30)
             if d < start:
@@ -388,7 +418,7 @@ def run(specs: list[Spec], history: History, start: date, end: date, book: Book 
                 had_open = bool(st.open)
                 manage(st, x, nxt, book, eday)
                 if d <= end:
-                    try_enter(st, x, sym, h, ivs, book, nxt, eday)
+                    try_enter(st, x, sym, h, ivs, book, nxt, eday, gate)
                 if d <= end or had_open or st.open:
                     st.equity.append(
                         (d, book.capital + st.realised + sum(p.gross() - p.entry_costs for p in st.open))

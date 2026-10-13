@@ -31,7 +31,7 @@ const ROWS: [string, (w: WindowStats) => string][] = [
   ["Average win / loss", (w) => `${rupees(w.avg_win)} / ${rupees(w.avg_loss)}`],
   ["Worst trade · 5% CVaR", (w) => `${rupees(w.worst_trade)} · ${rupees(w.cvar_5)}`],
   ["Total net · costs paid", (w) => `${rupees(w.total_net)} · ${rupees(w.costs)}`],
-  ["CAGR on ₹10L capital", (w) => pct(w.cagr)],
+  ["CAGR on the capital", (w) => pct(w.cagr)],
   ["Return on margin, a year", (w) => pct(w.return_on_margin_annual)],
   ["Max drawdown (% capital)", (w) => (w.max_drawdown_pct == null ? "—" : `${w.max_drawdown_pct.toFixed(1)}%`)],
   ["Sharpe · Sortino", (w) => `${num(w.sharpe)} · ${num(w.sortino)}`],
@@ -76,7 +76,7 @@ function Breakdown({ title, rows }: { title: string; rows: Record<string, Window
   );
 }
 
-export function StrategyCard({ r }: { r: StrategyResult }) {
+export function StrategyCard({ r, capital = 1_000_000 }: { r: StrategyResult; capital?: number }) {
   const st = STATUS[r.status] ?? { tone: "neutral" as Tone, label: r.status };
   const w = r.windows;
   return (
@@ -88,7 +88,7 @@ export function StrategyCard({ r }: { r: StrategyResult }) {
         {w && <StatsTable cols={[["In-sample", w.is], ["Out-of-sample", w.oos], ["OOS, slippage ×2", w.oos_stress]]} />}
         {r.equity && r.equity.length > 1 && (
           <TimeSeriesChart data={r.equity.map(([d, v]) => ({ date: d, equity: v }))} series={[{ key: "equity", label: "Equity (₹)" }]}
-            format={fmtCompactINR} height={220} references={[{ y: 1_000_000, label: "₹10L start", tone: "muted" }]} showChange={false} />
+            format={fmtCompactINR} height={220} references={[{ y: capital, label: `${fmtCompactINR(capital)} start`, tone: "muted" }]} showChange={false} />
         )}
         {r.overlay && (
           <p className="text-sm">Held stock alone {rupees(r.overlay.stock_total)} (worst period {rupees(r.overlay.stock_worst)}); with the overlay {rupees(r.overlay.with_overlay_total)} (worst {rupees(r.overlay.with_overlay_worst)}) over {r.overlay.periods} periods. <span className="text-muted">{r.overlay.note}</span></p>

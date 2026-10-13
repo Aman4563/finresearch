@@ -665,6 +665,12 @@ async def tick(deps: jobs.Deps, now: datetime | None = None) -> dict[str, int]:
         out |= await fno_book_step(now)
     except Exception:
         log.warning("F&O paper book step failed; it is retried on the next tick", exc_info=True)
+    try:  # Strategy Lab paper rule sets (#318): nothing without an active rule set or an open lab trade
+        from finresearch.stratlab.paper import step as lab_paper_step
+
+        out |= await lab_paper_step(now)
+    except Exception:
+        log.warning("Strategy Lab paper step failed; it is retried on the next tick", exc_info=True)
     try:  # Groww's daily close vs the exchange's official close, queued by the valuations (#283)
         from finresearch.adapters.groww_market import close_check_step
 
