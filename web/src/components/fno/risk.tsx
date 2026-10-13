@@ -180,7 +180,7 @@ export function IvTile({ symbol, atmIv, rv20 }: { symbol: string; atmIv: number 
   const ratio = atmIv != null && rv20 ? atmIv / 100 / rv20 : null;
   return (
     <Stat label="IV rank" icon={<Gauge className="size-4" />} tone="info"
-      help={<>IV rank = where today&apos;s ATM implied volatility sits between its low and high over the last 252 recorded days; IV percentile = share of those days with lower IV. Recorded daily after the close from {data?.min_days ?? 60} days on. {data?.method}</>}
+      help={<>IV rank = where today&apos;s ATM implied volatility sits between its low and high over the last 252 recorded days; IV percentile = share of those days with lower IV. Recorded daily after the close from {data?.min_days ?? 60} days on. {data?.method} <a href="/learn/options#iv-rank" className="text-brand underline">What is IV rank?</a></>}
       display={<span className="num">{ok ? pctText(data!.rank, 0) : "—"}</span>}
       // the short part is the one-line hint; the rest wraps in the note below it (a truncated status was unreadable)
       hint={!data ? "loading…" : ok ? `percentile ${pctText(data.percentile, 0)}` : ratio != null ? `IV/RV20 ${ratio.toFixed(2)}×` : undefined}

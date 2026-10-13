@@ -70,6 +70,7 @@ export default function BacktestsPage() {
           )}
         </>
       )}
+      <p className="text-xs text-muted">Learn more: <Link className="text-brand hover:underline" href="/learn/process#overfitting">overfitting and the deflated Sharpe ratio</Link> · <Link className="text-brand hover:underline" href="/learn/process#statistics">expectancy</Link></p>
     </div>
   );
 }
