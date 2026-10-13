@@ -8,7 +8,7 @@ export type ExitLevel = { rupees: number; premium_per_share: number | null; unde
 
 export type EntryLeg = {
   right: string; strike: number; side: "buy" | "sell"; lots: number; bid: number | null; ask: number | null; last: number | null;
-  mid: number | null; limit_from: number | null; limit_to: number | null; spread_pct: number | null; status: "ok" | "unknown";
+  mid: number | null; limit_from: number | null; limit_to: number | null; spread_pct: number | null; slippage: number | null; status: "ok" | "unknown";
 };
 
 export type PlanEvidence = {
@@ -29,7 +29,9 @@ export type TradePlan = {
   spec_key?: string;
   legs: { right: "call" | "put" | "future"; strike: number; side: "buy" | "sell"; lots: number; qty?: number; last?: number }[];
   size?: { multiple: number; suggested: number; budget: number; risk_per_set: number | null; reason: string; capital: number; max_loss_pct: number };
-  entry?: { legs: EntryLeg[]; status: "ok" | "unknown"; net_mid: number | null; net_fill_now: number | null; notes: string[]; levels_priced_at: string };
+  entry?: { legs: EntryLeg[]; status: "ok" | "unknown"; net_mid: number | null; net_fill_now: number | null; notes: string[]; levels_priced_at: string;
+    /** "bid/ask: NSE chain at HH:MM" (#324: NSE's chain when the plan's has no bid/ask), or "unknown" */
+    source?: string; slippage_inr?: number | null };
   max_profit?: number | null; max_loss?: number | null; breakevens?: number[]; net_premium?: number; costs?: number | null;
   probability?: { real_world: number | null; real_world_window: string | null; risk_neutral: number | null; note: string };
   exits?: {
@@ -51,6 +53,8 @@ export type Evidence = { measures: string; level: string; evidence: string };
 
 export type MarketContext = {
   symbol: string; today: string; not_a_signal: string;
+  /** the chain's expiry; defaulted (#324) to the nearest that is not today's when none was asked for */
+  expiry?: string; expiry_defaulted?: boolean; expiry_note?: string | null;
   trend: {
     close: number | null; closes: number; source: string; trend: string; strength: string; note: string | null;
     averages: { days: number; sma: number | null; slope_pct_10d: number | null; distance_pct: number | null }[];

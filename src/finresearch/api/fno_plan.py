@@ -63,15 +63,26 @@ def add_fno_plan_routes(app: FastAPI, fno: Callable[[], Any]) -> None:
                           backtest_head=head, paper=tpl.paper_trades(), events=await _events(sym, today),
                           is_index=events.is_index(sym))  # fmt: skip
 
+    async def bidask_for(f: Any, sym: str, expiry: date) -> tuple[Any, str] | None:
+        """NSE's chain for the bid/ask the plan's chain lacks (#324; cached in signals.bidask), with its label."""
+        from finresearch.fincalc.dates import now_ist
+        from finresearch.signals import bidask as ba
+
+        now = now_ist()
+        c = await ba.nse_chain(f, sym, expiry, now)
+        return None if c is None else (c, ba.label(c, now.date(), now))
+
     @app.post("/api/fno/plan")
     async def fno_plan(body: PlanIn) -> dict[str, Any]:
         """The trade-plan card for the legs (their lots are the ratio; the profile's budget sets the size)."""
         from finresearch.adapters.nse_fno import lot_size_for
         from finresearch.fincalc.dates import now_ist
+        from finresearch.signals import bidask as ba
         from finresearch.signals import fno as fs
         from finresearch.signals import tradeplan as tpl
 
         sym, today = body.symbol.strip().upper(), now_ist().date()
+        legs = [fs.LegIn(y.right, float(y.strike), y.side, y.lots) for y in body.legs]
         try:
             fs.check_expiry(body.expiry, today)
         except fs.ExpiredContract as e:
@@ -87,9 +98,11 @@ def add_fno_plan_routes(app: FastAPI, fno: Callable[[], Any]) -> None:
             if chain.underlying is None or not chain.rows:
                 raise HTTPException(422, f"no option chain for {sym} {body.expiry}")
             x = await inputs(f, sym, body.expiry, today)
-        legs = [fs.LegIn(y.right, float(y.strike), y.side, y.lots) for y in body.legs]
+            # the plan's chain has no bid/ask for a leg (Groww's has none): NSE's, once, cached (#324)
+            need = tpl.needs_bidask(chain, legs)
+            fb = await bidask_for(f, sym, body.expiry) if need else None
         try:
-            card = tpl.build(chain, lot, legs, x)
+            card = tpl.build(chain, lot, legs, x, bidask=fb, bidask_note=ba.FAILED_NOTE if need else None)
         except ValueError as e:
             raise HTTPException(422, str(e)) from e
         return {**card, "risk_notice": fs.risk_notice()}
@@ -122,15 +135,20 @@ def add_fno_plan_routes(app: FastAPI, fno: Callable[[], Any]) -> None:
             async def lot_for(e: date) -> int | None:
                 return lot_size_for(lots, sym, e)
 
+            async def get_bidask(e: date) -> tuple[Any, str] | None:
+                return await bidask_for(f, sym, e)
+
             x = await inputs(f, sym, expiries[0], today)
-            cards = await tpl.suggest(sym, expiries, get_chain, lot_for, x)
+            cards = await tpl.suggest(sym, expiries, get_chain, lot_for, x, get_bidask)
         return {"symbol": sym, "today": today.isoformat(), "cards": cards, "risk_notice": fs.risk_notice(),
                 "note": "The library's pre-registered recipes (backtest.specs) applied to today's chain, each with its "
                         "own out-of-sample result. A recipe shown here is not a recommendation."}  # fmt: skip
 
     @app.get("/api/fno/{symbol}/context")
-    async def fno_context(symbol: str, expiry: date) -> dict[str, Any]:
-        """The market-context panel for the underlying: every indicator with what it measures and its evidence."""
+    async def fno_context(symbol: str, expiry: date | None = None) -> dict[str, Any]:
+        """The market-context panel for the underlying: every indicator with what it measures and its evidence.
+        Without `expiry` (#324): the nearest live expiry that is not today (a same-day expiry's chain is mostly
+        decay), or today's when it is the only one; the response states which (`expiry`, `expiry_defaulted`)."""
         from finresearch.fincalc.dates import now_ist
         from finresearch.fnobook import events, sources
         from finresearch.signals import fno as fs
@@ -138,23 +156,36 @@ def add_fno_plan_routes(app: FastAPI, fno: Callable[[], Any]) -> None:
         from finresearch.signals.rates import risk_free
 
         sym, today = symbol.strip().upper(), now_ist().date()
-        try:
-            fs.check_expiry(expiry, today)
-        except fs.ExpiredContract as e:
-            raise HTTPException(422, str(e)) from e
+        if expiry is not None:
+            try:
+                fs.check_expiry(expiry, today)
+            except fs.ExpiredContract as e:
+                raise HTTPException(422, str(e)) from e
+        defaulted = expiry is None
         async with fno() as f:
+            exp: list[date] | None = None
+            try:
+                exp = fs.live_expiries((await f.contract_info(sym))[0], today)
+            except Exception as e:
+                if defaulted:
+                    raise HTTPException(
+                        422, f"no expiry given and NSE's expiry list for {sym} is unavailable"
+                    ) from e
+            if expiry is None:
+                if not exp:
+                    raise HTTPException(422, f"no live F&O expiries for {sym}")
+                expiry = next((e for e in exp if e > today), exp[0])
             chain = await f.option_chain(sym, expiry)
             # NSE's ~90 daily closes only when the stored bhavcopy history is too short (no needless request)
             closes = (
                 await fs.underlying_closes(f, sym, today) if ctx.needs_network_closes(sym, today) else None
             )
-            try:
-                exp = fs.live_expiries((await f.contract_info(sym))[0], today)
-            except Exception:
-                exp = [expiry]
+            exp = [expiry] if exp is None else exp
         try:
             strip = await events.strip(sym, today, sources.SOURCES, exp)
         except Exception:
             strip = None
         rate = (await risk_free(max((expiry - today).days, 0.5) / 365))["rate"]
-        return ctx.build(chain, today=today, rate=rate, network_closes=closes, events=strip)
+        return {**ctx.build(chain, today=today, rate=rate, network_closes=closes, events=strip),
+                "expiry": expiry.isoformat(), "expiry_defaulted": defaulted,
+                "expiry_note": ("No expiry given: the nearest that is not today's." if defaulted else None)}  # fmt: skip
