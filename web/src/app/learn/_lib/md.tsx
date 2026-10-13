@@ -42,7 +42,7 @@ export function Md({ text, order, className }: { text: string; order: string[]; 
     },
     table: ({ children }) => (
       <div className="my-3 max-w-full overflow-x-auto rounded-lg border border-border" tabIndex={0} role="region" aria-label="Table">
-        <table className="w-full min-w-[28rem] text-left text-xs">{children}</table>
+        <table className="w-full text-left text-xs">{children}</table>
       </div>
     ),
     th: ({ children }) => <th className="border-b border-border bg-background-subtle px-2.5 py-1.5 font-medium">{children}</th>,
