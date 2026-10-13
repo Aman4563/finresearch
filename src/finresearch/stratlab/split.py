@@ -19,7 +19,7 @@ from typing import Any
 
 from finresearch.backtest import specs
 
-MIN_SPAN_DAYS = 540  # about 18 months: a year in sample (IV percentile needs 60 days of warm-up) and 5+ months out
+MIN_SPAN_DAYS = 540  # about 18 months: a year in sample (IV needs 60 days of warm-up) and 5+ months out
 LIB_START_SLACK = timedelta(days=31)
 LIB_OOS_MIN = timedelta(days=180)
 
@@ -63,7 +63,9 @@ def span(history: Any, symbol: str) -> tuple[date | None, date | None]:
         from finresearch.db.models import FnoBhav
 
         with history._s() as s:
-            row = s.execute(select(func.min(FnoBhav.day), func.max(FnoBhav.day)).where(FnoBhav.symbol == symbol)).one()
+            row = s.execute(
+                select(func.min(FnoBhav.day), func.max(FnoBhav.day)).where(FnoBhav.symbol == symbol)
+            ).one()
         return row[0], row[1]
     days = history.sessions(symbol, date.min, date.max)
     return (days[0], days[-1]) if days else (None, None)

@@ -32,7 +32,13 @@ def replay(history: Any, s: StrategySpec, split: Split, *, key: str, name: str, 
     lab, book = to_lab_spec(s, key, name), book_for(s)
     latest = history.latest(s.underlying)
     if latest is None:
-        return {"key": key, "name": name, "status": "no_data", "reasons": ["no stored F&O history"], "trades": []}
+        return {
+            "key": key,
+            "name": name,
+            "status": "no_data",
+            "reasons": ["no stored F&O history"],
+            "trades": [],
+        }
     hi = latest if oos else min(latest, split.is_end)
     main_share = 0.7 if oos else 1.0
 
@@ -52,7 +58,9 @@ def replay(history: Any, s: StrategySpec, split: Split, *, key: str, name: str, 
                             replace(book, slippage_mult=crit.stress_slippage_mult), warmup_days=specs.IV_WARMUP_DAYS,
                             gate=g.gate, on_day=g.on_day, progress=hook(main_share, 1 - main_share, "stress"))[key]  # fmt: skip
         windows["oos"] = lib.window(main["trades"], main["equity"], split.oos_start, hi, book, crit)
-        windows["oos_stress"] = lib.window(stress["trades"], stress["equity"], split.oos_start, hi, book, crit)
+        windows["oos_stress"] = lib.window(
+            stress["trades"], stress["equity"], split.oos_start, hi, book, crit
+        )
     trades = main["trades"]
     return {
         "key": key, "name": name, "role": "lab", "kind": s.structure, "underlying": s.underlying,
@@ -78,7 +86,9 @@ def trials_variance(srs: list[float]) -> float | None:
 def deflated(w: dict[str, Any], n_trials: int, var: float | None) -> float | None:
     if var is None or w.get("daily_sr") is None or w.get("skew") is None or w.get("kurtosis") is None:
         return None
-    return metrics._r(metrics.deflated_sharpe(w["daily_sr"], w["days"] - 1, w["skew"], w["kurtosis"], n_trials, var), 4)
+    return metrics._r(
+        metrics.deflated_sharpe(w["daily_sr"], w["days"] - 1, w["skew"], w["kurtosis"], n_trials, var), 4
+    )
 
 
 def finalize(rep: dict[str, Any], *, n_trials: int, var: float | None, oos_versions: int, n_lab: int,
@@ -89,7 +99,9 @@ def finalize(rep: dict[str, Any], *, n_trials: int, var: float | None, oos_versi
         return rep
     rep["n_trials"], rep["sr_trials_variance"] = n_trials, metrics._r(var, 10)
     if not rep["oos"]:
-        rep.update(status="in_sample_only", reasons=["out of sample not run: tune freely here, it is not counted"])
+        rep.update(
+            status="in_sample_only", reasons=["out of sample not run: tune freely here, it is not counted"]
+        )
         rep["warnings"] = warnings(rep, n_trials, oos_versions, n_lab, crit)
         return rep
     w = rep["windows"]["oos"]
@@ -129,12 +141,14 @@ def warnings(rep: dict[str, Any], n_trials: int, oos_versions: int, n_lab: int, 
     if n_tr < crit.min_oos_trades:
         out.append(f"Only {n_tr} trades {'out of sample' if w_oos else 'in sample'} (the library asks for "
                    f"{crit.min_oos_trades}): too few to tell skill from luck.")  # fmt: skip
-    if w_oos and w_is["sharpe"] is not None and w_oos["sharpe"] is not None and w_is["sharpe"] > 0:
-        if w_oos["sharpe"] < 0.5 * w_is["sharpe"]:
-            out.append(f"Out-of-sample Sharpe {w_oos['sharpe']:.2f} is less than half the in-sample {w_is['sharpe']:.2f}: "
-                       "the classic sign of a fit to the in-sample years.")  # fmt: skip
+    sh_is, sh_oos = w_is["sharpe"], (w_oos or {}).get("sharpe")
+    if sh_is is not None and sh_oos is not None and sh_is > 0 and sh_oos < 0.5 * sh_is:
+        out.append(f"Out-of-sample Sharpe {sh_oos:.2f} is less than half the in-sample {sh_is:.2f}: the classic "
+                   "sign of a fit to the in-sample years.")  # fmt: skip
     if w_oos and w_oos.get("deflated_sharpe") is None:
-        out.append("The deflated Sharpe could not be computed (unknown), so the multiple-testing criterion does not hold.")
+        out.append(
+            "The deflated Sharpe could not be computed (unknown), so the multiple-testing criterion does not hold."
+        )
     nets = sorted((t["net"] for t in rep["trades"]), reverse=True)
     total = sum(nets)
     if total > 0 and len(nets) >= 10:

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import math
 from datetime import date
+from typing import Any
 
 from finresearch.backtest.history import Day
 from finresearch.fincalc.volatility import IvStats
@@ -70,3 +71,35 @@ class Filters:
             if s.trend.startswith("below") and above:
                 return f"trend filter: price not below its {n}-session average"
         return None
+
+
+def price_series(
+    history: Any, symbol: str, start: date, end: date, rate: float
+) -> list[tuple[date, float | None]]:
+    """[(session, underlying_price)] from `start` to `end`, oldest first, for the paper rule's trend filter: one SQL
+    read of the futures (and UDiFF underlying value) on a DbHistory, else every stored day."""
+    from finresearch.backtest.dbhistory import DbHistory
+
+    if not isinstance(history, DbHistory):
+        out = []
+        for d in history.sessions(symbol, start, end):
+            x = history.day(symbol, d)
+            out.append((d, underlying_price(x, rate) if x is not None else None))
+        return out
+    from sqlalchemy import select
+
+    from finresearch.db.models import FnoBhav
+
+    days: dict[date, Day] = {}
+    with history._s() as s:
+        rows = s.execute(select(FnoBhav.day, FnoBhav.instrument, FnoBhav.expiry, FnoBhav.settle, FnoBhav.underlying)
+                         .where(FnoBhav.symbol == symbol, FnoBhav.day.between(start, end))
+                         .where(FnoBhav.instrument.in_(("IDF", "STF")))).all()  # fmt: skip
+        sessions = history.sessions(symbol, start, end)
+    for d, _kind, e, settle, und in rows:
+        x = days.setdefault(d, Day(d, symbol))
+        if settle is not None and settle > 0:
+            x.futures[e] = float(settle)
+        if und is not None and und > 0:
+            x.spot = float(und)
+    return [(d, underlying_price(days[d], rate) if d in days else None) for d in sessions]

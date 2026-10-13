@@ -86,7 +86,9 @@ def submit(s: Session, version_id: int, oos: bool, now: datetime | None = None) 
     busy = s.scalar(select(func.count()).select_from(LabRun).where(LabRun.status.in_(ACTIVE))) or 0
     if busy >= MAX_ACTIVE:
         raise store.LabError(f"{busy} lab runs are already queued or running; try again when one finishes")
-    r = LabRun(version_id=version_id, oos=oos, status="queued", progress=0.0, counted=False, result={}, trades=[])
+    r = LabRun(
+        version_id=version_id, oos=oos, status="queued", progress=0.0, counted=False, result={}, trades=[]
+    )
     s.add(r)
     s.flush()
     return r
@@ -100,7 +102,10 @@ def recover_stale(s: Session, now: datetime | None = None) -> int:
         if r.status == "queued" and r.created_at is not None and now - r.created_at > START_GRACE:
             r.status, r.error = "failed", "the worker did not start"
         elif r.status == "running" and (r.heartbeat_at is None or now - r.heartbeat_at > STALE_AFTER):
-            r.status, r.error = "failed", f"the worker stopped reporting progress (no update for {STALE_AFTER})"
+            r.status, r.error = (
+                "failed",
+                f"the worker stopped reporting progress (no update for {STALE_AFTER})",
+            )
         else:
             continue
         r.finished_at = now

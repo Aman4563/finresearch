@@ -35,9 +35,13 @@ def create_strategy(s: Session, name: str, spec: StrategySpec, history: Any) -> 
 def add_version(s: Session, st: LabStrategy, spec: StrategySpec, note: str = "") -> LabVersion:
     """A new version; the same spec as an existing version of this strategy returns that version (no new variant)."""
     if spec.underlying != st.underlying:
-        raise LabError(f"the strategy's split is locked on {st.underlying}: another underlying is a new strategy")
+        raise LabError(
+            f"the strategy's split is locked on {st.underlying}: another underlying is a new strategy"
+        )
     h = spec_hash(spec)
-    old = s.scalars(select(LabVersion).where(LabVersion.strategy_id == st.id, LabVersion.spec_hash == h)).first()
+    old = s.scalars(
+        select(LabVersion).where(LabVersion.strategy_id == st.id, LabVersion.spec_hash == h)
+    ).first()
     if old is not None:
         return old
     n = s.scalar(select(func.max(LabVersion.version)).where(LabVersion.strategy_id == st.id)) or 0
@@ -76,7 +80,9 @@ def library_srs(s: Session) -> list[float]:
 
 
 def trial_srs(s: Session) -> list[float]:
-    return library_srs(s) + [float(x) for x in s.scalars(select(LabVariant.daily_sr).where(LabVariant.daily_sr.is_not(None)))]
+    return library_srs(s) + [
+        float(x) for x in s.scalars(select(LabVariant.daily_sr).where(LabVariant.daily_sr.is_not(None)))
+    ]
 
 
 def oos_versions(s: Session, strategy_id: int) -> int:
@@ -116,9 +122,17 @@ def strategy_json(s: Session, st: LabStrategy) -> dict[str, Any]:
     from finresearch.db.models import LabPaperRule
 
     vids = [v.id for v in st.versions]
-    runs = list(s.scalars(select(LabRun).where(LabRun.version_id.in_(vids)).order_by(LabRun.id.desc()))) if vids else []
+    runs = (
+        list(s.scalars(select(LabRun).where(LabRun.version_id.in_(vids)).order_by(LabRun.id.desc())))
+        if vids
+        else []
+    )
     rules = list(s.scalars(select(LabPaperRule).where(LabPaperRule.version_id.in_(vids)))) if vids else []
-    counted = set(s.scalars(select(LabVariant.version_id).where(LabVariant.version_id.in_(vids)))) if vids else set()
+    counted = (
+        set(s.scalars(select(LabVariant.version_id).where(LabVariant.version_id.in_(vids))))
+        if vids
+        else set()
+    )
     return {
         "id": st.id, "name": st.name, "underlying": st.underlying, "created_at": _iso(st.created_at),
         "split": {"is": [st.is_start.isoformat(), st.is_end.isoformat()], "oos_from": st.oos_start.isoformat(),

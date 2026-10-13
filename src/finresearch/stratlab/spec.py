@@ -110,7 +110,9 @@ class StrategySpec(BaseModel):
         if not credit and self.stop_mult is not None and self.stop_mult > 1:
             raise ValueError("a debit spread can lose at most its debit: stop at most 1 (× the debit)")
         if self.exit_dte is not None and self.exit_dte >= self.dte_min:
-            raise ValueError("the days-to-expiry exit must be below the entry window's minimum (else it exits at once)")
+            raise ValueError(
+                "the days-to-expiry exit must be below the entry window's minimum (else it exits at once)"
+            )
         if self.max_per_expiry > self.max_concurrent:
             raise ValueError("positions per expiry cannot exceed positions open at once")
         index = self.underlying in INDEXES
