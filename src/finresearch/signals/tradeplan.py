@@ -19,7 +19,7 @@ Nothing here places an order: the card's one-click actions are a paper trade and
 
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import date, timedelta
 from typing import Any
 
@@ -252,10 +252,34 @@ def _leg_iv(q: tp.ChainQuote | None, right: str, price: float, spot: float, stri
     return o.implied_vol(right, price, spot, strike, t, rate)  # type: ignore[arg-type]
 
 
+def needs_bidask(chain, legs: list[fs.LegIn]) -> bool:
+    """True when an option leg has no bid/ask in `chain` and the chain is not NSE's own (#324): re-reading NSE's chain
+    for an untraded NSE strike would only spend the shared request budget."""
+    if chain.source == "NSE":
+        return False
+    quotes = chain_quotes(chain)
+    lq = [None if y.right == "future" else _quote(quotes, y.right, y.strike) for y in legs]
+    return tp.needs_bidask(lq, [y.right for y in legs])
+
+
+def _with_bidask(lq: list[tp.ChainQuote | None], legs: list[fs.LegIn], other) -> list[tp.ChainQuote | None]:
+    """Every option leg's bid/ask from `other` (one chain, one timestamp; never a bid from one source and an ask from
+    another); IV, last price and OI stay the plan chain's."""
+    oq = chain_quotes(other)
+    out: list[tp.ChainQuote | None] = []
+    for q, y in zip(lq, legs, strict=True):
+        n = None if y.right == "future" else _quote(oq, y.right, y.strike)
+        out.append(None if q is None else replace(q, bid=n.bid if n else None, ask=n.ask if n else None))
+    return out
+
+
 def build(chain, lot: int, legs_in: list[fs.LegIn], x: Inputs, *, spec: Any | None = None,
-          extra_failed: list[tuple[str, str]] | None = None, title: str | None = None) -> dict[str, Any]:  # fmt: skip
+          extra_failed: list[tuple[str, str]] | None = None, title: str | None = None,
+          bidask: tuple[Any, str] | None = None, bidask_note: str | None = None) -> dict[str, Any]:  # fmt: skip
     """The trade-plan card for `legs_in` (the base set: its lots are the ratio, the budget sets the multiple). `spec`
     = the library recipe in "Suggest setups"; `extra_failed` = the recipe's own entry checks that failed (name, why).
+    `bidask` = (NSE's chain, its label) for the limit guidance when the plan's chain has no bid/ask for a leg (#324);
+    `bidask_note` = why it is missing when it was needed and could not be read.
     Raises ValueError when a leg has no price (signals.fno.analyse)."""
     sym, expiry = chain.symbol.upper(), chain.expiry
     spot, dte = float(chain.underlying), (chain.expiry - x.today).days
@@ -285,11 +309,19 @@ def build(chain, lot: int, legs_in: list[fs.LegIn], x: Inputs, *, spec: Any | No
         reasons.insert(0, f"The matching pre-registered backtest ({ev['spec_name']}): {ev['text']}")
     quotes = chain_quotes(chain)
     lq = [None if y.right == "future" else _quote(quotes, y.right, y.strike) for y in legs]
-    limits = tp.limit_guidance([tp.PlanLeg(y.right, y.strike, y.side, y.lots) for y in legs], lq, lot)
+    from finresearch.signals import bidask as ba
+
+    bq, bsrc = lq, ba.label(chain, x.today)
+    if tp.needs_bidask(lq, [y.right for y in legs]) and chain.source != "NSE":
+        bq, bsrc = (_with_bidask(lq, legs, bidask[0]), bidask[1]) if bidask else (lq, None)
+    limits = tp.limit_guidance([tp.PlanLeg(y.right, y.strike, y.side, y.lots) for y in legs], bq, lot)
+    if bidask is None and bsrc is None and bidask_note:
+        limits["notes"].insert(0, bidask_note)
+    src = bsrc if limits["status"] == "ok" else "unknown"
     exits = tp.spec_exits(ev["spec"]) if ev["spec"] is not None and (spec is not None or ev["match"] == "exact") \
         else tp.default_exits(kind, dte)  # fmt: skip
     # levels at the planned entry prices: the bid/ask mid when known, else the analysis' last prices (labelled)
-    entry_src = "bid/ask mid" if limits["status"] == "ok" else "last traded price (no live bid/ask)"
+    entry_src = f"bid/ask mid ({src})" if limits["status"] == "ok" else "last traded price (no live bid/ask)"
     ol, ivs = [], []
     for y, al, lr, q in zip(legs, a["legs"], limits["legs"], lq, strict=True):
         px = (
@@ -317,7 +349,7 @@ def build(chain, lot: int, legs_in: list[fs.LegIn], x: Inputs, *, spec: Any | No
         "size": {"multiple": sz.multiple, "suggested": m if sz.suggested else 0, "budget": round(sz.budget, 2),
                  "risk_per_set": None if sz.risk_per_multiple is None else round(sz.risk_per_multiple, 2),
                  "reason": sz.reason, "capital": x.capital, "max_loss_pct": x.max_loss_pct},
-        "entry": {**limits, "levels_priced_at": entry_src},
+        "entry": {**limits, "levels_priced_at": entry_src, "source": src},
         "max_profit": a["max_profit"], "max_loss": a["max_loss"], "breakevens": a["breakevens"],
         "net_premium": a["net_premium"], "costs": a["costs"]["total_to_expiry"],
         "probability": {"real_world": None if rw is None else rw["pop"], "real_world_window": (rw or {}).get("window"),
@@ -426,12 +458,17 @@ def waiting(spec: Any, symbol: str, x: Inputs, why: str) -> dict[str, Any]:
             "evidence": {k: v for k, v in ev.items() if k != "spec"}, "spec_key": spec.key}  # fmt: skip
 
 
-async def suggest(symbol: str, expiries: list[date], get_chain, lot_for, x: Inputs) -> list[dict[str, Any]]:
-    """One card per non-overlay library recipe on `symbol` today. `get_chain(expiry)` and `lot_for(expiry)` are async;
-    each expiry's chain is read once."""
+async def suggest(symbol: str, expiries: list[date], get_chain, lot_for, x: Inputs,
+                  get_bidask=None) -> list[dict[str, Any]]:  # fmt: skip
+    """One card per non-overlay library recipe on `symbol` today. `get_chain(expiry)`, `lot_for(expiry)` and
+    `get_bidask(expiry)` (-> (chain, label) or None: the bid/ask fallback, #324) are async; each expiry's chain is read
+    once, and its bid/ask fallback at most once, on the first card of that expiry that needs it (a failure is kept for
+    the other cards of this call: no retry per card)."""
     from finresearch.backtest import specs
+    from finresearch.signals import bidask as ba
 
     chains: dict[date, Any] = {}
+    fallback: dict[date, tuple[Any, str] | None] = {}
     out = []
     for spec in specs.SPECS:
         if spec.role == "overlay":
@@ -454,9 +491,12 @@ async def suggest(symbol: str, expiries: list[date], get_chain, lot_for, x: Inpu
         if isinstance(legs, str):
             out.append(waiting(spec, symbol, x, f"Cannot build the recipe's legs today: {legs}."))
             continue
+        if get_bidask is not None and e not in fallback and needs_bidask(chain, legs):
+            fallback[e] = await get_bidask(e)
         try:
             card = build(chain, lot, legs, x, spec=spec, extra_failed=_recipe_checks(spec, x),
-                         title=f"{symbol.upper()} {e:%d-%b-%Y} · {spec.name}")  # fmt: skip
+                         title=f"{symbol.upper()} {e:%d-%b-%Y} · {spec.name}", bidask=fallback.get(e),
+                         bidask_note=ba.FAILED_NOTE if e in fallback else None)  # fmt: skip
         except ValueError as err:
             out.append(waiting(spec, symbol, x, str(err)))
             continue
