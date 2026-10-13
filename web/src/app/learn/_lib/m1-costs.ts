@@ -6,7 +6,7 @@ export const M1_COSTS: Section[] = [
   {
     id: "stt",
     title: "STT, including STT on exercise",
-    body: `Securities transaction tax on equity F&O, as both Groww and Zerodha apply it in October 2026 [[groww-fno]] [[zerodha-charges]]:
+    body: `Securities transaction tax on equity F&O in October 2026. Groww's page lists the sale rates [[groww-fno]]; only Zerodha's also lists the rate on exercise [[zerodha-charges]]:
 
 | Trade | STT |
 |---|---|

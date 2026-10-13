@@ -42,10 +42,10 @@ export function Md({ text, order, className }: { text: string; order: string[]; 
     },
     table: ({ children }) => (
       <div className="my-3 max-w-full overflow-x-auto rounded-lg border border-border" tabIndex={0} role="region" aria-label="Table">
-        <table className="w-full text-left text-xs">{children}</table>
+        <table className="w-full text-left text-xs [overflow-wrap:normal]">{children}</table>
       </div>
     ),
-    th: ({ children }) => <th className="border-b border-border bg-background-subtle px-2.5 py-1.5 font-medium">{children}</th>,
+    th: ({ children }) => <th className="border-b border-border bg-background-subtle px-2.5 py-1.5 font-medium whitespace-nowrap">{children}</th>,
     td: ({ children }) => <td className="border-b border-border/60 px-2.5 py-1.5 align-top">{children}</td>,
     h3: ({ children }) => <h3 className="mt-4 mb-1 text-sm font-semibold text-foreground">{children}</h3>,
     blockquote: ({ children }) => <blockquote className="my-3 rounded-lg border-l-2 border-brand bg-brand-soft/40 px-3 py-1">{children}</blockquote>,
