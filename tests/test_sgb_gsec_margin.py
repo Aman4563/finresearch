@@ -120,3 +120,156 @@ def test_government_securities_are_listed_with_the_12_month_rule():
     assert re.search(
         r"s\.2\(42A\)", auto_tax_class("stock", "7.18% GOI 2033", None, None, None, "IN0020230085")[1]
     )
+
+
+# --------------------------------------------------------------------------- 3. Groww basket margin calculator
+# the F&O API fixture (fake Groww market and sources, TRADE_DAY 12-Oct-2026)
+from test_fno_book import api, book_db, offline  # noqa: E402,F401
+
+ORDER_WORDS = ("/order/create", "/order/modify", "/order/cancel", "/order/smart/create", "/order/smart/cancel",
+               "/order/oco/create", "/positions/user", "/margins/detail/user")  # fmt: skip
+
+
+def _all_lists():
+    from finresearch.adapters import groww_market as gm
+    from finresearch.portfolio.connectors import groww
+
+    return {"READ_PATHS": groww.READ_PATHS, "AUTH_PATHS": groww.AUTH_PATHS, "MARKET_PATHS": gm.MARKET_PATHS,
+            "ASSET_PATHS": gm.ASSET_PATHS, "CALC_PATHS": gm.CALC_PATHS}  # fmt: skip
+
+
+def test_the_margin_calculator_is_the_only_non_get_non_login_path_and_no_order_path_is_reachable():
+    from finresearch.adapters import groww_market as gm
+    from finresearch.portfolio.connectors import groww
+
+    lists = _all_lists()
+    assert gm.CALC_PATHS == (r"/margins/detail/orders",)  # exactly one entry
+    # every regex in every list, against order/modify/cancel paths: nothing matches
+    for name, paths in lists.items():
+        for p in paths:
+            for bad in ("/order/create", "/order/modify", "/order/cancel", "/order/smart/create"):
+                assert not re.fullmatch(p, bad), (name, p, bad)
+    # the calculator path is in no other list (so no GET or login POST client reaches it)
+    for name, paths in lists.items():
+        if name != "CALC_PATHS":
+            assert not any(re.fullmatch(p, "/margins/detail/orders") for p in paths), name
+    # the one client that carries CALC_PATHS: POST to the calculator only, through calc_post only
+    http = gm.GrowwMarket()._calc_api("tok")
+    http._check("POST", "/margins/detail/orders", "calc")
+    for method in ("GET", "PUT", "DELETE", "PATCH"):
+        _forbidden(http, method, "/margins/detail/orders", "calc")
+    for path in ORDER_WORDS:
+        for method in ("GET", "POST", "PUT", "DELETE"):
+            _forbidden(http, method, path, "calc")
+            _forbidden(http, method, path, None)
+    _forbidden(http, "POST", "/margins/detail/orders", None)  # auth_post cannot reach it
+    _forbidden(http, "POST", "/token/api/access", "calc")  # calc_post cannot reach login
+    # the connector and market clients stay GET-only (+ login)
+    for paths in (groww.READ_PATHS, gm.MARKET_PATHS):
+        from finresearch.portfolio.connectors.base import ReadOnlyHttp
+
+        c = ReadOnlyHttp(groww.BASE, read_paths=paths, auth_paths=groww.AUTH_PATHS)
+        _forbidden(c, "POST", "/margins/detail/orders", "calc")
+
+
+def _forbidden(http, method, path, kind):
+    import pytest
+
+    from finresearch.portfolio.connectors.base import ForbiddenRequest
+
+    with pytest.raises(ForbiddenRequest):
+        http._check(method, path, kind)
+
+
+def test_margin_counts_against_the_non_trading_budget():
+    from finresearch.adapters.groww_budget import LABELS, category
+
+    # docs rate-limit table: "Non Trading: Order Status, Order list, Trade list, Positions, Holdings, Margin"
+    assert category("/margins/detail/orders") == "non_trading" and "margin" in LABELS["non_trading"]
+
+
+def _fake_groww(monkeypatch, payload):
+    """A transport for api.groww.in: records the request and answers `payload` for the calculator."""
+    import httpx
+
+    from finresearch.adapters import groww_budget
+    from finresearch.portfolio.connectors import base
+
+    seen = []
+
+    def handle(req: httpx.Request) -> httpx.Response:
+        seen.append(req)
+        return httpx.Response(200, json=payload)
+
+    monkeypatch.setattr(base, "TRANSPORT", httpx.MockTransport(handle))
+    monkeypatch.setattr(groww_budget.BUDGET, "wait_s", lambda cat: 0.0)
+    return seen
+
+
+def test_basket_margin_request_and_answer(monkeypatch):
+    import asyncio
+    import json
+
+    from test_fno_book import EXPIRY, FakeMarket
+
+    from finresearch.adapters import groww_market as gm
+
+    inst = FakeMarket().inst
+    orders = gm.basket_orders(inst, "NIFTY", EXPIRY, [("call", 25000.0, "buy", 75, 119.0),
+                                                      ("call", 25200.0, "sell", 75, None)])  # fmt: skip
+    assert orders == [
+        {"trading_symbol": "NIFTY26OCT25000CE", "transaction_type": "BUY", "quantity": 75, "order_type": "LIMIT",
+         "price": 119.0, "product": "NRML", "exchange": "NSE"},
+        {"trading_symbol": "NIFTY26OCT25200CE", "transaction_type": "SELL", "quantity": 75, "order_type": "MARKET",
+         "product": "NRML", "exchange": "NSE"}]  # fmt: skip
+    seen = _fake_groww(monkeypatch, {"status": "SUCCESS", "payload": {
+        "exposure_required": 28125.5, "span_required": 61000, "option_buy_premium": 0, "brokerage_and_charges": 40,
+        "total_requirement": 89165.5, "cash_cnc_margin_required": 0}})  # fmt: skip
+    m = gm.GrowwMarket()
+    monkeypatch.setattr(m, "token", lambda: "tok-123456")
+    got = asyncio.run(m.basket_margin(orders))
+    assert got == {"span_required": 61000.0, "exposure_required": 28125.5, "option_buy_premium": 0.0,
+                   "brokerage_and_charges": 40.0, "total_requirement": 89165.5}  # fmt: skip
+    (req,) = seen
+    assert req.method == "POST" and req.url.path == "/v1/margins/detail/orders"
+    assert req.url.params["segment"] == "FNO" and json.loads(req.content) == orders
+    assert req.headers["X-API-VERSION"] == "1.0" and req.headers["Authorization"] == "Bearer tok-123456"
+
+
+def test_margin_api_uses_groww_and_falls_back_labelled(monkeypatch, api):  # noqa: F811
+    from test_fno_book import SPREAD, TRADE_DAY, at_ist
+
+    from finresearch.adapters import groww_market as gm
+
+    body = {k: SPREAD[k] for k in ("symbol", "expiry", "legs")}
+    sent = []
+
+    async def ok(orders, segment="FNO"):
+        sent.append((segment, orders))
+        return {"span_required": 61000.0, "exposure_required": 28125.5, "option_buy_premium": 8925.0,
+                "brokerage_and_charges": 40.0, "total_requirement": 98090.5}  # fmt: skip
+
+    monkeypatch.setattr(gm.MARKET, "basket_margin", ok, raising=False)
+    with api(at_ist(TRADE_DAY, 10)) as c:
+        r = c.post("/api/fno/margin", json=body).json()
+    g = r["groww_calculator"]
+    assert r["margin_source"] == "groww" and g["available"] and g["total"] == 98090.5 and g["span"] == 61000.0
+    ((seg, orders),) = sent
+    assert seg == "FNO" and [o["trading_symbol"] for o in orders] == [
+        "NIFTY26OCT25000CE",
+        "NIFTY26OCT25200CE",
+    ]
+    assert [o["quantity"] for o in orders] == [75, 75]  # 1 lot x 75
+    assert r["status"] == "approximate" and r["total"] > 0  # the approximation is still there, labelled
+
+    async def down(orders, segment="FNO"):
+        from finresearch.portfolio.connectors.base import ConnectorError
+
+        raise ConnectorError("HTTP 503 from /margins/detail/orders: busy")
+
+    monkeypatch.setattr(gm.MARKET, "basket_margin", down, raising=False)
+    with api(at_ist(TRADE_DAY, 10)) as c:
+        r = c.post("/api/fno/margin", json=body).json()
+    assert r["margin_source"] == "approximate" and r["groww_calculator"]["available"] is False
+    assert "HTTP 503" in r["groww_calculator"]["reason"] and "fallback" in r["groww_calculator"]["reason"]
+    assert "approximate" in r["label"] and r["total"] > 0

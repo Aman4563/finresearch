@@ -3,8 +3,8 @@
 The user pays for the Groww Trade API; when the Groww connection is on and its session is valid the app reads prices
 here first and falls back to NSE/BSE (AMFI for funds: Groww has no fund data) on any error or unknown instrument.
 Nothing here can place an order: requests go through `ReadOnlyHttp` with a GET-only allowlist (MARKET_PATHS on
-api.groww.in, the instruments CSV on growwapi-assets.groww.in), and every call takes a shared slot in its Groww
-rate category (`adapters.groww_budget`).
+api.groww.in, the instruments CSV on growwapi-assets.groww.in) plus one calculator POST (CALC_PATHS: the basket
+margin calculator, #316), and every call takes a shared slot in its Groww rate category (`adapters.groww_budget`).
 
 Official docs (read 9-Oct-2026), and the growwapi 1.5.0 SDK source where the pages leave a detail out:
 * LTP ``GET /v1/live-data/ltp?segment=CASH&exchange_symbols=NSE_RELIANCE&exchange_symbols=BSE_SENSEX`` → ``payload``
@@ -55,10 +55,27 @@ log = logging.getLogger(__name__)
 BASE = "https://api.groww.in/v1"
 ASSETS = "https://growwapi-assets.groww.in"
 INSTRUMENTS_PATH = "/instruments/instrument.csv"
-# GET only, and only these: no order, margin-for-order, smart-order or socket-token path is reachable from here
+# GET only, and only these: no order, smart-order or socket-token path is reachable from here (the margin
+# calculator is CALC_PATHS, on its own client)
 MARKET_PATHS = (r"/live-data/ltp", r"/historical/candles", r"/historical/expiries",
                 r"/option-chain/exchange/(NSE|BSE)/underlying/[A-Z0-9&_-]{1,30}")  # fmt: skip
 ASSET_PATHS = (r"/instruments/instrument\.csv",)
+# The ONE non-GET path besides login (#316): Groww's basket margin calculator. It only computes the margin a basket
+# would need and places nothing; it is reachable solely through `ReadOnlyHttp.calc_post` from `basket_margin`, on a
+# client of its own (MARKET_PATHS clients stay GET-only). Docs https://groww.in/trade-api/docs/curl/margin, read
+# 13-Oct-2026: ``POST /v1/margins/detail/orders?segment=CASH|FNO`` with a JSON array of orders {trading_symbol,
+# transaction_type BUY|SELL, quantity, price (limit orders), order_type LIMIT|MARKET|SL|SL_M, product CNC|MIS|NRML,
+# exchange NSE|BSE} -> {"status": "SUCCESS", "payload": {exposure_required, span_required, option_buy_premium,
+# brokerage_and_charges, total_requirement, cash_cnc_margin_required, cash_mis_margin_required,
+# physical_delivery_margin_requirement}}. Rate category: "Margin" is in Non Trading (20/s, 500/min) on the docs'
+# rate-limit table; adapters.groww_budget maps /margins/.* there.
+CALC_PATHS = (r"/margins/detail/orders",)
+MARGIN_PATH = "/margins/detail/orders"
+MARGIN_FIELDS = ("span_required", "exposure_required", "option_buy_premium", "brokerage_and_charges",
+                 "total_requirement")  # fmt: skip
+# NRML: "Regular margin trading allowing overnight positions" (docs annexure); the F&O carry-forward product. That
+# the calculator answers an F&O basket for NRML as the order screen does is not stated [U].
+FNO_PRODUCT = "NRML"
 SOURCE = "Groww"
 LTP_PROVENANCE, CLOSE_PROVENANCE = f"{SOURCE} LTP", f"{SOURCE} daily close"
 # the label of a Groww close used as a price: only when the exchange's official close is not available (#283)
@@ -240,6 +257,37 @@ def _num(v: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return f if f == f and f > 0 else None  # NaN, zero and negative are "no price", never a price of 0
+
+
+def _amount(v: Any) -> float | None:
+    """A rupee figure that may be 0 (a sell-only basket pays no premium); missing, NaN or negative -> None."""
+    if isinstance(v, bool):
+        return None
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return f if f == f and f >= 0 else None
+
+
+def basket_orders(inst: Instruments, underlying: str, expiry: date,
+                  legs: list[tuple[str, float, str, int, float | None]], exchange: str = "NSE") -> list[dict[str, Any]]:  # fmt: skip
+    """The calculator's order list for legs (right call|put|future, strike, side buy|sell, units, price or None):
+    trading symbols from Groww's instruments file, product NRML; a priced leg is a LIMIT at that price, else MARKET.
+    Raises ConnectorError when a contract is not in the file (the caller falls back to the approximation)."""
+    out = []
+    for right, strike, side, units, price in legs:
+        kind = {"call": "CE", "put": "PE", "future": "FUT"}[right]
+        sym = inst.fno_symbol(underlying, expiry, strike, kind)
+        if not sym:
+            raise ConnectorError(f"no Groww contract for {underlying} {expiry} {strike:g} {kind}")
+        o: dict[str, Any] = {"trading_symbol": sym, "transaction_type": "BUY" if side == "buy" else "SELL",
+                             "quantity": int(units), "order_type": "MARKET", "product": FNO_PRODUCT,
+                             "exchange": ((inst.contract(sym) or {}).get("exchange") or exchange).upper()}  # fmt: skip
+        if price is not None and price > 0:
+            o.update(order_type="LIMIT", price=round(float(price), 2))
+        out.append(o)
+    return out
 
 
 def _ok(body: Any) -> Any:
@@ -432,6 +480,11 @@ class GrowwMarket:
         return ReadOnlyHttp(BASE, read_paths=MARKET_PATHS, secrets=(token,),
                             headers={"Authorization": f"Bearer {token}", "Accept": "application/json",
                                      "X-API-VERSION": "1.0"})  # fmt: skip
+
+    def _calc_api(self, token: str) -> ReadOnlyHttp:
+        return ReadOnlyHttp(BASE, read_paths=(), calc_paths=CALC_PATHS, secrets=(token,),
+                            headers={"Authorization": f"Bearer {token}", "Accept": "application/json",
+                                     "Content-Type": "application/json", "X-API-VERSION": "1.0"})  # fmt: skip
 
     def token(self) -> str | None:
         return self.session.token()
@@ -794,6 +847,31 @@ class GrowwMarket:
         self._chains[key] = (self._now_s() + ttl, chain)
         self._mark("option_chain")
         return chain
+
+    # ---- basket margin (the one calculator POST, #316)
+    async def basket_margin(
+        self, orders: list[dict[str, Any]], segment: str = "FNO"
+    ) -> dict[str, float | None]:
+        """Groww's required margin for a basket (`basket_orders` builds it): MARGIN_FIELDS in rupees, a field Groww
+        leaves out stays None. Raises ConnectorError when there is no session or Groww cannot answer."""
+        from finresearch.portfolio.connectors.base import ReconnectNeeded
+
+        tok = self.token()
+        if not tok:
+            raise ConnectorError("no valid Groww session")
+        try:
+            body = await self._calc_api(tok).calc_post(MARGIN_PATH, json=orders, params={"segment": segment})
+        except ReconnectNeeded:
+            self.session.forget()
+            raise
+        payload = _ok(body)
+        if not isinstance(payload, dict):
+            raise ConnectorError("Groww's margin answer had no payload")
+        out = {k: _amount(payload.get(k)) for k in MARGIN_FIELDS}
+        if out["total_requirement"] is None:
+            raise ConnectorError("Groww's margin answer had no total_requirement")
+        self._mark("margin")
+        return out
 
     # ---- status for the settings card
     def status(self) -> dict[str, Any]:
