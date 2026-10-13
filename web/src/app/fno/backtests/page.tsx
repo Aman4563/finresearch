@@ -31,7 +31,8 @@ export default function BacktestsPage() {
   return (
     <div className="min-w-0 space-y-6 [overflow-wrap:anywhere]">
       <PageHeader icon={<FlaskConical className="size-5" />} eyebrow="Research" title="F&O strategy backtests"
-        description="A few strategies fixed in advance, replayed on NSE's end-of-day F&O history with real charges, STT and slippage, and judged out of sample against criteria written down before the run. A strategy that passes is a candidate with evidence, never a guarantee; one that fails says so." />
+        description="A few strategies fixed in advance, replayed on NSE's end-of-day F&O history with real charges, STT and slippage, and judged out of sample against criteria written down before the run. A strategy that passes is a candidate with evidence, never a guarantee; one that fails says so."
+        actions={<Link href="/fno/lab" className="text-sm text-brand hover:underline">Strategy lab: test your own →</Link>} />
       <RiskBanner />
       <ErrorNote error={error} onRetry={load} />
       {!data ? (
