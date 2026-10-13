@@ -433,8 +433,8 @@ async def suggest(symbol: str, expiries: list[date], get_chain, lot_for, x: Inpu
             continue
         e = recipe_expiry(spec, expiries, x.today)
         if e is None:
-            kind = "a monthly" if spec.expiry_kind == "monthly" else "an"
-            out.append(waiting(spec, symbol, x, f"No {kind} expiry {spec.dte_min}-{spec.dte_max} days away today: "
+            kind = "monthly " if spec.expiry_kind == "monthly" else ""
+            out.append(waiting(spec, symbol, x, f"No {kind}expiry {spec.dte_min}-{spec.dte_max} days away today: "
                                                 f"the recipe's entry window is closed."))  # fmt: skip
             continue
         if e not in chains:

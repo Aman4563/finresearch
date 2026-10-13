@@ -194,6 +194,19 @@ def option_buildup_live(chain) -> dict[str, Any] | None:
             "as_of": chain.as_of.isoformat() if chain.as_of else None}  # fmt: skip
 
 
+def needs_network_closes(symbol: str, today: date) -> bool:
+    """True when fewer than 60 underlying closes are stored (build() then falls back to NSE's recent closes)."""
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from finresearch.db import session_scope
+
+    try:
+        with session_scope() as s:
+            return len(stored_closes(s, symbol, today)) < 60
+    except SQLAlchemyError:
+        return True
+
+
 def _r(x: float | None, d: int = 2) -> float | None:
     return None if x is None else round(x, d)
 
