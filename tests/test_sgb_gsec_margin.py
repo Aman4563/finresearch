@@ -273,3 +273,19 @@ def test_margin_api_uses_groww_and_falls_back_labelled(monkeypatch, api):  # noq
     assert r["margin_source"] == "approximate" and r["groww_calculator"]["available"] is False
     assert "HTTP 503" in r["groww_calculator"]["reason"] and "fallback" in r["groww_calculator"]["reason"]
     assert "approximate" in r["label"] and r["total"] > 0
+
+
+def test_the_calculator_client_is_built_and_used_in_one_place_only():
+    from pathlib import Path
+
+    import finresearch
+
+    root = Path(finresearch.__file__).parent
+    src = {p: p.read_text() for p in root.rglob("*.py")}
+    built = [(p.name, t.count("calc_paths=")) for p, t in src.items() if "calc_paths=" in t]
+    used = [(p.name, t.count(".calc_post(")) for p, t in src.items() if ".calc_post(" in t]
+    assert built == [("groww_market.py", 1)]  # GrowwMarket._calc_api
+    assert used == [("groww_market.py", 1)]  # GrowwMarket.basket_margin
+    gm = src[root / "adapters" / "groww_market.py"]
+    assert "_calc_api(" in gm.split("async def basket_margin", 1)[1].split("\n    def ", 1)[0]
+    assert gm.count("._calc_api(") == 1
