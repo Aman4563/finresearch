@@ -4,7 +4,6 @@ worked out here from the stated rules and formulas, not by calling the code unde
 
 from __future__ import annotations
 
-import asyncio
 import math
 import threading
 import time
@@ -259,9 +258,10 @@ def test_oos_lock_in_sample_runs_are_free_and_every_new_oos_variant_raises_the_b
     w_a, w_b = a["result"]["windows"]["oos"], b["result"]["windows"]["oos"]
     assert w_a["from"] == w_b["from"] == "2025-02-01"
     # V: the library's eight OOS daily Sharpe ratios and the lab's counted variants (this one included)
-    v_b = ev.trials_variance(lib + [w_a["daily_sr"], w_b["daily_sr"]])
-    m = sum(lib + [w_a["daily_sr"], w_b["daily_sr"]]) / 10
-    assert v_b == pytest.approx(sum((x - m) ** 2 for x in lib + [w_a["daily_sr"], w_b["daily_sr"]]) / 9)
+    trials = [*lib, w_a["daily_sr"], w_b["daily_sr"]]
+    v_b = ev.trials_variance(trials)
+    m = sum(trials) / 10
+    assert v_b == pytest.approx(sum((x - m) ** 2 for x in trials) / 9)
     assert w_b["deflated_sharpe"] == pytest.approx(dsr_by_hand(w_b, 10, v_b), abs=1e-4)
     # the bar rises with N: the same window and V judged as one of 9 vs one of 10 (and of 30) variants
     assert dsr_by_hand(w_b, 9, v_b) > dsr_by_hand(w_b, 10, v_b) > dsr_by_hand(w_b, 30, v_b)
@@ -331,7 +331,7 @@ def test_api_runs_in_a_background_job_with_progress(client, mem, monkeypatch):
             seen.append(got["progress"])
         time.sleep(0.05)
     th.join()
-    assert seen and 0 <= min(seen) and max(seen) < 1
+    assert seen and seen == sorted(seen) and min(seen) >= 0 and max(seen) < 1
     done = client.get(f"/api/fno/lab/runs/{rid}").json()
     assert done["status"] == "done" and done["progress"] == 1 and done["n_trials"] == 9
     res = done["result"]
@@ -382,3 +382,154 @@ def test_run_cap_stops_a_run_and_a_silent_worker_is_marked_failed(lab_db, mem):
         assert st.status == "timed_out"
         with pytest.raises(store.LabError, match="already queued or running"):
             jobs.submit(s, vid, False)
+
+
+# --------------------------------------------------------------------------- 6. paper hand-off
+class NoGroww:
+    """No Groww session: prices come from the option chain (the paper book's fallback)."""
+
+    def token(self):
+        return None
+
+    async def instruments(self):
+        return None
+
+
+class ChainFrom:
+    """Option chains whose last prices are one synthetic day's closes (made-up prices)."""
+
+    def __init__(self, x: Day) -> None:
+        self.x = x
+
+    async def chain(self, symbol, expiry):
+        from decimal import Decimal as D
+
+        from finresearch.adapters.nse_fno import ChainRow, OptionChain, OptionQuote
+
+        def q(right, k):
+            got = self.x.options.get((expiry, right, k))
+            return None if got is None else OptionQuote(last_price=D(str(got.close)), iv=None, oi=None,
+                                                         change_in_oi=None, volume=None, bid=None, ask=None)  # fmt: skip
+
+        ks = sorted({k for e, _, k in self.x.options if e == expiry})
+        return OptionChain(symbol=symbol, expiry=expiry, underlying=D(str(round(self.x.spot, 2))), as_of=None,
+                           rows=[ChainRow(strike=D(str(k)), call=q("call", k), put=q("put", k)) for k in ks])  # fmt: skip
+
+
+def test_paper_hand_off_signals_match_the_engine_then_fill_live_and_exit_by_rule(client, mem, monkeypatch):
+    from finresearch.backtest import engine
+    from finresearch.db import session_scope
+    from finresearch.db.models import LabPaperSignal, PaperStrategy
+    from finresearch.fincalc import paper as pp
+    from finresearch.stratlab import jobs, paper, store
+    from finresearch.stratlab.spec import book_for
+
+    sp_ = spec(max_concurrent=5, max_per_expiry=5)
+    with session_scope() as s:
+        vid = store.create_strategy(s, "Paper me", sp_, mem).versions[0].id
+    assert run_async(paper.step(at_ist(LAST, 20))) == {}  # nothing to do: no rule set
+    assert client.post(f"/api/fno/lab/versions/{vid}/paper").status_code == 422  # not tested yet
+    with session_scope() as s:
+        rid = jobs.submit(s, vid, False).id
+    jobs.execute(rid, mem)
+    made = client.post(f"/api/fno/lab/versions/{vid}/paper")
+    assert made.status_code == 201 and made.json()["status"] == "active"
+    assert client.post(f"/api/fno/lab/versions/{vid}/paper").status_code == 409
+    assert client.post(f"/api/fno/lab/paper/{made.json()['id']}/stop").json()["status"] == "stopped"
+
+    # a rule set made on the evening of 8-Aug: closes from 11-Aug on are checked
+    monkeypatch.setattr(paper, "FILL_WITHIN_DAYS", 100)
+    with session_scope() as s:
+        rule = paper.create_rule(s, vid, at_ist(date(2025, 8, 8), 20)).id
+    got = paper.signals_step(at_ist(LAST, 20), mem)
+    lab, book = to_lab_spec(sp_, "e", "e"), book_for(sp_)
+    f = flt.Filters(lab, book.rate)
+    want = engine.run([lab], mem, date(2025, 8, 9), LAST, book, data_end=LAST, gate=f.gate, on_day=f.on_day)[
+        "e"
+    ]
+    entries = sorted([t["entry_day"] for t in want["trades"]] + [o["entry_day"] for o in want["open_at_end"]])
+    # fewer entries than max_concurrent, so the engine closing some early does not change later decisions
+    assert 0 < len(entries) < 5
+    by_day = {t["entry_day"]: t for t in want["trades"]}
+    with session_scope() as s:
+        sigs = list(s.scalars(paper.select(LabPaperSignal).where(LabPaperSignal.rule_id == rule)
+                              .order_by(LabPaperSignal.day)))  # fmt: skip
+        assert [g.day.isoformat() for g in sigs] == entries and {g.status for g in sigs} == {"pending"}
+        assert got == {"lab_signals": len(entries), "lab_closes_checked": 15}
+        assert all(g.legs[0]["side"] == "sell" and g.legs[1]["side"] == "buy" for g in sigs)
+        for g in sigs:  # the same legs and lots as the backtest's entry that close
+            t = by_day.get(g.day.isoformat())
+            if t is not None:
+                assert g.lots == t["lots"] and [x["strike"] for x in g.legs] == [
+                    x["strike"] for x in t["legs"]
+                ]
+                assert [x["fill_assumed"] for x in g.legs] == [x["entry"] for x in t["legs"]]
+        first = sigs[0]
+        ids, legs0, lots0 = [g.id for g in sigs], first.legs, first.lots
+    assert paper.signals_step(at_ist(LAST, 21), mem) == {
+        "lab_signals": 0,
+        "lab_closes_checked": 0,
+    }  # idempotent
+
+    # Monday 1-Sep, 10:00 IST: filled at the chain's last price ∓ the paper book's 0.5 % slippage
+    src, mon = ChainFrom(mem.day("NIFTY", LAST)), date(2025, 9, 1)
+    assert run_async(paper.fill_step(at_ist(mon, 10), market=NoGroww(), sources=src)) == {
+        "lab_filled": len(ids),
+        "lab_missed": 0,
+    }
+    with session_scope() as s:
+        g = s.get(LabPaperSignal, ids[0])
+        st = s.get(PaperStrategy, g.paper_id)
+        assert g.status == "filled" and st.label.startswith("Lab #") and st.status == "open"
+        for leg, want_leg in zip(st.legs, legs0, strict=True):
+            close = mem.day("NIFTY", LAST).options[(st.expiry, want_leg["right"], want_leg["strike"])].close
+            f_ = close * (1.005 if want_leg["side"] == "buy" else 0.995)
+            assert float(leg.entry_price) == pytest.approx(round(f_, 2), abs=0.006)
+            assert leg.lots == lots0
+        credit = abs(pp.net_premium(pp_legs(st)))
+        st.mtm_gross = round(credit * 0.6, 2)  # marked at 60 % of the credit: the 50 % profit-take fires
+        pid0 = st.id
+    out = run_async(paper.manage_step(at_ist(mon, 11), market=NoGroww(), sources=src))
+    assert out == {"lab_closed": 1}  # the others have no mark yet: an unknown mark never fires a P&L rule
+    with session_scope() as s:
+        st = s.get(PaperStrategy, pid0)
+        g = s.get(LabPaperSignal, ids[0])
+        assert st.status == "closed" and st.close_reason == "square_off" and g.exit_reason == "profit_take"
+    view = client.get("/api/fno/lab/paper").json()["rules"]
+    mine = next(r for r in view if r["id"] == rule)
+    assert mine["results"]["closed"] == 1 and mine["signals"][0]["exit_reason"] == "profit_take"
+
+
+def run_async(coro):
+    import asyncio
+
+    return asyncio.run(coro)
+
+
+def pp_legs(st):
+    from finresearch.fnobook import book
+
+    return book.legs_of(st)
+
+
+def test_paper_signals_checked_too_late_are_kept_as_missed(lab_db, mem):
+    from finresearch.db import session_scope
+    from finresearch.db.models import LabPaperSignal
+    from finresearch.stratlab import jobs, paper, store
+
+    with session_scope() as s:
+        vid = store.create_strategy(s, "", spec(), mem).versions[0].id
+        rid = jobs.submit(s, vid, False).id
+    jobs.execute(rid, mem)
+    with session_scope() as s:
+        rule = paper.create_rule(s, vid, at_ist(date(2025, 8, 8), 20)).id
+    # the app was off: the closes of 11-29 Aug are checked on 10-Sep, more than FILL_WITHIN_DAYS later
+    got = paper.signals_step(at_ist(date(2025, 9, 10), 20), mem)
+    assert got["lab_signals"] > 0
+    with session_scope() as s:
+        sigs = list(s.scalars(paper.select(LabPaperSignal).where(LabPaperSignal.rule_id == rule)))
+        assert {g.status for g in sigs} == {"missed"} and all("checked late" in g.note for g in sigs)
+    assert run_async(paper.fill_step(at_ist(date(2025, 9, 11), 10), market=NoGroww(), sources=None)) == {
+        "lab_filled": 0,
+        "lab_missed": 0,
+    }
