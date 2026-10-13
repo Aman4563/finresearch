@@ -177,15 +177,16 @@ def size(max_loss_one: float | None, costs_one: float, budget: float, proven: bo
 def limit_guidance(legs: Sequence[PlanLeg], quotes: Sequence[ChainQuote | None], lot: int) -> dict[str, Any]:
     """Per leg: bid, ask, mid and the limit range (mid = patient, the far side = fill now). The net per share only
     when every leg has a bid and an ask and the same lots; otherwise "unknown" (a last trade is shown as a reference,
-    never as a quote)."""
+    never as a quote). Slippage (#324) = what filling now gives up against the mids: |far side − mid| per share a leg,
+    and in rupees Σ |far − mid| × lots × lot size; None unless every leg has a bid and an ask (unknown, never 0)."""
     rows, known = [], True
-    net_mid = net_now = 0.0
+    net_mid = net_now = slip_inr = 0.0
     for x, q in zip(legs, quotes, strict=True):
         bid = q.bid if q and q.bid and q.bid > 0 else None
         ask = q.ask if q and q.ask and q.ask > 0 else None
         r: dict[str, Any] = {"right": x.right, "strike": x.strike, "side": x.side, "lots": x.lots, "bid": bid,
                              "ask": ask, "last": q.last if q else None, "mid": None, "limit_from": None,
-                             "limit_to": None, "spread_pct": None, "status": "unknown"}  # fmt: skip
+                             "limit_to": None, "spread_pct": None, "slippage": None, "status": "unknown"}  # fmt: skip
         if bid is not None and ask is not None and ask >= bid:
             mid = round((bid + ask) / 2, 2)
             far = ask if x.side == "buy" else bid
@@ -194,8 +195,10 @@ def limit_guidance(legs: Sequence[PlanLeg], quotes: Sequence[ChainQuote | None],
                 limit_from=mid,
                 limit_to=far,
                 spread_pct=round((ask - bid) / mid * 100, 2),
+                slippage=round(abs(far - mid), 2),
                 status="ok",
             )
+            slip_inr += abs(far - mid) * x.lots * lot
             sign = 1 if x.side == "sell" else -1
             net_mid += sign * mid
             net_now += sign * far
@@ -204,17 +207,24 @@ def limit_guidance(legs: Sequence[PlanLeg], quotes: Sequence[ChainQuote | None],
         rows.append(r)
     same_lots = len({x.lots for x in legs}) == 1
     out: dict[str, Any] = {"legs": rows, "status": "ok" if known and same_lots else "unknown",
-                           "net_mid": None, "net_fill_now": None, "notes": []}  # fmt: skip
+                           "net_mid": None, "net_fill_now": None, "notes": [],
+                           "slippage_inr": round(slip_inr, 2) if known else None}  # fmt: skip
     if known and same_lots:
         out["net_mid"], out["net_fill_now"] = round(net_mid, 2), round(net_now, 2)
     elif not known:
-        out["notes"].append("a leg has no live bid/ask (Groww's chain has none, or the strike is untraded): the "
-                            "entry range is unknown; last trades are shown only as a reference")  # fmt: skip
+        out["notes"].append("a leg has no live bid/ask (no chain with bid/ask could be read, or the strike is "
+                            "untraded): the entry range is unknown; last trades are shown only as a reference")  # fmt: skip
     wide = [r for r in rows if r["spread_pct"] is not None and r["spread_pct"] > 10]
     if wide:
         out["notes"].append("wide bid/ask on " + ", ".join(f"{r['strike']:g} {r['right']}" for r in wide)
                             + " (over 10% of the mid): a thin strike, expect to give up part of the spread")  # fmt: skip
     return out
+
+
+def needs_bidask(quotes: Sequence[ChainQuote | None], rights: Sequence[str]) -> bool:
+    """True when an option leg (not a future) lacks a positive bid or ask: limit guidance needs another chain."""
+    return any(r != "future" and not (q and q.bid and q.bid > 0 and q.ask and q.ask > 0)
+               for q, r in zip(quotes, rights, strict=True))  # fmt: skip
 
 
 # --------------------------------------------------------------------------- exits: stop, target, time

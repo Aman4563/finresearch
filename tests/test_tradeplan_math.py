@@ -84,9 +84,14 @@ def test_limit_guidance_mid_and_far_side():
     assert g["net_mid"] == pytest.approx(60 - 25)  # sell at the mid 60, buy at the mid 25
     assert g["net_fill_now"] == pytest.approx(59 - 26)  # sell at the bid, buy at the ask
     assert g["legs"][0]["limit_to"] == 59.0 and g["legs"][1]["limit_to"] == 26.0
+    # slippage (#324): filling now gives up |59 − 60| + |26 − 25| = 2/share; × 1 lot × 75 = ₹150
+    assert [x["slippage"] for x in g["legs"]] == [1.0, 1.0] and g["slippage_inr"] == pytest.approx(150.0)
+    assert not tp.needs_bidask(q, ["put", "put"])
     q[1] = tp.ChainQuote(19300, "put", 16, 25, bid=None, ask=None, oi=1)
+    assert tp.needs_bidask(q, ["put", "put"]) and not tp.needs_bidask([None], ["future"])
     g = tp.limit_guidance(legs, q, 75)
     assert g["status"] == "unknown" and g["net_mid"] is None  # never the last trade in place of a quote
+    assert g["slippage_inr"] is None  # unknown, never 0
 
 
 def test_stop_and_target_levels_for_a_put_credit_spread():

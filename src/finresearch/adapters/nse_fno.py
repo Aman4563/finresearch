@@ -179,6 +179,11 @@ class NseFno:
             raise NseError(f"NSE returned no option chain for {symbol} {expiry}")
         return parse_chain(symbol, expiry, d)
 
+    async def nse_option_chain(self, symbol: str, expiry: date) -> OptionChain:
+        """NSE's chain even when a subclass reads another broker's first (adapters.groww_fno): the trade plan's
+        bid/ask fallback (#324), since Groww's chain has no bid or ask. Same polite client, same 2 req/s budget."""
+        return await NseFno.option_chain(self, symbol, expiry)
+
     async def closes(self, symbol: str, start: date, end: date) -> list[tuple[date, Decimal]]:
         """Daily closes of the underlying, oldest first: NSE's index history for indices, the equity history for
         stocks."""
