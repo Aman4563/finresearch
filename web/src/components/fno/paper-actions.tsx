@@ -12,6 +12,12 @@ import type { MarginEstimate, PaperTrade } from "./book-types";
 import type { Leg } from "./model";
 
 const inr = (x: number) => fmtINR(Math.round(x));
+const inrOrDash = (x: number | null | undefined) => (x == null ? "—" : inr(x));
+
+/** #316: Groww's basket margin calculator answer (when Groww is connected), declared here so book-types stays as is. */
+type GrowwMargin = { available: true; source: string; span: number | null; exposure: number | null; premium: number | null; charges: number | null; total: number }
+  | { available: false; reason: string };
+type MarginAnswer = Omit<MarginEstimate, "groww_calculator"> & { groww_calculator: GrowwMargin; margin_source?: "groww" | "approximate" };
 
 /** Under the strategy builder: record the legs as a paper trade, and an approximate margin for them (#308). */
 export function PaperActions({ symbol, expiry, legs }: { symbol: string; expiry: string; legs: Leg[] }) {
@@ -19,7 +25,7 @@ export function PaperActions({ symbol, expiry, legs }: { symbol: string; expiry:
   const [label, setLabel] = useState("");
   const [busy, setBusy] = useState<"" | "paper" | "margin">("");
   const [made, setMade] = useState<PaperTrade | null>(null);
-  const [margin, setMargin] = useState<MarginEstimate | null>(null);
+  const [margin, setMargin] = useState<MarginAnswer | null>(null);
   const [error, setError] = useState<string | null>(null);
   const body = { symbol, expiry, legs: legs.map(({ right, strike, side, lots }) => ({ right, strike, side, lots })) };
 
@@ -37,7 +43,7 @@ export function PaperActions({ symbol, expiry, legs }: { symbol: string; expiry:
   const estimate = async () => {
     setBusy("margin");
     try {
-      setMargin(await api<MarginEstimate>("/api/fno/margin", { method: "POST", body: JSON.stringify(body) }));
+      setMargin(await api<MarginAnswer>("/api/fno/margin", { method: "POST", body: JSON.stringify(body) }));
       setError(null);
     } catch (e) {
       setError((e as Error).message);
@@ -65,8 +71,14 @@ export function PaperActions({ symbol, expiry, legs }: { symbol: string; expiry:
           Filled {made.legs.map((x) => `${x.side} ${x.right} ${x.strike} @ ₹${x.entry_price}`).join(", ")}; entry costs ₹{made.entry_costs}. Prices: {made.price_source}. Nothing was sent to a broker.
         </Callout>
       )}
+      {margin?.groww_calculator.available && (
+        <Callout tone="info" title={`${inr(margin.groww_calculator.total)} margin (Groww)`}>
+          SPAN {inrOrDash(margin.groww_calculator.span)} + exposure {inrOrDash(margin.groww_calculator.exposure)} + option premium {inrOrDash(margin.groww_calculator.premium)} + charges {inrOrDash(margin.groww_calculator.charges)}. {margin.groww_calculator.source}: it only computes the margin; no order is placed.
+        </Callout>
+      )}
+      {margin && !margin.groww_calculator.available && <p className="text-muted">{margin.groww_calculator.reason}.</p>}
       {margin && (
-        <Callout tone="warn" title={`≈ ${inr(margin.total)} margin (approximate)`}>
+        <Callout tone="warn" title={`≈ ${inr(margin.total)} margin (approximate${margin.groww_calculator.available ? ", for comparison" : ""})`}>
           Scan risk {inr(margin.scan_risk)} (worst move {margin.worst_move_pct}%) + exposure {inr(margin.exposure)} + premium {inr(margin.premium_paid)}. {margin.label}. {margin.note}
         </Callout>
       )}

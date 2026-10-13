@@ -1,0 +1,81 @@
+{
+ "id": "g34_sgb_original_subscriber_premature_rbi_redemption_after_apr2026",
+ "title": "SGB original subscriber (holding setting) redeemed early by RBI after the 5th year in Aug-2026: exempt (premature RBI redemption qualifies)",
+ "covers": [
+  "SGB premature RBI redemption after 1-Apr-2026",
+  "original subscriber from the holding setting"
+ ],
+ "rules": [
+  "https://cleartax.in/s/sovereign-gold-bonds (secondary source, read 13-Oct-2026: 'The exclusion from capital gains taxation at redemption is now available only to investors who originally subscribed to the SGB and held it continuously till redemption. Investors who purchase SGBs from the secondary market are not eligible ... even if the bonds are held till redemption'). The Budget 2026 memorandum (indiabudget.gov.in/doc/memo.pdf) returned HTTP 403 on 13-Oct-2026 and was not re-read",
+  "Sovereign Gold Bond Scheme 2015 / RBI SGB FAQ: premature redemption after the 5th year on a coupon date is a redemption by RBI, so it is 'redemption' for the exemption; issue #316 decision: maturity and premature RBI redemption both qualify"
+ ],
+ "derivation": [
+  "Subscription 2020-08-10: 8 @ 5,300.00 -> cost 42,400.00 (holding setting: subscribed at issue).",
+  "Premature RBI redemption 2026-08-10 (after the 5th year; held_to_maturity false): 8 @ 11,200.00 -> proceeds 89,600.00; fy 2027.",
+  "Original subscriber, held continuously until RBI redeemed it -> exempt: gain 0.00.",
+  "exempt_total 89,600 - 42,400 = 47,200.00; tax 0.00, cess 0.00, total 0.00."
+ ],
+ "interpretive": false,
+ "derived_by": "implementer (#316), by hand from the cited rule before the engine change",
+ "slab_rate": "0.30",
+ "holdings": [
+  {
+   "name": "SGB 2020-21 SERIES V",
+   "tax_class": "sgb",
+   "listed": true,
+   "sgb_original_subscriber": true,
+   "events": [
+    {
+     "day": "2020-08-10",
+     "kind": "buy",
+     "quantity": "8",
+     "price": "5300.00",
+     "charges": "0",
+     "stt_paid": false
+    },
+    {
+     "day": "2026-08-10",
+     "kind": "redemption",
+     "quantity": "8",
+     "price": "11200.00",
+     "charges": "0",
+     "stt_paid": false,
+     "meta": {
+      "held_to_maturity": false
+     }
+    }
+   ]
+  }
+ ],
+ "expected": {
+  "disposals": [
+   {
+    "holding": "SGB 2020-21 SERIES V",
+    "sold": "2026-08-10",
+    "acquired": "2020-08-10",
+    "quantity": "8",
+    "cost": "42400.00",
+    "proceeds": "89600.00",
+    "gain": "0.00",
+    "term": "exempt",
+    "rate": null
+   }
+  ],
+  "open_lots": [],
+  "fy": [
+   {
+    "fy": 2027,
+    "exemption_used": "0.00",
+    "tax": "0.00",
+    "cess": "0.00",
+    "total": "0.00",
+    "complete": true,
+    "unknown_count": 0,
+    "intraday_count": 0,
+    "exempt_total": "47200.00",
+    "losses_carried_short": "0.00",
+    "losses_carried_long": "0.00"
+   }
+  ]
+ }
+}

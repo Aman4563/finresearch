@@ -83,6 +83,7 @@ class ManualTxn(BaseModel):
             "acquired",
             "rbi_redemption",
             "held_to_maturity",
+            "sgb_subscription",  # an SGB bought at the original issue (true) or on the exchange (false), #316
             "resolves_action",
         }
         bad = set(v) - allowed
@@ -119,7 +120,7 @@ class HoldingUpdate(BaseModel):
     sector: str | None = Field(None, max_length=120)
     tax_class: Literal["equity", "debt_mf", "other_mf", "sgb", "other"] | None = None
     fmv_2018: Decimal | None = Field(None, ge=0)
-    flags: dict[str, bool] | None = None
+    flags: dict[str, bool | None] | None = None  # null clears a flag (sgb_subscribed: not known, #316)
     # a held bond's terms (#294): issue_date, maturity, coupon_pct, freq, face_value, redemption_price
     # (portfolio.bonds.clean_terms validates them; an empty value removes that term)
     bond_terms: dict[str, Any] | None = None
@@ -407,7 +408,7 @@ def add_portfolio_routes(app: FastAPI, *, scheme_rows: Callable[[], Awaitable[li
                                   "note": t.note, "meta": {k: v for k, v in (t.meta or {}).items()
                                                            if k in ("a", "b", "from", "to", "acquired", "reinvest",
                                                                     "subject", "description", "cas_type_txn",
-                                                                    "exchange", "rbi_redemption", "held_to_maturity", "ipo_allotment",
+                                                                    "exchange", "rbi_redemption", "held_to_maturity", "sgb_subscription", "ipo_allotment",
                                                                     "note")}}
                                  for t in txns],
                 "lots": [{"id": x.id, "acquired": x.acquired.isoformat() if x.acquired else None, "origin": x.origin,

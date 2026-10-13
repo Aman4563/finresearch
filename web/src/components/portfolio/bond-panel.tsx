@@ -94,7 +94,7 @@ export function BondPanel({ h, onSaved }: { h: Holding; onSaved: () => void }) {
             <Field label="Units"><input inputMode="decimal" value={rec.quantity} onChange={(e) => setRec({ ...rec, quantity: e.target.value })} className={cx(inputClass, "w-full num")} /></Field>
             <Field label="Price per unit (₹)"><input inputMode="decimal" value={rec.price} onChange={(e) => setRec({ ...rec, price: e.target.value })} className={cx(inputClass, "w-full num")} /></Field>
             {b.kind === "sgb" && (
-              <Field label={<span className="inline-flex items-center gap-1">On maturity <InfoTip>From 1-Apr-2026 an SGB&apos;s redemption is tax-free only for an original subscriber who held it to maturity (the app&apos;s reading of the Finance Act 2026, not yet verified); before that every redemption by RBI was exempt.</InfoTip></span>}>
+              <Field label={<span className="inline-flex items-center gap-1">On maturity <InfoTip>From 1-Apr-2026 an SGB redeemed by RBI (at maturity or early after year 5) is tax-free only for the original subscriber who held it until then; a secondary-market buyer pays LTCG (ClearTax, a secondary source). Set &lsquo;Subscribed at issue?&rsquo; on the holding. Before 1-Apr-2026 every RBI redemption was exempt.</InfoTip></span>}>
                 <label className="flex h-9 items-center gap-2 text-sm"><input type="checkbox" checked={rec.held_to_maturity} onChange={(e) => setRec({ ...rec, held_to_maturity: e.target.checked })} /> Held to maturity</label>
               </Field>
             )}

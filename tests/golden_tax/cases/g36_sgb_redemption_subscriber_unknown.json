@@ -1,0 +1,80 @@
+{
+ "id": "g36_sgb_redemption_subscriber_unknown",
+ "title": "SGB redeemed by RBI in Oct-2026 with no record of how it was acquired: tax unknown (never assumed exempt), year incomplete",
+ "covers": [
+  "SGB original subscriber unknown",
+  "unknown never safe",
+  "unknown date"
+ ],
+ "rules": [
+  "https://cleartax.in/s/sovereign-gold-bonds (secondary source, read 13-Oct-2026: 'The exclusion from capital gains taxation at redemption is now available only to investors who originally subscribed to the SGB and held it continuously till redemption. Investors who purchase SGBs from the secondary market are not eligible ... even if the bonds are held till redemption'). The Budget 2026 memorandum (indiabudget.gov.in/doc/memo.pdf) returned HTTP 403 on 13-Oct-2026 and was not re-read",
+  "Whether the holder subscribed at issue decides between exempt and a 12.5 % LTCG; with no record of it (a manual buy without a source, no holding setting) the term is unknown and the year's total leaves the disposal out"
+ ],
+ "derivation": [
+  "Buy 2019-10-20 with no source: 5 @ 3,800.00 -> cost 19,000.00.",
+  "RBI redemption 2026-10-20: 5 @ 12,000.00 -> proceeds 60,000.00; gain 41,000.00, term unknown (exempt if subscribed at issue, else LT 12.5 % = 5,330.00 incl. cess).",
+  "fy 2027: complete false, unknown_count 1 -> tax, cess, total null (the corpus convention for an incomplete year, as g15); exempt_total 0.00."
+ ],
+ "interpretive": false,
+ "derived_by": "implementer (#316), by hand from the cited rule before the engine change",
+ "slab_rate": "0.30",
+ "holdings": [
+  {
+   "name": "SGB 2019-20 SERIES VI",
+   "tax_class": "sgb",
+   "listed": true,
+   "events": [
+    {
+     "day": "2019-10-20",
+     "kind": "buy",
+     "quantity": "5",
+     "price": "3800.00",
+     "charges": "0",
+     "stt_paid": false
+    },
+    {
+     "day": "2026-10-20",
+     "kind": "redemption",
+     "quantity": "5",
+     "price": "12000.00",
+     "charges": "0",
+     "stt_paid": false,
+     "meta": {
+      "held_to_maturity": true
+     }
+    }
+   ]
+  }
+ ],
+ "expected": {
+  "disposals": [
+   {
+    "holding": "SGB 2019-20 SERIES VI",
+    "sold": "2026-10-20",
+    "acquired": "2019-10-20",
+    "quantity": "5",
+    "cost": "19000.00",
+    "proceeds": "60000.00",
+    "gain": "41000.00",
+    "term": "unknown",
+    "rate": null
+   }
+  ],
+  "open_lots": [],
+  "fy": [
+   {
+    "fy": 2027,
+    "exemption_used": "0.00",
+    "tax": null,
+    "cess": null,
+    "total": null,
+    "complete": false,
+    "unknown_count": 1,
+    "intraday_count": 0,
+    "exempt_total": "0.00",
+    "losses_carried_short": "0.00",
+    "losses_carried_long": "0.00"
+   }
+  ]
+ }
+}

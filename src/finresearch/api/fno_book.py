@@ -53,6 +53,35 @@ class ExitRuleIn(BaseModel):
         return self
 
 
+GROWW_MARGIN_SOURCE = "Groww margin calculator (POST /v1/margins/detail/orders, segment FNO, product NRML)"
+
+
+async def _groww_margin(sym: str, expiry: date, spec: list[tuple[str, float, str, int, float | None]]) -> dict[str, Any]:  # fmt: skip
+    """Groww's required margin for the basket, or why not (then the approximation is the figure). Never raises."""
+    from finresearch.adapters import groww_market as gm
+    from finresearch.portfolio.connectors.base import ConnectorError
+
+    market = gm.MARKET
+    if not market.token():
+        return {"available": False, "reason": "Groww is not connected (or its session expired): the approximate "
+                "estimate is the only figure"}  # fmt: skip
+    try:
+        inst = await market.instruments()
+        if inst is None:
+            raise ConnectorError("Groww's instruments file is not available")
+        got = await market.basket_margin(gm.basket_orders(inst, sym, expiry, spec), "FNO")
+    except ConnectorError as e:  # messages are redacted and safe to show
+        why = str(e)
+    except Exception as e:  # never let the calculator break the estimate
+        why = type(e).__name__
+    else:
+        return {"available": True, "source": GROWW_MARGIN_SOURCE, "span": got["span_required"],
+                "exposure": got["exposure_required"], "premium": got["option_buy_premium"],
+                "charges": got["brokerage_and_charges"], "total": got["total_requirement"]}  # fmt: skip
+    return {"available": False, "reason": f"Groww's margin calculator did not answer ({why}): the approximate "
+            "estimate is the fallback"}  # fmt: skip
+
+
 class MarginIn(BaseModel):
     symbol: str = Field(min_length=1, max_length=30)
     expiry: date
@@ -189,8 +218,9 @@ def add_fno_book_routes(app: FastAPI, clock: Callable[[], datetime] | None = Non
 
     @app.post("/api/fno/margin")
     async def fno_margin(body: MarginIn) -> dict[str, Any]:
-        """An APPROXIMATE SPAN-style margin for the basket (fincalc.margin_approx), labelled as such: Groww's basket
-        margin calculator is a POST, which the read-only Groww client never sends."""
+        """The basket's margin from Groww's margin calculator (`groww_calculator`, #316: the one calculator POST the
+        read-only client may send) when Groww is connected and answers, and always the APPROXIMATE SPAN-style
+        estimate (fincalc.margin_approx), labelled as such: the fallback, and the only figure without Groww."""
         from finresearch.fincalc import margin_approx as ma
         from finresearch.fnobook import events, positions, service
 
@@ -206,14 +236,16 @@ def add_fno_book_routes(app: FastAPI, clock: Callable[[], datetime] | None = Non
             )
         spot = float(chain.underlying)
         t = service._t(body.expiry, today())
-        legs = []
+        legs, spec = [], []
         for x in body.legs:
             k = float(x.strike)
             qty = x.lots * lot * (1 if x.side == "buy" else -1)
             if x.right == "future":
                 legs.append(ma.MarginLeg("future", spot, qty, spot, None))
+                spec.append(("future", k, x.side, abs(qty), None))
                 continue
             price = service._chain_price(chain, x.right, k)
+            spec.append((x.right, k, x.side, abs(qty), price))
             iv = positions.chain_iv(chain, x.right, k) or positions.implied(
                 x.right, price, spot, k, t, service.RATE
             )
@@ -223,9 +255,10 @@ def add_fno_book_routes(app: FastAPI, clock: Callable[[], datetime] | None = Non
             est = ma.estimate(legs, spot, t, service.RATE, kind)
         except ValueError as e:
             raise HTTPException(422, str(e)) from e
+        groww = await _groww_margin(sym, body.expiry, spec)
         return {"symbol": sym, "expiry": body.expiry.isoformat(), "spot": spot, "lot_size": lot,
-                **ma.to_json(est, kind), "groww_calculator": {"available": False, "reason": "POST "
-                "/v1/margins/detail/orders is not a read-only GET; the app never sends it"}}  # fmt: skip
+                **ma.to_json(est, kind), "groww_calculator": groww,
+                "margin_source": "groww" if groww["available"] else "approximate"}  # fmt: skip
 
     @app.get("/api/fno/{symbol}/events")
     async def fno_events(symbol: str) -> dict[str, Any]:
