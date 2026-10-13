@@ -596,6 +596,118 @@ class FnoBacktestResult(Base):
     trades: Mapped[list[Any]] = mapped_column(JSONB)
 
 
+# --------------------------------------------------------------------------- F&O Strategy Lab (#318)
+class LabStrategy(Base):
+    """A user-defined F&O strategy (finresearch.stratlab). Its in-sample / out-of-sample split is locked when it is
+    created (`stratlab.split.lock`) and never changes, whatever versions follow. Public market data only."""
+
+    __tablename__ = "lab_strategy"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    name: Mapped[str] = mapped_column(String(120))
+    underlying: Mapped[str] = mapped_column(String(30), index=True)
+    is_start: Mapped[date] = mapped_column(Date)
+    is_end: Mapped[date] = mapped_column(Date)
+    oos_start: Mapped[date] = mapped_column(Date)  # out of sample: from here to the latest stored day
+    data_first: Mapped[date] = mapped_column(Date)  # the stored history's range when the split was locked
+    data_last: Mapped[date] = mapped_column(Date)
+    split_rule: Mapped[str] = mapped_column(String(300))
+    versions: Mapped[list[LabVersion]] = relationship(
+        back_populates="strategy", order_by="LabVersion.version"
+    )
+
+
+class LabVersion(Base):
+    """One saved spec of a strategy (stratlab.spec.StrategySpec as JSON). Versions are never edited or deleted."""
+
+    __tablename__ = "lab_version"
+    __table_args__ = (UniqueConstraint("strategy_id", "version"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    strategy_id: Mapped[int] = mapped_column(ForeignKey("lab_strategy.id"), index=True)
+    version: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    spec: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    spec_hash: Mapped[str] = mapped_column(String(64), index=True)
+    note: Mapped[str] = mapped_column(String(200), default="")
+    strategy: Mapped[LabStrategy] = relationship(back_populates="versions")
+
+
+class LabRun(Base):
+    """One backtest of a version, run by a background worker (stratlab.jobs). `oos` False = in-sample only (never reads
+    a day after the split; free to tune); True = out of sample too, which counts the spec as a variant (LabVariant).
+    status: queued | running | done | failed | timed_out."""
+
+    __tablename__ = "lab_run"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    version_id: Mapped[int] = mapped_column(ForeignKey("lab_version.id"), index=True)
+    oos: Mapped[bool] = mapped_column(Boolean)
+    status: Mapped[str] = mapped_column(String(12), default="queued", index=True)
+    progress: Mapped[float] = mapped_column(Float, default=0.0)  # 0..1
+    progress_note: Mapped[str | None] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    pid: Mapped[int | None] = mapped_column(Integer)
+    error: Mapped[str | None] = mapped_column(Text)
+    n_trials: Mapped[int | None] = mapped_column(Integer)  # the deflated Sharpe's N when the run finished
+    counted: Mapped[bool] = mapped_column(Boolean, default=False)  # it added its spec to the variants count
+    result: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)  # the report without the trades
+    trades: Mapped[list[Any]] = mapped_column(JSONB, default=list)
+
+
+class LabVariant(Base):
+    """The global variants counter: one row per distinct spec (hash) ever evaluated out of sample. The deflated Sharpe
+    of every later run uses N = the pre-registered library's VARIANTS_TRIED + these rows. Never deleted."""
+
+    __tablename__ = "lab_variant"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    spec_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    version_id: Mapped[int] = mapped_column(ForeignKey("lab_version.id"), index=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("lab_run.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    daily_sr: Mapped[float | None] = mapped_column(Float)  # OOS daily Sharpe (for the trials' variance V)
+
+
+class LabPaperRule(Base):
+    """A version sent to paper trading (stratlab.paper): each stored close after `start_after` is checked against its
+    entry rule; a signal is filled as a paper trade on the next session at live prices and managed by its rules.
+    status: active | stopped."""
+
+    __tablename__ = "lab_paper_rule"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    version_id: Mapped[int] = mapped_column(ForeignKey("lab_version.id"), index=True)
+    status: Mapped[str] = mapped_column(String(10), default="active", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    start_after: Mapped[date] = mapped_column(Date)  # closes after this day only (no signal from the past)
+    last_day: Mapped[date | None] = mapped_column(Date)  # the last stored close checked
+    stopped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    note: Mapped[str | None] = mapped_column(Text)
+
+
+class LabPaperSignal(Base):
+    """One signal day of a paper rule: the legs its rule picked at that close, then the paper trade that filled it.
+    status: pending (to fill on the next session) | filled | missed (no fill in time) | void."""
+
+    __tablename__ = "lab_paper_signal"
+    __table_args__ = (UniqueConstraint("rule_id", "day"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    rule_id: Mapped[int] = mapped_column(ForeignKey("lab_paper_rule.id"), index=True)
+    day: Mapped[date] = mapped_column(Date)
+    status: Mapped[str] = mapped_column(String(10), default="pending")
+    expiry: Mapped[date] = mapped_column(Date)
+    lots: Mapped[int] = mapped_column(Integer)
+    lot: Mapped[int] = mapped_column(Integer)
+    legs: Mapped[list[Any]] = mapped_column(JSONB)  # [{right, strike, side, ref}] at the signal close
+    premium: Mapped[Decimal] = mapped_column(Numeric(14, 2))  # ₹ at the backtest's assumed fills that close
+    max_loss: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    margin: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))  # None = unknown
+    iv_pct: Mapped[float | None] = mapped_column(Float)
+    paper_id: Mapped[int | None] = mapped_column(ForeignKey("paper_strategy.id"))
+    exit_reason: Mapped[str | None] = mapped_column(String(20))
+    note: Mapped[str | None] = mapped_column(Text)
+
+
 # --------------------------------------------------------------------------- forecast ledger (calibration)
 class Forecast(Base):
     """One probability forecast of a defined, checkable event, logged before the outcome is known and scored after.
