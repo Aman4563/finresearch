@@ -461,9 +461,24 @@ def update_holding(s: Session, holding_id: int, body: dict[str, Any]) -> Portfol
     for k in EDITABLE_HOLDING:
         if k in body:
             setattr(h, k, body[k])
-    if "flags" in body:  # SGB original-subscriber flag, listed override ...
-        h.meta = {**(h.meta or {}), **{k: v for k, v in (body["flags"] or {}).items()
-                                       if k in ("sgb_original_subscriber", "listed")}}  # fmt: skip
+    # SGB "subscribed at issue" (true / false / null = not known, #316), the listed override ...
+    if "flags" in body:
+        flags = dict(body["flags"] or {})
+        m = dict(h.meta or {})
+        if "listed" in flags:  # null removes the override (back to the automatic answer)
+            m.pop("listed", None)
+            if flags["listed"] is not None:
+                m["listed"] = bool(flags["listed"])
+        for key in ("sgb_subscribed", "sgb_original_subscriber"):  # the second is the older checkbox's name
+            if key in flags:
+                v = flags[key]
+                if v is not None and not isinstance(v, bool):
+                    raise ValueError(f"{key} must be true, false or null")
+                m.pop("sgb_original_subscriber", None)
+                m = {k: x for k, x in m.items() if k != "sgb_subscribed"} | (
+                    {} if v is None else {"sgb_subscribed": v}
+                )
+        h.meta = m
     if "bond_terms" in body:  # a held bond's terms (#294), validated; {} or None clears them
         from finresearch.portfolio.bonds import clean_terms
 

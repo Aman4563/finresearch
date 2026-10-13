@@ -1,7 +1,7 @@
 "use client";
 
 import {
-  Activity, BadgeIndianRupee, BellRing, BookOpenCheck, Briefcase, ChartCandlestick, ChevronsLeft, CircleHelp, Command, Download, EyeOff, FlaskConical, Gauge as GaugeIcon, Landmark, Layers, LayoutDashboard, ListChecks, Menu, Monitor, Moon, NotebookPen, PieChart, PiggyBank, Radar, Rocket, Search, Sun, Sunrise, UserRound, X,
+  Activity, BadgeIndianRupee, BellRing, BookOpenCheck, Briefcase, ChartCandlestick, ChevronsLeft, CircleHelp, Command, Download, EyeOff, FlaskConical, Gauge as GaugeIcon, GraduationCap, Landmark, Layers, LayoutDashboard, ListChecks, Menu, Monitor, Moon, NotebookPen, PieChart, PiggyBank, Radar, Rocket, Search, Sun, Sunrise, UserRound, X,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -34,6 +34,7 @@ export const NAV: { group: string; items: NavItem[] }[] = [
       { href: "/funds", label: "Mutual funds", icon: <PieChart />, keys: "g f", description: "AMFI NAVs, returns and fund research" },
       { href: "/bonds", label: "Bonds", icon: <Landmark />, keys: "g b", description: "Listed bonds and NCDs, yields" },
       { href: "/fno", label: "F&O", icon: <Activity />, keys: "g o", description: "Option chains, greeks, strategy payoffs" },
+      { href: "/learn", label: "Learn F&O", icon: <GraduationCap />, keys: "g e", description: "Sourced lessons: options, strategies, risk, process" },
       { href: "/signals", label: "Signals (research heuristics)", icon: <Radar />, keys: "g g", description: "Rule-based research views and their track record, not buy/sell advice" },
     ],
   },

@@ -40,6 +40,9 @@ class OptionQuote(BaseModel):
     volume: Decimal | None
     bid: Decimal | None
     ask: Decimal | None
+    change: Decimal | None = (
+        None  # last price − previous close (NSE's "change"); Groww's chain has none (#317)
+    )
 
     @classmethod
     def parse(cls, r: dict[str, Any] | None) -> OptionQuote | None:
@@ -48,7 +51,7 @@ class OptionQuote(BaseModel):
         return cls(last_price=parse_num(r.get("lastPrice")), iv=parse_num(r.get("impliedVolatility")),
                    oi=parse_num(r.get("openInterest")), change_in_oi=parse_num(r.get("changeinOpenInterest")),
                    volume=parse_num(r.get("totalTradedVolume")), bid=parse_num(r.get("buyPrice1")),
-                   ask=parse_num(r.get("sellPrice1")))  # fmt: skip
+                   ask=parse_num(r.get("sellPrice1")), change=parse_num(r.get("change")))  # fmt: skip
 
 
 class ChainRow(BaseModel):

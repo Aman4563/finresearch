@@ -1628,6 +1628,10 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
     from finresearch.api.fno_book import add_fno_book_routes
 
     add_fno_book_routes(app, clock=clock)
+    # F&O trade plans (verdict, strikes, size, stops, exits) and the market-context panel (#317)
+    from finresearch.api.fno_plan import add_fno_plan_routes
+
+    add_fno_plan_routes(app, _fno)
     # F&O backtest evidence: pre-registered specs, the latest evaluation, candidates' setups (#307)
     from finresearch.api.fno_backtests import add_fno_backtest_routes
 

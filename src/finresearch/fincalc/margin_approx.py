@@ -1,8 +1,9 @@
 """An APPROXIMATE, SPAN-style margin for an F&O basket (#308). Not the exchange's margin.
 
-Why approximate: the exchange's SPAN risk-parameter files are not read by the app, and Groww's margin calculator for a
-basket (``POST /v1/margins/detail/orders``, docs read 12-Oct-2026) is a POST, which the app's read-only Groww client
-never sends (GET-only allowlist). So the builder shows this estimate, labelled, with its assumptions:
+Why approximate: the exchange's SPAN risk-parameter files are not read by the app. Groww's basket margin calculator
+(``POST /v1/margins/detail/orders``, the one calculator POST the read-only client may send, #316) gives the broker's
+figure when Groww is connected and answers; this estimate is the fallback (no Groww, an error, a contract Groww's
+instruments file does not list) and is always shown, labelled, with its assumptions:
 
 * Scan risk: the basket is repriced (Black-Scholes at each leg's IV, the same time to expiry) under price moves of
   0, ±1/3, ±2/3 and ±1 × the price-scan range, each with the volatility shifted up and down by the vol-scan range,
@@ -28,7 +29,7 @@ PARAMS: dict[str, dict[str, float]] = {
     "stock": {"price_scan": 0.12, "vol_scan": 0.04, "exposure": 0.035},
 }
 STATUS = "unconfirmed"
-LABEL = "approximate: SPAN-style estimate (exchange SPAN files not read; Groww's basket margin endpoint is a POST)"
+LABEL = "approximate: SPAN-style estimate (exchange SPAN files not read); the fallback when Groww's margin calculator is unavailable"
 MOVES = (0.0, 1 / 3, -1 / 3, 2 / 3, -2 / 3, 1.0, -1.0)
 EXTREME, EXTREME_WEIGHT = 2.0, 0.35
 

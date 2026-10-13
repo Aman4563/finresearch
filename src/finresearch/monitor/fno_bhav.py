@@ -8,6 +8,9 @@ failed and is retried (monitor.disclosures.MAX_ATTEMPTS, 30 minutes apart); the 
 otherwise. After loading, the day's derived IV row per underlying (fno_iv_eod) and the contract calendar are updated.
 Weekends and NSE holidays are skipped; an unknown holiday list skips the run too (monitor.market_days fails closed).
 Each night is claimed in `alert_eval_slot` ("fno_bhav:<day>"), so two monitor processes never run it twice.
+
+The same evening NSE's participant-wise F&O open interest file (#317, fnohist.participants) is fetched in its own slot
+("fno_participant:<day>"), so a failure of one never retries or fails the other.
 """
 
 from __future__ import annotations
@@ -53,6 +56,40 @@ async def fno_bhav_step(now: datetime, holidays: set[date] | None = None, **kw: 
     summary = {k: v for k, v in res.items() if k != "stocks"} | {"today_pending": pending}
     finish(slot, summary, now, failed=pending or bool(res["failed"]))
     return {"fno_bhav": summary}
+
+
+async def fno_participant_step(now: datetime, holidays: set[date] | None = None, **kw: Any) -> dict[str, Any]:
+    """Claim tonight's participant-OI slot and fetch the missing recent days (one small CSV a night). `kw` goes to
+    fnohist.participants.update (tests)."""
+    from finresearch.monitor.disclosures import claim, finish
+
+    bhav = due_slot(now, holidays)
+    if bhav is None:
+        return {}
+    slot = bhav.replace("fno_bhav:", "fno_participant:")
+    if not claim(slot, now):
+        return {}
+    today = to_ist(now).date()
+    try:
+        from finresearch.fnohist import participants
+
+        res = await participants.update(today, **kw)
+    except Exception as e:
+        log.warning("F&O participant OI update failed; retried later", exc_info=True)
+        finish(slot, {"error": f"{type(e).__name__}: {e}"[:300]}, now, failed=True)
+        return {"fno_participant": "failed"}
+    finish(slot, res, now, failed=bool(res["failed"]) or not _participant_loaded(today))
+    return {"fno_participant": res}
+
+
+def _participant_loaded(day: date) -> bool:
+    from sqlalchemy import select
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import FnoParticipantOi
+
+    with session_scope() as s:
+        return s.scalar(select(FnoParticipantOi.day).where(FnoParticipantOi.day == day).limit(1)) is not None
 
 
 def _loaded(day: date) -> bool:

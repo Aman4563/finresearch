@@ -1,11 +1,14 @@
 "use client";
 
 import { Activity, Calculator, Crosshair, Layers, Loader2, Minus, Plus, RefreshCw, Search, Sparkles, Target, Trash2, TrendingUp } from "lucide-react";
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { InteractivePayoff, OiButterfly } from "@/components/fno/charts";
 import { EventStrip } from "@/components/fno/events";
 import { PaperActions } from "@/components/fno/paper-actions";
+import { PlanForLegs, SuggestSetups } from "@/components/fno/plan-panels";
+import { MarketContextPanel } from "@/components/fno/context-panel";
 import { MyPositions } from "@/components/fno/positions";
 import { CostsBreakdown, IvTile, ProbabilityPanel, RiskBanner } from "@/components/fno/risk";
 import { SignalCard } from "@/components/signal";
@@ -349,6 +352,7 @@ export default function Fno() {
             <IvTile symbol={chain.symbol} atmIv={atmIv} rv20={fresh ? result?.analysis?.vols.realised_20d : null} />
           </div>
           <EventStrip symbol={chain.symbol} />
+          <MarketContextPanel key={`${chain.symbol}-${chain.expiry}`} symbol={chain.symbol} expiry={chain.expiry} />
 
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,22rem)_minmax(0,1fr)]">
             <Card title="Open interest by strike" icon={<Layers className="size-4" />} 
@@ -369,6 +373,8 @@ export default function Fno() {
               <ChainTable chain={chain} width={width} onAdd={add} />
             </Card>
           </div>
+
+          <SuggestSetups key={`suggest-${chain.symbol}`} symbol={chain.symbol} />
 
           <Card title="Strategy builder" icon={<Calculator className="size-4" />}
             subtitle="Pick a preset or add legs from the chain; the payoff updates as you edit"
@@ -500,6 +506,7 @@ export default function Fno() {
             )}
           </Card>
 
+          {fresh && result && <PlanForLegs key={`plan-${analysed}`} symbol={chain.symbol} expiry={chain.expiry} legs={legs} />}
           {fresh && result && (
             <SignalCard key={analysed} asset="fno" instrument={chain.symbol} title="Strategy check" compact={false}
               query={{ expiry: chain.expiry, legs: JSON.stringify(legs.map(({ right, strike, side, lots }) => ({ right, strike, side, lots }))) }} />
@@ -512,6 +519,7 @@ export default function Fno() {
           </EmptyState>
         )
       )}
+      <p className="text-xs text-muted">Learn more: <Link className="text-brand hover:underline" href="/learn/options#iv-rank">What is IV rank?</Link> · <Link className="text-brand hover:underline" href="/learn/options#greeks">the greeks</Link> · <Link className="text-brand hover:underline" href="/learn/strategies">strategy catalogue</Link> · <Link className="text-brand hover:underline" href="/learn/risk#sizing">position sizing</Link></p>
     </div>
   );
 }

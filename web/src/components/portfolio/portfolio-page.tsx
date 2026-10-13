@@ -146,7 +146,7 @@ function HoldingEditor({ h, onSaved }: { h: Holding; onSaved: () => void }) {
     try {
       await api(`/api/portfolio/holdings/${h.id}`, { method: "PUT", body: JSON.stringify({
         tax_class: f.tax_class || null, nse_symbol: f.nse_symbol || null, scheme_code: f.scheme_code || null, sector: f.sector || null,
-        fmv_2018: f.fmv_2018 || null, flags: { sgb_original_subscriber: f.sgb } }) });
+        fmv_2018: f.fmv_2018 || null, ...(h.tax_class === "sgb" ? { flags: { sgb_original_subscriber: f.sgb } } : {}) }) });
       setMsg("Saved");
       onSaved();
     } catch (e) { setMsg((e as Error).message); }
@@ -178,7 +178,15 @@ function HoldingEditor({ h, onSaved }: { h: Holding; onSaved: () => void }) {
         <Field label={<span className="inline-flex items-center gap-1">FMV 31-Jan-2018 (₹/unit) <InfoTip>Grandfathering: for equity bought before 1-Feb-2018, the cost is the higher of what you paid and the lower of this price and the sale price. Use the day&apos;s highest traded price (NAV for funds).</InfoTip></span>}>
           <input inputMode="decimal" value={f.fmv_2018} onChange={(e) => setF({ ...f, fmv_2018: e.target.value })} className={cx(inputClass, "w-full num")} />
         </Field>
-        {h.tax_class === "sgb" && <Field label="SGB bought at issue"><label className="flex h-9 items-center gap-2 text-sm"><input type="checkbox" checked={f.sgb} onChange={(e) => setF({ ...f, sgb: e.target.checked })} />Original subscriber</label></Field>}
+        {h.tax_class === "sgb" && (
+          <Field label="Subscribed at issue?">
+            <select value={f.sgb === null ? "" : f.sgb ? "yes" : "no"} onChange={(e) => setF({ ...f, sgb: e.target.value === "" ? null : e.target.value === "yes" })} className={cx(inputClass, "w-full")}>
+              <option value="">Not set (tax shown as unknown)</option>
+              <option value="yes">Yes, subscribed when RBI issued it</option>
+              <option value="no">No, bought on the exchange</option>
+            </select>
+          </Field>
+        )}
       </div>
       <div className="flex items-center gap-3"><Button onClick={save}>Save</Button>{msg && <span className="text-xs text-muted">{msg}</span>}</div>
       {error ? <ErrorNote error={error} onRetry={reload} /> : !data ? <SkeletonRows rows={3} /> : (

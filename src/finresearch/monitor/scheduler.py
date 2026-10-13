@@ -459,7 +459,7 @@ def _spawn_ipo_registry(now: datetime) -> None:
 def _spawn_fno_bhav(now: datetime) -> None:
     """Start the nightly F&O bhavcopy update (monitor.fno_bhav, #306) in the background on trading days: usually one
     NSE download plus the derived IV rows. At most one runs at a time."""
-    from finresearch.monitor.fno_bhav import due_slot, fno_bhav_step
+    from finresearch.monitor.fno_bhav import due_slot, fno_bhav_step, fno_participant_step
 
     t = _BACKGROUND.get("fno_bhav")
     if (t is not None and not t.done()) or due_slot(now) is None:
@@ -472,6 +472,12 @@ def _spawn_fno_bhav(now: datetime) -> None:
                 log.info("F&O bhavcopy update: %s", res)
         except Exception:
             log.warning("F&O bhavcopy update failed", exc_info=True)
+        try:  # participant-wise OI (#317): its own slot, after the bhavcopy
+            res = await fno_participant_step(now)
+            if res:
+                log.info("F&O participant OI update: %s", res)
+        except Exception:
+            log.warning("F&O participant OI update failed", exc_info=True)
 
     _BACKGROUND["fno_bhav"] = asyncio.create_task(run())
 

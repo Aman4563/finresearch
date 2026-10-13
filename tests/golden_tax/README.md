@@ -42,6 +42,16 @@ cover only redemption on maturity; g28 under the old wording the redemption woul
 g30 if a G-sec were not "listed" (most trading is on RBI's NDS-OM) the 24-month rule would make it short-term at slab
 (total 53.04); g31 and g32 the discount or premium could be taxed as interest at the same slab rate.
 
+## SGB cases g33-g37 (#316, 13-Oct-2026)
+
+Derived by hand by the implementer from the decided rule (issue #316; ClearTax, a secondary source; the Budget 2026
+memo returned HTTP 403) before the engine change, so not by an independent author: from 1-Apr-2026 RBI redemption is
+exempt only for the original subscriber, at maturity (g33) or early after year 5 (g34); a lot bought by an exchange
+trade is taxable even when the holding says subscriber (g35); with no record the term is unknown and the year
+incomplete (g36, tax null as in g15); an exchange sale is taxable for anyone (g37). Inputs: a holding's
+`sgb_original_subscriber` is three-way (absent = not known) and a lot's event may carry `meta.sgb_subscription` or a
+broker `trade_id`/`order_id` (portfolio.tax.lot_subscription). g33, g34 and g36 failed before the change.
+
 ## Cases and conventions (from the derivation author)
 
 These cases were derived by hand from the law, without looking at the code under test. Every transfer date is on or

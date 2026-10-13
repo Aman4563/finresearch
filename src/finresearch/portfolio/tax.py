@@ -30,6 +30,7 @@ from typing import Any
 from finresearch.fincalc.dates import fiscal_year
 from finresearch.fincalc.tax import (
     GRANDFATHER_DATE,
+    SGB_SUBSCRIBER_UNKNOWN,
     VERIFY_NOTE,
     Classification,
     Gain,
@@ -136,14 +137,18 @@ def is_debt_security(isin: str | None, name: str | None, symbol: str | None = No
 # (s.2(42A) first proviso), LTCG at 12.5 % without indexation for transfers on or after 23-Jul-2024 (s.112 as amended
 # by the Finance (No.2) Act 2024; s.197 of the 2025 Act), STCG at the slab rate; never s.111A/s.112A (no STT), so no
 # ₹1.25 lakh exemption. [S: that a G-sec counts as "listed" for the 12-month rule is the common reading, not a ruling.]
+# Citation (#316, decision kept): Income-tax Act 1961 s.2(42A) first proviso as amended by the Finance (No.2) Act 2024
+# (fincalc.tax.FINANCE_BILL_2024): "a security (other than a unit) listed in a recognised stock exchange" is long-term
+# when held more than 12 months; G-secs and SDLs are admitted to trading on NSE and BSE (NSE/BSE retail G-sec
+# segments), so they are treated as listed. Golden cases g30 (G-sec) and g31 (T-bill) hold the arithmetic.
 # A T-bill (91/182/364 days) is issued at a discount and redeemed at face: held to maturity it is always short-term,
 # and the discount is taxed at the slab rate as a short-term capital gain here (some treat it as interest, "Income from
 # other sources", also at the slab rate: same tax, different head; losses then differ).
 SOVEREIGN_WHY = {
-    "gsec": "Central Government security (G-sec): an 'other' listed security (12 months; LTCG 12.5 % under s.112, no "
-            "s.112A exemption)",
-    "sdl": "State Development Loan: an 'other' listed security (12 months; LTCG 12.5 % under s.112, no s.112A "
-           "exemption)",
+    "gsec": "Central Government security (G-sec): an 'other' listed security (long-term after 12 months, s.2(42A); "
+            "LTCG 12.5 % under s.112, no s.112A exemption)",
+    "sdl": "State Development Loan: an 'other' listed security (long-term after 12 months, s.2(42A); LTCG 12.5 % "
+           "under s.112, no s.112A exemption)",
     "tbill": "Treasury bill: a discount instrument of at most 364 days, so its gain is short-term at the slab rate",
 }  # fmt: skip
 
@@ -217,7 +222,7 @@ class HoldingTax:
     tax_class: str
     listed: bool
     fmv_2018: Decimal | None
-    sgb_original: bool = False
+    sgb_original: bool | None = None  # subscribed at issue (holding setting): True / False / None not known
     # unresolved unsupported corporate actions (#237): (ex-date, reason). A sale on or after the ex-date cannot be
     # classified until the user enters the cost allocation (portfolio.service.record_unsupported)
     blocked: tuple[tuple[date, str], ...] = ()
@@ -237,6 +242,9 @@ class DisposalRow:
     rbi_redemption: bool = False
     held_to_maturity: bool = False
     txn_id: int | None = None
+    # the lot's own acquisition source (lot_subscription): True subscribed at issue, False an exchange purchase,
+    # None the lot does not say. It wins over the holding setting (#316)
+    subscribed: bool | None = None
     # computed
     cls: Classification | None = None
     tax_cost: Decimal | None = None  # after grandfathering
@@ -252,13 +260,45 @@ def redemption_flags(kind: str, meta: dict[str, Any] | None, tax_class: str) -> 
     """(rbi_redemption, held_to_maturity) of a disposal from its transaction (#294). A `redemption` of an SGB is a
     redemption by RBI, at maturity or early on a coupon date after the fifth year (RBI SGB FAQ, rbi.org.in
     FAQs.aspx?Id=1658, read 12-Oct-2026): exempt for an individual under s.47(viic) of the 1961 Act, which covers "any
-    redemption" (early ones too), for redemptions up to 31-Mar-2026. From 1-Apr-2026 the exemption needs an original
-    subscriber who held to maturity (fincalc.tax rule sgb-redemption-2026, [U]): `held_to_maturity` is only what the
-    transaction says, never assumed, so an unconfirmed redemption errs towards tax. An exchange sale (`sell`) of an
-    SGB is a transfer of a listed security unless its meta says RBI redeemed it (older manual entries)."""
+    redemption" (early ones too), for redemptions up to 31-Mar-2026. From 1-Apr-2026 only for the original subscriber
+    who held it continuously until RBI redeemed it, at maturity or early (fincalc.tax rule sgb-redemption-2026, #316):
+    `held_to_maturity` is recorded but no longer decides it; `lot_subscription` and the holding setting say who
+    subscribed. An exchange sale (`sell`) of an SGB is a transfer of a listed security unless its meta says RBI
+    redeemed it (older manual entries)."""
     m = meta or {}
     rbi = bool(m.get("rbi_redemption")) or (kind == "redemption" and tax_class == "sgb")
     return rbi, bool(m.get("held_to_maturity"))
+
+
+# Broker trade identifiers on a buy (importers and connectors.merge set them on tradebook and API trades): units
+# bought with one came from the exchange, i.e. the secondary market. A statement or holdings-sync `opening` (whose
+# meta.exchange only says where the security is listed) and a manual buy carry none, so they prove nothing.
+TRADE_IDS = ("trade_id", "order_id", "trade_num")
+
+
+def lot_subscription(kind: str | None, meta: dict[str, Any] | None) -> bool | None:
+    """Whether the units of a lot were subscribed at the original issue, from the transaction that opened it (#316):
+    meta.sgb_subscription (a manual entry's answer) when stated; False for an exchange trade (a buy with a broker
+    trade or order id); None otherwise. No import marks an RBI-issue subscription on its own: an NSDL/CDSL e-CAS is
+    reconciled as holdings only (connectors.inbox), so the holding setting is the usual way to say it."""
+    m = meta or {}
+    v = m.get("sgb_subscription")
+    if isinstance(v, bool):
+        return v
+    if kind == "buy" and any(m.get(k) for k in TRADE_IDS):
+        return False
+    return None
+
+
+def holding_subscriber(meta: dict[str, Any] | None) -> bool | None:
+    """The per-holding "subscribed at issue" setting: meta.sgb_subscribed True/False, None when not set. The older
+    checkbox key `sgb_original_subscriber` counts only when True: the checkbox saved False on every unticked save, so a
+    stored False is not an answer and stays unknown."""
+    m = meta or {}
+    v = m.get("sgb_subscribed")
+    if isinstance(v, bool):
+        return v
+    return True if m.get("sgb_original_subscriber") is True else None
 
 
 def evaluate(row: DisposalRow) -> DisposalRow:
@@ -276,8 +316,15 @@ def evaluate(row: DisposalRow) -> DisposalRow:
         row.notes.append(why)
         return row
     row.cls = classify(h.tax_class, row.acquired, row.sold, listed=h.listed, stt_paid=row.stt_paid,
-                       rbi_redemption=row.rbi_redemption, original_subscriber=h.sgb_original,
+                       rbi_redemption=row.rbi_redemption,
+                       original_subscriber=row.subscribed if row.subscribed is not None else h.sgb_original,
                        held_to_maturity=row.held_to_maturity, debt=h.debt)  # fmt: skip
+    if row.rbi_redemption and row.subscribed is False and h.sgb_original is True:
+        row.notes.append("These units were bought on the exchange, so they are not the original subscription: the "
+                         "holding's 'subscribed at issue' setting does not apply to them")  # fmt: skip
+    if row.cls.reason == SGB_SUBSCRIBER_UNKNOWN:
+        row.notes.append("Set 'subscribed at issue' on the holding: exempt if you subscribed when RBI issued it, "
+                         "taxable if you bought it on the exchange")  # fmt: skip
     if row.cost is None:
         row.cls = Classification(
             "unknown", row.cls.rule, None, "unknown", "cost unknown: enter it to compute tax"

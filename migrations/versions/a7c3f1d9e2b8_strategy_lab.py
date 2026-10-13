@@ -1,7 +1,7 @@
 """F&O Strategy Lab (#318): lab_strategy, lab_version, lab_run, lab_variant, lab_paper_rule, lab_paper_signal
 
 Revision ID: a7c3f1d9e2b8
-Revises: b5e1d7c3a9f4
+Revises: c7a3e9d1f5b2
 Create Date: 2026-10-13 12:00:00.000000
 
 """
@@ -13,7 +13,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "a7c3f1d9e2b8"
-down_revision: str | Sequence[str] | None = "b5e1d7c3a9f4"
+down_revision: str | Sequence[str] | None = "c7a3e9d1f5b2"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

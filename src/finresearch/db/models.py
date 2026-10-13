@@ -1474,3 +1474,29 @@ class GrowwCloseCheck(Base):
     official_source: Mapped[str] = mapped_column(String(80))  # e.g. "NSE quote: close (official)"
     matched: Mapped[bool] = mapped_column(Boolean)  # |Groww - official| <= ₹0.01
     checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class FnoParticipantOi(Base):
+    """NSE's participant-wise open interest in equity derivatives, one row per day and participant (#317,
+    adapters.nse_participant_oi): contracts held long and short by Clients, DIIs, FIIs and Pros at the day's end.
+    Public aggregate market data; stored by the nightly F&O job (monitor.fno_bhav)."""
+
+    __tablename__ = "fno_participant_oi"
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    client_type: Mapped[str] = mapped_column(String(10), primary_key=True)  # Client | DII | FII | Pro
+    fut_idx_long: Mapped[int] = mapped_column(BigInteger)
+    fut_idx_short: Mapped[int] = mapped_column(BigInteger)
+    fut_stk_long: Mapped[int] = mapped_column(BigInteger)
+    fut_stk_short: Mapped[int] = mapped_column(BigInteger)
+    opt_idx_call_long: Mapped[int] = mapped_column(BigInteger)
+    opt_idx_put_long: Mapped[int] = mapped_column(BigInteger)
+    opt_idx_call_short: Mapped[int] = mapped_column(BigInteger)
+    opt_idx_put_short: Mapped[int] = mapped_column(BigInteger)
+    opt_stk_call_long: Mapped[int] = mapped_column(BigInteger)
+    opt_stk_put_long: Mapped[int] = mapped_column(BigInteger)
+    opt_stk_call_short: Mapped[int] = mapped_column(BigInteger)
+    opt_stk_put_short: Mapped[int] = mapped_column(BigInteger)
+    total_long: Mapped[int] = mapped_column(BigInteger)
+    total_short: Mapped[int] = mapped_column(BigInteger)
+    source: Mapped[str] = mapped_column(String(200))
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
