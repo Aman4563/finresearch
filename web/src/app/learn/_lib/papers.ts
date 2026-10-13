@@ -18,6 +18,7 @@ export const PAPERS: Record<string, Source> = {
   "sullivan-timmermann-white": p("Sullivan, Timmermann & White (1999), Data-Snooping, Technical Trading Rule Performance, and the Bootstrap, Journal of Finance 54(5) 1647–1691", "10.1111/0022-1082.00163"),
   "pan-poteshman": p("Pan & Poteshman (2006), The Information in Option Volume for Future Stock Prices, Review of Financial Studies 19(3) 871–908", "10.1093/rfs/hhj024"),
   "ni-pearson-poteshman": p("Ni, Pearson & Poteshman (2005), Stock Price Clustering on Option Expiration Dates, Journal of Financial Economics 78(1) 49–87", "10.1016/j.jfineco.2004.08.005"),
+  "longin-solnik": p("Longin & Solnik (2001), Extreme Correlation of International Equity Markets, Journal of Finance 56(2) 649–676", "10.1111/0022-1082.00340"),
   "kahneman-tversky": p("Kahneman & Tversky (1979), Prospect Theory: An Analysis of Decision under Risk, Econometrica 47(2) 263–291", "10.2307/1914185"),
   odean: p("Odean (1998), Are Investors Reluctant to Realize Their Losses?, Journal of Finance 53(5) 1775–1798", "10.1111/0022-1082.00072"),
   "barber-odean": p("Barber & Odean (2000), Trading Is Hazardous to Your Wealth, Journal of Finance 55(2) 773–806", "10.1111/0022-1082.00226"),
