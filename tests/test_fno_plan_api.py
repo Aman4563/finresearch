@@ -75,6 +75,7 @@ def client(env, monkeypatch):
     fs._CLOSES.clear()
     with TestClient(create_app(fno_client=FakeFno)) as c:
         yield c
+    _profile("0")  # the default profile again: later test files expect F&O capital unset
 
 
 def test_plan_card_has_every_part_and_no_strong_call_without_evidence(client):
@@ -228,7 +229,7 @@ def test_context_never_changes_the_verdict():
 def test_capital_unset_says_so_and_related_specs_do_not_borrow_paper_trades(client):
     from finresearch.signals import tradeplan as tpl
 
-    _profile("0")  # the default: not set
+    _profile("0")  # the default: not set (explicit, whatever ran before)
     card = client.post("/api/fno/plan", json={"symbol": "NIFTY", "expiry": "2026-10-06", "legs": PCS}).json()
     assert card["action"] == "AVOID" and card["reasons"][0].startswith("F&O capital is not set")
     # a paper trade tagged with the NIFTY monthly recipe but of another shape: it must not count for a card that only
