@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 from datetime import date, datetime
 from decimal import Decimal
+from typing import ClassVar
 
 import pytest
 from fastapi.testclient import TestClient
@@ -253,3 +254,150 @@ def test_capital_unset_says_so_and_related_specs_do_not_borrow_paper_trades(clie
                     tpl.Inputs(today=date(2026, 9, 29), closes=closes, iv_series=[], capital=1e9, max_loss_pct=2,
                                brokerage=20, defined_risk_only=True, rate=0.065))  # fmt: skip
     assert max(x["lots"] for x in big["legs"]) <= 100
+
+
+# --------------------------------------------------------------------------- #324: bid/ask from NSE's chain
+class GrowwLike(FakeFno):
+    """Groww's chain as groww_market parses it: last prices, IV and OI, but no bid or ask (None, never 0). NSE's chain
+    (the recorded fixture, timestamp 28-Sep-2026 15:40) through nse_option_chain, counted; `fail` makes NSE refuse."""
+
+    strip, fail, nse_calls = True, False, 0
+    expiries: ClassVar[list[date]] = [date(2026, 10, 6), date(2026, 10, 13)]
+
+    async def option_chain(self, symbol, expiry):
+        c = chain(symbol)
+        if GrowwLike.strip:
+            for r in c.rows:
+                for q in (r.call, r.put):
+                    if q is not None:
+                        q.bid = q.ask = None
+        return c.model_copy(update={"source": "Groww"})
+
+    async def nse_option_chain(self, symbol, expiry):
+        GrowwLike.nse_calls += 1
+        if GrowwLike.fail:
+            from finresearch.adapters.nse import NseError
+
+            raise NseError("HTTP 403 (block page)")
+        return chain(symbol)
+
+    async def contract_info(self, symbol):
+        return list(GrowwLike.expiries), [Decimal(22800)]
+
+
+@pytest.fixture
+def groww(env, monkeypatch):
+    from finresearch.api import create_app
+    from finresearch.signals import bidask as ba
+
+    monkeypatch.setattr(dates, "now_ist", lambda: NOW)
+    fs._CLOSES.clear()
+    ba._CACHE.clear()
+    GrowwLike.strip, GrowwLike.fail, GrowwLike.nse_calls = True, False, 0
+    GrowwLike.expiries = [date(2026, 10, 6), date(2026, 10, 13)]
+    _profile("1000000")
+    with TestClient(create_app(fno_client=GrowwLike)) as c:
+        yield c
+    ba._CACHE.clear()
+    _profile("0")
+
+
+def _plan(c):
+    return c.post("/api/fno/plan", json={"symbol": "NIFTY", "expiry": "2026-10-06", "legs": PCS}).json()
+
+
+NSE_LABEL = "bid/ask: NSE chain at 15:40 on 28-Sep-2026"  # the fixture's timestamp, a day before NOW
+
+
+def test_bidask_fallback_only_when_the_chain_lacks_it(groww):
+    GrowwLike.strip = False  # a chain that has bid/ask: NSE is not asked
+    e = _plan(groww)["entry"]
+    assert GrowwLike.nse_calls == 0 and e["status"] == "ok" and e["source"].startswith("bid/ask: Groww chain")
+    GrowwLike.strip = True
+    e = _plan(groww)["entry"]
+    assert GrowwLike.nse_calls == 1 and e["status"] == "ok" and e["source"] == NSE_LABEL
+    assert e["levels_priced_at"] == f"bid/ask mid ({NSE_LABEL})"
+    # independent of the code: 22600 PE bid 91.7 / ask 92, 22400 PE bid 52.6 / ask 53.65 (the fixture); one set
+    # mids 91.85 and 53.12 (53.125 to the paisa, half-even) → net 38.73 credit; fill now 91.7 − 53.65 = 38.05;
+    # slippage (91.85 − 91.7) + (53.65 − 53.12) = 0.68/share × 65 = ₹44.20
+    assert e["net_mid"] == pytest.approx(38.73) and e["net_fill_now"] == pytest.approx(38.05)
+    assert e["slippage_inr"] == pytest.approx(44.2)
+    assert [(x["bid"], x["ask"]) for x in e["legs"]] == [(91.7, 92.0), (52.6, 53.65)]
+
+
+def test_bidask_cache_30s_in_session_and_the_last_after_the_close(groww, monkeypatch):
+    clock = {"now": NOW}  # Tue 29-Sep-2026 10:00 IST, in session
+    monkeypatch.setattr(dates, "now_ist", lambda: clock["now"])
+    monkeypatch.setattr("finresearch.adapters.groww_market._holidays", lambda: set())
+
+    def at(h, m, s=0, day=29):
+        clock["now"] = datetime(2026, 9, day, h, m, s, tzinfo=dates.IST)
+        assert _plan(groww)["entry"]["status"] == "ok"
+        return GrowwLike.nse_calls
+
+    assert at(10, 0) == 1 and at(10, 0, 20) == 1  # within 30 s: cached
+    assert at(10, 0, 31) == 2  # stale in session: read again
+    assert at(17, 0) == 3  # after the close: once more (the last read was in session) ...
+    assert at(17, 30) == 3 and at(8, 0, day=30) == 3  # ... then kept until the next open
+    assert at(9, 20, day=30) == 4  # a new session: fresh quotes
+
+
+def test_nse_failure_keeps_the_entry_unknown(groww):
+    GrowwLike.fail = True
+    card = groww.post("/api/fno/plan", json={"symbol": "NIFTY", "expiry": "2026-10-06", "legs": PCS})
+    assert card.status_code == 200
+    e = card.json()["entry"]
+    assert GrowwLike.nse_calls == 1 and e["status"] == "unknown" and e["source"] == "unknown"
+    assert (
+        e["net_mid"] is None and e["net_fill_now"] is None and e["slippage_inr"] is None
+    )  # unknown, never 0
+    assert all(x["bid"] is None and x["status"] == "unknown" for x in e["legs"])
+    assert e["notes"][0].startswith("NSE's option chain could not be read")
+    assert (
+        _plan(groww)["entry"]["status"] == "unknown" and GrowwLike.nse_calls == 2
+    )  # a failure is not cached
+
+
+def _two_weekly_specs(monkeypatch):
+    from dataclasses import replace
+
+    from finresearch.backtest import specs
+
+    ic = next(s for s in specs.SPECS if s.key == "nifty_ic_w")
+    pcs = replace(ic, key="t_pcs_w", name="test put credit, weekly", kind="put_credit")
+    monkeypatch.setattr(specs, "SPECS", [ic, pcs])
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_suggest_reads_nse_once_per_expiry_not_per_card(groww, monkeypatch, fail):
+    _two_weekly_specs(monkeypatch)  # both on the 06-Oct weekly (4-9 days from 29-Sep)
+    GrowwLike.fail = fail
+    cards = groww.get("/api/fno/NIFTY/suggest").json()["cards"]
+    legged = [c for c in cards if c["legs"]]
+    assert len(legged) == 2 and GrowwLike.nse_calls == 1
+    for c in legged:
+        assert c["entry"]["source"] == ("unknown" if fail else NSE_LABEL)
+        assert (c["entry"]["status"] == "ok") is not fail
+
+
+@pytest.mark.parametrize(
+    ("today", "expiries", "want"),
+    [
+        (date(2026, 9, 29), [date(2026, 10, 6), date(2026, 10, 13)], "2026-10-06"),  # the nearest
+        (date(2026, 10, 6), [date(2026, 10, 6), date(2026, 10, 13)], "2026-10-13"),  # not today's
+        (
+            date(2026, 10, 6),
+            [date(2026, 9, 29), date(2026, 10, 6)],
+            "2026-10-06",
+        ),  # today's is the only live one
+    ],
+)
+def test_context_defaults_the_expiry_and_says_so(groww, monkeypatch, today, expiries, want):
+    monkeypatch.setattr(dates, "now_ist", lambda: datetime.combine(today, NOW.timetz()))
+    GrowwLike.expiries = expiries
+    got = groww.get("/api/fno/NIFTY/context")
+    assert got.status_code == 200
+    body = got.json()
+    assert body["expiry"] == want and body["expiry_defaulted"] is True and body["expiry_note"]
+    given = groww.get("/api/fno/NIFTY/context", params={"expiry": "2026-10-13"}).json()
+    assert given["expiry"] == "2026-10-13" and given["expiry_defaulted"] is False
