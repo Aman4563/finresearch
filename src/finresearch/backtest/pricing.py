@@ -81,6 +81,16 @@ def by_delta(x: Day, expiry: date, right: str, target: float, fwd: float, rate: 
     return best[2] if best else None
 
 
+def by_otm(x: Day, expiry: date, right: str, pct: float, fwd: float, min_contracts: int) -> Quote | None:
+    """The traded strike (>= min_contracts contracts today) nearest the forward moved `pct` % out of the money (a put
+    below, a call above; 0 = at the money); ties go to the farther-from-the-money strike (Strategy Lab, #318)."""
+    target = fwd * (1 - pct / 100) if right == "put" else fwd * (1 + pct / 100)
+    pool = [q for q in x.chain(expiry, right) if q.contracts >= min_contracts and q.traded]
+    if not pool:
+        return None
+    return min(pool, key=lambda q: (abs(q.strike - target), -abs(q.strike - fwd)))
+
+
 def wing(x: Day, expiry: date, right: str, anchor: float, target: float) -> Quote | None:
     """The traded strike nearest `target` that lies beyond `anchor` (lower for a put wing below, higher for a call
     wing above, as `target` says); None when no such contract traded today."""
