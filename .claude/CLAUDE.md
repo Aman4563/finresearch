@@ -10,8 +10,8 @@ Mac runs everything. Python 3.12 + FastAPI + SQLAlchemy/Alembic + Postgres 17/pg
 
 ## Commands
 
-Claude Code's Bash keeps no shell variables between calls, so set `T` in the same command that uses it. An empty URL
-makes every database test skip as "test database not reachable" while pytest still exits 0: read `-rs`.
+Claude Code's Bash keeps no shell variables between calls: set `T` in the same command that uses it (an empty URL
+skips every database test while pytest still exits 0, so read `-rs`).
 
 ```bash
 uv sync --locked                                     # as CI
@@ -20,16 +20,17 @@ uv run ruff check . && uv run ruff format --check .  # lint + format as CI; fix:
 # Tests: your OWN database whose name ends in _test (conftest drops and recreates its schema every session)
 createdb finresearch_<you>_test && psql -d finresearch_<you>_test -c 'create extension if not exists vector'
 T=postgresql+psycopg://localhost/finresearch_<you>_test; FINRESEARCH_TEST_DATABASE_URL=$T FINRESEARCH_DATABASE_URL=$T uv run pytest -q -rs
-T=...; FINRESEARCH_TEST_DATABASE_URL=$T FINRESEARCH_DATABASE_URL=$T uv run pytest -q -rs tests/test_x.py::test_name   # or -k '<expr>'
+T=postgresql+psycopg://localhost/finresearch_<you>_test; FINRESEARCH_TEST_DATABASE_URL=$T FINRESEARCH_DATABASE_URL=$T uv run pytest -q -rs tests/test_x.py::test_name   # or -k '<expr>'
 uv run pytest --collect-only -q                      # list tests; needs no database
 # the full suite is serial and takes ~6 min: give the Bash call a 600000 ms timeout or run it in the background.
 # tests shell out to pdftotext/pdftoppm and tesseract (brew install poppler tesseract; CI apt-installs them).
 
 # Migrations: tests build their schema with create_all, so only CI's Alembic round trip catches a missing migration.
 # Use a SECOND scratch database built by Alembic (a pytest-built one has no alembic_version).
+createdb finresearch_<you>_mig_test
 M=postgresql+psycopg://localhost/finresearch_<you>_mig_test; export FINRESEARCH_DATABASE_URL=$M; uv run alembic upgrade head && uv run alembic revision --autogenerate -m "Title (#N): tables"
 uv run ruff check --fix migrations && uv run ruff format migrations   # the template's output fails CI's ruff otherwise
-M=...; export FINRESEARCH_DATABASE_URL=$M; uv run alembic upgrade head && uv run alembic check && uv run alembic downgrade -1 && uv run alembic upgrade head && uv run alembic check   # CI's gate, on a fresh DB
+M=postgresql+psycopg://localhost/finresearch_<you>_mig_test; export FINRESEARCH_DATABASE_URL=$M; uv run alembic upgrade head && uv run alembic check && uv run alembic downgrade -1 && uv run alembic upgrade head && uv run alembic check   # CI's gate (on a fresh DB: dropdb/createdb first)
 uv run alembic heads                                 # must print exactly one head; needs no database
 
 # Web (in web/)
@@ -88,38 +89,35 @@ failures retry up to 3 times), a `Deps` flag, and a `_spawn_<job>` hook in `tick
 archives, portfolio pass, brief, alert rules and broker syncs deliberately treat an unknown list as no holidays
 (skipping them would lose data). Choose the policy on purpose for a new job.
 
-**Research pipeline.** `orchestrator/` runs one resumable DAG per run with a subclass per kind (IPO, stock, fund, bond):
-deterministic facts → planner → research streams in parallel, each followed by the deterministic gate
-(`verify/gate.py`), an adversarial verifier and, for high-importance claims it passed, a blind second verifier → one
-pass over cross-stream conflicts and accounting identities → bull ║ bear → synthesis (re-run up to twice while the
-publish gate blocks) → critic, whose gaps send follow-up streams through the same checks (≤ 2 rounds) → final
-publish gate. Model steps are `agent_step` rows
-unique on `(run_id, key)` and deterministic post-steps run once under `_once` keys, so a resume never repeats finished
-work and step keys are a contract. A Claude limit or the 5-hour budget pre-flight pauses a run; it never fails over.
-`agents/roles.py` gives each role its model class, output schema and an explicit tool allow-list (a new MCP tool is
-denied to every agent until a role lists it); prompts are `agents/prompts/*.md` (+ `_house_rules.md`), skills
-`agents/skills/*/SKILL.md`. `bridge/` runs tasks through the official `claude -p` CLI on the subscription login (auth
-env vars stripped); the API-key tier is off by default and Ollama serves embeddings, OCR and degraded tasks (research
-never degrades). Agents run in sandboxes `data/runs/<run>/<role>/` and load no CLAUDE.md
-(`CLAUDE_CODE_DISABLE_CLAUDE_MDS=1`): agent behaviour belongs in `agents/`, never in this file. Their data tools are the
-stdio MCP server (`mcp_server/`: documents, search, tables, `fincalc`, exchange data, `fetch_page`, the claim ledger)
-plus WebSearch/WebFetch for web roles (kept off this machine by `fetch_guard.py`). `save_claim` checks every citation
-before writing; `verify/evidence.py` grades it (A document quote found, B web quote found on a stored page, C unchecked
-web, D fincalc reproduced from cited input claims, U failed). The publish gate writes `report.md` only when, among other
-checks, every cited high-importance claim is verified with grade A, B or D; otherwise `report_blocked.md`. A verifier's
-verdicts apply only to the claims it was sent, and exchange/AMFI facts the pipeline fetched are never re-judged.
+**Research pipeline.** `orchestrator/` runs one resumable DAG per run, with a subclass per kind (IPO, stock, fund,
+bond): deterministic facts → planner → research streams in parallel, each followed by the deterministic gate, an
+adversarial verifier and, for high-importance claims it passed, a blind second verifier → cross-stream and
+accounting-identity checks → bull ║ bear → synthesis (re-run up to twice while the publish gate blocks) → critic,
+whose gaps send follow-up streams through the same checks (≤ 2 rounds) → final publish gate. Model steps are
+`agent_step` rows unique on `(run_id, key)` and deterministic post-steps run once under `_once` keys, so resumes never
+repeat finished work and step keys are a contract. A Claude limit or the 5-hour budget pre-flight pauses a run; it
+never fails over to a local model. `agents/roles.py` gives each role its model class, output schema and an explicit
+tool allow-list (a new MCP tool is denied to every agent until a role lists it); prompts are `agents/prompts/*.md`,
+skills `agents/skills/*/SKILL.md`. `bridge/` runs tasks through the official `claude -p` CLI on the subscription login
+(auth env vars stripped; the API-key tier is off, Ollama serves embeddings and OCR). Agents run in sandboxes
+`data/runs/<run>/<role>/` and load no CLAUDE.md (`CLAUDE_CODE_DISABLE_CLAUDE_MDS=1`), so agent behaviour belongs in
+`agents/`, never in this file. Their tools are the stdio MCP server (`mcp_server/`: documents, search, tables,
+`fincalc`, exchange data, `fetch_page`, the claim ledger) plus WebSearch/WebFetch for web roles (`fetch_guard.py` keeps
+them off this machine). `save_claim` checks every citation before writing, `verify/evidence.py` grades it (A–D, U; see
+`docs/ARCHITECTURE.md`), and the publish gate writes `report.md` only if, among other checks, every cited
+high-importance claim is verified with grade A, B or D (else `report_blocked.md`). A verifier's verdicts apply only to
+the claims it was sent, and exchange/AMFI facts the pipeline fetched are never re-judged by a model.
 
 **Markets and signals.** Exchange, regulator, AMFI and FBIL adapters use `adapters/http.PoliteClient`: a per-host
-rate limit shared by every process with the same state dir (flock slots in `state_dir/ratelimit`; all
-`*.nseindia.com` hosts share one budget), retries, a URL check on every request and redirect hop, and opt-in caching
-of 2xx bodies (pass a `cache_if` validator: exchanges answer blocks with HTTP 200). Agent-chosen pages go through
-`fetch_public`, which also resolves every hop. When connected, Groww's paid API is asked first for in-session prices,
-candles and option chains (`adapters/groww_market.py` via `ReadOnlyHttp`: GET allow-list plus one margin-calculator
-POST, shared rate budgets; it logs in only from the monitor tick); a failed Groww answer falls back to NSE/BSE/AMFI and
-is never a price. Signals share one contract (`signals/base.Signal`: probability, interval, factors, validation). IPO
-and stock signals, the direction model and gate-passed IPO/stock runs log forecasts to `signals/ledger.py`, which the
-monitor resolves and scores. New models are pre-registered (repo-root `evals/experiments/*/PREREG.md`; for the F&O
-backtest and direction model `specs.py` is the registration and `prereg.py` pins its hash).
+rate limit shared by every process with the same state dir (flock slots; all `*.nseindia.com` hosts share one budget),
+retries, a URL check on every request and redirect hop, and opt-in caching of 2xx bodies (pass a `cache_if` validator:
+exchanges answer blocks with HTTP 200). Agent-chosen pages go through `fetch_public`, which resolves every hop. When
+connected, Groww's paid API is asked first for in-session prices, candles and option chains (`adapters/groww_market.py`
+via `ReadOnlyHttp`: a GET allow-list plus one margin-calculator POST; it logs in only from the monitor tick); a failed
+Groww answer falls back to NSE/BSE/AMFI and is never a price. Signals share one contract (`signals/base.Signal`), and
+IPO/stock signals, the direction model and gate-passed runs log forecasts to `signals/ledger.py`, which the monitor
+resolves and scores. New models are pre-registered (repo-root `evals/experiments/*/PREREG.md`; for the F&O backtest
+and direction model `specs.py` is the registration and `prereg.py` pins its hash).
 
 **Portfolio.** Transactions are the only source of truth: importers (`portfolio/importers.py`, pure), read-only broker
 connectors (`portfolio/connectors/`) and the inbox all enter through `service.apply`/`add_txns` (`dedupe.py` matches

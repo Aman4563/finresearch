@@ -80,7 +80,12 @@ async def main() -> int:
     # otherwise inject (the repo's .claude/CLAUDE.md and the user's ~/.claude/CLAUDE.md)
     from finresearch.config import get_settings
 
-    marks = [p.read_text().splitlines()[0].strip() for p in (REPO / ".claude/CLAUDE.md", Path.home() / ".claude/CLAUDE.md")
+    def probe_line(text: str) -> str:
+        # a distinctive line: the repo file opens with the generic "# CLAUDE.md" heading, so prefer a FinResearch line
+        lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+        return next((ln for ln in lines if "FinResearch" in ln and len(ln) > 30), lines[0])
+
+    marks = [probe_line(p.read_text()) for p in (REPO / ".claude/CLAUDE.md", Path.home() / ".claude/CLAUDE.md")
              if p.exists() and p.read_text().strip()]  # fmt: skip
     sandbox = get_settings().runs_dir / "_smoke_isolation" / "probe"
     try:
