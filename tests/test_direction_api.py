@@ -277,3 +277,31 @@ def test_post_log_route_and_the_monitor_step(client):
     with session_scope() as s:
         assert s.scalar(select(func.count()).select_from(Forecast)) == n  # same day, same methods: deduped
     assert asyncio.run(fno_direction_step(datetime(2026, 9, 28, 18, 0, tzinfo=IST), holidays=set())) == {}
+
+
+def test_a_known_trading_holiday_without_a_manifest_row_does_not_block_resolution(db, monkeypatch):
+    """The backfill skips a cached weekday NSE holiday without a request, so the day has no manifest row at all."""
+    import asyncio
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import FnoBhav, FnoBhavDay, FnoIvEod, Forecast
+    from finresearch.direction import live
+
+    rows = panel(end=date(2026, 10, 9))
+    store(rows)
+    hol = date(2026, 9, 30)
+    st = live.state("NIFTY")
+    st = {**st, "as_of": AS_OF.isoformat(), "spot": round(next(r.close for r in rows if r.day == AS_OF), 2)}
+    live.log("NIFTY", datetime(2026, 9, 28, 20, 0, tzinfo=IST), st=st, holidays={hol})
+    monkeypatch.setattr("finresearch.adapters.nse_holidays.trading_holidays", lambda *a, **k: {hol})
+    with session_scope() as s:
+        for t in (FnoBhav, FnoIvEod, FnoBhavDay):
+            s.execute(t.__table__.delete().where(t.__table__.c.day == hol))
+        f = next(f for f in s.scalars(select(Forecast).where(Forecast.event_kind == "fno_dir_up_h5")))
+        r = asyncio.run(live.resolve_direction(f, None, s))
+        sessions = [x.day for x in rows if x.day > AS_OF and x.day != hol][:5]
+        closes = {x.day: round(x.close, 2) for x in rows}
+        assert (
+            r.outcome == int(math.log(closes[sessions[-1]] / closes[AS_OF]) > 0)
+            and str(sessions[-1]) in r.note
+        )

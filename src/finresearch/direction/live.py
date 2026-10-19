@@ -13,8 +13,9 @@ the next session's move. Each carries `start_date` (the session) so the ledger c
 independent events, and the threshold (K·σ_h) fixed at logging time.
 
 Resolution (registered with signals.ledger.resolver for every horizon × event): the bhavcopy's underlying value on the
-h-th stored session after the start date; waits (NotYet) while any weekday in between has no bhavcopy manifest row
-(neither loaded nor a confirmed no-file day), so a missed download never shifts the count.
+h-th stored session after the start date; waits (NotYet) while any weekday in between that is not a known NSE trading
+holiday has no bhavcopy manifest row (neither loaded nor a confirmed no-file day), so a missed download never shifts
+the count.
 """
 
 from __future__ import annotations
@@ -130,7 +131,7 @@ def compute(rows, feats, symbol: str, status: dict[tuple[int, str], str]) -> dic
             "horizons": horizons, "accepted": accepted,
             "model_status": "accepted" if accepted else "no_edge",
             "headline": {"h": 5, "p_up": up5["shown"], "label": up5["label"],
-                         "call_or_put": None if not accepted else ("CALL" if (up5["shown"] or 0.5) > 0.5 else "PUT")}}  # fmt: skip
+                         "call_or_put": None if up5["status"] != "accepted" else ("CALL" if (up5["shown"] or 0.5) > 0.5 else "PUT")}}  # fmt: skip
 
 
 def state(symbol: str, url: str | None = None, *, fresh: bool = False) -> dict[str, Any]:
@@ -269,9 +270,18 @@ async def resolve_direction(f, deps: Any, session) -> ledger.Resolution:
     manifest = {
         d: st for d, st in session.execute(select(FnoBhavDay.day, FnoBhavDay.status).where(FnoBhavDay.day.between(start, end)))
     }  # fmt: skip
+    from finresearch.adapters.nse_holidays import trading_holidays
+
+    # the bhavcopy backfill skips a cached weekday NSE holiday without a request, so it has no manifest row
+    holidays = trading_holidays()
     d = start + timedelta(days=1)
     while d < end:
-        if d.weekday() < 5 and d not in days and manifest.get(d) not in ("loaded", "no_file"):
+        if (
+            d.weekday() < 5
+            and d not in days
+            and d not in holidays
+            and manifest.get(d) not in ("loaded", "no_file")
+        ):
             raise ledger.NotYet(f"no bhavcopy record for {d}: cannot be sure {end} is the {h}th session")
         d += timedelta(days=1)
     s1 = _underlying_on(session, sym, end)
