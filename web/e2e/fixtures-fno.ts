@@ -289,3 +289,34 @@ export const LONG_LAB_VIEW: LabRunView = { ...LAB_VIEW, strategy: { ...LAB_VIEW.
     oos: { trades: 41, expectancy: -98765432, win_rate: 0.7, sharpe: 1.1, max_drawdown_pct: 4, deflated_sharpe: null, total_net: -9876543210 } }] } };
 export const LONG_LAB_PAPER: PaperRule[] = [{ ...LAB_PAPER[0], strategy: LONG_LAB_NAME, results: { ...LAB_PAPER[0].results, total_net: -98765432 },
   signals: [{ ...LAB_PAPER[0].signals[0], net_pnl: -98765432, exit_reason: "stop loss after a results-day gap", note: null }] }];
+
+// ------------------------------------------------------------------ /fno direction panel (#327)
+// moved from fno-direction.spec.ts so the layout spec can mount the panel too
+const dev = (implied: number, logistic: number) => ({ implied, base_rate: implied - 0.01, logistic, shown: implied, shown_model: "implied", status: "no_edge",
+  label: "market-implied, no edge", train_n: 900, text: "closes above today's close" });
+const hz = (h: number) => ({ h, sigma_pct: 0.9 * Math.sqrt(h), threshold_pct: 0.45 * Math.sqrt(h),
+  events: { up: dev(0.51, 0.53), up_k: dev(0.3, 0.29), down_k: dev(0.31, 0.33) } });
+const stats = (brier: number) => ({ n: 566, base_rate: 0.48, mean_p: 0.5, brier, log_loss: 0.69, hit_rate: 0.48, auc: 0.52, calibration_intercept: 0, calibration_slope: 1.37,
+  reliability: [0.4, 0.45, 0.5, 0.55, 0.6].map((p) => ({ n: 113, mean_p: p, observed: p - 0.03, ci: [p - 0.12, p + 0.06] })) });
+const test_ = (bss: number, p: number) => ({ brier_skill: bss, log_loss_skill: bss, dm: -1, p, p_holm: 1, lag: 5 });
+const cell = (h: number, event: string) => ({ symbol: "NIFTY", horizon: h, event, event_text: "", status: "no_edge", reasons: ["fails: Brier skill vs implied"],
+  is: { n: 348, from: "2023-01-02", to: "2024-06-28", models: {}, tests: {} },
+  oos: { n: 566, from: "2024-07-01", to: "2026-10-06", models: { base_rate: stats(0.253), implied: stats(0.2523), logistic: stats(0.2556) },
+    tests: { logistic_vs_implied: test_(-0.0132, 0.86), logistic_vs_base_rate: test_(-0.0101, 0.87), base_rate_vs_implied: test_(-0.003, 0.58) } } });
+const cand = (key: string, label: string, view: string, evm: number) => ({ key, label, view, status: "fails", why: ["the probabilities come from no accepted model (market-implied, no edge)"],
+  ev_model: evm, ev_implied: evm, edge: 0, costs: 120, max_loss: -6500, legs: [{ right: "call", strike: 25000, side: "buy", price: 100, iv: 14 }] });
+export const DIRECTION = (h: number) => ({
+  symbol: "NIFTY", as_of: "2026-10-12", spot: 25000, iv_30: 13.9, horizons: [1, 5, 10, 20].map(hz), accepted: [], model_status: "no_edge",
+  headline: { h: 5, p_up: 0.51, label: "market-implied, no edge", call_or_put: null },
+  run: { id: 1, created_at: "2026-10-19T20:00:00+05:30", verdict: "no edge: no logistic cell passed the pre-registered out-of-sample criteria",
+    source: "finresearch_fnohist2 (read only)", registration_hash: "372dabfe1d07", windows: { oos_start: "2024-07-01" },
+    criteria: { min_oos_n: 250, alpha: 0.05, slope_low: 0.5, slope_high: 3 }, cells: [1, 5, 10, 20].flatMap((x) => ["up", "up_k", "down_k"].map((e) => cell(x, e))) },
+  live_accuracy: [{ method: "m", event_kind: `fno_dir_up_h${h}`, h, event: "up", model: "implied", logged: 12, open: 4, resolved: 8, independent: 2, void: 0,
+    summary: { n: 2, brier: 0.24, brier_skill: null, hit_rate: 0.5, base_rate: 0.5 } }],
+  decision_horizon: h, evidence_note: "Probabilities are for the index's close h sessions after the stored close.",
+  registration: { hash: "372dabfe1d070d22", registered_on: "2026-10-19", matches_code: true, doc: "PREREG.md" },
+  decision: { status: "ok", action: "NO TRADE", label: "NO TRADE: no measured edge", chosen: null, horizon: h, expiry: "2026-10-20", horizon_day: "2026-10-19",
+    held_to_expiry: false, lot_size: 65, plan: null, notes: [],
+    candidates: [cand("long_call", "Long call (ATM)", "up", -310), cand("long_put", "Long put (ATM)", "down", -295)],
+    non_directional: { text: "No measured directional edge. Non-directional plans: the pre-registered library.", suggest_api: "/api/fno/NIFTY/suggest", href: "/fno?symbol=NIFTY", evidence_href: "/fno/backtests" } },
+});
