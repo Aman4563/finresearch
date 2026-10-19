@@ -584,13 +584,22 @@ export function Modal({ open, onClose, title, children, wide }: { open: boolean;
 }
 
 /** A table with sticky header styling and row hover; pass <thead>/<tbody> children. */
-export function Table({ children, className, label = "Table" }: { children: ReactNode; className?: string; label?: string }) {
+export function Table({ children, className, label = "Table", bleed = true, stickyFirst = false }: {
+  children: ReactNode; className?: string; label?: string;
+  /** run to the card's edges (the default, for a table directly in a Card); false inside a grid cell or a nested box,
+   * where the negative margins pushed the table over its neighbour */
+  bleed?: boolean;
+  /** keep the first column (the row label) in view while the rest scrolls sideways */
+  stickyFirst?: boolean;
+}) {
   return (
     // focusable so keyboard users can scroll a table wider than the screen (WCAG 2.1.1), named for screen readers;
     // `relative` keeps absolutely positioned children (sr-only header text) inside the scroll box: without it they
     // escape the clip and widen the whole page on a phone
-    <div tabIndex={0} role="region" aria-label={label} className={cx("relative -mx-4 overflow-x-auto sm:-mx-5", className)}>
-      <table className="w-full min-w-max text-sm [&_td]:px-4 [&_td]:py-2.5 sm:[&_td]:px-5 [&_th]:px-4 [&_th]:py-2 sm:[&_th]:px-5 [&_th]:text-left [&_th]:text-[11px] [&_th]:font-medium [&_th]:uppercase [&_th]:tracking-wider [&_th]:text-muted [&_thead_tr]:border-b [&_thead_tr]:border-border [&_tbody_tr]:border-b [&_tbody_tr]:border-border/60 [&_tbody_tr:last-child]:border-0 [&_tbody_tr]:transition-colors [&_tbody_tr:hover]:bg-card-hover">
+    <div tabIndex={0} role="region" aria-label={label} className={cx("relative overflow-x-auto", bleed && "-mx-4 sm:-mx-5", className)}>
+      <table className={cx("w-full min-w-max text-sm [&_td]:px-4 [&_td]:py-2.5 sm:[&_td]:px-5 [&_th]:px-4 [&_th]:py-2 sm:[&_th]:px-5 [&_th]:text-left [&_th]:text-[11px] [&_th]:font-medium [&_th]:uppercase [&_th]:tracking-wider [&_th]:text-muted [&_thead_tr]:border-b [&_thead_tr]:border-border [&_tbody_tr]:border-b [&_tbody_tr]:border-border/60 [&_tbody_tr:last-child]:border-0 [&_tbody_tr]:transition-colors [&_tbody_tr:hover]:bg-card-hover",
+        !bleed && "[&_td:first-child]:pl-0 [&_th:first-child]:pl-0 sm:[&_td:first-child]:pl-0 sm:[&_th:first-child]:pl-0",
+        stickyFirst && "[&_tr>*:first-child]:sticky [&_tr>*:first-child]:left-0 [&_tr>*:first-child]:z-[1] [&_tr>*:first-child]:bg-card")}>
         {children}
       </table>
     </div>

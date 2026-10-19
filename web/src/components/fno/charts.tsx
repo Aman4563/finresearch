@@ -7,13 +7,16 @@ import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, ReferenceArea, ReferenceDot, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 
-import { fmtINR } from "@/components/charts";
+import { fmtCompactINR, fmtINR } from "@/components/charts";
 
 const axis = { tickLine: false, axisLine: false, fontSize: 11 } as const;
 const compact = (v: number) => {
   const a = Math.abs(v);
   return a >= 1e7 ? `${(a / 1e7).toFixed(1)}Cr` : a >= 1e5 ? `${(a / 1e5).toFixed(1)}L` : a >= 1e3 ? `${(a / 1e3).toFixed(0)}K` : String(Math.round(a));
 };
+
+// a payoff axis tick: "−₹5,000", not "₹-5,000"; lakhs and crores compact so a nine-digit loss fits the 72px axis
+const money = (v: number) => `${v < 0 ? "−" : ""}${Math.abs(v) >= 1e5 ? fmtCompactINR(Math.abs(v)) : fmtINR(Math.round(Math.abs(v)))}`;
 
 type OiRow = { strike: number; calls: number; puts: number; callChg: number; putChg: number };
 
@@ -64,7 +67,7 @@ function PayoffTip({ active, payload, label }: { active?: boolean; payload?: { v
   return (
     <div className="rounded-lg border border-border bg-card/95 px-3 py-2 text-xs shadow-pop backdrop-blur">
       <p className="text-muted">At expiry, price {Number(label).toLocaleString("en-IN")}</p>
-      <p className={`num font-semibold ${v >= 0 ? "text-gain" : "text-loss"}`}>{v >= 0 ? "+" : ""}{fmtINR(v)}</p>
+      <p className={`num font-semibold ${v >= 0 ? "text-gain" : "text-loss"}`}>{v >= 0 ? "+" : "−"}{fmtINR(Math.abs(v))}</p>
     </div>
   );
 }
@@ -105,7 +108,7 @@ export function InteractivePayoff({ points, spot, breakevens, what, onPick, band
               ifOverflow="hidden" label={{ value: "±1σ expected move", position: "insideBottom", fill: "var(--chart-2)", fontSize: 10 }} />
           )}
           <XAxis dataKey="spot" type="number" domain={["dataMin", "dataMax"]} {...axis} tickFormatter={(v) => Number(v).toLocaleString("en-IN")} />
-          <YAxis {...axis} width={72} tickFormatter={(v) => fmtINR(Number(v)).replace(/\.\d+$/, "")} />
+          <YAxis {...axis} width={72} tickFormatter={money} />
           <Tooltip content={<PayoffTip />} />
           <ReferenceLine y={0} stroke="var(--border-strong)" />
           <ReferenceLine x={spot} stroke="var(--accent)" strokeDasharray="4 4"

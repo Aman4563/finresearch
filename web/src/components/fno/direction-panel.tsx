@@ -78,8 +78,8 @@ function Gauge({ hz }: { hz: Horizon }) {
 
 function Probabilities({ hz }: { hz: Horizon }) {
   return (
-    <div className="-mx-1 overflow-x-auto">
-      <table className="num w-full min-w-[520px] text-xs [&_td]:px-1.5 [&_td]:py-1 [&_th]:px-1.5 [&_th]:py-1 [&_th]:text-left [&_th]:font-medium [&_th]:text-muted">
+    <div tabIndex={0} role="region" aria-label="Probabilities by event, scrollable" className="-mx-1 overflow-x-auto">
+      <table className="num w-full min-w-[520px] text-xs [&_td]:px-1.5 [&_td]:py-1 [&_th]:px-1.5 [&_th]:py-1 [&_th]:text-left [&_th]:font-medium [&_th]:text-muted [&_th]:whitespace-nowrap [&_tr>*:first-child]:sticky [&_tr>*:first-child]:left-0 [&_tr>*:first-child]:z-[1] [&_tr>*:first-child]:bg-card">
         <thead><tr><th>Event ({hz.h} session{hz.h > 1 ? "s" : ""})</th><th>Shown</th><th>Market-implied</th><th>Base rate</th><th>Logistic</th><th>Status</th></tr></thead>
         <tbody>
           {EVENTS.map((k) => {
@@ -104,8 +104,8 @@ function Probabilities({ hz }: { hz: Horizon }) {
 
 function OosTable({ cells, crit }: { cells: RunCell[]; crit: NonNullable<DirectionResponse["run"]>["criteria"] }) {
   return (
-    <div className="-mx-1 overflow-x-auto">
-      <table className="num w-full min-w-[640px] text-xs [&_td]:px-1.5 [&_td]:py-1 [&_th]:px-1.5 [&_th]:py-1 [&_th]:text-left [&_th]:font-medium [&_th]:text-muted">
+    <div tabIndex={0} role="region" aria-label="Out-of-sample accuracy, scrollable" className="-mx-1 overflow-x-auto">
+      <table className="num w-full min-w-[640px] text-xs [&_td]:px-1.5 [&_td]:py-1 [&_th]:px-1.5 [&_th]:py-1 [&_th]:text-left [&_th]:font-medium [&_th]:text-muted [&_th]:whitespace-nowrap [&_tr>*:first-child]:sticky [&_tr>*:first-child]:left-0 [&_tr>*:first-child]:z-[1] [&_tr>*:first-child]:bg-card">
         <thead>
           <tr><th>Event</th><th>Days</th><th>Happened</th><th>Hit rate</th><th>AUC</th>
             <th>Brier skill vs market <InfoTip label="Brier skill">1 − Brier(model) ÷ Brier(reference) on the same days. Above 0 = better. p is one-sided Diebold-Mariano, Holm-adjusted over 24 cells.</InfoTip></th>
@@ -145,8 +145,8 @@ function OosTable({ cells, crit }: { cells: RunCell[]; crit: NonNullable<Directi
 function LiveTable({ rows }: { rows: LiveRow[] }) {
   if (!rows.length) return <p className="text-xs text-muted">No live forecast logged yet for this horizon. The nightly job logs one per event after the bhavcopy loads; you can also log now.</p>;
   return (
-    <div className="-mx-1 overflow-x-auto">
-      <table className="num w-full min-w-[560px] text-xs [&_td]:px-1.5 [&_td]:py-1 [&_th]:px-1.5 [&_th]:py-1 [&_th]:text-left [&_th]:font-medium [&_th]:text-muted">
+    <div tabIndex={0} role="region" aria-label="Live accuracy, scrollable" className="-mx-1 overflow-x-auto">
+      <table className="num w-full min-w-[560px] text-xs [&_td]:px-1.5 [&_td]:py-1 [&_th]:px-1.5 [&_th]:py-1 [&_th]:text-left [&_th]:font-medium [&_th]:text-muted [&_th]:whitespace-nowrap [&_tr>*:first-child]:sticky [&_tr>*:first-child]:left-0 [&_tr>*:first-child]:z-[1] [&_tr>*:first-child]:bg-card">
         <thead><tr><th>Event</th><th>Model</th><th>Logged</th><th>Open</th><th>Resolved</th><th>Independent <InfoTip label="Independent events">Non-overlapping windows: overlapping h-session windows share most of their path, so only these count as separate outcomes.</InfoTip></th><th>Hit rate</th><th>Brier</th></tr></thead>
         <tbody>
           {rows.map((r) => (
@@ -166,8 +166,8 @@ function LiveTable({ rows }: { rows: LiveRow[] }) {
 
 function Candidates({ rows }: { rows: Candidate[] }) {
   return (
-    <div className="-mx-1 overflow-x-auto">
-      <table className="num w-full min-w-[600px] text-xs [&_td]:px-1.5 [&_td]:py-1 [&_th]:px-1.5 [&_th]:py-1 [&_th]:text-left [&_th]:font-medium [&_th]:text-muted">
+    <div tabIndex={0} role="region" aria-label="Trade candidates, scrollable" className="-mx-1 overflow-x-auto">
+      <table className="num w-full min-w-[600px] text-xs [&_td]:px-1.5 [&_td]:py-1 [&_th]:px-1.5 [&_th]:py-1 [&_th]:text-left [&_th]:font-medium [&_th]:text-muted [&_th]:whitespace-nowrap [&_tr>*:first-child]:sticky [&_tr>*:first-child]:left-0 [&_tr>*:first-child]:z-[1] [&_tr>*:first-child]:bg-card">
         <thead><tr><th>Trade (1 lot set)</th><th>EV, model</th><th>EV, market</th><th>Edge</th><th>Costs</th><th>Max loss</th><th>Gate</th></tr></thead>
         <tbody>
           {rows.map((r) => (

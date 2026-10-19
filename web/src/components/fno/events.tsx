@@ -38,7 +38,7 @@ export function EventStrip({ symbol }: { symbol: string }) {
       ))}
       {data.results.status === "unknown" && <Badge tone="warn">results date unknown ({data.results.note})</Badge>}
       {data.results.status === "none" && <span className="text-muted">no results meeting announced</span>}
-      {data.rbi.status === "no_source" && <span className="text-muted">· {data.rbi.note}</span>}
+      {data.rbi.status === "no_source" && <span className="text-muted">{data.rbi.note}</span>}
     </div>
   );
 }

@@ -23,7 +23,8 @@ function Num({ label, value, onChange, step = "1", hint, name }: {
   label: string; value: number | null; onChange: (v: number | null) => void; step?: string; hint?: string; name: string;
 }) {
   return (
-    <Field label={label} hint={hint}>
+    // the hint joins the label, so every input in a row lines up at the bottom (#326)
+    <Field label={<>{label}{hint && <span className="font-normal"> ({hint})</span>}</>}>
       <input aria-label={label} name={name} type="number" step={step} className={cx(inputClass, "num w-full")} value={s(value)} onChange={(e) => onChange(n(e.target.value))} />
     </Field>
   );
@@ -44,7 +45,7 @@ export function StrategyForm({ blocks, underlyings, initial, submitLabel, onSubm
       {withName && (
         <Field label="Name (optional)"><input aria-label="Name" maxLength={120} className={cx(inputClass, "w-full")} value={name} onChange={(e) => setName(e.target.value)} /></Field>
       )}
-      <fieldset className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <fieldset className="grid grid-cols-2 items-end gap-3 sm:grid-cols-4">
         <legend className="col-span-full mb-1 text-xs font-semibold uppercase tracking-wider text-muted">Underlying and structure</legend>
         <Field label="Underlying">
           <input aria-label="Underlying" list="lab-underlyings" className={cx(inputClass, "w-full uppercase")} value={f.underlying} onChange={(e) => set("underlying", e.target.value.toUpperCase())} />
@@ -64,7 +65,7 @@ export function StrategyForm({ blocks, underlyings, initial, submitLabel, onSubm
         <Num name="dtemax" label="Days to expiry: max" value={f.dte_max} onChange={(v) => set("dte_max", v ?? 0)} hint={`at most ${blocks.max_dte}`} />
       </fieldset>
 
-      <fieldset className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <fieldset className="grid grid-cols-2 items-end gap-3 sm:grid-cols-4">
         <legend className="col-span-full mb-1 text-xs font-semibold uppercase tracking-wider text-muted">Entry filters (each one is a knob that can overfit)</legend>
         <div className="col-span-full flex flex-wrap items-center gap-3 text-sm" role="group" aria-label="Entry days">
           {blocks.weekdays.map((w, i) => (
@@ -85,7 +86,7 @@ export function StrategyForm({ blocks, underlyings, initial, submitLabel, onSubm
         </Field>
       </fieldset>
 
-      <fieldset className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <fieldset className="grid grid-cols-2 items-end gap-3 sm:grid-cols-4">
         <legend className="col-span-full mb-1 text-xs font-semibold uppercase tracking-wider text-muted">Legs and sizing</legend>
         <Field label={credit ? "Short leg by" : "Bought leg by"}>
           <select aria-label="Leg by" className={cx(inputClass, "w-full")} value={f.strike_by}
@@ -104,7 +105,7 @@ export function StrategyForm({ blocks, underlyings, initial, submitLabel, onSubm
         <Num name="gap" label="Days between entries" value={f.min_days_between} onChange={(v) => set("min_days_between", v ?? 1)} />
       </fieldset>
 
-      <fieldset className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <fieldset className="grid grid-cols-2 items-end gap-3 sm:grid-cols-4">
         <legend className="col-span-full mb-1 text-xs font-semibold uppercase tracking-wider text-muted">Management</legend>
         <Num name="pt" label={`Profit-take, % of the ${credit ? "credit" : "debit"}`} value={f.profit_take_pct} onChange={(v) => set("profit_take_pct", v)} />
         <Num name="stop" label={credit ? "Stop, × the credit" : "Stop, fraction of the debit"} step="0.1" value={f.stop_mult} onChange={(v) => set("stop_mult", v)} />

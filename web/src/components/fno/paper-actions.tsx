@@ -62,8 +62,10 @@ export function PaperActions({ symbol, expiry, legs }: { symbol: string; expiry:
         <input aria-label="Label" placeholder="label (optional)" maxLength={120} className={cx(inputClass, "w-40 py-1 text-xs")} value={label} onChange={(e) => setLabel(e.target.value)} />
         <Button onClick={paper} disabled={!!busy || !legs.length} icon={<NotebookPen className="size-3.5" />}>Paper trade this</Button>
         <Button variant="ghost" onClick={estimate} disabled={!!busy || !legs.length} icon={<Calculator className="size-3.5" />}>Estimate margin</Button>
-        <Link href="/fno/paper" className="ml-auto text-brand hover:underline">Paper book →</Link>
-        <Link href="/fno/backtests" className="text-brand hover:underline">Backtests →</Link>
+        <span className="ml-auto flex gap-3 whitespace-nowrap">
+          <Link href="/fno/paper" className="text-brand hover:underline">Paper book →</Link>
+          <Link href="/fno/backtests" className="text-brand hover:underline">Backtests →</Link>
+        </span>
       </div>
       {error && <p role="alert" className="text-loss">{error}</p>}
       {made && (

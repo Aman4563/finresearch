@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
 import { rupees } from "@/components/fno/backtest";
+import { Parts } from "@/components/fno/fit";
 import { DEFAULT_SPEC, StrategyForm } from "@/components/fno/lab-form";
 import { RunView } from "@/components/fno/lab-run";
 import type { LabResponse, LabSpec, LabStrategy, PaperRule } from "@/components/fno/lab-types";
@@ -81,14 +82,15 @@ export default function StrategyLabPage() {
           {data.strategies.length === 0 ? (
             <EmptyState icon={<Beaker className="size-5" />} title="No strategy yet">Save one above, then run it in sample first.</EmptyState>
           ) : data.strategies.map((s) => (
-            <Card key={s.id} title={<span className="flex flex-wrap items-center gap-2">{s.name}<Badge tone="neutral">{s.underlying}</Badge>{s.oos_versions > 1 && <Badge tone="warn">{s.oos_versions} versions seen out of sample</Badge>}</span>}
+            <Card key={s.id} title={<span className="flex min-w-0 flex-wrap items-center gap-2"><span className="line-clamp-2 min-w-0 break-words" title={s.name}>{s.name}</span><Badge tone="neutral">{s.underlying}</Badge>{s.oos_versions > 1 && <Badge tone="warn">{s.oos_versions} versions seen out of sample</Badge>}</span>}
               subtitle={`In sample ${s.split.is.join(" → ")} · out of sample from ${s.split.oos_from} (locked: ${s.split.rule})`}>
               <Table label={`Versions of ${s.name}`}>
                 <thead><tr><th>Version</th><th>Spec</th><th>Runs</th><th /></tr></thead>
                 <tbody>{s.versions.map((v) => (
                   <tr key={v.id}>
                     <td>v{v.version}{v.counted_variant && <Badge tone="info">counted</Badge>}</td>
-                    <td className="text-xs">{v.describe}</td>
+                    {/* a long spec reads as a paragraph instead of stretching the table to its full length */}
+                    <td className="text-xs"><p className="w-64 whitespace-normal sm:w-80">{v.describe}</p></td>
                     <td className="text-xs">{v.runs.length === 0 ? "—" : v.runs.map((r) => (
                       <button key={r.id} type="button" className="mr-2 text-brand hover:underline" onClick={() => setRunId(r.id)}>
                         #{r.id} {r.oos ? "OOS" : "IS"} {r.status}{r.summary?.status ? ` · ${r.summary.status.replaceAll("_", " ")}` : ""}
@@ -107,8 +109,8 @@ export default function StrategyLabPage() {
           <Card title="Paper rule sets" subtitle="Versions sent to paper trading: each signal day becomes a paper trade in the paper book">
             {paper.length === 0 ? <p className="text-sm text-muted">None yet: open a finished run and choose “Send to paper trading”.</p> : paper.map((r) => (
               <div key={r.id} className="space-y-2 border-b border-border/60 pb-3 last:border-0">
-                <p className="text-sm font-medium">Rule set #{r.id}: {r.strategy} v{r.version} <Badge tone={r.status === "active" ? "gain" : "neutral"}>{r.status}</Badge>{" "}
-                  <span className="text-muted">closed {r.results.closed} · net {rupees(r.results.total_net)} · last close checked {r.last_day ?? "none yet"}</span></p>
+                <p className="text-sm font-medium break-words">Rule set #{r.id}: {r.strategy} v{r.version} <Badge tone={r.status === "active" ? "gain" : "neutral"}>{r.status}</Badge>{" "}
+                  <span className="font-normal text-muted"><Parts parts={[`closed ${r.results.closed}`, `net ${rupees(r.results.total_net)}`, `last close checked ${r.last_day ?? "none yet"}`]} /></span></p>
                 {r.note && <p className="text-xs text-muted">{r.note}</p>}
                 {r.signals.length > 0 && (
                   <Table label={`Signals of rule set ${r.id}`}>

@@ -89,11 +89,11 @@ export function RunView({ runId, onChanged }: { runId: number; onChanged?: () =>
       <StrategyCard r={r} capital={r.book.capital} />
       <Card title="Against the pre-registered library" subtitle={v.library ? `Library run ${v.library.run_id}, ${v.library.variants_tried} variants; windows may differ from this strategy's` : "No library evaluation saved yet"}>
         {lib.length > 0 && (
-          <Table label="Library comparison">
+          <Table label="Library comparison" stickyFirst>
             <thead><tr><th>Strategy</th><th>Status</th><th>OOS trades</th><th>₹/trade</th><th>Sharpe</th><th>Max DD</th><th>DSR</th></tr></thead>
             <tbody>
-              <tr className="font-medium"><td>{r.name} (this run)</td><td>{st.label}</td><BriefCells b={r.windows?.oos ?? r.windows?.is ?? null} /></tr>
-              {lib.map((x) => <tr key={x.key}><td>{x.name}</td><td>{x.status}</td><BriefCells b={x.oos ?? x.is} /></tr>)}
+              <tr className="font-medium"><td><span className="block max-w-[16rem] truncate" title={`${r.name} (this run)`}>{r.name} (this run)</span></td><td>{st.label}</td><BriefCells b={r.windows?.oos ?? r.windows?.is ?? null} /></tr>
+              {lib.map((x) => <tr key={x.key}><td><span className="block max-w-[16rem] truncate" title={x.name}>{x.name}</span></td><td>{x.status}</td><BriefCells b={x.oos ?? x.is} /></tr>)}
             </tbody>
           </Table>
         )}

@@ -9,6 +9,8 @@ import { useEffect, useState } from "react";
 import type { Analysis, IvHistory, Outcome, RateInfo, RiskNotice } from "@/components/fno/model";
 import { fmtINR } from "@/components/charts";
 import { Badge, InfoTip, Stat, cx } from "@/components/ui";
+
+import { Fig, Parts } from "./fit";
 import { day, useApi } from "@/lib/api";
 
 const KEY = "finresearch:fno-risk-banner";
@@ -96,15 +98,15 @@ export function CostsBreakdown({ a }: { a: Analysis }) {
           {Object.entries(e.lines).map(([k, v]) => (
             <tr key={k} className="border-b border-border/50">
               <td className="text-muted"><span className="inline-flex items-center gap-1">{LINE_LABEL[k]?.label ?? k}<InfoTip>{LINE_LABEL[k]?.help}</InfoTip></span></td>
-              <td className="text-right">{paise(v)}</td>
+              <td className="whitespace-nowrap text-right">{paise(v)}</td>
             </tr>
           ))}
-          <tr className="border-b border-border/50 font-medium"><td>Entry ({e.orders} orders)</td><td className="text-right">{paise(e.total)}</td></tr>
+          <tr className="border-b border-border/50 font-medium"><td>Entry ({e.orders} orders)</td><td className="whitespace-nowrap text-right">{paise(e.total)}</td></tr>
           <tr className="border-b border-border/50">
             <td className="text-muted"><span className="inline-flex items-center gap-1">Expected STT on exercise<InfoTip>Held to expiry, long options that finish in the money pay STT on their intrinsic value. This is the model&apos;s expected amount.</InfoTip></span></td>
-            <td className="text-right">{a.costs.expected_exercise_stt == null ? "—" : paise(a.costs.expected_exercise_stt)}</td>
+            <td className="whitespace-nowrap text-right">{a.costs.expected_exercise_stt == null ? "—" : paise(a.costs.expected_exercise_stt)}</td>
           </tr>
-          <tr><td className="text-muted">If squared off early instead (same prices)</td><td className="text-right text-muted">+{paise(a.costs.square_off_at_same_prices.total)}</td></tr>
+          <tr><td className="text-muted">If squared off early instead (same prices)</td><td className="whitespace-nowrap text-right align-top text-muted">+{paise(a.costs.square_off_at_same_prices.total)}</td></tr>
         </tbody>
       </table>
       <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] text-muted">
@@ -120,7 +122,7 @@ export function CostsBreakdown({ a }: { a: Analysis }) {
               <span>· from {day(r.effective_from)}</span>
               <Badge tone={r.status === "unconfirmed" ? "warn" : r.status === "secondary" ? "neutral" : "gain"}>{r.status}</Badge>
               {r.source.startsWith("http") ? <a href={r.source} target="_blank" rel="noreferrer" className="underline decoration-dotted">source</a> : <span>{r.source}</span>}
-              {r.note && <span className="basis-full pl-2 text-muted/80">{r.note}</span>}
+              {r.note && <span className="basis-full pl-2 text-muted">{r.note}</span>}
             </li>
           ))}
         </ul>
@@ -131,11 +133,11 @@ export function CostsBreakdown({ a }: { a: Analysis }) {
 
 function PopTile({ label, o, help, tone }: { label: string; o: Outcome; help: string; tone: "info" | "accent" }) {
   return (
-    <div className="rounded-xl border border-border p-3">
+    <div className="min-w-0 rounded-xl border border-border p-3">
       <p className="flex items-center gap-1 text-[11px] text-muted">{label}<InfoTip>{help}</InfoTip></p>
-      <p className={cx("num mt-1 text-xl font-semibold", tone === "info" ? "text-info" : "text-accent")}>{pctText(o?.pop)}</p>
+      <p className={cx("mt-1 text-xl font-semibold", tone === "info" ? "text-info" : "text-accent")}><Fig>{pctText(o?.pop)}</Fig></p>
       <p className="num text-[11px] text-muted">
-        {o ? <>σ {pctText(o.vol)} · EV {rupees(o.ev)}</> : "no realised volatility"}
+        {o ? <Parts parts={[`σ ${pctText(o.vol)}`, `EV ${rupees(o.ev)}`]} /> : "no realised volatility"}
       </p>
     </div>
   );
