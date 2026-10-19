@@ -9,6 +9,7 @@ import { EventStrip } from "@/components/fno/events";
 import { PaperActions } from "@/components/fno/paper-actions";
 import { PlanForLegs, SuggestSetups } from "@/components/fno/plan-panels";
 import { MarketContextPanel } from "@/components/fno/context-panel";
+import { DirectionPanel } from "@/components/fno/direction-panel";
 import { MyPositions } from "@/components/fno/positions";
 import { CostsBreakdown, IvTile, ProbabilityPanel, RiskBanner } from "@/components/fno/risk";
 import { SignalCard } from "@/components/signal";
@@ -353,6 +354,7 @@ export default function Fno() {
           </div>
           <EventStrip symbol={chain.symbol} />
           <MarketContextPanel key={`${chain.symbol}-${chain.expiry}`} symbol={chain.symbol} expiry={chain.expiry} />
+          <DirectionPanel key={`direction-${chain.symbol}`} symbol={chain.symbol} />
 
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,22rem)_minmax(0,1fr)]">
             <Card title="Open interest by strike" icon={<Layers className="size-4" />} 

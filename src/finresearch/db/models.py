@@ -596,6 +596,24 @@ class FnoBacktestResult(Base):
     trades: Mapped[list[Any]] = mapped_column(JSONB)
 
 
+class FnoDirectionRun(Base):
+    """One walk-forward evaluation of the pre-registered F&O direction model (#327, finresearch.direction.evaluate):
+    the registration hash it ran under, the history it read (`source`, a database name without credentials), the
+    verdict, and the full report (per underlying × horizon × event: metrics, tests, criteria, regimes, the
+    out-of-sample forecasts). Public market data only."""
+
+    __tablename__ = "fno_direction_run"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    version: Mapped[str] = mapped_column(String(30))
+    registration_hash: Mapped[str] = mapped_column(String(64))
+    registered_hash: Mapped[str] = mapped_column(String(64))
+    oos_evaluated: Mapped[bool] = mapped_column(Boolean)
+    source: Mapped[str] = mapped_column(String(200))
+    verdict: Mapped[str] = mapped_column(Text)
+    report: Mapped[dict[str, Any]] = mapped_column(JSONB)
+
+
 # --------------------------------------------------------------------------- F&O Strategy Lab (#318)
 class LabStrategy(Base):
     """A user-defined F&O strategy (finresearch.stratlab). Its in-sample / out-of-sample split is locked when it is
