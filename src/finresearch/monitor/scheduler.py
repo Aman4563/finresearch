@@ -478,6 +478,14 @@ def _spawn_fno_bhav(now: datetime) -> None:
                 log.info("F&O participant OI update: %s", res)
         except Exception:
             log.warning("F&O participant OI update failed", exc_info=True)
+        try:  # the direction model's forecasts for today's close (#327): its own slot, once today's file is loaded
+            from finresearch.monitor.fno_direction import fno_direction_step
+
+            res = await fno_direction_step(now)
+            if res:
+                log.info("F&O direction forecasts: %s", res)
+        except Exception:
+            log.warning("F&O direction forecasts failed", exc_info=True)
 
     _BACKGROUND["fno_bhav"] = asyncio.create_task(run())
 

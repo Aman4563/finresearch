@@ -336,6 +336,9 @@ def due(session: Session, now: datetime, *, recheck: bool = False) -> list[Forec
 async def resolve_due(deps: Any, now: datetime | None = None, *, recheck: bool = False) -> dict[str, int]:
     """Try every due forecast once; each in its own transaction so one failure does not undo the others."""
     from finresearch.db import session_scope
+    from finresearch.direction import (
+        live,  # noqa: F401  (importing it registers the F&O direction resolvers, #327)
+    )
 
     now = now or datetime.now(UTC)
     with session_scope() as s:

@@ -40,28 +40,33 @@ async def _events(sym: str, today: date) -> list[tuple[date, str]] | None:
         return None
 
 
+async def plan_inputs(f: Any, sym: str, expiry: date, today: date) -> Any:
+    """Everything a trade-plan card reads besides the chain (signals.tradeplan.Inputs): closes, the IV series, the
+    profile's F&O budget, the rate, the saved backtest, the paper book and the event dates. Also used by #327."""
+    from finresearch.fnobook import events
+    from finresearch.signals import fno as fs
+    from finresearch.signals import tradeplan as tpl
+    from finresearch.signals.rates import risk_free
+    from finresearch.suggest.advisor import load_profile
+
+    closes = await fs.underlying_closes(f, sym, today)
+    series, src = fs.iv_series_info(sym)
+    with session_scope() as s:
+        p = load_profile(s)
+    rate = (await risk_free(max((expiry - today).days, 0.5) / 365))["rate"]
+    strategies, head = tpl.backtest_rows()
+    return tpl.Inputs(today=today, closes=closes, iv_series=[v for _, v, _ in series], iv_src=src,
+                      iv_as_of=series[-1][0] if series else None, capital=float(p.fno_capital_inr),
+                      max_loss_pct=float(p.fno_max_loss_pct), brokerage=float(p.fno_brokerage_per_order_inr),
+                      defined_risk_only=p.fno_defined_risk_only, rate=rate, strategies=strategies,
+                      backtest_head=head, paper=tpl.paper_trades(), events=await _events(sym, today),
+                      is_index=events.is_index(sym))  # fmt: skip
+
+
 def add_fno_plan_routes(app: FastAPI, fno: Callable[[], Any]) -> None:
     """`fno` = the app's option-chain client factory (Groww first, else NSE; tests pass a fake)."""
 
-    async def inputs(f: Any, sym: str, expiry: date, today: date) -> Any:
-        from finresearch.fnobook import events
-        from finresearch.signals import fno as fs
-        from finresearch.signals import tradeplan as tpl
-        from finresearch.signals.rates import risk_free
-        from finresearch.suggest.advisor import load_profile
-
-        closes = await fs.underlying_closes(f, sym, today)
-        series, src = fs.iv_series_info(sym)
-        with session_scope() as s:
-            p = load_profile(s)
-        rate = (await risk_free(max((expiry - today).days, 0.5) / 365))["rate"]
-        strategies, head = tpl.backtest_rows()
-        return tpl.Inputs(today=today, closes=closes, iv_series=[v for _, v, _ in series], iv_src=src,
-                          iv_as_of=series[-1][0] if series else None, capital=float(p.fno_capital_inr),
-                          max_loss_pct=float(p.fno_max_loss_pct), brokerage=float(p.fno_brokerage_per_order_inr),
-                          defined_risk_only=p.fno_defined_risk_only, rate=rate, strategies=strategies,
-                          backtest_head=head, paper=tpl.paper_trades(), events=await _events(sym, today),
-                          is_index=events.is_index(sym))  # fmt: skip
+    inputs = plan_inputs
 
     async def bidask_for(f: Any, sym: str, expiry: date) -> tuple[Any, str] | None:
         """NSE's chain for the bid/ask the plan's chain lacks (#324; cached in signals.bidask), with its label."""

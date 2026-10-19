@@ -15,7 +15,8 @@ const ROUTES = {
   "GET /api/fno/NIFTY/suggest": { symbol: "NIFTY", today: "2026-10-13", cards: [AVOID, ENTER], note: "The library's pre-registered recipes. Not a recommendation." },
   "POST /api/fno/paper": { id: 7, legs: [] }, "POST /api/fno/exit-rules": { id: 1 },
 };
-const OPTIONAL = ["GET /api/market/status", "GET /api/fno/positions", "GET /api/fno/paper", "GET /api/fno/NIFTY/events", "GET /api/fno/NIFTY/iv"];
+const OPTIONAL = ["GET /api/market/status", "GET /api/fno/positions", "GET /api/fno/paper", "GET /api/fno/NIFTY/events", "GET /api/fno/NIFTY/iv",
+  "GET /api/fno/direction/NIFTY"]; // the direction panel (#327) has its own spec
 
 test("fno: market context labels evidence; suggest shows AVOID with the failed backtest and a qualified ENTER", async ({ page }) => {
   const api = await mockApi(page, ROUTES);

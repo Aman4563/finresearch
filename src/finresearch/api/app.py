@@ -1636,6 +1636,10 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
     from finresearch.api.fno_backtests import add_fno_backtest_routes
 
     add_fno_backtest_routes(app)
+    # F&O direction model: probabilities, out-of-sample and live accuracy, EV decision, ledger logging (#327)
+    from finresearch.api.fno_direction import add_fno_direction_routes
+
+    add_fno_direction_routes(app, _fno, clock=clock)
     # F&O Strategy Lab: user strategies, background backtests, variants count, paper hand-off (#318)
     from finresearch.api.fno_lab import add_fno_lab_routes
 
