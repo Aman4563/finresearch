@@ -127,6 +127,11 @@ class ClaudeCodeEngine:
         if self.tier is Tier.CLAUDE_API and self._api_key:
             env["ANTHROPIC_API_KEY"] = self._api_key
         env.setdefault("CLAUDE_CODE_FORWARD_SUBAGENT_TEXT", "1")
+        # #333: agents never load CLAUDE.md files. The sandbox sits inside the repo (data/runs/<run>/<role>/), and
+        # Claude Code otherwise injects the repo's .claude/CLAUDE.md and the user's ~/.claude/CLAUDE.md into every
+        # step, whatever --setting-sources says (seen live with claude 2.1.303). The switch is undocumented, so
+        # scripts/smoke_live.py checks it on the real CLI; skills still load with it set.
+        env["CLAUDE_CODE_DISABLE_CLAUDE_MDS"] = "1"
         return env
 
     def build_command(self, task: AgentTask) -> list[str]:
