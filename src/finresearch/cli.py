@@ -1359,6 +1359,114 @@ def _backtest_table(rep: dict) -> None:
     console.print(t)
 
 
+direction_app = typer.Typer(
+    no_args_is_help=True,
+    help="The pre-registered F&O direction model: walk-forward evaluation, today's probabilities, ledger (#327)",
+)
+fno_app.add_typer(direction_app, name="direction")
+
+
+@direction_app.command("run")
+def fno_direction_run(
+    history_url: str | None = typer.Option(
+        None,
+        help="Database holding the F&O history, read only (e.g. postgresql+psycopg://localhost/finresearch_fnohist2); "
+        "default: the app's database",
+    ),
+    symbols: str = typer.Option(",".join(("NIFTY", "BANKNIFTY")), help="Comma-separated underlyings"),
+    in_sample_only: bool = typer.Option(
+        False, help="Evaluate up to 2024-06-30 only (never reads a later outcome)"
+    ),
+    json_out: Path | None = typer.Option(None, "--json", help="Also write the full report here"),
+    store: bool = typer.Option(True, help="Save the report in the app's database (fno_direction_run)"),
+) -> None:
+    """Walk-forward evaluation of direction/specs.py: per underlying × horizon × event, Brier / log loss / AUC /
+    calibration against the base rate and the market-implied model, Diebold-Mariano with Holm, and each cell's verdict.
+    Refuses out of sample if specs.py changed after its registration (direction/prereg.py)."""
+    from sqlalchemy.engine import make_url
+
+    from finresearch.db import session_scope
+    from finresearch.direction import data, evaluate, live
+
+    url = history_url or get_settings().database_url
+    panels, notes = {}, {}
+    for sym in [x.strip().upper() for x in symbols.split(",") if x.strip()]:
+        panels[sym], notes[sym] = data.load(sym, history_url)
+    try:
+        rep = evaluate.evaluate(panels, source=f"{make_url(url).database or '?'} (read only)", oos=not in_sample_only,
+                                data_notes=notes)  # fmt: skip
+    except evaluate.PreregistrationError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(2) from e
+    rep = json.loads(json.dumps(rep, default=str))
+    if json_out:
+        json_out.write_text(json.dumps(rep, indent=1))
+        console.print(f"report: {json_out}")
+    if store:
+        with session_scope() as s:
+            console.print(f"saved as run {live.save_run(s, rep)}")
+    _direction_table(rep)
+
+
+@direction_app.command("report")
+def fno_direction_report(
+    json_in: Path | None = typer.Option(None, "--json", help="Read a report written by `run --json` instead"),
+) -> None:
+    """The latest saved evaluation, one row per underlying × horizon × event."""
+    from finresearch.db import session_scope
+    from finresearch.direction import live
+
+    if json_in:
+        rep = json.loads(json_in.read_text())
+    else:
+        with session_scope() as s:
+            run = live.latest_run(s, matching=False)
+            if run is None:
+                console.print("no direction evaluation saved yet: run `finresearch fno direction run`")
+                raise typer.Exit(1)
+            rep = run.report
+    _direction_table(rep)
+
+
+@direction_app.command("log")
+def fno_direction_log(
+    symbols: str = typer.Option(",".join(("NIFTY", "BANKNIFTY")), help="Comma-separated underlyings"),
+) -> None:
+    """Log the latest stored session's forecasts to the ledger (the nightly job does this after the bhavcopy loads;
+    refused once the next session has opened)."""
+    from finresearch.direction import live
+
+    for sym in [x.strip().upper() for x in symbols.split(",") if x.strip()]:
+        res = live.log(sym, st=live.state(sym, fresh=True))
+        console.print(
+            f"{sym} {res['as_of']}: {len(res['logged'])} logged"
+            + (f"; {res['skipped']}" if res["skipped"] else "")
+        )
+
+
+def _direction_table(rep: dict) -> None:
+    span = f"OOS {rep['windows']['oos_start']} →" if rep.get("oos_evaluated") else "in-sample only"
+    t = Table(title=f"F&O direction {rep['version']} on {rep['source']} · registration {rep['registration_hash'][:12]}"
+              f" · {span}")  # fmt: skip
+    for c in ("underlying", "h", "event", "n", "freq", "Brier impl", "Brier logit", "BSS vs impl", "p (Holm)",
+              "BSS vs base", "p (Holm)", "hit", "AUC", "slope", "status"):  # fmt: skip
+        t.add_column(c)
+    for c in rep["cells"]:
+        o = c.get("oos") if rep.get("oos_evaluated") else c.get("is")
+        if not o or not o.get("n"):
+            t.add_row(c["symbol"], str(c["horizon"]), c["event"], "0", *["—"] * 11)
+            continue
+        m, ts = o["models"], o["tests"]
+        li, lb = ts["logistic_vs_implied"], ts["logistic_vs_base_rate"]
+        t.add_row(c["symbol"], str(c["horizon"]), c["event"], str(o["n"]), _num(m["implied"]["base_rate"], 3),
+                  _num(m["implied"]["brier"], 4), _num(m["logistic"]["brier"], 4), _num(li["brier_skill"], 4),
+                  _num(li.get("p_holm", li["p"]), 3), _num(lb["brier_skill"], 4), _num(lb.get("p_holm", lb["p"]), 3),
+                  _num(m["logistic"]["hit_rate"], 3), _num(m["logistic"]["auc"], 3),
+                  _num(m["logistic"]["calibration_slope"], 2), c.get("status", "in-sample"))  # fmt: skip
+    console.print(t)
+    console.print(rep["verdict"])
+
+
 lab_app = typer.Typer(no_args_is_help=True, help="F&O Strategy Lab background work (#318)")
 fno_app.add_typer(lab_app, name="lab")
 
