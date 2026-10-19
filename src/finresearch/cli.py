@@ -933,10 +933,6 @@ def monitor_run(interval: float = typer.Option(60, help="Seconds between passes"
     asyncio.run(run_forever(interval_s=interval))
 
 
-if __name__ == "__main__":
-    app()
-
-
 forecasts_app = typer.Typer(
     no_args_is_help=True, help="Forecast ledger: logged probabilities and calibration"
 )
@@ -1508,3 +1504,8 @@ def fno_status() -> None:
     for r in iv:
         t.add_row(*(str(x) for x in r))
     console.print(t)
+
+
+# keep last: `python -m finresearch.cli` (how the API spawns research and lab workers) must see every command above
+if __name__ == "__main__":
+    app()
