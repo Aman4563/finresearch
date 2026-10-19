@@ -244,6 +244,16 @@ def test_env_never_contains_api_key_for_max(fake_claude):
         del os.environ["ANTHROPIC_AUTH_TOKEN"]
 
 
+def test_agents_never_load_claude_md_files(fake_claude):
+    """#333: an agent's sandbox sits inside the repo, so without the switch Claude Code would inject the repo's and
+    the user's CLAUDE.md into every research step. A parent environment can't turn it back on."""
+    os.environ["CLAUDE_CODE_DISABLE_CLAUDE_MDS"] = "0"
+    try:
+        assert fake_claude("ok")._env()["CLAUDE_CODE_DISABLE_CLAUDE_MDS"] == "1"
+    finally:
+        del os.environ["CLAUDE_CODE_DISABLE_CLAUDE_MDS"]
+
+
 # ---------------------------------------------------------------- transient CLI failures (run 13, 2026-09-30)
 # "<fake CLI scenario> -> <expected kind>"
 @pytest.mark.parametrize(
