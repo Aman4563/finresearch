@@ -76,10 +76,13 @@ def horizon_grid(spot: float, iv_30: float, h: int, masses: list[float] | None,
     tot = [0.0] * 4
     for _, w, reg in pts:
         tot[reg] += w
-    if masses is None:
-        scale = [1 / sum(tot)] * 4
-    else:
-        scale = [masses[j] / tot[j] if tot[j] > 0 else 0.0 for j in range(4)]
+    if (
+        masses is None
+    ):  # the implied distribution, its region masses exact (the analytic ones, not the grid's sums)
+        from finresearch.direction.models import implied_p
+
+        masses = region_masses({ev: implied_p(iv_30, h, ev) or 0.0 for ev in specs.EVENTS})[0]
+    scale = [masses[j] / tot[j] if tot[j] > 0 else 0.0 for j in range(4)]
     return [(x, w * scale[reg]) for x, w, reg in pts]
 
 
