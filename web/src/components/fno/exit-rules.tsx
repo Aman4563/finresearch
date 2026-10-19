@@ -47,7 +47,7 @@ export function ExitRules({ paperId, positionKey, rules, onChange }: {
               <Badge tone={STATUS_TONE[r.status]}>{r.status}</Badge>
               <span className="font-medium">{r.phrase}</span>
               <span className="text-muted">{r.note ?? "not checked yet"}{r.checked_at ? ` · ${when(r.checked_at)}` : ""}</span>
-              {r.status === "armed" && <button type="button" className="text-muted hover:text-loss" onClick={() => off(r.id)}>turn off</button>}
+              {r.status === "armed" && <button type="button" className="rounded px-1 text-muted underline decoration-dotted underline-offset-2 hover:text-loss" onClick={() => off(r.id)}>turn off</button>}
             </li>
           ))}
         </ul>

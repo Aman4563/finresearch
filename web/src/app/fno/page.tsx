@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { InteractivePayoff, OiButterfly } from "@/components/fno/charts";
 import { EventStrip } from "@/components/fno/events";
+import { Fig } from "@/components/fno/fit";
 import { PaperActions } from "@/components/fno/paper-actions";
 import { PlanForLegs, SuggestSetups } from "@/components/fno/plan-panels";
 import { MarketContextPanel } from "@/components/fno/context-panel";
@@ -354,12 +355,13 @@ export default function Fno() {
           <EventStrip symbol={chain.symbol} />
           <MarketContextPanel key={`${chain.symbol}-${chain.expiry}`} symbol={chain.symbol} expiry={chain.expiry} />
 
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,22rem)_minmax(0,1fr)]">
+          {/* side by side only when the chain (720px wide) fits beside the chart without scrolling sideways (#326) */}
+          <div className="grid grid-cols-1 gap-4 2xl:grid-cols-[minmax(0,22rem)_minmax(0,1fr)]">
             <Card title="Open interest by strike" icon={<Layers className="size-4" />} 
               subtitle="Calls left, puts right, around the money"
               help="Open interest (OI) is the number of contracts still open. Big call OI above the price often acts as resistance, big put OI below it as support.">
               <OiButterfly rows={oiRows} spot={spot} maxPain={n(chain.max_pain)} />
-              <div className="mt-2 flex justify-center gap-4 text-[11px] text-muted">
+              <div className="mt-2 flex flex-wrap justify-center gap-x-4 gap-y-1 text-[11px] text-muted">
                 <span className="inline-flex items-center gap-1"><span className="size-2 rounded-sm" style={{ background: "var(--chart-5)" }} /> Call OI</span>
                 <span className="inline-flex items-center gap-1"><span className="size-2 rounded-sm" style={{ background: "var(--chart-3)" }} /> Put OI</span>
                 <span className="inline-flex items-center gap-1"><span className="h-0.5 w-3 bg-accent" /> nearest spot</span>
@@ -415,7 +417,7 @@ export default function Fno() {
                         </button>
                         <div className="min-w-0 flex-1">
                           <p className="num font-medium">{Number(l.strike).toLocaleString("en-IN")} <span className="text-xs uppercase text-muted">{l.right === "call" ? "CE" : l.right === "put" ? "PE" : "FUT"}</span></p>
-                          <p className="num text-[11px] text-muted">{prem != null && l.right !== "future" ? `premium ₹${prem}` : "no traded price"}</p>
+                          <p className="num text-[11px] text-muted">{prem != null && l.right !== "future" ? `premium ₹${prem.toLocaleString("en-IN", { maximumFractionDigits: 2 })}` : "no traded price"}</p>
                         </div>
                         <div className="flex items-center rounded-md ring-1 ring-inset ring-border">
                           <button type="button" aria-label="One lot less" className="px-1.5 py-1 text-muted hover:text-foreground" onClick={() => setLegs(legs.map((x, j) => (j === i ? { ...x, lots: Math.max(1, x.lots - 1) } : x)))}><Minus className="size-3" /></button>
@@ -446,8 +448,8 @@ export default function Fno() {
                       <input type="range" aria-label="Expiry price" className="mt-2 w-full accent-[var(--brand)]" min={Math.round(curve.lo)} max={Math.round(curve.hi)} step={1}
                         value={Math.round(whatSpot)} onChange={(e) => setWhat(Number(e.target.value))} />
                     )}
-                    <p className={cx("num mt-1 text-2xl font-bold tracking-tight transition-colors", whatPnl >= 0 ? "text-gain" : "text-loss")}>
-                      {whatPnl >= 0 ? "+" : "−"}{fmtINR(Math.abs(Math.round(whatPnl)))}
+                    <p className={cx("mt-1 text-2xl font-bold tracking-tight transition-colors", whatPnl >= 0 ? "text-gain" : "text-loss")}>
+                      <Fig>{whatPnl >= 0 ? "+" : "−"}{fmtINR(Math.abs(Math.round(whatPnl)))}</Fig>
                     </p>
                     {what != null && <button type="button" className="text-[11px] text-brand hover:underline" onClick={() => setWhat(null)}>reset to spot</button>}
                   </div>
@@ -465,14 +467,15 @@ export default function Fno() {
                   {loading === "analyse" && !result && <Skeleton className="h-24 rounded-xl" />}
                   {result && (
                     <div className={cx("space-y-3 transition-opacity", !fresh && "opacity-50")}>
-                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                        <Stat label="Max profit" display={<span className="num text-gain">{inr(result.max_profit)}</span>} tone="gain" />
-                        <Stat label="Max loss" display={<span className="num text-loss">{inr(result.max_loss)}</span>} tone="loss" />
-                        <Stat label={result.net_premium > 0 ? "Net debit (you pay)" : "Net credit (you receive)"} display={<span className="num">{inr(Math.abs(result.net_premium))}</span>}
+                      {/* four across only where a tile is wide enough for a nine-digit figure (#326) */}
+                      <div className="grid grid-cols-2 gap-2 xl:grid-cols-4">
+                        <Stat label="Max profit" display={<Fig className="text-gain">{inr(result.max_profit)}</Fig>} tone="gain" />
+                        <Stat label="Max loss" display={<Fig className="text-loss">{inr(result.max_loss)}</Fig>} tone="loss" />
+                        <Stat label={result.net_premium > 0 ? "Net debit (you pay)" : "Net credit (you receive)"} display={<Fig>{inr(Math.abs(result.net_premium))}</Fig>}
                           help="Premium received (credit) or paid (debit) to open all legs together." />
                         <Stat label="Expected move (1σ)" tone="info"
-                          display={<span className="num">{result.analysis?.expected_move ? `±${Math.round(result.analysis.expected_move.move).toLocaleString("en-IN")}` : "—"}</span>}
-                          hint={result.analysis?.expected_move ? `${Math.round(result.analysis.expected_move.low).toLocaleString("en-IN")}–${Math.round(result.analysis.expected_move.high).toLocaleString("en-IN")}` : undefined}
+                          display={<Fig>{result.analysis?.expected_move ? `±${Math.round(result.analysis.expected_move.move).toLocaleString("en-IN")}` : "—"}</Fig>}
+                          hint={result.analysis?.expected_move ? `${Math.round(result.analysis.expected_move.low).toLocaleString("en-IN")} – ${Math.round(result.analysis.expected_move.high).toLocaleString("en-IN")}` : undefined}
                           help="±S·σ·√T with the ATM implied volatility: under the model about two in three expiry prices land inside this band (shaded on the chart)." />
                       </div>
                       {result.analysis && (
@@ -490,9 +493,9 @@ export default function Fno() {
                         {GREEKS.map((g) => {
                           const v = result.net_greeks[g.key];
                           return (
-                            <div key={g.key} className="rounded-lg border border-border px-3 py-2">
+                            <div key={g.key} className="min-w-0 rounded-lg border border-border px-3 py-2">
                               <p className="flex items-center gap-1 text-[11px] text-muted">{g.label}<InfoTip>{g.help}</InfoTip></p>
-                              <p className={cx("num text-sm font-semibold", v > 0 ? "text-gain" : v < 0 ? "text-loss" : "")}>{v == null ? "—" : v.toFixed(g.digits)}</p>
+                              <p className={cx("text-sm font-semibold", v > 0 ? "text-gain" : v < 0 ? "text-loss" : "")}><Fig>{v == null ? "—" : v.toFixed(g.digits)}</Fig></p>
                             </div>
                           );
                         })}

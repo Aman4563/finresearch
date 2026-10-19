@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
 import type { PaperBook } from "@/components/fno/book-types";
+import { Fig } from "@/components/fno/fit";
 import { PaperTradeCard, pnlTone, rs } from "@/components/fno/paper-trade";
 import { RiskBanner } from "@/components/fno/risk";
 import { Card, EmptyState, ErrorNote, PageHeader, Skeleton, Stat } from "@/components/ui";
@@ -47,16 +48,16 @@ export default function PaperBookPage() {
         </EmptyState>
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
             <Stat label="Closed trades" value={r!.closed} hint={`${book.counts.open} open · ${book.counts.awaiting_settlement} awaiting settlement`} />
-            <Stat label="Win rate" display={<span className="num">{r!.win_rate == null ? "—" : `${(r!.win_rate * 100).toFixed(0)}%`}</span>} hint={`${r!.wins} won · ${r!.losses} lost`}
+            <Stat label="Win rate" display={<Fig>{r!.win_rate == null ? "—" : `${(r!.win_rate * 100).toFixed(0)}%`}</Fig>} hint={`${r!.wins} won · ${r!.losses} lost`}
               help="Closed trades with net P&L above zero ÷ all closed trades (after costs)." />
-            <Stat label="Expectancy" display={<span className={`num ${pnlTone(r!.expectancy)}`}>{r!.expectancy == null ? "—" : rs(r!.expectancy)}</span>}
+            <Stat label="Expectancy" display={<Fig className={pnlTone(r!.expectancy)}>{r!.expectancy == null ? "—" : rs(r!.expectancy)}</Fig>}
               help="Mean net P&L per closed trade, after entry and exit costs." />
-            <Stat label="Total net" display={<span className={`num ${pnlTone(r!.total_net)}`}>{rs(r!.total_net)}</span>} />
-            <Stat label="Max drawdown" display={<span className="num text-loss">{r!.max_drawdown ? `−₹${Math.round(r!.max_drawdown).toLocaleString("en-IN")}` : "₹0"}</span>}
+            <Stat label="Total net" display={<Fig className={pnlTone(r!.total_net)}>{rs(r!.total_net)}</Fig>} />
+            <Stat label="Max drawdown" display={<Fig className="text-loss">{r!.max_drawdown ? `−₹${Math.round(r!.max_drawdown).toLocaleString("en-IN")}` : "₹0"}</Fig>}
               help="The largest fall of the cumulative net P&L from its running peak, starting from zero." />
-            <Stat label="Avg win / loss" display={<span className="num text-xs">{r!.avg_win == null ? "—" : rs(r!.avg_win)} / {r!.avg_loss == null ? "—" : rs(r!.avg_loss)}</span>} />
+            <Stat label="Avg win / loss" display={<span className="block space-y-0.5 text-sm"><Fig className={pnlTone(r!.avg_win)}>{r!.avg_win == null ? "—" : rs(r!.avg_win)}</Fig><Fig className={pnlTone(r!.avg_loss)}>{r!.avg_loss == null ? "—" : rs(r!.avg_loss)}</Fig></span>} />
           </div>
           <p className="text-[11px] text-muted">{book.method}</p>
           <Card title={`Open (${open.length})`} subtitle="Marked every 5 minutes in market hours; settled automatically after expiry at the underlying's close">
