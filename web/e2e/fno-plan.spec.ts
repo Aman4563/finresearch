@@ -9,7 +9,8 @@ import { expectNoHorizontalOverflow, mockApi } from "./mock-api";
 const phone = (page: Page) => (page.viewportSize()?.width ?? 1280) < 640;
 
 const ROUTES = {
-  "GET /api/fno/NIFTY/expiries": { symbol: "NIFTY", expiries: ["2026-10-20", "2026-10-27"], strikes: [] },
+  // a week ahead of today: the page drops expiries before today, so fixed dates went stale after 20-Oct-2026
+  "GET /api/fno/NIFTY/expiries": { symbol: "NIFTY", expiries: [new Date(Date.now() + 7 * 864e5).toISOString().slice(0, 10)], strikes: [] },
   "GET /api/fno/NIFTY/chain": CHAIN, "GET /api/fno/risk-notice": NOTICE, "GET /api/fno/NIFTY/context": CONTEXT,
   "GET /api/fno/NIFTY/suggest": { symbol: "NIFTY", today: "2026-10-13", cards: [AVOID, ENTER], note: "The library's pre-registered recipes. Not a recommendation." },
   "POST /api/fno/paper": { id: 7, legs: [] }, "POST /api/fno/exit-rules": { id: 1 },
