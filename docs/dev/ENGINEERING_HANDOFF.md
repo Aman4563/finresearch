@@ -40,7 +40,7 @@ Every change must preserve these.
 
 **Engines**
 
-7. Tier 1 always uses the subscription. API-key and auth env vars are stripped before `claude` is spawned.
+7. Tier 1 always uses the subscription. API-key and auth env vars are stripped before `claude` is spawned. Agents load no CLAUDE.md files (`CLAUDE_CODE_DISABLE_CLAUDE_MDS=1`, #333): their sandbox sits inside the repo, so the repo's and the user's CLAUDE.md would otherwise reach every research step. Agent behaviour lives in `agents/prompts/` and `agents/skills/`, never in CLAUDE.md; `scripts/smoke_live.py` checks the switch live.
 8. Tier 1 is skipped when the last observed 5-hour or 7-day utilisation is above its ceiling, or after a limit hit until the reported reset. Transient failures open a circuit breaker.
 9. Local results are marked `degraded=True`. Tasks that need web, tools or long context are refused locally, and tasks with `allow_degraded=False` never fall back to local. A degraded run never produces a final verdict.
 10. Local generation is single-flight (16 GB). The 9B model drops to 4B when reclaimable RAM is short. glm-ocr output is cut at the first repetition loop.

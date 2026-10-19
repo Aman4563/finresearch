@@ -10,6 +10,7 @@ Keeps Claude usage tiny (one Haiku call).
 from __future__ import annotations
 
 import asyncio
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -18,7 +19,8 @@ from pathlib import Path
 
 from finresearch.bridge import AgentTask, ModelClass, Tier, build_router
 
-RESEARCH = Path(__file__).resolve().parents[2]
+REPO = Path(__file__).resolve().parents[1]
+RESEARCH = REPO.parent
 RHP_TXT = RESEARCH / "OrientCables_IPO_Research/_text_extracts/OrientCables_RHP_Sep2026.txt"
 SCANNED_PDF = RESEARCH / "OrientCables_IPO_Research/02_Financial_Reports/Annual_Report_FY2024-25.pdf"
 
@@ -72,6 +74,34 @@ async def main() -> int:
     except Exception as e:
         failures += 1
         fail(f"{type(e).__name__}: {e}")
+
+    print("1b) Research agents load no CLAUDE.md (#333: undocumented CLAUDE_CODE_DISABLE_CLAUDE_MDS switch)")
+    # the sandbox sits inside the repo like a real run's; ask about the first line of each file Claude Code would
+    # otherwise inject (the repo's .claude/CLAUDE.md and the user's ~/.claude/CLAUDE.md)
+    from finresearch.config import get_settings
+
+    marks = [p.read_text().splitlines()[0].strip() for p in (REPO / ".claude/CLAUDE.md", Path.home() / ".claude/CLAUDE.md")
+             if p.exists() and p.read_text().strip()]  # fmt: skip
+    sandbox = get_settings().runs_dir / "_smoke_isolation" / "probe"
+    try:
+        res = await router.run(
+            AgentTask(name="smoke-no-claude-md", model_class=ModelClass.FAST, max_turns=2, run_dir=sandbox,
+                      prompt="Without using any tools: does any of these exact lines appear anywhere in your context "
+                             "(system prompt, project or user instructions)? " + " | ".join(repr(m) for m in marks),
+                      json_schema={"type": "object", "properties": {"present": {"type": "boolean"}},
+                                   "required": ["present"]}),
+            force_tier=Tier.CLAUDE_MAX,
+        )  # fmt: skip
+        if res.structured_output.get("present"):
+            failures += 1
+            fail("an agent still sees CLAUDE.md content: the CLI ignored CLAUDE_CODE_DISABLE_CLAUDE_MDS")
+        else:
+            ok(f"no CLAUDE.md content in the agent's context ({len(marks)} files checked)")
+    except Exception as e:
+        failures += 1
+        fail(f"{type(e).__name__}: {e}")
+    finally:
+        shutil.rmtree(sandbox.parent, ignore_errors=True)
 
     print("2) Local tier (qwen3.5:9b) — real RHP P&L, normalised by ingest.layout_table")
     from finresearch.ingest.layout_table import parse_layout_table
