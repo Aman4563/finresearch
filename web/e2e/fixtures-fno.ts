@@ -73,6 +73,14 @@ export const PAPER: TradePlan = { title: "NIFTY 20-Oct-2026 · NIFTY short iron 
   entry: { legs: [], status: "ok", net_mid: 42.5, net_fill_now: 40, notes: [], levels_priced_at: "bid/ask mid" },
   max_profit: 2762, max_loss: -13488, breakevens: [24557.5, 25442.5], net_premium: -2762, costs: 180,
   probability: { real_world: 0.71, real_world_window: "60-day", risk_neutral: 0.66, note: "Model probabilities." },
+  // #356/#357: the model EV (labelled), payoff ratio, P&L quantile dots and the reliability line
+  ev: { label: "model EV - not validated", range: [-412, 96], note: "σ = realised volatility is a scenario, not a forecast.", risk_neutral: -412,
+    real_world: 96, real_world_window: "60-day", costs: 412, payoff_ratio: 0.31 },
+  pnl_dots: { model: "real-world 60-day scenario", payoff_ratio: 0.31, note: "Each dot is 5% of outcomes: a scenario, not a forecast.",
+    values: [-11200, -9800, -6100, -2300, 400, 1500, 2400, 2550, 2600, 2650, 2700, 2700, 2700, 2700, 2700, 2700, 2700, 2700, 2700, 2700] },
+  reliability: { base_rate_n: null, validation: { status: "rule_based", n: 0, label: "rule-based, not validated on outcomes" },
+    calibration: { scored: 0, established: false, tier: "none", needed: 50, label: "calibration not established: 0 scored" },
+    support: "no historical base rate · calibration not established: 0 scored", summary: "", how: "Calibration counts resolved forecasts." },
   exits: { source: "spec:nifty_ic_w", rule_of_thumb: null, stop: lvl(5525, 127.5, 24420), target: lvl(1381, 21.25, 24990), entry_net: 2762, credit: true, per_share_unit: 65, notes: [],
     time: { dte: 1, by: "2026-10-19", text: "Close on the last session before expiry day." }, profit_pct: 50, stop_pct: 200 },
   exit_rules: [{ kind: "profit", threshold: 50, why: "profit target" }, { kind: "stop", threshold: 200, why: "stop-loss" }, { kind: "dte", threshold: 1, why: "time exit" }],
@@ -108,6 +116,7 @@ export const ANALYSIS: Analysis = {
   costs: { entry: costs(129.67), square_off_at_same_prices: costs(129.67), expected_exercise_stt: 4.5, total_to_expiry: 263.84, brokerage_per_order: 20, note: "From the dated charges table." },
   risk_neutral: out(0.66, -210), real_world: out(0.71, 140), real_world_20d: out(0.73, 160), real_world_60d: out(0.71, 140),
   fair_price_note: "Under the risk-neutral model the position is roughly fair before costs; costs make it slightly negative.",
+  model_ev: { label: "model EV - not validated", range: [-412, 96], note: "σ = realised volatility is a scenario, not a forecast." },
   expected_move: { move: 520, low: 24480, high: 25520, vol: 0.142 },
   capital_check: { capital: 1e6, max_loss: -13488, pct: 1.35, limit_pct: 2, within: true, message: "Max loss is 1.3% of your ₹10,00,000 F&O capital (limit 2%)." },
   drawdown: { probability: 0.12, threshold_pct: 10, repeats: 20 },
@@ -324,3 +333,17 @@ export const DIRECTION = (h: number) => ({
       { ...cand("bull_put_credit", "Bull put credit spread", "up", 212), ev_fair: -120, pricing_residual: 332 }],
     non_directional: { text: "No measured directional edge. Non-directional plans: the pre-registered library.", suggest_api: "/api/fno/NIFTY/suggest", href: "/fno?symbol=NIFTY", evidence_href: "/fno/backtests" } },
 });
+
+// ------------------------------------------------------------------ the /fno "Strategy check" signal card (#357)
+export const FNO_SIGNAL = {
+  asset: "fno", instrument: "NIFTY", name: "NIFTY 20-Oct-2026 · 4-leg strategy", action: "PAPER", score: 100,
+  event: "the strategy's P&L after costs is positive at expiry (real-world model)", horizon: "until expiry (20-Oct-2026, 7 days)",
+  method: "rule-based risk/cost/fit gate v2", validation: { status: "rule_based", n: 0, metrics: {}, description: "Not validated." },
+  probability: 0.71, probability_interval: [0.62, 0.74], expected_return: null, base_rate: null,
+  interval: { low: 0.62, high: 0.74, kind: "model_span", label: "span across models: not a confidence interval" },
+  factors: [{ name: "EV after costs and spreads (model, not validated)", value: 96, contribution: 0, explanation: "A scenario, not a forecast.", source: null, unit: "₹" }],
+  caveats: ["No edge is claimed."], sizing: null, sources: [], as_of: "2026-10-13T15:30:00+05:30", disclaimer: "Not advice.", call: null,
+  reliability: { base_rate_n: null, validation: { status: "rule_based", n: 0, label: "rule-based, not validated on outcomes" },
+    calibration: { scored: 0, established: false, tier: "none", needed: 50, label: "calibration not established: 0 scored" },
+    support: "no historical base rate · calibration not established: 0 scored", summary: "", how: "Calibration counts resolved forecasts." },
+};

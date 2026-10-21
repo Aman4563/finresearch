@@ -7,6 +7,8 @@ import { fmtINR } from "@/components/charts";
 import { Badge, Callout, InfoTip, type Tone, cx } from "@/components/ui";
 import { day } from "@/lib/api";
 
+import { ReliabilityLine } from "@/components/signal";
+
 import { Fig, Parts } from "./fit";
 import { PlanActions } from "./plan-actions";
 import type { ExitLevel, PlanAction, TradePlan } from "./plan-types";
@@ -55,15 +57,54 @@ function Key({ label, value, note, tone, help }: { label: string; value: string;
   );
 }
 
-/** Max loss, max profit, chance of profit, stop, target and breakevens at a glance (#326). */
+/** #357: a quantile dot-plot of the P&L at expiry: 20 dots, each 5% of outcomes in the named model scenario. One
+ * series, so no legend; a dot's colour carries its sign (loss / gain) and its value is in its tooltip and the caption. */
+function QuantileDots({ d }: { d: NonNullable<TradePlan["pnl_dots"]> }) {
+  const v = d.values;
+  if (!v.length) return null;
+  const lo = Math.min(v[0], 0), hi = Math.max(v[v.length - 1], 0), span = hi - lo || 1;
+  const W = 300, pad = 8, r = 4.5, step = 2 * r + 1;
+  const x = (y: number) => pad + ((y - lo) / span) * (W - 2 * pad);
+  // dots that land on the same pixel column stack upwards, so every 5% stays visible (a capped payoff piles up)
+  const cols = new Map<number, number>();
+  const stacked = v.map((y, i) => { const cx = Math.round(x(y) / step) * step; const k = cols.get(cx) ?? 0; cols.set(cx, k + 1); return { i, y, cx, k }; });
+  const H = 18 + Math.max(...cols.values()) * step;
+  const pts = stacked.map((p) => ({ ...p, cy: H - 12 - p.k * step }));
+  return (
+    <figure className="py-1" data-testid="plan-pnl-dots">
+      <figcaption className="text-[11px] text-muted">P&amp;L at expiry, {d.model}: each dot is 5% of outcomes</figcaption>
+      <div className="overflow-x-auto">
+        <svg role="img" aria-label={`P&L quantiles at expiry from ${rs(v[0])} to ${rs(v[v.length - 1])}, median ${rs(v[9])}`} viewBox={`0 0 ${W} ${H}`} className="w-full min-w-[240px]" style={{ maxHeight: H * 1.6 }}>
+          <line x1={x(0)} x2={x(0)} y1={2} y2={H - 6} stroke="var(--border-strong)" strokeWidth={1} strokeDasharray="2 2" />
+          <line x1={pad} x2={W - pad} y1={H - 6} y2={H - 6} stroke="var(--border)" strokeWidth={1} />
+          {pts.map((p) => (
+            <circle key={p.i} cx={p.cx} cy={p.cy} r={r} fill={p.y < 0 ? "var(--loss)" : "var(--gain)"} stroke="var(--card)" strokeWidth={1.5}>
+              <title>{`${p.i * 5}–${p.i * 5 + 5}% of outcomes: ${rs(p.y)}`}</title>
+            </circle>
+          ))}
+        </svg>
+      </div>
+      <p className="num text-[11px] text-muted"><Parts parts={[`worst 5% ${rs(v[0])}`, `median ${rs(v[9])}`, `best 5% ${rs(v[v.length - 1])}`]} /></p>
+      <p className="text-[11px] text-muted">{d.note}</p>
+    </figure>
+  );
+}
+
+/** #357: the headline leads with the model EV after all costs (with its range across models), then the payoff ratio,
+ * then the chance of profit with its reliability line; then max loss, max profit, stop, target and breakevens (#326). */
 function KeyNumbers({ plan }: { plan: TradePlan }) {
-  const ex = plan.exits, p = plan.probability;
+  const ex = plan.exits, p = plan.probability, ev = plan.ev;
   if (plan.max_loss === undefined && plan.max_profit === undefined && !p && !ex) return null;
   return (
-    <div data-testid="plan-key-numbers" className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
+    <div data-testid="plan-key-numbers" className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4">
+      {ev && <Key label="Model EV, after costs" value={ev.range ? `${rs(ev.range[0])} to ${rs(ev.range[1])}` : "unknown"}
+        note={<span data-testid="plan-ev">{ev.label} · range across models</span>} help={ev.note} />}
+      {ev && <Key label="Payoff ratio" value={ev.payoff_ratio == null ? "unknown" : `${ev.payoff_ratio.toFixed(2)} : 1`}
+        note="average win ÷ average loss" help="E[P&L | win] ÷ |E[P&L | loss]| at expiry in the model scenario: a high chance of profit with a low payoff ratio is how premium sellers lose." />}
+      {p && <Key label="Chance of profit" value={pct(p.real_world)} help={p.note}
+        note={<span data-testid="plan-pop">real-world · risk-neutral {pct(p.risk_neutral)}{plan.reliability ? <ReliabilityLine r={plan.reliability} /> : <span data-testid="reliability" className="block">calibration unknown: not scored</span>}</span>} />}
       <Key label="Max loss" value={plan.max_loss == null ? "unlimited" : rs(plan.max_loss)} tone="loss" />
       <Key label="Max profit" value={plan.max_profit == null ? "unlimited" : rs(plan.max_profit)} tone="gain" />
-      <Key label="Chance of profit" value={pct(p?.real_world)} note={`real-world · risk-neutral ${pct(p?.risk_neutral)}`} help={p?.note} />
       <Key label="Stop" value={ex?.stop ? `−${rs(ex.stop.rupees)}` : "none"} tone={ex?.stop ? "loss" : undefined}
         note={ex?.stop?.underlying_now.below != null || ex?.stop?.underlying_now.above != null ? `underlying ${[ex!.stop!.underlying_now.below, ex!.stop!.underlying_now.above].filter((v) => v != null).map(lvl).join(" / ")}` : undefined} />
       <Key label="Target" value={ex?.target ? `+${rs(ex.target.rupees)}` : "none"} tone={ex?.target ? "gain" : undefined}
@@ -158,7 +199,15 @@ function PlanDetail({ plan }: { plan: TradePlan }) {
           <Row label="Max profit"><N>{plan.max_profit == null ? "unlimited" : rs(plan.max_profit)}</N></Row>
           <Row label="Max loss"><N>{plan.max_loss == null ? "unlimited" : rs(plan.max_loss)}</N></Row>
           <Row label="Breakevens">{plan.breakevens?.length ? plan.breakevens.map((b, i) => <span key={b}>{i > 0 && " / "}<N>{lvl(b)}</N></span>) : "none"}</Row>
-          <Row label="Chance of profit" help={p?.note}><Parts parts={[`real-world ${pct(p?.real_world)}`, `risk-neutral ${pct(p?.risk_neutral)}`]} /></Row>
+          {plan.ev && (
+            <Row label="Model EV" help={plan.ev.note}>
+              <Parts parts={[`real-world ${rs(plan.ev.real_world)}`, `at fair prices ${rs(plan.ev.risk_neutral)}`]} />
+              <span className="block text-[11px] text-muted">{plan.ev.label}: after statutory costs and half the bid/ask spreads ({rs(plan.ev.costs)}); never changes the verdict</span>
+            </Row>
+          )}
+          <Row label="Chance of profit" help={p?.note}><Parts parts={[`real-world ${pct(p?.real_world)}`, `risk-neutral ${pct(p?.risk_neutral)}`]} />
+            {plan.reliability && <ReliabilityLine r={plan.reliability} />}</Row>
+          {plan.pnl_dots && <QuantileDots d={plan.pnl_dots} />}
         </div>
         <div className="min-w-0">
           <Row label="Entry (limit)" help="Limit-price guidance from the live bid/ask: the mid is the patient price, the far side fills now. Groww's chain has no bid/ask, so it is read from NSE's chain (named below with its time); unknown when neither has it.">
