@@ -1,8 +1,9 @@
 "use client";
 
 // The Risk tab: realised risk of the value history (volatility, beta, drawdown, VaR/CVaR, Sharpe/Sortino with a stated
-// risk-free rate), today's mix over the last 12 months (risk contribution by holding and sector), stress scenarios and
-// the historical stress replay (#345).
+// risk-free rate), benchmark-relative and rolling views, the drawdown table and the VaR backtest (#349), today's mix over
+// the last 12 months (risk contribution by holding and sector), stress scenarios (unmapped holdings never shown as 0 %,
+// #423) and the historical stress replay (#345).
 
 import { Activity, Flame, Gauge as GaugeIcon, PieChart, ShieldAlert } from "lucide-react";
 import { useState } from "react";
@@ -13,23 +14,27 @@ import { day, useApi } from "@/lib/api";
 
 import { FactorExposures } from "./factor-exposures";
 import { AnalyticsFooter, type AnalyticsBase, Loading, type Metric, MetricRow, NotEnough, pct, spct } from "./shared-analytics";
+import { DrawdownTable, type Episode, RelativeCard, type Relative, RollingCard, type Rolling, VarBacktestLine, type VarBacktest } from "./risk-relative";
 import { StressReplay } from "./stress-replay";
 import { inr, signed } from "./types";
 
 type Scenario = {
   id: string; label: string; available: boolean; reason?: string; note: string; window?: string[]; peak?: string; trough?: string;
-  benchmark_move?: number; portfolio_move?: number | null; inr?: number;
-  positions?: { key: string; name: string; move: number; inr: number; how: string }[];
+  benchmark_move?: number; portfolio_move?: number | null; inr?: number | null;
+  mapped_value?: number; unmapped_value?: number; mapped_share?: number | null; assume_beta1?: boolean;
+  // move and ₹ are null for an unmapped holding (#423): unknown, never a 0 % move
+  positions?: { key: string; name: string; value?: number; move: number | null; inr: number | null; how: string; assumed?: boolean }[];
 };
 type Risk = AnalyticsBase & {
   value?: number;
   risk_free: { rate: number; label: string; as_of: string | null; source: string | null; fallback: boolean; user_set: boolean };
-  realised: null | {
+  realised: null | (Relative & {
+    rolling?: Rolling; drawdowns?: Episode[]; var_backtest?: VarBacktest;
     window: { start: string; end: string; returns: number };
     volatility: Metric; beta: Metric; tracking_error: Metric; sharpe: Metric; sortino: Metric;
     var_1d: Metric; cvar_1d: Metric; var_21d: Metric; cvar_21d: Metric;
     max_drawdown: Metric & { peak: string; trough: string; recovered: string | null; days_to_recover: number | null; underwater_days: number; current: number };
-  };
+  });
   hypothetical: null | {
     note: string; reason?: string; days?: number; from_?: string; to?: string; how?: string; missing?: string[];
     volatility?: Metric; var_1d?: Metric; cvar_1d?: Metric;
@@ -41,11 +46,15 @@ type Risk = AnalyticsBase & {
 
 const money = (m: Metric | undefined) => (m?.inr != null ? <p className="num text-[11px] font-normal text-muted">≈ {inr(m.inr)}</p> : null);
 
-function Stress({ items }: { items: Scenario[] }) {
+function Stress({ items, beta1, setBeta1 }: { items: Scenario[]; beta1: boolean; setBeta1: (v: boolean) => void }) {
   const [open, setOpen] = useState<string | null>(null);
   return (
     <Card title="Stress scenarios" icon={<Flame className="size-4" />}
-      help="Past episodes applied to today's holdings: instructive, not a probability. Historical VaR only knows the window it was measured in, so it is shown next to these.">
+      help="Past episodes applied to today's holdings: instructive, not a probability. Historical VaR only knows the window it was measured in, so it is shown next to these. A holding that cannot be mapped is listed with its value and left out of the figure, never counted as a 0 % move.">
+      <label className="mb-2 flex items-center gap-2 text-xs text-muted">
+        <input type="checkbox" checked={beta1} onChange={(e) => setBeta1(e.target.checked)} />
+        Hypothetical fall: assume beta 1 for equity with under 120 days of prices (an assumption, labelled on each row)
+      </label>
       <div className="space-y-2">
         {items.map((s) => (
           <div key={s.id} className="rounded-lg border border-border">
@@ -54,7 +63,8 @@ function Stress({ items }: { items: Scenario[] }) {
               {s.available ? (
                 <span className="flex items-center gap-3 text-xs">
                   <span className="text-muted">index {spct(s.benchmark_move)}</span>
-                  <span className={cx("num font-semibold", (s.inr ?? 0) < 0 ? "text-loss" : "text-gain")}>{spct(s.portfolio_move)} · {signed(s.inr)}</span>
+                  <span className={cx("num font-semibold", (s.inr ?? 0) < 0 ? "text-loss" : "text-gain")}>{spct(s.portfolio_move)}{s.inr != null ? ` · ${signed(s.inr)}` : ""}</span>
+                  {(s.unmapped_value ?? 0) > 0 && <Badge tone="warn">{s.positions?.filter((p) => p.move == null).length} unmapped</Badge>}
                 </span>
               ) : <Badge tone="neutral">not available</Badge>}
             </button>
@@ -64,11 +74,14 @@ function Stress({ items }: { items: Scenario[] }) {
                   <>
                     {s.peak && <p className="text-muted">NIFTYBEES peak {day(s.peak)} → trough {day(s.trough)} (found inside {day(s.window?.[0])} to {day(s.window?.[1])}).</p>}
                     <p className="mt-1 text-muted">{s.note}</p>
+                    {s.mapped_value != null && <p className="mt-1 text-muted">The figure is on the {inr(s.mapped_value)} that could be mapped{s.mapped_share != null ? `, ${pct(s.mapped_share)} of today's holdings` : ""}{(s.unmapped_value ?? 0) > 0 ? `; ${inr(s.unmapped_value)} is unmapped and not in it` : ""}.</p>}
                     <Table label={`${s.label}: holdings`} className="mt-2">
                       <thead><tr><th>Holding</th><th className="text-right">Move</th><th className="text-right">₹</th><th>How</th></tr></thead>
                       <tbody>{s.positions?.map((p) => (
-                        <tr key={p.key}><td className="max-w-[14rem] truncate">{p.name}</td><td className="num text-right">{spct(p.move)}</td>
-                          <td className={cx("num text-right", p.inr < 0 ? "text-loss" : "text-muted")}>{signed(p.inr)}</td><td className="text-muted">{p.how}</td></tr>
+                        <tr key={p.key}><td className="max-w-[14rem] truncate">{p.name}</td>
+                          <td className="num text-right">{p.move == null ? <Badge tone="warn">unmapped</Badge> : spct(p.move)}</td>
+                          <td className={cx("num text-right", (p.inr ?? 0) < 0 ? "text-loss" : "text-muted")}>{p.inr == null ? "—" : signed(p.inr)}</td>
+                          <td className={cx(p.assumed ? "text-warn" : "text-muted")}>{p.how}</td></tr>
                       ))}</tbody>
                     </Table>
                   </>
@@ -86,7 +99,8 @@ export function RiskAnalytics({ refresh }: { refresh: number }) {
   const [rfInput, setRfInput] = useState("");
   const [rf, setRf] = useState<string | null>(null);
   const [view, setView] = useState<"holding" | "sector">("holding");
-  const { data, error, reload } = useApi<Risk>(`/api/portfolio/analytics/risk?r=${refresh}${rf ? `&rf=${encodeURIComponent(rf)}` : ""}`);
+  const [beta1, setBeta1] = useState(false);
+  const { data, error, reload } = useApi<Risk>(`/api/portfolio/analytics/risk?r=${refresh}${rf ? `&rf=${encodeURIComponent(rf)}` : ""}${beta1 ? "&assume_beta1=true" : ""}`);
   if (error) return <ErrorNote error={error} onRetry={reload} />;
   if (!data) return <Loading what="risk figures" />;
   if (!data.available || !data.realised) return <NotEnough data={data} what="risk figures" />;
@@ -123,8 +137,14 @@ export function RiskAnalytics({ refresh }: { refresh: number }) {
           <MetricRow label="1-day CVaR 95 %" m={r.cvar_1d} format={(v) => pct(v, 2)} extra={money(r.cvar_1d)} help="Expected shortfall: the average loss on those worst 1-in-20 days." />
           <MetricRow label="1-month VaR 95 %" m={r.var_21d} format={(v) => pct(v, 2)} extra={money(r.var_21d)} help="The same over 21 trading days, from overlapping windows: far fewer independent observations, so treat it as rough." />
           <MetricRow label="1-month CVaR 95 %" m={r.cvar_21d} format={(v) => pct(v, 2)} extra={money(r.cvar_21d)} help="The average of the worst 5 % of 21-day returns." />
+          <VarBacktestLine b={r.var_backtest} />
         </Card>
       </div>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <RelativeCard r={r} />
+        <DrawdownTable items={r.drawdowns} />
+      </div>
+      <RollingCard rolling={r.rolling} />
 
       <Card title="Where today's risk comes from" icon={<PieChart className="size-4" />}
         help={`${h?.note ?? ""} ${h?.how ?? ""}`}
@@ -138,7 +158,7 @@ export function RiskAnalytics({ refresh }: { refresh: number }) {
           </>
         )}
       </Card>
-      {data.stress.length > 0 && <Stress items={data.stress} />}
+      {data.stress.length > 0 && <Stress items={data.stress} beta1={beta1} setBeta1={setBeta1} />}
       <StressReplay refresh={refresh} />
       <FactorExposures refresh={refresh} />
       <AnalyticsFooter data={data} />

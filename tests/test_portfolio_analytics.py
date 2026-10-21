@@ -371,8 +371,14 @@ def test_stress_scenario_uses_own_moves_and_proxies():
     moves = {x["key"]: (x["move"], x["how"]) for x in res["positions"]}
     assert moves["NSE:AAA"] == (-0.5, "own prices")
     assert moves["NSE:NEW"][0] == pytest.approx(-0.36) and "proxy" in moves["NSE:NEW"][1]
-    assert moves["MF:9"][0] == 0 and "not modelled" in moves["MF:9"][1]
+    # #423: a debt fund with no own prices is unmapped (move unknown, left out of the loss), never a 0 % move. This
+    # assertion changed on purpose: it used to pin the 0 % row.
+    assert moves["MF:9"][0] is None and moves["MF:9"][1].startswith("unmapped")
+    mf = next(x for x in res["positions"] if x["key"] == "MF:9")
+    assert mf["inr"] is None and mf["value"] == 1000
     assert res["inr"] == pytest.approx(-500 - 360)
+    assert res["mapped_value"] == 2000 and res["unmapped_value"] == 1000
+    assert res["portfolio_move"] == pytest.approx(-860 / 2000)  # on the mapped value, not the whole portfolio
 
 
 def test_concentration_flags_and_status(tmp_path):
@@ -775,3 +781,18 @@ def test_stress_replay_route_lists_unmapped_holdings_never_as_zero(api):
     assert all(u["value"] > 0 and u["reason"] for u in f["unmapped"])
     assert by["gfc2008"]["available"] is False and "NIFTYBEES" in by["gfc2008"]["reason"]
     assert body["disclaimer"] and "never sent to an LLM" in body["privacy"]
+
+
+def test_risk_route_beta_one_option_is_not_masked_by_the_stress_cache_423(api):
+    """#423: the hypothetical's beta-1 option is per request; the cached episodes must not hand back the other answer."""
+    first = next(s for s in api.get("/api/portfolio/analytics/risk").json()["stress"] if s["id"] == "beta20")
+    opt = next(
+        s
+        for s in api.get("/api/portfolio/analytics/risk?assume_beta1=true").json()["stress"]
+        if s["id"] == "beta20"
+    )
+    assert first["assume_beta1"] is False and opt["assume_beta1"] is True
+    # the fixture's holdings have a few days of prices: equity is unmapped by default, beta 1 only when asked
+    assert all(x["move"] is None for x in first["positions"])
+    assumed = [x for x in opt["positions"] if x["assumed"]]
+    assert assumed and all(x["move"] == pytest.approx(-0.20) for x in assumed)
