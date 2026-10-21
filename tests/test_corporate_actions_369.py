@@ -104,3 +104,70 @@ async def test_closes_raise_when_corporate_actions_cannot_be_fetched(monkeypatch
     monkeypatch.setattr(nse_equity, "NseEquity", FakeEq)
     with pytest.raises(NseError, match="corporate actions"):
         await NseFno(client=object()).closes("EXAMPLE", days[0], days[-1])  # type: ignore[arg-type]
+
+
+# --------------------------------------------------------------------------- equity factor maths (fincalc.corporate_actions)
+def test_factor_formulas():
+    from decimal import Decimal as Dc
+
+    from finresearch.fincalc import corporate_actions as ca
+
+    assert ca.bonus_factor(1, 1) == 2  # 1 new for every 1 held
+    assert ca.bonus_factor(3, 2) == Dc("2.5")  # (3 + 2) / 2
+    assert ca.face_value_factor(Dc(10), Dc(2)) == 5  # split Rs 10 -> Rs 2
+    assert ca.face_value_factor(Dc(1), Dc(10)) == Dc("0.1")  # consolidation Rs 1 -> Rs 10
+    # rights 1 for 4 at Rs 60, cum-rights 100: TERP = (4 x 100 + 1 x 60) / 5 = 92, f = 100 / 92
+    assert ca.rights_factor(1, 4, Dc(100), Dc(60)) == Dc(100) / Dc(92)
+    # a rights issue priced at or above the market changes nothing
+    assert ca.rights_factor(1, 4, Dc(100), Dc(120)) == 1
+    # demerger: cum price 500, the demerged unit is worth 125 per share: f = 500 / 375
+    assert ca.demerger_factor(Dc(500), Dc(125)) == Dc(500) / Dc(375)
+
+
+@pytest.mark.parametrize(
+    ("call", "args"),
+    [("bonus_factor", (0, 1)), ("bonus_factor", (1, 0)), ("face_value_factor", (0, 2)),
+     ("rights_factor", (1, 0, 100, 60)), ("demerger_factor", (100, 100)), ("demerger_factor", (100, -1))],
+)  # fmt: skip
+def test_factor_formulas_refuse_bad_terms(call, args):
+    from decimal import Decimal as Dc
+
+    from finresearch.fincalc import corporate_actions as ca
+
+    with pytest.raises(ValueError):
+        getattr(ca, call)(*(Dc(a) for a in args))
+
+
+def test_cumulative_factor_back_adjusts_before_each_ex_date():
+    from decimal import Decimal as Dc
+
+    from finresearch.fincalc import corporate_actions as ca
+
+    days = [date(2025, 1, i) for i in (1, 2, 3, 6, 7)]
+    px = [Dc(1000), Dc(1000), Dc(500), Dc(500), Dc(100)]
+    events = [(days[2], Dc(2)), (days[4], Dc(5))]  # a 1:1 bonus ex 3-Jan, a 10 -> 2 split ex 7-Jan
+    # CF_t = product of the factors whose ex-date is after t: 10, 10, 5, 5, 1
+    assert ca.cumulative_factors(days, events) == [Dc(10), Dc(10), Dc(5), Dc(5), Dc(1)]
+    assert ca.adjust_prices(days, px, events) == [Dc(100)] * 5
+
+
+def test_total_return_index_adds_dividends_and_neutralises_factors():
+    from decimal import Decimal as Dc
+
+    from finresearch.fincalc import corporate_actions as ca
+
+    days = [date(2025, 1, i) for i in (1, 2, 3, 6)]
+    px = [Dc(100), Dc(98), Dc(49), Dc(50)]
+    # ex-dividend Rs 2 on 2-Jan (price 100 -> 98: no loss), 1:1 bonus on 3-Jan (98 -> 49: no loss), then +2.04 %
+    tr = ca.total_return_index(days, px, factors=[(days[2], Dc(2))], dividends=[(days[1], Dc(2))])
+    assert tr == [Dc(1), Dc(1), Dc(1), Dc(50) / Dc(49)]
+
+
+def test_delisting_return_is_unknown_without_an_exit_price():
+    from decimal import Decimal as Dc
+
+    from finresearch.fincalc import corporate_actions as ca
+
+    assert ca.delisting_return(Dc(80), Dc(100)) == Dc("0.25")  # exit offer 100 vs last close 80
+    assert ca.delisting_return(Dc(80), Dc(70), dividend=Dc(2)) == Dc(72) / Dc(80) - 1
+    assert ca.delisting_return(Dc(80), None) is None  # never a US-style -30 % default
