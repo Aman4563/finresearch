@@ -959,6 +959,20 @@ def backup_init_key() -> None:
     console.print(f"[green]backup key created ({ref}); keep a second copy of it (docs/BACKUPS.md)")
 
 
+@backup_app.command("import-key")
+def backup_import_key() -> None:
+    """Install an escrowed backup key (base64, typed or piped on stdin, never an argument) on a new Mac."""
+    from finresearch.backups.offsite import OffsiteError, import_key
+
+    value = typer.prompt("Backup key (base64)", hide_input=True)
+    try:
+        ref = import_key(value)
+    except OffsiteError as e:
+        console.print(f"[red]{e}")
+        raise typer.Exit(1) from None
+    console.print(f"[green]backup key installed ({ref})")
+
+
 @backup_app.command("offsite")
 def backup_offsite(
     vault: bool = typer.Option(False, "--vault", help="Copy the vault database instead (keeps 2 copies)"),

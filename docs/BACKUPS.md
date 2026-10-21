@@ -104,9 +104,11 @@ Each copy is `<dest>/<kind>/finresearch-<kind>-<UTC time>-<pid>.enc` plus a `.js
 the `pg_dump` archive encrypted with AES-256-GCM in 16 MB frames (`backups/crypto.py`): a wrong key, a changed byte,
 or a copy cut short fails to decrypt, and nothing is written. Before the manifest is written, the copy is read back
 and must decrypt to the same SHA-256 as the dump. The manifest holds the time, size, SHA-256, a key fingerprint and
-the row count of each table, taken in the same database snapshot as the dump (`pg_dump --snapshot`). It holds no row
-data. The vault copy has no row counts, because counting would be a read of the sealed data.
-The plain dumps are written to a private temporary folder under `data/state` and deleted once pushed.
+the row count of each forward-only table, taken in the same database snapshot as the dump (`pg_dump --snapshot`).
+Manifests are not encrypted, so they hold no row data and never name or count the personal tables (portfolio,
+journal, connections) that the `db` dump also contains. The vault copy has no row counts, because counting would be a read of the sealed data.
+The plain dumps, and the read-back copy used to check them, are written to a private temporary folder under
+`data/state` and deleted once pushed (so a run briefly needs about twice the dump size free locally).
 
 `uv run finresearch backup status` exits 1 unless each forward-only table is in a copy at most one day old and a
 restore drill passed in the last 92 days. A missing or unreadable destination counts as not fresh.
@@ -117,6 +119,9 @@ The key lives only in this Mac's login Keychain. Time Machine keeps the Keychain
 both the Keychain and any locally attached backup with it. Store a second copy of the key separately, for example in
 a password manager or on paper in a safe. The app has no command that prints the key, so open Keychain Access, find
 the item `finresearch/finresearch` with the account `backup/offsite_key`, and copy its password by hand.
+On a new Mac, install the saved key with `uv run finresearch backup import-key`. It asks for the base64 key with
+hidden input, or reads it from stdin, and never takes it as an argument. It refuses a key that is not 32 bytes and
+never replaces an existing key.
 
 ## Restore drill (quarterly)
 

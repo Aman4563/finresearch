@@ -60,3 +60,25 @@ def test_offsite_status_drill_round_trip(env, db_url, tmp_path, monkeypatch):
     assert r.exit_code == 0, r.output
     r = _run("drill", "--scratch", "finresearch")
     assert r.exit_code == 2 and "_test" in r.output
+
+
+def test_import_key_restores_an_escrowed_key_from_stdin_never_argv(env):
+    import base64
+    import os
+
+    from finresearch.backups import offsite
+
+    raw = os.urandom(32)  # runtime-built: no literal key in the repo
+    r = CliRunner().invoke(app, ["backup", "import-key"], input=base64.b64encode(raw).decode() + "\n")
+    assert r.exit_code == 0, r.output
+    assert offsite.load_key() == raw and base64.b64encode(raw).decode() not in r.output
+    r = CliRunner().invoke(
+        app, ["backup", "import-key"], input=base64.b64encode(os.urandom(32)).decode() + "\n"
+    )
+    assert r.exit_code == 1 and "already exists" in r.output
+    assert offsite.load_key() == raw
+
+
+def test_import_key_refuses_a_key_that_is_not_32_bytes(env):
+    r = CliRunner().invoke(app, ["backup", "import-key"], input="c2hvcnQ=\n")
+    assert r.exit_code == 1 and "32 bytes" in r.output

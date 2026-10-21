@@ -26,11 +26,13 @@ def libpq_url(url: str) -> str:
 
 
 def dump_with_counts(url: str, out: Path, *, tables: Sequence[str] | None = None,
-                     count: bool = True, timeout: float = 3600) -> dict[str, int] | None:  # fmt: skip
+                     count: bool = True, count_tables: Sequence[str] | None = None,
+                     timeout: float = 3600) -> dict[str, int] | None:  # fmt: skip
     """Dump the database at `url` (only `tables` when given) to `out` in custom format and return {table: rows}
-    from the same snapshot (None when `count` is False). The archive is checked with pg_restore --list before it is
+    from the same snapshot for `count_tables` (default: the dumped tables, or every table for a whole-database dump;
+    None when `count` is False). The archive is checked with pg_restore --list before it is
     moved into place."""
-    for t in tables or ():
+    for t in [*(tables or ()), *(count_tables or ())]:
         if not _IDENT.match(t):
             raise ValueError(f"not a table name: {t!r}")
     dsn = libpq_url(url)
@@ -40,7 +42,7 @@ def dump_with_counts(url: str, out: Path, *, tables: Sequence[str] | None = None
         snap = conn.execute("SELECT pg_export_snapshot()").fetchone()[0]
         counts: dict[str, int] | None = None
         if count:
-            names = list(tables) if tables else [r[0] for r in conn.execute(
+            names = list(count_tables or tables or ()) or [r[0] for r in conn.execute(
                 "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename")]  # fmt: skip
             counts = {t: conn.execute(sql.SQL("SELECT count(*) FROM {}").format(sql.Identifier(t))).fetchone()[0]
                       for t in names}  # fmt: skip

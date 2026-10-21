@@ -9,10 +9,11 @@ Layout at the destination, one folder per kind (`db` = whole database, `tables` 
 
     <dest>/<kind>/finresearch-<kind>-<UTC stamp.µs>-<pid>.enc    the encrypted pg_dump (custom format)
     <dest>/<kind>/finresearch-<kind>-<UTC stamp.µs>-<pid>.json   manifest: time, size, sha256 of the plain dump, key id,
-                                                              and row counts taken in the dump's own snapshot
+                                                              forward-only tables' row counts (the dump's snapshot)
     <dest>/drills.jsonl                                       one line per restore drill (backups.drill)
 
-Manifests hold table names and row counts only, no row data. The destination root must already exist: an unmounted
+Manifests are clear text, so they name and count only the forward-only tables: no row data, and nothing about
+the personal tables a `db` dump also holds. The destination root must already exist: an unmounted
 drive must fail, not quietly create a local folder on the same disk.
 """
 
@@ -61,6 +62,23 @@ def init_key() -> str:
     if secrets.backend().get(ref):
         raise OffsiteError(f"a backup key already exists ({ref}); it is never replaced")
     secrets.backend().set(ref, _b64(os.urandom(KEY_LEN)))
+    return ref
+
+
+def import_key(b64: str) -> str:
+    """Install an escrowed key (base64) on a new Mac; refuse when one already exists or it is not 32 bytes."""
+    from finresearch import secrets
+
+    try:
+        key = base64.b64decode(b64.strip(), validate=True)
+    except ValueError:
+        raise OffsiteError("the key is not base64") from None
+    if len(key) != KEY_LEN:
+        raise OffsiteError("the key must be 32 bytes")
+    ref = key_ref()
+    if secrets.backend().get(ref):
+        raise OffsiteError(f"a backup key already exists ({ref}); it is never replaced")
+    secrets.backend().set(ref, _b64(key))
     return ref
 
 
@@ -277,8 +295,10 @@ def backup_now(url: str | None, dest: Path | str | None, *, kinds: tuple[str, ..
                 if not src:
                     raise OffsiteError("no vault database is configured (FINRESEARCH_VAULT_DATABASE_URL)")
             plain = Path(tmp) / f"{kind}.dump"
+            # counts only for the forward-only tables: the manifest is clear text at the destination, so it never
+            # names or sizes the personal tables (portfolio, journal, connections) that the `db` dump also holds
             counts = dump_with_counts(src, plain, tables=FORWARD_ONLY if kind == "tables" else None,
-                                      count=kind != "vault")  # fmt: skip
+                                      count=kind != "vault", count_tables=FORWARD_ONLY)  # fmt: skip
             made[kind] = push(plain, dest, kind, counts=counts)
             plain.unlink(missing_ok=True)
     return made

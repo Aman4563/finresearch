@@ -55,6 +55,7 @@ Retention (the monitor runs it weekly, early on Monday IST; `monitor/retention.p
 ```bash
 scripts/backup.sh                                   # nightly local dump; also off-machine when a destination is set
 uv run finresearch backup init-key                  # once: the off-machine copies' key, in the Keychain
+uv run finresearch backup import-key                # a new Mac: install the escrowed key (hidden prompt / stdin)
 uv run finresearch backup offsite                   # encrypted copies of the database and its forward-only tables
 uv run finresearch backup offsite --vault           # the vault database, once after a load (keeps 2 copies)
 uv run finresearch backup status                    # exit 1 unless every forward-only table has a copy <= 1 day old

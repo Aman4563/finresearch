@@ -88,6 +88,8 @@ def test_backup_then_drill_restores_matching_row_counts(env, db_url, tmp_path):
     made = offsite.backup_now(db_url, dest, kinds=("tables", "db"))
     assert set(made) == {"tables", "db"}
     assert offsite.manifest_of(made["tables"])["counts"]["subscription_snapshot"] == rows
+    # the manifest is clear text at the destination: it names only the forward-only tables, never personal ones
+    assert set(offsite.manifest_of(made["db"])["counts"]) == set(offsite.FORWARD_ONLY)
     assert all(t["ok"] for t in offsite.status(dest)["tables"])
 
     scratch = _scratch(db_url)
