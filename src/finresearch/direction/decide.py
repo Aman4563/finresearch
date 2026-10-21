@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 
 from finresearch.direction import specs
@@ -180,9 +180,14 @@ def price_legs(chain, spec: list[tuple[str, float, str]], t_years: float, rate: 
 
 
 def decide(chain, lot: int, *, today: date, horizon_day: date, h: int, iv_30: float, probs_model: dict[str, float],
-           accepted: bool, rate: float, brokerage: float) -> dict[str, Any]:  # fmt: skip
-    """Every candidate's EV under the model and under the market, and the decision (module docstring)."""
-    t_entry = max((chain.expiry - today).days, 0.5) / 365
+           accepted: bool, rate: float, brokerage: float, now: datetime | None = None) -> dict[str, Any]:  # fmt: skip
+    """Every candidate's EV under the model and under the market, and the decision (module docstring). `now` = the
+    live clock (#359): T at entry to the minute (15:30 IST on `today` without it); an expired chain prices nothing."""
+    from finresearch.fincalc.dates import session_clock, years_to_expiry
+
+    t_entry = years_to_expiry(chain.expiry, session_clock(today, now))
+    if t_entry <= 0:
+        raise ValueError(f"the {chain.expiry:%d-%b-%Y} contract has expired (15:30 IST): nothing to price")
     t_rem = max(0, (chain.expiry - horizon_day).days) / 365
     masses, notes = region_masses(probs_model)
     spot = float(chain.underlying)

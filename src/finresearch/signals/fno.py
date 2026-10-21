@@ -151,11 +151,19 @@ def _r(x: float | None, d: int = 4) -> float | None:
 def analyse(chain, lot: int, legs_in: list[LegIn], *, today: date, closes: list[float], iv_series: list[float],
             capital: float, max_loss_pct: float, brokerage: float, rate: float = RATE, drift: float | None = None,
             overrides: dict[str, Any] | None = None, iv_source: dict[str, Any] | None = None,
-            iv_as_of: date | None = None) -> dict[str, Any]:  # fmt: skip
-    """Everything the page and the signal show for one strategy. Raises ValueError when a leg has no premium."""
+            iv_as_of: date | None = None, now: datetime | None = None) -> dict[str, Any]:  # fmt: skip
+    """Everything the page and the signal show for one strategy. `now` = the clock T is measured from (#359: live
+    callers pass now_ist(); without it, 15:30 IST on `today`). Raises ValueError when a leg has no premium or the
+    contract has expired."""
+    from finresearch.fincalc import dates
+
     spot = float(chain.underlying)
     days = (chain.expiry - today).days
-    t = max(days, 0.5) / 365
+    t = dates.years_to_expiry(
+        chain.expiry, dates.session_clock(today, now)
+    )  # minutes to 15:30 IST, never floored
+    if t <= 0:
+        raise ValueError(f"the {chain.expiry:%d-%b-%Y} contract has expired (15:30 IST): nothing to price")
     mu = rate if drift is None else drift
     by_strike = {float(r.strike): r for r in chain.rows}
     legs, orders, notes = [], [], []
@@ -544,7 +552,8 @@ async def fno_signal(instrument: str, ctx: dict[str, Any]) -> Signal:
     from finresearch.fincalc.dates import now_ist
 
     sym = instrument.upper()
-    today = now_ist().date()
+    now = now_ist()
+    today = now.date()
     notice = risk_notice()
     async with _client() as f:
         if ctx.get("expiry"):
@@ -588,10 +597,15 @@ async def fno_signal(instrument: str, ctx: dict[str, Any]) -> Signal:
                          "budget. Set it (and the % limit) on the profile page.")  # fmt: skip
     series, src = iv_series_info(sym)
     drift = float(ctx["drift"]) if ctx.get("drift") not in (None, "") else None
+    from finresearch.fincalc.dates import years_to_expiry
     from finresearch.signals.rates import risk_free
 
-    rinfo = await risk_free(max((expiry - today).days, 0.5) / 365)  # FBIL par yield at the expiry (#244)
-    a = analyse(chain, lot, legs, today=today, closes=closes, iv_series=[v for _, v, _ in series], capital=capital,
+    if years_to_expiry(expiry, now) <= 0:
+        return no_signal(f"the {expiry:%d-%b-%Y} contract expired at 15:30 IST today: nothing to assess")
+    rinfo = await risk_free(
+        years_to_expiry(expiry, now)
+    )  # FBIL par yield at the expiry (#244); T to the minute (#359)
+    a = analyse(chain, lot, legs, today=today, now=now, closes=closes, iv_series=[v for _, v, _ in series], capital=capital,
                 max_loss_pct=float(profile.fno_max_loss_pct), brokerage=float(profile.fno_brokerage_per_order_inr),
                 rate=rinfo["rate"], drift=drift, iv_source=src,
                 iv_as_of=series[-1][0] if series else None)  # fmt: skip
