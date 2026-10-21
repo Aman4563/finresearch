@@ -16,6 +16,12 @@ file is not always exact: on 09-Oct-2026 the participants' index-call longs sum 
 5,404,257 (every other column exact), so a difference within the tolerance is kept with a note, and a larger one is
 refused (ParticipantFileError), never stored in part. A 404 is a holiday or a day not yet published (the file appears
 in the evening with the bhavcopy), so `fetch_day` returns None for it.
+
+Participant-wise trading volume (#371): `content/nsccl/fao_participant_vol_<DDMMYYYY>.csv` has the same layout and
+checks (verified by direct fetch on 22-Oct-2026 for 09-Oct-2026, HTTP 200, 980 bytes, title `""Participant wise Trading
+Volume (no. of contracts) in Equity Derivatives as on Oct 09, 2026""`; TOTAL long = short in every bucket: every trade
+has a buyer and a seller). Units: contracts traded that day. `Kind` names the file; the title phrase is checked, so a
+volume file is never stored as open interest or the other way round.
 """
 
 from __future__ import annotations
@@ -30,6 +36,24 @@ from finresearch.adapters.http import PoliteClient
 from finresearch.adapters.nse import NSE_BASE, NseError
 
 URL = "https://nsearchives.nseindia.com/content/nsccl/fao_participant_oi_{day:%d%m%Y}.csv"
+PARSER_VERSION = "2"  # 2: the title phrase is checked per kind (#371)
+
+
+@dataclass(frozen=True)
+class Kind:
+    dataset: str  # the table and the lineage / data-rights name
+    url: str
+    phrase: str  # in the title line: "Participant wise <phrase> (no. of contracts) ..."
+
+    def url_for(self, day: date) -> str:
+        return self.url.format(day=day)
+
+
+OI = Kind("fno_participant_oi", URL, "Open Interest")
+VOL = Kind(
+    "fno_participant_vol", URL.replace("fao_participant_oi_", "fao_participant_vol_"), "Trading Volume"
+)
+KINDS = (OI, VOL)
 PARTICIPANTS = ("Client", "DII", "FII", "Pro")
 # header name (whitespace-normalised) -> column key
 COLUMNS = {
@@ -69,12 +93,14 @@ def _norm(h: str) -> str:
     return re.sub(r"\s+", " ", h.replace('"', "")).strip()
 
 
-def parse(text: str) -> ParticipantDay:
+def parse(text: str, kind: Kind = OI) -> ParticipantDay:
     """The four participants' counts from the CSV text; raises ParticipantFileError when a check fails."""
     lines = [ln for ln in text.splitlines() if ln.strip()]
     if len(lines) < 3:
-        raise ParticipantFileError("too few lines for a participant-wise OI file")
+        raise ParticipantFileError("too few lines for a participant-wise file")
     title = _norm(lines[0])
+    if f"Participant wise {kind.phrase}" not in title:
+        raise ParticipantFileError(f"not the participant-wise {kind.phrase} file: {title[:80]!r}")
     # 2022 files print "Jan 03,2022" (no space before the year): without the optional space the date check was skipped
     m = re.search(r"as on ([A-Za-z]{3}) (\d{1,2}), ?(\d{4})", title)
     day = datetime.strptime(" ".join(m.groups()), "%b %d %Y").date() if m else None
@@ -109,16 +135,16 @@ def parse(text: str) -> ParticipantDay:
     return ParticipantDay(day, {p: rows[p] for p in PARTICIPANTS}, tuple(notes))
 
 
-async def fetch_day(http: PoliteClient, day: date) -> tuple[str, str] | None:
-    """(url, text) of the day's file; None on HTTP 404 (holiday, weekend or not yet published). A refusal, a 5xx or a
-    body that is not this CSV raises NseError: never read as "no file". GET only, through the shared NSE budget."""
-    url = URL.format(day=day)
+async def fetch_day(http: PoliteClient, day: date, kind: Kind = OI) -> tuple[str, bytes] | None:
+    """(url, body as served) of the day's file; None on HTTP 404 (holiday, weekend or not yet published). A refusal,
+    a 5xx or a body that is not this CSV raises NseError: never read as "no file". GET only, through the shared NSE
+    budget."""
+    url = kind.url_for(day)
     resp = await http.get(url, headers={"Referer": f"{NSE_BASE}/", "Accept": "text/csv,*/*"})
     if resp.status == 404:
         return None
     if not resp.ok:
         raise NseError(f"NSE HTTP {resp.status} for {url}")
-    text = resp.content.decode("utf-8", "replace")
-    if "Participant wise Open Interest" not in text[:300]:
+    if f"Participant wise {kind.phrase}".encode() not in resp.content[:300]:
         raise NseError(f"NSE served something else (HTTP {resp.status}) for {url}: a block page?")
-    return url, text
+    return url, resp.content

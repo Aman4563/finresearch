@@ -4,6 +4,9 @@
     with expiry > day of OI / lot (contracts); pass if |D_b| <= max(10, 1e-4 x total). Options are not reconciled: the
     bhavcopy store keeps only INDEX_OPTIONS' and tracked stocks' options. Days without lot sizes (pre-2024) are unknown.
     Also the identity sum(long_b) = sum(short_b) over the four participants (every contract has two sides).
+    Participant trading volume (#371) gets the same presence and identity checks (every trade has a buyer and a
+    seller) but no bhavcopy reconciliation. Both get a non-critical `reupload` check from the lineage table
+    (unknown for a day loaded before lineage existed).
 (b) the UDiFF underlying price vs the index file's close, exact to 0.01 (refseries.checks.underlying_vs_close).
 (c) d_t = VIX_t - IV30_t, flagged when |d_t - median(d)| > 4 x MAD(d) over the previous WINDOW pairs. Not critical:
     a gap says the two measures disagree, not which one is wrong.
@@ -17,9 +20,11 @@ from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from finresearch.db.models import (
+    DatasetLoad,
     FnoBhavDay,
     FnoIvEod,
     FnoParticipantOi,
+    FnoParticipantVol,
     FoVolt,
     IndexEod,
     IndexEodDay,
@@ -49,21 +54,50 @@ def _tol(total: float) -> float:
     return max(10.0, 1e-4 * total)
 
 
-def participant_checks(s: Session, day: date) -> list[Check]:
-    rows = s.scalars(select(FnoParticipantOi).where(FnoParticipantOi.day == day)).all()
-    names = ("participants_present", "long_short_identity", "bhav_fut_idx", "bhav_fut_stk")
+def _reupload(s: Session, dataset: str, day: date) -> Check:
+    from finresearch.dq.lineage import reuploads
+
+    loads = s.scalar(select(func.count()).select_from(DatasetLoad).where(
+        DatasetLoad.dataset == dataset, DatasetLoad.day == day))  # fmt: skip
+    if not loads:
+        return Check(dataset, "reupload", "unknown", note="no lineage for this load", critical=False)
+    n = reuploads(s, dataset, day)
+    return Check(dataset, "reupload", "warn" if n else "ok", n, 0,
+                 f"the {day} file changed {n} time(s) after its first load" if n else None, critical=False)  # fmt: skip
+
+
+def _participant_rows(
+    s: Session, table, dataset: str, day: date, extra: tuple[str, ...]
+) -> tuple[list, list[Check]]:
+    """The day's rows and the presence, long/short identity and reupload checks (all unknown when not loaded)."""
+    rows = s.scalars(select(table).where(table.day == day)).all()
     if not rows:
-        return [Check("fno_participant_oi", n, "unknown", note=f"{day} is not loaded") for n in names]
+        names = ("participants_present", "long_short_identity", "reupload", *extra)
+        return rows, [Check(dataset, n, "unknown", note=f"{day} is not loaded", critical=n != "reupload")
+                      for n in names]  # fmt: skip
     got = sorted(r.client_type for r in rows)
-    out = [Check("fno_participant_oi", "participants_present", "ok" if got == sorted(PARTICIPANTS) else "fail",
+    out = [Check(dataset, "participants_present", "ok" if got == sorted(PARTICIPANTS) else "fail",
                  len(got), 4, None if got == sorted(PARTICIPANTS) else f"rows: {', '.join(got)}")]  # fmt: skip
     worst = max(
         (abs(sum(getattr(r, lo) for r in rows) - sum(getattr(r, sh) for r in rows)), lo)
         for lo, sh in LONG_SHORT
     )
     tot = sum(r.total_long for r in rows)
-    out.append(Check("fno_participant_oi", "long_short_identity", "fail" if worst[0] > _tol(tot) else "ok",
+    out.append(Check(dataset, "long_short_identity", "fail" if worst[0] > _tol(tot) else "ok",
                      worst[0], _tol(tot), f"largest gap in {worst[1].removesuffix('_long')}" if worst[0] else None))  # fmt: skip
+    return rows, [*out, _reupload(s, dataset, day)]
+
+
+def participant_vol_checks(s: Session, day: date) -> list[Check]:
+    return _participant_rows(s, FnoParticipantVol, "fno_participant_vol", day, ())[1]
+
+
+def participant_checks(s: Session, day: date) -> list[Check]:
+    rows, out = _participant_rows(
+        s, FnoParticipantOi, "fno_participant_oi", day, ("bhav_fut_idx", "bhav_fut_stk")
+    )
+    if not rows:
+        return out
     m = s.get(FnoBhavDay, day)
     for bucket, inst in (("fut_idx", "IDF"), ("fut_stk", "STF")):
         name = f"bhav_{bucket}"
