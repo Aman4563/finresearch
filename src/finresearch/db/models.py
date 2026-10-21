@@ -1702,3 +1702,56 @@ class MarginCheck(Base):
     approx_margin: Mapped[Decimal] = mapped_column(Numeric(16, 2))
     groww_margin: Mapped[Decimal] = mapped_column(Numeric(16, 2))
     span_day: Mapped[date | None] = mapped_column(Date)
+
+
+class DqCheck(Base):
+    """One data-quality check's result for a dataset and day (#368, finresearch.dq): written by the nightly check job
+    (monitor.dq) and `finresearch dq run`. Re-running a day replaces its row. status ok / warn / fail / unknown
+    (unknown = could not be evaluated, never read as ok); `critical` failures mark the dependent pages unverified."""
+
+    __tablename__ = "dq_check"
+    __table_args__ = (UniqueConstraint("dataset", "day", "check"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    dataset: Mapped[str] = mapped_column(String(30), index=True)
+    day: Mapped[date] = mapped_column(Date, index=True)
+    check: Mapped[str] = mapped_column(String(40))
+    status: Mapped[str] = mapped_column(String(8))
+    critical: Mapped[bool] = mapped_column(Boolean, default=True)
+    value: Mapped[float | None] = mapped_column(REAL)
+    threshold: Mapped[float | None] = mapped_column(REAL)
+    note: Mapped[str | None] = mapped_column(String(300))
+    run_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class DatasetStatus(Base):
+    """One row per dataset (#368): the latest check run's verdict. `day` is the session checked (the last whose file
+    should be out by its SLA), `lag_sessions` how far the last loaded day trails it (None = never loaded), `failed`
+    the failing critical checks. status ok / warn / fail / unknown."""
+
+    __tablename__ = "dataset_status"
+    dataset: Mapped[str] = mapped_column(String(30), primary_key=True)
+    day: Mapped[date] = mapped_column(Date)
+    last_loaded: Mapped[date | None] = mapped_column(Date)
+    lag_sessions: Mapped[int | None] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(8))
+    failed: Mapped[list[Any]] = mapped_column(JSONB, default=list)
+    checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class DatasetLoad(Base):
+    """Lineage (#368): one row per file loaded into a dataset, append-only by convention. sha256 of the body as
+    downloaded (or read from the kept raw copy), the server's Last-Modified when known, the parser version and the row
+    count. `prior_sha256` is the last load's hash for the same day when it differed: a re-uploaded file."""
+
+    __tablename__ = "dataset_load"
+    __table_args__ = (Index("ix_dataset_load_dataset_day", "dataset", "day"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    dataset: Mapped[str] = mapped_column(String(30))
+    day: Mapped[date] = mapped_column(Date)
+    url: Mapped[str | None] = mapped_column(String(200))
+    sha256: Mapped[str] = mapped_column(String(64))
+    last_modified: Mapped[str | None] = mapped_column(String(40))
+    parser_version: Mapped[str] = mapped_column(String(20))
+    rows: Mapped[int | None] = mapped_column(Integer)
+    prior_sha256: Mapped[str | None] = mapped_column(String(64))
+    loaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
