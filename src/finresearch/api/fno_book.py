@@ -157,20 +157,23 @@ def add_fno_book_routes(app: FastAPI, clock: Callable[[], datetime] | None = Non
     @app.get("/api/fno/paper")
     def fno_paper() -> dict[str, Any]:
         """Every paper trade and the book's results (closed trades, after costs), with the exit rules."""
+        from finresearch.backtest import costs
         from finresearch.db.models import FnoExitRule
-        from finresearch.fnobook.book import DEFAULT_SLIPPAGE_PCT, book_json
+        from finresearch.fnobook.book import book_json
         from finresearch.fnobook.exits import rule_json
 
         with session_scope() as s:
             out = book_json(s, today())
             out["rules"] = [rule_json(r) for r in s.scalars(select(FnoExitRule).order_by(FnoExitRule.id))]
-        out["default_slippage_pct"] = DEFAULT_SLIPPAGE_PCT
+            # #382 (d): the measured median half-spread once enough quotes are recorded, else the assumption
+            out["default_slippage_pct"], out["default_slippage_source"] = costs.paper_default(s, today())
         return out
 
     @app.post("/api/fno/paper", status_code=201)
     async def fno_paper_open(body: PaperIn) -> dict[str, Any]:
         """Paper-trade a strategy from the builder: fills at the live LTP (Groww, else the chain's last price) moved
         by the slippage, with entry charges. Only in market hours. Nothing is sent to a broker."""
+        from finresearch.backtest import costs
         from finresearch.fnobook import book, service
         from finresearch.signals.fno import ExpiredContract, LegIn, check_expiry
         from finresearch.suggest.advisor import load_profile
@@ -193,9 +196,13 @@ def add_fno_book_routes(app: FastAPI, clock: Callable[[], datetime] | None = Non
             )
         except service.OutOfSession as e:
             raise HTTPException(409, str(e)) from e
-        slip = float(body.slippage_pct) if body.slippage_pct is not None else book.DEFAULT_SLIPPAGE_PCT
         legs_in = [LegIn(x.right, float(x.strike), x.side, x.lots) for x in body.legs]
         with session_scope() as s:
+            slip = (
+                float(body.slippage_pct)
+                if body.slippage_pct is not None
+                else costs.paper_default(s, today())[0]
+            )
             brokerage = float(load_profile(s).fno_brokerage_per_order_inr)
             try:
                 st = book.record(s, symbol=sym, expiry=body.expiry, lot=lot, legs_in=legs_in, quotes=quotes,

@@ -3,9 +3,9 @@ checks of the expected session (or, when it is missing, of the last loaded one);
 (one row per dataset, day and check: a re-run replaces it) and one dataset_status row per dataset.
 
 freshness lag = sessions between the last loaded day and the last session whose file should be out (dq.stats). SLAs
-are the issue's (IST): bhavcopy 20:30, participant OI 20:00, index closes 18:30. SPAN and the derived IV ride with the
-bhavcopy (20:30); the forward quotes' last snapshot is 15:25 and the intraday archive runs from 15:45, so 16:00. An
-unknown holiday list leaves freshness unknown (fails closed, like monitor.market_days), never ok.
+are the issue's (IST): bhavcopy 20:30, participant OI (and volume, #371) 20:00, index closes 18:30. SPAN and the
+derived IV ride with the bhavcopy (20:30); the forward quotes' last snapshot is 15:25 and the intraday archive runs
+from 15:45, so 16:00. An unknown holiday list leaves freshness unknown (fails closed, like monitor.market_days), never ok.
 
 dataset status: fail when a critical check failed; warn when any other check failed or warned; unknown when a critical
 check could not be evaluated; else ok. Non-critical unknowns (no lineage for an old load) do not make a dataset
@@ -56,6 +56,14 @@ DATASETS: tuple[Dataset, ...] = (
     ),
     Dataset("fno_iv_eod", time(20, 30), _max(M.FnoIvEod.day, M.FnoIvEod.symbol == "NIFTY"), ref.iv_checks),
     Dataset("fno_participant_oi", time(20, 0), _max(M.FnoParticipantOi.day), ref.participant_checks),
+    # new in #371 and read by nothing yet: shown, never marks a page 'data unverified'
+    Dataset(
+        "fno_participant_vol",
+        time(20, 0),
+        _max(M.FnoParticipantVol.day),
+        ref.participant_vol_checks,
+        critical=False,
+    ),
     Dataset(
         "index_eod", time(18, 30), _max(M.IndexEodDay.day, M.IndexEodDay.status == "loaded"), ref.index_checks
     ),

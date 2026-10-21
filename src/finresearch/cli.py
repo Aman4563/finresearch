@@ -1439,6 +1439,44 @@ def fno_backfill(
     console.print_json(json.dumps({k: v for k, v in res.items() if k != "stocks"}, default=str))
 
 
+@fno_app.command("participants")
+def fno_participants(
+    start: str = typer.Option(
+        ..., "--from", help="First day, YYYY-MM-DD (the archive has files from 2015 on)"
+    ),
+    end: str | None = typer.Option(None, "--to", help="Last day (default today, IST)"),
+    dataset: str = typer.Option("both", help="oi, vol or both"),
+    delay: float = typer.Option(
+        2.0, min=0.0, help="Extra seconds between downloads, on top of the shared NSE limit"
+    ),
+    keep_raw: bool = typer.Option(True, help="Keep each CSV under data/fno_participant/ (~1 KB a file)"),
+) -> None:
+    """Download and store NSE's participant-wise F&O open interest and trading volume (Client/DII/FII/Pro) for
+    [from, to] (#371). Resumable and idempotent: loaded days are skipped and failed days retried, so re-run the same
+    command to continue. Personal use only (#362): stops by itself between 09:00 and 16:00 IST on weekdays, and stops
+    a dataset after two refusals (403/429) or two failures in a row."""
+    from datetime import date as _date
+
+    from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn, TimeRemainingColumn
+
+    from finresearch.adapters import nse_participant_oi as po
+    from finresearch.fnohist import participants
+
+    kinds = {"oi": (po.OI,), "vol": (po.VOL,), "both": po.KINDS}.get(dataset)
+    if kinds is None:
+        raise typer.BadParameter("oi, vol or both", param_hint="--dataset")
+    with Progress(TextColumn("{task.description}"), BarColumn(), MofNCompleteColumn(), TimeRemainingColumn(),
+                  console=console) as bar:  # fmt: skip
+        task = bar.add_task("participants", total=None)
+
+        def progress(i: int, n: int, day, status: str) -> None:
+            bar.update(task, total=n, completed=i, description=f"participants {day} {status}")
+
+        res = asyncio.run(participants.backfill(_date.fromisoformat(start), _date.fromisoformat(end) if end else None,
+                                                kinds=kinds, pause=delay, keep_raw=keep_raw, progress=progress))  # fmt: skip
+    console.print_json(json.dumps(res, default=str))
+
+
 @fno_app.command("derive")
 def fno_derive(
     start: str = typer.Option(..., "--from", help="First day, YYYY-MM-DD"),
@@ -1487,6 +1525,10 @@ def fno_backtest_run(
         None, "--json", help="Also write the full report (every trade) here"
     ),
     store: bool = typer.Option(True, help="Save the report in the app's database (fno_backtest_run)"),
+    fill: str = typer.Option(
+        "same_print",
+        help="same_print (registered) | next_open | next_close: a next-print sensitivity (#382), never a candidate",
+    ),
 ) -> None:
     """Replay the pre-registered strategies (src/finresearch/backtest/specs.py) with real costs and slippage and judge
     them against the pass criteria stated before the out-of-sample run. Refuses out of sample if specs.py changed
@@ -1503,7 +1545,8 @@ def fno_backtest_run(
     stamp = provenance.code_stamp()  # #379: the engine code this run executes, hashed before it runs
     stock = dbhistory.top_stock(h, specs.IS_START, specs.IS_END)
     try:
-        rep = evaluate.evaluate(h, stock=stock, source=make_url(url).database or "?", oos=not in_sample_only)
+        rep = evaluate.evaluate(h, stock=stock, source=make_url(url).database or "?", oos=not in_sample_only,
+                                fill=fill)  # fmt: skip
     except evaluate.PreregistrationError as e:
         console.print(f"[red]{e}[/red]")
         raise typer.Exit(2) from e
@@ -1539,6 +1582,42 @@ def fno_backtest_report(
                 raise typer.Exit(1)
             rep = bstore.run_json(s, run)
     _backtest_table(rep)
+
+
+@backtest_app.command("compare")
+def fno_backtest_compare(
+    same_json: Path = typer.Argument(..., help="A same-print report written by `run --json`"),
+    next_json: Path = typer.Argument(
+        ..., help="A next-print report (`run --fill next_open --json`) of the same data"
+    ),
+) -> None:
+    """Same-print against next-print fills per spec (#382): paired ₹ difference per trade with its expiry-clustered
+    one-sided t, the change in expectancy and in stop count, and the 'execution-sensitive' label (sign flip)."""
+    from finresearch.backtest import compare
+
+    same, nxt = json.loads(same_json.read_text()), json.loads(next_json.read_text())
+    rows = compare.compare_reports(same, nxt)
+    t = Table(title="Same-print vs next-print fills (D = same − next, ₹ per paired trade)")
+    for c in ("strategy", "paired", "₹/trade same", "₹/trade next", "mean D", "t (D)", "p one-sided", "stops",
+              "execution-sensitive"):  # fmt: skip
+        t.add_column(c)
+    for r in rows:
+        if r.get("status") == "not compared":
+            t.add_row(r["key"], "—", "—", "—", "—", "—", "—", "—", r["reason"][:60])
+            continue
+        flag = {True: "yes", False: "no", None: "unknown"}[r["execution_sensitive"]]
+        t.add_row(r["key"], str(r["paired"]), _num(r["expectancy_same"], 0), _num(r["expectancy_next"], 0),
+                  _num(r["mean_d"], 0), _num(r["t_d"]), _num(r["p_one_sided"], 3),
+                  f"{r['stops_same']} → {r['stops_next']}", flag)  # fmt: skip
+    console.print(t)
+    pooled = compare.seller_tests(same, nxt)  # evals/experiments/execution_realism/PREREG.md H1 and H1b
+    for name, key in (
+        ("IV-filtered sellers pooled (H1)", "sellers"),
+        ("top IV third (H1b)", "sellers_top_iv"),
+    ):
+        x = pooled[key]
+        console.print(f"{name}: {x['paired']} pairs on {x['expiries']} expiries, mean D {_num(x['mean_d'], 0)}, "
+                      f"t {_num(x['t_d'])}, one-sided p {_num(x['p_one_sided'], 3)}")  # fmt: skip
 
 
 def _num(v: float | None, d: int = 2) -> str:

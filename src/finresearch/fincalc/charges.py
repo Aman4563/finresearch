@@ -2,7 +2,8 @@
 
 Every rate is a row with the date it applies from, its basis, its source and how sure we are of it:
 - ``verified``: read from a primary source (statute, exchange or regulator);
-- ``secondary``: read from a broker or tax-aggregator page on the stated date, not from the primary circular;
+- ``secondary``: read from a broker or tax-aggregator page on the stated date, or the start date is not from a primary
+  source;
 - ``unconfirmed``: announced but enactment or the start date is not confirmed (docs/dev/RESEARCH_ROADMAP.md §D.5
   marks the Finance Bill 2026 STT rates [U]; Zerodha's charges page applied the same 0.15 % / 0.05 % on 30-Sep-2026),
   or a rate we could not re-read from a source.
@@ -11,15 +12,18 @@ Rates change with budgets and exchange circulars, so callers can override any ke
 the rows it used. Brokerage is not statutory: it is a flat amount per executed order that the user sets in the
 profile (default ₹20, a common discount-broker price).
 
-Sources (fetched 30-Sep-2026):
+Sources:
 - STT from 1-Apr-2026, Finance Bill 2026 memorandum: https://www.indiabudget.gov.in/doc/memo.pdf (roadmap [56]) and
-  ClearTax: https://cleartax.in/s/securities-transaction-tax-stt (roadmap [60]; "the new STT rate for futures as
-  proposed in Budget 2026 is 0.05% which is a 150% increase from the existing 0.02%"; options 0.15 %).
-- Exchange transaction charges, SEBI fee, stamp duty, GST: Zerodha's charges page https://zerodha.com/charges
-  (NSE options 0.03553 % of premium, NSE futures 0.00183 %, SEBI ₹10/crore, stamp 0.003 % / 0.002 % on the buy side,
-  GST 18 % on brokerage + SEBI + transaction charges). A broker page, not the NSE circular, hence ``secondary``;
-  the date each rate started is not verified, so ``effective_from`` is the earliest date we can vouch for.
-- IPFT (₹0.01 per crore) is left out: under a paisa per crore of turnover.
+  ClearTax: https://cleartax.in/s/securities-transaction-tax-stt (roadmap [60]; fetched 30-Sep-2026).
+- 2013 to Sep-2026 (#382 (f), fetched 22-Oct-2026): STT from NSE's FATAX circulars quoting each Finance Act; NSE
+  transaction charges from NSE's FA circulars (each row names its circular); SEBI fee, stamp duty and GST from NSE's
+  levies page and SEBI's press release 24/2020. The Finance Act texts, the stamp-duty gazette notification and the
+  CBIC GST notification themselves were not read (each row's note says so where it matters).
+- Exchange charges before 1-Oct-2024 were slabbed by a member's monthly turnover; the table uses the first slab, the
+  rate a retail broker passes on. From 1-Apr-2023 the exchange rows include NSE's IPFT contribution (Rs 50 per crore
+  of options premium, Rs 10 per crore of futures); before that IPFT was Rs 0.01 per crore and is left out.
+- Before a key's earliest row (pre-2013 STT, pre-2021 exchange charges: the vault years) the earliest row is still
+  used and noted "used for an earlier date"; #365 adds the older rows.
 """
 
 from __future__ import annotations
@@ -34,8 +38,20 @@ Status = Literal["verified", "secondary", "unconfirmed"]
 Side = Literal["buy", "sell"]
 
 BUDGET_2026 = "https://www.indiabudget.gov.in/doc/memo.pdf"
-CLEARTAX_STT = "https://cleartax.in/s/securities-transaction-tax-stt"
 ZERODHA_CHARGES = "https://zerodha.com/charges"
+_NSE = "https://nsearchives.nseindia.com/content/circulars/"
+NSE_STT_2013, NSE_STT_2016, NSE_STT_2019 = (
+    _NSE + "FATAX23500.pdf",
+    _NSE + "FATAX32385.pdf",
+    _NSE + "FATAX41919.pdf",
+)
+NSE_STT_2023 = "https://archives.nseindia.com/content/circulars/FATAX56235.pdf"
+NSE_STT_2024 = _NSE + "FATAX63809.pdf"
+NSE_TX_2021, NSE_TX_2023, NSE_TX_2024 = _NSE + "FA46730.pdf", _NSE + "FA56129.pdf", _NSE + "FA61137.pdf"
+NSE_TX_2024_10 = _NSE + "FA64232.pdf"
+NSE_LEVIES = "https://www.nseindia.com/static/invest/first-time-investor-sebi-turnover-fees-stt-other-levies"
+SEBI_2020 = ("https://www.sebi.gov.in/media/press-releases/apr-2020/"
+             "sebi-reduces-broker-turnover-fees-and-filing-fees-for-issuers_46571.html")  # fmt: skip
 DEFAULT_BROKERAGE_PER_ORDER = Decimal(20)
 CRORE = 10_000_000
 
@@ -62,15 +78,27 @@ def _r(
     return ChargeRate(key, Decimal(pct) / 100, basis, since, source, status, note)
 
 
-_SEEN = "rate as published on 30-Sep-2026; the date it started is not verified"
+_SLAB = ("NSE's first-slab rate (the turnover slab a retail broker's clients pay; lower slabs apply only to a "
+         "member's turnover above it)")  # fmt: skip
+_IPFT = "plus NSE's IPFT contribution (Rs 50/crore of options premium, Rs 10/crore of futures, FA/56129)"
 # the table: several rows per key, the latest one on or before the trade date applies
 RATES: tuple[ChargeRate, ...] = (
-    _r("stt_option_sell", "0.1", "option premium, sell side", date(2024, 10, 1), CLEARTAX_STT, "unconfirmed",
-       "Finance (No. 2) Act 2024 rate; not re-read from the Act (ClearTax no longer lists it)"),
-    _r("stt_option_exercise", "0.125", "intrinsic value of long options exercised at expiry", date(2024, 10, 1),
-       CLEARTAX_STT, "unconfirmed", "Finance (No. 2) Act 2024 rate; not re-read from the Act"),
-    _r("stt_futures_sell", "0.02", "futures turnover, sell side", date(2024, 10, 1), CLEARTAX_STT, "secondary",
-       "Finance (No. 2) Act 2024 rate (\"the existing 0.02%\")"),
+    # STT (Securities Transaction Tax), from NSE's circulars quoting each Finance Act (fetched 22-Oct-2026)
+    _r("stt_option_sell", "0.05", "option premium, sell side", date(2016, 6, 1), NSE_STT_2016, "verified",
+       "Finance Act 2016: 0.017 % -> 0.05 % from 1-Jun-2016 (NSE/FATAX/32385)"),
+    _r("stt_option_sell", "0.0625", "option premium, sell side", date(2023, 4, 1), NSE_STT_2023, "verified",
+       "Finance Act 2023 (No. 8 of 2023): 0.05 % -> 0.0625 % from 1-Apr-2023 (NSE/FATAX/56235)"),
+    _r("stt_option_sell", "0.1", "option premium, sell side", date(2024, 10, 1), NSE_STT_2024, "verified",
+       "Finance (No. 2) Act 2024: 0.0625 % -> 0.10 % from 1-Oct-2024 (NSE/FATAX/63809)"),
+    _r("stt_option_exercise", "0.125", "intrinsic value of long options exercised at expiry", date(2019, 9, 1),
+       NSE_STT_2019, "verified", "on the intrinsic value instead of the settlement price from 1-Sep-2019 "
+       "(Finance (No. 2) Act 2019, NSE/FATAX/41919); unchanged by the 2023 and 2024 Acts (NSE/FATAX/56235, 63809)"),
+    _r("stt_futures_sell", "0.01", "futures turnover, sell side", date(2013, 6, 1), NSE_STT_2013, "verified",
+       "0.017 % -> 0.01 % from 1-Jun-2013 (NSE/FATAX/23500)"),
+    _r("stt_futures_sell", "0.0125", "futures turnover, sell side", date(2023, 4, 1), NSE_STT_2023, "verified",
+       "Finance Act 2023: 0.01 % -> 0.0125 % from 1-Apr-2023 (NSE/FATAX/56235)"),
+    _r("stt_futures_sell", "0.02", "futures turnover, sell side", date(2024, 10, 1), NSE_STT_2024, "verified",
+       "Finance (No. 2) Act 2024: 0.0125 % -> 0.02 % from 1-Oct-2024 (NSE/FATAX/63809)"),
     _r("stt_option_sell", "0.15", "option premium, sell side", date(2026, 4, 1), BUDGET_2026, "unconfirmed",
        "Finance Bill 2026 memo p.62-63 (re-read 1-Oct-2026: 0.1 % -> 0.15 % of premium, for options entered into on "
        "or after 1-Apr-2026); enactment of the Finance Act 2026 not confirmed (roadmap §D.5)"),
@@ -79,18 +107,36 @@ RATES: tuple[ChargeRate, ...] = (
        "enactment not confirmed"),
     _r("stt_futures_sell", "0.05", "futures turnover, sell side", date(2026, 4, 1), BUDGET_2026, "unconfirmed",
        "Finance Bill 2026 memo p.62-63: 0.02 % -> 0.05 % of the traded price; enactment not confirmed"),
-    _r("exchange_option", "0.03553", "option premium, both sides (NSE)", date(2026, 9, 30), ZERODHA_CHARGES,
-       "secondary", _SEEN),
-    _r("exchange_futures", "0.00183", "futures turnover, both sides (NSE)", date(2026, 9, 30), ZERODHA_CHARGES,
-       "secondary", _SEEN),
-    _r("sebi_fee", "0.0001", "turnover, both sides (₹10 per crore)", date(2026, 9, 30), ZERODHA_CHARGES,
-       "secondary", _SEEN),
-    _r("stamp_option_buy", "0.003", "option premium, buy side", date(2026, 9, 30), ZERODHA_CHARGES, "secondary",
-       _SEEN),
-    _r("stamp_futures_buy", "0.002", "futures turnover, buy side", date(2026, 9, 30), ZERODHA_CHARGES,
-       "secondary", _SEEN),
-    _r("gst", "18", "brokerage + exchange charges + SEBI fee", date(2026, 9, 30), ZERODHA_CHARGES, "secondary",
-       _SEEN),
+    # NSE transaction charges, each side; IPFT included from 1-Apr-2023 (Rs 0.01/crore before: negligible)
+    _r("exchange_option", "0.053", "option premium, both sides (NSE)", date(2021, 1, 1), NSE_TX_2021, "verified",
+       f"Rs 53.00 per lakh of premium from 1-Jan-2021 (NSE/FA/46730); {_SLAB}"),
+    _r("exchange_option", "0.0505", "option premium, both sides (NSE)", date(2023, 4, 1), NSE_TX_2023, "verified",
+       f"Rs 50.00 per lakh from 1-Apr-2023 (NSE/FA/56129) {_IPFT}; {_SLAB}"),
+    _r("exchange_option", "0.05", "option premium, both sides (NSE)", date(2024, 4, 1), NSE_TX_2024, "verified",
+       f"Rs 49.50 per lakh from 1-Apr-2024 (NSE/FA/61137) {_IPFT}; {_SLAB}"),
+    _r("exchange_option", "0.03553", "option premium, both sides (NSE)", date(2024, 10, 1), NSE_TX_2024_10,
+       "verified", f"Rs 35.03 per lakh, flat, from 1-Oct-2024 (NSE/FA/64232, SEBI 'true to label' circular "
+       f"SEBI/HO/MRD/TPD-1/P/CIR/2024/92) {_IPFT}; the same total since 1-Mar-2026 (NSE/FA/73061)"),
+    _r("exchange_futures", "0.002", "futures turnover, both sides (NSE)", date(2021, 1, 1), NSE_TX_2021,
+       "verified", f"Rs 2.00 per lakh from 1-Jan-2021 (NSE/FA/46730); {_SLAB}"),
+    _r("exchange_futures", "0.0020", "futures turnover, both sides (NSE)", date(2023, 4, 1), NSE_TX_2023,
+       "verified", f"Rs 1.90 per lakh from 1-Apr-2023 (NSE/FA/56129) {_IPFT}; {_SLAB}"),
+    _r("exchange_futures", "0.00198", "futures turnover, both sides (NSE)", date(2024, 4, 1), NSE_TX_2024,
+       "verified", f"Rs 1.88 per lakh from 1-Apr-2024 (NSE/FA/61137) {_IPFT}; {_SLAB}"),
+    _r("exchange_futures", "0.00183", "futures turnover, both sides (NSE)", date(2024, 10, 1), NSE_TX_2024_10,
+       "verified", f"Rs 1.73 per lakh, flat, from 1-Oct-2024 (NSE/FA/64232) {_IPFT}"),
+    # SEBI turnover fee: Rs 10/crore; halved June 2020 to March 2021 (SEBI PR 24/2020), so dated from April 2021
+    _r("sebi_fee", "0.0001", "turnover, both sides (₹10 per crore)", date(2021, 4, 1), NSE_LEVIES, "verified",
+       f"Rs 10 per crore (NSE's levies page; SEBI board memo Jul-2020); 50 % off June 2020 to March 2021 ({SEBI_2020}); "
+       "the date it first applied is not verified"),
+    _r("stamp_option_buy", "0.003", "option premium, buy side", date(2020, 7, 1), NSE_LEVIES, "verified",
+       "Indian Stamp Act as amended by the Finance Act 2019, uniform from 1-Jul-2020 (NSE's levies page; the "
+       "gazette notification not read)"),
+    _r("stamp_futures_buy", "0.002", "futures turnover, buy side", date(2020, 7, 1), NSE_LEVIES, "verified",
+       "Indian Stamp Act as amended by the Finance Act 2019, uniform from 1-Jul-2020 (NSE's levies page)"),
+    _r("gst", "18", "brokerage + exchange charges + SEBI fee", date(2017, 7, 1), NSE_LEVIES, "secondary",
+       "18 % on stock brokers' services (NSE's levies page); 1-Jul-2017 is GST's start, the CBIC rate notification "
+       "was not read"),
 )  # fmt: skip
 KEYS = tuple(dict.fromkeys(r.key for r in RATES))
 

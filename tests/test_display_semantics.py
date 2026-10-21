@@ -22,7 +22,7 @@ def clean(env):
 
     def wipe():
         with session_scope() as s:
-            s.execute(text("TRUNCATE fno_bhav, fno_bhav_day, fno_iv_eod, fno_contract, fno_participant_oi, "
+            s.execute(text("TRUNCATE fno_bhav, fno_bhav_day, fno_iv_eod, fno_contract, fno_participant_oi, fno_participant_vol, fno_participant_day, "
                            "iv_history"))  # fmt: skip
 
     wipe()
@@ -359,8 +359,10 @@ async def test_participant_update_follows_the_bhavcopy_manifest(clean):
     async with PoliteClient(cache_dir=None, sleep=no_sleep, clock=lambda: 0.0, max_retries=0) as http:
         res = await participants.update(date(2026, 10, 9), http=http, lookback=6)
     # 3-Oct (traded, a Saturday) is fetched; 6-Oct (the manifest's holiday) and the Sunday are not
-    assert sorted(asked) == ["03102026", "05102026", "07102026", "08102026", "09102026"]
-    assert res["planned"] == 5
+    # (#371: each day twice, the OI file and the trading-volume file)
+    days = ["03102026", "05102026", "07102026", "08102026", "09102026"]
+    assert sorted(asked) == sorted(days * 2)
+    assert res["planned"] == 10
 
 
 # ------------------------------------------------------------------------- (a) open interest excludes expiring OI
