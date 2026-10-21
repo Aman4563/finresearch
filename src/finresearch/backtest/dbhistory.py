@@ -100,7 +100,8 @@ class DbHistory:
 
     def day(self, symbol: str, d: date) -> Day | None:
         cols = (FnoBhav.instrument, FnoBhav.expiry, FnoBhav.strike, FnoBhav.option_type, FnoBhav.close,
-                FnoBhav.settle, FnoBhav.contracts, FnoBhav.oi, FnoBhav.underlying, FnoBhav.lot_size)  # fmt: skip
+                FnoBhav.settle, FnoBhav.contracts, FnoBhav.oi, FnoBhav.underlying, FnoBhav.lot_size, FnoBhav.open,
+                FnoBhav.high, FnoBhav.low)  # fmt: skip
         with self._s() as s:
             rows = s.execute(select(*cols).where(FnoBhav.symbol == symbol, FnoBhav.day == d,
                                                  FnoBhav.expiry <= d + timedelta(days=75))).all()  # fmt: skip
@@ -113,15 +114,18 @@ class DbHistory:
         if d <= VAULT_END:
             self._vault_check(d)
         out = Day(d, symbol)
-        for kind, exp, k, right, close, settle, n, oi, und, lot in rows:
+        for kind, exp, k, right, close, settle, n, oi, und, lot, o, hi, lo in rows:
             if und is not None:
                 out.spot = float(und)
             if kind in ("IDF", "STF"):
                 if settle is not None and settle > 0:
                     out.futures[exp] = float(settle)
             elif right in RIGHTS and within(d, exp):
+                ohl = (
+                    (_px(o), _px(hi), _px(lo)) if n and close else (None, None, None)
+                )  # untraded: no trade prices
                 q = Quote(exp, RIGHTS[right], float(k), None if close is None else float(close),
-                          None if settle is None else float(settle), int(n or 0), int(oi or 0), lot)  # fmt: skip
+                          None if settle is None else float(settle), int(n or 0), int(oi or 0), lot, *ohl)  # fmt: skip
                 out.options[(exp, q.right, q.strike)] = q
                 if lot:
                     self._row_lots[(symbol, exp, d)] = int(lot)
@@ -157,6 +161,10 @@ class DbHistory:
             live = [int(x) for day, x in changes if date.fromisoformat(day) <= d]
             return live[-1] if live else int(changes[0][1])
         return lot
+
+
+def _px(v: Any) -> float | None:
+    return float(v) if v is not None and v > 0 else None
 
 
 def computed_iv30(x: Day) -> float | None:

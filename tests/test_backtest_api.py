@@ -33,7 +33,8 @@ def store_days(days) -> None:
     for x in days:
         for (e, right, k), q in x.options.items():
             rows.append(dict(day=x.day, symbol=x.symbol, instrument="IDO", expiry=e, strike=k,
-                             option_type="CE" if right == "call" else "PE", close=q.close, settle=q.settle,
+                             option_type="CE" if right == "call" else "PE", open=q.open, high=q.high, low=q.low,
+                             close=q.close, settle=q.settle,
                              oi=q.oi, contracts=q.contracts, underlying=x.spot, lot_size=q.lot))  # fmt: skip
         for e, f in x.futures.items():
             rows.append(dict(day=x.day, symbol=x.symbol, instrument="IDF", expiry=e, strike=0, option_type="XX",
@@ -48,7 +49,10 @@ def test_db_history_reads_what_was_stored_read_only(bt_db):
     from finresearch.backtest.dbhistory import DbHistory
     from finresearch.db.models import FnoBhav
 
-    mem = fs.history(date(2025, 3, 3), date(2025, 3, 7))
+    px = fs.path(date(2025, 3, 3), date(2025, 3, 7))
+    mem = fs.history(
+        date(2025, 3, 3), date(2025, 3, 7), prices=px, opens={d: s * 1.01 for d, s in px.items()}
+    )
     store_days(mem.days["NIFTY"].values())
     h = DbHistory()
     assert h.sessions("NIFTY", date(2025, 3, 1), date(2025, 3, 31)) == sorted(mem.days["NIFTY"])
@@ -63,6 +67,10 @@ def test_db_history_reads_what_was_stored_read_only(bt_db):
         got.iv30 is not None and abs(got.iv30 - 15.0) < 0.2
     )  # no derived series: computed from the day itself
     assert h.lot("NIFTY", date(2025, 3, 27), d) == 50
+    q = next(
+        q for q in got.options.values() if q.open is not None
+    )  # #382: the day's open, high and low are read
+    assert q.high == max(q.open, q.close) and q.low == min(q.open, q.close)
     with pytest.raises(InternalError), h._s() as s:  # every session is READ ONLY
         s.execute(
             insert(FnoBhav).values(day=d, symbol="X", instrument="IDF", expiry=d, strike=0, option_type="XX")
@@ -113,3 +121,30 @@ def test_no_run_saved_yet(bt_db):
     with TestClient(create_app()) as c:
         body = c.get("/api/fno/backtests").json()
     assert body["run"] is None and body["registration"]["variants_tried"] == 8
+
+
+def test_a_next_print_run_is_a_sensitivity_never_the_evidence(bt_db):
+    """#382: a next-print report never makes a candidate, and the latest-run reader (trade-plan cards, the Strategy
+    Lab, the backtests page) keeps reading the newest same-print run even when a next-print run is newer."""
+    from finresearch.backtest import compare, evaluate
+    from finresearch.backtest import store as bstore
+    from finresearch.db import session_scope
+
+    mem = fs.history(date(2023, 6, 1), date(2025, 1, 31))
+    same = json.loads(json.dumps(evaluate.evaluate(mem, stock=None, source="synthetic"), default=str))
+    nxt = json.loads(
+        json.dumps(evaluate.evaluate(mem, stock=None, source="synthetic", fill="next_close"), default=str)
+    )
+    assert same["fill"] == "same_print" and nxt["fill"] == "next_close"
+    assert {r["status"] for r in nxt["strategies"]} <= {"sensitivity", "no_data", "overlay_reported"}
+    assert all(t["fill"] == "next_close" for r in nxt["strategies"] for t in r.get("trades", []))
+    rows = {r["key"]: r for r in compare.compare_reports(same, nxt)}
+    assert (
+        rows["nifty_dcs_m"]["paired"] == rows["nifty_dcs_m"]["trades_same"] > 0
+    )  # flat IV: sellers never enter
+    assert rows["stock_cc_m"]["status"] == "not compared"
+    with session_scope() as s:
+        same_id = bstore.save(s, same)
+        bstore.save(s, nxt)
+    with session_scope() as s:
+        assert bstore.latest_run(s).id == same_id

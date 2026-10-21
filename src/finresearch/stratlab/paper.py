@@ -25,7 +25,7 @@ from typing import Any
 
 from sqlalchemy import select
 
-from finresearch.backtest import engine
+from finresearch.backtest import costs, engine
 from finresearch.backtest.history import Clocked
 from finresearch.backtest.specs import IV_WARMUP_DAYS
 from finresearch.db import session_scope
@@ -238,7 +238,7 @@ async def fill_step(now: datetime, *, market: Any = None, sources: Any = None) -
             try:
                 st = book.record(s, symbol=sym, expiry=exp, lot=lot, quotes=quotes,
                                  legs_in=[LegIn(x["right"], float(x["strike"]), x["side"], lots) for x in legs],
-                                 slippage_pct=book.DEFAULT_SLIPPAGE_PCT,
+                                 slippage_pct=costs.paper_default(s, to_ist(now).date())[0],
                                  brokerage=float(load_profile(s).fno_brokerage_per_order_inr), now=now,
                                  spot=float(chain.underlying) if chain is not None and chain.underlying else None,
                                  label=_label(s, rid, day))  # fmt: skip
