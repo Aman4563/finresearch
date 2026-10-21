@@ -80,6 +80,9 @@ def load_day(s: Session, day: date, url: str, content: bytes) -> int:
     if seen:
         s.execute(insert(IndexEod), [{c: getattr(r, c) for c in COLUMNS} for r in seen.values()])
     _manifest(s, day, status="loaded", url=url, rows=len(seen), error=None)
+    from finresearch.dq.lineage import record_load
+
+    record_load(s, "index_eod", day, content, url=url, parser_version=ie.PARSER_VERSION, rows=len(seen))
     return len(seen)
 
 

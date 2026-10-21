@@ -77,15 +77,20 @@ def add_fno_direction_routes(
         st = await asyncio.to_thread(
             state, sym
         )  # a few seconds of history on a cold cache: off the event loop
+        from finresearch.dq import gate
+
         with session_scope() as s:
             accuracy = live.live_accuracy(s, sym)
+            # #368: the datasets these probabilities read; a failed critical check shows them 'data unverified'
+            data_health = gate.health(s, gate.DEPENDENTS["F&O direction model"])
         acc_h = [
             x["h"] for x in st["horizons"] if any(v["status"] == "accepted" for v in x["events"].values())
         ]
         h = horizon or (acc_h[0] if acc_h else specs.PRIMARY[1])
         out: dict[str, Any] = {**st, "live_accuracy": accuracy, "decision_horizon": h,
                                "registration": {k: v for k, v in registration().items() if k != "spec"},
-                               "risk_notice": fs.risk_notice(), "evidence_note": EVIDENCE_NOTE}  # fmt: skip
+                               "risk_notice": fs.risk_notice(), "evidence_note": EVIDENCE_NOTE,
+                               "data_health": data_health}  # fmt: skip
         out["decision"] = await _decision(sym, st, h) if decide else None
         return out
 
