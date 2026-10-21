@@ -357,10 +357,14 @@ SCENARIOS = (
     Scenario("covid2020", "COVID-19 fall, 2020", (date(2020, 1, 1), date(2020, 4, 30)), True,
              "Peak and trough found in NIFTYBEES closes inside Jan-Apr 2020; each holding's own move between those "
              "two days where it has prices."),
-    Scenario("gfc2008", "Global financial crisis, 2008-09", (date(2008, 1, 1), date(2009, 3, 31)), False,
+    # #423: relabelled, not retired. The historical replay (#345, portfolio.stress_replay) covers Sep-Nov 2008 only;
+    # this keeps the whole Jan-2008 to Mar-2009 fall, as an equity-only proxy.
+    Scenario("gfc2008", "Global financial crisis, 2008-09 (equity only, NIFTYBEES proxy)",
+             (date(2008, 1, 1), date(2009, 3, 31)), False,
              "Per-holding prices for 2008 are not fetched (most of today's holdings have no price series that far "
-             "back, and many did not exist), so equity holdings are shown at NIFTYBEES's own fall and other holdings "
-             "at 0 %. Debt and gold did not behave like that in 2008: read it as an equity-only shock."),
+             "back, and many did not exist), so equity holdings are shown at NIFTYBEES's own peak-to-trough fall and "
+             "every other holding is unmapped: listed with its value, left out of the figure, never counted as a "
+             "flat move. The historical stress replay below replays Sep-Nov 2008 holding by holding."),
     Scenario("corr2024", "2024-25 correction", (date(2024, 9, 1), date(2025, 3, 31)), True,
              "Peak and trough found in NIFTYBEES closes inside Sep-2024 to Mar-2025; small and mid caps fell more "
              "than the Nifty 50 in this episode, which each holding's own move captures."),
@@ -388,9 +392,8 @@ def scenario_result(sc: Scenario, bench_closes: dict[date, float], divs: dict[da
     dd = max_drawdown(tr)
     peak, trough = bd[dd.peak_index], bd[dd.trough_index]
     bmove = float(dd.max_drawdown)
-    rows, total, loss = [], 0.0, 0.0
+    rows = []
     for p in positions:
-        total += p.value
         r, how = None, None
         c = own.get(p.key) or {}
         if sc.per_holding and c:
@@ -400,48 +403,69 @@ def scenario_result(sc: Scenario, bench_closes: dict[date, float], divs: dict[da
         if r is None:
             if p.tax_class == "equity":
                 r, how = bmove, f"proxy: {BENCHMARK} move"
-            else:
-                r, how = 0.0, "not modelled (0 %)"
-        loss += p.value * r
-        rows.append({"key": p.key, "name": p.name, "move": _r(r, 4), "inr": _r(p.value * r, 0), "how": how})
+            else:  # #423: unknown, never a 0 % move
+                how = "unmapped: no own prices for the window and not equity, so no index proxy"
+        rows.append(_move_row(p, r, how))
     return {**base_out, "available": True, "peak": peak.isoformat(), "trough": trough.isoformat(),
-            "benchmark_move": _r(bmove, 4), "portfolio_move": _r(loss / total, 4) if total else None,
-            "inr": _r(loss, 0), "positions": sorted(rows, key=lambda x: x["inr"] or 0)}  # fmt: skip
+            "benchmark_move": _r(bmove, 4), **_totals(rows)}  # fmt: skip
 
 
-def hypothetical_fall(h: History, fall: float = HYPOTHETICAL_FALL) -> dict[str, Any]:
-    """Nifty 50 falls `fall`: each holding moves by its own 1-year beta to NIFTYBEES × the fall."""
-    out = {"id": "beta20", "label": f"Nifty 50 falls {abs(fall):.0%} (hypothetical)",
+def _move_row(p: Any, r: float | None, how: str, **extra: Any) -> dict[str, Any]:
+    return {"key": p.key, "name": p.name, "value": _r(p.value, 0), "move": _r(r, 4),
+            "inr": _r(p.value * r, 0) if r is not None else None, "how": how, **extra}  # fmt: skip
+
+
+def _totals(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """The scenario's move on the holdings that could be mapped; unmapped ones are counted apart (#423), as
+    portfolio.stress_replay does, so an unknown move never dilutes the figure as if it were 0 %."""
+    mapped = sum(x["value"] or 0 for x in rows if x["move"] is not None)
+    unmapped = sum(x["value"] or 0 for x in rows if x["move"] is None)
+    loss = sum(x["inr"] or 0 for x in rows if x["move"] is not None)
+    whole = mapped + unmapped
+    return {"portfolio_move": _r(loss / mapped, 4) if mapped else None, "inr": _r(loss, 0) if mapped else None,
+            "mapped_value": _r(mapped, 0), "unmapped_value": _r(unmapped, 0),
+            "mapped_share": _r(mapped / whole, 4) if whole else None,
+            "positions": sorted(rows, key=lambda x: (x["move"] is None, x["inr"] or 0))}  # fmt: skip
+
+
+def hypothetical_fall(
+    h: History, fall: float = HYPOTHETICAL_FALL, *, assume_beta1: bool = False
+) -> dict[str, Any]:
+    """Nifty 50 falls `fall`: each holding moves by its own 1-year beta to NIFTYBEES × the fall. A holding without
+    MIN_BETA days is unmapped; `assume_beta1` (the user's option, #423) gives short-history equity a labelled beta 1."""
+    out = {"id": "beta20", "label": f"Nifty 50 falls {abs(fall):.0%} (hypothetical)", "assume_beta1": assume_beta1,
            "note": "Each holding moves by its own 1-year beta to NIFTYBEES times the fall. Betas tend to rise in "
-                   "crashes, so this can understate a real fall [K]."}  # fmt: skip
+                   "crashes, so this can understate a real fall [K]. A holding with under "
+                   f"{MIN_BETA} days of prices has no beta: it is unmapped unless you choose to assume beta 1 for "
+                   "short-history equity."}  # fmt: skip
     b = h.benchmark
     if b is None or not h.positions:
         return {**out, "available": False, "reason": f"{BENCHMARK} history unavailable"}
     since = h.days[-1] - timedelta(days=365)
     bret = {d: r for d, r in returns_of(b.closes, b.factors).items() if d > since}
-    rows, total, loss = [], 0.0, 0.0
+    rows = []
     for p in h.positions:
         pr = {d: r for d, r in returns_of(h.closes.get(p.key, {}), h.factors.get(p.key)).items() if d > since}
         common = sorted(set(pr) & set(bret))
-        total += p.value
         if len(common) >= MIN_BETA:
             beta = am.beta([pr[d] for d in common], [bret[d] for d in common])
-            how = f"beta {beta:.2f} ({len(common)} days)"
-        else:
-            beta, how = (
-                (1.0, "beta 1 assumed (short history)")
-                if p.tax_class == "equity"
-                else (0.0, "not modelled (0 %)")
+            rows.append(_move_row(p, beta * fall, f"beta {beta:.2f} ({len(common)} days)", assumed=False))
+        elif p.tax_class == "equity" and assume_beta1:
+            rows.append(
+                _move_row(
+                    p, fall, f"beta 1 assumed (your option; {len(common)} days of prices)", assumed=True
+                )
             )
-        r = beta * fall
-        loss += p.value * r
-        rows.append({"key": p.key, "name": p.name, "move": _r(r, 4), "inr": _r(p.value * r, 0), "how": how})
-    return {**out, "available": True, "benchmark_move": fall, "portfolio_move": _r(loss / total, 4) if total else None,
-            "inr": _r(loss, 0), "positions": sorted(rows, key=lambda x: x["inr"] or 0)}  # fmt: skip
+        else:
+            why = f"only {len(common)} days of prices, needs {MIN_BETA} for a beta"
+            rows.append(_move_row(p, None, f"unmapped: {why}" + ("" if p.tax_class == "equity" else "; not equity"),
+                                  assumed=False))  # fmt: skip
+    return {**out, "available": True, "benchmark_move": fall, **_totals(rows)}
 
 
 async def stress_scenarios(h: History, fetch: Any, store: PriceStore, today: date) -> list[dict[str, Any]]:
-    """The stored episodes plus the beta-scaled hypothetical. Per-holding windows are fetched once and cached for
+    """The stored episodes (the beta-scaled hypothetical is added per request by the route: it depends on the
+    user's beta-1 option and needs no fetch). Per-holding windows are fetched once and cached for
     good (past prices do not change)."""
     if not h.ok or not h.positions:
         return []
@@ -471,7 +495,6 @@ async def stress_scenarios(h: History, fetch: Any, store: PriceStore, today: dat
                 except Exception:
                     own[p.key] = {}
         out.append(scenario_result(sc, bc, divs, factors, h.positions, own))
-    out.append(hypothetical_fall(h))
     return out
 
 
