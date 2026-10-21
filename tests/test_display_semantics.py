@@ -8,6 +8,7 @@ import math
 from datetime import date, timedelta
 
 import pytest
+import respx
 from sqlalchemy import text
 
 from finresearch.fincalc import fno_history as fh
@@ -314,3 +315,44 @@ def test_iv_rank_factor_says_it_ranks_a_previous_close(env):
         and "30-day IV" in f.explanation
         and "2026-09-28" in f.explanation
     )
+
+
+# ----------------------------------------------------------------- (h) the hash checks the spec, not the engine code
+def test_registration_says_matches_spec_not_matches_code():
+    from finresearch.api import fno_backtests, fno_direction
+
+    for reg in (fno_direction.registration(), fno_backtests.registration()):
+        assert reg["matches_spec"] is True
+        # the hash covers the registered spec's parameters only, not the engine that runs them (roadmap P2.4)
+        assert "spec parameters only" in reg["hash_covers"] and "engine" in reg["hash_covers"]
+
+
+# --------------------------------------------------- (i) participant files follow the bhavcopy manifest's sessions
+@respx.mock
+async def test_participant_update_follows_the_bhavcopy_manifest(clean):
+    import httpx
+
+    from finresearch.adapters.http import PoliteClient
+    from finresearch.db import session_scope
+    from finresearch.db.models import FnoBhavDay
+    from finresearch.fnohist import participants
+
+    with session_scope() as s:
+        s.add(FnoBhavDay(day=date(2026, 10, 3), status="loaded"))  # a Saturday special session
+        s.add(FnoBhavDay(day=date(2026, 10, 6), status="no_file"))  # a weekday holiday: no bhavcopy, no file
+    asked: list[str] = []
+
+    def answer(request):
+        asked.append(request.url.path.rsplit("_", 1)[-1][:8])
+        return httpx.Response(404)
+
+    respx.get(url__startswith="https://nsearchives.nseindia.com/").mock(side_effect=answer)
+
+    async def no_sleep(_s: float) -> None:
+        return None
+
+    async with PoliteClient(cache_dir=None, sleep=no_sleep, clock=lambda: 0.0, max_retries=0) as http:
+        res = await participants.update(date(2026, 10, 9), http=http, lookback=6)
+    # 3-Oct (traded, a Saturday) is fetched; 6-Oct (the manifest's holiday) and the Sunday are not
+    assert sorted(asked) == ["03102026", "05102026", "07102026", "08102026", "09102026"]
+    assert res["planned"] == 5
