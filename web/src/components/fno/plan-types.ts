@@ -37,6 +37,8 @@ export type TradePlan = {
   entry?: { legs: EntryLeg[]; status: "ok" | "unknown"; net_mid: number | null; net_fill_now: number | null; notes: string[]; levels_priced_at: string;
     /** "bid/ask: NSE chain at HH:MM" (#324: NSE's chain when the plan's has no bid/ask), or "unknown" */
     source?: string; slippage_inr?: number | null };
+  /** #351: "zero_bounded" = a finite max loss only because a price cannot fall below zero (not defined risk) */
+  risk_shape?: "defined" | "zero_bounded" | "unlimited";
   max_profit?: number | null; max_loss?: number | null; breakevens?: number[]; net_premium?: number; costs?: number | null;
   probability?: { real_world: number | null; real_world_window: string | null; risk_neutral: number | null; note: string };
   exits?: {
