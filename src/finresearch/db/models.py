@@ -1554,3 +1554,40 @@ class OptionQuote(Base):
     depth_ask: Mapped[list[int] | None] = mapped_column(ARRAY(Integer))
 
     __table_args__ = (PrimaryKeyConstraint("snapshot_at", "underlying", "expiry", "strike", "option_type"),)
+
+
+class IndexEod(Base):
+    """One index's end-of-day row from NSE's daily index close file (#366, adapters.nse_index_eod): OHLC, P/E, P/B,
+    dividend yield (percent) and India VIX. `symbol` is the F&O ticker for an F&O underlying (NIFTY, BANKNIFTY, ...)
+    and the upper-cased index name otherwise ("INDIA VIX"); `index_name` is the name as printed that day (CNX Nifty
+    before the 2015 rebrand). A value the file marks '-' is NULL (unknown), never 0."""
+
+    __tablename__ = "index_eod"
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(80), primary_key=True)
+    index_name: Mapped[str] = mapped_column(String(120))
+    open: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    high: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    low: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    close: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    points_change: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    pct_change: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
+    volume: Mapped[int | None] = mapped_column(BigInteger)
+    turnover_cr: Mapped[Decimal | None] = mapped_column(Numeric(16, 2))
+    pe: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    pb: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    div_yield: Mapped[Decimal | None] = mapped_column(Numeric(8, 2))
+
+
+class IndexEodDay(Base):
+    """The index close backfill manifest (#366): one row per calendar day tried. status loaded / no_file (404: a
+    holiday, a weekend or not yet published) / failed. Resume skips loaded days and old no_file days."""
+
+    __tablename__ = "index_eod_day"
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    status: Mapped[str] = mapped_column(String(10))
+    url: Mapped[str | None] = mapped_column(String(200))
+    rows: Mapped[int | None] = mapped_column(Integer)
+    attempts: Mapped[int] = mapped_column(Integer, default=1)
+    error: Mapped[str | None] = mapped_column(String(300))
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

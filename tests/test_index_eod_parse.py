@@ -62,7 +62,7 @@ def test_a_file_for_another_day_is_refused():
 
 def test_a_block_page_is_not_a_file():
     with pytest.raises(NseError, match="not an NSE index close file"):
-        ie.parse("<!DOCTYPE html>\n<html lang=\"en\">", date(2008, 10, 10))
+        ie.parse('<!DOCTYPE html>\n<html lang="en">', date(2008, 10, 10))
 
 
 async def _no_sleep(_s: float) -> None:
