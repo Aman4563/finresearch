@@ -1363,16 +1363,22 @@ def fno_backtest_run(
     from finresearch.backtest import dbhistory, evaluate, specs
     from finresearch.backtest import store as bstore
     from finresearch.db import session_scope
+    from finresearch.inventory import provenance
 
     url = history_url or get_settings().database_url
     h = dbhistory.DbHistory(history_url)
+    stamp = provenance.code_stamp()  # #379: the engine code this run executes, hashed before it runs
     stock = dbhistory.top_stock(h, specs.IS_START, specs.IS_END)
     try:
         rep = evaluate.evaluate(h, stock=stock, source=make_url(url).database or "?", oos=not in_sample_only)
     except evaluate.PreregistrationError as e:
         console.print(f"[red]{e}[/red]")
         raise typer.Exit(2) from e
-    rep = json.loads(json.dumps(rep, default=str))
+    with session_scope(
+        history_url
+    ) as s:  # #379: the bhavcopy manifest the replay read (store.save keeps both in detail)
+        stamp |= provenance.data_hash(s, specs.IS_START, specs.IS_END if in_sample_only else None)
+    rep = json.loads(json.dumps({**rep, **stamp}, default=str))
     if json_out:
         json_out.write_text(json.dumps(rep, indent=1))
         console.print(f"report: {json_out}")
