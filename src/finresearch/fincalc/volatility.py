@@ -6,6 +6,10 @@
 - IV percentile  IVP = share of the last 252 recorded days with IV below today's.
   Both need a stored daily series; below MIN_DAYS observations they are not computed and the caller says
   "insufficient history (n days)". About a year of history is needed before IVR is meaningful (roadmap item 18).
+- Over sessions (`iv_stats_sessions`, #354 b): W_t = the last 252 sessions to t (one point per session, None where the
+  IV is missing), used only when n_obs / 252 ≥ MIN_COVERAGE; IVR = (IV_t − min_W) / (max_W − min_W),
+  IVP = #{s in W_t: IV_s < IV_t} / (n_obs − 1). `iv_stats` ranks the last 252 non-null values instead, which for a
+  sparse series (FINNIFTY's 30-day IV exists on 213 of 1,175 days) spans 3-5 years while reading "one year".
 - Skew: 25-delta put IV − 25-delta call IV, in volatility points, from one chain. Each strike's delta comes from
   Black–Scholes with that strike's own IV; the IV at |Δ| = 0.25 is interpolated linearly in delta.
 """
@@ -13,6 +17,7 @@
 from __future__ import annotations
 
 import itertools
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -20,6 +25,7 @@ from finresearch.fincalc.options import greeks
 
 MIN_DAYS = 60
 WINDOW = 252
+MIN_COVERAGE = 0.8  # share of the window's sessions that must carry an IV (#354 b)
 
 
 @dataclass(frozen=True)
@@ -90,5 +96,25 @@ def iv_stats(series: Sequence[float], window: int = WINDOW, min_days: int = MIN_
                        f"insufficient history ({n} day{'s' if n != 1 else ''}; needs {min_days})")  # fmt: skip
     lo, hi = min(s), max(s)
     rank = (cur - lo) / (hi - lo) if hi > lo else 0.5
+    pct = sum(1 for x in s[:-1] if x < cur) / (n - 1)
+    return IvStats(n, cur, rank, pct, lo, hi, "ok")
+
+
+def iv_stats_sessions(points: Sequence[tuple[object, float | None]], window: int = WINDOW,
+                      min_coverage: float = MIN_COVERAGE) -> IvStats:  # fmt: skip
+    """IV rank and percentile at the last session of `points` ((session, IV or None), oldest first, one per session)
+    over the last `window` sessions. Below `min_coverage` of the window, or with no IV on the last session, rank and
+    percentile are None and `status` says why: unknown, never a number from a stretched window."""
+    w = [None if v is None else float(v) for _, v in list(points)[-window:]]
+    s = [v for v in w if v is not None]
+    n, cur = len(s), (w[-1] if w else None)
+    lo, hi = (min(s), max(s)) if s else (None, None)
+    if cur is None:
+        return IvStats(n, None, None, None, lo, hi, "no IV on the last session")
+    need = math.ceil(min_coverage * window)
+    if n < need:
+        return IvStats(n, cur, None, None, lo, hi, f"insufficient coverage ({n} of {window} sessions carry an IV; "
+                                                   f"needs {need})")  # fmt: skip
+    rank = (cur - lo) / (hi - lo) if hi > lo else 0.5  # type: ignore[operator]
     pct = sum(1 for x in s[:-1] if x < cur) / (n - 1)
     return IvStats(n, cur, rank, pct, lo, hi, "ok")

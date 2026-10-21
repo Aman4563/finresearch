@@ -50,7 +50,9 @@ EVIDENCE: dict[str, dict[str, str]] = {
                     f"was verified {_W}. The pre-registered backtest's sellers used it and none passed out of sample.",
     },
     "term": {
-        "measures": "Near-expiry IV against next-expiry IV: an inverted curve (near above next) means stress now.",
+        "measures": "Near-expiry ATM IV against next-expiry ATM IV (slope = next − near). Near above next is common "
+                    "and mostly mechanical: it follows the days left to each expiry and the weekly/monthly tenor mix, so "
+                    "it is shown without a reading until a clock- and event-adjusted percentile exists (roadmap P3.1).",
         "level": "weak / US only",
         "evidence": "The VIX term-structure slope predicted VIX-futures and variance-swap returns in US data "
                     "(Johnson 2017, JFQA 52(6) [U]); nothing comparable was verified for Indian options [W].",
@@ -269,14 +271,12 @@ def term_block(s, symbol: str) -> dict[str, Any] | None:
     if r is None:
         return None
     near, nxt = _f(r.near_iv), _f(r.next_iv)
-    shape = (
-        None
-        if near is None or nxt is None
-        else ("inverted (near above next)" if near > nxt else "normal (upward)")
-    )
+    slope = None if near is None or nxt is None else round(nxt - near, 3)
+    # neutral words only (#354 c): "inverted = stress now" fired on 36 % of NIFTY days, mostly from the expiry clock
+    shape = None if slope is None else "near above next" if slope < 0 else "next above near" if slope > 0 else "flat"
     return {"day": r.day.isoformat(), "near_expiry": r.near_expiry.isoformat() if r.near_expiry else None,
             "near_iv": near, "next_expiry": r.next_expiry.isoformat() if r.next_expiry else None, "next_iv": nxt,
-            "iv_30d": _f(r.iv_30d), "shape": shape, "evidence": EVIDENCE["term"],
+            "iv_30d": _f(r.iv_30d), "shape": shape, "slope": slope, "evidence": EVIDENCE["term"],
             "source": "NSE F&O bhavcopy (end of day), fnohist.derive"}  # fmt: skip
 
 

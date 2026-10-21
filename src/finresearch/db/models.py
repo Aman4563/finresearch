@@ -549,7 +549,7 @@ class FnoContract(Base):
     symbol: Mapped[str] = mapped_column(String(30), index=True)
     expiry: Mapped[date] = mapped_column(Date)
     underlying_kind: Mapped[str] = mapped_column(String(5))  # index / stock
-    kind: Mapped[str] = mapped_column(String(7))  # monthly / weekly
+    kind: Mapped[str] = mapped_column(String(12))  # monthly / weekly / long-dated
     first_seen: Mapped[date] = mapped_column(Date)
     last_seen: Mapped[date] = mapped_column(Date)
     lot_size: Mapped[int | None] = mapped_column(Integer)  # on last_seen
