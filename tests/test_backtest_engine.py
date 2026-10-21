@@ -168,12 +168,14 @@ def test_expiry_settlement_charges_exercise_stt_on_itm_longs_only(expiry, stt_ra
     assert engine.settle(short_itm, x)["exercise_stt"] == 0
 
 
-def test_settlement_price_falls_back_to_option_intrinsic_without_a_future():
+def test_settlement_price_is_unknown_when_settles_differ_without_a_future():
+    """#352: the old fallback (median of K ± settle, here 17,450.4) is a guess; settles that are not uniform on the
+    last session, with no future or underlying to check them, give no settlement price."""
     e = date(2023, 3, 2)  # a weekly expiry before the UDiFF file: no future, no underlying value
     x = Day(e, "NIFTY")
     x.options[(e, "call", 17300.0)] = Quote(e, "call", 17300.0, 150.0, 150.4, 900, 1, None)
     x.options[(e, "put", 17600.0)] = Quote(e, "put", 17600.0, 149.0, 149.6, 900, 1, None)
-    assert pricing.settlement_price(x, e) == (pytest.approx(17450.4), "options_intrinsic")
+    assert pricing.settlement_price(x, e) is None
 
 
 def test_management_rules_fire_in_order():
