@@ -185,7 +185,9 @@ def clean(env):
 
     from finresearch.db import session_scope
 
-    with session_scope() as s:  # TRUNCATE is not a row UPDATE/DELETE: card_log's append-only trigger allows it
+    with (
+        session_scope() as s
+    ):  # TRUNCATE is not a row UPDATE/DELETE: card_log's append-only trigger allows it
         s.execute(text("TRUNCATE forecast, card_log"))
     yield
 
@@ -228,14 +230,22 @@ def test_every_logged_card_is_recorded_once_with_both_models(clean):
     plan = _log(card(PCS, kind="put_credit"))
     sug = _log({"symbol": "NIFTY", "cards": [card([], kind="iron_condor"), card(PCS, kind="put_credit")]},
                kind="suggest")  # fmt: skip
-    _log({"symbol": "NIFTY", "expiry": EXP.isoformat(), "analysis": {}}, kind="strategy")  # no exit plan: none
+    _log(
+        {"symbol": "NIFTY", "expiry": EXP.isoformat(), "analysis": {}}, kind="strategy"
+    )  # no exit plan: none
     assert _record() == 4 and _record() == 0  # idempotent: a card is never recorded twice
     rows = _forecasts()
     assert [(r["source"], r["inputs"]["card_index"]) for r in rows] == [
-        (f"card_log:{plan}", 0), (f"card_log:{plan}", 0), (f"card_log:{sug}", 1), (f"card_log:{sug}", 1)]
+        (f"card_log:{plan}", 0),
+        (f"card_log:{plan}", 0),
+        (f"card_log:{sug}", 1),
+        (f"card_log:{sug}", 1),
+    ]
     rw, rn = rows[0], rows[1]
     assert (rw["asset"], rw["instrument"], rw["event_kind"]) == ("fno", "NIFTY", "card_pnl")
-    assert rw["method"] == PLAN_METHOD and rw["probability"] == 0.71 and rw["validation_status"] == "rule_based"
+    assert (
+        rw["method"] == PLAN_METHOD and rw["probability"] == 0.71 and rw["validation_status"] == "rule_based"
+    )
     assert rn["probability"] == 0.66 and rn["method"] != PLAN_METHOD
     assert rw["created_at"] == LOGGED and rw["resolve_on"] == EXP and rw["action"] == "WAIT"
     assert "999999" not in repr(rows), "no profile capital in the forecast ledger"
@@ -255,7 +265,10 @@ async def test_a_fake_outcome_resolves_through_the_monitor_pass(clean, monkeypat
            - charges(113.85 * LOT, 262.60 * LOT, 2))  # fmt: skip
     for f in _forecasts():
         assert f["status"] == "resolved" and f["outcome"] == 0
-        assert f["resolution_value"] == pytest.approx(net, abs=0.02) and "stop on 2025-01-15" in f["resolution_note"]
+        assert (
+            f["resolution_value"] == pytest.approx(net, abs=0.02)
+            and "stop on 2025-01-15" in f["resolution_note"]
+        )
 
 
 def test_independence_scores_only_the_first_card_per_underlying_expiry_and_structure(clean):

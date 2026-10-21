@@ -655,9 +655,9 @@ CLUSTER_EVENT_ORDER = {"up": 0, "up_k": 1, "down_k": 2}
 
 def _cluster(f: Forecast) -> tuple[str, str, str]:
     """The event cluster of a forecast (#353). Direction forecasts (inputs carry `h`) of one underlying and horizon
-    from one start date are nested events of ONE price path (P(up), P(up_k), P(down_k)): they share a cluster, so
-    the window pass below keeps one of them. F&O card forecasts (#376) cluster by underlying, expiry and structure kind
-(`independent_events` keeps the first card). Every other forecast clusters by its event kind as before."""
+        from one start date are nested events of ONE price path (P(up), P(up_k), P(down_k)): they share a cluster, so
+        the window pass below keeps one of them. F&O card forecasts (#376) cluster by underlying, expiry and structure kind
+    (`independent_events` keeps the first card). Every other forecast clusters by its event kind as before."""
     h = (f.inputs or {}).get("h")
     if h is not None and f.asset == "fno":
         return f.asset, f.instrument, f"h{h}"
@@ -782,9 +782,8 @@ def is_benchmark(f: Forecast) -> bool:
     direction rows a year would make the track record measure the option market. The F&O card's risk-neutral PoP (#376)
     is the option market's probability too."""
     from finresearch.direction.live import METHOD_IMPLIED
-    from finresearch.signals.ipo import BASE_RATE_METHOD
-
     from finresearch.fnobook.card_forecasts import RN_METHOD
+    from finresearch.signals.ipo import BASE_RATE_METHOD
 
     return f.validation_status == "base_rate" or _method_group(f.method) in (
         METHOD_IMPLIED,

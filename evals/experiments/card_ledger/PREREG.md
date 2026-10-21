@@ -2,8 +2,8 @@
 
 Registered 22-Oct-2026, before any card forecast was logged to the forecast ledger or resolved. The append-only card
 log (`card_log`, #360) has held the cards the owner was shown since #360 merged; none of their outcomes has been
-looked at. Cards logged before this date are recorded and resolved by the same rules (`finresearch forecasts cards`, and the monitor's hourly forecast step),
-and are reported separately from those logged after it, so the reader can see whether they differ.
+looked at. Cards logged before this date are recorded and resolved by the same rules (`finresearch forecasts cards`
+and the monitor's hourly forecast step), and are reported separately from those logged after it, so the reader can see whether they differ.
 
 ## Event
 
@@ -22,15 +22,15 @@ plan, marked at each session's reference price in the stored NSE F&O bhavcopy.**
   thumb for the card's structure and days to expiry) and must agree with the card's `profit_pct` and `stop_pct`;
   otherwise it is unknown and the forecast is void, never guessed.
 - Outcome 1 if the net P&L per set > 0, else 0; the net P&L per set (Rs) is kept as the resolution value.
-- Void (unscored, counted): a leg's contract never appears in the stored bhavcopy, a future leg (the engine marks
+- Void (unscored, counted): a leg with no stored bhavcopy row on a session before expiry day that the set is marked
+  on, a future leg (the engine marks
   options only), an unknown exit plan or lot size. Waiting cards (no legs) and strategy checks (no exit plan) are not
   forecasts.
 
 ## Probabilities
 
 - The card's real-world PoP (method `rule-based F&O trade-plan card`, the call shown first on the card).
-- The card's risk-neutral PoP (method `fnobook.card_forecasts.RN_METHOD`), the option
-  market's own probability: scored in its own row, never in the headline.
+- The card's risk-neutral PoP (method `fnobook.card_forecasts.RN_METHOD`), the option market's own probability: scored in its own row, never in the headline.
 - A card whose PoP is None is logged with probability None (coverage only, never scored as 0.5).
 - Both PoPs are of "P&L after costs > 0 at expiry, held to expiry", not of the exit-plan event above. Scoring them
   against the exit-plan event is the point: the owner acts on the card's PoP under its exits.
