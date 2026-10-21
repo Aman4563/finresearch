@@ -145,7 +145,8 @@ def test_only_allowlisted_get_paths_and_hosts_are_reachable(groww):
         await m.history_closes("NSE", "EXSTK1", date(2026, 9, 1), date(2026, 10, 8))
         api = m._api(TOKEN)
         for path in ("/order/create", "/order/cancel", "/order/list", "/holdings/user", "/margins/detail/orders",
-                     "/api/apex/v1/socket/token/create/", "/order-advance/create", "/live-data/quote"):  # fmt: skip
+                     "/api/apex/v1/socket/token/create/", "/order-advance/create", "/live-data/quotes",
+                     "/live-data/quote/x"):  # fmt: skip
             with pytest.raises(ForbiddenRequest):
                 await api.get(path)
         with pytest.raises(ForbiddenRequest):

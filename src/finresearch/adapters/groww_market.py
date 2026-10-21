@@ -29,6 +29,12 @@ Official docs (read 9-Oct-2026), and the growwapi 1.5.0 SDK source where the pag
   exchange_token, trading_symbol, groww_symbol, name, instrument_type, segment, series, isin, underlying_symbol, ...
   Downloaded at most once per IST day and cached on disk. That BSE rows carry the BSE scrip code as exchange_token,
   and how indices are named, is not shown in the docs [U]: an instrument the file does not resolve falls back.
+* Get Quote ``GET /v1/live-data/quote?exchange=NSE&segment=FNO&trading_symbol=...`` (docs read 21-Oct-2026), one
+  instrument a call → ``payload`` = {bid_price, bid_quantity, offer_price, offer_quantity, depth: {buy: [{price,
+  quantity}, ...], sell: [...]}, last_price, last_trade_time (epoch ms), volume, open_interest, implied_volatility,
+  ...}. The docs do not state the number of depth levels or the unit of implied_volatility [U]. trading_symbol is "the
+  instrument's symbol as the exchange defines it"; that this is the instruments file's trading_symbol for an F&O
+  contract is assumed [U: no FNO example in the docs]. Used only by the forward quote recorder (monitor.quotes, #363).
 * Groww's OHLC endpoint is not used: its documented sample payload is a string ("{open: 149.50,...}") [U].
 """
 
@@ -57,7 +63,7 @@ ASSETS = "https://growwapi-assets.groww.in"
 INSTRUMENTS_PATH = "/instruments/instrument.csv"
 # GET only, and only these: no order, smart-order or socket-token path is reachable from here (the margin
 # calculator is CALC_PATHS, on its own client)
-MARKET_PATHS = (r"/live-data/ltp", r"/historical/candles", r"/historical/expiries",
+MARKET_PATHS = (r"/live-data/ltp", r"/live-data/quote", r"/historical/candles", r"/historical/expiries",
                 r"/option-chain/exchange/(NSE|BSE)/underlying/[A-Z0-9&_-]{1,30}")  # fmt: skip
 ASSET_PATHS = (r"/instruments/instrument\.csv",)
 # The ONE non-GET path besides login (#316): Groww's basket margin calculator. It only computes the margin a basket
@@ -242,6 +248,20 @@ class Instruments:
         """The trading symbol of a contract (kind CE, PE or FUT; strike ignored for FUT), None when not listed."""
         r = self.fno_by_contract.get(fno_key(underlying, expiry.isoformat(), strike, kind))
         return (r.get("trading_symbol") or "").strip().upper() or None if r else None
+
+    def option_strikes(self, underlying: str) -> dict[date, set[Any]]:
+        """Every listed option strike (Decimal) of `underlying` by expiry, from the file's CE and PE rows (#363)."""
+        from decimal import Decimal
+
+        u, out = underlying.strip().upper(), {}
+        for und, exp, strike, kind in self.fno_by_contract:
+            if und != u or kind not in ("CE", "PE") or not strike:
+                continue
+            try:
+                out.setdefault(date.fromisoformat(exp), set()).add(Decimal(strike))
+            except ValueError:
+                continue
+        return out
 
     def index(self, name: str) -> dict[str, str] | None:
         nm = " ".join(name.upper().split())
@@ -882,6 +902,17 @@ class GrowwMarket:
         self._mark("option_chain")
         return chain
 
+    # ---- one instrument's quote (the forward quote recorder, #363)
+    async def quote(self, trading_symbol: str, exchange: str = "NSE", segment: str = "FNO") -> dict[str, Any]:
+        """Groww's Get Quote payload for one instrument, as returned (fnohist.quotes parses it). Never cached: each call
+        is a snapshot. Raises ConnectorError when there is no session or Groww cannot answer."""
+        payload = await self._get("/live-data/quote", {"exchange": exchange, "segment": segment,
+                                                       "trading_symbol": trading_symbol.strip().upper()})  # fmt: skip
+        if not isinstance(payload, dict):
+            raise ConnectorError(f"Groww's quote for {trading_symbol} had no payload")
+        self._mark("quote")
+        return payload
+
     # ---- basket margin (the one calculator POST, #316)
     async def basket_margin(
         self, orders: list[dict[str, Any]], segment: str = "FNO"
@@ -928,6 +959,11 @@ SUPPLIES = [
     {"kind": "indices", "label": "Index values on the market charts (in session)"},
     {"kind": "candles", "label": "Daily price history for performance, risk and charts (from 2020)"},
     {"kind": "option_chain", "label": "F&O option chains with IV"},
+    {
+        "kind": "quotes",
+        "label": "Forward option quotes (bid, ask, depth) for NIFTY and BANKNIFTY, four times a "
+        "trading day, for a measured trading-cost model",
+    },
     {"kind": "mutual_funds", "label": "Not supplied: mutual-fund NAVs stay on AMFI (Groww has no fund data)"},
 ]
 

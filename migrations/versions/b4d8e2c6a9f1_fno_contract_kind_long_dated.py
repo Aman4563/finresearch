@@ -1,7 +1,7 @@
 """F&O contract kind "long-dated" (#354): widen fno_contract.kind from 7 to 12 characters
 
 Revision ID: b4d8e2c6a9f1
-Revises: c9e4a2f7b1d3
+Revises: 01a11aa9e3f1
 Create Date: 2026-10-21 12:00:00.000000
 
 """
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "b4d8e2c6a9f1"
-down_revision: str | Sequence[str] | None = "c9e4a2f7b1d3"
+down_revision: str | Sequence[str] | None = "01a11aa9e3f1"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
