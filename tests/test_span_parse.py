@@ -110,7 +110,7 @@ async def test_fetch_semantics():
     respx.get(sp.url_for(date(2026, 10, 20))).mock(return_value=httpx.Response(429))
     async with PoliteClient(cache_dir=None, sleep=_no_sleep, clock=lambda: 0.0, max_retries=0) as http:
         url, body = await sp.fetch_day(http, DAY)
-        assert body.startswith(b"PK")
+        assert url == sp.url_for(DAY) and body.startswith(b"PK")
         assert await sp.fetch_day(http, date(2026, 10, 17)) is None
         with pytest.raises(NseError, match="block page"):
             await sp.fetch_day(http, date(2026, 10, 19))
