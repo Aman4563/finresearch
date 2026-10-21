@@ -12,10 +12,10 @@ export type WindowStats = {
 
 export type Criterion = { criterion: string; value: number | null; pass: boolean; rule: string };
 
-export type Status = "candidate" | "fails" | "overlay_reported" | "in_sample_only" | "no_data";
+export type Status = "candidate" | "fails" | "overlay_reported" | "in_sample_only" | "no_data" | "in_sample_result"; // in_sample_result: a Strategy Lab pass (#361)
 
 export type StrategyResult = {
-  key: string; name: string; role: "candidate" | "control" | "overlay"; kind: string; underlying: string | null;
+  key: string; name: string; role: "candidate" | "control" | "overlay" | "lab"; kind: string; underlying: string | null;
   spec: Record<string, unknown>; spec_hash: string; status: Status; reasons: string[];
   windows?: { is: WindowStats; oos?: WindowStats; oos_stress?: WindowStats };
   criteria?: Criterion[]; equity?: [string, number][]; skips?: Record<string, number>; notes?: Record<string, number>;

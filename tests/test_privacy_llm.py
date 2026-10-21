@@ -156,7 +156,7 @@ def test_llm_paths_never_import_personal_tables():
     personal = {"PortfolioHolding", "PortfolioTxn", "PortfolioLot", "PortfolioDisposal", "PortfolioImport",
                 "PortfolioAis", "PortfolioSnapshot", "PortfolioSetting", "TradeNote", "WealthAsset", "WealthGoal",
                 "WealthLoan", "WealthPolicy", "WealthValuation", "BrokerConnection", "Decision",
-                "PaperStrategy", "PaperLeg", "FnoExitRule"}  # fmt: skip
+                "PaperStrategy", "PaperLeg", "FnoExitRule", "CardLog"}  # fmt: skip
     bad = []
     for pkg in ("agents", "orchestrator", "mcp_server", "bridge", "verify", "ingest", "render"):
         for f in (SRC / pkg).rglob("*.py"):

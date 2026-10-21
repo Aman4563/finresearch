@@ -32,12 +32,16 @@ CASES = {"ipo": "past IPOs"}  # noun for the base-rate sample; others read "comp
 
 def scored_events(session: Session, asset: str, method: str) -> int:
     """Independent resolved outcomes of this (asset, method) group that carried a probability."""
-    from finresearch.signals.ledger import _method_group, independent_events
+    from finresearch.signals.ledger import _method_group, independent_events, ipo_close_dates
 
     group = _method_group(method)
     rows = session.scalars(select(Forecast).where(Forecast.asset == asset, Forecast.status == "resolved",
                                                   Forecast.probability.isnot(None), Forecast.outcome.isnot(None)))  # fmt: skip
-    return len(independent_events([f for f in rows if _method_group(f.method) == group]))
+    mine = [f for f in rows if _method_group(f.method) == group]
+    # the same events calibration_groups scores (#353: an IPO counts only with a decision-time forecast)
+    return len(
+        independent_events(mine, ipo_close_dates(session, {f.instrument for f in mine if f.asset == "ipo"}))
+    )
 
 
 def _pct(p: float) -> str:

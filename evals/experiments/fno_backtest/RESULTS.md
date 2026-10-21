@@ -72,3 +72,21 @@ specs (Strategy Lab style, no IV filter, 2022-23) change materially: NIFTY weekl
 104, −₹18.1 lakh → −₹1.0 lakh; BANKNIFTY weekly put credit 50 of 103, −₹15.7 lakh → −₹0.9 lakh. Each changed trade
 is flagged "settled at uniform option settle … (no future or underlying to check it)". Live Strategy Lab runs were
 not replayed here (the live database was not read); re-run any hold-to-expiry weekly lab run from 2022-23.
+
+## Evidence labels on the trade-plan cards (#355), pre-registered 21-Oct-2026 before the code change
+
+harmful ⇔ expiry-clustered t ≤ −2 AND the upper bound of the cluster-bootstrap 95 % CI < 0, for roughly delta-neutral
+recipes only (iron condors, other two-sided structures). One-sided credit spreads and debit spreads carry net delta,
+so their backtest sign mixes the premium with the index path: "directional". Anything else that failed is
+"inconclusive". None of these can read ENTER or carry real-money lots; only "harmful" reads AVOID.
+
+| strategy | t | 95 % CI upper | expected label | verdict when every check passes | real lots |
+|---|---|---|---|---|---|
+| NIFTY put credit spread, monthly | −1.30 | 569 | directional | NO PROVEN EDGE — paper only | 0 |
+| NIFTY call credit spread, monthly | 0.73 | 2,289 | directional | NO PROVEN EDGE — paper only | 0 |
+| BANKNIFTY iron condor, monthly | −0.18 | 2,068 | inconclusive | NO PROVEN EDGE — paper only | 0 |
+| NIFTY iron condor, weekly | 0.76 | 2,567 | inconclusive | NO PROVEN EDGE — paper only | 0 |
+| NIFTY debit call spread (control) | −3.86 | −13,289 | directional (control: never a setup) | NO PROVEN EDGE — paper only | 0 |
+| NIFTY debit put spread (control) | 1.78 | 44,029 | directional (control: never a setup) | NO PROVEN EDGE — paper only | 0 |
+
+Checked by `tests/test_tradeplan_math.py::test_preregistered_labels_for_the_results_rows_355`.

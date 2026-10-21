@@ -19,6 +19,11 @@ from typing import Any
 
 from finresearch.backtest import specs
 
+# #361 (P0.11, interim until P2.5's sealed holdout): the lab's "out-of-sample" window is the library's published one
+# (or a span the owner can already see), so it is labelled as seen data, and a run that passes reads "in-sample result"
+OOS_LABEL = "already published, not out of sample"
+OOS_NOTE = ("The out-of-sample window here is already published (the library's own results cover it, and its prices "
+            "are on screen), so a lab result on it is an in-sample result, not out-of-sample evidence.")  # fmt: skip
 MIN_SPAN_DAYS = 540  # about 18 months: a year in sample (IV needs 60 days of warm-up) and 5+ months out
 LIB_START_SLACK = timedelta(days=31)
 LIB_OOS_MIN = timedelta(days=180)

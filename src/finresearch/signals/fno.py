@@ -605,14 +605,35 @@ async def fno_signal(instrument: str, ctx: dict[str, Any]) -> Signal:
     pops = [x["pop"] for x in (rn, a["real_world_20d"], a["real_world_60d"]) if x]
     denom = a["return_denominator"]
     exp_ret = {k: round(v / denom, 4) for k, v in rw["quantiles"].items()} if rw and denom else None
+    # #350/#355: the trade-plan card's sizing and verdict (signals.tradeplan.decide): lots from max loss + entry costs,
+    # real money only for a matched candidate spec and an ENTER, never ENTER without one; IV percentile is context
+    from finresearch.fincalc import tradeplan as tp
+    from finresearch.signals import tradeplan as tpl
+
     budget = capital * float(profile.fno_max_loss_pct) / 100
     loss = -a["max_loss"] if a["max_loss"] is not None else None
-    multiple = math.floor(budget / loss) if loss else 0
-    sizing = {"max_multiple_of_these_legs": multiple if action in ("ENTER", "HOLD") else 0, "budget_inr": round(budget, 2),
-              "max_loss_inr": None if loss is None else round(loss, 2),
+    kind = tp.classify([tp.PlanLeg(x.right, x.strike, x.side, x.lots) for x in legs])
+    strategies, head = tpl.backtest_rows()
+    ev = tpl.evidence_for(kind, sym, a["days_to_expiry"], strategies, head)
+    # the open book (#358): open paper trades and Groww positions, month-to-date P&L; the same cap as the trade card
+    ob = tpl.book_for(await tpl.load_book(today), capital, sym, kind, float(chain.underlying),
+                      ev["spec"] if ev["match"] == "exact" else None)  # fmt: skip
+    # legs that are exactly a library recipe get its registered IV filter, as on the trade card (#355)
+    from finresearch.signals import fno_context
+
+    extra = (tpl.recipe_checks(ev["spec"], strategies, fno_context.iv_rank_input(sym)[0])
+             if ev["match"] == "exact" else [])  # fmt: skip
+    d = tpl.decide(failed, a["max_loss"], a["costs"]["entry"]["total"], budget, ev["level"], extra, book=ob)
+    sz, qualifier = d.size, None
+    if not held:  # the trade-plan card's verdict for the same legs (#355: one engine)
+        action, qualifier, failed = d.action, d.qualifier, d.failed
+    sizing = {"max_multiple_of_these_legs": sz.multiple if action in ("ENTER", "PAPER", "HOLD") else 0,
+              "paper_lots": sz.suggested, "real_lots": sz.real_lots if action == "ENTER" else 0,
+              "budget_inr": round(budget, 2), "max_loss_inr": None if loss is None else round(loss, 2),
+              "evidence": {k: v for k, v in ev.items() if k != "spec"}, "verdict_label": qualifier,
+              "open_book": tpl.book_json(ob),
               "reason": (f"Your budget per strategy is {float(profile.fno_max_loss_pct):g}% of ₹{_inr(capital)} = ₹{_inr(budget)}; "
-                         + (f"these legs risk ₹{_inr(loss)}, so at most {multiple}× them." if loss else
-                            "the loss of these legs is unlimited, so no size fits."))}  # fmt: skip
+                         + (f"{sz.reason}." if loss else "the loss of these legs is unlimited, so no size fits."))}  # fmt: skip
     caveat = caveats(a, notice)
     caveat.append(f"Risk-free rate {rinfo['rate']:.2%} (continuous): {rinfo['source']}; {rinfo['note']}.")
     caveat.append(backtest_caveat())

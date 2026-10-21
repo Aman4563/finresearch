@@ -95,6 +95,9 @@ def finalize(rep: dict[str, Any], *, n_trials: int, var: float | None, oos_versi
              crit: Criteria = CRITERIA) -> dict[str, Any]:  # fmt: skip
     """Status, criteria and warnings. `oos_versions`: versions of this strategy evaluated out of sample so far (this
     one included); `n_lab`: lab variants counted across the app (this one included)."""
+    from finresearch.stratlab.split import OOS_LABEL, OOS_NOTE
+
+    rep["oos_label"], rep["oos_note"] = OOS_LABEL, OOS_NOTE
     if rep.get("status") == "no_data":
         return rep
     rep["n_trials"], rep["sr_trials_variance"] = n_trials, metrics._r(var, 10)
@@ -115,8 +118,11 @@ def finalize(rep: dict[str, Any], *, n_trials: int, var: float | None, oos_versi
                 c["rule"] += "; unknown until two variants have out-of-sample results"
     failed = [c["criterion"] for c in checks if not c["pass"]]
     rep["criteria"] = checks
-    rep["status"] = "candidate" if not failed else "fails"
-    rep["reasons"] = [f"fails: {x}" for x in failed] or ["passes every library criterion out of sample"]
+    # never "candidate" (#361): the window is already published, so a pass is an in-sample result
+    rep["status"] = "in_sample_result" if not failed else "fails"
+    rep["reasons"] = [f"fails: {x}" for x in failed] or [
+        "passes every library criterion on an already-published window (in-sample result)"
+    ]
     rep["warnings"] = warnings(rep, n_trials, oos_versions, n_lab, crit)
     return rep
 

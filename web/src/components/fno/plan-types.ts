@@ -1,7 +1,8 @@
 // Trade-plan cards and the market-context panel (#317): the shapes of POST /api/fno/plan, GET /api/fno/{symbol}/suggest
 // and GET /api/fno/{symbol}/context.
 
-export type PlanAction = "ENTER" | "WAIT" | "AVOID";
+/** PAPER (#350): every check passes but no matched spec passed out of sample: paper only, 0 real-money lots */
+export type PlanAction = "ENTER" | "PAPER" | "WAIT" | "AVOID";
 
 export type Levels = { below: number | null; above: number | null };
 export type ExitLevel = { rupees: number; premium_per_share: number | null; underlying_now: Levels; underlying_at_expiry: Levels };
@@ -13,7 +14,8 @@ export type EntryLeg = {
 
 export type PlanEvidence = {
   spec_key: string | null; spec_name: string | null; match: "exact" | "related" | null; status: string | null;
-  level: "proven" | "negative" | "unproven" | "none"; raw_level: string; text: string; url: string;
+  /** #355: harmful (t ≤ −2 and CI below 0, delta-neutral recipes only) → AVOID; directional = one-sided or debit structures, whose backtest reflects the index path */
+  level: "proven" | "harmful" | "inconclusive" | "directional" | "none"; raw_level: string; text: string; url: string;
 };
 
 export type PaperRecord = {
@@ -28,7 +30,10 @@ export type TradePlan = {
   source?: string; kind: string; action: PlanAction; qualifier: string | null; label: string; failed: string[]; reasons: string[];
   spec_key?: string;
   legs: { right: "call" | "put" | "future"; strike: number; side: "buy" | "sell"; lots: number; qty?: number; last?: number }[];
-  size?: { multiple: number; suggested: number; budget: number; risk_per_set: number | null; reason: string; capital: number; max_loss_pct: number };
+  size?: { multiple: number; suggested: number; /** real-money lots (#350): 0 unless the matched spec is a candidate */ real_lots?: number;
+    /** #358: the open-book cap: budget = 8% of F&O capital, open_risk = what open paper and Groww positions risk (null = unknown) */
+    open_book?: { budget: number; budget_pct: number; open_risk: number | null; open_same: number; max_concurrent: number | null; mtd_paper: number | null; month_stop_pct: number; notes: string[] };
+    budget: number; risk_per_set: number | null; reason: string; capital: number; max_loss_pct: number };
   entry?: { legs: EntryLeg[]; status: "ok" | "unknown"; net_mid: number | null; net_fill_now: number | null; notes: string[]; levels_priced_at: string;
     /** "bid/ask: NSE chain at HH:MM" (#324: NSE's chain when the plan's has no bid/ask), or "unknown" */
     source?: string; slippage_inr?: number | null };

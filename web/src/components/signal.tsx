@@ -67,7 +67,7 @@ const POSITIVE = new Set(["APPLY", "BUY", "ACCUMULATE", "ENTER", "HOLD_AFTER_LIS
 const NEGATIVE = new Set(["SKIP", "SELL", "REDUCE", "AVOID", "EXIT", "SELL_AT_LISTING"]);
 const LABEL: Record<string, string> = {
   SELL_AT_LISTING: "Sell at listing", HOLD_AFTER_LISTING: "Hold after listing", NO_SIGNAL: "No signal", WAIT: "Wait",
-  INFORMATIONAL: "Informational — no proven edge",
+  INFORMATIONAL: "Informational — no proven edge", PAPER: "No proven edge — paper only",
 };
 const VALIDATION: Record<SignalValidation["status"], { label: string; tone: "gain" | "info" | "warn" | "neutral"; help: string }> = {
   backtested: { label: "Backtested", tone: "gain", help: "Checked out of sample on past data; the numbers below are its track record." },

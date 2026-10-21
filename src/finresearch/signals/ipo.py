@@ -18,9 +18,11 @@ SHADOW.md. The live OFS share (NSE issue-size text) and Nifty 50 20-session retu
 Decision-time caveat: the history uses FINAL subscription (after the 5 pm close); a retail applicant decides on the
 latest live snapshot, and QIB books fill late on the last day. So the table is optimistic about what is knowable.
 
-Expected value of applying for one lot (roadmap §D.1): E[value] ≈ P(allot) × lot cost × E[r], with
-P(allot) ≈ min(1, 1/category×) (`fincalc.ipo.allotment_probability_floor`, a floor for a minimum-lot applicant) and
-E[r] = the cell's mean listing-open return. Blocked UPI funds are treated as free for the few days they are blocked.
+Expected value of applying for one lot (roadmap §D.1): E[value] ≈ P(allot) × (lot cost × E[r] − listing-day
+selling costs) (#353: `fincalc.ipo.listing_sale_costs` on the sale at the mean return; brokerage and DP charge are
+labelled assumptions), with P(allot) ≈ min(1, 1/category×) (`fincalc.ipo.allotment_probability_floor`, a FLOOR for a
+minimum-lot applicant: `p_allot_is_floor`) and E[r] = the cell's mean listing-open return (pulled up by the right
+tail). Blocked UPI funds are treated as free for the few days they are blocked.
 The lottery unit is the category's minimum application (1 lot retail; the first whole lot above ₹2 lakh for sNII and
 above ₹10 lakh for bNII, ICDR Reg 32(3A)), so the size suggested is that minimum and `ev_per_application` = EV per lot
 × the minimum lots. A category book below 1x is not a lottery (every valid bid is allotted in full). An sNII/bNII
@@ -668,17 +670,30 @@ async def compute(
     e_r = cell.get("mean")
     p_allot = float(fipo.allotment_probability_floor(Decimal(str(cat_times)))) if cat_times and cat_times > 0 else \
         (1.0 if cat_times is not None else None)  # fmt: skip
-    ev = p_allot * float(lot_cost) * e_r if p_allot is not None and lot_cost and e_r is not None else None
     limits = lot_limits(profile, lot_cost)
     # The lottery unit is the category's minimum application (ICDR Reg 32(3A)): 1 lot for retail, the first whole lot
     # above ₹2 lakh for sNII, above ₹10 lakh for bNII. A successful sNII/bNII applicant is allotted that minimum, so
-    # the expected value that matters is per application; `ev_per_lot` is the same quantity per lot applied.
+    # the expected value that matters is per application; `ev_per_lot` is the EV of a one-lot application.
     min_lots = limits.get("min_lots") or 1
-    ev_app = ev * min_lots if ev is not None else None
+
+    def ev_of(lots: int) -> tuple[float | None, float | None]:
+        """P(allot) x (gain at the mean listing return − the listing-day selling costs of that sale, #353)."""
+        if p_allot is None or not lot_cost or e_r is None:
+            return None, None
+        cost = float(fipo.listing_sale_costs(float(lot_cost) * lots * (1 + e_r))["total"])
+        return p_allot * (float(lot_cost) * lots * e_r - cost), cost
+
+    ev, sell_cost = ev_of(1)
+    ev_app, sell_cost_app = ev_of(min_lots)
     sizing = {"lot_cost": float(lot_cost) if lot_cost else None, "lot_size": lot, "upper_band": _fl(upper),
-              "p_allot": p_allot, "p_allot_basis": f"min(1, 1/{cat_label} times) — a floor for a minimum "
+              "p_allot": p_allot, "p_allot_is_floor": cat_times is not None and cat_times >= 1,
+              "p_allot_basis": f"min(1, 1/{cat_label} times) — a floor for a minimum "
               f"{cat_label} application (fincalc.ipo.allotment_probability_floor)", "expected_return_mean": e_r,
               "ev_per_lot": ev, "min_lots": min_lots, "ev_per_application": ev_app,
+              "selling_costs_per_lot": sell_cost, "selling_costs_per_application": sell_cost_app,
+              "ev_basis": "P(allot) floor x (application cost x mean listing-open return − listing-day selling costs: "
+                          "STT, exchange, SEBI, GST, and an assumed ₹20 brokerage and ₹13 DP charge; "
+                          "fincalc.ipo.listing_sale_costs). The mean is pulled up by a few large listings.",
               "category": profile.category, "limits": limits}  # fmt: skip
     by_capital = limits.get("by_capital")
     cannot_afford = profile.category != "retail" and by_capital is not None and by_capital < min_lots
