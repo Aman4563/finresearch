@@ -22,7 +22,7 @@ def registration() -> dict[str, Any]:
     return {
         "version": specs.SPEC_VERSION, "hash": prereg.HASH, "registered_on": prereg.REGISTERED_ON,
         "matches_spec": specs.registration_hash() == prereg.HASH, "hash_covers": HASH_COVERS,
-            "matches_code": specs.registration_hash() == prereg.HASH, "note": prereg.NOTE,
+        "matches_code": specs.registration_hash() == prereg.HASH, "note": prereg.NOTE,
         "variants_tried": specs.VARIANTS_TRIED, "specs": [asdict(s) for s in specs.SPECS],
         "book": asdict(specs.BOOK), "criteria": asdict(specs.CRITERIA),
         "windows": {"is": [specs.IS_START.isoformat(), specs.IS_END.isoformat()],
