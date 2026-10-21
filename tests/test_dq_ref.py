@@ -58,7 +58,7 @@ def test_participant_mismatch_and_missing_row(clean):
     parts = ds.participants(ds.T1)
     parts[0] = {**parts[0], "fut_idx_long": parts[0]["fut_idx_long"] + 500}  # 500 contracts too many
     with session_scope() as s:
-        seed(s, parts=parts[:3] + [parts[3]])
+        seed(s, parts=parts)
         res = by_check(ref.participant_checks(s, ds.T1))
     assert res["bhav_fut_idx"].status == "fail" and res["bhav_fut_idx"].value == 500
     assert res["long_short_identity"].status == "fail"
