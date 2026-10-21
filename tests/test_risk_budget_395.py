@@ -175,3 +175,55 @@ def test_known_margin_room_keeps_enter_395():
 def test_kelly_is_zero_while_the_expectancys_lower_bound_is_not_positive_395(mu_lo):
     d = _decide(book=_book(shock=tp.Shock(FLAT, ONE_SET), funds=tp.Funds(1e6, 0.0, 0.0, 1000.0)), mu_lo=mu_lo)
     assert d.action == "WAIT" and "Kelly ceiling above zero" in d.failed and d.size.real_lots == 0
+
+
+# --------------------------------------------------------------------------- the shock P&L (#394's engine)
+def _b76(right, f, k, t, r, v):
+    from statistics import NormalDist
+
+    n = NormalDist()
+    d1 = (math.log(f / k) + v * v * t / 2) / (v * math.sqrt(t))
+    d2 = d1 - v * math.sqrt(t)
+    c = math.exp(-r * t) * (f * n.cdf(d1) - k * n.cdf(d2))
+    return c if right == "call" else c - math.exp(-r * t) * (f - k)
+
+
+def test_shock_pnls_reprice_one_session_later_with_the_spot_vol_response_395():
+    from datetime import date, datetime
+
+    from finresearch.fincalc import book_scenarios as bs
+    from finresearch.fincalc.dates import IST
+
+    now = datetime(2026, 10, 22, 15, 30, tzinfo=IST)  # Thursday close; one session later = Friday 23-Oct 15:30
+    exp, r, f, k, v = date(2026, 11, 26), 0.065, 24000.0, 23000.0, 0.15
+    t0, t1 = 35 / 365, 34 / 365
+    mark = _b76("put", f, k, t0, r, v)
+    leg = bs.BookLeg("NIFTY", exp, "put", k, -65, mark, "mid")
+    m = bs.Market(now, r, {("NIFTY", exp): f})
+    got, reasons = bs.shock_pnls([leg], m, bs.horizon_clock(now, 1))
+    assert reasons == ()
+    for mv in tp.SHOCK_MOVES:
+        # independent: F' = F (1 + m) e^{−r (T0 − T1)}; IV + 1.04 points per 1 % fall, − 0.76 per 1 % rise
+        f1 = f * (1 + mv) * math.exp(-r * (t0 - t1))
+        v1 = v + (-1.04 * mv * 100 if mv < 0 else -0.76 * mv * 100) / 100
+        assert got[mv] == pytest.approx((_b76("put", f1, k, t1, r, v1) - mark) * -65, rel=1e-6)
+    # P&L is linear in lots: three sets lose three times one (dL/dn = L_1)
+    three, _ = bs.shock_pnls([bs.BookLeg("NIFTY", exp, "put", k, -195, mark, "mid")], m, bs.horizon_clock(now, 1))
+    assert all(three[mv] == pytest.approx(3 * got[mv], rel=1e-9) for mv in tp.SHOCK_MOVES)
+    # no legs: no loss at any move (known, not unknown)
+    assert bs.shock_pnls([], m, bs.horizon_clock(now, 1)) == ({mv: 0.0 for mv in tp.SHOCK_MOVES}, ())
+
+
+def test_a_leg_without_a_beta_or_a_mark_makes_the_shock_unknown_395():
+    from datetime import date, datetime
+
+    from finresearch.fincalc import book_scenarios as bs
+    from finresearch.fincalc.dates import IST
+
+    now, exp = datetime(2026, 10, 22, 15, 30, tzinfo=IST), date(2026, 11, 26)
+    m = bs.Market(now, 0.065, {("BANKNIFTY", exp): 52000.0, ("NIFTY", exp): 24000.0})
+    bank = bs.BookLeg("BANKNIFTY", exp, "put", 50000, -30, 300.0, "mid")
+    got, reasons = bs.shock_pnls([bank], m, bs.horizon_clock(now, 1))
+    assert got is None and any("beta" in x for x in reasons)
+    got, reasons = bs.shock_pnls([bs.BookLeg("NIFTY", exp, "put", 23000, -65, None, None)], m, bs.horizon_clock(now, 1))
+    assert got is None and reasons

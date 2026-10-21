@@ -428,3 +428,21 @@ def reverse_stress(g: Grid, limit: float) -> list[Reverse]:
             Reverse(h, limit, next((c for c in cs if c.pnl is not None and c.pnl <= -limit), None), ())
         )
     return out
+
+
+# --------------------------------------------------------------------------- the common-shock term (#395)
+def shock_pnls(legs: Sequence[BookLeg], m: Market, at: datetime,
+               moves: Sequence[float] | None = None) -> tuple[dict[float, float] | None, tuple[str, ...]]:  # fmt: skip
+    """P4.2's common-shock loss L(m) = Σ_j PnL_j(F_j (1 + β_j m), σ_j + dσ(β_j m), T at `at`) for each registered
+    NIFTY move (fincalc.tradeplan.SHOCK_MOVES): the full revaluation above with the spot-vol response and no extra vol
+    shift, `at` one session later. (None, reasons) when any leg is unpriced or its beta is unknown, never 0."""
+    from finresearch.fincalc.tradeplan import SHOCK_MOVES
+
+    states = price_legs(legs, m)
+    out: dict[float, float] = {}
+    for mv in SHOCK_MOVES if moves is None else moves:
+        c = _revalue(states, m, mv, 0.0, at, "shock", True)
+        if c.pnl is None:
+            return None, c.reasons
+        out[mv] = c.pnl
+    return out, ()
