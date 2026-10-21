@@ -490,6 +490,26 @@ def _spawn_fno_bhav(now: datetime) -> None:
     _BACKGROUND["fno_bhav"] = asyncio.create_task(run())
 
 
+def _spawn_index_eod(now: datetime) -> None:
+    """Start the nightly index close update (monitor.index_eod, #366) in the background on trading days: one NSE
+    download (~9 KB). At most one runs at a time."""
+    from finresearch.monitor import index_eod
+
+    t = _BACKGROUND.get("index_eod")
+    if (t is not None and not t.done()) or index_eod.due_slot(now) is None:
+        return
+
+    async def run() -> None:
+        try:
+            res = await index_eod.index_eod_step(now)
+            if res:
+                log.info("index close update: %s", res)
+        except Exception:
+            log.warning("index close update failed", exc_info=True)
+
+    _BACKGROUND["index_eod"] = asyncio.create_task(run())
+
+
 def _spawn_quotes(deps: jobs.Deps, now: datetime) -> None:
     """Start the forward quote recorder (monitor.quotes, #363) in the background when a snapshot is due: one sweep is
     169 Groww calls (~50 s), longer than a tick. At most one runs at a time."""
@@ -657,6 +677,8 @@ async def tick(deps: jobs.Deps, now: datetime | None = None) -> dict[str, int]:
         _spawn_fno_bhav(now)
     if deps.quotes:
         _spawn_quotes(deps, now)
+    if deps.index_eod:
+        _spawn_index_eod(now)
     out_brief = brief_step(now) if deps.brief else {}
     if deps.holidays is not None or deps.live_holidays:
         await _refresh_holidays(deps)
@@ -748,6 +770,7 @@ def schedule_json(ww=None, *, running: bool | None = None) -> dict:
     from finresearch.fnohist import quotes as fq
     from finresearch.monitor import digest as dg
     from finresearch.monitor import fno_bhav as fb
+    from finresearch.monitor import index_eod as ixe
     from finresearch.monitor import intraday, iv
     from finresearch.monitor import lookthrough_fetch as ltf
     from finresearch.monitor import portfolio_daily as pd
@@ -781,6 +804,8 @@ def schedule_json(ww=None, *, running: bool | None = None) -> dict:
                    "underlyings": [u for u, _ in fq.UNDERLYINGS],
                    "groww_calls_per_day": (fq.PER_SNAPSHOT + 1) * len(fq.SNAPSHOT_TIMES)},
         "fno_bhav": {"after": hm((fb.RUN_AFTER.hour, fb.RUN_AFTER.minute)), "lookback_days": fb.LOOKBACK_DAYS},
+        "index_eod": {"after": hm((ixe.RUN_AFTER.hour, ixe.RUN_AFTER.minute)), "lookback_days": ixe.LOOKBACK_DAYS,
+                      "requests_per_night": 1},
         "forecasts": {"after": hm(READY_AFTER_IST), "every_min": int(FORECAST_EVERY.total_seconds() // 60)},
         "portfolio": {"close_pass": hm((pd.close_time(ww.stock_time()).hour, pd.close_time(ww.stock_time()).minute)),
                       "nav_pass": hm((pd.NAV_AT.hour, pd.NAV_AT.minute)), "max_instruments": pd.MAX_INSTRUMENTS,
