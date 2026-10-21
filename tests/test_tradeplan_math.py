@@ -169,3 +169,62 @@ def test_evidence_level_and_text():
     assert tp.evidence_level({"status": "candidate"}) == "proven"
     assert tp.evidence_level({"status": "overlay_reported"}) == "none"
     assert tp.evidence_level(None) == "none"
+
+
+# --------------------------------------------------------------------------- #355: evidence-consistent labels
+# PRE-REGISTERED 21-Oct-2026 before any #355 code change: the expected label of each out-of-sample row of
+# evals/experiments/fno_backtest/RESULTS.md (12-Oct-2026 run). harmful <=> t <= -2 AND CI upper bound < 0, and only for
+# roughly delta-neutral kinds; one-sided credit spreads and debit spreads are directional. Every row: 0 real lots.
+RESULTS_ROWS = [  # (key, kind, expectancy, t, ci_low, ci_high, expected label)
+    ("nifty_pcs_m", "put_credit", -1789, -1.30, -4581, 569, "directional"),
+    ("nifty_ccs_m", "call_credit", 679, 0.73, -1309, 2289, "directional"),
+    ("banknifty_ic_m", "iron_condor", -243, -0.18, -3046, 2068, "inconclusive"),
+    ("nifty_ic_w", "iron_condor", 741, 0.76, -1262, 2567, "inconclusive"),
+    ("nifty_dcs_m", "debit_call", -27775, -3.86, -40674, -13289, "directional"),
+    ("nifty_dps_m", "debit_put", 21492, 1.78, -1977, 44029, "directional"),
+]
+
+
+def _row(e, t, lo, hi, status="fails"):
+    return {"status": status, "windows": {"oos": {"expectancy": e, "t_stat": t, "ci_low": lo, "ci_high": hi,
+                                                  "trades": 40}}}  # fmt: skip
+
+
+@pytest.mark.parametrize(("key", "kind", "e", "t", "lo", "hi", "want"), RESULTS_ROWS)
+def test_preregistered_labels_for_the_results_rows_355(key, kind, e, t, lo, hi, want):
+    level = tp.evidence_level(_row(e, t, lo, hi), kind)
+    assert level == want
+    action, _ = tp.verdict([], level)
+    assert action == tp.PAPER  # neither AVOID nor ENTER from this evidence, every gate passing
+    assert tp.size(-1500.0, 60.0, 40000.0, proven=level == "proven").real_lots == 0
+
+
+def test_harmful_needs_both_t_and_ci_and_a_delta_neutral_kind_355():
+    assert tp.evidence_level(_row(-3000, -2.5, -5000, -100), "iron_condor") == "harmful"
+    assert tp.verdict([], "harmful") == (tp.AVOID, None)
+    assert tp.evidence_level(_row(-3000, -2.5, -5000, 50), "iron_condor") == "inconclusive"  # CI spans 0
+    assert tp.evidence_level(_row(-3000, -1.9, -5000, -100), "iron_condor") == "inconclusive"  # t above -2
+    assert tp.evidence_level(_row(-3000, -2.5, -5000, None), "iron_condor") == "inconclusive"  # CI unknown
+    assert tp.evidence_level(_row(-3000, -2.5, -5000, -100), "put_credit") == "directional"
+    assert tp.evidence_level(_row(None, None, None, None), "iron_condor") == "inconclusive"
+    assert tp.evidence_level({"status": "candidate"}, "iron_condor") == "proven"
+    assert tp.evidence_level(None, "iron_condor") == "none"
+
+
+@pytest.mark.parametrize(
+    ("key", "kind", "e", "t", "lo", "hi", "want"), [r for r in RESULTS_ROWS if abs(r[3]) < 2]
+)
+@pytest.mark.parametrize("failed", [[], ["EV after costs (real-world)"], ["Defined risk"]])
+def test_flipping_an_insignificant_expectancy_never_changes_the_verdict_355(
+    key, kind, e, t, lo, hi, want, failed
+):
+    a = tp.verdict(failed, tp.evidence_level(_row(e, t, lo, hi), kind))
+    b = tp.verdict(failed, tp.evidence_level(_row(-e, -t, -hi, -lo), kind))
+    assert a == b
+
+
+@pytest.mark.parametrize("level", ["none", "inconclusive", "directional", "harmful"])
+@pytest.mark.parametrize("failed", [[], ["IV context fits the strategy"], ["Defined risk"]])
+def test_no_enter_and_no_real_lots_unless_proven_355(level, failed):
+    assert tp.verdict(failed, level)[0] != tp.ENTER
+    assert tp.size(-1500.0, 60.0, 40000.0, proven=level == "proven").real_lots == 0
