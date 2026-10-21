@@ -231,3 +231,20 @@ def run(
         f"{k} ({u})" for k, v in report["adoption"].items() for u, a in v.items() if a["adopt"]
     )
     return report
+
+
+def summary_rows(report: dict[str, Any]) -> list[list[str]]:
+    """One row per forecaster x underlying: n, Brier, log, CRPS, DM p (Holm) against the incumbent, tail mode."""
+
+    def f(x: Any, d: int = 4) -> str:
+        return "—" if x is None else f"{x:.{d}f}"
+
+    rows = []
+    for k, per in sorted(report["forecasters"].items()):
+        for u, s in sorted(per.items()):
+            d = (report["dm"]["brier"].get(k) or {}).get(u) or {}
+            tl = s.get("tail") or {}
+            rows.append([k, u, str(s["n"]), str(s["missing"]), f(s.get("brier")), f(s.get("log")), f(s.get("crps"), 2),
+                         "incumbent" if k == specs.INCUMBENT else f(d.get("p_holm"), 3),
+                         f"{tl.get('mode', '—')} (n={tl.get('n', 0)})"])  # fmt: skip
+    return rows

@@ -94,3 +94,30 @@ def test_load_reads_resolved_card_forecasts_only(env) -> None:
     with session_scope() as s:
         evs = le.load(s)
     assert [e.underlying for e in evs] == ["NIFTY"] and evs[0].pnl == 120.0
+
+
+def test_cli_horse_race_scores_the_ledger_and_writes_json(env, tmp_path) -> None:
+    import json
+
+    from typer.testing import CliRunner
+
+    from finresearch.cli import app
+
+    test_load_reads_resolved_card_forecasts_only(env)  # one resolved card in the ledger
+    out = tmp_path / "race.json"
+    r = CliRunner().invoke(app, ["forecasts", "horse-race", "--window", "forward", "--json", str(out)])
+    assert r.exit_code == 0, r.output
+    assert "1 event" in r.output and "p_rw" in r.output and "adopted: none" in r.output
+    rep = json.loads(out.read_text())
+    assert rep["window"] == "forward" and rep["n_events"] == 1
+
+
+def test_cli_horse_race_refuses_a_changed_spec(env, monkeypatch) -> None:
+    from typer.testing import CliRunner
+
+    from finresearch.cli import app
+    from finresearch.horserace import prereg
+
+    monkeypatch.setattr(prereg, "HASH", "0" * 64)
+    r = CliRunner().invoke(app, ["forecasts", "horse-race"])
+    assert r.exit_code != 0 and "refused" in r.output

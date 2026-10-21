@@ -1185,6 +1185,41 @@ def forecasts_calibration() -> None:
             console.print(g)
 
 
+@forecasts_app.command("horse-race")
+def forecasts_horse_race(
+    window: str = typer.Option(
+        "forward", help="forward (primary), seen, tuesday or design (horserace/specs.py)"
+    ),
+    json_out: Path | None = typer.Option(None, "--json", help="Also write the full report here"),
+) -> None:
+    """The pre-registered card horse race (#377) on the card ledger's resolved cards: every forecaster's Brier, log
+    score, CRPS, tail coverage and DM against the incumbent, and the adoption gate. Read only; refuses if
+    horserace/specs.py changed after its registration (horserace/prereg.py)."""
+    import json
+
+    from rich.table import Table
+
+    from finresearch.db import session_scope
+    from finresearch.horserace import ledger_events, race
+
+    try:
+        race.require_registered()
+    except race.PreregistrationError as e:
+        console.print(str(e))
+        raise typer.Exit(1) from e
+    with session_scope() as s:
+        rep = race.run(ledger_events.load(s), window)
+    console.print(f"window {window}: {rep['n_events']} event(s); {rep['window_role']}")
+    t = Table("forecaster", "underlying", "n", "missing", "Brier", "log", "CRPS", "DM p (Holm)", "tails")
+    for r in race.summary_rows(rep):
+        t.add_row(*r)
+    console.print(t)
+    console.print(f"adopted: {', '.join(rep['adopted']) or 'none'}")
+    if json_out:
+        json_out.write_text(json.dumps(rep, indent=1, default=str))
+        console.print(f"report written to {json_out}")
+
+
 portfolio_app = typer.Typer(
     no_args_is_help=True, help="Your portfolio: import statements and tradebooks (local only)"
 )
