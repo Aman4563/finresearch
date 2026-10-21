@@ -40,6 +40,7 @@ Benchmark-relative and rolling views (#349):
 
 from __future__ import annotations
 
+import itertools
 import math
 import statistics
 from collections.abc import Sequence
@@ -129,7 +130,9 @@ def capture_ratios(rp: Sequence[float], rb: Sequence[float]) -> tuple[float, flo
     for side in (1, -1):
         pairs = [(a, b) for a, b in zip(rp, rb, strict=True) if b * side > 0]
         if len(pairs) < MIN_CAPTURE_DAYS:
-            raise ValueError(f"needs {MIN_CAPTURE_DAYS} {'up' if side > 0 else 'down'} days; have {len(pairs)}")
+            raise ValueError(
+                f"needs {MIN_CAPTURE_DAYS} {'up' if side > 0 else 'down'} days; have {len(pairs)}"
+            )
         out.append(g([a for a, _ in pairs]) / g([b for _, b in pairs]))
     return out[0], out[1]
 
@@ -185,7 +188,9 @@ def drawdown_episodes(index: Sequence[float], top: int = 5) -> list[Episode]:
 
 def var_exceptions(returns: Sequence[float], window: int = 250, level: float = 0.95) -> list[bool]:
     """Walk-forward exceptions: day t (t >= window) against the historical VaR of returns[t-window:t]."""
-    return [returns[t] < -historical_var(returns[t - window : t], level)[0] for t in range(window, len(returns))]
+    return [
+        returns[t] < -historical_var(returns[t - window : t], level)[0] for t in range(window, len(returns))
+    ]
 
 
 def _xlogy(x: float, y: float) -> float:
@@ -204,7 +209,7 @@ def kupiec(n: int, x: int, p: float) -> tuple[float, float]:
 def christoffersen_ind(hits: Sequence[bool | int]) -> float:
     """LR_ind: do exceptions cluster (does yesterday's exception change today's chance of one)?"""
     n = [[0, 0], [0, 0]]
-    for a, b in zip(hits, hits[1:], strict=False):
+    for a, b in itertools.pairwise(hits):
         n[int(a)][int(b)] += 1
     n00, n01, n10, n11 = n[0][0], n[0][1], n[1][0], n[1][1]
     tot = n00 + n01 + n10 + n11

@@ -87,7 +87,9 @@ def test_information_ratio_is_annualised_active_return_over_tracking_error():
 
     rp, rb = _pair()
     a = np.array(rp) - np.array(rb)
-    assert am.information_ratio(rp, rb) == pytest.approx(a.mean() * 252 / (a.std(ddof=1) * math.sqrt(252)), rel=1e-9)
+    assert am.information_ratio(rp, rb) == pytest.approx(
+        a.mean() * 252 / (a.std(ddof=1) * math.sqrt(252)), rel=1e-9
+    )
 
 
 def test_capture_ratios_use_geometric_means_on_up_and_down_days():
