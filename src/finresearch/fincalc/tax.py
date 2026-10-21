@@ -29,9 +29,12 @@ preceding the date of its transfer").
 
 Not modelled (shown as caveats): surcharge (capped at 15 % on these gains), the s.87A rebate (not available against
 tax at special rates), indexation for pre-23-Jul-2024 transfers of other assets, set-off of the unused basic
-exemption, carry-forward of losses across years (8 years), the s.94(7)/(8) dividend and bonus-stripping rules, and
+exemption, the s.94(7)/(8) dividend and bonus-stripping rules, and
 share buybacks (taxed as dividend with the cost as a capital loss from 1-Oct-2024; as capital gains from tax year
 2026-27, promoters at an effective 30 %, Budget 2026 memo p.63, enactment not verified [U]).
+
+Losses carried forward from earlier years (s.74 / s.111, eight years, only after a return filed on time) are set off
+by ``fy_tax(brought_forward=...)``; the ledger across years is fincalc.losses (#344).
 
 Unlisted bonds and debentures (#294): transferred, redeemed or matured on or after 23-Jul-2024 they are short-term at
 the slab rate whatever the holding period (s.50AA as amended by the Finance (No.2) Act 2024, Budget 2024 memo; s.76 of
