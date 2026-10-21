@@ -36,6 +36,14 @@ test("fno: every probability carries its reliability, EV leads, a model span is 
   expect(await before(plan.getByTestId("plan-ev"), plan.getByTestId("plan-pop"))).toBe(true);
   await expect(plan.getByText("0.31 : 1")).toBeVisible();
   await expect(plan.getByTestId("plan-pop").getByTestId("reliability")).toContainText("calibration not established: 0 scored");
+  // #433: a plan card is recorded in the forecast ledger (#376), so its chance-of-profit note never says "not forecasts"
+  const popHelp = plan.locator("div").filter({ has: page.getByTestId("plan-pop") }).last().getByRole("button", { name: "What is this?" }).first(); // the label's (?), not the reliability line's
+  await popHelp.scrollIntoViewIfNeeded();
+  // a scroll closes the bubble, so retry the open until it stays up
+  await expect(async () => { await popHelp.click(); await expect(page.getByRole("tooltip")).toBeVisible({ timeout: 1000 }); }).toPass();
+  await expect(page.getByRole("tooltip")).toContainText("recorded in the forecast ledger");
+  await expect(page.getByRole("tooltip")).not.toContainText("not forecasts");
+  await page.keyboard.press("Escape");
 
   // the suggested setups: every card that shows a chance of profit shows its reliability line too
   await page.getByRole("button", { name: "Suggest setups" }).click();
@@ -48,6 +56,8 @@ test("fno: every probability carries its reliability, EV leads, a model span is 
   const ev = page.getByTestId("fno-model-ev");
   await expect(ev).toContainText("model EV - not validated");
   expect(await before(ev, page.getByText("Chance of profit · risk-neutral"))).toBe(true);
+  // #433: a strategy check is not recorded in the ledger, and its reliability line says why it is not a forecast
+  await expect(page.getByText("calibration not established: 0 scored (model probabilities, not forecasts: a strategy check is not recorded in the forecast ledger)")).toBeVisible();
 
   // the Strategy check signal card: a model span, labelled as such and never as a confidence interval
   // (a backtest's expectancy CI elsewhere on the page is a real confidence interval and keeps its label)
