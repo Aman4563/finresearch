@@ -348,6 +348,9 @@ async def resolve_due(deps: Any, now: datetime | None = None, *, recheck: bool =
     from finresearch.direction import (
         live,  # noqa: F401  (importing it registers the F&O direction resolvers, #327)
     )
+    from finresearch.fnobook import (
+        card_forecasts,  # noqa: F401  (importing it registers the F&O card resolver, #376)
+    )
 
     now = now or datetime.now(UTC)
     with session_scope() as s:
@@ -652,11 +655,15 @@ CLUSTER_EVENT_ORDER = {"up": 0, "up_k": 1, "down_k": 2}
 
 def _cluster(f: Forecast) -> tuple[str, str, str]:
     """The event cluster of a forecast (#353). Direction forecasts (inputs carry `h`) of one underlying and horizon
-    from one start date are nested events of ONE price path (P(up), P(up_k), P(down_k)): they share a cluster, so
-    the window pass below keeps one of them. Every other forecast clusters by its event kind as before."""
+        from one start date are nested events of ONE price path (P(up), P(up_k), P(down_k)): they share a cluster, so
+        the window pass below keeps one of them. F&O card forecasts (#376) cluster by underlying, expiry and structure kind
+    (`independent_events` keeps the first card). Every other forecast clusters by its event kind as before."""
     h = (f.inputs or {}).get("h")
     if h is not None and f.asset == "fno":
         return f.asset, f.instrument, f"h{h}"
+    inp = f.inputs or {}
+    if f.asset == "fno" and "card_log_id" in inp:  # #376: one event per underlying, expiry and structure
+        return f.asset, f"{f.instrument} {inp.get('expiry')}", f"card:{inp.get('structure')}"
     return f.asset, f.instrument, f.event_kind
 
 
@@ -710,6 +717,8 @@ def independent_events(rows: list[Forecast], close_dates: dict[str, date] | None
       Soc. Sci. 3(3), which finds non-overlapping samples a valid if less efficient choice). Non-overlapping sampling
       is used instead of an n / overlap correction because the overlap is not fixed: views are irregular (daily,
       monthly, never), so no single divisor is right.
+    * F&O card forecasts (#376, evals/experiments/card_ledger/PREREG.md): the FIRST card logged per underlying, expiry
+      and structure kind, so the owner's repeated looks at one trade count once.
     Stocks resolving over the same months still move together (one market), so even the event count overstates
     the independent evidence across stocks; that limit is stated, not corrected."""
     by_key: dict[tuple[str, str, str], list[Forecast]] = {}
@@ -717,6 +726,9 @@ def independent_events(rows: list[Forecast], close_dates: dict[str, date] | None
         by_key.setdefault(_cluster(f), []).append(f)
     out: list[Forecast] = []
     for (_a, inst, kind), fs in by_key.items():
+        if kind.startswith("card:"):  # #376, pre-registered: the first card logged in the cluster
+            out.append(min(fs, key=lambda f: (f.created_at, (f.inputs or {}).get("card_index", 0), f.id)))
+            continue
         if kind in POINT_EVENTS:
             if close_dates is None:
                 out.append(max(fs, key=lambda f: (f.created_at, f.id)))
@@ -767,11 +779,17 @@ HEADLINE = "headline: the calls (benchmarks and shadow tests excluded)"
 def is_benchmark(f: Forecast) -> bool:
     """A benchmark, not a call (#353): the option market's own probability (direction, logged as rule_based) or an
     empirical base rate. They are scored in their own rows, never in a headline: otherwise ~2,000 market-implied
-    direction rows a year would make the track record measure the option market."""
+    direction rows a year would make the track record measure the option market. The F&O card's risk-neutral PoP (#376)
+    is the option market's probability too."""
     from finresearch.direction.live import METHOD_IMPLIED
+    from finresearch.fnobook.card_forecasts import RN_METHOD
     from finresearch.signals.ipo import BASE_RATE_METHOD
 
-    return f.validation_status == "base_rate" or _method_group(f.method) in (METHOD_IMPLIED, BASE_RATE_METHOD)
+    return f.validation_status == "base_rate" or _method_group(f.method) in (
+        METHOD_IMPLIED,
+        BASE_RATE_METHOD,
+        RN_METHOD,
+    )
 
 
 def calibration_groups(session: Session, asset: str | None = None, n_bins: int = 5) -> list[dict[str, Any]]:
