@@ -121,3 +121,30 @@ def test_no_run_saved_yet(bt_db):
     with TestClient(create_app()) as c:
         body = c.get("/api/fno/backtests").json()
     assert body["run"] is None and body["registration"]["variants_tried"] == 8
+
+
+def test_a_next_print_run_is_a_sensitivity_never_the_evidence(bt_db):
+    """#382: a next-print report never makes a candidate, and the latest-run reader (trade-plan cards, the Strategy
+    Lab, the backtests page) keeps reading the newest same-print run even when a next-print run is newer."""
+    from finresearch.backtest import compare, evaluate
+    from finresearch.backtest import store as bstore
+    from finresearch.db import session_scope
+
+    mem = fs.history(date(2023, 6, 1), date(2025, 1, 31))
+    same = json.loads(json.dumps(evaluate.evaluate(mem, stock=None, source="synthetic"), default=str))
+    nxt = json.loads(
+        json.dumps(evaluate.evaluate(mem, stock=None, source="synthetic", fill="next_close"), default=str)
+    )
+    assert same["fill"] == "same_print" and nxt["fill"] == "next_close"
+    assert {r["status"] for r in nxt["strategies"]} <= {"sensitivity", "no_data", "overlay_reported"}
+    assert all(t["fill"] == "next_close" for r in nxt["strategies"] for t in r.get("trades", []))
+    rows = {r["key"]: r for r in compare.compare_reports(same, nxt)}
+    assert (
+        rows["nifty_dcs_m"]["paired"] == rows["nifty_dcs_m"]["trades_same"] > 0
+    )  # flat IV: sellers never enter
+    assert rows["stock_cc_m"]["status"] == "not compared"
+    with session_scope() as s:
+        same_id = bstore.save(s, same)
+        bstore.save(s, nxt)
+    with session_scope() as s:
+        assert bstore.latest_run(s).id == same_id

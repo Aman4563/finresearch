@@ -5,6 +5,9 @@ slices of it: a trade belongs to the window of its entry day, equity statistics 
 No parameter is fitted, so "walk-forward" is the same frozen spec judged year by year (`by_year`).
 Status: `candidate` when every criterion holds out of sample; `fails` otherwise, with the failed criteria in words;
 `no_data` when the underlying has no stored history. A candidate is evidence, never a guarantee.
+`fill` (#382, P2.7a): the registered `same_print` fills, or a next-print sensitivity (engine.FILLS). A next-print
+report is judged by the same criteria but its status is `sensitivity`, never `candidate`: it is compared with the
+same-print report (backtest.compare), and backtest.store.latest_run never serves it as the evidence.
 """
 
 from __future__ import annotations
@@ -85,7 +88,8 @@ def thin(equity: list[tuple[date, float]], points: int = 600) -> list[list[Any]]
 
 
 def evaluate(history: History, *, stock: str | None, source: str, oos: bool = True, book: Book = BOOK,
-             crit: Criteria = CRITERIA, spec_list: tuple[Spec, ...] = specs.SPECS) -> dict[str, Any]:  # fmt: skip
+             crit: Criteria = CRITERIA, spec_list: tuple[Spec, ...] = specs.SPECS,
+             fill: str = "same_print") -> dict[str, Any]:  # fmt: skip
     """The full report (module docstring). `oos=False` replays the in-sample window only and never reads a day after
     IS_END; `oos=True` requires the registration (require_registered)."""
     reg = require_registered() if oos else specs.registration_hash()
@@ -95,7 +99,7 @@ def evaluate(history: History, *, stock: str | None, source: str, oos: bool = Tr
     last_all = max((d for d in latest.values() if d), default=specs.IS_END)
     entries_end = last_all if oos else specs.IS_END
     data_end = None if oos else specs.IS_END
-    kw = dict(warmup_days=specs.IV_WARMUP_DAYS, data_end=data_end)
+    kw = dict(warmup_days=specs.IV_WARMUP_DAYS, data_end=data_end, fill=fill)
     main = engine.run(runnable, history, specs.IS_START, entries_end, book, **kw)  # type: ignore[arg-type]
     stress = (engine.run(runnable, history, specs.OOS_START, entries_end,
                          replace(book, slippage_mult=crit.stress_slippage_mult), **kw) if oos else {})  # type: ignore[arg-type]  # fmt: skip
@@ -129,11 +133,11 @@ def evaluate(history: History, *, stock: str | None, source: str, oos: bool = Tr
                    overlay=overlay(r["trades"]) if s.role == "overlay" else None,
                    max_day_read=r["max_day_read"].isoformat() if r["max_day_read"] else None)  # fmt: skip
         out.append(row)
-    _finish(out, oos, crit)
+    _finish(out, oos, crit, fill)
     return {
         "version": specs.SPEC_VERSION, "registration_hash": reg, "registered_hash": prereg.HASH,
         "registered_on": prereg.REGISTERED_ON, "variants_tried": specs.VARIANTS_TRIED, "oos_evaluated": oos,
-        "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"), "source": source,
+        "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"), "source": source, "fill": fill,
         "windows": {"is": [specs.IS_START.isoformat(), specs.IS_END.isoformat()],
                     "oos": [specs.OOS_START.isoformat(), last_all.isoformat()] if oos else None},
         "stock_rule_symbol": stock, "book": asdict(book), "criteria": asdict(crit),
@@ -141,7 +145,7 @@ def evaluate(history: History, *, stock: str | None, source: str, oos: bool = Tr
     }  # fmt: skip
 
 
-def _finish(rows: list[dict[str, Any]], oos: bool, crit: Criteria) -> None:
+def _finish(rows: list[dict[str, Any]], oos: bool, crit: Criteria, fill: str = "same_print") -> None:
     """Deflated Sharpe across the trials of the out-of-sample window, then each spec's verdict."""
     if not oos:
         for r in rows:
@@ -177,3 +181,8 @@ def _finish(rows: list[dict[str, Any]], oos: bool, crit: Criteria) -> None:
         r["reasons"] = [f"fails: {x}" for x in failed] or [
             "passes every pre-registered criterion out of sample"
         ]
+        if fill != "same_print":  # a registered sensitivity (#382): never a candidate by itself
+            r["status"] = "sensitivity"
+            r["reasons"] = [f"{fill} fills: a sensitivity of the same-print verdict, never a candidate"] + r[
+                "reasons"
+            ]
