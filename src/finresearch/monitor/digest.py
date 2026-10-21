@@ -309,9 +309,15 @@ def build_brief(s: Session, now: datetime) -> dict[str, Any]:
     for x in disc.get("unavailable") or []:
         health.append({"level": "info", "text": f"Disclosures: {x} unavailable (no recent good read); red flags from it "
                        "are not shown as 'none'."})  # fmt: skip
+    from finresearch.dq import report as dq_report
+
+    dq = dq_report.data_health(s)  # #368: post-load checks of the market datasets (public data only)
+    health = dq_report.brief_lines(dq) + health
+    dq_failed = [d for d in dq["datasets"] if d["status"] == "fail"]
     at = advance_tax(s, data, today) if has_pf else None
     quiet = (
-        not rules
+        not dq_failed
+        and not rules
         and not changes
         and not missed
         and not [e for e in events if e["day"] == today.isoformat()]
@@ -320,11 +326,11 @@ def build_brief(s: Session, now: datetime) -> dict[str, Any]:
     return {
         "day": today.isoformat(), "generated_at": now.isoformat(), "has_portfolio": has_pf,
         "headline": "Nothing needs a decision today: no rule fired and nothing is due. No action needed."
-                    if quiet else _headline(rules, changes, events, missed, today, disc),
+                    if quiet else _headline(rules, changes, events, missed, today, disc, len(dq_failed)),
         "events": events, "rules_fired": rules, "since": since.isoformat(), "signal_changes": changes,
         "sip": sips, "sip_missed": missed, "long_term": lots, "tax_calendar": tax_cal, "advance_tax": at,
         "elss_unlocks": elss_month,
-        "health": health, "performance": perf, "performance_why": perf_why, "settings": settings.model_dump(mode="json"), "disclosures": disc,
+        "health": health, "data_health": dq, "performance": perf, "performance_why": perf_why, "settings": settings.model_dump(mode="json"), "disclosures": disc,
         "method": "Deterministic templates over the local database: holdings' events and signals from the monitor's "
                   "daily pass (NSE, AMFI), rule alerts, the dated tax table. Nothing here is sent to an LLM.",
         "behaviour_note": BEHAVIOUR_NOTE, "disclaimer": DISCLAIMER,
@@ -352,8 +358,11 @@ def _disclosure_items(disc: dict[str, Any] | None) -> int:
 
 
 def _headline(rules: list, changes: list, events: list, missed: list, today: date,
-              disc: dict[str, Any] | None = None) -> str:  # fmt: skip
+              disc: dict[str, Any] | None = None, dq_failed: int = 0) -> str:  # fmt: skip
     parts = []
+    if dq_failed:
+        parts.append(f"{dq_failed} market dataset{'s' if dq_failed != 1 else ''} failed a data check (figures that "
+                     "use them are unverified)")  # fmt: skip
     if n := _disclosure_items(disc):
         parts.append(f"{n} red flag{'s' if n != 1 else ''} or rating/SEBI item{'s' if n != 1 else ''} on holdings "
                      "and the watchlist")  # fmt: skip
