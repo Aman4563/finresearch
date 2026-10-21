@@ -178,4 +178,5 @@ uv run finresearch portfolio tax-csv gains.csv --fy 2027                 # reali
 uv run finresearch forecasts calibration     # Brier score, skill vs the base rate, hit rate with Wilson intervals
 uv run finresearch forecasts resolve         # score every due forecast now (the monitor does this daily)
 uv run finresearch forecasts cards           # record every logged F&O card (card_log) as a forecast (#376; the monitor does this hourly)
+uv run finresearch forecasts horse-race      # the pre-registered card horse race on resolved cards (#377; --window, --json); read only
 ```
