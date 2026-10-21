@@ -591,6 +591,7 @@ def harvest(rows: Sequence[DisposalRow], lots_by_holding: dict[int, list[OpenLot
     # off first): "tax-free" gain harvesting could then be taxable, so none is suggested (#213)
     headroom = now.exemption_remaining if complete else Decimal(0)
     gain_ideas, loss_ideas = [], []
+    gain_blocked_by_bf = False
     for hid, lots in lots_by_holding.items():
         price = prices.get(hid)
         if price is None or not lots:
@@ -607,7 +608,7 @@ def harvest(rows: Sequence[DisposalRow], lots_by_holding: dict[int, list[OpenLot
             continue
         # gain harvesting: the longest prefix of long-term, in-profit equity lots, trimmed to the headroom
         if h.tax_class == "equity" and headroom > 0:
-            qty, gain = Decimal(0), Decimal(0)
+            qty, gain, lt_cls = Decimal(0), Decimal(0), None
             for lot, dr in rows_for:
                 if dr.cls is None or dr.cls.bucket != "equity_lt" or dr.gain is None or dr.gain <= 0:
                     break
@@ -620,16 +621,36 @@ def harvest(rows: Sequence[DisposalRow], lots_by_holding: dict[int, list[OpenLot
                     break
                 qty += take
                 gain += per_unit * take
+                lt_cls = dr.cls
                 if take < lot.quantity:
                     break
-            if qty > 0:
+            # a booked gain is set off against any brought-forward loss still unused this year before the exemption
+            # (compulsory, s.74 / s.111): that spends a loss which could save tax later, unless it lapses this year
+            spent_later, spent_lapsing = Decimal(0), Decimal(0)
+            if qty > 0 and lt_cls is not None and brought_forward:
+                after = fy_tax([*base_gains, Gain(gain, lt_cls, today)], fy, slab, brought_forward)
+                for b in brought_forward:
+                    d = after.bf_used.get(b.key, Decimal(0)) - now.bf_used.get(b.key, Decimal(0))
+                    if last_fy(b.origin_fy) > fy:
+                        spent_later += d
+                    else:
+                        spent_lapsing += d
+            if spent_later > 0:
+                gain_blocked_by_bf = True
+            elif qty > 0:
                 value = qty * price
+                why = ("Long-term gain inside this year's unused ₹1.25 lakh exemption: tax-free now; buying back raises "
+                       "your cost, so less LTCG later")  # fmt: skip
+                if spent_lapsing > 0:
+                    why = (
+                        f"Uses ₹{spent_lapsing:,.0f} of a brought-forward loss that lapses this year anyway (the "
+                        "set-off is compulsory), the rest inside the exemption: " + why[0].lower() + why[1:]
+                    )
                 gain_ideas.append({"holding_id": hid, "name": h.name, "account": h.account, "sell_units": _f(qty),
                                    "price": _f(price), "value": _f(value), "gain": _f(gain),
                                    "future_tax_saved_up_to": _f(gain * Decimal("0.125")),
                                    "est_costs": _f(_round_trip_cost(h.tax_class, value, asset_types.get(hid, "stock"))),
-                                   "why": "Long-term gain inside this year's unused ₹1.25 lakh exemption: tax-free now; "
-                                          "buying back raises your cost, so less LTCG later"})  # fmt: skip
+                                   "brought_forward_used": _f(spent_lapsing), "why": why})  # fmt: skip
         # loss harvesting: the prefix with the most negative total gain
         best, best_q, acc, acc_q, extra = None, Decimal(0), Decimal(0), Decimal(0), []
         chosen: list[DisposalRow] = []
@@ -675,6 +696,10 @@ def harvest(rows: Sequence[DisposalRow], lots_by_holding: dict[int, list[OpenLot
     loss_ideas.sort(key=lambda x: -(x["net_benefit_up_to"] or 0))
     fy_end = date(fy, 3, 31)
     notes = list(HARVEST_NOTES)
+    if gain_blocked_by_bf:
+        notes.insert(0, "Some gain harvesting is not suggested: a loss brought forward from an earlier year is still "
+                     "unused this year, and a booked gain would be set off against it first (compulsory, s.74 / s.111),"
+                     " spending a loss that could save tax in a later year.")  # fmt: skip
     notes.append(f"A loss carried forward counts only if this year's return is filed by the s.139(1) due date "
                  f"({due_date(fy + 1).strftime('%d-%b-%Y')} for an individual without an audit; s.80 / s.121), and "
                  "only against capital gains within eight years: its value is an upper bound.")  # fmt: skip

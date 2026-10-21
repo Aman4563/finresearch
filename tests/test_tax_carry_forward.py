@@ -295,3 +295,16 @@ def test_harvest_counts_a_known_exit_load_and_flags_an_unknown_one():
     # held past the load period: no load
     (late,) = harvest(*args, exit_loads={3: (D("0.01"), 30)})["loss_harvest"]
     assert late["costs_unknown"] == [] and late["est_costs"] == 5.4
+
+
+def test_gain_harvesting_never_spends_a_brought_forward_loss_that_would_carry_on():
+    # an open long-term lot with a 50,000 gain (inside the exemption). A b/f STCL of 2,00,000 from fy 2026 is unused
+    # this year: booking the gain would be set off against it first (compulsory, s.74), not the exemption -> no idea
+    lots = {1: [OpenLot(EQ, date(2020, 1, 1), D(100), D(1000))]}  # cost 1,00,000, price 1,500 -> gain 50,000
+    args = ([], lots, {1: D(1500)}, {1: "stock"}, TODAY, D("0.30"))
+    out = harvest(*args, brought_forward=[BroughtForward(2026, "short", D(200_000), "2026:short")])
+    assert out["gain_harvest"] == [] and any("brought forward" in n for n in out["notes"])
+    # a b/f loss whose eighth year is this one (fy 2019 -> last fy 2027) lapses anyway: using it costs nothing
+    out = harvest(*args, brought_forward=[BroughtForward(2019, "short", D(200_000), "2019:short")])
+    (idea,) = out["gain_harvest"]
+    assert idea["gain"] == 50000.0 and idea["brought_forward_used"] == 50000.0 and "lapses" in idea["why"]
