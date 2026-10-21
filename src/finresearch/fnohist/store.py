@@ -96,12 +96,14 @@ def _manifest(s: Session, day: date, **values: Any) -> None:
 
 
 def load_day(
-    s: Session, day: date, fmt: fb.Format, url: str, content: bytes, stocks: Iterable[str]
+    s: Session, day: date, fmt: fb.Format, url: str, content: bytes, stocks: Iterable[str],
+    keep: Callable[[str, str], bool] | None = None,
 ) -> dict[str, int]:
     """Replace `day`'s rows with the file's (one transaction with the caller's session). Raises NseError for a file
-    that is not a bhavcopy or is dated another day."""
+    that is not a bhavcopy or is dated another day. `keep` replaces the default row filter (keeper(stocks)): the
+    vault loader keeps index contracts only (vault.backfill)."""
     stocks = sorted({x.upper() for x in stocks})
-    rows, total = fb.parse(content, fmt, keeper(stocks))
+    rows, total = fb.parse(content, fmt, keep or keeper(stocks))
     if any(r.day != day for r in rows):
         raise fb.NseError(f"the F&O bhavcopy for {day} carries another trade date")
     live = [r for r in rows if (r.oi or 0) > 0 or (r.contracts or 0) > 0]
