@@ -34,7 +34,9 @@ def test_repo_skills_are_user_invoked_only():
 def test_repo_agents_are_unreachable_from_research_roles():
     assert sorted(CLAUDE_DIR.glob("agents/*.md"))
     for name, role in ROLES.items():
-        assert not {"Agent", "Task"} & set(role.tools), f"role {name} could start repo agents from .claude/agents"
+        assert not {"Agent", "Task"} & set(role.tools), (
+            f"role {name} could start repo agents from .claude/agents"
+        )
 
 
 def test_repo_agents_have_valid_frontmatter():
