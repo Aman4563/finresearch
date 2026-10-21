@@ -1,0 +1,113 @@
+{
+  "id": "g40_bf_stcl_vs_ltcg_above_threshold",
+  "title": "Brought-forward STCL of Rs 40,000 set off against equity LTCG of Rs 2 lakh, then the Rs 1.25 lakh exemption",
+  "covers": [
+    "brought forward",
+    "carry forward",
+    "set-off",
+    "STCL against LTCG",
+    "set-off before s.112A threshold"
+  ],
+  "rules": [
+    "Income-tax Act 1961 s.74 (Income-tax Act 2025 s.111 [secondary mapping, not verified]): the net capital-gains loss of a year is carried forward to the following assessment year; (1)(a) a short-term loss 'shall be set off' against any capital gain of that year; (1)(b) a long-term loss only against long-term capital gain; (1)(c) the balance is carried on; (2) not for more than eight assessment years immediately succeeding the assessment year for which it was first computed",
+    "Income-tax Act 1961 s.80 (Income-tax Act 2025 s.121 [secondary mapping, not verified]) with s.139(3) and s.139(1): a capital loss is carried forward and set off under s.74 only if it was determined in a return filed within the time allowed by s.139(1)",
+    "Income-tax Act 1961 s.112A(1) as amended by Finance (No.2) Act 2024: 12.5 % on long-term capital gains 'exceeding one lakh twenty-five thousand rupees' for transfers on/after 23-Jul-2024; the gains are those included in total income, i.e. after the s.70 / s.74 set-off",
+    "Health and Education Cess 4 % (Finance Act 2025 s.2)"
+  ],
+  "derivation": [
+    "Manual entry: STCL 40,000.00 of origin fy 2024, return on time; last_fy 2032.",
+    "DAHLIA LTD: 1,000 @ 300.00 bought 2023-04-10, sold 2025-06-10 @ 500.00 -> proceeds 5,00,000.00, cost 3,00,000.00, LTCG 2,00,000.00, long 12.5 %.",
+    "FY 2025-26 (fy 2026): no STCG; s.74(1)(a) allows a short-term loss against any capital gain -> 2,00,000 - 40,000 = 1,60,000.00 LTCG included in total income. bf_set_off_short 40,000.00.",
+    "s.112A: exemption_used 1,25,000.00; taxable 1,60,000 - 1,25,000 = 35,000.00.",
+    "Tax 35,000 x 0.125 = 4,375.00; cess 175.00; total 4,550.00.",
+    "Order check: exemption first would give 2,00,000 - 1,25,000 - 40,000 = 35,000 as well; the order only matters when LTCG less the loss is below Rs 1.25 lakh (see g49).",
+    "Ledger: origin 2024 short, amount 40,000.00, remaining 0.00, last_fy 2032, used."
+  ],
+  "interpretive": false,
+  "slab_rate": "0.30",
+  "holdings": [
+    {
+      "name": "DAHLIA LTD",
+      "tax_class": "equity",
+      "listed": true,
+      "fmv_2018": null,
+      "sgb_original_subscriber": false,
+      "events": [
+        {
+          "day": "2023-04-10",
+          "kind": "buy",
+          "quantity": "1000",
+          "price": "300.00",
+          "charges": "0"
+        },
+        {
+          "day": "2025-06-10",
+          "kind": "sell",
+          "quantity": "1000",
+          "price": "500.00",
+          "charges": "0"
+        }
+      ]
+    }
+  ],
+  "tax_losses": {
+    "returns_filed_on_time": {
+      "2024": true
+    },
+    "brought_forward": [
+      {
+        "origin_fy": 2024,
+        "kind": "short",
+        "amount": "40000.00",
+        "source": "ITR AY 2024-25 Schedule CFL",
+        "apply_from_fy": 2025
+      }
+    ]
+  },
+  "through_fy": 2026,
+  "expected": {
+    "disposals": [
+      {
+        "holding": "DAHLIA LTD",
+        "sold": "2025-06-10",
+        "acquired": "2023-04-10",
+        "quantity": "1000",
+        "cost": "300000.00",
+        "tax_cost": "300000.00",
+        "proceeds": "500000.00",
+        "gain": "200000.00",
+        "term": "long",
+        "rate": "0.125"
+      }
+    ],
+    "open_lots": [],
+    "fy": [
+      {
+        "fy": 2026,
+        "exemption_used": "125000.00",
+        "tax": "4375.00",
+        "cess": "175.00",
+        "total": "4550.00",
+        "complete": true,
+        "unknown_count": 0,
+        "intraday_count": 0,
+        "exempt_total": "0.00",
+        "losses_carried_short": "0.00",
+        "losses_carried_long": "0.00",
+        "bf_set_off_short": "40000.00",
+        "bf_set_off_long": "0.00",
+        "carry_forward_complete": true
+      }
+    ],
+    "ledger": [
+      {
+        "origin_fy": 2024,
+        "kind": "short",
+        "amount": "40000.00",
+        "remaining": "0.00",
+        "last_fy": 2032,
+        "status": "used"
+      }
+    ]
+  }
+}
