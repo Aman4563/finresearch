@@ -1,0 +1,123 @@
+{
+  "id": "g38_current_year_stcl_vs_stcg",
+  "title": "Current-year equity STCL of Rs 30,000 set off against equity STCG of Rs 1 lakh in FY 2025-26 (s.70(2))",
+  "covers": [
+    "set-off",
+    "current-year STCL against STCG",
+    "s.70(2)"
+  ],
+  "rules": [
+    "Income-tax Act 1961 s.2(42A): listed equity share held for not more than 12 months is a short-term capital asset",
+    "Income-tax Act 1961 s.70 (Income-tax Act 2025 s.108 [secondary mapping, not verified]): s.70(2) a short-term capital loss may be set off against any other capital gain, short-term or long-term, of the same year; s.70(3) a long-term capital loss only against long-term capital gain",
+    "Income-tax Act 1961 s.111A(1) as amended by Finance (No.2) Act 2024: STCG on STT-paid equity 20 % for transfers on/after 23-Jul-2024",
+    "Health and Education Cess 4 % (Finance Act 2025 s.2)"
+  ],
+  "derivation": [
+    "ACORN LTD: 1,000 @ 200.00 bought 2025-01-15, sold 2025-08-01 @ 300.00 -> proceeds 3,00,000.00, cost 2,00,000.00, STCG 1,00,000.00 (held < 12 months, short 20 %).",
+    "BIRCH LTD: 200 @ 500.00 bought 2025-02-10, sold 2025-09-01 @ 350.00 -> proceeds 70,000.00, cost 1,00,000.00, STCL -30,000.00 (short).",
+    "FY 2025-26 (fy 2026): s.70(2) sets the STCL off against the STCG: 1,00,000 - 30,000 = 70,000.00 net STCG.",
+    "Tax 70,000 x 0.20 = 14,000.00; cess 560.00; total 14,560.00. No LTCG -> exemption_used 0.00. No loss left, nothing brought forward -> bf_set_off 0.00 / 0.00, carry_forward_complete true, no ledger."
+  ],
+  "interpretive": false,
+  "slab_rate": "0.30",
+  "holdings": [
+    {
+      "name": "ACORN LTD",
+      "tax_class": "equity",
+      "listed": true,
+      "fmv_2018": null,
+      "sgb_original_subscriber": false,
+      "events": [
+        {
+          "day": "2025-01-15",
+          "kind": "buy",
+          "quantity": "1000",
+          "price": "200.00",
+          "charges": "0"
+        },
+        {
+          "day": "2025-08-01",
+          "kind": "sell",
+          "quantity": "1000",
+          "price": "300.00",
+          "charges": "0"
+        }
+      ]
+    },
+    {
+      "name": "BIRCH LTD",
+      "tax_class": "equity",
+      "listed": true,
+      "fmv_2018": null,
+      "sgb_original_subscriber": false,
+      "events": [
+        {
+          "day": "2025-02-10",
+          "kind": "buy",
+          "quantity": "200",
+          "price": "500.00",
+          "charges": "0"
+        },
+        {
+          "day": "2025-09-01",
+          "kind": "sell",
+          "quantity": "200",
+          "price": "350.00",
+          "charges": "0"
+        }
+      ]
+    }
+  ],
+  "tax_losses": {
+    "returns_filed_on_time": {},
+    "brought_forward": []
+  },
+  "through_fy": 2026,
+  "expected": {
+    "disposals": [
+      {
+        "holding": "ACORN LTD",
+        "sold": "2025-08-01",
+        "acquired": "2025-01-15",
+        "quantity": "1000",
+        "cost": "200000.00",
+        "tax_cost": "200000.00",
+        "proceeds": "300000.00",
+        "gain": "100000.00",
+        "term": "short",
+        "rate": "0.20"
+      },
+      {
+        "holding": "BIRCH LTD",
+        "sold": "2025-09-01",
+        "acquired": "2025-02-10",
+        "quantity": "200",
+        "cost": "100000.00",
+        "tax_cost": "100000.00",
+        "proceeds": "70000.00",
+        "gain": "-30000.00",
+        "term": "short",
+        "rate": "0.20"
+      }
+    ],
+    "open_lots": [],
+    "fy": [
+      {
+        "fy": 2026,
+        "exemption_used": "0.00",
+        "tax": "14000.00",
+        "cess": "560.00",
+        "total": "14560.00",
+        "complete": true,
+        "unknown_count": 0,
+        "intraday_count": 0,
+        "exempt_total": "0.00",
+        "losses_carried_short": "0.00",
+        "losses_carried_long": "0.00",
+        "bf_set_off_short": "0.00",
+        "bf_set_off_long": "0.00",
+        "carry_forward_complete": true
+      }
+    ]
+  }
+}

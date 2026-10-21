@@ -21,13 +21,16 @@ from finresearch.portfolio.tax import (
     DisposalRow,
     HoldingTax,
     OpenLot,
+    TaxLossInputs,
     auto_tax_class,
+    carry_forward_json,
     evaluate,
     fy_summary,
     harvest,
     holding_subscriber,
     is_debt_security,
     is_listed,
+    ledger_of,
     lot_subscription,
     redemption_flags,
 )
@@ -454,17 +457,45 @@ def tax_view(s: Session, prices: dict[int, PriceInfo], today: date, slab: Decima
         if p is not None and p.price is not None and p.source and "statement" not in p.source:
             px[h.id] = p.price  # harvesting needs a live price, not an old statement NAV
     types = {h.id: h.asset_type for h in data.holdings}
-    return {"as_of": today.isoformat(), "fys": [fy_summary(rows, fy, slab) for fy in fys],
+    inputs = tax_loss_inputs(s)
+    ledger = ledger_of(rows, slab, inputs, today)
+    now = ledger.years.get(fiscal_year(today))
+    return {"as_of": today.isoformat(), "fys": [fy_summary(rows, fy, slab, ledger) for fy in fys],
+            "carry_forward": carry_forward_json(ledger, inputs),
             "disposals": [disposal_json(r) for r in sorted(rows, key=lambda r: (r.sold, r.holding.name), reverse=True)],
-            "harvest": harvest(rows, lots_by, px, types, today, slab),
+            "harvest": harvest(rows, lots_by, px, types, today, slab, now.brought_forward if now else (),
+                               _exit_loads(s)),
             "rules": [r.to_json() for r in RULES], "verify": VERIFY_NOTE,
             "rules_verified_through": {"fy": VERIFIED_THROUGH_FY, "label": fy_label(VERIFIED_THROUGH_FY),
                                        "source": VERIFIED_SOURCE},
             "caveats": ["Surcharge (capped at 15 % on these gains) and the s.87A rebate (not available against "
                         "special-rate tax) are not modelled.",
-                        "Losses carried forward from earlier years are not included.",
+                        "Losses of earlier years are set off only when you mark that year's return as filed on time "
+                        "(s.80 / s.121); losses from before the app's records count only as you enter them.",
                         "Indexation for transfers before 23-Jul-2024 is not modelled.",
                         "F&O and intraday trades are business income and are not in this computation."]}  # fmt: skip
+
+
+def _exit_loads(s: Session) -> dict[int, tuple[Decimal, int]]:
+    """The user's exit loads per fund holding (/portfolio Costs settings): {holding id: (fraction, days)}."""
+    from finresearch.api.portfolio_analytics import get_settings_row
+
+    out = {}
+    for k, v in get_settings_row(s)["exit_loads"].items():
+        if v and str(k).isdigit():
+            out[int(k)] = (Decimal(str(v["pct"])) / 100, int(v.get("days") or 0))
+    return out
+
+
+def tax_loss_inputs(s: Session) -> TaxLossInputs:
+    """The profile's carry-forward inputs (suggest.profile.TaxLosses) as portfolio.tax sees them."""
+    from finresearch.fincalc.losses import ManualLoss
+    from finresearch.suggest.advisor import load_profile
+
+    t = load_profile(s).tax_losses
+    return TaxLossInputs(dict(t.returns_filed_on_time),
+                         [ManualLoss(b.origin_fy, b.kind, b.amount_inr, b.source, b.apply_from_fy)
+                          for b in t.brought_forward])  # fmt: skip
 
 
 def export_rows(s: Session, prices: dict[int, PriceInfo] | None = None) -> list[DisposalRow]:

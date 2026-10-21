@@ -1,0 +1,127 @@
+{
+  "id": "g48_bf_stcl_and_ltcl_vs_ltcg",
+  "title": "Brought-forward STCL (FY 2021-22) and LTCL (FY 2023-24), Rs 60,000 each, against equity LTCG of Rs 60,000: LTCL used first",
+  "covers": [
+    "brought forward",
+    "carry forward",
+    "set-off",
+    "STCL vs LTCL order"
+  ],
+  "rules": [
+    "Income-tax Act 1961 s.74 (Income-tax Act 2025 s.111 [secondary mapping, not verified]): the net capital-gains loss of a year is carried forward to the following assessment year; (1)(a) a short-term loss 'shall be set off' against any capital gain of that year; (1)(b) a long-term loss only against long-term capital gain; (1)(c) the balance is carried on; (2) not for more than eight assessment years immediately succeeding the assessment year for which it was first computed",
+    "Income-tax Act 1961 s.80 (Income-tax Act 2025 s.121 [secondary mapping, not verified]) with s.139(3) and s.139(1): a capital loss is carried forward and set off under s.74 only if it was determined in a return filed within the time allowed by s.139(1)",
+    "Income-tax Act 1961 s.112A(1) as amended by Finance (No.2) Act 2024: 12.5 % on long-term capital gains 'exceeding one lakh twenty-five thousand rupees' for transfers on/after 23-Jul-2024; the gains are those included in total income, i.e. after the s.70 / s.74 set-off",
+    "Health and Education Cess 4 % (Finance Act 2025 s.2)"
+  ],
+  "derivation": [
+    "Manual entries, both returns on time: STCL 60,000.00 of origin fy 2022 (last_fy 2030) and LTCL 60,000.00 of origin fy 2024 (last_fy 2032).",
+    "NUTMEG LTD: 600 @ 300.00 bought 2023-05-02, sold 2025-07-01 @ 400.00 -> proceeds 2,40,000.00, cost 1,80,000.00, LTCG 60,000.00, long 12.5 %.",
+    "Both losses may absorb LTCG (s.74(1)(a) and (b)) but the gain covers only one. s.74 does not say which goes first (interpretive). Reading taken: the LTCL first, because it can absorb only LTCG, while the STCL kept can later absorb STCG taxed at 20 % or slab; within one kind, oldest first (g47).",
+    "The set-off is made even though the 60,000 LTCG is below Rs 1.25 lakh (compulsory set-off, g49) -> LTCG 0, exemption_used 0.00, bf_set_off_long 60,000.00, bf_set_off_short 0.00; tax 0.00, cess 0.00, total 0.00.",
+    "Ledger: 2022 short amount 60,000.00 remaining 60,000.00 last_fy 2030 available; 2024 long amount 60,000.00 remaining 0.00 last_fy 2032 used.",
+    "Alternative A (oldest first across kinds): bf_set_off_short 60,000.00, bf_set_off_long 0.00; 2022 short remaining 0.00 used; 2024 long remaining 60,000.00 available. Alternative B (set-off optional against exempt LTCG): no set-off, exemption_used 60,000.00, both remaining 60,000.00. Tax 0.00 in every reading."
+  ],
+  "interpretive": true,
+  "slab_rate": "0.30",
+  "holdings": [
+    {
+      "name": "NUTMEG LTD",
+      "tax_class": "equity",
+      "listed": true,
+      "fmv_2018": null,
+      "sgb_original_subscriber": false,
+      "events": [
+        {
+          "day": "2023-05-02",
+          "kind": "buy",
+          "quantity": "600",
+          "price": "300.00",
+          "charges": "0"
+        },
+        {
+          "day": "2025-07-01",
+          "kind": "sell",
+          "quantity": "600",
+          "price": "400.00",
+          "charges": "0"
+        }
+      ]
+    }
+  ],
+  "tax_losses": {
+    "returns_filed_on_time": {
+      "2022": true,
+      "2024": true
+    },
+    "brought_forward": [
+      {
+        "origin_fy": 2022,
+        "kind": "short",
+        "amount": "60000.00",
+        "source": "ITR AY 2022-23 Schedule CFL",
+        "apply_from_fy": 2023
+      },
+      {
+        "origin_fy": 2024,
+        "kind": "long",
+        "amount": "60000.00",
+        "source": "ITR AY 2024-25 Schedule CFL",
+        "apply_from_fy": 2025
+      }
+    ]
+  },
+  "through_fy": 2026,
+  "expected": {
+    "disposals": [
+      {
+        "holding": "NUTMEG LTD",
+        "sold": "2025-07-01",
+        "acquired": "2023-05-02",
+        "quantity": "600",
+        "cost": "180000.00",
+        "tax_cost": "180000.00",
+        "proceeds": "240000.00",
+        "gain": "60000.00",
+        "term": "long",
+        "rate": "0.125"
+      }
+    ],
+    "open_lots": [],
+    "fy": [
+      {
+        "fy": 2026,
+        "exemption_used": "0.00",
+        "tax": "0.00",
+        "cess": "0.00",
+        "total": "0.00",
+        "complete": true,
+        "unknown_count": 0,
+        "intraday_count": 0,
+        "exempt_total": "0.00",
+        "losses_carried_short": "0.00",
+        "losses_carried_long": "0.00",
+        "bf_set_off_short": "0.00",
+        "bf_set_off_long": "60000.00",
+        "carry_forward_complete": true
+      }
+    ],
+    "ledger": [
+      {
+        "origin_fy": 2022,
+        "kind": "short",
+        "amount": "60000.00",
+        "remaining": "60000.00",
+        "last_fy": 2030,
+        "status": "available"
+      },
+      {
+        "origin_fy": 2024,
+        "kind": "long",
+        "amount": "60000.00",
+        "remaining": "0.00",
+        "last_fy": 2032,
+        "status": "used"
+      }
+    ]
+  }
+}
