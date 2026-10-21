@@ -106,19 +106,6 @@ def test_plan_card_has_every_part_and_no_strong_call_without_evidence(client):
     assert card["paper"]["trades"] == 0 and card["invalidation"] and card["adjustments"]["rules"]
 
 
-def test_plan_is_avoid_when_the_matching_backtest_failed(client, monkeypatch):
-    _profile("1000000")
-    _save_backtest([FAILED])
-    monkeypatch.setattr(
-        dates, "now_ist", lambda: datetime(2026, 9, 1, 10, tzinfo=dates.IST)
-    )  # 35 days: in window
-    card = client.post("/api/fno/plan", json={"symbol": "NIFTY", "expiry": "2026-10-06", "legs": PCS}).json()
-    assert card["evidence"]["match"] == "exact" and card["evidence"]["level"] == "negative"
-    assert card["action"] == "AVOID" and card["label"] == "AVOID"
-    assert "FAILED out-of-sample: expectancy ₹-1,789/trade, t=-1.3, 42 trades" in card["reasons"][0]
-    assert card["exits"]["source"] == "spec:nifty_pcs_m" and card["exits"]["time"]["dte"] == 7
-
-
 def test_plan_over_budget_is_avoid_and_unknown_budget_is_never_safe(client):
     _profile("100000")  # budget ₹2,000: one set risks ≈ ₹12k
     card = client.post("/api/fno/plan", json={"symbol": "NIFTY", "expiry": "2026-10-06", "legs": PCS}).json()
@@ -138,21 +125,17 @@ def test_plan_over_budget_is_avoid_and_unknown_budget_is_never_safe(client):
     )
 
 
-def test_suggest_applies_each_recipe_and_marks_closed_windows(client):
+def test_suggest_serves_only_candidate_recipes_on_their_own_underlying(client):
     _profile("1000000")
-    _save_backtest([FAILED])
+    _save_backtest([FAILED, _ic_row(expectancy=741.0, t_stat=0.76, ci_low=-1262.0, ci_high=2567.0)])
     got = client.get("/api/fno/NIFTY/suggest").json()
     cards = {c["spec_key"]: c for c in got["cards"]}
-    assert set(cards) == {
-        "nifty_pcs_m",
-        "nifty_ccs_m",
-        "banknifty_ic_m",
-        "nifty_ic_w",
-        "nifty_dcs_m",
-        "nifty_dps_m",
-    }
-    # 29-Sep: no monthly expiry 30-45 days away in the fixture's list → the monthly recipes wait; the failed one avoids
-    assert cards["nifty_pcs_m"]["action"] == "AVOID" and not cards["nifty_pcs_m"]["legs"]
+    # #355: the two debit-spread controls and the BANKNIFTY condor are never served as NIFTY setups
+    assert set(cards) == {"nifty_pcs_m", "nifty_ccs_m", "nifty_ic_w"}
+    # 29-Sep: no monthly expiry 30-45 days away in the fixture's list → the monthly recipes wait, the failed one too
+    # (its one-sided evidence is directional: neither AVOID nor ENTER)
+    assert cards["nifty_pcs_m"]["action"] == "WAIT" and not cards["nifty_pcs_m"]["legs"]
+    assert cards["nifty_pcs_m"]["evidence"]["level"] == "directional"
     assert (
         cards["nifty_ccs_m"]["action"] == "WAIT"
         and "entry window is closed" in cards["nifty_ccs_m"]["reasons"][0]
@@ -162,8 +145,9 @@ def test_suggest_applies_each_recipe_and_marks_closed_windows(client):
     puts = sorted(x["strike"] for x in ic["legs"] if x["right"] == "put")
     calls = sorted(x["strike"] for x in ic["legs"] if x["right"] == "call")
     assert puts[1] < 22780.25 < calls[0]
-    # no IV history stored: the recipe's IV filter is unknown → never ENTER
+    # no IV history stored: the recipe's registered IV filter is unknown → never ENTER, labelled as the recipe's
     assert ic["action"] == "WAIT" and "Recipe IV filter" in ic["failed"]
+    assert any("registered filter of a recipe that failed out of sample" in r for r in ic["reasons"])
     assert all(c["action"] != "ENTER" for c in got["cards"])  # no candidate saved: never ENTER (#350)
 
 
@@ -439,3 +423,76 @@ def test_failed_spec_with_positive_expectancy_gets_no_enter_and_no_real_lots_350
     s = client.get("/api/signals/fno/NIFTY", params={"expiry": "2026-10-06", "legs": json.dumps(CCS)}).json()
     assert s["action"] != "ENTER"
     assert s["sizing"]["real_lots"] == 0
+
+
+# --------------------------------------------------------------------------- #355: one verdict engine, evidence-consistent labels
+IC = (
+    PCS + CCS
+)  # a NIFTY iron condor: 22400/22600 puts, 23000/23200 calls (7 days: nifty_ic_w's 4-9 day window)
+
+
+def _ic_row(status="fails", **oos):
+    return {"key": "nifty_ic_w", "name": "NIFTY short iron condor, weekly", "role": "candidate", "status": status,
+            "spec_hash": "x" * 64, "underlying": "NIFTY", "windows": {"oos": oos}}  # fmt: skip
+
+
+def _signal(c, monkeypatch, legs):
+    from finresearch.signals import registry
+
+    monkeypatch.setattr(fs, "CLIENT", FakeFno)
+    monkeypatch.setattr(registry, "_PROVIDERS", {"fno": fs.fno_signal})
+    monkeypatch.setattr(registry, "_loaded", True)
+    return c.get("/api/signals/fno/NIFTY", params={"expiry": "2026-10-06", "legs": json.dumps(legs)}).json()
+
+
+@pytest.mark.parametrize(
+    ("row", "want"),
+    [
+        (None, "PAPER"),  # no backtest saved
+        (_ic_row(expectancy=741.0, t_stat=0.76, ci_low=-1262.0, ci_high=2567.0), "PAPER"),  # inconclusive
+        (
+            _ic_row(expectancy=-741.0, t_stat=-0.76, ci_low=-2567.0, ci_high=1262.0),
+            "PAPER",
+        ),  # the sign flipped
+        (_ic_row(), "PAPER"),  # a fails row with no OOS expectancy: never ENTER, never real lots
+        (_ic_row(expectancy=-3000.0, t_stat=-2.4, ci_low=-5000.0, ci_high=-200.0), "AVOID"),  # harmful
+        (_ic_row(status="candidate", expectancy=3000.0, t_stat=2.6, ci_low=400.0, ci_high=5000.0), "ENTER"),
+    ],
+)
+def test_signal_card_and_trade_card_give_the_same_verdict_and_lots_355(client, monkeypatch, row, want):
+    _profile("1000000")
+    _save_backtest([row] if row else [])
+    card = client.post("/api/fno/plan", json={"symbol": "NIFTY", "expiry": "2026-10-06", "legs": IC}).json()
+    s = _signal(client, monkeypatch, IC)
+    assert card["evidence"]["match"] == "exact" and card["action"] == want and s["action"] == want
+    assert s["sizing"]["real_lots"] == card["size"]["real_lots"]
+    assert s["sizing"]["paper_lots"] == card["size"]["suggested"]
+    assert (card["size"]["real_lots"] > 0) is (want == "ENTER")
+
+
+def test_a_failed_one_sided_spread_is_directional_never_avoid_or_enter_355(client, monkeypatch):
+    _profile("1000000")
+    _save_backtest([FAILED])  # nifty_pcs_m: t -1.30, CI -4,581 to 569 (RESULTS.md)
+    monkeypatch.setattr(
+        dates, "now_ist", lambda: datetime(2026, 9, 1, 10, tzinfo=dates.IST)
+    )  # 35 days: exact
+    card = client.post("/api/fno/plan", json={"symbol": "NIFTY", "expiry": "2026-10-06", "legs": PCS}).json()
+    assert card["evidence"]["match"] == "exact" and card["evidence"]["level"] == "directional"
+    assert card["action"] not in ("AVOID", "ENTER") and card["size"]["real_lots"] == 0
+    assert "reflects the index path, not the structure" in card["evidence"]["text"]
+
+
+def test_iv_percentile_is_context_not_a_gate_for_ad_hoc_legs_355():
+    from finresearch.adapters.nse_fno import parse_index_history
+    from finresearch.signals import tradeplan as tpl
+
+    closes = [float(c) for _, c in parse_index_history(
+        json.loads((FNO / "indices_history_NIFTY50_202606_202609.json").read_text()))]  # fmt: skip
+    # a year of IV at 30% and today's at 5%: percentile 0, so the IV check fails for a premium seller
+    x = tpl.Inputs(today=date(2026, 9, 29), closes=closes, iv_series=[30.0] * 120 + [5.0], capital=1_000_000,
+                   max_loss_pct=2, brokerage=20, defined_risk_only=True, rate=0.065)  # fmt: skip
+    legs = [fs.LegIn(y["right"], y["strike"], y["side"]) for y in IC]
+    card = tpl.build(chain(), 65, legs, x)
+    iv = next(c for c in card["checks"] if c["name"] == "IV context fits the strategy")
+    assert iv["contribution"] < 0  # still shown, and still failing as context
+    assert "IV context fits the strategy" not in card["failed"] and card["action"] == "PAPER"

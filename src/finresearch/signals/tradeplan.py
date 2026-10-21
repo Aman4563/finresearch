@@ -4,11 +4,12 @@ lots from the profile's risk budget, a limit-price range from bid/ask, max profi
 probabilities of profit, the stop-loss in premium and in underlying terms, the profit target, the time exit,
 adjustment and invalidation rules, and the evidence (the matching backtest result and the user's paper record).
 
-Verdict (fincalc.tradeplan.verdict): AVOID when a hard check fails (undefined risk, over budget even at one set, a
-same-day expiry) or the matching pre-registered backtest FAILED out of sample with an expectancy ≤ 0; WAIT when any
-other check fails or is unknown (signals.fno.assess: EV after costs, IV context; plus the recipe's own entry filters);
+Verdict (one engine, `decide`, also used by the signal card's Strategy check, #355): AVOID when a hard check fails
+(undefined risk, over budget even at one set, a same-day expiry) or the matching pre-registered backtest is harmful
+(t ≤ −2 and CI below zero, delta-neutral recipes only); WAIT when any other check fails or is unknown (signals.fno.assess:
+EV after costs; the recipe's own registered entry filters; the IV percentile of ad hoc legs is context, not a gate);
 ENTER only when everything passes and the matched spec passed out of sample (a candidate); everything passing
-without one is "PAPER: NO PROVEN EDGE — paper only (0 real lots)" (#350), sized for paper at half the budget and
+without one is "PAPER: NO PROVEN EDGE — paper only (0 real lots)" (#350), sized for paper by the same formula and
 never with real money. The market-context indicators (signals.fno_context) never feed it.
 
 Evidence matching: the legs' shape (fincalc.tradeplan.classify) is matched to a library spec of the same kind. The
@@ -20,7 +21,7 @@ Nothing here places an order: the card's one-click actions are a paper trade and
 
 from __future__ import annotations
 
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import date, timedelta
 from typing import Any
 
@@ -157,7 +158,7 @@ def evidence_for(kind: str, symbol: str, dte: int, strategies: list[dict[str, An
     if spec is None:
         spec, exact = match_spec(kind, symbol, dte)
     row = next((r for r in strategies or [] if spec and r.get("key") == spec.key), None)
-    level = tp.evidence_level(row)
+    level = tp.evidence_level(row, kind)
     out = {"spec_key": spec.key if spec else None, "spec_name": spec.name if spec else None,
            "match": None if spec is None else ("exact" if exact else "related"), "status": (row or {}).get("status"),
            "level": level if exact else "none", "raw_level": level,
@@ -170,6 +171,40 @@ def evidence_for(kind: str, symbol: str, dte: int, strategies: list[dict[str, An
         out["text"] = "No pre-registered backtest is saved yet: no strategy has historical evidence."
     out["spec"] = spec
     return out
+
+
+IV_CHECK = "IV context fits the strategy"
+BUDGET_CHECK = "Max loss within your F&O budget"
+
+
+@dataclass(frozen=True)
+class Decision:
+    action: str
+    qualifier: str | None
+    failed: list[str]
+    size: tp.Size
+    reasons: list[str]  # why beyond the failed checks' own explanations (sizing, the recipe's filters)
+
+
+def decide(gates: list[str], max_loss_one: float | None, costs_one: float, budget: float, level: str,
+           extra_failed: list[tuple[str, str]] | None = None) -> Decision:  # fmt: skip
+    """The one verdict and sizing rule (#355) for the trade-plan card, "Suggest setups" and the signal card's Strategy
+    check: `gates` = signals.fno.assess's failed checks for the legs, sized from the base set's max loss and entry
+    costs, `level` = the matched spec's evidence. The IV-percentile check is context for ad hoc legs, never a gate (it
+    was never tested; a recipe applies its own registered iv_pct_min through `extra_failed`)."""
+    failed = [g for g in gates if g != IV_CHECK]
+    sz = tp.size(max_loss_one, costs_one, budget, proven=level == "proven")
+    reasons: list[str] = []
+    if sz.suggested == 0 and max_loss_one is not None and BUDGET_CHECK not in failed:
+        failed.append(BUDGET_CHECK)  # max loss fits but max loss + entry costs does not
+        reasons.append(f"Sizing: {sz.reason}.")
+    for name, why in extra_failed or []:
+        failed.append(name)
+        reasons.append(why)
+    action, qualifier = tp.verdict(failed, level)
+    if action != tp.ENTER:
+        sz = replace(sz, real_lots=0)  # real money only on an ENTER
+    return Decision(action, qualifier, failed, sz, reasons)
 
 
 def _evidence(kind: str, symbol: str, dte: int, x: Inputs, spec: Any | None) -> dict[str, Any]:
@@ -301,19 +336,14 @@ def build(chain, lot: int, legs_in: list[fs.LegIn], x: Inputs, *, spec: Any | No
     m = max(1, min(sz.suggested, 100 // max(y.lots for y in legs_in)))
     legs = [fs.LegIn(y.right, y.strike, y.side, y.lots * m, y.premium) for y in legs_in]
     a = _analyse(chain, lot, legs, x) if m > 1 else a0
-    _, factors, failed = fs.assess(a, defined_risk_only=x.defined_risk_only)
-    reasons = [f"{f.name}: {f.explanation}" for f in factors if f.name in failed]
+    _, factors, gates = fs.assess(a, defined_risk_only=x.defined_risk_only)
+    d = decide(gates, a0["max_loss"], a0["costs"]["entry"]["total"], x.budget, ev["level"], extra_failed)
+    action, qualifier, failed = d.action, d.qualifier, d.failed
+    reasons = [f"{f.name}: {f.explanation}" for f in factors if f.name in failed] + d.reasons
     if x.capital <= 0:
         reasons.insert(0, "F&O capital is not set in your profile, so no size fits a budget: set F&O capital and the "
                           "max-loss % on the profile page.")  # fmt: skip
-    if sz.suggested == 0 and a0["max_loss"] is not None and "Max loss within your F&O budget" not in failed:
-        failed.append("Max loss within your F&O budget")  # max loss fits but max loss + entry costs does not
-        reasons.append(f"Sizing: {sz.reason}.")
-    for name, why in extra_failed or []:
-        failed.append(name)
-        reasons.append(why)
-    action, qualifier = tp.verdict(failed, ev["level"])
-    if ev["level"] == "negative":
+    if ev["level"] == "harmful":
         reasons.insert(0, f"The matching pre-registered backtest ({ev['spec_name']}): {ev['text']}")
     quotes = chain_quotes(chain)
     lq = [None if y.right == "future" else _quote(quotes, y.right, y.strike) for y in legs]
@@ -358,7 +388,7 @@ def build(chain, lot: int, legs_in: list[fs.LegIn], x: Inputs, *, spec: Any | No
         "legs": [{"right": y.right, "strike": y.strike, "side": y.side, "lots": y.lots, "qty": al["qty"],
                   "last": al["premium"]} for y, al in zip(legs, a["legs"], strict=True)],
         "size": {"multiple": sz.multiple, "suggested": m if sz.suggested else 0,
-                 "real_lots": min(sz.real_lots, m), "budget": round(sz.budget, 2),
+                 "real_lots": min(d.size.real_lots, m), "budget": round(sz.budget, 2),
                  "risk_per_set": None if sz.risk_per_multiple is None else round(sz.risk_per_multiple, 2),
                  "reason": sz.reason, "capital": x.capital, "max_loss_pct": x.max_loss_pct},
         "entry": {**limits, "levels_priced_at": entry_src, "source": src},
@@ -442,29 +472,32 @@ def recipe_legs(spec: Any, chain, today: date, rate: float) -> list[fs.LegIn] | 
 
 
 def _recipe_checks(spec: Any, x: Inputs) -> list[tuple[str, str]]:
+    """The recipe's registered entry filter (iv_pct_min, 0.30 for the sellers in backtest.specs): part of the recipe's
+    definition, labelled as such (#355), unlike the IV context of ad hoc legs, which is never a gate."""
     from finresearch.fincalc import volatility as vol
 
     if spec.iv_pct_min is None:
         return []
+    row = next((r for r in x.strategies or [] if r.get("key") == spec.key), None)
+    status = (row or {}).get("status")
+    what = {"candidate": "the recipe's registered filter",
+            "fails": "the registered filter of a recipe that failed out of sample"}.get(
+        status, "the registered filter of a recipe not judged out of sample")  # fmt: skip
     pct = vol.iv_stats(x.iv_series).percentile
     if pct is None:
         return [("Recipe IV filter", f"IV percentile unknown: the recipe enters only when the 30-day IV is at or above "
-                 f"its {spec.iv_pct_min:.0%} percentile of the past year.")]  # fmt: skip
+                 f"its {spec.iv_pct_min:.0%} percentile of the past year ({what}).")]  # fmt: skip
     if pct < spec.iv_pct_min:
-        return [
-            (
-                "Recipe IV filter",
-                f"IV percentile {pct:.0%} is below the recipe's {spec.iv_pct_min:.0%} filter.",
-            )
-        ]
+        return [("Recipe IV filter", f"IV percentile {pct:.0%} is below the recipe's {spec.iv_pct_min:.0%} filter "
+                 f"({what}).")]  # fmt: skip
     return []
 
 
 def waiting(spec: Any, symbol: str, x: Inputs, why: str) -> dict[str, Any]:
-    """A recipe with no trade today: WAIT (or AVOID when its own backtest is negative), with no legs."""
+    """A recipe with no trade today: WAIT (or AVOID when its own backtest is harmful), with no legs."""
     ev = _evidence(spec.kind, symbol, spec.dte_min, x, spec)
     action, _ = tp.verdict(["Entry window"], ev["level"])
-    reasons = [why] + ([f"The pre-registered backtest: {ev['text']}"] if ev["level"] == "negative" else [])
+    reasons = [why] + ([f"The pre-registered backtest: {ev['text']}"] if ev["level"] == "harmful" else [])
     return {"title": f"{symbol.upper()} · {spec.name}", "symbol": symbol.upper(), "kind": spec.kind, "action": action,
             "qualifier": None, "label": action, "reasons": reasons, "legs": [], "failed": ["Entry window"],
             "evidence": {k: v for k, v in ev.items() if k != "spec"}, "spec_key": spec.key}  # fmt: skip
@@ -483,8 +516,8 @@ async def suggest(symbol: str, expiries: list[date], get_chain, lot_for, x: Inpu
     fallback: dict[date, tuple[Any, str] | None] = {}
     out = []
     for spec in specs.SPECS:
-        if spec.role == "overlay":
-            continue
+        if spec.role != "candidate" or spec.underlying != symbol.upper():
+            continue  # #355: controls, overlays and another underlying's recipes are never served as setups
         e = recipe_expiry(spec, expiries, x.today)
         if e is None:
             kind = "monthly " if spec.expiry_kind == "monthly" else ""

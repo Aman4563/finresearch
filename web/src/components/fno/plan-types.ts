@@ -14,7 +14,8 @@ export type EntryLeg = {
 
 export type PlanEvidence = {
   spec_key: string | null; spec_name: string | null; match: "exact" | "related" | null; status: string | null;
-  level: "proven" | "negative" | "unproven" | "none"; raw_level: string; text: string; url: string;
+  /** #355: harmful (t ≤ −2 and CI below 0, delta-neutral recipes only) → AVOID; directional = one-sided or debit structures, whose backtest reflects the index path */
+  level: "proven" | "harmful" | "inconclusive" | "directional" | "none"; raw_level: string; text: string; url: string;
 };
 
 export type PaperRecord = {

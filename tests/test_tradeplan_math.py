@@ -66,7 +66,9 @@ def test_size_from_budget():
     s = tp.size(-1500.0, 60.0, 4000.0, proven=True)
     assert (s.multiple, s.suggested, s.real_lots) == (2, 2, 2)  # floor(4000 / 1560)
     s = tp.size(-1500.0, 60.0, 4000.0, proven=False)
-    assert (s.multiple, s.suggested) == (2, 1)  # paper: half without a proven edge
+    # #355: one formula n = floor(B / (|ML| + c)), as the backtester sizes; without a proven edge it is the paper size
+    # and real money is 0 (no more "half of it" for an unproven setup)
+    assert (s.multiple, s.suggested, s.real_lots) == (2, 2, 0)
     s = tp.size(-1500.0, 60.0, 1000.0, proven=False)
     assert (s.multiple, s.suggested, s.real_lots) == (0, 0, 0) and "above your" in s.reason
     s = tp.size(None, 60.0, 4000.0, proven=False)
@@ -143,15 +145,16 @@ def test_stop_beyond_max_loss_is_capped():
 
 def test_verdict_rules():
     assert tp.verdict(["Max loss within your F&O budget"], "proven") == ("AVOID", None)
-    assert tp.verdict([], "negative") == ("AVOID", None)  # a failed backtest overrides passing checks
+    assert tp.verdict([], "harmful") == ("AVOID", None)  # a harmful backtest overrides passing checks (#355)
     assert tp.verdict(["IV context fits the strategy"], "none") == ("WAIT", None)
     assert tp.verdict([], "proven") == ("ENTER", None)
     # #350: never ENTER without a candidate spec; every check passing gives the paper-only verdict
     assert tp.verdict([], "none") == (tp.PAPER, tp.PAPER_ONLY)
-    assert tp.verdict([], "unproven") == (tp.PAPER, tp.PAPER_ONLY)
+    assert tp.verdict([], "inconclusive") == (tp.PAPER, tp.PAPER_ONLY)
+    assert tp.verdict([], "directional") == (tp.PAPER, tp.PAPER_ONLY)
 
 
-@pytest.mark.parametrize("level", ["none", "unproven", "negative"])
+@pytest.mark.parametrize("level", ["none", "inconclusive", "directional", "harmful"])
 @pytest.mark.parametrize("failed", [[], ["IV context fits the strategy"], ["Defined risk"]])
 def test_no_enter_unless_proven_350(level, failed):
     assert tp.verdict(failed, level)[0] != "ENTER"
@@ -160,15 +163,19 @@ def test_no_enter_unless_proven_350(level, failed):
 def test_evidence_level_and_text():
     fail = {"status": "fails", "windows": {"oos": {"expectancy": -1789.4, "t_stat": -1.31, "trades": 42,
                                                    "from": "2024-07-01", "to": "2026-10-09"}}}  # fmt: skip
-    assert tp.evidence_level(fail) == "negative"
-    assert tp.evidence_text(fail, "negative") == (
-        "FAILED out-of-sample: expectancy ₹-1,789/trade, t=-1.3, 42 trades (2024-07-01 → 2026-10-09)."
+    # #355: a one-sided credit spread's backtest is directional, never "negative" → AVOID
+    assert tp.evidence_level(fail, "put_credit") == "directional"
+    assert tp.evidence_text(fail, "directional") == (
+        "FAILED out-of-sample, directional — reflects the index path, not the structure: expectancy ₹-1,789/trade, "
+        "t=-1.3, 42 trades (2024-07-01 → 2026-10-09)."
     )
+    assert tp.evidence_level(fail, "iron_condor") == "inconclusive"  # no CI stored: never harmful
     pos = {"status": "fails", "windows": {"oos": {"expectancy": 120.0, "t_stat": 0.4, "trades": 35}}}
-    assert tp.evidence_level(pos) == "unproven"
-    assert tp.evidence_level({"status": "candidate"}) == "proven"
-    assert tp.evidence_level({"status": "overlay_reported"}) == "none"
-    assert tp.evidence_level(None) == "none"
+    assert tp.evidence_level(pos, "iron_condor") == "inconclusive"
+    assert tp.evidence_level({"status": "candidate"}, "iron_condor") == "proven"
+    assert tp.evidence_level({"status": "candidate"}, "call_credit") == "directional"
+    assert tp.evidence_level({"status": "overlay_reported"}, "iron_condor") == "none"
+    assert tp.evidence_level(None, "iron_condor") == "none"
 
 
 # --------------------------------------------------------------------------- #355: evidence-consistent labels
