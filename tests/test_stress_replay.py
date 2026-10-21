@@ -284,3 +284,70 @@ def test_bond_uses_duration_where_yields_exist_else_unmapped():
     assert isinstance(g, sr.Leg) and "duration" in g.how and g.returns[DAYS[0]] == pytest.approx(-0.005)
     m = sr.map_holding(hd(key="NSE:GS1", tax_class="debt", mod_duration=5.0), ctx())
     assert isinstance(m, sr.Missing) and "yield" in m.reason
+
+
+# --------------------------------------------------------------------------- loading (fake sources, synthetic book)
+def _weekdays(a, b):
+    return [a + timedelta(days=i) for i in range((b - a).days + 1) if (a + timedelta(days=i)).weekday() < 5]
+
+
+ELEC = _weekdays(D(2024, 5, 20), D(2024, 7, 31))
+NIFTY_2024 = {d: 100.0 + (3 if d == D(2024, 6, 3) else -3 if d == D(2024, 6, 4) else 0 if d < D(2024, 6, 5) else 1)
+              for d in ELEC}  # fmt: skip
+NOW_DAYS = [D(2026, 3, 1) + timedelta(days=i) for i in range(200)]
+NOW_MKT = {d: 100 * (1 + 0.01 * ((i % 5) - 2)) for i, d in enumerate(NOW_DAYS)}
+
+
+def synthetic_history():
+    from finresearch.portfolio.history import Benchmark, History, Position
+
+    lv, bbb = 10.0, {NOW_DAYS[0]: 10.0}
+    for a, b in zip(NOW_DAYS, NOW_DAYS[1:], strict=False):
+        lv *= 1 + 2 * (NOW_MKT[b] / NOW_MKT[a] - 1)
+        bbb[b] = lv
+    pos = [Position("NSE:AAA", "AAA Ltd", "stock", "equity", [1], 10, 100, None, 1000.0, None, "AAA"),
+           Position("NSE:BBB", "BBB Ltd", "stock", "equity", [2], 10, 100, None, 2000.0, None, "BBB"),
+           Position("MF:9", "Test Liquid Fund", "mf", "debt", [3], 10, 50, None, 500.0, None, None,
+                    scheme=type("S", (), {"code": "9", "category": "Debt Scheme - Liquid Fund"})())]  # fmt: skip
+    bench = Benchmark(NOW_DAYS, [NOW_MKT[d] for d in NOW_DAYS], NOW_MKT, {}, {})
+    return History(days=NOW_DAYS, value=[1.0] * 200, index=[1.0] * 200, positions=pos,
+                   closes={"NSE:BBB": bbb, "NSE:AAA": {}}, factors={}, benchmark=bench)  # fmt: skip
+
+
+async def fake_fetch(inst, a, b):
+    if inst.key == "NSE:AAA":
+        return {d: 50.0 * (0.9 if d == D(2024, 6, 4) else 1.0) for d in ELEC if a <= d <= b}, True
+    return {}, True
+
+
+def fake_index(sym, a, b):
+    src = {"NIFTY": NIFTY_2024, "INDIA VIX": {d: 16.0 + (10 if d == D(2024, 6, 4) else 0) for d in ELEC}}.get(
+        sym, {}
+    )
+    return {d: v for d, v in src.items() if a <= d <= b}
+
+
+async def test_load_replays_every_window_and_says_why_one_is_missing(tmp_path):
+    from finresearch.portfolio.history import PriceStore
+
+    out = await sr.load(
+        synthetic_history(), fake_fetch, PriceStore(tmp_path), D(2026, 10, 22), index_series=fake_index
+    )
+    by = {s["id"]: s for s in out["scenarios"]}
+    assert list(by) == [w.id for w in sr.WINDOWS]
+    e = by["election2024"]
+    assert e["available"] and e["base"] == "2024-05-31" and "index_eod" in e["index_source"]
+    how = {p["key"]: p["how"] for p in e["positions"]}
+    assert how["NSE:AAA"] == "own prices" and how["NSE:BBB"].startswith("beta 2.00")
+    assert e["unmapped"][0]["key"] == "MF:9" and e["mapped_share"] == pytest.approx(3000 / 3500, abs=1e-4)
+    assert e["worst_day"]["date"] == "2024-06-04"
+    # AAA -10 % (₹-100) and BBB 2 × (97/103 - 1) (₹-246.99) on 4-Jun, after +6 % on 3-Jun
+    assert e["worst_day"]["inr"] == pytest.approx(-100 + 2000 * 1.06 * 2 * (97 / 103 - 1), abs=0.5)
+    assert e["vix"] == {"start": 16.0, "peak": 26.0, "peak_date": "2024-06-04"}
+    g = by["gfc2008"]  # no index_eod rows before 2013 and the fake NIFTYBEES has none: unavailable, never 0
+    assert g["available"] is False and "NIFTYBEES" in g["reason"] and "index_eod" in g["reason"]
+
+
+def test_a_bond_without_a_duration_says_why():
+    m = sr.map_holding(hd(key="NSE:NCD1", tax_class="debt", bond=True), ctx())
+    assert isinstance(m, sr.Missing) and "duration" in m.reason and "yield" in m.reason

@@ -356,6 +356,7 @@ class HoldingData:
     recent: dict[date, float]  # the last year's closes (for betas)
     category: str | None = None  # AMFI scheme category of a fund
     mod_duration: float | None = None  # a bond's modified duration, when its terms and yield give one
+    bond: bool = False  # a listed bond, G-sec, SDL or T-bill held like a share
 
 
 @dataclass
@@ -397,6 +398,10 @@ def map_holding(x: HoldingData, c: Context) -> Leg | Missing:
             how = f"beta {b[0]:.2f} × {c.market_label} (beta to NIFTYBEES from {b[1]} days)"
             return Leg(x.key, x.name, x.value, how, beta_returns(b[0], c.market))
         reasons.append("under 120 days of recent prices to estimate a beta")
+    elif x.mod_duration is None and x.bond:
+        reasons.append(
+            "a bond: no modified duration (needs its terms and a yield; no yield history is stored)"
+        )
     elif x.mod_duration is not None:
         if c.yields is None:
             reasons.append("no stored yield history for this window (duration × yield change)")
@@ -410,3 +415,124 @@ def map_holding(x: HoldingData, c: Context) -> Leg | Missing:
     else:
         reasons.append("not equity, so no beta mapping")
     return Missing(x.key, x.name, x.value, "; ".join(reasons))
+
+
+# --------------------------------------------------------------------------- loading
+NIFTY = "NIFTY"  # index_eod's symbol for the Nifty 50 (adapters.nse_index_eod.FNO_SYMBOLS)
+VIX = "INDIA VIX"
+METHOD = ("Today's holdings at today's values, replayed day by day through each episode: own prices or NAVs where "
+          "they cover the window; else a fund's category index × its beta to it; else equity at its 1-year beta × "
+          "the market path; else a listed bond at -duration × the yield change; else unmapped (listed, never 0 %). "
+          "Instructive, not a forecast.")  # fmt: skip
+
+
+def index_eod_series(symbol: str, start: date, end: date) -> dict[date, float]:
+    """Closes of one index from the local index_eod table (#366); empty when none are stored."""
+    from sqlalchemy import select
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import IndexEod
+
+    with session_scope() as s:
+        rows = s.execute(select(IndexEod.day, IndexEod.close).where(
+            IndexEod.symbol == symbol, IndexEod.day.between(start, end), IndexEod.close.is_not(None))).all()  # fmt: skip
+    return {d: float(c) for d, c in rows}
+
+
+def _vix(series: Any, base: date, end: date) -> dict[str, Any] | None:
+    v = series(VIX, base, end)
+    if base not in v or len(v) < 2:
+        return None
+    peak = max(v, key=lambda d: v[d])
+    return {"start": v[base], "peak": v[peak], "peak_date": peak.isoformat()}
+
+
+async def _closes(store: Any, fetch: Any, key: str, kind: str, ident: str, scheme: Any, lo: date, hi: date,
+                  today: date) -> dict[date, float]:  # fmt: skip
+    from finresearch.portfolio.history import Instrument
+
+    inst = Instrument(key, kind, ident, scheme)
+    try:
+        return await store.get(key, lo, hi, lambda a, b, i=inst: fetch(i, a, b), today)
+    except (
+        Exception
+    ):  # a failed fetch is no data (the holding then maps another way or is listed), never a 0 % move
+        return {}
+
+
+async def _market(w: Window, h: Any, fetch: Any, store: Any, series: Any, lo: date, until: date,
+                  today: date) -> tuple[date, list[date], dict[date, float], str] | str:  # fmt: skip
+    """The market path: the Nifty 50 from index_eod, else NIFTYBEES closes; or why neither covers the window."""
+    from finresearch.portfolio.history import BENCHMARK
+
+    nifty = series(NIFTY, lo, until)
+    md = market_days(nifty, w, until)
+    if not isinstance(md, str):
+        return md[0], md[1], level_returns(nifty, *md), "Nifty 50 close (NSE index file, local index_eod)"
+    why_ix = md
+    bees = await _closes(store, fetch, f"NSE:{BENCHMARK}", "nse", BENCHMARK, None, lo, until, today)
+    md2 = market_days(bees, w, until)
+    if not isinstance(md2, str):
+        f = h.benchmark.factors if h.benchmark is not None else None
+        r, why = own_returns(bees, f, md2[0], md2[1], w.end)
+        if r is not None:
+            days = [d for d in md2[1] if d in r]
+            return md2[0], days, r, f"{BENCHMARK} closes (Nifty 50 ETF; no index_eod rows for this window)"
+        md2 = why or "unusable"
+    return f"Nifty 50 in index_eod: {why_ix}; {BENCHMARK}: {md2}"
+
+
+async def load(h: Any, fetch: Any, store: Any, today: date, *, index_series: Any = None,
+               yields: Any = None) -> dict[str, Any]:  # fmt: skip
+    """Every window replayed on `h.positions` (a portfolio.history.History). `index_series(symbol, start, end)` reads
+    index closes (default: the local index_eod table); `yields(window)` a G-sec yield series or None (no source is
+    stored yet, so bonds without their own prices are listed as unmapped). Own price ranges go through the on-disk
+    PriceStore, so past windows are fetched once."""
+    from finresearch.portfolio.bonds import bond_kind
+    from finresearch.signals.base import DISCLAIMER
+
+    series = index_series or index_eod_series
+    pos = [p for p in h.positions if p.value > 0]
+    as_of = h.days[-1] if h.days else today
+    b = h.benchmark
+    out = []
+    for w in WINDOWS:
+        head = {
+            "id": w.id,
+            "label": w.label,
+            "window": [w.start.isoformat(), w.end.isoformat()],
+            "note": w.note,
+        }
+        lo, until = (
+            w.start - timedelta(days=MAX_GAP_DAYS + 3),
+            min(w.end + timedelta(days=RECOVERY_DAYS), today),
+        )
+        m = await _market(w, h, fetch, store, series, lo, until, today)
+        if isinstance(m, str):
+            out.append({**head, "available": False, "reason": m, "unmapped": []})
+            continue
+        base, days, market, label = m
+        cats: dict[str, tuple[dict[date, float] | None, dict[date, float]]] = {}
+        for p in pos:
+            for sym in category_indices(getattr(p.scheme, "category", None)) if p.asset_type == "mf" else ():
+                if sym not in cats:
+                    path, _ = own_returns(series(sym, lo, until), None, base, days, w.end)
+                    cats[sym] = (path, series(sym, as_of - timedelta(days=380), as_of) if path else {})
+        c = Context(base, days, w.end, market, label.split(" (")[0], b.closes if b else {}, b.factors if b else None,
+                    as_of, cats, yields(w) if yields else None)  # fmt: skip
+        legs, missing = [], []
+        for p in pos:
+            kind, ident = p.key.split(":", 1)
+            own = await _closes(store, fetch, p.key, "mf" if kind == "MF" else kind.lower(), ident, p.scheme, lo,
+                                until, today)  # fmt: skip
+            x = HoldingData(p.key, p.name, p.value, p.asset_type, p.tax_class, own, h.factors.get(p.key) or {},
+                            h.closes.get(p.key) or {}, getattr(p.scheme, "category", None),
+                            bond=bond_kind(p.asset_type, None, p.name, p.nse_symbol, p.tax_class) is not None)  # fmt: skip
+            g = map_holding(x, c)
+            (legs if isinstance(g, Leg) else missing).append(g)
+        rep = replay(w, base, days, market, legs, missing, label)
+        p_out = {**head, **rep.payload()}
+        p_out["vix"] = _vix(series, base, w.end)
+        out.append(p_out)
+    return {"disclaimer": DISCLAIMER, "privacy": "Computed on this machine from your local database; never sent to an LLM.",
+            "as_of": as_of.isoformat(), "method": METHOD, "scenarios": out}  # fmt: skip
