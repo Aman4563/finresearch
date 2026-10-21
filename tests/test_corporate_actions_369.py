@@ -73,3 +73,34 @@ def test_unexplained_jump_is_unverified_and_excluded(lots):
 def test_ordinary_moves_pass_through_unchanged():
     rets = fh.front_future_returns(_futs([1000.0, 1100.0, 990.0]))
     assert [r for _, r in rets] == [pytest.approx(math.log(1.1)), pytest.approx(math.log(0.9))]
+
+
+async def test_closes_raise_when_corporate_actions_cannot_be_fetched(monkeypatch):
+    # before #369 a failed corporate-actions fetch returned unadjusted closes, so a 1:1 bonus read as a -50 % day in
+    # the F&O risk gate's realised vol; now the closes are unknown (NseError), never silently unadjusted
+    from decimal import Decimal
+
+    from finresearch.adapters import nse_equity
+    from finresearch.adapters.nse import NseError
+    from finresearch.adapters.nse_equity import PriceBar
+    from finresearch.adapters.nse_fno import NseFno
+
+    days = [date(2026, 5, 4) + timedelta(days=i) for i in range(5)]
+
+    class FakeEq:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return None
+
+        async def history(self, sym, lo, hi):
+            return [PriceBar(day=d, open=None, high=None, low=None, close=Decimal(100), prev_close=None, vwap=None,
+                             volume=None, value_inr=None, trades=None) for d in days if lo <= d <= hi]  # fmt: skip
+
+        async def corporate_actions(self, sym):
+            raise NseError("HTTP 403 for corporate actions")
+
+    monkeypatch.setattr(nse_equity, "NseEquity", FakeEq)
+    with pytest.raises(NseError, match="corporate actions"):
+        await NseFno(client=object()).closes("EXAMPLE", days[0], days[-1])  # type: ignore[arg-type]
