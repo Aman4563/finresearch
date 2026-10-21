@@ -731,3 +731,7 @@ def test_a_candidate_with_unknown_real_funds_waits_with_its_paper_size_395(clien
     # the card's own legs were shocked (an iron condor loses at −10 %) and the empty book has no shock loss
     assert ob["shock_book_worst"] == 0.0 and ob["shock_one_worst"] < 0 and ob["margin_known"] is False
     assert ob["shock_budget"] == pytest.approx(60_000) and any("not read" in n for n in ob["margin_notes"])
+    from finresearch.db import session_scope
+
+    with session_scope() as s:  # later files read the saved backtest: leave no candidate behind
+        s.execute(text("TRUNCATE fno_backtest_result, fno_backtest_run CASCADE"))
