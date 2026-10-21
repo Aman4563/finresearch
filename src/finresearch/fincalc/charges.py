@@ -52,6 +52,23 @@ NSE_TX_2024_10 = _NSE + "FA64232.pdf"
 NSE_LEVIES = "https://www.nseindia.com/static/invest/first-time-investor-sebi-turnover-fees-stt-other-levies"
 SEBI_2020 = ("https://www.sebi.gov.in/media/press-releases/apr-2020/"
              "sebi-reduces-broker-turnover-fees-and-filing-fees-for-issuers_46571.html")  # fmt: skip
+# 2008-2020 (#365, fetched 22-Oct-2026)
+NSE_STT_2008, NSE_ST_2008 = _NSE + "faac10706.htm", _NSE + "faac10704.htm"
+NSE_TX_2009, NSE_TX_2017 = _NSE + "faac13029.pdf", _NSE + "FA34601.pdf"
+FINANCE_BILL_2006 = "https://www.indiabudget.gov.in/budget_archive/ub2006-07/fb/bill11.pdf"
+FINANCE_BILL_2008 = "https://www.indiabudget.gov.in/budget_archive/ub2008-09/fb/bill61.pdf"
+SEBI_FEES_REGS = "https://www.sebi.gov.in/acts/stockreg1.pdf"
+SEBI_FEE_2009 = ("https://www.cse-india.com/upload/CSE%20Notices%20&%20Circulars/2009/"
+                 "Annexure%201%20(payment%20of%20fees).pdf")  # fmt: skip
+SEBI_FEE_2014 = _NSE + "COMP26781.zip"
+SEBI_FEE_2017 = "https://www.sebi.gov.in/sebi_data/attachdocs/1488970004632.pdf"
+SEBI_FEE_2019 = "https://www.cse-india.com/upload/cse_notice/REVISED_SEBI_TURNOVER_FEES.htm"
+TRU_2007 = "https://www.indiabudget.gov.in/budget_archive/ub2007-08/cen/dojstru1.pdf"
+ST_2009_2012 = "https://indiabudget.gov.in/budget2012-2013/ub2012-13/cen/st0212.pdf"
+TRU_2015 = "https://www.indiabudget.gov.in/budget2015-2016/ub2015-16/cen/dojstru2.pdf"
+TRU_2016 = "https://www.indiabudget.gov.in/budget2016-2017/ub2016-17/cen/dojstru2.pdf"
+NSE_STAMP = "https://www.nseindia.com/static/regulations/member-compliance-stamp-duty"
+EXERCISE_ON_INTRINSIC_FROM = date(2019, 9, 1)  # before: 0.125 % of the settlement price (Finance Act 2008)
 DEFAULT_BROKERAGE_PER_ORDER = Decimal(20)
 CRORE = 10_000_000
 
@@ -88,6 +105,65 @@ _SLAB = ("NSE's first-slab rate (the turnover slab a retail broker's clients pay
 _IPFT = "plus NSE's IPFT contribution (Rs 50/crore of options premium, Rs 10/crore of futures, FA/56129)"
 # the table: several rows per key, the latest one on or before the trade date applies
 RATES: tuple[ChargeRate, ...] = (
+    # 2008-2020 (#365). A row with no rate (None) records a period with no single sourced rate: unknown, never 0.
+    _r("stt_option_sell", None, "option premium, sell side", date(2008, 1, 1), NSE_STT_2008, "unknown",
+       "until 31-May-2008 option-sale STT was 0.017 % of strike + premium (Finance Act 2006; NSE/F&A/10706), a basis "
+       "the order legs do not carry"),
+    _r("stt_option_sell", "0.017", "option premium, sell side", date(2008, 6, 1), NSE_STT_2008, "verified",
+       "Finance Act 2008 (clause 119 of the Bill): 0.017 % of the premium from 1-Jun-2008 (NSE/F&A/10706); "
+       f"unchanged by the Finance Act 2013 (NSE/FATAX/23500); {FINANCE_BILL_2008}"),
+    _r("stt_option_exercise", "0.125", "settlement price x quantity of long options exercised", date(2008, 6, 1),
+       NSE_STT_2008, "verified", "Finance Act 2008 s.99(a)(ii): 0.125 % of the settlement price, paid by the "
+       "purchaser (NSE/F&A/10706); the statute says 'settlement price', x quantity is our reading; on the "
+       "intrinsic value only from 1-Sep-2019. Before 1-Jun-2008 not sourced"),
+    _r("stt_futures_sell", "0.017", "futures turnover, sell side", date(2006, 6, 1), FINANCE_BILL_2006, "verified",
+       "Finance Act 2006: 0.0133 % -> 0.017 % for derivatives from 1-Jun-2006 (in force on 1-Jan-2008, NSE/F&A/10706)"),
+    _r("exchange_option", None, "option premium, both sides (NSE)", date(2008, 1, 1), NSE_TX_2017, "unknown",
+       "NSE's options transaction charge before 1-Apr-2017 is in no NSE circular found (secondary pages disagree: "
+       "PTI Apr-2017 implies Rs 50/lakh, Zerodha Oct-2016 0.053 % possibly with clearing)"),
+    _r("exchange_option", "0.05", "option premium, both sides (NSE)", date(2017, 4, 1), NSE_TX_2017, "secondary",
+       f"NSE/FA/34601: a flat Rs 2,500 a month up to Rs 3 crore of premium, then Rs 50 per lakh; the per-lakh band "
+       f"is used, the monthly flat fee is not modelled; {_SLAB}"),
+    _r("exchange_futures", "0.002", "futures turnover, both sides (NSE)", date(2008, 1, 1), NSE_TX_2009, "secondary",
+       "Rs 2 per lakh, flat: NSE/F&A/13029 (Oct-2009) calls it the present rate; no revision in NSE's 2007-2009 "
+       "circular list; the start date is not sourced (taken as in force on 1-Jan-2008)"),
+    _r("exchange_futures", "0.0019", "futures turnover, both sides (NSE)", date(2009, 10, 1), NSE_TX_2009, "verified",
+       f"Rs 1.90 per lakh up to Rs 2,500 crore a month from 1-Oct-2009 (NSE/F&A/13029; 'existing' in NSE/FA/46730); "
+       f"{_SLAB}"),
+    _r("sebi_fee", "0.0002", "turnover, both sides (₹20 per crore)", date(2006, 10, 1), SEBI_FEES_REGS, "verified",
+       "SEBI (Stock Brokers) Regulations, Schedule III, footnote 94; options on premium (exercise notional not "
+       "modelled)"),
+    _r("sebi_fee", "0.0001", "turnover, both sides (₹10 per crore)", date(2009, 7, 1), SEBI_FEE_2009, "verified",
+       "SEBI gazette notification in force from 1-Jul-2009 (text hosted by the Calcutta Stock Exchange)"),
+    _r("sebi_fee", "0.0002", "turnover, both sides (₹20 per crore)", date(2014, 5, 23), SEBI_FEE_2014, "verified",
+       "SEBI gazette LAD-NRO/GN/2014-15/03/1089, sent with NSE/COMP/26781"),
+    _r("sebi_fee", "0.00015", "turnover, both sides (₹15 per crore)", date(2017, 4, 1), SEBI_FEE_2017, "verified",
+       "SEBI notification of Mar-2017 (NSE/FA/34501)"),
+    _r("sebi_fee", "0.0001", "turnover, both sides (₹10 per crore)", date(2019, 4, 1), SEBI_FEE_2019, "verified",
+       "SEBI/LAD-NRO/GN/2019/03 from 1-Apr-2019 (text hosted by the Calcutta Stock Exchange)"),
+    _r("sebi_fee", "0.00005", "turnover, both sides (₹5 per crore)", date(2020, 6, 1), SEBI_2020, "verified",
+       "50 % off the ₹10 per crore from June 2020 to March 2021 (SEBI PR 24/2020)"),
+    _r("stamp_option_buy", None, "option premium, buy side", date(2008, 1, 1), NSE_STAMP, "unknown",
+       "before 1-Jul-2020 stamp duty was the client's state's (Maharashtra 0.002 % under Art. 51A(c), other states "
+       "their own; NSE's member-compliance page): no single rate without choosing a state"),
+    _r("stamp_futures_buy", None, "futures turnover, buy side", date(2008, 1, 1), NSE_STAMP, "unknown",
+       "before 1-Jul-2020 stamp duty was the client's state's: no single rate without choosing a state"),
+    _r("gst", None, "brokerage + exchange charges + SEBI fee", date(2008, 1, 1), NSE_ST_2008, "unknown",
+       "until 15-May-2008 service tax applied to brokerage but not to NSE's charges (NSE/F&A/10704)"),
+    _r("gst", "12.36", "brokerage + exchange charges + SEBI fee", date(2008, 5, 16), NSE_ST_2008, "secondary",
+       f"service tax 12 % + 2 % + 1 % cesses ({TRU_2007}), on NSE's charges from 16-May-2008 (NSE/F&A/10704, "
+       "subject line read only); whether the SEBI fee bore it is not checked"),
+    _r("gst", "10.30", "brokerage + exchange charges + SEBI fee", date(2009, 2, 24), ST_2009_2012, "secondary",
+       "service tax 10 % + cesses from 24-Feb-2009 (Notification 8/2009-ST; the 10 % from a secondary copy)"),
+    _r("gst", "12.36", "brokerage + exchange charges + SEBI fee", date(2012, 4, 1), ST_2009_2012, "verified",
+       "service tax 12 % + cesses from 1-Apr-2012 (Notification 2/2012-ST)"),
+    _r("gst", "14", "brokerage + exchange charges + SEBI fee", date(2015, 6, 1), TRU_2015, "secondary",
+       "service tax 14 % (cesses folded in): rate from the 2015 TRU letter, 1-Jun-2015 from Notification 14/2015-ST "
+       "read in a secondary copy"),
+    _r("gst", "14.5", "brokerage + exchange charges + SEBI fee", date(2015, 11, 15), TRU_2015, "secondary",
+       "with Swachh Bharat cess 0.5 % from 15-Nov-2015 (Notifications 21-22/2015-ST, secondary copies)"),
+    _r("gst", "15", "brokerage + exchange charges + SEBI fee", date(2016, 6, 1), TRU_2016, "verified",
+       "with Krishi Kalyan cess 0.5 % from 1-Jun-2016 (2016 TRU letter)"),
     # STT (Securities Transaction Tax), from NSE's circulars quoting each Finance Act (fetched 22-Oct-2026)
     _r("stt_option_sell", "0.05", "option premium, sell side", date(2016, 6, 1), NSE_STT_2016, "verified",
        "Finance Act 2016: 0.017 % -> 0.05 % from 1-Jun-2016 (NSE/FATAX/32385)"),
@@ -232,12 +308,18 @@ def order_costs(legs: Sequence[TradeLeg], on: date, brokerage_per_order: Decimal
     return Costs(lines, sum(lines.values()), turnover, len(legs), list(used.values()))
 
 
-def exercise_stt(
-    intrinsic_value: float, on: date, overrides: Mapping[str, Decimal | float | str] | None = None
-) -> float:
-    """STT on long options that expire in the money and are exercised: a rate on the total intrinsic value (₹)."""
+def exercise_stt(intrinsic_value: float, on: date, overrides: Mapping[str, Decimal | float | str] | None = None,
+                 settlement_value: float | None = None) -> float:  # fmt: skip
+    """STT on long options that expire in the money and are exercised (₹): from 1-Sep-2019 a rate on the total
+    intrinsic value; before, on the settlement price x quantity (`settlement_value`; without it, unknown)."""
     rate = _known(rates_as_of(on, overrides), ["stt_option_exercise"], on)["stt_option_exercise"]
-    return max(0.0, intrinsic_value) * rate
+    if on >= EXERCISE_ON_INTRINSIC_FROM:
+        return max(0.0, intrinsic_value) * rate
+    if intrinsic_value <= 0:
+        return 0.0
+    if settlement_value is None:
+        raise ChargesUnknown(f"exercise STT on {on:%d-%b-%Y} is on the settlement value, which was not given")
+    return max(0.0, settlement_value) * rate
 
 
 def flip(legs: Sequence[TradeLeg]) -> list[TradeLeg]:

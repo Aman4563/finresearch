@@ -101,7 +101,10 @@ def settle(legs: Sequence[PaperLeg], settlement_price: float, expiry: date,
     base = sum(
         v * x.qty for x, v in zip(legs, finals, strict=True) if x.right != "future" and x.side == "buy"
     )
-    return Settlement(settlement_price, finals, gross, ch.exercise_stt(base, expiry, overrides), base)
+    notional = sum(settlement_price * x.qty for x, v in zip(legs, finals, strict=True)
+                   if x.right != "future" and x.side == "buy" and v > 0)  # the pre-Sep-2019 STT base (#365)  # fmt: skip
+    return Settlement(settlement_price, finals, gross,
+                      ch.exercise_stt(base, expiry, overrides, settlement_value=notional), base)  # fmt: skip
 
 
 def net_premium(legs: Sequence[PaperLeg]) -> float:
