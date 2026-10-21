@@ -1223,6 +1223,48 @@ def forecasts_horse_race(
         console.print(f"report written to {json_out}")
 
 
+@forecasts_app.command("skill")
+def forecasts_skill(
+    json_out: Path | None = typer.Option(None, "--json", help="Also write the full report here"),
+) -> None:
+    """The live skill monitor (#378) on read: per method x event kind x underlying, calibration-in-the-large and the
+    promotion BSS CI against the benchmark; at >= 100 resolved independent events also Spiegelhalter, Murphy and the
+    Bernoulli CUSUM, with alarms. Read only; refuses if skillmon/specs.py changed after its registration."""
+    import json
+
+    from rich.table import Table
+
+    from finresearch.db import session_scope
+    from finresearch.fincalc.dates import now_ist
+    from finresearch.skillmon import monitor
+
+    try:
+        with session_scope() as s:
+            rep = monitor.report(s, now_ist())
+    except monitor.PreregistrationError as e:
+        console.print(str(e))
+        raise typer.Exit(1) from e
+
+    def f(x: float | None, d: int = 3) -> str:
+        return "—" if x is None else f"{x:+.{d}f}"
+
+    t = Table("cell", "status", "events", "CITL", "BSS [CI]", "promotion", "alarms")
+    for c in rep["cells"]:
+        sk = c["skill"]
+        bss = (
+            sk["status"]
+            if sk["status"] == "no benchmark"
+            else f"{f(sk.get('bss'))} [{f(sk.get('lo'))}, {f(sk.get('hi'))}]"
+        )
+        t.add_row(c["label"], c["status"], f"{c['independent']} of {c['trigger']}", f(c["citl"]), bss,
+                  sk.get("promotion", "—"), "; ".join(a["text"] for a in c["alarms"]) or "—")  # fmt: skip
+    console.print(t)
+    console.print(f"{rep['version']}: {rep['counts']}; {rep['alarms']} alarm(s)")
+    if json_out:
+        json_out.write_text(json.dumps(rep, indent=1, default=str))
+        console.print(f"report written to {json_out}")
+
+
 portfolio_app = typer.Typer(
     no_args_is_help=True, help="Your portfolio: import statements and tradebooks (local only)"
 )

@@ -148,3 +148,35 @@ def test_a_stale_report_is_flagged(clean) -> None:
     with session_scope() as s:
         sec = job.brief_section(s, BRIEF_AT)
     assert sec["status"] == "stale" and any("2026-09-25" in x["text"] for x in sec["lines"])
+
+
+def test_cli_skill_prints_every_cell_read_only(clean, tmp_path) -> None:
+    import json
+
+    from typer.testing import CliRunner
+
+    from finresearch.cli import app
+    from finresearch.db import session_scope
+    from finresearch.direction.live import METHOD_IMPLIED, METHOD_LOGIT
+
+    with session_scope() as s:
+        s.add_all([_forecast(0, METHOD_LOGIT, 0.7, 1, date(2026, 6, 1)),
+                   _forecast(1, METHOD_IMPLIED, 0.5, 1, date(2026, 6, 1))])  # fmt: skip
+    out = tmp_path / "skill.json"
+    r = CliRunner().invoke(app, ["forecasts", "skill", "--json", str(out)])
+    assert r.exit_code == 0, r.output
+    assert "insufficient data" in r.output and "1 of 100" in r.output
+    assert json.loads(out.read_text())["counts"]["insufficient data"] == 2
+    with session_scope() as s:  # read only: no slot claimed
+        assert s.execute(text("SELECT count(*) FROM alert_eval_slot WHERE slot LIKE 'skill:%'")).scalar() == 0
+
+
+def test_cli_skill_refuses_a_changed_spec(env, monkeypatch) -> None:
+    from typer.testing import CliRunner
+
+    from finresearch.cli import app
+    from finresearch.skillmon import prereg
+
+    monkeypatch.setattr(prereg, "HASH", "0" * 64)
+    r = CliRunner().invoke(app, ["forecasts", "skill"])
+    assert r.exit_code != 0 and "refused" in r.output
