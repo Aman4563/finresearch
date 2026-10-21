@@ -6,6 +6,8 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import shlex
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -224,3 +226,89 @@ def test_branch_merges_are_blocked_in_the_main_checkout_only(tmp_path):
     assert guard.check_bash("git merge --abort", str(main)) is None
     assert guard.check_bash("git merge origin/main", str(wt)) is None  # updating a feature branch is the rule
     assert guard.check_bash("git merge feat/y", str(wt)) is None
+
+
+FILTER = REPO / ".claude" / "hooks" / "test_filter.py"
+PYTEST_OUT = """============================= test session starts ==============================
+tests/test_a.py ........s...                                             [ 40%]
+tests/test_b.py ..F                                                      [100%]
+=================================== FAILURES ===================================
+___________________________________ test_b ____________________________________
+    assert 1 == 2
+E   assert 1 == 2
+=============================== warnings summary ===============================
+tests/test_a.py::test_x
+  DeprecationWarning: old
+=========================== short test summary info ============================
+SKIPPED [1] tests/test_a.py:9: no database
+FAILED tests/test_b.py::test_b - assert 1 == 2
+==================== 1 failed, 10 passed, 1 skipped in 0.12s ===================
+"""
+
+
+def test_test_filter_hides_only_noise():
+    res = subprocess.run(
+        [sys.executable, str(FILTER)], input=PYTEST_OUT, capture_output=True, text=True, timeout=30
+    )
+    out = res.stdout
+    assert "tests/test_a.py ........s..." not in out and "DeprecationWarning" not in out
+    for kept in ("tests/test_b.py ..F", "E   assert 1 == 2", "SKIPPED [1]", "FAILED tests/test_b.py::test_b",
+                 "1 failed, 10 passed, 1 skipped"):  # fmt: skip
+        assert kept in out
+    assert "lines hidden" in out
+    pw = "  ✓  1 [desktop] › e2e/a.spec.ts:3:1 › loads (1.2s)\n  ✘  2 [desktop] › e2e/b.spec.ts:4:1 › fails (2.0s)\n"
+    out = subprocess.run(
+        [sys.executable, str(FILTER)], input=pw, capture_output=True, text=True, timeout=30
+    ).stdout
+    assert "✘  2" in out and "✓  1" not in out
+
+
+def test_test_commands_are_rewritten_and_keep_their_exit_code(tmp_path):
+    cmd = guard.filter_test_output("python3 -m pytest -q")
+    assert cmd and str(FILTER) in cmd and cmd.startswith("set -o pipefail;")
+    for untouched in ("uv run pytest -q | tail -3", "uv run pytest --collect-only -q", "uv run pytest > out.txt",
+                      "git status", "cat <<'EOF' > x\npytest\nEOF"):  # fmt: skip
+        assert guard.filter_test_output(untouched) is None
+    (tmp_path / "test_fail.py").write_text("def test_fail():\n    assert 1 == 2\n")
+    wrapped = guard.filter_test_output(
+        f"cd {tmp_path} && {shlex.quote(sys.executable)} -m pytest -q -p no:cacheprovider"
+    )
+    for shell in ("zsh", "bash"):
+        if shutil.which(shell):
+            res = subprocess.run([shell, "-c", wrapped], capture_output=True, text=True, timeout=120)
+            assert res.returncode == 1, res.stdout + res.stderr  # pytest's failure survives the pipe
+            assert "1 failed" in res.stdout
+
+
+def test_pre_bash_returns_the_rewritten_command():
+    res = _run(
+        "pre-bash",
+        {
+            "cwd": str(REPO),
+            "tool_input": {"command": T + "FINRESEARCH_TEST_DATABASE_URL=$T python3 -m pytest --version"},
+        },
+    )
+    assert res.returncode == 0
+    out = json.loads(res.stdout)["hookSpecificOutput"]
+    assert out["permissionDecision"] == "allow" and "test_filter.py" in out["updatedInput"]["command"]
+
+
+def test_post_edit_runs_eslint_on_web_files_only(tmp_path):
+    web = tmp_path / "web"
+    (web / "node_modules" / ".bin").mkdir(parents=True)
+    fake = web / "node_modules" / ".bin" / "eslint"
+    fake.write_text(
+        "#!/bin/sh\necho \"$3:1:1: 'x' is defined but never used. [Error/no-unused-vars]\"\nexit 1\n"
+    )
+    fake.chmod(0o755)
+    page = web / "src" / "page.tsx"
+    page.parent.mkdir()
+    page.write_text("const x = 1\n")
+    res = _run("post-edit", {"cwd": str(tmp_path), "tool_input": {"file_path": str(page)}},
+               CLAUDE_PROJECT_DIR=str(tmp_path))  # fmt: skip
+    assert res.returncode == 2 and "no-unused-vars" in res.stderr
+    other = tmp_path / "scripts" / "x.mjs"
+    other.parent.mkdir()
+    other.write_text("export {}\n")
+    assert _run("post-edit", {"cwd": str(tmp_path), "tool_input": {"file_path": str(other)}},
+                CLAUDE_PROJECT_DIR=str(tmp_path)).returncode == 0  # fmt: skip

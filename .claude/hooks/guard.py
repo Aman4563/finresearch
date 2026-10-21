@@ -291,7 +291,42 @@ def pre_bash(event: dict) -> int:
     if reason:
         print(f"FinResearch guard (.claude/hooks/guard.py) blocked this: {reason}.", file=sys.stderr)
         return 2
+    wrapped = filter_test_output(command)
+    if wrapped:
+        out = {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow",
+                                      "permissionDecisionReason": "test output filtered (.claude/hooks/test_filter.py)",
+                                      "updatedInput": {**(event.get("tool_input") or {}), "command": wrapped}}}  # fmt: skip
+        print(json.dumps(out))
     return 0
+
+
+def runs_tests(command: str) -> bool:
+    for seg in split_commands(command):
+        w = words_of(seg)
+        if not w or "--collect-only" in w or "--co" in w or "--list" in w:
+            continue
+        prog, args = Path(w[0]).name, w[1:]
+        if prog == "pytest" or (prog in ("uv", "python", "python3") and "pytest" in args):
+            return True
+        if (prog == "pnpm" and args[:1] == ["e2e"]) or ("playwright" in w and "test" in w):
+            return True
+    return False
+
+
+def filter_test_output(command: str) -> str | None:
+    """pytest/Playwright commands piped through test_filter.py (pipefail keeps their exit code); None to leave as is.
+
+    Commands that already pipe or redirect their output, or carry a heredoc, are left alone."""
+    if (
+        not runs_tests(command)
+        or "<<" in command
+        or re.search(r"(?<![|&>])\|(?!\|)|(?<![<&2])>(?!&)", command)
+    ):
+        return None
+    flt = Path(__file__).resolve().with_name("test_filter.py")
+    if not flt.exists():
+        return None
+    return f'set -o pipefail; {{ {command}\n}} 2>&1 | python3 "{flt}"'
 
 
 def pre_edit(event: dict) -> int:
@@ -317,6 +352,8 @@ def ruff_cmd(root: str) -> list[str] | None:
 def post_edit(event: dict) -> int:
     path = str((event.get("tool_input") or {}).get("file_path") or "")
     root = project_dir(event)
+    if re.search(r"\.(tsx?|jsx?|mjs)$", path):
+        return eslint_edited(path, root)
     ruff = ruff_cmd(root)
     if not path.endswith(".py") or not Path(path).exists() or not ruff:
         return 0
@@ -329,6 +366,25 @@ def post_edit(event: dict) -> int:
         lines = res.stdout.strip().splitlines()
         print("ruff found problems in the file just edited (CI fails on them):\n" + "\n".join(lines[:20]),
               file=sys.stderr)  # fmt: skip
+        return 2
+    return 0
+
+
+def eslint_edited(path: str, root: str) -> int:
+    """Report ESLint errors in an edited web/ file (report only, like ruff above; web/ has no formatter)."""
+    web = Path(root) / "web"
+    eslint = web / "node_modules" / ".bin" / "eslint"
+    if not eslint.exists() or not Path(path).exists() or not is_inside(path, web):
+        return 0
+    try:
+        res = subprocess.run([str(eslint), "--no-warn-ignored", "--format", "unix", path], cwd=web,
+                             capture_output=True, text=True, timeout=90)  # fmt: skip
+    except (OSError, subprocess.SubprocessError):
+        return 0
+    if res.returncode == 1 and res.stdout.strip():
+        lines = res.stdout.strip().splitlines()
+        print("eslint found problems in the file just edited (CI's `pnpm lint` fails on errors):\n"
+              + "\n".join(lines[:20]), file=sys.stderr)  # fmt: skip
         return 2
     return 0
 
