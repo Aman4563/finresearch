@@ -624,7 +624,7 @@ def build(chain, lot: int, legs_in: list[fs.LegIn], x: Inputs, *, spec: Any | No
                "half_spreads": a["costs"]["half_spreads"],
                "payoff_ratio": (a["pnl_dots"] or {}).get("payoff_ratio")},  # #357: E[win] / |E[loss]|
         "pnl_dots": a["pnl_dots"],
-        # #357: every F&O card's probability carries its reliability (plan cards are never scored in the ledger yet)
+        # #357: every F&O card's probability carries its reliability (#376: logged cards are recorded and scored)
         "reliability": card_reliability(None if rw is None else rw["pop"], x.scored),
         "probability": {"real_world": None if rw is None else rw["pop"], "real_world_window": (rw or {}).get("window"),
                         "risk_neutral": None if rn is None else rn["pop"],
