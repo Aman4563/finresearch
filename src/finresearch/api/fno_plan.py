@@ -31,12 +31,13 @@ class PlanIn(BaseModel):
     legs: list[PlanLegIn] = Field(min_length=1, max_length=8)
 
 
-async def _events(sym: str, today: date) -> list[tuple[date, str]] | None:
-    """Results / RBI dates before expiry (fnobook.events); None when they cannot be read (unknown, never "none")."""
+async def _events(sym: str, today: date, expiry: date) -> list[tuple[date, str]] | None:
+    """Results and tier-1 macro dates before expiry (fnobook.events); None when they cannot be read (unknown, never
+    "none")."""
     from finresearch.fnobook import events, sources
 
     try:
-        return await events.event_dates(sym, today, sources.SOURCES)
+        return await events.event_dates(sym, today, sources.SOURCES, until=expiry)
     except Exception:
         return None
 
@@ -84,7 +85,7 @@ async def plan_inputs(f: Any, sym: str, expiry: date, today: date, now: datetime
                       iv_as_of=series[-1][0] if series else None, capital=float(p.fno_capital_inr),
                       max_loss_pct=float(p.fno_max_loss_pct), brokerage=float(p.fno_brokerage_per_order_inr),
                       defined_risk_only=p.fno_defined_risk_only, rate=rate, strategies=strategies,
-                      backtest_head=head, paper=tpl.paper_trades(), events=await _events(sym, today),
+                      backtest_head=head, paper=tpl.paper_trades(), events=await _events(sym, today, expiry),
                       is_index=events.is_index(sym), book=await tpl.load_book(today),
                       iv_points=fno_context.iv_rank_input(sym)[0], scored=scored, now=now,
                       calendar=_calendar())  # fmt: skip

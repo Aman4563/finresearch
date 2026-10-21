@@ -490,7 +490,8 @@ def _invalidation(kind: str, legs: list[fs.LegIn], spot: float, events: list[tup
                "long it." if shorts else "Implied volatility collapses (e.g. after an event) while you hold options.")  # fmt: skip
     if events is None:
         out.append("Results / RBI dates before expiry are unknown here: check them yourself before entering."
-                   if not is_index else "RBI policy dates have no source in the app: check them before entering.")  # fmt: skip
+                   if not is_index else "RBI policy, Budget and election dates before expiry are not covered by the "
+                   "event calendar: check them before entering.")  # fmt: skip
     else:
         for d, what in events:
             if today <= d <= expiry:

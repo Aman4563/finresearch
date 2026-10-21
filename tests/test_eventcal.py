@@ -167,3 +167,40 @@ def test_a_plan_after_the_window_event_reads_none_and_one_without_a_calendar_rea
 def test_the_plan_check_ignores_an_event_announced_after_the_plan_time():
     late = _ev("union_budget", date(2026, 10, 2), date(2026, 9, 30))  # public the day after the 29-Sep plan
     assert _plan(([late], FULL))["event_check"]["status"] == "none"
+
+
+# --------------------------------------------------------------------------- fnobook.events reads the calendar
+def test_event_dates_and_strip_read_the_calendar_only_when_covered(env):
+    import asyncio
+
+    from finresearch.db import session_scope
+    from finresearch.eventcal import store
+    from finresearch.fnobook import events
+
+    today, expiry = date(2026, 9, 29), date(2026, 10, 27)
+    with session_scope() as s:
+        s.execute(text("TRUNCATE calendar_event, calendar_coverage"))
+    assert asyncio.run(events.event_dates("NIFTY", today, None, until=expiry)) is None  # empty: unknown
+    rbi = _ev("rbi_mpc", date(2026, 10, 1), date(2026, 3, 1))
+    budget = _ev("union_budget", date(2027, 2, 1), date(2026, 9, 1))
+    late = _ev("rbi_mpc", date(2026, 10, 20), date(2026, 10, 2))  # announced after `today`: invisible today
+    with session_scope() as s:
+        store.upsert(s, [rbi, budget, late], [c for c in FULL if c.type != "general_election"])
+    assert asyncio.run(events.event_dates("NIFTY", today, None, until=expiry)) is None  # elections uncovered
+    with session_scope() as s:
+        store.upsert(s, [], FULL)
+    got = asyncio.run(events.event_dates("NIFTY", today, None, until=expiry))
+    assert got == [(date(2026, 10, 1), "RBI policy"), (date(2027, 2, 1), "Union Budget")]
+    short = [_cov(k, date(2026, 10, 10), date(2026, 1, 1)) for k in cal.TIER1_TYPES]
+    with session_scope() as s:
+        s.execute(text("TRUNCATE calendar_coverage"))
+        store.upsert(s, [], short)
+    assert (
+        asyncio.run(events.event_dates("NIFTY", today, None, until=expiry)) is None
+    )  # coverage ends before expiry
+    st = asyncio.run(events.strip("NIFTY", today, None, [date(2026, 10, 6)]))
+    assert st["rbi"]["status"] == "ok"
+    assert [(x["day"], x["kind"]) for x in st["items"]][:2] == [
+        ("2026-10-01", "rbi"),
+        ("2026-10-06", "expiry"),
+    ]

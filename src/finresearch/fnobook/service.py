@@ -375,7 +375,7 @@ async def market_pass(now: datetime, market: Any, sources: Any, rate: float = RA
         snaps |= await real_snapshots(now, market, sources, rate)
     for key, p in snaps.items():
         if "event" in need.get(key, ()):
-            p.events = await ev.event_dates(p.symbol, today, sources)
+            p.events = await ev.event_dates(p.symbol, today, sources, until=p.expiry)
     with session_scope() as s:
         locked = list(s.scalars(select(FnoExitRule).where(FnoExitRule.status == "armed")
                                 .with_for_update(skip_locked=True)))  # fmt: skip

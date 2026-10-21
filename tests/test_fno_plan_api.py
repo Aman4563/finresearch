@@ -684,9 +684,11 @@ def test_plan_card_event_check_reads_the_stored_calendar_and_unknown_without_one
         s.execute(text("TRUNCATE calendar_event, calendar_coverage"))
     card = client.post("/api/fno/plan", json={"symbol": "NIFTY", "expiry": "2026-10-06", "legs": PCS}).json()
     assert card["event_check"]["status"] == "unknown"  # an empty calendar is never "no events"
+    assert any("not covered by the event calendar" in x for x in card["invalidation"])
     with session_scope() as s:
         store.upsert(s, [_ev("rbi_mpc", date(2026, 10, 1), date(2026, 3, 1))], FULL)
     card = client.post("/api/fno/plan", json={"symbol": "NIFTY", "expiry": "2026-10-06", "legs": PCS}).json()
     assert card["event_check"]["status"] == "events"
     assert [e["day"] for e in card["event_check"]["tier1"]] == ["2026-10-01"]
     assert card["action"] == "PAPER"  # informational: the check changes no verdict
+    assert "RBI policy on 01-Oct-2026, before expiry: a gap can jump past any stop." in card["invalidation"]
