@@ -62,11 +62,11 @@ export type MarketContext = {
     evidence: Evidence; adx_evidence: Evidence;
   };
   volatility: {
-    atm_iv: number | null; realised_20d: number | null; realised_60d: number | null; iv_minus_rv20: number | null;
+    atm_iv: number | null; realised_20d: number | null; realised_60d: number | null; iv_minus_rv20: number | null; iv_minus_rv20_label?: string | null;
     iv_rank: number | null; iv_percentile: number | null; iv_days: number; iv_status: string; iv_source: string; skew_25d: number | null;
     evidence: Evidence; rank_evidence: Evidence; skew_evidence: Evidence;
   };
-  term: { status?: string; note?: string; near_iv?: number | null; next_iv?: number | null; near_expiry?: string | null; next_expiry?: string | null; shape?: string | null; day?: string; evidence: Evidence };
+  term: { status?: string; note?: string; near_iv?: number | null; next_iv?: number | null; near_expiry?: string | null; next_expiry?: string | null; shape?: string | null; slope?: number | null; day?: string; evidence: Evidence };
   chain: { pcr_oi: number | null; pcr_volume: number | null; max_pain: number | null; spot: number | null; source: string; as_of: string | null; pcr_evidence: Evidence; max_pain_evidence: Evidence };
   buildup: {
     futures: { day: string; previous_day: string | null; rows: { expiry: string; close: number | null; price_change: number | null; oi: number | null; oi_change: number | null; buildup: string }[]; source: string } | null;

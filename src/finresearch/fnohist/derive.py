@@ -5,7 +5,7 @@ SEBI's circular SEBI/HO/MRD/TPD/P/CIR/2024/132 of 1-Oct-2024 (https://www.sebi.g
 measures-to-strengthen-equity-index-derivatives-framework-for-increased-investor-protection-and-market-stability_87208.html)
 limited weekly expiries to one benchmark index per exchange and raised the minimum contract value to ₹15 lakh, which
 changed lot sizes; its effective dates were not re-read here. fno_contract records what the bhavcopies show instead
-of encoding the rules: weekly versus monthly per expiry, and each contract's lot size by day, so the backtester uses
+of encoding the rules: weekly, monthly or long-dated per expiry, and each contract's lot size by day, so the backtester uses
 the expiries and lots that actually existed.
 """
 
@@ -56,16 +56,20 @@ def derive_day(s: Session, day: date, rate: float = fh.RATE) -> int:
         return 0
     lo = day - timedelta(days=RV_LOOKBACK_DAYS)
     hist: dict[str, list[tuple[date, date, float]]] = defaultdict(list)
-    for sym, d, exp, settle in s.execute(
-        select(FnoBhav.symbol, FnoBhav.day, FnoBhav.expiry, FnoBhav.settle).where(
+    lots: dict[str, dict[tuple[date, date], int]] = defaultdict(dict)
+    for sym, d, exp, settle, lot in s.execute(
+        select(FnoBhav.symbol, FnoBhav.day, FnoBhav.expiry, FnoBhav.settle, FnoBhav.lot_size).where(
             FnoBhav.symbol.in_(list(opts)), FnoBhav.instrument.in_(("IDF", "STF")), FnoBhav.day.between(lo, day))
     ):  # fmt: skip
         if settle is not None:
             hist[sym].append((d, exp, float(settle)))
+        if lot:
+            lots[sym][(d, exp)] = lot
     n = 0
     for sym, by_exp in opts.items():
         sm = fh.day_summary(day, by_exp, futs.get(sym, {}), spot.get(sym), rate)
-        rets = [r for d, r in fh.front_future_returns(hist.get(sym, [])) if d <= day]
+        # a corporate-action day (lot changed, |ln| > 0.25) is quarantined from RV20 (#354 j)
+        rets = [r for d, r in fh.front_future_returns(hist.get(sym, []), lots=lots.get(sym)) if d <= day]
         near = sm.near
         values: dict[str, Any] = {
             "near_expiry": near.expiry if near else None, "forward": _q(near.forward, 2) if near else None,
@@ -90,6 +94,18 @@ def infer_lot(oi_values: list[int]) -> int | None:
     if len(vals) < MIN_GCD_POINTS:
         return None
     return math.gcd(*vals) or None
+
+
+# an options-only expiry first seen more than this many days before it is long-dated (#354 i)
+LONG_DATED_DAYS = 45
+
+
+def _kind(expiry: date, a: dict[str, Any]) -> str:
+    """monthly (a future is listed on it), long-dated (options only, listed more than LONG_DATED_DAYS before expiry:
+    NSE's quarterly / half-yearly index options) or weekly. Before #354 every options-only expiry read "weekly"."""
+    if a["fut"]:
+        return "monthly"
+    return "long-dated" if (expiry - a["first"]).days > LONG_DATED_DAYS else "weekly"
 
 
 def rebuild_contracts(s: Session, since: date | None = None) -> int:
@@ -120,7 +136,7 @@ def rebuild_contracts(s: Session, since: date | None = None) -> int:
         else:
             lot = infer_lot(list(a["oi"]))
             source = "inferred_oi_gcd" if lot else None
-        values = {"underlying_kind": "index" if a["index"] else "stock", "kind": "monthly" if a["fut"] else "weekly",
+        values = {"underlying_kind": "index" if a["index"] else "stock", "kind": _kind(exp, a),
                   "first_seen": a["first"], "last_seen": a["last"], "lot_size": lot, "lot_source": source,
                   "lot_changes": changes if len(changes) > 1 else None}  # fmt: skip
         stmt = pg_insert(FnoContract).values(symbol=sym, expiry=exp, **values)

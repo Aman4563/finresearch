@@ -44,6 +44,7 @@ export type Analysis = {
 export type IvHistory = {
   symbol: string; n: number; min_days: number; status: string; current: number | null; rank: number | null; percentile: number | null;
   low: number | null; high: number | null; skew_25d: number | null; last_day: string | null; series: { day: string; atm_iv: number }[]; method: string;
+  rank_input?: string; rank_series?: string; rv_20?: number | null;
 };
 export type Result = {
   analysis?: Analysis;

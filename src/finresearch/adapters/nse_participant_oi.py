@@ -75,8 +75,9 @@ def parse(text: str) -> ParticipantDay:
     if len(lines) < 3:
         raise ParticipantFileError("too few lines for a participant-wise OI file")
     title = _norm(lines[0])
-    m = re.search(r"as on ([A-Za-z]{3} \d{1,2}, \d{4})", title)
-    day = datetime.strptime(m.group(1), "%b %d, %Y").date() if m else None
+    # 2022 files print "Jan 03,2022" (no space before the year): without the optional space the date check was skipped
+    m = re.search(r"as on ([A-Za-z]{3}) (\d{1,2}), ?(\d{4})", title)
+    day = datetime.strptime(" ".join(m.groups()), "%b %d %Y").date() if m else None
     reader = csv.reader(io.StringIO("\n".join(lines[1:])))
     header = [_norm(h) for h in next(reader)]
     if not header or header[0] != "Client Type" or any(c not in header for c in COLUMNS):

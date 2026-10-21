@@ -1353,18 +1353,22 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
         """Daily IV with IV rank / percentile over the last 252 days and the latest 25-delta skew: the 30-day IV derived
         from NSE's F&O bhavcopy history when it has 60+ days (#306), else the monitor's recorded ATM IV. With the
         bhavcopy series also the term structure (near / next expiry ATM IV) and 20-day realised volatility."""
-        from finresearch.fincalc.volatility import MIN_DAYS, WINDOW, iv_stats
+        from finresearch.fincalc.volatility import MIN_COVERAGE, MIN_DAYS, WINDOW
         from finresearch.signals.fno import iv_series_info
+        from finresearch.signals.fno_context import iv_rank
 
         rows, src = iv_series_info(symbol)
-        st = iv_stats([v for _, v, _ in rows])
+        # rank and percentile over the last 252 sessions with 80 % coverage, on a named input (#354 b)
+        st, rin = iv_rank(symbol)
         out = {"symbol": symbol.upper(), "n": st.n, "min_days": MIN_DAYS, "window": WINDOW, "status": st.status,
+               "min_coverage": MIN_COVERAGE, "rank_input": rin["label"], "rank_series": rin["series"],
                "current": st.current, "rank": st.rank, "percentile": st.percentile, "low": st.low, "high": st.high,
                "skew_25d": rows[-1][2] if rows else None, "last_day": rows[-1][0].isoformat() if rows else None,
                "series": [{"day": d.isoformat(), "atm_iv": v, "skew_25d": k} for d, v, k in rows[-days:]],
                "source_kind": src["source"], "source_label": src["label"], "as_of": rows[-1][0].isoformat() if rows else None,
-               "method": src["method"] + " IVR = (IV − min)/(max − min) and IVP = share of days below today, over the "
-                         "last 252 days.", "source": src["url"], "term": None, "rv_20": None}  # fmt: skip
+               "method": src["method"] + " IVR = (IV − min)/(max − min) and IVP = share of sessions below the last "
+                         "one, over the last 252 sessions; computed only when 80 % of them carry an IV (a 'flat' "
+                         "30-day IV counts as missing).", "source": src["url"], "term": None, "rv_20": None}  # fmt: skip
         if src["source"] == "bhavcopy":
             from finresearch.fnohist.derive import iv_eod_series
 
