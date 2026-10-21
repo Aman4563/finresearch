@@ -20,7 +20,7 @@ def test_round_trip_any_size_across_frames(tmp_path, size):
     src.write_bytes(data)
     key = _key()
     encrypt_file(src, enc, key, frame=4096)
-    assert data == b"" or data not in enc.read_bytes()  # the plaintext never appears in the copy
+    assert size < 16 or data[:16] not in enc.read_bytes()  # the plaintext never appears (16 bytes: no chance hit)
     decrypt_file(enc, out, key)
     assert out.read_bytes() == data
 
