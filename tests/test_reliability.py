@@ -83,9 +83,8 @@ def _log(s, sym, p, day, outcome, method="test reliability method"):
 
 def test_scored_counts_independent_outcomes_of_the_same_method(ledger):
     from finresearch.db import session_scope
-    from finresearch.signals.reliability import scored_events
-
     from finresearch.db.models import IpoIssue
+    from finresearch.signals.reliability import scored_events
 
     with session_scope() as s:
         s.query(IpoIssue).filter(IpoIssue.issue_key.in_(("RELA", "RELB"))).delete()

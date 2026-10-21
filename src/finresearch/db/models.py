@@ -24,12 +24,14 @@ from sqlalchemy import (
     Index,
     Integer,
     Numeric,
+    PrimaryKeyConstraint,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, REAL, TSVECTOR
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 EMBED_DIM = 1024  # qwen3-embedding:0.6b
@@ -1518,3 +1520,37 @@ class FnoParticipantOi(Base):
     total_short: Mapped[int] = mapped_column(BigInteger)
     source: Mapped[str] = mapped_column(String(200))
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class OptionQuote(Base):
+    """A forward option-quote snapshot (#363, P1.1, monitor.quotes): NIFTY and BANKNIFTY, near and next expiry, ATM
+    +/-10 strikes, calls and puts, at the registered snapshot times. Keyed on the instrument and the registered
+    snapshot time; `requested_at` is when the request was sent and `exchange_at` the exchange's last-trade time, so
+    each quote can be aged. Compact units (fnohist.quotes docstring): prices and the strike in integer paise, depth
+    as flat [price, quantity, ...] integer arrays, `iv` as the source returned it. `source` groww | nse (NSE's chain
+    is website collection that NSE's terms restrict, #362); `flags` the per-row quality bitmask. Public market data."""
+
+    __tablename__ = "option_quote"
+    # 8-byte columns first, then 4-byte, then variable length: less alignment padding per row
+    snapshot_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    exchange_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    oi: Mapped[int | None] = mapped_column(BigInteger)
+    volume: Mapped[int | None] = mapped_column(BigInteger)
+    expiry: Mapped[date] = mapped_column(Date)
+    strike: Mapped[int] = mapped_column(Integer)  # paise
+    bid: Mapped[int | None] = mapped_column(Integer)
+    ask: Mapped[int | None] = mapped_column(Integer)
+    bid_qty: Mapped[int | None] = mapped_column(Integer)
+    ask_qty: Mapped[int | None] = mapped_column(Integer)
+    ltp: Mapped[int | None] = mapped_column(Integer)
+    underlying_ltp: Mapped[int | None] = mapped_column(Integer)
+    iv: Mapped[float | None] = mapped_column(REAL)
+    flags: Mapped[int] = mapped_column(SmallInteger)
+    underlying: Mapped[str] = mapped_column(String(12))
+    option_type: Mapped[str] = mapped_column(String(2))  # CE | PE
+    source: Mapped[str] = mapped_column(String(5))
+    depth_bid: Mapped[list[int] | None] = mapped_column(ARRAY(Integer))
+    depth_ask: Mapped[list[int] | None] = mapped_column(ARRAY(Integer))
+
+    __table_args__ = (PrimaryKeyConstraint("snapshot_at", "underlying", "expiry", "strike", "option_type"),)
