@@ -2,6 +2,7 @@
 made-up index priced by Black-76 at one flat volatility; settle == close)."""
 
 import math
+from dataclasses import replace
 from datetime import date
 
 import pytest
@@ -99,3 +100,68 @@ def test_realised_vol_needs_n_returns() -> None:
     r = [0.01, -0.01] * 10
     assert replay.rv(r, 20) == pytest.approx(math.sqrt(sum((x - 0) ** 2 for x in r) / 19 * 252))
     assert replay.rv(r[:19], 20) is None
+
+
+def _truncated(h: MemoryHistory, last: date) -> MemoryHistory:
+    return MemoryHistory([x for x in h.days["NIFTY"].values() if x.day <= last])
+
+
+def test_a_cards_forecasts_never_read_past_its_origin(hist, made) -> None:
+    c = made[0][3]
+    cards, _ = replay.make_cards(_truncated(hist, c.origin), START, c.origin, [PCS])
+    assert cards[-1].origin == c.origin
+    assert (
+        cards[-1].forecasts == c.forecasts and cards[-1].inputs == c.inputs
+    )  # the later sessions changed nothing
+
+
+def test_a_leg_without_a_settlement_price_is_a_counted_skip(hist, made) -> None:
+    c = made[0][0]
+    x = hist.day("NIFTY", c.origin)
+    bare = Day(
+        x.day, x.symbol, {k: replace(q, settle=None) for k, q in x.options.items()}, x.futures, x.spot, x.iv30
+    )
+    h2 = MemoryHistory([bare if y.day == c.origin else y for y in hist.days["NIFTY"].values()])
+    cards, skips = replay.make_cards(h2, c.origin, c.origin, [PCS])
+    assert cards == [] and skips == {"nifty_pcs_m: no settlement price for a leg": 1}
+
+
+def test_an_unknown_lot_size_is_a_counted_skip(made) -> None:
+    h = synth(date(2021, 12, 1), date(2022, 6, 30), vol=0.15, seed=11, lot=None)
+    d = made[0][0].origin  # a session with an expiry in the window
+    cards, skips = replay.make_cards(h, d, d, [PCS])
+    assert cards == [] and set(skips) == {"nifty_pcs_m: lot size unknown"}
+
+
+def test_gate_proxy_is_the_specs_iv_filter_and_unknown_for_controls(made, hist) -> None:
+    # the synthetic iv30 is flat, so its percentile is 0 < 0.30: the seller's filter fails
+    assert {c.gate_pass for c in made[0]} == {False}
+    dcs = next(s for s in SPECS if s.key == "nifty_dcs_m")
+    cards, _ = replay.make_cards(hist, START, END, [dcs])
+    assert cards and {c.gate_pass for c in cards} == {None}
+
+
+def test_resolution_matches_the_engines_trade_for_the_same_entry(hist, made) -> None:
+    # the engine's recipe with its IV filter off and one lot: its first trade enters on a session we also replay
+    spec = replace(PCS, iv_pct_min=None)
+    run = engine.run([spec], hist, START, END, replace(BOOK, max_lots=1))[PCS.key]
+    tr = run["trades"][0]
+    events, _ = replay.resolve(made[0], hist)
+    ev = next(e for e in events if e.origin.isoformat() == tr["entry_day"])
+    assert ev.pnl == pytest.approx(tr["net"], abs=0.01) and ev.outcome == int(tr["net"] > 0)
+    assert ev.resolved_on == ev.expiry  # A1.11: conservative
+
+
+def test_unfinished_cards_are_counted_and_first_marks_one_per_cluster(made) -> None:
+    short = synth(date(2021, 12, 1), date(2022, 5, 20), vol=0.15, seed=11)  # data ends before May's expiry
+    events, counts = replay.resolve([c for c in made[0] if c.origin <= date(2022, 5, 20)], short)
+    assert counts["not yet"] > 0
+    firsts: dict[tuple, int] = {}
+    for e in events:
+        firsts[(e.underlying, e.expiry, e.structure)] = (
+            firsts.get((e.underlying, e.expiry, e.structure), 0) + e.first
+        )
+    assert firsts and set(firsts.values()) == {1}
+    for e in events:  # the first is the earliest resolved session of its cluster
+        if e.first:
+            assert e.origin == min(x.origin for x in events if x.expiry == e.expiry)

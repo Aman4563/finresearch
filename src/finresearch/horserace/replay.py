@@ -199,3 +199,60 @@ def make_cards(history: History, start: date, end: date, spec_list: Sequence[Spe
                 else:
                     cards.append(c)
     return cards, skips
+
+
+# --------------------------------------------------------------------------- pass 2: outcomes
+def resolve(cards: Sequence[Card], history: History) -> tuple[list[race.Event], Counter]:
+    """A1.2, A1.11, A1.12: each card's set replayed by fnobook.card_forecasts.simulate; void and unfinished cards are
+    counted, never events. `first` = the earliest resolved card per (underlying, expiry, structure)."""
+    from finresearch.fnobook.card_forecasts import simulate
+    from finresearch.signals.ledger import NotYet
+
+    cached = LruHistory(history)
+    counts: Counter = Counter()
+    done: list[tuple[Card, Any]] = []
+    for c in sorted(cards, key=lambda c: (c.origin, c.spec)):
+        try:
+            r = simulate(c.inputs, cached)
+        except NotYet:
+            counts["not yet"] += 1
+            continue
+        if r.outcome is None or r.value is None:
+            counts["void"] += 1
+            continue
+        done.append((c, r))
+    seen: set[tuple[str, date, str]] = set()
+    events = []
+    for c, r in done:
+        key = (c.underlying, c.expiry, c.structure)
+        events.append(race.Event(underlying=c.underlying, expiry=c.expiry, structure=c.structure, origin=c.origin,
+                                 resolved_on=c.expiry, outcome=int(r.outcome), pnl=float(r.value),
+                                 gate_pass=c.gate_pass, first=key not in seen, forecasts=dict(c.forecasts),
+                                 exit_reason=r.note.split(" on ")[0] if r.note else None))  # fmt: skip
+        seen.add(key)
+    counts["events"] = len(events)
+    return events, counts
+
+
+class LruHistory:
+    """A bounded cache of `day()` over another history: pass 2 reads each session once per open card, oldest
+    origins first, so the last ~`size` sessions cover almost every read (DbHistory loads a whole session per call)."""
+
+    def __init__(self, inner: History, size: int = 96) -> None:
+        from collections import OrderedDict
+
+        self.inner, self.size = inner, size
+        self.cache: OrderedDict[tuple[str, date], Day | None] = OrderedDict()
+
+    def day(self, symbol: str, d: date) -> Day | None:
+        k = (symbol, d)
+        if k in self.cache:
+            self.cache.move_to_end(k)
+            return self.cache[k]
+        x = self.cache[k] = self.inner.day(symbol, d)
+        if len(self.cache) > self.size:
+            self.cache.popitem(last=False)
+        return x
+
+    def __getattr__(self, name: str) -> Any:  # sessions, latest, lot, iv_history, span_params
+        return getattr(self.inner, name)
