@@ -470,7 +470,8 @@ export default function Fno() {
                       {/* four across only where a tile is wide enough for a nine-digit figure (#326) */}
                       <div className="grid grid-cols-2 gap-2 xl:grid-cols-4">
                         <Stat label="Max profit" display={<Fig className="text-gain">{inr(result.max_profit)}</Fig>} tone="gain" />
-                        <Stat label="Max loss" display={<Fig className="text-loss">{inr(result.max_loss)}</Fig>} tone="loss" />
+                        <Stat label="Max loss" display={<Fig className="text-loss">{inr(result.max_loss)}</Fig>} tone="loss"
+                          hint={result.analysis?.risk_shape === "zero_bounded" ? "bounded only by a price of zero: not defined risk" : undefined} />
                         <Stat label={result.net_premium > 0 ? "Net debit (you pay)" : "Net credit (you receive)"} display={<Fig>{inr(Math.abs(result.net_premium))}</Fig>}
                           help="Premium received (credit) or paid (debit) to open all legs together." />
                         <Stat label="Expected move (1σ)" tone="info"

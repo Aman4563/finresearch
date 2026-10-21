@@ -587,7 +587,7 @@ def build(chain, lot: int, legs_in: list[fs.LegIn], x: Inputs, *, spec: Any | No
                  "risk_per_set": None if sz.risk_per_multiple is None else round(sz.risk_per_multiple, 2),
                  "reason": sz.reason, "capital": x.capital, "max_loss_pct": x.max_loss_pct},
         "entry": {**limits, "levels_priced_at": entry_src, "source": src},
-        "max_profit": a["max_profit"], "max_loss": a["max_loss"], "breakevens": a["breakevens"],
+        "max_profit": a["max_profit"], "max_loss": a["max_loss"], "risk_shape": a["risk_shape"], "breakevens": a["breakevens"],
         "net_premium": a["net_premium"], "costs": a["costs"]["total_to_expiry"],
         "probability": {"real_world": None if rw is None else rw["pop"], "real_world_window": (rw or {}).get("window"),
                         "risk_neutral": None if rn is None else rn["pop"],

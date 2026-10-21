@@ -55,13 +55,16 @@ function Key({ label, value, note, tone, help }: { label: string; value: string;
   );
 }
 
+/** #351: a loss bounded only by a price of zero is not defined risk: say so beside the number. */
+const zeroBounded = (plan: TradePlan) => (plan.risk_shape === "zero_bounded" ? "bounded only by a price of zero: not defined risk" : undefined);
+
 /** Max loss, max profit, chance of profit, stop, target and breakevens at a glance (#326). */
 function KeyNumbers({ plan }: { plan: TradePlan }) {
   const ex = plan.exits, p = plan.probability;
   if (plan.max_loss === undefined && plan.max_profit === undefined && !p && !ex) return null;
   return (
     <div data-testid="plan-key-numbers" className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
-      <Key label="Max loss" value={plan.max_loss == null ? "unlimited" : rs(plan.max_loss)} tone="loss" />
+      <Key label="Max loss" value={plan.max_loss == null ? "unlimited" : rs(plan.max_loss)} tone="loss" note={zeroBounded(plan)} />
       <Key label="Max profit" value={plan.max_profit == null ? "unlimited" : rs(plan.max_profit)} tone="gain" />
       <Key label="Chance of profit" value={pct(p?.real_world)} note={`real-world · risk-neutral ${pct(p?.risk_neutral)}`} help={p?.note} />
       <Key label="Stop" value={ex?.stop ? `−${rs(ex.stop.rupees)}` : "none"} tone={ex?.stop ? "loss" : undefined}
@@ -156,7 +159,7 @@ function PlanDetail({ plan }: { plan: TradePlan }) {
             </Row>
           )}
           <Row label="Max profit"><N>{plan.max_profit == null ? "unlimited" : rs(plan.max_profit)}</N></Row>
-          <Row label="Max loss"><N>{plan.max_loss == null ? "unlimited" : rs(plan.max_loss)}</N></Row>
+          <Row label="Max loss"><N>{plan.max_loss == null ? "unlimited" : rs(plan.max_loss)}</N>{zeroBounded(plan) && <span className="block text-[11px] text-muted">{zeroBounded(plan)}</span>}</Row>
           <Row label="Breakevens">{plan.breakevens?.length ? plan.breakevens.map((b, i) => <span key={b}>{i > 0 && " / "}<N>{lvl(b)}</N></span>) : "none"}</Row>
           <Row label="Chance of profit" help={p?.note}><Parts parts={[`real-world ${pct(p?.real_world)}`, `risk-neutral ${pct(p?.risk_neutral)}`]} /></Row>
         </div>

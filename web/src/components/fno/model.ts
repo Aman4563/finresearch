@@ -27,6 +27,8 @@ export type Analysis = {
   rate: number;
   drift: number;
   max_loss: number | null;
+  /** #351: "zero_bounded" = finite only because a price cannot fall below zero (not defined risk) */
+  risk_shape?: "defined" | "zero_bounded" | "unlimited";
   net_vega: number | null;
   vols: { atm_iv: number | null; atm_strike: number | null; realised_20d: number | null; realised_60d: number | null; closes: number };
   costs: { entry: Costs; square_off_at_same_prices: Costs; expected_exercise_stt: number | null; total_to_expiry: number | null; brokerage_per_order: number; note: string };

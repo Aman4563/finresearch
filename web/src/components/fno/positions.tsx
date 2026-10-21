@@ -21,7 +21,7 @@ function Group({ g, rules, onRules }: { g: PositionGroup; rules: ExitRule[]; onR
         <p className="font-semibold">{g.underlying ?? "Contracts not in Groww's instruments file"}{g.expiry && <span className="ml-1 whitespace-nowrap text-xs font-normal text-muted">expires {day(g.expiry)}</span>}</p>
         {g.days_to_expiry != null && <Badge tone={g.days_to_expiry <= 3 ? "warn" : "neutral"}>{g.days_to_expiry} days to expiry</Badge>}
         <span className={cx("num whitespace-nowrap text-sm font-semibold", tone(g.unrealised_pnl))}>P&amp;L {rs(g.unrealised_pnl)}</span>
-        <span className={cx("num text-xs text-muted", g.max_loss != null && "whitespace-nowrap")}>max loss {g.max_loss != null ? rs(g.max_loss) : g.max_loss_note ?? "unknown"}</span>
+        <span className={cx("num text-xs text-muted", g.max_loss != null && "whitespace-nowrap")}>max loss {g.max_loss != null ? rs(g.max_loss) : g.max_loss_note ?? "unknown"}{g.max_loss != null && g.max_loss_note ? ` (${g.max_loss_note})` : ""}</span>
         {g.net_greeks && <span className="num text-xs text-muted"><Parts parts={[`Δ ${g.net_greeks.delta.toFixed(1)}`, `Θ/day ${g.net_greeks.theta.toFixed(0)}`, `vega ${g.net_greeks.vega.toFixed(0)}`]} /></span>}
       </div>
       {/* the contract column stays in view while the numbers scroll sideways on a phone (#326) */}

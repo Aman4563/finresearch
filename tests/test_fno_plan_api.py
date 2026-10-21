@@ -43,14 +43,15 @@ def _no_network(monkeypatch):
     monkeypatch.setattr(sources, "SOURCES", NoSources())
 
 
-def _profile(capital: str, pct: str = "2"):
+def _profile(capital: str, pct: str = "2", override: bool = False):
     from finresearch.db import session_scope
     from finresearch.suggest.advisor import save_profile
     from finresearch.suggest.profile import default_profile
 
     with session_scope() as s:
         save_profile(s, default_profile().model_copy(update={"fno_capital_inr": Decimal(capital),
-                                                            "fno_max_loss_pct": Decimal(pct)}))  # fmt: skip
+                                                            "fno_max_loss_pct": Decimal(pct),
+                                                            "fno_max_loss_override": override}))  # fmt: skip
 
 
 def _save_backtest(rows):
@@ -152,6 +153,8 @@ def test_suggest_serves_only_candidate_recipes_on_their_own_underlying(client):
     assert ic["action"] == "WAIT" and "Recipe IV filter" in ic["failed"]
     assert any("registered filter of a recipe that failed out of sample" in r for r in ic["reasons"])
     assert all(c["action"] != "ENTER" for c in got["cards"])  # no candidate saved: never ENTER (#350)
+    # #351: no library recipe changes class under the two-slope rule (no false positives)
+    assert all("Defined risk" not in c["failed"] for c in got["cards"])
 
 
 def test_context_panel_reads_stored_history_and_labels_evidence(client):
@@ -651,3 +654,19 @@ def test_signal_card_applies_the_recipe_iv_filter_like_the_trade_card_355(client
     _iv_points(monkeypatch, high=True)
     card = client.post("/api/fno/plan", json={"symbol": "NIFTY", "expiry": "2026-10-06", "legs": IC}).json()
     assert card["action"] == _signal(client, monkeypatch, IC)["action"] == "PAPER"
+
+
+@pytest.mark.parametrize("legs", [
+    [{"right": "put", "strike": 22600, "side": "sell", "lots": 1}],  # naked short put
+    [{"right": "put", "strike": 22600, "side": "buy", "lots": 1},
+     {"right": "put", "strike": 22400, "side": "sell", "lots": 2}],  # put ratio spread
+    [{"right": "future", "strike": 22780, "side": "buy", "lots": 1},
+     {"right": "call", "strike": 23000, "side": "sell", "lots": 1}],  # long future + short call
+], ids=["short_put", "put_ratio", "future_short_call"])  # fmt: skip
+def test_a_loss_bounded_only_by_zero_is_avoid_at_any_capital_351(client, legs):
+    # ₹1 crore at 20% (owner override): a ₹20 lakh budget, above each loss at a price of zero (≈ ₹14-15 lakh)
+    _profile("10000000", "20", override=True)
+    card = client.post("/api/fno/plan", json={"symbol": "NIFTY", "expiry": "2026-10-06", "legs": legs}).json()
+    assert card["action"] == "AVOID" and "Defined risk" in card["failed"]
+    assert "Max loss within your F&O budget" not in card["failed"]  # the budget is not what stops it
+    assert card["size"]["real_lots"] == 0
