@@ -41,7 +41,9 @@ def _cards(client, monkeypatch, row, created_at):
 
 
 def test_a_fresh_candidate_run_still_enters(client, monkeypatch):
-    card, s = _cards(client, monkeypatch, CANDIDATE, datetime(2026, 9, 20, 18, tzinfo=dates.IST))  # 9 days old
+    card, s = _cards(
+        client, monkeypatch, CANDIDATE, datetime(2026, 9, 20, 18, tzinfo=dates.IST)
+    )  # 9 days old
     assert card["action"] == "ENTER" and s["action"] == "ENTER" and not card["evidence"]["stale"]
 
 
@@ -49,7 +51,10 @@ def test_a_fresh_candidate_run_still_enters(client, monkeypatch):
     ("created_at", "why"),
     [
         (datetime(2026, 8, 1, 18, tzinfo=dates.IST), "59 days old"),  # 29-Sep − 1-Aug = 59 days > 45
-        (datetime(2026, 3, 30, 18, tzinfo=dates.IST), "01-Apr-2026"),  # before the Apr-2026 STT change (and old)
+        (
+            datetime(2026, 3, 30, 18, tzinfo=dates.IST),
+            "01-Apr-2026",
+        ),  # before the Apr-2026 STT change (and old)
     ],
 )
 def test_a_stale_candidate_run_caps_both_cards_at_wait_with_the_reason(client, monkeypatch, created_at, why):

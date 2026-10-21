@@ -576,8 +576,16 @@ def build(chain, lot: int, legs_in: list[fs.LegIn], x: Inputs, *, spec: Any | No
     legs = [fs.LegIn(y.right, y.strike, y.side, y.lots * m, y.premium) for y in legs_in]
     a = _analyse(chain, lot, legs, x, ba_chain, p_exit) if m > 1 else a0
     _, factors, gates = fs.assess(a, defined_risk_only=x.defined_risk_only)
-    d = decide(gates, a0["max_loss"], a0["costs"]["entry"]["total"], x.budget, ev["level"], extra_failed, ob,
-               stale=ev["stale"])
+    d = decide(
+        gates,
+        a0["max_loss"],
+        a0["costs"]["entry"]["total"],
+        x.budget,
+        ev["level"],
+        extra_failed,
+        ob,
+        stale=ev["stale"],
+    )
     action, qualifier, failed = d.action, d.qualifier, d.failed
     reasons = [f"{f.name}: {f.explanation}" for f in factors if f.name in failed] + d.reasons
     if x.capital <= 0:
