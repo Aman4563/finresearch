@@ -2,7 +2,9 @@
 
 Once per trading-day evening from RUN_AFTER (IST), after NSE has published the day's bars. Only issues not yet
 `complete` in ipo_history are fetched, and older partial rows only when they listed in the last RETRY_DAYS days, so a
-night with no new listing costs one `public-past-issues` request per board. A new listing costs its issue page, one or
+night with no new listing costs one `public-past-issues` request per board. An 'error' row that failed only on the
+network is re-fetched whatever its age, at most evals.ipo_history.MAX_FETCH_ATTEMPTS times with a doubling backoff
+(`retry_due`, #433). A new listing costs its issue page, one or
 two history requests (EQ, then the T2T "BE" series when EQ has no listing-day bar) and the current Nifty chunk. Every
 request goes through the shared per-host NSE rate limit (adapters.http.SharedSlots) at the harvester's 0.5 req/s.
 NSE holidays and weekends are skipped; an unknown holiday list skips the run too (monitor.market_days fails closed).
