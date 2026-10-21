@@ -1,6 +1,6 @@
 "use client";
 
-import { Activity, Calculator, Crosshair, Layers, Loader2, Minus, Plus, RefreshCw, Search, Sparkles, Target, Trash2, TrendingUp } from "lucide-react";
+import { Activity, Calculator, Crosshair, Layers, Loader2, Minus, Plus, RefreshCw, Search, Sparkles, Trash2, TrendingUp } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -270,7 +270,6 @@ export default function Fno() {
     }));
   }, [chain]);
   const pcr = chain?.pcr_oi ? Number(chain.pcr_oi) : null;
-  const atmIv = chain ? (([n(chain.atm_iv.call), n(chain.atm_iv.put)].filter((x) => x != null) as number[]).reduce((s, x, _, arr) => s + x / arr.length, 0) || null) : null;
   const an = fresh ? result?.analysis : undefined;
 
   return (
@@ -339,19 +338,18 @@ export default function Fno() {
         </div>
       ) : chain ? (
         <>
-          <div className="stagger grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+          {/* max pain is no KPI tile (#354 e): it is labelled context in the market-context panel and on the OI chart */}
+          <div className="stagger grid grid-cols-2 gap-3 lg:grid-cols-4">
             <Stat label={`${chain.symbol} spot`} value={spot} format={(v) => v.toLocaleString("en-IN", { maximumFractionDigits: 2 })} icon={<TrendingUp className="size-4" />}
               hint={[chain.as_of ? `as of ${when(chain.as_of)}` : null, chain.source_label ? `source: ${chain.source_label}` : null].filter(Boolean).join(" · ") || undefined} />
             <Stat label="ATM strike" value={n(chain.atm_strike)} format={(v) => v.toLocaleString("en-IN")} tone="accent" icon={<Crosshair className="size-4" />}
               help="At the money: the strike closest to the current price. IV (implied volatility) is how much movement option prices are expecting, as a yearly %."
-              hint={`IV call ${chain.atm_iv.call ?? "—"}% · put ${chain.atm_iv.put ?? "—"}%`} />
+              hint={`IV call ${chain.atm_iv.call ?? "—"}% · put ${chain.atm_iv.put ?? "—"}%`}
+              note={chain.lot_size ? `lot size ${chain.lot_size} · expires ${day(chain.expiry)}` : `expires ${day(chain.expiry)}`} />
             <Stat label="PCR (OI)" value={pcr} format={(v) => v.toFixed(2)} tone="info" icon={<Layers className="size-4" />}
               help="Put-call ratio: total put open interest ÷ total call open interest. Above 1 means more puts are open (often read as support below the price); below 0.7, more calls. A rough sentiment gauge, not a signal."
               hint={pcr == null ? undefined : pcr > 1 ? "more puts than calls" : "more calls than puts"} />
-            <Stat label="Max pain" value={n(chain.max_pain)} format={(v) => v.toLocaleString("en-IN")} tone="warn" icon={<Target className="size-4" />}
-              help="The expiry price at which option buyers, in total, would lose the most (and sellers keep the most). Prices sometimes drift towards it near expiry; it is not a forecast."
-              hint={chain.lot_size ? `lot size ${chain.lot_size} · expires ${day(chain.expiry)}` : `expires ${day(chain.expiry)}`} />
-            <IvTile symbol={chain.symbol} atmIv={atmIv} rv20={fresh ? result?.analysis?.vols.realised_20d : null} />
+            <IvTile symbol={chain.symbol} />
           </div>
           <EventStrip symbol={chain.symbol} />
           <MarketContextPanel key={`${chain.symbol}-${chain.expiry}`} symbol={chain.symbol} expiry={chain.expiry} />

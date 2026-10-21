@@ -36,7 +36,7 @@ export function Badge({ status, tone, children, dot }: { status?: string; tone?:
   const t = tone ?? STATUS[status ?? ""] ?? "neutral";
   const pulse = dot ?? LIVE.has(status ?? "");
   return (
-    <span className={cx("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset whitespace-nowrap", TONE[t])}>
+    <span data-tone={t} className={cx("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset whitespace-nowrap", TONE[t])}>
       {pulse && <span className="size-1.5 rounded-full bg-current animate-pulse-ring" />}
       {children ?? (status ?? "").replaceAll("_", " ")}
     </span>
