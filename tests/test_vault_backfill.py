@@ -76,7 +76,7 @@ async def test_refuses_the_app_database(vault):
 async def test_refuses_days_outside_the_vault(vault, start, end):
     from finresearch.vault import backfill as vb
 
-    with pytest.raises(vb.VaultLoadRefused, match="vault period|after"):
+    with pytest.raises(vb.VaultLoadRefused, match=r"vault period|after"):
         await vb.backfill(start, end, **kw(vault_url=vault))
 
 

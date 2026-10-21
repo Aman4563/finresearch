@@ -102,13 +102,10 @@ def plan_days(s: Session, start: date, end: date, holidays: set[date] | None = N
         if holidays is None and d.year not in years:
             years[d.year] = known_trading_holidays(d)
         hol = holidays if holidays is not None else years[d.year]
-        if done.get(d) in ("loaded", "no_file"):
-            pass
-        elif d.weekday() >= 5 and not probe_weekends and d not in extra:
-            pass
-        elif d.weekday() < 5 and hol and d in hol:
-            pass
-        else:
+        done_already = done.get(d) in ("loaded", "no_file")
+        weekend_skip = d.weekday() >= 5 and not probe_weekends and d not in extra
+        holiday = d.weekday() < 5 and bool(hol) and d in hol  # type: ignore[operator]
+        if not (done_already or weekend_skip or holiday):
             out.append(d)
         d += timedelta(days=1)
     return out
