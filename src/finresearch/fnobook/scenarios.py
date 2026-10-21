@@ -93,8 +93,13 @@ async def groww_legs(today: date) -> tuple[list[bs.BookLeg] | None, str | None]:
             None,
             "A Groww F&O position has no known expiry: the book cannot be repriced (sync Groww again).",
         )
-    legs = [bs.BookLeg(p.symbol.upper(), p.expiry, x.right, x.strike, x.qty, None, None, "groww")  # type: ignore[arg-type]
-            for p in real for x in p.legs]  # fmt: skip
+    # a future's Leg.strike is its average price (real_positions): not a strike, so 0 here
+    legs = [
+        bs.BookLeg(p.symbol.upper(), p.expiry, x.right, 0.0 if x.right == "future" else x.strike, x.qty, None, None,  # type: ignore[arg-type]
+                   "groww")
+        for p in real
+        for x in p.legs
+    ]  # fmt: skip
     return legs, why
 
 

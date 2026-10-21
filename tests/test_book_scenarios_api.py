@@ -170,12 +170,18 @@ def test_unresolved_groww_positions_make_every_figure_unknown():
 
 
 def test_api_route_reads_the_profile_capital_and_writes_nothing(monkeypatch):
+    from sqlalchemy import func, select
     from starlette.testclient import TestClient
 
     from finresearch.api import create_app
+    from finresearch.db import session_scope
+    from finresearch.db.models import InvestorProfile, PaperStrategy
     from finresearch.fnobook import sources
 
     _paper_spread()
+    with session_scope() as s:
+        assert s.scalar(select(func.count()).select_from(InvestorProfile)) == 0
+        before = [(p.mtm_gross, p.mtm_at) for p in s.scalars(select(PaperStrategy))]
     monkeypatch.setattr(sources, "SOURCES", Sources(chain()))
     c = TestClient(create_app(clock=lambda: NOW))
     r = c.get("/api/fno/scenarios")
@@ -184,4 +190,20 @@ def test_api_route_reads_the_profile_capital_and_writes_nothing(monkeypatch):
     assert v["grid"]["complete"] and len(v["legs"]) == 2
     assert (
         v["reverse"]["limit"] is None and "capital" in v["reverse"]["reason"]
-    )  # the default profile has none
+    )  # the default profile: none set
+    with session_scope() as s:  # the GET wrote nothing: no profile row, the paper trade's mark untouched
+        assert s.scalar(select(func.count()).select_from(InvestorProfile)) == 0
+        assert [(p.mtm_gross, p.mtm_at) for p in s.scalars(select(PaperStrategy))] == before
+
+
+def test_a_groww_future_shows_no_strike(monkeypatch):
+    from finresearch.fincalc import options as o
+    from finresearch.fnobook import scenarios
+    from finresearch.signals import tradeplan
+
+    async def real(today):  # real_positions carries a future's average price in Leg.strike
+        return [tradeplan.RealPosition("NIFTY", EXPIRY, [o.Leg("future", 24950.0, 0.0, -75)])], None
+
+    monkeypatch.setattr(tradeplan, "real_positions", real)
+    legs, _ = run(scenarios.groww_legs(TRADE_DAY))
+    assert [(x.right, x.strike, x.qty) for x in legs] == [("future", 0.0, -75)]
