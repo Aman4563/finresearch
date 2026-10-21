@@ -72,6 +72,17 @@ def test_the_plan_card_leads_with_ev_payoff_ratio_and_reliability(client):  # no
     )  # no F&O card is ever scored yet
 
 
+def test_the_plan_card_pop_note_says_it_is_recorded_as_a_forecast(client):  # noqa: F811
+    """#433: since #376 every logged plan/suggest card is a forecast in the ledger, scored as it resolves; the note
+    must not call its probabilities "not forecasts" (a strategy check is not recorded and keeps that wording)."""
+    _profile("1000000")
+    card = client.post("/api/fno/plan", json={"symbol": "NIFTY", "expiry": "2026-10-06", "legs": PCS}).json()
+    note = card["probability"]["note"]
+    assert "not forecasts" not in note
+    assert note.startswith("Model probabilities of a positive P&L after costs at expiry")
+    assert "recorded in the forecast ledger" in note and "card's exit plan" in note
+
+
 def test_inconclusive_evidence_says_the_ci_spans_zero():
     row = {"status": "fails", "windows": {"oos": {"expectancy": 741.0, "t_stat": 0.76, "trades": 40, "ci_low": -1262.0,
                                                   "ci_high": 2567.0}}}  # fmt: skip

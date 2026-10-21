@@ -234,6 +234,82 @@ async def test_incremental_harvest_is_idempotent_and_retries_only_recent_partial
         assert s.query(IpoHistory).count() == 3  # upserts, no duplicates
 
 
+def test_transient_retry_policy_is_bounded_with_a_doubling_backoff():
+    """#433: an 'error' row whose only reason is a network failure is due again 1, 2 and 4 days after its 1st, 2nd and
+    3rd failed attempts, and never after the 4th (MAX_FETCH_ATTEMPTS); other errors are never retried. A row from
+    before the policy (no attempt record) counts as one attempt made on its updated day."""
+    from finresearch.evals import ipo_history as ih
+
+    d = date(2026, 9, 30)
+    rt = ["fetch failed: ReadTimeout: timed out"]
+    due = lambda missing, src, today, status="error": ih.retry_due(status, missing, src, d, today)  # noqa: E731
+    assert ih.MAX_FETCH_ATTEMPTS == 4
+    assert not due(rt, {"fetch_attempts": 1, "last_attempt": "2026-09-30"}, d)  # same night
+    assert due(rt, {"fetch_attempts": 1, "last_attempt": "2026-09-30"}, d + timedelta(days=1))
+    assert not due(rt, {"fetch_attempts": 2, "last_attempt": "2026-09-30"}, d + timedelta(days=1))
+    assert due(rt, {"fetch_attempts": 2, "last_attempt": "2026-09-30"}, d + timedelta(days=2))
+    assert not due(rt, {"fetch_attempts": 3, "last_attempt": "2026-09-30"}, d + timedelta(days=3))
+    assert due(rt, {"fetch_attempts": 3, "last_attempt": "2026-09-30"}, d + timedelta(days=4))
+    assert not due(
+        rt, {"fetch_attempts": 4, "last_attempt": "2026-09-30"}, d + timedelta(days=400)
+    )  # exhausted
+    assert due(rt, {}, d + timedelta(days=1)) and not due(
+        rt, {}, d
+    )  # legacy row: one attempt on its updated day
+    assert not due(["fetch failed: NseError: 404"], {}, d + timedelta(days=30))  # not transient
+    assert not due([*rt, "no listing-day bar"], {}, d + timedelta(days=30))  # not only transient
+    assert not due(rt, {}, d + timedelta(days=30), status="partial")
+
+
+async def test_nightly_harvest_retries_an_old_transient_error_row_with_backoff(db):
+    """#433: SWIGGY (listed 13-Nov-2024, far older than RETRY_DAYS) fails on a read timeout; the nightly run re-fetches
+    it when its backoff has passed, counts the attempts, gives up after MAX_FETCH_ATTEMPTS and completes it when NSE
+    answers. Offline (respx)."""
+    import httpx
+    import respx
+    from test_ipo_history import NSE_BASE, client, load, mock_nse
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import IpoHistory
+    from finresearch.evals import ipo_history as ih
+
+    quiet = lambda _m: None  # noqa: E731
+    fail = {"on": True}
+
+    def detail(request):
+        sym = request.url.params["symbol"]
+        if sym == "SWIGGY" and fail["on"]:
+            raise httpx.ReadTimeout("timed out", request=request)
+        return httpx.Response(200, json=load(f"ipo_detail_{sym}.json"))
+
+    def swiggy() -> tuple[str, dict]:
+        with session_scope() as s:
+            r = s.scalar(select(IpoHistory).where(IpoHistory.symbol == "SWIGGY"))
+            return r.status, dict(r.source or {})
+
+    d = date(2026, 9, 30)
+    with respx.mock(assert_all_called=False) as router:
+        mock_nse(router)
+        router.get(f"{NSE_BASE}/api/ipo-detail").mock(side_effect=detail)
+        run = lambda day: ih.harvest(client=client(), today=day, retry_days=10, log=quiet)  # noqa: E731
+        await run(d)
+        st, src = swiggy()
+        assert st == "error" and src == {"fetch_attempts": 1, "last_attempt": "2026-09-30"}
+        assert (await run(d))["fetched"] == 0  # not due the same night
+        assert (await run(d + timedelta(days=1)))["error"] == 1  # due a day later: attempt 2
+        assert swiggy()[1]["fetch_attempts"] == 2
+        assert (await run(d + timedelta(days=2)))["fetched"] == 0  # next due 2 days after attempt 2
+        await run(d + timedelta(days=3))
+        await run(d + timedelta(days=7))
+        assert swiggy()[1] == {"fetch_attempts": 4, "last_attempt": "2026-10-07"}
+        fail["on"] = False
+        assert (await run(d + timedelta(days=60)))["fetched"] == 0  # exhausted: left for a manual harvest
+        with session_scope() as s:  # a row that still has an attempt left completes once NSE answers
+            s.scalar(select(IpoHistory).where(IpoHistory.symbol == "SWIGGY")).source = {"fetch_attempts": 3}
+        out = await run(d + timedelta(days=60))
+    assert out["fetched"] == 1 and out.get("complete") == 1 and swiggy()[0] == "complete"
+
+
 class _Detail:
     record = type("R", (), {"url": "https://www.nseindia.com/api/ipo-detail", "sha256": "x",
                             "fetched_at": datetime(2026, 9, 25, tzinfo=UTC)})()  # fmt: skip

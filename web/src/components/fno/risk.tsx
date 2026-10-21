@@ -163,8 +163,9 @@ export function ProbabilityPanel({ a, rate }: { a: Analysis; rate?: RateInfo }) 
         <PopTile label="Chance of profit · real-world" o={rw} tone="accent"
           help={`The same with σ = realised volatility (${rw?.window ?? "20/60-day"}; the less favourable of the two windows) and a stated drift of ${(a.drift * 100).toFixed(1)}% a year (no directional view). A scenario, not a forecast: its EV never changes a verdict.`} />
       </div>
-      {/* #357: every F&O probability carries its reliability; these model probabilities are never scored */}
-      <p data-testid="reliability" className="text-[11px] text-muted">calibration not established: 0 scored (model probabilities, not forecasts)</p>
+      {/* #357: every F&O probability carries its reliability; a strategy check is never recorded or scored (#433: unlike
+          a plan or suggested card, which the forecast ledger records since #376) */}
+      <p data-testid="reliability" className="text-[11px] text-muted">calibration not established: 0 scored (model probabilities, not forecasts: a strategy check is not recorded in the forecast ledger)</p>
       <p className="text-[11px] leading-relaxed text-muted">{a.fair_price_note}</p>
       {rate && (
         <p className={cx("text-[11px] leading-relaxed", rate.fallback ? "text-warn" : "text-muted")}>
