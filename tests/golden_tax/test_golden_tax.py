@@ -21,15 +21,18 @@ from typing import Any
 
 import pytest
 
+from finresearch.fincalc.losses import ManualLoss
 from finresearch.portfolio import elss
 from finresearch.portfolio.lots import Event, build_lots
 from finresearch.portfolio.tax import (
     DisposalRow,
     HoldingTax,
+    TaxLossInputs,
     auto_tax_class,
     evaluate,
     fy_summary,
     is_debt_security,
+    ledger_of,
     lot_subscription,
     redemption_flags,
 )
@@ -98,19 +101,30 @@ def run_engine(case: dict[str, Any]) -> dict[str, Any]:
         if h.get("elss"):
             unlock += [{"acquired": lot.acquired, "redeemable_from": elss.unlock_date(lot.acquired)}
                        for lot in book.lots if lot.acquired is not None]  # fmt: skip
+    # #344: losses brought forward (the user's return) and whether each loss year's return was filed on time
+    tl = case.get("tax_losses") or {}
+    inputs = TaxLossInputs({int(k): v for k, v in (tl.get("returns_filed_on_time") or {}).items()},
+                           [ManualLoss(b["origin_fy"], b["kind"], Decimal(b["amount"]), b["source"], b.get("apply_from_fy"))
+                            for b in tl.get("brought_forward") or []])  # fmt: skip
+    ledger = ledger_of(rows, slab, inputs, None, case.get("through_fy"))
     fys = []
     for fy in sorted({r.fy for r in rows}):
-        x = fy_summary(rows, fy, slab)
+        x = fy_summary(rows, fy, slab, ledger)
+        bf = x["brought_forward"]
         fys.append({"fy": fy, "exemption_used": x["exemption"]["used"], "tax": x["tax"], "cess": x["cess"],
                     "total": x["total"], "complete": x["complete"], "unknown_count": x["unknown"],
                     "intraday_count": x["intraday"], "exempt_total": x["exempt"],
                     "losses_carried_short": x["losses_carried"]["short"],
-                    "losses_carried_long": x["losses_carried"]["long"]})  # fmt: skip
-    return {"disposals": disposals, "open_lots": open_lots, "fy": fys, "elss_unlock": unlock}
+                    "losses_carried_long": x["losses_carried"]["long"], "bf_set_off_short": bf["set_off_short"],
+                    "bf_set_off_long": bf["set_off_long"], "carry_forward_complete": bf["complete"]})  # fmt: skip
+    led = [{"origin_fy": e.origin_fy, "kind": e.kind, "amount": e.amount, "remaining": e.remaining,
+            "last_fy": e.last_fy, "status": e.status} for e in ledger.entries]  # fmt: skip
+    return {"disposals": disposals, "open_lots": open_lots, "fy": fys, "elss_unlock": unlock, "ledger": led}
 
 
 MONEY = {"cost", "tax_cost", "proceeds", "gain", "cost_per_unit", "exemption_used", "tax", "cess", "total",
-         "exempt_total", "losses_carried_short", "losses_carried_long"}  # fmt: skip
+         "exempt_total", "losses_carried_short", "losses_carried_long", "bf_set_off_short", "bf_set_off_long",
+         "amount", "remaining"}  # fmt: skip
 QTY = {"quantity"}
 DATES = {"sold", "acquired", "redeemable_from"}
 
@@ -134,10 +148,16 @@ def compare(case: dict[str, Any], got: dict[str, Any]) -> dict[str, tuple[Any, A
     case states are asserted (the corpus omits what it considers not determinable)."""
     exp = case["expected"]
     out: dict[str, tuple[Any, Any]] = {}
-    for section in ("disposals", "open_lots", "elss_unlock"):
+    for section in ("disposals", "open_lots", "elss_unlock", "ledger"):
         want, have = exp.get(section), got[section]
         if want is None:
             continue
+        if (
+            section == "disposals"
+        ):  # cases list sales by date or by holding: compare in one order (a stable sort,
+            # so the order of one holding's same-day rows, e.g. an intraday match before a FIFO row, is kept)
+            want = sorted(want, key=lambda d: (str(d["sold"]), d["holding"]))
+            have = sorted(have, key=lambda d: (str(d["sold"]), d["holding"]))
         if len(want) != len(have):
             out[f"{section}.count"] = (len(want), len(have))
         for i, (w, g) in enumerate(zip(want, have, strict=False)):
@@ -183,9 +203,9 @@ def test_golden_case(path: Path):
 
 
 def test_corpus_size_and_coverage():
-    assert len(CASES) >= 31
+    assert len(CASES) >= 51
     covers = " ".join(" ".join(json.loads(p.read_text())["covers"]) for p in CASES).lower()
     for topic in ("fifo", "intraday", "split", "bonus", "grandfather", "sgb", "ncd", "debt mf", "unknown cost",
                   "unknown date", "elss", "stt", "set", "threshold", "redemption", "s.50aa", "t-bill",
-                  "g-sec"):  # fmt: skip
+                  "g-sec", "brought forward", "carry forward", "8-year", "late filing", "unknown filing"):  # fmt: skip
         assert topic in covers, topic

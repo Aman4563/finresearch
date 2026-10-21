@@ -443,11 +443,11 @@ class TaxLossInputs:
     brought_forward: list[ManualLoss] = field(default_factory=list)
 
 
-def ledger_of(
-    rows: Sequence[DisposalRow], slab: Decimal, inputs: TaxLossInputs | None, today: date
-) -> Ledger:
+def ledger_of(rows: Sequence[DisposalRow], slab: Decimal, inputs: TaxLossInputs | None, today: date | None,
+              through_fy: int | None = None) -> Ledger:  # fmt: skip
     """The carry-forward ledger (fincalc.losses.carry_forward) over every year with a disposal, through the current
-    financial year. A year with an unclassified disposal has an unknown unabsorbed loss."""
+    financial year (or `through_fy`). A year with an unclassified disposal has an unknown unabsorbed loss. `today`
+    None: no return is treated as not yet due."""
     inputs = inputs or TaxLossInputs()
     years: dict[int, YearGains] = {}
     for fy in sorted({r.fy for r in rows}):
@@ -455,8 +455,9 @@ def ledger_of(
         bad = [r for r in ev if is_unclassified(r)]
         years[fy] = YearGains(gains_of(ev), complete=not bad,
                               maybe_loss=any(r.gain is None or r.gain < 0 for r in bad))  # fmt: skip
-    return carry_forward(years, slab, inputs.brought_forward, inputs.returns_filed_on_time, today,
-                         max([fiscal_year(today), *years]))  # fmt: skip
+    if through_fy is None:
+        through_fy = max([*years, *([fiscal_year(today)] if today else [])], default=None)
+    return carry_forward(years, slab, inputs.brought_forward, inputs.returns_filed_on_time, today, through_fy)
 
 
 def _bf_block(ledger: Ledger, fy: int, t: FyTax) -> dict[str, Any]:

@@ -1,0 +1,149 @@
+{
+  "id": "g41_bf_ltcl_only_vs_ltcg",
+  "title": "Brought-forward LTCL of Rs 80,000 absorbs only the Rs 30,000 LTCG, never the Rs 50,000 STCG; Rs 50,000 LTCL carried on",
+  "covers": [
+    "brought forward",
+    "carry forward",
+    "set-off",
+    "LTCL only against LTCG",
+    "s.74(1)(b)"
+  ],
+  "rules": [
+    "Income-tax Act 1961 s.74 (Income-tax Act 2025 s.111 [secondary mapping, not verified]): the net capital-gains loss of a year is carried forward to the following assessment year; (1)(a) a short-term loss 'shall be set off' against any capital gain of that year; (1)(b) a long-term loss only against long-term capital gain; (1)(c) the balance is carried on; (2) not for more than eight assessment years immediately succeeding the assessment year for which it was first computed",
+    "Income-tax Act 1961 s.80 (Income-tax Act 2025 s.121 [secondary mapping, not verified]) with s.139(3) and s.139(1): a capital loss is carried forward and set off under s.74 only if it was determined in a return filed within the time allowed by s.139(1)",
+    "Income-tax Act 1961 s.111A(1) as amended by Finance (No.2) Act 2024: STCG on STT-paid equity 20 % for transfers on/after 23-Jul-2024",
+    "Income-tax Act 1961 s.112A(1) as amended by Finance (No.2) Act 2024: 12.5 % on long-term capital gains 'exceeding one lakh twenty-five thousand rupees' for transfers on/after 23-Jul-2024; the gains are those included in total income, i.e. after the s.70 / s.74 set-off",
+    "Health and Education Cess 4 % (Finance Act 2025 s.2)"
+  ],
+  "derivation": [
+    "Manual entry: LTCL 80,000.00 of origin fy 2024, return on time; last_fy 2032.",
+    "ELM LTD: 100 @ 1,000.00 bought 2025-04-02, sold 2025-10-01 @ 1,500.00 -> proceeds 1,50,000.00, cost 1,00,000.00, STCG 50,000.00, short 20 %.",
+    "FERN LTD: 100 @ 700.00 bought 2023-05-02, sold 2025-10-01 @ 1,000.00 -> proceeds 1,00,000.00, cost 70,000.00, LTCG 30,000.00, long 12.5 %.",
+    "FY 2025-26 (fy 2026): s.74(1)(b) lets the LTCL absorb LTCG only. It 'shall be set off' against the LTCG of 30,000 even though s.112A would have exempted that gain (same reading as g49) -> bf_set_off_long 30,000.00; LTCG left 0 -> exemption_used 0.00; LTCL left 50,000.00.",
+    "The STCG of 50,000 is untouched: tax 50,000 x 0.20 = 10,000.00; cess 400.00; total 10,400.00.",
+    "Ledger: origin 2024 long, amount 80,000.00, remaining 50,000.00, last_fy 2032, available.",
+    "Alternative (set-off optional against exempt LTCG): bf_set_off_long 0.00, exemption_used 30,000.00, remaining 80,000.00; tax unchanged 10,000.00 / total 10,400.00."
+  ],
+  "interpretive": true,
+  "slab_rate": "0.30",
+  "holdings": [
+    {
+      "name": "ELM LTD",
+      "tax_class": "equity",
+      "listed": true,
+      "fmv_2018": null,
+      "sgb_original_subscriber": false,
+      "events": [
+        {
+          "day": "2025-04-02",
+          "kind": "buy",
+          "quantity": "100",
+          "price": "1000.00",
+          "charges": "0"
+        },
+        {
+          "day": "2025-10-01",
+          "kind": "sell",
+          "quantity": "100",
+          "price": "1500.00",
+          "charges": "0"
+        }
+      ]
+    },
+    {
+      "name": "FERN LTD",
+      "tax_class": "equity",
+      "listed": true,
+      "fmv_2018": null,
+      "sgb_original_subscriber": false,
+      "events": [
+        {
+          "day": "2023-05-02",
+          "kind": "buy",
+          "quantity": "100",
+          "price": "700.00",
+          "charges": "0"
+        },
+        {
+          "day": "2025-10-01",
+          "kind": "sell",
+          "quantity": "100",
+          "price": "1000.00",
+          "charges": "0"
+        }
+      ]
+    }
+  ],
+  "tax_losses": {
+    "returns_filed_on_time": {
+      "2024": true
+    },
+    "brought_forward": [
+      {
+        "origin_fy": 2024,
+        "kind": "long",
+        "amount": "80000.00",
+        "source": "ITR AY 2024-25 Schedule CFL",
+        "apply_from_fy": 2025
+      }
+    ]
+  },
+  "through_fy": 2026,
+  "expected": {
+    "disposals": [
+      {
+        "holding": "ELM LTD",
+        "sold": "2025-10-01",
+        "acquired": "2025-04-02",
+        "quantity": "100",
+        "cost": "100000.00",
+        "tax_cost": "100000.00",
+        "proceeds": "150000.00",
+        "gain": "50000.00",
+        "term": "short",
+        "rate": "0.20"
+      },
+      {
+        "holding": "FERN LTD",
+        "sold": "2025-10-01",
+        "acquired": "2023-05-02",
+        "quantity": "100",
+        "cost": "70000.00",
+        "tax_cost": "70000.00",
+        "proceeds": "100000.00",
+        "gain": "30000.00",
+        "term": "long",
+        "rate": "0.125"
+      }
+    ],
+    "open_lots": [],
+    "fy": [
+      {
+        "fy": 2026,
+        "exemption_used": "0.00",
+        "tax": "10000.00",
+        "cess": "400.00",
+        "total": "10400.00",
+        "complete": true,
+        "unknown_count": 0,
+        "intraday_count": 0,
+        "exempt_total": "0.00",
+        "losses_carried_short": "0.00",
+        "losses_carried_long": "0.00",
+        "bf_set_off_short": "0.00",
+        "bf_set_off_long": "30000.00",
+        "carry_forward_complete": true
+      }
+    ],
+    "ledger": [
+      {
+        "origin_fy": 2024,
+        "kind": "long",
+        "amount": "80000.00",
+        "remaining": "50000.00",
+        "last_fy": 2032,
+        "status": "available"
+      }
+    ]
+  }
+}

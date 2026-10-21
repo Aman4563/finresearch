@@ -1,0 +1,112 @@
+{
+  "id": "g43_eight_year_boundary_used",
+  "title": "Brought-forward STCL from FY 2017-18 set off in FY 2025-26, the eighth succeeding assessment year",
+  "covers": [
+    "brought forward",
+    "carry forward",
+    "8-year",
+    "set-off",
+    "s.74(2)"
+  ],
+  "rules": [
+    "Income-tax Act 1961 s.74 (Income-tax Act 2025 s.111 [secondary mapping, not verified]): the net capital-gains loss of a year is carried forward to the following assessment year; (1)(a) a short-term loss 'shall be set off' against any capital gain of that year; (1)(b) a long-term loss only against long-term capital gain; (1)(c) the balance is carried on; (2) not for more than eight assessment years immediately succeeding the assessment year for which it was first computed",
+    "Income-tax Act 1961 s.80 (Income-tax Act 2025 s.121 [secondary mapping, not verified]) with s.139(3) and s.139(1): a capital loss is carried forward and set off under s.74 only if it was determined in a return filed within the time allowed by s.139(1)",
+    "Income-tax Act 1961 s.111A(1) as amended by Finance (No.2) Act 2024: STCG on STT-paid equity 20 % for transfers on/after 23-Jul-2024",
+    "Health and Education Cess 4 % (Finance Act 2025 s.2)"
+  ],
+  "derivation": [
+    "Manual entry: STCL 30,000.00 of origin fy 2018 (FY 2017-18 = AY 2018-19), return on time.",
+    "s.74(2): carried for at most eight AYs immediately succeeding AY 2018-19, i.e. AY 2019-20 ... AY 2026-27. AY 2026-27 = FY 2025-26 = fy 2026 -> last_fy 2018 + 8 = 2026.",
+    "IVY LTD: 1,000 @ 200.00 bought 2025-02-03, sold 2025-08-05 @ 300.00 -> proceeds 3,00,000.00, cost 2,00,000.00, STCG 1,00,000.00, short 20 %.",
+    "fy 2026 is within the limit: 1,00,000 - 30,000 = 70,000.00; bf_set_off_short 30,000.00.",
+    "Tax 70,000 x 0.20 = 14,000.00; cess 560.00; total 14,560.00.",
+    "Ledger: origin 2018 short, amount 30,000.00, remaining 0.00, last_fy 2026, used."
+  ],
+  "interpretive": false,
+  "slab_rate": "0.30",
+  "holdings": [
+    {
+      "name": "IVY LTD",
+      "tax_class": "equity",
+      "listed": true,
+      "fmv_2018": null,
+      "sgb_original_subscriber": false,
+      "events": [
+        {
+          "day": "2025-02-03",
+          "kind": "buy",
+          "quantity": "1000",
+          "price": "200.00",
+          "charges": "0"
+        },
+        {
+          "day": "2025-08-05",
+          "kind": "sell",
+          "quantity": "1000",
+          "price": "300.00",
+          "charges": "0"
+        }
+      ]
+    }
+  ],
+  "tax_losses": {
+    "returns_filed_on_time": {
+      "2018": true
+    },
+    "brought_forward": [
+      {
+        "origin_fy": 2018,
+        "kind": "short",
+        "amount": "30000.00",
+        "source": "ITR AY 2018-19 Schedule CFL",
+        "apply_from_fy": 2019
+      }
+    ]
+  },
+  "through_fy": 2026,
+  "expected": {
+    "disposals": [
+      {
+        "holding": "IVY LTD",
+        "sold": "2025-08-05",
+        "acquired": "2025-02-03",
+        "quantity": "1000",
+        "cost": "200000.00",
+        "tax_cost": "200000.00",
+        "proceeds": "300000.00",
+        "gain": "100000.00",
+        "term": "short",
+        "rate": "0.20"
+      }
+    ],
+    "open_lots": [],
+    "fy": [
+      {
+        "fy": 2026,
+        "exemption_used": "0.00",
+        "tax": "14000.00",
+        "cess": "560.00",
+        "total": "14560.00",
+        "complete": true,
+        "unknown_count": 0,
+        "intraday_count": 0,
+        "exempt_total": "0.00",
+        "losses_carried_short": "0.00",
+        "losses_carried_long": "0.00",
+        "bf_set_off_short": "30000.00",
+        "bf_set_off_long": "0.00",
+        "carry_forward_complete": true
+      }
+    ],
+    "ledger": [
+      {
+        "origin_fy": 2018,
+        "kind": "short",
+        "amount": "30000.00",
+        "remaining": "0.00",
+        "last_fy": 2026,
+        "status": "used"
+      }
+    ]
+  }
+}

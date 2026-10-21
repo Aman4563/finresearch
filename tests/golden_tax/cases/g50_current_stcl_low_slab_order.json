@@ -1,0 +1,166 @@
+{
+  "id": "g50_current_stcl_low_slab_order",
+  "title": "Slab 5 %: current-year equity STCL of Rs 20,000 with slab STCG of Rs 20,000 and equity LTCG of Rs 2.25 lakh: STCL absorbs the LTCG",
+  "covers": [
+    "set-off",
+    "current-year STCL",
+    "order of set-off across gains",
+    "s.50AA",
+    "low slab"
+  ],
+  "rules": [
+    "Income-tax Act 1961 s.50AA: gain on units of a specified (debt) mutual fund acquired on/after 1-Apr-2023 is deemed short-term capital gain, taxed at the slab rate",
+    "Income-tax Act 1961 s.70 (Income-tax Act 2025 s.108 [secondary mapping, not verified]): s.70(2) a short-term capital loss may be set off against any other capital gain, short-term or long-term, of the same year; s.70(3) a long-term capital loss only against long-term capital gain",
+    "Income-tax Act 1961 s.111A(1) as amended by Finance (No.2) Act 2024: STCG on STT-paid equity 20 % for transfers on/after 23-Jul-2024",
+    "Income-tax Act 1961 s.112A(1) as amended by Finance (No.2) Act 2024: 12.5 % on long-term capital gains 'exceeding one lakh twenty-five thousand rupees' for transfers on/after 23-Jul-2024; the gains are those included in total income, i.e. after the s.70 / s.74 set-off",
+    "Health and Education Cess 4 % (Finance Act 2025 s.2)"
+  ],
+  "derivation": [
+    "PINE SHORT DURATION FUND - GROWTH: 10,000 units @ 20.00 bought 2023-06-01, redeemed 2025-09-01 @ 22.00 -> proceeds 2,20,000.00, cost 2,00,000.00, gain 20,000.00; bought after 1-Apr-2023 -> s.50AA deemed short-term at slab (5 %).",
+    "QUARTZ LTD: 1,000 @ 300.00 bought 2023-05-02, sold 2025-06-02 @ 525.00 -> proceeds 5,25,000.00, cost 3,00,000.00, LTCG 2,25,000.00, long 12.5 %.",
+    "ROWAN LTD: 200 @ 500.00 bought 2025-03-03, sold 2025-08-04 @ 400.00 -> proceeds 80,000.00, cost 1,00,000.00, STCL -20,000.00, short.",
+    "s.70(2) lets the STCL absorb any capital gain but does not say which first (interpretive). Reading taken: the assessee may choose and the set-off goes to the gain taxed at the higher rate, here LTCG above the threshold at 12.5 % rather than slab STCG at 5 %.",
+    "LTCG 2,25,000 - 20,000 = 2,05,000; exemption_used 1,25,000.00; taxable 80,000 x 0.125 = 10,000.00. Slab STCG 20,000 x 0.05 = 1,000.00.",
+    "Tax 11,000.00; cess 440.00; total 11,440.00. Slab is treated as a flat marginal rate; the basic-exemption shortfall and s.87A are ignored, as in every case of this corpus.",
+    "Alternative (STCL against the slab STCG first): STCG 0; LTCG 2,25,000 - 1,25,000 = 1,00,000 x 0.125 = 12,500.00; cess 500.00; total 13,000.00; exemption_used 1,25,000.00."
+  ],
+  "interpretive": true,
+  "slab_rate": "0.05",
+  "holdings": [
+    {
+      "name": "PINE SHORT DURATION FUND - GROWTH",
+      "tax_class": "debt_mf",
+      "listed": false,
+      "fmv_2018": null,
+      "sgb_original_subscriber": false,
+      "events": [
+        {
+          "day": "2023-06-01",
+          "kind": "buy",
+          "quantity": "10000",
+          "price": "20.00",
+          "charges": "0",
+          "stt_paid": false
+        },
+        {
+          "day": "2025-09-01",
+          "kind": "sell",
+          "quantity": "10000",
+          "price": "22.00",
+          "charges": "0",
+          "stt_paid": false
+        }
+      ]
+    },
+    {
+      "name": "QUARTZ LTD",
+      "tax_class": "equity",
+      "listed": true,
+      "fmv_2018": null,
+      "sgb_original_subscriber": false,
+      "events": [
+        {
+          "day": "2023-05-02",
+          "kind": "buy",
+          "quantity": "1000",
+          "price": "300.00",
+          "charges": "0"
+        },
+        {
+          "day": "2025-06-02",
+          "kind": "sell",
+          "quantity": "1000",
+          "price": "525.00",
+          "charges": "0"
+        }
+      ]
+    },
+    {
+      "name": "ROWAN LTD",
+      "tax_class": "equity",
+      "listed": true,
+      "fmv_2018": null,
+      "sgb_original_subscriber": false,
+      "events": [
+        {
+          "day": "2025-03-03",
+          "kind": "buy",
+          "quantity": "200",
+          "price": "500.00",
+          "charges": "0"
+        },
+        {
+          "day": "2025-08-04",
+          "kind": "sell",
+          "quantity": "200",
+          "price": "400.00",
+          "charges": "0"
+        }
+      ]
+    }
+  ],
+  "tax_losses": {
+    "returns_filed_on_time": {},
+    "brought_forward": []
+  },
+  "through_fy": 2026,
+  "expected": {
+    "disposals": [
+      {
+        "holding": "QUARTZ LTD",
+        "sold": "2025-06-02",
+        "acquired": "2023-05-02",
+        "quantity": "1000",
+        "cost": "300000.00",
+        "tax_cost": "300000.00",
+        "proceeds": "525000.00",
+        "gain": "225000.00",
+        "term": "long",
+        "rate": "0.125"
+      },
+      {
+        "holding": "ROWAN LTD",
+        "sold": "2025-08-04",
+        "acquired": "2025-03-03",
+        "quantity": "200",
+        "cost": "100000.00",
+        "tax_cost": "100000.00",
+        "proceeds": "80000.00",
+        "gain": "-20000.00",
+        "term": "short",
+        "rate": "0.20"
+      },
+      {
+        "holding": "PINE SHORT DURATION FUND - GROWTH",
+        "sold": "2025-09-01",
+        "acquired": "2023-06-01",
+        "quantity": "10000",
+        "cost": "200000.00",
+        "tax_cost": "200000.00",
+        "proceeds": "220000.00",
+        "gain": "20000.00",
+        "term": "short",
+        "rate": "slab"
+      }
+    ],
+    "open_lots": [],
+    "fy": [
+      {
+        "fy": 2026,
+        "exemption_used": "125000.00",
+        "tax": "11000.00",
+        "cess": "440.00",
+        "total": "11440.00",
+        "complete": true,
+        "unknown_count": 0,
+        "intraday_count": 0,
+        "exempt_total": "0.00",
+        "losses_carried_short": "0.00",
+        "losses_carried_long": "0.00",
+        "bf_set_off_short": "0.00",
+        "bf_set_off_long": "0.00",
+        "carry_forward_complete": true
+      }
+    ]
+  }
+}
