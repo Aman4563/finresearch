@@ -104,3 +104,62 @@ def test_inflation_sensitivity_rows_match_fixed_rate_runs():
         assert rows[label]["inflation_pct"] == rate
         assert rows[label]["p_success"] == pytest.approx(fixed.p_success)
     assert rows["+2 pp"]["p_success"] <= rows["CPI trailing 12 months"]["p_success"]
+
+
+# --------------------------------------------------------------------------- the goal's inflation basis
+from datetime import datetime  # noqa: E402
+
+from finresearch.adapters.mospi_cpi import CpiData  # noqa: E402
+
+
+def cpi_data(first: int = 2013) -> CpiData:
+    """General grows 5 %/yr then 3 % in 2026; education 8 %/yr then 6 %; health 6 %/yr then 4 %."""
+    old = {"general": synthetic_old(first, growth=0.05), "education": synthetic_old(first, growth=0.08),
+           "health": synthetic_old(first, growth=0.06)}  # fmt: skip
+    new = {"general": synthetic_new_yoy(pct=3.0), "education": synthetic_new_yoy(pct=6.0),
+           "health": synthetic_new_yoy(pct=4.0)}  # fmt: skip
+    return CpiData(old=old, new_yoy=new, old_last=date(2025, 12, 1), new_last=date(2026, 9, 1),
+                   imputed=[date(2020, 4, 1)], fetched_at=datetime(2026, 10, 22, 9, 0),
+                   urls=["https://api.mospi.gov.in/api/cpi/getCPIIndex?x"])  # fmt: skip
+
+
+def test_manual_basis_is_labelled_your_assumption_with_no_spread():
+    r = inf.resolve("manual", 7.0, None, None)
+    assert r["known"] and r["mean_pct"] == 7.0 and r["sd_pct"] == 0.0
+    assert "your assumption" in r["label"]
+    assert [x[1] for x in r["sensitivity"]] == [5.0, 7.0, 9.0]
+
+
+def test_cpi_education_uses_its_long_run_rate_spread_and_premium():
+    r = inf.resolve("cpi_education", 7.0, inf.summarize(cpi_data()), None)
+    lr = ((1.08**9 * 1.06) ** 0.1 - 1) * 100  # Sep-2016..Sep-2026: nine years at 8 %, one at 6 %
+    gen = ((1.05**9 * 1.03) ** 0.1 - 1) * 100
+    assert r["known"] and r["mean_pct"] == pytest.approx(lr, abs=1e-9)
+    assert r["sd_pct"] == pytest.approx(math.sqrt(0.4), abs=1e-9)  # same 2-pp drop in one year of ten
+    assert r["trailing_pct"] == pytest.approx(6.0, abs=1e-9)
+    assert r["premium_pct"] == pytest.approx(lr - gen, abs=1e-9)  # over general CPI, both long-run
+    assert r["as_of"] == "2026-09-01" and r["window_start"] == "2016-09-01"
+    assert r["vintage"]["base2012_last"] == "2025-12-01" and r["vintage"]["base2024_last"] == "2026-09-01"
+    assert r["vintage"]["imputed"] == ["2020-04-01"] and r["vintage"]["fetched_at"].startswith("2026-10-22")
+    assert "MoSPI" in r["label"] and "education" in r["label"].lower()
+    labels = [x[0] for x in r["sensitivity"]]
+    assert any("trailing" in x for x in labels) and any("general" in x.lower() for x in labels)
+
+
+def test_cpi_basis_without_cpi_is_unknown_and_the_fallback_is_labelled():
+    r = inf.resolve("cpi_general", 6.5, None, "MoSPI CPI API HTTP 503")
+    assert r["known"] is False and r["value_pct"] is None
+    assert r["reason"] == "MoSPI CPI API HTTP 503"
+    assert r["mean_pct"] == 6.5 and r["sd_pct"] == 0.0  # the goal's own fixed rate, never a silent default
+    assert "unknown" in r["label"] and "6.5" in r["label"] and "503" in r["label"]
+
+
+def test_cpi_basis_with_too_short_history_is_unknown_with_reason():
+    r = inf.resolve("cpi_health", 6.0, inf.summarize(cpi_data(first=2022)), None)
+    assert r["known"] is False and "10 years" in r["reason"]
+    assert r["trailing_pct"] == pytest.approx(4.0, abs=1e-9)  # what is known is still shown
+
+
+def test_unknown_basis_is_refused():
+    with pytest.raises(ValueError):
+        inf.resolve("cpi_food", 6.0, None, None)
