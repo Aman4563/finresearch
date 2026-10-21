@@ -143,6 +143,17 @@ def add_fno_book_routes(app: FastAPI, clock: Callable[[], datetime] | None = Non
 
         return await positions_view(now())
 
+    @app.get("/api/fno/scenarios")
+    async def fno_scenarios() -> dict[str, Any]:
+        """The open F&O book's exposures, spot x vol x time grid, historical replays and reverse stress (#394).
+        Analysis only; reads option chains, writes nothing."""
+        from finresearch.fnobook.scenarios import view
+        from finresearch.suggest.advisor import load_profile
+
+        with session_scope() as s:
+            capital = float(load_profile(s).fno_capital_inr)
+        return await view(now(), sources=sources(), capital=capital)
+
     @app.get("/api/fno/paper")
     def fno_paper() -> dict[str, Any]:
         """Every paper trade and the book's results (closed trades, after costs), with the exit rules."""
