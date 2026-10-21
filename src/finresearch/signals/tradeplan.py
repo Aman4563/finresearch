@@ -80,7 +80,8 @@ def backtest_rows() -> tuple[list[dict[str, Any]] | None, dict[str, Any] | None]
         return None, None
     if rep is None:
         return None, None
-    head = {k: rep.get(k) for k in ("id", "created_at", "source", "oos_evaluated", "variants_tried")}
+    head = {k: rep.get(k) for k in ("id", "created_at", "source", "oos_evaluated", "variants_tried", "code_hash",
+                                    "engine_hash", "data_hash", "git_commit", "git_dirty")}  # fmt: skip
     return rep["strategies"], head
 
 
@@ -300,7 +301,8 @@ class Inputs:
                  backtest_head: dict[str, Any] | None = None, paper: list[dict[str, Any]] | None = None,
                  events: list[tuple[date, str]] | None = None, is_index: bool = True,
                  book: BookData = UNKNOWN_BOOK, iv_points: list[tuple[Any, float | None]] | None = None,
-                 scored: int | None = None, now: datetime | None = None) -> None:  # fmt: skip
+                 scored: int | None = None, now: datetime | None = None,
+                 calendar: tuple[list[Any], list[Any]] | None = None) -> None:  # fmt: skip
         self.today, self.closes, self.iv_series, self.iv_src, self.iv_as_of = (
             today,
             closes,
@@ -312,6 +314,9 @@ class Inputs:
         self.defined_risk_only, self.rate = defined_risk_only, rate
         self.strategies, self.backtest_head, self.paper = strategies, backtest_head, paper or []
         self.events, self.is_index = events, is_index
+        self.calendar = (
+            calendar  # #367: (events, coverage) from eventcal.store; None = not read (check: unknown)
+        )
         self.book = book  # the open book (#358); unknown unless read: then no card has room
         self.scored = scored  # #357: the plan card method's scored forecasts (None = the ledger was not read)
         self.now = (
@@ -334,24 +339,40 @@ def _analyse(chain, lot: int, legs: list[fs.LegIn], x: Inputs, bidask_chain: Any
 
 
 def evidence_for(kind: str, symbol: str, dte: int, strategies: list[dict[str, Any]] | None,
-                 head: dict[str, Any] | None, spec: Any | None = None) -> dict[str, Any]:  # fmt: skip
+                 head: dict[str, Any] | None, spec: Any | None = None, *, today: date) -> dict[str, Any]:  # fmt: skip
     """The evidence block for legs of `kind` (or for the recipe `spec`): the matched library spec, its saved backtest
-    row and level. Shared by the trade-plan card and the signal card's "Strategy check" (#350: one rule for both)."""
+    row and level. Shared by the trade-plan card and the signal card's "Strategy check" (#350: one rule for both).
+    #379: exact evidence from a stale run (older than the max age, from before a regime change, or of unknown date)
+    is not evidence: its level reads "none" (`raw_level` keeps what it said; harmful stays harmful, staleness never
+    relaxes an AVOID) and `stale` lists why, which `decide` turns into a failed check (WAIT)."""
+    from finresearch.inventory import regimes
+
     exact = spec is not None and spec.underlying == symbol.upper()
     if spec is None:
         spec, exact = match_spec(kind, symbol, dte)
     row = next((r for r in strategies or [] if spec and r.get("key") == spec.key), None)
     level = tp.evidence_level(row, kind)
+    stale = (regimes.staleness(regimes.run_day((head or {}).get("created_at")), today)
+             if exact and strategies is not None else [])  # fmt: skip
+    raw_level, level = level, ("harmful" if level == "harmful" else "none") if stale else level
     out = {"spec_key": spec.key if spec else None, "spec_name": spec.name if spec else None,
            "match": None if spec is None else ("exact" if exact else "related"), "status": (row or {}).get("status"),
-           "level": level if exact else "none", "raw_level": level,
-           "text": tp.evidence_text(row, level) if spec else tp.evidence_text(None, "none"),
+           "level": level if exact else "none", "raw_level": raw_level, "stale": stale,
+           "text": tp.evidence_text(row, raw_level) if spec else tp.evidence_text(None, "none"),
            "run": head, "url": "/fno/backtests"}  # fmt: skip
     if spec is not None and not exact:
         out["text"] = (f"Related only ({spec.name}, not this underlying or expiry window): " + out["text"]
                        + " It does not change the verdict.")  # fmt: skip
     if strategies is None:
         out["text"] = "No pre-registered backtest is saved yet: no strategy has historical evidence."
+    if head is not None:  # #379: shown, never a gate (a decision listed in the PR)
+        from finresearch.inventory import provenance
+
+        out["code_changed"] = provenance.code_changed(head)
+    else:
+        out["code_changed"] = None
+    if stale:
+        out["text"] = "Stale evidence, read as unvalidated (" + "; ".join(stale) + "). " + out["text"]
     out["spec"] = spec
     return out
 
@@ -372,20 +393,26 @@ class Decision:
 MONTH_CHECK = "Month-to-date F&O loss stop"
 MONTH_CHECK_REAL = "Month-to-date F&O loss stop (real book)"
 BOOK_CHECK = "Open book within its budget"
+STALE_CHECK = "Backtest evidence is current"  # #379: inventory.regimes.staleness
 
 
 def decide(gates: list[str], max_loss_one: float | None, costs_one: float, budget: float, level: str,
-           extra_failed: list[tuple[str, str]] | None = None, book: tp.OpenBook | None = None) -> Decision:  # fmt: skip
+           extra_failed: list[tuple[str, str]] | None = None, book: tp.OpenBook | None = None,
+           stale: list[str] | None = None) -> Decision:  # fmt: skip
     """The one verdict and sizing rule (#355) for the trade-plan card, "Suggest setups" and the signal card's Strategy
     check: `gates` = signals.fno.assess's failed checks for the legs, sized from the base set's max loss and entry
     costs, `level` = the matched spec's evidence. The IV-percentile check is context for ad hoc legs, never a gate (it
     was never tested; a recipe applies its own registered iv_pct_min through `extra_failed`).
     `book` (#358): the open positions and month-to-date P&L. A full (or unknown) open book sizes 0 and reads WAIT; a
     paper month-to-date loss at the stop (or unknown) turns the card to WAIT; real money also needs the real book's
-    month-to-date P&L known and above the stop."""
+    month-to-date P&L known and above the stop.
+    `stale` (#379): why the matched backtest evidence is stale; any reason caps the verdict at WAIT."""
     failed = [g for g in gates if g != IV_CHECK]
-    sz = tp.size(max_loss_one, costs_one, budget, proven=level == "proven", book=book)
     reasons: list[str] = []
+    if stale:
+        failed.append(STALE_CHECK)
+        reasons.append("Backtest evidence is stale: " + "; ".join(stale) + ".")
+    sz = tp.size(max_loss_one, costs_one, budget, proven=level == "proven", book=book)
     if sz.multiple == 0 and max_loss_one is not None and BUDGET_CHECK not in failed:
         failed.append(BUDGET_CHECK)  # max loss fits but max loss + entry costs does not
         reasons.append(f"Sizing: {sz.reason}.")
@@ -416,7 +443,7 @@ def decide(gates: list[str], max_loss_one: float | None, costs_one: float, budge
 
 
 def _evidence(kind: str, symbol: str, dte: int, x: Inputs, spec: Any | None) -> dict[str, Any]:
-    return evidence_for(kind, symbol, dte, x.strategies, x.backtest_head, spec)
+    return evidence_for(kind, symbol, dte, x.strategies, x.backtest_head, spec, today=x.today)
 
 
 def _time_exit(plan: tp.ExitPlan, expiry: date) -> dict[str, Any]:
@@ -486,12 +513,23 @@ def _invalidation(kind: str, legs: list[fs.LegIn], spot: float, events: list[tup
                "long it." if shorts else "Implied volatility collapses (e.g. after an event) while you hold options.")  # fmt: skip
     if events is None:
         out.append("Results / RBI dates before expiry are unknown here: check them yourself before entering."
-                   if not is_index else "RBI policy dates have no source in the app: check them before entering.")  # fmt: skip
+                   if not is_index else "RBI policy, Budget and election dates before expiry are not covered by the "
+                   "event calendar: check them before entering.")  # fmt: skip
     else:
         for d, what in events:
             if today <= d <= expiry:
                 out.append(f"{what} on {d:%d-%b-%Y}, before expiry: a gap can jump past any stop.")
     return out
+
+
+def event_check(x: Inputs, expiry: date) -> dict[str, Any]:
+    """#367: the informational "tier-1 event inside holding window" check, from the plan time to expiry, using only
+    calendar rows public at the plan time (point in time). Not a gate: it changes no action or size."""
+    from finresearch.eventcal import calendar as cal
+
+    events, coverage = x.calendar if x.calendar is not None else (None, None)
+    out = cal.window_check(events, coverage, start=x.today, end=expiry, as_of=session_clock(x.today, x.now))
+    return {**out, "window": {"from": x.today.isoformat(), "to": expiry.isoformat()}}
 
 
 def _leg_iv(q: tp.ChainQuote | None, right: str, price: float, spot: float, strike: float, t: float,
@@ -560,7 +598,16 @@ def build(chain, lot: int, legs_in: list[fs.LegIn], x: Inputs, *, spec: Any | No
     legs = [fs.LegIn(y.right, y.strike, y.side, y.lots * m, y.premium) for y in legs_in]
     a = _analyse(chain, lot, legs, x, ba_chain, p_exit) if m > 1 else a0
     _, factors, gates = fs.assess(a, defined_risk_only=x.defined_risk_only)
-    d = decide(gates, a0["max_loss"], a0["costs"]["entry"]["total"], x.budget, ev["level"], extra_failed, ob)
+    d = decide(
+        gates,
+        a0["max_loss"],
+        a0["costs"]["entry"]["total"],
+        x.budget,
+        ev["level"],
+        extra_failed,
+        ob,
+        stale=ev["stale"],
+    )
     action, qualifier, failed = d.action, d.qualifier, d.failed
     reasons = [f"{f.name}: {f.explanation}" for f in factors if f.name in failed] + d.reasons
     if x.capital <= 0:
@@ -637,6 +684,7 @@ def build(chain, lot: int, legs_in: list[fs.LegIn], x: Inputs, *, spec: Any | No
         "exit_rules": _exit_rules(exits, kind, legs, x.is_index),
         "adjustments": {"rules": ADJUST[family], "note": ADJUST_NOTE},
         "invalidation": _invalidation(kind, legs, spot, x.events, x.today, expiry, x.is_index),
+        "event_check": event_check(x, expiry),
         "evidence": {k: v for k, v in ev.items() if k != "spec"},
         # the plan:<spec> tag only counts for an exact match: a related spec's trades are another underlying's
         "paper": paper_record(x.paper, sym, kind, ev["spec_key"] if ev["match"] == "exact" else None),

@@ -50,6 +50,24 @@ Retention (the monitor runs it weekly, early on Monday IST; `monitor/retention.p
 - Never deleted: research packs and reports, backups (`scripts/backup.sh` keeps the newest 14), documents, run
   transcripts and the validation archive (`data/archive`).
 
+### Backups and research batches
+
+```bash
+scripts/backup.sh                                   # nightly local dump; also off-machine when a destination is set
+uv run finresearch backup init-key                  # once: the off-machine copies' key, in the Keychain
+uv run finresearch backup import-key                # a new Mac: install the escrowed key (hidden prompt / stdin)
+uv run finresearch backup offsite                   # encrypted copies of the database and its forward-only tables
+uv run finresearch backup offsite --vault           # the vault database, once after a load (keeps 2 copies)
+uv run finresearch backup status                    # exit 1 unless every forward-only table has a copy <= 1 day old
+uv run finresearch backup drill                     # quarterly: restore the newest copy into a scratch *_test database
+uv run finresearch batch run -- uv run finresearch fno backfill --from 2022-01-01   # outside 09:00-15:45 IST only
+```
+
+The off-machine destination is `FINRESEARCH_BACKUP_OFFSITE_DIR`, a folder that must already exist (a mounted drive,
+NAS share or cloud-synced folder); copies are encrypted on this Mac first. Details: `docs/BACKUPS.md`.
+`batch run` exits 75 when it defers a job (`--wait` sleeps until 15:45 IST instead), runs the job at background
+CPU and I/O priority, and pauses it while the market is open.
+
 ### Which requests write
 
 GET requests don't change your records, the alert inputs or the forecast ledger:
@@ -128,6 +146,8 @@ uv run finresearch index backfill --from 2013-03-01  # NSE's daily index closes,
 uv run finresearch audit index-eod                 # bhavcopy underlying vs index close; India VIX vs IV30 (no network)
 uv run finresearch dq run                          # data-quality checks now (the monitor runs them 21:00 and 08:00 IST, #368)
 uv run finresearch dq replay --from 2024-01-01 --to 2026-10-21  # content checks over stored history, read only
+uv run finresearch events seed                     # load the curated event calendar (RBI MPC, Budgets, 2024 election, FOMC; #367)
+uv run finresearch events check --from 2026-10-22 --to 2026-11-24  # the plan card's tier-1 event check for a window
 uv run finresearch fno span backfill --from 2008-01-01  # NSE SPAN scan ranges, one file a month (#370)
 uv run finresearch fno span margin-check           # margin estimate vs Groww's calculator: the P4.3 trigger
 uv run finresearch fno card-log --since 2026-10-21T18:00:00+05:30   # F&O card verdicts before/after a release (#360)

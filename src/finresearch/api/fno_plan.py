@@ -7,7 +7,7 @@ and exit-rule routes (api/fno_book.py)."""
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any, Literal
 
@@ -31,14 +31,29 @@ class PlanIn(BaseModel):
     legs: list[PlanLegIn] = Field(min_length=1, max_length=8)
 
 
-async def _events(sym: str, today: date) -> list[tuple[date, str]] | None:
-    """Results / RBI dates before expiry (fnobook.events); None when they cannot be read (unknown, never "none")."""
+async def _events(sym: str, today: date, expiry: date) -> list[tuple[date, str]] | None:
+    """Results and tier-1 macro dates before expiry (fnobook.events); None when they cannot be read (unknown, never
+    "none")."""
     from finresearch.fnobook import events, sources
 
     try:
-        return await events.event_dates(sym, today, sources.SOURCES)
+        return await events.event_dates(sym, today, sources.SOURCES, until=expiry)
     except Exception:
         return None
+
+
+def _calendar(today: date) -> tuple[list[Any], list[Any]] | None:
+    """The event calendar (#367) for the plan's tier-1 check: events from the day before `today` on (an after-close
+    release lands on the next session) and every coverage row, so the card log (#360) keeps what the check read and
+    no more. None when it cannot be read (the check reads unknown)."""
+    from finresearch.eventcal import store
+
+    try:
+        with session_scope() as s:
+            ev, cov = store.load(s)
+    except Exception:
+        return None
+    return [e for e in ev if e.day >= today - timedelta(days=1)], cov
 
 
 async def plan_inputs(f: Any, sym: str, expiry: date, today: date, now: datetime | None = None) -> Any:
@@ -73,9 +88,10 @@ async def plan_inputs(f: Any, sym: str, expiry: date, today: date, now: datetime
                       iv_as_of=series[-1][0] if series else None, capital=float(p.fno_capital_inr),
                       max_loss_pct=float(p.fno_max_loss_pct), brokerage=float(p.fno_brokerage_per_order_inr),
                       defined_risk_only=p.fno_defined_risk_only, rate=rate, strategies=strategies,
-                      backtest_head=head, paper=tpl.paper_trades(), events=await _events(sym, today),
+                      backtest_head=head, paper=tpl.paper_trades(), events=await _events(sym, today, expiry),
                       is_index=events.is_index(sym), book=await tpl.load_book(today),
-                      iv_points=fno_context.iv_rank_input(sym)[0], scored=scored, now=now)  # fmt: skip
+                      iv_points=fno_context.iv_rank_input(sym)[0], scored=scored, now=now,
+                      calendar=_calendar(today))  # fmt: skip
 
 
 def add_fno_plan_routes(app: FastAPI, fno: Callable[[], Any]) -> None:

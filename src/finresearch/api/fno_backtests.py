@@ -11,8 +11,8 @@ from fastapi import FastAPI, HTTPException
 # #354 h: the hash is over the registered spec's parameters, so "matches code" overstated it; matches_code stays one
 # release as a deprecated alias of matches_spec
 HASH_COVERS = (
-    "spec parameters only (specs.registration()): the engine code that runs them is not hashed until an "
-    "engine hash exists (roadmap P2.4)"
+    "spec parameters only (specs.registration()): the engine code that runs them is hashed separately on each saved "
+    "run (code_hash and engine_hash, #379), and a run whose code differs from this install says so"
 )
 
 

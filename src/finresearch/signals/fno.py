@@ -773,7 +773,7 @@ async def fno_signal(instrument: str, ctx: dict[str, Any]) -> Signal:
     loss = -a["max_loss"] if a["max_loss"] is not None else None
     kind = tp.classify([tp.PlanLeg(x.right, x.strike, x.side, x.lots) for x in legs])
     strategies, head = tpl.backtest_rows()
-    ev = tpl.evidence_for(kind, sym, a["days_to_expiry"], strategies, head)
+    ev = tpl.evidence_for(kind, sym, a["days_to_expiry"], strategies, head, today=today)
     # the open book (#358): open paper trades and Groww positions, month-to-date P&L; the same cap as the trade card
     ob = tpl.book_for(await tpl.load_book(today), capital, sym, kind, float(chain.underlying),
                       ev["spec"] if ev["match"] == "exact" else None)  # fmt: skip
@@ -782,7 +782,16 @@ async def fno_signal(instrument: str, ctx: dict[str, Any]) -> Signal:
 
     extra = (tpl.recipe_checks(ev["spec"], strategies, fno_context.iv_rank_input(sym)[0])
              if ev["match"] == "exact" else [])  # fmt: skip
-    d = tpl.decide(failed, a["max_loss"], a["costs"]["entry"]["total"], budget, ev["level"], extra, book=ob)
+    d = tpl.decide(
+        failed,
+        a["max_loss"],
+        a["costs"]["entry"]["total"],
+        budget,
+        ev["level"],
+        extra,
+        book=ob,
+        stale=ev["stale"],
+    )
     sz, qualifier = d.size, None
     if not held:  # the trade-plan card's verdict for the same legs (#355: one engine)
         action, qualifier, failed = d.action, d.qualifier, d.failed
@@ -796,6 +805,8 @@ async def fno_signal(instrument: str, ctx: dict[str, Any]) -> Signal:
     caveat = caveats(a, notice)
     caveat.append(f"Risk-free rate {rinfo['rate']:.2%} (continuous): {rinfo['source']}; {rinfo['note']}.")
     caveat.append(backtest_caveat())
+    if ev["stale"]:  # #379: the matched backtest evidence is stale, so it is read as unvalidated
+        caveat.insert(0, "Backtest evidence is stale: " + "; ".join(ev["stale"]) + ".")
     if failed:
         caveat.insert(0, "Not passing: " + "; ".join(failed) + ".")
     return Signal(
@@ -857,6 +868,13 @@ def backtest_evidence(with_setups: bool = True) -> dict[str, Any] | None:
         candidates.append(c)
     rep["candidates"] = candidates
     rep["note"] = BACKTEST_NOTE
+    from finresearch.fincalc.dates import today_ist
+    from finresearch.inventory import provenance, regimes
+
+    stale = regimes.staleness(regimes.run_day(rep.get("created_at")), today_ist())
+    # #379: stale evidence reads as unvalidated (a card matched to it waits); a code change is shown, not a gate
+    rep["evidence_status"] = {"current": not stale, "stale": stale, "code_changed": provenance.code_changed(rep),
+                              "max_age_days": regimes.MAX_EVIDENCE_AGE_DAYS}  # fmt: skip
     return rep
 
 

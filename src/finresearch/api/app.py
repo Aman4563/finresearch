@@ -1589,6 +1589,9 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
     from finresearch.api.portfolio_analytics import add_portfolio_analytics_routes
 
     add_portfolio_analytics_routes(app, scheme_rows=_scheme_rows)
+    from finresearch.api.portfolio_factors import add_portfolio_factor_routes
+
+    add_portfolio_factor_routes(app)  # needs the analytics routes' value history (#348)
     # fund look-through (AMC monthly portfolios)
     from finresearch.api.lookthrough import add_lookthrough_routes
 
@@ -1660,6 +1663,10 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
     from finresearch.api.fno_backtests import add_fno_backtest_routes
 
     add_fno_backtest_routes(app)
+
+    from finresearch.api.models_inventory import add_model_inventory_routes
+
+    add_model_inventory_routes(app, clock=clock)  # #379
     # F&O direction model: probabilities, out-of-sample and live accuracy, EV decision, ledger logging (#327)
     from finresearch.api.fno_direction import add_fno_direction_routes
 

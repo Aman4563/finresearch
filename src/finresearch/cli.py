@@ -934,6 +934,139 @@ def secrets_migrate(
     console.print(f"[green]moved {rep.moved} secret field(s)")
 
 
+backup_app = typer.Typer(
+    no_args_is_help=True, help="Encrypted off-machine backup copies and restore drills (docs/BACKUPS.md)"
+)
+app.add_typer(backup_app, name="backup")
+
+
+def _offsite_dir():
+    from finresearch.config import get_settings
+
+    return get_settings().backup_offsite_dir
+
+
+@backup_app.command("init-key")
+def backup_init_key() -> None:
+    """Create the 32-byte backup key in the Keychain once (refuses if one exists). Never prints the key."""
+    from finresearch.backups.offsite import OffsiteError, init_key
+
+    try:
+        ref = init_key()
+    except OffsiteError as e:
+        console.print(f"[red]{e}")
+        raise typer.Exit(1) from None
+    console.print(f"[green]backup key created ({ref}); keep a second copy of it (docs/BACKUPS.md)")
+
+
+@backup_app.command("import-key")
+def backup_import_key() -> None:
+    """Install an escrowed backup key (base64, typed or piped on stdin, never an argument) on a new Mac."""
+    from finresearch.backups.offsite import OffsiteError, import_key
+
+    value = typer.prompt("Backup key (base64)", hide_input=True)
+    try:
+        ref = import_key(value)
+    except OffsiteError as e:
+        console.print(f"[red]{e}")
+        raise typer.Exit(1) from None
+    console.print(f"[green]backup key installed ({ref})")
+
+
+@backup_app.command("offsite")
+def backup_offsite(
+    vault: bool = typer.Option(False, "--vault", help="Copy the vault database instead (keeps 2 copies)"),
+) -> None:
+    """Dump the database and its forward-only tables, encrypt them and copy them to FINRESEARCH_BACKUP_OFFSITE_DIR."""
+    from finresearch.backups.offsite import OffsiteError, backup_now
+
+    try:
+        made = backup_now(None, _offsite_dir(), kinds=("vault",) if vault else ("db", "tables"))
+    except (OffsiteError, RuntimeError) as e:
+        console.print(f"[red]offsite: {e}")
+        raise typer.Exit(1) from None
+    for kind, copy in made.items():
+        console.print(f"offsite: {kind} -> {copy.name} ({copy.stat().st_size} bytes, encrypted)")
+
+
+@backup_app.command("status")
+def backup_status() -> None:
+    """Exit 1 unless every forward-only table has an off-machine copy at most a day old and a drill passed this
+    quarter. An unreadable destination counts as not ok."""
+    from finresearch.backups.offsite import status
+
+    st = status(_offsite_dir())
+    for t in st["tables"]:
+        mark = "[green]ok" if t["ok"] else f"[red]NOT OK: {t['reason']}"
+        console.print(f"{t['table']}: copied {t['copied_at'] or 'never'} {mark}")
+    d = st["drill"]
+    console.print(
+        f"restore drill: {d['at'] or 'never'} " + ("[green]ok" if d["ok"] else f"[red]NOT OK: {d['reason']}")
+    )
+    if not st["ok"]:
+        raise typer.Exit(1)
+
+
+@backup_app.command("drill")
+def backup_drill(
+    kind: str = typer.Option("tables", help="Which copy to restore: tables | db | vault"),
+    scratch: str | None = typer.Option(
+        None, help="New scratch database (must end in _test; default <db>_drill_test)"
+    ),
+    keep_db: bool = typer.Option(False, "--keep-db", help="Leave the scratch database for inspection"),
+) -> None:
+    """Restore the newest off-machine copy into a NEW scratch *_test database and compare row counts with its
+    manifest; the result is logged at the destination. Exit 1 on a failed drill, 2 on a refused target."""
+    from finresearch.backups.drill import DrillRefused, run
+    from finresearch.backups.offsite import OffsiteError
+
+    try:
+        res = run(_offsite_dir(), kind=kind, scratch=scratch, keep_db=keep_db)
+    except DrillRefused as e:
+        console.print(f"[red]drill refused: {e}")
+        raise typer.Exit(2) from None
+    except OffsiteError as e:
+        console.print(f"[red]drill: {e}")
+        raise typer.Exit(1) from None
+    if res.get("skipped"):
+        console.print(f"[red]drill: {res['skipped']}")
+        raise typer.Exit(1)
+    for t, n in sorted((res["expected"] or {}).items()):
+        got = (res["restored"] or {}).get(t)
+        console.print(f"{t}: manifest {n}, restored {got}" + ("" if got == n else " [red]MISMATCH"))
+    if not res["ok"]:
+        console.print(f"[red]drill FAILED: {res['error'] or 'row counts differ'}")
+        raise typer.Exit(1)
+    console.print(f"[green]drill passed: {res['copy']} restored into {res['scratch']}")
+
+
+batch_app = typer.Typer(
+    no_args_is_help=True, help="Research batches outside market hours (finresearch.batchwindow)"
+)
+app.add_typer(batch_app, name="batch")
+
+
+@batch_app.command("run", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def batch_run(
+    cmd: list[str] = typer.Argument(..., help="The command, after --"),
+    wait: bool = typer.Option(
+        False, "--wait", help="Sleep until 15:45 IST instead of exiting 75 when deferred"
+    ),
+    cpu_seconds: int | None = typer.Option(None, help="Hard CPU-time cap for the job (RLIMIT_CPU)"),
+) -> None:
+    """Run a research batch (backfill, fit, bootstrap, simulation) only outside 09:00-15:45 IST on trading days,
+    at background CPU/I-O priority, paused while the market is open. Exit 75 when deferred, else the job's code."""
+    from finresearch.batchwindow import run_batch
+
+    res = run_batch(cmd, wait=wait, cpu_seconds=cpu_seconds)
+    if res.deferred:
+        console.print(f"batch: deferred during market hours; start again after {res.resume_at:%H:%M} IST")
+        raise typer.Exit(75)
+    if res.paused_s:
+        console.print(f"batch: paused {res.paused_s / 60:.0f} min while the market was open")
+    raise typer.Exit(res.returncode or 0)
+
+
 monitor_app = typer.Typer(
     no_args_is_help=True, help="Monitoring after the report: subscription, listing, lock-ins"
 )
@@ -1367,9 +1500,11 @@ def fno_backtest_run(
     from finresearch.backtest import dbhistory, evaluate, specs
     from finresearch.backtest import store as bstore
     from finresearch.db import session_scope
+    from finresearch.inventory import provenance
 
     url = history_url or get_settings().database_url
     h = dbhistory.DbHistory(history_url)
+    stamp = provenance.code_stamp()  # #379: the engine code this run executes, hashed before it runs
     stock = dbhistory.top_stock(h, specs.IS_START, specs.IS_END)
     try:
         rep = evaluate.evaluate(h, stock=stock, source=make_url(url).database or "?", oos=not in_sample_only,
@@ -1377,7 +1512,11 @@ def fno_backtest_run(
     except evaluate.PreregistrationError as e:
         console.print(f"[red]{e}[/red]")
         raise typer.Exit(2) from e
-    rep = json.loads(json.dumps(rep, default=str))
+    with session_scope(
+        history_url
+    ) as s:  # #379: the bhavcopy manifest the replay read (store.save keeps both in detail)
+        stamp |= provenance.data_hash(s, specs.IS_START, specs.IS_END if in_sample_only else None)
+    rep = json.loads(json.dumps({**rep, **stamp}, default=str))
     if json_out:
         json_out.write_text(json.dumps(rep, indent=1))
         console.print(f"report: {json_out}")
@@ -1744,6 +1883,44 @@ def dq_replay(
     with session_scope() as s:
         res = replay.replay(s, _date.fromisoformat(start), _date.fromisoformat(end))
     console.print_json(json.dumps(res, default=str))
+
+
+events_app = typer.Typer(no_args_is_help=True, help="The point-in-time event and macro calendar (#367)")
+app.add_typer(events_app, name="events")
+
+
+@events_app.command("seed")
+def events_seed() -> None:
+    """Load the hand-curated calendar (eventcal.seed: RBI MPC, Union Budgets, the 2024 election, FOMC) into the
+    database; idempotent. Database only, no network."""
+    from finresearch.db import session_scope
+    from finresearch.eventcal import seed, store
+
+    with session_scope() as s:
+        ne, nc = store.upsert(s, seed.EVENTS, seed.COVERAGE)
+    console.print(f"{ne} new events, {nc} new coverage rows ({len(seed.EVENTS)} events, {len(seed.COVERAGE)} "
+                  "coverage rows in the seed)")  # fmt: skip
+
+
+@events_app.command("check")
+def events_check(
+    start: str = typer.Option(..., "--from", help="Window start, YYYY-MM-DD (the plan day)"),
+    end: str = typer.Option(..., "--to", help="Window end, YYYY-MM-DD (the expiry)"),
+) -> None:
+    """The plan card's tier-1 event check for a window, as known at 15:30 IST on its first day. Read only."""
+    from datetime import date as _date
+
+    from finresearch.db import session_scope
+    from finresearch.eventcal import calendar as cal
+    from finresearch.eventcal import store
+    from finresearch.fincalc.dates import session_clock
+
+    a, b = _date.fromisoformat(start), _date.fromisoformat(end)
+    with session_scope() as s:
+        ev, cov = store.load(s)
+    console.print_json(
+        json.dumps(cal.window_check(ev, cov, start=a, end=b, as_of=session_clock(a)), default=str)
+    )
 
 
 span_app = typer.Typer(no_args_is_help=True, help="NSE SPAN risk parameters (scan ranges) and FOVOLT")
