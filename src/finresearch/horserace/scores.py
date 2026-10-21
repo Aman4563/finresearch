@@ -19,8 +19,13 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Sequence
 from itertools import pairwise
+from statistics import NormalDist
 
 import numpy as np
+
+from finresearch.direction.metrics import _t_sf
+
+N01 = NormalDist()
 
 
 def _xlogy(x: float, y: float) -> float:
@@ -134,3 +139,140 @@ def var_es(dots: Sequence[float], alpha: float) -> tuple[float, float]:
     keep = u < alpha
     uu, qq = np.append(u[keep], alpha), np.append(q[keep], va)
     return va, float(np.sum((uu[1:] - uu[:-1]) * (qq[1:] + qq[:-1]) / 2) / alpha)
+
+
+# --------------------------------------------------------------------------- tail tests on the PIT and the dots
+def berkowitz(u: Sequence[float]) -> dict[str, float | int | None]:
+    """Berkowitz (2001) LR (3 df) of z = Φ⁻¹(u) as AR(1) Gaussian z_t - μ = ρ(z_{t-1} - μ) + ε against i.i.d. N(0, 1),
+    on the conditional likelihood of z_2..z_n (the conditional MLE is OLS of z_t on (1, z_{t-1}), σ² = SSR / m)."""
+    z = np.array([N01.inv_cdf(x) for x in u], dtype=float)
+    m = len(z) - 1
+    out: dict[str, float | int | None] = {
+        "n": len(z),
+        "mu": None,
+        "rho": None,
+        "sigma": None,
+        "lr": None,
+        "p": None,
+    }
+    if m < 3 or float(np.var(z[:-1])) == 0:
+        return out
+    x, y = z[:-1], z[1:]
+    rho = float(np.sum((x - x.mean()) * (y - y.mean())) / np.sum((x - x.mean()) ** 2))
+    c = float(y.mean() - rho * x.mean())
+    s2 = float(np.mean((y - c - rho * x) ** 2))
+    if s2 <= 0:
+        return out
+    l1 = -m / 2 * math.log(2 * math.pi * s2) - m / 2
+    l0 = -m / 2 * math.log(2 * math.pi) - float(np.sum(y**2)) / 2
+    lr = max(2 * (l1 - l0), 0.0)
+    mu = c / (1 - rho) if rho != 1 else None
+    out.update(mu=mu, rho=rho, sigma=math.sqrt(s2), lr=lr, p=chi2_sf(lr, 3))
+    return out
+
+
+def _z2(x: np.ndarray, var: np.ndarray, es: np.ndarray, alpha: float) -> np.ndarray:
+    return 1 - np.sum(x * (x < var) / es, axis=-1) / (x.shape[-1] * alpha)
+
+
+def acerbi_szekely_z2(dots: Sequence[Sequence[float]], y: Sequence[float], alpha: float, sims: int, seed: int
+                      ) -> dict[str, float | int | None]:  # fmt: skip
+    """Acerbi & Szekely (2014) Z2 with ES_t the signed tail mean: Z2 = 1 - Σ X_t 1{X_t < VaR_t} / (T α ES_t), about 0
+    under the model and negative when the tail risk was under-forecast. Events with ES_t >= 0 are excluded and
+    counted. One-sided p = P(Z2_sim <= Z2) under each event's own quantile function (seeded)."""
+    keep = [(d, v) for d, v in zip(dots, y, strict=True) if var_es(d, alpha)[1] < 0]
+    out: dict[str, float | int | None] = {
+        "n": len(keep),
+        "excluded": len(dots) - len(keep),
+        "z2": None,
+        "p": None,
+    }
+    if not keep:
+        return out
+    ve = np.array([var_es(d, alpha) for d, _ in keep])
+    x = np.array([v for _, v in keep], dtype=float)
+    z2 = float(_z2(x, ve[:, 0], ve[:, 1], alpha))
+    rng = np.random.default_rng(seed)
+    uu = rng.random((sims, len(keep)))
+    xs = np.column_stack([np.interp(uu[:, i], *_knots(d)) for i, (d, _) in enumerate(keep)])
+    out.update(z2=z2, p=float(np.mean(_z2(xs, ve[:, 0], ve[:, 1], alpha) <= z2)))
+    return out
+
+
+# --------------------------------------------------------------------------- EV calibration and gate information
+def t_quantile(q: float, df: int) -> float:
+    """The q-quantile (q > 0.5) of Student's t with df degrees of freedom, by bisection on direction.metrics._t_sf."""
+    lo, hi = 0.0, 1e6
+    for _ in range(200):
+        mid = (lo + hi) / 2
+        lo, hi = (mid, hi) if _t_sf(mid, df) > 1 - q else (lo, mid)
+    return (lo + hi) / 2
+
+
+def ols_clustered(x: Sequence[float], y: Sequence[float], clusters: Sequence[object], level: float = 0.95
+                  ) -> dict[str, object]:  # fmt: skip
+    """y = a + b x by OLS with the CR1 cluster-robust variance (X'X)⁻¹ Σ_g X_g'e_g e_g'X_g (X'X)⁻¹ · G/(G-1) ·
+    (N-1)/(N-2) and t(G - 1) intervals. Everything None when N <= 2, G < 2 or x is constant (unknown, never 0)."""
+    n, groups = len(x), sorted(set(clusters), key=str)
+    out: dict[str, object] = {"n": n, "clusters": len(groups), "a": None, "b": None, "se_a": None, "se_b": None,
+                              "t_crit": None, "ci_a": None, "ci_b": None, "t_b": None, "p_b": None}  # fmt: skip
+    xa, ya = np.asarray(x, dtype=float), np.asarray(y, dtype=float)
+    if n <= 2 or len(groups) < 2 or float(np.var(xa)) == 0:
+        return out
+    big_x = np.column_stack([np.ones(n), xa])
+    bread = np.linalg.inv(big_x.T @ big_x)
+    a, b = bread @ big_x.T @ ya
+    e = ya - big_x @ np.array([a, b])
+    cl = np.array([groups.index(c) for c in clusters])
+    meat = sum(np.outer(s, s) for s in (big_x[cl == g].T @ e[cl == g] for g in range(len(groups))))
+    g = len(groups)
+    v = bread @ meat @ bread * g / (g - 1) * (n - 1) / (n - 2)
+    se_a, se_b = math.sqrt(max(v[0, 0], 0.0)), math.sqrt(max(v[1, 1], 0.0))
+    tc = t_quantile(1 - (1 - level) / 2, g - 1)
+    t_b = b / se_b if se_b > 0 else None
+    out.update(a=float(a), b=float(b), se_a=se_a, se_b=se_b, t_crit=tc, ci_a=(a - tc * se_a, a + tc * se_a),
+               ci_b=(b - tc * se_b, b + tc * se_b), t_b=t_b,
+               p_b=None if t_b is None else min(1.0, 2 * _t_sf(abs(t_b), g - 1)))  # fmt: skip
+    return out
+
+
+def ev_calibration(
+    ev: Sequence[float], pnl: Sequence[float], clusters: Sequence[object]
+) -> dict[str, object]:
+    """PnL = a + b EV: calibrated iff CI(b) contains 1 and CI(a) contains 0; None when the fit is unknown."""
+    r = ols_clustered(ev, pnl, clusters)
+    ci_a, ci_b = r["ci_a"], r["ci_b"]
+    ok = None if ci_a is None or ci_b is None else bool(ci_b[0] <= 1 <= ci_b[1] and ci_a[0] <= 0 <= ci_a[1])  # type: ignore[index]
+    return {**r, "calibrated": ok}
+
+
+def gate_information(
+    passed: Sequence[bool], pnl: Sequence[float], clusters: Sequence[object]
+) -> dict[str, object]:
+    """delta = mean P&L when the gate passes - when it fails (the dummy's OLS slope), expiry-clustered, two-sided."""
+    r = ols_clustered([1.0 if p else 0.0 for p in passed], pnl, clusters)
+    return {"delta": r["b"], "se": r["se_b"], "t": r["t_b"], "p": r["p_b"], "ci": r["ci_b"], "clusters": r["clusters"],
+            "n_pass": sum(1 for p in passed if p), "n_fail": sum(1 for p in passed if not p)}  # fmt: skip
+
+
+# --------------------------------------------------------------------------- exit reasons and drawdown bands
+def multinomial_log_score(
+    probs: Sequence[dict[str, float]], observed: Sequence[str], eps: float = 1e-6
+) -> float:
+    return sum(-math.log(max(p.get(o, 0.0), eps)) for p, o in zip(probs, observed, strict=True)) / len(
+        observed
+    )
+
+
+def binom_two_sided(k: int, n: int, p: float) -> float:
+    """Exact two-sided binomial p-value: the total probability of outcomes no more likely than k."""
+    pm = [math.comb(n, i) * p**i * (1 - p) ** (n - i) for i in range(n + 1)]
+    return min(1.0, sum(x for x in pm if x <= pm[k] * (1 + 1e-9)))
+
+
+def band_coverage(lo: Sequence[float], hi: Sequence[float], realised: Sequence[float], nominal: float
+                  ) -> dict[str, float | int]:  # fmt: skip
+    n = len(realised)
+    k = sum(1 for a, b, r in zip(lo, hi, realised, strict=True) if a <= r <= b)
+    return {"n": n, "inside": k, "share": k / n if n else float("nan"), "nominal": nominal,
+            "p": binom_two_sided(k, n, nominal) if n else float("nan")}  # fmt: skip
