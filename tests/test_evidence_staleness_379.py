@@ -45,6 +45,23 @@ def test_a_fresh_candidate_run_still_enters(client, monkeypatch):
         client, monkeypatch, CANDIDATE, datetime(2026, 9, 20, 18, tzinfo=dates.IST)
     )  # 9 days old
     assert card["action"] == "ENTER" and s["action"] == "ENTER" and not card["evidence"]["stale"]
+    # saved without provenance: shown as unknown (informational, it does not change the verdict)
+    assert "provenance unknown" in card["evidence"]["code_changed"]
+
+
+def test_a_run_with_the_current_code_hash_reads_unchanged_and_another_reads_changed():
+    from finresearch.inventory import provenance as pv
+    from finresearch.signals import tradeplan as tpl
+
+    head = {"created_at": "2026-09-20T12:00:00+05:30", "code_hash": pv.code_hash(pv.REPO)}
+    assert (
+        tpl.evidence_for("iron_condor", "NIFTY", 7, [CANDIDATE], head, today=NOW.date())["code_changed"]
+        is None
+    )
+    ev = tpl.evidence_for(
+        "iron_condor", "NIFTY", 7, [CANDIDATE], {**head, "code_hash": "0" * 64}, today=NOW.date()
+    )
+    assert "code changed since" in ev["code_changed"] and ev["level"] == "proven"
 
 
 @pytest.mark.parametrize(

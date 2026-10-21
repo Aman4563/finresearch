@@ -80,7 +80,8 @@ def backtest_rows() -> tuple[list[dict[str, Any]] | None, dict[str, Any] | None]
         return None, None
     if rep is None:
         return None, None
-    head = {k: rep.get(k) for k in ("id", "created_at", "source", "oos_evaluated", "variants_tried")}
+    head = {k: rep.get(k) for k in ("id", "created_at", "source", "oos_evaluated", "variants_tried", "code_hash",
+                                    "engine_hash", "data_hash", "git_commit", "git_dirty")}  # fmt: skip
     return rep["strategies"], head
 
 
@@ -360,6 +361,12 @@ def evidence_for(kind: str, symbol: str, dte: int, strategies: list[dict[str, An
                        + " It does not change the verdict.")  # fmt: skip
     if strategies is None:
         out["text"] = "No pre-registered backtest is saved yet: no strategy has historical evidence."
+    if head is not None:  # #379: shown, never a gate (a decision listed in the PR)
+        from finresearch.inventory import provenance
+
+        out["code_changed"] = provenance.code_changed(head)
+    else:
+        out["code_changed"] = None
     if stale:
         out["text"] = "Stale evidence, read as unvalidated (" + "; ".join(stale) + "). " + out["text"]
     out["spec"] = spec
