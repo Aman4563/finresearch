@@ -145,7 +145,8 @@ def test_only_allowlisted_get_paths_and_hosts_are_reachable(groww):
         await m.history_closes("NSE", "EXSTK1", date(2026, 9, 1), date(2026, 10, 8))
         api = m._api(TOKEN)
         for path in ("/order/create", "/order/cancel", "/order/list", "/holdings/user", "/margins/detail/orders",
-                     "/api/apex/v1/socket/token/create/", "/order-advance/create", "/live-data/quote"):  # fmt: skip
+                     "/api/apex/v1/socket/token/create/", "/order-advance/create", "/live-data/quotes",
+                     "/live-data/quote/x"):  # fmt: skip
             with pytest.raises(ForbiddenRequest):
                 await api.get(path)
         with pytest.raises(ForbiddenRequest):
@@ -275,6 +276,18 @@ def test_option_chain_from_groww(groww):
     assert (
         g.calls("/v1/option-chain/exchange/NSE/underlying/NIFTY")[0].url.params["expiry_date"] == "2026-10-27"
     )
+
+
+def test_option_chain_is_stamped_with_its_data_time_not_the_request_time(groww):
+    """#354 i: Groww's chain carries no timestamp; out of session its prices are the last session's close, so as_of is
+    that close (15:30 IST), not the moment it was asked for. In session the request time is the data time."""
+    _g, client = groww()
+    m, _ = client(SAT)
+    assert run(m.option_chain("NIFTY", date(2026, 10, 27))).as_of == datetime(2026, 10, 9, 15, 30, tzinfo=IST)
+    m, _ = client(FRI_17)
+    assert run(m.option_chain("NIFTY", date(2026, 10, 27))).as_of == datetime(2026, 10, 9, 15, 30, tzinfo=IST)
+    m, _ = client(FRI_10)
+    assert run(m.option_chain("NIFTY", date(2026, 10, 27))).as_of == FRI_10
 
 
 def test_provenance_label_on_the_price(groww):

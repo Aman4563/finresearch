@@ -30,14 +30,14 @@ type Decision = { status: "ok" | "unavailable"; why?: string; action?: "TRADE" |
   plan?: TradePlan | null; notes?: string[]; probabilities_as_of?: string; method?: string;
   non_directional?: { text: string; suggest_api: string; href: string; evidence_href: string } };
 type LiveRow = { method: string; event_kind: string; h: number; event: EventKey; model: string; logged: number; open: number; resolved: number;
-  independent: number; void: number; summary: { n: number; brier: number | null; brier_skill: number | null; hit_rate: number | null; base_rate: number | null } };
+  independent: number; void: number; summary: { n: number; brier: number | null; brier_skill: number | null; hit_rate: number | null; hit_rate_ci?: [number, number] | null; base_rate: number | null } };
 type DirectionResponse = {
   symbol: string; as_of: string; spot: number | null; iv_30: number | null; horizons: Horizon[]; accepted: string[];
   model_status: "accepted" | "no_edge"; headline: { h: number; p_up: number | null; label: string; call_or_put: "CALL" | "PUT" | null };
   run: null | { id: number; created_at: string; verdict: string; source: string; registration_hash: string; windows: { oos_start: string };
     criteria: { min_oos_n: number; alpha: number; slope_low: number; slope_high: number }; cells: RunCell[] };
   live_accuracy: LiveRow[]; decision: Decision | null; decision_horizon: number; evidence_note: string;
-  registration: { hash: string; registered_on: string; matches_code: boolean; doc: string };
+  registration: { hash: string; registered_on: string; matches_spec: boolean; matches_code?: boolean; hash_covers: string; doc: string };
 };
 
 const EVENTS: EventKey[] = ["up", "up_k", "down_k"];
@@ -147,14 +147,15 @@ function LiveTable({ rows }: { rows: LiveRow[] }) {
   return (
     <div tabIndex={0} role="region" aria-label="Live accuracy, scrollable" className="-mx-1 overflow-x-auto">
       <table className="num w-full min-w-[560px] text-xs [&_td]:px-1.5 [&_td]:py-1 [&_th]:px-1.5 [&_th]:py-1 [&_th]:text-left [&_th]:font-medium [&_th]:text-muted [&_th]:whitespace-nowrap [&_tr>*:first-child]:sticky [&_tr>*:first-child]:left-0 [&_tr>*:first-child]:z-[1] [&_tr>*:first-child]:bg-card">
-        <thead><tr><th>Event</th><th>Model</th><th>Logged</th><th>Open</th><th>Resolved</th><th>Independent <InfoTip label="Independent events">Non-overlapping windows: overlapping h-session windows share most of their path, so only these count as separate outcomes.</InfoTip></th><th>Hit rate</th><th>Brier</th></tr></thead>
+        <thead><tr><th>Event</th><th>Model</th><th>Logged</th><th>Open</th><th>Resolved</th><th>Independent <InfoTip label="Independent events">Non-overlapping windows: overlapping h-session windows share most of their path, so only these count as separate outcomes.</InfoTip></th><th>Hit rate <InfoTip label="Hit rate interval">Wilson 95% interval over the independent events: the range the true rate plausibly lies in.</InfoTip></th><th>Brier</th></tr></thead>
         <tbody>
           {rows.map((r) => (
             <tr key={`${r.event_kind}-${r.method}`} className="border-t border-border">
               <td className="font-medium">{EV_LABEL[r.event] ?? r.event}</td>
               <td>{r.model === "logistic" ? "logistic" : "market-implied"}</td>
               <td>{r.logged}</td><td>{r.open}</td><td>{r.resolved}</td><td>{r.independent}</td>
-              <td>{r.summary.n ? pct(r.summary.hit_rate, 0) : "—"}</td>
+              {/* a hit rate on a handful of independent events means little without its interval (#354 h) */}
+              <td className="whitespace-nowrap">{r.summary.n ? `${pct(r.summary.hit_rate, 0)}${r.summary.hit_rate_ci ? ` (95% CI ${pct(r.summary.hit_rate_ci[0], 0).replace("%", "")}–${pct(r.summary.hit_rate_ci[1], 0)})` : ""}` : "—"}</td>
               <td>{num(r.summary.brier, 3)}</td>
             </tr>
           ))}
@@ -325,7 +326,7 @@ export function DirectionPanel({ symbol }: { symbol: string }) {
 
         <p className="text-[11px] text-muted">
           {data.evidence_note} Registration {data.registration.hash.slice(0, 12)} ({data.registration.registered_on}
-          {data.registration.matches_code ? "" : ", CODE CHANGED SINCE"}).
+          {data.registration.matches_spec ? ", matches spec" : ", SPEC CHANGED SINCE"}; the hash covers {data.registration.hash_covers}).
         </p>
       </div>
     </Card>

@@ -402,7 +402,10 @@ def _factor_info(a: dict[str, Any]) -> list[Factor]:
                           f"±S·σ·√T with the ATM IV: about two in three outcomes land between {_inr(em['low'])} and "
                           f"{_inr(em['high'])} under the model.", "fincalc:options.expected_move", "points"))  # fmt: skip
     out.append(Factor("IV rank", None if ivc["rank"] is None else round(ivc["rank"] * 100), 0.0,
-                      f"Where today's ATM IV sits between its recorded low and high (IVR). {ivc['status'].capitalize()}.",
+                      # #354 b: it ranks a stored previous close (bhavcopy 30-day IV or recorded ATM IV), not the live IV
+                      f"Where the {'NSE F&O bhavcopy 30-day IV' if ivc.get('source') == 'bhavcopy' else 'recorded ATM IV'}"
+                      f" of the {ivc.get('as_of') or 'latest stored'} close sits between its stored low and high (IVR), "
+                      f"not today's live IV. {ivc['status'].capitalize()}.",
                       "fincalc:volatility.iv_stats", "%"))  # fmt: skip
     if ivc["skew_25d"] is not None:
         out.append(Factor("25-delta skew", ivc["skew_25d"], 0.0, "25-delta put IV minus 25-delta call IV: how much "

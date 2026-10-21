@@ -243,14 +243,15 @@ def test_strategy_api_iv_and_risk_notice(app_client):
     iv = c.get("/api/fno/NIFTY/iv").json()
     assert iv["n"] == 0 and iv["status"].startswith("insufficient history (0 days") and iv["rank"] is None
     with session_scope() as s:
-        for i in range(61):
-            s.add(IvHistory(symbol="NIFTY", day=date(2026, 6, 1) + timedelta(days=i), expiry=date(2026, 10, 6),
+        # #354 b: the rank needs an IV on 80 % of the last 252 sessions (202), no longer 60 recorded days
+        for i in range(202):  # from 1-Jan, so the last day stays before the monitor test's NOW
+            s.add(IvHistory(symbol="NIFTY", day=date(2026, 1, 1) + timedelta(days=i), expiry=date(2026, 10, 6),
                             atm_iv=Decimal(10 + i % 20), skew_25d=Decimal("1.5")))  # fmt: skip
     iv = c.get("/api/fno/NIFTY/iv").json()
-    assert iv["n"] == 61 and iv["status"] == "ok" and iv["rank"] is not None and iv["skew_25d"] == 1.5
+    assert iv["n"] == 202 and iv["status"] == "ok" and iv["rank"] is not None and iv["skew_25d"] == 1.5
     assert (
-        len(iv["series"]) == 61
-        and c.get("/api/fno/NIFTY/iv", params={"days": 5}).json()["series"][0]["day"] == "2026-07-27"
+        len(iv["series"]) == 202
+        and c.get("/api/fno/NIFTY/iv", params={"days": 5}).json()["series"][0]["day"] == "2026-07-17"
     )
 
 

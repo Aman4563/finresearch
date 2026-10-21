@@ -29,6 +29,12 @@ Official docs (read 9-Oct-2026), and the growwapi 1.5.0 SDK source where the pag
   exchange_token, trading_symbol, groww_symbol, name, instrument_type, segment, series, isin, underlying_symbol, ...
   Downloaded at most once per IST day and cached on disk. That BSE rows carry the BSE scrip code as exchange_token,
   and how indices are named, is not shown in the docs [U]: an instrument the file does not resolve falls back.
+* Get Quote ``GET /v1/live-data/quote?exchange=NSE&segment=FNO&trading_symbol=...`` (docs read 21-Oct-2026), one
+  instrument a call → ``payload`` = {bid_price, bid_quantity, offer_price, offer_quantity, depth: {buy: [{price,
+  quantity}, ...], sell: [...]}, last_price, last_trade_time (epoch ms), volume, open_interest, implied_volatility,
+  ...}. The docs do not state the number of depth levels or the unit of implied_volatility [U]. trading_symbol is "the
+  instrument's symbol as the exchange defines it"; that this is the instruments file's trading_symbol for an F&O
+  contract is assumed [U: no FNO example in the docs]. Used only by the forward quote recorder (monitor.quotes, #363).
 * Groww's OHLC endpoint is not used: its documented sample payload is a string ("{open: 149.50,...}") [U].
 """
 
@@ -57,7 +63,7 @@ ASSETS = "https://growwapi-assets.groww.in"
 INSTRUMENTS_PATH = "/instruments/instrument.csv"
 # GET only, and only these: no order, smart-order or socket-token path is reachable from here (the margin
 # calculator is CALC_PATHS, on its own client)
-MARKET_PATHS = (r"/live-data/ltp", r"/historical/candles", r"/historical/expiries",
+MARKET_PATHS = (r"/live-data/ltp", r"/live-data/quote", r"/historical/candles", r"/historical/expiries",
                 r"/option-chain/exchange/(NSE|BSE)/underlying/[A-Z0-9&_-]{1,30}")  # fmt: skip
 ASSET_PATHS = (r"/instruments/instrument\.csv",)
 # The ONE non-GET path besides login (#316): Groww's basket margin calculator. It only computes the margin a basket
@@ -135,6 +141,39 @@ def next_open(now: datetime, holidays: set[date] | None = None) -> datetime:
     return datetime.combine(d, OPEN, IST)
 
 
+def _epoch_or_iso(v: Any) -> datetime | None:
+    if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0:
+        return datetime.fromtimestamp(v / 1000 if v > 1e11 else v, UTC)
+    if isinstance(v, str):
+        try:
+            d = datetime.fromisoformat(v)
+        except ValueError:
+            return None
+        return d if d.tzinfo else d.replace(tzinfo=IST)  # no zone: IST, as the candles [U]
+    return None
+
+
+def chain_data_time(payload: dict[str, Any], now: datetime, ph: str, holidays: set[date]) -> datetime:
+    """When the chain's prices are from (#354 i), not when it was asked for. The documented payload has no timestamp
+    [U]; a `last_trade_time` (top level or per leg, epoch or ISO), if Groww sends one, wins (the latest). Else in
+    session the request time; out of session the last session's close (15:30 IST), the time its prices stopped."""
+    times = [_epoch_or_iso(payload.get("last_trade_time"))]
+    for legs in (payload.get("strikes") or {}).values():
+        for leg in legs.values() if isinstance(legs, dict) else ():
+            if isinstance(leg, dict):
+                times.append(_epoch_or_iso(leg.get("last_trade_time")))
+    known = [to_ist(t) for t in times if t is not None]
+    if known:
+        return max(known)
+    ist = to_ist(now)
+    if ph == "open":
+        return ist
+    d = ist.date() if ph in ("closing", "after") else ist.date() - timedelta(days=1)
+    while not trading_day(d, holidays):
+        d -= timedelta(days=1)
+    return datetime.combine(d, CLOSE, IST)
+
+
 def ltp_ttl(now: datetime, holidays: set[date] | None = None) -> float:
     """LTP is asked for only in session (and the closing session); then it lives LTP_TTL_S."""
     return LTP_TTL_S if phase(now, holidays) in ("open", "closing") else 0.0
@@ -209,6 +248,20 @@ class Instruments:
         """The trading symbol of a contract (kind CE, PE or FUT; strike ignored for FUT), None when not listed."""
         r = self.fno_by_contract.get(fno_key(underlying, expiry.isoformat(), strike, kind))
         return (r.get("trading_symbol") or "").strip().upper() or None if r else None
+
+    def option_strikes(self, underlying: str) -> dict[date, set[Any]]:
+        """Every listed option strike (Decimal) of `underlying` by expiry, from the file's CE and PE rows (#363)."""
+        from decimal import Decimal
+
+        u, out = underlying.strip().upper(), {}
+        for und, exp, strike, kind in self.fno_by_contract:
+            if und != u or kind not in ("CE", "PE") or not strike:
+                continue
+            try:
+                out.setdefault(date.fromisoformat(exp), set()).add(Decimal(strike))
+            except ValueError:
+                continue
+        return out
 
     def index(self, name: str) -> dict[str, str] | None:
         nm = " ".join(name.upper().split())
@@ -836,9 +889,10 @@ class GrowwMarket:
                 continue
             legs = legs if isinstance(legs, dict) else {}
             rows.append(ChainRow(strike=k, call=side(legs.get("CE")), put=side(legs.get("PE"))))
-        chain = OptionChain(symbol=sym, expiry=expiry, underlying=dec(payload.get("underlying_ltp")),
-                            as_of=to_ist(now), rows=sorted(rows, key=lambda r: r.strike))  # fmt: skip
         ph = phase(now, self.holidays())
+        chain = OptionChain(symbol=sym, expiry=expiry, underlying=dec(payload.get("underlying_ltp")),
+                            as_of=chain_data_time(payload, now, ph, self.holidays()),
+                            rows=sorted(rows, key=lambda r: r.strike))  # fmt: skip
         ttl = (
             CHAIN_TTL_S
             if ph in ("open", "closing")
@@ -847,6 +901,17 @@ class GrowwMarket:
         self._chains[key] = (self._now_s() + ttl, chain)
         self._mark("option_chain")
         return chain
+
+    # ---- one instrument's quote (the forward quote recorder, #363)
+    async def quote(self, trading_symbol: str, exchange: str = "NSE", segment: str = "FNO") -> dict[str, Any]:
+        """Groww's Get Quote payload for one instrument, as returned (fnohist.quotes parses it). Never cached: each call
+        is a snapshot. Raises ConnectorError when there is no session or Groww cannot answer."""
+        payload = await self._get("/live-data/quote", {"exchange": exchange, "segment": segment,
+                                                       "trading_symbol": trading_symbol.strip().upper()})  # fmt: skip
+        if not isinstance(payload, dict):
+            raise ConnectorError(f"Groww's quote for {trading_symbol} had no payload")
+        self._mark("quote")
+        return payload
 
     # ---- basket margin (the one calculator POST, #316)
     async def basket_margin(
@@ -894,6 +959,11 @@ SUPPLIES = [
     {"kind": "indices", "label": "Index values on the market charts (in session)"},
     {"kind": "candles", "label": "Daily price history for performance, risk and charts (from 2020)"},
     {"kind": "option_chain", "label": "F&O option chains with IV"},
+    {
+        "kind": "quotes",
+        "label": "Forward option quotes (bid, ask, depth) for NIFTY and BANKNIFTY, four times a "
+        "trading day, for a measured trading-cost model",
+    },
     {"kind": "mutual_funds", "label": "Not supplied: mutual-fund NAVs stay on AMFI (Groww has no fund data)"},
 ]
 
