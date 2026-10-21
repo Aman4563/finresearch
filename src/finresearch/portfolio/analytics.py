@@ -32,6 +32,9 @@ from finresearch.signals.base import DISCLAIMER
 
 MIN_VOL, WARN_VOL = 60, 250  # trading days of returns
 MIN_BETA = 120
+ROLL_WINDOW = 126  # trading days (about 6 months) for the rolling volatility and beta (#349)
+VAR_WINDOW = 250  # walk-forward VaR backtest: estimate on the 250 days before each tested day ...
+MIN_VAR_TEST = 250  # ... and test at least 250 days: 12.5 expected exceptions at 95 %, enough to test (#399)
 MIN_VAR = 250
 MIN_SHARPE = 250
 MIN_RC = 120
@@ -253,6 +256,10 @@ def risk(
         )
         real["tracking_error"] = metric(am.tracking_error(r, rb), "fraction", n=n,
                                         how=f"stdev(portfolio - {BENCHMARK} daily returns)·√252")  # fmt: skip
+    real.update(_relative(r, rb, n))
+    real["rolling"] = _rolling(days, r, rb)
+    real["var_backtest"] = _var_backtest(r)
+    real["drawdowns"] = [_episode(days, e) for e in am.drawdown_episodes(idx, top=5)]
     # drawdown and recovery
     dd = am.drawdown_recovery(idx)
     real["max_drawdown"] = {
@@ -334,6 +341,91 @@ def risk(
     return out
 
 
+def _relative(r: list[float], rb: list[float] | None, n: int) -> dict[str, Any]:
+    """Information ratio, active return and up/down capture vs the benchmark (#349); unknown carries a reason."""
+    keys = ("active_return", "information_ratio", "up_capture", "down_capture")
+    units = ("fraction", "ratio", "ratio", "ratio")
+    why = (f"{BENCHMARK} history unavailable" if rb is None
+           else f"needs {MIN_BETA} daily returns; have {n}" if n < MIN_BETA else None)  # fmt: skip
+    if why:
+        return {k: metric(None, u, reason=why, n=n) for k, u in zip(keys, units, strict=True)}
+    active = [a - b for a, b in zip(r, rb, strict=True)]
+    out = {"active_return": metric(sum(active) / n * am.TRADING_DAYS, "fraction", n=n,
+                                   how=f"mean(portfolio - {BENCHMARK} daily return)·252")}  # fmt: skip
+    try:
+        out["information_ratio"] = metric(am.information_ratio(r, rb), "ratio", n=n,
+                                          how="active return / tracking error")  # fmt: skip
+    except ValueError as e:
+        out["information_ratio"] = metric(None, "ratio", reason=str(e), n=n)
+    try:
+        up, down = am.capture_ratios(r, rb)
+    except ValueError as e:
+        out["up_capture"] = metric(None, "ratio", reason=str(e), n=n)
+        out["down_capture"] = metric(None, "ratio", reason=str(e), n=n)
+    else:
+        how = "geometric mean daily return on the index's {} days / the index's own"
+        out["up_capture"] = metric(up, "ratio", n=n, how=how.format("up"))
+        out["down_capture"] = metric(down, "ratio", n=n, how=how.format("down"))
+    return out
+
+
+def _rolling(days: list[date], r: list[float], rb: list[float] | None) -> dict[str, Any]:
+    out: dict[str, Any] = {"window": ROLL_WINDOW, "rows": [],
+                           "how": f"each point: the last {ROLL_WINDOW} daily returns (about 6 months)"}  # fmt: skip
+    if len(r) < ROLL_WINDOW:
+        out["reason"] = f"needs {ROLL_WINDOW} daily returns; have {len(r)}"
+        return out
+    rows = [{"day": days[x.end + 1].isoformat(), "volatility": _r(x.volatility, 4), "beta": _r(x.beta, 4)}
+            for x in am.rolling_stats(r, rb, ROLL_WINDOW)]  # fmt: skip
+    out["rows"] = _thin(rows)
+    if rb is None:
+        out["note"] = f"{BENCHMARK} history unavailable: no rolling beta"
+    return out
+
+
+def var_verdict(p_uc: float, p_ind: float, p_cc: float, *, x: int, expected: float) -> str:
+    """ "consistent" only when the coverage, independence and joint tests all pass at 5 %; a rejection never reads ok."""
+    if p_ind < 0.05 and p_uc >= 0.05:
+        return "clustered"
+    if p_uc < 0.05 or p_cc < 0.05:
+        return "too_many" if x > expected else "too_few"
+    return "consistent"
+
+
+def _var_backtest(r: list[float]) -> dict[str, Any]:
+    """Walk-forward test of the 1-day 95 % historical VaR on your own returns (Kupiec, Christoffersen; #349)."""
+    need = VAR_WINDOW + MIN_VAR_TEST
+    out: dict[str, Any] = {"level": 0.95, "window": VAR_WINDOW,
+                           "how": f"each day's loss is compared with the VaR from the {VAR_WINDOW} days before it "
+                                  "(never including itself)"}  # fmt: skip
+    if len(r) < need:
+        out["reason"] = f"needs {need} daily returns (about 2 years); have {len(r)}"
+        return out
+    hits = am.var_exceptions(r, VAR_WINDOW)
+    t, x = len(hits), sum(hits)
+    lr_uc, p_uc = am.kupiec(t, x, 0.05)
+    lr_ind = am.christoffersen_ind(hits)
+    p_ind, p_cc = am.chi2_sf(lr_ind, 1), am.chi2_sf(lr_uc + lr_ind, 2)
+    verdict = var_verdict(p_uc, p_ind, p_cc, x=x, expected=0.05 * t)
+    note = {"consistent": "Losses beyond the VaR came about as often as 1 day in 20 and did not cluster.",
+            "too_many": "Losses beyond the VaR came more often than 1 day in 20: the VaR understated your risk.",
+            "too_few": "Losses beyond the VaR came less often than 1 day in 20: the VaR overstated your risk.",
+            "clustered": "The count is plausible but the exceptions bunch together: risk rose in spells the "
+                         "VaR was slow to see."}[verdict]  # fmt: skip
+    out.update(days=t, exceptions=x, expected=_r(0.05 * t, 2), lr_uc=_r(lr_uc, 3), p_uc=_r(p_uc, 4),
+               lr_ind=_r(lr_ind, 3), p_ind=_r(p_ind, 4), p_cc=_r(p_cc, 4), verdict=verdict,
+               note=note + f" Tests at p < 0.05; with {t} days the test has limited power (12.5 expected exceptions "
+                           "in 250 days at 95 %).")  # fmt: skip
+    return out
+
+
+def _episode(days: list[date], e: am.Episode) -> dict[str, Any]:
+    return {"peak": days[e.peak].isoformat(), "trough": days[e.trough].isoformat(), "depth": _r(e.depth, 4),
+            "recovered": days[e.recovered].isoformat() if e.recovered is not None else None,
+            "days_to_recover": (days[e.recovered] - days[e.trough]).days if e.recovered is not None else None,
+            "underwater_days": ((days[e.recovered] if e.recovered is not None else days[-1]) - days[e.peak]).days}  # fmt: skip
+
+
 def _sector(p: Any, sectors: dict[str, str]) -> str:
     """The position's sector for the risk and concentration views (portfolio.limits.sector_label: ETFs and funds are
     grouped by what they hold, never as a sector of their own)."""
@@ -357,10 +449,14 @@ SCENARIOS = (
     Scenario("covid2020", "COVID-19 fall, 2020", (date(2020, 1, 1), date(2020, 4, 30)), True,
              "Peak and trough found in NIFTYBEES closes inside Jan-Apr 2020; each holding's own move between those "
              "two days where it has prices."),
-    Scenario("gfc2008", "Global financial crisis, 2008-09", (date(2008, 1, 1), date(2009, 3, 31)), False,
+    # #423: relabelled, not retired. The historical replay (#345, portfolio.stress_replay) covers Sep-Nov 2008 only;
+    # this keeps the whole Jan-2008 to Mar-2009 fall, as an equity-only proxy.
+    Scenario("gfc2008", "Global financial crisis, 2008-09 (equity only, NIFTYBEES proxy)",
+             (date(2008, 1, 1), date(2009, 3, 31)), False,
              "Per-holding prices for 2008 are not fetched (most of today's holdings have no price series that far "
-             "back, and many did not exist), so equity holdings are shown at NIFTYBEES's own fall and other holdings "
-             "at 0 %. Debt and gold did not behave like that in 2008: read it as an equity-only shock."),
+             "back, and many did not exist), so equity holdings are shown at NIFTYBEES's own peak-to-trough fall and "
+             "every other holding is unmapped: listed with its value, left out of the figure, never counted as a "
+             "flat move. The historical stress replay below replays Sep-Nov 2008 holding by holding."),
     Scenario("corr2024", "2024-25 correction", (date(2024, 9, 1), date(2025, 3, 31)), True,
              "Peak and trough found in NIFTYBEES closes inside Sep-2024 to Mar-2025; small and mid caps fell more "
              "than the Nifty 50 in this episode, which each holding's own move captures."),
@@ -388,9 +484,8 @@ def scenario_result(sc: Scenario, bench_closes: dict[date, float], divs: dict[da
     dd = max_drawdown(tr)
     peak, trough = bd[dd.peak_index], bd[dd.trough_index]
     bmove = float(dd.max_drawdown)
-    rows, total, loss = [], 0.0, 0.0
+    rows = []
     for p in positions:
-        total += p.value
         r, how = None, None
         c = own.get(p.key) or {}
         if sc.per_holding and c:
@@ -400,48 +495,69 @@ def scenario_result(sc: Scenario, bench_closes: dict[date, float], divs: dict[da
         if r is None:
             if p.tax_class == "equity":
                 r, how = bmove, f"proxy: {BENCHMARK} move"
-            else:
-                r, how = 0.0, "not modelled (0 %)"
-        loss += p.value * r
-        rows.append({"key": p.key, "name": p.name, "move": _r(r, 4), "inr": _r(p.value * r, 0), "how": how})
+            else:  # #423: unknown, never a 0 % move
+                how = "unmapped: no own prices for the window and not equity, so no index proxy"
+        rows.append(_move_row(p, r, how))
     return {**base_out, "available": True, "peak": peak.isoformat(), "trough": trough.isoformat(),
-            "benchmark_move": _r(bmove, 4), "portfolio_move": _r(loss / total, 4) if total else None,
-            "inr": _r(loss, 0), "positions": sorted(rows, key=lambda x: x["inr"] or 0)}  # fmt: skip
+            "benchmark_move": _r(bmove, 4), **_totals(rows)}  # fmt: skip
 
 
-def hypothetical_fall(h: History, fall: float = HYPOTHETICAL_FALL) -> dict[str, Any]:
-    """Nifty 50 falls `fall`: each holding moves by its own 1-year beta to NIFTYBEES × the fall."""
-    out = {"id": "beta20", "label": f"Nifty 50 falls {abs(fall):.0%} (hypothetical)",
+def _move_row(p: Any, r: float | None, how: str, **extra: Any) -> dict[str, Any]:
+    return {"key": p.key, "name": p.name, "value": _r(p.value, 0), "move": _r(r, 4),
+            "inr": _r(p.value * r, 0) if r is not None else None, "how": how, **extra}  # fmt: skip
+
+
+def _totals(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """The scenario's move on the holdings that could be mapped; unmapped ones are counted apart (#423), as
+    portfolio.stress_replay does, so an unknown move never dilutes the figure as if it were 0 %."""
+    mapped = sum(x["value"] or 0 for x in rows if x["move"] is not None)
+    unmapped = sum(x["value"] or 0 for x in rows if x["move"] is None)
+    loss = sum(x["inr"] or 0 for x in rows if x["move"] is not None)
+    whole = mapped + unmapped
+    return {"portfolio_move": _r(loss / mapped, 4) if mapped else None, "inr": _r(loss, 0) if mapped else None,
+            "mapped_value": _r(mapped, 0), "unmapped_value": _r(unmapped, 0),
+            "mapped_share": _r(mapped / whole, 4) if whole else None,
+            "positions": sorted(rows, key=lambda x: (x["move"] is None, x["inr"] or 0))}  # fmt: skip
+
+
+def hypothetical_fall(
+    h: History, fall: float = HYPOTHETICAL_FALL, *, assume_beta1: bool = False
+) -> dict[str, Any]:
+    """Nifty 50 falls `fall`: each holding moves by its own 1-year beta to NIFTYBEES × the fall. A holding without
+    MIN_BETA days is unmapped; `assume_beta1` (the user's option, #423) gives short-history equity a labelled beta 1."""
+    out = {"id": "beta20", "label": f"Nifty 50 falls {abs(fall):.0%} (hypothetical)", "assume_beta1": assume_beta1,
            "note": "Each holding moves by its own 1-year beta to NIFTYBEES times the fall. Betas tend to rise in "
-                   "crashes, so this can understate a real fall [K]."}  # fmt: skip
+                   "crashes, so this can understate a real fall [K]. A holding with under "
+                   f"{MIN_BETA} days of prices has no beta: it is unmapped unless you choose to assume beta 1 for "
+                   "short-history equity."}  # fmt: skip
     b = h.benchmark
     if b is None or not h.positions:
         return {**out, "available": False, "reason": f"{BENCHMARK} history unavailable"}
     since = h.days[-1] - timedelta(days=365)
     bret = {d: r for d, r in returns_of(b.closes, b.factors).items() if d > since}
-    rows, total, loss = [], 0.0, 0.0
+    rows = []
     for p in h.positions:
         pr = {d: r for d, r in returns_of(h.closes.get(p.key, {}), h.factors.get(p.key)).items() if d > since}
         common = sorted(set(pr) & set(bret))
-        total += p.value
         if len(common) >= MIN_BETA:
             beta = am.beta([pr[d] for d in common], [bret[d] for d in common])
-            how = f"beta {beta:.2f} ({len(common)} days)"
-        else:
-            beta, how = (
-                (1.0, "beta 1 assumed (short history)")
-                if p.tax_class == "equity"
-                else (0.0, "not modelled (0 %)")
+            rows.append(_move_row(p, beta * fall, f"beta {beta:.2f} ({len(common)} days)", assumed=False))
+        elif p.tax_class == "equity" and assume_beta1:
+            rows.append(
+                _move_row(
+                    p, fall, f"beta 1 assumed (your option; {len(common)} days of prices)", assumed=True
+                )
             )
-        r = beta * fall
-        loss += p.value * r
-        rows.append({"key": p.key, "name": p.name, "move": _r(r, 4), "inr": _r(p.value * r, 0), "how": how})
-    return {**out, "available": True, "benchmark_move": fall, "portfolio_move": _r(loss / total, 4) if total else None,
-            "inr": _r(loss, 0), "positions": sorted(rows, key=lambda x: x["inr"] or 0)}  # fmt: skip
+        else:
+            why = f"only {len(common)} days of prices, needs {MIN_BETA} for a beta"
+            rows.append(_move_row(p, None, f"unmapped: {why}" + ("" if p.tax_class == "equity" else "; not equity"),
+                                  assumed=False))  # fmt: skip
+    return {**out, "available": True, "benchmark_move": fall, **_totals(rows)}
 
 
 async def stress_scenarios(h: History, fetch: Any, store: PriceStore, today: date) -> list[dict[str, Any]]:
-    """The stored episodes plus the beta-scaled hypothetical. Per-holding windows are fetched once and cached for
+    """The stored episodes (the beta-scaled hypothetical is added per request by the route: it depends on the
+    user's beta-1 option and needs no fetch). Per-holding windows are fetched once and cached for
     good (past prices do not change)."""
     if not h.ok or not h.positions:
         return []
@@ -471,7 +587,6 @@ async def stress_scenarios(h: History, fetch: Any, store: PriceStore, today: dat
                 except Exception:
                     own[p.key] = {}
         out.append(scenario_result(sc, bc, divs, factors, h.positions, own))
-    out.append(hypothetical_fall(h))
     return out
 
 
