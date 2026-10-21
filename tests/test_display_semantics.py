@@ -75,7 +75,11 @@ def test_options_only_expiry_far_away_is_long_dated_not_weekly(clean):
         got = {c.expiry: c.kind for c in derive.contracts(s, "NIFTY")}
     # 6-Oct: 5 days after first seen, options only → weekly; 27-Oct has a future → monthly; 30-Mar-2027 is 180 days
     # after first seen with no future → a long-dated (quarterly / half-yearly) option, not a weekly
-    assert got == {date(2026, 10, 6): "weekly", date(2026, 10, 27): "monthly", date(2027, 3, 30): "long-dated"}
+    assert got == {
+        date(2026, 10, 6): "weekly",
+        date(2026, 10, 27): "monthly",
+        date(2027, 3, 30): "long-dated",
+    }
 
 
 # --------------------------------------------------------------------------- (j) corporate-action futures quarantine
@@ -190,7 +194,9 @@ def test_iv_minus_rv_uses_the_30_day_iv_not_the_live_weekly_atm_iv(clean, monkey
     from finresearch.signals import fno_context as fc
 
     _eod("NIFTY", [date(2026, 10, 20)], lambda i: 13.0, lambda i: 18.0, rv20=lambda i: 10.5)
-    q = OptionQuote(last_price=Decimal(100), iv=Decimal(22), oi=None, change_in_oi=None, volume=None, bid=None, ask=None)
+    q = OptionQuote(
+        last_price=Decimal(100), iv=Decimal(22), oi=None, change_in_oi=None, volume=None, bid=None, ask=None
+    )
     chain = OptionChain(symbol="NIFTY", expiry=date(2026, 10, 27), underlying=Decimal(25000), as_of=None,
                         rows=[ChainRow(strike=Decimal(25000), call=q, put=q)])  # fmt: skip
     with session_scope() as s:
