@@ -277,3 +277,21 @@ def test_harvest_ranks_by_tax_saved_plus_carry_forward_net_of_costs():
 def test_harvest_shows_the_gaar_and_same_day_caution():
     text = " ".join(harvest([], {}, {}, {}, TODAY, D("0.30"))["notes"])
     assert "no wash-sale rule" in text and "GAAR" in text and "s.43(5)" in text and "₹3 crore" in text
+
+
+def test_harvest_counts_a_known_exit_load_and_flags_an_unknown_one():
+    # an equity fund lot bought 1-Jun-2026 (127 days before TODAY): cost 1,00,000, NAV now 90,000 -> STCL 10,000
+    # up to 10,000 × 30 % × 1.04 = 3,120 carried forward. Stamp 0.005 % + 0.001 % on 90,000 = 5.40.
+    fund = HoldingTax(3, "Example Equity Fund", "Folio", None, "equity", False, None)
+    lots = {3: [OpenLot(fund, date(2026, 6, 1), D(1000), D(100))]}
+    args = ([], lots, {3: D(90)}, {3: "mf"}, TODAY, D("0.30"))
+    (unknown,) = harvest(*args)["loss_harvest"]
+    assert unknown["costs_unknown"] == ["exit load"] and unknown["est_costs"] == 5.4
+    # 1 % within 365 days (user-entered from the scheme document): + 900 -> costs 905.40, net 3,120 - 905.40
+    (known,) = harvest(*args, exit_loads={3: (D("0.01"), 365)})["loss_harvest"]
+    assert (
+        known["costs_unknown"] == [] and known["est_costs"] == 905.4 and known["net_benefit_up_to"] == 2214.6
+    )
+    # held past the load period: no load
+    (late,) = harvest(*args, exit_loads={3: (D("0.01"), 30)})["loss_harvest"]
+    assert late["costs_unknown"] == [] and late["est_costs"] == 5.4

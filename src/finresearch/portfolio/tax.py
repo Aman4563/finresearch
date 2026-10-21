@@ -569,7 +569,8 @@ def _carried(t: FyTax, bf: Sequence[BroughtForward], fy: int) -> dict[str, Decim
 
 def harvest(rows: Sequence[DisposalRow], lots_by_holding: dict[int, list[OpenLot]], prices: dict[int, Decimal],
             asset_types: dict[int, str], today: date, slab: Decimal,
-            brought_forward: Sequence[BroughtForward] = ()) -> dict[str, Any]:  # fmt: skip
+            brought_forward: Sequence[BroughtForward] = (),
+            exit_loads: dict[int, tuple[Decimal, int]] | None = None) -> dict[str, Any]:  # fmt: skip
     """Suggestions for the current financial year. Selling always takes a holding's oldest lots first (FIFO), so each
     suggestion sells a prefix of a holding's open lots, never a lot picked from the middle.
 
@@ -653,6 +654,13 @@ def harvest(rows: Sequence[DisposalRow], lots_by_holding: dict[int, list[OpenLot
             value = best_q * price
             atype = asset_types.get(hid, "stock")
             costs = _round_trip_cost(h.tax_class, value, atype)
+            unknown_costs = _unknown_costs(atype)
+            if atype == "mf" and (el := (exit_loads or {}).get(hid)) is not None:
+                # the user's load from the scheme document (/portfolio Costs): a fraction on units held under N days
+                pct, days = el
+                costs += sum((price * r.quantity * pct for r in chosen
+                              if r.acquired is not None and (today - r.acquired).days < days), Decimal(0))  # fmt: skip
+                unknown_costs = []
             if saved + cf_value > 0:
                 loss_ideas.append({"holding_id": hid, "name": h.name, "account": h.account, "sell_units": _f(best_q),
                                    "price": _f(price), "value": _f(value), "loss": _f(best),
@@ -661,7 +669,7 @@ def harvest(rows: Sequence[DisposalRow], lots_by_holding: dict[int, list[OpenLot
                                    "carry_forward": {"short": _f(cf["short"]), "long": _f(cf["long"])},
                                    "carry_forward_value_up_to": _f(cf_value),
                                    "net_benefit_up_to": _f(saved + cf_value - costs),
-                                   "est_costs": _f(costs), "costs_unknown": _unknown_costs(atype),
+                                   "est_costs": _f(costs), "costs_unknown": unknown_costs,
                                    "why": _loss_why(saved, cf_value)})  # fmt: skip
     gain_ideas.sort(key=lambda x: -(x["gain"] or 0))
     loss_ideas.sort(key=lambda x: -(x["net_benefit_up_to"] or 0))

@@ -463,7 +463,8 @@ def tax_view(s: Session, prices: dict[int, PriceInfo], today: date, slab: Decima
     return {"as_of": today.isoformat(), "fys": [fy_summary(rows, fy, slab, ledger) for fy in fys],
             "carry_forward": carry_forward_json(ledger, inputs),
             "disposals": [disposal_json(r) for r in sorted(rows, key=lambda r: (r.sold, r.holding.name), reverse=True)],
-            "harvest": harvest(rows, lots_by, px, types, today, slab, now.brought_forward if now else ()),
+            "harvest": harvest(rows, lots_by, px, types, today, slab, now.brought_forward if now else (),
+                               _exit_loads(s)),
             "rules": [r.to_json() for r in RULES], "verify": VERIFY_NOTE,
             "rules_verified_through": {"fy": VERIFIED_THROUGH_FY, "label": fy_label(VERIFIED_THROUGH_FY),
                                        "source": VERIFIED_SOURCE},
@@ -473,6 +474,17 @@ def tax_view(s: Session, prices: dict[int, PriceInfo], today: date, slab: Decima
                         "(s.80 / s.121); losses from before the app's records count only as you enter them.",
                         "Indexation for transfers before 23-Jul-2024 is not modelled.",
                         "F&O and intraday trades are business income and are not in this computation."]}  # fmt: skip
+
+
+def _exit_loads(s: Session) -> dict[int, tuple[Decimal, int]]:
+    """The user's exit loads per fund holding (/portfolio Costs settings): {holding id: (fraction, days)}."""
+    from finresearch.api.portfolio_analytics import get_settings_row
+
+    out = {}
+    for k, v in get_settings_row(s)["exit_loads"].items():
+        if v and str(k).isdigit():
+            out[int(k)] = (Decimal(str(v["pct"])) / 100, int(v.get("days") or 0))
+    return out
 
 
 def tax_loss_inputs(s: Session) -> TaxLossInputs:
