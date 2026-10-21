@@ -3,7 +3,7 @@
 // break them; what they pin down is that an unknown or stale value is labelled as such.
 import { type Page, expect, test } from "@playwright/test";
 
-import { ARCHIVED_WATCH, ARCHIVED_WATCHES, BOND_DETAIL, BOND_SNAPSHOT, CLAIM, DOC_LINES, GOAL_PLAN_LOWER, REPORT, SIGNAL, SNAPSHOT, TAX, WEALTH } from "./fixtures";
+import { ARCHIVED_WATCH, ARCHIVED_WATCHES, BOND_DETAIL, BOND_SNAPSHOT, CLAIM, DOC_LINES, GOAL_PLAN_CPI, GOAL_PLAN_CPI_UNKNOWN, GOAL_PLAN_LOWER, REPORT, SIGNAL, SNAPSHOT, TAX, WEALTH } from "./fixtures";
 import { expectNoHorizontalOverflow, mockApi } from "./mock-api";
 
 const phone = (page: Page) => (page.viewportSize()?.width ?? 1280) < 640;
@@ -171,6 +171,26 @@ test("wealth: a goal run on the priced part reads 'at least' / 'at most' and nam
   await expect(page.getByText(/^at most ₹7,400$/)).toBeVisible(); // SIP for 75 %
   await expect(page.getByText(/^unknown$/)).toBeVisible(); // SIP for 90 %: none found from the priced part, not "not reachable"
   await expect(page.getByText(/not reachable/i)).toHaveCount(0);
+  if (phone(page)) await expectNoHorizontalOverflow(page);
+  api.expectClean();
+});
+
+test("wealth: a CPI-based goal shows MoSPI's rate, its premium over general CPI and the vintage used", async ({ page }) => {
+  const api = await mockApi(page, { "GET /api/wealth": WEALTH, "GET /api/wealth/goals/1/plan": GOAL_PLAN_CPI });
+  await page.goto("/wealth#goals");
+  await expect(page.getByText(/MoSPI CPI education: 7\.25 % a year/)).toBeVisible();
+  await expect(page.getByText(/\+1\.75 pp/)).toBeVisible(); // over general CPI
+  await expect(page.getByText(/base 2024=100 to Sept? 2026/)).toBeVisible(); // the vintage used
+  await expect(page.getByText(/CPI education average \+2 pp/)).toBeVisible();
+  if (phone(page)) await expectNoHorizontalOverflow(page);
+  api.expectClean();
+});
+
+test("wealth: an unreadable CPI series reads as unknown with the reason and the labelled fixed rate", async ({ page }) => {
+  const api = await mockApi(page, { "GET /api/wealth": WEALTH, "GET /api/wealth/goals/1/plan": GOAL_PLAN_CPI_UNKNOWN });
+  await page.goto("/wealth#goals");
+  await expect(page.getByText(/^CPI inflation unknown$/)).toBeVisible();
+  await expect(page.getByText(/HTTP 503\); simulated at your fixed 6 % a year instead/)).toBeVisible();
   if (phone(page)) await expectNoHorizontalOverflow(page);
   api.expectClean();
 });

@@ -10,7 +10,11 @@ import { TimeSeriesChart, fmtCompactINR } from "@/components/charts";
 import { Badge, Button, Callout, Card, EmptyState, ErrorNote, Field, InfoTip, Modal, SkeletonRows, cx, inputClass } from "@/components/ui";
 import { api, day, useApi } from "@/lib/api";
 
-import { ASSET_KIND_LABEL, type Assumptions, type Goal, type GoalPlan, type Wealth, inr, num, prob } from "./types";
+import { ASSET_KIND_LABEL, type Assumptions, type Goal, type GoalInflation, type GoalPlan, type InflationBasis, type Wealth, inr, num, prob } from "./types";
+
+const BASIS_LABEL: Record<InflationBasis, string> = {
+  cpi_general: "CPI general (MoSPI)", cpi_education: "CPI education (MoSPI)", cpi_health: "CPI health (MoSPI)", manual: "My fixed rate",
+};
 
 const s = (v: number | string | null | undefined) => (v == null ? "" : String(v));
 
@@ -23,7 +27,7 @@ function addMonths(iso: string, m: number) {
 function GoalForm({ g, w, onSaved, close }: { g: Goal | null; w: Wealth; onSaved: () => void; close: () => void }) {
   const [f, setF] = useState({
     name: g?.name ?? "", target_inr: s(g?.target_inr), target_date: g?.target_date ?? "", priority: g?.priority ?? "medium",
-    inflation_pct: s(g?.inflation_pct ?? w.assumptions.inflation_pct), current_inr: s(g?.current_inr ?? 0), monthly_sip: s(g?.monthly_sip ?? 0),
+    inflation_pct: s(g?.inflation_pct ?? w.assumptions.inflation_pct), inflation_basis: (g ? g.inflation_basis ?? "manual" : "cpi_general") as InflationBasis, current_inr: s(g?.current_inr ?? 0), monthly_sip: s(g?.monthly_sip ?? 0),
     step_up_pct: s(g?.step_up_pct ?? 0), linked: g?.linked_asset_ids ?? [], portfolio_pct: s(g?.portfolio_pct ?? 0),
     equity_pct: s(g?.equity_pct), gold_pct: s(g?.gold_pct ?? 0), in_cover: g?.in_cover ?? false, notes: g?.notes ?? "",
   });
@@ -37,7 +41,7 @@ function GoalForm({ g, w, onSaved, close }: { g: Goal | null; w: Wealth; onSaved
     } catch (e) { setMsg((e as Error).message); }
   };
   const save = () => req(g ? "PUT" : "POST", {
-    name: f.name, target_inr: num(f.target_inr), target_date: f.target_date, priority: f.priority, inflation_pct: num(f.inflation_pct) ?? "6",
+    name: f.name, target_inr: num(f.target_inr), target_date: f.target_date, priority: f.priority, inflation_pct: num(f.inflation_pct) ?? "6", inflation_basis: f.inflation_basis,
     current_inr: num(f.current_inr) ?? "0", monthly_sip: num(f.monthly_sip) ?? "0", step_up_pct: num(f.step_up_pct) ?? "0",
     linked_asset_ids: f.linked, portfolio_pct: num(f.portfolio_pct) ?? "0", equity_pct: num(f.equity_pct), gold_pct: num(f.gold_pct) ?? "0", in_cover: f.in_cover, notes: f.notes || null,
   });
@@ -52,7 +56,11 @@ function GoalForm({ g, w, onSaved, close }: { g: Goal | null; w: Wealth; onSaved
         <Field label="Target date"><input type="date" value={f.target_date} onChange={(e) => set("target_date", e.target.value)} className={cx(inputClass, "w-full")} /></Field>
         <Field label="Priority"><select value={f.priority} onChange={(e) => set("priority", e.target.value)} className={cx(inputClass, "w-full")}>
           <option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select></Field>
-        {n("inflation_pct", <span className="inline-flex items-center gap-1">Inflation for this goal, % <InfoTip>General CPI ≈ 5–6 % long-run [unverified]; education and medical costs usually rise faster (rule of thumb).</InfoTip></span>)}
+        <Field label={<span className="inline-flex items-center gap-1">Inflation for this goal <InfoTip>MoSPI&apos;s all-India CPI (Combined): its 10-year average rate, with each simulated year drawn around it with the spread of the last ten years. Education and health use their own CPI sub-indices. The figure, its month and the data vintage are shown with the plan.</InfoTip></span>}>
+          <select value={f.inflation_basis} onChange={(e) => set("inflation_basis", e.target.value)} className={cx(inputClass, "w-full")}>
+            {(Object.keys(BASIS_LABEL) as InflationBasis[]).map((b) => <option key={b} value={b}>{BASIS_LABEL[b]}</option>)}</select></Field>
+        {n("inflation_pct", f.inflation_basis === "manual" ? "Fixed inflation, % a year" : "Fixed rate if CPI is unavailable, %",
+          f.inflation_basis === "manual" ? "Your assumption" : "Used only when the CPI series cannot be read, and labelled so")}
         {n("monthly_sip", "Monthly SIP towards it (₹)")}
         {n("step_up_pct", "SIP step-up each year, %")}
         {n("current_inr", "Other savings for it (₹)", "Money not entered as an asset")}
@@ -80,6 +88,36 @@ function GoalForm({ g, w, onSaved, close }: { g: Goal | null; w: Wealth; onSaved
         <Button onClick={save} disabled={!f.name.trim() || !f.target_inr || !f.target_date}>{g ? "Save" : "Add goal"}</Button>
         {g && <Button variant="ghost" onClick={() => confirm(`Delete ${g.name}?`) && req("DELETE")}>Delete</Button>}
       </div>
+    </div>
+  );
+}
+
+const pct2 = (v: number | null | undefined) => (v == null ? "unknown" : `${v.toFixed(2)} %`);
+const month = (iso: string | null | undefined) => (iso ? new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-IN", { month: "short", year: "numeric", timeZone: "UTC" }) : "—");
+
+// How the goal's inflation was set (#347): the CPI figure with its month and vintage, or why it is unknown
+function InflationView({ i, rows, lb }: { i: GoalInflation; rows: GoalPlan["inflation_sensitivity"]; lb: boolean }) {
+  const v = i.vintage;
+  return (
+    <div className="space-y-2 text-xs">
+      {!i.known && <Callout tone="warn" title="CPI inflation unknown">{i.label}</Callout>}
+      {i.known && <p><span className="text-muted">Inflation: </span>{i.label}</p>}
+      {i.basis !== "manual" && (
+        <dl className="grid grid-cols-2 gap-x-3 gap-y-1">
+          <dt className="text-muted">Trailing 12 months{i.as_of ? ` to ${month(i.as_of)}` : ""}</dt><dd className="num text-right">{pct2(i.trailing_pct)}</dd>
+          <dt className="text-muted">10-year average{i.window_start ? ` from ${month(i.window_start)}` : ""}</dt><dd className="num text-right">{pct2(i.long_run_pct)}</dd>
+          {i.basis !== "cpi_general" && <><dt className="text-muted">Over general CPI (10-year averages)</dt><dd className="num text-right">{i.premium_pct == null ? "unknown" : `${i.premium_pct >= 0 ? "+" : ""}${i.premium_pct.toFixed(2)} pp`}</dd></>}
+        </dl>
+      )}
+      {rows && rows.length > 0 && (
+        <div>
+          <p className="mb-1 text-muted">P(goal met) at a fixed inflation rate, same return paths</p>
+          <dl className="grid grid-cols-[minmax(0,1fr)_auto_auto] gap-x-3 gap-y-0.5">
+            {rows.map((r) => <div key={r.label} className="contents"><dt className="truncate">{r.label}</dt><dd className="num text-right text-muted">{r.inflation_pct.toFixed(2)} %</dd><dd className="num text-right">{lb ? "≥ " : ""}{prob(r.p_success)}</dd></div>)}
+          </dl>
+        </div>
+      )}
+      {v && <p className="text-[11px] text-muted">Source: {v.source}. Base 2012=100 to {month(v.base2012_last)}, base 2024=100 to {month(v.base2024_last)}{v.fetched_at ? `, read ${day(v.fetched_at.slice(0, 10))}` : ""}. {v.note}{v.imputed.length ? ` MoSPI marks ${v.imputed.map(month).join(", ")} as imputed.` : ""}</p>}
     </div>
   );
 }
@@ -121,6 +159,7 @@ function PlanView({ g, w, refresh }: { g: Goal; w: Wealth; refresh: number }) {
         </div>
         <dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs">
           <dt className="text-muted">Target on {day(g.target_date)}</dt><dd className="num text-right">{inr(p.target_nominal)}</dd>
+          {!!p.inflation_sd_pct && p.target_pcts && <><dt className="text-muted">Target P10–P90 (inflation paths)</dt><dd className="num text-right">{fmtCompactINR(p.target_pcts.p10)}–{fmtCompactINR(p.target_pcts.p90)}</dd></>}
           <dt className="text-muted">Set aside today</dt><dd className="num text-right">{least(inr(p.start))}</dd>
           <dt className="text-muted">SIP now (step-up {p.step_up_pct} %)</dt><dd className="num text-right">{inr(p.sip0)}</dd>
           <dt className="text-muted">SIP for 75 %</dt><dd className="num text-right">{sip(p.sip_for_75)}</dd>
@@ -130,6 +169,7 @@ function PlanView({ g, w, refresh }: { g: Goal; w: Wealth; refresh: number }) {
           <dt className="text-muted">Outcome P10 / P50 / P90</dt><dd className="num text-right">{lb ? "at least " : ""}{fmtCompactINR(p.terminal_pcts.p10)} / {fmtCompactINR(p.terminal_pcts.p50)} / {fmtCompactINR(p.terminal_pcts.p90)}</dd>
         </dl>
         <p className="text-sm">{p.message}</p>
+        {p.inflation && <InflationView i={p.inflation} rows={p.inflation_sensitivity} lb={lb} />}
       </div>
       <div>
         <TimeSeriesChart data={fan} area={false} showChange={false} height={220} format={fmtCompactINR}

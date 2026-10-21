@@ -36,6 +36,8 @@ export type Loan = {
 export type Goal = {
   id: number; name: string; target_inr: number; target_date: string; priority: "high" | "medium" | "low";
   inflation_pct: number; current_inr: number; monthly_sip: number; step_up_pct: number; linked_asset_ids: number[];
+  /** manual = inflation_pct; cpi_* = MoSPI CPI's 10-year average with its year-to-year spread (#347) */
+  inflation_basis?: InflationBasis;
   portfolio_pct: number; equity_pct: number | null; gold_pct: number; in_cover: boolean; notes: string | null;
   /** null = unknown (the earmarked portfolio has no valuation), never ₹0; funded_complete false = a lower bound (#262) */
   funded_now: number | null; funded_complete?: boolean; funded_why?: string | null; months_left: number; shared_links: number[];
@@ -98,6 +100,17 @@ export type Wealth = {
   disclaimer: string;
 };
 
+export type InflationBasis = "manual" | "cpi_general" | "cpi_education" | "cpi_health";
+
+/** How a goal's inflation was set (#347). known false: the CPI figure is unknown (reason), and the plan ran on the
+ * goal's own fixed rate, which the label says. Rates in %. */
+export type GoalInflation = {
+  basis: InflationBasis; known: boolean; reason: string | null; label: string; value_pct: number | null;
+  mean_pct: number; sd_pct: number; trailing_pct: number | null; long_run_pct: number | null; premium_pct: number | null;
+  as_of: string | null; window_start: string | null;
+  vintage: { source: string; base2012_last: string; base2024_last: string | null; imputed: string[]; fetched_at: string | null; urls: string[]; note: string } | null;
+};
+
 export type GoalPlan = {
   goal_id: number; name: string; months: number; target_today: number; target_nominal: number; start: number; sip0: number;
   step_up_pct: number; n: number; seed: number; p_success: number; p_ci: [number, number]; p_haircut: number;
@@ -114,6 +127,10 @@ export type GoalPlan = {
    * unpriced_share_pct its share of the earmarked portfolio at last known prices (null = unknown). bound_why: why a
    * partial amount was not used as a bound. */
   bound?: "lower" | null; bound_why?: string | null; unpriced?: string[]; unpriced_share_pct?: number | null;
+  inflation?: GoalInflation; inflation_pct?: number; inflation_sd_pct?: number;
+  /** the goal-date target across inflation paths (equal when the rate is fixed) */
+  target_pcts?: { p10: number; p50: number; p90: number };
+  inflation_sensitivity?: { label: string; inflation_pct: number; p_success: number }[];
 };
 
 export const inr = (v: number | null | undefined, d = 0) =>

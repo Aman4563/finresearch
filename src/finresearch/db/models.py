@@ -1070,6 +1070,8 @@ class WealthGoal(Base):
     target_date: Mapped[date] = mapped_column(Date)
     priority: Mapped[str] = mapped_column(String(8), default="medium")  # high | medium | low
     inflation_pct: Mapped[Decimal] = mapped_column(Numeric(6, 2), default=Decimal(6))
+    # manual = inflation_pct, the user's fixed rate; cpi_general | cpi_education | cpi_health = MoSPI CPI (#347)
+    inflation_basis: Mapped[str] = mapped_column(String(16), default="manual", server_default="manual")
     current_inr: Mapped[Decimal] = mapped_column(
         Numeric(20, 2), default=Decimal(0)
     )  # saved outside linked assets
