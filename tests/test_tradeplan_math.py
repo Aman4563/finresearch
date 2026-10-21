@@ -64,13 +64,23 @@ def test_pick_by_delta_matches_an_independent_black_scholes():
 
 def test_size_from_budget():
     s = tp.size(-1500.0, 60.0, 4000.0, proven=True)
-    assert (s.multiple, s.suggested) == (2, 2)  # floor(4000 / 1560)
+    assert (s.multiple, s.suggested, s.real_lots) == (2, 2, 2)  # floor(4000 / 1560)
     s = tp.size(-1500.0, 60.0, 4000.0, proven=False)
-    assert (s.multiple, s.suggested) == (2, 1)  # half without a proven edge
+    assert (s.multiple, s.suggested) == (2, 1)  # paper: half without a proven edge
     s = tp.size(-1500.0, 60.0, 1000.0, proven=False)
-    assert (s.multiple, s.suggested) == (0, 0) and "above your" in s.reason
+    assert (s.multiple, s.suggested, s.real_lots) == (0, 0, 0) and "above your" in s.reason
     s = tp.size(None, 60.0, 4000.0, proven=False)
-    assert s.suggested == 0 and s.risk_per_multiple is None  # unlimited loss: no size, not a number
+    assert (
+        s.suggested == 0 and s.real_lots == 0 and s.risk_per_multiple is None
+    )  # unlimited: no size, not a number
+
+
+def test_no_real_money_size_without_a_candidate_350():
+    """#350: real-money lots are 0 unless the matched spec is a candidate (evidence 'proven'), however much fits."""
+    s = tp.size(-1500.0, 60.0, 40000.0, proven=False)
+    assert s.multiple == 25 and s.real_lots == 0  # floor(40000 / 1560) = 25 fit, none with real money
+    assert "paper" in s.reason
+    assert tp.size(-1500.0, 60.0, 40000.0, proven=True).real_lots == 25
 
 
 def test_limit_guidance_mid_and_far_side():
@@ -136,8 +146,15 @@ def test_verdict_rules():
     assert tp.verdict([], "negative") == ("AVOID", None)  # a failed backtest overrides passing checks
     assert tp.verdict(["IV context fits the strategy"], "none") == ("WAIT", None)
     assert tp.verdict([], "proven") == ("ENTER", None)
-    assert tp.verdict([], "none") == ("ENTER", tp.NO_EDGE)
-    assert tp.verdict([], "unproven") == ("ENTER", tp.NO_EDGE)
+    # #350: never ENTER without a candidate spec; every check passing gives the paper-only verdict
+    assert tp.verdict([], "none") == (tp.PAPER, tp.PAPER_ONLY)
+    assert tp.verdict([], "unproven") == (tp.PAPER, tp.PAPER_ONLY)
+
+
+@pytest.mark.parametrize("level", ["none", "unproven", "negative"])
+@pytest.mark.parametrize("failed", [[], ["IV context fits the strategy"], ["Defined risk"]])
+def test_no_enter_unless_proven_350(level, failed):
+    assert tp.verdict(failed, level)[0] != "ENTER"
 
 
 def test_evidence_level_and_text():

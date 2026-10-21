@@ -65,11 +65,11 @@ export const AVOID: TradePlan = { title: "NIFTY · NIFTY put credit spread, mont
   failed: ["Entry window"], reasons: ["No monthly expiry 30-45 days away today.", "The pre-registered backtest: FAILED out-of-sample: expectancy ₹-1,789/trade, t=-1.3."],
   legs: [], spec_key: "nifty_pcs_m", evidence: evidence("negative", "FAILED out-of-sample: expectancy ₹-1,789/trade, t=-1.3, 42 trades.") };
 const lvl = (r: number, p: number, b: number) => ({ rupees: r, premium_per_share: p, underlying_now: { below: b, above: null }, underlying_at_expiry: { below: b + 50, above: null } });
-export const ENTER: TradePlan = { title: "NIFTY 20-Oct-2026 · NIFTY short iron condor, weekly", symbol: "NIFTY", expiry: "2026-10-20", days_to_expiry: 7, spot: 25000, lot_size: 65,
-  kind: "iron_condor", action: "ENTER", qualifier: "no proven edge — size small", label: "ENTER (no proven edge — size small)", failed: [], spec_key: "nifty_ic_w",
+export const PAPER: TradePlan = { title: "NIFTY 20-Oct-2026 · NIFTY short iron condor, weekly", symbol: "NIFTY", expiry: "2026-10-20", days_to_expiry: 7, spot: 25000, lot_size: 65,
+  kind: "iron_condor", action: "PAPER", qualifier: "NO PROVEN EDGE — paper only (0 real lots)", label: "NO PROVEN EDGE — paper only (0 real lots)", failed: [], spec_key: "nifty_ic_w",
   reasons: ["Every check passes: defined risk, within budget, EV after costs no worse than fair, IV fits."],
   legs: [{ right: "put", strike: 24600, side: "sell", lots: 1 }, { right: "put", strike: 24350, side: "buy", lots: 1 }, { right: "call", strike: 25400, side: "sell", lots: 1 }, { right: "call", strike: 25650, side: "buy", lots: 1 }],
-  size: { multiple: 3, suggested: 1, budget: 20000, risk_per_set: 6000, reason: "₹20,000 budget ÷ ₹6,000 risk per set = 3; no proven edge, so half of it: 1", capital: 1e6, max_loss_pct: 2 },
+  size: { multiple: 3, suggested: 1, real_lots: 0, budget: 20000, risk_per_set: 6000, reason: "₹20,000 budget ÷ ₹6,000 risk per set = 3; no strategy that passed out of sample matches, so 0 real-money lots and a paper size of half of it: 1", capital: 1e6, max_loss_pct: 2 },
   entry: { legs: [], status: "ok", net_mid: 42.5, net_fill_now: 40, notes: [], levels_priced_at: "bid/ask mid" },
   max_profit: 2762, max_loss: -13488, breakevens: [24557.5, 25442.5], net_premium: -2762, costs: 180,
   probability: { real_world: 0.71, real_world_window: "60-day", risk_neutral: 0.66, note: "Model probabilities." },
@@ -79,23 +79,23 @@ export const ENTER: TradePlan = { title: "NIFTY 20-Oct-2026 · NIFTY short iron 
   adjustments: { rules: ["Do not add to a losing short-premium position."], note: "Rules of thumb, not backtested." }, invalidation: ["The underlying closes below the short put strike 24,600."],
   evidence: { ...evidence("none", "Not judged out of sample (fails)."), spec_key: "nifty_ic_w", match: "exact" },
   paper: { trades: 2, open: 0, closed: 2, wins: 1, losses: 1, total_net: -320, expectancy: -160, note: "Too few to be evidence." }, disclaimer: "Nothing is ordered. Not advice." };
-const WAIT: TradePlan = { ...ENTER, title: "NIFTY 27-Oct-2026 · NIFTY call debit spread, weekly", action: "WAIT", qualifier: "IV too high for a debit", label: "WAIT",
+const WAIT: TradePlan = { ...PAPER, title: "NIFTY 27-Oct-2026 · NIFTY call debit spread, weekly", action: "WAIT", qualifier: "IV too high for a debit", label: "WAIT",
   kind: "debit_call", failed: ["IV fit"], reasons: ["IV percentile 88 is above the recipe's 60 limit for buying premium."], spec_key: "nifty_dcs_w",
   legs: [{ right: "call", strike: 25000, side: "buy", lots: 1 }, { right: "call", strike: 25300, side: "sell", lots: 1 }], max_loss: -6500, max_profit: 13000, breakevens: [25100] };
-export const SUGGEST: SuggestResponse = { symbol: "NIFTY", today: "2026-10-13", cards: [AVOID, ENTER, WAIT], note: "The library's pre-registered recipes. Not a recommendation." };
+export const SUGGEST: SuggestResponse = { symbol: "NIFTY", today: "2026-10-13", cards: [AVOID, PAPER, WAIT], note: "The library's pre-registered recipes. Not a recommendation." };
 
 const LONG_NAME = "NIFTY 20-Oct-2026 · NIFTY short iron condor with ultra-wide protective wings, a delta-neutral adjustment rule and a pre-earnings exit, weekly (version 12)";
 const big = (x: number) => x * 12345;
-export const LONG_ENTER: TradePlan = { ...ENTER, title: LONG_NAME, kind: "iron_condor_with_delta_neutral_adjustments", label: "ENTER (no proven edge — size small, paper first, half size)",
+export const LONG_PAPER: TradePlan = { ...PAPER, title: LONG_NAME, kind: "iron_condor_with_delta_neutral_adjustments", label: "NO PROVEN EDGE — paper only (0 real lots), paper first, half size",
   spot: 125000.75, max_profit: big(2762), max_loss: -big(13488), breakevens: [124557.5, 125442.5, 126013.25], costs: big(180),
-  legs: [...ENTER.legs, { right: "put" as const, strike: 24100, side: "buy" as const, lots: 25 }, { right: "call" as const, strike: 25900, side: "buy" as const, lots: 25 }].map((l) => ({ ...l, strike: l.strike + 100000, lots: 25 })),
-  size: { ...ENTER.size!, suggested: 25, budget: big(20000), reason: "₹24,69,00,000 budget ÷ ₹7,40,70,000 risk per set = 3; no proven edge, so half of it: 25" },
+  legs: [...PAPER.legs, { right: "put" as const, strike: 24100, side: "buy" as const, lots: 25 }, { right: "call" as const, strike: 25900, side: "buy" as const, lots: 25 }].map((l) => ({ ...l, strike: l.strike + 100000, lots: 25 })),
+  size: { ...PAPER.size!, suggested: 25, budget: big(20000), reason: "₹24,69,00,000 budget ÷ ₹7,40,70,000 risk per set = 3; no proven edge, so half of it: 25" },
   entry: { legs: [{ right: "put", strike: 124600, side: "sell", lots: 25, bid: 12345.25, ask: 12399.75, last: 12370, mid: 12372.5, limit_from: 12372.5, limit_to: 12345.25, spread_pct: 0.44, slippage: 27.25, status: "ok" }],
     status: "ok", net_mid: 12342.5, net_fill_now: 12240, notes: ["The far leg's spread is over 3%: fill the near legs first."], levels_priced_at: "bid/ask mid",
     source: "bid/ask: NSE chain at 09:31", slippage_inr: big(1500) },
-  exits: { ...ENTER.exits!, stop: lvl(big(5525), 12127.5, 124420), target: lvl(big(1381), 2021.25, 124990), notes: ["A results meeting falls before expiry: the stop may gap through."], rule_of_thumb: "Close at 50% of the credit or 21 days to expiry, whichever comes first." },
-  paper: { ...ENTER.paper!, total_net: -big(320) } };
-export const LONG_SUGGEST: SuggestResponse = { ...SUGGEST, cards: [{ ...AVOID, title: `${LONG_NAME} (avoid)` }, LONG_ENTER] };
+  exits: { ...PAPER.exits!, stop: lvl(big(5525), 12127.5, 124420), target: lvl(big(1381), 2021.25, 124990), notes: ["A results meeting falls before expiry: the stop may gap through."], rule_of_thumb: "Close at 50% of the credit or 21 days to expiry, whichever comes first." },
+  paper: { ...PAPER.paper!, total_net: -big(320) } };
+export const LONG_SUGGEST: SuggestResponse = { ...SUGGEST, cards: [{ ...AVOID, title: `${LONG_NAME} (avoid)` }, LONG_PAPER] };
 
 // POST /api/fno/strategy: the builder's analysis of an iron condor
 const costs = (total: number) => ({ lines: { stt: 12.5, exchange: 18.24, sebi: 0.05, stamp: 1.2, brokerage: 80, gst: 17.68 }, total, turnover: 52000, orders: 4,

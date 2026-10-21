@@ -82,9 +82,9 @@ def client(env, monkeypatch):
 def test_plan_card_has_every_part_and_no_strong_call_without_evidence(client):
     _profile("1000000")  # budget 2% = ₹20,000
     card = client.post("/api/fno/plan", json={"symbol": "NIFTY", "expiry": "2026-10-06", "legs": PCS}).json()
-    assert card["kind"] == "put_credit" and card["action"] in ("ENTER", "WAIT", "AVOID")
-    if card["action"] == "ENTER":
-        assert card["qualifier"] == "no proven edge — size small"  # nothing saved: never an unqualified ENTER
+    # nothing saved: never ENTER (#350); every check passes, so paper only with 0 real-money lots
+    assert card["kind"] == "put_credit" and card["action"] == "PAPER"
+    assert card["label"] == "NO PROVEN EDGE — paper only (0 real lots)" and card["size"]["real_lots"] == 0
     assert [(x["strike"], x["side"]) for x in card["legs"]] == [(22600, "sell"), (22400, "buy")]
     # risk per set = max loss + entry costs ≈ ₹12.2k → floor(20,000 / 12.2k) = 1; half of it is still 1
     assert card["size"]["multiple"] == 1 and card["size"]["suggested"] == 1
@@ -164,7 +164,7 @@ def test_suggest_applies_each_recipe_and_marks_closed_windows(client):
     assert puts[1] < 22780.25 < calls[0]
     # no IV history stored: the recipe's IV filter is unknown → never ENTER
     assert ic["action"] == "WAIT" and "Recipe IV filter" in ic["failed"]
-    assert all(not (c["action"] == "ENTER" and c.get("qualifier") is None) for c in got["cards"])
+    assert all(c["action"] != "ENTER" for c in got["cards"])  # no candidate saved: never ENTER (#350)
 
 
 def test_context_panel_reads_stored_history_and_labels_evidence(client):
@@ -401,3 +401,41 @@ def test_context_defaults_the_expiry_and_says_so(groww, monkeypatch, today, expi
     assert body["expiry"] == want and body["expiry_defaulted"] is True and body["expiry_note"]
     given = groww.get("/api/fno/NIFTY/context", params={"expiry": "2026-10-13"}).json()
     assert given["expiry"] == "2026-10-13" and given["expiry_defaulted"] is False
+
+
+# --------------------------------------------------------------------------- #350: no real money, no ENTER without a candidate
+CCS = [
+    {"right": "call", "strike": 23000, "side": "sell", "lots": 1},
+    {"right": "call", "strike": 23200, "side": "buy", "lots": 1},
+]
+# RESULTS.md: the NIFTY call credit spread FAILED out of sample with a positive, insignificant expectancy (t 0.73)
+CCS_FAILED = {"key": "nifty_ccs_m", "name": "NIFTY call credit spread, monthly", "role": "candidate", "status": "fails",
+              "spec_hash": "x" * 64, "underlying": "NIFTY",
+              "windows": {"oos": {"expectancy": 679.0, "t_stat": 0.73, "trades": 49, "from": "2024-07-01",
+                                  "to": "2026-10-09"}}}  # fmt: skip
+
+
+def test_failed_spec_with_positive_expectancy_gets_no_enter_and_no_real_lots_350(client, monkeypatch):
+    from dataclasses import replace
+
+    from finresearch.backtest import specs
+    from finresearch.signals import registry
+
+    _profile("1000000")
+    _save_backtest([CCS_FAILED])
+    # the recorded chain passes every gate only at 7 days to expiry (29-Sep): widen nifty_ccs_m's window so the match
+    # is exact there; on main this card read "ENTER (no proven edge — size small)" with 1 lot (#350's bug)
+    monkeypatch.setattr(
+        specs, "SPECS", [replace(s, dte_min=4) if s.key == "nifty_ccs_m" else s for s in specs.SPECS]
+    )
+    card = client.post("/api/fno/plan", json={"symbol": "NIFTY", "expiry": "2026-10-06", "legs": CCS}).json()
+    assert card["evidence"]["spec_key"] == "nifty_ccs_m" and card["evidence"]["match"] == "exact"
+    assert card["action"] != "ENTER" and not card["label"].startswith("ENTER")
+    assert card["size"]["real_lots"] == 0
+    # the signal card's "Strategy check" for the same legs: the same rule
+    monkeypatch.setattr(fs, "CLIENT", FakeFno)
+    monkeypatch.setattr(registry, "_PROVIDERS", {"fno": fs.fno_signal})
+    monkeypatch.setattr(registry, "_loaded", True)
+    s = client.get("/api/signals/fno/NIFTY", params={"expiry": "2026-10-06", "legs": json.dumps(CCS)}).json()
+    assert s["action"] != "ENTER"
+    assert s["sizing"]["real_lots"] == 0

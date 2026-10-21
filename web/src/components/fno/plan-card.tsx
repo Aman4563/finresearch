@@ -1,6 +1,6 @@
 "use client";
 
-import { ClipboardList, ShieldAlert, ShieldCheck, ShieldQuestion } from "lucide-react";
+import { ClipboardList, NotebookPen, ShieldAlert, ShieldCheck, ShieldQuestion } from "lucide-react";
 import Link from "next/link";
 
 import { fmtINR } from "@/components/charts";
@@ -11,8 +11,8 @@ import { Fig, Parts } from "./fit";
 import { PlanActions } from "./plan-actions";
 import type { ExitLevel, PlanAction, TradePlan } from "./plan-types";
 
-const VERDICT: Record<PlanAction, string> = { ENTER: "bg-gain-soft text-gain ring-gain/30", WAIT: "bg-warn-soft text-warn ring-warn/30", AVOID: "bg-loss-soft text-loss ring-loss/30" };
-const ICON = { ENTER: ShieldCheck, WAIT: ShieldQuestion, AVOID: ShieldAlert } as const;
+const VERDICT: Record<PlanAction, string> = { ENTER: "bg-gain-soft text-gain ring-gain/30", PAPER: "bg-background-subtle text-foreground ring-border-strong", WAIT: "bg-warn-soft text-warn ring-warn/30", AVOID: "bg-loss-soft text-loss ring-loss/30" };
+const ICON = { ENTER: ShieldCheck, PAPER: NotebookPen, WAIT: ShieldQuestion, AVOID: ShieldAlert } as const;
 const rs = (x: number | null | undefined) => (x == null ? "unknown" : `${x < 0 ? "−" : ""}${fmtINR(Math.abs(Math.round(x)))}`);
 const lvl = (x: number | null | undefined) => (x == null ? "—" : Math.round(x).toLocaleString("en-IN"));
 const pct = (x: number | null | undefined) => (x == null ? "unknown" : `${(x * 100).toFixed(0)}%`);
@@ -84,9 +84,9 @@ export function PlanCard({ plan, compact = false }: { plan: TradePlan; compact?:
   const ex = plan.exits;
   const s = plan.size, e = plan.entry;
   return (
-    <article aria-label={`Trade plan: ${plan.title}`} className={cx("min-w-0 space-y-3 rounded-xl border p-3 sm:p-4", plan.action === "AVOID" ? "border-loss/30" : plan.action === "ENTER" ? "border-gain/30" : "border-warn/30")}>
+    <article aria-label={`Trade plan: ${plan.title}`} className={cx("min-w-0 space-y-3 rounded-xl border p-3 sm:p-4", plan.action === "AVOID" ? "border-loss/30" : plan.action === "ENTER" ? "border-gain/30" : plan.action === "PAPER" ? "border-border-strong" : "border-warn/30")}>
       <header className="flex items-start gap-2.5">
-        <span className={cx("grid size-8 shrink-0 place-items-center rounded-lg", plan.action === "ENTER" ? "bg-gain-soft text-gain" : plan.action === "WAIT" ? "bg-warn-soft text-warn" : "bg-loss-soft text-loss")}>
+        <span className={cx("grid size-8 shrink-0 place-items-center rounded-lg", plan.action === "ENTER" ? "bg-gain-soft text-gain" : plan.action === "PAPER" ? "bg-background-subtle text-muted" : plan.action === "WAIT" ? "bg-warn-soft text-warn" : "bg-loss-soft text-loss")}>
           <Icon className="size-4" />
         </span>
         <div className="min-w-0 flex-1 space-y-1">
@@ -103,7 +103,8 @@ export function PlanCard({ plan, compact = false }: { plan: TradePlan; compact?:
       <KeyNumbers plan={plan} />
       {s && (
         <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-          <span className="whitespace-nowrap"><span className="text-muted">Size </span><span className="num font-semibold">{s.suggested ? `${s.suggested}× these legs` : "none fits"}</span></span>
+          <span className="whitespace-nowrap"><span className="text-muted">{s.real_lots ? "Size " : "Paper size "}</span><span className="num font-semibold" data-testid="plan-size">{s.suggested ? `${s.suggested}× these legs` : "none fits"}</span></span>
+          <span className="whitespace-nowrap"><span className="text-muted">Real money </span><span className="num font-semibold" data-testid="plan-real-lots">{s.real_lots ? `${s.real_lots}× these legs` : "0 lots"}</span></span>
           {e?.status === "ok" && <span className="whitespace-nowrap"><span className="text-muted">Entry </span><span className="num font-medium">{`net ${px(Math.abs(e.net_mid!))} ${e.net_mid! >= 0 ? "credit" : "debit"}`}</span></span>}
           {plan.costs != null && <span className="whitespace-nowrap"><span className="text-muted">Costs to expiry </span><span className="num">{rs(plan.costs)}</span></span>}
         </p>
@@ -143,7 +144,7 @@ function PlanDetail({ plan }: { plan: TradePlan }) {
       <summary className="cursor-pointer py-0.5 font-medium text-muted hover:text-foreground">Details: sizing, limit prices, adjustments and what invalidates the trade</summary>
       <div className="mt-1 grid gap-x-6 lg:grid-cols-2">
         <div className="min-w-0">
-          <Row label="Sizing" help="Lots from your profile's F&O budget: max-loss % × F&O capital, divided by the max loss plus entry costs of one set of these legs. Without a proven edge the plan uses half of it.">
+          <Row label="Sizing" help="Lots from your profile's F&O budget: max-loss % × F&O capital, divided by the max loss plus entry costs of one set of these legs. Real money only when the matching strategy passed its pre-registered out-of-sample test; otherwise 0 real lots and a paper size of half of it.">
             <span className="font-normal">{s.reason}</span>
           </Row>
           <Row label="Max profit"><N>{plan.max_profit == null ? "unlimited" : rs(plan.max_profit)}</N></Row>

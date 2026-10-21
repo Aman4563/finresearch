@@ -23,7 +23,9 @@ from finresearch.fincalc import options as o
 
 HARD_GATES = frozenset({"Defined risk", "Max loss within your F&O budget", "Not a same-day expiry"})
 ENTER, WAIT, AVOID = "ENTER", "WAIT", "AVOID"
-NO_EDGE = "no proven edge — size small"
+# #350: every check passes but no matched spec is a candidate: paper trading only, 0 real-money lots (never ENTER)
+PAPER = "PAPER"
+PAPER_ONLY = "NO PROVEN EDGE — paper only (0 real lots)"
 
 
 @dataclass(frozen=True)
@@ -147,15 +149,19 @@ def wing(quotes: Sequence[ChainQuote], right: str, anchor: float, target: float)
 @dataclass(frozen=True)
 class Size:
     multiple: int  # how many times the base legs fit the budget (0 = not even once)
-    suggested: int  # what the plan uses: the multiple, or half of it (at least 1) without a proven edge
+    suggested: (
+        int  # the paper size the plan uses: the multiple, or half of it (at least 1) without a proven edge
+    )
     budget: float
     risk_per_multiple: float | None  # max loss + entry costs of one multiple; None = unlimited
     reason: str
+    real_lots: int = 0  # real-money size (#350): 0 unless the matched spec is a candidate
 
 
 def size(max_loss_one: float | None, costs_one: float, budget: float, proven: bool, cap: int = 100) -> Size:
     """Lots from the risk budget: floor(budget ÷ (max loss + entry costs of the base legs)), as the backtester sizes
-    (backtest.engine.try_enter). Without a proven edge the plan suggests half of that, at least one when one fits."""
+    (backtest.engine.try_enter). Real money (#350) only when the matched spec is a candidate (`proven`): otherwise 0
+    real lots, and the paper size is half of it, at least one when one fits."""
     if max_loss_one is None:
         return Size(0, 0, budget, None, "the loss is unlimited, so no size fits a budget")
     risk = abs(max_loss_one) + max(costs_one, 0.0)
@@ -169,8 +175,9 @@ def size(max_loss_one: float | None, costs_one: float, budget: float, proven: bo
     sug = m if proven else max(1, m // 2)
     why = f"₹{budget:,.0f} budget ÷ ₹{risk:,.0f} risk per set (max loss + entry costs) = {m}"
     if not proven:
-        why += f"; no proven edge, so half of it: {sug}"
-    return Size(m, sug, budget, risk, why)
+        why += (f"; no strategy that passed out of sample matches, so 0 real-money lots and a paper size of half of "
+                f"it: {sug}")  # fmt: skip
+    return Size(m, sug, budget, risk, why, real_lots=m if proven else 0)
 
 
 # --------------------------------------------------------------------------- limit prices from bid/ask
@@ -374,10 +381,10 @@ def evidence_text(row: dict[str, Any] | None, level: str) -> str:
 
 def verdict(failed: Sequence[str], evidence: str) -> tuple[str, str | None]:
     """(action, qualifier). AVOID when a hard gate fails or the matching backtest is negative; WAIT when any other
-    check fails or is unknown; ENTER only when everything passes, and without a passed out-of-sample backtest it is
-    always qualified "no proven edge — size small" (never a strong call)."""
+    check fails or is unknown; ENTER only when everything passes AND the matched spec is a candidate (evidence
+    "proven"). Everything passing without that gives PAPER, "NO PROVEN EDGE — paper only (0 real lots)" (#350)."""
     if HARD_GATES & set(failed) or evidence == "negative":
         return AVOID, None
     if failed:
         return WAIT, None
-    return (ENTER, None) if evidence == "proven" else (ENTER, NO_EDGE)
+    return (ENTER, None) if evidence == "proven" else (PAPER, PAPER_ONLY)

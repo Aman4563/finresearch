@@ -270,6 +270,9 @@ class Household(BaseModel):
     target_equity_pct: Decimal | None = Field(None, ge=0, le=100)  # None = the age rule of thumb
 
 
+# #350: the most one F&O strategy may risk, % of F&O capital, unless the owner overrides it explicitly. The backtest
+# book sizes at 5% (backtest.specs.Book.max_loss_pct); the research roadmap suggests 2% or less.
+FNO_MAX_LOSS_CAP_PCT = Decimal(5)
 # number fields with a default that the profile form may send back empty: blank = the default, never a 422
 DEFAULTABLE = ("rebalance_band_abs_pp", "rebalance_band_rel_pct", "fno_capital_inr", "fno_max_loss_pct", "fno_brokerage_per_order_inr")  # fmt: skip
 
@@ -295,6 +298,8 @@ class Profile(BaseModel):
         Decimal(0), ge=0
     )  # 0 = not set: the F&O signal says so and makes no call
     fno_max_loss_pct: Decimal = Field(Decimal(2), gt=0, le=100)  # per strategy, % of fno_capital_inr
+    # #350: fno_max_loss_pct is capped at FNO_MAX_LOSS_CAP_PCT unless the owner sets this explicitly
+    fno_max_loss_override: bool = False
     fno_brokerage_per_order_inr: Decimal = Field(Decimal(20), ge=0, le=1000)  # flat per executed order
     fno_defined_risk_only: bool = True
     fno_experience: Literal["none", "some", "experienced"] = "none"
@@ -310,6 +315,14 @@ class Profile(BaseModel):
     # same inputs (report verdict, rules, lot limits), and no model call is made. Off = the advisor agent (Claude)
     # writes it from ADVISOR_FIELDS of this profile.
     local_suggestion: bool = False
+
+    @model_validator(mode="after")
+    def _cap_fno_max_loss(self) -> Profile:
+        """#350: above the cap without the explicit override reads as the cap (clamped, the safe direction: a stored
+        profile above it still loads, and every consumer sees at most the cap)."""
+        if not self.fno_max_loss_override and self.fno_max_loss_pct > FNO_MAX_LOSS_CAP_PCT:
+            self.fno_max_loss_pct = FNO_MAX_LOSS_CAP_PCT
+        return self
 
     @field_validator("display_name")
     @classmethod
