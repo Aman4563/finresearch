@@ -15,7 +15,7 @@ expiry level (payoff only) is exact. Nothing here is a forecast.
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -163,6 +163,65 @@ class Size:
 BOOK_BUDGET_PCT = 8.0
 MONTH_LOSS_STOP_PCT = 6.0
 UP_SHOCK = 0.25
+
+# P4.2 (#395): the common-shock and margin terms. Registered values, from the issue's reviewed text (20-Oct-2026):
+# the book after a new trade may lose at most SHOCK_BUDGET_PCT of F&O capital at any of NIFTY's one-session moves
+# SHOCK_MOVES (other underlyings move β × it, IVs follow the spot-vol response, one session passes: #394's engine), and
+# margin may use at most MARGIN_UTIL_MAX of the margin capacity. CASH_SHARE_MIN = c_min, the share of margin that must
+# be cash: the exchanges' 50 % cash-equivalent rule for collateral [U: the issue marks it "verify the rule"].
+SHOCK_MOVES = (-0.03, -0.05, -0.10, 0.05)
+SHOCK_BUDGET_PCT = 6.0
+MARGIN_UTIL_MAX = 0.5
+CASH_SHARE_MIN = 0.5
+
+
+def shock_lots(book: Mapping[float, float | None] | None, one: Mapping[float, float | None] | None,
+               limit: float, moves: Sequence[float] = SHOCK_MOVES) -> tuple[float | None, str]:  # fmt: skip
+    """Lots the common-shock budget allows (#395): the open book's P&L L_book(m) and one lot's L_1(m) (₹, signed) at
+    each registered move; P&L is linear in lots, so n lots add n × L_1(m). Accept n only if L_book(m) + n L_1(m) ≥
+    −limit at every m: n = min over the moves where one lot loses of floor((limit + L_book(m)) ÷ −L_1(m)). A book
+    already beyond the limit at any move takes nothing new (not even a hedge). None when any value is unknown; inf
+    when one lot loses at no move."""
+    if book is None or one is None or any(book.get(m) is None or one.get(m) is None for m in moves):
+        return None, "the book's or this trade's loss under the common shock is unknown, so it has no known room"
+    worst = min(moves, key=lambda m: book[m])  # type: ignore[arg-type,return-value]
+    if book[worst] <= -limit:  # type: ignore[operator]
+        return 0, (f"the open book already loses ₹{-book[worst]:,.0f} at a {worst:+.0%} NIFTY move, at or beyond the "  # type: ignore[operator]
+                   f"₹{limit:,.0f} common-shock budget")  # fmt: skip
+    bound: tuple[float, float] | None = None
+    for m in moves:
+        if one[m] < 0:  # type: ignore[operator]
+            n = max(0, math.floor((limit + book[m]) / -one[m]))  # type: ignore[operator]
+            bound = (n, m) if bound is None or n < bound[0] else bound
+    if bound is None:
+        return math.inf, "this trade loses at none of the shock moves"
+    n, m = bound
+    return n, (f"common shock at {m:+.0%}: ₹{limit:,.0f} budget, the open book's P&L ₹{book[m]:,.0f}, "
+               f"₹{-one[m]:,.0f} loss per set = room for {n:g}")  # type: ignore[operator]  # fmt: skip
+
+
+def margin_utilisation(margin_used: float, im_new: float, cash: float, collateral: float,
+                       c_min: float = CASH_SHARE_MIN) -> float:  # fmt: skip
+    """u = max((used + IM_new) ÷ (cash + collateral after haircut), (used + IM_new) × c_min ÷ cash) (#395)."""
+    x = margin_used + im_new
+    return max(x / (cash + collateral), x * c_min / cash if cash > 0 else math.inf)
+
+
+def margin_lots(margin_used: float | None, im_one: float | None, cash: float | None, collateral: float | None,
+                u_max: float = MARGIN_UTIL_MAX, c_min: float = CASH_SHARE_MIN) -> tuple[float | None, str]:  # fmt: skip
+    """Lots the margin cap allows (#395): u ≤ u_max ⇔ used + n IM_1 ≤ u_max × min(cash + collateral, cash ÷ c_min),
+    so n = floor((u_max × min(cash + collateral, cash ÷ c_min) − used) ÷ IM_1), floored at 0. `collateral` is after
+    the broker's haircut. None when any input is unknown (never counted as 0)."""
+    if margin_used is None or im_one is None or cash is None or collateral is None:
+        return None, "the margin in use, this trade's margin or the funds are unknown, so margin has no known room"
+    if cash <= 0:
+        return 0, f"no cash: margin needs a cash share of at least {c_min:.0%}"
+    cap = u_max * min(cash + collateral, cash / c_min)
+    if im_one <= 0:
+        return math.inf, "this trade needs no margin"
+    n = max(0, math.floor((cap - margin_used) / im_one))
+    return n, (f"margin: {u_max:.0%} of ₹{min(cash + collateral, cash / c_min):,.0f} capacity − ₹{margin_used:,.0f} in "
+               f"use, ₹{im_one:,.0f} per set = room for {n}")  # fmt: skip
 
 
 @dataclass(frozen=True)
