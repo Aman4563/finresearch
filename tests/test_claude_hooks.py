@@ -312,3 +312,20 @@ def test_post_edit_runs_eslint_on_web_files_only(tmp_path):
     other.write_text("export {}\n")
     assert _run("post-edit", {"cwd": str(tmp_path), "tool_input": {"file_path": str(other)}},
                 CLAUDE_PROJECT_DIR=str(tmp_path)).returncode == 0  # fmt: skip
+
+
+def test_claude_code_agent_worktrees_are_not_the_main_checkout(tmp_path):
+    """`isolation: worktree` agents work under <repo>/.claude/worktrees/ (#337): they must not count as the live tree."""
+    main = tmp_path / "repo"
+    subprocess.run(["git", "init", "-q", "-b", "main", str(main)], check=True)
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "--allow-empty",
+                    "-m", "init"], cwd=main, check=True)  # fmt: skip
+    agent = main / ".claude" / "worktrees" / "agent-1"
+    subprocess.run(["git", "worktree", "add", "-q", str(agent), "-b", "feat/a"], cwd=main, check=True)
+    assert guard.check_bash("git merge feat/b", str(agent)) is None
+    assert guard.check_bash("git checkout -b x", str(agent), live=True) is None
+    assert guard.check_bash("git merge feat/a", str(main)) is not None
+    ev = {"cwd": str(agent), "tool_input": {"file_path": str(agent / "src" / "x.py")}}
+    assert _run("pre-edit", ev, FINRESEARCH_HOOK_LIVE_RUN="1").returncode == 0
+    ev = {"cwd": str(main), "tool_input": {"file_path": str(main / "src" / "x.py")}}
+    assert _run("pre-edit", ev, FINRESEARCH_HOOK_LIVE_RUN="1").returncode == 2

@@ -64,6 +64,11 @@ def main_tree(cwd: str) -> Path | None:
     return Path(common).parent if common.endswith("/.git") else None
 
 
+def in_main_checkout(path: str, root: Path | None) -> bool:
+    """Inside the main working tree, not in a Claude Code agent worktree (those live under .claude/worktrees/)."""
+    return bool(root) and is_inside(path, root) and not is_inside(path, root / ".claude" / "worktrees")
+
+
 def is_inside(path: str, root: Path) -> bool:
     try:
         Path(path).resolve().relative_to(root.resolve())
@@ -200,7 +205,7 @@ def check_bash(command: str, cwd: str, live: bool = False) -> str | None:
             ]
             if verb == "merge" and merged and not {"--abort", "--continue", "--quit"} & set(rest):
                 root = main_tree(cwd)
-                if root and is_inside(cwd, root):
+                if in_main_checkout(cwd, root):
                     return ("never merge a branch into the main checkout (it is the live app's tree, e.g. superpowers' "
                             "'merge locally' option): push the branch, open a PR and deploy with /ship")  # fmt: skip
             if verb == "rebase" and any(re.fullmatch(r"(origin/)?(main|master)", a) for a in rest):
@@ -211,7 +216,7 @@ def check_bash(command: str, cwd: str, live: bool = False) -> str | None:
                 return "never soft-reset onto main and recommit an old tree: `git merge origin/main`"
             if live and verb in GIT_TREE_VERBS:
                 root = main_tree(cwd)
-                if root and is_inside(cwd, root):
+                if in_main_checkout(cwd, root):
                     return ("a research run is live: never change the main working tree's files or branch; work in "
                             "a worktree (`git worktree add ../wt-<name> -b <branch> origin/main`)")  # fmt: skip
         ln_flags = args[0] if prog == "ln" and args and re.fullmatch(r"-[a-zA-Z]*", args[0]) else ""
@@ -333,7 +338,7 @@ def pre_edit(event: dict) -> int:
     ti = event.get("tool_input") or {}
     path = str(ti.get("file_path") or ti.get("notebook_path") or "")
     root = main_tree(str(event.get("cwd") or os.getcwd()))
-    if path and root and is_inside(path, root) and not is_inside(path, root / "data") and live_run_active():
+    if path and in_main_checkout(path, root) and not is_inside(path, root / "data") and live_run_active():
         print("FinResearch guard blocked this edit: a research run is live, so the main working tree must not change. "
               "Work in a worktree: git worktree add ../wt-<name> -b <branch> origin/main", file=sys.stderr)  # fmt: skip
         return 2
