@@ -244,3 +244,40 @@ def _when(v: Any) -> datetime | None:
     except (TypeError, ValueError):
         return None
     return at if at.tzinfo else None  # a naive time is not trusted as fresh
+
+
+def work_dir():
+    """A private temporary folder on this Mac's own disk (the state dir) for plain dumps on their way out or in."""
+    import tempfile
+
+    from finresearch.config import get_settings
+
+    base = Path(get_settings().state_dir)
+    base.mkdir(parents=True, exist_ok=True)
+    return tempfile.TemporaryDirectory(prefix="offsite-", dir=base)  # mode 0700
+
+
+def backup_now(url: str | None, dest: Path | str | None, *, kinds: tuple[str, ...] = ("db", "tables"),
+               vault_url: str | None = None) -> dict[str, Path]:  # fmt: skip
+    """Dump and push each kind: `db` the whole database at `url` and `tables` its forward-only tables (both with
+    row counts from the dump's snapshot), `vault` the vault database (no row counts: counting is a read of sealed
+    data, so its drill checks only that the copy restores). The plain dumps are deleted as soon as they are pushed."""
+    from finresearch.backups.dump import dump_with_counts
+    from finresearch.config import get_settings
+
+    load_key()  # fail before any dump when there is no key
+    _root(dest)
+    made: dict[str, Path] = {}
+    with work_dir() as tmp:
+        for kind in kinds:
+            src = url or get_settings().database_url
+            if kind == "vault":
+                src = vault_url or get_settings().vault_database_url
+                if not src:
+                    raise OffsiteError("no vault database is configured (FINRESEARCH_VAULT_DATABASE_URL)")
+            plain = Path(tmp) / f"{kind}.dump"
+            counts = dump_with_counts(src, plain, tables=FORWARD_ONLY if kind == "tables" else None,
+                                      count=kind != "vault")  # fmt: skip
+            made[kind] = push(plain, dest, kind, counts=counts)
+            plain.unlink(missing_ok=True)
+    return made
