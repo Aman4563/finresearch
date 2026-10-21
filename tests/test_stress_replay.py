@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+from itertools import pairwise
 
 import pytest
 
@@ -188,7 +189,7 @@ MKT_RECENT = {d: 100 * (1 + 0.01 * ((i % 5) - 2)) for i, d in enumerate(RECENT_D
 
 def twice_market():  # a holding whose recent daily returns are exactly 2 × the market's: beta 2
     out, lv = {RECENT_DAYS[0]: 10.0}, 10.0
-    for a, b in zip(RECENT_DAYS, RECENT_DAYS[1:], strict=False):
+    for a, b in pairwise(RECENT_DAYS):
         lv *= 1 + 2 * (MKT_RECENT[b] / MKT_RECENT[a] - 1)
         out[b] = lv
     return out
@@ -302,7 +303,7 @@ def synthetic_history():
     from finresearch.portfolio.history import Benchmark, History, Position
 
     lv, bbb = 10.0, {NOW_DAYS[0]: 10.0}
-    for a, b in zip(NOW_DAYS, NOW_DAYS[1:], strict=False):
+    for a, b in pairwise(NOW_DAYS):
         lv *= 1 + 2 * (NOW_MKT[b] / NOW_MKT[a] - 1)
         bbb[b] = lv
     pos = [Position("NSE:AAA", "AAA Ltd", "stock", "equity", [1], 10, 100, None, 1000.0, None, "AAA"),

@@ -503,6 +503,10 @@ async def load(h: Any, fetch: Any, store: Any, today: date, *, index_series: Any
             "window": [w.start.isoformat(), w.end.isoformat()],
             "note": w.note,
         }
+        if w.end >= today:
+            out.append({**head, "available": False, "reason": f"the window has not ended (today {today:%d-%b-%Y})",
+                        "unmapped": []})  # fmt: skip
+            continue
         lo, until = (
             w.start - timedelta(days=MAX_GAP_DAYS + 3),
             min(w.end + timedelta(days=RECOVERY_DAYS), today),

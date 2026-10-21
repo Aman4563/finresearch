@@ -38,6 +38,7 @@ SETTINGS_KEY = "analytics"
 class AnalyticsSources:
     ter: Callable[[date], Awaitable[dict]] | None = None  # month -> {ter_key(name): SchemeTer}
     curve: Callable[[], Awaitable[Any]] | None = None  # () -> fbil.ParCurve
+    index_series: Callable[[str, date, date], dict] | None = None  # (symbol, start, end) -> closes (#345)
 
 
 class ExitLoad(BaseModel):
@@ -227,6 +228,26 @@ def add_portfolio_analytics_routes(app: FastAPI, *, scheme_rows: Callable[[], Aw
 
         stress = await cache.get(("stress", fp, today), HISTORY_TTL_S, make_stress) if hist.ok else []
         return risk_payload(hist, rfree, sectors, stress)
+
+    @app.get("/api/portfolio/analytics/stress-replay")
+    async def stress_replay() -> dict[str, Any]:
+        """Historical stress replay (#345): today's holdings replayed through Sep-Nov 2008, May-Aug 2013, Feb-Mar 2020,
+        3-5 Jun 2024 and Feb-Mar 2026. Loss, worst day, peak-to-trough, recovery and the holdings that drive it;
+        holdings with no price path are listed as unmapped. The first call reads each holding's prices for the windows
+        (cached on disk for good)."""
+        from finresearch.portfolio import stress_replay as sr
+        from finresearch.portfolio.history import Fetcher
+
+        hist, today, fp = await history()
+        if not hist.ok:
+            return {"available": False, "reason": hist.reason or "no value history yet", "scenarios": [],
+                    "method": sr.METHOD}  # fmt: skip
+
+        async def make():
+            async with Fetcher(src()) as f:
+                return await sr.load(hist, f, store(), today, index_series=seams().index_series)
+
+        return {"available": True, **await cache.get(("replay", fp, today), HISTORY_TTL_S, make)}
 
     @app.get("/api/portfolio/analytics/concentration")
     async def concentration() -> dict[str, Any]:
