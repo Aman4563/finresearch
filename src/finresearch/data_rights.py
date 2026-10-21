@@ -47,6 +47,9 @@ DECISIONS: dict[str, Decision] = {
         Decision(
             "equity_eod", "accept-personal", "2026-10-21", "issue #362", _NSE_TERMS
         ),  # products/content/sec_bhavdata_full (#373 (a))
+        Decision(
+            "fno_bhav", "accept-personal", "2026-10-21", "issue #362", _NSE_TERMS
+        ),  # the F&O bhavcopy (#306, collected since before #362) and its 2008-2021 vault load (#365)
     )
 }
 
