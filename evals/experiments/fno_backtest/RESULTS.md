@@ -73,6 +73,23 @@ specs (Strategy Lab style, no IV filter, 2022-23) change materially: NIFTY weekl
 is flagged "settled at uniform option settle … (no future or underlying to check it)". Live Strategy Lab runs were
 not replayed here (the live database was not read); re-run any hold-to-expiry weekly lab run from 2022-23.
 
+## Engine change (22-Oct-2026, #382): dated charges for 2022-24, and a next-print fill variant
+
+Post hoc, engine only (specs, book, criteria and `PREREG.md` untouched; registration hash unchanged).
+
+- **Dated charges.** `fincalc.charges` now applies the rates in force on each trade date, read from NSE's circulars:
+  option-sale STT 0.05 % to 31-Mar-2023 and 0.0625 % to 30-Sep-2024 (was 0.1 % for every date), futures STT
+  0.01 % / 0.0125 %, NSE transaction charges 0.053 % (2021-23), 0.0505 % (Apr-2023, incl. IPFT) and 0.05 % (Apr-2024)
+  of option premium (was 0.03553 %), exercise STT 0.125 % of intrinsic value from 1-Sep-2019 (unchanged). This
+  replaces the caveat above that "in-sample charges use the later rates". It moves every in-sample trade's costs
+  and the out-of-sample trades entered or exited before 1-Oct-2024 (lower STT, higher NSE charge). The published
+  figures above were computed with the old flat rates; the library has NOT been re-run under the dated table here
+  (no copy of the history was available to this change; the live database was not read). Re-run it before any
+  figure in this file is quoted again, and record the before/after here.
+- **Next-print fills** (`engine.run(fill="next_open" | "next_close")`): a registered sensitivity, pre-registered in
+  `evals/experiments/execution_realism/PREREG.md` before any run. The default `same_print` engine is unchanged
+  (`tests/test_backtest_fills.py::test_same_print_is_the_registered_engine_unchanged`).
+
 ## Evidence labels on the trade-plan cards (#355), pre-registered 21-Oct-2026 before the code change
 
 harmful ⇔ expiry-clustered t ≤ −2 AND the upper bound of the cluster-bootstrap 95 % CI < 0, for roughly delta-neutral
