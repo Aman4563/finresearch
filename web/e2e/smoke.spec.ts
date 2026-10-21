@@ -43,6 +43,26 @@ test("portfolio: unknown cost, stale price and incomplete tax are labelled", asy
     "GET /api/disclosures/tracked", "GET /api/portfolio/ais"]);
 });
 
+test("tax: an earlier loss with an unknown filing status is shown as unknown, never applied (#344)", async ({ page }) => {
+  const api = await mockApi(page, {
+    "GET /api/portfolio": SNAPSHOT,
+    "POST /api/portfolio/snapshot": { recorded: false, reason: "e2e" },
+    "GET /api/portfolio/tax": TAX,
+    "GET /api/connections/summary": [],
+    "PUT /api/portfolio/tax/losses": { returns_filed_on_time: { "2025": true }, brought_forward: [] },
+  });
+  await page.goto("/portfolio#tax");
+  await expect(page.getByText(/earlier losses not counted/i)).toBeVisible();
+  const ledger = page.getByRole("region", { name: "Carry-forward ledger" });
+  await expect(ledger.getByText(/filing unknown/i)).toBeVisible();
+  await expect(ledger.getByText("FY 2032-33")).toBeVisible(); // usable for 8 years after the loss year
+  await page.getByRole("button", { name: "On time" }).click();
+  await expect.poll(() => api.count("PUT /api/portfolio/tax/losses")).toBe(1);
+  if (phone(page)) await expectNoHorizontalOverflow(page);
+  api.expectClean(["GET /api/funds/category-ranks", "GET /api/lookthrough", "GET /api/portfolio/health",
+    "GET /api/disclosures/tracked", "GET /api/portfolio/ais"]);
+});
+
 test("portfolio: a matured bond says so and offers to record its redemption (#294)", async ({ page }) => {
   const api = await mockApi(page, {
     "GET /api/portfolio": BOND_SNAPSHOT,

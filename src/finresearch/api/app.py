@@ -762,7 +762,12 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
         alert_ids = [r.id for r in profile.alert_rules]
         if len(alert_ids) != len(set(alert_ids)):
             raise HTTPException(422, "alert rule ids must be unique")
+        from finresearch.suggest.advisor import load_profile
+
         with session_scope() as s:
+            # the carry-forward inputs (#344) change only through PUT /api/portfolio/tax/losses: a profile page loaded
+            # before such an edit would otherwise write the old ones back
+            profile.tax_losses = load_profile(s).tax_losses
             return save_profile(s, profile).model_dump(mode="json")
 
     @app.get("/api/profile/stats")

@@ -441,6 +441,32 @@ def add_portfolio_routes(app: FastAPI, *, scheme_rows: Callable[[], Awaitable[li
         with session_scope() as s:
             return tax_view(s, prices, src().today(), slab)
 
+    @app.get("/api/portfolio/tax/losses")
+    def tax_losses() -> dict[str, Any]:
+        """The carry-forward inputs (#344): which loss years' returns were filed on time, and losses brought forward
+        from before the app's records. Personal data: never sent to a model."""
+        from finresearch.suggest.advisor import load_profile
+
+        with session_scope() as s:
+            return load_profile(s).tax_losses.model_dump(mode="json")
+
+    @app.put("/api/portfolio/tax/losses")
+    def put_tax_losses(body: dict[str, Any]) -> dict[str, Any]:
+        """Replace the carry-forward inputs; the rest of the profile is untouched."""
+        from pydantic import ValidationError
+
+        from finresearch.suggest.advisor import load_profile, save_profile
+        from finresearch.suggest.profile import TaxLosses
+
+        try:
+            losses = TaxLosses.model_validate(body)
+        except ValidationError as e:
+            raise HTTPException(422, e.errors(include_url=False, include_context=False)) from e
+        with session_scope() as s:
+            profile = load_profile(s)
+            profile.tax_losses = losses
+            return save_profile(s, profile).tax_losses.model_dump(mode="json")
+
     @app.get("/api/portfolio/tax.csv")
     def tax_csv(fy: int | None = Query(None, ge=2000, le=2100)) -> Response:
         from finresearch.portfolio.report import export_rows

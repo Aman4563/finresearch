@@ -306,9 +306,9 @@ def alert_metrics(session: Session) -> Out:
     from finresearch.fincalc.dates import fiscal_year, today_ist
     from finresearch.fincalc.tax import fy_label
     from finresearch.portfolio import cache
-    from finresearch.portfolio.report import disposal_rows, load
+    from finresearch.portfolio.report import disposal_rows, load, tax_loss_inputs
     from finresearch.portfolio.sip import LATE, NOT_YET, sip_health
-    from finresearch.portfolio.tax import fy_summary
+    from finresearch.portfolio.tax import fy_summary, ledger_of
 
     out: Out = {}
     data = load(session)
@@ -317,7 +317,9 @@ def alert_metrics(session: Session) -> Out:
         return {k: (None, reason) for k in PORTFOLIO_METRICS}
     today = today_ist()
     fy = fiscal_year(today)
-    summary = fy_summary(disposal_rows(data), fy, Decimal("0.30"))  # the headroom does not depend on the slab
+    rows, slab = disposal_rows(data), Decimal("0.30")  # the headroom hardly depends on the slab
+    # losses brought forward from earlier years (#344) are set off before the exemption, as on the tax page
+    summary = fy_summary(rows, fy, slab, ledger_of(rows, slab, tax_loss_inputs(session), today))
     ex = summary["exemption"]
     # an unclassified disposal may use the exemption: the headroom is unknown, not the full limit (#213)
     if not ex["complete"]:
