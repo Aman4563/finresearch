@@ -35,7 +35,7 @@ from finresearch.fincalc.dates import is_business_day, to_ist
 log = logging.getLogger(__name__)
 START = (15, 45)  # IST: the close is 15:30; the series settles a few minutes later
 COMPLETE_AFTER = time(15, 35)
-ARCHIVE_INDICES = ("NIFTY 50", "NIFTY BANK", "NIFTY NEXT 50")
+ARCHIVE_INDICES = ("NIFTY 50", "NIFTY BANK", "NIFTY NEXT 50", "INDIA VIX")  # India VIX daily since #366
 MAX_TRIES, RETRY_S = 3, 600
 MAX_SYMBOLS = 40
 _tries: dict[tuple[str, str, date], tuple[int, float]] = {}

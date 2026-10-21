@@ -356,6 +356,8 @@ def test_after_close_archive_completes_watched_and_viewed_symbols(env):
     assert (
         ("equity", "INFY") in got
         and ("index", "NIFTY 50") in got
+        and ("index", "INDIA VIX")
+        in got  # #366: India VIX's session is archived every day, not only when viewed
         and set(out["archived"]) >= {"INFY", "NIFTY 50"}
     )
     with session_scope() as s:
