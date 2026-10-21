@@ -70,7 +70,10 @@ def client(env, monkeypatch):
 
     with session_scope() as s:
         s.execute(
-            text("TRUNCATE fno_backtest_result, fno_backtest_run, fno_participant_oi, fno_bhav CASCADE")
+            text(
+                "TRUNCATE fno_backtest_result, fno_backtest_run, fno_participant_oi, fno_bhav, paper_leg, "
+                "paper_strategy CASCADE"
+            )  # no open paper trade from another file fills the open book (#358)
         )
     monkeypatch.setattr(dates, "now_ist", lambda: NOW)
     fs._CLOSES.clear()
@@ -467,6 +470,11 @@ def test_signal_card_and_trade_card_give_the_same_verdict_and_lots_355(client, m
         return tpl.EMPTY_BOOK
 
     monkeypatch.setattr(tpl, "load_book", known)
+    # a year of IV ending at its high: the recipe's registered IV filter (≥ 30th percentile) passes for exact matches
+    from datetime import timedelta
+
+    series = [(date(2026, 9, 28) - timedelta(days=120 - i), 10.0 + i / 10, None) for i in range(121)]
+    monkeypatch.setattr(fs, "iv_series_info", lambda sym: (series, {"source": "bhavcopy"}))
     _profile("1000000")
     _save_backtest([row] if row else [])
     card = client.post("/api/fno/plan", json={"symbol": "NIFTY", "expiry": "2026-10-06", "legs": IC}).json()
@@ -498,10 +506,12 @@ def test_iv_percentile_is_context_not_a_gate_for_ad_hoc_legs_355():
     # a year of IV at 30% and today's at 5%: percentile 0, so the IV check fails for a premium seller
     x = tpl.Inputs(today=date(2026, 9, 29), closes=closes, iv_series=[30.0] * 120 + [5.0], capital=1_000_000,
                    max_loss_pct=2, brokerage=20, defined_risk_only=True, rate=0.065, book=tpl.EMPTY_BOOK)  # fmt: skip
-    legs = [fs.LegIn(y["right"], y["strike"], y["side"]) for y in IC]
+    # a call credit spread 7 days out: only related to nifty_ccs_m (30-45 days), so no recipe filter applies
+    legs = [fs.LegIn(y["right"], y["strike"], y["side"]) for y in CCS]
     card = tpl.build(chain(), 65, legs, x)
     iv = next(c for c in card["checks"] if c["name"] == "IV context fits the strategy")
     assert iv["contribution"] < 0  # still shown, and still failing as context
+    assert card["evidence"]["match"] == "related"
     assert "IV context fits the strategy" not in card["failed"] and card["action"] == "PAPER"
 
 
@@ -592,3 +602,22 @@ def test_a_naked_short_call_at_groww_adds_its_up_shock_loss_358(client, monkeypa
     # independent: S × 1.25 = 22,780.25 × 1.25 = 28,475.3125; loss (28,475.3125 − 23,500 − 20) × 65
     want = (22780.25 * 1.25 - 23500 - 20) * 65
     assert card["size"]["open_book"]["open_risk"] == pytest.approx(want, rel=1e-6)
+
+
+def test_ad_hoc_legs_matching_a_recipe_exactly_keep_its_registered_iv_filter_355():
+    """Removing the untested IV gate must not make a hand-built copy of a candidate recipe looser than the recipe: an
+    exact match borrows the recipe's evidence, so it also gets its registered iv_pct_min (0.30)."""
+    from finresearch.adapters.nse_fno import parse_index_history
+    from finresearch.signals import tradeplan as tpl
+
+    closes = [float(c) for _, c in parse_index_history(
+        json.loads((FNO / "indices_history_NIFTY50_202606_202609.json").read_text()))]  # fmt: skip
+    row = _ic_row(status="candidate", expectancy=3000.0, t_stat=2.6, ci_low=400.0, ci_high=5000.0)
+    x = tpl.Inputs(today=date(2026, 9, 29), closes=closes, iv_series=[30.0] * 120 + [5.0], capital=1_000_000,
+                   max_loss_pct=2, brokerage=20, defined_risk_only=True, rate=0.065, strategies=[row],
+                   book=tpl.EMPTY_BOOK)  # fmt: skip
+    card = tpl.build(chain(), 65, [fs.LegIn(y["right"], y["strike"], y["side"]) for y in IC], x)
+    assert card["evidence"]["match"] == "exact" and card["evidence"]["level"] == "proven"
+    assert (
+        "Recipe IV filter" in card["failed"] and card["action"] == "WAIT" and card["size"]["real_lots"] == 0
+    )

@@ -208,19 +208,21 @@ async def real_positions(today: date) -> tuple[list[RealPosition] | None, str | 
     if st["status"] == "not_connected":
         return [], "Groww is not connected: only paper positions are counted in the open book."
     if st["status"] != "ok":
-        return None, "Groww's F&O positions have not been read yet: the open risk is unknown."
+        return None, ("Groww is connected but its F&O positions have not been read yet: the open risk is unknown "
+                      "(run a Groww sync on the Connections page).")  # fmt: skip
     if not st["rows"]:
         return [], None
     inst = await service._instruments(service._market())
     if inst is None:
-        return None, "Groww's instruments file could not be read: the open F&O positions' risk is unknown."
+        return None, ("Groww's instruments file could not be read, so the Groww F&O positions cannot be priced: the "
+                      "open risk is unknown (try again, or sync Groww).")  # fmt: skip
     groups: dict[tuple[str, date], list[o.Leg]] = defaultdict(list)
     for r in st["rows"]:
         c = pos.contract(inst.contract(r.get("symbol") or ""))
         qty, avg = service._f(r.get("quantity")), service._f(r.get("avg_price"))
         if c is None or not r.get("direction_known") or qty is None or avg is None:
-            return None, ("A Groww F&O position could not be resolved (contract, long/short or average price "
-                          "unknown): the open risk is unknown.")  # fmt: skip
+            return None, (f"The Groww F&O position {r.get('symbol') or '?'} could not be resolved (contract, long/short "
+                          "or average price unknown): the open risk is unknown (sync Groww again).")  # fmt: skip
         right, q = c["right"], int(qty)
         leg = o.Leg("future", avg, 0.0, q) if right == "future" else o.Leg(right, c["strike"], avg, q)
         groups[(c["underlying"], c["expiry"])].append(leg)
@@ -366,11 +368,12 @@ def decide(gates: list[str], max_loss_one: float | None, costs_one: float, budge
         reasons.append(f"Sizing: {sz.reason}.")
     elif sz.multiple > 0 and sz.suggested == 0:
         failed.append(BOOK_CHECK)  # the trade fits its budget, the open book has no room for it
-        reasons.append(f"{BOOK_CHECK}: {sz.reason}.")
+        why = " ".join(book.notes) if book is not None and book.open_risk is None else ""
+        reasons.append(f"{BOOK_CHECK}: {sz.reason}." + (f" {why}" if why else ""))
     if book is not None and book.month_stopped():
         failed.append(MONTH_CHECK)
         reasons.append(f"{MONTH_CHECK}: " + ("the paper book's month-to-date P&L is unknown (an open paper trade has "
-                       "no mark yet), so no card can pass it." if book.mtd_paper is None else
+                       "no mark yet: it is marked in the next in-session pass), so no card can pass it." if book.mtd_paper is None else
                        f"the paper book is down ₹{-book.mtd_paper:,.0f} this month, at or beyond the "
                        f"{tp.MONTH_LOSS_STOP_PCT:g}% of F&O capital stop: every card waits until next month."))  # fmt: skip
     for name, why in extra_failed or []:
@@ -513,6 +516,10 @@ def build(chain, lot: int, legs_in: list[fs.LegIn], x: Inputs, *, spec: Any | No
     kind = tp.classify(plan_legs)
     ev = _evidence(kind, sym, dte, x, spec)
     a0 = _analyse(chain, lot, legs_in, x)
+    if spec is None and ev["match"] == "exact":
+        # legs that are exactly a library recipe borrow its evidence, so they also get its registered entry filter
+        # (#355: never looser than the recipe once the untested IV gate is context only)
+        extra_failed = [*(extra_failed or []), *_recipe_checks(ev["spec"], x)]
     ob = book_for(x.book, x.capital, sym, kind, spot, ev["spec"] if ev["match"] == "exact" else None)
     sz = tp.size(
         a0["max_loss"], a0["costs"]["entry"]["total"], x.budget, proven=ev["level"] == "proven", book=ob
