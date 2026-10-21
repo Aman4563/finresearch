@@ -270,6 +270,48 @@ class Household(BaseModel):
     target_equity_pct: Decimal | None = Field(None, ge=0, le=100)  # None = the age rule of thumb
 
 
+class BroughtForwardLoss(BaseModel):
+    """A capital loss of an earlier year typed in from the user's own return (ITR Schedule CFL), for years before the
+    app's records (#344). `amount_inr` is what is still unabsorbed and available from `apply_from_fy` (default the year
+    after the loss). Years are named by their end (2024 = FY 2023-24). s.74(2) / s.111: at most eight years after."""
+
+    origin_fy: int = Field(ge=2000, le=2100)
+    kind: Literal["short", "long"]
+    amount_inr: Decimal = Field(gt=0, le=Decimal(10) ** 12)
+    source: str = Field(
+        min_length=1, max_length=200
+    )  # where the figure comes from, e.g. "ITR AY 2024-25 CFL"
+    apply_from_fy: int | None = Field(None, ge=2000, le=2100)
+
+    @field_validator("source", mode="before")
+    @classmethod
+    def _strip(cls, v: Any) -> Any:
+        return " ".join(v.split()) if isinstance(v, str) else v
+
+    @model_validator(mode="after")
+    def _window(self) -> BroughtForwardLoss:
+        start = self.apply_from_fy or self.origin_fy + 1
+        if not self.origin_fy < start <= self.origin_fy + 8:
+            raise ValueError("apply_from_fy must be 1 to 8 years after origin_fy (s.74(2) / s.111)")
+        return self
+
+
+class TaxLosses(BaseModel):
+    """Inputs of the capital-loss carry-forward ledger (#344; portfolio.tax.TaxLossInputs). Private: never sent to a
+    model. `returns_filed_on_time`: loss year -> whether its return was filed within s.139(1) time (s.80 / s.121);
+    a year left out is unknown, and its loss is then not set off."""
+
+    returns_filed_on_time: dict[int, bool] = Field(default_factory=dict)
+    brought_forward: list[BroughtForwardLoss] = Field(default_factory=list, max_length=50)
+
+    @model_validator(mode="after")
+    def _unique(self) -> TaxLosses:
+        keys = [(b.origin_fy, b.kind) for b in self.brought_forward]
+        if len(keys) != len(set(keys)):
+            raise ValueError("one brought-forward entry per loss year and kind")
+        return self
+
+
 # #350: the most one F&O strategy may risk, % of F&O capital, unless the owner overrides it explicitly. The backtest
 # book sizes at 5% (backtest.specs.Book.max_loss_pct); the research roadmap suggests 2% or less.
 FNO_MAX_LOSS_CAP_PCT = Decimal(5)
@@ -311,6 +353,8 @@ class Profile(BaseModel):
     alert_rules: list[AlertRule] = Field(default_factory=list, max_length=200)
     # household finances for /wealth (finresearch.wealth); private, never in the advisor prompt
     household: Household = Field(default_factory=Household)
+    # capital-loss carry-forward inputs for the tax view (#344); private, never in the advisor prompt
+    tax_losses: TaxLosses = Field(default_factory=TaxLosses)
     # #215 "Keep the personal IPO suggestion local": the suggestion is written by fixed rules on this machine from the
     # same inputs (report verdict, rules, lot limits), and no model call is made. Off = the advisor agent (Claude)
     # writes it from ADVISOR_FIELDS of this profile.
@@ -339,7 +383,7 @@ class Profile(BaseModel):
 
 
 # personal financial data: never sent to an LLM
-PRIVATE_FIELDS = {"household"}
+PRIVATE_FIELDS = {"household", "tax_losses"}
 # not investment inputs (or private): kept out of the stored decision inputs
 UI_FIELDS = {
     "display_name",

@@ -92,6 +92,20 @@ the sections, and its changes could not be checked in this session. Charges are 
 | g30_gsec_exchange_sale_long_term.json | #294: dated G-sec (IN00 ISIN, tax class auto) sold after 12 months: 12.5 % under s.112, no s.112A threshold (interpretive: G-sec as listed) |
 | g31_tbill_held_to_maturity.json | #294: 364-day T-bill (tax class auto) redeemed at face: STCG at slab (interpretive: head of income) |
 | g32_unlisted_debenture_s50aa.json | #294: unlisted debenture redeemed after 23-Jul-2024: s.50AA deemed STCG at slab despite 36 months |
+| g38_current_year_stcl_vs_stcg.json | #344: current-year equity STCL set off against STCG only (s.70(2)) |
+| g39_bf_stcl_vs_stcg.json | #344: manual brought-forward STCL (filed on time) set off against STCG two years later (s.74(1)(a)) |
+| g40_bf_stcl_vs_ltcg_above_threshold.json | #344: brought-forward STCL against equity LTCG, then the Rs 1.25L exemption |
+| g41_bf_ltcl_only_vs_ltcg.json | #344: brought-forward LTCL absorbs the small LTCG only, never the STCG; balance carried (interpretive, see 16) |
+| g42_engine_ltcl_chain.json | #344: LTCL from events in fy 2025 carried and absorbed by LTCG in fy 2026 (two FY blocks) |
+| g43_eight_year_boundary_used.json | #344: 8-year limit: origin fy 2018 still set off in fy 2026 |
+| g44_eight_year_boundary_lapsed.json | #344: 8-year limit: origin fy 2017 lapsed after fy 2025, not set off in fy 2026 |
+| g45_late_filing_not_carried.json | #344: late filing (s.80): engine-computed STCL not carried, fy 2026 fully taxed |
+| g46_unknown_filing_status.json | #344: unknown filing status: loss excluded from tax, carry_forward_complete false |
+| g47_two_bf_stcl_oldest_first.json | #344: two brought-forward STCLs, partial absorption, oldest year first (interpretive, see 17) |
+| g48_bf_stcl_and_ltcl_vs_ltcg.json | #344: brought-forward STCL and LTCL compete for one LTCG: LTCL first (interpretive, see 18) |
+| g49_bf_stcl_vs_ltcg_below_threshold.json | #344: brought-forward STCL set off compulsorily against LTCG under Rs 1.25L (interpretive, see 16) |
+| g50_current_stcl_low_slab_order.json | #344: slab 5 %: current-year STCL absorbs the 12.5 % LTCG before the 5 % slab STCG (interpretive, see 19) |
+| g51_origin_year_incomplete_unknown_amount.json | #344: origin year incomplete: ledger unknown_amount, loss excluded in fy 2026 (interpretive, see 21) |
 
 ## Points where the law is uncertain, or where a convention was chosen
 
@@ -135,3 +149,53 @@ the sections, and its changes could not be checked in this session. Charges are 
     as by name. Otherwise g21 will fail because of the schema, not because of the tax.
 15. **g15/g16 still assert `exempt_total: "0.00"`.** This is independent of the unknown cost or date, because neither case
     has an exempt transfer.
+16. **Brought-forward loss against LTCG the s.112A exemption would cover (g49, also g41 and g48, interpretive).** s.74(1)(a)
+    and (b) say the carried loss "shall be set off" against the capital gains of the following year, with no election, and
+    s.112A(1) taxes the LTCG included in total income, which is after that set-off. So the loss is used even when the gain
+    sits inside Rs 1.25L. g49: bf_set_off_short 50,000, exemption_used 30,000, remaining 0. Under the optional reading:
+    bf_set_off_short 0, exemption_used 80,000, remaining 50,000. Tax is 0 in both, so only the set-off and ledger fields
+    differ. g41 under the optional reading: bf_set_off_long 0, exemption_used 30,000, remaining 80,000, tax unchanged 10,000.
+17. **Which brought-forward year is used first (g47, interpretive).** s.74 does not say. The case uses the oldest first, because
+    the older loss expires first and Schedule CFL lists years in that order. Newest first would leave fy 2020 with 30,000
+    (last_fy 2028) and use fy 2023 in full. Tax is the same.
+18. **Brought-forward STCL vs LTCL against the same LTCG (g48, interpretive).** The case applies the LTCL first, because it can
+    absorb only LTCG, while a kept STCL can also absorb STCG taxed at 20 % or slab. Within one kind it uses the oldest
+    first. Under oldest-first across kinds: bf_set_off_short 60,000 and bf_set_off_long 0; the fy 2022 STCL is used and the
+    fy 2024 LTCL stays at 60,000. Tax is 0 in every reading.
+19. **Which gain a current-year STCL absorbs (g50, interpretive).** s.70(2) allows "any other capital gain" and fixes no order.
+    The case lets the assessee choose the most beneficial order: the gain taxed at the higher rate (LTCG at 12.5 % over
+    the threshold) before slab STCG at 5 %. That gives a total of 11,440. STCL against STCG first gives 13,000 (tax
+    12,500). The same principle would apply to a brought-forward STCL facing mixed gains; no case tests that.
+20. **`losses_carried_short` in a late-filed origin year (g45).** The field is the year's own unabsorbed loss (30,000) whether
+    or not s.80 lets it be carried. The `not_carried` status is shown only in the ledger.
+21. **`amount` of an `unknown_amount` ledger entry (g51, interpretive).** The case uses the loss from the classified disposals
+    (LTCL 40,000) as `amount` and `remaining`. The true amount is unknown, because the unknown-cost sale could absorb the
+    loss or add to it. A harness that expects `null` there would differ. Either way the fy 2026 tax excludes the loss:
+    total 10,400; applying it would give 5,200. The fy 2025 block leaves out `losses_carried_*` (as g15) but states
+    `bf_set_off_*` 0.00 and `carry_forward_complete` true, because nothing was brought into that year.
+22. **2025-Act numbers.** s.70 -> s.108, s.74 -> s.111 and s.80 -> s.121 are a secondary mapping given in the brief and were not
+    checked against the Income-tax Act 2025. All transfers in g38-g51 are on or before 31-Mar-2026.
+
+## Set-off and carry-forward cases g38-g51 (#344, 21-Oct-2026)
+
+Derived by hand from the Income-tax Act 1961 by an author who did not read the engine or the runner: s.70 (same-year
+set-off), s.74 (carry forward, LTCL only against LTCG, eight assessment years), s.80 with s.139(1)/(3) (a loss is carried
+only if the return was filed on time), s.111A / s.112A as amended by the Finance (No.2) Act 2024, and 4 % cess. The s.74
+text was checked only in paraphrase (HostBooks; incometaxindia.gov.in returned HTTP 403): the quoted words "shall be
+set off" are from memory of the section, and the paraphrase agrees with them. New inputs:
+`tax_losses.returns_filed_on_time` (per origin fy; a missing key means not known), `tax_losses.brought_forward` (manual
+losses from Schedule CFL) and `through_fy`. New outputs: per-FY `bf_set_off_short`, `bf_set_off_long`,
+`carry_forward_complete`, and `expected.ledger` (origin_fy, kind, amount, remaining, last_fy = origin_fy + 8, status).
+Conventions used: brought-forward losses are set off after the year's own s.70 set-off and before the s.112A
+exemption. A loss with late, unknown or unknown-amount status is left out of tax. `last_fy` is origin + 8: for example,
+origin fy 2018 = AY 2018-19, and the eighth succeeding AY is AY 2026-27 = fy 2026 (g43); fy 2017 lapses after fy 2025
+(g44). Interpretive cases g41, g47, g48, g49, g50 and g51 are explained in items 16-21 above, with the other reading's
+figures.
+
+First run against the engine (21-Oct-2026): 13 of the 14 cases agreed with the engine, interpretive ones included
+(g50: the engine also sets a current-year STCL against the highest-taxed gain first; g48: brought-forward LTCL before
+STCL; g47: oldest year first; g41/g49: compulsory set-off). **g51 is a known divergence of representation only**: the
+engine records an incomplete year's unabsorbed loss as unknown (`amount` null) and adds a separate `unknown` entry for
+the possible loss of the unknown-cost sale; the case shows the classified 40,000. The tax and
+`carry_forward_complete` agree. The runner now compares disposals in (sale date, holding) order (a stable sort on both
+sides), because these cases list sales by date while the engine lists them by holding; no expectation was changed.
