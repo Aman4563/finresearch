@@ -107,7 +107,7 @@ def test_groww_close_warns_only_beyond_the_ltp_vs_vwap_tolerance(clean):
                               official_close=Decimal(official), official_source="synthetic",
                               matched=abs(Decimal(groww) - Decimal(official)) <= Decimal("0.01")))  # fmt: skip
 
-    assert misc.CLOSE_WARN_TOL == Decimal("0.02")
+    assert Decimal("0.02") == misc.CLOSE_WARN_TOL
     with session_scope() as s:
         assert by_check(misc.close_checks(s, DAY))["groww_vs_official"].status == "unknown"
         add(s, "FAKEA", "100", "100")
