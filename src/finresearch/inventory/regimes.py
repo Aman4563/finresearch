@@ -51,7 +51,7 @@ def regime_changes() -> list[RegimeChange]:
     # never make it stale, so only 1-Oct-2024 on can matter for this app's runs)
     by_day: dict[date, list[charges.ChargeRate]] = {}
     for r in charges.RATES:
-        if r.key.startswith("stt_"):
+        if r.key.startswith("stt_") and r.rate is not None:  # an unknown-period row (#365) is not a change
             by_day.setdefault(r.effective_from, []).append(r)
     stt = [RegimeChange(d, "stt", "STT rates changed (" + ", ".join(sorted(r.key for r in rows)) + ")", rows[0].source)
            for d, rows in by_day.items()]  # fmt: skip
