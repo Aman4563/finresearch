@@ -232,8 +232,8 @@ _FORECASTS_CHECKED: dict[str, datetime] = {}
 
 
 async def forecast_step(deps: jobs.Deps, now: datetime) -> dict[str, int]:
-    """The forecast ledger's daily work (signals.ledger): log verdicts of finished runs that have no forecast yet, then
-    resolve the forecasts whose date has passed. At most once an hour; each forecast is itself checked at most every
+    """The forecast ledger's daily work (signals.ledger): log verdicts of finished runs and F&O cards (#376) that have
+    no forecast yet, then resolve the forecasts whose date has passed. At most once an hour; each forecast is itself checked at most every
     few hours and only after the close on its date, so this makes a handful of NSE requests a day at most."""
     last = _FORECASTS_CHECKED.get("at")
     if last is not None and now - last < FORECAST_EVERY:
@@ -242,9 +242,13 @@ async def forecast_step(deps: jobs.Deps, now: datetime) -> dict[str, int]:
     from finresearch.signals import ledger
 
     try:
+        from finresearch.fnobook import card_forecasts
+
         with session_scope() as s:
             logged = len(ledger.backfill_runs(s))
-        return {"forecasts_logged": logged, **await ledger.resolve_due(deps, now)}
+        with session_scope() as s:  # #376: every card the F&O pages logged (card_log) becomes a forecast
+            cards = card_forecasts.record_pending(s)
+        return {"forecasts_logged": logged, "cards_logged": cards, **await ledger.resolve_due(deps, now)}
     except Exception:
         log.warning("forecast ledger step failed", exc_info=True)
         return {}

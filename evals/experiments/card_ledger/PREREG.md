@@ -2,7 +2,7 @@
 
 Registered 22-Oct-2026, before any card forecast was logged to the forecast ledger or resolved. The append-only card
 log (`card_log`, #360) has held the cards the owner was shown since #360 merged; none of their outcomes has been
-looked at. Cards logged before this date are recorded and resolved by the same rules (`finresearch fno cards record`),
+looked at. Cards logged before this date are recorded and resolved by the same rules (`finresearch forecasts cards`, and the monitor's hourly forecast step),
 and are reported separately from those logged after it, so the reader can see whether they differ.
 
 ## Event
@@ -29,7 +29,7 @@ plan, marked at each session's reference price in the stored NSE F&O bhavcopy.**
 ## Probabilities
 
 - The card's real-world PoP (method `rule-based F&O trade-plan card`, the call shown first on the card).
-- The card's risk-neutral PoP (method `F&O card PoP, risk-neutral (ATM IV lognormal) - benchmark`), the option
+- The card's risk-neutral PoP (method `fnobook.card_forecasts.RN_METHOD`), the option
   market's own probability: scored in its own row, never in the headline.
 - A card whose PoP is None is logged with probability None (coverage only, never scored as 0.5).
 - Both PoPs are of "P&L after costs > 0 at expiry, held to expiry", not of the exit-plan event above. Scoring them

@@ -22,13 +22,18 @@ import math
 from datetime import date, datetime
 from typing import Any
 
+from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.orm import Session
+
 from finresearch.backtest import engine
 from finresearch.backtest.history import History
 from finresearch.backtest.specs import BOOK, SPECS, Spec
 from finresearch.fincalc import charges as ch
 from finresearch.fincalc import tradeplan as tp
 from finresearch.fincalc.dates import to_ist
-from finresearch.signals.ledger import NotYet, Resolution
+from finresearch.db.models import CardLog, Forecast
+from finresearch.signals.ledger import NotYet, Resolution, resolver
 
 EVENT_KIND = "card_pnl"
 
@@ -164,3 +169,64 @@ def simulate(inp: dict[str, Any], history: History) -> Resolution:
             f"{tr['reason']} on {tr['exit_day']}: net {tr['net']:,.2f} per set after costs{flags}",
         )
     raise NotYet(f"the set is still open at {days[-1]} (expiry {expiry})")
+
+
+# --------------------------------------------------------------------------- the forecast ledger
+SOURCE = "card_log:"  # + the card_log row id
+RN_METHOD = "F&O card PoP, risk-neutral (ATM IV lognormal): the option market's own probability, benchmark"
+EVENT = ("P&L of one set (the card's base lot ratio) after costs > 0 under the card's exit plan, replayed on the "
+         "stored NSE F&O bhavcopy (evals/experiments/card_ledger/PREREG.md)")  # fmt: skip
+
+
+def history() -> History:
+    """The stored F&O history of the app's database (a test seam)."""
+    from finresearch.backtest.dbhistory import DbHistory
+
+    return DbHistory()
+
+
+def _cards(kind: str, response: dict[str, Any]) -> list[dict[str, Any]]:
+    """The cards of a logged response that carry an exit plan: a plan card, or each suggest card. A strategy check
+    has none (not a forecast here)."""
+    if kind == "plan":
+        return [response]
+    if kind == "suggest":
+        return list(response.get("cards") or [])
+    return []
+
+
+def record_pending(s: Session) -> int:
+    """Record every card_log card that has no forecast yet: one forecast per model (the real-world PoP under the plan
+    card's method, the risk-neutral PoP as a benchmark), keyed on the card so nothing is ever replaced. Returns the
+    number of forecasts written. Runs from the monitor's forecast step and `finresearch forecasts cards`, never in a
+    GET (the suggest endpoint is one)."""
+    from finresearch.signals.tradeplan import PLAN_METHOD
+
+    done = set(s.scalars(select(Forecast.source).where(Forecast.source.like(f"{SOURCE}%")).distinct()))
+    q = select(CardLog).where(CardLog.kind.in_(("plan", "suggest"))).order_by(CardLog.id)
+    n = 0
+    for row in s.scalars(q):
+        if f"{SOURCE}{row.id}" in done:
+            continue
+        for i, c in enumerate(_cards(row.kind, row.response)):
+            inp = card_inputs(c, row.created_at, card_log_id=row.id, index=i)
+            if inp is None:
+                continue
+            expiry = date.fromisoformat(inp["expiry"])
+            for tag, method, p in (("rw", PLAN_METHOD, inp["probability"]["real_world"]),
+                                   ("rn", RN_METHOD, inp["probability"]["risk_neutral"])):  # fmt: skip
+                values = dict(created_at=row.created_at, asset="fno", instrument=row.symbol, name=c.get("title"),
+                              source=f"{SOURCE}{row.id}", event_kind=EVENT_KIND, event=EVENT,
+                              horizon=f"to the card's exit, at the latest expiry {expiry:%d-%b-%Y}",
+                              resolve_on=expiry, probability=p, action=(c.get("label") or c.get("action") or "")[:40],
+                              method=method[:200], validation_status="rule_based", inputs=inp, status="open",
+                              dedupe_key=f"card:{row.id}:{i}:{tag}")  # fmt: skip
+                stmt = insert(Forecast).values(**values).on_conflict_do_nothing(index_elements=["dedupe_key"])
+                n += len(s.scalars(stmt.returning(Forecast.id)).all())
+    s.flush()
+    return n
+
+
+@resolver("fno", EVENT_KIND)
+async def _resolve(f: Forecast, deps: Any, s: Session) -> Resolution:
+    return simulate(f.inputs or {}, history())

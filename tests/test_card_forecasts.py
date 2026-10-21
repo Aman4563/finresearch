@@ -176,3 +176,123 @@ def test_unknown_exit_plans_and_future_legs_void():
     fut = card([("future", 20050.0, "buy", 1, 20050.0)], kind="long_future", profit=None, stop=None)
     r = cf.simulate(_inputs(fut), MemoryHistory(STOP_PATH))
     assert r.outcome is None and "future" in r.note
+
+
+# --------------------------------------------------------------------------- the forecast ledger (database)
+@pytest.fixture
+def clean(env):
+    from sqlalchemy import text
+
+    from finresearch.db import session_scope
+
+    with session_scope() as s:  # TRUNCATE is not a row UPDATE/DELETE: card_log's append-only trigger allows it
+        s.execute(text("TRUNCATE forecast, card_log"))
+    yield
+
+
+def _log(cards_response, *, kind="plan", at=LOGGED):
+    from finresearch.db import session_scope
+    from finresearch.fnobook import card_log
+
+    with session_scope() as s:
+        r = card_log.row(kind, symbol="NIFTY", expiry=EXP if kind == "plan" else None, inputs={"plan": {"capital": 999999}},
+                         cards=card_log.summarise(kind, cards_response), response=cards_response, created_at=at)  # fmt: skip
+        s.add(r)
+        s.flush()
+        return r.id
+
+
+def _forecasts():
+    from sqlalchemy import select
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import Forecast
+
+    with session_scope() as s:
+        return [{c.name: getattr(f, c.name) for c in Forecast.__table__.columns}
+                for f in s.scalars(select(Forecast).order_by(Forecast.id))]  # fmt: skip
+
+
+def _record() -> int:
+    from finresearch.db import session_scope
+    from finresearch.fnobook import card_forecasts as cf
+
+    with session_scope() as s:
+        return cf.record_pending(s)
+
+
+def test_every_logged_card_is_recorded_once_with_both_models(clean):
+    from finresearch.signals import ledger
+    from finresearch.signals.tradeplan import PLAN_METHOD
+
+    plan = _log(card(PCS, kind="put_credit"))
+    sug = _log({"symbol": "NIFTY", "cards": [card([], kind="iron_condor"), card(PCS, kind="put_credit")]},
+               kind="suggest")  # fmt: skip
+    _log({"symbol": "NIFTY", "expiry": EXP.isoformat(), "analysis": {}}, kind="strategy")  # no exit plan: none
+    assert _record() == 4 and _record() == 0  # idempotent: a card is never recorded twice
+    rows = _forecasts()
+    assert [(r["source"], r["inputs"]["card_index"]) for r in rows] == [
+        (f"card_log:{plan}", 0), (f"card_log:{plan}", 0), (f"card_log:{sug}", 1), (f"card_log:{sug}", 1)]
+    rw, rn = rows[0], rows[1]
+    assert (rw["asset"], rw["instrument"], rw["event_kind"]) == ("fno", "NIFTY", "card_pnl")
+    assert rw["method"] == PLAN_METHOD and rw["probability"] == 0.71 and rw["validation_status"] == "rule_based"
+    assert rn["probability"] == 0.66 and rn["method"] != PLAN_METHOD
+    assert rw["created_at"] == LOGGED and rw["resolve_on"] == EXP and rw["action"] == "WAIT"
+    assert "999999" not in repr(rows), "no profile capital in the forecast ledger"
+    assert ledger.is_benchmark(type("F", (), rn)) and not ledger.is_benchmark(type("F", (), rw))
+
+
+async def test_a_fake_outcome_resolves_through_the_monitor_pass(clean, monkeypatch):
+    from finresearch.fnobook import card_forecasts as cf
+    from finresearch.signals import ledger
+
+    _log(card(PCS, kind="put_credit"))
+    _record()
+    monkeypatch.setattr(cf, "history", lambda: MemoryHistory(STOP_PATH))
+    got = await ledger.resolve_due(None, datetime(2025, 2, 13, 12, 0, tzinfo=UTC))
+    assert got["resolved"] == 2
+    net = (-(262.60 - 100.0) * LOT + (113.85 - 60.0) * LOT - charges(100.0 * LOT, 60.0 * LOT, 2)
+           - charges(113.85 * LOT, 262.60 * LOT, 2))  # fmt: skip
+    for f in _forecasts():
+        assert f["status"] == "resolved" and f["outcome"] == 0
+        assert f["resolution_value"] == pytest.approx(net, abs=0.02) and "stop on 2025-01-15" in f["resolution_note"]
+
+
+def test_independence_scores_only_the_first_card_per_underlying_expiry_and_structure(clean):
+    from sqlalchemy import select, update
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import Forecast
+    from finresearch.signals import ledger
+    from finresearch.signals.tradeplan import PLAN_METHOD
+
+    first = _log(card(PCS, kind="put_credit"), at=datetime(2025, 1, 10, 5, 0, tzinfo=UTC))
+    _log(card(PCS, kind="put_credit"), at=datetime(2025, 1, 14, 5, 0, tzinfo=UTC))  # same cluster, later
+    other = _log(card([("call", 20400.0, "sell", 1, 90.0), ("call", 20600.0, "buy", 1, 50.0)], kind="call_credit"),
+                 at=datetime(2025, 1, 14, 6, 0, tzinfo=UTC))  # fmt: skip
+    _record()
+    with session_scope() as s:
+        s.execute(update(Forecast).values(status="resolved", outcome=1))
+        rows = list(s.scalars(select(Forecast).where(Forecast.method == PLAN_METHOD)))
+        kept = ledger.independent_events(rows)
+        assert sorted(f.source for f in kept) == [f"card_log:{first}", f"card_log:{other}"]
+
+
+async def test_the_monitor_forecast_step_records_logged_cards(clean, monkeypatch):
+    from finresearch.monitor import scheduler
+
+    _log(card(PCS, kind="put_credit"))
+    monkeypatch.setattr(scheduler, "_FORECASTS_CHECKED", {})
+    got = await scheduler.forecast_step(None, datetime(2025, 1, 10, 12, 0, tzinfo=UTC))
+    assert got["cards_logged"] == 2 and len(_forecasts()) == 2
+
+
+def test_the_cli_records_logged_cards(clean):
+    from typer.testing import CliRunner
+
+    from finresearch.cli import app
+
+    _log(card(PCS, kind="put_credit"))
+    r = CliRunner().invoke(app, ["forecasts", "cards"])
+    assert r.exit_code == 0, r.output
+    assert "2 card forecast(s) recorded" in r.output and len(_forecasts()) == 2
