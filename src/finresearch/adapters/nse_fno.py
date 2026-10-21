@@ -215,7 +215,9 @@ class NseFno:
             try:
                 actions = [(a.ex_date, a.subject) for a in await eq.corporate_actions(sym) if a.ex_date]
             except Exception as exc:
-                raise NseError(f"{sym}: corporate actions unavailable, closes not adjustable ({exc})") from exc
+                raise NseError(
+                    f"{sym}: corporate actions unavailable, closes not adjustable ({exc})"
+                ) from exc
         if not bars:
             return []
         adj = adjust_for_actions([b.day for b in bars], [float(b.close) for b in bars], actions)
