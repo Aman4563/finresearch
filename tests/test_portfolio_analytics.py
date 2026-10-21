@@ -709,7 +709,7 @@ def test_analytics_gets_write_nothing_to_the_database(api):
         cache.write(s, series.KEY, {"days": ["2026-01-05"], "value": [1.0], "invested": [1.0], "complete": [True],
                                     "fingerprint": "stored-by-the-monitor", "built_on": "2026-01-05"})  # fmt: skip
     with _db_writes() as writes:
-        for path in ("performance", "risk", "risk?rf=7", "concentration", "costs"):
+        for path in ("performance", "risk", "risk?rf=7", "concentration", "costs", "stress-replay"):
             assert api.get(f"/api/portfolio/analytics/{path}").status_code == 200
     assert writes == []
     with session_scope() as s:
@@ -748,3 +748,30 @@ def test_concentration_never_holds_an_etf_to_the_single_stock_limit(tmp_path):
                    for p in h.positions]  # fmt: skip
     c = concentration(h, {}, {}, position_limit(Profile(risk_appetite="low")))
     assert {f["label"] for f in c["flags"] if f["kind"] == "stock"} == {"AAA Ltd"}
+
+
+def test_stress_replay_route_lists_unmapped_holdings_never_as_zero(api):
+    """#345: the replay route. The fixture's holdings have a few days of prices (no window prices, no beta), so with a
+    synthetic Nifty path for 3-5 Jun 2024 every holding is listed as unmapped with its value, none as a 0 % move;
+    windows without a market path say why."""
+    days = [date(2024, 5, 20) + timedelta(days=i) for i in range(90)]
+    nifty = {d: 100.0 - (i % 10) for i, d in enumerate(days) if d.weekday() < 5}
+
+    def index_series(sym, a, b):
+        return {d: v for d, v in nifty.items() if a <= d <= b} if sym == "NIFTY" else {}
+
+    api.app.state.analytics_sources.index_series = index_series
+    r = api.get("/api/portfolio/analytics/stress-replay")
+    assert r.status_code == 200
+    body = r.json()
+    by = {s["id"]: s for s in body["scenarios"]}
+    assert set(by) == {"gfc2008", "taper2013", "covid2020", "election2024", "febmar2026"}
+    assert (
+        by["febmar2026"]["available"] is False and "not ended" in by["febmar2026"]["reason"]
+    )  # fixture today: Jan-2026
+    f = by["election2024"]
+    assert f["available"] is False and f["loss"] is None and f["mapped_share"] == 0
+    assert {u["key"] for u in f["unmapped"]} == {"NSE:AAA", "NSE:BBB", "MF:111"}
+    assert all(u["value"] > 0 and u["reason"] for u in f["unmapped"])
+    assert by["gfc2008"]["available"] is False and "NIFTYBEES" in by["gfc2008"]["reason"]
+    assert body["disclaimer"] and "never sent to an LLM" in body["privacy"]
