@@ -169,31 +169,49 @@ def test_unresolved_groww_positions_make_every_figure_unknown():
     assert any("could not be resolved" in r for r in v["grid"]["reasons"])
 
 
-def test_api_route_reads_the_profile_capital_and_writes_nothing(monkeypatch):
-    from sqlalchemy import func, select
+def _profile_rows():
+    from sqlalchemy import select
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import InvestorProfile, PaperStrategy
+
+    with session_scope() as s:
+        return ([(p.name, p.data) for p in s.scalars(select(InvestorProfile).order_by(InvestorProfile.name))],
+                [(p.mtm_gross, p.mtm_at) for p in s.scalars(select(PaperStrategy))])  # fmt: skip
+
+
+@pytest.mark.parametrize("capital", [None, 500_000])
+def test_api_route_reads_the_profile_capital_and_writes_nothing(monkeypatch, capital):
+    """The profile is set here, never inherited from another test's rows (other test files leave one behind): none
+    stored (capital unknown: no limit) or one with F&O capital. The GET must leave profile and paper rows as they were."""
+    from sqlalchemy import delete
     from starlette.testclient import TestClient
 
     from finresearch.api import create_app
     from finresearch.db import session_scope
-    from finresearch.db.models import InvestorProfile, PaperStrategy
+    from finresearch.db.models import InvestorProfile
     from finresearch.fnobook import sources
+    from finresearch.suggest.advisor import default_profile, save_profile
 
-    _paper_spread()
     with session_scope() as s:
-        assert s.scalar(select(func.count()).select_from(InvestorProfile)) == 0
-        before = [(p.mtm_gross, p.mtm_at) for p in s.scalars(select(PaperStrategy))]
+        s.execute(delete(InvestorProfile))
+        if capital is not None:
+            save_profile(s, default_profile().model_copy(update={"fno_capital_inr": D(capital)}))
+    _paper_spread()
+    before = _profile_rows()
     monkeypatch.setattr(sources, "SOURCES", Sources(chain()))
-    c = TestClient(create_app(clock=lambda: NOW))
-    r = c.get("/api/fno/scenarios")
+    r = TestClient(create_app(clock=lambda: NOW)).get("/api/fno/scenarios")
     assert r.status_code == 200
     v = r.json()
     assert v["grid"]["complete"] and len(v["legs"]) == 2
+    if capital is None:
+        assert v["reverse"]["limit"] is None and "capital" in v["reverse"]["reason"]
+    else:
+        assert v["reverse"]["limit"] == pytest.approx(40_000) and len(v["reverse"]["rows"]) == 3  # 8 % (#358)
     assert (
-        v["reverse"]["limit"] is None and "capital" in v["reverse"]["reason"]
-    )  # the default profile: none set
-    with session_scope() as s:  # the GET wrote nothing: no profile row, the paper trade's mark untouched
-        assert s.scalar(select(func.count()).select_from(InvestorProfile)) == 0
-        assert [(p.mtm_gross, p.mtm_at) for p in s.scalars(select(PaperStrategy))] == before
+        _profile_rows() == before
+    )  # the GET wrote nothing: no profile row created or changed, marks untouched
+    assert len(before[0]) == (0 if capital is None else 1)
 
 
 def test_a_groww_future_shows_no_strike(monkeypatch):
