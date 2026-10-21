@@ -45,6 +45,11 @@ def test_parity_forward():
     assert bs.parity_forward(24000, c, p, T35, 0.065) == pytest.approx(24100, abs=1e-6)
 
 
+def _roll(days: float) -> float:
+    """The forward rolled `days` closer to expiry at the same spot: F(T') = F e^{-r (T - T')}, r = 6.5 %."""
+    return math.exp(-0.065 * days / 365)
+
+
 def _mkt(**kw):
     base = {"now": NOW, "rate": 0.065, "forwards": {("NIFTY", EXP): 24000.0}, "betas": {}, "nifty": 23900.0}
     return bs.Market(**{**base, **kw})
@@ -163,7 +168,9 @@ def test_horizon_clock_counts_weekday_sessions_to_the_close():
 def test_a_future_moves_linearly_and_a_zero_scenario_is_zero():
     legs = [bs.BookLeg("NIFTY", EXP, "future", 0, 75, None, None)]
     m = _mkt()
-    assert bs.revalue(legs, m, -0.05, 0.0, bs.horizon_clock(NOW, 1)).pnl == pytest.approx(75 * 24000 * -0.05)
+    assert bs.revalue(legs, m, -0.05, 0.0, bs.horizon_clock(NOW, 1)).pnl == pytest.approx(
+        75 * (24000 * 0.95 * _roll(1) - 24000)
+    )
     put = bs.BookLeg("NIFTY", EXP, "put", 23500, -75, _b76("put", 24000, 23500, T35, 0.065, 0.15), "mid")
     assert bs.revalue([*legs, put], m, 0.0, 0.0, NOW, response=False).pnl == pytest.approx(0.0, abs=1e-6)
 
@@ -175,7 +182,7 @@ def test_an_option_is_repriced_at_the_shocked_forward_vol_and_time(move, dvol, r
     v0 = _b76("put", 24000, 23500, T35, 0.065, 0.15)
     legs = [bs.BookLeg("NIFTY", EXP, "put", 23500, -75, v0, "mid")]
     cell = bs.revalue(legs, _mkt(), move, dvol, bs.horizon_clock(NOW, 1))
-    v1 = _b76("put", 24000 * (1 + move), 23500, 34 / 365, 0.065, 0.15 + (resp + dvol) / 100)
+    v1 = _b76("put", 24000 * (1 + move) * _roll(1), 23500, 34 / 365, 0.065, 0.15 + (resp + dvol) / 100)
     assert cell.pnl == pytest.approx((v1 - v0) * -75, rel=1e-6)
 
 
@@ -184,7 +191,7 @@ def test_other_underlyings_move_by_their_beta_and_need_it():
     fw = {("BANKNIFTY", EXP): 52000.0}
     at = bs.horizon_clock(NOW, 1)
     cell = bs.revalue(legs, _mkt(forwards=fw, betas={"BANKNIFTY": 1.2}), -0.05, 0.0, at)
-    assert cell.pnl == pytest.approx(35 * 52000 * 1.2 * -0.05)
+    assert cell.pnl == pytest.approx(35 * (52000 * (1 - 1.2 * 0.05) * _roll(1) - 52000))
     cell = bs.revalue(legs, _mkt(forwards=fw), -0.05, 0.0, at)
     assert cell.pnl is None and any("beta" in r for r in cell.reasons)
 
@@ -195,7 +202,7 @@ def test_a_leg_expiring_inside_the_horizon_is_valued_at_intrinsic():
     v0 = _b76("call", 24000, 24000, t, 0.065, 0.12)
     legs = [bs.BookLeg("NIFTY", near, "call", 24000, 75, v0, "mid")]
     cell = bs.revalue(legs, _mkt(forwards={("NIFTY", near): 24000.0}), 0.02, 0.0, bs.horizon_clock(NOW, 5))
-    assert cell.pnl == pytest.approx((24000 * 0.02 - v0) * 75, rel=1e-6)
+    assert cell.pnl == pytest.approx((24000 * 1.02 * _roll(5) - 24000 - v0) * 75, rel=1e-6)
     assert cell.intrinsic == 1
 
 
@@ -218,14 +225,16 @@ def test_grid_axes_and_the_expiry_horizon():
     )
     assert sorted({c.dvol for c in g.cells}) == [-3, 0, 5, 10, 20]
     c = g.cell(-0.10, 0, "expiry")
-    assert c.pnl == pytest.approx(75 * 24000 * -0.10) and c.at == datetime(2026, 11, 26, 15, 30, tzinfo=IST)
+    assert c.pnl == pytest.approx(75 * (24000 * 0.9 * _roll(35) - 24000)) and c.at == datetime(
+        2026, 11, 26, 15, 30, tzinfo=IST
+    )
 
 
 def test_a_vol_driven_below_the_floor_is_floored_and_flagged():
     v0 = _b76("call", 24000, 24500, T35, 0.065, 0.05)
     cell = bs.revalue([bs.BookLeg("NIFTY", EXP, "call", 24500, 75, v0, "mid")], _mkt(), 0.10, -3.0,
                       bs.horizon_clock(NOW, 1))  # fmt: skip
-    v1 = _b76("call", 26400, 24500, 34 / 365, 0.065, bs.MIN_VOL)
+    v1 = _b76("call", 26400 * _roll(1), 24500, 34 / 365, 0.065, bs.MIN_VOL)
     assert cell.floored == 1 and cell.pnl == pytest.approx((v1 - v0) * 75, rel=1e-6)
 
 
@@ -247,8 +256,8 @@ def test_a_replay_applies_the_day_s_move_and_iv30_change_without_the_response_ru
     out = {r.replay.day: r for r in bs.replays(legs, _mkt())}
     r = out[date(2024, 6, 4)]
     mv = math.exp(-0.0611) - 1
-    v1 = _b76("put", 24000 * (1 + mv), 23500, 34 / 365, 0.065, 0.15 + 4.46 / 100)
-    assert r.cell.pnl == pytest.approx((v1 - v0) * -75 + 75 * 24000 * mv, rel=1e-6)
+    v1 = _b76("put", 24000 * (1 + mv) * _roll(1), 23500, 34 / 365, 0.065, 0.15 + 4.46 / 100)
+    assert r.cell.pnl == pytest.approx((v1 - v0) * -75 + 75 * (24000 * (1 + mv) * _roll(1) - 24000), rel=1e-6)
     assert any("skew" in n for n in r.notes)
 
 
@@ -256,7 +265,7 @@ def test_a_replay_marks_beta_mapped_underlyings():
     legs = [bs.BookLeg("BANKNIFTY", EXP, "future", 0, 35, None, None)]
     rs = bs.replays(legs, _mkt(forwards={("BANKNIFTY", EXP): 52000.0}, betas={"BANKNIFTY": 1.2}))
     assert all(any("BANKNIFTY" in n and "beta" in n for n in r.notes) for r in rs)
-    assert rs[0].cell.pnl == pytest.approx(35 * 52000 * 1.2 * rs[0].replay.move)
+    assert rs[0].cell.pnl == pytest.approx(35 * (52000 * (1 + 1.2 * rs[0].replay.move) * _roll(1) - 52000))
 
 
 def test_reverse_stress_finds_the_smallest_breaching_point():
@@ -264,7 +273,7 @@ def test_reverse_stress_finds_the_smallest_breaching_point():
     g = bs.grid(legs, _mkt())
     out = {r.horizon: r for r in bs.reverse_stress(g, 50_000)}
     assert out["1d"].complete and (out["1d"].cell.move, out["1d"].cell.dvol) == (0.03, 0.0)
-    assert out["1d"].cell.pnl == pytest.approx(-75 * 24000 * 0.03)
+    assert out["1d"].cell.pnl == pytest.approx(-75 * (24000 * 1.03 * _roll(1) - 24000))
     none = bs.reverse_stress(g, 10_000_000)
     assert all(r.complete and r.cell is None for r in none)
 
@@ -279,3 +288,10 @@ def test_the_book_limit_is_the_open_book_budget():
     assert bs.book_limit(500_000) == pytest.approx(40_000)  # 8 % of F&O capital (#358)
     with pytest.raises(ValueError):
         bs.reverse_stress(bs.grid([], _mkt()), 0)
+
+
+def test_forward_lookup_ignores_case_and_a_price_of_unknown_kind_is_flagged_as_such():
+    mark = _b76("call", 24000, 24500, T35, 0.065, 0.13)
+    st = bs.price_legs([bs.BookLeg("nifty", EXP, "call", 24500, 75, mark, None)], _mkt())[0]
+    assert st.reason is None and st.iv == pytest.approx(0.13, abs=1e-6)
+    assert st.flags and "unknown kind" in st.flags[0] and "LTP" not in st.flags[0]

@@ -68,7 +68,7 @@ class BookLeg:
 
 @dataclass(frozen=True)
 class Market:
-    """The clock (#359), the rate, the forward per (underlying, expiry) (None or absent = unknown), betas of each
+    """The clock (#359), the rate, the forward per (UNDERLYING, expiry) (upper case; None or absent = unknown), betas of each
     underlying's front-future returns to NIFTY's (NIFTY = 1 always; absent = unknown) and NIFTY's level for the
     NIFTY-equivalent delta (None = unknown)."""
 
@@ -101,7 +101,7 @@ def _price(x: BookLeg, m: Market) -> LegState:
     t = years_to_expiry(x.expiry, m.now)
     if t <= 0:
         return LegState(x, reason=f"{name} has expired (15:30 IST on its expiry day): it cannot be repriced")
-    f = m.forwards.get((x.underlying, x.expiry))
+    f = m.forwards.get((x.underlying.upper(), x.expiry))
     if f is None or f <= 0:
         return LegState(
             x, t=t, reason=f"{name}: the forward (same-expiry future or parity forward) is unknown"
@@ -115,7 +115,13 @@ def _price(x: BookLeg, m: Market) -> LegState:
         return LegState(x, f, t, reason=f"{name}: its price {x.mark:g} is outside the no-arbitrage bounds on the "
                                         f"forward {f:g}, so no IV reproduces it")  # fmt: skip
     g = b76_greeks(x.right, f, x.strike, t, m.rate, iv)
-    flags = () if x.mark_kind == "mid" else (f"{name}: IV from the LTP (no two-sided quote), not a mid",)
+    flags = (
+        ()
+        if x.mark_kind == "mid"
+        else (f"{name}: IV from the LTP (no two-sided quote), not a mid",)
+        if x.mark_kind == "ltp"
+        else (f"{name}: IV from a price of unknown kind (its source is not recorded)",)
+    )
     return LegState(x, f, t, iv, g.price, g, None, flags)
 
 
@@ -275,7 +281,9 @@ def _revalue(states: Sequence[LegState], m: Market, move: float, dvol: float, at
     pnl, floored, intrinsic = 0.0, 0, 0
     for s in states:
         x, mu = s.leg, m.beta(s.leg.underlying) * move  # type: ignore[operator]
-        f1, t1 = s.forward * (1 + mu), years_to_expiry(x.expiry, at)  # type: ignore[operator]
+        # the forward is shocked and rolled to the horizon at the same rate: F' = F (1 + move) e^{-r (T - T')}, T' >= 0
+        t1 = years_to_expiry(x.expiry, at)
+        f1 = s.forward * (1 + mu) * math.exp(-m.rate * (s.t - max(t1, 0.0)))  # type: ignore[operator]
         if t1 <= 0 or x.right == "future":
             v1 = _intrinsic(x.right, f1, x.strike)
             intrinsic += t1 <= 0 and x.right != "future"
