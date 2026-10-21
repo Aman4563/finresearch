@@ -159,6 +159,8 @@ def test_holdings_exposures_from_their_own_closes_with_reasons_for_the_rest():
     assert (
         rows["MF:999"]["available"] is False and rows["MF:999"]["reason"] == "no price history could be read"
     )
+    assert set(rows["MF:999"]) == set(rows["NSE:AAAA"]) == set(rows["NSE:BBBB"])  # one row shape for the page
+    assert rows["MF:999"]["window"]["returns"] == 0 and rows["MF:999"]["r2"] is None
 
 
 class FakeFetch:

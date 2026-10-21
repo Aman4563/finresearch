@@ -149,7 +149,7 @@ def exposures(h: History, fs: FactorSeries | None, holding_closes: Mapping[str, 
         }
         closes = holding_closes.get(p.key) or {}
         if len(closes) < 2:
-            row.update(available=False, reason="no price history could be read", exposures=[])
+            row.update(regress({}, {}, fs), reason="no price history could be read")  # same row shape
         else:
             row.update(regress(*_holding_series(closes, h.factors.get(p.key)), fs))
         out["holdings"].append(row)
