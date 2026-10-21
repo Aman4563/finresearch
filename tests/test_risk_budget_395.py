@@ -86,3 +86,92 @@ def test_unknown_margin_or_funds_is_never_room_395(args):
 
 def test_no_cash_means_no_margin_room_395():
     assert tp.margin_lots(0, 40_000, 0, 500_000)[0] == 0
+
+
+# --------------------------------------------------------------------------- one sizing rule: every term
+CAPITAL = 1_000_000.0  # ₹10 lakh: trade budget 2% = ₹20,000, book 8% = ₹80,000, shock 6% = ₹60,000
+ML, COSTS = -4940.0, 60.0  # one set risks ₹5,000
+
+
+def _book(open_risk=0.0, shock=None, funds=None, mtd_real=0.0):
+    return tp.OpenBook(capital=CAPITAL, open_risk=open_risk, mtd_paper=0.0, mtd_real=mtd_real, shock=shock,
+                       funds=funds)  # fmt: skip
+
+
+FLAT = {m: 0.0 for m in tp.SHOCK_MOVES}
+ONE_SET = {M3: -1500.0, M5: -2500.0, M10: -4800.0, P5: 700.0}
+
+
+def test_the_shock_term_cuts_the_paper_size_and_says_so_395():
+    # trade: floor(20,000 / 5,000) = 4; book: floor(80,000 / 5,000) = 16; shock with the book at −₹45,000 at −10 %:
+    # floor((60,000 − 45,000) / 4,800) = 3 → 3 (the binding term)
+    book = {**FLAT, M10: -45000.0}
+    s = tp.size(ML, COSTS, 20_000.0, proven=False, book=_book(shock=tp.Shock(book, ONE_SET)))
+    assert (s.multiple, s.suggested, s.binding) == (4, 3, "shock") and "common shock" in s.reason
+
+
+def test_an_unknown_shock_sizes_zero_395():
+    s = tp.size(ML, COSTS, 20_000.0, proven=True, book=_book(shock=tp.Shock(None, ONE_SET, ("no chain",))))
+    assert s.suggested == 0 and s.real_lots == 0 and s.binding == "shock" and "unknown" in s.reason
+
+
+def test_the_margin_term_caps_real_lots_only_395():
+    # margin: 0.5 x min(2,00,000 + 0, 2,00,000 / 0.5) = 1,00,000; (1,00,000 − 40,000) / 25,000 = 2.4 → 2 real lots
+    funds = tp.Funds(cash=200_000.0, margin_used=40_000.0, collateral=0.0, im_one=25_000.0)
+    s = tp.size(ML, COSTS, 20_000.0, proven=True, book=_book(shock=tp.Shock(FLAT, ONE_SET), funds=funds))
+    assert (s.suggested, s.real_lots) == (4, 2) and "margin" in s.real_reason
+
+
+@pytest.mark.parametrize("funds", [tp.Funds(None, 0.0, 0.0, 25_000.0), tp.Funds(2e5, None, 0.0, 25_000.0),
+                                   tp.Funds(2e5, 0.0, None, 25_000.0), tp.Funds(2e5, 0.0, 0.0, None)])  # fmt: skip
+def test_unknown_margin_or_funds_blocks_real_money_with_a_reason_395(funds):
+    s = tp.size(ML, COSTS, 20_000.0, proven=True, book=_book(shock=tp.Shock(FLAT, ONE_SET), funds=funds))
+    assert s.suggested == 4 and s.real_lots == 0 and "unknown" in s.real_reason
+
+
+def test_new_terms_never_raise_a_size_395():
+    import random
+
+    rng = random.Random(395)
+    for _ in range(300):
+        ml, c, risk = -rng.uniform(500, 30000), rng.uniform(10, 300), rng.uniform(0, 90_000)
+        book = {m: -rng.uniform(0, 70_000) for m in tp.SHOCK_MOVES}
+        one = {m: rng.uniform(-8000, 2000) for m in tp.SHOCK_MOVES}
+        funds = tp.Funds(rng.uniform(0, 4e5), rng.uniform(0, 3e5), rng.uniform(0, 4e5), rng.uniform(0, 9e4))
+        old = tp.size(ml, c, 20_000.0, proven=True, book=_book(risk))
+        new = tp.size(ml, c, 20_000.0, proven=True, book=_book(risk, tp.Shock(book, one), funds))
+        assert new.multiple == old.multiple and new.suggested <= old.suggested and new.real_lots <= old.real_lots
+        assert new.real_lots <= new.suggested
+        if new.suggested:  # the accepted book stays within the shock budget at every move
+            assert all(book[m] + new.suggested * one[m] >= -0.06 * CAPITAL - 1e-6 for m in tp.SHOCK_MOVES)
+
+
+# --------------------------------------------------------------------------- the verdict: real-money blockers
+def _decide(**kw):
+    from finresearch.signals import tradeplan as tpl
+
+    return tpl.decide([], ML, COSTS, 20_000.0, "proven", **kw)
+
+
+def test_a_full_shock_budget_reads_wait_with_its_own_check_395():
+    d = _decide(book=_book(shock=tp.Shock({**FLAT, M10: -59000.0}, ONE_SET), funds=tp.Funds(1e6, 0.0, 0.0, 1.0)),
+                mu_lo=100.0)  # fmt: skip
+    assert d.action == "WAIT" and "Book within its common-shock budget" in d.failed and d.size.real_lots == 0
+
+
+def test_unknown_margin_turns_enter_to_wait_395():
+    d = _decide(book=_book(shock=tp.Shock(FLAT, ONE_SET), funds=tp.Funds(None, 0.0, 0.0, 1.0)), mu_lo=100.0)
+    assert d.action == "WAIT" and "Margin within its cap (real book)" in d.failed and d.size.real_lots == 0
+    assert d.size.suggested == 4  # the paper size is kept
+    assert any("unknown" in r for r in d.reasons)
+
+
+def test_known_margin_room_keeps_enter_395():
+    d = _decide(book=_book(shock=tp.Shock(FLAT, ONE_SET), funds=tp.Funds(1e6, 0.0, 0.0, 1000.0)), mu_lo=100.0)
+    assert d.action == "ENTER" and d.size.real_lots == 4
+
+
+@pytest.mark.parametrize("mu_lo", [None, 0.0, -50.0])
+def test_kelly_is_zero_while_the_expectancys_lower_bound_is_not_positive_395(mu_lo):
+    d = _decide(book=_book(shock=tp.Shock(FLAT, ONE_SET), funds=tp.Funds(1e6, 0.0, 0.0, 1000.0)), mu_lo=mu_lo)
+    assert d.action == "WAIT" and "Kelly ceiling above zero" in d.failed and d.size.real_lots == 0

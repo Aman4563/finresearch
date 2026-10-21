@@ -393,12 +393,16 @@ class Decision:
 MONTH_CHECK = "Month-to-date F&O loss stop"
 MONTH_CHECK_REAL = "Month-to-date F&O loss stop (real book)"
 BOOK_CHECK = "Open book within its budget"
+SHOCK_CHECK = "Book within its common-shock budget"  # #395
+MARGIN_CHECK_REAL = "Margin within its cap (real book)"  # #395
+KELLY_CHECK = "Kelly ceiling above zero"  # #395: f = max(0, μ_lo) / σ² is 0 while μ_lo ≤ 0
+NOT_EVALUATED: Any = object()  # #395: `decide(mu_lo=...)` not passed (pure callers); every card passes it
 STALE_CHECK = "Backtest evidence is current"  # #379: inventory.regimes.staleness
 
 
 def decide(gates: list[str], max_loss_one: float | None, costs_one: float, budget: float, level: str,
            extra_failed: list[tuple[str, str]] | None = None, book: tp.OpenBook | None = None,
-           stale: list[str] | None = None) -> Decision:  # fmt: skip
+           stale: list[str] | None = None, mu_lo: float | None = NOT_EVALUATED) -> Decision:  # fmt: skip
     """The one verdict and sizing rule (#355) for the trade-plan card, "Suggest setups" and the signal card's Strategy
     check: `gates` = signals.fno.assess's failed checks for the legs, sized from the base set's max loss and entry
     costs, `level` = the matched spec's evidence. The IV-percentile check is context for ad hoc legs, never a gate (it
@@ -406,7 +410,10 @@ def decide(gates: list[str], max_loss_one: float | None, costs_one: float, budge
     `book` (#358): the open positions and month-to-date P&L. A full (or unknown) open book sizes 0 and reads WAIT; a
     paper month-to-date loss at the stop (or unknown) turns the card to WAIT; real money also needs the real book's
     month-to-date P&L known and above the stop.
-    `stale` (#379): why the matched backtest evidence is stale; any reason caps the verdict at WAIT."""
+    `stale` (#379): why the matched backtest evidence is stale; any reason caps the verdict at WAIT.
+    #395: a book with no room under the common-shock budget reads WAIT ("Book within its common-shock budget"); real
+    money also needs the margin term's room (unknown funds or margin = none) and a Kelly ceiling above 0, i.e. the
+    matched backtest's out-of-sample expectancy lower bound `mu_lo` known and > 0; else an ENTER reads WAIT."""
     failed = [g for g in gates if g != IV_CHECK]
     reasons: list[str] = []
     if stale:
@@ -417,9 +424,10 @@ def decide(gates: list[str], max_loss_one: float | None, costs_one: float, budge
         failed.append(BUDGET_CHECK)  # max loss fits but max loss + entry costs does not
         reasons.append(f"Sizing: {sz.reason}.")
     elif sz.multiple > 0 and sz.suggested == 0:
-        failed.append(BOOK_CHECK)  # the trade fits its budget, the open book has no room for it
+        check = SHOCK_CHECK if sz.binding == "shock" else BOOK_CHECK
+        failed.append(check)  # the trade fits its budget, the open book has no room for it
         why = " ".join(book.notes) if book is not None and book.open_risk is None else ""
-        reasons.append(f"{BOOK_CHECK}: {sz.reason}." + (f" {why}" if why else ""))
+        reasons.append(f"{check}: {sz.reason}." + (f" {why}" if why else ""))
     if book is not None and book.month_stopped():
         failed.append(MONTH_CHECK)
         reasons.append(f"{MONTH_CHECK}: " + ("the paper book's month-to-date P&L is unknown (an open paper trade has "
@@ -436,6 +444,17 @@ def decide(gates: list[str], max_loss_one: float | None, costs_one: float, budge
         reasons.append(f"{MONTH_CHECK_REAL}: " + ("the real book's month-to-date F&O P&L is not known here, so no "
                        "real-money size is given." if book.mtd_real is None else f"the real book is down "
                        f"₹{-book.mtd_real:,.0f} this month, at or beyond the {tp.MONTH_LOSS_STOP_PCT:g}% stop."))  # fmt: skip
+        action, qualifier = tp.verdict(failed, level)
+    if action == tp.ENTER and sz.real_lots == 0 and book is not None and book.funds is not None:
+        failed.append(MARGIN_CHECK_REAL)  # #395: no margin room, or margin / funds unknown → WAIT (paper size kept)
+        reasons.append(f"{MARGIN_CHECK_REAL}: {sz.real_reason}.")
+        action, qualifier = tp.verdict(failed, level)
+    if action == tp.ENTER and mu_lo is not NOT_EVALUATED and (mu_lo is None or mu_lo <= 0):
+        failed.append(KELLY_CHECK)  # #395: Kelly is only a ceiling, and it is 0 while μ_lo ≤ 0 (or unknown)
+        reasons.append(f"{KELLY_CHECK}: " + ("the backtest's out-of-sample expectancy lower bound is unknown, so the "
+                       "Kelly ceiling is unknown: no real-money size." if mu_lo is None else f"the backtest's "
+                       f"out-of-sample expectancy lower bound is ₹{mu_lo:,.0f} per trade (≤ 0), so the Kelly ceiling "
+                       "is 0: no real-money size."))  # fmt: skip
         action, qualifier = tp.verdict(failed, level)
     if action != tp.ENTER:
         sz = replace(sz, real_lots=0)  # real money only on an ENTER

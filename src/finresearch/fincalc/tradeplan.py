@@ -154,6 +154,8 @@ class Size:
     risk_per_multiple: float | None  # max loss + entry costs of one multiple; None = unlimited
     reason: str
     real_lots: int = 0  # real-money size (#350): 0 unless the matched spec is a candidate
+    binding: str | None = None  # #395: the open-book term that cut `suggested` below `multiple` (book|concurrent|shock)
+    real_reason: str = ""  # #395: the margin term on real money (why real_lots is below suggested, or unknown)
 
 
 # #358 (interim open-book cap; P4.2 adds the common-shock and margin terms). Registered values, stated in the issue
@@ -225,6 +227,28 @@ def margin_lots(margin_used: float | None, im_one: float | None, cash: float | N
 
 
 @dataclass(frozen=True)
+class Shock:
+    """The common-shock inputs (#395): the open book's P&L and one set of the new legs' P&L (₹, signed) at each of
+    SHOCK_MOVES; a map (or a value in it) None = unknown, never 0."""
+
+    book: Mapping[float, float | None] | None
+    one: Mapping[float, float | None] | None
+    notes: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class Funds:
+    """The real book's funds for the margin term (#395): Groww's cash, margin in use and collateral after haircut, and
+    one set of the new legs' initial margin (₹; None = unknown, never 0)."""
+
+    cash: float | None
+    margin_used: float | None
+    collateral: float | None
+    im_one: float | None
+    notes: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class OpenBook:
     """What is already open (#358), for one card. `open_risk` = OR, the Σ of position_risk over open paper and Groww
     positions (None = unknown: never counted as room); `open_same` = open positions of this recipe / shape, against the
@@ -238,10 +262,17 @@ class OpenBook:
     mtd_paper: float | None = None
     mtd_real: float | None = None
     notes: tuple[str, ...] = ()
+    # #395: None = the term is not evaluated (pure callers only; signals.tradeplan.book_for always sets both)
+    shock: Shock | None = None
+    funds: Funds | None = None
 
     @property
     def budget(self) -> float:
         return self.capital * BOOK_BUDGET_PCT / 100
+
+    @property
+    def shock_budget(self) -> float:
+        return self.capital * SHOCK_BUDGET_PCT / 100
 
     def month_stopped(self, real: bool = False) -> bool:
         """True when that book's month-to-date P&L is at or below −MONTH_LOSS_STOP_PCT of capital, or unknown."""
@@ -270,7 +301,9 @@ def size(max_loss_one: float | None, costs_one: float, budget: float, proven: bo
     """Lots from the risk budget: floor(budget ÷ (max loss + entry costs of the base legs)), as the backtester sizes
     (backtest.engine.try_enter): one formula n = floor(B / (|ML| + c)) (#355). With the open book (#358):
     n = min(that, floor((B_book − OR) ÷ (|ML| + c))), floored at 0, and 0 once `max_concurrent` of this recipe are
-    open. Real money (#350) only when the matched spec is a candidate (`proven`): otherwise n is the paper size and
+    open. #395 adds the common-shock term, floor((B_shock − |L_book|) ÷ |dL/dn|) taken per move (`shock_lots`), to n,
+    and the margin term (`margin_lots`, the real book's funds) to real lots only; an unknown term sizes 0.
+    Real money (#350) only when the matched spec is a candidate (`proven`): otherwise n is the paper size and
     real lots are 0. `multiple` stays the trade budget's alone (a full book is not an over-budget trade)."""
     if max_loss_one is None:
         return Size(0, 0, budget, None, "the loss is unlimited, so no size fits a budget")
@@ -283,22 +316,38 @@ def size(max_loss_one: float | None, costs_one: float, budget: float, proven: bo
             0, 0, budget, risk, f"one set of these legs risks ₹{risk:,.0f}, above your ₹{budget:,.0f} budget"
         )
     why = f"₹{budget:,.0f} budget ÷ ₹{risk:,.0f} risk per set (max loss + entry costs) = {m}"
-    n = m
+    n, binding = m, None
     if book is not None:
         if book.open_risk is None:
-            n, more = 0, "the risk of your open positions is unknown, so the open book has no known room: 0"
+            n, binding, more = 0, "book", "the risk of your open positions is unknown, so the open book has no known room: 0"
         elif book.max_concurrent is not None and book.open_same >= book.max_concurrent:
-            n, more = 0, (f"{book.open_same} of this recipe already open, the backtest's limit of "
-                          f"{book.max_concurrent} at a time: 0")  # fmt: skip
+            n, binding, more = 0, "concurrent", (f"{book.open_same} of this recipe already open, the backtest's limit "
+                                                 f"of {book.max_concurrent} at a time: 0")  # fmt: skip
         else:
             room = book.budget - book.open_risk
             n = max(0, min(m, math.floor(room / risk)))
+            binding = "book" if n < m else None
             more = (f"open book: ₹{book.budget:,.0f} ({BOOK_BUDGET_PCT:g}% of F&O capital) − ₹{book.open_risk:,.0f} "
                     f"already at risk in open positions = room for {max(0, math.floor(room / risk))}")  # fmt: skip
         why += f"; {more}"
+        if book.shock is not None:  # #395: the common-shock term (B_shock = SHOCK_BUDGET_PCT of F&O capital)
+            sn, swhy = shock_lots(book.shock.book, book.shock.one, book.shock_budget)
+            if sn is None and book.shock.notes:
+                swhy += " (" + "; ".join(book.shock.notes) + ")"
+            if binding is None and (sn is None or sn < n):
+                binding = "shock"
+            n = 0 if sn is None else min(n, int(min(sn, n)))
+            why += f"; {swhy}"
+    real, real_why = (n if proven else 0), ""
     if not proven:
         why += "; no strategy that passed out of sample matches, so paper only: 0 real-money lots"
-    return Size(m, n, budget, risk, why, real_lots=n if proven else 0)
+    elif book is not None and book.funds is not None:  # #395: the margin term, real money only
+        f = book.funds
+        mn, real_why = margin_lots(f.margin_used, f.im_one, f.cash, f.collateral)
+        if mn is None and f.notes:
+            real_why += " (" + "; ".join(f.notes) + ")"
+        real = 0 if mn is None else min(real, int(min(mn, real)))
+    return Size(m, n, budget, risk, why, real_lots=real, binding=binding, real_reason=real_why)
 
 
 # --------------------------------------------------------------------------- limit prices from bid/ask
