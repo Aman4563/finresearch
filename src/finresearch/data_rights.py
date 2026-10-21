@@ -38,6 +38,12 @@ DECISIONS: dict[str, Decision] = {
         Decision(
             "nse_span", "accept-personal", "2026-10-21", "issue #362", _NSE_TERMS
         ),  # nsccl SPAN + FOVOLT (#370)
+        Decision(
+            "fno_participant_oi", "accept-personal", "2026-10-21", "issue #362", _NSE_TERMS
+        ),  # nsccl fao_participant_oi (#317; backfill #371)
+        Decision(
+            "fno_participant_vol", "accept-personal", "2026-10-21", "issue #362", _NSE_TERMS
+        ),  # nsccl fao_participant_vol (#371)
     )
 }
 

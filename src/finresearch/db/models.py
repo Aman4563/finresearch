@@ -1545,6 +1545,48 @@ class FnoParticipantOi(Base):
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class FnoParticipantVol(Base):
+    """NSE's participant-wise trading volume in equity derivatives, one row per day and participant (#371,
+    adapters.nse_participant_oi.VOL): contracts bought (long) and sold (short) that day by Clients, DIIs, FIIs and
+    Pros, in the same buckets as fno_participant_oi. Public aggregate market data."""
+
+    __tablename__ = "fno_participant_vol"
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    client_type: Mapped[str] = mapped_column(String(10), primary_key=True)  # Client | DII | FII | Pro
+    fut_idx_long: Mapped[int] = mapped_column(BigInteger)
+    fut_idx_short: Mapped[int] = mapped_column(BigInteger)
+    fut_stk_long: Mapped[int] = mapped_column(BigInteger)
+    fut_stk_short: Mapped[int] = mapped_column(BigInteger)
+    opt_idx_call_long: Mapped[int] = mapped_column(BigInteger)
+    opt_idx_put_long: Mapped[int] = mapped_column(BigInteger)
+    opt_idx_call_short: Mapped[int] = mapped_column(BigInteger)
+    opt_idx_put_short: Mapped[int] = mapped_column(BigInteger)
+    opt_stk_call_long: Mapped[int] = mapped_column(BigInteger)
+    opt_stk_put_long: Mapped[int] = mapped_column(BigInteger)
+    opt_stk_call_short: Mapped[int] = mapped_column(BigInteger)
+    opt_stk_put_short: Mapped[int] = mapped_column(BigInteger)
+    total_long: Mapped[int] = mapped_column(BigInteger)
+    total_short: Mapped[int] = mapped_column(BigInteger)
+    source: Mapped[str] = mapped_column(String(200))
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class FnoParticipantDay(Base):
+    """The participant files' backfill manifest (#371): one row per dataset (fno_participant_oi / _vol) and calendar
+    day tried. status loaded / no_file (404: a holiday, a weekend or not yet published) / failed. Resume skips loaded
+    days and old no_file days."""
+
+    __tablename__ = "fno_participant_day"
+    dataset: Mapped[str] = mapped_column(String(30), primary_key=True)
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    status: Mapped[str] = mapped_column(String(10))
+    url: Mapped[str | None] = mapped_column(String(200))
+    rows: Mapped[int | None] = mapped_column(Integer)
+    attempts: Mapped[int] = mapped_column(Integer, default=1)
+    error: Mapped[str | None] = mapped_column(String(300))
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class CardLog(Base):
     """#360: one row per F&O plan, suggest or strategy-check response, as the owner saw it. Append-only: a trigger
     refuses UPDATE and DELETE (`CARD_LOG_APPEND_ONLY`, created here for create_all and in the migration). `inputs` =

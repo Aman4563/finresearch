@@ -46,8 +46,10 @@ def test_participants_reconcile_with_bhavcopy(clean):
     with session_scope() as s:
         seed(s)
         res = by_check(ref.participant_checks(s, ds.T1))
+    # #371 added the non-critical reupload check: unknown here, as the seeded rows have no lineage row
     assert {k: c.status for k, c in res.items()} == {"participants_present": "ok", "long_short_identity": "ok",
-                                                     "bhav_fut_idx": "ok", "bhav_fut_stk": "ok"}  # fmt: skip
+                                                     "reupload": "unknown", "bhav_fut_idx": "ok",
+                                                     "bhav_fut_stk": "ok"}  # fmt: skip
     assert res["bhav_fut_idx"].value == 0
 
 

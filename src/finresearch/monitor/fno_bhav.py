@@ -9,8 +9,9 @@ otherwise. After loading, the day's derived IV row per underlying (fno_iv_eod) a
 Weekends and NSE holidays are skipped; an unknown holiday list skips the run too (monitor.market_days fails closed).
 Each night is claimed in `alert_eval_slot` ("fno_bhav:<day>"), so two monitor processes never run it twice.
 
-The same evening NSE's participant-wise F&O open interest file (#317, fnohist.participants) is fetched in its own slot
-("fno_participant:<day>"), so a failure of one never retries or fails the other.
+The same evening NSE's participant-wise F&O open interest and trading volume files (#317, #371, fnohist.participants)
+are fetched in their own slot ("fno_participant:<day>"), so a failure of one never retries or fails the other. The
+slot counts as failed (retried) until both of today's files are stored.
 """
 
 from __future__ import annotations
@@ -59,8 +60,8 @@ async def fno_bhav_step(now: datetime, holidays: set[date] | None = None, **kw: 
 
 
 async def fno_participant_step(now: datetime, holidays: set[date] | None = None, **kw: Any) -> dict[str, Any]:
-    """Claim tonight's participant-OI slot and fetch the missing recent days (one small CSV a night). `kw` goes to
-    fnohist.participants.update (tests)."""
+    """Claim tonight's participant slot and fetch the missing recent days (two small CSVs a night: OI and volume).
+    `kw` goes to fnohist.participants.update (tests)."""
     from finresearch.monitor.disclosures import claim, finish
 
     bhav = due_slot(now, holidays)
@@ -83,13 +84,14 @@ async def fno_participant_step(now: datetime, holidays: set[date] | None = None,
 
 
 def _participant_loaded(day: date) -> bool:
+    """Both participant files (OI and volume) are stored for `day`."""
     from sqlalchemy import select
 
     from finresearch.db import session_scope
-    from finresearch.db.models import FnoParticipantOi
+    from finresearch.fnohist.participants import TABLES
 
     with session_scope() as s:
-        return s.scalar(select(FnoParticipantOi.day).where(FnoParticipantOi.day == day).limit(1)) is not None
+        return all(s.scalar(select(t.day).where(t.day == day).limit(1)) is not None for t in TABLES.values())
 
 
 def _loaded(day: date) -> bool:
