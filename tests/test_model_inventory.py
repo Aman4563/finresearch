@@ -157,3 +157,57 @@ def test_fno_backtest_run_saves_engine_and_data_hashes(env, monkeypatch):
         saved = bstore.run_json(s, bstore.latest_run(s))
     assert saved["code_hash"] == pv.code_hash(pv.REPO) and len(saved["engine_hash"]) == 64
     assert len(saved["data_hash"]) == 64 and "data_days" in saved and "git_dirty" in saved
+
+
+# --------------------------------------------------------------------------- registry
+def test_registry_keys_are_unique_and_every_entry_is_complete():
+    from finresearch.inventory import registry
+
+    es = registry.entries()
+    assert len({e.key for e in es}) == len(es)
+    for e in es:
+        assert e.purpose and e.intended_use and e.restrictions and e.outcome_metric and e.code, e.key
+        assert e.tier in ("A", "B", "C") and all(m.strip() for m in e.methods), e.key
+
+
+def test_the_issue_s_models_are_all_in_the_inventory():
+    from finresearch.backtest import specs
+    from finresearch.inventory import registry
+
+    want = {"fno_strategy_gate", "fno_tradeplan_verdict", "direction_logistic", "direction_implied", "ipo_base_rate",
+            "ipo_blend", "stock_composite", "risk_margin_approx", "risk_lognormal_pop", "risk_drawdown_mc",
+            "risk_var", "risk_stress", *(f"recipe:{s.key}" for s in specs.SPECS)}  # fmt: skip
+    assert want <= {e.key for e in registry.entries()}
+
+
+def test_status_is_validated_only_with_current_dates():
+    from dataclasses import replace
+
+    from finresearch.inventory import registry
+
+    base = registry.entry("fno_strategy_gate")
+    ok = replace(base, declared="validated", validated_on=date(2026, 9, 1), valid_until=date(2026, 12, 1))
+    assert ok.status(date(2026, 10, 22))[0] == "validated"
+    st, why = ok.status(date(2026, 12, 2))  # expired evidence reads unvalidated, never fine
+    assert st == "unvalidated" and "expired on 01-Dec-2026" in why
+    assert replace(base, declared="validated").status(date(2026, 10, 22))[0] == "unvalidated"  # no dates
+    assert (
+        registry.entry("direction_logistic").status(date(2030, 1, 1))[0] == "failed"
+    )  # time never rescues a fail
+
+
+def test_no_entry_is_declared_validated_without_its_evidence():
+    from finresearch.inventory import registry
+
+    for e in registry.entries():
+        st, _ = e.status(date(2026, 10, 22))
+        assert st in ("unvalidated", "failed"), (
+            f"{e.key}: nothing has passed a validation yet (#379, 22-Oct-2026)"
+        )
+
+
+def test_unknown_methods_map_to_nothing():
+    from finresearch.inventory import registry
+
+    assert registry.entry_for_method("a brand new method nobody registered") is None
+    assert registry.entry_for_method("rule: QIB above 2x").key == "ipo_rules"
