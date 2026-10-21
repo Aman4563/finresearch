@@ -17,7 +17,8 @@ from test_fno_signal import FakeFno
 from finresearch.fincalc import dates
 
 TABLES = (
-    "fno_bhav, fno_bhav_day, fno_iv_eod, fno_participant_oi, fno_direction_run, forecast, alert_eval_slot"
+    "fno_bhav, fno_bhav_day, fno_iv_eod, fno_participant_oi, fno_direction_run, forecast, alert_eval_slot, "
+    "dataset_status"
 )
 AS_OF = date(2026, 9, 28)  # a Monday; the recorded chain is from 29-Sep-2026 10:00 IST
 IST = dates.IST
@@ -305,3 +306,20 @@ def test_a_known_trading_holiday_without_a_manifest_row_does_not_block_resolutio
             r.outcome == int(math.log(closes[sessions[-1]] / closes[AS_OF]) > 0)
             and str(sessions[-1]) in r.note
         )
+
+
+def test_direction_carries_the_data_gate_unknown_then_unverified(client):
+    """#368: the probabilities are shown with the data-quality gate of the datasets they read; no check run is
+    unknown (never verified) and a failed bhavcopy check marks them unverified."""
+    from finresearch.db import session_scope
+    from finresearch.db.models import DatasetStatus
+
+    store(panel())
+    d = client.get("/api/fno/direction/NIFTY?decide=false").json()
+    assert d["data_health"]["status"] == "unknown"
+    with session_scope() as s:
+        for name in ("fno_bhav", "fno_iv_eod", "index_eod"):
+            s.add(DatasetStatus(dataset=name, day=AS_OF, status="fail" if name == "fno_bhav" else "ok",
+                                failed=["freshness"] if name == "fno_bhav" else []))  # fmt: skip
+    d = client.get("/api/fno/direction/NIFTY?decide=false").json()
+    assert d["data_health"]["status"] == "unverified" and d["data_health"]["failed"] == ["fno_bhav"]

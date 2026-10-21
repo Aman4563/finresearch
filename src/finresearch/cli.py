@@ -1657,6 +1657,43 @@ def fno_card_log(
     console.print(t)
 
 
+dq_app = typer.Typer(
+    no_args_is_help=True, help="Data quality (#368): post-load checks, lineage and the replay"
+)
+app.add_typer(dq_app, name="dq")
+
+
+@dq_app.command("run")
+def dq_run() -> None:
+    """Run every dataset's checks now and store the results (what the monitor does at 21:00 and 08:00 IST). Database
+    only; prints each dataset's status."""
+    from datetime import UTC, datetime
+
+    from finresearch.db import session_scope
+    from finresearch.dq import run
+
+    with session_scope() as s:
+        res = run.run_all(s, datetime.now(UTC))
+    console.print_json(json.dumps(res, default=str))
+
+
+@dq_app.command("replay")
+def dq_replay(
+    start: str = typer.Option(..., "--from", help="First day, YYYY-MM-DD"),
+    end: str = typer.Option(..., "--to", help="Last day, YYYY-MM-DD"),
+) -> None:
+    """Acceptance 2's historical replay: the content checks over every loaded bhavcopy day in the range, read only.
+    Prints counts per check, the flagged days and the share of sessions with a critical failure."""
+    from datetime import date as _date
+
+    from finresearch.db import session_scope
+    from finresearch.dq import replay
+
+    with session_scope() as s:
+        res = replay.replay(s, _date.fromisoformat(start), _date.fromisoformat(end))
+    console.print_json(json.dumps(res, default=str))
+
+
 span_app = typer.Typer(no_args_is_help=True, help="NSE SPAN risk parameters (scan ranges) and FOVOLT")
 fno_app.add_typer(span_app, name="span")
 

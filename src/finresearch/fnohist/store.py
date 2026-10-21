@@ -113,6 +113,9 @@ def load_day(
         )
     _manifest(s, day, status="loaded", format=fmt, url=url, rows_total=total, rows_kept=len(live),
               rows_dead=len(rows) - len(live), stock_symbols=stocks, error=None)  # fmt: skip
+    from finresearch.dq.lineage import record_load
+
+    record_load(s, "fno_bhav", day, content, url=url, parser_version=fb.PARSER_VERSION, rows=len(live))
     return {"total": total, "kept": len(live), "dead": len(rows) - len(live)}
 
 

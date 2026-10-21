@@ -215,6 +215,29 @@ def add_brief_routes(app: FastAPI, clock: Callable[[], datetime] | None = None) 
                                 "message": a.message} for a in past]  # fmt: skip
             return body
 
+    @app.get("/api/data-health")
+    def data_health() -> dict[str, Any]:
+        """The data-quality pass's latest results per dataset and the pages they gate (#368). Stored rows only."""
+        from finresearch.dq.report import data_health as build
+
+        with session_scope() as s:
+            return build(s)
+
+    @app.get("/api/data-health/checks")
+    def data_health_checks(dataset: str, days: int = 10) -> dict[str, Any]:
+        """One dataset's stored check rows for its last `days` checked days, newest first."""
+        from finresearch.db.models import DqCheck
+
+        days = max(1, min(days, 60))
+        with session_scope() as s:
+            recent = s.scalars(select(DqCheck.day).where(DqCheck.dataset == dataset).distinct()
+                               .order_by(DqCheck.day.desc()).limit(days)).all()  # fmt: skip
+            rows = s.scalars(select(DqCheck).where(DqCheck.dataset == dataset, DqCheck.day.in_(recent))
+                             .order_by(DqCheck.day.desc(), DqCheck.check)).all()  # fmt: skip
+            return {"dataset": dataset, "checks": [{"day": c.day.isoformat(), "check": c.check, "status": c.status,
+                    "critical": c.critical, "value": c.value, "threshold": c.threshold, "note": c.note,
+                    "run_at": c.run_at.isoformat()} for c in rows]}  # fmt: skip
+
     @app.get("/api/brief/digest")
     def digest() -> dict[str, Any]:
         from finresearch.monitor.digest import build_digest
