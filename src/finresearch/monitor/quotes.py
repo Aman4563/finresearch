@@ -39,7 +39,8 @@ from finresearch.fnohist.quotes import EXPIRIES, SNAPSHOT_TIMES, STRIKES_EACH_SI
 
 log = logging.getLogger(__name__)
 
-WINDOW = timedelta(minutes=5)  # 15:25 + 5 min ends at the 15:30 close; 15:15 + 5 min before the 15:25 snapshot
+# 15:25 + 5 min ends at the 15:30 close; 15:15 + 5 min ends before the 15:25 snapshot
+WINDOW = timedelta(minutes=5)
 SPACING_S = 0.25  # between the recorder's own calls: at most 240 of Groww's 300 Live Data calls a minute
 SWEEP_TIMEOUT_S = 240.0  # a hung request never holds the background task; rows read until then are kept
 
@@ -118,8 +119,12 @@ async def sweep_groww(market: Any, snap: datetime, rows: list[dict[str, Any]], o
     if not spots:
         raise ConnectorError("Groww gave no index LTP")
     today = to_ist(snap).date()
-    contracts = [c for sym, _ in UNDERLYINGS if sym in spots for c in select_contracts(inst, sym, spots[sym], today)]
-    out["unresolved"] = [f"{c.underlying} {c.expiry} {c.strike} {c.kind}" for c in contracts if not c.trading_symbol]
+    contracts = [
+        c for sym, _ in UNDERLYINGS if sym in spots for c in select_contracts(inst, sym, spots[sym], today)
+    ]
+    out["unresolved"] = [
+        f"{c.underlying} {c.expiry} {c.strike} {c.kind}" for c in contracts if not c.trading_symbol
+    ]
     out["failed"] = []
     for n, c in enumerate(x for x in contracts if x.trading_symbol):
         if n and spacing_s:

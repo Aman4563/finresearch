@@ -925,6 +925,11 @@ SUPPLIES = [
     {"kind": "indices", "label": "Index values on the market charts (in session)"},
     {"kind": "candles", "label": "Daily price history for performance, risk and charts (from 2020)"},
     {"kind": "option_chain", "label": "F&O option chains with IV"},
+    {
+        "kind": "quotes",
+        "label": "Forward option quotes (bid, ask, depth) for NIFTY and BANKNIFTY, four times a "
+        "trading day, for a measured trading-cost model",
+    },
     {"kind": "mutual_funds", "label": "Not supplied: mutual-fund NAVs stay on AMFI (Groww has no fund data)"},
 ]
 

@@ -12,7 +12,7 @@ from decimal import Decimal
 import httpx
 import pytest
 
-from finresearch.adapters import groww_budget, groww_market
+from finresearch.adapters import groww_budget
 from finresearch.adapters.groww_market import GrowwMarket
 from finresearch.fincalc.dates import IST
 from finresearch.portfolio.connectors import base
@@ -155,7 +155,9 @@ def test_mid_half_spread_and_depth_cost_by_hand():
     assert qt.depth_cost(1600, "buy") == Decimal("810.000")
     # sell 900: 900 x 120.525 - (120.05 x 750 + 120.00 x 150) = 108472.5 - 108037.5 = 435
     assert qt.depth_cost(900, "sell") == Decimal("435.000")
-    assert qt.depth_cost(1800, "buy") is None  # deeper than the book shown: unknown, not the last level's price
+    assert (
+        qt.depth_cost(1800, "buy") is None
+    )  # deeper than the book shown: unknown, not the last level's price
 
 
 def test_no_mid_without_a_two_sided_uncrossed_quote():
@@ -278,7 +280,9 @@ def instruments_csv(skip_pe: int | None = None) -> str:
                         continue
                     tok += 1
                     sym = f"{und}{exp[2:4]}{exp[5:7]}{exp[8:]}{k}{kind}"
-                    rows.append(f"NSE,{tok},{sym},NSE-{sym},{und},{kind},FNO,,,{und},26000,{exp},{k},75,0.05,,0,1,1")
+                    rows.append(
+                        f"NSE,{tok},{sym},NSE-{sym},{und},{kind},FNO,,,{und},26000,{exp},{k},75,0.05,,0,1,1"
+                    )
     return CSV_HEAD + "\n".join(rows) + "\n"
 
 
@@ -288,7 +292,10 @@ def test_select_contracts_near_and_next_expiry_atm_plus_minus_ten():
 
     inst = Instruments.parse(instruments_csv())
     got = job.select_contracts(inst, "NIFTY", Decimal("25012.4"), TUE)
-    assert {c.expiry for c in got} == {date(2026, 10, 20), date(2026, 10, 27)}  # expiry day counts; past ones not
+    assert {c.expiry for c in got} == {
+        date(2026, 10, 20),
+        date(2026, 10, 27),
+    }  # expiry day counts; past ones not
     strikes = sorted({c.strike for c in got})
     assert len(strikes) == 21 and strikes[10] == Decimal("25000")  # ATM = nearest listed strike
     assert strikes[0] == Decimal("24500") and strikes[-1] == Decimal("25500")
@@ -390,7 +397,10 @@ async def test_sweep_records_168_quotes_once_per_slot(sweep_groww):
     assert len(rows) == 84 and rows[0].meta["source"] == "groww" and rows[0].meta["underlying_ltp"] == 2501240
     r = _slot("quotes:2026-10-20:0930")
     assert r["status"] == "done" and r["checks"]["ok"] is True and r["checks"]["rows"] == 168
-    assert await job.quotes_step(AT_0930 + timedelta(seconds=60), market=market(), holidays=set(), spacing_s=0) == {}
+    assert (
+        await job.quotes_step(AT_0930 + timedelta(seconds=60), market=market(), holidays=set(), spacing_s=0)
+        == {}
+    )
     assert g.calls("/v1/live-data/quote") == 168  # claimed: never recorded twice
 
 
@@ -431,7 +441,9 @@ def nse_chain_fake(calls: list):
         oq = OptionQuote(last_price=Decimal("120.5"), iv=Decimal("12.3"), oi=Decimal(1000), change_in_oi=None,
                          volume=Decimal(50), bid=Decimal("120.05"), ask=Decimal("121"))  # fmt: skip
         rows = [ChainRow(strike=Decimal(k), call=oq, put=oq) for k in range(lo, hi + 1, step)]
-        return OptionChain(symbol=sym, expiry=exp, underlying=spot, as_of=AT_0930 - timedelta(seconds=20), rows=rows)
+        return OptionChain(
+            symbol=sym, expiry=exp, underlying=spot, as_of=AT_0930 - timedelta(seconds=20), rows=rows
+        )
 
     return chain
 
@@ -458,3 +470,49 @@ async def test_nse_fallback_is_capped_at_four_chains_a_sweep_and_sixteen_a_day(s
     r = _slot("quotes:2026-10-20:0930")
     assert r["source"] == "nse" and r["nse_requests"] == 4 and "no valid Groww session" in r["error"]
     assert q.day_checks(TUE)["rows"] == 672
+
+
+# ------------------------------------------------------------------ wiring: a Deps flag, on in the live app
+def test_deps_flag_off_in_tests_on_in_the_live_app():
+    from finresearch.monitor.jobs import Deps
+
+    assert Deps(None, None).quotes is False and Deps(None, None).quotes_nse_fallback is False
+    live = Deps.live()
+    assert live.quotes is True
+    assert (
+        live.quotes_nse_fallback is False
+    )  # NSE's terms restrict automated collection: the owner decides (#362)
+
+
+async def test_tick_spawns_the_recorder_in_the_background_only_with_the_flag(monkeypatch):
+    from finresearch.monitor import quotes as job
+    from finresearch.monitor import scheduler
+    from finresearch.monitor.jobs import Deps
+
+    seen: list = []
+
+    async def step(now, **kw):
+        seen.append((now, kw))
+        return {}
+
+    monkeypatch.setattr(job, "quotes_step", step)
+    monkeypatch.setattr(job, "due_slot", lambda now, holidays=None: (now, "quotes:x"))
+    monkeypatch.setitem(scheduler._BACKGROUND, "quotes", None)
+    scheduler._spawn_quotes(Deps(None, None), AT_0930)
+    await scheduler._BACKGROUND["quotes"]
+    assert seen and seen[0][1]["nse_chain"] is None
+    seen.clear()
+    scheduler._spawn_quotes(Deps(None, None, quotes_nse_fallback=True, fno=lambda: None), AT_0930)
+    await scheduler._BACKGROUND["quotes"]
+    assert seen and callable(seen[0][1]["nse_chain"])
+
+
+def test_schedule_and_groww_card_name_the_recorder():
+    from finresearch.adapters.groww_market import SUPPLIES
+    from finresearch.monitor import scheduler
+    from finresearch.suggest.profile import WatchWindows
+
+    sj = scheduler.schedule_json(WatchWindows(), running=True)  # the default windows: no database read
+    assert sj["quotes"] == {"times": ["09:30", "12:00", "15:15", "15:25"], "window_min": 5, "per_snapshot": 168,
+                            "underlyings": ["NIFTY", "BANKNIFTY"], "groww_calls_per_day": 676}  # fmt: skip
+    assert any(s["kind"] == "quotes" for s in SUPPLIES)

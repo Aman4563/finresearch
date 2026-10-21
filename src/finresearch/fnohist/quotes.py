@@ -119,7 +119,9 @@ class Quote:
     ask_qty: int | None = None
     depth_bid: list[tuple[Decimal, int]] = field(default_factory=list)
     depth_ask: list[tuple[Decimal, int]] = field(default_factory=list)
-    meta: dict[str, Any] = field(default_factory=dict)  # the row's other columns (instrument, times, iv, flags)
+    meta: dict[str, Any] = field(
+        default_factory=dict
+    )  # the row's other columns (instrument, times, iv, flags)
 
     @classmethod
     def from_row(cls, r: dict[str, Any]) -> Quote:
@@ -174,7 +176,9 @@ def store(rows: list[dict[str, Any]]) -> int:
     from finresearch.db.models import OptionQuote
 
     with session_scope() as s:
-        res = s.execute(insert(OptionQuote).values(rows).on_conflict_do_nothing().returning(OptionQuote.strike))
+        res = s.execute(
+            insert(OptionQuote).values(rows).on_conflict_do_nothing().returning(OptionQuote.strike)
+        )
         return len(res.all())
 
 

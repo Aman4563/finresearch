@@ -115,6 +115,10 @@ class Deps:
     fno_bhav: bool = (
         False  # the nightly NSE F&O bhavcopy update and derived IV series (monitor.fno_bhav, #306)
     )
+    quotes: bool = False  # the forward option-quote recorder in session (monitor.quotes, #363)
+    # monitor.quotes' NSE option-chain fallback (at most 16 requests a day) through `fno`; off in the live app until
+    # the owner decides on NSE's terms, which restrict automated collection (#362)
+    quotes_nse_fallback: bool = False
 
     @classmethod
     def live(cls) -> Deps:
@@ -215,7 +219,7 @@ class Deps:
                    live_holidays=True, disclosures=True, fund_ranks=True, stock_peers=True,
                    lookthrough=True, pf_history=live_history, retention=True, lifecycle=True,
                    ipo_symbols=ipo_symbols, ipo_harvest=True, ipo_registry=True, sip_estimates=True,
-                   scheme_master=True, fno_bhav=True)  # fmt: skip
+                   scheme_master=True, fno_bhav=True, quotes=True)  # fmt: skip
 
 
 def alert(session: Session, watch: Watch, kind: str, message: str, level: str = "info", **data: Any) -> None:
