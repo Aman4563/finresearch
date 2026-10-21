@@ -314,9 +314,14 @@ def build_brief(s: Session, now: datetime) -> dict[str, Any]:
     dq = dq_report.data_health(s)  # #368: post-load checks of the market datasets (public data only)
     health = dq_report.brief_lines(dq) + health
     dq_failed = [d for d in dq["datasets"] if d["status"] == "fail"]
+    skill = _skill(
+        s, now
+    )  # #378: forecast calibration drift and skill against the benchmarks (the ledger only)
+    health = skill["lines"] + health
     at = advance_tax(s, data, today) if has_pf else None
     quiet = (
         not dq_failed
+        and not skill["alarms"]
         and not rules
         and not changes
         and not missed
@@ -326,11 +331,12 @@ def build_brief(s: Session, now: datetime) -> dict[str, Any]:
     return {
         "day": today.isoformat(), "generated_at": now.isoformat(), "has_portfolio": has_pf,
         "headline": "Nothing needs a decision today: no rule fired and nothing is due. No action needed."
-                    if quiet else _headline(rules, changes, events, missed, today, disc, len(dq_failed)),
+                    if quiet else _headline(rules, changes, events, missed, today, disc, len(dq_failed),
+                                            len(skill["alarms"])),
         "events": events, "rules_fired": rules, "since": since.isoformat(), "signal_changes": changes,
         "sip": sips, "sip_missed": missed, "long_term": lots, "tax_calendar": tax_cal, "advance_tax": at,
         "elss_unlocks": elss_month,
-        "health": health, "data_health": dq, "performance": perf, "performance_why": perf_why, "settings": settings.model_dump(mode="json"), "disclosures": disc,
+        "health": health, "data_health": dq, "skill": skill, "performance": perf, "performance_why": perf_why, "settings": settings.model_dump(mode="json"), "disclosures": disc,
         "method": "Deterministic templates over the local database: holdings' events and signals from the monitor's "
                   "daily pass (NSE, AMFI), rule alerts, the dated tax table. Nothing here is sent to an LLM.",
         "behaviour_note": BEHAVIOUR_NOTE, "disclaimer": DISCLAIMER,
@@ -352,14 +358,33 @@ def _disclosures(s: Session, now: datetime) -> dict[str, Any]:
         return {"error": f"{type(e).__name__}: {e}"[:200], "unavailable": ["exchange disclosures"]}
 
 
+def _skill(s: Session, now: datetime) -> dict[str, Any]:
+    """The skill monitor's section (monitor.skill, #378); a failure here never breaks the brief and is said so."""
+    try:
+        from finresearch.monitor.skill import brief_section
+
+        with s.begin_nested():
+            return brief_section(s, now)
+    except Exception as e:
+        import logging
+
+        logging.getLogger(__name__).warning("skill section failed", exc_info=True)
+        return {"status": "unavailable", "error": f"{type(e).__name__}: {e}"[:200], "alarms": [],
+                "lines": [{"level": "info", "text": "The forecast skill monitor's report is unavailable: alarms are "
+                           "unknown."}]}  # fmt: skip
+
+
 def _disclosure_items(disc: dict[str, Any] | None) -> int:
     d = disc or {}
     return len(d.get("flags") or []) + len(d.get("ratings") or []) + len(d.get("sebi_orders") or [])
 
 
 def _headline(rules: list, changes: list, events: list, missed: list, today: date,
-              disc: dict[str, Any] | None = None, dq_failed: int = 0) -> str:  # fmt: skip
+              disc: dict[str, Any] | None = None, dq_failed: int = 0, skill_alarms: int = 0) -> str:  # fmt: skip
     parts = []
+    if skill_alarms:
+        parts.append(f"{skill_alarms} forecast skill alarm{'s' if skill_alarms != 1 else ''} (calibration drift or "
+                     "skill below the benchmark)")  # fmt: skip
     if dq_failed:
         parts.append(f"{dq_failed} market dataset{'s' if dq_failed != 1 else ''} failed a data check (figures that "
                      "use them are unverified)")  # fmt: skip
@@ -407,6 +432,8 @@ def brief_text(b: dict[str, Any]) -> str:
     for d in [d for d in (b.get("data_health") or {}).get("datasets", []) if d["status"] == "fail"][:2]:
         first = f" ({d['failed'][0]})" if d.get("failed") else ""
         lines.append(f"• Data check failed: {d['label']}{first}")
+    for a in ((b.get("skill") or {}).get("alarms") or [])[:2]:
+        lines.append(f"• Skill alarm: {a['label']}: {a['text']}")
     if b["health"]:
         lines.append(f"• Data health: {len(b['health'])} note(s)")
     lines.append("Personal research, not advice.")
