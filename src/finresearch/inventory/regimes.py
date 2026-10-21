@@ -47,7 +47,8 @@ _FIXED = (
 
 def regime_changes() -> list[RegimeChange]:
     """Every known regime change, oldest first: the fixed market-structure events plus the STT start dates."""
-    # every STT row starts a change, the earliest included (Finance (No. 2) Act 2024 raised option STT from 1-Oct-2024)
+    # every STT row starts a change, the earliest included (dated from 2013 since #382; changes before a run's day
+    # never make it stale, so only 1-Oct-2024 on can matter for this app's runs)
     by_day: dict[date, list[charges.ChargeRate]] = {}
     for r in charges.RATES:
         if r.key.startswith("stt_"):
