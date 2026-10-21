@@ -176,3 +176,27 @@ def test_session_start_reports_a_live_run():
     res = _run("session", {"cwd": str(REPO)}, FINRESEARCH_HOOK_LIVE_RUN="1")
     ctx = json.loads(res.stdout)["hookSpecificOutput"]["additionalContext"]
     assert res.returncode == 0 and "LIVE" in ctx
+
+
+def _hook_commands() -> list[str]:
+    settings = json.loads((REPO / ".claude" / "settings.json").read_text())
+    return [h["command"] for groups in settings["hooks"].values() for g in groups for h in g["hooks"]]
+
+
+def test_hook_commands_fail_open_when_the_script_is_missing_or_in_a_sandbox(tmp_path):
+    """A missing script must never become exit 2 (python3's "can't open file"), which would block every tool call."""
+    cmds = _hook_commands()
+    assert len(cmds) == 5
+    event = json.dumps({"cwd": str(tmp_path), "tool_input": {"command": "gh pr list"}})
+    for cmd in cmds:
+        base = {k: v for k, v in os.environ.items() if k != "CLAUDE_CODE_DISABLE_CLAUDE_MDS"}
+        for env in ({**base, "CLAUDE_PROJECT_DIR": str(tmp_path)},
+                    {**base, "CLAUDE_PROJECT_DIR": str(REPO), "CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1"}):  # fmt: skip
+            res = subprocess.run(
+                ["sh", "-c", cmd], input=event, capture_output=True, text=True, env=env, timeout=60
+            )
+            assert res.returncode == 0, (cmd, res.stderr)
+    pre_bash = next(c for c in cmds if c.endswith("pre-bash"))
+    res = subprocess.run(["sh", "-c", pre_bash], input=event, capture_output=True, text=True, timeout=60,
+                         env={**os.environ, "CLAUDE_PROJECT_DIR": str(REPO), "FINRESEARCH_HOOK_LIVE_RUN": "0"})  # fmt: skip
+    assert res.returncode == 2  # and it still blocks when the script is there
