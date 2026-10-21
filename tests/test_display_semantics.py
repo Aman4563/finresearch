@@ -53,7 +53,8 @@ def test_participant_title_without_space_before_year_is_read():
     from finresearch.adapters import nse_participant_oi as po
 
     raw = (Path(__file__).parent / "fixtures" / "nse" / "fno" / "fao_participant_oi_09102026.csv").read_text()
-    old = raw.replace("as on Oct 09, 2026", "as on Jan 03,2022")  # NSE's 2022 files have no space before the year
+    # NSE's 2022 files have no space before the year
+    old = raw.replace("as on Oct 09, 2026", "as on Jan 03,2022")
     assert po.parse(old).day == date(2022, 1, 3)
 
 

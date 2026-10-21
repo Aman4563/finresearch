@@ -320,7 +320,8 @@ def test_fno_iv_expiry_and_spot(monkeypatch):
     monkeypatch.setattr(compute, "SOURCES", src(iv_rank_input=lambda s: (series, label), fno_expiries=exps,
                                                  fno_chain=ch))  # fmt: skip
     short = run(reader().read("fno", "iv_percentile", "NIFTY", {}, {}))
-    assert short.value is None and "insufficient coverage" in short.note  # 201 of 252 sessions: no percentile yet
+    # 201 of 252 sessions: no percentile yet
+    assert short.value is None and "insufficient coverage" in short.note
     # the 202nd session: 12.0 is above 10.0..11.9, i.e. 20 of each cycle of 50 → 4 × 20 + 1 (i = 200) = 81 of the
     # 201 earlier sessions: IVP = 81 / 201 = 40.30 %
     series.append((date(2026, 9, 1), 12.0))

@@ -15,6 +15,7 @@ participant-wise open interest (fnohist.participants); the event strip (fnobook.
 from __future__ import annotations
 
 from datetime import date
+from itertools import pairwise
 from typing import Any
 
 from finresearch.fincalc import market_context as mc
@@ -141,7 +142,7 @@ def front_futures(s, symbol: str, today: date) -> list[Any]:
         by_day.setdefault(d, {})[e] = (_f(h), _f(lo), _f(c), _f(st))
     days = sorted(by_day)
     out = []
-    for d0, d1 in zip(days, days[1:], strict=False):
+    for d0, d1 in pairwise(days):
         r = DayRow(d1)
         if set_front_future(r, by_day[d0], by_day[d1], d0) is not None:
             out.append(r)
@@ -331,7 +332,7 @@ def term_block(s, symbol: str) -> dict[str, Any] | None:
     near, nxt = _f(r.near_iv), _f(r.next_iv)
     slope = None if near is None or nxt is None else round(nxt - near, 3)
     # neutral words only (#354 c): "inverted = stress now" fired on 36 % of NIFTY days, mostly from the expiry clock
-    shape = None if slope is None else "near above next" if slope < 0 else "next above near" if slope > 0 else "flat"
+    shape = None if slope is None else "flat" if slope == 0 else "near above next" if slope < 0 else "next above near"  # fmt: skip
     return {"day": r.day.isoformat(), "near_expiry": r.near_expiry.isoformat() if r.near_expiry else None,
             "near_iv": near, "next_expiry": r.next_expiry.isoformat() if r.next_expiry else None, "next_iv": nxt,
             "iv_30d": _f(r.iv_30d), "rv_20": _f(r.rv_20), "shape": shape, "slope": slope, "evidence": EVIDENCE["term"],

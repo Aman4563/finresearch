@@ -96,7 +96,8 @@ def infer_lot(oi_values: list[int]) -> int | None:
     return math.gcd(*vals) or None
 
 
-LONG_DATED_DAYS = 45  # an options-only expiry first seen more than this many days before it is long-dated (#354 i)
+# an options-only expiry first seen more than this many days before it is long-dated (#354 i)
+LONG_DATED_DAYS = 45
 
 
 def _kind(expiry: date, a: dict[str, Any]) -> str:
