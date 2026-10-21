@@ -39,9 +39,10 @@ export default function BacktestsPage() {
         !error && <Skeleton className="h-40 rounded-xl" />
       ) : (
         <>
-          <Callout tone={reg!.matches_code ? "info" : "warn"} title={`Pre-registered ${reg!.registered_on} · ${reg!.variants_tried} variants · hash ${reg!.hash.slice(0, 12)}`}>
+          <Callout tone={reg!.matches_spec ? "info" : "warn"} title={`Pre-registered ${reg!.registered_on} · ${reg!.variants_tried} variants · hash ${reg!.hash.slice(0, 12)}${reg!.matches_spec ? " · matches spec" : ""}`}>
             In-sample {reg!.windows.is.join(" → ")}, out-of-sample from {reg!.windows.oos_from}. {reg!.note}{" "}
-            {!reg!.matches_code && "The specs in the code no longer match the registration: out-of-sample runs are refused. "}
+            {!reg!.matches_spec && "The specs in the code no longer match the registration: out-of-sample runs are refused. "}
+            The hash covers {reg!.hash_covers}.{" "}
             Details: <code>{reg!.doc}</code>. Multiple-testing adjustment: {reg!.deflated_sharpe_source}
           </Callout>
           {!run ? (
