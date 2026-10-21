@@ -136,3 +136,53 @@ def test_annualised_vol_helper():
     assert om.ann_vol([0.01, -0.01, 0.01, -0.01]) == pytest.approx(
         np.std([0.01, -0.01] * 2, ddof=1) * math.sqrt(252)
     )
+
+
+# --------------------------------------------------------------------------- walk-forward validation
+def test_walk_forward_holds_weights_with_drift_between_rebalances():
+    # train 2 days, test 2 days, fixed 50/50 target: day 1 of a window earns the 50/50 mix, day 2 the drifted mix
+    r = np.array([[0, 0], [0, 0], [0.10, 0.0], [0.10, 0.0], [0.0, 0.0], [0.0, 0.0]])
+    out = om.walk_forward(r, lambda _x: np.array([0.5, 0.5]), np.array([0.5, 0.5]), train=2, test=2)
+    day1 = 0.5 * 0.10
+    w_drift = 0.5 * 1.10 / (0.5 * 1.10 + 0.5)
+    assert out.returns["method"][:2] == pytest.approx([day1, w_drift * 0.10])
+    assert out.windows == 2
+    # the second rebalance trades the drift back: one-way turnover ½Σ|w - w_drifted|
+    w2 = 0.5 * 1.1 * 1.1 / (0.5 * 1.1 * 1.1 + 0.5)
+    assert out.turnover_trades["method"] == pytest.approx([abs(0.5 - w2)])
+
+
+def test_walk_forward_fits_only_on_the_past():
+    seen = []
+    r = np.arange(20, dtype=float).reshape(10, 2) / 1000
+    om.walk_forward(
+        r, lambda x: seen.append(x.copy()) or np.array([0.5, 0.5]), np.array([0.5, 0.5]), train=4, test=3
+    )
+    assert [s[-1, 0] for s in seen] == [r[3, 0], r[6, 0]]  # the window ends the day before the test period
+    assert all(len(s) == 4 for s in seen)
+
+
+def test_validation_passes_when_min_variance_avoids_a_volatile_asset():
+    rng = np.random.default_rng(11)
+    r = rng.normal(0, 0.01, size=(800, 3)) * np.array([1, 1, 3])
+    cur = np.array([0.2, 0.2, 0.6])
+    v = om.validate(r, "min_variance", np.zeros(3), np.ones(3), cur)
+    assert v["passed"], v["reasons"]
+    assert v["vol"]["method"] < v["vol"]["equal_weight"] < v["vol"]["current"]
+    assert v["windows"] >= om.MIN_WINDOWS
+
+
+def test_validation_needs_enough_windows():
+    r = np.random.default_rng(2).normal(0, 0.01, size=(om.TRAIN + om.TEST * (om.MIN_WINDOWS - 1), 2))
+    v = om.validate(r, "hrp", np.zeros(2), np.ones(2), np.array([0.5, 0.5]))
+    assert not v["passed"]
+    assert any("windows" in x for x in v["reasons"])
+
+
+def test_validation_fails_when_the_method_is_riskier_than_equal_weight():
+    # two uncorrelated assets of equal volatility: 1/N is the minimum-variance mix, so a forced 90/10 must fail
+    r = np.random.default_rng(5).normal(0, 0.01, size=(700, 2))
+    out = om.walk_forward(r, lambda _x: np.array([0.9, 0.1]), np.array([0.5, 0.5]))
+    v = om.verdict(out)
+    assert not v["passed"]
+    assert any("equal weight" in x for x in v["reasons"])

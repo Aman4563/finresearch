@@ -21,10 +21,13 @@ actual risk contributions. Bounds that cannot add up to 1 raise `Infeasible`, ne
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
+from finresearch.portfolio.analytics_math import TRADING_DAYS
 from finresearch.portfolio.analytics_math import annualised_vol as ann_vol
 
 METHODS = ("min_variance", "risk_parity", "hrp")
@@ -166,3 +169,81 @@ def optimise(method: str, cov: np.ndarray, lo: np.ndarray, hi: np.ndarray) -> np
         return min_variance(cov, lo, hi)
     raw = risk_parity(cov) if method == "risk_parity" else hrp(cov)
     return project_capped_simplex(raw, lo, hi)
+
+
+# --------------------------------------------------------------------------- out-of-sample validation
+# Pre-registered before any output on real holdings was looked at (#346, 22-Oct-2026). Changing one is a new
+# registration: say so in the PR and keep the old values in the comment.
+TRAIN = 252  # one year of daily returns to estimate the covariance
+TEST = 21  # rebalance monthly; each month is held with drift and never seen by its own fit
+MIN_WINDOWS = 6  # at least six out-of-sample months
+MAX_TURNOVER = 1.0  # at most 100 % one-way turnover a year after the first trade
+# pass = enough windows, out-of-sample volatility no higher than both equal weight and the current weights (each
+# rebalanced on the same dates), and turnover within the cap. A fail shows the comparison and no trade list.
+
+
+@dataclass
+class WalkForward:
+    returns: dict[str, list[float]]  # daily out-of-sample returns: method, equal_weight, current
+    turnover_trades: dict[str, list[float]]  # one-way turnover at each rebalance after the first
+    windows: int
+    days: int
+
+
+def _hold(r: np.ndarray, w: np.ndarray) -> tuple[list[float], np.ndarray]:
+    """Daily returns of weights `w` held without trading over `r`, and the drifted weights at the end."""
+    v, out = w.astype(float).copy(), []
+    for row in r:
+        out.append(float(v @ row / v.sum()))
+        v = v * (1 + row)
+    return out, v / v.sum()
+
+
+def walk_forward(r: np.ndarray, fit: Callable[[np.ndarray], np.ndarray], current: np.ndarray, *, train: int = TRAIN,
+                 test: int = TEST) -> WalkForward:  # fmt: skip
+    """Refit every `test` days on the `train` days before, hold the weights with drift until the next refit."""
+    r = np.asarray(r, dtype=float)
+    n = r.shape[1]
+    fixed = {"equal_weight": np.full(n, 1 / n), "current": np.asarray(current, dtype=float)}
+    rets: dict[str, list[float]] = {k: [] for k in ("method", *fixed)}
+    trades: dict[str, list[float]] = {k: [] for k in rets}
+    drifted: dict[str, np.ndarray | None] = dict.fromkeys(rets)
+    windows = 0
+    for t0 in range(train, len(r), test):
+        target = {"method": np.asarray(fit(r[t0 - train : t0]), dtype=float), **fixed}
+        for k, w in target.items():
+            if (prev := drifted[k]) is not None:
+                trades[k].append(float(np.abs(w - prev).sum() / 2))
+            got, drifted[k] = _hold(r[t0 : t0 + test], w)
+            rets[k] += got
+        windows += 1
+    return WalkForward(rets, trades, windows, len(rets["method"]))
+
+
+def verdict(wf: WalkForward) -> dict[str, Any]:
+    vol = {k: (ann_vol(v) if len(v) > 2 else None) for k, v in wf.returns.items()}
+    years = wf.days / TRADING_DAYS
+    turnover = {k: (sum(v) / years if years > 0 else None) for k, v in wf.turnover_trades.items()}
+    reasons = []
+    if wf.windows < MIN_WINDOWS:
+        reasons.append(f"only {wf.windows} out-of-sample windows (needs {MIN_WINDOWS})")
+    m = vol["method"]
+    if m is None:
+        reasons.append("no out-of-sample returns")
+    else:
+        for k, label in (("equal_weight", "equal weight"), ("current", "your current weights")):
+            if vol[k] is not None and m > vol[k]:
+                reasons.append(f"out-of-sample volatility {m:.2%} is above {label} ({vol[k]:.2%})")
+    t = turnover["method"]
+    if t is not None and t > MAX_TURNOVER:
+        reasons.append(f"turnover {t:.0%} a year is above the {MAX_TURNOVER:.0%} cap")
+    return {"passed": not reasons, "reasons": reasons, "windows": wf.windows, "days": wf.days, "vol": vol,
+            "turnover": turnover, "train": TRAIN, "test": TEST, "min_windows": MIN_WINDOWS,
+            "max_turnover": MAX_TURNOVER}  # fmt: skip
+
+
+def validate(
+    r: np.ndarray, method: str, lo: np.ndarray, hi: np.ndarray, current: np.ndarray
+) -> dict[str, Any]:
+    """The pre-registered out-of-sample check of `method` (Ledoit-Wolf covariance, the same bounds) on `r`."""
+    return verdict(walk_forward(r, lambda x: optimise(method, ledoit_wolf(x)[0], lo, hi), current))
