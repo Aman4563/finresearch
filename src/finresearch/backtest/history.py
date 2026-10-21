@@ -29,7 +29,8 @@ class LookAheadError(RuntimeError):
 @dataclass(frozen=True)
 class Quote:
     """One option contract's end-of-day row. `close` is the last traded price (None when it did not trade);
-    `settle` is NSE's settlement price (a model price when the contract did not trade)."""
+    `settle` is NSE's settlement price (a model price when the contract did not trade). `open`, `high` and `low` are
+    the bhavcopy's, kept only when the contract traded (an untraded row's are NSE's placeholders, never a price)."""
 
     expiry: date
     right: str  # call | put
@@ -39,6 +40,10 @@ class Quote:
     contracts: int  # traded that day
     oi: int
     lot: int | None = None  # UDiFF rows carry the lot size (2024 on)
+    # the session's first, highest and lowest trade (#382: next-open fills, stop touches); None when it did not trade
+    open: float | None = None
+    high: float | None = None
+    low: float | None = None
 
     @property
     def traded(self) -> bool:
