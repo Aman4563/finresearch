@@ -1207,6 +1207,9 @@ def forecasts_horse_race(
     except race.PreregistrationError as e:
         console.print(str(e))
         raise typer.Exit(1) from e
+    if window not in race.specs.WINDOWS:
+        console.print(f"unknown window {window!r}: one of {', '.join(race.specs.WINDOWS)}")
+        raise typer.Exit(2)
     with session_scope() as s:
         rep = race.run(ledger_events.load(s), window)
     console.print(f"window {window}: {rep['n_events']} event(s); {rep['window_role']}")

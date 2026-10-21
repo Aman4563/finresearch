@@ -108,3 +108,8 @@ def test_a_brier_winner_with_too_narrow_tails_is_not_adopted() -> None:
     a = rep["adoption"]["p_new"]["NIFTY"]
     assert rep["dm"]["brier"]["p_new"]["NIFTY"]["p_holm"] < 0.05
     assert a["adopt"] is False and "tail coverage fails" in a["why"]
+
+
+def test_an_unknown_window_is_refused_never_everything() -> None:
+    with pytest.raises(ValueError, match="vault"):
+        race.run(_calibrated(5), window="vault")  # the vault is registered elsewhere and never run here

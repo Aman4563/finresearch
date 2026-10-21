@@ -63,9 +63,8 @@ def test_gate_class(verdict, gate) -> None:
 def test_only_the_first_card_per_cluster_is_independent() -> None:
     later = row(3, card=2, logged=datetime(2026, 10, 24, 5, 0, tzinfo=UTC))
     other = row(5, card=3, structure="call_credit", logged=datetime(2026, 10, 24, 6, 0, tzinfo=UTC))
-    evs = {(e.structure, e.origin, e.first) for e in le.events_from_rows([row(1), later, other])}
-    firsts = sorted(e.first for e in le.events_from_rows([row(1), later, other]))
-    assert firsts == [False, True, True] and len(evs) >= 2
+    got = sorted((e.structure, e.first) for e in le.events_from_rows([row(1), later, other]))
+    assert got == [("call_credit", True), ("put_credit", False), ("put_credit", True)]
 
 
 def test_unsorted_or_missing_dots_are_unknown() -> None:
@@ -75,7 +74,8 @@ def test_unsorted_or_missing_dots_are_unknown() -> None:
     assert e.forecasts["p_rw"].dots is None and e.forecasts["p_rw"].p == 0.7
 
 
-def test_load_reads_resolved_card_forecasts_only(env) -> None:
+def _seed() -> None:
+    """One resolved card_pnl row, one open one and one resolved forecast of another kind."""
     from sqlalchemy import text
 
     from finresearch.db import session_scope
@@ -91,6 +91,12 @@ def test_load_reads_resolved_card_forecasts_only(env) -> None:
             vals = {k: getattr(r, k) for k in cols if hasattr(r, k)}
             s.add(Forecast(**{**vals, "event_kind": kind, "horizon": "h", "resolve_on": date(2026, 11, 25),
                               "action": "ENTER", "validation_status": "rule_based", "dedupe_key": f"t{i}"}))  # fmt: skip
+
+
+def test_load_reads_resolved_card_forecasts_only(env) -> None:
+    from finresearch.db import session_scope
+
+    _seed()
     with session_scope() as s:
         evs = le.load(s)
     assert [e.underlying for e in evs] == ["NIFTY"] and evs[0].pnl == 120.0
@@ -103,7 +109,7 @@ def test_cli_horse_race_scores_the_ledger_and_writes_json(env, tmp_path) -> None
 
     from finresearch.cli import app
 
-    test_load_reads_resolved_card_forecasts_only(env)  # one resolved card in the ledger
+    _seed()  # one resolved card in the ledger
     out = tmp_path / "race.json"
     r = CliRunner().invoke(app, ["forecasts", "horse-race", "--window", "forward", "--json", str(out)])
     assert r.exit_code == 0, r.output
@@ -121,3 +127,12 @@ def test_cli_horse_race_refuses_a_changed_spec(env, monkeypatch) -> None:
     monkeypatch.setattr(prereg, "HASH", "0" * 64)
     r = CliRunner().invoke(app, ["forecasts", "horse-race"])
     assert r.exit_code != 0 and "refused" in r.output
+
+
+def test_cli_horse_race_refuses_an_unknown_window(env) -> None:
+    from typer.testing import CliRunner
+
+    from finresearch.cli import app
+
+    r = CliRunner().invoke(app, ["forecasts", "horse-race", "--window", "vault"])
+    assert r.exit_code == 2 and "unknown window" in r.output

@@ -87,8 +87,8 @@ def with_trailing(events: Iterable[Event]) -> list[Event]:
 
 def in_window(events: Iterable[Event], window: str) -> list[Event]:
     w = specs.WINDOWS.get(window)
-    if w is None:
-        return list(events)
+    if w is None:  # never "every event": the vault is registered and read elsewhere (fno_pop_calibration)
+        raise ValueError(f"unknown window {window!r}: one of {', '.join(specs.WINDOWS)}")
     lo = date.fromisoformat(w["start"])
     hi = date.fromisoformat(w["end"]) if w["end"] else date.max
     return [e for e in events if lo <= e.origin <= hi]
