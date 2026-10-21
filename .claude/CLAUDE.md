@@ -44,7 +44,7 @@ pnpm exec playwright install chromium                # once, after a Playwright 
 uv run finresearch --help                            # every group and command has --help
 ```
 
-Procedures are slash commands in `.claude/skills/` (`/live-check`, `/new-migration`, `/ship`, `/release`) and
+Procedures are slash commands in `.claude/skills/` (`/feature`, `/live-check`, `/new-migration`, `/ship`, `/release`) and
 subagents in `.claude/agents/` (`implementer`, `invariant-auditor`, `gold-reviewer`). Research sandboxes sit inside the
 repo and see both, so every repo skill keeps `disable-model-invocation: true` and no role gets the Agent tool
 (`tests/test_claude_config.py`).
