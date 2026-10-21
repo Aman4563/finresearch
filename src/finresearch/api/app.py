@@ -1325,7 +1325,7 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
         except ValueError as e:
             raise HTTPException(422, str(e)) from e
         rn = a["risk_neutral"]
-        return {"symbol": sym, "expiry": body.expiry.isoformat(), "spot": spot, "lot_size": lot, "as_of": _iso(chain.as_of),
+        out = {"symbol": sym, "expiry": body.expiry.isoformat(), "spot": spot, "lot_size": lot, "as_of": _iso(chain.as_of),
                 "breakevens": prof.breakevens, "max_profit": _money(prof.max_profit), "max_loss": _money(prof.max_loss),
                 "net_premium": _money(prof.net_premium),
                 # risk-neutral, after costs: a model probability under a lognormal price, not a forecast (#244)
@@ -1340,6 +1340,14 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
                 "notes": notes + a["notes"],
                 "disclaimer": "Analysis only: model probabilities, not forecasts; costs from a dated table (some rates "
                               "unconfirmed); margin not computed. Not advice."}  # fmt: skip
+        from finresearch.fnobook import card_log  # #360: one row per strategy-check response
+
+        out["card_log_id"] = card_log.append("strategy", symbol=sym, expiry=body.expiry, request=body.model_dump(mode="json"),
+                                             chains=[chain], response=out, plan_inputs={
+                "today": today, "closes": closes, "iv_series": series, "iv_src": src, "rate": rinfo,
+                "capital": profile.fno_capital_inr, "max_loss_pct": profile.fno_max_loss_pct,
+                "brokerage": profile.fno_brokerage_per_order_inr})  # fmt: skip
+        return out
 
     @app.get("/api/fno/risk-notice")
     def fno_risk_notice() -> dict[str, Any]:

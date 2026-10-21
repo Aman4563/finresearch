@@ -1573,6 +1573,32 @@ def fno_status() -> None:
     console.print(t)
 
 
+@fno_app.command("card-log")
+def fno_card_log(
+    since: str = typer.Option(..., help="The split, e.g. a release's deploy time: ISO datetime WITH its zone, "
+                                        "e.g. 2026-10-21T18:00:00+05:30"),  # fmt: skip
+) -> None:
+    """Release report (#360): card verdicts (ENTER, NO PROVEN EDGE, WAIT, AVOID) before and after `--since`."""
+    from datetime import datetime
+
+    from finresearch.db import session_scope
+    from finresearch.fnobook import card_log
+
+    split = datetime.fromisoformat(since)
+    if split.tzinfo is None:
+        console.print("--since needs a time zone (e.g. +05:30): a naive time is ambiguous")
+        raise typer.Exit(2)
+    with session_scope() as s:
+        got = card_log.verdict_counts(s, split)
+    t = Table(title=f"F&O card verdicts before / after {split.isoformat()}")
+    for c in ("verdict", "before", "after"):
+        t.add_column(c)
+    for k in dict.fromkeys([*got["before"], *got["after"]]):
+        t.add_row(k, str(got["before"].get(k, 0)), str(got["after"].get(k, 0)))
+    t.add_row("responses", str(got["responses"]["before"]), str(got["responses"]["after"]))
+    console.print(t)
+
+
 # keep last: `python -m finresearch.cli` (how the API spawns research and lab workers) must see every command above
 if __name__ == "__main__":
     app()
