@@ -490,6 +490,32 @@ def _spawn_fno_bhav(now: datetime) -> None:
     _BACKGROUND["fno_bhav"] = asyncio.create_task(run())
 
 
+def _spawn_quotes(deps: jobs.Deps, now: datetime) -> None:
+    """Start the forward quote recorder (monitor.quotes, #363) in the background when a snapshot is due: one sweep is
+    169 Groww calls (~50 s), longer than a tick. At most one runs at a time."""
+    from finresearch.monitor import quotes
+
+    t = _BACKGROUND.get("quotes")
+    if (t is not None and not t.done()) or quotes.due_slot(now) is None:
+        return
+    nse_chain = None
+    if deps.quotes_nse_fallback and deps.fno is not None:
+
+        async def nse_chain(symbol, expiry):
+            async with deps.fno() as f:
+                return await f.nse_option_chain(symbol, expiry)
+
+    async def run() -> None:
+        try:
+            res = await quotes.quotes_step(now, nse_chain=nse_chain)
+            if res:
+                log.info("quote snapshot: %s", res)
+        except Exception:
+            log.warning("quote snapshot failed", exc_info=True)
+
+    _BACKGROUND["quotes"] = asyncio.create_task(run())
+
+
 def _spawn_sip_estimates(now: datetime) -> None:
     """Start the nightly SIP-estimate pass (monitor.sip_estimates, #297) in the background on trading days from 23:30
     IST: one AMFI request per instalment day without units, two Kite GETs when Zerodha is connected. At most one runs
@@ -629,6 +655,8 @@ async def tick(deps: jobs.Deps, now: datetime | None = None) -> dict[str, int]:
         _spawn_scheme_master(now)
     if deps.fno_bhav:
         _spawn_fno_bhav(now)
+    if deps.quotes:
+        _spawn_quotes(deps, now)
     out_brief = brief_step(now) if deps.brief else {}
     if deps.holidays is not None or deps.live_holidays:
         await _refresh_holidays(deps)
@@ -717,11 +745,13 @@ def schedule_json(ww=None, *, running: bool | None = None) -> dict:
 
     from finresearch.api.live import BIDDING_HOURS, EQUITY_HOURS
     from finresearch.fincalc.ipo import lock_in_schedule
+    from finresearch.fnohist import quotes as fq
     from finresearch.monitor import digest as dg
     from finresearch.monitor import fno_bhav as fb
     from finresearch.monitor import intraday, iv
     from finresearch.monitor import lookthrough_fetch as ltf
     from finresearch.monitor import portfolio_daily as pd
+    from finresearch.monitor import quotes as mq
     from finresearch.monitor import scheme_master as sm
     from finresearch.monitor import sip_estimates as sipe
     from finresearch.monitor.plan import ALLOTMENT_TIME, LISTING_TIMES, LOCKIN_TIME
@@ -746,6 +776,10 @@ def schedule_json(ww=None, *, running: bool | None = None) -> dict:
         "intraday": {"from": hm(intraday.START), "indices": list(intraday.ARCHIVE_INDICES),
                      "max_tries": intraday.MAX_TRIES, "retry_min": intraday.RETRY_S // 60},
         "iv": {"from": hm(iv.START), "indices": list(iv.INDEX_SYMBOLS)},
+        "quotes": {"times": [hm((t.hour, t.minute)) for t in fq.SNAPSHOT_TIMES],
+                   "window_min": int(mq.WINDOW.total_seconds() // 60), "per_snapshot": fq.PER_SNAPSHOT,
+                   "underlyings": [u for u, _ in fq.UNDERLYINGS],
+                   "groww_calls_per_day": (fq.PER_SNAPSHOT + 1) * len(fq.SNAPSHOT_TIMES)},
         "fno_bhav": {"after": hm((fb.RUN_AFTER.hour, fb.RUN_AFTER.minute)), "lookback_days": fb.LOOKBACK_DAYS},
         "forecasts": {"after": hm(READY_AFTER_IST), "every_min": int(FORECAST_EVERY.total_seconds() // 60)},
         "portfolio": {"close_pass": hm((pd.close_time(ww.stock_time()).hour, pd.close_time(ww.stock_time()).minute)),
