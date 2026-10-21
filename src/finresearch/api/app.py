@@ -1589,6 +1589,9 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
     from finresearch.api.portfolio_analytics import add_portfolio_analytics_routes
 
     add_portfolio_analytics_routes(app, scheme_rows=_scheme_rows)
+    from finresearch.api.portfolio_factors import add_portfolio_factor_routes
+
+    add_portfolio_factor_routes(app)  # needs the analytics routes' value history (#348)
     # fund look-through (AMC monthly portfolios)
     from finresearch.api.lookthrough import add_lookthrough_routes
 
