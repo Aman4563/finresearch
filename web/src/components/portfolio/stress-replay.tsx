@@ -9,7 +9,7 @@ import { useState } from "react";
 import { Badge, Button, Card, ErrorNote, Table, cx } from "@/components/ui";
 import { day, useApi } from "@/lib/api";
 
-import { Loading, spct } from "./shared-analytics";
+import { Loading, pct, spct } from "./shared-analytics";
 import { inr, signed } from "./types";
 
 type Unmapped = { key: string; name: string; value: number; reason: string };
@@ -44,6 +44,7 @@ function ScenarioDetail({ s }: { s: ReplayScenario }) {
   return (
     <>
       <p className="text-muted">{s.note} Market path: {s.index_source}, from the {day(s.base)} close. Index {spct(s.index?.move)} to the window&apos;s end, {spct(s.index?.drawdown)} peak to trough{s.vix ? `; India VIX ${s.vix.start} → ${s.vix.peak} (${day(s.vix.peak_date)})` : ""}.</p>
+      <p className="mt-1 font-medium">To the window&apos;s end ({day(s.loss?.day)}): {spct(s.loss?.pct)} ({signed(s.loss?.inr)}) on the {inr(s.mapped_value)} that could be mapped, {pct(s.mapped_share)} of today&apos;s holdings.</p>
       <p className="mt-1 text-muted">Worst day {day(s.worst_day?.date)}: {spct(s.worst_day?.pct)} ({signed(s.worst_day?.inr)}). Peak {day(s.drawdown?.peak)} → trough {day(s.drawdown?.trough)}: {spct(s.drawdown?.pct)} ({signed(s.drawdown?.inr)}). Recovery: {s.recovery?.note}{s.recovery?.days != null ? ` (${s.recovery.days} days)` : ""}.</p>
       <Table label={`${s.label}: holdings`} className="mt-2">
         <thead><tr><th>Holding</th><th className="text-right">Move</th><th className="text-right">Peak → trough ₹</th><th>How</th></tr></thead>

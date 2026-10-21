@@ -55,6 +55,7 @@ test("risk: the stress replay runs on request and lists unmapped holdings with t
   await expect(card.getByText(/peak to trough −11\.1%|peak to trough -11\.1%/)).toBeVisible();
   await expect(card.getByText(/1 unmapped/)).toBeVisible();
   await card.getByRole("button", { name: /Election-result day/ }).click();
+  await expect(card.getByText(/To the window's end \(5 Jun 2024\): -3\.1% \(.₹93\) on the ₹3,000 that could be mapped, 85\.7% of today's holdings/)).toBeVisible();
   await expect(card.getByText(/Unmapped: not in the figures above/)).toBeVisible();
   await expect(card.getByText(/Example Liquid Fund/)).toBeVisible();
   await expect(card.getByText(/not back at the 03-Jun-2024 peak/)).toBeVisible();

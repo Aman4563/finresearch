@@ -15,8 +15,9 @@ found. Each holding gets one daily return path, chosen in this order (the first 
 
 The market path is the Nifty 50 close from `index_eod` (NSE's daily index file, stored from Mar-2013, #366) when it
 covers the window, else NIFTYBEES (the Nifty 50 ETF, traded since 2002) closes from the app's existing price
-history. Betas are against NIFTYBEES total return; the index is a price index. Over a window of days to months the
-difference (dividends of about 1-1.5 % a year and the ETF's tracking error) is small and is stated, not hidden.
+history. Betas are against NIFTYBEES closes (split-adjusted, distributions not reinvested); the index is a price
+index. Over a window of days to months the difference (dividends of about 1-1.5 % a year and the ETF's tracking
+error) is small and is stated, not hidden.
 
 Outputs per episode, on the replayed value of the holdings that could be mapped: the move to the window's end, the
 worst day, peak-to-trough inside the window, the recovery date (first day back at that peak) and each holding's ₹
@@ -77,9 +78,10 @@ def market_days(level: dict[date, float], w: Window, until: date) -> tuple[date,
     base = before[-1]
     days = [d for d in ks if base < d <= until]
     inside = [base, *(d for d in days if d <= w.end)]
-    after = until > w.end and not any(
-        d > w.end for d in days
-    )  # a close after the window proves none is missing
+    if len(inside) < 2:
+        return f"no close inside the window ({w.start:%d-%b-%Y} to {w.end:%d-%b-%Y}): the stored history has a gap"
+    # a close after the window proves none is missing at its end
+    after = until > w.end and not any(d > w.end for d in days)
     if not days or after or w.end - inside[-1] > timedelta(days=MAX_GAP_DAYS):
         return f"closes stop before the window's end ({w.end:%d-%b-%Y})"
     for a, b in pairwise(inside):
@@ -488,14 +490,12 @@ async def load(h: Any, fetch: Any, store: Any, today: date, *, index_series: Any
     index closes (default: the local index_eod table); `yields(window)` a G-sec yield series or None (no source is
     stored yet, so bonds without their own prices are listed as unmapped). Own price ranges go through the on-disk
     PriceStore, so past windows are fetched once."""
-    from finresearch.portfolio.bonds import bond_kind
     from finresearch.signals.base import DISCLAIMER
 
     series = index_series or index_eod_series
     pos = [p for p in h.positions if p.value > 0]
     as_of = h.days[-1] if h.days else today
-    b = h.benchmark
-    out = []
+    out: list[dict[str, Any]] = []
     for w in WINDOWS:
         head = {
             "id": w.id,
@@ -503,40 +503,48 @@ async def load(h: Any, fetch: Any, store: Any, today: date, *, index_series: Any
             "window": [w.start.isoformat(), w.end.isoformat()],
             "note": w.note,
         }
-        if w.end >= today:
-            out.append({**head, "available": False, "reason": f"the window has not ended (today {today:%d-%b-%Y})",
+        try:
+            out.append({**head, **await _window(w, h, pos, fetch, store, series, yields, today, as_of)})
+        except Exception as e:  # one window's failure is that window's reason, never the whole replay's
+            out.append({**head, "available": False, "reason": f"could not be computed ({type(e).__name__})",
                         "unmapped": []})  # fmt: skip
-            continue
-        lo, until = (
-            w.start - timedelta(days=MAX_GAP_DAYS + 3),
-            min(w.end + timedelta(days=RECOVERY_DAYS), today),
-        )
-        m = await _market(w, h, fetch, store, series, lo, until, today)
-        if isinstance(m, str):
-            out.append({**head, "available": False, "reason": m, "unmapped": []})
-            continue
-        base, days, market, label = m
-        cats: dict[str, tuple[dict[date, float] | None, dict[date, float]]] = {}
-        for p in pos:
-            for sym in category_indices(getattr(p.scheme, "category", None)) if p.asset_type == "mf" else ():
-                if sym not in cats:
-                    path, _ = own_returns(series(sym, lo, until), None, base, days, w.end)
-                    cats[sym] = (path, series(sym, as_of - timedelta(days=380), as_of) if path else {})
-        c = Context(base, days, w.end, market, label.split(" (")[0], b.closes if b else {}, b.factors if b else None,
-                    as_of, cats, yields(w) if yields else None)  # fmt: skip
-        legs, missing = [], []
-        for p in pos:
-            kind, ident = p.key.split(":", 1)
-            own = await _closes(store, fetch, p.key, "mf" if kind == "MF" else kind.lower(), ident, p.scheme, lo,
-                                until, today)  # fmt: skip
-            x = HoldingData(p.key, p.name, p.value, p.asset_type, p.tax_class, own, h.factors.get(p.key) or {},
-                            h.closes.get(p.key) or {}, getattr(p.scheme, "category", None),
-                            bond=bond_kind(p.asset_type, None, p.name, p.nse_symbol, p.tax_class) is not None)  # fmt: skip
-            g = map_holding(x, c)
-            (legs if isinstance(g, Leg) else missing).append(g)
-        rep = replay(w, base, days, market, legs, missing, label)
-        p_out = {**head, **rep.payload()}
-        p_out["vix"] = _vix(series, base, w.end)
-        out.append(p_out)
     return {"disclaimer": DISCLAIMER, "privacy": "Computed on this machine from your local database; never sent to an LLM.",
             "as_of": as_of.isoformat(), "method": METHOD, "scenarios": out}  # fmt: skip
+
+
+async def _window(w: Window, h: Any, pos: list[Any], fetch: Any, store: Any, series: Any, yields: Any, today: date,
+                  as_of: date) -> dict[str, Any]:  # fmt: skip
+    """One window's payload (see `load`)."""
+    from finresearch.portfolio.bonds import bond_kind
+
+    if w.end >= today:
+        return {
+            "available": False,
+            "reason": f"the window has not ended (today {today:%d-%b-%Y})",
+            "unmapped": [],
+        }
+    lo, until = w.start - timedelta(days=MAX_GAP_DAYS + 3), min(w.end + timedelta(days=RECOVERY_DAYS), today)
+    m = await _market(w, h, fetch, store, series, lo, until, today)
+    if isinstance(m, str):
+        return {"available": False, "reason": m, "unmapped": []}
+    base, days, market, label = m
+    b = h.benchmark
+    cats: dict[str, tuple[dict[date, float] | None, dict[date, float]]] = {}
+    for p in pos:
+        for sym in category_indices(getattr(p.scheme, "category", None)) if p.asset_type == "mf" else ():
+            if sym not in cats:
+                path, _ = own_returns(series(sym, lo, until), None, base, days, w.end)
+                cats[sym] = (path, series(sym, as_of - timedelta(days=380), as_of) if path else {})
+    c = Context(base, days, w.end, market, label.split(" (")[0], b.closes if b else {}, b.factors if b else None,
+                as_of, cats, yields(w) if yields else None)  # fmt: skip
+    legs, missing = [], []
+    for p in pos:
+        kind, ident = p.key.split(":", 1)
+        own = await _closes(store, fetch, p.key, "mf" if kind == "MF" else kind.lower(), ident, p.scheme, lo,
+                            until, today)  # fmt: skip
+        x = HoldingData(p.key, p.name, p.value, p.asset_type, p.tax_class, own, h.factors.get(p.key) or {},
+                        h.closes.get(p.key) or {}, getattr(p.scheme, "category", None),
+                        bond=bond_kind(p.asset_type, None, p.name, p.nse_symbol, p.tax_class) is not None)  # fmt: skip
+        g = map_holding(x, c)
+        (legs if isinstance(g, Leg) else missing).append(g)
+    return {**replay(w, base, days, market, legs, missing, label).payload(), "vix": _vix(series, base, w.end)}

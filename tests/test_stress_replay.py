@@ -352,3 +352,28 @@ async def test_load_replays_every_window_and_says_why_one_is_missing(tmp_path):
 def test_a_bond_without_a_duration_says_why():
     m = sr.map_holding(hd(key="NSE:NCD1", tax_class="debt", bond=True), ctx())
     assert isinstance(m, sr.Missing) and "duration" in m.reason and "yield" in m.reason
+
+
+def test_market_days_refuse_a_window_with_no_close_inside():
+    """A backfill hole over a short window (closes before and after it, none inside) is unavailable, never a replay of
+    zero days (which would also crash the payload)."""
+    w = sr.Window("e", "Short", D(2024, 6, 3), D(2024, 6, 5), "synthetic")
+    level = {D(2024, 5, 31): 100.0, D(2024, 6, 6): 101.0, D(2024, 6, 7): 102.0}
+    why = sr.market_days(level, w, D(2024, 6, 30))
+    assert isinstance(why, str) and "inside" in why
+
+
+async def test_one_failing_window_does_not_take_the_others_down(tmp_path):
+    from finresearch.portfolio.history import PriceStore
+
+    def flaky(sym, a, b):
+        if a.year == 2013:
+            raise RuntimeError("synthetic failure")
+        return fake_index(sym, a, b)
+
+    out = await sr.load(
+        synthetic_history(), fake_fetch, PriceStore(tmp_path), D(2026, 10, 22), index_series=flaky
+    )
+    by = {s["id"]: s for s in out["scenarios"]}
+    assert by["taper2013"]["available"] is False and "RuntimeError" in by["taper2013"]["reason"]
+    assert by["election2024"]["available"] is True
