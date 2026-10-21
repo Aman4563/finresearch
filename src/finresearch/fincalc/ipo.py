@@ -252,6 +252,48 @@ def allotment_probability(lots_available: Num, applications: Num) -> Decimal:
     return min(Decimal(1), lots / apps)
 
 
+# --- listing-day sale costs (#353) --------------------------------------------------------------
+# Selling allotted shares on listing day is a delivery sale. Rates (fetched/known as stated; dated):
+SELL_STT_DELIVERY = Decimal(
+    "0.001"
+)  # 0.1 % of the sale value, delivery equity (Budget 2024 memo p.46) [verified]
+NSE_EQUITY_TXN = Decimal(
+    "0.0000297"
+)  # NSE cash-market transaction charge 0.00297 % (Zerodha charges page) [unconfirmed]
+SEBI_FEE = Decimal("0.000001")  # ₹10 per crore of turnover (Zerodha charges page) [secondary]
+GST = Decimal("0.18")  # on brokerage + exchange charges + SEBI fee + DP charge [secondary]
+ASSUMED_BROKERAGE = Decimal(
+    20
+)  # ASSUMED: ₹20 per order (many brokers charge ₹0 on delivery: this keeps EV low)
+ASSUMED_DP_CHARGE = Decimal(
+    13
+)  # ASSUMED: depository charge per scrip per sale day (₹3.50 CDSL + ₹9.50 broker)
+SALE_COST_SOURCES = {
+    "stt": "Budget 2024 memorandum p.46 (0.1 % on each side of a delivery equity trade), as portfolio/tax.py",
+    "exchange": "https://zerodha.com/charges (NSE equity 0.00297 %); not re-read from the NSE circular: unconfirmed",
+    "sebi": "https://zerodha.com/charges (₹10 per crore)",
+    "gst": "https://zerodha.com/charges (18 % on brokerage + transaction + SEBI + DP charges)",
+}
+
+
+def listing_sale_costs(
+    sale_value: Num, brokerage: Num = ASSUMED_BROKERAGE, dp: Num = ASSUMED_DP_CHARGE
+) -> dict:
+    """Costs of selling allotted shares worth ``sale_value`` in one order on listing day: STT, exchange charge, SEBI
+    fee, brokerage, the DP charge and GST on brokerage + exchange + SEBI + DP. Stamp duty is on the buy only. Brokerage
+    and DP are labelled assumptions (they depend on the broker), never 0."""
+    v = to_decimal(sale_value)
+    if v < 0:
+        raise ValueError("sale_value must be >= 0")
+    b, d = to_decimal(brokerage), to_decimal(dp)
+    lines = {"stt": v * SELL_STT_DELIVERY, "exchange": v * NSE_EQUITY_TXN, "sebi": v * SEBI_FEE, "brokerage": b,
+             "dp": d}  # fmt: skip
+    lines["gst"] = GST * (b + lines["exchange"] + lines["sebi"] + d)
+    return {"sale_value": v, "lines": lines, "total": sum(lines.values(), Decimal(0)), "sources": SALE_COST_SOURCES,
+            "assumptions": {"brokerage": f"₹{b} per order (assumed; brokers differ, many charge ₹0 on delivery)",
+                            "dp": f"₹{d} per scrip on the sale day (assumed: ₹3.50 CDSL + ₹9.50 broker, before GST)"}}  # fmt: skip
+
+
 # --- pricing ---------------------------------------------------------------------------------
 
 

@@ -134,7 +134,7 @@ export default function Signals() {
         <div className="grid gap-4 lg:grid-cols-5 [&>*]:min-w-0">
           {cal.error ? null : <Card className="lg:col-span-3" title="Calibration" icon={<Target className="size-4" />}
             help="Each dot is a group of forecasts: across is what was forecast, up is how often it happened, and the whisker is the 95% Wilson interval. On the dashed diagonal is perfect; with few cases the whiskers are long and nothing can be concluded yet."
-            subtitle={selected && selected.asset !== "all" ? `${ASSET_LABEL[selected.asset]} · ${selected.method}` : "All live methods pooled (shadow tests apart)"}
+            subtitle={selected && selected.asset !== "all" ? `${ASSET_LABEL[selected.asset]} · ${selected.method}` : "The calls pooled across assets: benchmarks (market-implied, base rates) and shadow tests apart"}
             actions={perMethod.length > 1 ? (
               <select aria-label="Method" className="max-w-44 truncate rounded-md border border-border bg-card px-2 py-1 text-xs"
                 value={groupKey} onChange={(e) => setGroupKey(e.target.value)}>
@@ -166,6 +166,8 @@ export default function Signals() {
               <li>IPO calls are about the <b>listing-day open above the issue price</b>; stock calls about the <b>12-month return beating the Nifty 50</b> (NIFTYBEES as the index proxy, dividends counted).</li>
               <li>Conditional or neutral verdicts are logged as <b>no call</b>: their outcome is still recorded, but they are not scored. Fund and bond verdicts have no checkable event yet and are not logged.</li>
               <li>A <b>shadow test</b> is a candidate method logged beside the call for out-of-sample scoring, never used for the call; it has its own row in the method list and is left out of the pooled headline.</li>
+              <li>A <b>benchmark</b> (the option market&apos;s own probability, an IPO base-rate table) is scored in its own row but left out of every headline, so the track record measures the calls, not the market. Each asset also has its own headline row in the method list.</li>
+              <li>An IPO is scored on its <b>last forecast before 17:00 IST on the last bidding day</b> (the bidding cut-off), not a later view built on the final book; nested F&amp;O direction events from one close and horizon count once.</li>
               <li>Below about {cal.data?.min_n_for_recalibration ?? 50} resolved cases nothing is re-fitted and nothing should be concluded: expect years for stock calls.</li>
             </ul>
           </Callout></div>
@@ -243,7 +245,7 @@ const TIER_LABEL: Record<string, string> = { base_rate: "base rate only", shrink
 function GroupFacts({ g }: { g: CalibrationGroup | undefined }) {
   if (!g) return <p className="text-xs text-muted">No forecasts logged yet.</p>;
   const rows: [string, React.ReactNode, string][] = [
-    ["Scored", <span key="n" className="num">{g.n}{g.scored_forecasts != null && g.scored_forecasts !== g.n ? ` (of ${g.scored_forecasts} forecasts)` : ""}</span>, "Independent resolved events that carried a probability: one per IPO listing (its latest forecast) and non-overlapping 12-month windows per stock, so a call logged on many days counts once."],
+    ["Scored", <span key="n" className="num">{g.n}{g.scored_forecasts != null && g.scored_forecasts !== g.n ? ` (of ${g.scored_forecasts} forecasts)` : ""}</span>, "Independent resolved events that carried a probability: one per IPO listing (its last forecast before the 17:00 bidding cut-off) and non-overlapping windows per stock or direction path, so a call logged on many days counts once."],
     ["Hit rate", <span key="h" className="num">{g.calls ? `${g.hits}/${g.calls} · ${pc(g.hit_rate)}` : "—"}</span>, "Calls that pointed the right way (above 50% and it happened, or below 50% and it did not)."],
     ["95% CI", <span key="c" className="num">{g.hit_rate_ci ? `${pc(g.hit_rate_ci[0])}–${pc(g.hit_rate_ci[1])}` : "—"}</span>, "Wilson interval for the hit rate: the range the true rate plausibly lies in, given so few cases."],
     ["Base rate", <span key="b" className="num">{pc(g.base_rate)}</span>, "How often the event happened across the scored cases."],

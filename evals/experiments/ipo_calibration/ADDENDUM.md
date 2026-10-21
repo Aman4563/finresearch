@@ -47,3 +47,25 @@ So it does not replace the live call. The live IPO signal stays the empirical ba
 `base_rate`). The blend is computed alongside and logged in the forecast ledger as its own method, with validation
 status `shadow`. The IPO card shows it as an "experimental comparison". The switch criterion is pre-registered in
 `SHADOW.md` (≥ 30 paired live outcomes; the blend's Brier lower, with a paired-bootstrap 90% interval that excludes 0).
+
+## Update (21-Oct-2026, #353): the scored forecast is the decision-time one
+
+Registered before the next listing is scored. `PREREG.md` and `SHADOW.md` are unchanged.
+
+- **Rule.** For the IPO listing event, the forecast scored in the track record (`/api/calibration`, the reliability
+  line) is, per issue and method, the one with the largest logged time t_f such that t_f < 17:00 IST on the issue's
+  last bidding day (bids and UPI mandates close at 5 pm; SEBI T+3 circular SEBI/HO/CFD/TPD1/CIR/P/2023/140). A view
+  after that time is built on the final book that no bidder had. The last bidding day comes from the watch, the IPO
+  offer or the issue registry; an issue with none, or with no forecast before the cut-off, is not scored (counted as
+  `unknown_close_date` / `no_forecast_before_cutoff`), never scored on its latest forecast instead.
+- **Recording.** A forecast made at or after 17:00 IST gets its own ledger slot for that day, so it never overwrites
+  the day's decision-time forecast (before #353 a later same-day view replaced it).
+- **Both rules reported.** Every IPO calibration group carries `ipo_rules`: the cut-off rule beside the old rule
+  (latest forecast before listing) on the same issues, as live forecasts resolve. Historical cut-off forecasts do
+  not exist (decision-time subscription snapshots start 28-Sep-2026), so no backfilled comparison is made.
+- **Refit, pre-registered now.** Once at least 50 issues have a subscription snapshot logged before the cut-off, the
+  blend's λ and the listing model are refitted on those last pre-17:00 snapshot features (not on the final book),
+  under the same folds, bar and variants as `PREREG.md`, and reported in `RESULTS.md` whatever the outcome.
+- **Shadow criterion.** `SHADOW.md` keeps its registered rule (latest forecast per method). The cut-off rule's paired
+  result is reported beside it and does not gate the switch; moving the switch criterion to the cut-off rule needs
+  its own registration before the first look at n = 30 pairs.

@@ -23,7 +23,7 @@ export function IpoSignalLine({ symbol, series, company, closed }: { symbol: str
   // the lottery unit is the category's minimum application (1 lot retail, 14+ lots sNII): show EV per application
   const minLots = (s.sizing?.min_lots as number | undefined) ?? 1;
   const ev = (minLots > 1 ? s.sizing?.ev_per_application : s.sizing?.ev_per_lot) as number | null | undefined;
-  const evLabel = minLots > 1 ? `EV per ${minLots}-lot application` : "EV per lot";
+  const evLabel = minLots > 1 ? `EV per ${minLots}-lot application, after costs` : "EV per lot, after costs";
   const reason = s.probability == null ? s.caveats[0] : null; // no call, a rule-only skip, or after listing
   return (
     <div className="mt-3 rounded-lg bg-background-subtle px-3 py-2">
@@ -65,7 +65,7 @@ export function IpoSignalLine({ symbol, series, company, closed }: { symbol: str
               <div title={s.sizing.p_allot_basis as string}><dt className="text-muted">P(allotment) ≥</dt><dd className="num font-medium">{pctText(s.sizing.p_allot as number | null, 1)}</dd></div>
               <div><dt className="text-muted">Mean open return</dt><dd className="num font-medium">{pctText(s.sizing.expected_return_mean as number | null, 1)}</dd></div>
               <div><dt className="text-muted">{minLots > 1 ? `EV of one ${minLots}-lot application` : "EV of one lot"}</dt><dd className="num font-medium">{ev == null ? "—" : inr0(ev)}</dd></div>
-              <p className="col-span-full text-[11px] text-muted">EV ≈ P(allotment) × {minLots > 1 ? `${minLots} lots` : "lot cost"}{minLots > 1 ? " × lot cost" : ""} × mean past open return. Oversubscribed books are lotteries over minimum applications: a bigger bid gives the same odds. A book below 1x allots every valid bid in full.</p>
+              <p className="col-span-full text-[11px] text-muted">EV ≈ P(allotment) × ({minLots > 1 ? `${minLots} lots × lot cost` : "lot cost"} × mean past open return − listing-day selling costs{s.sizing.selling_costs_per_application != null ? ` of about ${inr0((minLots > 1 ? s.sizing.selling_costs_per_application : s.sizing.selling_costs_per_lot) as number)}` : ""}: STT, exchange, SEBI and GST, with an assumed ₹20 brokerage and ₹13 DP charge). P(allotment) is a floor (shares bid, not applications), and the mean is pulled up by a few large listings. Oversubscribed books are lotteries over minimum applications: a bigger bid gives the same odds. A book below 1x allots every valid bid in full.</p>
             </dl>
           )}
           <SignalView s={s} />
