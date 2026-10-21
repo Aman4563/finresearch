@@ -78,3 +78,68 @@ def test_ltp_mark_is_flagged():
     mark = _b76("call", 24000, 24500, T35, 0.065, 0.13)
     st = bs.price_legs([bs.BookLeg("NIFTY", EXP, "call", 24500, 75, mark, "ltp")], _mkt())[0]
     assert st.reason is None and any("LTP" in f for f in st.flags)
+
+
+# --------------------------------------------------------------------------- exposures
+def _greeks76(right: str, f: float, k: float, t: float, r: float, v: float) -> dict[str, float]:
+    d1 = (math.log(f / k) + v * v * t / 2) / (v * math.sqrt(t))
+    df, phi = math.exp(-r * t), N.pdf(d1)
+    delta = df * N.cdf(d1) if right == "call" else -df * N.cdf(-d1)
+    gamma = df * phi / (f * v * math.sqrt(t))
+    vega = f * df * phi * math.sqrt(t) / 100
+    theta = (-f * df * phi * v / (2 * math.sqrt(t)) + r * _b76(right, f, k, t, r, v)) / 365
+    return {"delta": delta, "gamma": gamma, "vega": vega, "theta": theta}
+
+
+def test_exposures_per_leg_and_per_bucket():
+    put = _b76("put", 24000, 23500, T35, 0.065, 0.15)
+    near = date(2026, 10, 27)  # 5 days: this week
+    legs = [
+        bs.BookLeg("NIFTY", EXP, "put", 23500, -75, put, "mid"),
+        bs.BookLeg("NIFTY", EXP, "future", 0, 75, 24000.0, "mid"),
+        bs.BookLeg("NIFTY", near, "future", 0, -150, 23950.0, "mid"),
+    ]
+    ex = bs.exposures(legs, _mkt(forwards={("NIFTY", EXP): 24000.0, ("NIFTY", near): 23950.0}))
+    g = _greeks76("put", 24000, 23500, T35, 0.065, 0.15)
+    later = ex.row("NIFTY", "later")
+    assert later.exposure.rs_delta == pytest.approx(g["delta"] * 24000 * -75 + 24000 * 75, rel=1e-6)
+    assert later.exposure.rs_gamma_1pct == pytest.approx(0.5 * g["gamma"] * 24000**2 * 1e-4 * -75, rel=1e-6)
+    assert later.exposure.vega_pt == pytest.approx(g["vega"] * -75, rel=1e-6)
+    assert later.exposure.theta_day == pytest.approx(g["theta"] * -75, rel=1e-6)
+    assert ex.row("NIFTY", "this_week").exposure.rs_delta == pytest.approx(23950 * -150)
+    assert ex.complete and ex.reasons == ()
+    total = later.exposure.rs_delta + 23950 * -150
+    assert ex.total.rs_delta == pytest.approx(total)
+    assert ex.nifty_delta == pytest.approx(total / 23900)  # NIFTY beta = 1, in NIFTY units
+
+
+def test_buckets():
+    assert bs.bucket(date(2026, 10, 29), date(2026, 10, 22)) == "this_week"  # 7 days
+    assert bs.bucket(date(2026, 10, 30), date(2026, 10, 22)) == "this_month"
+    assert (
+        bs.bucket(date(2026, 11, 3), date(2026, 10, 28)) == "this_week"
+    )  # across a month end: the week wins
+    assert bs.bucket(date(2026, 11, 24), date(2026, 10, 22)) == "later"
+
+
+def test_an_unpriced_leg_makes_its_row_and_the_total_unknown_never_zero():
+    legs = [
+        bs.BookLeg("NIFTY", EXP, "future", 0, 75, 24000.0, "mid"),
+        bs.BookLeg("NIFTY", EXP, "put", 23500, -75, None, None),
+        bs.BookLeg("BANKNIFTY", EXP, "future", 0, 35, 52000.0, "mid"),
+    ]
+    ex = bs.exposures(legs, _mkt(forwards={("NIFTY", EXP): 24000.0, ("BANKNIFTY", EXP): 52000.0}))
+    assert not ex.complete and ex.total is None and ex.nifty_delta is None
+    assert ex.row("NIFTY", "later").exposure is None
+    assert ex.row("BANKNIFTY", "later").exposure.rs_delta == pytest.approx(52000 * 35)
+    assert any("23500" in r for r in ex.reasons)
+
+
+def test_nifty_equivalent_delta_needs_every_beta():
+    legs = [bs.BookLeg("BANKNIFTY", EXP, "future", 0, 35, 52000.0, "mid")]
+    fw = {("BANKNIFTY", EXP): 52000.0}
+    ex = bs.exposures(legs, _mkt(forwards=fw))
+    assert ex.complete and ex.total.rs_delta == pytest.approx(52000 * 35)
+    assert ex.nifty_delta is None and any("beta" in r for r in ex.nifty_delta_reasons)
+    ex = bs.exposures(legs, _mkt(forwards=fw, betas={"BANKNIFTY": 1.2}))
+    assert ex.nifty_delta == pytest.approx(1.2 * 52000 * 35 / 23900)

@@ -19,7 +19,7 @@ from datetime import date, datetime
 from typing import Literal
 
 from finresearch.fincalc import options as o
-from finresearch.fincalc.dates import years_to_expiry
+from finresearch.fincalc.dates import to_ist, years_to_expiry
 
 Right = Literal["call", "put", "future"]
 
@@ -121,3 +121,92 @@ def _price(x: BookLeg, m: Market) -> LegState:
 
 def price_legs(legs: Sequence[BookLeg], m: Market) -> list[LegState]:
     return [_price(x, m) for x in legs]
+
+
+# --------------------------------------------------------------------------- exposures
+BUCKETS = ("this_week", "this_month", "later")
+WEEK_DAYS = 7  # an expiry within 7 calendar days is "this week" (the nearest weekly), even across a month end
+
+
+def bucket(expiry: date, today: date) -> str:
+    """The expiry bucket: this week (within WEEK_DAYS), this month (rest of the calendar month), or later."""
+    if (expiry - today).days <= WEEK_DAYS:
+        return "this_week"
+    return "this_month" if (expiry.year, expiry.month) == (today.year, today.month) else "later"
+
+
+@dataclass(frozen=True)
+class Exposure:
+    """₹ exposures: delta (₹ per 1 unit of relative move, Δ x F x q: ×0.01 for a 1 % move), gamma P&L of a 1 % move
+    (½ Γ F² 0.01² q), vega per vol point and theta per calendar day."""
+
+    rs_delta: float = 0.0
+    rs_gamma_1pct: float = 0.0
+    vega_pt: float = 0.0
+    theta_day: float = 0.0
+
+    def __add__(self, b: Exposure) -> Exposure:
+        return Exposure(self.rs_delta + b.rs_delta, self.rs_gamma_1pct + b.rs_gamma_1pct, self.vega_pt + b.vega_pt,
+                        self.theta_day + b.theta_day)  # fmt: skip
+
+
+def leg_exposure(s: LegState) -> Exposure | None:
+    if s.greeks is None or s.forward is None:
+        return None
+    g, f, q = s.greeks, s.forward, s.leg.qty
+    return Exposure(g.delta * f * q, 0.5 * g.gamma * f * f * 1e-4 * q, g.vega * q, g.theta * q)
+
+
+@dataclass(frozen=True)
+class ExposureRow:
+    underlying: str
+    bucket: str
+    exposure: Exposure | None  # None when any leg in it is unpriced
+    legs: int
+
+
+@dataclass(frozen=True)
+class Exposures:
+    """Per underlying x expiry bucket and in total; `total` and `nifty_delta` (NIFTY-equivalent units:
+    Σ β_u Δ F_u q / NIFTY) are None while any leg is unpriced (`reasons`) or, for nifty_delta, a beta or NIFTY's
+    level is unknown (`nifty_delta_reasons`)."""
+
+    rows: tuple[ExposureRow, ...]
+    total: Exposure | None
+    nifty_delta: float | None
+    reasons: tuple[str, ...]
+    nifty_delta_reasons: tuple[str, ...]
+    flags: tuple[str, ...]
+
+    @property
+    def complete(self) -> bool:
+        return not self.reasons
+
+    def row(self, underlying: str, bucket_: str) -> ExposureRow:
+        return next(r for r in self.rows if r.underlying == underlying and r.bucket == bucket_)
+
+
+def exposures(legs: Sequence[BookLeg], m: Market) -> Exposures:
+    today = to_ist(m.now).date()
+    states = price_legs(legs, m)
+    groups: dict[tuple[str, str], list[LegState]] = {}
+    for s in states:
+        groups.setdefault((s.leg.underlying, bucket(s.leg.expiry, today)), []).append(s)
+    rows, total, reasons = [], Exposure(), [s.reason for s in states if s.reason]
+    nifty, nreasons = 0.0, []
+    for (u, b), ss in sorted(groups.items(), key=lambda kv: (kv[0][0], BUCKETS.index(kv[0][1]))):
+        es = [leg_exposure(s) for s in ss]
+        e = None if any(x is None for x in es) else sum((x for x in es if x), Exposure())
+        rows.append(ExposureRow(u, b, e, len(ss)))
+        if e is not None:
+            total += e
+            beta = m.beta(u)
+            if beta is None:
+                nreasons.append(f"{u}: its beta to NIFTY is unknown")
+            else:
+                nifty += beta * e.rs_delta
+    if m.nifty is None or m.nifty <= 0:
+        nreasons.append("NIFTY's level is unknown")
+    nreasons = sorted(set(nreasons)) + reasons
+    return Exposures(tuple(rows), None if reasons else total, None if nreasons else nifty / m.nifty,  # type: ignore[operator]
+                     tuple(reasons), tuple(nreasons), tuple(f for s in states for f in s.flags))  # fmt: skip
