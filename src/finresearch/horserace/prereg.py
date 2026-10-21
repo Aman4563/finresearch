@@ -5,3 +5,8 @@ HASH = "11f10c09f6a629ec09b3115a37008afaf0f2917b69cb56abd716157be4701060"
 REGISTERED_ON = "2026-10-22"
 NOTE = ("Registered before any horse-race score was computed: no card-ledger outcome and no replayed outcome had "
         "been read, and no stored F&O row was queried for it (the counts in PREREG.md are issue #377's).")  # fmt: skip
+
+# Post-hoc addendum A1 (horserace/addendum.py, evals/experiments/card_horse_race/ADDENDUM.md): the replay's open
+# choices, pinned before any replay code read a stored session; replay.require_registered checks both hashes.
+ADDENDUM_HASH = "d26e9f0d58a8f86cb66433f59053633a98efdab2f824c7ee7112f76c4e3bd3a6"
+ADDENDUM_ON = "2026-10-22"
