@@ -5,7 +5,7 @@ SEBI's circular SEBI/HO/MRD/TPD/P/CIR/2024/132 of 1-Oct-2024 (https://www.sebi.g
 measures-to-strengthen-equity-index-derivatives-framework-for-increased-investor-protection-and-market-stability_87208.html)
 limited weekly expiries to one benchmark index per exchange and raised the minimum contract value to ₹15 lakh, which
 changed lot sizes; its effective dates were not re-read here. fno_contract records what the bhavcopies show instead
-of encoding the rules: weekly versus monthly per expiry, and each contract's lot size by day, so the backtester uses
+of encoding the rules: weekly, monthly or long-dated per expiry, and each contract's lot size by day, so the backtester uses
 the expiries and lots that actually existed.
 """
 
