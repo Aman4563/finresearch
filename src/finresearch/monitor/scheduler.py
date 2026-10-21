@@ -530,6 +530,67 @@ def _spawn_span(now: datetime) -> None:
     _BACKGROUND["span"] = asyncio.create_task(run())
 
 
+_DISK_WARNED: set[str] = set()
+
+
+def _ingest_allowed() -> bool:
+    """False below dq.misc.MIN_FREE_GIB free on the data volume (#368): the nightly downloads stop, and the data
+    health card says why. A failed disk read never blocks ingests."""
+    try:
+        from finresearch.config import get_settings
+        from finresearch.dq.misc import ingest_allowed
+
+        return ingest_allowed(get_settings().state_dir.parent)
+    except Exception:
+        log.warning("disk check failed; ingests not gated", exc_info=True)
+        return True
+
+
+def _spawn_downloads(deps: jobs.Deps, now: datetime) -> None:
+    """The exchange file downloads (bhavcopy, forward quotes, index closes, SPAN), unless the disk is nearly full."""
+    if not (deps.fno_bhav or deps.quotes or deps.index_eod or deps.span):
+        return
+    if not _ingest_allowed():
+        day = now.date().isoformat()
+        if day not in _DISK_WARNED:
+            _DISK_WARNED.add(day)
+            log.warning("less than 10 GiB free on the data volume: nightly downloads paused (#368)")
+        return
+    if deps.fno_bhav:
+        _spawn_fno_bhav(now)
+    if deps.quotes:
+        _spawn_quotes(deps, now)
+    if deps.index_eod:
+        _spawn_index_eod(now)
+    if deps.span:
+        _spawn_span(now)
+
+
+def _spawn_dq(now: datetime) -> None:
+    """Start the data-quality pass (monitor.dq, #368) in a worker thread when a window is due: SQL only, a few
+    seconds. At most one runs at a time."""
+    from finresearch.monitor import dq
+
+    t = _BACKGROUND.get("dq")
+    if (t is not None and not t.done()) or dq.due_slot(now) is None:
+        return
+
+    async def run() -> None:
+        try:
+            res = await asyncio.to_thread(dq.dq_step, now)
+            if res:
+                log.info(
+                    "data-quality pass: %s",
+                    {k: v for k, v in (res.get("dq") or {}).items() if k != "status"}
+                    if isinstance(res.get("dq"), dict)
+                    else res,
+                )
+        except Exception:
+            log.warning("data-quality pass failed", exc_info=True)
+
+    _BACKGROUND["dq"] = asyncio.create_task(run())
+
+
 def _spawn_quotes(deps: jobs.Deps, now: datetime) -> None:
     """Start the forward quote recorder (monitor.quotes, #363) in the background when a snapshot is due: one sweep is
     169 Groww calls (~50 s), longer than a tick. At most one runs at a time."""
@@ -693,14 +754,9 @@ async def tick(deps: jobs.Deps, now: datetime | None = None) -> dict[str, int]:
         _spawn_sip_estimates(now)
     if deps.scheme_master:
         _spawn_scheme_master(now)
-    if deps.fno_bhav:
-        _spawn_fno_bhav(now)
-    if deps.quotes:
-        _spawn_quotes(deps, now)
-    if deps.index_eod:
-        _spawn_index_eod(now)
-    if deps.span:
-        _spawn_span(now)
+    _spawn_downloads(deps, now)
+    if deps.dq:
+        _spawn_dq(now)
     out_brief = brief_step(now) if deps.brief else {}
     if deps.holidays is not None or deps.live_holidays:
         await _refresh_holidays(deps)
@@ -788,10 +844,12 @@ def schedule_json(ww=None, *, running: bool | None = None) -> dict:
     import inspect
 
     from finresearch.api.live import BIDDING_HOURS, EQUITY_HOURS
+    from finresearch.dq import misc as dqm
     from finresearch.fincalc.ipo import lock_in_schedule
     from finresearch.fnohist import quotes as fq
     from finresearch.fnohist import span as fspan
     from finresearch.monitor import digest as dg
+    from finresearch.monitor import dq as dqj
     from finresearch.monitor import fno_bhav as fb
     from finresearch.monitor import index_eod as ixe
     from finresearch.monitor import intraday, iv
@@ -830,6 +888,8 @@ def schedule_json(ww=None, *, running: bool | None = None) -> dict:
         "fno_bhav": {"after": hm((fb.RUN_AFTER.hour, fb.RUN_AFTER.minute)), "lookback_days": fb.LOOKBACK_DAYS},
         "index_eod": {"after": hm((ixe.RUN_AFTER.hour, ixe.RUN_AFTER.minute)), "lookback_days": ixe.LOOKBACK_DAYS,
                       "requests_per_night": 1},
+        "dq": {"evening": hm((dqj.EVENING.hour, dqj.EVENING.minute)),
+               "morning": hm((dqj.MORNING.hour, dqj.MORNING.minute)), "min_free_gib": dqm.MIN_FREE_GIB},
         "span": {"after": hm((spj.RUN_AFTER.hour, spj.RUN_AFTER.minute)), "lookback_days": spj.LOOKBACK_DAYS,
                  "requests_per_night": 2, "raw_sessions_kept": fspan.KEEP_SESSIONS},
         "forecasts": {"after": hm(READY_AFTER_IST), "every_min": int(FORECAST_EVERY.total_seconds() // 60)},
