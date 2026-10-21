@@ -26,6 +26,19 @@ test("fno: market context labels evidence; suggest shows AVOID on a failed hard 
   await expect(ctx.getByText("Trend: uptrend (emerging)")).toBeVisible();
   await expect(ctx.getByText("evidence: weak / contested").first()).toBeVisible();
   await expect(ctx.getByText(/Contracts long − short/)).toBeVisible();
+  // #354 e: build-up badges are neutral, not gain/loss colours that read as direction calls (puts included)
+  for (const b of ["short build-up", "long build-up"]) await expect(ctx.getByText(b, { exact: true }).first()).toHaveAttribute("data-tone", "neutral");
+  // "none verified" is at least as cautionary as "weak / contested" (it used to get the milder neutral badge)
+  await expect(ctx.getByText("evidence: none verified").first()).toHaveAttribute("data-tone", "warn");
+  await expect(ctx.getByText("evidence: weak / contested").first()).toHaveAttribute("data-tone", "warn");
+  // max pain is labelled context inside the panel, no longer a KPI tile above it
+  await expect(page.getByText("Max pain", { exact: true })).toHaveCount(0);
+  await expect(ctx.getByText(/Max pain 25,000 \(spot 25,000\), context only/)).toBeVisible();
+  // #354 c/d/g: the term slope without a "stress" reading; IV − RV on matched horizons; ADX roll-adjusted
+  await expect(ctx.getByText(/slope \+0\.6 pts/)).toBeVisible();
+  await expect(ctx.getByText(/stress|inverted/i)).toHaveCount(0);
+  await expect(ctx.getByText(/IV30 − RV20: \+2\.5 pts/)).toBeVisible();
+  await expect(ctx.getByText(/ratio-adjusted at each roll/)).toBeVisible();
   await page.getByRole("button", { name: "Suggest setups" }).click();
   const avoid = page.getByRole("article", { name: /NIFTY put credit spread/ });
   await expect(avoid.getByTestId("plan-verdict")).toHaveText("AVOID");

@@ -34,7 +34,7 @@ discount factor e^(−rT), so ±1 % in r moves a 30-day ATM IV by well under 0.1
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
 from itertools import pairwise
@@ -49,6 +49,11 @@ RV_WINDOW = 20
 MIN_CONTRACTS = 10  # contracts traded that day for a settlement price to count as a market price
 ATM_BAND = 0.03  # the ATM strike (both sides traded) must be within 3 % of the forward
 FLAT_WITHIN = 7  # days: a longest expiry this close below 30 days stands in for the 30-day IV ("flat")
+# NSE adjusts the price and lot of open stock futures for a corporate action (bonus, split, large dividend): such a day's
+# within-contract return is not a market move. Since 2024, 84 of 296 within-contract lot changes came with
+# |ln F_t/F_t-1| > 0.25 and every stock RV20 above 100 % followed one (#354 j). Those returns are quarantined from RV
+# (unverified until the adjustment factor is applied, roadmap P1.7); a lot change with a small move is kept.
+QUARANTINE_LN = 0.25
 
 
 def black76_price(right: Right, fwd: float, strike: float, t_years: float, rate: float, vol: float) -> float:
@@ -169,9 +174,12 @@ def constant_maturity(
     return None
 
 
-def front_future_returns(futs: Sequence[tuple[date, date, float]]) -> list[tuple[date, float]]:
+def front_future_returns(futs: Sequence[tuple[date, date, float]], lots: Mapping[tuple[date, date], int] | None = None,
+                         quarantined: list[tuple[date, date, float]] | None = None) -> list[tuple[date, float]]:  # fmt: skip
     """Daily log returns of the front future from (day, expiry, settle) rows, each within one contract: for day d1 the
-    contract is the earliest expiry after the previous day d0 that has a settlement on both days."""
+    contract is the earliest expiry after the previous day d0 that has a settlement on both days. With `lots`
+    ({(day, expiry): lot size}) a return whose contract changed lot between d0 and d1 with |ln| > QUARANTINE_LN is left
+    out and appended to `quarantined` as (d1, expiry, return)."""
     by_day: dict[date, dict[date, float]] = {}
     for d, e, p in futs:
         if p and p > 0:
@@ -182,7 +190,13 @@ def front_future_returns(futs: Sequence[tuple[date, date, float]]) -> list[tuple
         common = sorted(e for e in by_day[d1] if e in by_day[d0] and e > d0)
         if common:
             e = common[0]
-            out.append((d1, math.log(by_day[d1][e] / by_day[d0][e])))
+            r = math.log(by_day[d1][e] / by_day[d0][e])
+            l0, l1 = (lots.get((d0, e)), lots.get((d1, e))) if lots else (None, None)
+            if l0 and l1 and l0 != l1 and abs(r) > QUARANTINE_LN:
+                if quarantined is not None:
+                    quarantined.append((d1, e, r))
+                continue
+            out.append((d1, r))
     return out
 
 

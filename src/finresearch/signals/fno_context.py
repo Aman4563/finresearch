@@ -15,6 +15,7 @@ participant-wise open interest (fnohist.participants); the event strip (fnobook.
 from __future__ import annotations
 
 from datetime import date
+from itertools import pairwise
 from typing import Any
 
 from finresearch.fincalc import market_context as mc
@@ -50,7 +51,9 @@ EVIDENCE: dict[str, dict[str, str]] = {
                     f"was verified {_W}. The pre-registered backtest's sellers used it and none passed out of sample.",
     },
     "term": {
-        "measures": "Near-expiry IV against next-expiry IV: an inverted curve (near above next) means stress now.",
+        "measures": "Near-expiry ATM IV against next-expiry ATM IV (slope = next − near). Near above next is common "
+                    "and mostly mechanical: it follows the days left to each expiry and the weekly/monthly tenor mix, so "
+                    "it is shown without a reading until a clock- and event-adjusted percentile exists (roadmap P3.1).",
         "level": "weak / US only",
         "evidence": "The VIX term-structure slope predicted VIX-futures and variance-swap returns in US data "
                     "(Johnson 2017, JFQA 52(6) [U]); nothing comparable was verified for Indian options [W].",
@@ -119,30 +122,31 @@ def stored_closes(s, symbol: str, today: date) -> list[tuple[date, float]]:
     return [(d, float(u)) for d, u in s.execute(q)]
 
 
-def near_futures(s, symbol: str, today: date) -> list[dict[str, Any]]:
-    """Per stored day, the nearest-expiry future (the near month): day, expiry, high, low, close, oi, chg_oi."""
+def front_futures(s, symbol: str, today: date) -> list[Any]:
+    """Per stored session, the front future as the direction model reads it (direction.data.set_front_future: the
+    earliest expiry after the previous session with a settlement on both days), as direction.features.DayRow, so the
+    panel's ADX is roll-adjusted exactly like the model's (#354 g). Oldest first; a session without one is skipped."""
     from datetime import timedelta
 
     from sqlalchemy import select
 
     from finresearch.db.models import FnoBhav
+    from finresearch.direction.data import set_front_future
+    from finresearch.direction.features import DayRow
 
-    q = (select(FnoBhav.day, FnoBhav.expiry, FnoBhav.high, FnoBhav.low, FnoBhav.close, FnoBhav.oi, FnoBhav.chg_oi)
+    q = (select(FnoBhav.day, FnoBhav.expiry, FnoBhav.high, FnoBhav.low, FnoBhav.close, FnoBhav.settle)
          .where(FnoBhav.symbol == symbol.upper(), FnoBhav.instrument.in_(("IDF", "STF")),
-                FnoBhav.day >= today - timedelta(days=HISTORY_DAYS)).order_by(FnoBhav.day, FnoBhav.expiry))  # fmt: skip
-    out: dict[date, dict[str, Any]] = {}
-    for d, e, h, lo, c, oi, chg in s.execute(q):
-        if d not in out and e >= d:
-            out[d] = {
-                "day": d,
-                "expiry": e,
-                "high": _f(h),
-                "low": _f(lo),
-                "close": _f(c),
-                "oi": oi,
-                "chg_oi": chg,
-            }
-    return list(out.values())
+                FnoBhav.day >= today - timedelta(days=HISTORY_DAYS), FnoBhav.day <= today))  # fmt: skip
+    by_day: dict[date, dict[date, tuple]] = {}
+    for d, e, h, lo, c, st in s.execute(q):
+        by_day.setdefault(d, {})[e] = (_f(h), _f(lo), _f(c), _f(st))
+    days = sorted(by_day)
+    out = []
+    for d0, d1 in pairwise(days):
+        r = DayRow(d1)
+        if set_front_future(r, by_day[d0], by_day[d1], d0) is not None:
+            out.append(r)
+    return out
 
 
 def futures_buildup(s, symbol: str) -> dict[str, Any] | None:
@@ -194,6 +198,61 @@ def option_buildup_live(chain) -> dict[str, Any] | None:
             "as_of": chain.as_of.isoformat() if chain.as_of else None}  # fmt: skip
 
 
+def iv_rank_input(symbol: str) -> tuple[list[tuple[date, float | None]], dict[str, Any]]:
+    """The per-session IV points that IV rank and percentile read (#354 b), oldest first, with a label naming the series
+    and the close it is from. Bhavcopy history (fno_iv_eod, one row per stored session) when it has MIN_DAYS 30-day IVs:
+    a "flat" 30-day IV (the longest expiry standing in, fincalc.fno_history.FLAT_WITHIN) counts as missing; when the
+    30-day IV covers too few of the last 252 sessions but the near-expiry ATM IV covers enough (FINNIFTY, MIDCPNIFTY:
+    monthly expiries rarely bracket 30 days), the near IV is ranked and the label says so. Else the monitor's recorded
+    ATM IV, one point per recorded day."""
+    from sqlalchemy import select
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import FnoIvEod, IvHistory
+    from finresearch.fincalc import volatility as vol
+    from finresearch.signals.fno import BHAV_METHOD, LIVE_METHOD
+
+    sym = symbol.upper()
+    try:
+        with session_scope() as s:
+            eod = s.execute(select(FnoIvEod.day, FnoIvEod.iv_30d, FnoIvEod.iv_30d_method, FnoIvEod.near_iv)
+                            .where(FnoIvEod.symbol == sym).order_by(FnoIvEod.day)).all()  # fmt: skip
+    except SQLAlchemyError:
+        eod = []
+    if sum(r[1] is not None for r in eod) >= vol.MIN_DAYS:
+        iv30 = [(d, None if v is None or m == "flat" else float(v)) for d, v, m, _ in eod]
+        day = eod[-1][0].isoformat()
+        info = {"source": "bhavcopy", "series": "iv_30d", "as_of": day, "method": BHAV_METHOD,
+                "label": f"NSE F&O bhavcopy 30-day IV at the {day} close", "url": "https://nsearchives.nseindia.com/content/fo/"}  # fmt: skip
+        st = vol.iv_stats_sessions(iv30)
+        if st.status.startswith("insufficient coverage"):
+            near = [(d, None if v is None else float(v)) for d, _, _, v in eod]
+            if vol.iv_stats_sessions(near).status == "ok":
+                return near, info | {"series": "near_iv", "label": f"NSE F&O bhavcopy near-expiry ATM IV at the {day} "
+                                     f"close (fallback: the 30-day IV is on only {st.n} of {vol.WINDOW} sessions)"}  # fmt: skip
+        return iv30, info
+    try:
+        with session_scope() as s:
+            rec = s.execute(select(IvHistory.day, IvHistory.atm_iv).where(IvHistory.symbol == sym)
+                            .order_by(IvHistory.day)).all()  # fmt: skip
+    except SQLAlchemyError:
+        rec = []
+    day = rec[-1][0].isoformat() if rec else None
+    return [(d, float(v)) for d, v in rec], {
+        "source": "recorded", "series": "atm_iv", "as_of": day, "method": LIVE_METHOD,
+        "label": f"recorded daily ATM IV (NSE option chain after the {day} close)" if day else "recorded daily ATM IV",
+        "url": "https://www.nseindia.com/option-chain"}  # fmt: skip
+
+
+def iv_rank(symbol: str) -> tuple[Any, dict[str, Any]]:
+    """(volatility.IvStats over the last 252 sessions, the input's label) for `symbol` (#354 b)."""
+    from finresearch.fincalc import volatility as vol
+
+    points, info = iv_rank_input(symbol)
+    return vol.iv_stats_sessions(points), info
+
+
 def needs_network_closes(symbol: str, today: date) -> bool:
     """True when fewer than 60 underlying closes are stored (build() then falls back to NSE's recent closes)."""
     from sqlalchemy.exc import SQLAlchemyError
@@ -211,34 +270,33 @@ def _r(x: float | None, d: int = 2) -> float | None:
     return None if x is None else round(x, d)
 
 
-def trend_block(
-    closes: list[float], spot: float | None, futs: list[dict[str, Any]], source: str
-) -> dict[str, Any]:
+def trend_block(closes: list[float], spot: float | None, futs: list[Any], source: str) -> dict[str, Any]:
     last = spot if spot else (closes[-1] if closes else None)
     avgs = {n: mc.sma(closes, n) for n in (20, 50, 200)}
     slopes = {n: mc.sma_slope(closes, n) for n in (20, 50, 200)}
-    bars = [x for x in futs if x["high"] is not None and x["low"] is not None and x["close"] is not None]
-    a = (
-        mc.adx([x["high"] for x in bars], [x["low"] for x in bars], [x["close"] for x in bars])
-        if bars
-        else None
-    )
+    from finresearch.direction.features import roll_adjusted_bars
+
+    hs, ls, cs = roll_adjusted_bars(futs)
+    a = mc.adx(hs, ls, cs) if cs else None
     reg = mc.regime(last, avgs[50], avgs[200], slopes[50], a and a["adx"]) if last else {"trend": "unknown",
                                                                                            "strength": "unknown"}  # fmt: skip
     return {"close": last, "closes": len(closes), "source": source,
             "averages": [{"days": n, "sma": _r(avgs[n]), "slope_pct_10d": _r(slopes[n], 3),
                           "distance_pct": _r(mc.distance(last, avgs[n]) if last else None, 2)} for n in (20, 50, 200)],
-            "adx": None if a is None else {k: _r(v) for k, v in a.items()} | {"bars": len(bars),
-                   "on": "near-month future (NSE bhavcopy high/low/close; rolls at each expiry)"},
+            "adx": None if a is None else {k: _r(v) for k, v in a.items()} | {"bars": len(cs),
+                   "on": "front future (NSE bhavcopy high/low/close), ratio-adjusted at each roll as the direction "
+                         "model's ADX"},
             **reg, "evidence": EVIDENCE["trend"], "adx_evidence": EVIDENCE["adx"],
             "note": None if avgs[200] is not None else f"only {len(closes)} daily closes: the 200-day average "
                     "is unknown until the F&O history covers about 10 months"}  # fmt: skip
 
 
-def vol_block(chain, closes: list[float], today: date, rate: float) -> dict[str, Any]:
+def vol_block(chain, closes: list[float], today: date, rate: float,
+              term: dict[str, Any] | None = None) -> dict[str, Any]:  # fmt: skip
+    """`term` (term_block's latest stored row) gives IV − RV on matched horizons: the 30-day IV against the 20-day
+    realised volatility of the same close (#354 d), not this expiry's live ATM IV (often a weekly) against RV20."""
     from finresearch.fincalc import options as o
     from finresearch.fincalc import volatility as vol
-    from finresearch.signals.fno import iv_series_info
 
     spot = float(chain.underlying) if chain is not None and chain.underlying is not None else None
     rows = [vol.StrikeIv(float(r.strike), _f(r.call.iv) if r.call else None, _f(r.put.iv) if r.put else None)
@@ -248,11 +306,14 @@ def vol_block(chain, closes: list[float], today: date, rate: float) -> dict[str,
     skew = vol.skew_25d(rows, spot, t, rate) if spot and rows and t else None
     rv20 = o.realised_vol(closes, 20) * 100 if len(closes) >= 22 else None
     rv60 = o.realised_vol(closes, 60) * 100 if len(closes) >= 62 else None
-    series, src = iv_series_info(chain.symbol if chain is not None else "")
-    st = vol.iv_stats([v for _, v, _ in series])
+    st, src = iv_rank(chain.symbol if chain is not None else "")
     iv = atm[1] if atm else None
+    t30, rv_eod = (term or {}).get("iv_30d"), (term or {}).get("rv_20")
+    matched = None if t30 is None or rv_eod is None else t30 - rv_eod
     return {"atm_iv": _r(iv), "atm_strike": atm[0] if atm else None, "expiry": chain.expiry.isoformat() if chain else None,
-            "realised_20d": _r(rv20), "realised_60d": _r(rv60), "iv_minus_rv20": _r(iv - rv20) if iv and rv20 else None,
+            "realised_20d": _r(rv20), "realised_60d": _r(rv60), "iv_minus_rv20": _r(matched),
+            "iv_minus_rv20_label": None if matched is None else f"30-day IV {t30:.1f}% − 20-day realised {rv_eod:.1f}% "
+                                   f"(NSE F&O bhavcopy, both at the {term['day']} close)",  # type: ignore[index]
             "iv_rank": _r(st.rank, 4), "iv_percentile": _r(st.percentile, 4), "iv_days": st.n, "iv_status": st.status,
             "iv_source": src["label"], "skew_25d": _r(skew, 3), "evidence": EVIDENCE["volatility"],
             "rank_evidence": EVIDENCE["iv_rank"], "skew_evidence": EVIDENCE["skew"]}  # fmt: skip
@@ -269,14 +330,12 @@ def term_block(s, symbol: str) -> dict[str, Any] | None:
     if r is None:
         return None
     near, nxt = _f(r.near_iv), _f(r.next_iv)
-    shape = (
-        None
-        if near is None or nxt is None
-        else ("inverted (near above next)" if near > nxt else "normal (upward)")
-    )
+    slope = None if near is None or nxt is None else round(nxt - near, 3)
+    # neutral words only (#354 c): "inverted = stress now" fired on 36 % of NIFTY days, mostly from the expiry clock
+    shape = None if slope is None else "flat" if slope == 0 else "near above next" if slope < 0 else "next above near"  # fmt: skip
     return {"day": r.day.isoformat(), "near_expiry": r.near_expiry.isoformat() if r.near_expiry else None,
             "near_iv": near, "next_expiry": r.next_expiry.isoformat() if r.next_expiry else None, "next_iv": nxt,
-            "iv_30d": _f(r.iv_30d), "shape": shape, "evidence": EVIDENCE["term"],
+            "iv_30d": _f(r.iv_30d), "rv_20": _f(r.rv_20), "shape": shape, "slope": slope, "evidence": EVIDENCE["term"],
             "source": "NSE F&O bhavcopy (end of day), fnohist.derive"}  # fmt: skip
 
 
@@ -303,12 +362,12 @@ def build(chain, *, today: date, rate: float, network_closes: list[float] | None
 
     sym = chain.symbol.upper()
     stored: list[tuple[date, float]] = []
-    futs: list[dict[str, Any]] = []
+    futs: list[Any] = []
     term = fut_bu = parts = None
     try:
         with session_scope() as s:
             stored = stored_closes(s, sym, today)
-            futs = near_futures(s, sym, today)
+            futs = front_futures(s, sym, today)
             term = term_block(s, sym)
             fut_bu = futures_buildup(s, sym)
             parts = pt.latest(s)
@@ -325,7 +384,7 @@ def build(chain, *, today: date, rate: float, network_closes: list[float] | None
     return {
         "symbol": sym, "today": today.isoformat(), "not_a_signal": NOT_A_SIGNAL,
         "trend": trend_block(closes, spot, futs, source),
-        "volatility": vol_block(chain, closes, today, rate),
+        "volatility": vol_block(chain, closes, today, rate, term=term),
         "term": term or {"status": "unknown", "note": "no stored bhavcopy IV for this underlying",
                          "evidence": EVIDENCE["term"]},
         "chain": chain_block(chain),

@@ -34,6 +34,9 @@ test("fno: the direction panel says no edge, NO TRADE, shows out-of-sample accur
   await expect(panel.getByText("Long put (ATM)")).toBeVisible();
   await expect(panel.getByRole("img", { name: /Calibration: Logistic and Market-implied/ })).toBeVisible();
   await expect(panel.getByText(/Walk-forward from 2024-07-01/)).toBeVisible();
+  // #354 h: a live hit rate carries its Wilson 95% CI; the registration "matches spec", not "code"
+  await expect(panel.getByText("50% (95% CI 9–91%)")).toBeVisible();
+  await expect(panel.getByText(/matches spec/)).toBeVisible();
   await expect(panel.getByRole("button", { name: "Best non-directional plan" })).toBeVisible();
   await panel.getByRole("button", { name: "Log today's forecast" }).click();
   await expect(panel.getByText("Logged 2 forecasts from the 2026-10-12 close.")).toBeVisible();

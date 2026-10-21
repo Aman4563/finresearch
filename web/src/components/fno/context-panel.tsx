@@ -12,11 +12,11 @@ import type { BuildupCell, Evidence, MarketContext } from "./plan-types";
 const n0 = (x: number | null | undefined) => (x == null ? "—" : Math.round(x).toLocaleString("en-IN"));
 const n2 = (x: number | null | undefined, d = 2) => (x == null ? "—" : x.toFixed(d));
 const signed = (x: number | null | undefined) => (x == null ? "—" : `${x > 0 ? "+" : x < 0 ? "−" : ""}${Math.abs(Math.round(x)).toLocaleString("en-IN")}`);
-const BUILD: Record<string, Tone> = { "long build-up": "gain", "short covering": "gain", "short build-up": "loss", "long unwinding": "loss" };
 
-/** The evidence label every indicator carries: what it measures and what is known about its predictive value. */
+/** The evidence label every indicator carries: what it measures and what is known about its predictive value. Anything
+ * not documented is a warning: "none verified" is at least as cautionary as "weak / contested" (#354 e). */
 function Ev({ e }: { e: Evidence }) {
-  const tone: Tone = e.level.startsWith("documented") ? "info" : e.level === "none verified" ? "neutral" : "warn";
+  const tone: Tone = e.level.startsWith("documented") ? "info" : "warn";
   return (
     <span className="inline-flex items-center gap-1">
       <Badge tone={tone}>evidence: {e.level}</Badge>
@@ -37,8 +37,9 @@ function Tile({ title, ev, children }: { title: string; ev: Evidence; children: 
   );
 }
 
+/** Neutral on purpose (#354 e): green/red read as direction calls, and for options a build-up describes premium flows. */
 function Cell({ c }: { c: BuildupCell }) {
-  return <Badge tone={BUILD[c.buildup] ?? "neutral"}>{c.buildup}</Badge>;
+  return <Badge tone="neutral">{c.buildup}</Badge>;
 }
 
 /** Market context per underlying (#317): trend, volatility, term, PCR, build-up, participants, events. Context only:
@@ -73,11 +74,14 @@ function Body({ d }: { d: MarketContext }) {
             <p key={a.days} className="num"><Parts parts={[`${a.days}-day avg ${n0(a.sma)}`, `price ${a.distance_pct == null ? "—" : `${a.distance_pct > 0 ? "+" : ""}${a.distance_pct.toFixed(1)}%`}`, `slope ${a.slope_pct_10d == null ? "—" : `${a.slope_pct_10d.toFixed(2)}%/10d`}`]} /></p>
           ))}
           <p className="mt-1 flex flex-wrap items-center gap-1">ADX {t.adx ? `${n2(t.adx.adx, 1)} (+DI ${n2(t.adx.plus_di, 1)} / −DI ${n2(t.adx.minus_di, 1)})` : "unknown (no stored high/low)"} <Ev e={t.adx_evidence} /></p>
+          {t.adx && <p className="text-[11px] text-muted">ADX on the {t.adx.on}</p>}
           <p className="mt-1 text-[11px] text-muted">{t.note ?? t.source}</p>
         </Tile>
         <Tile title="Implied vs realised volatility" ev={v.evidence}>
-          <p className="num"><Parts parts={[`ATM IV ${n2(v.atm_iv, 1)}%`, `realised 20d ${n2(v.realised_20d, 1)}%`, `60d ${n2(v.realised_60d, 1)}%`]} /></p>
-          <p className="num">IV − RV20: {v.iv_minus_rv20 == null ? "—" : `${v.iv_minus_rv20 > 0 ? "+" : ""}${v.iv_minus_rv20.toFixed(1)} pts`}</p>
+          <p className="num"><Parts parts={[`ATM IV (this expiry, live) ${n2(v.atm_iv, 1)}%`, `realised 20d ${n2(v.realised_20d, 1)}%`, `60d ${n2(v.realised_60d, 1)}%`]} /></p>
+          {/* matched horizons (#354 d): the stored 30-day IV against the 20-day realised volatility of the same close */}
+          <p className="num">IV30 − RV20: {v.iv_minus_rv20 == null ? "unknown (no stored 30-day IV and RV20)" : `${v.iv_minus_rv20 > 0 ? "+" : ""}${v.iv_minus_rv20.toFixed(1)} pts`}</p>
+          {v.iv_minus_rv20_label && <p className="text-[11px] text-muted">{v.iv_minus_rv20_label}</p>}
           <p className="mt-1 flex flex-wrap items-center gap-1">IV rank {v.iv_rank == null ? "unknown" : `${(v.iv_rank * 100).toFixed(0)}`} · percentile {v.iv_percentile == null ? "unknown" : `${(v.iv_percentile * 100).toFixed(0)}`} <Ev e={v.rank_evidence} /></p>
           <p className="text-[11px] text-muted">{v.iv_status} ({v.iv_days} days, {v.iv_source})</p>
           <p className="mt-1 flex flex-wrap items-center gap-1">25-delta skew {n2(v.skew_25d, 2)} pts <Ev e={v.skew_evidence} /></p>
@@ -86,13 +90,14 @@ function Body({ d }: { d: MarketContext }) {
           {d.term.status === "unknown" ? <p className="text-muted">{d.term.note}</p> : (
             <>
               <p className="num"><Parts parts={[`near ${d.term.near_expiry ? day(d.term.near_expiry) : "—"}: ${n2(d.term.near_iv, 1)}%`, `next ${d.term.next_expiry ? day(d.term.next_expiry) : "—"}: ${n2(d.term.next_iv, 1)}%`]} /></p>
-              <p>{d.term.shape ?? "shape unknown"} <span className="text-[11px] text-muted">(as of {d.term.day})</span></p>
+              {/* no "stress" reading (#354 c): near above next is mostly the expiry clock and the tenor mix */}
+              <p className="num">{d.term.slope == null ? "slope unknown" : `slope ${d.term.slope > 0 ? "+" : d.term.slope < 0 ? "−" : ""}${Math.abs(d.term.slope).toFixed(1)} pts (${d.term.shape})`} <span className="text-[11px] text-muted">(as of {d.term.day})</span></p>
             </>
           )}
         </Tile>
         <Tile title="Put-call ratio and max pain" ev={c.pcr_evidence}>
           <p className="num"><Parts parts={[`PCR (OI) ${n2(c.pcr_oi)}`, `PCR (volume) ${n2(c.pcr_volume)}`]} /></p>
-          <p className="mt-1 flex flex-wrap items-center gap-1">Max pain {n0(c.max_pain)} (spot {n0(c.spot)}) <Ev e={c.max_pain_evidence} /></p>
+          <p className="mt-1 flex flex-wrap items-center gap-1">Max pain {n0(c.max_pain)} (spot {n0(c.spot)}), context only <Ev e={c.max_pain_evidence} /></p>
           <p className="text-[11px] text-muted">{c.source} chain{c.as_of ? `, ${day(c.as_of)}` : ""}</p>
         </Tile>
         <Participants p={p} />

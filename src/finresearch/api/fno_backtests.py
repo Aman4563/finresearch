@@ -8,12 +8,20 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException
 
+# #354 h: the hash is over the registered spec's parameters, so "matches code" overstated it; matches_code stays one
+# release as a deprecated alias of matches_spec
+HASH_COVERS = (
+    "spec parameters only (specs.registration()): the engine code that runs them is not hashed until an "
+    "engine hash exists (roadmap P2.4)"
+)
+
 
 def registration() -> dict[str, Any]:
     from finresearch.backtest import prereg, specs
 
     return {
         "version": specs.SPEC_VERSION, "hash": prereg.HASH, "registered_on": prereg.REGISTERED_ON,
+        "matches_spec": specs.registration_hash() == prereg.HASH, "hash_covers": HASH_COVERS,
         "matches_code": specs.registration_hash() == prereg.HASH, "note": prereg.NOTE,
         "variants_tried": specs.VARIANTS_TRIED, "specs": [asdict(s) for s in specs.SPECS],
         "book": asdict(specs.BOOK), "criteria": asdict(specs.CRITERIA),

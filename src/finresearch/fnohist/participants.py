@@ -41,6 +41,14 @@ def stored_days(s: Session, start: date, end: date) -> set[date]:
     return set(s.scalars(q))
 
 
+def bhav_sessions(s: Session, start: date, end: date) -> dict[date, str]:
+    """{day: status} from the bhavcopy manifest (fno_bhav_day) between start and end."""
+    from finresearch.db.models import FnoBhavDay
+
+    q = select(FnoBhavDay.day, FnoBhavDay.status).where(FnoBhavDay.day.between(start, end))
+    return {d: st for d, st in s.execute(q)}
+
+
 async def update(today: date, *, http: Any = None, lookback: int = LOOKBACK_DAYS) -> dict[str, Any]:
     """Fetch the missing weekdays in [today − lookback, today]; returns counts and errors by day."""
     from finresearch.adapters.http import PoliteClient
@@ -49,8 +57,14 @@ async def update(today: date, *, http: Any = None, lookback: int = LOOKBACK_DAYS
     start = today - timedelta(days=lookback)
     with session_scope() as s:
         have = stored_days(s, start, today)
+        manifest = bhav_sessions(s, start, today)
+    # the bhavcopy manifest's sessions decide (#354 i): a day it loaded is fetched even on a weekend (a special session),
+    # a day it found no file for is a holiday and skipped; a day it has not tried yet stays a weekday guess
     days = [start + timedelta(days=i) for i in range(lookback + 1)]
-    days = [d for d in days if d.weekday() < 5 and d not in have]
+    days = [
+        d for d in days if manifest.get(d) == "loaded" or (d.weekday() < 5 and manifest.get(d) != "no_file")
+    ]
+    days = [d for d in days if d not in have]
     out: dict[str, Any] = {"planned": len(days), "loaded": 0, "no_file": 0, "failed": {}}
     own = http is None
     http = http or PoliteClient()

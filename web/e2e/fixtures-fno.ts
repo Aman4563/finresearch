@@ -34,10 +34,10 @@ export const CONTEXT: MarketContext = {
   symbol: "NIFTY", today: "2026-10-13", not_a_signal: "Context, not signals: none of these indicators changes the trade-plan verdict.",
   trend: { close: 25000, closes: 290, source: "stored", trend: "uptrend", strength: "emerging", note: null,
     averages: [{ days: 20, sma: 24800, slope_pct_10d: 0.4, distance_pct: 0.8 }, { days: 50, sma: 24500, slope_pct_10d: 0.3, distance_pct: 2.0 }, { days: 200, sma: 24000, slope_pct_10d: 0.1, distance_pct: 4.2 }],
-    adx: { adx: 22.5, plus_di: 25, minus_di: 18, bars: 290, on: "near-month future" }, evidence: ev("mixed"), adx_evidence: ev("none verified") },
-  volatility: { atm_iv: 14.2, realised_20d: 11.1, realised_60d: 12.0, iv_minus_rv20: 3.1, iv_rank: 0.3, iv_percentile: 0.42, iv_days: 252, iv_status: "ok",
+    adx: { adx: 22.5, plus_di: 25, minus_di: 18, bars: 290, on: "front future, ratio-adjusted at each roll as the direction model's ADX" }, evidence: ev("mixed"), adx_evidence: ev("none verified") },
+  volatility: { atm_iv: 14.2, realised_20d: 11.1, realised_60d: 12.0, iv_minus_rv20: 2.5, iv_minus_rv20_label: "30-day IV 13.6% − 20-day realised 11.1% (NSE F&O bhavcopy, both at the 2026-10-10 close)", iv_rank: 0.3, iv_percentile: 0.42, iv_days: 252, iv_status: "ok",
     iv_source: "NSE F&O bhavcopy, 30-day IV", skew_25d: 2.1, evidence: ev("documented on average"), rank_evidence: ev("none verified"), skew_evidence: ev("weak / US stocks only") },
-  term: { near_iv: 14.0, next_iv: 14.6, near_expiry: "2026-10-20", next_expiry: "2026-10-27", shape: "normal (upward)", day: "2026-10-10", evidence: ev("weak / US only") },
+  term: { near_iv: 14.0, next_iv: 14.6, near_expiry: "2026-10-20", next_expiry: "2026-10-27", shape: "next above near", slope: 0.6, day: "2026-10-10", evidence: ev("weak / US only") },
   chain: { pcr_oi: 1.1, pcr_volume: 0.92, max_pain: 25000, spot: 25000, source: "NSE", as_of: null, pcr_evidence: ev("weak / contested"), max_pain_evidence: ev("weak / contested") },
   buildup: { futures: { day: "2026-10-10", previous_day: "2026-10-09", source: "NSE F&O bhavcopy", rows: [{ expiry: "2026-10-27", close: 25050, price_change: -60, oi: 1.2e7, oi_change: 3e5, buildup: "short build-up" }] },
     options: { status: "ok", source: "NSE option chain (live)", rows: [{ strike: 25000, call: { price_change: -10, oi_change: 200, oi: 5000, buildup: "short build-up" }, put: { price_change: 5, oi_change: 100, oi: 6000, buildup: "long build-up" } }] },
@@ -201,7 +201,8 @@ export const BT_BASE: StrategyResult = {
 };
 export const BT_FAILS: StrategyResult = { ...BT_BASE, key: "nifty_dcs_m", name: "NIFTY debit call spread, monthly (control)", role: "control",
   status: "fails", reasons: ["fails: OOS deflated Sharpe"], criteria: crit(false), windows: { is: w({}), oos: w({ deflated_sharpe: null }) } };
-export const REG = { version: "2026-10-12.1", hash: "6d92407630d7f406", registered_on: "2026-10-12", matches_code: true, note: "Registered before any real-data run.",
+export const REG = { version: "2026-10-12.1", hash: "6d92407630d7f406", registered_on: "2026-10-12", matches_spec: true, matches_code: true,
+  hash_covers: "spec parameters only (specs.registration()): the engine code that runs them is not hashed until an engine hash exists (roadmap P2.4)", note: "Registered before any real-data run.",
   variants_tried: 8, specs: [], book: {}, criteria: {}, windows: { is: ["2022-01-01", "2024-06-30"] as [string, string], oos_from: "2024-07-01" },
   doc: "evals/experiments/fno_backtest/PREREG.md", deflated_sharpe_source: "Bailey & López de Prado (2014)" };
 export const BACKTESTS: BacktestsResponse = {
@@ -312,9 +313,10 @@ export const DIRECTION = (h: number) => ({
     source: "finresearch_fnohist2 (read only)", registration_hash: "372dabfe1d07", windows: { oos_start: "2024-07-01" },
     criteria: { min_oos_n: 250, alpha: 0.05, slope_low: 0.5, slope_high: 3 }, cells: [1, 5, 10, 20].flatMap((x) => ["up", "up_k", "down_k"].map((e) => cell(x, e))) },
   live_accuracy: [{ method: "m", event_kind: `fno_dir_up_h${h}`, h, event: "up", model: "implied", logged: 12, open: 4, resolved: 8, independent: 2, void: 0,
-    summary: { n: 2, brier: 0.24, brier_skill: null, hit_rate: 0.5, base_rate: 0.5 } }],
+    summary: { n: 2, brier: 0.24, brier_skill: null, hit_rate: 0.5, hit_rate_ci: [0.0945, 0.9055], base_rate: 0.5 } }],
   decision_horizon: h, evidence_note: "Probabilities are for the index's close h sessions after the stored close.",
-  registration: { hash: "372dabfe1d070d22", registered_on: "2026-10-19", matches_code: true, doc: "PREREG.md" },
+  registration: { hash: "372dabfe1d070d22", registered_on: "2026-10-19", matches_spec: true, matches_code: true, doc: "PREREG.md",
+    hash_covers: "spec parameters only (specs.registration()): the engine code that runs them is not hashed until an engine hash exists (roadmap P2.4)" },
   decision: { status: "ok", action: "NO TRADE", label: "NO TRADE: no measured edge", chosen: null, horizon: h, expiry: "2026-10-20", horizon_day: "2026-10-19",
     held_to_expiry: false, lot_size: 65, plan: null, notes: [],
     candidates: [cand("long_call", "Long call (ATM)", "up", -310), cand("long_put", "Long put (ATM)", "down", -295)],
