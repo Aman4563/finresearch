@@ -55,6 +55,12 @@ LTCG_RATE = Decimal("0.125")  # s.112 / s.112A (s.197 / s.198) from 23-Jul-2024
 # tax benefit in the year is ₹3 crore or less. Its section numbers in the Income-tax Act 2025 were not verified [U].
 # Below that threshold the judicial substance-over-form doctrine (McDowell & Co. v CTO, Supreme Court, 1985, as read in
 # Azadi Bachao Andolan, 2003) can still treat a colourable device as a sham.
+LOSS_LAW = (
+    "Within a year a short-term capital loss is set off against any capital gain and a long-term one only against "
+    "long-term gains (s.70 of the 1961 Act, s.108 of the 2025 Act). What is left is carried forward for eight years "
+    "with the same restriction (s.74 / s.111), only if that year's return was filed by the s.139(1) due date (s.80 / "
+    "s.121), and is set off before the ₹1.25 lakh LTCG exemption. 2025 Act numbers from a secondary source (21-Oct-2026)."
+)
 GAAR_CAUTION = (
     "No wash-sale rule does not mean no scrutiny: a sale made only to book a loss and bought straight back can be "
     "questioned for lack of substance. GAAR (Chapter X-A, ss.95-102 of the 1961 Act) applies only to a tax benefit "
@@ -463,6 +469,22 @@ def _bf_block(ledger: Ledger, fy: int, t: FyTax) -> dict[str, Any]:
     return {"set_off_short": _f(t.bf_set_off_short), "set_off_long": _f(t.bf_set_off_long), "used": used,
             "complete": y.carry_forward_complete if y else True, "pending": pending,
             "tax_if_pending_allowed": _f(y.tax_if_pending_allowed) if y else None}  # fmt: skip
+
+
+def carry_forward_json(ledger: Ledger, inputs: TaxLossInputs) -> dict[str, Any]:
+    """The ledger by year of origin for the tax view, plus the loss years whose filing the user has not answered."""
+    entries = [{"origin_fy": e.origin_fy, "label": fy_label(e.origin_fy), "kind": e.kind, "amount": _f(e.amount),
+                "remaining": _f(e.remaining), "used": {str(fy): _f(a) for fy, a in sorted(e.used.items())},
+                "apply_from_fy": e.apply_from_fy, "last_fy": e.last_fy, "last_label": fy_label(e.last_fy),
+                "filing": e.filing, "status": e.status, "source": e.source, "notes": e.notes}
+               for e in ledger.entries]  # fmt: skip
+    ask = sorted({e.origin_fy for e in ledger.entries if e.filing in ("unknown", "not_yet_due")})
+    return {"entries": entries, "through_fy": ledger.through_fy, "ask_filing": ask,
+            "inputs": {"returns_filed_on_time": {str(k): v for k, v in sorted(inputs.returns_filed_on_time.items())},
+                       "brought_forward": [{"origin_fy": m.origin_fy, "kind": m.kind, "amount_inr": _f(m.amount),
+                                            "source": m.source, "apply_from_fy": m.apply_from_fy}
+                                           for m in inputs.brought_forward]},
+            "law": LOSS_LAW}  # fmt: skip
 
 
 def fy_summary(

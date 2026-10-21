@@ -117,6 +117,9 @@ class YearResult:
     pending: list[str]  # LossEntry.key of those losses
     # the year's tax incl. cess if the pending losses were allowed; None when an amount is unknown
     tax_if_pending_allowed: Decimal | None
+    brought_forward: list[BroughtForward] = field(
+        default_factory=list
+    )  # what was offered to fy_tax this year
 
 
 @dataclass
@@ -183,7 +186,7 @@ def carry_forward(years: Mapping[int, YearGains], slab_rate: Decimal | float | s
         tax_if = None
         if pending and all(e.amount is not None and e.kind != "unknown" for e in pending):
             tax_if = fy_tax(yg.gains, fy, slab_rate, [*bf, *_bf(pending)]).total
-        out[fy] = YearResult(fy, t, not pending, [e.key for e in pending], tax_if)
+        out[fy] = YearResult(fy, t, not pending, [e.key for e in pending], tax_if, bf)
         filing = filing_of(fy, filed, today)
         own = (("short", t.losses_unabsorbed_short), ("long", t.losses_unabsorbed_long))
         for kind, amt in own:
