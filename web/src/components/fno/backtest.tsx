@@ -27,6 +27,7 @@ export const STATUS: Record<string, { tone: Tone; label: string }> = {
   fails: { tone: "loss", label: "fails" },
   overlay_reported: { tone: "info", label: "overlay: reported only" },
   in_sample_only: { tone: "warn", label: "in-sample only" },
+  in_sample_result: { tone: "warn", label: "in-sample result" }, // a Strategy Lab pass on a published window (#361)
   no_data: { tone: "neutral", label: "no data" },
 };
 

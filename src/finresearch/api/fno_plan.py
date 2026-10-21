@@ -15,6 +15,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from finresearch.db import session_scope
+from finresearch.fnobook import card_log
 
 
 class PlanLegIn(BaseModel):
@@ -112,7 +113,10 @@ def add_fno_plan_routes(app: FastAPI, fno: Callable[[], Any]) -> None:
             card = tpl.build(chain, lot, legs, x, bidask=fb, bidask_note=ba.FAILED_NOTE if need else None)
         except ValueError as e:
             raise HTTPException(422, str(e)) from e
-        return {**card, "risk_notice": fs.risk_notice()}
+        out = {**card, "risk_notice": fs.risk_notice()}
+        out["card_log_id"] = card_log.append("plan", symbol=sym, expiry=body.expiry, request=body.model_dump(mode="json"),
+                                             chains=[chain], response=out, plan_inputs=x)  # #360  # fmt: skip
+        return out
 
     @app.get("/api/fno/{symbol}/suggest")
     async def fno_suggest(symbol: str) -> dict[str, Any]:
@@ -133,11 +137,14 @@ def add_fno_plan_routes(app: FastAPI, fno: Callable[[], Any]) -> None:
             except Exception:
                 lots = {}
 
+            seen: list[Any] = []  # the chains the cards were built on, for the card log (#360)
+
             async def get_chain(e: date) -> Any:
                 try:
-                    return await f.option_chain(sym, e)
+                    seen.append(await f.option_chain(sym, e))
                 except Exception:
                     return None
+                return seen[-1]
 
             async def lot_for(e: date) -> int | None:
                 return lot_size_for(lots, sym, e)
@@ -147,9 +154,12 @@ def add_fno_plan_routes(app: FastAPI, fno: Callable[[], Any]) -> None:
 
             x = await inputs(f, sym, expiries[0], today)
             cards = await tpl.suggest(sym, expiries, get_chain, lot_for, x, get_bidask)
-        return {"symbol": sym, "today": today.isoformat(), "cards": cards, "risk_notice": fs.risk_notice(),
-                "note": "The library's pre-registered recipes (backtest.specs) applied to today's chain, each with its "
-                        "own out-of-sample result. A recipe shown here is not a recommendation."}  # fmt: skip
+        out = {"symbol": sym, "today": today.isoformat(), "cards": cards, "risk_notice": fs.risk_notice(),
+               "note": "The library's pre-registered recipes (backtest.specs) applied to today's chain, each with its "
+                       "own out-of-sample result. A recipe shown here is not a recommendation."}  # fmt: skip
+        out["card_log_id"] = card_log.append("suggest", symbol=sym, expiry=None, request={"symbol": sym},
+                                             chains=seen, response=out, plan_inputs=x)  # #360  # fmt: skip
+        return out
 
     @app.get("/api/fno/{symbol}/context")
     async def fno_context(symbol: str, expiry: date | None = None) -> dict[str, Any]:

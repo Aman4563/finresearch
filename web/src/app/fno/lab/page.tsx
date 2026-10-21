@@ -83,7 +83,7 @@ export default function StrategyLabPage() {
             <EmptyState icon={<Beaker className="size-5" />} title="No strategy yet">Save one above, then run it in sample first.</EmptyState>
           ) : data.strategies.map((s) => (
             <Card key={s.id} title={<span className="flex min-w-0 flex-wrap items-center gap-2"><span className="line-clamp-2 min-w-0 break-words" title={s.name}>{s.name}</span><Badge tone="neutral">{s.underlying}</Badge>{s.oos_versions > 1 && <Badge tone="warn">{s.oos_versions} versions seen out of sample</Badge>}</span>}
-              subtitle={`In sample ${s.split.is.join(" → ")} · out of sample from ${s.split.oos_from} (locked: ${s.split.rule})`}>
+              subtitle={`In sample ${s.split.is.join(" → ")} · out of sample from ${s.split.oos_from} (locked: ${s.split.rule}) · that window is ${s.split.oos_label ?? "already published, not out of sample"}`}>
               <Table label={`Versions of ${s.name}`}>
                 <thead><tr><th>Version</th><th>Spec</th><th>Runs</th><th /></tr></thead>
                 <tbody>{s.versions.map((v) => (

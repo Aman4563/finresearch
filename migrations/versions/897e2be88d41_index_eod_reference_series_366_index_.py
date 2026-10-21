@@ -1,7 +1,7 @@
 """Index EOD reference series (#366): index_eod, index_eod_day
 
 Revision ID: 897e2be88d41
-Revises: b4d8e2c6a9f1
+Revises: d4a8c2e6f1b9
 Create Date: 2026-10-21 22:52:34.476457
 
 """
@@ -13,7 +13,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "897e2be88d41"
-down_revision: str | Sequence[str] | None = "b4d8e2c6a9f1"
+down_revision: str | Sequence[str] | None = "d4a8c2e6f1b9"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
