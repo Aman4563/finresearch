@@ -81,3 +81,14 @@ def test_api_data_health(clean):
         c.get("/api/data-health/checks", params={"dataset": "fno_bhav"}).json()["checks"][0]["check"]
         == "freshness"
     )
+
+
+def test_push_text_names_the_failed_dataset(clean):
+    from finresearch.db import session_scope
+    from finresearch.monitor.digest import brief_text, build_brief
+
+    with session_scope() as s:
+        seed_fail(s)
+    with session_scope() as s:
+        text_ = brief_text(build_brief(s, NOW))
+    assert "• Data check failed: F&O bhavcopy (freshness)" in text_

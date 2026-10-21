@@ -14,6 +14,7 @@ unknown.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, time
@@ -27,6 +28,8 @@ from finresearch.db import models as M
 from finresearch.dq import fno, misc, ref, stats
 from finresearch.dq.base import Check
 from finresearch.fincalc.dates import IST, to_ist
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -125,6 +128,18 @@ def _status(s: Session, name: str, day: date, last: date | None, lag: int | None
     return status
 
 
+def _guarded(
+    s: Session, name: str, critical: bool, fn: Callable[..., list[Check]], *args: Any
+) -> list[Check]:
+    """One dataset's checks; a crash becomes an unknown `checks` row (with the error) instead of stopping the pass."""
+    try:
+        with s.begin_nested():
+            return fn(*args)
+    except Exception as e:
+        log.warning("data-quality checks for %s failed", name, exc_info=True)
+        return [Check(name, "checks", "unknown", note=f"{type(e).__name__}: {e}", critical=critical)]
+
+
 def run_all(s: Session, now: datetime, *, holidays: set[date] | None = None,
             free_bytes: Callable[[Any], int] | None = None) -> dict[str, Any]:  # fmt: skip
     """Run every dataset's checks as of `now` and store the results. Returns {checks, status: {dataset: status}}."""
@@ -138,7 +153,7 @@ def run_all(s: Session, now: datetime, *, holidays: set[date] | None = None,
         last = ds.last(s)
         fresh, want = freshness(ds, last, now, hol)
         day = want if want is not None and last is not None and last >= want else last
-        checks = [fresh] + (ds.checks(s, day) if day is not None else [])
+        checks = [fresh] + (_guarded(s, ds.name, ds.critical, ds.checks, s, day) if day is not None else [])
         key = want or day or today
         _store(s, key, [fresh], now)
         if day is not None:
@@ -148,7 +163,8 @@ def run_all(s: Session, now: datetime, *, holidays: set[date] | None = None,
         n += len(checks)
     session = stats.expected_day(now, time(16, 0), hol or set())
     free = {"free_bytes": free_bytes} if free_bytes else {}
-    extra = [*misc.ipo_checks(s, now), *misc.close_checks(s, session),
+    extra = [*_guarded(s, "ipo_history", False, misc.ipo_checks, s, now),
+             *_guarded(s, "groww_close", False, misc.close_checks, s, session),
              misc.disk_check(get_settings().state_dir.parent, **free)]  # fmt: skip
     for name in sorted({c.dataset for c in extra}):
         mine = [c for c in extra if c.dataset == name]

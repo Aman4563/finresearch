@@ -103,7 +103,10 @@ def _free(p: Path) -> int:
 
 
 def disk_check(path: Path, free_bytes: Callable[[Path], int] = _free) -> Check:
-    gib = free_bytes(path) / 2**30
+    try:
+        gib = free_bytes(path) / 2**30
+    except OSError as e:
+        return Check("disk", "free_space", "unknown", note=f"cannot read free space: {type(e).__name__}")
     return Check("disk", "free_space", "fail" if gib < MIN_FREE_GIB else "ok", round(gib, 1), MIN_FREE_GIB,
                  f"{gib:.1f} GiB free on the data volume")  # fmt: skip
 

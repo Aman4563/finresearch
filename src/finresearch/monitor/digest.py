@@ -404,6 +404,9 @@ def brief_text(b: dict[str, Any]) -> str:
     if b.get("performance"):
         p = b["performance"]
         lines.append(f"• Value {p['twr_pct']:+.2f}% (new money removed) since {p['from']}")
+    for d in [d for d in (b.get("data_health") or {}).get("datasets", []) if d["status"] == "fail"][:2]:
+        first = f" ({d['failed'][0]})" if d.get("failed") else ""
+        lines.append(f"• Data check failed: {d['label']}{first}")
     if b["health"]:
         lines.append(f"• Data health: {len(b['health'])} note(s)")
     lines.append("Personal research, not advice.")

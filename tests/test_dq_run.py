@@ -121,3 +121,29 @@ def test_low_disk_fails(clean):
     with session_scope() as s:
         run.run_all(s, NIGHT, holidays=set(), free_bytes=lambda _p: 2**30)
         assert status_of(s)["disk"][0] == "fail"
+
+
+def test_one_crashing_check_leaves_the_others_and_marks_its_dataset_unknown(clean, monkeypatch):
+    from finresearch.db import session_scope
+    from finresearch.dq import run
+
+    def boom(s, day):
+        raise RuntimeError("synthetic SQL failure")
+
+    monkeypatch.setattr(run, "DATASETS", tuple(
+        run.Dataset(d.name, d.sla, d.last, boom if d.name == "index_eod" else d.checks, d.critical) for d in run.DATASETS))  # fmt: skip
+    with session_scope() as s:
+        seed_fno(s)
+        run.run_all(s, NIGHT, holidays=set(), free_bytes=FREE)
+        st = status_of(s)
+        note = s.execute(
+            text("SELECT note FROM dq_check WHERE dataset = 'index_eod' AND \"check\" = 'checks'")
+        ).scalar()
+    assert st["fno_bhav"][0] == "ok" and st["index_eod"][0] == "unknown"
+    assert "RuntimeError: synthetic SQL failure" in note
+
+
+def test_disk_check_on_a_missing_path_is_unknown(tmp_path):
+    from finresearch.dq import misc
+
+    assert misc.disk_check(tmp_path / "nope").status == "unknown"
