@@ -135,6 +135,39 @@ def next_open(now: datetime, holidays: set[date] | None = None) -> datetime:
     return datetime.combine(d, OPEN, IST)
 
 
+def _epoch_or_iso(v: Any) -> datetime | None:
+    if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0:
+        return datetime.fromtimestamp(v / 1000 if v > 1e11 else v, UTC)
+    if isinstance(v, str):
+        try:
+            d = datetime.fromisoformat(v)
+        except ValueError:
+            return None
+        return d if d.tzinfo else d.replace(tzinfo=IST)  # no zone: IST, as the candles [U]
+    return None
+
+
+def chain_data_time(payload: dict[str, Any], now: datetime, ph: str, holidays: set[date]) -> datetime:
+    """When the chain's prices are from (#354 i), not when it was asked for. The documented payload has no timestamp
+    [U]; a `last_trade_time` (top level or per leg, epoch or ISO), if Groww sends one, wins (the latest). Else in
+    session the request time; out of session the last session's close (15:30 IST), the time its prices stopped."""
+    times = [_epoch_or_iso(payload.get("last_trade_time"))]
+    for legs in (payload.get("strikes") or {}).values():
+        for leg in legs.values() if isinstance(legs, dict) else ():
+            if isinstance(leg, dict):
+                times.append(_epoch_or_iso(leg.get("last_trade_time")))
+    known = [to_ist(t) for t in times if t is not None]
+    if known:
+        return max(known)
+    ist = to_ist(now)
+    if ph == "open":
+        return ist
+    d = ist.date() if ph in ("closing", "after") else ist.date() - timedelta(days=1)
+    while not trading_day(d, holidays):
+        d -= timedelta(days=1)
+    return datetime.combine(d, CLOSE, IST)
+
+
 def ltp_ttl(now: datetime, holidays: set[date] | None = None) -> float:
     """LTP is asked for only in session (and the closing session); then it lives LTP_TTL_S."""
     return LTP_TTL_S if phase(now, holidays) in ("open", "closing") else 0.0
@@ -836,9 +869,10 @@ class GrowwMarket:
                 continue
             legs = legs if isinstance(legs, dict) else {}
             rows.append(ChainRow(strike=k, call=side(legs.get("CE")), put=side(legs.get("PE"))))
-        chain = OptionChain(symbol=sym, expiry=expiry, underlying=dec(payload.get("underlying_ltp")),
-                            as_of=to_ist(now), rows=sorted(rows, key=lambda r: r.strike))  # fmt: skip
         ph = phase(now, self.holidays())
+        chain = OptionChain(symbol=sym, expiry=expiry, underlying=dec(payload.get("underlying_ltp")),
+                            as_of=chain_data_time(payload, now, ph, self.holidays()),
+                            rows=sorted(rows, key=lambda r: r.strike))  # fmt: skip
         ttl = (
             CHAIN_TTL_S
             if ph in ("open", "closing")
