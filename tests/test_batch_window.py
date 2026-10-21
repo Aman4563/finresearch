@@ -98,3 +98,21 @@ def test_a_running_job_is_paused_at_the_open_and_resumed_after_the_window(tmp_pa
     res = bw.run_batch([sys.executable, "-c", "import time; time.sleep(0.6)"], clock=clock, holidays=set(),
                        poll=0.1, on_signal=events.append)  # fmt: skip
     assert res.returncode == 0 and events == ["paused", "resumed"]
+
+
+@pytest.mark.parametrize(("hh", "code", "ran"), [(10, 75, False), (20, 3, True)])
+def test_cli_batch_run_defers_with_exit_75_or_passes_the_exit_code(env, tmp_path, monkeypatch, hh, code, ran):
+    from typer.testing import CliRunner
+
+    from finresearch.cli import app
+
+    monkeypatch.setattr(
+        bw, "now_ist", lambda: at(WED, hh, 0)
+    )  # no cached holiday list: a weekday is a session
+    marker = tmp_path / "ran"
+    r = CliRunner().invoke(app, ["batch", "run", "--", sys.executable, "-c",
+                                 f"open({str(marker)!r}, 'w'); raise SystemExit(3)"])  # fmt: skip
+    assert r.exit_code == code, r.output
+    assert marker.exists() is ran
+    if not ran:
+        assert "deferred" in r.output and "15:45" in r.output

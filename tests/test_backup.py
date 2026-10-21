@@ -83,7 +83,9 @@ def test_backup_also_pushes_an_encrypted_off_machine_copy_when_configured(env, d
     from finresearch import config
     from finresearch.backups import offsite
 
-    monkeypatch.setenv("FINRESEARCH_SECRETS_BACKEND", "file")  # shared with the script: a 0600 file in tmp state
+    monkeypatch.setenv(
+        "FINRESEARCH_SECRETS_BACKEND", "file"
+    )  # shared with the script: a 0600 file in tmp state
     config.get_settings.cache_clear()
     offsite.init_key()
     dest = tmp_path / "offsite"

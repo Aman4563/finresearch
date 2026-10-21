@@ -1026,6 +1026,33 @@ def backup_drill(
     console.print(f"[green]drill passed: {res['copy']} restored into {res['scratch']}")
 
 
+batch_app = typer.Typer(
+    no_args_is_help=True, help="Research batches outside market hours (finresearch.batchwindow)"
+)
+app.add_typer(batch_app, name="batch")
+
+
+@batch_app.command("run", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def batch_run(
+    cmd: list[str] = typer.Argument(..., help="The command, after --"),
+    wait: bool = typer.Option(
+        False, "--wait", help="Sleep until 15:45 IST instead of exiting 75 when deferred"
+    ),
+    cpu_seconds: int | None = typer.Option(None, help="Hard CPU-time cap for the job (RLIMIT_CPU)"),
+) -> None:
+    """Run a research batch (backfill, fit, bootstrap, simulation) only outside 09:00-15:45 IST on trading days,
+    at background CPU/I-O priority, paused while the market is open. Exit 75 when deferred, else the job's code."""
+    from finresearch.batchwindow import run_batch
+
+    res = run_batch(cmd, wait=wait, cpu_seconds=cpu_seconds)
+    if res.deferred:
+        console.print(f"batch: deferred during market hours; start again after {res.resume_at:%H:%M} IST")
+        raise typer.Exit(75)
+    if res.paused_s:
+        console.print(f"batch: paused {res.paused_s / 60:.0f} min while the market was open")
+    raise typer.Exit(res.returncode or 0)
+
+
 monitor_app = typer.Typer(
     no_args_is_help=True, help="Monitoring after the report: subscription, listing, lock-ins"
 )

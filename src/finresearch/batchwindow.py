@@ -77,10 +77,11 @@ class BatchResult:
 
 
 def run_batch(cmd: Sequence[str], *, wait: bool = False, cpu_seconds: int | None = None,
-              clock: Callable[[], datetime] = now_ist, holidays: Collection[date] | object | None = _LOOKUP,
+              clock: Callable[[], datetime] | None = None, holidays: Collection[date] | object | None = _LOOKUP,
               sleep: Callable[[float], None] = time.sleep, poll: float = 30.0,
               on_signal: Callable[[str], None] | None = None) -> BatchResult:  # fmt: skip
     """Run `cmd` outside market hours with the budget; see the module docstring."""
+    clock = clock or (lambda: now_ist())  # looked up per call (tests replace the module's clock)
     until = resume_at(clock(), holidays)
     if until is not None:
         if not wait:
@@ -105,7 +106,9 @@ def run_batch(cmd: Sequence[str], *, wait: bool = False, cpu_seconds: int | None
     paused, paused_s, since = False, 0.0, 0.0
     try:
         while proc.poll() is None:
-            time.sleep(poll)
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                proc.wait(timeout=poll)  # returns at once when the job ends
+                break
             inside = in_market_hours(clock(), holidays)
             if inside and not paused:
                 group(signal.SIGSTOP)
