@@ -59,8 +59,11 @@ def snapshot(chain, today: date) -> dict[str, Any] | None:
     if atm is None:
         return None
     row = next(r for r in rows if r.strike == atm[0])
-    t = max((chain.expiry - today).days, 0.5) / 365
-    skew = skew_25d(rows, spot, t, RATE)
+    # #359: T to the minute from the chain's own timestamp (else 15:30 IST on `today`); an expired chain has no skew
+    from finresearch.fincalc.dates import session_clock, years_to_expiry
+
+    t = years_to_expiry(chain.expiry, session_clock(today, chain.as_of))
+    skew = skew_25d(rows, spot, t, RATE) if t > 0 else None
     q = lambda x: None if x is None else Decimal(str(round(x, 3)))  # noqa: E731
     day = to_ist(chain.as_of).date() if chain.as_of else today
     return {"symbol": chain.symbol.upper(), "day": day, "expiry": chain.expiry, "underlying": chain.underlying,

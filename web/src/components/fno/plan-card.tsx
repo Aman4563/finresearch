@@ -57,6 +57,9 @@ function Key({ label, value, note, tone, help }: { label: string; value: string;
   );
 }
 
+/** #351: a loss bounded only by a price of zero is not defined risk: say so beside the number. */
+const zeroBounded = (plan: TradePlan) => (plan.risk_shape === "zero_bounded" ? "bounded only by a price of zero: not defined risk" : undefined);
+
 /** #357: a quantile dot-plot of the P&L at expiry: 20 dots, each 5% of outcomes in the named model scenario. One
  * series, so no legend; a dot's colour carries its sign (loss / gain) and its value is in its tooltip and the caption. */
 function QuantileDots({ d }: { d: NonNullable<TradePlan["pnl_dots"]> }) {
@@ -103,7 +106,7 @@ function KeyNumbers({ plan }: { plan: TradePlan }) {
         note="average win ÷ average loss" help="E[P&L | win] ÷ |E[P&L | loss]| at expiry in the model scenario: a high chance of profit with a low payoff ratio is how premium sellers lose." />}
       {p && <Key label="Chance of profit" value={pct(p.real_world)} help={p.note}
         note={<span data-testid="plan-pop">real-world · risk-neutral {pct(p.risk_neutral)}{plan.reliability ? <ReliabilityLine r={plan.reliability} /> : <span data-testid="reliability" className="block">calibration unknown: not scored</span>}</span>} />}
-      <Key label="Max loss" value={plan.max_loss == null ? "unlimited" : rs(plan.max_loss)} tone="loss" />
+      <Key label="Max loss" value={plan.max_loss == null ? "unlimited" : rs(plan.max_loss)} tone="loss" note={zeroBounded(plan)} />
       <Key label="Max profit" value={plan.max_profit == null ? "unlimited" : rs(plan.max_profit)} tone="gain" />
       <Key label="Stop" value={ex?.stop ? `−${rs(ex.stop.rupees)}` : "none"} tone={ex?.stop ? "loss" : undefined}
         note={ex?.stop?.underlying_now.below != null || ex?.stop?.underlying_now.above != null ? `underlying ${[ex!.stop!.underlying_now.below, ex!.stop!.underlying_now.above].filter((v) => v != null).map(lvl).join(" / ")}` : undefined} />
@@ -197,7 +200,7 @@ function PlanDetail({ plan }: { plan: TradePlan }) {
             </Row>
           )}
           <Row label="Max profit"><N>{plan.max_profit == null ? "unlimited" : rs(plan.max_profit)}</N></Row>
-          <Row label="Max loss"><N>{plan.max_loss == null ? "unlimited" : rs(plan.max_loss)}</N></Row>
+          <Row label="Max loss"><N>{plan.max_loss == null ? "unlimited" : rs(plan.max_loss)}</N>{zeroBounded(plan) && <span className="block text-[11px] text-muted">{zeroBounded(plan)}</span>}</Row>
           <Row label="Breakevens">{plan.breakevens?.length ? plan.breakevens.map((b, i) => <span key={b}>{i > 0 && " / "}<N>{lvl(b)}</N></span>) : "none"}</Row>
           {plan.ev && (
             <Row label="Model EV" help={plan.ev.note}>

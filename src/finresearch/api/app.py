@@ -1268,7 +1268,14 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
         if not lot:
             raise HTTPException(422, f"no NSE lot size for {sym} {body.expiry:%b-%y}")
         spot = float(chain.underlying)
-        t = max((body.expiry - now_ist().date()).days, 0.5) / 365
+        from finresearch.fincalc.dates import years_to_expiry
+
+        clock = now_ist()
+        t = years_to_expiry(body.expiry, clock)  # #359: minutes to 15:30 IST on the expiry day, never floored
+        if t <= 0:
+            raise HTTPException(
+                422, f"the {body.expiry:%d-%b-%Y} contract has expired (15:30 IST): nothing to price"
+            )
         from finresearch.signals.rates import risk_free, user_rate
 
         rinfo = user_rate(float(body.rate)) if body.rate is not None else await risk_free(t)
@@ -1311,7 +1318,7 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
         if body.charge_overrides and set(body.charge_overrides) - set(KEYS):
             raise HTTPException(422, f"unknown charge keys; use {list(KEYS)}")
         prof = o.profile(legs, spot)
-        today = now_ist().date()
+        today = clock.date()
         async with _fno() as f:
             closes = await fs.underlying_closes(f, sym, today)
         with session_scope() as s:
@@ -1320,7 +1327,7 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
                    for x in body.legs]  # fmt: skip
         series, src = fs.iv_series_info(sym)
         try:
-            a = fs.analyse(chain, lot, legs_in, today=today, closes=closes, iv_source=src,
+            a = fs.analyse(chain, lot, legs_in, today=today, now=clock, closes=closes, iv_source=src,
                            iv_as_of=series[-1][0] if series else None,
                            iv_series=[v for _, v, _ in series], capital=float(profile.fno_capital_inr),
                            max_loss_pct=float(profile.fno_max_loss_pct),

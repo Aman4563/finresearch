@@ -4,7 +4,8 @@ The app has no edge-generating F&O signal, and the evidence says most individual
 option buying (SEBI, 20-Aug-2026 [P30]). So the "signal" asks four questions about a proposed strategy and says ENTER
 only when every answer is acceptable:
 
-1. Defined risk: the maximum loss is finite (no naked short options).
+1. Defined risk: both payoff slopes are bounded (#351): no naked short options, and a loss bounded only by a price
+   of zero (a short put, a put ratio, a long future + short call) is not defined risk.
 2. Liquidity (#356): Σ half the bid/ask spread of every leg is at most 10% of the premium at mids (live bid/ask only;
    an estimated or unknown spread fails). The old "EV_rw ≥ −costs" gate is gone: the entry costs cancelled in it, so it
    only tested "IV at the strikes above realised volatility". Model EVs are now cost-complete (fills at mid ± half the
@@ -197,14 +198,22 @@ def _half_spread(q, fb, ref: float) -> tuple[float, float, str]:
 def analyse(chain, lot: int, legs_in: list[LegIn], *, today: date, closes: list[float], iv_series: list[float],
             capital: float, max_loss_pct: float, brokerage: float, rate: float = RATE, drift: float | None = None,
             overrides: dict[str, Any] | None = None, iv_source: dict[str, Any] | None = None,
-            iv_as_of: date | None = None, bidask_chain: Any = None,
-            early_exit_p: float = 1.0) -> dict[str, Any]:  # fmt: skip
-    """Everything the page and the signal show for one strategy. Raises ValueError when a leg has no premium.
+            iv_as_of: date | None = None, bidask_chain: Any = None, early_exit_p: float = 1.0,
+            now: datetime | None = None) -> dict[str, Any]:  # fmt: skip
+    """Everything the page and the signal show for one strategy. `now` = the clock T is measured from (#359: live
+    callers pass now_ist(); without it, 15:30 IST on `today`). Raises ValueError when a leg has no premium or the
+    contract has expired.
     #356: model EVs are cost-complete (each leg at its fill, mid ± half the bid/ask, plus `early_exit_p` × the exit
     half-spreads; `bidask_chain` = NSE's chain for legs the plan's chain quotes without bid/ask) and informational."""
+    from finresearch.fincalc import dates
+
     spot = float(chain.underlying)
     days = (chain.expiry - today).days
-    t = max(days, 0.5) / 365
+    t = dates.years_to_expiry(
+        chain.expiry, dates.session_clock(today, now)
+    )  # minutes to 15:30 IST, never floored
+    if t <= 0:
+        raise ValueError(f"the {chain.expiry:%d-%b-%Y} contract has expired (15:30 IST): nothing to price")
     mu = rate if drift is None else drift
     by_strike = {float(r.strike): r for r in chain.rows}
     legs, orders, notes = [], [], []
@@ -342,6 +351,11 @@ def analyse(chain, lot: int, legs_in: list[LegIn], *, today: date, closes: list[
         "breakevens": prof.breakevens,
         "max_profit": _r(prof.max_profit, 2),
         "max_loss": _r(prof.max_loss, 2),
+        # #351: defined risk needs both payoff slopes bounded; a loss bounded only by a price of zero is not
+        "defined_risk": prof.defined_risk,
+        "risk_shape": (
+            "defined" if prof.defined_risk else "zero_bounded" if prof.bounded_only_by_zero else "unlimited"
+        ),
         "net_premium": _r(prof.net_premium, 2),
         "net_vega": _r(vega, 2),
         "vols": {
@@ -447,11 +461,16 @@ def assess(
         if not ok:
             failed.append(name)
 
-    unlimited = a["max_loss"] is None
-    gate("Defined risk", not unlimited or not defined_risk_only, "unlimited loss" if unlimited else f"max loss ₹{_inr(-a['max_loss'])}",
-         "Only strategies whose worst case is known in advance pass (no naked short options): your profile allows "
-         "defined-risk strategies only." if defined_risk_only else "Your profile allows undefined-risk strategies.",
-         "fincalc:options.profile")  # fmt: skip
+    # #351: both payoff slopes must be bounded; a missing classification counts as undefined (unknown is never safe)
+    defined = a.get("defined_risk") is True and a["max_loss"] is not None
+    value = ("unlimited loss" if a["max_loss"] is None else
+             f"max loss ₹{_inr(-a['max_loss'])}" if defined else
+             f"bounded only by a price of zero: ₹{_inr(-a['max_loss'])}")  # fmt: skip
+    gate("Defined risk", defined or not defined_risk_only, value,
+         "Only strategies whose worst case is capped by a bought option pass (no naked short options, no put ratio, "
+         "no short call against a long future): a loss that stops only at a price of zero is not defined risk. Your "
+         "profile allows defined-risk strategies only." if defined_risk_only else
+         "Your profile allows undefined-risk strategies.", "fincalc:options.profile")  # fmt: skip
     # #356: spreads bind through liquidity (live bid/ask only: an estimate or an unknown spread never passes)
     hs = a["costs"]["half_spreads"]
     share = hs["share_of_premium"]
@@ -569,6 +588,9 @@ def caveats(a: dict[str, Any], notice: dict[str, str]) -> list[str]:
                  f"drawdown of your F&O capital at {dd['probability'] * 100:.0f}%.")  # fmt: skip
     if a["max_loss"] is None:
         c.append("Unlimited loss: a naked short option can lose far more than the premium received.")
+    elif a.get("risk_shape") == "zero_bounded":
+        c.append(f"Not defined risk: the loss is bounded only by a price of zero (₹{_inr(-a['max_loss'])}); nothing "
+                 "bought caps it on the way down.")  # fmt: skip
     c.append("Margin (SPAN + exposure) is not computed here; check your broker's margin calculator.")
     return c
 
@@ -678,7 +700,8 @@ async def fno_signal(instrument: str, ctx: dict[str, Any]) -> Signal:
     from finresearch.fincalc.dates import now_ist
 
     sym = instrument.upper()
-    today = now_ist().date()
+    now = now_ist()
+    today = now.date()
     notice = risk_notice()
     async with _client() as f:
         if ctx.get("expiry"):
@@ -723,10 +746,15 @@ async def fno_signal(instrument: str, ctx: dict[str, Any]) -> Signal:
                          "budget. Set it (and the % limit) on the profile page.")  # fmt: skip
     series, src = iv_series_info(sym)
     drift = float(ctx["drift"]) if ctx.get("drift") not in (None, "") else None
+    from finresearch.fincalc.dates import years_to_expiry
     from finresearch.signals.rates import risk_free
 
-    rinfo = await risk_free(max((expiry - today).days, 0.5) / 365)  # FBIL par yield at the expiry (#244)
-    a = analyse(chain, lot, legs, today=today, closes=closes, iv_series=[v for _, v, _ in series], capital=capital,
+    if years_to_expiry(expiry, now) <= 0:
+        return no_signal(f"the {expiry:%d-%b-%Y} contract expired at 15:30 IST today: nothing to assess")
+    rinfo = await risk_free(
+        years_to_expiry(expiry, now)
+    )  # FBIL par yield at the expiry (#244); T to the minute (#359)
+    a = analyse(chain, lot, legs, today=today, now=now, closes=closes, iv_series=[v for _, v, _ in series], capital=capital,
                 max_loss_pct=float(profile.fno_max_loss_pct), brokerage=float(profile.fno_brokerage_per_order_inr),
                 rate=rinfo["rate"], drift=drift, iv_source=src,
                 iv_as_of=series[-1][0] if series else None)  # fmt: skip

@@ -23,11 +23,12 @@ Nothing here places an order: the card's one-click actions are a paper trade and
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, replace
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from finresearch.fincalc import options as o
 from finresearch.fincalc import tradeplan as tp
+from finresearch.fincalc.dates import session_clock, years_to_expiry
 from finresearch.signals import fno as fs
 
 DELTA_ALERT = 0.30  # short-strike |delta| alert (rule of thumb: the short strike is being tested)
@@ -299,7 +300,7 @@ class Inputs:
                  backtest_head: dict[str, Any] | None = None, paper: list[dict[str, Any]] | None = None,
                  events: list[tuple[date, str]] | None = None, is_index: bool = True,
                  book: BookData = UNKNOWN_BOOK, iv_points: list[tuple[Any, float | None]] | None = None,
-                 scored: int | None = None) -> None:  # fmt: skip
+                 scored: int | None = None, now: datetime | None = None) -> None:  # fmt: skip
         self.today, self.closes, self.iv_series, self.iv_src, self.iv_as_of = (
             today,
             closes,
@@ -313,6 +314,9 @@ class Inputs:
         self.events, self.is_index = events, is_index
         self.book = book  # the open book (#358); unknown unless read: then no card has room
         self.scored = scored  # #357: the plan card method's scored forecasts (None = the ledger was not read)
+        self.now = (
+            now  # the clock T is measured from (#359); None = 15:30 IST on `today` (end-of-day convention)
+        )
         # per-session IV points for a recipe's IV filter (#354's definition); default: iv_series as consecutive sessions
         self.iv_points = iv_points if iv_points is not None else list(enumerate(iv_series))
 
@@ -325,7 +329,8 @@ def _analyse(chain, lot: int, legs: list[fs.LegIn], x: Inputs, bidask_chain: Any
              early_exit_p: float = 1.0) -> dict[str, Any]:  # fmt: skip
     return fs.analyse(chain, lot, legs, today=x.today, closes=x.closes, iv_series=x.iv_series, capital=x.capital,
                       max_loss_pct=x.max_loss_pct, brokerage=x.brokerage, rate=x.rate, iv_source=x.iv_src,
-                      iv_as_of=x.iv_as_of, bidask_chain=bidask_chain, early_exit_p=early_exit_p)  # fmt: skip
+                      iv_as_of=x.iv_as_of, bidask_chain=bidask_chain, early_exit_p=early_exit_p,
+                      now=x.now)  # fmt: skip
 
 
 def evidence_for(kind: str, symbol: str, dte: int, strategies: list[dict[str, Any]] | None,
@@ -529,7 +534,9 @@ def build(chain, lot: int, legs_in: list[fs.LegIn], x: Inputs, *, spec: Any | No
     Raises ValueError when a leg has no price (signals.fno.analyse)."""
     sym, expiry = chain.symbol.upper(), chain.expiry
     spot, dte = float(chain.underlying), (chain.expiry - x.today).days
-    t = max(dte, 0.5) / 365
+    t = years_to_expiry(
+        chain.expiry, session_clock(x.today, x.now)
+    )  # #359: to the minute; ≤ 0 → analyse refuses it
     plan_legs = [tp.PlanLeg(y.right, y.strike, y.side, y.lots) for y in legs_in]
     kind = tp.classify(plan_legs)
     ev = _evidence(kind, sym, dte, x, spec)
@@ -608,7 +615,7 @@ def build(chain, lot: int, legs_in: list[fs.LegIn], x: Inputs, *, spec: Any | No
                  "risk_per_set": None if sz.risk_per_multiple is None else round(sz.risk_per_multiple, 2),
                  "reason": sz.reason, "capital": x.capital, "max_loss_pct": x.max_loss_pct},
         "entry": {**limits, "levels_priced_at": entry_src, "source": src},
-        "max_profit": a["max_profit"], "max_loss": a["max_loss"], "breakevens": a["breakevens"],
+        "max_profit": a["max_profit"], "max_loss": a["max_loss"], "risk_shape": a["risk_shape"], "breakevens": a["breakevens"],
         "net_premium": a["net_premium"], "costs": a["costs"]["total_to_expiry"],
         # #356: model EVs after statutory costs and half-spreads, informational ("model EV - not validated")
         "ev": {"label": a["model_ev"]["label"], "range": a["model_ev"]["range"], "note": a["model_ev"]["note"],
@@ -657,10 +664,14 @@ def recipe_expiry(spec: Any, expiries: list[date], today: date) -> date | None:
     return ok[0] if ok else None
 
 
-def recipe_legs(spec: Any, chain, today: date, rate: float) -> list[fs.LegIn] | str:
+def recipe_legs(
+    spec: Any, chain, today: date, rate: float, now: datetime | None = None
+) -> list[fs.LegIn] | str:
     """The spec's legs on the live chain (its rule from backtest.engine.choose_legs: the short leg by delta, the wing
-    width_pct of spot away), or the reason none can be picked."""
-    spot, t = float(chain.underlying), max((chain.expiry - today).days, 0.5) / 365
+    width_pct of spot away), or the reason none can be picked. Deltas at T to the minute from `now` (#359)."""
+    spot, t = float(chain.underlying), years_to_expiry(chain.expiry, session_clock(today, now))
+    if t <= 0:
+        return f"the {chain.expiry:%d-%b-%Y} contract has expired (15:30 IST)"
     quotes, a = chain_quotes(chain), spec.anchor_delta
     w = (spec.width_pct or 0) / 100 * spot
 
@@ -764,7 +775,7 @@ async def suggest(symbol: str, expiries: list[date], get_chain, lot_for, x: Inpu
                 waiting(spec, symbol, x, f"No option chain or lot size for {symbol.upper()} {e:%d-%b-%Y}.")
             )
             continue
-        legs = recipe_legs(spec, chain, x.today, x.rate)
+        legs = recipe_legs(spec, chain, x.today, x.rate, x.now)
         if isinstance(legs, str):
             out.append(waiting(spec, symbol, x, f"Cannot build the recipe's legs today: {legs}."))
             continue
