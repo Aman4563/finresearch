@@ -30,12 +30,14 @@ def charges(sell_value: float, buy_value: float, orders: int, stt_sell: float = 
     )
 
 
-def card(legs, *, kind, suggested=2, source="rule of thumb", profit=50.0, stop=200.0, mids=True, **extra):
+def card(
+    legs, *, kind, suggested=2, source="rule of thumb", profit=50.0, stop=200.0, mids=True, exp=EXP, **extra
+):
     """A trade-plan card shaped like signals.tradeplan.build's response (only the fields the ledger reads), sized at
     `suggested` sets: its legs carry lots = ratio x suggested."""
     return {
-        "title": f"NIFTY {EXP:%d-%b-%Y} · {kind}", "symbol": "NIFTY", "expiry": EXP.isoformat(),
-        "days_to_expiry": (EXP - D0).days, "spot": 20000.0, "lot_size": LOT, "kind": kind, "action": "WAIT",
+        "title": f"NIFTY {exp:%d-%b-%Y} · {kind}", "symbol": "NIFTY", "expiry": exp.isoformat(),
+        "days_to_expiry": (exp - D0).days, "spot": 20000.0, "lot_size": LOT, "kind": kind, "action": "WAIT",
         "qualifier": None, "label": "WAIT", "failed": ["Proven edge"],
         "legs": [{"right": r, "strike": k, "side": s, "lots": n * suggested, "qty": n * suggested * LOT, "last": px + 1}
                  for r, k, s, n, px in legs],
@@ -57,12 +59,12 @@ PCS = [("put", 20000.0, "sell", 1, 100.0), ("put", 19800.0, "buy", 1, 60.0)]
 
 
 def day(d: date, marks: dict[float, float], *, settle_all: float | None = None, fut: float | None = None,
-        contracts: int = 1500, right: str = "put") -> Day:  # fmt: skip
+        contracts: int = 1500, right: str = "put", exp: date = EXP) -> Day:  # fmt: skip
     x = Day(d, "NIFTY")
     if fut is not None:
-        x.futures[EXP] = fut
+        x.futures[exp] = fut
     for k, px in marks.items():
-        x.options[(EXP, right, k)] = Quote(EXP, right, k, px, settle_all or px, contracts, 1000)
+        x.options[(exp, right, k)] = Quote(exp, right, k, px, settle_all or px, contracts, 1000)
     return x
 
 
@@ -149,6 +151,38 @@ def test_a_hold_to_expiry_recipe_settles_with_exercise_stt():
     assert r.outcome == 1 and r.value == pytest.approx(net, abs=0.02) and "expiry" in r.note
 
 
+def test_a_weekly_exits_on_the_last_session_before_expiry_day_once_the_next_is_stored():
+    from finresearch.fnobook import card_forecasts as cf
+
+    wk = date(
+        2025, 1, 16
+    )  # 6 days: a weekly, so the rule of thumb has no DTE exit and leaves before expiry day
+    inp = _inputs(card(PCS, kind="put_credit", exp=wk))
+    assert inp["exit_plan"] == {
+        "profit_pct": 50.0,
+        "stop_pct": 200.0,
+        "exit_dte": None,
+        "hold_to_expiry": False,
+    }
+    path = [
+        day(date(2025, 1, 13), {20000.0: 95.0, 19800.0: 57.0}, exp=wk),  # gross +150: no target (1,500)
+        day(date(2025, 1, 14), {20000.0: 90.0, 19800.0: 55.0}, exp=wk),  # +375
+        day(date(2025, 1, 15), {20000.0: 85.0, 19800.0: 52.0}, exp=wk),
+    ]  # +525, the last session before expiry
+    with pytest.raises(
+        NotYet
+    ):  # 15-Jan is the latest stored session: is it the last before expiry day? not known
+        cf.simulate(inp, MemoryHistory(path))
+    path.append(day(wk, {20000.0: 70.0, 19800.0: 40.0}, exp=wk))
+    r = cf.simulate(inp, MemoryHistory(path))
+    gross = (
+        -(85.85 - 100.0) * LOT + (51.48 - 60.0) * LOT
+    )  # 1 % slippage: buy back 85 -> 85.85, sell 52 -> 51.48
+    net = gross - charges(100.0 * LOT, 60.0 * LOT, 2) - charges(51.48 * LOT, 85.85 * LOT, 2)
+    assert r.outcome == 1 and r.value == pytest.approx(net, abs=0.02)
+    assert r.note.startswith("before_expiry_day on 2025-01-15")
+
+
 def test_an_open_trade_with_no_later_session_stored_is_not_yet():
     from finresearch.fnobook import card_forecasts as cf
 
@@ -212,7 +246,7 @@ def _forecasts():
 
     with session_scope() as s:
         return [{c.name: getattr(f, c.name) for c in Forecast.__table__.columns}
-                for f in s.scalars(select(Forecast).order_by(Forecast.id))]  # fmt: skip
+                for f in s.scalars(select(Forecast).where(Forecast.source.like("card_log:%")).order_by(Forecast.id))]  # fmt: skip
 
 
 def _record() -> int:

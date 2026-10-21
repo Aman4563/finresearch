@@ -22,8 +22,8 @@ import math
 from datetime import date, datetime
 from typing import Any
 
-from sqlalchemy import select
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy import Text, cast, func, literal, select
+from sqlalchemy.dialects.postgresql import JSONPATH, insert
 from sqlalchemy.orm import Session
 
 from finresearch.backtest import engine
@@ -202,12 +202,15 @@ def record_pending(s: Session) -> int:
     GET (the suggest endpoint is one)."""
     from finresearch.signals.tradeplan import PLAN_METHOD
 
-    done = set(s.scalars(select(Forecast.source).where(Forecast.source.like(f"{SOURCE}%")).distinct()))
-    q = select(CardLog).where(CardLog.kind.in_(("plan", "suggest"))).order_by(CardLog.id)
+    recorded = select(Forecast.id).where(Forecast.source == literal(SOURCE) + cast(CardLog.id, Text)).exists()
+    # only rows with a card that has legs, never read again once recorded, and without the (large) inputs column
+    has_legs = func.jsonb_path_exists(CardLog.response, cast("$.legs[0]", JSONPATH)) | func.jsonb_path_exists(
+        CardLog.response, cast("$.cards[*].legs[0]", JSONPATH)
+    )
+    q = (select(CardLog.id, CardLog.kind, CardLog.symbol, CardLog.created_at, CardLog.response)
+         .where(CardLog.kind.in_(("plan", "suggest")), has_legs, ~recorded).order_by(CardLog.id))  # fmt: skip
     n = 0
-    for row in s.scalars(q):
-        if f"{SOURCE}{row.id}" in done:
-            continue
+    for row in s.execute(q).all():
         for i, c in enumerate(_cards(row.kind, row.response)):
             inp = card_inputs(c, row.created_at, card_log_id=row.id, index=i)
             if inp is None:
