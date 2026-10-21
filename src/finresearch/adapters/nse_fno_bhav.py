@@ -51,6 +51,10 @@ INSTRUMENTS = ("IDF", "IDO", "STF", "STO")
 Format = Literal["udiff", "legacy"]
 
 
+# bump when the parsers' output changes for the same file (#368 lineage: dataset_load.parser_version)
+PARSER_VERSION = "1"
+
+
 @dataclass(slots=True)
 class FoRow:
     """One contract's day. `right` is CE/PE for options, XX for futures (strike 0)."""
