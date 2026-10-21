@@ -22,8 +22,8 @@ Sources:
 - Exchange charges before 1-Oct-2024 were slabbed by a member's monthly turnover; the table uses the first slab, the
   rate a retail broker passes on. From 1-Apr-2023 the exchange rows include NSE's IPFT contribution (Rs 50 per crore
   of options premium, Rs 10 per crore of futures); before that IPFT was Rs 0.01 per crore and is left out.
-- Before a key's earliest row (pre-2013 STT, pre-2021 exchange charges: the vault years) the earliest row is still
-  used and noted "used for an earlier date"; #365 adds the older rows.
+- Before a key's earliest row, and in a period recorded with no rate, the rate is unknown (#365): order_costs and
+  exercise_stt raise ChargesUnknown and the backtest skips that entry. A later rate is never used for an earlier date.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Literal
 
-Status = Literal["verified", "secondary", "unconfirmed"]
+Status = Literal["verified", "secondary", "unconfirmed", "unknown"]
 Side = Literal["buy", "sell"]
 
 BUDGET_2026 = "https://www.indiabudget.gov.in/doc/memo.pdf"
@@ -59,7 +59,7 @@ CRORE = 10_000_000
 @dataclass(frozen=True)
 class ChargeRate:
     key: str
-    rate: Decimal  # a fraction of the basis (0.0015 = 0.15 %)
+    rate: Decimal | None  # a fraction of the basis (0.0015 = 0.15 %); None = unknown (no sourced rate)
     basis: str
     effective_from: date
     source: str
@@ -67,15 +67,20 @@ class ChargeRate:
     note: str = ""
 
     def to_json(self) -> dict:
-        return {"key": self.key, "rate_pct": float(self.rate * 100), "basis": self.basis,
+        return {"key": self.key, "rate_pct": None if self.rate is None else float(self.rate * 100), "basis": self.basis,
                 "effective_from": self.effective_from.isoformat(), "source": self.source, "status": self.status,
                 "note": self.note}  # fmt: skip
 
 
 def _r(
-    key: str, pct: str, basis: str, since: date, source: str, status: Status, note: str = ""
+    key: str, pct: str | None, basis: str, since: date, source: str, status: Status, note: str = ""
 ) -> ChargeRate:
-    return ChargeRate(key, Decimal(pct) / 100, basis, since, source, status, note)
+    return ChargeRate(key, None if pct is None else Decimal(pct) / 100, basis, since, source, status, note)
+
+
+class ChargesUnknown(ValueError):
+    """A charge needed for a trade date has no sourced rate (#365): the trade cannot be priced, never at 0 or at a
+    later date's rate."""
 
 
 _SLAB = ("NSE's first-slab rate (the turnover slab a retail broker's clients pay; lower slabs apply only to a "
@@ -144,22 +149,39 @@ KEYS = tuple(dict.fromkeys(r.key for r in RATES))
 def rates_as_of(
     on: date, overrides: Mapping[str, Decimal | float | str] | None = None
 ) -> dict[str, ChargeRate]:
-    """The rate of every key in force on `on`. Before a key's first row, its earliest row is used (noted). An
-    override (a fraction, e.g. 0.001 for 0.1 %) replaces the rate and is marked as the user's."""
+    """The rate of every key in force on `on`. Before a key's first sourced row, or in a period recorded as unknown,
+    the row is unknown (rate None, status "unknown"): an earlier date never borrows a later rate (#365). An override
+    (a fraction, e.g. 0.001 for 0.1 %) replaces the rate and is marked as the user's."""
     out: dict[str, ChargeRate] = {}
     for key in KEYS:
         rows = sorted((r for r in RATES if r.key == key), key=lambda r: r.effective_from)
         live = [r for r in rows if r.effective_from <= on]
-        row = (
-            live[-1]
-            if live
-            else replace(rows[0], note=f"{rows[0].note}; used for an earlier date".lstrip("; "))
-        )
+        if live and live[-1].rate is not None:
+            row = live[-1]
+        elif live:
+            row = replace(live[-1], status="unknown")
+        else:
+            first = f" before {rows[0].effective_from:%d-%b-%Y}" if rows else ""
+            row = ChargeRate(
+                key, None, rows[0].basis if rows else "", on, "", "unknown", f"no sourced rate{first}"
+            )
         if overrides and key in overrides:
             row = replace(row, rate=Decimal(str(overrides[key])), source="user override", status="verified",
                           note="set by the user")  # fmt: skip
         out[key] = row
     return out
+
+
+def unknown_keys(on: date, overrides: Mapping[str, Decimal | float | str] | None = None) -> list[str]:
+    """The keys with no sourced rate on `on` (empty when the date can be priced)."""
+    return [k for k, v in rates_as_of(on, overrides).items() if v.rate is None]
+
+
+def _known(rows: dict[str, ChargeRate], keys: Sequence[str], on: date) -> dict[str, float]:
+    missing = [k for k in keys if rows[k].rate is None]
+    if missing:
+        raise ChargesUnknown(f"no sourced rate on {on:%d-%b-%Y} for {', '.join(missing)}")
+    return {k: float(rows[k].rate) for k in keys}  # type: ignore[arg-type]
 
 
 @dataclass(frozen=True)
@@ -191,7 +213,8 @@ def order_costs(legs: Sequence[TradeLeg], on: date, brokerage_per_order: Decimal
     """Charges for executing `legs` (one order each) on `on`:
     STT (sell side), exchange transaction charges and SEBI fee (both sides), stamp duty (buy side), flat brokerage per
     order, and GST on brokerage + exchange charges + SEBI fee."""
-    r = {k: float(v.rate) for k, v in rates_as_of(on, overrides).items()}
+    used = rates_as_of(on, overrides)
+    r = _known(used, [k for k in KEYS if k != "stt_option_exercise"], on)
     stt = exch = sebi = stamp = turnover = 0.0
     for leg in legs:
         value = abs(leg.price * leg.qty)
@@ -206,7 +229,6 @@ def order_costs(legs: Sequence[TradeLeg], on: date, brokerage_per_order: Decimal
     brokerage = float(brokerage_per_order) * len(legs)
     gst = (brokerage + exch + sebi) * r["gst"]
     lines = {"stt": stt, "exchange": exch, "sebi": sebi, "stamp": stamp, "brokerage": brokerage, "gst": gst}
-    used = rates_as_of(on, overrides)
     return Costs(lines, sum(lines.values()), turnover, len(legs), list(used.values()))
 
 
@@ -214,7 +236,8 @@ def exercise_stt(
     intrinsic_value: float, on: date, overrides: Mapping[str, Decimal | float | str] | None = None
 ) -> float:
     """STT on long options that expire in the money and are exercised: a rate on the total intrinsic value (₹)."""
-    return max(0.0, intrinsic_value) * float(rates_as_of(on, overrides)["stt_option_exercise"].rate)
+    rate = _known(rates_as_of(on, overrides), ["stt_option_exercise"], on)["stt_option_exercise"]
+    return max(0.0, intrinsic_value) * rate
 
 
 def flip(legs: Sequence[TradeLeg]) -> list[TradeLeg]:
