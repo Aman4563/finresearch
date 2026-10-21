@@ -101,3 +101,67 @@ def test_get_quote_without_a_session_raises(mock_groww):
     with pytest.raises(ConnectorError):
         asyncio.run(market(token=None).quote("NIFTY26OCT25000CE"))
     assert mock_groww == []
+
+
+# ------------------------------------------------------------------ parsing: paise, unknown stays None
+def test_parse_groww_quote_to_compact_columns():
+    from finresearch.fnohist import quotes as q
+
+    ltt = int(datetime(2026, 10, 20, 9, 29, 58, tzinfo=IST).timestamp() * 1000)
+    row = q.parse_groww(quote_payload(ltt_ms=ltt))
+    assert (row["bid"], row["bid_qty"], row["ask"], row["ask_qty"]) == (12005, 750, 12100, 1500)
+    assert row["ltp"] == 12050 and row["oi"] == 456000 and row["volume"] == 123450
+    assert row["iv"] == pytest.approx(12.34)
+    # depth flattened as (price paise, quantity) pairs in the order returned; the empty level (price 0) is dropped
+    assert row["depth_bid"] == [12005, 750, 12000, 300] and row["depth_ask"] == [12100, 1500, 12150, 225]
+    assert row["exchange_at"] == datetime(2026, 10, 20, 9, 29, 58, tzinfo=IST)
+
+
+def test_parse_groww_quote_missing_sides_are_unknown_not_zero():
+    from finresearch.fnohist import quotes as q
+
+    p = quote_payload(bid=0, ask=None, depth=False)
+    p.update(bid_quantity=0, offer_quantity=None, implied_volatility=0, last_price=None, open_interest=None)
+    row = q.parse_groww(p)
+    assert row["bid"] is None and row["bid_qty"] is None  # a zero bid is "no bid", never a bid of 0
+    assert row["ask"] is None and row["ask_qty"] is None
+    assert row["depth_bid"] is None and row["depth_ask"] is None
+    assert row["iv"] is None and row["ltp"] is None and row["oi"] is None and row["exchange_at"] is None
+    assert row["volume"] == 123450
+
+
+def test_row_flags():
+    from finresearch.fnohist import quotes as q
+
+    t = datetime(2026, 10, 20, 9, 30, 10, tzinfo=IST)
+    fresh = t - timedelta(seconds=60)
+    assert q.flags({"bid": 100, "ask": 105, "exchange_at": fresh}, t) == 0
+    assert q.flags({"bid": 105, "ask": 105, "exchange_at": fresh}, t) == q.LOCKED
+    assert q.flags({"bid": 106, "ask": 105, "exchange_at": fresh}, t) == q.CROSSED
+    assert q.flags({"bid": None, "ask": 105, "exchange_at": fresh}, t) == q.NO_BID
+    assert q.flags({"bid": 100, "ask": None, "exchange_at": None}, t) == q.NO_ASK | q.NO_TRADE_TIME
+    assert q.flags({"bid": 100, "ask": 105, "exchange_at": fresh - timedelta(seconds=1)}, t) == q.STALE
+
+
+# ------------------------------------------------------------------ the cost model's interface (issue maths)
+def test_mid_half_spread_and_depth_cost_by_hand():
+    from finresearch.fnohist.quotes import Quote
+
+    qt = Quote.from_row({"bid": 12005, "ask": 12100, "bid_qty": 750, "ask_qty": 1500,
+                         "depth_bid": [12005, 750, 12000, 300], "depth_ask": [12100, 1500, 12150, 225]})  # fmt: skip
+    assert qt.mid == Decimal("120.525") and qt.half_spread == Decimal("0.475")
+    assert qt.rel_half_spread == Decimal("0.475") / Decimal("120.525")
+    # buy 1600: 121.00 x 1500 + 121.50 x 100 - 1600 x 120.525 = 193650 - 192840 = 810
+    assert qt.depth_cost(1600, "buy") == Decimal("810.000")
+    # sell 900: 900 x 120.525 - (120.05 x 750 + 120.00 x 150) = 108472.5 - 108037.5 = 435
+    assert qt.depth_cost(900, "sell") == Decimal("435.000")
+    assert qt.depth_cost(1800, "buy") is None  # deeper than the book shown: unknown, not the last level's price
+
+
+def test_no_mid_without_a_two_sided_uncrossed_quote():
+    from finresearch.fnohist.quotes import Quote
+
+    for bid, ask in ((None, 100), (100, None), (100, 100), (101, 100)):
+        qt = Quote.from_row({"bid": bid, "ask": ask})
+        assert qt.mid is None and qt.half_spread is None and qt.rel_half_spread is None
+        assert qt.depth_cost(1, "buy") is None
