@@ -11,6 +11,7 @@ import { BarsChart } from "@/components/charts";
 import { Badge, Button, Callout, Card, ErrorNote, Field, Segmented, Table, cx, inputClass } from "@/components/ui";
 import { day, useApi } from "@/lib/api";
 
+import { FactorExposures } from "./factor-exposures";
 import { AnalyticsFooter, type AnalyticsBase, Loading, type Metric, MetricRow, NotEnough, pct, spct } from "./shared-analytics";
 import { StressReplay } from "./stress-replay";
 import { inr, signed } from "./types";
@@ -139,6 +140,7 @@ export function RiskAnalytics({ refresh }: { refresh: number }) {
       </Card>
       {data.stress.length > 0 && <Stress items={data.stress} />}
       <StressReplay refresh={refresh} />
+      <FactorExposures refresh={refresh} />
       <AnalyticsFooter data={data} />
     </div>
   );
