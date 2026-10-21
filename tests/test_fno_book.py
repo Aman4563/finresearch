@@ -268,8 +268,15 @@ def book_db(env, offline):
     from sqlalchemy import delete
 
     from finresearch.db import session_scope
-    from finresearch.db.models import (Alert, BrokerConnection, CalendarCoverage, CalendarEvent, FnoExitRule,
-                                       PaperLeg, PaperStrategy)  # fmt: skip
+    from finresearch.db.models import (
+        Alert,
+        BrokerConnection,
+        CalendarCoverage,
+        CalendarEvent,
+        FnoExitRule,
+        PaperLeg,
+        PaperStrategy,
+    )
 
     with session_scope() as s:
         for m in (FnoExitRule, PaperLeg, PaperStrategy, CalendarEvent, CalendarCoverage):

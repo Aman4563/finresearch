@@ -7,7 +7,7 @@ and exit-rule routes (api/fno_book.py)."""
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any, Literal
 
@@ -42,15 +42,18 @@ async def _events(sym: str, today: date, expiry: date) -> list[tuple[date, str]]
         return None
 
 
-def _calendar() -> tuple[list[Any], list[Any]] | None:
-    """The event calendar (#367) for the plan's tier-1 check; None when it cannot be read (the check reads unknown)."""
+def _calendar(today: date) -> tuple[list[Any], list[Any]] | None:
+    """The event calendar (#367) for the plan's tier-1 check: events from the day before `today` on (an after-close
+    release lands on the next session) and every coverage row, so the card log (#360) keeps what the check read and
+    no more. None when it cannot be read (the check reads unknown)."""
     from finresearch.eventcal import store
 
     try:
         with session_scope() as s:
-            return store.load(s)
+            ev, cov = store.load(s)
     except Exception:
         return None
+    return [e for e in ev if e.day >= today - timedelta(days=1)], cov
 
 
 async def plan_inputs(f: Any, sym: str, expiry: date, today: date, now: datetime | None = None) -> Any:
@@ -88,7 +91,7 @@ async def plan_inputs(f: Any, sym: str, expiry: date, today: date, now: datetime
                       backtest_head=head, paper=tpl.paper_trades(), events=await _events(sym, today, expiry),
                       is_index=events.is_index(sym), book=await tpl.load_book(today),
                       iv_points=fno_context.iv_rank_input(sym)[0], scored=scored, now=now,
-                      calendar=_calendar())  # fmt: skip
+                      calendar=_calendar(today))  # fmt: skip
 
 
 def add_fno_plan_routes(app: FastAPI, fno: Callable[[], Any]) -> None:

@@ -213,3 +213,23 @@ def test_a_rescheduled_meeting_shows_the_old_day_until_the_notice_and_the_new_da
     before, after = datetime(2022, 2, 1, 15, 30, tzinfo=IST), datetime(2022, 2, 7, 15, 30, tzinfo=IST)
     assert [e.day for e in cal.known_at([old, new], before)] == [date(2022, 2, 9)]
     assert [e.day for e in cal.known_at([old, new], after)] == [date(2022, 2, 10)]
+
+
+def test_plan_inputs_carry_only_events_from_today_so_the_card_log_stays_small(env):
+    from finresearch.api import fno_plan
+    from finresearch.db import session_scope
+    from finresearch.eventcal import store
+
+    old, new = (
+        _ev("rbi_mpc", date(2024, 2, 8), date(2023, 3, 24)),
+        _ev("rbi_mpc", date(2026, 12, 4), date(2026, 3, 23)),
+    )
+    with session_scope() as s:
+        s.execute(text("TRUNCATE calendar_event, calendar_coverage"))
+        store.upsert(s, [old, new], FULL)
+    try:
+        ev, cov = fno_plan._calendar(date(2026, 9, 29))
+        assert [e.day for e in ev] == [date(2026, 12, 4)] and len(cov) == len(FULL)
+    finally:
+        with session_scope() as s:
+            s.execute(text("TRUNCATE calendar_event, calendar_coverage"))
