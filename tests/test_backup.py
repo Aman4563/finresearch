@@ -77,3 +77,32 @@ def test_backup_rotates_and_restores_into_a_scratch_database(env, db_url, tmp_pa
 def test_backup_refuses_a_bad_keep(tmp_path):
     r = _run_backup("postgresql://localhost/none", tmp_path, tmp_path, keep=0)
     assert r.returncode == 2 and "KEEP" in r.stderr
+
+
+def test_backup_also_pushes_an_encrypted_off_machine_copy_when_configured(env, db_url, tmp_path, monkeypatch):
+    from finresearch import config
+    from finresearch.backups import offsite
+
+    monkeypatch.setenv("FINRESEARCH_SECRETS_BACKEND", "file")  # shared with the script: a 0600 file in tmp state
+    config.get_settings.cache_clear()
+    offsite.init_key()
+    dest = tmp_path / "offsite"
+    dest.mkdir()
+    monkeypatch.setenv("FINRESEARCH_BACKUP_OFFSITE_DIR", str(dest))
+    r = _run_backup(db_url, tmp_path / "backups", tmp_path / "docs", keep=2)
+    if r.returncode != 0 and "version mismatch" in r.stderr:
+        pytest.skip("pg_dump older than the server")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert len(list((dest / "db").glob("*.enc"))) == 1 and len(list((dest / "tables").glob("*.enc"))) == 1
+    assert offsite.status(dest)["tables"][0]["ok"] is True
+
+
+def test_a_failed_off_machine_copy_fails_the_job_but_keeps_the_local_dump(env, db_url, tmp_path, monkeypatch):
+    monkeypatch.setenv("FINRESEARCH_BACKUP_OFFSITE_DIR", str(tmp_path / "not-mounted"))
+    out = tmp_path / "backups"
+    r = _run_backup(db_url, out, tmp_path / "docs", keep=2)
+    if "version mismatch" in r.stderr:
+        pytest.skip("pg_dump older than the server")
+    assert r.returncode == 4 and "off-machine" in r.stderr
+    assert len(list(out.glob("finresearch-*.dump"))) == 1
+    assert not (tmp_path / "not-mounted").exists()
