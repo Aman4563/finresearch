@@ -334,24 +334,34 @@ def _analyse(chain, lot: int, legs: list[fs.LegIn], x: Inputs, bidask_chain: Any
 
 
 def evidence_for(kind: str, symbol: str, dte: int, strategies: list[dict[str, Any]] | None,
-                 head: dict[str, Any] | None, spec: Any | None = None) -> dict[str, Any]:  # fmt: skip
+                 head: dict[str, Any] | None, spec: Any | None = None, *, today: date) -> dict[str, Any]:  # fmt: skip
     """The evidence block for legs of `kind` (or for the recipe `spec`): the matched library spec, its saved backtest
-    row and level. Shared by the trade-plan card and the signal card's "Strategy check" (#350: one rule for both)."""
+    row and level. Shared by the trade-plan card and the signal card's "Strategy check" (#350: one rule for both).
+    #379: exact evidence from a stale run (older than the max age, from before a regime change, or of unknown date)
+    is not evidence: its level reads "none" (`raw_level` keeps what it said; harmful stays harmful, staleness never
+    relaxes an AVOID) and `stale` lists why, which `decide` turns into a failed check (WAIT)."""
+    from finresearch.inventory import regimes
+
     exact = spec is not None and spec.underlying == symbol.upper()
     if spec is None:
         spec, exact = match_spec(kind, symbol, dte)
     row = next((r for r in strategies or [] if spec and r.get("key") == spec.key), None)
     level = tp.evidence_level(row, kind)
+    stale = (regimes.staleness(regimes.run_day((head or {}).get("created_at")), today)
+             if exact and strategies is not None else [])  # fmt: skip
+    raw_level, level = level, ("harmful" if level == "harmful" else "none") if stale else level
     out = {"spec_key": spec.key if spec else None, "spec_name": spec.name if spec else None,
            "match": None if spec is None else ("exact" if exact else "related"), "status": (row or {}).get("status"),
-           "level": level if exact else "none", "raw_level": level,
-           "text": tp.evidence_text(row, level) if spec else tp.evidence_text(None, "none"),
+           "level": level if exact else "none", "raw_level": raw_level, "stale": stale,
+           "text": tp.evidence_text(row, raw_level) if spec else tp.evidence_text(None, "none"),
            "run": head, "url": "/fno/backtests"}  # fmt: skip
     if spec is not None and not exact:
         out["text"] = (f"Related only ({spec.name}, not this underlying or expiry window): " + out["text"]
                        + " It does not change the verdict.")  # fmt: skip
     if strategies is None:
         out["text"] = "No pre-registered backtest is saved yet: no strategy has historical evidence."
+    if stale:
+        out["text"] = "Stale evidence, read as unvalidated (" + "; ".join(stale) + "). " + out["text"]
     out["spec"] = spec
     return out
 
@@ -372,20 +382,26 @@ class Decision:
 MONTH_CHECK = "Month-to-date F&O loss stop"
 MONTH_CHECK_REAL = "Month-to-date F&O loss stop (real book)"
 BOOK_CHECK = "Open book within its budget"
+STALE_CHECK = "Backtest evidence is current"  # #379: inventory.regimes.staleness
 
 
 def decide(gates: list[str], max_loss_one: float | None, costs_one: float, budget: float, level: str,
-           extra_failed: list[tuple[str, str]] | None = None, book: tp.OpenBook | None = None) -> Decision:  # fmt: skip
+           extra_failed: list[tuple[str, str]] | None = None, book: tp.OpenBook | None = None,
+           stale: list[str] | None = None) -> Decision:  # fmt: skip
     """The one verdict and sizing rule (#355) for the trade-plan card, "Suggest setups" and the signal card's Strategy
     check: `gates` = signals.fno.assess's failed checks for the legs, sized from the base set's max loss and entry
     costs, `level` = the matched spec's evidence. The IV-percentile check is context for ad hoc legs, never a gate (it
     was never tested; a recipe applies its own registered iv_pct_min through `extra_failed`).
     `book` (#358): the open positions and month-to-date P&L. A full (or unknown) open book sizes 0 and reads WAIT; a
     paper month-to-date loss at the stop (or unknown) turns the card to WAIT; real money also needs the real book's
-    month-to-date P&L known and above the stop."""
+    month-to-date P&L known and above the stop.
+    `stale` (#379): why the matched backtest evidence is stale; any reason caps the verdict at WAIT."""
     failed = [g for g in gates if g != IV_CHECK]
-    sz = tp.size(max_loss_one, costs_one, budget, proven=level == "proven", book=book)
     reasons: list[str] = []
+    if stale:
+        failed.append(STALE_CHECK)
+        reasons.append(f"{STALE_CHECK}: no — " + "; ".join(stale) + ".")
+    sz = tp.size(max_loss_one, costs_one, budget, proven=level == "proven", book=book)
     if sz.multiple == 0 and max_loss_one is not None and BUDGET_CHECK not in failed:
         failed.append(BUDGET_CHECK)  # max loss fits but max loss + entry costs does not
         reasons.append(f"Sizing: {sz.reason}.")
@@ -416,7 +432,7 @@ def decide(gates: list[str], max_loss_one: float | None, costs_one: float, budge
 
 
 def _evidence(kind: str, symbol: str, dte: int, x: Inputs, spec: Any | None) -> dict[str, Any]:
-    return evidence_for(kind, symbol, dte, x.strategies, x.backtest_head, spec)
+    return evidence_for(kind, symbol, dte, x.strategies, x.backtest_head, spec, today=x.today)
 
 
 def _time_exit(plan: tp.ExitPlan, expiry: date) -> dict[str, Any]:
@@ -560,7 +576,8 @@ def build(chain, lot: int, legs_in: list[fs.LegIn], x: Inputs, *, spec: Any | No
     legs = [fs.LegIn(y.right, y.strike, y.side, y.lots * m, y.premium) for y in legs_in]
     a = _analyse(chain, lot, legs, x, ba_chain, p_exit) if m > 1 else a0
     _, factors, gates = fs.assess(a, defined_risk_only=x.defined_risk_only)
-    d = decide(gates, a0["max_loss"], a0["costs"]["entry"]["total"], x.budget, ev["level"], extra_failed, ob)
+    d = decide(gates, a0["max_loss"], a0["costs"]["entry"]["total"], x.budget, ev["level"], extra_failed, ob,
+               stale=ev["stale"])
     action, qualifier, failed = d.action, d.qualifier, d.failed
     reasons = [f"{f.name}: {f.explanation}" for f in factors if f.name in failed] + d.reasons
     if x.capital <= 0:
