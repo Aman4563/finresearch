@@ -195,6 +195,14 @@ def check_bash(command: str, cwd: str, live: bool = False) -> str | None:
                     return "never push --mirror/--all: push only your branch"
             if verb == "stash" and (not rest or rest[0] not in ("list", "show")):
                 return "never use git stash: the stash is shared across worktrees; commit WIP to your branch"
+            merged = [
+                a for a in rest if not a.startswith("-") and a not in ("origin/main", "main", "FETCH_HEAD")
+            ]
+            if verb == "merge" and merged and not {"--abort", "--continue", "--quit"} & set(rest):
+                root = main_tree(cwd)
+                if root and is_inside(cwd, root):
+                    return ("never merge a branch into the main checkout (it is the live app's tree, e.g. superpowers' "
+                            "'merge locally' option): push the branch, open a PR and deploy with /ship")  # fmt: skip
             if verb == "rebase" and any(re.fullmatch(r"(origin/)?(main|master)", a) for a in rest):
                 return (
                     "never rebase onto a newer main (that once reverted #270-#272): `git merge origin/main`"

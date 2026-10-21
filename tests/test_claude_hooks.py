@@ -200,3 +200,27 @@ def test_hook_commands_fail_open_when_the_script_is_missing_or_in_a_sandbox(tmp_
     res = subprocess.run(["sh", "-c", pre_bash], input=event, capture_output=True, text=True, timeout=60,
                          env={**os.environ, "CLAUDE_PROJECT_DIR": str(REPO), "FINRESEARCH_HOOK_LIVE_RUN": "0"})  # fmt: skip
     assert res.returncode == 2  # and it still blocks when the script is there
+
+
+def test_branch_merges_are_blocked_in_the_main_checkout_only(tmp_path):
+    main, wt = tmp_path / "repo", tmp_path / "wt"
+    run = lambda *a: subprocess.run(["git", *a], cwd=main, check=True, capture_output=True)  # noqa: E731
+    subprocess.run(["git", "init", "-q", "-b", "main", str(main)], check=True)
+    run(
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@example.invalid",
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "init",
+    )
+    run("worktree", "add", "-q", str(wt), "-b", "feat/x")
+    assert guard.check_bash("git merge feat/x", str(main)) is not None
+    assert guard.check_bash("git merge --no-ff feat/x", str(main)) is not None
+    assert guard.check_bash("git merge origin/main", str(main)) is None
+    assert guard.check_bash("git merge --abort", str(main)) is None
+    assert guard.check_bash("git merge origin/main", str(wt)) is None  # updating a feature branch is the rule
+    assert guard.check_bash("git merge feat/y", str(wt)) is None
