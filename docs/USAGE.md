@@ -144,6 +144,8 @@ uv run finresearch stock peers                     # build the stock peer datase
 uv run finresearch audit prices                    # cross-check price sources against the exchanges' own figures
 uv run finresearch index backfill --from 2013-03-01  # NSE's daily index closes, P/E, P/B, yield, India VIX (#366)
 uv run finresearch audit index-eod                 # bhavcopy underlying vs index close; India VIX vs IV30 (no network)
+uv run finresearch equity backfill --from 2025-09-01  # NSE's full equity bhavcopy: closes, delivery; one file a day (#373)
+uv run finresearch audit equity-eod --sample 50    # stored closes vs NSE's history bar on 50 random stock-days (50 requests)
 uv run finresearch dq run                          # data-quality checks now (the monitor runs them 21:00 and 08:00 IST, #368)
 uv run finresearch dq replay --from 2024-01-01 --to 2026-10-21  # content checks over stored history, read only
 uv run finresearch events seed                     # load the curated event calendar (RBI MPC, Budgets, 2024 election, FOMC; #367)
@@ -157,6 +159,14 @@ uv run finresearch fno card-log --since 2026-10-21T18:00:00+05:30   # F&O card v
 NSE data is collected for personal, non-distributed use only (owner decision #362, `finresearch.data_rights`): it
 stays in the local database and `data/`. Backfills go through the shared NSE rate limit, stop by themselves between
 09:00 and 16:00 IST on weekdays and after two refusals (HTTP 403/429) in a row, and resume where they stopped.
+
+The nightly stock peer build prices peers from NSE's quote and price-history APIs (about 1,000 website requests a
+night) until `FINRESEARCH_PEER_PRICE_SOURCE=equity_eod` switches it to the stored full bhavcopy (#373): peers' prices
+are then the bhavcopy's official closes and the year-ago close comes from the store, with a quote only to refresh a
+stock's issued shares and classification (every 30 days, or at once on a sign of a split or bonus). A stock the
+bhavcopy does not list keeps the quote path. Switch only after a year of history is loaded (`equity backfill`), the
+data-health card's `equity_eod` close_vs_quote check has matched for a few nights and `audit equity-eod` shows no
+mismatch.
 
 ## Portfolio
 
