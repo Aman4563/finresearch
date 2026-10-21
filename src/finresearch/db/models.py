@@ -1563,6 +1563,9 @@ class IndexEod(Base):
     before the 2015 rebrand). A value the file marks '-' is NULL (unknown), never 0."""
 
     __tablename__ = "index_eod"
+    __table_args__ = (
+        Index("ix_index_eod_symbol_day", "symbol", "day"),
+    )  # one index's series (direction, audits)
     day: Mapped[date] = mapped_column(Date, primary_key=True)
     symbol: Mapped[str] = mapped_column(String(80), primary_key=True)
     index_name: Mapped[str] = mapped_column(String(120))
