@@ -180,4 +180,5 @@ uv run finresearch forecasts calibration     # Brier score, skill vs the base ra
 uv run finresearch forecasts resolve         # score every due forecast now (the monitor does this daily)
 uv run finresearch forecasts cards           # record every logged F&O card (card_log) as a forecast (#376; the monitor does this hourly)
 uv run finresearch forecasts horse-race      # the pre-registered card horse race on resolved cards (#377; --window, --json); read only
+uv run finresearch forecasts skill           # the live skill monitor per method x event kind x underlying (#378; --json); read only
 ```
