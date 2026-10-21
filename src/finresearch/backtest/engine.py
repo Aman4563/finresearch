@@ -333,6 +333,11 @@ def try_enter(st: SpecState, x: Day, sym: str, h: Clocked, ivs: list[float], boo
     if not lot:
         st.skips["lot size unknown"] += 1
         return None
+    if ch.unknown_keys(
+        d
+    ):  # #365: unknown is a prefix per key, so every later exit or expiry is priceable too
+        st.skips["charges unknown on the trade date"] += 1
+        return None
     t = (expiry - d).days / 365
     fills = [(q, side, px.fill(q.ref, side, q.contracts, book)) for q, side in picked]  # type: ignore[arg-type]
     prem_unit = sum((f if side == "sell" else -f) for _, side, f in fills)

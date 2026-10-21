@@ -44,6 +44,9 @@ DECISIONS: dict[str, Decision] = {
         Decision(
             "fno_participant_vol", "accept-personal", "2026-10-21", "issue #362", _NSE_TERMS
         ),  # nsccl fao_participant_vol (#371)
+        Decision(
+            "fno_bhav", "accept-personal", "2026-10-21", "issue #362", _NSE_TERMS
+        ),  # the F&O bhavcopy (#306, collected since before #362) and its 2008-2021 vault load (#365)
     )
 }
 
