@@ -35,6 +35,9 @@ DECISIONS: dict[str, Decision] = {
         Decision(
             "index_eod", "accept-personal", "2026-10-21", "issue #362", _NSE_TERMS
         ),  # ind_close_all (#366)
+        Decision(
+            "nse_span", "accept-personal", "2026-10-21", "issue #362", _NSE_TERMS
+        ),  # nsccl SPAN + FOVOLT (#370)
     )
 }
 
