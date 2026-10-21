@@ -227,3 +227,55 @@ def test_a_vol_driven_below_the_floor_is_floored_and_flagged():
                       bs.horizon_clock(NOW, 1))  # fmt: skip
     v1 = _b76("call", 26400, 24500, 34 / 365, 0.065, bs.MIN_VOL)
     assert cell.floored == 1 and cell.pnl == pytest.approx((v1 - v0) * 75, rel=1e-6)
+
+
+# --------------------------------------------------------------------------- historical replays and reverse stress
+def test_the_single_day_replay_library():
+    days = {r.day: r for r in bs.REPLAYS}
+    assert set(days) == {date(2022, 2, 24), date(2024, 6, 4), date(2024, 8, 5), date(2025, 4, 7)}
+    assert days[date(2024, 6, 4)].move == pytest.approx(math.exp(-0.0611) - 1)  # an index log return
+    assert days[date(2022, 2, 24)].move == pytest.approx(-0.0488)  # the front future's move
+    assert days[date(2025, 4, 7)].iv30_change == 9.60
+
+
+def test_a_replay_applies_the_day_s_move_and_iv30_change_without_the_response_rule():
+    v0 = _b76("put", 24000, 23500, T35, 0.065, 0.15)
+    legs = [
+        bs.BookLeg("NIFTY", EXP, "put", 23500, -75, v0, "mid"),
+        bs.BookLeg("NIFTY", EXP, "future", 0, 75, None, None),
+    ]
+    out = {r.replay.day: r for r in bs.replays(legs, _mkt())}
+    r = out[date(2024, 6, 4)]
+    mv = math.exp(-0.0611) - 1
+    v1 = _b76("put", 24000 * (1 + mv), 23500, 34 / 365, 0.065, 0.15 + 4.46 / 100)
+    assert r.cell.pnl == pytest.approx((v1 - v0) * -75 + 75 * 24000 * mv, rel=1e-6)
+    assert any("skew" in n for n in r.notes)
+
+
+def test_a_replay_marks_beta_mapped_underlyings():
+    legs = [bs.BookLeg("BANKNIFTY", EXP, "future", 0, 35, None, None)]
+    rs = bs.replays(legs, _mkt(forwards={("BANKNIFTY", EXP): 52000.0}, betas={"BANKNIFTY": 1.2}))
+    assert all(any("BANKNIFTY" in n and "beta" in n for n in r.notes) for r in rs)
+    assert rs[0].cell.pnl == pytest.approx(35 * 52000 * 1.2 * rs[0].replay.move)
+
+
+def test_reverse_stress_finds_the_smallest_breaching_point():
+    legs = [bs.BookLeg("NIFTY", EXP, "future", 0, -75, None, None)]  # loses 18,000 per 1 % rise
+    g = bs.grid(legs, _mkt())
+    out = {r.horizon: r for r in bs.reverse_stress(g, 50_000)}
+    assert out["1d"].complete and (out["1d"].cell.move, out["1d"].cell.dvol) == (0.03, 0.0)
+    assert out["1d"].cell.pnl == pytest.approx(-75 * 24000 * 0.03)
+    none = bs.reverse_stress(g, 10_000_000)
+    assert all(r.complete and r.cell is None for r in none)
+
+
+def test_reverse_stress_on_an_incomplete_grid_is_unknown_not_safe():
+    g = bs.grid([bs.BookLeg("NIFTY", EXP, "put", 23500, -75, None, None)], _mkt())
+    for r in bs.reverse_stress(g, 50_000):
+        assert not r.complete and r.cell is None and r.reasons
+
+
+def test_the_book_limit_is_the_open_book_budget():
+    assert bs.book_limit(500_000) == pytest.approx(40_000)  # 8 % of F&O capital (#358)
+    with pytest.raises(ValueError):
+        bs.reverse_stress(bs.grid([], _mkt()), 0)

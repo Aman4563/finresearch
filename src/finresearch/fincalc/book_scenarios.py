@@ -331,3 +331,92 @@ def grid(legs: Sequence[BookLeg], m: Market, moves: Sequence[float] = MOVES, vol
     ]
     reasons = cells[0].reasons if cells else ()
     return Grid(tuple(cells), reasons, tuple(f for s in states for f in s.flags))
+
+
+# --------------------------------------------------------------------------- historical single-day replays
+@dataclass(frozen=True)
+class Replay:
+    day: date
+    label: str
+    move: float  # NIFTY's relative move that day
+    iv30_change: float  # vol points
+    source: str
+
+
+def _log(r: float) -> float:
+    return math.exp(r) - 1
+
+
+# #394's table (reviewed roadmap item): 24-Feb-2022 is the front future's move, the later rows the index's log return
+# (converted to a relative move here); IV30 changes in vol points, as measured in the issue.
+REPLAYS = (
+    Replay(date(2022, 2, 24), "24-Feb-2022 sell-off", -0.0488, 5.1, "NIFTY front future -4.88 %; IV30 +5.1"),
+    Replay(date(2024, 6, 4), "4-Jun-2024 election-result day", _log(-0.0611), 4.46,
+           "NIFTY index log return -6.11 % (the front future fell 6.41 %); IV30 +4.46"),
+    Replay(date(2024, 8, 5), "5-Aug-2024 sell-off", _log(-0.0272), 5.42, "NIFTY index log return -2.72 %; IV30 +5.42"),
+    Replay(date(2025, 4, 7), "7-Apr-2025 sell-off", _log(-0.0330), 9.60, "NIFTY index log return -3.30 %; IV30 +9.60"),
+)  # fmt: skip
+SKEW_NOTE = ("The same expiry's 25-delta skew change (from fno_bhav) is not applied yet: every strike's IV moves by the "
+             "day's IV30 change.")  # fmt: skip
+
+
+@dataclass(frozen=True)
+class ReplayResult:
+    replay: Replay
+    cell: Cell
+    notes: tuple[str, ...]
+
+
+def replays(legs: Sequence[BookLeg], m: Market, holidays: frozenset[date] | set[date] = frozenset()) -> list[ReplayResult]:  # fmt: skip
+    """Each day of REPLAYS applied to today's book over one session: NIFTY's move (other underlyings β x it, noted:
+    not their own move that day), every IV shifted by the day's IV30 change (not the response rule)."""
+    states, at = price_legs(legs, m), horizon_clock(m.now, 1, holidays)
+    mapped = sorted({s.leg.underlying for s in states if s.leg.underlying.upper() != "NIFTY"})
+    notes = [
+        SKEW_NOTE,
+        *(f"{u} moves by its beta to NIFTY x NIFTY's move, not by its own move that day" for u in mapped),
+    ]
+    return [
+        ReplayResult(r, _revalue(states, m, r.move, r.iv30_change, at, "1d", False), tuple(notes))
+        for r in REPLAYS
+    ]
+
+
+# --------------------------------------------------------------------------- reverse stress
+def book_limit(capital: float) -> float:
+    """The book loss limit: the open-book budget, BOOK_BUDGET_PCT of F&O capital (#358)."""
+    from finresearch.fincalc.tradeplan import BOOK_BUDGET_PCT
+
+    return capital * BOOK_BUDGET_PCT / 100
+
+
+@dataclass(frozen=True)
+class Reverse:
+    """Per horizon, the smallest grid point whose loss reaches `limit`: smallest |move| first, then smallest |vol
+    shift|, then a fall before a rise. cell None + complete = no grid point breaches; incomplete = unknown."""
+
+    horizon: str
+    limit: float
+    cell: Cell | None
+    reasons: tuple[str, ...]
+
+    @property
+    def complete(self) -> bool:
+        return not self.reasons
+
+
+def reverse_stress(g: Grid, limit: float) -> list[Reverse]:
+    if limit <= 0:
+        raise ValueError("the book loss limit must be positive")
+    out = []
+    for h in dict.fromkeys(c.horizon for c in g.cells):
+        cs = sorted(
+            (c for c in g.cells if c.horizon == h), key=lambda c: (abs(c.move), abs(c.dvol), c.move, c.dvol)
+        )
+        if not g.complete:
+            out.append(Reverse(h, limit, None, g.reasons))
+            continue
+        out.append(
+            Reverse(h, limit, next((c for c in cs if c.pnl is not None and c.pnl <= -limit), None), ())
+        )
+    return out
