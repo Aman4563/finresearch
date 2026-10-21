@@ -151,7 +151,15 @@ async def backfill(start: date, end: date | None = None, *, today: date | None =
                    derive: bool = True, progress: Callable[[int, int, date, str], None] | None = None) -> dict[str, Any]:  # fmt: skip
     """Fetch and store every missing day in [start, end]. Resumable and idempotent (see the module docstring).
     Network goes through one PoliteClient (the shared NSE budget, adapters.http); `pause` adds seconds between
-    downloads. Returns counts by outcome and the failed days with their errors."""
+    downloads. Returns counts by outcome and the failed days with their errors.
+    Refuses (VaultSealed) any range reaching into the sealed 2008-2021 vault (#364): those days are loaded only into
+    the separate vault database by P1.3 (#365), never into this one."""
+    from finresearch.vault.registry import VAULT_END, VaultSealed
+
+    if start <= VAULT_END:
+        raise VaultSealed(
+            f"{start:%d-%b-%Y} is inside the sealed 2008-2021 vault: not loading it here (#364, #365)"
+        )
     from finresearch.adapters.http import PoliteClient
     from finresearch.db import session_scope
     from finresearch.fincalc.dates import today_ist
