@@ -30,6 +30,7 @@ from finresearch.adapters.nse import NSE_BASE, NseError
 ARCHIVES = "https://nsearchives.nseindia.com"
 URL = ARCHIVES + "/content/indices/ind_close_all_{day:%d%m%Y}.csv"
 HEADER = "Index Name"
+PARSER_VERSION = "1"  # bump when the parser's output changes for the same file (#368 lineage)
 MAX_BYTES = 1024 * 1024  # a day's file is ~9 KB
 # F&O underlyings by every name NSE has used for them in this file; the symbol is the F&O ticker so the index close
 # joins fno_bhav and the direction model (direction/data.py reads index_eod by F&O symbol)

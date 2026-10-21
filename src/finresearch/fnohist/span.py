@@ -78,6 +78,9 @@ def load_day(s: Session, day: date, url: str, content: bytes) -> int:
     _manifest(
         s, day, status="loaded", url=url, rows=len(rows), created=f.created, points=f.points, error=None
     )
+    from finresearch.dq.lineage import record_load
+
+    record_load(s, "span", day, content, url=url, parser_version=sp.PARSER_VERSION, rows=len(rows))
     return len(rows)
 
 
