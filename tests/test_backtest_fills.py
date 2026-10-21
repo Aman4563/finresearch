@@ -275,3 +275,21 @@ def test_pooled_seller_test_and_its_top_iv_third():
     top = got["sellers_top_iv"]
     assert top["paired"] == 2 and top["mean_d"] == pytest.approx(40.0)
     assert top["t_d"] == pytest.approx(40 / (2 * (20**2 + 20**2) / 4) ** 0.5, abs=1e-4)
+
+
+def test_windows_take_a_next_print_trade_by_its_decision_day():
+    """PREREG §2: a trade decided on the last in-sample close and filled on the first out-of-sample session belongs
+    to the in-sample window (same-print trades: decision day = entry day, unchanged)."""
+    from finresearch.backtest import evaluate
+
+    t = {
+        **tr("", "2024-07-25", 100.0, decision="2024-06-28"),
+        "entry_day": "2024-07-01",
+        "entry_costs": 1.0,
+        "exit_costs": 1.0,
+        "exercise_stt": 0.0,
+        "margin": None,
+        "days_held": 10,
+    }
+    w = lambda lo, hi: evaluate.window([t], [], lo, hi, specs.BOOK, specs.CRITERIA)["trades"]  # noqa: E731
+    assert w(date(2022, 1, 1), date(2024, 6, 30)) == 1 and w(date(2024, 7, 1), date(2024, 12, 31)) == 0

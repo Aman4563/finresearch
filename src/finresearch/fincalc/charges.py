@@ -38,7 +38,6 @@ Status = Literal["verified", "secondary", "unconfirmed"]
 Side = Literal["buy", "sell"]
 
 BUDGET_2026 = "https://www.indiabudget.gov.in/doc/memo.pdf"
-CLEARTAX_STT = "https://cleartax.in/s/securities-transaction-tax-stt"
 ZERODHA_CHARGES = "https://zerodha.com/charges"
 _NSE = "https://nsearchives.nseindia.com/content/circulars/"
 NSE_STT_2013, NSE_STT_2016, NSE_STT_2019 = (
@@ -79,7 +78,6 @@ def _r(
     return ChargeRate(key, Decimal(pct) / 100, basis, since, source, status, note)
 
 
-_SEEN = "rate as published on 30-Sep-2026; the date it started is not verified"
 _SLAB = ("NSE's first-slab rate (the turnover slab a retail broker's clients pay; lower slabs apply only to a "
          "member's turnover above it)")  # fmt: skip
 _IPFT = "plus NSE's IPFT contribution (Rs 50/crore of options premium, Rs 10/crore of futures, FA/56129)"

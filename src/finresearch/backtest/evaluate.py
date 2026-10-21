@@ -37,7 +37,8 @@ def require_registered() -> str:
 
 def window(trades: list[dict[str, Any]], equity: list[tuple[date, float]], lo: date, hi: date, book: Book,
            crit: Criteria) -> dict[str, Any]:  # fmt: skip
-    tr = [t for t in trades if lo <= date.fromisoformat(t["entry_day"]) <= hi]
+    # a trade belongs to the window of the close it was decided at (next-print fills, #382; else its entry day)
+    tr = [t for t in trades if lo <= date.fromisoformat(t.get("decision_day") or t["entry_day"]) <= hi]
     eq = [(d, v) for d, v in equity if lo <= d <= hi]
     return {"from": lo.isoformat(), "to": hi.isoformat(),
             **metrics.trade_stats(tr, crit.bootstrap_draws, crit.bootstrap_seed),

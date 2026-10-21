@@ -53,7 +53,8 @@ out of sample only the weekly condor moved (114 → 113 trades, ₹787 → ₹74
 - Pre-2024 lot sizes are inferred from open interest (#306); a few long-dated contracts carry a wrong gcd (NIFTY
   25 instead of 50 on some quarterly expiries, BANKNIFTY 5 on two). Sizing by the ₹ max-loss budget keeps the rupee
   exposure about the same, but brokerage per order is then spread over a different number of lots.
-- In-sample charges use the later rates of `fincalc.charges` (see PREREG.md).
+- In-sample charges used the later rates of `fincalc.charges` for every date in this run (see PREREG.md); the table is
+  dated from 22-Oct-2026 (#382, "Engine change" below), and this run has not yet been repeated under it.
 - The debit spreads are sized on the starting capital, not on the current equity, so a losing control can draw down
   more than 90 % of it (its CAGR on the window is then not meaningful).
 
@@ -81,7 +82,7 @@ Post hoc, engine only (specs, book, criteria and `PREREG.md` untouched; registra
   option-sale STT 0.05 % to 31-Mar-2023 and 0.0625 % to 30-Sep-2024 (was 0.1 % for every date), futures STT
   0.01 % / 0.0125 %, NSE transaction charges 0.053 % (2021-23), 0.0505 % (Apr-2023, incl. IPFT) and 0.05 % (Apr-2024)
   of option premium (was 0.03553 %), exercise STT 0.125 % of intrinsic value from 1-Sep-2019 (unchanged). This
-  replaces the caveat above that "in-sample charges use the later rates". It moves every in-sample trade's costs
+  removes the caveat above for any later run. It moves every in-sample trade's costs
   and the out-of-sample trades entered or exited before 1-Oct-2024 (lower STT, higher NSE charge). The published
   figures above were computed with the old flat rates; the library has NOT been re-run under the dated table here
   (no copy of the history was available to this change; the live database was not read). Re-run it before any
