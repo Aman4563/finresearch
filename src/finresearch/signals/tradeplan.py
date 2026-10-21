@@ -407,7 +407,7 @@ def decide(gates: list[str], max_loss_one: float | None, costs_one: float, budge
     reasons: list[str] = []
     if stale:
         failed.append(STALE_CHECK)
-        reasons.append(f"{STALE_CHECK}: no — " + "; ".join(stale) + ".")
+        reasons.append("Backtest evidence is stale: " + "; ".join(stale) + ".")
     sz = tp.size(max_loss_one, costs_one, budget, proven=level == "proven", book=book)
     if sz.multiple == 0 and max_loss_one is not None and BUDGET_CHECK not in failed:
         failed.append(BUDGET_CHECK)  # max loss fits but max loss + entry costs does not
