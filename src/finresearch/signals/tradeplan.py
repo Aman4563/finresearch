@@ -285,7 +285,8 @@ class Inputs:
                  iv_as_of: date | None = None, strategies: list[dict[str, Any]] | None = None,
                  backtest_head: dict[str, Any] | None = None, paper: list[dict[str, Any]] | None = None,
                  events: list[tuple[date, str]] | None = None, is_index: bool = True,
-                 book: BookData = UNKNOWN_BOOK) -> None:  # fmt: skip
+                 book: BookData = UNKNOWN_BOOK, iv_points: list[tuple[Any, float | None]] | None = None,
+                 ) -> None:  # fmt: skip
         self.today, self.closes, self.iv_series, self.iv_src, self.iv_as_of = (
             today,
             closes,
@@ -298,6 +299,8 @@ class Inputs:
         self.strategies, self.backtest_head, self.paper = strategies, backtest_head, paper or []
         self.events, self.is_index = events, is_index
         self.book = book  # the open book (#358); unknown unless read: then no card has room
+        # per-session IV points for a recipe's IV filter (#354's definition); default: iv_series as consecutive sessions
+        self.iv_points = iv_points if iv_points is not None else list(enumerate(iv_series))
 
     @property
     def budget(self) -> float:
@@ -663,26 +666,33 @@ def recipe_legs(spec: Any, chain, today: date, rate: float) -> list[fs.LegIn] | 
     return f"{spec.kind} is an overlay on a held stock: not suggested"
 
 
-def _recipe_checks(spec: Any, x: Inputs) -> list[tuple[str, str]]:
+def recipe_checks(spec: Any, strategies: list[dict[str, Any]] | None,
+                  iv_points: list[tuple[Any, float | None]]) -> list[tuple[str, str]]:  # fmt: skip
     """The recipe's registered entry filter (iv_pct_min, 0.30 for the sellers in backtest.specs): part of the recipe's
-    definition, labelled as such (#355), unlike the IV context of ad hoc legs, which is never a gate."""
+    definition, labelled as such (#355), unlike the IV context of ad hoc legs, which is never a gate. Live, it reads
+    the IV percentile as the context panel does (#354: the last 252 sessions, ≥ 80% coverage, flat 30-day IVs
+    missing; signals.fno_context.iv_rank_input); the backtest's own filter (backtest.engine) is registered and unchanged."""
     from finresearch.fincalc import volatility as vol
 
     if spec.iv_pct_min is None:
         return []
-    row = next((r for r in x.strategies or [] if r.get("key") == spec.key), None)
+    row = next((r for r in strategies or [] if r.get("key") == spec.key), None)
     status = (row or {}).get("status")
     what = {"candidate": "the recipe's registered filter",
             "fails": "the registered filter of a recipe that failed out of sample"}.get(
         status, "the registered filter of a recipe not judged out of sample")  # fmt: skip
-    pct = vol.iv_stats(x.iv_series).percentile
-    if pct is None:
-        return [("Recipe IV filter", f"IV percentile unknown: the recipe enters only when the 30-day IV is at or above "
-                 f"its {spec.iv_pct_min:.0%} percentile of the past year ({what}).")]  # fmt: skip
-    if pct < spec.iv_pct_min:
-        return [("Recipe IV filter", f"IV percentile {pct:.0%} is below the recipe's {spec.iv_pct_min:.0%} filter "
-                 f"({what}).")]  # fmt: skip
+    st = vol.iv_stats_sessions(iv_points)
+    if st.percentile is None:
+        return [("Recipe IV filter", f"IV percentile unknown ({st.status}): the recipe enters only when the 30-day IV "
+                 f"is at or above its {spec.iv_pct_min:.0%} percentile of the past year ({what}).")]  # fmt: skip
+    if st.percentile < spec.iv_pct_min:
+        return [("Recipe IV filter", f"IV percentile {st.percentile:.0%} is below the recipe's {spec.iv_pct_min:.0%} "
+                 f"filter ({what}).")]  # fmt: skip
     return []
+
+
+def _recipe_checks(spec: Any, x: Inputs) -> list[tuple[str, str]]:
+    return recipe_checks(spec, x.strategies, x.iv_points)
 
 
 def waiting(spec: Any, symbol: str, x: Inputs, why: str) -> dict[str, Any]:

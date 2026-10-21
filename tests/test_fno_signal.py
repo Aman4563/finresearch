@@ -151,8 +151,14 @@ def app_client(env, monkeypatch):
         yield c
 
 
-def test_provider_actions_probabilities_and_caveats(app_client):
+def test_provider_actions_probabilities_and_caveats(app_client, monkeypatch):
+    from finresearch.signals import fno_context
+
     c = app_client
+    # the preset condor 7 days out is exactly the weekly condor recipe, so its registered IV filter applies (#355):
+    # a year of 30-day IV ending at its high passes it
+    pts = [(date(2026, 9, 28) - timedelta(days=251 - i), 10.0 + i / 10) for i in range(252)]
+    monkeypatch.setattr(fno_context, "iv_rank_input", lambda sym: (pts, {"label": "test"}))
     s = c.get("/api/signals/fno/NIFTY", params={"preset": "iron_condor", "expiry": "2026-10-06"}).json()
     assert s["action"] == "NO_SIGNAL" and "capital is not set" in s["event"]
     _set_profile("1000000")

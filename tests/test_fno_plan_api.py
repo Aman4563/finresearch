@@ -440,6 +440,19 @@ def _ic_row(status="fails", **oos):
             "spec_hash": "x" * 64, "underlying": "NIFTY", "windows": {"oos": oos}}  # fmt: skip
 
 
+def _iv_points(monkeypatch, high: bool):
+    """252 sessions of 30-day IV (signals.fno_context.iv_rank_input, #354's definition) ending at the year's high
+    (percentile 1) or low (percentile 0)."""
+    from datetime import timedelta
+
+    from finresearch.signals import fno_context
+
+    pts = [(date(2026, 9, 28) - timedelta(days=251 - i), 10.0 + i / 10) for i in range(252)]
+    if not high:
+        pts[-1] = (pts[-1][0], 5.0)
+    monkeypatch.setattr(fno_context, "iv_rank_input", lambda sym: (pts, {"label": "test 30-day IV"}))
+
+
 def _signal(c, monkeypatch, legs):
     from finresearch.signals import registry
 
@@ -470,11 +483,7 @@ def test_signal_card_and_trade_card_give_the_same_verdict_and_lots_355(client, m
         return tpl.EMPTY_BOOK
 
     monkeypatch.setattr(tpl, "load_book", known)
-    # a year of IV ending at its high: the recipe's registered IV filter (≥ 30th percentile) passes for exact matches
-    from datetime import timedelta
-
-    series = [(date(2026, 9, 28) - timedelta(days=120 - i), 10.0 + i / 10, None) for i in range(121)]
-    monkeypatch.setattr(fs, "iv_series_info", lambda sym: (series, {"source": "bhavcopy"}))
+    _iv_points(monkeypatch, high=True)  # the recipe's registered IV filter (≥ 30th percentile) passes
     _profile("1000000")
     _save_backtest([row] if row else [])
     card = client.post("/api/fno/plan", json={"symbol": "NIFTY", "expiry": "2026-10-06", "legs": IC}).json()
@@ -621,3 +630,24 @@ def test_ad_hoc_legs_matching_a_recipe_exactly_keep_its_registered_iv_filter_355
     assert (
         "Recipe IV filter" in card["failed"] and card["action"] == "WAIT" and card["size"]["real_lots"] == 0
     )
+
+
+def test_signal_card_applies_the_recipe_iv_filter_like_the_trade_card_355(client, monkeypatch):
+    """Legs that are exactly a library recipe get its registered IV filter on both cards, read over the last 252
+    sessions as the context panel reads it (#354's iv_stats_sessions)."""
+    from finresearch.signals import tradeplan as tpl
+
+    async def known(today):
+        return tpl.EMPTY_BOOK
+
+    monkeypatch.setattr(tpl, "load_book", known)
+    _iv_points(monkeypatch, high=False)  # today's IV is the year's low: percentile 0 < the recipe's 0.30
+    _profile("1000000")
+    _save_backtest([_ic_row(expectancy=741.0, t_stat=0.76, ci_low=-1262.0, ci_high=2567.0)])
+    card = client.post("/api/fno/plan", json={"symbol": "NIFTY", "expiry": "2026-10-06", "legs": IC}).json()
+    s = _signal(client, monkeypatch, IC)
+    assert card["evidence"]["match"] == "exact" and "Recipe IV filter" in card["failed"]
+    assert card["action"] == s["action"] == "WAIT" and "Recipe IV filter" in s["caveats"][0]
+    _iv_points(monkeypatch, high=True)
+    card = client.post("/api/fno/plan", json={"symbol": "NIFTY", "expiry": "2026-10-06", "legs": IC}).json()
+    assert card["action"] == _signal(client, monkeypatch, IC)["action"] == "PAPER"

@@ -618,7 +618,12 @@ async def fno_signal(instrument: str, ctx: dict[str, Any]) -> Signal:
     # the open book (#358): open paper trades and Groww positions, month-to-date P&L; the same cap as the trade card
     ob = tpl.book_for(await tpl.load_book(today), capital, sym, kind, float(chain.underlying),
                       ev["spec"] if ev["match"] == "exact" else None)  # fmt: skip
-    d = tpl.decide(failed, a["max_loss"], a["costs"]["entry"]["total"], budget, ev["level"], book=ob)
+    # legs that are exactly a library recipe get its registered IV filter, as on the trade card (#355)
+    from finresearch.signals import fno_context
+
+    extra = (tpl.recipe_checks(ev["spec"], strategies, fno_context.iv_rank_input(sym)[0])
+             if ev["match"] == "exact" else [])  # fmt: skip
+    d = tpl.decide(failed, a["max_loss"], a["costs"]["entry"]["total"], budget, ev["level"], extra, book=ob)
     sz, qualifier = d.size, None
     if not held:  # the trade-plan card's verdict for the same legs (#355: one engine)
         action, qualifier, failed = d.action, d.qualifier, d.failed
