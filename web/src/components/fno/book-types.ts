@@ -51,7 +51,7 @@ export type PaperBook = {
     avg_win: number | null; avg_loss: number | null; total_net: number; max_drawdown: number;
     curve: { closed_at: string; id: number; cumulative: number }[];
   };
-  method: string; rules: ExitRule[]; default_slippage_pct: number;
+  method: string; rules: ExitRule[]; default_slippage_pct: number; default_slippage_source?: string;
 };
 
 export type EventStripData = {

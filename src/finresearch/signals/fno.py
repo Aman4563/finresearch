@@ -180,19 +180,15 @@ def _half_spread(q, fb, ref: float) -> tuple[float, float, str]:
     """(mid, half-spread, source) for one option leg (#356): the live bid/ask of the chain, else of `fb` (NSE's chain
     when the plan's has none, #324), else the registered slippage tiers (backtest.specs.Book: a fraction of the price
     by contracts traded that day, the worst tier when the volume is unknown, at least ₹0.10) around `ref`."""
-    from finresearch.backtest.specs import Book
+    from finresearch.backtest import costs
 
     for x in (q, fb):
         bid = float(x.bid) if x is not None and x.bid and x.bid > 0 else None
         ask = float(x.ask) if x is not None and x.ask and x.ask > 0 else None
         if bid is not None and ask is not None and ask >= bid:
             return (bid + ask) / 2, (ask - bid) / 2, "bid/ask"
-    book = Book()
     volume = float(q.volume) if q is not None and q.volume is not None else None
-    frac = next(
-        (f for n, f in book.slippage_tiers if volume is not None and volume >= n), book.slippage_tiers[-1][1]
-    )
-    return ref, max(book.min_slippage, frac * ref), "slippage tiers (no live bid/ask)"
+    return ref, costs.slippage(ref, volume), "slippage tiers (no live bid/ask)"
 
 
 def analyse(chain, lot: int, legs_in: list[LegIn], *, today: date, closes: list[float], iv_series: list[float],

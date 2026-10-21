@@ -60,6 +60,7 @@ export default function PaperBookPage() {
             <Stat label="Avg win / loss" display={<span className="block space-y-0.5 text-sm"><Fig className={pnlTone(r!.avg_win)}>{r!.avg_win == null ? "—" : rs(r!.avg_win)}</Fig><Fig className={pnlTone(r!.avg_loss)}>{r!.avg_loss == null ? "—" : rs(r!.avg_loss)}</Fig></span>} />
           </div>
           <p className="text-[11px] text-muted">{book.method}</p>
+          <p className="text-[11px] text-muted">Default slippage for new paper trades: <span className="num">{book.default_slippage_pct}%</span>{book.default_slippage_source ? ` (${book.default_slippage_source})` : ""}.</p>
           <Card title={`Open (${open.length})`} subtitle="Marked every 5 minutes in market hours; settled automatically after expiry at the underlying's close">
             {open.length ? <div className="space-y-3">{open.map((t) => <PaperTradeCard key={t.id} t={t} rules={book.rules} onChange={load} />)}</div>
               : <p className="text-sm text-muted">No open paper trades.</p>}

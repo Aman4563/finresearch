@@ -12,12 +12,14 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from finresearch.backtest.costs import ASSUMED_PAPER_SLIPPAGE_PCT
 from finresearch.db.models import PaperLeg, PaperStrategy
 from finresearch.fincalc import paper as pp
 from finresearch.fincalc.dates import to_ist
 
-# the default slippage against the LTP (a decision for the user: shown and editable on every paper trade)
-DEFAULT_SLIPPAGE_PCT = 0.5
+# the assumed slippage against the LTP when too few quotes are recorded to measure it (backtest.costs.paper_default,
+# #382: the default is the measured median half-spread once it exists; shown and editable on every paper trade)
+DEFAULT_SLIPPAGE_PCT = ASSUMED_PAPER_SLIPPAGE_PCT
 OPEN, AWAITING, CLOSED = "open", "awaiting_settlement", "closed"
 
 

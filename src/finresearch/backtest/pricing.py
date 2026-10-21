@@ -12,6 +12,7 @@ from __future__ import annotations
 import math
 from datetime import date
 
+from finresearch.backtest import costs
 from finresearch.backtest.history import Day, Quote
 from finresearch.backtest.specs import Book
 from finresearch.fincalc import fno_history as fh
@@ -21,9 +22,8 @@ TICK = 0.05
 
 
 def slippage(ref: float, contracts: int, book: Book) -> float:
-    """₹ per unit moved against the trader (see the module docstring)."""
-    pct = next(p for n, p in book.slippage_tiers if contracts >= n)
-    return max(pct * ref, book.min_slippage) * book.slippage_mult
+    """₹ per unit moved against the trader (see the module docstring; the one cost model is backtest.costs)."""
+    return costs.slippage(ref, contracts, book)
 
 
 def fill(ref: float, side: str, contracts: int, book: Book) -> float:

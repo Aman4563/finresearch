@@ -524,6 +524,8 @@ def test_api_paper_trade_open_close_and_book(api):
         assert book["results"]["wins"] == 0 and book["results"]["win_rate"] == 0
         assert book["results"]["max_drawdown"] == pytest.approx(-closed["net_pnl"])
         assert book["rules"][0]["kind"] == "stop" and book["default_slippage_pct"] == 0.5
+        # #382 (d): no recorded quotes yet, so the default is the labelled assumption, not a measurement
+        assert book["default_slippage_source"].startswith("assumption")
         # no route deletes a paper trade
         assert c.delete(f"/api/fno/paper/{t['id']}").status_code in (404, 405)
 
