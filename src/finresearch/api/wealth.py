@@ -2,7 +2,8 @@
 
 Privacy: the user's own entries, local database only, never sent to an LLM (the household profile is excluded from
 the advisor prompt). Unsafe routes sit behind the app's CSRF/Origin guard. Everything is computed in Python by
-finresearch.wealth; no network calls.
+finresearch.wealth. The one network read: the plan of a goal on a CPI inflation basis fetches MoSPI's public CPI
+series (adapters.mospi_cpi; no personal data is sent), kept in memory for CPI_TTL_S (a failure is never cached).
 """
 
 from __future__ import annotations
