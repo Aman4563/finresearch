@@ -216,6 +216,20 @@ class Instruments:
         r = self.fno_by_contract.get(fno_key(underlying, expiry.isoformat(), strike, kind))
         return (r.get("trading_symbol") or "").strip().upper() or None if r else None
 
+    def option_strikes(self, underlying: str) -> dict[date, set[Any]]:
+        """Every listed option strike (Decimal) of `underlying` by expiry, from the file's CE and PE rows (#363)."""
+        from decimal import Decimal
+
+        u, out = underlying.strip().upper(), {}
+        for und, exp, strike, kind in self.fno_by_contract:
+            if und != u or kind not in ("CE", "PE") or not strike:
+                continue
+            try:
+                out.setdefault(date.fromisoformat(exp), set()).add(Decimal(strike))
+            except ValueError:
+                continue
+        return out
+
     def index(self, name: str) -> dict[str, str] | None:
         nm = " ".join(name.upper().split())
         for ex in ("NSE", "BSE"):

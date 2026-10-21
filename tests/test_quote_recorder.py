@@ -255,3 +255,54 @@ def test_day_checks_on_a_day_with_nothing_is_not_ok(qdb):
 
     c = q.day_checks(TUE)
     assert c["rows"] == 0 and c["ok"] is False  # no data is never a pass
+
+
+# ------------------------------------------------------------------ which contracts a sweep asks for
+CSV_HEAD = ("exchange,exchange_token,trading_symbol,groww_symbol,name,instrument_type,segment,series,isin,"
+            "underlying_symbol,underlying_exchange_token,expiry_date,strike_price,lot_size,tick_size,"
+            "freeze_quantity,is_reserved,buy_allowed,sell_allowed\n")  # fmt: skip
+
+
+def instruments_csv(skip_pe: int | None = None) -> str:
+    rows = ["NSE,26000,NIFTY,NSE-NIFTY,Nifty 50,IDX,CASH,,,,,,,1,0.05,,0,0,0",
+            "NSE,26009,BANKNIFTY,NSE-BANKNIFTY,Nifty Bank,IDX,CASH,,,,,,,1,0.05,,0,0,0"]  # fmt: skip
+    tok = 40000
+    for und, lo, hi, step, expiries in (
+        ("NIFTY", 24000, 26000, 50, ("2026-10-13", "2026-10-20", "2026-10-27", "2026-11-03")),
+        ("BANKNIFTY", 54000, 58000, 100, ("2026-10-28", "2026-11-25")),
+    ):
+        for exp in expiries:
+            for k in range(lo, hi + 1, step):
+                for kind in ("CE", "PE"):
+                    if kind == "PE" and k == skip_pe:
+                        continue
+                    tok += 1
+                    sym = f"{und}{exp[2:4]}{exp[5:7]}{exp[8:]}{k}{kind}"
+                    rows.append(f"NSE,{tok},{sym},NSE-{sym},{und},{kind},FNO,,,{und},26000,{exp},{k},75,0.05,,0,1,1")
+    return CSV_HEAD + "\n".join(rows) + "\n"
+
+
+def test_select_contracts_near_and_next_expiry_atm_plus_minus_ten():
+    from finresearch.adapters.groww_market import Instruments
+    from finresearch.monitor import quotes as job
+
+    inst = Instruments.parse(instruments_csv())
+    got = job.select_contracts(inst, "NIFTY", Decimal("25012.4"), TUE)
+    assert {c.expiry for c in got} == {date(2026, 10, 20), date(2026, 10, 27)}  # expiry day counts; past ones not
+    strikes = sorted({c.strike for c in got})
+    assert len(strikes) == 21 and strikes[10] == Decimal("25000")  # ATM = nearest listed strike
+    assert strikes[0] == Decimal("24500") and strikes[-1] == Decimal("25500")
+    assert len(got) == 84 and all(c.trading_symbol for c in got)
+    one = next(c for c in got if c.expiry == date(2026, 10, 20) and c.strike == 25000 and c.kind == "CE")
+    assert one.trading_symbol == "NIFTY26102025000CE"
+
+
+def test_select_contracts_keeps_a_contract_missing_from_the_file_as_unresolved():
+    from finresearch.adapters.groww_market import Instruments
+    from finresearch.monitor import quotes as job
+
+    inst = Instruments.parse(instruments_csv(skip_pe=55900))
+    got = job.select_contracts(inst, "BANKNIFTY", Decimal("56040"), TUE)
+    assert len(got) == 84
+    missing = [c for c in got if c.trading_symbol is None]
+    assert [(c.strike, c.kind) for c in missing] == [(Decimal("55900"), "PE")] * 2
