@@ -109,9 +109,12 @@ def iv_stats_sessions(points: Sequence[tuple[object, float | None]], window: int
     s = [v for v in w if v is not None]
     n, cur = len(s), (w[-1] if w else None)
     lo, hi = (min(s), max(s)) if s else (None, None)
+    need = math.ceil(min_coverage * window)
+    if not w:
+        return IvStats(0, None, None, None, None, None, f"insufficient history (0 days; needs an IV on {need} of "
+                                                        f"{window} sessions)")  # fmt: skip
     if cur is None:
         return IvStats(n, None, None, None, lo, hi, "no IV on the last session")
-    need = math.ceil(min_coverage * window)
     if n < need:
         return IvStats(n, cur, None, None, lo, hi, f"insufficient coverage ({n} of {window} sessions carry an IV; "
                                                    f"needs {need})")  # fmt: skip

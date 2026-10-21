@@ -268,3 +268,49 @@ def test_context_adx_is_roll_adjusted_like_the_direction_model(clean):
     want = mc.adx([x + 50 for x in a[1:]], [x - 50 for x in a[1:]], [float(x) for x in a[1:]])
     assert got["adx"] == pytest.approx(round(want["adx"], 2), abs=0.011)
     assert "ratio-adjusted" in got["on"]
+
+
+def test_iv_api_ranks_over_sessions_and_labels_the_input(clean):
+    from fastapi.testclient import TestClient
+
+    from finresearch.api import create_app
+
+    days = _sessions(71)
+    _eod("NIFTY", days, lambda i: 15.0 + i % 10, lambda i: 14.0, rv20=lambda i: 11.0)
+    with TestClient(create_app()) as c:
+        short = c.get("/api/fno/NIFTY/iv").json()
+        # 71 sessions are 28 % of a 252-session year: no rank, said so (before #354: "ok" over 71 days)
+        assert short["rank"] is None and short["status"].startswith("insufficient coverage")
+        _eod("NIFTY", _sessions(200, days[-1] + timedelta(days=1)), lambda i: 15.0 + i % 10, lambda i: 14.0,
+             rv20=lambda i: 11.0)  # fmt: skip
+        full = c.get("/api/fno/NIFTY/iv").json()
+    assert full["status"] == "ok" and full["n"] == 252 and full["rank"] is not None
+    assert (
+        full["rank_input"].startswith("NSE F&O bhavcopy 30-day IV at the") and "close" in full["rank_input"]
+    )
+    assert full["rank_series"] == "iv_30d"
+
+
+def test_iv_rank_factor_says_it_ranks_a_previous_close(env):
+    import json
+    from pathlib import Path
+
+    from finresearch.adapters.nse_fno import parse_chain, parse_index_history
+    from finresearch.signals import fno as fs
+
+    fno = Path(__file__).parent / "fixtures" / "nse" / "fno"
+    ch = parse_chain(
+        "NIFTY", date(2026, 10, 6), json.loads((fno / "option_chain_NIFTY_20261006_trimmed.json").read_text())
+    )
+    closes = [float(c) for _, c in parse_index_history(json.loads(
+        (fno / "indices_history_NIFTY50_202606_202609.json").read_text()))]  # fmt: skip
+    a = fs.analyse(ch, 65, fs.preset_legs(ch, "iron_condor"), today=date(2026, 9, 29), closes=closes,
+                   iv_series=[*([20.0] * 70), 13.36], capital=1_000_000, max_loss_pct=2, brokerage=20,
+                   iv_source={"source": "bhavcopy"}, iv_as_of=date(2026, 9, 28))  # fmt: skip
+    f = next(x for x in fs._factor_info(a) if x.name == "IV rank")
+    # it ranks the bhavcopy 30-day IV of the 28-Sep close, not "today's ATM IV" (#354 b)
+    assert (
+        "today's ATM IV" not in f.explanation
+        and "30-day IV" in f.explanation
+        and "2026-09-28" in f.explanation
+    )
