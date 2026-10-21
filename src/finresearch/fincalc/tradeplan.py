@@ -23,7 +23,9 @@ from finresearch.fincalc import options as o
 
 HARD_GATES = frozenset({"Defined risk", "Max loss within your F&O budget", "Not a same-day expiry"})
 ENTER, WAIT, AVOID = "ENTER", "WAIT", "AVOID"
-NO_EDGE = "no proven edge — size small"
+# #350: every check passes but no matched spec is a candidate: paper trading only, 0 real-money lots (never ENTER)
+PAPER = "PAPER"
+PAPER_ONLY = "NO PROVEN EDGE — paper only (0 real lots)"
 
 
 @dataclass(frozen=True)
@@ -147,15 +149,70 @@ def wing(quotes: Sequence[ChainQuote], right: str, anchor: float, target: float)
 @dataclass(frozen=True)
 class Size:
     multiple: int  # how many times the base legs fit the budget (0 = not even once)
-    suggested: int  # what the plan uses: the multiple, or half of it (at least 1) without a proven edge
+    suggested: int  # the size the plan uses (paper only without a proven edge): n, one formula (#355)
     budget: float
     risk_per_multiple: float | None  # max loss + entry costs of one multiple; None = unlimited
     reason: str
+    real_lots: int = 0  # real-money size (#350): 0 unless the matched spec is a candidate
 
 
-def size(max_loss_one: float | None, costs_one: float, budget: float, proven: bool, cap: int = 100) -> Size:
+# #358 (interim open-book cap; P4.2 adds the common-shock and margin terms). Registered values, stated in the issue
+# before any use: the open book may risk at most 8% of F&O capital, a month-to-date F&O loss of 6% of it stops every
+# card until the next month, and a naked upside is shocked by +25%. No stress scenario is registered yet (P4.2), so
+# the open risk of an undefined-risk position is the larger of the loss at S = 0 and at S × (1 + UP_SHOCK).
+BOOK_BUDGET_PCT = 8.0
+MONTH_LOSS_STOP_PCT = 6.0
+UP_SHOCK = 0.25
+
+
+@dataclass(frozen=True)
+class OpenBook:
+    """What is already open (#358), for one card. `open_risk` = OR, the Σ of position_risk over open paper and Groww
+    positions (None = unknown: never counted as room); `open_same` = open positions of this recipe / shape, against the
+    backtester's `max_concurrent`; month-to-date F&O P&L after costs (realised + marked), the paper book's for paper
+    cards and the real book's for real-money permission (None = unknown)."""
+
+    capital: float
+    open_risk: float | None
+    open_same: int = 0
+    max_concurrent: int | None = None
+    mtd_paper: float | None = None
+    mtd_real: float | None = None
+    notes: tuple[str, ...] = ()
+
+    @property
+    def budget(self) -> float:
+        return self.capital * BOOK_BUDGET_PCT / 100
+
+    def month_stopped(self, real: bool = False) -> bool:
+        """True when that book's month-to-date P&L is at or below −MONTH_LOSS_STOP_PCT of capital, or unknown."""
+        mtd = self.mtd_real if real else self.mtd_paper
+        return mtd is None or mtd <= -self.capital * MONTH_LOSS_STOP_PCT / 100
+
+
+def position_risk(legs: Sequence[o.Leg], spot: float | None) -> float | None:
+    """One open position's contribution to OR (#358), ₹ (≥ 0), from its legs at their entry prices (premiums; signed
+    qty): |max loss at expiry| when bounded above (the payoff is piecewise linear, so its minimum on [0, ∞) is at 0 or
+    a strike); otherwise the larger of that and the loss at S × (1 + UP_SHOCK). None when the shock needs a spot that
+    is unknown."""
+    if not legs:
+        return 0.0
+    kinks = [0.0, *(x.strike for x in legs if x.right != "future")]
+    up_slope = sum(x.qty for x in legs if x.right in ("call", "future"))
+    if up_slope < 0:
+        if not spot:
+            return None
+        kinks.append(spot * (1 + UP_SHOCK))
+    return max(0.0, -min(o.payoff(legs, k) for k in kinks))
+
+
+def size(max_loss_one: float | None, costs_one: float, budget: float, proven: bool, cap: int = 100,
+         book: OpenBook | None = None) -> Size:  # fmt: skip
     """Lots from the risk budget: floor(budget ÷ (max loss + entry costs of the base legs)), as the backtester sizes
-    (backtest.engine.try_enter). Without a proven edge the plan suggests half of that, at least one when one fits."""
+    (backtest.engine.try_enter): one formula n = floor(B / (|ML| + c)) (#355). With the open book (#358):
+    n = min(that, floor((B_book − OR) ÷ (|ML| + c))), floored at 0, and 0 once `max_concurrent` of this recipe are
+    open. Real money (#350) only when the matched spec is a candidate (`proven`): otherwise n is the paper size and
+    real lots are 0. `multiple` stays the trade budget's alone (a full book is not an over-budget trade)."""
     if max_loss_one is None:
         return Size(0, 0, budget, None, "the loss is unlimited, so no size fits a budget")
     risk = abs(max_loss_one) + max(costs_one, 0.0)
@@ -166,11 +223,23 @@ def size(max_loss_one: float | None, costs_one: float, budget: float, proven: bo
         return Size(
             0, 0, budget, risk, f"one set of these legs risks ₹{risk:,.0f}, above your ₹{budget:,.0f} budget"
         )
-    sug = m if proven else max(1, m // 2)
     why = f"₹{budget:,.0f} budget ÷ ₹{risk:,.0f} risk per set (max loss + entry costs) = {m}"
+    n = m
+    if book is not None:
+        if book.open_risk is None:
+            n, more = 0, "the risk of your open positions is unknown, so the open book has no known room: 0"
+        elif book.max_concurrent is not None and book.open_same >= book.max_concurrent:
+            n, more = 0, (f"{book.open_same} of this recipe already open, the backtest's limit of "
+                          f"{book.max_concurrent} at a time: 0")  # fmt: skip
+        else:
+            room = book.budget - book.open_risk
+            n = max(0, min(m, math.floor(room / risk)))
+            more = (f"open book: ₹{book.budget:,.0f} ({BOOK_BUDGET_PCT:g}% of F&O capital) − ₹{book.open_risk:,.0f} "
+                    f"already at risk in open positions = room for {max(0, math.floor(room / risk))}")  # fmt: skip
+        why += f"; {more}"
     if not proven:
-        why += f"; no proven edge, so half of it: {sug}"
-    return Size(m, sug, budget, risk, why)
+        why += "; no strategy that passed out of sample matches, so paper only: 0 real-money lots"
+    return Size(m, n, budget, risk, why, real_lots=n if proven else 0)
 
 
 # --------------------------------------------------------------------------- limit prices from bid/ask
@@ -343,19 +412,32 @@ def levels(legs: Sequence[o.Leg], ivs: Sequence[float | None], spot: float, t: f
 
 
 # --------------------------------------------------------------------------- evidence and the verdict
-def evidence_level(row: dict[str, Any] | None) -> str:
-    """A saved backtest result row (backtest.store.run_json strategies[]) → proven | negative | unproven | none.
-    negative = failed out of sample with an expectancy after costs at or below zero; unproven = failed, but the
-    expectancy was positive (not significant, or another criterion failed); none = not judged (no data, an overlay,
-    in-sample only) or no matching strategy."""
-    if not row:
+# #355: roughly delta-neutral structures, whose backtest sign is about the premium, not the index path; only these can
+# be judged harmful. Everything else (one-sided credit spreads, debit spreads, single options, futures) is directional.
+DELTA_NEUTRAL_KINDS = frozenset({"iron_condor", "iron_butterfly", "short_straddle", "short_strangle"})
+HARMFUL_T = -2.0  # expiry-clustered t at or below this AND the bootstrap CI's upper bound below 0 (#355)
+DIRECTIONAL_NOTE = "directional — reflects the index path, not the structure"
+
+
+def evidence_level(row: dict[str, Any] | None, kind: str) -> str:
+    """A saved backtest result row (backtest.store.run_json strategies[]) for legs of `kind` → proven | harmful |
+    inconclusive | directional | none (#355).
+    proven = a candidate (passed every pre-registered out-of-sample criterion) of a delta-neutral kind;
+    directional = any judged row of a directional kind: its sign mixes the premium with the index path, so it gives
+    neither AVOID nor ENTER; harmful = failed with clustered t ≤ −2 AND the 95% bootstrap CI's upper bound < 0;
+    inconclusive = failed otherwise (an unknown t or CI is inconclusive, never harmful or safe);
+    none = not judged (no data, an overlay, in-sample only) or no matching strategy."""
+    if not row or row.get("status") not in ("candidate", "fails"):
         return "none"
-    if row.get("status") == "candidate":
+    if kind not in DELTA_NEUTRAL_KINDS:
+        return "directional"
+    if row["status"] == "candidate":
         return "proven"
-    if row.get("status") != "fails":
-        return "none"
-    e = ((row.get("windows") or {}).get("oos") or {}).get("expectancy")
-    return "unproven" if e is None or e > 0 else "negative"
+    w = (row.get("windows") or {}).get("oos") or {}
+    t, hi = w.get("t_stat"), w.get("ci_high")
+    if t is not None and hi is not None and t <= HARMFUL_T and hi < 0:
+        return "harmful"
+    return "inconclusive"
 
 
 def evidence_text(row: dict[str, Any] | None, level: str) -> str:
@@ -363,21 +445,28 @@ def evidence_text(row: dict[str, Any] | None, level: str) -> str:
         return "No pre-registered backtest covers this strategy: no evidence of an edge either way."
     w = (row.get("windows") or {}).get("oos") or {}
     e, t, n = w.get("expectancy"), w.get("t_stat"), w.get("trades")
+    lo, hi = w.get("ci_low"), w.get("ci_high")
     stats = ", ".join(x for x in (None if e is None else f"expectancy ₹{e:,.0f}/trade",
-                                  None if t is None else f"t={t:.1f}", None if n is None else f"{n} trades") if x)  # fmt: skip
+                                  None if t is None else f"t={t:.1f}",
+                                  None if lo is None or hi is None else f"95% CI ₹{lo:,.0f} to ₹{hi:,.0f}",
+                                  None if n is None else f"{n} trades") if x)  # fmt: skip
     span = f" ({w['from']} → {w['to']})" if w.get("from") and w.get("to") else ""
+    status = "PASSED" if row.get("status") == "candidate" else "FAILED"
     head = {"proven": "PASSED every pre-registered out-of-sample criterion",
-            "negative": "FAILED out-of-sample", "unproven": "FAILED out-of-sample (positive but not proven)",
+            "harmful": "FAILED out-of-sample and HARMFUL (t ≤ −2 and the 95% CI below zero)",
+            "inconclusive": "FAILED out-of-sample, inconclusive (no edge distinguishable from zero either way)",
+            "directional": f"{status} out-of-sample, {DIRECTIONAL_NOTE}",
             "none": f"Not judged out of sample ({row.get('status', 'unknown')})"}[level]  # fmt: skip
     return f"{head}: {stats}{span}." if stats else f"{head}."
 
 
 def verdict(failed: Sequence[str], evidence: str) -> tuple[str, str | None]:
-    """(action, qualifier). AVOID when a hard gate fails or the matching backtest is negative; WAIT when any other
-    check fails or is unknown; ENTER only when everything passes, and without a passed out-of-sample backtest it is
-    always qualified "no proven edge — size small" (never a strong call)."""
-    if HARD_GATES & set(failed) or evidence == "negative":
+    """(action, qualifier), #350/#355. AVOID when a hard gate fails or the matching backtest is harmful; WAIT when any
+    other check fails or is unknown; ENTER only when everything passes AND the evidence is proven (the matched spec is
+    a candidate). Everything passing on inconclusive, directional or no evidence gives PAPER, "NO PROVEN EDGE — paper
+    only (0 real lots)": flipping the sign of an insignificant expectancy never changes it."""
+    if HARD_GATES & set(failed) or evidence == "harmful":
         return AVOID, None
     if failed:
         return WAIT, None
-    return (ENTER, None) if evidence == "proven" else (ENTER, NO_EDGE)
+    return (ENTER, None) if evidence == "proven" else (PAPER, PAPER_ONLY)

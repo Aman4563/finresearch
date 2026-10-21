@@ -102,6 +102,7 @@ export function ProfilePage() {
     !blank(p.rebalance_band_rel_pct) && (!isNum(p.rebalance_band_rel_pct) || Number(p.rebalance_band_rel_pct) > 100) ? "Band: relative must be between 0 and 100 % (empty = 25)." :
     !blank(p.fno_capital_inr) && !isNum(p.fno_capital_inr) ? "F&O capital must be a number of rupees (0 = not set)." :
     !blank(p.fno_max_loss_pct) && (!isNum(p.fno_max_loss_pct) || Number(p.fno_max_loss_pct) <= 0 || Number(p.fno_max_loss_pct) > 100) ? "Max loss per strategy must be a percentage above 0 and at most 100." :
+    !blank(p.fno_max_loss_pct) && Number(p.fno_max_loss_pct) > 5 && !p.fno_max_loss_override ? "Max loss per strategy is capped at 5% unless you turn on the override below." :
     !blank(p.fno_brokerage_per_order_inr) && (!isNum(p.fno_brokerage_per_order_inr) || Number(p.fno_brokerage_per_order_inr) > 1000) ? "Brokerage per order must be between ₹0 and ₹1,000." :
     prefs.watch?.quiet_start && prefs.watch.quiet_start === prefs.watch.quiet_end ? "Quiet hours must start and end at different times." : null;
 
@@ -379,10 +380,14 @@ export function ProfilePage() {
                   </div>
                 </Labelled>
               </div>
-              <div className="mt-4 grid gap-4 sm:grid-cols-2">
+              <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 <Labelled label={<Label tip="Defined risk means the worst case is known in advance (spreads, condors, bought options). Naked short options can lose far more than the premium.">Strategies allowed</Label>}>
                   <div><Segmented value={p.fno_defined_risk_only === false ? "any" : "defined"} onChange={(v) => set("fno_defined_risk_only", v === "defined")}
                     options={[{ value: "defined", label: "Defined risk only" }, { value: "any", label: "Any" }]} /></div>
+                </Labelled>
+                <Labelled label={<Label tip="Max loss per strategy is capped at 5% of F&O capital (#350). Turning this on lets you set more, at your own risk; the backtest sizes at 5%.">Above 5% per strategy</Label>}>
+                  <div><Segmented value={p.fno_max_loss_override ? "override" : "capped"} onChange={(v) => set("fno_max_loss_override", v === "override")}
+                    options={[{ value: "capped", label: "Capped at 5%" }, { value: "override", label: "Override" }]} /></div>
                 </Labelled>
                 <Labelled label={<Label tip="Your experience with futures and options. Shown with the F&O signal; it does not loosen any limit.">Experience</Label>}>
                   <div><Segmented value={p.fno_experience ?? "none"} onChange={(v) => set("fno_experience", v as Profile["fno_experience"])}

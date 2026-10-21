@@ -19,7 +19,7 @@ Action = Literal[
     "APPLY", "SKIP",  # IPO before allotment
     "SELL_AT_LISTING", "HOLD_AFTER_LISTING",  # IPO on listing day
     "BUY", "ACCUMULATE", "HOLD", "REDUCE", "SELL", "AVOID",  # stocks, funds, bonds
-    "ENTER", "WAIT", "EXIT",  # F&O strategies
+    "ENTER", "WAIT", "EXIT", "PAPER",  # F&O strategies (PAPER: every check passes, no proven edge, #350)
     "NO_SIGNAL",  # not enough data to say anything honest
     "INFORMATIONAL",  # analysis shown, no call: the method has not shown an edge (see `Signal.call`)
 ]  # fmt: skip
