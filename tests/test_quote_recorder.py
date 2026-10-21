@@ -165,3 +165,93 @@ def test_no_mid_without_a_two_sided_uncrossed_quote():
         qt = Quote.from_row({"bid": bid, "ask": ask})
         assert qt.mid is None and qt.half_spread is None and qt.rel_half_spread is None
         assert qt.depth_cost(1, "buy") is None
+
+
+# ------------------------------------------------------------------ storage and the day's acceptance checks
+SNAPS = [datetime.combine(TUE, t, IST) for t in (time(9, 30), time(12, 0), time(15, 15), time(15, 25))]
+
+
+def synthetic_row(snap: datetime, und: str, expiry: date, strike: int, kind: str, *, spot: int,
+                  bid: int | None = 12005, ask: int | None = 12100, age_s: int = 5) -> dict:  # fmt: skip
+    from finresearch.fnohist import quotes as q
+
+    req = snap + timedelta(seconds=3)
+    r = {"snapshot_at": snap, "underlying": und, "expiry": expiry, "strike": strike * 100, "option_type": kind,
+         "requested_at": req, "exchange_at": req - timedelta(seconds=age_s), "bid": bid, "ask": ask,
+         "bid_qty": 750 if bid else None, "ask_qty": 1500 if ask else None,
+         "depth_bid": [bid or 1, 750, 12000, 300, 11995, 75, 11990, 1500, 11985, 225],
+         "depth_ask": [ask or 1, 1500, 12150, 225, 12155, 75, 12160, 1500, 12165, 300],
+         "ltp": 12050, "oi": 4560000, "volume": 12345000, "iv": 12.34, "underlying_ltp": spot * 100,
+         "source": "groww"}  # fmt: skip
+    r["flags"] = q.flags(r, req)
+    return r
+
+
+def full_day(crossed: int = 0, stale_atm: bool = False) -> list[dict]:
+    rows = []
+    for snap in SNAPS:
+        for und, spot, step, expiries in (("NIFTY", 25012, 50, (date(2026, 10, 20), date(2026, 10, 27))),
+                                          ("BANKNIFTY", 56040, 100, (date(2026, 10, 28), date(2026, 11, 25)))):  # fmt: skip
+            atm = round(spot / step) * step
+            for exp in expiries:
+                for k in range(-10, 11):
+                    for kind in ("CE", "PE"):
+                        age = 120 if (stale_atm and k == 0) else 5
+                        rows.append(synthetic_row(snap, und, exp, atm + k * step, kind, spot=spot, age_s=age))
+    for r in rows[:crossed]:
+        r.update(bid=12200, flags=r["flags"] | 4)
+    return rows
+
+
+@pytest.fixture
+def qdb(env):
+    from sqlalchemy import text
+
+    from finresearch.db import session_scope
+
+    with session_scope() as s:
+        s.execute(text("TRUNCATE option_quote"))
+        s.execute(text("DELETE FROM alert_eval_slot WHERE slot LIKE 'quotes:%'"))
+    yield env
+
+
+def test_store_is_idempotent_and_keyed_on_instrument_and_snapshot(qdb):
+    from finresearch.fnohist import quotes as q
+
+    rows = full_day()
+    assert len(rows) == 672
+    assert q.store(rows) == 672
+    assert q.store(rows[:10]) == 0  # (instrument, snapshot_at) already stored
+    got = q.load("NIFTY", SNAPS[0], SNAPS[0])
+    assert len(got) == 84 and got[0].meta["snapshot_at"] == SNAPS[0]
+    assert got[0].mid == Decimal("120.525")
+
+
+def test_day_checks_pass_on_a_clean_day(qdb):
+    from finresearch.fnohist import quotes as q
+
+    q.store(full_day())
+    c = q.day_checks(TUE)
+    assert c["rows"] == 672 and c["expected"] == 672 and c["rows_ok"]
+    assert c["crossed_or_locked"] == 0 and c["crossed_ok"]
+    assert c["atm_checked"] == 32 and c["atm_fresh"] == 32 and c["atm_ok"]
+    assert c["ok"] is True
+
+
+def test_day_checks_fail_on_crossed_quotes_stale_atm_and_missing_rows(qdb):
+    from finresearch.fnohist import quotes as q
+
+    rows = full_day(crossed=1, stale_atm=True)
+    q.store(rows[:-1])
+    c = q.day_checks(TUE)
+    assert c["rows"] == 671 and not c["rows_ok"]
+    assert c["crossed_or_locked"] == 1 and not c["crossed_ok"]  # 1/671 = 0.15% >= 0.1%
+    assert c["atm_fresh"] < c["atm_checked"] and not c["atm_ok"]
+    assert c["ok"] is False
+
+
+def test_day_checks_on_a_day_with_nothing_is_not_ok(qdb):
+    from finresearch.fnohist import quotes as q
+
+    c = q.day_checks(TUE)
+    assert c["rows"] == 0 and c["ok"] is False  # no data is never a pass

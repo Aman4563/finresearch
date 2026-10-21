@@ -16,9 +16,18 @@ sell over the bids). A quote without both sides, or crossed or locked, has no mi
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any
+
+# The registered universe and times (issue #363): 2 underlyings x 2 expiries x 21 strikes x 2 rights = 168 quotes
+# per snapshot, 4 snapshots a trading day (IST)
+UNDERLYINGS = (("NIFTY", "NIFTY 50"), ("BANKNIFTY", "NIFTY BANK"))  # (F&O symbol, index name for its LTP)
+EXPIRIES = 2  # the near and the next listed expiry
+STRIKES_EACH_SIDE = 10
+SNAPSHOT_TIMES = (time(9, 30), time(12, 0), time(15, 15), time(15, 25))
+PER_SNAPSHOT = len(UNDERLYINGS) * EXPIRIES * (2 * STRIKES_EACH_SIDE + 1) * 2
+CROSSED_MAX = 0.001  # crossed or locked quotes below 0.1% of rows
 
 # per-row data-quality flags (option_quote.flags, a bitmask)
 NO_BID, NO_ASK, CROSSED, LOCKED, STALE, NO_TRADE_TIME = 1, 2, 4, 8, 16, 32
@@ -151,3 +160,77 @@ class Quote:
         if rem > 0:
             return None
         return paid - qty * m if side == "buy" else qty * m - paid
+
+
+# --------------------------------------------------------------------------- storage
+def store(rows: list[dict[str, Any]]) -> int:
+    """Insert rows (option_quote columns); a row already stored for (instrument, snapshot_at) is left as it is.
+    Returns the number inserted."""
+    if not rows:
+        return 0
+    from sqlalchemy.dialects.postgresql import insert
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import OptionQuote
+
+    with session_scope() as s:
+        res = s.execute(insert(OptionQuote).values(rows).on_conflict_do_nothing().returning(OptionQuote.strike))
+        return len(res.all())
+
+
+def _rows(start: datetime, end: datetime, underlying: str | None = None) -> list[dict[str, Any]]:
+    from sqlalchemy import select
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import OptionQuote as T
+
+    q = select(T).where(T.snapshot_at >= start, T.snapshot_at <= end)
+    if underlying:
+        q = q.where(T.underlying == underlying.upper())
+    q = q.order_by(T.snapshot_at, T.underlying, T.expiry, T.strike, T.option_type)
+    with session_scope() as s:
+        return [{c.name: getattr(r, c.name) for c in T.__table__.columns} for r in s.scalars(q)]
+
+
+def load(underlying: str, start: datetime, end: datetime) -> list[Quote]:
+    """The cost model's read: every stored quote of `underlying` with snapshot_at in [start, end], oldest first."""
+    return [Quote.from_row(r) for r in _rows(start, end, underlying)]
+
+
+# --------------------------------------------------------------------------- data-quality checks
+def checks(rows: list[dict[str, Any]], expected: int) -> dict[str, Any]:
+    """The issue's acceptance checks over a set of rows (one sweep, or one day): row count against `expected`,
+    crossed or locked quotes below CROSSED_MAX of rows, and every ATM quote (per snapshot, underlying and expiry: the
+    strike nearest the underlying's LTP, call and put) with a last trade within STALE_AFTER of its request. No rows,
+    or no ATM row that can be judged, is never a pass."""
+    n = len(rows)
+    bad = sum(1 for r in rows if r["flags"] & (CROSSED | LOCKED))
+    groups: dict[tuple, list[dict[str, Any]]] = {}
+    for r in rows:
+        groups.setdefault((r["snapshot_at"], r["underlying"], r["expiry"]), []).append(r)
+    atm_checked = atm_fresh = 0
+    for g in groups.values():
+        spot = next((r["underlying_ltp"] for r in g if r.get("underlying_ltp")), None)
+        if spot is None:
+            atm_checked += 2  # no LTP: the ATM pair cannot be found, so it counts as not fresh
+            continue
+        k = min({r["strike"] for r in g}, key=lambda x: (abs(x - spot), x))
+        for r in (r for r in g if r["strike"] == k):
+            atm_checked += 1
+            at = r.get("exchange_at")
+            atm_fresh += at is not None and abs(r["requested_at"] - at) <= STALE_AFTER
+    out = {"rows": n, "expected": expected, "rows_ok": n == expected, "crossed_or_locked": bad,
+           "crossed_ok": n > 0 and bad / n < CROSSED_MAX, "atm_checked": atm_checked, "atm_fresh": atm_fresh,
+           "atm_ok": atm_checked > 0 and atm_fresh == atm_checked,
+           "no_bid": sum(1 for r in rows if r["flags"] & NO_BID), "no_ask": sum(1 for r in rows if r["flags"] & NO_ASK)}  # fmt: skip
+    out["ok"] = out["rows_ok"] and out["crossed_ok"] and out["atm_ok"]
+    return out
+
+
+def day_checks(day: date) -> dict[str, Any]:
+    """The checks over one IST day's stored snapshots (expected PER_SNAPSHOT x the registered times)."""
+    from finresearch.fincalc.dates import IST
+
+    start = datetime.combine(day, time(0, 0), IST)
+    rows = _rows(start, start + timedelta(days=1) - timedelta(microseconds=1))
+    return {"day": day.isoformat(), **checks(rows, PER_SNAPSHOT * len(SNAPSHOT_TIMES))}
