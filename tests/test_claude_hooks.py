@@ -97,6 +97,14 @@ ALLOWED = [
 ]
 
 
+@pytest.fixture(autouse=True)
+def _no_runner_database_urls(monkeypatch):
+    """The guard judges each command as written. The runner's own database URLs (passed inline per the repo rules)
+    must not leak into the in-process checks and make a bare `alembic upgrade head` look pointed at a test database."""
+    monkeypatch.delenv("FINRESEARCH_DATABASE_URL", raising=False)
+    monkeypatch.delenv("FINRESEARCH_TEST_DATABASE_URL", raising=False)
+
+
 @pytest.mark.parametrize("command", BLOCKED)
 def test_blocks(command):
     assert guard.check_bash(command, str(REPO)) is not None
@@ -117,7 +125,10 @@ def test_live_run_blocks_tree_changes_only_in_the_main_tree(tmp_path):
 
 
 def _run(mode: str, event: dict, **env) -> subprocess.CompletedProcess:
-    full = {k: v for k, v in os.environ.items() if k != "CLAUDE_CODE_DISABLE_CLAUDE_MDS"}
+    # the guard judges each command as written: the runner's own database URLs (set inline per the repo rules) must not
+    # leak in and make a bare `alembic upgrade head` look pointed at a test database
+    drop = {"CLAUDE_CODE_DISABLE_CLAUDE_MDS", "FINRESEARCH_DATABASE_URL", "FINRESEARCH_TEST_DATABASE_URL"}
+    full = {k: v for k, v in os.environ.items() if k not in drop}
     full.update({"FINRESEARCH_HOOK_LIVE_RUN": "0", "CLAUDE_PROJECT_DIR": str(REPO), **env})
     return subprocess.run([sys.executable, str(GUARD), mode], input=json.dumps(event), capture_output=True,
                           text=True, env=full, timeout=60)  # fmt: skip
