@@ -91,7 +91,9 @@ def test_plan_skips_weekends_and_known_holidays_but_probes_listed_weekend_sessio
     assert days == [date(2015, 2, 23), date(2015, 2, 24), date(2015, 2, 25), date(2015, 2, 26), date(2015, 2, 27),
                     date(2015, 2, 28), date(2015, 3, 2), date(2015, 3, 3)]  # fmt: skip
     with session_scope(vault) as s:
-        assert date(2015, 2, 17) not in vb.plan_days(s, date(2015, 2, 16), date(2015, 2, 18), holidays={date(2015, 2, 17)})
+        assert date(2015, 2, 17) not in vb.plan_days(
+            s, date(2015, 2, 16), date(2015, 2, 18), holidays={date(2015, 2, 17)}
+        )
 
 
 def test_load_keeps_only_the_vaults_index_contracts(vault):
@@ -124,12 +126,19 @@ async def test_backfill_writes_only_to_the_vault_and_resumes(vault, monkeypatch)
     monkeypatch.setenv("FINRESEARCH_DATABASE_URL", "postgresql+psycopg://localhost:1/nowhere_test")
     config.get_settings.cache_clear()
     db.get_engine.cache_clear()
-    file = respx.get(fb.url_for(DAY, "legacy")).mock(return_value=httpx.Response(200, content=zipped(FX.read_text())))
+    file = respx.get(fb.url_for(DAY, "legacy")).mock(
+        return_value=httpx.Response(200, content=zipped(FX.read_text()))
+    )
     holiday = respx.get(fb.url_for(date(2008, 10, 15), "legacy")).mock(return_value=httpx.Response(404))
     async with client() as http:
         r = await vb.backfill(DAY, date(2008, 10, 19), vault_url=vault, http=http, **kw(app_url=None))
         # Tue 14 (file), Wed 15 (404), Thu 16 / Fri 17 not mocked: respx refuses them (failed); Sat/Sun not requested
-        assert (r["planned"], r["loaded"], r["no_file"], sorted(r["failed"])) == (4, 1, 1, ["2008-10-16", "2008-10-17"])
+        assert (r["planned"], r["loaded"], r["no_file"], sorted(r["failed"])) == (
+            4,
+            1,
+            1,
+            ["2008-10-16", "2008-10-17"],
+        )
         assert r["contracts"] == 3, r  # NIFTY Oct + Nov, BANKNIFTY Oct
         assert "derive_failed" not in r, r
         r2 = await vb.backfill(DAY, date(2008, 10, 19), vault_url=vault, http=http, **kw(app_url=None))

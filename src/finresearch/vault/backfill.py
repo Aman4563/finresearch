@@ -144,7 +144,9 @@ async def backfill(start: date, end: date, *, vault_url: str | None, app_url: st
         for i, day in enumerate(days, 1):
             raw = _raw(day)
             if raw is None and in_market_hours(now()):
-                out["stopped"] = "market hours (09:00-16:00 IST): no backfill downloads; re-run after the close"
+                out["stopped"] = (
+                    "market hours (09:00-16:00 IST): no backfill downloads; re-run after the close"
+                )
                 break
             status = "loaded"
             try:
@@ -165,7 +167,9 @@ async def backfill(start: date, end: date, *, vault_url: str | None, app_url: st
                         status = "no_file"
                     else:
                         out["rows"] += store.load_day(s, day, *got, [], keep=keep)["kept"]
-                if got is not None and derive:  # its own transaction: a derivation error never un-loads the day
+                if (
+                    got is not None and derive
+                ):  # its own transaction: a derivation error never un-loads the day
                     try:
                         with session_scope(url) as s:
                             dv.derive_day(s, day)
@@ -186,7 +190,9 @@ async def backfill(start: date, end: date, *, vault_url: str | None, app_url: st
                                       "dataset and check before re-running (#362)")  # fmt: skip
                     break
                 if streak >= MAX_CONSECUTIVE_FAILURES:
-                    out["stopped"] = f"{streak} consecutive failures: stopped to stay polite; re-run to resume"
+                    out["stopped"] = (
+                        f"{streak} consecutive failures: stopped to stay polite; re-run to resume"
+                    )
                     break
             if progress:
                 progress(i, len(days), day, status)

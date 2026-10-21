@@ -96,7 +96,12 @@ def _manifest(s: Session, day: date, **values: Any) -> None:
 
 
 def load_day(
-    s: Session, day: date, fmt: fb.Format, url: str, content: bytes, stocks: Iterable[str],
+    s: Session,
+    day: date,
+    fmt: fb.Format,
+    url: str,
+    content: bytes,
+    stocks: Iterable[str],
     keep: Callable[[str, str], bool] | None = None,
 ) -> dict[str, int]:
     """Replace `day`'s rows with the file's (one transaction with the caller's session). Raises NseError for a file
