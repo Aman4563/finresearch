@@ -6,7 +6,51 @@
       "WebFetch(domain:127.0.0.1)",
       "WebFetch(domain:0.0.0.0)",
       "WebFetch(domain:*.local)",
-      "WebFetch(domain:*.internal)"
+      "WebFetch(domain:*.internal)",
+      "Read(./.env)",
+      "Read(./.env.local)",
+      "Read(~/.pgpass)",
+      "Edit(./.env)",
+      "Edit(~/.pgpass)",
+      "Bash(gh auth switch:*)",
+      "Bash(gh auth login:*)",
+      "Bash(gh auth logout:*)",
+      "Bash(git config --global:*)",
+      "Bash(git push origin main:*)",
+      "Bash(git push --force origin main:*)",
+      "Bash(git stash)",
+      "Bash(git stash push:*)",
+      "Bash(git stash pop:*)",
+      "Bash(dropdb finresearch)",
+      "Bash(security find-generic-password:*)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [{ "type": "command", "command": "[ \"$CLAUDE_CODE_DISABLE_CLAUDE_MDS\" = 1 ] || [ ! -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard.py\" ] || python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard.py\" session", "timeout": 10 }]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [{ "type": "command", "command": "[ \"$CLAUDE_CODE_DISABLE_CLAUDE_MDS\" = 1 ] || [ ! -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard.py\" ] || python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard.py\" pre-bash", "timeout": 10 }]
+      },
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [{ "type": "command", "command": "[ \"$CLAUDE_CODE_DISABLE_CLAUDE_MDS\" = 1 ] || [ ! -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard.py\" ] || python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard.py\" pre-edit", "timeout": 10 }]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [{ "type": "command", "command": "[ \"$CLAUDE_CODE_DISABLE_CLAUDE_MDS\" = 1 ] || [ ! -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard.py\" ] || python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard.py\" post-edit", "timeout": 40 }]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [{ "type": "command", "command": "[ \"$CLAUDE_CODE_DISABLE_CLAUDE_MDS\" = 1 ] || [ ! -f \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard.py\" ] || python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard.py\" stop", "timeout": 90 }]
+      }
     ]
   }
 }
