@@ -25,6 +25,7 @@ import logging
 import os
 import re
 import socket
+import ssl
 import threading
 import time
 from collections.abc import Awaitable, Callable, Mapping
@@ -368,10 +369,13 @@ class PoliteClient:
         clock: Callable[[], float] | None = None,
         wall_clock: Callable[[], datetime] = now_ist,
         slots: SharedSlots | None = None,
+        verify: ssl.SSLContext
+        | bool = True,  # an adapter's own TLS context (still verifying), e.g. mospi_cpi
     ) -> None:
         self._client = httpx.AsyncClient(
             headers={**BROWSER_HEADERS, **(headers or {})},
             timeout=timeout,
+            verify=verify,
             follow_redirects=True,
             transport=transport,
             # every request, redirects included, is checked: an official host redirecting to 127.0.0.1 or a private

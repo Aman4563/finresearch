@@ -89,7 +89,7 @@ official closes (`portfolio.series`); the saved snapshots are the "as shown" rec
 
 ```
 src/finresearch/
-  adapters/      NSE, BSE, AMFI, SEBI, FBIL, XBRL clients and the polite HTTP client
+  adapters/      NSE, BSE, AMFI, SEBI, FBIL, MoSPI CPI, XBRL clients and the polite HTTP client
   agents/        research roles, prompts, skills and the role runner
   alerts/        alert rules, the evaluation engine and portfolio alerts
   api/           local HTTP API for the app

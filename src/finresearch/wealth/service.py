@@ -721,9 +721,18 @@ def overview(s: Session, today: date) -> dict[str, Any]:
 
 # --------------------------------------------------------------------------- goal plan
 def goal_plan(
-    s: Session, goal_id: int, today: date, *, seed: int | None = None, n: int | None = None
+    s: Session,
+    goal_id: int,
+    today: date,
+    *,
+    seed: int | None = None,
+    n: int | None = None,
+    cpi: Any = None,
+    cpi_why: str | None = None,
 ) -> dict[str, Any]:
+    """`cpi` is a `wealth.inflation.CpiSummary` (fetched by the API for a CPI-based goal) or None with `cpi_why`."""
     from finresearch.wealth.goals import plan
+    from finresearch.wealth.inflation import resolve
 
     g = s.get(WealthGoal, goal_id)
     if g is None:
@@ -751,13 +760,16 @@ def goal_plan(
                 "disclaimer": DISCLAIMER}  # fmt: skip
     months = calc.months_between(today, g.target_date)
     a = assumptions_from({k: asm[k] for k in DEFAULT_ASSUMPTIONS})
+    infl = resolve(g.inflation_basis or "manual", float(g.inflation_pct), cpi, cpi_why)
     p = plan(
         start=fund["start"],
         sip0=float(g.monthly_sip),
         step_up_pct=float(g.step_up_pct),
         months=months,
         target_today=float(g.target_inr),
-        inflation_pct=float(g.inflation_pct),
+        inflation_pct=infl["mean_pct"],
+        inflation_sd_pct=infl["sd_pct"],
+        sensitivity=infl["sensitivity"],
         equity_pct=f(g.equity_pct),
         gold_pct=float(g.gold_pct),
         assumptions=a,
@@ -801,8 +813,15 @@ def goal_plan(
             "unpriced_share_pct": fund["unpriced_share_pct"],
             "message": msg,
             "linked": fund["linked"],
+            "inflation": {k: v for k, v in infl.items() if k != "sensitivity"},
             "method": "Seeded lognormal Monte Carlo, monthly steps, SIP added at month end, rebalanced monthly; "
-            "classes drawn independently. Range: 95 % Wilson interval (simulation error) and the "
+            "classes drawn independently"
+            + (
+                "; each path draws its own yearly inflation, independently of returns"
+                if infl["sd_pct"]
+                else ""
+            )
+            + ". Range: 95 % Wilson interval (simulation error) and the "
             f"result with equity returns 2 pp lower. Seed {out['seed']}, {out['n']:,} paths.",
             "disclaimer": DISCLAIMER,
         }
@@ -856,6 +875,7 @@ def goal_json(g: WealthGoal) -> dict[str, Any]:
         "target_date": g.target_date.isoformat(),
         "priority": g.priority,
         "inflation_pct": f(g.inflation_pct),
+        "inflation_basis": g.inflation_basis or "manual",
         "current_inr": f(g.current_inr),
         "monthly_sip": f(g.monthly_sip),
         "step_up_pct": f(g.step_up_pct),

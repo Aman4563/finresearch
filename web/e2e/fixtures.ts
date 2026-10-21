@@ -210,6 +210,25 @@ export const GOAL_PLAN_LOWER = {
   bound: "lower", unpriced: ["Example Beta Ltd"], unpriced_share_pct: 45.45,
 } satisfies GoalPlan;
 
+// #347: a goal on a CPI inflation basis, once with MoSPI's figure and once with the series unreadable
+const VINTAGE = { source: "MoSPI, All-India CPI (Combined), api.mospi.gov.in", base2012_last: "2025-12-01", base2024_last: "2026-09-01",
+  imputed: ["2020-04-01", "2020-05-01"], fetched_at: "2026-10-22T09:00:00+05:30", urls: [], note: "Synthetic test vintage." };
+export const GOAL_PLAN_CPI = {
+  ...GOAL_PLAN_LOWER, inflation_pct: 7.25, inflation_sd_pct: 1.5, target_pcts: { p10: 1700000, p50: 2000000, p90: 2400000 },
+  inflation: { basis: "cpi_education", known: true, reason: null, label: "MoSPI CPI education: 7.25 % a year (10-year average to Sep-2026), drawn each year with a 1.50 pp spread",
+    value_pct: 7.25, mean_pct: 7.25, sd_pct: 1.5, trailing_pct: 6.1, long_run_pct: 7.25, premium_pct: 1.75, as_of: "2026-09-01",
+    window_start: "2016-09-01", vintage: VINTAGE },
+  inflation_sensitivity: [{ label: "CPI education, trailing 12 months to Sep-2026", inflation_pct: 6.1, p_success: 0.47 },
+    { label: "CPI education average +2 pp", inflation_pct: 9.25, p_success: 0.3 }],
+} satisfies GoalPlan;
+export const GOAL_PLAN_CPI_UNKNOWN = {
+  ...GOAL_PLAN_LOWER, inflation_pct: 6, inflation_sd_pct: 0,
+  inflation: { basis: "cpi_general", known: false, reason: "MospiError: MoSPI CPI API HTTP 503",
+    label: "CPI general inflation unknown (MospiError: MoSPI CPI API HTTP 503); simulated at your fixed 6 % a year instead",
+    value_pct: null, mean_pct: 6, sd_pct: 0, trailing_pct: null, long_run_pct: null, premium_pct: null, as_of: null, window_start: null, vintage: null },
+  inflation_sensitivity: [{ label: "4 % (-2 pp)", inflation_pct: 4, p_success: 0.55 }, { label: "8 % (+2 pp)", inflation_pct: 8, p_success: 0.3 }],
+} satisfies GoalPlan;
+
 // #291: an IPO that listed weeks ago and was archived; its lock-in checks still run, its book never changes
 const ARCHIVED_BASE: WatchSummary = {
   id: 77, kind: "ipo", company: "example-listed", company_name: "Example Listed Ltd", nse_symbol: "EXLIST",
