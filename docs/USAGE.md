@@ -120,7 +120,13 @@ uv run finresearch monitor holidays                # NSE trading and settlement 
 uv run finresearch fund rank                       # rank every fund within its SEBI category now
 uv run finresearch stock peers                     # build the stock peer dataset now (NIFTY 500; slow, polite)
 uv run finresearch audit prices                    # cross-check price sources against the exchanges' own figures
+uv run finresearch index backfill --from 2013-03-01  # NSE's daily index closes, P/E, P/B, yield, India VIX (#366)
+uv run finresearch audit index-eod                 # bhavcopy underlying vs index close; India VIX vs IV30 (no network)
 ```
+
+NSE data is collected for personal, non-distributed use only (owner decision #362, `finresearch.data_rights`): it
+stays in the local database and `data/`. Backfills go through the shared NSE rate limit, stop by themselves between
+09:00 and 16:00 IST on weekdays and after two refusals (HTTP 403/429) in a row, and resume where they stopped.
 
 ## Portfolio
 
