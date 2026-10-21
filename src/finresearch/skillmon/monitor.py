@@ -79,7 +79,8 @@ def evaluate(d: cells.CellData) -> dict[str, Any]:
     out.update(spiegelhalter=z, murphy=sc.murphy(p, o, cal.murphy_bins), cusum=cus)
     alarms = out["alarms"]
     if (a := cus["alarm"]) is not None:
-        when = to_ist(d.independent[a["at"]].resolved_at).date().isoformat()
+        at = d.independent[a["at"]].resolved_at
+        when = to_ist(at).date().isoformat() if at is not None else "on an unknown date"
         more = "more" if a["side"] == "up" else "less"
         alarms.append({"check": "cusum", "side": a["side"], "at": a["at"], "resolved_on": when,
                        "text": f"outcomes came {more} often than forecast (CUSUM crossed at event {a['at'] + 1}, "

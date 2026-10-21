@@ -97,3 +97,13 @@ def test_prereg_md_quotes_the_hash_and_the_thresholds() -> None:
     c = specs.CALIBRATION
     assert prereg.HASH in text and f"h_up = {c.cusum_h_up}" in text and f"h_down = {c.cusum_h_down}" in text
     assert specs.TRIGGER.full_events == 100 and specs.TRIGGER.promotion_events == 50
+
+
+def test_an_alarm_on_a_row_without_a_resolution_time_still_reports() -> None:
+    p = [0.3] * 300
+    o = [int(i % 10 < 3) for i in range(150)] + [int(i % 10 < 7) for i in range(150)]
+    d = data(p, o)
+    for f in d.independent:
+        f.resolved_at = None
+    cus = next(a for a in monitor.evaluate(d)["alarms"] if a["check"] == "cusum")
+    assert cus["resolved_on"] == "on an unknown date"
