@@ -701,7 +701,7 @@ def harvest(rows: Sequence[DisposalRow], lots_by_holding: dict[int, list[OpenLot
                      "unused this year, and a booked gain would be set off against it first (compulsory, s.74 / s.111),"
                      " spending a loss that could save tax in a later year.")  # fmt: skip
     notes.append(f"A loss carried forward counts only if this year's return is filed by the s.139(1) due date "
-                 f"({due_date(fy + 1).strftime('%d-%b-%Y')} for an individual without an audit; s.80 / s.121), and "
+                 f"({due_date(fy).strftime('%d-%b-%Y')} for an individual without an audit; s.80 / s.121), and "
                  "only against capital gains within eight years: its value is an upper bound.")  # fmt: skip
     if not complete:
         notes.insert(0, unk["detail"] + ". Gain harvesting is not suggested (the unused exemption is unknown) and the "

@@ -81,3 +81,13 @@ def test_bad_manual_losses_are_rejected(api, bad):
 
 def test_tax_losses_are_private_and_never_sent_to_a_model():
     assert "tax_losses" in PRIVATE_FIELDS and "tax_losses" not in ADVISOR_FIELDS
+
+
+def test_a_profile_save_never_overwrites_the_carry_forward_inputs(api):
+    # the profile page PUTs the whole profile it loaded; a stale copy (or one without the key) must not wipe them
+    api.put("/api/portfolio/tax/losses", headers=ORIGIN, json={"returns_filed_on_time": {"2025": True}})
+    prof = api.get("/api/profile").json()
+    for body in ({**prof, "tax_losses": {"returns_filed_on_time": {}, "brought_forward": []}},
+                 {k: v for k, v in prof.items() if k != "tax_losses"}):  # fmt: skip
+        assert api.put("/api/profile", headers=ORIGIN, json=body).status_code == 200
+        assert api.get("/api/portfolio/tax/losses").json()["returns_filed_on_time"] == {"2025": True}

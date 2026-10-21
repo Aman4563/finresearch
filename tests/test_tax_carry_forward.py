@@ -308,3 +308,9 @@ def test_gain_harvesting_never_spends_a_brought_forward_loss_that_would_carry_on
     out = harvest(*args, brought_forward=[BroughtForward(2019, "short", D(200_000), "2019:short")])
     (idea,) = out["gain_harvest"]
     assert idea["gain"] == 50000.0 and idea["brought_forward_used"] == 50000.0 and "lapses" in idea["why"]
+
+
+def test_harvest_note_names_this_years_s139_due_date():
+    # a loss booked in FY 2026-27 (AY 2027-28) is carried only if that return is filed by 31-Jul-2027
+    notes = " ".join(harvest([], {}, {}, {}, TODAY, D("0.30"))["notes"])
+    assert "31-Jul-2027" in notes and "2028" not in notes
