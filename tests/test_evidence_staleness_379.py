@@ -7,7 +7,17 @@ from datetime import datetime
 
 import pytest
 from sqlalchemy import text
-from test_fno_plan_api import IC, _ic_row, _iv_points, _no_network, _profile, _save_backtest, _signal, client
+from test_fno_plan_api import (
+    FUNDED_BOOK,
+    IC,
+    _ic_row,
+    _iv_points,
+    _no_network,
+    _profile,
+    _save_backtest,
+    _signal,
+    client,
+)
 from test_fno_signal import NOW
 
 from finresearch.fincalc import dates
@@ -29,7 +39,7 @@ def _cards(client, monkeypatch, row, created_at):
     from finresearch.signals import tradeplan as tpl
 
     async def known(today):
-        return tpl.EMPTY_BOOK
+        return FUNDED_BOOK  # #395: real money also needs the real book's funds known
 
     monkeypatch.setattr(tpl, "load_book", known)
     _iv_points(monkeypatch, high=True)

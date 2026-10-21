@@ -153,10 +153,17 @@ class BookData:
     mtd_paper: float | None
     mtd_real: float | None
     notes: tuple[str, ...] = ()
+    # #395: the open book's P&L at each registered shock move and the real book's funds (None = unknown, never 0)
+    shock: dict[float, float] | None = None
+    funds: dict[str, float] | None = None
+    shock_notes: tuple[str, ...] = ()
+    funds_notes: tuple[str, ...] = ()
 
 
 UNKNOWN_BOOK = BookData(None, None, None, ("The open book was not read: its risk is unknown.",))
-EMPTY_BOOK = BookData([], 0.0, 0.0)  # tests and callers that know nothing is open
+# tests and callers that know nothing is open (so no shock loss); the real book's funds stay unknown
+EMPTY_BOOK = BookData([], 0.0, 0.0, shock=dict.fromkeys(tp.SHOCK_MOVES, 0.0),
+                      funds_notes=("The real book's funds were not read.",))  # fmt: skip
 
 
 def _signed(right: str, strike: float, side: str, qty: int, price: float) -> o.Leg:
@@ -232,31 +239,111 @@ async def real_positions(today: date) -> tuple[list[RealPosition] | None, str | 
     return [RealPosition(k[0], k[1], v) for k, v in groups.items()], None
 
 
-async def load_book(today: date) -> BookData:
+async def _shock_and_funds(now: datetime) -> dict[str, Any]:
+    """#395: the open book's common-shock P&L (fnobook.scenarios.book_shock) and the real book's funds
+    (fnobook.service.stored_funds); anything that fails to read is unknown, with the reason."""
+    from finresearch.fnobook import scenarios, service
+
+    try:
+        shock, snotes = await scenarios.book_shock(now)
+    except Exception as e:  # a chain or position read failed: unknown, never 0
+        shock, snotes = None, [f"The open book could not be repriced under the shock ({type(e).__name__})."]
+    try:
+        funds, fnote = service.stored_funds(now)
+    except Exception as e:
+        funds, fnote = None, f"The real book's funds could not be read ({type(e).__name__})."
+    return {
+        "shock": shock,
+        "shock_notes": tuple(snotes),
+        "funds": funds,
+        "funds_notes": (fnote,) if fnote else (),
+    }
+
+
+async def load_book(today: date, now: datetime | None = None) -> BookData:
     """The open book for a card (#358): open paper trades and Groww F&O positions, and both month-to-date P&Ls. The
-    real book's month-to-date P&L is not stored yet (P0.10's card log and P2.1), so it is unknown: real money stays 0."""
+    real book's month-to-date P&L is not stored yet (P0.10's card log and P2.1), so it is unknown: real money stays 0.
+    #395: also the book's common-shock P&L, one session from `now` (default: now), and the real book's funds."""
     from sqlalchemy.exc import SQLAlchemyError
+
+    from finresearch.fincalc import dates
 
     notes = ["The real book's month-to-date F&O P&L is not recorded yet: real-money permission stays off."]
     try:
         paper, mtd = paper_book(today)
     except SQLAlchemyError:
         return UNKNOWN_BOOK
+    terms = await _shock_and_funds(now or dates.now_ist())
     real, why = await real_positions(today)
     if why:
         notes.append(why)
     if real is None:
-        return BookData(None, mtd, None, tuple(notes))
+        return BookData(None, mtd, None, tuple(notes), **terms)
     rp = [OpenPosition(r.symbol, tp.classify([tp.PlanLeg(x.right, x.strike, "buy" if x.qty > 0 else "sell", abs(x.qty))
                                               for x in r.legs]), "", r.legs, None, "groww") for r in real]  # fmt: skip
-    return BookData(paper + rp, mtd, None, tuple(notes))
+    return BookData(paper + rp, mtd, None, tuple(notes), **terms)
 
 
-def book_for(
-    b: BookData, capital: float, symbol: str, kind: str, spot: float | None, spec: Any | None
-) -> tp.OpenBook:
+def trade_terms(symbol: str, expiry: date, spot: float, legs: list[o.Leg], now: datetime, rate: float,
+                is_index: bool, span: dict[str, Any] | None = None) -> tuple[Any, tuple[str, ...], float | None,
+                                                                            tuple[str, ...]]:  # fmt: skip
+    """#395: one set of the card's legs (signed units at their prices: premiums, a future's price as its strike) →
+    (its P&L at each registered shock move one session from `now`, notes; its initial margin, notes). The forward is
+    S e^{rT}, so the repricing is the card's own Black-Scholes on spot; IVs are inverted from the prices. The margin
+    is fincalc.margin_approx with the day's NSE SPAN ranges when stored (`span`, else read here), else its labelled
+    assumptions. None (with why) when unknown."""
+    import math
+
+    from finresearch.adapters.groww_market import _holidays
+    from finresearch.fincalc import book_scenarios as bs
+    from finresearch.fincalc import margin_approx as ma
+
+    t = years_to_expiry(expiry, now)
+    if t <= 0:
+        return None, ("the contract has expired",), None, ("the contract has expired",)
+    sym = symbol.upper()
+    m = bs.Market(now, rate, {(sym, expiry): spot * math.exp(rate * t)})
+    bl = [bs.BookLeg(sym, expiry, x.right, 0.0 if x.right == "future" else x.strike, x.qty,
+                     None if x.right == "future" else x.premium, "ltp") for x in legs]  # fmt: skip
+    one, reasons = bs.shock_pnls(bl, m, bs.horizon_clock(now, 1, _holidays()))
+    ivs = [
+        None if x.right == "future" else o.implied_vol(x.right, x.premium, spot, x.strike, t, rate)
+        for x in legs
+    ]  # type: ignore[arg-type]
+    if any(x.right != "future" and v is None for x, v in zip(legs, ivs, strict=True)):
+        return one, reasons, None, ("a leg's IV cannot be solved from its price: its margin is unknown",)
+    if span is None:
+        try:
+            from finresearch.db import session_scope
+            from finresearch.fincalc.dates import to_ist
+            from finresearch.fnohist import span as sp
+
+            with session_scope() as s:
+                span = sp.params_for(s, sym, to_ist(now).date())
+        except Exception:
+            span = None  # the labelled assumptions
+    ml = [ma.MarginLeg(x.right, x.strike, x.qty, x.strike if x.right == "future" else x.premium, v)
+          for x, v in zip(legs, ivs, strict=True)]  # fmt: skip
+    try:
+        est = ma.estimate(ml, spot, t, rate, "index" if is_index else "stock", params=span["params"] if span else None,
+                          sources=span["sources"] if span else None)  # fmt: skip
+    except ValueError as e:
+        return one, reasons, None, (str(e),)
+    label = ma.LABEL_SPAN if span else ma.LABEL
+    return one, reasons, est.total, (f"one set's margin is an estimate ({label})",)
+
+
+def book_for(b: BookData, capital: float, symbol: str, kind: str, spot: float | None, spec: Any | None,
+             terms: tuple[Any, tuple[str, ...], float | None, tuple[str, ...]] | None = None) -> tp.OpenBook:  # fmt: skip
     """The OpenBook one card sees: OR over every open position (each shocked at the card's spot when it is the same
-    underlying, else at its own reference spot), and the open count of this recipe (its paper tag) or shape."""
+    underlying, else at its own reference spot), and the open count of this recipe (its paper tag) or shape.
+    #395: always both new terms, `terms` = trade_terms(...) for one set of the card's legs (None = unknown)."""
+    one, one_notes, im, im_notes = terms or (None, ("this trade's shock P&L was not computed",), None,
+                                             ("this trade's margin was not computed",))  # fmt: skip
+    f = b.funds or {}
+    shock = tp.Shock(b.shock, one, (*b.shock_notes, *(() if one is not None else one_notes)))
+    funds = tp.Funds(f.get("cash"), f.get("margin_used"), f.get("collateral"), im,
+                     (*b.funds_notes, *(() if im is not None else im_notes)))  # fmt: skip
     risk: float | None = None
     same = 0
     if b.positions is not None:
@@ -268,14 +355,29 @@ def book_for(
             same += bool(tag or (p.symbol == symbol.upper() and p.kind == kind))
     return tp.OpenBook(capital=capital, open_risk=risk, open_same=same,
                        max_concurrent=None if spec is None else spec.max_concurrent,
-                       mtd_paper=b.mtd_paper, mtd_real=b.mtd_real, notes=b.notes)  # fmt: skip
+                       mtd_paper=b.mtd_paper, mtd_real=b.mtd_real, notes=b.notes, shock=shock, funds=funds)  # fmt: skip
 
 
 def book_json(ob: tp.OpenBook) -> dict[str, Any]:
     return {"budget": round(ob.budget, 2), "budget_pct": tp.BOOK_BUDGET_PCT,
             "open_risk": None if ob.open_risk is None else round(ob.open_risk, 2), "open_same": ob.open_same,
             "max_concurrent": ob.max_concurrent, "mtd_paper": None if ob.mtd_paper is None else round(ob.mtd_paper, 2),
-            "month_stop_pct": tp.MONTH_LOSS_STOP_PCT, "notes": list(ob.notes)}  # fmt: skip
+            "month_stop_pct": tp.MONTH_LOSS_STOP_PCT, "notes": list(ob.notes),
+            # #395: the common-shock term (the book's worst P&L over the registered moves; None = unknown) and whether
+            # the real book's margin term could be evaluated (its figures stay off the card: they are personal)
+            "shock_budget": round(ob.shock_budget, 2), "shock_pct": tp.SHOCK_BUDGET_PCT,
+            "shock_moves": list(tp.SHOCK_MOVES), "shock_book_worst": _worst(ob.shock.book if ob.shock else None),
+            "shock_one_worst": _worst(ob.shock.one if ob.shock else None),
+            "shock_notes": list(ob.shock.notes) if ob.shock else [], "margin_util_max": tp.MARGIN_UTIL_MAX,
+            "margin_known": ob.funds is not None and None not in (ob.funds.cash, ob.funds.margin_used,
+                                                                   ob.funds.collateral, ob.funds.im_one),
+            "margin_notes": list(ob.funds.notes) if ob.funds else []}  # fmt: skip
+
+
+def _worst(pnl: dict[float, float | None] | Any) -> float | None:
+    if pnl is None or any(pnl.get(m) is None for m in tp.SHOCK_MOVES):
+        return None
+    return round(min(pnl[m] for m in tp.SHOCK_MOVES), 2)
 
 
 # --------------------------------------------------------------------------- the card
@@ -359,7 +461,9 @@ def evidence_for(kind: str, symbol: str, dte: int, strategies: list[dict[str, An
            "match": None if spec is None else ("exact" if exact else "related"), "status": (row or {}).get("status"),
            "level": level if exact else "none", "raw_level": raw_level, "stale": stale,
            "text": tp.evidence_text(row, raw_level) if spec else tp.evidence_text(None, "none"),
-           "run": head, "url": "/fno/backtests"}  # fmt: skip
+           "run": head, "url": "/fno/backtests",
+           # #395: μ_lo for the Kelly ceiling: the matched row's out-of-sample expectancy CI lower bound (₹/trade)
+           "mu_lo": (((row or {}).get("windows") or {}).get("oos") or {}).get("ci_low") if exact else None}  # fmt: skip
     if spec is not None and not exact:
         out["text"] = (f"Related only ({spec.name}, not this underlying or expiry window): " + out["text"]
                        + " It does not change the verdict.")  # fmt: skip
@@ -446,7 +550,9 @@ def decide(gates: list[str], max_loss_one: float | None, costs_one: float, budge
                        f"₹{-book.mtd_real:,.0f} this month, at or beyond the {tp.MONTH_LOSS_STOP_PCT:g}% stop."))  # fmt: skip
         action, qualifier = tp.verdict(failed, level)
     if action == tp.ENTER and sz.real_lots == 0 and book is not None and book.funds is not None:
-        failed.append(MARGIN_CHECK_REAL)  # #395: no margin room, or margin / funds unknown → WAIT (paper size kept)
+        failed.append(
+            MARGIN_CHECK_REAL
+        )  # #395: no margin room, or margin / funds unknown → WAIT (paper size kept)
         reasons.append(f"{MARGIN_CHECK_REAL}: {sz.real_reason}.")
         action, qualifier = tp.verdict(failed, level)
     if action == tp.ENTER and mu_lo is not NOT_EVALUATED and (mu_lo is None or mu_lo <= 0):
@@ -608,7 +714,11 @@ def build(chain, lot: int, legs_in: list[fs.LegIn], x: Inputs, *, spec: Any | No
         # legs that are exactly a library recipe borrow its evidence, so they also get its registered entry filter
         # (#355: never looser than the recipe once the untested IV gate is context only)
         extra_failed = [*(extra_failed or []), *_recipe_checks(ev["spec"], x)]
-    ob = book_for(x.book, x.capital, sym, kind, spot, ev["spec"] if ev["match"] == "exact" else None)
+    one = [o.Leg(y.right, y.strike, 0.0 if y.right == "future" else al["premium"], al["qty"])  # type: ignore[arg-type]
+           if y.right != "future" else o.Leg("future", al["premium"], 0.0, al["qty"])
+           for y, al in zip(legs_in, a0["legs"], strict=True)]  # fmt: skip
+    terms = trade_terms(sym, expiry, spot, one, session_clock(x.today, x.now), x.rate, x.is_index)
+    ob = book_for(x.book, x.capital, sym, kind, spot, ev["spec"] if ev["match"] == "exact" else None, terms)
     sz = tp.size(
         a0["max_loss"], a0["costs"]["entry"]["total"], x.budget, proven=ev["level"] == "proven", book=ob
     )
@@ -626,6 +736,7 @@ def build(chain, lot: int, legs_in: list[fs.LegIn], x: Inputs, *, spec: Any | No
         extra_failed,
         ob,
         stale=ev["stale"],
+        mu_lo=ev["mu_lo"],
     )
     action, qualifier, failed = d.action, d.qualifier, d.failed
     reasons = [f"{f.name}: {f.explanation}" for f in factors if f.name in failed] + d.reasons

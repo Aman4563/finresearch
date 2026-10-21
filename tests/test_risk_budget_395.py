@@ -140,7 +140,9 @@ def test_new_terms_never_raise_a_size_395():
         funds = tp.Funds(rng.uniform(0, 4e5), rng.uniform(0, 3e5), rng.uniform(0, 4e5), rng.uniform(0, 9e4))
         old = tp.size(ml, c, 20_000.0, proven=True, book=_book(risk))
         new = tp.size(ml, c, 20_000.0, proven=True, book=_book(risk, tp.Shock(book, one), funds))
-        assert new.multiple == old.multiple and new.suggested <= old.suggested and new.real_lots <= old.real_lots
+        assert (
+            new.multiple == old.multiple and new.suggested <= old.suggested and new.real_lots <= old.real_lots
+        )
         assert new.real_lots <= new.suggested
         if new.suggested:  # the accepted book stays within the shock budget at every move
             assert all(book[m] + new.suggested * one[m] >= -0.06 * CAPITAL - 1e-6 for m in tp.SHOCK_MOVES)
@@ -194,7 +196,9 @@ def test_shock_pnls_reprice_one_session_later_with_the_spot_vol_response_395():
     from finresearch.fincalc import book_scenarios as bs
     from finresearch.fincalc.dates import IST
 
-    now = datetime(2026, 10, 22, 15, 30, tzinfo=IST)  # Thursday close; one session later = Friday 23-Oct 15:30
+    now = datetime(
+        2026, 10, 22, 15, 30, tzinfo=IST
+    )  # Thursday close; one session later = Friday 23-Oct 15:30
     exp, r, f, k, v = date(2026, 11, 26), 0.065, 24000.0, 23000.0, 0.15
     t0, t1 = 35 / 365, 34 / 365
     mark = _b76("put", f, k, t0, r, v)
@@ -208,7 +212,9 @@ def test_shock_pnls_reprice_one_session_later_with_the_spot_vol_response_395():
         v1 = v + (-1.04 * mv * 100 if mv < 0 else -0.76 * mv * 100) / 100
         assert got[mv] == pytest.approx((_b76("put", f1, k, t1, r, v1) - mark) * -65, rel=1e-6)
     # P&L is linear in lots: three sets lose three times one (dL/dn = L_1)
-    three, _ = bs.shock_pnls([bs.BookLeg("NIFTY", exp, "put", k, -195, mark, "mid")], m, bs.horizon_clock(now, 1))
+    three, _ = bs.shock_pnls(
+        [bs.BookLeg("NIFTY", exp, "put", k, -195, mark, "mid")], m, bs.horizon_clock(now, 1)
+    )
     assert all(three[mv] == pytest.approx(3 * got[mv], rel=1e-9) for mv in tp.SHOCK_MOVES)
     # no legs: no loss at any move (known, not unknown)
     assert bs.shock_pnls([], m, bs.horizon_clock(now, 1)) == ({mv: 0.0 for mv in tp.SHOCK_MOVES}, ())
@@ -225,5 +231,7 @@ def test_a_leg_without_a_beta_or_a_mark_makes_the_shock_unknown_395():
     bank = bs.BookLeg("BANKNIFTY", exp, "put", 50000, -30, 300.0, "mid")
     got, reasons = bs.shock_pnls([bank], m, bs.horizon_clock(now, 1))
     assert got is None and any("beta" in x for x in reasons)
-    got, reasons = bs.shock_pnls([bs.BookLeg("NIFTY", exp, "put", 23000, -65, None, None)], m, bs.horizon_clock(now, 1))
+    got, reasons = bs.shock_pnls(
+        [bs.BookLeg("NIFTY", exp, "put", 23000, -65, None, None)], m, bs.horizon_clock(now, 1)
+    )
     assert got is None and reasons

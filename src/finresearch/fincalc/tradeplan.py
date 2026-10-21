@@ -154,8 +154,10 @@ class Size:
     risk_per_multiple: float | None  # max loss + entry costs of one multiple; None = unlimited
     reason: str
     real_lots: int = 0  # real-money size (#350): 0 unless the matched spec is a candidate
-    binding: str | None = None  # #395: the open-book term that cut `suggested` below `multiple` (book|concurrent|shock)
-    real_reason: str = ""  # #395: the margin term on real money (why real_lots is below suggested, or unknown)
+    # #395: the open-book term that cut `suggested` below `multiple` (book | concurrent | shock), and the margin
+    # term's reason on real money (why real_lots is below suggested, or unknown)
+    binding: str | None = None
+    real_reason: str = ""
 
 
 # #358 (interim open-book cap; P4.2 adds the common-shock and margin terms). Registered values, stated in the issue
@@ -185,7 +187,10 @@ def shock_lots(book: Mapping[float, float | None] | None, one: Mapping[float, fl
     already beyond the limit at any move takes nothing new (not even a hedge). None when any value is unknown; inf
     when one lot loses at no move."""
     if book is None or one is None or any(book.get(m) is None or one.get(m) is None for m in moves):
-        return None, "the book's or this trade's loss under the common shock is unknown, so it has no known room"
+        return (
+            None,
+            "the book's or this trade's loss under the common shock is unknown, so it has no known room",
+        )
     worst = min(moves, key=lambda m: book[m])  # type: ignore[arg-type,return-value]
     if book[worst] <= -limit:  # type: ignore[operator]
         return 0, (f"the open book already loses ₹{-book[worst]:,.0f} at a {worst:+.0%} NIFTY move, at or beyond the "  # type: ignore[operator]
@@ -215,7 +220,10 @@ def margin_lots(margin_used: float | None, im_one: float | None, cash: float | N
     so n = floor((u_max × min(cash + collateral, cash ÷ c_min) − used) ÷ IM_1), floored at 0. `collateral` is after
     the broker's haircut. None when any input is unknown (never counted as 0)."""
     if margin_used is None or im_one is None or cash is None or collateral is None:
-        return None, "the margin in use, this trade's margin or the funds are unknown, so margin has no known room"
+        return (
+            None,
+            "the margin in use, this trade's margin or the funds are unknown, so margin has no known room",
+        )
     if cash <= 0:
         return 0, f"no cash: margin needs a cash share of at least {c_min:.0%}"
     cap = u_max * min(cash + collateral, cash / c_min)
@@ -319,7 +327,11 @@ def size(max_loss_one: float | None, costs_one: float, budget: float, proven: bo
     n, binding = m, None
     if book is not None:
         if book.open_risk is None:
-            n, binding, more = 0, "book", "the risk of your open positions is unknown, so the open book has no known room: 0"
+            n, binding, more = (
+                0,
+                "book",
+                "the risk of your open positions is unknown, so the open book has no known room: 0",
+            )
         elif book.max_concurrent is not None and book.open_same >= book.max_concurrent:
             n, binding, more = 0, "concurrent", (f"{book.open_same} of this recipe already open, the backtest's limit "
                                                  f"of {book.max_concurrent} at a time: 0")  # fmt: skip

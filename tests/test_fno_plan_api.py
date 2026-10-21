@@ -26,6 +26,20 @@ FAILED = {"key": "nifty_pcs_m", "name": "NIFTY put credit spread, monthly", "rol
                               "to": "2026-10-09"}}}  # fmt: skip
 
 
+def _funded_book():
+    """#395: nothing open (EMPTY_BOOK) and the real book's funds known: made-up, ample cash and nothing in use."""
+    from dataclasses import replace
+
+    from finresearch.signals import tradeplan as tpl
+
+    return replace(
+        tpl.EMPTY_BOOK, funds={"cash": 10_000_000.0, "margin_used": 0.0, "collateral": 0.0}, funds_notes=()
+    )
+
+
+FUNDED_BOOK = _funded_book()
+
+
 class NoSources:
     async def board_meetings(self, symbol):
         raise AssertionError("no network in tests")
@@ -483,7 +497,7 @@ def test_signal_card_and_trade_card_give_the_same_verdict_and_lots_355(client, m
     from finresearch.signals import tradeplan as tpl
 
     async def known(today):  # nothing open and both months known (#358 needs the real one for real money)
-        return tpl.EMPTY_BOOK
+        return FUNDED_BOOK  # #395: real money also needs the real book's funds known
 
     monkeypatch.setattr(tpl, "load_book", known)
     _iv_points(monkeypatch, high=True)  # the recipe's registered IV filter (≥ 30th percentile) passes
@@ -695,3 +709,25 @@ def test_plan_card_event_check_reads_the_stored_calendar_and_unknown_without_one
     assert [e["day"] for e in card["event_check"]["tier1"]] == ["2026-10-01"]
     assert card["action"] == "PAPER"  # informational: the check changes no verdict
     assert "RBI policy on 01-Oct-2026, before expiry: a gap can jump past any stop." in card["invalidation"]
+
+
+# --------------------------------------------------------------------------- #395: the shock and margin terms
+def test_a_candidate_with_unknown_real_funds_waits_with_its_paper_size_395(client, monkeypatch):
+    from finresearch.signals import tradeplan as tpl
+
+    async def known(today):  # nothing open, both months known, the real book's funds NOT read
+        return tpl.EMPTY_BOOK
+
+    monkeypatch.setattr(tpl, "load_book", known)
+    _iv_points(monkeypatch, high=True)
+    _profile("1000000")
+    _save_backtest([_ic_row(status="candidate", expectancy=3000.0, t_stat=2.6, ci_low=400.0, ci_high=5000.0)])
+    card = client.post("/api/fno/plan", json={"symbol": "NIFTY", "expiry": "2026-10-06", "legs": IC}).json()
+    s = _signal(client, monkeypatch, IC)
+    for action, failed in ((card["action"], card["failed"]), (s["action"], s["caveats"][0])):
+        assert action == "WAIT" and "Margin within its cap (real book)" in failed
+    assert card["size"]["real_lots"] == 0 and card["size"]["suggested"] >= 1 and s["sizing"]["real_lots"] == 0
+    ob = card["size"]["open_book"]
+    # the card's own legs were shocked (an iron condor loses at −10 %) and the empty book has no shock loss
+    assert ob["shock_book_worst"] == 0.0 and ob["shock_one_worst"] < 0 and ob["margin_known"] is False
+    assert ob["shock_budget"] == pytest.approx(60_000) and any("not read" in n for n in ob["margin_notes"])

@@ -119,7 +119,7 @@ def _exposure(e: bs.Exposure | None) -> dict[str, float] | None:
 
 async def _priced(legs: list[bs.BookLeg], now: datetime, sources: Any, rate: float) -> tuple[Any, ...]:
     """The legs with their marks from each (underlying, expiry)'s chain, and the Market of parity forwards; also the
-    chains and the forwards with their sources. Betas are not measured yet: only NIFTY's (1) is known."""
+    forwards with their sources. Betas are not measured yet: only NIFTY's (1) is known."""
     from finresearch.fnobook import service
 
     chains = {k: await service._chain(sources, *k) for k in sorted({(x.underlying, x.expiry) for x in legs})}
@@ -130,7 +130,7 @@ async def _priced(legs: list[bs.BookLeg], now: datetime, sources: Any, rate: flo
     nifty = next(
         (float(c.underlying) for (u, _), c in chains.items() if u == "NIFTY" and c and c.underlying), None
     )
-    return priced, bs.Market(now, rate, {k: f for k, (f, _) in fws.items()}, {}, nifty), chains, fws
+    return priced, bs.Market(now, rate, {k: f for k, (f, _) in fws.items()}, {}, nifty), fws
 
 
 async def book_shock(now: datetime, *, sources: Any = None, rate: float = RATE,
@@ -174,7 +174,7 @@ async def view(now: datetime, *, sources: Any = None, capital: float | None = No
         notes.append(why)
     unknown_book = real is None
     legs += real or []
-    priced, m, chains, fws = await _priced(legs, now, sources, rate)
+    priced, m, fws = await _priced(legs, now, sources, rate)
     states = bs.price_legs(priced, m)
     ex, g = bs.exposures(priced, m), bs.grid(priced, m, holidays=holidays)
     reps = bs.replays(priced, m, holidays)
