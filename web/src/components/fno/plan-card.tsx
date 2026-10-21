@@ -11,7 +11,7 @@ import { ReliabilityLine } from "@/components/signal";
 
 import { Fig, Parts } from "./fit";
 import { PlanActions } from "./plan-actions";
-import type { ExitLevel, PlanAction, TradePlan } from "./plan-types";
+import type { EventCheck, ExitLevel, PlanAction, TradePlan } from "./plan-types";
 
 const VERDICT: Record<PlanAction, string> = { ENTER: "bg-gain-soft text-gain ring-gain/30", PAPER: "bg-background-subtle text-foreground ring-border-strong", WAIT: "bg-warn-soft text-warn ring-warn/30", AVOID: "bg-loss-soft text-loss ring-loss/30" };
 const ICON = { ENTER: ShieldCheck, PAPER: NotebookPen, WAIT: ShieldQuestion, AVOID: ShieldAlert } as const;
@@ -174,10 +174,35 @@ export function PlanCard({ plan, compact = false }: { plan: TradePlan; compact?:
           {ex.rule_of_thumb && <p className="py-1 text-[11px] text-muted">{ex.rule_of_thumb}</p>}
         </div>
       )}
+      {plan.event_check && <EventCheckLine c={plan.event_check} />}
       {!compact && s && <PlanDetail plan={plan} />}
       <Evidence plan={plan} />
       {plan.legs.length > 0 && plan.expiry && <PlanActions plan={plan} />}
     </article>
+  );
+}
+
+/** #367: tier-1 events inside the holding window (informational: never changes the verdict); unknown is never "none" */
+function EventCheckLine({ c }: { c: EventCheck }) {
+  const tone: Tone = c.status === "none" ? "neutral" : "warn";
+  const label = c.status === "events" ? "tier-1 event before expiry" : c.status === "none" ? "no tier-1 event" : "events unknown";
+  return (
+    <div className="space-y-0.5 text-xs" data-testid="plan-event-check">
+      <p className="flex flex-wrap items-center gap-1.5">
+        <span className="text-muted">Events</span>
+        <InfoTip>Scheduled events that move the whole market (RBI policy decisions, the Union Budget, general-election results) between today and expiry, from the point-in-time event calendar. A gap on such a day can jump past any stop. Informational: it does not change the verdict.</InfoTip>
+        <Badge tone={tone}>{label}</Badge>
+      </p>
+      {c.tier1.map((e) => (
+        <p key={`${e.type}${e.day}`} className="text-[11px]">
+          <a className="underline decoration-dotted" href={e.source} target="_blank" rel="noreferrer">{e.title}</a> <span className="num">{day(e.india_day)}</span>
+        </p>
+      ))}
+      {c.status !== "events" && <p className="text-[11px] text-muted">{c.note}</p>}
+      {c.context.length > 0 && (
+        <p className="text-[11px] text-muted">Context (not tier-1): {c.context.map((e) => `${e.title} ${day(e.india_day)}`).join(" · ")}</p>
+      )}
+    </div>
   );
 }
 

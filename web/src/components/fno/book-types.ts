@@ -56,7 +56,7 @@ export type PaperBook = {
 
 export type EventStripData = {
   symbol: string; today: string;
-  items: { day: string; kind: "results" | "rbi" | "expiry"; title: string; source: string }[];
+  items: { day: string; kind: "results" | "rbi" | "macro" | "expiry"; title: string; source: string }[];
   results: { status: string; next?: string | null; note?: string | null; source?: string };
   rbi: { status: "ok" | "no_source"; note?: string; source?: string };
 };

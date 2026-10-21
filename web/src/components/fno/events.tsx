@@ -8,7 +8,7 @@ import { api, day } from "@/lib/api";
 
 import type { EventStripData } from "./book-types";
 
-const TONE = { results: "warn", rbi: "info", expiry: "neutral" } as const;
+const TONE = { results: "warn", rbi: "info", macro: "info", expiry: "neutral" } as const;
 
 /** Next results date (stocks), RBI policy dates (when the app has a source) and the next expiries (#308). */
 export function EventStrip({ symbol }: { symbol: string }) {

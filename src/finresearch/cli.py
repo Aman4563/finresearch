@@ -1496,16 +1496,22 @@ def fno_backtest_run(
     from finresearch.backtest import dbhistory, evaluate, specs
     from finresearch.backtest import store as bstore
     from finresearch.db import session_scope
+    from finresearch.inventory import provenance
 
     url = history_url or get_settings().database_url
     h = dbhistory.DbHistory(history_url)
+    stamp = provenance.code_stamp()  # #379: the engine code this run executes, hashed before it runs
     stock = dbhistory.top_stock(h, specs.IS_START, specs.IS_END)
     try:
         rep = evaluate.evaluate(h, stock=stock, source=make_url(url).database or "?", oos=not in_sample_only)
     except evaluate.PreregistrationError as e:
         console.print(f"[red]{e}[/red]")
         raise typer.Exit(2) from e
-    rep = json.loads(json.dumps(rep, default=str))
+    with session_scope(
+        history_url
+    ) as s:  # #379: the bhavcopy manifest the replay read (store.save keeps both in detail)
+        stamp |= provenance.data_hash(s, specs.IS_START, specs.IS_END if in_sample_only else None)
+    rep = json.loads(json.dumps({**rep, **stamp}, default=str))
     if json_out:
         json_out.write_text(json.dumps(rep, indent=1))
         console.print(f"report: {json_out}")
@@ -1836,6 +1842,44 @@ def dq_replay(
     with session_scope() as s:
         res = replay.replay(s, _date.fromisoformat(start), _date.fromisoformat(end))
     console.print_json(json.dumps(res, default=str))
+
+
+events_app = typer.Typer(no_args_is_help=True, help="The point-in-time event and macro calendar (#367)")
+app.add_typer(events_app, name="events")
+
+
+@events_app.command("seed")
+def events_seed() -> None:
+    """Load the hand-curated calendar (eventcal.seed: RBI MPC, Union Budgets, the 2024 election, FOMC) into the
+    database; idempotent. Database only, no network."""
+    from finresearch.db import session_scope
+    from finresearch.eventcal import seed, store
+
+    with session_scope() as s:
+        ne, nc = store.upsert(s, seed.EVENTS, seed.COVERAGE)
+    console.print(f"{ne} new events, {nc} new coverage rows ({len(seed.EVENTS)} events, {len(seed.COVERAGE)} "
+                  "coverage rows in the seed)")  # fmt: skip
+
+
+@events_app.command("check")
+def events_check(
+    start: str = typer.Option(..., "--from", help="Window start, YYYY-MM-DD (the plan day)"),
+    end: str = typer.Option(..., "--to", help="Window end, YYYY-MM-DD (the expiry)"),
+) -> None:
+    """The plan card's tier-1 event check for a window, as known at 15:30 IST on its first day. Read only."""
+    from datetime import date as _date
+
+    from finresearch.db import session_scope
+    from finresearch.eventcal import calendar as cal
+    from finresearch.eventcal import store
+    from finresearch.fincalc.dates import session_clock
+
+    a, b = _date.fromisoformat(start), _date.fromisoformat(end)
+    with session_scope() as s:
+        ev, cov = store.load(s)
+    console.print_json(
+        json.dumps(cal.window_check(ev, cov, start=a, end=b, as_of=session_clock(a)), default=str)
+    )
 
 
 span_app = typer.Typer(no_args_is_help=True, help="NSE SPAN risk parameters (scan ranges) and FOVOLT")

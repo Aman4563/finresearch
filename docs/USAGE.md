@@ -146,6 +146,8 @@ uv run finresearch index backfill --from 2013-03-01  # NSE's daily index closes,
 uv run finresearch audit index-eod                 # bhavcopy underlying vs index close; India VIX vs IV30 (no network)
 uv run finresearch dq run                          # data-quality checks now (the monitor runs them 21:00 and 08:00 IST, #368)
 uv run finresearch dq replay --from 2024-01-01 --to 2026-10-21  # content checks over stored history, read only
+uv run finresearch events seed                     # load the curated event calendar (RBI MPC, Budgets, 2024 election, FOMC; #367)
+uv run finresearch events check --from 2026-10-22 --to 2026-11-24  # the plan card's tier-1 event check for a window
 uv run finresearch fno span backfill --from 2008-01-01  # NSE SPAN scan ranges, one file a month (#370)
 uv run finresearch fno span margin-check           # margin estimate vs Groww's calculator: the P4.3 trigger
 uv run finresearch fno card-log --since 2026-10-21T18:00:00+05:30   # F&O card verdicts before/after a release (#360)

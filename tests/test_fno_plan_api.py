@@ -627,6 +627,7 @@ def test_ad_hoc_legs_matching_a_recipe_exactly_keep_its_registered_iv_filter_355
     row = _ic_row(status="candidate", expectancy=3000.0, t_stat=2.6, ci_low=400.0, ci_high=5000.0)
     x = tpl.Inputs(today=date(2026, 9, 29), closes=closes, iv_series=[30.0] * 120 + [5.0], capital=1_000_000,
                    max_loss_pct=2, brokerage=20, defined_risk_only=True, rate=0.065, strategies=[row],
+                   backtest_head={"created_at": "2026-09-20T12:00:00+05:30"},  # #379: a dated, fresh run
                    book=tpl.EMPTY_BOOK)  # fmt: skip
     card = tpl.build(chain(), 65, [fs.LegIn(y["right"], y["strike"], y["side"]) for y in IC], x)
     assert card["evidence"]["match"] == "exact" and card["evidence"]["level"] == "proven"
@@ -670,3 +671,27 @@ def test_a_loss_bounded_only_by_zero_is_avoid_at_any_capital_351(client, legs):
     assert card["action"] == "AVOID" and "Defined risk" in card["failed"]
     assert "Max loss within your F&O budget" not in card["failed"]  # the budget is not what stops it
     assert card["size"]["real_lots"] == 0
+
+
+# --------------------------------------------------------------------------- #367: the event check on every plan
+def test_plan_card_event_check_reads_the_stored_calendar_and_unknown_without_one(client):
+    from test_eventcal import FULL, _ev
+
+    from finresearch.db import session_scope
+    from finresearch.eventcal import store
+
+    _profile("1000000")
+    with session_scope() as s:
+        s.execute(text("TRUNCATE calendar_event, calendar_coverage"))
+    card = client.post("/api/fno/plan", json={"symbol": "NIFTY", "expiry": "2026-10-06", "legs": PCS}).json()
+    assert card["event_check"]["status"] == "unknown"  # an empty calendar is never "no events"
+    assert any("not covered by the event calendar" in x for x in card["invalidation"])
+    with session_scope() as s:
+        store.upsert(s, [_ev("rbi_mpc", date(2026, 10, 1), date(2026, 3, 1))], FULL)
+    card = client.post("/api/fno/plan", json={"symbol": "NIFTY", "expiry": "2026-10-06", "legs": PCS}).json()
+    with session_scope() as s:  # later tests expect an empty calendar
+        s.execute(text("TRUNCATE calendar_event, calendar_coverage"))
+    assert card["event_check"]["status"] == "events"
+    assert [e["day"] for e in card["event_check"]["tier1"]] == ["2026-10-01"]
+    assert card["action"] == "PAPER"  # informational: the check changes no verdict
+    assert "RBI policy on 01-Oct-2026, before expiry: a gap can jump past any stop." in card["invalidation"]

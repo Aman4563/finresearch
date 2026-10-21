@@ -48,6 +48,8 @@ test("fno: market context labels evidence; suggest shows AVOID on a failed hard 
   await expect(enter.getByTestId("plan-verdict")).toHaveText("NO PROVEN EDGE — paper only (0 real lots)");
   await expect(enter.getByTestId("plan-size")).toHaveText("3× these legs");
   await expect(enter.getByTestId("plan-real-lots")).toHaveText("0 lots");
+  await expect(enter.getByTestId("plan-event-check")).toContainText("tier-1 event before expiry"); // #367
+  await expect(enter.getByTestId("plan-event-check")).toContainText("RBI monetary policy decision");
   if (!phone(page)) {
     await enter.getByText(/^Details: sizing/).click();
     await expect(enter.getByTestId("plan-open-book")).toContainText("at risk of"); // #358: the open-book cap is shown
