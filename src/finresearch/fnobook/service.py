@@ -111,6 +111,29 @@ def stored_positions() -> dict[str, Any]:
     return {"status": "ok", "at": got.get("at"), "rows": list(got.get("rows") or [])}
 
 
+def stored_funds(now: datetime) -> tuple[dict[str, float] | None, str | None]:
+    """The real book's funds for P4.2's margin term (#395), from the last Groww sync: {"cash", "margin_used",
+    "collateral"} (Groww's clear_cash, net_margin_used and collateral_available, taken as after haircut [U]), or
+    (None, why): not connected, not synced today (IST; margin changes intraday, so an older figure is unknown), or a
+    figure missing. Local only: never sent to a model."""
+    from finresearch.db import session_scope
+    from finresearch.db.models import BrokerConnection
+    from finresearch.fincalc.dates import to_ist
+
+    with session_scope() as s:
+        row = s.get(BrokerConnection, "groww")
+        if row is None or not row.enabled:
+            return None, "Groww is not connected: the margin in use and the funds are unknown"
+        synced, funds = row.last_sync_at, dict((row.state or {}).get("funds") or {})
+    if synced is None or to_ist(synced).date() != to_ist(now).date():
+        return None, "Groww's funds were not synced today: the margin in use is unknown (sync Groww)"
+    got = {"cash": _f(funds.get("cash")), "margin_used": _f(funds.get("margin_used")),
+           "collateral": _f(funds.get("collateral_available"))}  # fmt: skip
+    if any(v is None for v in got.values()):
+        return None, "Groww's last sync did not give cash, margin used and collateral: the funds are unknown"
+    return got, None  # type: ignore[return-value]
+
+
 def _f(v: Any) -> float | None:
     try:
         return None if v is None else float(v)

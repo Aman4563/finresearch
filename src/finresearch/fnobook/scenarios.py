@@ -117,6 +117,45 @@ def _exposure(e: bs.Exposure | None) -> dict[str, float] | None:
                                                                           "theta_day")}  # fmt: skip
 
 
+async def _priced(legs: list[bs.BookLeg], now: datetime, sources: Any, rate: float) -> tuple[Any, ...]:
+    """The legs with their marks from each (underlying, expiry)'s chain, and the Market of parity forwards; also the
+    chains and the forwards with their sources. Betas are not measured yet: only NIFTY's (1) is known."""
+    from finresearch.fnobook import service
+
+    chains = {k: await service._chain(sources, *k) for k in sorted({(x.underlying, x.expiry) for x in legs})}
+    fws = {k: forward(c, now, rate) for k, c in chains.items()}
+    mk = {k: marks(c) for k, c in chains.items()}
+    priced = [bs.BookLeg(x.underlying, x.expiry, x.right, x.strike, x.qty, *(mk[(x.underlying, x.expiry)].get(
+        (x.right, x.strike)) or (None, None)), x.label) for x in legs]  # fmt: skip
+    nifty = next(
+        (float(c.underlying) for (u, _), c in chains.items() if u == "NIFTY" and c and c.underlying), None
+    )
+    return priced, bs.Market(now, rate, {k: f for k, (f, _) in fws.items()}, {}, nifty), chains, fws
+
+
+async def book_shock(now: datetime, *, sources: Any = None, rate: float = RATE,
+                     holidays: set[date] | None = None) -> tuple[dict[float, float] | None, list[str]]:  # fmt: skip
+    """P4.2 (#395): the open book's (paper and Groww) P&L at each registered NIFTY shock move one session from now,
+    every leg repriced on its chain as on the scenarios page. (None, why) when a leg, a forward, a beta or the Groww
+    positions are unknown. Reads chains (market-data caches only); writes no record."""
+    from finresearch.fnobook import service
+
+    sources = sources or service._sources()
+    if holidays is None:
+        from finresearch.adapters.groww_market import _holidays
+
+        holidays = _holidays()
+    legs = paper_legs()
+    real, why = await groww_legs(to_ist(now).date())
+    notes = [why] if why else []
+    if real is None:
+        return None, notes
+    legs += real
+    priced, m = (await _priced(legs, now, sources, rate))[:2] if legs else ([], bs.Market(now, rate, {}))
+    got, reasons = bs.shock_pnls(priced, m, bs.horizon_clock(now, 1, holidays))
+    return got, notes + list(reasons)
+
+
 async def view(now: datetime, *, sources: Any = None, capital: float | None = None,
                rate: float = RATE, holidays: set[date] | None = None) -> dict[str, Any]:  # fmt: skip
     """Everything GET /api/fno/scenarios shows. Reads chains (market-data caches only); writes no record. The Groww
@@ -135,15 +174,7 @@ async def view(now: datetime, *, sources: Any = None, capital: float | None = No
         notes.append(why)
     unknown_book = real is None
     legs += real or []
-    chains = {k: await service._chain(sources, *k) for k in sorted({(x.underlying, x.expiry) for x in legs})}
-    fws = {k: forward(c, now, rate) for k, c in chains.items()}
-    mk = {k: marks(c) for k, c in chains.items()}
-    priced = [bs.BookLeg(x.underlying, x.expiry, x.right, x.strike, x.qty, *(mk[(x.underlying, x.expiry)].get(
-        (x.right, x.strike)) or (None, None)), x.label) for x in legs]  # fmt: skip
-    nifty = next(
-        (float(c.underlying) for (u, _), c in chains.items() if u == "NIFTY" and c and c.underlying), None
-    )
-    m = bs.Market(now, rate, {k: f for k, (f, _) in fws.items()}, {}, nifty)
+    priced, m, chains, fws = await _priced(legs, now, sources, rate)
     states = bs.price_legs(priced, m)
     ex, g = bs.exposures(priced, m), bs.grid(priced, m, holidays=holidays)
     reps = bs.replays(priced, m, holidays)
