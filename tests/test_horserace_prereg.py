@@ -19,3 +19,12 @@ def test_prereg_md_quotes_the_hash_and_the_incumbent() -> None:
     assert prereg.HASH in text
     assert specs.INCUMBENT == "p_rw" and specs.INCUMBENT in specs.FORECASTERS
     assert specs.TESTS.tail_min_events == 100 and specs.SCORES.primary_binary == "brier"
+
+
+def test_addendum_hash_is_pinned_and_quoted() -> None:
+    from finresearch.horserace import addendum
+
+    assert addendum.addendum_hash() == prereg.ADDENDUM_HASH, "a changed addendum is a new ADDENDUM_VERSION"
+    assert addendum.registration()["base_hash"] == prereg.HASH
+    text = (ROOT / "evals/experiments/card_horse_race/ADDENDUM.md").read_text()
+    assert prereg.ADDENDUM_HASH in text and "post hoc" in text
