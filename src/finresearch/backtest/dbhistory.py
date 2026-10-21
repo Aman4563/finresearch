@@ -5,7 +5,8 @@ IV: fno_iv_eod.iv_30d of that day when the database has a derived series for the
 (a copy without the derived table), the 30-day IV is computed from that day's own prices with the same function the
 nightly derivation uses (fincalc.fno_history.day_summary), so it stays point-in-time either way. A day missing from
 an existing series is unknown (None), never filled from a neighbour.
-Lot size: the row's own lot (UDiFF, 2024 on), else fno_contract's lot changes on or before the day, else its single
+Lot size: on a vault day (2008-2021) the dated circular table only (backtest.lots, #365); later, the row's own lot
+(UDiFF, 2024 on), else fno_contract's lot changes on or before the day, else its single
 inferred lot (pre-2024: the gcd of open interest, fnohist.derive.infer_lot). Unknown stays None and the trade is
 skipped. The inferred lot is a property of the contract, which NSE publishes before trading starts, so reading it is
 not look-ahead in market data.
@@ -25,6 +26,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from finresearch.backtest import lots
 from finresearch.backtest.history import RIGHTS, Day, Quote, within
 from finresearch.db.models import FnoBhav, FnoContract, FnoIvEod
 from finresearch.fincalc import fno_history as fh
@@ -43,7 +45,7 @@ class DbHistory:
             span_ranges  # #370: margin from the stored NSE SPAN ranges (opt-in, see span_params)
         )
         self._has_iv: dict[str, bool] = {}
-        self._contracts: dict[str, dict[date, tuple[int | None, list[Any] | None]]] = {}
+        self._contracts: dict[str, dict[date, tuple[int | None, list[Any] | None, str | None]]] = {}
         self._row_lots: dict[tuple[str, date, date], int] = {}
 
     @contextmanager
@@ -145,22 +147,30 @@ class DbHistory:
         return [float(v) for _, v in rows]
 
     def lot(self, symbol: str, expiry: date, d: date) -> int | None:
+        if (
+            d <= VAULT_END
+        ):  # the vault: NSE's circulars only (backtest.lots), never the file or the gcd of OI (#365)
+            return lots.lot_for(symbol, expiry, d, self._contract(symbol, expiry)[2])
         if (symbol, expiry, d) in self._row_lots:
             return self._row_lots[(symbol, expiry, d)]
-        if symbol not in self._contracts:
-            with self._s() as s:
-                self._contracts[symbol] = {
-                    e: (lot, ch) for e, lot, ch in s.execute(select(FnoContract.expiry, FnoContract.lot_size,
-                                                                     FnoContract.lot_changes)
-                                                              .where(FnoContract.symbol == symbol))}  # fmt: skip
-        got = self._contracts[symbol].get(expiry)
-        if got is None:
+        got = self._contract(symbol, expiry)
+        if got == (None, None, None):
             return None
-        lot, changes = got
+        lot, changes, _kind = got
         if changes:
             live = [int(x) for day, x in changes if date.fromisoformat(day) <= d]
             return live[-1] if live else int(changes[0][1])
         return lot
+
+    def _contract(self, symbol: str, expiry: date) -> tuple[int | None, list[Any] | None, str | None]:
+        """fno_contract's (lot, lot changes, kind) for one contract; all None when it has no row."""
+        if symbol not in self._contracts:
+            with self._s() as s:
+                self._contracts[symbol] = {
+                    e: (lot, ch, k) for e, lot, ch, k in s.execute(
+                        select(FnoContract.expiry, FnoContract.lot_size, FnoContract.lot_changes, FnoContract.kind)
+                        .where(FnoContract.symbol == symbol))}  # fmt: skip
+        return self._contracts[symbol].get(expiry, (None, None, None))
 
 
 def _px(v: Any) -> float | None:

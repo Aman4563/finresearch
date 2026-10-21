@@ -119,3 +119,36 @@ def test_every_row_cites_an_nse_circular_and_weeklies_are_dated():
     assert lots.WEEKLIES_FROM["BANKNIFTY"].first_expiry == D(2016, 6, 2)  # FAOP/32329
     assert lots.WEEKLIES_FROM["NIFTY"].first_expiry == D(2019, 2, 14)  # FAOP/39894
     assert lots.WEEKLIES_FROM["FINNIFTY"].first_trade == D(2021, 1, 11)  # FAOP/46603
+
+
+def test_history_reads_vault_lots_from_the_table_never_the_oi_gcd(env, db_url, monkeypatch):
+    """DbHistory.lot: on a vault day the circular table decides, even against an inferred lot in fno_contract (the
+    gcd of OI can return a multiple); a day the table leaves unknown is None. Later days keep the stored lot."""
+    from sqlalchemy import text
+
+    from finresearch.backtest.dbhistory import DbHistory
+    from finresearch.db import session_scope
+    from finresearch.db.models import FnoContract
+    from finresearch.vault import guard
+
+    monkeypatch.setattr(
+        guard, "check_grant", lambda g, url: True
+    )  # the guard itself is tested in test_vault_guard
+    with session_scope(db_url) as s:
+        s.execute(text("TRUNCATE fno_contract"))
+        for sym, exp, kind, lot in [("NIFTY", D(2015, 11, 26), "monthly", 25), ("BANKNIFTY", D(2018, 11, 29), "monthly", 20),
+                                    ("BANKNIFTY", D(2020, 7, 9), "weekly", 25), ("NIFTY", D(2022, 1, 27), "monthly", 50)]:  # fmt: skip
+            s.add(FnoContract(symbol=sym, expiry=exp, underlying_kind="index", kind=kind, first_seen=exp,
+                              last_seen=exp, lot_size=lot, lot_source="inferred_oi_gcd"))  # fmt: skip
+    h = DbHistory(db_url)
+    try:
+        assert h.lot("NIFTY", D(2015, 11, 26), D(2015, 9, 15)) == 75  # FAOP/30449, not the gcd's 25
+        assert h.lot("BANKNIFTY", D(2018, 11, 29), D(2018, 10, 29)) is None  # ambiguous: no entry
+        assert h.lot("BANKNIFTY", D(2020, 7, 9), D(2020, 7, 1)) is None  # weekly kind read from fno_contract
+        assert h.lot("BANKNIFTY", D(2016, 7, 28), D(2016, 5, 2)) == 40  # no fno_contract row: the table alone
+        assert (
+            h.lot("NIFTY", D(2022, 1, 27), D(2022, 1, 3)) == 50
+        )  # after the vault: the stored lot, as before
+    finally:
+        with session_scope(db_url) as s:
+            s.execute(text("TRUNCATE fno_contract"))
