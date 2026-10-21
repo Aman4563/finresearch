@@ -1191,27 +1191,46 @@ def forecasts_horse_race(
         "forward", help="forward (primary), seen, tuesday or design (horserace/specs.py)"
     ),
     json_out: Path | None = typer.Option(None, "--json", help="Also write the full report here"),
+    source: str = typer.Option(
+        "ledger", help="ledger (the card ledger) or replay (2022-26 bhavcopy, addendum A1)"
+    ),
 ) -> None:
-    """The pre-registered card horse race (#377) on the card ledger's resolved cards: every forecaster's Brier, log
-    score, CRPS, tail coverage and DM against the incumbent, and the adoption gate. Read only; refuses if
-    horserace/specs.py changed after its registration (horserace/prereg.py)."""
+    """The pre-registered card horse race (#377) on the card ledger's resolved cards, or (--source replay) on one card
+    per stored session replayed from the bhavcopy: every forecaster's Brier, log score, CRPS, tail coverage and DM
+    against the incumbent, and the adoption gate. Read only; refuses if horserace/specs.py or the replay's addendum
+    changed after registration (horserace/prereg.py)."""
     import json
 
     from rich.table import Table
 
     from finresearch.db import session_scope
-    from finresearch.horserace import ledger_events, race
+    from finresearch.horserace import ledger_events, race, replay
 
+    if source not in ("ledger", "replay"):
+        console.print(f"unknown source {source!r}: ledger or replay")
+        raise typer.Exit(2)
     try:
-        race.require_registered()
+        race.require_registered() if source == "ledger" else replay.require_registered()
     except race.PreregistrationError as e:
         console.print(str(e))
         raise typer.Exit(1) from e
     if window not in race.specs.WINDOWS:
         console.print(f"unknown window {window!r}: one of {', '.join(race.specs.WINDOWS)}")
         raise typer.Exit(2)
-    with session_scope() as s:
-        rep = race.run(ledger_events.load(s), window)
+    if source == "replay":
+        from finresearch.backtest.dbhistory import DbHistory
+
+        try:
+            rep = replay.run_window(DbHistory(), window)
+        except ValueError as e:
+            console.print(str(e))
+            raise typer.Exit(2) from e
+        rp = rep["replay"]
+        console.print(f"replay ({rp['addendum']}): {rp['cards']} card(s) from {rp['first_origin']} to "
+                      f"{rp['last_origin']}; {rp['counts']}; skips {rp['skips']}")  # fmt: skip
+    else:
+        with session_scope() as s:
+            rep = race.run(ledger_events.load(s), window)
     console.print(f"window {window}: {rep['n_events']} event(s); {rep['window_role']}")
     t = Table("forecaster", "underlying", "n", "missing", "Brier", "log", "CRPS", "DM p (Holm)", "tails")
     for r in race.summary_rows(rep):

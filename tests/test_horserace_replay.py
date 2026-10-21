@@ -165,3 +165,31 @@ def test_unfinished_cards_are_counted_and_first_marks_one_per_cluster(made) -> N
     for e in events:  # the first is the earliest resolved session of its cluster
         if e.first:
             assert e.origin == min(x.origin for x in events if x.expiry == e.expiry)
+
+
+def test_run_window_scores_every_replay_forecaster(hist) -> None:
+    rep = replay.run_window(hist, "design", spec_list=[PCS])
+    assert rep["n_events"] > 0 and rep["window"] == "design"
+    assert {"p_rw", "p_rw20", "p_rw60", "p_rn_atm", "p_base", "p_gate"} <= set(rep["forecasters"])
+    assert rep["replay"]["counts"]["events"] >= rep["n_events"] and "skips" in rep["replay"]
+    assert rep["replay"]["addendum_hash"] == prereg.ADDENDUM_HASH
+    assert rep["adopted"] == []  # design never adopts
+
+
+def test_run_window_refuses_forward_and_unknown_windows(hist) -> None:
+    with pytest.raises(ValueError, match="card-ledger"):
+        replay.run_window(hist, "forward", spec_list=[PCS])
+    with pytest.raises(ValueError, match="unknown window"):
+        replay.run_window(hist, "vault", spec_list=[PCS])
+
+
+def test_cli_replay_source_on_an_empty_database(env) -> None:
+    from typer.testing import CliRunner
+
+    from finresearch.cli import app
+
+    r = CliRunner().invoke(app, ["forecasts", "horse-race", "--source", "replay", "--window", "seen"])
+    assert r.exit_code == 0, r.output
+    assert "0 event(s)" in r.output and "replay" in r.output
+    r = CliRunner().invoke(app, ["forecasts", "horse-race", "--source", "replay", "--window", "forward"])
+    assert r.exit_code == 2 and "card-ledger" in r.output

@@ -256,3 +256,26 @@ class LruHistory:
 
     def __getattr__(self, name: str) -> Any:  # sessions, latest, lot, iv_history, span_params
         return getattr(self.inner, name)
+
+
+# --------------------------------------------------------------------------- the race on a replay window
+def run_window(history: History, window: str, spec_list: Sequence[Spec] | None = None) -> dict[str, Any]:
+    """Cards from REPLAY.start (2022-04-01) to the window's end (else the latest stored session), resolved, then the
+    registered race on the window (trailing rates see every earlier resolved card). Read only."""
+    if window == "forward":
+        raise ValueError("the forward window is registered as card-ledger events: use the ledger source")
+    w = specs.WINDOWS.get(window)
+    if w is None:
+        raise ValueError(
+            f"unknown window {window!r}: the replay serves design, seen and tuesday (addendum A1.13)"
+        )
+    start = date.fromisoformat(specs.REPLAY.start)
+    end = date.fromisoformat(w["end"]) if w["end"] else date.max
+    cards, skips = make_cards(history, start, end, spec_list)
+    events, counts = resolve(cards, history)
+    rep = race.run(events, window)
+    rep["replay"] = {"addendum": addendum.ADDENDUM_VERSION, "addendum_hash": addendum.addendum_hash(),
+                     "cards": len(cards), "counts": dict(counts), "skips": dict(skips),
+                     "first_origin": min((c.origin for c in cards), default=None),
+                     "last_origin": max((c.origin for c in cards), default=None)}  # fmt: skip
+    return rep
