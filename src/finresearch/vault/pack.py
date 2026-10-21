@@ -3,6 +3,10 @@ any 2008-2021 file was loaded). vault.guard recomputes them from disk (vault.reg
 difference. Never edit these values: a changed or added study is a new pack, and once the vault has been read the
 guard refuses every read under another pack hash (PREREG.md §2.3)."""
 
+from finresearch.vault.registry import (
+    engine_hash,  # noqa: F401  (PREREG.md §2.7 names it vault.pack.engine_hash)
+)
+
 REGISTERED_ON = "2026-10-22"
 PACK_COMMIT = "f9d9584"  # the commit that registered the pack's files
 

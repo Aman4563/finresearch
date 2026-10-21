@@ -183,6 +183,11 @@ def test_history_refuses_vault_rows_without_a_live_grant(vault):
             DbHistory(vault + "?application_name=x", vault_grant=g).sessions(
                 "FAKEIDX", date(2008, 1, 1), date(2008, 12, 31)
             )
+        forged = guard.Grant(
+            g.study_id, g.study_hash, g.read_no, g.url, g.read_id + 1
+        )  # no log row behind it
+        with pytest.raises(VaultSealed):
+            DbHistory(vault, vault_grant=forged).sessions("FAKEIDX", date(2008, 1, 1), date(2008, 12, 31))
         h = DbHistory(vault, vault_grant=g)
         assert h.sessions("FAKEIDX", date(2008, 1, 1), date(2008, 12, 31)) == [
             date(2008, 10, 23),

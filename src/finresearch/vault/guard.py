@@ -26,6 +26,8 @@ from finresearch.vault.registry import STUDIES, Study, VaultSealed, engine_hash,
 
 __all__ = ["Grant", "VaultSealed", "check_grant", "reads", "reads_count", "vault_read", "verify"]
 
+_LIVE: dict[int, Grant] = {}  # grants issued by vault_read and not yet closed, by read-log id
+
 
 @dataclass
 class Grant:
@@ -123,14 +125,16 @@ def vault_read(study_id: str, study_hash_: str, *, purpose: str, vault_url: str 
     except SQLAlchemyError as e:
         raise VaultSealed(f"the vault read log could not be checked or written: {type(e).__name__}") from e
     try:
+        _LIVE[grant.read_id] = grant
         yield grant
     finally:
         grant.open = False
+        _LIVE.pop(grant.read_id, None)
 
 
 def check_grant(grant: Any, url: str | None) -> bool:
-    """True only for a live Grant issued for this database URL."""
-    return isinstance(grant, Grant) and grant.open and grant.url == url
+    """True only for a Grant that vault_read issued (not one built by hand), still open, for this database URL."""
+    return isinstance(grant, Grant) and _LIVE.get(grant.read_id) is grant and grant.open and grant.url == url
 
 
 def reads(log_url: str | None = None) -> list[dict[str, Any]]:
