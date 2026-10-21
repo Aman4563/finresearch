@@ -675,8 +675,10 @@ def build(chain, lot: int, legs_in: list[fs.LegIn], x: Inputs, *, spec: Any | No
         "reliability": card_reliability(None if rw is None else rw["pop"], x.scored),
         "probability": {"real_world": None if rw is None else rw["pop"], "real_world_window": (rw or {}).get("window"),
                         "risk_neutral": None if rn is None else rn["pop"],
+                        # #433: since #376 each logged card is a forecast in the ledger (fnobook.card_forecasts)
                         "note": "Model probabilities of a positive P&L after costs at expiry (lognormal; real prices "
-                                "have fat tails), not forecasts."},
+                                "have fat tails). The card is recorded in the forecast ledger and scored on its P&L "
+                                "under the card's exit plan; its reliability line says how many are scored yet."},
         "exits": {"source": exits.source, "rule_of_thumb": tp.RULE_OF_THUMB if exits.source == "rule of thumb" else None,
                   "stop": lv["stop"], "target": lv["target"], "entry_net": lv["entry_net"], "credit": lv["credit"],
                   "per_share_unit": lv["per_share_unit"], "notes": lv["notes"], "time": _time_exit(exits, expiry),
