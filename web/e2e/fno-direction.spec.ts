@@ -46,3 +46,12 @@ test("fno: the direction panel says no edge, NO TRADE, shows out-of-sample accur
   if (phone(page)) await expectNoHorizontalOverflow(page);
   api.expectClean(OPTIONAL);
 });
+
+test("fno: a failed data check marks the direction probabilities 'data unverified' (#368)", async ({ page }) => {
+  const api = await mockApi(page, { ...ROUTES, "GET /api/fno/direction/NIFTY": { ...STATE(5), data_health: { status: "unverified", failed: ["fno_bhav"] } } });
+  await page.goto("/fno");
+  const panel = page.locator("section").filter({ has: page.getByRole("heading", { name: "CALL or PUT?" }) });
+  await expect(panel.getByText("Data unverified")).toBeVisible();
+  await expect(panel.getByText(/A data check failed on fno_bhav/)).toBeVisible();
+  api.expectClean(OPTIONAL);
+});

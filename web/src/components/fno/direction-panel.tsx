@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
 import { Badge, Button, Callout, Card, ErrorNote, InfoTip, Segmented, Skeleton, type Tone, cx } from "@/components/ui";
+import { DataGateNote, type DataGate } from "@/components/brief/data-health";
 import { api } from "@/lib/api";
 
 import { CalibrationChart, type RelBin } from "./direction-calibration";
@@ -37,6 +38,8 @@ type DirectionResponse = {
   run: null | { id: number; created_at: string; verdict: string; source: string; registration_hash: string; windows: { oos_start: string };
     criteria: { min_oos_n: number; alpha: number; slope_low: number; slope_high: number }; cells: RunCell[] };
   live_accuracy: LiveRow[]; decision: Decision | null; decision_horizon: number; evidence_note: string;
+  /** #368: the data-quality gate of the datasets these probabilities read (absent from older APIs) */
+  data_health?: DataGate;
   registration: { hash: string; registered_on: string; matches_spec: boolean; matches_code?: boolean; hash_covers: string; doc: string };
 };
 
@@ -273,6 +276,7 @@ export function DirectionPanel({ symbol }: { symbol: string }) {
             options={data.horizons.map((x) => ({ value: String(x.h), label: `${x.h}d` }))} /></span>
         </div>
         {logMsg && <Callout tone="info">{logMsg}</Callout>}
+        <DataGateNote gate={data.data_health} />
         <Gauge hz={hz} />
         <Probabilities hz={hz} />
 
