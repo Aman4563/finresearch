@@ -5,6 +5,7 @@ rules are local rows; a paper trade can be closed but never deleted (every trade
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -15,6 +16,8 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select
 
 from finresearch.db import session_scope
+
+log = logging.getLogger(__name__)
 
 
 class PaperLegIn(BaseModel):
@@ -80,6 +83,35 @@ async def _groww_margin(sym: str, expiry: date, spec: list[tuple[str, float, str
                 "charges": got["brokerage_and_charges"], "total": got["total_requirement"]}  # fmt: skip
     return {"available": False, "reason": f"Groww's margin calculator did not answer ({why}): the approximate "
             "estimate is the fallback"}  # fmt: skip
+
+
+def _span_params(sym: str, day: date) -> dict[str, Any] | None:
+    """The day's NSE SPAN scan ranges for `sym` (fnohist.span.params_for, #370), or None (the labelled assumptions).
+    A database error never breaks the estimate."""
+    try:
+        from finresearch.fnohist import span
+
+        with session_scope() as s:
+            return span.params_for(s, sym, day)
+    except Exception:
+        log.warning("SPAN ranges not read; the assumed ranges are used", exc_info=True)
+        return None
+
+
+def _log_margin_check(sym: str, expiry: date, kind: str, spec: list[Any], est: Any, groww: dict[str, Any],
+                      span_day: date | None) -> None:  # fmt: skip
+    """One row per Groww answer: the estimate against Groww's figure, like for like (scan + exposure vs SPAN +
+    exposure; premium and charges left out), for the P4.3 trigger (MF16, #370). Never breaks the answer."""
+    try:
+        from finresearch.db.models import MarginCheck
+
+        g = float(groww["span"] or 0) + float(groww["exposure"] or 0)
+        with session_scope() as s:
+            s.add(MarginCheck(symbol=sym, expiry=expiry, kind=kind, legs=[list(x) for x in spec],
+                              approx_margin=round(est.scan_risk + est.exposure, 2), groww_margin=round(g, 2),
+                              span_day=span_day))  # fmt: skip
+    except Exception:
+        log.warning("margin check not logged", exc_info=True)
 
 
 class MarginIn(BaseModel):
@@ -251,11 +283,15 @@ def add_fno_book_routes(app: FastAPI, clock: Callable[[], datetime] | None = Non
             )
             legs.append(ma.MarginLeg(x.right, k, qty, price or 0.0, iv))
         kind = "index" if events.is_index(sym) else "stock"
+        span = _span_params(sym, today())
         try:
-            est = ma.estimate(legs, spot, t, service.RATE, kind)
+            est = ma.estimate(legs, spot, t, service.RATE, kind, params=span and span["params"],
+                              sources=span and span["sources"])  # fmt: skip
         except ValueError as e:
             raise HTTPException(422, str(e)) from e
         groww = await _groww_margin(sym, body.expiry, spec)
+        if groww["available"]:
+            _log_margin_check(sym, body.expiry, kind, spec, est, groww, span and span["day"])
         return {"symbol": sym, "expiry": body.expiry.isoformat(), "spot": spot, "lot_size": lot,
                 **ma.to_json(est, kind), "groww_calculator": groww,
                 "margin_source": "groww" if groww["available"] else "approximate"}  # fmt: skip
