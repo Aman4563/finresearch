@@ -126,6 +126,8 @@ uv run finresearch stock peers                     # build the stock peer datase
 uv run finresearch audit prices                    # cross-check price sources against the exchanges' own figures
 uv run finresearch index backfill --from 2013-03-01  # NSE's daily index closes, P/E, P/B, yield, India VIX (#366)
 uv run finresearch audit index-eod                 # bhavcopy underlying vs index close; India VIX vs IV30 (no network)
+uv run finresearch fno span backfill --from 2008-01-01  # NSE SPAN scan ranges, one file a month (#370)
+uv run finresearch fno span margin-check           # margin estimate vs Groww's calculator: the P4.3 trigger
 uv run finresearch fno card-log --since 2026-10-21T18:00:00+05:30   # F&O card verdicts before/after a release (#360)
 ```
 

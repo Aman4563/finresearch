@@ -138,3 +138,32 @@ def test_db_history_reads_span_ranges_only_when_asked(clean):
     assert DbHistory().span_params("NIFTY", date(2026, 10, 12)) is None
     got = DbHistory(span_ranges=True).span_params("NIFTY", date(2026, 10, 12))
     assert got["day"] == date(2026, 9, 15) and got["params"]["price_scan"] == pytest.approx(0.093)
+
+
+def test_cli_span_backfill_and_margin_check(clean, monkeypatch):
+    from decimal import Decimal
+
+    from typer.testing import CliRunner
+
+    from finresearch import cli
+    from finresearch.db import session_scope
+    from finresearch.db.models import MarginCheck
+    from finresearch.fnohist import span
+
+    seen: dict = {}
+
+    async def fake_backfill(start, end=None, **kw):
+        seen.update(start=start, end=end, **kw)
+        return {"planned": 0, "loaded": 0, "no_file": 0, "failed": {}}
+
+    monkeypatch.setattr(span, "backfill", fake_backfill)
+    r = CliRunner().invoke(cli.app, ["fno", "span", "backfill", "--from", "2008-01-01", "--to", "2008-12-31"])
+    assert r.exit_code == 0, r.output
+    assert seen["start"] == date(2008, 1, 1) and seen["monthly"] is True and seen["keep_raw"] is False
+    with session_scope() as s:
+        for a in (100, 104):
+            s.add(MarginCheck(symbol="NIFTY", expiry=date(2026, 10, 27), kind="index", legs=[],
+                              approx_margin=Decimal(a), groww_margin=Decimal(100)))  # fmt: skip
+    r = CliRunner().invoke(cli.app, ["fno", "span", "margin-check"])
+    assert r.exit_code == 0, r.output
+    assert '"n": 2' in r.output and '"build_full_engine": false' in r.output
