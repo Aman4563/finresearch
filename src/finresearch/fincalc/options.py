@@ -120,6 +120,28 @@ class StrategyProfile:
     max_loss: float | None  # None = unlimited (a negative number otherwise)
     net_premium: float  # paid (+) or received (-)
     curve: list[tuple[float, float]]
+    # #351: the payoff's slope above every strike (s_up) and below every strike (s_down), per point of the underlying
+    slope_up: float = 0.0
+    slope_down: float = 0.0
+
+    @property
+    def defined_risk(self) -> bool:
+        """Defined risk only when BOTH slopes are bounded (s_up ≥ 0 and s_down ≤ 0). A short put, a put ratio or a
+        long future + short call (s_down > 0) has a finite max loss only because a price cannot fall below zero."""
+        return self.slope_up >= 0 and self.slope_down <= 0
+
+    @property
+    def bounded_only_by_zero(self) -> bool:
+        """The loss is finite (s_up ≥ 0) but grows all the way down to a price of zero (s_down > 0)."""
+        return self.slope_up >= 0 and self.slope_down > 0
+
+
+def slopes(legs: Sequence[Leg]) -> tuple[float, float]:
+    """(s_up, s_down), #351: s_up = Σq(calls) + Σq(futures) above every strike; s_down = Σq(futures) − Σq(puts) below
+    every strike (a short put adds +|q|: the position loses as the price falls)."""
+    up = sum(x.qty for x in legs if x.right in ("call", "future"))
+    down = sum(x.qty for x in legs if x.right == "future") - sum(x.qty for x in legs if x.right == "put")
+    return up, down
 
 
 def profile(legs: Sequence[Leg], spot: float, width: float = 0.3, points: int = 241) -> StrategyProfile:
@@ -136,13 +158,14 @@ def profile(legs: Sequence[Leg], spot: float, width: float = 0.3, points: int = 
             breakevens.append(round(p0, 2))
         elif v0 * v1 < 0:
             breakevens.append(round(p0 + (p1 - p0) * (-v0) / (v1 - v0), 2))
-    # prices cannot fall below zero, so only the upside can be unbounded: its slope is the net call + future quantity
-    up_slope = sum(x.qty for x in legs if x.right in ("call", "future"))
+    # prices cannot fall below zero, so only the upside can be unbounded: its slope is the net call + future quantity.
+    # A finite max loss is not defined risk on its own: `defined_risk` also needs the downside slope bounded (#351).
+    up_slope, down_slope = slopes(legs)
     values = [v for _, v in curve] + [payoff(legs, 0.0)]
     max_profit = None if up_slope > 0 else max(values)
     max_loss = None if up_slope < 0 else min(values)
     net = sum(x.premium * x.qty for x in legs if x.right != "future")
-    return StrategyProfile(sorted(set(breakevens)), max_profit, max_loss, net, curve)
+    return StrategyProfile(sorted(set(breakevens)), max_profit, max_loss, net, curve, up_slope, down_slope)
 
 
 def probability_of_profit(legs: Sequence[Leg], spot: float, t_years: float, vol: float, rate: float = 0.0,
@@ -288,6 +311,40 @@ def outcome(legs: Sequence[Leg], spot: float, t_years: float, vol: float, drift:
                    e_exit / total, quant)  # fmt: skip
 
 
+def fill_price(mid: float, half_spread: float, qty: float, theta: float = 1.0) -> float:
+    """#356: the price a leg fills at, p = mid + sgn(q)·θ·(ask − bid)/2: a buy pays towards the ask, a sale receives
+    towards the bid. θ = 1 (the far touch) until fills are calibrated (roadmap P1.1)."""
+    return mid + (1.0 if qty > 0 else -1.0) * theta * half_spread
+
+
+def own_iv_ev(legs: Sequence[Leg], ivs: Sequence[float | None], spot: float, t_years: float, rate: float,
+              entry_cost: float = 0.0, stt_exercise: float = 0.0, other_cost: float = 0.0,
+              steps: int = 4000) -> tuple[float, float] | None:  # fmt: skip
+    """(EV, e^(−rT)·E_Q[STT on exercise]) under the risk-neutral measure with each option leg at its OWN implied
+    volatility (#356): EV_Q = Σ q_i·(e^(−rT)·E_Q,σi[intrinsic_i] − p_i) + Σ q_f·(S − e^(−rT)·F) − entry − STT − other.
+    With p_i the fills and σ_i the IVs of the mids, e^(−rT)·E_Q[intrinsic_i] = mid_i, so EV_Q = −(statutory costs +
+    half-spreads): the fair-price identity, with no pricing residual from the smile. Each expectation is integrated on
+    that leg's own lognormal grid. None when an option leg has no IV."""
+    df = math.exp(-rate * t_years)
+    ev = stt = 0.0
+    for x, iv in zip(legs, ivs, strict=True):
+        if x.right == "future":
+            ev += x.qty * (spot - df * x.strike)
+            continue
+        if not iv:
+            return None
+        grid = lognormal_grid(spot, t_years, iv, rate, steps)
+        total = sum(w for _, w in grid)
+        intr = sum(
+            w * (max(0.0, p - x.strike) if x.right == "call" else max(0.0, x.strike - p)) for p, w in grid
+        )
+        pv = df * intr / total
+        ev += x.qty * (pv - x.premium)
+        if x.qty > 0:
+            stt += stt_exercise * x.qty * pv
+    return ev - entry_cost - stt - other_cost, stt
+
+
 def pnl_distribution(legs: Sequence[Leg], spot: float, t_years: float, vol: float, drift: float,
                      entry_cost: float = 0.0, exit_cost: Callable[[float], float] | None = None,
                      steps: int = 400) -> list[tuple[float, float]]:  # fmt: skip
@@ -299,6 +356,30 @@ def pnl_distribution(legs: Sequence[Leg], spot: float, t_years: float, vol: floa
         (_gross(legs, p) - net - entry_cost - (exit_cost(p) if exit_cost else 0.0), w / total)
         for p, w in grid
     ]
+
+
+def payoff_ratio(dist: Sequence[tuple[float, float]]) -> float | None:
+    """E[P&L | win] / |E[P&L | loss]| over (P&L, probability) pairs (#357); None without a win or a loss."""
+    win = [(x, w) for x, w in dist if x > 0]
+    loss = [(x, w) for x, w in dist if x < 0]
+    pw, pl = sum(w for _, w in win), sum(w for _, w in loss)
+    if pw <= 0 or pl <= 0:
+        return None
+    return (sum(x * w for x, w in win) / pw) / abs(sum(x * w for x, w in loss) / pl)
+
+
+def weighted_quantiles(dist: Sequence[tuple[float, float]], qs: Sequence[float]) -> list[float]:
+    """The q-quantiles of a discrete (P&L, probability) distribution: the smallest value whose cumulative probability
+    reaches q (probabilities are normalised to their total)."""
+    pts = sorted(dist)
+    total = sum(w for _, w in pts)
+    out, acc, i = [], 0.0, 0
+    for q in sorted(qs):
+        while i < len(pts) - 1 and acc + pts[i][1] < q * total - 1e-12:
+            acc += pts[i][1]
+            i += 1
+        out.append(pts[i][0])
+    return out
 
 
 def risk_of_ruin(edge: float, units: float) -> float:
