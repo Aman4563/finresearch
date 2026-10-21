@@ -47,8 +47,12 @@ def _phase(now: datetime) -> str:
     return phase(now)
 
 
-def _t(expiry: date, today: date) -> float:
-    return max((expiry - today).days, 0.5) / 365
+def _t(expiry: date, now: datetime) -> float | None:
+    """T to the minute (#359: to 15:30 IST on the expiry day); None once expired (greeks and IVs unknown, never floored)."""
+    from finresearch.fincalc.dates import years_to_expiry
+
+    t = years_to_expiry(expiry, now)
+    return t if t > 0 else None
 
 
 async def _instruments(market: Any) -> Any:
@@ -119,7 +123,6 @@ async def positions_view(now: datetime, *, rate: float = RATE, market: Any = Non
     """The user's F&O positions grouped by underlying + expiry, priced live (see `fnobook.positions`)."""
     market, sources = market or _market(), sources or _sources()
     st = stored if stored is not None else stored_positions()
-    today = to_ist(now).date()
     inst = await _instruments(market) if st["rows"] else None
     legs: list[dict[str, Any]] = []
     for r in st["rows"]:
@@ -138,7 +141,7 @@ async def positions_view(now: datetime, *, rate: float = RATE, market: Any = Non
         groups.setdefault(key, []).append(x)
     out = []
     for key, gl in groups.items():
-        out.append(await _group(key, gl, ltp, today, rate, sources))
+        out.append(await _group(key, gl, ltp, now, rate, sources))
     return {"status": st["status"], "read_at": st["at"], "groups": out, "ltp_source": GROWW_LTP if ltp else None,
             "as_of": now.isoformat(),
             "notes": ["Read-only: positions come from Groww's positions API (segment FNO); nothing here can trade.",
@@ -148,14 +151,15 @@ async def positions_view(now: datetime, *, rate: float = RATE, market: Any = Non
                       "LTP), per position (× signed units)."]}  # fmt: skip
 
 
-async def _group(key: str, gl: list[dict[str, Any]], ltp: dict[str, float], today: date, rate: float,
+async def _group(key: str, gl: list[dict[str, Any]], ltp: dict[str, float], now: datetime, rate: float,
                  sources: Any) -> dict[str, Any]:  # fmt: skip
+    today = to_ist(now).date()
     first = gl[0]
     chain = None
     if first["contract_known"]:
         chain = await _chain(sources, first["underlying"], first["expiry"])
     spot = _f(getattr(chain, "underlying", None)) if chain is not None else None
-    t = _t(first["expiry"], today) if first["contract_known"] else None
+    t = _t(first["expiry"], now) if first["contract_known"] else None
     tot = {"delta": 0.0, "gamma": 0.0, "vega": 0.0, "theta": 0.0}
     greeks_known, pnl, pnl_known = True, 0.0, True
     for x in gl:
@@ -224,13 +228,20 @@ async def quotes(symbol: str, expiry: date, legs: list[tuple[str, float]], now: 
     return out, chain
 
 
-def paper_short_deltas(st: Any, chain: Any, today: date, rate: float = RATE) -> list[float | None]:
-    """|delta| inputs for the delta rule: one per short option leg, None when there is no spot or IV."""
+def paper_short_deltas(st: Any, chain: Any, today: date, rate: float = RATE,
+                       now: datetime | None = None) -> list[float | None]:  # fmt: skip
+    """|delta| inputs for the delta rule: one per short option leg, None when there is no spot or IV, or the contract
+    has expired. T from `now` (#359), else from 15:30 IST on `today`."""
+    from finresearch.fincalc.dates import session_clock
+
     spot = _f(getattr(chain, "underlying", None)) if chain is not None else None
-    t = _t(st.expiry, today)
+    t = _t(st.expiry, session_clock(today, now))
     out: list[float | None] = []
     for x in st.legs:
         if x.side != "sell" or x.right == "future":
+            continue
+        if t is None:
+            out.append(None)
             continue
         k = float(x.strike)
         iv = pos.chain_iv(chain, x.right, k) or pos.implied(x.right, _f(x.last_price), spot, k, t, rate)
@@ -358,7 +369,7 @@ async def market_pass(now: datetime, market: Any, sources: Any, rate: float = RA
                 snaps[key] = exits.Snapshot(label=f"Paper #{sid} {st.symbol} {st.expiry:%d-%b}", symbol=st.symbol,
                                             expiry=st.expiry, today=today, gross_pnl=_f(st.mtm_gross),
                                             base=abs(book.pp.net_premium(book.legs_of(st))) or None,
-                                            short_deltas=paper_short_deltas(st, chains.get(heads[sid]), today, rate),
+                                            short_deltas=paper_short_deltas(st, chains.get(heads[sid]), today, rate, now=now),
                                             path=f"/fno/paper#{sid}")  # fmt: skip
     if any(k.startswith("real:") for k in need):
         snaps |= await real_snapshots(now, market, sources, rate)

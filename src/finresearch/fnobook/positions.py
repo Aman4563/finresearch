@@ -77,7 +77,8 @@ def group_key(underlying: str, expiry: date) -> str:
 
 def max_loss(legs: list[dict[str, Any]], spot: float | None) -> tuple[float | None, str]:
     """The group's loss at expiry (₹, negative) when bounded, from fincalc.options.profile with the positions' average
-    prices as premiums. (None, reason) when unbounded or not computable."""
+    prices as premiums, with a note when it is bounded only by a price of zero (#351). (None, reason) when unbounded or
+    not computable."""
     if not legs or spot is None:
         return None, "no underlying price"
     if any(not x["direction_known"] or x.get("right") is None or (x["right"] != "future" and x.get("strike") is None)
@@ -88,7 +89,7 @@ def max_loss(legs: list[dict[str, Any]], spot: float | None) -> tuple[float | No
     ol = [o.Leg(x["right"], x["avg_price"] if x["right"] == "future" else x["strike"],
                 0.0 if x["right"] == "future" else x["avg_price"], int(x["qty"])) for x in legs]  # fmt: skip
     prof = o.profile(ol, spot)
-    return (
-        prof.max_loss,
-        "" if prof.max_loss is not None else "unbounded (a naked short call or a short future)",
-    )
+    if prof.max_loss is None:
+        return None, "unbounded (a naked short call or a short future)"
+    # #351: the same two-slope rule as the F&O gate: a loss that stops only at a price of zero is not defined risk
+    return prof.max_loss, "" if prof.defined_risk else "bounded only by a price of zero: not defined risk"

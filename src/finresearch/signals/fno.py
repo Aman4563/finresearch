@@ -4,10 +4,14 @@ The app has no edge-generating F&O signal, and the evidence says most individual
 option buying (SEBI, 20-Aug-2026 [P30]). So the "signal" asks four questions about a proposed strategy and says ENTER
 only when every answer is acceptable:
 
-1. Defined risk: the maximum loss is finite (no naked short options).
-2. Costs: the expected P&L after costs under the real-world model (σ = realised volatility, the less favourable of the
-   20- and 60-day windows; drift μ stated, default the risk-free rate, i.e. no directional view) is no worse
-   than the fair-price expectation, which is minus the costs (EV_rw ≥ −costs).
+1. Defined risk: both payoff slopes are bounded (#351): no naked short options, and a loss bounded only by a price
+   of zero (a short put, a put ratio, a long future + short call) is not defined risk.
+2. Liquidity (#356): Σ half the bid/ask spread of every leg is at most 10% of the premium at mids (live bid/ask only;
+   an estimated or unknown spread fails). The old "EV_rw ≥ −costs" gate is gone: the entry costs cancelled in it, so it
+   only tested "IV at the strikes above realised volatility". Model EVs are now cost-complete (fills at mid ± half the
+   spread, plus the exit half-spread) and informational: the risk-neutral EV with each leg at its own-strike IV is the
+   fair-price identity −(statutory costs + half-spreads), and the σ = realised-volatility EVs (20- and 60-day windows,
+   drift μ stated) are labelled scenarios, "model EV - not validated", that never change a verdict.
 3. Budget: the maximum loss is within the profile's F&O risk budget (fno_max_loss_pct of fno_capital_inr).
 4. IV context fits the strategy: premium sellers (net short vega) want IV high, buyers want it low. IV percentile
    of the 30-day IV derived from NSE's F&O bhavcopy history (#306, a year back as soon as it is backfilled), else of
@@ -51,7 +55,19 @@ RISK_NOTICE = {
     "date": "2026-08-20",
 }  # fmt: skip
 RATE = 0.065  # analyse()'s default only; the API and the signal pass FBIL's par yield at the expiry (signals.rates)
-EV_TOLERANCE = 1.0  # EV_rw must be ≥ −EV_TOLERANCE × costs
+# #356 (P0.6, roadmap MF1): model EV is shown, never a gate, until a physical model passes P2.2/P3.4. The only
+# EV-related gate is liquidity: Σ|q_i|·(ask_i − bid_i)/2 ≤ LIQUIDITY_MAX_SPREAD_SHARE × the premium at mids (the
+# credit received, or the debit paid). 10% is the issue's registered example [U: an assumption, not a measured cut-off]
+LIQUIDITY_MAX_SPREAD_SHARE = 0.10
+LIQUIDITY_CHECK = "Bid/ask spreads within 10% of the premium"
+EV_INFO = "EV after costs and spreads (model, not validated)"
+MODEL_EV_LABEL = "model EV - not validated"
+SCENARIO = "scenario, not a forecast"
+# why σ = realised volatility is a scenario: over 2022-26 the 30-day IV forecast next-month realised volatility better
+# than the 20-day realised volatility (MAE 3.40 vs 4.09 vol points; roadmap #356, institutional gap analysis §2)
+RV_SCENARIO_NOTE = ("σ = realised volatility is a scenario, not a forecast: in 2022-26 the 30-day IV forecast "
+                    "next-month realised volatility better than the 20-day realised volatility (MAE 3.40 vs 4.09 vol "
+                    "points). The lognormal's thin left tail understates crash losses (until roadmap P3.4).")  # fmt: skip
 DRAWDOWN_PCT, DRAWDOWN_REPEATS = 0.20, 20  # risk-of-ruin style check: P(20 % drawdown within 20 repeats)
 MIN_DTE_FOR_IV = 7  # the IV series reads the nearest expiry at least a week away
 
@@ -144,27 +160,77 @@ def preset_legs(chain, key: str) -> list[LegIn]:
 
 
 # --------------------------------------------------------------------------- the analysis (also used by the API)
+def _model_ev(ev_q: float | None, *rws: Any) -> dict[str, Any]:
+    """The EV range across the shown models (#356/#357): the own-strike-IV identity and the σ = RV scenarios."""
+    evs = [x for x in (ev_q, *(r.ev for r in rws if r is not None)) if x is not None]
+    return {"label": MODEL_EV_LABEL, "range": [_r(min(evs), 2), _r(max(evs), 2)] if evs else None,
+            "note": RV_SCENARIO_NOTE}  # fmt: skip
+
+
 def _r(x: float | None, d: int = 4) -> float | None:
     return None if x is None or (isinstance(x, float) and not math.isfinite(x)) else round(x, d)
+
+
+def _quote_of(chain, right: str, strike: float):
+    row = next((r for r in chain.rows if float(r.strike) == strike), None) if chain is not None else None
+    return (row.call if right == "call" else row.put) if row else None
+
+
+def _half_spread(q, fb, ref: float) -> tuple[float, float, str]:
+    """(mid, half-spread, source) for one option leg (#356): the live bid/ask of the chain, else of `fb` (NSE's chain
+    when the plan's has none, #324), else the registered slippage tiers (backtest.specs.Book: a fraction of the price
+    by contracts traded that day, the worst tier when the volume is unknown, at least ₹0.10) around `ref`."""
+    from finresearch.backtest.specs import Book
+
+    for x in (q, fb):
+        bid = float(x.bid) if x is not None and x.bid and x.bid > 0 else None
+        ask = float(x.ask) if x is not None and x.ask and x.ask > 0 else None
+        if bid is not None and ask is not None and ask >= bid:
+            return (bid + ask) / 2, (ask - bid) / 2, "bid/ask"
+    book = Book()
+    volume = float(q.volume) if q is not None and q.volume is not None else None
+    frac = next(
+        (f for n, f in book.slippage_tiers if volume is not None and volume >= n), book.slippage_tiers[-1][1]
+    )
+    return ref, max(book.min_slippage, frac * ref), "slippage tiers (no live bid/ask)"
 
 
 def analyse(chain, lot: int, legs_in: list[LegIn], *, today: date, closes: list[float], iv_series: list[float],
             capital: float, max_loss_pct: float, brokerage: float, rate: float = RATE, drift: float | None = None,
             overrides: dict[str, Any] | None = None, iv_source: dict[str, Any] | None = None,
-            iv_as_of: date | None = None) -> dict[str, Any]:  # fmt: skip
-    """Everything the page and the signal show for one strategy. Raises ValueError when a leg has no premium."""
+            iv_as_of: date | None = None, bidask_chain: Any = None, early_exit_p: float = 1.0,
+            now: datetime | None = None) -> dict[str, Any]:  # fmt: skip
+    """Everything the page and the signal show for one strategy. `now` = the clock T is measured from (#359: live
+    callers pass now_ist(); without it, 15:30 IST on `today`). Raises ValueError when a leg has no premium or the
+    contract has expired.
+    #356: model EVs are cost-complete (each leg at its fill, mid ± half the bid/ask, plus `early_exit_p` × the exit
+    half-spreads; `bidask_chain` = NSE's chain for legs the plan's chain quotes without bid/ask) and informational."""
+    from finresearch.fincalc import dates
+
     spot = float(chain.underlying)
     days = (chain.expiry - today).days
-    t = max(days, 0.5) / 365
+    t = dates.years_to_expiry(
+        chain.expiry, dates.session_clock(today, now)
+    )  # minutes to 15:30 IST, never floored
+    if t <= 0:
+        raise ValueError(f"the {chain.expiry:%d-%b-%Y} contract has expired (15:30 IST): nothing to price")
     mu = rate if drift is None else drift
     by_strike = {float(r.strike): r for r in chain.rows}
     legs, orders, notes = [], [], []
+    fills: list[o.Leg] = []  # the legs at their fills (#356): what the model EVs are computed on
+    own_ivs: list[float | None] = []  # each option leg's IV at its mid (the fair-price identity)
+    spread_rows: list[dict[str, Any]] = []
     vega = 0.0
     for x in legs_in:
         qty = x.lots * lot * (1 if x.side == "buy" else -1)
         if x.right == "future":
             legs.append(o.Leg("future", x.strike, 0.0, qty))
+            fills.append(o.Leg("future", x.strike, 0.0, qty))
+            own_ivs.append(None)
             orders.append(ch.TradeLeg("future", x.side, x.strike, abs(qty)))
+            # the chain quotes no future: its spread is unknown (never 0), so the liquidity check cannot pass
+            spread_rows.append({"right": "future", "strike": x.strike, "side": x.side, "mid": None, "half": None,
+                                "fill": None, "source": "unknown (no quote for a future)"})  # fmt: skip
             continue
         row = by_strike.get(x.strike)
         q = (row.call if x.right == "call" else row.put) if row else None
@@ -176,6 +242,12 @@ def analyse(chain, lot: int, legs_in: list[LegIn], *, today: date, closes: list[
         iv = float(q.iv) / 100 if q and q.iv else o.implied_vol(x.right, prem, spot, x.strike, t, rate)
         if iv:
             vega += o.greeks(x.right, spot, x.strike, t, rate, iv).vega * qty
+        mid, half, src = _half_spread(q, _quote_of(bidask_chain, x.right, x.strike), prem)
+        fill = o.fill_price(mid, half, qty)
+        fills.append(o.Leg(x.right, x.strike, fill, qty))
+        own_ivs.append(o.implied_vol(x.right, mid, spot, x.strike, t, rate))  # type: ignore[arg-type]
+        spread_rows.append({"right": x.right, "strike": x.strike, "side": x.side, "mid": round(mid, 4),
+                            "half": round(half, 4), "fill": round(fill, 4), "source": src})  # fmt: skip
     prof = o.profile(legs, spot)
 
     # volatilities: ATM IV (market), 20- and 60-day realised (history)
@@ -200,17 +272,49 @@ def analyse(chain, lot: int, legs_in: list[LegIn], *, today: date, closes: list[
         return stt_ex * sum(x.qty * (max(0.0, p - x.strike) if x.right == "call" else max(0.0, x.strike - p))
                             for x in longs)  # fmt: skip
 
-    def run(sigma: float | None, m: float) -> o.Outcome | None:
-        return o.outcome(legs, spot, t, sigma, m, rate, entry.total, exit_cost) if sigma else None
+    # #356: half-spreads paid on entry (at the fills) and, with probability early_exit_p, again on an early exit
+    opt_rows = [r for r in spread_rows if r["right"] != "future"]
+    halves_known = all(r["half"] is not None for r in spread_rows)
+    entry_spread = sum(
+        abs(x.qty) * r["half"] for x, r in zip(legs, spread_rows, strict=True) if r["half"] is not None
+    )
+    exit_spread = early_exit_p * entry_spread
+    spread_src = ("unknown (no quote for a future)" if not halves_known else
+                  "bid/ask" if all(r["source"] == "bid/ask" for r in opt_rows) else
+                  "slippage tiers (no live bid/ask)")  # fmt: skip
+    premium_mid = abs(
+        sum(-x.qty * r["mid"] for x, r in zip(legs, spread_rows, strict=True) if r["mid"] is not None)
+    )
 
-    rn = run(iv, rate)
+    def run(sigma: float | None, m: float) -> o.Outcome | None:
+        return (
+            o.outcome(fills, spot, t, sigma, m, rate, entry.total + exit_spread, exit_cost) if sigma else None
+        )
+
+    rn = run(iv, rate)  # its PoP only (one ATM-IV lognormal); its EV is the own-strike-IV identity below
+    q_ev = o.own_iv_ev(fills, own_ivs, spot, t, rate, entry.total, stt_ex, exit_spread)
     rw20 = run(rv20, mu)
     rw60 = run(rv60, mu)
     # the headline real-world case is the less favourable of the two realised-volatility windows (lower EV):
     # a low 20-day volatility flatters premium sellers, a high one flatters buyers
     rw = min((x for x in (rw20, rw60) if x), key=lambda x: x.ev, default=None)
     rw_window = None if rw is None else ("20-day" if rw is rw20 else "60-day")
-    costs_total = entry.total + (rn.exit_cost if rn else 0.0)
+    # #357: a 20-dot quantile plot of the P&L at expiry (after costs and spreads) and the payoff ratio, under the
+    # headline real-world scenario (else the risk-neutral ATM-IV model), labelled with the model it came from
+    basis = rw or rn
+    dots = None
+    if basis is not None:
+        dist = o.pnl_distribution(
+            fills, spot, t, basis.vol, basis.drift, entry.total + exit_spread, exit_cost, 2000
+        )
+        pr = o.payoff_ratio(dist)
+        dots = {"model": f"real-world {rw_window} scenario" if rw else "risk-neutral (ATM IV)",
+                "values": [round(v, 2) for v in o.weighted_quantiles(dist, [(i + 0.5) / 20 for i in range(20)])],
+                "payoff_ratio": None if pr is None else round(pr, 3),
+                "note": "Each dot is 5% of outcomes: the P&L at expiry after costs and spreads in a lognormal "
+                        f"{SCENARIO} (thin tails: real crashes are larger)."}  # fmt: skip
+    stt_q = q_ev[1] if q_ev else (rn.exit_cost if rn else 0.0)  # e^(−rT)·E_Q[STT on exercise], own-strike IVs
+    costs_total = entry.total + stt_q
     move = o.expected_move(spot, iv, t) if iv else None
     check = o.max_loss_check(prof.max_loss, capital, max_loss_pct)
     stats = vol.iv_stats(iv_series)
@@ -233,10 +337,25 @@ def analyse(chain, lot: int, legs_in: list[LegIn], *, today: date, closes: list[
         "t_years": _r(t, 6),
         "rate": rate,
         "drift": mu,
-        "legs": [{"right": x.right, "strike": x.strike, "premium": x.premium, "qty": x.qty} for x in legs],
+        "legs": [
+            {
+                "right": x.right,
+                "strike": x.strike,
+                "premium": x.premium,
+                "qty": x.qty,
+                "fill": r["fill"],
+                "spread_source": r["source"],
+            }
+            for x, r in zip(legs, spread_rows, strict=True)
+        ],
         "breakevens": prof.breakevens,
         "max_profit": _r(prof.max_profit, 2),
         "max_loss": _r(prof.max_loss, 2),
+        # #351: defined risk needs both payoff slopes bounded; a loss bounded only by a price of zero is not
+        "defined_risk": prof.defined_risk,
+        "risk_shape": (
+            "defined" if prof.defined_risk else "zero_bounded" if prof.bounded_only_by_zero else "unlimited"
+        ),
         "net_premium": _r(prof.net_premium, 2),
         "net_vega": _r(vega, 2),
         "vols": {
@@ -249,8 +368,22 @@ def analyse(chain, lot: int, legs_in: list[LegIn], *, today: date, closes: list[
         "costs": {
             "entry": entry.to_json(),
             "square_off_at_same_prices": square_off.to_json(),
-            "expected_exercise_stt": _r(rn.exit_cost if rn else None, 2),
+            "expected_exercise_stt": _r(stt_q if (q_ev or rn) else None, 2),
             "total_to_expiry": _r(costs_total, 2),
+            # #356: the bid/ask half-spreads, paid on entry at the fills and, with p_early_exit, on the way out
+            "half_spreads": {
+                "entry": _r(entry_spread, 2) if halves_known else None,
+                "exit_expected": _r(exit_spread, 2) if halves_known else None,
+                "p_early_exit": early_exit_p,
+                "theta": 1.0,
+                "source": spread_src,
+                "premium_at_mid": _r(premium_mid, 2),
+                "share_of_premium": _r(entry_spread / premium_mid, 4)
+                if spread_src == "bid/ask" and premium_mid > 0
+                else None,
+                "limit_share": LIQUIDITY_MAX_SPREAD_SHARE,
+            },
+            "total_with_spreads": _r(costs_total + entry_spread + exit_spread, 2) if halves_known else None,
             "brokerage_per_order": brokerage,
             "note": (
                 "Entry charges at the chain's last prices; holding to expiry adds STT on long options "
@@ -259,20 +392,28 @@ def analyse(chain, lot: int, legs_in: list[LegIn], *, today: date, closes: list[
                 "computed offline; futures settlement charges are not modelled."
             ),
         },
-        "risk_neutral": oc(rn),
-        "real_world": None if rw is None else {**oc(rw), "window": rw_window},
-        "real_world_20d": oc(rw20),
-        "real_world_60d": oc(rw60),
+        # #356: the risk-neutral EV prices each leg at its own-strike IV (EV_Q = −(statutory costs + half-spreads));
+        # its PoP is the one ATM-IV lognormal's. Real-world cases are σ = RV scenarios, not forecasts: no EV gates
+        "risk_neutral": None
+        if rn is None
+        else {
+            **oc(rn),
+            "ev": _r(q_ev[0], 2) if q_ev else None,
+            "ev_gross": _r(q_ev[0] + entry.total + q_ev[1] + exit_spread, 2) if q_ev else None,
+            "ev_method": "each leg at its own-strike IV of the mid: the fair-price identity, −(statutory costs + "
+            "half-spreads)",
+            "pop_method": "one lognormal at the ATM IV",
+        },
+        "real_world": None if rw is None else {**oc(rw), "window": rw_window, "kind": SCENARIO},
+        "real_world_20d": None if rw20 is None else {**oc(rw20), "kind": SCENARIO},
+        "real_world_60d": None if rw60 is None else {**oc(rw60), "kind": SCENARIO},
+        "model_ev": _model_ev(q_ev[0] if q_ev else None, rw20, rw60),
+        "pnl_dots": dots,
         "fair_price_note": (
-            "At fair prices the expected P&L of any strategy is minus its costs: under the "
-            "risk-neutral model EV ≈ −costs by construction. A real-world EV above that needs the "
-            "market's IV to be wrong in your favour."
-            + (
-                f" Here the risk-neutral EV before costs is ₹{_inr(rn.ev_gross)}, not 0, because the chain's last "
-                "prices differ from one-σ (ATM IV) model prices: skew across strikes and stale last trades."
-                if rn and abs(rn.ev_gross) > max(1.0, 0.01 * abs(prof.net_premium))
-                else ""
-            )
+            "At fair prices the expected P&L of any strategy is minus its costs: with each leg at its own-strike "
+            "IV, the risk-neutral EV is exactly −(statutory costs + half-spreads). A real-world EV above that "
+            "needs the market's IV to be wrong in your favour; the σ = realised-volatility cases are scenarios, "
+            "not forecasts, and no EV changes the verdict (model EV - not validated)."
         ),
         "expected_move": None
         if move is None
@@ -320,19 +461,25 @@ def assess(
         if not ok:
             failed.append(name)
 
-    unlimited = a["max_loss"] is None
-    gate("Defined risk", not unlimited or not defined_risk_only, "unlimited loss" if unlimited else f"max loss ₹{_inr(-a['max_loss'])}",
-         "Only strategies whose worst case is known in advance pass (no naked short options): your profile allows "
-         "defined-risk strategies only." if defined_risk_only else "Your profile allows undefined-risk strategies.",
-         "fincalc:options.profile")  # fmt: skip
-    rw, costs = a["real_world"], a["costs"]["total_to_expiry"] or 0.0
-    gate("EV after costs (real-world)", None if rw is None else rw["ev"] >= -EV_TOLERANCE * costs,
-         None if rw is None else rw["ev"],
-         f"Expected P&L after ₹{_inr(costs)} of costs if the price moves with its realised volatility "
-        f"({(rw or {}).get('window', 'n/a')}, the less favourable of 20 and 60 days) "
-         f"(drift {a['drift'] * 100:.1f}% a year). It passes when it is no worse than the fair-price expectation, "
-         "minus the costs." + ("" if rw else " No realised volatility: unknown, so it fails."),
-         "fincalc:options.outcome", "₹")  # fmt: skip
+    # #351: both payoff slopes must be bounded; a missing classification counts as undefined (unknown is never safe)
+    defined = a.get("defined_risk") is True and a["max_loss"] is not None
+    value = ("unlimited loss" if a["max_loss"] is None else
+             f"max loss ₹{_inr(-a['max_loss'])}" if defined else
+             f"bounded only by a price of zero: ₹{_inr(-a['max_loss'])}")  # fmt: skip
+    gate("Defined risk", defined or not defined_risk_only, value,
+         "Only strategies whose worst case is capped by a bought option pass (no naked short options, no put ratio, "
+         "no short call against a long future): a loss that stops only at a price of zero is not defined risk. Your "
+         "profile allows defined-risk strategies only." if defined_risk_only else
+         "Your profile allows undefined-risk strategies.", "fincalc:options.profile")  # fmt: skip
+    # #356: spreads bind through liquidity (live bid/ask only: an estimate or an unknown spread never passes)
+    hs = a["costs"]["half_spreads"]
+    share = hs["share_of_premium"]
+    gate(LIQUIDITY_CHECK, share is not None and share <= LIQUIDITY_MAX_SPREAD_SHARE,
+         None if share is None else round(share * 100, 1),
+         f"Σ half the bid/ask spread of every leg (₹{_inr(hs['entry'] or 0)}) against the premium at mids "
+         f"(₹{_inr(hs['premium_at_mid'] or 0)}): crossing wide spreads costs more than the trade can earn. At most "
+         f"{LIQUIDITY_MAX_SPREAD_SHARE:.0%} (an assumption)." + ("" if share is not None else
+         f" Spreads are {hs['source']}: unknown, so it fails."), "NSE option chain bid/ask", "% of premium")  # fmt: skip
     cc = a["capital_check"]
     gate(
         "Max loss within your F&O budget",
@@ -368,15 +515,21 @@ def assess(
          f"{'Net short volatility (selling premium) wants IV high' if seller else 'Net long volatility (buying options) wants IV low'}; "
          f"measured by {how}. A high-IV premium sale is an uncertain variance-risk-premium harvest with tail risk, "
          "not an edge.", "fincalc:volatility", unit)  # fmt: skip
+    # #356 (MF1): the model EV is shown, labelled, and scores nothing: it cannot change a verdict
+    rw, rn = a["real_world"], a["risk_neutral"]
+    f.append(Factor(EV_INFO, None if rw is None else rw["ev"], 0.0,
+                    f"Real-world {SCENARIO}: the expected P&L after statutory costs and half-spreads if the price moves "
+                    f"with its realised volatility ({(rw or {}).get('window', 'n/a')}, the less favourable of 20 and 60 "
+                    f"days; drift {a['drift'] * 100:.1f}% a year). At fair prices it would be "
+                    f"₹{_inr(rn['ev']) if rn and rn['ev'] is not None else 'unknown'} (own-strike IVs). "
+                    f"{MODEL_EV_LABEL}: it is not a gate. {RV_SCENARIO_NOTE}", "fincalc:options.outcome", "₹"))  # fmt: skip
     if a["days_to_expiry"] <= 0:
         gate("Not a same-day expiry", False, "expires today",
              "SEBI found 59% of index-option turnover in contracts expiring the same day, where most traders lose.",
              SEBI_STUDY_URL)  # fmt: skip
     hard = {"Defined risk", "Max loss within your F&O budget", "Not a same-day expiry"}
-    if held:
-        action = "EXIT" if hard & set(failed) or "EV after costs (real-world)" in failed else "HOLD"
-    else:
-        action = "WAIT" if failed else "ENTER"
+    # #356: a model EV no longer exits a held position; only a hard check does
+    action = ("EXIT" if hard & set(failed) else "HOLD") if held else ("WAIT" if failed else "ENTER")
     return action, f, failed
 
 
@@ -435,6 +588,9 @@ def caveats(a: dict[str, Any], notice: dict[str, str]) -> list[str]:
                  f"drawdown of your F&O capital at {dd['probability'] * 100:.0f}%.")  # fmt: skip
     if a["max_loss"] is None:
         c.append("Unlimited loss: a naked short option can lose far more than the premium received.")
+    elif a.get("risk_shape") == "zero_bounded":
+        c.append(f"Not defined risk: the loss is bounded only by a price of zero (₹{_inr(-a['max_loss'])}); nothing "
+                 "bought caps it on the way down.")  # fmt: skip
     c.append("Margin (SPAN + exposure) is not computed here; check your broker's margin calculator.")
     return c
 
@@ -544,7 +700,8 @@ async def fno_signal(instrument: str, ctx: dict[str, Any]) -> Signal:
     from finresearch.fincalc.dates import now_ist
 
     sym = instrument.upper()
-    today = now_ist().date()
+    now = now_ist()
+    today = now.date()
     notice = risk_notice()
     async with _client() as f:
         if ctx.get("expiry"):
@@ -561,9 +718,10 @@ async def fno_signal(instrument: str, ctx: dict[str, Any]) -> Signal:
         except Exception:
             lot = None
         closes = await underlying_closes(f, sym, today)
-    method = ("rule-based risk/cost/fit gate v1: defined risk, EV after costs under realised volatility, max loss "
-              "within the profile's F&O budget, IV context; lognormal model (roadmap §D.5). Return range = real-world P&L "
-              "quantiles after costs as a fraction of the capital at risk (the maximum loss)")  # fmt: skip
+    method = ("rule-based risk/cost/fit gate v2: defined risk, bid/ask spreads within 10% of the premium, max loss "
+              "within the profile's F&O budget, IV context; model EV shown, not a gate (#356); lognormal model (roadmap "
+              "§D.5). Return range = real-world P&L quantiles after costs and spreads as a fraction of the capital at "
+              "risk (the maximum loss)")  # fmt: skip
     validation = Validation("rule_based", 0, {}, "Not validated: no edge is claimed, so there is nothing to backtest "
                             "yet. The checks are fixed rules drawn from the roadmap's evidence.")  # fmt: skip
 
@@ -588,10 +746,15 @@ async def fno_signal(instrument: str, ctx: dict[str, Any]) -> Signal:
                          "budget. Set it (and the % limit) on the profile page.")  # fmt: skip
     series, src = iv_series_info(sym)
     drift = float(ctx["drift"]) if ctx.get("drift") not in (None, "") else None
+    from finresearch.fincalc.dates import years_to_expiry
     from finresearch.signals.rates import risk_free
 
-    rinfo = await risk_free(max((expiry - today).days, 0.5) / 365)  # FBIL par yield at the expiry (#244)
-    a = analyse(chain, lot, legs, today=today, closes=closes, iv_series=[v for _, v, _ in series], capital=capital,
+    if years_to_expiry(expiry, now) <= 0:
+        return no_signal(f"the {expiry:%d-%b-%Y} contract expired at 15:30 IST today: nothing to assess")
+    rinfo = await risk_free(
+        years_to_expiry(expiry, now)
+    )  # FBIL par yield at the expiry (#244); T to the minute (#359)
+    a = analyse(chain, lot, legs, today=today, now=now, closes=closes, iv_series=[v for _, v, _ in series], capital=capital,
                 max_loss_pct=float(profile.fno_max_loss_pct), brokerage=float(profile.fno_brokerage_per_order_inr),
                 rate=rinfo["rate"], drift=drift, iv_source=src,
                 iv_as_of=series[-1][0] if series else None)  # fmt: skip
@@ -646,6 +809,7 @@ async def fno_signal(instrument: str, ctx: dict[str, Any]) -> Signal:
         horizon=f"until expiry ({expiry:%d-%b-%Y}, {a['days_to_expiry']} days)", method=method, validation=validation,
         probability=rw["pop"] if rw else None,
         probability_interval=(min(pops), max(pops)) if len(pops) > 1 else None,
+        probability_interval_kind="model_span",  # #357: IV vs 20/60-day realised volatility, not a confidence interval
         expected_return=exp_ret,
         factors=factors, caveats=caveat, sizing=sizing,
         sources=[notice["url"], "https://www.nseindia.com/option-chain", ch.BUDGET_2026, ch.ZERODHA_CHARGES],

@@ -32,6 +32,10 @@ test("fno: the direction panel says no edge, NO TRADE, shows out-of-sample accur
   await expect(panel.getByText("no edge: showing market-implied probabilities")).toBeVisible();
   await expect(panel.getByText("NO TRADE: no measured edge")).toBeVisible();
   await expect(panel.getByText("Long put (ATM)")).toBeVisible();
+  // #356 (c): a positive EV from the market's own probabilities is a pricing residual, never coloured as a gain
+  const residual = panel.getByRole("row").filter({ hasText: "Bull put credit spread" });
+  await expect(residual.getByRole("cell", { name: "₹212", exact: true }).first()).not.toHaveClass(/text-gain/);
+  await expect(residual.getByText("incl. pricing residual ₹332 (not edge)")).toBeVisible();
   await expect(panel.getByRole("img", { name: /Calibration: Logistic and Market-implied/ })).toBeVisible();
   await expect(panel.getByText(/Walk-forward from 2024-07-01/)).toBeVisible();
   // #354 h: a live hit rate carries its Wilson 95% CI; the registration "matches spec", not "code"
