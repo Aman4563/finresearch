@@ -13,6 +13,7 @@ ollama pull qwen3.5:9b && ollama pull qwen3.5:4b && ollama pull qwen3-embedding:
 cp .env.example .env        # optional overrides; never commit .env
 uv run finresearch bridge health          # Claude login, local models, memory, limits
 uv run finresearch bridge limits          # how much of the Claude plan's 5-hour and 7-day windows is used
+uv run finresearch bridge usage --runs 10 # which agent roles spend the plan: cost share, tokens, turns per role
 ```
 
 ## Running the app
