@@ -627,6 +627,7 @@ def test_ad_hoc_legs_matching_a_recipe_exactly_keep_its_registered_iv_filter_355
     row = _ic_row(status="candidate", expectancy=3000.0, t_stat=2.6, ci_low=400.0, ci_high=5000.0)
     x = tpl.Inputs(today=date(2026, 9, 29), closes=closes, iv_series=[30.0] * 120 + [5.0], capital=1_000_000,
                    max_loss_pct=2, brokerage=20, defined_risk_only=True, rate=0.065, strategies=[row],
+                   backtest_head={"created_at": "2026-09-20T12:00:00+05:30"},  # #379: a dated, fresh run
                    book=tpl.EMPTY_BOOK)  # fmt: skip
     card = tpl.build(chain(), 65, [fs.LegIn(y["right"], y["strike"], y["side"]) for y in IC], x)
     assert card["evidence"]["match"] == "exact" and card["evidence"]["level"] == "proven"
