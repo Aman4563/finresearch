@@ -36,7 +36,7 @@ def _fake_sources(monkeypatch):
     monkeypatch.setattr(compute, "SOURCES", compute.Sources(
         stock_quote=boom, stock_inputs=boom, signal=boom, fund_scheme=boom, fund_navs=boom, fund_analyse=boom, fund_ranks=boom,
         bonds=boom, bond_freq=boom, fno_expiries=boom, fno_chain=boom, fno_lot=boom,
-        iv_series=lambda s: [], today=lambda: TODAY))  # fmt: skip
+        iv_rank_input=lambda s: ([], {"label": "none"}), today=lambda: TODAY))  # fmt: skip
     from finresearch.alerts import portfolio
 
     monkeypatch.setattr(portfolio, "SOURCE", None)
@@ -307,7 +307,9 @@ def test_fno_strategy_pnl_vs_max_loss_golden(monkeypatch):
 
 
 def test_fno_iv_expiry_and_spot(monkeypatch):
-    series = [(date(2026, 1, 1) + timedelta(days=i), 10.0 + i * 0.1, None) for i in range(59)]
+    # #354 b: the percentile reads the last 252 sessions and needs an IV on 80 % of them (202), not 60 recorded days
+    series = [(date(2026, 1, 1) + timedelta(days=i), 10.0 + (i % 50) * 0.1) for i in range(201)]
+    label = {"label": "NSE F&O bhavcopy 30-day IV at the test close"}
 
     async def exps(sym):
         return [date(2026, 9, 29), date(2026, 10, 6), date(2026, 10, 27)]
@@ -315,12 +317,17 @@ def test_fno_iv_expiry_and_spot(monkeypatch):
     async def ch(sym, exp):
         return chain(underlying=25012.5)
 
-    monkeypatch.setattr(compute, "SOURCES", src(iv_series=lambda s: series, fno_expiries=exps, fno_chain=ch))
+    monkeypatch.setattr(compute, "SOURCES", src(iv_rank_input=lambda s: (series, label), fno_expiries=exps,
+                                                 fno_chain=ch))  # fmt: skip
     short = run(reader().read("fno", "iv_percentile", "NIFTY", {}, {}))
-    assert short.value is None and "insufficient history" in short.note  # 59 days: no percentile yet
-    series.append((date(2026, 3, 1), 12.0, None))  # 60th day: 12.0 is above 20 of the 59 earlier values
-    assert run(reader().read("fno", "iv_percentile", "NIFTY", {}, {})).value == Decimal("33.9")
-    assert run(reader().read("fno", "atm_iv", "NIFTY", {}, {})).value == Decimal("12.0")
+    assert short.value is None and "insufficient coverage" in short.note  # 201 of 252 sessions: no percentile yet
+    # the 202nd session: 12.0 is above 10.0..11.9, i.e. 20 of each cycle of 50 → 4 × 20 + 1 (i = 200) = 81 of the
+    # 201 earlier sessions: IVP = 81 / 201 = 40.30 %
+    series.append((date(2026, 9, 1), 12.0))
+    got = run(reader().read("fno", "iv_percentile", "NIFTY", {}, {}))
+    assert got.value == Decimal("40.3") and "bhavcopy 30-day IV" in got.source
+    atm = run(reader().read("fno", "atm_iv", "NIFTY", {}, {}))
+    assert atm.value == Decimal("12.0") and atm.source.startswith("NSE F&O bhavcopy 30-day IV")
     assert run(reader().read("fno", "days_to_expiry", "NIFTY", {}, {})).value == 6  # past expiries skipped
     assert run(reader().read("fno", "spot", "NIFTY", {}, {})).value == Decimal("25012.5")
 

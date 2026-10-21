@@ -94,13 +94,9 @@ def load(
         fut_ret = None
         if prev is not None:
             p0, p1 = by_day.get(prev.day, {}), by_day.get(d, {})
-            common = sorted(e for e in p1 if e in p0 and e > prev.day and p0[e][3] and p1[e][3])
-            if common:
-                e = common[0]
-                hi, lo, cl, st = p1[e]
-                r.fut_expiry, r.fut_high, r.fut_low, r.fut_close = e, hi, lo, cl or st
-                r.fut_prev_close = p0[e][2] or p0[e][3]
-                fut_ret = math.log(st / p0[e][3])  # type: ignore[operator]
+            e = set_front_future(r, p0, p1, prev.day)
+            if e is not None:
+                fut_ret = math.log(p1[e][3] / p0[e][3])  # type: ignore[operator]
             u0 = prev.extra.get("underlying")
             if d in idx and prev.day in idx:
                 r.ret, r.ret_source = math.log(idx[d] / idx[prev.day]), "index"
@@ -119,6 +115,19 @@ def load(
         prev = r
     return rows, {"return_proxy_check": _proxy_check(checks), "index_eod": bool(idx),
                   "participant_days": sum(1 for r in rows if r.participants)}  # fmt: skip
+
+
+def set_front_future(r: DayRow, p0: dict[date, tuple], p1: dict[date, tuple], prev_day: date) -> date | None:
+    """Set r's front-future fields from the previous and this session's futures ({expiry: (high, low, close, settle)}):
+    the earliest expiry after the previous session with a settlement on both days. Returns that expiry (or None)."""
+    common = sorted(e for e in p1 if e in p0 and e > prev_day and p0[e][3] and p1[e][3])
+    if not common:
+        return None
+    e = common[0]
+    hi, lo, cl, st = p1[e]
+    r.fut_expiry, r.fut_high, r.fut_low, r.fut_close = e, hi, lo, cl or st
+    r.fut_prev_close = p0[e][2] or p0[e][3]
+    return e
 
 
 def _proxy_check(c: dict[str, Any]) -> dict[str, Any] | None:

@@ -137,3 +137,127 @@ def test_iv_rank_is_unknown_when_the_last_session_has_no_iv():
     pts[-1] = (days[-1], None)
     st = vol.iv_stats_sessions(pts)
     assert st.rank is None and st.current is None and "no IV" in st.status
+
+
+def _eod(symbol: str, days: list[date], iv30, near, method=lambda i: "interpolated", rv20=None) -> None:
+    from finresearch.db import session_scope
+    from finresearch.db.models import FnoIvEod
+
+    with session_scope() as s:
+        for i, d in enumerate(days):
+            v = iv30(i)
+            s.add(FnoIvEod(symbol=symbol, day=d, iv_30d=v, iv_30d_method=None if v is None else method(i),
+                           near_iv=near(i), next_iv=None, rv_20=None if rv20 is None else rv20(i), rate=0.065))  # fmt: skip
+
+
+def test_sparse_30d_iv_falls_back_to_the_labelled_near_iv(clean):
+    from finresearch.signals import fno_context as fc
+
+    days = _sessions(300)
+    last = len(days) - 1
+    # FINNIFTY-shaped: the 30-day IV on 1 session in 5, the near-expiry ATM IV on every session
+    _eod("FINNIFTY", days, lambda i: 15.0 + i % 7 if (last - i) % 5 == 0 else None, lambda i: 12.0 + i % 11)
+    st, info = fc.iv_rank("FINNIFTY")
+    near = [12.0 + i % 11 for i in range(len(days))][-252:]
+    assert info["series"] == "near_iv" and "near-expiry" in info["label"] and "fallback" in info["label"]
+    assert info["as_of"] == days[-1].isoformat() and "close" in info["label"]
+    assert st.status == "ok" and st.n == 252
+    assert st.rank == pytest.approx((near[-1] - min(near)) / (max(near) - min(near)))
+    # with no near IV either: insufficient coverage, never a rank from a five-year "year"
+    _eod("MIDCPNIFTY", days, lambda i: 15.0 + i % 7 if (last - i) % 5 == 0 else None, lambda i: None)
+    st, info = fc.iv_rank("MIDCPNIFTY")
+    assert st.rank is None and st.status.startswith("insufficient coverage") and info["series"] == "iv_30d"
+
+
+def test_flat_30d_iv_rows_count_as_missing(clean):
+    from finresearch.signals import fno_context as fc
+
+    days = _sessions(260)
+    # every third 30-day IV is a "flat" stand-in (the longest expiry, up to 7 days short of 30): 67 % coverage
+    _eod("NIFTY", days, lambda i: 15.0 + i % 9, lambda i: None,
+         method=lambda i: "flat" if (len(days) - 1 - i) % 3 == 1 else "interpolated")  # fmt: skip
+    st, info = fc.iv_rank("NIFTY")
+    assert info["series"] == "iv_30d" and st.rank is None and "insufficient coverage" in st.status
+
+
+# ---------------------------------------------------------------------------- (d) IV − RV on matched horizons
+def test_iv_minus_rv_uses_the_30_day_iv_not_the_live_weekly_atm_iv(clean, monkeypatch):
+    from decimal import Decimal
+
+    from finresearch.adapters.nse_fno import ChainRow, OptionChain, OptionQuote
+    from finresearch.db import session_scope
+    from finresearch.signals import fno_context as fc
+
+    _eod("NIFTY", [date(2026, 10, 20)], lambda i: 13.0, lambda i: 18.0, rv20=lambda i: 10.5)
+    q = OptionQuote(last_price=Decimal(100), iv=Decimal(22), oi=None, change_in_oi=None, volume=None, bid=None, ask=None)
+    chain = OptionChain(symbol="NIFTY", expiry=date(2026, 10, 27), underlying=Decimal(25000), as_of=None,
+                        rows=[ChainRow(strike=Decimal(25000), call=q, put=q)])  # fmt: skip
+    with session_scope() as s:
+        term = fc.term_block(s, "NIFTY")
+    closes = [25000.0 * (1.01 if i % 2 else 1.0) for i in range(70)]
+    v = fc.vol_block(chain, closes, date(2026, 10, 21), 0.065, term=term)
+    # IV30 13.0 − RV20 10.5 at the 20-Oct close: 2.5 points. The live weekly ATM IV (22 %) against the chain-free RV
+    # gave a different, mismatched number before
+    assert v["iv_minus_rv20"] == pytest.approx(2.5)
+    assert "30-day IV" in v["iv_minus_rv20_label"] and "2026-10-20" in v["iv_minus_rv20_label"]
+    assert v["atm_iv"] == pytest.approx(22.0)
+
+
+# ------------------------------------------------------------------------------- (f) alert readings name the series
+def test_alert_iv_readings_name_the_series_they_read(clean):
+    import asyncio
+
+    from finresearch.alerts import compute
+
+    days = _sessions(260)
+    _eod("NIFTY", days, lambda i: 15.0 + i % 9, lambda i: 14.0)
+    r = compute.Reader(None)
+    atm = asyncio.run(r.read("fno", "atm_iv", "NIFTY", {}, {}))
+    pct = asyncio.run(r.read("fno", "iv_percentile", "NIFTY", {}, {}))
+    for got in (atm, pct):
+        assert "iv_history" not in got.source and "bhavcopy 30-day IV" in got.source, got.source
+    assert atm.value is not None and pct.value is not None
+
+
+# ------------------------------------------------------------------------------- (g) roll-adjusted ADX on /fno
+def test_registered_adx_is_unchanged_by_the_shared_roll_adjustment():
+    """The direction model's ADX feature is registered (#327): extracting its roll adjustment for the context panel must
+    not move it. Values recorded from the code before #354 on a seeded synthetic panel with 15 rolls."""
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).parent))
+    from direction_synth import panel
+
+    from finresearch.direction.features import _adx
+
+    rows = panel(date(2022, 1, 3), date(2023, 3, 31), seed=3)
+    assert _adx(rows) == 16.98271388224083
+    assert _adx(rows[:150]) == 23.374853456011518
+    assert _adx(rows[:60]) == 9.3800705008798
+
+
+def test_context_adx_is_roll_adjusted_like_the_direction_model(clean):
+    from finresearch.db import session_scope
+    from finresearch.db.models import FnoBhav
+    from finresearch.signals import fno_context as fc
+
+    days = _sessions(90, date(2026, 6, 1))
+    e1, e2 = days[44], days[-1] + timedelta(days=30)
+    a = [24000 + 40 * i + (120 if i % 3 == 0 else -60) for i in range(len(days))]  # a zig-zag uptrend
+    with session_scope() as s:
+        for i, d in enumerate(days):
+            for exp, f in ((e1, 1.0), (e2, 1.02)):  # the next contract trades 2 % above the near one (carry)
+                if d > exp:
+                    continue
+                s.add(FnoBhav(day=d, symbol="NIFTY", instrument="IDF", expiry=exp, strike=0, option_type="XX",
+                              high=(a[i] + 50) * f, low=(a[i] - 50) * f, close=a[i] * f, settle=a[i] * f, oi=1000))  # fmt: skip
+        s.flush()
+        bars = fc.front_futures(s, "NIFTY", days[-1])
+    got = fc.trend_block([], float(a[-1]), bars, "test")["adx"]
+    # ratio-adjusted at the roll (factor = near close / next close on the day before the roll = 1/1.02), the series is
+    # the near contract's path throughout: ADX equals ADX on that path, with no 2 % jump at the roll
+    # (the first session has no previous one, so the front-future rule starts on the second)
+    want = mc.adx([x + 50 for x in a[1:]], [x - 50 for x in a[1:]], [float(x) for x in a[1:]])
+    assert got["adx"] == pytest.approx(round(want["adx"], 2), abs=0.011)
+    assert "ratio-adjusted" in got["on"]

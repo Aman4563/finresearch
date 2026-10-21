@@ -81,9 +81,10 @@ def _rv(rets: Sequence[float | None], n: int) -> float | None:
     return math.sqrt(sum((x - m) ** 2 for x in w) / (n - 1) * specs.YEAR_SESSIONS) * 100
 
 
-def _adx(prefix: Sequence[DayRow]) -> float | None:
-    """ADX(14) on the front future, forward ratio-adjusted at each roll (factor from both contracts' closes on the
-    session before the roll), so the series up to day t uses only data up to day t. Restarts after a gap."""
+def roll_adjusted_bars(prefix: Sequence[DayRow]) -> tuple[list[float], list[float], list[float]]:
+    """The front future's high/low/close, forward ratio-adjusted at each roll (factor from both contracts' closes on
+    the session before the roll), so the series up to day t uses only data up to day t. Restarts after a gap. Shared
+    by the registered ADX feature and the /fno context panel (#354 g)."""
     hs: list[float] = []
     ls: list[float] = []
     cs: list[float] = []
@@ -101,6 +102,12 @@ def _adx(prefix: Sequence[DayRow]) -> float | None:
         ls.append(r.fut_low * factor)
         cs.append(r.fut_close * factor)
         prev = r
+    return hs, ls, cs
+
+
+def _adx(prefix: Sequence[DayRow]) -> float | None:
+    """ADX(14) on the roll-adjusted front future (roll_adjusted_bars)."""
+    hs, ls, cs = roll_adjusted_bars(prefix)
     need = 4 * mc.ADX_N  # enough bars for Wilder's smoothing to settle
     if len(cs) < need:
         return None
