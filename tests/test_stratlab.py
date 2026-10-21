@@ -315,7 +315,7 @@ def test_api_runs_in_a_background_job_with_progress(client, mem, monkeypatch):
     assert r.status_code == 201, r.text
     st = r.json()
     assert st["split"] == {"is": ["2023-09-01", "2025-01-31"], "oos_from": "2025-02-01",
-                           "data": ["2023-09-01", "2025-08-29"], "rule": st["split"]["rule"]}  # fmt: skip
+                           "data": ["2023-09-01", "2025-08-29"], "rule": st["split"]["rule"], "oos_label": "already published, not out of sample"}  # fmt: skip
     vid = st["versions"][0]["id"]
     q = client.post(f"/api/fno/lab/versions/{vid}/runs", json={"oos": True})
     assert q.status_code == 202 and q.json()["status"] == "queued"  # nothing replayed in the request

@@ -23,13 +23,15 @@ export type LabRunRow = {
   id: number; version_id: number; oos: boolean; status: RunStatus; progress: number; progress_note: string | null;
   created_at: string | null; started_at: string | null; finished_at: string | null; error: string | null;
   n_trials: number | null; counted: boolean; n_trades: number;
-  summary?: { status: string | null; is: Brief | null; oos: Brief | null; warnings: number };
+  summary?: { status: string | null; is: Brief | null; oos: Brief | null; warnings: number; oos_label?: string | null };
 };
 
 export type LabResult = StrategyResult & {
   oos: boolean; warnings: string[]; n_trials: number; sr_trials_variance: number | null;
   windows_dates: { is: [string, string]; oos: [string, string] | null }; book: { capital: number } & Record<string, unknown>;
   criteria?: Criterion[];
+  // #361: the lab's "out-of-sample" window is already published; a pass reads "in_sample_result", never "candidate"
+  oos_label?: string; oos_note?: string;
 };
 
 export type LibraryRow = { key: string; name: string; underlying: string | null; status: string; is: Brief | null; oos: Brief | null };
@@ -47,7 +49,7 @@ export type LabVersion = {
 
 export type LabStrategy = {
   id: number; name: string; underlying: string; created_at: string | null; oos_versions: number;
-  split: { is: [string, string]; oos_from: string; data: [string, string]; rule: string }; versions: LabVersion[];
+  split: { is: [string, string]; oos_from: string; data: [string, string]; rule: string; oos_label?: string }; versions: LabVersion[];
 };
 
 export type LabResponse = {
