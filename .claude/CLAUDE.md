@@ -44,6 +44,11 @@ pnpm exec playwright install chromium                # once, after a Playwright 
 uv run finresearch --help                            # every group and command has --help
 ```
 
+Procedures are slash commands in `.claude/skills/` (`/feature`, `/live-check`, `/new-migration`, `/ship`, `/release`) and
+subagents in `.claude/agents/` (`implementer`, `invariant-auditor`, `gold-reviewer`). Research sandboxes sit inside the
+repo and see both, so every repo skill keeps `disable-model-invocation: true` and no role gets the Agent tool
+(`tests/test_claude_config.py`).
+
 Live checks are local only (CI has no Claude login or Ollama) and spend real Claude usage: a full IPO research run
 uses most of a 5-hour Max window, so check `uv run finresearch bridge limits` first and live-check one instrument per
 asset class (Orient Cables for IPOs). `uv run python scripts/smoke_live.py` covers the bridge, local models, OCR and

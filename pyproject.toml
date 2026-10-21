@@ -70,3 +70,17 @@ ignore = ["RUF001", "RUF002", "RUF003", "E501"]
 
 [tool.ruff.lint.per-file-ignores]
 "src/finresearch/cli.py" = ["B008"]  # typer declares options as defaults
+
+[tool.pyright]
+# Claude Code's pyright-lsp plugin and editors: resolve imports from this checkout's .venv (`uv sync --locked`)
+venvPath = "."
+venv = ".venv"
+pythonVersion = "3.12"
+include = ["src", "scripts"]
+typeCheckingMode = "basic"
+# the LSP shows Claude every new diagnostic after an edit: keep only signal (ORM Optional attributes and pydantic
+# coercions account for most of the rest; tests are left out the same way)
+reportOptionalMemberAccess = false
+reportOptionalSubscript = false
+reportOptionalOperand = false
+reportArgumentType = false
