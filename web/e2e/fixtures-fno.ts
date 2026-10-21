@@ -319,6 +319,8 @@ export const DIRECTION = (h: number) => ({
     hash_covers: "spec parameters only (specs.registration()): the engine code that runs them is not hashed until an engine hash exists (roadmap P2.4)" },
   decision: { status: "ok", action: "NO TRADE", label: "NO TRADE: no measured edge", chosen: null, horizon: h, expiry: "2026-10-20", horizon_day: "2026-10-19",
     held_to_expiry: false, lot_size: 65, plan: null, notes: [],
-    candidates: [cand("long_call", "Long call (ATM)", "up", -310), cand("long_put", "Long put (ATM)", "down", -295)],
+    // #356: a bull put credit whose market-implied EV is +₹212 (a pricing residual of +₹332 over the fair −₹120)
+    candidates: [cand("long_call", "Long call (ATM)", "up", -310), cand("long_put", "Long put (ATM)", "down", -295),
+      { ...cand("bull_put_credit", "Bull put credit spread", "up", 212), ev_fair: -120, pricing_residual: 332 }],
     non_directional: { text: "No measured directional edge. Non-directional plans: the pre-registered library.", suggest_api: "/api/fno/NIFTY/suggest", href: "/fno?symbol=NIFTY", evidence_href: "/fno/backtests" } },
 });

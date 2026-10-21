@@ -7,7 +7,7 @@ and exit-rule routes (api/fno_book.py)."""
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Literal
 
@@ -41,9 +41,10 @@ async def _events(sym: str, today: date) -> list[tuple[date, str]] | None:
         return None
 
 
-async def plan_inputs(f: Any, sym: str, expiry: date, today: date) -> Any:
+async def plan_inputs(f: Any, sym: str, expiry: date, today: date, now: datetime | None = None) -> Any:
     """Everything a trade-plan card reads besides the chain (signals.tradeplan.Inputs): closes, the IV series, the
-    profile's F&O budget, the rate, the saved backtest, the paper book and the event dates. Also used by #327."""
+    profile's F&O budget, the rate, the saved backtest, the paper book and the event dates. Also used by #327.
+    `now` = the live clock T is measured from (#359); None = 15:30 IST on `today`."""
     from finresearch.fnobook import events
     from finresearch.signals import fno as fs
     from finresearch.signals import fno_context
@@ -55,7 +56,11 @@ async def plan_inputs(f: Any, sym: str, expiry: date, today: date) -> Any:
     series, src = fs.iv_series_info(sym)
     with session_scope() as s:
         p = load_profile(s)
-    rate = (await risk_free(max((expiry - today).days, 0.5) / 365))["rate"]
+    from finresearch.fincalc.dates import session_clock, years_to_expiry
+
+    rate = (await risk_free(years_to_expiry(expiry, session_clock(today, now))))[
+        "rate"
+    ]  # tenor to the minute (#359)
     strategies, head = tpl.backtest_rows()
     return tpl.Inputs(today=today, closes=closes, iv_series=[v for _, v, _ in series], iv_src=src,
                       iv_as_of=series[-1][0] if series else None, capital=float(p.fno_capital_inr),
@@ -63,7 +68,7 @@ async def plan_inputs(f: Any, sym: str, expiry: date, today: date) -> Any:
                       defined_risk_only=p.fno_defined_risk_only, rate=rate, strategies=strategies,
                       backtest_head=head, paper=tpl.paper_trades(), events=await _events(sym, today),
                       is_index=events.is_index(sym), book=await tpl.load_book(today),
-                      iv_points=fno_context.iv_rank_input(sym)[0])  # fmt: skip
+                      iv_points=fno_context.iv_rank_input(sym)[0], now=now)  # fmt: skip
 
 
 def add_fno_plan_routes(app: FastAPI, fno: Callable[[], Any]) -> None:
@@ -89,7 +94,8 @@ def add_fno_plan_routes(app: FastAPI, fno: Callable[[], Any]) -> None:
         from finresearch.signals import fno as fs
         from finresearch.signals import tradeplan as tpl
 
-        sym, today = body.symbol.strip().upper(), now_ist().date()
+        now = now_ist()
+        sym, today = body.symbol.strip().upper(), now.date()
         legs = [fs.LegIn(y.right, float(y.strike), y.side, y.lots) for y in body.legs]
         try:
             fs.check_expiry(body.expiry, today)
@@ -105,7 +111,7 @@ def add_fno_plan_routes(app: FastAPI, fno: Callable[[], Any]) -> None:
                 raise HTTPException(422, f"no NSE lot size for {sym} {body.expiry:%b-%y}")
             if chain.underlying is None or not chain.rows:
                 raise HTTPException(422, f"no option chain for {sym} {body.expiry}")
-            x = await inputs(f, sym, body.expiry, today)
+            x = await inputs(f, sym, body.expiry, today, now)
             # the plan's chain has no bid/ask for a leg (Groww's has none): NSE's, once, cached (#324)
             need = tpl.needs_bidask(chain, legs)
             fb = await bidask_for(f, sym, body.expiry) if need else None
@@ -126,7 +132,8 @@ def add_fno_plan_routes(app: FastAPI, fno: Callable[[], Any]) -> None:
         from finresearch.signals import fno as fs
         from finresearch.signals import tradeplan as tpl
 
-        sym, today = symbol.strip().upper(), now_ist().date()
+        now = now_ist()
+        sym, today = symbol.strip().upper(), now.date()
         async with fno() as f:
             expiries, _ = await f.contract_info(sym)
             expiries = fs.live_expiries(expiries, today)
@@ -152,7 +159,7 @@ def add_fno_plan_routes(app: FastAPI, fno: Callable[[], Any]) -> None:
             async def get_bidask(e: date) -> tuple[Any, str] | None:
                 return await bidask_for(f, sym, e)
 
-            x = await inputs(f, sym, expiries[0], today)
+            x = await inputs(f, sym, expiries[0], today, now)
             cards = await tpl.suggest(sym, expiries, get_chain, lot_for, x, get_bidask)
         out = {"symbol": sym, "today": today.isoformat(), "cards": cards, "risk_notice": fs.risk_notice(),
                "note": "The library's pre-registered recipes (backtest.specs) applied to today's chain, each with its "
@@ -172,7 +179,8 @@ def add_fno_plan_routes(app: FastAPI, fno: Callable[[], Any]) -> None:
         from finresearch.signals import fno_context as ctx
         from finresearch.signals.rates import risk_free
 
-        sym, today = symbol.strip().upper(), now_ist().date()
+        now = now_ist()
+        sym, today = symbol.strip().upper(), now.date()
         if expiry is not None:
             try:
                 fs.check_expiry(expiry, today)
@@ -202,7 +210,9 @@ def add_fno_plan_routes(app: FastAPI, fno: Callable[[], Any]) -> None:
             strip = await events.strip(sym, today, sources.SOURCES, exp)
         except Exception:
             strip = None
-        rate = (await risk_free(max((expiry - today).days, 0.5) / 365))["rate"]
-        return {**ctx.build(chain, today=today, rate=rate, network_closes=closes, events=strip),
+        from finresearch.fincalc.dates import years_to_expiry
+
+        rate = (await risk_free(years_to_expiry(expiry, now)))["rate"]  # tenor to the minute (#359)
+        return {**ctx.build(chain, today=today, rate=rate, network_closes=closes, events=strip, now=now),
                 "expiry": expiry.isoformat(), "expiry_defaulted": defaulted,
                 "expiry_note": ("No expiry given: the nearest that is not today's." if defaulted else None)}  # fmt: skip

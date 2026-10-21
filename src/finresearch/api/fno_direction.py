@@ -94,7 +94,7 @@ def add_fno_direction_routes(
         from finresearch.adapters.nse_holidays import trading_holidays
         from finresearch.api.fno_plan import plan_inputs
         from finresearch.direction import decide, live
-        from finresearch.fincalc.dates import to_ist
+        from finresearch.fincalc.dates import to_ist, years_to_expiry
         from finresearch.signals import fno as fs
         from finresearch.signals import tradeplan as tpl
         from finresearch.signals.rates import risk_free
@@ -103,7 +103,8 @@ def add_fno_direction_routes(
         probs, accepted, iv30 = _probs_for(st, h)
         if not iv30:
             return {"status": "unavailable", "why": f"no 30-day IV stored for {st['as_of']}"}
-        today = to_ist(now()).date()
+        clock = to_ist(now())
+        today = clock.date()
         as_of = date.fromisoformat(st["as_of"])
         horizon_day = live.session_after(as_of, h, trading_holidays())
         try:
@@ -119,11 +120,12 @@ def add_fno_direction_routes(
                 lot = lot_size_for(await f.lot_sizes(), sym, expiry)
                 if chain.underlying is None or not chain.rows or not lot:
                     return {"status": "unavailable", "why": f"no option chain or lot size for {sym} {expiry}"}
-                rate = (await risk_free(max((expiry - today).days, 0.5) / 365))["rate"]
+                rate = (await risk_free(years_to_expiry(expiry, clock)))["rate"]  # tenor to the minute (#359)
                 with session_scope() as s:
                     brokerage = float(load_profile(s).fno_brokerage_per_order_inr)
                 d = decide.decide(chain, lot, today=today, horizon_day=horizon_day, h=h, iv_30=iv30,
-                                  probs_model=probs, accepted=accepted, rate=rate, brokerage=brokerage)  # fmt: skip
+                                  probs_model=probs, accepted=accepted, rate=rate, brokerage=brokerage,
+                                  now=clock)  # fmt: skip
                 d["status"] = "ok"
                 d["chain"] = {
                     "source": chain.source,
@@ -132,7 +134,7 @@ def add_fno_direction_routes(
                 d["probabilities_as_of"] = st["as_of"]
                 if d["chosen"] is not None:
                     legs = [fs.LegIn(x["right"], x["strike"], x["side"]) for x in d["chosen"]["legs"]]
-                    x = await plan_inputs(f, sym, expiry, today)
+                    x = await plan_inputs(f, sym, expiry, today, clock)
                     try:
                         d["plan"] = tpl.build(chain, lot, legs, x, title=f"{sym} {expiry:%d-%b-%Y} · "
                                               f"{d['chosen']['label']} (direction model)")  # fmt: skip

@@ -14,7 +14,7 @@ participant-wise open interest (fnohist.participants); the event strip (fnobook.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from itertools import pairwise
 from typing import Any
 
@@ -292,7 +292,7 @@ def trend_block(closes: list[float], spot: float | None, futs: list[Any], source
 
 
 def vol_block(chain, closes: list[float], today: date, rate: float,
-              term: dict[str, Any] | None = None) -> dict[str, Any]:  # fmt: skip
+              term: dict[str, Any] | None = None, now: datetime | None = None) -> dict[str, Any]:  # fmt: skip
     """`term` (term_block's latest stored row) gives IV − RV on matched horizons: the 30-day IV against the 20-day
     realised volatility of the same close (#354 d), not this expiry's live ATM IV (often a weekly) against RV20."""
     from finresearch.fincalc import options as o
@@ -302,8 +302,11 @@ def vol_block(chain, closes: list[float], today: date, rate: float,
     rows = [vol.StrikeIv(float(r.strike), _f(r.call.iv) if r.call else None, _f(r.put.iv) if r.put else None)
             for r in (chain.rows if chain is not None else [])]  # fmt: skip
     atm = vol.atm_iv(rows, spot) if spot and rows else None
-    t = max((chain.expiry - today).days, 0.5) / 365 if chain is not None else None
-    skew = vol.skew_25d(rows, spot, t, rate) if spot and rows and t else None
+    from finresearch.fincalc.dates import session_clock, years_to_expiry
+
+    # #359: T to the minute (from `now`, else 15:30 IST on `today`); an expired chain has no skew (unknown)
+    t = years_to_expiry(chain.expiry, session_clock(today, now)) if chain is not None else None
+    skew = vol.skew_25d(rows, spot, t, rate) if spot and rows and t and t > 0 else None
     rv20 = o.realised_vol(closes, 20) * 100 if len(closes) >= 22 else None
     rv60 = o.realised_vol(closes, 60) * 100 if len(closes) >= 62 else None
     st, src = iv_rank(chain.symbol if chain is not None else "")
@@ -352,7 +355,7 @@ def chain_block(chain) -> dict[str, Any]:
 
 
 def build(chain, *, today: date, rate: float, network_closes: list[float] | None = None,
-          events: dict[str, Any] | None = None) -> dict[str, Any]:  # fmt: skip
+          events: dict[str, Any] | None = None, now: datetime | None = None) -> dict[str, Any]:  # fmt: skip
     """The whole panel for the chain's underlying. Stored history first (no network); `network_closes` (NSE's ~90
     days) only when fewer than 60 closes are stored. A block whose data is missing says so (never zeros)."""
     from sqlalchemy.exc import SQLAlchemyError
@@ -384,7 +387,7 @@ def build(chain, *, today: date, rate: float, network_closes: list[float] | None
     return {
         "symbol": sym, "today": today.isoformat(), "not_a_signal": NOT_A_SIGNAL,
         "trend": trend_block(closes, spot, futs, source),
-        "volatility": vol_block(chain, closes, today, rate, term=term),
+        "volatility": vol_block(chain, closes, today, rate, term=term, now=now),
         "term": term or {"status": "unknown", "note": "no stored bhavcopy IV for this underlying",
                          "evidence": EVIDENCE["term"]},
         "chain": chain_block(chain),

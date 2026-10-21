@@ -49,6 +49,25 @@ def ist_datetime(d: date, hour: int = 0, minute: int = 0) -> datetime:
     return datetime(d.year, d.month, d.day, hour, minute, tzinfo=IST)
 
 
+# #359: NSE's equity F&O session closes at 15:30 IST and a contract expires at the close of its expiry day (NSE equity
+# derivatives contract specifications, "trading hours 09:15-15:30"; the same close as fnobook's paper-trade hours)
+EXPIRY_CLOSE = (15, 30)
+MINUTES_PER_YEAR = 365 * 1440
+
+
+def years_to_expiry(expiry: date, now: datetime) -> float:
+    """T for option pricing (#359): minutes from `now` to 15:30 IST on the expiry day / (365 × 1,440). Never floored:
+    0 at the close and negative after it (expired; callers refuse it rather than price it)."""
+    close = ist_datetime(expiry, *EXPIRY_CLOSE)
+    return (close - to_ist(now)).total_seconds() / 60 / MINUTES_PER_YEAR
+
+
+def session_clock(today: date, now: datetime | None = None) -> datetime:
+    """The clock a T is measured from: `now` when given (live sites pass now_ist()); a date-only call (end-of-day work,
+    tests) measures from 15:30 IST that day, so T = calendar days / 365, as the backtest's unfloored EOD dte/365."""
+    return now if now is not None else ist_datetime(today, *EXPIRY_CLOSE)
+
+
 def today_ist() -> date:
     """Today's date in India (differs from UTC date between 00:00 and 05:30 IST)."""
     return datetime.now(UTC).astimezone(IST).date()

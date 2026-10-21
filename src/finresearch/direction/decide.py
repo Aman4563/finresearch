@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 
 from finresearch.direction import specs
@@ -94,7 +94,7 @@ def leg_value(leg: CLeg, s: float, t_rem: float, rate: float) -> float:
 
 def evaluate_trade(legs: list[CLeg], qty: int, spot: float, grid_model: list[tuple[float, float]],
                    grid_implied: list[tuple[float, float]], t_rem: float, today: date, rate: float,
-                   brokerage: float) -> dict[str, Any]:  # fmt: skip
+                   brokerage: float, t_entry: float | None = None) -> dict[str, Any]:  # fmt: skip
     """EV after costs of one set (each leg `qty` units, signed by side) under both distributions (the two grids share
     their price points; only the masses differ)."""
     sign = {"buy": 1, "sell": -1}
@@ -119,7 +119,16 @@ def evaluate_trade(legs: list[CLeg], qty: int, spot: float, grid_model: list[tup
     ev_m, pop_m = ev(grid_model)
     ev_i, pop_i = ev(grid_implied)
     prof = o.profile([o.Leg(x.right, x.strike, x.price, sign[x.side] * qty) for x in legs], spot)  # type: ignore[arg-type]
+    # #356: the fair-price EV with each leg at its own IV, Σ q·(BS(σ_i) − price_i) − costs (≈ −costs when the IVs are
+    # the prices' own). EV under the market's ATM-IV lognormal differs from it by a pricing residual (the smile and
+    # stale last trades): shown as such, never as edge
+    fair = None
+    if t_entry is not None and t_entry > 0:
+        fair = sum(sign[x.side] * qty * (o.bs_price(x.right, spot, x.strike, t_entry, rate, x.iv) - x.price)  # type: ignore[arg-type]
+                   for x in legs) - entry - square  # fmt: skip
     return {"ev_model": round(ev_m, 2), "ev_implied": round(ev_i, 2), "edge": round(ev_m - ev_i, 2),
+            "ev_fair": None if fair is None else round(fair, 2),
+            "pricing_residual": None if fair is None else round(ev_i - fair, 2),
             "pop_model": round(pop_m, 4), "pop_implied": round(pop_i, 4), "costs": round(entry + square, 2),
             "entry_costs": round(entry, 2), "exit_costs": round(square, 2),
             "max_loss": None if prof.max_loss is None else round(prof.max_loss, 2),
@@ -180,9 +189,14 @@ def price_legs(chain, spec: list[tuple[str, float, str]], t_years: float, rate: 
 
 
 def decide(chain, lot: int, *, today: date, horizon_day: date, h: int, iv_30: float, probs_model: dict[str, float],
-           accepted: bool, rate: float, brokerage: float) -> dict[str, Any]:  # fmt: skip
-    """Every candidate's EV under the model and under the market, and the decision (module docstring)."""
-    t_entry = max((chain.expiry - today).days, 0.5) / 365
+           accepted: bool, rate: float, brokerage: float, now: datetime | None = None) -> dict[str, Any]:  # fmt: skip
+    """Every candidate's EV under the model and under the market, and the decision (module docstring). `now` = the
+    live clock (#359): T at entry to the minute (15:30 IST on `today` without it); an expired chain prices nothing."""
+    from finresearch.fincalc.dates import session_clock, years_to_expiry
+
+    t_entry = years_to_expiry(chain.expiry, session_clock(today, now))
+    if t_entry <= 0:
+        raise ValueError(f"the {chain.expiry:%d-%b-%Y} contract has expired (15:30 IST): nothing to price")
     t_rem = max(0, (chain.expiry - horizon_day).days) / 365
     masses, notes = region_masses(probs_model)
     spot = float(chain.underlying)
@@ -201,7 +215,7 @@ def decide(chain, lot: int, *, today: date, horizon_day: date, h: int, iv_30: fl
                 {"key": key, "label": LABELS[key], "view": VIEW[key], "status": "unavailable", "why": [legs]}
             )
             continue
-        r = evaluate_trade(legs, lot, spot, gm, gi, t_rem, today, rate, brokerage)
+        r = evaluate_trade(legs, lot, spot, gm, gi, t_rem, today, rate, brokerage, t_entry)
         ok, why = gate(r, accepted)
         rows.append({"key": key, "label": LABELS[key], "view": VIEW[key], "status": "passes" if ok else "fails",
                      "why": why, "legs": [{"right": x.right, "strike": x.strike, "side": x.side, "price": x.price,

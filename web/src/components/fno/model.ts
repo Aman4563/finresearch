@@ -37,6 +37,8 @@ export type Analysis = {
   real_world_20d: Outcome;
   real_world_60d: Outcome;
   fair_price_note: string;
+  /** #356: the EV range across the shown models, labelled "model EV - not validated" (never a gate) */
+  model_ev?: { label: string; range: [number, number] | null; note: string };
   expected_move: { move: number; low: number; high: number; vol: number } | null;
   capital_check: { capital: number; max_loss: number | null; pct: number | null; limit_pct: number; within: boolean; message: string };
   drawdown: { probability: number; threshold_pct: number; repeats: number } | null;
