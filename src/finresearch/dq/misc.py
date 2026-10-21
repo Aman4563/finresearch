@@ -121,7 +121,7 @@ def close_checks(s: Session, day: date) -> list[Check]:
         ]
     tol = f"{CLOSE_WARN_TOL * 100:.0f} %"
     parts = [f"{beyond}/{n} Groww closes differ from the official close by more than {tol}" if beyond else
-             f"{unmatched} of {n} differ by more than ₹0.01 (last trade vs 30-minute average), all within {tol}"]  # fmt: skip
+             f"{unmatched} of {n} differ by more than ₹0.01 (last trade vs 30-minute average), none beyond {tol}"]  # fmt: skip
     if worst is not None:
         parts.append(f"max {worst * 100:.2f} %")
     if no_official:
