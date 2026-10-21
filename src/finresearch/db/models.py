@@ -1697,6 +1697,45 @@ class IndexEodDay(Base):
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class EquityEod(Base):
+    """One cash-market security's day from NSE's full bhavcopy with delivery (#373 (a), adapters.nse_equity_eod):
+    every series as printed (EQ, BE, BZ, SM, ...), unadjusted for corporate actions. `close` is NSE's official
+    closing price. A value the file marks '-' is NULL (unknown), never 0: delivery is '-' on trade-to-trade series.
+    The delivery ratio deliv_qty / qty is descriptive only (the issue found no evidence it has value)."""
+
+    __tablename__ = "equity_eod"
+    __table_args__ = (Index("ix_equity_eod_symbol_day", "symbol", "day"),)  # one stock's series
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(40), primary_key=True)
+    series: Mapped[str] = mapped_column(String(8), primary_key=True)
+    prev_close: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    open: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    high: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    low: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    last: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    close: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    avg_price: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    qty: Mapped[int | None] = mapped_column(BigInteger)
+    turnover_lacs: Mapped[Decimal | None] = mapped_column(Numeric(18, 2))  # ₹ lakh, as printed
+    trades: Mapped[int | None] = mapped_column(BigInteger)
+    deliv_qty: Mapped[int | None] = mapped_column(BigInteger)
+    deliv_pct: Mapped[Decimal | None] = mapped_column(Numeric(7, 2))
+
+
+class EquityEodDay(Base):
+    """The full equity bhavcopy manifest (#373 (a)): one row per calendar day tried. status loaded / no_file (404: a
+    holiday, a weekend or not yet published) / failed. Resume skips loaded days and old no_file days."""
+
+    __tablename__ = "equity_eod_day"
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    status: Mapped[str] = mapped_column(String(10))
+    url: Mapped[str | None] = mapped_column(String(200))
+    rows: Mapped[int | None] = mapped_column(Integer)
+    attempts: Mapped[int] = mapped_column(Integer, default=1)
+    error: Mapped[str | None] = mapped_column(String(300))
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class SpanParam(Base):
     """One underlying's day from NSE Clearing's SPAN risk-parameter file (#370, adapters.nse_span): the underlying
     price, the price scan range (rupees per unit; the range % is price_scan / price), the vol scan range (fraction of
