@@ -318,3 +318,32 @@ def test_volume_is_a_monitored_dataset():
 
     ds = {d.name: d for d in run.DATASETS}["fno_participant_vol"]
     assert ds.critical is False and ds.sla.hour == 20
+
+
+def test_dq_report_names_the_volume_dataset():
+    from finresearch.dq import report
+
+    assert report.LABELS["fno_participant_vol"] == "Participant volume"
+
+
+# ------------------------------------------------------------------------------------------------------------ CLI
+def test_cli_passes_dates_datasets_and_delay(monkeypatch):
+    from typer.testing import CliRunner
+
+    from finresearch.cli import app
+    from finresearch.fnohist import participants
+
+    seen = {}
+
+    async def fake(start, end, **kw):
+        seen.update(start=start, end=end, **kw)
+        return {"fno_participant_vol": {"planned": 0}}
+
+    monkeypatch.setattr(participants, "backfill", fake)
+    r = CliRunner().invoke(app, ["fno", "participants", "--from", "2015-01-01", "--to", "2015-12-31",
+                                 "--dataset", "vol", "--delay", "3"])  # fmt: skip
+    assert r.exit_code == 0, r.output
+    assert seen["start"] == date(2015, 1, 1) and seen["end"] == date(2015, 12, 31)
+    assert seen["kinds"] == (po.VOL,) and seen["pause"] == 3.0 and seen["keep_raw"] is True
+    r = CliRunner().invoke(app, ["fno", "participants", "--from", "2015-01-01", "--dataset", "fii"])
+    assert r.exit_code != 0
