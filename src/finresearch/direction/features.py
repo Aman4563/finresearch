@@ -41,6 +41,15 @@ class DayRow:
     put_oi: float | None = None
     call_oi: float | None = None
     fut_oi: float | None = None
+    # #354 a: the same sums over contracts with expiry > day (they reconcile with NSE's participant totals) and over
+    # those expiring that day. Not read by any registered feature: pcr_oi and the OI changes keep the registered
+    # all-contract sums above until a disclosed new variant adopts these
+    put_oi_live: float | None = None
+    call_oi_live: float | None = None
+    fut_oi_live: float | None = None
+    put_oi_expiring: float | None = None
+    call_oi_expiring: float | None = None
+    fut_oi_expiring: float | None = None
     near_expiry: date | None = None  # the nearest option expiry on or after the day
     participants: dict[str, dict[str, int]] | None = (
         None  # {"FII": {...}, "Pro": {...}} (fno_participant_oi keys)

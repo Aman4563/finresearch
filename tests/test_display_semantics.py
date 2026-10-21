@@ -356,3 +356,45 @@ async def test_participant_update_follows_the_bhavcopy_manifest(clean):
     # 3-Oct (traded, a Saturday) is fetched; 6-Oct (the manifest's holiday) and the Sunday are not
     assert sorted(asked) == ["03102026", "05102026", "07102026", "08102026", "09102026"]
     assert res["planned"] == 5
+
+
+# ------------------------------------------------------------------------- (a) open interest excludes expiring OI
+# NSE's participant-wise OI (public) on the two observed expiry days: index option longs by right, index future longs
+PARTICIPANT_TOTALS = {date(2026, 10, 13): {"CE": 3_743_159, "PE": 4_252_513, "FUT": 431_001},
+                      date(2026, 10, 19): {"CE": 4_029_420, "PE": 3_744_636, "FUT": 413_750}}  # fmt: skip
+# the stored bhavcopy's index option and future contracts on those days (every index underlying, folded into one row
+# per right and bucket; the expiring NIFTY weekly expired that day): (live, expiring) contracts
+STORED = {date(2026, 10, 13): {"CE": (3_742_988, 2_452_276), "PE": (4_252_427, 3_436_969), "FUT": (431_001, 0)},
+          date(2026, 10, 19): {"CE": (4_029_145, 3_280_597), "PE": (3_744_534, 2_611_793), "FUT": (413_750, 0)}}  # fmt: skip
+
+
+def test_oi_aggregates_exclude_contracts_expiring_that_day(clean):
+    from finresearch.db import session_scope
+    from finresearch.db.models import FnoBhav
+    from finresearch.direction import data
+
+    lot = 65
+    with session_scope() as s:
+        for d, by in STORED.items():
+            for right, (live, expiring) in by.items():
+                fut = right == "FUT"
+                for exp, n in ((d + timedelta(days=7), live), (d, expiring)):
+                    if n:
+                        s.add(FnoBhav(day=d, symbol="NIFTY", instrument="IDF" if fut else "IDO", expiry=exp,
+                                      strike=0 if fut else 25000, option_type="XX" if fut else right, oi=n * lot,
+                                      lot_size=lot, settle=100))  # fmt: skip
+    rows, notes = data.load("NIFTY", url=None)
+    for r in rows:
+        want = PARTICIPANT_TOTALS[r.day]
+        for got, key in ((r.call_oi_live, "CE"), (r.put_oi_live, "PE"), (r.fut_oi_live, "FUT")):
+            assert abs(got / lot - want[key]) / want[key] < 1e-4, (
+                r.day,
+                key,
+            )  # within 0.01 % of NSE's totals
+        assert (
+            r.call_oi_expiring == STORED[r.day]["CE"][1] * lot
+            and r.put_oi_expiring == STORED[r.day]["PE"][1] * lot
+        )
+        # the registered features' all-contract sums overshoot NSE's totals by 65-81 % on these days (kept, disclosed)
+        assert (r.call_oi + r.put_oi) / lot / (want["CE"] + want["PE"]) > 1.6
+    assert "expiring" in notes["oi_note"]
