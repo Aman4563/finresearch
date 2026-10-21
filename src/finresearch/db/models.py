@@ -1774,3 +1774,43 @@ class DatasetLoad(Base):
     rows: Mapped[int | None] = mapped_column(Integer)
     prior_sha256: Mapped[str | None] = mapped_column(String(64))
     loaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class CalendarEvent(Base):
+    """One scheduled market event (#367, finresearch.eventcal): tier 1 = registered (RBI MPC decision, Union Budget,
+    general-election results), 2 = context (FOMC, US CPI). `at` is the release time when the source states it.
+    Point in time: `known_since` is when the schedule announcing it was public (`known_since_url`), or when we first
+    fetched it; a row is usable at t only if known_since <= t < withdrawn_since (set when a notice moved the date).
+    `recorded_at` is when this database stored it."""
+
+    __tablename__ = "calendar_event"
+    __table_args__ = (UniqueConstraint("type", "scope", "day"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    type: Mapped[str] = mapped_column(String(30))
+    tier: Mapped[int] = mapped_column(SmallInteger)
+    scope: Mapped[str] = mapped_column(String(30))
+    day: Mapped[date] = mapped_column(Date, index=True)
+    at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    title: Mapped[str] = mapped_column(String(200))
+    source_url: Mapped[str] = mapped_column(String(400))
+    known_since: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    known_since_url: Mapped[str | None] = mapped_column(String(400))
+    # a moved date: unusable from the notice that moved it
+    withdrawn_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class CalendarCoverage(Base):
+    """A statement that every `type` event in `scope` is listed through `through` (#367), public from known_since.
+    Without one covering a plan's window the event check reads unknown, never "no events". Append-only."""
+
+    __tablename__ = "calendar_coverage"
+    __table_args__ = (UniqueConstraint("type", "scope", "through", "source_url"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    type: Mapped[str] = mapped_column(String(30))
+    scope: Mapped[str] = mapped_column(String(30))
+    through: Mapped[date] = mapped_column(Date)
+    source_url: Mapped[str] = mapped_column(String(400))
+    known_since: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    note: Mapped[str | None] = mapped_column(String(300))
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

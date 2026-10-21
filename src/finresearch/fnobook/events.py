@@ -3,23 +3,29 @@
 * Results: the next board meeting on financial results of a stock underlying, from the portfolio's corporate-events
   pass (`cache.EVENTS`, holdings only) or else NSE's board-meetings list for that symbol (read at most once a day per
   symbol). Indices have no results date.
-* RBI monetary-policy dates: no source in the app yet. RBI_POLICY_DATES stays empty until a dated list is copied from
-  an RBI press release with its URL; until then the strip says "no source" and, for an index (where RBI is the event
-  that matters), the event rule reads unknown rather than "no event".
+* Tier-1 macro dates (RBI policy, Union Budget, general-election results): from the point-in-time event calendar
+  (finresearch.eventcal, #367), only rows public by the end of `today`, and only when every tier-1 schedule is known
+  through the window's end (`until`, default today + 92 days); otherwise unknown (None), never "no event". For an
+  index (where these are the events that matter) an unknown calendar makes the event rule unknown.
 * Expiries: the contract's live expiries.
 """
 
 from __future__ import annotations
 
 import time
-from datetime import date
+from datetime import date, datetime, timedelta
+from datetime import time as dtime
 from typing import Any
 
 from finresearch.adapters.nse_fno import INDEX_NAMES
 
-# (policy announcement date, source URL): empty until verified from an RBI press release (a decision for the user)
-RBI_POLICY_DATES: tuple[tuple[date, str], ...] = ()
-RBI_NO_SOURCE = "RBI policy dates: no source in the app yet"
+RBI_NO_SOURCE = "Tier-1 event calendar (RBI policy, Budget, elections): not covered for this window"
+LABELS = {
+    "rbi_mpc": "RBI policy",
+    "union_budget": "Union Budget",
+    "general_election": "General-election results",
+}
+HORIZON = timedelta(days=92)  # the default window when the caller has no expiry: about a quarterly contract
 NSE_BOARD_MEETINGS = "https://www.nseindia.com/companies-listing/corporate-filings-board-meetings"
 _CACHE: dict[tuple[str, date], tuple[float, Any]] = {}
 TTL_S = 6 * 3600
@@ -65,16 +71,36 @@ async def results_dates(symbol: str, today: date, sources: Any) -> tuple[list[da
     return hit[1], NSE_BOARD_MEETINGS
 
 
-def rbi_dates(today: date) -> list[tuple[date, str]] | None:
-    return [(d, u) for d, u in RBI_POLICY_DATES if d >= today] if RBI_POLICY_DATES else None
+def macro_dates(today: date, until: date | None = None) -> list[tuple[date, str, str, str]] | None:
+    """(India session day, type, label, source URL) of tier-1 events from `today` to `until`, as known at the end of
+    `today`; None when the calendar cannot be read or does not cover every tier-1 type through `until`."""
+    from finresearch.db import session_scope
+    from finresearch.eventcal import calendar as cal
+    from finresearch.eventcal import store
+    from finresearch.fincalc.dates import IST
+
+    end = until or today + HORIZON
+    try:
+        with session_scope() as s:
+            ev, cov = store.load(s)
+    except Exception:
+        return None
+    as_of = datetime.combine(today, dtime.max, IST)
+    if any((cal.covered_through(cov, k, as_of) or date.min) < end for k in cal.TIER1_TYPES):
+        return None
+    rows = [(cal.india_day(e), e.type, LABELS[e.type], e.source_url) for e in cal.known_at(ev, as_of)
+            if e.tier == 1 and e.type in LABELS]  # fmt: skip
+    return sorted(r for r in rows if today <= r[0])
 
 
-async def event_dates(symbol: str, today: date, sources: Any) -> list[tuple[date, str]] | None:
-    """The dates the event exit rule reads; None = unknown (see the module docstring)."""
-    rbi = rbi_dates(today)
-    out = [(d, "RBI policy") for d, _ in rbi or []]
+async def event_dates(
+    symbol: str, today: date, sources: Any, until: date | None = None
+) -> list[tuple[date, str]] | None:
+    """The dates the event exit rule reads up to `until` (the expiry); None = unknown (see the module docstring)."""
+    macro = macro_dates(today, until)
+    out = [(d, label) for d, _, label, _ in macro or []]
     if is_index(symbol):
-        return out if rbi is not None else None
+        return out if macro is not None else None
     res, _ = await results_dates(symbol, today, sources)
     if res is None:
         return None
@@ -93,13 +119,14 @@ async def strip(symbol: str, today: date, sources: Any, expiries: list[date]) ->
         for d in res or []:
             items.append({"day": d.isoformat(), "kind": "results", "title": f"{symbol.upper()} results (board "
                           "meeting)", "source": src})  # fmt: skip
-    rbi = rbi_dates(today)
-    for d, u in rbi or []:
-        items.append({"day": d.isoformat(), "kind": "rbi", "title": "RBI monetary policy", "source": u})
+    macro = macro_dates(today, max(expiries[:4], default=None))
+    for d, kind, label, u in macro or []:
+        items.append({"day": d.isoformat(), "kind": "rbi" if kind == "rbi_mpc" else "macro",
+                      "title": "RBI monetary policy" if kind == "rbi_mpc" else label, "source": u})  # fmt: skip
     for e in expiries[:4]:
         items.append({"day": e.isoformat(), "kind": "expiry", "title": f"{symbol.upper()} expiry",
                       "source": "NSE contract info"})  # fmt: skip
     items.sort(key=lambda x: (x["day"], x["kind"]))
     return {"symbol": symbol.upper(), "today": today.isoformat(), "items": items, "results": results,
-            "rbi": {"status": "ok", "source": "RBI press releases"} if rbi is not None
+            "rbi": {"status": "ok", "source": "event calendar (#367): RBI, indiabudget.gov.in, ECI"} if macro is not None
             else {"status": "no_source", "note": RBI_NO_SOURCE}}  # fmt: skip
