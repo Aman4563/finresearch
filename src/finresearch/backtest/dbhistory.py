@@ -9,6 +9,9 @@ Lot size: the row's own lot (UDiFF, 2024 on), else fno_contract's lot changes on
 inferred lot (pre-2024: the gcd of open interest, fnohist.derive.infer_lot). Unknown stays None and the trade is
 skipped. The inferred lot is a property of the contract, which NSE publishes before trading starts, so reading it is
 not look-ahead in market data.
+The vault (#364): a database whose stored F&O history starts on or before vault.registry.VAULT_END (31-Dec-2021) is
+the sealed 2008-2021 vault; it is read only with a live grant from vault.guard.vault_read for this URL, else every
+read raises VaultSealed (checked once per instance, and again on each vault-period day returned).
 """
 
 from __future__ import annotations
@@ -25,13 +28,17 @@ from sqlalchemy.orm import Session
 from finresearch.backtest.history import RIGHTS, Day, Quote, within
 from finresearch.db.models import FnoBhav, FnoContract, FnoIvEod
 from finresearch.fincalc import fno_history as fh
+from finresearch.vault.registry import VAULT_END, VaultSealed
 
 SPAN_MAX_AGE_DAYS = 45  # a monthly SPAN sample covers the following weeks
 
 
 class DbHistory:
-    def __init__(self, url: str | None = None, span_ranges: bool = False) -> None:
+    def __init__(self, url: str | None = None, span_ranges: bool = False, vault_grant: Any = None) -> None:
         self.url = url
+        self.vault_grant = vault_grant  # vault.guard.Grant for a registered vault read (#364)
+        self._sealed_checked = False
+        self._earliest: date | None = None  # the first stored F&O day, read once
         self.span_ranges = (
             span_ranges  # #370: margin from the stored NSE SPAN ranges (opt-in, see span_params)
         )
@@ -45,7 +52,19 @@ class DbHistory:
 
         with session_scope(self.url) as s:
             s.execute(text("SET TRANSACTION READ ONLY"))
+            if not self._sealed_checked:
+                self._earliest = s.scalar(select(func.min(FnoBhav.day)))
+                self._sealed_checked = True
+            self._vault_check(self._earliest)  # every session: a grant closed since refuses further reads
             yield s
+
+    def _vault_check(self, earliest: date | None) -> None:
+        """VaultSealed when `earliest` is a vault-period day and this instance has no live grant for its URL."""
+        from finresearch.vault.guard import check_grant
+
+        if earliest is not None and earliest <= VAULT_END and not check_grant(self.vault_grant, self.url):
+            raise VaultSealed(f"this database holds F&O rows from {earliest:%d-%b-%Y}, inside the sealed 2008-2021 "
+                              "vault: read it only through finresearch.vault.guard.vault_read (#364)")  # fmt: skip
 
     def span_params(self, symbol: str, d: date) -> dict[str, Any] | None:
         """The newest stored NSE SPAN ranges on or before `d` within SPAN_MAX_AGE_DAYS (the backfill samples one file
@@ -91,6 +110,8 @@ class DbHistory:
                 iv = None if v is None else float(v)
         if not rows:
             return None
+        if d <= VAULT_END:
+            self._vault_check(d)
         out = Day(d, symbol)
         for kind, exp, k, right, close, settle, n, oi, und, lot in rows:
             if und is not None:
@@ -112,9 +133,12 @@ class DbHistory:
         if not self.has_iv(symbol):
             return []
         with self._s() as s:
-            return [float(v) for v in s.scalars(select(FnoIvEod.iv_30d).where(
+            rows = s.execute(select(FnoIvEod.day, FnoIvEod.iv_30d).where(
                 FnoIvEod.symbol == symbol, FnoIvEod.day.between(start, end), FnoIvEod.iv_30d.is_not(None))
-                .order_by(FnoIvEod.day))]  # fmt: skip
+                .order_by(FnoIvEod.day)).all()  # fmt: skip
+        if rows and rows[0][0] <= VAULT_END:
+            self._vault_check(rows[0][0])
+        return [float(v) for _, v in rows]
 
     def lot(self, symbol: str, expiry: date, d: date) -> int | None:
         if (symbol, expiry, d) in self._row_lots:

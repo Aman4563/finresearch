@@ -68,6 +68,8 @@ class Settings(BaseSettings):
     # ---- storage
     database_url: str = "postgresql+psycopg://localhost/finresearch"
     test_database_url: str = "postgresql+psycopg://localhost/finresearch_test"
+    # the sealed 2008-2021 F&O vault (#364/#365): read only through finresearch.vault.guard; unset = no vault
+    vault_database_url: str | None = None
 
     # ---- secrets (finresearch.secrets): auto = the macOS Keychain, except a *_test database or off macOS (a 0600
     # file under state_dir); "memory" for tests

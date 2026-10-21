@@ -691,6 +691,25 @@ class LabVariant(Base):
     daily_sr: Mapped[float | None] = mapped_column(Float)  # OOS daily Sharpe (for the trials' variance V)
 
 
+class VaultRead(Base):
+    """The vault's logged-read table (#364, finresearch.vault.guard): one row per read of the 2008-2021 vault, written
+    and committed before the vault connection is handed out, so a read is spent even if the study then fails. At most
+    one row per (study, study hash) except for the repeatable data audit (read_no 1, 2, ...). Never updated or deleted."""
+
+    __tablename__ = "vault_read"
+    __table_args__ = (UniqueConstraint("study_id", "study_hash", "read_no"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    study_id: Mapped[str] = mapped_column(String(64), index=True)
+    study_hash: Mapped[str] = mapped_column(String(64))
+    read_no: Mapped[int] = mapped_column(Integer, default=1)
+    pack_hash: Mapped[str] = mapped_column(String(64))
+    engine_hash: Mapped[str] = mapped_column(String(64))  # vault.registry.engine_hash() at the read
+    git_sha: Mapped[str | None] = mapped_column(String(40))  # None when git is unavailable
+    counts_in_n: Mapped[bool] = mapped_column(Boolean)
+    purpose: Mapped[str] = mapped_column(String(300))
+    read_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class LabPaperRule(Base):
     """A version sent to paper trading (stratlab.paper): each stored close after `start_after` is checked against its
     entry rule; a signal is filled as a paper trade on the next session at live prices and managed by its rules.

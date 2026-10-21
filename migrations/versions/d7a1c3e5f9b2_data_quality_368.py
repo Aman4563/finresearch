@@ -1,7 +1,7 @@
 """Data quality and lineage (#368): dq_check, dataset_status, dataset_load
 
 Revision ID: d7a1c3e5f9b2
-Revises: c4576e88cbf0
+Revises: 87c2628bb597
 Create Date: 2026-10-22 10:00:00
 
 """
@@ -13,7 +13,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "d7a1c3e5f9b2"
-down_revision: str | Sequence[str] | None = "c4576e88cbf0"
+down_revision: str | Sequence[str] | None = "87c2628bb597"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
