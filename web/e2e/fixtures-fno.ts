@@ -72,7 +72,7 @@ export const PAPER: TradePlan = { title: "NIFTY 20-Oct-2026 · NIFTY short iron 
   size: { multiple: 3, suggested: 3, real_lots: 0, open_book: { budget: 80000, budget_pct: 8, open_risk: 12000, open_same: 0, max_concurrent: 1, mtd_paper: -1500, month_stop_pct: 6, notes: ["Groww is not connected: only paper positions are counted in the open book."] }, budget: 20000, risk_per_set: 6000, reason: "₹20,000 budget ÷ ₹6,000 risk per set = 3; no strategy that passed out of sample matches, so paper only: 0 real-money lots", capital: 1e6, max_loss_pct: 2 },
   entry: { legs: [], status: "ok", net_mid: 42.5, net_fill_now: 40, notes: [], levels_priced_at: "bid/ask mid" },
   max_profit: 2762, max_loss: -13488, breakevens: [24557.5, 25442.5], net_premium: -2762, costs: 180,
-  probability: { real_world: 0.71, real_world_window: "60-day", risk_neutral: 0.66, note: "Model probabilities." },
+  probability: { real_world: 0.71, real_world_window: "60-day", risk_neutral: 0.66, note: "Model probabilities of a positive P&L after costs at expiry (lognormal; real prices have fat tails). The card is recorded in the forecast ledger and scored on its P&L under the card's exit plan; its reliability line says how many are scored yet." },
   // #356/#357: the model EV (labelled), payoff ratio, P&L quantile dots and the reliability line
   ev: { label: "model EV - not validated", range: [-412, 96], note: "σ = realised volatility is a scenario, not a forecast.", risk_neutral: -412,
     real_world: 96, real_world_window: "60-day", costs: 412, payoff_ratio: 0.31 },
