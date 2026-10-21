@@ -175,8 +175,11 @@ def settle(p: Position, x: Day) -> dict[str, Any] | None:
     st = paper.settle(legs, s, p.expiry)
     for leg, v in zip(p.legs, st.final_values, strict=True):
         leg.exit = v
-    if source != "future":
-        p.flags.append(f"settled at {source} {s:.2f}")
+    checked = key in x.futures or bool(x.spot)  # a uniform option settle cross-checked within 1 bp (#352)
+    if source == "underlying" or (source == "uniform option settle" and not checked):
+        p.flags.append(
+            f"settled at {source} {s:.2f}" + ("" if checked else " (no future or underlying to check it)")
+        )
     if x.day != p.expiry:
         p.flags.append(f"expiry moved to {x.day} (holiday)")
     return _trade(p, x.day, "expiry", st.gross, 0.0, st.exercise_stt, x.futures.get(key))
