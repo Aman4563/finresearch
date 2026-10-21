@@ -1,7 +1,7 @@
 """F&O card log (#360): card_log, append-only (a trigger refuses UPDATE and DELETE)
 
 Revision ID: d4a8c2e6f1b9
-Revises: c9e4a2f7b1d3
+Revises: 01a11aa9e3f1
 Create Date: 2026-10-21 21:30:00.000000
 
 """
@@ -13,7 +13,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "d4a8c2e6f1b9"
-down_revision: str | Sequence[str] | None = "c9e4a2f7b1d3"
+down_revision: str | Sequence[str] | None = "01a11aa9e3f1"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
