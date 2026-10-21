@@ -1,7 +1,8 @@
 "use client";
 
 // The Risk tab: realised risk of the value history (volatility, beta, drawdown, VaR/CVaR, Sharpe/Sortino with a stated
-// risk-free rate), today's mix over the last 12 months (risk contribution by holding and sector), and stress scenarios.
+// risk-free rate), today's mix over the last 12 months (risk contribution by holding and sector), stress scenarios and
+// the historical stress replay (#345).
 
 import { Activity, Flame, Gauge as GaugeIcon, PieChart, ShieldAlert } from "lucide-react";
 import { useState } from "react";
@@ -11,6 +12,7 @@ import { Badge, Button, Callout, Card, ErrorNote, Field, Segmented, Table, cx, i
 import { day, useApi } from "@/lib/api";
 
 import { AnalyticsFooter, type AnalyticsBase, Loading, type Metric, MetricRow, NotEnough, pct, spct } from "./shared-analytics";
+import { StressReplay } from "./stress-replay";
 import { inr, signed } from "./types";
 
 type Scenario = {
@@ -136,6 +138,7 @@ export function RiskAnalytics({ refresh }: { refresh: number }) {
         )}
       </Card>
       {data.stress.length > 0 && <Stress items={data.stress} />}
+      <StressReplay refresh={refresh} />
       <AnalyticsFooter data={data} />
     </div>
   );
