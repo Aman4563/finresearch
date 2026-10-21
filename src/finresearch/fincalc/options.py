@@ -120,6 +120,28 @@ class StrategyProfile:
     max_loss: float | None  # None = unlimited (a negative number otherwise)
     net_premium: float  # paid (+) or received (-)
     curve: list[tuple[float, float]]
+    # #351: the payoff's slope above every strike (s_up) and below every strike (s_down), per point of the underlying
+    slope_up: float = 0.0
+    slope_down: float = 0.0
+
+    @property
+    def defined_risk(self) -> bool:
+        """Defined risk only when BOTH slopes are bounded (s_up ≥ 0 and s_down ≤ 0). A short put, a put ratio or a
+        long future + short call (s_down > 0) has a finite max loss only because a price cannot fall below zero."""
+        return self.slope_up >= 0 and self.slope_down <= 0
+
+    @property
+    def bounded_only_by_zero(self) -> bool:
+        """The loss is finite (s_up ≥ 0) but grows all the way down to a price of zero (s_down > 0)."""
+        return self.slope_up >= 0 and self.slope_down > 0
+
+
+def slopes(legs: Sequence[Leg]) -> tuple[float, float]:
+    """(s_up, s_down), #351: s_up = Σq(calls) + Σq(futures) above every strike; s_down = Σq(futures) − Σq(puts) below
+    every strike (a short put adds +|q|: the position loses as the price falls)."""
+    up = sum(x.qty for x in legs if x.right in ("call", "future"))
+    down = sum(x.qty for x in legs if x.right == "future") - sum(x.qty for x in legs if x.right == "put")
+    return up, down
 
 
 def profile(legs: Sequence[Leg], spot: float, width: float = 0.3, points: int = 241) -> StrategyProfile:
@@ -136,13 +158,14 @@ def profile(legs: Sequence[Leg], spot: float, width: float = 0.3, points: int = 
             breakevens.append(round(p0, 2))
         elif v0 * v1 < 0:
             breakevens.append(round(p0 + (p1 - p0) * (-v0) / (v1 - v0), 2))
-    # prices cannot fall below zero, so only the upside can be unbounded: its slope is the net call + future quantity
-    up_slope = sum(x.qty for x in legs if x.right in ("call", "future"))
+    # prices cannot fall below zero, so only the upside can be unbounded: its slope is the net call + future quantity.
+    # A finite max loss is not defined risk on its own: `defined_risk` also needs the downside slope bounded (#351).
+    up_slope, down_slope = slopes(legs)
     values = [v for _, v in curve] + [payoff(legs, 0.0)]
     max_profit = None if up_slope > 0 else max(values)
     max_loss = None if up_slope < 0 else min(values)
     net = sum(x.premium * x.qty for x in legs if x.right != "future")
-    return StrategyProfile(sorted(set(breakevens)), max_profit, max_loss, net, curve)
+    return StrategyProfile(sorted(set(breakevens)), max_profit, max_loss, net, curve, up_slope, down_slope)
 
 
 def probability_of_profit(legs: Sequence[Leg], spot: float, t_years: float, vol: float, rate: float = 0.0,

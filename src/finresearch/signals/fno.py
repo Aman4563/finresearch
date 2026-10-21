@@ -4,7 +4,8 @@ The app has no edge-generating F&O signal, and the evidence says most individual
 option buying (SEBI, 20-Aug-2026 [P30]). So the "signal" asks four questions about a proposed strategy and says ENTER
 only when every answer is acceptable:
 
-1. Defined risk: the maximum loss is finite (no naked short options).
+1. Defined risk: both payoff slopes are bounded (#351): no naked short options, and a loss bounded only by a price
+   of zero (a short put, a put ratio, a long future + short call) is not defined risk.
 2. Liquidity (#356): Σ half the bid/ask spread of every leg is at most 10% of the premium at mids (live bid/ask only;
    an estimated or unknown spread fails). The old "EV_rw ≥ −costs" gate is gone: the entry costs cancelled in it, so it
    only tested "IV at the strikes above realised volatility". Model EVs are now cost-complete (fills at mid ± half the
@@ -328,6 +329,11 @@ def analyse(chain, lot: int, legs_in: list[LegIn], *, today: date, closes: list[
         "breakevens": prof.breakevens,
         "max_profit": _r(prof.max_profit, 2),
         "max_loss": _r(prof.max_loss, 2),
+        # #351: defined risk needs both payoff slopes bounded; a loss bounded only by a price of zero is not
+        "defined_risk": prof.defined_risk,
+        "risk_shape": (
+            "defined" if prof.defined_risk else "zero_bounded" if prof.bounded_only_by_zero else "unlimited"
+        ),
         "net_premium": _r(prof.net_premium, 2),
         "net_vega": _r(vega, 2),
         "vols": {
@@ -432,11 +438,16 @@ def assess(
         if not ok:
             failed.append(name)
 
-    unlimited = a["max_loss"] is None
-    gate("Defined risk", not unlimited or not defined_risk_only, "unlimited loss" if unlimited else f"max loss ₹{_inr(-a['max_loss'])}",
-         "Only strategies whose worst case is known in advance pass (no naked short options): your profile allows "
-         "defined-risk strategies only." if defined_risk_only else "Your profile allows undefined-risk strategies.",
-         "fincalc:options.profile")  # fmt: skip
+    # #351: both payoff slopes must be bounded; a missing classification counts as undefined (unknown is never safe)
+    defined = a.get("defined_risk") is True and a["max_loss"] is not None
+    value = ("unlimited loss" if a["max_loss"] is None else
+             f"max loss ₹{_inr(-a['max_loss'])}" if defined else
+             f"bounded only by a price of zero: ₹{_inr(-a['max_loss'])}")  # fmt: skip
+    gate("Defined risk", defined or not defined_risk_only, value,
+         "Only strategies whose worst case is capped by a bought option pass (no naked short options, no put ratio, "
+         "no short call against a long future): a loss that stops only at a price of zero is not defined risk. Your "
+         "profile allows defined-risk strategies only." if defined_risk_only else
+         "Your profile allows undefined-risk strategies.", "fincalc:options.profile")  # fmt: skip
     # #356: spreads bind through liquidity (live bid/ask only: an estimate or an unknown spread never passes)
     hs = a["costs"]["half_spreads"]
     share = hs["share_of_premium"]
@@ -554,6 +565,9 @@ def caveats(a: dict[str, Any], notice: dict[str, str]) -> list[str]:
                  f"drawdown of your F&O capital at {dd['probability'] * 100:.0f}%.")  # fmt: skip
     if a["max_loss"] is None:
         c.append("Unlimited loss: a naked short option can lose far more than the premium received.")
+    elif a.get("risk_shape") == "zero_bounded":
+        c.append(f"Not defined risk: the loss is bounded only by a price of zero (₹{_inr(-a['max_loss'])}); nothing "
+                 "bought caps it on the way down.")  # fmt: skip
     c.append("Margin (SPAN + exposure) is not computed here; check your broker's margin calculator.")
     return c
 
