@@ -163,3 +163,87 @@ def test_cpi_basis_with_too_short_history_is_unknown_with_reason():
 def test_unknown_basis_is_refused():
     with pytest.raises(ValueError):
         inf.resolve("cpi_food", 6.0, None, None)
+
+
+# --------------------------------------------------------------------------- /api/wealth/goals/{id}/plan
+ORIGIN = {"Origin": "http://127.0.0.1:3000", "X-FinResearch": "1"}
+GOAL = {"name": "Child's college", "target_inr": "2500000", "target_date": "2036-06-30", "inflation_pct": "7",
+        "current_inr": "400000", "monthly_sip": "12000", "step_up_pct": "5"}  # fmt: skip
+
+
+@pytest.fixture
+def api(env):
+    from fastapi.testclient import TestClient
+    from sqlalchemy import text
+
+    from finresearch.api import create_app
+    from finresearch.db import session_scope
+
+    with session_scope() as s:
+        s.execute(text("TRUNCATE wealth_goal, portfolio_setting CASCADE"))
+    app = create_app()
+    app.state.wealth_today = date(2026, 10, 22)
+    state = {"calls": 0, "fail": None}
+
+    async def source():
+        state["calls"] += 1
+        if state["fail"]:
+            raise RuntimeError(state["fail"])
+        return cpi_data()
+
+    app.state.cpi_source = source
+    with TestClient(app) as c:
+        yield c, state
+
+
+def _goal(c, **kw):
+    r = c.post("/api/wealth/goals", json=GOAL | kw, headers=ORIGIN)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_api_manual_goal_never_fetches_cpi_and_says_your_assumption(api):
+    c, state = api
+    g = _goal(c)
+    assert g["inflation_basis"] == "manual"  # existing and API-created goals keep their fixed rate
+    p = c.get(f"/api/wealth/goals/{g['id']}/plan?n=500").json()
+    assert state["calls"] == 0
+    assert p["inflation"]["basis"] == "manual" and "your assumption" in p["inflation"]["label"]
+    assert p["target_nominal"] == pytest.approx(2_500_000 * 1.07 ** (p["months"] / 12))
+    assert [r["inflation_pct"] for r in p["inflation_sensitivity"]] == [5.0, 7.0, 9.0]
+
+
+def test_api_cpi_education_goal_uses_mospi_rates_and_records_the_vintage(api):
+    c, state = api
+    g = _goal(c, inflation_basis="cpi_education")
+    p = c.get(f"/api/wealth/goals/{g['id']}/plan?n=500").json()
+    lr = ((1.08**9 * 1.06) ** 0.1 - 1) * 100
+    inf_ = p["inflation"]
+    assert inf_["known"] and inf_["mean_pct"] == pytest.approx(lr, abs=1e-9)
+    assert p["inflation_pct"] == pytest.approx(lr, abs=1e-9) and p["inflation_sd_pct"] > 0
+    assert p["target_nominal"] == pytest.approx(2_500_000 * (1 + lr / 100) ** (p["months"] / 12))
+    assert p["target_pcts"]["p10"] < p["target_pcts"]["p90"]
+    assert inf_["vintage"]["base2024_last"] == "2026-09-01" and inf_["as_of"] == "2026-09-01"
+    assert len(p["inflation_sensitivity"]) == 4  # trailing, average, +2 pp, general CPI
+    c.get(f"/api/wealth/goals/{g['id']}/plan?n=500")
+    assert state["calls"] == 1  # the series is kept in memory between plans
+
+
+def test_api_cpi_failure_is_unknown_with_reason_and_not_cached(api):
+    c, state = api
+    state["fail"] = "MoSPI CPI API HTTP 503"
+    g = _goal(c, inflation_basis="cpi_general", inflation_pct="6.5")
+    p = c.get(f"/api/wealth/goals/{g['id']}/plan?n=500").json()
+    assert p["inflation"]["known"] is False and p["inflation"]["value_pct"] is None
+    assert "503" in p["inflation"]["reason"] and "unknown" in p["inflation"]["label"]
+    assert p["target_nominal"] == pytest.approx(2_500_000 * 1.065 ** (p["months"] / 12))  # labelled fallback
+    assert p["inflation_sd_pct"] == 0.0
+    state["fail"] = None
+    p2 = c.get(f"/api/wealth/goals/{g['id']}/plan?n=500").json()
+    assert p2["inflation"]["known"] is True and state["calls"] == 2
+
+
+def test_api_rejects_an_unknown_basis(api):
+    c, _ = api
+    r = c.post("/api/wealth/goals", json=GOAL | {"inflation_basis": "cpi_food"}, headers=ORIGIN)
+    assert r.status_code == 422

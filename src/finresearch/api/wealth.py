@@ -96,6 +96,8 @@ class GoalIn(BaseModel):
     target_date: date
     priority: Literal["high", "medium", "low"] = "medium"
     inflation_pct: Decimal = Field(Decimal(6), ge=0, le=20)
+    # manual: inflation_pct as given; cpi_*: MoSPI CPI's long-run rate with its spread (wealth.inflation, #347)
+    inflation_basis: Literal["manual", "cpi_general", "cpi_education", "cpi_health"] = "manual"
     current_inr: Decimal = Field(Decimal(0), ge=0)
     monthly_sip: Decimal = Field(Decimal(0), ge=0)
     step_up_pct: Decimal = Field(Decimal(0), ge=0, le=50)
@@ -123,6 +125,9 @@ class PolicyIn(BaseModel):
     notes: str | None = Field(None, max_length=2000)
 
 
+CPI_TTL_S = 12 * 3600  # MoSPI publishes the CPI once a month (around the 12th)
+
+
 def add_wealth_routes(app: FastAPI, *, clock: Callable[[], datetime] | None = None) -> None:
     from finresearch.fincalc.dates import IST, today_ist
 
@@ -148,22 +153,62 @@ def add_wealth_routes(app: FastAPI, *, clock: Callable[[], datetime] | None = No
         with session_scope() as s:
             return overview(s, today())
 
+    from finresearch.api.markets import TtlCache
+
+    cpi_cache = TtlCache()
+
+    async def _cpi_series():
+        seam = getattr(app.state, "cpi_source", None)
+        if seam is not None:
+            return await seam()
+        from finresearch.adapters.mospi_cpi import MospiCpiClient
+
+        async with MospiCpiClient() as c:
+            return await c.fetch(today=today())
+
+    async def _cpi() -> tuple[Any, str | None]:
+        """MoSPI's CPI summary, kept in memory for CPI_TTL_S; a failure is returned as its reason, never cached."""
+        from finresearch.api.errors import public_error
+        from finresearch.wealth.inflation import summarize
+
+        try:
+            return summarize(await cpi_cache.get(("mospi_cpi", today()), CPI_TTL_S, _cpi_series)), None
+        except Exception as e:  # any failure: the goal's CPI inflation is unknown, with this reason
+            return None, public_error(e, drop_query=True)
+
     @app.get("/api/wealth/goals/{goal_id}/plan")
-    def goal_plan(
+    async def goal_plan(
         goal_id: int,
         seed: int | None = Query(None, ge=0, lt=2**32),
         n: int | None = Query(None, ge=500, le=20000),
     ) -> dict[str, Any]:
-        """Seeded Monte Carlo for one goal: P(success) with its range, fan chart, SIP needed for 75 % / 90 %."""
+        """Seeded Monte Carlo for one goal: P(success) with its range, fan chart, SIP needed for 75 % / 90 %. A goal
+        on a CPI inflation basis reads MoSPI's CPI first (adapters.mospi_cpi, #347); a manual goal never does."""
+        from starlette.concurrency import run_in_threadpool
+
+        from finresearch.db.models import WealthGoal
         from finresearch.wealth.service import goal_plan as run
 
-        with session_scope() as s:
-            try:
-                return run(s, goal_id, today(), seed=seed, n=n)
-            except LookupError as e:
-                raise HTTPException(404, f"unknown goal {goal_id}") from e
-            except ValueError as e:
-                raise HTTPException(422, str(e)) from e
+        def basis() -> str | None:
+            with session_scope() as s:
+                g = s.get(WealthGoal, goal_id)
+                return None if g is None else (g.inflation_basis or "manual")
+
+        b = await run_in_threadpool(basis)
+        if b is None:
+            raise HTTPException(404, f"unknown goal {goal_id}")
+        cpi, why = await _cpi() if b != "manual" else (None, None)
+
+        def work() -> dict[str, Any]:
+            with session_scope() as s:
+                return run(s, goal_id, today(), seed=seed, n=n, cpi=cpi, cpi_why=why)
+
+        try:
+            return await run_in_threadpool(work)
+        except LookupError as e:
+            raise HTTPException(404, f"unknown goal {goal_id}") from e
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from e
 
     # ------------------------------------------------------------------ household profile and assumptions
     @app.get("/api/wealth/household")
