@@ -62,3 +62,45 @@ def test_stats_too_short_history_is_unknown_with_reason():
 def test_stats_empty_is_unknown():
     st = inf.stats({}, years=10)
     assert st.as_of is None and st.trailing_pct is None and st.long_run_pct is None and st.why
+
+
+# --------------------------------------------------------------------------- inflation paths in the Monte Carlo
+from finresearch.wealth import goals  # noqa: E402
+
+KW = dict(start=500_000.0, sip0=15_000.0, step_up_pct=5.0, months=120, target_today=3_000_000.0,
+          inflation_pct=6.0, equity_pct=None, gold_pct=10.0, assumptions=goals.DEFAULT_ASSUMPTIONS, n=2000,
+          seed=11)  # fmt: skip
+
+
+def test_growth_from_draws_compounds_whole_and_part_years_hand_computed():
+    import numpy as np
+
+    g = goals.growth_from_draws(np.array([[0.10, 0.20], [0.0, -0.10]]), months=18)
+    assert g == pytest.approx([1.10 * 1.20**0.5, 1.0 * 0.90**0.5], rel=1e-12)
+
+
+def test_zero_spread_keeps_the_fixed_inflation_plan_exactly():
+    a, b = goals.plan(**KW), goals.plan(**KW, inflation_sd_pct=0.0)
+    assert a.to_json() == b.to_json()
+    assert b.target_nominal == pytest.approx(3_000_000 * 1.06**10)
+
+
+def test_inflation_spread_reuses_the_return_draws_and_spreads_the_target():
+    a, b = goals.plan(**KW), goals.plan(**KW, inflation_sd_pct=1.5)
+    assert b.terminal_pcts == a.terminal_pcts  # returns drawn from their own stream: common random numbers
+    assert b.target_nominal == pytest.approx(a.target_nominal)  # the central target is the long-run rate's
+    lo, mid, hi = (b.target_pcts[k] for k in ("p10", "p50", "p90"))
+    assert lo < mid < hi and lo < a.target_nominal < hi
+    # mean target ~ central: E[prod(1 + pi)] = (1 + mu)^10 for independent years; ~1.5 % sd of 2,000 paths
+    assert b.target_mean == pytest.approx(a.target_nominal, rel=0.01)
+    assert b.inflation_sd_pct == 1.5
+
+
+def test_inflation_sensitivity_rows_match_fixed_rate_runs():
+    b = goals.plan(**KW, inflation_sd_pct=1.5, sensitivity=[("CPI trailing 12 months", 3.0), ("+2 pp", 8.0)])
+    rows = {r["label"]: r for r in b.inflation_sensitivity}
+    for label, rate in (("CPI trailing 12 months", 3.0), ("+2 pp", 8.0)):
+        fixed = goals.plan(**(KW | {"inflation_pct": rate}), extras=False)
+        assert rows[label]["inflation_pct"] == rate
+        assert rows[label]["p_success"] == pytest.approx(fixed.p_success)
+    assert rows["+2 pp"]["p_success"] <= rows["CPI trailing 12 months"]["p_success"]

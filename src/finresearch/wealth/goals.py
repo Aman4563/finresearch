@@ -9,7 +9,11 @@ Model (stated, editable assumptions; not a forecast):
 - Weights: the goal's own equity % if set, else a time-to-goal glide (rule of thumb [W]): more than 7 years left
   70 % equity, 3-7 years 50 %, 1-3 years 20 %, under a year 0 %; the goal's gold % is held throughout; the rest
   debt.
-- Target in rupees of the goal date: T = target_today (1 + inflation)^(M / 12).
+- Target in rupees of the goal date: T = target_today (1 + inflation)^(M / 12) with one fixed rate; with an
+  inflation spread (CPI-based goals, #347) each path draws its own yearly rates pi_y ~ N(inflation, sd) from a
+  separate random stream and T_path = target_today prod_y (1 + pi_y)^(e_y) (e_y = 1, the last part year
+  (M - 12 y) / 12). Years are drawn independently (a limitation: Indian inflation is persistent, so the real spread
+  of a multi-year average is wider than this) and independently of returns. `target_nominal` stays the central T.
 - P(success) = share of paths with V_M >= T, with a 95 % Wilson interval for the simulation's own sampling error,
   and the same run with equity returns cut by 2 pp (the "haircut" row) as the stated range of assumption risk.
 - SIP needed for 75 % / 90 % success: bisection on SIP_0 over the same random draws (common random numbers), so the
@@ -111,6 +115,21 @@ def monthly_returns(
     return out
 
 
+def inflation_draws(n: int, years: int, mu_pct: float, sd_pct: float, seed: int) -> np.ndarray:
+    """(n, years) yearly inflation rates, pi ~ N(mu, sd) independently per year, floored at -50 %. Drawn from
+    PCG64(seed).jumped(): a stream of its own, so the return draws (and every fixed-inflation result) are unchanged."""
+    rng = np.random.Generator(np.random.PCG64(seed).jumped())
+    return np.maximum(mu_pct / 100 + sd_pct / 100 * rng.standard_normal((n, years)), -0.5)
+
+
+def growth_from_draws(pi: np.ndarray, months: int) -> np.ndarray:
+    """Price growth over `months` per path: prod over years y of (1 + pi_y)^(e_y), e_y = 1 for whole years and
+    (months - 12 y) / 12 for the last part year."""
+    years = math.ceil(months / 12)
+    e = np.array([min(12, months - 12 * y) / 12 for y in range(years)])
+    return np.exp(np.log1p(pi[:, :years]) @ e)
+
+
 def terminal(start: float, sips: np.ndarray, returns: np.ndarray) -> np.ndarray:
     v = np.full(returns.shape[0], float(start))
     for m in range(returns.shape[1]):
@@ -152,7 +171,12 @@ def fv_closed_form(
 
 
 def required_sip(
-    start: float, step_up_pct: float, target: float, returns: np.ndarray, p: float, hi: float | None = None
+    start: float,
+    step_up_pct: float,
+    target: float | np.ndarray,
+    returns: np.ndarray,
+    p: float,
+    hi: float | None = None,
 ) -> float | None:
     """Smallest SIP_0 (to the rupee) whose success share over these draws is >= p. None if even a very large SIP
     misses (e.g. a goal due within a month)."""
@@ -165,7 +189,9 @@ def required_sip(
 
     if ok(0.0):
         return 0.0
-    hi = hi or max(target / months, 1000.0)
+    hi = hi or max(
+        float(np.max(target)) / months, 1000.0
+    )  # a per-path target (inflation paths) starts from its largest
     for _ in range(40):
         if ok(hi):
             break
@@ -200,6 +226,11 @@ class GoalPlan:
     terminal_pcts: dict[str, float] = field(default_factory=dict)
     assumptions: dict[str, dict[str, Any]] = field(default_factory=dict)
     equity_path: str = ""
+    inflation_pct: float = 0.0  # the central (mean) yearly inflation
+    inflation_sd_pct: float = 0.0  # 0 = one fixed rate on every path
+    target_pcts: dict[str, float] = field(default_factory=dict)  # the goal-date target across inflation paths
+    target_mean: float = 0.0
+    inflation_sensitivity: list[dict[str, Any]] = field(default_factory=list)
 
     def to_json(self) -> dict[str, Any]:
         d = self.__dict__.copy()
@@ -223,10 +254,20 @@ def plan(
     extras: bool = True,
     today_year: int | None = None,
     progress: Callable[[str], None] | None = None,
+    inflation_sd_pct: float = 0.0,
+    sensitivity: list[tuple[str, float]] | None = None,
 ) -> GoalPlan:
+    """`inflation_sd_pct` > 0 draws each path's yearly inflation around `inflation_pct` (`inflation_draws`), so the
+    goal-date target differs per path; `sensitivity` adds P(success) at each (label, fixed rate) on the same draws."""
     if months <= 0:
         raise ValueError("the goal date must be at least a month away")
-    target = target_today * (1 + inflation_pct / 100) ** (months / 12)
+    central = target_today * (1 + inflation_pct / 100) ** (months / 12)
+    pi = (
+        inflation_draws(n, math.ceil((months + 12) / 12), inflation_pct, inflation_sd_pct, seed)
+        if inflation_sd_pct > 0
+        else None
+    )
+    target: Any = central if pi is None else target_today * growth_from_draws(pi, months)
     w = weights_path(months, equity_pct, gold_pct)
     sips = sip_path(sip0, step_up_pct, months)
     rets = monthly_returns(months, n, assumptions, w, seed)
@@ -240,7 +281,11 @@ def plan(
     if extras:
         # one more year: the same goal (in today's rupees, inflated one more year) and one more year of SIPs
         m2 = months + 12
-        t2 = target_today * (1 + inflation_pct / 100) ** (m2 / 12)
+        t2 = (
+            target_today * (1 + inflation_pct / 100) ** (m2 / 12)
+            if pi is None
+            else target_today * growth_from_draws(pi, m2)
+        )
         r2 = monthly_returns(m2, n, assumptions, weights_path(m2, equity_pct, gold_pct), seed)
         p_year = float(np.mean(terminal(start, sip_path(sip0, step_up_pct, m2), r2) >= t2))
         p_step = float(np.mean(terminal(start, sip_path(sip0, step_up_pct + 5, months), rets) >= target))
@@ -264,7 +309,7 @@ def plan(
     return GoalPlan(
         months=months,
         target_today=target_today,
-        target_nominal=target,
+        target_nominal=central,
         start=start,
         sip0=sip0,
         step_up_pct=step_up_pct,
@@ -284,4 +329,18 @@ def plan(
             for k2, a in assumptions.items()
         },
         equity_path=f"{eq}; gold {gold_pct:g} %; rest debt",
+        inflation_pct=inflation_pct,
+        inflation_sd_pct=inflation_sd_pct,
+        target_pcts={
+            q: float(np.percentile(np.broadcast_to(target, (n,)), int(q[1:]))) for q in ("p10", "p50", "p90")
+        },
+        target_mean=float(np.mean(target)),
+        inflation_sensitivity=[
+            {
+                "label": lab,
+                "inflation_pct": r,
+                "p_success": float(np.mean(final >= target_today * (1 + r / 100) ** (months / 12))),
+            }
+            for lab, r in (sensitivity or [])
+        ],
     )
