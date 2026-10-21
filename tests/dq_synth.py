@@ -65,3 +65,35 @@ def manifest(s, upto: date, n: int = 30, kept: int = 32, total: int = 40) -> lis
         s.add(FnoBhavDay(day=d, status="loaded", format="udiff", url="synthetic", rows_total=total + i % 7,
                          rows_kept=kept + i % 5, rows_dead=0, stock_symbols=[]))  # fmt: skip
     return sorted(days)
+
+
+BUCKETS = ("fut_idx", "fut_stk", "opt_idx_call", "opt_idx_put", "opt_stk_call", "opt_stk_put")
+
+
+def participants(day: date) -> list[dict]:
+    """Four participants whose futures longs (and shorts) add up to the synthetic futures' open interest in contracts:
+    index futures (1000 + 600 lots) x 2 symbols = 3,200, stock futures the same. Options balance among themselves."""
+    share = {"Client": 0.4, "DII": 0.1, "FII": 0.3, "Pro": 0.2}
+    out = []
+    for who, w in share.items():
+        r: dict = {"day": day, "client_type": who, "source": "synthetic"}
+        for b in BUCKETS:
+            n = int(3200 * w) if b.startswith("fut") else int(10000 * w)
+            if b.startswith("fut"):
+                r[f"{b}_long"], r[f"{b}_short"] = n, n
+            else:
+                kind, right = b.rsplit("_", 1)
+                r[f"{kind}_{right}_long"], r[f"{kind}_{right}_short"] = n, n
+        r["total_long"] = sum(v for k, v in r.items() if k.endswith("_long"))
+        r["total_short"] = sum(v for k, v in r.items() if k.endswith("_short"))
+        out.append(r)
+    return out
+
+
+def index_rows(day: date, vix: float = 13.0) -> list[dict]:
+    out = []
+    for sym in ("NIFTY", "BANKNIFTY", "INDIA VIX"):
+        c = Decimal(str(round(price(sym, day), 2))) if sym in BASE else Decimal(str(vix))
+        out.append({"day": day, "symbol": sym, "index_name": sym, "open": c, "high": c * Decimal("1.01"),
+                    "low": c * Decimal("0.99"), "close": c})  # fmt: skip
+    return out
