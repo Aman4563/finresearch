@@ -3,6 +3,8 @@ India session an event lands in, and the plan's tier-1 window check."""
 
 from datetime import date, datetime, timedelta, timezone
 
+from sqlalchemy import text
+
 from finresearch.eventcal import calendar as cal
 from finresearch.fincalc.dates import IST
 
@@ -106,6 +108,8 @@ def test_store_round_trip_keeps_known_since_and_is_idempotent(env):
     rows = [_ev("rbi_mpc", date(2026, 10, 1), date(2026, 3, 1)), _ev("fomc", date(2026, 9, 16), date(2025, 6, 1),
                                                                       at=fomc, tier=2)]  # fmt: skip
     with session_scope() as s:
+        s.execute(text("TRUNCATE calendar_event, calendar_coverage"))  # another file's rows
+    with session_scope() as s:
         assert store.load(s) == ([], [])  # empty: no coverage, so every check reads unknown
         assert store.upsert(s, rows, FULL) == (2, 3)
     with session_scope() as s:
@@ -126,3 +130,40 @@ def test_store_keeps_the_earliest_known_since_when_a_row_is_seen_again(env):
         store.upsert(s, [_ev("rbi_mpc", date(2026, 12, 4), date(2026, 9, 30))], [])
         (e,) = [e for e in store.load(s)[0] if e.day == date(2026, 12, 4)]
     assert e.known_since == datetime(2026, 3, 1, tzinfo=IST)
+
+
+# --------------------------------------------------------------------------- the trade-plan card's event check
+def _plan(calendar):
+    import json
+
+    from test_fno_signal import FNO, chain
+
+    from finresearch.adapters.nse_fno import parse_index_history
+    from finresearch.signals import fno as fs
+    from finresearch.signals import tradeplan as tpl
+
+    hist = json.loads((FNO / "indices_history_NIFTY50_202606_202609.json").read_text())
+    closes = [float(c) for _, c in parse_index_history(hist)]
+    x = tpl.Inputs(today=date(2026, 9, 29), closes=closes, iv_series=[], capital=1_000_000, max_loss_pct=2,
+                   brokerage=20, defined_risk_only=True, rate=0.065, book=tpl.EMPTY_BOOK, calendar=calendar)  # fmt: skip
+    return tpl.build(chain(), 65, [fs.LegIn("put", 22600, "sell"), fs.LegIn("put", 22400, "buy")], x)
+
+
+def test_an_index_plan_whose_window_spans_a_tier1_event_shows_the_check():
+    rbi = _ev("rbi_mpc", date(2026, 10, 1), date(2026, 3, 1), at=datetime(2026, 10, 1, 10, 0, tzinfo=IST))
+    card = _plan(([rbi], FULL))  # NIFTY 06-Oct-2026 expiry, planned on 29-Sep-2026
+    ec = card["event_check"]
+    assert ec["status"] == "events" and [e["day"] for e in ec["tier1"]] == ["2026-10-01"]
+    assert ec["window"] == {"from": "2026-09-29", "to": "2026-10-06"}
+
+
+def test_a_plan_after_the_window_event_reads_none_and_one_without_a_calendar_reads_unknown():
+    rbi = _ev("rbi_mpc", date(2026, 10, 9), date(2026, 3, 1))  # after the 06-Oct expiry
+    assert _plan(([rbi], FULL))["event_check"]["status"] == "none"
+    assert _plan(None)["event_check"]["status"] == "unknown"  # never read: unknown, never "no events"
+    assert _plan(([], []))["event_check"]["status"] == "unknown"  # read but empty (no coverage): unknown
+
+
+def test_the_plan_check_ignores_an_event_announced_after_the_plan_time():
+    late = _ev("union_budget", date(2026, 10, 2), date(2026, 9, 30))  # public the day after the 29-Sep plan
+    assert _plan(([late], FULL))["event_check"]["status"] == "none"

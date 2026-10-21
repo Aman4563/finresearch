@@ -300,7 +300,8 @@ class Inputs:
                  backtest_head: dict[str, Any] | None = None, paper: list[dict[str, Any]] | None = None,
                  events: list[tuple[date, str]] | None = None, is_index: bool = True,
                  book: BookData = UNKNOWN_BOOK, iv_points: list[tuple[Any, float | None]] | None = None,
-                 scored: int | None = None, now: datetime | None = None) -> None:  # fmt: skip
+                 scored: int | None = None, now: datetime | None = None,
+                 calendar: tuple[list[Any], list[Any]] | None = None) -> None:  # fmt: skip
         self.today, self.closes, self.iv_series, self.iv_src, self.iv_as_of = (
             today,
             closes,
@@ -312,6 +313,9 @@ class Inputs:
         self.defined_risk_only, self.rate = defined_risk_only, rate
         self.strategies, self.backtest_head, self.paper = strategies, backtest_head, paper or []
         self.events, self.is_index = events, is_index
+        self.calendar = (
+            calendar  # #367: (events, coverage) from eventcal.store; None = not read (check: unknown)
+        )
         self.book = book  # the open book (#358); unknown unless read: then no card has room
         self.scored = scored  # #357: the plan card method's scored forecasts (None = the ledger was not read)
         self.now = (
@@ -494,6 +498,16 @@ def _invalidation(kind: str, legs: list[fs.LegIn], spot: float, events: list[tup
     return out
 
 
+def event_check(x: Inputs, expiry: date) -> dict[str, Any]:
+    """#367: the informational "tier-1 event inside holding window" check, from the plan time to expiry, using only
+    calendar rows public at the plan time (point in time). Not a gate: it changes no action or size."""
+    from finresearch.eventcal import calendar as cal
+
+    events, coverage = x.calendar if x.calendar is not None else (None, None)
+    out = cal.window_check(events, coverage, start=x.today, end=expiry, as_of=session_clock(x.today, x.now))
+    return {**out, "window": {"from": x.today.isoformat(), "to": expiry.isoformat()}}
+
+
 def _leg_iv(q: tp.ChainQuote | None, right: str, price: float, spot: float, strike: float, t: float,
             rate: float) -> float | None:  # fmt: skip
     if right == "future":
@@ -637,6 +651,7 @@ def build(chain, lot: int, legs_in: list[fs.LegIn], x: Inputs, *, spec: Any | No
         "exit_rules": _exit_rules(exits, kind, legs, x.is_index),
         "adjustments": {"rules": ADJUST[family], "note": ADJUST_NOTE},
         "invalidation": _invalidation(kind, legs, spot, x.events, x.today, expiry, x.is_index),
+        "event_check": event_check(x, expiry),
         "evidence": {k: v for k, v in ev.items() if k != "spec"},
         # the plan:<spec> tag only counts for an exact match: a related spec's trades are another underlying's
         "paper": paper_record(x.paper, sym, kind, ev["spec_key"] if ev["match"] == "exact" else None),
