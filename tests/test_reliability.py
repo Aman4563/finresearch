@@ -83,9 +83,14 @@ def _log(s, sym, p, day, outcome, method="test reliability method"):
 
 def test_scored_counts_independent_outcomes_of_the_same_method(ledger):
     from finresearch.db import session_scope
+    from finresearch.db.models import IpoIssue
     from finresearch.signals.reliability import scored_events
 
     with session_scope() as s:
+        s.query(IpoIssue).filter(IpoIssue.issue_key.in_(("RELA", "RELB"))).delete()
+        for sym in ("RELA", "RELB"):  # #353: scored only with a known last bidding day (3-Sep)
+            s.add(IpoIssue(exchange="NSE", issue_key=sym, symbol=sym, name=sym, board="mainboard",
+                           close_date=date(2026, 9, 3), status="closed", first_seen=_at(1), last_seen=_at(3)))  # fmt: skip
         for day in (1, 2, 3):  # one listing viewed on three days = one outcome
             _log(s, "RELA", 0.9, day, 1)
         _log(s, "RELB", 0.7, 2, 0)

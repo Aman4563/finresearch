@@ -24,7 +24,7 @@ const fnoRoutes = (long: boolean): Routes => ({
   "GET /api/fno/risk-notice": F.NOTICE, "GET /api/fno/NIFTY/expiries": { symbol: "NIFTY", expiries: [expiry], strikes: [] },
   "GET /api/fno/NIFTY/chain": F.WIDE_CHAIN, "GET /api/fno/NIFTY/context": long ? F.LONG_CONTEXT : F.CONTEXT,
   "GET /api/fno/NIFTY/suggest": long ? F.LONG_SUGGEST : F.SUGGEST, "POST /api/fno/strategy": long ? F.LONG_RESULT : F.RESULT,
-  "POST /api/fno/plan": long ? F.LONG_ENTER : F.ENTER, "GET /api/fno/positions": long ? F.LONG_POSITIONS : F.POSITIONS,
+  "POST /api/fno/plan": long ? F.LONG_PAPER : F.PAPER, "GET /api/fno/positions": long ? F.LONG_POSITIONS : F.POSITIONS,
   "GET /api/fno/paper": long ? F.LONG_BOOK : F.BOOK, "GET /api/fno/NIFTY/events": F.EVENTS, "GET /api/fno/NIFTY/iv": IV, "POST /api/fno/margin": F.MARGIN, "GET /api/fno/direction/NIFTY": F.DIRECTION(5),
 });
 const fnoReady = async (page: Page) => {

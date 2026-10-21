@@ -26,7 +26,7 @@ export function PlanForLegs({ symbol, expiry, legs }: { symbol: string; expiry: 
   }, [body]);
   return (
     <Card title="Trade plan" icon={<Lightbulb className="size-4" />} subtitle="Verdict, size, entry, stop, target and exits for these legs"
-      help="ENTER only when every check passes; without a strategy that passed its pre-registered backtest it is always 'no proven edge — size small'. AVOID when a hard check fails or the matching backtest failed.">
+      help="ENTER only when every check passes and a strategy that passed its pre-registered out-of-sample backtest matches; every check passing without one reads 'NO PROVEN EDGE — paper only (0 real lots)'. AVOID when a hard check fails or the matching backtest failed.">
       {error ? <ErrorNote error={error} /> : plan ? <PlanCard plan={plan} /> : <Skeleton className="h-40 rounded-xl" />}
     </Card>
   );
