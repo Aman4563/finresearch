@@ -224,6 +224,14 @@ function PlanDetail({ plan }: { plan: TradePlan }) {
               {s.open_book.notes.map((n) => <span key={n} className="block text-[11px] text-muted">{n}</span>)}
             </Row>
           )}
+          {s.open_book?.shock_budget != null && (
+            <Row label="Common shock" help={`The book after this trade may lose at most ${s.open_book.shock_pct}% of your F&O capital if NIFTY moved ${(s.open_book.shock_moves ?? []).map((m) => `${m > 0 ? "+" : "−"}${Math.abs(m * 100)}%`).join(", ")} in one session (other underlyings by their beta, IVs by the measured spot-vol response). An unknown shock loss sizes 0. Real money also needs margin use within ${(s.open_book.margin_util_max ?? 0) * 100}% of your Groww margin capacity, read from today's sync.`}>
+              <span className="font-normal" data-testid="plan-shock">
+                book worst <N>{rs(s.open_book.shock_book_worst)}</N> · one set worst <N>{rs(s.open_book.shock_one_worst)}</N> of <N>{rs(s.open_book.shock_budget)}</N> · margin {s.open_book.margin_known ? "known" : "unknown"}
+              </span>
+              {[...(s.open_book.shock_notes ?? []), ...(s.open_book.margin_notes ?? [])].map((n) => <span key={n} className="block text-[11px] text-muted">{n}</span>)}
+            </Row>
+          )}
           <Row label="Max profit"><N>{plan.max_profit == null ? "unlimited" : rs(plan.max_profit)}</N></Row>
           <Row label="Max loss"><N>{plan.max_loss == null ? "unlimited" : rs(plan.max_loss)}</N>{zeroBounded(plan) && <span className="block text-[11px] text-muted">{zeroBounded(plan)}</span>}</Row>
           <Row label="Breakevens">{plan.breakevens?.length ? plan.breakevens.map((b, i) => <span key={b}>{i > 0 && " / "}<N>{lvl(b)}</N></span>) : "none"}</Row>

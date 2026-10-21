@@ -33,7 +33,10 @@ export type TradePlan = {
   legs: { right: "call" | "put" | "future"; strike: number; side: "buy" | "sell"; lots: number; qty?: number; last?: number }[];
   size?: { multiple: number; suggested: number; /** real-money lots (#350): 0 unless the matched spec is a candidate */ real_lots?: number;
     /** #358: the open-book cap: budget = 8% of F&O capital, open_risk = what open paper and Groww positions risk (null = unknown) */
-    open_book?: { budget: number; budget_pct: number; open_risk: number | null; open_same: number; max_concurrent: number | null; mtd_paper: number | null; month_stop_pct: number; notes: string[] };
+    open_book?: { budget: number; budget_pct: number; open_risk: number | null; open_same: number; max_concurrent: number | null; mtd_paper: number | null; month_stop_pct: number; notes: string[];
+      // #395: the common-shock and margin terms (optional: older cards lack them)
+      shock_budget?: number; shock_pct?: number; shock_moves?: number[]; shock_book_worst?: number | null; shock_one_worst?: number | null;
+      shock_notes?: string[]; margin_util_max?: number; margin_known?: boolean; margin_notes?: string[] };
     budget: number; risk_per_set: number | null; reason: string; capital: number; max_loss_pct: number };
   entry?: { legs: EntryLeg[]; status: "ok" | "unknown"; net_mid: number | null; net_fill_now: number | null; notes: string[]; levels_priced_at: string;
     /** "bid/ask: NSE chain at HH:MM" (#324: NSE's chain when the plan's has no bid/ask), or "unknown" */
