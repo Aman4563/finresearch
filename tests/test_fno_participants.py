@@ -65,7 +65,7 @@ def clean(env):
 
     def wipe():
         with session_scope() as s:
-            s.execute(text("TRUNCATE fno_participant_oi"))
+            s.execute(text("TRUNCATE fno_participant_oi, fno_participant_vol, fno_participant_day"))
             s.execute(text("DELETE FROM alert_eval_slot WHERE slot LIKE 'fno_participant:%'"))
 
     wipe()
@@ -87,11 +87,18 @@ async def test_nightly_step_stores_the_day_and_latest_reads_changes(clean):
     prev_text = prev_text.replace("Client,291627,62104", "Client,290627,63104")
     respx.get(po.URL.format(day=DAY)).mock(return_value=httpx.Response(200, text=FIXTURE))
     respx.get(po.URL.format(day=prev)).mock(return_value=httpx.Response(200, text=prev_text))
+    # #371: the step also loads the trading-volume file (same layout; the slot is done only when both are stored)
+    for d, t in ((DAY, FIXTURE), (prev, prev_text)):
+        respx.get(po.VOL.url_for(d)).mock(
+            return_value=httpx.Response(200, text=t.replace("Open Interest", "Trading Volume"))
+        )
     respx.get(url__startswith="https://nsearchives.nseindia.com/").mock(return_value=httpx.Response(404))
     now = datetime(2026, 10, 9, 14, 15, tzinfo=UTC)  # 19:45 IST, Friday
     async with PoliteClient(cache_dir=None, sleep=_no_sleep, clock=lambda: 0.0, max_retries=0) as http:
         res = await job.fno_participant_step(now, holidays=set(), http=http)
-        assert res["fno_participant"]["loaded"] == 2 and not res["fno_participant"]["failed"]
+        assert (
+            res["fno_participant"]["loaded"] == 4 and not res["fno_participant"]["failed"]
+        )  # 2 days x 2 files
         assert await job.fno_participant_step(now, holidays=set(), http=http) == {}  # claimed once a night
     with session_scope() as s:
         assert s.get(AlertEvalSlot, "fno_participant:2026-10-09").result["status"] == "done"
@@ -112,4 +119,6 @@ async def test_block_page_is_an_error_not_no_file(clean):
     )
     async with PoliteClient(cache_dir=None, sleep=_no_sleep, clock=lambda: 0.0, max_retries=0) as http:
         res = await participants.update(DAY, http=http, lookback=3)
-    assert res["loaded"] == 0 and res["no_file"] == 0 and len(res["failed"]) == 2 and "stopped" in res
+    # #371: each file (OI, volume) stops after its own two failures in a row
+    assert res["loaded"] == 0 and res["no_file"] == 0 and len(res["failed"]) == 4 and "stopped" in res
+    assert {k.split()[0] for k in res["failed"]} == {"fno_participant_oi", "fno_participant_vol"}

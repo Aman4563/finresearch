@@ -68,6 +68,12 @@ class Position:
     iv_pct: float | None
     stock_entry: float | None = None  # overlays: the same-expiry future at entry (the held stock's proxy)
     flags: list[str] = field(default_factory=list)
+    # next-print fills (#382): the mode, the close the entry was decided at, whether it filled at a session's open
+    # (then that session's close may already manage it), and the pending exit (decision day, reason)
+    fill: str | None = None
+    decision_day: date | None = None
+    open_fill: bool = False
+    exit_order: tuple[date, str] | None = None
 
     def gross(self) -> float:
         return sum(x.sign * (x.mark - x.entry) * x.qty for x in self.legs)
@@ -88,6 +94,8 @@ def _trade(p: Position, d: date, reason: str, gross: float, exit_costs: float, s
                   "exit": x.exit, "iv": None if x.iv is None else round(x.iv, 4)} for x in p.legs],
         "stock_pnl": None if p.stock_entry is None or stock_exit is None
         else round((stock_exit - p.stock_entry) * units, 2),
+        **({} if p.fill is None else {"fill": p.fill, "decision_day": p.decision_day.isoformat(),  # type: ignore[union-attr]
+                                      "exit_decision_day": p.exit_order[0].isoformat() if p.exit_order else None}),
     }  # fmt: skip
 
 
@@ -95,6 +103,7 @@ def _trade(p: Position, d: date, reason: str, gross: float, exit_costs: float, s
 class SpecState:
     spec: Spec
     open: list[Position] = field(default_factory=list)
+    pending: list[Position] = field(default_factory=list)  # next-print entries decided, not yet filled (#382)
     trades: list[dict[str, Any]] = field(default_factory=list)
     equity: list[tuple[date, float]] = field(default_factory=list)
     realised: float = 0.0
@@ -148,16 +157,30 @@ def exit_reason(p: Position, spec: Spec, d: date, next_session: date | None,
     return None
 
 
-def square_off(
-    p: Position, x: Day, quotes: dict[int, Quote | None], reason: str, book: Book
-) -> dict[str, Any]:
-    """Close every leg at today's reference price moved by slippage; charges on the closing orders."""
+def print_ref(q: Quote | None, mode: str) -> tuple[float, int] | None:
+    """A next-print fill's reference price and the contracts that pick its slippage tier (#382): `next_open` takes the
+    session's open for a leg that traded that session; otherwise (and always for `next_close`) the session's reference
+    price, the last trade, else NSE's settle with the widest tier. None without a row or a price."""
+    if q is None or q.ref is None:
+        return None
+    if mode == "next_open" and q.traded and q.open:
+        return q.open, q.contracts
+    return q.ref, q.contracts if q.traded else 0
+
+
+def square_off(p: Position, x: Day, quotes: dict[int, Quote | None], reason: str, book: Book,
+               mode: str = "same_print") -> dict[str, Any]:  # fmt: skip
+    """Close every leg at today's reference price moved by slippage; charges on the closing orders. A next-print exit
+    (`mode`, #382) fills at `print_ref`; a leg without a price that session keeps its last mark (the widest tier)."""
     orders = []
     for i, leg in enumerate(p.legs):
         q = quotes.get(i)
         contracts = q.contracts if q is not None and q.ref is not None else 0  # a stale leg: the widest tier
+        ref = leg.mark
+        if mode != "same_print":
+            ref, contracts = print_ref(q, mode) or (leg.mark, 0)
         side = "sell" if leg.side == "buy" else "buy"
-        leg.exit = px.fill(leg.mark, side, contracts, book)
+        leg.exit = px.fill(ref, side, contracts, book)
         orders.append(ch.TradeLeg("option", side, leg.exit, leg.qty))  # type: ignore[arg-type]
     gross = sum(leg.sign * (leg.exit - leg.entry) * leg.qty for leg in p.legs)  # type: ignore[operator]
     costs = ch.order_costs(orders, x.day, book.brokerage_per_order).total
@@ -275,13 +298,13 @@ def try_enter(st: SpecState, x: Day, sym: str, h: Clocked, ivs: list[float], boo
     must be out before expiry day never enters on the last session before it (it could not be managed). `gate`
     (Strategy Lab filters, #318) sees today's IV statistics and returns a refusal reason or None."""
     spec, d = st.spec, x.day
-    if len(st.open) >= spec.max_concurrent:
+    if len(st.open) + len(st.pending) >= spec.max_concurrent:
         return None
     if st.last_entry is not None and (d - st.last_entry).days < spec.min_days_between:
         return None
     exps = [e for e in x.expiries() if spec.dte_min <= (e - d).days <= spec.dte_max
             and (spec.expiry_kind == "any" or x.is_monthly(e))]  # fmt: skip
-    exps = [e for e in exps if sum(p.expiry == e for p in st.open) < spec.max_per_expiry]
+    exps = [e for e in exps if sum(p.expiry == e for p in st.open + st.pending) < spec.max_per_expiry]
     if not exps:
         return None
     st.entries_considered += 1
@@ -336,10 +359,10 @@ def try_enter(st: SpecState, x: Day, sym: str, h: Clocked, ivs: list[float], boo
             book.max_lots, math.floor(book.capital * book.max_loss_pct / 100 / (loss_unit * lot + one[1]))
         )  # type: ignore[operator]
     needs_margin = spec.kind != "covered_call"
-    if needs_margin and any(p.margin is None for p in st.open):
+    if needs_margin and any(p.margin is None for p in st.open + st.pending):
         st.skips["margin of an open position unknown"] += 1  # unknown is never counted as 0
         return None
-    used = sum(p.margin or 0.0 for p in st.open)
+    used = sum(p.margin or 0.0 for p in st.open + st.pending)
     while lots >= 1:
         legs, costs, mg = build(lots)
         if not needs_margin or (mg is not None and used + mg <= book.capital):
@@ -359,12 +382,72 @@ def try_enter(st: SpecState, x: Day, sym: str, h: Clocked, ivs: list[float], boo
     return p
 
 
+# --------------------------------------------------------------------------- next-print fills (#382)
+FILLS = ("same_print", "next_open", "next_close")
+
+
+def fill_entry(st: SpecState, p: Position, x: Day, h: Clocked, book: Book,
+               expiry_day: Callable[[date], date] = lambda e: e) -> bool:  # fmt: skip
+    """Fill an entry decided at an earlier close (the strikes, sides and lots of that decision) at this session's
+    prints (`print_ref`). Premium, defined max loss, entry costs, IVs and margin are recomputed at the fills; the IV
+    reading that passed the filter stays the decision's. A refusal is counted in st.skips and the order dropped."""
+    spec, mode = st.spec, p.fill or "next_open"
+    if x.day >= expiry_day(p.expiry):
+        st.skips["expiry reached before the fill"] += 1
+        return False
+    quotes = [x.options.get((p.expiry, lg.right, lg.strike)) for lg in p.legs]
+    refs = [print_ref(q, mode) for q in quotes]
+    if any(r is None for r in refs):
+        st.skips["no price for a leg at the fill session"] += 1
+        return False
+    for lg, q, (ref, n) in zip(p.legs, quotes, refs, strict=True):  # type: ignore[misc]
+        lg.entry, lg.mark = px.fill(ref, lg.side, n, book), q.ref  # type: ignore[union-attr]
+    units = p.lots * p.lot
+    prem_unit = sum(lg.entry if lg.side == "sell" else -lg.entry for lg in p.legs)
+    if spec.kind in ("put_credit", "call_credit", "iron_condor") and prem_unit <= 0:
+        st.skips["no credit after slippage at the fill session"] += 1
+        return False
+    loss_unit = max_loss_per_unit(
+        spec, [(q, lg.side) for q, lg in zip(quotes, p.legs, strict=True)], prem_unit
+    )  # type: ignore[misc]
+    if loss_unit is not None and loss_unit <= 0:
+        st.skips["no risk at these prices (data error?)"] += 1
+        return False
+    fwd, t = px.forward(x, p.expiry, book.rate), (p.expiry - x.day).days / 365
+    for lg, q in zip(p.legs, quotes, strict=True):
+        lg.iv = px.leg_iv(q, fwd, t, book.rate) if fwd else None  # type: ignore[arg-type]
+    p.premium, p.max_loss = prem_unit * units, None if loss_unit is None else loss_unit * units
+    p.entry_costs = ch.order_costs([ch.TradeLeg("option", lg.side, lg.entry, lg.qty) for lg in p.legs], x.day,  # type: ignore[arg-type]
+                                   book.brokerage_per_order).total  # fmt: skip
+    p.margin = margin(spec, p.symbol, p.legs, fwd, t, book, _span(h, p.symbol, x.day)) if fwd else None
+    p.entry_day, p.dte = x.day, (p.expiry - x.day).days
+    p.open_fill = mode == "next_open" and all(q.traded and q.open for q in quotes)  # type: ignore[union-attr]
+    if p.stock_entry is not None:
+        p.stock_entry = x.futures.get(p.expiry)
+    st.open.append(p)
+    return True
+
+
+def fill_orders(st: SpecState, x: Day, h: Clocked, book: Book, expiry_day: Callable[[date], date]) -> None:
+    """At the top of a session: the exits decided at the previous close, then the entries (#382)."""
+    for p in [p for p in st.open if p.exit_order is not None]:
+        tr = square_off(p, x, mark(p, x), p.exit_order[1], book, p.fill or "next_open")  # type: ignore[index]
+        st.trades.append(tr)
+        st.realised += tr["net"]
+        st.open.remove(p)
+    pending, st.pending = st.pending, []
+    for p in pending:
+        fill_entry(st, p, x, h, book, expiry_day)
+
+
 # --------------------------------------------------------------------------- the loop
 def manage(st: SpecState, x: Day, next_session: date | None, book: Book,
-           expiry_day: Callable[[date], date] = lambda e: e) -> None:  # fmt: skip
-    """`expiry_day(e)`: the last session on or before expiry date e (the exchange calendar, not prices)."""
+           expiry_day: Callable[[date], date] = lambda e: e, fill: str = "same_print") -> None:  # fmt: skip
+    """`expiry_day(e)`: the last session on or before expiry date e (the exchange calendar, not prices). A next-print
+    run (`fill`, #382) leaves a fired rule as an exit order for the next session (fill_orders); `next_session` is
+    then the session after that fill, so the last-session rule still has the position out before expiry day."""
     for p in list(st.open):
-        if p.entry_day >= x.day:
+        if p.exit_order is not None or p.entry_day > x.day or (p.entry_day == x.day and not p.open_fill):
             continue
         tr = None
         eday = expiry_day(p.expiry)
@@ -376,7 +459,9 @@ def manage(st: SpecState, x: Day, next_session: date | None, book: Book,
         else:
             quotes = mark(p, x)
             reason = exit_reason(p, st.spec, x.day, next_session, eday)
-            if reason:
+            if reason and fill != "same_print":
+                p.exit_order = (x.day, reason)
+            elif reason:
                 tr = square_off(p, x, quotes, reason, book)
         if tr is not None:
             st.trades.append(tr)
@@ -387,13 +472,22 @@ def manage(st: SpecState, x: Day, next_session: date | None, book: Book,
 def run(specs: list[Spec], history: History, start: date, end: date, book: Book = BOOK,
         warmup_days: int = 400, data_end: date | None = None, *, gate: Gate | None = None,
         on_day: Callable[[Day], None] | None = None,
-        progress: Callable[[int, int, date], None] | None = None) -> dict[str, dict[str, Any]]:  # fmt: skip
+        progress: Callable[[int, int, date], None] | None = None,
+        fill: str = "same_print") -> dict[str, dict[str, Any]]:  # fmt: skip
     """Replay `specs` (concrete underlyings) with entries from `start` to `end`; open positions are managed after
     `end` until they close or the data ends (`data_end`, default the latest stored day). Returns per spec key:
     trades, the daily equity curve, refusals and the positions still open at the end.
     Strategy Lab hooks (#318): `gate` (try_enter), `on_day(x)` at every session read (warm-up included, before any
-    decision of that close) and `progress(i, n, day)` per session, which may raise to stop the run."""
+    decision of that close) and `progress(i, n, day)` per session, which may raise to stop the run.
+    `fill` (#382, P2.7a): `same_print` (registered: decide and fill at the same close), or a next-print sensitivity,
+    where every order decided at a close fills at the next session (fill_orders): `next_open` at its open for a leg
+    that traded that session, else its close; `next_close` at its close. An entry decided at the last stored session
+    never fills (skip "no session left to fill")."""
     from datetime import timedelta
+
+    if fill not in FILLS:
+        raise ValueError(f"fill must be one of {FILLS}, not {fill!r}")
+    lag = fill != "same_print"
 
     h = Clocked(history)
     groups: dict[str, list[Spec]] = {}
@@ -425,16 +519,26 @@ def run(specs: list[Spec], history: History, start: date, end: date, book: Book 
             if d < start:
                 continue
             nxt = days[i + 1] if i + 1 < len(days) else None
+            if lag:  # the session after an order's fill: what the last-session rule must look at
+                nxt = days[i + 2] if i + 2 < len(days) else None
             for st in states:
                 had_open = bool(st.open)
-                manage(st, x, nxt, book, eday)
+                if lag:
+                    fill_orders(st, x, h, book, eday)
+                manage(st, x, nxt, book, eday, fill)
                 if d <= end:
-                    try_enter(st, x, sym, h, ivs, book, nxt, eday, gate)
+                    p = try_enter(st, x, sym, h, ivs, book, nxt, eday, gate)
+                    if p is not None and lag:  # decided now, filled at the next session
+                        st.open.remove(p)
+                        p.fill, p.decision_day = fill, d
+                        st.pending.append(p)
                 if d <= end or had_open or st.open:
                     st.equity.append(
                         (d, book.capital + st.realised + sum(p.gross() - p.entry_costs for p in st.open))
                     )
         for st in states:
+            if st.pending:
+                st.skips["no session left to fill"] += len(st.pending)
             out[st.spec.key] = {
                 "spec": st.spec, "symbol": sym, "trades": st.trades, "equity": st.equity,
                 "skips": dict(st.skips), "notes": dict(st.notes), "entries_considered": st.entries_considered,
