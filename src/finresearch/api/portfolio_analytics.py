@@ -206,12 +206,15 @@ def add_portfolio_analytics_routes(app: FastAPI, *, scheme_rows: Callable[[], Aw
     @app.get("/api/portfolio/analytics/risk")
     async def risk(
         rf: float | None = Query(None, ge=0, le=20, description="risk-free rate, % a year"),
+        assume_beta1: bool = Query(
+            False, description="hypothetical fall: beta 1 for short-history equity (#423)"
+        ),
     ) -> dict[str, Any]:
         """Realised volatility, beta and tracking error vs NIFTYBEES, max drawdown and recovery, historical VaR/CVaR,
         Sharpe/Sortino (risk-free: FBIL 3-month par yield unless `rf` is given), today's mix over the last year with
         each holding's risk contribution, and stress scenarios."""
+        from finresearch.portfolio.analytics import hypothetical_fall, stress_scenarios
         from finresearch.portfolio.analytics import risk as risk_payload
-        from finresearch.portfolio.analytics import stress_scenarios
         from finresearch.portfolio.history import Fetcher
 
         hist, today, fp = await history()
@@ -227,6 +230,9 @@ def add_portfolio_analytics_routes(app: FastAPI, *, scheme_rows: Callable[[], Aw
                 return await stress_scenarios(hist, f, store(), today)
 
         stress = await cache.get(("stress", fp, today), HISTORY_TTL_S, make_stress) if hist.ok else []
+        # the hypothetical needs no fetch and depends on the option, so it is computed per request, outside the cache
+        if hist.positions:
+            stress = [*stress, hypothetical_fall(hist, assume_beta1=assume_beta1)]
         return risk_payload(hist, rfree, sectors, stress)
 
     @app.get("/api/portfolio/analytics/stress-replay")
