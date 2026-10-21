@@ -25,6 +25,8 @@ export type Signal = {
   validation: SignalValidation;
   probability: number | null;
   probability_interval: [number, number] | null;
+  /** #357: what the interval is; only wilson95/bootstrap95 are confidence intervals */
+  interval?: { low: number; high: number; kind: "wilson95" | "bootstrap95" | "model_span" | "conformal" | null; label: string } | null;
   expected_return: Record<string, number> | null;
   base_rate: { n: number; p: number; ci?: [number, number]; description?: string } | null;
   factors: SignalFactor[];
@@ -49,6 +51,17 @@ export type SignalReliability = {
 
 /** "base rate from 54 past IPOs · calibration not established: 1 scored": the support beside a probability, so a big
  *  number is not read as proven accuracy (#218). */
+/** #357: the interval says what it is. A model span is never written as a confidence interval; a kind the producer
+ * did not state reads "range". */
+function IntervalLine({ s }: { s: Signal }) {
+  const [lo, hi] = s.probability_interval!;
+  const kind = s.interval?.kind ?? null;
+  const text = kind === "wilson95" || kind === "bootstrap95" ? `95% CI ${pctText(lo)}–${pctText(hi)}`
+    : kind === "model_span" ? `span across models ${pctText(lo)}–${pctText(hi)} · not a confidence interval`
+    : kind === "conformal" ? `conformal interval ${pctText(lo)}–${pctText(hi)}` : `range ${pctText(lo)}–${pctText(hi)}`;
+  return <p data-testid="probability-interval" className="num text-xs text-muted" title={s.interval?.label}>{text}</p>;
+}
+
 export function ReliabilityLine({ r, className }: { r: SignalReliability; className?: string }) {
   return (
     <p className={cx("flex flex-wrap items-center gap-x-1.5 text-[11px] text-muted", className)} data-testid="reliability">
@@ -140,8 +153,10 @@ export function SignalView({ s, compact }: { s: Signal; compact?: boolean }) {
         <div className="rounded-lg bg-background-subtle p-3">
           <p className="text-[11px] text-muted">Probability · {s.event}</p>
           <p className="num mt-1 text-2xl font-semibold">{pctText(s.probability)}</p>
-          {s.probability_interval && <p className="num text-xs text-muted">range {pctText(s.probability_interval[0])}–{pctText(s.probability_interval[1])}</p>}
+          {s.probability_interval && <IntervalLine s={s} />}
           {s.reliability && s.probability != null && <ReliabilityLine r={s.reliability} className="mt-1" />}
+          {/* #357: an F&O probability never shows without a word on its reliability */}
+          {!s.reliability && s.probability != null && s.asset === "fno" && <p data-testid="reliability" className="mt-1 text-[11px] text-muted">calibration unknown: not scored</p>}
           {s.call?.universe_base_rate && (
             <p className="mt-1 text-xs text-muted">
               vs base rate, all stocks <span className="num font-medium text-foreground">{(s.call.universe_base_rate.p * 100).toFixed(1)}%</span>

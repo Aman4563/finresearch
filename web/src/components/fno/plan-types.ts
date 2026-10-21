@@ -1,3 +1,4 @@
+import type { SignalReliability } from "@/components/signal";
 // Trade-plan cards and the market-context panel (#317): the shapes of POST /api/fno/plan, GET /api/fno/{symbol}/suggest
 // and GET /api/fno/{symbol}/context.
 
@@ -40,6 +41,12 @@ export type TradePlan = {
   /** #351: "zero_bounded" = a finite max loss only because a price cannot fall below zero (not defined risk) */
   risk_shape?: "defined" | "zero_bounded" | "unlimited";
   max_profit?: number | null; max_loss?: number | null; breakevens?: number[]; net_premium?: number; costs?: number | null;
+  /** #356/#357: model EVs after statutory costs and half-spreads, informational ("model EV - not validated") */
+  ev?: { label: string; range: [number, number] | null; note: string; risk_neutral: number | null; real_world: number | null;
+    real_world_window: string | null; costs: number | null; payoff_ratio: number | null };
+  /** #357: 20 quantiles (each 5% of outcomes) of the P&L at expiry under the named model */
+  pnl_dots?: { model: string; values: number[]; payoff_ratio: number | null; note: string } | null;
+  reliability?: SignalReliability | null;
   probability?: { real_world: number | null; real_world_window: string | null; risk_neutral: number | null; note: string };
   exits?: {
     source: string; rule_of_thumb: string | null; stop: ExitLevel | null; target: ExitLevel | null; entry_net: number; credit: boolean;
