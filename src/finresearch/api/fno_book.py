@@ -105,7 +105,9 @@ def _log_margin_check(sym: str, expiry: date, kind: str, spec: list[Any], est: A
     try:
         from finresearch.db.models import MarginCheck
 
-        g = float(groww["span"] or 0) + float(groww["exposure"] or 0)
+        if groww.get("span") is None or groww.get("exposure") is None:
+            return  # an incomplete answer is not a comparison (unknown is never 0)
+        g = float(groww["span"]) + float(groww["exposure"])
         with session_scope() as s:
             s.add(MarginCheck(symbol=sym, expiry=expiry, kind=kind, legs=[list(x) for x in spec],
                               approx_margin=round(est.scan_risk + est.exposure, 2), groww_margin=round(g, 2),

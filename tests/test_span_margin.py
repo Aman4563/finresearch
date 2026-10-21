@@ -167,3 +167,19 @@ def test_cli_span_backfill_and_margin_check(clean, monkeypatch):
     r = CliRunner().invoke(cli.app, ["fno", "span", "margin-check"])
     assert r.exit_code == 0, r.output
     assert '"n": 2' in r.output and '"build_full_engine": false' in r.output
+
+
+def test_a_groww_answer_without_its_span_figure_is_not_logged(clean, api, monkeypatch):  # noqa: F811
+    from finresearch.adapters import groww_market as gm
+    from finresearch.db import session_scope
+    from finresearch.db.models import MarginCheck
+
+    async def partial(orders, segment="FNO"):
+        return {"span_required": None, "exposure_required": 28125.5, "option_buy_premium": 0.0,
+                "brokerage_and_charges": 40.0, "total_requirement": 28165.5}  # fmt: skip
+
+    monkeypatch.setattr(gm.MARKET, "basket_margin", partial, raising=False)
+    with api(at_ist(TRADE_DAY, 10)) as c:
+        c.post("/api/fno/margin", json={k: SPREAD[k] for k in ("symbol", "expiry", "legs")})
+    with session_scope() as s:
+        assert s.query(MarginCheck).count() == 0  # an unknown figure is never logged as 0
