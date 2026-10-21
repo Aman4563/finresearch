@@ -43,6 +43,7 @@ from finresearch.adapters.nse import NSE_BASE, NseError
 ARCHIVES = "https://nsearchives.nseindia.com"
 URL = ARCHIVES + "/archives/nsccl/span/nsccl.{day:%Y%m%d}.s.zip"
 VOLT_URL = ARCHIVES + "/archives/nsccl/volt/FOVOLT_{day:%d%m%Y}.csv"
+PARSER_VERSION = "1"  # bump when the parser's output changes for the same file (#368 lineage)
 MAX_UNZIPPED = 400 * 1024 * 1024  # the 2026 file is ~52 MB of XML; anything far larger is not a SPAN file
 MAX_RATIO = 60  # XML compresses ~5.5x; a far higher ratio is a zip bomb
 VOLT_HEADER = "Date"

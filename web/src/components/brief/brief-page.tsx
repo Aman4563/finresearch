@@ -11,6 +11,7 @@ import Link from "next/link";
 import { useState } from "react";
 
 import { Badge, Button, Callout, Card, EmptyState, ErrorNote, InfoTip, PageHeader, SkeletonRows, Stat, Table, cx } from "@/components/ui";
+import { DataHealthCard } from "@/components/brief/data-health";
 import { BriefDisclosuresCard } from "@/components/brief/disclosures";
 import { API_URL, api, day, when, useApi } from "@/lib/api";
 
@@ -316,6 +317,8 @@ export function BriefPage() {
           </div>
 
           <BriefDisclosuresCard brief={b} />
+
+          <DataHealthCard health={b.data_health} />
 
           {b.has_portfolio && (
             <Card title="Weekly digest" icon={<TrendingUp className="size-4" />} subtitle="The last seven days, new money removed. Sent on Sundays.">

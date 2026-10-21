@@ -1,3 +1,5 @@
+import type { DataHealth } from "./data-health";
+
 // Shapes of /api/brief, /api/brief/digest, /api/brief/calendar and /api/dashboard/portfolio (finresearch.api.brief).
 
 export type BriefEvent = { day: string; kind: string; title: string; path?: string; verified?: boolean; note?: string };
@@ -35,7 +37,7 @@ export type Brief = {
   day: string; generated_at: string; has_portfolio: boolean; headline: string; events: BriefEvent[];
   rules_fired: FiredAlert[]; since: string; signal_changes: SignalChange[]; sip: Sip[]; sip_missed: Sip[];
   long_term: LtLot[]; tax_calendar: TaxItem[]; advance_tax: AdvanceTax | null; elss_unlocks?: ElssUnlock[];
-  health: { level: "warn" | "info"; text: string }[]; performance: ValueChange | null; performance_why?: string | null; settings: BriefSettings;
+  health: { level: "warn" | "info"; text: string }[]; data_health?: DataHealth; performance: ValueChange | null; performance_why?: string | null; settings: BriefSettings;
   method: string; behaviour_note: string; disclaimer: string;
   history: { id: number; kind: string; at: string; message: string }[];
 };
