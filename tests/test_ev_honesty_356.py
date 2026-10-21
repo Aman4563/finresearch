@@ -147,3 +147,38 @@ def test_the_liquidity_gate_binds_spreads():
     a, (_, factors, failed) = _assess_on(c, PCS)
     assert LIQ in failed and a["costs"]["half_spreads"]["source"] == "slippage tiers (no live bid/ask)"
     assert next(f for f in factors if f.name == LIQ).value is None
+
+
+def test_the_direction_table_separates_the_pricing_residual_from_ev():
+    # (c) at the market's own probabilities the EV is the pricing residual (ATM-IV lognormal vs each leg's IV and last
+    # price) minus costs: it is reported as such, beside the fair-price EV at own-strike IVs, never as edge
+    from finresearch.direction import decide, models, specs
+    from finresearch.fincalc import options as o
+
+    c = chain()
+    implied = {e: models.implied_p(14.0, 5, e) for e in specs.EVENTS}
+    d = decide.decide(c, 75, today=date(2026, 9, 29), horizon_day=date(2026, 10, 6), h=5, iv_30=14.0,
+                      probs_model=implied, accepted=False, rate=0.065, brokerage=20.0)  # fmt: skip
+    rows = [r for r in d["candidates"] if r["status"] != "unavailable"]
+    assert rows
+    t = 7 / 365
+    for r in rows:
+        sign = {"buy": 1, "sell": -1}
+        fair = sum(sign[x["side"]] * 75 * (o.bs_price(x["right"], 22780.25, x["strike"], t, 0.065, x["iv"] / 100)
+                                           - x["price"]) for x in r["legs"]) - r["costs"]  # fmt: skip
+        assert r["ev_fair"] == pytest.approx(fair, abs=0.5)
+        assert r["pricing_residual"] == pytest.approx(
+            r["ev_implied"] - r["ev_fair"], abs=0.02
+        )  # each rounded to paise
+        assert r["status"] == "fails"  # no accepted model: a residual never passes the gate
+
+
+def test_a_held_position_exits_only_on_a_hard_check_now():
+    # before #356 a held position whose real-world EV fell below −costs read EXIT; the model EV is no longer a gate, so
+    # it reads HOLD unless a hard check fails (listed in the PR as a decision for the owner)
+    a, _ = run("", 0.30, preset="iron_condor")  # RV 30%: the scenario EV is deeply negative
+    assert a["real_world"]["ev"] < -a["costs"]["total_to_expiry"]
+    assert fs.assess(a, held=True)[0] == "HOLD"
+    wide = fs.analyse(chain(), 65, fs.preset_legs(chain(), "strangle"), today=date(2026, 9, 29), closes=closes_at(0.30),
+                      iv_series=[], capital=10_000_000, max_loss_pct=5, brokerage=20)  # fmt: skip
+    assert fs.assess(wide, held=True)[0] == "EXIT"  # undefined risk is still a hard exit

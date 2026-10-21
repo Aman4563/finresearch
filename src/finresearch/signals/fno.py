@@ -5,9 +5,12 @@ option buying (SEBI, 20-Aug-2026 [P30]). So the "signal" asks four questions abo
 only when every answer is acceptable:
 
 1. Defined risk: the maximum loss is finite (no naked short options).
-2. Costs: the expected P&L after costs under the real-world model (σ = realised volatility, the less favourable of the
-   20- and 60-day windows; drift μ stated, default the risk-free rate, i.e. no directional view) is no worse
-   than the fair-price expectation, which is minus the costs (EV_rw ≥ −costs).
+2. Liquidity (#356): Σ half the bid/ask spread of every leg is at most 10% of the premium at mids (live bid/ask only;
+   an estimated or unknown spread fails). The old "EV_rw ≥ −costs" gate is gone: the entry costs cancelled in it, so it
+   only tested "IV at the strikes above realised volatility". Model EVs are now cost-complete (fills at mid ± half the
+   spread, plus the exit half-spread) and informational: the risk-neutral EV with each leg at its own-strike IV is the
+   fair-price identity −(statutory costs + half-spreads), and the σ = realised-volatility EVs (20- and 60-day windows,
+   drift μ stated) are labelled scenarios, "model EV - not validated", that never change a verdict.
 3. Budget: the maximum loss is within the profile's F&O risk budget (fno_max_loss_pct of fno_capital_inr).
 4. IV context fits the strategy: premium sellers (net short vega) want IV high, buyers want it low. IV percentile
    of the 30-day IV derived from NSE's F&O bhavcopy history (#306, a year back as soon as it is backfilled), else of
@@ -677,9 +680,10 @@ async def fno_signal(instrument: str, ctx: dict[str, Any]) -> Signal:
         except Exception:
             lot = None
         closes = await underlying_closes(f, sym, today)
-    method = ("rule-based risk/cost/fit gate v1: defined risk, EV after costs under realised volatility, max loss "
-              "within the profile's F&O budget, IV context; lognormal model (roadmap §D.5). Return range = real-world P&L "
-              "quantiles after costs as a fraction of the capital at risk (the maximum loss)")  # fmt: skip
+    method = ("rule-based risk/cost/fit gate v2: defined risk, bid/ask spreads within 10% of the premium, max loss "
+              "within the profile's F&O budget, IV context; model EV shown, not a gate (#356); lognormal model (roadmap "
+              "§D.5). Return range = real-world P&L quantiles after costs and spreads as a fraction of the capital at "
+              "risk (the maximum loss)")  # fmt: skip
     validation = Validation("rule_based", 0, {}, "Not validated: no edge is claimed, so there is nothing to backtest "
                             "yet. The checks are fixed rules drawn from the roadmap's evidence.")  # fmt: skip
 

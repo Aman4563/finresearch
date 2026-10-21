@@ -137,7 +137,7 @@ function PopTile({ label, o, help, tone }: { label: string; o: Outcome; help: st
       <p className="flex items-center gap-1 text-[11px] text-muted">{label}<InfoTip>{help}</InfoTip></p>
       <p className={cx("mt-1 text-xl font-semibold", tone === "info" ? "text-info" : "text-accent")}><Fig>{pctText(o?.pop)}</Fig></p>
       <p className="num text-[11px] text-muted">
-        {o ? <Parts parts={[`σ ${pctText(o.vol)}`, `EV ${rupees(o.ev)}`]} /> : "no realised volatility"}
+        {o ? <Parts parts={[`σ ${pctText(o.vol)}`, `model EV ${rupees(o.ev)}`]} /> : "no realised volatility"}
       </p>
     </div>
   );
@@ -152,10 +152,16 @@ export function ProbabilityPanel({ a, rate }: { a: Analysis; rate?: RateInfo }) 
     <div className="space-y-2">
       <div className="grid grid-cols-2 gap-2">
         <PopTile label="Chance of profit · risk-neutral" o={a.risk_neutral} tone="info"
-          help={`Model probability that the P&L after costs is positive at expiry with σ = ATM implied volatility and drift = the risk-free rate (${rateText}), N(d₂)-based. What option prices imply; not a forecast.`} />
+          help={`Model probability that the P&L after costs is positive at expiry with σ = ATM implied volatility and drift = the risk-free rate (${rateText}), N(d₂)-based. What option prices imply; not a forecast. Its EV prices each leg at its own-strike IV: −(statutory costs + half the bid/ask spreads), the fair-price identity.`} />
         <PopTile label="Chance of profit · real-world" o={rw} tone="accent"
-          help={`The same with σ = realised volatility (${rw?.window ?? "20/60-day"}; the less favourable of the two windows) and a stated drift of ${(a.drift * 100).toFixed(1)}% a year (no directional view). A model probability, not a forecast.`} />
+          help={`The same with σ = realised volatility (${rw?.window ?? "20/60-day"}; the less favourable of the two windows) and a stated drift of ${(a.drift * 100).toFixed(1)}% a year (no directional view). A scenario, not a forecast: its EV never changes a verdict.`} />
       </div>
+      {a.model_ev && (
+        <p data-testid="fno-model-ev" className="text-[11px] leading-relaxed text-muted">
+          <span className="font-medium text-foreground/80">{a.model_ev.label}</span>
+          {a.model_ev.range && <> · EV after costs and spreads <span className="num">{rupees(a.model_ev.range[0])} to {rupees(a.model_ev.range[1])}</span> across the models</>}. {a.model_ev.note}
+        </p>
+      )}
       <p className="text-[11px] leading-relaxed text-muted">{a.fair_price_note}</p>
       {rate && (
         <p className={cx("text-[11px] leading-relaxed", rate.fallback ? "text-warn" : "text-muted")}>
