@@ -66,7 +66,9 @@ def test_size_from_budget():
     s = tp.size(-1500.0, 60.0, 4000.0, proven=True)
     assert (s.multiple, s.suggested, s.real_lots) == (2, 2, 2)  # floor(4000 / 1560)
     s = tp.size(-1500.0, 60.0, 4000.0, proven=False)
-    assert (s.multiple, s.suggested) == (2, 1)  # paper: half without a proven edge
+    # #355: one formula n = floor(B / (|ML| + c)), as the backtester sizes; without a proven edge it is the paper size
+    # and real money is 0 (no more "half of it" for an unproven setup)
+    assert (s.multiple, s.suggested, s.real_lots) == (2, 2, 0)
     s = tp.size(-1500.0, 60.0, 1000.0, proven=False)
     assert (s.multiple, s.suggested, s.real_lots) == (0, 0, 0) and "above your" in s.reason
     s = tp.size(None, 60.0, 4000.0, proven=False)
@@ -143,15 +145,16 @@ def test_stop_beyond_max_loss_is_capped():
 
 def test_verdict_rules():
     assert tp.verdict(["Max loss within your F&O budget"], "proven") == ("AVOID", None)
-    assert tp.verdict([], "negative") == ("AVOID", None)  # a failed backtest overrides passing checks
+    assert tp.verdict([], "harmful") == ("AVOID", None)  # a harmful backtest overrides passing checks (#355)
     assert tp.verdict(["IV context fits the strategy"], "none") == ("WAIT", None)
     assert tp.verdict([], "proven") == ("ENTER", None)
     # #350: never ENTER without a candidate spec; every check passing gives the paper-only verdict
     assert tp.verdict([], "none") == (tp.PAPER, tp.PAPER_ONLY)
-    assert tp.verdict([], "unproven") == (tp.PAPER, tp.PAPER_ONLY)
+    assert tp.verdict([], "inconclusive") == (tp.PAPER, tp.PAPER_ONLY)
+    assert tp.verdict([], "directional") == (tp.PAPER, tp.PAPER_ONLY)
 
 
-@pytest.mark.parametrize("level", ["none", "unproven", "negative"])
+@pytest.mark.parametrize("level", ["none", "inconclusive", "directional", "harmful"])
 @pytest.mark.parametrize("failed", [[], ["IV context fits the strategy"], ["Defined risk"]])
 def test_no_enter_unless_proven_350(level, failed):
     assert tp.verdict(failed, level)[0] != "ENTER"
@@ -160,12 +163,155 @@ def test_no_enter_unless_proven_350(level, failed):
 def test_evidence_level_and_text():
     fail = {"status": "fails", "windows": {"oos": {"expectancy": -1789.4, "t_stat": -1.31, "trades": 42,
                                                    "from": "2024-07-01", "to": "2026-10-09"}}}  # fmt: skip
-    assert tp.evidence_level(fail) == "negative"
-    assert tp.evidence_text(fail, "negative") == (
-        "FAILED out-of-sample: expectancy ₹-1,789/trade, t=-1.3, 42 trades (2024-07-01 → 2026-10-09)."
+    # #355: a one-sided credit spread's backtest is directional, never "negative" → AVOID
+    assert tp.evidence_level(fail, "put_credit") == "directional"
+    assert tp.evidence_text(fail, "directional") == (
+        "FAILED out-of-sample, directional — reflects the index path, not the structure: expectancy ₹-1,789/trade, "
+        "t=-1.3, 42 trades (2024-07-01 → 2026-10-09)."
     )
+    assert tp.evidence_level(fail, "iron_condor") == "inconclusive"  # no CI stored: never harmful
     pos = {"status": "fails", "windows": {"oos": {"expectancy": 120.0, "t_stat": 0.4, "trades": 35}}}
-    assert tp.evidence_level(pos) == "unproven"
-    assert tp.evidence_level({"status": "candidate"}) == "proven"
-    assert tp.evidence_level({"status": "overlay_reported"}) == "none"
-    assert tp.evidence_level(None) == "none"
+    assert tp.evidence_level(pos, "iron_condor") == "inconclusive"
+    assert tp.evidence_level({"status": "candidate"}, "iron_condor") == "proven"
+    assert tp.evidence_level({"status": "candidate"}, "call_credit") == "directional"
+    assert tp.evidence_level({"status": "overlay_reported"}, "iron_condor") == "none"
+    assert tp.evidence_level(None, "iron_condor") == "none"
+
+
+# --------------------------------------------------------------------------- #355: evidence-consistent labels
+# PRE-REGISTERED 21-Oct-2026 before any #355 code change: the expected label of each out-of-sample row of
+# evals/experiments/fno_backtest/RESULTS.md (12-Oct-2026 run). harmful <=> t <= -2 AND CI upper bound < 0, and only for
+# roughly delta-neutral kinds; one-sided credit spreads and debit spreads are directional. Every row: 0 real lots.
+RESULTS_ROWS = [  # (key, kind, expectancy, t, ci_low, ci_high, expected label)
+    ("nifty_pcs_m", "put_credit", -1789, -1.30, -4581, 569, "directional"),
+    ("nifty_ccs_m", "call_credit", 679, 0.73, -1309, 2289, "directional"),
+    ("banknifty_ic_m", "iron_condor", -243, -0.18, -3046, 2068, "inconclusive"),
+    ("nifty_ic_w", "iron_condor", 741, 0.76, -1262, 2567, "inconclusive"),
+    ("nifty_dcs_m", "debit_call", -27775, -3.86, -40674, -13289, "directional"),
+    ("nifty_dps_m", "debit_put", 21492, 1.78, -1977, 44029, "directional"),
+]
+
+
+def _row(e, t, lo, hi, status="fails"):
+    return {"status": status, "windows": {"oos": {"expectancy": e, "t_stat": t, "ci_low": lo, "ci_high": hi,
+                                                  "trades": 40}}}  # fmt: skip
+
+
+@pytest.mark.parametrize(("key", "kind", "e", "t", "lo", "hi", "want"), RESULTS_ROWS)
+def test_preregistered_labels_for_the_results_rows_355(key, kind, e, t, lo, hi, want):
+    level = tp.evidence_level(_row(e, t, lo, hi), kind)
+    assert level == want
+    action, _ = tp.verdict([], level)
+    assert action == tp.PAPER  # neither AVOID nor ENTER from this evidence, every gate passing
+    assert tp.size(-1500.0, 60.0, 40000.0, proven=level == "proven").real_lots == 0
+
+
+def test_harmful_needs_both_t_and_ci_and_a_delta_neutral_kind_355():
+    assert tp.evidence_level(_row(-3000, -2.5, -5000, -100), "iron_condor") == "harmful"
+    assert tp.verdict([], "harmful") == (tp.AVOID, None)
+    assert tp.evidence_level(_row(-3000, -2.5, -5000, 50), "iron_condor") == "inconclusive"  # CI spans 0
+    assert tp.evidence_level(_row(-3000, -1.9, -5000, -100), "iron_condor") == "inconclusive"  # t above -2
+    assert tp.evidence_level(_row(-3000, -2.5, -5000, None), "iron_condor") == "inconclusive"  # CI unknown
+    assert tp.evidence_level(_row(-3000, -2.5, -5000, -100), "put_credit") == "directional"
+    assert tp.evidence_level(_row(None, None, None, None), "iron_condor") == "inconclusive"
+    assert tp.evidence_level({"status": "candidate"}, "iron_condor") == "proven"
+    assert tp.evidence_level(None, "iron_condor") == "none"
+
+
+@pytest.mark.parametrize(
+    ("key", "kind", "e", "t", "lo", "hi", "want"), [r for r in RESULTS_ROWS if abs(r[3]) < 2]
+)
+@pytest.mark.parametrize("failed", [[], ["EV after costs (real-world)"], ["Defined risk"]])
+def test_flipping_an_insignificant_expectancy_never_changes_the_verdict_355(
+    key, kind, e, t, lo, hi, want, failed
+):
+    a = tp.verdict(failed, tp.evidence_level(_row(e, t, lo, hi), kind))
+    b = tp.verdict(failed, tp.evidence_level(_row(-e, -t, -hi, -lo), kind))
+    assert a == b
+
+
+@pytest.mark.parametrize("level", ["none", "inconclusive", "directional", "harmful"])
+@pytest.mark.parametrize("failed", [[], ["IV context fits the strategy"], ["Defined risk"]])
+def test_no_enter_and_no_real_lots_unless_proven_355(level, failed):
+    assert tp.verdict(failed, level)[0] != tp.ENTER
+    assert tp.size(-1500.0, 60.0, 40000.0, proven=level == "proven").real_lots == 0
+
+
+# --------------------------------------------------------------------------- #358: open-book cap (interim)
+CAPITAL = 2_500_000.0  # 2% of it = the ₹50,000 trade budget of bug 8's suggestion {4, 2, 50000.0, 10714.65}
+B_BOOK = 0.08 * CAPITAL  # ₹2,00,000 (registered: 8% of F&O capital)
+
+
+def _book(open_risk, open_same=0, mtd_paper=0.0, mtd_real=0.0, max_concurrent=None):
+    return tp.OpenBook(capital=CAPITAL, open_risk=open_risk, open_same=open_same, max_concurrent=max_concurrent,
+                       mtd_paper=mtd_paper, mtd_real=mtd_real)  # fmt: skip
+
+
+def test_ten_open_four_lot_condors_cut_the_suggested_size_to_zero_358():
+    ml, costs = -10500.0, 214.65  # one set: max loss ₹10,500 + entry costs = ₹10,714.65 at risk
+    alone = tp.size(ml, costs, 50000.0, proven=False)
+    assert (alone.multiple, alone.suggested) == (
+        4,
+        4,
+    )  # floor(50,000 / 10,714.65): the unchanged suggestion of bug 8
+    # ten open 4-lot condors of the same risk: OR = 10 × 4 × ₹10,500 = ₹4,20,000 > B_book ₹2,00,000
+    full = tp.size(ml, costs, 50000.0, proven=False, book=_book(10 * 4 * 10500.0))
+    assert full.multiple == 4 and full.suggested == 0 and full.real_lots == 0 and "open" in full.reason
+    # room for one more: floor((2,00,000 − 1,85,000) / 10,714.65) = 1
+    assert tp.size(ml, costs, 50000.0, proven=True, book=_book(185000.0)).suggested == 1
+    # unknown open risk is never room: 0, with the reason
+    unknown = tp.size(ml, costs, 50000.0, proven=False, book=_book(None))
+    assert unknown.suggested == 0 and "unknown" in unknown.reason
+    # the backtester's concurrency cap: two open of this recipe and max_concurrent 2 → 0
+    assert (
+        tp.size(ml, costs, 50000.0, proven=False, book=_book(0.0, open_same=2, max_concurrent=2)).suggested
+        == 0
+    )
+
+
+def test_n_simultaneous_cards_never_exceed_the_book_budget_358():
+    import random
+
+    rng = random.Random(358)
+    risk = 0.0
+    for _ in range(40):
+        ml, c = -rng.uniform(2000, 30000), rng.uniform(50, 400)
+        s = tp.size(ml, c, 50000.0, proven=False, book=_book(risk))
+        risk += s.suggested * abs(ml)  # every card taken at its suggested size
+        assert risk <= B_BOOK + 1e-6
+    assert risk > 0.8 * B_BOOK  # and the book does fill up
+
+
+def test_open_risk_of_a_naked_short_call_is_its_up_shock_loss_358():
+    lot = 65
+    call = [o.Leg("call", 25000, 100.0, -lot)]  # short 1 lot of the 25,000 call at ₹100, spot 24,800
+    # independent: at S = 24,800 × 1.25 = 31,000 the call is worth 6,000: loss (6,000 − 100) × 65 = ₹3,83,500;
+    # at S = 0 it keeps the premium (no loss), so the up-shock is the larger loss
+    assert tp.position_risk(call, 24800.0) == pytest.approx(383500.0)
+    assert tp.position_risk(call, None) is None  # no spot: the shock cannot be priced, unknown
+    # a defined-risk spread is its max loss, with or without a spot: (200 − 35) × 65 = ₹10,725
+    pcs = [o.Leg("put", 19500, 60.0, -lot), o.Leg("put", 19300, 25.0, lot)]
+    assert tp.position_risk(pcs, None) == pytest.approx(10725.0)
+    # a naked short put: the loss at S = 0, (19,500 − 60) × 65 = ₹12,63,600
+    assert tp.position_risk([o.Leg("put", 19500, 60.0, -lot)], 20000.0) == pytest.approx(1263600.0)
+
+
+@pytest.mark.parametrize(("mtd", "stopped"), [(-0.061 * CAPITAL, True), (-0.06 * CAPITAL, True),
+                                              (-0.059 * CAPITAL, False), (None, True)])  # fmt: skip
+def test_a_breached_month_loss_turns_every_card_to_wait_358(mtd, stopped):
+    from finresearch.signals import tradeplan as tpl
+
+    d = tpl.decide([], -1500.0, 60.0, 50000.0, "proven", book=_book(0.0, mtd_paper=mtd))
+    assert (d.action == "WAIT") is stopped and (d.size.real_lots == 0) is stopped
+    if stopped:
+        assert "Month-to-date F&O loss stop" in d.failed
+
+
+def test_real_money_needs_the_real_books_month_to_date_358():
+    from finresearch.signals import tradeplan as tpl
+
+    ok = tpl.decide([], -1500.0, 60.0, 50000.0, "proven", book=_book(0.0, mtd_real=0.0))
+    assert ok.action == "ENTER" and ok.size.real_lots == 32  # floor(50,000 / 1,560)
+    for real in (None, -0.07 * CAPITAL):  # unknown or breached real book: paper size kept, real money 0
+        d = tpl.decide([], -1500.0, 60.0, 50000.0, "proven", book=_book(0.0, mtd_real=real))
+        assert d.size.real_lots == 0 and d.size.suggested == 32

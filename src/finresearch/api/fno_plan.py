@@ -45,6 +45,7 @@ async def plan_inputs(f: Any, sym: str, expiry: date, today: date) -> Any:
     profile's F&O budget, the rate, the saved backtest, the paper book and the event dates. Also used by #327."""
     from finresearch.fnobook import events
     from finresearch.signals import fno as fs
+    from finresearch.signals import fno_context
     from finresearch.signals import tradeplan as tpl
     from finresearch.signals.rates import risk_free
     from finresearch.suggest.advisor import load_profile
@@ -60,7 +61,8 @@ async def plan_inputs(f: Any, sym: str, expiry: date, today: date) -> Any:
                       max_loss_pct=float(p.fno_max_loss_pct), brokerage=float(p.fno_brokerage_per_order_inr),
                       defined_risk_only=p.fno_defined_risk_only, rate=rate, strategies=strategies,
                       backtest_head=head, paper=tpl.paper_trades(), events=await _events(sym, today),
-                      is_index=events.is_index(sym))  # fmt: skip
+                      is_index=events.is_index(sym), book=await tpl.load_book(today),
+                      iv_points=fno_context.iv_rank_input(sym)[0])  # fmt: skip
 
 
 def add_fno_plan_routes(app: FastAPI, fno: Callable[[], Any]) -> None:

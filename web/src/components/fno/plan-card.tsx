@@ -144,9 +144,17 @@ function PlanDetail({ plan }: { plan: TradePlan }) {
       <summary className="cursor-pointer py-0.5 font-medium text-muted hover:text-foreground">Details: sizing, limit prices, adjustments and what invalidates the trade</summary>
       <div className="mt-1 grid gap-x-6 lg:grid-cols-2">
         <div className="min-w-0">
-          <Row label="Sizing" help="Lots from your profile's F&O budget: max-loss % × F&O capital, divided by the max loss plus entry costs of one set of these legs. Real money only when the matching strategy passed its pre-registered out-of-sample test; otherwise 0 real lots and a paper size of half of it.">
+          <Row label="Sizing" help="Lots from your profile's F&O budget: max-loss % × F&O capital, divided by the max loss plus entry costs of one set of these legs. Real money only when the matching strategy passed its pre-registered out-of-sample test; otherwise the same number is a paper size and real money is 0 lots.">
             <span className="font-normal">{s.reason}</span>
           </Row>
+          {s.open_book && (
+            <Row label="Open book" help={`Every open paper and Groww F&O position's worst loss (a naked upside shocked +25%) must fit in ${s.open_book.budget_pct}% of your F&O capital; a month-to-date F&O loss of ${s.open_book.month_stop_pct}% stops every card until next month.`}>
+              <span className="font-normal" data-testid="plan-open-book">
+                <N>{rs(s.open_book.open_risk)}</N> at risk of <N>{rs(s.open_book.budget)}</N>{s.open_book.max_concurrent != null && ` · ${s.open_book.open_same} of ${s.open_book.max_concurrent} open`} · month to date (paper) <N>{rs(s.open_book.mtd_paper)}</N>
+              </span>
+              {s.open_book.notes.map((n) => <span key={n} className="block text-[11px] text-muted">{n}</span>)}
+            </Row>
+          )}
           <Row label="Max profit"><N>{plan.max_profit == null ? "unlimited" : rs(plan.max_profit)}</N></Row>
           <Row label="Max loss"><N>{plan.max_loss == null ? "unlimited" : rs(plan.max_loss)}</N></Row>
           <Row label="Breakevens">{plan.breakevens?.length ? plan.breakevens.map((b, i) => <span key={b}>{i > 0 && " / "}<N>{lvl(b)}</N></span>) : "none"}</Row>
@@ -180,13 +188,13 @@ function PlanDetail({ plan }: { plan: TradePlan }) {
 
 function Evidence({ plan }: { plan: TradePlan }) {
   const ev = plan.evidence, pr = plan.paper;
-  const tone: Tone = ev.level === "proven" ? "gain" : ev.level === "negative" ? "loss" : "neutral";
+  const tone: Tone = ev.level === "proven" ? "gain" : ev.level === "harmful" ? "loss" : "neutral";
   return (
     <div className="space-y-1 text-xs">
       <p className="flex flex-wrap items-center gap-1.5">
         <ClipboardList className="size-3.5 text-muted" />
         <span className="text-muted">Evidence</span>
-        <Badge tone={tone}>{ev.level === "none" ? "no proven edge" : ev.level}</Badge>
+        <Badge tone={tone}>{ev.level === "none" ? "no proven edge" : ev.level === "directional" ? "directional — the index path, not the structure" : ev.level}</Badge>
         <span data-testid="plan-evidence">{ev.text}</span>
         <Link href={ev.url} className="whitespace-nowrap text-brand hover:underline">backtests →</Link>
       </p>
