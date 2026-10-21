@@ -347,6 +347,8 @@ export type Profile = {
   // F&O analysis budget (optional: older API builds omit them)
   fno_capital_inr?: string;
   fno_max_loss_pct?: string;
+  /** #350: fno_max_loss_pct above 5 needs this explicit override; without it the API reads 5 */
+  fno_max_loss_override?: boolean;
   fno_brokerage_per_order_inr?: string;
   fno_defined_risk_only?: boolean;
   /** #215: write the IPO suggestion by fixed rules on this machine; nothing is sent to Claude */

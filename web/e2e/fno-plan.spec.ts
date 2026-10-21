@@ -1,9 +1,9 @@
 // F&O trade plans and market context (#317): the context panel labels every indicator with its evidence and says it
-// is not a signal; "Suggest setups" shows an AVOID card with its failed backtest and a qualified ENTER card; the
+// is not a signal; "Suggest setups" shows an AVOID card with its failed backtest and a paper-only card (never ENTER without a candidate, #350); the
 // one-click action records a paper trade and arms its exit alerts. Made-up chain and plans; no API or broker.
 import { type Page, expect, test } from "@playwright/test";
 
-import { AVOID, CHAIN, CONTEXT, ENTER, NOTICE } from "./fixtures-fno";
+import { AVOID, CHAIN, CONTEXT, NOTICE, PAPER } from "./fixtures-fno";
 import { expectNoHorizontalOverflow, mockApi } from "./mock-api";
 
 const phone = (page: Page) => (page.viewportSize()?.width ?? 1280) < 640;
@@ -12,13 +12,13 @@ const ROUTES = {
   // a week ahead of today: the page drops expiries before today, so fixed dates went stale after 20-Oct-2026
   "GET /api/fno/NIFTY/expiries": { symbol: "NIFTY", expiries: [new Date(Date.now() + 7 * 864e5).toISOString().slice(0, 10)], strikes: [] },
   "GET /api/fno/NIFTY/chain": CHAIN, "GET /api/fno/risk-notice": NOTICE, "GET /api/fno/NIFTY/context": CONTEXT,
-  "GET /api/fno/NIFTY/suggest": { symbol: "NIFTY", today: "2026-10-13", cards: [AVOID, ENTER], note: "The library's pre-registered recipes. Not a recommendation." },
+  "GET /api/fno/NIFTY/suggest": { symbol: "NIFTY", today: "2026-10-13", cards: [AVOID, PAPER], note: "The library's pre-registered recipes. Not a recommendation." },
   "POST /api/fno/paper": { id: 7, legs: [] }, "POST /api/fno/exit-rules": { id: 1 },
 };
 const OPTIONAL = ["GET /api/market/status", "GET /api/fno/positions", "GET /api/fno/paper", "GET /api/fno/NIFTY/events", "GET /api/fno/NIFTY/iv",
   "GET /api/fno/direction/NIFTY"]; // the direction panel (#327) has its own spec
 
-test("fno: market context labels evidence; suggest shows AVOID with the failed backtest and a qualified ENTER", async ({ page }) => {
+test("fno: market context labels evidence; suggest shows AVOID on a failed hard check, directional evidence, and a paper-only card with 0 real lots", async ({ page }) => {
   const api = await mockApi(page, ROUTES);
   await page.goto("/fno");
   const ctx = page.locator("section").filter({ has: page.getByRole("heading", { name: "Market context" }) });
@@ -42,10 +42,16 @@ test("fno: market context labels evidence; suggest shows AVOID with the failed b
   await page.getByRole("button", { name: "Suggest setups" }).click();
   const avoid = page.getByRole("article", { name: /NIFTY put credit spread/ });
   await expect(avoid.getByTestId("plan-verdict")).toHaveText("AVOID");
-  await expect(avoid.getByTestId("plan-evidence")).toContainText("FAILED out-of-sample: expectancy ₹-1,789/trade, t=-1.3");
+  await expect(avoid.getByTestId("plan-evidence")).toContainText("directional — reflects the index path, not the structure");
+  await expect(avoid.getByText("directional — the index path, not the structure")).toBeVisible();
   const enter = page.getByRole("article", { name: /short iron condor/ });
-  await expect(enter.getByTestId("plan-verdict")).toHaveText("ENTER (no proven edge — size small)");
-  await expect(enter.getByText(/1× these legs/)).toBeVisible();
+  await expect(enter.getByTestId("plan-verdict")).toHaveText("NO PROVEN EDGE — paper only (0 real lots)");
+  await expect(enter.getByTestId("plan-size")).toHaveText("3× these legs");
+  await expect(enter.getByTestId("plan-real-lots")).toHaveText("0 lots");
+  if (!phone(page)) {
+    await enter.getByText(/^Details: sizing/).click();
+    await expect(enter.getByTestId("plan-open-book")).toContainText("at risk of"); // #358: the open-book cap is shown
+  }
   await expect(enter.getByText(/buy back at ₹127.50\/share/)).toBeVisible();
   await enter.getByRole("button", { name: "Paper trade + alerts" }).click();
   await expect(enter.getByRole("status")).toContainText("Paper trade #7 recorded with 3 exit alerts");

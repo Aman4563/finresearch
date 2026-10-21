@@ -151,13 +151,21 @@ def app_client(env, monkeypatch):
         yield c
 
 
-def test_provider_actions_probabilities_and_caveats(app_client):
+def test_provider_actions_probabilities_and_caveats(app_client, monkeypatch):
+    from finresearch.signals import fno_context
+
     c = app_client
+    # the preset condor 7 days out is exactly the weekly condor recipe, so its registered IV filter applies (#355):
+    # a year of 30-day IV ending at its high passes it
+    pts = [(date(2026, 9, 28) - timedelta(days=251 - i), 10.0 + i / 10) for i in range(252)]
+    monkeypatch.setattr(fno_context, "iv_rank_input", lambda sym: (pts, {"label": "test"}))
     s = c.get("/api/signals/fno/NIFTY", params={"preset": "iron_condor", "expiry": "2026-10-06"}).json()
     assert s["action"] == "NO_SIGNAL" and "capital is not set" in s["event"]
     _set_profile("1000000")
     s = c.get("/api/signals/fno/NIFTY", params={"preset": "iron_condor", "expiry": "2026-10-06"}).json()
-    assert s["action"] == "ENTER" and s["asset"] == "fno" and s["score"] == 100
+    # every check passes, but no backtest is saved: paper only, never ENTER, 0 real-money lots (#350)
+    assert s["action"] == "PAPER" and s["asset"] == "fno" and s["score"] == 100
+    assert s["sizing"]["real_lots"] == 0 and s["sizing"]["paper_lots"] >= 1
     assert s["validation"] == {
         "status": "rule_based",
         "n": 0,
@@ -183,8 +191,9 @@ def test_provider_actions_probabilities_and_caveats(app_client):
     legs = "sell:call:23050:1,sell:put:22550:1"
     w = c.get("/api/signals/fno/NIFTY", params={"legs": legs, "expiry": "2026-10-06"}).json()
     assert (
-        w["action"] == "WAIT"
+        w["action"] == "AVOID"  # a failed hard check: the trade card's verdict rule (#350), WAIT before it
         and w["sizing"]["max_multiple_of_these_legs"] == 0
+        and w["sizing"]["real_lots"] == 0
         and "Unlimited loss" in " ".join(w["caveats"])
     )
     assert (
