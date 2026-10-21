@@ -75,12 +75,13 @@ async def test_hot_qib_book_gives_apply_with_base_rate_probability_and_ev():
     assert s.probability == pytest.approx((18 + 1) / (20 + 2), abs=1e-4)  # Laplace-smoothed 18/20
     lo, hi = s.probability_interval
     assert lo == pytest.approx(0.6990, abs=1e-3) and hi == pytest.approx(0.9721, abs=1e-3)  # Wilson 18/20
-    # EV of one lot = P(allot) x lot cost x E[r]; Orient: 55 x ₹272 = ₹14,960, retail 20x -> 5%
+    # EV of one lot = P(allot) x (lot cost x E[r] − listing-day selling costs, #353); Orient: 55 x ₹272 = ₹14,960,
+    # retail 20x -> 5%; selling ₹18,924.40: STT 18.92 + NSE 0.56 + SEBI 0.02 + ₹20 + ₹13 + GST 6.04 = ₹58.55
     z = s.sizing
     assert z["lot_cost"] == 14960 and z["p_allot"] == pytest.approx(0.05, abs=1e-6)
     mean = (18 * 0.30 + 2 * -0.05) / 20
     assert z["expected_return_mean"] == pytest.approx(mean) and z["ev_per_lot"] == pytest.approx(
-        0.05 * 14960 * mean
+        0.05 * (14960 * mean - 58.5499), abs=0.01
     )
     assert z["max_lots"] == 1 and z["max_lots"] <= z["limits"]["by_capital"]
     assert s.score == pytest.approx(200 * (s.probability - 0.5), abs=0.01)
@@ -469,8 +470,21 @@ async def test_small_nii_applicant_is_sized_at_the_minimum_snii_application():
     assert s.action == "APPLY" and z["min_lots"] == 14 and z["max_lots"] == 14
     snii = z["p_allot"]
     assert snii == pytest.approx(1 / 21.3418, rel=1e-6)  # the fixture's sNII book (2.2), 4 dp
-    assert z["ev_per_application"] == pytest.approx(snii * 14 * 14960 * z["expected_return_mean"])
-    assert z["ev_per_lot"] == pytest.approx(snii * 14960 * z["expected_return_mean"])
+    # after the listing-day selling costs of that sale (#353): one order, so brokerage and DP are paid once
+    r = z["expected_return_mean"]
+
+    def cost(v):  # STT 0.1 %, NSE 0.00297 %, SEBI 0.0001 %, ₹20 brokerage, ₹13 DP, GST 18 % on the last four
+        return (
+            v * 0.001
+            + v * 0.0000297
+            + v * 0.000001
+            + 20
+            + 13
+            + 0.18 * (20 + v * 0.0000297 + v * 0.000001 + 13)
+        )
+
+    assert z["ev_per_application"] == pytest.approx(snii * (14 * 14960 * r - cost(14 * 14960 * (1 + r))))
+    assert z["ev_per_lot"] == pytest.approx(snii * (14960 * r - cost(14960 * (1 + r))))
     assert "minimum" in z["reason"] and "sNII" in z["reason"]
 
 

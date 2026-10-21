@@ -189,3 +189,39 @@ def test_an_ipo_is_scored_on_its_last_forecast_before_17h_on_the_last_bidding_da
     # the old rule (latest before listing) on the same issues with a known cut-off: 0.99 → (0.01)²
     assert cmp["latest"]["n"] == 1 and cmp["latest"]["brier"] == pytest.approx(0.0001)
     assert cmp["unknown_close_date"] == 1
+
+
+# ------------------------------------------------------------------------------------------------ IPO EV after costs
+def test_listing_day_selling_costs_golden():
+    """Selling ₹18,924.40 of allotted shares on listing day (delivery): STT 0.1 %, NSE 0.00297 %, SEBI ₹10/crore,
+    brokerage ₹20 (assumed), DP ₹13 a scrip (assumed), GST 18 % on brokerage + exchange + SEBI + DP."""
+    from decimal import Decimal
+
+    from finresearch.fincalc import ipo
+
+    c = ipo.listing_sale_costs(Decimal("18924.40"))
+    stt, exch, sebi = 18.9244, 18924.40 * 0.0000297, 18924.40 * 0.000001
+    gst = 0.18 * (20 + exch + sebi + 13)
+    assert float(c["lines"]["stt"]) == pytest.approx(stt, abs=1e-6)
+    assert float(c["lines"]["exchange"]) == pytest.approx(0.5620547, abs=1e-6)
+    assert float(c["lines"]["gst"]) == pytest.approx(gst, abs=1e-6)
+    assert float(c["total"]) == pytest.approx(stt + exch + sebi + 20 + 13 + gst, abs=1e-6)
+    assert float(c["total"]) == pytest.approx(58.5499, abs=1e-3)
+    assert {"brokerage", "dp"} <= set(c["assumptions"])  # labelled, never silently 0
+
+
+async def test_ipo_ev_is_after_listing_day_selling_costs_and_labels_the_allotment_floor():
+    from test_ipo_signal import orient, sources
+
+    from finresearch.fincalc import ipo
+    from finresearch.signals import ipo as sig_ipo
+
+    s = await sig_ipo.compute("orientcabl", {}, sources(orient(qib="150", retail="20")))
+    z = s.sizing
+    mean = (18 * 0.30 + 2 * -0.05) / 20  # 0.265
+    cost = float(ipo.listing_sale_costs(14960 * (1 + mean))["total"])  # ≈ ₹58.55 on a ₹18,924.40 sale
+    assert z["ev_per_lot"] == pytest.approx(0.05 * (14960 * mean - cost)) and z[
+        "ev_per_lot"
+    ] == pytest.approx(195.2925, abs=0.01)
+    assert z["p_allot_is_floor"] is True and "floor" in z["p_allot_basis"]
+    assert z["selling_costs_per_lot"] == pytest.approx(cost) and "selling costs" in z["ev_basis"]
