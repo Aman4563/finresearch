@@ -21,6 +21,12 @@ mostly zero after the first night); and at most BROAD_PER_STOCK chosen peers per
 peers are fetched once). E.g. 10 such stocks in 5 sectors: about 20 + ~150 candidate quotes on the first night
 (about 0-10 later) + up to 150 peers x 2 = roughly 500 requests the first night, about 320 afterwards (~3 minutes at
 NSE's 2 requests/s), on top of the ~1,000 for the NIFTY 500.
+
+With Settings.peer_price_source "equity_eod" (#373 (a)) the per-stock quote and history requests are replaced by the
+stored full bhavcopy (refseries.equity_eod; EodPrices): the price is that day's official close, the year-ago close
+comes from the store, and a quote is read only to refresh issued shares and the classification (QUOTE_TTL_DAYS, or at
+once on a sign of a share-count change). After the first month that is a few dozen quotes a night instead of ~1,000
+requests; results re-reads (weekly) are unchanged. `requests` in the stored dataset counts them.
 """
 
 from __future__ import annotations

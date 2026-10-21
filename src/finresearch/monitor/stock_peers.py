@@ -7,6 +7,9 @@ and their industry peers add a bounded number (signals.stock_peers module docstr
 stocks). Weekends and NSE holidays are skipped (no new prices; an unknown holiday list skips too). Each run is
 claimed in `alert_eval_slot` ("stock_peers:<day>"), so two monitor processes never run it twice; a failed run is
 retried (monitor.disclosures.MAX_ATTEMPTS). Pages only read the stored file.
+
+With Settings.peer_price_source "equity_eod" (#373) prices come from the full bhavcopy the 19:00 job stored
+(monitor.equity_eod); while today's file is not loaded the run fails and is retried 30 minutes later.
 """
 
 from __future__ import annotations
