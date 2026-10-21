@@ -31,7 +31,9 @@ def engine_sha() -> str | None:
     from finresearch.config import REPO_ROOT
 
     try:
-        out = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, cwd=REPO_ROOT, timeout=5)
+        out = subprocess.run(
+            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, cwd=REPO_ROOT, timeout=5
+        )
     except (OSError, subprocess.TimeoutExpired):
         return None
     sha = out.stdout.strip()
@@ -91,7 +93,14 @@ def append(kind: str, *, symbol: str, expiry: date | None, request: Any, chains:
     inputs = {"request": request, "chains": [c.model_dump(mode="json") for c in chains if c is not None],
               "plan": plan_inputs if plan_inputs is None or isinstance(plan_inputs, dict) else dict(vars(plan_inputs))}  # fmt: skip
     with session_scope() as s:
-        r = row(kind, symbol=symbol, expiry=expiry, inputs=inputs, cards=summarise(kind, response), response=response)
+        r = row(
+            kind,
+            symbol=symbol,
+            expiry=expiry,
+            inputs=inputs,
+            cards=summarise(kind, response),
+            response=response,
+        )
         s.add(r)
         s.flush()
         return r.id
@@ -101,7 +110,9 @@ def bucket(action: str | None, qualifier: str | None) -> str:
     """ENTER, NO PROVEN EDGE (an ENTER qualified "no proven edge"), WAIT, AVOID, or `no verdict`."""
     if action is None:
         return NO_VERDICT
-    if action.upper() == "NO PROVEN EDGE" or (action == "ENTER" and "no proven edge" in (qualifier or "").lower()):
+    if action.upper() == "NO PROVEN EDGE" or (
+        action == "ENTER" and "no proven edge" in (qualifier or "").lower()
+    ):
         return "NO PROVEN EDGE"
     return action
 

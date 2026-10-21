@@ -1575,8 +1575,10 @@ def fno_status() -> None:
 
 @fno_app.command("card-log")
 def fno_card_log(
-    since: str = typer.Option(..., help="The split, e.g. a release's deploy time: ISO datetime WITH its zone, "
-                                        "e.g. 2026-10-21T18:00:00+05:30"),  # fmt: skip
+    since: str = typer.Option(
+        ...,
+        help="The split, e.g. a release's deploy time: ISO datetime WITH its zone, e.g. 2026-10-21T18:00:00+05:30",
+    ),
 ) -> None:
     """Release report (#360): card verdicts (ENTER, NO PROVEN EDGE, WAIT, AVOID) before and after `--since`."""
     from datetime import datetime

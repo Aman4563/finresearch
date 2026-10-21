@@ -1532,11 +1532,17 @@ class CardLog(Base):
 
     __tablename__ = "card_log"
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
     kind: Mapped[str] = mapped_column(String(12))  # plan | suggest | strategy | direction
     symbol: Mapped[str] = mapped_column(String(30), index=True)
-    expiry: Mapped[date | None] = mapped_column(Date)  # None for suggest (one card per recipe, several expiries)
-    engine_sha: Mapped[str | None] = mapped_column(String(40))  # the checkout's commit; None = not a git checkout
+    expiry: Mapped[date | None] = mapped_column(
+        Date
+    )  # None for suggest (one card per recipe, several expiries)
+    engine_sha: Mapped[str | None] = mapped_column(
+        String(40)
+    )  # the checkout's commit; None = not a git checkout
     inputs: Mapped[dict[str, Any]] = mapped_column(JSONB)
     cards: Mapped[list[Any]] = mapped_column(JSONB)
     response: Mapped[dict[str, Any]] = mapped_column(JSONB)

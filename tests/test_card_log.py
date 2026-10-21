@@ -44,8 +44,11 @@ def _common(row, kind):
     assert ch["symbol"] == "NIFTY" and ch["underlying"] and ch["rows"] and "as_of" in ch and ch["source"]
     assert row["response"], "the full response the owner saw"
     for c in row["cards"]:
-        assert CARD_FIELDS <= set(c), CARD_FIELDS - set(c)
-        assert {"real_world", "risk_neutral"} <= set(c["probability"]) and {"real_world", "risk_neutral"} <= set(c["ev"])
+        assert set(c) >= CARD_FIELDS, CARD_FIELDS - set(c)
+        assert {"real_world", "risk_neutral"} <= set(c["probability"]) and {
+            "real_world",
+            "risk_neutral",
+        } <= set(c["ev"])
 
 
 def test_plan_appends_exactly_one_row_with_every_field(client):  # noqa: F811
@@ -60,7 +63,11 @@ def test_plan_appends_exactly_one_row_with_every_field(client):  # noqa: F811
     pin = row["inputs"]["plan"]
     assert pin["capital"] == 1000000 and pin["max_loss_pct"] == 2 and pin["rate"] and pin["closes"]
     [c] = row["cards"]
-    assert c["action"] == card["action"] and c["qualifier"] == card["qualifier"] and c["failed"] == card["failed"]
+    assert (
+        c["action"] == card["action"]
+        and c["qualifier"] == card["qualifier"]
+        and c["failed"] == card["failed"]
+    )
     assert c["probability"]["real_world"] == card["probability"]["real_world"]
     assert c["probability"]["risk_neutral"] == card["probability"]["risk_neutral"]
     assert c["ev"]["real_world"] is not None  # the card's "EV after costs (real-world)" check
@@ -95,7 +102,10 @@ def test_strategy_check_appends_one_row_without_inventing_a_verdict(client):  # 
     assert c["action"] is None and c["failed"] is None
     an = r["analysis"]
     assert c["probability"]["risk_neutral"] == an["risk_neutral"]["pop"]
-    assert c["ev"]["risk_neutral"] == an["risk_neutral"]["ev"] and c["ev"]["real_world"] == an["real_world"]["ev"]
+    assert (
+        c["ev"]["risk_neutral"] == an["risk_neutral"]["ev"]
+        and c["ev"]["real_world"] == an["real_world"]["ev"]
+    )
 
 
 def test_a_refused_request_logs_nothing(client):  # noqa: F811
@@ -160,3 +170,17 @@ def test_release_report_cli_prints_the_before_after_table(client):  # noqa: F811
     assert "AVOID" in r.output and "NO PROVEN EDGE" in r.output and "before" in r.output
     bad = CliRunner().invoke(app, ["fno", "card-log", "--since", "2026-10-10"])  # no zone: ambiguous, refused
     assert bad.exit_code != 0
+
+
+def test_the_migration_creates_the_same_append_only_trigger_as_the_models():
+    """Tests build the schema with create_all; the live database with Alembic: both must install the trigger."""
+    import importlib.util
+    from pathlib import Path
+
+    from finresearch.db.models import CARD_LOG_APPEND_ONLY
+
+    path = Path(__file__).parents[1] / "migrations" / "versions" / "d4a8c2e6f1b9_card_log.py"
+    spec = importlib.util.spec_from_file_location("mig_card_log", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert mod.APPEND_ONLY == CARD_LOG_APPEND_ONLY
