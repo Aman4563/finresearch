@@ -14,7 +14,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import date, timedelta
-from typing import Protocol
+from typing import Any, Protocol
 
 RIGHTS = {"CE": "call", "PE": "put"}
 MAX_DTE_LOADED = (
@@ -117,6 +117,13 @@ class Clocked:
         if self.clock is None or end > self.clock:
             raise LookAheadError(f"{symbol} IV to {end} requested at the close of {self.clock}")
         return self.inner.iv_history(symbol, start, end)
+
+    def span_params(self, symbol: str, d: date) -> dict[str, Any] | None:
+        """The NSE SPAN scan ranges known on `d` (#370) when the inner history provides them, else None."""
+        if self.clock is None or d > self.clock:
+            raise LookAheadError(f"{symbol} SPAN ranges on {d} requested at the close of {self.clock}")
+        fn = getattr(self.inner, "span_params", None)
+        return fn(symbol, d) if fn is not None else None
 
 
 class MemoryHistory:

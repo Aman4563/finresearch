@@ -490,6 +490,46 @@ def _spawn_fno_bhav(now: datetime) -> None:
     _BACKGROUND["fno_bhav"] = asyncio.create_task(run())
 
 
+def _spawn_index_eod(now: datetime) -> None:
+    """Start the nightly index close update (monitor.index_eod, #366) in the background on trading days: one NSE
+    download (~9 KB). At most one runs at a time."""
+    from finresearch.monitor import index_eod
+
+    t = _BACKGROUND.get("index_eod")
+    if (t is not None and not t.done()) or index_eod.due_slot(now) is None:
+        return
+
+    async def run() -> None:
+        try:
+            res = await index_eod.index_eod_step(now)
+            if res:
+                log.info("index close update: %s", res)
+        except Exception:
+            log.warning("index close update failed", exc_info=True)
+
+    _BACKGROUND["index_eod"] = asyncio.create_task(run())
+
+
+def _spawn_span(now: datetime) -> None:
+    """Start the nightly SPAN update (monitor.span, #370) in the background on trading days: the SPAN zip (~10 MB)
+    and FOVOLT (~40 KB). At most one runs at a time."""
+    from finresearch.monitor import span
+
+    t = _BACKGROUND.get("span")
+    if (t is not None and not t.done()) or span.due_slot(now) is None:
+        return
+
+    async def run() -> None:
+        try:
+            res = await span.span_step(now)
+            if res:
+                log.info("SPAN update: %s", res)
+        except Exception:
+            log.warning("SPAN update failed", exc_info=True)
+
+    _BACKGROUND["span"] = asyncio.create_task(run())
+
+
 def _spawn_quotes(deps: jobs.Deps, now: datetime) -> None:
     """Start the forward quote recorder (monitor.quotes, #363) in the background when a snapshot is due: one sweep is
     169 Groww calls (~50 s), longer than a tick. At most one runs at a time."""
@@ -657,6 +697,10 @@ async def tick(deps: jobs.Deps, now: datetime | None = None) -> dict[str, int]:
         _spawn_fno_bhav(now)
     if deps.quotes:
         _spawn_quotes(deps, now)
+    if deps.index_eod:
+        _spawn_index_eod(now)
+    if deps.span:
+        _spawn_span(now)
     out_brief = brief_step(now) if deps.brief else {}
     if deps.holidays is not None or deps.live_holidays:
         await _refresh_holidays(deps)
@@ -746,14 +790,17 @@ def schedule_json(ww=None, *, running: bool | None = None) -> dict:
     from finresearch.api.live import BIDDING_HOURS, EQUITY_HOURS
     from finresearch.fincalc.ipo import lock_in_schedule
     from finresearch.fnohist import quotes as fq
+    from finresearch.fnohist import span as fspan
     from finresearch.monitor import digest as dg
     from finresearch.monitor import fno_bhav as fb
+    from finresearch.monitor import index_eod as ixe
     from finresearch.monitor import intraday, iv
     from finresearch.monitor import lookthrough_fetch as ltf
     from finresearch.monitor import portfolio_daily as pd
     from finresearch.monitor import quotes as mq
     from finresearch.monitor import scheme_master as sm
     from finresearch.monitor import sip_estimates as sipe
+    from finresearch.monitor import span as spj
     from finresearch.monitor.plan import ALLOTMENT_TIME, LISTING_TIMES, LOCKIN_TIME
     from finresearch.signals.ledger import READY_AFTER_IST
     from finresearch.suggest.profile import IPO_FINAL_CHECK
@@ -781,6 +828,10 @@ def schedule_json(ww=None, *, running: bool | None = None) -> dict:
                    "underlyings": [u for u, _ in fq.UNDERLYINGS],
                    "groww_calls_per_day": (fq.PER_SNAPSHOT + 1) * len(fq.SNAPSHOT_TIMES)},
         "fno_bhav": {"after": hm((fb.RUN_AFTER.hour, fb.RUN_AFTER.minute)), "lookback_days": fb.LOOKBACK_DAYS},
+        "index_eod": {"after": hm((ixe.RUN_AFTER.hour, ixe.RUN_AFTER.minute)), "lookback_days": ixe.LOOKBACK_DAYS,
+                      "requests_per_night": 1},
+        "span": {"after": hm((spj.RUN_AFTER.hour, spj.RUN_AFTER.minute)), "lookback_days": spj.LOOKBACK_DAYS,
+                 "requests_per_night": 2, "raw_sessions_kept": fspan.KEEP_SESSIONS},
         "forecasts": {"after": hm(READY_AFTER_IST), "every_min": int(FORECAST_EVERY.total_seconds() // 60)},
         "portfolio": {"close_pass": hm((pd.close_time(ww.stock_time()).hour, pd.close_time(ww.stock_time()).minute)),
                       "nav_pass": hm((pd.NAV_AT.hour, pd.NAV_AT.minute)), "max_instruments": pd.MAX_INSTRUMENTS,
