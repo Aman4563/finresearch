@@ -26,10 +26,15 @@ from finresearch.backtest.history import RIGHTS, Day, Quote, within
 from finresearch.db.models import FnoBhav, FnoContract, FnoIvEod
 from finresearch.fincalc import fno_history as fh
 
+SPAN_MAX_AGE_DAYS = 45  # a monthly SPAN sample covers the following weeks
+
 
 class DbHistory:
-    def __init__(self, url: str | None = None) -> None:
+    def __init__(self, url: str | None = None, span_ranges: bool = False) -> None:
         self.url = url
+        self.span_ranges = (
+            span_ranges  # #370: margin from the stored NSE SPAN ranges (opt-in, see span_params)
+        )
         self._has_iv: dict[str, bool] = {}
         self._contracts: dict[str, dict[date, tuple[int | None, list[Any] | None]]] = {}
         self._row_lots: dict[tuple[str, date, date], int] = {}
@@ -41,6 +46,17 @@ class DbHistory:
         with session_scope(self.url) as s:
             s.execute(text("SET TRANSACTION READ ONLY"))
             yield s
+
+    def span_params(self, symbol: str, d: date) -> dict[str, Any] | None:
+        """The newest stored NSE SPAN ranges on or before `d` within SPAN_MAX_AGE_DAYS (the backfill samples one file
+        a month), when built with span_ranges=True; else None, and margins use margin_approx's labelled assumptions.
+        Off by default: it changes the registered backtest's margin and so its lot caps (a decision, #370)."""
+        if not self.span_ranges:
+            return None
+        from finresearch.fnohist import span
+
+        with self._s() as s:
+            return span.params_for(s, symbol, d, max_age_days=SPAN_MAX_AGE_DAYS)
 
     def sessions(self, symbol: str, start: date, end: date) -> list[date]:
         with self._s() as s:
