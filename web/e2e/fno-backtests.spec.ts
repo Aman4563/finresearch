@@ -14,6 +14,9 @@ test("fno backtests: candidate with setup, failing strategy plainly labelled, un
   await expect(page.getByText(/Pre-registered 2026-10-12 · 8 variants/)).toBeVisible();
   await expect(page.getByText(/sell 24300 put @ ~88.5/)).toBeVisible();
   await expect(page.getByText(/margin ≈ —/)).toBeVisible(); // unknown margin: a dash, never ₹0
+  // #354 h: the IV-percentile split was chosen after seeing results: it says so; the hash "matches spec", not "code"
+  await expect(page.getByText(/By IV percentile at entry .*post hoc/).first()).toBeVisible();
+  await expect(page.getByText(/matches spec/).first()).toBeVisible();
   const failing = page.locator("[id='nifty_dcs_m']");
   await expect(failing.getByText("fails: OOS deflated Sharpe")).toBeVisible();
   await expect(failing.getByText(/OOS deflated Sharpe: unknown/)).toBeVisible();

@@ -106,7 +106,7 @@ export function StrategyCard({ r, capital = 1_000_000 }: { r: StrategyResult; ca
         )}
         <div className="grid grid-cols-1 gap-4 2xl:grid-cols-2">
           {r.by_year && Object.keys(r.by_year).length > 0 && <Breakdown title="By year of entry (walk-forward, frozen spec)" rows={r.by_year} />}
-          {r.by_iv_regime && Object.keys(r.by_iv_regime).length > 0 && <Breakdown title="By IV percentile at entry (low < ⅓ ≤ mid < ⅔ ≤ high)" rows={r.by_iv_regime} />}
+          {r.by_iv_regime && Object.keys(r.by_iv_regime).length > 0 && <Breakdown title="By IV percentile at entry (low < ⅓ ≤ mid < ⅔ ≤ high) · post hoc, not a pre-registered test" rows={r.by_iv_regime} />}
         </div>
         {r.skips && Object.keys(r.skips).length > 0 && (
           <p className="text-xs text-muted">Entries refused: {Object.entries(r.skips).map(([k, n]) => `${k} (${n})`).join(" · ")}</p>

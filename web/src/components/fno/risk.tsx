@@ -176,16 +176,18 @@ export function ProbabilityPanel({ a, rate }: { a: Analysis; rate?: RateInfo }) 
 }
 
 /** IV rank and percentile from the recorded daily ATM IV; says how many days are recorded until there are enough. */
-export function IvTile({ symbol, atmIv, rv20 }: { symbol: string; atmIv: number | null; rv20?: number | null }) {
+/** IV rank of a stored previous close (#354 b): the series and close it ranks are named, never "today's ATM IV". The
+ * IV/RV ratio is on matched horizons (the 30-day IV over the 20-day realised volatility of the same close, #354 d). */
+export function IvTile({ symbol }: { symbol: string }) {
   const { data } = useApi<IvHistory>(`/api/fno/${encodeURIComponent(symbol)}/iv`);
   const ok = data?.status === "ok";
-  const ratio = atmIv != null && rv20 ? atmIv / 100 / rv20 : null;
+  const ratio = data?.rank_series === "iv_30d" && data.current != null && data.rv_20 ? data.current / data.rv_20 : null;
   return (
     <Stat label="IV rank" icon={<Gauge className="size-4" />} tone="info"
-      help={<>IV rank = where today&apos;s ATM implied volatility sits between its low and high over the last 252 recorded days; IV percentile = share of those days with lower IV. Recorded daily after the close from {data?.min_days ?? 60} days on. {data?.method} <a href="/learn/options#iv-rank" className="text-brand underline">What is IV rank?</a></>}
+      help={<>IV rank = where the latest stored close&apos;s IV ({data?.rank_input ?? "the stored daily IV"}) sits between its low and high over the last 252 sessions; IV percentile = share of those sessions with lower IV. Not today&apos;s live IV. Computed only when 80% of the 252 sessions carry an IV. {data?.method} <a href="/learn/options#iv-rank" className="text-brand underline">What is IV rank?</a></>}
       display={<span className="num">{ok ? pctText(data!.rank, 0) : "—"}</span>}
       // the short part is the one-line hint; the rest wraps in the note below it (a truncated status was unreadable)
-      hint={!data ? "loading…" : ok ? `percentile ${pctText(data.percentile, 0)}` : ratio != null ? `IV/RV20 ${ratio.toFixed(2)}×` : undefined}
-      note={!data ? undefined : ok ? `${data.n} days recorded${data.skew_25d != null ? ` · 25-delta skew ${data.skew_25d.toFixed(1)}` : ""}` : data.status} />
+      hint={!data ? "loading…" : ok ? `percentile ${pctText(data.percentile, 0)}` : ratio != null ? `IV30/RV20 ${ratio.toFixed(2)}×` : undefined}
+      note={!data ? undefined : ok ? `${data.n} of 252 sessions · ${data.rank_input ?? "stored daily IV"}${data.skew_25d != null ? ` · 25-delta skew ${data.skew_25d.toFixed(1)}` : ""}` : data.status} />
   );
 }
