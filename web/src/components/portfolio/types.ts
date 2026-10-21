@@ -226,10 +226,35 @@ export type FySummary = {
   /** false when a disposal can't be classified short/long-term (#213): tax, cess and total are then null */
   complete: boolean; unclassified: Unclassified; rules_verified: boolean; rules_note: string | null;
   exemption: { limit: number; used: number; remaining: number; complete: boolean };
-  slices: { bucket: string; rate_pct: number | null; slab: boolean; long: boolean; gain: number; set_off: number; exempted: number; taxable: number }[];
+  slices: { bucket: string; rate_pct: number | null; slab: boolean; long: boolean; gain: number; set_off: number; exempted: number; taxable: number; bf_set_off?: number }[];
   losses_carried: { short: number; long: number };
+  /** losses of earlier years set off this year (s.74 / s.111, #344); null when not considered */
+  brought_forward?: BroughtForwardYear | null;
   tax: number | null; cess: number | null; total: number | null; total_classified: number; slab_rate_pct: number; notes: string[];
 };
+
+export type LossKind = "short" | "long" | "unknown";
+export type LossStatus = "available" | "used" | "lapsed" | "not_carried" | "unknown_filing" | "not_yet_due" | "unknown_amount";
+
+export type BroughtForwardYear = {
+  set_off_short: number; set_off_long: number;
+  used: { origin_fy: number; label: string; kind: LossKind; amount: number }[];
+  /** false when a loss that could be set off has an unknown filing status or amount: the tax leaves it out */
+  complete: boolean;
+  pending: { origin_fy: number; label: string; kind: LossKind; remaining: number | null; status: LossStatus }[];
+  tax_if_pending_allowed: number | null;
+};
+
+export type LossEntry = {
+  origin_fy: number; label: string; kind: LossKind; amount: number | null; remaining: number | null; used: Record<string, number>;
+  apply_from_fy: number; last_fy: number; last_label: string; filing: "on_time" | "late" | "unknown" | "not_yet_due";
+  status: LossStatus; source: string; notes: string[];
+};
+
+export type ManualLossInput = { origin_fy: number; kind: "short" | "long"; amount_inr: number | string; source: string; apply_from_fy?: number | null };
+export type TaxLossInputs = { returns_filed_on_time: Record<string, boolean>; brought_forward: ManualLossInput[] };
+
+export type CarryForward = { entries: LossEntry[]; through_fy: number | null; ask_filing: number[]; inputs: TaxLossInputs; law: string };
 
 export type Unclassified = { count: number; gain: number | null; no_cost: number; no_date: number; detail: string; corporate_action?: number };
 
@@ -243,6 +268,9 @@ export type DisposalRow = {
 export type HarvestIdea = {
   holding_id: number; name: string; account: string; sell_units: number; price: number; value: number; est_costs: number; why: string;
   gain?: number; future_tax_saved_up_to?: number; loss?: number; short_term?: boolean; tax_saved?: number; estimate?: boolean;
+  /** loss harvesting (#344): extra loss carried forward, its value as an upper bound, and the net of known costs */
+  carry_forward?: { short: number; long: number }; carry_forward_value_up_to?: number; net_benefit_up_to?: number;
+  costs_unknown?: string[];
 };
 
 export type TaxRule = {
@@ -255,6 +283,7 @@ export type TaxView = {
   as_of: string;
   fys: FySummary[];
   disposals: DisposalRow[];
+  carry_forward?: CarryForward;
   harvest: {
     fy: number; label: string; days_left: number; deadline: string; exemption_remaining: number | null; tax_so_far: number | null;
     complete: boolean; unclassified: Unclassified; rules_verified: boolean; rules_note: string | null;

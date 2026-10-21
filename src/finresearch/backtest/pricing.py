@@ -10,7 +10,6 @@ the tier picked by contracts traded that day (specs.Book.slippage_tiers; assumpt
 from __future__ import annotations
 
 import math
-import statistics
 from datetime import date
 
 from finresearch.backtest.history import Day, Quote
@@ -103,17 +102,30 @@ def wing(x: Day, expiry: date, right: str, anchor: float, target: float) -> Quot
     return min(pool, key=lambda q: (abs(q.strike - target), abs(q.strike - anchor)))
 
 
+MAX_SETTLE_GAP = (
+    1e-4  # 1 bp: the uniform settle must agree this closely with the expiring future or underlying
+)
+
+
 def settlement_price(x: Day, expiry: date) -> tuple[float, str] | None:
-    """The final settlement price (call it only on the contract's last session, which a holiday can move earlier): the expiring future's settlement price (NSE settles index and stock
-    futures at the underlying's closing value), else the bhavcopy's underlying value (UDiFF), else the median of
-    K ± settlement price of the expiring options worth more than ₹1 (on expiry day NSE settles them at intrinsic)."""
-    if expiry in x.futures:
-        return x.futures[expiry], "future"
-    if x.spot:
-        return x.spot, "underlying"
-    implied = [q.strike + q.settle if q.right == "call" else q.strike - q.settle
-               for q in x.options.values() if q.expiry == expiry and q.settle and q.settle > 1]  # fmt: skip
-    return (statistics.median(implied), "options_intrinsic") if implied else None
+    """The final settlement price (#352; call it only on the contract's last session, which a holiday can move
+    earlier). On that session every expiring option row carries one identical settle, the underlying's final
+    settlement price (419 of 426 NIFTY/BANKNIFTY near expiries 2022-26, 0.0 bp from the future or underlying on all 262
+    where one exists): that uniform settle is used, accepted only if it is within 1 bp of the expiring future or the
+    bhavcopy's underlying value when either exists. Without option settles: the expiring future (NSE settles index and
+    stock futures at the underlying's closing value), else the underlying value (UDiFF). Settles that differ with
+    neither to check them, or a uniform settle that disagrees: None (unknown, never a guess; the median of K ± settle
+    used before gave BANKNIFTY 13-Jan-2022 3,680.05 against 38,469.95)."""
+    ref, ref_src = (x.futures[expiry], "future") if expiry in x.futures else (x.spot, "underlying")
+    settles = {
+        q.settle for q in x.options.values() if q.expiry == expiry and q.settle is not None and q.settle > 0
+    }
+    if len(settles) == 1:
+        s = settles.pop()
+        if ref and abs(s - ref) / ref >= MAX_SETTLE_GAP:
+            return None
+        return s, "uniform option settle"
+    return (ref, ref_src) if ref else None
 
 
 def discounted_spot(fwd: float, t: float, rate: float) -> float:

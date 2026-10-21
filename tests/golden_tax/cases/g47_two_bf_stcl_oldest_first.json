@@ -1,0 +1,127 @@
+{
+  "id": "g47_two_bf_stcl_oldest_first",
+  "title": "Two brought-forward STCLs (FY 2019-20 Rs 40,000, FY 2022-23 Rs 50,000) against STCG of Rs 60,000: oldest used first",
+  "covers": [
+    "brought forward",
+    "carry forward",
+    "set-off",
+    "order of brought-forward years"
+  ],
+  "rules": [
+    "Income-tax Act 1961 s.74 (Income-tax Act 2025 s.111 [secondary mapping, not verified]): the net capital-gains loss of a year is carried forward to the following assessment year; (1)(a) a short-term loss 'shall be set off' against any capital gain of that year; (1)(b) a long-term loss only against long-term capital gain; (1)(c) the balance is carried on; (2) not for more than eight assessment years immediately succeeding the assessment year for which it was first computed",
+    "Income-tax Act 1961 s.80 (Income-tax Act 2025 s.121 [secondary mapping, not verified]) with s.139(3) and s.139(1): a capital loss is carried forward and set off under s.74 only if it was determined in a return filed within the time allowed by s.139(1)",
+    "Income-tax Act 1961 s.111A(1) as amended by Finance (No.2) Act 2024: STCG on STT-paid equity 20 % for transfers on/after 23-Jul-2024",
+    "Health and Education Cess 4 % (Finance Act 2025 s.2)"
+  ],
+  "derivation": [
+    "Manual entries, both returns on time: STCL 40,000.00 of origin fy 2020 (last_fy 2028) and STCL 50,000.00 of origin fy 2023 (last_fy 2031).",
+    "MAPLE LTD: 300 @ 400.00 bought 2025-02-03, sold 2025-08-05 @ 600.00 -> proceeds 1,80,000.00, cost 1,20,000.00, STCG 60,000.00, short 20 %.",
+    "fy 2026: the losses total 90,000 but only 60,000 of gain exists -> bf_set_off_short 60,000.00; net STCG 0; tax 0.00, cess 0.00, total 0.00.",
+    "Order (s.74 does not fix it; interpretive): oldest origin first, as the older loss expires first and Schedule CFL lists years in that order -> fy 2020 loss 40,000 used in full, fy 2023 loss 20,000 used, 30,000 left.",
+    "Ledger: 2020 short amount 40,000.00 remaining 0.00 last_fy 2028 used; 2023 short amount 50,000.00 remaining 30,000.00 last_fy 2031 available.",
+    "Alternative (newest first): 2023 remaining 0.00 used; 2020 remaining 30,000.00 available (last_fy 2028). Tax identical."
+  ],
+  "interpretive": true,
+  "slab_rate": "0.30",
+  "holdings": [
+    {
+      "name": "MAPLE LTD",
+      "tax_class": "equity",
+      "listed": true,
+      "fmv_2018": null,
+      "sgb_original_subscriber": false,
+      "events": [
+        {
+          "day": "2025-02-03",
+          "kind": "buy",
+          "quantity": "300",
+          "price": "400.00",
+          "charges": "0"
+        },
+        {
+          "day": "2025-08-05",
+          "kind": "sell",
+          "quantity": "300",
+          "price": "600.00",
+          "charges": "0"
+        }
+      ]
+    }
+  ],
+  "tax_losses": {
+    "returns_filed_on_time": {
+      "2020": true,
+      "2023": true
+    },
+    "brought_forward": [
+      {
+        "origin_fy": 2020,
+        "kind": "short",
+        "amount": "40000.00",
+        "source": "ITR AY 2020-21 Schedule CFL",
+        "apply_from_fy": 2021
+      },
+      {
+        "origin_fy": 2023,
+        "kind": "short",
+        "amount": "50000.00",
+        "source": "ITR AY 2023-24 Schedule CFL",
+        "apply_from_fy": 2024
+      }
+    ]
+  },
+  "through_fy": 2026,
+  "expected": {
+    "disposals": [
+      {
+        "holding": "MAPLE LTD",
+        "sold": "2025-08-05",
+        "acquired": "2025-02-03",
+        "quantity": "300",
+        "cost": "120000.00",
+        "tax_cost": "120000.00",
+        "proceeds": "180000.00",
+        "gain": "60000.00",
+        "term": "short",
+        "rate": "0.20"
+      }
+    ],
+    "open_lots": [],
+    "fy": [
+      {
+        "fy": 2026,
+        "exemption_used": "0.00",
+        "tax": "0.00",
+        "cess": "0.00",
+        "total": "0.00",
+        "complete": true,
+        "unknown_count": 0,
+        "intraday_count": 0,
+        "exempt_total": "0.00",
+        "losses_carried_short": "0.00",
+        "losses_carried_long": "0.00",
+        "bf_set_off_short": "60000.00",
+        "bf_set_off_long": "0.00",
+        "carry_forward_complete": true
+      }
+    ],
+    "ledger": [
+      {
+        "origin_fy": 2020,
+        "kind": "short",
+        "amount": "40000.00",
+        "remaining": "0.00",
+        "last_fy": 2028,
+        "status": "used"
+      },
+      {
+        "origin_fy": 2023,
+        "kind": "short",
+        "amount": "50000.00",
+        "remaining": "30000.00",
+        "last_fy": 2031,
+        "status": "available"
+      }
+    ]
+  }
+}

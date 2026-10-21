@@ -29,9 +29,12 @@ preceding the date of its transfer").
 
 Not modelled (shown as caveats): surcharge (capped at 15 % on these gains), the s.87A rebate (not available against
 tax at special rates), indexation for pre-23-Jul-2024 transfers of other assets, set-off of the unused basic
-exemption, carry-forward of losses across years (8 years), the s.94(7)/(8) dividend and bonus-stripping rules, and
+exemption, the s.94(7)/(8) dividend and bonus-stripping rules, and
 share buybacks (taxed as dividend with the cost as a capital loss from 1-Oct-2024; as capital gains from tax year
 2026-27, promoters at an effective 30 %, Budget 2026 memo p.63, enactment not verified [U]).
+
+Losses carried forward from earlier years (s.74 / s.111, eight years, only after a return filed on time) are set off
+by ``fy_tax(brought_forward=...)``; the ledger across years is fincalc.losses (#344).
 
 Unlisted bonds and debentures (#294): transferred, redeemed or matured on or after 23-Jul-2024 they are short-term at
 the slab rate whatever the holding period (s.50AA as amended by the Finance (No.2) Act 2024, Budget 2024 memo; s.76 of
@@ -315,11 +318,29 @@ class Slice:
     long: bool
     amount: Decimal
     exempted: Decimal = Decimal(0)
-    set_off: Decimal = Decimal(0)
+    set_off: Decimal = Decimal(0)  # current-year losses (s.70 / s.108)
+    bf_set_off: Decimal = Decimal(0)  # brought-forward losses (s.74 / s.111)
+
+    @property
+    def room(self) -> Decimal:
+        """The gain still free to absorb a loss."""
+        return self.amount - self.set_off - self.bf_set_off
 
     @property
     def taxable(self) -> Decimal:
-        return max(Decimal(0), self.amount - self.exempted - self.set_off)
+        return max(Decimal(0), self.room - self.exempted)
+
+
+@dataclass(frozen=True)
+class BroughtForward:
+    """A capital loss of an earlier year available for set-off in this one (s.74(1) of the 1961 Act; s.111 of the
+    2025 Act). The caller decides eligibility (return filed within s.139(1) time, s.80 / s.121; at most eight
+    assessment years after the loss year, s.74(2)): fy_tax sets off whatever it is given."""
+
+    origin_fy: int  # the financial year the loss arose in (named by its end year)
+    kind: Literal["short", "long"]
+    amount: Decimal  # still unabsorbed at the start of this year
+    key: str = ""
 
 
 @dataclass
@@ -341,6 +362,11 @@ class FyTax:
     cess: Decimal
     notes: list[str] = field(default_factory=list)
     rules_verified: bool = True
+    bf_used: dict[str, Decimal] = field(
+        default_factory=dict
+    )  # BroughtForward.key -> amount set off this year
+    bf_set_off_short: Decimal = Decimal(0)
+    bf_set_off_long: Decimal = Decimal(0)
 
     @property
     def complete(self) -> bool:
@@ -366,15 +392,23 @@ def _rate(s: Slice, slab: Decimal) -> Decimal:
     return slab if s.rate is None else s.rate
 
 
-def fy_tax(gains: Iterable[Gain], fy: int, slab_rate: Decimal | float | str = Decimal("0.30")) -> FyTax:
+def fy_tax(gains: Iterable[Gain], fy: int, slab_rate: Decimal | float | str = Decimal("0.30"),
+           brought_forward: Sequence[BroughtForward] = ()) -> FyTax:  # fmt: skip
     """Tax on one financial year's realised capital gains.
 
     1. Gains and losses net within their bucket and rate (e.g. all 20 % equity STCG together).
     2. Remaining losses are set off across buckets: long-term losses only against long-term gains, short-term losses
        against any gain, each time against the highest-taxed part first (the order that minimises tax; the Act
        fixes which gains a loss may absorb, not the order among them [U]).
-    3. The ₹1.25 lakh (₹1 lakh before FY 2024-25) exemption applies to the equity LTCG left, to the 12.5 % part first.
-    4. Tax = rate × taxable part (slab-rate parts at `slab_rate`), plus 4 % cess. Surcharge and rebates are not modelled.
+    3. Brought-forward losses (s.74(1) of the 1961 Act, s.111 of the 2025 Act) are set off next, after the current
+       year's own (s.70 / s.108), as ITR Schedule CYLA comes before BFLA: long-term ones first and only against
+       long-term gains (s.74(1)(b)), then short-term ones against any gain (s.74(1)(a)), each kind oldest year first.
+       The set-off is compulsory ("shall be set off"), even against equity LTCG the exemption would have covered.
+       LTCL before STCL and oldest first are conventions [U]: the Act fixes which gains a loss may absorb, not the
+       order; this one absorbs the most this year and uses the losses nearest expiry first.
+    4. The ₹1.25 lakh (₹1 lakh before FY 2024-25) exemption applies to the equity LTCG left, to the 12.5 % part first
+       (s.112A(1): only the LTCG "exceeding" the limit is taxed, computed after set-off).
+    5. Tax = rate × taxable part (slab-rate parts at `slab_rate`), plus 4 % cess. Surcharge and rebates are not modelled.
     """
     slab = Decimal(str(slab_rate))
     gl = [g for g in gains if fiscal_year(g.sold) == fy]
@@ -397,38 +431,45 @@ def fy_tax(gains: Iterable[Gain], fy: int, slab_rate: Decimal | float | str = De
     def order(pool: list[Slice]) -> list[Slice]:
         return sorted(pool, key=lambda s: _rate(s, slab), reverse=True)
 
-    def absorb(loss: Decimal, pool: list[Slice]) -> Decimal:
+    def absorb(loss: Decimal, pool: list[Slice], attr: str = "set_off") -> Decimal:
         # first the part of each slice that would stay taxable after the exemption, then the rest
         eq_lt = [s for s in slices if s.bucket == "equity_lt"]
-        eq_total = sum((s.amount - s.set_off for s in eq_lt), Decimal(0))
+        eq_total = sum((s.room for s in eq_lt), Decimal(0))
         shelter = min(limit, eq_total)  # equity LTCG the exemption will cover anyway
         taxable_eq = eq_total - shelter
         for s in order(pool):
             if loss <= 0:
                 break
-            room = s.amount - s.set_off
+            room = s.room
             if s.bucket == "equity_lt":
                 take_share = min(room, max(Decimal(0), taxable_eq))
                 taxable_eq -= take_share
                 room = take_share
             t = min(loss, room)
-            s.set_off += t
+            setattr(s, attr, getattr(s, attr) + t)
             loss -= t
         for s in order(pool):  # losses left over absorb gains the exemption would have covered
             if loss <= 0:
                 break
-            t = min(loss, s.amount - s.set_off)
-            s.set_off += t
+            t = min(loss, s.room)
+            setattr(s, attr, getattr(s, attr) + t)
             loss -= t
         return loss
 
     loss_long = absorb(loss_long, [s for s in slices if s.long])
     loss_short = absorb(loss_short, slices)
+    bf_used: dict[str, Decimal] = {}
+    bf_total = {"short": Decimal(0), "long": Decimal(0)}
+    for kind, pool in (("long", [s for s in slices if s.long]), ("short", slices)):
+        for b in sorted((b for b in brought_forward if b.kind == kind), key=lambda b: (b.origin_fy, b.key)):
+            took = b.amount - absorb(b.amount, pool, "bf_set_off")
+            bf_used[b.key] = bf_used.get(b.key, Decimal(0)) + took
+            bf_total[kind] += took
     used = Decimal(0)
     for s in sorted(
         (s for s in slices if s.bucket == "equity_lt"), key=lambda s: _rate(s, slab), reverse=True
     ):
-        t = min(limit - used, s.amount - s.set_off)
+        t = min(limit - used, s.room)
         if t > 0:
             s.exempted = t
             used += t
@@ -446,7 +487,8 @@ def fy_tax(gains: Iterable[Gain], fy: int, slab_rate: Decimal | float | str = De
     return FyTax(fy=fy, label=fy_label(fy), slab_rate=slab,
                  gross={f"{b}@{'slab' if r is None else r}": a for (b, r, _), a in net.items()}, slices=slices,
                  exemption_limit=limit, exemption_used=used, losses_unabsorbed_short=loss_short,
-                 losses_unabsorbed_long=loss_long, exempt_total=exempt_total, unknown_count=len(unknown),
+                 losses_unabsorbed_long=loss_long, exempt_total=exempt_total, bf_used=bf_used,
+                 bf_set_off_short=bf_total["short"], bf_set_off_long=bf_total["long"], unknown_count=len(unknown),
                  unknown_gain=sum((g.amount for g in unknown), Decimal(0)), rules_verified=rules_verified(fy), tax=tax.quantize(Decimal("0.01")), cess=(tax * CESS).quantize(Decimal("0.01")), notes=notes)  # fmt: skip
 
 

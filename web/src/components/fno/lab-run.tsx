@@ -30,6 +30,7 @@ export function RunView({ runId, onChanged }: { runId: number; onChanged?: () =>
   const [error, setError] = useState<string | null>(null);
   const [trades, setTrades] = useState<LabTrade[] | null>(null);
   const [paperMsg, setPaperMsg] = useState<string | null>(null);
+  const [showLib, setShowLib] = useState(false); // #361: the library comparison is collapsed by default
   const load = useCallback(async () => {
     try {
       setV(await api<LabRunView>(`/api/fno/lab/runs/${runId}`));
@@ -77,18 +78,22 @@ export function RunView({ runId, onChanged }: { runId: number; onChanged?: () =>
     }
   };
   const lib = v.library?.strategies ?? [];
+  const oosLabel = r.oos_label ?? "already published, not out of sample";
   return (
     <div className="space-y-4">
       <Callout tone={r.warnings.length ? "warn" : "info"} icon={<AlertTriangle className="size-4" />}
         title={<span className="flex flex-wrap items-center gap-2">{head}<Badge tone={st.tone}>{st.label}</Badge></span>}>
+        <p className="mb-2 text-xs" data-testid="lab-oos-label"><b>Out-of-sample window: {oosLabel}.</b> {r.oos_note ?? "The out-of-sample window here is already published, so a lab result on it is an in-sample result, not out-of-sample evidence."}</p>
         {r.warnings.length ? <ul className="list-disc space-y-1 pl-5">{r.warnings.map((w) => <li key={w}>{w}</li>)}</ul> : "No overfitting warning for this run."}
         {v.bar_now && v.oos && (
           <p className="mt-2 text-xs">Deflated Sharpe at run time (N = {v.n_trials}): {num(r.windows?.oos?.deflated_sharpe ?? null, 3)}; with today&apos;s N = {v.bar_now.n_trials}: {num(v.bar_now.deflated_sharpe, 3)}. {v.bar_now.note}</p>
         )}
       </Callout>
       <StrategyCard r={r} capital={r.book.capital} />
-      <Card title="Against the pre-registered library" subtitle={v.library ? `Library run ${v.library.run_id}, ${v.library.variants_tried} variants; windows may differ from this strategy's` : "No library evaluation saved yet"}>
-        {lib.length > 0 && (
+      <Card title="Against the pre-registered library" subtitle={v.library ? `Library run ${v.library.run_id}, ${v.library.variants_tried} variants; windows may differ from this strategy's` : "No library evaluation saved yet"}
+        actions={lib.length > 0 ? <Button variant="ghost" aria-expanded={showLib} onClick={() => setShowLib((x) => !x)}>{showLib ? "Hide the library comparison" : "Show the library comparison"}</Button> : undefined}>
+        {lib.length > 0 && !showLib && <p className="text-xs text-muted">Hidden by default: this run&apos;s window is already published, so it is not comparable with the library&apos;s out-of-sample results.</p>}
+        {lib.length > 0 && showLib && (
           <Table label="Library comparison" stickyFirst>
             <thead><tr><th>Strategy</th><th>Status</th><th>OOS trades</th><th>₹/trade</th><th>Sharpe</th><th>Max DD</th><th>DSR</th></tr></thead>
             <tbody>

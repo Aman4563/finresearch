@@ -107,6 +107,10 @@ def ledger_db(env, tmp_path):
         s.query(Forecast).delete()
     yield tmp_path.name[-8:]
     scheduler._FORECASTS_CHECKED.clear()
+    from finresearch.db.models import IpoIssue
+
+    with session_scope() as s:  # the closing days `bidding_closed` recorded
+        s.query(IpoIssue).filter(IpoIssue.first_seen == at(2026, 8, 1)).delete()
 
 
 def make_run(s, tag: str, kind: str, verdict: str, confidence: str, finished: datetime, symbol: str,
@@ -137,6 +141,16 @@ def make_run(s, tag: str, kind: str, verdict: str, confidence: str, finished: da
 
 def at(y, m, d, h=12) -> datetime:
     return datetime(y, m, d, h, tzinfo=IST)
+
+
+def bidding_closed(s, symbol: str, close_day: date) -> None:
+    """#353: an IPO is scored on its last forecast before 17:00 IST on its last bidding day, so a scored IPO needs
+    that day on record (here the issue registry; the watch and the IPO offer also count)."""
+    from finresearch.db.models import IpoIssue
+
+    s.add(IpoIssue(exchange="NSE", issue_key=symbol, symbol=symbol, name=symbol, board="mainboard",
+                   close_date=close_day, status="closed", first_seen=at(2026, 8, 1), last_seen=at(2026, 8, 1)))  # fmt: skip
+    s.flush()
 
 
 def test_verdict_mapping_is_fixed_and_directional():
@@ -364,6 +378,7 @@ def test_forecast_and_calibration_api(ledger_db):
                                                         ("AVOID", "medium", 0), ("APPLY", "low", 1),
                                                         ("APPLY-CONDITIONAL", "low", 1)]):  # fmt: skip
             sym = f"API{i}{ledger_db}".upper()[:20]
+            bidding_closed(s, sym, date(2026, 9, 20 + i))  # each report finished at noon on its closing day
             fid = ledger.record_run(
                 s, make_run(s, ledger_db, "ipo_report", p_verdict, conf, at(2026, 9, 20 + i), sym)
             )
@@ -465,6 +480,7 @@ def test_ipo_base_rate_forecasts_in_different_qib_bands_pool_into_one_calibratio
 
     with session_scope() as s:
         for i, (band, p, o) in enumerate((("50–100x", 0.86, 1), ("10–50x", 0.61, 0), (">100x", 0.96, 1))):
+            bidding_closed(s, f"PB{i}{ledger_db}"[:20].upper(), date(2026, 9, 30))
             sig = Signal(asset="ipo", instrument=f"PB{i}{ledger_db}"[:20].upper(), name=None, action="APPLY",
                          score=10, event=ledger.IPO_EVENT, horizon="listing day",
                          method=BASE_RATE_METHOD if i else f"empirical base rate by final QIB band × regime ({band}, "
@@ -495,6 +511,7 @@ def test_a_shadow_method_is_logged_beside_the_call_and_deduped_per_method(ledger
 
     kw = dict(source="signal:ipo", resolve_on=date(2026, 10, 5), event_kind="listing_gain")
     with session_scope() as s:
+        bidding_closed(s, sym, date(2026, 9, 30))
         base = ledger.record(sig(BASE_RATE_METHOD, "base_rate", 0.9, at(2026, 9, 30, 10)), session=s, **kw)
         shadow = ledger.record(sig(BLEND_METHOD, "shadow", 0.8, at(2026, 9, 30, 10)), session=s, **kw)
         assert base != shadow  # both methods on the same day: two rows
@@ -515,7 +532,8 @@ def test_a_shadow_method_is_logged_beside_the_call_and_deduped_per_method(ledger
             and groups[("ipo", BLEND_METHOD)]["validation_status"] == "shadow"
         )
         assert groups[("ipo", BASE_RATE_METHOD)]["n"] == 1
-        assert groups[("all", "all methods")]["n"] == 1  # the headline pools the calls, not the shadow
+        # the headline pools the calls: neither the shadow test nor (#353) the base-rate benchmark
+        assert groups[("all", "all methods")]["n"] == 0 and ("ipo", ledger.HEADLINE) not in groups
 
 
 def test_a_legacy_same_day_row_is_kept_for_its_method_and_does_not_block_another(ledger_db):
@@ -575,6 +593,9 @@ def test_calibration_counts_one_event_per_ipo_listing_not_one_per_day(ledger_db)
 
     sym = ("IE" + ledger_db).upper()[:20]
     with session_scope() as s:
+        bidding_closed(
+            s, sym, date(2026, 9, 3)
+        )  # the 15:00 view on the last bidding day is the decision-time one
         for day, p in ((1, 0.6), (2, 0.7), (3, 0.9)):
             fid = ledger.record(_sig("ipo", sym, p, at(2026, 9, day, 15), ledger.IPO_EVENT), source="signal:ipo",
                                 resolve_on=date(2026, 9, 8), event_kind="listing_gain", session=s)  # fmt: skip

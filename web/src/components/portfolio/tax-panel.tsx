@@ -10,6 +10,7 @@ import { Badge, Callout, Card, EmptyState, ErrorNote, InfoTip, Progress, Segment
 import { API_URL, day, useApi } from "@/lib/api";
 
 import { AisCheck } from "./ais-check";
+import { CarryForwardCard } from "./carry-forward";
 import { type HarvestIdea, TAX_CLASS_LABEL, type TaxView, inr, signed, units } from "./types";
 
 const BUCKET: Record<string, string> = {
@@ -21,7 +22,7 @@ function Ideas({ title, icon, items, kind, help, empty }: { title: string; icon:
     <Card title={title} icon={icon} help={help}>
       {items.length === 0 ? <p className={cx("text-sm", empty ? "text-warn" : "text-muted")}>{empty ? empty : kind === "gain" ? "Nothing to harvest: no long-term equity gains fit in the unused exemption, or no live prices." : "No loss that would lower this year's tax (it needs realised taxable gains and a holding priced below cost)."}</p> : (
         <Table label={title}>
-          <thead><tr><th>Holding</th><th className="text-right">Sell units</th><th className="text-right">Value</th><th className="text-right">{kind === "gain" ? "Tax-free gain" : "Loss booked"}</th><th className="text-right">{kind === "gain" ? "Future tax saved ≤" : "Tax saved now"}</th><th className="text-right">Est. costs</th></tr></thead>
+          <thead><tr><th>Holding</th><th className="text-right">Sell units</th><th className="text-right">Value</th><th className="text-right">{kind === "gain" ? "Tax-free gain" : "Loss booked"}</th><th className="text-right">{kind === "gain" ? "Future tax saved ≤" : "Tax saved now"}</th>{kind === "loss" && <><th className="text-right">Carry-forward value ≤</th><th className="text-right">Net ≤</th></>}<th className="text-right">Est. costs</th></tr></thead>
           <tbody>
             {items.map((i) => (
               <tr key={i.holding_id}>
@@ -30,6 +31,10 @@ function Ideas({ title, icon, items, kind, help, empty }: { title: string; icon:
                 <td className="num text-right">{inr(i.value)}</td>
                 <td className={cx("num text-right", kind === "gain" ? "text-gain" : "text-loss")}>{inr(kind === "gain" ? i.gain : i.loss)}</td>
                 <td className="num text-right font-medium">{inr(kind === "gain" ? i.future_tax_saved_up_to : i.tax_saved)}{i.estimate && <span className="block text-[10px] font-normal text-warn">estimate</span>}</td>
+                {kind === "loss" && <>
+                  <td className="num text-right">{inr(i.carry_forward_value_up_to)}{(i.carry_forward?.short || i.carry_forward?.long) ? <span className="block text-[10px] text-muted">{inr((i.carry_forward?.short ?? 0) + (i.carry_forward?.long ?? 0))} carried</span> : null}</td>
+                  <td className="num text-right font-medium">{inr(i.net_benefit_up_to)}{(i.costs_unknown ?? []).length > 0 && <span className="block text-[10px] font-normal text-warn">before {i.costs_unknown!.join(", ")}</span>}</td>
+                </>}
                 <td className="num text-right text-muted">{inr(i.est_costs)}</td>
               </tr>
             ))}
@@ -51,6 +56,8 @@ export function TaxPanel({ refresh }: { refresh: number }) {
   if (!data || !current) return <Card><SkeletonRows rows={6} /></Card>;
   const isCurrent = current.fy === data.harvest.fy;
   const unk = current.unclassified;
+  const bf = current.brought_forward ?? null;
+  const hasBf = current.slices.some((s) => (s.bf_set_off ?? 0) > 0);
 
   return (
     <div className="space-y-4">
@@ -69,6 +76,13 @@ export function TaxPanel({ refresh }: { refresh: number }) {
       {!current.rules_verified && current.rules_note && (
         <Callout tone="warn" icon={<ShieldAlert className="size-4" />} title={`Rules not verified for ${current.label}`}>
           {current.rules_note}.
+        </Callout>
+      )}
+      {bf && !bf.complete && (
+        <Callout tone="warn" icon={<ShieldAlert className="size-4" />} title={`Earlier losses not counted in ${current.label}: filing status or amount unknown`}>
+          {bf.pending.map((p) => `${p.label} ${p.kind === "unknown" ? "" : p.kind + "-term "}loss ${p.remaining == null ? "(amount unknown)" : inr(p.remaining)}`).join("; ")}.
+          {" "}The tax shown leaves them out (a loss is carried forward only if that year&apos;s return was filed on time, s.80)
+          {bf.tax_if_pending_allowed != null ? `; if they are allowed it would be ${inr(bf.tax_if_pending_allowed)} incl. cess` : ""}. Answer under &ldquo;Losses carried forward&rdquo; below.
         </Callout>
       )}
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -104,10 +118,10 @@ export function TaxPanel({ refresh }: { refresh: number }) {
           {current.intraday > 0 && <p className="mt-2 text-xs text-warn">{current.intraday} intraday match(es) excluded: same-day trades are business income.</p>}
           {current.notes.map((n) => <p key={n} className="mt-1 text-xs text-muted">{n}</p>)}
         </Card>
-        <Card title="How the tax is computed" subtitle={`${current.label} · gains net within their category, then losses are set off (long-term losses only against long-term gains), then the exemption`}>
+        <Card title="How the tax is computed" subtitle={`${current.label} · gains net within their category, then this year's losses are set off (long-term losses only against long-term gains), then losses brought forward from earlier years, then the exemption`}>
           {current.slices.length === 0 ? <p className="text-sm text-muted">No taxable gains in {current.label}.</p> : (
             <Table label="How the tax is computed">
-              <thead><tr><th>Category</th><th className="text-right">Rate</th><th className="text-right">Gain</th><th className="text-right">Set off</th><th className="text-right">Exempt</th><th className="text-right">Taxable</th></tr></thead>
+              <thead><tr><th>Category</th><th className="text-right">Rate</th><th className="text-right">Gain</th><th className="text-right">Set off</th>{hasBf && <th className="text-right">Earlier losses</th>}<th className="text-right">Exempt</th><th className="text-right">Taxable</th></tr></thead>
               <tbody>
                 {current.slices.map((s, i) => (
                   <tr key={i}>
@@ -115,6 +129,7 @@ export function TaxPanel({ refresh }: { refresh: number }) {
                     <td className="num text-right">{s.slab ? `slab ${current.slab_rate_pct}%` : `${s.rate_pct}%`}</td>
                     <td className="num text-right">{inr(s.gain)}</td>
                     <td className="num text-right text-muted">{s.set_off ? `−${inr(s.set_off)}` : "—"}</td>
+                    {hasBf && <td className="num text-right text-muted">{s.bf_set_off ? `−${inr(s.bf_set_off)}` : "—"}</td>}
                     <td className="num text-right text-muted">{s.exempted ? `−${inr(s.exempted)}` : "—"}</td>
                     <td className="num text-right font-medium">{inr(s.taxable)}</td>
                   </tr>
@@ -135,7 +150,7 @@ export function TaxPanel({ refresh }: { refresh: number }) {
               empty={data.harvest.complete ? undefined : "Not suggested: this year's unused exemption is unknown while a disposal can't be classified (see above)."}
               help="Sell long-term equity lots whose gain fits in this year's unused exemption (tax-free), then buy back on a later day at the higher price: your cost rises, so future LTCG is lower." />
             <Ideas title="Tax-loss harvesting" icon={<Scissors className="size-4" />} items={data.harvest.loss_harvest} kind="loss"
-              help="Sell holdings priced below cost to set the loss off against gains already booked this year. The saving is the change in this year's tax computed by the same rules." />
+              help="Sell holdings priced below cost. Ranked by this year's tax saving (with losses brought forward from earlier years set off first) plus the most the extra loss carried forward could save later (only if this year's return is filed on time and there are gains within 8 years), net of the costs the app knows. No wash-sale rule in India, but see the GAAR / substance caution below." />
           </div>
           <Card title="Before you act">
             <ul className="space-y-1.5 text-xs">
@@ -170,6 +185,8 @@ export function TaxPanel({ refresh }: { refresh: number }) {
           </Table>
         )}
       </Card>
+
+      {data.carry_forward && <CarryForwardCard cf={data.carry_forward} onSaved={reload} />}
 
       <AisCheck refresh={refresh} preferFy={current.fy} />
 

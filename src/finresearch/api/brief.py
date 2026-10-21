@@ -118,8 +118,8 @@ def strip(s: Any, now: datetime) -> dict[str, Any]:
     from finresearch.fincalc.dates import fiscal_year, to_ist
     from finresearch.monitor.digest import BEHAVIOUR_NOTE, window_change
     from finresearch.portfolio import cache
-    from finresearch.portfolio.report import disposal_rows, load
-    from finresearch.portfolio.tax import fy_summary
+    from finresearch.portfolio.report import disposal_rows, load, tax_loss_inputs
+    from finresearch.portfolio.tax import fy_summary, ledger_of
 
     today = to_ist(now).date()
     data = load(s)
@@ -128,7 +128,10 @@ def strip(s: Any, now: datetime) -> dict[str, Any]:
     last = s.scalars(select(PortfolioSnapshot).order_by(PortfolioSnapshot.day.desc())).first()
     # the week's change reads the canonical value history (#239); when it cannot, the strip says why (#264)
     week, week_why = window_change(s, today, 7)
-    ex = fy_summary(disposal_rows(data), fiscal_year(today), Decimal("0.30"))["exemption"]
+    rows, slab = disposal_rows(data), Decimal("0.30")
+    ex = fy_summary(rows, fiscal_year(today), slab, ledger_of(rows, slab, tax_loss_inputs(s), today))[
+        "exemption"
+    ]
     # an unclassified disposal may have used the exemption: the headroom is unknown (#213)
     if not ex["complete"]:
         ex = {**ex, "remaining": None}
