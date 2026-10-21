@@ -41,6 +41,7 @@ from sqlalchemy.orm import Session
 
 from finresearch.adapters.http import IST, PoliteClient
 from finresearch.adapters.nse import NseClient, PastIssue, parse_num, parse_price_band
+from finresearch.fincalc.dates import to_ist
 
 # SEBI NII allotment reform (ICDR amendment of 14-Jan-2022, Reg 32(3A)): issues opening on/after this date. Audit #137
 # could not re-read the primary text for the exact start (1-Apr vs 4-Apr-2022 in secondary sources); no mainboard
@@ -57,6 +58,13 @@ MAX_LISTING_GAP_DAYS = 30  # T+6 before Dec-2023, T+3 since; a later NSE listing
 HARVEST_RATE = 0.5  # NSE requests per second for the harvester (one every 2 s)
 SCOPE = "nse_combined"  # activeCat: NSE+BSE, ex-anchor, lower-band shares offered
 CR = Decimal(10_000_000)
+# A fetch that failed only on the network (#433): the nightly harvest re-fetches such an 'error' row 1, 2 and 4 days
+# after its 1st, 2nd and 3rd failed attempt (BACKOFF_DAYS doubling, at most MAX_FETCH_ATTEMPTS attempts in all), so a
+# timeout or DNS blip is not kept as a final row. Attempts are kept in the row's `source` (fetch_attempts, last_attempt).
+TRANSIENT = re.compile(r"ReadTimeout|ConnectTimeout|ConnectError|PoolTimeout|RemoteProtocolError|TimeoutException|"
+                       r"nodename nor servname|Name or service not known|Temporary failure in name resolution")  # fmt: skip
+MAX_FETCH_ATTEMPTS = 4
+BACKOFF_DAYS = 1
 
 # activeCat top-level rows. Old pages say "Non Institutional Investors", new ones add 2.1 (bNII) and 2.2 (sNII).
 _CATS = (
@@ -498,6 +506,27 @@ def eligible(rows: list[PastIssue], series: str, today: date) -> list[PastIssue]
             and r.listing_date <= today and (r.ipo_start is None or r.listing_date >= r.ipo_start)]  # fmt: skip
 
 
+def transient_only(missing: list[Any] | None) -> bool:
+    """Every recorded reason is a network failure (a timeout, a refused connection, DNS)."""
+    return bool(missing) and all(TRANSIENT.search(str(m)) for m in missing or [])
+
+
+def fetch_attempts(source: dict[str, Any] | None) -> int:
+    """Failed attempts on record; a row from before #433 has none recorded and counts as one."""
+    return int((source or {}).get("fetch_attempts") or 1)
+
+
+def retry_due(status: str, missing: list[Any] | None, source: dict[str, Any] | None, updated: date,
+              today: date) -> bool:  # fmt: skip
+    """An 'error' row that failed only on the network, with attempts left and its backoff passed (#433)."""
+    if status != "error" or not transient_only(missing):
+        return False
+    n = fetch_attempts(source)
+    last = (source or {}).get("last_attempt")
+    since = date.fromisoformat(last) if last else updated
+    return n < MAX_FETCH_ATTEMPTS and today >= since + timedelta(days=BACKOFF_DAYS * 2 ** (n - 1))
+
+
 def _upsert(session: Session, symbol: str, series: str, row: dict[str, Any], source: dict[str, Any],
             raw: dict[str, Any]) -> None:  # fmt: skip
     from finresearch.db.models import IpoHistory
@@ -523,6 +552,7 @@ async def harvest(*, series: str = "EQ", limit: int | None = None, refresh: bool
 
     `retry_days` (the monitor's nightly run, #292): rows already stored but not complete are retried only when they
     listed in the last `retry_days` days; older partial rows stay as they are (their gaps are NSE's, not transient).
+    An 'error' row that failed only on the network is retried whatever its age, with a backoff (`retry_due`, #433).
     The Nifty history is then read only from the earliest issue to fetch, and not at all when nothing is new."""
     from finresearch.adapters.nse_equity import NseEquity
     from finresearch.db import session_scope
@@ -542,15 +572,18 @@ async def harvest(*, series: str = "EQ", limit: int | None = None, refresh: bool
             done = {(r.symbol, r.ipo_start) for r in s.scalars(select(IpoHistory).where(
                 IpoHistory.series == series, IpoHistory.status == "complete"))}  # fmt: skip
         todo = [r for r in past if refresh or (r.symbol, r.ipo_start) not in done]
+        with factory() as s:
+            stored = {(r.symbol, r.ipo_start): (r.status, list(r.missing or []), dict(r.source or {}),
+                                                to_ist(r.updated_at).date())
+                      for r in s.scalars(select(IpoHistory).where(IpoHistory.series == series))}  # fmt: skip
         if retry_days is not None and not refresh:
-            with factory() as s:
-                stored = {(r.symbol, r.ipo_start) for r in s.scalars(select(IpoHistory).where(
-                    IpoHistory.series == series))}  # fmt: skip
             cutoff = today - timedelta(days=retry_days)
             todo = [
                 r
                 for r in todo
-                if (r.symbol, r.ipo_start) not in stored or (r.listing_date or date.min) >= cutoff
+                if (k := (r.symbol, r.ipo_start)) not in stored
+                or (r.listing_date or date.min) >= cutoff
+                or retry_due(*stored[k], today)  # a network failure, retried with a backoff (#433)
             ]
         if limit is not None:
             todo = todo[:limit]
@@ -573,7 +606,10 @@ async def harvest(*, series: str = "EQ", limit: int | None = None, refresh: bool
                                p.price_range, None, {}, None, [])  # fmt: skip
                     row = derive(x, nifty, listings)
                     row.update(status="error", missing=[f"fetch failed: {type(e).__name__}: {e}"[:300]])
-                    _upsert(s, p.symbol, series, row, {}, _raw(x))
+                    prev = stored.get((p.symbol, p.ipo_start))
+                    n = fetch_attempts(prev[2]) + 1 if prev and prev[0] == "error" else 1
+                    _upsert(s, p.symbol, series, row, {"fetch_attempts": n, "last_attempt": today.isoformat()},
+                            _raw(x))  # fmt: skip
                 continue
             row = derive(x, nifty, listings)
             stats[row["status"]] += 1

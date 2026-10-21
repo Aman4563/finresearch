@@ -3,9 +3,10 @@
 * quotes: one snapshot per registered time (fnohist.quotes.SNAPSHOT_TIMES) on a session, and the share of quotes
   flagged STALE (a last trade older than STALE_AFTER at the request).
 * intraday: every ARCHIVE_INDICES series archived and complete for the session.
-* IPO history: 'error' rows whose only reason is a transient network failure (ReadTimeout, DNS) are a failure kept as
-  data; counted until they are re-harvested. The issue registry is refreshed twice a day, so a newest row older than
-  REGISTRY_MAX_AGE means the refresh has stopped.
+* IPO history: 'error' rows whose only reason is a transient network failure (ReadTimeout, DNS) are re-fetched by the
+  nightly harvest with a backoff (evals.ipo_history.retry_due, #433); those that used up their attempts are a failure
+  kept as data and counted until they are re-harvested. The issue registry is refreshed twice a day, so a newest row
+  older than REGISTRY_MAX_AGE means the refresh has stopped.
 * Groww vs official close (reconciliation d, groww_close_check): closes beyond CLOSE_WARN_TOL on the day (Groww's
   last trade vs the exchange's 30-minute weighted average differ by paise on most stocks). Public prices, no holdings.
 * disk: below MIN_FREE_GIB free on the data volume, ingests stop (`ingest_allowed`) and the check fails.
@@ -13,7 +14,6 @@
 
 from __future__ import annotations
 
-import re
 import shutil
 from collections.abc import Callable
 from datetime import date, datetime, timedelta
@@ -38,8 +38,6 @@ MIN_FREE_GIB = 10
 # from the last trade. Live groww_close_check rows (Oct-2026): median |diff| 0.1 %, max 1.2 %. Beyond 2 % the gap is
 # more than the method explains (a wrong day, instrument or an unadjusted corporate action), so only that warns.
 CLOSE_WARN_TOL = Decimal("0.02")
-TRANSIENT = re.compile(r"ReadTimeout|ConnectTimeout|ConnectError|PoolTimeout|RemoteProtocolError|TimeoutException|"
-                       r"nodename nor servname|Name or service not known|Temporary failure in name resolution")  # fmt: skip
 
 
 def _ist_day(day: date) -> tuple[datetime, datetime]:
@@ -75,10 +73,22 @@ def intraday_checks(s: Session, day: date) -> list[Check]:
 
 
 def ipo_checks(s: Session, now: datetime) -> list[Check]:
-    errs = s.scalars(select(IpoHistory.missing).where(IpoHistory.status == "error")).all()
-    n = sum(1 for m in errs if m and all(TRANSIENT.search(str(x)) for x in m))
-    out = [Check("ipo_history", "transient_errors_final", "warn" if n else "ok", n, 0,
-                 f"{n} row(s) failed on a network error and are kept as final 'error' rows" if n else None,
+    from finresearch.evals.ipo_history import MAX_FETCH_ATTEMPTS, fetch_attempts, transient_only
+
+    errs = s.execute(select(IpoHistory.missing, IpoHistory.source).where(IpoHistory.status == "error")).all()
+    net = [src for m, src in errs if transient_only(m)]
+    n = sum(1 for src in net if fetch_attempts(src) >= MAX_FETCH_ATTEMPTS)  # retries used up: final
+    waiting = len(net) - n
+    parts = (
+        [
+            f"{n} row(s) failed on a network error {MAX_FETCH_ATTEMPTS} times and are kept as final 'error' rows"
+        ]
+        if n
+        else []
+    )
+    if waiting:
+        parts.append(f"{waiting} awaiting a retry by the nightly harvest")
+    out = [Check("ipo_history", "transient_errors_final", "warn" if n else "ok", n, 0, "; ".join(parts) or None,
                  critical=False)]  # fmt: skip
     last = s.scalar(select(func.max(IpoIssue.last_seen)))
     if last is None:

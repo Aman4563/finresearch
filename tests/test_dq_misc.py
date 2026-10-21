@@ -86,11 +86,15 @@ def test_ipo_transient_errors_kept_as_final_and_stale_registry(clean):
                 symbol="FAKEREAL", series="EQ", status="error", missing=["fetch failed: NseError: 404"]
             )
         )
+        # #433: only a transient row that used up its retries is final; the two above (no attempt record) are retried
+        s.add(IpoHistory(symbol="FAKEGONE", series="EQ", status="error", source={"fetch_attempts": 4},
+                         missing=["fetch failed: ReadTimeout: timed out"]))  # fmt: skip
         s.add(IpoIssue(exchange="NSE", issue_key="FAKEIPO", name="Fake Ltd", board="sme", status="open",
                        first_seen=now - timedelta(days=9), last_seen=now - timedelta(days=3)))  # fmt: skip
         s.flush()
         res = by_check(misc.ipo_checks(s, now))
-    assert (res["transient_errors_final"].status, res["transient_errors_final"].value) == ("warn", 2)
+    t = res["transient_errors_final"]
+    assert (t.status, t.value) == ("warn", 1) and "2 awaiting a retry" in t.note
     assert res["registry_fresh"].status == "fail"
 
 
