@@ -688,6 +688,8 @@ def test_plan_card_event_check_reads_the_stored_calendar_and_unknown_without_one
     with session_scope() as s:
         store.upsert(s, [_ev("rbi_mpc", date(2026, 10, 1), date(2026, 3, 1))], FULL)
     card = client.post("/api/fno/plan", json={"symbol": "NIFTY", "expiry": "2026-10-06", "legs": PCS}).json()
+    with session_scope() as s:  # later tests expect an empty calendar
+        s.execute(text("TRUNCATE calendar_event, calendar_coverage"))
     assert card["event_check"]["status"] == "events"
     assert [e["day"] for e in card["event_check"]["tier1"]] == ["2026-10-01"]
     assert card["action"] == "PAPER"  # informational: the check changes no verdict

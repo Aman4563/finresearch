@@ -263,14 +263,16 @@ def offline(monkeypatch):
 
 @pytest.fixture
 def book_db(env, offline):
-    """The test database with an empty paper book, no F&O alerts and no Groww connection."""
+    """The test database with an empty paper book, no F&O alerts, no Groww connection and an empty event calendar
+    (#367: so an index's tier-1 event dates are unknown)."""
     from sqlalchemy import delete
 
     from finresearch.db import session_scope
-    from finresearch.db.models import Alert, BrokerConnection, FnoExitRule, PaperLeg, PaperStrategy
+    from finresearch.db.models import (Alert, BrokerConnection, CalendarCoverage, CalendarEvent, FnoExitRule,
+                                       PaperLeg, PaperStrategy)  # fmt: skip
 
     with session_scope() as s:
-        for m in (FnoExitRule, PaperLeg, PaperStrategy):
+        for m in (FnoExitRule, PaperLeg, PaperStrategy, CalendarEvent, CalendarCoverage):
             s.execute(delete(m))
         s.execute(delete(Alert).where(Alert.kind == "fno_exit"))
         s.execute(delete(BrokerConnection).where(BrokerConnection.key == "groww"))

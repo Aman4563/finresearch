@@ -64,11 +64,15 @@ def test_cli_seed_loads_the_curated_rows_once(env):
 
     with session_scope() as s:
         s.execute(text("TRUNCATE calendar_event, calendar_coverage"))
-    r = CliRunner().invoke(cli.app, ["events", "seed"])
-    assert r.exit_code == 0, r.output
-    assert f"{len(seed.EVENTS)} new events" in r.output
-    again = CliRunner().invoke(cli.app, ["events", "seed"])
-    assert "0 new events" in again.output
-    with session_scope() as s:
-        ev, cov = store.load(s)
-    assert len(ev) == len(seed.EVENTS) and len(cov) == len(seed.COVERAGE)
+    try:
+        r = CliRunner().invoke(cli.app, ["events", "seed"])
+        assert r.exit_code == 0, r.output
+        assert f"{len(seed.EVENTS)} new events" in r.output
+        again = CliRunner().invoke(cli.app, ["events", "seed"])
+        assert "0 new events" in again.output
+        with session_scope() as s:
+            ev, cov = store.load(s)
+        assert len(ev) == len(seed.EVENTS) and len(cov) == len(seed.COVERAGE)
+    finally:  # later files expect an empty calendar (unknown tier-1 dates)
+        with session_scope() as s:
+            s.execute(text("TRUNCATE calendar_event, calendar_coverage"))
