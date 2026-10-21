@@ -91,6 +91,19 @@ Post hoc, engine only (specs, book, criteria and `PREREG.md` untouched; registra
   `evals/experiments/execution_realism/PREREG.md` before any run. The default `same_print` engine is unchanged
   (`tests/test_backtest_fills.py::test_same_print_is_the_registered_engine_unchanged`).
 
+## Engine change (22-Oct-2026, #365): vault lots and charges, unknown charges skip
+
+Post hoc, engine only (specs, book, criteria, `PREREG.md` and the vault pack untouched; registration hash unchanged).
+No effect on any 2022-26 trade by construction: `backtest.lots` answers only for trade days up to 31-Dec-2021
+(`DbHistory.lot` keeps its old path after that), every charge key has a sourced row before 1-Jan-2022, and the exercise
+STT basis changes only before 1-Sep-2019 (`tests/test_charges_dated.py` pins the 2022-24 rates and costs).
+
+- **Lots** for vault days come from NSE's circulars only (`backtest/lots.py`, inside the vault engine pin); an
+  unsourced or ambiguous lot skips the entry.
+- **Charges** before a key's first sourced row are unknown instead of the earliest row's rate; the engine skips such an
+  entry ("charges unknown on the trade date"). Rows dated from 2006/2008 for STT, NSE futures charges, SEBI fee and
+  service tax; exercise STT before 1-Sep-2019 on the settlement value (Finance Act 2008).
+
 ## Evidence labels on the trade-plan cards (#355), pre-registered 21-Oct-2026 before the code change
 
 harmful ⇔ expiry-clustered t ≤ −2 AND the upper bound of the cluster-bootstrap 95 % CI < 0, for roughly delta-neutral
