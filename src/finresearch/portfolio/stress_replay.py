@@ -29,6 +29,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date, timedelta
+from itertools import pairwise
 from typing import Any
 
 from finresearch.portfolio.history import JUMP
@@ -76,10 +77,12 @@ def market_days(level: dict[date, float], w: Window, until: date) -> tuple[date,
     base = before[-1]
     days = [d for d in ks if base < d <= until]
     inside = [base, *(d for d in days if d <= w.end)]
-    after = until > w.end and not any(d > w.end for d in days)  # a close after the window proves none is missing
+    after = until > w.end and not any(
+        d > w.end for d in days
+    )  # a close after the window proves none is missing
     if not days or after or w.end - inside[-1] > timedelta(days=MAX_GAP_DAYS):
         return f"closes stop before the window's end ({w.end:%d-%b-%Y})"
-    for a, b in zip(inside, inside[1:], strict=False):
+    for a, b in pairwise(inside):
         if (b - a).days > MAX_GAP_DAYS:
             return f"no close between {a:%d-%b-%Y} and {b:%d-%b-%Y}: the stored history has a gap"
     return base, days
@@ -126,3 +129,189 @@ def own_returns(closes: dict[date, float], factors: dict[date, float] | None, ba
         out[d] = r
         prev = cur
     return out, None
+
+
+def level_returns(level: dict[date, float], base: date, days: list[date]) -> dict[date, float]:
+    """Daily returns of the market path on its own days (from `market_days`, so every day has a close)."""
+    out, prev = {}, level[base]
+    for d in days:
+        out[d] = level[d] / prev - 1
+        prev = level[d]
+    return out
+
+
+def beta_returns(beta: float, market: dict[date, float]) -> dict[date, float]:
+    return {d: beta * r for d, r in market.items()}
+
+
+def duration_returns(mod_duration: float, yields: dict[date, float], base: date, days: list[date],
+                     end: date) -> tuple[dict[date, float] | None, str | None]:  # fmt: skip
+    """r_t = -D_mod × (y_t - y_(t-1)): the first-order price change of a bond for a parallel yield move (coupon carry
+    and convexity left out; over weeks both are small next to the yield move). Yields are fractions."""
+    ks = sorted(yields)
+    prev = _carried(yields, ks, base)
+    if prev is None:
+        return None, "no yield at the window's start"
+    inwin = [d for d in days if d <= end]
+    have = sum(1 for d in inwin if d in yields)
+    if not inwin or have < MIN_COVERAGE * len(inwin):
+        return None, f"yields on {have} of the window's {len(inwin)} market days"
+    out: dict[date, float] = {}
+    for d in days:
+        cur = _carried(yields, ks, d) if d <= end or d <= ks[-1] else None
+        if cur is None:
+            if d <= end:
+                return None, f"no yield near {d:%d-%b-%Y} inside the window"
+            break
+        out[d] = -mod_duration * (cur[0] - prev[0])
+        prev = cur
+    return out, None
+
+
+def estimate_beta(closes: dict[date, float], factors: dict[date, float] | None, market: dict[date, float],
+                  market_factors: dict[date, float] | None, end: date, lookback_days: int = 365,
+                  min_days: int = 120) -> tuple[float, int] | None:  # fmt: skip
+    """(beta, days) of a holding against the market over the last `lookback_days` of common daily returns, or None
+    when fewer than `min_days` (as portfolio.analytics.MIN_BETA) are available."""
+    from finresearch.portfolio import analytics_math as am
+    from finresearch.portfolio.history import returns_of
+
+    since = end - timedelta(days=lookback_days)
+    a = {d: r for d, r in returns_of(closes, factors).items() if since < d <= end}
+    m = {d: r for d, r in returns_of(market, market_factors).items() if since < d <= end}
+    common = sorted(set(a) & set(m))
+    if len(common) < min_days:
+        return None
+    return am.beta([a[d] for d in common], [m[d] for d in common]), len(common)
+
+
+# --------------------------------------------------------------------------- the replay
+@dataclass
+class Leg:
+    key: str
+    name: str
+    value: float  # today's value, ₹
+    how: str
+    returns: dict[date, float]  # daily return on each market day the path covers
+
+
+@dataclass
+class Missing:
+    key: str
+    name: str
+    value: float
+    reason: str
+
+
+def _r(x: float | None, nd: int = 2) -> float | None:
+    return None if x is None else round(x, nd)
+
+
+def _chain(returns: dict[date, float], days: list[date]) -> list[float]:
+    lv, out = 1.0, [1.0]
+    for d in days:
+        lv *= 1 + returns[d]
+        out.append(lv)
+    return out
+
+
+@dataclass
+class Replay:
+    window: Window
+    base: date
+    days: list[date]  # market days of the replay (after the base), cut where any leg's path ends
+    market: dict[date, float]
+    legs: list[Leg]
+    missing: list[Missing]
+    index_label: str
+    notes: list[str] = field(default_factory=list)
+
+    def levels(self) -> dict[str, list[float]]:
+        """Each leg's level on [base, *days], base = 1."""
+        return {g.key: _chain(g.returns, self.days) for g in self.legs}
+
+    def values(self) -> list[float]:
+        lv = self.levels()
+        return [sum(g.value * lv[g.key][t] for g in self.legs) for t in range(len(self.days) + 1)]
+
+    def payload(self) -> dict[str, Any]:
+        from finresearch.portfolio import analytics_math as am
+
+        w = self.window
+        mapped = sum(g.value for g in self.legs)
+        unmapped = sum(m.value for m in self.missing)
+        out: dict[str, Any] = {
+            "id": w.id, "label": w.label, "window": [w.start.isoformat(), w.end.isoformat()], "note": w.note,
+            "base": self.base.isoformat(), "index_source": self.index_label, "notes": self.notes,
+            "mapped_value": _r(mapped), "unmapped_value": _r(unmapped),
+            "mapped_share": _r(mapped / (mapped + unmapped), 4) if mapped + unmapped > 0 else None,
+            "unmapped": [{"key": m.key, "name": m.name, "value": _r(m.value), "reason": m.reason}
+                         for m in sorted(self.missing, key=lambda m: -m.value)],
+        }  # fmt: skip
+        n_in = sum(1 for d in self.days if d <= w.end)
+        mk = _chain(self.market, self.days)
+        mdd = am.drawdown_recovery(mk[: n_in + 1])
+        out["index"] = {"move": _r(mk[n_in] - 1, 4), "drawdown": _r(mdd.depth, 4)}
+        if mapped <= 0:
+            return {**out, "available": False, "reason": "no holding could be mapped to a price path for this window",
+                    "loss": None, "worst_day": None, "drawdown": None, "recovery": None, "contributors": [],
+                    "positions": []}  # fmt: skip
+        v, lv = self.values(), self.levels()
+        dd = am.drawdown_recovery(v[: n_in + 1])
+        daily = [(self.days[t - 1], v[t] / v[t - 1] - 1, v[t] - v[t - 1]) for t in range(1, n_in + 1)]
+        worst = min(daily, key=lambda x: x[1])
+        day = [self.base, *self.days]
+        rec = (
+            next((t for t in range(dd.trough + 1, len(v)) if v[t] >= v[dd.peak]), None)
+            if dd.depth < 0
+            else None
+        )
+        last = day[-1]
+        if dd.depth >= 0:
+            note = "the replayed value never fell below its start inside the window"
+        elif rec is None:
+            note = f"not back at the {day[dd.peak]:%d-%b-%Y} peak by {last:%d-%b-%Y} (the end of the data searched)"
+        else:
+            note = f"back at the {day[dd.peak]:%d-%b-%Y} peak on {day[rec]:%d-%b-%Y}"
+        contrib = [{"key": g.key, "name": g.name, "inr": _r(g.value * (lv[g.key][dd.trough] - lv[g.key][dd.peak]))}
+                   for g in self.legs]  # fmt: skip
+        contrib.sort(key=lambda x: x["inr"] or 0)
+        fall = v[dd.trough] - v[dd.peak]
+        for c in contrib:
+            c["share"] = _r((c["inr"] or 0) / fall, 4) if fall < 0 else None
+        out.update(
+            available=True,
+            loss={"inr": _r(v[n_in] - mapped), "pct": _r(v[n_in] / mapped - 1, 4), "day": day[n_in].isoformat()},
+            worst_day={"date": worst[0].isoformat(), "pct": _r(worst[1], 4), "inr": _r(worst[2])},
+            drawdown={"peak": day[dd.peak].isoformat(), "trough": day[dd.trough].isoformat(), "pct": _r(dd.depth, 4),
+                      "inr": _r(fall)},
+            recovery={"date": day[rec].isoformat() if rec is not None else None,
+                      "days": (day[rec] - day[dd.trough]).days if rec is not None else None,
+                      "searched_to": last.isoformat(), "note": note},
+            contributors=contrib[:TOP],
+            positions=sorted([{"key": g.key, "name": g.name, "value": _r(g.value), "how": g.how,
+                               "move": _r(lv[g.key][n_in] - 1, 4),
+                               "drawdown_inr": _r(g.value * (lv[g.key][dd.trough] - lv[g.key][dd.peak]))}
+                              for g in self.legs], key=lambda x: x["drawdown_inr"] or 0),
+            path=[{"date": d.isoformat(), "value": _r(x), "index": _r(m * 100, 3)}
+                  for d, x, m in zip(day, v, mk, strict=True)],
+        )  # fmt: skip
+        return out
+
+
+def replay(w: Window, base: date, days: list[date], market: dict[date, float], legs: list[Leg],
+           missing: list[Missing], index_label: str) -> Replay:  # fmt: skip
+    """Today's mapped holdings replayed over the market days. The replay ends on the last day every path covers (a
+    leg's own prices may end after the window); a leg missing a day inside the window is moved to `missing`."""
+    inwin = [d for d in days if d <= w.end]
+    keep, gone = [], list(missing)
+    for g in legs:
+        if all(d in g.returns for d in inwin):
+            keep.append(g)
+        else:
+            gone.append(Missing(g.key, g.name, g.value, f"{g.how}: the path misses days inside the window"))
+    cut = len(days)
+    for g in keep:
+        cut = min(cut, next((i for i, d in enumerate(days) if d not in g.returns), len(days)))
+    days = days[:cut]
+    return Replay(w, base, days, {d: market[d] for d in days}, keep, gone, index_label)

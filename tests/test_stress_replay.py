@@ -11,7 +11,15 @@ from finresearch.portfolio import stress_replay as sr
 D = date
 W = sr.Window("t", "Test fall", D(2020, 2, 3), D(2020, 2, 7), "synthetic")
 BASE = D(2020, 1, 31)
-DAYS = [D(2020, 2, 3), D(2020, 2, 4), D(2020, 2, 5), D(2020, 2, 6), D(2020, 2, 7), D(2020, 2, 10), D(2020, 2, 11)]
+DAYS = [
+    D(2020, 2, 3),
+    D(2020, 2, 4),
+    D(2020, 2, 5),
+    D(2020, 2, 6),
+    D(2020, 2, 7),
+    D(2020, 2, 10),
+    D(2020, 2, 11),
+]
 INDEX = dict(zip([BASE, *DAYS], [100, 98, 95, 97, 90, 92, 99, 101], strict=True))
 
 
@@ -48,7 +56,9 @@ def test_own_path_chains_closes_and_applies_an_in_window_split():
     closes = {BASE: 100.0, DAYS[0]: 90.0, DAYS[1]: 45.0, DAYS[2]: 45.0, DAYS[3]: 40.5, DAYS[4]: 45.0}
     r, why = sr.own_returns(closes, {DAYS[1]: 2.0}, BASE, DAYS[:5], W.end)
     assert why is None
-    assert r == pytest.approx({DAYS[0]: -0.10, DAYS[1]: 0.0, DAYS[2]: 0.0, DAYS[3]: -0.10, DAYS[4]: 45 / 40.5 - 1})
+    assert r == pytest.approx(
+        {DAYS[0]: -0.10, DAYS[1]: 0.0, DAYS[2]: 0.0, DAYS[3]: -0.10, DAYS[4]: 45 / 40.5 - 1}
+    )
 
 
 def test_own_path_rejects_an_unrecorded_split_instead_of_a_fake_crash():
@@ -70,3 +80,102 @@ def test_own_path_stops_after_the_window_where_prices_end():
     closes = {BASE: 10.0, **{d: 10.0 for d in DAYS[:5]}}
     r, why = sr.own_returns(closes, {}, BASE, DAYS, W.end)
     assert why is None and sorted(r) == DAYS[:5]  # 10/11-Feb have no close: the path ends, never ffilled
+
+
+def index_returns():
+    return sr.level_returns(INDEX, BASE, DAYS)
+
+
+def test_index_and_beta_paths():
+    r = index_returns()
+    assert r[DAYS[0]] == pytest.approx(-0.02) and r[DAYS[3]] == pytest.approx(90 / 97 - 1)
+    assert sr.beta_returns(0.5, r)[DAYS[1]] == pytest.approx(0.5 * (95 / 98 - 1))
+
+
+def test_duration_path_is_minus_duration_times_yield_change():
+    y = {BASE: 0.070, DAYS[0]: 0.071, DAYS[1]: 0.073, DAYS[2]: 0.072, DAYS[3]: 0.075, DAYS[4]: 0.075}
+    r, why = sr.duration_returns(6.0, y, BASE, DAYS[:5], W.end)
+    assert why is None
+    assert r == pytest.approx(
+        {DAYS[0]: -0.006, DAYS[1]: -0.012, DAYS[2]: 0.006, DAYS[3]: -0.018, DAYS[4]: 0.0}
+    )
+    r, why = sr.duration_returns(6.0, {BASE: 0.07}, BASE, DAYS[:5], W.end)
+    assert r is None and "yield" in why
+
+
+def test_beta_estimate_matches_cov_over_var():
+    days = [D(2025, 1, 1) + timedelta(days=i) for i in range(200)]
+    m = {d: 100 * (1 + 0.01 * ((i % 7) - 3)) for i, d in enumerate(days)}
+    a = {d: 50 * (1 + 0.02 * ((i % 7) - 3)) for i, d in enumerate(days)}
+    import numpy as np
+
+    rm = np.array([m[days[i]] / m[days[i - 1]] - 1 for i in range(1, 200)])
+    ra = np.array([a[days[i]] / a[days[i - 1]] - 1 for i in range(1, 200)])
+    want = np.cov(ra, rm, ddof=1)[0, 1] / np.var(rm, ddof=1)
+    got = sr.estimate_beta(a, None, m, None, days[-1])
+    assert got is not None and got[0] == pytest.approx(want) and got[1] == 199
+    assert sr.estimate_beta({d: a[d] for d in days[-50:]}, None, m, None, days[-1]) is None  # under 120 days
+
+
+def golden():
+    """A (own closes, ₹1,000), B (beta 0.5 × index, ₹2,000), C (no path, ₹500). Hand values:
+    A levels 1, .9, .9, .8, .84 | .92, 1.04; B levels .99, .9748469, .9851085, .9495639, .9601146 | .9966407, 1.0067078;
+    value 3000 -> 2980, 2849.694, 2870.217, 2699.128, 2760.229 | 2913.281, 3053.416."""
+    a_closes = dict(zip([BASE, *DAYS], [50, 50, 45, 45, 40, 42, 46, 52], strict=True))
+    a, _ = sr.own_returns(a_closes, {}, BASE, DAYS, W.end)
+    legs = [
+        sr.Leg("NSE:AAA", "AAA Ltd", 1000.0, "own prices", a),
+        sr.Leg("NSE:BBB", "BBB Ltd", 2000.0, "beta 0.50 × Nifty 50", sr.beta_returns(0.5, index_returns())),
+    ]
+    missing = [sr.Missing("MF:999", "Test Debt Fund", 500.0, "no own NAVs for the window; not equity")]
+    return sr.replay(W, BASE, DAYS, index_returns(), legs, missing, "Nifty 50 (index_eod)")
+
+
+def test_replay_loss_worst_day_drawdown_and_recovery_by_hand():
+    p = golden().payload()
+    assert p["available"] and p["base"] == "2020-01-31"
+    assert (
+        p["mapped_value"] == 3000
+        and p["unmapped_value"] == 500
+        and p["mapped_share"] == pytest.approx(3000 / 3500, abs=1e-4)
+    )
+    v_end = 840 + 2000 * 0.99 * (1 + 0.5 * (95 / 98 - 1)) * (1 + 0.5 * (97 / 95 - 1)) * (
+        1 + 0.5 * (90 / 97 - 1)
+    ) * (1 + 0.5 * (92 / 90 - 1))
+    assert p["loss"]["inr"] == pytest.approx(v_end - 3000, abs=0.5)
+    assert p["loss"]["pct"] == pytest.approx(v_end / 3000 - 1, abs=1e-4)
+    assert p["worst_day"]["date"] == "2020-02-06" and p["worst_day"]["pct"] == pytest.approx(
+        2699.128 / 2870.217 - 1, abs=1e-4
+    )
+    dd = p["drawdown"]
+    assert (dd["peak"], dd["trough"]) == ("2020-01-31", "2020-02-06")
+    assert dd["pct"] == pytest.approx(2699.128 / 3000 - 1, abs=1e-4)
+    assert p["recovery"]["date"] == "2020-02-11" and p["recovery"]["days"] == 5
+    assert p["index"]["move"] == pytest.approx(-0.08) and p["index"]["drawdown"] == pytest.approx(-0.10)
+
+
+def test_contributors_add_up_to_the_fall_and_unmapped_is_not_zero():
+    p = golden().payload()
+    c = {x["key"]: x["inr"] for x in p["contributors"]}
+    assert c["NSE:AAA"] == pytest.approx(-200, abs=0.5) and c["NSE:BBB"] == pytest.approx(-100.87, abs=0.5)
+    assert sum(c.values()) == pytest.approx(p["drawdown"]["inr"], abs=1)
+    assert p["contributors"][0]["key"] == "NSE:AAA"
+    u = p["unmapped"][0]
+    assert u["key"] == "MF:999" and u["value"] == 500 and u["reason"]
+    assert "MF:999" not in {x["key"] for x in p["positions"]}  # never shown as a 0 % move
+
+
+def test_not_recovered_is_said_not_hidden():
+    days = DAYS[:6]  # the horizon ends on 10-Feb, still below the peak
+    r = sr.level_returns(INDEX, BASE, days)
+    rep = sr.replay(
+        W, BASE, days, r, [sr.Leg("NSE:BBB", "BBB", 1000.0, "beta 1.00", sr.beta_returns(1.0, r))], [], "x"
+    )
+    rec = rep.payload()["recovery"]
+    assert rec["date"] is None and rec["days"] is None and "10-Feb-2020" in rec["note"]
+
+
+def test_nothing_mapped_is_unavailable_with_the_list():
+    rep = sr.replay(W, BASE, DAYS, index_returns(), [], [sr.Missing("X", "X", 10.0, "why")], "x")
+    p = rep.payload()
+    assert p["available"] is False and p["unmapped"][0]["key"] == "X" and p["loss"] is None
