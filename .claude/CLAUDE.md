@@ -204,7 +204,9 @@ row; tag `vX.Y.Z` on `main` only once that PR shows MERGED, then publish the rel
 **On the owner's Mac** the live app runs from the main checkout (API :8710 and web :3100 on the `finresearch`
 database, serving `web/.next`). Don't run `pnpm build|dev|typecheck|e2e`, `finresearch serve`, the monitor or research
 runs from the main tree or against the live database while developing: use a git worktree per change and your own
-`*_test` databases. Never use `git stash` (it is shared across worktrees). Run GitHub CLI commands as `git gh ...` (a
+`*_test` databases. Hooks in `.claude/hooks/guard.py` enforce these rules (and block edits to the main tree while a research run is
+live); when one blocks a legitimate command, fix the rule and its case in `tests/test_claude_hooks.py`, never work
+around it. Never use `git stash` (it is shared across worktrees). Run GitHub CLI commands as `git gh ...` (a
 repo-local alias for the project's account). A dev stack in a worktree (after `pnpm install --frozen-lockfile` in its
 `web/`): create a third scratch database `finresearch_<you>_dev_test` and build it with `alembic upgrade head`; run
 `mktemp -d` once and paste that literal path as `<S>` (an empty or different state dir means no cookie and a 401 on
