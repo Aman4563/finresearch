@@ -82,6 +82,73 @@ def reset(tier: Tier | None = typer.Option(None, help="Tier to reset (default: a
     console.print("reset done")
 
 
+def usage_by_role(steps) -> list[dict]:
+    """Aggregate agent steps per role, costliest first.
+
+    Shares use the CLI's per-step cost estimate (cache-aware, and each step counts only its own calls). The 5-hour
+    window delta is shown as an indicator only: parallel streams overlap, so one step's delta includes its
+    neighbours' usage. A missing value is left out of its aggregate and counted, never taken as 0.
+    """
+    by: dict[str, dict] = {}
+    for st in steps:
+        role = st.role or st.key.split(":", 1)[0]
+        u = by.setdefault(role, {"role": role, "steps": 0, "runs": set(), "cost": 0.0, "no_cost": 0, "in_tok": 0,
+                                 "out_tok": 0, "turns": 0, "minutes": 0.0, "deltas": []})  # fmt: skip
+        u["steps"] += 1
+        u["runs"].add(st.run_id)
+        if st.cost_usd_est is None:
+            u["no_cost"] += 1
+        else:
+            u["cost"] += st.cost_usd_est
+        u["in_tok"] += st.input_tokens or 0
+        u["out_tok"] += st.output_tokens or 0
+        u["turns"] += st.num_turns or 0
+        u["minutes"] += (st.duration_s or 0) / 60
+        if st.five_hour_before is not None and st.five_hour_after is not None:
+            u["deltas"].append(max(0.0, st.five_hour_after - st.five_hour_before))
+    total = sum(u["cost"] for u in by.values())
+    rows = []
+    for u in by.values():
+        d = u.pop("deltas")
+        rows.append({**u, "runs": len(u["runs"]), "share": u["cost"] / total if total else None,
+                     "mean_5h_delta": sum(d) / len(d) if d else None, "with_5h": len(d)})  # fmt: skip
+    return sorted(rows, key=lambda r: r["cost"], reverse=True)
+
+
+@bridge_app.command()
+def usage(
+    runs: int = typer.Option(10, help="How many of the latest research runs to include"),
+    kind: str | None = typer.Option(None, help="Only this run kind, e.g. ipo_report"),
+) -> None:
+    """Which agent roles spend the Max window: cost share, tokens, turns and minutes per role across recent runs."""
+    from sqlalchemy import select
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import AgentStep, ResearchRun
+
+    kinds = (kind,) if kind else ("ipo_report", "stock_report", "fund_report", "bond_report")
+    with session_scope() as s:
+        ids = list(s.scalars(select(ResearchRun.id).where(ResearchRun.kind.in_(kinds))
+                             .order_by(ResearchRun.id.desc()).limit(runs)))  # fmt: skip
+        steps = list(s.scalars(select(AgentStep).where(AgentStep.run_id.in_(ids)))) if ids else []
+        rows = usage_by_role(steps)
+    if not rows:
+        console.print("no agent steps in the selected runs")
+        return
+    t = Table(title=f"agent usage by role — {len(ids)} run(s): {min(ids)}–{max(ids)}")
+    for col in ("role", "steps", "runs", "share", "est $", "in tok", "out tok", "turns", "min", "mean 5h Δ*"):
+        t.add_column(col, justify="left" if col == "role" else "right")
+    for r in rows:
+        share = f"{r['share']:.0%}" if r["share"] is not None else "?"
+        cost = f"{r['cost']:.2f}" + (f" (+{r['no_cost']} ?)" if r["no_cost"] else "")
+        delta = f"{r['mean_5h_delta']:.1%} (n={r['with_5h']})" if r["mean_5h_delta"] is not None else "?"
+        t.add_row(r["role"], str(r["steps"]), str(r["runs"]), share, cost, f"{r['in_tok']:,}", f"{r['out_tok']:,}",
+                  str(r["turns"]), f"{r['minutes']:.0f}", delta)  # fmt: skip
+    console.print(t)
+    console.print("* window use while the step ran; parallel steps overlap, so it is an upper bound per step. "
+                  "Shares use the CLI's per-step cost estimate; input tokens include cache reads.")  # fmt: skip
+
+
 @bridge_app.command()
 def run(
     prompt: str = typer.Argument(..., help="Prompt text, or @path/to/file"),
