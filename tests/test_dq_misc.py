@@ -94,19 +94,47 @@ def test_ipo_transient_errors_kept_as_final_and_stale_registry(clean):
     assert res["registry_fresh"].status == "fail"
 
 
-def test_groww_close_mismatch(clean):
+def test_groww_close_warns_only_beyond_the_ltp_vs_vwap_tolerance(clean):
+    """Groww's close is the last traded price, the official close the 30-minute weighted average: a few paise apart on
+    most stocks (live: median 0.1 %, max 1.2 %). Only a difference beyond CLOSE_WARN_TOL (2 %) warns; `matched`
+    (₹0.01) is untouched. Expected values by hand: 101.5/100 = 1.5 % (within), 103/100 = 3 % (beyond)."""
+    from finresearch.db import session_scope
+    from finresearch.db.models import GrowwCloseCheck
+    from finresearch.dq import misc
+
+    def add(s, sym, groww, official):
+        s.add(GrowwCloseCheck(day=DAY, exchange="NSE", symbol=sym, groww_close=Decimal(groww),
+                              official_close=Decimal(official), official_source="synthetic",
+                              matched=abs(Decimal(groww) - Decimal(official)) <= Decimal("0.01")))  # fmt: skip
+
+    assert misc.CLOSE_WARN_TOL == Decimal("0.02")
+    with session_scope() as s:
+        assert by_check(misc.close_checks(s, DAY))["groww_vs_official"].status == "unknown"
+        add(s, "FAKEA", "100", "100")
+        add(s, "FAKEB", "101.5", "100")  # 1.5 %: LTP vs VWAP, not a warning
+        add(s, "FAKEC", "99.9", "100")
+        s.flush()
+        c = by_check(misc.close_checks(s, DAY))["groww_vs_official"]
+        assert (c.status, c.value, c.threshold) == ("ok", 0, 0.02)
+        assert "2 of 3 differ by more than ₹0.01" in c.note and "max 1.50 %" in c.note
+        add(s, "FAKED", "103", "100")  # 3 %: beyond tolerance
+        s.flush()
+        c = by_check(misc.close_checks(s, DAY))["groww_vs_official"]
+    assert (c.status, c.value) == ("warn", 1)
+    assert "1/4 Groww closes differ from the official close by more than 2 %" in c.note and "max 3.00 %" in c.note
+
+
+def test_groww_close_with_no_official_close_is_never_ok(clean):
     from finresearch.db import session_scope
     from finresearch.db.models import GrowwCloseCheck
     from finresearch.dq import misc
 
     with session_scope() as s:
-        assert by_check(misc.close_checks(s, DAY))["groww_vs_official"].status == "unknown"
-        for sym, ok in (("FAKEA", True), ("FAKEB", False)):
-            s.add(GrowwCloseCheck(day=DAY, exchange="NSE", symbol=sym, groww_close=Decimal(100), official_close=
-                                  Decimal(100 if ok else 101), official_source="synthetic", matched=ok))  # fmt: skip
+        s.add(GrowwCloseCheck(day=DAY, exchange="NSE", symbol="FAKEZ", groww_close=Decimal(100),
+                              official_close=Decimal(0), official_source="synthetic", matched=False))  # fmt: skip
         s.flush()
         c = by_check(misc.close_checks(s, DAY))["groww_vs_official"]
-    assert (c.status, c.value) == ("warn", 1)
+    assert c.status == "unknown" and "1 without an official close" in c.note
 
 
 def test_disk_check(tmp_path):

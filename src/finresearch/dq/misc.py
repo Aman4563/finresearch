@@ -6,7 +6,8 @@
 * IPO history: 'error' rows whose only reason is a transient network failure (ReadTimeout, DNS) are a failure kept as
   data; counted until they are re-harvested. The issue registry is refreshed twice a day, so a newest row older than
   REGISTRY_MAX_AGE means the refresh has stopped.
-* Groww vs official close (reconciliation d, groww_close_check): mismatches on the day. Public prices, no holdings.
+* Groww vs official close (reconciliation d, groww_close_check): closes beyond CLOSE_WARN_TOL on the day (Groww's
+  last trade vs the exchange's 30-minute weighted average differ by paise on most stocks). Public prices, no holdings.
 * disk: below MIN_FREE_GIB free on the data volume, ingests stop (`ingest_allowed`) and the check fails.
 """
 
@@ -16,6 +17,7 @@ import re
 import shutil
 from collections.abc import Callable
 from datetime import date, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 
 from sqlalchemy import func, select
@@ -28,6 +30,14 @@ from finresearch.fincalc.dates import IST
 STALE_SHARE = 0.5
 REGISTRY_MAX_AGE = timedelta(days=2)
 MIN_FREE_GIB = 10
+# Groww's close is the last traded price; NSE's official closing price is the volume-weighted average price of the
+# trades in the last 30 minutes of the continuous session, or the last traded price when there was no trade in that
+# window (NSE's closing-price method as brokers' explainers quote it, e.g. Kotak Securities' "Why is there a difference
+# between last traded price and closing price on NSE?"; BSE uses the same 30-minute average). F&O stocks moved to a
+# closing auction session in Aug-2026 per broker notes (not confirmed from an NSE circular here); its price also differs
+# from the last trade. Live groww_close_check rows (Oct-2026): median |diff| 0.1 %, max 1.2 %. Beyond 2 % the gap is
+# more than the method explains (a wrong day, instrument or an unadjusted corporate action), so only that warns.
+CLOSE_WARN_TOL = Decimal("0.02")
 TRANSIENT = re.compile(r"ReadTimeout|ConnectTimeout|ConnectError|PoolTimeout|RemoteProtocolError|TimeoutException|"
                        r"nodename nor servname|Name or service not known|Temporary failure in name resolution")  # fmt: skip
 
@@ -82,20 +92,25 @@ def ipo_checks(s: Session, now: datetime) -> list[Check]:
 
 
 def close_checks(s: Session, day: date) -> list[Check]:
-    n, bad = s.execute(select(func.count(), func.count().filter(GrowwCloseCheck.matched.is_(False)))
-                       .where(GrowwCloseCheck.day == day)).one()  # fmt: skip
+    """Groww's close vs the official close on `day`: warn only beyond CLOSE_WARN_TOL (see the constant). `matched`
+    (₹0.01, groww_market.CLOSE_MATCH_TOL) is counted for the note only; a row with no official close is unknown."""
+    C = GrowwCloseCheck
+    rel = func.abs(C.groww_close - C.official_close) / func.nullif(C.official_close, 0)
+    n, unmatched, beyond, no_official, worst = s.execute(
+        select(func.count(), func.count().filter(C.matched.is_(False)), func.count().filter(rel > CLOSE_WARN_TOL),
+               func.count().filter(rel.is_(None)), func.max(rel)).where(C.day == day)).one()  # fmt: skip
     if not n:
-        return [
-            Check(
-                "groww_close",
-                "groww_vs_official",
-                "unknown",
-                note=f"no close checks for {day}",
-                critical=False,
-            )
-        ]
-    return [Check("groww_close", "groww_vs_official", "warn" if bad else "ok", bad, 0,
-                  f"{bad}/{n} Groww closes differ from the official close" if bad else None, critical=False)]  # fmt: skip
+        return [Check("groww_close", "groww_vs_official", "unknown", note=f"no close checks for {day}", critical=False)]
+    tol = f"{CLOSE_WARN_TOL * 100:.0f} %"
+    parts = [f"{beyond}/{n} Groww closes differ from the official close by more than {tol}" if beyond else
+             f"{unmatched} of {n} differ by more than ₹0.01 (last trade vs 30-minute average), all within {tol}"]  # fmt: skip
+    if worst is not None:
+        parts.append(f"max {worst * 100:.2f} %")
+    if no_official:
+        parts.append(f"{no_official} without an official close")
+    status = "warn" if beyond else "unknown" if no_official else "ok"
+    return [Check("groww_close", "groww_vs_official", status, beyond, float(CLOSE_WARN_TOL), "; ".join(parts),
+                  critical=False)]  # fmt: skip
 
 
 def _free(p: Path) -> int:
