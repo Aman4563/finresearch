@@ -5,14 +5,13 @@ Policy (docs/USAGE.md "Retention"):
   meta file since #247; the TTL is still checked on every read). Entries written before that carry no TTL and are
   deleted after LEGACY_MAX_AGE, longer than the longest TTL any caller uses (45 days, evals.ipo_history). A body
   whose meta file is missing (an interrupted write) is deleted after a day.
-- Intraday 1-minute series (table intraday_series): rows older than INTRADAY_KEEP_DAYS are deleted. The charts read
-  at most the last 5 sessions; a year and a month keeps a full year of sessions for any later study.
 - Logs: `finresearch serve --log-file` and `finresearch logpipe` rotate by size (RotatingFileHandler, LOG_MAX_BYTES x
   LOG_BACKUPS), so they never need pruning here.
 Never pruned: research packs and reports (data/reports), backups (scripts/backup.sh keeps the newest 14), documents
-(data/docs), run transcripts (data/runs), the validation archive (data/archive: append-only and irreplaceable) and
-every other table. This module only ever deletes `*.meta.json` / `*.body` files inside the HTTP cache folder and
-intraday_series rows.
+(data/docs), run transcripts (data/runs), the validation archive (data/archive: append-only and irreplaceable), the
+intraday 1-minute series (intraday_series: NSE serves only the current session, so an old session can never be
+fetched again; until #366 rows older than 400 days were deleted) and every other table. This module only ever
+deletes `*.meta.json` / `*.body` files inside the HTTP cache folder.
 
 Schedule: once per ISO week (slot "retention:<year>-W<week>" in alert_eval_slot, so two monitor processes never run
 it twice): the first tick of the week from Monday RUN_AFTER IST (before the market opens).
@@ -23,11 +22,9 @@ from __future__ import annotations
 import json
 import logging
 import time as _time
-from datetime import date, datetime, time, timedelta
+from datetime import datetime, time, timedelta
 from pathlib import Path
 from typing import Any
-
-from sqlalchemy import delete
 
 from finresearch.fincalc.dates import to_ist
 
@@ -35,7 +32,6 @@ log = logging.getLogger(__name__)
 
 LEGACY_MAX_AGE = timedelta(days=60)
 ORPHAN_MAX_AGE = timedelta(days=1)
-INTRADAY_KEEP_DAYS = 400
 LOG_MAX_BYTES = 10 * 1024 * 1024
 LOG_BACKUPS = 5
 _DONE: set[str] = (
@@ -89,15 +85,6 @@ def prune_http_cache(cache_dir: Path, now: datetime) -> dict[str, int]:
     return out
 
 
-def prune_intraday(session, today: date, keep_days: int = INTRADAY_KEEP_DAYS) -> int:
-    """Delete 1-minute series older than `keep_days` before `today`. Returns rows deleted."""
-    from finresearch.db.models import IntradaySeriesRow
-
-    cutoff = today - timedelta(days=keep_days)
-    res = session.execute(delete(IntradaySeriesRow).where(IntradaySeriesRow.day < cutoff))
-    return int(res.rowcount or 0)
-
-
 def due_slot(now: datetime) -> str | None:
     ist = to_ist(now)
     if ist.weekday() == 0 and ist.time() < RUN_AFTER:  # the week's run starts on Monday from RUN_AFTER
@@ -109,12 +96,9 @@ def due_slot(now: datetime) -> str | None:
 def prune(now: datetime, *, cache_dir: Path | None = None) -> dict[str, Any]:
     """Run the whole policy once (the CLI and the weekly job)."""
     from finresearch.adapters.http import DEFAULT_CACHE_DIR
-    from finresearch.db import session_scope
 
     started = _time.monotonic()
     out: dict[str, Any] = {"http_cache": prune_http_cache(cache_dir or DEFAULT_CACHE_DIR, now)}
-    with session_scope() as s:
-        out["intraday_rows"] = prune_intraday(s, to_ist(now).date())
     out["seconds"] = round(_time.monotonic() - started, 1)
     return out
 

@@ -45,8 +45,8 @@ Each log file is capped at 10 MB and keeps 5 older files (`serve.log.1` … `.5`
 Retention (the monitor runs it weekly, early on Monday IST; `monitor/retention.py`):
 - HTTP cache (`data/cache/http`): an entry is deleted once it is past the TTL it was cached with. Entries cached
   before the TTL was stored are deleted after 60 days (the longest TTL in use is 45 days).
-- Intraday 1-minute series (`intraday_series`): rows older than 400 days are deleted. The charts use at most 5
-  sessions.
+- Intraday 1-minute series (`intraday_series`) are never deleted (#366): NSE serves only the current session, so
+  an old session cannot be fetched again (about 1 MB a year; until #366 rows older than 400 days were deleted).
 - Never deleted: research packs and reports, backups (`scripts/backup.sh` keeps the newest 14), documents, run
   transcripts and the validation archive (`data/archive`).
 
@@ -124,8 +124,16 @@ uv run finresearch monitor holidays                # NSE trading and settlement 
 uv run finresearch fund rank                       # rank every fund within its SEBI category now
 uv run finresearch stock peers                     # build the stock peer dataset now (NIFTY 500; slow, polite)
 uv run finresearch audit prices                    # cross-check price sources against the exchanges' own figures
+uv run finresearch index backfill --from 2013-03-01  # NSE's daily index closes, P/E, P/B, yield, India VIX (#366)
+uv run finresearch audit index-eod                 # bhavcopy underlying vs index close; India VIX vs IV30 (no network)
+uv run finresearch fno span backfill --from 2008-01-01  # NSE SPAN scan ranges, one file a month (#370)
+uv run finresearch fno span margin-check           # margin estimate vs Groww's calculator: the P4.3 trigger
 uv run finresearch fno card-log --since 2026-10-21T18:00:00+05:30   # F&O card verdicts before/after a release (#360)
 ```
+
+NSE data is collected for personal, non-distributed use only (owner decision #362, `finresearch.data_rights`): it
+stays in the local database and `data/`. Backfills go through the shared NSE rate limit, stop by themselves between
+09:00 and 16:00 IST on weekdays and after two refusals (HTTP 403/429) in a row, and resume where they stopped.
 
 ## Portfolio
 
