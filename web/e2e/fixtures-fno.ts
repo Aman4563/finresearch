@@ -85,6 +85,9 @@ export const PAPER: TradePlan = { title: "NIFTY 20-Oct-2026 · NIFTY short iron 
     time: { dte: 1, by: "2026-10-19", text: "Close on the last session before expiry day." }, profit_pct: 50, stop_pct: 200 },
   exit_rules: [{ kind: "profit", threshold: 50, why: "profit target" }, { kind: "stop", threshold: 200, why: "stop-loss" }, { kind: "dte", threshold: 1, why: "time exit" }],
   adjustments: { rules: ["Do not add to a losing short-premium position."], note: "Rules of thumb, not backtested." }, invalidation: ["The underlying closes below the short put strike 24,600."],
+  // #367: the informational tier-1 event check (a synthetic RBI decision inside the window)
+  event_check: { status: "events", uncovered: [], note: "A tier-1 event falls inside the holding window.", window: { from: "2026-10-01", to: "2026-10-20" }, context: [],
+    tier1: [{ type: "rbi_mpc", title: "RBI monetary policy decision", day: "2026-10-09", india_day: "2026-10-09", at: null, source: "https://www.rbi.org.in/", known_since: "2026-03-27T00:00:00+05:30" }] },
   evidence: { ...evidence("none", "Not judged out of sample (fails)."), spec_key: "nifty_ic_w", match: "exact" },
   paper: { trades: 2, open: 0, closed: 2, wins: 1, losses: 1, total_net: -320, expectancy: -160, note: "Too few to be evidence." }, disclaimer: "Nothing is ordered. Not advice." };
 const WAIT: TradePlan = { ...PAPER, title: "NIFTY 27-Oct-2026 · NIFTY call debit spread, weekly", action: "WAIT", qualifier: "IV too high for a debit", label: "WAIT",

@@ -55,6 +55,9 @@ export type TradePlan = {
   exit_rules?: ExitRuleSpec[];
   adjustments?: { rules: string[]; note: string };
   invalidation?: string[];
+  /** #367: informational check: a tier-1 event (RBI policy, Union Budget, election results) between today and expiry,
+   * from the point-in-time event calendar; "unknown" when the calendar does not cover the window (never "none") */
+  event_check?: EventCheck;
   evidence: PlanEvidence;
   paper?: PaperRecord;
   notes?: string[];
@@ -95,3 +98,7 @@ export type MarketContext = {
 };
 
 export type BuildupCell = { price_change: number | null; oi_change: number | null; oi: number | null; buildup: string };
+
+export type CalendarEventRow = { type: string; title: string; day: string; india_day: string; at: string | null; source: string; known_since: string };
+export type EventCheck = { status: "events" | "none" | "unknown"; tier1: CalendarEventRow[]; context: CalendarEventRow[];
+  uncovered: string[]; note: string; window: { from: string; to: string } };
