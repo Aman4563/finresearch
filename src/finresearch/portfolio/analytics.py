@@ -351,9 +351,12 @@ def _relative(r: list[float], rb: list[float] | None, n: int) -> dict[str, Any]:
         return {k: metric(None, u, reason=why, n=n) for k, u in zip(keys, units, strict=True)}
     active = [a - b for a, b in zip(r, rb, strict=True)]
     out = {"active_return": metric(sum(active) / n * am.TRADING_DAYS, "fraction", n=n,
-                                   how=f"mean(portfolio - {BENCHMARK} daily return)·252"),
-           "information_ratio": metric(am.information_ratio(r, rb), "ratio", n=n,
-                                       how="active return / tracking error")}  # fmt: skip
+                                   how=f"mean(portfolio - {BENCHMARK} daily return)·252")}  # fmt: skip
+    try:
+        out["information_ratio"] = metric(am.information_ratio(r, rb), "ratio", n=n,
+                                          how="active return / tracking error")  # fmt: skip
+    except ValueError as e:
+        out["information_ratio"] = metric(None, "ratio", reason=str(e), n=n)
     try:
         up, down = am.capture_ratios(r, rb)
     except ValueError as e:
@@ -380,6 +383,15 @@ def _rolling(days: list[date], r: list[float], rb: list[float] | None) -> dict[s
     return out
 
 
+def var_verdict(p_uc: float, p_ind: float, p_cc: float, *, x: int, expected: float) -> str:
+    """ "consistent" only when the coverage, independence and joint tests all pass at 5 %; a rejection never reads ok."""
+    if p_ind < 0.05 and p_uc >= 0.05:
+        return "clustered"
+    if p_uc < 0.05 or p_cc < 0.05:
+        return "too_many" if x > expected else "too_few"
+    return "consistent"
+
+
 def _var_backtest(r: list[float]) -> dict[str, Any]:
     """Walk-forward test of the 1-day 95 % historical VaR on your own returns (Kupiec, Christoffersen; #349)."""
     need = VAR_WINDOW + MIN_VAR_TEST
@@ -394,12 +406,7 @@ def _var_backtest(r: list[float]) -> dict[str, Any]:
     lr_uc, p_uc = am.kupiec(t, x, 0.05)
     lr_ind = am.christoffersen_ind(hits)
     p_ind, p_cc = am.chi2_sf(lr_ind, 1), am.chi2_sf(lr_uc + lr_ind, 2)
-    if p_uc < 0.05:
-        verdict = "too_many" if x > 0.05 * t else "too_few"
-    elif p_ind < 0.05:
-        verdict = "clustered"
-    else:
-        verdict = "consistent"
+    verdict = var_verdict(p_uc, p_ind, p_cc, x=x, expected=0.05 * t)
     note = {"consistent": "Losses beyond the VaR came about as often as 1 day in 20 and did not cluster.",
             "too_many": "Losses beyond the VaR came more often than 1 day in 20: the VaR understated your risk.",
             "too_few": "Losses beyond the VaR came less often than 1 day in 20: the VaR overstated your risk.",

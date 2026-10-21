@@ -273,3 +273,26 @@ def test_risk_payload_short_or_benchmarkless_history_is_unknown_never_zero_349()
     real = _risk(h)["realised"]
     assert real["information_ratio"]["value"] is None and "NIFTYBEES" in real["information_ratio"]["reason"]
     assert real["rolling"]["rows"] and all(x["beta"] is None for x in real["rolling"]["rows"])
+
+
+def test_var_verdict_is_consistent_only_when_the_joint_test_also_passes_349():
+    from finresearch.portfolio.analytics import var_verdict
+
+    assert var_verdict(0.5, 0.5, 0.5, x=13, expected=12.5) == "consistent"
+    # each one-degree test passes but conditional coverage rejects: never shown as consistent
+    assert var_verdict(0.07, 0.07, 0.04, x=20, expected=12.5) == "too_many"
+    assert var_verdict(0.07, 0.07, 0.04, x=6, expected=12.5) == "too_few"
+    assert var_verdict(0.01, 0.5, 0.03, x=25, expected=12.5) == "too_many"
+    assert var_verdict(0.5, 0.01, 0.03, x=13, expected=12.5) == "clustered"
+
+
+def test_information_ratio_with_zero_tracking_error_is_a_reason_not_an_error_349():
+    from finresearch.portfolio.analytics import _relative
+
+    rb = [0.01 * math.sin(i) for i in range(200)]
+    out = _relative(list(rb), rb, 200)  # tracks the index exactly
+    assert (
+        out["information_ratio"]["value"] is None
+        and "tracking error is zero" in out["information_ratio"]["reason"]
+    )
+    assert out["active_return"]["value"] == 0
