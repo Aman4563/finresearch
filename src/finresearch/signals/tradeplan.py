@@ -277,6 +277,18 @@ def book_json(ob: tp.OpenBook) -> dict[str, Any]:
 
 
 # --------------------------------------------------------------------------- the card
+PLAN_METHOD = "rule-based F&O trade-plan card"
+
+
+def card_reliability(probability: float | None, scored: int | None) -> dict[str, Any]:
+    """signals.reliability for a trade-plan card (#357): rule-based, no base rate, and `scored` = this method's resolved
+    forecasts in the ledger (None = unreadable: calibration unknown, never established)."""
+    from finresearch.signals.reliability import reliability
+
+    return reliability({"asset": "fno", "probability": probability, "validation": {"status": "rule_based", "n": 0}},
+                       scored)  # fmt: skip
+
+
 class Inputs:
     """Everything the card reads besides the chain: market history, the profile's F&O settings, the saved backtest,
     the paper book and the event dates (None = unknown)."""
@@ -287,7 +299,7 @@ class Inputs:
                  backtest_head: dict[str, Any] | None = None, paper: list[dict[str, Any]] | None = None,
                  events: list[tuple[date, str]] | None = None, is_index: bool = True,
                  book: BookData = UNKNOWN_BOOK, iv_points: list[tuple[Any, float | None]] | None = None,
-                 ) -> None:  # fmt: skip
+                 scored: int | None = None) -> None:  # fmt: skip
         self.today, self.closes, self.iv_series, self.iv_src, self.iv_as_of = (
             today,
             closes,
@@ -300,6 +312,7 @@ class Inputs:
         self.strategies, self.backtest_head, self.paper = strategies, backtest_head, paper or []
         self.events, self.is_index = events, is_index
         self.book = book  # the open book (#358); unknown unless read: then no card has room
+        self.scored = scored  # #357: the plan card method's scored forecasts (None = the ledger was not read)
         # per-session IV points for a recipe's IV filter (#354's definition); default: iv_series as consecutive sessions
         self.iv_points = iv_points if iv_points is not None else list(enumerate(iv_series))
 
@@ -601,7 +614,11 @@ def build(chain, lot: int, legs_in: list[fs.LegIn], x: Inputs, *, spec: Any | No
         "ev": {"label": a["model_ev"]["label"], "range": a["model_ev"]["range"], "note": a["model_ev"]["note"],
                "risk_neutral": None if rn is None else rn["ev"], "real_world": None if rw is None else rw["ev"],
                "real_world_window": (rw or {}).get("window"), "costs": a["costs"]["total_with_spreads"],
-               "half_spreads": a["costs"]["half_spreads"]},
+               "half_spreads": a["costs"]["half_spreads"],
+               "payoff_ratio": (a["pnl_dots"] or {}).get("payoff_ratio")},  # #357: E[win] / |E[loss]|
+        "pnl_dots": a["pnl_dots"],
+        # #357: every F&O card's probability carries its reliability (plan cards are never scored in the ledger yet)
+        "reliability": card_reliability(None if rw is None else rw["pop"], x.scored),
         "probability": {"real_world": None if rw is None else rw["pop"], "real_world_window": (rw or {}).get("window"),
                         "risk_neutral": None if rn is None else rn["pop"],
                         "note": "Model probabilities of a positive P&L after costs at expiry (lognormal; real prices "

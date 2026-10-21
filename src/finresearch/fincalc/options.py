@@ -335,6 +335,30 @@ def pnl_distribution(legs: Sequence[Leg], spot: float, t_years: float, vol: floa
     ]
 
 
+def payoff_ratio(dist: Sequence[tuple[float, float]]) -> float | None:
+    """E[P&L | win] / |E[P&L | loss]| over (P&L, probability) pairs (#357); None without a win or a loss."""
+    win = [(x, w) for x, w in dist if x > 0]
+    loss = [(x, w) for x, w in dist if x < 0]
+    pw, pl = sum(w for _, w in win), sum(w for _, w in loss)
+    if pw <= 0 or pl <= 0:
+        return None
+    return (sum(x * w for x, w in win) / pw) / abs(sum(x * w for x, w in loss) / pl)
+
+
+def weighted_quantiles(dist: Sequence[tuple[float, float]], qs: Sequence[float]) -> list[float]:
+    """The q-quantiles of a discrete (P&L, probability) distribution: the smallest value whose cumulative probability
+    reaches q (probabilities are normalised to their total)."""
+    pts = sorted(dist)
+    total = sum(w for _, w in pts)
+    out, acc, i = [], 0.0, 0
+    for q in sorted(qs):
+        while i < len(pts) - 1 and acc + pts[i][1] < q * total - 1e-12:
+            acc += pts[i][1]
+            i += 1
+        out.append(pts[i][0])
+    return out
+
+
 def risk_of_ruin(edge: float, units: float) -> float:
     """Classic gambler's-ruin approximation for even-money bets with edge e and capital of C/u bet units:
     RoR ≈ ((1 − e)/(1 + e))^(C/u); 1 when there is no positive edge (roadmap §D.5)."""

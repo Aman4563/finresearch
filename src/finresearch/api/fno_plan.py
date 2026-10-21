@@ -57,13 +57,20 @@ async def plan_inputs(f: Any, sym: str, expiry: date, today: date) -> Any:
         p = load_profile(s)
     rate = (await risk_free(max((expiry - today).days, 0.5) / 365))["rate"]
     strategies, head = tpl.backtest_rows()
+    try:  # #357: the reliability line; an unreadable ledger leaves calibration unknown
+        from finresearch.signals.reliability import scored_events
+
+        with session_scope() as s:
+            scored: int | None = scored_events(s, "fno", tpl.PLAN_METHOD)
+    except Exception:
+        scored = None
     return tpl.Inputs(today=today, closes=closes, iv_series=[v for _, v, _ in series], iv_src=src,
                       iv_as_of=series[-1][0] if series else None, capital=float(p.fno_capital_inr),
                       max_loss_pct=float(p.fno_max_loss_pct), brokerage=float(p.fno_brokerage_per_order_inr),
                       defined_risk_only=p.fno_defined_risk_only, rate=rate, strategies=strategies,
                       backtest_head=head, paper=tpl.paper_trades(), events=await _events(sym, today),
                       is_index=events.is_index(sym), book=await tpl.load_book(today),
-                      iv_points=fno_context.iv_rank_input(sym)[0])  # fmt: skip
+                      iv_points=fno_context.iv_rank_input(sym)[0], scored=scored)  # fmt: skip
 
 
 def add_fno_plan_routes(app: FastAPI, fno: Callable[[], Any]) -> None:

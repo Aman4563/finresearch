@@ -290,6 +290,20 @@ def analyse(chain, lot: int, legs_in: list[LegIn], *, today: date, closes: list[
     # a low 20-day volatility flatters premium sellers, a high one flatters buyers
     rw = min((x for x in (rw20, rw60) if x), key=lambda x: x.ev, default=None)
     rw_window = None if rw is None else ("20-day" if rw is rw20 else "60-day")
+    # #357: a 20-dot quantile plot of the P&L at expiry (after costs and spreads) and the payoff ratio, under the
+    # headline real-world scenario (else the risk-neutral ATM-IV model), labelled with the model it came from
+    basis = rw or rn
+    dots = None
+    if basis is not None:
+        dist = o.pnl_distribution(
+            fills, spot, t, basis.vol, basis.drift, entry.total + exit_spread, exit_cost, 2000
+        )
+        pr = o.payoff_ratio(dist)
+        dots = {"model": f"real-world {rw_window} scenario" if rw else "risk-neutral (ATM IV)",
+                "values": [round(v, 2) for v in o.weighted_quantiles(dist, [(i + 0.5) / 20 for i in range(20)])],
+                "payoff_ratio": None if pr is None else round(pr, 3),
+                "note": "Each dot is 5% of outcomes: the P&L at expiry after costs and spreads in a lognormal "
+                        f"{SCENARIO} (thin tails: real crashes are larger)."}  # fmt: skip
     stt_q = q_ev[1] if q_ev else (rn.exit_cost if rn else 0.0)  # e^(−rT)·E_Q[STT on exercise], own-strike IVs
     costs_total = entry.total + stt_q
     move = o.expected_move(spot, iv, t) if iv else None
@@ -380,6 +394,7 @@ def analyse(chain, lot: int, legs_in: list[LegIn], *, today: date, closes: list[
         "real_world_20d": None if rw20 is None else {**oc(rw20), "kind": SCENARIO},
         "real_world_60d": None if rw60 is None else {**oc(rw60), "kind": SCENARIO},
         "model_ev": _model_ev(q_ev[0] if q_ev else None, rw20, rw60),
+        "pnl_dots": dots,
         "fair_price_note": (
             "At fair prices the expected P&L of any strategy is minus its costs: with each leg at its own-strike "
             "IV, the risk-neutral EV is exactly −(statutory costs + half-spreads). A real-world EV above that "
@@ -766,6 +781,7 @@ async def fno_signal(instrument: str, ctx: dict[str, Any]) -> Signal:
         horizon=f"until expiry ({expiry:%d-%b-%Y}, {a['days_to_expiry']} days)", method=method, validation=validation,
         probability=rw["pop"] if rw else None,
         probability_interval=(min(pops), max(pops)) if len(pops) > 1 else None,
+        probability_interval_kind="model_span",  # #357: IV vs 20/60-day realised volatility, not a confidence interval
         expected_return=exp_ret,
         factors=factors, caveats=caveat, sizing=sizing,
         sources=[notice["url"], "https://www.nseindia.com/option-chain", ch.BUDGET_2026, ch.ZERODHA_CHARGES],
