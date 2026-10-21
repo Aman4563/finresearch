@@ -1573,6 +1573,62 @@ def fno_status() -> None:
     console.print(t)
 
 
+index_app = typer.Typer(
+    no_args_is_help=True,
+    help="Reference series: NSE's daily index close file (OHLC, P/E, P/B, yield, India VIX)",
+)
+app.add_typer(index_app, name="index")
+
+
+@index_app.command("backfill")
+def index_backfill(
+    start: str = typer.Option(..., "--from", help="First day, YYYY-MM-DD (the archive starts in early 2013)"),
+    end: str | None = typer.Option(None, "--to", help="Last day (default today, IST)"),
+    delay: float = typer.Option(
+        2.0, min=0.0, help="Extra seconds between downloads, on top of the shared NSE limit"
+    ),
+    keep_raw: bool = typer.Option(True, help="Keep each day's CSV under data/index_eod/ (~9 KB a day)"),
+) -> None:
+    """Download and store NSE's daily index close file (ind_close_all) for [from, to]. Resumable and idempotent:
+    loaded days are skipped and failed days retried, so re-run the same command to continue. Personal use only
+    (#362): stops by itself between 09:00 and 16:00 IST on weekdays and after two refusals (403/429) in a row."""
+    from datetime import date as _date
+
+    from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn, TimeRemainingColumn
+
+    from finresearch.refseries import index_eod as store
+
+    with Progress(TextColumn("{task.description}"), BarColumn(), MofNCompleteColumn(), TimeRemainingColumn(),
+                  console=console) as bar:  # fmt: skip
+        task = bar.add_task("index close", total=None)
+
+        def progress(i: int, n: int, day, status: str) -> None:
+            bar.update(task, total=n, completed=i, description=f"index close {day} {status}")
+
+        res = asyncio.run(store.backfill(_date.fromisoformat(start), _date.fromisoformat(end) if end else None,
+                                         pause=delay, keep_raw=keep_raw, progress=progress))  # fmt: skip
+    console.print_json(json.dumps(res, default=str))
+
+
+@audit_app.command("index-eod")
+def audit_index_eod(
+    start: str = typer.Option("2024-01-01", "--from", help="First day of the underlying-vs-close check"),
+    vix_from: str = typer.Option("2013-01-01", help="First day of the India VIX vs IV30 comparison"),
+) -> None:
+    """#366's acceptance checks on the stored data (no network): the F&O bhavcopy's underlying price vs the index
+    close (2024 on: exact to 0.01, or every exception listed), and India VIX vs NIFTY's IV30 (change correlation,
+    median and MAD of the level gap)."""
+    from datetime import date as _date
+
+    from finresearch.db import session_scope
+    from finresearch.refseries import checks
+
+    with session_scope() as s:
+        res = {"underlying_vs_close": checks.underlying_vs_close(s, start=_date.fromisoformat(start)),
+               "vix_vs_iv30": checks.vix_vs_iv30(s, start=_date.fromisoformat(vix_from))}  # fmt: skip
+    console.print_json(json.dumps(res, default=str))
+
+
 @fno_app.command("card-log")
 def fno_card_log(
     since: str = typer.Option(
@@ -1599,6 +1655,60 @@ def fno_card_log(
         t.add_row(k, str(got["before"].get(k, 0)), str(got["after"].get(k, 0)))
     t.add_row("responses", str(got["responses"]["before"]), str(got["responses"]["after"]))
     console.print(t)
+
+
+span_app = typer.Typer(no_args_is_help=True, help="NSE SPAN risk parameters (scan ranges) and FOVOLT")
+fno_app.add_typer(span_app, name="span")
+
+
+@span_app.command("backfill")
+def fno_span_backfill(
+    start: str = typer.Option(..., "--from", help="First day, YYYY-MM-DD (files exist from 2008)"),
+    end: str | None = typer.Option(None, "--to", help="Last day (default today, IST)"),
+    daily: bool = typer.Option(False, help="Every session instead of one file a month (~10 MB a request)"),
+    delay: float = typer.Option(
+        5.0, min=0.0, help="Extra seconds between downloads, on top of the shared NSE limit"
+    ),
+    keep_raw: bool = typer.Option(False, help="Keep the zips (the newest 30 only) under data/span/"),
+) -> None:
+    """Download NSE's SPAN files (and FOVOLT) for [from, to] and keep the per-underlying scan ranges, short-option
+    minimum and spread tiers. One file a month by default (the first session from the 15th); each zip is parsed
+    and discarded. Resumable: re-run the same command to continue. Personal use only (#362): stops by itself
+    between 09:00 and 16:00 IST on weekdays and after two refusals (403/429) in a row."""
+    from datetime import date as _date
+
+    from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn, TimeRemainingColumn
+
+    from finresearch.fnohist import span
+
+    with Progress(TextColumn("{task.description}"), BarColumn(), MofNCompleteColumn(), TimeRemainingColumn(),
+                  console=console) as bar:  # fmt: skip
+        task = bar.add_task("SPAN", total=None)
+
+        def progress(i: int, n: int, day, status: str) -> None:
+            bar.update(task, total=n, completed=i, description=f"SPAN {day} {status}")
+
+        res = asyncio.run(span.backfill(_date.fromisoformat(start), _date.fromisoformat(end) if end else None,
+                                        monthly=not daily, pause=delay, keep_raw=keep_raw, progress=progress))  # fmt: skip
+    console.print_json(json.dumps(res, default=str))
+
+
+@span_app.command("margin-check")
+def fno_span_margin_check() -> None:
+    """margin_approx against Groww's calculator on every logged live basket (MF16): the median and 95th percentile
+    of |approx - Groww| / Groww, and whether they trigger the full margin engine (P4.3: median > 5 % or p95 > 15 %)."""
+    from sqlalchemy import select
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import MarginCheck
+    from finresearch.fincalc import margin_approx as ma
+
+    with session_scope() as s:
+        rows = [
+            (float(a), float(g))
+            for a, g in s.execute(select(MarginCheck.approx_margin, MarginCheck.groww_margin))
+        ]
+    console.print_json(json.dumps(ma.check_summary(rows)))
 
 
 # keep last: `python -m finresearch.cli` (how the API spawns research and lab workers) must see every command above

@@ -74,22 +74,22 @@ async def test_a_cached_entry_is_still_served_after_the_ttl_is_stored(tmp_path):
     assert len(calls) == 1 and not first.record.from_cache and second.record.from_cache
 
 
-def test_intraday_series_older_than_the_window_are_deleted(env):
+def test_intraday_series_are_never_pruned(env, tmp_path):
+    """#366: the 1-minute archive cannot be fetched again (NSE serves the current session only), so the weekly pass
+    no longer deletes old sessions (it deleted rows older than 400 days before)."""
     from finresearch.db import session_scope
     from finresearch.db.models import IntradaySeriesRow
 
-    today = date(2026, 10, 12)
-    days = {"old": today - timedelta(days=401), "edge": today - timedelta(days=400), "new": today}
+    old = date(2026, 10, 12) - timedelta(days=900)
     with session_scope() as s:
         s.query(IntradaySeriesRow).filter(IntradaySeriesRow.symbol == "RETCO").delete()
-        for d in days.values():
-            s.add(IntradaySeriesRow(kind="equity", symbol="RETCO", day=d, ticks=[[1, "1.0"]], prev_close=Decimal(1), source="nse",
-                                    complete=True))  # fmt: skip
+        s.add(IntradaySeriesRow(kind="equity", symbol="RETCO", day=old, ticks=[[1, "1.0"]], prev_close=Decimal(1),
+                                source="nse", complete=True))  # fmt: skip
+    res = retention.prune(NOW, cache_dir=tmp_path / "http")
+    assert "intraday_rows" not in res
     with session_scope() as s:
-        assert retention.prune_intraday(s, today) == 1
-    with session_scope() as s:
-        left = {r.day for r in s.query(IntradaySeriesRow).filter(IntradaySeriesRow.symbol == "RETCO")}
-    assert left == {days["edge"], days["new"]}
+        assert s.query(IntradaySeriesRow).filter(IntradaySeriesRow.symbol == "RETCO").count() == 1
+        s.query(IntradaySeriesRow).filter(IntradaySeriesRow.symbol == "RETCO").delete()
 
 
 async def test_the_weekly_job_runs_once_a_week(env, tmp_path):
@@ -152,4 +152,4 @@ def test_the_policy_is_documented_with_the_code_constants():
     from pathlib import Path
 
     doc = (Path(__file__).parents[1] / "docs" / "USAGE.md").read_text()
-    assert "Retention" in doc and f"{retention.INTRADAY_KEEP_DAYS} days" in doc
+    assert "Retention" in doc and "Intraday 1-minute series (`intraday_series`) are never deleted" in doc
