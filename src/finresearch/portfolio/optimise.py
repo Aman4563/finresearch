@@ -270,3 +270,33 @@ NOTES = [
     "a fund sale without an exit load entered is flagged too. Costs are counted, not optimised.",
     "Buys are paid from the net sale proceeds; tax is paid later from your own money.",
 ]
+
+
+# --------------------------------------------------------------------------- price history
+HISTORY_YEARS = 4  # closes read per holding: enough for NEED (about 2.5 years) with gaps to spare
+
+
+async def load_returns(hist: Any, fetch: Any, store: Any, today: date) -> dict[int, dict[date, float]]:
+    """Holding id -> daily unit-adjusted returns (history.returns_of) of its instrument over the last
+    `HISTORY_YEARS`, read through the analytics PriceStore (as factor_exposures.load). A failed read is an empty
+    history, so the holding is fixed with its reason; it never becomes a 0 return."""
+    from datetime import timedelta
+
+    from finresearch.fincalc.dates import add_years
+    from finresearch.portfolio.history import Instrument, returns_of
+
+    start = add_years(today, -HISTORY_YEARS) - timedelta(days=10)
+    out: dict[int, dict[date, float]] = {}
+    for p in hist.positions:
+        if p.value <= 0:
+            continue
+        kind, ident = p.key.split(":", 1)
+        inst = Instrument(p.key, "mf" if kind == "MF" else kind.lower(), ident, p.scheme)
+        try:
+            closes = await store.get(p.key, start, today, lambda a, b, i=inst: fetch(i, a, b), today)
+        except Exception:
+            closes = {}
+        r = returns_of(dict(closes), dict(hist.factors.get(p.key) or {})) if len(closes) > 1 else {}
+        for hid in p.holding_ids:
+            out[hid] = r
+    return out

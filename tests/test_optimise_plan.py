@@ -168,3 +168,32 @@ def test_infeasible_cap_is_reported():
 def test_mean_variance_is_refused():
     with pytest.raises(ValueError):
         run(three(), series([3, 1, 1]), method="mean_variance")
+
+
+# --------------------------------------------------------------------------- price history
+class FakeFetch:
+    def __init__(self, closes):
+        self.closes, self.calls = closes, []
+
+    async def __call__(self, inst, a, b):
+        self.calls.append((inst.key, a, b))
+        if inst.key == "NSE:FAIL":
+            raise RuntimeError("exchange down")
+        return {d: v for d, v in self.closes.get(inst.key, {}).items() if a <= d <= b}, True
+
+
+async def test_load_returns_maps_instruments_to_holdings_and_isolates_failures(tmp_path):
+    from finresearch.portfolio.history import History, PriceStore
+    from finresearch.portfolio.history import Position as HPos
+
+    ds = days(10)
+    closes = {d: 100.0 * (1.01**i) for i, d in enumerate(ds)}
+    h = History(days=ds, positions=[HPos("NSE:AAAA", "Example A", "stock", "equity", [1, 2], 10, 1, None, 10, None, None),
+                                    HPos("NSE:FAIL", "Example F", "stock", "equity", [3], 10, 1, None, 10, None, None)])  # fmt: skip
+    f = FakeFetch({"NSE:AAAA": closes})
+    out = await op.load_returns(h, f, PriceStore(tmp_path / "ph"), ds[-1])
+    assert out[1] == out[2] and len(out[1]) == 9 and out[1][ds[1]] == pytest.approx(0.01)
+    assert out[3] == {}  # a failed read is no history, which fixes the holding, never a 0 return
+    assert min(c[1] for c in f.calls if c[0] == "NSE:AAAA") <= date(
+        ds[-1].year - op.HISTORY_YEARS, ds[-1].month, ds[-1].day
+    )

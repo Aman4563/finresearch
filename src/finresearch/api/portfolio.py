@@ -511,6 +511,37 @@ def add_portfolio_routes(app: FastAPI, *, scheme_rows: Callable[[], Awaitable[li
         """As GET, with the parameters in a JSON body. Read-only: nothing is stored or traded."""
         return await _rebalance(body)
 
+    @app.get("/api/portfolio/optimise")
+    async def optimise(
+        method: Literal["min_variance", "risk_parity", "hrp"] = Query("min_variance"),
+    ) -> dict[str, Any]:
+        """Holding-level optimiser (#346, portfolio.optimise): robust weights (no expected returns) within the
+        units that cannot be sold and the profile's position limit, shown only after the pre-registered
+        out-of-sample check passes, with a tax-aware FIFO trade list. Suggested trades only; read-only."""
+        from finresearch.config import get_settings
+        from finresearch.fincalc.dates import fiscal_year
+        from finresearch.portfolio import optimise as opt
+        from finresearch.portfolio.history import Fetcher, PriceStore
+        from finresearch.portfolio.limits import position_limit
+        from finresearch.portfolio.rebalance import positions_from_db
+        from finresearch.portfolio.report import disposal_rows, load
+        from finresearch.suggest.advisor import load_profile
+
+        prices, _ = await _prices(_detached_holdings())
+        slab, today = _slab(), src().today()
+        hist, _, _ = await app.state.portfolio_history()
+        store = PriceStore(get_settings().state_dir / "portfolio_history")
+        async with Fetcher(app.state.markets) as f:
+            returns = await opt.load_returns(hist, f, store, today)
+        cats = {hid: getattr(p, "category", None) for hid, p in prices.items()}
+        with session_scope() as s:
+            cap = position_limit(load_profile(s))
+            realised = [r for r in disposal_rows(load(s), cats) if r.fy == fiscal_year(today)]
+            positions = positions_from_db(s, prices, today)
+        out = opt.suggest(positions, returns, today, realised, slab, method=method, max_position_pct=cap.pct)
+        out["position_limit"] = cap.to_json()
+        return out
+
     # ------------------------------------------------------------------ imports
     @app.post("/api/portfolio/import/cas")
     async def import_cas(request: Request) -> dict[str, Any]:
