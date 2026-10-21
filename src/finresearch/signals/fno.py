@@ -242,7 +242,7 @@ def analyse(chain, lot: int, legs_in: list[LegIn], *, today: date, closes: list[
         "defined_risk": prof.defined_risk,
         "risk_shape": (
             "defined" if prof.defined_risk else "zero_bounded" if prof.bounded_only_by_zero else "unlimited"
-        ),  # fmt: skip
+        ),
         "net_premium": _r(prof.net_premium, 2),
         "net_vega": _r(vega, 2),
         "vols": {
