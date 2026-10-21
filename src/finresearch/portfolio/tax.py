@@ -28,27 +28,45 @@ from decimal import Decimal
 from typing import Any
 
 from finresearch.fincalc.dates import fiscal_year
+from finresearch.fincalc.losses import Ledger, ManualLoss, YearGains, carry_forward, due_date, last_fy
 from finresearch.fincalc.tax import (
+    CESS,
     GRANDFATHER_DATE,
     SGB_SUBSCRIBER_UNKNOWN,
     VERIFY_NOTE,
+    BroughtForward,
     Classification,
+    FyTax,
     Gain,
     classify,
     fy_label,
     fy_tax,
-    tax_delta,
     unverified_note,
 )
 
 STT_DELIVERY = Decimal("0.001")  # each side of a delivery equity trade (Budget 2024 memo p.46) [V]
 STAMP_DELIVERY_BUY = Decimal("0.00015")  # 0.015 % on the buy (Indian Stamp Act schedule via broker pages) [S]
 STAMP_MF_BUY = Decimal("0.00005")  # 0.005 % on MF purchases [S]
+STCG_EQUITY = Decimal("0.20")  # s.111A / s.196 from 23-Jul-2024 (fincalc.tax rule equity-2024)
+LTCG_RATE = Decimal("0.125")  # s.112 / s.112A (s.197 / s.198) from 23-Jul-2024
+# GAAR and substance (research note 21-Oct-2026). Chapter X-A of the Income-tax Act 1961 (ss.95-102, in force from
+# AY 2018-19) lets the assessing officer deny the tax benefit of an "impermissible avoidance arrangement" whose main
+# purpose is a tax benefit and which lacks commercial substance (s.97); Rule 10U(1)(a) keeps it off arrangements whose
+# tax benefit in the year is ₹3 crore or less. Its section numbers in the Income-tax Act 2025 were not verified [U].
+# Below that threshold the judicial substance-over-form doctrine (McDowell & Co. v CTO, Supreme Court, 1985, as read in
+# Azadi Bachao Andolan, 2003) can still treat a colourable device as a sham.
+GAAR_CAUTION = (
+    "No wash-sale rule does not mean no scrutiny: a sale made only to book a loss and bought straight back can be "
+    "questioned for lack of substance. GAAR (Chapter X-A, ss.95-102 of the 1961 Act) applies only to a tax benefit "
+    "above ₹3 crore in a year (Rule 10U), but below that a colourable device can still be disregarded (McDowell, "
+    "1985). Keep it a genuine trade: a later trading day, real market exposure in between, and your contract notes."
+)
 HARVEST_NOTES = [
     "India has no wash-sale rule: you may sell and buy back the same security. The buyback resets your cost and the "
     "12-month holding clock.",
-    "Buy back on a later trading day: a same-day sell and buy in one account is an intraday trade (business income), "
-    "not a capital gain.",
+    "Buy back on a later trading day: a same-day sell and buy in one account is an intraday trade (speculative business "
+    "income, s.43(5)), not a capital gain or loss, so no capital loss is booked at all.",
+    GAAR_CAUTION,
     "Costs: STT 0.1 % on each side, stamp duty, brokerage and DP charges, the spread and a day out of the market; for "
     "funds, any exit load and the NAV gap.",
     "Avoid buying around a dividend or bonus record date and selling at a loss soon after: s.94(7)/(8) disallow such "
@@ -409,9 +427,52 @@ def rules_note(fys: Iterable[int]) -> dict[str, Any]:
     return {"rules_verified": not notes, "rules_note": "; ".join(notes) or None}
 
 
-def fy_summary(rows: Sequence[DisposalRow], fy: int, slab: Decimal) -> dict[str, Any]:
+@dataclass
+class TaxLossInputs:
+    """What only the user knows about earlier years' losses (suggest.profile.TaxLosses, stored in the profile and
+    never sent to a model): whether each loss year's return was filed within s.139(1) time (absent = not said), and
+    losses brought forward from years before the app's records, each with its source."""
+
+    returns_filed_on_time: dict[int, bool] = field(default_factory=dict)
+    brought_forward: list[ManualLoss] = field(default_factory=list)
+
+
+def ledger_of(
+    rows: Sequence[DisposalRow], slab: Decimal, inputs: TaxLossInputs | None, today: date
+) -> Ledger:
+    """The carry-forward ledger (fincalc.losses.carry_forward) over every year with a disposal, through the current
+    financial year. A year with an unclassified disposal has an unknown unabsorbed loss."""
+    inputs = inputs or TaxLossInputs()
+    years: dict[int, YearGains] = {}
+    for fy in sorted({r.fy for r in rows}):
+        ev = [r for r in rows if r.fy == fy]
+        bad = [r for r in ev if is_unclassified(r)]
+        years[fy] = YearGains(gains_of(ev), complete=not bad,
+                              maybe_loss=any(r.gain is None or r.gain < 0 for r in bad))  # fmt: skip
+    return carry_forward(years, slab, inputs.brought_forward, inputs.returns_filed_on_time, today,
+                         max([fiscal_year(today), *years]))  # fmt: skip
+
+
+def _bf_block(ledger: Ledger, fy: int, t: FyTax) -> dict[str, Any]:
+    y = ledger.years.get(fy)
+    by_key = {e.key: e for e in ledger.entries}
+    used = [{"origin_fy": e.origin_fy, "label": fy_label(e.origin_fy), "kind": e.kind, "amount": _f(e.used[fy])}
+            for e in ledger.entries if fy in e.used]  # fmt: skip
+    pending = [{"origin_fy": e.origin_fy, "label": fy_label(e.origin_fy), "kind": e.kind, "remaining": _f(e.remaining),
+                "status": e.status} for k in (y.pending if y else []) if (e := by_key.get(k))]  # fmt: skip
+    return {"set_off_short": _f(t.bf_set_off_short), "set_off_long": _f(t.bf_set_off_long), "used": used,
+            "complete": y.carry_forward_complete if y else True, "pending": pending,
+            "tax_if_pending_allowed": _f(y.tax_if_pending_allowed) if y else None}  # fmt: skip
+
+
+def fy_summary(
+    rows: Sequence[DisposalRow], fy: int, slab: Decimal, ledger: Ledger | None = None
+) -> dict[str, Any]:
+    """One year's figures. With `ledger` (ledger_of), losses brought forward from earlier years are set off (s.74 /
+    s.111) and reported under `brought_forward`; without it they are not considered (`brought_forward` None)."""
     ev = [r for r in rows if r.fy == fy]
-    t = fy_tax(gains_of(ev), fy, slab)
+    y = ledger.years.get(fy) if ledger is not None else None
+    t = y.tax if y is not None else fy_tax(gains_of(ev), fy, slab)
     st = sum((r.gain for r in ev if r.gain is not None and r.cls and r.cls.term == "short"), Decimal(0))
     lt = sum((r.gain for r in ev if r.gain is not None and r.cls and r.cls.term == "long"), Decimal(0))
     eq_lt = sum(
@@ -429,8 +490,10 @@ def fy_summary(rows: Sequence[DisposalRow], fy: int, slab: Decimal) -> dict[str,
                           "remaining": _f(t.exemption_remaining), "complete": complete},
             "slices": [{"bucket": s.bucket, "rate_pct": None if s.rate is None else float(s.rate * 100),
                         "slab": s.rate is None, "long": s.long, "gain": _f(s.amount), "set_off": _f(s.set_off),
-                        "exempted": _f(s.exempted), "taxable": _f(s.taxable)} for s in t.slices],
+                        "exempted": _f(s.exempted), "taxable": _f(s.taxable), "bf_set_off": _f(s.bf_set_off)}
+                       for s in t.slices],
             "losses_carried": {"short": _f(t.losses_unabsorbed_short), "long": _f(t.losses_unabsorbed_long)},
+            "brought_forward": _bf_block(ledger, fy, t) if ledger is not None else None,
             "tax": _f(t.tax) if complete else None, "cess": _f(t.cess) if complete else None,
             "total": _f(t.total) if complete else None, "total_classified": _f(t.total),
             "slab_rate_pct": float(slab * 100), "notes": t.notes}  # fmt: skip
@@ -450,25 +513,54 @@ class OpenLot:
     stt_paid: bool = True
 
 
+def _unknown_costs(asset_type: str) -> list[str]:
+    """Costs the app cannot price and leaves out of est_costs (so the net figure is before them)."""
+    return ["exit load"] if asset_type == "mf" else ["brokerage"]
+
+
+def _loss_why(saved: Decimal, cf_value: Decimal) -> str:
+    if saved > 0 and cf_value > 0:
+        return "Lowers this year's tax and leaves more loss to carry forward"
+    if saved > 0:
+        return "Booking this loss lowers this year's tax on gains already realised"
+    return (
+        "No tax saved this year: the loss (or an earlier loss it displaces) carries forward for later gains"
+    )
+
+
 def _round_trip_cost(tax_class: str, value: Decimal, asset_type: str) -> Decimal:
     if asset_type == "mf" and tax_class != "sgb":
         return value * (STAMP_MF_BUY + (Decimal("0.00001") if tax_class == "equity" else 0))
     return value * (STT_DELIVERY * 2 + STAMP_DELIVERY_BUY)
 
 
+def _carried(t: FyTax, bf: Sequence[BroughtForward], fy: int) -> dict[str, Decimal]:
+    """Losses that leave year `fy` still usable later: its own unabsorbed losses plus brought-forward losses not used
+    this year whose eight years have not run out (one whose last year is `fy` lapses, s.74(2))."""
+    out = {"short": t.losses_unabsorbed_short, "long": t.losses_unabsorbed_long}
+    for b in bf:
+        if last_fy(b.origin_fy) > fy:
+            out[b.kind] += b.amount - t.bf_used.get(b.key, Decimal(0))
+    return out
+
+
 def harvest(rows: Sequence[DisposalRow], lots_by_holding: dict[int, list[OpenLot]], prices: dict[int, Decimal],
-            asset_types: dict[int, str], today: date, slab: Decimal) -> dict[str, Any]:  # fmt: skip
+            asset_types: dict[int, str], today: date, slab: Decimal,
+            brought_forward: Sequence[BroughtForward] = ()) -> dict[str, Any]:  # fmt: skip
     """Suggestions for the current financial year. Selling always takes a holding's oldest lots first (FIFO), so each
     suggestion sells a prefix of a holding's open lots, never a lot picked from the middle.
 
     - Gain harvesting: long-term equity gains up to the exemption still unused this year, booked tax-free and bought
       back at a higher cost (lower future tax).
-    - Loss harvesting: when the year has taxable gains, sell loss-making lots to set the loss off; the saving is the
-      change in this year's tax (fincalc.tax.tax_delta), not a guess."""
+    - Loss harvesting: sell loss-making lots; the value is the change in this year's tax (with `brought_forward`,
+      the losses of earlier years usable this year, set off as fincalc.tax.fy_tax does) plus, as an upper bound, the
+      tax the extra loss carried forward could save later (only if this year's return is filed on time and there are
+      gains to absorb it within eight years). Ideas are ranked by that total net of the known costs."""
     fy = fiscal_year(today)
     base = [r for r in rows if r.fy == fy]
     base_gains = gains_of(base)
-    now = fy_tax(base_gains, fy, slab)
+    now = fy_tax(base_gains, fy, slab, brought_forward)
+    carried_now = _carried(now, brought_forward, fy)
     unk = unclassified(base)
     complete = unk["count"] == 0
     # with an unclassified disposal this year the unused exemption is not known (it may be equity LTCG, or a loss set
@@ -526,19 +618,35 @@ def harvest(rows: Sequence[DisposalRow], lots_by_holding: dict[int, list[OpenLot
             if acc < 0 and (best is None or acc < best):
                 best, best_q, chosen = acc, acc_q, list(extra)
         if best is not None:
-            delta = tax_delta(base_gains, gains_of(chosen), fy, slab)
+            after = fy_tax([*base_gains, *gains_of(chosen)], fy, slab, brought_forward)
+            saved = now.total - after.total
+            cf = {
+                k: max(Decimal(0), v - carried_now[k])
+                for k, v in _carried(after, brought_forward, fy).items()
+            }
+            # upper bound: a short-term loss may later absorb gains taxed at the slab or 20 % (s.111A), a long-term
+            # one LTCG at 12.5 % (s.112 / s.112A, rates from 23-Jul-2024), with 4 % cess
+            cf_value = (cf["short"] * max(slab, STCG_EQUITY) + cf["long"] * LTCG_RATE) * (1 + CESS)
             value = best_q * price
-            if delta < 0:
+            atype = asset_types.get(hid, "stock")
+            costs = _round_trip_cost(h.tax_class, value, atype)
+            if saved + cf_value > 0:
                 loss_ideas.append({"holding_id": hid, "name": h.name, "account": h.account, "sell_units": _f(best_q),
                                    "price": _f(price), "value": _f(value), "loss": _f(best),
                                    "short_term": any(r.cls and r.cls.term == "short" for r in chosen),
-                                   "tax_saved": _f(-delta), "estimate": not complete,
-                                   "est_costs": _f(_round_trip_cost(h.tax_class, value, asset_types.get(hid, "stock"))),
-                                   "why": "Booking this loss lowers this year's tax on gains already realised"})  # fmt: skip
+                                   "tax_saved": _f(saved), "estimate": not complete,
+                                   "carry_forward": {"short": _f(cf["short"]), "long": _f(cf["long"])},
+                                   "carry_forward_value_up_to": _f(cf_value),
+                                   "net_benefit_up_to": _f(saved + cf_value - costs),
+                                   "est_costs": _f(costs), "costs_unknown": _unknown_costs(atype),
+                                   "why": _loss_why(saved, cf_value)})  # fmt: skip
     gain_ideas.sort(key=lambda x: -(x["gain"] or 0))
-    loss_ideas.sort(key=lambda x: -(x["tax_saved"] or 0))
+    loss_ideas.sort(key=lambda x: -(x["net_benefit_up_to"] or 0))
     fy_end = date(fy, 3, 31)
     notes = list(HARVEST_NOTES)
+    notes.append(f"A loss carried forward counts only if this year's return is filed by the s.139(1) due date "
+                 f"({due_date(fy + 1).strftime('%d-%b-%Y')} for an individual without an audit; s.80 / s.121), and "
+                 "only against capital gains within eight years: its value is an upper bound.")  # fmt: skip
     if not complete:
         notes.insert(0, unk["detail"] + ". Gain harvesting is not suggested (the unused exemption is unknown) and the "
                      "loss-harvesting savings are estimates that leave those disposals out.")  # fmt: skip
