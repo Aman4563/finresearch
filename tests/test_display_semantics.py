@@ -83,28 +83,33 @@ def test_options_only_expiry_far_away_is_long_dated_not_weekly(clean):
     }
 
 
-# --------------------------------------------------------------------------- (j) corporate-action futures quarantine
-def test_lot_change_jump_is_quarantined_from_realised_vol():
+# --------------------------------------------------------------------------- (j) corporate-action futures adjustment
+def test_lot_change_jump_is_adjusted_in_realised_vol():
+    """#354 j quarantined the bonus day; since #369 the lot factor is applied instead (behaviour changed on purpose)."""
     e = date(2026, 10, 27)
     days = [date(2026, 9, 1) + timedelta(days=i) for i in range(23)]
     px = [1000.0 * (1.01 if i % 2 else 1.0) for i in range(23)]
     px[12:] = [p / 2 for p in px[12:]]  # a 1:1 bonus: NSE halves the open future's price and doubles the lot
     lots = {(d, e): (500 if i < 12 else 1000) for i, d in enumerate(days)}
     futs = [(d, e, p) for d, p in zip(days, px, strict=True)]
-    quarantined: list = []
-    rets = fh.front_future_returns(futs, lots=lots, quarantined=quarantined)
-    # the bonus day's return ln(0.5·1.0 / 1.01) is not a market move: excluded and reported
-    assert [q[0] for q in quarantined] == [days[12]]
-    assert quarantined[0][2] == pytest.approx(math.log(0.5 / 1.01))
-    assert days[12] not in [d for d, _ in rets] and len(rets) == 21
+    unverified: list = []
+    adjusted: list = []
+    rets = fh.front_future_returns(futs, lots=lots, unverified=unverified, adjusted=adjusted)
+    # the bonus day's raw return ln(0.5·1.0 / 1.01) is not a market move: f = 1000/500 = 2 turns it into ln(1/1.01)
+    assert unverified == [] and [a[0] for a in adjusted] == [days[12]]
+    assert adjusted[0][3] == pytest.approx(math.log(0.5 / 1.01))
+    assert dict(rets)[days[12]] == pytest.approx(math.log(1 / 1.01)) and len(rets) == 22
     clean_rv = fh.realised_vol_pct([r for _, r in rets])
-    # the 20 remaining returns alternate ±ln(1.01) except where the dropped day joins two flat/up days: < 25 %
+    # the last 20 returns alternate ±ln(1.01): RV about 16 %
     assert clean_rv is not None and clean_rv < 25
-    # without the lots the jump goes through and RV20 is far above 100 % (the bug)
-    assert fh.realised_vol_pct([r for _, r in fh.front_future_returns(futs)]) > 100
-    # a lot change with a small price move (a contract revision without a price adjustment) is kept
+    # without the lots the -50 % day cannot be explained: it is unverified and left out, never a >100 % RV (the bug)
+    no_lots: list = []
+    rv = fh.realised_vol_pct([r for _, r in fh.front_future_returns(futs, unverified=no_lots)])
+    assert [u[0] for u in no_lots] == [days[12]] and rv is not None and rv < 25
+    # a lot change with a small price move (a contract revision without a price adjustment) keeps the raw return
     small = [(d, e, 1000.0 + i) for i, d in enumerate(days)]
-    assert len(fh.front_future_returns(small, lots=lots)) == 22
+    small_rets = fh.front_future_returns(small, lots=lots)
+    assert len(small_rets) == 22 and dict(small_rets)[days[12]] == pytest.approx(math.log(1012 / 1011))
 
 
 # ------------------------------------------------------------------------------------ (b) IV rank over 252 sessions
