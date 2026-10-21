@@ -179,3 +179,108 @@ def test_nothing_mapped_is_unavailable_with_the_list():
     rep = sr.replay(W, BASE, DAYS, index_returns(), [], [sr.Missing("X", "X", 10.0, "why")], "x")
     p = rep.payload()
     assert p["available"] is False and p["unmapped"][0]["key"] == "X" and p["loss"] is None
+
+
+# --------------------------------------------------------------------------- mapping hierarchy
+RECENT_DAYS = [D(2026, 1, 1) + timedelta(days=i) for i in range(200)]
+MKT_RECENT = {d: 100 * (1 + 0.01 * ((i % 5) - 2)) for i, d in enumerate(RECENT_DAYS)}
+
+
+def twice_market():  # a holding whose recent daily returns are exactly 2 × the market's: beta 2
+    out, lv = {RECENT_DAYS[0]: 10.0}, 10.0
+    for a, b in zip(RECENT_DAYS, RECENT_DAYS[1:], strict=False):
+        lv *= 1 + 2 * (MKT_RECENT[b] / MKT_RECENT[a] - 1)
+        out[b] = lv
+    return out
+
+
+def ctx(**kw):
+    base = dict(
+        base=BASE,
+        days=DAYS,
+        end=W.end,
+        market=index_returns(),
+        market_label="Nifty 50",
+        market_recent=MKT_RECENT,
+        market_factors=None,
+        as_of=RECENT_DAYS[-1],
+        categories={},
+        yields=None,
+    )
+    return sr.Context(**{**base, **kw})
+
+
+def hd(**kw):
+    base = dict(
+        key="NSE:AAA",
+        name="AAA Ltd",
+        value=1000.0,
+        asset_type="stock",
+        tax_class="equity",
+        closes={},
+        factors={},
+        recent={},
+        category=None,
+        mod_duration=None,
+    )
+    return sr.HoldingData(**{**base, **kw})
+
+
+def test_own_prices_win():
+    closes = dict(zip([BASE, *DAYS], [50, 50, 45, 45, 40, 42, 46, 52], strict=True))
+    g = sr.map_holding(hd(closes=closes, recent=twice_market()), ctx())
+    assert isinstance(g, sr.Leg) and g.how == "own prices" and g.returns[DAYS[1]] == pytest.approx(-0.1)
+
+
+def test_equity_without_window_prices_uses_its_beta():
+    g = sr.map_holding(hd(recent=twice_market()), ctx())
+    assert isinstance(g, sr.Leg) and g.how.startswith("beta 2.00 × Nifty 50")
+    assert g.returns[DAYS[0]] == pytest.approx(2 * -0.02)
+
+
+def test_equity_with_too_short_a_history_is_unmapped_not_beta_one():
+    short = {d: v for d, v in twice_market().items() if d >= RECENT_DAYS[-60]}
+    m = sr.map_holding(hd(recent=short), ctx())
+    assert isinstance(m, sr.Missing) and "beta" in m.reason and m.value == 1000
+
+
+def test_debt_fund_without_navs_is_unmapped_not_zero():
+    m = sr.map_holding(
+        hd(
+            key="MF:9",
+            asset_type="mf",
+            tax_class="debt",
+            recent=twice_market(),
+            category="Debt Scheme - Gilt Fund",
+        ),
+        ctx(),
+    )
+    assert isinstance(m, sr.Missing) and "not equity" in m.reason
+
+
+def test_fund_uses_its_category_index_with_its_beta_to_it():
+    cat = {"NIFTY MIDCAP 150": (sr.level_returns(INDEX, BASE, DAYS), MKT_RECENT)}
+    g = sr.map_holding(
+        hd(key="MF:7", asset_type="mf", recent=twice_market(), category="Equity Scheme - Mid Cap Fund"),
+        ctx(categories=cat),
+    )
+    assert (
+        isinstance(g, sr.Leg) and "NIFTY MIDCAP 150" in g.how and g.returns[DAYS[0]] == pytest.approx(-0.04)
+    )
+
+
+def test_fund_category_without_window_data_falls_back_to_market_beta():
+    cat = {"NIFTY MIDCAP 150": (None, MKT_RECENT)}
+    g = sr.map_holding(
+        hd(key="MF:7", asset_type="mf", recent=twice_market(), category="Equity Scheme - Mid Cap Fund"),
+        ctx(categories=cat),
+    )
+    assert isinstance(g, sr.Leg) and "Nifty 50" in g.how
+
+
+def test_bond_uses_duration_where_yields_exist_else_unmapped():
+    y = {BASE: 0.07, **{d: 0.07 + 0.001 * (i + 1) for i, d in enumerate(DAYS)}}
+    g = sr.map_holding(hd(key="NSE:GS1", tax_class="debt", mod_duration=5.0), ctx(yields=y))
+    assert isinstance(g, sr.Leg) and "duration" in g.how and g.returns[DAYS[0]] == pytest.approx(-0.005)
+    m = sr.map_holding(hd(key="NSE:GS1", tax_class="debt", mod_duration=5.0), ctx())
+    assert isinstance(m, sr.Missing) and "yield" in m.reason

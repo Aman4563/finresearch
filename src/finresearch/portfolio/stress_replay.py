@@ -315,3 +315,98 @@ def replay(w: Window, base: date, days: list[date], market: dict[date, float], l
         cut = min(cut, next((i for i, d in enumerate(days) if d not in g.returns), len(days)))
     days = days[:cut]
     return Replay(w, base, days, {d: market[d] for d in days}, keep, gone, index_label)
+
+
+# --------------------------------------------------------------------------- mapping one holding
+# AMFI scheme category (SEBI's Oct-2017 categorisation, the AMFI NAV file's heading) -> the index_eod symbols that
+# stand for it, newest name first: indices launched later (Midcap 150, Smallcap 250 and LargeMidcap 250 in 2016-17) or
+# renamed in 2015 (CNX -> NIFTY) are tried in turn. [unverified: the older names are taken from NSE's 2015 rebrand and
+# not checked against stored rows; a name with no rows for the window simply does not map, it never reads as 0 %]
+CATEGORY_INDEX: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
+    (("large & mid cap",), ("NIFTY LARGEMIDCAP 250", "NIFTY 500", "CNX 500")),
+    (("large cap",), ("NIFTY 100", "CNX 100")),
+    (("mid cap",), ("NIFTY MIDCAP 150", "NIFTY MIDCAP 100", "CNX MIDCAP")),
+    (("small cap",), ("NIFTY SMALLCAP 250", "NIFTY SMALLCAP 100", "CNX SMALLCAP")),
+    (
+        ("flexi cap", "multi cap", "elss", "focused", "value fund", "contra", "dividend yield"),
+        ("NIFTY 500", "CNX 500"),
+    ),
+)
+
+
+def category_indices(category: str | None) -> tuple[str, ...]:
+    c = (category or "").lower()
+    if not c.startswith("equity"):
+        return ()
+    for words, syms in CATEGORY_INDEX:
+        if any(w in c for w in words):
+            return syms
+    return ()
+
+
+@dataclass
+class HoldingData:
+    key: str
+    name: str
+    value: float
+    asset_type: str
+    tax_class: str
+    closes: dict[date, float]  # own closes over the replay's range
+    factors: dict[date, float]  # split/bonus unit factors by ex-date
+    recent: dict[date, float]  # the last year's closes (for betas)
+    category: str | None = None  # AMFI scheme category of a fund
+    mod_duration: float | None = None  # a bond's modified duration, when its terms and yield give one
+
+
+@dataclass
+class Context:
+    base: date
+    days: list[date]
+    end: date  # the window's end
+    market: dict[date, float]  # the market path's daily returns
+    market_label: str
+    market_recent: dict[date, float]  # NIFTYBEES closes over the last year (betas)
+    market_factors: dict[date, float] | None
+    as_of: date  # the end of the beta lookback
+    categories: dict[
+        str, tuple[dict[date, float] | None, dict[date, float]]
+    ]  # symbol -> (window path, recent)
+    yields: dict[date, float] | None  # a G-sec yield series for the window, where one exists
+
+
+def map_holding(x: HoldingData, c: Context) -> Leg | Missing:
+    """The first path that has data (module docstring), or Missing with every reason tried."""
+    own, why = own_returns(x.closes, x.factors, c.base, c.days, c.end)
+    if own is not None:
+        return Leg(x.key, x.name, x.value, "own NAVs" if x.asset_type == "mf" else "own prices", own)
+    reasons = [why or "no own prices"]
+    if x.asset_type == "mf":
+        for sym in category_indices(x.category):
+            path, recent = c.categories.get(sym, (None, {}))
+            if path is None:
+                continue
+            b = estimate_beta(x.recent, x.factors, recent, None, c.as_of)
+            if b is not None:
+                how = f"beta {b[0]:.2f} × {sym} (category index; beta from {b[1]} days)"
+                return Leg(x.key, x.name, x.value, how, beta_returns(b[0], path))
+        if category_indices(x.category):
+            reasons.append("no category index for this window")
+    if x.tax_class == "equity":
+        b = estimate_beta(x.recent, x.factors, c.market_recent, c.market_factors, c.as_of)
+        if b is not None:
+            how = f"beta {b[0]:.2f} × {c.market_label} (beta to NIFTYBEES from {b[1]} days)"
+            return Leg(x.key, x.name, x.value, how, beta_returns(b[0], c.market))
+        reasons.append("under 120 days of recent prices to estimate a beta")
+    elif x.mod_duration is not None:
+        if c.yields is None:
+            reasons.append("no stored yield history for this window (duration × yield change)")
+        else:
+            r, ywhy = duration_returns(x.mod_duration, c.yields, c.base, c.days, c.end)
+            if r is not None:
+                return Leg(
+                    x.key, x.name, x.value, f"-{x.mod_duration:.2f} modified duration × yield change", r
+                )
+            reasons.append(ywhy or "no yields")
+    else:
+        reasons.append("not equity, so no beta mapping")
+    return Missing(x.key, x.name, x.value, "; ".join(reasons))
