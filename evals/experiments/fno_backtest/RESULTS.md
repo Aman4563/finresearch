@@ -56,3 +56,19 @@ out of sample only the weekly condor moved (114 → 113 trades, ₹787 → ₹74
 - In-sample charges use the later rates of `fincalc.charges` (see PREREG.md).
 - The debit spreads are sized on the starting capital, not on the current equity, so a losing control can draw down
   more than 90 % of it (its CAGR on the window is then not meaningful).
+
+## Engine change (21-Oct-2026, #352): final settlement at the uniform option settle
+
+Post hoc, engine only (specs, criteria and `PREREG.md` untouched; `PREREG.md` still describes the old fallback, "median
+K ± settlement price", which is no longer used). On an expiry's last session every expiring option row carries one
+identical settle, the underlying's final settlement price; `backtest/pricing.settlement_price` now uses it, cross-checked
+within 1 bp against the expiring future or the underlying when one exists, and returns None (unknown) when settles
+differ with nothing to check them. Replay on NSE's 2022-23 legacy bhavcopies (494 sessions, NIFTY and BANKNIFTY, a
+scratch database): 210 settled near expiries, 160 of them settled by the old K ± settle median at a wrong price (e.g.
+NIFTY 13-Jan-2022 1,317.20 instead of 18,257.80), all 160 now at the uniform settle; none settles at
+`options_intrinsic`. The library's verdicts are unaffected: no registered spec holds to expiry. Hold-to-expiry weekly
+specs (Strategy Lab style, no IV filter, 2022-23) change materially: NIFTY weekly condor 76 of 103 trades, total
+−₹37.7 lakh → −₹2.1 lakh; BANKNIFTY weekly condor 77 of 103, −₹39.3 lakh → −₹2.1 lakh; NIFTY weekly put credit 46 of
+104, −₹18.1 lakh → −₹1.0 lakh; BANKNIFTY weekly put credit 50 of 103, −₹15.7 lakh → −₹0.9 lakh. Each changed trade
+is flagged "settled at uniform option settle … (no future or underlying to check it)". Live Strategy Lab runs were
+not replayed here (the live database was not read); re-run any hold-to-expiry weekly lab run from 2022-23.
