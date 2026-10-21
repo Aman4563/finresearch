@@ -13,7 +13,7 @@ from finresearch.dq.gate import DEPENDENTS, health
 
 LABELS = {
     "fno_bhav": "F&O bhavcopy", "fno_iv_eod": "Derived F&O IV", "fno_participant_oi": "Participant OI",
-    "fno_participant_vol": "Participant volume",
+    "fno_participant_vol": "Participant volume", "equity_eod": "Equity closes and delivery (full bhavcopy)",
     "index_eod": "Index closes and India VIX", "span": "SPAN risk parameters", "option_quote": "Forward option quotes",
     "intraday_series": "Intraday index archive", "ipo_history": "IPO history", "ipo_issue": "IPO issue registry",
     "groww_close": "Groww vs official closes", "disk": "Disk space",

@@ -3,7 +3,7 @@ checks of the expected session (or, when it is missing, of the last loaded one);
 (one row per dataset, day and check: a re-run replaces it) and one dataset_status row per dataset.
 
 freshness lag = sessions between the last loaded day and the last session whose file should be out (dq.stats). SLAs
-are the issue's (IST): bhavcopy 20:30, participant OI (and volume, #371) 20:00, index closes 18:30. SPAN and the
+are the issue's (IST): bhavcopy 20:30 (and the full equity bhavcopy, #373), participant OI (and volume, #371) 20:00, index closes 18:30. SPAN and the
 derived IV ride with the bhavcopy (20:30); the forward quotes' last snapshot is 15:25 and the intraday archive runs
 from 15:45, so 16:00. An unknown holiday list leaves freshness unknown (fails closed, like monitor.market_days), never ok.
 
@@ -25,7 +25,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from finresearch.db import models as M
-from finresearch.dq import fno, misc, ref, stats
+from finresearch.dq import equity, fno, misc, ref, stats
 from finresearch.dq.base import Check
 from finresearch.fincalc.dates import IST, to_ist
 
@@ -66,6 +66,14 @@ DATASETS: tuple[Dataset, ...] = (
     ),
     Dataset(
         "index_eod", time(18, 30), _max(M.IndexEodDay.day, M.IndexEodDay.status == "loaded"), ref.index_checks
+    ),
+    # new in #373 (a); the stock peer build reads it only behind Settings.peer_price_source: never marks a page
+    Dataset(
+        "equity_eod",
+        time(20, 30),
+        _max(M.EquityEodDay.day, M.EquityEodDay.status == "loaded"),
+        equity.equity_checks,
+        critical=False,
     ),
     Dataset("span", time(20, 30), _max(M.SpanDay.day, M.SpanDay.status == "loaded"), ref.span_checks),
     Dataset("option_quote", time(15, 30), _last_quote, misc.quote_checks, critical=False),
