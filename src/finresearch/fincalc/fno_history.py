@@ -50,9 +50,10 @@ MIN_CONTRACTS = 10  # contracts traded that day for a settlement price to count 
 ATM_BAND = 0.03  # the ATM strike (both sides traded) must be within 3 % of the forward
 FLAT_WITHIN = 7  # days: a longest expiry this close below 30 days stands in for the 30-day IV ("flat")
 # NSE adjusts the price and lot of open stock futures for a corporate action (bonus, split, large dividend): such a day's
-# within-contract return is not a market move. Since 2024, 84 of 296 within-contract lot changes came with
-# |ln F_t/F_t-1| > 0.25 and every stock RV20 above 100 % followed one (#354 j). Those returns are quarantined from RV
-# (unverified until the adjustment factor is applied, roadmap P1.7); a lot change with a small move is kept.
+# raw within-contract return is not a market move. Since 2024, 84 of 296 within-contract lot changes came with
+# |ln F_t/F_t-1| > 0.25 and every stock RV20 above 100 % followed one (#354 j). Since #369 (roadmap P1.7) the lot
+# factor f = L_t / L_t-1 is applied (r = ln(F_t x f / F_t-1)) when it explains the move; any within-contract return
+# still beyond QUARANTINE_LN is "unverified" and left out of RV.
 QUARANTINE_LN = 0.25
 
 
@@ -175,11 +176,17 @@ def constant_maturity(
 
 
 def front_future_returns(futs: Sequence[tuple[date, date, float]], lots: Mapping[tuple[date, date], int] | None = None,
-                         quarantined: list[tuple[date, date, float]] | None = None) -> list[tuple[date, float]]:  # fmt: skip
+                         unverified: list[tuple[date, date, float]] | None = None,
+                         adjusted: list[tuple[date, date, float, float]] | None = None) -> list[tuple[date, float]]:  # fmt: skip
     """Daily log returns of the front future from (day, expiry, settle) rows, each within one contract: for day d1 the
-    contract is the earliest expiry after the previous day d0 that has a settlement on both days. With `lots`
-    ({(day, expiry): lot size}) a return whose contract changed lot between d0 and d1 with |ln| > QUARANTINE_LN is left
-    out and appended to `quarantined` as (d1, expiry, return)."""
+    contract is the earliest expiry after the previous day d0 that has a settlement on both days.
+
+    Corporate actions (#369): with `lots` ({(day, expiry): lot size}) a contract whose lot changed between d0 and d1 is
+    a candidate adjustment, f = L1 / L0 and r_adj = ln(F1 x f / F0). The factor is verified when it brings the return
+    closer to zero and within QUARANTINE_LN: then r_adj is used and (d1, expiry, f, raw r) appended to `adjusted`.
+    Otherwise the raw return stands (NSE's periodic lot revisions change the lot without touching the price). Any
+    return still beyond QUARANTINE_LN, with or without lot data, is left out and appended to `unverified` as
+    (d1, expiry, raw r): a missing return is unknown, never a fake -50 % day."""
     by_day: dict[date, dict[date, float]] = {}
     for d, e, p in futs:
         if p and p > 0:
@@ -188,15 +195,24 @@ def front_future_returns(futs: Sequence[tuple[date, date, float]], lots: Mapping
     out = []
     for d0, d1 in pairwise(days):
         common = sorted(e for e in by_day[d1] if e in by_day[d0] and e > d0)
-        if common:
-            e = common[0]
-            r = math.log(by_day[d1][e] / by_day[d0][e])
-            l0, l1 = (lots.get((d0, e)), lots.get((d1, e))) if lots else (None, None)
-            if l0 and l1 and l0 != l1 and abs(r) > QUARANTINE_LN:
-                if quarantined is not None:
-                    quarantined.append((d1, e, r))
+        if not common:
+            continue
+        e = common[0]
+        r = math.log(by_day[d1][e] / by_day[d0][e])
+        l0, l1 = (lots.get((d0, e)), lots.get((d1, e))) if lots else (None, None)
+        if l0 and l1 and l0 != l1:
+            f = l1 / l0
+            r_adj = r + math.log(f)
+            if abs(r_adj) < abs(r) and abs(r_adj) <= QUARANTINE_LN:
+                if adjusted is not None:
+                    adjusted.append((d1, e, f, r))
+                out.append((d1, r_adj))
                 continue
-            out.append((d1, r))
+        if abs(r) > QUARANTINE_LN:
+            if unverified is not None:
+                unverified.append((d1, e, r))
+            continue
+        out.append((d1, r))
     return out
 
 

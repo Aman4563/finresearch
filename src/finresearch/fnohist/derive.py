@@ -68,7 +68,7 @@ def derive_day(s: Session, day: date, rate: float = fh.RATE) -> int:
     n = 0
     for sym, by_exp in opts.items():
         sm = fh.day_summary(day, by_exp, futs.get(sym, {}), spot.get(sym), rate)
-        # a corporate-action day (lot changed, |ln| > 0.25) is quarantined from RV20 (#354 j)
+        # a lot change inside a contract is adjusted by its factor; an unexplained |ln| > 0.25 is left out of RV20 (#369)
         rets = [r for d, r in fh.front_future_returns(hist.get(sym, []), lots=lots.get(sym)) if d <= day]
         near = sm.near
         values: dict[str, Any] = {
