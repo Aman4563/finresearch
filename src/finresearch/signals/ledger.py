@@ -78,6 +78,11 @@ STOCK_DOWN = ("REDUCE", "AVOID", "UNFAVOURABLE")
 CHECK_EVERY = timedelta(hours=6)
 VOID_AFTER = timedelta(days=60)
 READY_AFTER_IST = (16, 30)  # resolve after the close, when NSE has published the day's prices
+# The last moment a retail bidder can act: bids and UPI mandates close at 5 pm IST on the issue's last bidding day
+# (SEBI T+3 listing circular SEBI/HO/CFD/TPD1/CIR/P/2023/140, 9-Aug-2023; #353 "the 17:00 UPI cut-off"). An IPO is
+# scored on its last forecast BEFORE this on that day: the final book is published after it, so a later forecast
+# uses information no bidder had (pre-registered in evals/experiments/ipo_calibration/ADDENDUM.md, 21-Oct-2026).
+IPO_CUTOFF = time(17, 0)
 EXPECTED_LISTING_DAYS = (
     7  # no known listing date: first check a week after the report (retried until it lists)
 )
@@ -121,9 +126,13 @@ def dedupe_key(asset: str, instrument: str, event_kind: str, day: date, method: 
     return f"{base}:{hashlib.sha1(method.encode()).hexdigest()[:12]}"
 
 
-def _key_for(session: Session, asset: str, instrument: str, event_kind: str, day: date, method: str) -> str:
+def _key_for(session: Session, asset: str, instrument: str, event_kind: str, day: date, method: str,
+             created: datetime | None = None) -> str:  # fmt: skip
     """The key for a new forecast: the legacy method-less key when a pre-#151 row of the SAME method holds it (so it
-    keeps being updated, not duplicated), else the per-method key."""
+    keeps being updated, not duplicated), else the per-method key. An IPO forecast made at or after 17:00 IST gets
+    its own slot (#353), so a view after the bidding cut-off never overwrites the day's decision-time forecast."""
+    if event_kind in POINT_EVENTS and created is not None and to_ist(created).time() >= IPO_CUTOFF:
+        return f"{dedupe_key(asset, instrument, event_kind, day, method)}:after-cutoff"
     legacy = dedupe_key(asset, instrument, event_kind, day)
     held = session.scalar(select(Forecast.method).where(Forecast.dedupe_key == legacy))
     return (
@@ -169,7 +178,7 @@ def record(signal: Signal, *, source: str, resolve_on: date, event_kind: str, se
 
     def put(s: Session) -> int:
         values["dedupe_key"] = _key_for(s, signal.asset, signal.instrument, event_kind, ist_day(created),
-                                        signal.method[:200])  # fmt: skip
+                                        signal.method[:200], created)  # fmt: skip
         return _upsert(s, values)
 
     if session is not None:
@@ -275,7 +284,7 @@ def record_run(session: Session, run_id: int) -> int | None:
                   run_id=run.id, event_kind=event_kind, event=event, horizon=horizon, resolve_on=resolve_on,
                   probability=p, interval_low=None, interval_high=None, action=str(verdict)[:40], score=None,
                   method=RUN_METHOD, validation_status="uncalibrated", inputs=inputs, status="open",
-                  dedupe_key=_key_for(session, asset, instrument, event_kind, day, RUN_METHOD))  # fmt: skip
+                  dedupe_key=_key_for(session, asset, instrument, event_kind, day, RUN_METHOD, created))  # fmt: skip
     return _upsert(session, values)
 
 
@@ -637,15 +646,64 @@ def _window(f: Forecast) -> tuple[date, date]:
     return (date.fromisoformat(start) if start else ist_day(f.created_at)), f.resolve_on
 
 
-def independent_events(rows: list[Forecast]) -> list[Forecast]:
+# nested events of one direction path, in the order a cluster keeps them (#353): P(up) is the primary event
+CLUSTER_EVENT_ORDER = {"up": 0, "up_k": 1, "down_k": 2}
+
+
+def _cluster(f: Forecast) -> tuple[str, str, str]:
+    """The event cluster of a forecast (#353). Direction forecasts (inputs carry `h`) of one underlying and horizon
+    from one start date are nested events of ONE price path (P(up), P(up_k), P(down_k)): they share a cluster, so
+    the window pass below keeps one of them. Every other forecast clusters by its event kind as before."""
+    h = (f.inputs or {}).get("h")
+    if h is not None and f.asset == "fno":
+        return f.asset, f.instrument, f"h{h}"
+    return f.asset, f.instrument, f.event_kind
+
+
+def cutoff_of(close_day: date) -> datetime:
+    """17:00 IST on the issue's last bidding day (`IPO_CUTOFF`)."""
+    return datetime.combine(close_day, IPO_CUTOFF, IST)
+
+
+def ipo_close_dates(session: Session, instruments: set[str]) -> dict[str, date]:
+    """The last bidding day per IPO instrument (NSE symbol or "BSE:<ipo no>"), from the watch, the IPO offer or the
+    issue registry; an instrument with none is absent (unknown, never guessed)."""
+    from finresearch.db.models import IpoIssue
+
+    out: dict[str, date] = {}
+    if not instruments:
+        return out
+    nse = {i for i in instruments if not i.startswith("BSE:")}
+    for sym, d in session.execute(select(IpoIssue.symbol, IpoIssue.close_date).where(
+            IpoIssue.exchange == "NSE", IpoIssue.symbol.in_(nse), IpoIssue.close_date.isnot(None))):  # fmt: skip
+        out[sym] = d
+    bse = {i.removeprefix("BSE:"): i for i in instruments if i.startswith("BSE:")}
+    for key, d in session.execute(select(IpoIssue.issue_key, IpoIssue.close_date).where(
+            IpoIssue.exchange == "BSE", IpoIssue.issue_key.in_(set(bse)), IpoIssue.close_date.isnot(None))):  # fmt: skip
+        out[bse[key]] = d
+    for sym, d in session.execute(select(IpoOffer.nse_symbol, IpoOffer.close_date).where(
+            IpoOffer.nse_symbol.in_(nse), IpoOffer.close_date.isnot(None))):  # fmt: skip
+        out[sym] = d
+    for sym, d in session.execute(select(Watch.nse_symbol, Watch.close_date).where(
+            Watch.kind == "ipo", Watch.nse_symbol.in_(nse), Watch.close_date.isnot(None))):  # fmt: skip
+        out[sym] = d  # the watch is the date the app tracked bidding by: it wins
+    return out
+
+
+def independent_events(rows: list[Forecast], close_dates: dict[str, date] | None = None) -> list[Forecast]:
     """One scored forecast per INDEPENDENT outcome, so n, the Brier score, the bins and every Wilson interval count
     events, not ledger rows. The ledger keeps one row per instrument per IST day, so an IPO viewed on five bidding
     days is five rows about one listing, and a stock signal viewed daily logs ~250 overlapping 12-month windows a year.
 
-    * point events (`POINT_EVENTS`: the IPO listing-day open): the LATEST resolved forecast per instrument, i.e. the
-      last call before the information cutoff (forecasts made after the listing-day open are already voided).
-    * window events (the stock's 12-month excess return): non-overlapping sampling per instrument. Forecasts are
-      taken in start-date order, keeping one only when it starts on or after the previous kept one's resolution date.
+    * point events (`POINT_EVENTS`: the IPO listing-day open): with `close_dates` (#353, the scored rule), the LAST
+      forecast made before 17:00 IST on the issue's last bidding day (`IPO_CUTOFF`): the one a bidder could act on.
+      An issue whose last bidding day is unknown, or with no forecast before the cut-off, is not scored (never the
+      latest by default). Without `close_dates`: the latest resolved forecast (the pre-#353 rule, kept for the
+      comparison in `ipo_rule_comparison`).
+    * window events (the stock's 12-month excess return, the F&O direction paths): non-overlapping sampling per
+      cluster (`_cluster`: one per underlying, horizon and start-date window, so nested direction events count
+      once, keeping P(up) before P(up_k) before P(down_k)). Forecasts are taken in start-date order, keeping one only
+      when it starts on or after the previous kept one's resolution date.
       Overlapping windows share most of their return path, so their outcomes are serially correlated and counting
       each as a separate trial overstates n and narrows every interval (Hansen & Hodrick 1980, J. Political Economy
       88(5) on overlapping observations; Harri & Brorsen 2009, "The Overlapping Data Problem", Quant. Qual. Anal.
@@ -656,14 +714,23 @@ def independent_events(rows: list[Forecast]) -> list[Forecast]:
     the independent evidence across stocks; that limit is stated, not corrected."""
     by_key: dict[tuple[str, str, str], list[Forecast]] = {}
     for f in rows:
-        by_key.setdefault((f.asset, f.instrument, f.event_kind), []).append(f)
+        by_key.setdefault(_cluster(f), []).append(f)
     out: list[Forecast] = []
-    for (_a, _i, kind), fs in by_key.items():
+    for (_a, inst, kind), fs in by_key.items():
         if kind in POINT_EVENTS:
-            out.append(max(fs, key=lambda f: (f.created_at, f.id)))
+            if close_dates is None:
+                out.append(max(fs, key=lambda f: (f.created_at, f.id)))
+                continue
+            close = close_dates.get(inst)
+            before = [f for f in fs if close is not None and f.created_at < cutoff_of(close)]
+            if before:
+                out.append(max(before, key=lambda f: (f.created_at, f.id)))
             continue
         last_end: date | None = None
-        for f in sorted(fs, key=lambda f: (_window(f), f.created_at, f.id)):
+        order = CLUSTER_EVENT_ORDER
+        for f in sorted(
+            fs, key=lambda f: (_window(f), order.get((f.inputs or {}).get("event"), 9), f.created_at, f.id)
+        ):
             start, end = _window(f)
             if last_end is None or start >= last_end:
                 out.append(f)
@@ -671,12 +738,50 @@ def independent_events(rows: list[Forecast]) -> list[Forecast]:
     return sorted(out, key=lambda f: f.id)
 
 
+def ipo_rule_comparison(
+    rows: list[Forecast], close_dates: dict[str, date], n_bins: int = 5
+) -> dict[str, Any]:
+    """#353: the pre-registered decision-time rule (last forecast before the cut-off) beside the old one (latest
+    before listing) on the same issues, so the two can be compared as live forecasts resolve."""
+    from finresearch.evals.calibration import summarize
+
+    known = [f for f in rows if f.instrument in close_dates]
+    cut = independent_events(known, close_dates)
+    issues = {f.instrument for f in cut}
+    latest = independent_events([f for f in known if f.instrument in issues])
+
+    def sm(fs: list[Forecast]) -> dict[str, Any]:
+        j = summarize([f.probability for f in fs], [int(f.outcome) for f in fs], n_bins).to_json()
+        return {"n": j["n"], "brier": j["brier"], "mean_p": j["mean_p"]}
+
+    return {"cutoff": sm(cut), "latest": sm(latest),
+            "unknown_close_date": len({f.instrument for f in rows} - set(close_dates)),
+            "no_forecast_before_cutoff": len({f.instrument for f in known} - issues),
+            "rule": "scored: the last forecast before 17:00 IST on the last bidding day; compared: the latest before "
+                    "listing (on the same issues)"}  # fmt: skip
+
+
+HEADLINE = "headline: the calls (benchmarks and shadow tests excluded)"
+
+
+def is_benchmark(f: Forecast) -> bool:
+    """A benchmark, not a call (#353): the option market's own probability (direction, logged as rule_based) or an
+    empirical base rate. They are scored in their own rows, never in a headline: otherwise ~2,000 market-implied
+    direction rows a year would make the track record measure the option market."""
+    from finresearch.direction.live import METHOD_IMPLIED
+    from finresearch.signals.ipo import BASE_RATE_METHOD
+
+    return f.validation_status == "base_rate" or _method_group(f.method) in (METHOD_IMPLIED, BASE_RATE_METHOD)
+
+
 def calibration_groups(session: Session, asset: str | None = None, n_bins: int = 5) -> list[dict[str, Any]]:
     """Calibration per (asset, method) over resolved forecasts with a probability, plus coverage counts (open, no-call,
     void) so the track record shows what was not scored as well as what was. Scores, n and intervals count
-    independent events (`independent_events`); `scored_forecasts` is the number of ledger rows behind them. The last
-    group, asset "all", pools every method (a headline only: methods differ, so read the per-method rows before
-    trusting it); there too each event counts once, as the latest non-shadow call on it."""
+    independent events (`independent_events`: clusters, and an IPO's decision-time forecast); `scored_forecasts` is
+    the number of ledger rows behind them. Headlines (#353) pool only the calls (no benchmark, `is_benchmark`, and
+    no shadow test): one per asset (method `HEADLINE`), and the last group, asset "all", across assets (methods
+    differ, so read the per-method rows before trusting it); there each event counts once, as the latest call on it.
+    IPO groups also carry `ipo_rules`: the decision-time rule beside the old latest-forecast rule."""
     from finresearch.evals.calibration import summarize
 
     q = select(Forecast)
@@ -688,19 +793,31 @@ def calibration_groups(session: Session, asset: str | None = None, n_bins: int =
     out = []
     if not groups:
         return out
-    # the headline pools the methods that made the calls; shadow methods (#151) are scored in their own rows only
-    groups[("all", "all methods")] = [f for rows in list(groups.values()) for f in rows
-                                      if f.validation_status != "shadow"]  # fmt: skip
+    closes = ipo_close_dates(
+        session, {f.instrument for (a, _), rows in groups.items() if a == "ipo" for f in rows}
+    )
+    calls = [
+        f
+        for rows in list(groups.values())
+        for f in rows
+        if f.validation_status != "shadow" and not is_benchmark(f)
+    ]
+    for a in sorted({f.asset for f in calls}):
+        groups[(a, HEADLINE)] = [f for f in calls if f.asset == a]
+    groups[("all", "all methods")] = calls
     for (a, method), rows in sorted(groups.items(), key=lambda kv: (kv[0][0] == "all", kv[0])):
         rows_scored = [
             f for f in rows if f.status == "resolved" and f.probability is not None and f.outcome is not None
         ]
-        scored = independent_events(rows_scored)
+        scored = independent_events(rows_scored, closes)
         summary = summarize([f.probability for f in scored], [int(f.outcome) for f in scored], n_bins)
-        out.append({"asset": a, "method": method, "total": len(rows), "scored_forecasts": len(rows_scored),
-                    "open": sum(f.status == "open" for f in rows),
-                    "resolved": sum(f.status == "resolved" for f in rows),
-                    "void": sum(f.status == "void" for f in rows),
-                    "no_call": sum(f.probability is None for f in rows),
-                    "validation_status": rows[-1].validation_status, **summary.to_json()})  # fmt: skip
+        g = {"asset": a, "method": method, "total": len(rows), "scored_forecasts": len(rows_scored),
+             "open": sum(f.status == "open" for f in rows), "resolved": sum(f.status == "resolved" for f in rows),
+             "void": sum(f.status == "void" for f in rows), "no_call": sum(f.probability is None for f in rows),
+             "validation_status": "headline" if method in (HEADLINE, "all methods") else (rows[-1].validation_status
+                                                                                           if rows else None),
+             **summary.to_json()}  # fmt: skip
+        if a == "ipo":
+            g["ipo_rules"] = ipo_rule_comparison(rows_scored, closes, n_bins)
+        out.append(g)
     return out

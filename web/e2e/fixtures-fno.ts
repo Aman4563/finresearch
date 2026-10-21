@@ -257,7 +257,7 @@ export const LAB: LabResponse = {
 };
 export const LAB_VIEW: LabRunView = {
   ...RUN_ROW, strategy: { id: 1, name: "Bull put", version: 2, underlying: "NIFTY" },
-  result: { key: "lab1v2", name: "Bull put (v2)", role: "candidate", kind: "put_credit", underlying: "NIFTY", spec: {}, spec_hash: "b".repeat(64),
+  result: { key: "lab1v2", name: "Bull put (v2)", role: "lab", kind: "put_credit", underlying: "NIFTY", spec: {}, spec_hash: "b".repeat(64),
     status: "fails", reasons: ["fails: OOS deflated Sharpe"], oos: true, n_trials: 10, sr_trials_variance: 0.0004,
     warnings: ["This strategy has had 2 versions tested out of sample. Only the first look at the out-of-sample years was clean.",
       "10 variants have now been tried in this app (8 pre-registered + 2 lab)."],

@@ -96,18 +96,31 @@ def _iso(x: Any) -> str | None:
     return x.isoformat() if x is not None else None
 
 
+def shown(res: dict[str, Any] | None) -> dict[str, Any] | None:
+    """A stored result as shown (#361): a pass stored as "candidate" before the relabel reads "in_sample_result",
+    and every result carries the window label. A copy: the stored row is never changed."""
+    from finresearch.stratlab.split import OOS_LABEL, OOS_NOTE
+
+    if not res:
+        return res
+    out = {**res, "oos_label": OOS_LABEL, "oos_note": OOS_NOTE}
+    if out.get("status") == "candidate":
+        out["status"] = "in_sample_result"
+    return out
+
+
 def run_json(r: LabRun, full: bool = False) -> dict[str, Any]:
     out = {"id": r.id, "version_id": r.version_id, "oos": r.oos, "status": r.status, "progress": round(r.progress, 4),
            "progress_note": r.progress_note, "created_at": _iso(r.created_at), "started_at": _iso(r.started_at),
            "finished_at": _iso(r.finished_at), "error": r.error, "n_trials": r.n_trials, "counted": r.counted,
            "n_trades": len(r.trades or [])}  # fmt: skip
     if full:
-        out["result"] = r.result or None
+        out["result"] = shown(r.result) or None
     else:
-        res = r.result or {}
+        res = shown(r.result) or {}
         w = res.get("windows") or {}
         out["summary"] = {"status": res.get("status"), "is": _brief(w.get("is")), "oos": _brief(w.get("oos")),
-                          "warnings": len(res.get("warnings") or [])}  # fmt: skip
+                          "warnings": len(res.get("warnings") or []), "oos_label": res.get("oos_label")}  # fmt: skip
     return out
 
 
@@ -120,6 +133,7 @@ def _brief(w: dict[str, Any] | None) -> dict[str, Any] | None:
 
 def strategy_json(s: Session, st: LabStrategy) -> dict[str, Any]:
     from finresearch.db.models import LabPaperRule
+    from finresearch.stratlab.split import OOS_LABEL
 
     vids = [v.id for v in st.versions]
     runs = (
@@ -136,7 +150,8 @@ def strategy_json(s: Session, st: LabStrategy) -> dict[str, Any]:
     return {
         "id": st.id, "name": st.name, "underlying": st.underlying, "created_at": _iso(st.created_at),
         "split": {"is": [st.is_start.isoformat(), st.is_end.isoformat()], "oos_from": st.oos_start.isoformat(),
-                  "data": [st.data_first.isoformat(), st.data_last.isoformat()], "rule": st.split_rule},
+                  "data": [st.data_first.isoformat(), st.data_last.isoformat()], "rule": st.split_rule,
+                  "oos_label": OOS_LABEL},
         "oos_versions": len(counted),
         "versions": [{"id": v.id, "version": v.version, "created_at": _iso(v.created_at), "spec": v.spec,
                       "spec_hash": v.spec_hash, "note": v.note, "describe": describe(StrategySpec.model_validate(v.spec)),

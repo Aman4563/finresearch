@@ -13,6 +13,7 @@ from typing import Any, ClassVar
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    DDL,
     BigInteger,
     Boolean,
     CheckConstraint,
@@ -29,6 +30,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    event,
     func,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, REAL, TSVECTOR
@@ -1520,6 +1522,42 @@ class FnoParticipantOi(Base):
     total_short: Mapped[int] = mapped_column(BigInteger)
     source: Mapped[str] = mapped_column(String(200))
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class CardLog(Base):
+    """#360: one row per F&O plan, suggest or strategy-check response, as the owner saw it. Append-only: a trigger
+    refuses UPDATE and DELETE (`CARD_LOG_APPEND_ONLY`, created here for create_all and in the migration). `inputs` =
+    the request, the live chain(s) and the card inputs (capital, rate, closes, IV series, ...); `cards` = per card its
+    verdict (action, qualifier), failed gates, PoP and EV per model and evidence label (None = not computed, e.g. a
+    strategy check runs no gates); `response` = the whole response. Personal (the profile's F&O budget): never sent to
+    a model. Resolution and scoring are P2.1's."""
+
+    __tablename__ = "card_log"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+    kind: Mapped[str] = mapped_column(String(12))  # plan | suggest | strategy | direction
+    symbol: Mapped[str] = mapped_column(String(30), index=True)
+    expiry: Mapped[date | None] = mapped_column(
+        Date
+    )  # None for suggest (one card per recipe, several expiries)
+    engine_sha: Mapped[str | None] = mapped_column(
+        String(40)
+    )  # the checkout's commit; None = not a git checkout
+    inputs: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    cards: Mapped[list[Any]] = mapped_column(JSONB)
+    response: Mapped[dict[str, Any]] = mapped_column(JSONB)
+
+
+CARD_LOG_APPEND_ONLY = (
+    "CREATE OR REPLACE FUNCTION card_log_append_only() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN "
+    "RAISE EXCEPTION USING MESSAGE = 'card_log is append-only: ' || TG_OP || ' refused'; END $$",
+    "CREATE TRIGGER card_log_append_only BEFORE UPDATE OR DELETE ON card_log "
+    "FOR EACH ROW EXECUTE FUNCTION card_log_append_only()",
+)
+for _sql in CARD_LOG_APPEND_ONLY:
+    event.listen(CardLog.__table__, "after_create", DDL(_sql))
 
 
 class OptionQuote(Base):
