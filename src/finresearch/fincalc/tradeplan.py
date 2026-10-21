@@ -156,10 +156,63 @@ class Size:
     real_lots: int = 0  # real-money size (#350): 0 unless the matched spec is a candidate
 
 
-def size(max_loss_one: float | None, costs_one: float, budget: float, proven: bool, cap: int = 100) -> Size:
+# #358 (interim open-book cap; P4.2 adds the common-shock and margin terms). Registered values, stated in the issue
+# before any use: the open book may risk at most 8% of F&O capital, a month-to-date F&O loss of 6% of it stops every
+# card until the next month, and a naked upside is shocked by +25%. No stress scenario is registered yet (P4.2), so
+# the open risk of an undefined-risk position is the larger of the loss at S = 0 and at S × (1 + UP_SHOCK).
+BOOK_BUDGET_PCT = 8.0
+MONTH_LOSS_STOP_PCT = 6.0
+UP_SHOCK = 0.25
+
+
+@dataclass(frozen=True)
+class OpenBook:
+    """What is already open (#358), for one card. `open_risk` = OR, the Σ of position_risk over open paper and Groww
+    positions (None = unknown: never counted as room); `open_same` = open positions of this recipe / shape, against the
+    backtester's `max_concurrent`; month-to-date F&O P&L after costs (realised + marked), the paper book's for paper
+    cards and the real book's for real-money permission (None = unknown)."""
+
+    capital: float
+    open_risk: float | None
+    open_same: int = 0
+    max_concurrent: int | None = None
+    mtd_paper: float | None = None
+    mtd_real: float | None = None
+    notes: tuple[str, ...] = ()
+
+    @property
+    def budget(self) -> float:
+        return self.capital * BOOK_BUDGET_PCT / 100
+
+    def month_stopped(self, real: bool = False) -> bool:
+        """True when that book's month-to-date P&L is at or below −MONTH_LOSS_STOP_PCT of capital, or unknown."""
+        mtd = self.mtd_real if real else self.mtd_paper
+        return mtd is None or mtd <= -self.capital * MONTH_LOSS_STOP_PCT / 100
+
+
+def position_risk(legs: Sequence[o.Leg], spot: float | None) -> float | None:
+    """One open position's contribution to OR (#358), ₹ (≥ 0), from its legs at their entry prices (premiums; signed
+    qty): |max loss at expiry| when bounded above (the payoff is piecewise linear, so its minimum on [0, ∞) is at 0 or
+    a strike); otherwise the larger of that and the loss at S × (1 + UP_SHOCK). None when the shock needs a spot that
+    is unknown."""
+    if not legs:
+        return 0.0
+    kinks = [0.0, *(x.strike for x in legs if x.right != "future")]
+    up_slope = sum(x.qty for x in legs if x.right in ("call", "future"))
+    if up_slope < 0:
+        if not spot:
+            return None
+        kinks.append(spot * (1 + UP_SHOCK))
+    return max(0.0, -min(o.payoff(legs, k) for k in kinks))
+
+
+def size(max_loss_one: float | None, costs_one: float, budget: float, proven: bool, cap: int = 100,
+         book: OpenBook | None = None) -> Size:  # fmt: skip
     """Lots from the risk budget: floor(budget ÷ (max loss + entry costs of the base legs)), as the backtester sizes
-    (backtest.engine.try_enter): one formula n = floor(B / (|ML| + c)) (#355). Real money (#350) only when the matched
-    spec is a candidate (`proven`): otherwise n is the paper size and real lots are 0."""
+    (backtest.engine.try_enter): one formula n = floor(B / (|ML| + c)) (#355). With the open book (#358):
+    n = min(that, floor((B_book − OR) ÷ (|ML| + c))), floored at 0, and 0 once `max_concurrent` of this recipe are
+    open. Real money (#350) only when the matched spec is a candidate (`proven`): otherwise n is the paper size and
+    real lots are 0. `multiple` stays the trade budget's alone (a full book is not an over-budget trade)."""
     if max_loss_one is None:
         return Size(0, 0, budget, None, "the loss is unlimited, so no size fits a budget")
     risk = abs(max_loss_one) + max(costs_one, 0.0)
@@ -171,9 +224,22 @@ def size(max_loss_one: float | None, costs_one: float, budget: float, proven: bo
             0, 0, budget, risk, f"one set of these legs risks ₹{risk:,.0f}, above your ₹{budget:,.0f} budget"
         )
     why = f"₹{budget:,.0f} budget ÷ ₹{risk:,.0f} risk per set (max loss + entry costs) = {m}"
+    n = m
+    if book is not None:
+        if book.open_risk is None:
+            n, more = 0, "the risk of your open positions is unknown, so the open book has no known room: 0"
+        elif book.max_concurrent is not None and book.open_same >= book.max_concurrent:
+            n, more = 0, (f"{book.open_same} of this recipe already open, the backtest's limit of "
+                          f"{book.max_concurrent} at a time: 0")  # fmt: skip
+        else:
+            room = book.budget - book.open_risk
+            n = max(0, min(m, math.floor(room / risk)))
+            more = (f"open book: ₹{book.budget:,.0f} ({BOOK_BUDGET_PCT:g}% of F&O capital) − ₹{book.open_risk:,.0f} "
+                    f"already at risk in open positions = room for {max(0, math.floor(room / risk))}")  # fmt: skip
+        why += f"; {more}"
     if not proven:
         why += "; no strategy that passed out of sample matches, so paper only: 0 real-money lots"
-    return Size(m, m, budget, risk, why, real_lots=m if proven else 0)
+    return Size(m, n, budget, risk, why, real_lots=n if proven else 0)
 
 
 # --------------------------------------------------------------------------- limit prices from bid/ask

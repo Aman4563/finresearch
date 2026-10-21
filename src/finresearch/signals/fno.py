@@ -612,7 +612,10 @@ async def fno_signal(instrument: str, ctx: dict[str, Any]) -> Signal:
     kind = tp.classify([tp.PlanLeg(x.right, x.strike, x.side, x.lots) for x in legs])
     strategies, head = tpl.backtest_rows()
     ev = tpl.evidence_for(kind, sym, a["days_to_expiry"], strategies, head)
-    d = tpl.decide(failed, a["max_loss"], a["costs"]["entry"]["total"], budget, ev["level"])
+    # the open book (#358): open paper trades and Groww positions, month-to-date P&L; the same cap as the trade card
+    ob = tpl.book_for(await tpl.load_book(today), capital, sym, kind, float(chain.underlying),
+                      ev["spec"] if ev["match"] == "exact" else None)  # fmt: skip
+    d = tpl.decide(failed, a["max_loss"], a["costs"]["entry"]["total"], budget, ev["level"], book=ob)
     sz, qualifier = d.size, None
     if not held:  # the trade-plan card's verdict for the same legs (#355: one engine)
         action, qualifier, failed = d.action, d.qualifier, d.failed
@@ -620,6 +623,7 @@ async def fno_signal(instrument: str, ctx: dict[str, Any]) -> Signal:
               "paper_lots": sz.suggested, "real_lots": sz.real_lots if action == "ENTER" else 0,
               "budget_inr": round(budget, 2), "max_loss_inr": None if loss is None else round(loss, 2),
               "evidence": {k: v for k, v in ev.items() if k != "spec"}, "verdict_label": qualifier,
+              "open_book": tpl.book_json(ob),
               "reason": (f"Your budget per strategy is {float(profile.fno_max_loss_pct):g}% of ₹{_inr(capital)} = ₹{_inr(budget)}; "
                          + (f"{sz.reason}." if loss else "the loss of these legs is unlimited, so no size fits."))}  # fmt: skip
     caveat = caveats(a, notice)

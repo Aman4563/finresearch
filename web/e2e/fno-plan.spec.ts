@@ -35,6 +35,10 @@ test("fno: market context labels evidence; suggest shows AVOID on a failed hard 
   await expect(enter.getByTestId("plan-verdict")).toHaveText("NO PROVEN EDGE — paper only (0 real lots)");
   await expect(enter.getByTestId("plan-size")).toHaveText("3× these legs");
   await expect(enter.getByTestId("plan-real-lots")).toHaveText("0 lots");
+  if (!phone(page)) {
+    await enter.getByText(/^Details: sizing/).click();
+    await expect(enter.getByTestId("plan-open-book")).toContainText("at risk of"); // #358: the open-book cap is shown
+  }
   await expect(enter.getByText(/buy back at ₹127.50\/share/)).toBeVisible();
   await enter.getByRole("button", { name: "Paper trade + alerts" }).click();
   await expect(enter.getByRole("status")).toContainText("Paper trade #7 recorded with 3 exit alerts");

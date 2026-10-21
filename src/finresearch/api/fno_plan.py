@@ -60,7 +60,7 @@ async def plan_inputs(f: Any, sym: str, expiry: date, today: date) -> Any:
                       max_loss_pct=float(p.fno_max_loss_pct), brokerage=float(p.fno_brokerage_per_order_inr),
                       defined_risk_only=p.fno_defined_risk_only, rate=rate, strategies=strategies,
                       backtest_head=head, paper=tpl.paper_trades(), events=await _events(sym, today),
-                      is_index=events.is_index(sym))  # fmt: skip
+                      is_index=events.is_index(sym), book=await tpl.load_book(today))  # fmt: skip
 
 
 def add_fno_plan_routes(app: FastAPI, fno: Callable[[], Any]) -> None:

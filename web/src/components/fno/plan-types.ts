@@ -30,7 +30,10 @@ export type TradePlan = {
   source?: string; kind: string; action: PlanAction; qualifier: string | null; label: string; failed: string[]; reasons: string[];
   spec_key?: string;
   legs: { right: "call" | "put" | "future"; strike: number; side: "buy" | "sell"; lots: number; qty?: number; last?: number }[];
-  size?: { multiple: number; suggested: number; /** real-money lots (#350): 0 unless the matched spec is a candidate */ real_lots?: number; budget: number; risk_per_set: number | null; reason: string; capital: number; max_loss_pct: number };
+  size?: { multiple: number; suggested: number; /** real-money lots (#350): 0 unless the matched spec is a candidate */ real_lots?: number;
+    /** #358: the open-book cap: budget = 8% of F&O capital, open_risk = what open paper and Groww positions risk (null = unknown) */
+    open_book?: { budget: number; budget_pct: number; open_risk: number | null; open_same: number; max_concurrent: number | null; mtd_paper: number | null; month_stop_pct: number; notes: string[] };
+    budget: number; risk_per_set: number | null; reason: string; capital: number; max_loss_pct: number };
   entry?: { legs: EntryLeg[]; status: "ok" | "unknown"; net_mid: number | null; net_fill_now: number | null; notes: string[]; levels_priced_at: string;
     /** "bid/ask: NSE chain at HH:MM" (#324: NSE's chain when the plan's has no bid/ask), or "unknown" */
     source?: string; slippage_inr?: number | null };

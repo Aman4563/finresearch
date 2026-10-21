@@ -199,7 +199,7 @@ def test_context_never_changes_the_verdict():
     raw = json.loads((FNO / "indices_history_NIFTY50_202606_202609.json").read_text())
     closes = [float(c) for _, c in parse_index_history(raw)]
     x = tpl.Inputs(today=date(2026, 9, 29), closes=closes, iv_series=[], capital=1_000_000, max_loss_pct=2,
-                   brokerage=20, defined_risk_only=True, rate=0.065)  # fmt: skip
+                   brokerage=20, defined_risk_only=True, rate=0.065, book=tpl.EMPTY_BOOK)  # fmt: skip
     legs = [fs.LegIn("put", 22600, "sell"), fs.LegIn("put", 22400, "buy")]
     base = tpl.build(chain(), 65, legs, x)
     skewed = chain()
@@ -230,13 +230,14 @@ def test_capital_unset_says_so_and_related_specs_do_not_borrow_paper_trades(clie
         )
     ]
     x = tpl.Inputs(today=date(2026, 9, 29), closes=closes, iv_series=[], capital=1_000_000, max_loss_pct=2,
-                   brokerage=20, defined_risk_only=True, rate=0.065, paper=[tagged])  # fmt: skip
+                   brokerage=20, defined_risk_only=True, rate=0.065, paper=[tagged],
+                   book=tpl.EMPTY_BOOK)  # fmt: skip
     got = tpl.build(chain(), 65, [fs.LegIn("put", 22600, "sell"), fs.LegIn("put", 22400, "buy")], x)
     assert got["evidence"]["match"] == "related" and got["paper"]["trades"] == 0
     # 60 lots a leg with room for 3 sets would exceed the paper book's 100-lot limit: capped
     big = tpl.build(chain(), 65, [fs.LegIn("put", 22600, "sell", 60), fs.LegIn("put", 22400, "buy", 60)],
                     tpl.Inputs(today=date(2026, 9, 29), closes=closes, iv_series=[], capital=1e9, max_loss_pct=2,
-                               brokerage=20, defined_risk_only=True, rate=0.065))  # fmt: skip
+                               brokerage=20, defined_risk_only=True, rate=0.065, book=tpl.EMPTY_BOOK))  # fmt: skip
     assert max(x["lots"] for x in big["legs"]) <= 100
 
 
@@ -460,6 +461,12 @@ def _signal(c, monkeypatch, legs):
     ],
 )
 def test_signal_card_and_trade_card_give_the_same_verdict_and_lots_355(client, monkeypatch, row, want):
+    from finresearch.signals import tradeplan as tpl
+
+    async def known(today):  # nothing open and both months known (#358 needs the real one for real money)
+        return tpl.EMPTY_BOOK
+
+    monkeypatch.setattr(tpl, "load_book", known)
     _profile("1000000")
     _save_backtest([row] if row else [])
     card = client.post("/api/fno/plan", json={"symbol": "NIFTY", "expiry": "2026-10-06", "legs": IC}).json()
@@ -490,9 +497,98 @@ def test_iv_percentile_is_context_not_a_gate_for_ad_hoc_legs_355():
         json.loads((FNO / "indices_history_NIFTY50_202606_202609.json").read_text()))]  # fmt: skip
     # a year of IV at 30% and today's at 5%: percentile 0, so the IV check fails for a premium seller
     x = tpl.Inputs(today=date(2026, 9, 29), closes=closes, iv_series=[30.0] * 120 + [5.0], capital=1_000_000,
-                   max_loss_pct=2, brokerage=20, defined_risk_only=True, rate=0.065)  # fmt: skip
+                   max_loss_pct=2, brokerage=20, defined_risk_only=True, rate=0.065, book=tpl.EMPTY_BOOK)  # fmt: skip
     legs = [fs.LegIn(y["right"], y["strike"], y["side"]) for y in IC]
     card = tpl.build(chain(), 65, legs, x)
     iv = next(c for c in card["checks"] if c["name"] == "IV context fits the strategy")
     assert iv["contribution"] < 0  # still shown, and still failing as context
     assert "IV context fits the strategy" not in card["failed"] and card["action"] == "PAPER"
+
+
+# --------------------------------------------------------------------------- #358: open-book cap through the API
+def _open_paper_condors(n: int, lots: int, marked: bool = True):
+    """n open paper iron condors of `lots` lots (made-up fills on the recorded strikes), marked flat unless told."""
+    from finresearch.db import session_scope
+    from finresearch.fnobook import book
+
+    legs = [fs.LegIn(y["right"], y["strike"], y["side"], lots) for y in IC]
+    prices = {22600: 92.0, 22400: 53.0, 23000: 108.0, 23200: 52.0}
+    with session_scope() as s:
+        for _ in range(n):
+            st = book.record(s, symbol="NIFTY", expiry=date(2026, 10, 6), lot=65, legs_in=legs,
+                             quotes=[book.Quote(prices[int(y.strike)], "test") for y in legs], slippage_pct=0.0,
+                             brokerage=20.0, now=NOW, spot=22780.25, label="test")  # fmt: skip
+            if marked:
+                st.mtm_gross = Decimal(0)
+
+
+@pytest.fixture
+def no_real_book(monkeypatch):
+    from finresearch.signals import tradeplan as tpl
+
+    async def none(today):
+        return [], "Groww is not connected: no real F&O positions counted."
+
+    monkeypatch.setattr(tpl, "real_positions", none)
+
+
+def test_ten_open_paper_condors_cut_the_plan_size_to_zero_358(client, no_real_book):
+    from finresearch.db import session_scope
+
+    with session_scope() as s:
+        s.execute(text("TRUNCATE paper_leg, paper_strategy CASCADE"))
+    _profile("2500000")  # trade budget 2% = ₹50,000; open book 8% = ₹2,00,000
+    before = client.post("/api/fno/plan", json={"symbol": "NIFTY", "expiry": "2026-10-06", "legs": IC}).json()
+    assert before["size"]["suggested"] >= 1
+    # ten open 4-lot condors: OR = 10 × 4 × ₹6,825 = ₹2,73,000 > the ₹2,00,000 open-book budget
+    _open_paper_condors(10, 4)
+    card = client.post("/api/fno/plan", json={"symbol": "NIFTY", "expiry": "2026-10-06", "legs": IC}).json()
+    assert card["size"]["suggested"] == 0 and card["size"]["real_lots"] == 0
+    assert card["action"] == "WAIT" and "Open book within its budget" in card["failed"]
+    ob = card["size"]["open_book"]
+    # independent: one set's max loss at expiry = (200 − credit) × 65, credit 92 − 53 + 108 − 52 = 95 → ₹6,825
+    assert ob["open_risk"] == pytest.approx(10 * 4 * (200 - 95) * 65) and ob["budget"] == pytest.approx(
+        200000
+    )
+
+
+def test_signal_card_reads_the_same_open_book_358(client, monkeypatch, no_real_book):
+    from finresearch.db import session_scope
+
+    with session_scope() as s:
+        s.execute(text("TRUNCATE paper_leg, paper_strategy CASCADE"))
+    _profile("2500000")
+    _open_paper_condors(10, 4)
+    card = client.post("/api/fno/plan", json={"symbol": "NIFTY", "expiry": "2026-10-06", "legs": IC}).json()
+    sig = _signal(client, monkeypatch, IC)
+    assert (sig["action"], sig["sizing"]["paper_lots"], sig["sizing"]["real_lots"]) == (card["action"], 0, 0)
+
+
+def test_an_unmarked_paper_trade_makes_the_month_unknown_and_the_card_waits_358(client, no_real_book):
+    from finresearch.db import session_scope
+
+    with session_scope() as s:
+        s.execute(text("TRUNCATE paper_leg, paper_strategy CASCADE"))
+    _profile("2500000")
+    _open_paper_condors(1, 1, marked=False)
+    card = client.post("/api/fno/plan", json={"symbol": "NIFTY", "expiry": "2026-10-06", "legs": IC}).json()
+    assert card["action"] == "WAIT" and "Month-to-date F&O loss stop" in card["failed"]
+
+
+def test_a_naked_short_call_at_groww_adds_its_up_shock_loss_358(client, monkeypatch):
+    from finresearch.db import session_scope
+    from finresearch.fincalc import options as o
+    from finresearch.signals import tradeplan as tpl
+
+    with session_scope() as s:
+        s.execute(text("TRUNCATE paper_leg, paper_strategy CASCADE"))
+
+    async def groww(today):  # one lot short of a 23,500 call at ₹20 (made up), NIFTY spot from the chain
+        return [tpl.RealPosition("NIFTY", date(2026, 10, 6), [o.Leg("call", 23500.0, 20.0, -65)])], None
+
+    monkeypatch.setattr(tpl, "real_positions", groww)
+    _profile("100000000")  # a large book: the shock is visible, not capped
+    card = client.post("/api/fno/plan", json={"symbol": "NIFTY", "expiry": "2026-10-06", "legs": IC}).json()
+    # independent: S × 1.25 = 22,780.25 × 1.25 = 28,475.3125; loss (28,475.3125 − 23,500 − 20) × 65
+    want = (22780.25 * 1.25 - 23500 - 20) * 65
+    assert card["size"]["open_book"]["open_risk"] == pytest.approx(want, rel=1e-6)

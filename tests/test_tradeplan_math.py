@@ -235,3 +235,83 @@ def test_flipping_an_insignificant_expectancy_never_changes_the_verdict_355(
 def test_no_enter_and_no_real_lots_unless_proven_355(level, failed):
     assert tp.verdict(failed, level)[0] != tp.ENTER
     assert tp.size(-1500.0, 60.0, 40000.0, proven=level == "proven").real_lots == 0
+
+
+# --------------------------------------------------------------------------- #358: open-book cap (interim)
+CAPITAL = 2_500_000.0  # 2% of it = the ₹50,000 trade budget of bug 8's suggestion {4, 2, 50000.0, 10714.65}
+B_BOOK = 0.08 * CAPITAL  # ₹2,00,000 (registered: 8% of F&O capital)
+
+
+def _book(open_risk, open_same=0, mtd_paper=0.0, mtd_real=0.0, max_concurrent=None):
+    return tp.OpenBook(capital=CAPITAL, open_risk=open_risk, open_same=open_same, max_concurrent=max_concurrent,
+                       mtd_paper=mtd_paper, mtd_real=mtd_real)  # fmt: skip
+
+
+def test_ten_open_four_lot_condors_cut_the_suggested_size_to_zero_358():
+    ml, costs = -10500.0, 214.65  # one set: max loss ₹10,500 + entry costs = ₹10,714.65 at risk
+    alone = tp.size(ml, costs, 50000.0, proven=False)
+    assert (alone.multiple, alone.suggested) == (
+        4,
+        4,
+    )  # floor(50,000 / 10,714.65): the unchanged suggestion of bug 8
+    # ten open 4-lot condors of the same risk: OR = 10 × 4 × ₹10,500 = ₹4,20,000 > B_book ₹2,00,000
+    full = tp.size(ml, costs, 50000.0, proven=False, book=_book(10 * 4 * 10500.0))
+    assert full.multiple == 4 and full.suggested == 0 and full.real_lots == 0 and "open" in full.reason
+    # room for one more: floor((2,00,000 − 1,85,000) / 10,714.65) = 1
+    assert tp.size(ml, costs, 50000.0, proven=True, book=_book(185000.0)).suggested == 1
+    # unknown open risk is never room: 0, with the reason
+    unknown = tp.size(ml, costs, 50000.0, proven=False, book=_book(None))
+    assert unknown.suggested == 0 and "unknown" in unknown.reason
+    # the backtester's concurrency cap: two open of this recipe and max_concurrent 2 → 0
+    assert (
+        tp.size(ml, costs, 50000.0, proven=False, book=_book(0.0, open_same=2, max_concurrent=2)).suggested
+        == 0
+    )
+
+
+def test_n_simultaneous_cards_never_exceed_the_book_budget_358():
+    import random
+
+    rng = random.Random(358)
+    risk = 0.0
+    for _ in range(40):
+        ml, c = -rng.uniform(2000, 30000), rng.uniform(50, 400)
+        s = tp.size(ml, c, 50000.0, proven=False, book=_book(risk))
+        risk += s.suggested * abs(ml)  # every card taken at its suggested size
+        assert risk <= B_BOOK + 1e-6
+    assert risk > 0.8 * B_BOOK  # and the book does fill up
+
+
+def test_open_risk_of_a_naked_short_call_is_its_up_shock_loss_358():
+    lot = 65
+    call = [o.Leg("call", 25000, 100.0, -lot)]  # short 1 lot of the 25,000 call at ₹100, spot 24,800
+    # independent: at S = 24,800 × 1.25 = 31,000 the call is worth 6,000: loss (6,000 − 100) × 65 = ₹3,83,500;
+    # at S = 0 it keeps the premium (no loss), so the up-shock is the larger loss
+    assert tp.position_risk(call, 24800.0) == pytest.approx(383500.0)
+    assert tp.position_risk(call, None) is None  # no spot: the shock cannot be priced, unknown
+    # a defined-risk spread is its max loss, with or without a spot: (200 − 35) × 65 = ₹10,725
+    pcs = [o.Leg("put", 19500, 60.0, -lot), o.Leg("put", 19300, 25.0, lot)]
+    assert tp.position_risk(pcs, None) == pytest.approx(10725.0)
+    # a naked short put: the loss at S = 0, (19,500 − 60) × 65 = ₹12,63,600
+    assert tp.position_risk([o.Leg("put", 19500, 60.0, -lot)], 20000.0) == pytest.approx(1263600.0)
+
+
+@pytest.mark.parametrize(("mtd", "stopped"), [(-0.061 * CAPITAL, True), (-0.06 * CAPITAL, True),
+                                              (-0.059 * CAPITAL, False), (None, True)])  # fmt: skip
+def test_a_breached_month_loss_turns_every_card_to_wait_358(mtd, stopped):
+    from finresearch.signals import tradeplan as tpl
+
+    d = tpl.decide([], -1500.0, 60.0, 50000.0, "proven", book=_book(0.0, mtd_paper=mtd))
+    assert (d.action == "WAIT") is stopped and (d.size.real_lots == 0) is stopped
+    if stopped:
+        assert "Month-to-date F&O loss stop" in d.failed
+
+
+def test_real_money_needs_the_real_books_month_to_date_358():
+    from finresearch.signals import tradeplan as tpl
+
+    ok = tpl.decide([], -1500.0, 60.0, 50000.0, "proven", book=_book(0.0, mtd_real=0.0))
+    assert ok.action == "ENTER" and ok.size.real_lots == 32  # floor(50,000 / 1,560)
+    for real in (None, -0.07 * CAPITAL):  # unknown or breached real book: paper size kept, real money 0
+        d = tpl.decide([], -1500.0, 60.0, 50000.0, "proven", book=_book(0.0, mtd_real=real))
+        assert d.size.real_lots == 0 and d.size.suggested == 32

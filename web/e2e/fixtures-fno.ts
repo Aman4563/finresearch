@@ -69,7 +69,7 @@ export const PAPER: TradePlan = { title: "NIFTY 20-Oct-2026 · NIFTY short iron 
   kind: "iron_condor", action: "PAPER", qualifier: "NO PROVEN EDGE — paper only (0 real lots)", label: "NO PROVEN EDGE — paper only (0 real lots)", failed: [], spec_key: "nifty_ic_w",
   reasons: ["Every check passes: defined risk, within budget, EV after costs no worse than fair, IV fits."],
   legs: [{ right: "put", strike: 24600, side: "sell", lots: 1 }, { right: "put", strike: 24350, side: "buy", lots: 1 }, { right: "call", strike: 25400, side: "sell", lots: 1 }, { right: "call", strike: 25650, side: "buy", lots: 1 }],
-  size: { multiple: 3, suggested: 3, real_lots: 0, budget: 20000, risk_per_set: 6000, reason: "₹20,000 budget ÷ ₹6,000 risk per set = 3; no strategy that passed out of sample matches, so paper only: 0 real-money lots", capital: 1e6, max_loss_pct: 2 },
+  size: { multiple: 3, suggested: 3, real_lots: 0, open_book: { budget: 80000, budget_pct: 8, open_risk: 12000, open_same: 0, max_concurrent: 1, mtd_paper: -1500, month_stop_pct: 6, notes: ["Groww is not connected: only paper positions are counted in the open book."] }, budget: 20000, risk_per_set: 6000, reason: "₹20,000 budget ÷ ₹6,000 risk per set = 3; no strategy that passed out of sample matches, so paper only: 0 real-money lots", capital: 1e6, max_loss_pct: 2 },
   entry: { legs: [], status: "ok", net_mid: 42.5, net_fill_now: 40, notes: [], levels_priced_at: "bid/ask mid" },
   max_profit: 2762, max_loss: -13488, breakevens: [24557.5, 25442.5], net_premium: -2762, costs: 180,
   probability: { real_world: 0.71, real_world_window: "60-day", risk_neutral: 0.66, note: "Model probabilities." },
