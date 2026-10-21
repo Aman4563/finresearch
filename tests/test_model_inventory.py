@@ -27,7 +27,13 @@ def test_a_run_from_before_a_regime_change_is_stale_even_when_young():
 
 def test_stt_changes_come_from_the_dated_charges_table():
     days = {c.day for c in regimes.regime_changes() if c.tag == "stt"}
-    assert days == {date(2024, 10, 1), date(2026, 4, 1)}  # fincalc/charges.py stt_* rows
+    # fincalc/charges.py stt_* rows, dated since #382 from NSE's circulars: futures 0.01 % (FATAX/23500), option sale
+    # 0.05 % (FATAX/32385), exercise STT on intrinsic value (FATAX/41919), Finance Act 2023 (FATAX/56235), Finance
+    # (No. 2) Act 2024 (FATAX/63809), Finance Bill 2026 (memo)
+    assert days == {date(2013, 6, 1), date(2016, 6, 1), date(2019, 9, 1), date(2023, 4, 1), date(2024, 10, 1),
+                    date(2026, 4, 1)}  # fmt: skip
+    # the older dates fall before any run this app can have made: a run after Oct-2024 is judged as before
+    assert regimes.staleness(date(2024, 10, 5), date(2024, 10, 15)) == []
     why = regimes.staleness(date(2026, 3, 25), date(2026, 4, 10))
     assert len(why) == 1 and "STT" in why[0]
 

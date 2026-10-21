@@ -21,7 +21,7 @@ type MarginAnswer = Omit<MarginEstimate, "groww_calculator"> & { groww_calculato
 
 /** Under the strategy builder: record the legs as a paper trade, and an approximate margin for them (#308). */
 export function PaperActions({ symbol, expiry, legs }: { symbol: string; expiry: string; legs: Leg[] }) {
-  const [slip, setSlip] = useState("0.5");
+  const [slip, setSlip] = useState(""); // empty: the server's default (#382: measured half-spread, else 0.5 %)
   const [label, setLabel] = useState("");
   const [busy, setBusy] = useState<"" | "paper" | "margin">("");
   const [made, setMade] = useState<PaperTrade | null>(null);
@@ -32,7 +32,7 @@ export function PaperActions({ symbol, expiry, legs }: { symbol: string; expiry:
   const paper = async () => {
     setBusy("paper");
     try {
-      setMade(await api<PaperTrade>("/api/fno/paper", { method: "POST", body: JSON.stringify({ ...body, slippage_pct: slip, label }) }));
+      setMade(await api<PaperTrade>("/api/fno/paper", { method: "POST", body: JSON.stringify({ ...body, ...(slip.trim() ? { slippage_pct: slip } : {}), label }) }));
       setError(null);
     } catch (e) {
       setError((e as Error).message);
@@ -56,8 +56,8 @@ export function PaperActions({ symbol, expiry, legs }: { symbol: string; expiry:
     <div className="space-y-2 rounded-xl border border-border bg-background-subtle/40 p-3 text-xs">
       <div className="flex flex-wrap items-center gap-2">
         <label className="flex items-center gap-1 text-muted">Slippage
-          <input aria-label="Slippage %" type="number" min={0} max={20} step="0.1" className={cx(inputClass, "num w-16 py-1 text-xs")} value={slip} onChange={(e) => setSlip(e.target.value)} />%
-          <InfoTip>A paper buy fills at the live LTP plus this %, a sell at the LTP minus it (Groww&apos;s chain has no bid/ask, so the LTP stands in for the ask and the slippage for the spread).</InfoTip>
+          <input aria-label="Slippage %" type="number" min={0} max={20} step="0.1" className={cx(inputClass, "num w-16 py-1 text-xs")} placeholder="auto" value={slip} onChange={(e) => setSlip(e.target.value)} />%
+          <InfoTip>A paper buy fills at the live LTP plus this %, a sell at the LTP minus it (Groww&apos;s chain has no bid/ask, so the LTP stands in for the ask and the slippage for the spread). Left empty: the median half-spread of the recorded option quotes once 40 sessions are recorded, else 0.5 % (the paper book shows which).</InfoTip>
         </label>
         <input aria-label="Label" placeholder="label (optional)" maxLength={120} className={cx(inputClass, "w-40 py-1 text-xs")} value={label} onChange={(e) => setLabel(e.target.value)} />
         <Button onClick={paper} disabled={!!busy || !legs.length} icon={<NotebookPen className="size-3.5" />}>Paper trade this</Button>

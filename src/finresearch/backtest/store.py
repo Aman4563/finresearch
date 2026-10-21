@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from finresearch.db.models import FnoBacktestResult, FnoBacktestRun
@@ -27,8 +27,11 @@ def save(s: Session, report: dict[str, Any]) -> int:
 
 
 def latest_run(s: Session) -> FnoBacktestRun | None:
-    """The newest run that evaluated out of sample, else the newest run."""
-    q = select(FnoBacktestRun).order_by(FnoBacktestRun.created_at.desc(), FnoBacktestRun.id.desc())
+    """The newest same-print run that evaluated out of sample, else the newest same-print run. A next-print run
+    (#382: detail.fill) is a sensitivity, never the evidence the cards, the Strategy Lab and the page read."""
+    fill = FnoBacktestRun.detail["fill"].astext
+    q = (select(FnoBacktestRun).where(or_(fill.is_(None), fill == "same_print"))
+         .order_by(FnoBacktestRun.created_at.desc(), FnoBacktestRun.id.desc()))  # fmt: skip
     return (
         s.scalars(q.where(FnoBacktestRun.oos_evaluated.is_(True)).limit(1)).first()
         or s.scalars(q.limit(1)).first()
