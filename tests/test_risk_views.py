@@ -169,3 +169,107 @@ def test_var_backtest_is_walk_forward():
         t = 250 + k
         q = -float(np.quantile(rp[t - 250 : t], 0.05))
         assert hits[k] == (rp[t] < -q)
+
+
+# --------------------------------------------------------------------------- #349 payload
+def _history(n=600, seed=11, benchmark=True):
+    """A synthetic value history with no flows (so the TWR index is the value / its start) and a benchmark."""
+    import numpy as np
+
+    from finresearch.portfolio import analytics_math as am
+    from finresearch.portfolio.history import Benchmark, History
+
+    rng = np.random.default_rng(seed)
+    days, d = [], date(2023, 1, 2)
+    while len(days) < n:
+        if d.weekday() < 5:
+            days.append(d)
+        d += timedelta(days=1)
+    rb = rng.normal(0.0004, 0.01, n - 1)
+    rp = 1.2 * rb + rng.normal(0.0001, 0.007, n - 1)
+    value = [100000.0, *(100000.0 * np.cumprod(1 + rp))]
+    level = [1.0, *np.cumprod(1 + rb)]
+    rets = am.twr_returns(value, [0.0] * n)
+    bm = Benchmark(days, [float(x) for x in level], {}, {}, {}) if benchmark else None
+    return History(days=days, value=[float(x) for x in value], flow=[0.0] * n, returns=rets, index=am.chain(rets),
+                   benchmark=bm), [float(x) for x in rp], [float(x) for x in rb]  # fmt: skip
+
+
+def _risk(h):
+    from finresearch.portfolio.analytics import RiskFree, risk
+
+    return risk(h, RiskFree(0.065, "test", None, None), {})
+
+
+def test_risk_payload_benchmark_relative_lines_match_numpy_349():
+    import numpy as np
+
+    h, rp, rb = _history()
+    real = _risk(h)["realised"]
+    a = np.array(rp) - np.array(rb)
+    assert real["information_ratio"]["value"] == pytest.approx(
+        a.mean() * 252 / (a.std(ddof=1) * math.sqrt(252)), abs=1e-4
+    )
+    p, b = np.array(rp), np.array(rb)
+
+    def g(x):
+        return float(np.prod(1 + x) ** (1 / len(x)) - 1)
+
+    assert real["up_capture"]["value"] == pytest.approx(g(p[b > 0]) / g(b[b > 0]), abs=1e-4)
+    assert real["down_capture"]["value"] == pytest.approx(g(p[b < 0]) / g(b[b < 0]), abs=1e-4)
+    assert real["active_return"]["value"] == pytest.approx(a.mean() * 252, abs=1e-4)
+
+
+def test_risk_payload_rolling_and_drawdown_table_349():
+    import numpy as np
+
+    from finresearch.portfolio import analytics_math as am
+
+    h, rp, rb = _history()
+    out = _risk(h)
+    roll = out["realised"]["rolling"]
+    assert roll["window"] == 126 and len(roll["rows"]) == len(rp) - 126 + 1
+    last = roll["rows"][-1]
+    assert last["day"] == h.days[-1].isoformat()
+    assert last["volatility"] == pytest.approx(np.std(rp[-126:], ddof=1) * math.sqrt(252), abs=1e-4)
+    assert last["beta"] == pytest.approx(
+        np.cov(rp[-126:], rb[-126:], ddof=1)[0, 1] / np.var(rb[-126:], ddof=1), abs=1e-4
+    )
+    dds = out["realised"]["drawdowns"]
+    eps = am.drawdown_episodes(h.index, top=5)
+    assert len(dds) == len(eps) <= 5
+    assert dds[0]["depth"] == pytest.approx(out["realised"]["max_drawdown"]["value"], abs=1e-4)
+    assert [x["peak"] for x in dds] == [h.days[e.peak].isoformat() for e in eps]
+    assert all(x["recovered"] is None or x["days_to_recover"] >= 0 for x in dds)
+
+
+def test_risk_payload_var_backtest_walk_forward_349():
+    import numpy as np
+
+    from finresearch.portfolio import analytics_math as am
+
+    h, rp, _ = _history()
+    vb = _risk(h)["realised"]["var_backtest"]
+    tested = len(rp) - 250
+    hits = [rp[t] < float(np.quantile(rp[t - 250 : t], 0.05)) for t in range(250, len(rp))]
+    assert vb["days"] == tested and vb["exceptions"] == sum(hits)
+    assert vb["expected"] == pytest.approx(tested * 0.05, abs=0.01)
+    assert vb["p_uc"] == pytest.approx(am.kupiec(tested, sum(hits), 0.05)[1], abs=1e-4)
+    lr_cc = am.kupiec(tested, sum(hits), 0.05)[0] + am.christoffersen_ind(hits)
+    assert vb["p_cc"] == pytest.approx(math.exp(-lr_cc / 2), abs=1e-4)
+    assert vb["verdict"] in {"consistent", "too_many", "too_few", "clustered"} and vb["note"]
+
+
+def test_risk_payload_short_or_benchmarkless_history_is_unknown_never_zero_349():
+    h, _, _ = _history(n=301)
+    real = _risk(h)["realised"]
+    assert real["var_backtest"]["reason"].startswith("needs 500") and real["var_backtest"].get("p_uc") is None
+    assert real["information_ratio"]["value"] is not None  # 300 returns are enough for the relative lines
+    h, _, _ = _history(n=100)
+    real = _risk(h)["realised"]
+    assert real["rolling"]["rows"] == [] and real["rolling"]["reason"].startswith("needs 126")
+    assert real["information_ratio"]["value"] is None and real["up_capture"]["reason"]
+    h, _, _ = _history(benchmark=False)
+    real = _risk(h)["realised"]
+    assert real["information_ratio"]["value"] is None and "NIFTYBEES" in real["information_ratio"]["reason"]
+    assert real["rolling"]["rows"] and all(x["beta"] is None for x in real["rolling"]["rows"])

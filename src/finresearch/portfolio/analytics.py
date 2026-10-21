@@ -32,6 +32,9 @@ from finresearch.signals.base import DISCLAIMER
 
 MIN_VOL, WARN_VOL = 60, 250  # trading days of returns
 MIN_BETA = 120
+ROLL_WINDOW = 126  # trading days (about 6 months) for the rolling volatility and beta (#349)
+VAR_WINDOW = 250  # walk-forward VaR backtest: estimate on the 250 days before each tested day ...
+MIN_VAR_TEST = 250  # ... and test at least 250 days: 12.5 expected exceptions at 95 %, enough to test (#399)
 MIN_VAR = 250
 MIN_SHARPE = 250
 MIN_RC = 120
@@ -253,6 +256,10 @@ def risk(
         )
         real["tracking_error"] = metric(am.tracking_error(r, rb), "fraction", n=n,
                                         how=f"stdev(portfolio - {BENCHMARK} daily returns)·√252")  # fmt: skip
+    real.update(_relative(r, rb, n))
+    real["rolling"] = _rolling(days, r, rb)
+    real["var_backtest"] = _var_backtest(r)
+    real["drawdowns"] = [_episode(days, e) for e in am.drawdown_episodes(idx, top=5)]
     # drawdown and recovery
     dd = am.drawdown_recovery(idx)
     real["max_drawdown"] = {
@@ -332,6 +339,84 @@ def risk(
             hypo["missing"] = left
     out.update(available=True, realised=real, hypothetical=hypo, stress=stress or [], value=_r(v_end))
     return out
+
+
+def _relative(r: list[float], rb: list[float] | None, n: int) -> dict[str, Any]:
+    """Information ratio, active return and up/down capture vs the benchmark (#349); unknown carries a reason."""
+    keys = ("active_return", "information_ratio", "up_capture", "down_capture")
+    units = ("fraction", "ratio", "ratio", "ratio")
+    why = (f"{BENCHMARK} history unavailable" if rb is None
+           else f"needs {MIN_BETA} daily returns; have {n}" if n < MIN_BETA else None)  # fmt: skip
+    if why:
+        return {k: metric(None, u, reason=why, n=n) for k, u in zip(keys, units, strict=True)}
+    active = [a - b for a, b in zip(r, rb, strict=True)]
+    out = {"active_return": metric(sum(active) / n * am.TRADING_DAYS, "fraction", n=n,
+                                   how=f"mean(portfolio - {BENCHMARK} daily return)·252"),
+           "information_ratio": metric(am.information_ratio(r, rb), "ratio", n=n,
+                                       how="active return / tracking error")}  # fmt: skip
+    try:
+        up, down = am.capture_ratios(r, rb)
+    except ValueError as e:
+        out["up_capture"] = metric(None, "ratio", reason=str(e), n=n)
+        out["down_capture"] = metric(None, "ratio", reason=str(e), n=n)
+    else:
+        how = "geometric mean daily return on the index's {} days / the index's own"
+        out["up_capture"] = metric(up, "ratio", n=n, how=how.format("up"))
+        out["down_capture"] = metric(down, "ratio", n=n, how=how.format("down"))
+    return out
+
+
+def _rolling(days: list[date], r: list[float], rb: list[float] | None) -> dict[str, Any]:
+    out: dict[str, Any] = {"window": ROLL_WINDOW, "rows": [],
+                           "how": f"each point: the last {ROLL_WINDOW} daily returns (about 6 months)"}  # fmt: skip
+    if len(r) < ROLL_WINDOW:
+        out["reason"] = f"needs {ROLL_WINDOW} daily returns; have {len(r)}"
+        return out
+    rows = [{"day": days[x.end + 1].isoformat(), "volatility": _r(x.volatility, 4), "beta": _r(x.beta, 4)}
+            for x in am.rolling_stats(r, rb, ROLL_WINDOW)]  # fmt: skip
+    out["rows"] = _thin(rows)
+    if rb is None:
+        out["note"] = f"{BENCHMARK} history unavailable: no rolling beta"
+    return out
+
+
+def _var_backtest(r: list[float]) -> dict[str, Any]:
+    """Walk-forward test of the 1-day 95 % historical VaR on your own returns (Kupiec, Christoffersen; #349)."""
+    need = VAR_WINDOW + MIN_VAR_TEST
+    out: dict[str, Any] = {"level": 0.95, "window": VAR_WINDOW,
+                           "how": f"each day's loss is compared with the VaR from the {VAR_WINDOW} days before it "
+                                  "(never including itself)"}  # fmt: skip
+    if len(r) < need:
+        out["reason"] = f"needs {need} daily returns (about 2 years); have {len(r)}"
+        return out
+    hits = am.var_exceptions(r, VAR_WINDOW)
+    t, x = len(hits), sum(hits)
+    lr_uc, p_uc = am.kupiec(t, x, 0.05)
+    lr_ind = am.christoffersen_ind(hits)
+    p_ind, p_cc = am.chi2_sf(lr_ind, 1), am.chi2_sf(lr_uc + lr_ind, 2)
+    if p_uc < 0.05:
+        verdict = "too_many" if x > 0.05 * t else "too_few"
+    elif p_ind < 0.05:
+        verdict = "clustered"
+    else:
+        verdict = "consistent"
+    note = {"consistent": "Losses beyond the VaR came about as often as 1 day in 20 and did not cluster.",
+            "too_many": "Losses beyond the VaR came more often than 1 day in 20: the VaR understated your risk.",
+            "too_few": "Losses beyond the VaR came less often than 1 day in 20: the VaR overstated your risk.",
+            "clustered": "The count is plausible but the exceptions bunch together: risk rose in spells the "
+                         "VaR was slow to see."}[verdict]  # fmt: skip
+    out.update(days=t, exceptions=x, expected=_r(0.05 * t, 2), lr_uc=_r(lr_uc, 3), p_uc=_r(p_uc, 4),
+               lr_ind=_r(lr_ind, 3), p_ind=_r(p_ind, 4), p_cc=_r(p_cc, 4), verdict=verdict,
+               note=note + f" Tests at p < 0.05; with {t} days the test has limited power (12.5 expected exceptions "
+                           "in 250 days at 95 %).")  # fmt: skip
+    return out
+
+
+def _episode(days: list[date], e: am.Episode) -> dict[str, Any]:
+    return {"peak": days[e.peak].isoformat(), "trough": days[e.trough].isoformat(), "depth": _r(e.depth, 4),
+            "recovered": days[e.recovered].isoformat() if e.recovered is not None else None,
+            "days_to_recover": (days[e.recovered] - days[e.trough]).days if e.recovered is not None else None,
+            "underwater_days": ((days[e.recovered] if e.recovered is not None else days[-1]) - days[e.peak]).days}  # fmt: skip
 
 
 def _sector(p: Any, sectors: dict[str, str]) -> str:
