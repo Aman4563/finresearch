@@ -23,9 +23,8 @@ plan, marked at each session's reference price in the stored NSE F&O bhavcopy.**
   otherwise it is unknown and the forecast is void, never guessed.
 - Outcome 1 if the net P&L per set > 0, else 0; the net P&L per set (Rs) is kept as the resolution value.
 - Void (unscored, counted): a leg with no stored bhavcopy row on a session before expiry day that the set is marked
-  on, a future leg (the engine marks
-  options only), an unknown exit plan or lot size. Waiting cards (no legs) and strategy checks (no exit plan) are not
-  forecasts.
+  on, a future leg (the engine marks options only), an unknown exit plan or lot size. Waiting cards (no legs) and
+  strategy checks (no exit plan) are not forecasts.
 
 ## Probabilities
 
