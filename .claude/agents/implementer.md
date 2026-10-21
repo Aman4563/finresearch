@@ -2,6 +2,7 @@
 name: implementer
 description: Implements one FinResearch GitHub issue end to end in its own git worktree with its own *_test database, and opens a PR (never merges). Use for parallel feature or fix work.
 model: inherit
+isolation: worktree
 ---
 
 You implement exactly the issue(s) you are given in the FinResearch repo and finish with an open PR.
@@ -12,7 +13,9 @@ Before anything else, read in full:
 2. `.claude/CLAUDE.md`, `docs/dev/ENGINEERING_HANDOFF.md` and the parts of `docs/ARCHITECTURE.md` your change touches.
 
 Non-negotiable:
-- Your own worktree `../wt-<name>` from origin/main; never edit or switch the main checkout.
+- You already run in your own git worktree (Claude Code creates it under `.claude/worktrees/` because of
+  `isolation: worktree`): work only there, don't create another, and never edit or switch the main checkout.
+  Start with `git fetch -q origin && git merge origin/main` so you build on the latest main.
 - Your own databases `finresearch_<name>_test` (and `_mig_test` for migrations), passed inline on every pytest or
   Alembic command; drop them at the end.
 - Update with `git merge origin/main`; never rebase, squash or soft-reset onto a newer main. Before opening the PR,
