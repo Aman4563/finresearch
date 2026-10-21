@@ -25,7 +25,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import delete, insert, select
+from sqlalchemy import delete, insert, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -202,4 +202,73 @@ async def backfill(start: date, end: date | None = None, *, today: date | None =
     finally:
         if own and http is not None:
             await http.aclose()
+    return out
+
+
+async def reconcile_history(n: int = 50, *, seed: int = 0, fetch: Callable[[str, date], Any] | None = None,
+                            now: Callable[[], datetime] | None = None, pause: float = 0.0) -> dict[str, Any]:  # fmt: skip
+    """#373 (a)'s acceptance check: `n` stored EQ stock-days, drawn reproducibly for `seed`, against NSE's
+    price-history bar (`chClosingPrice`, adapters.nse_equity.NseEquity.history), exact. One website request per
+    stock-day through the shared NSE budget; never starts between 09:00 and 16:00 IST on a weekday and stops after
+    REFUSALS_TO_STOP refusals in a row. A bar NSE does not return is listed as missing, never as a match.
+    `fetch(symbol, day)` -> the history close (tests: a fake)."""
+    from finresearch.adapters.http import now_ist
+    from finresearch.db import session_scope
+
+    now = now or now_ist
+    out: dict[str, Any] = {
+        "sampled": 0,
+        "compared": 0,
+        "matches": 0,
+        "mismatches": [],
+        "missing": [],
+        "errors": {},
+    }
+    if in_market_hours(now()):
+        out["stopped"] = "market hours (09:00-16:00 IST): no website requests; re-run after the close"
+        return out
+    with session_scope() as s:
+        rows = s.execute(text("""
+            SELECT e.day, e.symbol, e.close FROM equity_eod e JOIN equity_eod_day m ON m.day = e.day
+             WHERE m.status = 'loaded' AND e.series = 'EQ' AND e.close IS NOT NULL
+             ORDER BY md5(e.symbol || e.day::text || :seed) LIMIT :n"""), {"seed": str(seed), "n": n}).all()  # fmt: skip
+    out["sampled"] = len(rows)
+    eq = None
+    if fetch is None:
+        from finresearch.adapters.nse_equity import NseEquity
+
+        eq = NseEquity()
+
+        async def fetch(symbol: str, day: date) -> Decimal | None:
+            bars = await eq.history(symbol, day, day)
+            return next((b.close for b in bars if b.day == day), None)
+
+    refusals = 0
+    try:
+        for day, symbol, close in rows:
+            try:
+                got = await fetch(symbol, day)
+                refusals = 0
+            except Exception as e:  # recorded; a refusal streak stops the run
+                out["errors"][f"{symbol} {day}"] = f"{type(e).__name__}: {e}"[:200]
+                refusals = refusals + 1 if refused(e) else 0
+                if refusals >= REFUSALS_TO_STOP:
+                    out["stopped"] = f"NSE refused {refusals} requests in a row (403/429): stopped (#362)"
+                    break
+                continue
+            finally:
+                if pause:
+                    await asyncio.sleep(pause)
+            if got is None:
+                out["missing"].append({"symbol": symbol, "day": day.isoformat()})
+                continue
+            out["compared"] += 1
+            if Decimal(got) == close:
+                out["matches"] += 1
+            else:
+                out["mismatches"].append({"symbol": symbol, "day": day.isoformat(), "bhavcopy": str(close),
+                                          "history": str(got)})  # fmt: skip
+    finally:
+        if eq is not None:
+            await eq.nse.aclose()
     return out
