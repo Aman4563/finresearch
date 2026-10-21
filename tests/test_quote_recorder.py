@@ -306,3 +306,155 @@ def test_select_contracts_keeps_a_contract_missing_from_the_file_as_unresolved()
     assert len(got) == 84
     missing = [c for c in got if c.trading_symbol is None]
     assert [(c.strike, c.kind) for c in missing] == [(Decimal("55900"), "PE")] * 2
+
+
+# ------------------------------------------------------------------ the claimed slots
+def test_due_slot_window_trading_days_and_holidays():
+    from finresearch.monitor import quotes as job
+
+    at = lambda h, m, s=0, d=TUE: datetime.combine(d, time(h, m, s), IST)  # noqa: E731
+    assert job.due_slot(at(9, 29, 59), set()) is None
+    assert job.due_slot(at(9, 30), set()) == (at(9, 30), "quotes:2026-10-20:0930")
+    assert job.due_slot(at(9, 34, 59), set()) == (at(9, 30), "quotes:2026-10-20:0930")
+    assert job.due_slot(at(9, 35), set()) is None  # past the window: a late quote is not the 09:30 snapshot
+    assert job.due_slot(at(15, 27), set()) == (at(15, 25), "quotes:2026-10-20:1525")
+    assert job.due_slot(at(12, 1), {TUE}) is None  # NSE holiday
+    assert job.due_slot(at(12, 1, d=date(2026, 10, 24)), set()) is None  # Saturday
+
+
+# ------------------------------------------------------------------ a whole sweep against a mocked Groww
+class GrowwSweep:
+    """Answers the instruments file, the index LTP and Get Quote; `fail` symbols answer 500."""
+
+    def __init__(self, clock_t: datetime, fail: tuple[str, ...] = (), ltp_ok: bool = True) -> None:
+        self.t, self.fail, self.ltp_ok = clock_t, fail, ltp_ok
+        self.requests: list[httpx.Request] = []
+        self.csv = instruments_csv()
+
+    async def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        path = request.url.path
+        if request.url.host == "growwapi-assets.groww.in":
+            return httpx.Response(200, content=self.csv.encode())
+        if path == "/v1/live-data/ltp" and self.ltp_ok:
+            return httpx.Response(200, json={"status": "SUCCESS", "payload": {"NSE_NIFTY": 25012.4,
+                                                                              "NSE_BANKNIFTY": 56040.0}})  # fmt: skip
+        if path == "/v1/live-data/quote" and request.url.params["trading_symbol"] not in self.fail:
+            ltt = int((self.t - timedelta(seconds=5)).timestamp() * 1000)
+            return httpx.Response(200, json={"status": "SUCCESS", "payload": quote_payload(ltt_ms=ltt)})
+        return httpx.Response(500, json={"status": "FAILURE", "error": {"message": "down"}})
+
+    def calls(self, path: str) -> int:
+        return sum(1 for r in self.requests if r.url.path == path)
+
+
+@pytest.fixture
+def sweep_groww(monkeypatch, qdb):
+    class NoWait:
+        def reserve(self, key, interval):
+            return 0.0
+
+        def hold_off(self, key, seconds):
+            pass
+
+    monkeypatch.setattr(groww_budget.BUDGET, "slots", NoWait())
+
+    def install(t: datetime = AT_0930, **kw) -> GrowwSweep:
+        g = GrowwSweep(t, **kw)
+        monkeypatch.setattr(base, "TRANSPORT", httpx.MockTransport(g))
+        return g
+
+    return install
+
+
+def _slot(slot: str) -> dict:
+    from finresearch.db import session_scope
+    from finresearch.db.models import AlertEvalSlot
+
+    with session_scope() as s:
+        row = s.get(AlertEvalSlot, slot)
+        return dict(row.result) if row else {}
+
+
+async def test_sweep_records_168_quotes_once_per_slot(sweep_groww):
+    from finresearch.fnohist import quotes as q
+    from finresearch.monitor import quotes as job
+
+    g = sweep_groww()
+    res = await job.quotes_step(AT_0930, market=market(), holidays=set(), spacing_s=0)
+    assert res["quotes"]["stored"] == 168
+    assert g.calls("/v1/live-data/quote") == 168 and g.calls("/v1/live-data/ltp") == 1
+    assert {r.method for r in g.requests} == {"GET"}
+    snap = datetime.combine(TUE, time(9, 30), IST)
+    rows = q.load("NIFTY", snap, snap)
+    assert len(rows) == 84 and rows[0].meta["source"] == "groww" and rows[0].meta["underlying_ltp"] == 2501240
+    r = _slot("quotes:2026-10-20:0930")
+    assert r["status"] == "done" and r["checks"]["ok"] is True and r["checks"]["rows"] == 168
+    assert await job.quotes_step(AT_0930 + timedelta(seconds=60), market=market(), holidays=set(), spacing_s=0) == {}
+    assert g.calls("/v1/live-data/quote") == 168  # claimed: never recorded twice
+
+
+async def test_a_failed_contract_is_a_missing_row_and_fails_the_checks(sweep_groww):
+    from finresearch.monitor import quotes as job
+
+    sweep_groww(fail=("NIFTY26102025000CE",))
+    res = await job.quotes_step(AT_0930, market=market(), holidays=set(), spacing_s=0)
+    assert res["quotes"]["stored"] == 167
+    r = _slot("quotes:2026-10-20:0930")
+    assert r["status"] == "done" and r["checks"]["rows_ok"] is False and r["checks"]["ok"] is False
+    assert r["failed"] == ["NIFTY26102025000CE"]
+
+
+async def test_no_groww_session_fails_the_slot_without_nse_unless_switched_on(sweep_groww):
+    from finresearch.monitor import quotes as job
+
+    g = sweep_groww()
+    calls: list = []
+
+    async def nse_chain(sym, exp):
+        calls.append((sym, exp))
+        raise AssertionError("not called")
+
+    res = await job.quotes_step(AT_0930, market=market(token=None), holidays=set(), spacing_s=0)
+    assert res == {"quotes": "failed"} and calls == [] and g.calls("/v1/live-data/quote") == 0
+    r = _slot("quotes:2026-10-20:0930")
+    assert r["status"] == "failed" and "Groww" in r["error"]
+
+
+def nse_chain_fake(calls: list):
+    from finresearch.adapters.nse_fno import ChainRow, OptionChain, OptionQuote
+
+    async def chain(sym: str, exp: date) -> OptionChain:
+        calls.append((sym, exp))
+        spot, lo, hi, step = (Decimal("25012.4"), 24000, 26000, 50) if sym == "NIFTY" else \
+            (Decimal("56040"), 54000, 58000, 100)  # fmt: skip
+        oq = OptionQuote(last_price=Decimal("120.5"), iv=Decimal("12.3"), oi=Decimal(1000), change_in_oi=None,
+                         volume=Decimal(50), bid=Decimal("120.05"), ask=Decimal("121"))  # fmt: skip
+        rows = [ChainRow(strike=Decimal(k), call=oq, put=oq) for k in range(lo, hi + 1, step)]
+        return OptionChain(symbol=sym, expiry=exp, underlying=spot, as_of=AT_0930 - timedelta(seconds=20), rows=rows)
+
+    return chain
+
+
+async def test_nse_fallback_is_capped_at_four_chains_a_sweep_and_sixteen_a_day(sweep_groww):
+    from finresearch.fnohist import quotes as q
+    from finresearch.monitor import quotes as job
+
+    g = sweep_groww()
+    calls: list = []
+    for t in q.SNAPSHOT_TIMES:
+        now = datetime.combine(TUE, t, IST) + timedelta(seconds=5)
+        res = await job.quotes_step(now, market=market(now, token=None), nse_chain=nse_chain_fake(calls),
+                                    holidays=set(), spacing_s=0)  # fmt: skip
+        assert res["quotes"]["source"] == "nse" and res["quotes"]["stored"] == 168
+    assert len(calls) == 16 and g.calls("/v1/live-data/quote") == 0
+    assert set(calls) == {("NIFTY", date(2026, 10, 20)), ("NIFTY", date(2026, 10, 27)),
+                          ("BANKNIFTY", date(2026, 10, 28)), ("BANKNIFTY", date(2026, 11, 25))}  # fmt: skip
+    snap = datetime.combine(TUE, time(9, 30), IST)
+    (row,) = [r for r in q.load("NIFTY", snap, snap) if r.meta["strike"] == 2500000 and r.meta["option_type"] == "CE"
+              and r.meta["expiry"] == date(2026, 10, 20)]  # fmt: skip
+    assert row.meta["source"] == "nse" and row.bid_qty is None and row.depth_ask == []
+    assert row.mid == Decimal("120.525")
+    r = _slot("quotes:2026-10-20:0930")
+    assert r["source"] == "nse" and r["nse_requests"] == 4 and "no valid Groww session" in r["error"]
+    assert q.day_checks(TUE)["rows"] == 672
