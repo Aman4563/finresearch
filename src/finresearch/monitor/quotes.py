@@ -143,7 +143,8 @@ async def sweep_nse(nse_chain: Any, market: Any, snap: datetime, rows: list[dict
                     out: dict[str, Any]) -> None:  # fmt: skip
     """The fallback: one NSE chain per underlying and expiry (at most len(UNDERLYINGS) x EXPIRIES requests), the
     same ATM +/-10 strikes picked from the chain's own rows and underlying value. Expiries come from Groww's
-    instruments file, which needs no session."""
+    instruments file, which needs no session. NSE's chain gives no per-contract trade time: `exchange_at` is the
+    chain's own timestamp, so the ATM freshness check on these rows ages the chain, not the last trade."""
     from finresearch.portfolio.connectors.base import ConnectorError
 
     inst = await market.instruments()
