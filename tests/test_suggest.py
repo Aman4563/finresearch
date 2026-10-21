@@ -189,6 +189,22 @@ def test_cleared_band_and_fno_fields_save_as_the_defaults(api):
     assert bad.status_code == 422  # still range-checked
 
 
+def test_fno_max_loss_pct_is_capped_at_5_unless_overridden_350(api):
+    """#350: the per-strategy F&O max loss is at most 5% of F&O capital unless the owner overrides it explicitly. A
+    stored or sent value above 5 without the override reads as 5 (clamped, never a failed profile load)."""
+    from finresearch.suggest.profile import Profile
+
+    assert Profile(fno_max_loss_pct=Decimal(10)).fno_max_loss_pct == Decimal(5)
+    assert Profile(fno_max_loss_pct=Decimal(4)).fno_max_loss_pct == Decimal(4)
+    assert Profile(fno_max_loss_pct=Decimal(10), fno_max_loss_override=True).fno_max_loss_pct == Decimal(10)
+    p = api.get("/api/profile").json()
+    assert p["fno_max_loss_override"] is False
+    assert api.put("/api/profile", json={**p, "fno_max_loss_pct": "25"}).json()["fno_max_loss_pct"] == "5"
+    got = api.put("/api/profile", json={**p, "fno_max_loss_pct": "25", "fno_max_loss_override": True}).json()
+    assert (got["fno_max_loss_pct"], got["fno_max_loss_override"]) == ("25", True)
+    api.put("/api/profile", json=p)
+
+
 def test_probability_rule_threshold_is_range_checked_on_save_and_repaired_on_load(api, caplog):
     """Audit follow-up: `p_listing_gain < 60` (meant as 60 %) made every IPO SKIP, since P is a fraction 0..1."""
     from finresearch.db import session_scope

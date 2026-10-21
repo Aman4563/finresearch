@@ -188,7 +188,7 @@ function Candidates({ rows }: { rows: Candidate[] }) {
   );
 }
 
-const RANK: Record<string, number> = { ENTER: 0, WAIT: 1, AVOID: 2 };
+const RANK: Record<string, number> = { ENTER: 0, PAPER: 1, WAIT: 2, AVOID: 3 };
 
 function NonDirectional({ symbol, nd }: { symbol: string; nd: NonNullable<Decision["non_directional"]> }) {
   const [card, setCard] = useState<TradePlan | null | undefined>(undefined);

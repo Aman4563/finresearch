@@ -1,7 +1,8 @@
 // Trade-plan cards and the market-context panel (#317): the shapes of POST /api/fno/plan, GET /api/fno/{symbol}/suggest
 // and GET /api/fno/{symbol}/context.
 
-export type PlanAction = "ENTER" | "WAIT" | "AVOID";
+/** PAPER (#350): every check passes but no matched spec passed out of sample: paper only, 0 real-money lots */
+export type PlanAction = "ENTER" | "PAPER" | "WAIT" | "AVOID";
 
 export type Levels = { below: number | null; above: number | null };
 export type ExitLevel = { rupees: number; premium_per_share: number | null; underlying_now: Levels; underlying_at_expiry: Levels };
@@ -28,7 +29,7 @@ export type TradePlan = {
   source?: string; kind: string; action: PlanAction; qualifier: string | null; label: string; failed: string[]; reasons: string[];
   spec_key?: string;
   legs: { right: "call" | "put" | "future"; strike: number; side: "buy" | "sell"; lots: number; qty?: number; last?: number }[];
-  size?: { multiple: number; suggested: number; budget: number; risk_per_set: number | null; reason: string; capital: number; max_loss_pct: number };
+  size?: { multiple: number; suggested: number; /** real-money lots (#350): 0 unless the matched spec is a candidate */ real_lots?: number; budget: number; risk_per_set: number | null; reason: string; capital: number; max_loss_pct: number };
   entry?: { legs: EntryLeg[]; status: "ok" | "unknown"; net_mid: number | null; net_fill_now: number | null; notes: string[]; levels_priced_at: string;
     /** "bid/ask: NSE chain at HH:MM" (#324: NSE's chain when the plan's has no bid/ask), or "unknown" */
     source?: string; slippage_inr?: number | null };

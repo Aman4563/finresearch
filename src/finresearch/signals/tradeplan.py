@@ -7,8 +7,9 @@ adjustment and invalidation rules, and the evidence (the matching backtest resul
 Verdict (fincalc.tradeplan.verdict): AVOID when a hard check fails (undefined risk, over budget even at one set, a
 same-day expiry) or the matching pre-registered backtest FAILED out of sample with an expectancy ≤ 0; WAIT when any
 other check fails or is unknown (signals.fno.assess: EV after costs, IV context; plus the recipe's own entry filters);
-ENTER only when everything passes, and without a strategy that passed out of sample it is always "ENTER (no proven
-edge — size small)", sized at half the budget. The market-context indicators (signals.fno_context) never feed it.
+ENTER only when everything passes and the matched spec passed out of sample (a candidate); everything passing
+without one is "PAPER: NO PROVEN EDGE — paper only (0 real lots)" (#350), sized for paper at half the budget and
+never with real money. The market-context indicators (signals.fno_context) never feed it.
 
 Evidence matching: the legs' shape (fincalc.tradeplan.classify) is matched to a library spec of the same kind. The
 match is exact only for the spec's own underlying inside its days-to-expiry window; any other match is shown as
@@ -148,24 +149,31 @@ def _analyse(chain, lot: int, legs: list[fs.LegIn], x: Inputs) -> dict[str, Any]
                       iv_as_of=x.iv_as_of)  # fmt: skip
 
 
-def _evidence(kind: str, symbol: str, dte: int, x: Inputs, spec: Any | None) -> dict[str, Any]:
+def evidence_for(kind: str, symbol: str, dte: int, strategies: list[dict[str, Any]] | None,
+                 head: dict[str, Any] | None, spec: Any | None = None) -> dict[str, Any]:  # fmt: skip
+    """The evidence block for legs of `kind` (or for the recipe `spec`): the matched library spec, its saved backtest
+    row and level. Shared by the trade-plan card and the signal card's "Strategy check" (#350: one rule for both)."""
     exact = spec is not None and spec.underlying == symbol.upper()
     if spec is None:
         spec, exact = match_spec(kind, symbol, dte)
-    row = next((r for r in x.strategies or [] if spec and r.get("key") == spec.key), None)
+    row = next((r for r in strategies or [] if spec and r.get("key") == spec.key), None)
     level = tp.evidence_level(row)
     out = {"spec_key": spec.key if spec else None, "spec_name": spec.name if spec else None,
            "match": None if spec is None else ("exact" if exact else "related"), "status": (row or {}).get("status"),
            "level": level if exact else "none", "raw_level": level,
            "text": tp.evidence_text(row, level) if spec else tp.evidence_text(None, "none"),
-           "run": x.backtest_head, "url": "/fno/backtests"}  # fmt: skip
+           "run": head, "url": "/fno/backtests"}  # fmt: skip
     if spec is not None and not exact:
         out["text"] = (f"Related only ({spec.name}, not this underlying or expiry window): " + out["text"]
                        + " It does not change the verdict.")  # fmt: skip
-    if x.strategies is None:
+    if strategies is None:
         out["text"] = "No pre-registered backtest is saved yet: no strategy has historical evidence."
     out["spec"] = spec
     return out
+
+
+def _evidence(kind: str, symbol: str, dte: int, x: Inputs, spec: Any | None) -> dict[str, Any]:
+    return evidence_for(kind, symbol, dte, x.strategies, x.backtest_head, spec)
 
 
 def _time_exit(plan: tp.ExitPlan, expiry: date) -> dict[str, Any]:
@@ -334,11 +342,14 @@ def build(chain, lot: int, legs_in: list[fs.LegIn], x: Inputs, *, spec: Any | No
     lv = tp.levels(ol, ivs, spot, t, x.rate, exits, a["max_loss"])
     rn, rw = a["risk_neutral"], a["real_world"]
     family = "future" if kind.endswith("_future") else ("credit" if tp.is_credit(kind) else "debit")
-    label = action if qualifier is None else f"{action} ({qualifier})"
-    if action == "ENTER" and not reasons:
+    label = action if qualifier is None else qualifier if action == tp.PAPER else f"{action} ({qualifier})"
+    if action == tp.ENTER and not reasons:
         reasons.append(
             "Every check passes: defined risk, within budget, EV after costs no worse than fair, IV fits."
         )
+    elif action == tp.PAPER:
+        reasons.append("Every check passes, but no strategy that passed its pre-registered out-of-sample test "
+                       "matches these legs: paper-trade it to test it; 0 real-money lots (#350).")  # fmt: skip
     return {
         "title": title or f"{sym} {expiry:%d-%b-%Y} · {kind.replace('_', ' ')}",
         "symbol": sym, "expiry": expiry.isoformat(), "days_to_expiry": dte, "spot": spot, "lot_size": lot,
@@ -346,7 +357,8 @@ def build(chain, lot: int, legs_in: list[fs.LegIn], x: Inputs, *, spec: Any | No
         "kind": kind, "action": action, "qualifier": qualifier, "label": label, "failed": failed, "reasons": reasons,
         "legs": [{"right": y.right, "strike": y.strike, "side": y.side, "lots": y.lots, "qty": al["qty"],
                   "last": al["premium"]} for y, al in zip(legs, a["legs"], strict=True)],
-        "size": {"multiple": sz.multiple, "suggested": m if sz.suggested else 0, "budget": round(sz.budget, 2),
+        "size": {"multiple": sz.multiple, "suggested": m if sz.suggested else 0,
+                 "real_lots": min(sz.real_lots, m), "budget": round(sz.budget, 2),
                  "risk_per_set": None if sz.risk_per_multiple is None else round(sz.risk_per_multiple, 2),
                  "reason": sz.reason, "capital": x.capital, "max_loss_pct": x.max_loss_pct},
         "entry": {**limits, "levels_priced_at": entry_src, "source": src},
