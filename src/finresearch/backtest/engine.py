@@ -247,14 +247,22 @@ def max_loss_per_unit(spec: Spec, legs: list[tuple[Quote, str]], premium: float)
     return max(widths.values()) - premium
 
 
-def margin(spec: Spec, sym: str, legs: list[Leg], fwd: float, t: float, book: Book) -> float | None:
+def margin(spec: Spec, sym: str, legs: list[Leg], fwd: float, t: float, book: Book,
+           scan: dict[str, Any] | None = None) -> float | None:  # fmt: skip
     """fincalc.margin_approx on the basket; None when a leg has no IV (unknown, never 0). A covered call's margin is
-    the held stock (pledged), so it is None here and the overlay is judged on the stock's value instead."""
+    the held stock (pledged), so it is None here and the overlay is judged on the stock's value instead. `scan`: the
+    day's NSE SPAN ranges (fnohist.span.params_for, #370) when the history provides them, else the assumptions."""
     if spec.kind == "covered_call" or any(x.iv is None for x in legs):
         return None
     ml = [ma.MarginLeg(x.right, x.strike, x.qty * x.sign, x.mark, x.iv) for x in legs]
     kind = "index" if sym in INDEXES else "stock"
-    return ma.estimate(ml, px.discounted_spot(fwd, t, book.rate), t, book.rate, kind).total
+    return ma.estimate(ml, px.discounted_spot(fwd, t, book.rate), t, book.rate, kind,
+                       params=scan["params"] if scan else None, sources=scan["sources"] if scan else None).total  # fmt: skip
+
+
+def _span(h: Any, sym: str, d: date) -> dict[str, Any] | None:
+    fn = getattr(h, "span_params", None)  # a history without SPAN ranges: the labelled assumptions
+    return fn(sym, d) if fn is not None else None
 
 
 Gate = Callable[[SpecState, Day, vol.IvStats | None], str | None]
@@ -318,7 +326,7 @@ def try_enter(st: SpecState, x: Day, sym: str, h: Clocked, ivs: list[float], boo
                 for q, side, f in fills]  # fmt: skip
         costs = ch.order_costs([ch.TradeLeg("option", lg.side, lg.entry, lg.qty) for lg in legs], d,  # type: ignore[arg-type]
                                book.brokerage_per_order).total  # fmt: skip
-        return legs, costs, margin(spec, sym, legs, fwd, t, book)
+        return legs, costs, margin(spec, sym, legs, fwd, t, book, _span(h, sym, d))
 
     if spec.role == "overlay":
         lots = 1

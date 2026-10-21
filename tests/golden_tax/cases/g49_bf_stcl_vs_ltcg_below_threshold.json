@@ -1,0 +1,112 @@
+{
+  "id": "g49_bf_stcl_vs_ltcg_below_threshold",
+  "title": "Brought-forward STCL of Rs 50,000 against equity LTCG of Rs 80,000 (below Rs 1.25 lakh): set-off is compulsory",
+  "covers": [
+    "brought forward",
+    "carry forward",
+    "set-off",
+    "compulsory set-off against exempt-band LTCG",
+    "set-off before s.112A threshold"
+  ],
+  "rules": [
+    "Income-tax Act 1961 s.74 (Income-tax Act 2025 s.111 [secondary mapping, not verified]): the net capital-gains loss of a year is carried forward to the following assessment year; (1)(a) a short-term loss 'shall be set off' against any capital gain of that year; (1)(b) a long-term loss only against long-term capital gain; (1)(c) the balance is carried on; (2) not for more than eight assessment years immediately succeeding the assessment year for which it was first computed",
+    "Income-tax Act 1961 s.80 (Income-tax Act 2025 s.121 [secondary mapping, not verified]) with s.139(3) and s.139(1): a capital loss is carried forward and set off under s.74 only if it was determined in a return filed within the time allowed by s.139(1)",
+    "Income-tax Act 1961 s.112A(1) as amended by Finance (No.2) Act 2024: 12.5 % on long-term capital gains 'exceeding one lakh twenty-five thousand rupees' for transfers on/after 23-Jul-2024; the gains are those included in total income, i.e. after the s.70 / s.74 set-off",
+    "Health and Education Cess 4 % (Finance Act 2025 s.2)"
+  ],
+  "derivation": [
+    "Manual entry: STCL 50,000.00 of origin fy 2024, return on time; last_fy 2032.",
+    "OLIVE LTD: 400 @ 300.00 bought 2023-05-02, sold 2025-07-01 @ 500.00 -> proceeds 2,00,000.00, cost 1,20,000.00, LTCG 80,000.00, long 12.5 %.",
+    "s.74(1)(a): the carried loss 'shall be set off' against any capital gain of the year: mandatory wording, with no election to skip a gain. s.112A(1) then applies to the LTCG included in total income, which is the amount after the set-off.",
+    "fy 2026: 80,000 - 50,000 = 30,000.00 LTCG; bf_set_off_short 50,000.00; exemption_used 30,000.00; tax 0.00, cess 0.00, total 0.00.",
+    "Ledger: origin 2024 short, amount 50,000.00, remaining 0.00, last_fy 2032, used (the loss is used up against gain the exemption would have covered).",
+    "Alternative (set-off optional, exemption preserved): bf_set_off_short 0.00, exemption_used 80,000.00, remaining 50,000.00 available. Tax 0.00 in both."
+  ],
+  "interpretive": true,
+  "slab_rate": "0.30",
+  "holdings": [
+    {
+      "name": "OLIVE LTD",
+      "tax_class": "equity",
+      "listed": true,
+      "fmv_2018": null,
+      "sgb_original_subscriber": false,
+      "events": [
+        {
+          "day": "2023-05-02",
+          "kind": "buy",
+          "quantity": "400",
+          "price": "300.00",
+          "charges": "0"
+        },
+        {
+          "day": "2025-07-01",
+          "kind": "sell",
+          "quantity": "400",
+          "price": "500.00",
+          "charges": "0"
+        }
+      ]
+    }
+  ],
+  "tax_losses": {
+    "returns_filed_on_time": {
+      "2024": true
+    },
+    "brought_forward": [
+      {
+        "origin_fy": 2024,
+        "kind": "short",
+        "amount": "50000.00",
+        "source": "ITR AY 2024-25 Schedule CFL",
+        "apply_from_fy": 2025
+      }
+    ]
+  },
+  "through_fy": 2026,
+  "expected": {
+    "disposals": [
+      {
+        "holding": "OLIVE LTD",
+        "sold": "2025-07-01",
+        "acquired": "2023-05-02",
+        "quantity": "400",
+        "cost": "120000.00",
+        "tax_cost": "120000.00",
+        "proceeds": "200000.00",
+        "gain": "80000.00",
+        "term": "long",
+        "rate": "0.125"
+      }
+    ],
+    "open_lots": [],
+    "fy": [
+      {
+        "fy": 2026,
+        "exemption_used": "30000.00",
+        "tax": "0.00",
+        "cess": "0.00",
+        "total": "0.00",
+        "complete": true,
+        "unknown_count": 0,
+        "intraday_count": 0,
+        "exempt_total": "0.00",
+        "losses_carried_short": "0.00",
+        "losses_carried_long": "0.00",
+        "bf_set_off_short": "50000.00",
+        "bf_set_off_long": "0.00",
+        "carry_forward_complete": true
+      }
+    ],
+    "ledger": [
+      {
+        "origin_fy": 2024,
+        "kind": "short",
+        "amount": "50000.00",
+        "remaining": "0.00",
+        "last_fy": 2032,
+        "status": "used"
+      }
+    ]
+  }
+}

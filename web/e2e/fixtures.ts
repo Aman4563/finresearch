@@ -105,9 +105,18 @@ export const TAX = {
     exemption: { limit: 125000, used: 0, remaining: 125000, complete: false },
     slices: [{ bucket: "equity_st", rate_pct: 20, slab: false, long: false, gain: 1500, set_off: 0, exempted: 0, taxable: 1500 }],
     losses_carried: { short: 0, long: 0 },
+    // #344: an earlier year's loss whose return-filing status the user has not given: left out, shown as unknown
+    brought_forward: { set_off_short: 0, set_off_long: 0, used: [], complete: false, tax_if_pending_allowed: 104,
+      pending: [{ origin_fy: 2025, label: "FY 2024-25", kind: "short", remaining: 1000, status: "unknown_filing" }] },
     tax: null, cess: null, total: null, total_classified: 312, slab_rate_pct: 30, notes: [],
   }],
   disposals: [],
+  carry_forward: {
+    entries: [{ origin_fy: 2025, label: "FY 2024-25", kind: "short", amount: 1000, remaining: 1000, used: {}, apply_from_fy: 2026,
+      last_fy: 2033, last_label: "FY 2032-33", filing: "unknown", status: "unknown_filing", source: "computed", notes: [] }],
+    through_fy: 2026, ask_filing: [2025], inputs: { returns_filed_on_time: {}, brought_forward: [] },
+    law: "s.70 / s.74 / s.80 of the Income-tax Act 1961 (s.108 / s.111 / s.121 of the 2025 Act).",
+  },
   harvest: { fy: 2026, label: "FY 2026-27", days_left: 175, deadline: "2027-03-31", exemption_remaining: null,
     tax_so_far: null, complete: false, unclassified, rules_verified: true, rules_note: null, gain_harvest: [],
     loss_harvest: [], notes: [], verify: "Verify with a chartered accountant." },

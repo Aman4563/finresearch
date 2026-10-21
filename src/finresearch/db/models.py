@@ -1632,3 +1632,73 @@ class IndexEodDay(Base):
     attempts: Mapped[int] = mapped_column(Integer, default=1)
     error: Mapped[str | None] = mapped_column(String(300))
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class SpanParam(Base):
+    """One underlying's day from NSE Clearing's SPAN risk-parameter file (#370, adapters.nse_span): the underlying
+    price, the price scan range (rupees per unit; the range % is price_scan / price), the vol scan range (fraction of
+    volatility), the short-option minimum rate and the calendar spread tiers. NULL = not in the file (unknown)."""
+
+    __tablename__ = "span_param"
+    __table_args__ = (Index("ix_span_param_symbol_day", "symbol", "day"),)
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(30), primary_key=True)
+    price: Mapped[Decimal | None] = mapped_column(Numeric(16, 6))
+    price_scan: Mapped[Decimal | None] = mapped_column(Numeric(16, 4))
+    vol_scan: Mapped[Decimal | None] = mapped_column(Numeric(8, 4))
+    som_rate: Mapped[Decimal | None] = mapped_column(Numeric(16, 4))
+    spreads: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+
+
+class SpanDay(Base):
+    """The SPAN file manifest (#370): one row per day tried. status loaded / no_file / failed; `points` keeps the
+    file's 16 scenario definitions, `created` its creation stamp (YYYYMMDDhhmm)."""
+
+    __tablename__ = "span_day"
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    status: Mapped[str] = mapped_column(String(10))
+    url: Mapped[str | None] = mapped_column(String(200))
+    rows: Mapped[int | None] = mapped_column(Integer)
+    created: Mapped[str | None] = mapped_column(String(12))
+    points: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+    attempts: Mapped[int] = mapped_column(Integer, default=1)
+    error: Mapped[str | None] = mapped_column(String(300))
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class FoVolt(Base):
+    """NSE's FOVOLT row per F&O underlying and day (#370): EWMA volatilities, daily as fractions, annual = daily x
+    sqrt(365) (sigma_t = sqrt(0.995 sigma_t-1^2 + 0.005 r_t^2))."""
+
+    __tablename__ = "fo_volt"
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(30), primary_key=True)
+    underlying_close: Mapped[Decimal | None] = mapped_column(Numeric(16, 4))
+    underlying_prev_close: Mapped[Decimal | None] = mapped_column(Numeric(16, 4))
+    underlying_log_return: Mapped[Decimal | None] = mapped_column(Numeric(14, 8))
+    underlying_prev_vol: Mapped[Decimal | None] = mapped_column(Numeric(14, 8))
+    underlying_daily_vol: Mapped[Decimal | None] = mapped_column(Numeric(14, 8))
+    underlying_annual_vol: Mapped[Decimal | None] = mapped_column(Numeric(14, 8))
+    futures_close: Mapped[Decimal | None] = mapped_column(Numeric(16, 4))
+    futures_daily_vol: Mapped[Decimal | None] = mapped_column(Numeric(14, 8))
+    futures_annual_vol: Mapped[Decimal | None] = mapped_column(Numeric(14, 8))
+    applicable_daily_vol: Mapped[Decimal | None] = mapped_column(Numeric(14, 8))
+    applicable_annual_vol: Mapped[Decimal | None] = mapped_column(Numeric(14, 8))
+
+
+class MarginCheck(Base):
+    """margin_approx against Groww's basket calculator on a live basket (#370, MF16): both like for like (scan or
+    SPAN margin + exposure, no premium or charges), with the SPAN file day the estimate used (NULL: assumed ranges).
+    The P4.3 full margin engine is built only if the median |approx - Groww| / Groww exceeds 5 % or the 95th
+    percentile 15 % (fincalc.margin_approx.check_summary)."""
+
+    __tablename__ = "margin_check"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    symbol: Mapped[str] = mapped_column(String(30))
+    expiry: Mapped[date] = mapped_column(Date)
+    kind: Mapped[str] = mapped_column(String(10))  # index | stock
+    legs: Mapped[list[Any]] = mapped_column(JSONB)
+    approx_margin: Mapped[Decimal] = mapped_column(Numeric(16, 2))
+    groww_margin: Mapped[Decimal] = mapped_column(Numeric(16, 2))
+    span_day: Mapped[date | None] = mapped_column(Date)

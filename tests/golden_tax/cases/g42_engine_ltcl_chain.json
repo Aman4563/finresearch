@@ -1,0 +1,156 @@
+{
+  "id": "g42_engine_ltcl_chain",
+  "title": "LTCL of Rs 40,000 from events in FY 2024-25 (return on time) absorbed by LTCG of Rs 2.05 lakh in FY 2025-26",
+  "covers": [
+    "carry forward",
+    "set-off",
+    "engine-computed loss",
+    "brought forward",
+    "two FY blocks"
+  ],
+  "rules": [
+    "Income-tax Act 1961 s.70 (Income-tax Act 2025 s.108 [secondary mapping, not verified]): s.70(2) a short-term capital loss may be set off against any other capital gain, short-term or long-term, of the same year; s.70(3) a long-term capital loss only against long-term capital gain",
+    "Income-tax Act 1961 s.74 (Income-tax Act 2025 s.111 [secondary mapping, not verified]): the net capital-gains loss of a year is carried forward to the following assessment year; (1)(a) a short-term loss 'shall be set off' against any capital gain of that year; (1)(b) a long-term loss only against long-term capital gain; (1)(c) the balance is carried on; (2) not for more than eight assessment years immediately succeeding the assessment year for which it was first computed",
+    "Income-tax Act 1961 s.80 (Income-tax Act 2025 s.121 [secondary mapping, not verified]) with s.139(3) and s.139(1): a capital loss is carried forward and set off under s.74 only if it was determined in a return filed within the time allowed by s.139(1)",
+    "Income-tax Act 1961 s.112A(1) as amended by Finance (No.2) Act 2024: 12.5 % on long-term capital gains 'exceeding one lakh twenty-five thousand rupees' for transfers on/after 23-Jul-2024; the gains are those included in total income, i.e. after the s.70 / s.74 set-off",
+    "Health and Education Cess 4 % (Finance Act 2025 s.2)"
+  ],
+  "derivation": [
+    "GROVE LTD: 100 @ 1,000.00 bought 2022-06-01, sold 2024-09-02 @ 600.00 -> proceeds 60,000.00, cost 1,00,000.00, LTCL -40,000.00, long (12.5 % bucket, after 23-Jul-2024).",
+    "FY 2024-25 (fy 2025): no gain to absorb it -> tax 0.00, exemption_used 0.00, losses_carried_long 40,000.00. Return for fy 2025 filed on time -> carried forward; last_fy 2025 + 8 = 2033.",
+    "HAZEL LTD: 1,000 @ 200.00 bought 2023-06-01, sold 2025-07-01 @ 405.00 -> proceeds 4,05,000.00, cost 2,00,000.00, LTCG 2,05,000.00, long 12.5 %.",
+    "FY 2025-26 (fy 2026): s.74(1)(b) sets the brought-forward LTCL off: 2,05,000 - 40,000 = 1,65,000.00. bf_set_off_long 40,000.00.",
+    "s.112A: exemption_used 1,25,000.00; taxable 40,000.00; tax 40,000 x 0.125 = 5,000.00; cess 200.00; total 5,200.00.",
+    "Ledger: origin 2025 long, amount 40,000.00, remaining 0.00, last_fy 2033, used."
+  ],
+  "interpretive": false,
+  "slab_rate": "0.30",
+  "holdings": [
+    {
+      "name": "GROVE LTD",
+      "tax_class": "equity",
+      "listed": true,
+      "fmv_2018": null,
+      "sgb_original_subscriber": false,
+      "events": [
+        {
+          "day": "2022-06-01",
+          "kind": "buy",
+          "quantity": "100",
+          "price": "1000.00",
+          "charges": "0"
+        },
+        {
+          "day": "2024-09-02",
+          "kind": "sell",
+          "quantity": "100",
+          "price": "600.00",
+          "charges": "0"
+        }
+      ]
+    },
+    {
+      "name": "HAZEL LTD",
+      "tax_class": "equity",
+      "listed": true,
+      "fmv_2018": null,
+      "sgb_original_subscriber": false,
+      "events": [
+        {
+          "day": "2023-06-01",
+          "kind": "buy",
+          "quantity": "1000",
+          "price": "200.00",
+          "charges": "0"
+        },
+        {
+          "day": "2025-07-01",
+          "kind": "sell",
+          "quantity": "1000",
+          "price": "405.00",
+          "charges": "0"
+        }
+      ]
+    }
+  ],
+  "tax_losses": {
+    "returns_filed_on_time": {
+      "2025": true
+    },
+    "brought_forward": []
+  },
+  "through_fy": 2026,
+  "expected": {
+    "disposals": [
+      {
+        "holding": "GROVE LTD",
+        "sold": "2024-09-02",
+        "acquired": "2022-06-01",
+        "quantity": "100",
+        "cost": "100000.00",
+        "tax_cost": "100000.00",
+        "proceeds": "60000.00",
+        "gain": "-40000.00",
+        "term": "long",
+        "rate": "0.125"
+      },
+      {
+        "holding": "HAZEL LTD",
+        "sold": "2025-07-01",
+        "acquired": "2023-06-01",
+        "quantity": "1000",
+        "cost": "200000.00",
+        "tax_cost": "200000.00",
+        "proceeds": "405000.00",
+        "gain": "205000.00",
+        "term": "long",
+        "rate": "0.125"
+      }
+    ],
+    "open_lots": [],
+    "fy": [
+      {
+        "fy": 2025,
+        "exemption_used": "0.00",
+        "tax": "0.00",
+        "cess": "0.00",
+        "total": "0.00",
+        "complete": true,
+        "unknown_count": 0,
+        "intraday_count": 0,
+        "exempt_total": "0.00",
+        "losses_carried_short": "0.00",
+        "losses_carried_long": "40000.00",
+        "bf_set_off_short": "0.00",
+        "bf_set_off_long": "0.00",
+        "carry_forward_complete": true
+      },
+      {
+        "fy": 2026,
+        "exemption_used": "125000.00",
+        "tax": "5000.00",
+        "cess": "200.00",
+        "total": "5200.00",
+        "complete": true,
+        "unknown_count": 0,
+        "intraday_count": 0,
+        "exempt_total": "0.00",
+        "losses_carried_short": "0.00",
+        "losses_carried_long": "0.00",
+        "bf_set_off_short": "0.00",
+        "bf_set_off_long": "40000.00",
+        "carry_forward_complete": true
+      }
+    ],
+    "ledger": [
+      {
+        "origin_fy": 2025,
+        "kind": "long",
+        "amount": "40000.00",
+        "remaining": "0.00",
+        "last_fy": 2033,
+        "status": "used"
+      }
+    ]
+  }
+}
