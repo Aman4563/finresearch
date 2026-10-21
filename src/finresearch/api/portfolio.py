@@ -538,8 +538,14 @@ def add_portfolio_routes(app: FastAPI, *, scheme_rows: Callable[[], Awaitable[li
             cap = position_limit(load_profile(s))
             realised = [r for r in disposal_rows(load(s), cats) if r.fy == fiscal_year(today)]
             positions = positions_from_db(s, prices, today)
-        out = opt.suggest(positions, returns, today, realised, slab, method=method, max_position_pct=cap.pct)
+        # only a max position the user set is a hard bound; the 5 / 8 / 10 % default by risk appetite is a warning
+        # threshold (portfolio.limits) and as a bound would make most stock-only portfolios infeasible
+        explicit = cap.pct if cap.source == "profile" else None
+        out = opt.suggest(positions, returns, today, realised, slab, method=method, max_position_pct=explicit)
         out["position_limit"] = cap.to_json()
+        if explicit is None:
+            out["notes"].append(f"Your risk profile's {cap.pct:g} % single-stock warning level is not applied as a "
+                                "limit: set a max position on your profile to bound each stock.")  # fmt: skip
         return out
 
     # ------------------------------------------------------------------ imports

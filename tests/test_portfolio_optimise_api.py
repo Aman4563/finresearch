@@ -40,3 +40,11 @@ def test_optimise_route_refuses_unknown_methods(priced):
     c = priced
     assert c.get("/api/portfolio/optimise", params={"method": "mean_variance"}).status_code == 422
     assert c.get("/api/portfolio/optimise", params={"method": "hrp"}).json()["method"] == "hrp"
+
+
+def test_default_risk_limit_is_a_note_not_a_bound(priced):
+    # no max position on the profile: the 5 / 8 / 10 % default is a warning threshold, not a hard cap
+    body = priced.get("/api/portfolio/optimise").json()
+    assert body["max_position_pct"] is None
+    assert body["position_limit"]["source"] == "risk"
+    assert any("not applied as a limit" in n for n in body["notes"])

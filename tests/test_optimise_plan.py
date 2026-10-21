@@ -197,3 +197,11 @@ async def test_load_returns_maps_instruments_to_holdings_and_isolates_failures(t
     assert min(c[1] for c in f.calls if c[0] == "NSE:AAAA") <= date(
         ds[-1].year - op.HISTORY_YEARS, ds[-1].month, ds[-1].day
     )
+
+
+def test_steps_of_one_holding_follow_fifo_order():
+    # Example 1's oldest lot is a long-term gain and its newer lot a short-term loss: FIFO sells the gain lot first
+    out = run(three([(OLD, 300, 50), (date(2026, 6, 1), 300, 150)]), series([3, 1, 1]))
+    acquired = [lot["acquired"] for s in out["sells"] if s["holding_id"] == 1 for lot in s["lots"]]
+    assert acquired[0] == OLD.isoformat()
+    assert acquired == sorted(acquired)

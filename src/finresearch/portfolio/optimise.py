@@ -208,15 +208,15 @@ def _trades(by_id: Mapping[int, Position], keep: list[int], sl: Mapping[int, Any
             slab: Decimal) -> dict[str, Any]:  # fmt: skip
     fy = fiscal_year(today)
     move = {h: target[h] - w0[h] for h in keep if abs(target[h] - w0[h]) * 100 >= MIN_TRADE_PP}
-    pieces: list[Piece] = []
-    for h in sorted((h for h in move if move[h] < 0), key=lambda h: h):
+    per: list[list[Piece]] = []
+    for h in sorted(h for h in move if move[h] < 0):
         p = by_id[h]
         can = sum((x.quantity for x in sl[h].lots), ZERO)
         units = min(can, _units(Decimal(str(-move[h])) * total, p, "ROUND_HALF_UP"))
-        pieces += _sell_pieces(p, units, sl[h].lots, today) if units > 0 else []
-    pieces.sort(
-        key=lambda x: (x.category, x.pos.holding.id)
-    )  # losses first, so later gains are taxed after them
+        if units > 0 and (got := _sell_pieces(p, units, sl[h].lots, today)):
+            per.append(got)
+    # holdings whose first FIFO slice is a loss go first; each holding's own slices stay in FIFO order
+    pieces = [x for g in sorted(per, key=lambda g: (g[0].category, g[0].pos.holding.id)) for x in g]
     steps, _ = _steps(pieces, today, gains_of(base_rows), fy, slab)
     _flag_sells(steps, by_id)
     net = sum((Decimal(str(s["net"])) for s in steps), ZERO)
@@ -269,6 +269,8 @@ NOTES = [
     "Charges: STT and stamp duty only. Brokerage, DP and exchange charges are unknown and flagged on each trade; "
     "a fund sale without an exit load entered is flagged too. Costs are counted, not optimised.",
     "Buys are paid from the net sale proceeds; tax is paid later from your own money.",
+    "Returns are adjusted for the splits and bonuses your transactions record; one before you held the stock that "
+    "moved the price by less than 40 % in a day may remain in its history unadjusted.",
 ]
 
 
