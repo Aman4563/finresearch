@@ -51,7 +51,7 @@ def pct(a: Decimal, b: Decimal) -> Decimal:
 # --------------------------------------------------------------------------- data sources (test seam)
 @dataclass
 class Sources:
-    """Where readings come from; None = the live default. Each is async except `today` and `iv_series`."""
+    """Where readings come from; None = the live default. Each is async except `today` and `iv_rank_input`."""
 
     stock_quote: Callable[[str], Awaitable[Any]] | None = None  # key ("INFY" / "BSE:500209") -> Quote
     stock_inputs: Callable[[str], Awaitable[dict[str, Any]]] | None = None  # signals.stock.inputs
@@ -65,7 +65,8 @@ class Sources:
     fno_expiries: Callable[[str], Awaitable[list[date]]] | None = None
     fno_chain: Callable[[str, date], Awaitable[Any]] | None = None  # (symbol, expiry) -> OptionChain
     fno_lot: Callable[[str, date], Awaitable[int | None]] | None = None
-    iv_series: Callable[[str], list[tuple[date, float, float | None]]] | None = None
+    # symbol -> (per-session IV points, the series' label): signals.fno_context.iv_rank_input
+    iv_rank_input: Callable[[str], tuple[list[tuple[date, float | None]], dict[str, Any]]] | None = None
     today: Callable[[], date] | None = None
 
 
@@ -171,9 +172,9 @@ async def _live_lot(symbol: str, expiry: date) -> int | None:
 
 
 def _live_iv(symbol: str):
-    from finresearch.signals.fno import iv_series
+    from finresearch.signals.fno_context import iv_rank_input
 
-    return iv_series(symbol)
+    return iv_rank_input(symbol)
 
 
 def _today() -> date:
@@ -523,21 +524,23 @@ class Reader:
 
             return fno_ban_reading(self.session, sym)
         if metric in ("atm_iv", "iv_percentile"):
-            series = (SOURCES.iv_series or _live_iv)(sym)
-            if not series:
-                return unknown(
-                    f"no recorded IV for {sym} yet (the monitor records it after each close)", "iv_history"
-                )
-            last_day, last_iv = series[-1][0], series[-1][1]
+            # every reading names the series it reads (#354 f): the bhavcopy 30-day IV, its near-IV fallback or the
+            # recorded ATM IV, never "iv_history" when it was not
+            points, info = (SOURCES.iv_rank_input or _live_iv)(sym)
+            known = [(d, v) for d, v in points if v is not None]
+            if not known:
+                return unknown(f"no stored IV for {sym} yet (the nightly F&O job derives it after each close)",
+                               info.get("label", "stored IV"))  # fmt: skip
+            last_day, last_iv = known[-1]
             if metric == "atm_iv":
-                return Reading(D(round(last_iv, 3)), f"iv_history ATM IV on {last_day}", last_day.isoformat())
-            from finresearch.fincalc.volatility import iv_stats
+                return Reading(D(round(last_iv, 3)), f"{info['label']}: {last_day}", last_day.isoformat())
+            from finresearch.fincalc.volatility import iv_stats_sessions
 
-            st = iv_stats([v for _, v, _ in series])
+            st = iv_stats_sessions(points)
             if st.percentile is None:
-                return unknown(f"IV percentile for {sym}: {st.status}", "iv_history")
-            return Reading(D(round(st.percentile * 100, 2)), f"IV percentile over {st.n} recorded days to {last_day}",
-                           last_day.isoformat())  # fmt: skip
+                return unknown(f"IV percentile for {sym}: {st.status}", info["label"])
+            return Reading(D(round(st.percentile * 100, 2)), f"IV percentile of the {info['label']} over the last "
+                           f"{st.n} sessions with an IV", last_day.isoformat())  # fmt: skip
         expiry = await self._expiry(sym, params)
         if metric == "days_to_expiry":
             return Reading(Decimal((expiry - _today()).days), f"NSE contract info: expiry {expiry}")

@@ -42,7 +42,7 @@ export type BacktestRun = {
 };
 
 export type Registration = {
-  version: string; hash: string; registered_on: string; matches_code: boolean; note: string; variants_tried: number;
+  version: string; hash: string; registered_on: string; matches_spec: boolean; matches_code?: boolean; hash_covers: string; note: string; variants_tried: number;
   specs: Record<string, unknown>[]; book: Record<string, unknown>; criteria: Record<string, unknown>;
   windows: { is: [string, string]; oos_from: string }; doc: string; deflated_sharpe_source: string;
 };

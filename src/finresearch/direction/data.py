@@ -2,7 +2,8 @@
 app's own, or a read-only market-data copy (`--history-url`). Every session runs `SET TRANSACTION READ ONLY` first.
 
 Sessions are the days with stored bhavcopy rows for the underlying. Per session: the 30-day IV, near/next ATM IV and
-25-delta skew (fno_iv_eod); total put / call option OI and futures OI and the nearest option expiry (fno_bhav); the
+25-delta skew (fno_iv_eod); total put / call option OI and futures OI (every stored contract, as registered; also split
+into contracts with expiry > day and those expiring that day, OI_NOTE) and the nearest option expiry (fno_bhav); the
 front future's high/low/close; the bhavcopy's underlying value (2024 on); FII and Pro participant OI
 (fno_participant_oi, market-wide); a stored index close (`index_eod`) when the database has that table.
 The daily return (features.DayRow.ret): index close, else underlying value, else the front future (the earliest expiry
@@ -56,6 +57,12 @@ def load(
                    sum(oi) FILTER (WHERE instrument IN ('IDO','STO') AND option_type = 'CE') AS call_oi,
                    sum(oi) FILTER (WHERE instrument IN ('IDF','STF')) AS fut_oi,
                    max(underlying) AS und,
+                   sum(oi) FILTER (WHERE instrument IN ('IDO','STO') AND option_type = 'PE' AND expiry > day),
+                   sum(oi) FILTER (WHERE instrument IN ('IDO','STO') AND option_type = 'CE' AND expiry > day),
+                   sum(oi) FILTER (WHERE instrument IN ('IDF','STF') AND expiry > day),
+                   sum(oi) FILTER (WHERE instrument IN ('IDO','STO') AND option_type = 'PE' AND expiry = day),
+                   sum(oi) FILTER (WHERE instrument IN ('IDO','STO') AND option_type = 'CE' AND expiry = day),
+                   sum(oi) FILTER (WHERE instrument IN ('IDF','STF') AND expiry = day),
                    min(expiry) FILTER (WHERE instrument IN ('IDO','STO') AND expiry >= day) AS near_exp
             FROM fno_bhav WHERE symbol = :s AND day <= :cut GROUP BY day ORDER BY day"""),
                         {"s": sym, "cut": cut}).all()  # fmt: skip
@@ -84,23 +91,21 @@ def load(
     rows: list[DayRow] = []
     checks = {"pairs": 0, "sign_agree": 0, "diff_sq": 0.0, "fut": [], "und": []}
     prev: DayRow | None = None
-    for d, put_oi, call_oi, fut_oi, und, near_exp in agg:
+    for d, put_oi, call_oi, fut_oi, und, *split, near_exp in agg:
         ivr = iv.get(d)
         u = _f(und) if und is not None else (_f(ivr[5]) if ivr is not None else None)
         r = DayRow(d, close=idx.get(d, u), iv_30=_f(ivr[1]) if ivr else None, near_iv=_f(ivr[2]) if ivr else None,
                    next_iv=_f(ivr[3]) if ivr else None, skew_25d=_f(ivr[4]) if ivr else None, put_oi=_f(put_oi),
                    call_oi=_f(call_oi), fut_oi=_f(fut_oi), near_expiry=near_exp, participants=parts.get(d))  # fmt: skip
+        (r.put_oi_live, r.call_oi_live, r.fut_oi_live, r.put_oi_expiring, r.call_oi_expiring,
+         r.fut_oi_expiring) = (_f(x) for x in split)  # fmt: skip
         r.extra["underlying"] = u  # type: ignore[assignment]
         fut_ret = None
         if prev is not None:
             p0, p1 = by_day.get(prev.day, {}), by_day.get(d, {})
-            common = sorted(e for e in p1 if e in p0 and e > prev.day and p0[e][3] and p1[e][3])
-            if common:
-                e = common[0]
-                hi, lo, cl, st = p1[e]
-                r.fut_expiry, r.fut_high, r.fut_low, r.fut_close = e, hi, lo, cl or st
-                r.fut_prev_close = p0[e][2] or p0[e][3]
-                fut_ret = math.log(st / p0[e][3])  # type: ignore[operator]
+            e = set_front_future(r, p0, p1, prev.day)
+            if e is not None:
+                fut_ret = math.log(p1[e][3] / p0[e][3])  # type: ignore[operator]
             u0 = prev.extra.get("underlying")
             if d in idx and prev.day in idx:
                 r.ret, r.ret_source = math.log(idx[d] / idx[prev.day]), "index"
@@ -118,7 +123,28 @@ def load(
         rows.append(r)
         prev = r
     return rows, {"return_proxy_check": _proxy_check(checks), "index_eod": bool(idx),
-                  "participant_days": sum(1 for r in rows if r.participants)}  # fmt: skip
+                  "participant_days": sum(1 for r in rows if r.participants), "oi_note": OI_NOTE}  # fmt: skip
+
+
+def set_front_future(r: DayRow, p0: dict[date, tuple], p1: dict[date, tuple], prev_day: date) -> date | None:
+    """Set r's front-future fields from the previous and this session's futures ({expiry: (high, low, close, settle)}):
+    the earliest expiry after the previous session with a settlement on both days. Returns that expiry (or None)."""
+    common = sorted(e for e in p1 if e in p0 and e > prev_day and p0[e][3] and p1[e][3])
+    if not common:
+        return None
+    e = common[0]
+    hi, lo, cl, st = p1[e]
+    r.fut_expiry, r.fut_high, r.fut_low, r.fut_close = e, hi, lo, cl or st
+    r.fut_prev_close = p0[e][2] or p0[e][3]
+    return e
+
+
+OI_NOTE = (
+    "The registered OI features (pcr_oi, pcr_chg_5, opt_oi_chg_5, fut_oi_chg_5) sum every stored contract, "
+    "including those expiring that day: on expiry days NIFTY's option OI then exceeds NSE's participant totals "
+    "by 65-81 % and the features jump. The sums over contracts with expiry > day (which reconcile within 0.01 %) "
+    "and the expiring OI are loaded separately; a model reads them only as a disclosed new variant (#354 a)."
+)
 
 
 def _proxy_check(c: dict[str, Any]) -> dict[str, Any] | None:
