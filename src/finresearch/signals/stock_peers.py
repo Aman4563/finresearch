@@ -550,7 +550,8 @@ async def build(eq: Any, today: date, symbols: list[str] | None = None, tracked:
     if eod is not None:
         eod.save_meta()
     return {"price_source": "equity_eod" if eod is not None else "quote",
-            "requests": dict(eod.counts) if eod is not None else None,"version": STORE_VERSION, "as_of": today.isoformat(), "generated_at": datetime.now(UTC).isoformat(),
+            "requests": dict(eod.counts) if eod is not None else None,
+            "version": STORE_VERSION, "as_of": today.isoformat(), "generated_at": datetime.now(UTC).isoformat(),
             "universe": UNIVERSE_NAME, "universe_source": UNIVERSE_URL,
             "extended": {"outside_base": len(extras), "industry_peers": len(broad["symbols"]),
                          "source": BROAD_URL if extras else None, "quotes": broad["quotes"],
