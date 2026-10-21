@@ -12,6 +12,9 @@
 #   BACKUP_DIR                default: <repo>/data/backups
 #   DOCS_DIR                  default: <repo>/data/docs
 #   KEEP                      how many dumps to keep (default 14)
+#   FINRESEARCH_BACKUP_OFFSITE_DIR  when set (env or the app's settings), also push encrypted off-machine copies of
+#                             the database and its forward-only tables there (`finresearch backup offsite`, #375);
+#                             a failed copy keeps the local dump and exits 4
 set -euo pipefail
 umask 077
 
@@ -29,6 +32,7 @@ URL="${FINRESEARCH_DATABASE_URL:-}"
 if [ -z "$URL" ]; then
   URL="$(cd "$REPO" && uv run --quiet python -c 'from finresearch.config import get_settings; print(get_settings().database_url)')"
 fi
+APP_URL="$URL"
 URL="${URL/+psycopg2/}"  # SQLAlchemy driver suffixes: pg_dump wants a plain libpq URL
 URL="${URL/+psycopg/}"
 
@@ -60,3 +64,15 @@ ls -1 "$BACKUP_DIR"/finresearch-*.dump 2>/dev/null | sort -r | tail -n +"$((KEEP
 done
 
 echo "backup: wrote $OUT ($(du -h "$OUT" | cut -f1)); keeping the newest $KEEP"
+
+OFFSITE="${FINRESEARCH_BACKUP_OFFSITE_DIR:-}"
+if [ -z "$OFFSITE" ]; then
+  OFFSITE="$(cd "$REPO" && uv run --quiet python -c 'from finresearch.config import get_settings; print(get_settings().backup_offsite_dir or "")')"
+fi
+if [ -n "$OFFSITE" ]; then
+  if ! (cd "$REPO" && FINRESEARCH_DATABASE_URL="$APP_URL" FINRESEARCH_BACKUP_OFFSITE_DIR="$OFFSITE" \
+        uv run --quiet finresearch backup offsite); then
+    echo "backup: the off-machine copy FAILED (the local dump above is kept); see docs/BACKUPS.md" >&2
+    exit 4
+  fi
+fi

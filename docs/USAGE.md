@@ -50,6 +50,24 @@ Retention (the monitor runs it weekly, early on Monday IST; `monitor/retention.p
 - Never deleted: research packs and reports, backups (`scripts/backup.sh` keeps the newest 14), documents, run
   transcripts and the validation archive (`data/archive`).
 
+### Backups and research batches
+
+```bash
+scripts/backup.sh                                   # nightly local dump; also off-machine when a destination is set
+uv run finresearch backup init-key                  # once: the off-machine copies' key, in the Keychain
+uv run finresearch backup import-key                # a new Mac: install the escrowed key (hidden prompt / stdin)
+uv run finresearch backup offsite                   # encrypted copies of the database and its forward-only tables
+uv run finresearch backup offsite --vault           # the vault database, once after a load (keeps 2 copies)
+uv run finresearch backup status                    # exit 1 unless every forward-only table has a copy <= 1 day old
+uv run finresearch backup drill                     # quarterly: restore the newest copy into a scratch *_test database
+uv run finresearch batch run -- uv run finresearch fno backfill --from 2022-01-01   # outside 09:00-15:45 IST only
+```
+
+The off-machine destination is `FINRESEARCH_BACKUP_OFFSITE_DIR`, a folder that must already exist (a mounted drive,
+NAS share or cloud-synced folder); copies are encrypted on this Mac first. Details: `docs/BACKUPS.md`.
+`batch run` exits 75 when it defers a job (`--wait` sleeps until 15:45 IST instead), runs the job at background
+CPU and I/O priority, and pauses it while the market is open.
+
 ### Which requests write
 
 GET requests don't change your records, the alert inputs or the forecast ledger:

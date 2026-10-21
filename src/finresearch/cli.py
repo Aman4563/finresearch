@@ -934,6 +934,139 @@ def secrets_migrate(
     console.print(f"[green]moved {rep.moved} secret field(s)")
 
 
+backup_app = typer.Typer(
+    no_args_is_help=True, help="Encrypted off-machine backup copies and restore drills (docs/BACKUPS.md)"
+)
+app.add_typer(backup_app, name="backup")
+
+
+def _offsite_dir():
+    from finresearch.config import get_settings
+
+    return get_settings().backup_offsite_dir
+
+
+@backup_app.command("init-key")
+def backup_init_key() -> None:
+    """Create the 32-byte backup key in the Keychain once (refuses if one exists). Never prints the key."""
+    from finresearch.backups.offsite import OffsiteError, init_key
+
+    try:
+        ref = init_key()
+    except OffsiteError as e:
+        console.print(f"[red]{e}")
+        raise typer.Exit(1) from None
+    console.print(f"[green]backup key created ({ref}); keep a second copy of it (docs/BACKUPS.md)")
+
+
+@backup_app.command("import-key")
+def backup_import_key() -> None:
+    """Install an escrowed backup key (base64, typed or piped on stdin, never an argument) on a new Mac."""
+    from finresearch.backups.offsite import OffsiteError, import_key
+
+    value = typer.prompt("Backup key (base64)", hide_input=True)
+    try:
+        ref = import_key(value)
+    except OffsiteError as e:
+        console.print(f"[red]{e}")
+        raise typer.Exit(1) from None
+    console.print(f"[green]backup key installed ({ref})")
+
+
+@backup_app.command("offsite")
+def backup_offsite(
+    vault: bool = typer.Option(False, "--vault", help="Copy the vault database instead (keeps 2 copies)"),
+) -> None:
+    """Dump the database and its forward-only tables, encrypt them and copy them to FINRESEARCH_BACKUP_OFFSITE_DIR."""
+    from finresearch.backups.offsite import OffsiteError, backup_now
+
+    try:
+        made = backup_now(None, _offsite_dir(), kinds=("vault",) if vault else ("db", "tables"))
+    except (OffsiteError, RuntimeError) as e:
+        console.print(f"[red]offsite: {e}")
+        raise typer.Exit(1) from None
+    for kind, copy in made.items():
+        console.print(f"offsite: {kind} -> {copy.name} ({copy.stat().st_size} bytes, encrypted)")
+
+
+@backup_app.command("status")
+def backup_status() -> None:
+    """Exit 1 unless every forward-only table has an off-machine copy at most a day old and a drill passed this
+    quarter. An unreadable destination counts as not ok."""
+    from finresearch.backups.offsite import status
+
+    st = status(_offsite_dir())
+    for t in st["tables"]:
+        mark = "[green]ok" if t["ok"] else f"[red]NOT OK: {t['reason']}"
+        console.print(f"{t['table']}: copied {t['copied_at'] or 'never'} {mark}")
+    d = st["drill"]
+    console.print(
+        f"restore drill: {d['at'] or 'never'} " + ("[green]ok" if d["ok"] else f"[red]NOT OK: {d['reason']}")
+    )
+    if not st["ok"]:
+        raise typer.Exit(1)
+
+
+@backup_app.command("drill")
+def backup_drill(
+    kind: str = typer.Option("tables", help="Which copy to restore: tables | db | vault"),
+    scratch: str | None = typer.Option(
+        None, help="New scratch database (must end in _test; default <db>_drill_test)"
+    ),
+    keep_db: bool = typer.Option(False, "--keep-db", help="Leave the scratch database for inspection"),
+) -> None:
+    """Restore the newest off-machine copy into a NEW scratch *_test database and compare row counts with its
+    manifest; the result is logged at the destination. Exit 1 on a failed drill, 2 on a refused target."""
+    from finresearch.backups.drill import DrillRefused, run
+    from finresearch.backups.offsite import OffsiteError
+
+    try:
+        res = run(_offsite_dir(), kind=kind, scratch=scratch, keep_db=keep_db)
+    except DrillRefused as e:
+        console.print(f"[red]drill refused: {e}")
+        raise typer.Exit(2) from None
+    except OffsiteError as e:
+        console.print(f"[red]drill: {e}")
+        raise typer.Exit(1) from None
+    if res.get("skipped"):
+        console.print(f"[red]drill: {res['skipped']}")
+        raise typer.Exit(1)
+    for t, n in sorted((res["expected"] or {}).items()):
+        got = (res["restored"] or {}).get(t)
+        console.print(f"{t}: manifest {n}, restored {got}" + ("" if got == n else " [red]MISMATCH"))
+    if not res["ok"]:
+        console.print(f"[red]drill FAILED: {res['error'] or 'row counts differ'}")
+        raise typer.Exit(1)
+    console.print(f"[green]drill passed: {res['copy']} restored into {res['scratch']}")
+
+
+batch_app = typer.Typer(
+    no_args_is_help=True, help="Research batches outside market hours (finresearch.batchwindow)"
+)
+app.add_typer(batch_app, name="batch")
+
+
+@batch_app.command("run", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def batch_run(
+    cmd: list[str] = typer.Argument(..., help="The command, after --"),
+    wait: bool = typer.Option(
+        False, "--wait", help="Sleep until 15:45 IST instead of exiting 75 when deferred"
+    ),
+    cpu_seconds: int | None = typer.Option(None, help="Hard CPU-time cap for the job (RLIMIT_CPU)"),
+) -> None:
+    """Run a research batch (backfill, fit, bootstrap, simulation) only outside 09:00-15:45 IST on trading days,
+    at background CPU/I-O priority, paused while the market is open. Exit 75 when deferred, else the job's code."""
+    from finresearch.batchwindow import run_batch
+
+    res = run_batch(cmd, wait=wait, cpu_seconds=cpu_seconds)
+    if res.deferred:
+        console.print(f"batch: deferred during market hours; start again after {res.resume_at:%H:%M} IST")
+        raise typer.Exit(75)
+    if res.paused_s:
+        console.print(f"batch: paused {res.paused_s / 60:.0f} min while the market was open")
+    raise typer.Exit(res.returncode or 0)
+
+
 monitor_app = typer.Typer(
     no_args_is_help=True, help="Monitoring after the report: subscription, listing, lock-ins"
 )
