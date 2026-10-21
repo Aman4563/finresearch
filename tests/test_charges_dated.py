@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
+from urllib.parse import urlparse
 
 import pytest
 
@@ -78,4 +79,5 @@ def test_exercise_stt_and_the_verified_status():
     assert {
         r[k].status for k in ("stt_option_sell", "stt_futures_sell", "exchange_option", "exchange_futures")
     } == {"verified"}
-    assert "nseindia.com" in r["stt_option_sell"].source and "nseindia.com" in r["exchange_option"].source
+    hosts = {urlparse(r[k].source).hostname for k in ("stt_option_sell", "exchange_option")}
+    assert hosts <= {"nsearchives.nseindia.com", "archives.nseindia.com"}  # NSE's own circulars
