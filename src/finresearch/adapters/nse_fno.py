@@ -186,7 +186,7 @@ class NseFno:
 
     async def closes(self, symbol: str, start: date, end: date) -> list[tuple[date, Decimal]]:
         """Daily closes of the underlying, oldest first: NSE's index history for indices, the equity history for
-        stocks."""
+        stocks (split- and bonus-adjusted; NseError when the corporate actions cannot be fetched, #369)."""
         sym = symbol.upper()
         if sym in INDICES:
             # the API returns at most about 70 rows from the start of the range: ask in 60-day windows
@@ -210,12 +210,14 @@ class NseFno:
         async with NseEquity() as eq:
             bars, _partial = await walk_history(lambda lo, hi: eq.history(sym, lo, hi), start, end)
             bars = [b for b in bars if b.close]
+            # without the actions a bonus would read as a fake -50 % day, so the closes are unknown, never silently
+            # unadjusted (#369)
             try:
                 actions = [(a.ex_date, a.subject) for a in await eq.corporate_actions(sym) if a.ex_date]
-            except (
-                Exception
-            ):  # unadjusted closes still serve; an unexplained jump is the signal's anomaly to flag
-                actions = []
+            except Exception as exc:
+                raise NseError(
+                    f"{sym}: corporate actions unavailable, closes not adjustable ({exc})"
+                ) from exc
         if not bars:
             return []
         adj = adjust_for_actions([b.day for b in bars], [float(b.close) for b in bars], actions)

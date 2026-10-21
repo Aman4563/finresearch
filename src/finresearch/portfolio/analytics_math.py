@@ -25,10 +25,22 @@ Formulas (research note "portfolio-insights" §1.7, §1.8, §1.4, §1.17):
   each outflow sells them; Kaplan–Schoar PME = (Σ out_t·B_T/B_t + V_T) / Σ in_t·B_T/B_t (> 1: the portfolio did better
   than the benchmark with the same money at the same times);
 - regular → direct break-even years = one-off switch cost / yearly TER saving.
+
+Benchmark-relative and rolling views (#349):
+- information ratio = mean(r_p - r_b)·252 / tracking error (Grinold–Kahn, active return per unit of active risk);
+- up / down capture = G(r_p | r_b > 0) / G(r_b | r_b > 0) and the same on r_b < 0 days, G the geometric mean per day
+  (Morningstar's capture-ratio method, applied to daily rather than monthly returns; days with r_b = 0 are left out);
+- rolling volatility and beta: the formulas above over each trailing window of `window` returns;
+- drawdown episodes: every spell below a running peak (peak, trough, first day back at the peak), deepest first;
+- VaR backtest, walk-forward: day t's 1-day historical VaR is estimated from the `window` returns before t only, and
+  an exception is r_t < -VaR_t. Kupiec unconditional coverage LR_uc = -2 ln[(1-p)^(T-x) p^x] + 2 ln[(1-x/T)^(T-x)
+  (x/T)^x] ~ χ²(1); Christoffersen independence LR_ind from the 0/1 transition counts ~ χ²(1); LR_cc = LR_uc + LR_ind
+  ~ χ²(2) (Kupiec 1995; Christoffersen 1998). χ²(1) survival = erfc(√(x/2)), χ²(2) survival = e^(-x/2), both exact.
 """
 
 from __future__ import annotations
 
+import itertools
 import math
 import statistics
 from collections.abc import Sequence
@@ -94,6 +106,130 @@ def tracking_error(rp: Sequence[float], rb: Sequence[float], periods: int = TRAD
     if len(rp) != len(rb) or len(rp) < 3:
         raise ValueError("need at least 3 paired returns")
     return statistics.stdev([a - b for a, b in zip(rp, rb, strict=True)]) * math.sqrt(periods)
+
+
+def information_ratio(rp: Sequence[float], rb: Sequence[float], periods: int = TRADING_DAYS) -> float:
+    te = tracking_error(rp, rb, periods)
+    if te == 0:
+        raise ValueError("tracking error is zero")
+    return statistics.fmean([a - b for a, b in zip(rp, rb, strict=True)]) * periods / te
+
+
+MIN_CAPTURE_DAYS = 20  # up days and down days each
+
+
+def capture_ratios(rp: Sequence[float], rb: Sequence[float]) -> tuple[float, float]:
+    """(up capture, down capture) as ratios (1.0 = moved as much as the benchmark on those days)."""
+    if len(rp) != len(rb):
+        raise ValueError("need paired returns")
+
+    def g(xs: list[float]) -> float:
+        return math.exp(statistics.fmean([math.log1p(x) for x in xs])) - 1
+
+    out = []
+    for side in (1, -1):
+        pairs = [(a, b) for a, b in zip(rp, rb, strict=True) if b * side > 0]
+        if len(pairs) < MIN_CAPTURE_DAYS:
+            raise ValueError(
+                f"needs {MIN_CAPTURE_DAYS} {'up' if side > 0 else 'down'} days; have {len(pairs)}"
+            )
+        out.append(g([a for a, _ in pairs]) / g([b for _, b in pairs]))
+    return out[0], out[1]
+
+
+@dataclass(frozen=True)
+class Rolling:
+    end: int  # position of the window's last return
+    volatility: float
+    beta: float | None  # None without a benchmark (or one with no variance in the window)
+
+
+def rolling_stats(rp: Sequence[float], rb: Sequence[float] | None, window: int) -> list[Rolling]:
+    """Volatility and beta over each trailing `window` of returns; nothing before the first full window."""
+    out = []
+    for t in range(window - 1, len(rp)):
+        p = rp[t - window + 1 : t + 1]
+        b = None
+        if rb is not None:
+            try:
+                b = beta(p, rb[t - window + 1 : t + 1])
+            except ValueError:
+                b = None
+        out.append(Rolling(t, annualised_vol(p), b))
+    return out
+
+
+@dataclass(frozen=True)
+class Episode:
+    peak: int
+    trough: int
+    recovered: int | None  # None: still below that peak at the last point
+    depth: float  # trough / peak - 1, < 0
+
+
+def drawdown_episodes(index: Sequence[float], top: int = 5) -> list[Episode]:
+    """Every spell below a running peak, deepest first (ties: the earlier first), at most `top`."""
+    eps, peak, trough, start = [], 0, None, None
+    for t in range(1, len(index)):
+        if index[t] >= index[peak]:
+            if start is not None:
+                eps.append(Episode(peak, trough, t, index[trough] / index[peak] - 1))
+                start = None
+            peak = t
+        else:
+            if start is None:
+                start, trough = t, t
+            elif index[t] < index[trough]:
+                trough = t
+    if start is not None:
+        eps.append(Episode(peak, trough, None, index[trough] / index[peak] - 1))
+    return sorted(eps, key=lambda e: (e.depth, e.peak))[:top]
+
+
+def var_exceptions(returns: Sequence[float], window: int = 250, level: float = 0.95) -> list[bool]:
+    """Walk-forward exceptions: day t (t >= window) against the historical VaR of returns[t-window:t]."""
+    return [
+        returns[t] < -historical_var(returns[t - window : t], level)[0] for t in range(window, len(returns))
+    ]
+
+
+def _xlogy(x: float, y: float) -> float:
+    return 0.0 if x == 0 else x * math.log(y)
+
+
+def kupiec(n: int, x: int, p: float) -> tuple[float, float]:
+    """(LR_uc, p-value) for x exceptions in n days at exception rate p."""
+    if n <= 0 or not 0 <= x <= n:
+        raise ValueError("need 0 <= x <= n and n > 0")
+    lr = -2 * (_xlogy(n - x, 1 - p) + _xlogy(x, p)) + 2 * (_xlogy(n - x, 1 - x / n) + _xlogy(x, x / n))
+    lr = max(lr, 0.0)
+    return lr, chi2_sf(lr, 1)
+
+
+def christoffersen_ind(hits: Sequence[bool | int]) -> float:
+    """LR_ind: do exceptions cluster (does yesterday's exception change today's chance of one)?"""
+    n = [[0, 0], [0, 0]]
+    for a, b in itertools.pairwise(hits):
+        n[int(a)][int(b)] += 1
+    n00, n01, n10, n11 = n[0][0], n[0][1], n[1][0], n[1][1]
+    tot = n00 + n01 + n10 + n11
+    if tot == 0:
+        raise ValueError("need at least 2 days")
+    pi = (n01 + n11) / tot
+    p01 = n01 / (n00 + n01) if n00 + n01 else 0.0
+    p11 = n11 / (n10 + n11) if n10 + n11 else 0.0
+    l0 = _xlogy(n00 + n10, 1 - pi) + _xlogy(n01 + n11, pi)
+    l1 = _xlogy(n00, 1 - p01) + _xlogy(n01, p01) + _xlogy(n10, 1 - p11) + _xlogy(n11, p11)
+    return max(-2 * (l0 - l1), 0.0)
+
+
+def chi2_sf(x: float, df: int) -> float:
+    """χ² survival function for 1 or 2 degrees of freedom (closed forms)."""
+    if df == 1:
+        return math.erfc(math.sqrt(max(x, 0.0) / 2))
+    if df == 2:
+        return math.exp(-max(x, 0.0) / 2)
+    raise ValueError("df must be 1 or 2")
 
 
 @dataclass(frozen=True)

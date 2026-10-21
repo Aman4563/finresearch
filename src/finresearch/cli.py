@@ -1150,6 +1150,17 @@ def forecasts_backfill() -> None:
     console.print(f"{len(ids)} forecast(s) logged or refreshed: {ids}")
 
 
+@forecasts_app.command("cards")
+def forecasts_cards() -> None:
+    """Record every logged F&O card (card_log) that has no forecast yet (#376; the monitor also does this hourly)."""
+    from finresearch.db import session_scope
+    from finresearch.fnobook import card_forecasts
+
+    with session_scope() as s:
+        n = card_forecasts.record_pending(s)
+    console.print(f"{n} card forecast(s) recorded")
+
+
 @forecasts_app.command("resolve")
 def forecasts_resolve(
     recheck: bool = typer.Option(
