@@ -100,7 +100,15 @@ def close_checks(s: Session, day: date) -> list[Check]:
         select(func.count(), func.count().filter(C.matched.is_(False)), func.count().filter(rel > CLOSE_WARN_TOL),
                func.count().filter(rel.is_(None)), func.max(rel)).where(C.day == day)).one()  # fmt: skip
     if not n:
-        return [Check("groww_close", "groww_vs_official", "unknown", note=f"no close checks for {day}", critical=False)]
+        return [
+            Check(
+                "groww_close",
+                "groww_vs_official",
+                "unknown",
+                note=f"no close checks for {day}",
+                critical=False,
+            )
+        ]
     tol = f"{CLOSE_WARN_TOL * 100:.0f} %"
     parts = [f"{beyond}/{n} Groww closes differ from the official close by more than {tol}" if beyond else
              f"{unmatched} of {n} differ by more than ₹0.01 (last trade vs 30-minute average), all within {tol}"]  # fmt: skip

@@ -121,7 +121,10 @@ def test_groww_close_warns_only_beyond_the_ltp_vs_vwap_tolerance(clean):
         s.flush()
         c = by_check(misc.close_checks(s, DAY))["groww_vs_official"]
     assert (c.status, c.value) == ("warn", 1)
-    assert "1/4 Groww closes differ from the official close by more than 2 %" in c.note and "max 3.00 %" in c.note
+    assert (
+        "1/4 Groww closes differ from the official close by more than 2 %" in c.note
+        and "max 3.00 %" in c.note
+    )
 
 
 def test_groww_close_with_no_official_close_is_never_ok(clean):
