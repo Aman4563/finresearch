@@ -204,3 +204,12 @@ def test_event_dates_and_strip_read_the_calendar_only_when_covered(env):
         ("2026-10-01", "rbi"),
         ("2026-10-06", "expiry"),
     ]
+
+
+def test_a_rescheduled_meeting_shows_the_old_day_until_the_notice_and_the_new_day_after():
+    old = cal.Event(**{**_ev("rbi_mpc", date(2022, 2, 9), date(2021, 3, 31)).__dict__,
+                       "withdrawn_since": datetime(2022, 2, 6, tzinfo=IST)})  # fmt: skip
+    new = _ev("rbi_mpc", date(2022, 2, 10), date(2022, 2, 6))
+    before, after = datetime(2022, 2, 1, 15, 30, tzinfo=IST), datetime(2022, 2, 7, 15, 30, tzinfo=IST)
+    assert [e.day for e in cal.known_at([old, new], before)] == [date(2022, 2, 9)]
+    assert [e.day for e in cal.known_at([old, new], after)] == [date(2022, 2, 10)]

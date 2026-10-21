@@ -1,7 +1,7 @@
 """Pure point-in-time rules of the event calendar (#367), no database.
 
-* Point in time: an event (or a coverage statement) is usable at time t only if known_since <= t, so a backtest
-  replaying day t never sees a meeting announced after t.
+* Point in time: an event (or a coverage statement) is usable at time t only if known_since <= t (and, for a date
+  later moved, t < withdrawn_since), so a backtest replaying day t never sees a meeting announced after t.
 * Coverage: an empty answer is "no events" only for event types whose schedule is known through the end of the window
   (a `Coverage` row known at t); any tier-1 type without such coverage makes the check "unknown", never "none".
 * India session: an event released after NSE's 15:30 IST close (FOMC at 14:00 ET, US CPI at 08:30 ET) moves Indian
@@ -39,6 +39,8 @@ class Event:
     source_url: str
     known_since: datetime  # aware: when the schedule announcing this event was public
     known_since_url: str | None = None
+    # a rescheduled or cancelled date: unusable from this time on (the notice that moved it); None = still standing
+    withdrawn_since: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -54,8 +56,10 @@ class Coverage:
 
 
 def known_at(rows: list[Any], t: datetime) -> list[Any]:
-    """The rows (events or coverage) public at `t`: known_since <= t."""
-    return [r for r in rows if r.known_since <= t]
+    """The rows (events or coverage) public at `t`: known_since <= t, and not yet withdrawn (a moved meeting's old
+    date stands until the notice that moved it)."""
+    return [r for r in rows if r.known_since <= t and (getattr(r, "withdrawn_since", None) or datetime.max.replace(
+        tzinfo=IST)) > t]  # fmt: skip
 
 
 def india_day(e: Event) -> date:

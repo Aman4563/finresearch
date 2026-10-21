@@ -1,8 +1,8 @@
 """Event calendar (#367): calendar_event, calendar_coverage
 
-Revision ID: ab07bb0c4752
+Revision ID: e74ae9d0229e
 Revises: d7a1c3e5f9b2
-Create Date: 2026-10-22 01:48:12.758968
+Create Date: 2026-10-22 01:55:55.498835
 
 """
 
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "ab07bb0c4752"
+revision: str = "e74ae9d0229e"
 down_revision: str | Sequence[str] | None = "d7a1c3e5f9b2"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
@@ -47,6 +47,7 @@ def upgrade() -> None:
         sa.Column("source_url", sa.String(length=400), nullable=False),
         sa.Column("known_since", sa.DateTime(timezone=True), nullable=False),
         sa.Column("known_since_url", sa.String(length=400), nullable=True),
+        sa.Column("withdrawn_since", sa.DateTime(timezone=True), nullable=True),
         sa.Column("recorded_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("type", "scope", "day"),

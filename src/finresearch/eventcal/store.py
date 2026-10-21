@@ -18,12 +18,17 @@ def upsert(s: Session, events: list[Event], coverage: list[Coverage]) -> tuple[i
         r = have.get((e.type, e.scope, e.day))
         if r is None:
             r = CalendarEvent(type=e.type, tier=e.tier, scope=e.scope, day=e.day, at=e.at, title=e.title,
-                              source_url=e.source_url, known_since=e.known_since, known_since_url=e.known_since_url)  # fmt: skip
+                              source_url=e.source_url, known_since=e.known_since, known_since_url=e.known_since_url,
+                              withdrawn_since=e.withdrawn_since)  # fmt: skip
             s.add(r)
             have[(e.type, e.scope, e.day)] = r
             new_e += 1
             continue
         r.tier, r.at, r.title, r.source_url = e.tier, e.at, e.title, e.source_url
+        if e.withdrawn_since is not None and (
+            r.withdrawn_since is None or e.withdrawn_since < r.withdrawn_since
+        ):
+            r.withdrawn_since = e.withdrawn_since
         if e.known_since < r.known_since:
             r.known_since, r.known_since_url = e.known_since, e.known_since_url
     seen = {(c.type, c.scope, c.through, c.source_url) for c in s.scalars(select(CalendarCoverage))}
@@ -42,7 +47,7 @@ def upsert(s: Session, events: list[Event], coverage: list[Coverage]) -> tuple[i
 def load(s: Session) -> tuple[list[Event], list[Coverage]]:
     """Every stored event and coverage statement (callers filter by known_since with calendar.known_at)."""
     ev = [Event(type=r.type, tier=r.tier, scope=r.scope, day=r.day, at=r.at, title=r.title, source_url=r.source_url,
-                known_since=r.known_since, known_since_url=r.known_since_url)
+                known_since=r.known_since, known_since_url=r.known_since_url, withdrawn_since=r.withdrawn_since)
           for r in s.scalars(select(CalendarEvent).order_by(CalendarEvent.day, CalendarEvent.type))]  # fmt: skip
     cov = [Coverage(type=r.type, scope=r.scope, through=r.through, source_url=r.source_url, known_since=r.known_since,
                     note=r.note) for r in s.scalars(select(CalendarCoverage).order_by(CalendarCoverage.id))]  # fmt: skip

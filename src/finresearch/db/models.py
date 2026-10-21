@@ -1780,7 +1780,8 @@ class CalendarEvent(Base):
     """One scheduled market event (#367, finresearch.eventcal): tier 1 = registered (RBI MPC decision, Union Budget,
     general-election results), 2 = context (FOMC, US CPI). `at` is the release time when the source states it.
     Point in time: `known_since` is when the schedule announcing it was public (`known_since_url`), or when we first
-    fetched it; a row is usable at t only if known_since <= t. `recorded_at` is when this database stored it."""
+    fetched it; a row is usable at t only if known_since <= t < withdrawn_since (set when a notice moved the date).
+    `recorded_at` is when this database stored it."""
 
     __tablename__ = "calendar_event"
     __table_args__ = (UniqueConstraint("type", "scope", "day"),)
@@ -1794,6 +1795,8 @@ class CalendarEvent(Base):
     source_url: Mapped[str] = mapped_column(String(400))
     known_since: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     known_since_url: Mapped[str | None] = mapped_column(String(400))
+    # a moved date: unusable from the notice that moved it
+    withdrawn_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
