@@ -1418,7 +1418,8 @@ def fno_backtest_compare(
     one-sided t, the change in expectancy and in stop count, and the 'execution-sensitive' label (sign flip)."""
     from finresearch.backtest import compare
 
-    rows = compare.compare_reports(json.loads(same_json.read_text()), json.loads(next_json.read_text()))
+    same, nxt = json.loads(same_json.read_text()), json.loads(next_json.read_text())
+    rows = compare.compare_reports(same, nxt)
     t = Table(title="Same-print vs next-print fills (D = same − next, ₹ per paired trade)")
     for c in ("strategy", "paired", "₹/trade same", "₹/trade next", "mean D", "t (D)", "p one-sided", "stops",
               "execution-sensitive"):  # fmt: skip
@@ -1432,6 +1433,14 @@ def fno_backtest_compare(
                   _num(r["mean_d"], 0), _num(r["t_d"]), _num(r["p_one_sided"], 3),
                   f"{r['stops_same']} → {r['stops_next']}", flag)  # fmt: skip
     console.print(t)
+    pooled = compare.seller_tests(same, nxt)  # evals/experiments/execution_realism/PREREG.md H1 and H1b
+    for name, key in (
+        ("IV-filtered sellers pooled (H1)", "sellers"),
+        ("top IV third (H1b)", "sellers_top_iv"),
+    ):
+        x = pooled[key]
+        console.print(f"{name}: {x['paired']} pairs on {x['expiries']} expiries, mean D {_num(x['mean_d'], 0)}, "
+                      f"t {_num(x['t_d'])}, one-sided p {_num(x['p_one_sided'], 3)}")  # fmt: skip
 
 
 def _num(v: float | None, d: int = 2) -> str:

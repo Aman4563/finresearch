@@ -235,6 +235,43 @@ def test_cli_compare_prints_each_spec(tmp_path):
                                    str(tmp_path / "next.json")], env={"COLUMNS": "250"})  # fmt: skip
     assert out.exit_code == 0, out.output
     assert "nifty_dcs_m" in out.output and "execution-sensitive" in out.output
+    assert (
+        "IV-filtered sellers pooled (H1): 0 pairs" in out.output
+    )  # flat synthetic IV: the sellers never enter
     bad = CliRunner().invoke(app, ["fno", "backtest", "compare", str(tmp_path / "next.json"),
                                    str(tmp_path / "same.json")])  # fmt: skip
     assert bad.exit_code != 0
+
+
+def test_pooled_seller_test_and_its_top_iv_third():
+    """PREREG §2 H1 pooled over the IV-filtered sellers (clusters = underlying and expiry) and H1b on the pairs whose
+    entry IV percentile is in the top third."""
+    from finresearch.backtest import compare
+
+    def rep(fill: str, rows: dict[str, list[dict]]) -> dict:
+        return {"fill": fill, "registration_hash": "h", "windows": {"is": ["2022-01-01", "2024-06-30"],
+                "oos": ["2024-07-01", "2024-12-31"]}, "strategies": [
+                {"key": k, "name": k, "underlying": "BANKNIFTY" if k.startswith("bank") else "NIFTY", "trades": v}
+                for k, v in rows.items()]}  # fmt: skip
+
+    def t(day, exp, net, iv, decision=None):
+        return {**tr(day, exp, net, decision=decision), "iv_pct": iv}
+
+    same = rep("same_print", {
+        "nifty_pcs_m": [t("2024-07-01", "2024-07-25", 100, 0.9), t("2024-08-01", "2024-08-29", 10, 0.5)],
+        "banknifty_ic_m": [t("2024-07-01", "2024-07-25", 70, 0.8)],
+        "nifty_dcs_m": [t("2024-07-01", "2024-07-25", 5000, 0.9)]})  # a control: not in the seller test  # fmt: skip
+    nxt = rep("next_open", {
+        "nifty_pcs_m": [t("", "2024-07-25", 40, 0.9, "2024-07-01"), t("", "2024-08-29", 30, 0.5, "2024-08-01")],
+        "banknifty_ic_m": [t("", "2024-07-25", 50, 0.8, "2024-07-01")],
+        "nifty_dcs_m": [t("", "2024-07-25", 0, 0.9, "2024-07-01")]})  # fmt: skip
+    got = compare.seller_tests(same, nxt)
+    # D = 60 (NIFTY Jul), -20 (NIFTY Aug), 20 (BANKNIFTY Jul): three clusters, mean 20
+    m = 20.0
+    var = 3 / 2 * ((60 - m) ** 2 + (-20 - m) ** 2 + (20 - m) ** 2) / 9
+    assert got["sellers"]["paired"] == 3 and got["sellers"]["mean_d"] == pytest.approx(m)
+    assert got["sellers"]["t_d"] == pytest.approx(m / var**0.5, abs=1e-4) and got["sellers"]["expiries"] == 3
+    # top third: the NIFTY July pair (0.9) and the BANKNIFTY one (0.8): D = 60, 20 on two clusters
+    top = got["sellers_top_iv"]
+    assert top["paired"] == 2 and top["mean_d"] == pytest.approx(40.0)
+    assert top["t_d"] == pytest.approx(40 / (2 * (20**2 + 20**2) / 4) ** 0.5, abs=1e-4)
