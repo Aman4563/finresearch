@@ -1705,6 +1705,44 @@ def dq_replay(
     console.print_json(json.dumps(res, default=str))
 
 
+events_app = typer.Typer(no_args_is_help=True, help="The point-in-time event and macro calendar (#367)")
+app.add_typer(events_app, name="events")
+
+
+@events_app.command("seed")
+def events_seed() -> None:
+    """Load the hand-curated calendar (eventcal.seed: RBI MPC, Union Budgets, the 2024 election, FOMC) into the
+    database; idempotent. Database only, no network."""
+    from finresearch.db import session_scope
+    from finresearch.eventcal import seed, store
+
+    with session_scope() as s:
+        ne, nc = store.upsert(s, seed.EVENTS, seed.COVERAGE)
+    console.print(f"{ne} new events, {nc} new coverage rows ({len(seed.EVENTS)} events, {len(seed.COVERAGE)} "
+                  "coverage rows in the seed)")  # fmt: skip
+
+
+@events_app.command("check")
+def events_check(
+    start: str = typer.Option(..., "--from", help="Window start, YYYY-MM-DD (the plan day)"),
+    end: str = typer.Option(..., "--to", help="Window end, YYYY-MM-DD (the expiry)"),
+) -> None:
+    """The plan card's tier-1 event check for a window, as known at 15:30 IST on its first day. Read only."""
+    from datetime import date as _date
+
+    from finresearch.db import session_scope
+    from finresearch.eventcal import calendar as cal
+    from finresearch.eventcal import store
+    from finresearch.fincalc.dates import session_clock
+
+    a, b = _date.fromisoformat(start), _date.fromisoformat(end)
+    with session_scope() as s:
+        ev, cov = store.load(s)
+    console.print_json(
+        json.dumps(cal.window_check(ev, cov, start=a, end=b, as_of=session_clock(a)), default=str)
+    )
+
+
 span_app = typer.Typer(no_args_is_help=True, help="NSE SPAN risk parameters (scan ranges) and FOVOLT")
 fno_app.add_typer(span_app, name="span")
 

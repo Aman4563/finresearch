@@ -10,7 +10,7 @@ from finresearch.eventcal import seed
 from finresearch.fincalc.dates import session_clock
 
 OFFICIAL = ("rbi.org.in", "indiabudget.gov.in", "pib.gov.in", "eci.gov.in", "federalreserve.gov", "bls.gov",
-            "mospi.gov.in", "nseindia.com", "sansad.in", "legislative.gov.in")  # fmt: skip
+            "mospi.gov.in", "nseindia.com", "newsonair.gov.in")  # fmt: skip
 
 
 def _official(url: str | None) -> bool:
