@@ -29,6 +29,7 @@ cached; more than MAX_PAGES pages is refused rather than truncated.
 from __future__ import annotations
 
 import json
+import ssl
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Any
@@ -97,10 +98,19 @@ def _num(v: Any) -> float | None:
     return None if v in (None, "", "NA", "-") else float(v)
 
 
+def tls_context() -> ssl.SSLContext:
+    """The default verifying context plus OP_LEGACY_SERVER_CONNECT: api.mospi.gov.in does not support RFC 5746
+    secure renegotiation, which OpenSSL 3 otherwise requires (checked 22-Oct-2026). Certificates and the host name
+    are still verified; the option is used for this host's client only."""
+    ctx = ssl.create_default_context()
+    ctx.options |= ssl.OP_LEGACY_SERVER_CONNECT
+    return ctx
+
+
 class MospiCpiClient:
     def __init__(self, client: PoliteClient | None = None):
         self._own = client is None
-        self.http = client or PoliteClient()
+        self.http = client or PoliteClient(verify=tls_context())
 
     async def __aenter__(self) -> MospiCpiClient:
         return self

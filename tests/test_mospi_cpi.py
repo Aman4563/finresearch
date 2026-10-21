@@ -123,3 +123,25 @@ async def test_too_many_pages_is_refused_not_truncated(monkeypatch):
     async with mc.MospiCpiClient(client(serve(old_rows(), new_rows()))) as c:
         with pytest.raises(mc.MospiError, match="pages"):
             await c.fetch(today=date(2026, 10, 22))
+
+
+def test_tls_context_allows_legacy_renegotiation_but_still_verifies_certificates():
+    import ssl
+
+    ctx = mc.tls_context()
+    assert ctx.options & ssl.OP_LEGACY_SERVER_CONNECT  # api.mospi.gov.in needs it under OpenSSL 3
+    assert ctx.verify_mode == ssl.CERT_REQUIRED and ctx.check_hostname
+
+
+async def test_default_client_uses_the_mospi_tls_context(monkeypatch):
+    seen = {}
+    real = mc.PoliteClient
+
+    def fake(**kw):
+        seen.update(kw)
+        return real(cache_dir=None)
+
+    monkeypatch.setattr(mc, "PoliteClient", fake)
+    async with mc.MospiCpiClient():
+        pass
+    assert seen["verify"].options & __import__("ssl").OP_LEGACY_SERVER_CONNECT
