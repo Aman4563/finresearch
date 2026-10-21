@@ -24,6 +24,8 @@ type Window = { n: number; from: string | null; to: string | null; models: Recor
 type RunCell = { symbol: string; horizon: number; event: EventKey; status?: string; reasons?: string[]; is: Window; oos: Window | null };
 type Candidate = { key: string; label: string; view: "up" | "down"; status: "passes" | "fails" | "unavailable"; why: string[];
   ev_model?: number; ev_implied?: number; edge?: number; costs?: number; max_loss?: number | null; pop_model?: number;
+  /** #356: EV with each leg at its own IV (≈ −costs) and what the ATM-IV market EV adds to it: a pricing residual, not edge */
+  ev_fair?: number | null; pricing_residual?: number | null;
   legs?: { right: string; strike: number; side: string; price: number; iv: number }[] };
 type Decision = { status: "ok" | "unavailable"; why?: string; action?: "TRADE" | "NO TRADE"; label?: string; chosen?: Candidate | null;
   candidates?: Candidate[]; horizon?: number; expiry?: string; horizon_day?: string; held_to_expiry?: boolean; lot_size?: number;
@@ -174,8 +176,10 @@ function Candidates({ rows }: { rows: Candidate[] }) {
           {rows.map((r) => (
             <tr key={r.key} className="border-t border-border align-top">
               <td><span className="font-medium">{r.label}</span>{r.legs && <span className="block text-[11px] text-muted">{r.legs.map((l) => `${l.side} ${l.right} ${l.strike} @ ${l.price}`).join(", ")}</span>}</td>
-              <td className={cx((r.ev_model ?? 0) > 0 ? "text-gain" : "text-loss")}>{inr(r.ev_model)}</td>
-              <td>{inr(r.ev_implied)}</td>
+              {/* #356: green only for a trade that passed the registered gate (an accepted model); otherwise a positive
+                  model EV is the pricing residual of the market's own probabilities, not edge */}
+              <td data-testid="direction-ev-model" className={cx(r.status === "passes" ? "text-gain" : (r.ev_model ?? 0) < 0 ? "text-loss" : "")}>{inr(r.ev_model)}</td>
+              <td>{inr(r.ev_implied)}{r.pricing_residual != null && <span className="block text-[11px] text-muted">incl. pricing residual {inr(r.pricing_residual)} (not edge)</span>}</td>
               <td>{inr(r.edge)}</td>
               <td>{inr(r.costs)}</td>
               <td>{inr(r.max_loss)}</td>

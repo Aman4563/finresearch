@@ -269,7 +269,11 @@ def add_fno_book_routes(app: FastAPI, clock: Callable[[], datetime] | None = Non
                 422, f"no option chain or lot size for {sym} {body.expiry}: no margin estimate"
             )
         spot = float(chain.underlying)
-        t = service._t(body.expiry, today())
+        t = service._t(body.expiry, now())  # #359: minutes to 15:30 IST on the expiry day; None once expired
+        if t is None:
+            raise HTTPException(
+                422, f"the {body.expiry:%d-%b-%Y} contract has expired (15:30 IST): no margin estimate"
+            )
         legs, spec = [], []
         for x in body.legs:
             k = float(x.strike)

@@ -120,9 +120,15 @@ def test_assessment_rules():
     assert action == "WAIT" and "Defined risk" in failed
     assert fs.assess(_analyse("strangle"), held=True)[0] == "EXIT"
     assert fs.assess(_analyse("iron_condor"), held=True)[0] == "HOLD"
-    # buying options when IV is well above realised volatility: the EV and IV-context checks fail
-    action, _, failed = fs.assess(_analyse("long_call"))
-    assert action == "WAIT" and {"EV after costs (real-world)", "IV context fits the strategy"} <= set(failed)
+    # buying options when IV is well above realised volatility: the IV-context check fails; since #356 the real-world
+    # EV is a labelled scenario that scores 0 and is never a failed check
+    action, factors, failed = fs.assess(_analyse("long_call"))
+    assert (
+        action == "WAIT"
+        and "IV context fits the strategy" in failed
+        and "EV after costs (real-world)" not in failed
+    )
+    assert next(f for f in factors if f.name == fs.EV_INFO).contribution == 0
     # with 60+ recorded days the IV percentile replaces the IV/RV proxy: today's 13.36 % is the lowest -> sellers wait
     a = _analyse("iron_condor", series=[*([20.0] * 70), 13.36])
     assert a["iv_context"]["percentile"] == 0 and "IV context fits the strategy" in fs.assess(a)[2]

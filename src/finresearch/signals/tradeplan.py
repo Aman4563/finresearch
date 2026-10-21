@@ -7,7 +7,8 @@ adjustment and invalidation rules, and the evidence (the matching backtest resul
 Verdict (one engine, `decide`, also used by the signal card's Strategy check, #355): AVOID when a hard check fails
 (undefined risk, over budget even at one set, a same-day expiry) or the matching pre-registered backtest is harmful
 (t ≤ −2 and CI below zero, delta-neutral recipes only); WAIT when any other check fails or is unknown (signals.fno.assess:
-EV after costs; the recipe's own registered entry filters; the IV percentile of ad hoc legs is context, not a gate);
+bid/ask spreads within 10% of the premium; the recipe's own registered entry filters; the IV percentile of ad hoc legs
+is context, not a gate; #356: the model EV is shown, labelled "model EV - not validated", and never a gate);
 ENTER only when everything passes and the matched spec passed out of sample (a candidate); everything passing
 without one is "PAPER: NO PROVEN EDGE — paper only (0 real lots)" (#350), sized for paper by the same formula and
 never with real money. The market-context indicators (signals.fno_context) never feed it.
@@ -22,11 +23,12 @@ Nothing here places an order: the card's one-click actions are a paper trade and
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, replace
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from finresearch.fincalc import options as o
 from finresearch.fincalc import tradeplan as tp
+from finresearch.fincalc.dates import session_clock, years_to_expiry
 from finresearch.signals import fno as fs
 
 DELTA_ALERT = 0.30  # short-strike |delta| alert (rule of thumb: the short strike is being tested)
@@ -276,6 +278,18 @@ def book_json(ob: tp.OpenBook) -> dict[str, Any]:
 
 
 # --------------------------------------------------------------------------- the card
+PLAN_METHOD = "rule-based F&O trade-plan card"
+
+
+def card_reliability(probability: float | None, scored: int | None) -> dict[str, Any]:
+    """signals.reliability for a trade-plan card (#357): rule-based, no base rate, and `scored` = this method's resolved
+    forecasts in the ledger (None = unreadable: calibration unknown, never established)."""
+    from finresearch.signals.reliability import reliability
+
+    return reliability({"asset": "fno", "probability": probability, "validation": {"status": "rule_based", "n": 0}},
+                       scored)  # fmt: skip
+
+
 class Inputs:
     """Everything the card reads besides the chain: market history, the profile's F&O settings, the saved backtest,
     the paper book and the event dates (None = unknown)."""
@@ -286,7 +300,7 @@ class Inputs:
                  backtest_head: dict[str, Any] | None = None, paper: list[dict[str, Any]] | None = None,
                  events: list[tuple[date, str]] | None = None, is_index: bool = True,
                  book: BookData = UNKNOWN_BOOK, iv_points: list[tuple[Any, float | None]] | None = None,
-                 ) -> None:  # fmt: skip
+                 scored: int | None = None, now: datetime | None = None) -> None:  # fmt: skip
         self.today, self.closes, self.iv_series, self.iv_src, self.iv_as_of = (
             today,
             closes,
@@ -299,6 +313,10 @@ class Inputs:
         self.strategies, self.backtest_head, self.paper = strategies, backtest_head, paper or []
         self.events, self.is_index = events, is_index
         self.book = book  # the open book (#358); unknown unless read: then no card has room
+        self.scored = scored  # #357: the plan card method's scored forecasts (None = the ledger was not read)
+        self.now = (
+            now  # the clock T is measured from (#359); None = 15:30 IST on `today` (end-of-day convention)
+        )
         # per-session IV points for a recipe's IV filter (#354's definition); default: iv_series as consecutive sessions
         self.iv_points = iv_points if iv_points is not None else list(enumerate(iv_series))
 
@@ -307,10 +325,12 @@ class Inputs:
         return self.capital * self.max_loss_pct / 100
 
 
-def _analyse(chain, lot: int, legs: list[fs.LegIn], x: Inputs) -> dict[str, Any]:
+def _analyse(chain, lot: int, legs: list[fs.LegIn], x: Inputs, bidask_chain: Any = None,
+             early_exit_p: float = 1.0) -> dict[str, Any]:  # fmt: skip
     return fs.analyse(chain, lot, legs, today=x.today, closes=x.closes, iv_series=x.iv_series, capital=x.capital,
                       max_loss_pct=x.max_loss_pct, brokerage=x.brokerage, rate=x.rate, iv_source=x.iv_src,
-                      iv_as_of=x.iv_as_of)  # fmt: skip
+                      iv_as_of=x.iv_as_of, bidask_chain=bidask_chain, early_exit_p=early_exit_p,
+                      now=x.now)  # fmt: skip
 
 
 def evidence_for(kind: str, symbol: str, dte: int, strategies: list[dict[str, Any]] | None,
@@ -514,11 +534,19 @@ def build(chain, lot: int, legs_in: list[fs.LegIn], x: Inputs, *, spec: Any | No
     Raises ValueError when a leg has no price (signals.fno.analyse)."""
     sym, expiry = chain.symbol.upper(), chain.expiry
     spot, dte = float(chain.underlying), (chain.expiry - x.today).days
-    t = max(dte, 0.5) / 365
+    t = years_to_expiry(
+        chain.expiry, session_clock(x.today, x.now)
+    )  # #359: to the minute; ≤ 0 → analyse refuses it
     plan_legs = [tp.PlanLeg(y.right, y.strike, y.side, y.lots) for y in legs_in]
     kind = tp.classify(plan_legs)
     ev = _evidence(kind, sym, dte, x, spec)
-    a0 = _analyse(chain, lot, legs_in, x)
+    # #356: the cost-complete EV and the liquidity check read NSE's bid/ask when the plan's chain has none (#324); a
+    # hold-to-expiry recipe pays no exit half-spread, every other plan is assumed to exit early (p = 1, conservative)
+    held = (
+        ev["spec"] is not None and (spec is not None or ev["match"] == "exact") and ev["spec"].hold_to_expiry
+    )
+    ba_chain, p_exit = (bidask[0] if bidask else None), (0.0 if held else 1.0)
+    a0 = _analyse(chain, lot, legs_in, x, ba_chain, p_exit)
     if spec is None and ev["match"] == "exact":
         # legs that are exactly a library recipe borrow its evidence, so they also get its registered entry filter
         # (#355: never looser than the recipe once the untested IV gate is context only)
@@ -530,7 +558,7 @@ def build(chain, lot: int, legs_in: list[fs.LegIn], x: Inputs, *, spec: Any | No
     # the paper book takes at most 100 lots a leg (api/fno_book.PaperLegIn): never size a plan beyond it
     m = max(1, min(sz.suggested, 100 // max(y.lots for y in legs_in)))
     legs = [fs.LegIn(y.right, y.strike, y.side, y.lots * m, y.premium) for y in legs_in]
-    a = _analyse(chain, lot, legs, x) if m > 1 else a0
+    a = _analyse(chain, lot, legs, x, ba_chain, p_exit) if m > 1 else a0
     _, factors, gates = fs.assess(a, defined_risk_only=x.defined_risk_only)
     d = decide(gates, a0["max_loss"], a0["costs"]["entry"]["total"], x.budget, ev["level"], extra_failed, ob)
     action, qualifier, failed = d.action, d.qualifier, d.failed
@@ -570,7 +598,7 @@ def build(chain, lot: int, legs_in: list[fs.LegIn], x: Inputs, *, spec: Any | No
     label = action if qualifier is None else qualifier if action == tp.PAPER else f"{action} ({qualifier})"
     if action == tp.ENTER and not reasons:
         reasons.append(
-            "Every check passes: defined risk, within budget, EV after costs no worse than fair, IV fits."
+            "Every check passes: defined risk, within budget, bid/ask spreads within 10% of the premium."
         )
     elif action == tp.PAPER:
         reasons.append("Every check passes, but no strategy that passed its pre-registered out-of-sample test "
@@ -587,8 +615,17 @@ def build(chain, lot: int, legs_in: list[fs.LegIn], x: Inputs, *, spec: Any | No
                  "risk_per_set": None if sz.risk_per_multiple is None else round(sz.risk_per_multiple, 2),
                  "reason": sz.reason, "capital": x.capital, "max_loss_pct": x.max_loss_pct},
         "entry": {**limits, "levels_priced_at": entry_src, "source": src},
-        "max_profit": a["max_profit"], "max_loss": a["max_loss"], "breakevens": a["breakevens"],
+        "max_profit": a["max_profit"], "max_loss": a["max_loss"], "risk_shape": a["risk_shape"], "breakevens": a["breakevens"],
         "net_premium": a["net_premium"], "costs": a["costs"]["total_to_expiry"],
+        # #356: model EVs after statutory costs and half-spreads, informational ("model EV - not validated")
+        "ev": {"label": a["model_ev"]["label"], "range": a["model_ev"]["range"], "note": a["model_ev"]["note"],
+               "risk_neutral": None if rn is None else rn["ev"], "real_world": None if rw is None else rw["ev"],
+               "real_world_window": (rw or {}).get("window"), "costs": a["costs"]["total_with_spreads"],
+               "half_spreads": a["costs"]["half_spreads"],
+               "payoff_ratio": (a["pnl_dots"] or {}).get("payoff_ratio")},  # #357: E[win] / |E[loss]|
+        "pnl_dots": a["pnl_dots"],
+        # #357: every F&O card's probability carries its reliability (plan cards are never scored in the ledger yet)
+        "reliability": card_reliability(None if rw is None else rw["pop"], x.scored),
         "probability": {"real_world": None if rw is None else rw["pop"], "real_world_window": (rw or {}).get("window"),
                         "risk_neutral": None if rn is None else rn["pop"],
                         "note": "Model probabilities of a positive P&L after costs at expiry (lognormal; real prices "
@@ -627,10 +664,14 @@ def recipe_expiry(spec: Any, expiries: list[date], today: date) -> date | None:
     return ok[0] if ok else None
 
 
-def recipe_legs(spec: Any, chain, today: date, rate: float) -> list[fs.LegIn] | str:
+def recipe_legs(
+    spec: Any, chain, today: date, rate: float, now: datetime | None = None
+) -> list[fs.LegIn] | str:
     """The spec's legs on the live chain (its rule from backtest.engine.choose_legs: the short leg by delta, the wing
-    width_pct of spot away), or the reason none can be picked."""
-    spot, t = float(chain.underlying), max((chain.expiry - today).days, 0.5) / 365
+    width_pct of spot away), or the reason none can be picked. Deltas at T to the minute from `now` (#359)."""
+    spot, t = float(chain.underlying), years_to_expiry(chain.expiry, session_clock(today, now))
+    if t <= 0:
+        return f"the {chain.expiry:%d-%b-%Y} contract has expired (15:30 IST)"
     quotes, a = chain_quotes(chain), spec.anchor_delta
     w = (spec.width_pct or 0) / 100 * spot
 
@@ -734,7 +775,7 @@ async def suggest(symbol: str, expiries: list[date], get_chain, lot_for, x: Inpu
                 waiting(spec, symbol, x, f"No option chain or lot size for {symbol.upper()} {e:%d-%b-%Y}.")
             )
             continue
-        legs = recipe_legs(spec, chain, x.today, x.rate)
+        legs = recipe_legs(spec, chain, x.today, x.rate, x.now)
         if isinstance(legs, str):
             out.append(waiting(spec, symbol, x, f"Cannot build the recipe's legs today: {legs}."))
             continue

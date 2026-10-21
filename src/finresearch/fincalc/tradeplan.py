@@ -454,7 +454,12 @@ def evidence_text(row: dict[str, Any] | None, level: str) -> str:
     status = "PASSED" if row.get("status") == "candidate" else "FAILED"
     head = {"proven": "PASSED every pre-registered out-of-sample criterion",
             "harmful": "FAILED out-of-sample and HARMFUL (t ≤ −2 and the 95% CI below zero)",
-            "inconclusive": "FAILED out-of-sample, inconclusive (no edge distinguishable from zero either way)",
+            # #357: what the reader needs first is that the interval contains zero, not the word FAILED
+            "inconclusive": ("Inconclusive (95% CI spans 0): FAILED out-of-sample, no edge distinguishable from zero "
+                             "either way" if lo is not None and hi is not None and lo < 0 < hi else
+                             "Inconclusive (CI unknown): FAILED out-of-sample, no edge distinguishable from zero"
+                             if lo is None or hi is None else
+                             "Inconclusive (the t-statistic and the 95% CI disagree): FAILED out-of-sample"),
             "directional": f"{status} out-of-sample, {DIRECTIONAL_NOTE}",
             "none": f"Not judged out of sample ({row.get('status', 'unknown')})"}[level]  # fmt: skip
     return f"{head}: {stats}{span}." if stats else f"{head}."
