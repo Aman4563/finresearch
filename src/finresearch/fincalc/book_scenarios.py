@@ -210,3 +210,124 @@ def exposures(legs: Sequence[BookLeg], m: Market) -> Exposures:
     nreasons = sorted(set(nreasons)) + reasons
     return Exposures(tuple(rows), None if reasons else total, None if nreasons else nifty / m.nifty,  # type: ignore[operator]
                      tuple(reasons), tuple(nreasons), tuple(f for s in states for f in s.flags))  # fmt: skip
+
+
+# --------------------------------------------------------------------------- full revaluation
+# The grid and the measured NIFTY spot-vol response are #394's (reviewed roadmap item, 20-Oct-2026): ATM IV rises
+# 1.04 vol points per 1 % fall on down days and falls 0.76 per 1 % rise on up days (NIFTY IV30 against index moves).
+MOVES = (-0.15, -0.10, -0.07, -0.05, -0.03, -0.02, -0.01, 0.0, 0.01, 0.02, 0.03, 0.05, 0.07, 0.10)
+VOL_SHIFTS = (-3.0, 0.0, 5.0, 10.0, 20.0)  # vol points, on top of the spot-vol response
+HORIZONS = (1, 5, "expiry")  # sessions; "expiry" = the close of the book's nearest expiry
+DOWN_SLOPE, UP_SLOPE = 1.04, 0.76  # vol points per 1 % move
+MIN_VOL = 0.01  # a shocked IV below 1 vol point is floored there (and counted): Black-76 needs sigma > 0
+
+
+def vol_response(move: float) -> float:
+    """The ATM IV change in vol points for a relative move of the underlying (sticky-strike: every strike shifts by
+    it; the skew term dskew(m) x w(K) waits for the measured 25-delta skew response)."""
+    pct = move * 100
+    return -DOWN_SLOPE * pct if pct < 0 else -UP_SLOPE * pct
+
+
+def horizon_clock(
+    now: datetime, sessions: int, holidays: frozenset[date] | set[date] = frozenset()
+) -> datetime:
+    """15:30 IST on the `sessions`-th weekday after `now`'s date that is not in `holidays` (the NSE list, when the
+    caller has it; weekdays only otherwise)."""
+    from datetime import timedelta
+
+    from finresearch.fincalc.dates import EXPIRY_CLOSE, ist_datetime
+
+    d, n = to_ist(now).date(), 0
+    while n < sessions:
+        d += timedelta(days=1)
+        n += d.weekday() < 5 and d not in holidays
+    return ist_datetime(d, *EXPIRY_CLOSE)
+
+
+@dataclass(frozen=True)
+class Cell:
+    """One scenario: the NIFTY move (other underlyings move β x it), the extra vol shift (points), the horizon and its
+    clock, and the book's P&L in ₹ (None = incomplete: `reasons`). `floored`/`intrinsic` count legs whose shocked
+    IV was floored at MIN_VOL and legs valued at intrinsic because they expire inside the horizon."""
+
+    move: float
+    dvol: float
+    horizon: str
+    at: datetime
+    pnl: float | None
+    reasons: tuple[str, ...] = ()
+    floored: int = 0
+    intrinsic: int = 0
+
+
+def _intrinsic(right: str, f: float, k: float) -> float:
+    return f if right == "future" else max(f - k, 0.0) if right == "call" else max(k - f, 0.0)
+
+
+def _revalue(states: Sequence[LegState], m: Market, move: float, dvol: float, at: datetime, horizon: str,
+             response: bool) -> Cell:  # fmt: skip
+    reasons = [s.reason for s in states if s.reason]
+    reasons += sorted({f"{s.leg.underlying}: its beta to NIFTY is unknown, so its move is unknown"
+                       for s in states if m.beta(s.leg.underlying) is None})  # fmt: skip
+    if reasons:
+        return Cell(move, dvol, horizon, at, None, tuple(reasons))
+    pnl, floored, intrinsic = 0.0, 0, 0
+    for s in states:
+        x, mu = s.leg, m.beta(s.leg.underlying) * move  # type: ignore[operator]
+        f1, t1 = s.forward * (1 + mu), years_to_expiry(x.expiry, at)  # type: ignore[operator]
+        if t1 <= 0 or x.right == "future":
+            v1 = _intrinsic(x.right, f1, x.strike)
+            intrinsic += t1 <= 0 and x.right != "future"
+        else:
+            vol = s.iv + ((vol_response(mu) if response else 0.0) + dvol) / 100  # type: ignore[operator]
+            if vol < MIN_VOL:
+                vol, floored = MIN_VOL, floored + 1
+            v1 = b76_price(x.right, f1, x.strike, t1, m.rate, vol)
+        pnl += (v1 - s.value) * x.qty  # type: ignore[operator]
+    return Cell(move, dvol, horizon, at, pnl, (), floored, intrinsic)
+
+
+def revalue(legs: Sequence[BookLeg], m: Market, move: float, dvol: float, at: datetime, *, response: bool = True,
+            horizon: str = "") -> Cell:  # fmt: skip
+    """PnL = Σ_j [V_j(F'_j, σ'_j, T_j at `at`) - V_j(now)] x q_j (Black-76 on the forward), F' = F(1 + β_u move),
+    σ' = σ_K + response(β_u move) + dvol (points)."""
+    return _revalue(price_legs(legs, m), m, move, dvol, at, horizon, response)
+
+
+@dataclass(frozen=True)
+class Grid:
+    cells: tuple[Cell, ...]
+    reasons: tuple[str, ...]  # why every cell is unknown (empty = complete)
+    flags: tuple[str, ...]
+
+    @property
+    def complete(self) -> bool:
+        return not self.reasons
+
+    def cell(self, move: float, dvol: float, horizon: str) -> Cell:
+        return next(c for c in self.cells if (c.move, c.dvol, c.horizon) == (move, dvol, horizon))
+
+
+def grid(legs: Sequence[BookLeg], m: Market, moves: Sequence[float] = MOVES, vol_shifts: Sequence[float] = VOL_SHIFTS,
+         horizons: Sequence[int | str] = HORIZONS, holidays: frozenset[date] | set[date] = frozenset()) -> Grid:  # fmt: skip
+    """The full-revaluation ladder: every (move, vol shift, horizon), each leg repriced in full (no greek
+    approximation). "expiry" is the close of the nearest expiry in the book (legs expiring then are at intrinsic)."""
+    from finresearch.fincalc.dates import EXPIRY_CLOSE, ist_datetime
+
+    states = price_legs(legs, m)
+    clocks: list[tuple[str, datetime]] = []
+    for h in horizons:
+        if h == "expiry":
+            if legs:
+                clocks.append(("expiry", ist_datetime(min(x.expiry for x in legs), *EXPIRY_CLOSE)))
+        else:
+            clocks.append((f"{h}d", horizon_clock(m.now, int(h), holidays)))
+    cells = [
+        _revalue(states, m, mv, dv, at, name, True)
+        for name, at in clocks
+        for mv in moves
+        for dv in vol_shifts
+    ]
+    reasons = cells[0].reasons if cells else ()
+    return Grid(tuple(cells), reasons, tuple(f for s in states for f in s.flags))

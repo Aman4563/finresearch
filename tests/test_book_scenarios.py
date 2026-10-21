@@ -143,3 +143,87 @@ def test_nifty_equivalent_delta_needs_every_beta():
     assert ex.nifty_delta is None and any("beta" in r for r in ex.nifty_delta_reasons)
     ex = bs.exposures(legs, _mkt(forwards=fw, betas={"BANKNIFTY": 1.2}))
     assert ex.nifty_delta == pytest.approx(1.2 * 52000 * 35 / 23900)
+
+
+# --------------------------------------------------------------------------- revaluation grid
+def test_vol_response_follows_the_measured_nifty_slopes():
+    assert bs.vol_response(-0.05) == pytest.approx(5 * 1.04)  # +1.04 vol points per 1 % fall
+    assert bs.vol_response(0.03) == pytest.approx(-3 * 0.76)  # -0.76 per 1 % rise
+    assert bs.vol_response(0.0) == 0.0
+
+
+def test_horizon_clock_counts_weekday_sessions_to_the_close():
+    assert bs.horizon_clock(NOW, 1) == datetime(2026, 10, 23, 15, 30, tzinfo=IST)
+    assert bs.horizon_clock(NOW, 5) == datetime(2026, 10, 29, 15, 30, tzinfo=IST)  # Fri, Mon, Tue, Wed, Thu
+    assert bs.horizon_clock(NOW, 1, holidays={date(2026, 10, 23)}) == datetime(
+        2026, 10, 26, 15, 30, tzinfo=IST
+    )
+
+
+def test_a_future_moves_linearly_and_a_zero_scenario_is_zero():
+    legs = [bs.BookLeg("NIFTY", EXP, "future", 0, 75, None, None)]
+    m = _mkt()
+    assert bs.revalue(legs, m, -0.05, 0.0, bs.horizon_clock(NOW, 1)).pnl == pytest.approx(75 * 24000 * -0.05)
+    put = bs.BookLeg("NIFTY", EXP, "put", 23500, -75, _b76("put", 24000, 23500, T35, 0.065, 0.15), "mid")
+    assert bs.revalue([*legs, put], m, 0.0, 0.0, NOW, response=False).pnl == pytest.approx(0.0, abs=1e-6)
+
+
+@pytest.mark.parametrize(
+    ("move", "dvol", "resp"), [(-0.05, 0.0, 5.2), (0.03, 5.0, -2.28), (-0.10, -3.0, 10.4)]
+)
+def test_an_option_is_repriced_at_the_shocked_forward_vol_and_time(move, dvol, resp):
+    v0 = _b76("put", 24000, 23500, T35, 0.065, 0.15)
+    legs = [bs.BookLeg("NIFTY", EXP, "put", 23500, -75, v0, "mid")]
+    cell = bs.revalue(legs, _mkt(), move, dvol, bs.horizon_clock(NOW, 1))
+    v1 = _b76("put", 24000 * (1 + move), 23500, 34 / 365, 0.065, 0.15 + (resp + dvol) / 100)
+    assert cell.pnl == pytest.approx((v1 - v0) * -75, rel=1e-6)
+
+
+def test_other_underlyings_move_by_their_beta_and_need_it():
+    legs = [bs.BookLeg("BANKNIFTY", EXP, "future", 0, 35, None, None)]
+    fw = {("BANKNIFTY", EXP): 52000.0}
+    at = bs.horizon_clock(NOW, 1)
+    cell = bs.revalue(legs, _mkt(forwards=fw, betas={"BANKNIFTY": 1.2}), -0.05, 0.0, at)
+    assert cell.pnl == pytest.approx(35 * 52000 * 1.2 * -0.05)
+    cell = bs.revalue(legs, _mkt(forwards=fw), -0.05, 0.0, at)
+    assert cell.pnl is None and any("beta" in r for r in cell.reasons)
+
+
+def test_a_leg_expiring_inside_the_horizon_is_valued_at_intrinsic():
+    near = date(2026, 10, 27)
+    t = 5 / 365
+    v0 = _b76("call", 24000, 24000, t, 0.065, 0.12)
+    legs = [bs.BookLeg("NIFTY", near, "call", 24000, 75, v0, "mid")]
+    cell = bs.revalue(legs, _mkt(forwards={("NIFTY", near): 24000.0}), 0.02, 0.0, bs.horizon_clock(NOW, 5))
+    assert cell.pnl == pytest.approx((24000 * 0.02 - v0) * 75, rel=1e-6)
+    assert cell.intrinsic == 1
+
+
+def test_an_unpriced_leg_leaves_every_cell_unknown():
+    legs = [
+        bs.BookLeg("NIFTY", EXP, "future", 0, 75, None, None),
+        bs.BookLeg("NIFTY", EXP, "put", 23500, -75, None, None),
+    ]
+    g = bs.grid(legs, _mkt())
+    assert not g.complete and g.reasons
+    assert len(g.cells) == 14 * 5 * 3 and all(c.pnl is None for c in g.cells)
+
+
+def test_grid_axes_and_the_expiry_horizon():
+    legs = [bs.BookLeg("NIFTY", EXP, "future", 0, 75, None, None)]
+    g = bs.grid(legs, _mkt())
+    assert g.complete and {c.horizon for c in g.cells} == {"1d", "5d", "expiry"}
+    assert sorted({c.move for c in g.cells}) == sorted(
+        x / 100 for x in (-15, -10, -7, -5, -3, -2, -1, 0, 1, 2, 3, 5, 7, 10)
+    )
+    assert sorted({c.dvol for c in g.cells}) == [-3, 0, 5, 10, 20]
+    c = g.cell(-0.10, 0, "expiry")
+    assert c.pnl == pytest.approx(75 * 24000 * -0.10) and c.at == datetime(2026, 11, 26, 15, 30, tzinfo=IST)
+
+
+def test_a_vol_driven_below_the_floor_is_floored_and_flagged():
+    v0 = _b76("call", 24000, 24500, T35, 0.065, 0.05)
+    cell = bs.revalue([bs.BookLeg("NIFTY", EXP, "call", 24500, 75, v0, "mid")], _mkt(), 0.10, -3.0,
+                      bs.horizon_clock(NOW, 1))  # fmt: skip
+    v1 = _b76("call", 26400, 24500, 34 / 365, 0.065, bs.MIN_VOL)
+    assert cell.floored == 1 and cell.pnl == pytest.approx((v1 - v0) * 75, rel=1e-6)
