@@ -95,3 +95,34 @@ def test_context_events_are_listed_but_never_make_the_status():
 def test_unknown_calendar_reads_unknown():
     c = cal.window_check(None, None, start=date(2026, 9, 1), end=date(2026, 9, 24), as_of=T)
     assert c["status"] == "unknown" and c["uncovered"] == list(cal.TIER1_TYPES)
+
+
+# --------------------------------------------------------------------------- the store (database)
+def test_store_round_trip_keeps_known_since_and_is_idempotent(env):
+    from finresearch.db import session_scope
+    from finresearch.eventcal import store
+
+    fomc = datetime(2026, 9, 16, 14, 0, tzinfo=ET)
+    rows = [_ev("rbi_mpc", date(2026, 10, 1), date(2026, 3, 1)), _ev("fomc", date(2026, 9, 16), date(2025, 6, 1),
+                                                                      at=fomc, tier=2)]  # fmt: skip
+    with session_scope() as s:
+        assert store.load(s) == ([], [])  # empty: no coverage, so every check reads unknown
+        assert store.upsert(s, rows, FULL) == (2, 3)
+    with session_scope() as s:
+        assert store.upsert(s, rows, FULL) == (0, 0)  # same rows again: nothing new
+        events, cov = store.load(s)
+    assert sorted(events, key=lambda e: e.day) == sorted(rows, key=lambda e: e.day)
+    assert {c.type for c in cov} == set(cal.TIER1_TYPES)
+    assert next(e for e in events if e.type == "fomc").at == fomc
+
+
+def test_store_keeps_the_earliest_known_since_when_a_row_is_seen_again(env):
+    from finresearch.db import session_scope
+    from finresearch.eventcal import store
+
+    with session_scope() as s:
+        store.upsert(s, [_ev("rbi_mpc", date(2026, 12, 4), date(2026, 3, 1))], [])
+    with session_scope() as s:  # a later refresh sees the same meeting: when we first knew it does not move
+        store.upsert(s, [_ev("rbi_mpc", date(2026, 12, 4), date(2026, 9, 30))], [])
+        (e,) = [e for e in store.load(s)[0] if e.day == date(2026, 12, 4)]
+    assert e.known_since == datetime(2026, 3, 1, tzinfo=IST)
