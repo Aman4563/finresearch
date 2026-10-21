@@ -154,3 +154,27 @@ def exposures(h: History, fs: FactorSeries | None, holding_closes: Mapping[str, 
             row.update(regress(*_holding_series(closes, h.factors.get(p.key)), fs))
         out["holdings"].append(row)
     return out
+
+
+async def load(h: History, fs: FactorSeries, fetch: Any, store: Any, today: date) -> dict[str, Any]:
+    """`exposures` with each current holding's closes read for the `HISTORY_YEARS` before the factor file's end
+    (through the on-disk PriceStore, so a release's window is fetched once). A failed read is that holding's reason,
+    never a 0 exposure."""
+    from datetime import timedelta
+
+    from finresearch.fincalc.dates import add_years
+    from finresearch.portfolio.history import Instrument
+
+    end = min(fs.last, today)
+    start = add_years(end, -HISTORY_YEARS) - timedelta(days=10)
+    closes: dict[str, dict[date, float]] = {}
+    for p in h.positions:
+        if p.value <= 0:
+            continue
+        kind, ident = p.key.split(":", 1)
+        inst = Instrument(p.key, "mf" if kind == "MF" else kind.lower(), ident, p.scheme)
+        try:
+            closes[p.key] = await store.get(p.key, start, end, lambda a, b, i=inst: fetch(i, a, b), today)
+        except Exception:
+            closes[p.key] = {}
+    return exposures(h, fs, closes)

@@ -159,3 +159,50 @@ def test_holdings_exposures_from_their_own_closes_with_reasons_for_the_rest():
     assert (
         rows["MF:999"]["available"] is False and rows["MF:999"]["reason"] == "no price history could be read"
     )
+
+
+class FakeFetch:
+    """fetch(instrument, a, b) -> (closes, complete), as portfolio.history.Fetcher; one key fails."""
+
+    def __init__(self, closes: dict[str, dict[date, float]]):
+        self.closes = closes
+        self.calls: list[tuple[str, date, date]] = []
+
+    async def __call__(self, inst, a, b):
+        self.calls.append((inst.key, a, b))
+        if inst.key == "NSE:FAIL":
+            raise RuntimeError("exchange down")
+        return {d: v for d, v in self.closes.get(inst.key, {}).items() if a <= d <= b}, True
+
+
+async def test_load_reads_each_holding_over_the_factor_window_and_isolates_failures(tmp_path):
+    from finresearch.portfolio.history import PriceStore
+
+    days = trading_days(date(2023, 1, 2), 500)
+    fs = factors(days[:450])
+    h = history(days, fs)
+    b = {"alpha": 0.0, "mkt": 1.0, "smb": 0.3, "hml": 0.0, "wml": -0.4}
+    closes, px = {}, 100.0
+    for d in days[:450]:
+        if d != days[0]:
+            px *= 1 + ret(fs.rows[d], b)
+        closes[d] = px
+    h.positions = [
+        pos("NSE:AAAA", "Alpha Synthetic Ltd", 70000),
+        pos("NSE:FAIL", "Broken Synthetic Ltd", 30000),
+    ]
+    f = FakeFetch({"NSE:AAAA": closes})
+    out = await fx.load(h, fs, f, PriceStore(tmp_path / "ph"), today=days[-1])
+    rows = {r["key"]: r for r in out["holdings"]}
+    assert by(rows["NSE:AAAA"])["wml"]["beta"] == pytest.approx(-0.4, abs=1e-9)
+    assert (
+        rows["NSE:FAIL"]["available"] is False
+        and rows["NSE:FAIL"]["reason"] == "no price history could be read"
+    )
+    # asked for three years up to the factor file's end, not up to today
+    ask = [c for c in f.calls if c[0] == "NSE:AAAA"]
+    assert (
+        ask
+        and max(c[2] for c in ask) == fs.last
+        and min(c[1] for c in ask) <= date(fs.last.year - 3, fs.last.month, fs.last.day)
+    )
