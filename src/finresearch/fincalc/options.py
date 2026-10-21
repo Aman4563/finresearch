@@ -288,6 +288,40 @@ def outcome(legs: Sequence[Leg], spot: float, t_years: float, vol: float, drift:
                    e_exit / total, quant)  # fmt: skip
 
 
+def fill_price(mid: float, half_spread: float, qty: float, theta: float = 1.0) -> float:
+    """#356: the price a leg fills at, p = mid + sgn(q)·θ·(ask − bid)/2: a buy pays towards the ask, a sale receives
+    towards the bid. θ = 1 (the far touch) until fills are calibrated (roadmap P1.1)."""
+    return mid + (1.0 if qty > 0 else -1.0) * theta * half_spread
+
+
+def own_iv_ev(legs: Sequence[Leg], ivs: Sequence[float | None], spot: float, t_years: float, rate: float,
+              entry_cost: float = 0.0, stt_exercise: float = 0.0, other_cost: float = 0.0,
+              steps: int = 4000) -> tuple[float, float] | None:  # fmt: skip
+    """(EV, e^(−rT)·E_Q[STT on exercise]) under the risk-neutral measure with each option leg at its OWN implied
+    volatility (#356): EV_Q = Σ q_i·(e^(−rT)·E_Q,σi[intrinsic_i] − p_i) + Σ q_f·(S − e^(−rT)·F) − entry − STT − other.
+    With p_i the fills and σ_i the IVs of the mids, e^(−rT)·E_Q[intrinsic_i] = mid_i, so EV_Q = −(statutory costs +
+    half-spreads): the fair-price identity, with no pricing residual from the smile. Each expectation is integrated on
+    that leg's own lognormal grid. None when an option leg has no IV."""
+    df = math.exp(-rate * t_years)
+    ev = stt = 0.0
+    for x, iv in zip(legs, ivs, strict=True):
+        if x.right == "future":
+            ev += x.qty * (spot - df * x.strike)
+            continue
+        if not iv:
+            return None
+        grid = lognormal_grid(spot, t_years, iv, rate, steps)
+        total = sum(w for _, w in grid)
+        intr = sum(
+            w * (max(0.0, p - x.strike) if x.right == "call" else max(0.0, x.strike - p)) for p, w in grid
+        )
+        pv = df * intr / total
+        ev += x.qty * (pv - x.premium)
+        if x.qty > 0:
+            stt += stt_exercise * x.qty * pv
+    return ev - entry_cost - stt - other_cost, stt
+
+
 def pnl_distribution(legs: Sequence[Leg], spot: float, t_years: float, vol: float, drift: float,
                      entry_cost: float = 0.0, exit_cost: Callable[[float], float] | None = None,
                      steps: int = 400) -> list[tuple[float, float]]:  # fmt: skip

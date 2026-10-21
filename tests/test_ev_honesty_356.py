@@ -38,17 +38,112 @@ def run(legs: str, rv: float, brokerage: float = 20, preset: str | None = None):
 
 
 def test_golden_todays_ev_gate_ignores_costs_and_tracks_rv_against_iv():
+    """The golden test as first committed (d56ce43) asserted, on the recorded put spread, that the old gate passed at
+    RV 8% and 10% and failed at 12-16% whatever the costs (₹64 or ₹4,737: EV_rw + costs identical, the entry costs
+    cancelling), i.e. it tested 'IV at the strikes above RV'. After #356 that gate is gone: the same sweep leaves the
+    failed checks unchanged across RV and costs, and the scenario EV carries the costs one-for-one."""
     assert run(PCS, 0.12)[0]["vols"]["realised_20d"] == pytest.approx(0.12, abs=1e-4)
-    for rv, passes in ((0.08, True), (0.10, True), (0.12, False), (0.14, False), (0.16, False)):
+    base = None
+    for rv in (0.08, 0.10, 0.12, 0.14, 0.16):
         cheap, (_, _, f_cheap) = run(PCS, rv, brokerage=20)
         dear, (_, _, f_dear) = run(PCS, rv, brokerage=2000)
-        # ₹64 or ₹4,737 of costs: the same answer, and the same EV_rw + costs (the entry costs cancel)
         assert dear["costs"]["total_to_expiry"] > 70 * cheap["costs"]["total_to_expiry"]
-        assert (EV_GATE not in f_cheap) is passes and (EV_GATE not in f_dear) is passes
-        lhs = [x["real_world"]["ev"] + x["costs"]["total_to_expiry"] for x in (cheap, dear)]
-        assert lhs[0] == pytest.approx(lhs[1], abs=0.05)
-        # the identity: EV_rw + costs = EV_rw before costs − (discounted E_RV[STT_ex] − E_RN[STT_ex])
-        rw, entry = cheap["real_world"], cheap["costs"]["entry"]["total"]
-        stt_rw = rw["ev_gross"] - entry - rw["ev"]  # e^(−rT)·E_RV[STT on exercise]
-        stt_rn = cheap["costs"]["expected_exercise_stt"]
-        assert lhs[0] == pytest.approx(rw["ev_gross"] - stt_rw + stt_rn, abs=0.05)
+        assert EV_GATE not in f_cheap and EV_GATE not in f_dear
+        hard = [x for x in f_cheap if x != "IV context fits the strategy"]  # context of ad hoc legs (#355)
+        base = hard if base is None else base
+        assert hard == base == [x for x in f_dear if x != "IV context fits the strategy"]
+
+
+# ------------------------------------------------------------------------------------------------ after the change
+LIQ = "Bid/ask spreads within 10% of the premium"
+EV_INFO = "EV after costs and spreads (model, not validated)"
+
+
+def _half(c, right: str, strike: float) -> float:
+    q = getattr(next(r for r in c.rows if float(r.strike) == strike), right)
+    return (float(q.ask) - float(q.bid)) / 2
+
+
+def test_the_fair_price_identity_with_own_strike_ivs_and_spreads():
+    # (a) legs at their own-strike IV mids: EV_Q = −(statutory costs + half-spreads), within ₹1
+    from finresearch.fincalc import charges as ch
+    from finresearch.fincalc import options as o
+
+    a, _ = run(PCS, 0.12)
+    c = chain()
+    halves = {k: _half(c, "put", k) for k in (22600, 22400)}
+    entry_spread = 65 * sum(halves.values())  # Σ|q|·(ask − bid)/2: 65 × (0.15 + 0.525) = ₹43.875
+    assert entry_spread == pytest.approx(43.875)
+    hs = a["costs"]["half_spreads"]
+    assert hs["entry"] == pytest.approx(entry_spread, abs=0.01) and hs["p_early_exit"] == 1.0
+    assert hs["exit_expected"] == pytest.approx(entry_spread, abs=0.01) and hs["source"] == "bid/ask"
+    # the expected exercise STT on the bought 22400 put at its own IV (mid 53.125), computed here independently
+    t, r = a["t_years"], a["rate"]
+    iv = o.implied_vol("put", 53.125, a["spot"], 22400, t, r)
+    stt = float(ch.rates_as_of(date(2026, 10, 6))["stt_option_exercise"].rate)
+    stt_q = stt * 65 * o.bs_price("put", a["spot"], 22400, t, r, iv)  # discounted E_Q[STT on exercise]
+    assert a["costs"]["expected_exercise_stt"] == pytest.approx(stt_q, abs=0.05)
+    c_stat = a["costs"]["entry"]["total"] + stt_q
+    assert a["risk_neutral"]["ev"] == pytest.approx(-(c_stat + 2 * entry_spread), abs=1.0)
+
+
+def test_model_ev_is_informational_and_cannot_change_a_verdict():
+    # (b) the condor's verdict is identical at RV 10%, 12% and 14%; the RV EV is shown, labelled, and scores 0
+    from finresearch.signals import tradeplan as tpl
+
+    seen = []
+    for rv in (0.10, 0.12, 0.14):
+        a, (_, factors, failed) = run("", rv, preset="iron_condor")
+        d = tpl.decide(failed, a["max_loss"], a["costs"]["entry"]["total"], 500_000, "proven")
+        # the card's verdict (signals.tradeplan.decide); the IV/RV context of ad hoc legs is context, never a gate (#355)
+        seen.append((d.action, tuple(d.failed)))
+        assert EV_GATE not in failed
+        ev = next(f for f in factors if f.name == EV_INFO)
+        assert ev.contribution == 0 and "scenario, not a forecast" in ev.explanation
+        assert a["model_ev"]["label"] == "model EV - not validated"
+        lo, hi = a["model_ev"]["range"]
+        assert lo <= a["risk_neutral"]["ev"] <= hi and lo <= a["real_world"]["ev"] <= hi
+    assert len(set(seen)) == 1 and seen[0][0] == "ENTER"  # proven evidence, every gate passing
+
+
+def test_costs_now_count_in_the_real_world_scenario():
+    # the old gate cancelled the entry costs; the scenario EV now moves one-for-one with them
+    cheap, _ = run(PCS, 0.12, brokerage=20)
+    dear, _ = run(PCS, 0.12, brokerage=2000)
+    extra = dear["costs"]["entry"]["total"] - cheap["costs"]["entry"]["total"]
+    assert dear["real_world"]["ev"] == pytest.approx(cheap["real_world"]["ev"] - extra, abs=0.5)
+    # and the scenario prices the legs at their fills (bid for the sold put, ask for the bought one), not at LTP
+    assert [x["fill"] for x in cheap["legs"]] == [91.7, 53.65]
+
+
+def _wide(c, right: str, strike: float, bid: float, ask: float):
+    from decimal import Decimal
+
+    q = getattr(next(r for r in c.rows if float(r.strike) == strike), right)
+    q.bid, q.ask = Decimal(str(bid)), Decimal(str(ask))
+    return c
+
+
+def _assess_on(c, legs: str):
+    a = fs.analyse(c, 65, fs.parse_legs(legs), today=date(2026, 9, 29), closes=closes_at(0.12), iv_series=[],
+                   capital=10_000_000, max_loss_pct=5, brokerage=20)  # fmt: skip
+    return a, fs.assess(a)
+
+
+def test_the_liquidity_gate_binds_spreads():
+    from finresearch.signals import tradeplan as tpl
+
+    a, (_, _, failed) = _assess_on(chain(), PCS)
+    share = a["costs"]["half_spreads"]["share_of_premium"]
+    assert LIQ not in failed and share == pytest.approx(43.875 / (38.725 * 65), abs=1e-4)
+    # the sold put quoted 88-96 and the bought one 50-57: Σ half-spreads 65 × (4 + 3.5) = ₹487.5 > 10% of the
+    # ₹2,502.5 credit at mids (38.5 × 65): fails, so even a proven recipe reads WAIT, never ENTER
+    c = _wide(_wide(chain(), "put", 22600, 88, 96), "put", 22400, 50, 57)
+    a, (_, factors, failed) = _assess_on(c, PCS)
+    assert LIQ in failed
+    assert tpl.decide(failed, a["max_loss"], a["costs"]["entry"]["total"], 500_000, "proven").action == "WAIT"
+    # unknown bid/ask is never a pass
+    c = _wide(chain(), "put", 22400, 0, 0)
+    a, (_, factors, failed) = _assess_on(c, PCS)
+    assert LIQ in failed and a["costs"]["half_spreads"]["source"] == "slippage tiers (no live bid/ask)"
+    assert next(f for f in factors if f.name == LIQ).value is None

@@ -7,7 +7,8 @@ adjustment and invalidation rules, and the evidence (the matching backtest resul
 Verdict (one engine, `decide`, also used by the signal card's Strategy check, #355): AVOID when a hard check fails
 (undefined risk, over budget even at one set, a same-day expiry) or the matching pre-registered backtest is harmful
 (t ≤ −2 and CI below zero, delta-neutral recipes only); WAIT when any other check fails or is unknown (signals.fno.assess:
-EV after costs; the recipe's own registered entry filters; the IV percentile of ad hoc legs is context, not a gate);
+bid/ask spreads within 10% of the premium; the recipe's own registered entry filters; the IV percentile of ad hoc legs
+is context, not a gate; #356: the model EV is shown, labelled "model EV - not validated", and never a gate);
 ENTER only when everything passes and the matched spec passed out of sample (a candidate); everything passing
 without one is "PAPER: NO PROVEN EDGE — paper only (0 real lots)" (#350), sized for paper by the same formula and
 never with real money. The market-context indicators (signals.fno_context) never feed it.
@@ -307,10 +308,11 @@ class Inputs:
         return self.capital * self.max_loss_pct / 100
 
 
-def _analyse(chain, lot: int, legs: list[fs.LegIn], x: Inputs) -> dict[str, Any]:
+def _analyse(chain, lot: int, legs: list[fs.LegIn], x: Inputs, bidask_chain: Any = None,
+             early_exit_p: float = 1.0) -> dict[str, Any]:  # fmt: skip
     return fs.analyse(chain, lot, legs, today=x.today, closes=x.closes, iv_series=x.iv_series, capital=x.capital,
                       max_loss_pct=x.max_loss_pct, brokerage=x.brokerage, rate=x.rate, iv_source=x.iv_src,
-                      iv_as_of=x.iv_as_of)  # fmt: skip
+                      iv_as_of=x.iv_as_of, bidask_chain=bidask_chain, early_exit_p=early_exit_p)  # fmt: skip
 
 
 def evidence_for(kind: str, symbol: str, dte: int, strategies: list[dict[str, Any]] | None,
@@ -518,7 +520,13 @@ def build(chain, lot: int, legs_in: list[fs.LegIn], x: Inputs, *, spec: Any | No
     plan_legs = [tp.PlanLeg(y.right, y.strike, y.side, y.lots) for y in legs_in]
     kind = tp.classify(plan_legs)
     ev = _evidence(kind, sym, dte, x, spec)
-    a0 = _analyse(chain, lot, legs_in, x)
+    # #356: the cost-complete EV and the liquidity check read NSE's bid/ask when the plan's chain has none (#324); a
+    # hold-to-expiry recipe pays no exit half-spread, every other plan is assumed to exit early (p = 1, conservative)
+    held = (
+        ev["spec"] is not None and (spec is not None or ev["match"] == "exact") and ev["spec"].hold_to_expiry
+    )
+    ba_chain, p_exit = (bidask[0] if bidask else None), (0.0 if held else 1.0)
+    a0 = _analyse(chain, lot, legs_in, x, ba_chain, p_exit)
     if spec is None and ev["match"] == "exact":
         # legs that are exactly a library recipe borrow its evidence, so they also get its registered entry filter
         # (#355: never looser than the recipe once the untested IV gate is context only)
@@ -530,7 +538,7 @@ def build(chain, lot: int, legs_in: list[fs.LegIn], x: Inputs, *, spec: Any | No
     # the paper book takes at most 100 lots a leg (api/fno_book.PaperLegIn): never size a plan beyond it
     m = max(1, min(sz.suggested, 100 // max(y.lots for y in legs_in)))
     legs = [fs.LegIn(y.right, y.strike, y.side, y.lots * m, y.premium) for y in legs_in]
-    a = _analyse(chain, lot, legs, x) if m > 1 else a0
+    a = _analyse(chain, lot, legs, x, ba_chain, p_exit) if m > 1 else a0
     _, factors, gates = fs.assess(a, defined_risk_only=x.defined_risk_only)
     d = decide(gates, a0["max_loss"], a0["costs"]["entry"]["total"], x.budget, ev["level"], extra_failed, ob)
     action, qualifier, failed = d.action, d.qualifier, d.failed
@@ -570,7 +578,7 @@ def build(chain, lot: int, legs_in: list[fs.LegIn], x: Inputs, *, spec: Any | No
     label = action if qualifier is None else qualifier if action == tp.PAPER else f"{action} ({qualifier})"
     if action == tp.ENTER and not reasons:
         reasons.append(
-            "Every check passes: defined risk, within budget, EV after costs no worse than fair, IV fits."
+            "Every check passes: defined risk, within budget, bid/ask spreads within 10% of the premium."
         )
     elif action == tp.PAPER:
         reasons.append("Every check passes, but no strategy that passed its pre-registered out-of-sample test "
@@ -589,6 +597,11 @@ def build(chain, lot: int, legs_in: list[fs.LegIn], x: Inputs, *, spec: Any | No
         "entry": {**limits, "levels_priced_at": entry_src, "source": src},
         "max_profit": a["max_profit"], "max_loss": a["max_loss"], "breakevens": a["breakevens"],
         "net_premium": a["net_premium"], "costs": a["costs"]["total_to_expiry"],
+        # #356: model EVs after statutory costs and half-spreads, informational ("model EV - not validated")
+        "ev": {"label": a["model_ev"]["label"], "range": a["model_ev"]["range"], "note": a["model_ev"]["note"],
+               "risk_neutral": None if rn is None else rn["ev"], "real_world": None if rw is None else rw["ev"],
+               "real_world_window": (rw or {}).get("window"), "costs": a["costs"]["total_with_spreads"],
+               "half_spreads": a["costs"]["half_spreads"]},
         "probability": {"real_world": None if rw is None else rw["pop"], "real_world_window": (rw or {}).get("window"),
                         "risk_neutral": None if rn is None else rn["pop"],
                         "note": "Model probabilities of a positive P&L after costs at expiry (lognormal; real prices "
