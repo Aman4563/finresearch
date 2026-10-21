@@ -271,3 +271,50 @@ async def test_nightly_step_loads_both_files_and_retries_a_missing_volume_file(c
     with session_scope() as s:
         assert s.get(AlertEvalSlot, "fno_participant:2026-10-09").result["status"] == "done"
         assert s.get(FnoParticipantVol, (day, "FII")) is not None
+
+
+# --------------------------------------------------------------------------------------------------- data quality
+def _checks(fn, day):
+    from finresearch.db import session_scope
+
+    with session_scope() as s:
+        return {c.check: c for c in fn(s, day)}
+
+
+def test_volume_checks_present_identity_and_reupload(clean):
+    from finresearch.db import session_scope
+    from finresearch.dq import ref
+    from finresearch.fnohist import participants
+
+    assert {c.status for c in _checks(ref.participant_vol_checks, D).values()} == {"unknown"}  # not loaded
+    body = synth(po.VOL, D).encode()
+    with session_scope() as s:
+        participants.load_day(s, po.VOL, D, po.VOL.url_for(D), body)
+    got = _checks(ref.participant_vol_checks, D)
+    assert {k: c.status for k, c in got.items()} == {"participants_present": "ok", "long_short_identity": "ok",
+                                                     "reupload": "ok"}  # fmt: skip
+    assert all(c.dataset == "fno_participant_vol" for c in got.values())
+    # NSE re-uploads the day with one more Client contract on each side: same totals, another body
+    changed = synth(po.VOL, D, BUCKETS | {"Client": (101, 61, *BUCKETS["Client"][2:])}).encode()
+    with session_scope() as s:
+        participants.load_day(s, po.VOL, D, po.VOL.url_for(D), changed)
+    rep = _checks(ref.participant_vol_checks, D)["reupload"]
+    assert rep.status == "warn" and rep.value == 1 and rep.critical is False
+
+
+def test_oi_rows_without_lineage_have_an_unknown_reupload_check(clean):
+    from finresearch.db import session_scope
+    from finresearch.dq import ref
+    from finresearch.fnohist import participants
+
+    with session_scope() as s:  # stored by #317's nightly job before lineage existed
+        participants.save_day(s, D, po.parse(synth(po.OI, D)), po.OI.url_for(D))
+    rep = _checks(ref.participant_checks, D)["reupload"]
+    assert rep.status == "unknown" and rep.critical is False
+
+
+def test_volume_is_a_monitored_dataset():
+    from finresearch.dq import run
+
+    ds = {d.name: d for d in run.DATASETS}["fno_participant_vol"]
+    assert ds.critical is False and ds.sla.hour == 20
