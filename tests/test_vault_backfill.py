@@ -182,3 +182,37 @@ async def test_refuses_without_a_data_rights_decision(vault, monkeypatch):
     monkeypatch.delitem(data_rights.DECISIONS, "fno_bhav")
     with pytest.raises(data_rights.NoDecision):
         await vb.backfill(DAY, DAY, vault_url=vault, **kw())
+
+
+def _cli(*args: str, vault_url: str | None, monkeypatch):
+    from typer.testing import CliRunner
+
+    from finresearch import config
+    from finresearch.cli import app
+
+    if vault_url is None:
+        monkeypatch.delenv("FINRESEARCH_VAULT_DATABASE_URL", raising=False)
+    else:
+        monkeypatch.setenv("FINRESEARCH_VAULT_DATABASE_URL", vault_url)
+    config.get_settings.cache_clear()
+    return CliRunner().invoke(app, ["vault", *args])
+
+
+def test_cli_refuses_without_a_vault_or_on_the_app_database(vault, monkeypatch):
+    r = _cli(
+        "backfill", "--from", "2008-10-14", "--to", "2008-10-14", vault_url=None, monkeypatch=monkeypatch
+    )
+    assert r.exit_code == 1 and "no vault database" in r.output
+    r = _cli(
+        "backfill", "--from", "2008-10-14", "--to", "2008-10-14", vault_url=vault, monkeypatch=monkeypatch
+    )
+    assert r.exit_code == 1 and "app's database" in r.output  # the test database is the app's here
+
+
+def test_cli_engine_hash_and_status(vault, monkeypatch):
+    from finresearch.vault import registry
+
+    r = _cli("engine-hash", vault_url=None, monkeypatch=monkeypatch)
+    assert r.exit_code == 0 and registry.engine_hash() in r.output and "no pin" in r.output
+    r = _cli("status", vault_url=vault, monkeypatch=monkeypatch)
+    assert r.exit_code == 0 and "{}" in r.output.replace(" ", "").replace("\n", "")

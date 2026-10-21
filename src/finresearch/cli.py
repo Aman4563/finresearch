@@ -1764,6 +1764,78 @@ def fno_status() -> None:
     console.print(t)
 
 
+vault_app = typer.Typer(
+    no_args_is_help=True,
+    help="The sealed 2008-2021 F&O vault (#364, #365): load it into its own database; never read it here",
+)
+app.add_typer(vault_app, name="vault")
+
+
+@vault_app.command("backfill")
+def vault_backfill(
+    start: str = typer.Option(..., "--from", help="First day, YYYY-MM-DD (from 2008-01-01)"),
+    end: str = typer.Option(..., "--to", help="Last day, YYYY-MM-DD (to 2021-12-31)"),
+    max_days: int | None = typer.Option(None, min=1, help="Request at most this many days in this run"),
+    delay: float = typer.Option(
+        2.5, min=0.0, help="Extra seconds between downloads, on top of the shared NSE limit"
+    ),
+    keep_raw: bool = typer.Option(
+        False, help="Keep each zip under data/vault/fno_bhav/ (~1.3 GB in all; off)"
+    ),
+    probe_weekends: bool = typer.Option(
+        False, help="Request every weekend day, not only the listed sessions"
+    ),
+) -> None:
+    """Load NSE's legacy F&O bhavcopy for NIFTY/BANKNIFTY/FINNIFTY index futures and options into the vault database
+    (FINRESEARCH_VAULT_DATABASE_URL), with derived IV rows and the contract calendar. Resumable: re-run the same command
+    to continue. Personal use only (#362): no downloads 09:00-16:00 IST on weekdays; stops after two refusals
+    (403/429) in a row. Prints counts only, never a vault figure."""
+    from datetime import date as _date
+
+    from finresearch.config import get_settings
+    from finresearch.vault import backfill as vb
+
+    def progress(i: int, n: int, day, status: str) -> None:
+        if i % 25 == 0 or i == n or status == "failed":
+            console.print(f"vault {i}/{n} {day} {status}")
+
+    try:
+        res = asyncio.run(vb.backfill(_date.fromisoformat(start), _date.fromisoformat(end),
+                                      vault_url=get_settings().vault_database_url, pause=delay, keep_raw=keep_raw,
+                                      max_days=max_days, probe_weekends=probe_weekends, progress=progress))  # fmt: skip
+    except vb.VaultLoadRefused as e:
+        console.print(f"[red]refused:[/red] {e}")
+        raise typer.Exit(1) from e
+    console.print_json(json.dumps(res, default=str))
+
+
+@vault_app.command("status")
+def vault_status() -> None:
+    """Days tried in the vault database by year and status (the load manifest only; no market data is read)."""
+    from finresearch.config import get_settings
+    from finresearch.vault import backfill as vb
+
+    url = get_settings().vault_database_url
+    if not url:
+        console.print("[red]no vault database is configured (FINRESEARCH_VAULT_DATABASE_URL)[/red]")
+        raise typer.Exit(1)
+    console.print_json(json.dumps(vb.status(url)))
+
+
+@vault_app.command("engine-hash")
+def vault_engine_hash() -> None:
+    """The backtest engine's hash as PREREG.md §2.7 defines it, and the committed pin (vault/engine_pin.py)."""
+    from finresearch.vault import engine_pin, registry
+
+    h = registry.engine_hash()
+    pin = engine_pin.ENGINE_HASH
+    console.print(f"engine hash: {h}")
+    console.print(
+        "pin: "
+        + ("no pin committed yet" if pin is None else pin + (" (matches)" if pin == h else " (DIFFERS)"))
+    )
+
+
 index_app = typer.Typer(
     no_args_is_help=True,
     help="Reference series: NSE's daily index close file (OHLC, P/E, P/B, yield, India VIX)",
