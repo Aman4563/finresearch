@@ -151,7 +151,20 @@ uv run finresearch events check --from 2026-10-22 --to 2026-11-24  # the plan ca
 uv run finresearch fno span backfill --from 2008-01-01  # NSE SPAN scan ranges, one file a month (#370)
 uv run finresearch fno span margin-check           # margin estimate vs Groww's calculator: the P4.3 trigger
 uv run finresearch fno card-log --since 2026-10-21T18:00:00+05:30   # F&O card verdicts before/after a release (#360)
+uv run finresearch vault backfill --from 2018-01-01 --to 2021-12-31 --max-days 400   # the sealed vault (#365), below
+uv run finresearch vault status                    # vault load manifest: days by year and status (no market data)
+uv run finresearch vault engine-hash               # the engine hash for the vault pin (PREREG.md §2.7)
 ```
+
+The sealed 2008-2021 vault (#364, #365) is loaded only into its own database, `FINRESEARCH_VAULT_DATABASE_URL`
+(never the app's: the loader refuses a URL naming it, and refuses days outside 2008-2021). Create it once with
+`createdb finresearch_vault` and build its tables with `FINRESEARCH_DATABASE_URL=postgresql+psycopg://localhost/finresearch_vault
+uv run alembic upgrade head` (a per-command variable: the app keeps its own URL). Load the 2018-2021 tranche first
+(COVID; unblocks the stress replays), then 2008-2017, a few hundred days per night with `--max-days`; it keeps NIFTY,
+BANKNIFTY and FINNIFTY index futures and options only, no raw zips by default, and derives fno_iv_eod and
+fno_contract with the app's code. Lots come from NSE's circulars (`backtest.lots`) and charges from
+`fincalc.charges`; a date with an unsourced lot or charge is skipped by the backtest, never priced with a guess.
+The vault is read only through `finresearch.vault.guard` (registered studies, logged reads).
 
 NSE data is collected for personal, non-distributed use only (owner decision #362, `finresearch.data_rights`): it
 stays in the local database and `data/`. Backfills go through the shared NSE rate limit, stop by themselves between
