@@ -70,7 +70,9 @@ def estimate(legs: Sequence[MarginLeg], spot: float, t_years: float, rate: float
     p = {**PARAMS[kind], **(params or {})}
     if any(x.right != "future" and not x.iv for x in legs):
         raise ValueError("an option leg has no implied volatility: no margin estimate")
-    if t_years <= 0:  # #359: T is to the minute and never floored; an expired basket has no margin to estimate
+    if (
+        t_years <= 0
+    ):  # #359: T is to the minute and never floored; an expired basket has no margin to estimate
         raise ValueError("the contract has expired (15:30 IST on the expiry day): no margin estimate")
     t = t_years
     premium = sum(x.price * x.qty for x in legs if x.right != "future" and x.qty > 0)

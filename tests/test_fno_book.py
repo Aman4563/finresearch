@@ -414,7 +414,9 @@ def test_positions_view_prices_known_legs_and_keeps_unknowns_unknown(book_db):
     # the row whose direction is not confirmed: no P&L, no greeks, so no group totals and no max loss
     assert legs["NIFTY26OCT25500CE"]["unrealised_pnl"] is None and legs["NIFTY26OCT25500CE"]["greeks"] is None
     assert g["unrealised_pnl"] is None and g["net_greeks"] is None and g["max_loss"] is None
-    t = (15 * 1440 + 270) / 525_600  # #359: 12-Oct 11:00 IST → 27-Oct 15:30 IST, to the minute (was 15 days flat)
+    t = (
+        15 * 1440 + 270
+    ) / 525_600  # #359: 12-Oct 11:00 IST → 27-Oct 15:30 IST, to the minute (was 15 days flat)
     assert legs["NIFTY26OCT25000CE"]["greeks"]["delta"] == pytest.approx(
         75 * _bs_delta("call", 24900, 25000, t, service.RATE, 0.14), abs=1e-3)  # fmt: skip
     assert legs["NIFTY26OCT24500PE"]["greeks"]["delta"] == pytest.approx(
