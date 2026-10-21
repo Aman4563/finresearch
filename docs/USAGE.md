@@ -150,6 +150,7 @@ uv run finresearch events seed                     # load the curated event cale
 uv run finresearch events check --from 2026-10-22 --to 2026-11-24  # the plan card's tier-1 event check for a window
 uv run finresearch fno span backfill --from 2008-01-01  # NSE SPAN scan ranges, one file a month (#370)
 uv run finresearch fno span margin-check           # margin estimate vs Groww's calculator: the P4.3 trigger
+uv run finresearch fno participants --from 2015-01-01  # participant-wise OI and volume (Client/DII/FII/Pro), 2 files a day (#371)
 uv run finresearch fno card-log --since 2026-10-21T18:00:00+05:30   # F&O card verdicts before/after a release (#360)
 ```
 
