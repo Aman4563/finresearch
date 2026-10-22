@@ -1437,7 +1437,9 @@ class FnoMark(Base):
     spot: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
     spot_source: Mapped[str | None] = mapped_column(String(80))
     iv: Mapped[Decimal | None] = mapped_column(Numeric(10, 6))  # a fraction a year
-    t_years: Mapped[Decimal | None] = mapped_column(Numeric(12, 8))  # to 15:30 IST on expiry, from 15:30 IST that day
+    t_years: Mapped[Decimal | None] = mapped_column(
+        Numeric(12, 8)
+    )  # to 15:30 IST on expiry, from 15:30 IST that day
     note: Mapped[str | None] = mapped_column(Text)
     recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
