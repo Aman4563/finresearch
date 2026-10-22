@@ -283,6 +283,13 @@ function Evidence({ plan }: { plan: TradePlan }) {
         <span data-testid="plan-evidence">{ev.text}</span>
         <Link href={ev.url} className="whitespace-nowrap text-brand hover:underline">backtests →</Link>
       </p>
+      {ev.opportunity && (
+        <p className="text-muted" data-testid="plan-opportunity">
+          Against holding NIFTY on the same capital and days ({ev.opportunity.window.join(" → ")}): this recipe{" "}
+          <N>{rs(ev.opportunity.fno_after_tax)}</N> after tax, the index <N>{rs(ev.opportunity.index_after_tax)}</N>
+          {ev.opportunity.excess_after_tax == null ? `: difference unknown${ev.opportunity.reason ? ` (${ev.opportunity.reason})` : ""}` : <>: difference <N>{rs(ev.opportunity.excess_after_tax)}</N></>}.
+        </p>
+      )}
       {pr && (
         <p className="text-muted">
           Your paper record: {pr.closed ? <>{pr.closed} closed ({pr.wins} won · {pr.losses} lost), net <N>{rs(pr.total_net)}</N></> : "none closed"}{pr.open ? ` · ${pr.open} open` : ""}. {pr.note}

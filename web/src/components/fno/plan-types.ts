@@ -1,4 +1,6 @@
 import type { SignalReliability } from "@/components/signal";
+
+import type { Opportunity } from "./backtest-types";
 // Trade-plan cards and the market-context panel (#317): the shapes of POST /api/fno/plan, GET /api/fno/{symbol}/suggest
 // and GET /api/fno/{symbol}/context.
 
@@ -17,6 +19,8 @@ export type PlanEvidence = {
   spec_key: string | null; spec_name: string | null; match: "exact" | "related" | null; status: string | null;
   /** #355: harmful (t ≤ −2 and CI below 0, delta-neutral recipes only) → AVOID; directional = one-sided or debit structures, whose backtest reflects the index path */
   level: "proven" | "harmful" | "inconclusive" | "directional" | "none"; raw_level: string; text: string; url: string;
+  /** #381: the exact spec's out-of-sample P&L after tax beside holding the index (shown, never a gate) */
+  opportunity?: Opportunity | null;
 };
 
 export type PaperRecord = {
