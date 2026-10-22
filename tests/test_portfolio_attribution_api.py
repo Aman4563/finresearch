@@ -131,3 +131,43 @@ def test_attribution_without_stored_bhavcopy_is_unknown(api):  # noqa: F811
 
 async def _async(x):
     return x
+
+
+def test_attribution_weights_from_nse_list_and_quotes_failed_quote_kept_briefly(api, short, monkeypatch):  # noqa: F811
+    """No seam: the route reads the member list (stubbed here) and each member's quote through the app's quote source;
+    a member whose quote fails makes its sector unknown, and that answer is not kept for the full 12 hours."""
+    from types import SimpleNamespace
+
+    from finresearch.adapters import nse_index_weights as nw
+
+    _seed()
+    lists = []
+
+    async def fake_nifty50(self, quote):
+        lists.append(1)
+        cons = [nw.Constituent("AAA", "AAA Ltd", "Financial Services", None),
+                nw.Constituent("ZZZ", "ZZZ Ltd", "Information Technology", None)]  # fmt: skip
+        return await nw.weights(cons, quote, url=nw.LIST_URL)
+
+    async def quote(sym):
+        if sym == "ZZZ":
+            raise RuntimeError("HTTP 403")
+        return SimpleNamespace(ffmc=Decimal(1200), last_price=Decimal(60), sector=None)
+
+    import finresearch.api.markets as mk
+
+    monkeypatch.setattr(
+        mk, "NEGATIVE_TTL_S", 0
+    )  # an incomplete answer expires at once (normally after minutes)
+    monkeypatch.setattr(nw.NiftyWeightsClient, "nifty50", fake_nifty50)
+    api.app.state.markets.quote = quote
+    with _db_writes() as writes:
+        body = api.get("/api/portfolio/analytics/attribution?period=1m").json()
+    assert writes == []
+    assert body["available"] is True and body["totals"]["active"] is None
+    assert body["benchmark_unknown"] == [
+        {"symbol": "ZZZ", "name": "ZZZ Ltd", "reason": "its NSE quote failed: RuntimeError"}
+    ]
+    assert body["unreachable"] == ["ZZZ"]
+    api.get("/api/portfolio/analytics/attribution?period=1m")
+    assert len(lists) == 2

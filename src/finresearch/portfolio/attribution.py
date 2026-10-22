@@ -4,7 +4,8 @@ What it answers: over the window (1, 3 or 6 months, ending on the last stored bh
 between today's holdings, held unchanged through the window, and the Nifty 50 came from sector weights (allocation),
 from the stocks picked inside a sector (selection) and from both (interaction). `fincalc.brinson` does the arithmetic.
 
-- Benchmark weights: NSE's free-float market cap of each current Nifty 50 constituent (adapters.nse_index_weights).
+- Benchmark weights: NSE's free-float market cap of each current Nifty 50 member, from its NSE quote, over NSE's
+  member list (adapters.nse_index_weights).
   The index is free-float market-cap weighted, so a constituent's weight is its share of the total; NSE Indices'
   capping (a stock at most 33 %, the top three at most 62 %) is not applied and is rarely binding for the Nifty 50.
   The market cap is moved to the window's last close (× close / the price NSE quoted it at) and back-drifted to the
@@ -217,7 +218,9 @@ def members(s: Any, iw: Any, s0: date, end: date) -> list[Member]:
         ]
         ret, why = constituent_return(rows, s0, end)
         close_end = next((float(c) for d, c, _ in rows if d == end and c is not None), None)
-        if m.ffmc is None:
+        if getattr(m, "reason", None):
+            why = m.reason
+        elif m.ffmc is None:
             why = "NSE gave no free-float market cap"
         elif not m.last_price:
             why = "NSE gave no price for its market cap"
@@ -300,7 +303,7 @@ def _base(period: str) -> dict[str, Any]:
     return {"disclaimer": DISCLAIMER, "privacy": PRIVACY, "method": brinson.METHOD, "caveats": CAVEATS,
             "period": period, "periods": list(PERIODS), "available": False, "reason": None,
             "window": None, "benchmark": None, "segments": [], "totals": None, "excluded": [],
-            "benchmark_unknown": [], "coverage": None, "complete": False}  # fmt: skip
+            "benchmark_unknown": [], "coverage": None, "complete": False, "unreachable": []}  # fmt: skip
 
 
 def unavailable(period: str, reason: str) -> dict[str, Any]:
@@ -353,7 +356,8 @@ async def load(
     out["benchmark"] = {"name": BENCHMARK, "members": len(iw.members), "rebuilt_return": rebuilt,
                         "index_return": None if idx is None else round(idx, 6), "difference": diff,
                         "tolerance": INDEX_TOLERANCE, "warning": warn,
-                        "source": {"name": "NSE: Nifty 50 constituents with free-float market capitalisation",
+                        "source": {"name": "NSE: Nifty 50 member list (ind_nifty50list.csv) and each member's free-float "
+                                           "market cap from its NSE quote",
                                    "url": iw.url, "as_of": iw.as_of.isoformat() if iw.as_of else None,
                                    "fetched_at": iw.fetched_at.isoformat() if iw.fetched_at else None}}  # fmt: skip
     if idx is None:

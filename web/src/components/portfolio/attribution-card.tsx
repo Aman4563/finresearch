@@ -79,7 +79,7 @@ export function AttributionCard({ refresh }: { refresh: number }) {
       help="Brinson-Fachler: allocation is the effect of over- or under-weighting sectors, selection the effect of the stocks you picked inside a sector, interaction the two together. They add up to the gap between your holdings and the index. Today's holdings as if held through the window; past, not advice.">
       {!run ? (
         <div className="flex flex-wrap items-center gap-3 text-xs text-muted">
-          <p className="flex-1">Compares today&apos;s holdings with the Nifty 50 sector by sector. It reads NSE&apos;s index weights and the stored daily bhavcopy.</p>
+          <p className="flex-1">Compares today&apos;s holdings with the Nifty 50 sector by sector. It reads NSE&apos;s Nifty 50 member list, one quote per member for its free-float market cap (the first run can take a minute or two) and the stored daily bhavcopy.</p>
           <Button variant="secondary" onClick={() => setRun(true)}>Attribute returns</Button>
         </div>
       ) : (

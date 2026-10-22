@@ -1,11 +1,12 @@
-"""NSE's Nifty 50 constituents with free-float market caps (#348, adapters.nse_index_weights): parsing a hand-made
-synthetic payload (made-up symbols and ISINs) and the client over a mocked NSE. Offline."""
+"""The Nifty 50's members (NSE's constituent CSV) with each one's free-float market cap from its NSE quote (#348,
+adapters.nse_index_weights). Hand-made synthetic CSV (made-up symbols and ISINs), fake quotes, NSE mocked. Offline."""
 
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -14,50 +15,72 @@ import respx
 from finresearch.adapters import nse_index_weights as nw
 from finresearch.adapters.http import PoliteClient
 
-FX = Path(__file__).parent / "fixtures" / "nse_index"
-PAYLOAD = json.loads((FX / "nifty50_synthetic.json").read_text())
+CSV = (Path(__file__).parent / "fixtures" / "nse_index" / "ind_nifty50list_synthetic.csv").read_text()
+PRICES = Path(__file__).parent / "fixtures" / "prices"
 
 
-def test_parse_skips_the_index_row_and_keeps_a_missing_ffmc_unknown():
-    iw = nw.parse(PAYLOAD, url="https://example.invalid/x")
-    assert iw.index == "NIFTY 50" and iw.as_of == datetime(2026, 10, 20, 15, 30, tzinfo=iw.as_of.tzinfo)
-    by = {m.symbol: m for m in iw.members}
-    assert set(by) == {"EXBANK", "EXSOFT", "EXNEW"}  # the "NIFTY 50" row itself is not a member
-    assert by["EXBANK"].ffmc == pytest.approx(9000000000000.5) and by["EXBANK"].last_price == 1500.0
-    assert by["EXBANK"].name == "Example Bank Limited" and by["EXBANK"].isin == "INE000X01011"
-    assert by["EXNEW"].ffmc is None  # absent: unknown, never 0
+def test_quote_parses_the_free_float_market_cap():
+    from finresearch.adapters.nse import Quote
+
+    q = Quote.parse(json.loads((PRICES / "nse_quote_INFY_20260930_after_close.json").read_text()))
+    assert q.ffmc == Decimal("3501433699412.84") and q.sector == "Information Technology"
 
 
-def test_parse_refuses_a_payload_without_members():
+def test_parse_constituents():
+    rows = nw.parse_constituents(CSV)
+    assert [r.symbol for r in rows] == ["EXBANK", "EXSOFT", "EXNEW"]
+    assert rows[0] == nw.Constituent("EXBANK", "Example Bank Ltd.", "Financial Services", "INE000X01011")
+    with pytest.raises(nw.IndexWeightsError, match="not NSE's index constituent list"):
+        nw.parse_constituents("<html>blocked</html>")
     with pytest.raises(nw.IndexWeightsError, match="no constituents"):
-        nw.parse({"name": "NIFTY 50", "data": [PAYLOAD["data"][0]]}, url="u")
-    with pytest.raises(nw.IndexWeightsError, match="not the NIFTY 50"):
-        nw.parse({**PAYLOAD, "name": "NIFTY BANK"}, url="u")
+        nw.parse_constituents("Company Name,Industry,Symbol,Series,ISIN Code\n")
+
+
+async def test_members_take_the_cap_from_each_quote_and_a_failed_quote_stays_unknown():
+    async def quote(sym):
+        if sym == "EXNEW":
+            raise RuntimeError("NSE quote refused for EXNEW: HTTP 403")
+        return SimpleNamespace(ffmc=Decimal({"EXBANK": "9000.5", "EXSOFT": "3000"}[sym]),
+                               last_price=Decimal({"EXBANK": "1500", "EXSOFT": "1200"}[sym]))  # fmt: skip
+
+    iw = await nw.weights(nw.parse_constituents(CSV), quote, url="https://example.invalid/list.csv")
+    by = {m.symbol: m for m in iw.members}
+    assert (by["EXBANK"].ffmc, by["EXBANK"].last_price, by["EXBANK"].sector) == (
+        9000.5,
+        1500.0,
+        "Financial Services",
+    )
+    assert by["EXNEW"].ffmc is None and by["EXNEW"].reason == "its NSE quote failed: RuntimeError"
+    assert iw.unreachable == ["EXNEW"] and iw.url == "https://example.invalid/list.csv"
 
 
 async def _no_sleep(_s: float) -> None:
     return None
 
 
+def _http() -> PoliteClient:
+    return PoliteClient(cache_dir=None, sleep=_no_sleep, clock=lambda: 0.0, max_retries=0)
+
+
+async def _quote(sym):
+    return SimpleNamespace(ffmc=Decimal(100), last_price=Decimal(10))
+
+
 @respx.mock
-async def test_client_reads_through_the_polite_client():
-    respx.get(nw.WARMUP_URL).mock(return_value=httpx.Response(200, text="<html>ok</html>"))
-    route = respx.get(url__startswith=nw.API_URL).mock(
-        return_value=httpx.Response(200, json=PAYLOAD, headers={"content-type": "application/json"})
-    )
-    http = PoliteClient(cache_dir=None, sleep=_no_sleep, clock=lambda: 0.0, max_retries=0)
+async def test_client_reads_the_list_through_the_polite_client():
+    route = respx.get(nw.LIST_URL).mock(return_value=httpx.Response(200, text=CSV))
+    http = _http()
     async with nw.NiftyWeightsClient(http) as c:
-        iw = await c.nifty50()
+        iw = await c.nifty50(_quote)
     await http.aclose()
-    assert route.called and route.calls.last.request.url.params["index"] == "NIFTY 50"
-    assert len(iw.members) == 3 and iw.url.startswith(nw.API_URL) and iw.fetched_at is not None
+    assert route.called and len(iw.members) == 3 and iw.fetched_at is not None and not iw.unreachable
 
 
-def test_member_sector_is_nse_classification_or_unknown():
-    by = {m.symbol: m for m in nw.parse(PAYLOAD, url="u").members}
-    assert (
-        by["EXBANK"].sector == "Private Sector Bank"
-        and by["EXSOFT"].sector == "Computers - Software & Consulting"
-    )
-    row = {**PAYLOAD["data"][1], "meta": {"companyName": "X"}}
-    assert nw.parse({**PAYLOAD, "data": [row]}, url="u").members[0].sector is None
+@respx.mock
+async def test_client_refusal_is_an_error_not_an_empty_index():
+    respx.get(nw.LIST_URL).mock(return_value=httpx.Response(503))
+    http = _http()
+    with pytest.raises(nw.IndexWeightsError, match="HTTP 503"):
+        async with nw.NiftyWeightsClient(http) as c:
+            await c.nifty50(_quote)
+    await http.aclose()

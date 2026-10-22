@@ -4,8 +4,9 @@ holding from stored NSE volume (`portfolio.liquidity`) and Brinson-Fachler attri
 
 GETs that write nothing to the database: they reuse the analytics routes' value history (`app.state.portfolio_history`,
 so `add_portfolio_analytics_routes` must be added first) and read the stored NSE bhavcopy (`equity_eod`, `index_eod`).
-The attribution also reads the Nifty 50 constituents with NSE's free-float market caps through
-`adapters.nse_index_weights` (PoliteClient; kept in memory for 12 hours, a failure never cached).
+The attribution also reads the Nifty 50 member list and each member's free-float market cap from its NSE quote
+(`adapters.nse_index_weights`; PoliteClient and the quote source, kept in memory for 12 hours; a failure, or a list
+with a failed quote, is never kept as data).
 
 Test seam: `app.state.benchmark_source`, an async `() -> IndexWeights` used instead of NSE. Privacy: nothing here calls
 an LLM.
@@ -50,14 +51,23 @@ def add_portfolio_attribution_routes(app: FastAPI) -> None:
 
     cache = TtlCache()
 
-    async def _weights():
+    async def _quote(symbol: str):
+        return await cache.get(
+            ("quote", symbol), QUOTE_TTL_S, lambda: app.state.markets.get_quote(symbol, "NSE")
+        )
+
+    async def _weights() -> dict[str, Any]:
+        """{"iw": IndexWeights, "unreachable": members whose quote failed}; a non-empty `unreachable` keeps the
+        answer only briefly (TtlCache's degraded rule), so a failed quote is retried, never cached as data."""
         seam = getattr(app.state, "benchmark_source", None)
         if seam is not None:
-            return await seam()
-        from finresearch.adapters.nse_index_weights import NiftyWeightsClient
+            iw = await seam()
+        else:
+            from finresearch.adapters.nse_index_weights import NiftyWeightsClient
 
-        async with NiftyWeightsClient() as c:
-            return await c.nifty50()
+            async with NiftyWeightsClient() as c:
+                iw = await c.nifty50(_quote)
+        return {"iw": iw, "unreachable": list(getattr(iw, "unreachable", []) or [])}
 
     async def _sector_of(symbol: str) -> str | None:
         """NSE's sector level ("Information Technology") of a stock outside the index, from its quote (cached)."""
@@ -78,17 +88,19 @@ def add_portfolio_attribution_routes(app: FastAPI) -> None:
 
         hist, today, fp = await app.state.portfolio_history()
         try:
-            iw = await cache.get(("nifty50",), WEIGHTS_TTL_S, _weights)
+            got = await cache.get(("nifty50",), WEIGHTS_TTL_S, _weights)
         except Exception as e:
             return at.unavailable(
                 period, f"Nifty 50 weights could not be read: {public_error(e, drop_query=True)}"
             )
+        iw = got["iw"]
         if not hist.ok:
             return at.unavailable(period, hist.reason or "no value history yet")
         store = PriceStore(get_settings().state_dir / "portfolio_history")
 
         async def make():
             async with Fetcher(app.state.markets) as f:  # set by portfolio_history() above
-                return await at.load(hist, iw, today, period, f, store, _sector_of)
+                out = await at.load(hist, iw, today, period, f, store, _sector_of)
+            return {**out, "unreachable": got["unreachable"]}  # non-empty: kept only briefly
 
         return await cache.get(("attribution", fp, today, period, iw.as_of), RESULT_TTL_S, make)
