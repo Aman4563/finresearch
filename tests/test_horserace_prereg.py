@@ -76,11 +76,15 @@ def test_addendum_a6_hash_is_pinned_quoted_and_covers_the_simulation_settings(mo
     from finresearch.fnobook import path_pop as pp
     from finresearch.horserace import addendum_a3, addendum_a6
 
-    assert addendum_a6.addendum_hash() == prereg.ADDENDUM_A6_HASH, "a changed addendum is a new ADDENDUM_VERSION"
+    assert addendum_a6.addendum_hash() == prereg.ADDENDUM_A6_HASH, (
+        "a changed addendum is a new ADDENDUM_VERSION"
+    )
     reg = addendum_a6.registration()
     assert reg["base_hash"] == prereg.HASH and reg["a1_hash"] == prereg.ADDENDUM_HASH
     assert reg["a2_hash"] == prereg.ADDENDUM_A2_HASH and reg["a3_hash"] == prereg.ADDENDUM_A3_HASH
-    assert addendum_a6.CHALLENGER == "p_path" and addendum_a6.CHALLENGERS == (*addendum_a3.CHALLENGERS, "p_path")
+    assert (
+        addendum_a6.CHALLENGER == "p_path" and (*addendum_a3.CHALLENGERS, "p_path") == addendum_a6.CHALLENGERS
+    )
     sim = reg["simulation"]
     assert sim["n_paths"] == addendum_a6.N_PATHS == 2000 and sim["seed"] == addendum_a6.SEED == 388
     assert sim["steps"] == addendum_a6.STEPS and "session" in sim["steps"]
@@ -90,7 +94,9 @@ def test_addendum_a6_hash_is_pinned_quoted_and_covers_the_simulation_settings(mo
                              (pp, "BETA_WINDOW", 260), (pp, "BETA_MIN", 100), (pp, "TICK", 0.1),
                              (b, "SIGMA_LO", 1e-3)):  # fmt: skip
         monkeypatch.setattr(mod, name, value)
-        assert addendum_a6.addendum_hash() != prereg.ADDENDUM_A6_HASH, name  # editing a setting moves the hash
+        assert addendum_a6.addendum_hash() != prereg.ADDENDUM_A6_HASH, (
+            name
+        )  # editing a setting moves the hash
         monkeypatch.undo()
 
 
