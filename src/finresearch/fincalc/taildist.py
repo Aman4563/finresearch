@@ -98,3 +98,106 @@ def sample_outcome(legs: Sequence[o.Leg], s_t: Sequence[float], t: float, rate: 
     dist = list(zip(pnl.tolist(), w.tolist(), strict=True))
     return SampleOutcome(float(w[pnl > 0].sum()), ev, o.weighted_quantiles(dist, DOTS),
                          expected_shortfall(pnl, w), len(st))  # fmt: skip
+
+
+# ------------------------------------------------------------------------------------- the stationary bootstrap
+def stationary_bootstrap(n: int, size: int, mean_block: float, rng: np.random.Generator) -> np.ndarray:
+    """`size` indices into a series of length n by Politis and Romano's stationary bootstrap: a run starts at a
+    uniform index and continues to i + 1 (mod n) with probability 1 - 1/mean_block, so block lengths are geometric
+    with mean `mean_block`."""
+    if n < 1 or size < 1 or mean_block < 1:
+        raise ValueError("a series, a size and a mean block length of at least 1 are required")
+    starts = rng.integers(0, n, size)
+    restart = rng.random(size) < 1.0 / mean_block
+    restart[0] = True
+    out = np.empty(size, dtype=np.int64)
+    cur = 0
+    for i in range(size):
+        cur = starts[i] if restart[i] else (cur + 1) % n
+        out[i] = cur
+    return out
+
+
+# ------------------------------------------------------------------------------------------- the GPD tail
+GPD_THETA_GRID = 4000  # Grimshaw's profile likelihood is searched on this grid of theta = xi / beta, then refined
+
+
+@dataclass(frozen=True)
+class GpdFit:
+    xi: float
+    beta: float
+    loglik: float
+    n: int
+
+
+def _gpd_profile(theta: float, x: np.ndarray) -> float:
+    """Grimshaw (1993, Technometrics 35, 185-191): for theta = xi / beta the MLE of xi is mean(log(1 + theta x)), and
+    the log-likelihood is -n log(xi / theta) - n (1 + xi); theta -> 0 is the exponential limit."""
+    n = len(x)
+    if abs(theta) < 1e-12:
+        return -n * math.log(float(np.mean(x))) - n
+    a = 1 + theta * x
+    if np.any(a <= 0):
+        return -math.inf
+    xi = float(np.mean(np.log(a)))
+    # xi <= -1: the likelihood is unbounded as theta -> -1 / max x (no MLE; Smith 1985, Biometrika 72, 67-90), so
+    # only the interior local maximum with xi > -1 counts (scipy's genpareto.fit lands on the same one)
+    return -n * math.log(xi / theta) - n * (1 + xi) if xi / theta > 0 and xi > -1 else -math.inf
+
+
+def _golden_max(f: Callable[[float], float], lo: float, hi: float, tol: float = 1e-12) -> float:
+    g = (math.sqrt(5) - 1) / 2
+    a, b = lo, hi
+    c, d = b - g * (b - a), a + g * (b - a)
+    fc, fd = f(c), f(d)
+    while abs(b - a) > tol * max(1.0, abs(a) + abs(b)):
+        if fc >= fd:
+            b, d, fd = d, c, fc
+            c = b - g * (b - a)
+            fc = f(c)
+        else:
+            a, c, fc = c, d, fd
+            d = a + g * (b - a)
+            fd = f(d)
+    return (a + b) / 2
+
+
+def gpd_fit(excess: Sequence[float]) -> GpdFit:
+    """Maximum-likelihood GPD(xi, beta) of positive excesses over a threshold (location 0), by Grimshaw's profile
+    likelihood: a grid over theta in (-1 / max x, 50 / mean x) then golden-section refinement."""
+    x = np.asarray(excess, float)
+    if len(x) < 2 or np.any(x <= 0):
+        raise ValueError("at least two positive excesses are required")
+    lo, hi = -1.0 / float(x.max()) * (1 - 1e-9), 50.0 / float(np.mean(x))
+    grid = np.concatenate([lo * (1 - np.geomspace(1e-9, 1, GPD_THETA_GRID // 2)),
+                           hi * np.geomspace(1e-9, 1, GPD_THETA_GRID // 2)])  # fmt: skip
+    vals = np.array([_gpd_profile(t, x) for t in grid])
+    order = np.argsort(grid)
+    grid, vals = grid[order], vals[order]
+    i = int(np.argmax(vals))
+    theta = _golden_max(lambda t: _gpd_profile(t, x), grid[max(i - 1, 0)], grid[min(i + 1, len(grid) - 1)])
+    if abs(theta) < 1e-12:
+        return GpdFit(0.0, float(np.mean(x)), _gpd_profile(0.0, x), len(x))
+    xi = float(np.mean(np.log1p(theta * x)))
+    return GpdFit(xi, float(xi / theta), _gpd_profile(theta, x), len(x))
+
+
+@dataclass(frozen=True)
+class GpdTail:
+    threshold: float  # u: the q-quantile of |z|
+    q: float
+    xi: float
+    beta: float
+    n_exceed: int
+
+
+def gpd_tail(z: Sequence[float], q: float, min_exceed: int) -> GpdTail | None:
+    """A GPD fitted to |z| - u over |z| > u, u the q-quantile of |z| (numpy's linear rule); None with fewer than
+    `min_exceed` exceedances (too few to fit a tail: none is better than noise)."""
+    a = np.abs(np.asarray(z, float))
+    u = float(np.quantile(a, q))
+    e = a[a > u] - u
+    if len(e) < min_exceed:
+        return None
+    f = gpd_fit(e)
+    return GpdTail(u, q, f.xi, f.beta, len(e))
