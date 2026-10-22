@@ -33,3 +33,10 @@ ADDENDUM_A4_ON = "2026-10-22"
 # still before any replay run).
 ADDENDUM_A5_HASH = "cebb9fd453637c294ee9cac2c1eeb545daa9a033523aca2236be7e66a834a670"
 ADDENDUM_A5_ON = "2026-10-22"
+
+# Post-hoc addendum A6 (horserace/addendum_a6.py, ADDENDUM.md): the exit-rule Monte Carlo challenger p_path (#388),
+# with its simulation settings (paths, seed, steps) and path-model constants, pinned before any replay code computed
+# it on a stored session.
+# Re-chained before any replay run: first on A1-A3 (7dfe96c6...89dca7f3), then on A4 (18f7b402...ba244881b), now on A5.
+ADDENDUM_A6_HASH = "5c34c776b3fa171863eec95b71ae73a5d6f2de1eca38a0a7d7cbfd8ef38bdc14"
+ADDENDUM_A6_ON = "2026-10-22"

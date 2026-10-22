@@ -175,6 +175,9 @@ uv run finresearch fno review --month 2026-10      # the month's post-trade revi
 uv run finresearch fno risk-replay --from 2024-01-01 --json   # #398: replay the IV30-shock, cumulative-shock and gap
                                                    # alerts on the stored series: firings, false alarms a year, the
                                                    # scenario days (reads only; public market data)
+uv run finresearch fno vol-race --json              # #390: the pre-registered volatility forecast race on the stored
+                                                   # 2022-26 NIFTY window (HAR-IV vs the implied-variance benchmark,
+                                                   # QLIKE, DM-HLN + Holm, 90 % MCS; refused if the hash moved; reads only)
 uv run finresearch vault backfill --from 2018-01-01 --to 2021-12-31 --max-days 400   # the sealed vault (#365), below
 uv run finresearch vault status                    # vault load manifest: days by year and status (no market data)
 uv run finresearch vault engine-hash               # the engine hash for the vault pin (PREREG.md §2.7)
@@ -225,5 +228,5 @@ uv run finresearch forecasts resolve         # score every due forecast now (the
 uv run finresearch forecasts cards           # record every logged F&O card (card_log) as a forecast (#376; the monitor does this hourly)
 uv run finresearch forecasts horse-race      # the pre-registered card horse race on resolved cards (#377; --window, --json); read only
 uv run finresearch forecasts skill           # the live skill monitor per method x event kind x underlying (#378; --json); read only
-uv run finresearch forecasts horse-race --source replay --window seen   # the same race on one replayed card per stored session, 2022-26 (addendum A1, plus the business-time challenger p_rw_bus of addendum A2, #384, the parity-forward Black-76 IV challenger p_rn_b76 of addendum A3, #385, and the tail-aware challengers p_rw_emp (IV-scaled empirical) and p_rw_fhs (GJR filtered historical simulation) of addendum A5, #387; design | seen | tuesday); read only, run outside market hours
+uv run finresearch forecasts horse-race --source replay --window seen   # the same race on one replayed card per stored session, 2022-26 (addendum A1, plus the business-time challenger p_rw_bus of addendum A2, #384, the parity-forward Black-76 IV challenger p_rn_b76 of addendum A3, #385, and the tail-aware challengers p_rw_emp (IV-scaled empirical) and p_rw_fhs (GJR filtered historical simulation) of addendum A5, #387, and the exit-rule Monte Carlo p_path of addendum A6, #388, with its simulation error and exit-reason score; design | seen | tuesday); read only, run outside market hours
 ```

@@ -1237,6 +1237,10 @@ def forecasts_horse_race(
         console.print(f"challengers p_rw_emp / p_rw_fhs ({rp['addendum_a5']}): unknown on {rp['p_rw_emp_unknown']} / "
                       f"{rp['p_rw_fhs_unknown']} card(s); reasons {rp['p_rw_emp_reasons']} / "
                       f"{rp['p_rw_fhs_reasons']}")  # fmt: skip
+        mc = rp["p_path_mc"]
+        console.print(f"challenger p_path ({rp['addendum_a6']}): {rp['n_paths']} paths per card; unknown on "
+                      f"{mc['unknown']} event(s), reasons {mc['reasons']}; Monte Carlo se mean {mc['mean_se']}, max "
+                      f"{mc['max_se']}, Brier noise {mc['brier_noise']}; exit-reason log score {rp['exit_reasons']}")  # fmt: skip
     else:
         with session_scope() as s:
             rep = race.run(ledger_events.load(s), window)
@@ -1714,6 +1718,54 @@ def fno_risk_replay(
         console.print(f"  episode {w}: {'fired' if hit else 'did NOT fire'}")
     for f in out["firings"]:
         console.print(f"  {f['day']} {','.join(f['rules'])} loss {f['loss']} false alarm {f['false_alarm']}")
+
+
+@fno_app.command("vol-race")
+def fno_vol_race(
+    symbol: str = typer.Option(
+        "NIFTY", "--symbol", help="NIFTY is the registered primary; BANKNIFTY is reported only"
+    ),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """Run the pre-registered volatility forecast race (#390, evals/experiments/vol_forecast_race/PREREG.md) on the
+    stored 2022-2026 window: log HAR-IV against the bias-corrected implied-variance benchmark at h = 5, 10 and 22
+    sessions, QLIKE and MSE, DM-HLN with Holm, the 90 % MCS and Mincer-Zarnowitz. Refused unless the registration
+    hash is intact; never reads the 2008-2021 vault. Reads only, writes nothing; changes no card."""
+    import json as _json
+    from datetime import date as _date
+
+    from finresearch.db import session_scope
+    from finresearch.volrace import data, prereg, race, specs
+
+    h = prereg.require_registered()
+    win = specs.WINDOWS["recent"]
+    start, end = _date.fromisoformat(win["start"]), _date.fromisoformat(win["end"])
+    with session_scope() as s:
+        ss, counts = data.load_sessions(s, symbol.upper(), start, end)
+    res = race.run(ss, race.HORIZONS, burn_in=win["burn_in"])
+    out = {"registration": h, "window": "recent", "symbol": symbol.upper(), "burn_in": win["burn_in"],
+           "sessions": res["sessions"], "first": res["first"], "last": res["last"], "unknown": counts,
+           "holm": {str(k): v for k, v in res["holm"].items()}, "winning_horizons": res["winning_horizons"],
+           "passes": res["passes"], "verdict": res["window_verdict"],
+           "horizons": {str(k): {**{x: v for x, v in r.items() if x != "origins"}, "windows": len(r["origins"])}
+                        for k, r in res["horizons"].items()}}  # fmt: skip
+    if as_json:
+        print(_json.dumps(out, indent=2, default=str))
+        return
+    console.print(f"{out['symbol']} {out['first']}..{out['last']}: {out['sessions']} sessions, burn-in "
+                  f"{out['burn_in']}, unknown {counts} (registration {h[:12]})")  # fmt: skip
+    for k, r in out["horizons"].items():
+        inc = set((r["mcs"] or {}).get("included", []))
+        t = Table(title=f"h = {k}: DM p {r['dm']['p']} (Holm {out['holm'][k]}) on {r['windows']} windows; "
+                        f"MCS on {(r['mcs'] or {}).get('n')} rows")  # fmt: skip
+        for c in ("model", "n", "QLIKE", "MSE", "MZ a", "MZ b", "in MCS"):
+            t.add_column(c)
+        for m, v in r["models"].items():
+            fmt = lambda x, f="{:.4g}": "unknown" if x is None else f.format(x)  # noqa: E731
+            t.add_row(m, str(v["n"]), fmt(v["qlike"]), fmt(v["mse"]), fmt(v["mz"]["a"]), fmt(v["mz"]["b"]),
+                      "-" if r["mcs"] is None else ("yes" if m in inc else "no"))  # fmt: skip
+        console.print(t)
+    console.print(out["verdict"])
 
 
 backtest_app = typer.Typer(

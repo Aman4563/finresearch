@@ -4,7 +4,8 @@ Registered in horserace/specs.py (`Replay`), post-hoc addendum A1 (horserace/add
 business-time challenger p_rw_bus (#384), addendum A2 (horserace/addendum_a2.py) and, for the Black-76 forward/IV
 challenger p_rn_b76 (#385), addendum A3 (horserace/addendum_a3.py), for the SVI density challenger p_rn_svi
 (#386), addendum A4 (horserace/addendum_a4.py) and, for the tail-aware challengers p_rw_emp and p_rw_fhs
-(#387), addendum A5 (horserace/addendum_a5.py); the item numbers below are the addenda's.
+(#387), addendum A5 (horserace/addendum_a5.py), and for the exit-rule Monte Carlo p_path (#388),
+addendum A6 (horserace/addendum_a6.py); the item numbers below are the addenda's.
 
 Two passes. (1) Forecasting, oldest session first, through `backtest.history.Clocked` advanced to the origin close,
 so a card can read nothing later than its origin (LookAheadError otherwise): expiry (A1.4), legs (A1.5), fills
@@ -41,16 +42,19 @@ from finresearch.fincalc import taildist as td
 from finresearch.fincalc import tradeplan as tp
 from finresearch.fincalc import volatility as vol
 from finresearch.fincalc.dates import ist_datetime
+from finresearch.fnobook import path_pop as pp
 from finresearch.horserace import (
     addendum,
     addendum_a2,
     addendum_a3,
     addendum_a4,
     addendum_a5,
+    addendum_a6,
     prereg,
     race,
     specs,
 )
+from finresearch.horserace import scores as sc
 from finresearch.horserace.race import Forecast
 
 WARMUP_DAYS = 400  # A1.7, the engine's
@@ -58,7 +62,7 @@ DOTS = [(i + 0.5) / 20 for i in range(20)]
 
 
 def require_registered() -> str:
-    """The registration (specs.py) and addenda A1-A5 must each match their pinned hashes."""
+    """The registration (specs.py) and addenda A1-A6 must each match their pinned hashes."""
     race.require_registered()
     h = addendum.addendum_hash()
     if h != prereg.ADDENDUM_HASH:
@@ -89,6 +93,13 @@ def require_registered() -> str:
         raise race.PreregistrationError(
             f"horserace/addendum_a5.py (with fincalc/taildist's fitted settings) hashes to {h5[:12]}… but the "
             f"pinned hash is {prereg.ADDENDUM_A5_HASH[:12]}…: the replay is refused. Register a new addendum first."
+        )
+    h6 = addendum_a6.addendum_hash()
+    if h6 != prereg.ADDENDUM_A6_HASH:
+        raise race.PreregistrationError(
+            f"horserace/addendum_a6.py (with the simulation settings and fnobook/path_pop's constants) hashes to "
+            f"{h6[:12]}… but the pinned hash is {prereg.ADDENDUM_A6_HASH[:12]}…: the replay is refused. Register a new "
+            "addendum first."
         )
     return h
 
@@ -188,6 +199,9 @@ class Card:
     svi: dict[str, Any] | None = None  # A4.4: the smile's parameters, fit and RR/BF, or why unknown (logged)
     tail: dict[str, Any] | None = (
         None  # A5.5: bucket, z count, kappa, ES97.5 and why unknown (logged, not scored)
+    )
+    path: dict[str, Any] | None = (
+        None  # A6.7: p_path's Monte Carlo error, exit-reason shares, beta, why unknown
     )
 
 
@@ -347,10 +361,42 @@ def tail_forecasts(spec: Spec, x: Day, legs: Sequence[o.Leg], expiry: date, fwd:
     return {addendum_a5.EMPIRICAL: _fc(emp), addendum_a5.FHS: _fc(fhs)}, log
 
 
+def path_forecast(spec: Spec, origin: date, inputs: dict[str, Any], picked: Sequence[tuple[Any, str]], fwd: float,
+                  t: float, rate: float, fc: dict[str, Forecast], sig: dict[str, float | None],
+                  pairs: Sequence[tuple[float, float]], sessions: Sequence[date], n_paths: int,
+                  last: date | None = None) -> tuple[Forecast, dict[str, Any]]:  # fmt: skip
+    """A6: the exit-rule Monte Carlo at the incumbent's volatility case, or Forecast(None) with the reason. `last`:
+    the expiry's last session; a calendar that does not reach it cannot settle a path on the right day."""
+    last = last or (sessions[-1] if sessions else None)
+    seed = addendum_a6.card_seed(spec.key, origin)
+    out: dict[str, Any] = {"n": n_paths, "seed": seed, "sigma_case": None, "beta": None, "reason": None}
+    case = next((k for k in ("p_rw20", "p_rw60") if fc.get(k) is fc["p_rw"] and fc[k].p is not None), None)
+    beta = pp.spot_vol_beta(pairs)
+    ivs = [px.leg_iv(q, fwd, t, rate) for q, _ in picked]
+    why = ("sigma unknown: no realised-volatility case" if case is None else
+           f"beta unknown: fewer than {pp.BETA_MIN} paired IV and price changes" if beta is None else
+           "a leg's origin IV is unknown" if any(v is None for v in ivs) else
+           "no stored session before expiry" if not sessions else
+           "stored calendar ends before the expiry's last session" if sessions[-1] != last else None)  # fmt: skip
+    out.update(sigma_case=case, beta=beta)
+    if why:
+        return Forecast(None), out | {"reason": why}
+    legs = [pp.PathLeg(q.right, q.strike, side, lg["entry"], iv, q.contracts)  # type: ignore[arg-type]
+            for (q, side), lg, iv in zip(picked, inputs["legs"], ivs, strict=True)]  # fmt: skip
+    mc = pp.monte_carlo(inputs, legs, sessions, f0=fwd, sigma=sig[case], beta=beta, rate=rate,  # type: ignore[arg-type,index]
+                        n_paths=n_paths, seed=seed)  # fmt: skip
+    out |= {"pop_se": mc.pop_se, "pop_ci": mc.pop_ci, "ev_se": mc.ev_se, "reasons": mc.reasons,
+            "reasons_se": mc.reasons_se, "void": mc.void, "reason": None if mc.pop is not None else
+            f"a path was void: {mc.void_reason}"}  # fmt: skip
+    return (Forecast(mc.pop, mc.ev, mc.dots) if mc.pop is not None else Forecast(None)), out
+
+
 def card_at(spec: Spec, x: Day, h: Clocked, nxt: date | None, eday: Any, returns: Sequence[float],
             ivs: Sequence[float], book: Book = BOOK, calendar: bt.Calendar | None = None,
-            tail: TailBook | None = None) -> Card | str:  # fmt: skip
-    """One card at this close (A1.1, A1.3-A1.10), or the reason there is none."""
+            tail: TailBook | None = None, pairs: Sequence[tuple[float, float]] = (),
+            sessions: Sequence[date] = (), n_paths: int = addendum_a6.N_PATHS) -> Card | str:  # fmt: skip
+    """One card at this close (A1.1, A1.3-A1.10, A6), or the reason there is none. `pairs`: the (return, iv30
+    change) pairs up to this close (A6.4); `sessions`: the stored sessions after it (A6.6)."""
     d, sym, rate = x.day, x.symbol, book.rate
     exps = [e for e in x.expiries() if spec.dte_min <= (e - d).days <= spec.dte_max
             and (spec.expiry_kind == "any" or x.is_monthly(e))]  # fmt: skip
@@ -408,11 +454,16 @@ def card_at(spec: Spec, x: Day, h: Clocked, nxt: date | None, eday: Any, returns
                        for q, side, f in fills],
               "exit_plan": {"profit_pct": plan.profit_pct, "stop_pct": plan.stop_pct, "exit_dte": plan.exit_dte,
                             "hold_to_expiry": plan.hold_to_expiry}}  # fmt: skip
-    return Card(spec.key, sym, spec.kind, expiry, d, inputs, fc, gate, t_bus, b3, s4, tlog)
+    # A6: the plan's own exits on simulated paths, at the volatility the incumbent chose
+    last = eday(expiry)
+    path_days = [s for s in sessions if d < s <= last]
+    fc[addendum_a6.CHALLENGER], mc = path_forecast(spec, d, inputs, picked, fwd, t, rate, fc, sig, pairs, path_days,
+                                                   n_paths, last)  # fmt: skip
+    return Card(spec.key, sym, spec.kind, expiry, d, inputs, fc, gate, t_bus, b3, s4, tlog, mc)
 
 
 def make_cards(history: History, start: date, end: date, spec_list: Sequence[Spec] | None = None,
-               book: Book = BOOK) -> tuple[list[Card], Counter]:  # fmt: skip
+               book: Book = BOOK, n_paths: int = addendum_a6.N_PATHS) -> tuple[list[Card], Counter]:  # fmt: skip
     """Pass 1: every session from `start` to `end` (or the latest stored), one card per spec, oldest first."""
     from bisect import bisect_right
 
@@ -434,6 +485,9 @@ def make_cards(history: History, start: date, end: date, spec_list: Sequence[Spe
         tail = TailBook(book.rate)  # A5.1, A5.4
         returns: list[float] = []
         ivs: list[float] = []
+        pairs: list[
+            tuple[float, float]
+        ] = []  # A6.4: (return, iv30 change / 100) on sessions where both are known
         for i, d in enumerate(days):
             h.advance(d)
             x = h.day(sym, d)
@@ -442,6 +496,8 @@ def make_cards(history: History, start: date, end: date, spec_list: Sequence[Spe
             r = same_instrument_return(prev, x) if prev is not None else None
             if r is not None:
                 returns.append(r)
+                if prev is not None and prev.iv30 is not None and x.iv30 is not None:
+                    pairs.append((r, (x.iv30 - prev.iv30) / 100))
             if x.iv30 is not None:
                 ivs.append(x.iv30)
             prev = x
@@ -451,7 +507,8 @@ def make_cards(history: History, start: date, end: date, spec_list: Sequence[Spe
                 continue
             nxt = days[i + 1] if i + 1 < len(days) else None
             for spec in group:
-                c = card_at(spec, x, h, nxt, eday, returns, ivs, book, calendar, tail)
+                c = card_at(spec, x, h, nxt, eday, returns, ivs, book, calendar, tail, pairs, days[i + 1 :],
+                            n_paths)  # fmt: skip
                 if isinstance(c, str):
                     skips[f"{spec.key}: {c}"] += 1
                 else:
@@ -494,6 +551,38 @@ def resolve(cards: Sequence[Card], history: History) -> tuple[list[race.Event], 
     return events, counts
 
 
+def event_key(e: race.Event | Card) -> tuple[str, str, date, date]:
+    """The card an event came from: (underlying, structure, expiry, origin)."""
+    return e.underlying, e.structure, e.expiry, e.origin
+
+
+def exit_reason_score(events: Sequence[race.Event], shares: dict[tuple, dict[str, float]],
+                      window: str | None = None) -> dict[str, Any]:  # fmt: skip
+    """A6.8: the multinomial log score (eps 1e-6) of the forecast exit-reason shares against trailing Dirichlet(1)
+    frequencies over the four reason groups of events of the same underlying and structure resolved strictly before
+    the origin (every event given, as race.with_trailing), scoring only the events in `window` (all when None) whose
+    shares are known. Descriptive; lower is better."""
+    scored = {id(e) for e in (race.in_window(events, window) if window else events)}
+    cats = sorted(set(pp.REASONS.values()))
+    model, base, seen = [], [], []
+    for e in sorted(events, key=lambda e: e.origin):
+        got = shares.get(event_key(e))
+        if id(e) not in scored or not got or e.exit_reason is None:
+            continue
+        prior = [r for r in events if (r.underlying, r.structure) == (e.underlying, e.structure)
+                 and r.resolved_on < e.origin and r.exit_reason is not None]  # fmt: skip
+        counts = {c: 1 + sum(1 for r in prior if pp.REASONS.get(r.exit_reason) == c) for c in cats}
+        total = sum(counts.values())
+        model.append(got)
+        base.append({c: k / total for c, k in counts.items()})
+        seen.append(pp.REASONS.get(e.exit_reason, e.exit_reason))
+    if not seen:
+        return {"n": 0, "model": None, "base": None, "model_minus_base": None}
+    m, b = sc.multinomial_log_score(model, seen), sc.multinomial_log_score(base, seen)
+    return {"n": len(seen), "model": m, "base": b, "model_minus_base": m - b,
+            "observed": dict(Counter(seen))}  # fmt: skip
+
+
 class LruHistory:
     """A bounded cache of `day()` over another history: pass 2 reads each session once per open card, oldest
     origins first, so the last ~`size` sessions cover almost every read (DbHistory loads a whole session per call)."""
@@ -519,7 +608,8 @@ class LruHistory:
 
 
 # --------------------------------------------------------------------------- the race on a replay window
-def run_window(history: History, window: str, spec_list: Sequence[Spec] | None = None) -> dict[str, Any]:
+def run_window(history: History, window: str, spec_list: Sequence[Spec] | None = None,
+               n_paths: int = addendum_a6.N_PATHS) -> dict[str, Any]:  # fmt: skip
     """Cards from REPLAY.start (2022-04-01) to the window's end (else the latest stored session), resolved, then the
     registered race on the window (trailing rates see every earlier resolved card). Read only."""
     if window == "forward":
@@ -531,9 +621,21 @@ def run_window(history: History, window: str, spec_list: Sequence[Spec] | None =
         )
     start = date.fromisoformat(specs.REPLAY.start)
     end = date.fromisoformat(w["end"]) if w["end"] else date.max
-    cards, skips = make_cards(history, start, end, spec_list)
+    cards, skips = make_cards(history, start, end, spec_list, n_paths=n_paths)
     events, counts = resolve(cards, history)
-    rep = race.run(events, window, challengers=addendum_a5.CHALLENGERS)
+    rep = race.run(events, window, challengers=addendum_a6.CHALLENGERS)
+    # A6.7, A6.8: p_path's simulation error and exit-reason score on the window's events
+    xs = race.in_window(events, window)
+    by_card = {event_key(c): c.path for c in cards if c.path and c.path.get("reason") is None}
+    known = [
+        (by_card[k], e.forecasts[addendum_a6.CHALLENGER].p) for e in xs if (k := event_key(e)) in by_card
+    ]
+    ses = [mc["pop_se"] for mc, _ in known]
+    mc_report = {"events": len(known), "unknown": len(xs) - len(known),
+                 "mean_se": sum(ses) / len(ses) if ses else None, "max_se": max(ses, default=None),
+                 "brier_noise": sum(p * (1 - p) / mc["n"] for mc, p in known) / len(known) if known else None,
+                 "reasons": dict(Counter(c.path["reason"].split(":")[0] for c in cards
+                                         if c.path and c.path.get("reason")))}  # fmt: skip
     gaps: dict[str, int | None] = {}  # A2.5: weekdays without a stored session (holidays and any missing day)
     for sym in sorted({s.underlying for s in spec_list or replay_specs()}):
         last = history.latest(sym)
@@ -558,6 +660,9 @@ def run_window(history: History, window: str, spec_list: Sequence[Spec] | None =
                      **{f"{k}_reasons": dict(Counter(c.tail[f"reason_{r}"].split(":")[0] for c in cards
                                                      if c.tail and c.tail[f"reason_{r}"]))
                         for k, r in ((addendum_a5.EMPIRICAL, "emp"), (addendum_a5.FHS, "fhs"))},
+                     "addendum_a6": addendum_a6.ADDENDUM_VERSION, "addendum_a6_hash": addendum_a6.addendum_hash(),
+                     "n_paths": n_paths, "p_path_mc": mc_report,
+                     "exit_reasons": exit_reason_score(events, {k: v["reasons"] for k, v in by_card.items()}, window),
                      "calendar_gap_weekdays": gaps, "t_bus_unknown": sum(1 for c in cards if c.t_bus is None),
                      "first_origin": min((c.origin for c in cards), default=None),
                      "last_origin": max((c.origin for c in cards), default=None)}  # fmt: skip

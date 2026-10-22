@@ -172,7 +172,9 @@ def test_unfinished_cards_are_counted_and_first_marks_one_per_cluster(made) -> N
 
 
 def test_run_window_scores_every_replay_forecaster(hist) -> None:
-    rep = replay.run_window(hist, "design", spec_list=[PCS])
+    rep = replay.run_window(
+        hist, "design", spec_list=[PCS], n_paths=50
+    )  # few paths: p_path is tested elsewhere
     assert rep["n_events"] > 0 and rep["window"] == "design"
     assert {"p_rw", "p_rw20", "p_rw60", "p_rn_atm", "p_base", "p_gate"} <= set(rep["forecasters"])
     assert rep["replay"]["counts"]["events"] >= rep["n_events"] and "skips" in rep["replay"]
@@ -199,5 +201,6 @@ def test_cli_replay_source_on_an_empty_database(env) -> None:
     assert "challenger p_rw_bus" in flat and "T_bus unknown on 0 card(s)" in flat
     assert "challenger p_rn_b76" in flat and "unknown on 0 card(s); reasons {}" in flat
     assert "challengers p_rw_emp / p_rw_fhs" in flat and "unknown on 0 / 0 card(s)" in flat
+    assert "challenger p_path" in flat and "2000 paths per card" in flat and "Monte Carlo se" in flat
     r = CliRunner().invoke(app, ["forecasts", "horse-race", "--source", "replay", "--window", "forward"])
     assert r.exit_code == 2 and "card-ledger" in r.output
