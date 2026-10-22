@@ -151,12 +151,17 @@ class FbilClient:
         days = [_iso(r.get("processRunDate")) for r in resp.json() if isinstance(r, dict)]
         return sorted((d for d in days if d), reverse=True)
 
-    async def par_curve(self, day: date) -> ParCurve:
+    async def workbook(self, day: date, *, cache_ttl: float | None = None) -> bytes:
+        """`day`'s G-sec workbook as downloaded (.xlsx or OLE2 .xls). Not cached unless `cache_ttl` is given: the
+        backfill reads ~0.73 MB a day and discards it after parsing."""
         resp = await self.http.get(DOWNLOAD_URL, params={"date": day.isoformat()}, headers=HEADERS,
-                                   cache_ttl=30 * 86400, cache_if=lambda f: xls.kind(f.content) is not None)  # fmt: skip
+                                   cache_ttl=cache_ttl, cache_if=lambda f: xls.kind(f.content) is not None)  # fmt: skip
         if not resp.ok or xls.kind(resp.content) is None:
             raise FbilError(f"FBIL has no G-sec workbook for {day} (HTTP {resp.status})")
-        curve = parse_par_yield_xlsx(resp.content)
+        return resp.content
+
+    async def par_curve(self, day: date) -> ParCurve:
+        curve = parse_par_yield(await self.workbook(day, cache_ttl=30 * 86400))
         return ParCurve(
             as_of=curve.as_of, points=curve.points, source=f"{DOWNLOAD_URL}?date={day.isoformat()}"
         )
