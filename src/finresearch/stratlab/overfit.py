@@ -55,7 +55,7 @@ def pbo_cscv(m: Any, s: int = 16, stat: str = "sharpe") -> dict[str, Any]:
     size = t // s if s >= 2 and s % 2 == 0 else 0
     if size * (s // 2) < 2 or n < 2 or not np.isfinite(x).all():
         return out
-    x = x[t - size * s:]
+    x = x[t - size * s :]
     blocks = x.reshape(s, size, n)
     bsum, bsq = blocks.sum(axis=1), (blocks**2).sum(axis=1)  # s × N
     combos = list(combinations(range(s), s // 2))
@@ -95,4 +95,125 @@ def pbo_cscv(m: Any, s: int = 16, stat: str = "sharpe") -> dict[str, Any]:
     dx = v_is - v_is.mean()
     sxx = float((dx**2).sum())
     out["slope"] = float((dx * (v - v.mean())).sum() / sxx) if sxx > 0 else None
+    return out
+
+
+# --------------------------------------------------------------------------- the stationary bootstrap
+def sb_indices(n: int, b: int, *, mean_block: float, rng: np.random.Generator) -> np.ndarray:
+    """b resamples (rows) of the indices 0..n−1 by the stationary bootstrap (Politis & Romano 1994): the first index
+    is uniform; each next one starts a new block at a uniform index with probability q = 1/mean_block, else follows
+    the previous index, wrapping from the last day to the first (their circular scheme)."""
+    q = 1.0 / mean_block
+    idx = np.empty((b, n), dtype=np.int64)
+    idx[:, 0] = rng.integers(0, n, size=b)
+    fresh = rng.random((b, n)) < q
+    jump = rng.integers(0, n, size=(b, n))
+    for t in range(1, n):
+        idx[:, t] = np.where(fresh[:, t], jump[:, t], (idx[:, t - 1] + 1) % n)
+    return idx
+
+
+def kernel_var(d: np.ndarray, q: float) -> np.ndarray:
+    """ω̂²_k, the variance of √n·d̄_k implied by the stationary bootstrap (Politis & Romano 1994, Lemma 1; Hansen 2005
+    §2.4): γ̂_0 + 2 Σ_{i=1}^{n−1} κ(n, i) γ̂_i with κ(n, i) = ((n−i)/n)(1−q)^i + (i/n)(1−q)^(n−i) and
+    γ̂_i = (1/n) Σ_t (d_t − d̄)(d_{t+i} − d̄)."""
+    d = np.asarray(d, dtype=float)
+    n = d.shape[0]
+    e = d - d.mean(axis=0)
+    out = (e * e).sum(axis=0) / n
+    for i in range(1, n):
+        k = (n - i) / n * (1 - q) ** i + i / n * (1 - q) ** (n - i)
+        if k == 0.0:
+            continue
+        out = out + 2 * k * (e[i:] * e[:-i]).sum(axis=0) / n
+    return out
+
+
+def _boot_means(d: np.ndarray, idx: np.ndarray) -> np.ndarray:
+    """B × K means of the resampled rows."""
+    return np.stack([d[row].mean(axis=0) for row in idx]) if len(idx) else np.empty((0, d.shape[1]))
+
+
+def reality_check(d: Any, idx: np.ndarray) -> dict[str, Any]:
+    """White (2000): V̄ = max_k √n·d̄_k with d the trials' P&L over the benchmark (here: not trading, 0);
+    p = share of resamples with max_k √n(d̄*_k − d̄_k) > V̄."""
+    d = np.asarray(d, dtype=float)
+    n = d.shape[0]
+    if n < 2 or d.shape[1] < 1 or len(idx) == 0:
+        return {"stat": None, "p": None}
+    mean = d.mean(axis=0)
+    v = math.sqrt(n) * mean.max()
+    vb = math.sqrt(n) * (_boot_means(d, idx) - mean).max(axis=1)
+    return {"stat": float(v), "p": float((vb > v).mean())}
+
+
+def _studentize(d: np.ndarray, q: float) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
+    """(d̄, ω̂, live): a trial with ω̂ = 0 and d̄ = 0 (never traded) has a studentized mean and bootstrap deviation of
+    0 at every draw, so it is kept out of the maxima (`live` False); one with ω̂ = 0 and d̄ ≠ 0 makes the test unknown."""
+    mean = d.mean(axis=0)
+    om = np.sqrt(np.maximum(kernel_var(d, q), 0.0))
+    flat = om <= 1e-12 * np.maximum(np.abs(d).max(axis=0), 1e-300)
+    if np.any(flat & (np.abs(mean) > 0)):
+        return None
+    return mean, np.where(flat, 1.0, om), ~flat
+
+
+def spa(d: Any, idx: np.ndarray, *, q: float) -> dict[str, Any]:
+    """Hansen (2005): T = max(max_k √n·d̄_k/ω̂_k, 0). Resample Z̄*_k = d̄*_k − g(d̄_k) and T* = max(max_k √n·Z̄*_k/ω̂_k, 0);
+    p = share of T* > T. g_l(x) = max(x, 0) (lower), g_c(x) = x·1{x ≥ −√(ω̂²/n · 2 ln ln n)} (consistent: a trial
+    whose t is below −√(2 ln ln n) keeps its negative mean, every other is recentred to 0), g_u(x) = x (upper, the
+    studentized Reality Check). p_l ≤ p_c ≤ p_u; the gate reads the consistent p."""
+    d = np.asarray(d, dtype=float)
+    n = d.shape[0]
+    out: dict[str, Any] = {"stat": None, "p_lower": None, "p_consistent": None, "p_upper": None, "n": n,
+                           "k": d.shape[1] if d.ndim == 2 else 0}  # fmt: skip
+    if n < 3 or d.ndim != 2 or d.shape[1] < 1 or len(idx) == 0:
+        return out
+    got = _studentize(d, q)
+    if got is None:
+        return out
+    mean, om, live = got
+    rn = math.sqrt(n)
+    t = np.where(live, rn * mean / om, 0.0)
+    stat = max(float(t.max()), 0.0)
+    dev = _boot_means(d, idx) - mean  # d̄* − d̄
+    thr = -math.sqrt(2 * math.log(math.log(n)))
+    shifts = {
+        "p_lower": np.minimum(mean, 0.0),
+        "p_consistent": np.where(t >= thr, 0.0, mean),
+        "p_upper": 0 * mean,
+    }
+    out["stat"] = stat
+    for key, mu in shifts.items():
+        z = np.where(live, rn * (dev + mu) / om, 0.0)
+        out[key] = float((np.maximum(z.max(axis=1), 0.0) > stat).mean())
+    return out
+
+
+def romano_wolf(d: Any, idx: np.ndarray, *, q: float, alpha: float = 0.05) -> dict[str, Any]:
+    """Romano & Wolf (2005) studentized stepdown: t_k = √n·d̄_k/ω̂_k; c = the (1 − α) quantile (linear interpolation)
+    of max over the not-yet-rejected k of √n(d̄*_k − d̄_k)/ω̂_k; reject every t_k > c, drop them and repeat until a step
+    rejects nothing. Returns the rejected trials (column indices) and each step's c."""
+    d = np.asarray(d, dtype=float)
+    n = d.shape[0]
+    out: dict[str, Any] = {"rejected": None, "critical": [], "t": None, "alpha": alpha}
+    if n < 3 or d.ndim != 2 or d.shape[1] < 1 or len(idx) == 0:
+        return out
+    got = _studentize(d, q)
+    if got is None:
+        return out
+    mean, om, live = got
+    rn = math.sqrt(n)
+    t = np.where(live, rn * mean / om, 0.0)
+    z = np.where(live, rn * (_boot_means(d, idx) - mean) / om, 0.0)
+    active, rejected = np.ones(d.shape[1], dtype=bool), []
+    while active.any():
+        c = float(np.quantile(z[:, active].max(axis=1), 1 - alpha))
+        out["critical"].append(c)
+        new = active & (t > c)
+        if not new.any():
+            break
+        rejected += [int(j) for j in np.flatnonzero(new)]
+        active &= ~new
+    out.update(rejected=sorted(rejected), t=[float(x) for x in t])
     return out
