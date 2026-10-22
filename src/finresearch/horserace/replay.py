@@ -192,11 +192,8 @@ class Card:
 
 
 def _exit_cost(legs: Sequence[o.Leg], expiry: date):
-    longs = [x for x in legs if x.qty > 0]
-
-    def exit_cost(p: float) -> float:  # STT on long options exercised in the money (the card's)
-        return ch.exercise_stt(sum(x.qty * (max(0.0, p - x.strike) if x.right == "call" else max(0.0, x.strike - p))
-                                   for x in longs), expiry)  # fmt: skip
+    # STT on long options exercised in the money (the card's): one dated-rate lookup per card, the same values
+    exit_cost = exercise_stt_cost(legs, expiry)
 
     return exit_cost
 
@@ -251,7 +248,8 @@ class ExerciseSttCost:
             tot = tot + x.qty * (
                 np.maximum(p - x.strike, 0.0) if x.right == "call" else np.maximum(x.strike - p, 0.0)
             )
-        return self.rate * tot
+        v = self.rate * tot
+        return float(v) if np.ndim(v) == 0 else v
 
 
 def exercise_stt_cost(legs: Sequence[o.Leg], expiry: date) -> ExerciseSttCost:

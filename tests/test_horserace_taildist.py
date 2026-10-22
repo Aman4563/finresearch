@@ -151,3 +151,24 @@ def test_the_design_window_scores_both_challengers_on_resolved_events(design, tm
         f = design["forecasters"][k]["NIFTY"]
         assert f["n"] > 0 and math.isfinite(f["brier"]) and math.isfinite(f["crps"]), (k, f)
     (tmp_path / "rep.json").write_text(json.dumps(design, indent=1, default=str))  # the CLI's --json path
+
+
+def test_models_with_the_vectorised_exit_cost_are_bit_identical_to_the_per_price_stt() -> None:
+    # replay.models charges A1.6's exercise STT through ExerciseSttCost (one dated-rate lookup per card instead of
+    # one per grid price); every PoP, EV and dot must equal the per-price charges.exercise_stt closure exactly
+    from finresearch.fincalc import charges as ch
+
+    legs = [o.Leg("put", 17000, 95.0, -50), o.Leg("put", 16500, 30.0, 50), o.Leg("call", 18500, 12.0, 50)]
+    expiry, spot, t, rate = date(2022, 4, 28), 17400.0, 27 / 365, 0.065
+
+    def old(p: float) -> float:
+        return ch.exercise_stt(sum(x.qty * (max(0.0, p - x.strike) if x.right == "call" else max(0.0, x.strike - p))
+                                   for x in legs if x.qty > 0), expiry)  # fmt: skip
+
+    got = replay.models(legs, expiry, spot, t, rate, 90.0, {"p_rw20": 0.14, "p_rw60": None, "p_rn_atm": 0.18})
+    for key, sigma in (("p_rw20", 0.14), ("p_rn_atm", 0.18)):
+        oc = o.outcome(legs, spot, t, sigma, rate, rate, 90.0, old, steps=4000)
+        dist = o.pnl_distribution(legs, spot, t, sigma, rate, 90.0, old, 2000)
+        ref = (oc.pop, oc.ev, [round(v, 2) for v in o.weighted_quantiles(dist, replay.DOTS)])
+        assert (got[key].p, got[key].ev, list(got[key].dots)) == ref, key
+        assert type(got[key].ev) is float
