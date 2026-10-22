@@ -367,18 +367,21 @@ def _option_tool(fn):
     return server.tool(description=f"{inspect.getdoc(fn)} {_OPTION_CITE}")(fn)
 
 
-def _foreign_run(run_id: Any) -> str | None:
-    """Why `run_id` may not be written by this server, or None. A server launched for one agent task is bound to its
-    run (mcp_server.config.RUN_ENV): a claim-writing tool refuses any other run, so an agent cannot write into another
-    run's ledger. An unbound server (tests, scripts) is not restricted."""
+# every tool that takes a run_id; each refuses a run other than the server's bound run, and start_run is refused
+# outright on a bound server (tests/test_mcp_bound_run.py)
+RUN_BOUND_TOOLS = ("save_claim", "list_claims", "identity_checks", "fetch_page")
+
+
+def _foreign_run(run_id: Any, action: str = "write claims into") -> str | None:
+    """Why `run_id` may not be used by this server, or None. A server launched for one agent task is bound to its run
+    (mcp_server.config.RUN_ENV): every tool that takes a run_id (RUN_BOUND_TOOLS) refuses any other run, so an agent
+    can neither write into nor read another run's ledger. An unbound server (tests, scripts) is not restricted."""
     from finresearch.mcp_server import option_facts
 
     bound = option_facts.bound_run_id()
     if bound is None or str(run_id).strip() == str(bound):
         return None
-    return (
-        f"this server is bound to run {bound}; it cannot write claims into run {run_id}. Use run_id {bound}."
-    )
+    return f"this server is bound to run {bound}; it cannot {action} run {run_id}. Use run_id {bound}."
 
 
 def run_option_fact(session, tool: str, args: dict[str, Any], run_id: int | None) -> dict[str, Any]:
@@ -437,6 +440,8 @@ def identity_checks(run_id: int, only_failing: bool = True) -> str:
     (a failing high-importance figure blocks the publish gate). Checks without inputs are listed, never guessed."""
     from finresearch.verify.identities import run_identities
 
+    if (why := _foreign_run(run_id, "check the ledger of")) is not None:
+        return json.dumps({"error": why})
     with session_scope() as s:
         rep = run_identities(s, run_id).to_dict()
     if only_failing:
@@ -971,7 +976,14 @@ async def sebi_resolve_pdf(detail_url: str) -> str:
 # --------------------------------------------------------------------------- claim ledger
 @server.tool()
 def start_run(company: str, kind: str = "ipo_report", note: str | None = None) -> str:
-    """Create a research run (container for claims). Returns run_id."""
+    """Create a research run (container for claims). Returns run_id. Refused on a server bound to a run (an agent
+    task's): agents never create runs."""
+    from finresearch.mcp_server import option_facts
+
+    if (bound := option_facts.bound_run_id()) is not None:
+        return json.dumps(
+            {"error": f"this server is bound to run {bound}; it cannot create runs. Use run_id {bound}."}
+        )
     with session_scope() as s:
         c = s.scalar(select(Company).where(Company.slug == company))
         run = ResearchRun(company_id=c.id if c else None, kind=kind, manifest={"note": note} if note else {})
@@ -989,6 +1001,8 @@ async def fetch_page(url: str, run_id: int, offset: int = 0) -> str:
     from finresearch.adapters.http import UnsafeURLError
     from finresearch.verify import web
 
+    if (why := _foreign_run(run_id, "store pages for")) is not None:
+        return json.dumps({"error": why})
     try:
         text, ctype = await web.fetch(url)
     except UnsafeURLError as e:
@@ -1059,6 +1073,8 @@ def list_claims(run_id: int, stream: str | None = None, status: str | None = Non
     from finresearch.db.models import Claim
     from finresearch.verify.evidence import citation_grade, claim_grade
 
+    if (why := _foreign_run(run_id, "read the claims of")) is not None:
+        return json.dumps({"error": why})
     with session_scope() as s:
         q = select(Claim).where(Claim.run_id == run_id)
         if stream:
