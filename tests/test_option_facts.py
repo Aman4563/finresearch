@@ -5,10 +5,12 @@ chains only: prices come from the Black-76 engine at a known volatility, so the 
 
 from __future__ import annotations
 
+import ast
 import json
 import math
 from datetime import date, timedelta
 from decimal import Decimal as D
+from pathlib import Path
 
 import pytest
 
@@ -380,3 +382,47 @@ def test_regrade_rechecks_a_cited_fact_and_a_changed_stored_series_fails_it(env,
         mine = [c for c in regrade(s, all_d=True).citations if c.claim_id == res["claim_id"]]
         assert [c.grade for c in mine] == ["U"] and mine[0].changed
         s.rollback()
+
+
+# --------------------------------------------------------------------------- least privilege and privacy
+def test_only_the_stock_technical_stream_may_call_the_option_tools():
+    from finresearch.agents.roles import MCP, ROLES
+    from finresearch.mcp_server.option_facts import TOOLS
+
+    holders = {name for name, r in ROLES.items() if any(f"{MCP}{t}" in r.tools for t in TOOLS)}
+    assert holders == {"stock_technical"}
+    assert all(f"{MCP}{t}" in ROLES["stock_technical"].tools for t in TOOLS)
+    assert f"{MCP}save_claim" in ROLES["stock_technical"].tools  # it can cite what it reads
+    assert "option_implied_move" in ROLES["stock_technical"].template_text()
+
+
+def test_the_option_fact_module_imports_market_data_only():
+    """Static guard beyond test_privacy_llm's: nothing outside the market-data models, fincalc and the server config
+    (fnohist.store and disclosures would reach the tracked-stock list)."""
+    src = Path(__file__).parents[1] / "src" / "finresearch" / "mcp_server" / "option_facts.py"
+    allowed = ("finresearch.db.models", "finresearch.fincalc", "finresearch.mcp_server.config", "sqlalchemy")
+    std = {"__future__", "collections", "datetime", "decimal", "itertools", "math", "os", "typing"}
+    bad = []
+    for node in ast.walk(ast.parse(src.read_text())):
+        mods = ([a.name for a in node.names] if isinstance(node, ast.Import)
+                else [node.module or ""] if isinstance(node, ast.ImportFrom) else [])  # fmt: skip
+        bad += [m for m in mods if m.split(".")[0] not in std and not m.startswith(allowed)]
+        if isinstance(node, ast.ImportFrom) and node.module == "finresearch.db.models":
+            bad += [a.name for a in node.names if a.name not in
+                    {"Company", "FnoBhav", "FnoBhavDay", "FnoIvEod", "ResearchRun"}]  # fmt: skip
+    assert not bad, bad
+
+
+def test_the_blind_verifier_sees_where_an_option_fact_points_but_not_its_value(env, tmp_path):
+    from finresearch.bridge.limits import LimitTracker
+    from finresearch.orchestrator.ipo import IpoPipeline
+
+    _load()
+    run_id = _run(tmp_path)
+    out = _call("option_implied_move", run_id=run_id, symbol="NIFTY", trade_date="2026-03-02")
+    res = _save(run_id, out["move_1sd_pct"], {**out["citation"], "result_key": "move_1sd_pct"})
+    pipe = IpoPipeline(run_id, runner=lambda *a, **k: None, tracker=LimitTracker(tmp_path / "lim"))
+    (item,) = json.loads(pipe._blind_claims_text([res["claim_id"]]))
+    assert item["citations"] == [{"option_fact": "option_implied_move", "result_key": "move_1sd_pct",
+                                  "args": {"symbol": "NIFTY", "trade_date": "2026-03-02", "expiry": "2026-03-30"}}]  # fmt: skip
+    assert out["move_1sd_pct"] not in json.dumps(item)

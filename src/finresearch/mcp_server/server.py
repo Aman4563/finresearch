@@ -41,7 +41,8 @@ server = MCPServer(
     instructions=(
         "Tools over FinResearch's document store (offer documents, annual reports) and claim ledger. "
         "Always cite document_id + line numbers from these tools. Record every factual or numeric finding with "
-        "save_claim, quoting the exact text at the cited lines. Use fincalc for ALL arithmetic."
+        "save_claim, quoting the exact text at the cited lines. Use fincalc for ALL arithmetic. Option-fact tools "
+        "return a ready `citation`: cite it with its result_key."
     ),
 )
 
