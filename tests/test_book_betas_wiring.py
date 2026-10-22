@@ -118,6 +118,10 @@ def test_one_set_of_a_banknifty_card_is_shocked_at_its_band_and_shown_on_the_car
         )
     ob = tpl.book_for(tpl.EMPTY_BOOK, 1_000_000.0, "BANKNIFTY", "put_credit", s0, None,
                       (one, notes, 1.0, ()), betas={"BANKNIFTY": BAND})  # fmt: skip
+    from finresearch.fincalc import tradeplan as tp
+
+    n, why = tp.shock_lots(tpl.EMPTY_BOOK.shock, one, 200_000.0)  # known now: no longer "unknown, no room"
+    assert n is not None and n >= 1, why
     (shown,) = tpl.book_json(ob)["shock_betas"]
     assert shown["underlying"] == "BANKNIFTY" and shown["hi"] == 1.3 and shown["as_of"] == "2026-10-09"
 
