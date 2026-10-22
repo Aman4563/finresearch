@@ -17,6 +17,13 @@ def stub_fit(returns, window):  # a fixed GARCH so tests do not pay for Nelder-M
     return GjrFit(GjrParams(2e-6, 0.06, 0.04, 0.88), 0.0, len(returns))
 
 
+def data_fit(
+    returns, window
+):  # a GARCH whose omega depends on every return it is given: a fit that saw a later
+    r = np.asarray(returns[-window:])  # return would change the forecasts the look-ahead test compares
+    return GjrFit(GjrParams(float(np.mean(r * r)) * 0.04, 0.06, 0.04, 0.88), 0.0, len(r))
+
+
 def sessions(n: int = 300, seed: int = 390, vrp: float = 1.1) -> list[race.Session]:
     """Weekday sessions; log daily vol AR(1); OHLC from a 20-step path; IV = vrp x the true vol on two expiries."""
     rng = np.random.default_rng(seed)
@@ -68,12 +75,13 @@ def test_no_look_ahead_forecasts_and_fits_ignore_every_later_session() -> None:
     later = [replace(s, bar=replace(s.bar, open=s.bar.open * 1.3, high=s.bar.high * 1.5, low=s.bar.low * 1.2,
                                     close=s.bar.close * 1.3, prev_close=s.bar.prev_close * 1.3),
                      term=tuple((d, v * rng.uniform(0.5, 2)) for d, v in s.term)) for s in ss[cut + 1 :]]  # fmt: skip
-    a = race.forecasts(ss, (5, 10), burn_in=120, fit_garch=stub_fit)
-    b = race.forecasts(ss[: cut + 1] + later, (5, 10), burn_in=120, fit_garch=stub_fit)
+    a = race.forecasts(ss, (5, 10), burn_in=120, fit_garch=data_fit)
+    b = race.forecasts(ss[: cut + 1] + later, (5, 10), burn_in=120, fit_garch=data_fit)
     for h in (5, 10):
         for t in range(120, cut + 1):
             assert a[h][t] == b[h][t], (h, t)  # every model's forecast at an origin up to the cut
     assert any(a[5][t] != b[5][t] for t in range(cut + 1, 250))  # the mutation did reach later origins
+    assert all(a[5][t]["garch"] is not None for t in range(150, cut + 1))  # the GARCH path was exercised
 
 
 def test_an_invalid_bar_makes_what_it_touches_unknown_and_counted() -> None:
