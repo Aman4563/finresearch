@@ -29,7 +29,9 @@ def card_of(s: Session, st: PaperStrategy) -> tuple[dict[str, Any] | None, str |
 
     if st.card_log_id is None:
         return None, "not taken from a card"
-    row = s.get(CardLog, st.card_log_id)
+    row = s.execute(
+        select(CardLog.kind, CardLog.response).where(CardLog.id == st.card_log_id)
+    ).first()  # not inputs
     cards = _cards(row.kind, row.response or {}) if row is not None else []
     if not 0 <= (st.card_index or 0) < len(cards):
         return None, f"card log {st.card_log_id} has no card {st.card_index}"
