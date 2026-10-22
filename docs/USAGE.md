@@ -87,6 +87,9 @@ GET requests don't change your records, the alert inputs or the forecast ledger:
   lab (`GET /api/fno/lab`) or a run (`GET /api/fno/lab/runs/{id}`) marks a run whose worker has gone silent as failed,
   as before, and now also appends its trial row, so an abandoned run still counts in N. `GET /api/fno/lab/family`
   and `GET /api/fno/lab/versions/{id}/promotion` only read.
+- The portfolio's 1-day 95 % VaR (#399) is logged in the forecast ledger only by the monitor's value-history pass,
+  on the evening of the history's last day; `GET /api/portfolio/analytics/risk` only reads its backtest.
+  `POST /api/journal/pretrade` stores no record (it fills only the price cache, for the marginal-risk line).
 - `POST /api/portfolio/analytics/joint-risk/pretrade` (#397) is a POST only because it carries the candidate legs:
   it stores nothing. `GET /api/portfolio/analytics/joint-risk` writes nothing either (it fills only the price caches).
 - An alert's "acted" or "ignored" (#398) is stored by `POST /api/alerts/{id}/feedback` (it also marks the alert read).

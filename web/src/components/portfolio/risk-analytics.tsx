@@ -30,7 +30,7 @@ type Risk = AnalyticsBase & {
   value?: number;
   risk_free: { rate: number; label: string; as_of: string | null; source: string | null; fallback: boolean; user_set: boolean };
   realised: null | (Relative & {
-    rolling?: Rolling; drawdowns?: Episode[]; var_backtest?: VarBacktest;
+    rolling?: Rolling; drawdowns?: Episode[]; var_backtest?: VarBacktest; var_ledger?: VarBacktest;
     window: { start: string; end: string; returns: number };
     volatility: Metric; beta: Metric; tracking_error: Metric; sharpe: Metric; sortino: Metric;
     var_1d: Metric; cvar_1d: Metric; var_21d: Metric; cvar_21d: Metric;
@@ -134,11 +134,12 @@ export function RiskAnalytics({ refresh }: { refresh: number }) {
             extra={dd.value != null && dd.value < 0 ? <p className="text-[10px] font-normal text-muted">{day(dd.peak)} → {day(dd.trough)} · {dd.recovered ? `recovered ${day(dd.recovered)} (${dd.days_to_recover} days)` : `not recovered · ${dd.underwater_days} days below the peak`}</p> : null} />
           <div className="flex justify-between border-b border-border py-2.5 text-sm"><span>Below the last peak now</span><span className="num font-medium">{pct(dd.current)}</span></div>
           <MetricRow label="1-day VaR 95 %" m={r.var_1d} format={(v) => pct(v, 2)} extra={money(r.var_1d)}
-            help="Historical value at risk: on about 1 day in 20, the loss was at least this much. From your own past returns, not a model." />
+            help="Historical value at risk: on about 1 day in 20 of this window, the loss was at least this much (true by construction). Whether that held on new days is what the backtests below check." />
           <MetricRow label="1-day CVaR 95 %" m={r.cvar_1d} format={(v) => pct(v, 2)} extra={money(r.cvar_1d)} help="Expected shortfall: the average loss on those worst 1-in-20 days." />
           <MetricRow label="1-month VaR 95 %" m={r.var_21d} format={(v) => pct(v, 2)} extra={money(r.var_21d)} help="The same over 21 trading days, from overlapping windows: far fewer independent observations, so treat it as rough." />
           <MetricRow label="1-month CVaR 95 %" m={r.cvar_21d} format={(v) => pct(v, 2)} extra={money(r.cvar_21d)} help="The average of the worst 5 % of 21-day returns." />
-          <VarBacktestLine b={r.var_backtest} />
+          <VarBacktestLine b={r.var_backtest} title="VaR backtest (walk-forward)" />
+          <VarBacktestLine b={r.var_ledger} title="Logged VaR backtest" />
         </Card>
       </div>
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">

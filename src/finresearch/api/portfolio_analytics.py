@@ -233,7 +233,12 @@ def add_portfolio_analytics_routes(app: FastAPI, *, scheme_rows: Callable[[], Aw
         # the hypothetical needs no fetch and depends on the option, so it is computed per request, outside the cache
         if hist.positions:
             stress = [*stress, hypothetical_fall(hist, assume_beta1=assume_beta1)]
-        return risk_payload(hist, rfree, sectors, stress)
+        from finresearch.portfolio.var_ledger import backtest
+
+        with session_scope() as s:  # read only: the monitor logs and resolves the VaR forecasts (#399)
+            vl = backtest(s)
+            s.rollback()
+        return risk_payload(hist, rfree, sectors, stress, var_ledger=vl)
 
     @app.get("/api/portfolio/analytics/stress-replay")
     async def stress_replay() -> dict[str, Any]:

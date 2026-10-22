@@ -182,6 +182,11 @@ def client(env):
     app.state.markets = MarketSources(quote=quote, today=lambda: TODAY)
     app.state.journal_today = TODAY
     app.state.journal_signal = no_signal
+
+    async def no_history():  # the pre-trade marginal-risk line's value history (#399) needs the network
+        raise LookupError("offline test")
+
+    app.state.portfolio_history = no_history
     with TestClient(app) as c:
         yield c
 
