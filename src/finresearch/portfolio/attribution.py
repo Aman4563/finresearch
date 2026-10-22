@@ -235,3 +235,129 @@ def index_return(s: Any, s0: date, end: date, symbol: str = "NIFTY") -> float | 
                          .where(IndexEod.symbol == symbol, IndexEod.day.in_([s0, end]))).all())  # fmt: skip
     a, b = got.get(s0), got.get(end)
     return None if not a or b is None else float(b / a) - 1
+
+
+STALE_DAYS = (
+    7  # a price at most this many days before a window edge stands for that day (holidays, fund NAV dates)
+)
+
+
+def holding_return(closes: dict[date, float], factors: dict[date, float] | None, s0: date, end: date
+                   ) -> tuple[float | None, float | None, str | None]:  # fmt: skip
+    """(close at end, unit-adjusted return over (s0, end], reason): the last price on or before each edge (within
+    STALE_DAYS), compounded through history.returns_of, which applies recorded splits and bonuses."""
+    from datetime import timedelta
+
+    from finresearch.portfolio.history import returns_of
+
+    def at_or_before(d: date) -> date | None:
+        ks = [k for k in closes if d - timedelta(days=STALE_DAYS) <= k <= d]
+        return max(ks) if ks else None
+
+    d0, d1 = at_or_before(s0), at_or_before(end)
+    if d0 is None:
+        return (
+            None,
+            None,
+            f"no price on or within {STALE_DAYS} days before {s0.isoformat()} (bought or listed later?)",
+        )
+    if d1 is None:
+        return None, None, f"no price on or within {STALE_DAYS} days before {end.isoformat()}"
+    span = {k: v for k, v in closes.items() if d0 <= k <= d1}
+    daily = returns_of(span, factors)
+    if len(daily) < len(span) - 1:
+        return closes[d1], None, f"a one-day move beyond ±{JUMP * 100:.0f} % with no recorded split or bonus"
+    growth = 1.0
+    for r in daily.values():
+        growth *= 1 + r
+    return closes[d1], growth - 1, None
+
+
+# --------------------------------------------------------------------------- the payload
+PERIODS = {
+    "1m": 30,
+    "3m": 91,
+    "6m": 182,
+}  # calendar days; at most six months (the index reconstitutes semi-annually)
+INDEX_TOLERANCE = (
+    0.005  # rebuilt vs NSE's own Nifty 50 return: more than half a percentage point apart is a warning
+)
+BENCHMARK = "Nifty 50 (price return)"
+CAVEATS = [
+    "Holdings-based: today's holdings as if held unchanged through the window; trades in the window are not modelled, "
+    "so this is not your realised return.",
+    "Benchmark weights are NSE's free-float market caps of today's Nifty 50 members, back-drifted to the window's "
+    "start; index changes during the window and NSE Indices' capping are not modelled.",
+    "Price returns on both sides (no dividends), so this differs from the NIFTYBEES total-return benchmark used by "
+    "Performance.",
+]
+
+
+def _base(period: str) -> dict[str, Any]:
+    from finresearch.portfolio.analytics import PRIVACY
+    from finresearch.signals.base import DISCLAIMER
+
+    return {"disclaimer": DISCLAIMER, "privacy": PRIVACY, "method": brinson.METHOD, "caveats": CAVEATS,
+            "period": period, "periods": list(PERIODS), "available": False, "reason": None,
+            "window": None, "benchmark": None, "segments": [], "totals": None, "excluded": [],
+            "benchmark_unknown": [], "coverage": None, "complete": False}  # fmt: skip
+
+
+def unavailable(period: str, reason: str) -> dict[str, Any]:
+    return {**_base(period), "reason": reason}
+
+
+async def load(
+    h: Any, iw: Any, today: date, period: str, fetch: Any, store: Any, sector_of: Any
+) -> dict[str, Any]:
+    """The attribution payload for `period` (a PERIODS key). `fetch`/`store`: the analytics price fetcher and
+    on-disk PriceStore for each holding's closes; `sector_of(symbol)`: NSE's sector of a stock outside the index."""
+    from datetime import timedelta
+
+    from finresearch.db import session_scope
+    from finresearch.portfolio.history import Instrument
+    from finresearch.portfolio.limits import sector_label
+
+    with session_scope() as s:
+        w = window(s, today, days=PERIODS[period])
+        ms = members(s, iw, w.start, w.end) if w.reason is None else []
+        idx = index_return(s, w.start, w.end) if w.reason is None else None
+        s.rollback()  # reads only
+    if w.reason is not None:
+        return unavailable(period, w.reason)
+    in_index = {m.symbol: m.sector for m in iw.members}
+    holdings = []
+    for p in (p for p in h.positions if p.value > 0):
+        kind, ident = p.key.split(":", 1)
+        inst = Instrument(p.key, "mf" if kind == "MF" else kind.lower(), ident, p.scheme)
+        try:
+            closes = await store.get(p.key, w.start - timedelta(days=STALE_DAYS + 3), w.end,
+                                     lambda a, b, i=inst: fetch(i, a, b), today)  # fmt: skip
+        except Exception:
+            closes = {}
+        c1, ret, why = holding_return(closes, h.factors.get(p.key), w.start, w.end)
+        sym = p.nse_symbol or (ident if kind == "NSE" else None)
+        nse_sector = None
+        if p.asset_type == "stock" and sym:
+            nse_sector = in_index[sym] if sym in in_index else await sector_of(sym)
+        seg = sector_label(p.asset_type, nse_sector, sym or ident, p.name, p.tax_class)
+        holdings.append(Holding(p.key, p.name, seg, None if c1 is None else p.units * c1, ret, why))
+    out = {**_base(period), **attribute(holdings, ms), "available": True,
+           "window": {"start": w.start.isoformat(), "end": w.end.isoformat()}}  # fmt: skip
+    rebuilt = out["totals"]["benchmark_return"]
+    diff = None if rebuilt is None or idx is None else round(rebuilt - idx, 6)
+    warn = None
+    if diff is not None and abs(diff) > INDEX_TOLERANCE:
+        warn = (f"the rebuilt Nifty 50 return differs from NSE's own index by {diff * 100:+.2f} percentage points "
+                f"(tolerance ±{INDEX_TOLERANCE * 100:.1f}): treat the attribution with care")  # fmt: skip
+    out["benchmark"] = {"name": BENCHMARK, "members": len(iw.members), "rebuilt_return": rebuilt,
+                        "index_return": None if idx is None else round(idx, 6), "difference": diff,
+                        "tolerance": INDEX_TOLERANCE, "warning": warn,
+                        "source": {"name": "NSE: Nifty 50 constituents with free-float market capitalisation",
+                                   "url": iw.url, "as_of": iw.as_of.isoformat() if iw.as_of else None,
+                                   "fetched_at": iw.fetched_at.isoformat() if iw.fetched_at else None}}  # fmt: skip
+    if idx is None:
+        out["benchmark"]["warning"] = (
+            "NSE's Nifty 50 close is not stored for the window's edges: not cross-checked"
+        )
+    return out

@@ -159,3 +159,22 @@ def test_members_from_the_store_and_the_index_check(env):
     )
     assert ms["CCC"].ffmc is None and ms["CCC"].reason == "NSE gave no free-float market cap"
     assert idx == pytest.approx(0.10)  # 22,000 / 20,000 - 1
+
+
+def test_holding_return_over_the_window():
+    closes = {
+        date(2026, 2, 27): 100.0,
+        date(2026, 3, 3): 110.0,
+        date(2026, 3, 4): 55.0,
+        date(2026, 3, 6): 60.5,
+    }
+    # 1:2 split ex 4-Mar recorded (factor 2): 110 / 100 × (55 × 2) / 110 × 60.5 / 55 - 1 = 0.21; the window starts on
+    # 2-Mar, whose price is the 27-Feb close (the last one on or before it)
+    close_end, r, why = at.holding_return(closes, {date(2026, 3, 4): 2.0}, date(2026, 3, 2), date(2026, 3, 6))
+    assert (close_end, why) == (60.5, None) and r == pytest.approx(0.21)
+    _, r, why = at.holding_return(closes, {}, date(2026, 3, 2), date(2026, 3, 6))  # the split not recorded
+    assert r is None and why == "a one-day move beyond ±40 % with no recorded split or bonus"
+    _, r, why = at.holding_return(
+        {date(2026, 3, 5): 10.0, date(2026, 3, 6): 11.0}, {}, date(2026, 3, 2), date(2026, 3, 6)
+    )
+    assert r is None and why == "no price on or within 7 days before 2026-03-02 (bought or listed later?)"

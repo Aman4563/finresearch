@@ -13,12 +13,15 @@ an LLM.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, Query
 
 from finresearch.api.errors import public_error
 
+WEIGHTS_TTL_S = 12 * 3600
+QUOTE_TTL_S = 12 * 3600
+RESULT_TTL_S = 1800
 LIQUIDITY_SOURCE = {"name": "NSE full bhavcopy with delivery (sec_bhavdata_full), stored daily (#373)",
                     "note": "NSE volume only; BSE volume is not collected."}  # fmt: skip
 
@@ -43,4 +46,49 @@ def add_portfolio_attribution_routes(app: FastAPI) -> None:
                 "disclaimer": DISCLAIMER, "available": bool(positions),
                 "reason": None if positions else (hist.reason or "no holdings")}  # fmt: skip
 
-    _ = public_error  # used by the attribution route
+    from finresearch.api.markets import TtlCache
+
+    cache = TtlCache()
+
+    async def _weights():
+        seam = getattr(app.state, "benchmark_source", None)
+        if seam is not None:
+            return await seam()
+        from finresearch.adapters.nse_index_weights import NiftyWeightsClient
+
+        async with NiftyWeightsClient() as c:
+            return await c.nifty50()
+
+    async def _sector_of(symbol: str) -> str | None:
+        """NSE's sector level ("Information Technology") of a stock outside the index, from its quote (cached)."""
+        try:
+            q = await cache.get(
+                ("quote", symbol), QUOTE_TTL_S, lambda: app.state.markets.get_quote(symbol, "NSE")
+            )
+        except Exception:
+            return None
+        return getattr(q, "sector", None) or None
+
+    @app.get("/api/portfolio/analytics/attribution")
+    async def attribution(period: Literal["1m", "3m", "6m"] = "3m") -> dict[str, Any]:
+        """Brinson-Fachler attribution of today's holdings by sector against the Nifty 50 over the period."""
+        from finresearch.config import get_settings
+        from finresearch.portfolio import attribution as at
+        from finresearch.portfolio.history import Fetcher, PriceStore
+
+        hist, today, fp = await app.state.portfolio_history()
+        try:
+            iw = await cache.get(("nifty50",), WEIGHTS_TTL_S, _weights)
+        except Exception as e:
+            return at.unavailable(
+                period, f"Nifty 50 weights could not be read: {public_error(e, drop_query=True)}"
+            )
+        if not hist.ok:
+            return at.unavailable(period, hist.reason or "no value history yet")
+        store = PriceStore(get_settings().state_dir / "portfolio_history")
+
+        async def make():
+            async with Fetcher(app.state.markets) as f:  # set by portfolio_history() above
+                return await at.load(hist, iw, today, period, f, store, _sector_of)
+
+        return await cache.get(("attribution", fp, today, period, iw.as_of), RESULT_TTL_S, make)
