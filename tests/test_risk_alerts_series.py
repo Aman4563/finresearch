@@ -5,7 +5,9 @@ day, or tonight's marks not written, reads unknown with the reason. Test databas
 
 from __future__ import annotations
 
+import itertools
 import math
+import statistics
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal as D
 
@@ -100,8 +102,8 @@ def test_iv_shock_and_gap_read_the_stored_series_and_name_them(clean) -> None:
         and "fno_iv_eod.iv_30d" in got[("iv_shock", "NIFTY")].series
     )
     assert got[("cum_shock", "NIFTY")].value == pytest.approx(ra.cum_shock(ivs).value)
-    rets = [math.log(b / a) for a, b in zip(closes[:-1], closes[1:-1], strict=False)]
-    want = abs(math.log(0.96)) / __import__("statistics").stdev(rets[-252:])
+    rets = [math.log(b / a) for a, b in itertools.pairwise(closes[:-1])]  # up to the previous close
+    want = abs(math.log(0.96)) / statistics.stdev(rets[-252:])
     assert got[("gap", "NIFTY")].value == pytest.approx(want) and "fno_bhav" in got[("gap", "NIFTY")].series
 
 
