@@ -179,8 +179,10 @@ def bus_sigmas(sigmas: dict[str, float | None], t_bus: float | None, t: float) -
 def path_forecast(spec: Spec, origin: date, inputs: dict[str, Any], picked: Sequence[tuple[Any, str]], fwd: float,
                   t: float, rate: float, fc: dict[str, Forecast], sig: dict[str, float | None],
                   pairs: Sequence[tuple[float, float]], sessions: Sequence[date], n_paths: int,
-                  ) -> tuple[Forecast, dict[str, Any]]:  # fmt: skip
-    """A6: the exit-rule Monte Carlo at the incumbent's volatility case, or Forecast(None) with the reason."""
+                  last: date | None = None) -> tuple[Forecast, dict[str, Any]]:  # fmt: skip
+    """A6: the exit-rule Monte Carlo at the incumbent's volatility case, or Forecast(None) with the reason. `last`:
+    the expiry's last session; a calendar that does not reach it cannot settle a path on the right day."""
+    last = last or (sessions[-1] if sessions else None)
     seed = addendum_a6.card_seed(spec.key, origin)
     out: dict[str, Any] = {"n": n_paths, "seed": seed, "sigma_case": None, "beta": None, "reason": None}
     case = next((k for k in ("p_rw20", "p_rw60") if fc.get(k) is fc["p_rw"] and fc[k].p is not None), None)
@@ -189,7 +191,8 @@ def path_forecast(spec: Spec, origin: date, inputs: dict[str, Any], picked: Sequ
     why = ("sigma unknown: no realised-volatility case" if case is None else
            f"beta unknown: fewer than {pp.BETA_MIN} paired IV and price changes" if beta is None else
            "a leg's origin IV is unknown" if any(v is None for v in ivs) else
-           "no stored session before expiry" if not sessions else None)  # fmt: skip
+           "no stored session before expiry" if not sessions else
+           "stored calendar ends before the expiry's last session" if sessions[-1] != last else None)  # fmt: skip
     out.update(sigma_case=case, beta=beta)
     if why:
         return Forecast(None), out | {"reason": why}
@@ -260,7 +263,7 @@ def card_at(spec: Spec, x: Day, h: Clocked, nxt: date | None, eday: Any, returns
     last = eday(expiry)
     path_days = [s for s in sessions if d < s <= last]
     fc[addendum_a6.CHALLENGER], mc = path_forecast(spec, d, inputs, picked, fwd, t, rate, fc, sig, pairs, path_days,
-                                                   n_paths)  # fmt: skip
+                                                   n_paths, last)  # fmt: skip
     return Card(spec.key, sym, spec.kind, expiry, d, inputs, fc, gate, t_bus, b3, mc)
 
 
@@ -354,15 +357,18 @@ def event_key(e: race.Event | Card) -> tuple[str, str, date, date]:
     return e.underlying, e.structure, e.expiry, e.origin
 
 
-def exit_reason_score(events: Sequence[race.Event], shares: dict[tuple, dict[str, float]]) -> dict[str, Any]:
+def exit_reason_score(events: Sequence[race.Event], shares: dict[tuple, dict[str, float]],
+                      window: str | None = None) -> dict[str, Any]:  # fmt: skip
     """A6.8: the multinomial log score (eps 1e-6) of the forecast exit-reason shares against trailing Dirichlet(1)
     frequencies over the four reason groups of events of the same underlying and structure resolved strictly before
-    the origin, on the events whose shares are known. Descriptive; lower is better."""
+    the origin (every event given, as race.with_trailing), scoring only the events in `window` (all when None) whose
+    shares are known. Descriptive; lower is better."""
+    scored = {id(e) for e in (race.in_window(events, window) if window else events)}
     cats = sorted(set(pp.REASONS.values()))
     model, base, seen = [], [], []
     for e in sorted(events, key=lambda e: e.origin):
         got = shares.get(event_key(e))
-        if not got or e.exit_reason is None:
+        if id(e) not in scored or not got or e.exit_reason is None:
             continue
         prior = [r for r in events if (r.underlying, r.structure) == (e.underlying, e.structure)
                  and r.resolved_on < e.origin and r.exit_reason is not None]  # fmt: skip
@@ -446,7 +452,7 @@ def run_window(history: History, window: str, spec_list: Sequence[Spec] | None =
                                                       if c.b76 and c.b76["reason"])),
                      "addendum_a6": addendum_a6.ADDENDUM_VERSION, "addendum_a6_hash": addendum_a6.addendum_hash(),
                      "n_paths": n_paths, "p_path_mc": mc_report,
-                     "exit_reasons": exit_reason_score(xs, {k: v["reasons"] for k, v in by_card.items()}),
+                     "exit_reasons": exit_reason_score(events, {k: v["reasons"] for k, v in by_card.items()}, window),
                      "calendar_gap_weekdays": gaps, "t_bus_unknown": sum(1 for c in cards if c.t_bus is None),
                      "first_origin": min((c.origin for c in cards), default=None),
                      "last_origin": max((c.origin for c in cards), default=None)}  # fmt: skip

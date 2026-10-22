@@ -99,3 +99,43 @@ def test_the_race_lists_p_path_and_reports_the_simulation_error(hist) -> None:
     assert 0 < mc["mean_se"] <= mc["max_se"] <= 0.5 / math.sqrt(60) + 1e-12
     assert 0 < mc["brier_noise"] <= 0.25 / 60 and mc["unknown"] == 0
     assert r["exit_reasons"]["n"] > 0 and math.isfinite(r["exit_reasons"]["model"])
+
+
+def test_a_calendar_that_ends_before_the_expiry_leaves_p_path_unknown() -> None:
+    """The stored sessions stop before May 2022's expiry: the last stored session is not the expiry's, so no path
+    can be settled on the right day; p_path is unknown, never a number."""
+    h = synth(date(2021, 1, 4), date(2022, 5, 20), vol=0.15, seed=11)
+    cards, _ = replay.make_cards(h, date(2022, 4, 18), date(2022, 4, 22), [PCS], n_paths=N)
+    late = [c for c in cards if c.expiry > date(2022, 5, 20)]
+    assert late and all(c.forecasts["p_path"].p is None for c in late)
+    assert all(c.path["reason"].startswith("stored calendar ends before") for c in late)
+
+
+def test_the_first_mark_reproduces_the_origin_price_within_a_tick(hist, made) -> None:
+    """The leg IV (backtest.pricing.leg_iv) and the Black-76 mark (path_pop.leg_price) use the same forward and
+    discounting: at the origin, with no move, the mark is the origin reference price."""
+    from finresearch.backtest import pricing as px
+    from finresearch.backtest.specs import BOOK
+    from finresearch.fnobook import path_pop as pp
+
+    cards, _ = made
+    for c in [c for c in cards if c.spec == "nifty_pcs_m"][:3]:
+        x = hist.day("NIFTY", c.origin)
+        fwd, t = px.forward(x, c.expiry, BOOK.rate), (c.expiry - c.origin).days / 365
+        for lg in c.inputs["legs"]:
+            q = x.options[(c.expiry, lg["right"], lg["strike"])]
+            leg = pp.PathLeg(
+                q.right, q.strike, lg["side"], lg["entry"], px.leg_iv(q, fwd, t, BOOK.rate), q.contracts
+            )
+            assert pp.leg_price(leg, fwd, fwd, t, BOOK.rate, 0.0) == pytest.approx(q.ref, abs=pp.TICK)
+
+
+def test_the_exit_reason_base_counts_events_before_the_window() -> None:
+    """A6.8: 'earlier resolved events' are all of them, not only the window's: a stop resolved before the design
+    window moves the base of the window's first event to stop 2/5, and only window events are scored."""
+    ev = lambda o, r, why: race.Event("NIFTY", r, "put_credit", o, r, 1, 1.0, None, True, {}, why)  # noqa: E731
+    e0, e1 = ev(date(2022, 2, 1), date(2022, 2, 24), "stop"), ev(date(2022, 4, 4), date(2022, 4, 28), "dte")
+    shares = {replay.event_key(e0): {"stop": 1.0}, replay.event_key(e1): {"time": 0.5, "stop": 0.5}}
+    got = replay.exit_reason_score([e0, e1], shares, window="design")
+    assert got["n"] == 1 and got["base"] == pytest.approx(math.log(5))  # time: 1 / 5
+    assert got["model"] == pytest.approx(math.log(2))
