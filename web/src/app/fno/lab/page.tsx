@@ -64,8 +64,8 @@ export default function StrategyLabPage() {
       <ErrorNote error={error} onRetry={load} />
       {!data ? (!error && <Skeleton className="h-40 rounded-xl" />) : (
         <>
-          <Callout tone="info" title={`${data.variants.n} variants tried so far: ${data.variants.library} pre-registered + ${data.variants.lab} from the lab`}>
-            Tune freely with in-sample runs: they never read the out-of-sample years and are not counted. An out-of-sample run counts its spec once, for good, and raises the deflated-Sharpe bar for every strategy. Runs run in the background (at most {data.blocks.run_cap_minutes} minutes). Multiple-testing adjustment: {data.blocks.deflated_sharpe_source}
+          <Callout tone="info" title={`${data.variants.n} trials so far: ${data.variants.library} pre-registered + ${data.variants.trials ?? data.variants.lab} specs run in the lab${data.variants.vault_reads ? ` + ${data.variants.vault_reads} vault reads` : ""}`}>
+            Every run is logged and counted, in-sample runs included: each spec you try raises the deflated-Sharpe bar for every strategy. The out-of-sample years here are already published; the only clean test is the forward holdout (sessions after you saved the spec), and the only way past &ldquo;no proven edge&rdquo; is forward paper incubation with PBO, SPA and MinTRL all passing. Runs run in the background (at most {data.blocks.run_cap_minutes} minutes). Multiple-testing adjustment: {data.blocks.deflated_sharpe_source}
           </Callout>
           <Card title={editing ? `New version of ${editing.name}` : "New strategy"} subtitle={editing ? `Same underlying and the same locked split (out of sample from ${editing.split.oos_from})` : "Its in-sample / out-of-sample split is fixed when you save it"}>
             <StrategyForm key={editing?.id ?? "new"} blocks={data.blocks} underlyings={data.underlyings} busy={busy} withName={!editing}
