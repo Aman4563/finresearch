@@ -1237,6 +1237,10 @@ def forecasts_horse_race(
         console.print(f"challengers p_rw_emp / p_rw_fhs ({rp['addendum_a5']}): unknown on {rp['p_rw_emp_unknown']} / "
                       f"{rp['p_rw_fhs_unknown']} card(s); reasons {rp['p_rw_emp_reasons']} / "
                       f"{rp['p_rw_fhs_reasons']}")  # fmt: skip
+        mc = rp["p_path_mc"]
+        console.print(f"challenger p_path ({rp['addendum_a6']}): {rp['n_paths']} paths per card; unknown on "
+                      f"{mc['unknown']} event(s), reasons {mc['reasons']}; Monte Carlo se mean {mc['mean_se']}, max "
+                      f"{mc['max_se']}, Brier noise {mc['brier_noise']}; exit-reason log score {rp['exit_reasons']}")  # fmt: skip
     else:
         with session_scope() as s:
             rep = race.run(ledger_events.load(s), window)
