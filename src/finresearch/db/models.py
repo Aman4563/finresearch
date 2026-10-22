@@ -1735,6 +1735,43 @@ class IndexEodDay(Base):
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class RateCurve(Base):
+    """One point of a dated rate series from FBIL (#366, refseries.rates): `series` gsec_par (the G-sec par yield
+    curve, tenors in years, `rate` half-yearly compounded and `annualised` FBIL's own annualised figure), tbill (T-bill
+    benchmark), mibor_on (overnight MIBOR, plus its 3D/4D weekend tenors) or mibor_term. `rate` is a fraction as FBIL
+    publishes it (percent / 100), in the series' own compounding basis; convert with fincalc before discounting. A day
+    or tenor FBIL did not publish has no row (unknown), never a filled-in rate."""
+
+    __tablename__ = "rate_curve"
+    series: Mapped[str] = mapped_column(String(12), primary_key=True)
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    tenor: Mapped[str] = mapped_column(
+        String(8), primary_key=True
+    )  # ON, 3D, 14D, 3M, 12M; gsec_par: 0.25Y, 10Y
+    tenor_years: Mapped[Decimal] = mapped_column(Numeric(8, 4))
+    rate: Mapped[Decimal] = mapped_column(Numeric(12, 8))
+    annualised: Mapped[Decimal | None] = mapped_column(Numeric(12, 8))
+    published_at: Mapped[datetime | None] = mapped_column(
+        DateTime
+    )  # FBIL's display time, IST (naive as printed)
+
+
+class RateCurveLoad(Base):
+    """The rate backfill manifest (#366): one row per (series, period) tried. gsec_par: one workbook day; the JSON
+    fixings: one calendar month (`period` = its first day). status loaded / no_file / failed. A month is fetched
+    again until a load finished after the month's end plus refseries.rates.SETTLE_DAYS (FBIL's public pages lag)."""
+
+    __tablename__ = "rate_curve_load"
+    series: Mapped[str] = mapped_column(String(12), primary_key=True)
+    period: Mapped[date] = mapped_column(Date, primary_key=True)
+    status: Mapped[str] = mapped_column(String(10))
+    url: Mapped[str | None] = mapped_column(String(200))
+    rows: Mapped[int | None] = mapped_column(Integer)
+    attempts: Mapped[int] = mapped_column(Integer, default=1)
+    error: Mapped[str | None] = mapped_column(String(300))
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class EquityEod(Base):
     """One cash-market security's day from NSE's full bhavcopy with delivery (#373 (a), adapters.nse_equity_eod):
     every series as printed (EQ, BE, BZ, SM, ...), unadjusted for corporate actions. `close` is NSE's official

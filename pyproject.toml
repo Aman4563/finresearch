@@ -28,6 +28,7 @@ dependencies = [
     "mcp>=1.2",
     "markdown-it-py>=3.0",
     "openpyxl>=3.1",
+    "xlrd==2.0.2",  # OLE2 .xls only (FBIL pre-2023 G-sec workbooks, NSE fii_stats): BSD-3, pure Python (#366)
     "pypdf>=5.0",
     "matplotlib>=3.9",
     "numpy>=2.0",

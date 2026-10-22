@@ -54,11 +54,24 @@ DECISIONS: dict[str, Decision] = {
 }
 
 
+# Datasets whose terms were read but whose decision is the owner's and not yet recorded: `require` refuses them and
+# says what was read. To decide, add a Decision above (choice, date, where it is recorded, the terms it rests on).
+PENDING: dict[str, str] = {
+    # FBIL's T-bill, MIBOR and G-sec par curve history (#366, refseries.rates). Read 22-Oct-2026 from the disclaimer
+    # FBIL's benchmark pages show (www.fbil.org.in, site bundle main.12b820d6bf685718ad3d.js): the benchmark is
+    # provided "as is" without warranties, and "FBIL does not authorize commercial use of the data available in its
+    # website without written permission". No separate terms-of-use page was found; personal use is not addressed.
+    "fbil_rates": "FBIL disclaimer read 22-Oct-2026: no commercial use without written permission; personal use "
+    "not addressed. Owner decision needed (#366)",
+}
+
+
 def require(dataset: str) -> Decision:
     """The dataset's decision; NoDecision when none is recorded or the owner chose to drop it."""
     d = DECISIONS.get(dataset)
     if d is None:
-        raise NoDecision(f"no recorded data-rights decision for {dataset!r} (#362): not collecting it")
+        why = f" ({PENDING[dataset]})" if dataset in PENDING else ""
+        raise NoDecision(f"no recorded data-rights decision for {dataset!r} (#362){why}: not collecting it")
     if d.choice == "drop":
         raise NoDecision(f"the owner dropped {dataset!r} on {d.decided} ({d.ref})")
     return d

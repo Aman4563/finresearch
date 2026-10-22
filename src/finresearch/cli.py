@@ -2165,6 +2165,82 @@ def audit_equity_eod(
         raise typer.Exit(1)
 
 
+rates_app = typer.Typer(
+    no_args_is_help=True,
+    help="Dated rate series from FBIL: G-sec par curve, T-bill, overnight and term MIBOR",
+)
+app.add_typer(rates_app, name="rates")
+
+
+@rates_app.command("backfill")
+def rates_backfill(
+    start: str = typer.Option(
+        ..., "--from", help="First day, YYYY-MM-DD (each series starts at FBIL's first day)"
+    ),
+    end: str | None = typer.Option(None, "--to", help="Last day (default today, IST)"),
+    series: list[str] | None = typer.Option(
+        None, "--series", help="gsec_par, tbill, mibor_on, mibor_term (repeatable; default all)"
+    ),
+    delay: float = typer.Option(
+        2.0, min=0.0, help="Extra seconds between requests, on top of the per-host limit"
+    ),
+) -> None:
+    """Download and store FBIL's dated rates for [from, to] (#366): the JSON fixings one month per request, the
+    G-sec par curve one workbook (~0.73 MB, parsed and discarded) per published day. Resumable and idempotent: re-run
+    the same command to continue. Needs the owner's data-rights decision for FBIL (finresearch.data_rights); stops
+    between 09:00 and 16:00 IST on weekdays and after two refusals (403/429) in a row. Exit 1 when it stopped early."""
+    from datetime import date as _date
+
+    from finresearch import data_rights
+    from finresearch.refseries import rates as store
+
+    try:
+        res = asyncio.run(store.backfill(series or list(store.SERIES), _date.fromisoformat(start),
+                                         _date.fromisoformat(end) if end else None, pause=delay,
+                                         progress=lambda key, status: console.print(f"{key} {status}")))  # fmt: skip
+    except data_rights.NoDecision as e:
+        console.print(str(e))
+        raise typer.Exit(2) from e
+    console.print_json(json.dumps(res, default=str))
+    if res.get("stopped"):
+        raise typer.Exit(1)
+
+
+@audit_app.command("rates")
+def audit_rates(start: str = typer.Option("2018-01-01", "--from", help="First day compared")) -> None:
+    """#366's acceptance check on the stored FBIL rates (no network): the 3-month rate from the G-sec par curve vs
+    FBIL's 3-month T-bill, both continuous, within 15 bp (the T-bill basis is an assumption, stated in the output)."""
+    from datetime import date as _date
+
+    from finresearch.db import session_scope
+    from finresearch.refseries import checks
+
+    with session_scope() as s:
+        res = checks.par3m_vs_tbill(s, start=_date.fromisoformat(start))
+    console.print_json(json.dumps(res, default=str))
+
+
+@index_app.command("tri")
+def index_tri(
+    symbol: str = typer.Argument(..., help="F&O symbol (NIFTY, BANKNIFTY) or upper-cased index name"),
+    start: str = typer.Option(..., "--from", help="First day (the series is based at its first close)"),
+    end: str | None = typer.Option(None, "--to", help="Last day (default today, IST)"),
+) -> None:
+    """The APPROXIMATE total-return index from the stored closes and dividend yields (#366; NSE's official TRI is not
+    fetched). Labelled approximate in the output; an unknown yield stops the chain."""
+    from datetime import date as _date
+
+    from finresearch.db import session_scope
+    from finresearch.fincalc.dates import today_ist
+    from finresearch.refseries.tri import tri_series
+
+    with session_scope() as s:
+        res = tri_series(
+            s, symbol, _date.fromisoformat(start), _date.fromisoformat(end) if end else today_ist()
+        )
+    console.print_json(json.dumps(res, default=str))
+
+
 @audit_app.command("index-eod")
 def audit_index_eod(
     start: str = typer.Option("2024-01-01", "--from", help="First day of the underlying-vs-close check"),
