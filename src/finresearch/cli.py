@@ -2640,6 +2640,117 @@ def events_check(
     )
 
 
+panel_app = typer.Typer(
+    no_args_is_help=True,
+    help="The market-wide stock-options panel and F&O ban history (#374), behind the registered study "
+    "evals/experiments/stock_option_vrp/PREREG.md",
+)
+fno_app.add_typer(panel_app, name="panel")
+
+
+def _panel_refusal(fn):
+    """Run `fn`; a refusal (registration changed, vault day, no data-rights decision) is printed, exit code 1."""
+    from finresearch.data_rights import NoDecision
+    from finresearch.optpanel.prereg import PreregistrationError
+    from finresearch.vault.registry import VaultSealed
+
+    try:
+        return fn()
+    except (NoDecision, PreregistrationError, VaultSealed) as e:
+        console.print(f"[red]refused:[/red] {e}")
+        raise typer.Exit(1) from None
+
+
+@panel_app.command("build")
+def fno_panel_build(
+    start: str = typer.Option(
+        ..., "--from", help="First session, YYYY-MM-DD (2022-01-01 on: never the vault)"
+    ),
+    end: str | None = typer.Option(None, "--to", help="Last session (default today, IST)"),
+    rebuild: bool = typer.Option(False, help="Rebuild sessions already built under the current registration"),
+) -> None:
+    """Build the panel from the kept raw F&O bhavcopy zips (no download): every stock-option underlying plus
+    NIFTYNXT50, near/next/30-day IV, skew, RV20, ATM straddle, OI and volume by moneyness, and the moneyness-filtered
+    rows. Resumable. CPU-heavy: run it outside market hours, e.g. through `finresearch batch run --`."""
+    from datetime import date as _date
+
+    from finresearch.optpanel import store
+
+    res = _panel_refusal(lambda: store.build(_date.fromisoformat(start), _date.fromisoformat(end) if end else None,
+                                             rebuild=rebuild))  # fmt: skip
+    console.print_json(json.dumps(res, default=str))
+
+
+@panel_app.command("mwpl")
+def fno_panel_mwpl(
+    start: str = typer.Option(..., "--from", help="First session, YYYY-MM-DD"),
+    end: str | None = typer.Option(None, "--to", help="Last session (default today, IST)"),
+    delay: float = typer.Option(
+        3.0, min=0.0, help="Extra seconds between downloads, on top of the shared NSE limit"
+    ),
+) -> None:
+    """Download NSE Clearing's combined OI / MWPL file, one per stored F&O session, for [from, to]. Needs the
+    owner's data-rights decision for nse_combineoi (finresearch/data_rights.py). Resumable; stops by itself between
+    09:00 and 16:00 IST on weekdays and after two refusals (403/429) in a row."""
+    from datetime import date as _date
+
+    from finresearch.optpanel import mwpl
+
+    res = _panel_refusal(lambda: asyncio.run(mwpl.backfill(
+        _date.fromisoformat(start), _date.fromisoformat(end) if end else None, pause=delay)))  # fmt: skip
+    console.print_json(json.dumps(res, default=str))
+
+
+@panel_app.command("ban-check")
+def fno_panel_ban_check(
+    n: int = typer.Option(20, min=1, max=40, help="Trade days to sample (#374: 20)"),
+    seed: int = typer.Option(0, help="Sampling seed (fixed: the same days on a re-run)"),
+) -> None:
+    """Compare the derived ban list with NSE's dated ban notice on `n` sampled trade days (one file each). Needs the
+    owner's data-rights decision for nse_secban."""
+    from finresearch.optpanel import mwpl
+
+    res = _panel_refusal(lambda: asyncio.run(mwpl.check_notices(n=n, seed=seed)))
+    console.print_json(json.dumps(res, default=str))
+
+
+@panel_app.command("coverage")
+def fno_panel_coverage(
+    start: str = typer.Option("2022-01-01", "--from"), end: str | None = typer.Option(None, "--to")
+) -> None:
+    """Per-stock coverage: the % of built sessions with a fitted ATM IV (no network)."""
+    from datetime import date as _date
+
+    from finresearch.db import session_scope
+    from finresearch.fincalc.dates import today_ist
+    from finresearch.optpanel import store
+
+    with session_scope() as s:
+        res = store.coverage(s, _date.fromisoformat(start), _date.fromisoformat(end) if end else today_ist())
+    console.print_json(json.dumps(res, default=str))
+
+
+@panel_app.command("reconcile")
+def fno_panel_reconcile(
+    start: str = typer.Option("2024-07-08", "--from", help="Lot sizes exist from the UDiFF file only"),
+    end: str | None = typer.Option(None, "--to"),
+) -> None:
+    """Stock-option OI from the built panel against the participant-wise OI file, per day (no network)."""
+    from datetime import date as _date
+
+    from finresearch.db import session_scope
+    from finresearch.fincalc.dates import today_ist
+    from finresearch.optpanel import store
+
+    with session_scope() as s:
+        rows = store.reconcile_participants(
+            s, _date.fromisoformat(start), _date.fromisoformat(end) if end else today_ist()
+        )
+    known = [r for r in rows if r["match"] is not None]
+    console.print_json(json.dumps({"days": len(rows), "known": len(known), "matched": sum(r["match"] for r in known),
+                                   "mismatches": [r for r in known if not r["match"]][:50]}, default=str))  # fmt: skip
+
+
 span_app = typer.Typer(no_args_is_help=True, help="NSE SPAN risk parameters (scan ranges) and FOVOLT")
 fno_app.add_typer(span_app, name="span")
 
