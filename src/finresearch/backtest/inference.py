@@ -256,18 +256,19 @@ def excess_net(trade: dict[str, Any], *, rate: float, cash_share: float) -> floa
 
 
 def opportunity_cost(fno_net: float, capital: float, start: tuple[date, float] | None, end: tuple[date, float] | None,
-                     slab_rate: Decimal, *, trades: int) -> dict[str, Any]:  # fmt: skip
+                     slab_rate: Decimal | None, *, trades: int) -> dict[str, Any]:  # fmt: skip
     """F&O net P&L after the owner's tax beside holding the index on the same capital over the same days.
     F&O is non-speculative business income at the slab rate plus cess; a net loss is shown untaxed (its set-off
     against other income is not modelled). The index leg (`start`/`end`: (day, total-return level)) is a listed-
     equity sale classified by fincalc.tax (12.5 % LTCG / 20 % STCG from 23-Jul-2024, plus cess); the ₹1.25 lakh LTCG
     exemption and surcharge are not applied (both depend on the owner's other gains). Unknown index -> None."""
-    out: dict[str, Any] = {"capital": capital, "fno_net": fno_net, "trades": trades, "slab_rate": float(slab_rate),
+    out: dict[str, Any] = {"capital": capital, "fno_net": fno_net, "trades": trades, "slab_rate": None if slab_rate is None else float(slab_rate),
                            "fno_after_tax": None, "index_return": None, "index_tax_rate": None,
                            "index_after_tax": None, "index_per_trade_after_tax": None, "excess_after_tax": None,
                            "reason": None}  # fmt: skip
     cess = float(tax.CESS)
-    out["fno_after_tax"] = fno_net - max(fno_net, 0.0) * float(slab_rate) * (1 + cess)
+    if slab_rate is not None:  # an unknown slab leaves the F&O leg, and so the excess, unknown
+        out["fno_after_tax"] = fno_net - max(fno_net, 0.0) * float(slab_rate) * (1 + cess)
     if start is None or end is None or not start[1] or end[1] is None or end[0] <= start[0]:
         out["reason"] = "no index total-return series covers the window (refseries.index_eod): unknown"
         return out
@@ -279,5 +280,5 @@ def opportunity_cost(fno_net: float, capital: float, start: tuple[date, float] |
     after = gain - max(gain, 0.0) * float(c.rate) * (1 + cess)
     out.update(index_return=end[1] / start[1] - 1, index_tax_rate=float(c.rate), index_after_tax=after,
                index_per_trade_after_tax=after / trades if trades else None,
-               excess_after_tax=out["fno_after_tax"] - after)  # fmt: skip
+               excess_after_tax=None if out["fno_after_tax"] is None else out["fno_after_tax"] - after)  # fmt: skip
     return out

@@ -289,3 +289,12 @@ def test_dm_hln_rectangular_variance_not_positive_is_unknown():
     d = [1.0 if i % 2 else -1.0 for i in range(40)]
     r = dm.diebold_mariano_hln([x + 0.1 for x in d], [0.0] * 40, 2)
     assert r["dm"] is None and r["p"] is None
+
+
+def test_opportunity_cost_with_an_unknown_slab_is_unknown():
+    from datetime import date
+
+    o = inference.opportunity_cost(50_000.0, 1_000_000.0, (date(2024, 7, 1), 100.0), (date(2026, 10, 9), 115.0),
+                                   None, trades=40)  # fmt: skip
+    assert o["fno_after_tax"] is None and o["excess_after_tax"] is None
+    assert o["index_after_tax"] == pytest.approx(130_500.0)  # the index leg does not need the slab
