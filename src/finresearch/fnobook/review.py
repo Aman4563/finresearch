@@ -11,8 +11,8 @@ and adherence are unknown. Analysis only: nothing here places an order. Local on
 from __future__ import annotations
 
 from collections import defaultdict
-from itertools import pairwise
 from datetime import date, timedelta
+from itertools import pairwise
 from typing import Any
 
 from sqlalchemy import select
