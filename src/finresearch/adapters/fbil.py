@@ -16,6 +16,7 @@ stale curve is never mistaken for today's.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
@@ -160,11 +161,99 @@ class FbilClient:
             as_of=curve.as_of, points=curve.points, source=f"{DOWNLOAD_URL}?date={day.isoformat()}"
         )
 
+    async def _filtered(self, path: str, start: date, end: date) -> tuple[str, bytes, object]:
+        url = f"{BASE}/{path}/fetchfiltered"
+        params = {"fromDate": start.isoformat(), "toDate": end.isoformat(), "authenticated": "false"}
+        resp = await self.http.get(url, params=params, headers=HEADERS)
+        if not resp.ok or resp.content.lstrip()[:1] != b"[":
+            raise FbilError(f"FBIL HTTP {resp.status} for {url} (not a JSON list)")
+        try:
+            data = resp.json()
+        except ValueError as e:
+            raise FbilError(f"FBIL {path}: unreadable JSON") from e
+        return f"{url}?fromDate={start.isoformat()}&toDate={end.isoformat()}", resp.content, data
+
+    async def fixings(self, series: str, start: date, end: date) -> tuple[str, bytes, list[RateFixing]]:
+        """One series' fixings for [start, end]: (url, body, rows)."""
+        url, body, data = await self._filtered(FIXING_PATHS[series], start, end)
+        return url, body, parse_fixings(series, data)
+
+    async def gsec_dates(self, start: date, end: date) -> list[date]:
+        """The days FBIL published a G-sec workbook in [start, end], oldest first."""
+        _, _, data = await self._filtered("gsec", start, end)
+        if not isinstance(data, list):
+            raise FbilError("FBIL gsec: expected a list")
+        return sorted({d for r in data if isinstance(r, dict) and (d := _iso(r.get("processRunDate")))})
+
     async def latest_par_curve(self) -> ParCurve:
         days = await self.published_dates()
         if not days:
             raise FbilError("FBIL lists no published G-sec dates")
         return await self.par_curve(days[0])
+
+
+# FBIL's money-market fixings, read as JSON from the same endpoints its site's tables use (no workbook):
+# wasdm/<path>/fetchfiltered?fromDate&toDate&authenticated=false, one row per day and tenor, the rate in percent.
+# History seen on 22-Oct-2026: overnight MIBOR from 22-Jul-2015, term MIBOR from 23-Sep-2015, T-bills from 2018.
+# The public pages showed fixings up to about a week before the request day (14-Oct on 22-Oct-2026).
+FIXING_PATHS = {"tbill": "tbill", "mibor_on": "ovnmibor", "mibor_term": "termmibor"}
+_TENOR = re.compile(r"^(\d+)\s*(D|DAY|DAYS|M|MONTH|MONTHS)$")
+
+
+@dataclass(frozen=True)
+class RateFixing:
+    day: date
+    series: str  # tbill | mibor_on | mibor_term
+    tenor: str  # canonical: ON, 3D, 7D, 14D, 1M ... 12M
+    tenor_days: int  # months x 364/12 rounded (T-bills run 91/182/364 days); ON = 1
+    rate: Decimal  # fraction, as FBIL publishes it (percent / 100); its compounding basis is the series' own
+    published_at: datetime | None  # FBIL's display time (IST)
+
+
+def _tenor(label: object) -> tuple[str, int]:
+    s = str(label or "").strip().upper()
+    if s in ("O/N", "ON", "OVERNIGHT"):
+        return "ON", 1
+    m = _TENOR.match(s)
+    if not m:
+        raise FbilError(f"unknown FBIL tenor {label!r}")
+    n = int(m.group(1))
+    if m.group(2).startswith("D"):
+        return f"{n}D", n
+    return f"{n}M", round(n * 364 / 12)
+
+
+def _dt(v: object) -> datetime | None:
+    try:
+        return datetime.fromisoformat(str(v).strip())
+    except ValueError:
+        return None
+
+
+def parse_fixings(series: str, payload: object) -> list[RateFixing]:
+    """FBIL's fetchfiltered rows for one series. A row without a numeric rate is left out (unknown, never 0); an
+    unknown tenor label or a payload that is not a list raises FbilError (the layout changed: stop, don't guess)."""
+    if series not in FIXING_PATHS:
+        raise ValueError(f"unknown FBIL series {series!r}")
+    if not isinstance(payload, list):
+        raise FbilError(f"FBIL {series}: expected a list, got {type(payload).__name__}")
+    out = []
+    for r in payload:
+        if not isinstance(r, dict):
+            raise FbilError(f"FBIL {series}: unexpected row {r!r}"[:200])
+        day = _iso(r.get("processRunDate"))
+        tenor, days = _tenor(r.get("tenorName") or r.get("tenor"))
+        rate = r.get("rate")
+        if day is None or isinstance(rate, bool) or not isinstance(rate, int | float | str):
+            continue
+        try:
+            frac = Decimal(str(rate)) / 100
+        except InvalidOperation:
+            continue
+        if not frac.is_finite():
+            continue
+        out.append(RateFixing(day, series, tenor, days, frac, _dt(r.get("displayTime"))))
+    return out
 
 
 def _iso(v: object) -> date | None:
