@@ -123,7 +123,7 @@ def kernel_var(d: np.ndarray, q: float) -> np.ndarray:
     out = (e * e).sum(axis=0) / n
     for i in range(1, n):
         k = (n - i) / n * (1 - q) ** i + i / n * (1 - q) ** (n - i)
-        if k == 0.0:
+        if k < 1e-15:  # both terms vanish far from i = 0 and i = n: no effect on the sum at double precision
             continue
         out = out + 2 * k * (e[i:] * e[:-i]).sum(axis=0) / n
     return out
