@@ -211,7 +211,7 @@ def test_the_spot_vol_slope_is_ols_on_the_trailing_window_and_unknown_when_short
     pairs = old + [(r, -0.6 * r + 0.0005 * ((i % 3) - 1)) for i, r in enumerate(rets)]
     x, y = rets, [b for _, b in pairs[100:]]
     mx, my = sum(x) / len(x), sum(y) / len(y)
-    want = sum((a - mx) * (b - my) for a, b in zip(x, y)) / sum((a - mx) ** 2 for a in x)
+    want = sum((a - mx) * (b - my) for a, b in zip(x, y, strict=True)) / sum((a - mx) ** 2 for a in x)
     assert pp.spot_vol_beta(pairs) == pytest.approx(want, rel=1e-12)
     assert pp.spot_vol_beta(pairs[-(pp.BETA_MIN - 1):]) is None
     assert pp.BETA_WINDOW == 250 and pp.BETA_MIN == 120
