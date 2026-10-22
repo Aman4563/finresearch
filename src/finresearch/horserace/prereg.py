@@ -15,3 +15,8 @@ ADDENDUM_ON = "2026-10-22"
 # pinned before any replay code computed it on a stored session.
 ADDENDUM_A2_HASH = "a43dd5c2bd94d48e304e84ca7da391d7841f810de8e261eb12c12addf37022c0"
 ADDENDUM_A2_ON = "2026-10-22"
+
+# Post-hoc addendum A3 (horserace/addendum_a3.py, ADDENDUM.md): the forward/IV challenger p_rn_b76 (#385), with the
+# Black-76 engine's registered constants, pinned before any replay code computed it on a stored session.
+ADDENDUM_A3_HASH = "c5c07f159a6a8154ac7f264a847645fd4556b69c86fd1e1808bf8bd9b64dc10b"
+ADDENDUM_A3_ON = "2026-10-22"

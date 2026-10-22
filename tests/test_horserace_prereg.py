@@ -46,3 +46,20 @@ def test_addendum_a2_hash_is_pinned_quoted_and_covers_the_clock_weights(monkeypa
     assert prereg.ADDENDUM_A2_HASH in text and "Addendum A2 (post hoc)" in text
     monkeypatch.setattr(bt, "PRIOR", bt.Weights(overnight=0.0, nontrading=0.2))
     assert addendum_a2.addendum_hash() != prereg.ADDENDUM_A2_HASH  # editing the weights moves the hash
+
+
+def test_addendum_a3_hash_is_pinned_quoted_and_covers_the_engine_constants(monkeypatch) -> None:
+    from finresearch.fincalc import black76 as b
+    from finresearch.horserace import addendum_a2, addendum_a3
+
+    assert addendum_a3.addendum_hash() == prereg.ADDENDUM_A3_HASH, "a changed addendum is a new ADDENDUM_VERSION"
+    reg = addendum_a3.registration()
+    assert reg["base_hash"] == prereg.HASH and reg["a1_hash"] == prereg.ADDENDUM_HASH
+    assert reg["a2_hash"] == prereg.ADDENDUM_A2_HASH == addendum_a2.addendum_hash()
+    assert addendum_a2.CHALLENGERS == ("p_rw_bus",) and addendum_a3.CHALLENGERS == ("p_rw_bus", "p_rn_b76")
+    text = (ROOT / "evals/experiments/card_horse_race/ADDENDUM.md").read_text()
+    assert prereg.ADDENDUM_A3_HASH in text and "Addendum A3 (post hoc)" in text
+    for name, value in (("PARITY_BAND", 0.04), ("R_SE_MAX", 0.02), ("PRICE_TOL", 1e-8), ("MAX_BAND", 0.03)):
+        monkeypatch.setattr(b, name, value)
+        assert addendum_a3.addendum_hash() != prereg.ADDENDUM_A3_HASH, name  # editing a constant moves the hash
+        monkeypatch.undo()
