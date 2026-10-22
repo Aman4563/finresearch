@@ -75,3 +75,38 @@ replay refuses to run when any of the three hashes differs. Any change is a new 
 9. **Later.** Weights estimated by `bustime.overnight_weight` and `bustime.nontrading_weight` on 2022-01-03 to
    2024-06-30 only (#384 acceptance (a)) would be a new addendum, registered before any later window is read with
    them.
+
+# Addendum A3 (post hoc): the forward and Black-76 IV challenger `p_rn_b76` (P3.2, #385)
+
+Recorded 22-Oct-2026, after `card-horse-race-v1` and addenda A1 and A2 (all unchanged) and before any replay code
+computed the challenger on a stored session or read an outcome. It is `src/finresearch/horserace/addendum_a3.py`
+(`card-horse-race-v1-addendum-A3`), sha256 `c5c07f159a6a8154ac7f264a847645fd4556b69c86fd1e1808bf8bd9b64dc10b`, pinned in `horserace/prereg.py` (`ADDENDUM_A3_HASH`); the
+hash covers the engine's registered numbers (`fincalc/black76.py`: solver bracket and tolerances, parity band,
+minimum strikes, Huber constant, implied-rate plausibility limits, tick and maximum band) and the market-settle
+contract minimum. The replay refuses to run when any of the four hashes differs. Any change is a new addendum version.
+
+1. **Challenger.** `p_rn_b76` = the lognormal PoP, EV and 20 dots (A1.9) at the ATM IV of item 4, with A1.6's spot,
+   t, rate, drift, costs, legs and fills unchanged, so it differs from `p_rn_atm` only in the ATM IV (forward,
+   discount factor, price filter and solver). An unknown IV gives `p_rn_b76` None, counted.
+2. **One forward per expiry.** F_par = `black76.parity_fit` on the card's expiry at the origin close: the
+   regression C - P = DF F - DF K over every strike whose call and put both have a market settle
+   (`fno_history.market_settle`: >= 10 contracts and settle = close) with |ln K/F| <= 5 %, equal weights (the
+   bhavcopy has no bid/ask), Huber IRLS (c = 1.345). Fewer than 3 strikes or a non-negative slope: unknown. It is
+   neither the future nor one strike.
+3. **Discount factor.** The regression's own DF when it is identified (standard error of r_impl <= 1 rate point and
+   r_impl between -2 % and 20 %); otherwise unknown, and so is `p_rn_b76`. No dated rate is substituted (FBIL dated
+   rates are not collected while the owner's data-rights decision on #447 is open), and never `BOOK.rate`'s 6.5 %.
+4. **ATM IV.** `black76.atm_iv` over the market settles at the listed strike nearest F_par: the mean of the call and
+   put IVs, either alone. T = A1.6's calendar t: with DF given directly a price depends on sigma^2 T only, so the
+   total variance and the PoP are the same on any clock (A2.6's argument).
+5. **Solver.** `black76.implied_vol`: Newton safeguarded by bisection inside [0.01 %, 1,000 %], converged at
+   1e-10 relative to the out-of-the-money twin's price or a 1e-10 bracket; an in-the-money side is solved on its OTM
+   twin through parity; a price on or outside the no-arbitrage bounds or the bracket is unknown with a reason.
+6. **Logged, not scored.** Per card: F_par, its basis to the A1.5 forward, r_impl, se(F), strikes used, and the
+   reason when unknown.
+7. **Race.** Challengers = addendum A2's + `p_rn_b76`; incumbent `p_rw`, scores, tests and the gate unchanged. The
+   registered Holm family (every non-incumbent forecaster x underlying) grows by `p_rn_b76`.
+8. **Windows.** Replay windows only (design, seen, tuesday), none of which can adopt. The live card is unchanged:
+   adoption needs forward shadow logging or the vault, each registered first.
+9. **Later.** IVs from recorded bid/ask mids (`option_quote`, #363) with spread weights, error bands and the issue's
+   acceptance checks (a)-(e) on >= 20 recorded sessions are a later addendum, registered before they are read.
