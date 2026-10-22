@@ -92,6 +92,8 @@ GET requests don't change your records, the alert inputs or the forecast ledger:
   `POST /api/journal/pretrade` stores no record (it fills only the price cache, for the marginal-risk line).
 - `POST /api/portfolio/analytics/joint-risk/pretrade` (#397) is a POST only because it carries the candidate legs:
   it stores nothing. `GET /api/portfolio/analytics/joint-risk` writes nothing either (it fills only the price caches).
+- The daily joint P&L of both books (#397 (b), `joint_pnl_day`, append-only) is written only by the monitor's nightly
+  joint P&L pass (23:15 IST on trading days); the joint-risk GET only reads it for the forward-test line.
 - An alert's "acted" or "ignored" (#398) is stored by `POST /api/alerts/{id}/feedback` (it also marks the alert read).
   `GET /api/alerts/quality`, the per-rule precision and mute suggestions, only reads.
 
