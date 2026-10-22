@@ -37,3 +37,41 @@ its hash (`11f10c09…4701060`) are untouched. The addendum is `src/finresearch/
 12. **Independence.** `first` = the first session per (underlying, expiry, structure) whose card resolved.
 13. **Windows.** Events from 2022-04-01 to the last stored session; the replay serves `design`, `seen` and
     `tuesday` only (`forward` is registered as card-ledger events and is refused for the replay).
+
+# Addendum A2 (post hoc): the business-time clock challenger `p_rw_bus` (P3.1, #384)
+
+Recorded 22-Oct-2026, after `card-horse-race-v1` and addendum A1 (both unchanged) and before any replay code computed
+the challenger on a stored session or read an outcome. It is `src/finresearch/horserace/addendum_a2.py`
+(`card-horse-race-v1-addendum-A2`), sha256 `a43dd5c2bd94d48e304e84ca7da391d7841f810de8e261eb12c12addf37022c0`, pinned in `horserace/prereg.py` (`ADDENDUM_A2_HASH`); the hash
+covers the clock's registered numbers (`fincalc/bustime.py`: the prior weights, session hours, per-year counts). The
+replay refuses to run when any of the three hashes differs. Any change is a new addendum version.
+
+1. **Challenger.** `p_rw_bus` = `p_rw` (the lower-EV of the RV20 and RV60 lognormal cases, A1.6, A1.7, A1.9) with
+   each volatility moved to the business clock: sigma_eff = RV_N x sqrt(T_bus / t), so the total variance to expiry
+   is RV_N^2 x T_bus. t (calendar days / 365), spot, rate, drift, costs, legs and fills stay A1.6's.
+2. **Clock.** `bustime.business_years` from 15:30 IST on the origin session to 15:30 IST on the expiry:
+   T_bus = [n_s + w_o n_o + w_w n_w] / Y with n_o = n_s from a close, Y = 252 + 252 w_o + 113 w_w (the issue writes 251 overnights; 252 makes a
+   calendar year exactly 1). A calendar year of the clock sums to 1, so RV_N = sd(close-to-close) x sqrt(252) is
+   already sigma per business year.
+3. **Weights: the registered prior, not estimated.** w_o = 0 (the session is the whole close-to-close day) and
+   w_w = 0.10 of one per weekend or holiday day (Y = 263.3). The issue's registered fallback is 0.1-0.3 of an
+   open-to-close session; 0.10 of a close-to-close day is 0.10-0.14 of a session for any w_o from 0 to 0.4.
+   Consistent with, not taken from, US evidence that a whole weekend's variance is only about 10-20 % above one
+   weekday's (French and Roll 1986, JFE 17, 5-26; Fortune 1998, Federal Reserve Bank of Boston WP 98-6, pp. 1, 3).
+   No FinResearch data was used.
+4. **Events** are excluded by this registration (P3.8 is not built). That is not a claim that no event falls in the
+   window.
+5. **Calendar.** The underlying's stored sessions (the list the replay already uses for expiry days): a weekday with
+   no stored session is a holiday. NSE publishes the year's holidays before the year starts, so only an unscheduled
+   closure is look-ahead. A missing stored weekday cannot be told from a holiday; the replay reports how many there
+   are. An expiry after the last stored session or on a non-session gives an unknown T_bus.
+6. **No risk-neutral twin.** An ATM IV solved and used on the same clock has the same total variance at expiry, so
+   a `p_rn_atm_bus` would equal `p_rn_atm`.
+7. **Race.** Challengers = `specs.CHALLENGERS` + `p_rw_bus`; incumbent, scores, tests and the gate unchanged. The
+   registered Holm family (every non-incumbent forecaster x underlying) grows by `p_rw_bus`.
+8. **Windows.** Replay windows only (design, seen, tuesday), none of which can adopt. The forward card ledger has no
+   `p_rw_bus` because the live card is unchanged: adoption needs forward shadow logging or the vault, each
+   registered first.
+9. **Later.** Weights estimated by `bustime.overnight_weight` and `bustime.nontrading_weight` on 2022-01-03 to
+   2024-06-30 only (#384 acceptance (a)) would be a new addendum, registered before any later window is read with
+   them.

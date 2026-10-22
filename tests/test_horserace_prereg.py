@@ -28,3 +28,21 @@ def test_addendum_hash_is_pinned_and_quoted() -> None:
     assert addendum.registration()["base_hash"] == prereg.HASH
     text = (ROOT / "evals/experiments/card_horse_race/ADDENDUM.md").read_text()
     assert prereg.ADDENDUM_HASH in text and "post hoc" in text
+
+
+def test_addendum_a2_hash_is_pinned_quoted_and_covers_the_clock_weights(monkeypatch) -> None:
+    from finresearch.fincalc import bustime as bt
+    from finresearch.horserace import addendum, addendum_a2
+
+    assert addendum_a2.addendum_hash() == prereg.ADDENDUM_A2_HASH, (
+        "a changed addendum is a new ADDENDUM_VERSION"
+    )
+    reg = addendum_a2.registration()
+    assert (
+        reg["base_hash"] == prereg.HASH and reg["a1_hash"] == prereg.ADDENDUM_HASH == addendum.addendum_hash()
+    )
+    assert specs.CHALLENGERS == () and addendum_a2.CHALLENGERS == ("p_rw_bus",)
+    text = (ROOT / "evals/experiments/card_horse_race/ADDENDUM.md").read_text()
+    assert prereg.ADDENDUM_A2_HASH in text and "Addendum A2 (post hoc)" in text
+    monkeypatch.setattr(bt, "PRIOR", bt.Weights(overnight=0.0, nontrading=0.2))
+    assert addendum_a2.addendum_hash() != prereg.ADDENDUM_A2_HASH  # editing the weights moves the hash
