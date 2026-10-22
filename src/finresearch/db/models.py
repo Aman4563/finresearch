@@ -1707,11 +1707,15 @@ class RateCurve(Base):
     __tablename__ = "rate_curve"
     series: Mapped[str] = mapped_column(String(12), primary_key=True)
     day: Mapped[date] = mapped_column(Date, primary_key=True)
-    tenor: Mapped[str] = mapped_column(String(8), primary_key=True)  # ON, 3D, 14D, 3M, 12M; gsec_par: 0.25Y, 10Y
+    tenor: Mapped[str] = mapped_column(
+        String(8), primary_key=True
+    )  # ON, 3D, 14D, 3M, 12M; gsec_par: 0.25Y, 10Y
     tenor_years: Mapped[Decimal] = mapped_column(Numeric(8, 4))
     rate: Mapped[Decimal] = mapped_column(Numeric(12, 8))
     annualised: Mapped[Decimal | None] = mapped_column(Numeric(12, 8))
-    published_at: Mapped[datetime | None] = mapped_column(DateTime)  # FBIL's display time, IST (naive as printed)
+    published_at: Mapped[datetime | None] = mapped_column(
+        DateTime
+    )  # FBIL's display time, IST (naive as printed)
 
 
 class RateCurveLoad(Base):
