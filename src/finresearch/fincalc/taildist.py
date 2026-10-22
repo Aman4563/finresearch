@@ -201,3 +201,152 @@ def gpd_tail(z: Sequence[float], q: float, min_exceed: int) -> GpdTail | None:
         return None
     f = gpd_fit(e)
     return GpdTail(u, q, f.xi, f.beta, len(e))
+
+
+# ------------------------------------------------------------------------------------------- filters
+EWMA_LAMBDA = 0.94  # RiskMetrics (1996) daily decay; NSE's margin volatility uses 0.995
+BACKCAST_TAU, BACKCAST_DECAY = 75, 0.94  # arch's (K. Sheppard) variance backcast: EWMA weights over the first 75
+GJR_WINDOW = 1000  # the last 1,000 daily returns (about four years) on or before the fit date
+GJR_MIN_RETURNS = 250  # fewer: no fit (unknown)
+GJR_START = (0.05, 0.05, 0.85)  # alpha, gamma, beta; omega = var x (1 - alpha - gamma / 2 - beta)
+NM_STEP, NM_XATOL, NM_FATOL, NM_MAXFEV, NM_RESTARTS = 0.1, 1e-9, 1e-10, 4000, 2
+
+
+@dataclass(frozen=True)
+class Minimum:
+    x: list[float]
+    fun: float
+    converged: bool
+    nfev: int
+
+
+def nelder_mead(f: Callable[[np.ndarray], float], x0: Sequence[float], step: Sequence[float],
+                xatol: float = NM_XATOL, fatol: float = NM_FATOL, maxfev: int = NM_MAXFEV) -> Minimum:  # fmt: skip
+    """Nelder and Mead (1965) with the standard coefficients (reflect 1, expand 2, contract 1/2, shrink 1/2);
+    converged when the simplex spans < xatol in x and < fatol in f."""
+    n = len(x0)
+    sim = np.array([np.asarray(x0, float)] + [np.asarray(x0, float) + np.eye(n)[i] * step[i] for i in range(n)])
+    fs = np.array([f(x) for x in sim])
+    nfev = n + 1
+    while nfev < maxfev:
+        order = np.argsort(fs)
+        sim, fs = sim[order], fs[order]
+        if np.max(np.abs(sim[1:] - sim[0])) <= xatol and np.max(np.abs(fs[1:] - fs[0])) <= fatol:
+            return Minimum(sim[0].tolist(), float(fs[0]), True, nfev)
+        c = sim[:-1].mean(axis=0)
+        xr = c + (c - sim[-1])
+        fr = f(xr)
+        nfev += 1
+        if fr < fs[0]:
+            xe = c + 2 * (c - sim[-1])
+            fe = f(xe)
+            nfev += 1
+            sim[-1], fs[-1] = (xe, fe) if fe < fr else (xr, fr)
+        elif fr < fs[-2]:
+            sim[-1], fs[-1] = xr, fr
+        else:
+            xc = c + 0.5 * (xr - c) if fr < fs[-1] else c + 0.5 * (sim[-1] - c)
+            fc = f(xc)
+            nfev += 1
+            if fc < min(fr, fs[-1]):
+                sim[-1], fs[-1] = xc, fc
+            else:
+                sim[1:] = sim[0] + 0.5 * (sim[1:] - sim[0])
+                fs[1:] = [f(x) for x in sim[1:]]
+                nfev += n
+    i = int(np.argmin(fs))
+    return Minimum(sim[i].tolist(), float(fs[i]), False, nfev)
+
+
+def backcast(r: np.ndarray) -> float:
+    """arch's starting variance: sum of w_i r_i^2 over the first min(75, n) returns, w_i proportional to 0.94^i."""
+    tau = min(BACKCAST_TAU, len(r))
+    w = BACKCAST_DECAY ** np.arange(tau)
+    return float(np.sum(w / w.sum() * np.asarray(r[:tau], float) ** 2))
+
+
+def ewma_variance(r: Sequence[float], lam: float = EWMA_LAMBDA, start: float | None = None) -> list[float]:
+    """sigma^2_t = lam sigma^2_{t-1} + (1 - lam) r^2_{t-1}: the variance of each return given the earlier ones, plus
+    the next session's forecast (len(r) + 1 values); `start` defaults to the backcast."""
+    s = backcast(np.asarray(r, float)) if start is None else start
+    out = [s]
+    for x in r:
+        s = lam * s + (1 - lam) * x * x
+        out.append(s)
+    return out
+
+
+@dataclass(frozen=True)
+class GjrParams:
+    omega: float
+    alpha: float
+    gamma: float
+    beta: float
+
+    def step(self, s2: float, r: float) -> float:
+        return self.omega + (self.alpha + self.gamma * (r < 0)) * r * r + self.beta * s2
+
+
+@dataclass(frozen=True)
+class Filtered:
+    sigma2: list[float]  # the conditional variance of each return
+    z: list[float]  # standardised residuals r_t / sigma_t
+    next_sigma2: float  # the forecast for the session after the last return
+
+
+def gjr_filter(r: Sequence[float], p: GjrParams) -> Filtered:
+    """sigma^2_0 = omega + (alpha + gamma / 2 + beta) x backcast (arch's), then the GJR recursion; zero mean."""
+    bc = backcast(np.asarray(r, float))
+    s = p.omega + (p.alpha + p.gamma / 2 + p.beta) * bc
+    s2, z = [], []
+    for x in r:
+        s2.append(s)
+        z.append(x / math.sqrt(s))
+        s = p.step(s, x)
+    return Filtered(s2, z, s)
+
+
+def _gjr_nll(r: list[float], bc: float, p: GjrParams) -> float:
+    if p.omega <= 0 or p.alpha < 0 or p.gamma < 0 or p.beta < 0 or p.alpha + p.gamma / 2 + p.beta >= 1:
+        return math.inf
+    s = p.omega + (p.alpha + p.gamma / 2 + p.beta) * bc
+    tot = 0.0
+    for x in r:
+        tot += math.log(s) + x * x / s
+        s = p.omega + (p.alpha + p.gamma * (x < 0)) * x * x + p.beta * s
+    return 0.5 * (len(r) * math.log(2 * math.pi) + tot)
+
+
+@dataclass(frozen=True)
+class GjrFit:
+    params: GjrParams | None
+    loglik: float | None
+    n: int
+    reason: str | None = None
+
+
+def gjr_fit(returns: Sequence[float], window: int = GJR_WINDOW, min_returns: int = GJR_MIN_RETURNS) -> GjrFit:
+    """Gaussian quasi-maximum likelihood of a zero-mean GJR-GARCH(1,1) on the last `window` returns (omega > 0,
+    alpha, gamma, beta >= 0, alpha + gamma / 2 + beta < 1), by Nelder-Mead from GJR_START restarted NM_RESTARTS
+    times; unknown (params None, a reason) when too short or not converged. Never a fallback."""
+    r = [float(x) for x in list(returns)[-window:]]
+    if len(r) < min_returns:
+        return GjrFit(None, None, len(r), f"{len(r)} returns, fewer than {min_returns}")
+    var, bc = float(np.var(r)), backcast(np.asarray(r))
+    if var <= 0:
+        return GjrFit(None, None, len(r), "zero variance")
+    a, g, b = GJR_START
+    x0 = [1 - a - g / 2 - b, a, g, b]  # omega / var, alpha, gamma, beta
+
+    def nll(x: np.ndarray) -> float:
+        return _gjr_nll(r, bc, GjrParams(x[0] * var, x[1], x[2], x[3]))
+
+    res = None
+    for _ in range(NM_RESTARTS + 1):
+        res = nelder_mead(nll, x0, [NM_STEP * max(abs(v), 0.01) for v in x0])
+        x0 = res.x
+    assert res is not None
+    if not res.converged or not math.isfinite(res.fun):
+        return GjrFit(None, None, len(r), f"not converged after {res.nfev} evaluations")
+    x = res.x
+    return GjrFit(GjrParams(x[0] * var, x[1], x[2], x[3]), -res.fun, len(r))

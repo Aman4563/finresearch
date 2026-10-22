@@ -122,3 +122,56 @@ def test_gpd_tail_needs_its_minimum_exceedances() -> None:
     assert tail.xi == pytest.approx(-0.4490895487147928, abs=1e-4)
     assert tail.beta == pytest.approx(1.6515613896073926, rel=1e-4)
     assert td.gpd_tail(z[:100], q=0.95, min_exceed=15) is None  # 5 exceedances: no tail, never a noisy fit
+
+
+# ------------------------------------------------------------------------------------------- filters
+def test_nelder_mead_finds_the_rosenbrock_minimum() -> None:
+    res = td.nelder_mead(lambda p: (1 - p[0]) ** 2 + 100 * (p[1] - p[0] ** 2) ** 2, [-1.2, 1.0], [0.1, 0.1])
+    assert res.converged and res.x == pytest.approx([1.0, 1.0], abs=1e-5)
+
+
+def test_ewma_variance_by_hand() -> None:
+    # sigma^2_t = 0.94 sigma^2_{t-1} + 0.06 r^2_{t-1}, from a given start
+    got = td.ewma_variance([0.01, -0.02], lam=0.94, start=1e-4)
+    assert got == pytest.approx([1e-4, 0.94e-4 + 0.06e-4, 0.94 * 1e-4 + 0.06 * 4e-4])
+
+
+def test_backcast_is_archs() -> None:
+    r = np.array([0.01, -0.02, 0.03])
+    w = 0.94 ** np.arange(3)
+    assert td.backcast(r) == pytest.approx(float(np.sum(w / w.sum() * r**2)))
+
+
+def test_gjr_filter_by_hand() -> None:
+    p = td.GjrParams(omega=1e-6, alpha=0.05, gamma=0.1, beta=0.9)
+    r = [0.01, -0.02]
+    bc = td.backcast(np.array(r))
+    s0 = 1e-6 + (0.05 + 0.1 / 2 + 0.9) * bc
+    s1 = 1e-6 + 0.05 * 1e-4 + 0.9 * s0
+    s2 = 1e-6 + (0.05 + 0.1) * 4e-4 + 0.9 * s1  # the next session's forecast
+    got = td.gjr_filter(r, p)
+    assert got.sigma2 == pytest.approx([s0, s1]) and got.next_sigma2 == pytest.approx(s2)
+    assert got.z == pytest.approx([0.01 / math.sqrt(s0), -0.02 / math.sqrt(s1)])
+
+
+def test_gjr_fit_matches_an_independent_scipy_fit() -> None:
+    # scipy 1.18.1 SLSQP on a separately written Gaussian GJR likelihood with arch's backcast, two starts, pinned
+    r = gjr_series()
+    assert r[:3] == pytest.approx([-0.00864976, -0.00692306, 0.00333252], rel=1e-5)
+    fit = td.gjr_fit(r, window=len(r))  # the whole series, as the reference
+    assert fit.params is not None and fit.reason is None
+    assert fit.loglik >= 5385.174137567787 - 1e-4
+    p = fit.params
+    assert p.omega == pytest.approx(1.6845710482056098e-06, rel=0.02)
+    assert (p.alpha, p.gamma, p.beta) == pytest.approx((0.04770763893572895, 0.05671467991330568,
+                                                        0.8911758464038406), abs=2e-3)  # fmt: skip
+
+
+def test_gjr_fit_refuses_a_short_series() -> None:
+    fit = td.gjr_fit(gjr_series()[:100], min_returns=250)
+    assert fit.params is None and "returns" in fit.reason
+
+
+def test_gjr_fit_uses_only_the_last_window_returns() -> None:
+    r = gjr_series()
+    assert td.gjr_fit(r, window=1000).loglik == pytest.approx(td.gjr_fit(r[-1000:], window=1000).loglik)
