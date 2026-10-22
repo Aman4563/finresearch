@@ -83,3 +83,52 @@ def test_tolerance_unknown_floor_is_unknown_not_a_fail():
     # the ratio fails and the max loss is unbounded/unknown: the floor cannot be read -> None
     assert pt.within_tolerance(residual=5, actual=2, max_loss=None) is None
     assert pt.within_tolerance(residual=None, actual=2, max_loss=-2000) is None
+
+
+# --------------------------------------------------------------------------- full revaluation and position greeks
+def test_revaluation_future_is_all_spot():
+    # short 75 futures, spot 100 -> 102: spot effect -75 x 2 = -150, no vol or time effect; actual -150 -> residual 0
+    legs = [pt.MarkLeg("future", 0.0, -75, None, None)]
+    r = pt.revaluation(legs, s0=100, s1=102, t0=10 / 365, t1=9 / 365, rate=0.0, actual=-150)
+    assert (r.spot, r.vol, r.time) == pytest.approx((-150, 0, 0))
+    assert r.residual == pytest.approx(0)
+
+
+def test_revaluation_deep_itm_call_tracks_intrinsic():
+    # K 50, S 100 -> 110, vol 1 %, r 0: the call is worth S - K (50, then 60) to many decimals, so 50 units gain
+    # 10 x 50 = 500 from spot; vol 1 % -> 2 % and one day less change nothing measurable
+    legs = [pt.MarkLeg("call", 50.0, 50, 0.01, 0.02)]
+    r = pt.revaluation(legs, s0=100, s1=110, t0=30 / 365, t1=29 / 365, rate=0.0, actual=500)
+    assert r.spot == pytest.approx(500, abs=1e-6)
+    assert r.vol == pytest.approx(0, abs=1e-6) and r.time == pytest.approx(0, abs=1e-6)
+    assert r.model == pytest.approx(500, abs=1e-6) and r.residual == pytest.approx(0, abs=1e-6)
+
+
+def test_revaluation_on_expiry_day_values_at_intrinsic():
+    # long 50 calls K 100 at S0 100, vol 20 %, one day left; on expiry (T1 = 0) S1 = 105: worth 5 x 50 = 250.
+    # spot -> vol (unknown at expiry: held at vol0, so 0) -> time: model total = 250 - V0
+    from finresearch.fincalc.options import bs_price
+
+    v0 = 50 * bs_price("call", 100, 100, 1 / 365, 0.0, 0.2)
+    legs = [pt.MarkLeg("call", 100.0, 50, 0.2, None)]
+    r = pt.revaluation(legs, s0=100, s1=105, t0=1 / 365, t1=0.0, rate=0.0, actual=250 - v0)
+    assert r.vol == 0
+    assert r.spot + r.time == pytest.approx(250 - v0)
+    assert r.residual == pytest.approx(0)
+
+
+def test_revaluation_unknown_iv_is_unknown():
+    legs = [pt.MarkLeg("put", 100.0, -50, None, 0.2)]
+    assert pt.revaluation(legs, s0=100, s1=101, t0=0.1, t1=0.09, rate=0.0, actual=10) is None
+    legs = [pt.MarkLeg("put", 100.0, -50, 0.2, None)]  # T1 > 0 needs IV1
+    assert pt.revaluation(legs, s0=100, s1=101, t0=0.1, t1=0.09, rate=0.0, actual=10) is None
+
+
+def test_position_greeks_sum_signed_units():
+    # short 75 futures: delta -75, nothing else; plus 50 deep-ITM calls at r 0 (delta ~ 1 each): delta ~ -25
+    g = pt.position_greeks([pt.MarkLeg("future", 0.0, -75, None, None), pt.MarkLeg("call", 50.0, 50, 0.01, None)],
+                           spot=100, t=30 / 365, rate=0.0)  # fmt: skip
+    assert g.delta == pytest.approx(-25, abs=1e-6)
+    assert g.gamma == pytest.approx(0, abs=1e-6) and g.vega == pytest.approx(0, abs=1e-6)
+    assert pt.position_greeks([pt.MarkLeg("call", 50.0, 50, None, None)], spot=100, t=0.1, rate=0.0) is None
+    assert pt.position_greeks([pt.MarkLeg("call", 50.0, 50, 0.2, None)], spot=100, t=0.0, rate=0.0) is None
