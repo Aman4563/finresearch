@@ -4,8 +4,6 @@ the comments (synthetic trades only)."""
 
 from __future__ import annotations
 
-import math
-
 import pytest
 
 from finresearch.fincalc import posttrade as pt
@@ -132,3 +130,81 @@ def test_position_greeks_sum_signed_units():
     assert g.gamma == pytest.approx(0, abs=1e-6) and g.vega == pytest.approx(0, abs=1e-6)
     assert pt.position_greeks([pt.MarkLeg("call", 50.0, 50, None, None)], spot=100, t=0.1, rate=0.0) is None
     assert pt.position_greeks([pt.MarkLeg("call", 50.0, 50, 0.2, None)], spot=100, t=0.0, rate=0.0) is None
+
+
+# --------------------------------------------------------------------------- plan adherence
+def _at(day, hh=10, mm=0):
+    from datetime import datetime
+
+    from finresearch.fincalc.dates import IST
+
+    return datetime(2026, 9, day, hh, mm, tzinfo=IST)
+
+
+def _five():
+    R = pt.RuleState
+    return [
+        # 1: target rule fired 10:00, squared off 10:05 -> planned target
+        pt.ClosedTrade(
+            "square_off", _at(1, 10, 5), 3000, 10000, [R("profit", 30, _at(1)), R("stop", 30, None)]
+        ),
+        # 2: stop 30 % fired on the 1st, squared off on the 3rd (beyond the 1-day window) -> late;
+        #    gross -4,000 on a 10,000 premium: the stop allowed 3,000 -> 1,000 beyond the stop
+        pt.ClosedTrade("square_off", _at(3), -4000, 10000, [R("stop", 30, _at(1))]),
+        # 3: rules armed, none fired, squared off -> discretionary
+        pt.ClosedTrade("square_off", _at(4), -200, 5000, [R("profit", 50, None)]),
+        # 4: stop 50 % never hit, settled at expiry -> planned (time); gross +500, nothing beyond the stop
+        pt.ClosedTrade("expiry", _at(5, 15, 30), 500, 8000, [R("stop", 50, None)]),
+        # 5: no exit rules at all -> no plan (left out of the rate, never counted as discretionary)
+        pt.ClosedTrade("square_off", _at(6), 100, 2000, []),
+    ]
+
+
+def test_classify_each_exit():
+    assert [pt.classify(t) for t in _five()] == [
+        "planned_target",
+        "late",
+        "discretionary",
+        "planned_time",
+        "no_plan",
+    ]
+
+
+def test_adherence_golden_values():
+    a = pt.adherence(_five())
+    # planned 2 (trades 1, 4) of 4 with a plan (planned 2 + late 1 + discretionary 1) = 0.5
+    assert a.counts == {"planned_target": 1, "late": 1, "discretionary": 1, "planned_time": 1, "no_plan": 1}
+    assert a.rate == pytest.approx(0.5)
+    # trades with a stop rule: 1, 2 and 4; breached: trade 2 only, 1,000 beyond
+    assert a.with_stop == 3 and a.beyond_stop_count == 1
+    assert a.mean_beyond_stop == pytest.approx(1000)
+
+
+def test_adherence_without_plans_is_unknown():
+    a = pt.adherence([pt.ClosedTrade("square_off", _at(6), 100, 2000, [])])
+    assert a.rate is None and a.mean_beyond_stop is None
+
+
+def test_beyond_stop_unknown_premium_is_unknown():
+    t = pt.ClosedTrade("square_off", _at(3), -4000, None, [pt.RuleState("stop", 30, _at(1))])
+    assert pt.beyond_stop(t) is None
+
+
+def test_hold_to_expiry_plan_counts_an_expiry_as_planned():
+    t = pt.ClosedTrade("expiry", _at(5, 15, 30), 500, 8000, [], hold_to_expiry=True)
+    assert pt.classify(t) == "planned_time"
+
+
+# --------------------------------------------------------------------------- exposure mix
+def test_exposure_mix_golden_values():
+    from datetime import date
+
+    a = pt.MixTrade(date(2026, 9, 1), date(2026, 9, 1), [("sell", 100.0, 50), ("buy", 40.0, 50)], 0)
+    b = pt.MixTrade(date(2026, 9, 1), date(2026, 9, 6), [("buy", 80.0, 25)], 2)
+    m = pt.exposure_mix([a, b])
+    # sold 5,000 of 5,000 + 2,000 + 2,000 = 9,000 -> 0.5556; same-day expiry 1 of 2
+    assert m.premium_sold_share == pytest.approx(5000 / 9000)
+    assert m.same_day_expiry_share == pytest.approx(0.5)
+    # held 2 of 5 days to expiry -> 0.4; trade a (0 days to expiry) has no ratio
+    assert m.mean_hold_share == pytest.approx(0.4)
+    assert pt.exposure_mix([]).same_day_expiry_share is None

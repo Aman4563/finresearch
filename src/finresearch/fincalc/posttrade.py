@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import date, datetime, timedelta
 
 RATIO_TOL = 0.10  # 10 % of |actual|
 MAX_LOSS_FLOOR = 0.005  # 0.5 % of the position's max loss
@@ -77,7 +78,9 @@ class Explain:
     unexplained: float | None  # U = |residual| ÷ |actual|; None when actual is 0
 
 
-def greek_explain(g: PositionGreeks, *, d_spot: float, d_vol_pts: float, d_days: float, actual: float) -> Explain:
+def greek_explain(
+    g: PositionGreeks, *, d_spot: float, d_vol_pts: float, d_days: float, actual: float
+) -> Explain:
     d, gm = g.delta * d_spot, 0.5 * g.gamma * d_spot * d_spot
     v, th = g.vega * d_vol_pts, g.theta * d_days
     explained = d + gm + v + th
@@ -128,7 +131,9 @@ class Reval:
     time: float  # V(S1, σ1, T1) − V(S1, σ1, T0)
     model: float  # their sum = V(S1, σ1, T1) − V(S0, σ0, T0)
     actual: float
-    residual: float  # actual − model: the marks against the model (non-zero when a mark is not the model price)
+    residual: (
+        float  # actual − model: the marks against the model (non-zero when a mark is not the model price)
+    )
 
 
 def revaluation(legs: Sequence[MarkLeg], *, s0: float, s1: float, t0: float, t1: float, rate: float,
@@ -167,3 +172,110 @@ def position_greeks(legs: Sequence[MarkLeg], *, spot: float, t: float, rate: flo
         k = o.greeks(x.right, spot, x.strike, t, rate, x.iv0)  # type: ignore[arg-type]
         d, g, v, th = d + k.delta * x.qty, g + k.gamma * x.qty, v + k.vega * x.qty, th + k.theta * x.qty
     return PositionGreeks(d, g, v, th)
+
+
+# --------------------------------------------------------------------------- plan adherence
+# A planned exit is a square-off within PLANNED_WINDOW of the first exit rule that fired (profit → target, stop → stop,
+# dte → time, delta/event → risk), or a settlement at expiry when no rule fired (the plan's profit and stop were never
+# reached) or the card's plan held to expiry. A square-off after the window is "late"; one with rules armed but none
+# fired is "discretionary"; a trade with neither rules nor a card plan has no plan and is left out of the rate.
+PLANNED_WINDOW_HOURS = 24  # [U: a convention; a decision for the owner]
+_PLANNED = {"profit": "planned_target", "stop": "planned_stop", "dte": "planned_time", "delta": "planned_risk",
+            "event": "planned_risk"}  # fmt: skip
+CLASSES = (
+    "planned_target",
+    "planned_stop",
+    "planned_time",
+    "planned_risk",
+    "late",
+    "discretionary",
+    "no_plan",
+)
+
+
+@dataclass(frozen=True)
+class RuleState:
+    kind: str
+    threshold: float
+    fired_at: datetime | None
+
+
+@dataclass(frozen=True)
+class ClosedTrade:
+    reason: str  # square_off | expiry
+    closed_at: datetime
+    gross_pnl: float | None
+    base: float | None  # |entry net option premium|, ₹ (exits.read's base)
+    rules: Sequence[RuleState]
+    hold_to_expiry: bool | None = None  # the linked card's plan; None = no card
+
+
+def classify(t: ClosedTrade) -> str:
+    fired = sorted((r for r in t.rules if r.fired_at is not None and r.fired_at <= t.closed_at),
+                   key=lambda r: r.fired_at)  # type: ignore[arg-type,return-value]  # fmt: skip
+    if fired:
+        first = fired[0]
+        late = t.closed_at - first.fired_at > timedelta(hours=PLANNED_WINDOW_HOURS)  # type: ignore[operator]
+        return "late" if late else _PLANNED[first.kind]
+    if t.reason == "expiry" and (t.rules or t.hold_to_expiry):
+        return "planned_time"
+    if not t.rules and not t.hold_to_expiry:
+        return "no_plan"
+    return "discretionary"
+
+
+def beyond_stop(t: ClosedTrade) -> float | None:
+    """₹ lost beyond the stop: max(0, −gross − stop % × base); None without a stop rule or a known P&L and base."""
+    stops = [r for r in t.rules if r.kind == "stop"]
+    if not stops or t.gross_pnl is None or not t.base:
+        return None
+    return max(0.0, -t.gross_pnl - min(r.threshold for r in stops) / 100 * t.base)
+
+
+@dataclass(frozen=True)
+class Adherence:
+    counts: dict[str, int]
+    rate: float | None  # planned ÷ (planned + late + discretionary)
+    with_stop: int
+    beyond_stop_count: int
+    mean_beyond_stop: float | None  # over the trades that went beyond their stop
+
+
+def adherence(trades: Sequence[ClosedTrade]) -> Adherence:
+    counts: dict[str, int] = {}
+    for t in trades:
+        c = classify(t)
+        counts[c] = counts.get(c, 0) + 1
+    planned = sum(v for k, v in counts.items() if k.startswith("planned_"))
+    judged = planned + counts.get("late", 0) + counts.get("discretionary", 0)
+    stops = [b for t in trades if (b := beyond_stop(t)) is not None]
+    over = [b for b in stops if b > 0]
+    return Adherence(counts, planned / judged if judged else None, len(stops), len(over),
+                     sum(over) / len(over) if over else None)  # fmt: skip
+
+
+# --------------------------------------------------------------------------- exposure mix
+@dataclass(frozen=True)
+class MixTrade:
+    opened: date  # IST day
+    expiry: date
+    legs: Sequence[tuple[str, float, int]]  # (side, entry price, units) of the option legs
+    held_days: int | None  # calendar days open; None while open
+
+
+@dataclass(frozen=True)
+class Mix:
+    trades: int
+    premium_sold_share: float | None
+    same_day_expiry_share: float | None
+    mean_hold_share: float | None  # mean of days held ÷ days to expiry at entry (closed trades with DTE > 0)
+
+
+def exposure_mix(trades: Sequence[MixTrade]) -> Mix:
+    sold = sum(p * q for t in trades for s, p, q in t.legs if s == "sell")
+    total = sum(p * q for t in trades for _, p, q in t.legs)
+    holds = [t.held_days / (t.expiry - t.opened).days for t in trades
+             if t.held_days is not None and (t.expiry - t.opened).days > 0]  # fmt: skip
+    n = len(trades)
+    return Mix(n, sold / total if total else None, sum(t.opened == t.expiry for t in trades) / n if n else None,
+               sum(holds) / len(holds) if holds else None)  # fmt: skip
