@@ -40,7 +40,9 @@ class VersionIn(BaseModel):
 
 class RunIn(BaseModel):
     oos: bool = Field(
-        False, description="False: in-sample only (free, not counted); True: out of sample (counted)"
+        False,
+        description="False: in-sample only; True: out of sample and the forward holdout. Every run is a "
+        "logged trial and counts in N (#380)",
     )
 
 
@@ -85,10 +87,33 @@ def add_fno_lab_routes(app: FastAPI, clock: Callable[[], datetime] | None = None
                 store.strategy_json(s, st)
                 for st in s.scalars(select(LabStrategy).order_by(LabStrategy.id.desc()))
             ]
-            lab = store.lab_variants(s)
+            lab, trials, vault = store.lab_variants(s), store.lab_trials(s), store.vault_reads_in_n(s)
+            n = store.n_trials(s)
             unders = _underlyings(s)
+        # n (#380): the library's VARIANTS_TRIED + every spec run in the lab (in sample too) + vault reads in N
         return {"strategies": rows, "underlyings": unders, "blocks": blocks(),
-                "variants": {"library": specs.VARIANTS_TRIED, "lab": lab, "n": specs.VARIANTS_TRIED + lab}}  # fmt: skip
+                "variants": {"library": specs.VARIANTS_TRIED, "lab": lab, "trials": trials, "vault_reads": vault,
+                             "n": n}}  # fmt: skip
+
+    @app.get("/api/fno/lab/family")
+    def fno_lab_family() -> dict[str, Any]:
+        """PBO, SPA and Romano-Wolf over every spec run in the lab (#380, stratlab.family). Reads only."""
+        from finresearch.stratlab import family
+
+        with session_scope() as s:
+            return family.statistics(family.matrix(s))
+
+    @app.get("/api/fno/lab/versions/{version_id}/promotion")
+    def fno_lab_promotion(version_id: int) -> dict[str, Any]:
+        """The forward-incubation gate of one version (#380, stratlab.promotion): the only path to lifting
+        'no proven edge'. Reads only."""
+        from finresearch.stratlab import promotion
+
+        with session_scope() as s:
+            try:
+                return promotion.judge(s, version_id)
+            except store.LabError as e:
+                raise HTTPException(404, str(e)) from e
 
     @app.post("/api/fno/lab/strategies", status_code=201)
     def fno_lab_create(body: StrategyIn) -> dict[str, Any]:
@@ -96,7 +121,7 @@ def add_fno_lab_routes(app: FastAPI, clock: Callable[[], datetime] | None = None
         h = HISTORY()
         with session_scope() as s:
             try:
-                st = store.create_strategy(s, body.name, body.spec, h)
+                st = store.create_strategy(s, body.name, body.spec, h, now=now())
             except store.LabError as e:
                 raise refuse(e) from e
             s.flush()
@@ -113,7 +138,7 @@ def add_fno_lab_routes(app: FastAPI, clock: Callable[[], datetime] | None = None
             if st is None:
                 raise HTTPException(404, f"no lab strategy {strategy_id}")
             try:
-                v = store.add_version(s, st, body.spec, body.note)
+                v = store.add_version(s, st, body.spec, body.note, now=now())
             except store.LabError as e:
                 raise refuse(e) from e
             s.refresh(st)

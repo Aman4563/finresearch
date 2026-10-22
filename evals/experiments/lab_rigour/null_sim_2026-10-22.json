@@ -1,0 +1,83 @@
+{
+ "registration_hash": "a54d87a3a4899bc6c8fab7c40c66e64f168f982cf2c04e20f76bc0b4a27dd22a",
+ "planted_daily_sr": 0.0944911182523068,
+ "settings": {
+  "family": {
+   "pbo_blocks": 16,
+   "pbo_stat": "sharpe",
+   "bootstrap_draws": 1000,
+   "mean_block": 10.0,
+   "seed": 380,
+   "rw_alpha": 0.05,
+   "min_grid_days": 64
+  },
+  "gate": {
+   "max_pbo": 0.2,
+   "max_spa_p": 0.05,
+   "min_paper_trades": 30,
+   "min_paper_t": 2.0,
+   "min_trl_alpha": 0.05,
+   "min_trl_sr_star": 0.0
+  },
+  "null_sim": {
+   "noise_panels": 200,
+   "noise_n": 300,
+   "noise_t": 1000,
+   "planted_panels": 200,
+   "planted_noise_n": 50,
+   "planted_t": [
+    1000,
+    3400
+   ],
+   "planted_annual_sr": 1.5,
+   "incubation_runs": 1000,
+   "incubation_days": 3400,
+   "seed": 380
+  }
+ },
+ "items": {
+  "A_noise_pbo": {
+   "panels": 200,
+   "unknown": 0,
+   "mean_pbo": 0.5077859362859363,
+   "spa_reject_rate": 0.08,
+   "criterion": "mean PBO in [0.45, 0.55]",
+   "pass": true
+  },
+  "B_noise_spa": {
+   "panels": 200,
+   "unknown": 0,
+   "mean_pbo": 0.5077859362859363,
+   "spa_reject_rate": 0.08,
+   "criterion": "SPA p < 0.05 in at most 5 % of panels",
+   "pass": false
+  },
+  "C_planted_t1000": {
+   "panels": 200,
+   "unknown": 0,
+   "mean_pbo": 0.2817824397824398,
+   "spa_reject_rate": 0.49,
+   "t": 1000,
+   "criterion": "mean PBO < 0.2 and SPA rejects in >= 80 % of panels",
+   "pass": false
+  },
+  "C_planted_t3400": {
+   "panels": 200,
+   "unknown": 0,
+   "mean_pbo": 0.04314335664335664,
+   "spa_reject_rate": 0.975,
+   "t": 3400,
+   "criterion": "mean PBO < 0.2 and SPA rejects in >= 80 % of panels",
+   "pass": true
+  },
+  "D_incubation_power": {
+   "runs": 1000,
+   "days": 3400,
+   "power": 1.0,
+   "criterion": "MinTRL met in >= 70 % of runs",
+   "pass": true
+  }
+ },
+ "registered_settings": true,
+ "seconds": 1275.7
+}

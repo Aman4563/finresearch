@@ -1977,6 +1977,56 @@ def fno_lab_run_job(run_id: int) -> None:
         raise typer.Exit(1)
 
 
+@lab_app.command("null-sim")
+def fno_lab_null_sim(out: Path = typer.Option(..., "--json", help="Write every result here")) -> None:
+    """#380's pre-registered null experiment (evals/experiments/lab_rigour/PREREG.md §5) on synthetic panels with the
+    registered settings (stratlab.rigour). Pure computation: nothing is written to any database."""
+    import json
+    import time
+
+    from finresearch.stratlab import nullsim, rigour
+
+    registered = (rigour.NullSim(), rigour.Family()) == (rigour.NULL_SIM, rigour.FAMILY)
+    if not registered:
+        console.print("[yellow]NOT the registered settings: this run is not the pre-registered experiment[/]")
+    t0 = time.time()
+    res = nullsim.run(rigour.NULL_SIM, rigour.FAMILY, progress=lambda k, i, n: console.print(f"{k}: {i}/{n}")
+                      if i == n or i % 20 == 0 else None)  # fmt: skip
+    res["registered_settings"], res["seconds"] = registered, round(time.time() - t0, 1)
+    out.write_text(json.dumps(res, indent=1) + "\n")
+    for k, v in res["items"].items():
+        console.print(f"{k}: {'pass' if v['pass'] else 'FAIL'} ({v['criterion']}) "
+                      + ", ".join(f"{x}={v[x]:.4g}" for x in ("mean_pbo", "spa_reject_rate", "power")
+                                  if isinstance(v.get(x), float)))  # fmt: skip
+
+
+@lab_app.command("rigour")
+def fno_lab_rigour(
+    version_id: int | None = typer.Argument(None, help="also judge this version's promotion"),
+) -> None:
+    """The Lab's trial family (PBO, SPA, Romano-Wolf; #380) and, for a version, the forward-incubation gate. Reads only."""
+    import json
+
+    from finresearch.db import session_scope
+    from finresearch.stratlab import family, promotion, store
+
+    with session_scope() as s:
+        fam = family.statistics(family.matrix(s))
+        console.print(
+            f"N = {store.n_trials(s)} trials; family: {fam['specs']} specs on {fam['days']} common sessions"
+        )
+        console.print(
+            json.dumps({k: fam[k] for k in ("pbo", "spa", "romano_wolf", "note")}, indent=1, default=str)
+        )
+        if version_id is not None:
+            got = promotion.judge(s, version_id, fam)
+            for c in got["checks"]:
+                console.print(
+                    f"{'pass' if c['pass'] else 'FAIL'}  {c['criterion']}: {c['value']} ({c['rule']})"
+                )
+            console.print(f"status: {got['status']}")
+
+
 @fno_app.command("status")
 def fno_status() -> None:
     """Backfill coverage: days by status, rows stored, and the IV series per underlying."""

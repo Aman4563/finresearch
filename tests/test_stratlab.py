@@ -161,7 +161,7 @@ def test_strike_by_percent_out_of_the_money():
 
 
 # --------------------------------------------------------------------------- 4. OOS lock, variants counter (database)
-LAB_TABLES = ("lab_paper_signal, lab_paper_rule, lab_variant, lab_run, lab_version, lab_strategy, fno_backtest_result, "
+LAB_TABLES = ("lab_trial, lab_paper_signal, lab_paper_rule, lab_variant, lab_run, lab_version, lab_strategy, fno_backtest_result, "
               "fno_backtest_run, fno_exit_rule, paper_leg, paper_strategy")  # fmt: skip
 
 
@@ -244,9 +244,11 @@ def test_oos_lock_in_sample_runs_are_free_and_every_new_oos_variant_raises_the_b
         with pytest.raises(store.LabError, match="locked on NIFTY"):
             store.add_version(s, st, spec(underlying="BANKNIFTY"))
 
-    ins = run_now(v1, False, mem)  # in sample: never reads a day after the split, not counted
+    ins = run_now(
+        v1, False, mem
+    )  # in sample: never reads a day after the split; not a variant, but a trial (#380)
     assert ins["result"]["status"] == "in_sample_only" and ins["counted"] is False
-    assert ins["result"]["max_day_read"] <= "2025-01-31" and ins["n_trials"] == 8
+    assert ins["result"]["max_day_read"] <= "2025-01-31" and ins["n_trials"] == 9
     assert all(t["entry_day"] <= "2025-01-31" for t in ins["trades"])
 
     a = run_now(v1, True, mem)
@@ -341,7 +343,13 @@ def test_api_runs_in_a_background_job_with_progress(client, mem, monkeypatch):
     trades = client.get(f"/api/fno/lab/runs/{rid}/trades").json()["trades"]
     assert len(trades) == done["n_trades"] > 0 and {"entry_day", "legs", "net", "reason"} <= set(trades[0])
     lab = client.get("/api/fno/lab").json()
-    assert lab["variants"] == {"library": 8, "lab": 1, "n": 9}
+    assert lab["variants"] == {
+        "library": 8,
+        "lab": 1,
+        "trials": 1,
+        "vault_reads": 0,
+        "n": 9,
+    }  # #380 adds the trial counts
     assert lab["strategies"][0]["versions"][0]["counted_variant"] is True
 
 
