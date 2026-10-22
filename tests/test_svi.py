@@ -104,3 +104,89 @@ def test_calendar_check() -> None:
     assert got.ok is False and got.worst_k is not None and got.worst_k < 0 and got.worst > 0
     # by hand at k = -1: steep 0.01 + 0.15 (0.6 + sqrt(1.01)) = 0.2507...; far 0.02 + 0.05 (0.3 + 1.00499) = 0.0852
     assert svi.w(steep, -1.0) - svi.w(far, -1.0) == pytest.approx(0.2507481343 - 0.0852493781, abs=1e-9)
+
+
+# --------------------------------------------------------------------------- calibration (Zeliade quasi-explicit)
+def test_nelder_mead_finds_the_rosenbrock_minimum() -> None:
+    def rosen(x: list[float]) -> float:
+        return (1 - x[0]) ** 2 + 100 * (x[1] - x[0] ** 2) ** 2
+
+    x, fx = svi.nelder_mead(rosen, [-1.2, 1.0], step=0.5, max_iter=2000, ftol=1e-16)
+    assert x[0] == pytest.approx(1.0, abs=1e-4) and x[1] == pytest.approx(1.0, abs=1e-4) and fx < 1e-8
+
+
+def _brute_inner(ks, ws, wt, m, s):
+    # independent: profile a out and scan (c, d) over a fine grid of the admissible quadrilateral
+    import numpy as np
+
+    y = (np.asarray(ks) - m) / s
+    z = np.sqrt(y * y + 1)
+    best = math.inf
+    r = svi.RHO_MAX
+    for c in np.linspace(0, 2 * s, 801):
+        dmax = min(r * c, 2 * s - c)
+        for d in np.linspace(-dmax, dmax, 201):
+            res = np.asarray(ws) - d * y - c * z
+            a = np.sum(wt * res) / np.sum(wt)
+            best = min(best, float(np.sum(wt * (res - a) ** 2)))
+    return best
+
+
+@pytest.mark.parametrize("m,s", [(0.0, 0.1), (0.3, 0.02), (-0.4, 0.5)])
+def test_inner_least_squares_is_the_constrained_optimum(m: float, s: float) -> None:
+    # data from a smile the box at (m, s) may not contain: the inner answer must be no worse than any admissible point
+    ks = [-0.3 + 0.05 * i for i in range(13)]
+    ws = [float(svi.w(svi.Raw(0.01, 0.4, 0.05, -0.7, 0.08), k)) for k in ks]
+    wt = [1.0] * len(ks)
+    got = svi.inner(ks, ws, wt, m, s)
+    brute = _brute_inner(ks, ws, wt, m, s)
+    assert got.sse <= brute + 1e-12 and got.sse == pytest.approx(brute, rel=2e-2, abs=1e-12)
+    c, d = got.c, got.d
+    assert 0 <= c <= 2 * s + 1e-15 and abs(d) <= svi.RHO_MAX * c + 1e-15 and abs(d) <= 2 * s - c + 1e-15
+
+
+def _points(p, t, ks, noise=None):
+    out = []
+    for i, k in enumerate(ks):
+        sig = math.sqrt(float(svi.w(p, k)) / t) + (noise[i] if noise else 0.0)
+        out.append(svi.Point(k, sig))
+    return out
+
+
+GOOD = svi.Raw(a=0.0004, b=0.012, m=0.01, rho=-0.55, s=0.03)  # a weekly-like smile, T = 7/365: ATM ~ 15 %
+
+
+def test_fit_recovers_known_parameters() -> None:
+    t = 7 / 365
+    ks = [-0.08 + 0.008 * i for i in range(21)]
+    got = svi.fit(_points(GOOD, t, ks), t)
+    assert got.params is not None and got.reason is None
+    assert got.rmse_vol < 1e-6 and got.n == 21
+    for k in (-0.08, 0.0, 0.05):
+        assert float(svi.w(got.params, k)) == pytest.approx(float(svi.w(GOOD, k)), rel=1e-5)
+
+
+def test_fit_reports_rmse_in_vol_points_and_refuses_a_bad_fit() -> None:
+    t = 7 / 365
+    ks = [-0.08 + 0.008 * i for i in range(21)]
+    alt = [
+        0.004 if i % 2 else -0.004 for i in range(21)
+    ]  # +/- 0.4 vol points, alternating: SVI cannot follow it
+    got = svi.fit(_points(GOOD, t, ks, alt), t)
+    assert got.params is not None and 0.002 < got.rmse_vol < 0.0045  # about 0.4 points left over
+    big = [0.03 if i % 2 else -0.03 for i in range(21)]
+    bad = svi.fit(_points(GOOD, t, ks, big), t)
+    assert bad.params is None and "RMSE" in (bad.reason or "") and bad.rmse_vol > svi.MAX_RMSE
+
+
+def test_fit_with_too_few_points_is_unknown() -> None:
+    got = svi.fit(_points(GOOD, 0.02, [-0.02, 0.0, 0.02, 0.04]), 0.02)
+    assert got.params is None and "fewer than" in (got.reason or "")
+
+
+def test_fit_to_vogt_data_is_unknown_not_clipped() -> None:
+    # Vogt's smile is inside the calibration box, so the fit reproduces it, and its density is negative: unknown
+    ks = [-1.0 + 0.1 * i for i in range(25)]
+    got = svi.fit(_points(VOGT, 1.0, ks), 1.0)
+    assert got.params is None and got.raw is not None
+    assert "butterfly" in (got.reason or "") and got.check is not None and got.check.g_min < 0

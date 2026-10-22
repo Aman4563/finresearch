@@ -191,3 +191,190 @@ def calendar_ok(near: Raw, far: Raw) -> Calendar:
     i = int(np.argmax(d))
     worst = float(d[i])
     return Calendar(worst <= CAL_TOL, worst, float(ks[i]) if worst > CAL_TOL else None)
+
+
+# --------------------------------------------------------------------------- calibration
+# Zeliade's quasi-explicit method: with y = (k - m)/s and z = sqrt(y^2 + 1), raw SVI is linear in (a, d, c) =
+# (a, rho b s, b s): w = a + d y + c z. For fixed (m, s) the weighted least squares in (a, d, c) is solved exactly
+# over the admissible set (c, d) in {|d| <= RHO_MAX c, |d| <= 2 s - c} (b >= 0, |rho| <= RHO_MAX and Lee's
+# b (1 + |rho|) <= 2; Zeliade's paper writes 4 s, a bound on sigma^2 rather than on total variance), with a profiled
+# out; an optimum outside the set is the best point on its boundary (a convex quadratic: the minimum over each edge),
+# never the clipped unconstrained point. Then (m, s) by Nelder-Mead from the best of a coarse grid.
+RHO_MAX = 0.999  # |rho| < 1 strictly
+MIN_POINTS = 6  # five parameters plus one degree of freedom
+S_MIN, S_MAX = 1e-4, 2.0  # the box of s
+M_PAD = 1.0  # m within [k_min - pad x span, k_max + pad x span]
+START_GRID = 9  # a 9 x 9 grid over (m, ln s) chooses the Nelder-Mead start
+NM_STEP, NM_ITER, NM_FTOL = 0.1, 400, 1e-14
+MAX_RMSE = 0.01  # a fit whose IV RMSE exceeds 1 vol point is refused (unknown)
+TARGET_RMSE = 0.005  # issue #386 acceptance (a): <= 0.5 vol points on liquid slices; above it is flagged
+
+
+def nelder_mead(f, x0: list[float], *, step: float = NM_STEP, max_iter: int = NM_ITER,
+                ftol: float = NM_FTOL) -> tuple[list[float], float]:  # fmt: skip
+    """The standard Nelder-Mead simplex (reflection 1, expansion 2, contraction 1/2, shrink 1/2), stopping when the
+    simplex's values differ by under ftol or after max_iter steps. Returns the best point and its value."""
+    n = len(x0)
+    pts = [list(x0)] + [[x0[j] + (step if j == i else 0.0) for j in range(n)] for i in range(n)]
+    vals = [f(p) for p in pts]
+    for _ in range(max_iter):
+        order = sorted(range(n + 1), key=lambda i: vals[i])
+        pts, vals = [pts[i] for i in order], [vals[i] for i in order]
+        if abs(vals[-1] - vals[0]) <= ftol and all(math.isfinite(v) for v in vals):
+            break
+        cen = [sum(p[j] for p in pts[:-1]) / n for j in range(n)]
+        refl = [cen[j] + (cen[j] - pts[-1][j]) for j in range(n)]
+        fr = f(refl)
+        if fr < vals[0]:
+            exp = [cen[j] + 2 * (cen[j] - pts[-1][j]) for j in range(n)]
+            fe = f(exp)
+            pts[-1], vals[-1] = (exp, fe) if fe < fr else (refl, fr)
+        elif fr < vals[-2]:
+            pts[-1], vals[-1] = refl, fr
+        else:
+            con = [cen[j] + 0.5 * (pts[-1][j] - cen[j]) for j in range(n)]
+            fc = f(con)
+            if fc < vals[-1]:
+                pts[-1], vals[-1] = con, fc
+            else:
+                pts = [pts[0]] + [[pts[0][j] + 0.5 * (p[j] - pts[0][j]) for j in range(n)] for p in pts[1:]]
+                vals = [vals[0]] + [f(p) for p in pts[1:]]
+    i = min(range(n + 1), key=lambda i: vals[i])
+    return pts[i], vals[i]
+
+
+@dataclass(frozen=True)
+class Inner:
+    a: float
+    d: float
+    c: float
+    sse: float
+    boundary: bool  # the unconstrained optimum was outside the admissible set
+
+
+def inner(ks, ws, wts, m: float, s: float) -> Inner:
+    """The exact constrained weighted least squares in (a, d, c) at fixed (m, s)."""
+    k, wv, wt = np.asarray(ks, float), np.asarray(ws, float), np.asarray(wts, float)
+    y = (k - m) / s
+    z = np.sqrt(y * y + 1)
+    sw = wt.sum()
+    # profile a out: centre every column on its weighted mean
+    yc, zc, tc = y - (wt @ y) / sw, z - (wt @ z) / sw, wv - (wt @ wv) / sw
+    h = np.array([[wt @ (yc * yc), wt @ (yc * zc)], [wt @ (yc * zc), wt @ (zc * zc)]])
+    rhs = np.array([wt @ (yc * tc), wt @ (zc * tc)])
+
+    def sse(d: float, c: float) -> float:
+        e = tc - d * yc - c * zc
+        return float(wt @ (e * e))
+
+    def admissible(d: float, c: float) -> bool:
+        eps = 1e-15
+        return c >= -eps and abs(d) <= RHO_MAX * c + eps and abs(d) <= 2 * s - c + eps
+
+    boundary = False
+    try:
+        d, c = (float(v) for v in np.linalg.solve(h, rhs))
+        ok = admissible(d, c)
+    except np.linalg.LinAlgError:
+        ok = False
+    if not ok:
+        boundary = True
+        c1 = 2 * s / (1 + RHO_MAX)
+        verts = [
+            (0.0, 0.0),
+            (RHO_MAX * c1, c1),
+            (0.0, 2 * s),
+            (-RHO_MAX * c1, c1),
+        ]  # (d, c), convex, in order
+        best = None
+        for i in range(4):
+            p, q = np.array(verts[i]), np.array(verts[(i + 1) % 4])
+            e = q - p
+            den = float(e @ h @ e)
+            u = 0.0 if den <= 0 else min(1.0, max(0.0, float(e @ (rhs - h @ p)) / den))
+            cand = p + u * e
+            val = sse(float(cand[0]), float(cand[1]))
+            if best is None or val < best[0]:
+                best = (val, float(cand[0]), float(cand[1]))
+        _, d, c = best  # type: ignore[misc]
+    a = float(wt @ (wv - d * y - c * z)) / sw
+    return Inner(a, d, c, sse(d, c), boundary)
+
+
+def to_raw(i: Inner, m: float, s: float) -> Raw:
+    b = i.c / s
+    return Raw(i.a, b, m, i.d / i.c if i.c > 0 else 0.0, s)
+
+
+@dataclass(frozen=True)
+class Point:
+    k: float  # ln(K/F)
+    sigma: float  # implied volatility (annual fraction) on the caller's clock
+    band: float | None = None  # its error band (fraction); None = unknown
+
+
+@dataclass(frozen=True)
+class Fit:
+    params: Raw | None  # None = unknown (reason); never a repaired smile
+    t: float
+    n: int = 0
+    rmse_vol: float | None = None  # root mean square IV error, annual fraction (0.005 = 0.5 vol points)
+    max_err_vol: float | None = None
+    weights: str = "equal"  # equal (in volatility) | band (1 / band^2)
+    flags: tuple[str, ...] = ()
+    reason: str | None = None
+    raw: Raw | None = None  # the calibrated parameters even when refused, for diagnosis only
+    check: Check | None = None
+
+
+def fit(points: list[Point], t: float) -> Fit:
+    """The raw-SVI smile of one expiry through `points`; unknown with the reason when there are too few points, the
+    fit is poor (RMSE above MAX_RMSE) or the fitted smile is not free of static arbitrage."""
+    pts = [p for p in points if all(math.isfinite(x) for x in (p.k, p.sigma)) and p.sigma > 0]
+    if not (math.isfinite(t) and t > 0):
+        return Fit(None, t, len(pts), reason="time to expiry must be positive")
+    if len(pts) < MIN_POINTS or len({p.k for p in pts}) < MIN_POINTS:
+        return Fit(None, t, len(pts), reason=f"fewer than {MIN_POINTS} strikes with an implied volatility")
+    ks = [p.k for p in pts]
+    ws = [p.sigma * p.sigma * t for p in pts]
+    banded = all(p.band is not None and p.band > 0 for p in pts)
+    # residuals are in total variance; dw = 2 sigma T dsigma, so these weights make the sum one of IV errors^2 / band^2
+    wts = [1 / (2 * p.sigma * t * (p.band if banded else 1.0)) ** 2 for p in pts]  # type: ignore[operator]
+    lo, hi = min(ks), max(ks)
+    span = hi - lo
+    m_lo, m_hi = lo - M_PAD * span, hi + M_PAD * span
+    l_lo, l_hi = math.log(S_MIN), math.log(S_MAX)
+
+    def obj(x: list[float]) -> float:
+        m, ls = x
+        if not (m_lo <= m <= m_hi and l_lo <= ls <= l_hi):
+            return math.inf  # outside the box: rejected, not projected
+        return inner(ks, ws, wts, m, math.exp(ls)).sse
+
+    starts = [[m_lo + (m_hi - m_lo) * i / (START_GRID - 1), l_lo + (l_hi - l_lo) * j / (START_GRID - 1)]
+              for i in range(START_GRID) for j in range(START_GRID)]  # fmt: skip
+    x0 = min(starts, key=obj)
+    x, _ = nelder_mead(obj, x0)
+    m, s = x[0], math.exp(x[1])
+    sol = inner(ks, ws, wts, m, s)
+    p = to_raw(sol, m, s)
+    flags = []
+    if sol.boundary:
+        flags.append("on the constraint boundary")
+    if min(abs(x[1] - l_lo), abs(x[1] - l_hi)) < 1e-6 or min(abs(m - m_lo), abs(m - m_hi)) < 1e-9:
+        flags.append("on the (m, s) box")
+    with np.errstate(invalid="ignore"):
+        fitted = np.sqrt(np.maximum(np.asarray(w(p, np.asarray(ks))), 0.0) / t)
+    errs = fitted - np.array([q.sigma for q in pts])
+    rmse, mx = float(np.sqrt(np.mean(errs * errs))), float(np.max(np.abs(errs)))
+    if rmse > TARGET_RMSE:
+        flags.append(f"RMSE {rmse * 100:.2f} vol points is above the {TARGET_RMSE * 100:g}-point target")
+    chk = check(p)
+    out = Fit(p, t, len(pts), rmse, mx, "band" if banded else "equal", tuple(flags), None, p, chk)
+    if not chk.ok:
+        return Fit(None, t, len(pts), rmse, mx, out.weights, out.flags,
+                   f"the fitted smile is not arbitrage-free: {chk.reason}", p, chk)  # fmt: skip
+    if rmse > MAX_RMSE:
+        return Fit(None, t, len(pts), rmse, mx, out.weights, out.flags,
+                   f"RMSE {rmse * 100:.2f} vol points is above {MAX_RMSE * 100:g}", p, chk)  # fmt: skip
+    return out
