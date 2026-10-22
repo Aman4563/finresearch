@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -64,6 +65,14 @@ class Settings(BaseSettings):
 
     # ---- F&O risk notice (finresearch.signals.fno.RISK_NOTICE); set when SEBI publishes a newer study
     fno_risk_notice: str | None = None
+
+    # ---- market data sources
+    # Where the nightly stock peer build (signals.stock_peers) takes peers' closes from (#373 (a)): "quote" = one NSE
+    # quote and one price-history request per stock a night (about 1,000 website requests); "equity_eod" = the stored
+    # full bhavcopy (refseries.equity_eod), with a quote only to refresh issued shares and NSE's classification. Stay
+    # on "quote" until dq's equity_eod close_vs_quote reconciliation and `finresearch audit equity-eod` show no
+    # mismatch (FINRESEARCH_PEER_PRICE_SOURCE=equity_eod switches).
+    peer_price_source: Literal["quote", "equity_eod"] = "quote"
 
     # ---- storage
     database_url: str = "postgresql+psycopg://localhost/finresearch"
