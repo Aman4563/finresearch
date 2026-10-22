@@ -199,3 +199,19 @@ def test_a_path_with_no_volatility_is_one_deterministic_replay():
     )
     assert got.ev == pytest.approx(one.value, abs=0.01) and got.ev_se == pytest.approx(0.0, abs=1e-6)
     assert got.reasons == {pp.REASONS[one.note.split(" on ")[0]]: 1.0}
+
+
+def test_the_spot_vol_slope_is_ols_on_the_trailing_window_and_unknown_when_short():
+    """beta = OLS slope of d(ATM IV) on d ln F over the last BETA_WINDOW paired sessions; fewer than BETA_MIN pairs:
+    unknown (None), never 0."""
+    from finresearch.fnobook import path_pop as pp
+
+    old = [(0.01 * ((i % 7) - 3), 9.0) for i in range(100)]  # outside the window: would pull the slope away
+    rets = [0.004 * ((i * 37) % 11 - 5) for i in range(pp.BETA_WINDOW)]
+    pairs = old + [(r, -0.6 * r + 0.0005 * ((i % 3) - 1)) for i, r in enumerate(rets)]
+    x, y = rets, [b for _, b in pairs[100:]]
+    mx, my = sum(x) / len(x), sum(y) / len(y)
+    want = sum((a - mx) * (b - my) for a, b in zip(x, y)) / sum((a - mx) ** 2 for a in x)
+    assert pp.spot_vol_beta(pairs) == pytest.approx(want, rel=1e-12)
+    assert pp.spot_vol_beta(pairs[-(pp.BETA_MIN - 1):]) is None
+    assert pp.BETA_WINDOW == 250 and pp.BETA_MIN == 120

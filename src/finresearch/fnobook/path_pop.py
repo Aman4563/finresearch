@@ -62,6 +62,22 @@ def leg_price(leg: PathLeg, fwd: float, f0: float, tau: float, rate: float, beta
     return b76.price(leg.right, fwd, leg.strike, tau, math.exp(-rate * max(tau, 0.0)), sigma)  # type: ignore[arg-type]
 
 
+BETA_WINDOW = 250  # sessions: about a year of paired changes before the origin
+BETA_MIN = 120  # fewer pairs: the spot-vol slope is unknown
+
+
+def spot_vol_beta(pairs: Sequence[tuple[float, float]]) -> float | None:
+    """The spot-vol rule's slope: OLS of the session change in ATM IV (fraction) on the same session's log return of
+    the underlying, over the last BETA_WINDOW (return, IV change) pairs; None with fewer than BETA_MIN."""
+    xs = list(pairs)[-BETA_WINDOW:]
+    if len(xs) < BETA_MIN:
+        return None
+    mx = sum(a for a, _ in xs) / len(xs)
+    my = sum(b for _, b in xs) / len(xs)
+    sxx = sum((a - mx) ** 2 for a, _ in xs)
+    return sum((a - mx) * (b - my) for a, b in xs) / sxx if sxx > 0 else None
+
+
 def tick(price: float) -> float:
     """A simulated mark on NSE's tick grid, never below one tick (a traded quote needs a positive close)."""
     return max(TICK, round(round(price / TICK) * TICK, 2))
