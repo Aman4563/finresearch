@@ -421,7 +421,8 @@ class ResearchPipeline:
     def _blind_claims_text(self, ids: list[int]) -> str:
         """What the blind second verifier sees: the claim's metric, unit, period and statement with its figures masked,
         and WHERE each citation points (document lines, URL, or a fincalc call's function and arguments). Never the
-        value, the status, the gate notes, the first verifier's evidence or the quotes (which carry the figure)."""
+        value, the status, the gate notes, the first verifier's evidence or the quotes (which carry the figure). An
+        option-fact citation (#393) shows its tool, result key and arguments, never its result."""
         with session_scope() as s:
             rows = s.scalars(select(Claim).where(Claim.run_id == self.run_id, Claim.id.in_(ids))
                              .order_by(Claim.id)).all()  # fmt: skip
@@ -431,6 +432,12 @@ class ResearchPipeline:
                 for x in c.citations:
                     if x.document_id is not None or x.line_start is not None:
                         cites.append({"document_id": x.document_id, "lines": [x.line_start, x.line_end]})
+                    elif (
+                        x.computation and x.computation.get("kind") == "option_fact"
+                    ):  # #393, never its result
+                        cites.append({"option_fact": x.computation["function"].removeprefix("option_fact:"),
+                                      "result_key": x.computation.get("result_key"),
+                                      "args": x.computation.get("args")})  # fmt: skip
                     elif x.computation:
                         cites.append(
                             {"fincalc": x.computation.get("function"), "args": x.computation.get("args")}

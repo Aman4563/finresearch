@@ -77,6 +77,8 @@ def _recheck(session: Session, ct: Citation, claim: Claim) -> tuple[bool, dict[s
     from finresearch.mcp_server.server import run_fincalc
 
     old = ct.computation or {}
+    if old.get("kind") == "option_fact":  # #393: re-run the option-fact tool on today's stored data
+        return _recheck_option_fact(session, ct, claim, old)
     spec = {"function": old.get("function"), "args": old.get("args") or {}}
     if old.get("result_key") is not None:
         spec["result_key"] = old["result_key"]
@@ -89,6 +91,31 @@ def _recheck(session: Session, ct: Citation, claim: Claim) -> tuple[bool, dict[s
         detail = f"fincalc citation could not be re-checked: {e}"[:1000]
         return False, {**{k: v for k, v in old.items() if k != "regrade"}, "args_bound": False,
                        "detail": detail}, detail  # fmt: skip
+    comp = dict(new.computation or {})
+    return bool(new.quote_found), comp, str(comp.get("detail") or "")
+
+
+def _recheck_option_fact(session: Session, ct: Citation, claim: Claim,
+                         old: dict[str, Any]) -> tuple[bool, dict[str, Any], str]:  # fmt: skip
+    from finresearch.mcp_server import option_facts
+    from finresearch.mcp_server.claims import _option_fact_citation
+
+    def run_option_fact(
+        session, tool, args, run_id
+    ):  # offline: no agent, so the claim's own run is the scope
+        return option_facts.run(session, tool, args, run_id=run_id)
+
+    c = {"option_fact": {"tool": (old.get("function") or "").removeprefix("option_fact:"), "args": old.get("args")
+                         or {}}, "result_key": old.get("result_key")}  # fmt: skip
+    try:
+        new, _ = _option_fact_citation(session, claim.run_id, c, claim.value, run_option_fact)
+    except ValueError as e:  # unknown today, refused or malformed: it proves nothing
+        detail = f"option-fact citation could not be re-checked: {e}"[:1000]
+        return (
+            False,
+            {**{k: v for k, v in old.items() if k != "regrade"}, "matches": False, "detail": detail},
+            detail,
+        )
     comp = dict(new.computation or {})
     return bool(new.quote_found), comp, str(comp.get("detail") or "")
 

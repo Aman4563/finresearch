@@ -41,7 +41,8 @@ server = MCPServer(
     instructions=(
         "Tools over FinResearch's document store (offer documents, annual reports) and claim ledger. "
         "Always cite document_id + line numbers from these tools. Record every factual or numeric finding with "
-        "save_claim, quoting the exact text at the cited lines. Use fincalc for ALL arithmetic."
+        "save_claim, quoting the exact text at the cited lines. Use fincalc for ALL arithmetic. Option-fact tools "
+        "return a ready `citation`: cite it with its result_key."
     ),
 )
 
@@ -349,6 +350,80 @@ def fincalc_call(function: str, args: dict[str, Any]) -> str:
         if str(e).startswith("unexpected argument"):
             return str(e)
         return json.dumps({"function": function, "error": f"{type(e).__name__}: {e}"})
+
+
+# --------------------------------------------------------------------------- option-implied facts (#393)
+_OPTION_CITE = ("Each answer is one bounded record (no pagination) with its provenance: dataset, NSE source file, trade "
+                "date, expiry, strikes used, computation and method_version. To save a figure, cite the returned "
+                "`citation` with result_key set to the key you quote (one of citable_keys) and the value exactly as "
+                "returned or rounded: save_claim re-runs it and grades it D only if it reproduces the value. "
+                "known=false carries a reason and no number: report it as unknown. Answers for NIFTY, BANKNIFTY, "
+                "FINNIFTY, MIDCPNIFTY and this run's own NSE symbol only; trade_date YYYY-MM-DD (default: the latest "
+                "stored session).")  # fmt: skip
+
+
+def _option_tool(fn):
+    """Register an option-fact tool with the shared citation rules appended to its description."""
+    return server.tool(description=f"{inspect.getdoc(fn)} {_OPTION_CITE}")(fn)
+
+
+def _foreign_run(run_id: Any) -> str | None:
+    """Why `run_id` may not be written by this server, or None. A server launched for one agent task is bound to its
+    run (mcp_server.config.RUN_ENV): a claim-writing tool refuses any other run, so an agent cannot write into another
+    run's ledger. An unbound server (tests, scripts) is not restricted."""
+    from finresearch.mcp_server import option_facts
+
+    bound = option_facts.bound_run_id()
+    if bound is None or str(run_id).strip() == str(bound):
+        return None
+    return (
+        f"this server is bound to run {bound}; it cannot write claims into run {run_id}. Use run_id {bound}."
+    )
+
+
+def run_option_fact(session, tool: str, args: dict[str, Any], run_id: int | None) -> dict[str, Any]:
+    """Re-run an option-fact tool for save_claim. The scope is this server's bound run when it has one: save_claim's
+    run_id is the agent's argument, so naming another run must not widen what the re-check reads. Unbound (tests,
+    scripts) it is the claim's run."""
+    from finresearch.mcp_server import option_facts
+
+    bound = option_facts.bound_run_id()
+    return option_facts.run(session, tool, args, run_id=bound if bound is not None else run_id)
+
+
+def _option_fact(tool: str, **args: Any) -> str:
+    from finresearch.mcp_server import option_facts
+
+    with session_scope() as s:
+        try:
+            out = option_facts.run(s, tool, {k: v for k, v in args.items() if v is not None},
+                                   run_id=option_facts.bound_run_id())  # fmt: skip
+        except ValueError as e:
+            out = {"known": False, "reason": str(e)}
+        s.rollback()  # read-only: nothing of a tool call is written
+    return json.dumps(out, indent=1)
+
+
+@_option_tool
+def option_implied_move(symbol: str, trade_date: str | None = None, expiry: str | None = None) -> str:
+    """The market-implied move of an F&O underlying to an expiry, from NSE's stored end-of-day bhavcopy (Black-76 on
+    the expiry's forward): move_1sd_pct = ATM IV x sqrt(days/365) and atm_straddle_pct = (ATM call + put) / forward.
+    expiry: YYYY-MM-DD (default: the first expiry at least 7 days away). Context only, not a forecast."""
+    return _option_fact("option_implied_move", symbol=symbol, trade_date=trade_date, expiry=expiry)
+
+
+@_option_tool
+def option_iv30_percentile(symbol: str, trade_date: str | None = None) -> str:
+    """Where the 30-day implied volatility stands against its last 252 stored sessions: percentile and rank (0-100),
+    with n, coverage and the window's first and last session; unknown below 80 % coverage."""
+    return _option_fact("option_iv30_percentile", symbol=symbol, trade_date=trade_date)
+
+
+@_option_tool
+def option_skew_25d(symbol: str, trade_date: str | None = None) -> str:
+    """The near expiry's 25-delta skew (25-delta put IV minus 25-delta call IV, volatility points) from the stored
+    bhavcopy, with the strikes that bracket each 25-delta point."""
+    return _option_fact("option_skew_25d", symbol=symbol, trade_date=trade_date)
 
 
 # --------------------------------------------------------------------------- accuracy and valuation triangulation
@@ -945,11 +1020,15 @@ def save_claim(run_id: int, stream: str, statement: str, claim_type: str, citati
                or [{"fincalc": {"function": "growth.cagr", "args": {...}}, "inputs": [12, 15],
                     "constants": {"years": "FY2023 to FY2026 = 3 fiscal years"}}] for a computed figure: each numeric
                argument must be the value of one cited input claim (any ₹ scale or %/fraction) or a declared constant.
+               or [{"option_fact": {"tool": "option_implied_move", "args": {...}}, "result_key": "move_1sd_pct"}]: the
+               `citation` an option-fact tool returned, with result_key the figure quoted (re-run on stored data).
     The server checks each document quote really appears at the cited lines, a web quote against the page text
     fetch_page (or an exchange tool) returned, and re-runs a fincalc citation. Evidence grades: A document quote
     verified, B web quote verified on the stored page, C web quote unchecked (no fetch_page), D fincalc reproduces
     the value from the cited inputs' own values, U unsupported. A high-importance figure needs A, B or D to be published. A claim
     whose quotes are all missing is stored as 'unsupported' — fix the citation and save again."""
+    if (why := _foreign_run(run_id)) is not None:
+        return json.dumps({"error": why})
     with session_scope() as s:
         try:
             res = claims_mod.save_claim(
@@ -965,6 +1044,7 @@ def save_claim(run_id: int, stream: str, statement: str, claim_type: str, citati
                 period=period,
                 importance=importance,
                 fincalc=run_fincalc,
+                option_fact=run_option_fact,
             )
         except ValueError as e:
             s.rollback()  # nothing of a rejected claim is kept

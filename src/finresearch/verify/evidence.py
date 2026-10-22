@@ -5,7 +5,8 @@
        also exchange/AMFI facts the pipeline itself fetched and recorded (verify.gate.DETERMINISTIC_SOURCES)
     C  web citation whose quote was not checked (no stored snapshot)
     D  computed by fincalc: save_claim re-ran the call, it reproduced the value, its input claims are cited, and
-       every numeric argument is one of those claims' values or a declared constant (#265)
+       every numeric argument is one of those claims' values or a declared constant (#265); or an option-fact tool
+       (mcp_server.option_facts, #393) that save_claim re-ran on the stored market data and that reproduced it
     U  unsupported: a checked citation that failed, or a free-text calculation note nobody re-ran
 
 A claim's grade is the best of its citations' (A, B, D are "checked"; C is weaker; U worst). The publish gate
@@ -28,6 +29,7 @@ LABEL = {
     "D": "computed by fincalc from cited inputs",
     "U": "unsupported",
 }
+OPTION_FACT = "computed from stored market data by an option-fact tool, re-run on save"
 _HTTP = re.compile(r"^https?://", re.I)
 
 
@@ -40,6 +42,15 @@ def citation_grade(ct: Citation) -> tuple[str, str]:
             return "A", LABEL["A"]
         return "U", "document quote not found at the cited lines"
     if ct.computation:
+        if (ct.computation or {}).get(
+            "kind"
+        ) == "option_fact":  # #393: an option-fact tool re-run on stored data
+            if ct.quote_found:
+                return "D", OPTION_FACT
+            return (
+                "U",
+                f"option-fact check failed: {(ct.computation or {}).get('detail') or 'not reproduced'}",
+            )
         if ct.quote_found:
             return "D", LABEL["D"]
         return "U", f"fincalc check failed: {(ct.computation or {}).get('detail') or 'not reproduced'}"
