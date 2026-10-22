@@ -217,7 +217,11 @@ def _grid(p: Raw, steps: int) -> list[tuple[float, float]]:
     """(k, probability mass) on the outcome grid."""
     half = OUT_SD * math.sqrt(float(svi.w(p, 0.0)))
     dk = 2 * half / steps
-    return [(k, density(p, k) * dk) for k in (-half + (i + 0.5) * dk for i in range(steps))]
+    ks = -half + (np.arange(steps) + 0.5) * dk
+    sw = np.sqrt(np.asarray(svi.w(p, ks)))
+    dm = -ks / sw - sw / 2
+    mass = np.asarray(svi.g(p, ks)) / (math.sqrt(2 * math.pi) * sw) * np.exp(-dm * dm / 2) * dk  # density(p, k) dk
+    return list(zip(ks.tolist(), mass.tolist(), strict=True))
 
 
 def outcome(legs, spot: float, t: float, rate: float, p: Raw, entry_cost: float = 0.0, exit_cost=None,
