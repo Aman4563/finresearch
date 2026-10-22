@@ -34,3 +34,20 @@ def test_report_splits_periods_and_labels_the_benchmark() -> None:
     )
     assert p["z"]["mf"]["n"] == 1 and p["z"]["atm"]["unknown"] == 1
     assert "not adopted" in out["verdict"]
+
+
+def test_counted_reasons_carry_no_price_strike_or_date() -> None:
+    # a vault read writes these keys: a forward, strike range or date in them would be a per-day vault figure
+    d0 = date(2022, 1, 27)
+    bad = st.Day(d0, None, None, "near term 2022-02-24: the traded strikes 16500-17500 do not cover (16712.3-17311.5)",
+                 None, None)  # fmt: skip
+    old = co.Trade(date(2008, 1, 31), date(2008, 2, 28), 5000.0, 50,
+                   (co.Mark(date(2008, 1, 31), 5010.0, 90.0, 80.0, 500, 500),), 5100.0, ("call", "put"))  # fmt: skip
+    x = run.Inputs([bad], {d0}, d0, [old], [], {}, {})
+    out = run.report(x, draws=20, seed=1)
+    keys = list(out["periods"]["seen"]["primary"]["unknown_reasons"])
+    assert keys == ["near term #: the traded strikes # do not cover (#)"]
+    rep = run.report(run.Inputs([st.Day(date(2008, 1, 31), None, 0.04, None, None, None)], {date(2008, 1, 31)},
+                                date(2008, 1, 31), [old], [], {}, {}), draws=20, seed=1)  # fmt: skip
+    for k in rep["periods"]["vault"]["collect"]["dated"]["straddle"]["none"]["unknown_reasons"]:
+        assert not any(ch.isdigit() for ch in k), k

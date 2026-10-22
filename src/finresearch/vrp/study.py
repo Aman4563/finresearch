@@ -17,6 +17,7 @@ Windows that start 28 days apart (February) overlap the next by up to 2 days: Ne
 from __future__ import annotations
 
 import math
+import re
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -87,6 +88,12 @@ def windows(days: Sequence[Day], starts: set[date], data_end: date) -> list[Wind
     return out
 
 
+def category(reason: str | None) -> str:
+    """A reason with every number and date replaced by '#': counted reasons never carry a day's price, strike or
+    date (a vault read writes aggregates only, vault PREREG.md section 2)."""
+    return re.sub(r"\d[\d.,\-]*", "#", reason or "unknown")
+
+
 def nw_mean(x: Sequence[float], lag: int = NW_LAG, level: float = CI_LEVEL) -> dict:
     """Mean, Newey-West (Bartlett) standard error, t and the normal CI; t, se and CI unknown below lag + 2 values."""
     n = len(x)
@@ -111,7 +118,7 @@ def primary(ws: Sequence[Window]) -> dict:
     pay = [w.payoff for w in known]
     logs = [w.log_ratio for w in known if w.log_ratio is not None]
     return {**nw_mean(pay), "unknown": len(ws) - len(known),  # type: ignore[arg-type]
-            "unknown_reasons": dict(Counter(w.reason for w in ws if w.payoff is None)),
+            "unknown_reasons": dict(Counter(category(w.reason) for w in ws if w.payoff is None)),
             "share_negative": sum(1 for p in pay if p < 0) / len(pay) if pay else None,  # type: ignore[operator]
             "log_ratio": {**nw_mean(logs), "label": LOG_RATIO_LABEL}}  # type: ignore[arg-type]  # fmt: skip
 

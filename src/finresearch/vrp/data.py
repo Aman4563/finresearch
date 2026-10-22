@@ -63,8 +63,10 @@ def _atm_strike(chain: dict[float, dict[str, tuple]], fwd: float) -> float | Non
 
 
 def load(symbol: str, start: date, end: date, *, lots: Lots, band: float | None, url: str | None = None,
-         grant: object = None) -> tuple[run.Inputs, dict]:  # fmt: skip
-    """The study's inputs for `symbol` from `start` to `end` and the counts of what was unknown."""
+         grant: object = None, vix_url: str | None = None) -> tuple[run.Inputs, dict]:  # fmt: skip
+    """The study's inputs for `symbol` from `start` to `end` and the counts of what was unknown. India VIX comes
+    from `vix_url` (default: the app's database, where P1.4 stores index_eod), never from the F&O history's: the
+    vault and fnohist databases hold no index closes. A UDiFF row's own lot (2024 on) is used before `lots`."""
     prereg.require_registered()
     if start <= VAULT_END:
         from finresearch.vault.guard import check_grant
@@ -78,13 +80,16 @@ def load(symbol: str, start: date, end: date, *, lots: Lots, band: float | None,
     with session_scope(url) as s:
         s.execute(text("SET TRANSACTION READ ONLY"))
         futs: dict[date, dict[date, tuple]] = defaultdict(dict)
-        for d, e, o, h, lo, c, stl in s.execute(
+        for d, e, o, h, lo, c, stl, lot in s.execute(
             select(FnoBhav.day, FnoBhav.expiry, FnoBhav.open, FnoBhav.high, FnoBhav.low, FnoBhav.close,
-                   FnoBhav.settle).where(FnoBhav.symbol == symbol, FnoBhav.option_type == "XX",
+                   FnoBhav.settle, FnoBhav.lot_size).where(FnoBhav.symbol == symbol, FnoBhav.option_type == "XX",
                                          FnoBhav.day.between(start, end))):  # fmt: skip
-            futs[d][e] = (_f(o), _f(h), _f(lo), _f(c), _f(stl))
-        vix = {d: float(v) for d, v in s.execute(select(IndexEod.day, IndexEod.close).where(
-            IndexEod.symbol == VIX_SYMBOL, IndexEod.day.between(start, end), IndexEod.close.is_not(None)))}  # fmt: skip
+            row_lot = int(lot) if lot and d > VAULT_END else None  # vault days: NSE's circulars only (#365)
+            futs[d][e] = (_f(o), _f(h), _f(lo), _f(c), _f(stl), row_lot)
+        with session_scope(vix_url) as v:
+            v.execute(text("SET TRANSACTION READ ONLY"))
+            vix = {d: float(x) for d, x in v.execute(select(IndexEod.day, IndexEod.close).where(
+                IndexEod.symbol == VIX_SYMBOL, IndexEod.day.between(start, end), IndexEod.close.is_not(None)))}  # fmt: skip
         days = sorted(futs)
         monthly = measure.monthly_expiries(sorted({e for x in futs.values() for e in x}))
         starts = {e for e in monthly if e in futs}
@@ -118,7 +123,7 @@ def load(symbol: str, start: date, end: date, *, lots: Lots, band: float | None,
                     _observe(t, d, symbol, opts.get(d, {}), fut, spot.get(d))
                 opens = [t for t in opens if d < t.expiry]
                 if d in starts:
-                    new = _enter(d, symbol, monthly, opts.get(d, {}), fut, lots, counts)
+                    new = _enter(d, symbol, monthly, opts.get(d, {}), fut, lots, counts, futs[d])
                     for kind, t in new:
                         _observe(t, d, symbol, opts.get(d, {}), fut, spot.get(d))
                         opens.append(t)
@@ -145,7 +150,7 @@ def _day(d: date, i: int, days: list[date], futs: dict, chains: dict, vix: dict,
     bar = None
     if live:
         e = min(live)
-        o, h, lo, c, _ = futs[d][e]
+        o, h, lo, c = futs[d][e][:4]
         prev = futs[days[i - 1]].get(e) if i > 0 else None
         bar = rv.Bar(d, o, h, lo, c, prev[3] if prev else None)
         counts["no_prev_close"] += bar.prev_close is None
@@ -184,15 +189,15 @@ def _observe(t: _Open, d: date, symbol: str, chains: dict, fut: dict, spot: floa
         t.last = history.Day(d, symbol, opts, {t.expiry: fut[t.expiry]} if t.expiry in fut else {}, spot)
 
 
-def _enter(d: date, symbol: str, monthly: list[date], chains: dict, fut: dict, lots: Lots,
-           counts: Counter) -> list[tuple[str, _Open]]:  # fmt: skip
+def _enter(d: date, symbol: str, monthly: list[date], chains: dict, fut: dict, lots: Lots, counts: Counter,
+           fut_rows: dict) -> list[tuple[str, _Open]]:  # fmt: skip
     nxt = [e for e in monthly if e > d]
     if not nxt:
         counts["no_next_monthly"] += 1
         return []
     e = nxt[0]
     f, ch = fut.get(e), chains.get(e, {})
-    lot = lots(symbol, e, d)
+    lot = (fut_rows.get(e) or (None,) * 6)[5] or lots(symbol, e, d)
     k = _atm_strike(ch, f) if f else None
     counts["no_atm_strike"] += k is None
     puts = [(kk, v["put"][0], v["put"][2]) for kk, v in ch.items() if "put" in v and v["put"][3]]

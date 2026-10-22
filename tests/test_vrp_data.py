@@ -126,3 +126,20 @@ def test_no_settlement_from_a_chain_older_than_the_contracts_last_session() -> N
         E2  # the expiry session is stored but its chain is missing: unknown, not the 25th's price
     )
     assert t.trade().final is None
+
+
+def test_a_udiff_rows_own_lot_comes_before_the_lot_table(env, monkeypatch) -> None:
+    from sqlalchemy import update
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import FnoBhav
+    from finresearch.vrp import data
+
+    monkeypatch.setattr(data, "VIX_SYMBOL", VIX)
+    with session_scope() as s:
+        seed(s)
+        s.execute(update(FnoBhav).where(FnoBhav.symbol == SYM, FnoBhav.day == E1, FnoBhav.expiry == E2,
+                                        FnoBhav.option_type == "XX").values(lot_size=65))  # fmt: skip
+    x, _ = data.load(SYM, date(2026, 7, 1), date(2026, 9, 30), lots=lambda *_: 75, band=None)
+    assert [t.lot for t in x.straddles if t.entry == E1] == [65]
+    assert [t.lot for t in x.straddles if t.entry == E2] == [75]

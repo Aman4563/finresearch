@@ -38,6 +38,7 @@ from finresearch.backtest.specs import BOOK, Book
 from finresearch.fincalc import black76 as b76
 from finresearch.fincalc import charges, margin_approx
 from finresearch.fincalc import fno_history as fh
+from finresearch.vrp.study import category
 
 BAND = 0.5  # lots of net delta that trigger a re-hedge
 FUT_SLIPPAGE_BPS = (
@@ -233,7 +234,7 @@ def summarise(rs: Sequence[Result], draws: int = BOOTSTRAP_DRAWS, seed: int = BO
         crash[name] = {"windows": len(xs), "net": sum(xs) if xs else None}  # type: ignore[arg-type]
     mk = [r for r in k if r.margin is not None]
     return {"n": len(k), "unknown": len(rs) - len(k),
-            "unknown_reasons": dict(Counter(r.reason for r in rs if r.net is None)),
+            "unknown_reasons": dict(Counter(category(r.reason) for r in rs if r.net is None)),
             "mean_net": sum(nets) / len(nets) if nets else None,  # type: ignore[arg-type]
             "ci": inference.cluster_bca(nets, [r.entry.isoformat() for r in k], draws, seed),  # type: ignore[arg-type]
             "share_negative": sum(1 for x in nets if x < 0) / len(nets) if nets else None,  # type: ignore[operator]
