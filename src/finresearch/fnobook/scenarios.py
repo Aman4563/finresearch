@@ -223,3 +223,64 @@ async def view(now: datetime, *, sources: Any = None, capital: float | None = No
                     "rows": [{"horizon": r.horizon, "complete": r.complete, "reasons": list(r.reasons),
                               "cell": None if r.cell is None else _cell(r.cell)} for r in rev]},
     }  # fmt: skip
+
+
+def stored_forward(
+    s: Any, day: date, sym: str, expiry: date, spot: float | None, rate: float = RATE
+) -> tuple[float | None, str]:
+    """The forward of (sym, expiry) on `day` from the stored bhavcopy (#398): the same-expiry future's settle, else
+    put-call parity on the settles of the strike nearest `spot` with both a call and a put, else unknown."""
+    from sqlalchemy import select
+
+    from finresearch.db.models import FnoBhav
+    from finresearch.fincalc.dates import session_clock
+
+    rows = s.execute(select(FnoBhav.option_type, FnoBhav.strike, FnoBhav.settle).where(
+        FnoBhav.day == day, FnoBhav.symbol == sym, FnoBhav.expiry == expiry, FnoBhav.settle.is_not(None))).all()  # fmt: skip
+    fut = next((float(v) for k, _, v in rows if k == "XX" and v > 0), None)
+    if fut is not None:
+        return fut, "the same-expiry future's settle"
+    ce = {float(k): float(v) for t, k, v in rows if t == "CE"}
+    pe = {float(k): float(v) for t, k, v in rows if t == "PE"}
+    both = sorted(set(ce) & set(pe), key=lambda k: (abs(k - spot) if spot else 0.0, k))
+    if not both:
+        return None, f"{sym} {expiry}: no future and no strike with both a call and a put settle stored"
+    k = both[0]
+    t = years_to_expiry(expiry, session_clock(day))
+    return bs.parity_forward(k, ce[k], pe[k], t, rate), f"put-call parity on the {k:g} settles"
+
+
+def stored_shock(s: Any, day: date, *, holidays: set[date] | None = None,
+                 rate: float = RATE) -> tuple[dict[float, float] | None, list[str]]:  # fmt: skip
+    """P4.5 (#398): the open book's P&L at each registered NIFTY shock move one session after `day`'s close, from
+    stored data only: tonight's marks (fno_mark, paper and Groww: the bhavcopy settle), each on `stored_forward`,
+    with the registered betas (fnohist.betas). No chain is read. (None, why) when a leg's direction, price or forward,
+    or a beta, is unknown; nothing open is exactly 0 at every move."""
+    from sqlalchemy import select
+
+    from finresearch.db.models import FnoMark
+    from finresearch.fincalc.dates import session_clock
+    from finresearch.fincalc.tradeplan import SHOCK_MOVES
+    from finresearch.fnohist import betas
+
+    marks = s.scalars(select(FnoMark).where(FnoMark.day == day).order_by(FnoMark.id)).all()
+    if not marks:
+        return dict.fromkeys(SHOCK_MOVES, 0.0), []
+    if any(m.qty is None for m in marks):
+        return None, ["Groww did not confirm whether a leg is long or short: the book's shock P&L is unknown"]
+    fws: dict[tuple[str, date], float | None] = {}
+    notes: list[str] = []
+    for m in marks:
+        key = (m.symbol.upper(), m.expiry)
+        if key not in fws:
+            fws[key], src = stored_forward(
+                s, day, m.symbol, m.expiry, None if m.spot is None else float(m.spot), rate
+            )
+            if fws[key] is None:
+                notes.append(src)
+    legs = [bs.BookLeg(m.symbol.upper(), m.expiry, m.right, float(m.strike or 0), m.qty,  # type: ignore[arg-type]
+                       None if m.price is None else float(m.price), "settle", m.leg_key) for m in marks]  # fmt: skip
+    clock = session_clock(day)
+    mk = bs.Market(clock, rate, fws, betas.read({x.underlying for x in legs}, day))
+    got, reasons = bs.shock_pnls(legs, mk, bs.horizon_clock(clock, 1, holidays or set()))
+    return got, notes + list(reasons)
