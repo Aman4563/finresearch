@@ -192,7 +192,8 @@ async def backfill(series: Iterable[str], start: date, end: date | None = None, 
         out["planned"] += len(todo)
         for m in todo:
             gate()
-            a, b, key = max(m, lo), min(_month_end(m), hi), f"{name} {m:%Y-%m}"
+            # always the whole month from its 1st: a partial window would mark the month settled half-fetched
+            a, b, key = m, min(_month_end(m), hi), f"{name} {m:%Y-%m}"
             try:
                 url, _, got = await client.fixings(name, a, b)
                 with session_scope() as s:

@@ -59,10 +59,9 @@ async def test_recent_window_fetched_once_a_night(clean, monkeypatch):
         res = await job.rates_step(AFTER, http=http)
         assert res["rates"]["failed"] == {}
         starts = sorted({c.request.url.params["fromDate"] for c in fix.calls})
-        assert starts == [
-            (date(2026, 9, 30) - job.LOOKBACK).isoformat(),
-            "2026-09-01",
-        ]  # 45 days: two windows
+        # 45 days back is mid-August (date(2026, 9, 30) - job.LOOKBACK): whole months are asked, from the 1st
+        assert (date(2026, 9, 30) - job.LOOKBACK).month == 8
+        assert starts == ["2026-08-01", "2026-09-01"]
         assert len(fix.calls) == 6  # three series
         assert listing.called
         assert await job.rates_step(AFTER, http=http) == {}

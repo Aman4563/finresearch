@@ -5,6 +5,7 @@ synthetic payloads (made-up rates)."""
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
+from decimal import Decimal
 from pathlib import Path
 
 import httpx
@@ -88,7 +89,6 @@ async def test_fixings_month_windows_stored_with_lineage(clean):
     windows = [(c.request.url.params["fromDate"], c.request.url.params["toDate"]) for c in route.calls]
     assert windows == [("2022-01-01", "2022-01-31"), ("2022-02-01", "2022-02-28")]
     assert out["loaded"] == 1 and out["no_file"] == 1 and out["rows"] == 2
-    from decimal import Decimal
 
     assert rows("tbill") == [
         (date(2022, 1, 3), "3M", Decimal("0.03620000")),
@@ -116,7 +116,7 @@ async def test_an_unsettled_month_is_refetched_and_a_revision_is_seen(clean):
     await rates.backfill(["tbill"], date(2026, 10, 1), **kw)
     got = lineage("fbil_tbill")
     assert len(got) == 2 and got[1][1] is not None  # FBIL re-published the day: prior hash kept
-    assert {r[2] for r in rows("tbill")} == {__import__("decimal").Decimal("0.05450000")}
+    assert {r[2] for r in rows("tbill")} == {Decimal("0.05450000")}
 
 
 @respx.mock
@@ -145,3 +145,15 @@ async def test_two_refusals_in_a_row_stop_the_run(clean):
     out = await rates.backfill(["tbill"], date(2022, 1, 1), date(2022, 6, 30), today=TODAY, http=client(),
                                now=lambda: NIGHT)  # fmt: skip
     assert len(route.calls) == 2 and "refused" in out["stopped"]
+
+
+@respx.mock
+async def test_a_mid_month_start_still_asks_for_the_whole_month(clean):
+    """Regression: a window starting mid-month (the nightly job's 45 days) must not mark the month settled with its
+    first half never fetched; months are always requested whole."""
+    from finresearch.refseries import rates
+
+    route = respx.get(f"{fbil.BASE}/tbill/fetchfiltered").mock(return_value=httpx.Response(200, json=[]))
+    await rates.backfill(["tbill"], date(2026, 8, 16), today=TODAY, http=client(), now=lambda: NIGHT)
+    assert route.calls[0].request.url.params["fromDate"] == "2026-08-01"
+    assert route.calls[0].request.url.params["toDate"] == "2026-08-31"
