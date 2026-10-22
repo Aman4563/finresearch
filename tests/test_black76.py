@@ -139,3 +139,67 @@ def test_a_far_wing_with_a_tiny_vega_still_converges_or_says_why() -> None:
         assert got.reason is None or "no convergence" not in got.reason
         assert got.sigma is None or got.sigma == pytest.approx(0.05, abs=1e-6)
         assert got.iterations <= b.MAX_ITER
+
+
+# --------------------------------------------------------------------------- the per-expiry parity regression
+F_TRUE, R_TRUE, T30 = 25012.4, 0.066, 30 / 365
+
+
+def chain(f=F_TRUE, r=R_TRUE, t=T30, lo=23000, hi=27000, step=100, sigma=0.14, round_to=None, bump=None):
+    """Calls and puts priced by Black-76 at one volatility; `bump` = {strike: rupees added to the call}."""
+    d, out = df(r, t), []
+    for k in range(lo, hi + 1, step):
+        c, p = b.price("call", f, k, t, d, sigma), b.price("put", f, k, t, d, sigma)
+        if round_to:
+            c, p = round(c / round_to) * round_to, round(p / round_to) * round_to
+        c += (bump or {}).get(k, 0.0)
+        out.append(b.ParityQuote(float(k), c, p))
+    return out
+
+
+def test_parity_regression_recovers_forward_and_discount_factor_exactly() -> None:
+    fit = b.parity_fit(chain(), T30)
+    assert fit.reason is None and fit.forward == pytest.approx(F_TRUE, abs=1e-6)
+    assert fit.df == pytest.approx(df(R_TRUE, T30), abs=1e-10) and fit.r_impl == pytest.approx(R_TRUE, abs=1e-8)
+    # only strikes with |ln K/F| <= 5 % enter: 23,800 to 26,200
+    assert min(fit.strikes) == 23800 and max(fit.strikes) == 26200 and fit.n == 25 and fit.weights == "equal"
+
+
+def test_tick_rounded_prices_give_the_forward_within_a_point() -> None:
+    fit = b.parity_fit(chain(round_to=0.05), T30)
+    assert fit.forward == pytest.approx(F_TRUE, abs=1.0) and fit.se_forward < 1.0
+
+
+def test_one_mispriced_strike_barely_moves_the_huber_forward() -> None:
+    # a 40-rupee model settle at one strike next to the money: the single-strike parity forward there would move by
+    # 40 / DF ~ 40 points; the Huber fit stays within half a point
+    fit = b.parity_fit(chain(bump={25000: 40.0}), T30)
+    assert fit.forward == pytest.approx(F_TRUE, abs=0.5)
+
+
+def test_too_few_strikes_is_unknown_with_a_reason() -> None:
+    fit = b.parity_fit(chain(lo=24900, hi=25100, step=100)[:2], T30)
+    assert fit.forward is None and fit.df is None and "strikes" in fit.reason
+
+
+def test_a_narrow_noisy_band_gives_the_forward_but_no_implied_rate() -> None:
+    # three strikes 100 apart with tick rounding and a 7-day expiry: the slope (DF) is not identified, the intercept
+    # (F) still is; r_impl must be unknown, never a number off by several points
+    t = 7 / 365
+    qs = chain(t=t, lo=24900, hi=25100, step=100, round_to=0.05, bump={25100: 0.35})
+    fit = b.parity_fit(qs, t)
+    assert fit.forward == pytest.approx(F_TRUE, abs=2.0)
+    assert fit.r_impl is None and fit.df is None and fit.df_reason
+
+
+def test_spread_weights_downweight_a_wide_quote() -> None:
+    qs = chain()
+    qs = [b.ParityQuote(q.strike, q.call + (6.0 if q.strike == 25100 else 0.0), q.put,
+                        20.0 if q.strike == 25100 else 0.5, 0.5) for q in qs]  # fmt: skip
+    fit = b.parity_fit(qs, T30)
+    assert fit.weights == "spread" and fit.forward == pytest.approx(F_TRUE, abs=0.05)
+
+
+def test_basis_between_parity_and_future() -> None:
+    assert b.basis(25010.0, 25000.0) == pytest.approx(0.0004)
+    assert b.basis(None, 25000.0) is None and b.basis(25010.0, None) is None

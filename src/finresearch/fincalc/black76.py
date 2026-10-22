@@ -159,3 +159,114 @@ def implied_vol(right: Right, target: float, fwd: float, strike: float, t: float
         else:
             step_before, s = (b - a) / 2, (a + b) / 2
     return IvResult(None, f"no convergence in {MAX_ITER} steps")
+
+
+# --------------------------------------------------------------------------- one forward per expiry: parity regression
+# y_i = C_i - P_i = DF F - DF K_i + e_i over strikes with both sides and |ln K/F| <= PARITY_BAND: slope b = -DF,
+# intercept a = DF F, so F = -a/b and r_impl = -ln(DF)/T. Weighted least squares with w_i = 1/(s_C^2 + s_P^2) when
+# every strike has both bid-ask spreads (else equal weights: end-of-day settles carry no spread), made robust by
+# Huber IRLS on the standardised residuals. The intercept (F) is well identified on a few strikes; the slope (DF) is
+# not, so DF and r_impl are reported only when their standard error and level are plausible.
+PARITY_BAND = 0.05  # |ln K/F| up to 5 % (issue #385)
+MIN_STRIKES = 3  # at least one residual degree of freedom
+HUBER_C = 1.345  # the usual 95 %-efficiency tuning constant (Huber 1981)
+HUBER_ITER = 50
+BAND_PASSES = 5  # re-select the strikes around the fitted forward until the set is stable
+R_IMPL_RANGE = (-0.02, 0.20)  # an implied rate outside this is not a rate but a mis-specified fit
+R_SE_MAX = 0.01  # r_impl is reported only with a standard error under 1 rate point
+
+
+@dataclass(frozen=True)
+class ParityQuote:
+    strike: float
+    call: float  # mid (or a settle that is a market price)
+    put: float
+    call_spread: float | None = None  # ask - bid; None = unknown
+    put_spread: float | None = None
+
+
+@dataclass(frozen=True)
+class ParityFit:
+    forward: float | None
+    df: float | None  # None when the slope is not identified (df_reason) or the fit failed (reason)
+    r_impl: float | None
+    n: int = 0
+    strikes: tuple[float, ...] = ()
+    weights: str = "equal"  # equal | spread
+    resid_sd: float | None = None
+    se_forward: float | None = None
+    se_r: float | None = None
+    reason: str | None = None  # why there is no forward
+    df_reason: str | None = None  # why there is no DF / r_impl while the forward is known
+
+
+def _wls(xs: list[float], ys: list[float], ws: list[float]) -> tuple[float, float, float, float, float, float]:
+    """Weighted straight line y = a + b x: (a, b, var_a, var_b, cov_ab, s^2) with s^2 = sum w e^2 / (n - 2)."""
+    sw = sum(ws)
+    xm, ym = sum(w * x for w, x in zip(ws, xs, strict=True)) / sw, sum(w * y for w, y in zip(ws, ys, strict=True)) / sw
+    sxx = sum(w * (x - xm) ** 2 for w, x in zip(ws, xs, strict=True))
+    bb = sum(w * (x - xm) * (y - ym) for w, x, y in zip(ws, xs, ys, strict=True)) / sxx
+    aa = ym - bb * xm
+    s2 = sum(w * (y - aa - bb * x) ** 2 for w, x, y in zip(ws, xs, ys, strict=True)) / (len(xs) - 2)
+    return aa, bb, s2 * (1 / sw + xm * xm / sxx), s2 / sxx, -xm * s2 / sxx, s2
+
+
+def _huber(xs: list[float], ys: list[float], base: list[float]) -> tuple[float, float, float, float, float, float]:
+    ws = list(base)
+    fit = _wls(xs, ys, ws)
+    for _ in range(HUBER_ITER):
+        u = [(y - fit[0] - fit[1] * x) * math.sqrt(w) for x, y, w in zip(xs, ys, base, strict=True)]
+        scale = 1.4826 * sorted(abs(v) for v in u)[len(u) // 2]  # MAD of the standardised residuals
+        if scale <= 0:
+            break
+        ws = [w * min(1.0, HUBER_C * scale / abs(v)) if v else w for w, v in zip(base, u, strict=True)]
+        new = _wls(xs, ys, ws)
+        done = abs(new[0] - fit[0]) <= 1e-12 * max(1.0, abs(fit[0])) and abs(new[1] - fit[1]) <= 1e-14
+        fit = new
+        if done:
+            break
+    return fit
+
+
+def parity_fit(quotes: list[ParityQuote], t: float, *, band: float = PARITY_BAND) -> ParityFit:
+    """The expiry's forward (and, when identified, DF and r_impl) from every strike with both sides priced."""
+    qs = [q for q in quotes if _finite_positive(q.strike, q.call, q.put)]
+    if len(qs) < MIN_STRIKES or not _finite_positive(t):
+        return ParityFit(None, None, None, len(qs), reason=f"fewer than {MIN_STRIKES} strikes with both sides priced")
+    spread = all(_finite_positive(q.call_spread, q.put_spread) for q in qs)
+    near = min(qs, key=lambda q: (abs(q.call - q.put), q.strike))
+    fwd, used = near.strike + near.call - near.put, ()  # the single-strike start (DF ~ 1 is fine for choosing a band)
+    for _ in range(BAND_PASSES):
+        pick = tuple(q for q in qs if abs(math.log(q.strike / fwd)) <= band)
+        if len(pick) < MIN_STRIKES:
+            return ParityFit(None, None, None, len(pick), tuple(q.strike for q in pick),
+                             reason=f"fewer than {MIN_STRIKES} strikes within {band:.0%} of the forward")  # fmt: skip
+        if pick == used:
+            break
+        used = pick
+        k0 = sum(q.strike for q in pick) / len(pick)  # centred strikes: the intercept is DF (F - k0)
+        xs = [q.strike - k0 for q in pick]
+        ys = [q.call - q.put for q in pick]
+        base = [1 / (q.call_spread**2 + q.put_spread**2) for q in pick] if spread else [1.0] * len(pick)  # type: ignore[operator]
+        a, bb, va, vb, cab, s2 = _huber(xs, ys, base)
+        if not bb < 0:
+            return ParityFit(None, None, None, len(pick), tuple(q.strike for q in pick),
+                             reason="the parity slope is not negative (no discount factor)")  # fmt: skip
+        fwd = k0 - a / bb
+    d = -bb
+    se_f = math.sqrt(max(0.0, va / bb**2 + a * a * vb / bb**4 - 2 * a * cab / bb**3))
+    r, se_r = -math.log(d) / t, math.sqrt(vb) / (d * t)
+    why = None
+    if se_r > R_SE_MAX:
+        why = f"the implied rate's standard error {se_r:.2%} is above {R_SE_MAX:.0%}: the slope is not identified"
+    elif not R_IMPL_RANGE[0] <= r <= R_IMPL_RANGE[1]:
+        why = f"the implied rate {r:.2%} is outside {R_IMPL_RANGE[0]:.0%} to {R_IMPL_RANGE[1]:.0%}"
+    return ParityFit(fwd, None if why else d, None if why else r, len(used), tuple(q.strike for q in used),
+                     "spread" if spread else "equal", math.sqrt(s2), se_f, se_r, None, why)  # fmt: skip
+
+
+def basis(f_parity: float | None, f_future: float | None) -> float | None:
+    """(F_parity - F_future) / F_future, the relative basis to log; unknown when either is."""
+    if not _finite_positive(f_parity, f_future):
+        return None
+    return (f_parity - f_future) / f_future  # type: ignore[operator]
