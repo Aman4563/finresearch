@@ -688,6 +688,26 @@ def _spawn_risk_alerts(now: datetime) -> None:
     _BACKGROUND["risk_alerts"] = asyncio.create_task(run())
 
 
+def _spawn_joint_pnl(deps: jobs.Deps, now: datetime) -> None:
+    """Start the nightly joint P&L pass (monitor.joint_pnl, #397) in the background when due: one value-history build
+    with NIFTYBEES (network, cached closes) and SQL. At most one runs at a time."""
+    from finresearch.monitor import joint_pnl
+
+    t = _BACKGROUND.get("joint_pnl")
+    if (t is not None and not t.done()) or joint_pnl.due_slot(now) is None:
+        return
+
+    async def run() -> None:
+        try:
+            res = await joint_pnl.joint_pnl_step(deps, now)
+            if res:
+                log.info("joint P&L pass: %s", res.get("joint_pnl"))
+        except Exception:
+            log.warning("joint P&L pass failed", exc_info=True)
+
+    _BACKGROUND["joint_pnl"] = asyncio.create_task(run())
+
+
 def _spawn_quotes(deps: jobs.Deps, now: datetime) -> None:
     """Start the forward quote recorder (monitor.quotes, #363) in the background when a snapshot is due: one sweep is
     169 Groww calls (~50 s), longer than a tick. At most one runs at a time."""
@@ -858,6 +878,8 @@ async def tick(deps: jobs.Deps, now: datetime | None = None) -> dict[str, int]:
         _spawn_skill(now)
     if deps.risk_alerts:
         _spawn_risk_alerts(now)
+    if deps.joint_pnl:
+        _spawn_joint_pnl(deps, now)
     out_brief = brief_step(now) if deps.brief else {}
     if deps.holidays is not None or deps.live_holidays:
         await _refresh_holidays(deps)
@@ -959,6 +981,7 @@ def schedule_json(ww=None, *, running: bool | None = None) -> dict:
     from finresearch.monitor import portfolio_daily as pd
     from finresearch.monitor import quotes as mq
     from finresearch.monitor import rates as mr
+    from finresearch.monitor import joint_pnl as jpj
     from finresearch.monitor import risk_alerts as rka
     from finresearch.monitor import scheme_master as sm
     from finresearch.monitor import sip_estimates as sipe
@@ -1002,6 +1025,8 @@ def schedule_json(ww=None, *, running: bool | None = None) -> dict:
         "skill": {"after": hm((skj.RUN_AFTER.hour, skj.RUN_AFTER.minute)), "trading_days": False},
         "risk_alerts": {"after": hm((rka.RUN_AFTER.hour, rka.RUN_AFTER.minute)),
                         "deadline": hm((rka.DEADLINE.hour, rka.DEADLINE.minute)), "trading_days": True},
+        "joint_pnl": {"after": hm((jpj.RUN_AFTER.hour, jpj.RUN_AFTER.minute)),
+                      "deadline": hm((jpj.DEADLINE.hour, jpj.DEADLINE.minute)), "trading_days": True},
         "span": {"after": hm((spj.RUN_AFTER.hour, spj.RUN_AFTER.minute)), "lookback_days": spj.LOOKBACK_DAYS,
                  "requests_per_night": 2, "raw_sessions_kept": fspan.KEEP_SESSIONS},
         "forecasts": {"after": hm(READY_AFTER_IST), "every_min": int(FORECAST_EVERY.total_seconds() // 60)},
