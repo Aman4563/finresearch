@@ -124,7 +124,7 @@ def build_task(role_name: str, ctx: RunContext, **extra: str) -> AgentTask:
         effort=role.effort,
         capabilities={Capability.TOOLS} | ({Capability.WEB} if role.needs_web else set()),
         allowed_tools=role.tools,
-        mcp_config=write_mcp_config(),
+        mcp_config=write_mcp_config(run_id=ctx.run_id),
         max_turns=role.max_turns,
         timeout_s=role.timeout_s,
         run_dir=prepare_workspace(role, ctx),

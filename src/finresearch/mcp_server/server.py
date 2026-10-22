@@ -351,6 +351,56 @@ def fincalc_call(function: str, args: dict[str, Any]) -> str:
         return json.dumps({"function": function, "error": f"{type(e).__name__}: {e}"})
 
 
+# --------------------------------------------------------------------------- option-implied facts (#393)
+_OPTION_CITE = ("Each answer is one bounded record (no pagination) with its provenance: dataset, NSE source file, trade "
+                "date, expiry, strikes used, computation and method_version. To save a figure, cite the returned "
+                "`citation` with result_key set to the key you quote (one of citable_keys) and the value exactly as "
+                "returned or rounded: save_claim re-runs it and grades it D only if it reproduces the value. "
+                "known=false carries a reason and no number: report it as unknown. Answers for NIFTY, BANKNIFTY, "
+                "FINNIFTY, MIDCPNIFTY and this run's own NSE symbol only; trade_date YYYY-MM-DD (default: the latest "
+                "stored session).")  # fmt: skip
+
+
+def _option_tool(fn):
+    """Register an option-fact tool with the shared citation rules appended to its description."""
+    return server.tool(description=f"{inspect.getdoc(fn)} {_OPTION_CITE}")(fn)
+
+
+def _option_fact(tool: str, **args: Any) -> str:
+    from finresearch.mcp_server import option_facts
+
+    with session_scope() as s:
+        try:
+            out = option_facts.run(s, tool, {k: v for k, v in args.items() if v is not None},
+                                   run_id=option_facts.bound_run_id())  # fmt: skip
+        except ValueError as e:
+            out = {"known": False, "reason": str(e)}
+        s.rollback()  # read-only: nothing of a tool call is written
+    return json.dumps(out, indent=1)
+
+
+@_option_tool
+def option_implied_move(symbol: str, trade_date: str | None = None, expiry: str | None = None) -> str:
+    """The market-implied move of an F&O underlying to an expiry, from NSE's stored end-of-day bhavcopy (Black-76 on
+    the expiry's forward): move_1sd_pct = ATM IV x sqrt(days/365) and atm_straddle_pct = (ATM call + put) / forward.
+    expiry: YYYY-MM-DD (default: the first expiry at least 7 days away). Context only, not a forecast."""
+    return _option_fact("option_implied_move", symbol=symbol, trade_date=trade_date, expiry=expiry)
+
+
+@_option_tool
+def option_iv30_percentile(symbol: str, trade_date: str | None = None) -> str:
+    """Where the 30-day implied volatility stands against its last 252 stored sessions: percentile and rank (0-100),
+    with n, coverage and the window's first and last session; unknown below 80 % coverage."""
+    return _option_fact("option_iv30_percentile", symbol=symbol, trade_date=trade_date)
+
+
+@_option_tool
+def option_skew_25d(symbol: str, trade_date: str | None = None) -> str:
+    """The near expiry's 25-delta skew (25-delta put IV minus 25-delta call IV, volatility points) from the stored
+    bhavcopy, with the strikes that bracket each 25-delta point."""
+    return _option_fact("option_skew_25d", symbol=symbol, trade_date=trade_date)
+
+
 # --------------------------------------------------------------------------- accuracy and valuation triangulation
 @server.tool()
 def identity_checks(run_id: int, only_failing: bool = True) -> str:

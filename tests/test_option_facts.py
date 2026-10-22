@@ -5,11 +5,10 @@ chains only: prices come from the Black-76 engine at a known volatility, so the 
 
 from __future__ import annotations
 
-import ast
+import json
 import math
 from datetime import date, timedelta
 from decimal import Decimal as D
-from pathlib import Path
 
 import pytest
 
@@ -86,12 +85,13 @@ def _run(tmp_path, symbol: str | None = None) -> int:
         return r.id
 
 
-def _call(tool: str, **args):
+def _call(tool: str, run_id: int | None = None, **args):
+    """A tool call as the server makes it: the run comes from the server's trusted binding, never from the args."""
     from finresearch.db import session_scope
     from finresearch.mcp_server import option_facts
 
     with session_scope() as s:
-        return option_facts.run(s, tool, args)
+        return option_facts.run(s, tool, args, run_id=run_id)
 
 
 # --------------------------------------------------------------------------- the implied move (golden)
@@ -121,7 +121,9 @@ def test_implied_move_golden_from_a_chain_fixture(env, tmp_path):
 def test_explicit_expiry_is_honoured_and_missing_data_is_unknown_with_a_reason(env, tmp_path):
     _load()
     run_id = _run(tmp_path)
-    out = _call("option_implied_move", run_id=run_id, symbol="NIFTY", trade_date="2026-03-02", expiry="2026-03-05")
+    out = _call(
+        "option_implied_move", run_id=run_id, symbol="NIFTY", trade_date="2026-03-02", expiry="2026-03-05"
+    )
     assert out["provenance"]["expiry"] == "2026-03-05" and out["provenance"]["days_to_expiry"] == 3
     for args in ({"trade_date": "2026-03-03"}, {"trade_date": "2026-03-02", "expiry": "2026-04-27"}):
         out = _call("option_implied_move", run_id=run_id, symbol="NIFTY", **args)
@@ -144,7 +146,65 @@ def test_symbols_outside_the_run_are_refused_without_saying_why(env, tmp_path):
     assert out["known"] is False and "not available to this run" in out["reason"]
     assert "track" not in out["reason"] and "hold" not in out["reason"] and "watch" not in out["reason"]
     own = _run(tmp_path / "own", symbol="ZZSECRET")
-    assert _call("option_implied_move", run_id=own, symbol="ZZSECRET", trade_date="2026-03-02")["known"] is True
+    assert (
+        _call("option_implied_move", run_id=own, symbol="ZZSECRET", trade_date="2026-03-02")["known"] is True
+    )
+
+
+def test_a_run_id_in_the_tool_args_cannot_widen_the_scope(env, tmp_path):
+    """The scope comes only from the trusted run (the server's binding, or the claim's own run in save_claim): an
+    agent naming another run whose stock has stored options is refused."""
+    _load(symbol="ZZSECRET", instrument="STO")
+    mine = _run(tmp_path, symbol="ACME")
+    theirs = _run(tmp_path / "theirs", symbol="ZZSECRET")
+    with pytest.raises(ValueError, match="run_id"):
+        _call_raw(
+            "option_implied_move", mine, {"run_id": theirs, "symbol": "ZZSECRET", "trade_date": "2026-03-02"}
+        )
+
+
+def _call_raw(tool: str, run_id: int | None, args: dict):
+    from finresearch.db import session_scope
+    from finresearch.mcp_server import option_facts
+
+    with session_scope() as s:
+        return option_facts.run(s, tool, args, run_id=run_id)
+
+
+def test_server_tools_take_the_run_from_their_binding_not_from_the_agent(env, tmp_path, monkeypatch):
+    import asyncio
+
+    from finresearch.mcp_server import option_facts, server
+
+    _load(symbol="ZZSECRET", instrument="STO")
+    mine = _run(tmp_path, symbol="ACME")
+    _run(tmp_path / "theirs", symbol="ZZSECRET")
+    registered = {t.name: t for t in asyncio.run(server.server.list_tools())}
+    for name in option_facts.TOOLS:
+        assert "run_id" not in registered[name].input_schema["properties"], name
+        assert "citation" in registered[name].description and "unknown" in registered[name].description
+    monkeypatch.setenv(option_facts.RUN_ENV, str(mine))
+    out = json.loads(server.option_implied_move("ZZSECRET", "2026-03-02"))
+    assert out["known"] is False and "not available to this run" in out["reason"]
+    monkeypatch.delenv(option_facts.RUN_ENV)
+    out = json.loads(server.option_implied_move("NIFTY", "2026-03-02"))  # unbound: indices only
+    assert out["known"] is False and "no traded NIFTY options" in out["reason"]
+
+
+def test_each_agent_task_binds_its_own_run_into_the_mcp_server(env, tmp_path):
+    from finresearch.agents.runner import RunContext, build_task
+    from finresearch.mcp_server.option_facts import RUN_ENV
+
+    run_id = _run(tmp_path, symbol="ACME")
+    ctx = RunContext(run_id=run_id, company_slug="of-x", company_name="Synthetic Options Co", nse_symbol="ACME",
+                     facts={})  # fmt: skip
+    task = build_task("stock_technical", ctx, plan="(plan)", claims="(claims)")
+    cfg = json.loads(task.mcp_config.read_text())
+    assert cfg["mcpServers"]["finresearch"]["env"][RUN_ENV] == str(run_id)
+    other = build_task("stock_technical", RunContext(run_id=run_id + 1, company_slug="of-y", company_name="Other",
+                                                     nse_symbol="ZZ", facts={}), plan="(plan)", claims="(c)")  # fmt: skip
+    assert other.mcp_config != task.mcp_config  # one config per run: a later run never rebinds an earlier one
+    assert json.loads(task.mcp_config.read_text())["mcpServers"]["finresearch"]["env"][RUN_ENV] == str(run_id)
 
 
 def test_index_list_matches_the_stored_index_options():
@@ -152,3 +212,78 @@ def test_index_list_matches_the_stored_index_options():
     from finresearch.mcp_server.option_facts import INDEXES
 
     assert tuple(INDEXES) == tuple(INDEX_OPTIONS)
+
+
+# --------------------------------------------------------------------------- IV30 percentile
+def _iv_series(values: list[float | None], symbol: str = "NIFTY") -> list[date]:
+    """One loaded session per value (weekdays ending DAY) with fno_iv_eod.iv_30d = value (no row for None)."""
+    from finresearch.db import session_scope
+    from finresearch.db.models import FnoBhavDay, FnoIvEod
+
+    days, d = [], DAY
+    while len(days) < len(values):
+        if d.weekday() < 5:
+            days.append(d)
+        d -= timedelta(days=1)
+    days.reverse()
+    with session_scope() as s:
+        for d, v in zip(days, values, strict=True):
+            s.merge(FnoBhavDay(day=d, status="loaded", format="udiff", url=URL))
+            if v is not None:
+                s.add(
+                    FnoIvEod(
+                        symbol=symbol, day=d, iv_30d=D(str(v)), iv_30d_method="interpolated", rate=D("0.065")
+                    )
+                )
+    return days
+
+
+def test_iv30_percentile_over_252_sessions_with_n_and_source(env, tmp_path):
+    vals = [10 + (i * 37 % 251) / 10 for i in range(251)] + [20.0]
+    days = _iv_series(vals)
+    out = _call("option_iv30_percentile", run_id=_run(tmp_path), symbol="NIFTY", trade_date="2026-03-02")
+    assert out["known"] is True, out
+    below = sum(1 for v in vals[:-1] if v < 20.0)
+    assert float(out["iv30_percentile"]) == pytest.approx(below / 251 * 100, abs=0.005)
+    assert out["iv30_pct"] == "20.000" or float(out["iv30_pct"]) == 20.0
+    p = out["provenance"]
+    assert p["n"] == 252 and p["sessions"] == 252 and p["window_first"] == days[0].isoformat()
+    assert p["window_last"] == "2026-03-02" and p["dataset"].startswith("fno_iv_eod") and p["method_version"]
+    assert out["citation"]["option_fact"] == {"tool": "option_iv30_percentile",
+                                              "args": {"symbol": "NIFTY", "trade_date": "2026-03-02"}}  # fmt: skip
+
+
+def test_iv30_percentile_below_coverage_is_unknown_without_a_number(env, tmp_path):
+    _iv_series([None] * 102 + [15.0] * 150)  # 150 of 252 sessions carry an IV: below 80 %
+    out = _call("option_iv30_percentile", run_id=_run(tmp_path), symbol="NIFTY", trade_date="2026-03-02")
+    assert out["known"] is False and "coverage" in out["reason"] and "iv30_percentile" not in out
+
+
+# --------------------------------------------------------------------------- 25-delta skew
+def test_skew_25d_matches_the_stored_series_and_names_its_strikes(env, tmp_path):
+    from finresearch.db import session_scope
+    from finresearch.db.models import FnoIvEod
+    from finresearch.fnohist.derive import derive_day
+
+    _load(skew=0.10)
+    with session_scope() as s:
+        derive_day(s, DAY)
+    with session_scope() as s:
+        stored = s.scalar(select_skew(FnoIvEod))
+    out = _call("option_skew_25d", run_id=_run(tmp_path), symbol="NIFTY", trade_date="2026-03-02")
+    assert out["known"] is True, out
+    # independent: the 25-delta strikes sit about 0.674 sigma sqrt(T) (~2.8 %) either side of F, so a smile of 0.10 vol
+    # per unit of (F - K) / F puts the put about 0.28 points over and the call 0.28 under the ATM level
+    assert float(out["skew_25d"]) == pytest.approx(0.56, abs=0.05)
+    assert float(out["skew_25d"]) == pytest.approx(float(stored), abs=0.0006)
+    p = out["provenance"]
+    assert p["expiry"] == "2026-03-30" and p["stored_skew_25d"] == str(stored)
+    (c0, c1), (p0, p1) = p["call_25d_strikes"], p["put_25d_strikes"]
+    assert FWD < c0 < c1 and p0 < p1 < FWD
+    assert sorted(p["strikes_used"]) == sorted({c0, c1, p0, p1})
+
+
+def select_skew(model):
+    from sqlalchemy import select
+
+    return select(model.skew_25d).where(model.symbol == "NIFTY", model.day == DAY)

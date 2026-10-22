@@ -22,7 +22,9 @@ run's own NSE symbol only, and never list the stored underlyings. The module imp
 
 from __future__ import annotations
 
+import itertools
 import math
+import os
 from collections import defaultdict
 from datetime import date
 from decimal import Decimal
@@ -35,6 +37,8 @@ from finresearch.db.models import Company, FnoBhav, FnoBhavDay, FnoIvEod, Resear
 from finresearch.fincalc import fno_history as fh
 from finresearch.fincalc import volatility as vol
 from finresearch.fincalc.dates import today_ist
+from finresearch.fincalc.options import greeks
+from finresearch.mcp_server.config import RUN_ENV  # set per agent task by write_mcp_config(run_id=...)
 
 INDEXES = ("NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY")  # = fnohist.store.INDEX_OPTIONS (a test pins it)
 METHOD_VERSION = "option_facts/1"
@@ -42,6 +46,12 @@ BHAV = "fno_bhav: NSE F&O bhavcopy, end-of-day settlement prices (stored, local)
 IV_EOD = "fno_iv_eod: daily IVs derived from fno_bhav by fincalc.fno_history (stored, local)"
 RIGHTS = {"CE": "call", "PE": "put"}
 TOOLS = ("option_implied_move", "option_iv30_percentile", "option_skew_25d")
+
+
+def bound_run_id() -> int | None:
+    """The research run this MCP server process serves (agents.runner writes it into the server's environment)."""
+    v = os.environ.get(RUN_ENV, "").strip()
+    return int(v) if v.isdigit() else None
 
 
 def _unknown(reason: str) -> dict[str, Any]:
@@ -86,7 +96,9 @@ def _chain(s: Session, symbol: str, day: date):
             continue
         if kind in ("IDF", "STF"):
             futs[exp] = float(settle)
-        elif right in RIGHTS and fh.market_settle(float(settle), None if close is None else float(close), contracts):
+        elif right in RIGHTS and fh.market_settle(
+            float(settle), None if close is None else float(close), contracts
+        ):
             opts[exp].append(fh.OptQuote(float(strike), RIGHTS[right], float(settle)))
     return opts, futs, spot
 
@@ -112,7 +124,11 @@ def _fitted(s: Session, symbol: str, day: date, expiry: str | None):
     if expiry:
         e = date.fromisoformat(expiry)
         if e not in opts:
-            return None, None, f"no traded {symbol} options expiring {e} with market settlement prices on {day}"
+            return (
+                None,
+                None,
+                f"no traded {symbol} options expiring {e} with market settlement prices on {day}",
+            )
         x = fh.expiry_iv(day, e, opts[e], future=futs.get(e), spot=spot)
         if x is None:
             return None, None, (f"the {e} expiry on {day} cannot be fitted: no strike within "
@@ -124,7 +140,9 @@ def _fitted(s: Session, symbol: str, day: date, expiry: str | None):
     return near, opts[near.expiry], None
 
 
-def _provenance(s: Session, day: date, x: fh.ExpiryIv, strikes: list[float], computation: str) -> dict[str, Any]:
+def _provenance(
+    s: Session, day: date, x: fh.ExpiryIv, strikes: list[float], computation: str
+) -> dict[str, Any]:
     return {"dataset": BHAV, "source_url": _source_url(s, day), "trade_date": day.isoformat(),
             "expiry": x.expiry.isoformat(), "days_to_expiry": x.dte, "forward": _r(x.forward, 2),
             "forward_source": x.forward_source, "strikes_used": strikes, "rate": fh.RATE,
@@ -135,7 +153,9 @@ def _citation(tool: str, args: dict[str, Any]) -> dict[str, Any]:
     return {"option_fact": {"tool": tool, "args": args}, "result_key": "<one of citable_keys>"}
 
 
-def implied_move(s: Session, symbol: str, trade_date: str | None = None, expiry: str | None = None) -> dict[str, Any]:
+def implied_move(
+    s: Session, symbol: str, trade_date: str | None = None, expiry: str | None = None
+) -> dict[str, Any]:
     day = _day(s, symbol, trade_date)
     if day is None:
         return _unknown(f"no {symbol} F&O rows are stored")
@@ -159,15 +179,92 @@ def implied_move(s: Session, symbol: str, trade_date: str | None = None, expiry:
                                                           "expiry": x.expiry.isoformat()})}  # fmt: skip
 
 
-_FNS = {"option_implied_move": implied_move}
+def iv30_percentile(s: Session, symbol: str, trade_date: str | None = None) -> dict[str, Any]:
+    day = (
+        date.fromisoformat(trade_date)
+        if trade_date
+        else s.scalar(
+            select(func.max(FnoIvEod.day)).where(FnoIvEod.symbol == symbol, FnoIvEod.day <= today_ist())
+        )
+    )
+    if day is None:
+        return _unknown(f"no {symbol} implied-volatility rows are stored")
+    sessions = list(s.scalars(select(FnoBhavDay.day).where(FnoBhavDay.status == "loaded", FnoBhavDay.day <= day)
+                              .order_by(FnoBhavDay.day.desc()).limit(vol.WINDOW)))[::-1]  # fmt: skip
+    if not sessions or sessions[-1] != day:
+        return _unknown(f"{day} is not a loaded F&O bhavcopy session")
+    ivs = dict(s.execute(select(FnoIvEod.day, FnoIvEod.iv_30d).where(
+        FnoIvEod.symbol == symbol, FnoIvEod.day.between(sessions[0], day))).all())  # fmt: skip
+    st = vol.iv_stats_sessions([(d, None if ivs.get(d) is None else float(ivs[d])) for d in sessions])
+    if st.status != "ok" or st.percentile is None or st.rank is None:
+        return _unknown(f"the {symbol} IV30 percentile on {day} is unknown: {st.status}")
+    method = s.scalar(select(FnoIvEod.iv_30d_method).where(FnoIvEod.symbol == symbol, FnoIvEod.day == day))
+    comp = (f"fincalc.volatility.iv_stats_sessions over the last {vol.WINDOW} loaded bhavcopy sessions to the trade "
+            f"date (one point per session, missing IVs left out; unknown below {vol.MIN_COVERAGE:.0%} coverage): "
+            "percentile = share of earlier IVs in the window below the trade date's x 100; rank = (IV - min) / "
+            "(max - min) x 100")  # fmt: skip
+    prov = {"dataset": IV_EOD, "source_url": _source_url(s, day), "trade_date": day.isoformat(),
+            "iv_30d_method": method, "window_first": sessions[0].isoformat(), "window_last": day.isoformat(),
+            "sessions": len(sessions), "n": st.n, "coverage": _r(st.n / vol.WINDOW, 3), "low": _r(st.low, 3),
+            "high": _r(st.high, 3), "computation": comp, "method_version": METHOD_VERSION}  # fmt: skip
+    return {"known": True, "symbol": symbol, "iv30_pct": _r(st.current, 3), "iv30_percentile": _r(st.percentile * 100),
+            "iv30_rank": _r(st.rank * 100), "citable_keys": ["iv30_percentile", "iv30_rank", "iv30_pct"],
+            "provenance": prov,
+            "citation": _citation("option_iv30_percentile", {"symbol": symbol, "trade_date": day.isoformat()})}  # fmt: skip
+
+
+def _bracket(points: list[tuple[float, float]], target: float) -> list[float] | None:
+    """The two strikes whose (delta, strike) points bracket `target` (as volatility._iv_at_delta interpolates)."""
+    pts = sorted(points)
+    for (d0, k0), (d1, k1) in itertools.pairwise(pts):
+        if d0 <= target <= d1:
+            return sorted({k0, k1})
+    return None
+
+
+def skew_25d(s: Session, symbol: str, trade_date: str | None = None) -> dict[str, Any]:
+    day = _day(s, symbol, trade_date)
+    if day is None:
+        return _unknown(f"no {symbol} F&O rows are stored")
+    x, quotes, why = _fitted(s, symbol, day, None)
+    if x is None:
+        return _unknown(why)
+    if x.skew_25d is None:
+        return _unknown(f"the {x.expiry} chain on {day} does not span both 25-delta points")
+    t, f = x.dte / 365, x.forward
+    deltas: dict[str, list[tuple[float, float]]] = {"call": [], "put": []}
+    for q in quotes:
+        iv = fh.black76_iv(q.right, q.price, f, q.strike, t, fh.RATE)
+        if iv is not None and 0.005 < iv < 4.99:  # as fh.expiry_iv
+            deltas[q.right].append((greeks(q.right, f, q.strike, t, fh.RATE, iv, fh.RATE).delta, q.strike))
+    calls, puts = _bracket(deltas["call"], 0.25), _bracket(deltas["put"], -0.25)
+    stored = s.scalar(select(FnoIvEod.skew_25d).where(FnoIvEod.symbol == symbol, FnoIvEod.day == day))
+    comp = (f"fincalc.volatility.skew_25d on the near expiry (first fitted expiry >= {fh.MIN_DTE} days): Black-76 "
+            "IV per traded strike, each strike's delta at its own IV, IV linear in delta at +0.25 (calls) and "
+            "-0.25 (puts); skew = put IV - call IV in volatility points")  # fmt: skip
+    prov = _provenance(s, day, x, sorted({*(calls or []), *(puts or [])}), comp)
+    prov.update({"call_25d_strikes": calls, "put_25d_strikes": puts,
+                 "stored_skew_25d": None if stored is None else str(stored)})  # fmt: skip
+    return {"known": True, "symbol": symbol, "skew_25d": _r(x.skew_25d), "citable_keys": ["skew_25d"],
+            "provenance": prov,
+            "citation": _citation("option_skew_25d", {"symbol": symbol, "trade_date": day.isoformat()})}  # fmt: skip
+
+
+_FNS = {
+    "option_implied_move": implied_move,
+    "option_iv30_percentile": iv30_percentile,
+    "option_skew_25d": skew_25d,
+}
 
 
 def run(s: Session, tool: str, args: dict[str, Any], run_id: int | None = None) -> dict[str, Any]:
-    """Run one option-fact tool (also save_claim's re-check). `args` may carry run_id, which sets the scope."""
+    """Run one option-fact tool (also save_claim's re-check). `run_id` is the trusted run that sets the scope: the
+    server's binding (bound_run_id) or the claim's own run, never a value from the agent's arguments."""
     if tool not in _FNS:
         raise ValueError(f"unknown option fact tool {tool!r}; one of {sorted(_FNS)}")
     a = dict(args or {})
-    run_id = a.pop("run_id", run_id)
+    if "run_id" in a:
+        raise ValueError("run_id is not an option-fact argument: the run is bound by the server")
     symbol = str(a.pop("symbol", "") or "").strip().upper()
     if not symbol:
         return _unknown("symbol is required")
