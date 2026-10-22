@@ -1615,6 +1615,9 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
     from finresearch.api.portfolio_factors import add_portfolio_factor_routes
 
     add_portfolio_factor_routes(app)  # needs the analytics routes' value history (#348)
+    from finresearch.api.portfolio_attribution import add_portfolio_attribution_routes
+
+    add_portfolio_attribution_routes(app)  # liquidity and Brinson attribution; needs the value history (#348)
     from finresearch.api.portfolio_joint import add_portfolio_joint_routes
 
     add_portfolio_joint_routes(
