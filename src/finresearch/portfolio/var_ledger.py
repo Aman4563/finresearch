@@ -33,7 +33,9 @@ from finresearch.portfolio import analytics_math as am
 
 ASSET, INSTRUMENT, EVENT_KIND = "portfolio", "PORTFOLIO", "var95_1d"
 LEVEL, WINDOW = 0.95, 250
-MIN_TEST = 250  # resolved days before the backtest is run: 12.5 expected exceptions at 95 % (#399's power note)
+MIN_TEST = (
+    250  # resolved days before the backtest is run: 12.5 expected exceptions at 95 % (#399's power note)
+)
 MAX_GAP_DAYS = 5  # calendar days between as_of and the next history day; more = missing days, not one session
 AFTER_CLOSE = (15, 30)  # IST: NSE's session has ended
 METHOD = (f"historical 1-day VaR {LEVEL:.0%}: -5th percentile of the last {WINDOW} daily TWR returns of the "
@@ -71,3 +73,87 @@ def var_forecast(ser: Any, now: datetime) -> tuple[dict[str, Any] | None, str | 
             "event_kind": EVENT_KIND, "event": EVENT, "horizon": "1 trading day",
             "resolve_on": next_business_day(as_of), "probability": round(1 - LEVEL, 6), "action": "RISK", "score": None,
             "method": METHOD, "validation_status": "rule_based", "inputs": inputs, "status": "open"}, None  # fmt: skip
+
+
+def log_var(s: Any, ser: Any, now: datetime) -> dict[str, Any]:
+    """Log (or replace the same day's open) VaR forecast; {"logged": bool, "reason": ...}. Monitor only: a GET never
+    calls this."""
+    from finresearch.signals import ledger
+
+    values, why = var_forecast(ser, now)
+    if values is None:
+        return {"logged": False, "reason": why}
+    values["dedupe_key"] = ledger._key_for(s, ASSET, INSTRUMENT, EVENT_KIND, ser.days[-1], METHOD, now)
+    return {"logged": True, "id": ledger._upsert(s, values), "as_of": ser.days[-1].isoformat()}
+
+
+def _void(why: str) -> Any:
+    from finresearch.signals.ledger import Resolution
+
+    return Resolution(None, None, f"void: {why}")
+
+
+def resolve_var(f: Any, deps: Any, s: Any) -> Any:
+    """The next history day's TWR return against -VaR (module docstring)."""
+    from finresearch.portfolio import series
+    from finresearch.signals.ledger import NotYet, Resolution
+
+    ser, why = series.load(s)
+    if ser is None:
+        raise NotYet(why or "no value history")
+    as_of, var = date.fromisoformat(f.inputs["as_of"]), float(f.inputs["var"])
+    if as_of not in ser.days:
+        return _void(f"{as_of} is no longer a day of the value history (rebuilt since)")
+    i = ser.days.index(as_of)
+    if i + 1 >= len(ser.days):
+        raise NotYet(f"the value history has no day after {as_of} yet")
+    d1 = ser.days[i + 1]
+    if (d1 - as_of).days > MAX_GAP_DAYS:
+        return _void(f"the next history day is {d1}, {(d1 - as_of).days} days later: not a 1-day return")
+    if not (ser.complete[i] and ser.complete[i + 1]):
+        return _void(f"{as_of} or {d1} is valued on a stale price: the return is unknown")
+    r = dict(daily_returns(ser)).get(d1)
+    if r is None:
+        return _void(f"no return on {d1} (the value on {as_of} was 0)")
+    hit = r < -var
+    return Resolution(int(hit), r, f"{d1}: return {r:+.2%} against VaR {var:.2%}: "
+                                   + ("an exception" if hit else "within the VaR"))  # fmt: skip
+
+
+async def _resolver(f: Any, deps: Any, s: Any) -> Any:
+    return resolve_var(f, deps, s)
+
+
+def _register() -> None:
+    from finresearch.signals.ledger import resolver
+
+    resolver(ASSET, EVENT_KIND)(_resolver)
+
+
+_register()
+
+
+def backtest(s: Any) -> dict[str, Any]:
+    """Kupiec / Christoffersen over the logged, resolved forecasts in as_of order (read only). Under MIN_TEST resolved
+    days: the counts and the reason, no verdict. `trigger` is #399's start condition for the deferred work (EWMA-FHS
+    VaR and ES): conditional coverage rejected, p_cc < 0.05."""
+    from sqlalchemy import select
+
+    from finresearch.db.models import Forecast
+    from finresearch.portfolio.analytics import coverage_test
+
+    rows = list(s.scalars(select(Forecast).where(Forecast.asset == ASSET, Forecast.event_kind == EVENT_KIND)))
+    done = sorted((f for f in rows if f.status == "resolved" and f.outcome is not None),
+                  key=lambda f: f.inputs["as_of"])  # fmt: skip
+    out: dict[str, Any] = {"level": LEVEL, "window": WINDOW, "logged": len(rows), "resolved": len(done),
+                           "open": sum(f.status == "open" for f in rows),
+                           "void": sum(f.status == "void" for f in rows), "reason": None,
+                           "since": done[0].inputs["as_of"] if done else None,
+                           "how": f"the VaR logged each evening from the {WINDOW} days before it, scored on the next "
+                                  "day: figures as they stood, never re-estimated"}  # fmt: skip
+    if len(done) < MIN_TEST:
+        out["reason"] = f"needs {MIN_TEST} logged days with a known outcome; have {len(done)}"
+        return out
+    out.update(coverage_test([int(f.outcome) for f in done]))
+    out["trigger"] = out["p_cc"] < 0.05
+    return out

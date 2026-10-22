@@ -401,8 +401,14 @@ def _var_backtest(r: list[float]) -> dict[str, Any]:
     if len(r) < need:
         out["reason"] = f"needs {need} daily returns (about 2 years); have {len(r)}"
         return out
-    hits = am.var_exceptions(r, VAR_WINDOW)
-    t, x = len(hits), sum(hits)
+    out.update(coverage_test(am.var_exceptions(r, VAR_WINDOW)))
+    return out
+
+
+def coverage_test(hits: Sequence[bool | int]) -> dict[str, Any]:
+    """Kupiec, Christoffersen and the joint test of a 1-day 95 % VaR's exceptions (in day order), with the verdict and
+    its plain-words note. Shared by the walk-forward backtest and the logged one (portfolio.var_ledger, #399)."""
+    t, x = len(hits), sum(int(h) for h in hits)
     lr_uc, p_uc = am.kupiec(t, x, 0.05)
     lr_ind = am.christoffersen_ind(hits)
     p_ind, p_cc = am.chi2_sf(lr_ind, 1), am.chi2_sf(lr_uc + lr_ind, 2)
@@ -412,11 +418,10 @@ def _var_backtest(r: list[float]) -> dict[str, Any]:
             "too_few": "Losses beyond the VaR came less often than 1 day in 20: the VaR overstated your risk.",
             "clustered": "The count is plausible but the exceptions bunch together: risk rose in spells the "
                          "VaR was slow to see."}[verdict]  # fmt: skip
-    out.update(days=t, exceptions=x, expected=_r(0.05 * t, 2), lr_uc=_r(lr_uc, 3), p_uc=_r(p_uc, 4),
-               lr_ind=_r(lr_ind, 3), p_ind=_r(p_ind, 4), p_cc=_r(p_cc, 4), verdict=verdict,
-               note=note + f" Tests at p < 0.05; with {t} days the test has limited power (12.5 expected exceptions "
-                           "in 250 days at 95 %).")  # fmt: skip
-    return out
+    return dict(days=t, exceptions=x, expected=_r(0.05 * t, 2), lr_uc=_r(lr_uc, 3), p_uc=_r(p_uc, 4),
+                lr_ind=_r(lr_ind, 3), p_ind=_r(p_ind, 4), p_cc=_r(p_cc, 4), verdict=verdict,
+                note=note + f" Tests at p < 0.05; with {t} days the test has limited power (12.5 expected exceptions "
+                            "in 250 days at 95 %).")  # fmt: skip
 
 
 def _episode(days: list[date], e: am.Episode) -> dict[str, Any]:

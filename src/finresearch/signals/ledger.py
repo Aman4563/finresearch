@@ -351,6 +351,9 @@ async def resolve_due(deps: Any, now: datetime | None = None, *, recheck: bool =
     from finresearch.fnobook import (
         card_forecasts,  # noqa: F401  (importing it registers the F&O card resolver, #376)
     )
+    from finresearch.portfolio import (
+        var_ledger,  # noqa: F401  (importing it registers the portfolio VaR resolver, #399)
+    )
 
     now = now or datetime.now(UTC)
     with session_scope() as s:
@@ -818,7 +821,8 @@ def calibration_groups(session: Session, asset: str | None = None, n_bins: int =
         f
         for rows in list(groups.values())
         for f in rows
-        if f.validation_status != "shadow" and not is_benchmark(f)
+        # the portfolio's daily VaR (#399) is a risk model scored by Kupiec/Christoffersen, not a call
+        if f.validation_status != "shadow" and not is_benchmark(f) and f.asset != "portfolio"
     ]
     for a in sorted({f.asset for f in calls}):
         groups[(a, HEADLINE)] = [f for f in calls if f.asset == a]
