@@ -115,13 +115,13 @@ def test_a_missing_pair_does_not_shift_the_other_weights_and_is_counted() -> Non
     [
         ([0.01] * 2 + [None] * 6, None, {"max_missing": 8}, "only 2 paired returns (needs 3)"),
         (
-            X8[:5] + [None] + X8[6:],
+            [*X8[:5], None, *X8[6:]],
             None,
             {"max_missing": 8, "recent_sessions": 3},
             "missing in the last 3 sessions",
         ),
         (
-            X8[:2] + [None, None] + X8[4:],
+            [*X8[:2], None, None, *X8[4:]],
             None,
             {"max_missing": 1},
             "2 sessions without a return in the window (at most 1)",
