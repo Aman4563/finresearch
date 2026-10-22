@@ -79,3 +79,53 @@ def test_range_estimators_are_unbiased_on_simulated_brownian_bars_and_rogers_sat
     drift = bars(0.01)  # a 1 % daily drift: 100x the variance's square root
     assert np.mean([rv.rogers_satchell(b) for b in drift]) == pytest.approx(sigma2, rel=0.06)
     assert np.mean([rv.parkinson(b) for b in drift]) > 1.3 * sigma2  # Parkinson reads the drift as variance
+
+
+# ----------------------------------------------------------------------------------------------- intraday
+def test_realised_and_bipower_variance_and_the_jump_share_match_barndorff_nielsen_shephard() -> None:
+    r = [0.01, -0.02, 0.015]
+    assert rv.realized_variance(r, overnight=0.005) == pytest.approx(7.5e-4, rel=1e-12)
+    assert rv.realized_variance(r) == pytest.approx(7.25e-4, rel=1e-12)
+    assert rv.bipower_variation(r) == pytest.approx(math.pi / 2 * 5e-4, rel=1e-12)
+    assert rv.jump_share(r) == 0.0  # BV above RV: no jump, never a negative share
+    jumpy = [0.001] * 10 + [0.05]
+    rv_, bv = 10e-6 + 0.0025, math.pi / 2 * (9e-6 + 5e-5)
+    assert rv.jump_share(jumpy) == pytest.approx((rv_ - bv) / rv_, rel=1e-12)
+    assert rv.realized_variance([0.01, None]) is None and rv.bipower_variation([0.01]) is None
+
+
+# ----------------------------------------------------------------------------------------------- losses
+def test_qlike_and_mse_by_hand_and_unknown_inputs() -> None:
+    assert rv.qlike(2.0, 1.0) == pytest.approx(2 - math.log(2) - 1, rel=1e-12)
+    assert rv.qlike(1.5, 1.5) == 0.0
+    assert rv.mse(2.0, 1.0) == 1.0
+    for a, f in ((0.0, 1.0), (1.0, 0.0), (None, 1.0), (1.0, None), (-1.0, 1.0)):
+        assert rv.qlike(a, f) is None  # QLIKE is undefined there: unknown, not 0
+    assert rv.mse(None, 1.0) is None
+
+
+def test_mean_qlike_is_minimised_at_the_mean_of_the_proxy() -> None:
+    # Patton (2011): QLIKE is a robust loss, so the expected loss is minimised by the conditional mean of RV
+    a = np.random.default_rng(1).lognormal(-9, 0.6, 400)
+    grid = np.linspace(0.5, 1.5, 201) * a.mean()
+    best = grid[np.argmin([np.mean([rv.qlike(x, f) for x in a]) for f in grid])]
+    assert best == pytest.approx(a.mean(), rel=0.006)
+
+
+# ----------------------------------------------------------------------------------------------- vol cone
+def test_vol_cone_reads_quantiles_of_annualised_window_variances_and_counts_unknown_windows() -> None:
+    rng = np.random.default_rng(7)
+    bars, c = [], 100.0
+    for i in range(40):
+        o = c * math.exp(rng.normal(0, 0.003))
+        cl = o * math.exp(rng.normal(0, 0.01))
+        bars.append(rv.Bar(date(2025, 1, 1) + timedelta(i), o, max(o, cl) * 1.004, min(o, cl) * 0.996, cl, c))
+        c = cl
+    bars[30] = rv.Bar(bars[30].day, 0.0, 1.0, 1.0, 1.0, 1.0)  # an invalid bar: windows over it are unknown
+    cone = rv.vol_cone(bars, windows=(5, 10), quantiles=(0.1, 0.5, 0.9))
+    w5 = [rv.yang_zhang(bars[i - 5 : i]) for i in range(5, 41)]
+    known = [math.sqrt(252 * v) for v in w5 if v is not None]
+    assert cone[5]["n"] == len(known) and cone[5]["unknown"] == 5
+    for q in (0.1, 0.5, 0.9):
+        assert cone[5]["q"][q] == pytest.approx(float(np.quantile(known, q)), rel=1e-12)
+    assert cone[10]["unknown"] == 10

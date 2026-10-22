@@ -26,6 +26,8 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import date
 
+import numpy as np
+
 LN2 = math.log(2)
 YZ_ALPHA = 1.34  # Yang and Zhang's alpha (their p. 485: "1.34 ... in practice")
 
@@ -123,3 +125,59 @@ def mean_of(f: Callable[[Bar], float | None], bars: Sequence[Bar]) -> float | No
     """The window mean of a per-bar estimator (Parkinson, Garman-Klass, Rogers-Satchell); None if any bar is."""
     xs = [f(b) for b in bars]
     return None if not xs or any(x is None for x in xs) else sum(xs) / len(xs)  # type: ignore[arg-type, misc]
+
+
+# ----------------------------------------------------------------------------------------------- intraday
+def realized_variance(returns: Sequence[float | None], overnight: float | None = None) -> float | None:
+    """Sum of squared intraday log returns (5-minute in the issue), plus the overnight return squared if given."""
+    if not returns or any(r is None for r in returns):
+        return None
+    return sum(r * r for r in returns) + (overnight * overnight if overnight is not None else 0.0)  # type: ignore[operator]
+
+
+def bipower_variation(returns: Sequence[float | None]) -> float | None:
+    """(pi / 2) sum |r_i| |r_i-1|: jump-robust integrated variance (Barndorff-Nielsen and Shephard 2004)."""
+    if len(returns) < 2 or any(r is None for r in returns):
+        return None
+    return math.pi / 2 * sum(abs(a) * abs(b) for a, b in zip(returns[1:], returns[:-1], strict=True))  # type: ignore[arg-type]
+
+
+def jump_share(returns: Sequence[float | None]) -> float | None:
+    """max(RV - BV, 0) / RV on the intraday returns (no overnight term): the share of variance from jumps."""
+    a, b = realized_variance(returns), bipower_variation(returns)
+    if a is None or b is None or a <= 0:
+        return None
+    return max(a - b, 0.0) / a
+
+
+# ----------------------------------------------------------------------------------------------- losses
+def qlike(realised: float | None, forecast: float | None) -> float | None:
+    """RV / f - ln(RV / f) - 1; None when either is unknown or not positive (the loss is undefined there)."""
+    if realised is None or forecast is None or realised <= 0 or forecast <= 0:
+        return None
+    x = realised / forecast
+    return x - math.log(x) - 1
+
+
+def mse(realised: float | None, forecast: float | None) -> float | None:
+    return None if realised is None or forecast is None else (realised - forecast) ** 2
+
+
+# ----------------------------------------------------------------------------------------------- vol cone
+CONE_WINDOWS = (5, 10, 21, 63)
+CONE_QUANTILES = (0.05, 0.25, 0.5, 0.75, 0.95)
+SESSIONS_PER_YEAR = 252  # the cone's annualisation only; forecasts stay in total variance over the horizon
+
+
+def vol_cone(bars: Sequence[Bar], windows: Sequence[int] = CONE_WINDOWS,
+             quantiles: Sequence[float] = CONE_QUANTILES,
+             estimator: Callable[[Sequence[Bar]], float | None] = yang_zhang) -> dict[int, dict]:  # fmt: skip
+    """Per window length w: quantiles (numpy's linear rule) of sqrt(252 x per-session variance) over every rolling
+    w-bar window, with the count of windows used and of windows left out as unknown (an invalid bar inside)."""
+    out: dict[int, dict] = {}
+    for w in windows:
+        vals = [estimator(bars[i - w : i]) for i in range(w, len(bars) + 1)]
+        known = [math.sqrt(SESSIONS_PER_YEAR * v) for v in vals if v is not None and v >= 0]
+        qs = {q: float(np.quantile(known, q)) for q in quantiles} if known else {q: None for q in quantiles}
+        out[w] = {"n": len(known), "unknown": len(vals) - len(known), "q": qs}
+    return out
