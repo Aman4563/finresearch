@@ -123,6 +123,12 @@ class Deps:
     dq: bool = False  # the data-quality pass after the evening SLAs and before the brief (monitor.dq, #368)
     skill: bool = False  # the nightly forecast skill and calibration-drift pass (monitor.skill, #378)
     risk_alerts: bool = False  # the nightly risk alerts: limits, shocks, gaps, touch, events (#398)
+    joint_pnl: bool = (
+        False  # the nightly joint P&L of both books for the forward test (monitor.joint_pnl, #397)
+    )
+    # async (holdings, today) -> history.History with the NIFTYBEES benchmark (holding betas and own closes) for
+    # monitor.joint_pnl; the live app wires portfolio_daily.live_joint_history
+    joint_history: Any = None
     # monitor.quotes' NSE option-chain fallback (at most 16 requests a day) through `fno`; off in the live app until
     # the owner decides on NSE's terms, which restrict automated collection (#362)
     quotes_nse_fallback: bool = False
@@ -216,7 +222,7 @@ class Deps:
 
         from finresearch.adapters.nse_fno import NseFno
         from finresearch.monitor.intraday import live_fetch
-        from finresearch.monitor.portfolio_daily import live_history
+        from finresearch.monitor.portfolio_daily import live_history, live_joint_history
 
         return cls(ipo_detail=ipo_detail, quote=quote, current_issues=current_issues, stock_snapshot=stock_snapshot,
                    bse_ipo_detail=bse_ipo_detail, bse_quote=bse_quote, fno=NseFno, price_history=price_history,
@@ -227,7 +233,8 @@ class Deps:
                    lookthrough=True, pf_history=live_history, retention=True, lifecycle=True,
                    ipo_symbols=ipo_symbols, ipo_harvest=True, ipo_registry=True, sip_estimates=True,
                    scheme_master=True, fno_bhav=True, quotes=True, index_eod=True, span=True, dq=True, rates=True,
-                   equity_eod=True, skill=True, risk_alerts=True)  # fmt: skip
+                   equity_eod=True, skill=True, risk_alerts=True, joint_pnl=True,
+                   joint_history=live_joint_history)  # fmt: skip
 
 
 def alert(session: Session, watch: Watch, kind: str, message: str, level: str = "info", **data: Any) -> None:

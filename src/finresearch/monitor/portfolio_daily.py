@@ -216,9 +216,9 @@ HISTORY_TIMEOUT_S = (
 )
 
 
-async def live_history(holdings: list[Any], today: date) -> Any:
+async def live_history(holdings: list[Any], today: date, *, benchmark: bool = False) -> Any:
     """Build the reconstructed value history with the live sources (NSE/BSE closes, AMFI NAV history), as the
-    Performance tab does, without the benchmark (the stored series does not need it)."""
+    Performance tab does, without the benchmark (the stored series does not need it) unless `benchmark`."""
     from finresearch.api.markets import MarketSources
     from finresearch.config import get_settings
     from finresearch.portfolio.history import Fetcher, PriceStore, build
@@ -238,7 +238,12 @@ async def live_history(holdings: list[Any], today: date) -> Any:
             log.warning("listings for the value history unavailable", exc_info=True)
     async with Fetcher(MarketSources()) as f:
         return await build(holdings, fetch=f, store=PriceStore(get_settings().state_dir / "portfolio_history"),
-                           schemes=schemes, today=today, isin_map=isin_map, benchmark=False)  # fmt: skip
+                           schemes=schemes, today=today, isin_map=isin_map, benchmark=benchmark)  # fmt: skip
+
+
+async def live_joint_history(holdings: list[Any], today: date) -> Any:
+    """The value history with NIFTYBEES (holding betas and each holding's own closes) for monitor.joint_pnl (#397)."""
+    return await live_history(holdings, today, benchmark=True)
 
 
 async def history_pass(deps: Any, today: date, *, now: datetime | None = None) -> dict[str, Any]:

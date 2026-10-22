@@ -250,24 +250,28 @@ def stored_forward(
     return bs.parity_forward(k, ce[k], pe[k], t, rate), f"put-call parity on the {k:g} settles"
 
 
-def stored_shock(s: Any, day: date, *, holidays: set[date] | None = None,
-                 rate: float = RATE) -> tuple[dict[float, float] | None, list[str]]:  # fmt: skip
-    """P4.5 (#398): the open book's P&L at each registered NIFTY shock move one session after `day`'s close, from
-    stored data only: tonight's marks (fno_mark, paper and Groww: the bhavcopy settle), each on `stored_forward`,
-    with the registered betas (fnohist.betas). No chain is read. (None, why) when a leg's direction, price or forward,
-    or a beta, is unknown; nothing open is exactly 0 at every move."""
+def stored_book(s: Any, day: date, *, rate: float = RATE, expiring_after: date | None = None,
+                ) -> tuple[list[bs.BookLeg] | None, bs.Market | None, list[str]]:  # fmt: skip
+    """The book as marked on `day`'s evening (fno_mark: paper and Groww, the bhavcopy settle), each leg on
+    `stored_forward`, with the registered betas (fnohist.betas) as of `day`; the clock is `day`'s 15:30 IST. With
+    `expiring_after`, only legs whose expiry is on or after it. ([] , market, []) when nothing is marked; (None, None,
+    why) when a leg's direction is unknown. A forward that cannot be found is a note (its legs price as unknown)."""
     from sqlalchemy import select
 
     from finresearch.db.models import FnoMark
     from finresearch.fincalc.dates import session_clock
-    from finresearch.fincalc.tradeplan import SHOCK_MOVES
     from finresearch.fnohist import betas
 
-    marks = s.scalars(select(FnoMark).where(FnoMark.day == day).order_by(FnoMark.id)).all()
-    if not marks:
-        return dict.fromkeys(SHOCK_MOVES, 0.0), []
+    q = select(FnoMark).where(FnoMark.day == day)
+    if expiring_after is not None:
+        q = q.where(FnoMark.expiry >= expiring_after)
+    marks = s.scalars(q.order_by(FnoMark.id)).all()
     if any(m.qty is None for m in marks):
-        return None, ["Groww did not confirm whether a leg is long or short: the book's shock P&L is unknown"]
+        return (
+            None,
+            None,
+            ["Groww did not confirm whether a leg is long or short: the book's shock P&L is unknown"],
+        )
     fws: dict[tuple[str, date], float | None] = {}
     notes: list[str] = []
     for m in marks:
@@ -280,7 +284,23 @@ def stored_shock(s: Any, day: date, *, holidays: set[date] | None = None,
                 notes.append(src)
     legs = [bs.BookLeg(m.symbol.upper(), m.expiry, m.right, float(m.strike or 0), m.qty,  # type: ignore[arg-type]
                        None if m.price is None else float(m.price), "settle", m.leg_key) for m in marks]  # fmt: skip
-    clock = session_clock(day)
-    mk = bs.Market(clock, rate, fws, betas.read({x.underlying for x in legs}, day))
-    got, reasons = bs.shock_pnls(legs, mk, bs.horizon_clock(clock, 1, holidays or set()))
+    mk = bs.Market(
+        session_clock(day), rate, fws, betas.read({x.underlying for x in legs}, day) if legs else {}
+    )
+    return legs, mk, notes
+
+
+def stored_shock(s: Any, day: date, *, holidays: set[date] | None = None,
+                 rate: float = RATE) -> tuple[dict[float, float] | None, list[str]]:  # fmt: skip
+    """P4.5 (#398): the open book's P&L at each registered NIFTY shock move one session after `day`'s close, from
+    stored data only (`stored_book`). No chain is read. (None, why) when a leg's direction, price or forward, or a
+    beta, is unknown; nothing open is exactly 0 at every move."""
+    from finresearch.fincalc.tradeplan import SHOCK_MOVES
+
+    legs, mk, notes = stored_book(s, day, rate=rate)
+    if legs is None or mk is None:
+        return None, notes
+    if not legs:
+        return dict.fromkeys(SHOCK_MOVES, 0.0), []
+    got, reasons = bs.shock_pnls(legs, mk, bs.horizon_clock(mk.now, 1, holidays or set()))
     return got, notes + list(reasons)
