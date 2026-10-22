@@ -244,3 +244,39 @@ def test_ssvi_surface_with_falling_atm_variance_is_unknown() -> None:
     ]
     got = svi.fit_ssvi(slices)
     assert got.rho is None and "calendar" in (got.reason or "")
+
+
+# --------------------------------------------------------------------------- from quotes, and the flags for P1.6
+def test_fit_quotes_through_the_black76_engine() -> None:
+    from finresearch.fincalc import black76 as b76
+
+    fwd, t, df = 22000.0, 7 / 365, 0.9988
+    quotes = []
+    for i in range(-15, 16):
+        k = fwd * math.exp(0.006 * i)
+        sig = math.sqrt(float(svi.w(GOOD, math.log(k / fwd))) / t)
+        for right in ("call", "put"):
+            px = b76.price(right, fwd, k, t, df, sig)
+            quotes.append(b76.OptionQuote(k, right, bid=px - 0.05, ask=px + 0.05))
+    quotes.append(b76.OptionQuote(fwd * 0.8, "put", bid=0.0, ask=0.05))  # no bid: dropped, counted
+    got = svi.fit_quotes(quotes, fwd, t, df)
+    assert got.fit.params is not None and got.fit.weights == "band"
+    assert got.fit.rmse_vol is not None and got.fit.rmse_vol < 1e-4
+    assert got.dropped.get("no bid") == 1
+    for k in (-0.05, 0.0, 0.04):
+        assert float(svi.w(got.fit.params, k)) == pytest.approx(float(svi.w(GOOD, k)), rel=1e-3)
+    unknown = svi.fit_quotes(quotes, fwd, t, None)  # no discount factor: no IVs, no smile
+    assert unknown.fit.params is None and "fewer than" in (unknown.fit.reason or "")
+
+
+def test_surface_flags_name_every_violation() -> None:
+    near = svi.Fit(svi.Raw(a=0.01, b=0.15, m=0.0, rho=-0.6, s=0.1), 0.05)
+    far = svi.Fit(svi.Raw(a=0.02, b=0.05, m=0.0, rho=-0.3, s=0.1), 0.1)
+    refused = svi.Fit(
+        None, 0.2, reason="the fitted smile is not arbitrage-free: butterfly arbitrage: g = -0.03"
+    )
+    flags = svi.surface_flags([far, refused, near])
+    kinds = sorted(f["kind"] for f in flags)
+    assert kinds == ["calendar", "refused"]
+    cal = next(f for f in flags if f["kind"] == "calendar")
+    assert cal["t_near"] == 0.05 and cal["t_far"] == 0.1 and cal["k"] < 0 and cal["excess"] > 0

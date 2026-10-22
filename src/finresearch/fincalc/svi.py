@@ -27,6 +27,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from finresearch.fincalc import black76 as b76
+
 # The static-arbitrage check's grid (registered with horserace addendum A4):
 K_WIDE = 3.0  # |k| up to 3 (strikes from 5 % to 2,000 % of the forward), evenly spaced ...
 K_LOCAL = 25.0  # ... plus m +/- 25 s, where a narrow (weekly) smile bends
@@ -492,3 +494,42 @@ def fit_ssvi(slices: list[tuple[float, list[Point]]]) -> SsviFit:
     errs = [f.rmse_vol**2 * f.n for f in fits if f.rmse_vol is not None]
     rmse = math.sqrt(sum(errs) / sum(f.n for f in fits))
     return SsviFit(rho, eta, gam, tuple(thetas), tuple(fits), rmse, tuple(flags))
+
+
+# --------------------------------------------------------------------------- from quotes; flags for P1.6
+@dataclass(frozen=True)
+class QuoteFit:
+    fit: Fit
+    points: tuple[Point, ...]
+    dropped: dict[str, int]  # reason -> count of quotes without a usable IV
+
+
+def fit_quotes(quotes: list[b76.OptionQuote], fwd: float, t: float, df: float | None) -> QuoteFit:
+    """black76.otm_ivs (out-of-the-money mids, both sides at the strike nearest F, spread and tick bands) through
+    fit(); the quotes it cannot use are counted by reason. Without a discount factor nothing has an IV: unknown."""
+    rows = b76.otm_ivs(quotes, fwd, t, df)
+    pts = tuple(Point(math.log(r.strike / fwd), r.sigma, r.band) for r in rows if r.sigma is not None)
+    dropped: dict[str, int] = {}
+    for r in rows:
+        if r.sigma is None:
+            key = (r.reason or "no implied volatility").split(":")[0]
+            dropped[key] = dropped.get(key, 0) + 1
+    return QuoteFit(fit(list(pts), t), pts, dropped)
+
+
+def surface_flags(fits: list[Fit]) -> list[dict]:
+    """Data-quality flags of one underlying's fitted expiries (inputs to P1.6): every refused slice with its reason,
+    every fit flag, and calendar arbitrage between consecutive fitted expiries (where and by how much)."""
+    out: list[dict] = []
+    for f in sorted(fits, key=lambda f: f.t):
+        if f.params is None:
+            out.append({"kind": "refused", "t": f.t, "reason": f.reason})
+        out += [{"kind": "fit", "t": f.t, "flag": x} for x in f.flags]
+    known = sorted((f for f in fits if f.params is not None), key=lambda f: f.t)
+    for a, b in itertools.pairwise(known):
+        cal = calendar_ok(a.params, b.params)  # type: ignore[arg-type]
+        if not cal.ok:
+            out.append(
+                {"kind": "calendar", "t_near": a.t, "t_far": b.t, "k": cal.worst_k, "excess": cal.worst}
+            )
+    return out
