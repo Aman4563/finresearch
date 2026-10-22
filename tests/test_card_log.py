@@ -84,6 +84,10 @@ def test_suggest_appends_one_row_for_the_whole_response(client):  # noqa: F811
     assert got["card_log_id"] == row["id"]
     assert [c["title"] for c in row["cards"]] == [c["title"] for c in got["cards"]]
     assert [c["action"] for c in row["cards"]] == [c["action"] for c in got["cards"]]
+    # #383: each served card names its row and index, so a paper trade taken from it can be linked back
+    assert [(c["card_log_id"], c["card_index"]) for c in got["cards"]] == [
+        (row["id"], i) for i in range(len(got["cards"]))
+    ]
 
 
 def test_strategy_check_appends_one_row_without_inventing_a_verdict(client):  # noqa: F811

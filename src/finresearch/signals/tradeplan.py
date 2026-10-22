@@ -22,13 +22,15 @@ Nothing here places an order: the card's one-click actions are a paper trade and
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime, timedelta
 from typing import Any
 
+from finresearch.fincalc import beta as fbeta
 from finresearch.fincalc import options as o
 from finresearch.fincalc import tradeplan as tp
-from finresearch.fincalc.dates import session_clock, years_to_expiry
+from finresearch.fincalc.dates import session_clock, to_ist, years_to_expiry
 from finresearch.signals import fno as fs
 
 DELTA_ALERT = 0.30  # short-strike |delta| alert (rule of thumb: the short strike is being tested)
@@ -161,6 +163,7 @@ class BookData:
     funds: dict[str, float] | None = None
     shock_notes: tuple[str, ...] = ()
     funds_notes: tuple[str, ...] = ()
+    shock_betas: tuple[Any, ...] = ()  # the beta estimates (fincalc.beta) the book's shock used
 
 
 UNKNOWN_BOOK = BookData(None, None, None, ("The open book was not read: its risk is unknown.",))
@@ -247,8 +250,9 @@ async def _shock_and_funds(now: datetime) -> dict[str, Any]:
     (fnobook.service.stored_funds); anything that fails to read is unknown, with the reason."""
     from finresearch.fnobook import scenarios, service
 
+    used: dict[str, Any] = {}
     try:
-        shock, snotes = await scenarios.book_shock(now)
+        shock, snotes = await scenarios.book_shock(now, betas_out=used)
     except Exception as e:  # a chain or position read failed: unknown, never 0
         shock, snotes = None, [f"The open book could not be repriced under the shock ({type(e).__name__})."]
     try:
@@ -258,6 +262,7 @@ async def _shock_and_funds(now: datetime) -> dict[str, Any]:
     return {
         "shock": shock,
         "shock_notes": tuple(snotes),
+        "shock_betas": tuple(used.values()),
         "funds": funds,
         "funds_notes": (fnote,) if fnote else (),
     }
@@ -287,14 +292,24 @@ async def load_book(today: date, now: datetime | None = None) -> BookData:
     return BookData(paper + rp, mtd, None, tuple(notes), **terms)
 
 
+def card_betas(symbol: str, today: date) -> dict[str, Any]:
+    """The card underlying's registered beta to NIFTY (fnohist.betas; {} for NIFTY, whose beta is 1): unknown with
+    the reason when the stored series is short, gapped, stale or unreadable."""
+    from finresearch.fnohist import betas
+
+    return betas.read([symbol], today)
+
+
 def trade_terms(symbol: str, expiry: date, spot: float, legs: list[o.Leg], now: datetime, rate: float,
-                is_index: bool, span: dict[str, Any] | None = None) -> tuple[Any, tuple[str, ...], float | None,
-                                                                            tuple[str, ...]]:  # fmt: skip
+                is_index: bool, span: dict[str, Any] | None = None,
+                betas: Mapping[str, Any] | None = None) -> tuple[Any, tuple[str, ...], float | None,
+                                                                 tuple[str, ...]]:  # fmt: skip
     """#395: one set of the card's legs (signed units at their prices: premiums, a future's price as its strike) →
     (its P&L at each registered shock move one session from `now`, notes; its initial margin, notes). The forward is
     S e^{rT}, so the repricing is the card's own Black-Scholes on spot; IVs are inverted from the prices. The margin
     is fincalc.margin_approx with the day's NSE SPAN ranges when stored (`span`, else read here), else its labelled
-    assumptions. None (with why) when unknown."""
+    assumptions. None (with why) when unknown. An underlying other than NIFTY moves by the worse end of its beta band
+    (`betas`, else card_betas)."""
     import math
 
     from finresearch.adapters.groww_market import _holidays
@@ -305,7 +320,9 @@ def trade_terms(symbol: str, expiry: date, spot: float, legs: list[o.Leg], now: 
     if t <= 0:
         return None, ("the contract has expired",), None, ("the contract has expired",)
     sym = symbol.upper()
-    m = bs.Market(now, rate, {(sym, expiry): spot * math.exp(rate * t)})
+    if betas is None:
+        betas = card_betas(sym, to_ist(now).date())
+    m = bs.Market(now, rate, {(sym, expiry): spot * math.exp(rate * t)}, betas)
     bl = [bs.BookLeg(sym, expiry, x.right, 0.0 if x.right == "future" else x.strike, x.qty,
                      None if x.right == "future" else x.premium, "ltp") for x in legs]  # fmt: skip
     one, reasons = bs.shock_pnls(bl, m, bs.horizon_clock(now, 1, _holidays()))
@@ -318,7 +335,6 @@ def trade_terms(symbol: str, expiry: date, spot: float, legs: list[o.Leg], now: 
     if span is None:
         try:
             from finresearch.db import session_scope
-            from finresearch.fincalc.dates import to_ist
             from finresearch.fnohist import span as sp
 
             with session_scope() as s:
@@ -337,14 +353,22 @@ def trade_terms(symbol: str, expiry: date, spot: float, legs: list[o.Leg], now: 
 
 
 def book_for(b: BookData, capital: float, symbol: str, kind: str, spot: float | None, spec: Any | None,
-             terms: tuple[Any, tuple[str, ...], float | None, tuple[str, ...]] | None = None) -> tp.OpenBook:  # fmt: skip
+             terms: tuple[Any, tuple[str, ...], float | None, tuple[str, ...]] | None = None,
+             betas: Mapping[str, Any] | None = None) -> tp.OpenBook:  # fmt: skip
     """The OpenBook one card sees: OR over every open position (each shocked at the card's spot when it is the same
     underlying, else at its own reference spot), and the open count of this recipe (its paper tag) or shape.
-    #395: always both new terms, `terms` = trade_terms(...) for one set of the card's legs (None = unknown)."""
+    #395: always both new terms, `terms` = trade_terms(...) for one set of the card's legs (None = unknown); the beta
+    estimates of the book's shock and of `betas` (the card's own, as given to trade_terms) are shown with it."""
     one, one_notes, im, im_notes = terms or (None, ("this trade's shock P&L was not computed",), None,
                                              ("this trade's margin was not computed",))  # fmt: skip
     f = b.funds or {}
-    shock = tp.Shock(b.shock, one, (*b.shock_notes, *(() if one is not None else one_notes)))
+    used = {e.underlying: e for e in (*b.shock_betas, *(betas or {}).values())}
+    shock = tp.Shock(
+        b.shock,
+        one,
+        (*b.shock_notes, *(() if one is not None else one_notes)),
+        tuple(used[k] for k in sorted(used)),
+    )
     funds = tp.Funds(f.get("cash"), f.get("margin_used"), f.get("collateral"), im,
                      (*b.funds_notes, *(() if im is not None else im_notes)))  # fmt: skip
     risk: float | None = None
@@ -372,6 +396,8 @@ def book_json(ob: tp.OpenBook) -> dict[str, Any]:
             "shock_moves": list(tp.SHOCK_MOVES), "shock_book_worst": _worst(ob.shock.book if ob.shock else None),
             "shock_one_worst": _worst(ob.shock.one if ob.shock else None),
             "shock_notes": list(ob.shock.notes) if ob.shock else [], "margin_util_max": tp.MARGIN_UTIL_MAX,
+            # the registered beta to NIFTY of each other underlying in the shock (fincalc.beta_specs), with its band
+            "shock_betas": [fbeta.as_json(e) for e in ob.shock.betas] if ob.shock else [],
             "margin_known": ob.funds is not None and None not in (ob.funds.cash, ob.funds.margin_used,
                                                                    ob.funds.collateral, ob.funds.im_one),
             "margin_notes": list(ob.funds.notes) if ob.funds else []}  # fmt: skip
@@ -722,8 +748,11 @@ def build(chain, lot: int, legs_in: list[fs.LegIn], x: Inputs, *, spec: Any | No
     one = [o.Leg(y.right, y.strike, 0.0 if y.right == "future" else al["premium"], al["qty"])  # type: ignore[arg-type]
            if y.right != "future" else o.Leg("future", al["premium"], 0.0, al["qty"])
            for y, al in zip(legs_in, a0["legs"], strict=True)]  # fmt: skip
-    terms = trade_terms(sym, expiry, spot, one, session_clock(x.today, x.now), x.rate, x.is_index)
-    ob = book_for(x.book, x.capital, sym, kind, spot, ev["spec"] if ev["match"] == "exact" else None, terms)
+    bt = card_betas(sym, x.today)
+    terms = trade_terms(sym, expiry, spot, one, session_clock(x.today, x.now), x.rate, x.is_index, betas=bt)
+    ob = book_for(
+        x.book, x.capital, sym, kind, spot, ev["spec"] if ev["match"] == "exact" else None, terms, bt
+    )
     sz = tp.size(
         a0["max_loss"], a0["costs"]["entry"]["total"], x.budget, proven=ev["level"] == "proven", book=ob
     )

@@ -274,12 +274,13 @@ def book_db(env, offline):
         CalendarCoverage,
         CalendarEvent,
         FnoExitRule,
+        FnoMark,
         PaperLeg,
         PaperStrategy,
     )
 
     with session_scope() as s:
-        for m in (FnoExitRule, PaperLeg, PaperStrategy, CalendarEvent, CalendarCoverage):
+        for m in (FnoMark, FnoExitRule, PaperLeg, PaperStrategy, CalendarEvent, CalendarCoverage):
             s.execute(delete(m))
         s.execute(delete(Alert).where(Alert.kind == "fno_exit"))
         s.execute(delete(BrokerConnection).where(BrokerConnection.key == "groww"))
@@ -604,3 +605,27 @@ def test_event_strip_and_event_dates(api, monkeypatch):
     events._CACHE.clear()
     bad = FakeSources(meetings=RuntimeError("NSE down"))
     assert run(events.event_dates("EXMPL", TRADE_DAY, bad)) is None
+
+
+def test_api_paper_trade_keeps_the_card_it_was_taken_from(api):
+    """#383: a paper trade can name its card (card_log row + index) for the shortfall against the card's mids."""
+    from finresearch.db import session_scope
+    from finresearch.fnobook import card_log
+
+    def card(symbol, kind="plan"):
+        with session_scope() as s:
+            r = card_log.row(kind, symbol=symbol, expiry=EXPIRY, inputs={}, cards=[{}], response={"legs": []})
+            s.add(r)
+            s.flush()
+            return r.id
+
+    nifty, other, check = card("NIFTY"), card("SYNTHCO"), card("NIFTY", "strategy")
+    with api(at_ist(TRADE_DAY, 10)) as c:
+        for cid, idx in ((nifty + other + check + 1000, 0), (other, 0), (check, 0), (nifty, 3)):
+            r = c.post("/api/fno/paper", json={**SPREAD, "card_log_id": cid, "card_index": idx})
+            assert r.status_code == 422, (cid, r.text)
+        assert c.get("/api/fno/paper").json()["counts"]["all"] == 0
+        r = c.post("/api/fno/paper", json={**SPREAD, "card_log_id": nifty, "card_index": 0})
+        assert r.status_code == 201, r.text
+        assert (r.json()["card_log_id"], r.json()["card_index"]) == (nifty, 0)
+        assert c.post("/api/fno/paper", json=SPREAD).json()["card_log_id"] is None
