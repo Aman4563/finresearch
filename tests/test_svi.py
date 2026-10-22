@@ -190,3 +190,57 @@ def test_fit_to_vogt_data_is_unknown_not_clipped() -> None:
     got = svi.fit(_points(VOGT, 1.0, ks), 1.0)
     assert got.params is None and got.raw is not None
     assert "butterfly" in (got.reason or "") and got.check is not None and got.check.g_min < 0
+
+
+# --------------------------------------------------------------------------- SSVI (GJ 2014 section 4)
+def test_power_law_phi_by_hand() -> None:
+    # GJ (4.5): phi = eta / (theta^gamma (1 + theta)^(1 - gamma)); eta 1, gamma 1/2, theta 0.04: 1/(0.2 sqrt(1.04))
+    assert svi.phi(0.04, 1.0, 0.5) == pytest.approx(4.902903378454601, abs=1e-12)
+
+
+def test_ssvi_slice_is_a_raw_svi_slice() -> None:
+    theta, rho, ph = 0.01, -0.6, 8.0
+    raw = svi.ssvi_to_raw(theta, rho, ph)
+    # w(0) = theta: the ATM total variance
+    assert svi.ssvi_w(0.0, theta, rho, ph) == pytest.approx(theta, abs=1e-15)
+    for k in (-0.4, -0.05, 0.0, 0.1, 0.3):
+        # w = theta/2 [1 + rho phi k + sqrt((phi k + rho)^2 + 1 - rho^2)] by hand
+        want = theta / 2 * (1 + rho * ph * k + math.sqrt((ph * k + rho) ** 2 + 1 - rho * rho))
+        assert svi.ssvi_w(k, theta, rho, ph) == pytest.approx(want, abs=1e-15)
+        assert float(svi.w(raw, k)) == pytest.approx(want, abs=1e-14)
+
+
+def test_ssvi_butterfly_conditions() -> None:
+    # theta phi (1 + |rho|) = 0.04 x 10 x 1.5 = 0.6 < 4; theta phi^2 (1 + |rho|) = 0.04 x 100 x 1.5 = 6 > 4
+    ok, why = svi.ssvi_conditions(0.04, -0.5, 10.0)
+    assert ok is False and "theta phi^2" in (why or "")
+    assert svi.ssvi_conditions(0.04, -0.5, 5.0)[0]  # 0.3 and 1.5: both hold
+
+
+def _ssvi_points(theta, rho, ph, t, ks):
+    return [svi.Point(k, math.sqrt(svi.ssvi_w(k, theta, rho, ph) / t)) for k in ks]
+
+
+def test_ssvi_surface_fit_recovers_parameters() -> None:
+    rho, eta, gam = -0.65, 0.9, 0.4
+    ts = (14 / 365, 42 / 365, 77 / 365)
+    thetas = (0.0006, 0.0017, 0.0031)
+    ks = [-0.12 + 0.02 * i for i in range(13)]  # 0 is on the grid: theta read from the data exactly
+    slices = [
+        (t, _ssvi_points(th, rho, svi.phi(th, eta, gam), t, ks)) for t, th in zip(ts, thetas, strict=True)
+    ]
+    got = svi.fit_ssvi(slices)
+    assert got.reason is None and got.rho == pytest.approx(rho, abs=1e-4)
+    assert got.eta == pytest.approx(eta, rel=1e-3) and got.gamma == pytest.approx(gam, abs=2e-3)
+    assert [f.params is not None for f in got.slices] == [True, True, True]
+    assert got.rmse_vol is not None and got.rmse_vol < 1e-5
+
+
+def test_ssvi_surface_with_falling_atm_variance_is_unknown() -> None:
+    ks = [-0.1 + 0.02 * i for i in range(11)]
+    slices = [
+        (0.05, _ssvi_points(0.002, -0.5, 5.0, 0.05, ks)),
+        (0.1, _ssvi_points(0.0015, -0.5, 5.0, 0.1, ks)),
+    ]
+    got = svi.fit_ssvi(slices)
+    assert got.rho is None and "calendar" in (got.reason or "")

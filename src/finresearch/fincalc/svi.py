@@ -21,6 +21,7 @@ smile's own scale around m, then refines the worst cell. Pure functions, no I/O;
 
 from __future__ import annotations
 
+import itertools
 import math
 from dataclasses import dataclass
 
@@ -363,18 +364,131 @@ def fit(points: list[Point], t: float) -> Fit:
         flags.append("on the constraint boundary")
     if min(abs(x[1] - l_lo), abs(x[1] - l_hi)) < 1e-6 or min(abs(m - m_lo), abs(m - m_hi)) < 1e-9:
         flags.append("on the (m, s) box")
+    return assess(p, pts, t, "band" if banded else "equal", tuple(flags))
+
+
+def assess(p: Raw, pts: list[Point], t: float, weights: str = "equal", flags: tuple[str, ...] = ()) -> Fit:
+    """A calibrated slice against its points: the IV errors, the static check and the refusal rules."""
     with np.errstate(invalid="ignore"):
-        fitted = np.sqrt(np.maximum(np.asarray(w(p, np.asarray(ks))), 0.0) / t)
+        fitted = np.sqrt(np.maximum(np.asarray(w(p, np.asarray([q.k for q in pts]))), 0.0) / t)
     errs = fitted - np.array([q.sigma for q in pts])
     rmse, mx = float(np.sqrt(np.mean(errs * errs))), float(np.max(np.abs(errs)))
     if rmse > TARGET_RMSE:
-        flags.append(f"RMSE {rmse * 100:.2f} vol points is above the {TARGET_RMSE * 100:g}-point target")
+        flags = (*flags, f"RMSE {rmse * 100:.2f} vol points is above the {TARGET_RMSE * 100:g}-point target")
     chk = check(p)
-    out = Fit(p, t, len(pts), rmse, mx, "band" if banded else "equal", tuple(flags), None, p, chk)
     if not chk.ok:
-        return Fit(None, t, len(pts), rmse, mx, out.weights, out.flags,
+        return Fit(None, t, len(pts), rmse, mx, weights, flags,
                    f"the fitted smile is not arbitrage-free: {chk.reason}", p, chk)  # fmt: skip
     if rmse > MAX_RMSE:
-        return Fit(None, t, len(pts), rmse, mx, out.weights, out.flags,
+        return Fit(None, t, len(pts), rmse, mx, weights, flags,
                    f"RMSE {rmse * 100:.2f} vol points is above {MAX_RMSE * 100:g}", p, chk)  # fmt: skip
-    return out
+    return Fit(p, t, len(pts), rmse, mx, weights, flags, None, p, chk)
+
+
+# --------------------------------------------------------------------------- SSVI (GJ 2014 section 4), sparse chains
+# w(k, theta) = theta/2 [1 + rho phi k + sqrt((phi k + rho)^2 + 1 - rho^2)], theta = the ATM total variance of each
+# expiry (read from the data), with one (rho, eta, gamma) for the whole surface and GJ's power law (4.5)
+# phi(theta) = eta / (theta^gamma (1 + theta)^(1 - gamma)): free of static arbitrage when theta rises with T,
+# 0 < gamma < 1 and eta (1 + |rho|) <= 2 (GJ Remark 4.4). Theorem 4.2's conditions are checked per slice as well.
+GAMMA_RANGE = (0.01, 0.99)
+GAMMA_ONE_SLICE = 0.5  # gamma is not identified by one slice: fixed (GJ Example 4.2's square-root case)
+
+
+def phi(theta: float, eta: float, gamma: float) -> float:
+    return eta / (theta**gamma * (1 + theta) ** (1 - gamma))
+
+
+def ssvi_w(k: float, theta: float, rho: float, ph: float) -> float:
+    return theta / 2 * (1 + rho * ph * k + math.sqrt((ph * k + rho) ** 2 + 1 - rho * rho))
+
+
+def ssvi_to_raw(theta: float, rho: float, ph: float) -> Raw:
+    """An SSVI slice is the raw slice (theta/2 (1 - rho^2), theta phi / 2, -rho/phi, rho, sqrt(1 - rho^2)/phi)."""
+    return Raw(theta / 2 * (1 - rho * rho), theta * ph / 2, -rho / ph, rho, math.sqrt(1 - rho * rho) / ph)
+
+
+def ssvi_conditions(theta: float, rho: float, ph: float) -> tuple[bool, str | None]:
+    """GJ 2014 Theorem 4.2: theta phi (1 + |rho|) < 4 and theta phi^2 (1 + |rho|) <= 4 rule out butterfly arbitrage."""
+    x1, x2 = theta * ph * (1 + abs(rho)), theta * ph * ph * (1 + abs(rho))
+    if not x1 < 4:
+        return False, f"theta phi (1 + |rho|) = {x1:.4g} is not below 4"
+    if not x2 <= 4:
+        return False, f"theta phi^2 (1 + |rho|) = {x2:.4g} is above 4"
+    return True, None
+
+
+def atm_variance(points: list[Point], t: float) -> float | None:
+    """w(0): the point at k = 0, else linear in k between the two points that bracket it; None without a bracket."""
+    pts = sorted((p.k, p.sigma * p.sigma * t) for p in points)
+    for (k1, w1), (k2, w2) in itertools.pairwise(pts):
+        if k1 == 0:
+            return w1
+        if k1 < 0 < k2:
+            return w1 + (w2 - w1) * (0 - k1) / (k2 - k1)
+        if k2 == 0:
+            return w2
+    return None
+
+
+@dataclass(frozen=True)
+class SsviFit:
+    rho: float | None
+    eta: float | None
+    gamma: float | None
+    thetas: tuple[float, ...] = ()
+    slices: tuple[Fit, ...] = ()  # each expiry as a raw slice (params None when that slice is refused)
+    rmse_vol: float | None = None  # over every point of every slice
+    flags: tuple[str, ...] = ()
+    reason: str | None = None
+
+
+def fit_ssvi(slices: list[tuple[float, list[Point]]]) -> SsviFit:
+    """One SSVI surface through several expiries of the same underlying on the same clock (sorted by T); unknown with
+    the reason when an expiry has no ATM variance or the ATM variances do not rise with T (calendar arbitrage)."""
+    data = sorted(((t, [p for p in pts if math.isfinite(p.k) and p.sigma > 0]) for t, pts in slices),
+                  key=lambda x: x[0])  # fmt: skip
+    if not data or any(not (t > 0) or len(pts) < 3 for t, pts in data):
+        return SsviFit(None, None, None, reason="every expiry needs T > 0 and at least 3 points")
+    thetas = []
+    for t, pts in data:
+        th = atm_variance(pts, t)
+        if th is None or th <= 0:
+            return SsviFit(
+                None, None, None, reason=f"no ATM variance at T = {t:.4f} (no points either side of k = 0)"
+            )
+        thetas.append(th)
+    if any(b <= a for a, b in itertools.pairwise(thetas)):
+        return SsviFit(None, None, None, tuple(thetas), reason="calendar arbitrage: ATM total variance does not rise "
+                       "with expiry")  # fmt: skip
+    one = len(data) == 1
+    rows = [(th, p.k, p.sigma * p.sigma * t, 1 / (2 * p.sigma * t) ** 2)
+            for (t, pts), th in zip(data, thetas, strict=True) for p in pts]  # fmt: skip
+
+    def obj(x: list[float]) -> float:
+        rho, eta = x[0], x[1]
+        gam = GAMMA_ONE_SLICE if one else x[2]
+        if not (abs(rho) <= RHO_MAX and eta > 0 and eta * (1 + abs(rho)) <= LEE_MAX
+                and GAMMA_RANGE[0] <= gam <= GAMMA_RANGE[1]):  # fmt: skip
+            return math.inf  # rejected, not projected
+        return sum(wt * (ssvi_w(k, th, rho, phi(th, eta, gam)) - wv) ** 2 for th, k, wv, wt in rows)
+
+    grid0 = [[r, e] + ([] if one else [g0]) for r in (-0.8, -0.4, 0.0, 0.4) for e in (0.2, 0.6, 1.0)
+             for g0 in (0.25, 0.5, 0.75)]  # fmt: skip
+    x, val = nelder_mead(obj, min(grid0, key=obj))
+    if not math.isfinite(val):
+        return SsviFit(None, None, None, tuple(thetas), reason="no admissible SSVI parameters")
+    rho, eta = x[0], x[1]
+    gam = GAMMA_ONE_SLICE if one else x[2]
+    flags = ["gamma fixed at 0.5 (one expiry)"] if one else []
+    if eta * (1 + abs(rho)) > LEE_MAX - 1e-9:
+        flags.append("on the eta (1 + |rho|) <= 2 bound")
+    fits = []
+    for (t, pts), th in zip(data, thetas, strict=True):
+        ph = phi(th, eta, gam)
+        ok, why = ssvi_conditions(th, rho, ph)
+        f = assess(ssvi_to_raw(th, rho, ph), pts, t)
+        fits.append(f if ok else Fit(None, t, f.n, f.rmse_vol, f.max_err_vol, reason=f"SSVI condition: {why}",
+                                     raw=f.raw, check=f.check))  # fmt: skip
+    errs = [f.rmse_vol**2 * f.n for f in fits if f.rmse_vol is not None]
+    rmse = math.sqrt(sum(errs) / sum(f.n for f in fits))
+    return SsviFit(rho, eta, gam, tuple(thetas), tuple(fits), rmse, tuple(flags))
