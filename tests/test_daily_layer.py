@@ -299,7 +299,13 @@ def test_daily_pass_values_and_every_metric(pf):
     assert v["advance_tax_due_inr"] == 0 and "below the ₹10,000 threshold" in m["advance_tax_due_inr"][1]
     # 34,900 / 35,000 - 1 with no new money, from the reconstructed history the pass stored (#239), not the snapshots
     assert v["drawdown_pct"] == D("-0.29") and "reconstructed from transactions" in m["drawdown_pct"][1]
-    assert r2["close"]["history"] == {"stored": True, "days": 2, "checked": 2, "differ": 0}
+    assert r2["close"]["history"] == {
+        "stored": True,
+        "days": 2,
+        "checked": 2,
+        "differ": 0,  # #399: the VaR log's reason
+        "var": {"logged": False, "reason": "needs 250 daily returns; have 1"},
+    }
     for k, x in m.items():
         assert x[1], k  # every reading says where it came from
 

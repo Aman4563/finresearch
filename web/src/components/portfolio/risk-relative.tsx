@@ -17,6 +17,8 @@ export type Episode = { peak: string; trough: string; depth: number; recovered: 
 export type VarBacktest = {
   level: number; window: number; how: string; reason?: string; days?: number; exceptions?: number; expected?: number;
   p_uc?: number; p_ind?: number; p_cc?: number; verdict?: "consistent" | "too_many" | "too_few" | "clustered"; note?: string;
+  // the logged VaR's backtest (#399): forecasts as they stood each evening, resolved by the monitor
+  logged?: number; resolved?: number; trigger?: boolean;
 };
 export type Relative = { active_return?: Metric; information_ratio?: Metric; up_capture?: Metric; down_capture?: Metric };
 
@@ -72,17 +74,18 @@ export function DrawdownTable({ items }: { items?: Episode[] }) {
   );
 }
 
-export function VarBacktestLine({ b }: { b?: VarBacktest }) {
+export function VarBacktestLine({ b, title = "VaR backtest" }: { b?: VarBacktest; title?: string }) {
   if (!b) return null;
-  if (b.reason) return <p className="mt-2 text-[11px] text-muted">VaR backtest: {b.reason}.</p>;
+  if (b.reason) return <p className="mt-2 text-[11px] text-muted">{title}: {b.reason}.</p>;
   const ok = b.verdict === "consistent";
   return (
     <div className="mt-2 rounded-lg border border-border px-3 py-2 text-xs">
       <p className="flex items-center gap-1.5 font-medium">
         {ok ? <CheckCircle2 className="size-3.5 text-gain" /> : <TriangleAlert className="size-3.5 text-warn" />}
-        VaR backtest: {b.exceptions} of {b.days} days lost more than the 1-day VaR (expected {b.expected?.toFixed(1)})
+        {title}: {b.exceptions} of {b.days} days lost more than the 1-day VaR (expected {b.expected?.toFixed(1)})
       </p>
       <p className="mt-0.5 text-muted">{b.note} Kupiec p = {b.p_uc?.toFixed(3)}, conditional coverage p = {b.p_cc?.toFixed(3)}. Method: {b.how}.</p>
+      {b.trigger && <p className="mt-0.5 text-warn">Conditional coverage rejected (p &lt; 0.05): the trigger for a filtered-historical VaR has fired.</p>}
     </div>
   );
 }

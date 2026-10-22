@@ -15,8 +15,10 @@ processes never run it twice; a failed pass is retried up to MAX_ATTEMPTS times,
 
 Politeness: quotes share one NSE session at the client's 2 requests a second; signals and events are capped at
 MAX_INSTRUMENTS per pass with `pf_spacing_s` between instruments; AMFI's NAV and TER files are one download each.
-Signals are computed with ctx log=0: a scheduled check never writes the forecast ledger (only a viewed signal does,
-per signals.ledger's logging rules). Personal data stays in the local database; nothing here calls a model.
+Signals are computed with ctx log=0: a scheduled signal check never writes the forecast ledger (only a viewed signal
+does, per signals.ledger's logging rules). The one ledger write here is the portfolio's own 1-day 95 % VaR
+(portfolio.var_ledger, #399), logged by the history pass on the evening of the history's last day, before the
+session it forecasts opens. Personal data stays in the local database; nothing here calls a model.
 """
 
 from __future__ import annotations
@@ -172,7 +174,7 @@ async def stale_history_step(deps: Any, now: datetime) -> dict[str, Any] | None:
     if not claim(slot, now):
         return None
     try:
-        res = await history_pass(deps, to_ist(now).date())
+        res = await history_pass(deps, to_ist(now).date(), now=now)
     except Exception as e:
         log.warning("portfolio value history rebuild failed; retried later", exc_info=True)
         _finish(slot, {}, now, f"{type(e).__name__}: {e}")
@@ -191,7 +193,7 @@ async def daily_pass(deps: Any, now: datetime, *, full: bool = True) -> dict[str
     val = await valuation_pass(deps, now, today)
     res["valuation"] = {k: val.get(k) for k in ("value", "complete", "holdings", "unpriced")}
     try:
-        res["history"] = await history_pass(deps, today)
+        res["history"] = await history_pass(deps, today, now=now)
     except Exception as e:  # the value history never fails the pass; the next one rebuilds it
         log.warning("portfolio value history failed", exc_info=True)
         res["history"] = {"error": f"{type(e).__name__}: {e}"[:300]}
@@ -239,9 +241,10 @@ async def live_history(holdings: list[Any], today: date) -> Any:
                            schemes=schemes, today=today, isin_map=isin_map, benchmark=False)  # fmt: skip
 
 
-async def history_pass(deps: Any, today: date) -> dict[str, Any]:
+async def history_pass(deps: Any, today: date, *, now: datetime | None = None) -> dict[str, Any]:
     """Rebuild the canonical value history (portfolio.series, #239), store it, and reconcile the day's snapshots
-    against it. Skipped (with the reason) when the deps have no builder."""
+    against it. Skipped (with the reason) when the deps have no builder. With `now`, also log the day's 1-day 95 %
+    VaR to the forecast ledger (portfolio.var_ledger, #399: only after the close of the history's last day)."""
     from finresearch.portfolio import series
     from finresearch.portfolio.history import fingerprint, holdings_from
     from finresearch.portfolio.report import load
@@ -259,8 +262,19 @@ async def history_pass(deps: Any, today: date) -> dict[str, Any]:
                   .on_conflict_do_nothing(index_elements=["slot"]))  # fmt: skip
         if not series.save(s, hist, fp, today):
             return {"stored": False, "reason": hist.reason or "fewer than two days of prices"}
-        rec = series.reconcile_db(s, series.from_history(hist, fp, today), today)
-    return {"stored": True, "days": len(hist.days), "checked": rec["checked"], "differ": len(rec["differ"])}
+        ser = series.from_history(hist, fp, today)
+        rec = series.reconcile_db(s, ser, today)
+    out = {"stored": True, "days": len(hist.days), "checked": rec["checked"], "differ": len(rec["differ"])}
+    if now is not None:
+        from finresearch.portfolio.var_ledger import log_var
+
+        try:  # the VaR log never fails the pass
+            with session_scope() as s:
+                out["var"] = log_var(s, ser, now)
+        except Exception as e:
+            log.warning("portfolio VaR ledger entry failed", exc_info=True)
+            out["var"] = {"logged": False, "reason": f"{type(e).__name__}: {e}"[:300]}
+    return out
 
 
 def _detached_holdings() -> list[Any]:

@@ -623,6 +623,8 @@ def test_api_routes_end_to_end(api):
     assert r["risk_free"]["fallback"] and "FBIL" in r["risk_free"]["label"]
     assert r["realised"]["volatility"]["reason"]
     assert {s["id"] for s in r["stress"]} >= {"covid2020", "gfc2008", "beta20"}
+    vl = r["realised"]["var_ledger"]  # #399: the logged VaR's backtest, read only
+    assert vl["resolved"] == 0 and vl["reason"].startswith("needs 250 logged days") and "verdict" not in vl
     r2 = api.get("/api/portfolio/analytics/risk?rf=7").json()
     assert r2["risk_free"]["rate"] == pytest.approx(0.07) and r2["risk_free"]["user_set"]
     c = api.get("/api/portfolio/analytics/concentration").json()

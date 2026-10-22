@@ -244,7 +244,7 @@ def queue(session: Session, alert: Alert, channels: list[str], priority: str, *,
 
 
 def forward_monitor_alerts(session: Session, now: datetime) -> int:
-    """Queue the monitor's own alerts (not rule alerts) at the chosen level for the forward channels."""
+    """Queue the monitor's own alerts (not rule or risk alerts) at the chosen level for the forward channels."""
     row = session.get(NotificationSetting, "general")
     general = load(session, "general")
     if general.forward_level == "off" or not general.forward_channels or row is None:
@@ -254,7 +254,8 @@ def forward_monitor_alerts(session: Session, now: datetime) -> int:
     rows = session.scalars(select(Alert).where(Alert.id > cursor).order_by(Alert.id).limit(100)).all()
     n = 0
     for a in rows:
-        if a.kind != "rule_alert" and a.level in levels:
+        # rule alerts and P4.5's risk alerts (alerts.risk) route themselves: never pushed a second time here
+        if a.kind not in ("rule_alert", "risk_alert") and a.level in levels:
             path = (a.data or {}).get("path") or (f"/monitor/{a.watch_id}" if a.watch_id else "/monitor")
             n += bool(queue(session, a, general.forward_channels, "high" if a.level == "action" else "default",
                             title=f"FinResearch · {a.kind.replace('_', ' ')}", message=a.message, path=path, now=now))  # fmt: skip
