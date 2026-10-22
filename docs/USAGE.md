@@ -175,6 +175,9 @@ uv run finresearch fno review --month 2026-10      # the month's post-trade revi
 uv run finresearch fno risk-replay --from 2024-01-01 --json   # #398: replay the IV30-shock, cumulative-shock and gap
                                                    # alerts on the stored series: firings, false alarms a year, the
                                                    # scenario days (reads only; public market data)
+uv run finresearch fno vol-race --json              # #390: the pre-registered volatility forecast race on the stored
+                                                   # 2022-26 NIFTY window (HAR-IV vs the implied-variance benchmark,
+                                                   # QLIKE, DM-HLN + Holm, 90 % MCS; refused if the hash moved; reads only)
 uv run finresearch vault backfill --from 2018-01-01 --to 2021-12-31 --max-days 400   # the sealed vault (#365), below
 uv run finresearch vault status                    # vault load manifest: days by year and status (no market data)
 uv run finresearch vault engine-hash               # the engine hash for the vault pin (PREREG.md §2.7)

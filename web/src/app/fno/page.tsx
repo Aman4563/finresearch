@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { InteractivePayoff, OiButterfly } from "@/components/fno/charts";
 import { EventStrip } from "@/components/fno/events";
+import { EventVolPanel } from "@/components/fno/event-vol";
 import { Fig } from "@/components/fno/fit";
 import { PaperActions } from "@/components/fno/paper-actions";
 import { PlanForLegs, SuggestSetups } from "@/components/fno/plan-panels";
@@ -352,6 +353,7 @@ export default function Fno() {
             <IvTile symbol={chain.symbol} />
           </div>
           <EventStrip symbol={chain.symbol} />
+          <EventVolPanel key={`event-vol-${chain.symbol}`} symbol={chain.symbol} />
           <MarketContextPanel key={`${chain.symbol}-${chain.expiry}`} symbol={chain.symbol} expiry={chain.expiry} />
           <DirectionPanel key={`direction-${chain.symbol}`} symbol={chain.symbol} />
 

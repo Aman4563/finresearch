@@ -12,7 +12,7 @@ const ROUTES = {
   "GET /api/fno/NIFTY/chain": F.WIDE_CHAIN, "GET /api/fno/NIFTY/context": F.CONTEXT, "GET /api/fno/NIFTY/suggest": F.SUGGEST,
   "POST /api/fno/strategy": F.RESULT, "POST /api/fno/plan": F.PAPER, "POST /api/signals/fno/NIFTY": F.FNO_SIGNAL,
 };
-const OPTIONAL = ["GET /api/market/status", "GET /api/fno/positions", "GET /api/fno/paper", "GET /api/fno/NIFTY/events", "GET /api/fno/NIFTY/iv",
+const OPTIONAL = ["GET /api/market/status", "GET /api/fno/positions", "GET /api/fno/paper", "GET /api/fno/NIFTY/events", "GET /api/fno/NIFTY/event-vol", "GET /api/fno/NIFTY/iv",
   "GET /api/fno/direction/NIFTY"];
 
 /** True when `a` comes before `b` in the document. */
