@@ -259,3 +259,33 @@ def test_opportunity_cost_after_tax_by_hand():
     assert st["index_after_tax"] == pytest.approx(100_000 - 100_000 * 0.20 * 1.04)
     unknown = inference.opportunity_cost(50_000.0, 1_000_000.0, None, None, Decimal("0.30"), trades=40)
     assert unknown["excess_after_tax"] is None and unknown["reason"]
+
+
+# --------------------------------------------------------------------------- DM: rectangular HAC with h - 1 lags
+def test_rectangular_long_run_variance_by_hand():
+    from finresearch.direction import metrics as dm
+
+    # d = 1..5: e = -2, -1, 0, 1, 2; gamma_0 = 10/5 = 2, gamma_1 = (2 + 0 + 0 + 2)/5 = 0.8
+    # rectangular, 1 lag: (2 + 2 x 0.8)/5 = 0.72; Bartlett (registered), 1 lag: (2 + 2 x 0.5 x 0.8)/5 = 0.56
+    d = [1.0, 2.0, 3.0, 4.0, 5.0]
+    assert dm.newey_west_var(d, 1, kernel="rectangular") == pytest.approx(0.72)
+    assert dm.newey_west_var(d, 1) == pytest.approx(0.56)
+
+
+def test_dm_hln_rectangular_equals_the_registered_test_at_h_1():
+    import numpy as np
+
+    from finresearch.direction import metrics as dm
+
+    rng = np.random.default_rng(5)
+    a, b = list(rng.random(60)), list(rng.random(60))
+    assert dm.diebold_mariano_hln(a, b, 1) == {**dm.diebold_mariano(a, b, 1, 0), "kernel": "rectangular"}
+
+
+def test_dm_hln_rectangular_variance_not_positive_is_unknown():
+    from finresearch.direction import metrics as dm
+
+    # an alternating differential has gamma_1 = -(n-1)/n gamma_0: 1 + 2 rho_1 < 0 with h = 2 -> unknown, never a p
+    d = [1.0 if i % 2 else -1.0 for i in range(40)]
+    r = dm.diebold_mariano_hln([x + 0.1 for x in d], [0.0] * 40, 2)
+    assert r["dm"] is None and r["p"] is None

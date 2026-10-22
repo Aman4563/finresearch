@@ -10,6 +10,8 @@
 - Diebold-Mariano (1995) on d_t = loss_ref,t − loss_model,t (positive = the model is better): DM = d̄ / √(V/n) with the
   Newey-West (Bartlett) long-run variance V over `lag` autocovariances; the Harvey, Leybourne & Newbold (1997)
   correction multiplies it by √((n + 1 − 2h + h(h − 1)/n) / n); the one-sided p-value is P(t_{n−1} > DM).
+  `diebold_mariano_hln` (#381, not used by any registered test) puts the same factor on the rectangular variance
+  with h − 1 lags that HLN derived it for.
 - Holm (1979) step-down adjustment of a family of p-values.
 """
 
@@ -91,14 +93,18 @@ def calibration_fit(p: Sequence[float], o: Sequence[int], iters: int = 100) -> t
     return float(w[0]), float(w[1])
 
 
-def newey_west_var(d: Sequence[float], lag: int) -> float:
-    """Long-run variance of d (Bartlett weights 1 − j/(lag + 1)), divided by n: the variance of its mean."""
+def newey_west_var(d: Sequence[float], lag: int, kernel: str = "bartlett") -> float:
+    """Long-run variance of d, divided by n: the variance of its mean. `bartlett` (registered): weights 1 − j/(lag + 1);
+    `rectangular` (#381): weight 1 for every lag up to `lag`, which can be negative."""
+    if kernel not in ("bartlett", "rectangular"):
+        raise ValueError(f"unknown kernel {kernel!r}")
     x = np.asarray(d, dtype=float)
     n = len(x)
     e = x - x.mean()
     v = float(e @ e) / n
     for j in range(1, min(lag, n - 1) + 1):
-        v += 2 * (1 - j / (lag + 1)) * float(e[j:] @ e[:-j]) / n
+        w = 1 - j / (lag + 1) if kernel == "bartlett" else 1.0
+        v += 2 * w * float(e[j:] @ e[:-j]) / n
     return v / n
 
 
@@ -143,20 +149,30 @@ def _cf(a: float, b: float, x: float) -> float:
     return h
 
 
-def diebold_mariano(loss_ref: Sequence[float], loss_model: Sequence[float], h: int, lag: int
-                    ) -> dict[str, float | int | None]:  # fmt: skip
+def diebold_mariano(loss_ref: Sequence[float], loss_model: Sequence[float], h: int, lag: int,
+                    kernel: str = "bartlett") -> dict[str, float | int | None]:  # fmt: skip
     """One-sided test that the model's expected loss is below the reference's (module docstring)."""
     d = [a - b for a, b in zip(loss_ref, loss_model, strict=True)]
     n = len(d)
     if n < 10:
         return {"n": n, "mean_diff": mean(d), "dm": None, "p": None, "lag": lag}
-    v = newey_west_var(d, lag)
+    v = newey_west_var(d, lag, kernel)
     if v <= 0:
         return {"n": n, "mean_diff": mean(d), "dm": None, "p": None, "lag": lag}
     dm = (sum(d) / n) / math.sqrt(v)
     corr = (n + 1 - 2 * h + h * (h - 1) / n) / n
     dm_hln = dm * math.sqrt(corr) if corr > 0 else dm
     return {"n": n, "mean_diff": sum(d) / n, "dm": dm_hln, "p": _t_sf(dm_hln, n - 1), "lag": lag}
+
+
+def diebold_mariano_hln(loss_ref: Sequence[float], loss_model: Sequence[float], h: int
+                        ) -> dict[str, float | int | str | None]:  # fmt: skip
+    """The HLN-corrected DM test on the variance HLN derived their factor for (#381, P2.6): the rectangular
+    long-run variance with h − 1 lags, n⁻¹(γ̂₀ + 2 Σ_{k=1}^{h−1} γ̂_k) (Diebold & Mariano 1995; Harvey, Leybourne &
+    Newbold 1997). The registered `diebold_mariano` mixes Bartlett weights over max(h − 1, 5) lags with the same
+    factor, which over-rejects a true null for overlapping h (evals/experiments/fno_backtest/ADDENDUM.md (c)).
+    A variance that is not positive gives dm = p = None (unknown), never a p-value."""
+    return {**diebold_mariano(loss_ref, loss_model, h, max(h - 1, 0), "rectangular"), "kernel": "rectangular"}
 
 
 def holm(pvals: dict[str, float | None]) -> dict[str, float | None]:
