@@ -11,6 +11,7 @@ from statistics import NormalDist
 import pytest
 
 from finresearch.fincalc import book_scenarios as bs
+from finresearch.fincalc.beta import BetaEstimate
 from finresearch.fincalc.dates import IST
 
 N = NormalDist()
@@ -48,6 +49,11 @@ def test_parity_forward():
 def _roll(days: float) -> float:
     """The forward rolled `days` closer to expiry at the same spot: F(T') = F e^{-r (T - T')}, r = 6.5 %."""
     return math.exp(-0.065 * days / 365)
+
+
+def _beta(u: str, beta: float, lo: float | None = None, hi: float | None = None) -> BetaEstimate:
+    """A registered estimate's shape (fincalc.beta); lo = hi = beta unless a band is given."""
+    return BetaEstimate(u, beta, 0.0, beta if lo is None else lo, beta if hi is None else hi)
 
 
 def _mkt(**kw):
@@ -146,7 +152,7 @@ def test_nifty_equivalent_delta_needs_every_beta():
     ex = bs.exposures(legs, _mkt(forwards=fw))
     assert ex.complete and ex.total.rs_delta == pytest.approx(52000 * 35)
     assert ex.nifty_delta is None and any("beta" in r for r in ex.nifty_delta_reasons)
-    ex = bs.exposures(legs, _mkt(forwards=fw, betas={"BANKNIFTY": 1.2}))
+    ex = bs.exposures(legs, _mkt(forwards=fw, betas={"BANKNIFTY": _beta("BANKNIFTY", 1.2)}))
     assert ex.nifty_delta == pytest.approx(1.2 * 52000 * 35 / 23900)
 
 
@@ -190,7 +196,7 @@ def test_other_underlyings_move_by_their_beta_and_need_it():
     legs = [bs.BookLeg("BANKNIFTY", EXP, "future", 0, 35, None, None)]
     fw = {("BANKNIFTY", EXP): 52000.0}
     at = bs.horizon_clock(NOW, 1)
-    cell = bs.revalue(legs, _mkt(forwards=fw, betas={"BANKNIFTY": 1.2}), -0.05, 0.0, at)
+    cell = bs.revalue(legs, _mkt(forwards=fw, betas={"BANKNIFTY": _beta("BANKNIFTY", 1.2)}), -0.05, 0.0, at)
     assert cell.pnl == pytest.approx(35 * (52000 * (1 - 1.2 * 0.05) * _roll(1) - 52000))
     cell = bs.revalue(legs, _mkt(forwards=fw), -0.05, 0.0, at)
     assert cell.pnl is None and any("beta" in r for r in cell.reasons)
@@ -263,7 +269,9 @@ def test_a_replay_applies_the_day_s_move_and_iv30_change_without_the_response_ru
 
 def test_a_replay_marks_beta_mapped_underlyings():
     legs = [bs.BookLeg("BANKNIFTY", EXP, "future", 0, 35, None, None)]
-    rs = bs.replays(legs, _mkt(forwards={("BANKNIFTY", EXP): 52000.0}, betas={"BANKNIFTY": 1.2}))
+    rs = bs.replays(
+        legs, _mkt(forwards={("BANKNIFTY", EXP): 52000.0}, betas={"BANKNIFTY": _beta("BANKNIFTY", 1.2)})
+    )
     assert all(any("BANKNIFTY" in n and "beta" in n for n in r.notes) for r in rs)
     assert rs[0].cell.pnl == pytest.approx(35 * (52000 * (1 + 1.2 * rs[0].replay.move) * _roll(1) - 52000))
 
@@ -295,3 +303,73 @@ def test_forward_lookup_ignores_case_and_a_price_of_unknown_kind_is_flagged_as_s
     st = bs.price_legs([bs.BookLeg("nifty", EXP, "call", 24500, 75, mark, None)], _mkt())[0]
     assert st.reason is None and st.iv == pytest.approx(0.13, abs=1e-6)
     assert st.flags and "unknown kind" in st.flags[0] and "LTP" not in st.flags[0]
+
+
+# --------------------------------------------------------------------------- the beta band (#394, #395)
+BN = {("BANKNIFTY", EXP): 52000.0}
+AT1 = bs.horizon_clock(NOW, 1)
+
+
+def _fut(u: str, q: int, f: float, m: float, beta: float) -> float:
+    """A future's P&L, one session later, when its underlying moves beta x m (independent of the engine)."""
+    return q * (f * (1 + beta * m) * _roll(1) - f)
+
+
+def test_a_loss_on_a_fall_is_taken_at_the_band_s_upper_end():
+    legs = [bs.BookLeg("BANKNIFTY", EXP, "future", 0, 35, None, None)]
+    cell = bs.revalue(
+        legs, _mkt(forwards=BN, betas={"BANKNIFTY": _beta("BANKNIFTY", 1.15, 1.0, 1.3)}), -0.05, 0.0, AT1
+    )
+    assert cell.pnl == pytest.approx(_fut("BANKNIFTY", 35, 52000, -0.05, 1.3))
+    assert cell.ends == (("BANKNIFTY", "hi"),)
+
+
+def test_a_gain_on_a_rise_is_taken_at_the_band_s_lower_end():
+    legs = [bs.BookLeg("BANKNIFTY", EXP, "future", 0, 35, None, None)]
+    cell = bs.revalue(
+        legs, _mkt(forwards=BN, betas={"BANKNIFTY": _beta("BANKNIFTY", 1.05, 0.8, 1.3)}), 0.05, 0.0, AT1
+    )
+    assert cell.pnl == pytest.approx(_fut("BANKNIFTY", 35, 52000, 0.05, 0.8))
+    assert cell.ends == (("BANKNIFTY", "lo"),)
+
+
+def test_each_underlying_takes_its_own_worse_end_and_legs_of_one_underlying_move_together():
+    fw = {**BN, ("RELIANCE", EXP): 3000.0, ("BANKNIFTY", date(2026, 12, 31)): 52500.0}
+    betas = {"BANKNIFTY": _beta("BANKNIFTY", 1.15, 1.0, 1.3), "RELIANCE": _beta("RELIANCE", 0.9, 0.6, 1.2)}
+    legs = [
+        bs.BookLeg("BANKNIFTY", EXP, "future", 0, 35, None, None),  # long 35, alone worse at hi on a fall
+        bs.BookLeg("BANKNIFTY", date(2026, 12, 31), "future", 0, -70, None, None),  # net short: worse at lo
+        bs.BookLeg("RELIANCE", EXP, "future", 0, -500, None, None),  # short: its gain is smallest at lo
+    ]
+    cell = bs.revalue(legs, _mkt(forwards=fw, betas=betas), -0.05, 0.0, AT1)
+    dec_roll = math.exp(-0.065 * 1 / 365)  # the December future rolls by the same one day
+    bn_lo = _fut("BANKNIFTY", 35, 52000, -0.05, 1.0) + -70 * (52500 * (1 - 0.05) * dec_roll - 52500)
+    assert cell.pnl == pytest.approx(bn_lo + _fut("RELIANCE", -500, 3000, -0.05, 0.6))
+    assert dict(cell.ends) == {"BANKNIFTY": "lo", "RELIANCE": "lo"}
+
+
+def test_an_unknown_estimate_keeps_its_reason():
+    unknown = BetaEstimate(
+        "BANKNIFTY", None, None, None, None, reason="BANKNIFTY: beta to NIFTY unknown, stale"
+    )
+    legs = [bs.BookLeg("BANKNIFTY", EXP, "future", 0, 35, None, None)]
+    cell = bs.revalue(legs, _mkt(forwards=BN, betas={"BANKNIFTY": unknown}), -0.05, 0.0, AT1)
+    assert cell.pnl is None and "BANKNIFTY: beta to NIFTY unknown, stale" in cell.reasons
+    pnl, why = bs.shock_pnls(legs, _mkt(forwards=BN, betas={"BANKNIFTY": unknown}), AT1)
+    assert pnl is None and any("stale" in r for r in why)
+
+
+def test_the_nifty_equivalent_delta_uses_the_point_estimate():
+    legs = [bs.BookLeg("BANKNIFTY", EXP, "future", 0, 35, None, None)]
+    ex = bs.exposures(legs, _mkt(forwards=BN, betas={"BANKNIFTY": _beta("BANKNIFTY", 1.15, 1.0, 1.3)}))
+    assert ex.nifty_delta == pytest.approx(1.15 * 52000 * 35 / 23900)
+
+
+def test_the_shock_terms_use_the_band():
+    legs = [bs.BookLeg("BANKNIFTY", EXP, "future", 0, 35, None, None)]
+    pnl, why = bs.shock_pnls(
+        legs, _mkt(forwards=BN, betas={"BANKNIFTY": _beta("BANKNIFTY", 1.15, 1.0, 1.3)}), AT1
+    )
+    assert why == ()
+    assert pnl[-0.10] == pytest.approx(_fut("BANKNIFTY", 35, 52000, -0.10, 1.3))
+    assert pnl[0.05] == pytest.approx(_fut("BANKNIFTY", 35, 52000, 0.05, 1.0))

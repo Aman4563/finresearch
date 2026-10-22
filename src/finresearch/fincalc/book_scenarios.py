@@ -18,7 +18,9 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Literal
 
+from finresearch.fincalc import beta as fbeta
 from finresearch.fincalc import options as o
+from finresearch.fincalc.beta import BetaEstimate
 from finresearch.fincalc.dates import to_ist, years_to_expiry
 
 Right = Literal["call", "put", "future"]
@@ -68,18 +70,34 @@ class BookLeg:
 
 @dataclass(frozen=True)
 class Market:
-    """The clock (#359), the rate, the forward per (UNDERLYING, expiry) (upper case; None or absent = unknown), betas of each
-    underlying's front-future returns to NIFTY's (NIFTY = 1 always; absent = unknown) and NIFTY's level for the
-    NIFTY-equivalent delta (None = unknown)."""
+    """The clock (#359), the rate, the forward per (UNDERLYING, expiry) (upper case; None or absent = unknown), the
+    registered beta estimate of each underlying's front-future returns to NIFTY's (fincalc.beta; NIFTY = 1 always;
+    absent or with a reason = unknown) and NIFTY's level for the NIFTY-equivalent delta (None = unknown)."""
 
     now: datetime
     rate: float
     forwards: Mapping[tuple[str, date], float | None]
-    betas: Mapping[str, float] = field(default_factory=dict)
+    betas: Mapping[str, BetaEstimate] = field(default_factory=dict)
     nifty: float | None = None
 
+    def estimate(self, underlying: str) -> BetaEstimate | None:
+        return fbeta.NIFTY if underlying.upper() == "NIFTY" else self.betas.get(underlying.upper())
+
     def beta(self, underlying: str) -> float | None:
-        return 1.0 if underlying.upper() == "NIFTY" else self.betas.get(underlying.upper())
+        """The point estimate (the NIFTY-equivalent delta only: a display, no gate)."""
+        e = self.estimate(underlying)
+        return e.beta if e is not None and e.known else None
+
+    def band(self, underlying: str) -> tuple[float, float] | None:
+        """(lo, hi): every P&L under a NIFTY move takes the worse of the two ends (beta_specs.BetaSpec.band)."""
+        e = self.estimate(underlying)
+        return (e.lo, e.hi) if e is not None and e.known else None  # type: ignore[return-value]
+
+    def beta_reason(self, underlying: str) -> str:
+        e = self.estimate(underlying)
+        return (
+            e.reason if e is not None and e.reason else None
+        ) or f"{underlying}: its beta to NIFTY is unknown"
 
 
 @dataclass(frozen=True)
@@ -208,7 +226,7 @@ def exposures(legs: Sequence[BookLeg], m: Market) -> Exposures:
             total += e
             beta = m.beta(u)
             if beta is None:
-                nreasons.append(f"{u}: its beta to NIFTY is unknown")
+                nreasons.append(m.beta_reason(u))
             else:
                 nifty += beta * e.rs_delta
     if m.nifty is None or m.nifty <= 0:
@@ -265,23 +283,22 @@ class Cell:
     reasons: tuple[str, ...] = ()
     floored: int = 0
     intrinsic: int = 0
+    ends: tuple[
+        tuple[str, str], ...
+    ] = ()  # per underlying with a band: which end ("lo" | "hi") was the worse
 
 
 def _intrinsic(right: str, f: float, k: float) -> float:
     return f if right == "future" else max(f - k, 0.0) if right == "call" else max(k - f, 0.0)
 
 
-def _revalue(states: Sequence[LegState], m: Market, move: float, dvol: float, at: datetime, horizon: str,
-             response: bool) -> Cell:  # fmt: skip
-    reasons = [s.reason for s in states if s.reason]
-    reasons += sorted({f"{s.leg.underlying}: its beta to NIFTY is unknown, so its move is unknown"
-                       for s in states if m.beta(s.leg.underlying) is None})  # fmt: skip
-    if reasons:
-        return Cell(move, dvol, horizon, at, None, tuple(reasons))
+def _side(ss: Sequence[LegState], m: Market, mu: float, dvol: float, at: datetime,
+          response: bool) -> tuple[float, int, int]:  # fmt: skip
+    """One underlying's legs moved by mu: (P&L, IVs floored, legs at intrinsic)."""
     pnl, floored, intrinsic = 0.0, 0, 0
-    for s in states:
-        x, mu = s.leg, m.beta(s.leg.underlying) * move  # type: ignore[operator]
-        # the forward is shocked and rolled to the horizon at the same rate: F' = F (1 + move) e^{-r (T - T')}, T' >= 0
+    for s in ss:
+        x = s.leg
+        # the forward is shocked and rolled to the horizon at the same rate: F' = F (1 + mu) e^{-r (T - T')}, T' >= 0
         t1 = years_to_expiry(x.expiry, at)
         f1 = s.forward * (1 + mu) * math.exp(-m.rate * (s.t - max(t1, 0.0)))  # type: ignore[operator]
         if t1 <= 0 or x.right == "future":
@@ -293,13 +310,36 @@ def _revalue(states: Sequence[LegState], m: Market, move: float, dvol: float, at
                 vol, floored = MIN_VOL, floored + 1
             v1 = b76_price(x.right, f1, x.strike, t1, m.rate, vol)
         pnl += (v1 - s.value) * x.qty  # type: ignore[operator]
-    return Cell(move, dvol, horizon, at, pnl, (), floored, intrinsic)
+    return pnl, floored, intrinsic
+
+
+def _revalue(states: Sequence[LegState], m: Market, move: float, dvol: float, at: datetime, horizon: str,
+             response: bool) -> Cell:  # fmt: skip
+    """Per underlying, its legs at the worse of its beta band's two ends (lo x move, hi x move), summed."""
+    reasons = [s.reason for s in states if s.reason]
+    groups: dict[str, list[LegState]] = {}
+    for s in states:
+        groups.setdefault(s.leg.underlying, []).append(s)
+    reasons += sorted({m.beta_reason(u) for u in groups if m.band(u) is None})
+    if reasons:
+        return Cell(move, dvol, horizon, at, None, tuple(reasons))
+    pnl, floored, intrinsic, ends = 0.0, 0, 0, []
+    for u in sorted(groups):
+        lo, hi = m.band(u)  # type: ignore[misc]
+        sides = [(_side(groups[u], m, hi * move, dvol, at, response), "hi")]
+        if lo != hi:
+            sides.append((_side(groups[u], m, lo * move, dvol, at, response), "lo"))
+            ends.append((u, min(sides, key=lambda x: x[0][0])[1]))
+        (p, fl, it), _ = min(sides, key=lambda x: x[0][0])  # a tie keeps the upper end
+        pnl, floored, intrinsic = pnl + p, floored + fl, intrinsic + it
+    return Cell(move, dvol, horizon, at, pnl, (), floored, intrinsic, tuple(ends))
 
 
 def revalue(legs: Sequence[BookLeg], m: Market, move: float, dvol: float, at: datetime, *, response: bool = True,
             horizon: str = "") -> Cell:  # fmt: skip
     """PnL = Σ_j [V_j(F'_j, σ'_j, T_j at `at`) - V_j(now)] x q_j (Black-76 on the forward), F' = F(1 + β_u move),
-    σ' = σ_K + response(β_u move) + dvol (points)."""
+    σ' = σ_K + response(β_u move) + dvol (points); β_u is the worse of the ends of u's band (lo, hi), per
+    underlying (fincalc.beta_specs: the worse of the two ends, not the worst over the interval)."""
     return _revalue(price_legs(legs, m), m, move, dvol, at, horizon, response)
 
 
@@ -382,7 +422,10 @@ def replays(legs: Sequence[BookLeg], m: Market, holidays: frozenset[date] | set[
     mapped = sorted({s.leg.underlying for s in states if s.leg.underlying.upper() != "NIFTY"})
     notes = [
         SKEW_NOTE,
-        *(f"{u} moves by its beta to NIFTY x NIFTY's move, not by its own move that day" for u in mapped),
+        *(
+            f"{u} moves by its beta to NIFTY (the worse end of its band) x NIFTY's move, not by its own move that day"
+            for u in mapped
+        ),
     ]
     return [
         ReplayResult(r, _revalue(states, m, r.move, r.iv30_change, at, "1d", False), tuple(notes))
@@ -435,7 +478,7 @@ def shock_pnls(legs: Sequence[BookLeg], m: Market, at: datetime,
                moves: Sequence[float] | None = None) -> tuple[dict[float, float] | None, tuple[str, ...]]:  # fmt: skip
     """P4.2's common-shock loss L(m) = Σ_j PnL_j(F_j (1 + β_j m), σ_j + dσ(β_j m), T at `at`) for each registered
     NIFTY move (fincalc.tradeplan.SHOCK_MOVES): the full revaluation above with the spot-vol response and no extra vol
-    shift, `at` one session later. (None, reasons) when any leg is unpriced or its beta is unknown, never 0."""
+    shift, `at` one session later, each underlying at the worse end of its beta band. (None, reasons) when any leg is unpriced or its beta is unknown, never 0."""
     from finresearch.fincalc.tradeplan import SHOCK_MOVES
 
     states = price_legs(legs, m)
