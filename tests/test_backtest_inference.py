@@ -85,3 +85,37 @@ def test_dsr_v2_rules_and_trial_count():
     assert cand["dsr"] == pytest.approx(metrics.deflated_sharpe(0.1, 570, 0.0, 3.0, 6, cand["v_used"]))
     assert inference.dsr_v2({**w, "skew": None}, srs, rule="max")["dsr"] is None  # unknown moments: unknown
     assert inference.dsr_v2(w, srs[:1], rule="v_cand")["dsr"] is None  # one trial: V_cand unknown
+
+
+# --------------------------------------------------------------------------- Lo (2002) and the posterior Sharpe
+def test_lo_eta_matches_the_ar1_closed_form():
+    # Lo (2002) eq. 22: AR(1) with rho = 0.2, q = 12 -> sqrt(12) * (1 + 2*0.2/0.8 * (1 - (1 - 0.2^12)/(12*0.8)))^-1/2
+    # = 3.4641 / sqrt(1.447917) = 2.879 ("3.46 in the IID case and 2.88", p. 41); eq. 20 with rho_k = 0.2^k is the same
+    rhos = [0.2**k for k in range(1, 12)]
+    assert inference.lo_eta(rhos, 12) == pytest.approx(2.8789, abs=1e-4)
+    assert inference.lo_eta([0.0] * 11, 12) == pytest.approx(12**0.5)
+    assert inference.lo_eta([-0.6] * 11, 12) is None  # q + 2 sum (q - k) rho_k <= 0: unknown
+
+
+def test_lo_sharpe_uses_the_sample_autocorrelations_up_to_the_lag_cap():
+    # returns 1, -1, 1, -1 ...: rho_1 = -(n-1)/n with gamma_k / gamma_0 over T (Lo eq. A17); with max_lag 1 only rho_1
+    # enters: eta = q / sqrt(q + 2 (q - 1) rho_1)
+    r = [0.01 + (0.01 if i % 2 else -0.01) for i in range(100)]
+    rho1 = -99 / 100
+    q = 2  # q + 2 (q - 1) rho_1 = 0.02 > 0
+    lo = inference.lo_sharpe(r, q=q, max_lag=1)
+    sr = 0.01 / (sum((x - 0.01) ** 2 for x in r) / 99) ** 0.5
+    assert lo["rho"] == [pytest.approx(rho1)]
+    assert lo["eta"] == pytest.approx(q / (q + 2 * (q - 1) * rho1) ** 0.5)
+    assert lo["sharpe"] == pytest.approx(sr * lo["eta"])
+    assert inference.lo_sharpe([0.01], q=252)["sharpe"] is None
+
+
+def test_posterior_sharpe_reproduces_the_issue_example():
+    # SR-hat 1.0 annualised over 2.3 years (T = 580 daily returns), tau = 0.5, Normal returns: se^2 per day
+    # (1 + 0.5 SR_d^2) / T with SR_d = 1/sqrt(252), x 252 = 0.43524 a year -> 1.0 * 0.25 / (0.25 + 0.43524) = 0.3648
+    p = inference.posterior_sharpe(1 / 252**0.5, 580, 0.0, 3.0, tau=0.5)
+    assert p["se2_annual"] == pytest.approx(252 * (1 + 0.5 / 252) / 580)
+    assert p["posterior"] == pytest.approx(0.3648, abs=5e-4)
+    assert p["shrink"] == pytest.approx(0.25 / (0.25 + p["se2_annual"]))
+    assert inference.posterior_sharpe(None, 580, 0.0, 3.0, tau=0.5)["posterior"] is None
