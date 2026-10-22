@@ -2,7 +2,8 @@
 built from the bhavcopy at the close, forecast by the card's models and resolved by the card ledger's exit replay.
 Registered in horserace/specs.py (`Replay`), post-hoc addendum A1 (horserace/addendum.py, ADDENDUM.md) and, for the
 business-time challenger p_rw_bus (#384), addendum A2 (horserace/addendum_a2.py) and, for the Black-76 forward/IV
-challenger p_rn_b76 (#385), addendum A3 (horserace/addendum_a3.py); the item numbers below are the addenda's.
+challenger p_rn_b76 (#385), addendum A3 (horserace/addendum_a3.py) and, for the SVI density challenger p_rn_svi
+(#386), addendum A4 (horserace/addendum_a4.py); the item numbers below are the addenda's.
 
 Two passes. (1) Forecasting, oldest session first, through `backtest.history.Clocked` advanced to the origin close,
 so a card can read nothing later than its origin (LookAheadError otherwise): expiry (A1.4), legs (A1.5), fills
@@ -29,10 +30,12 @@ from finresearch.fincalc import bustime as bt
 from finresearch.fincalc import charges as ch
 from finresearch.fincalc import fno_history as fh
 from finresearch.fincalc import options as o
+from finresearch.fincalc import smile as sm
+from finresearch.fincalc import svi
 from finresearch.fincalc import tradeplan as tp
 from finresearch.fincalc import volatility as vol
 from finresearch.fincalc.dates import ist_datetime
-from finresearch.horserace import addendum, addendum_a2, addendum_a3, prereg, race, specs
+from finresearch.horserace import addendum, addendum_a2, addendum_a3, addendum_a4, prereg, race, specs
 from finresearch.horserace.race import Forecast
 
 WARMUP_DAYS = 400  # A1.7, the engine's
@@ -40,7 +43,7 @@ DOTS = [(i + 0.5) / 20 for i in range(20)]
 
 
 def require_registered() -> str:
-    """The registration (specs.py) and addenda A1, A2 and A3 must each match their pinned hashes."""
+    """The registration (specs.py) and addenda A1-A4 must each match their pinned hashes."""
     race.require_registered()
     h = addendum.addendum_hash()
     if h != prereg.ADDENDUM_HASH:
@@ -59,6 +62,12 @@ def require_registered() -> str:
         raise race.PreregistrationError(
             f"horserace/addendum_a3.py (with fincalc/black76's registered constants) hashes to {h3[:12]}… but the "
             f"pinned hash is {prereg.ADDENDUM_A3_HASH[:12]}…: the replay is refused. Register a new addendum first."
+        )
+    h4 = addendum_a4.addendum_hash()
+    if h4 != prereg.ADDENDUM_A4_HASH:
+        raise race.PreregistrationError(
+            f"horserace/addendum_a4.py (with fincalc/svi's and smile's registered settings) hashes to {h4[:12]}… but "
+            f"the pinned hash is {prereg.ADDENDUM_A4_HASH[:12]}…: the replay is refused. Register a new addendum first."
         )
     return h
 
@@ -97,12 +106,34 @@ def atm_iv(x: Day, expiry: date, fwd: float, t: float, rate: float) -> float | N
     return sum(ivs) / len(ivs) if ivs else None
 
 
+def market_settles(x: Day, expiry: date) -> dict[tuple[str, float], float]:
+    """A3.2: (right, strike) -> settle for the expiry's options whose settle is a market price."""
+    return {(r, k): q.settle for (e, r, k), q in x.options.items()
+            if e == expiry and q.settle and fh.market_settle(q.settle, q.close, q.contracts)}  # fmt: skip
+
+
+def svi_smile(x: Day, expiry: date, t: float, b3: dict[str, Any]) -> dict[str, Any]:
+    """A4.2-A4.4: the raw-SVI smile of the expiry through the market settles' out-of-the-money IVs at A3's parity
+    forward and discount factor; `params` None with `reason` when any step is unknown or the fit is refused."""
+    out: dict[str, Any] = {"params": None, "n": 0, "rmse_vol": None, "flags": [], "atm": None, "rr25": None,
+                           "bf25": None, "dropped": {}, "reason": None}  # fmt: skip
+    if b3.get("forward") is None or b3.get("df") is None:
+        return out | {"reason": f"no parity forward or discount factor: {b3.get('reason')}"}
+    quotes = [b76.OptionQuote(k, r, price=p) for (r, k), p in market_settles(x, expiry).items()]  # type: ignore[arg-type]
+    got = svi.fit_quotes(quotes, b3["forward"], t, b3["df"])
+    f = got.fit
+    out |= {"n": f.n, "rmse_vol": f.rmse_vol, "flags": list(f.flags), "dropped": got.dropped}
+    if f.params is None:
+        return out | {"reason": f"no smile: {f.reason}"}
+    rb = sm.rr_bf(f.params, t)
+    return out | {"params": vars(f.params).copy(), "atm": rb.atm, "rr25": rb.rr, "bf25": rb.bf}
+
+
 def b76_atm(x: Day, expiry: date, t: float, ref_forward: float | None = None) -> dict[str, Any]:
     """A3.2-A3.6: the parity-regression forward and discount factor of the expiry over strikes whose call and put
     both have a market settle, then the ATM Black-76 IV at the strike nearest it; `sigma` None with `reason` when
     any step is unknown. `basis` is to `ref_forward` (the A1.5 forward; default the same-expiry future)."""
-    settles = {(r, k): q.settle for (e, r, k), q in x.options.items()
-               if e == expiry and q.settle and fh.market_settle(q.settle, q.close, q.contracts)}  # fmt: skip
+    settles = market_settles(x, expiry)
     strikes = sorted({k for (_, k) in settles if ("call", k) in settles and ("put", k) in settles})
     fit = b76.parity_fit([b76.ParityQuote(k, settles[("call", k)], settles[("put", k)]) for k in strikes], t)
     ref = ref_forward if ref_forward is not None else x.futures.get(expiry)
@@ -133,18 +164,35 @@ class Card:
     b76: dict[str, Any] | None = (
         None  # A3.6: the parity forward, DF, ATM IV and why unknown (logged, not scored)
     )
+    svi: dict[str, Any] | None = None  # A4.4: the smile's parameters, fit and RR/BF, or why unknown (logged)
 
 
-def models(legs: Sequence[o.Leg], expiry: date, spot: float, t: float, rate: float, entry_cost: float,
-           sigmas: dict[str, float | None]) -> dict[str, Forecast]:  # fmt: skip
-    """A1.6, A1.9: PoP and EV (fincalc.options.outcome) and 20 P&L dots per volatility; p_rw = the lower-EV of the
-    realised-volatility cases. An unknown volatility gives an unknown forecast."""
+def _exit_cost(legs: Sequence[o.Leg], expiry: date):
     longs = [x for x in legs if x.qty > 0]
 
     def exit_cost(p: float) -> float:  # STT on long options exercised in the money (the card's)
         return ch.exercise_stt(sum(x.qty * (max(0.0, p - x.strike) if x.right == "call" else max(0.0, x.strike - p))
                                    for x in longs), expiry)  # fmt: skip
 
+    return exit_cost
+
+
+def svi_forecast(legs: Sequence[o.Leg], expiry: date, spot: float, t: float, rate: float, entry_cost: float,
+                 params: dict[str, float] | None) -> Forecast:  # fmt: skip
+    """A4.1: PoP, EV and 20 dots under the smile's density around the A1.5 forward; unknown smile, unknown forecast."""
+    if params is None:
+        return Forecast(None)
+    p, exit_cost = svi.Raw(**params), _exit_cost(legs, expiry)
+    oc = sm.outcome(legs, spot, t, rate, p, entry_cost, exit_cost)
+    dist = sm.pnl_distribution(legs, spot, t, rate, p, entry_cost, exit_cost, 2000)
+    return Forecast(oc.pop, oc.ev, [round(v, 2) for v in o.weighted_quantiles(dist, DOTS)])
+
+
+def models(legs: Sequence[o.Leg], expiry: date, spot: float, t: float, rate: float, entry_cost: float,
+           sigmas: dict[str, float | None]) -> dict[str, Forecast]:  # fmt: skip
+    """A1.6, A1.9: PoP and EV (fincalc.options.outcome) and 20 P&L dots per volatility; p_rw = the lower-EV of the
+    realised-volatility cases. An unknown volatility gives an unknown forecast."""
+    exit_cost = _exit_cost(legs, expiry)
     out: dict[str, Forecast] = {}
     for key, sigma in sigmas.items():
         if not sigma:
@@ -203,6 +251,9 @@ def card_at(spec: Spec, x: Day, h: Clocked, nxt: date | None, eday: Any, returns
     fc[addendum_a3.CHALLENGER] = models(legs, expiry, spot, t, rate, entry_cost, {"p_rn_atm": b3["sigma"]})[
         "p_rn_atm"
     ]
+    # A4: the SVI density challenger, A1.6's inputs with the terminal distribution from the expiry's fitted smile
+    s4 = svi_smile(x, expiry, t, b3)
+    fc[addendum_a4.CHALLENGER] = svi_forecast(legs, expiry, spot, t, rate, entry_cost, s4["params"])
     plan = tp.spec_exits(spec)
     stats = vol.iv_stats(ivs) if x.iv30 is not None else None
     pct = stats.percentile if stats else None
@@ -213,7 +264,7 @@ def card_at(spec: Spec, x: Day, h: Clocked, nxt: date | None, eday: Any, returns
                        for q, side, f in fills],
               "exit_plan": {"profit_pct": plan.profit_pct, "stop_pct": plan.stop_pct, "exit_dte": plan.exit_dte,
                             "hold_to_expiry": plan.hold_to_expiry}}  # fmt: skip
-    return Card(spec.key, sym, spec.kind, expiry, d, inputs, fc, gate, t_bus, b3)
+    return Card(spec.key, sym, spec.kind, expiry, d, inputs, fc, gate, t_bus, b3, s4)
 
 
 def make_cards(history: History, start: date, end: date, spec_list: Sequence[Spec] | None = None,
@@ -333,7 +384,7 @@ def run_window(history: History, window: str, spec_list: Sequence[Spec] | None =
     end = date.fromisoformat(w["end"]) if w["end"] else date.max
     cards, skips = make_cards(history, start, end, spec_list)
     events, counts = resolve(cards, history)
-    rep = race.run(events, window, challengers=addendum_a3.CHALLENGERS)
+    rep = race.run(events, window, challengers=addendum_a4.CHALLENGERS)
     gaps: dict[str, int | None] = {}  # A2.5: weekdays without a stored session (holidays and any missing day)
     for sym in sorted({s.underlying for s in spec_list or replay_specs()}):
         last = history.latest(sym)
@@ -347,6 +398,10 @@ def run_window(history: History, window: str, spec_list: Sequence[Spec] | None =
                      "p_rn_b76_unknown": sum(1 for c in cards if not c.b76 or c.b76["sigma"] is None),
                      "p_rn_b76_reasons": dict(Counter(c.b76["reason"].split(":")[0] for c in cards
                                                       if c.b76 and c.b76["reason"])),
+                     "addendum_a4": addendum_a4.ADDENDUM_VERSION, "addendum_a4_hash": addendum_a4.addendum_hash(),
+                     "p_rn_svi_unknown": sum(1 for c in cards if not c.svi or c.svi["params"] is None),
+                     "p_rn_svi_reasons": dict(Counter(": ".join(c.svi["reason"].split(": ")[:2]) for c in cards
+                                                      if c.svi and c.svi["reason"])),
                      "calendar_gap_weekdays": gaps, "t_bus_unknown": sum(1 for c in cards if c.t_bus is None),
                      "first_origin": min((c.origin for c in cards), default=None),
                      "last_origin": max((c.origin for c in cards), default=None)}  # fmt: skip

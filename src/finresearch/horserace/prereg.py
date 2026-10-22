@@ -20,3 +20,9 @@ ADDENDUM_A2_ON = "2026-10-22"
 # Black-76 engine's registered constants, pinned before any replay code computed it on a stored session.
 ADDENDUM_A3_HASH = "c5c07f159a6a8154ac7f264a847645fd4556b69c86fd1e1808bf8bd9b64dc10b"
 ADDENDUM_A3_ON = "2026-10-22"
+
+# Post-hoc addendum A4 (horserace/addendum_a4.py, ADDENDUM.md): the SVI risk-neutral density challenger p_rn_svi
+# (#386), with the fit's and density's registered settings, pinned before any replay code computed it on a stored
+# session.
+ADDENDUM_A4_HASH = "3602512dc19256374975c5f8779a7890ea16eb15d5471871be056a6684cbd6da"
+ADDENDUM_A4_ON = "2026-10-22"
