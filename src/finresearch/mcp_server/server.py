@@ -367,6 +367,20 @@ def _option_tool(fn):
     return server.tool(description=f"{inspect.getdoc(fn)} {_OPTION_CITE}")(fn)
 
 
+def _foreign_run(run_id: Any) -> str | None:
+    """Why `run_id` may not be written by this server, or None. A server launched for one agent task is bound to its
+    run (mcp_server.config.RUN_ENV): a claim-writing tool refuses any other run, so an agent cannot write into another
+    run's ledger. An unbound server (tests, scripts) is not restricted."""
+    from finresearch.mcp_server import option_facts
+
+    bound = option_facts.bound_run_id()
+    if bound is None or str(run_id).strip() == str(bound):
+        return None
+    return (
+        f"this server is bound to run {bound}; it cannot write claims into run {run_id}. Use run_id {bound}."
+    )
+
+
 def run_option_fact(session, tool: str, args: dict[str, Any], run_id: int | None) -> dict[str, Any]:
     """Re-run an option-fact tool for save_claim. The scope is this server's bound run when it has one: save_claim's
     run_id is the agent's argument, so naming another run must not widen what the re-check reads. Unbound (tests,
@@ -1013,6 +1027,8 @@ def save_claim(run_id: int, stream: str, statement: str, claim_type: str, citati
     verified, B web quote verified on the stored page, C web quote unchecked (no fetch_page), D fincalc reproduces
     the value from the cited inputs' own values, U unsupported. A high-importance figure needs A, B or D to be published. A claim
     whose quotes are all missing is stored as 'unsupported' — fix the citation and save again."""
+    if (why := _foreign_run(run_id)) is not None:
+        return json.dumps({"error": why})
     with session_scope() as s:
         try:
             res = claims_mod.save_claim(

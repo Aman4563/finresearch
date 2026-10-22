@@ -445,10 +445,44 @@ def test_save_claim_through_the_server_scopes_by_its_bound_run_not_the_run_id_ar
     monkeypatch.setenv(option_facts.RUN_ENV, str(mine))
     cite = {"option_fact": {"tool": "option_implied_move", "args": {"symbol": "ZZSECRET", "trade_date": "2026-03-02"}},
             "result_key": "move_1sd_pct"}  # fmt: skip
-    out = json.loads(server.save_claim(theirs, "stock_technical", "ZZSECRET implied move", "numeric", [cite],
-                                       metric="implied_move", value="5.20", unit="%", period="2026-03-02"))  # fmt: skip
-    assert "not available to this run" in out["error"] and not any(
-        ch.isdigit() for ch in out["error"].split(":")[-1]
+    kw = {"metric": "implied_move", "value": "5.20", "unit": "%", "period": "2026-03-02"}
+    # naming the other run is refused outright (the bound-run guard), before any citation is re-run
+    out = json.loads(
+        server.save_claim(theirs, "stock_technical", "ZZSECRET implied move", "numeric", [cite], **kw)
     )
+    assert f"bound to run {mine}" in out["error"] and "5.20" not in out["error"] and "4." not in out["error"]
+    # in its own run the re-check reads with the bound run's scope: ZZSECRET is not available to it
+    out = json.loads(
+        server.save_claim(mine, "stock_technical", "ZZSECRET implied move", "numeric", [cite], **kw)
+    )
+    assert "not available to this run" in out["error"]
+    assert not any(ch.isdigit() for ch in out["error"].split(":")[-1])
     with session_scope() as s:
         assert s.scalar(select(func.count()).select_from(Claim).where(Claim.run_id == theirs)) == 0
+
+
+@pytest.mark.parametrize("kind", ["opinion", "factual", "numeric"])
+def test_a_bound_server_refuses_to_write_claims_into_another_run(env, tmp_path, monkeypatch, kind):
+    """Each agent task's server is bound to its run: save_claim with another run_id is refused for every claim kind,
+    with a clear error and nothing written, while the bound run still saves."""
+    from sqlalchemy import func, select
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import Claim
+    from finresearch.mcp_server import option_facts, server
+
+    mine = _run(tmp_path, symbol="ACME")
+    theirs = _run(tmp_path / "theirs", symbol="OTHER")
+    monkeypatch.setenv(option_facts.RUN_ENV, str(mine))
+    cites = {"opinion": [], "factual": [{"url": "https://example.com/a", "quote": "a"}],
+             "numeric": [{"fincalc": {"function": "growth.cagr", "args": {"start": "100", "end": "121", "years": 2}},
+                          "inputs": []}]}[kind]  # fmt: skip
+    extra = {"metric": "m", "value": "10", "unit": "%", "period": "FY2026"} if kind == "numeric" else {}
+    out = json.loads(server.save_claim(theirs, "stock_technical", "a statement", kind, cites, **extra))
+    assert f"bound to run {mine}" in out["error"] and str(theirs) in out["error"]
+    with session_scope() as s:
+        assert s.scalar(select(func.count()).select_from(Claim).where(Claim.run_id == theirs)) == 0
+    if kind == "opinion":
+        assert "claim_id" in json.loads(
+            server.save_claim(mine, "stock_technical", "a statement", kind, cites)
+        )
