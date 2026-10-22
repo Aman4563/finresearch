@@ -23,7 +23,7 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from statistics import NormalDist, median
 
 from finresearch.eventcal.calendar import NSE_CLOSE, Event, india_day, known_at
@@ -238,3 +238,62 @@ def history(events: list[Event], closes: Mapping[date, float], as_of: datetime) 
             continue
         out.setdefault(e.type, TypeStats(e.type)).moves.append(realised_move(e, seen))
     return out
+
+
+# ---------------------------------------------------------------- display flags (informational, not a gate)
+MIN_EVENTS_FOR_FLAG = 20  # the issue's rule: only event types with >= 20 past events get the short-gamma flag
+
+
+def elevation(p: Point, inside: list[tuple[str, Implied]]) -> dict:
+    """'IV elevated by event X' for expiry `p`, given the (title, implied) of every event up to it, so that a high IV
+    percentile is not read as a variance premium. The ex-event IV removes the measured events only. An empty list
+    means no event inside; the caller passes it only when the calendar covers the window."""
+    if not inside:
+        return {"status": "none", "ex_event_iv": None, "event_share": None, "events": [],
+                "note": "No event inside this expiry."}  # fmt: skip
+    got = [(t, i) for t, i in inside if i.j2 is not None]
+    if not got or p.sigma is None or not p.tau:
+        return {"status": "unknown", "ex_event_iv": None, "event_share": None, "events": [t for t, _ in inside],
+                "note": "Events fall inside this expiry, but the term structure does not show how much IV they add."}  # fmt: skip
+    j2 = sum(i.j2 for _, i in got)  # type: ignore[misc]
+    rest = p.sigma**2 - j2 / p.tau
+    names = ", ".join(t for t, _ in got)
+    missed = [t for t, i in inside if i.j2 is None]
+    note = f"IV elevated by {names}: read a high IV percentile against the ex-event IV, not as a variance premium."
+    if missed:
+        note += " Not measured: " + ", ".join(missed) + "."
+    return {"status": "elevated", "ex_event_iv": math.sqrt(rest) if rest > 0 else None,
+            "event_share": j2 / (p.sigma**2 * p.tau), "events": [t for t, _ in got], "unmeasured": missed,
+            "note": note}  # fmt: skip
+
+
+def short_gamma(imp: Implied, stats: TypeStats | None) -> dict:
+    """The plan rule's flag: for a type with >= 20 past events, 'flag' when the implied median |move| (0.6745 J) is
+    below the realised median |move| (short gamma looks cheap). Rarer types list their past moves, never a flag."""
+    past = [] if stats is None else [{"day": m.day.isoformat(), "r": m.r, "title": m.title} for m in stats.moves]
+    n = 0 if stats is None else stats.n
+    hist = None if stats is None else stats.median_abs
+    base = {"n": n, "historical_median_abs": hist, "implied_median_abs": imp.median_abs, "past_moves": past}
+    if imp.j2 is None:
+        return {**base, "status": "unknown", "note": "No implied event move to compare."}
+    if n < MIN_EVENTS_FOR_FLAG or hist is None:
+        return {**base, "status": "too_few", "note": f"{n} past events of this type: listed, not flagged "
+                f"(the flag needs {MIN_EVENTS_FOR_FLAG})."}  # fmt: skip
+    if imp.median_abs < hist:  # type: ignore[operator]
+        return {**base, "status": "flag", "note": "The implied move is below the typical past move of this event "
+                "type: short gamma across it looks under-priced."}  # fmt: skip
+    return {**base, "status": "no_flag", "note": "The implied move is not below the typical past move."}
+
+
+def fairness(pairs: list[tuple[float, float]]) -> dict:
+    """Descriptive fairness over (realised r, implied J^2) pairs: rho = mean(r^2) / mean(J^2) (1 = fair), the mean
+    of z^2 = r^2 / J^2 and the share inside the +/-1 and +/-2 sigma bands. Reported, not tested: the registered
+    test (bootstrap CI, Holm) belongs to a pre-registered study."""
+    ok = [(r, j2) for r, j2 in pairs if j2 > 0]
+    if not ok:
+        return {"n": 0, "rho": None, "mean_z2": None, "within_1sd": None, "within_2sd": None}
+    n = len(ok)
+    z = [abs(r) / math.sqrt(j2) for r, j2 in ok]
+    return {"n": n, "rho": sum(r * r for r, _ in ok) / sum(j2 for _, j2 in ok),
+            "mean_z2": sum(x * x for x in z) / n, "within_1sd": sum(x <= 1 for x in z) / n,
+            "within_2sd": sum(x <= 2 for x in z) / n}  # fmt: skip

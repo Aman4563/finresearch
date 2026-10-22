@@ -153,3 +153,44 @@ def test_type_stats_median_and_mean_square():
     st = ev.TypeStats("rbi_mpc", [ev.Move(date(2024, 1, d), r, None, None, None) for d, r in
                                   [(1, 0.01), (2, -0.03), (3, 0.02)]])  # fmt: skip
     assert st.n == 3 and st.median_abs == pytest.approx(0.02) and st.mean_r2 == pytest.approx(0.0014 / 3)
+
+
+# ---------------------------------------------------------------- flags
+def test_elevated_names_the_event_and_strips_it_from_the_near_iv():
+    imp = ev.two_after(NEAR, NEXT)
+    got = ev.elevation(NEAR, [("Election results", imp)])
+    assert got["status"] == "elevated" and "Election results" in got["note"]
+    # ex-event IV: sqrt(sigma^2 - J^2 / tau) = sqrt(0.2674^2 - 0.001365131 x 36.5)
+    assert got["ex_event_iv"] == pytest.approx(math.sqrt(0.2674**2 - 0.001365131272 * 36.5), rel=1e-8)
+    assert got["event_share"] == pytest.approx(0.001365131272 / (0.2674**2 * 10 / 365), rel=1e-8)
+
+
+def test_elevation_is_unknown_when_no_event_inside_could_be_measured():
+    got = ev.elevation(NEAR, [("RBI policy", ev.Implied(None, reason="x"))])
+    assert got["status"] == "unknown" and got["ex_event_iv"] is None
+    assert ev.elevation(NEAR, [])["status"] == "none"
+
+
+def _stats(n: int, size: float) -> ev.TypeStats:
+    return ev.TypeStats("rbi_mpc", [ev.Move(date(2020, 1, 1) + timedelta(days=i), size * (-1) ** i, None, None,
+                                            None) for i in range(n)])  # fmt: skip
+
+
+def test_short_gamma_flag_needs_twenty_events_and_compares_median_moves():
+    cheap = ev.Implied(0.005**2)  # implied median |move| 0.6745 x 0.5 % = 0.34 %, below the history's 1 %
+    assert ev.short_gamma(cheap, _stats(20, 0.01))["status"] == "flag"
+    assert ev.short_gamma(ev.Implied(0.03**2), _stats(20, 0.01))["status"] == "no_flag"  # 2.0 % > 1 %
+    few = ev.short_gamma(cheap, _stats(19, 0.01))
+    assert few["status"] == "too_few" and len(few["past_moves"]) == 19  # listed, never flagged
+    assert ev.short_gamma(ev.Implied(None, reason="x"), _stats(25, 0.01))["status"] == "unknown"
+
+
+def test_fairness_ratio_and_band_coverage_are_descriptive():
+    pairs = [(0.02, 0.0004), (-0.01, 0.0004), (0.05, 0.0004)]  # z = 1, -0.5, 2.5
+    got = ev.fairness(pairs)
+    assert got["n"] == 3
+    assert got["rho"] == pytest.approx((0.0004 + 0.0001 + 0.0025) / 3 / 0.0004)
+    assert got["mean_z2"] == pytest.approx((1 + 0.25 + 6.25) / 3)
+    assert got["within_1sd"] == pytest.approx(2 / 3)  # |z| <= 1 counts as inside
+    assert got["within_2sd"] == pytest.approx(2 / 3)
+    assert ev.fairness([])["rho"] is None
