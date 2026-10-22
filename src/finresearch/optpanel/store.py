@@ -155,3 +155,42 @@ def build(start: date, end: date | None = None, *, today: date | None = None, re
         if progress:
             progress(i, len(days), day, status)
     return out
+
+
+def coverage(s: Session, start: date, end: date) -> dict[str, Any]:
+    """#374's per-stock coverage: the % of built sessions in [start, end] on which the stock had a fitted ATM IV
+    (`rows`: sessions it appeared in the file at all)."""
+    from sqlalchemy import func
+
+    days = s.scalar(select(func.count()).select_from(OptPanelDay).where(
+        OptPanelDay.day.between(start, end), OptPanelDay.status == "built")) or 0  # fmt: skip
+    q = (select(OptPanelEod.symbol, func.count(), func.count(OptPanelEod.near_iv))
+         .where(OptPanelEod.day.between(start, end)).group_by(OptPanelEod.symbol).order_by(OptPanelEod.symbol))  # fmt: skip
+    stocks = [{"symbol": sym, "rows": n, "with_iv": k, "pct": 100 * k / days if days else None}
+              for sym, n, k in s.execute(q)]  # fmt: skip
+    return {"sessions": days, "stocks": stocks}
+
+
+def reconcile_participants(s: Session, start: date, end: date) -> list[dict[str, Any]]:
+    """#374's check: the bhavcopy's stock-option OI in contracts (non-expiring, the build's day totals) against the
+    participant-wise OI file's long stock calls and puts (the four participants summed). `match` None when either side
+    is unknown (a lot size missing, no participant file). [U: that NSE's participant file excludes the contracts
+    expiring that day is the issue's statement, not verified here.]"""
+    from sqlalchemy import func
+
+    from finresearch.db.models import FnoParticipantOi
+
+    theirs = {d: (c, p) for d, c, p in s.execute(
+        select(FnoParticipantOi.day, func.sum(FnoParticipantOi.opt_stk_call_long), func.sum(FnoParticipantOi.opt_stk_put_long))
+        .where(FnoParticipantOi.day.between(start, end), FnoParticipantOi.client_type.in_(("Client", "DII", "FII", "Pro")))
+        .group_by(FnoParticipantOi.day))}  # fmt: skip
+    out = []
+    for m in s.scalars(select(OptPanelDay).where(OptPanelDay.day.between(start, end), OptPanelDay.status == "built")
+                       .order_by(OptPanelDay.day)):  # fmt: skip
+        t = theirs.get(m.day)
+        ours = (m.sto_call_oi_contracts, m.sto_put_oi_contracts)
+        known = t is not None and None not in ours
+        out.append({"day": m.day.isoformat(), "call": [ours[0], None if t is None else int(t[0])],
+                    "put": [ours[1], None if t is None else int(t[1])],
+                    "match": (ours[0] == int(t[0]) and ours[1] == int(t[1])) if known else None})  # fmt: skip
+    return out

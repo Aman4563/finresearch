@@ -175,3 +175,43 @@ def test_build_resumes_rebuilds_idempotently_and_marks_missing_raw(clean) -> Non
             select(DatasetLoad).where(DatasetLoad.dataset == "optpanel").order_by(DatasetLoad.id)
         ).all()
         assert len(loads) == 2 and loads[1].prior_sha256 == loads[0].sha256  # the changed zip is seen
+
+
+def test_coverage_is_the_share_of_sessions_with_a_fitted_atm_iv(clean) -> None:
+    from finresearch.db import session_scope
+    from finresearch.db.models import OptPanelDay, OptPanelEod
+    from finresearch.optpanel import store
+
+    with session_scope() as s:
+        for d in (D1, D2, date(2026, 3, 4)):
+            s.add(OptPanelDay(day=d, status="built"))
+        s.add(OptPanelEod(day=D1, symbol="ZZALPHA", near_iv=Decimal("30")))
+        s.add(OptPanelEod(day=D2, symbol="ZZALPHA", near_iv=None))
+        s.add(OptPanelEod(day=D1, symbol="ZZBETA", near_iv=Decimal("45")))
+        got = store.coverage(s, D1, date(2026, 3, 4))
+    assert got["sessions"] == 3
+    by = {r["symbol"]: r for r in got["stocks"]}
+    assert by["ZZALPHA"] == {"symbol": "ZZALPHA", "rows": 2, "with_iv": 1, "pct": pytest.approx(100 / 3)}
+    assert by["ZZBETA"]["pct"] == pytest.approx(100 / 3)
+
+
+def test_participant_reconciliation_compares_stock_option_oi_and_keeps_unknowns(clean) -> None:
+    from finresearch.db import session_scope
+    from finresearch.db.models import FnoParticipantOi, OptPanelDay
+    from finresearch.optpanel import store
+
+    with session_scope() as s:
+        s.execute(text("TRUNCATE fno_participant_oi"))
+        s.add(OptPanelDay(day=D1, status="built", sto_call_oi_contracts=100, sto_put_oi_contracts=60))
+        s.add(OptPanelDay(day=D2, status="built", sto_call_oi_contracts=None, sto_put_oi_contracts=None))
+        zero = {k: 0 for k in ("fut_idx_long", "fut_idx_short", "fut_stk_long", "fut_stk_short", "opt_idx_call_long",
+                               "opt_idx_put_long", "opt_idx_call_short", "opt_idx_put_short", "opt_stk_call_short",
+                               "opt_stk_put_short", "total_long", "total_short")}  # fmt: skip
+        for d in (D1, D2):
+            for who, c, p in (("Client", 70, 40), ("FII", 30, 21)):
+                s.add(FnoParticipantOi(day=d, client_type=who, opt_stk_call_long=c, opt_stk_put_long=p,
+                                       source="test", **zero))  # fmt: skip
+        got = {r["day"]: r for r in store.reconcile_participants(s, D1, D2)}
+        s.execute(text("TRUNCATE fno_participant_oi"))
+    assert got[D1.isoformat()] == {"day": D1.isoformat(), "call": [100, 100], "put": [60, 61], "match": False}
+    assert got[D2.isoformat()]["match"] is None  # a lot size was unknown: not a match, not a mismatch
