@@ -280,3 +280,25 @@ def test_surface_flags_name_every_violation() -> None:
     assert kinds == ["calendar", "refused"]
     cal = next(f for f in flags if f["kind"] == "calendar")
     assert cal["t_near"] == 0.05 and cal["t_far"] == 0.1 and cal["k"] < 0 and cal["excess"] > 0
+
+
+@pytest.mark.parametrize("p", [GOOD, svi.Raw(a=0.0002, b=0.03, m=0.0, rho=-0.8, s=0.02)])
+def test_fit_settles_on_ticks_with_noise_like_a_weekly_index_chain(p: svi.Raw) -> None:
+    # equal weights (settles carry no bid/ask, as addendum A4.2), strikes every 50 to +/- 10 %, settles rounded to
+    # the 5-paisa tick and moved by up to two ticks: the fit must be known, arbitrage-free and under the 0.5-point target
+    import random
+
+    from finresearch.fincalc import black76 as b76
+
+    rnd, fwd, t, df = random.Random(3), 22000.0, 7 / 365, 0.995
+    quotes = []
+    for i in range(-40, 41):
+        k = round(fwd * (1 + 0.0025 * i) / 50) * 50
+        sig = math.sqrt(float(svi.w(p, math.log(k / fwd))) / t)
+        for right in ("call", "put"):
+            px = round(b76.price(right, fwd, k, t, df, sig) / 0.05) * 0.05 + 0.05 * rnd.randint(-2, 2)
+            if px > 0:
+                quotes.append(b76.OptionQuote(k, right, price=px))
+    got = svi.fit_quotes(quotes, fwd, t, df).fit
+    assert got.params is not None and got.weights == "equal" and got.n >= 75
+    assert got.rmse_vol is not None and got.rmse_vol < svi.TARGET_RMSE and got.check.g_min > 0
