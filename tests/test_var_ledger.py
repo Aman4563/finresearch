@@ -95,10 +95,14 @@ def db(env):
 
     from finresearch.db import session_scope
 
-    with session_scope() as s:
-        s.execute(text("TRUNCATE forecast, portfolio_txn, portfolio_holding, portfolio_setting, alert_eval_slot "
-                       "CASCADE"))  # fmt: skip
-    return env
+    def clean():
+        with session_scope() as s:
+            s.execute(text("TRUNCATE forecast, portfolio_txn, portfolio_holding, portfolio_setting, alert_eval_slot "
+                           "CASCADE"))  # fmt: skip
+
+    clean()
+    yield env
+    clean()  # later tests in the session (the risk API's logged backtest) expect no VaR rows
 
 
 def _rows():
