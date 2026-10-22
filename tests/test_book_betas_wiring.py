@@ -132,3 +132,25 @@ def test_card_betas_read_the_store_and_never_invent_a_beta():
     assert tpl.card_betas("NIFTY", date(2026, 10, 12)) == {}
     got = tpl.card_betas("BANKNIFTY", date(2026, 10, 12))["BANKNIFTY"]
     assert not got.known and "front-future series is empty" in got.reason
+
+
+@pytest.mark.parametrize(
+    ("raised", "needle"),
+    [
+        (RuntimeError("db down"), "the stored futures could not be read (RuntimeError)"),
+        (None, "differs from its registration"),
+    ],
+)
+def test_an_unreadable_store_or_an_unregistered_estimator_leaves_beta_unknown(monkeypatch, raised, needle):
+    from finresearch.fincalc import beta as fb
+    from finresearch.fnobook import scenarios
+    from finresearch.fnohist import betas
+
+    def load(underlyings, today):
+        raise raised if raised is not None else fb.PreregistrationError("pin differs")
+
+    monkeypatch.setattr(betas, "load", load)
+    _banknifty_spread()
+    v = run(scenarios.view(NOW, sources=Sources(chain()), capital=500_000))
+    (b,) = v["betas"]
+    assert b["beta"] is None and needle in b["reason"] and not v["grid"]["complete"]

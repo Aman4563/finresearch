@@ -42,8 +42,11 @@ def load(underlyings: Iterable[str], today: date) -> dict[str, fb.BetaEstimate]:
 
 def read(underlyings: Iterable[str], today: date) -> dict[str, fb.BetaEstimate]:
     """`load`, with a failed read making each beta unknown with the reason (never 0, never 1)."""
+    want = sorted({x.upper() for x in underlyings} - {"NIFTY"})
     try:
         return load(underlyings, today)
+    except fb.PreregistrationError:
+        why = "the estimator differs from its registration (fincalc/beta_prereg.py): no beta until it is re-registered"
+        return {u: fb.unknown(u, why) for u in want}
     except Exception as e:
-        return {u: fb.unknown(u, f"the stored futures could not be read ({type(e).__name__})")
-                for u in sorted({x.upper() for x in underlyings} - {"NIFTY"})}  # fmt: skip
+        return {u: fb.unknown(u, f"the stored futures could not be read ({type(e).__name__})") for u in want}
