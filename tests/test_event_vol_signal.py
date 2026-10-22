@@ -117,3 +117,15 @@ def test_a_row_dated_today_is_not_read_before_the_close(clean):
     assert got["as_of"] == "2024-06-03" and got["upcoming"][0]["move"] == pytest.approx(
         0.0369476829, rel=1e-6
     )
+
+
+def test_event_vol_route_reads_only_stored_data(clean):
+    from starlette.testclient import TestClient
+
+    from finresearch.api import create_app
+
+    _seed()
+    with TestClient(create_app(clock=lambda: datetime(2024, 6, 3, 18, 0, tzinfo=IST))) as c:
+        got = c.get("/api/fno/nifty/event-vol").json()
+    assert got["symbol"] == "NIFTY" and got["clock"] == "calendar"  # no cached NSE holiday list in the test state
+    assert got["upcoming"][0]["move"] == pytest.approx(0.0369476829, rel=1e-6)
