@@ -143,7 +143,7 @@ def test_summary_counts_unknowns_crash_losses_and_negative_months() -> None:
     s = co.summarise(rs, draws=200, seed=389)
     assert s["n"] == 3 and s["unknown"] == 1 and s["unknown_reasons"] == {"no dated lot size": 1}
     assert s["mean_net"] == pytest.approx(-2000 / 3) and s["share_negative"] == pytest.approx(1 / 3)
-    assert s["crash"]["2008-09..2009-03"] == {"windows": 2, "net": -3000.0, "worst": -5000.0}
-    assert s["crash"]["2020-02..2020-06"] == {"windows": 0, "net": None, "worst": None}
+    assert s["crash"]["2008-09..2009-03"] == {"windows": 2, "net": -3000.0}
+    assert s["crash"]["2020-02..2020-06"] == {"windows": 0, "net": None}
     assert s["margin"]["n"] == 1 and s["margin"]["mean_net_after_carry"] == pytest.approx(400.0)
     assert set(s["ci"]) >= {"lo", "hi", "draws"} and s["ci"]["draws"] == 200

@@ -223,20 +223,21 @@ def delta_put_strike(puts: Sequence[tuple[float, float, int | None]], fwd: float
 
 def summarise(rs: Sequence[Result], draws: int = BOOTSTRAP_DRAWS, seed: int = BOOTSTRAP_SEED) -> dict:
     """Mean net, its expiry-clustered BCa interval (one trade per expiry), share negative, crash-period losses and
-    the margin view, with the unknown windows counted by reason."""
+    the margin view, with the unknown windows counted by reason. Aggregates only: no single window's P&L (a vault
+    read prints nothing per window, vault PREREG.md section 2)."""
     k = [r for r in rs if r.net is not None]
     nets = [r.net for r in k]
     crash = {}
     for name, (a, b) in CRASHES.items():
         xs = [r.net for r in k if a <= r.entry <= b]
-        crash[name] = {"windows": len(xs), "net": sum(xs) if xs else None, "worst": min(xs) if xs else None}  # type: ignore[type-var, arg-type]
+        crash[name] = {"windows": len(xs), "net": sum(xs) if xs else None}  # type: ignore[arg-type]
     mk = [r for r in k if r.margin is not None]
     return {"n": len(k), "unknown": len(rs) - len(k),
             "unknown_reasons": dict(Counter(r.reason for r in rs if r.net is None)),
             "mean_net": sum(nets) / len(nets) if nets else None,  # type: ignore[arg-type]
             "ci": inference.cluster_bca(nets, [r.entry.isoformat() for r in k], draws, seed),  # type: ignore[arg-type]
             "share_negative": sum(1 for x in nets if x < 0) / len(nets) if nets else None,  # type: ignore[operator]
-            "worst": min(nets) if nets else None, "crash": crash,  # type: ignore[type-var]
+            "crash": crash,
             "margin": {"n": len(mk), "label": margin_approx.LABEL,
                        "mean_margin": sum(r.margin for r in mk) / len(mk) if mk else None,  # type: ignore[misc]
                        "mean_net_after_carry": sum(r.net_after_carry for r in mk) / len(mk) if mk else None,  # type: ignore[misc]
