@@ -82,3 +82,16 @@ def test_attach_without_index_rows_is_unknown(clean):
         benchmark.attach(rep, s, slab_rate=Decimal("0.30"))
     o = rep["strategies"][0]["opportunity"]
     assert o["excess_after_tax"] is None and "unknown" in o["reason"]
+
+
+def test_the_card_evidence_carries_the_exact_specs_opportunity_line():
+    from datetime import date as d
+
+    from finresearch.signals import tradeplan as tpl
+
+    opp = {"excess_after_tax": -96_100.0, "reason": None}
+    row = {"key": "nifty_ic_w", "status": "fails", "windows": {"oos": {"ci_low": -10.0}}, "opportunity": opp}
+    ev = tpl.evidence_for("iron_condor", "NIFTY", 7, [row], None, today=d(2026, 10, 22))
+    assert ev["match"] == "exact" and ev["opportunity"] == opp
+    related = tpl.evidence_for("iron_condor", "FINNIFTY", 7, [row], None, today=d(2026, 10, 22))
+    assert related["opportunity"] is None  # only the exact spec's line is shown

@@ -69,6 +69,7 @@ def backtest_rows() -> tuple[list[dict[str, Any]] | None, dict[str, Any] | None]
     """The latest saved backtest's strategy rows and run header; (None, None) when none is saved."""
     from sqlalchemy.exc import SQLAlchemyError
 
+    from finresearch.backtest import benchmark
     from finresearch.backtest import store as bstore
     from finresearch.db import session_scope
 
@@ -76,6 +77,8 @@ def backtest_rows() -> tuple[list[dict[str, Any]] | None, dict[str, Any] | None]
         with session_scope() as s:
             run = bstore.latest_run(s)
             rep = bstore.run_json(s, run) if run else None
+            if rep is not None:  # #381: the after-tax index opportunity cost, computed on read
+                benchmark.attach(rep, s)
     except SQLAlchemyError:
         return None, None
     if rep is None:
@@ -463,7 +466,9 @@ def evidence_for(kind: str, symbol: str, dte: int, strategies: list[dict[str, An
            "text": tp.evidence_text(row, raw_level) if spec else tp.evidence_text(None, "none"),
            "run": head, "url": "/fno/backtests",
            # #395: μ_lo for the Kelly ceiling: the matched row's out-of-sample expectancy CI lower bound (₹/trade)
-           "mu_lo": (((row or {}).get("windows") or {}).get("oos") or {}).get("ci_low") if exact else None}  # fmt: skip
+           "mu_lo": (((row or {}).get("windows") or {}).get("oos") or {}).get("ci_low") if exact else None,
+           # #381: the matched spec's out-of-sample P&L after tax beside holding the index (shown, never a gate)
+           "opportunity": (row or {}).get("opportunity") if exact else None}  # fmt: skip
     if spec is not None and not exact:
         out["text"] = (f"Related only ({spec.name}, not this underlying or expiry window): " + out["text"]
                        + " It does not change the verdict.")  # fmt: skip
