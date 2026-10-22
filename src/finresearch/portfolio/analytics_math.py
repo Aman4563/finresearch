@@ -20,6 +20,7 @@ Formulas (research note "portfolio-insights" §1.7, §1.8, §1.4, §1.17):
 - Sharpe = (mean(r)·252 - r_f) / σ_ann; Sortino divides by the downside deviation below r_f / 252
   (`fincalc.funds.sharpe_ratio` / `sortino_ratio`, applied to the TWR index);
 - risk contribution RC_i = w_i·(Σw)_i / (wᵀΣw), fractions that add up to 1;
+- marginal contribution MCR_i = (Σw)_i / σ_p (#399, the pre-trade line): new money in i raises σ_p iff MCR_i > σ_p;
 - HHI = Σ w_i², effective number of holdings N_eff = 1 / HHI;
 - direct index equivalent (Long–Nickels public-market equivalent): each net inflow buys F_t / B_t benchmark units and
   each outflow sells them; Kaplan–Schoar PME = (Σ out_t·B_T/B_t + V_T) / Σ in_t·B_T/B_t (> 1: the portfolio did better
@@ -302,6 +303,36 @@ def risk_contributions(
         raise ValueError("portfolio variance is zero")
     rc = w * (cov @ w) / var_p
     return [float(x) for x in rc], math.sqrt(var_p * TRADING_DAYS)
+
+
+@dataclass(frozen=True)
+class TradeRisk:
+    sigma_before: float  # annualised portfolio volatility, today's mix
+    sigma_after: float  # the same after the trade (new money in for a buy, proceeds out for a sale)
+    mcr: float  # holding i's marginal contribution (Σw)_i / σ_p, annualised: new money in i raises σ_p iff mcr > σ_p
+    correlation: float | None  # of holding i's daily returns with holding j's (None: no j, or a constant series)
+
+
+def trade_risk(values_before: Sequence[float], values_after: Sequence[float], returns: Sequence[Sequence[float]],
+               i: int, j: int | None) -> TradeRisk:  # fmt: skip
+    """The pre-trade marginal-risk line (#399) under the sample covariance of a T x N matrix of aligned daily returns.
+    σ_p is homogeneous of degree 1 in w, so Σ w_k MCR_k = σ_p and adding ε of new money to i moves σ_p by about
+    ε·(MCR_i - σ_p)."""
+    r = np.asarray(returns, dtype=float)
+    wb, wa = np.asarray(values_before, dtype=float), np.asarray(values_after, dtype=float)
+    if r.ndim != 2 or r.shape[1] != len(wb) or len(wa) != len(wb) or r.shape[0] < 3:
+        raise ValueError("returns must be T x N with T >= 3")
+    if wb.sum() <= 0 or wa.sum() <= 0:
+        raise ValueError("values must add up to more than 0")
+    cov = np.atleast_2d(np.cov(r, rowvar=False, ddof=1)) * TRADING_DAYS
+    wb, wa = wb / wb.sum(), wa / wa.sum()
+    sb = math.sqrt(float(wb @ cov @ wb))
+    if sb <= 0:
+        raise ValueError("portfolio variance is zero")
+    corr = None
+    if j is not None and cov[i, i] > 0 and cov[j, j] > 0:
+        corr = float(cov[i, j] / math.sqrt(cov[i, i] * cov[j, j]))
+    return TradeRisk(sb, math.sqrt(float(wa @ cov @ wa)), float((cov @ wb)[i] / sb), corr)
 
 
 # --------------------------------------------------------------------------- concentration
