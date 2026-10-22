@@ -66,7 +66,7 @@ def seed_futures(days: list[date], settles: list[float]) -> None:
             s.add(FnoBhav(day=d, symbol="ZZALPHA", instrument="STF", expiry=EXPS[0], strike=Decimal(0),
                           option_type="XX", settle=Decimal(str(p)), close=Decimal(str(p)), oi=5000, contracts=500,
                           lot_size=100))  # fmt: skip
-        for d in (*days, D2):
+        for d in {*days, D1, D2}:
             s.merge(FnoBhavDay(day=d, status="loaded"))
 
 
@@ -104,3 +104,74 @@ def test_the_manifest_records_no_stock_list() -> None:
 
     cols = set(OptPanelDay.__table__.c.keys())
     assert not any("symbol" in c or "stock" in c for c in cols), cols
+
+
+def test_build_refuses_a_changed_registration_and_writes_nothing(clean, monkeypatch) -> None:
+    from finresearch.db import session_scope
+    from finresearch.db.models import OptPanelDay
+    from finresearch.optpanel import params, prereg, store
+
+    seed_futures([], [])
+    put_raw(D1, zip_for(D1))
+    monkeypatch.setattr(params, "ROWS_LN_BAND", 0.3)
+    with pytest.raises(prereg.PreregistrationError):
+        store.build(D1, D2, today=D2)
+    with session_scope() as s:
+        assert s.scalar(select(func.count()).select_from(OptPanelDay)) == 0
+
+
+def test_build_refuses_the_vault() -> None:
+    from finresearch.optpanel import store
+    from finresearch.vault.registry import VaultSealed
+
+    with pytest.raises(VaultSealed):
+        store.build(date(2021, 12, 31), date(2022, 1, 5), today=D2)
+
+
+def test_build_never_reads_the_held_or_watched_list(clean, monkeypatch) -> None:
+    """The panel is the same whatever the portfolio is: the tracked list is never asked for, and a tracked stock's
+    full option rows in fno_bhav (different prices) do not leak into its panel row."""
+    from finresearch.db import session_scope
+    from finresearch.db.models import FnoBhav, OptPanelEod
+    from finresearch.disclosures import store as dstore
+    from finresearch.fnohist import store as fstore
+    from finresearch.optpanel import store
+
+    def boom(*a, **k):
+        raise AssertionError("the panel read the held or watched list")
+
+    monkeypatch.setattr(dstore, "tracked", boom)
+    monkeypatch.setattr(fstore, "tracked_stocks", boom)
+    seed_futures([], [])
+    put_raw(D1, zip_for(D1))
+    with session_scope() as s:  # ZZBETA "held": its options stored in fno_bhav at a 90 % volatility
+        for r in fb.parse_udiff(csv_text(underlying(D1, "ZZBETA", 250.0, 0.90, EXPS, lot=400)))[0]:
+            if r.right != "XX":
+                s.add(FnoBhav(day=D1, symbol=r.symbol, instrument=r.instrument, expiry=r.expiry, strike=r.strike,
+                              option_type=r.right, settle=r.settle, close=r.close, oi=r.oi, contracts=r.contracts))  # fmt: skip
+    store.build(D1, D1, today=D2)
+    with session_scope() as s:
+        assert float(s.get(OptPanelEod, (D1, "ZZBETA")).near_iv) == pytest.approx(45.0, abs=0.3)
+
+
+def test_build_resumes_rebuilds_idempotently_and_marks_missing_raw(clean) -> None:
+    from finresearch.db import session_scope
+    from finresearch.db.models import DatasetLoad, OptPanelDay, OptPanelEod
+    from finresearch.optpanel import store
+
+    seed_futures([], [])  # D2 is a loaded session whose raw zip was not kept
+    put_raw(D1, zip_for(D1))
+    first = store.build(D1, D2, today=D2)
+    assert (first["built"], first["no_raw"]) == (1, 1)
+    again = store.build(D1, D2, today=D2)
+    assert again["planned"] == 1 and again["built"] == 0  # D1 skipped; D2 (no raw) tried again
+    put_raw(D1, zip_for(D1, alpha_vol=0.20))
+    store.build(D1, D1, today=D2, rebuild=True)
+    with session_scope() as s:
+        assert s.scalar(select(func.count()).select_from(OptPanelEod).where(OptPanelEod.day == D1)) == 2
+        assert float(s.get(OptPanelEod, (D1, "ZZALPHA")).near_iv) == pytest.approx(20.0, abs=0.3)
+        assert s.get(OptPanelDay, D2).status == "no_raw"
+        loads = s.scalars(
+            select(DatasetLoad).where(DatasetLoad.dataset == "optpanel").order_by(DatasetLoad.id)
+        ).all()
+        assert len(loads) == 2 and loads[1].prior_sha256 == loads[0].sha256  # the changed zip is seen
