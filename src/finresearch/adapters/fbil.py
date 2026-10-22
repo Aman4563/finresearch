@@ -5,7 +5,8 @@ sheet of tenors (0.25-year steps) against the par yield, half-yearly compounded 
 annualised. The site's own front end reads two endpoints:
 
 * ``/wasdm/gsec/fetch?authenticated=false`` -> the latest published dates, newest first;
-* ``/wasdm/gsec/downloadPublished?date=YYYY-MM-DD`` -> that day's workbook (served as ``.xls`` but really ``.xlsx``).
+* ``/wasdm/gsec/downloadPublished?date=YYYY-MM-DD`` -> that day's workbook, served as ``.xls``: really ``.xlsx`` in
+  recent years, a true OLE2 ``.xls`` up to 2022 (the 03-Jan-2022 file); both are read (adapters.xls).
 
 The domain is fbil.org.in. (fbil.co.in is an unrelated bullion dealer.)
 
@@ -15,12 +16,12 @@ stale curve is never mistaken for today's.
 
 from __future__ import annotations
 
-import io
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from itertools import pairwise
 
+from finresearch.adapters import xls
 from finresearch.adapters.http import PoliteClient
 
 BASE = "https://www.fbil.org.in/wasdm"
@@ -80,47 +81,53 @@ def _as_of(v: object) -> date | None:
         return v.date()
     if isinstance(v, date):
         return v
+    for fmt in ("%d-%b-%Y", "%d %b, %Y"):  # .xlsx era / OLE2 .xls era ('03 Jan, 2022')
+        try:
+            return datetime.strptime(str(v).strip(), fmt).date()
+        except ValueError:
+            pass
+    return None
+
+
+def parse_par_yield(content: bytes) -> ParCurve:
+    """The "Par Yield" sheet of FBIL's G-sec workbook, .xlsx or (up to 2022) OLE2 .xls (adapters.xls): a title row
+    with the date ('23-Sep-2026', or '03 Jan, 2022' in the .xls era), then 'Tenor (Year)', 'YTM% p.a.(Semi-Annual)',
+    'YTM % p.a.(Annualized)' rows."""
+    from finresearch.adapters.xls import NotAWorkbook, read_sheets
+
     try:
-        return datetime.strptime(str(v).strip(), "%d-%b-%Y").date()
-    except ValueError:
-        return None
+        sheets = read_sheets(content)
+    except NotAWorkbook as e:
+        raise FbilError(str(e)) from e
+    name = next((n for n in sheets if "par" in n.lower()), None)
+    if name is None:
+        raise FbilError(f"no Par Yield sheet (sheets: {list(sheets)})")
+    as_of, points, in_table = None, [], False
+    for row in sheets[name]:
+        cells = [c for c in row if c is not None and str(c).strip() != ""]
+        if not cells:
+            continue
+        first = str(cells[0]).strip().lower()
+        if as_of is None and "par yield" in first and len(cells) > 1:
+            as_of = _as_of(cells[1])
+            continue
+        if first.startswith("tenor"):
+            in_table = True
+            continue
+        if in_table and len(cells) >= 2:
+            try:
+                tenor = Decimal(str(cells[0]))
+            except InvalidOperation:
+                continue
+            semi = _pct(cells[1])
+            if semi is not None:
+                points.append(ParPoint(tenor, semi, _pct(cells[2]) if len(cells) > 2 else None))
+    if as_of is None or len(points) < 2:
+        raise FbilError("could not read the par yield table")
+    return ParCurve(as_of=as_of, points=points)
 
 
-def parse_par_yield_xlsx(content: bytes) -> ParCurve:
-    """The "Par Yield" sheet of FBIL's G-sec workbook: a title row with the date, then 'Tenor (Year)',
-    'YTM% p.a.(Semi-Annual)', 'YTM % p.a.(Annualized)' rows."""
-    from openpyxl import load_workbook
-
-    wb = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
-    try:
-        sheet = next((ws for ws in wb.worksheets if "par" in ws.title.lower()), None)
-        if sheet is None:
-            raise FbilError(f"no Par Yield sheet (sheets: {[ws.title for ws in wb.worksheets]})")
-        as_of, points, in_table = None, [], False
-        for row in sheet.iter_rows(values_only=True):
-            cells = [c for c in row if c is not None and str(c).strip() != ""]
-            if not cells:
-                continue
-            first = str(cells[0]).strip().lower()
-            if as_of is None and "par yield" in first and len(cells) > 1:
-                as_of = _as_of(cells[1])
-                continue
-            if first.startswith("tenor"):
-                in_table = True
-                continue
-            if in_table and len(cells) >= 2:
-                try:
-                    tenor = Decimal(str(cells[0]))
-                except InvalidOperation:
-                    continue
-                semi = _pct(cells[1])
-                if semi is not None:
-                    points.append(ParPoint(tenor, semi, _pct(cells[2]) if len(cells) > 2 else None))
-        if as_of is None or len(points) < 2:
-            raise FbilError("could not read the par yield table")
-        return ParCurve(as_of=as_of, points=points)
-    finally:
-        wb.close()
+parse_par_yield_xlsx = parse_par_yield  # the earlier name (callers and tests)
 
 
 class FbilClient:
@@ -145,8 +152,8 @@ class FbilClient:
 
     async def par_curve(self, day: date) -> ParCurve:
         resp = await self.http.get(DOWNLOAD_URL, params={"date": day.isoformat()}, headers=HEADERS,
-                                   cache_ttl=30 * 86400, cache_if=lambda f: f.content[:2] == b"PK")  # fmt: skip
-        if not resp.ok or resp.content[:2] != b"PK":
+                                   cache_ttl=30 * 86400, cache_if=lambda f: xls.kind(f.content) is not None)  # fmt: skip
+        if not resp.ok or xls.kind(resp.content) is None:
             raise FbilError(f"FBIL has no G-sec workbook for {day} (HTTP {resp.status})")
         curve = parse_par_yield_xlsx(resp.content)
         return ParCurve(
