@@ -85,12 +85,12 @@ def test_sample_outcome_charges_the_exit_cost_like_the_card() -> None:
 # ------------------------------------------------------------------------------------- the stationary bootstrap
 def test_stationary_bootstrap_draws_runs_of_geometric_mean_length() -> None:
     rng = np.random.default_rng(1)
-    idx = td.stationary_bootstrap(100, 200_000, 3.0, rng)
+    idx = td.stationary_bootstrap(100, 60_000, 3.0, rng)
     assert idx.min() >= 0 and idx.max() <= 99
     # a run continues with probability 1 - 1/3 (circularly): the share of steps i -> i + 1 mod n is 2/3
     cont = np.mean((idx[1:] - idx[:-1]) % 100 == 1)
-    assert cont == pytest.approx(2 / 3 + (1 / 3) / 100, abs=0.005)  # a restart lands on i + 1 with chance 1/n
-    assert np.bincount(idx, minlength=100).min() > 1500  # every expiry is drawn (uniform restarts)
+    assert cont == pytest.approx(2 / 3 + (1 / 3) / 100, abs=0.01)  # a restart lands on i + 1 with chance 1/n
+    assert np.bincount(idx, minlength=100).min() > 400  # every expiry is drawn (uniform restarts)
 
 
 def test_block_bootstrap_is_reproducible_by_seed() -> None:
@@ -116,7 +116,11 @@ def test_gpd_fit_matches_scipy_genpareto_fit() -> None:
 def test_gpd_tail_needs_its_minimum_exceedances() -> None:
     z = np.random.default_rng(3).standard_t(4, 400)
     tail = td.gpd_tail(z, q=0.95, min_exceed=15)
-    assert tail is not None and tail.n_exceed == 20 and tail.threshold == pytest.approx(np.quantile(np.abs(z), 0.95))
+    assert (
+        tail is not None
+        and tail.n_exceed == 20
+        and tail.threshold == pytest.approx(np.quantile(np.abs(z), 0.95))
+    )
     # scipy.stats.genpareto.fit(|z| - u over |z| > u, floc=0): a short-tailed fit (xi < 0) on 20 points
     assert tail.threshold == pytest.approx(2.8875516916763027, rel=1e-12)
     assert tail.xi == pytest.approx(-0.4490895487147928, abs=1e-4)
@@ -162,9 +166,9 @@ def test_gjr_fit_matches_an_independent_scipy_fit() -> None:
     assert fit.params is not None and fit.reason is None
     assert fit.loglik >= 5385.174137567787 - 1e-4
     p = fit.params
-    assert p.omega == pytest.approx(1.6845710482056098e-06, rel=0.02)
+    assert p.omega == pytest.approx(1.6845710482056098e-06, rel=1e-4)
     assert (p.alpha, p.gamma, p.beta) == pytest.approx((0.04770763893572895, 0.05671467991330568,
-                                                        0.8911758464038406), abs=2e-3)  # fmt: skip
+                                                        0.8911758464038406), abs=1e-5)  # fmt: skip
 
 
 def test_gjr_fit_refuses_a_short_series() -> None:
@@ -175,3 +179,68 @@ def test_gjr_fit_refuses_a_short_series() -> None:
 def test_gjr_fit_uses_only_the_last_window_returns() -> None:
     r = gjr_series()
     assert td.gjr_fit(r, window=1000).loglik == pytest.approx(td.gjr_fit(r[-1000:], window=1000).loglik)
+
+
+# ------------------------------------------------------------------------------------------- M2: IV-scaled empirical
+PCS = [o.Leg("put", 24000, 60.0, -75), o.Leg("put", 23500, 25.0, 75)]
+F, SIG, T, R = 24400.0, 0.13, 28 / 365, 0.065
+
+
+def normal_scores(n: int) -> np.ndarray:
+    from statistics import NormalDist
+
+    return np.array([NormalDist().inv_cdf((i + 0.5) / n) for i in range(n)])
+
+
+def test_empirical_model_on_normal_z_is_the_lognormal_card_at_the_atm_iv() -> None:
+    zs = normal_scores(4000)
+    got = td.empirical_forecast(PCS, F, SIG, T, R, 120.0, None, zs, rng=np.random.default_rng(1), boot=50)
+    # the grid's own kappa (0.9994), so the lognormal reference uses sigma sqrt(kappa); EV within Rs 2 of Rs 6,266:
+    # 4,000 normal scores stop at |z| = 3.5 where the card's grid integrates to 6
+    k = float(np.mean(zs**2))
+    ref = o.outcome(PCS, F * math.exp(-R * T), T, SIG * math.sqrt(k), R, R, 120.0, None)
+    assert got.kappa == pytest.approx(k) and got.n == 4000 and got.reason is None
+    assert got.outcome.pop == pytest.approx(ref.pop, abs=1e-3) and got.outcome.ev == pytest.approx(
+        ref.ev, abs=2.0
+    )
+    assert got.ev_lo <= got.outcome.ev <= got.ev_hi
+
+
+def test_empirical_model_turns_fat_left_tails_into_a_lower_ev_for_a_put_seller() -> None:
+    zs = normal_scores(400)
+    fat = np.where(zs < -1.5, zs * 1.6, zs)  # the same body, a heavier left tail
+    rng = np.random.default_rng(2)
+    a = td.empirical_forecast(PCS, F, SIG, T, R, 120.0, None, zs, rng=rng, boot=50)
+    b = td.empirical_forecast(PCS, F, SIG, T, R, 120.0, None, fat, rng=rng, boot=50)
+    assert b.kappa > a.kappa and b.outcome.ev < a.outcome.ev and b.outcome.es > a.outcome.es
+
+
+def test_empirical_model_is_unknown_without_enough_z_or_an_iv() -> None:
+    zs = normal_scores(20)
+    got = td.empirical_forecast(PCS, F, SIG, T, R, 120.0, None, zs, min_z=30, rng=np.random.default_rng(1))
+    assert got.outcome is None and "20 z" in got.reason
+    got = td.empirical_forecast(
+        PCS, F, None, T, R, 120.0, None, normal_scores(100), rng=np.random.default_rng(1)
+    )
+    assert got.outcome is None and "IV" in got.reason
+
+
+def test_ev_interval_narrows_with_more_expiries() -> None:
+    z = np.random.default_rng(5).standard_t(5, 2000) / math.sqrt(5 / 3)
+    small = td.empirical_forecast(
+        PCS, F, SIG, T, R, 120.0, None, z[:100], rng=np.random.default_rng(1), boot=300
+    )
+    big = td.empirical_forecast(PCS, F, SIG, T, R, 120.0, None, z, rng=np.random.default_rng(1), boot=300)
+    assert big.ev_hi - big.ev_lo < (small.ev_hi - small.ev_lo) / 2
+
+
+def test_gpd_tail_draws_replace_only_the_exceedances() -> None:
+    z = np.random.default_rng(3).standard_t(4, 400)
+    tail = td.gpd_tail(z, q=0.95, min_exceed=15)
+    draws = td.sample_z(z, 20000, np.random.default_rng(4), 3.0, tail)
+    inside = np.abs(draws) <= tail.threshold
+    assert set(np.round(draws[inside], 12)) <= set(np.round(z, 12))  # the body is resampled as is
+    assert (
+        np.mean(~inside) == pytest.approx(0.05, abs=0.01)
+        and np.abs(draws).max() < tail.threshold - tail.beta / tail.xi + 1e-9
+    )

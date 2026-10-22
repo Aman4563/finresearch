@@ -50,7 +50,9 @@ def iv_scaled_terminal(fwd: float, sigma: float, t: float, z: np.ndarray, kap: f
 
 
 # ------------------------------------------------------------------------------------------- expected shortfall
-def expected_shortfall(x: Sequence[float], w: Sequence[float] | None = None, alpha: float = ES_ALPHA) -> float:
+def expected_shortfall(
+    x: Sequence[float], w: Sequence[float] | None = None, alpha: float = ES_ALPHA
+) -> float:
     """ES_alpha as a positive loss: -(1/alpha)[sum_{i<k} w_i x_(i) + (alpha - sum_{i<k} w_i) x_(k)] on the sorted
     values, k the first index whose cumulative weight reaches alpha (weights normalised to 1)."""
     xs = np.asarray(x, float)
@@ -83,14 +85,20 @@ def sample_outcome(legs: Sequence[o.Leg], s_t: Sequence[float], t: float, rate: 
     """PoP, EV, dots and ES of holding `legs` to expiry over terminal prices `s_t` with `weights` (equal if None),
     on fincalc.options.outcome's conventions so that a lognormal grid reproduces it."""
     st = np.asarray(s_t, float)
-    w = np.full(len(st), 1.0 / len(st)) if weights is None else np.asarray(weights, float) / float(np.sum(weights))
+    w = (
+        np.full(len(st), 1.0 / len(st))
+        if weights is None
+        else np.asarray(weights, float) / float(np.sum(weights))
+    )
     net = sum(x.premium * x.qty for x in legs if x.right != "future")
     gross = np.zeros(len(st))
     for x in legs:
         if x.right == "future":
             gross += x.qty * (st - x.strike)
         else:
-            gross += x.qty * (np.maximum(st - x.strike, 0) if x.right == "call" else np.maximum(x.strike - st, 0))
+            gross += x.qty * (
+                np.maximum(st - x.strike, 0) if x.right == "call" else np.maximum(x.strike - st, 0)
+            )
     xc = np.array([exit_cost(float(p)) for p in st]) if exit_cost else np.zeros(len(st))
     pnl = gross - net - entry_cost - xc
     df = math.exp(-rate * t)
@@ -119,7 +127,9 @@ def stationary_bootstrap(n: int, size: int, mean_block: float, rng: np.random.Ge
 
 
 # ------------------------------------------------------------------------------------------- the GPD tail
-GPD_THETA_GRID = 4000  # Grimshaw's profile likelihood is searched on this grid of theta = xi / beta, then refined
+GPD_THETA_GRID = (
+    4000  # Grimshaw's profile likelihood is searched on this grid of theta = xi / beta, then refined
+)
 
 
 @dataclass(frozen=True)
@@ -205,7 +215,10 @@ def gpd_tail(z: Sequence[float], q: float, min_exceed: int) -> GpdTail | None:
 
 # ------------------------------------------------------------------------------------------- filters
 EWMA_LAMBDA = 0.94  # RiskMetrics (1996) daily decay; NSE's margin volatility uses 0.995
-BACKCAST_TAU, BACKCAST_DECAY = 75, 0.94  # arch's (K. Sheppard) variance backcast: EWMA weights over the first 75
+BACKCAST_TAU, BACKCAST_DECAY = (
+    75,
+    0.94,
+)  # arch's (K. Sheppard) variance backcast: EWMA weights over the first 75
 GJR_WINDOW = 1000  # the last 1,000 daily returns (about four years) on or before the fit date
 GJR_MIN_RETURNS = 250  # fewer: no fit (unknown)
 GJR_START = (0.05, 0.05, 0.85)  # alpha, gamma, beta; omega = var x (1 - alpha - gamma / 2 - beta)
@@ -225,7 +238,9 @@ def nelder_mead(f: Callable[[np.ndarray], float], x0: Sequence[float], step: Seq
     """Nelder and Mead (1965) with the standard coefficients (reflect 1, expand 2, contract 1/2, shrink 1/2);
     converged when the simplex spans < xatol in x and < fatol in f."""
     n = len(x0)
-    sim = np.array([np.asarray(x0, float)] + [np.asarray(x0, float) + np.eye(n)[i] * step[i] for i in range(n)])
+    sim = np.array(
+        [np.asarray(x0, float)] + [np.asarray(x0, float) + np.eye(n)[i] * step[i] for i in range(n)]
+    )
     fs = np.array([f(x) for x in sim])
     nfev = n + 1
     while nfev < maxfev:
@@ -350,3 +365,67 @@ def gjr_fit(returns: Sequence[float], window: int = GJR_WINDOW, min_returns: int
         return GjrFit(None, None, len(r), f"not converged after {res.nfev} evaluations")
     x = res.x
     return GjrFit(GjrParams(x[0] * var, x[1], x[2], x[3]), -res.fun, len(r))
+
+
+# ------------------------------------------------------------------------------------------- M2: IV-scaled empirical
+MIN_Z = 30  # fewer past expiries in the bucket: the model is unknown
+BLOCK_MEAN = 3.0  # expected stationary-bootstrap block, in expiries (the drawdown block of the issue)
+EV_BOOT = 500  # bootstrap replicates of the z series for the EV interval
+EV_LEVEL = 0.90  # two-sided: the lower bound is the 5th percentile (the gate's 90 % lower bound)
+PATHS = 20_000  # Monte Carlo draws where the model is sampled (a GPD tail; FHS)
+
+
+def sample_z(zs: Sequence[float], size: int, rng: np.random.Generator, mean_block: float = BLOCK_MEAN,
+             tail: GpdTail | None = None) -> np.ndarray:  # fmt: skip
+    """`size` draws of z by the stationary bootstrap over expiries; with a GPD tail every draw beyond the threshold
+    keeps its sign and takes |z| = u + a GPD draw (inverse CDF: beta ((1 - U)^-xi - 1) / xi)."""
+    z = np.asarray(zs, float)[stationary_bootstrap(len(zs), size, mean_block, rng)]
+    if tail is None:
+        return z
+    out = np.abs(z) > tail.threshold
+    u = rng.random(int(out.sum()))
+    exc = (tail.beta * -np.log1p(-u) if abs(tail.xi) < 1e-12
+           else tail.beta * (np.power(1 - u, -tail.xi) - 1) / tail.xi)  # fmt: skip
+    z[out] = np.sign(z[out]) * (tail.threshold + exc)
+    return z
+
+
+@dataclass(frozen=True)
+class ModelForecast:
+    outcome: SampleOutcome | None  # None = unknown, with `reason`
+    ev_lo: float | None  # the EV interval at EV_LEVEL (bootstrap over expiries); None when not estimated
+    ev_hi: float | None
+    kappa: float | None
+    n: int  # z values (M2) or returns (M3) behind it
+    reason: str | None = None
+
+
+def empirical_forecast(legs: Sequence[o.Leg], fwd: float, sigma: float | None, t: float, rate: float,
+                       entry_cost: float, exit_cost: Callable[[float], float] | None, zs: Sequence[float], *,
+                       rng: np.random.Generator, min_z: int = MIN_Z, mean_block: float = BLOCK_MEAN,
+                       boot: int = EV_BOOT, level: float = EV_LEVEL, tail: GpdTail | None = None,
+                       paths: int = PATHS) -> ModelForecast:  # fmt: skip
+    """M2. Without a tail the point estimates are exact on the empirical z distribution (the limit of drawing
+    z* by the bootstrap); with one they are a Monte Carlo of `paths` draws. The EV interval re-estimates kappa and
+    the EV on `boot` stationary-bootstrap replicates of the z series (length n each)."""
+    z = np.asarray(zs, float)
+    if not sigma or sigma <= 0:
+        return ModelForecast(None, None, None, None, len(z), "no ATM IV")
+    if len(z) < min_z:
+        return ModelForecast(None, None, None, None, len(z), f"{len(z)} z values, fewer than {min_z}")
+    k = kappa(z)
+    assert k is not None
+    draws = z if tail is None else sample_z(z, paths, rng, mean_block, tail)
+    point = sample_outcome(legs, iv_scaled_terminal(fwd, sigma, t, draws, k), t, rate, entry_cost, exit_cost)
+    evs = []
+    for _ in range(boot):
+        zb = z[stationary_bootstrap(len(z), len(z), mean_block, rng)]
+        kb = kappa(zb)
+        evs.append(sample_outcome(legs, iv_scaled_terminal(fwd, sigma, t, zb, kb), t, rate, entry_cost,  # type: ignore[arg-type]
+                                  exit_cost).ev)  # fmt: skip
+    lo, hi = (
+        (float(np.quantile(evs, (1 - level) / 2)), float(np.quantile(evs, (1 + level) / 2)))
+        if evs
+        else (None, None)
+    )
+    return ModelForecast(point, lo, hi, k, len(z))
