@@ -261,7 +261,7 @@ const RUN_ROW = { id: 7, version_id: 3, oos: true, status: "done" as const, prog
   started_at: null, finished_at: null, error: null, n_trials: 10, counted: true, n_trades: 41,
   summary: { status: "fails", is: null, oos: null, warnings: 3 } };
 export const LAB: LabResponse = {
-  underlyings: ["NIFTY", "BANKNIFTY"], variants: { library: 8, lab: 2, n: 10 }, blocks: BLOCKS,
+  underlyings: ["NIFTY", "BANKNIFTY"], variants: { library: 8, lab: 2, trials: 3, vault_reads: 0, n: 11 }, blocks: BLOCKS,
   strategies: [{ id: 1, name: "Bull put", underlying: "NIFTY", created_at: null, oos_versions: 2,
     split: { is: ["2022-01-01", "2024-06-30"], oos_from: "2024-07-01", data: ["2022-01-03", "2026-10-09"], rule: "the pre-registered library's windows" },
     versions: [{ id: 3, version: 2, created_at: null, spec: DEFAULT_SPEC, spec_hash: "b".repeat(64), note: "", counted_variant: true,
