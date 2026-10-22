@@ -86,16 +86,19 @@ function Breakdown({ title, rows }: { title: string; rows: Record<string, Window
   );
 }
 
+/** A rupee figure that never wraps inside itself (the layout test flags a split number). */
+const Rs = ({ v }: { v: number | null }) => <span className="num whitespace-nowrap">{rupees(v)}</span>;
+
 /** #381: the out-of-sample P&L after tax beside simply holding the index; unknown reads unknown, never ₹0. */
 export function OpportunityLine({ o }: { o: Opportunity | null | undefined }) {
   if (!o) return null;
   const [from, to] = o.window;
   return (
     <p className="text-sm">
-      Against holding the index ({from} → {to}, {rupees(o.capital)}): this strategy {rupees(o.fno_after_tax)} after tax
-      {o.slab_rate == null ? " (tax slab unknown)" : ` (${(o.slab_rate * 100).toFixed(0)}% slab + cess)`}; the index {o.index_after_tax == null ? "unknown" : rupees(o.index_after_tax)}
+      Against holding the index ({from} → {to}, <Rs v={o.capital} />): this strategy <Rs v={o.fno_after_tax} /> after tax
+      {o.slab_rate == null ? " (tax slab unknown)" : ` (${(o.slab_rate * 100).toFixed(0)}% slab + cess)`}; the index {o.index_after_tax == null ? "unknown" : <Rs v={o.index_after_tax} />}
       {o.index_tax_rate != null && ` after ${(o.index_tax_rate * 100).toFixed(1)}% capital-gains tax`}.{" "}
-      <span className="font-medium">{o.excess_after_tax == null ? "Difference unknown" : `Difference ${rupees(o.excess_after_tax)}`}</span>
+      <span className="font-medium">{o.excess_after_tax == null ? "Difference unknown" : <>Difference <Rs v={o.excess_after_tax} /></>}</span>
       {o.reason && <span className="text-muted"> ({o.reason})</span>}
       <span className="block text-xs text-muted">{o.benchmark}; the ₹1.25 lakh LTCG exemption, surcharge and set-off of F&amp;O losses are not applied.</span>
     </p>
@@ -107,7 +110,7 @@ function ShadowV2({ v }: { v: CriteriaV2 }) {
   return (
     <details className="text-sm">
       <summary className="cursor-pointer">Criteria v2 (shadow, not adopted): {v.verdict === "would_pass" ? "would pass" : "would fail"}
-        <span className="text-muted"> · posterior Sharpe {num(v.stats.posterior_sharpe ?? null)} · Lo-adjusted Sharpe {num(v.stats.lo_sharpe ?? null)}</span></summary>
+        <span className="text-muted"> · posterior Sharpe <span className="num whitespace-nowrap">{num(v.stats.posterior_sharpe ?? null)}</span> · Lo-adjusted Sharpe <span className="num whitespace-nowrap">{num(v.stats.lo_sharpe ?? null)}</span></span></summary>
       <p className="my-1 text-xs text-muted">{v.note}</p>
       <CriteriaList items={v.criteria} />
     </details>
