@@ -2,7 +2,8 @@
 
 Tool policy (least privilege): every role reads documents and uses fincalc through the FinResearch MCP server; only
 roles whose job needs the open web get WebSearch/WebFetch; only research streams may write claims; bull/bear,
-synthesizer and critic read the ledger but never write to it.
+synthesizer and critic read the ledger but never write to it. The option-fact tools (#393) go to stock_technical only:
+it is the one stream that writes market context, and save_claim re-runs a cited fact itself, so no verifier needs them.
 """
 
 from __future__ import annotations
@@ -43,6 +44,8 @@ BONDS = [f"{MCP}nse_bond_search", f"{MCP}bond_analytics"]
 FUNDS = [f"{MCP}{t}" for t in ("amfi_scheme_search", "amfi_nav_history", "amfi_category_peers")]
 EQUITY = [f"{MCP}{t}" for t in ("nse_price_history", "nse_announcements", "nse_results_filings", "nse_results_facts",
                                  "nse_shareholding", "nse_corporate_actions")]  # fmt: skip
+# option-implied facts from stored F&O data (#393): only the price-behaviour stream, which writes market context
+OPTIONS = [f"{MCP}{t}" for t in ("option_implied_move", "option_iv30_percentile", "option_skew_25d")]
 WEB = [
     "WebSearch",
     "WebFetch",
@@ -79,10 +82,10 @@ class Role:
 
 def _stream(name: str, *, web: bool, market: bool = False, docs: bool = True, turns: int = 80,
             equity: bool = False, funds: bool = False, bonds: bool = False, value: bool = False,
-            skills: list[str] | None = None) -> Role:  # fmt: skip
+            options: bool = False, skills: list[str] | None = None) -> Role:  # fmt: skip
     tools = [*(DOC_READ if docs else [f"{MCP}search_documents", f"{MCP}read_lines_tool"]), *CALC, *LEDGER_WRITE,
              *(MARKET if market else []), *(EQUITY if equity else []), *(FUNDS if funds else []),
-             *(BONDS if bonds else []), *(VALUE if value else []),
+             *(BONDS if bonds else []), *(VALUE if value else []), *(OPTIONS if options else []),
              *(WEB if web else []), *SKILL]  # fmt: skip
     extra = {"skills": skills} if skills is not None else {}
     return Role(name=name, template=f"stream_{name}.md", output=StreamReport, model_class=ModelClass.STANDARD,
@@ -138,7 +141,8 @@ ROLES: dict[str, Role] = {
     "stock_valuation": _stream("stock_valuation", web=True, equity=True, value=True, skills=STOCK_SKILLS),
     "stock_governance": _stream("stock_governance", web=True, equity=True, skills=STOCK_SKILLS),
     "stock_news": _stream("stock_news", web=True, docs=False, equity=True, skills=STOCK_SKILLS),
-    "stock_technical": _stream("stock_technical", web=False, docs=False, equity=True, turns=40, skills=STOCK_SKILLS),
+    "stock_technical": _stream("stock_technical", web=False, docs=False, equity=True, options=True, turns=40,
+                               skills=STOCK_SKILLS),
     "stock_bull": Role("stock_bull", "case_stock_bull.md", CaseReport, ModelClass.DEEP, [*LEDGER_READ, *DOC_READ],
                        effort="medium", max_turns=25, timeout_s=1200, skills=STOCK_SKILLS),
     "stock_bear": Role("stock_bear", "case_stock_bear.md", CaseReport, ModelClass.DEEP, [*LEDGER_READ, *DOC_READ],

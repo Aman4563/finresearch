@@ -52,13 +52,17 @@ Every model task goes through one interface with three tiers:
 
 A resumable, budget-aware pipeline per research kind (IPO, stock, fund, bond): a planner, research streams,
 adversarial verifiers, bull and bear analysts, a synthesiser and a completeness critic. Agents work only through the
-FinResearch MCP tools: documents, sections, search, tables, `fincalc`, live market data and the claim ledger.
+FinResearch MCP tools: documents, sections, search, tables, `fincalc`, live market data, read-only option-implied facts
+(`mcp_server/option_facts.py`: implied move, IV30 percentile, 25-delta skew from the stored bhavcopy; indices and the
+run's own stock only, the run bound by the server's config, granted to `stock_technical` only) and the claim ledger.
 
 Every finding is saved as an atomic claim (metric, value, unit, period) with citations. The verification gate:
 - checks each quoted value against its cited lines, and each web quote against the page text the `fetch_page` tool
-  stored (`verify/web.py`); a fincalc citation is run again and must reproduce the value;
+  stored (`verify/web.py`); a fincalc citation, or an option-fact tool's citation, is run again and must reproduce
+  the value;
 - grades every claim's evidence (`verify/evidence.py`): A document quote verified, B web quote verified on a stored
-  copy of the page, C web quote unchecked, D computed by fincalc from cited inputs, U unsupported;
+  copy of the page, C web quote unchecked, D computed by fincalc from cited inputs (or by an option-fact tool from stored market data),
+  U unsupported;
 - catches conflicts between streams, stale live figures and wrong bidding-day labels;
 - turns verifier corrections into new, re-checked claims, and gives verified high-importance claims an independent
   second verifier (`verifier_blind`: its own prompt, the STANDARD model tier, no ledger access) that is never shown

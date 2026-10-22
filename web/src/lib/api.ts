@@ -20,7 +20,7 @@ export type Citation = {
   grade?: EvidenceGrade;
   grade_label?: string;
   snapshot_sha256?: string | null;
-  computation?: { function: string; args: Record<string, unknown>; inputs: number[]; result: string; matches: boolean; inputs_ok: boolean; detail: string } | null;
+  computation?: { kind?: string; function: string; args: Record<string, unknown>; inputs: number[]; result: string; matches: boolean; inputs_ok: boolean; detail: string } | null;
 };
 
 export type EvidenceGrade = "A" | "B" | "C" | "D" | "U";
