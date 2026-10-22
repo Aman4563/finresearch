@@ -132,7 +132,9 @@ def fit(points: list[Point], events: list[date]) -> dict[date, Implied]:
     for e in sorted(set(events)):
         col = tuple(int(p.expiry >= e) for p in pts)
         if not any(col):
-            out[e] = Implied(None, method="fit", reason="no expiry after the event: its move is not priced yet")
+            out[e] = Implied(
+                None, method="fit", reason="no expiry after the event: its move is not priced yet"
+            )
         else:
             cols.setdefault(col, []).append(e)
     for same in cols.values():
@@ -170,7 +172,9 @@ def fit(points: list[Point], events: list[date]) -> dict[date, Implied]:
 
 
 # ---------------------------------------------------------------- realised event moves (point in time)
-MAX_GAP_DAYS = 5  # a close more than 5 calendar days from the event's session is a gap in the data, not a holiday
+MAX_GAP_DAYS = (
+    5  # a close more than 5 calendar days from the event's session is a gap in the data, not a holiday
+)
 
 
 @dataclass(frozen=True)
@@ -270,7 +274,9 @@ def elevation(p: Point, inside: list[tuple[str, Implied]]) -> dict:
 def short_gamma(imp: Implied, stats: TypeStats | None) -> dict:
     """The plan rule's flag: for a type with >= 20 past events, 'flag' when the implied median |move| (0.6745 J) is
     below the realised median |move| (short gamma looks cheap). Rarer types list their past moves, never a flag."""
-    past = [] if stats is None else [{"day": m.day.isoformat(), "r": m.r, "title": m.title} for m in stats.moves]
+    past = (
+        [] if stats is None else [{"day": m.day.isoformat(), "r": m.r, "title": m.title} for m in stats.moves]
+    )
     n = 0 if stats is None else stats.n
     hist = None if stats is None else stats.median_abs
     base = {"n": n, "historical_median_abs": hist, "implied_median_abs": imp.median_abs, "past_moves": past}

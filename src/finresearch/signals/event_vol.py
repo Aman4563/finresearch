@@ -35,7 +35,9 @@ def _tau(day: date, expiry: date, calendar: bustime.Calendar | None) -> tuple[fl
     return (expiry - day).days / 365, "calendar"
 
 
-def _implied(row: FnoIvEod, tier1: list[cal.Event], calendar: bustime.Calendar | None) -> tuple[dict, str, list]:
+def _implied(
+    row: FnoIvEod, tier1: list[cal.Event], calendar: bustime.Calendar | None
+) -> tuple[dict, str, list]:
     """Every tier-1 event in (row.day, next expiry] fitted from the row's two expiries: {event day: Implied}."""
     pts, clock = [], "calendar"
     for exp, iv in ((row.near_expiry, row.near_iv), (row.next_expiry, row.next_iv)):
@@ -97,7 +99,11 @@ def build(s: Session, symbol: str, now: datetime, *, calendar: Any = AUTO) -> di
               if near and date.fromisoformat(u["day"]) <= near.expiry]  # fmt: skip
     elev = ev.elevation(near, inside) if near else {"status": "unknown", "note": "No near expiry."}
     if elev["status"] == "none" and window["status"] != "none":
-        elev = {**elev, "status": "unknown", "note": window["note"]}  # an uncovered calendar is never "no event"
+        elev = {
+            **elev,
+            "status": "unknown",
+            "note": window["note"],
+        }  # an uncovered calendar is never "no event"
     for h in stats:
         h.pop("_stats")
     context = [x["title"] + " " + x["india_day"] for x in window["context"]]
@@ -116,7 +122,9 @@ def _history(s: Session, sym: str, events: list[cal.Event], closes: dict[date, f
     (only from calendar rows public at that close)."""
     hist = ev.history(events, closes, now)
     starts = {m.start for h in hist.values() for m in h.moves if m.start}
-    rows = {r.day: r for r in s.scalars(select(FnoIvEod).where(FnoIvEod.symbol == sym, FnoIvEod.day.in_(starts)))}
+    rows = {
+        r.day: r for r in s.scalars(select(FnoIvEod).where(FnoIvEod.symbol == sym, FnoIvEod.day.in_(starts)))
+    }
     clock = bustime.Calendar.from_sessions(closes)
     out = []
     for kind, st in hist.items():
@@ -127,7 +135,11 @@ def _history(s: Session, sym: str, events: list[cal.Event], closes: dict[date, f
             if row is not None:
                 at = ist_datetime(row.day, *bustime.SESSION_CLOSE)
                 t1 = [e for e in cal.known_at(events, at) if e.tier == 1]
-                j2 = _implied(row, t1, clock)[0].get(m.day, ev.Implied(None)).j2 if kind in cal.TIER1_TYPES else None
+                j2 = (
+                    _implied(row, t1, clock)[0].get(m.day, ev.Implied(None)).j2
+                    if kind in cal.TIER1_TYPES
+                    else None
+                )
             if m.r is not None and j2 is not None:
                 pairs.append((m.r, j2))
             moves.append({"day": m.day.isoformat(), "title": m.title, "r": m.r, "reason": m.reason,

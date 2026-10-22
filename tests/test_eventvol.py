@@ -98,7 +98,9 @@ from finresearch.eventcal import calendar as cal  # noqa: E402
 from finresearch.fincalc.dates import IST  # noqa: E402
 
 
-def _ev(kind: str, day: date, known: date, *, withdrawn: date | None = None, at: datetime | None = None) -> cal.Event:
+def _ev(
+    kind: str, day: date, known: date, *, withdrawn: date | None = None, at: datetime | None = None
+) -> cal.Event:
     eod = lambda d: datetime(d.year, d.month, d.day, 23, 59, tzinfo=IST)  # noqa: E731
     return cal.Event(type=kind, tier=1, scope="IN", day=day, at=at, title=f"{kind} {day}",
                      source_url="https://example.gov/x", known_since=eod(known),
@@ -106,7 +108,11 @@ def _ev(kind: str, day: date, known: date, *, withdrawn: date | None = None, at:
 
 
 # Synthetic closes: 100 on every weekday of June 2024, except the event days below.
-CLOSES = {date(2024, 6, 1) + timedelta(days=i): 100.0 for i in range(30) if (date(2024, 6, 1) + timedelta(days=i)).weekday() < 5}
+CLOSES = {
+    date(2024, 6, 1) + timedelta(days=i): 100.0
+    for i in range(30)
+    if (date(2024, 6, 1) + timedelta(days=i)).weekday() < 5
+}
 CLOSES[date(2024, 6, 4)] = 94.0  # results day (a Tuesday): -6 %
 CLOSES[date(2024, 6, 5)] = 94.0
 CLOSES.update({d: 94.0 for d in CLOSES if d > date(2024, 6, 4)})
@@ -137,8 +143,12 @@ def test_realised_move_with_a_missing_close_is_unknown():
 def test_history_uses_only_events_known_and_settled_before_as_of():
     events = [
         _ev("general_election", date(2024, 6, 4), date(2024, 3, 16)),
-        _ev("rbi_mpc", date(2024, 6, 7), date(2024, 6, 20)),  # announced after the date (back-filled): unseen before
-        _ev("rbi_mpc", date(2024, 6, 6), date(2024, 3, 1), withdrawn=date(2024, 6, 2)),  # moved: never happened
+        _ev(
+            "rbi_mpc", date(2024, 6, 7), date(2024, 6, 20)
+        ),  # announced after the date (back-filled): unseen before
+        _ev(
+            "rbi_mpc", date(2024, 6, 6), date(2024, 3, 1), withdrawn=date(2024, 6, 2)
+        ),  # moved: never happened
     ]
     on_4th = ev.history(events, CLOSES, datetime(2024, 6, 4, 12, 0, tzinfo=IST))
     assert on_4th == {}  # the 4th's close is not known at noon on the 4th

@@ -38,7 +38,11 @@ def _seed(coverage: bool = True) -> None:
         # the issue's example: 3-Jun-2024, near 13-Jun at 26.74 %, next 20-Jun at 22.58 %
         s.add(FnoIvEod(symbol="NIFTY", day=date(2024, 6, 3), near_expiry=date(2024, 6, 13), near_iv=Decimal("26.74"),
                        next_expiry=date(2024, 6, 20), next_iv=Decimal("22.58"), rate=Decimal("0.065")))  # fmt: skip
-        for d, c in [(date(2024, 5, 31), 22530.70), (date(2024, 6, 3), 23263.90), (date(2024, 6, 4), 21884.50)]:
+        for d, c in [
+            (date(2024, 5, 31), 22530.70),
+            (date(2024, 6, 3), 23263.90),
+            (date(2024, 6, 4), 21884.50),
+        ]:
             s.add(IndexEod(day=d, symbol="NIFTY", index_name="Nifty 50", close=Decimal(str(c))))
         cov = [_cov(k, date(2024, 12, 31), date(2024, 1, 1)) for k in cal.TIER1_TYPES] if coverage else []
         store.upsert(s, [_ev("general_election", ELECTION, date(2024, 3, 16))], cov)
@@ -110,4 +114,6 @@ def test_a_row_dated_today_is_not_read_before_the_close(clean):
         s.add(FnoIvEod(symbol="NIFTY", day=date(2024, 6, 4), near_expiry=date(2024, 6, 13), near_iv=Decimal("30"),
                        next_expiry=date(2024, 6, 20), next_iv=Decimal("20"), rate=Decimal("0.065")))  # fmt: skip
     got = _build(datetime(2024, 6, 4, 12, 0, tzinfo=IST))
-    assert got["as_of"] == "2024-06-03" and got["upcoming"][0]["move"] == pytest.approx(0.0369476829, rel=1e-6)
+    assert got["as_of"] == "2024-06-03" and got["upcoming"][0]["move"] == pytest.approx(
+        0.0369476829, rel=1e-6
+    )
