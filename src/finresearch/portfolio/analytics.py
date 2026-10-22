@@ -222,9 +222,10 @@ def _position_returns(
     return keep, common, mat
 
 
-def risk(
-    h: History, rf: RiskFree, sectors: dict[str, str], stress: list[dict[str, Any]] | None = None
-) -> dict[str, Any]:
+def risk(h: History, rf: RiskFree, sectors: dict[str, str], stress: list[dict[str, Any]] | None = None, *,
+         var_ledger: dict[str, Any] | None = None) -> dict[str, Any]:  # fmt: skip
+    """The Risk tab. `var_ledger`: the logged VaR's backtest (portfolio.var_ledger.backtest, #399), read by the
+    route; it is left out when not given."""
     out = base(h)
     out["risk_free"] = rf.to_json()
     if not h.ok:
@@ -259,6 +260,8 @@ def risk(
     real.update(_relative(r, rb, n))
     real["rolling"] = _rolling(days, r, rb)
     real["var_backtest"] = _var_backtest(r)
+    if var_ledger is not None:
+        real["var_ledger"] = var_ledger
     real["drawdowns"] = [_episode(days, e) for e in am.drawdown_episodes(idx, top=5)]
     # drawdown and recovery
     dd = am.drawdown_recovery(idx)
@@ -283,7 +286,9 @@ def risk(
         tail = sum(1 for x in r if x <= -v1)
         real["var_1d"] = {**metric(v1, "fraction", n=n, how="-5th percentile of daily returns (historical)"),
                           "inr": _r(v1 * v_end, 0),
-                          "note": f"about 1 day in 20 lost more; {tail} of {n} days in this window did"}  # fmt: skip
+                          "note": f"in-sample: {tail} of {n} days in this window lost more, about 1 in 20 by "
+                                  "construction, so it checks nothing; the backtests below test it out of sample "
+                                  "(#399)"}  # fmt: skip
         real["cvar_1d"] = {**metric(c1, "fraction", n=n, how="average loss on the worst 5 % of days"),
                            "inr": _r(c1 * v_end, 0)}  # fmt: skip
         real["var_21d"] = {**metric(v21, "fraction", n=len(hr), how="-5th percentile of overlapping 21-day returns"),

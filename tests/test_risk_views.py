@@ -296,3 +296,21 @@ def test_information_ratio_with_zero_tracking_error_is_a_reason_not_an_error_349
         and "tracking error is zero" in out["information_ratio"]["reason"]
     )
     assert out["active_return"]["value"] == 0
+
+
+# --------------------------------------------------------------------------- #399
+def test_var_note_says_the_tail_count_is_in_sample_399():
+    """'1 day in 20 lost more' over the VaR's own window is true by construction (#399): the note says so and points
+    at the out-of-sample backtests instead of presenting it as a check."""
+    h, _, _ = _history()
+    note = _risk(h)["realised"]["var_1d"]["note"]
+    assert "in-sample" in note and "by construction" in note and "backtest" in note
+
+
+def test_risk_payload_carries_the_logged_var_backtest_399():
+    from finresearch.portfolio.analytics import RiskFree, risk
+
+    h, _, _ = _history()
+    vl = {"level": 0.95, "resolved": 3, "reason": "needs 250 logged days with a known outcome; have 3"}
+    assert risk(h, RiskFree(0.065, "t", None, None), {}, var_ledger=vl)["realised"]["var_ledger"] == vl
+    assert "var_ledger" not in _risk(h)["realised"]  # not read: absent, never an empty pass
