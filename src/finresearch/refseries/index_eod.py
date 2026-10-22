@@ -91,13 +91,20 @@ def mark(s: Session, day: date, status: str, error: str | None = None) -> None:
 
 
 def plan_days(
-    s: Session, start: date, end: date, today: date, holidays: set[date] | None = None
+    s: Session,
+    start: date,
+    end: date,
+    today: date,
+    holidays: set[date] | None = None,
+    *,
+    manifest: Any = IndexEodDay,
 ) -> list[date]:
-    """The days a run still has to fetch, oldest first (see the module docstring)."""
+    """The days a run still has to fetch, oldest first (see the module docstring). `manifest`: the day table with
+    the same columns (refseries.equity_eod reuses this plan)."""
     from finresearch.adapters.nse_holidays import known_trading_holidays
     from finresearch.db.models import FnoBhavDay
 
-    done = {r.day: r for r in s.scalars(select(IndexEodDay).where(IndexEodDay.day.between(start, end)))}
+    done = {r.day: r for r in s.scalars(select(manifest).where(manifest.day.between(start, end)))}
     bhav = dict(
         s.execute(select(FnoBhavDay.day, FnoBhavDay.status).where(FnoBhavDay.day.between(start, end))).all()
     )
