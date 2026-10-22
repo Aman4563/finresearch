@@ -20,8 +20,9 @@ from __future__ import annotations
 
 import itertools
 import math
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from datetime import date
 from statistics import NormalDist, stdev
 
 FIRE_U, CLEAR_U = 0.8, 0.7
@@ -84,20 +85,58 @@ def cum_shock(ivs: Sequence[float | None]) -> Stat:
                 f"{SD_WINDOW} {k}-session changes {sd:.2f}")  # fmt: skip
 
 
-def gap_z(*, open_: float | None, prev_close: float | None, closes: Sequence[float | None]) -> Stat:
-    """|ln(open / previous close)| / sigma_daily, sigma_daily the sample sd of the SD_WINDOW close-to-close log
-    returns up to the previous close (`closes` ends with it)."""
+def gap_z(*, open_: float | None, prev_close: float | None, rets: Sequence[float | None]) -> Stat:
+    """|ln(open / previous close)| / sigma_daily, sigma_daily the sample sd of the last SD_WINDOW close-to-close log
+    returns up to the previous close (`rets`, old to new; same-contract pairs, see `front_future`)."""
     if open_ is None or prev_close is None or open_ <= 0 or prev_close <= 0:
         return Stat(None, "gap: the open or the previous close is unknown")
-    w, why = _window(closes, SD_WINDOW + 1, "gap")
+    w, why = _window(rets, SD_WINDOW, "gap")
     if w is None:
         return Stat(None, why)
-    sigma = stdev([math.log(b / a) for a, b in itertools.pairwise(w)])
+    sigma = stdev(w)
     if sigma <= 0:
         return Stat(None, "gap: the past returns have no spread")
     g = math.log(open_ / prev_close)
     return Stat(abs(g) / sigma, f"open {open_:,.2f} vs previous close {prev_close:,.2f} ({g:+.2%}); daily sigma "
                 f"{sigma:.2%} over {SD_WINDOW} sessions")  # fmt: skip
+
+
+@dataclass(frozen=True)
+class FutureDay:
+    """One session of the front future: its open, the same contract's previous close, the overnight gap
+    g = ln(open / previous close) and the close-to-close return ln(close / previous close)."""
+
+    day: date
+    expiry: date
+    open: float | None
+    prev_close: float
+    gap: float | None
+    ret: float | None
+
+
+def front_future(rows: Iterable[tuple[date, date, float | None, float | None]]) -> list[FutureDay]:
+    """The front-future session series from (day, expiry, open, close) rows of every future of one underlying: each
+    day's front is its nearest expiry on or after the day, paired with that same contract's previous stored close
+    (never another contract's, so a roll adds no false gap). Days whose front has no previous close are left out."""
+    by_day: dict[date, dict[date, tuple[float | None, float | None]]] = {}
+    for d, e, op, cl in rows:
+        by_day.setdefault(d, {})[e] = (op, cl)
+    last_close: dict[date, float] = {}
+    out: list[FutureDay] = []
+    for d in sorted(by_day):
+        live = [e for e in by_day[d] if e >= d]
+        if live:
+            e = min(live)
+            op, cl = by_day[d][e]
+            pc = last_close.get(e)
+            if pc is not None and pc > 0:
+                g = math.log(op / pc) if op and op > 0 else None
+                r = math.log(cl / pc) if cl and cl > 0 else None
+                out.append(FutureDay(d, e, op, pc, g, r))
+        for e, (_, cl) in by_day[d].items():
+            if cl and cl > 0:
+                last_close[e] = cl
+    return out
 
 
 def gap_tail(gaps: Sequence[float], distance: float) -> tuple[float | None, int]:

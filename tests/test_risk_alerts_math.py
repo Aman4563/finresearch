@@ -56,9 +56,32 @@ def test_gap_z_is_the_abs_log_gap_over_daily_sigma_of_close_to_close_returns() -
     closes = [100 * (1.01 if i % 2 else 0.99) ** (i % 3) for i in range(260)]
     rets = [math.log(b / a) for a, b in itertools.pairwise(closes)]
     sigma = stdev(rets[-252:])
-    got = ra.gap_z(open_=closes[-1] * 0.95, prev_close=closes[-1], closes=closes)
+    got = ra.gap_z(open_=closes[-1] * 0.95, prev_close=closes[-1], rets=rets)
     assert got.value == pytest.approx(abs(math.log(0.95)) / sigma)
-    assert ra.gap_z(open_=None, prev_close=closes[-1], closes=closes).value is None
+    assert ra.gap_z(open_=None, prev_close=closes[-1], rets=rets).value is None
+    assert ra.gap_z(open_=95.0, prev_close=100.0, rets=rets[:100]).value is None  # short history: unknown
+
+
+def test_front_future_series_pairs_each_session_with_the_same_contract_across_a_roll() -> None:
+    from datetime import date
+
+    e1, e2 = date(2026, 1, 27), date(2026, 2, 24)
+    rows = [  # (day, expiry, open, close): the near contract expires on 27-Jan, then February is the front
+        (date(2026, 1, 23), e1, 100.0, 101.0), (date(2026, 1, 23), e2, 101.5, 102.0),
+        (date(2026, 1, 27), e1, 99.0, 100.0), (date(2026, 1, 27), e2, 100.0, 103.0),
+        (date(2026, 1, 28), e2, 98.0, 99.0),
+    ]  # fmt: skip
+    got = ra.front_future(rows)
+    assert [x.day for x in got] == [date(2026, 1, 27), date(2026, 1, 28)]
+    jan27, jan28 = got
+    assert jan27.gap == pytest.approx(math.log(99.0 / 101.0)) and jan27.ret == pytest.approx(
+        math.log(100 / 101)
+    )
+    # 28-Jan: February is the front; its own previous close (103), never January's
+    assert jan28.gap == pytest.approx(math.log(98.0 / 103.0)) and jan28.ret == pytest.approx(
+        math.log(99 / 103)
+    )
+    assert jan28.open == 98.0 and jan28.prev_close == 103.0
 
 
 def test_gap_tail_is_the_share_of_stored_gaps_beyond_the_distance() -> None:
