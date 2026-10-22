@@ -27,7 +27,7 @@ export function PlanActions({ plan }: { plan: TradePlan }) {
     setBusy("paper");
     try {
       const legs = plan.legs.map(({ right, strike, side, lots }) => ({ right, strike, side, lots }));
-      const t = await api<PaperTrade>("/api/fno/paper", { method: "POST", body: JSON.stringify({ symbol: plan.symbol, expiry: plan.expiry, legs, label }) });
+      const t = await api<PaperTrade>("/api/fno/paper", { method: "POST", body: JSON.stringify({ symbol: plan.symbol, expiry: plan.expiry, legs, label, ...(plan.card_log_id ? { card_log_id: plan.card_log_id, card_index: plan.card_index ?? 0 } : {}) }) });
       await arm({ paper_id: t.id });
       setDone(`Paper trade #${t.id} recorded with ${rules.length} exit alerts. Nothing was sent to a broker.`);
       setError(null);
