@@ -16,7 +16,7 @@ from dataclasses import asdict, replace
 from datetime import date, datetime
 from typing import Any
 
-from finresearch.backtest import engine, metrics, prereg, specs
+from finresearch.backtest import criteria_v2, engine, metrics, prereg, specs
 from finresearch.backtest.history import History
 from finresearch.backtest.specs import BOOK, CRITERIA, Book, Criteria, Spec
 
@@ -90,9 +90,10 @@ def thin(equity: list[tuple[date, float]], points: int = 600) -> list[list[Any]]
 
 def evaluate(history: History, *, stock: str | None, source: str, oos: bool = True, book: Book = BOOK,
              crit: Criteria = CRITERIA, spec_list: tuple[Spec, ...] = specs.SPECS,
-             fill: str = "same_print") -> dict[str, Any]:  # fmt: skip
+             fill: str = "same_print", shadow_v2: bool = True) -> dict[str, Any]:  # fmt: skip
     """The full report (module docstring). `oos=False` replays the in-sample window only and never reads a day after
-    IS_END; `oos=True` requires the registration (require_registered)."""
+    IS_END; `oos=True` requires the registration (require_registered). `shadow_v2` adds each strategy's criteria v2
+    shadow verdict (#381; never its status)."""
     reg = require_registered() if oos else specs.registration_hash()
     pairs = [(s, engine.resolve(s, stock)) for s in spec_list]
     runnable = [c for _, c in pairs if c is not None]
@@ -104,7 +105,7 @@ def evaluate(history: History, *, stock: str | None, source: str, oos: bool = Tr
     main = engine.run(runnable, history, specs.IS_START, entries_end, book, **kw)  # type: ignore[arg-type]
     stress = (engine.run(runnable, history, specs.OOS_START, entries_end,
                          replace(book, slippage_mult=crit.stress_slippage_mult), **kw) if oos else {})  # type: ignore[arg-type]  # fmt: skip
-    out = []
+    out, v2_parts = [], {}
     for s, c in pairs:
         row: dict[str, Any] = {"key": s.key, "name": s.name, "role": s.role, "kind": s.kind,
                                "underlying": c.underlying if c else None, "spec": asdict(s),
@@ -127,6 +128,8 @@ def evaluate(history: History, *, stock: str | None, source: str, oos: bool = Tr
             windows["oos"] = window(r["trades"], r["equity"], specs.OOS_START, hi, book, crit)
             sr = stress[s.key]
             windows["oos_stress"] = window(sr["trades"], sr["equity"], specs.OOS_START, hi, book, crit)
+            if shadow_v2:
+                v2_parts[s.key] = _v2_part(r["trades"], r["equity"], specs.OOS_START, hi, windows["oos"])
         row.update(windows=windows, trades=r["trades"], equity=thin(r["equity"]), skips=r["skips"],
                    notes=r["notes"], open_at_end=r["open_at_end"], entries_considered=r["entries_considered"],
                    by_year=metrics.breakdown(r["trades"], lambda t: t["entry_day"][:4]),
@@ -134,7 +137,7 @@ def evaluate(history: History, *, stock: str | None, source: str, oos: bool = Tr
                    overlay=overlay(r["trades"]) if s.role == "overlay" else None,
                    max_day_read=r["max_day_read"].isoformat() if r["max_day_read"] else None)  # fmt: skip
         out.append(row)
-    _finish(out, oos, crit, fill)
+    _finish(out, oos, crit, fill, v2_parts)
     return {
         "version": specs.SPEC_VERSION, "registration_hash": reg, "registered_hash": prereg.HASH,
         "registered_on": prereg.REGISTERED_ON, "variants_tried": specs.VARIANTS_TRIED, "oos_evaluated": oos,
@@ -146,15 +149,27 @@ def evaluate(history: History, *, stock: str | None, source: str, oos: bool = Tr
     }  # fmt: skip
 
 
-def _finish(rows: list[dict[str, Any]], oos: bool, crit: Criteria, fill: str = "same_print") -> None:
+def _v2_part(trades: list[dict[str, Any]], equity: list[tuple[date, float]], lo: date, hi: date,
+             w_oos: dict[str, Any]) -> dict[str, Any]:  # fmt: skip
+    """Criteria v2's statistics of the out-of-sample window (the same trade and day selection as `window`)."""
+    tr = [t for t in trades if lo <= date.fromisoformat(t.get("decision_day") or t["entry_day"]) <= hi]
+    eq = [(d, v) for d, v in equity if lo <= d <= hi]
+    return criteria_v2.trade_part(tr) | criteria_v2.equity_part(eq, w_oos)
+
+
+def _finish(rows: list[dict[str, Any]], oos: bool, crit: Criteria, fill: str = "same_print",
+            v2_parts: dict[str, dict[str, Any]] | None = None) -> None:  # fmt: skip
     """Deflated Sharpe across the trials of the out-of-sample window, then each spec's verdict."""
     if not oos:
         for r in rows:
             if r.get("status") != "no_data":
                 r.update(status="in_sample_only", reasons=["out-of-sample not evaluated"])
         return
+    # `is not None` (#381): a daily Sharpe of exactly 0 is a trial and enters V; only an unknown one is left out
     srs = [
-        r["windows"]["oos"]["daily_sr"] for r in rows if r.get("windows") and r["windows"]["oos"]["daily_sr"]
+        r["windows"]["oos"]["daily_sr"]
+        for r in rows
+        if r.get("windows") and r["windows"]["oos"]["daily_sr"] is not None
     ]
     mean = sum(srs) / len(srs) if srs else 0.0
     var = sum((x - mean) ** 2 for x in srs) / (len(srs) - 1) if len(srs) > 1 else 0.0
@@ -178,6 +193,11 @@ def _finish(rows: list[dict[str, Any]], oos: bool, crit: Criteria, fill: str = "
                 "trade a month cannot reach the trade-count criterion)"
             ] + [f"would fail: {x}" for x in failed]
             continue
+        if (
+            v2_parts and r["key"] in v2_parts
+        ):  # a shadow beside the registered verdict, never the status (#381)
+            r["criteria_v2"] = criteria_v2.judge(v2_parts[r["key"]], r["windows"]["is"], r["windows"]["oos_stress"],
+                                                 srs, w)  # fmt: skip
         r["status"] = "candidate" if not failed else "fails"
         r["reasons"] = [f"fails: {x}" for x in failed] or [
             "passes every pre-registered criterion out of sample"

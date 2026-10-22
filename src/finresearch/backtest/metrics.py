@@ -139,13 +139,20 @@ def deflated_sharpe(
     sr: float, n_obs: int, skew: float, kurt: float, n_trials: int, var_trials: float
 ) -> float | None:
     """DSR (module docstring): the probability that the true Sharpe exceeds the best of N unskilled trials."""
+    v = sr_variance(sr, n_obs, skew, kurt)
+    if v is None:
+        return None
+    return N01.cdf((sr - expected_max_sharpe(var_trials, n_trials)) / math.sqrt(v))
+
+
+def sr_variance(sr: float, n_obs: int, skew: float, kurt: float) -> float | None:
+    """The variance of an estimated per-period Sharpe ratio over n_obs returns, (1 − γ₃·SR + (γ₄−1)/4 · SR²)/(T−1):
+    the square of the denominator of DSR eq. (2) (Bailey & López de Prado 2014; Mertens 2002). None when T < 2 or the
+    numerator is not positive (unknown, never 0)."""
     if n_obs < 2:
         return None
-    sr0 = expected_max_sharpe(var_trials, n_trials)
-    den = 1 - skew * sr + (kurt - 1) / 4 * sr * sr
-    if den <= 0:
-        return None
-    return N01.cdf((sr - sr0) * math.sqrt(n_obs - 1) / math.sqrt(den))
+    num = 1 - skew * sr + (kurt - 1) / 4 * sr * sr
+    return num / (n_obs - 1) if num > 0 else None
 
 
 def regime(pct: float | None) -> str:

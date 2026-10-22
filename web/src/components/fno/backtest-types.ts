@@ -23,6 +23,23 @@ export type StrategyResult = {
   overlay?: { periods: number; stock_total: number; with_overlay_total: number; stock_worst: number;
     with_overlay_worst: number; stock_cvar_5: number | null; with_overlay_cvar_5: number | null; note: string } | null;
   open_at_end?: { entry_day: string; expiry: string; marked_gross: number }[]; n_trades?: number;
+  criteria_v2?: CriteriaV2; opportunity?: Opportunity;
+};
+
+/** #381: the strategy's out-of-sample net P&L after the owner's tax beside holding NIFTY on the same capital and days. */
+export type Opportunity = {
+  capital: number; fno_net: number; trades: number; slab_rate: number | null; fno_after_tax: number | null;
+  index_return: number | null; index_tax_rate: number | null; index_after_tax: number | null;
+  index_per_trade_after_tax: number | null; excess_after_tax: number | null; reason: string | null;
+  benchmark: string; window: [string, string];
+};
+
+/** #381: criteria v2, a registered shadow verdict that never changes the status. */
+export type CriteriaV2 = {
+  status: "shadow_not_adopted"; verdict: "would_pass" | "would_fail"; reasons: string[]; criteria: Criterion[];
+  registration_hash: string; note: string;
+  dsr: { rule: string; n_trials: number; v_null: number | null; v_cand: number | null; v_used: number | null; dsr: number | null };
+  stats: { lo_sharpe?: number | null; posterior_sharpe?: number | null; max_drawdown_peak_pct?: number | null } & Record<string, unknown>;
 };
 
 export type SetupLeg = { right: string; strike: number; side: string; ref_price: number; fill_assumed: number };
