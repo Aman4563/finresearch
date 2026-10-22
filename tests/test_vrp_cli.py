@@ -3,6 +3,7 @@ vault read is refused BEFORE the guard is asked when the common range, the outpu
 missing (the read could not be repeated)."""
 
 import json
+import re
 from datetime import date, timedelta
 
 from typer.testing import CliRunner
@@ -51,6 +52,11 @@ def test_recent_window_reports_both_indices(env, monkeypatch, tmp_path) -> None:
     assert text.exit_code == 0 and "VRP payoff mean" in text.output and "not adopted" in text.output
 
 
+def _plain(text: str) -> str:
+    # CI's terminal gets rich's coloured usage panel; the escape codes split option names like --common-range
+    return re.sub(r"\x1b\[[0-9;]*m", "", text)
+
+
 def test_vault_read_is_refused_before_the_guard_without_its_inputs(env, monkeypatch, tmp_path) -> None:
     from finresearch.cli import app
     from finresearch.fincalc import charges
@@ -61,7 +67,7 @@ def test_vault_read_is_refused_before_the_guard_without_its_inputs(env, monkeypa
 
     monkeypatch.setattr(guard, "vault_read", never)
     r = CliRunner().invoke(app, ["fno", "vrp", "--window", "vault", "--out", str(tmp_path / "v.json")])
-    assert r.exit_code != 0 and "common-range" in r.output
+    assert r.exit_code != 0 and "common-range" in _plain(r.output)
     r = CliRunner().invoke(app, ["fno", "vrp", "--window", "vault", "--common-range", "0.1"])
     assert r.exit_code != 0
     if any(
@@ -69,4 +75,4 @@ def test_vault_read_is_refused_before_the_guard_without_its_inputs(env, monkeypa
     ):  # today's table: gaps before 2021
         r = CliRunner().invoke(app, ["fno", "vrp", "--window", "vault", "--common-range", "0.1", "--out",
                                      str(tmp_path / "v.json")])  # fmt: skip
-        assert r.exit_code != 0 and "charges" in r.output
+        assert r.exit_code != 0 and "charges" in _plain(r.output)
