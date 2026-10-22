@@ -368,10 +368,13 @@ def _option_tool(fn):
 
 
 def run_option_fact(session, tool: str, args: dict[str, Any], run_id: int | None) -> dict[str, Any]:
-    """Re-run an option-fact tool for save_claim, scoped by the claim's own run."""
+    """Re-run an option-fact tool for save_claim. The scope is this server's bound run when it has one: save_claim's
+    run_id is the agent's argument, so naming another run must not widen what the re-check reads. Unbound (tests,
+    scripts) it is the claim's run."""
     from finresearch.mcp_server import option_facts
 
-    return option_facts.run(session, tool, args, run_id=run_id)
+    bound = option_facts.bound_run_id()
+    return option_facts.run(session, tool, args, run_id=bound if bound is not None else run_id)
 
 
 def _option_fact(tool: str, **args: Any) -> str:
@@ -1003,6 +1006,8 @@ def save_claim(run_id: int, stream: str, statement: str, claim_type: str, citati
                or [{"fincalc": {"function": "growth.cagr", "args": {...}}, "inputs": [12, 15],
                     "constants": {"years": "FY2023 to FY2026 = 3 fiscal years"}}] for a computed figure: each numeric
                argument must be the value of one cited input claim (any ₹ scale or %/fraction) or a declared constant.
+               or [{"option_fact": {"tool": "option_implied_move", "args": {...}}, "result_key": "move_1sd_pct"}]: the
+               `citation` an option-fact tool returned, with result_key the figure quoted (re-run on stored data).
     The server checks each document quote really appears at the cited lines, a web quote against the page text
     fetch_page (or an exchange tool) returned, and re-runs a fincalc citation. Evidence grades: A document quote
     verified, B web quote verified on the stored page, C web quote unchecked (no fetch_page), D fincalc reproduces

@@ -97,8 +97,13 @@ def _recheck(session: Session, ct: Citation, claim: Claim) -> tuple[bool, dict[s
 
 def _recheck_option_fact(session: Session, ct: Citation, claim: Claim,
                          old: dict[str, Any]) -> tuple[bool, dict[str, Any], str]:  # fmt: skip
+    from finresearch.mcp_server import option_facts
     from finresearch.mcp_server.claims import _option_fact_citation
-    from finresearch.mcp_server.server import run_option_fact
+
+    def run_option_fact(
+        session, tool, args, run_id
+    ):  # offline: no agent, so the claim's own run is the scope
+        return option_facts.run(session, tool, args, run_id=run_id)
 
     c = {"option_fact": {"tool": (old.get("function") or "").removeprefix("option_fact:"), "args": old.get("args")
                          or {}}, "result_key": old.get("result_key")}  # fmt: skip

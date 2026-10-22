@@ -426,3 +426,29 @@ def test_the_blind_verifier_sees_where_an_option_fact_points_but_not_its_value(e
     assert item["citations"] == [{"option_fact": "option_implied_move", "result_key": "move_1sd_pct",
                                   "args": {"symbol": "NIFTY", "trade_date": "2026-03-02", "expiry": "2026-03-30"}}]  # fmt: skip
     assert out["move_1sd_pct"] not in json.dumps(item)
+
+
+def test_save_claim_through_the_server_scopes_by_its_bound_run_not_the_run_id_argument(
+    env, tmp_path, monkeypatch
+):
+    """An agent bound to run A cannot name run B (whose stock has stored options) in save_claim to read B's facts
+    through the re-check's verdict."""
+    from sqlalchemy import func, select
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import Claim
+    from finresearch.mcp_server import option_facts, server
+
+    _load(symbol="ZZSECRET", instrument="STO")
+    mine = _run(tmp_path, symbol="ACME")
+    theirs = _run(tmp_path / "theirs", symbol="ZZSECRET")
+    monkeypatch.setenv(option_facts.RUN_ENV, str(mine))
+    cite = {"option_fact": {"tool": "option_implied_move", "args": {"symbol": "ZZSECRET", "trade_date": "2026-03-02"}},
+            "result_key": "move_1sd_pct"}  # fmt: skip
+    out = json.loads(server.save_claim(theirs, "stock_technical", "ZZSECRET implied move", "numeric", [cite],
+                                       metric="implied_move", value="5.20", unit="%", period="2026-03-02"))  # fmt: skip
+    assert "not available to this run" in out["error"] and not any(
+        ch.isdigit() for ch in out["error"].split(":")[-1]
+    )
+    with session_scope() as s:
+        assert s.scalar(select(func.count()).select_from(Claim).where(Claim.run_id == theirs)) == 0
