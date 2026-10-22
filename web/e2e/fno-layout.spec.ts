@@ -25,7 +25,7 @@ const fnoRoutes = (long: boolean): Routes => ({
   "GET /api/fno/NIFTY/chain": F.WIDE_CHAIN, "GET /api/fno/NIFTY/context": long ? F.LONG_CONTEXT : F.CONTEXT,
   "GET /api/fno/NIFTY/suggest": long ? F.LONG_SUGGEST : F.SUGGEST, "POST /api/fno/strategy": long ? F.LONG_RESULT : F.RESULT,
   "POST /api/fno/plan": long ? F.LONG_PAPER : F.PAPER, "GET /api/fno/positions": long ? F.LONG_POSITIONS : F.POSITIONS,
-  "GET /api/fno/paper": long ? F.LONG_BOOK : F.BOOK, "GET /api/fno/NIFTY/events": F.EVENTS, "GET /api/fno/NIFTY/iv": IV, "POST /api/fno/margin": F.MARGIN, "GET /api/fno/direction/NIFTY": F.DIRECTION(5),
+  "GET /api/fno/paper": long ? F.LONG_BOOK : F.BOOK, "GET /api/fno/NIFTY/events": F.EVENTS, "GET /api/fno/NIFTY/event-vol": F.EVENT_VOL, "GET /api/fno/NIFTY/iv": IV, "POST /api/fno/margin": F.MARGIN, "GET /api/fno/direction/NIFTY": F.DIRECTION(5),
 });
 const fnoReady = async (page: Page) => {
   await expect(page.getByRole("heading", { name: "Trade plan" })).toBeVisible();

@@ -4,6 +4,7 @@
 // rupee values, crore-sized open interest and strategy names far longer than any real one (#326).
 import type { BacktestsResponse, StrategyResult, WindowStats } from "../src/components/fno/backtest-types";
 import type { PaperBook, PaperTrade, PositionsView, EventStripData } from "../src/components/fno/book-types";
+import type { EventVolData } from "../src/components/fno/event-vol";
 import type { LabResponse, LabRunView, LabSpec, LabTrade, PaperRule } from "../src/components/fno/lab-types";
 import type { Analysis, Chain, Result } from "../src/components/fno/model";
 import type { MarketContext, SuggestResponse, TradePlan } from "../src/components/fno/plan-types";
@@ -136,6 +137,18 @@ export const LONG_RESULT: Result = { ...RESULT, max_profit: big(2762), max_loss:
 export const EVENTS: EventStripData = { symbol: "NIFTY", today: "2026-10-13",
   items: [{ day: "2026-10-20", kind: "expiry", title: "NIFTY weekly expiry", source: "NSE" }, { day: "2026-10-27", kind: "expiry", title: "NIFTY monthly expiry", source: "NSE" }],
   results: { status: "none" }, rbi: { status: "no_source", note: "RBI policy dates: no source in the app yet" } };
+
+// #391: made-up numbers; one measured event, one the term structure cannot show (unknown, never "0 %")
+export const EVENT_VOL: EventVolData = { symbol: "NIFTY", status: "ok", as_of: "2026-10-12", clock: "calendar",
+  upcoming: [
+    { type: "rbi_mpc", title: "RBI monetary policy decision", day: "2026-10-14", source: "https://example.gov/x", j2: 0.000144, move: 0.012, expected_abs: 0.009575, median_abs: 0.008094, method: "fit", reason: null,
+      short_gamma: { status: "flag", n: 24, note: "The implied move is below the typical past move of this event type." } },
+    { type: "union_budget", title: "Union Budget", day: "2026-10-30", source: "https://example.gov/y", j2: null, move: null, expected_abs: null, median_abs: null, method: "fit", reason: "no expiry after the event: its move is not priced yet",
+      short_gamma: { status: "unknown", n: 3, note: "No implied event move to compare." } }],
+  context: ["US FOMC decision 2026-10-29"],
+  elevation: { status: "elevated", note: "IV elevated by RBI monetary policy decision.", ex_event_iv: 0.118, event_share: 0.21 },
+  history: [{ type: "rbi_mpc", title: "RBI monetary policy decision", n: 24, median_abs: 0.0061, fairness: { n: 12, rho: 0.84 },
+    moves: [{ day: "2026-10-07", title: "RBI monetary policy decision", r: -0.0042, reason: null, implied_move: 0.011 }] }] };
 
 const pleg = (symbol: string, strike: number, right: "call" | "put", qty: number, pnl: number) => ({
   symbol, product: "NRML", quantity: qty, qty, direction_known: true, note: null, avg_price: 120.5, realised_pnl: null, contract_known: true,

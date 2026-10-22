@@ -354,6 +354,15 @@ def add_fno_book_routes(app: FastAPI, clock: Callable[[], datetime] | None = Non
                 **ma.to_json(est, kind), "groww_calculator": groww,
                 "margin_source": "groww" if groww["available"] else "approximate"}  # fmt: skip
 
+    @app.get("/api/fno/{symbol}/event-vol")
+    def fno_event_vol(symbol: str) -> dict[str, Any]:
+        """#391: implied event moves from the stored end-of-day term structure and the realised history by event
+        type (point in time). Reads stored data only; informational, the card does not use it."""
+        from finresearch.signals import event_vol
+
+        with session_scope() as s:
+            return event_vol.build(s, symbol, now())
+
     @app.get("/api/fno/{symbol}/events")
     async def fno_events(symbol: str) -> dict[str, Any]:
         """The event strip: the next results date (stocks), RBI policy dates (when a source exists) and expiries."""
