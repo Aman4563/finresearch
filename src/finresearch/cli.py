@@ -1719,6 +1719,55 @@ def fno_backtest_compare(
                       f"t {_num(x['t_d'])}, one-sided p {_num(x['p_one_sided'], 3)}")  # fmt: skip
 
 
+@backtest_app.command("recal-sim")
+def fno_backtest_recal_sim(
+    out: Path = typer.Option(..., "--json", help="Write every result here"),
+    parts: str = typer.Option(
+        "abc", help="Which of #381's simulations: a (DSR rule), b (coverage), c (DM size)"
+    ),
+    history_url: str | None = typer.Option(
+        None,
+        help="(a) on the real out-of-sample seller P&L from this F&O history database (read only); "
+        "default: a synthetic seller-like base, labelled so",
+    ),
+    programmes: int = typer.Option(2000, help="(a) programmes per N and planted Sharpe"),
+    draws: int = typer.Option(500, help="bootstrap draws per programme (a) or per series (b)"),
+    reps: int = typer.Option(2000, help="(b) series per DGP and (c) replications per h"),
+    seed: int = typer.Option(381),
+) -> None:
+    """#381's validation simulations (backtest/recal_sim.py): (a) FWER and power of five rules, (b) 95 % CI coverage,
+    (c) the DM test's size. Pure computation: nothing is written to any database."""
+    import time
+
+    from finresearch.backtest import recal_sim as rs
+
+    res: dict = {"seed": seed, "parts": parts}
+    t0 = time.time()
+    if "c" in parts:
+        res["c_dm_size"] = [rs.dm_size(h, n, reps, seed + h) for n in (200, 570) for h in (5, 10, 22)]
+    if "b" in parts:
+        kinds = ["iid", "ar1", "garch_t", "ar1_garch_t"]
+        res["b_coverage"] = {str(n): rs.coverage(kinds, n, reps, draws, seed) for n in (60, 570)}
+    if "a" in parts:
+        if history_url:
+            from finresearch.backtest.dbhistory import DbHistory
+
+            base, keys = rs.seller_returns(DbHistory(history_url))
+            res["a_base"] = {
+                "source": "real out-of-sample seller P&L",
+                "keys": keys,
+                "days": int(base.shape[0]),
+            }
+        else:
+            base = rs.synthetic_base(570, 4, seed)
+            res["a_base"] = {"source": "SYNTHETIC seller-like series (not the real P&L)", "days": 570}
+        res["a_dsr_rule"] = [rs.dsr_rule_sim(base, n, sr, programmes, draws, seed + n)
+                             for n in (8, 30) for sr in (0.0, 0.5, 1.0, 1.5)]  # fmt: skip
+    res["seconds"] = round(time.time() - t0, 1)
+    out.write_text(json.dumps(res, indent=1))
+    console.print(f"written: {out} ({res['seconds']} s)")
+
+
 def _num(v: float | None, d: int = 2) -> str:
     return "—" if v is None else f"{v:,.{d}f}"
 
