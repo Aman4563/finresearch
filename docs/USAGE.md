@@ -83,6 +83,10 @@ GET requests don't change your records, the alert inputs or the forecast ledger:
   `POST /api/fno/strategy` and `GET /api/fno/{symbol}/suggest` response appends one row (the suggest GET is the one
   F&O read that writes, because a card shown and never logged cannot be recovered). Rows are never updated or
   deleted; `uv run finresearch fno card-log --since <ISO time with zone>` counts the verdicts before and after it.
+- The Strategy Lab's trial log (#380) is append-only: every lab run that ends appends one `lab_trial` row. Listing the
+  lab (`GET /api/fno/lab`) or a run (`GET /api/fno/lab/runs/{id}`) marks a run whose worker has gone silent as failed,
+  as before, and now also appends its trial row, so an abandoned run still counts in N. `GET /api/fno/lab/family`
+  and `GET /api/fno/lab/versions/{id}/promotion` only read.
 
 Some GETs still write caches, by design. They store fetched market data, never your records: the intraday series
 archive, the disclosure feed refresh, the ISIN map, the fund cap list, and the HTTP and price caches. The broker OAuth

@@ -31,8 +31,9 @@ from finresearch.backups.crypto import KEY_LEN, BackupCryptoError, decrypt_file,
 
 # Tables whose rows are recorded forward only and cannot be fetched again later (roadmap P1.13): the option-quote
 # recorder (#363), the F&O card ledger (#360), the IPO decision-time subscription snapshots (#244) and the intraday
-# 1-minute series (#366: NSE serves only the current session).
-FORWARD_ONLY = ("option_quote", "card_log", "subscription_snapshot", "intraday_series")
+# 1-minute series (#366: NSE serves only the current session) and the Strategy Lab trial log (#380: N and the
+# PBO / SPA family rest on it; a re-run is a new trial, never the lost one).
+FORWARD_ONLY = ("option_quote", "card_log", "subscription_snapshot", "intraday_series", "lab_trial")
 KEEP = {"db": 7, "tables": 14, "vault": 2}
 MAX_AGE = timedelta(days=1)
 DRILL_EVERY = timedelta(days=92)  # quarterly

@@ -130,3 +130,10 @@ def test_vault_reads_that_count_in_n_raise_the_lab_n(lab_db):  # noqa: F811
         assert store.n_trials(s) == 9 and store.vault_reads_in_n(s) == 1
     with session_scope() as s:
         s.execute(text("TRUNCATE vault_read"))  # keep it clean for later tests
+
+
+def test_the_trial_log_is_in_the_forward_only_offsite_backup():
+    """Its rows cannot be fetched again (a re-run is a new trial), like card_log (#380)."""
+    from finresearch.backups import offsite
+
+    assert "lab_trial" in offsite.FORWARD_ONLY
