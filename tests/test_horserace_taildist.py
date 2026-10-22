@@ -107,3 +107,38 @@ def test_the_race_lists_both_tail_challengers(prices) -> None:
     assert rep["challengers"] == list(addendum_a5.CHALLENGERS)
     assert rep["replay"]["addendum_a5_hash"] == prereg.ADDENDUM_A5_HASH
     assert math.isfinite(rep["replay"]["p_rw_emp_unknown"]) and "p_rw_fhs_reasons" in rep["replay"]
+
+
+def test_card_seed_is_the_registered_string() -> None:
+    import hashlib
+
+    want = np.random.default_rng(
+        int.from_bytes(hashlib.sha256(b"387|NIFTY|nifty_ic_w|2022-04-01|2022-04-07").digest()[:8], "big")
+    )
+    got = replay.card_rng("NIFTY", "nifty_ic_w", date(2022, 4, 1), date(2022, 4, 7))
+    assert (got.random(5) == want.random(5)).all()
+
+
+def test_an_expiry_without_a_settlement_price_is_counted_not_lost(prices) -> None:
+    from dataclasses import replace
+
+    h = synth(
+        FIRST, date(2022, 4, 8), vol=VOL, prices={d: v for d, v in prices.items() if d <= date(2022, 4, 8)}
+    )
+    e = date(
+        2022, 3, 3
+    )  # a weekly expiry: no future, so its settlement needs a uniform settle or the underlying
+    h.days["NIFTY"][e] = replace(h.days["NIFTY"][e], spot=None)
+    _, skips = replay.make_cards(h, START, date(2022, 4, 8), [ICW])
+    assert skips["A5 z not formed (NIFTY): settlement price unknown"] >= 1
+
+
+def test_the_design_window_scores_both_challengers_on_resolved_events(prices, tmp_path) -> None:
+    import json
+
+    short = {d: v for d, v in prices.items() if d <= date(2022, 5, 20)}
+    rep = replay.run_window(synth(FIRST, date(2022, 5, 20), vol=VOL, prices=short), "design", [ICW])
+    for k in ("p_rw_emp", "p_rw_fhs"):
+        f = rep["forecasters"][k]["NIFTY"]
+        assert f["n"] > 0 and math.isfinite(f["brier"]) and math.isfinite(f["crps"]), (k, f)
+    (tmp_path / "rep.json").write_text(json.dumps(rep, indent=1, default=str))  # the CLI's --json path

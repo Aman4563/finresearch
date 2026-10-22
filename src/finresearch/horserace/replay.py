@@ -203,10 +203,10 @@ def exercise_stt_cost(legs: Sequence[o.Leg], expiry: date) -> ExerciseSttCost:
     )
 
 
-def card_rng(symbol: str, spec: str, origin: date, expiry: date, part: str) -> np.random.Generator:
-    """A5.4: a generator per card from sha256("SEED|underlying|spec|origin|expiry|part"), so a card's draws do not
-    depend on which other specs or sessions run."""
-    key = f"{addendum_a5.SEED}|{symbol}|{spec}|{origin.isoformat()}|{expiry.isoformat()}|{part}"
+def card_rng(symbol: str, spec: str, origin: date, expiry: date) -> np.random.Generator:
+    """A5.4: one generator per card from sha256("SEED|underlying|spec|origin|expiry"), so a card's draws do not
+    depend on which other specs or sessions run (M2 draws nothing in the replay: no tail, no interval)."""
+    key = f"{addendum_a5.SEED}|{symbol}|{spec}|{origin.isoformat()}|{expiry.isoformat()}"
     return np.random.default_rng(int.from_bytes(hashlib.sha256(key.encode()).digest()[:8], "big"))
 
 
@@ -221,6 +221,7 @@ class TailBook:
         self.z: dict[str, list[tuple[date, float]]] = {b: [] for b in addendum_a5.BUCKETS}
         self.gjr: td.GjrFit | None = None
         self.month: tuple[int, int] | None = None
+        self.dropped: Counter = Counter()  # entries that gave no z, by reason (reported, never silently lost)
 
     def observe(self, x: Day, eday: Any) -> None:
         d = x.day
@@ -237,11 +238,15 @@ class TailBook:
                     self.seen.add(key)
         for key in [k for k in self.pending if eday(k[1]) <= d]:
             fwd, sigma, t = self.pending.pop(key)
-            if eday(key[1]) == d:
-                st = px.settlement_price(x, key[1])
-                z = td.terminal_z(st[0] if st else None, fwd, sigma, t)
-                if z is not None:
-                    self.z[key[0]].append((d, z))
+            if eday(key[1]) != d:
+                self.dropped["no stored session on the expiry day"] += 1
+                continue
+            st = px.settlement_price(x, key[1])
+            z = td.terminal_z(st[0] if st else None, fwd, sigma, t)
+            if z is None:
+                self.dropped["settlement price unknown"] += 1
+            else:
+                self.z[key[0]].append((d, z))
 
     def refit(self, d: date, returns: Sequence[float]) -> None:
         if (d.year, d.month) != self.month:
@@ -263,16 +268,17 @@ def tail_forecasts(spec: Spec, x: Day, legs: Sequence[o.Leg], expiry: date, fwd:
     bucket = next((b for b, (lo, hi, _) in addendum_a5.BUCKETS.items() if lo <= dte <= hi), None)
     sample = [(s, z) for s, z in tail.z[bucket] if s < d] if bucket else []  # A5.2: settled before the origin
     xc = exercise_stt_cost(legs, expiry)
+    rng = card_rng(x.symbol, spec.key, d, expiry)
     if bucket is None:
         emp = td.ModelForecast(None, None, None, None, 0, f"{dte} days to expiry: outside every bucket")
         fhs = td.ModelForecast(None, None, None, None, 0, emp.reason)
     else:
         emp = td.empirical_forecast(legs, fwd, sigma, t, rate, entry_cost, xc, [z for _, z in sample], boot=0,
-                                    rng=card_rng(x.symbol, spec.key, d, expiry, "emp"))  # fmt: skip
+                                    rng=rng)  # fmt: skip
         fit = tail.gjr
         fhs = td.fhs_forecast(legs, fwd, sigma, t, rate, entry_cost, xc, list(returns)[-td.GJR_WINDOW:],
                               fit.params if fit else None, steps=td.weekday_steps(d, expiry), kap=emp.kappa,
-                              rng=card_rng(x.symbol, spec.key, d, expiry, "fhs"))  # fmt: skip
+                              rng=rng)  # fmt: skip
         if fhs.reason == "no filter parameters":
             fhs = td.ModelForecast(None, None, None, emp.kappa, fhs.n,
                                    f"no filter parameters: {fit.reason if fit else 'no fit yet'}")  # fmt: skip
@@ -392,6 +398,8 @@ def make_cards(history: History, start: date, end: date, spec_list: Sequence[Spe
                     skips[f"{spec.key}: {c}"] += 1
                 else:
                     cards.append(c)
+        for why, n in tail.dropped.items():  # A5.1: expiries entered but never turned into a z
+            skips[f"A5 z not formed ({sym}): {why}"] += n
     return cards, skips
 
 
@@ -482,6 +490,7 @@ def run_window(history: History, window: str, spec_list: Sequence[Spec] | None =
                      "p_rn_b76_reasons": dict(Counter(c.b76["reason"].split(":")[0] for c in cards
                                                       if c.b76 and c.b76["reason"])),
                      "addendum_a5": addendum_a5.ADDENDUM_VERSION, "addendum_a5_hash": addendum_a5.addendum_hash(),
+                     "z_not_formed": {k: v for k, v in skips.items() if k.startswith("A5 z")},
                      **{f"{k}_unknown": sum(1 for c in cards if c.forecasts.get(k, Forecast(None)).p is None)
                         for k in (addendum_a5.EMPIRICAL, addendum_a5.FHS)},
                      **{f"{k}_reasons": dict(Counter(c.tail[f"reason_{r}"].split(":")[0] for c in cards
