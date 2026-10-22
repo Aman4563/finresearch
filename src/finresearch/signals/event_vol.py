@@ -26,24 +26,26 @@ from finresearch.fnohist.store import INDEX_OPTIONS
 AUTO: Any = object()  # read the cached NSE holiday lists
 
 
-def _tau(day: date, expiry: date, calendar: bustime.Calendar | None) -> tuple[float, str]:
-    if calendar is not None and calendar.covers(day, expiry):
-        bt = bustime.business_years(expiry, ist_datetime(day, *bustime.SESSION_CLOSE), calendar, bustime.PRIOR,
-                                    events=bustime.EXCLUDED)  # fmt: skip
-        if bt.value:
-            return bt.value, "business"
-    return (expiry - day).days / 365, "calendar"
+def _taus(day: date, expiries: list[date], calendar: bustime.Calendar | None) -> tuple[list[float], str]:
+    """Every expiry on one clock: business time when it is known for all of them, else the calendar clock."""
+    if calendar is not None:
+        bt = [bustime.business_years(x, ist_datetime(day, *bustime.SESSION_CLOSE), calendar, bustime.PRIOR,
+                                     events=bustime.EXCLUDED).value for x in expiries]  # fmt: skip
+        if all(bt):
+            return bt, "business"  # type: ignore[return-value]
+    return [(x - day).days / 365 for x in expiries], "calendar"
 
 
 def _implied(
     row: FnoIvEod, tier1: list[cal.Event], calendar: bustime.Calendar | None
 ) -> tuple[dict, str, list]:
     """Every tier-1 event in (row.day, next expiry] fitted from the row's two expiries: {event day: Implied}."""
-    pts, clock = [], "calendar"
-    for exp, iv in ((row.near_expiry, row.near_iv), (row.next_expiry, row.next_iv)):
-        if exp is not None and exp > row.day:
-            tau, clock = _tau(row.day, exp, calendar)
-            pts.append(ev.Point(exp, tau, None if iv is None else float(iv) / 100))
+    got = [(x, iv) for x, iv in ((row.near_expiry, row.near_iv), (row.next_expiry, row.next_iv))
+           if x is not None and x > row.day]  # fmt: skip
+    taus, clock = _taus(row.day, [x for x, _ in got], calendar)
+    pts = [
+        ev.Point(x, t, None if iv is None else float(iv) / 100) for (x, iv), t in zip(got, taus, strict=True)
+    ]
     last = max((p.expiry for p in pts), default=row.day)
     inside = [e for e in tier1 if row.day < cal.india_day(e) <= last]
     return ev.fit(pts, [cal.india_day(e) for e in inside]) if inside else {}, clock, pts
@@ -72,7 +74,8 @@ def build(s: Session, symbol: str, now: datetime, *, calendar: Any = AUTO) -> di
     seen = cal.known_at(events, now)
     tier1 = [e for e in seen if e.tier == 1]
     closes = _closes(s, sym, now)
-    out: dict[str, Any] = {"symbol": sym, "status": "ok", "history": _history(s, sym, events, closes, now)}
+    history, stats = _history(s, sym, events, closes, now)
+    out: dict[str, Any] = {"symbol": sym, "status": "ok", "history": history}
     rows = s.scalars(select(FnoIvEod).where(FnoIvEod.symbol == sym, FnoIvEod.day <= to_ist(now).date())
                      .order_by(FnoIvEod.day.desc()).limit(2)).all()  # fmt: skip
     row = next((r for r in rows if ev.close_known(r.day, now)), None)  # today's row only after today's close
@@ -84,28 +87,29 @@ def build(s: Session, symbol: str, now: datetime, *, calendar: Any = AUTO) -> di
     fits, clock, pts = _implied(row, tier1, calendar)  # every event since the row's close, passed or not
     last = max((p.expiry for p in pts), default=row.day)
     window = cal.window_check(events, coverage, start=row.day, end=last, as_of=now)
-    stats = out["history"]
     upcoming = []
     for e in sorted(pending, key=cal.india_day):
         d = cal.india_day(e)
         if not row.day < d <= last:
             continue
         i = fits.get(d)
-        st = next((h["_stats"] for h in stats if h["type"] == e.type), None)
+        st = stats.get(e.type)
         upcoming.append({"type": e.type, "title": e.title, "day": d.isoformat(), "source": e.source_url,
                          **_imp(i), "short_gamma": ev.short_gamma(i or ev.Implied(None), st)})  # fmt: skip
     near = pts[0] if pts else None
     inside = [(u["title"], fits.get(date.fromisoformat(u["day"])) or ev.Implied(None)) for u in upcoming
               if near and date.fromisoformat(u["day"]) <= near.expiry]  # fmt: skip
     elev = ev.elevation(near, inside) if near else {"status": "unknown", "note": "No near expiry."}
-    if elev["status"] == "none" and window["status"] != "none":
-        elev = {
-            **elev,
-            "status": "unknown",
-            "note": window["note"],
-        }  # an uncovered calendar is never "no event"
-    for h in stats:
-        h.pop("_stats")
+    if (
+        elev["status"] == "none" and near
+    ):  # nothing measured before the near expiry: only if the calendar covers it
+        near_cov = cal.window_check(events, coverage, start=row.day, end=near.expiry, as_of=now)
+        if near_cov["uncovered"]:
+            elev = {
+                **elev,
+                "status": "unknown",
+                "note": near_cov["note"],
+            }  # an uncovered calendar is never "none"
     context = [x["title"] + " " + x["india_day"] for x in window["context"]]
     return {**out, "as_of": row.day.isoformat(), "clock": clock,
             "expiries": [{"expiry": p.expiry.isoformat(), "iv": p.sigma, "tau": p.tau} for p in pts],
@@ -117,7 +121,7 @@ def build(s: Session, symbol: str, now: datetime, *, calendar: Any = AUTO) -> di
 
 
 def _history(s: Session, sym: str, events: list[cal.Event], closes: dict[date, float],
-             now: datetime) -> list[dict[str, Any]]:  # fmt: skip
+             now: datetime) -> tuple[list[dict[str, Any]], dict[str, ev.TypeStats]]:  # fmt: skip
     """Realised moves by type as known at `now`, each paired with the implied move its last pre-event close showed
     (only from calendar rows public at that close)."""
     hist = ev.history(events, closes, now)
@@ -146,5 +150,5 @@ def _history(s: Session, sym: str, events: list[cal.Event], closes: dict[date, f
                           "start": m.start and m.start.isoformat(), "end": m.end and m.end.isoformat(),
                           "implied_move": None if j2 is None else j2**0.5})  # fmt: skip
         out.append({"type": kind, "title": cal.TITLES.get(kind, kind), "n": st.n, "median_abs": st.median_abs,
-                    "mean_r2": st.mean_r2, "fairness": ev.fairness(pairs), "moves": moves, "_stats": st})  # fmt: skip
-    return out
+                    "mean_r2": st.mean_r2, "fairness": ev.fairness(pairs), "moves": moves})  # fmt: skip
+    return out, hist

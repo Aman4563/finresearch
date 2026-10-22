@@ -127,5 +127,43 @@ def test_event_vol_route_reads_only_stored_data(clean):
     _seed()
     with TestClient(create_app(clock=lambda: datetime(2024, 6, 3, 18, 0, tzinfo=IST))) as c:
         got = c.get("/api/fno/nifty/event-vol").json()
-    assert got["symbol"] == "NIFTY" and got["clock"] == "calendar"  # no cached NSE holiday list in the test state
+    assert (
+        got["symbol"] == "NIFTY" and got["clock"] == "calendar"
+    )  # no cached NSE holiday list in the test state
     assert got["upcoming"][0]["move"] == pytest.approx(0.0369476829, rel=1e-6)
+
+
+def test_history_without_a_stored_iv_row_is_plain_json(clean):
+    from finresearch.db import session_scope
+
+    _seed()
+    with session_scope() as s:
+        s.execute(text("TRUNCATE fno_iv_eod"))
+    got = _build(datetime(2024, 6, 5, 18, 0, tzinfo=IST))
+    assert got["status"] == "no_data" and "_stats" not in got["history"][0]
+
+
+def test_an_event_between_the_expiries_leaves_the_near_expiry_event_free(clean):
+    from test_eventcal import _ev
+
+    from finresearch.db import session_scope
+    from finresearch.eventcal import store
+
+    _seed()
+    with session_scope() as s:  # move the only event to between the near (13-Jun) and next (20-Jun) expiries
+        s.execute(text("TRUNCATE calendar_event"))
+        store.upsert(s, [_ev("rbi_mpc", date(2024, 6, 14), date(2024, 3, 1))], [])
+    got = _build(datetime(2024, 6, 3, 18, 0, tzinfo=IST))
+    assert got["elevation"]["status"] == "none"  # covered through both expiries, nothing before the near one
+    (u,) = got["upcoming"]
+    assert u["j2"] is None and "no premium" in u["reason"]  # next IV below near: no premium shown
+
+
+def test_one_expiry_off_the_business_clock_puts_every_expiry_on_the_calendar_clock(clean):
+    _seed()
+    cal = bustime.Calendar(
+        date(2024, 1, 1), date(2024, 12, 31), frozenset({date(2024, 6, 20)})
+    )  # far expiry a holiday
+    got = _build(datetime(2024, 6, 3, 18, 0, tzinfo=IST), calendar=cal)
+    assert got["clock"] == "calendar"
+    assert [e["tau"] for e in got["expiries"]] == [10 / 365, 17 / 365]
