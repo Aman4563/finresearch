@@ -112,3 +112,17 @@ def test_loaded_inputs_run_through_the_report(env, monkeypatch) -> None:
     # with 3 sessions left to E2 the terms roll to E3 and a far month that is not listed: unknown
     rolled = [d for d in DAYS if sum(1 for x in DAYS if d < x <= E2) <= 3 or d >= E2]
     assert sum(1 for d in x.days if d.mf30 is not None) == len(DAYS) - len(rolled)
+
+
+def test_no_settlement_from_a_chain_older_than_the_contracts_last_session() -> None:
+    from finresearch.backtest import history
+    from finresearch.vrp import data
+
+    t = data._Open(E1, E2, 22_000.0, ("call", "put"), 75)
+    t.last = history.Day(date(2026, 8, 25), SYM, {}, {E2: 22_100.0}, None)
+    t.last_session = date(2026, 8, 25)
+    assert t.trade().final == 22_100.0
+    t.last_session = (
+        E2  # the expiry session is stored but its chain is missing: unknown, not the 25th's price
+    )
+    assert t.trade().final is None

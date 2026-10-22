@@ -47,10 +47,11 @@ class _Open:
         self.entry, self.expiry, self.strike, self.rights, self.lot = entry, expiry, strike, rights, lot
         self.marks: list[co.Mark] = []
         self.last: history.Day | None = None
+        self.last_session: date | None = None  # the latest stored session on or before the expiry
 
     def trade(self) -> co.Trade:
         final = None
-        if self.last is not None:
+        if self.last is not None and self.last.day == self.last_session:  # never settle on an earlier chain
             got = pricing.settlement_price(self.last, self.expiry)
             final = None if got is None else got[0]
         return co.Trade(self.entry, self.expiry, self.strike, self.lot, tuple(self.marks), final, self.rights)
@@ -175,6 +176,8 @@ def _observe(t: _Open, d: date, symbol: str, chains: dict, fut: dict, spot: floa
     if d < t.expiry:
         c, p = _quote(ch, t.strike, "call"), _quote(ch, t.strike, "put")
         t.marks.append(co.Mark(d, fut.get(t.expiry), c[0], p[0], c[2], p[2]))
+    if d <= t.expiry:
+        t.last_session = d
     if d <= t.expiry and ch:
         opts = {(t.expiry, r, k): history.Quote(t.expiry, r, k, q[1], q[0], int(q[2] or 0), 0)
                 for k, v in ch.items() for r, q in v.items()}  # fmt: skip
