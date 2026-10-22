@@ -220,7 +220,8 @@ def add_journal_routes(app: FastAPI, *, clock: Callable[[], datetime] | None = N
     # ------------------------------------------------------------------ pre-trade checklist
     @app.post("/api/journal/pretrade")
     async def pretrade(body: PlanIn) -> dict[str, Any]:
-        """The checklist for a planned trade. Computes and stores nothing; record it with POST /api/journal/notes."""
+        """The checklist for a planned trade. Stores no record (it fills only the price cache the value history
+        reads, for the marginal-risk line, #399); record it with POST /api/journal/notes."""
         from finresearch.portfolio.pretrade import Plan, checklist
 
         live = getattr(app.state, "journal_signal", None)

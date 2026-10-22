@@ -15,8 +15,10 @@ processes never run it twice; a failed pass is retried up to MAX_ATTEMPTS times,
 
 Politeness: quotes share one NSE session at the client's 2 requests a second; signals and events are capped at
 MAX_INSTRUMENTS per pass with `pf_spacing_s` between instruments; AMFI's NAV and TER files are one download each.
-Signals are computed with ctx log=0: a scheduled check never writes the forecast ledger (only a viewed signal does,
-per signals.ledger's logging rules). Personal data stays in the local database; nothing here calls a model.
+Signals are computed with ctx log=0: a scheduled signal check never writes the forecast ledger (only a viewed signal
+does, per signals.ledger's logging rules). The one ledger write here is the portfolio's own 1-day 95 % VaR
+(portfolio.var_ledger, #399), logged by the history pass on the evening of the history's last day, before the
+session it forecasts opens. Personal data stays in the local database; nothing here calls a model.
 """
 
 from __future__ import annotations

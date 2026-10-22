@@ -265,3 +265,38 @@ def test_var_rows_stay_out_of_the_calibration_headlines(db):
         groups = calibration_groups(s)
     assert not [g for g in groups if g["method"] in (HEADLINE, "all methods") and g["total"]]
     assert [g for g in groups if g["asset"] == "portfolio" and g["total"] == 3]  # still scored in its own row
+
+
+def test_the_daily_var_never_becomes_the_calibration_pages_next_forecast(db):
+    """A VaR row resolves every trading day: it would always be the 'next to resolve' on /api/calibration."""
+    from fastapi.testclient import TestClient
+
+    from finresearch.api import create_app
+    from finresearch.db import session_scope
+    from finresearch.db.models import Forecast
+
+    with session_scope() as s:
+        for i, (asset, on) in enumerate((("portfolio", date(2026, 10, 1)), ("ipo", date(2026, 10, 9)))):
+            s.add(Forecast(asset=asset, instrument="EXAMPLE" if asset == "ipo" else "PORTFOLIO", source="t",
+                           event_kind="listing_gain" if asset == "ipo" else "var95_1d", event="e", horizon="h",
+                           resolve_on=on, probability=0.6 if asset == "ipo" else 0.05, action="A", method="m",
+                           validation_status="rule_based", inputs={"as_of": "2026-09-30"}, status="open",
+                           dedupe_key=f"n{i}"))  # fmt: skip
+    with TestClient(create_app()) as c:
+        out = c.get("/api/calibration").json()
+    assert out["next_open"]["asset"] == "ipo" and out["next_scored"]["asset"] == "ipo"
+
+
+def test_the_logged_backtest_counts_days_its_independence_test_skips(db):
+    """Christoffersen's test reads consecutive rows as consecutive days; a missing logged day is counted, not hidden."""
+    from sqlalchemy import delete
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import Forecast
+    from finresearch.portfolio.var_ledger import backtest
+
+    _resolved_rows([0] * 260)
+    with session_scope() as s:
+        s.execute(delete(Forecast).where(Forecast.dedupe_key == "t100"))  # one business day not logged
+        b = backtest(s)
+    assert b["days"] == 259 and b["gaps"] == 1

@@ -26,6 +26,7 @@ forecast ledger is local and never sent to a model. These rows are excluded from
 from __future__ import annotations
 
 from datetime import date, datetime
+from itertools import pairwise
 from typing import Any
 
 from finresearch.fincalc.dates import next_business_day, to_ist
@@ -155,5 +156,12 @@ def backtest(s: Any) -> dict[str, Any]:
         out["reason"] = f"needs {MIN_TEST} logged days with a known outcome; have {len(done)}"
         return out
     out.update(coverage_test([int(f.outcome) for f in done]))
+    # Christoffersen reads consecutive rows as consecutive days: count the rows that follow a missing weekday (an
+    # exchange holiday counts too: an upper bound on the skipped sessions)
+    ds = [date.fromisoformat(f.inputs["as_of"]) for f in done]
+    out["gaps"] = sum(next_business_day(a) != b for a, b in pairwise(ds))
+    if out["gaps"]:
+        out["how"] += (f"; {out['gaps']} day(s) follow a day with no logged outcome, which the independence test "
+                       "reads as adjacent")  # fmt: skip
     out["trigger"] = out["p_cc"] < 0.05
     return out
