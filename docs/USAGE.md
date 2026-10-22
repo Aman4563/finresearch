@@ -87,6 +87,8 @@ GET requests don't change your records, the alert inputs or the forecast ledger:
   lab (`GET /api/fno/lab`) or a run (`GET /api/fno/lab/runs/{id}`) marks a run whose worker has gone silent as failed,
   as before, and now also appends its trial row, so an abandoned run still counts in N. `GET /api/fno/lab/family`
   and `GET /api/fno/lab/versions/{id}/promotion` only read.
+- `POST /api/portfolio/analytics/joint-risk/pretrade` (#397) is a POST only because it carries the candidate legs:
+  it stores nothing. `GET /api/portfolio/analytics/joint-risk` writes nothing either (it fills only the price caches).
 
 Some GETs still write caches, by design. They store fetched market data, never your records: the intraday series
 archive, the disclosure feed refresh, the ISIN map, the fund cap list, and the HTTP and price caches. The broker OAuth
@@ -212,9 +214,6 @@ uv run finresearch forecasts calibration     # Brier score, skill vs the base ra
 uv run finresearch forecasts resolve         # score every due forecast now (the monitor does this daily)
 uv run finresearch forecasts cards           # record every logged F&O card (card_log) as a forecast (#376; the monitor does this hourly)
 uv run finresearch forecasts horse-race      # the pre-registered card horse race on resolved cards (#377; --window, --json); read only
-<<<<<<< HEAD
 uv run finresearch forecasts skill           # the live skill monitor per method x event kind x underlying (#378; --json); read only
-=======
-uv run finresearch forecasts horse-race --source replay --window seen   # the same race on one replayed card per stored session, 2022-26 (addendum A1; design | seen | tuesday); read only, run outside market hours
->>>>>>> origin/main
+uv run finresearch forecasts horse-race --source replay --window seen   # the same race on one replayed card per stored session, 2022-26 (addendum A1, plus the business-time challenger p_rw_bus of addendum A2, #384; design | seen | tuesday); read only, run outside market hours
 ```
