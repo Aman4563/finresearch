@@ -220,7 +220,9 @@ def _grid(p: Raw, steps: int) -> list[tuple[float, float]]:
     ks = -half + (np.arange(steps) + 0.5) * dk
     sw = np.sqrt(np.asarray(svi.w(p, ks)))
     dm = -ks / sw - sw / 2
-    mass = np.asarray(svi.g(p, ks)) / (math.sqrt(2 * math.pi) * sw) * np.exp(-dm * dm / 2) * dk  # density(p, k) dk
+    mass = (
+        np.asarray(svi.g(p, ks)) / (math.sqrt(2 * math.pi) * sw) * np.exp(-dm * dm / 2) * dk
+    )  # density(p, k) dk
     return list(zip(ks.tolist(), mass.tolist(), strict=True))
 
 
