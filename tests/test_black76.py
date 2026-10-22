@@ -203,3 +203,71 @@ def test_spread_weights_downweight_a_wide_quote() -> None:
 def test_basis_between_parity_and_future() -> None:
     assert b.basis(25010.0, 25000.0) == pytest.approx(0.0004)
     assert b.basis(None, 25000.0) is None and b.basis(25010.0, None) is None
+
+
+# --------------------------------------------------------------------------- IVs from quotes, with error bands
+D30 = df(R_TRUE, T30)
+
+
+def quote(right, k, sigma=0.14, half=0.5, **kw):
+    m = b.price(right, F_TRUE, k, T30, D30, sigma)
+    return b.OptionQuote(float(k), right, **({"bid": m - half, "ask": m + half} | kw))
+
+
+def test_mid_iv_and_its_bands_computed_by_hand() -> None:
+    got = b.quote_iv(quote("put", 24500, half=0.75), F_TRUE, T30, D30)
+    v = b.vega(F_TRUE, 24500, T30, D30, 0.14)
+    assert got.reason is None and got.sigma == pytest.approx(0.14, abs=1e-9)
+    assert got.band == pytest.approx(1.5 / (2 * v), rel=1e-6) and got.tick_band == pytest.approx(0.05 / v, rel=1e-6)
+
+
+@pytest.mark.parametrize(
+    "kw,why",
+    [({"bid": None, "ask": 10.0}, "no bid"), ({"bid": 0.0, "ask": 10.0}, "no bid"), ({"bid": 9.0, "ask": None}, "no ask"),
+     ({"bid": 10.0, "ask": 9.95}, "crossed"), ({"bid": 10.0, "ask": 10.0}, "locked")],
+)  # fmt: skip
+def test_unusable_quotes_are_dropped_with_a_reason(kw, why) -> None:
+    got = b.quote_iv(b.OptionQuote(24000.0, "put", **kw), F_TRUE, T30, D30)
+    assert got.sigma is None and why in got.reason
+
+
+def test_a_band_over_two_vol_points_is_unknown() -> None:
+    v = b.vega(F_TRUE, 26500, T30, D30, 0.14)
+    got = b.quote_iv(quote("call", 26500, half=0.021 * v), F_TRUE, T30, D30)  # band = 2.1 vol points
+    assert got.sigma is None and "2 vol points" in got.reason and got.band == pytest.approx(0.021, rel=1e-4)
+
+
+def test_a_settle_without_bid_ask_has_an_unknown_band_not_zero() -> None:
+    m = b.price("call", F_TRUE, 25500, T30, D30, 0.13)
+    got = b.quote_iv(b.OptionQuote(25500.0, "call", price=m), F_TRUE, T30, D30)
+    assert got.sigma == pytest.approx(0.13, abs=1e-9) and got.band is None and got.tick_band is not None
+
+
+def test_no_discount_factor_means_no_iv() -> None:
+    got = b.quote_iv(quote("put", 24500), F_TRUE, T30, None)
+    assert got.sigma is None and "discount factor" in got.reason
+
+
+def test_otm_side_per_strike_and_both_sides_at_the_money() -> None:
+    qs = [quote(r, k, sigma=0.14 + (0.01 if r == "put" else 0.0)) for k in range(24500, 25600, 100)
+          for r in ("call", "put")]  # fmt: skip
+    rows = b.otm_ivs(qs, F_TRUE, T30, D30)
+    sides = {(q.strike, q.right) for q in rows}
+    assert (24500, "put") in sides and (24500, "call") not in sides
+    assert (25500, "call") in sides and (25500, "put") not in sides
+    assert {(25000, "call"), (25000, "put")} <= sides  # 25,000 is the strike nearest F = 25,012.4
+    atm = b.atm_iv(qs, F_TRUE, T30, D30)
+    assert atm.strike == 25000 and atm.sigma == pytest.approx(0.145, abs=1e-9) and atm.sides == 2
+
+
+def test_atm_iv_uses_one_side_when_the_other_is_unusable() -> None:
+    qs = [quote("call", 25000), b.OptionQuote(25000.0, "put", bid=5.0, ask=4.0), quote("call", 25100)]
+    atm = b.atm_iv(qs, F_TRUE, T30, D30)
+    assert atm.sigma == pytest.approx(0.14, abs=1e-9) and atm.sides == 1
+    assert b.atm_iv([], F_TRUE, T30, D30).sigma is None
+
+
+def test_expected_move_band_is_lognormal() -> None:
+    lo, hi = b.expected_move(25000.0, 0.2, 0.25)
+    assert lo == pytest.approx(25000 * math.exp(-0.1)) and hi == pytest.approx(25000 * math.exp(0.1))
+    assert 25000 - lo < hi - 25000  # skewed up, unlike S +/- S sigma sqrt T

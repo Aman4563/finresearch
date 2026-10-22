@@ -270,3 +270,93 @@ def basis(f_parity: float | None, f_future: float | None) -> float | None:
     if not _finite_positive(f_parity, f_future):
         return None
     return (f_parity - f_future) / f_future  # type: ignore[operator]
+
+
+# --------------------------------------------------------------------------- the app's own IVs from mids
+# IV of the mid m = (bid + ask)/2 on the out-of-the-money side (both sides at the strike nearest F), each with an
+# error band dsigma = (ask - bid) / (2 vega) and a tick band TICK / vega. Crossed, locked, one-sided and zero-bid
+# quotes are dropped, and so is an IV whose band exceeds MAX_BAND. A single market price without bid/ask (an
+# end-of-day settle) gets an IV with an unknown spread band (None), never a zero one.
+TICK = 0.05  # NSE's option tick, rupees
+MAX_BAND = 0.02  # 2 vol points (issue #385)
+
+
+@dataclass(frozen=True)
+class OptionQuote:
+    strike: float
+    right: Right
+    bid: float | None = None
+    ask: float | None = None
+    price: float | None = None  # a market price used when there is no bid/ask (e.g. a settle that traded)
+
+
+@dataclass(frozen=True)
+class QuoteIv:
+    strike: float
+    right: Right
+    mid: float | None
+    sigma: float | None
+    band: float | None = None  # spread band in volatility (fraction); None = unknown
+    tick_band: float | None = None
+    reason: str | None = None
+
+
+def quote_iv(q: OptionQuote, fwd: float, t: float, df: float | None) -> QuoteIv:
+    def out(mid: float | None, reason: str, band: float | None = None) -> QuoteIv:
+        return QuoteIv(q.strike, q.right, mid, None, band, None, reason)
+
+    if q.bid is not None or q.ask is not None:
+        if q.bid is None or q.bid <= 0:
+            return out(None, "no bid")
+        if q.ask is None or q.ask <= 0:
+            return out(None, "no ask")
+        if q.ask < q.bid:
+            return out(None, "crossed quote (ask below bid)")
+        if q.ask == q.bid:
+            return out(None, "locked quote (ask equals bid)")
+        mid, spread = (q.bid + q.ask) / 2, q.ask - q.bid
+    elif q.price is not None and q.price > 0:
+        mid, spread = q.price, None
+    else:
+        return out(None, "no price")
+    if df is None:
+        return out(mid, "discount factor unknown (no dated rate and no identified parity discount factor)")
+    got = implied_vol(q.right, mid, fwd, q.strike, t, df)
+    if got.sigma is None:
+        return out(mid, got.reason or "no implied volatility")
+    v = vega(fwd, q.strike, t, df, got.sigma)
+    if v <= 0:
+        return out(mid, "vega is zero at the solution")
+    band = None if spread is None else spread / (2 * v)
+    if band is not None and band > MAX_BAND:
+        return out(mid, f"spread band {band * 100:.1f} vol points is above {MAX_BAND * 100:g} vol points", band)
+    return QuoteIv(q.strike, q.right, mid, got.sigma, band, TICK / v)
+
+
+def otm_ivs(quotes: list[OptionQuote], fwd: float, t: float, df: float | None) -> list[QuoteIv]:
+    """Every out-of-the-money quote's IV (puts below F, calls above) plus both sides at the strike nearest F."""
+    if not quotes:
+        return []
+    atm = min({q.strike for q in quotes}, key=lambda k: (abs(k - fwd), k))
+    keep = [q for q in quotes if q.strike == atm or (q.right == "put") == (q.strike < fwd)]
+    return [quote_iv(q, fwd, t, df) for q in sorted(keep, key=lambda q: (q.strike, q.right))]
+
+
+@dataclass(frozen=True)
+class AtmIv:
+    strike: float | None
+    sigma: float | None
+    sides: int = 0
+    reason: str | None = None
+
+
+def atm_iv(quotes: list[OptionQuote], fwd: float, t: float, df: float | None) -> AtmIv:
+    """The mean of the call and put IVs at the strike nearest F (either alone when only one is usable)."""
+    if not quotes:
+        return AtmIv(None, None, 0, "no quotes")
+    k = min({q.strike for q in quotes}, key=lambda s: (abs(s - fwd), s))
+    rows = [quote_iv(q, fwd, t, df) for q in quotes if q.strike == k]
+    ok = [r.sigma for r in rows if r.sigma is not None]
+    if not ok:
+        return AtmIv(k, None, 0, "; ".join(f"{r.right}: {r.reason}" for r in rows))
+    return AtmIv(k, sum(ok) / len(ok), len(ok))
