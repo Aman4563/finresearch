@@ -495,6 +495,8 @@ class Quote(BaseModel):
     average_price: Decimal | None = None  # the day's VWAP so far
     # NSE's tradeInfo.totalMarketCap in rupees (issued shares x closePrice after the close, checked 30-Sep-2026)
     exchange_market_cap: Decimal | None = None
+    # NSE's tradeInfo.ffmc in rupees: the free-float market cap at the quote's price (#348, the Nifty 50 weights)
+    ffmc: Decimal | None = None
     isin: str | None = None
     listing_date: date | None = None
     status: str | None = None
@@ -532,6 +534,7 @@ class Quote(BaseModel):
                    indicative_close=parse_num(meta.get("indicativeClose")) or None,
                    average_price=parse_num(meta.get("averagePrice")) or None,
                    exchange_market_cap=parse_num(trade.get("totalMarketCap")) or None,
+                   ffmc=parse_num(trade.get("ffmc")) or None,
                    isin=(meta.get("isinCode") or None),
                    listing_date=parse_nse_date(listing),
                    status=sec.get("secStatus"), as_of=parse_nse_timestamp(e.get("lastUpdateTime")),
