@@ -11,7 +11,7 @@ import { ReliabilityLine } from "@/components/signal";
 
 import { Fig, Parts } from "./fit";
 import { PlanActions } from "./plan-actions";
-import type { EventCheck, ExitLevel, PlanAction, TradePlan } from "./plan-types";
+import type { EventCheck, ExitLevel, PlanAction, ShockBeta, TradePlan } from "./plan-types";
 
 const VERDICT: Record<PlanAction, string> = { ENTER: "bg-gain-soft text-gain ring-gain/30", PAPER: "bg-background-subtle text-foreground ring-border-strong", WAIT: "bg-warn-soft text-warn ring-warn/30", AVOID: "bg-loss-soft text-loss ring-loss/30" };
 const ICON = { ENTER: ShieldCheck, PAPER: NotebookPen, WAIT: ShieldQuestion, AVOID: ShieldAlert } as const;
@@ -31,6 +31,21 @@ function Row({ label, children, help }: { label: string; children: React.ReactNo
 }
 
 const N = ({ children }: { children: React.ReactNode }) => <span className="num whitespace-nowrap">{children}</span>;
+
+/** #394/#395: one underlying's beta to NIFTY as the shock used it: estimate, SE, band, window and as-of date, or why it is unknown. */
+function ShockBetaLine({ b }: { b: ShockBeta }) {
+  return (
+    <span className="block text-[11px] text-muted" data-testid="plan-shock-beta">
+      {b.beta == null || b.lo == null || b.hi == null ? (
+        <>{b.reason ?? `${b.underlying}: beta to NIFTY unknown`}</>
+      ) : (
+        <>
+          {b.underlying} beta <N>{b.beta.toFixed(2)}</N> (SE <N>{(b.se ?? 0).toFixed(2)}</N>), shocked at the worse of <N>{b.lo.toFixed(2)}</N>–<N>{b.hi.toFixed(2)}</N> · {b.n} returns, {day(b.window_start) || "unknown"} to {day(b.as_of) || "unknown"}, EWMA half-life {b.half_life} sessions · as of {day(b.as_of) || "unknown"}
+        </>
+      )}
+    </span>
+  );
+}
 
 function Level({ x, credit, what }: { x: ExitLevel | null | undefined; credit: boolean; what: "stop" | "target" }) {
   if (!x) return <span className="text-muted">none for this position</span>;
@@ -225,10 +240,11 @@ function PlanDetail({ plan }: { plan: TradePlan }) {
             </Row>
           )}
           {s.open_book?.shock_budget != null && (
-            <Row label="Common shock" help={`The book after this trade may lose at most ${s.open_book.shock_pct}% of your F&O capital if NIFTY moved ${(s.open_book.shock_moves ?? []).map((m) => `${m > 0 ? "+" : "−"}${Math.abs(m * 100)}%`).join(", ")} in one session (other underlyings by their beta, IVs by the measured spot-vol response). An unknown shock loss sizes 0. Real money also needs margin use within ${(s.open_book.margin_util_max ?? 0) * 100}% of your Groww margin capacity, read from today's sync.`}>
+            <Row label="Common shock" help={`The book after this trade may lose at most ${s.open_book.shock_pct}% of your F&O capital if NIFTY moved ${(s.open_book.shock_moves ?? []).map((m) => `${m > 0 ? "+" : "−"}${Math.abs(m * 100)}%`).join(", ")} in one session (other underlyings by their registered beta to NIFTY, at the worse end of its band, IVs by the measured spot-vol response). An unknown shock loss sizes 0. Real money also needs margin use within ${(s.open_book.margin_util_max ?? 0) * 100}% of your Groww margin capacity, read from today's sync.`}>
               <span className="font-normal" data-testid="plan-shock">
                 book worst <N>{rs(s.open_book.shock_book_worst)}</N> · one set worst <N>{rs(s.open_book.shock_one_worst)}</N> of <N>{rs(s.open_book.shock_budget)}</N> · margin {s.open_book.margin_known ? "known" : "unknown"}
               </span>
+              {(s.open_book.shock_betas ?? []).map((b) => <ShockBetaLine key={b.underlying} b={b} />)}
               {[...(s.open_book.shock_notes ?? []), ...(s.open_book.margin_notes ?? [])].map((n) => <span key={n} className="block text-[11px] text-muted">{n}</span>)}
             </Row>
           )}

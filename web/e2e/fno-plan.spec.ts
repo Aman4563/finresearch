@@ -53,6 +53,10 @@ test("fno: market context labels evidence; suggest shows AVOID on a failed hard 
   if (!phone(page)) {
     await enter.getByText(/^Details: sizing/).click();
     await expect(enter.getByTestId("plan-open-book")).toContainText("at risk of"); // #358: the open-book cap is shown
+    // #394/#395: the shock row shows each underlying's registered beta, its SE, band, window and as-of date, or why unknown
+    await expect(enter.getByTestId("plan-shock-beta").first()).toContainText("BANKNIFTY beta 1.15 (SE 0.09), shocked at the worse of 1.00–1.30");
+    await expect(enter.getByTestId("plan-shock-beta").first()).toContainText("as of 9 Oct 2026");
+    await expect(enter.getByTestId("plan-shock-beta").nth(1)).toContainText("FINNIFTY: beta to NIFTY unknown, only 40 paired returns (needs 120)");
   }
   await expect(enter.getByText(/buy back at ₹127.50\/share/)).toBeVisible();
   await enter.getByRole("button", { name: "Paper trade + alerts" }).click();
