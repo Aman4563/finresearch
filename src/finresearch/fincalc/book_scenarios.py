@@ -201,6 +201,9 @@ class Exposures:
     reasons: tuple[str, ...]
     nifty_delta_reasons: tuple[str, ...]
     flags: tuple[str, ...]
+    # #397: the same sum in ₹ per unit relative NIFTY move (Σ β_u Δ F_u q), which needs no NIFTY level; None while
+    # any leg is unpriced or a beta is unknown
+    nifty_rs_delta: float | None = None
 
     @property
     def complete(self) -> bool:
@@ -229,11 +232,12 @@ def exposures(legs: Sequence[BookLeg], m: Market) -> Exposures:
                 nreasons.append(m.beta_reason(u))
             else:
                 nifty += beta * e.rs_delta
+    rs = None if reasons or nreasons else nifty
     if m.nifty is None or m.nifty <= 0:
         nreasons.append("NIFTY's level is unknown")
     nreasons = sorted(set(nreasons)) + reasons
     return Exposures(tuple(rows), None if reasons else total, None if nreasons else nifty / m.nifty,  # type: ignore[operator]
-                     tuple(reasons), tuple(nreasons), tuple(f for s in states for f in s.flags))  # fmt: skip
+                     tuple(reasons), tuple(nreasons), tuple(f for s in states for f in s.flags), rs)  # fmt: skip
 
 
 # --------------------------------------------------------------------------- full revaluation

@@ -83,6 +83,8 @@ GET requests don't change your records, the alert inputs or the forecast ledger:
   `POST /api/fno/strategy` and `GET /api/fno/{symbol}/suggest` response appends one row (the suggest GET is the one
   F&O read that writes, because a card shown and never logged cannot be recovered). Rows are never updated or
   deleted; `uv run finresearch fno card-log --since <ISO time with zone>` counts the verdicts before and after it.
+- `POST /api/portfolio/analytics/joint-risk/pretrade` (#397) is a POST only because it carries the candidate legs:
+  it stores nothing. `GET /api/portfolio/analytics/joint-risk` writes nothing either (it fills only the price caches).
 
 Some GETs still write caches, by design. They store fetched market data, never your records: the intraday series
 archive, the disclosure feed refresh, the ISIN map, the fund cap list, and the HTTP and price caches. The broker OAuth
