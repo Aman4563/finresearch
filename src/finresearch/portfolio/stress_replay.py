@@ -512,6 +512,15 @@ async def load(h: Any, fetch: Any, store: Any, today: date, *, index_series: Any
             "as_of": as_of.isoformat(), "method": METHOD, "scenarios": out}  # fmt: skip
 
 
+async def window(w: Window, h: Any, fetch: Any, store: Any, today: date, *, index_series: Any = None,
+                 yields: Any = None) -> dict[str, Any]:  # fmt: skip
+    """One window's payload on `h.positions` (as `load`, for a window of the caller's: the joint view's single-day
+    replays, #397)."""
+    pos = [p for p in h.positions if p.value > 0]
+    as_of = h.days[-1] if h.days else today
+    return await _window(w, h, pos, fetch, store, index_series or index_eod_series, yields, today, as_of)
+
+
 async def _window(w: Window, h: Any, pos: list[Any], fetch: Any, store: Any, series: Any, yields: Any, today: date,
                   as_of: date) -> dict[str, Any]:  # fmt: skip
     """One window's payload (see `load`)."""

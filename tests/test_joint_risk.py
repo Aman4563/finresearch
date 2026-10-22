@@ -115,7 +115,9 @@ def test_d_total_does_not_need_niftys_level():
 def test_pretrade_shows_how_d_total_and_l_minus_10_change_for_a_trade():
     p = jr.pretrade([EQUITY], jr.Book([], MARKET), [SHORT_PUT], AT)
     alone = jr.losses([], jr.Book([SHORT_PUT], MARKET), AT, moves=(-0.10,))[0].total
-    assert p.before.total == pytest.approx(1_200_000.0) and p.after.total > p.before.total  # a short put adds delta
+    assert (
+        p.before.total == pytest.approx(1_200_000.0) and p.after.total > p.before.total
+    )  # a short put adds delta
     assert p.l_before.total == pytest.approx(-120_000.0)
     assert p.l_after.total == pytest.approx(-120_000.0 + alone)
     assert p.d_change == pytest.approx(p.after.total - p.before.total)
