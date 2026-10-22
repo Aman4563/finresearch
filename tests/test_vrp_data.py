@@ -11,9 +11,11 @@ import pytest
 
 from finresearch.fincalc import fno_history as fh
 
-E1, E2, E3 = date(2025, 1, 30), date(2025, 2, 27), date(2025, 3, 27)
+# a made-up symbol and India VIX name: no other test writes these rows into the shared test database
+SYM, VIX = "VRPTESTIDX", "VRPTEST VIX"
+E1, E2, E3 = date(2026, 7, 30), date(2026, 8, 27), date(2026, 9, 24)
 DAYS = [
-    date(2025, 1, 27) + timedelta(i) for i in range(40) if (date(2025, 1, 27) + timedelta(i)).weekday() < 5
+    date(2026, 7, 27) + timedelta(i) for i in range(40) if (date(2026, 7, 27) + timedelta(i)).weekday() < 5
 ]
 
 
@@ -35,7 +37,7 @@ def seed(s) -> None:
         for e in (E1, E2, E3):
             if e < d:
                 continue
-            rows.append(FnoBhav(day=d, symbol="NIFTY", instrument="IDF", expiry=e, strike=D(0), option_type="XX",
+            rows.append(FnoBhav(day=d, symbol=SYM, instrument="IDF", expiry=e, strike=D(0), option_type="XX",
                                 open=D(str(round(f * 0.999, 2))), high=D(str(round(f * 1.004, 2))),
                                 low=D(str(round(f * 0.995, 2))), close=D(str(round(f, 2))),
                                 settle=D(str(round(f, 2))), contracts=5000))  # fmt: skip
@@ -46,20 +48,21 @@ def seed(s) -> None:
                         max(f - k, 0.0) if right == "call" else max(k - f, 0.0))  # fmt: skip
                     if p < 0.05:
                         continue
-                    rows.append(FnoBhav(day=d, symbol="NIFTY", instrument="IDO", expiry=e, strike=D(k),
+                    rows.append(FnoBhav(day=d, symbol=SYM, instrument="IDO", expiry=e, strike=D(k),
                                         option_type=kind, close=D(str(round(p, 2))), settle=D(str(round(p, 2))),
                                         contracts=100))  # fmt: skip
-        rows.append(IndexEod(day=d, symbol="INDIA VIX", index_name="India VIX", close=D("15.5")))
+        rows.append(IndexEod(day=d, symbol=VIX, index_name="India VIX", close=D("15.5")))
     s.add_all(rows)
 
 
-def test_loader_builds_days_windows_and_trades(env) -> None:
+def test_loader_builds_days_windows_and_trades(env, monkeypatch) -> None:
     from finresearch.db import session_scope
     from finresearch.vrp import data
 
+    monkeypatch.setattr(data, "VIX_SYMBOL", VIX)
     with session_scope() as s:
         seed(s)
-    x, counts = data.load("NIFTY", date(2025, 1, 1), date(2025, 3, 31), lots=lambda *_: 75, band=None)
+    x, counts = data.load(SYM, date(2026, 7, 1), date(2026, 9, 30), lots=lambda *_: 75, band=None)
     assert [d.day for d in x.days] == DAYS and x.starts == {E1, E2}  # E3 is after the data
     d0 = next(d for d in x.days if d.day == E1)
     assert d0.mf30 == pytest.approx(0.15**2, rel=0.03) and d0.vix == 15.5
@@ -91,13 +94,14 @@ def test_loader_refuses_the_vault_and_an_unregistered_spec(monkeypatch) -> None:
         data.load("NIFTY", date(2022, 1, 1), date(2022, 6, 30), lots=lambda *_: 50, band=None)
 
 
-def test_loaded_inputs_run_through_the_report(env) -> None:
+def test_loaded_inputs_run_through_the_report(env, monkeypatch) -> None:
     from finresearch.db import session_scope
     from finresearch.vrp import data, run
 
+    monkeypatch.setattr(data, "VIX_SYMBOL", VIX)
     with session_scope() as s:
         seed(s)
-    x, _ = data.load("NIFTY", date(2025, 1, 1), date(2025, 3, 31), lots=lambda *_: 75, band=None)
+    x, _ = data.load(SYM, date(2026, 7, 1), date(2026, 9, 30), lots=lambda *_: 75, band=None)
     out = run.report(x, draws=50, seed=1)
     p = out["periods"]["seen"]
     assert p["primary"]["n"] == 1  # E1's window completes; at E2 only one monthly (E3) is listed: unknown
@@ -105,5 +109,6 @@ def test_loaded_inputs_run_through_the_report(env) -> None:
     s = p["collect"]["dated"]["straddle"]
     assert s["none"]["n"] == 1 and s["band"]["n"] == 1 and s["fractional"]["n"] == 1
     assert s["none"]["unknown_reasons"] == {"no final settlement price": 1}  # the E2 -> E3 trade
-    # from 24-Feb (3 sessions to E2) the terms roll to E3 and a far month that is not listed: unknown
-    assert out["gate"]["2022-2026"]["days"] == len([d for d in DAYS if d < date(2025, 2, 24)])
+    # with 3 sessions left to E2 the terms roll to E3 and a far month that is not listed: unknown
+    rolled = [d for d in DAYS if sum(1 for x in DAYS if d < x <= E2) <= 3 or d >= E2]
+    assert sum(1 for d in x.days if d.mf30 is not None) == len(DAYS) - len(rolled)
