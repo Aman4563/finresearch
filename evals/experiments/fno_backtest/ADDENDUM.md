@@ -62,6 +62,7 @@ RESULTS_PLACEHOLDER
 
 - The registered DM tests (`direction/evaluate.py`, `horserace/race.py`) still call the Bartlett + HLN version; the
   fixed test is `direction.metrics.diebold_mariano_hln`. Switching either registered consumer is a post hoc change
-  of its own experiment (a decision; the published direction and horse-race nulls have Holm p ≥ 0.66).
+  of its own experiment (a decision; #381 reports every published direction-model Holm p ≥ 0.66, so the over-size
+  changed no published verdict).
 - `evals/stock_universe.py` keeps its own registered DSR copy.
 - The Strategy Lab judges with v1 (P2.5 territory); the v2 functions are importable for it.
