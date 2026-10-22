@@ -38,12 +38,16 @@ class BetaSpec:
     recent_sessions: int = 5  # a missing pair among the last 5 NIFTY sessions (a roll or data gap) = unknown
     max_age_days: int = 7  # as_of (the last NIFTY return) at most 7 calendar days before today (IST)
     z: float = 1.645  # one-sided 95 %
-    floor: float = 1.0  # the band's upper end is never below 1: no underlying is assumed to fall less than NIFTY
+    floor: float = (
+        1.0  # the band's upper end is never below 1: no underlying is assumed to fall less than NIFTY
+    )
     band: str = ("lo = beta - z SE (not floored), hi = max(floor, beta + z SE); NIFTY = (1, 1) with no estimate. "
                  "A P&L under a NIFTY move m is evaluated, per underlying, at both ends (each underlying moves by "
                  "its end x m) and the worse of the two is taken, then summed over underlyings: the worse of the "
                  "band's two ends, not the worst over the interval")  # fmt: skip
-    point_use: str = "the point estimate is shown and used only for the NIFTY-equivalent delta (a display, no gate)"
+    point_use: str = (
+        "the point estimate is shown and used only for the NIFTY-equivalent delta (a display, no gate)"
+    )
     unknown: str = ("fewer than min_returns pairs, more than max_missing missing, a missing pair in the last "
                     "recent_sessions, a stale as_of, or Sxx = 0 or n_eff <= 2: beta unknown with the reason "
                     "(never 0, never 1)")  # fmt: skip
