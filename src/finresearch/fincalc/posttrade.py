@@ -279,3 +279,22 @@ def exposure_mix(trades: Sequence[MixTrade]) -> Mix:
     n = len(trades)
     return Mix(n, sold / total if total else None, sum(t.opened == t.expiry for t in trades) / n if n else None,
                sum(holds) / len(holds) if holds else None)  # fmt: skip
+
+
+def legs_greek_explain(legs: Sequence[MarkLeg], *, s0: float, s1: float, t0: float, t1: float, d_days: float,
+                       rate: float, actual: float) -> Explain | None:  # fmt: skip
+    """The greek explain with each leg's own vol change (Σ vega_i dσ_i): greeks at the first mark; on expiry day
+    (T1 ≤ 0) σ1 is unknown and irrelevant, so the leg has no vol term. None when a needed IV is unknown or T0 ≤ 0."""
+    d = gm = v = th = 0.0
+    for x in legs:
+        g = position_greeks([x], spot=s0, t=t0, rate=rate)
+        if g is None:
+            return None
+        if x.right != "future" and t1 > 0 and x.iv1 is None:
+            return None
+        dv = 0.0 if x.right == "future" or t1 <= 0 else (x.iv1 - x.iv0) * 100  # type: ignore[operator]
+        e = greek_explain(g, d_spot=s1 - s0, d_vol_pts=dv, d_days=d_days, actual=0.0)
+        d, gm, v, th = d + e.delta, gm + e.gamma, v + e.vega, th + e.theta
+    explained = d + gm + v + th
+    res = actual - explained
+    return Explain(d, gm, v, th, explained, actual, res, abs(res) / abs(actual) if actual else None)

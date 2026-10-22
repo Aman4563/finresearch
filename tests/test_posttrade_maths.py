@@ -208,3 +208,22 @@ def test_exposure_mix_golden_values():
     # held 2 of 5 days to expiry -> 0.4; trade a (0 days to expiry) has no ratio
     assert m.mean_hold_share == pytest.approx(0.4)
     assert pt.exposure_mix([]).same_day_expiry_share is None
+
+
+def test_legs_greek_explain_uses_each_legs_own_vol_change():
+    from finresearch.fincalc import options as o
+
+    # long 50 calls K 100 (IV 20 % -> 22 %) and short 50 calls K 110 (IV 18 % -> 17 %), S 100 -> 101, 30 -> 29 days
+    legs = [pt.MarkLeg("call", 100.0, 50, 0.20, 0.22), pt.MarkLeg("call", 110.0, -50, 0.18, 0.17)]
+    e = pt.legs_greek_explain(legs, s0=100, s1=101, t0=30 / 365, t1=29 / 365, d_days=1, rate=0.0, actual=40)
+    a, b = o.greeks("call", 100, 100, 30 / 365, 0.0, 0.20), o.greeks("call", 100, 110, 30 / 365, 0.0, 0.18)
+    assert e.delta == pytest.approx(50 * a.delta - 50 * b.delta)
+    assert e.gamma == pytest.approx(0.5 * (50 * a.gamma - 50 * b.gamma))
+    assert e.vega == pytest.approx(50 * a.vega * 2 - 50 * b.vega * -1)  # +2 points long, -1 point short
+    assert e.theta == pytest.approx(50 * a.theta - 50 * b.theta)
+    assert e.residual == pytest.approx(40 - e.explained)
+    # on expiry day the IV is unknown and irrelevant: no vol term; an unknown IV0 leaves it unknown
+    e = pt.legs_greek_explain(legs[:1], s0=100, s1=101, t0=1 / 365, t1=0.0, d_days=1, rate=0.0, actual=40)
+    assert e.vega == 0
+    assert pt.legs_greek_explain([pt.MarkLeg("call", 100.0, 50, None, 0.2)], s0=100, s1=101, t0=0.1, t1=0.09,
+                                 d_days=1, rate=0.0, actual=40) is None  # fmt: skip
