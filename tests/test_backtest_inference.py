@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from itertools import pairwise
+
 import pytest
 
 from finresearch.backtest import evaluate, inference, metrics
@@ -119,3 +121,88 @@ def test_posterior_sharpe_reproduces_the_issue_example():
     assert p["posterior"] == pytest.approx(0.3648, abs=5e-4)
     assert p["shrink"] == pytest.approx(0.25 / (0.25 + p["se2_annual"]))
     assert inference.posterior_sharpe(None, 580, 0.0, 3.0, tau=0.5)["posterior"] is None
+
+
+# --------------------------------------------------------------------------- two-way clustering (Cameron, Gelbach & Miller)
+def test_twoway_t_by_hand():
+    # values 10, 20, -5, 7 (mean 8, residuals 2, 12, -13, -1); expiry a a b c; entry month m1 m2 m2 m3.
+    # CGM (2011) eq. 2.15 with c = G/(G-1) per component: expiry 3/2 (14^2 + 13^2 + 1^2)/16 = 34.3125; month
+    # 3/2 (2^2 + 1^2 + 1^2)/16 = 0.5625; intersection (4 singletons) 4/3 (4 + 144 + 169 + 1)/16 = 26.5;
+    # V = 34.3125 + 0.5625 - 26.5 = 8.375, t = 8 / sqrt(8.375) = 2.76437
+    r = inference.twoway_clustered_t([10, 20, -5, 7], ["a", "a", "b", "c"], ["m1", "m2", "m2", "m3"])
+    assert r["var"] == pytest.approx(8.375) and r["t"] == pytest.approx(2.76437, abs=1e-5)
+    assert r["fallback"] is False
+
+
+def test_twoway_t_with_identical_clusterings_is_the_one_way_t():
+    vals, cl = [10.0, 20.0, -5.0, 7.0, 3.0], ["a", "a", "b", "c", "c"]
+    assert inference.twoway_clustered_t(vals, cl, cl)["t"] == pytest.approx(metrics.clustered_t(vals, cl))
+
+
+def test_twoway_t_falls_back_to_the_larger_one_way_variance_when_not_positive():
+    # values 3, 0, 0, 1 (mean 1, residuals 2, -1, -1, 0); expiry a a b b: 2 (1 + 1)/16 = 0.25; month x y x y:
+    # 2 (1 + 1)/16 = 0.25; intersection 4/3 (4 + 1 + 1)/16 = 0.5 -> V = 0: CGM's rule of thumb, max one-way = 0.25
+    r = inference.twoway_clustered_t([3, 0, 0, 1], ["a", "a", "b", "b"], ["x", "y", "x", "y"])
+    assert r["fallback"] is True and r["var"] == pytest.approx(0.25) and r["t"] == pytest.approx(2.0)
+    assert inference.twoway_clustered_t([1, 2], ["a", "a"], ["x", "y"])["t"] is None  # one expiry: unknown
+
+
+# --------------------------------------------------------------------------- stationary bootstrap and BCa
+def test_stationary_bootstrap_indices():
+    import numpy as np
+
+    rng = np.random.default_rng(1)
+    idx = inference.stationary_indices(50, 1.0, 200, rng)
+    assert idx.shape == (200, 50) and idx.min() >= 0 and idx.max() < 50
+    one_block = inference.stationary_indices(7, 1e12, 3, np.random.default_rng(2))
+    for row in one_block:  # p ~ 0: one block from a random start, wrapping round the circle
+        assert all((b - a) % 7 == 1 for a, b in pairwise(row))
+    # mean block length ~ L: the share of steps that continue the previous index is 1 - 1/L
+    idx = inference.stationary_indices(400, 5.0, 200, np.random.default_rng(3))
+    cont = ((idx[:, 1:] - idx[:, :-1]) % 400 == 1).mean()
+    assert cont == pytest.approx(0.8, abs=0.01)
+
+
+def test_bca_acceleration_and_levels_by_hand():
+    # jackknife values 1, 2, 3, 10: mean 4, d = 3, 2, 1, -6; a = sum d^3 / (6 (sum d^2)^1.5) = -180 / (6 * 50^1.5)
+    assert inference.acceleration([1.0, 2.0, 3.0, 10.0]) == pytest.approx(-180 / (6 * 50**1.5))
+    # z0 = 0, a = 0: the percentile levels
+    assert inference.bca_levels(0.0, 0.0, 0.95) == pytest.approx((0.025, 0.975))
+    # z0 = Phi^-1(0.3) = -0.524401, a = 0: alpha1 = Phi(2 z0 - 1.959964) = Phi(-3.008766) = 0.0013117,
+    # alpha2 = Phi(2 z0 + 1.959964) = Phi(0.911162) = 0.818895 (table: 0.81859 + 0.1162 x 0.00262)
+    lo, hi = inference.bca_levels(-0.524401, 0.0, 0.95)
+    assert lo == pytest.approx(0.0013117, abs=2e-7) and hi == pytest.approx(0.818895, abs=2e-6)
+    # a = 0.1, z0 = 0: alpha1 = Phi(-1.959964 / 1.1959964) = Phi(-1.638770) = 0.05063 (table: 0.05155 - 0.877 x 0.00105)
+    assert inference.bca_levels(0.0, 0.1, 0.95)[0] == pytest.approx(0.05063, abs=5e-6)
+
+
+def test_bca_with_no_bias_and_no_skew_is_the_percentile_interval():
+    import numpy as np
+
+    boot = np.array([-3.0, -2.0, -1.0, 1.0, 2.0, 3.0])  # half below theta-hat 0: z0 = 0
+    lo, hi = inference.bca_interval(0.0, boot, [-1.0, 0.0, 1.0], 0.5)  # symmetric jackknife: a = 0
+    assert (lo, hi) == (pytest.approx(np.quantile(boot, 0.25)), pytest.approx(np.quantile(boot, 0.75)))
+    assert (
+        inference.bca_interval(0.0, np.zeros(5) + 1.0, [0.0, 1.0], 0.95) is None
+    )  # every draw above: z0 infinite
+
+
+def test_cluster_bca_is_seeded_and_brackets_the_mean():
+    vals = [100.0, -50.0, 30.0, -20.0, 60.0, 10.0, -5.0, 45.0, 12.0, -30.0]
+    cl = [
+        "2024-01",
+        "2024-01",
+        "2024-02",
+        "2024-03",
+        "2024-03",
+        "2024-04",
+        "2024-05",
+        "2024-06",
+        "2024-06",
+        "2024-07",
+    ]
+    r = inference.cluster_bca(vals, cl, 2000, 307)
+    assert r["lo"] < sum(vals) / len(vals) < r["hi"] and r["block"] == 2  # ceil(7^(1/3)) = 2 expiries
+    assert inference.cluster_bca(vals, cl, 2000, 307) == r
+    assert inference.cluster_bca([5.0, 5.0, 5.0], ["a", "b", "c"], 500, 1)["lo"] == 5.0  # degenerate: a point
+    assert inference.cluster_bca([5.0], ["a"], 500, 1)["lo"] is None
