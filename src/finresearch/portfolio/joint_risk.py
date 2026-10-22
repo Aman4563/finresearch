@@ -95,9 +95,37 @@ async def book(now: datetime, *, sources: Any = None, rate: float | None = None,
     return b, priced[n:], notes
 
 
+def stored_test(s: Session, today: date) -> dict[str, Any]:
+    """#397 (b) on the stored daily joint P&L (joint_pnl_day, monitor.joint_pnl): the pre-registered gate on the first
+    MIN_DAYS usable sessions since BOOK_START with |NIFTY move| > BIG_MOVE (evaluated once: later days do not re-test
+    it), the holdings' single-beta R² on the same days, and every unusable session counted with its reasons."""
+    from collections import Counter
+
+    from finresearch.db.models import JointPnlDay
+
+    rows = s.scalars(select(JointPnlDay).where(JointPnlDay.day.between(BOOK_START, today))
+                     .order_by(JointPnlDay.day)).all()  # fmt: skip
+    f = lambda x: None if x is None else float(x)  # noqa: E731
+    big = [r for r in rows if r.usable and abs(float(r.nifty_move)) > jr.BIG_MOVE]
+    bad = [r for r in rows if not r.usable]
+    first = big[: jr.MIN_DAYS]
+    ft = jr.forward_test([(float(r.nifty_move), float(r.actual), float(r.explained)) for r in first])
+    hb = [(f(r.holdings_actual), f(r.holdings_beta)) for r in first]
+    hr2 = (jr.variance_explained([a for a, _ in hb], [b for _, b in hb])  # type: ignore[misc]
+           if ft.r2 is not None and all(a is not None and b is not None for a, b in hb) else None)  # fmt: skip
+    reasons: Counter[str] = Counter(w for r in bad for w in r.reasons)
+    return {"usable_qualifying": len(big), "evaluated_on": len(first) if ft.r2 is not None else 0,
+            "r2": ft.r2, "passed": ft.passed, "holdings_beta_r2": hr2, "stored_days": len(rows),
+            "unusable": len(bad), "move_unknown": sum(r.nifty_move is None for r in bad),
+            "unusable_qualifying": sum(r.nifty_move is not None and abs(float(r.nifty_move)) > jr.BIG_MOVE
+                                       for r in bad),
+            "unusable_reasons": dict(reasons.most_common(10))}  # fmt: skip
+
+
 def forward_status(s: Session, today: date) -> dict[str, Any]:
     """#397 (b): sessions since BOOK_START with marks (fno_mark) and |NIFTY close-to-close move| > BIG_MOVE, against
-    the MIN_DAYS the pre-registered test needs (evals/experiments/joint_risk/PREREG.md)."""
+    the MIN_DAYS the pre-registered test needs (evals/experiments/joint_risk/PREREG.md), and the test itself on the
+    stored daily joint P&L (`stored_test`)."""
     from finresearch.db.models import FnoMark, IndexEod
 
     marked = sorted(set(s.scalars(select(FnoMark.day).where(FnoMark.day.between(BOOK_START, today)))))
@@ -109,11 +137,20 @@ def forward_status(s: Session, today: date) -> dict[str, Any]:
         prev = [k for k in closes if d - timedelta(days=7) <= k < d]
         if d in closes and prev:
             n += abs(closes[d] / closes[max(prev)] - 1) > jr.BIG_MOVE
+    st = stored_test(s, today)
+    u, bad = st["usable_qualifying"], st["unusable"]
+    tail = f"; {u} usable in the stored joint P&L, {bad} stored session(s) unusable (counted with reasons)"
+    if st["r2"] is not None:
+        status = (f"evaluated on the first {st['evaluated_on']} usable qualifying days: R² {st['r2']:.3f} against "
+                  f"the {jr.R2_GATE:.2f} gate, {'passed' if st['passed'] else 'failed'}")  # fmt: skip
+    elif n < jr.MIN_DAYS:
+        status = (f"not evaluable yet: {n} of {jr.MIN_DAYS} qualifying days (sessions with marks and a NIFTY move "
+                  f"beyond {jr.BIG_MOVE:.1%})" + tail)  # fmt: skip
+    else:
+        status = f"not evaluable yet: {n} qualifying days but only {u} of {jr.MIN_DAYS} usable" + tail
     return {"qualifying_days": n, "needed": jr.MIN_DAYS, "big_move": jr.BIG_MOVE, "r2_gate": jr.R2_GATE,
-            "r2": None, "passed": None, "since": BOOK_START.isoformat(),
-            "status": f"not evaluable yet: {n} of {jr.MIN_DAYS} qualifying days (sessions with marks and a NIFTY "
-                      f"move beyond {jr.BIG_MOVE:.1%})" if n < jr.MIN_DAYS else
-                      f"{n} qualifying days: the pre-registered test can run (not wired yet)"}  # fmt: skip
+            "r2": st["r2"], "passed": st["passed"], "since": BOOK_START.isoformat(), "status": status,
+            "stored": st}  # fmt: skip
 
 
 # --------------------------------------------------------------------------- payloads

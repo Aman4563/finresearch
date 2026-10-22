@@ -1491,6 +1491,46 @@ class FnoMark(Base):
     __table_args__ = (UniqueConstraint("day", "leg_key", name="uq_fno_mark_day_leg"),)
 
 
+class JointPnlDay(Base):
+    """#397 (b): one IST session's joint P&L of both books, written once by the monitor (monitor.joint_pnl) after that
+    evening's marks and value history, never updated (the pre-registered forward test reads these rows,
+    evals/experiments/joint_risk/PREREG.md). Two parts:
+
+    * the session from `prev_day` to `day`: actual (the canonical value history's change less net money in, plus the
+      F&O legs carried over at fno_mark settles) and explained (the previous evening's holdings × each one's own
+      return, plus the previous evening's legs revalued at NIFTY's realised move: L(m)'s F&O term), with the side
+      figures (single-beta holdings, the book repriced at the day's own spot and IVs). `usable` False with `reasons`
+      when a part is unknown, never 0;
+    * the evening snapshot the next session is explained from: D_total and its terms, L(m) on book_scenarios.MOVES
+      and each holding's value and beta (`holdings` NULL when unknown, with `snapshot_reasons`).
+
+    Rupee values of personal holdings: local only, never sent to a model."""
+
+    __tablename__ = "joint_pnl_day"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    day: Mapped[date] = mapped_column(Date, unique=True)
+    prev_day: Mapped[date | None] = mapped_column(Date)
+    nifty_move: Mapped[Decimal | None] = mapped_column(Numeric(12, 8))
+    holdings_actual: Mapped[Decimal | None] = mapped_column(Numeric(16, 2))
+    fno_actual: Mapped[Decimal | None] = mapped_column(Numeric(16, 2))
+    actual: Mapped[Decimal | None] = mapped_column(Numeric(16, 2))
+    holdings_own: Mapped[Decimal | None] = mapped_column(Numeric(16, 2))
+    fno_model: Mapped[Decimal | None] = mapped_column(Numeric(16, 2))
+    explained: Mapped[Decimal | None] = mapped_column(Numeric(16, 2))
+    holdings_beta: Mapped[Decimal | None] = mapped_column(Numeric(16, 2))
+    fno_market: Mapped[Decimal | None] = mapped_column(Numeric(16, 2))
+    usable: Mapped[bool] = mapped_column(Boolean, default=False)
+    reasons: Mapped[list[Any]] = mapped_column(default=list)
+    notes: Mapped[list[Any]] = mapped_column(default=list)
+    d_holdings: Mapped[Decimal | None] = mapped_column(Numeric(16, 2))
+    d_fno: Mapped[Decimal | None] = mapped_column(Numeric(16, 2))
+    d_total: Mapped[Decimal | None] = mapped_column(Numeric(16, 2))
+    l_curve: Mapped[list[Any]] = mapped_column(default=list)  # [{move, holdings, fno, total}]
+    holdings: Mapped[list[Any] | None] = mapped_column(JSONB)  # [{key, value, beta}]
+    snapshot_reasons: Mapped[list[Any]] = mapped_column(default=list)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 # --------------------------------------------------------------------------- exchange disclosures (finresearch.disclosures)
 # Public market data (no personal data): NSE surveillance lists, the F&O ban list, promoter pledge, insider (PIT) and
 # SAST disclosures, bulk/block deals, credit ratings, and SEBI orders that name a tracked company (PAN-scrubbed).
