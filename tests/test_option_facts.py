@@ -23,7 +23,8 @@ URL = "https://nsearchives.nseindia.com/content/fo/BhavCopy_NSE_FO_0_0_0_2026030
 
 @pytest.fixture(autouse=True)
 def _clean(request):
-    """Each test starts with no stored F&O rows (the test database is shared by the session)."""
+    """Each test starts with no stored F&O rows and leaves no option-fact claims behind (the test database is shared
+    by the session, and a later regrade over every grade-D citation must not meet ours)."""
     if "env" not in request.fixturenames:
         yield
         return
@@ -35,6 +36,9 @@ def _clean(request):
     with session_scope() as s:
         s.execute(text("TRUNCATE fno_bhav, fno_bhav_day, fno_iv_eod"))
     yield
+    with session_scope() as s:
+        s.execute(text("DELETE FROM claim WHERE id IN (SELECT claim_id FROM citation "
+                       "WHERE computation->>'kind' = 'option_fact')"))  # fmt: skip
 
 
 def _smile(k: float, skew: float) -> float:
@@ -287,3 +291,92 @@ def select_skew(model):
     from sqlalchemy import select
 
     return select(model.skew_25d).where(model.symbol == "NIFTY", model.day == DAY)
+
+
+# --------------------------------------------------------------------------- citing a fact: save_claim re-runs it
+def _save(run_id: int, value: str, cite: dict, metric: str = "nifty_implied_move", unit: str = "%"):
+    from finresearch.db import session_scope
+    from finresearch.mcp_server.claims import save_claim
+    from finresearch.mcp_server.server import run_fincalc, run_option_fact
+
+    with session_scope() as s:
+        return save_claim(s, run_id=run_id, stream="stock_technical", statement="NIFTY implied move to 30-Mar",
+                          claim_type="numeric", metric=metric, value=value, unit=unit, period="2026-03-02",
+                          citations=[cite], fincalc=run_fincalc, option_fact=run_option_fact)  # fmt: skip
+
+
+def _grade(claim_id: int):
+    from finresearch.db import session_scope
+    from finresearch.db.models import Claim
+    from finresearch.verify.evidence import claim_grade
+
+    with session_scope() as s:
+        c = s.get(Claim, claim_id)
+        return claim_grade(c), c.status, c.citations[0].computation
+
+
+def test_a_claim_citing_the_tool_reproduces_its_value_and_is_grade_d(env, tmp_path):
+    _load()
+    run_id = _run(tmp_path)
+    out = _call("option_implied_move", run_id=run_id, symbol="NIFTY", trade_date="2026-03-02")
+    cite = {**out["citation"], "result_key": "move_1sd_pct"}
+    res = _save(run_id, str(round(float(out["move_1sd_pct"]), 2)), cite)  # rounded as a report states it
+    g, status, comp = _grade(res["claim_id"])
+    assert g["grade"] == "D" and "stored market data" in g["label"] and status != "unsupported"
+    assert comp["kind"] == "option_fact" and comp["matches"] is True and comp["inputs"] == []
+    assert (
+        comp["result"] == out["move_1sd_pct"]
+        and comp["method_version"] == out["provenance"]["method_version"]
+    )
+    assert comp["provenance"]["expiry"] == "2026-03-30"
+
+
+def test_a_claim_that_misstates_the_value_is_unsupported(env, tmp_path):
+    _load()
+    run_id = _run(tmp_path)
+    cite = {**_call("option_implied_move", run_id=run_id, symbol="NIFTY", trade_date="2026-03-02")["citation"],
+            "result_key": "move_1sd_pct"}  # fmt: skip
+    res = _save(run_id, "5.20", cite)
+    g, status, comp = _grade(res["claim_id"])
+    assert g["grade"] == "U" and status == "unsupported" and comp["matches"] is False
+
+
+def test_an_unknown_or_out_of_scope_fact_cannot_be_cited(env, tmp_path):
+    _load()
+    _load(symbol="ZZSECRET", instrument="STO")
+    run_id = _run(tmp_path, symbol="ACME")
+    cite = {"option_fact": {"tool": "option_implied_move", "args": {"symbol": "ZZSECRET", "trade_date": "2026-03-02"}},
+            "result_key": "move_1sd_pct"}  # fmt: skip
+    with pytest.raises(ValueError, match="not available to this run"):
+        _save(run_id, "4.15", cite)
+    cite["option_fact"]["args"] = {"symbol": "NIFTY", "trade_date": "2026-03-02", "run_id": run_id}
+    with pytest.raises(ValueError, match="run_id"):
+        _save(run_id, "4.15", cite)
+    with pytest.raises(ValueError, match="result_key"):
+        _save(run_id, "4.15", {"option_fact": {"tool": "option_skew_25d", "args": {"symbol": "NIFTY"}}})
+
+
+def test_regrade_rechecks_a_cited_fact_and_a_changed_stored_series_fails_it(env, tmp_path):
+    from sqlalchemy import update
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import FnoBhav
+    from finresearch.verify.regrade import regrade
+
+    _load()
+    run_id = _run(tmp_path)
+    out = _call("option_implied_move", run_id=run_id, symbol="NIFTY", trade_date="2026-03-02")
+    res = _save(run_id, out["move_1sd_pct"], {**out["citation"], "result_key": "move_1sd_pct"})
+    with session_scope() as s:
+        mine = [c for c in regrade(s, all_d=True).citations if c.claim_id == res["claim_id"]]
+        assert [c.grade for c in mine] == ["D"] and not mine[0].changed
+        s.rollback()
+    with (
+        session_scope() as s
+    ):  # the stored chain was re-loaded with different prices: the fact no longer holds
+        s.execute(update(FnoBhav).where(FnoBhav.instrument == "IDO").values(settle=FnoBhav.settle * D("1.2"),
+                                                                            close=FnoBhav.close * D("1.2")))  # fmt: skip
+    with session_scope() as s:
+        mine = [c for c in regrade(s, all_d=True).citations if c.claim_id == res["claim_id"]]
+        assert [c.grade for c in mine] == ["U"] and mine[0].changed
+        s.rollback()

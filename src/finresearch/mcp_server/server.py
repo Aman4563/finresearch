@@ -366,6 +366,13 @@ def _option_tool(fn):
     return server.tool(description=f"{inspect.getdoc(fn)} {_OPTION_CITE}")(fn)
 
 
+def run_option_fact(session, tool: str, args: dict[str, Any], run_id: int | None) -> dict[str, Any]:
+    """Re-run an option-fact tool for save_claim, scoped by the claim's own run."""
+    from finresearch.mcp_server import option_facts
+
+    return option_facts.run(session, tool, args, run_id=run_id)
+
+
 def _option_fact(tool: str, **args: Any) -> str:
     from finresearch.mcp_server import option_facts
 
@@ -1015,6 +1022,7 @@ def save_claim(run_id: int, stream: str, statement: str, claim_type: str, citati
                 period=period,
                 importance=importance,
                 fincalc=run_fincalc,
+                option_fact=run_option_fact,
             )
         except ValueError as e:
             s.rollback()  # nothing of a rejected claim is kept
