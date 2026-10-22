@@ -111,17 +111,58 @@ contract minimum. The replay refuses to run when any of the four hashes differs.
 9. **Later.** IVs from recorded bid/ask mids (`option_quote`, #363) with spread weights, error bands and the issue's
    acceptance checks (a)-(e) on >= 20 recorded sessions are a later addendum, registered before they are read.
 
-# Addendum A5 (post hoc): the tail-aware physical challengers `p_rw_emp` and `p_rw_fhs` (P3.4, #387)
+# Addendum A4 (post hoc): the SVI risk-neutral density challenger `p_rn_svi` (P3.3, #386)
 
 Recorded 22-Oct-2026, after `card-horse-race-v1` and addenda A1-A3 (all unchanged) and before any replay code
+computed the challenger on a stored session or read an outcome. It is `src/finresearch/horserace/addendum_a4.py`
+(`card-horse-race-v1-addendum-A4`), sha256 `3602512dc19256374975c5f8779a7890ea16eb15d5471871be056a6684cbd6da`, pinned in `horserace/prereg.py` (`ADDENDUM_A4_HASH`); the
+hash covers A3's hash (and so the Black-76 engine's constants) and the fit's and density's registered settings
+(`fincalc/svi.py`: check grid, Lee bound, rho limit, minimum points, the (m, s) box, start grid, Nelder-Mead step,
+iterations and tolerance, RMSE refusal and target; `fincalc/smile.py`: the outcome grid's width and cells, the delta
+and its tolerance). The replay refuses to run when any of the five hashes differs. Any change is a new addendum version.
+
+1. **Challenger.** `p_rn_svi` = PoP, EV and 20 dots (A1.9) of holding the legs to expiry with S_T = F e^k, k drawn
+   from the SVI risk-neutral density of item 3 (`smile.outcome`, 4,000 cells over +/- 12 ATM standard deviations,
+   PoP from the smile's exact CDF; `smile.pnl_distribution`, 2,000 cells, for the dots). F = the A1.5 forward
+   (spot e^(rate t)); A1.6's spot, t, rate, costs, legs and fills are unchanged, so it differs from `p_rn_b76` only
+   in the shape of the terminal distribution. An unknown smile gives `p_rn_svi` None, counted by reason.
+2. **Inputs.** A3.2's F_par and A3.3's DF on the card's expiry at the origin close (unknown: unknown). The points are
+   `black76.otm_ivs` over the market settles (out-of-the-money sides plus both sides at the strike nearest F_par),
+   k = ln(K/F_par), equal weights in volatility (settles carry no bid/ask). T = A1.6's calendar t: one slice's total
+   variance w(k) is the same on any clock (A2.6's argument).
+3. **Fit.** `svi.fit`: raw SVI by Zeliade's quasi-explicit method, the exact constrained least squares in (a, d, c)
+   over b >= 0, |rho| <= 0.999 and Lee's b (1 + |rho|) <= 2, then (m, s) by Nelder-Mead from the best point of a
+   9 x 9 grid. Refused, unknown with the reason, when there are fewer than 6 strikes, the IV RMSE is above 1 vol
+   point, or the smile has any static violation on the check grid (min w <= 0, Lee's bound, g(k) < 0, Gatheral and
+   Jacquier 2014): never repaired or clipped. The engine reproduces their published SVI-JW values for Vogt's
+   arbitrageable smile and refuses it. Raw SVI for NIFTY and BANKNIFTY; SSVI is for the sparse chains the race
+   does not include.
+4. **Logged, not scored.** Per card: the raw parameters, n, IV RMSE, fit flags, RR25 and BF25, the quotes dropped
+   by reason, and the reason when unknown.
+5. **Race.** Challengers = addendum A3's + `p_rn_svi`; incumbent `p_rw`, scores, tests and the gate unchanged. The
+   registered Holm family (every non-incumbent forecaster x underlying) grows by `p_rn_svi`. Smile models may not
+   be called more accurate unless Brier improves at Holm p < 0.05 (#377).
+6. **Windows.** Replay windows only (design, seen, tuesday), none of which can adopt. The live card is unchanged:
+   adoption needs forward shadow logging or the vault, each registered first.
+7. **Not claimed.** Issue #386's start trigger (MF16: flat-IV strike picks or PoP change on at least 10 % of
+   verdicts) is not established by this registration. The issue's measured difference between Breeden-Litzenberger
+   and flat probabilities (at most 2.4 points at 10-25 delta) came from 2022-26, so the design and seen windows are
+   not independent of it.
+8. **Later.** The issue's acceptance checks (a)-(e) on recorded mids (#363) are a later addendum, registered before
+   they are read.
+
+# Addendum A5 (post hoc): the tail-aware physical challengers `p_rw_emp` and `p_rw_fhs` (P3.4, #387)
+
+Recorded 22-Oct-2026, after `card-horse-race-v1` and addenda A1-A4 (all unchanged) and before any replay code
 computed either challenger on a stored session or read an outcome. It is `src/finresearch/horserace/addendum_a5.py`
-(`card-horse-race-v1-addendum-A5`), sha256 `831253ef45f26e6cf6a12fe80fda5e608bdb6b123b3561b0fa334b178570aaff`, pinned in `horserace/prereg.py` (`ADDENDUM_A5_HASH`); the
+(`card-horse-race-v1-addendum-A5`), sha256 `cebb9fd453637c294ee9cac2c1eeb545daa9a033523aca2236be7e66a834a670`, pinned in `horserace/prereg.py` (`ADDENDUM_A5_HASH`); the
 hash covers every fitted setting (`fincalc/taildist.py`: sample minimum, bootstrap block and replicates, paths, FHS
 block, GJR window, minimum, start values and Nelder-Mead settings, backcast, EWMA decay, GPD grid, drawdown block)
 and this addendum's buckets, seed rule, refit rule and GPD switch. The replay refuses to run when any pinned hash
-differs. Any change is a new addendum version. Addendum A4 is registered in parallel by another slice: A5 chains
-from A3, and whichever of the two merges second takes the union of the challenger lists (the Holm family grows by
-both).
+differs. Any change is a new addendum version. A5 was first pinned chained on A3 (sha256 `831253ef…570aaff`) while
+A4 was registered in parallel; when A4 merged first, A5 was rebuilt on it (its challengers follow A4's, the
+registration carries A4's hash) and re-pinned, still before any replay code computed either challenger on a stored
+session. No item below changed.
 
 1. **z sample.** Per underlying and tenor bucket (short: 1-14 calendar days to expiry, any expiry; long: 15-45, monthly
    expiries only), one z per expiry: z = [ln(S_T / F) + sigma^2 T / 2] / (sigma sqrt(T)) at the expiry's entry
@@ -144,7 +185,7 @@ both).
 5. **Forecasts.** PoP, EV and the 20 dots (A1.9's quantile rule) from `taildist.sample_outcome`, on
    `fincalc.options.outcome`'s EV convention; the exit cost is A1.6's exercise STT on in-the-money longs. kappa, the
    number of z and ES97.5 are logged per card, not scored; the replay computes no EV interval.
-6. **Race.** Challengers = addendum A3's + `p_rw_emp` + `p_rw_fhs`; incumbent `p_rw`, scores, tests and the gate
+6. **Race.** Challengers = addendum A4's + `p_rw_emp` + `p_rw_fhs`; incumbent `p_rw`, scores, tests and the gate
    unchanged; the registered Holm family (every non-incumbent forecaster x underlying) grows by both.
 7. **Windows.** Replay windows only (design, seen, tuesday), none of which can adopt. The live card's PoP, EV and
    gates are unchanged: adoption needs forward shadow logging or the vault, each registered first.

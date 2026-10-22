@@ -69,9 +69,33 @@ def test_addendum_a3_hash_is_pinned_quoted_and_covers_the_engine_constants(monke
         monkeypatch.undo()
 
 
+def test_addendum_a4_hash_is_pinned_quoted_and_covers_the_fit_settings(monkeypatch) -> None:
+    from finresearch.fincalc import smile as sm
+    from finresearch.fincalc import svi
+    from finresearch.horserace import addendum_a3, addendum_a4
+
+    assert addendum_a4.addendum_hash() == prereg.ADDENDUM_A4_HASH, (
+        "a changed addendum is a new ADDENDUM_VERSION"
+    )
+    reg = addendum_a4.registration()
+    assert reg["base_hash"] == prereg.HASH and reg["a1_hash"] == prereg.ADDENDUM_HASH
+    assert reg["a2_hash"] == prereg.ADDENDUM_A2_HASH
+    assert reg["a3_hash"] == prereg.ADDENDUM_A3_HASH == addendum_a3.addendum_hash()
+    assert addendum_a4.CHALLENGERS == ("p_rw_bus", "p_rn_b76", "p_rn_svi")
+    text = (ROOT / "evals/experiments/card_horse_race/ADDENDUM.md").read_text()
+    assert prereg.ADDENDUM_A4_HASH in text and "Addendum A4 (post hoc)" in text
+    for mod, name, value in ((svi, "MAX_RMSE", 0.02), (svi, "GRID_POINTS", 2001), (svi, "RHO_MAX", 0.99),
+                             (svi, "START_GRID", 5), (sm, "OUT_SD", 8.0), (sm, "OUT_STEPS", 2000)):  # fmt: skip
+        monkeypatch.setattr(mod, name, value)
+        assert addendum_a4.addendum_hash() != prereg.ADDENDUM_A4_HASH, (
+            name
+        )  # editing a setting moves the hash
+        monkeypatch.undo()
+
+
 def test_addendum_a5_hash_is_pinned_quoted_and_covers_every_fitted_setting(monkeypatch) -> None:
     from finresearch.fincalc import taildist as td
-    from finresearch.horserace import addendum_a3, addendum_a5
+    from finresearch.horserace import addendum_a4, addendum_a5
 
     assert addendum_a5.addendum_hash() == prereg.ADDENDUM_A5_HASH, (
         "a changed addendum is a new ADDENDUM_VERSION"
@@ -79,7 +103,8 @@ def test_addendum_a5_hash_is_pinned_quoted_and_covers_every_fitted_setting(monke
     reg = addendum_a5.registration()
     assert reg["base_hash"] == prereg.HASH and reg["a1_hash"] == prereg.ADDENDUM_HASH
     assert reg["a2_hash"] == prereg.ADDENDUM_A2_HASH and reg["a3_hash"] == prereg.ADDENDUM_A3_HASH
-    assert (*addendum_a3.CHALLENGERS, "p_rw_emp", "p_rw_fhs") == addendum_a5.CHALLENGERS
+    assert reg["a4_hash"] == prereg.ADDENDUM_A4_HASH == addendum_a4.addendum_hash()  # A5 chains on A4
+    assert addendum_a5.CHALLENGERS == ("p_rw_bus", "p_rn_b76", "p_rn_svi", "p_rw_emp", "p_rw_fhs")
     text = (ROOT / "evals/experiments/card_horse_race/ADDENDUM.md").read_text()
     assert prereg.ADDENDUM_A5_HASH in text and "Addendum A5 (post hoc)" in text
     for name, value in (("MIN_Z", 40), ("PATHS", 10_000), ("GJR_WINDOW", 750), ("FHS_BLOCK", 3),

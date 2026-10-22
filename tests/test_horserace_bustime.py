@@ -83,11 +83,10 @@ def test_an_unknown_calendar_makes_only_the_challenger_unknown(hist, made) -> No
 
 def test_run_window_registers_the_challenger_and_reports_the_calendar(hist) -> None:
     rep = replay.run_window(hist, "design", spec_list=[PCS])
-    # addendum A3 (#385) appended p_rn_b76 after p_rw_bus, and addendum A5 (#387) p_rw_emp and p_rw_fhs after it
-    assert (
-        rep["challengers"] == ["p_rw_bus", "p_rn_b76", "p_rw_emp", "p_rw_fhs"]
-        and "p_rw_bus" in rep["forecasters"]
-    )
+    # addendum A3 (#385) appended p_rn_b76 after p_rw_bus, A4 (#386) p_rn_svi after it and A5 (#387) p_rw_emp and
+    # p_rw_fhs after that
+    assert rep["challengers"] == ["p_rw_bus", "p_rn_b76", "p_rn_svi", "p_rw_emp", "p_rw_fhs"]
+    assert "p_rw_bus" in rep["forecasters"]
     assert rep["adoption"]["p_rw_bus"]["NIFTY"]["adopt"] is False  # design never adopts
     assert rep["replay"]["addendum_a2"] == addendum_a2.ADDENDUM_VERSION
     assert rep["replay"]["addendum_a2_hash"] == prereg.ADDENDUM_A2_HASH

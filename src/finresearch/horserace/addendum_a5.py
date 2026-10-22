@@ -1,8 +1,7 @@
 """Post-hoc addendum A5 to the card horse race (#377): the tail-aware physical challengers of P3.4 (#387). Written and
 hashed before any replay code computed them on a stored session; its hash is pinned in prereg.ADDENDUM_A5_HASH and the
-replay refuses to run when it differs. The registered `card-horse-race-v1` (horserace/specs.py) and addenda A1-A3 are
-unchanged; A4 is registered in parallel by another slice and A5 chains from A3 (the challenger lists are unioned when
-both are merged). Prose: evals/experiments/card_horse_race/ADDENDUM.md. A change is a new ADDENDUM_VERSION, never an
+replay refuses to run when it differs. The registered `card-horse-race-v1` (horserace/specs.py) and addenda A1-A4 are
+unchanged; A5 chains on A4 (its challengers follow A4's). Prose: evals/experiments/card_horse_race/ADDENDUM.md. A change is a new ADDENDUM_VERSION, never an
 edit. Every fitted setting (fincalc/taildist.py's registered numbers and the bucket, seed and refit rules here) is
 hashed with it.
 """
@@ -12,12 +11,12 @@ from __future__ import annotations
 import hashlib
 
 from finresearch.fincalc import taildist as td
-from finresearch.horserace import addendum, addendum_a2, addendum_a3, specs
+from finresearch.horserace import addendum, addendum_a2, addendum_a3, addendum_a4, specs
 
 ADDENDUM_VERSION = "card-horse-race-v1-addendum-A5"
 BASE_VERSION = specs.SPEC_VERSION
 EMPIRICAL, FHS = "p_rw_emp", "p_rw_fhs"
-CHALLENGERS = (*addendum_a3.CHALLENGERS, EMPIRICAL, FHS)
+CHALLENGERS = (*addendum_a4.CHALLENGERS, EMPIRICAL, FHS)
 # tenor buckets by calendar days to expiry: (lowest DTE, highest DTE, expiries admitted to the z sample)
 BUCKETS = {"short": (1, 14, "any"), "long": (15, 45, "monthly")}
 SEED = 387  # each card's generator: sha256 of "SEED|underlying|spec|origin|expiry" (independent of run order)
@@ -44,7 +43,7 @@ ITEMS = {
     "A5.5 forecasts": "PoP, EV and the 20 dots (A1.9's quantile rule) from taildist.sample_outcome; the exit cost "
                       "is A1.6's exercise STT on in-the-money longs. The EV bootstrap interval, ES97.5 and kappa "
                       "are logged per card, not scored; the replay computes no EV interval (boot = 0)",
-    "A5.6 race": "race.run with challengers = addendum_a3.CHALLENGERS + (p_rw_emp, p_rw_fhs); incumbent p_rw, "
+    "A5.6 race": "race.run with challengers = addendum_a4.CHALLENGERS + (p_rw_emp, p_rw_fhs); incumbent p_rw, "
                  "scores, tests and the gate unchanged; the registered Holm family grows by both",
     "A5.7 windows": "replay windows design, seen and tuesday only, none of which can adopt; the live card's PoP, EV "
                     "and gates are unchanged, so adoption needs forward shadow logging or the vault, each "
@@ -73,6 +72,7 @@ def registration() -> dict:
         "a1_hash": addendum.addendum_hash(),
         "a2_hash": addendum_a2.addendum_hash(),
         "a3_hash": addendum_a3.addendum_hash(),
+        "a4_hash": addendum_a4.addendum_hash(),
         "challengers": CHALLENGERS,
         "items": ITEMS,
         "settings": fitted_settings(),
