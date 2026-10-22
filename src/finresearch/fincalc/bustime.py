@@ -158,7 +158,10 @@ def business_years(expiry: date, now: datetime, calendar: Calendar | None, w: We
     if isinstance(events, EventVariance):
         ev = sum(j for d, j in events.extra.items() if today < d <= expiry or (d == today and now < t_close))
     units = tau + sessions + w.overnight * sessions + w.nontrading * nontrading + ev
-    return BusinessT(units / units_per_year(w), None, tau, sessions, sessions, nontrading, ev)
+    gaps = sessions + (
+        1 if calendar.is_session(today) and now < t_open else 0
+    )  # today's gap before the open too
+    return BusinessT(units / units_per_year(w), None, tau, sessions, gaps, nontrading, ev)
 
 
 def rescale_vol(sigma: float | None, t_from: float | None, t_to: float | None) -> float | None:
@@ -172,7 +175,8 @@ def rescale_vol(sigma: float | None, t_from: float | None, t_to: float | None) -
 
 def nse_calendar(start: date, end: date, state_dir: Path | None = None) -> Calendar | None:
     """The cached NSE trading-holiday lists for every year from `start` to `end` (adapters.nse_holidays); None when
-    any of those years is not cached (NSE publishes only the current year's list)."""
+    any of those years is not cached (NSE publishes only the current year's list). Every cached year's dates come
+    back in one set, but each year in [start, end] is checked to be cached, and only that span is ever read."""
     from finresearch.adapters.nse_holidays import known_trading_holidays
 
     hol: set[date] = set()

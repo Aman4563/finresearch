@@ -50,7 +50,7 @@ replay refuses to run when any of the three hashes differs. Any change is a new 
    each volatility moved to the business clock: sigma_eff = RV_N x sqrt(T_bus / t), so the total variance to expiry
    is RV_N^2 x T_bus. t (calendar days / 365), spot, rate, drift, costs, legs and fills stay A1.6's.
 2. **Clock.** `bustime.business_years` from 15:30 IST on the origin session to 15:30 IST on the expiry:
-   T_bus = [n_s (1 + w_o) + w_w n_w] / Y, Y = 252 + 252 w_o + 113 w_w (the issue writes 251 overnights; 252 makes a
+   T_bus = [n_s + w_o n_o + w_w n_w] / Y with n_o = n_s from a close, Y = 252 + 252 w_o + 113 w_w (the issue writes 251 overnights; 252 makes a
    calendar year exactly 1). A calendar year of the clock sums to 1, so RV_N = sd(close-to-close) x sqrt(252) is
    already sigma per business year.
 3. **Weights: the registered prior, not estimated.** w_o = 0 (the session is the whole close-to-close day) and

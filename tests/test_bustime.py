@@ -38,7 +38,8 @@ def test_expiry_day_at_12_30_is_the_rest_of_the_session_only() -> None:
 
 
 def test_before_the_open_today_counts_its_overnight_gap_and_whole_session() -> None:
-    assert t(TUE, ist_datetime(TUE, 8, 0)).value == pytest.approx(1.25 / Y)
+    r = t(TUE, ist_datetime(TUE, 8, 0))
+    assert r.value == pytest.approx(1.25 / Y) and (r.sessions, r.overnights) == (0, 1)
 
 
 def test_at_the_expiry_close_it_is_zero_and_after_it_expired() -> None:
