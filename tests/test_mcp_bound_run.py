@@ -20,7 +20,11 @@ def _run(tmp_path, name: str) -> int:
         r = ResearchRun(company_id=co.id, kind="stock_report", manifest={})
         s.add(r)
         s.flush()
-        s.add(Claim(run_id=r.id, stream="stock_technical", statement=f"MARKER-{name}-CLAIM", claim_type="opinion"))
+        s.add(
+            Claim(
+                run_id=r.id, stream="stock_technical", statement=f"MARKER-{name}-CLAIM", claim_type="opinion"
+            )
+        )
         return r.id
 
 
@@ -71,7 +75,9 @@ def test_fetch_page_refuses_another_run_before_fetching_or_storing(bound):
     mine, theirs = bound
     _refused(asyncio.run(server.fetch_page("https://example.com/page", theirs)), mine, theirs)
     with session_scope() as s:
-        assert s.scalar(select(func.count()).select_from(WebSnapshot).where(WebSnapshot.run_id == theirs)) == 0
+        assert (
+            s.scalar(select(func.count()).select_from(WebSnapshot).where(WebSnapshot.run_id == theirs)) == 0
+        )
 
 
 def test_every_tool_taking_a_run_id_is_guarded():
@@ -80,7 +86,11 @@ def test_every_tool_taking_a_run_id_is_guarded():
 
     tools = asyncio.run(server.server.list_tools())
     with_run = {t.name for t in tools if "run_id" in (t.input_schema.get("properties") or {})}
-    assert with_run == set(server.RUN_BOUND_TOOLS) == {"save_claim", "list_claims", "identity_checks", "fetch_page"}
+    assert (
+        with_run
+        == set(server.RUN_BOUND_TOOLS)
+        == {"save_claim", "list_claims", "identity_checks", "fetch_page"}
+    )
 
 
 def test_an_unbound_server_is_not_restricted(env, tmp_path, monkeypatch):
