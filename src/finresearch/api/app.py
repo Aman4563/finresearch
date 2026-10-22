@@ -1776,9 +1776,11 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
                 g
             ) in groups:  # the recalibration tier the track record has reached (research §2.6; informational)
                 g["policy"] = group_policy(g["asset"], g["n"])
-            nxt = s.scalars(select(Forecast).where(Forecast.status == "open")
+            # the portfolio's daily VaR (#399) resolves every trading day: never "the next forecast" here
+            calls = (Forecast.status == "open", Forecast.asset != "portfolio")
+            nxt = s.scalars(select(Forecast).where(*calls)
                             .order_by(Forecast.resolve_on, Forecast.id).limit(1)).first()  # fmt: skip
-            scored = s.scalars(select(Forecast).where(Forecast.status == "open", Forecast.probability.isnot(None))
+            scored = s.scalars(select(Forecast).where(*calls, Forecast.probability.isnot(None))
                                .order_by(Forecast.resolve_on, Forecast.id).limit(1)).first()  # fmt: skip
             return {"groups": groups, "confidence_map": CONFIDENCE_P,
                     "next_open": forecast_json(nxt) if nxt else None,

@@ -220,7 +220,8 @@ def add_journal_routes(app: FastAPI, *, clock: Callable[[], datetime] | None = N
     # ------------------------------------------------------------------ pre-trade checklist
     @app.post("/api/journal/pretrade")
     async def pretrade(body: PlanIn) -> dict[str, Any]:
-        """The checklist for a planned trade. Computes and stores nothing; record it with POST /api/journal/notes."""
+        """The checklist for a planned trade. Stores no record (it fills only the price cache the value history
+        reads, for the marginal-risk line, #399); record it with POST /api/journal/notes."""
         from finresearch.portfolio.pretrade import Plan, checklist
 
         live = getattr(app.state, "journal_signal", None)
@@ -230,9 +231,19 @@ def add_journal_routes(app: FastAPI, *, clock: Callable[[], datetime] | None = N
                  holding_id=body.holding_id, asset_type=body.asset_type, name=body.name,
                  nse_symbol=body.nse_symbol, bse_code=body.bse_code, scheme_code=body.scheme_code,
                  isin=body.isin, charges=body.charges)  # fmt: skip
+        hist, hist_note = None, None
+        get_hist = getattr(app.state, "portfolio_history", None)  # fills only market-data caches (#399)
+        if get_hist is not None:
+            try:
+                hist, _, _ = await get_hist()
+                hist_note = None if hist.ok else (hist.reason or "under two days of value history")
+            except Exception as e:  # the line says why; the rest of the checklist stands
+                hist_note = f"the value history could not be built ({type(e).__name__})"
+        else:
+            hist_note = "the value history is not available here"
         with session_scope() as s:
             try:
-                out = await checklist(s, p, live_signal=live)
+                out = await checklist(s, p, live_signal=live, history=hist, history_note=hist_note)
             except LookupError as e:
                 raise HTTPException(404, str(e)) from e
             s.rollback()  # read-only
