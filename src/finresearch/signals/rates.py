@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Awaitable, Callable
+from datetime import date
 from typing import Any
 
 FIXED_RATE = 0.065  # the earlier fixed default (continuous), kept only as the last fallback
@@ -54,3 +55,15 @@ async def risk_free(t_years: float) -> dict[str, Any]:
 def user_rate(rate: float) -> dict[str, Any]:
     return {"rate": rate, "par_yield": None, "tenor_years": None, "as_of": None, "fallback": False,
             "source": "your input", "note": "the risk-free rate you supplied"}  # fmt: skip
+
+
+async def risk_free_on(day: date, t_years: float, *, before: bool = False) -> dict[str, Any]:
+    """The dated rate for `day` from the stored FBIL curves (refseries.rate_lookup.par_rate_on, #366), in the shape
+    of risk_free() plus `known`. Unlike risk_free() it has no fallback: a day without a stored curve returns rate
+    None with the reason, never FIXED_RATE. Callers on historical dates should switch to this (see #366's PR)."""
+    from finresearch.db import session_scope
+    from finresearch.refseries.rate_lookup import par_rate_on
+
+    with session_scope() as s:
+        r = par_rate_on(s, day, t_years, before=before)
+    return r | {"fallback": False}
