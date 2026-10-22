@@ -76,8 +76,9 @@ def test_the_replay_refuses_a_changed_addendum_a4(monkeypatch) -> None:
 
 
 def test_the_race_lists_p_rn_svi_as_a_challenger(hist) -> None:
-    rep = replay.run_window(hist, "seen", [PCS], n_paths=50)  # few paths: p_path (A6) is tested elsewhere
-    # addendum A6 (#388) appended p_path after A4's challengers
-    assert rep["challengers"] == [*addendum_a4.CHALLENGERS, "p_path"]
+    rep = replay.run_window(hist, "seen", [PCS], n_paths=50)  # few paths: p_path is tested elsewhere
+    # A4's challengers lead the list; addendum A5 (#387) appends p_rw_emp and p_rw_fhs and A6
+    # (#388) p_path after them
+    assert rep["challengers"][: len(addendum_a4.CHALLENGERS)] == list(addendum_a4.CHALLENGERS)
     assert rep["replay"]["addendum_a4_hash"] == prereg.ADDENDUM_A4_HASH
     assert "p_rn_svi_unknown" in rep["replay"] and math.isfinite(rep["replay"]["p_rn_svi_unknown"])

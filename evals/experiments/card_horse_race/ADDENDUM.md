@@ -151,16 +151,61 @@ and its tolerance). The replay refuses to run when any of the five hashes differ
 8. **Later.** The issue's acceptance checks (a)-(e) on recorded mids (#363) are a later addendum, registered before
    they are read.
 
-# Addendum A6 (post hoc): the exit-rule Monte Carlo challenger `p_path` (P3.5, #388)
+# Addendum A5 (post hoc): the tail-aware physical challengers `p_rw_emp` and `p_rw_fhs` (P3.4, #387)
 
 Recorded 22-Oct-2026, after `card-horse-race-v1` and addenda A1-A4 (all unchanged) and before any replay code
+computed either challenger on a stored session or read an outcome. It is `src/finresearch/horserace/addendum_a5.py`
+(`card-horse-race-v1-addendum-A5`), sha256 `cebb9fd453637c294ee9cac2c1eeb545daa9a033523aca2236be7e66a834a670`, pinned in `horserace/prereg.py` (`ADDENDUM_A5_HASH`); the
+hash covers every fitted setting (`fincalc/taildist.py`: sample minimum, bootstrap block and replicates, paths, FHS
+block, GJR window, minimum, start values and Nelder-Mead settings, backcast, EWMA decay, GPD grid, drawdown block)
+and this addendum's buckets, seed rule, refit rule and GPD switch. The replay refuses to run when any pinned hash
+differs. Any change is a new addendum version. A5 was first pinned chained on A3 (sha256 `831253ef…570aaff`) while
+A4 was registered in parallel; when A4 merged first, A5 was rebuilt on it (its challengers follow A4's, the
+registration carries A4's hash) and re-pinned, still before any replay code computed either challenger on a stored
+session. No item below changed.
+
+1. **z sample.** Per underlying and tenor bucket (short: 1-14 calendar days to expiry, any expiry; long: 15-45, monthly
+   expiries only), one z per expiry: z = [ln(S_T / F) + sigma^2 T / 2] / (sigma sqrt(T)) at the expiry's entry
+   session, the first stored session inside the bucket with a known A1.5 forward F and A1.8 ATM IV sigma; T = DTE / 365;
+   S_T = `backtest.pricing.settlement_price` on the expiry's last session (unknown: no z). Expanding window from the
+   first stored session, warm-up included.
+2. **No look-ahead.** A card at origin d uses only z whose settlement session is strictly before d, and returns up to
+   and including d (`Clocked`). Tested by changing every price after d and checking the cards up to d are identical.
+3. **`p_rw_emp` (M2).** `taildist.empirical_forecast` in the card's bucket (outside both: unknown) with sigma = the
+   card's A1.8 ATM IV (the one `p_rn_atm` uses), F = the A1.5 forward, and A1.6's t, rate, costs, legs and fills:
+   S_T = F exp(-kappa sigma^2 T / 2 + sigma sqrt(T) z), kappa = mean z^2. The point estimates are exact on the empirical
+   z distribution (the limit of the stationary block bootstrap); fewer than 30 z or no ATM IV: unknown.
+4. **`p_rw_fhs` (M3).** `taildist.fhs_forecast`: a zero-mean GJR-GARCH(1,1) Gaussian QMLE on the last 1,000 A1.7
+   same-instrument returns (at least 250, else unknown), refitted on the first stored session of each calendar month on
+   returns up to that session and filtered daily through the origin; standardised residuals resampled in 5-session
+   blocks over 20,000 paths of `weekday_steps(origin, expiry)` sessions (holidays not used, so nothing after the
+   origin is read), rescaled so that E[sum r^2] = kappa sigma_IV^2 T with item 3's kappa (unknown with fewer than 30 z).
+   A fit that does not converge is unknown, never a fallback. Each card's generator is seeded by sha256 of
+   "387|underlying|spec|origin|expiry".
+5. **Forecasts.** PoP, EV and the 20 dots (A1.9's quantile rule) from `taildist.sample_outcome`, on
+   `fincalc.options.outcome`'s EV convention; the exit cost is A1.6's exercise STT on in-the-money longs. kappa, the
+   number of z and ES97.5 are logged per card, not scored; the replay computes no EV interval.
+6. **Race.** Challengers = addendum A4's + `p_rw_emp` + `p_rw_fhs`; incumbent `p_rw`, scores, tests and the gate
+   unchanged; the registered Holm family (every non-incumbent forecaster x underlying) grows by both.
+7. **Windows.** Replay windows only (design, seen, tuesday), none of which can adopt. The live card's PoP, EV and
+   gates are unchanged: adoption needs forward shadow logging or the vault, each registered first.
+8. **Off or later.** The GPD tail beyond the 95th percentile of |z| is off: 2022-26 leaves about 5-10 exceedances per
+   bucket, too few to fit (the library refuses a fit below its minimum). The EWMA-filtered FHS, the M3 EV interval, the
+   robust EV gate's lambda and ES budget (`taildist.robust_gate` stays informational until a model is validated)
+   and the drawdown bands are later addenda, each registered before it is read.
+
+# Addendum A6 (post hoc): the exit-rule Monte Carlo challenger `p_path` (P3.5, #388)
+
+Recorded 22-Oct-2026, after `card-horse-race-v1` and addenda A1-A5 (all unchanged) and before any replay code
 computed the challenger on a stored session or read an outcome. It is `src/finresearch/horserace/addendum_a6.py`
-(`card-horse-race-v1-addendum-A6`), sha256 `18f7b40274feef48aca3760e8244a37d1c650118fc9dcd1c8b2c115ba244881b`, pinned in `horserace/prereg.py`
+(`card-horse-race-v1-addendum-A6`), sha256 `5c34c776b3fa171863eec95b71ae73a5d6f2de1eca38a0a7d7cbfd8ef38bdc14`, pinned in `horserace/prereg.py`
 (`ADDENDUM_A6_HASH`); the hash covers the simulation settings (2,000 paths per card, seed 388 and the per-card seed
 rule, one step per stored session) and the path model's constants (`fnobook/path_pop.py`: the beta window and
 minimum, the tick, the exit-reason grouping, the dot levels; `black76.SIGMA_LO`). The replay refuses to run when any
-of the six hashes differs. Any change is a new addendum version. It chains on A1-A4 (A4 merged before this was
-opened); A5 was being registered on another branch and is not covered.
+of the seven hashes differs. Any change is a new addendum version. It chains on A1-A5. A6 was first pinned on A1-A3
+(sha256 `7dfe96c6…89dca7f3`), then re-chained on A4 when A4 merged (`18f7b402…ba244881b`), and on A5 when A5 merged
+(the hash above), each time before any replay code computed `p_path` on a stored session. No item below changed
+except the challenger chain of item 9.
 
 The card shows P(P&L > 0 at expiry), but the plan exits early (target, stop, a days-to-expiry exit, the last session
 before expiry day). This challenger is the same event under the plan's own exits, simulated.
@@ -194,7 +239,7 @@ before expiry day). This challenger is the same event under the plan's own exits
    expiry (expiry, expiry_unsettled). The registered exit-reason score: the multinomial log score (eps 1e-6) of
    `p_path`'s shares against trailing Dirichlet(1) frequencies over these four categories of earlier resolved events
    (resolved strictly before the origin), same underlying and structure. Descriptive: no test is registered on it.
-9. **Race.** Challengers = addendum A4's + `p_path`; incumbent `p_rw`, scores, tests and the gate unchanged. The
+9. **Race.** Challengers = addendum A5's + `p_path`; incumbent `p_rw`, scores, tests and the gate unchanged. The
    registered Holm family (every non-incumbent forecaster x underlying) grows by `p_path`.
 10. **Windows.** Replay windows only (design, seen, tuesday), none of which can adopt. The live card's PoP is unchanged:
     adoption needs forward shadow logging or the vault, each registered first.

@@ -92,6 +92,8 @@ GET requests don't change your records, the alert inputs or the forecast ledger:
   `POST /api/journal/pretrade` stores no record (it fills only the price cache, for the marginal-risk line).
 - `POST /api/portfolio/analytics/joint-risk/pretrade` (#397) is a POST only because it carries the candidate legs:
   it stores nothing. `GET /api/portfolio/analytics/joint-risk` writes nothing either (it fills only the price caches).
+- The daily joint P&L of both books (#397 (b), `joint_pnl_day`, append-only) is written only by the monitor's nightly
+  joint P&L pass (23:15 IST on trading days); the joint-risk GET only reads it for the forward-test line.
 - An alert's "acted" or "ignored" (#398) is stored by `POST /api/alerts/{id}/feedback` (it also marks the alert read).
   `GET /api/alerts/quality`, the per-rule precision and mute suggestions, only reads.
 
@@ -223,5 +225,5 @@ uv run finresearch forecasts resolve         # score every due forecast now (the
 uv run finresearch forecasts cards           # record every logged F&O card (card_log) as a forecast (#376; the monitor does this hourly)
 uv run finresearch forecasts horse-race      # the pre-registered card horse race on resolved cards (#377; --window, --json); read only
 uv run finresearch forecasts skill           # the live skill monitor per method x event kind x underlying (#378; --json); read only
-uv run finresearch forecasts horse-race --source replay --window seen   # the same race on one replayed card per stored session, 2022-26 (addendum A1, plus the business-time challenger p_rw_bus of addendum A2, #384, the parity-forward Black-76 IV challenger p_rn_b76 of addendum A3, #385, and the exit-rule Monte Carlo p_path of addendum A6, #388, with its simulation error and exit-reason score; design | seen | tuesday); read only, run outside market hours
+uv run finresearch forecasts horse-race --source replay --window seen   # the same race on one replayed card per stored session, 2022-26 (addendum A1, plus the business-time challenger p_rw_bus of addendum A2, #384, the parity-forward Black-76 IV challenger p_rn_b76 of addendum A3, #385, and the tail-aware challengers p_rw_emp (IV-scaled empirical) and p_rw_fhs (GJR filtered historical simulation) of addendum A5, #387, and the exit-rule Monte Carlo p_path of addendum A6, #388, with its simulation error and exit-reason score; design | seen | tuesday); read only, run outside market hours
 ```

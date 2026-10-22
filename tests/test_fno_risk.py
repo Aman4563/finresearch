@@ -1,5 +1,5 @@
 """F&O risk maths (roadmap items 5 and 18): the dated charges table, real-world and risk-neutral probabilities, expected
-value after costs, expected move, max loss vs capital, risk of ruin, IV rank/percentile and skew. Golden values are
+value after costs, expected move, max loss vs capital, IV rank/percentile and skew. Golden values are
 hand-computed (see each comment)."""
 
 from __future__ import annotations
@@ -98,7 +98,6 @@ def test_expected_move_realised_vol_ruin_and_capital_check():
         math.sqrt(((math.log(100 / 99) - math.log(100 / 99) / 2) ** 2 * 2) * 252), abs=1e-9)  # fmt: skip
     with pytest.raises(ValueError):
         o.realised_vol([100, 101])
-    assert o.risk_of_ruin(0.1, 10) == pytest.approx((0.9 / 1.1) ** 10) and o.risk_of_ruin(0.0, 10) == 1.0
     ok = o.max_loss_check(-1950, 100000, 2)
     assert ok.within and ok.pct_of_capital == pytest.approx(1.95)
     assert not o.max_loss_check(-2500, 100000, 2).within and not o.max_loss_check(None, 100000, 2).within

@@ -18,7 +18,7 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30  # the suite grew past 17 min on main by Oct-2026 (#387); 20 cancelled runs mid-suite
     services:
       postgres:
         image: pgvector/pgvector:pg17
