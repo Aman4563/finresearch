@@ -1,13 +1,13 @@
 """Post-hoc addendum A6 to the card horse race (#377): the exit-rule Monte Carlo challenger of P3.5 (#388). Written and
 hashed before any replay code computed the challenger on a stored session; its hash is pinned in
 prereg.ADDENDUM_A6_HASH and the replay refuses to run when it differs. The registered `card-horse-race-v1`
-(horserace/specs.py) and addenda A1-A3 are unchanged. Prose: evals/experiments/card_horse_race/ADDENDUM.md. A change
+(horserace/specs.py) and addenda A1-A4 are unchanged. Prose: evals/experiments/card_horse_race/ADDENDUM.md. A change
 is a new ADDENDUM_VERSION, never an edit. The simulation settings (paths, seed, steps) and the path model's constants
 (fnobook/path_pop.py, fincalc/black76.SIGMA_LO) are hashed with it.
 
-A4 and A5 are registered on other branches; this addendum's hash covers A1-A3 only (the ones merged when it was
-written), and its race challenger set is A3's plus p_path. Whichever lands later re-versions its addendum if the
-merged chain changes its text.
+It chains on A1-A4 (merged when it was opened): its hash covers their hashes and its race challenger set is A4's plus
+p_path. A5 was registered on another branch; if it lands first, this addendum is re-chained and re-hashed before any
+replay reads it.
 """
 
 from __future__ import annotations
@@ -17,12 +17,12 @@ from datetime import date
 
 from finresearch.fincalc import black76 as b
 from finresearch.fnobook import path_pop as pp
-from finresearch.horserace import addendum, addendum_a2, addendum_a3, specs
+from finresearch.horserace import addendum, addendum_a2, addendum_a3, addendum_a4, specs
 
 ADDENDUM_VERSION = "card-horse-race-v1-addendum-A6"
 BASE_VERSION = specs.SPEC_VERSION
 CHALLENGER = "p_path"
-CHALLENGERS = (*addendum_a3.CHALLENGERS, CHALLENGER)
+CHALLENGERS = (*addendum_a4.CHALLENGERS, CHALLENGER)
 N_PATHS = 2000  # per card in the replay: Monte Carlo se of a probability <= 0.5 / sqrt(2000) = 0.0112
 SEED = 388
 STEPS = ("one step per stored session after the origin up to the expiry's last session (the exchange calendar the "
@@ -60,7 +60,7 @@ ITEMS = {
                          "trailing Dirichlet(1) frequencies over these four categories of earlier resolved events "
                          "(resolved strictly before the origin), same underlying and structure; reported per window, "
                          "descriptive (no test is registered on it)",
-    "A6.9 race": "race.run with challengers = addendum_a3.CHALLENGERS + (p_path,); incumbent p_rw, scores, tests and "
+    "A6.9 race": "race.run with challengers = addendum_a4.CHALLENGERS + (p_path,); incumbent p_rw, scores, tests and "
                  "the gate unchanged; the registered Holm family (every non-incumbent forecaster x underlying) grows "
                  "by p_path",
     "A6.10 windows": "the replay windows design, seen and tuesday only, none of which can adopt; the live card's PoP is "
@@ -91,6 +91,7 @@ def registration() -> dict:
         "a1_hash": addendum.addendum_hash(),
         "a2_hash": addendum_a2.addendum_hash(),
         "a3_hash": addendum_a3.addendum_hash(),
+        "a4_hash": addendum_a4.addendum_hash(),
         "challengers": CHALLENGERS,
         "items": ITEMS,
         "simulation": simulation(),

@@ -82,8 +82,8 @@ def test_the_replay_refuses_a_changed_addendum_a3(monkeypatch) -> None:
 
 
 def test_the_race_lists_p_rn_b76_as_a_challenger(hist) -> None:
-    rep = replay.run_window(hist, "seen", [PCS], n_paths=50)  # few paths: p_path (A6) is tested elsewhere
-    # addendum A6 (#388) appended p_path after A3's challengers
-    assert rep["challengers"] == [*addendum_a3.CHALLENGERS, "p_path"]
+    rep = replay.run_window(hist, "seen", [PCS], n_paths=50)
+    # later addenda append (A4, #386: p_rn_svi; A6, #388: p_path, few paths here); A3's challengers stay the leading ones, in order
+    assert rep["challengers"][: len(addendum_a3.CHALLENGERS)] == list(addendum_a3.CHALLENGERS)
     assert rep["replay"]["addendum_a3_hash"] == prereg.ADDENDUM_A3_HASH
     assert "p_rn_b76_unknown" in rep["replay"] and math.isfinite(rep["replay"]["p_rn_b76_unknown"])

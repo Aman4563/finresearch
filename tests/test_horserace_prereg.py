@@ -69,12 +69,36 @@ def test_addendum_a3_hash_is_pinned_quoted_and_covers_the_engine_constants(monke
         monkeypatch.undo()
 
 
+def test_addendum_a4_hash_is_pinned_quoted_and_covers_the_fit_settings(monkeypatch) -> None:
+    from finresearch.fincalc import smile as sm
+    from finresearch.fincalc import svi
+    from finresearch.horserace import addendum_a3, addendum_a4
+
+    assert addendum_a4.addendum_hash() == prereg.ADDENDUM_A4_HASH, (
+        "a changed addendum is a new ADDENDUM_VERSION"
+    )
+    reg = addendum_a4.registration()
+    assert reg["base_hash"] == prereg.HASH and reg["a1_hash"] == prereg.ADDENDUM_HASH
+    assert reg["a2_hash"] == prereg.ADDENDUM_A2_HASH
+    assert reg["a3_hash"] == prereg.ADDENDUM_A3_HASH == addendum_a3.addendum_hash()
+    assert addendum_a4.CHALLENGERS == ("p_rw_bus", "p_rn_b76", "p_rn_svi")
+    text = (ROOT / "evals/experiments/card_horse_race/ADDENDUM.md").read_text()
+    assert prereg.ADDENDUM_A4_HASH in text and "Addendum A4 (post hoc)" in text
+    for mod, name, value in ((svi, "MAX_RMSE", 0.02), (svi, "GRID_POINTS", 2001), (svi, "RHO_MAX", 0.99),
+                             (svi, "START_GRID", 5), (sm, "OUT_SD", 8.0), (sm, "OUT_STEPS", 2000)):  # fmt: skip
+        monkeypatch.setattr(mod, name, value)
+        assert addendum_a4.addendum_hash() != prereg.ADDENDUM_A4_HASH, (
+            name
+        )  # editing a setting moves the hash
+        monkeypatch.undo()
+
+
 def test_addendum_a6_hash_is_pinned_quoted_and_covers_the_simulation_settings(monkeypatch) -> None:
     """A6 (#388): the exit-rule Monte Carlo p_path. The hash covers the simulation settings (paths, seed, steps) and
     the path model's constants, so changing any of them is a new addendum version."""
     from finresearch.fincalc import black76 as b
     from finresearch.fnobook import path_pop as pp
-    from finresearch.horserace import addendum_a3, addendum_a6
+    from finresearch.horserace import addendum_a4, addendum_a6
 
     assert addendum_a6.addendum_hash() == prereg.ADDENDUM_A6_HASH, (
         "a changed addendum is a new ADDENDUM_VERSION"
@@ -82,8 +106,9 @@ def test_addendum_a6_hash_is_pinned_quoted_and_covers_the_simulation_settings(mo
     reg = addendum_a6.registration()
     assert reg["base_hash"] == prereg.HASH and reg["a1_hash"] == prereg.ADDENDUM_HASH
     assert reg["a2_hash"] == prereg.ADDENDUM_A2_HASH and reg["a3_hash"] == prereg.ADDENDUM_A3_HASH
+    assert reg["a4_hash"] == prereg.ADDENDUM_A4_HASH
     assert (
-        addendum_a6.CHALLENGER == "p_path" and (*addendum_a3.CHALLENGERS, "p_path") == addendum_a6.CHALLENGERS
+        addendum_a6.CHALLENGER == "p_path" and (*addendum_a4.CHALLENGERS, "p_path") == addendum_a6.CHALLENGERS
     )
     sim = reg["simulation"]
     assert sim["n_paths"] == addendum_a6.N_PATHS == 2000 and sim["seed"] == addendum_a6.SEED == 388
