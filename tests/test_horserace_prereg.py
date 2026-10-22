@@ -79,13 +79,15 @@ def test_addendum_a5_hash_is_pinned_quoted_and_covers_every_fitted_setting(monke
     reg = addendum_a5.registration()
     assert reg["base_hash"] == prereg.HASH and reg["a1_hash"] == prereg.ADDENDUM_HASH
     assert reg["a2_hash"] == prereg.ADDENDUM_A2_HASH and reg["a3_hash"] == prereg.ADDENDUM_A3_HASH
-    assert addendum_a5.CHALLENGERS == (*addendum_a3.CHALLENGERS, "p_rw_emp", "p_rw_fhs")
+    assert (*addendum_a3.CHALLENGERS, "p_rw_emp", "p_rw_fhs") == addendum_a5.CHALLENGERS
     text = (ROOT / "evals/experiments/card_horse_race/ADDENDUM.md").read_text()
     assert prereg.ADDENDUM_A5_HASH in text and "Addendum A5 (post hoc)" in text
     for name, value in (("MIN_Z", 40), ("PATHS", 10_000), ("GJR_WINDOW", 750), ("FHS_BLOCK", 3),
                         ("BLOCK_MEAN", 4.0), ("GJR_START", (0.1, 0.1, 0.8)), ("NM_MAXFEV", 3000)):  # fmt: skip
         monkeypatch.setattr(td, name, value)
-        assert addendum_a5.addendum_hash() != prereg.ADDENDUM_A5_HASH, name  # editing a setting moves the hash
+        assert addendum_a5.addendum_hash() != prereg.ADDENDUM_A5_HASH, (
+            name
+        )  # editing a setting moves the hash
         monkeypatch.undo()
     for name, value in (("BUCKETS", {"short": (1, 10, "any")}), ("SEED", 1), ("GPD_TAIL", 0.95)):
         monkeypatch.setattr(addendum_a5, name, value)
