@@ -111,11 +111,12 @@ def test_the_replay_refuses_a_changed_addendum_a5(monkeypatch) -> None:
 
 @pytest.fixture(scope="module")
 def design(hist):
-    return replay.run_window(hist, "design", [ICW])
+    return replay.run_window(hist, "design", [ICW], n_paths=50)  # few paths: p_path (A6) is tested elsewhere
 
 
 def test_the_race_lists_both_tail_challengers(design) -> None:
-    assert design["challengers"] == list(addendum_a5.CHALLENGERS)
+    # addendum A6 (#388) appended p_path after A5's challengers
+    assert design["challengers"] == [*addendum_a5.CHALLENGERS, "p_path"]
     assert design["replay"]["addendum_a5_hash"] == prereg.ADDENDUM_A5_HASH
     assert math.isfinite(design["replay"]["p_rw_emp_unknown"]) and "p_rw_fhs_reasons" in design["replay"]
 

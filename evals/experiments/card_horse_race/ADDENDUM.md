@@ -193,3 +193,55 @@ session. No item below changed.
    bucket, too few to fit (the library refuses a fit below its minimum). The EWMA-filtered FHS, the M3 EV interval, the
    robust EV gate's lambda and ES budget (`taildist.robust_gate` stays informational until a model is validated)
    and the drawdown bands are later addenda, each registered before it is read.
+
+# Addendum A6 (post hoc): the exit-rule Monte Carlo challenger `p_path` (P3.5, #388)
+
+Recorded 22-Oct-2026, after `card-horse-race-v1` and addenda A1-A5 (all unchanged) and before any replay code
+computed the challenger on a stored session or read an outcome. It is `src/finresearch/horserace/addendum_a6.py`
+(`card-horse-race-v1-addendum-A6`), sha256 `5c34c776b3fa171863eec95b71ae73a5d6f2de1eca38a0a7d7cbfd8ef38bdc14`, pinned in `horserace/prereg.py`
+(`ADDENDUM_A6_HASH`); the hash covers the simulation settings (2,000 paths per card, seed 388 and the per-card seed
+rule, one step per stored session) and the path model's constants (`fnobook/path_pop.py`: the beta window and
+minimum, the tick, the exit-reason grouping, the dot levels; `black76.SIGMA_LO`). The replay refuses to run when any
+of the seven hashes differs. Any change is a new addendum version. It chains on A1-A5. A6 was first pinned on A1-A3
+(sha256 `7dfe96c6…89dca7f3`), then re-chained on A4 when A4 merged (`18f7b402…ba244881b`), and on A5 when A5 merged
+(the hash above), each time before any replay code computed `p_path` on a stored session. No item below changed
+except the challenger chain of item 9.
+
+The card shows P(P&L > 0 at expiry), but the plan exits early (target, stop, a days-to-expiry exit, the last session
+before expiry day). This challenger is the same event under the plan's own exits, simulated.
+
+1. **Challenger.** `p_path` = P(net P&L of one set > 0 under the spec's exit plan) over 2,000 simulated paths; EV =
+   the mean net P&L; 20 dots = the net quantiles at (i + 0.5) / 20. Each path's net is the card ledger's own replay,
+   so the event is the registered one. An unknown sigma, beta or leg IV, or a voided path: `p_path` None, counted.
+2. **Paths.** The card's expiry forward, zero drift (the spot drifts at r, A1.6), lognormal from A1.5's forward, at the
+   volatility of the case `p_rw` chose (the lower-EV of RV20 and RV60, A1.7, A1.9). The terminal distribution is
+   therefore the incumbent's: the only new element is the path. Times are calendar days / 365 from the origin
+   (A1.6's clock); the last step ends at the expiry date.
+3. **Marks.** Each leg by Black-76 at its origin IV (`backtest.pricing.leg_iv` of the origin reference price, A1.5's
+   forward, `BOOK.rate`) moved by sigma_t = iv + beta ln(F_t / F_0), floored at `black76.SIGMA_LO`, discounted at
+   `BOOK.rate` over the remaining calendar time, on the Rs 0.05 tick grid (never below one tick). close = settle =
+   the mark; contracts = the leg's origin-session contracts, which pick the engine's exit slippage tier (the
+   half-spread). The expiry session carries only the expiring future at F_T, which the engine settles at.
+4. **Spot-vol slope.** beta = OLS of the session change in iv30 / 100 on the same session's A1.7 return, over the last
+   250 sessions on or before the origin where both are known; fewer than 120 pairs: unknown. iv30 (the stored 30-day
+   ATM IV) is a proxy for the ATM vol of the card's expiry.
+5. **Exits: no second implementation.** Every path is replayed by `fnobook.card_forecasts.simulate` (A1.2:
+   `backtest.engine.manage`, `fill="same_print"`, the spec's exits, costs and tiered slippage) on
+   `path_pop.PathHistory`, with a sentinel session after the expiry date so an exit on the last session is final.
+   `tests/test_path_pop.py` checks a known path against the replay of the same quotes (identical reason, day and net).
+6. **Simulation.** 2,000 paths per card; `numpy.random.default_rng(card_seed(spec, origin))`, card_seed = the first 8
+   bytes of sha256("388|spec|origin") mod 2^63; one step per stored session after the origin up to the expiry's last
+   session (the exchange calendar, which the engine already reads ahead).
+7. **Monte Carlo error.** Per card: se(p_path) = sqrt(p (1 - p) / n) (at most 0.0112), a Wilson 95 % interval, se(EV) =
+   sd / sqrt(n), and the se of each exit-reason share. Per window: mean and max se, and the Brier inflation from
+   simulation noise, mean p (1 - p) / n. This is simulation error only: sigma and beta are taken as known.
+8. **Exit reasons.** The engine's reasons grouped as target (profit_take), stop, time (dte, before_expiry_day) and
+   expiry (expiry, expiry_unsettled). The registered exit-reason score: the multinomial log score (eps 1e-6) of
+   `p_path`'s shares against trailing Dirichlet(1) frequencies over these four categories of earlier resolved events
+   (resolved strictly before the origin), same underlying and structure. Descriptive: no test is registered on it.
+9. **Race.** Challengers = addendum A5's + `p_path`; incumbent `p_rw`, scores, tests and the gate unchanged. The
+   registered Holm family (every non-incumbent forecaster x underlying) grows by `p_path`.
+10. **Windows.** Replay windows only (design, seen, tuesday), none of which can adopt. The live card's PoP is unchanged:
+    adoption needs forward shadow logging or the vault, each registered first.
+11. **Later.** Marks on the P3.3 smile, paths from the P3.4 generator, bootstrap intervals over sigma and beta, and the
+    live card's session calendar (`fincalc.bustime.nse_calendar`) are later addenda, registered before they are read.
