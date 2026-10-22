@@ -23,6 +23,7 @@ from finresearch.backtest.specs import CRITERIA, Criteria
 from finresearch.stratlab.filters import Filters
 from finresearch.stratlab.spec import RESULTS_NOTE, StrategySpec, book_for, n_filters, spec_hash, to_lab_spec
 from finresearch.stratlab.split import Split
+from finresearch.stratlab.trials import daily_pnl
 
 Progress = Callable[[float, str], None]
 
@@ -68,6 +69,7 @@ def replay(history: Any, s: StrategySpec, split: Split, *, key: str, name: str, 
         "windows_dates": {"is": [split.is_start.isoformat(), split.is_end.isoformat()],
                           "oos": [split.oos_start.isoformat(), hi.isoformat()] if oos else None},
         "windows": windows, "trades": trades, "equity": lib.thin(main["equity"]), "skips": main["skips"],
+        "daily": daily_pnl(main["equity"], book.capital),
         "entries_considered": main["entries_considered"], "open_at_end": main["open_at_end"],
         "by_year": metrics.breakdown(trades, lambda t: t["entry_day"][:4]),
         "by_iv_regime": metrics.breakdown(trades, lambda t: metrics.regime(t["iv_pct"])),
@@ -103,7 +105,8 @@ def finalize(rep: dict[str, Any], *, n_trials: int, var: float | None, oos_versi
     rep["n_trials"], rep["sr_trials_variance"] = n_trials, metrics._r(var, 10)
     if not rep["oos"]:
         rep.update(
-            status="in_sample_only", reasons=["out of sample not run: tune freely here, it is not counted"]
+            status="in_sample_only",
+            reasons=["out of sample not run; this run is still a logged trial and counts in N (#380)"],
         )
         rep["warnings"] = warnings(rep, n_trials, oos_versions, n_lab, crit)
         return rep

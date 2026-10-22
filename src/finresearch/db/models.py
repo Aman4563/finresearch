@@ -691,6 +691,40 @@ class LabVariant(Base):
     daily_sr: Mapped[float | None] = mapped_column(Float)  # OOS daily Sharpe (for the trials' variance V)
 
 
+class LabTrial(Base):
+    """#380 (P2.5): one row per Strategy Lab run that started (in sample, out of sample or forward holdout), whatever
+    its end (done | no_data | failed | timed_out), so the trial count N (stratlab.store.n_trials) and the PBO / SPA
+    trial matrix cannot be undercounted. `daily` = [[ISO day, ₹ P&L of the marked equity that day], ...] over the
+    replayed window (the first day against the capital); [] when the run produced no result. Append-only: a trigger
+    refuses UPDATE and DELETE (`LAB_TRIAL_APPEND_ONLY`, as card_log). Public market data only."""
+
+    __tablename__ = "lab_trial"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+    run_id: Mapped[int | None] = mapped_column(Integer, unique=True)  # None only for rows written by hand
+    version_id: Mapped[int | None] = mapped_column(Integer, index=True)
+    spec_hash: Mapped[str] = mapped_column(String(64), index=True)
+    underlying: Mapped[str] = mapped_column(String(30))
+    mode: Mapped[str] = mapped_column(String(10))  # is | oos | holdout
+    status: Mapped[str] = mapped_column(String(12))
+    first_day: Mapped[date | None] = mapped_column(Date)
+    last_day: Mapped[date | None] = mapped_column(Date)
+    git_sha: Mapped[str | None] = mapped_column(String(40))
+    daily: Mapped[list[Any]] = mapped_column(JSONB)
+
+
+LAB_TRIAL_APPEND_ONLY = (
+    "CREATE OR REPLACE FUNCTION lab_trial_append_only() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN "
+    "RAISE EXCEPTION USING MESSAGE = 'lab_trial is append-only: ' || TG_OP || ' refused'; END $$",
+    "CREATE TRIGGER lab_trial_append_only BEFORE UPDATE OR DELETE ON lab_trial "
+    "FOR EACH ROW EXECUTE FUNCTION lab_trial_append_only()",
+)
+for _sql in LAB_TRIAL_APPEND_ONLY:
+    event.listen(LabTrial.__table__, "after_create", DDL(_sql))
+
+
 class VaultRead(Base):
     """The vault's logged-read table (#364, finresearch.vault.guard): one row per read of the 2008-2021 vault, written
     and committed before the vault connection is handed out, so a read is spent even if the study then fails. At most

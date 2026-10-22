@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 from finresearch.db import session_scope
 from finresearch.db.models import LabRun, LabStrategy, LabVariant, LabVersion
 from finresearch.stratlab import evaluate as ev
-from finresearch.stratlab import store
+from finresearch.stratlab import store, trials
 from finresearch.stratlab.spec import StrategySpec
 
 log = logging.getLogger(__name__)
@@ -109,6 +109,7 @@ def recover_stale(s: Session, now: datetime | None = None) -> int:
         else:
             continue
         r.finished_at = now
+        trials.log(s, r, "failed")
         n += 1
     return n
 
@@ -120,6 +121,19 @@ def _set(run_id: int, **kw: Any) -> None:
         if r is not None:
             for k, v in kw.items():
                 setattr(r, k, v)
+
+
+def _end(run_id: int, status: str, **kw: Any) -> str:
+    """A run that ended without a result (failed, timed out): its status and its trial row in one transaction."""
+    with session_scope() as s:
+        r = s.get(LabRun, run_id, with_for_update=True)
+        if r is None or r.status != "running":  # marked stale meanwhile: already logged
+            return r.status if r is not None else "missing"
+        r.status = status
+        for k, v in kw.items():
+            setattr(r, k, v)
+        trials.log(s, r, status)
+    return status
 
 
 def execute(run_id: int, history: Any = None, *, cap: timedelta = RUN_CAP,
@@ -152,12 +166,10 @@ def execute(run_id: int, history: Any = None, *, cap: timedelta = RUN_CAP,
     try:
         rep = ev.replay(history, spec, split, key=key, name=name, oos=oos, progress=progress)
     except RunTimeout as e:
-        _set(run_id, status="timed_out", error=str(e), finished_at=clock())
-        return "timed_out"
+        return _end(run_id, "timed_out", error=str(e), finished_at=clock())
     except Exception as e:
         log.warning("lab run %s failed", run_id, exc_info=True)
-        _set(run_id, status="failed", error=f"{type(e).__name__}: {e}"[:500], finished_at=clock())
-        return "failed"
+        return _end(run_id, "failed", error=f"{type(e).__name__}: {e}"[:500], finished_at=clock())
     return _finish(run_id, rep, sid, vid, clock())
 
 
@@ -176,10 +188,12 @@ def _finish(run_id: int, rep: dict[str, Any], sid: int, vid: int, now: datetime)
                                  daily_sr=rep["windows"]["oos"].get("daily_sr")))  # fmt: skip
                 s.flush()
                 counted = True
+        daily = rep.pop("daily", None) or []
+        trials.log(s, r, "no_data" if rep.get("status") == "no_data" else "done", daily)
         n = store.n_trials(s)
         var = ev.trials_variance(store.trial_srs(s))
         rep = ev.finalize(rep, n_trials=n, var=var, oos_versions=store.oos_versions(s, sid),
-                          n_lab=store.lab_variants(s))  # fmt: skip
+                          n_lab=store.lab_trials(s))  # fmt: skip
         trades = rep.pop("trades", [])
         r.result, r.trades, r.n_trials, r.counted = rep, trades, n, counted
         r.status, r.progress, r.progress_note, r.finished_at, r.heartbeat_at = "done", 1.0, None, now, now

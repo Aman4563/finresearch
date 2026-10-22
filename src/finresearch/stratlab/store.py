@@ -60,8 +60,23 @@ def lab_variants(s: Session) -> int:
     return s.scalar(select(func.count()).select_from(LabVariant)) or 0
 
 
+def lab_trials(s: Session) -> int:
+    """Distinct specs ever run in the lab, in sample included (#380: every run is a trial, stratlab.trials)."""
+    from finresearch.stratlab.trials import lab_hashes
+
+    return len(lab_hashes(s))
+
+
+def vault_reads_in_n(s: Session) -> int:
+    """Vault reads that count in N (vault PREREG.md §2.5), read in this session (vault.guard.reads_count opens its own)."""
+    from finresearch.db.models import VaultRead
+
+    return s.scalar(select(func.count()).select_from(VaultRead).where(VaultRead.counts_in_n.is_(True))) or 0
+
+
 def n_trials(s: Session) -> int:
-    return specs.VARIANTS_TRIED + lab_variants(s)
+    """N = the library's VARIANTS_TRIED + every distinct spec run in the lab + vault reads counted in N (#380)."""
+    return specs.VARIANTS_TRIED + lab_trials(s) + vault_reads_in_n(s)
 
 
 def library_srs(s: Session) -> list[float]:
