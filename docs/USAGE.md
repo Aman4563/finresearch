@@ -223,5 +223,5 @@ uv run finresearch forecasts resolve         # score every due forecast now (the
 uv run finresearch forecasts cards           # record every logged F&O card (card_log) as a forecast (#376; the monitor does this hourly)
 uv run finresearch forecasts horse-race      # the pre-registered card horse race on resolved cards (#377; --window, --json); read only
 uv run finresearch forecasts skill           # the live skill monitor per method x event kind x underlying (#378; --json); read only
-uv run finresearch forecasts horse-race --source replay --window seen   # the same race on one replayed card per stored session, 2022-26 (addendum A1, plus the business-time challenger p_rw_bus of addendum A2, #384, and the parity-forward Black-76 IV challenger p_rn_b76 of addendum A3, #385; design | seen | tuesday); read only, run outside market hours
+uv run finresearch forecasts horse-race --source replay --window seen   # the same race on one replayed card per stored session, 2022-26 (addendum A1, plus the business-time challenger p_rw_bus of addendum A2, #384, the parity-forward Black-76 IV challenger p_rn_b76 of addendum A3, #385, and the tail-aware challengers p_rw_emp (IV-scaled empirical) and p_rw_fhs (GJR filtered historical simulation) of addendum A5, #387; design | seen | tuesday); read only, run outside market hours
 ```

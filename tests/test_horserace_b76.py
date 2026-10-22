@@ -83,6 +83,8 @@ def test_the_replay_refuses_a_changed_addendum_a3(monkeypatch) -> None:
 
 def test_the_race_lists_p_rn_b76_as_a_challenger(hist) -> None:
     rep = replay.run_window(hist, "seen", [PCS])
-    assert rep["challengers"] == list(addendum_a3.CHALLENGERS)
+    # A3's challengers lead the list; addendum A5 (#387) appends its own after them on purpose
+    assert rep["challengers"][: len(addendum_a3.CHALLENGERS)] == list(addendum_a3.CHALLENGERS)
+    assert "p_rn_b76" in rep["challengers"]
     assert rep["replay"]["addendum_a3_hash"] == prereg.ADDENDUM_A3_HASH
     assert "p_rn_b76_unknown" in rep["replay"] and math.isfinite(rep["replay"]["p_rn_b76_unknown"])

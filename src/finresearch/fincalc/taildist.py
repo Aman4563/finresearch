@@ -100,7 +100,12 @@ def sample_outcome(legs: Sequence[o.Leg], s_t: Sequence[float], t: float, rate: 
             gross += x.qty * (
                 np.maximum(st - x.strike, 0) if x.right == "call" else np.maximum(x.strike - st, 0)
             )
-    xc = np.array([exit_cost(float(p)) for p in st]) if exit_cost else np.zeros(len(st))
+    if exit_cost is None:
+        xc = np.zeros(len(st))
+    elif getattr(exit_cost, "vectorised", False):  # takes the whole array (horserace.replay.ExerciseSttCost)
+        xc = np.asarray(exit_cost(st), float)  # type: ignore[arg-type]
+    else:
+        xc = np.array([exit_cost(float(p)) for p in st])
     pnl = gross - net - entry_cost - xc
     df = math.exp(-rate * t)
     ev = df * float(w @ gross) - net - entry_cost - df * float(w @ xc)
