@@ -23,7 +23,7 @@ const ROUTES = {
   "GET /api/fno/direction/NIFTY": STATE(5),
   "POST /api/fno/direction/NIFTY/log": { logged: [{ id: 1 }, { id: 2 }], skipped: null, as_of: "2026-10-12" },
 };
-const OPTIONAL = ["GET /api/market/status", "GET /api/fno/positions", "GET /api/fno/paper", "GET /api/fno/NIFTY/events", "GET /api/fno/NIFTY/iv", "GET /api/fno/NIFTY/context"];
+const OPTIONAL = ["GET /api/market/status", "GET /api/fno/positions", "GET /api/fno/paper", "GET /api/fno/NIFTY/events", "GET /api/fno/NIFTY/event-vol", "GET /api/fno/NIFTY/iv", "GET /api/fno/NIFTY/context"];
 
 test("fno: the direction panel says no edge, NO TRADE, shows out-of-sample accuracy and logs a forecast", async ({ page }) => {
   const api = await mockApi(page, ROUTES);
