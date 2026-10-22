@@ -18,8 +18,9 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from finresearch.db.models import CardLog, FnoMark, PaperStrategy
+from finresearch.db.models import CardLog, FnoExitRule, FnoMark, PaperStrategy
 from finresearch.fincalc import posttrade as pt
+from finresearch.fincalc.dates import to_ist
 
 
 def card_of(s: Session, st: PaperStrategy) -> tuple[dict[str, Any] | None, str | None]:
@@ -135,3 +136,92 @@ def explain_summary(days: list[dict[str, Any]]) -> dict[str, Any]:
     return {"position_days": len(days), "unknown": sum(d["actual"] is None or d["greeks"] is None for d in days),
             "decided": len(decided), "within": sum(decided), "share_within": None if share is None else round(share, 4),
             "target_share": TARGET_SHARE, "meets_target": None if share is None else share >= TARGET_SHARE}  # fmt: skip
+
+
+# --------------------------------------------------------------------------- the month
+DEFERRED_AFTER = 100  # MF16: disposition-effect and loss-chasing metrics wait for >= 100 closed trades
+
+
+def _month(year: int, month: int) -> tuple[date, date]:
+    start = date(year, month, 1)
+    return start, date(year + month // 12, month % 12 + 1, 1)
+
+
+def _closed_trade(s: Session, st: PaperStrategy) -> pt.ClosedTrade:
+    from finresearch.fnobook import book
+    from finresearch.fnobook.card_forecasts import exit_plan
+
+    rules = [pt.RuleState(r.kind, float(r.threshold), r.fired_at)
+             for r in s.scalars(select(FnoExitRule).where(FnoExitRule.paper_id == st.id))]  # fmt: skip
+    card, _ = card_of(s, st)
+    plan = exit_plan(card)[0] if card is not None else None
+    base = abs(book.pp.net_premium([x for x in book.legs_of(st) if x.right != "future"])) or None
+    return pt.ClosedTrade(st.close_reason or "", st.closed_at, None if st.gross_pnl is None else float(st.gross_pnl),  # type: ignore[arg-type]
+                          base, rules, None if plan is None else bool(plan["hold_to_expiry"]))  # fmt: skip
+
+
+def month_view(s: Session, year: int, month: int) -> dict[str, Any]:
+    """The month's review: shortfall of the paper trades opened in it, adherence of those closed in it, the exposure
+    mix of those opened in it and the P&L explain of the position-days in it (IST days)."""
+    start, end = _month(year, month)
+    rows = list(s.scalars(select(PaperStrategy).order_by(PaperStrategy.opened_at, PaperStrategy.id)))
+    day = lambda d: to_ist(d).date()  # noqa: E731
+    opened = [r for r in rows if start <= day(r.opened_at) < end]
+    closed = [r for r in rows if r.status == "closed" and r.closed_at and start <= day(r.closed_at) < end]
+    ad = pt.adherence([_closed_trade(s, r) for r in closed])
+    isf = [shortfall_of(s, r) for r in opened]
+    known = [x for x in isf if x["total"] is not None]
+    mean = lambda xs: None if not xs else round(sum(xs) / len(xs), 2)  # noqa: E731
+    mix = pt.exposure_mix([pt.MixTrade(day(r.opened_at), r.expiry, [(x.side, float(x.entry_price), x.qty)
+                                                                    for x in r.legs if x.right != "future"],
+                                       (day(r.closed_at) - day(r.opened_at)).days if r.closed_at else None)
+                           for r in opened])  # fmt: skip
+    days = explain_days(s, start, end)
+    r4 = lambda v: None if v is None else round(v, 4)  # noqa: E731
+    n_closed = sum(r.status == "closed" for r in rows)
+    return {
+        "month": f"{year}-{month:02d}", "start": start.isoformat(), "end": end.isoformat(),
+        "adherence": {"closed": len(closed), "counts": ad.counts, "rate": r4(ad.rate), "with_stop": ad.with_stop,
+                      "beyond_stop_count": ad.beyond_stop_count, "mean_beyond_stop": mean([ad.mean_beyond_stop]
+                      if ad.mean_beyond_stop is not None else []), "window_hours": pt.PLANNED_WINDOW_HOURS},
+        "shortfall": {"trades": isf, "known": len(known), "mean_total": mean([x["total"] for x in known]),
+                      "mean_pct": mean([x["pct"] for x in known if x["pct"] is not None])},
+        "mix": {"trades": mix.trades, "premium_sold_share": r4(mix.premium_sold_share),
+                "same_day_expiry_share": r4(mix.same_day_expiry_share), "mean_hold_share": r4(mix.mean_hold_share)},
+        "explain": {"days": days, "summary": explain_summary(days)},
+        "deferred": {"closed_trades": n_closed, "starts_at": DEFERRED_AFTER,
+                     "status": "deferred" if n_closed < DEFERRED_AFTER else "due"},
+        "notes": NOTES,
+    }  # fmt: skip
+
+
+NOTES = [
+    "Paper trades only for shortfall and adherence: Groww's order and trade lists are not read yet, so real fills "
+    "and real exits are unknown. Real positions appear in the P&L explain from their nightly marks.",
+    "Shortfall = Σ side × (fill − the card's mid) × qty + entry costs (positive = a cost), against the card the trade "
+    "was taken from; % of |the net premium at the card's mids|. Paper fills are the LTP moved by the slippage.",
+    "Explain: dV ≈ Δ dS + ½ Γ dS² + vega dσ + Θ dt at the previous night's mark (Black-Scholes at the IV implied by "
+    "NSE's settlement price); full revaluation reprices spot → vol → time. A day is within tolerance when |residual| ≤ "
+    "max(10 % of |actual|, 0.5 % of the max loss); the target is ≥ 80 % of decided position-days.",
+    f"Adherence: a square-off within {pt.PLANNED_WINDOW_HOURS} h of the first exit rule that fired is planned, later "
+    "is late; with rules armed and none fired, a square-off is discretionary and an expiry is planned (time); a trade "
+    "with no rules and no card plan has no plan and is left out of the rate.",
+    "Disposition effect and loss-chasing wait for 100 closed trades (MF16). Descriptive only: no causal claim.",
+]
+
+
+def brief_line(s: Session, today: date) -> str | None:
+    """One line for the daily brief about this month so far; None when the month has no paper trade and no marks."""
+    v = month_view(s, today.year, today.month)
+    ad, isf, ex = v["adherence"], v["shortfall"], v["explain"]["summary"]
+    if not ad["closed"] and not isf["trades"] and not ex["position_days"]:
+        return None
+    judged = sum(n for k, n in ad["counts"].items() if k != "no_plan")
+    adh = ("plan adherence unknown (no closed trade with a plan)" if ad["rate"] is None else
+           f"plan adherence {ad['rate']:.0%} ({round(ad['rate'] * judged)} of {judged} with a plan)")  # fmt: skip
+    sf = f"shortfall known for {isf['known']} of {len(isf['trades'])} entries"
+    if isf["mean_total"] is not None:
+        sf += f" (mean ₹{isf['mean_total']:,.0f})"
+    exp = ("P&L explain: no position-days yet" if not ex["position_days"] else
+           f"P&L explain within tolerance on {ex['within']} of {ex['decided']} decided position-days")  # fmt: skip
+    return f"F&O review ({today:%b %Y}): {ad['closed']} paper trades closed, {adh}; {sf}; {exp}."

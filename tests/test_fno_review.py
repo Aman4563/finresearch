@@ -153,3 +153,73 @@ def test_explain_summary_counts_only_decided_days(db):
     assert sm["position_days"] == 2 and sm["unknown"] == 1
     assert sm["decided"] == (days[0]["within"] is not None)
     assert sm["target_share"] == 0.8
+
+
+# --------------------------------------------------------------------------- the month
+def close(st, when, gross, reason="square_off"):
+    st.status, st.closed_at, st.close_reason = "closed", when, reason
+    st.gross_pnl, st.net_pnl, st.exit_costs = D(gross), D(gross) - st.entry_costs, D(0)
+
+
+def month(s):
+    from finresearch.db.models import FnoExitRule
+
+    t1 = spread(s, opened=at(5, 10))  # profit rule fired 11:00, squared off 11:30 -> planned target
+    s.add(FnoExitRule(paper_id=t1.id, kind="profit", threshold=D(50), status="fired", created_at=at(5, 10),
+                      fired_at=at(5, 11)))  # fmt: skip
+    close(t1, at(5, 11, 30), 2000)
+    t2 = spread(s, opened=at(6, 10))  # no rules: no plan
+    close(t2, at(7, 10), -500)
+    t3 = spread(s, opened=at(28, 10, month=9))  # closed in September: not in October's adherence
+    close(t3, at(29, 10, month=9), 100)
+    t4 = spread(s, opened=at(20, 10), card=(plan_card(s), 0))  # open, from a card
+    s.flush()
+    return t1, t2, t3, t4
+
+
+def test_month_view(db):
+    from finresearch.db import session_scope
+    from finresearch.fnobook import review
+
+    with session_scope() as s:
+        t1, t2, _t3, t4 = month(s)
+        v = review.month_view(s, 2026, 10)
+    assert v["month"] == "2026-10"
+    ad = v["adherence"]
+    assert ad["closed"] == 2 and ad["counts"] == {"planned_target": 1, "no_plan": 1}
+    assert ad["rate"] == 1.0  # 1 planned of 1 trade with a plan; the no-plan trade is left out
+    assert [x["paper_id"] for x in v["shortfall"]["trades"]] == [t1.id, t2.id, t4.id]
+    assert (
+        v["shortfall"]["known"] == 1 and v["shortfall"]["mean_total"] == v["shortfall"]["trades"][2]["total"]
+    )
+    mix = v["mix"]
+    # premium: bought 121.20 x 75, sold 49.50 x 75 on each of the 3 October trades -> 49.50 / 170.70
+    assert mix["premium_sold_share"] == pytest.approx(49.5 / 170.7, abs=1e-4)
+    assert mix["same_day_expiry_share"] == 0
+    # held 0 of 22 days (t1) and 1 of 21 days (t2); t4 is still open
+    assert mix["mean_hold_share"] == pytest.approx((0 + 1 / 21) / 2, abs=1e-4)
+    assert v["deferred"] == {"closed_trades": 3, "starts_at": 100, "status": "deferred"}
+
+
+def test_month_view_with_nothing_says_unknown_not_zero(db):
+    from finresearch.db import session_scope
+    from finresearch.fnobook import review
+
+    with session_scope() as s:
+        v = review.month_view(s, 2026, 10)
+        assert review.brief_line(s, date(2026, 10, 22)) is None
+    assert v["adherence"]["rate"] is None and v["shortfall"]["mean_total"] is None
+    assert v["mix"]["premium_sold_share"] is None and v["explain"]["summary"]["share_within"] is None
+
+
+def test_brief_line(db):
+    from finresearch.db import session_scope
+    from finresearch.fnobook import review
+
+    with session_scope() as s:
+        month(s)
+        line = review.brief_line(s, date(2026, 10, 22))
+    assert line.startswith("F&O review (Oct 2026): 2 paper trades closed")
+    assert "plan adherence 100% (1 of 1 with a plan)" in line
+    assert "shortfall known for 1 of 3 entries" in line
+    assert "P&L explain: no position-days yet" in line
