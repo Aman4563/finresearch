@@ -172,7 +172,9 @@ def test_unfinished_cards_are_counted_and_first_marks_one_per_cluster(made) -> N
 
 
 def test_run_window_scores_every_replay_forecaster(hist) -> None:
-    rep = replay.run_window(hist, "design", spec_list=[PCS])
+    rep = replay.run_window(
+        hist, "design", spec_list=[PCS], n_paths=50
+    )  # few paths: p_path is tested elsewhere
     assert rep["n_events"] > 0 and rep["window"] == "design"
     assert {"p_rw", "p_rw20", "p_rw60", "p_rn_atm", "p_base", "p_gate"} <= set(rep["forecasters"])
     assert rep["replay"]["counts"]["events"] >= rep["n_events"] and "skips" in rep["replay"]
