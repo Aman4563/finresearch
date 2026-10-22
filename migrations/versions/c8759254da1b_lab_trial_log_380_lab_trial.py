@@ -1,7 +1,7 @@
 """Lab trial log (#380): lab_trial (append-only) and an append-only lab_version
 
 Revision ID: c8759254da1b
-Revises: 6ca0f961e9df
+Revises: 2677b268b3a4
 Create Date: 2026-10-22 10:42:19.536754
 
 """
@@ -38,7 +38,7 @@ BACKFILL = (
 
 # revision identifiers, used by Alembic.
 revision: str = "c8759254da1b"
-down_revision: str | Sequence[str] | None = "6ca0f961e9df"
+down_revision: str | Sequence[str] | None = "2677b268b3a4"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
