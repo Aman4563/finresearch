@@ -15,7 +15,7 @@ export type JointReplay = {
 };
 export type JointRisk = {
   as_of: string; assume_beta1: boolean; disclaimer: string; privacy: string; method: string; beta_note: string; notes: string[];
-  holdings: { key: string; name: string; value: number; beta: number | null; how: string }[];
+  holdings: { key: string; name: string; value: number; beta: number | null; how: string }[]; holdings_reason: string | null;
   book: { known: boolean; legs: number | null; reason: string | null };
   d_total: Delta; losses: Loss[];
   hedge_trigger: { share: number | null; fired: boolean | null; threshold: number; reasons: string[]; note: string };

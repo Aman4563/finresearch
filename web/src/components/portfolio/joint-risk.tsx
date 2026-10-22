@@ -65,7 +65,7 @@ function Body({ d }: { d: JointRisk }) {
       </Table>
       <p className="text-xs text-muted">Forward test (pre-registered): {d.forward_test.status}, since {day(d.forward_test.since)}.</p>
       {d.notes.map((n) => <p key={n} className="text-xs text-muted">{n}</p>)}
-      <p className="text-[11px] text-muted">{d.method} {d.beta_note} Holdings valued at {inr(d.holdings.reduce((a, h) => a + h.value, 0))}. {d.privacy}</p>
+      <p className="text-[11px] text-muted">{d.method} {d.beta_note} {d.holdings_reason ? "" : `Holdings valued at ${inr(d.holdings.reduce((a, h) => a + h.value, 0))}. `}{d.privacy}</p>
     </div>
   );
 }

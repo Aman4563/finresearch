@@ -141,7 +141,7 @@ def loss_json(x: jr.Loss) -> dict[str, Any]:
             "fno_share": _r(x.fno_share, 4), "share_reason": x.share_reason, "reasons": list(x.reasons)}  # fmt: skip
 
 
-def view(hs: Sequence[jr.Holding], b: jr.Book, notes: Sequence[str], at: datetime,
+def view(hs: jr.Holdings, b: jr.Book, notes: Sequence[str], at: datetime,
          replay_holdings: dict[date, tuple[float | None, tuple[str, ...]]], forward: dict[str, Any],
          holidays: frozenset[date] | set[date] = frozenset()) -> dict[str, Any]:  # fmt: skip
     """Everything GET /api/portfolio/analytics/joint-risk shows (besides the route's base fields)."""
@@ -150,8 +150,9 @@ def view(hs: Sequence[jr.Holding], b: jr.Book, notes: Sequence[str], at: datetim
     reps = jr.replays(replay_holdings, b, holidays)
     return {
         "method": METHOD, "beta_note": jr.BETA_NOTE, "notes": list(notes),
-        "holdings": [{"key": h.key, "name": h.name, "value": _r(h.value), "beta": _r(h.beta, 4), "how": h.how}
-                     for h in hs],
+        "holdings": [] if isinstance(hs, str) else [{"key": h.key, "name": h.name, "value": _r(h.value),
+                                                     "beta": _r(h.beta, 4), "how": h.how} for h in hs],
+        "holdings_reason": hs if isinstance(hs, str) else None,
         "book": {"known": b.legs is not None, "legs": None if b.legs is None else len(b.legs), "reason": b.reason},
         "d_total": delta_json(jr.d_total(hs, b)),
         "losses": [loss_json(x) for x in ls],

@@ -34,7 +34,7 @@ const JOINT = {
   as_of: "2026-10-22T11:00:00+05:30", assume_beta1: false, disclaimer: "Personal analysis, not advice.", privacy: "Local only (e2e).",
   method: "D_total = e2e.", beta_note: "Holdings use NIFTYBEES betas (e2e).", notes: ["Groww is not connected: only paper positions are counted."],
   holdings: [{ key: "NSE:AAA", name: "Example Alpha Ltd", value: 1000000, beta: 1.2, how: "beta 1.20 (250 days)" }],
-  book: { known: true, legs: 1, reason: null },
+  holdings_reason: null, book: { known: true, legs: 1, reason: null },
   d_total: delta(1200000, 600000),
   losses: [loss(-0.15, -180000, -150000), loss(-0.1, -120000, -90000), loss(0.05, 60000, 20000)],
   hedge_trigger: { share: 90000 / 210000, fired: true, threshold: 0.25, reasons: [], note: "The costed hedge calculator is built only once F&O is at least 25 %." },

@@ -122,3 +122,49 @@ def test_forward_test_counts_marked_sessions_with_a_big_nifty_move(env):
         st = jl.forward_status(s, date(2026, 10, 22))
     assert st["qualifying_days"] == 2 and st["needed"] == 20 and st["r2"] is None and st["passed"] is None
     assert "not evaluable yet" in st["status"]
+
+
+class _Store:
+    """A price store that just asks the fetcher (no disk)."""
+
+    async def get(self, key, lo, hi, fn, today):
+        return await fn(lo, hi)
+
+
+def test_one_day_replay_moves_are_each_holdings_own_close_to_close_move():
+    from finresearch.fincalc import book_scenarios as bs
+
+    day = bs.REPLAYS[1].day  # 4-Jun-2024 (a Tuesday)
+    d0, d2 = day - timedelta(days=1), day + timedelta(days=1)
+    closes = {"NSE:AAA": {d0: 100.0, day: 95.0, d2: 97.0}, "NSE:BBB": {d0: 50.0, day: 48.0, d2: 49.0}}
+    nifty = {d0: 100.0, day: 94.0, d2: 96.0}
+
+    async def fetch(inst, a, b):
+        return {d: v for d, v in closes.get(inst.key, {}).items() if a <= d <= b}
+
+    def index_series(sym, a, b):
+        return {d: v for d, v in nifty.items() if a <= d <= b} if sym == "NIFTY" else {}
+
+    pos = [SimpleNamespace(key=k, name=k, value=v, asset_type="stock", tax_class="equity", scheme=None,
+                           nse_symbol=k.split(":")[1]) for k, v in (("NSE:AAA", 10_000.0), ("NSE:BBB", 5_000.0))]  # fmt: skip
+    h = SimpleNamespace(positions=pos, closes={}, factors={}, benchmark=None, days=[date(2026, 10, 21)])
+    got = run(jl.replay_moves(h, fetch, _Store(), date(2026, 10, 22), index_series=index_series))
+    assert got[day][0] == pytest.approx(10_000 * (95 / 100 - 1) + 5_000 * (48 / 50 - 1)) and got[day][1] == ()
+    other = got[bs.REPLAYS[0].day]  # no closes stored for 24-Feb-2022: unknown with the reason, never 0
+    assert other[0] is None and other[1]
+
+
+@pytest.mark.usefixtures("book_db")
+def test_unread_groww_positions_make_the_book_unknown_with_the_reason(monkeypatch):
+    from finresearch.fincalc import joint_risk as jr
+    from finresearch.fnobook import scenarios as sc
+
+    async def unread(today):
+        return None, "Groww is connected but its F&O positions have not been read yet"
+
+    monkeypatch.setattr(sc, "groww_legs", unread)
+    _paper_spread()
+    b, _, notes = run(jl.book(NOW, sources=Sources(chain())))
+    assert b.legs is None and "not been read" in b.reason and notes
+    d = jr.d_total([], b)
+    assert d.total is None and d.fno is None and any("not been read" in r for r in d.reasons)

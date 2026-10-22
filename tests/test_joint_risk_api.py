@@ -82,3 +82,25 @@ def test_pretrade_needs_valid_legs_and_writes_nothing(empty_book):
     assert p["d_before"]["total"] == pytest.approx(sum(VALUES.values()), abs=0.01)
     # the fake app reads no option chain, so the candidate future's forward is unknown: after = unknown, never 0
     assert p["d_after"]["total"] is None and p["d_change"] is None and p["d_after"]["reasons"]
+
+
+def test_no_value_history_makes_the_holdings_side_unknown_not_zero(env):
+    """A value history that could not be built is not an empty portfolio: the holdings term is unknown."""
+    from fastapi.testclient import TestClient
+    from sqlalchemy import text
+
+    from finresearch.api import create_app
+    from finresearch.db import session_scope
+
+    with session_scope() as s:
+        s.execute(text("TRUNCATE portfolio_expected_txn, portfolio_disposal, portfolio_lot, portfolio_txn, "
+                       "portfolio_holding, portfolio_import, fno_mark, paper_leg, paper_strategy, broker_connection "
+                       "CASCADE"))  # fmt: skip
+    with TestClient(create_app()) as c:
+        body = c.get("/api/portfolio/analytics/joint-risk").json()
+    assert body["holdings_reason"]
+    assert body["d_total"]["total"] is None and body["d_total"]["holdings"] is None
+    assert body["holdings_reason"] in body["d_total"]["reasons"]
+    assert all(x["total"] is None for x in body["losses"]) and all(
+        r["total"] is None for r in body["replays"]
+    )

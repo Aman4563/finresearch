@@ -64,10 +64,13 @@ def add_portfolio_joint_routes(app: FastAPI, clock: Callable[[], datetime] | Non
 
         return _holidays()
 
-    async def _base(assume_beta1: bool) -> tuple[Any, list[Any], date, str]:
+    async def _base(assume_beta1: bool) -> tuple[Any, Any, date, str]:
         from finresearch.portfolio import joint_risk as jl
 
         hist, today, fp = await app.state.portfolio_history()
+        if not hist.ok:  # no value history is not an empty portfolio: the holdings side is unknown
+            why = f"Your holdings: {hist.reason or 'under two days of value history'}; their risk is unknown"
+            return hist, why, today, fp
         return hist, jl.holdings(hist, assume_beta1=assume_beta1), today, fp
 
     @app.get("/api/portfolio/analytics/joint-risk")
@@ -95,7 +98,12 @@ def add_portfolio_joint_routes(app: FastAPI, clock: Callable[[], datetime] | Non
             async with Fetcher(app.state.markets) as f:  # set by portfolio_history() above
                 return await jl.replay_moves(hist, f, store, today, index_series=index_series)
 
-        moves = await cache.get(("joint-replay", fp, today), REPLAY_TTL_S, make) if hs else {}
+        if isinstance(hs, str):
+            moves = {r.day: (None, (hs,)) for r in bs.REPLAYS}
+        elif not hs:  # no open holding (and that is known): the holdings move by exactly 0
+            moves = {r.day: (0.0, ()) for r in bs.REPLAYS}
+        else:
+            moves = await cache.get(("joint-replay", fp, today), REPLAY_TTL_S, make)
         with session_scope() as s:
             fwd = jl.forward_status(s, today)
         out = jl.view(hs, b, notes, bs.horizon_clock(t, 1, hol), moves, fwd, hol)

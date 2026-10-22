@@ -52,8 +52,14 @@ class Book:
     reason: str | None = None
 
 
-def _holdings(hs: Sequence[Holding], factor: float) -> tuple[float | None, list[str]]:
+# The holdings: a list, or a str when the holdings themselves are unknown (no value history), saying why
+Holdings = Sequence[Holding] | str
+
+
+def _holdings(hs: Holdings, factor: float) -> tuple[float | None, list[str]]:
     """Σ β_i V_i × factor over holdings with a value, or None with each beta-less holding named."""
+    if isinstance(hs, str):
+        return None, [hs]
     why = [f"{h.name}: no beta ({h.how})" for h in hs if h.value > 0 and h.beta is None]
     if why:
         return None, why
@@ -82,7 +88,7 @@ class Delta:
         return self.total is not None
 
 
-def d_total(hs: Sequence[Holding], b: Book) -> Delta:
+def d_total(hs: Holdings, b: Book) -> Delta:
     hv, reasons = _holdings(hs, 1.0)
     fno: float | None
     if b.legs is None:
@@ -111,7 +117,7 @@ class Loss:
     share_reason: str | None
 
 
-def losses(hs: Sequence[Holding], b: Book, at: datetime, moves: Sequence[float] = MOVES) -> list[Loss]:
+def losses(hs: Holdings, b: Book, at: datetime, moves: Sequence[float] = MOVES) -> list[Loss]:
     """L(m) for each move. `at` is the horizon clock (book_scenarios.horizon_clock(now, 1, holidays))."""
     fno: dict[float, float] | None
     if b.legs is None:
@@ -176,7 +182,7 @@ class PreTrade:
     trade_reasons: tuple[str, ...]
 
 
-def pretrade(hs: Sequence[Holding], b: Book, candidate: Sequence[bs.BookLeg], at: datetime,
+def pretrade(hs: Holdings, b: Book, candidate: Sequence[bs.BookLeg], at: datetime,
              move: float = HEDGE_MOVE) -> PreTrade:  # fmt: skip
     after_b = Book(None if b.legs is None else [*b.legs, *candidate], b.market, b.reason)
     alone = Book(list(candidate), b.market)
