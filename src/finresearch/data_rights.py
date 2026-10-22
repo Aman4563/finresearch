@@ -63,6 +63,15 @@ PENDING: dict[str, str] = {
     # website without written permission". No separate terms-of-use page was found; personal use is not addressed.
     "fbil_rates": "FBIL disclaimer read 22-Oct-2026: no commercial use without written permission; personal use "
     "not addressed. Owner decision needed (#366)",
+    # NSE Clearing's combined OI / MWPL file (P1.12, #374, adapters.nse_mwpl): one zip a day on nsearchives, ~1,200
+    # requests for 2022-2026. Same NSE website terms as the datasets above ('Updated on: 29/10/2025', read through
+    # the 01-Oct-2026 Wayback memento for #362; not re-read for this dataset): no systematic or automated collection.
+    "nse_combineoi": f"{_NSE_TERMS}: automated collection prohibited; a new dataset (#374, ~1,200 daily files "
+    "2022-2026). Owner decision needed (#374)",
+    # NSE's dated F&O ban notice (fo_secban_DDMMYYYY.csv, P1.12, #374): 20 files, only to validate the derived ban
+    # history. Same terms as above.
+    "nse_secban": f"{_NSE_TERMS}: automated collection prohibited; 20 dated files to validate the ban history "
+    "(#374). Owner decision needed (#374)",
 }
 
 
