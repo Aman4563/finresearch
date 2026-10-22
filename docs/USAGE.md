@@ -83,6 +83,10 @@ GET requests don't change your records, the alert inputs or the forecast ledger:
   `POST /api/fno/strategy` and `GET /api/fno/{symbol}/suggest` response appends one row (the suggest GET is the one
   F&O read that writes, because a card shown and never logged cannot be recovered). Rows are never updated or
   deleted; `uv run finresearch fno card-log --since <ISO time with zone>` counts the verdicts before and after it.
+- The Strategy Lab's trial log (#380) is append-only: every lab run that ends appends one `lab_trial` row. Listing the
+  lab (`GET /api/fno/lab`) or a run (`GET /api/fno/lab/runs/{id}`) marks a run whose worker has gone silent as failed,
+  as before, and now also appends its trial row, so an abandoned run still counts in N. `GET /api/fno/lab/family`
+  and `GET /api/fno/lab/versions/{id}/promotion` only read.
 - `POST /api/portfolio/analytics/joint-risk/pretrade` (#397) is a POST only because it carries the candidate legs:
   it stores nothing. `GET /api/portfolio/analytics/joint-risk` writes nothing either (it fills only the price caches).
 
@@ -210,9 +214,6 @@ uv run finresearch forecasts calibration     # Brier score, skill vs the base ra
 uv run finresearch forecasts resolve         # score every due forecast now (the monitor does this daily)
 uv run finresearch forecasts cards           # record every logged F&O card (card_log) as a forecast (#376; the monitor does this hourly)
 uv run finresearch forecasts horse-race      # the pre-registered card horse race on resolved cards (#377; --window, --json); read only
-<<<<<<< HEAD
 uv run finresearch forecasts skill           # the live skill monitor per method x event kind x underlying (#378; --json); read only
-=======
 uv run finresearch forecasts horse-race --source replay --window seen   # the same race on one replayed card per stored session, 2022-26 (addendum A1, plus the business-time challenger p_rw_bus of addendum A2, #384, and the parity-forward Black-76 IV challenger p_rn_b76 of addendum A3, #385; design | seen | tuesday); read only, run outside market hours
->>>>>>> origin/main
 ```
