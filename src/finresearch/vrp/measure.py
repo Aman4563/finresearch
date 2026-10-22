@@ -72,15 +72,3 @@ def mf30(day: date, pair: tuple[date, date] | None, strikes: Mapping[date, Seque
         return Mf30(None, f"{which} term {pair[0] if bad is a else pair[1]}: {bad.reason}", a, b)
     v = mfiv.thirty_day(a.value, n1, b.value, n2)
     return Mf30(v, None if v is not None else "the 30-day combination is not positive", a, b)
-
-
-def strikes_from_settles(
-    rows: Sequence[tuple[float, str, float | None, float | None, int | None]],
-) -> list[mfiv.Strike]:
-    """(strike, right, settle, close, contracts) rows of one expiry -> Strike with a price only where the settle is
-    a market price (fno_history.market_settle); every listed strike is kept so the two-misses stop rule sees it."""
-    by: dict[float, dict[str, float | None]] = {}
-    for k, right, settle, close, n in rows:
-        ok = settle is not None and settle > 0 and fh.market_settle(settle, close, n)
-        by.setdefault(k, {"call": None, "put": None})[right] = settle if ok else None
-    return [mfiv.Strike(k, v["call"], v["put"]) for k, v in sorted(by.items())]

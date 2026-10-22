@@ -1,5 +1,5 @@
 """One session's 30-day model-free variance (P3.6, #389; vrp/measure.py): monthly expiries, India VIX's roll, the
-two-term combination on a flat-volatility chain and market-settle filtering."""
+two-term combination on a flat-volatility chain."""
 
 import math
 from datetime import date, timedelta
@@ -49,9 +49,3 @@ def test_flat_chain_gives_sigma_squared_at_thirty_days() -> None:
     assert out.near.t == pytest.approx(35 * 1440 / 525_600)
     miss = me.mf30(d, pair, {pair[0]: strikes[pair[0]]}, {})
     assert miss.value is None and miss.reason.startswith("next term 2024-03-28")
-
-
-def test_strikes_keep_listed_rows_but_price_only_market_settles() -> None:
-    rows = [(100.0, "call", 5.0, 5.0, 50), (100.0, "put", 4.0, 3.0, 50), (105.0, "call", 2.0, 2.0, 3)]
-    out = me.strikes_from_settles(rows)
-    assert out == [mfiv.Strike(100.0, 5.0, None), mfiv.Strike(105.0, None, None)]
