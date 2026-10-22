@@ -114,3 +114,88 @@ def test_an_expiry_moved_earlier_by_a_holiday_settles_on_the_last_session_and_ne
     net = gross - charges(150.0 * LOT, 300.0 * LOT, 2) - 300.0 * LOT * 0.00125  # exercise STT 0.125 %
     assert r.outcome == 1 and r.value == pytest.approx(net, abs=0.02)
     assert r.note.startswith("expiry on 2025-02-12") and "expiry moved to 2025-02-12" in r.note
+
+
+# --------------------------------------------------------------------------- the Monte Carlo and its error
+def _weekdays(a: date, b: date) -> list[date]:
+    from datetime import timedelta
+
+    return [a + timedelta(days=i) for i in range((b - a).days + 1) if (a + timedelta(days=i)).weekday() < 5]
+
+
+SESSIONS = _weekdays(date(2025, 1, 13), EXP)  # every weekday after the origin up to the expiry (a Thursday)
+
+
+def test_with_no_early_exit_the_path_pop_is_the_expiry_pop_within_its_monte_carlo_error():
+    """A hold-to-expiry debit spread never exits early, so its path PoP and mean P&L must match the lognormal expiry
+    model at the same volatility (fincalc.options, exact) within the reported Monte Carlo error."""
+    from finresearch.fincalc import charges as ch
+    from finresearch.fincalc import options as o
+    from finresearch.fnobook import path_pop as pp
+
+    dcs = [("call", 20000.0, "buy", 1, 300.0), ("call", 20400.0, "sell", 1, 150.0)]
+    inp = _inp(card(dcs, kind="debit_call", source="spec:nifty_dcs_m", profit=None, stop=None))
+    t, sigma, r = (EXP - D0).days / 365, 0.15, 0.065
+    got = pp.monte_carlo(
+        inp, _legs(inp), SESSIONS, f0=20000.0, sigma=sigma, beta=0.0, rate=r, n_paths=4000, seed=7
+    )
+    entry = ch.order_costs([ch.TradeLeg("option", "buy", 300.0, LOT), ch.TradeLeg("option", "sell", 150.0, LOT)],
+                           D0, 20.0).total  # fmt: skip
+    legs = [o.Leg("call", 20000.0, 300.0, LOT), o.Leg("call", 20400.0, 150.0, -LOT)]
+    stt = lambda p: ch.exercise_stt(LOT * max(0.0, p - 20000.0), EXP)  # noqa: E731
+    spot = 20000.0 * math.exp(-r * t)
+    want = o.outcome(legs, spot, t, sigma, r, r, entry, stt, steps=4000)
+    mean = sum(v * w for v, w in o.pnl_distribution(legs, spot, t, sigma, r, entry, stt, 4000))
+    assert got.n == 4000 and got.void == 0 and got.reasons == {"expiry": 1.0}
+    assert got.pop == pytest.approx(want.pop, abs=4 * got.pop_se)
+    assert got.ev == pytest.approx(mean, abs=4 * got.ev_se)
+    assert got.pop_se == pytest.approx(math.sqrt(got.pop * (1 - got.pop) / 4000))
+    assert got.pop_ci[0] < got.pop < got.pop_ci[1] and len(got.dots) == 20 and got.dots == sorted(got.dots)
+
+
+def test_reason_shares_sum_to_one_with_binomial_errors_and_a_seed_reproduces_the_run():
+    from finresearch.fnobook import path_pop as pp
+
+    inp = _inp(card(PCS, kind="put_credit"))
+    a = pp.monte_carlo(
+        inp, _legs(inp), SESSIONS, f0=20000.0, sigma=0.25, beta=-0.3, rate=0.065, n_paths=600, seed=3
+    )
+    b = pp.monte_carlo(
+        inp, _legs(inp), SESSIONS, f0=20000.0, sigma=0.25, beta=-0.3, rate=0.065, n_paths=600, seed=3
+    )
+    assert a == b
+    assert sum(a.reasons.values()) == pytest.approx(1.0) and set(a.reasons) <= {
+        "target",
+        "stop",
+        "time",
+        "expiry",
+    }
+    for k, p in a.reasons.items():
+        assert a.reasons_se[k] == pytest.approx(math.sqrt(p * (1 - p) / 600))
+    assert "stop" in a.reasons and "target" in a.reasons  # a 25 % vol path both stops out and takes profit
+
+
+def test_a_path_with_no_volatility_is_one_deterministic_replay():
+    """sigma -> 0: every path is the flat forward, so the Monte Carlo is the single replay of that path."""
+    from finresearch.fnobook import card_forecasts as cf
+    from finresearch.fnobook import path_pop as pp
+
+    inp = _inp(card(PCS, kind="put_credit"))
+    legs = _legs(inp)
+    got = pp.monte_carlo(
+        inp, legs, SESSIONS, f0=20000.0, sigma=1e-9, beta=0.0, rate=0.065, n_paths=50, seed=1
+    )
+    flat = [20000.0] * len(SESSIONS)
+    taus = [(EXP - d).days / 365 for d in SESSIONS]
+    one = cf.simulate(
+        inp,
+        pp.PathHistory(
+            inp,
+            legs,
+            SESSIONS,
+            flat,
+            lambda j, i: pp.leg_price(legs[j], 20000.0, 20000.0, taus[i], 0.065, 0.0),
+        ),
+    )
+    assert got.ev == pytest.approx(one.value, abs=0.01) and got.ev_se == pytest.approx(0.0, abs=1e-6)
+    assert got.reasons == {pp.REASONS[one.note.split(" on ")[0]]: 1.0}

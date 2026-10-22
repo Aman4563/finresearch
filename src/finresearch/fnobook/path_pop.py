@@ -109,3 +109,72 @@ class PathHistory:
             x.options[(self.expiry, leg.right, leg.strike)] = Quote(self.expiry, leg.right, leg.strike, px, px,
                                                                     leg.contracts, 0)  # fmt: skip
         return x
+
+
+# --------------------------------------------------------------------------- the Monte Carlo
+# the engine's exit reasons (backtest.engine.exit_reason, manage) grouped as the plan states them
+REASONS = {"profit_take": "target", "stop": "stop", "dte": "time", "before_expiry_day": "time", "expiry": "expiry",
+           "expiry_unsettled": "expiry"}  # fmt: skip
+DOTS = [(i + 0.5) / 20 for i in range(20)]
+
+
+@dataclass(frozen=True)
+class PathPop:
+    """The plan's outcome over `n` simulated paths, per set after costs and the engine's slippage. Every probability
+    carries its Monte Carlo standard error sqrt(p (1 - p) / n) (the paths are independent) and the PoP a Wilson 95 %
+    interval; the mean P&L carries sd / sqrt(n). A path the replay voids is counted in `void` and makes every
+    estimate unknown (never dropped silently)."""
+
+    n: int
+    void: int
+    pop: float | None  # P(net > 0) under the exit rules
+    pop_se: float | None
+    pop_ci: tuple[float, float] | None
+    ev: float | None  # mean net P&L, rupees per set
+    ev_se: float | None
+    reasons: dict[str, float]  # target / stop / time / expiry: the share of paths that left that way
+    reasons_se: dict[str, float]
+    dots: list[float]  # 20 net P&L quantiles at (i + 0.5) / 20
+    void_reason: str | None = None
+
+
+def monte_carlo(inp: dict[str, Any], legs: Sequence[PathLeg], sessions: Sequence[date], *, f0: float, sigma: float,
+                beta: float, rate: float, n_paths: int, seed: int) -> PathPop:  # fmt: skip
+    """`n_paths` forward paths (module docstring) on `sessions` (after the origin, up to the expiry's last session),
+    each replayed by `card_forecasts.simulate`. Times are calendar days / 365 from the origin; the last session's is
+    the expiry date's, so the terminal variance is sigma^2 x t whatever the holiday."""
+    from finresearch.fincalc.options import weighted_quantiles
+    from finresearch.fincalc.signals import wilson
+    from finresearch.fnobook.card_forecasts import simulate
+
+    expiry, d0 = date.fromisoformat(inp["expiry"]), date.fromisoformat(inp["entry_day"])
+    days = list(sessions)
+    times = np.array([(d - d0).days for d in days[:-1]] + [(expiry - d0).days], dtype=float) / 365
+    taus = [(expiry - d).days / 365 for d in days]
+    paths = forward_paths(f0, sigma, times, n_paths, np.random.default_rng(seed))
+    nets: list[float] = []
+    counts: dict[str, int] = {}
+    void, why = 0, None
+    for f in paths:
+
+        def price(j: int, i: int, f: np.ndarray = f) -> float:
+            return leg_price(legs[j], float(f[i]), f0, taus[i], rate, beta)
+
+        r = simulate(inp, PathHistory(inp, legs, days, f, price))
+        if r.outcome is None or r.value is None:
+            void, why = void + 1, why or r.note
+            continue
+        nets.append(float(r.value))
+        k = REASONS.get(r.note.split(" on ")[0], r.note.split(" on ")[0])
+        counts[k] = counts.get(k, 0) + 1
+    n = len(nets)
+    if void or not n:
+        return PathPop(n_paths, void, None, None, None, None, None, {}, {}, [], why or "no path")
+    wins = sum(1 for v in nets if v > 0)
+    p = wins / n
+    mean = sum(nets) / n
+    sd = math.sqrt(sum((v - mean) ** 2 for v in nets) / (n - 1)) if n > 1 else 0.0
+    shares = {k: c / n for k, c in sorted(counts.items())}
+    return PathPop(n, 0, p, math.sqrt(p * (1 - p) / n), wilson(wins, n), mean, sd / math.sqrt(n), shares,
+                   {k: math.sqrt(s * (1 - s) / n) for k, s in shares.items()},
+                   [round(v, 2) for v in weighted_quantiles([(v, 1.0) for v in nets], DOTS)])  # fmt: skip
