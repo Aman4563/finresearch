@@ -77,3 +77,33 @@ def test_loader_refuses_the_vault_and_an_unregistered_spec(monkeypatch) -> None:
     monkeypatch.setattr(race, "TRAIL", 21)
     with pytest.raises(prereg.PreregistrationError):
         data.load_sessions(None, "NIFTY", date(2022, 1, 1), date(2022, 6, 30))  # type: ignore[arg-type]
+
+
+def test_cli_runs_the_registered_race_read_only_and_prints_the_verdict(env, monkeypatch) -> None:
+    import json
+
+    from test_volrace_race import sessions, stub_fit
+    from typer.testing import CliRunner
+
+    from finresearch.cli import app
+    from finresearch.fincalc import realvol as rv
+    from finresearch.fincalc import taildist as td
+    from finresearch.volrace import data
+
+    seen = {}
+
+    def fake_load(s, symbol, start, end):
+        seen.update(symbol=symbol, start=start, end=end)
+        return sessions(300), {"no_prev_close": 0, "no_iv": 0, "invalid_bar": 0}
+
+    monkeypatch.setattr(data, "load_sessions", fake_load)
+    monkeypatch.setattr(rv, "garch11_fit", stub_fit)
+    monkeypatch.setattr(td, "gjr_fit", lambda r, window: stub_fit(r, window))
+    out = CliRunner().invoke(app, ["fno", "vol-race", "--json"])
+    assert out.exit_code == 0, out.output
+    res = json.loads(out.output)
+    assert seen == {"symbol": "NIFTY", "start": date(2022, 1, 1), "end": date(2026, 12, 31)}
+    assert res["window"] == "recent" and res["burn_in"] == 250 and res["registration"].startswith("5f04e079")
+    assert set(res["horizons"]) == {"5", "10", "22"} and "verdict" in res
+    text = CliRunner().invoke(app, ["fno", "vol-race"])
+    assert text.exit_code == 0 and "har_iv" in text.output and "QLIKE" in text.output
