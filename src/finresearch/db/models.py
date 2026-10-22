@@ -1366,6 +1366,10 @@ class PaperStrategy(Base):
     gross_pnl: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
     net_pnl: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
     note: Mapped[str | None] = mapped_column(Text)
+    # #383: the card it was taken from (card_log row and the card's index in it), for the implementation shortfall
+    # against the card's mids; None = not taken from a card (its shortfall is unknown)
+    card_log_id: Mapped[int | None] = mapped_column(BigInteger)
+    card_index: Mapped[int | None] = mapped_column(Integer)
     legs: Mapped[list[PaperLeg]] = relationship(back_populates="strategy", order_by="PaperLeg.id")
 
 
@@ -1406,6 +1410,40 @@ class FnoExitRule(Base):
     note: Mapped[str | None] = mapped_column(Text)
     fired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     alert_id: Mapped[int | None] = mapped_column(Integer)
+
+
+class FnoMark(Base):
+    """#383: one open F&O leg's end-of-day mark, paper or real (Groww), written once per IST session after NSE's
+    bhavcopy is loaded (monitor.fno_marks): the leg's settlement price, the underlying's close, the IV implied by them
+    at 15:30 IST and T. Never updated (the P&L explain and P4.4's forward test read the same rows); an unknown price,
+    spot or IV is NULL with `note` saying why, never 0. `leg_key` = "paper_leg:<id>" or "groww:<trading symbol>";
+    `qty` is signed units (+ long, − short), NULL when Groww did not confirm the direction. Personal: never sent to a
+    model."""
+
+    __tablename__ = "fno_mark"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    day: Mapped[date] = mapped_column(Date, index=True)
+    book: Mapped[str] = mapped_column(String(5))  # paper | real
+    leg_key: Mapped[str] = mapped_column(String(80))
+    paper_id: Mapped[int | None] = mapped_column(ForeignKey("paper_strategy.id"), index=True)
+    position_key: Mapped[str | None] = mapped_column(String(60))  # real: "NIFTY:2026-10-27"
+    symbol: Mapped[str] = mapped_column(String(30))
+    expiry: Mapped[date] = mapped_column(Date)
+    right: Mapped[str] = mapped_column(String(6))  # call | put | future
+    strike: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))  # None for a future
+    qty: Mapped[int | None] = mapped_column(Integer)
+    price: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    price_source: Mapped[str | None] = mapped_column(String(80))
+    spot: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    spot_source: Mapped[str | None] = mapped_column(String(80))
+    iv: Mapped[Decimal | None] = mapped_column(Numeric(10, 6))  # a fraction a year
+    t_years: Mapped[Decimal | None] = mapped_column(
+        Numeric(12, 8)
+    )  # to 15:30 IST on expiry, from 15:30 IST that day
+    note: Mapped[str | None] = mapped_column(Text)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (UniqueConstraint("day", "leg_key", name="uq_fno_mark_day_leg"),)
 
 
 # --------------------------------------------------------------------------- exchange disclosures (finresearch.disclosures)

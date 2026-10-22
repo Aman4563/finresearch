@@ -490,6 +490,14 @@ def _spawn_fno_bhav(now: datetime) -> None:
                 log.info("F&O direction forecasts: %s", res)
         except Exception:
             log.warning("F&O direction forecasts failed", exc_info=True)
+        try:  # #383: the daily marks of open paper and Groww F&O legs, once today's file is loaded
+            from finresearch.monitor.fno_marks import fno_marks_step
+
+            res = await fno_marks_step(now)
+            if res:
+                log.info("F&O marks: %s", res)
+        except Exception:
+            log.warning("F&O marks failed", exc_info=True)
 
     _BACKGROUND["fno_bhav"] = asyncio.create_task(run())
 
