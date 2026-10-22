@@ -1656,6 +1656,61 @@ def fno_review(
         )
 
 
+@fno_app.command("risk-replay")
+def fno_risk_replay(
+    symbol: str = typer.Option("NIFTY", "--symbol"),
+    start: str = typer.Option("2024-01-01", "--from", help="first firing day reported (YYYY-MM-DD)"),
+    end: str | None = typer.Option(None, "--to", help="last day (default today, IST)"),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """Replay the risk alerts' shock rules (#398: IV30 shock, cumulative shock, gap) over the stored fno_iv_eod and
+    fno_bhav history: the days they fire, per-year firings and false alarms (a synthetic short 30-day ATM straddle
+    losing no more than 1 % of the forward within 2 sessions; at most 12 a year), and whether the issue's scenario
+    days and the Feb-Mar 2026 episode fire. Public market data only; reads only, writes nothing."""
+    import json as _json
+    from datetime import date as _date
+
+    from sqlalchemy import select
+
+    from finresearch.alerts.risk_readers import front
+    from finresearch.db import session_scope
+    from finresearch.db.models import FnoIvEod
+    from finresearch.fincalc import risk_alerts as ra
+    from finresearch.fincalc.dates import today_ist
+
+    sym, first = symbol.upper(), _date.fromisoformat(start)
+    last = _date.fromisoformat(end) if end else today_ist()
+    with session_scope() as s:
+        ivs = [(d, None if v is None else float(v)) for d, v in s.execute(
+            select(FnoIvEod.day, FnoIvEod.iv_30d).where(FnoIvEod.symbol == sym, FnoIvEod.day <= last)
+            .order_by(FnoIvEod.day))]  # fmt: skip
+        fut = front(s, sym, last)
+    firings = [f for f in ra.replay(ivs, fut) if f.day >= first]
+    out = {"symbol": sym, "from": first.isoformat(), "to": last.isoformat(),
+           "series": f"fno_iv_eod.iv_30d and fno_bhav front future of {sym} ({len(ivs)} IV30 days, {len(fut)} "
+                     "future sessions)",
+           "false_alarm_rule": f"a firing after which a short {ra.STRADDLE_DAYS}-day ATM straddle loses at most "
+                               f"{ra.FALSE_ALARM_LOSS:.0%} of the forward within {ra.FOLLOW_SESSIONS} sessions",
+           "summary": ra.replay_summary(firings),
+           "firings": [{"day": f.day.isoformat(), "rules": list(f.rules), "values": {k: round(v, 3) for k, v in
+                        f.values.items()}, "loss": None if f.loss is None else round(f.loss, 5),
+                        "false_alarm": f.false_alarm} for f in firings]}  # fmt: skip
+    if as_json:
+        print(_json.dumps(out, indent=2))
+        return
+    console.print(f"{sym} {out['from']}..{out['to']}: {out['series']}")
+    for y, c in sorted(out["summary"]["years"].items()):
+        console.print(
+            f"  {y}: {c['firings']} firings, {c['false_alarms']} false alarms, {c['unscored']} unscored"
+        )
+    for d, hit in out["summary"]["scenarios"].items():
+        console.print(f"  scenario {d}: {'fired' if hit else 'did NOT fire'}")
+    for w, hit in out["summary"]["episodes"].items():
+        console.print(f"  episode {w}: {'fired' if hit else 'did NOT fire'}")
+    for f in out["firings"]:
+        console.print(f"  {f['day']} {','.join(f['rules'])} loss {f['loss']} false alarm {f['false_alarm']}")
+
+
 backtest_app = typer.Typer(
     no_args_is_help=True,
     help="Backtest the pre-registered F&O strategies on the stored bhavcopy history (#307)",
@@ -1768,6 +1823,55 @@ def fno_backtest_compare(
         x = pooled[key]
         console.print(f"{name}: {x['paired']} pairs on {x['expiries']} expiries, mean D {_num(x['mean_d'], 0)}, "
                       f"t {_num(x['t_d'])}, one-sided p {_num(x['p_one_sided'], 3)}")  # fmt: skip
+
+
+@backtest_app.command("recal-sim")
+def fno_backtest_recal_sim(
+    out: Path = typer.Option(..., "--json", help="Write every result here"),
+    parts: str = typer.Option(
+        "abc", help="Which of #381's simulations: a (DSR rule), b (coverage), c (DM size)"
+    ),
+    history_url: str | None = typer.Option(
+        None,
+        help="(a) on the real out-of-sample seller P&L from this F&O history database (read only); "
+        "default: a synthetic seller-like base, labelled so",
+    ),
+    programmes: int = typer.Option(2000, help="(a) programmes per N and planted Sharpe"),
+    draws: int = typer.Option(500, help="bootstrap draws per programme (a) or per series (b)"),
+    reps: int = typer.Option(2000, help="(b) series per DGP and (c) replications per h"),
+    seed: int = typer.Option(381),
+) -> None:
+    """#381's validation simulations (backtest/recal_sim.py): (a) FWER and power of five rules, (b) 95 % CI coverage,
+    (c) the DM test's size. Pure computation: nothing is written to any database."""
+    import time
+
+    from finresearch.backtest import recal_sim as rs
+
+    res: dict = {"seed": seed, "parts": parts}
+    t0 = time.time()
+    if "c" in parts:
+        res["c_dm_size"] = [rs.dm_size(h, n, reps, seed + h) for n in (200, 570) for h in (5, 10, 22)]
+    if "b" in parts:
+        kinds = ["iid", "ar1", "garch_t", "ar1_garch_t"]
+        res["b_coverage"] = {str(n): rs.coverage(kinds, n, reps, draws, seed) for n in (60, 570)}
+    if "a" in parts:
+        if history_url:
+            from finresearch.backtest.dbhistory import DbHistory
+
+            base, keys = rs.seller_returns(DbHistory(history_url))
+            res["a_base"] = {
+                "source": "real out-of-sample seller P&L",
+                "keys": keys,
+                "days": int(base.shape[0]),
+            }
+        else:
+            base = rs.synthetic_base(570, 4, seed)
+            res["a_base"] = {"source": "SYNTHETIC seller-like series (not the real P&L)", "days": 570}
+        res["a_dsr_rule"] = [rs.dsr_rule_sim(base, n, sr, programmes, draws, seed + n)
+                             for n in (8, 30) for sr in (0.0, 0.5, 1.0, 1.5)]  # fmt: skip
+    res["seconds"] = round(time.time() - t0, 1)
+    out.write_text(json.dumps(res, indent=1))
+    console.print(f"written: {out} ({res['seconds']} s)")
 
 
 def _num(v: float | None, d: int = 2) -> str:

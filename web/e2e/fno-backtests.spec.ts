@@ -20,6 +20,9 @@ test("fno backtests: candidate with setup, failing strategy plainly labelled, un
   const failing = page.locator("[id='nifty_dcs_m']");
   await expect(failing.getByText("fails: OOS deflated Sharpe")).toBeVisible();
   await expect(failing.getByText(/OOS deflated Sharpe: unknown/)).toBeVisible();
+  // #381: the index opportunity line reads unknown (never ₹0) and the v2 shadow never replaces the status
+  await expect(failing.getByText(/Difference unknown/)).toBeVisible();
+  await expect(failing.getByText(/Criteria v2 \(shadow, not adopted\): would fail/)).toBeVisible();
   if (phone(page)) await expectNoHorizontalOverflow(page);
   api.expectClean();
 });

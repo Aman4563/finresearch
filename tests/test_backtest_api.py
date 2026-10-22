@@ -148,3 +148,27 @@ def test_a_next_print_run_is_a_sensitivity_never_the_evidence(bt_db):
         bstore.save(s, nxt)
     with session_scope() as s:
         assert bstore.latest_run(s).id == same_id
+
+
+def test_served_run_carries_the_v2_shadow_and_the_opportunity_line(bt_db):
+    """#381: each judged strategy shows its criteria v2 shadow (never its status) and the index opportunity cost,
+    which is unknown while no NIFTY index rows are stored (never 0)."""
+    from starlette.testclient import TestClient
+
+    from finresearch.api import create_app
+    from finresearch.backtest import evaluate
+    from finresearch.backtest import store as bstore
+    from finresearch.db import session_scope
+
+    mem = fs.history(date(2023, 6, 1), date(2025, 1, 31))
+    rep = json.loads(json.dumps(evaluate.evaluate(mem, stock=None, source="synthetic"), default=str))
+    with session_scope() as s:
+        s.execute(text("TRUNCATE index_eod"))
+        bstore.save(s, rep)
+    with TestClient(create_app()) as c:
+        run = c.get("/api/fno/backtests").json()["run"]
+    dcs = {r["key"]: r for r in run["strategies"]}["nifty_dcs_m"]
+    assert dcs["status"] == "fails" and dcs["criteria_v2"]["status"] == "shadow_not_adopted"
+    o = dcs["opportunity"]
+    assert o["excess_after_tax"] is None and "unknown" in o["reason"]
+    assert o["fno_net"] == dcs["windows"]["oos"]["total_net"]

@@ -222,9 +222,10 @@ def _position_returns(
     return keep, common, mat
 
 
-def risk(
-    h: History, rf: RiskFree, sectors: dict[str, str], stress: list[dict[str, Any]] | None = None
-) -> dict[str, Any]:
+def risk(h: History, rf: RiskFree, sectors: dict[str, str], stress: list[dict[str, Any]] | None = None, *,
+         var_ledger: dict[str, Any] | None = None) -> dict[str, Any]:  # fmt: skip
+    """The Risk tab. `var_ledger`: the logged VaR's backtest (portfolio.var_ledger.backtest, #399), read by the
+    route; it is left out when not given."""
     out = base(h)
     out["risk_free"] = rf.to_json()
     if not h.ok:
@@ -259,6 +260,8 @@ def risk(
     real.update(_relative(r, rb, n))
     real["rolling"] = _rolling(days, r, rb)
     real["var_backtest"] = _var_backtest(r)
+    if var_ledger is not None:
+        real["var_ledger"] = var_ledger
     real["drawdowns"] = [_episode(days, e) for e in am.drawdown_episodes(idx, top=5)]
     # drawdown and recovery
     dd = am.drawdown_recovery(idx)
@@ -283,7 +286,9 @@ def risk(
         tail = sum(1 for x in r if x <= -v1)
         real["var_1d"] = {**metric(v1, "fraction", n=n, how="-5th percentile of daily returns (historical)"),
                           "inr": _r(v1 * v_end, 0),
-                          "note": f"about 1 day in 20 lost more; {tail} of {n} days in this window did"}  # fmt: skip
+                          "note": f"in-sample: {tail} of {n} days in this window lost more, about 1 in 20 by "
+                                  "construction, so it checks nothing; the backtests below test it out of sample "
+                                  "(#399)"}  # fmt: skip
         real["cvar_1d"] = {**metric(c1, "fraction", n=n, how="average loss on the worst 5 % of days"),
                            "inr": _r(c1 * v_end, 0)}  # fmt: skip
         real["var_21d"] = {**metric(v21, "fraction", n=len(hr), how="-5th percentile of overlapping 21-day returns"),
@@ -401,8 +406,14 @@ def _var_backtest(r: list[float]) -> dict[str, Any]:
     if len(r) < need:
         out["reason"] = f"needs {need} daily returns (about 2 years); have {len(r)}"
         return out
-    hits = am.var_exceptions(r, VAR_WINDOW)
-    t, x = len(hits), sum(hits)
+    out.update(coverage_test(am.var_exceptions(r, VAR_WINDOW)))
+    return out
+
+
+def coverage_test(hits: Sequence[bool | int]) -> dict[str, Any]:
+    """Kupiec, Christoffersen and the joint test of a 1-day 95 % VaR's exceptions (in day order), with the verdict and
+    its plain-words note. Shared by the walk-forward backtest and the logged one (portfolio.var_ledger, #399)."""
+    t, x = len(hits), sum(int(h) for h in hits)
     lr_uc, p_uc = am.kupiec(t, x, 0.05)
     lr_ind = am.christoffersen_ind(hits)
     p_ind, p_cc = am.chi2_sf(lr_ind, 1), am.chi2_sf(lr_uc + lr_ind, 2)
@@ -412,11 +423,10 @@ def _var_backtest(r: list[float]) -> dict[str, Any]:
             "too_few": "Losses beyond the VaR came less often than 1 day in 20: the VaR overstated your risk.",
             "clustered": "The count is plausible but the exceptions bunch together: risk rose in spells the "
                          "VaR was slow to see."}[verdict]  # fmt: skip
-    out.update(days=t, exceptions=x, expected=_r(0.05 * t, 2), lr_uc=_r(lr_uc, 3), p_uc=_r(p_uc, 4),
-               lr_ind=_r(lr_ind, 3), p_ind=_r(p_ind, 4), p_cc=_r(p_cc, 4), verdict=verdict,
-               note=note + f" Tests at p < 0.05; with {t} days the test has limited power (12.5 expected exceptions "
-                           "in 250 days at 95 %).")  # fmt: skip
-    return out
+    return dict(days=t, exceptions=x, expected=_r(0.05 * t, 2), lr_uc=_r(lr_uc, 3), p_uc=_r(p_uc, 4),
+                lr_ind=_r(lr_ind, 3), p_ind=_r(p_ind, 4), p_cc=_r(p_cc, 4), verdict=verdict,
+                note=note + f" Tests at p < 0.05; with {t} days the test has limited power (12.5 expected exceptions "
+                            "in 250 days at 95 %).")  # fmt: skip
 
 
 def _episode(days: list[date], e: am.Episode) -> dict[str, Any]:

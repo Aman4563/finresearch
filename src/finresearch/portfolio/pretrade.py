@@ -15,6 +15,9 @@ Items:
   /portfolio) and the 25 % sector rule of thumb
   (portfolio.analytics.SECTOR_LIMIT_PCT); HHI and the effective number of holdings before and after (a buy is
   assumed to bring new money; a sale's proceeds leave the portfolio);
+- marginal risk (#399): the portfolio's volatility before and after the trade, the holding's marginal contribution
+  MCR_i = (Σw)_i / σ_p and its correlation with the largest other holding, over today's mix and the last 12 months
+  of prices (the value history; unknown with the reason when it is not available or too short);
 - tax (sales): the open lots the sale takes first-in-first-out (CBDT Circular 768), each taxed with the dated rules
   (portfolio.tax.evaluate), the change in this financial year's tax incl. cess against the year's realised gains
   (fincalc.tax.tax_delta), and lots that turn long-term within 60 days (portfolio.tax_watch.lt_date) with the tax
@@ -193,6 +196,52 @@ def concentration_items(s: Session, p: Plan, key: str, h: PortfolioHolding | Non
                     sector=sector, sector_after=_f(sec_after), n_effective_before=round(nb, 2) if nb else None,
                     n_effective_after=round(na, 2), limit_pct=limit, limit_source=limit_src))  # fmt: skip
     return out
+
+
+def marginal_risk_item(p: Plan, h: PortfolioHolding | None, hist: Any, why: str | None) -> dict[str, Any]:
+    """#399: the portfolio's volatility before and after the trade under today's mix over the last 12 months of
+    prices (the Risk tab's "where today's risk comes from" sample), the holding's marginal contribution MCR_i and its
+    correlation with the largest other holding. Information, no threshold: unknown carries its reason."""
+    from finresearch.portfolio import analytics_math as am
+    from finresearch.portfolio.analytics import MIN_RC, _position_returns
+
+    label, src = "Marginal risk", "value history (12 months of prices); portfolio.analytics_math.trade_risk"
+    if hist is None or not getattr(hist, "positions", None):
+        return item("marginal_risk", label, "unknown", None, f"unknown: {why or 'no value history yet'}", src)
+    keep, common, mat = _position_returns(hist)
+    keys = {f"NSE:{(p.nse_symbol or '').upper()}", f"BSE:{p.bse_code}", f"MF:{p.scheme_code}"}
+    i = next(
+        (k for k, x in enumerate(keep) if (h is not None and h.id in x.holding_ids) or x.key in keys), None
+    )
+    if i is None:
+        return item("marginal_risk", label, "unknown", None, "unknown: no price history for this instrument among "
+                    "today's holdings (an instrument you don't hold yet is not fetched)", src)  # fmt: skip
+    if len(common) < MIN_RC:
+        return item("marginal_risk", label, "unknown", None, f"unknown: needs {MIN_RC} common trading days of prices "
+                    f"for today's holdings; have {len(common)}", src)  # fmt: skip
+    before = [x.value for x in keep]
+    after = list(before)
+    trade = float(p.quantity * p.price)
+    after[i] = after[i] + trade if p.side == "buy" else max(0.0, after[i] - trade)
+    others = [k for k in range(len(keep)) if k != i]
+    j = max(others, key=lambda k: before[k]) if others else None
+    try:
+        tr = am.trade_risk(before, after, mat, i, j)
+    except ValueError as e:
+        return item("marginal_risk", label, "unknown", None, f"unknown: {e}", src)
+    effect = "raises" if tr.mcr > tr.sigma_before else "lowers"
+    detail = (f"volatility {tr.sigma_before:.1%} → {tr.sigma_after:.1%} a year; {keep[i].name}'s marginal risk is "
+              f"{tr.mcr:.1%} against the portfolio's {tr.sigma_before:.1%}, so new money in it {effect} the "
+              "portfolio's volatility")  # fmt: skip
+    if j is not None:
+        share = before[j] / sum(before)
+        corr = "unknown" if tr.correlation is None else f"{tr.correlation:.2f}"
+        detail += f"; correlation with your largest other holding, {keep[j].name} ({share:.0%}): {corr}"
+    detail += f" ({len(common)} trading days to {common[-1]}; a sample estimate, not a forecast)"
+    return item("marginal_risk", label, "info", round(tr.sigma_after, 4), detail, src,
+                volatility_before=round(tr.sigma_before, 4), mcr=round(tr.mcr, 4),
+                correlation=None if tr.correlation is None else round(tr.correlation, 4),
+                largest=keep[j].name if j is not None else None, days=len(common))  # fmt: skip
 
 
 # --------------------------------------------------------------------------- tax, exit load, ELSS lock
@@ -521,7 +570,10 @@ def _flag_key(s: Session, key: str, h: PortfolioHolding | None) -> str:
     return key
 
 
-async def checklist(s: Session, p: Plan, *, live_signal: SignalFetch | None = None) -> dict[str, Any]:
+async def checklist(s: Session, p: Plan, *, live_signal: SignalFetch | None = None, history: Any = None,
+                    history_note: str | None = None) -> dict[str, Any]:  # fmt: skip
+    """`history`: the value history (portfolio.history.History) for the marginal-risk line, or None with
+    `history_note` saying why."""
     h = s.get(PortfolioHolding, p.holding_id) if p.holding_id else None
     if p.holding_id and h is None:
         raise LookupError(f"unknown holding {p.holding_id}")
@@ -533,6 +585,7 @@ async def checklist(s: Session, p: Plan, *, live_signal: SignalFetch | None = No
     if p.side == "sell":
         items += sell_items(s, p, h)
     items += concentration_items(s, p, key, h)
+    items.append(marginal_risk_item(p, h, history, history_note))
     items.append(await signal_item(s, p, h, live_signal))
     items.append(red_flag_item(_flag_key(s, key, h), p.asset_type))
     items.append(thesis_item(s, p, key, h))

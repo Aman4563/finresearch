@@ -847,7 +847,7 @@ def backtest_evidence(with_setups: bool = True) -> dict[str, Any] | None:
 
     from sqlalchemy.exc import SQLAlchemyError
 
-    from finresearch.backtest import setup, specs
+    from finresearch.backtest import benchmark, setup, specs
     from finresearch.backtest import store as bstore
     from finresearch.backtest.dbhistory import DbHistory
     from finresearch.db import session_scope
@@ -856,6 +856,8 @@ def backtest_evidence(with_setups: bool = True) -> dict[str, Any] | None:
         with session_scope() as s:
             run = bstore.latest_run(s)
             rep = bstore.run_json(s, run) if run else None
+            if rep is not None:  # #381: the after-tax index opportunity cost, computed on read
+                benchmark.attach(rep, s)
     except SQLAlchemyError:  # the #307 migration has not run on this database yet
         return None
     if rep is None:

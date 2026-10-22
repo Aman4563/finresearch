@@ -29,6 +29,8 @@ const RISK = {
     ],
     var_backtest: { level: 0.95, window: 250, how: "each day against the 250 days before it", days: 349, exceptions: 29, expected: 17.45,
       p_uc: 0.0083, p_ind: 0.41, p_cc: 0.026, verdict: "too_many", note: "Losses beyond the VaR came more often than 1 day in 20: the VaR understated your risk." },
+    var_ledger: { level: 0.95, window: 250, how: "e2e", logged: 41, resolved: 38, open: 1, void: 2,
+      reason: "needs 250 logged days with a known outcome; have 38" },
   },
   hypothetical: { note: "e2e", reason: "needs 120 common days", positions: [], sectors: [] },
   stress: [
@@ -65,7 +67,9 @@ test("risk: relative, rolling, drawdown and VaR-backtest lines; unmapped stress 
   const dd = page.locator("section").filter({ has: page.getByRole("heading", { name: "Largest drawdowns" }) });
   await expect(dd.getByText("-21.4%")).toBeVisible();
   await expect(dd.getByText("not yet")).toBeVisible();
-  await expect(page.getByText(/VaR backtest: 29 of 349 days lost more than the 1-day VaR \(expected 17\.\d\)/)).toBeVisible();
+  // #399: the logged VaR is not tested until 250 days have an outcome: its reason, never a verdict
+  await expect(page.getByText("Logged VaR backtest: needs 250 logged days with a known outcome; have 38.")).toBeVisible();
+  await expect(page.getByText(/VaR backtest \(walk-forward\): 29 of 349 days lost more than the 1-day VaR \(expected 17\.\d\)/)).toBeVisible();
   await expect(page.getByText(/understated your risk/)).toBeVisible();
 
   const stress = page.locator("section").filter({ has: page.getByRole("heading", { name: "Stress scenarios" }) });
