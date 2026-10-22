@@ -89,3 +89,67 @@ def test_fit_cannot_split_events_between_the_same_expiries_or_after_the_last():
 def test_fit_with_too_few_expiries_is_unknown():
     got = ev.fit(_pts()[1:], [EV_A, EV_B])  # 2 expiries, 3 unknowns (base, A, B)
     assert got[EV_A].j2 is None and got[EV_B].j2 is None and "too few" in got[EV_A].reason
+
+
+# ---------------------------------------------------------------- realised event moves, point in time
+from datetime import datetime, timedelta  # noqa: E402
+
+from finresearch.eventcal import calendar as cal  # noqa: E402
+from finresearch.fincalc.dates import IST  # noqa: E402
+
+
+def _ev(kind: str, day: date, known: date, *, withdrawn: date | None = None, at: datetime | None = None) -> cal.Event:
+    eod = lambda d: datetime(d.year, d.month, d.day, 23, 59, tzinfo=IST)  # noqa: E731
+    return cal.Event(type=kind, tier=1, scope="IN", day=day, at=at, title=f"{kind} {day}",
+                     source_url="https://example.gov/x", known_since=eod(known),
+                     withdrawn_since=eod(withdrawn) if withdrawn else None)  # fmt: skip
+
+
+# Synthetic closes: 100 on every weekday of June 2024, except the event days below.
+CLOSES = {date(2024, 6, 1) + timedelta(days=i): 100.0 for i in range(30) if (date(2024, 6, 1) + timedelta(days=i)).weekday() < 5}
+CLOSES[date(2024, 6, 4)] = 94.0  # results day (a Tuesday): -6 %
+CLOSES[date(2024, 6, 5)] = 94.0
+CLOSES.update({d: 94.0 for d in CLOSES if d > date(2024, 6, 4)})
+CLOSES[date(2024, 6, 10)] = 95.0  # a Saturday event (8-Jun) lands on Monday's close
+
+
+def test_realised_move_is_last_close_before_to_first_close_on_or_after_the_event():
+    got = ev.realised_move(_ev("general_election", date(2024, 6, 4), date(2024, 3, 16)), CLOSES)
+    assert got.r == pytest.approx(math.log(94 / 100), rel=1e-12)
+    assert (got.start, got.end) == (date(2024, 6, 3), date(2024, 6, 4))
+    sat = ev.realised_move(_ev("union_budget", date(2024, 6, 8), date(2024, 6, 1)), CLOSES)
+    assert (sat.start, sat.end) == (date(2024, 6, 7), date(2024, 6, 10))
+    assert sat.r == pytest.approx(math.log(95 / 94), rel=1e-12)
+
+
+def test_realised_move_after_the_close_lands_on_the_next_session():
+    late = datetime(2024, 6, 3, 23, 30, tzinfo=IST)  # after NSE's close: moves the 4th
+    got = ev.realised_move(_ev("fomc", date(2024, 6, 3), date(2024, 1, 1), at=late), CLOSES)
+    assert (got.start, got.end) == (date(2024, 6, 3), date(2024, 6, 4))
+
+
+def test_realised_move_with_a_missing_close_is_unknown():
+    gappy = {d: c for d, c in CLOSES.items() if not date(2024, 6, 3) <= d <= date(2024, 6, 12)}
+    got = ev.realised_move(_ev("rbi_mpc", date(2024, 6, 7), date(2024, 3, 1)), gappy)
+    assert got.r is None and "close" in got.reason
+
+
+def test_history_uses_only_events_known_and_settled_before_as_of():
+    events = [
+        _ev("general_election", date(2024, 6, 4), date(2024, 3, 16)),
+        _ev("rbi_mpc", date(2024, 6, 7), date(2024, 6, 20)),  # announced after the date (back-filled): unseen before
+        _ev("rbi_mpc", date(2024, 6, 6), date(2024, 3, 1), withdrawn=date(2024, 6, 2)),  # moved: never happened
+    ]
+    on_4th = ev.history(events, CLOSES, datetime(2024, 6, 4, 12, 0, tzinfo=IST))
+    assert on_4th == {}  # the 4th's close is not known at noon on the 4th
+    after = ev.history(events, CLOSES, datetime(2024, 6, 4, 16, 0, tzinfo=IST))
+    assert [m.day for m in after["general_election"].moves] == [date(2024, 6, 4)]
+    assert "rbi_mpc" not in after
+    later = ev.history(events, CLOSES, datetime(2024, 6, 25, 16, 0, tzinfo=IST))
+    assert [m.day for m in later["rbi_mpc"].moves] == [date(2024, 6, 7)]  # the moved date never counts
+
+
+def test_type_stats_median_and_mean_square():
+    st = ev.TypeStats("rbi_mpc", [ev.Move(date(2024, 1, d), r, None, None, None) for d, r in
+                                  [(1, 0.01), (2, -0.03), (3, 0.02)]])  # fmt: skip
+    assert st.n == 3 and st.median_abs == pytest.approx(0.02) and st.mean_r2 == pytest.approx(0.0014 / 3)

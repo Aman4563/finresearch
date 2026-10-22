@@ -21,9 +21,13 @@ registration).
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
-from datetime import date
-from statistics import NormalDist
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta
+from statistics import NormalDist, median
+
+from finresearch.eventcal.calendar import NSE_CLOSE, Event, india_day, known_at
+from finresearch.fincalc.dates import to_ist
 
 MEAN_ABS = math.sqrt(2 / math.pi)  # E|Z| for a standard normal Z
 MEDIAN_ABS = NormalDist().inv_cdf(0.75)  # median |Z| = 0.6745
@@ -162,4 +166,75 @@ def fit(points: list[Point], events: list[date]) -> dict[date, Implied]:
     for i, (_, e) in enumerate(solo):
         out[e] = (Implied(x[1 + free.index(i)], x[0], "fit") if i in free else
                   Implied(None, x[0], "fit", "the term structure shows no premium for this event"))  # fmt: skip
+    return out
+
+
+# ---------------------------------------------------------------- realised event moves (point in time)
+MAX_GAP_DAYS = 5  # a close more than 5 calendar days from the event's session is a gap in the data, not a holiday
+
+
+@dataclass(frozen=True)
+class Move:
+    """One event's realised log return from the last close before its India session to the first close on or after
+    it; r None = unknown (reason)."""
+
+    day: date  # the event's India session (calendar.india_day)
+    r: float | None
+    start: date | None
+    end: date | None
+    reason: str | None
+    title: str = ""
+    j2: float | None = None  # the implied J^2 the term structure showed before it, when the caller pairs one
+
+
+@dataclass(frozen=True)
+class TypeStats:
+    type: str
+    moves: list[Move] = field(default_factory=list)
+
+    @property
+    def known(self) -> list[float]:
+        return [m.r for m in self.moves if m.r is not None]
+
+    @property
+    def n(self) -> int:
+        return len(self.known)
+
+    @property
+    def median_abs(self) -> float | None:
+        return median(abs(r) for r in self.known) if self.known else None
+
+    @property
+    def mean_r2(self) -> float | None:
+        return sum(r * r for r in self.known) / self.n if self.known else None
+
+
+def realised_move(e: Event, closes: Mapping[date, float]) -> Move:
+    d = india_day(e)
+    before = [x for x in closes if x < d and closes[x] is not None]
+    after = [x for x in closes if x >= d and closes[x] is not None]
+    a, b = (max(before) if before else None), (min(after) if after else None)
+    if a is None or b is None or (d - a).days > MAX_GAP_DAYS or (b - d).days > MAX_GAP_DAYS:
+        return Move(d, None, a, b, "no stored close on both sides of the event", e.title)
+    ca, cb = closes[a], closes[b]
+    if ca <= 0 or cb <= 0:
+        return Move(d, None, a, b, "a non-positive close", e.title)
+    return Move(d, math.log(cb / ca), a, b, None, e.title)
+
+
+def close_known(day: date, as_of: datetime) -> bool:
+    """A session's close is known after 15:30 IST that day."""
+    t = to_ist(as_of)
+    return day < t.date() or (day == t.date() and t.time() >= NSE_CLOSE)
+
+
+def history(events: list[Event], closes: Mapping[date, float], as_of: datetime) -> dict[str, TypeStats]:
+    """Realised moves by event type as known at `as_of`: only events public by then (and not moved away), whose India
+    session has closed, with only the closes known by then."""
+    seen = {d: c for d, c in closes.items() if close_known(d, as_of)}
+    out: dict[str, TypeStats] = {}
+    for e in sorted(known_at(events, as_of), key=lambda x: (india_day(x), x.type)):
+        if not close_known(india_day(e), as_of):
+            continue
+        out.setdefault(e.type, TypeStats(e.type)).moves.append(realised_move(e, seen))
     return out
