@@ -17,8 +17,9 @@ from finresearch.horserace import addendum_a5, prereg, race, replay
 
 ICW = next(s for s in SPECS if s.key == "nifty_ic_w")
 PCS = next(s for s in SPECS if s.key == "nifty_pcs_m")
-FIRST, LAST = date(2021, 1, 4), date(2022, 8, 31)
-START, END, CUT = date(2022, 4, 1), date(2022, 5, 31), date(2022, 4, 29)
+# one shared synthetic history and as few replay runs as possible (each card costs about 0.4 s in the replay)
+FIRST, LAST = date(2021, 1, 4), date(2022, 5, 20)
+START, END, CUT = date(2022, 4, 1), date(2022, 5, 6), date(2022, 4, 22)
 VOL = 0.15
 
 
@@ -28,8 +29,18 @@ def prices() -> dict[date, float]:
 
 
 @pytest.fixture(scope="module")
-def made(prices):
-    return replay.make_cards(synth(FIRST, LAST, vol=VOL, prices=prices), START, END, [ICW, PCS])
+def hist(prices):
+    return synth(FIRST, LAST, vol=VOL, prices=prices)
+
+
+@pytest.fixture(scope="module")
+def made(hist):
+    return replay.make_cards(hist, START, END, [ICW, PCS])
+
+
+@pytest.fixture(scope="module")
+def weekly_alone(hist):
+    return replay.make_cards(hist, START, END, [ICW])[0]
 
 
 def test_weekly_cards_carry_both_challengers_near_the_market_lognormal(made) -> None:
@@ -59,28 +70,25 @@ def test_monthly_cards_are_unknown_until_thirty_monthly_expiries_have_settled(ma
         assert c.forecasts["p_rw_fhs"].p is None and "kappa" in c.tail["reason_fhs"]
 
 
-def test_no_look_ahead_a_different_future_leaves_earlier_cards_unchanged(prices) -> None:
+def test_no_look_ahead_a_different_future_leaves_earlier_cards_unchanged(prices, weekly_alone) -> None:
     other = path(FIRST, LAST, vol=0.45, seed=99)  # a different, wilder path after CUT
     mixed = {d: (s if d <= CUT else other[d] * prices[CUT] / other[CUT]) for d, s in prices.items()}
-    a, _ = replay.make_cards(synth(FIRST, LAST, vol=VOL, prices=prices), START, END, [ICW])
+    a = weekly_alone
     b, _ = replay.make_cards(synth(FIRST, LAST, vol=VOL, prices=mixed), START, END, [ICW])
     early = [(x, y) for x, y in zip(a, b, strict=True) if x.origin <= CUT]
     assert early and any(x.origin == CUT for x, _ in early)
     for x, y in early:
         for k in ("p_rw_emp", "p_rw_fhs"):
             assert x.forecasts[k] == y.forecasts[k], (x.origin, k)
-    late = [(x, y) for x, y in zip(a, b, strict=True) if x.origin > date(2022, 5, 10)]
-    assert any(
+    late = [(x, y) for x, y in zip(a, b, strict=True) if x.origin > date(2022, 4, 28)]
+    assert late and any(
         x.forecasts["p_rw_emp"] != y.forecasts["p_rw_emp"] for x, y in late
     )  # the test can see a change
 
 
-def test_card_seeds_do_not_depend_on_which_specs_run(prices) -> None:
-    h = synth(FIRST, LAST, vol=VOL, prices=prices)
-    alone, _ = replay.make_cards(h, START, date(2022, 4, 15), [ICW])
-    both, _ = replay.make_cards(h, START, date(2022, 4, 15), [PCS, ICW])
-    pick = [c for c in both if c.spec == "nifty_ic_w"]
-    assert [c.forecasts["p_rw_fhs"] for c in alone] == [c.forecasts["p_rw_fhs"] for c in pick]
+def test_card_seeds_do_not_depend_on_which_specs_run(made, weekly_alone) -> None:
+    pick = [c for c in made[0] if c.spec == "nifty_ic_w"]  # run with the monthly spec alongside
+    assert pick and [c.forecasts["p_rw_fhs"] for c in weekly_alone] == [c.forecasts["p_rw_fhs"] for c in pick]
 
 
 def test_vectorised_exit_cost_equals_the_card_exit_cost() -> None:
@@ -101,12 +109,15 @@ def test_the_replay_refuses_a_changed_addendum_a5(monkeypatch) -> None:
         replay.require_registered()
 
 
-def test_the_race_lists_both_tail_challengers(prices) -> None:
-    short = {d: v for d, v in prices.items() if d <= date(2022, 4, 22)}  # three weeks of cards keep it quick
-    rep = replay.run_window(synth(FIRST, date(2022, 4, 22), vol=VOL, prices=short), "seen", [ICW])
-    assert rep["challengers"] == list(addendum_a5.CHALLENGERS)
-    assert rep["replay"]["addendum_a5_hash"] == prereg.ADDENDUM_A5_HASH
-    assert math.isfinite(rep["replay"]["p_rw_emp_unknown"]) and "p_rw_fhs_reasons" in rep["replay"]
+@pytest.fixture(scope="module")
+def design(hist):
+    return replay.run_window(hist, "design", [ICW])
+
+
+def test_the_race_lists_both_tail_challengers(design) -> None:
+    assert design["challengers"] == list(addendum_a5.CHALLENGERS)
+    assert design["replay"]["addendum_a5_hash"] == prereg.ADDENDUM_A5_HASH
+    assert math.isfinite(design["replay"]["p_rw_emp_unknown"]) and "p_rw_fhs_reasons" in design["replay"]
 
 
 def test_card_seed_is_the_registered_string() -> None:
@@ -129,16 +140,14 @@ def test_an_expiry_without_a_settlement_price_is_counted_not_lost(prices) -> Non
         2022, 3, 3
     )  # a weekly expiry: no future, so its settlement needs a uniform settle or the underlying
     h.days["NIFTY"][e] = replace(h.days["NIFTY"][e], spot=None)
-    _, skips = replay.make_cards(h, START, date(2022, 4, 8), [ICW])
+    _, skips = replay.make_cards(h, date(2022, 4, 8), date(2022, 4, 8), [ICW])  # one session of cards
     assert skips["A5 z not formed (NIFTY): settlement price unknown"] >= 1
 
 
-def test_the_design_window_scores_both_challengers_on_resolved_events(prices, tmp_path) -> None:
+def test_the_design_window_scores_both_challengers_on_resolved_events(design, tmp_path) -> None:
     import json
 
-    short = {d: v for d, v in prices.items() if d <= date(2022, 5, 20)}
-    rep = replay.run_window(synth(FIRST, date(2022, 5, 20), vol=VOL, prices=short), "design", [ICW])
     for k in ("p_rw_emp", "p_rw_fhs"):
-        f = rep["forecasters"][k]["NIFTY"]
+        f = design["forecasters"][k]["NIFTY"]
         assert f["n"] > 0 and math.isfinite(f["brier"]) and math.isfinite(f["crps"]), (k, f)
-    (tmp_path / "rep.json").write_text(json.dumps(rep, indent=1, default=str))  # the CLI's --json path
+    (tmp_path / "rep.json").write_text(json.dumps(design, indent=1, default=str))  # the CLI's --json path
