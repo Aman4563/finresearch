@@ -242,6 +242,9 @@ class Shock:
     book: Mapping[float, float | None] | None
     one: Mapping[float, float | None] | None
     notes: tuple[str, ...] = ()
+    betas: tuple[
+        Any, ...
+    ] = ()  # the fincalc.beta estimates the shock used (shown on the card; NIFTY's 1 is not)
 
 
 @dataclass(frozen=True)

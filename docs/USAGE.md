@@ -157,6 +157,8 @@ uv run finresearch fno span backfill --from 2008-01-01  # NSE SPAN scan ranges, 
 uv run finresearch fno span margin-check           # margin estimate vs Groww's calculator: the P4.3 trigger
 uv run finresearch fno participants --from 2015-01-01  # participant-wise OI and volume (Client/DII/FII/Pro), 2 files a day (#371)
 uv run finresearch fno card-log --since 2026-10-21T18:00:00+05:30   # F&O card verdicts before/after a release (#360)
+uv run finresearch fno marks --from 2026-10-01      # missing daily marks of open paper legs from stored bhavcopy days (#383)
+uv run finresearch fno review --month 2026-10      # the month's post-trade review in one line (#383; reads only)
 uv run finresearch vault backfill --from 2018-01-01 --to 2021-12-31 --max-days 400   # the sealed vault (#365), below
 uv run finresearch vault status                    # vault load manifest: days by year and status (no market data)
 uv run finresearch vault engine-hash               # the engine hash for the vault pin (PREREG.md §2.7)

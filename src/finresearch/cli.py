@@ -1605,6 +1605,53 @@ def fno_derive(
     console.print(f"{len(days)} days, {n} IV rows, {c} contracts")
 
 
+@fno_app.command("marks")
+def fno_marks(
+    start: str = typer.Option(..., "--from", help="First day, YYYY-MM-DD"),
+    end: str | None = typer.Option(None, "--to", help="Last day (default today)"),
+) -> None:
+    """Write the missing daily marks of open paper legs from stored bhavcopy days (#383; no network). Real Groww
+    positions are marked only by the nightly monitor step (Groww keeps no position history)."""
+    from datetime import date as _date
+
+    from sqlalchemy import select
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import FnoBhavDay
+    from finresearch.fincalc.dates import today_ist
+    from finresearch.fnobook import marks
+
+    lo, hi = _date.fromisoformat(start), _date.fromisoformat(end) if end else today_ist()
+    with session_scope() as s:
+        days = s.scalars(select(FnoBhavDay.day).where(FnoBhavDay.status == "loaded", FnoBhavDay.day.between(lo, hi))
+                         .order_by(FnoBhavDay.day)).all()  # fmt: skip
+    n = u = 0
+    for d in days:
+        with session_scope() as s:
+            got = marks.record(s, d)
+        n, u = n + got["paper"], u + got["unpriced"]
+    console.print(f"{len(days)} loaded days: {n} paper marks written ({u} unpriced)")
+
+
+@fno_app.command("review")
+def fno_review(
+    month: str | None = typer.Option(None, "--month", help="YYYY-MM (default this month, IST)"),
+) -> None:
+    """The month's post-trade review in one line (#383): adherence, shortfall and the P&L explain. Reads only."""
+    from finresearch.db import session_scope
+    from finresearch.fincalc.dates import today_ist
+    from finresearch.fnobook import review
+
+    t = today_ist()
+    if month:
+        y, m = (int(x) for x in month.split("-"))
+        t = t.replace(year=y, month=m, day=1)
+    with session_scope() as s:
+        console.print(
+            review.brief_line(s, t) or f"F&O review ({t:%b %Y}): no paper trade or mark this month."
+        )
+
+
 backtest_app = typer.Typer(
     no_args_is_help=True,
     help="Backtest the pre-registered F&O strategies on the stored bhavcopy history (#307)",

@@ -26,17 +26,27 @@ export type PaperRecord = {
 
 export type ExitRuleSpec = { kind: "profit" | "stop" | "dte" | "delta" | "event"; threshold: number; why: string };
 
+/** One underlying's registered beta to NIFTY (fincalc.beta): the shock takes the worse of lo and hi per underlying. */
+export type ShockBeta = {
+  underlying: string; beta: number | null; se: number | null; lo: number | null; hi: number | null; n: number; missing: number;
+  window_start: string | null; as_of: string | null; half_life: number; z: number; floor: number; reason: string | null;
+};
+
 export type TradePlan = {
   title: string; symbol: string; expiry?: string; days_to_expiry?: number; spot?: number; lot_size?: number; as_of?: string | null;
   source?: string; kind: string; action: PlanAction; qualifier: string | null; label: string; failed: string[]; reasons: string[];
   spec_key?: string;
+  /** #383: the card_log row this card was logged in and its index there (a plan card: 0) */
+  card_log_id?: number | null; card_index?: number;
   legs: { right: "call" | "put" | "future"; strike: number; side: "buy" | "sell"; lots: number; qty?: number; last?: number }[];
   size?: { multiple: number; suggested: number; /** real-money lots (#350): 0 unless the matched spec is a candidate */ real_lots?: number;
     /** #358: the open-book cap: budget = 8% of F&O capital, open_risk = what open paper and Groww positions risk (null = unknown) */
     open_book?: { budget: number; budget_pct: number; open_risk: number | null; open_same: number; max_concurrent: number | null; mtd_paper: number | null; month_stop_pct: number; notes: string[];
       // #395: the common-shock and margin terms (optional: older cards lack them)
       shock_budget?: number; shock_pct?: number; shock_moves?: number[]; shock_book_worst?: number | null; shock_one_worst?: number | null;
-      shock_notes?: string[]; margin_util_max?: number; margin_known?: boolean; margin_notes?: string[] };
+      shock_notes?: string[]; margin_util_max?: number; margin_known?: boolean; margin_notes?: string[];
+      /** #394/#395: the registered beta to NIFTY of each other underlying in the shock (null figures = unknown, with the reason) */
+      shock_betas?: ShockBeta[] };
     budget: number; risk_per_set: number | null; reason: string; capital: number; max_loss_pct: number };
   entry?: { legs: EntryLeg[]; status: "ok" | "unknown"; net_mid: number | null; net_fill_now: number | null; notes: string[]; levels_priced_at: string;
     /** "bid/ask: NSE chain at HH:MM" (#324: NSE's chain when the plan's has no bid/ask), or "unknown" */

@@ -780,9 +780,12 @@ async def fno_signal(instrument: str, ctx: dict[str, Any]) -> Signal:
 
     one = [o.Leg(x.right, x.strike, al["premium"], al["qty"]) if x.right != "future"  # type: ignore[arg-type]
            else o.Leg("future", al["premium"], 0.0, al["qty"]) for x, al in zip(legs, a["legs"], strict=True)]  # fmt: skip
-    terms = tpl.trade_terms(sym, expiry, float(chain.underlying), one, now, rinfo["rate"], is_index(sym))
+    bt = tpl.card_betas(sym, today)
+    terms = tpl.trade_terms(
+        sym, expiry, float(chain.underlying), one, now, rinfo["rate"], is_index(sym), betas=bt
+    )
     ob = tpl.book_for(await tpl.load_book(today), capital, sym, kind, float(chain.underlying),
-                      ev["spec"] if ev["match"] == "exact" else None, terms)  # fmt: skip
+                      ev["spec"] if ev["match"] == "exact" else None, terms, bt)  # fmt: skip
     # legs that are exactly a library recipe get its registered IV filter, as on the trade card (#355)
     from finresearch.signals import fno_context
 
