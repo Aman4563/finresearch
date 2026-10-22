@@ -212,7 +212,17 @@ export const BT_BASE: StrategyResult = {
   by_year: { "2025": w({ trades: 20 }) }, by_iv_regime: { high: w({ trades: 15 }) },
 };
 export const BT_FAILS: StrategyResult = { ...BT_BASE, key: "nifty_dcs_m", name: "NIFTY debit call spread, monthly (control)", role: "control",
-  status: "fails", reasons: ["fails: OOS deflated Sharpe"], criteria: crit(false), windows: { is: w({}), oos: w({ deflated_sharpe: null }) } };
+  status: "fails", reasons: ["fails: OOS deflated Sharpe"], criteria: crit(false), windows: { is: w({}), oos: w({ deflated_sharpe: null }) },
+  // #381: the index line with an unknown index (never ₹0), and the criteria v2 shadow
+  opportunity: { capital: 1000000, fno_net: -833250, trades: 30, slab_rate: 0.3, fno_after_tax: -833250, index_return: null,
+    index_tax_rate: null, index_after_tax: null, index_per_trade_after_tax: null, excess_after_tax: null,
+    reason: "no index total-return series covers the window (refseries.index_eod): unknown",
+    benchmark: "NIFTY 50, approximate total return (closes + dividend yield), same capital, same days", window: ["2024-07-01", "2026-10-09"] },
+  criteria_v2: { status: "shadow_not_adopted", verdict: "would_fail", reasons: ["fails: OOS deflated Sharpe (v2)"],
+    criteria: [{ criterion: "OOS deflated Sharpe (v2)", value: null, pass: false, rule: ">= 0.95 (V = max, N = 6 trials with a known SR)" }],
+    registration_hash: "b".repeat(64), note: "Criteria v2 (#381) are a registered shadow, not adopted.",
+    dsr: { rule: "max", n_trials: 6, v_null: 0.00176, v_cand: 0.00694, v_used: 0.00694, dsr: null },
+    stats: { lo_sharpe: null, posterior_sharpe: -0.9, max_drawdown_peak_pct: 40 } } };
 export const REG = { version: "2026-10-12.1", hash: "6d92407630d7f406", registered_on: "2026-10-12", matches_spec: true, matches_code: true,
   hash_covers: "spec parameters only (specs.registration()): the engine code that runs them is not hashed until an engine hash exists (roadmap P2.4)", note: "Registered before any real-data run.",
   variants_tried: 8, specs: [], book: {}, criteria: {}, windows: { is: ["2022-01-01", "2024-06-30"] as [string, string], oos_from: "2024-07-01" },
