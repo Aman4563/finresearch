@@ -10,7 +10,8 @@ Sources (both NSE, checked 22-Oct-2026 after the close with one request each; st
 
 NSE's `/api/equity-stockIndices` (the index page's JSON) answered HTTP 404 on 22-Oct-2026 and is not used. NSE
 publishes no index weights directly: a member's weight is its share of the members' free-float market cap (the index
-is free-float market-cap weighted; NSE Indices' capping is not applied). A member whose quote fails keeps
+is free-float market-cap weighted; NSE Indices' capping is not applied). `ffmc` and `last_price` come from the same quote, so
+during market hours both are live and attribution.Member.mcap_end rescales the cap to the stored close. A member whose quote fails keeps
 `ffmc=None` with a reason (unknown, never 0) and is listed in `unreachable`. Nothing is stored in the database or
 committed (owner decision #362: personal use only); tests use hand-made synthetic files.
 """

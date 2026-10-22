@@ -46,7 +46,7 @@ export function LiquidityCard({ refresh }: { refresh: number }) {
             <p className="text-sm text-muted">{data.reason}</p>
           ) : (
             <>
-              {s && <p className="text-xs text-muted">Sellable within 1 day: {s.complete ? "" : "at least "}{pct(s.within["1"])}; 5 days: {s.complete ? "" : "at least "}{pct(s.within["5"])}; 20 days: {s.complete ? "" : "at least "}{pct(s.within["20"])}.
+              {s && <p className="text-xs text-muted">Sellable within 1 day: {s.complete || s.within["1"] == null ? "" : "at least "}{pct(s.within["1"])}; 5 days: {s.complete || s.within["5"] == null ? "" : "at least "}{pct(s.within["5"])}; 20 days: {s.complete || s.within["20"] == null ? "" : "at least "}{pct(s.within["20"])}.
                 {s.unknown ? ` Unknown: ${pct(s.unknown)}.` : ""}{s.not_applicable ? ` Funds (redeemed, not sold on the exchange): ${pct(s.not_applicable)}.` : ""}</p>}
               <Table label="Days to liquidate">
                 <thead><tr><th>Holding</th><th className="text-right">Weight</th><th className="text-right">Avg daily volume</th>

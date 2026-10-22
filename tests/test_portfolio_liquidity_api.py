@@ -67,7 +67,7 @@ def test_liquidity_with_no_stored_volume_is_unknown_not_zero(api):  # noqa: F811
     assert rows["NSE:AAA"]["days"] is None
     assert rows["NSE:AAA"]["reason"] == "only 0 sessions of NSE volume are stored; needs 15"
     assert (
-        body["summary"]["within"]["20"] == 0.0
+        body["summary"]["within"]["20"] is None  # nothing known: unknown, not "0 % sellable"
         and body["summary"]["unknown"] > 0
         and body["participation"] == 0.2
     )

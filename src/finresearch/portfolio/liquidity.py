@@ -131,9 +131,10 @@ def liquidity(positions: Sequence[Any], advs: Mapping[str, Adv], *,
                                      "last": a.last.isoformat() if a.last else None})  # fmt: skip
                 days_known.append((d, p.value))
         rows.append(row)
-    within = {
-        str(h): _r(sum(v for d, v in days_known if d <= h) / total, 4) if total else None for h in HORIZONS
-    }
+    # nothing known while some value is unknown: the share sellable is unknown, never "0 %"
+    none_known = not days_known and unknown > 0
+    within = {str(h): None if none_known or not total else _r(sum(v for d, v in days_known if d <= h) / total, 4)
+              for h in HORIZONS}  # fmt: skip
     summary = {"within": within, "unknown": _r(unknown / total, 4) if total else None,
                "not_applicable": _r(na / total, 4) if total else None,
                "max_days": _r(max((d for d, _ in days_known), default=None), 2), "complete": unknown == 0}  # fmt: skip

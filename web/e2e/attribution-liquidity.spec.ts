@@ -34,13 +34,13 @@ const ATTRIBUTION = {
     line("Consumer Durables", 0.3, 0, 0.1, 0.1, -0.03, 0, 0, "not in the benchmark"), line("Funds (no look-through)", 0.2, 0, 0.05, 0.05, -0.03, 0, 0, "not in the benchmark")],
   totals: { portfolio_return: 0.14, benchmark_return: 0.2, active: -0.06, allocation: -0.0975, selection: 0.06, interaction: -0.0225 },
   excluded: [{ key: "NSE:NEW", name: "Example New Listing Ltd", reason: "no price on or within 7 days before 2026-07-20 (bought or listed later?)" }],
-  benchmark_unknown: [], coverage: 0.95, complete: false,
+  benchmark_unknown: [], coverage: 0.95, complete: false, unreachable: [],
 };
 const UNKNOWN_BENCH = {
   ...ATTRIBUTION, complete: false, excluded: [],
   segments: [line("Financial Services", 0.5, 0.8, 0.2, null, null, null, null, null, "benchmark weight or return unknown for EXA: NSE gave no free-float market cap")],
   totals: { portfolio_return: 0.14, benchmark_return: null, active: null, allocation: null, selection: null, interaction: null },
-  benchmark_unknown: [{ symbol: "EXA", name: "Example Bank Ltd", reason: "NSE gave no free-float market cap" }],
+  benchmark_unknown: [{ symbol: "EXA", name: "Example Bank Ltd", reason: "NSE gave no free-float market cap" }], unreachable: ["EXA"],
 };
 const LIQUIDITY = {
   available: true, reason: null, participation: 0.2, adv_sessions: 20, min_sessions: 15, horizons: [1, 5, 20], method: "Days = units ÷ (participation × ADV) (e2e).",

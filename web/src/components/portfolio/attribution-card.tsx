@@ -26,7 +26,7 @@ type Attribution = {
   available: boolean; reason: string | null; period: string; method: string; caveats: string[]; disclaimer: string;
   window: { start: string; end: string } | null; benchmark: Bench | null; segments: Line[]; totals: Totals | null;
   excluded: { key: string; name: string; reason: string }[]; benchmark_unknown: { symbol: string; name: string; reason: string }[];
-  coverage: number | null; complete: boolean;
+  coverage: number | null; complete: boolean; unreachable: string[];
 };
 type Period = "1m" | "3m" | "6m";
 const PERIODS: { value: Period; label: string }[] = [{ value: "1m", label: "1M" }, { value: "3m", label: "3M" }, { value: "6m", label: "6M" }];
