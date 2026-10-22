@@ -200,3 +200,66 @@ def test_a_session_missing_between_two_evenings_is_unusable(db):
     _record()
     r = _row()
     assert not r.usable and "session" in " ".join(r.reasons)
+
+
+def _rows(s, n_big: int, *, start: date = date(2026, 10, 13)):
+    """n_big usable sessions with |NIFTY| > 1.5 %, one usable quiet session, two unusable big-move sessions and one
+    with NIFTY's move unknown."""
+    from finresearch.db.models import JointPnlDay
+
+    d, out = start, []
+    while len(out) < n_big + 4:
+        if d.weekday() < 5:
+            out.append(d)
+        d += timedelta(days=1)
+    for i, day in enumerate(out[:n_big]):
+        a = (i - 10) * 1000.0
+        mv = -0.02 if i % 2 else 0.02
+        s.add(JointPnlDay(day=day, nifty_move=D(str(mv)), actual=D(str(a)), explained=D(str(a + (i % 3 - 1) * 400)),
+                          holdings_actual=D(str(a / 2)), holdings_beta=D(str(a / 2 + 900 * (i % 2))), usable=True,
+                          reasons=[], notes=[], l_curve=[], snapshot_reasons=[]))  # fmt: skip
+    quiet, bad1, bad2, nomove = out[n_big:]
+    s.add(JointPnlDay(day=quiet, nifty_move=D("0.001"), actual=D("5"), explained=D("-9999"), usable=True, reasons=[],
+                      notes=[], l_curve=[], snapshot_reasons=[]))  # fmt: skip
+    for day in (bad1, bad2):
+        s.add(JointPnlDay(day=day, nifty_move=D("-0.03"), usable=False, reasons=["the Groww book is unknown"],
+                          notes=[], l_curve=[], snapshot_reasons=[]))  # fmt: skip
+    s.add(JointPnlDay(day=nomove, usable=False, reasons=["NIFTY's close is not stored"], notes=[], l_curve=[],
+                      snapshot_reasons=[]))  # fmt: skip
+    return out
+
+
+def _r2(a, e):
+    import numpy as np
+
+    a, e = np.array(a), np.array(e)
+    return float(1 - ((a - e) ** 2).sum() / ((a - a.mean()) ** 2).sum())
+
+
+def test_forward_status_evaluates_the_first_20_usable_big_move_days_and_counts_the_unusable(db):
+    from finresearch.db import session_scope
+    from finresearch.portfolio import joint_risk as jl
+
+    with session_scope() as s:
+        _rows(s, 22)
+    with session_scope() as s:
+        st = jl.forward_status(s, date(2026, 12, 31))["stored"]
+    a = [(i - 10) * 1000.0 for i in range(20)]  # the first 20 only: evaluated once, later days do not re-test it
+    e = [x + (i % 3 - 1) * 400 for i, x in enumerate(a)]
+    hb = [x / 2 + 900 * (i % 2) for i, x in enumerate(a)]
+    assert st["usable_qualifying"] == 22 and st["evaluated_on"] == 20
+    assert st["r2"] == pytest.approx(_r2(a, e), abs=1e-6) and st["passed"] is (_r2(a, e) >= 0.90)
+    assert st["holdings_beta_r2"] == pytest.approx(_r2([x / 2 for x in a], hb), abs=1e-6)
+    assert st["unusable"] == 3 and st["unusable_qualifying"] == 2 and st["move_unknown"] == 1
+    assert st["unusable_reasons"] == {"the Groww book is unknown": 2, "NIFTY's close is not stored": 1}
+
+
+def test_forward_status_before_20_usable_days_is_not_evaluable_never_a_pass(db):
+    from finresearch.db import session_scope
+    from finresearch.portfolio import joint_risk as jl
+
+    with session_scope() as s:
+        _rows(s, 19)
+    with session_scope() as s:
+        st = jl.forward_status(s, date(2026, 12, 31))["stored"]
+    assert st["usable_qualifying"] == 19 and st["r2"] is None and st["passed"] is None
