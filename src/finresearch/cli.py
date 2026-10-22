@@ -1768,6 +1768,117 @@ def fno_vol_race(
     console.print(out["verdict"])
 
 
+@fno_app.command("vrp")
+def fno_vrp(
+    window: str = typer.Option(
+        "recent",
+        "--window",
+        help="recent (2022-26, the app's history) | vault (2008-21, ONE "
+        "logged read through vault.guard; aggregates only)",
+    ),
+    common_range: float | None = typer.Option(
+        None,
+        "--common-range",
+        help="|ln K/F| band fixed by vault_data_audit check 8; required for the vault read",
+    ),
+    banknifty_from: int | None = typer.Option(
+        None,
+        "--banknifty-from",
+        help="vault: the first year with >= 10 valid OTM strikes per side on >= 90 % of days (audit check 8)",
+    ),
+    history_url: str | None = typer.Option(
+        None, help="recent: the database holding the F&O history (default: app's)"
+    ),
+    out: Path | None = typer.Option(
+        None, "--out", help="write the aggregate report as JSON here (vault: required)"
+    ),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """The pre-registered collectable variance risk premium (#389, evals/experiments/vrp_collectable/PREREG.md):
+    own model-free 30-day implied variance against India VIX (the gate), the variance-swap payoff on windows from each
+    monthly expiry, and the short ATM straddle / 25-delta put P&L after dated charges, slippage and margin, un-hedged
+    and hedged. Refused unless the registration hash is intact. Reads only and changes no card; the vault window is
+    spent once (vault.guard) and prints aggregates only."""
+    import json as _json
+    from datetime import date as _date
+
+    from finresearch.backtest.dbhistory import DbHistory
+    from finresearch.vrp import data, prereg, run
+
+    h = prereg.require_registered()
+    reports: dict = {"registration": h, "window": window, "common_range": common_range, "symbols": {}}
+    if common_range is None:
+        reports["label"] = (
+            "full traded strip, not era-comparable (no common range from vault_data_audit check 8)"
+        )
+    if window == "recent":
+        hist = DbHistory(history_url)
+        for sym in ("NIFTY", "BANKNIFTY"):
+            x, counts = data.load(sym, _date(2022, 1, 1), _date(2026, 12, 31), lots=hist.lot, band=common_range,
+                                  url=history_url)  # fmt: skip
+            reports["symbols"][sym] = {**run.report(x), "unknown": counts}
+    elif window == "vault":
+        reports.update(_vrp_vault(common_range, banknifty_from, out))
+    else:
+        raise typer.BadParameter("--window must be recent or vault")
+    text = _json.dumps(reports, indent=2, default=str)
+    if out:
+        out.write_text(text)
+    if as_json:
+        print(text)
+        return
+    for sym, r in reports["symbols"].items():
+        for era, g in r["gate"].items():
+            console.print(f"{sym} gate {era}: {'passes' if g['passes'] else 'fails'} (corr {g['corr_changes']}, "
+                          f"median gap {g['median_gap']}, n {g['n']}{'; ' + g['reason'] if g['reason'] else ''})")  # fmt: skip
+        for per, p in r["periods"].items():
+            pr = p["primary"]
+            console.print(f"{sym} {per}: VRP payoff mean {pr['mean']} NW t {pr['t']} CI {pr['ci95']} share negative "
+                          f"{pr['share_negative']} on {pr['n']} windows ({pr['unknown']} unknown); "
+                          f"ln ratio {pr['log_ratio']['mean']} [{pr['log_ratio']['label']}]")  # fmt: skip
+            for case in ("dated", "today"):
+                for kind, hs in p["collect"][case].items():
+                    if kind == "label":
+                        continue
+                    for hedge, s in hs.items():
+                        console.print(f"  {case} {kind} {hedge}: mean net {s['mean_net']} CI ({s['ci']['lo']}, "
+                                      f"{s['ci']['hi']}) share negative {s['share_negative']} n {s['n']} unknown "
+                                      f"{s['unknown']}")  # fmt: skip
+    console.print(run.VERDICT)
+
+
+def _vrp_vault(common_range: float | None, banknifty_from: int | None, out: Path | None) -> dict:
+    """The one logged vault read of `vrp_primary`: refused before the guard is asked unless the common range, an
+    output path and a fully sourced charges table are in hand (the read cannot be repeated)."""
+    from datetime import date as _date
+
+    from finresearch.backtest.dbhistory import DbHistory
+    from finresearch.fincalc import charges
+    from finresearch.vault import guard, pack
+    from finresearch.vault.registry import VAULT_END
+    from finresearch.vrp import data, run, specs
+
+    if common_range is None or out is None:
+        raise typer.BadParameter("the vault read needs --common-range (audit check 8) and --out")
+    gaps = sorted({k for y in range(2008, 2022) for m in range(1, 13)
+                   for k in charges.unknown_keys(_date(y, m, 28))})  # fmt: skip
+    if gaps:
+        raise typer.BadParameter(f"charges have no sourced rate on some 2008-2021 dates ({', '.join(gaps)}): every "
+                                 "collectable window would be unknown. Complete the table (#365) or record the "
+                                 "decision in evals/experiments/vrp_collectable/ADDENDUM.md first")  # fmt: skip
+    syms = [("NIFTY", _date(2008, 1, 1))] + (
+        [("BANKNIFTY", _date(banknifty_from, 1, 1))] if banknifty_from else []
+    )
+    res: dict = {"symbols": {}, "banknifty": "not read: no --banknifty-from" if not banknifty_from else None}
+    with guard.vault_read("vrp_primary", pack.STUDY_HASHES["vrp_primary"],
+                          purpose=f"{specs.SPEC_VERSION} common range {common_range}") as g:  # fmt: skip
+        hist = DbHistory(g.url, vault_grant=g)
+        for sym, start in syms:
+            x, counts = data.load(sym, start, VAULT_END, lots=hist.lot, band=common_range, url=g.url, grant=g)
+            res["symbols"][sym] = {**run.report(x), "unknown": counts}
+    return res
+
+
 backtest_app = typer.Typer(
     no_args_is_help=True,
     help="Backtest the pre-registered F&O strategies on the stored bhavcopy history (#307)",
