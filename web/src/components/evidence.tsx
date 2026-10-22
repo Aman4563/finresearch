@@ -161,7 +161,7 @@ export function EvidencePanel({ id, claim: given, onClose, embedded }: { id: num
               {c.grade && <p className="mb-1"><GradeBadge grade={c.grade} label={c.grade_label} /></p>}
               {c.url && !isWeb(c.url) ? (
                 <p className="text-xs">
-                  {c.computation?.matches && c.computation.inputs_ok ? "Deterministic calculation (fincalc re-ran it)" : c.computation ? "Calculation that did not check out" : "Calculation note, not re-checked"}{" "}
+                  {c.computation?.kind === "option_fact" ? (c.computation.matches ? "Option-implied fact (re-run on stored market data)" : "Option-implied fact that did not check out") : c.computation?.matches && c.computation.inputs_ok ? "Deterministic calculation (fincalc re-ran it)" : c.computation ? "Calculation that did not check out" : "Calculation note, not re-checked"}{" "}
                   <code className="break-all">{calcText(c.url)}</code>
                   {c.computation && (
                     <span className="mt-0.5 block text-muted">
