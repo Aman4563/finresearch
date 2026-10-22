@@ -153,8 +153,11 @@ def _finish(rows: list[dict[str, Any]], oos: bool, crit: Criteria, fill: str = "
             if r.get("status") != "no_data":
                 r.update(status="in_sample_only", reasons=["out-of-sample not evaluated"])
         return
+    # `is not None` (#381): a daily Sharpe of exactly 0 is a trial and enters V; only an unknown one is left out
     srs = [
-        r["windows"]["oos"]["daily_sr"] for r in rows if r.get("windows") and r["windows"]["oos"]["daily_sr"]
+        r["windows"]["oos"]["daily_sr"]
+        for r in rows
+        if r.get("windows") and r["windows"]["oos"]["daily_sr"] is not None
     ]
     mean = sum(srs) / len(srs) if srs else 0.0
     var = sum((x - mean) ** 2 for x in srs) / (len(srs) - 1) if len(srs) > 1 else 0.0
