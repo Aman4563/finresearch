@@ -58,7 +58,7 @@ jobs:
       - run: uv run pytest -q   # offline: fake Claude CLI, mocked Ollama/HTTP, real Postgres service
   web:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30  # a slow runner took 16 min to install and build and was cancelled mid-e2e at 20 (#461)
     defaults:
       run:
         working-directory: web
