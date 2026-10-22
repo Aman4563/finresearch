@@ -24,7 +24,7 @@ from finresearch.dq.base import Check
 
 EXPECTED = {"gsec_par": ("0.25Y", "10Y"), "tbill": ("3M",), "mibor_on": (), "mibor_term": ("1M",)}
 RATE_MAX = 0.20  # a sanity band, not a market view: no FBIL series has printed 20 %
-MAX_LAG = 7
+MAX_LAG = 10  # ~6 sessions observed on 22-Oct-2026, with margin so a one-day slip is not a nightly failure
 
 
 def checks_for(series: str) -> Callable[[Session, date], list[Check]]:
