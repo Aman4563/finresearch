@@ -110,3 +110,49 @@ def test_an_underlying_without_a_registered_beta_leaves_the_book_term_unknown():
 def test_d_total_does_not_need_niftys_level():
     m = bs.Market(NOW, R, {("NIFTY", EXP): F}, nifty=None)
     assert jr.d_total([], jr.Book([SHORT_FUT], m)).total == pytest.approx(-1_875_000.0)
+
+
+def test_pretrade_shows_how_d_total_and_l_minus_10_change_for_a_trade():
+    p = jr.pretrade([EQUITY], jr.Book([], MARKET), [SHORT_PUT], AT)
+    alone = jr.losses([], jr.Book([SHORT_PUT], MARKET), AT, moves=(-0.10,))[0].total
+    assert p.before.total == pytest.approx(1_200_000.0) and p.after.total > p.before.total  # a short put adds delta
+    assert p.l_before.total == pytest.approx(-120_000.0)
+    assert p.l_after.total == pytest.approx(-120_000.0 + alone)
+    assert p.d_change == pytest.approx(p.after.total - p.before.total)
+    assert p.l_change == pytest.approx(alone)
+
+
+def test_pretrade_on_an_unknown_book_is_unknown_never_the_trade_alone():
+    unknown = jr.Book(None, MARKET, "the Groww positions are unknown")
+    p = jr.pretrade([EQUITY], unknown, [SHORT_PUT], AT)
+    assert p.after.total is None and p.l_after.total is None and p.d_change is None and p.l_change is None
+    # the trade's own change is still known: it does not depend on the rest of the book
+    assert p.trade_delta is not None and p.trade_l is not None
+
+
+def test_joint_replays_add_each_days_holdings_move_to_the_book_revaluation():
+    day = bs.REPLAYS[0].day
+    moves = {day: (-30_000.0, ())}
+    rows = jr.replays(moves, jr.Book([SHORT_PUT], MARKET))
+    first = rows[0]
+    fo = bs.replays([SHORT_PUT], MARKET)[0].cell.pnl
+    assert first.day == day and first.fno == pytest.approx(fo)
+    assert first.total == pytest.approx(-30_000.0 + fo)
+    # a day without the holdings' move is incomplete, with the reason
+    assert rows[1].holdings is None and rows[1].total is None and rows[1].reasons
+
+
+def test_variance_explained_and_the_forward_test_gate():
+    actual = [-1000.0, 500.0, -2000.0, 1500.0]
+    explained = [-900.0, 450.0, -2100.0, 1400.0]
+    mean = sum(actual) / 4
+    sst = sum((a - mean) ** 2 for a in actual)
+    sse = sum((a - e) ** 2 for a, e in zip(actual, explained, strict=True))
+    assert jr.variance_explained(actual, explained) == pytest.approx(1 - sse / sst)
+    assert jr.variance_explained([1.0, 1.0], [1.0, 1.0]) is None  # no variance to explain
+    rows = [(0.02, a, e) for a, e in zip(actual, explained, strict=True)] + [(0.005, 9e9, 0.0)]
+    ft = jr.forward_test(rows)
+    assert ft.qualifying == 4 and ft.needed == 20 and ft.r2 is None and ft.passed is None  # too few days
+    many = [(-0.016 if i % 2 else 0.017, float(i), float(i) + (0.5 if i % 2 else -0.5)) for i in range(20)]
+    ft2 = jr.forward_test(many)
+    assert ft2.qualifying == 20 and ft2.r2 is not None and ft2.passed is (ft2.r2 >= 0.90)

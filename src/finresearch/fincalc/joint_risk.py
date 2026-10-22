@@ -17,9 +17,9 @@ None with the reasons, never 0. An empty book (nothing open, and that is known) 
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 
 from finresearch.fincalc import book_scenarios as bs
 
@@ -157,3 +157,106 @@ def hedge_trigger(ls: Sequence[Loss], move: float = HEDGE_MOVE) -> HedgeTrigger:
     if lo.fno_share is None:  # no joint loss at -10 %: F&O is no share of it
         return HedgeTrigger(0.0, False, HEDGE_SHARE, ())
     return HedgeTrigger(lo.fno_share, lo.fno_share >= HEDGE_SHARE, HEDGE_SHARE, ())
+
+
+# --------------------------------------------------------------------------- pre-trade
+@dataclass(frozen=True)
+class PreTrade:
+    """D_total and L(move) before and after adding `candidate` legs to the book, the changes (None while either side
+    is unknown) and the trade's own terms (which need neither the holdings nor the rest of the book)."""
+
+    before: Delta
+    after: Delta
+    l_before: Loss
+    l_after: Loss
+    d_change: float | None
+    l_change: float | None
+    trade_delta: float | None
+    trade_l: float | None
+    trade_reasons: tuple[str, ...]
+
+
+def pretrade(hs: Sequence[Holding], b: Book, candidate: Sequence[bs.BookLeg], at: datetime,
+             move: float = HEDGE_MOVE) -> PreTrade:  # fmt: skip
+    after_b = Book(None if b.legs is None else [*b.legs, *candidate], b.market, b.reason)
+    alone = Book(list(candidate), b.market)
+    d0, d1, dt = d_total(hs, b), d_total(hs, after_b), d_total([], alone)
+    (l0,), (l1,), (lt,) = (losses(x, y, at, (move,)) for x, y in ((hs, b), (hs, after_b), ([], alone)))
+    dd = None if d0.total is None or d1.total is None else d1.total - d0.total
+    dl = None if l0.total is None or l1.total is None else l1.total - l0.total
+    return PreTrade(d0, d1, l0, l1, dd, dl, dt.total, lt.total, tuple(dict.fromkeys(dt.reasons + lt.reasons)))
+
+
+# --------------------------------------------------------------------------- historical single-day replays
+@dataclass(frozen=True)
+class JointReplay:
+    """One of book_scenarios.REPLAYS on both books: the holdings' own move that day (₹; each holding's own close-to-
+    close move where it has prices, else its mapped path), the book's revaluation at NIFTY's move and the day's IV30
+    change over one session, and their sum."""
+
+    day: date
+    label: str
+    nifty_move: float
+    iv30_change: float
+    holdings: float | None
+    fno: float | None
+    total: float | None
+    reasons: tuple[str, ...]
+    notes: tuple[str, ...]
+
+
+def replays(
+    holding_moves: Mapping[date, tuple[float | None, Sequence[str]]],
+    b: Book,
+    holidays: frozenset[date] | set[date] = frozenset(),
+) -> list[JointReplay]:
+    """`holding_moves` = {replay day: (holdings' ₹ move or None, reasons)}; a day absent from it is unknown."""
+    if b.legs is None:
+        book = [(None, tuple(_book_reason(b)), ())] * len(bs.REPLAYS)
+    elif not b.legs:
+        book = [(0.0, (), ())] * len(bs.REPLAYS)
+    else:
+        book = [(r.cell.pnl, r.cell.reasons, r.notes) for r in bs.replays(b.legs, b.market, holidays)]
+    out = []
+    for r, (f, freasons, notes) in zip(bs.REPLAYS, book, strict=True):
+        hv, hreasons = holding_moves.get(
+            r.day, (None, (f"the holdings' move on {r.day:%d-%b-%Y} is unknown",))
+        )
+        out.append(JointReplay(r.day, r.label, r.move, r.iv30_change, hv, f, _sum(hv, f),
+                               tuple(hreasons) + tuple(freasons), tuple(notes)))  # fmt: skip
+    return out
+
+
+# --------------------------------------------------------------------------- the forward test (#397 (b))
+# evals/experiments/joint_risk/PREREG.md: on days with |NIFTY move| > 1.5 %, full revaluation of the book plus each
+# holding's own path must explain >= 90 % of the joint P&L's variance; evaluated once 20 such days exist.
+BIG_MOVE, MIN_DAYS, R2_GATE = 0.015, 20, 0.90
+
+
+def variance_explained(actual: Sequence[float], explained: Sequence[float]) -> float | None:
+    """1 - Σ(a - e)² / Σ(a - ā)²; None when the actual P&L does not vary."""
+    n = len(actual)
+    if n == 0 or n != len(explained):
+        return None
+    mean = sum(actual) / n
+    sst = sum((a - mean) ** 2 for a in actual)
+    if sst <= 0:
+        return None
+    return 1 - sum((a - e) ** 2 for a, e in zip(actual, explained, strict=True)) / sst
+
+
+@dataclass(frozen=True)
+class ForwardTest:
+    qualifying: int
+    needed: int
+    r2: float | None
+    passed: bool | None
+
+
+def forward_test(rows: Sequence[tuple[float, float, float]]) -> ForwardTest:
+    """rows = (NIFTY's move, actual joint P&L, explained joint P&L) per day; only |move| > BIG_MOVE days count."""
+    q = [(a, e) for mv, a, e in rows if abs(mv) > BIG_MOVE]
+    if len(q) < MIN_DAYS:
+        return ForwardTest(len(q), MIN_DAYS, None, None)
+    r2 = variance_explained([a for a, _ in q], [e for _, e in q])
+    return ForwardTest(len(q), MIN_DAYS, r2, None if r2 is None else r2 >= R2_GATE)
