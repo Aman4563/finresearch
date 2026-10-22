@@ -1234,6 +1234,9 @@ def forecasts_horse_race(
                       f"reasons {rp['p_rn_b76_reasons']}")  # fmt: skip
         console.print(f"challenger p_rn_svi ({rp['addendum_a4']}): unknown on {rp['p_rn_svi_unknown']} card(s); "
                       f"reasons {rp['p_rn_svi_reasons']}")  # fmt: skip
+        console.print(f"challengers p_rw_emp / p_rw_fhs ({rp['addendum_a5']}): unknown on {rp['p_rw_emp_unknown']} / "
+                      f"{rp['p_rw_fhs_unknown']} card(s); reasons {rp['p_rw_emp_reasons']} / "
+                      f"{rp['p_rw_fhs_reasons']}")  # fmt: skip
     else:
         with session_scope() as s:
             rep = race.run(ledger_events.load(s), window)

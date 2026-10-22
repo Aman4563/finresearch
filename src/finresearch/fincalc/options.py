@@ -382,16 +382,6 @@ def weighted_quantiles(dist: Sequence[tuple[float, float]], qs: Sequence[float])
     return out
 
 
-def risk_of_ruin(edge: float, units: float) -> float:
-    """Classic gambler's-ruin approximation for even-money bets with edge e and capital of C/u bet units:
-    RoR ≈ ((1 − e)/(1 + e))^(C/u); 1 when there is no positive edge (roadmap §D.5)."""
-    if edge <= 0:
-        return 1.0
-    if edge >= 1:
-        return 0.0
-    return ((1 - edge) / (1 + edge)) ** units
-
-
 def drawdown_probability(dist: Sequence[tuple[float, float]], capital: float, threshold: float, repeats: int,
                          sims: int = 4000, seed: int = 7) -> float:  # fmt: skip
     """Monte Carlo: P(the running P&L falls more than `threshold` × capital below its peak (or the start) within

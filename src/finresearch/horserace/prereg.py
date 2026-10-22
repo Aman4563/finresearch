@@ -26,3 +26,10 @@ ADDENDUM_A3_ON = "2026-10-22"
 # session.
 ADDENDUM_A4_HASH = "3602512dc19256374975c5f8779a7890ea16eb15d5471871be056a6684cbd6da"
 ADDENDUM_A4_ON = "2026-10-22"
+
+# Post-hoc addendum A5 (horserace/addendum_a5.py, ADDENDUM.md): the tail-aware physical challengers p_rw_emp (IV-scaled
+# empirical) and p_rw_fhs (GJR filtered historical simulation) of P3.4 (#387), with every fitted setting of
+# fincalc/taildist.py, pinned before any replay code computed them on a stored session; chained on A4 (re-pinned when A4 merged first,
+# still before any replay run).
+ADDENDUM_A5_HASH = "cebb9fd453637c294ee9cac2c1eeb545daa9a033523aca2236be7e66a834a670"
+ADDENDUM_A5_ON = "2026-10-22"

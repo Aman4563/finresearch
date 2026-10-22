@@ -2,24 +2,29 @@
 built from the bhavcopy at the close, forecast by the card's models and resolved by the card ledger's exit replay.
 Registered in horserace/specs.py (`Replay`), post-hoc addendum A1 (horserace/addendum.py, ADDENDUM.md) and, for the
 business-time challenger p_rw_bus (#384), addendum A2 (horserace/addendum_a2.py) and, for the Black-76 forward/IV
-challenger p_rn_b76 (#385), addendum A3 (horserace/addendum_a3.py) and, for the SVI density challenger p_rn_svi
-(#386), addendum A4 (horserace/addendum_a4.py); the item numbers below are the addenda's.
+challenger p_rn_b76 (#385), addendum A3 (horserace/addendum_a3.py), for the SVI density challenger p_rn_svi
+(#386), addendum A4 (horserace/addendum_a4.py) and, for the tail-aware challengers p_rw_emp and p_rw_fhs
+(#387), addendum A5 (horserace/addendum_a5.py); the item numbers below are the addenda's.
 
 Two passes. (1) Forecasting, oldest session first, through `backtest.history.Clocked` advanced to the origin close,
 so a card can read nothing later than its origin (LookAheadError otherwise): expiry (A1.4), legs (A1.5), fills
 (A1.1), RV20/RV60 on same-instrument returns (A1.7), ATM IV (A1.8), PoP/EV/dots per model (A1.6, A1.9) and the gate
-proxy (A1.10). (2) Outcomes on the raw history with `fnobook.card_forecasts.simulate` (A1.2, A1.11): void and
+proxy (A1.10); a TailBook per underlying keeps the A5.1 z sample and the A5.4 GJR fit from the sessions already
+read. (2) Outcomes on the raw history with `fnobook.card_forecasts.simulate` (A1.2, A1.11): void and
 unfinished cards are counted, never events. Nothing here writes to the database.
 """
 
 from __future__ import annotations
 
+import hashlib
 import math
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Any
+
+import numpy as np
 
 from finresearch.backtest import engine
 from finresearch.backtest import pricing as px
@@ -32,10 +37,20 @@ from finresearch.fincalc import fno_history as fh
 from finresearch.fincalc import options as o
 from finresearch.fincalc import smile as sm
 from finresearch.fincalc import svi
+from finresearch.fincalc import taildist as td
 from finresearch.fincalc import tradeplan as tp
 from finresearch.fincalc import volatility as vol
 from finresearch.fincalc.dates import ist_datetime
-from finresearch.horserace import addendum, addendum_a2, addendum_a3, addendum_a4, prereg, race, specs
+from finresearch.horserace import (
+    addendum,
+    addendum_a2,
+    addendum_a3,
+    addendum_a4,
+    addendum_a5,
+    prereg,
+    race,
+    specs,
+)
 from finresearch.horserace.race import Forecast
 
 WARMUP_DAYS = 400  # A1.7, the engine's
@@ -43,7 +58,7 @@ DOTS = [(i + 0.5) / 20 for i in range(20)]
 
 
 def require_registered() -> str:
-    """The registration (specs.py) and addenda A1-A4 must each match their pinned hashes."""
+    """The registration (specs.py) and addenda A1-A5 must each match their pinned hashes."""
     race.require_registered()
     h = addendum.addendum_hash()
     if h != prereg.ADDENDUM_HASH:
@@ -68,6 +83,12 @@ def require_registered() -> str:
         raise race.PreregistrationError(
             f"horserace/addendum_a4.py (with fincalc/svi's and smile's registered settings) hashes to {h4[:12]}… but "
             f"the pinned hash is {prereg.ADDENDUM_A4_HASH[:12]}…: the replay is refused. Register a new addendum first."
+        )
+    h5 = addendum_a5.addendum_hash()
+    if h5 != prereg.ADDENDUM_A5_HASH:
+        raise race.PreregistrationError(
+            f"horserace/addendum_a5.py (with fincalc/taildist's fitted settings) hashes to {h5[:12]}… but the "
+            f"pinned hash is {prereg.ADDENDUM_A5_HASH[:12]}…: the replay is refused. Register a new addendum first."
         )
     return h
 
@@ -165,14 +186,14 @@ class Card:
         None  # A3.6: the parity forward, DF, ATM IV and why unknown (logged, not scored)
     )
     svi: dict[str, Any] | None = None  # A4.4: the smile's parameters, fit and RR/BF, or why unknown (logged)
+    tail: dict[str, Any] | None = (
+        None  # A5.5: bucket, z count, kappa, ES97.5 and why unknown (logged, not scored)
+    )
 
 
 def _exit_cost(legs: Sequence[o.Leg], expiry: date):
-    longs = [x for x in legs if x.qty > 0]
-
-    def exit_cost(p: float) -> float:  # STT on long options exercised in the money (the card's)
-        return ch.exercise_stt(sum(x.qty * (max(0.0, p - x.strike) if x.right == "call" else max(0.0, x.strike - p))
-                                   for x in longs), expiry)  # fmt: skip
+    # STT on long options exercised in the money (the card's): one dated-rate lookup per card, the same values
+    exit_cost = exercise_stt_cost(legs, expiry)
 
     return exit_cost
 
@@ -211,8 +232,124 @@ def bus_sigmas(sigmas: dict[str, float | None], t_bus: float | None, t: float) -
     return {k: bt.rescale_vol(v, t_bus, t) for k, v in sigmas.items()}
 
 
+# --------------------------------------------------------------------------- A5: the tail-aware challengers
+@dataclass(frozen=True)
+class ExerciseSttCost:
+    """A1.6's exit cost, exercise STT on in-the-money longs (a rate on intrinsic value from 1-Sep-2019), on a price
+    or a whole array of prices (taildist.sample_outcome takes the array: `vectorised`)."""
+
+    rate: float
+    longs: tuple[o.Leg, ...]
+    vectorised = True
+
+    def __call__(self, p: Any) -> Any:
+        tot = 0.0
+        for x in self.longs:
+            tot = tot + x.qty * (
+                np.maximum(p - x.strike, 0.0) if x.right == "call" else np.maximum(x.strike - p, 0.0)
+            )
+        v = self.rate * tot
+        return float(v) if np.ndim(v) == 0 else v
+
+
+def exercise_stt_cost(legs: Sequence[o.Leg], expiry: date) -> ExerciseSttCost:
+    return ExerciseSttCost(
+        ch.exercise_stt(1.0, expiry), tuple(x for x in legs if x.qty > 0 and x.right != "future")
+    )
+
+
+def card_rng(symbol: str, spec: str, origin: date, expiry: date) -> np.random.Generator:
+    """A5.4: one generator per card from sha256("SEED|underlying|spec|origin|expiry"), so a card's draws do not
+    depend on which other specs or sessions run (M2 draws nothing in the replay: no tail, no interval)."""
+    key = f"{addendum_a5.SEED}|{symbol}|{spec}|{origin.isoformat()}|{expiry.isoformat()}"
+    return np.random.default_rng(int.from_bytes(hashlib.sha256(key.encode()).digest()[:8], "big"))
+
+
+class TailBook:
+    """Per underlying, oldest session first: the A5.1 z sample (entries pending until their expiry settles) and the
+    A5.4 GJR fit. `observe` reads only the session it is given."""
+
+    def __init__(self, rate: float) -> None:
+        self.rate = rate
+        self.pending: dict[tuple[str, date], tuple[float, float, float]] = {}
+        self.seen: set[tuple[str, date]] = set()
+        self.z: dict[str, list[tuple[date, float]]] = {b: [] for b in addendum_a5.BUCKETS}
+        self.gjr: td.GjrFit | None = None
+        self.month: tuple[int, int] | None = None
+        self.dropped: Counter = Counter()  # entries that gave no z, by reason (reported, never silently lost)
+
+    def observe(self, x: Day, eday: Any) -> None:
+        d = x.day
+        for e in x.expiries():
+            dte = (e - d).days
+            for b, (lo, hi, kind) in addendum_a5.BUCKETS.items():
+                key = (b, e)
+                if key in self.seen or not lo <= dte <= hi or (kind == "monthly" and not x.is_monthly(e)):
+                    continue
+                fwd = px.forward(x, e, self.rate)
+                sigma = atm_iv(x, e, fwd, dte / 365, self.rate) if fwd else None
+                if fwd and sigma:
+                    self.pending[key] = (fwd, sigma, dte / 365)
+                    self.seen.add(key)
+        for key in [k for k in self.pending if eday(k[1]) <= d]:
+            fwd, sigma, t = self.pending.pop(key)
+            if eday(key[1]) != d:
+                self.dropped["no stored session on the expiry day"] += 1
+                continue
+            st = px.settlement_price(x, key[1])
+            z = td.terminal_z(st[0] if st else None, fwd, sigma, t)
+            if z is None:
+                self.dropped["settlement price unknown"] += 1
+            else:
+                self.z[key[0]].append((d, z))
+
+    def refit(self, d: date, returns: Sequence[float]) -> None:
+        if (d.year, d.month) != self.month:
+            self.month = (d.year, d.month)
+            self.gjr = td.gjr_fit(returns)
+
+
+def _fc(m: td.ModelForecast) -> Forecast:
+    if m.outcome is None:
+        return Forecast(None)
+    return Forecast(m.outcome.pop, m.outcome.ev, [round(v, 2) for v in m.outcome.dots])
+
+
+def tail_forecasts(spec: Spec, x: Day, legs: Sequence[o.Leg], expiry: date, fwd: float, t: float, rate: float,
+                   entry_cost: float, sigma: float | None, tail: TailBook,
+                   returns: Sequence[float]) -> tuple[dict[str, Forecast], dict[str, Any]]:  # fmt: skip
+    """A5.3-A5.5: p_rw_emp and p_rw_fhs for one card, and what is logged about them."""
+    d, dte = x.day, (expiry - x.day).days
+    bucket = next((b for b, (lo, hi, _) in addendum_a5.BUCKETS.items() if lo <= dte <= hi), None)
+    sample = [(s, z) for s, z in tail.z[bucket] if s < d] if bucket else []  # A5.2: settled before the origin
+    xc = exercise_stt_cost(legs, expiry)
+    rng = card_rng(x.symbol, spec.key, d, expiry)
+    if bucket is None:
+        emp = td.ModelForecast(None, None, None, None, 0, f"{dte} days to expiry: outside every bucket")
+        fhs = td.ModelForecast(None, None, None, None, 0, emp.reason)
+    else:
+        emp = td.empirical_forecast(legs, fwd, sigma, t, rate, entry_cost, xc, [z for _, z in sample], boot=0,
+                                    rng=rng)  # fmt: skip
+        fit = tail.gjr
+        fhs = td.fhs_forecast(legs, fwd, sigma, t, rate, entry_cost, xc, list(returns)[-td.GJR_WINDOW:],
+                              fit.params if fit else None, steps=td.weekday_steps(d, expiry), kap=emp.kappa,
+                              rng=rng)  # fmt: skip
+        if fhs.reason == "no filter parameters":
+            fhs = td.ModelForecast(None, None, None, emp.kappa, fhs.n,
+                                   f"no filter parameters: {fit.reason if fit else 'no fit yet'}")  # fmt: skip
+    gjr = tail.gjr.params if tail.gjr and tail.gjr.params else None
+    log = {"bucket": bucket, "n_z": len(sample), "kappa": emp.kappa,
+           "last_settled": max((s for s, _ in sample), default=None),
+           "es_emp": emp.outcome.es if emp.outcome else None, "es_fhs": fhs.outcome.es if fhs.outcome else None,
+           "reason_emp": emp.reason, "reason_fhs": fhs.reason,
+           "gjr": None if gjr is None else {"omega": gjr.omega, "alpha": gjr.alpha, "gamma": gjr.gamma,
+                                            "beta": gjr.beta}}  # fmt: skip
+    return {addendum_a5.EMPIRICAL: _fc(emp), addendum_a5.FHS: _fc(fhs)}, log
+
+
 def card_at(spec: Spec, x: Day, h: Clocked, nxt: date | None, eday: Any, returns: Sequence[float],
-            ivs: Sequence[float], book: Book = BOOK, calendar: bt.Calendar | None = None) -> Card | str:  # fmt: skip
+            ivs: Sequence[float], book: Book = BOOK, calendar: bt.Calendar | None = None,
+            tail: TailBook | None = None) -> Card | str:  # fmt: skip
     """One card at this close (A1.1, A1.3-A1.10), or the reason there is none."""
     d, sym, rate = x.day, x.symbol, book.rate
     exps = [e for e in x.expiries() if spec.dte_min <= (e - d).days <= spec.dte_max
@@ -254,6 +391,13 @@ def card_at(spec: Spec, x: Day, h: Clocked, nxt: date | None, eday: Any, returns
     # A4: the SVI density challenger, A1.6's inputs with the terminal distribution from the expiry's fitted smile
     s4 = svi_smile(x, expiry, t, b3)
     fc[addendum_a4.CHALLENGER] = svi_forecast(legs, expiry, spot, t, rate, entry_cost, s4["params"])
+    # A5: the tail-aware challengers, A1.6's inputs with the A1.8 ATM IV scaling the empirical shape
+    tlog = None
+    if tail is not None:
+        tfc, tlog = tail_forecasts(
+            spec, x, legs, expiry, fwd, t, rate, entry_cost, sig["p_rn_atm"], tail, returns
+        )
+        fc.update(tfc)
     plan = tp.spec_exits(spec)
     stats = vol.iv_stats(ivs) if x.iv30 is not None else None
     pct = stats.percentile if stats else None
@@ -264,7 +408,7 @@ def card_at(spec: Spec, x: Day, h: Clocked, nxt: date | None, eday: Any, returns
                        for q, side, f in fills],
               "exit_plan": {"profit_pct": plan.profit_pct, "stop_pct": plan.stop_pct, "exit_dte": plan.exit_dte,
                             "hold_to_expiry": plan.hold_to_expiry}}  # fmt: skip
-    return Card(spec.key, sym, spec.kind, expiry, d, inputs, fc, gate, t_bus, b3, s4)
+    return Card(spec.key, sym, spec.kind, expiry, d, inputs, fc, gate, t_bus, b3, s4, tlog)
 
 
 def make_cards(history: History, start: date, end: date, spec_list: Sequence[Spec] | None = None,
@@ -287,6 +431,7 @@ def make_cards(history: History, start: date, end: date, spec_list: Sequence[Spe
             return e if not days or e > days[-1] else days[bisect_right(days, e) - 1]
 
         prev: Day | None = None
+        tail = TailBook(book.rate)  # A5.1, A5.4
         returns: list[float] = []
         ivs: list[float] = []
         for i, d in enumerate(days):
@@ -300,15 +445,19 @@ def make_cards(history: History, start: date, end: date, spec_list: Sequence[Spe
             if x.iv30 is not None:
                 ivs.append(x.iv30)
             prev = x
+            tail.observe(x, eday)  # settles z on d; a card at d reads only z settled before d (A5.2)
+            tail.refit(d, returns)
             if not start <= d <= end:
                 continue
             nxt = days[i + 1] if i + 1 < len(days) else None
             for spec in group:
-                c = card_at(spec, x, h, nxt, eday, returns, ivs, book, calendar)
+                c = card_at(spec, x, h, nxt, eday, returns, ivs, book, calendar, tail)
                 if isinstance(c, str):
                     skips[f"{spec.key}: {c}"] += 1
                 else:
                     cards.append(c)
+        for why, n in tail.dropped.items():  # A5.1: expiries entered but never turned into a z
+            skips[f"A5 z not formed ({sym}): {why}"] += n
     return cards, skips
 
 
@@ -384,7 +533,7 @@ def run_window(history: History, window: str, spec_list: Sequence[Spec] | None =
     end = date.fromisoformat(w["end"]) if w["end"] else date.max
     cards, skips = make_cards(history, start, end, spec_list)
     events, counts = resolve(cards, history)
-    rep = race.run(events, window, challengers=addendum_a4.CHALLENGERS)
+    rep = race.run(events, window, challengers=addendum_a5.CHALLENGERS)
     gaps: dict[str, int | None] = {}  # A2.5: weekdays without a stored session (holidays and any missing day)
     for sym in sorted({s.underlying for s in spec_list or replay_specs()}):
         last = history.latest(sym)
@@ -402,6 +551,13 @@ def run_window(history: History, window: str, spec_list: Sequence[Spec] | None =
                      "p_rn_svi_unknown": sum(1 for c in cards if not c.svi or c.svi["params"] is None),
                      "p_rn_svi_reasons": dict(Counter(": ".join(c.svi["reason"].split(": ")[:2]) for c in cards
                                                       if c.svi and c.svi["reason"])),
+                     "addendum_a5": addendum_a5.ADDENDUM_VERSION, "addendum_a5_hash": addendum_a5.addendum_hash(),
+                     "z_not_formed": {k: v for k, v in skips.items() if k.startswith("A5 z")},
+                     **{f"{k}_unknown": sum(1 for c in cards if c.forecasts.get(k, Forecast(None)).p is None)
+                        for k in (addendum_a5.EMPIRICAL, addendum_a5.FHS)},
+                     **{f"{k}_reasons": dict(Counter(c.tail[f"reason_{r}"].split(":")[0] for c in cards
+                                                     if c.tail and c.tail[f"reason_{r}"]))
+                        for k, r in ((addendum_a5.EMPIRICAL, "emp"), (addendum_a5.FHS, "fhs"))},
                      "calendar_gap_weekdays": gaps, "t_bus_unknown": sum(1 for c in cards if c.t_bus is None),
                      "first_origin": min((c.origin for c in cards), default=None),
                      "last_origin": max((c.origin for c in cards), default=None)}  # fmt: skip
