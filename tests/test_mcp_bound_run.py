@@ -100,3 +100,28 @@ def test_an_unbound_server_is_not_restricted(env, tmp_path, monkeypatch):
     monkeypatch.delenv(RUN_ENV, raising=False)
     theirs = _run(tmp_path, "OPEN")
     assert "MARKER-OPEN-CLAIM" in server.list_claims(theirs)
+
+
+def test_a_bound_server_refuses_to_create_runs(bound):
+    """Agents never create runs: a run-bound server's start_run is refused with a clear error and writes nothing."""
+    from sqlalchemy import func, select
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import ResearchRun
+    from finresearch.mcp_server import server
+
+    mine, _ = bound
+    with session_scope() as s:
+        before = s.scalar(select(func.count()).select_from(ResearchRun))
+    err = json.loads(server.start_run("anything", note="x"))["error"]
+    assert f"bound to run {mine}" in err and "cannot create runs" in err
+    with session_scope() as s:
+        assert s.scalar(select(func.count()).select_from(ResearchRun)) == before
+
+
+def test_an_unbound_server_may_still_create_a_run(env, monkeypatch):
+    from finresearch.mcp_server import server
+    from finresearch.mcp_server.config import RUN_ENV
+
+    monkeypatch.delenv(RUN_ENV, raising=False)
+    assert "run_id" in json.loads(server.start_run("no-such-company"))

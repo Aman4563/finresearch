@@ -367,7 +367,8 @@ def _option_tool(fn):
     return server.tool(description=f"{inspect.getdoc(fn)} {_OPTION_CITE}")(fn)
 
 
-# every tool that takes a run_id; each refuses a run other than the server's bound run (tests/test_mcp_bound_run.py)
+# every tool that takes a run_id; each refuses a run other than the server's bound run, and start_run is refused
+# outright on a bound server (tests/test_mcp_bound_run.py)
 RUN_BOUND_TOOLS = ("save_claim", "list_claims", "identity_checks", "fetch_page")
 
 
@@ -975,7 +976,14 @@ async def sebi_resolve_pdf(detail_url: str) -> str:
 # --------------------------------------------------------------------------- claim ledger
 @server.tool()
 def start_run(company: str, kind: str = "ipo_report", note: str | None = None) -> str:
-    """Create a research run (container for claims). Returns run_id."""
+    """Create a research run (container for claims). Returns run_id. Refused on a server bound to a run (an agent
+    task's): agents never create runs."""
+    from finresearch.mcp_server import option_facts
+
+    if (bound := option_facts.bound_run_id()) is not None:
+        return json.dumps(
+            {"error": f"this server is bound to run {bound}; it cannot create runs. Use run_id {bound}."}
+        )
     with session_scope() as s:
         c = s.scalar(select(Company).where(Company.slug == company))
         run = ResearchRun(company_id=c.id if c else None, kind=kind, manifest={"note": note} if note else {})
