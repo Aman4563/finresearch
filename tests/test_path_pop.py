@@ -39,13 +39,16 @@ def test_a_leg_is_repriced_by_black76_at_its_origin_iv_moved_by_the_spot_vol_rul
     tau, df = 30 / 365, math.exp(-0.065 * 30 / 365)
     # no move: the origin IV; beta = -0.5 and F down 2 %: sigma = 0.14 - 0.5 x ln(0.98) = 0.150101
     assert pp.leg_price(leg, 20000.0, 20000.0, tau, 0.065, -0.5) == pytest.approx(
-        b76.price("put", 20000.0, 19800.0, tau, df, 0.14), abs=1e-9)
+        b76.price("put", 20000.0, 19800.0, tau, df, 0.14), abs=1e-9
+    )
     sig = 0.14 - 0.5 * math.log(0.98)
     assert pp.leg_price(leg, 19600.0, 20000.0, tau, 0.065, -0.5) == pytest.approx(
-        b76.price("put", 19600.0, 19800.0, tau, df, sig), abs=1e-9)
+        b76.price("put", 19600.0, 19800.0, tau, df, sig), abs=1e-9
+    )
     # a shift below the solver's floor is floored there, never negative
     assert pp.leg_price(leg, 30000.0, 20000.0, tau, 0.065, -5.0) == pytest.approx(
-        b76.price("put", 30000.0, 19800.0, tau, df, b76.SIGMA_LO), abs=1e-9)
+        b76.price("put", 30000.0, 19800.0, tau, df, b76.SIGMA_LO), abs=1e-9
+    )
     assert pp.leg_price(leg, 19000.0, 20000.0, 0.0, 0.065, 0.0) == pytest.approx(800.0)  # intrinsic at expiry
 
 
@@ -53,3 +56,61 @@ def test_a_mark_is_rounded_to_the_tick_and_never_below_one():
     from finresearch.fnobook import path_pop as pp
 
     assert pp.tick(12.3449) == 12.35 and pp.tick(12.32) == 12.3 and pp.tick(0.004) == 0.05
+
+
+# --------------------------------------------------------------------------- the exit rules are the engine's
+from test_card_forecasts import LOT, PCS, STOP_PATH, card, charges  # noqa: E402
+
+from finresearch.backtest.history import MemoryHistory  # noqa: E402
+
+
+def _inp(c):
+    from datetime import UTC, datetime
+
+    from finresearch.fnobook import card_forecasts as cf
+
+    return cf.card_inputs(c, datetime(2025, 1, 10, 6, 0, tzinfo=UTC), card_log_id=1, index=0)
+
+
+def _legs(inp, iv=0.15, contracts=1500):
+    from finresearch.fnobook import path_pop as pp
+
+    return [
+        pp.PathLeg(lg["right"], lg["strike"], lg["side"], lg["entry"], iv, contracts) for lg in inp["legs"]
+    ]
+
+
+def test_a_known_path_resolves_exactly_as_the_card_ledger_replay_of_the_same_quotes():
+    """The deterministic check: STOP_PATH's quotes fed as a simulated path give the same reason, day and net as
+    fnobook.card_forecasts.simulate on a MemoryHistory of those quotes (both are engine.manage)."""
+    from finresearch.fnobook import card_forecasts as cf
+    from finresearch.fnobook import path_pop as pp
+
+    inp = _inp(card(PCS, kind="put_credit"))
+    want = cf.simulate(inp, MemoryHistory(STOP_PATH))
+    marks = [[x.options[(EXP, "put", k)].close for k in (20000.0, 19800.0)] for x in STOP_PATH[1:]]
+    sessions = [x.day for x in STOP_PATH[1:]] + [EXP]
+    h = pp.PathHistory(inp, _legs(inp), sessions, [20000.0] * len(sessions),
+                       lambda leg_i, i: marks[i][leg_i] if i < len(marks) else 1.0)  # fmt: skip
+    got = cf.simulate(inp, h)
+    assert (got.outcome, got.value, got.note) == (want.outcome, want.value, want.note)
+    assert got.note.startswith("stop on 2025-01-15")
+
+
+def test_an_expiry_moved_earlier_by_a_holiday_settles_on_the_last_session_and_never_waits():
+    """Expiry date 13-Feb is a holiday: the contracts settle on 12-Feb at the path's forward. The calendar carries a
+    sentinel after the expiry date, so the exit on the last session is final (simulate would otherwise wait)."""
+    from finresearch.fnobook import card_forecasts as cf
+    from finresearch.fnobook import path_pop as pp
+
+    dcs = [("call", 20000.0, "buy", 1, 300.0), ("call", 20400.0, "sell", 1, 150.0)]
+    inp = _inp(card(dcs, kind="debit_call", source="spec:nifty_dcs_m", profit=None, stop=None))
+    sessions = [date(2025, 1, 13), date(2025, 2, 12)]
+    h = pp.PathHistory(inp, _legs(inp), sessions, [20100.0, 20300.0], lambda leg_i, i: 200.0)
+    r = cf.simulate(inp, h)
+    gross = (300.0 - 300.0) * LOT - (
+        0.0 - 150.0
+    ) * LOT  # long 20000 call worth 300 at 20,300; the wing expires
+    net = gross - charges(150.0 * LOT, 300.0 * LOT, 2) - 300.0 * LOT * 0.00125  # exercise STT 0.125 %
+    assert r.outcome == 1 and r.value == pytest.approx(net, abs=0.02)
+    assert r.note.startswith("expiry on 2025-02-12") and "expiry moved to 2025-02-12" in r.note

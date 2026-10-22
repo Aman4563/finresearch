@@ -21,10 +21,14 @@ The smile (P3.3) and the fat-tailed path generator (P3.4) are not merged: both e
 from __future__ import annotations
 
 import math
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import date, timedelta
+from typing import Any
 
 import numpy as np
 
+from finresearch.backtest.history import Day, Quote
 from finresearch.fincalc import black76 as b76
 
 TICK = 0.05  # NSE's option tick, rupees
@@ -61,3 +65,47 @@ def leg_price(leg: PathLeg, fwd: float, f0: float, tau: float, rate: float, beta
 def tick(price: float) -> float:
     """A simulated mark on NSE's tick grid, never below one tick (a traded quote needs a positive close)."""
     return max(TICK, round(round(price / TICK) * TICK, 2))
+
+
+class PathHistory:
+    """One simulated path as a `backtest.history.History` that `card_forecasts.simulate` reads like the bhavcopy.
+
+    `sessions`: the stored sessions after the origin up to the expiry's last session (the exchange calendar, the one
+    thing the engine may read ahead); `forwards[i]`: the path's forward at sessions[i]; `price(leg_i, i)`: leg leg_i's
+    value at sessions[i]. Each session before the last carries every leg's quote (close = settle = the value on the
+    tick grid, the leg's origin contracts); the last carries only the expiring future at the forward, which the engine
+    settles at. A sentinel session after the expiry date (no data) makes an exit on the last session final."""
+
+    def __init__(self, inp: dict[str, Any], legs: Sequence[PathLeg], sessions: Sequence[date],
+                 forwards: Sequence[float], price: Callable[[int, int], float]) -> None:  # fmt: skip
+        self.symbol, self.lot_size = inp["symbol"], inp.get("lot")
+        self.expiry, self.origin = date.fromisoformat(inp["expiry"]), date.fromisoformat(inp["entry_day"])
+        self.legs, self.price, self.forwards = legs, price, forwards
+        self.sessions_ = list(sessions)
+        if not self.sessions_ or self.sessions_[0] <= self.origin or self.sessions_[-1] > self.expiry:
+            raise ValueError("sessions must run from after the origin to the expiry date")
+        self.index = {d: i for i, d in enumerate(self.sessions_)}
+        self.calendar = [self.origin, *self.sessions_, self.expiry + timedelta(days=1)]
+
+    def sessions(self, symbol: str, start: date, end: date) -> list[date]:
+        return [d for d in self.calendar if start <= d <= end] if symbol == self.symbol else []
+
+    def latest(self, symbol: str) -> date | None:
+        return self.calendar[-1] if symbol == self.symbol else None
+
+    def lot(self, symbol: str, expiry: date, d: date) -> int | None:
+        return self.lot_size
+
+    def day(self, symbol: str, d: date) -> Day | None:
+        i = self.index.get(d)
+        if symbol != self.symbol or i is None:
+            return None
+        x = Day(d, symbol)
+        if i == len(self.sessions_) - 1:
+            x.futures[self.expiry] = float(self.forwards[i])
+            return x
+        for j, leg in enumerate(self.legs):
+            px = tick(self.price(j, i))
+            x.options[(self.expiry, leg.right, leg.strike)] = Quote(self.expiry, leg.right, leg.strike, px, px,
+                                                                    leg.contracts, 0)  # fmt: skip
+        return x
