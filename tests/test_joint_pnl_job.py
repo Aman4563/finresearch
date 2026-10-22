@@ -15,7 +15,7 @@ from finresearch.monitor import joint_pnl as job
 from finresearch.monitor.jobs import Deps as _Deps
 
 
-def Deps(**kw):  # noqa: N802
+def Deps(**kw):
     return _Deps(ipo_detail=None, quote=None, **kw)
 
 

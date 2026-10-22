@@ -244,7 +244,9 @@ def test_forward_status_evaluates_the_first_20_usable_big_move_days_and_counts_t
         _rows(s, 22)
     with session_scope() as s:
         st = jl.forward_status(s, date(2026, 12, 31))["stored"]
-    a = [(i - 10) * 1000.0 for i in range(20)]  # the first 20 only: evaluated once, later days do not re-test it
+    a = [
+        (i - 10) * 1000.0 for i in range(20)
+    ]  # the first 20 only: evaluated once, later days do not re-test it
     e = [x + (i % 3 - 1) * 400 for i, x in enumerate(a)]
     hb = [x / 2 + 900 * (i % 2) for i, x in enumerate(a)]
     assert st["usable_qualifying"] == 22 and st["evaluated_on"] == 20

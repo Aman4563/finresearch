@@ -977,11 +977,11 @@ def schedule_json(ww=None, *, running: bool | None = None) -> dict:
     from finresearch.monitor import fno_bhav as fb
     from finresearch.monitor import index_eod as ixe
     from finresearch.monitor import intraday, iv
+    from finresearch.monitor import joint_pnl as jpj
     from finresearch.monitor import lookthrough_fetch as ltf
     from finresearch.monitor import portfolio_daily as pd
     from finresearch.monitor import quotes as mq
     from finresearch.monitor import rates as mr
-    from finresearch.monitor import joint_pnl as jpj
     from finresearch.monitor import risk_alerts as rka
     from finresearch.monitor import scheme_master as sm
     from finresearch.monitor import sip_estimates as sipe
