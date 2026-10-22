@@ -37,6 +37,10 @@ class PaperIn(BaseModel):
         None, ge=0, le=20, description="Default: fnobook.book.DEFAULT_SLIPPAGE_PCT"
     )
     label: str = Field("", max_length=120)
+    card_log_id: int | None = Field(
+        None, ge=1, description="#383: the card_log row of the card it was taken from"
+    )
+    card_index: int = Field(0, ge=0, le=50, description="The card's index in that response (a plan card: 0)")
 
 
 class ExitRuleIn(BaseModel):
@@ -114,6 +118,18 @@ def _log_margin_check(sym: str, expiry: date, kind: str, spec: list[Any], est: A
                               span_day=span_day))  # fmt: skip
     except Exception:
         log.warning("margin check not logged", exc_info=True)
+
+
+def _check_card(s: Any, card_log_id: int, index: int, sym: str) -> None:
+    """422 unless the card_log row is a plan or suggest response for `sym` holding a card at `index` (#383)."""
+    from finresearch.db.models import CardLog
+    from finresearch.fnobook.card_forecasts import _cards
+
+    row = s.get(CardLog, card_log_id)
+    if row is None or row.symbol.upper() != sym:
+        raise HTTPException(422, f"card log {card_log_id} is not a {sym} card")
+    if not 0 <= index < len(_cards(row.kind, row.response or {})):
+        raise HTTPException(422, f"card log {card_log_id} ({row.kind}) has no card {index}")
 
 
 class MarginIn(BaseModel):
@@ -198,6 +214,8 @@ def add_fno_book_routes(app: FastAPI, clock: Callable[[], datetime] | None = Non
             raise HTTPException(409, str(e)) from e
         legs_in = [LegIn(x.right, float(x.strike), x.side, x.lots) for x in body.legs]
         with session_scope() as s:
+            if body.card_log_id is not None:
+                _check_card(s, body.card_log_id, body.card_index, sym)
             slip = (
                 float(body.slippage_pct)
                 if body.slippage_pct is not None
@@ -207,6 +225,7 @@ def add_fno_book_routes(app: FastAPI, clock: Callable[[], datetime] | None = Non
             try:
                 st = book.record(s, symbol=sym, expiry=body.expiry, lot=lot, legs_in=legs_in, quotes=quotes,
                                  slippage_pct=slip, brokerage=brokerage, now=t, label=body.label,
+                                 card=None if body.card_log_id is None else (body.card_log_id, body.card_index),
                                  spot=float(chain.underlying) if chain is not None and chain.underlying else None)  # fmt: skip
             except ValueError as e:
                 raise HTTPException(422, str(e)) from e

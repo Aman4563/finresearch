@@ -46,8 +46,8 @@ def legs_of(st: PaperStrategy) -> list[pp.PaperLeg]:
 
 def record(s: Session, *, symbol: str, expiry: date, lot: int, legs_in: list[Any], quotes: list[Quote],
            slippage_pct: float, brokerage: float, now: datetime, spot: float | None = None, label: str = "",
-           overrides: dict[str, Any] | None = None) -> PaperStrategy:  # fmt: skip
-    """A new open paper strategy. `legs_in` are `signals.fno.LegIn` (right, strike, side, lots); `quotes` their
+           overrides: dict[str, Any] | None = None, card: tuple[int, int] | None = None) -> PaperStrategy:  # fmt: skip
+    """A new open paper strategy. `card` = (card_log id, card index) it was taken from (#383), else None. `legs_in` are `signals.fno.LegIn` (right, strike, side, lots); `quotes` their
     reference prices in the same order. Raises ValueError when a leg has no price (never filled at 0)."""
     if not legs_in or len(legs_in) != len(quotes):
         raise ValueError("a paper trade needs at least one leg and a price for each")
@@ -65,7 +65,8 @@ def record(s: Session, *, symbol: str, expiry: date, lot: int, legs_in: list[Any
     st = PaperStrategy(symbol=symbol.upper(), expiry=expiry, label=label[:120], status=OPEN, opened_at=now, lot_size=lot,
                        slippage_pct=Decimal(str(slippage_pct)), brokerage_per_order=Decimal(str(brokerage)),
                        spot_at_entry=_m(spot), price_source=", ".join(sorted({q.source for q in quotes}))[:80],
-                       entry_costs=_m(costs.total), entry_detail=costs.to_json(), exit_detail={}, legs=rows)  # fmt: skip
+                       entry_costs=_m(costs.total), entry_detail=costs.to_json(), exit_detail={}, legs=rows,
+                       card_log_id=card[0] if card else None, card_index=card[1] if card else None)  # fmt: skip
     s.add(st)
     s.flush()
     return st
@@ -150,6 +151,7 @@ def strategy_json(st: PaperStrategy, today: date) -> dict[str, Any]:
             "close_reason": st.close_reason, "exit_costs": _f(st.exit_costs), "exit_detail": st.exit_detail,
             "settlement_price": _f(st.settlement_price), "settlement_source": st.settlement_source,
             "gross_pnl": _f(st.gross_pnl), "net_pnl": _f(st.net_pnl), "note": st.note,
+            "card_log_id": st.card_log_id, "card_index": st.card_index,
             "legs": [{"id": x.id, "right": x.right, "strike": _f(x.strike), "side": x.side, "lots": x.lots, "qty": x.qty,
                       "ref_price": _f(x.ref_price), "entry_price": _f(x.entry_price),
                       "trading_symbol": x.trading_symbol, "last_price": _f(x.last_price),
