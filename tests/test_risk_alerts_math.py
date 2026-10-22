@@ -118,3 +118,56 @@ def test_precision_and_mute_suggestions_never_touch_limit_rules() -> None:
     assert ra.suggest_mute("shock", fired=10, actioned=2) is False  # 20 % is not below 20 %
     for cat in ("limit", "margin", "es", "gap_stop"):
         assert ra.suggest_mute(cat, fired=50, actioned=0) is False
+
+
+def _quiet(n: int, start=None):
+    """n weekday sessions: IV30 alternating 15.0/15.5, the front future alternating 24000/24240 (opens = closes)."""
+    from datetime import date, timedelta
+
+    d, days = start or date(2025, 1, 1), []
+    while len(days) < n:
+        if d.weekday() < 5:
+            days.append(d)
+        d += timedelta(days=1)
+    ivs = [(x, 15.0 + (0.5 if i % 2 else 0.0)) for i, x in enumerate(days)]
+    fut = [(x, date(2030, 1, 31), 24000 * (1.01 if i % 2 else 1.0), 24000 * (1.01 if i % 2 else 1.0))
+           for i, x in enumerate(days)]  # fmt: skip
+    return days, ivs, fut
+
+
+def test_replay_fires_on_a_shock_day_and_scores_the_synthetic_books_follow_through() -> None:
+    days, ivs, fut = _quiet(300)
+    k = 280  # an even session: close 24000; the shock: IV +6 points and a 4 % gap down that keeps falling
+    ivs[k] = (days[k], ivs[k - 1][1] + 6)
+    for j in range(k, 300):
+        ivs[j] = (days[j], ivs[k][1] + (0.5 if j % 2 else 0.0)) if j > k else ivs[k]
+        lvl = 24000 * 0.96 * (0.97 ** (j - k))
+        fut[j] = (days[j], fut[j][1], lvl, lvl)
+    got = ra.replay(ivs, ra.front_future(fut))
+    hit = next(f for f in got if f.day == days[k])
+    assert {"iv_shock", "gap"} <= set(hit.rules)
+    # the short 30-day ATM straddle struck at the shock day's close, repriced two sessions later
+    from finresearch.fincalc.book_scenarios import b76_price
+
+    f0, f2 = 24000 * 0.96, 24000 * 0.96 * 0.97**2
+    v0, v2 = ivs[k][1] / 100, ivs[k + 2][1] / 100
+    p0 = sum(b76_price(r, f0, f0, 30 / 365, 0.065, v0) for r in ("call", "put"))
+    t2 = (30 - (days[k + 2] - days[k]).days) / 365
+    p2 = sum(b76_price(r, f2, f0, t2, 0.065, v2) for r in ("call", "put"))
+    assert hit.loss == pytest.approx((p2 - p0) / f0) and hit.false_alarm is False
+    summ = ra.replay_summary(got, scenario_days=(days[k],), episodes=())
+    assert summ["scenarios"][days[k].isoformat()] is True
+    assert summ["years"][str(days[k].year)]["firings"] >= 1
+
+
+def test_a_shock_with_no_follow_through_is_a_false_alarm_and_too_little_data_is_unknown() -> None:
+    days, ivs, fut = _quiet(300)
+    k = 281
+    ivs[k] = (days[k], ivs[k - 1][1] + 6)  # one-day IV blip, reverted the next session, no price move
+    got = ra.replay(ivs, ra.front_future(fut))
+    hit = next(f for f in got if f.day == days[k])
+    assert set(hit.rules) == {"iv_shock", "cum_shock"} and hit.false_alarm is True  # no gap: no price move
+    days, ivs, fut = _quiet(300)
+    ivs[299] = (days[299], ivs[298][1] + 6)  # the last session: no two sessions after it
+    last = next(f for f in ra.replay(ivs, ra.front_future(fut)) if f.day == days[299])
+    assert last.loss is None and last.false_alarm is None
