@@ -159,6 +159,21 @@ def add_fno_book_routes(app: FastAPI, clock: Callable[[], datetime] | None = Non
 
         return await positions_view(now())
 
+    @app.get("/api/fno/review")
+    def fno_review(month: str | None = None) -> dict[str, Any]:
+        """The monthly post-trade review (#383): shortfall, adherence, exposure mix and the daily P&L explain of the
+        paper and Groww F&O book (`month` = YYYY-MM, default this IST month). Reads stored rows only, writes nothing."""
+        from finresearch.fnobook import review
+
+        try:
+            y, m = (int(x) for x in month.split("-")) if month else (today().year, today().month)
+            if not 1 <= m <= 12 or not 2000 <= y <= 2100:
+                raise ValueError
+        except ValueError:
+            raise HTTPException(422, "month must be YYYY-MM") from None
+        with session_scope() as s:
+            return review.month_view(s, y, m)
+
     @app.get("/api/fno/scenarios")
     async def fno_scenarios() -> dict[str, Any]:
         """The open F&O book's exposures, spot x vol x time grid, historical replays and reverse stress (#394).

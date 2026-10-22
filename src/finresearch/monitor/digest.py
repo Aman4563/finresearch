@@ -318,6 +318,8 @@ def build_brief(s: Session, now: datetime) -> dict[str, Any]:
         s, now
     )  # #378: forecast calibration drift and skill against the benchmarks (the ledger only)
     health = skill["lines"] + health
+    if fno := _fno_review(s, today):  # #383: the month's F&O post-trade review in one line (local only)
+        health.append({"level": "info", "text": fno})
     at = advance_tax(s, data, today) if has_pf else None
     quiet = (
         not dq_failed
@@ -356,6 +358,20 @@ def _disclosures(s: Session, now: datetime) -> dict[str, Any]:
 
         logging.getLogger(__name__).warning("disclosures section failed", exc_info=True)
         return {"error": f"{type(e).__name__}: {e}"[:200], "unavailable": ["exchange disclosures"]}
+
+
+def _fno_review(s: Session, today: date) -> str | None:
+    """fnobook.review's brief line; a failure never breaks the brief (logged, no line)."""
+    try:
+        from finresearch.fnobook import review
+
+        with s.begin_nested():  # a database error rolls back to here, so the rest of the brief still reads
+            return review.brief_line(s, today)
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).warning("F&O review line not built", exc_info=True)
+        return None
 
 
 def _skill(s: Session, now: datetime) -> dict[str, Any]:

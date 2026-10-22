@@ -223,3 +223,46 @@ def test_brief_line(db):
     assert "plan adherence 100% (1 of 1 with a plan)" in line
     assert "shortfall known for 1 of 3 entries" in line
     assert "P&L explain: no position-days yet" in line
+
+
+# --------------------------------------------------------------------------- the API and the brief
+def _counts(s):
+    from sqlalchemy import func, select
+
+    from finresearch.db.models import FnoExitRule, FnoMark, PaperLeg, PaperStrategy
+
+    return [
+        s.scalar(select(func.count()).select_from(m)) for m in (PaperStrategy, PaperLeg, FnoExitRule, FnoMark)
+    ]
+
+
+def test_review_route_reads_and_writes_nothing(db):
+    from starlette.testclient import TestClient
+
+    from finresearch.api import create_app
+    from finresearch.db import session_scope
+
+    with session_scope() as s:
+        t1, *_ = month(s)
+        three_days(s)
+        before = _counts(s)
+    with TestClient(create_app(clock=lambda: at(22, 20))) as c:
+        v = c.get("/api/fno/review").json()  # default: this IST month
+        assert v["month"] == "2026-10" and v["adherence"]["closed"] == 2
+        assert v["explain"]["summary"]["position_days"] == 2
+        assert c.get("/api/fno/review", params={"month": "2026-09"}).json()["adherence"]["closed"] == 1
+        assert c.get("/api/fno/review", params={"month": "2026-13"}).status_code == 422
+    with session_scope() as s:
+        assert _counts(s) == before
+        assert s.get(type(t1), t1.id).card_log_id is None
+
+
+def test_brief_carries_the_review_line(db):
+    from finresearch.db import session_scope
+    from finresearch.monitor.digest import build_brief
+
+    with session_scope() as s:
+        month(s)
+    with session_scope() as s:
+        b = build_brief(s, at(22, 20))
+    assert any(h["text"].startswith("F&O review (Oct 2026)") for h in b["health"])
