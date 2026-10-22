@@ -99,7 +99,9 @@ def test_round_trip_in_and_out_of_the_money(right, k) -> None:
     for s in (0.05, 0.2, 0.8, 2.5):
         p = b.price(right, 100, k, 0.25, d, s)
         got = b.implied_vol(right, p, 100, k, 0.25, d)
-        if got.sigma is None:  # only where the time value is below what a double can resolve (deep ITM, low vol)
+        if (
+            got.sigma is None
+        ):  # only where the time value is below what a double can resolve (deep ITM, low vol)
             assert got.reason and p - b.bounds(right, 100, k, d)[0] < 1e-9
         else:
             assert got.sigma == pytest.approx(s, abs=1e-8), (right, k, s)
@@ -160,7 +162,9 @@ def chain(f=F_TRUE, r=R_TRUE, t=T30, lo=23000, hi=27000, step=100, sigma=0.14, r
 def test_parity_regression_recovers_forward_and_discount_factor_exactly() -> None:
     fit = b.parity_fit(chain(), T30)
     assert fit.reason is None and fit.forward == pytest.approx(F_TRUE, abs=1e-6)
-    assert fit.df == pytest.approx(df(R_TRUE, T30), abs=1e-10) and fit.r_impl == pytest.approx(R_TRUE, abs=1e-8)
+    assert fit.df == pytest.approx(df(R_TRUE, T30), abs=1e-10) and fit.r_impl == pytest.approx(
+        R_TRUE, abs=1e-8
+    )
     # only strikes with |ln K/F| <= 5 % enter: 23,800 to 26,200
     assert min(fit.strikes) == 23800 and max(fit.strikes) == 26200 and fit.n == 25 and fit.weights == "equal"
 
@@ -218,7 +222,9 @@ def test_mid_iv_and_its_bands_computed_by_hand() -> None:
     got = b.quote_iv(quote("put", 24500, half=0.75), F_TRUE, T30, D30)
     v = b.vega(F_TRUE, 24500, T30, D30, 0.14)
     assert got.reason is None and got.sigma == pytest.approx(0.14, abs=1e-9)
-    assert got.band == pytest.approx(1.5 / (2 * v), rel=1e-6) and got.tick_band == pytest.approx(0.05 / v, rel=1e-6)
+    assert got.band == pytest.approx(1.5 / (2 * v), rel=1e-6) and got.tick_band == pytest.approx(
+        0.05 / v, rel=1e-6
+    )
 
 
 @pytest.mark.parametrize(
@@ -271,3 +277,40 @@ def test_expected_move_band_is_lognormal() -> None:
     lo, hi = b.expected_move(25000.0, 0.2, 0.25)
     assert lo == pytest.approx(25000 * math.exp(-0.1)) and hi == pytest.approx(25000 * math.exp(0.1))
     assert 25000 - lo < hi - 25000  # skewed up, unlike S +/- S sigma sqrt T
+
+
+# --------------------------------------------------------------------------- dated rates: unknown stays unknown
+def test_a_known_dated_rate_gives_its_discount_factor_and_source() -> None:
+    ans = {
+        "known": True,
+        "rate": 0.0655,
+        "as_of": "2026-10-21",
+        "source": "FBIL G-sec par yield",
+        "note": "x",
+    }
+    got = b.dated_df(ans, 0.1)
+    assert got.df == pytest.approx(math.exp(-0.00655)) and got.rate == 0.0655 and "FBIL" in got.source
+
+
+def test_an_unknown_dated_rate_is_no_discount_factor_never_six_and_a_half_percent() -> None:
+    from finresearch.signals import rates
+
+    unknown = {
+        "known": False,
+        "rate": None,
+        "as_of": None,
+        "source": None,
+        "note": "no FBIL gsec_par curve stored",
+    }
+    got = b.dated_df(unknown, 0.1)
+    assert got.df is None and got.rate is None and "no FBIL" in got.reason
+    # risk_free()'s last fallback is the fixed 6.5 %: it is not a dated rate and is refused
+    fixed = {"rate": rates.FIXED_RATE, "fallback": True, "as_of": None, "source": "fixed 6.5 % (fallback)"}
+    got = b.dated_df(fixed, 0.1)
+    assert got.df is None and "fallback" in got.reason
+    assert b.dated_df(None, 0.1).df is None
+
+
+def test_rate_cross_check_against_the_parity_rate() -> None:
+    assert b.rate_gap(0.066, 0.0655) == pytest.approx(0.0005)
+    assert b.rate_gap(None, 0.0655) is None and b.rate_gap(0.066, None) is None

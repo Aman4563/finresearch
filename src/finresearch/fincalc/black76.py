@@ -23,10 +23,14 @@ from finresearch.fincalc.options import Right
 # The implied-volatility solver: a Newton iteration kept inside a bracket that always holds the root (a step that
 # leaves the bracket, or a vega too small to divide by, is replaced by bisection). Stated tolerances:
 SIGMA_LO, SIGMA_HI = 1e-4, 10.0  # the bracket: 0.01 % to 1,000 % a year; a price outside it is unknown
-PRICE_TOL = 1e-10  # converged when |model - target| <= PRICE_TOL x the out-of-the-money twin's price (relative)
+PRICE_TOL = (
+    1e-10  # converged when |model - target| <= PRICE_TOL x the out-of-the-money twin's price (relative)
+)
 SIGMA_TOL = 1e-10  # ... or when the bracket is narrower than this (annual volatility, as a fraction)
 MAX_ITER = 100  # Newton halves the bracket at worst, so 100 steps cannot run out on a valid bracket
-MAX_DF = 1.05  # a discount factor above this (a rate below about -5 % over a year) is refused as an input error
+MAX_DF = (
+    1.05  # a discount factor above this (a rate below about -5 % over a year) is refused as an input error
+)
 
 
 def _cdf(x: float) -> float:
@@ -70,7 +74,9 @@ def forward_delta(right: Right, fwd: float, strike: float, t: float, df: float, 
     return df * _cdf(d1) if right == "call" else -df * _cdf(-d1)
 
 
-def spot_delta(right: Right, fwd: float, strike: float, t: float, df: float, sigma: float, spot: float) -> float:
+def spot_delta(
+    right: Right, fwd: float, strike: float, t: float, df: float, sigma: float, spot: float
+) -> float:
     """dPrice/dS with the carry the forward implies: e^(-qT) N(d1) = (F DF / S) N(d1) for a call."""
     return forward_delta(right, fwd, strike, t, df, sigma) * fwd / spot
 
@@ -111,7 +117,9 @@ def _finite_positive(*xs: float | None) -> bool:
     return all(x is not None and math.isfinite(x) and x > 0 for x in xs)
 
 
-def implied_vol(right: Right, target: float, fwd: float, strike: float, t: float, df: float | None) -> IvResult:
+def implied_vol(
+    right: Right, target: float, fwd: float, strike: float, t: float, df: float | None
+) -> IvResult:
     """The volatility that reproduces `target`, or unknown with the reason: bad inputs, a price on or outside the
     no-arbitrage bounds, or outside the [SIGMA_LO, SIGMA_HI] bracket. An in-the-money option is solved on its
     out-of-the-money twin through parity (C - P = DF (F - K)), whose time value is the same and is not swamped by
@@ -134,9 +142,13 @@ def implied_vol(right: Right, target: float, fwd: float, strike: float, t: float
     a, b = SIGMA_LO, SIGMA_HI
     ga = price(side, fwd, strike, t, df, a) - p  # type: ignore[arg-type]
     if ga > 0:
-        return IvResult(None, f"price {target:g} is below the value at sigma {SIGMA_LO:g} (outside the bracket)")
+        return IvResult(
+            None, f"price {target:g} is below the value at sigma {SIGMA_LO:g} (outside the bracket)"
+        )
     if price(side, fwd, strike, t, df, b) - p < 0:  # type: ignore[arg-type]
-        return IvResult(None, f"price {target:g} is above the value at sigma {SIGMA_HI:g} (outside the bracket)")
+        return IvResult(
+            None, f"price {target:g} is above the value at sigma {SIGMA_HI:g} (outside the bracket)"
+        )
     # start: the Brenner-Subrahmanyam ATM approximation sigma ~ sqrt(2 pi / T) x price / (DF F), kept in the bracket
     s = min(b, max(a, math.sqrt(2 * math.pi / t) * p / (df * fwd)))  # type: ignore[operator]
     step_before = b - a
@@ -200,10 +212,15 @@ class ParityFit:
     df_reason: str | None = None  # why there is no DF / r_impl while the forward is known
 
 
-def _wls(xs: list[float], ys: list[float], ws: list[float]) -> tuple[float, float, float, float, float, float]:
+def _wls(
+    xs: list[float], ys: list[float], ws: list[float]
+) -> tuple[float, float, float, float, float, float]:
     """Weighted straight line y = a + b x: (a, b, var_a, var_b, cov_ab, s^2) with s^2 = sum w e^2 / (n - 2)."""
     sw = sum(ws)
-    xm, ym = sum(w * x for w, x in zip(ws, xs, strict=True)) / sw, sum(w * y for w, y in zip(ws, ys, strict=True)) / sw
+    xm, ym = (
+        sum(w * x for w, x in zip(ws, xs, strict=True)) / sw,
+        sum(w * y for w, y in zip(ws, ys, strict=True)) / sw,
+    )
     sxx = sum(w * (x - xm) ** 2 for w, x in zip(ws, xs, strict=True))
     bb = sum(w * (x - xm) * (y - ym) for w, x, y in zip(ws, xs, ys, strict=True)) / sxx
     aa = ym - bb * xm
@@ -211,7 +228,9 @@ def _wls(xs: list[float], ys: list[float], ws: list[float]) -> tuple[float, floa
     return aa, bb, s2 * (1 / sw + xm * xm / sxx), s2 / sxx, -xm * s2 / sxx, s2
 
 
-def _huber(xs: list[float], ys: list[float], base: list[float]) -> tuple[float, float, float, float, float, float]:
+def _huber(
+    xs: list[float], ys: list[float], base: list[float]
+) -> tuple[float, float, float, float, float, float]:
     ws = list(base)
     fit = _wls(xs, ys, ws)
     for _ in range(HUBER_ITER):
@@ -232,10 +251,15 @@ def parity_fit(quotes: list[ParityQuote], t: float, *, band: float = PARITY_BAND
     """The expiry's forward (and, when identified, DF and r_impl) from every strike with both sides priced."""
     qs = [q for q in quotes if _finite_positive(q.strike, q.call, q.put)]
     if len(qs) < MIN_STRIKES or not _finite_positive(t):
-        return ParityFit(None, None, None, len(qs), reason=f"fewer than {MIN_STRIKES} strikes with both sides priced")
+        return ParityFit(
+            None, None, None, len(qs), reason=f"fewer than {MIN_STRIKES} strikes with both sides priced"
+        )
     spread = all(_finite_positive(q.call_spread, q.put_spread) for q in qs)
     near = min(qs, key=lambda q: (abs(q.call - q.put), q.strike))
-    fwd, used = near.strike + near.call - near.put, ()  # the single-strike start (DF ~ 1 is fine for choosing a band)
+    fwd, used = (
+        near.strike + near.call - near.put,
+        (),
+    )  # the single-strike start (DF ~ 1 is fine for choosing a band)
     for _ in range(BAND_PASSES):
         pick = tuple(q for q in qs if abs(math.log(q.strike / fwd)) <= band)
         if len(pick) < MIN_STRIKES:
@@ -329,7 +353,9 @@ def quote_iv(q: OptionQuote, fwd: float, t: float, df: float | None) -> QuoteIv:
         return out(mid, "vega is zero at the solution")
     band = None if spread is None else spread / (2 * v)
     if band is not None and band > MAX_BAND:
-        return out(mid, f"spread band {band * 100:.1f} vol points is above {MAX_BAND * 100:g} vol points", band)
+        return out(
+            mid, f"spread band {band * 100:.1f} vol points is above {MAX_BAND * 100:g} vol points", band
+        )
     return QuoteIv(q.strike, q.right, mid, got.sigma, band, TICK / v)
 
 
@@ -360,3 +386,31 @@ def atm_iv(quotes: list[OptionQuote], fwd: float, t: float, df: float | None) ->
     if not ok:
         return AtmIv(k, None, 0, "; ".join(f"{r.right}: {r.reason}" for r in rows))
     return AtmIv(k, sum(ok) / len(ok), len(ok))
+
+
+# --------------------------------------------------------------------------- dated rates
+@dataclass(frozen=True)
+class DatedDf:
+    df: float | None
+    rate: float | None  # continuous
+    source: str | None = None
+    reason: str | None = None
+
+
+def dated_df(answer: dict | None, t: float) -> DatedDf:
+    """DF = e^(-rT) from a dated-rate answer (refseries.rate_lookup.par_rate_on / tbill_rate_on or
+    signals.rates.risk_free_on). An unknown answer, or one that is a fallback (risk_free()'s fixed 6.5 % or its
+    stale curve), gives no discount factor with the reason: the caller shows unknown, never a default."""
+    if not answer:
+        return DatedDf(None, None, None, "no dated rate")
+    if answer.get("fallback"):
+        return DatedDf(None, None, None, f"a fallback rate is not a dated rate ({answer.get('source')})")
+    r = answer.get("rate")
+    if answer.get("known") is False or r is None or not math.isfinite(r):
+        return DatedDf(None, None, None, answer.get("note") or "the dated rate is unknown")
+    return DatedDf(math.exp(-r * t), r, f"{answer.get('source')} (as of {answer.get('as_of')})")
+
+
+def rate_gap(r_dated: float | None, r_impl: float | None) -> float | None:
+    """r_dated - r_impl, the cross-check of a dated rate against the parity-implied one; unknown when either is."""
+    return None if r_dated is None or r_impl is None else r_dated - r_impl
