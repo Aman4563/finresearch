@@ -514,6 +514,26 @@ def _spawn_index_eod(now: datetime) -> None:
     _BACKGROUND["index_eod"] = asyncio.create_task(run())
 
 
+def _spawn_rates(now: datetime) -> None:
+    """Start the nightly FBIL rates update (monitor.rates, #366) in the background on weekdays: about six small JSON
+    requests and any newly published G-sec workbook. At most one runs at a time."""
+    from finresearch.monitor import rates
+
+    t = _BACKGROUND.get("rates")
+    if (t is not None and not t.done()) or rates.due_slot(now) is None:
+        return
+
+    async def run() -> None:
+        try:
+            res = await rates.rates_step(now)
+            if res:
+                log.info("FBIL rates update: %s", res)
+        except Exception:
+            log.warning("FBIL rates update failed", exc_info=True)
+
+    _BACKGROUND["rates"] = asyncio.create_task(run())
+
+
 def _spawn_equity_eod(now: datetime) -> None:
     """Start the nightly full equity bhavcopy update (monitor.equity_eod, #373) in the background on trading days: one
     NSE download (~400 KB). At most one runs at a time."""
@@ -573,7 +593,7 @@ def _ingest_allowed() -> bool:
 def _spawn_downloads(deps: jobs.Deps, now: datetime) -> None:
     """The exchange file downloads (bhavcopy, forward quotes, index closes, SPAN, the full equity bhavcopy), unless
     the disk is nearly full."""
-    if not (deps.fno_bhav or deps.quotes or deps.index_eod or deps.span or deps.equity_eod):
+    if not (deps.fno_bhav or deps.quotes or deps.index_eod or deps.span or deps.equity_eod or deps.rates):
         return
     if not _ingest_allowed():
         day = now.date().isoformat()
@@ -591,6 +611,8 @@ def _spawn_downloads(deps: jobs.Deps, now: datetime) -> None:
         _spawn_span(now)
     if deps.equity_eod:
         _spawn_equity_eod(now)
+    if deps.rates:
+        _spawn_rates(now)
 
 
 def _spawn_dq(now: datetime) -> None:
@@ -906,6 +928,7 @@ def schedule_json(ww=None, *, running: bool | None = None) -> dict:
     from finresearch.monitor import lookthrough_fetch as ltf
     from finresearch.monitor import portfolio_daily as pd
     from finresearch.monitor import quotes as mq
+    from finresearch.monitor import rates as mr
     from finresearch.monitor import scheme_master as sm
     from finresearch.monitor import sip_estimates as sipe
     from finresearch.monitor import skill as skj
@@ -939,6 +962,8 @@ def schedule_json(ww=None, *, running: bool | None = None) -> dict:
         "fno_bhav": {"after": hm((fb.RUN_AFTER.hour, fb.RUN_AFTER.minute)), "lookback_days": fb.LOOKBACK_DAYS},
         "index_eod": {"after": hm((ixe.RUN_AFTER.hour, ixe.RUN_AFTER.minute)), "lookback_days": ixe.LOOKBACK_DAYS,
                       "requests_per_night": 1},
+        "rates": {"after": hm((mr.RUN_AFTER.hour, mr.RUN_AFTER.minute)), "lookback_days": mr.LOOKBACK.days,
+                  "trading_days": False},
         "equity_eod": {"after": hm((eqe.RUN_AFTER.hour, eqe.RUN_AFTER.minute)), "lookback_days": eqe.LOOKBACK_DAYS,
                        "requests_per_night": 1},
         "dq": {"evening": hm((dqj.EVENING.hour, dqj.EVENING.minute)),
