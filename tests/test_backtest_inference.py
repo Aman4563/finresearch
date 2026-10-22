@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from finresearch.backtest import evaluate
+from finresearch.backtest import evaluate, inference, metrics
 
 
 def _win(daily_sr: float | None) -> dict:
@@ -23,3 +23,65 @@ def test_a_zero_daily_sharpe_enters_the_trials_variance():
     rows = [_row("a", 0.0), _row("b", 0.1), _row("c", -0.1)]
     evaluate._finish(rows, True, evaluate.CRITERIA)
     assert rows[0]["windows"]["oos"]["sr_trials_variance"] == pytest.approx(0.01)
+
+
+# --------------------------------------------------------------------------- deflated Sharpe (Bailey & López de Prado)
+def test_deflated_sharpe_reproduces_the_papers_numerical_example():
+    # Bailey & López de Prado (2014), "A numerical example": annualised SR 2.5 over 5 years of daily returns
+    # (250 a year, T = 1,250), N = 100, V[{SR}] = 1/2 annualised, skew -3, kurtosis 10 -> DSR 0.9004; with N = 46,
+    # 0.9505; with Normal returns and N = 88, 0.9505 (eq. 1 for SR0, eq. 2 for DSR).
+    sr, v = 2.5 / 250**0.5, 0.5 / 250
+    assert metrics.deflated_sharpe(sr, 1250, -3.0, 10.0, 100, v) == pytest.approx(0.9004, abs=5e-5)
+    assert metrics.deflated_sharpe(sr, 1250, -3.0, 10.0, 46, v) == pytest.approx(0.9505, abs=5e-5)
+    assert metrics.deflated_sharpe(sr, 1250, 0.0, 3.0, 88, v) == pytest.approx(0.9505, abs=5e-5)
+
+
+def test_sr_variance_is_the_dsr_denominator_over_t_minus_1():
+    # (1 - g3 SR + (g4 - 1)/4 SR^2) / (T - 1): SR 0.1, g3 -1, g4 6 -> (1 + 0.1 + 1.25 * 0.01) / 99 = 0.0112374
+    assert inference.sr_variance(0.1, 100, -1.0, 6.0) == pytest.approx(1.1125 / 99)
+    assert inference.sr_variance(0.0, 570, 0.0, 3.0) == pytest.approx(1 / 569)  # V_null
+    assert inference.sr_variance(0.1, 1, 0.0, 3.0) is None  # T < 2: unknown
+
+
+def _bar(t: int, n: int, v: float) -> float:
+    """The annualised Sharpe at which DSR reaches 0.95 (Normal returns, so the denominator is ~1)."""
+    lo, hi = 0.0, 1.0
+    for _ in range(80):
+        mid = (lo + hi) / 2
+        lo, hi = (mid, hi) if metrics.deflated_sharpe(mid, t, 0.0, 3.0, n, v) < 0.95 else (lo, mid)
+    return lo * 252**0.5
+
+
+def test_v_null_bars_quoted_in_the_issue():
+    # V_null = 1/(T-1). T = 570, N = 8: SR0 = sqrt(1/569) * 1.45880 = 0.061156 daily, plus 1.645/sqrt(569) = 0.06896
+    # -> 0.1301 daily = 2.07 annualised ("about 2.0-2.2"); T = 3,400: 0.85 (N = 8) and 1.01 (N = 30).
+    assert _bar(570, 8, 1 / 569) == pytest.approx(2.07, abs=0.02)
+    assert _bar(3400, 8, 1 / 3399) == pytest.approx(0.85, abs=0.02)
+    assert _bar(3400, 30, 1 / 3399) == pytest.approx(1.01, abs=0.02)
+
+
+def test_v_cand_from_the_published_sharpes_gives_the_issues_bar():
+    # RESULTS.md OOS Sharpes (annualised) -1.00, 0.24, 0.10, 0.44, -2.62, 1.07: sd of the daily SRs 0.0833, and with
+    # N = 8 the bar is about 3.0-3.3 annualised at T ~ 570 (the issue's "mis-scaled" figure)
+    srs = [x / 252**0.5 for x in (-1.00, 0.24, 0.10, 0.44, -2.62, 1.07)]
+    m = sum(srs) / 6
+    v = sum((x - m) ** 2 for x in srs) / 5
+    assert v**0.5 == pytest.approx(0.0833, abs=5e-4)
+    assert 3.0 <= _bar(570, 8, v) <= 3.3
+
+
+def test_dsr_v2_rules_and_trial_count():
+    srs = [x / 252**0.5 for x in (-1.00, 0.24, 0.10, 0.44, -2.62, 1.07)]
+    w = {"daily_sr": 0.1, "days": 571, "skew": 0.0, "kurtosis": 3.0}  # T = 570 daily returns
+    cand = inference.dsr_v2(w, srs, rule="v_cand")
+    null = inference.dsr_v2(w, srs, rule="v_null")
+    both = inference.dsr_v2(w, srs, rule="max")
+    assert cand["n_trials"] == null["n_trials"] == 6  # N = the trials whose SR enters V
+    assert null["v_used"] == pytest.approx(1 / 569)
+    assert cand["v_used"] == pytest.approx(0.0833**2, rel=0.02)
+    assert both["v_used"] == max(cand["v_used"], null["v_used"])
+    # same N and T: DSR falls as V rises
+    assert null["dsr"] > cand["dsr"] and both["dsr"] == cand["dsr"]
+    assert cand["dsr"] == pytest.approx(metrics.deflated_sharpe(0.1, 570, 0.0, 3.0, 6, cand["v_used"]))
+    assert inference.dsr_v2({**w, "skew": None}, srs, rule="max")["dsr"] is None  # unknown moments: unknown
+    assert inference.dsr_v2(w, srs[:1], rule="v_cand")["dsr"] is None  # one trial: V_cand unknown
