@@ -12,8 +12,14 @@ while a book is open they read "can't check". Stored series (`series_readings`, 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from datetime import date, datetime
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from finresearch.alerts.risk import Reading
+from finresearch.db.models import AlertEvalSlot, FnoBhav, FnoIvEod, FnoMark
+from finresearch.fincalc import risk_alerts as ra
 from finresearch.fincalc import tradeplan as tp
 
 Row = tuple[str, str, Reading]  # (rule id, instrument, reading)
@@ -51,4 +57,131 @@ def book_readings(shock: Mapping[float, float] | None, shock_notes: Sequence[str
                     f"{funds['margin_used']:,.0f}: utilisation {u:.0%} of a {tp.MARGIN_UTIL_MAX:.0%} cap")))  # fmt: skip
     elif funds_note and "not connected" not in funds_note:
         out.append(("margin", "BOOK", Reading(None, FUNDS_SERIES, funds_note)))
+    return out
+
+
+# --------------------------------------------------------------------------- stored series (database only)
+INDEX_UNDERLYINGS = frozenset({"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "NIFTYNXT50"})
+MARK_RATE = 0.065  # fnobook.marks.RATE: the rate fno_mark's IVs were implied with (Black-Scholes on the spot)
+
+
+def _iv_series(s: Session, sym: str, day: date) -> list[tuple[date, float | None]]:
+    n = ra.SD_WINDOW + 2 * ra.CUM_SESSIONS
+    rows = s.execute(select(FnoIvEod.day, FnoIvEod.iv_30d).where(FnoIvEod.symbol == sym, FnoIvEod.day <= day)
+                     .order_by(FnoIvEod.day.desc()).limit(n)).all()  # fmt: skip
+    return [(d, None if v is None else float(v)) for d, v in reversed(rows)]
+
+
+def front(s: Session, sym: str, day: date) -> list[ra.FutureDay]:
+    """The front future's sessions of `sym` up to `day` from fno_bhav (same-contract pairs, ra.front_future)."""
+    rows = s.execute(select(FnoBhav.day, FnoBhav.expiry, FnoBhav.open, FnoBhav.close)
+                     .where(FnoBhav.symbol == sym, FnoBhav.option_type == "XX", FnoBhav.day <= day)).all()  # fmt: skip
+    return ra.front_future((d, e, None if o is None else float(o), None if c is None else float(c))
+                           for d, e, o, c in rows)  # fmt: skip
+
+
+def series_readings(s: Session, symbols: Sequence[str], day: date) -> list[Row]:
+    """Per underlying: the one-session and 5-session IV30 shocks (fno_iv_eod.iv_30d, the app's Black-76 EOD IV30 from
+    NSE's bhavcopy settles: EOD against EOD, like with like) and the overnight gap of the front future (fno_bhav)."""
+    out: list[Row] = []
+    for sym in symbols:
+        ser = f"fno_iv_eod.iv_30d {sym} (EOD IV30 from NSE bhavcopy settles) to {day}"
+        ivs = _iv_series(s, sym, day)
+        if not ivs or ivs[-1][0] != day:
+            last = ivs[-1][0].isoformat() if ivs else "never"
+            miss = f"IV30 of {sym} is not stored for {day.isoformat()} (last {last})"
+            out += [("iv_shock", sym, Reading(None, ser, miss)), ("cum_shock", sym, Reading(None, ser, miss))]
+        else:
+            vals = [v for _, v in ivs]
+            for rid, st in (("iv_shock", ra.iv_shock(vals)), ("cum_shock", ra.cum_shock(vals))):
+                out.append((rid, sym, Reading(st.value, ser, st.detail)))
+        gser = f"fno_bhav front future {sym} (open vs the same contract's previous close) to {day}"
+        f = front(s, sym, day)
+        if not f or f[-1].day != day:
+            out.append(
+                ("gap", sym, Reading(None, gser, f"the front future of {sym} is not stored for {day}"))
+            )
+        else:
+            st = ra.gap_z(open_=f[-1].open, prev_close=f[-1].prev_close, rets=[x.ret for x in f[:-1]])
+            out.append(("gap", sym, Reading(st.value, gser, st.detail)))
+    return out
+
+
+def _leg_key(m: FnoMark) -> str:
+    return f"{m.symbol} {m.expiry.isoformat()} {float(m.strike or 0):g}{'PE' if m.right == 'put' else 'CE'}"
+
+
+def leg_readings(s: Session, day: date, now: datetime) -> list[Row]:
+    """Per open short option leg in tonight's marks (fno_mark, paper and Groww): its risk-neutral touch probability
+    at its own IV (ra.TOUCH_LABEL) and the share of the front future's stored overnight gaps beyond its strike's
+    distance; per index underlying held, the tier-1 event check up to its last expiry (eventcal). Tonight's marks
+    not written, or a Groww book that could not be marked, read unknown for the whole book."""
+    import math
+
+    from finresearch.eventcal import calendar, store
+
+    mser = f"fno_mark {day} (NSE bhavcopy settle, the underlying's close and the leg's own IV)"
+    slot = s.get(AlertEvalSlot, f"fno_marks:{day.isoformat()}")
+    res = dict(slot.result or {}) if slot is not None else {}
+    why = None
+    if res.get("status") != "done":
+        why = f"tonight's F&O marks (monitor.fno_marks) are not written for {day}"
+    elif (note := res.get("real_note")) and "not_connected" not in note:
+        why = f"the Groww book was not marked: {note}"
+    elif res.get("real_unresolved"):
+        why = f"{res['real_unresolved']} Groww position(s) could not be resolved to a contract"
+    if why:
+        return [("touch", "BOOK", Reading(None, mser, why)), ("gap_stop", "BOOK", Reading(None, mser, why))]
+    marks = s.scalars(select(FnoMark).where(FnoMark.day == day).order_by(FnoMark.id)).all()
+    out: list[Row] = []
+    gaps: dict[str, list[float]] = {}
+    for m in marks:
+        if m.right not in ("call", "put") or (m.qty is not None and m.qty >= 0):
+            continue
+        key = _leg_key(m)
+        if m.qty is None:
+            miss = "Groww did not confirm whether this leg is long or short"
+            out += [("touch", key, Reading(None, mser, miss)), ("gap_stop", key, Reading(None, mser, miss))]
+            continue
+        spot, k = (None if m.spot is None else float(m.spot)), float(m.strike or 0)
+        if m.iv is None or spot is None or m.t_years is None:
+            out.append(
+                (
+                    "touch",
+                    key,
+                    Reading(None, mser, m.note or "the leg's IV or the underlying's close is unknown"),
+                )
+            )
+        else:
+            t, iv = float(m.t_years), float(m.iv)
+            f = spot * math.exp(MARK_RATE * t)
+            p = ra.touch_prob(f, k, iv, t)
+            out.append(("touch", key, Reading(p, mser, f"strike {k:g}, forward {f:,.0f}, IV {iv:.1%}, "
+                                              f"{t * 365:.1f} days: {ra.TOUCH_LABEL}")))  # fmt: skip
+        gser = f"fno_bhav front-future overnight gaps of {m.symbol} to {day}"
+        if spot is None:
+            out.append(("gap_stop", key, Reading(None, gser, "the underlying's close is unknown")))
+            continue
+        if m.symbol not in gaps:
+            gaps[m.symbol] = [x.gap for x in front(s, m.symbol, day) if x.gap is not None]
+        dist = abs(math.log(k / spot))
+        p, n = ra.gap_tail(gaps[m.symbol], dist)
+        detail = (f"{n} stored gaps, fewer than the {ra.MIN_GAPS} needed" if p is None else
+                  f"{p:.1%} of {n} stored overnight gaps moved more than the {dist:.2%} to strike {k:g}")  # fmt: skip
+        out.append(("gap_stop", key, Reading(p, gser, detail)))
+    held: dict[str, date] = {}
+    for m in marks:
+        if m.symbol in INDEX_UNDERLYINGS:
+            held[m.symbol] = max(held.get(m.symbol, m.expiry), m.expiry)
+    if held:
+        try:
+            ev, cov = store.load(s)
+        except Exception:
+            ev, cov = None, None
+        for sym, end in sorted(held.items()):
+            w = calendar.window_check(ev, cov, start=day, end=end, as_of=now)
+            val = {"events": 1.0, "none": 0.0}.get(w["status"])
+            names = ", ".join(f"{e['title']} {e['day']}" for e in w["tier1"])
+            out.append(("event", sym, Reading(val, f"calendar_event tier 1 from {day} to {end}",
+                                              w["note"] + (f" ({names})" if names else ""))))  # fmt: skip
     return out
