@@ -146,6 +146,9 @@ uv run finresearch stock peers                     # build the stock peer datase
 uv run finresearch audit prices                    # cross-check price sources against the exchanges' own figures
 uv run finresearch index backfill --from 2013-03-01  # NSE's daily index closes, P/E, P/B, yield, India VIX (#366)
 uv run finresearch audit index-eod                 # bhavcopy underlying vs index close; India VIX vs IV30 (no network)
+uv run finresearch index tri NIFTY --from 2015-01-01  # APPROXIMATE total-return index from stored closes + yields (#366)
+uv run finresearch rates backfill --from 2022-01-01   # FBIL G-sec par curve, T-bill, overnight/term MIBOR (#366; needs the FBIL data-rights decision)
+uv run finresearch audit rates                     # 3-month par-curve rate vs FBIL's 3-month T-bill, 15 bp (no network)
 uv run finresearch equity backfill --from 2025-09-01  # NSE's full equity bhavcopy: closes, delivery; one file a day (#373)
 uv run finresearch audit equity-eod --sample 50    # stored closes vs NSE's history bar on 50 random stock-days (50 requests)
 uv run finresearch dq run                          # data-quality checks now (the monitor runs them 21:00 and 08:00 IST, #368)

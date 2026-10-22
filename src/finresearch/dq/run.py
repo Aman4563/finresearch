@@ -25,7 +25,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from finresearch.db import models as M
-from finresearch.dq import equity, fno, misc, ref, stats
+from finresearch.dq import equity, fno, misc, rates, ref, stats
 from finresearch.dq.base import Check
 from finresearch.fincalc.dates import IST, to_ist
 
@@ -39,6 +39,7 @@ class Dataset:
     last: Callable[[Session], date | None]
     checks: Callable[[Session, date], list[Check]]
     critical: bool = True
+    max_lag: int = 0  # sessions behind that still count as fresh (FBIL's public pages lag, dq.rates.MAX_LAG)
 
 
 def _max(col, *where) -> Callable[[Session], date | None]:
@@ -74,6 +75,23 @@ DATASETS: tuple[Dataset, ...] = (
         _max(M.EquityEodDay.day, M.EquityEodDay.status == "loaded"),
         equity.equity_checks,
         critical=False,
+    ),
+    # FBIL's dated rates (#366, dq.rates): SLAs from FBIL's display times (tbill 17:30, overnight MIBOR 12:45, term
+    # MIBOR 13:45; the G-sec workbook in the evening), with the public pages' ~1-week lag allowed
+    *(
+        Dataset(
+            f"rate_{x}",
+            sla,
+            _max(M.RateCurve.day, M.RateCurve.series == x),
+            rates.checks_for(x),
+            max_lag=rates.MAX_LAG,
+        )
+        for x, sla in (
+            ("gsec_par", time(20, 0)),
+            ("tbill", time(17, 30)),
+            ("mibor_on", time(12, 45)),
+            ("mibor_term", time(13, 45)),
+        )
     ),
     Dataset("span", time(20, 30), _max(M.SpanDay.day, M.SpanDay.status == "loaded"), ref.span_checks),
     Dataset("option_quote", time(15, 30), _last_quote, misc.quote_checks, critical=False),
@@ -112,7 +130,8 @@ def freshness(
     if lag is None:
         return Check(ds.name, "freshness", "unknown", note="never loaded", critical=ds.critical), want
     note = f"last loaded {last}, expected {want}" if lag else None
-    return Check(ds.name, "freshness", "fail" if lag else "ok", lag, 0, note, critical=ds.critical), want
+    status = "fail" if lag > ds.max_lag else "ok"
+    return Check(ds.name, "freshness", status, lag, ds.max_lag, note, critical=ds.critical), want
 
 
 def verdict(checks: list[Check]) -> tuple[str, list[str]]:
