@@ -240,3 +240,10 @@ def run(ss: Sequence[Session], horizons: Sequence[int] = HORIZONS, *, burn_in: i
         f"{ADOPT_MIN_HORIZONS}); adoption also needs the other registered window"
     )
     return out
+
+
+def adopt(vault: dict | None, recent: dict | None) -> bool:
+    """The registered adoption gate: both windows pass and share at least ADOPT_MIN_HORIZONS winning horizons."""
+    if vault is None or recent is None or not (vault["passes"] and recent["passes"]):
+        return False
+    return len(set(vault["winning_horizons"]) & set(recent["winning_horizons"])) >= ADOPT_MIN_HORIZONS

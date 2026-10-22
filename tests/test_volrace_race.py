@@ -99,3 +99,13 @@ def test_the_race_reports_dm_holm_mcs_and_mz_and_reads_the_adoption_gate() -> No
         assert {"a", "b", "r2"} <= set(r["models"]["mkt"]["mz"])
     assert set(res["holm"]) == {5, 10}
     assert res["passes"] in (True, False) and res["window_verdict"].startswith(("passes", "fails"))
+
+
+def test_adoption_needs_both_windows_and_two_shared_winning_horizons() -> None:
+    def w(*hs: int) -> dict:
+        return {"winning_horizons": list(hs), "passes": len(hs) >= 2}
+
+    assert race.adopt(w(5, 10), w(5, 10, 22)) is True
+    assert race.adopt(w(5, 10), w(10, 22)) is False  # each window passes, but only h = 10 is shared
+    assert race.adopt(w(5, 10, 22), w(5)) is False
+    assert race.adopt(w(5, 10), None) is False  # the other window not read: no adoption
