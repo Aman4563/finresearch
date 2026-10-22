@@ -5,7 +5,8 @@ sheet of tenors (0.25-year steps) against the par yield, half-yearly compounded 
 annualised. The site's own front end reads two endpoints:
 
 * ``/wasdm/gsec/fetch?authenticated=false`` -> the latest published dates, newest first;
-* ``/wasdm/gsec/downloadPublished?date=YYYY-MM-DD`` -> that day's workbook (served as ``.xls`` but really ``.xlsx``).
+* ``/wasdm/gsec/downloadPublished?date=YYYY-MM-DD`` -> that day's workbook, served as ``.xls``: really ``.xlsx`` in
+  recent years, a true OLE2 ``.xls`` up to 2022 (the 03-Jan-2022 file); both are read (adapters.xls).
 
 The domain is fbil.org.in. (fbil.co.in is an unrelated bullion dealer.)
 
@@ -15,12 +16,13 @@ stale curve is never mistaken for today's.
 
 from __future__ import annotations
 
-import io
+import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from itertools import pairwise
 
+from finresearch.adapters import xls
 from finresearch.adapters.http import PoliteClient
 
 BASE = "https://www.fbil.org.in/wasdm"
@@ -80,47 +82,53 @@ def _as_of(v: object) -> date | None:
         return v.date()
     if isinstance(v, date):
         return v
+    for fmt in ("%d-%b-%Y", "%d %b, %Y"):  # .xlsx era / OLE2 .xls era ('03 Jan, 2022')
+        try:
+            return datetime.strptime(str(v).strip(), fmt).date()
+        except ValueError:
+            pass
+    return None
+
+
+def parse_par_yield(content: bytes) -> ParCurve:
+    """The "Par Yield" sheet of FBIL's G-sec workbook, .xlsx or (up to 2022) OLE2 .xls (adapters.xls): a title row
+    with the date ('23-Sep-2026', or '03 Jan, 2022' in the .xls era), then 'Tenor (Year)', 'YTM% p.a.(Semi-Annual)',
+    'YTM % p.a.(Annualized)' rows."""
+    from finresearch.adapters.xls import NotAWorkbook, read_sheets
+
     try:
-        return datetime.strptime(str(v).strip(), "%d-%b-%Y").date()
-    except ValueError:
-        return None
+        sheets = read_sheets(content)
+    except NotAWorkbook as e:
+        raise FbilError(str(e)) from e
+    name = next((n for n in sheets if "par" in n.lower()), None)
+    if name is None:
+        raise FbilError(f"no Par Yield sheet (sheets: {list(sheets)})")
+    as_of, points, in_table = None, [], False
+    for row in sheets[name]:
+        cells = [c for c in row if c is not None and str(c).strip() != ""]
+        if not cells:
+            continue
+        first = str(cells[0]).strip().lower()
+        if as_of is None and "par yield" in first and len(cells) > 1:
+            as_of = _as_of(cells[1])
+            continue
+        if first.startswith("tenor"):
+            in_table = True
+            continue
+        if in_table and len(cells) >= 2:
+            try:
+                tenor = Decimal(str(cells[0]))
+            except InvalidOperation:
+                continue
+            semi = _pct(cells[1])
+            if semi is not None:
+                points.append(ParPoint(tenor, semi, _pct(cells[2]) if len(cells) > 2 else None))
+    if as_of is None or len(points) < 2:
+        raise FbilError("could not read the par yield table")
+    return ParCurve(as_of=as_of, points=points)
 
 
-def parse_par_yield_xlsx(content: bytes) -> ParCurve:
-    """The "Par Yield" sheet of FBIL's G-sec workbook: a title row with the date, then 'Tenor (Year)',
-    'YTM% p.a.(Semi-Annual)', 'YTM % p.a.(Annualized)' rows."""
-    from openpyxl import load_workbook
-
-    wb = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
-    try:
-        sheet = next((ws for ws in wb.worksheets if "par" in ws.title.lower()), None)
-        if sheet is None:
-            raise FbilError(f"no Par Yield sheet (sheets: {[ws.title for ws in wb.worksheets]})")
-        as_of, points, in_table = None, [], False
-        for row in sheet.iter_rows(values_only=True):
-            cells = [c for c in row if c is not None and str(c).strip() != ""]
-            if not cells:
-                continue
-            first = str(cells[0]).strip().lower()
-            if as_of is None and "par yield" in first and len(cells) > 1:
-                as_of = _as_of(cells[1])
-                continue
-            if first.startswith("tenor"):
-                in_table = True
-                continue
-            if in_table and len(cells) >= 2:
-                try:
-                    tenor = Decimal(str(cells[0]))
-                except InvalidOperation:
-                    continue
-                semi = _pct(cells[1])
-                if semi is not None:
-                    points.append(ParPoint(tenor, semi, _pct(cells[2]) if len(cells) > 2 else None))
-        if as_of is None or len(points) < 2:
-            raise FbilError("could not read the par yield table")
-        return ParCurve(as_of=as_of, points=points)
-    finally:
-        wb.close()
+parse_par_yield_xlsx = parse_par_yield  # the earlier name (callers and tests)
 
 
 class FbilClient:
@@ -143,21 +151,114 @@ class FbilClient:
         days = [_iso(r.get("processRunDate")) for r in resp.json() if isinstance(r, dict)]
         return sorted((d for d in days if d), reverse=True)
 
-    async def par_curve(self, day: date) -> ParCurve:
+    async def workbook(self, day: date, *, cache_ttl: float | None = None) -> bytes:
+        """`day`'s G-sec workbook as downloaded (.xlsx or OLE2 .xls). Not cached unless `cache_ttl` is given: the
+        backfill reads ~0.73 MB a day and discards it after parsing."""
         resp = await self.http.get(DOWNLOAD_URL, params={"date": day.isoformat()}, headers=HEADERS,
-                                   cache_ttl=30 * 86400, cache_if=lambda f: f.content[:2] == b"PK")  # fmt: skip
-        if not resp.ok or resp.content[:2] != b"PK":
+                                   cache_ttl=cache_ttl, cache_if=lambda f: xls.kind(f.content) is not None)  # fmt: skip
+        if not resp.ok or xls.kind(resp.content) is None:
             raise FbilError(f"FBIL has no G-sec workbook for {day} (HTTP {resp.status})")
-        curve = parse_par_yield_xlsx(resp.content)
+        return resp.content
+
+    async def par_curve(self, day: date) -> ParCurve:
+        curve = parse_par_yield(await self.workbook(day, cache_ttl=30 * 86400))
         return ParCurve(
             as_of=curve.as_of, points=curve.points, source=f"{DOWNLOAD_URL}?date={day.isoformat()}"
         )
+
+    async def _filtered(self, path: str, start: date, end: date) -> tuple[str, bytes, object]:
+        url = f"{BASE}/{path}/fetchfiltered"
+        params = {"fromDate": start.isoformat(), "toDate": end.isoformat(), "authenticated": "false"}
+        resp = await self.http.get(url, params=params, headers=HEADERS)
+        if not resp.ok or resp.content.lstrip()[:1] != b"[":
+            raise FbilError(f"FBIL HTTP {resp.status} for {url} (not a JSON list)")
+        try:
+            data = resp.json()
+        except ValueError as e:
+            raise FbilError(f"FBIL {path}: unreadable JSON") from e
+        return f"{url}?fromDate={start.isoformat()}&toDate={end.isoformat()}", resp.content, data
+
+    async def fixings(self, series: str, start: date, end: date) -> tuple[str, bytes, list[RateFixing]]:
+        """One series' fixings for [start, end]: (url, body, rows)."""
+        url, body, data = await self._filtered(FIXING_PATHS[series], start, end)
+        return url, body, parse_fixings(series, data)
+
+    async def gsec_dates(self, start: date, end: date) -> list[date]:
+        """The days FBIL published a G-sec workbook in [start, end], oldest first."""
+        _, _, data = await self._filtered("gsec", start, end)
+        if not isinstance(data, list):
+            raise FbilError("FBIL gsec: expected a list")
+        return sorted({d for r in data if isinstance(r, dict) and (d := _iso(r.get("processRunDate")))})
 
     async def latest_par_curve(self) -> ParCurve:
         days = await self.published_dates()
         if not days:
             raise FbilError("FBIL lists no published G-sec dates")
         return await self.par_curve(days[0])
+
+
+# FBIL's money-market fixings, read as JSON from the same endpoints its site's tables use (no workbook):
+# wasdm/<path>/fetchfiltered?fromDate&toDate&authenticated=false, one row per day and tenor, the rate in percent.
+# History seen on 22-Oct-2026: overnight MIBOR from 22-Jul-2015, term MIBOR from 23-Sep-2015, T-bills from 2018.
+# The public pages showed fixings up to about a week before the request day (14-Oct on 22-Oct-2026).
+FIXING_PATHS = {"tbill": "tbill", "mibor_on": "ovnmibor", "mibor_term": "termmibor"}
+_TENOR = re.compile(r"^(\d+)\s*(D|DAY|DAYS|M|MONTH|MONTHS)$")
+
+
+@dataclass(frozen=True)
+class RateFixing:
+    day: date
+    series: str  # tbill | mibor_on | mibor_term
+    tenor: str  # canonical: ON, 3D, 7D, 14D, 1M ... 12M
+    tenor_days: int  # months x 364/12 rounded (T-bills run 91/182/364 days); ON = 1
+    rate: Decimal  # fraction, as FBIL publishes it (percent / 100); its compounding basis is the series' own
+    published_at: datetime | None  # FBIL's display time (IST)
+
+
+def _tenor(label: object) -> tuple[str, int]:
+    s = str(label or "").strip().upper()
+    if s in ("O/N", "ON", "OVERNIGHT"):
+        return "ON", 1
+    m = _TENOR.match(s)
+    if not m:
+        raise FbilError(f"unknown FBIL tenor {label!r}")
+    n = int(m.group(1))
+    if m.group(2).startswith("D"):
+        return f"{n}D", n
+    return f"{n}M", round(n * 364 / 12)
+
+
+def _dt(v: object) -> datetime | None:
+    try:
+        return datetime.fromisoformat(str(v).strip())
+    except ValueError:
+        return None
+
+
+def parse_fixings(series: str, payload: object) -> list[RateFixing]:
+    """FBIL's fetchfiltered rows for one series. A row without a numeric rate is left out (unknown, never 0); an
+    unknown tenor label or a payload that is not a list raises FbilError (the layout changed: stop, don't guess)."""
+    if series not in FIXING_PATHS:
+        raise ValueError(f"unknown FBIL series {series!r}")
+    if not isinstance(payload, list):
+        raise FbilError(f"FBIL {series}: expected a list, got {type(payload).__name__}")
+    out = []
+    for r in payload:
+        if not isinstance(r, dict):
+            raise FbilError(f"FBIL {series}: unexpected row {r!r}"[:200])
+        day = _iso(r.get("processRunDate"))
+        tenor, days = _tenor(r.get("tenorName") or r.get("tenor"))
+        rate = r.get("rate")
+        if day is None or isinstance(rate, bool) or not isinstance(rate, int | float | str):
+            continue
+        try:
+            frac = Decimal(str(rate)) / 100
+        except InvalidOperation:
+            continue
+        if not frac.is_finite():
+            continue
+        out.append(RateFixing(day, series, tenor, days, frac, _dt(r.get("displayTime"))))
+    return out
 
 
 def _iso(v: object) -> date | None:
