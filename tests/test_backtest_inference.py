@@ -206,3 +206,56 @@ def test_cluster_bca_is_seeded_and_brackets_the_mean():
     assert inference.cluster_bca(vals, cl, 2000, 307) == r
     assert inference.cluster_bca([5.0, 5.0, 5.0], ["a", "b", "c"], 500, 1)["lo"] == 5.0  # degenerate: a point
     assert inference.cluster_bca([5.0], ["a"], 500, 1)["lo"] is None
+
+
+# --------------------------------------------------------------------------- drawdown, collateral, opportunity cost
+def test_drawdown_on_peak_equity():
+    from datetime import date, timedelta
+
+    d = [date(2024, 7, 1) + timedelta(days=i) for i in range(4)]
+    # 100 -> 110 -> 99 -> 120: the fall 11 from the peak 110 is 10 % of it (11 % of capital 100)
+    assert inference.drawdown_peak_pct(
+        list(zip(d, [100.0, 110.0, 99.0, 120.0], strict=True))
+    ) == pytest.approx(10.0)
+    # a window that opens below the capital: 80 -> 90 -> 72 is 20 % of the peak 90 (18 % of capital 100)
+    assert inference.drawdown_peak_pct(list(zip(d[:3], [80.0, 90.0, 72.0], strict=True))) == pytest.approx(
+        20.0
+    )
+    assert inference.drawdown_peak_pct([(d[0], 100.0)]) is None
+
+
+def test_collateral_yield_forgone_per_trade():
+    # margin 1,00,000, half of it cash earning nothing, 6.5 % a year for 30 days: 100000 x 0.5 x 0.065 x 30/365
+    t = {"net": 1000.0, "margin": 100_000.0, "days_held": 30}
+    f = 100_000 * 0.5 * 0.065 * 30 / 365
+    assert inference.excess_net(t, rate=0.065, cash_share=0.5) == pytest.approx(1000 - f)
+    assert inference.excess_net({**t, "days_held": 0}, rate=0.065, cash_share=0.5) == pytest.approx(
+        1000 - f / 30
+    )  # a same-day trade holds its margin for one day
+    assert inference.excess_net({**t, "margin": None}, rate=0.065, cash_share=0.5) is None  # unknown margin
+
+
+def test_opportunity_cost_after_tax_by_hand():
+    from datetime import date
+    from decimal import Decimal
+
+    # Rs 10 lakh, index TRI 100 -> 115 from 1-Jul-2024 to 9-Oct-2026 (long-term listed equity sold after
+    # 23-Jul-2024: 12.5 %, plus 4 % cess): gain 1,50,000, tax 19,500, after tax 1,30,500. F&O net Rs 50,000 at a 30 %
+    # slab: tax 15,600, after tax 34,400. Excess over holding the index: -96,100.
+    o = inference.opportunity_cost(50_000.0, 1_000_000.0, (date(2024, 7, 1), 100.0), (date(2026, 10, 9), 115.0),
+                                   Decimal("0.30"), trades=40)  # fmt: skip
+    assert o["index_tax_rate"] == pytest.approx(0.125)
+    assert o["fno_after_tax"] == pytest.approx(34_400.0) and o["index_after_tax"] == pytest.approx(130_500.0)
+    assert o["excess_after_tax"] == pytest.approx(-96_100.0)
+    assert o["index_per_trade_after_tax"] == pytest.approx(130_500.0 / 40)
+    # an F&O loss carries no tax credit here (set-off against other business income is not modelled)
+    loss = inference.opportunity_cost(-20_000.0, 1_000_000.0, (date(2024, 7, 1), 100.0),
+                                      (date(2026, 10, 9), 115.0), Decimal("0.30"), trades=40)  # fmt: skip
+    assert loss["fno_after_tax"] == -20_000.0
+    # short-term (held 8 months, sold after 23-Jul-2024): 20 %
+    st = inference.opportunity_cost(0.0, 1_000_000.0, (date(2025, 7, 1), 100.0), (date(2026, 3, 2), 110.0),
+                                    Decimal("0.30"), trades=10)  # fmt: skip
+    assert st["index_tax_rate"] == pytest.approx(0.20)
+    assert st["index_after_tax"] == pytest.approx(100_000 - 100_000 * 0.20 * 1.04)
+    unknown = inference.opportunity_cost(50_000.0, 1_000_000.0, None, None, Decimal("0.30"), trades=40)
+    assert unknown["excess_after_tax"] is None and unknown["reason"]

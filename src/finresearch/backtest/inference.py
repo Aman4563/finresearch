@@ -13,12 +13,15 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from datetime import date
+from decimal import Decimal
 from statistics import NormalDist
 from typing import Any
 
 import numpy as np
 
 from finresearch.backtest.metrics import deflated_sharpe, expected_max_sharpe, sr_variance
+from finresearch.fincalc import tax
 from finresearch.skillmon.stats import block_len
 
 N01 = NormalDist()
@@ -224,4 +227,57 @@ def cluster_bca(values: Sequence[float], clusters: Sequence[Any], draws: int, se
     ci = bca_interval(theta, boot, jack, level)
     if ci is not None:
         out.update(lo=ci[0], hi=ci[1])
+    return out
+
+
+# --------------------------------------------------------------------------- drawdown, collateral, opportunity cost
+def drawdown_peak_pct(equity: Sequence[tuple[date, float]]) -> float | None:
+    """The largest fall from a running peak as % of that peak (metrics.equity_stats measures it on the capital)."""
+    if len(equity) < 2:
+        return None
+    peak, worst = equity[0][1], 0.0
+    for _, v in equity:
+        peak = max(peak, v)
+        if peak > 0:
+            worst = max(worst, (peak - v) / peak)
+    return worst * 100
+
+
+def excess_net(trade: dict[str, Any], *, rate: float, cash_share: float) -> float | None:
+    """The trade's net P&L less the yield its margin's cash component could have earned: margin × cash_share ×
+    rate × max(days held, 1)/365. NSE Clearing requires the cash component to be at least 50 % of liquid assets
+    (nseindia.com, equity-market liquid assets); the rest can be pledged securities that keep their own return.
+    Whether a client's cash part may sit in instruments that earn (FDs, G-secs, liquid funds) is not verified here
+    [U], so `cash_share` and `rate` are registered assumptions (criteria_v2). None when the margin is unknown."""
+    m = trade.get("margin")
+    if m is None:
+        return None
+    return trade["net"] - m * cash_share * rate * max(trade.get("days_held") or 0, 1) / 365
+
+
+def opportunity_cost(fno_net: float, capital: float, start: tuple[date, float] | None, end: tuple[date, float] | None,
+                     slab_rate: Decimal, *, trades: int) -> dict[str, Any]:  # fmt: skip
+    """F&O net P&L after the owner's tax beside holding the index on the same capital over the same days.
+    F&O is non-speculative business income at the slab rate plus cess; a net loss is shown untaxed (its set-off
+    against other income is not modelled). The index leg (`start`/`end`: (day, total-return level)) is a listed-
+    equity sale classified by fincalc.tax (12.5 % LTCG / 20 % STCG from 23-Jul-2024, plus cess); the ₹1.25 lakh LTCG
+    exemption and surcharge are not applied (both depend on the owner's other gains). Unknown index -> None."""
+    out: dict[str, Any] = {"capital": capital, "fno_net": fno_net, "trades": trades, "slab_rate": float(slab_rate),
+                           "fno_after_tax": None, "index_return": None, "index_tax_rate": None,
+                           "index_after_tax": None, "index_per_trade_after_tax": None, "excess_after_tax": None,
+                           "reason": None}  # fmt: skip
+    cess = float(tax.CESS)
+    out["fno_after_tax"] = fno_net - max(fno_net, 0.0) * float(slab_rate) * (1 + cess)
+    if start is None or end is None or not start[1] or end[1] is None or end[0] <= start[0]:
+        out["reason"] = "no index total-return series covers the window (refseries.index_eod): unknown"
+        return out
+    c = tax.classify("equity", start[0], end[0])
+    if c.rate is None:
+        out["reason"] = f"index tax unknown: {c.reason}"
+        return out
+    gain = capital * (end[1] / start[1] - 1)
+    after = gain - max(gain, 0.0) * float(c.rate) * (1 + cess)
+    out.update(index_return=end[1] / start[1] - 1, index_tax_rate=float(c.rate), index_after_tax=after,
+               index_per_trade_after_tax=after / trades if trades else None,
+               excess_after_tax=out["fno_after_tax"] - after)  # fmt: skip
     return out
