@@ -29,7 +29,8 @@ def test_parkinson_garman_klass_rogers_satchell_match_the_published_formulas_by_
 @pytest.mark.parametrize(
     ("bar", "why"),
     [
-        (rv.Bar(date(2025, 1, 2), 100.0, 110.0, 95.0, 0.0, 98.0), "close"),  # a zero close is unknown, not dropped
+        # a zero close is unknown, not dropped
+        (rv.Bar(date(2025, 1, 2), 100.0, 110.0, 95.0, 0.0, 98.0), "close"),
         (rv.Bar(date(2025, 1, 2), None, 110.0, 95.0, 105.0, 98.0), "open"),
         (rv.Bar(date(2025, 1, 2), 100.0, 104.0, 95.0, 105.0, 98.0), "high"),  # H below C
         (rv.Bar(date(2025, 1, 2), 100.0, 110.0, 101.0, 105.0, 98.0), "low"),  # L above O
@@ -129,3 +130,85 @@ def test_vol_cone_reads_quantiles_of_annualised_window_variances_and_counts_unkn
     for q in (0.1, 0.5, 0.9):
         assert cone[5]["q"][q] == pytest.approx(float(np.quantile(known, q)), rel=1e-12)
     assert cone[10]["unknown"] == 10
+
+
+# ----------------------------------------------------------------------------------------------- OLS, HAR, MZ
+def test_ols_matches_numpy_least_squares_and_reports_the_residual_variance() -> None:
+    rng = np.random.default_rng(3)
+    x = rng.normal(size=(60, 3))
+    y = 0.2 + x @ np.array([0.5, -0.3, 0.1]) + rng.normal(0, 0.2, 60)
+    fit = rv.ols(x.tolist(), y.tolist())
+    xx = np.column_stack([np.ones(60), x])
+    b, ssr, *_ = np.linalg.lstsq(xx, y, rcond=None)
+    assert fit.coef == pytest.approx(b.tolist(), rel=1e-10)
+    assert fit.s2 == pytest.approx(float(ssr[0]) / (60 - 4), rel=1e-10) and fit.n == 60
+    assert rv.ols([[1.0], [1.0]], [1.0, 2.0]) is None  # fewer rows than coefficients + 1: unknown
+
+
+def test_har_rows_use_the_day_week_and_month_means_and_the_forecast_is_bias_corrected() -> None:
+    d = [float(i + 1) for i in range(30)]
+    row = rv.har_row(d, 29)
+    assert row == pytest.approx([math.log(30), math.log(np.mean(d[25:30])), math.log(np.mean(d[8:30]))])
+    assert rv.har_row(d, 20) is None  # fewer than 22 sessions to t
+    d[10] = None  # type: ignore[call-overload]
+    assert rv.har_row(d, 29) is None  # an unknown day in the month window
+    # noise-free: ln y = 0.1 + 0.3 x1 + 0.4 x2 + 0.2 x3 is recovered exactly and s^2 = 0
+    rng = np.random.default_rng(5)
+    x = rng.normal(-9, 0.5, (80, 3))
+    ly = 0.1 + x @ np.array([0.3, 0.4, 0.2])
+    fit = rv.ols(x.tolist(), ly.tolist())
+    assert fit.coef == pytest.approx([0.1, 0.3, 0.4, 0.2], abs=1e-9) and fit.s2 == pytest.approx(0, abs=1e-20)
+    # with lognormal noise, exp(x'b + s^2 / 2) is the mean of y (the bias correction), exp(x'b) its median
+    x = rng.normal(-9, 0.5, (4000, 3))
+    ly = 0.1 + x @ np.array([0.3, 0.4, 0.2]) + rng.normal(0, 0.5, 4000)
+    fit = rv.ols(x.tolist(), ly.tolist())
+    f = [rv.log_forecast(fit, list(r)) for r in x]
+    assert np.mean(f) == pytest.approx(np.mean(np.exp(ly)), rel=0.03)
+    assert np.mean([math.exp(math.log(v) - fit.s2 / 2) for v in f]) < 0.9 * np.mean(np.exp(ly))
+
+
+def test_mincer_zarnowitz_recovers_a_and_b() -> None:
+    f = [1.0, 2.0, 3.0, 4.0, 5.0]
+    mz = rv.mincer_zarnowitz([0.5 + 0.8 * x for x in f], f)
+    assert mz["a"] == pytest.approx(0.5) and mz["b"] == pytest.approx(0.8) and mz["r2"] == pytest.approx(1.0)
+    assert mz["n"] == 5 and rv.mincer_zarnowitz([1.0], [1.0])["b"] is None
+
+
+# ----------------------------------------------------------------------------------------------- GARCH
+def test_garch_h_step_variance_sums_the_mean_reverting_path_by_hand() -> None:
+    from finresearch.fincalc.taildist import GjrParams
+
+    p = GjrParams(omega=1e-6, alpha=0.05, gamma=0.10, beta=0.85)  # persistence 0.05 + 0.05 + 0.85 = 0.95
+    # E[s_t+k] = s_bar + 0.95^(k-1) (s_t+1 - s_bar), s_bar = 1e-6 / 0.05 = 2e-5; k = 1..3 from 4e-5
+    assert rv.garch_horizon_variance(p, 4e-5, 3) == pytest.approx(
+        6e-5 + (1 + 0.95 + 0.9025) * 2e-5, rel=1e-12
+    )
+    assert rv.garch_horizon_variance(p, 4e-5, 1) == pytest.approx(4e-5, rel=1e-12)
+    assert rv.garch_horizon_variance(GjrParams(1e-6, 0.1, 0.0, 0.9), 4e-5, 3) is None  # not stationary
+
+
+def garch_series(
+    n: int = 600, seed: int = 390, omega: float = 2e-6, a: float = 0.08, b: float = 0.88
+) -> np.ndarray:
+    """GARCH(1,1) Gaussian returns (the scratch script's generator, verbatim)."""
+    rng = np.random.default_rng(seed)
+    z = rng.standard_normal(n)
+    r, s2 = np.empty(n), omega / (1 - a - b)
+    for t in range(n):
+        r[t] = np.sqrt(s2) * z[t]
+        s2 = omega + a * r[t] ** 2 + b * s2
+    return r
+
+
+def test_garch11_fit_matches_the_arch_package() -> None:
+    # arch 8.0 arch_model(100 r, mean="Zero", vol="GARCH", p=1, q=1).fit(ftol=1e-12), run in a scratch environment
+    # outside the repo: omega 3.962330795181204e-06 (rescaled), alpha 0.12061588502345971, beta 0.8143504706437775,
+    # log-likelihood -3437.040324482172 on 100 r (+ 2 n ln 100 back on r)
+    fit = rv.garch11_fit(garch_series().tolist(), window=600)
+    assert fit.params is not None and fit.params.gamma == 0.0
+    assert fit.params.omega == pytest.approx(3.962330795181204e-06, rel=2e-3)
+    assert fit.params.alpha == pytest.approx(0.12061588502345971, rel=2e-3)
+    assert fit.params.beta == pytest.approx(0.8143504706437775, rel=2e-3)
+    assert fit.loglik == pytest.approx(-3437.040324482172 + 2 * 600 * math.log(100), abs=1e-4)
+    short = rv.garch11_fit([0.01] * 50, window=600)
+    assert short.params is None and "fewer" in (short.reason or "")
