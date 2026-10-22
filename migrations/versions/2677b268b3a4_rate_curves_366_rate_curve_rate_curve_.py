@@ -1,7 +1,7 @@
 """Rate curves (#366): rate_curve, rate_curve_load
 
 Revision ID: 2677b268b3a4
-Revises: 643a8583ff1d
+Revises: 6ca0f961e9df
 Create Date: 2026-10-22 09:48:41.466248
 
 """
@@ -14,7 +14,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "2677b268b3a4"
-down_revision: str | Sequence[str] | None = "643a8583ff1d"
+down_revision: str | Sequence[str] | None = "6ca0f961e9df"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
