@@ -56,7 +56,58 @@ figure.
 
 ## 4. Validation simulations (`finresearch fno backtest recal-sim`, `backtest/recal_sim.py`)
 
-RESULTS_PLACEHOLDER
+Run 22-Oct-2026: `finresearch fno backtest recal-sim --json …` with the defaults (seed 381; (a) 2,000 programmes
+per cell, 500 bootstrap draws; (b) and (c) 2,000 replications); 571 s. Full output:
+`recal_sim_2026-10-22.json` beside this file. Seeded, so the figures reproduce exactly.
+
+**(c) DM size at nominal 5 %** (d = equal-weight MA(h−1) of N(0, 1) shocks, one-sided; our own Monte Carlo, since the
+review's `critic2/checks.py` is not in this repository):
+
+| n | h | registered (Bartlett, max(h−1, 5) lags, HLN) | fixed (rectangular, h−1 lags, HLN) |
+|---|---|---|---|
+| 200 | 5 / 10 / 22 | 8.3 % / 9.5 % / 10.2 % | 5.7 % / 6.6 % / 7.9 % |
+| 570 | 5 / 10 / 22 | 8.7 % / 8.9 % / 9.7 % | 5.7 % / 4.9 % / 5.8 % |
+
+The registered test over-rejects as the issue said (8-10 %); the fixed one is near nominal at n = 570 and still
+over-sized at n = 200 with h = 22 (7.9 %). Its variance was never non-positive in these runs (0 of 12,000).
+
+**(b) 95 % CI coverage of a known mean** (target 93-97 %):
+
+| n | DGP | i.i.d. percentile | stationary percentile | stationary BCa | Newey-West t |
+|---|---|---|---|---|---|
+| 60 | iid / AR(1) 0.3 / GARCH-t / AR(1)+GARCH-t | 94.0 / 81.9 / 94.5 / 82.5 | 90.5 / 86.8 / 91.7 / 88.3 | 90.2 / 85.6 / 90.6 / 85.9 | 92.0 / 88.5 / 93.0 / 90.2 |
+| 570 | the same | 94.5 / 84.2 / 94.5 / 83.8 | 93.4 / 92.4 / 94.0 / 92.7 | 93.5 / 91.9 / 93.3 / 91.8 | 94.1 / 92.6 / 94.8 / 93.5 |
+
+No method lies in 93-97 % on every DGP. At n = 60 (the scale of 30-113 trades per spec) none is adequate under
+serial dependence. At n = 570 the Newey-West t-interval is closest (3 of 4 DGPs in range, AR(1) 92.6 %), then the
+stationary percentile; the stationary BCa that criteria v2 registers covers 91.8-93.5 % and does NOT meet the
+acceptance bar. **Decision needed** before any adoption: keep BCa (as the issue specifies), switch v2's CI to the HAC
+t-interval or the stationary percentile (a new v2 variant, re-registered), or accept that no interval is honest at
+this trade count.
+
+**(a) DSR rule, FWER and power — on a SYNTHETIC seller-like base only** (570 days, 4 columns: N(0.05 %, 0.4 %) days
+with 2 % crash days of −Exp(2 %); ρ = 0.5). `finresearch_fnohist` is not on this machine and the live database was not
+read, so the real-P&L run (`--history-url postgresql+psycopg://localhost/finresearch_fnohist`) is still to do; these
+figures do not decide anything.
+
+| N | rule | FWER at SR 0 | FWER range over SR 0-1.5 | power at SR 0.5 / 1.0 / 1.5 |
+|---|---|---|---|---|
+| 8 | DSR V_null | 3.8 % | 2.2-3.8 % | 2.3 / 6.6 / 17.3 % |
+| 8 | DSR V_cand (= v1 here) | 0.4 % | 0.2-0.4 % | 0.4 / 2.0 / 3.8 % |
+| 8 | DSR max(V_null, V_cand) | 0.4 % | 0.2-0.4 % | 0.4 / 1.9 / 3.8 % |
+| 8 | Romano-Wolf | 7.1 % | 6.3-7.1 % | 4.8 / 13.4 / 30.6 % |
+| 8 | SPA_c | 7.1 % | 4.0-7.1 % | 4.5 / 12.9 / 29.7 % |
+| 30 | DSR V_null | 3.0 % | 2.5-3.0 % | 1.0 / 3.8 / 8.9 % |
+| 30 | DSR V_cand / max | 0.9 % | 0.5-0.9 % | 0.3 / 1.5 / 3.8 % |
+| 30 | Romano-Wolf | 6.3 % | 5.9-6.3 % | 2.4 / 6.3 / 16.1 % |
+| 30 | SPA_c | 6.2 % | 4.5-6.2 % | 2.1 / 6.1 / 15.7 % |
+
+Read with the acceptance rule ("FWER ≤ 5 % and the highest power at SR 1.0"): on this synthetic base it picks DSR with
+V_null, not the max(V_null, V_cand) that v2 registers; Romano-Wolf and SPA (studentised by each resample's own sd,
+no HAC) exceed 5 % FWER. max(·) and V_cand are very conservative (FWER < 1 %). Power at a true annual Sharpe of 1.0
+is 2-13 % for every rule: as the issue says, no rule rescues power at T ≈ 570. If the real-P&L run agrees, v2's
+`dsr_rule` should become `v_null` as a new, re-registered v2 variant (more permissive than v1 and than the
+registered v2: the bar falls from ~3.0 to ~2.0 annualised at T = 570). That is an owner decision, after #380.
 
 ## 5. Not changed, on purpose
 
