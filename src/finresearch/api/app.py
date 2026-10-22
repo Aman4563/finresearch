@@ -109,6 +109,10 @@ class WatchBody(BaseModel):
     kind: Literal["ipo", "stock"] = "ipo"
 
 
+class FeedbackBody(BaseModel):
+    outcome: str  # acted | ignored (alerts.quality.OUTCOMES, #398)
+
+
 class KeepWatchingBody(BaseModel):
     keep: bool
 
@@ -966,6 +970,25 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
                 raise HTTPException(404, f"unknown alert {alert_id}")
             a.read_at = a.read_at or datetime.now(UTC)
             return alert_json(a)
+
+    @app.post("/api/alerts/{alert_id}/feedback")
+    def alert_feedback(alert_id: int, body: FeedbackBody) -> dict[str, Any]:
+        """#398: one tap, "acted" or "ignored" on an alert (marks it read); feeds the per-rule precision."""
+        from finresearch.alerts import quality
+
+        with session_scope() as s:
+            try:
+                return alert_json(quality.feedback(s, alert_id, body.outcome, datetime.now(UTC)))
+            except LookupError as e:
+                raise HTTPException(404, str(e)) from None
+
+    @app.get("/api/alerts/quality")
+    def alert_quality() -> dict[str, Any]:
+        """#398: per-rule precision (acted / fired) and mute suggestions. Read only."""
+        from finresearch.alerts import quality
+
+        with session_scope() as s:
+            return {"rules": quality.by_rule(s), "rule_text": quality.RULE_TEXT}
 
     # ------------------------------------------------------------------ listed stocks
     equity_cache: dict[str, Any] = {}

@@ -107,3 +107,61 @@ def risk_step(now: datetime, holidays: set[date] | None = None) -> dict[str, Any
         return {"risk_alerts": "failed"}
     finish(slot, res, now, failed=False)
     return {"risk_alerts": res["counts"]}
+
+
+STALE_AFTER_DAYS = 4  # a long weekend plus a holiday; an older last pass is stale
+MAX_LINES = 6
+
+
+def brief_section(s: Any, now: datetime) -> dict[str, Any]:
+    """The brief's risk section: alerts still standing (fired and not cleared), inputs that cannot be checked, the
+    mute suggestions (alerts.quality) and whether the last pass is missing or stale. Never "ok" by default. Reads
+    only. The new firings themselves are in the brief's alert list."""
+    from sqlalchemy import select
+
+    from finresearch.alerts import quality, risk
+    from finresearch.db.models import AlertEvalSlot, AlertRuleState
+
+    lines: list[dict[str, str]] = []
+    rows = s.scalars(select(AlertEvalSlot).where(AlertEvalSlot.slot.like(f"{PREFIX}%"))
+                     .order_by(AlertEvalSlot.slot.desc()).limit(10)).all()  # fmt: skip
+    last = next((r.slot.removeprefix(PREFIX) for r in rows if (r.result or {}).get("status") == "done"), None)
+    status = "current"
+    if last is None:
+        status = "not run"
+        lines.append({"level": "info", "text": "The risk alerts have not run yet: limits, IV shocks, gaps and short "
+                      "strikes are unchecked (not ok)."})  # fmt: skip
+    elif (to_ist(now).date() - date.fromisoformat(last)).days > STALE_AFTER_DAYS:
+        status = "stale"
+        lines.append(
+            {"level": "info", "text": f"The risk alerts last ran for {last}: anything since is unchecked."}
+        )
+    states = s.scalars(select(AlertRuleState).where(AlertRuleState.rule_id.like(f"{risk.PREFIX}%"),
+                                                    AlertRuleState.status.in_(("fired", "unknown")))
+                       .order_by(AlertRuleState.rule_id, AlertRuleState.instrument)).all()  # fmt: skip
+    fired = [x for x in states if x.status == "fired"]
+    unknown = [x for x in states if x.status == "unknown"]
+
+    def label(x: AlertRuleState) -> str:
+        r = risk.RULES.get(x.rule_id.removeprefix(risk.PREFIX))
+        return f"{r.label if r else x.rule_id} ({'the F&O book' if x.instrument == 'BOOK' else x.instrument})"
+
+    lines += [{"level": "warn", "text": f"Risk alert standing: {label(x)}, last reading {float(x.value):.2f}."}
+              for x in fired[:MAX_LINES] if x.value is not None]  # fmt: skip
+    lines += [{"level": "info", "text": f"Risk alert can't check {label(x)}: {x.note or 'the input is unknown'}."}
+              for x in unknown[:MAX_LINES]]  # fmt: skip
+    if len(unknown) > MAX_LINES:
+        lines.append(
+            {"level": "info", "text": f"{len(unknown) - MAX_LINES} more risk inputs cannot be checked."}
+        )
+    for q in quality.by_rule(s):
+        if q["suggest_mute"]:
+            lines.append({"level": "info", "text": f"Alert rule {q['label']}: you acted on {q['acted']} of "
+                          f"{q['fired']} firings ({q['precision']:.0%}); consider muting it."})  # fmt: skip
+    return {
+        "status": status,
+        "last_pass": last,
+        "standing": len(fired),
+        "unknown": len(unknown),
+        "lines": lines,
+    }
