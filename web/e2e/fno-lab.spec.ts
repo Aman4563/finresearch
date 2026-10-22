@@ -12,7 +12,7 @@ test("fno lab: variants count, locked split, run warnings first, library beside 
   const api = await mockApi(page, { "GET /api/fno/lab": LAB, "GET /api/fno/lab/paper": { rules: PAPER },
     "GET /api/fno/lab/runs/7": VIEW, "GET /api/fno/risk-notice": NOTICE });
   await page.goto("/fno/lab");
-  await expect(page.getByText(/10 variants tried so far: 8 pre-registered \+ 2 from the lab/)).toBeVisible();
+  await expect(page.getByText(/11 trials so far: 8 pre-registered \+ 3 specs run in the lab/)).toBeVisible();
   await expect(page.getByText(/out of sample from 2024-07-01 \(locked/)).toBeVisible();
   await expect(page.getByText("2 versions seen out of sample")).toBeVisible();
   await expect(page.getByText(/that window is already published, not out of sample/)).toBeVisible(); // #361

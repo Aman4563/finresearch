@@ -53,7 +53,7 @@ export type LabStrategy = {
 };
 
 export type LabResponse = {
-  strategies: LabStrategy[]; underlyings: string[]; variants: { library: number; lab: number; n: number };
+  strategies: LabStrategy[]; underlyings: string[]; variants: { library: number; lab: number; trials?: number; vault_reads?: number; n: number };
   blocks: { structures: Record<Structure, string>; trends: Record<Trend, string>; weekdays: string[]; max_dte: number;
     run_cap_minutes: number; min_span_days: number; results_note: string; deflated_sharpe_source: string };
 };
