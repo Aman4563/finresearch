@@ -1,6 +1,7 @@
 """The 2022-26 card replay of the horse race (#377): one card per stored session for each registered index spec,
 built from the bhavcopy at the close, forecast by the card's models and resolved by the card ledger's exit replay.
-Registered in horserace/specs.py (`Replay`) and post-hoc addendum A1 (horserace/addendum.py, ADDENDUM.md); the item
+Registered in horserace/specs.py (`Replay`), post-hoc addendum A1 (horserace/addendum.py, ADDENDUM.md) and, for the
+business-time challenger p_rw_bus (#384), addendum A2 (horserace/addendum_a2.py); the item
 numbers below are the addendum's.
 
 Two passes. (1) Forecasting, oldest session first, through `backtest.history.Clocked` advanced to the origin close,
@@ -23,11 +24,13 @@ from finresearch.backtest import engine
 from finresearch.backtest import pricing as px
 from finresearch.backtest.history import Clocked, Day, History
 from finresearch.backtest.specs import BOOK, SPECS, Book, Spec
+from finresearch.fincalc import bustime as bt
 from finresearch.fincalc import charges as ch
 from finresearch.fincalc import options as o
 from finresearch.fincalc import tradeplan as tp
 from finresearch.fincalc import volatility as vol
-from finresearch.horserace import addendum, prereg, race, specs
+from finresearch.fincalc.dates import ist_datetime
+from finresearch.horserace import addendum, addendum_a2, prereg, race, specs
 from finresearch.horserace.race import Forecast
 
 WARMUP_DAYS = 400  # A1.7, the engine's
@@ -35,13 +38,19 @@ DOTS = [(i + 0.5) / 20 for i in range(20)]
 
 
 def require_registered() -> str:
-    """Both the registration (specs.py) and addendum A1 must match their pinned hashes."""
+    """The registration (specs.py), addendum A1 and addendum A2 must each match their pinned hashes."""
     race.require_registered()
     h = addendum.addendum_hash()
     if h != prereg.ADDENDUM_HASH:
         raise race.PreregistrationError(
             f"horserace/addendum.py hashes to {h[:12]}… but the pinned addendum hash is {prereg.ADDENDUM_HASH[:12]}…: "
             "the replay is refused. Record a changed addendum as a new ADDENDUM_VERSION and pin its hash first."
+        )
+    h2 = addendum_a2.addendum_hash()
+    if h2 != prereg.ADDENDUM_A2_HASH:
+        raise race.PreregistrationError(
+            f"horserace/addendum_a2.py (with fincalc/bustime's registered weights) hashes to {h2[:12]}… but the "
+            f"pinned hash is {prereg.ADDENDUM_A2_HASH[:12]}…: the replay is refused. Register a new addendum first."
         )
     return h
 
@@ -90,6 +99,7 @@ class Card:
     inputs: dict[str, Any]  # fnobook.card_forecasts.simulate's inputs (one set)
     forecasts: dict[str, Forecast]
     gate_pass: bool | None
+    t_bus: float | None = None  # A2.2: business years, origin close to expiry close; None = unknown
 
 
 def models(legs: Sequence[o.Leg], expiry: date, spot: float, t: float, rate: float, entry_cost: float,
@@ -115,8 +125,13 @@ def models(legs: Sequence[o.Leg], expiry: date, spot: float, t: float, rate: flo
     return out
 
 
+def bus_sigmas(sigmas: dict[str, float | None], t_bus: float | None, t: float) -> dict[str, float | None]:
+    """A2.1: each volatility rescaled so that sigma_eff^2 x t = sigma^2 x T_bus (unknown T_bus: every case unknown)."""
+    return {k: bt.rescale_vol(v, t_bus, t) for k, v in sigmas.items()}
+
+
 def card_at(spec: Spec, x: Day, h: Clocked, nxt: date | None, eday: Any, returns: Sequence[float],
-            ivs: Sequence[float], book: Book = BOOK) -> Card | str:  # fmt: skip
+            ivs: Sequence[float], book: Book = BOOK, calendar: bt.Calendar | None = None) -> Card | str:  # fmt: skip
     """One card at this close (A1.1, A1.3-A1.10), or the reason there is none."""
     d, sym, rate = x.day, x.symbol, book.rate
     exps = [e for e in x.expiries() if spec.dte_min <= (e - d).days <= spec.dte_max
@@ -143,7 +158,13 @@ def card_at(spec: Spec, x: Day, h: Clocked, nxt: date | None, eday: Any, returns
     entry_cost = ch.order_costs([ch.TradeLeg("option", side, f, lot) for _, side, f in fills], d,  # type: ignore[arg-type]
                                 book.brokerage_per_order).total  # fmt: skip
     sig = {"p_rw20": rv(returns, 20), "p_rw60": rv(returns, 60), "p_rn_atm": atm_iv(x, expiry, fwd, t, rate)}
-    fc = models(legs, expiry, px.discounted_spot(fwd, t, rate), t, rate, entry_cost, sig)
+    spot = px.discounted_spot(fwd, t, rate)
+    fc = models(legs, expiry, spot, t, rate, entry_cost, sig)
+    # A2: the business-time challenger, the same lower-EV rule over the RV cases on the registered prior clock
+    close = ist_datetime(d, *bt.SESSION_CLOSE)
+    t_bus = bt.business_years(expiry, close, calendar, bt.PRIOR, events=bt.EXCLUDED).value
+    rw = bus_sigmas({k: sig[k] for k in ("p_rw20", "p_rw60")}, t_bus, t)
+    fc[addendum_a2.CHALLENGER] = models(legs, expiry, spot, t, rate, entry_cost, rw)["p_rw"]
     plan = tp.spec_exits(spec)
     stats = vol.iv_stats(ivs) if x.iv30 is not None else None
     pct = stats.percentile if stats else None
@@ -154,7 +175,7 @@ def card_at(spec: Spec, x: Day, h: Clocked, nxt: date | None, eday: Any, returns
                        for q, side, f in fills],
               "exit_plan": {"profit_pct": plan.profit_pct, "stop_pct": plan.stop_pct, "exit_dte": plan.exit_dte,
                             "hold_to_expiry": plan.hold_to_expiry}}  # fmt: skip
-    return Card(spec.key, sym, spec.kind, expiry, d, inputs, fc, gate)
+    return Card(spec.key, sym, spec.kind, expiry, d, inputs, fc, gate, t_bus)
 
 
 def make_cards(history: History, start: date, end: date, spec_list: Sequence[Spec] | None = None,
@@ -171,6 +192,7 @@ def make_cards(history: History, start: date, end: date, spec_list: Sequence[Spe
         h = Clocked(history)
         last = history.latest(sym)
         days = h.sessions(sym, start - timedelta(days=WARMUP_DAYS), last) if last else []
+        calendar = bt.Calendar.from_sessions(days)  # A2.5: the stored sessions, as eday below
 
         def eday(e: date, days: list[date] = days) -> date:
             return e if not days or e > days[-1] else days[bisect_right(days, e) - 1]
@@ -193,7 +215,7 @@ def make_cards(history: History, start: date, end: date, spec_list: Sequence[Spe
                 continue
             nxt = days[i + 1] if i + 1 < len(days) else None
             for spec in group:
-                c = card_at(spec, x, h, nxt, eday, returns, ivs, book)
+                c = card_at(spec, x, h, nxt, eday, returns, ivs, book, calendar)
                 if isinstance(c, str):
                     skips[f"{spec.key}: {c}"] += 1
                 else:
@@ -273,9 +295,17 @@ def run_window(history: History, window: str, spec_list: Sequence[Spec] | None =
     end = date.fromisoformat(w["end"]) if w["end"] else date.max
     cards, skips = make_cards(history, start, end, spec_list)
     events, counts = resolve(cards, history)
-    rep = race.run(events, window)
+    rep = race.run(events, window, challengers=addendum_a2.CHALLENGERS)
+    gaps: dict[str, int | None] = {}  # A2.5: weekdays without a stored session (holidays and any missing day)
+    for sym in sorted({s.underlying for s in spec_list or replay_specs()}):
+        last = history.latest(sym)
+        got = history.sessions(sym, start - timedelta(days=WARMUP_DAYS), last) if last else []
+        cal = bt.Calendar.from_sessions(got)
+        gaps[sym] = len(cal.holidays) if cal else None
     rep["replay"] = {"addendum": addendum.ADDENDUM_VERSION, "addendum_hash": addendum.addendum_hash(),
                      "cards": len(cards), "counts": dict(counts), "skips": dict(skips),
+                     "addendum_a2": addendum_a2.ADDENDUM_VERSION, "addendum_a2_hash": addendum_a2.addendum_hash(),
+                     "calendar_gap_weekdays": gaps, "t_bus_unknown": sum(1 for c in cards if c.t_bus is None),
                      "first_origin": min((c.origin for c in cards), default=None),
                      "last_origin": max((c.origin for c in cards), default=None)}  # fmt: skip
     return rep

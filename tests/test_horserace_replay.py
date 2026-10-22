@@ -110,9 +110,13 @@ def test_a_cards_forecasts_never_read_past_its_origin(hist, made) -> None:
     c = made[0][3]
     cards, _ = replay.make_cards(_truncated(hist, c.origin), START, c.origin, [PCS])
     assert cards[-1].origin == c.origin
-    assert (
-        cards[-1].forecasts == c.forecasts and cards[-1].inputs == c.inputs
-    )  # the later sessions changed nothing
+
+    # the later sessions changed nothing; p_rw_bus is the one forecast that reads the stored session calendar past
+    # the origin (addendum A2.5), tested in test_horserace_bustime.py
+    def known(f: dict) -> dict:
+        return {k: v for k, v in f.items() if k != "p_rw_bus"}
+
+    assert known(cards[-1].forecasts) == known(c.forecasts) and cards[-1].inputs == c.inputs
 
 
 def test_a_leg_without_a_settlement_price_is_a_counted_skip(hist, made) -> None:
@@ -191,5 +195,7 @@ def test_cli_replay_source_on_an_empty_database(env) -> None:
     r = CliRunner().invoke(app, ["forecasts", "horse-race", "--source", "replay", "--window", "seen"])
     assert r.exit_code == 0, r.output
     assert "0 event(s)" in r.output and "replay" in r.output
+    flat = " ".join(r.output.split())
+    assert "challenger p_rw_bus" in flat and "T_bus unknown on 0 card(s)" in flat
     r = CliRunner().invoke(app, ["forecasts", "horse-race", "--source", "replay", "--window", "forward"])
     assert r.exit_code == 2 and "card-ledger" in r.output

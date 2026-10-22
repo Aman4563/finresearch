@@ -1228,6 +1228,8 @@ def forecasts_horse_race(
         rp = rep["replay"]
         console.print(f"replay ({rp['addendum']}): {rp['cards']} card(s) from {rp['first_origin']} to "
                       f"{rp['last_origin']}; {rp['counts']}; skips {rp['skips']}")  # fmt: skip
+        console.print(f"challenger p_rw_bus ({rp['addendum_a2']}): T_bus unknown on {rp['t_bus_unknown']} card(s); "
+                      f"weekdays without a stored session (holidays or missing days): {rp['calendar_gap_weekdays']}")  # fmt: skip
     else:
         with session_scope() as s:
             rep = race.run(ledger_events.load(s), window)
