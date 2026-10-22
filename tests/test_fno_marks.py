@@ -142,3 +142,80 @@ def test_real_legs_keep_an_unknown_direction_unknown(db):
     assert rows["groww:NIFTY26OCT24500PE"].qty == -75
     assert rows["groww:NIFTY26OCT24500PE"].position_key == "NIFTY:2026-10-27"
     assert rows["groww:NIFTY26OCT25500CE"].qty is None and rows["groww:NIFTY26OCT25500CE"].price == D("30.00")
+
+
+# --------------------------------------------------------------------------- the nightly monitor step
+ROWS = {"NIFTY26OCT24500PE": {"instrument_type": "PE", "expiry_date": "2026-10-27", "strike_price": "24500",
+                                  "underlying_symbol": "NIFTY", "lot_size": "75"}}  # fmt: skip
+
+
+class FakeInstruments:
+    def contract(self, sym):
+        return ROWS.get(sym)
+
+
+class FakeMarket:
+    async def instruments(self):
+        return FakeInstruments()
+
+
+NIGHT = datetime(2026, 10, 20, 20, 0, tzinfo=IST)
+
+
+def _loaded_day(s):
+    from finresearch.db.models import AlertEvalSlot, FnoBhavDay
+
+    s.merge(FnoBhavDay(day=DAY, status="loaded"))
+    s.execute(delete(AlertEvalSlot).where(AlertEvalSlot.slot.like("fno_marks:%")))
+
+
+def test_monitor_step_marks_paper_and_todays_real_positions_once(db):
+    import asyncio
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import FnoMark
+    from finresearch.monitor.fno_marks import fno_marks_step
+
+    with session_scope() as s:
+        _loaded_day(s)
+        spread(s)
+        for k, kind, p in ((25000, "CE", "180"), (25200, "CE", "80"), (24500, "PE", "60")):
+            bhav(s, DAY, k, kind, D(p))
+    stored = {"status": "ok", "at": "2026-10-20T15:40:00+05:30", "rows": [
+        {"symbol": "NIFTY26OCT24500PE", "quantity": -75, "direction_known": True},
+        {"symbol": "NIFTY26NOVXXXXX", "quantity": 75, "direction_known": True}]}  # fmt: skip
+    out = asyncio.run(fno_marks_step(NIGHT, holidays=set(), market=FakeMarket(), stored=stored))
+    assert out["fno_marks"]["paper"] == 2 and out["fno_marks"]["real"] == 1
+    assert out["fno_marks"]["real_unresolved"] == 1  # not in the instruments file: skipped, counted
+    assert asyncio.run(fno_marks_step(NIGHT, holidays=set(), market=FakeMarket(), stored=stored)) == {}
+    with session_scope() as s:
+        assert s.scalars(select(FnoMark.qty).where(FnoMark.book == "real")).all() == [-75]
+
+
+def test_monitor_step_skips_real_positions_not_read_today(db):
+    import asyncio
+
+    from finresearch.db import session_scope
+    from finresearch.monitor.fno_marks import fno_marks_step
+
+    with session_scope() as s:
+        _loaded_day(s)
+    stored = {"status": "ok", "at": "2026-10-17T15:40:00+05:30",
+              "rows": [{"symbol": "NIFTY26OCT24500PE", "quantity": -75, "direction_known": True}]}  # fmt: skip
+    out = asyncio.run(fno_marks_step(NIGHT, holidays=set(), market=FakeMarket(), stored=stored))
+    assert out["fno_marks"]["real"] == 0 and "not read today" in out["fno_marks"]["real_note"]
+
+
+def test_monitor_step_waits_for_the_bhavcopy(db):
+    import asyncio
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import FnoBhavDay
+    from finresearch.monitor.fno_marks import fno_marks_step
+
+    with session_scope() as s:
+        s.execute(delete(FnoBhavDay).where(FnoBhavDay.day == DAY))
+    assert (
+        asyncio.run(fno_marks_step(NIGHT, holidays=set(), market=FakeMarket(), stored={"status": "not_read"}))
+        == {}
+    )
