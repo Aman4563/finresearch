@@ -40,7 +40,7 @@ def mcs(
     rng = np.random.default_rng(seed)
     idx = np.stack([stationary_bootstrap(n, n, mean_block, rng) for _ in range(reps)])  # B x n
     lbar = L.mean(axis=0)
-    lboot = L[idx].mean(axis=1)  # B x m
+    lboot = np.column_stack([L[:, j][idx].mean(axis=1) for j in range(L.shape[1])])  # B x m
     alive = list(range(len(names)))
     pv: dict[str, float] = {}
     order: list[str] = []
