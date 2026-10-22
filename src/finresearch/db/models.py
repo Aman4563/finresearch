@@ -640,7 +640,8 @@ class LabStrategy(Base):
 
 
 class LabVersion(Base):
-    """One saved spec of a strategy (stratlab.spec.StrategySpec as JSON). Versions are never edited or deleted."""
+    """One saved spec of a strategy (stratlab.spec.StrategySpec as JSON). Versions are never edited or deleted (a trigger
+    refuses UPDATE and DELETE, #380): the first `created_at` of a spec hash is its registration date."""
 
     __tablename__ = "lab_version"
     __table_args__ = (UniqueConstraint("strategy_id", "version"),)
@@ -652,6 +653,16 @@ class LabVersion(Base):
     spec_hash: Mapped[str] = mapped_column(String(64), index=True)
     note: Mapped[str] = mapped_column(String(200), default="")
     strategy: Mapped[LabStrategy] = relationship(back_populates="versions")
+
+
+LAB_VERSION_APPEND_ONLY = (  # #380: a version's created_at is its spec's registration date (the holdout's start)
+    "CREATE OR REPLACE FUNCTION lab_version_append_only() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN "
+    "RAISE EXCEPTION USING MESSAGE = 'lab_version is append-only: ' || TG_OP || ' refused'; END $$",
+    "CREATE TRIGGER lab_version_append_only BEFORE UPDATE OR DELETE ON lab_version "
+    "FOR EACH ROW EXECUTE FUNCTION lab_version_append_only()",
+)
+for _sql in LAB_VERSION_APPEND_ONLY:
+    event.listen(LabVersion.__table__, "after_create", DDL(_sql))
 
 
 class LabRun(Base):

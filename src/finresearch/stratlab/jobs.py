@@ -147,6 +147,8 @@ def execute(run_id: int, history: Any = None, *, cap: timedelta = RUN_CAP,
         st = s.get(LabStrategy, v.strategy_id)
         spec, split, oos = StrategySpec.model_validate(v.spec), store.split_of(st), r.oos
         key, name, sid, vid = f"lab{st.id}v{v.version}", f"{st.name} (v{v.version})", st.id, v.id
+        reg = store.registered_on(s, v.spec_hash)
+        hold = reg + timedelta(days=1) if reg is not None else None
         t0 = clock()
         r.status, r.started_at, r.heartbeat_at, r.pid = "running", t0, t0, os.getpid()
     if history is None:
@@ -164,7 +166,9 @@ def execute(run_id: int, history: Any = None, *, cap: timedelta = RUN_CAP,
             _set(run_id, progress=round(min(frac, 0.99), 4), progress_note=note[:200], heartbeat_at=t)
 
     try:
-        rep = ev.replay(history, spec, split, key=key, name=name, oos=oos, progress=progress)
+        rep = ev.replay(
+            history, spec, split, key=key, name=name, oos=oos, progress=progress, holdout_from=hold
+        )
     except RunTimeout as e:
         return _end(run_id, "timed_out", error=str(e), finished_at=clock())
     except Exception as e:

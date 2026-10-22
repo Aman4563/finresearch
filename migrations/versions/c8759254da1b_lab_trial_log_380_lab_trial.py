@@ -1,4 +1,4 @@
-"""Lab trial log (#380): lab_trial
+"""Lab trial log (#380): lab_trial (append-only) and an append-only lab_version
 
 Revision ID: c8759254da1b
 Revises: 6ca0f961e9df
@@ -19,6 +19,12 @@ APPEND_ONLY = (
     "RAISE EXCEPTION USING MESSAGE = 'lab_trial is append-only: ' || TG_OP || ' refused'; END $$",
     "CREATE TRIGGER lab_trial_append_only BEFORE UPDATE OR DELETE ON lab_trial "
     "FOR EACH ROW EXECUTE FUNCTION lab_trial_append_only()",
+)
+VERSION_APPEND_ONLY = (  # db.models.LAB_VERSION_APPEND_ONLY: a version's created_at is its spec's registration date
+    "CREATE OR REPLACE FUNCTION lab_version_append_only() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN "
+    "RAISE EXCEPTION USING MESSAGE = 'lab_version is append-only: ' || TG_OP || ' refused'; END $$",
+    "CREATE TRIGGER lab_version_append_only BEFORE UPDATE OR DELETE ON lab_version "
+    "FOR EACH ROW EXECUTE FUNCTION lab_version_append_only()",
 )
 # runs that ended before the log existed are trials too (their daily P&L was not kept: [] marks it unknown);
 # queued or running ones log themselves when they end
@@ -62,7 +68,7 @@ def upgrade() -> None:
     op.create_index(op.f("ix_lab_trial_version_id"), "lab_trial", ["version_id"], unique=False)
     # ### end Alembic commands ###
     op.execute(BACKFILL)
-    for sql in APPEND_ONLY:
+    for sql in (*APPEND_ONLY, *VERSION_APPEND_ONLY):
         op.execute(sql)
 
 
@@ -75,3 +81,5 @@ def downgrade() -> None:
     op.drop_table("lab_trial")  # drops its trigger
     # ### end Alembic commands ###
     op.execute("DROP FUNCTION IF EXISTS lab_trial_append_only()")
+    op.execute("DROP TRIGGER IF EXISTS lab_version_append_only ON lab_version")
+    op.execute("DROP FUNCTION IF EXISTS lab_version_append_only()")

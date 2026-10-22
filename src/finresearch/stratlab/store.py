@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date, datetime
 from typing import Any
 
 from sqlalchemy import func, select
@@ -17,7 +18,9 @@ class LabError(ValueError):
     """A request the lab refuses (shown to the user as is)."""
 
 
-def create_strategy(s: Session, name: str, spec: StrategySpec, history: Any) -> LabStrategy:
+def create_strategy(
+    s: Session, name: str, spec: StrategySpec, history: Any, now: datetime | None = None
+) -> LabStrategy:
     """A new strategy with its split locked now from the stored history of the underlying, and version 1."""
     try:
         got = sp.lock(*sp.span(history, spec.underlying))
@@ -28,11 +31,13 @@ def create_strategy(s: Session, name: str, spec: StrategySpec, history: Any) -> 
                      data_last=got.data_last, split_rule=got.rule[:300])  # fmt: skip
     s.add(st)
     s.flush()
-    add_version(s, st, spec, "first version")
+    add_version(s, st, spec, "first version", now=now)
     return st
 
 
-def add_version(s: Session, st: LabStrategy, spec: StrategySpec, note: str = "") -> LabVersion:
+def add_version(
+    s: Session, st: LabStrategy, spec: StrategySpec, note: str = "", now: datetime | None = None
+) -> LabVersion:
     """A new version; the same spec as an existing version of this strategy returns that version (no new variant)."""
     if spec.underlying != st.underlying:
         raise LabError(
@@ -46,9 +51,20 @@ def add_version(s: Session, st: LabStrategy, spec: StrategySpec, note: str = "")
         return old
     n = s.scalar(select(func.max(LabVersion.version)).where(LabVersion.strategy_id == st.id)) or 0
     v = LabVersion(strategy_id=st.id, version=n + 1, spec=spec.model_dump(), spec_hash=h, note=note[:200])
+    if now is not None:
+        v.created_at = now
     s.add(v)
     s.flush()
     return v
+
+
+def registered_on(s: Session, spec_hash_: str) -> date | None:
+    """The spec's registration date (#380): the IST day its hash was first saved, in any strategy (lab_version is
+    append-only, so it cannot move). Its sealed holdout is every stored session after this day."""
+    from finresearch.fincalc.dates import to_ist
+
+    first = s.scalar(select(func.min(LabVersion.created_at)).where(LabVersion.spec_hash == spec_hash_))
+    return to_ist(first).date() if first is not None else None
 
 
 def split_of(st: LabStrategy) -> sp.Split:

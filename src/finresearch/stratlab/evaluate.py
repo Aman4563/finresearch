@@ -29,7 +29,7 @@ Progress = Callable[[float, str], None]
 
 
 def replay(history: Any, s: StrategySpec, split: Split, *, key: str, name: str, oos: bool, crit: Criteria = CRITERIA,
-           progress: Progress | None = None) -> dict[str, Any]:  # fmt: skip
+           progress: Progress | None = None, holdout_from: date | None = None) -> dict[str, Any]:  # fmt: skip
     lab, book = to_lab_spec(s, key, name), book_for(s)
     latest = history.latest(s.underlying)
     if latest is None:
@@ -62,6 +62,13 @@ def replay(history: Any, s: StrategySpec, split: Split, *, key: str, name: str, 
         windows["oos_stress"] = lib.window(
             stress["trades"], stress["equity"], split.oos_start, hi, book, crit
         )
+        if (
+            holdout_from is not None and holdout_from <= hi
+        ):  # #380: the sealed holdout, forward of registration
+            windows["holdout"] = lib.window(main["trades"], main["equity"], holdout_from, hi, book, crit)
+            windows["holdout_stress"] = lib.window(
+                stress["trades"], stress["equity"], holdout_from, hi, book, crit
+            )
     trades = main["trades"]
     return {
         "key": key, "name": name, "role": "lab", "kind": s.structure, "underlying": s.underlying,
@@ -75,6 +82,7 @@ def replay(history: Any, s: StrategySpec, split: Split, *, key: str, name: str, 
         "by_iv_regime": metrics.breakdown(trades, lambda t: metrics.regime(t["iv_pct"])),
         "max_day_read": main["max_day_read"].isoformat() if main["max_day_read"] else None,
         "notes": [RESULTS_NOTE] if s.exit_before_results else [],
+        "holdout_from": holdout_from.isoformat() if holdout_from is not None else None,
     }  # fmt: skip
 
 
@@ -121,6 +129,7 @@ def finalize(rep: dict[str, Any], *, n_trials: int, var: float | None, oos_versi
                 c["rule"] += "; unknown until two variants have out-of-sample results"
     failed = [c["criterion"] for c in checks if not c["pass"]]
     rep["criteria"] = checks
+    rep["holdout"] = holdout(rep, n_trials, var, crit)
     # never "candidate" (#361): the window is already published, so a pass is an in-sample result
     rep["status"] = "in_sample_result" if not failed else "fails"
     rep["reasons"] = [f"fails: {x}" for x in failed] or [
@@ -128,6 +137,40 @@ def finalize(rep: dict[str, Any], *, n_trials: int, var: float | None, oos_versi
     ]
     rep["warnings"] = warnings(rep, n_trials, oos_versions, n_lab, crit)
     return rep
+
+
+HOLDOUT_LABEL = "forward holdout: sessions after the spec was registered (never seen when it was saved)"
+
+
+def holdout(
+    rep: dict[str, Any], n_trials: int, var: float | None, crit: Criteria = CRITERIA
+) -> dict[str, Any]:
+    """The holdout's own verdict (#380): the library criteria on the forward window, with the in-sample window and the
+    holdout's slippage stress. `candidate` only here, and only when every criterion holds (unknown = fails);
+    `too_early` while no stored session follows the registration; `unknown` when the run carries no registration."""
+    frm = rep.get("holdout_from")
+    if frm is None:
+        return {
+            "status": "unknown",
+            "label": HOLDOUT_LABEL,
+            "reasons": ["the spec's registration date is unknown"],
+        }
+    w = rep["windows"].get("holdout")
+    if w is None:
+        return {"status": "too_early", "from": frm, "label": HOLDOUT_LABEL,
+                "reasons": [f"no stored session after the registration yet (the holdout starts {frm})"]}  # fmt: skip
+    w["deflated_sharpe"] = deflated(w, n_trials, var)
+    checks = lib.judge(rep["windows"]["is"], w, rep["windows"]["holdout_stress"], crit)
+    for c in checks:
+        c["criterion"] = c["criterion"].replace("OOS", "Holdout")
+        if c["criterion"] == "Holdout deflated Sharpe":
+            c["rule"] = f">= {crit.min_deflated_sharpe:g} (N = {n_trials} trials)" + (
+                "" if var is not None else "; unknown: V unknown"
+            )
+    failed = [c["criterion"] for c in checks if not c["pass"]]
+    return {"status": "fails" if failed else "candidate", "from": w["from"], "to": w["to"], "label": HOLDOUT_LABEL,
+            "criteria": checks, "reasons": [f"fails: {x}" for x in failed] or ["passes every library criterion on "
+            "the forward holdout: a candidate for forward paper incubation, not an edge"]}  # fmt: skip
 
 
 def warnings(rep: dict[str, Any], n_trials: int, oos_versions: int, n_lab: int, crit: Criteria) -> list[str]:
