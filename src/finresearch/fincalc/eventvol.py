@@ -96,3 +96,70 @@ def straddling(before: Point, after: Point) -> Implied:
         return Implied(None, base, "straddling",
                        "the event cannot be identified: the expiry after it is not priced above the one before")  # fmt: skip
     return Implied(j2, base, "straddling")
+
+
+def _solve(a: list[list[float]], b: list[float]) -> list[float] | None:
+    """Least squares by the normal equations and Gaussian elimination (a few unknowns); None when singular."""
+    k = len(a[0])
+    m = [[sum(r[i] * r[j] for r in a) for j in range(k)] + [sum(r[i] * y for r, y in zip(a, b, strict=True))]
+         for i in range(k)]  # fmt: skip
+    for c in range(k):
+        p = max(range(c, k), key=lambda i: abs(m[i][c]))
+        if abs(m[p][c]) < 1e-18 * max(1.0, max(abs(x) for row in m for x in row[:k])):
+            return None
+        m[c], m[p] = m[p], m[c]
+        for i in range(k):
+            if i != c:
+                f = m[i][c] / m[c][c]
+                m[i] = [x - f * y for x, y in zip(m[i], m[c], strict=True)]
+    return [m[i][k] / m[i][i] for i in range(k)]
+
+
+def fit(points: list[Point], events: list[date]) -> dict[date, Implied]:
+    """Every event's J^2 from all the expiries at once: least squares of w_j on (tau_j, 1{T_j >= e}) with every
+    J_e^2 >= 0 (the exact non-negative solution: the best feasible fit over which events are held at zero, at most
+    2^events small solves). An event no expiry follows, or sharing its expiries with another event, is unknown; so is
+    every event when there are fewer expiries than unknowns or the base variance is not positive."""
+    out: dict[date, Implied] = {}
+    pts = sorted(points, key=lambda p: p.expiry)
+    if bad := _usable(*pts) if pts else "no expiries":
+        return {e: Implied(None, method="fit", reason=bad) for e in events}
+    cols: dict[tuple[int, ...], list[date]] = {}
+    for e in sorted(set(events)):
+        col = tuple(int(p.expiry >= e) for p in pts)
+        if not any(col):
+            out[e] = Implied(None, method="fit", reason="no expiry after the event: its move is not priced yet")
+        else:
+            cols.setdefault(col, []).append(e)
+    for same in cols.values():
+        if len(same) > 1:
+            for e in same:
+                out[e] = Implied(None, method="fit", reason="events between the same expiries cannot be told apart: "
+                                 + ", ".join(str(x) for x in same if x != e))  # fmt: skip
+    solo = [(col, es[0]) for col, es in cols.items() if len(es) == 1]
+    if not solo:
+        return out
+    if 1 + len(solo) > len(pts):
+        out.update({e: Implied(None, method="fit", reason=f"too few expiries ({len(pts)}) to separate the base "
+                               f"variance and {len(solo)} event(s)") for _, e in solo})  # fmt: skip
+        return out
+    w = [p.sigma**2 * p.tau for p in pts]  # type: ignore[operator]
+    best: tuple[float, list[float], list[int]] | None = None
+    for mask in range(1 << len(solo)):
+        free = [i for i in range(len(solo)) if mask >> i & 1]
+        a = [[p.tau] + [solo[i][0][j] for i in free] for j, p in enumerate(pts)]  # type: ignore[list-item]
+        x = _solve(a, w)  # type: ignore[arg-type]
+        if x is None or x[0] <= 0 or any(v <= 0 for v in x[1:]):
+            continue
+        ssr = sum((sum(c * v for c, v in zip(r, x, strict=True)) - y) ** 2 for r, y in zip(a, w, strict=True))
+        if best is None or ssr < best[0] - 1e-30:
+            best = (ssr, x, free)
+    if best is None:
+        out.update({e: Implied(None, method="fit", reason="no positive base variance fits these expiries")
+                    for _, e in solo})  # fmt: skip
+        return out
+    _, x, free = best
+    for i, (_, e) in enumerate(solo):
+        out[e] = (Implied(x[1 + free.index(i)], x[0], "fit") if i in free else
+                  Implied(None, x[0], "fit", "the term structure shows no premium for this event"))  # fmt: skip
+    return out

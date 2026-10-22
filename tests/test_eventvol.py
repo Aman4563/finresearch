@@ -45,3 +45,47 @@ def test_unusable_inputs_are_unknown():
     assert ev.two_after(NEAR, NEAR).j2 is None  # same expiry: no term structure
     assert ev.two_after(ev.Point(NEAR.expiry, NEAR.tau, None), NEXT).reason  # a missing IV
     assert ev.two_after(ev.Point(NEAR.expiry, 0.0, 0.2), NEXT).j2 is None  # expired
+
+
+# Three expiries built from base 15 % and two events: A (J^2 = 0.001) before every expiry, B (J^2 = 0.0004) between
+# the second and the third. w_j = 0.0225 tau_j + the events before T_j, so the fit must recover them exactly.
+TAUS = (date(2024, 6, 13), 5 / 365), (date(2024, 6, 20), 12 / 365), (date(2024, 7, 25), 33 / 365)
+EV_A, EV_B = date(2024, 6, 10), date(2024, 7, 1)
+
+
+def _pts(j_a: float = 0.001, j_b: float = 0.0004) -> list:
+    out = []
+    for exp, tau in TAUS:
+        w = 0.0225 * tau + j_a + (j_b if exp >= EV_B else 0.0)
+        out.append(ev.Point(exp, tau, math.sqrt(w / tau)))
+    return out
+
+
+def test_fit_recovers_each_event_from_three_expiries():
+    got = ev.fit(_pts(), [EV_A, EV_B])
+    assert got[EV_A].j2 == pytest.approx(0.001, rel=1e-9)
+    assert got[EV_B].j2 == pytest.approx(0.0004, rel=1e-9)
+    assert got[EV_A].base_var == pytest.approx(0.0225, rel=1e-9)
+
+
+def test_fit_on_two_expiries_matches_the_closed_form():
+    assert ev.fit([NEAR, NEXT], [EVENT])[EVENT].j2 == pytest.approx(ev.two_after(NEAR, NEXT).j2, rel=1e-12)
+
+
+def test_fit_leaves_an_event_with_no_premium_unknown_and_keeps_the_other():
+    got = ev.fit(_pts(j_b=-0.0003), [EV_A, EV_B])  # the far expiry is priced below base: B shows no premium
+    assert got[EV_B].j2 is None and "no premium" in got[EV_B].reason
+    assert got[EV_A].j2 is not None and got[EV_A].j2 > 0
+
+
+def test_fit_cannot_split_events_between_the_same_expiries_or_after_the_last():
+    twin = date(2024, 7, 2)
+    got = ev.fit(_pts(), [EV_A, EV_B, twin, date(2024, 8, 1)])
+    assert got[EV_B].j2 is None and got[twin].j2 is None and "same expiries" in got[twin].reason
+    assert got[date(2024, 8, 1)].j2 is None and "no expiry after" in got[date(2024, 8, 1)].reason
+    assert got[EV_A].j2 is not None  # still identified from the three expiries
+
+
+def test_fit_with_too_few_expiries_is_unknown():
+    got = ev.fit(_pts()[1:], [EV_A, EV_B])  # 2 expiries, 3 unknowns (base, A, B)
+    assert got[EV_A].j2 is None and got[EV_B].j2 is None and "too few" in got[EV_A].reason
