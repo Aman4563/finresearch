@@ -223,12 +223,13 @@ def replay(ivs: Sequence[tuple[date, float | None]], fut: Sequence[FutureDay]) -
     on = dict.fromkeys(SHOCK_RULES, False)
     out: list[Firing] = []
     fpos = {x.day: i for i, x in enumerate(fut)}
+    rets = [y.ret for y in fut]
     for j, x in enumerate(days):
         i = iv_pos[x.day]
-        hist = iv_vals[: i + 1]
+        hist = iv_vals[max(0, i + 1 - SD_WINDOW - 2 * CUM_SESSIONS) : i + 1]
         k = fpos[x.day]
         stats = {"iv_shock": iv_shock(hist).value, "cum_shock": cum_shock(hist).value,
-                 "gap": gap_z(open_=x.open, prev_close=x.prev_close, rets=[y.ret for y in fut[:k]]).value}  # fmt: skip
+                 "gap": gap_z(open_=x.open, prev_close=x.prev_close, rets=rets[max(0, k - SD_WINDOW) : k]).value}  # fmt: skip
         new = []
         for r in SHOCK_RULES:
             v = stats[r]

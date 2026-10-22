@@ -102,3 +102,40 @@ def test_deps_flag_and_schedule_entry() -> None:
     assert Deps.live().risk_alerts is True
     assert scheduler.schedule_json(WatchWindows(), running=True)["risk_alerts"] == {
         "after": "20:45", "deadline": "23:30", "trading_days": True}  # fmt: skip
+
+
+def test_cli_risk_replay_reports_firings_per_year_and_the_scenario_days_read_only(clean) -> None:
+    import json
+    from datetime import timedelta
+    from decimal import Decimal as D
+
+    from typer.testing import CliRunner
+
+    from finresearch.cli import app
+    from finresearch.db import session_scope
+    from finresearch.db.models import AlertRuleState, FnoBhav, FnoIvEod
+
+    days, d = [], date(2025, 1, 1)
+    while len(days) < 300:
+        if d.weekday() < 5:
+            days.append(d)
+        d += timedelta(days=1)
+    with session_scope() as s:
+        for i, x in enumerate(days):
+            iv = (
+                15.0 + (0.5 if i % 2 else 0.0) + (6.0 if i == 290 else 0.0)
+            )  # a one-day IV30 spike on session 290
+            c = D(str(24000 * (1.01 if i % 2 else 1.0)))
+            s.add(FnoIvEod(symbol="NIFTY", day=x, iv_30d=D(str(iv)), rate=D("0.065")))
+            s.add(FnoBhav(day=x, symbol="NIFTY", instrument="IDF", expiry=date(2030, 1, 31), strike=D(0),
+                          option_type="XX", open=c, close=c))  # fmt: skip
+    r = CliRunner().invoke(
+        app, ["fno", "risk-replay", "--from", "2025-06-01", "--to", days[-1].isoformat(), "--json"]
+    )
+    assert r.exit_code == 0, r.output
+    out = json.loads(r.output)
+    assert [f["day"] for f in out["firings"]] == [days[290].isoformat()]
+    assert out["summary"]["years"]["2026"]["firings"] == 1 and "fno_iv_eod.iv_30d" in out["series"]
+    assert set(out["summary"]["scenarios"]) == {"2024-06-04", "2024-08-05", "2025-04-07"}
+    with session_scope() as s:
+        assert not s.scalars(select(AlertRuleState)).first()  # a replay writes nothing

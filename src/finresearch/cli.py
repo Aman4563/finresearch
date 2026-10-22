@@ -1654,6 +1654,61 @@ def fno_review(
         )
 
 
+@fno_app.command("risk-replay")
+def fno_risk_replay(
+    symbol: str = typer.Option("NIFTY", "--symbol"),
+    start: str = typer.Option("2024-01-01", "--from", help="first firing day reported (YYYY-MM-DD)"),
+    end: str | None = typer.Option(None, "--to", help="last day (default today, IST)"),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """Replay the risk alerts' shock rules (#398: IV30 shock, cumulative shock, gap) over the stored fno_iv_eod and
+    fno_bhav history: the days they fire, per-year firings and false alarms (a synthetic short 30-day ATM straddle
+    losing no more than 1 % of the forward within 2 sessions; at most 12 a year), and whether the issue's scenario
+    days and the Feb-Mar 2026 episode fire. Public market data only; reads only, writes nothing."""
+    import json as _json
+    from datetime import date as _date
+
+    from sqlalchemy import select
+
+    from finresearch.alerts.risk_readers import front
+    from finresearch.db import session_scope
+    from finresearch.db.models import FnoIvEod
+    from finresearch.fincalc import risk_alerts as ra
+    from finresearch.fincalc.dates import today_ist
+
+    sym, first = symbol.upper(), _date.fromisoformat(start)
+    last = _date.fromisoformat(end) if end else today_ist()
+    with session_scope() as s:
+        ivs = [(d, None if v is None else float(v)) for d, v in s.execute(
+            select(FnoIvEod.day, FnoIvEod.iv_30d).where(FnoIvEod.symbol == sym, FnoIvEod.day <= last)
+            .order_by(FnoIvEod.day))]  # fmt: skip
+        fut = front(s, sym, last)
+    firings = [f for f in ra.replay(ivs, fut) if f.day >= first]
+    out = {"symbol": sym, "from": first.isoformat(), "to": last.isoformat(),
+           "series": f"fno_iv_eod.iv_30d and fno_bhav front future of {sym} ({len(ivs)} IV30 days, {len(fut)} "
+                     "future sessions)",
+           "false_alarm_rule": f"a firing after which a short {ra.STRADDLE_DAYS}-day ATM straddle loses at most "
+                               f"{ra.FALSE_ALARM_LOSS:.0%} of the forward within {ra.FOLLOW_SESSIONS} sessions",
+           "summary": ra.replay_summary(firings),
+           "firings": [{"day": f.day.isoformat(), "rules": list(f.rules), "values": {k: round(v, 3) for k, v in
+                        f.values.items()}, "loss": None if f.loss is None else round(f.loss, 5),
+                        "false_alarm": f.false_alarm} for f in firings]}  # fmt: skip
+    if as_json:
+        print(_json.dumps(out, indent=2))
+        return
+    console.print(f"{sym} {out['from']}..{out['to']}: {out['series']}")
+    for y, c in sorted(out["summary"]["years"].items()):
+        console.print(
+            f"  {y}: {c['firings']} firings, {c['false_alarms']} false alarms, {c['unscored']} unscored"
+        )
+    for d, hit in out["summary"]["scenarios"].items():
+        console.print(f"  scenario {d}: {'fired' if hit else 'did NOT fire'}")
+    for w, hit in out["summary"]["episodes"].items():
+        console.print(f"  episode {w}: {'fired' if hit else 'did NOT fire'}")
+    for f in out["firings"]:
+        console.print(f"  {f['day']} {','.join(f['rules'])} loss {f['loss']} false alarm {f['false_alarm']}")
+
+
 backtest_app = typer.Typer(
     no_args_is_help=True,
     help="Backtest the pre-registered F&O strategies on the stored bhavcopy history (#307)",
