@@ -9,7 +9,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
-from test_stratlab import lab_db, mem, spec  # noqa: F401  (fixtures)
+from test_stratlab import BASE, client, lab_db, mem, spec  # noqa: F401  (fixtures)
 
 from finresearch.stratlab import promotion as pm
 
@@ -99,3 +99,17 @@ def test_a_changed_registration_fails_the_gate(monkeypatch):
 
     monkeypatch.setattr(rigour_prereg, "HASH", "0" * 64)
     assert pm.checks(**{**GOOD, "registered": False})["status"] == "no_proven_edge"
+
+
+def test_api_serves_the_gate_and_the_family_and_counts_every_trial(client):  # noqa: F811
+    st = client.post("/api/fno/lab/strategies", json={"name": "Bull put", "spec": BASE}).json()
+    vid = st["versions"][0]["id"]
+    got = client.get(f"/api/fno/lab/versions/{vid}/promotion")
+    assert got.status_code == 200 and got.json()["status"] == "no_proven_edge"
+    assert client.get("/api/fno/lab/versions/999999/promotion").status_code == 404
+    fam = client.get("/api/fno/lab/family").json()
+    assert fam["pbo"]["pbo"] is None and fam["specs"] == 0 and "unknown" in fam["note"]
+    lab = client.get("/api/fno/lab").json()
+    assert (
+        lab["variants"]["n"] == 8 and lab["variants"]["trials"] == 0 and lab["variants"]["vault_reads"] == 0
+    )

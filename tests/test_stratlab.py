@@ -343,7 +343,13 @@ def test_api_runs_in_a_background_job_with_progress(client, mem, monkeypatch):
     trades = client.get(f"/api/fno/lab/runs/{rid}/trades").json()["trades"]
     assert len(trades) == done["n_trades"] > 0 and {"entry_day", "legs", "net", "reason"} <= set(trades[0])
     lab = client.get("/api/fno/lab").json()
-    assert lab["variants"] == {"library": 8, "lab": 1, "n": 9}
+    assert lab["variants"] == {
+        "library": 8,
+        "lab": 1,
+        "trials": 1,
+        "vault_reads": 0,
+        "n": 9,
+    }  # #380 adds the trial counts
     assert lab["strategies"][0]["versions"][0]["counted_variant"] is True
 
 
