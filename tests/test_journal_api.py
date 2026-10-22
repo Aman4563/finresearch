@@ -8,6 +8,7 @@ from datetime import UTC, date, datetime
 from decimal import Decimal as D
 from pathlib import Path
 
+import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
@@ -34,6 +35,11 @@ def client(env):
         raise LookupError("offline test")
 
     app.state.journal_signal = no_signal
+
+    async def no_history():
+        raise LookupError("offline test")
+
+    app.state.portfolio_history = no_history  # the value history needs the network: tests give their own
     with TestClient(app) as c:
         c.app_ = app
         yield c
@@ -340,6 +346,99 @@ def test_checklist_elss_lock_and_unknown_valuation(client):
     assert it["exit_load"]["status"] == "unknown"
     assert it["concentration"]["status"] == "unknown"
     assert out["status"] == "block"
+
+
+# --------------------------------------------------------------------------- #399 marginal risk line
+def _risk_history(ex_id: int, bank_id: int, n: int = 140):
+    """Two holdings with n business days of synthetic closes to TODAY (expected values below come from numpy)."""
+    from datetime import timedelta
+
+    from finresearch.portfolio.history import History, Position
+
+    rng = np.random.default_rng(7)
+    m = rng.normal(0, 0.01, n)
+    ra, rb = 0.9 * m + rng.normal(0, 0.008, n), 1.1 * m + rng.normal(0, 0.006, n)
+    days, d = [], TODAY
+    while len(days) < n + 1:
+        if d.weekday() < 5:
+            days.append(d)
+        d -= timedelta(days=1)
+    days = days[::-1]
+    ca, cb = [150.0], [425.0]
+    for x, y in zip(ra, rb, strict=True):
+        ca.append(ca[-1] * (1 + x))
+        cb.append(cb[-1] * (1 + y))
+    pos = [Position("NSE:EXMPL", "Example Textiles", "stock", "equity", [ex_id], 10, ca[-1], TODAY, 10 * ca[-1], None,
+                    "EXMPL"),
+           Position("NSE:EXBANK", "Example Bank", "stock", "equity", [bank_id], 20, cb[-1], TODAY, 20 * cb[-1], None,
+                    "EXBANK")]  # fmt: skip
+    hist = History(days=days, value=[1.0] * len(days), positions=pos,
+                   closes={"NSE:EXMPL": dict(zip(days, ca, strict=True)), "NSE:EXBANK": dict(zip(days, cb, strict=True))})  # fmt: skip
+    return hist, np.column_stack([ra, rb])
+
+
+def _two(client):
+    ex = txn(client, name="Example Textiles", nse_symbol="EXMPL", day="2025-10-15", kind="buy", quantity="10",
+             price="100")  # fmt: skip
+    bank = txn(client, name="Example Bank", nse_symbol="EXBANK", day="2025-01-02", kind="buy", quantity="20",
+               price="400")  # fmt: skip
+    _seed_valuation(ex["holding_id"], bank["holding_id"])
+    return ex, bank
+
+
+def test_checklist_marginal_risk_line_matches_numpy_399(client):
+    import math
+
+    ex, bank = _two(client)
+    hist, r = _risk_history(ex["holding_id"], bank["holding_id"])
+
+    async def fake_history():
+        return hist, TODAY, "fp"
+
+    client.app_.state.portfolio_history = fake_history
+    out = client.post("/api/journal/pretrade", headers=ORIGIN,
+                      json={"side": "buy", "holding_id": ex["holding_id"], "quantity": "5", "price": "150"}).json()  # fmt: skip
+    it = by_key(out)["marginal_risk"]
+    v = np.array([p.value for p in hist.positions])
+    va = v + np.array([750.0, 0.0])
+    cov = np.cov(r, rowvar=False, ddof=1) * 252
+    w, wa = v / v.sum(), va / va.sum()
+    sp = math.sqrt(w @ cov @ w)
+    assert it["status"] == "info" and it["days"] == 140
+    assert it["volatility_before"] == pytest.approx(sp, abs=1e-4)
+    assert it["value"] == pytest.approx(math.sqrt(wa @ cov @ wa), abs=1e-4)  # volatility after the trade
+    assert it["mcr"] == pytest.approx((cov @ w)[0] / sp, abs=1e-4)
+    assert it["correlation"] == pytest.approx(np.corrcoef(r[:, 0], r[:, 1])[0, 1], abs=1e-4)
+    assert it["largest"] == "Example Bank" and "Example Bank" in it["detail"]
+    assert ("raises" if it["mcr"] > sp else "lowers") in it["detail"]
+
+
+def test_checklist_marginal_risk_is_unknown_with_its_reason_never_zero_399(client):
+    ex, bank = _two(client)
+    # the fixture's value history is offline: unknown, and the checklist is not "nothing flagged"
+    out = client.post("/api/journal/pretrade", headers=ORIGIN,
+                      json={"side": "buy", "holding_id": ex["holding_id"], "quantity": "5", "price": "150"}).json()  # fmt: skip
+    it = by_key(out)["marginal_risk"]
+    assert it["status"] == "unknown" and it["value"] is None and "value history" in it["detail"]
+    hist, _ = _risk_history(ex["holding_id"], bank["holding_id"])
+
+    async def fake_history():
+        return hist, TODAY, "fp"
+
+    client.app_.state.portfolio_history = fake_history
+    new = by_key(client.post("/api/journal/pretrade", headers=ORIGIN,
+                             json={"side": "buy", "name": "Example New Ltd", "nse_symbol": "EXNEW", "quantity": "1",
+                                   "price": "10"}).json())["marginal_risk"]  # fmt: skip
+    assert new["status"] == "unknown" and "no price history" in new["detail"] and new["value"] is None
+    short, _ = _risk_history(ex["holding_id"], bank["holding_id"], n=60)
+
+    async def short_history():
+        return short, TODAY, "fp"
+
+    client.app_.state.portfolio_history = short_history
+    few = by_key(client.post("/api/journal/pretrade", headers=ORIGIN,
+                             json={"side": "buy", "holding_id": ex["holding_id"], "quantity": "5", "price": "150"}).json())  # fmt: skip
+    assert few["marginal_risk"]["status"] == "unknown" and "needs 120" in few["marginal_risk"]["detail"]
 
 
 # --------------------------------------------------------------------------- behaviour report

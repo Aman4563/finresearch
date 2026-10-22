@@ -310,7 +310,9 @@ class TradeRisk:
     sigma_before: float  # annualised portfolio volatility, today's mix
     sigma_after: float  # the same after the trade (new money in for a buy, proceeds out for a sale)
     mcr: float  # holding i's marginal contribution (Σw)_i / σ_p, annualised: new money in i raises σ_p iff mcr > σ_p
-    correlation: float | None  # of holding i's daily returns with holding j's (None: no j, or a constant series)
+    correlation: (
+        float | None
+    )  # of holding i's daily returns with holding j's (None: no j, or a constant series)
 
 
 def trade_risk(values_before: Sequence[float], values_after: Sequence[float], returns: Sequence[Sequence[float]],
