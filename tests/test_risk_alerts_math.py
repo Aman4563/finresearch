@@ -3,6 +3,7 @@ the formula written out by hand (statistics.stdev, math.log, NormalDist), not by
 
 from __future__ import annotations
 
+import itertools
 import math
 from statistics import NormalDist, stdev
 
@@ -22,7 +23,7 @@ def _iv_series(n: int, bump: float = 0.0) -> list[float]:
 
 def test_iv_shock_z_is_todays_change_over_the_prior_252_changes_sd() -> None:
     ivs = _iv_series(300, bump=2.0)
-    changes = [b - a for a, b in zip(ivs, ivs[1:], strict=False)]
+    changes = [b - a for a, b in itertools.pairwise(ivs)]
     want = changes[-1] / stdev(changes[-253:-1])  # today's change excluded from its own sd
     got = ra.iv_shock(ivs)
     assert got.value == pytest.approx(want) and got.value >= ra.SHOCK_Z
@@ -53,7 +54,7 @@ def test_cumulative_shock_compares_the_5_session_change_with_past_5_session_chan
 
 def test_gap_z_is_the_abs_log_gap_over_daily_sigma_of_close_to_close_returns() -> None:
     closes = [100 * (1.01 if i % 2 else 0.99) ** (i % 3) for i in range(260)]
-    rets = [math.log(b / a) for a, b in zip(closes, closes[1:], strict=False)]
+    rets = [math.log(b / a) for a, b in itertools.pairwise(closes)]
     sigma = stdev(rets[-252:])
     got = ra.gap_z(open_=closes[-1] * 0.95, prev_close=closes[-1], closes=closes)
     assert got.value == pytest.approx(abs(math.log(0.95)) / sigma)

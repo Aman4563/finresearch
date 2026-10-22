@@ -18,6 +18,7 @@ history is unknown (None with the reason), never "no shock".
 
 from __future__ import annotations
 
+import itertools
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -60,7 +61,7 @@ def iv_shock(ivs: Sequence[float | None]) -> Stat:
     w, why = _window(ivs, SD_WINDOW + 2, "IV30 shock")
     if w is None:
         return Stat(None, why)
-    d = [b - a for a, b in zip(w, w[1:], strict=False)]
+    d = [b - a for a, b in itertools.pairwise(w)]
     sd = stdev(d[:-1])
     if sd <= 0:
         return Stat(None, "IV30 shock: the past changes have no spread")
@@ -91,7 +92,7 @@ def gap_z(*, open_: float | None, prev_close: float | None, closes: Sequence[flo
     w, why = _window(closes, SD_WINDOW + 1, "gap")
     if w is None:
         return Stat(None, why)
-    sigma = stdev([math.log(b / a) for a, b in zip(w, w[1:], strict=False)])
+    sigma = stdev([math.log(b / a) for a, b in itertools.pairwise(w)])
     if sigma <= 0:
         return Stat(None, "gap: the past returns have no spread")
     g = math.log(open_ / prev_close)
@@ -118,7 +119,7 @@ def touch_prob(forward: float, strike: float, vol: float, t_years: float) -> flo
 
 
 def hysteresis(prev: str, u: float, fire: float = FIRE_U, clear: float = CLEAR_U) -> str:
-    """"fired" or "clear": a fired alert stays fired until u drops below `clear`; anything else fires at `fire`."""
+    """ "fired" or "clear": a fired alert stays fired until u drops below `clear`; anything else fires at `fire`."""
     if prev == "fired":
         return "fired" if u >= clear else "clear"
     return "fired" if u >= fire else "clear"
