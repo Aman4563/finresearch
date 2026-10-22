@@ -21,6 +21,7 @@ import logging
 import random
 from collections.abc import Callable
 from datetime import date, datetime, timedelta
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
@@ -176,7 +177,7 @@ def ban_history(s: Session, start: date, end: date) -> dict[date, dict[str, bool
     for d, sym, u in s.execute(select(MwplOi.day, MwplOi.symbol, MwplOi.utilisation)
                                .where(MwplOi.day.between(start, end))):  # fmt: skip
         us.setdefault(sym, {})[d] = None if u is None else float(u)
-    nxt = dict(zip(days, days[1:], strict=False))
+    nxt = dict(pairwise(days))
     out: dict[date, dict[str, bool | None]] = {}
     for sym, by_day in us.items():
         series = [(d, by_day.get(d) if d in loaded else None) for d in inside]
