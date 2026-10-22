@@ -500,3 +500,112 @@ def fhs_forecast(legs: Sequence[o.Leg], fwd: float, sigma: float | None, t: floa
     return ModelForecast(
         sample_outcome(legs, st, t, rate, entry_cost, exit_cost), None, None, kap, len(returns)
     )
+
+
+# ------------------------------------------------------------------------------------------- the robust EV gate
+@dataclass(frozen=True)
+class ModelEV:
+    name: str
+    validated: bool  # adopted through the horse race (#377): only validated models enter the gate
+    ev: float | None  # EV_P, Rs
+    ev_lo: float | None  # its lower bound at EV_LEVEL
+    es: float | None  # ES97.5, a positive loss in Rs
+
+
+@dataclass(frozen=True)
+class RobustGate:
+    passed: bool
+    informational: (
+        bool  # no validated model: the current gate decides alone (MF1: model EV stays informational)
+    )
+    ev_robust: float | None  # min EV over the validated models (maxmin, Gilboa-Schmeidler)
+    ev_lo_robust: float | None
+    es_worst: float | None
+    reasons: tuple[str, ...]
+
+
+def robust_gate(current_pass: bool, models: Sequence[ModelEV], costs: float | None, lam: float,
+                es_budget: float | None) -> RobustGate:  # fmt: skip
+    """passed = current_pass AND min over validated models of the EV lower bound > max(0, lam x costs) AND the
+    worst validated ES97.5 <= es_budget. It can only turn a pass into a fail: never more permissive than the gate it
+    wraps. Any unknown among the validated models, the costs or the budget fails it (unknown is never ok). `lam`
+    must be pre-registered before the gate is used."""
+    v = [m for m in models if m.validated]
+    if not v:
+        return RobustGate(
+            current_pass, True, None, None, None, ("no validated physical model: informational",)
+        )
+    reasons = [] if current_pass else ["the current gate fails"]
+    los, evs, ess = [m.ev_lo for m in v], [m.ev for m in v], [m.es for m in v]
+    lo = None if any(x is None for x in los) else min(los)  # type: ignore[type-var]
+    ev = None if any(x is None for x in evs) else min(evs)  # type: ignore[type-var]
+    es = None if any(x is None for x in ess) else max(ess)  # type: ignore[type-var]
+    if lo is None or ev is None or es is None:
+        reasons.append("a validated model's EV, lower bound or ES is unknown")
+    if costs is None:
+        reasons.append("costs unknown")
+    if es_budget is None:
+        reasons.append("ES budget unknown")
+    if lo is not None and costs is not None and not lo > max(0.0, lam * costs):
+        reasons.append(f"robust EV lower bound {lo:,.0f} is not above max(0, {lam:g} x costs {costs:,.0f})")
+    if es is not None and es_budget is not None and es > es_budget:
+        reasons.append(f"ES97.5 {es:,.0f} exceeds the budget {es_budget:,.0f}")
+    return RobustGate(current_pass and not reasons, False, ev, lo, es, tuple(reasons))
+
+
+# ------------------------------------------------------------------------------------------- drawdown, VRP, Kelly
+DD_BLOCK = 3  # consecutive expiries per block (the issue's b = 3)
+DD_SIMS = 10_000
+
+
+def max_drawdown(pnls: Sequence[float]) -> float:
+    """The largest fall of cumulative P&L below its running peak, the start (0) counting as a peak."""
+    eq = np.concatenate([[0.0], np.cumsum(np.asarray(pnls, float))])
+    return float(np.max(np.maximum.accumulate(eq) - eq))
+
+
+@dataclass(frozen=True)
+class DrawdownRisk:
+    p_exceed: float  # P(max drawdown > x x capital)
+    dar95: float  # the 95th percentile of the path maximum drawdown, Rs
+    cdar95: float  # the mean of the worst 5 % of path maximum drawdowns, Rs
+    horizon: int
+    sims: int
+    drawdowns: list[float] | None = None
+
+
+def drawdown_bootstrap(pnls: Sequence[float], capital: float, x: float, horizon: int | None = None,
+                       block: int = DD_BLOCK, sims: int = DD_SIMS, *, rng: np.random.Generator,
+                       keep: bool = False) -> DrawdownRisk:  # fmt: skip
+    """Paths of `horizon` trades (default: as many as observed) built from circular blocks of `block` consecutive
+    P&Ls, so clustered losses stay together (the i.i.d. draw of fincalc.options.drawdown_probability breaks them)."""
+    p = np.asarray(pnls, float)
+    n = len(p)
+    if n < 1 or capital <= 0:
+        raise ValueError("P&Ls and a positive capital are required")
+    h = horizon or n
+    nb = -(-h // block)
+    starts = rng.integers(0, n, (sims, nb))
+    idx = ((starts[:, :, None] + np.arange(block)) % n).reshape(sims, nb * block)[:, :h]
+    paths = p[idx]
+    eq = np.concatenate([np.zeros((sims, 1)), np.cumsum(paths, axis=1)], axis=1)
+    dd = np.max(np.maximum.accumulate(eq, axis=1) - eq, axis=1)
+    q = float(np.quantile(dd, 0.95))
+    return DrawdownRisk(float(np.mean(dd > x * capital)), q, float(np.mean(dd[dd >= q])), h, sims,
+                        dd.tolist() if keep else None)  # fmt: skip
+
+
+def vrp(
+    ev_p: float | None, ev_q: float | None, interval: tuple[float, float] | None
+) -> tuple[float, float, float] | None:
+    """The claimed edge VRP = EV_P - EV_Q with EV_P's interval shifted by EV_Q (EV_Q is a market identity)."""
+    if ev_p is None or ev_q is None or interval is None:
+        return None
+    return ev_p - ev_q, interval[0] - ev_q, interval[1] - ev_q
+
+
+def kelly_lo(mu_lo: float | None, var: float | None) -> float | None:
+    """Kelly with estimation error: f = max(0, mu_lo) / sigma^2 (0 whenever the lower bound is not positive)."""
+    if mu_lo is None or var is None or var <= 0:
+        return None
+    return max(0.0, mu_lo) / var

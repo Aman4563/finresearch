@@ -304,3 +304,98 @@ def test_weekday_steps_count_sessions_after_the_origin_up_to_expiry() -> None:
 
     # Thursday 2-Jan-2025 close to Thursday 30-Jan-2025: 20 weekdays (holidays are not used: known at the origin)
     assert td.weekday_steps(date(2025, 1, 2), date(2025, 1, 30)) == 20
+
+
+# ------------------------------------------------------------------------------------------- the robust EV gate
+def model_ev(name: str, validated: bool, ev: float | None, lo: float | None, es: float | None) -> td.ModelEV:
+    return td.ModelEV(name, validated, ev, lo, es)
+
+
+def test_robust_gate_is_informational_until_a_model_is_validated() -> None:
+    ms = [model_ev("M2", False, 900.0, 500.0, 3000.0)]
+    for cur in (True, False):
+        g = td.robust_gate(cur, ms, costs=150.0, lam=1.0, es_budget=5000.0)
+        assert g.passed is cur and g.informational and g.ev_robust is None
+
+
+def test_robust_gate_takes_the_worst_validated_model() -> None:
+    ms = [model_ev("M2", True, 900.0, 400.0, 3000.0), model_ev("M3", True, 700.0, 120.0, 4200.0),
+          model_ev("M1", False, -50.0, -400.0, 9000.0)]  # fmt: skip
+    g = td.robust_gate(True, ms, costs=100.0, lam=1.0, es_budget=5000.0)
+    assert g.passed and g.ev_robust == 700.0 and g.ev_lo_robust == 120.0 and g.es_worst == 4200.0
+    assert not td.robust_gate(True, ms, costs=130.0, lam=1.0, es_budget=5000.0).passed  # 120 <= lam x costs
+    assert not td.robust_gate(True, ms, costs=100.0, lam=1.0, es_budget=4000.0).passed  # ES over budget
+    neg = [model_ev("M2", True, -10.0, -300.0, 100.0)]
+    assert not td.robust_gate(
+        True, neg, costs=0.0, lam=1.0, es_budget=5000.0
+    ).passed  # lower bound must be > 0
+
+
+def test_robust_gate_fails_on_any_unknown() -> None:
+    ms = [model_ev("M2", True, 900.0, None, 3000.0)]
+    assert not td.robust_gate(True, ms, costs=100.0, lam=1.0, es_budget=5000.0).passed
+    ok = [model_ev("M2", True, 900.0, 400.0, 3000.0)]
+    assert not td.robust_gate(True, ok, costs=None, lam=1.0, es_budget=5000.0).passed
+    assert not td.robust_gate(True, ok, costs=100.0, lam=1.0, es_budget=None).passed
+
+
+def test_robust_gate_is_never_more_permissive_than_the_current_gate() -> None:
+    rng = np.random.default_rng(387)
+    for _ in range(3000):
+        k = int(rng.integers(0, 4))
+
+        def val() -> float | None:
+            return None if rng.random() < 0.1 else float(rng.normal(0, 1000))
+
+        ms = [model_ev(f"M{i}", bool(rng.random() < 0.7), val(), val(), val()) for i in range(k)]
+        cur = bool(rng.random() < 0.5)
+        g = td.robust_gate(cur, ms, costs=val(), lam=float(rng.uniform(0, 3)), es_budget=val())
+        assert not g.passed or cur
+
+
+# ------------------------------------------------------------------------------------------- drawdown, VRP, Kelly
+def test_max_drawdown_counts_from_the_start() -> None:
+    assert td.max_drawdown([-1.0, 2.0, -3.0, 1.0]) == 3.0  # peak 1 after two trades, trough -2
+    assert td.max_drawdown([-2.0, 1.0]) == 2.0 and td.max_drawdown([1.0, 1.0]) == 0.0
+
+
+def test_block_bootstrap_drawdown_matches_exhaustive_enumeration() -> None:
+    # 3 trades, blocks of 3 (circular): exactly three equally likely paths, by start index
+    pnls = [-3.0, 2.0, -2.0]
+    paths = [[-3.0, 2.0, -2.0], [2.0, -2.0, -3.0], [-2.0, -3.0, 2.0]]  # max drawdowns 3, 5, 5
+    dds = sorted(td.max_drawdown(p) for p in paths)
+    assert dds == [3.0, 5.0, 5.0]
+    got = td.drawdown_bootstrap(
+        pnls, capital=100.0, x=0.045, block=3, sims=30_000, rng=np.random.default_rng(1)
+    )
+    assert got.p_exceed == pytest.approx(np.mean([d > 4.5 for d in dds]), abs=0.01)
+    assert got.dar95 == pytest.approx(max(dds)) and got.cdar95 == pytest.approx(max(dds))
+
+
+def test_drawdown_of_a_steady_loser_is_certain() -> None:
+    got = td.drawdown_bootstrap(
+        [-1000.0] * 12, capital=100_000.0, x=0.05, horizon=10, rng=np.random.default_rng(1)
+    )
+    assert (
+        got.p_exceed == 1.0 and got.dar95 == pytest.approx(10_000.0) and got.cdar95 == pytest.approx(10_000.0)
+    )
+
+
+def test_cdar_is_the_mean_of_the_worst_five_percent() -> None:
+    pnls = list(np.random.default_rng(2).normal(100, 1000, 60))
+    got = td.drawdown_bootstrap(pnls, capital=1e5, x=0.02, sims=4000, rng=np.random.default_rng(3), keep=True)
+    dd = np.sort(got.drawdowns)
+    assert got.dar95 == pytest.approx(float(np.quantile(dd, 0.95)))
+    assert got.cdar95 == pytest.approx(float(np.mean(dd[dd >= np.quantile(dd, 0.95)])))
+
+
+def test_vrp_and_kelly() -> None:
+    assert td.vrp(500.0, -120.0, (100.0, 900.0)) == (620.0, 220.0, 1020.0)
+    assert td.vrp(None, -120.0, (100.0, 900.0)) is None
+    assert td.kelly_lo(-0.01, 0.04) == 0.0 and td.kelly_lo(0.02, 0.04) == pytest.approx(0.5)
+    assert td.kelly_lo(0.02, 0.0) is None and td.kelly_lo(None, 0.04) is None
+
+
+def test_the_even_money_risk_of_ruin_is_retired() -> None:
+    # #387: an even-money formula with no callers; drawdown risk is drawdown_bootstrap's
+    assert not hasattr(o, "risk_of_ruin")
