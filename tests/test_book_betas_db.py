@@ -23,7 +23,10 @@ def _sessions(n: int) -> list[date]:
 
 
 DAYS = _sessions(261)  # 260 returns: the window holds the last 250
-EXPIRIES = [DAYS[i] for i in range(19, 261, 20)] + [DAYS[-1] + timedelta(days=28), DAYS[-1] + timedelta(days=56)]
+EXPIRIES = [DAYS[i] for i in range(19, 261, 20)] + [
+    DAYS[-1] + timedelta(days=28),
+    DAYS[-1] + timedelta(days=56),
+]
 X = [0.012 * math.sin(1.7 * i) + 0.004 * math.cos(0.3 * i) for i in range(len(DAYS))]  # NIFTY's log returns
 
 
@@ -78,7 +81,11 @@ def test_a_low_beta_stock_is_shocked_at_least_like_nifty(clean):
     _store("NIFTY", 24000.0, 1.0)
     _store("ITC", 400.0, 0.5)
     e = betas.load(["ITC"], DAYS[-1])["ITC"]
-    assert e.beta == pytest.approx(0.5, abs=2e-3) and e.hi == 1.0 and e.lo == pytest.approx(e.beta - 1.645 * e.se)
+    assert (
+        e.beta == pytest.approx(0.5, abs=2e-3)
+        and e.hi == 1.0
+        and e.lo == pytest.approx(e.beta - 1.645 * e.se)
+    )
 
 
 @pytest.mark.parametrize(

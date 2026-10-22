@@ -70,7 +70,7 @@ def returns_with_prev(futs: Sequence[tuple[date, date, float]],
     return [(prev[d1], d1, r) for d1, r in front_future_returns(futs, lots=lots)]
 
 
-def _unknown(u: str, why: str, **kw: object) -> BetaEstimate:
+def unknown(u: str, why: str, **kw: object) -> BetaEstimate:
     return BetaEstimate(
         u.upper(), None, None, None, None, reason=f"{u.upper()}: beta to NIFTY unknown, {why}", **kw
     )  # type: ignore[arg-type]
@@ -83,7 +83,7 @@ def estimate(underlying: str, nifty: Sequence[tuple[date, date, float]], other: 
         require_registered()
     cal = sorted({(d0, d1) for d0, d1, _ in nifty})[-spec.window_sessions :]
     if not cal:
-        return _unknown(underlying, "NIFTY's front-future series is empty")
+        return unknown(underlying, "NIFTY's front-future series is empty")
     xs = {(d0, d1): r for d0, d1, r in nifty}
     ys = {(d0, d1): r for d0, d1, r in other}
     as_of, start = cal[-1][1], cal[0][1]
@@ -94,23 +94,35 @@ def estimate(underlying: str, nifty: Sequence[tuple[date, date, float]], other: 
     missing = len(cal) - len(pts)
     kw |= {"n": len(pts), "missing": missing}
     if (today - as_of).days > spec.max_age_days:
-        return _unknown(underlying, f"the futures series is stale (last session {as_of:%d-%b-%Y})", **kw)
+        return unknown(underlying, f"the futures series is stale (last session {as_of:%d-%b-%Y})", **kw)
     if spec.recent_sessions and any(s not in ys for s in cal[-spec.recent_sessions :]):
-        return _unknown(underlying, f"a return is missing in the last {spec.recent_sessions} sessions (a roll or "
+        return unknown(underlying, f"a return is missing in the last {spec.recent_sessions} sessions (a roll or "
                                     "data gap)", **kw)  # fmt: skip
     if len(pts) < spec.min_returns:
-        return _unknown(underlying, f"only {len(pts)} paired returns (needs {spec.min_returns})", **kw)
+        return unknown(underlying, f"only {len(pts)} paired returns (needs {spec.min_returns})", **kw)
     if missing > spec.max_missing:
-        return _unknown(underlying, f"{missing} sessions without a return in the window (at most "
+        return unknown(underlying, f"{missing} sessions without a return in the window (at most "
                                     f"{spec.max_missing})", **kw)  # fmt: skip
     sw = sum(w for w, _, _ in pts)
     xb, yb = sum(w * x for w, x, _ in pts) / sw, sum(w * y for w, _, y in pts) / sw
     sxx = sum(w * (x - xb) ** 2 for w, x, _ in pts)
     n_eff = sw * sw / sum(w * w for w, _, _ in pts)
     if sxx <= 0 or n_eff <= 2:
-        return _unknown(underlying, "NIFTY's returns in the window do not vary enough", **kw)
+        return unknown(underlying, "NIFTY's returns in the window do not vary enough", **kw)
     beta = sum(w * (x - xb) * (y - yb) for w, x, y in pts) / sxx
     s2 = sum(w * (y - yb - beta * (x - xb)) ** 2 for w, x, y in pts) / sw * n_eff / (n_eff - 2)
     se = math.sqrt(s2 / (n_eff * sxx / sw))
     return BetaEstimate(underlying.upper(), beta, se, beta - spec.z * se, max(spec.floor, beta + spec.z * se),
                         n_eff=n_eff, **kw)  # type: ignore[arg-type]  # fmt: skip
+
+
+def as_json(e: BetaEstimate) -> dict[str, object]:
+    """What the scenario page and the plan card show for one estimate (the registered z and floor with it)."""
+    return {"underlying": e.underlying, "beta": _r(e.beta), "se": _r(e.se), "lo": _r(e.lo), "hi": _r(e.hi),
+            "n": e.n, "missing": e.missing, "window_start": e.window_start.isoformat() if e.window_start else None,
+            "as_of": e.as_of.isoformat() if e.as_of else None, "half_life": e.half_life, "z": specs.SPEC.z,
+            "floor": specs.SPEC.floor, "reason": e.reason}  # fmt: skip
+
+
+def _r(x: float | None) -> float | None:
+    return None if x is None else round(x, 4)

@@ -38,3 +38,12 @@ def load(underlyings: Iterable[str], today: date) -> dict[str, fb.BetaEstimate]:
                 lots[sym][(d, exp)] = lot
     nifty = fb.returns_with_prev(futs.get("NIFTY", []), lots.get("NIFTY"))
     return {u: fb.estimate(u, nifty, fb.returns_with_prev(futs.get(u, []), lots.get(u)), today) for u in want}
+
+
+def read(underlyings: Iterable[str], today: date) -> dict[str, fb.BetaEstimate]:
+    """`load`, with a failed read making each beta unknown with the reason (never 0, never 1)."""
+    try:
+        return load(underlyings, today)
+    except Exception as e:
+        return {u: fb.unknown(u, f"the stored futures could not be read ({type(e).__name__})")
+                for u in sorted({x.upper() for x in underlyings} - {"NIFTY"})}  # fmt: skip

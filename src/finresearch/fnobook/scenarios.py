@@ -14,10 +14,15 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any
 
+from finresearch.fincalc import beta as fbeta
 from finresearch.fincalc import book_scenarios as bs
 from finresearch.fincalc.dates import to_ist, years_to_expiry
 
 RATE = 0.065  # the rate the book's greeks use (fnobook.service.RATE)
+BETA_RULE = ("Each underlying other than NIFTY moves by its beta x NIFTY's move: an EWMA estimate from stored front-"
+             "future settles (evals/experiments/book_betas/PREREG.md). Every P&L takes, per underlying, the worse of "
+             "its band's two ends (lo = beta - 1.645 SE; hi = beta + 1.645 SE, at least 1), not the worst over the "
+             "interval. The NIFTY-equivalent delta uses the point estimate.")  # fmt: skip
 
 
 def _quote(q: Any) -> tuple[float, str] | None:
@@ -109,7 +114,7 @@ def _r(x: float | None, nd: int = 2) -> float | None:
 
 def _cell(c: bs.Cell) -> dict[str, Any]:
     return {"move": c.move, "dvol": c.dvol, "horizon": c.horizon, "at": c.at.isoformat(), "pnl": _r(c.pnl),
-            "floored": c.floored, "intrinsic": c.intrinsic}  # fmt: skip
+            "floored": c.floored, "intrinsic": c.intrinsic, "ends": dict(c.ends)}  # fmt: skip
 
 
 def _exposure(e: bs.Exposure | None) -> dict[str, float] | None:
@@ -118,9 +123,11 @@ def _exposure(e: bs.Exposure | None) -> dict[str, float] | None:
 
 
 async def _priced(legs: list[bs.BookLeg], now: datetime, sources: Any, rate: float) -> tuple[Any, ...]:
-    """The legs with their marks from each (underlying, expiry)'s chain, and the Market of parity forwards; also the
-    forwards with their sources. Betas are not measured yet: only NIFTY's (1) is known."""
+    """The legs with their marks from each (underlying, expiry)'s chain, and the Market of parity forwards and each
+    underlying's registered beta estimate (fnohist.betas: stored futures settles; NIFTY = 1); also the forwards with
+    their sources."""
     from finresearch.fnobook import service
+    from finresearch.fnohist import betas
 
     chains = {k: await service._chain(sources, *k) for k in sorted({(x.underlying, x.expiry) for x in legs})}
     fws = {k: forward(c, now, rate) for k, c in chains.items()}
@@ -130,14 +137,16 @@ async def _priced(legs: list[bs.BookLeg], now: datetime, sources: Any, rate: flo
     nifty = next(
         (float(c.underlying) for (u, _), c in chains.items() if u == "NIFTY" and c and c.underlying), None
     )
-    return priced, bs.Market(now, rate, {k: f for k, (f, _) in fws.items()}, {}, nifty), fws
+    est = betas.read({x.underlying for x in legs}, to_ist(now).date()) if legs else {}
+    return priced, bs.Market(now, rate, {k: f for k, (f, _) in fws.items()}, est, nifty), fws
 
 
-async def book_shock(now: datetime, *, sources: Any = None, rate: float = RATE,
-                     holidays: set[date] | None = None) -> tuple[dict[float, float] | None, list[str]]:  # fmt: skip
+async def book_shock(now: datetime, *, sources: Any = None, rate: float = RATE, holidays: set[date] | None = None,
+                     betas_out: dict[str, Any] | None = None) -> tuple[dict[float, float] | None, list[str]]:  # fmt: skip
     """P4.2 (#395): the open book's (paper and Groww) P&L at each registered NIFTY shock move one session from now,
     every leg repriced on its chain as on the scenarios page. (None, why) when a leg, a forward, a beta or the Groww
-    positions are unknown. Reads chains (market-data caches only); writes no record."""
+    positions are unknown. Each underlying other than NIFTY moves by the worse end of its beta band; the estimates
+    used are put in `betas_out`. Reads chains and stored futures (market-data caches only); writes no record."""
     from finresearch.fnobook import service
 
     sources = sources or service._sources()
@@ -152,6 +161,8 @@ async def book_shock(now: datetime, *, sources: Any = None, rate: float = RATE,
         return None, notes
     legs += real
     priced, m = (await _priced(legs, now, sources, rate))[:2] if legs else ([], bs.Market(now, rate, {}))
+    if betas_out is not None:
+        betas_out.update(m.betas)
     got, reasons = bs.shock_pnls(priced, m, bs.horizon_clock(now, 1, holidays))
     return got, notes + list(reasons)
 
@@ -190,6 +201,9 @@ async def view(now: datetime, *, sources: Any = None, capital: float | None = No
                   "strike": s.leg.strike, "qty": s.leg.qty, "mark": _r(s.leg.mark), "mark_kind": s.leg.mark_kind,
                   "iv": _r(s.iv, 6), "forward": _r(s.forward), "source": s.leg.label, "reason": s.reason}
                  for s in states],
+        # the registered beta to NIFTY of every other underlying in the book (fincalc.beta_specs), with its band
+        "betas": [fbeta.as_json(e) for e in m.betas.values()],
+        "beta_rule": BETA_RULE,
         "forwards": [{"underlying": u, "expiry": e.isoformat(), "forward": _r(f, 4), "source": src}
                      for (u, e), (f, src) in fws.items()],
         "exposures": {"complete": ex.complete and not extra, "reasons": [*extra, *ex.reasons],
