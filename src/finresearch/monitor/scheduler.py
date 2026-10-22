@@ -668,6 +668,26 @@ def _spawn_skill(now: datetime) -> None:
     _BACKGROUND["skill"] = asyncio.create_task(run())
 
 
+def _spawn_risk_alerts(now: datetime) -> None:
+    """Start the nightly risk-alert pass (monitor.risk_alerts, #398) in a worker thread when due: SQL and pure
+    arithmetic over stored series (seconds). At most one runs at a time."""
+    from finresearch.monitor import risk_alerts
+
+    t = _BACKGROUND.get("risk_alerts")
+    if (t is not None and not t.done()) or risk_alerts.due_slot(now) is None:
+        return
+
+    async def run() -> None:
+        try:
+            res = await asyncio.to_thread(risk_alerts.risk_step, now)
+            if res:
+                log.info("risk-alert pass: %s", res.get("risk_alerts"))
+        except Exception:
+            log.warning("risk-alert pass failed", exc_info=True)
+
+    _BACKGROUND["risk_alerts"] = asyncio.create_task(run())
+
+
 def _spawn_quotes(deps: jobs.Deps, now: datetime) -> None:
     """Start the forward quote recorder (monitor.quotes, #363) in the background when a snapshot is due: one sweep is
     169 Groww calls (~50 s), longer than a tick. At most one runs at a time."""
@@ -836,6 +856,8 @@ async def tick(deps: jobs.Deps, now: datetime | None = None) -> dict[str, int]:
         _spawn_dq(now)
     if deps.skill:
         _spawn_skill(now)
+    if deps.risk_alerts:
+        _spawn_risk_alerts(now)
     out_brief = brief_step(now) if deps.brief else {}
     if deps.holidays is not None or deps.live_holidays:
         await _refresh_holidays(deps)
@@ -937,6 +959,7 @@ def schedule_json(ww=None, *, running: bool | None = None) -> dict:
     from finresearch.monitor import portfolio_daily as pd
     from finresearch.monitor import quotes as mq
     from finresearch.monitor import rates as mr
+    from finresearch.monitor import risk_alerts as rka
     from finresearch.monitor import scheme_master as sm
     from finresearch.monitor import sip_estimates as sipe
     from finresearch.monitor import skill as skj
@@ -977,6 +1000,8 @@ def schedule_json(ww=None, *, running: bool | None = None) -> dict:
         "dq": {"evening": hm((dqj.EVENING.hour, dqj.EVENING.minute)),
                "morning": hm((dqj.MORNING.hour, dqj.MORNING.minute)), "min_free_gib": dqm.MIN_FREE_GIB},
         "skill": {"after": hm((skj.RUN_AFTER.hour, skj.RUN_AFTER.minute)), "trading_days": False},
+        "risk_alerts": {"after": hm((rka.RUN_AFTER.hour, rka.RUN_AFTER.minute)),
+                        "deadline": hm((rka.DEADLINE.hour, rka.DEADLINE.minute)), "trading_days": True},
         "span": {"after": hm((spj.RUN_AFTER.hour, spj.RUN_AFTER.minute)), "lookback_days": spj.LOOKBACK_DAYS,
                  "requests_per_night": 2, "raw_sessions_kept": fspan.KEEP_SESSIONS},
         "forecasts": {"after": hm(READY_AFTER_IST), "every_min": int(FORECAST_EVERY.total_seconds() // 60)},

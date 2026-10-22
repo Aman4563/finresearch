@@ -1,0 +1,109 @@
+"""The monitor's nightly risk-alert pass (#398, alerts.risk): database only, no network.
+
+Due on trading days from RUN_AFTER (20:45 IST), after tonight's F&O bhavcopy (monitor.fno_bhav, from 19:30) and the
+book's marks (monitor.fno_marks) are written; it waits for both, but from DEADLINE (23:30 IST) it runs anyway, so a
+file that never came raises "can't check" alerts instead of silence. Holiday policy, on purpose: an unknown NSE
+holiday list counts as no holidays (like the alert rules): on a holiday the inputs then read unknown and say so,
+whereas failing closed (monitor.market_days) would skip the pass without a word. Claimed in `alert_eval_slot`
+("risk_alerts:<day>"); a crash is retried (monitor.disclosures MAX_ATTEMPTS, RETRY_AFTER apart). Alerts only:
+nothing here places, modifies or cancels an order.
+"""
+
+from __future__ import annotations
+
+import logging
+from collections import Counter
+from datetime import date, datetime, time
+from typing import Any
+
+from finresearch.fincalc.dates import to_ist
+
+log = logging.getLogger(__name__)
+
+RUN_AFTER = time(20, 45)
+DEADLINE = time(23, 30)
+PREFIX = "risk_alerts:"
+
+
+def due_slot(now: datetime, holidays: set[date] | None = None) -> str | None:
+    from finresearch.fincalc.dates import is_business_day
+
+    ist = to_ist(now)
+    if ist.time() < RUN_AFTER:
+        return None
+    if holidays is None:
+        from finresearch.adapters.nse_holidays import trading_holidays
+
+        holidays = (
+            trading_holidays()
+        )  # an unknown year's list is empty: no holidays (see the module docstring)
+    return f"{PREFIX}{ist.date().isoformat()}" if is_business_day(ist.date(), holidays) else None
+
+
+def ready(day: date) -> bool:
+    """Tonight's bhavcopy is loaded and the book's marks are written."""
+    from finresearch.db import session_scope
+    from finresearch.db.models import AlertEvalSlot
+    from finresearch.monitor.fno_bhav import _loaded
+
+    if not _loaded(day):
+        return False
+    with session_scope() as s:
+        row = s.get(AlertEvalSlot, f"fno_marks:{day.isoformat()}")
+        return row is not None and (row.result or {}).get("status") == "done"
+
+
+def evaluate(now: datetime, day: date, holidays: set[date] | None = None) -> dict[str, Any]:
+    """Read every risk input for `day` and apply each rule (alerts.risk). Returns counts and the checks."""
+    from sqlalchemy import select
+
+    from finresearch.alerts import risk
+    from finresearch.alerts import risk_readers as rr
+    from finresearch.db import session_scope
+    from finresearch.db.models import FnoMark
+    from finresearch.fnobook import scenarios, service
+    from finresearch.monitor.iv import INDEX_SYMBOLS
+    from finresearch.suggest.advisor import load_profile
+
+    try:
+        funds, fnote = service.stored_funds(now)
+    except Exception as e:  # unknown, never 0
+        funds, fnote = None, f"the real book's funds could not be read ({type(e).__name__})"
+    counts: Counter[str] = Counter()
+    checks: list[dict[str, Any]] = []
+    with session_scope() as s:
+        try:
+            shock, notes = scenarios.stored_shock(s, day, holidays=holidays)
+        except Exception as e:
+            shock, notes = None, [f"the open book could not be repriced ({type(e).__name__})"]
+        capital = float(load_profile(s).fno_capital_inr)
+        held = set(s.scalars(select(FnoMark.symbol).where(FnoMark.day == day)))
+        rows = (rr.book_readings(shock, notes, capital, funds, fnote, book_open=bool(held))
+                + rr.series_readings(s, sorted(set(INDEX_SYMBOLS) | held), day) + rr.leg_readings(s, day, now))  # fmt: skip
+        for rid, inst, rd in rows:
+            what = risk.apply(s, risk.RULES[rid], inst, rd, now)
+            counts[what] += 1
+            checks.append({"rule": rid, "instrument": inst, "result": what, "value": rd.value, "series": rd.series,
+                           "detail": rd.detail[:300]})  # fmt: skip
+    return {"counts": dict(counts), "checks": checks[:200]}
+
+
+def risk_step(now: datetime, holidays: set[date] | None = None) -> dict[str, Any]:
+    from finresearch.monitor.disclosures import claim, finish
+
+    slot = due_slot(now, holidays)
+    if slot is None:
+        return {}
+    day = to_ist(now).date()
+    if to_ist(now).time() < DEADLINE and not ready(day):
+        return {}
+    if not claim(slot, now):
+        return {}
+    try:
+        res = evaluate(now, day, holidays)
+    except Exception as e:
+        log.warning("risk-alert pass failed; retried later", exc_info=True)
+        finish(slot, {"error": f"{type(e).__name__}: {e}"[:300]}, now, failed=True)
+        return {"risk_alerts": "failed"}
+    finish(slot, res, now, failed=False)
+    return {"risk_alerts": res["counts"]}
