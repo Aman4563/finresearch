@@ -153,3 +153,85 @@ def attribute(holdings: Sequence[Holding], bench: Sequence[Member]) -> dict[str,
             "coverage": round(covered / end_all, 4) if end_all else None,
             "complete": res is not None and res.complete and not excluded,
             "reason": None if res is not None else "no holding has a return over the window"}  # fmt: skip
+
+
+# --------------------------------------------------------------------------- reading the stores (no writes)
+@dataclass(frozen=True)
+class Window:
+    start: date | None
+    end: date | None
+    reason: str | None = None
+
+
+def window(s: Any, today: date, *, days: int) -> Window:
+    """The window's first and last stored bhavcopy sessions: the last loaded day on or before `today`, and the last
+    loaded day on or before `days` calendar days earlier. Every weekday in between must be loaded or known to have no
+    file (a holiday): a day never tried, or a failed one, would make the chained returns skip a day."""
+    from datetime import timedelta
+
+    from sqlalchemy import select
+
+    from finresearch.db.models import EquityEodDay
+
+    loaded = select(EquityEodDay.day).where(EquityEodDay.status == "loaded")
+    end = s.scalar(loaded.where(EquityEodDay.day <= today).order_by(EquityEodDay.day.desc()).limit(1))
+    if end is None:
+        return Window(None, None, "no NSE bhavcopy is stored yet (finresearch equity backfill)")
+    target = end - timedelta(days=days)
+    start = s.scalar(loaded.where(EquityEodDay.day <= target).order_by(EquityEodDay.day.desc()).limit(1))
+    if start is None:
+        first = s.scalar(loaded.order_by(EquityEodDay.day).limit(1))
+        return Window(None, end, f"the stored bhavcopy starts on {first.isoformat()}; this window needs a session "
+                                 f"on or before {target.isoformat()}")  # fmt: skip
+    seen = dict(s.execute(select(EquityEodDay.day, EquityEodDay.status)
+                          .where(EquityEodDay.day.between(start, end))).all())  # fmt: skip
+    d = start
+    while d < end:
+        d += timedelta(days=1)
+        if d.weekday() < 5 and seen.get(d) not in ("loaded", "no_file"):
+            return Window(start, end, f"the bhavcopy for {d.isoformat()} is not stored, so returns over the window "
+                                      "would skip a day")  # fmt: skip
+    return Window(start, end)
+
+
+def members(s: Any, iw: Any, s0: date, end: date) -> list[Member]:
+    """Each constituent of `iw` (adapters.nse_index_weights.IndexWeights) with its stored close on `end` and its
+    chained return over (s0, end]."""
+    from sqlalchemy import select
+
+    from finresearch.db.models import EquityEod
+    from finresearch.refseries.equity_eod import PRICE_SERIES
+
+    syms = [m.symbol for m in iw.members]
+    per: dict[str, dict[date, dict[str, tuple[Decimal | None, Decimal | None]]]] = {}
+    q = select(
+        EquityEod.symbol, EquityEod.day, EquityEod.series, EquityEod.close, EquityEod.prev_close
+    ).where(EquityEod.symbol.in_(syms), EquityEod.day.between(s0, end), EquityEod.series.in_(PRICE_SERIES))
+    for sym, d, series, c, p in s.execute(q):
+        per.setdefault(sym, {}).setdefault(d, {})[series] = (c, p)
+    out = []
+    for m in iw.members:
+        rows = [
+            (d, *next(by[x] for x in PRICE_SERIES if x in by))
+            for d, by in sorted(per.get(m.symbol, {}).items())
+        ]
+        ret, why = constituent_return(rows, s0, end)
+        close_end = next((float(c) for d, c, _ in rows if d == end and c is not None), None)
+        if m.ffmc is None:
+            why = "NSE gave no free-float market cap"
+        elif not m.last_price:
+            why = "NSE gave no price for its market cap"
+        out.append(Member(m.symbol, m.name, m.sector, m.ffmc, m.last_price, close_end, ret, why))
+    return out
+
+
+def index_return(s: Any, s0: date, end: date, symbol: str = "NIFTY") -> float | None:
+    """NSE's own index price return over (s0, end] from the stored index close file; None when either close is missing."""
+    from sqlalchemy import select
+
+    from finresearch.db.models import IndexEod
+
+    got = dict(s.execute(select(IndexEod.day, IndexEod.close)
+                         .where(IndexEod.symbol == symbol, IndexEod.day.in_([s0, end]))).all())  # fmt: skip
+    a, b = got.get(s0), got.get(end)
+    return None if not a or b is None else float(b / a) - 1

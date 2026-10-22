@@ -88,3 +88,74 @@ def test_holding_without_a_return_is_left_out_and_counted():
     assert out["coverage"] == pytest.approx(0.75) and out["complete"] is False
     assert out["excluded"] == [{"key": "NSE:N", "name": "New Ltd", "reason": "listed after the window began"}]
     assert out["totals"]["active"] == pytest.approx(0.0)
+
+
+# --------------------------------------------------------------------------- reading the stored bhavcopy (test DB)
+def _store(
+    days_closes: dict[str, list[tuple[date, float, float]]], loaded: list[date], *, no_file=(), nifty=None
+):
+    from sqlalchemy import text
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import EquityEod, EquityEodDay, IndexEod
+
+    with session_scope() as s:
+        s.execute(text("TRUNCATE equity_eod, equity_eod_day, index_eod"))
+        for d in loaded:
+            s.add(EquityEodDay(day=d, status="loaded", rows=1))
+        for d in no_file:
+            s.add(EquityEodDay(day=d, status="no_file"))
+        for sym, rows in days_closes.items():
+            for d, c, p in rows:
+                s.add(EquityEod(day=d, symbol=sym, series="EQ", close=D(str(c)), prev_close=D(str(p))))
+        for d, c in (nifty or {}).items():
+            s.add(IndexEod(day=d, symbol="NIFTY", index_name="Nifty 50", close=D(str(c))))
+
+
+WEEK = [date(2026, 3, 2), date(2026, 3, 3), date(2026, 3, 4), date(2026, 3, 5), date(2026, 3, 6)]  # Mon-Fri
+
+
+def test_window_needs_every_weekday_accounted_for(env):
+    from finresearch.db import session_scope
+
+    loaded = [d for d in WEEK if d != date(2026, 3, 4)]
+    _store({}, loaded, no_file=[date(2026, 3, 4)])  # a holiday: no file, not a gap
+    with session_scope() as s:
+        w = at.window(s, date(2026, 3, 6), days=4)
+    assert (w.start, w.end, w.reason) == (date(2026, 3, 2), date(2026, 3, 6), None)
+    _store({}, loaded)  # 4-Mar never tried: a gap
+    with session_scope() as s:
+        w = at.window(s, date(2026, 3, 6), days=4)
+    assert (
+        w.reason == "the bhavcopy for 2026-03-04 is not stored, so returns over the window would skip a day"
+    )
+    _store({}, WEEK[2:])
+    with session_scope() as s:
+        w = at.window(s, date(2026, 3, 6), days=5)
+    assert (
+        w.reason
+        == "the stored bhavcopy starts on 2026-03-04; this window needs a session on or before 2026-03-01"
+    )
+
+
+def test_members_from_the_store_and_the_index_check(env):
+    from finresearch.adapters.nse_index_weights import IndexMember, IndexWeights
+    from finresearch.db import session_scope
+
+    _store({"AAA": [(WEEK[0], 100, 99), (WEEK[2], 110, 100), (WEEK[4], 121, 110)],
+            "BBB": [(WEEK[2], 50, 49), (WEEK[4], 50, 50)]},
+           WEEK, nifty={WEEK[0]: 20000, WEEK[4]: 22000})  # fmt: skip
+    iw = IndexWeights("NIFTY 50", None, "https://example.invalid/w", None,
+                      [IndexMember("AAA", "AAA Ltd", "INE000A01011", "Financial Services", 1210.0, 121.0),
+                       IndexMember("BBB", "BBB Ltd", "INE000B01011", "Information Technology", 500.0, 50.0),
+                       IndexMember("CCC", "CCC Ltd", "INE000C01011", "Information Technology", None, 10.0)])  # fmt: skip
+    with session_scope() as s:
+        ms = {m.symbol: m for m in at.members(s, iw, WEEK[0], WEEK[4])}
+        idx = at.index_return(s, WEEK[0], WEEK[4])
+    assert ms["AAA"].ret == pytest.approx(0.21) and ms["AAA"].mcap_end == pytest.approx(1210.0)
+    assert (
+        ms["BBB"].ret is None
+        and ms["BBB"].reason == "no stored close on 2026-03-02 (the window's first session)"
+    )
+    assert ms["CCC"].ffmc is None and ms["CCC"].reason == "NSE gave no free-float market cap"
+    assert idx == pytest.approx(0.10)  # 22,000 / 20,000 - 1
