@@ -114,3 +114,58 @@ def forward_status(s: Session, today: date) -> dict[str, Any]:
             "status": f"not evaluable yet: {n} of {jr.MIN_DAYS} qualifying days (sessions with marks and a NIFTY "
                       f"move beyond {jr.BIG_MOVE:.1%})" if n < jr.MIN_DAYS else
                       f"{n} qualifying days: the pre-registered test can run (not wired yet)"}  # fmt: skip
+
+
+# --------------------------------------------------------------------------- payloads
+METHOD = ("D_total = Σ β_i V_i over holdings + Σ β_u Δ F q over F&O legs (₹ per unit NIFTY move; the table shows it "
+          "per 1 %). L(m) = Σ β_i V_i m + the book's full revaluation at NIFTY m one session from now (spot-vol "
+          "response, each underlying at the worse end of its beta band). Historical days use each holding's own "
+          "move that day. Instructive, not a forecast; analysis only.")  # fmt: skip
+HEDGE_NOTE = ("The costed hedge calculator (#397) is built only once F&O is at least 25 % of the L(-10 %) loss; it "
+              "would be a scenario, never a default programme.")  # fmt: skip
+
+
+def _r(x: float | None, nd: int = 2) -> float | None:
+    return None if x is None else round(x, nd)
+
+
+def delta_json(d: jr.Delta) -> dict[str, Any]:
+    return {"holdings": _r(d.holdings), "fno": _r(d.fno), "total": _r(d.total),
+            "per_pct": {k: _r(None if v is None else v / 100) for k, v in
+                        (("holdings", d.holdings), ("fno", d.fno), ("total", d.total))},
+            "complete": d.complete, "reasons": list(d.reasons)}  # fmt: skip
+
+
+def loss_json(x: jr.Loss) -> dict[str, Any]:
+    return {"move": x.move, "holdings": _r(x.holdings), "fno": _r(x.fno), "total": _r(x.total),
+            "fno_share": _r(x.fno_share, 4), "share_reason": x.share_reason, "reasons": list(x.reasons)}  # fmt: skip
+
+
+def view(hs: Sequence[jr.Holding], b: jr.Book, notes: Sequence[str], at: datetime,
+         replay_holdings: dict[date, tuple[float | None, tuple[str, ...]]], forward: dict[str, Any],
+         holidays: frozenset[date] | set[date] = frozenset()) -> dict[str, Any]:  # fmt: skip
+    """Everything GET /api/portfolio/analytics/joint-risk shows (besides the route's base fields)."""
+    ls = jr.losses(hs, b, at)
+    ht = jr.hedge_trigger(ls)
+    reps = jr.replays(replay_holdings, b, holidays)
+    return {
+        "method": METHOD, "beta_note": jr.BETA_NOTE, "notes": list(notes),
+        "holdings": [{"key": h.key, "name": h.name, "value": _r(h.value), "beta": _r(h.beta, 4), "how": h.how}
+                     for h in hs],
+        "book": {"known": b.legs is not None, "legs": None if b.legs is None else len(b.legs), "reason": b.reason},
+        "d_total": delta_json(jr.d_total(hs, b)),
+        "losses": [loss_json(x) for x in ls],
+        "hedge_trigger": {"share": _r(ht.share, 4), "fired": ht.fired, "threshold": ht.threshold,
+                          "reasons": list(ht.reasons), "note": HEDGE_NOTE},
+        "replays": [{"day": r.day.isoformat(), "label": r.label, "nifty_move": r.nifty_move,
+                     "iv30_change": r.iv30_change, "holdings": _r(r.holdings), "fno": _r(r.fno), "total": _r(r.total),
+                     "reasons": list(r.reasons), "notes": list(r.notes)} for r in reps],
+        "forward_test": forward,
+    }  # fmt: skip
+
+
+def pretrade_json(p: jr.PreTrade) -> dict[str, Any]:
+    return {"d_before": delta_json(p.before), "d_after": delta_json(p.after), "l_before": loss_json(p.l_before),
+            "l_after": loss_json(p.l_after), "d_change": _r(p.d_change), "l_change": _r(p.l_change),
+            "trade_delta": _r(p.trade_delta), "trade_l": _r(p.trade_l), "trade_reasons": list(p.trade_reasons),
+            "move": p.l_before.move}  # fmt: skip
