@@ -67,3 +67,25 @@ def test_addendum_a3_hash_is_pinned_quoted_and_covers_the_engine_constants(monke
             name
         )  # editing a constant moves the hash
         monkeypatch.undo()
+
+
+def test_addendum_a4_hash_is_pinned_quoted_and_covers_the_fit_settings(monkeypatch) -> None:
+    from finresearch.fincalc import smile as sm
+    from finresearch.fincalc import svi
+    from finresearch.horserace import addendum_a3, addendum_a4
+
+    assert addendum_a4.addendum_hash() == prereg.ADDENDUM_A4_HASH, (
+        "a changed addendum is a new ADDENDUM_VERSION"
+    )
+    reg = addendum_a4.registration()
+    assert reg["base_hash"] == prereg.HASH and reg["a1_hash"] == prereg.ADDENDUM_HASH
+    assert reg["a2_hash"] == prereg.ADDENDUM_A2_HASH
+    assert reg["a3_hash"] == prereg.ADDENDUM_A3_HASH == addendum_a3.addendum_hash()
+    assert addendum_a4.CHALLENGERS == ("p_rw_bus", "p_rn_b76", "p_rn_svi")
+    text = (ROOT / "evals/experiments/card_horse_race/ADDENDUM.md").read_text()
+    assert prereg.ADDENDUM_A4_HASH in text and "Addendum A4 (post hoc)" in text
+    for mod, name, value in ((svi, "MAX_RMSE", 0.02), (svi, "GRID_POINTS", 2001), (svi, "RHO_MAX", 0.99),
+                             (svi, "START_GRID", 5), (sm, "OUT_SD", 8.0), (sm, "OUT_STEPS", 2000)):  # fmt: skip
+        monkeypatch.setattr(mod, name, value)
+        assert addendum_a4.addendum_hash() != prereg.ADDENDUM_A4_HASH, name  # editing a setting moves the hash
+        monkeypatch.undo()
