@@ -71,6 +71,7 @@ export default function PaperBookPage() {
           </Card>
         </>
       )}
+      <p className="text-xs text-muted"><Link className="text-brand hover:underline" href="/fno/review">Monthly review: shortfall, exits against the plan, P&amp;L explain →</Link></p>
       <p className="text-xs text-muted">Learn more: <Link className="text-brand hover:underline" href="/learn/process#pipeline">backtest → paper → small size</Link> · <Link className="text-brand hover:underline" href="/learn/risk#stops">exit and stop types</Link></p>
     </div>
   );

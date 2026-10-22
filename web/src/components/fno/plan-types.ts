@@ -36,6 +36,8 @@ export type TradePlan = {
   title: string; symbol: string; expiry?: string; days_to_expiry?: number; spot?: number; lot_size?: number; as_of?: string | null;
   source?: string; kind: string; action: PlanAction; qualifier: string | null; label: string; failed: string[]; reasons: string[];
   spec_key?: string;
+  /** #383: the card_log row this card was logged in and its index there (a plan card: 0) */
+  card_log_id?: number | null; card_index?: number;
   legs: { right: "call" | "put" | "future"; strike: number; side: "buy" | "sell"; lots: number; qty?: number; last?: number }[];
   size?: { multiple: number; suggested: number; /** real-money lots (#350): 0 unless the matched spec is a candidate */ real_lots?: number;
     /** #358: the open-book cap: budget = 8% of F&O capital, open_risk = what open paper and Groww positions risk (null = unknown) */

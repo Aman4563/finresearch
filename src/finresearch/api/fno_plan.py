@@ -189,6 +189,10 @@ def add_fno_plan_routes(app: FastAPI, fno: Callable[[], Any]) -> None:
                        "own out-of-sample result. A recipe shown here is not a recommendation."}  # fmt: skip
         out["card_log_id"] = card_log.append("suggest", symbol=sym, expiry=None, request={"symbol": sym},
                                              chains=seen, response=out, plan_inputs=x)  # #360  # fmt: skip
+        for i, c in enumerate(
+            cards
+        ):  # #383: a paper trade taken from a card names it (shortfall against its mids)
+            c["card_log_id"], c["card_index"] = out["card_log_id"], i
         return out
 
     @app.get("/api/fno/{symbol}/context")
