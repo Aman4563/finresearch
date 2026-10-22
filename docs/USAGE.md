@@ -85,6 +85,8 @@ GET requests don't change your records, the alert inputs or the forecast ledger:
   deleted; `uv run finresearch fno card-log --since <ISO time with zone>` counts the verdicts before and after it.
 - `POST /api/portfolio/analytics/joint-risk/pretrade` (#397) is a POST only because it carries the candidate legs:
   it stores nothing. `GET /api/portfolio/analytics/joint-risk` writes nothing either (it fills only the price caches).
+- An alert's "acted" or "ignored" (#398) is stored by `POST /api/alerts/{id}/feedback` (it also marks the alert read).
+  `GET /api/alerts/quality`, the per-rule precision and mute suggestions, only reads.
 
 Some GETs still write caches, by design. They store fetched market data, never your records: the intraday series
 archive, the disclosure feed refresh, the ISIN map, the fund cap list, and the HTTP and price caches. The broker OAuth
@@ -161,6 +163,9 @@ uv run finresearch fno participants --from 2015-01-01  # participant-wise OI and
 uv run finresearch fno card-log --since 2026-10-21T18:00:00+05:30   # F&O card verdicts before/after a release (#360)
 uv run finresearch fno marks --from 2026-10-01      # missing daily marks of open paper legs from stored bhavcopy days (#383)
 uv run finresearch fno review --month 2026-10      # the month's post-trade review in one line (#383; reads only)
+uv run finresearch fno risk-replay --from 2024-01-01 --json   # #398: replay the IV30-shock, cumulative-shock and gap
+                                                   # alerts on the stored series: firings, false alarms a year, the
+                                                   # scenario days (reads only; public market data)
 uv run finresearch vault backfill --from 2018-01-01 --to 2021-12-31 --max-days 400   # the sealed vault (#365), below
 uv run finresearch vault status                    # vault load manifest: days by year and status (no market data)
 uv run finresearch vault engine-hash               # the engine hash for the vault pin (PREREG.md §2.7)
