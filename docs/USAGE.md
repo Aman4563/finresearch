@@ -213,6 +213,6 @@ uv run finresearch forecasts horse-race      # the pre-registered card horse rac
 <<<<<<< HEAD
 uv run finresearch forecasts skill           # the live skill monitor per method x event kind x underlying (#378; --json); read only
 =======
-uv run finresearch forecasts horse-race --source replay --window seen   # the same race on one replayed card per stored session, 2022-26 (addendum A1, plus the business-time challenger p_rw_bus of addendum A2, #384; design | seen | tuesday); read only, run outside market hours
+uv run finresearch forecasts horse-race --source replay --window seen   # the same race on one replayed card per stored session, 2022-26 (addendum A1, plus the business-time challenger p_rw_bus of addendum A2, #384, and the parity-forward Black-76 IV challenger p_rn_b76 of addendum A3, #385; design | seen | tuesday); read only, run outside market hours
 >>>>>>> origin/main
 ```

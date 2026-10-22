@@ -197,5 +197,6 @@ def test_cli_replay_source_on_an_empty_database(env) -> None:
     assert "0 event(s)" in r.output and "replay" in r.output
     flat = " ".join(r.output.split())
     assert "challenger p_rw_bus" in flat and "T_bus unknown on 0 card(s)" in flat
+    assert "challenger p_rn_b76" in flat and "unknown on 0 card(s)" in flat
     r = CliRunner().invoke(app, ["forecasts", "horse-race", "--source", "replay", "--window", "forward"])
     assert r.exit_code == 2 and "card-ledger" in r.output

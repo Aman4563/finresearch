@@ -52,7 +52,9 @@ def test_addendum_a3_hash_is_pinned_quoted_and_covers_the_engine_constants(monke
     from finresearch.fincalc import black76 as b
     from finresearch.horserace import addendum_a2, addendum_a3
 
-    assert addendum_a3.addendum_hash() == prereg.ADDENDUM_A3_HASH, "a changed addendum is a new ADDENDUM_VERSION"
+    assert addendum_a3.addendum_hash() == prereg.ADDENDUM_A3_HASH, (
+        "a changed addendum is a new ADDENDUM_VERSION"
+    )
     reg = addendum_a3.registration()
     assert reg["base_hash"] == prereg.HASH and reg["a1_hash"] == prereg.ADDENDUM_HASH
     assert reg["a2_hash"] == prereg.ADDENDUM_A2_HASH == addendum_a2.addendum_hash()
@@ -61,5 +63,7 @@ def test_addendum_a3_hash_is_pinned_quoted_and_covers_the_engine_constants(monke
     assert prereg.ADDENDUM_A3_HASH in text and "Addendum A3 (post hoc)" in text
     for name, value in (("PARITY_BAND", 0.04), ("R_SE_MAX", 0.02), ("PRICE_TOL", 1e-8), ("MAX_BAND", 0.03)):
         monkeypatch.setattr(b, name, value)
-        assert addendum_a3.addendum_hash() != prereg.ADDENDUM_A3_HASH, name  # editing a constant moves the hash
+        assert addendum_a3.addendum_hash() != prereg.ADDENDUM_A3_HASH, (
+            name
+        )  # editing a constant moves the hash
         monkeypatch.undo()
