@@ -2057,3 +2057,124 @@ class CalendarCoverage(Base):
     known_since: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     note: Mapped[str | None] = mapped_column(String(300))
     recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class OptPanelEod(Base):
+    """The cross-sectional options panel (P1.12, #374; optpanel.panel, evals/experiments/stock_option_vrp/PREREG.md):
+    one row per underlying and session for EVERY stock-option underlying in the day's bhavcopy (plus NIFTYNXT50),
+    re-parsed from the kept raw zips. Market-wide by construction (no held or watched list is read), and never sent
+    to a model. IVs and RV are annual %; NULL = could not be fitted (unknown), never 0. `buckets` = open interest
+    (units) and contracts traded per ln(K/F) bucket, calls and puts apart."""
+
+    __tablename__ = "optpanel_eod"
+    __table_args__ = (Index("ix_optpanel_eod_symbol_day", "symbol", "day"),)
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(30), primary_key=True)
+    near_expiry: Mapped[date | None] = mapped_column(Date)
+    near_iv: Mapped[Decimal | None] = mapped_column(Numeric(8, 3))
+    next_expiry: Mapped[date | None] = mapped_column(Date)
+    next_iv: Mapped[Decimal | None] = mapped_column(Numeric(8, 3))
+    iv_30d: Mapped[Decimal | None] = mapped_column(Numeric(8, 3))
+    iv_30d_method: Mapped[str | None] = mapped_column(String(12))
+    skew_25d: Mapped[Decimal | None] = mapped_column(Numeric(8, 3))
+    rv_20: Mapped[Decimal | None] = mapped_column(Numeric(8, 3))
+    forward: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    forward_source: Mapped[str | None] = mapped_column(String(12))
+    spot: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    straddle_expiry: Mapped[date | None] = mapped_column(Date)
+    straddle_strike: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    straddle_call: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    straddle_put: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    straddle_call_contracts: Mapped[int | None] = mapped_column(BigInteger)
+    straddle_put_contracts: Mapped[int | None] = mapped_column(BigInteger)
+    liq_contracts: Mapped[int | None] = mapped_column(BigInteger)
+    buckets: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+
+
+class OptPanelRow(Base):
+    """The panel's moneyness-filtered contract rows (P1.12, #374): every stock option (and NIFTYNXT50 option) with
+    |ln(K/F)| <= optpanel.params.ROWS_LN_BAND in the ROWS_EXPIRIES nearest expiries, columns as fno_bhav. Separate from
+    fno_bhav, whose stock options stay the held/watched few the backtester reads."""
+
+    __tablename__ = "optpanel_row"
+    __table_args__ = (Index("ix_optpanel_row_symbol_day", "symbol", "day"),)
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(30), primary_key=True)
+    instrument: Mapped[str] = mapped_column(String(3), primary_key=True)
+    expiry: Mapped[date] = mapped_column(Date, primary_key=True)
+    strike: Mapped[Decimal] = mapped_column(Numeric(12, 2), primary_key=True)
+    option_type: Mapped[str] = mapped_column(String(2), primary_key=True)
+    open: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    high: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    low: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    close: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    settle: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    oi: Mapped[int | None] = mapped_column(BigInteger)
+    chg_oi: Mapped[int | None] = mapped_column(BigInteger)
+    contracts: Mapped[int | None] = mapped_column(BigInteger)
+    turnover: Mapped[Decimal | None] = mapped_column(Numeric(20, 2))
+    underlying: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    lot_size: Mapped[int | None] = mapped_column(Integer)
+
+
+class OptPanelDay(Base):
+    """The panel build manifest (P1.12, #374): one row per session built from a kept raw zip. It records counts and
+    the registration hash it was built under, never a list of stocks. `sto_*_oi_contracts`: the file's stock-option
+    open interest in contracts (units / lot), expiring contracts excluded, for the participant-OI reconciliation;
+    NULL when any lot size is unknown (the legacy file)."""
+
+    __tablename__ = "optpanel_day"
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    status: Mapped[str] = mapped_column(String(10))  # built / no_raw / failed
+    spec_hash: Mapped[str | None] = mapped_column(String(64))
+    underlyings: Mapped[int | None] = mapped_column(Integer)
+    with_iv: Mapped[int | None] = mapped_column(Integer)
+    rows_kept: Mapped[int | None] = mapped_column(Integer)
+    sto_call_oi_contracts: Mapped[int | None] = mapped_column(BigInteger)
+    sto_put_oi_contracts: Mapped[int | None] = mapped_column(BigInteger)
+    attempts: Mapped[int] = mapped_column(Integer, default=1)
+    error: Mapped[str | None] = mapped_column(String(300))
+    built_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class MwplOi(Base):
+    """NSE Clearing's combined open interest against the market-wide position limit, one row per stock and day
+    (P1.12, #374; adapters.nse_mwpl). `utilisation` = oi / mwpl at the day's end (NULL when either is unknown);
+    `oi_basis` names the OI column read (SEBI's delta-based 'Future Equivalent Open Interest' when the file has it).
+    Public market-wide data; the ban history is derived from it (optpanel.ban)."""
+
+    __tablename__ = "mwpl_oi"
+    __table_args__ = (Index("ix_mwpl_oi_symbol_day", "symbol", "day"),)
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(30), primary_key=True)
+    isin: Mapped[str | None] = mapped_column(String(12))
+    mwpl: Mapped[int | None] = mapped_column(BigInteger)
+    oi: Mapped[int | None] = mapped_column(BigInteger)
+    limit_next: Mapped[int | None] = mapped_column(BigInteger)
+    utilisation: Mapped[Decimal | None] = mapped_column(Numeric(10, 6))
+    oi_basis: Mapped[str] = mapped_column(String(40))
+
+
+class FnoBanNotice(Base):
+    """NSE's dated F&O ban notice (P1.12, #374): the stocks in the ban period for `trade_day`, fetched only for the
+    20-day validation of the derived ban history. A notice listing no stock has no rows; its manifest row
+    (optpanel_file_day, dataset nse_secban) says it was loaded."""
+
+    __tablename__ = "fno_ban_notice"
+    trade_day: Mapped[date] = mapped_column(Date, primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(30), primary_key=True)
+
+
+class OptPanelFileDay(Base):
+    """The download manifest of the panel's NSE files (P1.12, #374): one row per (dataset, day) tried, dataset
+    nse_combineoi or nse_secban. status loaded / no_file (404) / failed. Resume skips loaded days and old no_file days."""
+
+    __tablename__ = "optpanel_file_day"
+    dataset: Mapped[str] = mapped_column(String(30), primary_key=True)
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    status: Mapped[str] = mapped_column(String(10))
+    url: Mapped[str | None] = mapped_column(String(200))
+    rows: Mapped[int | None] = mapped_column(Integer)
+    attempts: Mapped[int] = mapped_column(Integer, default=1)
+    error: Mapped[str | None] = mapped_column(String(300))
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
