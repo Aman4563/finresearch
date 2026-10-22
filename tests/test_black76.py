@@ -128,3 +128,14 @@ def test_a_price_beyond_the_volatility_bracket_is_unknown() -> None:
     p = b.price("call", 100, 100, 0.25, d, b.SIGMA_HI * 1.5)  # inside the bounds, beyond the bracket's top
     got = b.implied_vol("call", p, 100, 100, 0.25, d)
     assert got.sigma is None and "bracket" in got.reason
+
+
+def test_a_far_wing_with_a_tiny_vega_still_converges_or_says_why() -> None:
+    # 13 standard deviations out of the money: Newton alone crawls (vega ~ 1e-37); the bisection safeguard must end it
+    d = df(0.06, 0.25)
+    for right, k in (("call", 140.0), ("put", 70.0)):
+        p = b.price(right, 100, k, 0.25, d, 0.05)
+        got = b.implied_vol(right, p, 100, k, 0.25, d)
+        assert got.reason is None or "no convergence" not in got.reason
+        assert got.sigma is None or got.sigma == pytest.approx(0.05, abs=1e-6)
+        assert got.iterations <= b.MAX_ITER

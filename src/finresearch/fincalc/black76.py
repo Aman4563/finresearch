@@ -139,6 +139,7 @@ def implied_vol(right: Right, target: float, fwd: float, strike: float, t: float
         return IvResult(None, f"price {target:g} is above the value at sigma {SIGMA_HI:g} (outside the bracket)")
     # start: the Brenner-Subrahmanyam ATM approximation sigma ~ sqrt(2 pi / T) x price / (DF F), kept in the bracket
     s = min(b, max(a, math.sqrt(2 * math.pi / t) * p / (df * fwd)))  # type: ignore[operator]
+    step_before = b - a
     for i in range(1, MAX_ITER + 1):
         g = price(side, fwd, strike, t, df, s) - p  # type: ignore[arg-type]
         if abs(g) <= tol:
@@ -151,5 +152,10 @@ def implied_vol(right: Right, target: float, fwd: float, strike: float, t: float
             return IvResult(s, None, abs(g), i)
         v = vega(fwd, strike, t, df, s)  # type: ignore[arg-type]
         nxt = s - g / v if v > 0 else math.nan
-        s = nxt if a < nxt < b else (a + b) / 2  # Newton when it stays inside the bracket, else bisection
+        # Newton only while it stays inside the bracket and its step is under half the one before (Numerical
+        # Recipes' rtsafe); otherwise bisect, so a flat far wing still ends within MAX_ITER
+        if a < nxt < b and abs(nxt - s) < step_before / 2:
+            step_before, s = abs(nxt - s), nxt
+        else:
+            step_before, s = (b - a) / 2, (a + b) / 2
     return IvResult(None, f"no convergence in {MAX_ITER} steps")
