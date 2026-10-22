@@ -87,5 +87,7 @@ def test_addendum_a4_hash_is_pinned_quoted_and_covers_the_fit_settings(monkeypat
     for mod, name, value in ((svi, "MAX_RMSE", 0.02), (svi, "GRID_POINTS", 2001), (svi, "RHO_MAX", 0.99),
                              (svi, "START_GRID", 5), (sm, "OUT_SD", 8.0), (sm, "OUT_STEPS", 2000)):  # fmt: skip
         monkeypatch.setattr(mod, name, value)
-        assert addendum_a4.addendum_hash() != prereg.ADDENDUM_A4_HASH, name  # editing a setting moves the hash
+        assert addendum_a4.addendum_hash() != prereg.ADDENDUM_A4_HASH, (
+            name
+        )  # editing a setting moves the hash
         monkeypatch.undo()
