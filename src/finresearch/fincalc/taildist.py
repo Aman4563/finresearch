@@ -22,6 +22,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import date, timedelta
 
 import numpy as np
 
@@ -311,14 +312,7 @@ class Filtered:
 
 def gjr_filter(r: Sequence[float], p: GjrParams) -> Filtered:
     """sigma^2_0 = omega + (alpha + gamma / 2 + beta) x backcast (arch's), then the GJR recursion; zero mean."""
-    bc = backcast(np.asarray(r, float))
-    s = p.omega + (p.alpha + p.gamma / 2 + p.beta) * bc
-    s2, z = [], []
-    for x in r:
-        s2.append(s)
-        z.append(x / math.sqrt(s))
-        s = p.step(s, x)
-    return Filtered(s2, z, s)
+    return filter_returns(r, p)
 
 
 def _gjr_nll(r: list[float], bc: float, p: GjrParams) -> float:
@@ -429,3 +423,80 @@ def empirical_forecast(legs: Sequence[o.Leg], fwd: float, sigma: float | None, t
         else (None, None)
     )
     return ModelForecast(point, lo, hi, k, len(z))
+
+
+# ------------------------------------------------------------------------------------------- M3: FHS
+FHS_BLOCK = 5  # standardised residuals are resampled in blocks of 5 consecutive sessions (circular)
+
+
+@dataclass(frozen=True)
+class Ewma:
+    lam: float = EWMA_LAMBDA
+
+    def step(self, s2: float, r: float) -> float:
+        return self.lam * s2 + (1 - self.lam) * r * r
+
+
+def _start(model: GjrParams | Ewma, bc: float) -> float:
+    if isinstance(model, Ewma):
+        return bc
+    return model.omega + (model.alpha + model.gamma / 2 + model.beta) * bc
+
+
+def filter_returns(r: Sequence[float], model: GjrParams | Ewma) -> Filtered:
+    """The conditional variances, standardised residuals and next-session forecast under either filter."""
+    s = _start(model, backcast(np.asarray(r, float)))
+    s2, z = [], []
+    for x in r:
+        s2.append(s)
+        z.append(x / math.sqrt(s))
+        s = model.step(s, x)
+    return Filtered(s2, z, s)
+
+
+def weekday_steps(origin: date, expiry: date) -> int:
+    """Sessions simulated from the origin close to the expiry close: weekdays after the origin up to the expiry
+    (exchange holidays are not used, so nothing after the origin is read; the total variance is rescaled anyway)."""
+    return int(np.busday_count(origin + timedelta(days=1), expiry + timedelta(days=1)))
+
+
+def fhs_log_returns(r: Sequence[float], model: GjrParams | Ewma, steps: int, total_var: float,
+                    rng: np.random.Generator, paths: int = PATHS, block: int = FHS_BLOCK) -> np.ndarray:  # fmt: skip
+    """`paths` x `steps` daily log returns: r_j = sigma_j z*_j from the filter's next-session variance, z* drawn in
+    blocks of `block` consecutive standardised residuals, the variance updated by the filter on each simulated
+    return; then every return is multiplied by one constant c so that E[sum_j r_j^2] = total_var."""
+    f = filter_returns(r, model)
+    z = np.asarray(f.z, float)
+    n = len(z)
+    s2 = np.full(paths, f.next_sigma2)
+    out = np.empty((paths, steps))
+    start = np.zeros(paths, dtype=np.int64)
+    for j in range(steps):
+        if j % block == 0:
+            start = rng.integers(0, n, paths)
+        x = np.sqrt(s2) * z[(start + j % block) % n]
+        out[:, j] = x
+        s2 = model.step(s2, x)  # type: ignore[arg-type]
+    return out * math.sqrt(total_var / float(np.mean(np.sum(out**2, axis=1))))
+
+
+def fhs_forecast(legs: Sequence[o.Leg], fwd: float, sigma: float | None, t: float, rate: float, entry_cost: float,
+                 exit_cost: Callable[[float], float] | None, returns: Sequence[float],
+                 model: GjrParams | Ewma | None, *, steps: int, kap: float | None, rng: np.random.Generator,
+                 paths: int = PATHS, block: int = FHS_BLOCK) -> ModelForecast:  # fmt: skip
+    """M3: S_T = F exp(-kappa sigma^2 T / 2 + sum_j r_j) over FHS paths rescaled to kappa sigma_IV^2 T (kappa from
+    M2's z sample). No EV interval in this slice (ev_lo/ev_hi None)."""
+    if model is None:
+        return ModelForecast(None, None, None, kap, len(returns), "no filter parameters")
+    if not sigma or sigma <= 0:
+        return ModelForecast(None, None, None, kap, len(returns), "no ATM IV")
+    if kap is None:
+        return ModelForecast(None, None, None, None, len(returns), "kappa unknown")
+    if steps < 1 or len(returns) < 1:
+        return ModelForecast(None, None, None, kap, len(returns), "no steps to expiry")
+    tv = kap * sigma * sigma * t
+    x = fhs_log_returns(returns, model, steps, tv, rng, paths, block).sum(axis=1)
+    st = fwd * np.exp(-0.5 * tv + x)
+    return ModelForecast(
+        sample_outcome(legs, st, t, rate, entry_cost, exit_cost), None, None, kap, len(returns)
+    )

@@ -244,3 +244,63 @@ def test_gpd_tail_draws_replace_only_the_exceedances() -> None:
         np.mean(~inside) == pytest.approx(0.05, abs=0.01)
         and np.abs(draws).max() < tail.threshold - tail.beta / tail.xi + 1e-9
     )
+
+
+# ------------------------------------------------------------------------------------------- M3: FHS
+def test_fhs_with_iid_normal_residuals_and_constant_variance_is_the_lognormal_card() -> None:
+    r = normal_scores(2000)[np.random.default_rng(8).permutation(2000)] * 0.01  # i.i.d.-like, unit residuals
+    flat = td.GjrParams(omega=1e-4, alpha=0.0, gamma=0.0, beta=0.0)  # sigma^2 = 1e-4 every day
+    got = td.fhs_forecast(
+        PCS, F, SIG, T, R, 120.0, None, r, flat, steps=20, kap=1.0, rng=np.random.default_rng(3)
+    )
+    ref = o.outcome(PCS, F * math.exp(-R * T), T, SIG, R, R, 120.0, None)
+    assert got.reason is None and got.outcome.n == td.PATHS
+    # Monte Carlo error of 20,000 paths: PoP sd 0.0033, EV sd about Rs 60
+    assert got.outcome.pop == pytest.approx(ref.pop, abs=0.012) and got.outcome.ev == pytest.approx(
+        ref.ev, abs=200
+    )
+
+
+def test_fhs_paths_are_rescaled_to_kappa_times_the_iv_variance() -> None:
+    r = gjr_series()
+    p = td.gjr_fit(r).params
+    paths = td.fhs_log_returns(r, p, steps=10, total_var=1.03 * SIG**2 * T, rng=np.random.default_rng(1))
+    assert np.mean(np.sum(paths**2, axis=1)) == pytest.approx(1.03 * SIG**2 * T, rel=1e-9)
+
+
+def test_fhs_on_a_leverage_filter_skews_the_terminal_left() -> None:
+    r = gjr_series()
+    p = td.gjr_fit(r).params
+    x = td.fhs_log_returns(r, p, steps=20, total_var=SIG**2 * T, rng=np.random.default_rng(1)).sum(axis=1)
+    skew = float(np.mean((x - x.mean()) ** 3) / np.std(x) ** 3)
+    assert skew < -0.1  # gamma > 0: a fall raises the next variance
+
+
+def test_fhs_also_runs_on_the_ewma_filter() -> None:
+    r = gjr_series()
+    x = td.fhs_log_returns(r, td.Ewma(), steps=5, total_var=SIG**2 * T, rng=np.random.default_rng(1))
+    assert x.shape == (td.PATHS, 5)
+
+
+def test_fhs_is_unknown_without_filter_parameters_or_steps() -> None:
+    r = gjr_series()
+    got = td.fhs_forecast(
+        PCS, F, SIG, T, R, 120.0, None, r, None, steps=10, kap=1.0, rng=np.random.default_rng(1)
+    )
+    assert got.outcome is None and "filter" in got.reason
+    p = td.GjrParams(1e-6, 0.05, 0.1, 0.85)
+    got = td.fhs_forecast(
+        PCS, F, SIG, T, R, 120.0, None, r, p, steps=0, kap=1.0, rng=np.random.default_rng(1)
+    )
+    assert got.outcome is None and "steps" in got.reason
+    got = td.fhs_forecast(
+        PCS, F, SIG, T, R, 120.0, None, r, p, steps=5, kap=None, rng=np.random.default_rng(1)
+    )
+    assert got.outcome is None and "kappa" in got.reason
+
+
+def test_weekday_steps_count_sessions_after_the_origin_up_to_expiry() -> None:
+    from datetime import date
+
+    # Thursday 2-Jan-2025 close to Thursday 30-Jan-2025: 20 weekdays (holidays are not used: known at the origin)
+    assert td.weekday_steps(date(2025, 1, 2), date(2025, 1, 30)) == 20
