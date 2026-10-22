@@ -219,3 +219,23 @@ def test_monitor_step_waits_for_the_bhavcopy(db):
         asyncio.run(fno_marks_step(NIGHT, holidays=set(), market=FakeMarket(), stored={"status": "not_read"}))
         == {}
     )
+
+
+def test_cli_backfills_paper_marks_from_stored_days(db):
+    from typer.testing import CliRunner
+
+    from finresearch.cli import app
+    from finresearch.db import session_scope
+    from finresearch.db.models import FnoBhavDay
+
+    with session_scope() as s:
+        s.merge(FnoBhavDay(day=DAY, status="loaded"))
+        spread(s)
+        bhav(s, DAY, 25000, "CE", D("180.00"))
+        bhav(s, DAY, 25200, "CE", D("80.00"))
+    r = CliRunner().invoke(app, ["fno", "marks", "--from", "2026-10-19", "--to", "2026-10-20"])
+    assert r.exit_code == 0, r.output
+    assert "1 loaded days: 2 paper marks written (0 unpriced)" in r.output
+    r = CliRunner().invoke(app, ["fno", "review", "--month", "2026-10"])
+    assert r.exit_code == 0, r.output
+    assert "F&O review (Oct 2026): 0 paper trades closed" in r.output
