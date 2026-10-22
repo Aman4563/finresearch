@@ -13,6 +13,7 @@ import { Badge, Button, Callout, Card, ErrorNote, Field, Segmented, Table, cx, i
 import { day, useApi } from "@/lib/api";
 
 import { FactorExposures } from "./factor-exposures";
+import { JointRiskCard } from "./joint-risk";
 import { AnalyticsFooter, type AnalyticsBase, Loading, type Metric, MetricRow, NotEnough, pct, spct } from "./shared-analytics";
 import { DrawdownTable, type Episode, RelativeCard, type Relative, RollingCard, type Rolling, VarBacktestLine, type VarBacktest } from "./risk-relative";
 import { StressReplay } from "./stress-replay";
@@ -161,6 +162,7 @@ export function RiskAnalytics({ refresh }: { refresh: number }) {
       {data.stress.length > 0 && <Stress items={data.stress} beta1={beta1} setBeta1={setBeta1} />}
       <StressReplay refresh={refresh} />
       <FactorExposures refresh={refresh} />
+      <JointRiskCard refresh={refresh} />
       <AnalyticsFooter data={data} />
     </div>
   );
