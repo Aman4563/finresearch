@@ -514,6 +514,26 @@ def _spawn_index_eod(now: datetime) -> None:
     _BACKGROUND["index_eod"] = asyncio.create_task(run())
 
 
+def _spawn_equity_eod(now: datetime) -> None:
+    """Start the nightly full equity bhavcopy update (monitor.equity_eod, #373) in the background on trading days: one
+    NSE download (~400 KB). At most one runs at a time."""
+    from finresearch.monitor import equity_eod
+
+    t = _BACKGROUND.get("equity_eod")
+    if (t is not None and not t.done()) or equity_eod.due_slot(now) is None:
+        return
+
+    async def run() -> None:
+        try:
+            res = await equity_eod.equity_eod_step(now)
+            if res:
+                log.info("full equity bhavcopy update: %s", res)
+        except Exception:
+            log.warning("full equity bhavcopy update failed", exc_info=True)
+
+    _BACKGROUND["equity_eod"] = asyncio.create_task(run())
+
+
 def _spawn_span(now: datetime) -> None:
     """Start the nightly SPAN update (monitor.span, #370) in the background on trading days: the SPAN zip (~10 MB)
     and FOVOLT (~40 KB). At most one runs at a time."""
@@ -551,8 +571,9 @@ def _ingest_allowed() -> bool:
 
 
 def _spawn_downloads(deps: jobs.Deps, now: datetime) -> None:
-    """The exchange file downloads (bhavcopy, forward quotes, index closes, SPAN), unless the disk is nearly full."""
-    if not (deps.fno_bhav or deps.quotes or deps.index_eod or deps.span):
+    """The exchange file downloads (bhavcopy, forward quotes, index closes, SPAN, the full equity bhavcopy), unless
+    the disk is nearly full."""
+    if not (deps.fno_bhav or deps.quotes or deps.index_eod or deps.span or deps.equity_eod):
         return
     if not _ingest_allowed():
         day = now.date().isoformat()
@@ -568,6 +589,8 @@ def _spawn_downloads(deps: jobs.Deps, now: datetime) -> None:
         _spawn_index_eod(now)
     if deps.span:
         _spawn_span(now)
+    if deps.equity_eod:
+        _spawn_equity_eod(now)
 
 
 def _spawn_dq(now: datetime) -> None:
@@ -593,6 +616,26 @@ def _spawn_dq(now: datetime) -> None:
             log.warning("data-quality pass failed", exc_info=True)
 
     _BACKGROUND["dq"] = asyncio.create_task(run())
+
+
+def _spawn_skill(now: datetime) -> None:
+    """Start the nightly skill pass (monitor.skill, #378) in a worker thread when due: the forecast ledger only, with
+    a vectorised bootstrap per paired cell (seconds). At most one runs at a time."""
+    from finresearch.monitor import skill
+
+    t = _BACKGROUND.get("skill")
+    if (t is not None and not t.done()) or skill.due_slot(now) is None:
+        return
+
+    async def run() -> None:
+        try:
+            res = await asyncio.to_thread(skill.skill_step, now)
+            if res:
+                log.info("skill monitor pass: %s", res.get("skill"))
+        except Exception:
+            log.warning("skill monitor pass failed", exc_info=True)
+
+    _BACKGROUND["skill"] = asyncio.create_task(run())
 
 
 def _spawn_quotes(deps: jobs.Deps, now: datetime) -> None:
@@ -761,6 +804,8 @@ async def tick(deps: jobs.Deps, now: datetime | None = None) -> dict[str, int]:
     _spawn_downloads(deps, now)
     if deps.dq:
         _spawn_dq(now)
+    if deps.skill:
+        _spawn_skill(now)
     out_brief = brief_step(now) if deps.brief else {}
     if deps.holidays is not None or deps.live_holidays:
         await _refresh_holidays(deps)
@@ -854,6 +899,7 @@ def schedule_json(ww=None, *, running: bool | None = None) -> dict:
     from finresearch.fnohist import span as fspan
     from finresearch.monitor import digest as dg
     from finresearch.monitor import dq as dqj
+    from finresearch.monitor import equity_eod as eqe
     from finresearch.monitor import fno_bhav as fb
     from finresearch.monitor import index_eod as ixe
     from finresearch.monitor import intraday, iv
@@ -862,6 +908,7 @@ def schedule_json(ww=None, *, running: bool | None = None) -> dict:
     from finresearch.monitor import quotes as mq
     from finresearch.monitor import scheme_master as sm
     from finresearch.monitor import sip_estimates as sipe
+    from finresearch.monitor import skill as skj
     from finresearch.monitor import span as spj
     from finresearch.monitor.plan import ALLOTMENT_TIME, LISTING_TIMES, LOCKIN_TIME
     from finresearch.signals.ledger import READY_AFTER_IST
@@ -892,8 +939,11 @@ def schedule_json(ww=None, *, running: bool | None = None) -> dict:
         "fno_bhav": {"after": hm((fb.RUN_AFTER.hour, fb.RUN_AFTER.minute)), "lookback_days": fb.LOOKBACK_DAYS},
         "index_eod": {"after": hm((ixe.RUN_AFTER.hour, ixe.RUN_AFTER.minute)), "lookback_days": ixe.LOOKBACK_DAYS,
                       "requests_per_night": 1},
+        "equity_eod": {"after": hm((eqe.RUN_AFTER.hour, eqe.RUN_AFTER.minute)), "lookback_days": eqe.LOOKBACK_DAYS,
+                       "requests_per_night": 1},
         "dq": {"evening": hm((dqj.EVENING.hour, dqj.EVENING.minute)),
                "morning": hm((dqj.MORNING.hour, dqj.MORNING.minute)), "min_free_gib": dqm.MIN_FREE_GIB},
+        "skill": {"after": hm((skj.RUN_AFTER.hour, skj.RUN_AFTER.minute)), "trading_days": False},
         "span": {"after": hm((spj.RUN_AFTER.hour, spj.RUN_AFTER.minute)), "lookback_days": spj.LOOKBACK_DAYS,
                  "requests_per_night": 2, "raw_sessions_kept": fspan.KEEP_SESSIONS},
         "forecasts": {"after": hm(READY_AFTER_IST), "every_min": int(FORECAST_EVERY.total_seconds() // 60)},

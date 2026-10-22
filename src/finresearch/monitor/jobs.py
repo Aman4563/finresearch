@@ -117,8 +117,10 @@ class Deps:
     )
     quotes: bool = False  # the forward option-quote recorder in session (monitor.quotes, #363)
     index_eod: bool = False  # the nightly NSE index close file: OHLC, P/E, P/B, yield, India VIX (#366)
+    equity_eod: bool = False  # the nightly NSE full equity bhavcopy with delivery (monitor.equity_eod, #373)
     span: bool = False  # the nightly NSE SPAN risk parameters and FOVOLT file (monitor.span, #370)
     dq: bool = False  # the data-quality pass after the evening SLAs and before the brief (monitor.dq, #368)
+    skill: bool = False  # the nightly forecast skill and calibration-drift pass (monitor.skill, #378)
     # monitor.quotes' NSE option-chain fallback (at most 16 requests a day) through `fno`; off in the live app until
     # the owner decides on NSE's terms, which restrict automated collection (#362)
     quotes_nse_fallback: bool = False
@@ -222,7 +224,8 @@ class Deps:
                    live_holidays=True, disclosures=True, fund_ranks=True, stock_peers=True,
                    lookthrough=True, pf_history=live_history, retention=True, lifecycle=True,
                    ipo_symbols=ipo_symbols, ipo_harvest=True, ipo_registry=True, sip_estimates=True,
-                   scheme_master=True, fno_bhav=True, quotes=True, index_eod=True, span=True, dq=True)  # fmt: skip
+                   scheme_master=True, fno_bhav=True, quotes=True, index_eod=True, span=True, dq=True,
+                   equity_eod=True, skill=True)  # fmt: skip
 
 
 def alert(session: Session, watch: Watch, kind: str, message: str, level: str = "info", **data: Any) -> None:

@@ -1242,6 +1242,48 @@ def forecasts_horse_race(
         console.print(f"report written to {json_out}")
 
 
+@forecasts_app.command("skill")
+def forecasts_skill(
+    json_out: Path | None = typer.Option(None, "--json", help="Also write the full report here"),
+) -> None:
+    """The live skill monitor (#378) on read: per method x event kind x underlying, calibration-in-the-large and the
+    promotion BSS CI against the benchmark; at >= 100 resolved independent events also Spiegelhalter, Murphy and the
+    Bernoulli CUSUM, with alarms. Read only; refuses if skillmon/specs.py changed after its registration."""
+    import json
+
+    from rich.table import Table
+
+    from finresearch.db import session_scope
+    from finresearch.fincalc.dates import now_ist
+    from finresearch.skillmon import monitor
+
+    try:
+        with session_scope() as s:
+            rep = monitor.report(s, now_ist())
+    except monitor.PreregistrationError as e:
+        console.print(str(e))
+        raise typer.Exit(1) from e
+
+    def f(x: float | None, d: int = 3) -> str:
+        return "—" if x is None else f"{x:+.{d}f}"
+
+    t = Table("cell", "status", "events", "CITL", "BSS [CI]", "promotion", "alarms")
+    for c in rep["cells"]:
+        sk = c["skill"]
+        bss = (
+            sk["status"]
+            if sk["status"] == "no benchmark"
+            else f"{f(sk.get('bss'))} [{f(sk.get('lo'))}, {f(sk.get('hi'))}]"
+        )
+        t.add_row(c["label"], c["status"], f"{c['independent']} of {c['trigger']}", f(c["citl"]), bss,
+                  sk.get("promotion", "—"), "; ".join(a["text"] for a in c["alarms"]) or "—")  # fmt: skip
+    console.print(t)
+    console.print(f"{rep['version']}: {rep['counts']}; {rep['alarms']} alarm(s)")
+    if json_out:
+        json_out.write_text(json.dumps(rep, indent=1, default=str))
+        console.print(f"report written to {json_out}")
+
+
 portfolio_app = typer.Typer(
     no_args_is_help=True, help="Your portfolio: import statements and tradebooks (local only)"
 )
@@ -1966,6 +2008,65 @@ def index_backfill(
         res = asyncio.run(store.backfill(_date.fromisoformat(start), _date.fromisoformat(end) if end else None,
                                          pause=delay, keep_raw=keep_raw, progress=progress))  # fmt: skip
     console.print_json(json.dumps(res, default=str))
+
+
+equity_app = typer.Typer(
+    no_args_is_help=True,
+    help="Equity end of day: NSE's full bhavcopy with delivery (sec_bhavdata_full, #373)",
+)
+app.add_typer(equity_app, name="equity")
+
+
+@equity_app.command("backfill")
+def equity_backfill(
+    start: str = typer.Option(
+        ..., "--from", help="First day, YYYY-MM-DD (the file exists for 2020, per #373)"
+    ),
+    end: str | None = typer.Option(None, "--to", help="Last day (default today, IST)"),
+    delay: float = typer.Option(
+        2.0, min=0.0, help="Extra seconds between downloads, on top of the shared NSE limit"
+    ),
+    keep_raw: bool = typer.Option(True, help="Keep each day's CSV under data/equity_eod/ (~400 KB a day)"),
+) -> None:
+    """Download and store NSE's full equity bhavcopy (sec_bhavdata_full) for [from, to]: one file a day. Resumable
+    and idempotent: loaded days are skipped and failed days retried, so re-run the same command to continue. Personal
+    use only (#362): stops by itself between 09:00 and 16:00 IST on weekdays and after two refusals (403/429) in a
+    row."""
+    from datetime import date as _date
+
+    from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn, TimeRemainingColumn
+
+    from finresearch.refseries import equity_eod as store
+
+    with Progress(TextColumn("{task.description}"), BarColumn(), MofNCompleteColumn(), TimeRemainingColumn(),
+                  console=console) as bar:  # fmt: skip
+        task = bar.add_task("equity bhavcopy", total=None)
+
+        def progress(i: int, n: int, day, status: str) -> None:
+            bar.update(task, total=n, completed=i, description=f"equity bhavcopy {day} {status}")
+
+        res = asyncio.run(store.backfill(_date.fromisoformat(start), _date.fromisoformat(end) if end else None,
+                                         pause=delay, keep_raw=keep_raw, progress=progress))  # fmt: skip
+    console.print_json(json.dumps(res, default=str))
+
+
+@audit_app.command("equity-eod")
+def audit_equity_eod(
+    sample: int = typer.Option(
+        50, min=1, max=500, help="Stock-days to compare (one NSE website request each)"
+    ),
+    seed: int = typer.Option(0, help="Draws the sample reproducibly; change it for another sample"),
+    delay: float = typer.Option(1.0, min=0.0, help="Extra seconds between requests"),
+) -> None:
+    """#373 (a)'s acceptance check: random stored EQ closes from the full bhavcopy against NSE's price-history bar,
+    exact. Makes `--sample` website requests (polite, shared NSE budget); refuses to run between 09:00 and 16:00 IST
+    on weekdays and stops after two refusals. The nightly dq check (close_vs_quote) needs no requests."""
+    from finresearch.refseries import equity_eod as store
+
+    res = asyncio.run(store.reconcile_history(sample, seed=seed, pause=delay))
+    console.print_json(json.dumps(res, default=str))
+    if res["mismatches"]:
+        raise typer.Exit(1)
 
 
 @audit_app.command("index-eod")
