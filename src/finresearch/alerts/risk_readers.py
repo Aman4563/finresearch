@@ -111,6 +111,16 @@ def _leg_key(m: FnoMark) -> str:
     return f"{m.symbol} {m.expiry.isoformat()} {float(m.strike or 0):g}{'PE' if m.right == 'put' else 'CE'}"
 
 
+def _may_hold(s: Session, day: date) -> bool:
+    """Whether the book may hold an option leg on `day`: a paper trade still open, or Groww connected."""
+    from finresearch.db.models import BrokerConnection, PaperStrategy
+
+    paper = s.scalar(select(PaperStrategy.id).where(PaperStrategy.status != "closed", PaperStrategy.expiry >= day)
+                     .limit(1))  # fmt: skip
+    g = s.get(BrokerConnection, "groww")
+    return paper is not None or (g is not None and g.enabled)
+
+
 def leg_readings(s: Session, day: date, now: datetime) -> list[Row]:
     """Per open short option leg in tonight's marks (fno_mark, paper and Groww): its risk-neutral touch probability
     at its own IV (ra.TOUCH_LABEL) and the share of the front future's stored overnight gaps beyond its strike's
@@ -130,6 +140,8 @@ def leg_readings(s: Session, day: date, now: datetime) -> list[Row]:
         why = f"the Groww book was not marked: {note}"
     elif res.get("real_unresolved"):
         why = f"{res['real_unresolved']} Groww position(s) could not be resolved to a contract"
+    if why and res.get("status") != "done" and not _may_hold(s, day):
+        return []  # no open paper trade and Groww not connected: the book is known to be empty
     if why:
         return [("touch", "BOOK", Reading(None, mser, why)), ("gap_stop", "BOOK", Reading(None, mser, why))]
     marks = s.scalars(select(FnoMark).where(FnoMark.day == day).order_by(FnoMark.id)).all()

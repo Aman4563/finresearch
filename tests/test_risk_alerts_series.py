@@ -37,7 +37,7 @@ def clean(env):
     def wipe():
         with session_scope() as s:
             s.execute(text("TRUNCATE fno_iv_eod, fno_bhav, fno_mark, alert_eval_slot, calendar_event, "
-                           "calendar_coverage CASCADE"))  # fmt: skip
+                           "calendar_coverage, broker_connection CASCADE"))  # fmt: skip
 
     wipe()
     yield env
@@ -145,9 +145,18 @@ def test_short_legs_get_touch_gap_through_and_event_readings(clean) -> None:
     assert got[("event", "NIFTY")].value == 1.0 and "RBI" in got[("event", "NIFTY")].detail
 
 
+def _groww() -> None:
+    from finresearch.db import session_scope
+    from finresearch.db.models import BrokerConnection
+
+    with session_scope() as s:
+        s.add(BrokerConnection(key="groww", enabled=True))
+
+
 def test_marks_not_written_or_an_unread_groww_book_read_unknown(clean) -> None:
     from finresearch.alerts.risk_readers import leg_readings
 
+    _groww()  # a book that may hold positions
     got = _read(leg_readings, DAY, NOW)
     assert got[("touch", "BOOK")].value is None and "fno_marks" in got[("touch", "BOOK")].detail
     assert got[("gap_stop", "BOOK")].value is None
@@ -163,3 +172,9 @@ def test_a_short_leg_without_an_iv_reads_unknown_for_that_leg(clean) -> None:
     _marks([{"strike": 23800, "iv": None}])
     got = _read(leg_readings, DAY, NOW)
     assert got[("touch", "NIFTY 2026-10-27 23800PE")].value is None
+
+
+def test_with_no_paper_trade_open_and_groww_not_connected_there_is_no_book_to_check(clean) -> None:
+    from finresearch.alerts.risk_readers import leg_readings
+
+    assert _read(leg_readings, DAY, NOW) == {}  # marks not written, but the book is known to be empty

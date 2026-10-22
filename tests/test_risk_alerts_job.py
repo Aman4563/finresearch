@@ -32,7 +32,7 @@ def clean(env):
     def wipe():
         with session_scope() as s:
             s.execute(text("TRUNCATE alert, alert_delivery, alert_rule_state, alert_eval_slot, fno_bhav_day, "
-                           "fno_mark, fno_iv_eod, fno_bhav CASCADE"))  # fmt: skip
+                           "fno_mark, fno_iv_eod, fno_bhav, broker_connection CASCADE"))  # fmt: skip
 
     wipe()
     yield env
@@ -50,8 +50,10 @@ def _ready() -> None:
 
 def test_it_waits_for_tonights_inputs_until_the_deadline_then_says_what_it_cannot_check(clean) -> None:
     from finresearch.db import session_scope
-    from finresearch.db.models import Alert
+    from finresearch.db.models import Alert, BrokerConnection
 
+    with session_scope() as s:
+        s.add(BrokerConnection(key="groww", enabled=True))  # a book that may hold positions
     assert job.risk_step(NIGHT, holidays=set()) == {}  # the bhavcopy is not loaded yet: not claimed
     res = job.risk_step(LATE, holidays=set())
     assert res["risk_alerts"]["unknown"] > 0

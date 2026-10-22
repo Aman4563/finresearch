@@ -97,3 +97,22 @@ def test_an_unpriced_or_undirected_leg_makes_the_shock_unknown(clean) -> None:
 def test_no_open_leg_is_exactly_zero(clean) -> None:
     got, notes = _shock()
     assert got == dict.fromkeys(SHOCK_MOVES, 0.0) and notes == []
+
+
+def test_a_stock_underlying_without_stored_futures_history_has_an_unknown_beta_so_the_shock_is_unknown(
+    clean,
+) -> None:
+    from finresearch.db.models import FnoMark
+
+    _add(FnoMark(day=DAY, book="paper", leg_key="paper_leg:9", symbol="EXAMPLESTK", expiry=EXP, right="put",
+                 strike=D("1000"), qty=-500, price=D("12"), spot=D("1010")),
+         _bhav_sym("EXAMPLESTK", 1015.0))  # fmt: skip
+    got, notes = _shock()
+    assert got is None and notes  # the beta read (its own session) says why; never 0
+
+
+def _bhav_sym(sym: str, settle: float):
+    from finresearch.db.models import FnoBhav
+
+    return FnoBhav(day=DAY, symbol=sym, instrument="STF", expiry=EXP, strike=D(0), option_type="XX",
+                   settle=D(str(settle)), close=D(str(settle)))  # fmt: skip
