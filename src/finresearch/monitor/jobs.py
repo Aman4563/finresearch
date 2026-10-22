@@ -122,6 +122,7 @@ class Deps:
     rates: bool = False  # the nightly FBIL G-sec par curve, T-bill and MIBOR update (monitor.rates, #366)
     dq: bool = False  # the data-quality pass after the evening SLAs and before the brief (monitor.dq, #368)
     skill: bool = False  # the nightly forecast skill and calibration-drift pass (monitor.skill, #378)
+    risk_alerts: bool = False  # the nightly risk alerts: limits, shocks, gaps, touch, events (#398)
     # monitor.quotes' NSE option-chain fallback (at most 16 requests a day) through `fno`; off in the live app until
     # the owner decides on NSE's terms, which restrict automated collection (#362)
     quotes_nse_fallback: bool = False
@@ -226,7 +227,7 @@ class Deps:
                    lookthrough=True, pf_history=live_history, retention=True, lifecycle=True,
                    ipo_symbols=ipo_symbols, ipo_harvest=True, ipo_registry=True, sip_estimates=True,
                    scheme_master=True, fno_bhav=True, quotes=True, index_eod=True, span=True, dq=True, rates=True,
-                   equity_eod=True, skill=True)  # fmt: skip
+                   equity_eod=True, skill=True, risk_alerts=True)  # fmt: skip
 
 
 def alert(session: Session, watch: Watch, kind: str, message: str, level: str = "info", **data: Any) -> None:

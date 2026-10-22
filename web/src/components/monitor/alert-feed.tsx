@@ -21,6 +21,7 @@ const levelOf = (a: AlertItem) => (a.kind === "rule_change" && /\bnow clear\b/i.
 const KIND: Record<string, string> = {
   rule_change: "Rule changed",
   rule_alert: "Alert rule",
+  risk_alert: "Risk alert",
   subscription: "Subscription",
   allotment: "Allotment",
   listing_open: "Listed (open)",
@@ -62,6 +63,42 @@ function RuleSource({ data }: { data: Record<string, unknown> }) {
       {s("source") && <span className="break-all">source: {s("source")}</span>}
       {s("path") && <Link href={s("path")} className="hover:text-brand">open {s("instrument")}</Link>}
     </p>
+  );
+}
+
+/** #398: did this alert lead to action? One tap records "acted" or "ignored" (a POST); per-rule precision comes from
+ * these answers. Only firings of your rules and risk alerts are scored, not a "can't check" alert. */
+function Feedback({ a, onDone }: { a: AlertItem; onDone: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const given = typeof a.data?.feedback === "string" ? a.data.feedback : null;
+  const scored = a.kind === "rule_alert" || (a.kind === "risk_alert" && a.data?.status === "fired");
+  if (!scored) return null;
+  if (given) return <p className="mt-1 text-[11px] text-muted">You marked this alert: {given}.</p>;
+  const send = async (outcome: "acted" | "ignored") => {
+    setBusy(true);
+    try {
+      await api(`/api/alerts/${a.id}/feedback`, { method: "POST", body: JSON.stringify({ outcome }) });
+      setError(null);
+      window.dispatchEvent(new Event(ALERTS_CHANGED));
+      onDone();
+    } catch (e) {
+      setError(`Could not record it: ${(e as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px]">
+      <span className="text-muted">Did you act on it?</span>
+      {(["acted", "ignored"] as const).map((o) => (
+        <button key={o} type="button" disabled={busy} onClick={() => send(o)}
+          className="rounded-md border border-border px-2 py-0.5 font-medium text-foreground transition hover:border-border-strong disabled:opacity-50">
+          {o === "acted" ? "Acted" : "Ignored"}
+        </button>
+      ))}
+      {error && <span className="text-loss">{error}</span>}
+    </div>
   );
 }
 
@@ -140,6 +177,10 @@ export function AlertFeed({ alerts, onRead, limit, showSymbol = true, emptyHint,
                     <p className="mt-0.5 text-sm break-words">{a.message}</p>
                     {a.kind === "rule_alert" && a.data?.rule_id != null && <RuleSource data={a.data} />}
                     {a.data?.links != null && <AlertLinks data={a.data} />}
+                    {a.kind === "risk_alert" && typeof a.data?.series === "string" && (
+                      <p className="mt-1 break-all text-[11px] text-muted">series: {a.data.series}</p>
+                    )}
+                    <Feedback a={a} onDone={onRead} />
                   </div>
                   {!a.read_at && (
                     <button
