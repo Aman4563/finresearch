@@ -67,3 +67,39 @@ def test_addendum_a3_hash_is_pinned_quoted_and_covers_the_engine_constants(monke
             name
         )  # editing a constant moves the hash
         monkeypatch.undo()
+
+
+def test_addendum_a6_hash_is_pinned_quoted_and_covers_the_simulation_settings(monkeypatch) -> None:
+    """A6 (#388): the exit-rule Monte Carlo p_path. The hash covers the simulation settings (paths, seed, steps) and
+    the path model's constants, so changing any of them is a new addendum version."""
+    from finresearch.fincalc import black76 as b
+    from finresearch.fnobook import path_pop as pp
+    from finresearch.horserace import addendum_a3, addendum_a6
+
+    assert addendum_a6.addendum_hash() == prereg.ADDENDUM_A6_HASH, "a changed addendum is a new ADDENDUM_VERSION"
+    reg = addendum_a6.registration()
+    assert reg["base_hash"] == prereg.HASH and reg["a1_hash"] == prereg.ADDENDUM_HASH
+    assert reg["a2_hash"] == prereg.ADDENDUM_A2_HASH and reg["a3_hash"] == prereg.ADDENDUM_A3_HASH
+    assert addendum_a6.CHALLENGER == "p_path" and addendum_a6.CHALLENGERS == (*addendum_a3.CHALLENGERS, "p_path")
+    sim = reg["simulation"]
+    assert sim["n_paths"] == addendum_a6.N_PATHS == 2000 and sim["seed"] == addendum_a6.SEED == 388
+    assert sim["steps"] == addendum_a6.STEPS and "session" in sim["steps"]
+    text = (ROOT / "evals/experiments/card_horse_race/ADDENDUM.md").read_text()
+    assert prereg.ADDENDUM_A6_HASH in text and "Addendum A6 (post hoc)" in text
+    for mod, name, value in ((addendum_a6, "N_PATHS", 2001), (addendum_a6, "SEED", 1), (addendum_a6, "STEPS", "x"),
+                             (pp, "BETA_WINDOW", 260), (pp, "BETA_MIN", 100), (pp, "TICK", 0.1),
+                             (b, "SIGMA_LO", 1e-3)):  # fmt: skip
+        monkeypatch.setattr(mod, name, value)
+        assert addendum_a6.addendum_hash() != prereg.ADDENDUM_A6_HASH, name  # editing a setting moves the hash
+        monkeypatch.undo()
+
+
+def test_each_card_has_its_own_reproducible_seed() -> None:
+    from datetime import date
+
+    from finresearch.horserace import addendum_a6
+
+    a = addendum_a6.card_seed("nifty_pcs_m", date(2024, 7, 1))
+    assert a == addendum_a6.card_seed("nifty_pcs_m", date(2024, 7, 1)) and 0 <= a < 2**63
+    assert a != addendum_a6.card_seed("nifty_pcs_m", date(2024, 7, 2))
+    assert a != addendum_a6.card_seed("nifty_ccs_m", date(2024, 7, 1))

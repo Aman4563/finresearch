@@ -20,3 +20,9 @@ ADDENDUM_A2_ON = "2026-10-22"
 # Black-76 engine's registered constants, pinned before any replay code computed it on a stored session.
 ADDENDUM_A3_HASH = "c5c07f159a6a8154ac7f264a847645fd4556b69c86fd1e1808bf8bd9b64dc10b"
 ADDENDUM_A3_ON = "2026-10-22"
+
+# Post-hoc addendum A6 (horserace/addendum_a6.py, ADDENDUM.md): the exit-rule Monte Carlo challenger p_path (#388),
+# with its simulation settings (paths, seed, steps) and path-model constants, pinned before any replay code computed
+# it on a stored session.
+ADDENDUM_A6_HASH = "7dfe96c636fb373bd769c76a27db6cb052e68d0d7e94dd3376f74f4989dca7f3"
+ADDENDUM_A6_ON = "2026-10-22"
