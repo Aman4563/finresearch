@@ -3,9 +3,15 @@ after the load. One SQL pass over the day and the previous loaded day (a few tho
 nightly budget. Thresholds are the issue's where it states one; the others are named constants here.
 
 * rows_total_z / rows_kept_z: robust z of the manifest's row counts against the last WINDOW loaded days (|z| > 6).
-* futures_continuity: every symbol with a live future at t-1 (expiry after t-1) still has a future at t (a dropped
-  symbol). A stock that left F&O keeps its contracts until their expiry, so this does not false-alarm on exits.
-* expiry_continuity: every index future and index option expiry live at t-1 is still there at t (a missing expiry).
+* futures_continuity: every symbol with a live future at t-1 (expiry on or after t) still has a future at t (a
+  dropped symbol). A stock that left F&O keeps its contracts until their expiry, so this does not false-alarm on exits.
+* symbol_changed (not critical): a vanished symbol whose open futures reappear under one new symbol with the same
+  expiries, lot and price (pair_renames: L&TFH -> LTF in 2024, TATAMOTORS -> TMPV in 2025) is a rename, not a drop.
+* expiry_continuity: every index future and index option expiry live at t-1 that had open interest, or is one of the
+  two nearest, is still there at t (a missing expiry). A far expiry with no OI and no trades is not stored
+  (fnohist.store drops dead rows), so its absence is not a loss.
+* expiry_moved (not critical): a missing expiry that fell between the two sessions, moved to a date within
+  MOVE_DAYS, or is an NSE holiday (classify_lost_expiries; MIDCPNIFTY's 22-Jan-2024 expiry on a special holiday).
 * expired_contracts: no stored contract expired before t (expiring OI kept).
 * stale_settle: futures whose settlement price is identical to t-1's (a duplicated or stale day). Futures settle at a
   new price every session; far OTM options sit at the 0.05 floor for weeks, so they are not counted.
@@ -37,10 +43,11 @@ LOT_SHARE = 0.05
 TURNOVER_SHARE = 0.05
 TURNOVER_BAND = 0.02
 JUMP = 0.30
-CHECKS = ("rows_total_z", "rows_kept_z", "futures_continuity", "expiry_continuity", "expired_contracts",
-          "stale_settle", "oi_lot_multiple", "turnover_units", "price_jump", "row_ranges", "reupload",
+MOVE_DAYS = 3  # an expiry NSE shifts for a holiday moves to an adjacent session
+CHECKS = ("rows_total_z", "rows_kept_z", "futures_continuity", "symbol_changed", "expiry_continuity", "expiry_moved",
+          "expired_contracts", "stale_settle", "oi_lot_multiple", "turnover_units", "price_jump", "row_ranges", "reupload",
           "duplicate_body")  # fmt: skip
-NON_CRITICAL = {"price_jump", "reupload"}
+NON_CRITICAL = {"price_jump", "reupload", "symbol_changed", "expiry_moved"}
 
 
 def _c(check: str, status: str, value: float | None = None, threshold: float | None = None,
@@ -48,7 +55,7 @@ def _c(check: str, status: str, value: float | None = None, threshold: float | N
     return Check(DATASET, check, status, value, threshold, note, critical=check not in NON_CRITICAL)
 
 
-def bhav_checks(s: Session, day: date) -> list[Check]:
+def bhav_checks(s: Session, day: date, holidays: set[date] | None = None) -> list[Check]:
     m = s.get(FnoBhavDay, day)
     if m is None or m.status != "loaded":
         return [_c(c, "unknown", note=f"{day} is not loaded") for c in CHECKS]
@@ -60,32 +67,107 @@ def bhav_checks(s: Session, day: date) -> list[Check]:
         x, h = getattr(m, col), [getattr(r, col) for r in hist if getattr(r, col) is not None]
         z = stats.robust_z(float(x), [float(v) for v in h]) if x is not None else None
         out.append(_c(f"{col}_z", stats.z_status(z), z, stats.Z_LIMIT, f"{col} {x} vs {len(h)} prior days"))
-    out += _continuity(s, day, prev) + _contents(s, day, prev) + _lineage(s, day)
+    out += _continuity(s, day, prev, holidays) + _contents(s, day, prev) + _lineage(s, day)
     return out
 
 
-def _continuity(s: Session, day: date, prev: date | None) -> list[Check]:
+def _continuity(s: Session, day: date, prev: date | None, holidays: set[date] | None = None) -> list[Check]:
+    names = ("futures_continuity", "symbol_changed", "expiry_continuity", "expiry_moved")
     if prev is None:
-        return [
-            _c(c, "unknown", note="no earlier loaded day")
-            for c in ("futures_continuity", "expiry_continuity")
-        ]
+        return [_c(c, "unknown", note="no earlier loaded day") for c in names]
     q = {"d": day, "p": prev}
-    gone = s.scalars(text("""
-        SELECT DISTINCT symbol FROM fno_bhav WHERE day = :p AND instrument IN ('IDF', 'STF') AND expiry > :p
-        EXCEPT SELECT DISTINCT symbol FROM fno_bhav WHERE day = :d AND instrument IN ('IDF', 'STF')
-        ORDER BY 1"""), q).all()  # fmt: skip
-    lost = s.execute(text("""
-        SELECT DISTINCT symbol, instrument, expiry FROM fno_bhav WHERE day = :p AND instrument IN ('IDF', 'IDO')
-               AND expiry > :p
-        EXCEPT SELECT DISTINCT symbol, instrument, expiry FROM fno_bhav WHERE day = :d
-        ORDER BY 1, 2, 3"""), q).all()  # fmt: skip
+    # one row per (day, symbol, instrument, expiry): OI, lot and close summed/taken over strikes
+    rows = s.execute(text("""
+        SELECT day, symbol, instrument, expiry, sum(oi), max(lot_size), max(close) FILTER (WHERE option_type = 'XX')
+        FROM fno_bhav WHERE day IN (:p, :d) AND instrument IN ('IDF', 'STF', 'IDO') AND expiry >= :p
+        GROUP BY 1, 2, 3, 4"""), q).all()  # fmt: skip
+    at = {prev: [r for r in rows if r[0] == prev], day: [r for r in rows if r[0] == day]}
+    fut = {d: [r for r in at[d] if r[2] != "IDO"] for d in at}
+    # a symbol whose live future (expiry on or after `day`) at t-1 has no future at t
+    was = {r[1] for r in fut[prev] if r[3] >= day}
+    now = {r[1] for r in fut[day]}
+    pairs, gone = pair_renames(_fut_profile(fut[prev], day, sorted(was - now)),
+                               _fut_profile(fut[day], day, sorted(now - {r[1] for r in at[prev]})))  # fmt: skip
+    groups = {
+        (r[1], r[2], r[3]): (int(r[4] or 0)) for r in at[prev] if r[2] in ("IDF", "IDO") and r[3] > prev
+    }
+    lost, moved, idle = classify_lost_expiries(
+        groups, {(r[1], r[2], r[3]) for r in at[day]}, prev, day, holidays
+    )
     return [
         _c("futures_continuity", "fail" if gone else "ok", len(gone), 0,
            f"no future at {day} for: {', '.join(gone[:8])}" if gone else None),
+        _c("symbol_changed", "warn" if pairs else "ok", len(pairs), 0,
+           ", ".join(f"symbol changed {a}→{b}" for a, b in pairs[:6]) or None),
         _c("expiry_continuity", "fail" if lost else "ok", len(lost), 0,
-           "missing: " + ", ".join(f"{a} {b} {e}" for a, b, e in lost[:6]) if lost else None),
+           "missing: " + ", ".join(f"{a} {b} {e}" for a, b, e in lost[:6]) if lost
+           else (f"{idle} far expiry(ies) with no open interest at {prev} not required" if idle else None)),
+        _c("expiry_moved", "warn" if moved else "ok", len(moved), 0, "; ".join(moved[:4]) or None),
     ]  # fmt: skip
+
+
+def _fut_profile(rows, day: date, symbols: list[str]) -> dict[str, tuple]:
+    """symbol -> (instrument, live expiries, lot, nearest future's close) for the given symbols."""
+    out = {}
+    for sym in symbols:
+        mine = sorted((r for r in rows if r[1] == sym and r[3] >= day), key=lambda r: r[3])
+        if mine:
+            out[sym] = (mine[0][2], tuple(r[3] for r in mine), mine[0][5], mine[0][6])
+    return out
+
+
+def pair_renames(gone: dict[str, tuple], new: dict[str, tuple]) -> tuple[list[tuple[str, str]], list[str]]:
+    """Pairs a vanished symbol A with a symbol B new at t when exactly one B matches A and A is B's only match:
+    same instrument, same live expiries, same lot size (both unknown counts as same) and the nearest future's close
+    within JUMP of A's. NSE renames (L&TFH -> LTF, TATAMOTORS -> TMPV) carry the open contracts over unchanged; a
+    vanished symbol with no such twin stays an unexplained drop."""
+
+    def twin(a: tuple, b: tuple) -> bool:
+        if a[:3] != b[:3]:
+            return False
+        if a[3] is None or b[3] is None or a[3] <= 0 or b[3] <= 0:
+            return False
+        return abs(math.log(float(b[3]) / float(a[3]))) <= math.log(1 + JUMP)
+
+    match = {a: [b for b in new if twin(pa, new[b])] for a, pa in gone.items()}
+    used = [b for bs in match.values() for b in bs]
+    pairs = [(a, bs[0]) for a, bs in match.items() if len(bs) == 1 and used.count(bs[0]) == 1]
+    paired = {a for a, _ in pairs}
+    return pairs, [a for a in gone if a not in paired]
+
+
+def classify_lost_expiries(groups: dict[tuple[str, str, date], int], today: set[tuple[str, str, date]], prev: date,
+                           day: date, holidays: set[date] | None = None) -> tuple[list, list[str], int]:  # fmt: skip
+    """The index expiries live at t-1 (`groups`: (symbol, instrument, expiry) -> open interest) that are missing at t,
+    split into (unexplained losses, explained moves, count of idle far expiries not required).
+
+    Required: open interest > 0 at t-1 (the store drops rows with no OI and no trades, fnohist.store, so a contract
+    with OI must reappear) or one of the symbol's two nearest expiries. Explained: the expiry date fell between the two
+    sessions (a special holiday such as 22-Jan-2024: NSE settled it on the earlier session); the same symbol and
+    instrument gained an expiry within MOVE_DAYS that it did not have at t-1 (NSE moved the date); or the date is an
+    NSE trading holiday (when the list is known)."""
+    rank: dict[tuple[str, str, date], int] = {}
+    for sym, inst in {(a, b) for a, b, _ in groups}:
+        for i, e in enumerate(sorted(e for a, b, e in groups if (a, b) == (sym, inst))):
+            rank[(sym, inst, e)] = i
+    new = today - set(groups)
+    lost, moved, idle = [], [], 0
+    for key in sorted(set(groups) - today):
+        sym, inst, e = key
+        if e < day:
+            moved.append(f"{sym} {inst} {e} fell between sessions {prev} and {day}")
+            continue
+        if groups[key] <= 0 and rank[key] >= 2:
+            idle += 1
+            continue
+        to = sorted(x for a, b, x in new if (a, b) == (sym, inst) and 0 < abs((x - e).days) <= MOVE_DAYS)
+        if to:
+            moved.append(f"{sym} {inst} expiry moved {e}→{to[0]}")
+        elif holidays is not None and e in holidays:
+            moved.append(f"{sym} {inst} {e} is an NSE holiday")
+        else:
+            lost.append(key)
+    return lost, moved, idle
 
 
 def _contents(s: Session, day: date, prev: date | None) -> list[Check]:
