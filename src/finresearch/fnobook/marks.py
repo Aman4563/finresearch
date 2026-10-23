@@ -26,7 +26,7 @@ from finresearch.db.models import EquityEod, FnoBhav, FnoMark, IndexEod, PaperSt
 from finresearch.fincalc import options as o
 from finresearch.fincalc.dates import session_clock, to_ist, years_to_expiry
 
-RATE = 0.065  # the book's greeks rate (fnobook.service.RATE)
+RATE = 0.065  # fno_mark rows are write-once IVs implied at this rate; kept fixed (the live greeks use FBIL, #366/#385)
 _TYPE = {"call": "CE", "put": "PE", "future": "XX"}
 
 
