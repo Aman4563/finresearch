@@ -138,7 +138,7 @@ def test_bad_row_in_a_read_index_still_fails_critical(clean):
         assert res["row_ranges"].status == "fail" and res["row_ranges"].critical, sym
     with session_scope() as s:  # a dividend-points index going negative is still shown
         s.execute(text(f"TRUNCATE {TABLES}"))
-        seed(s, idx=ds.index_rows(ds.T1) + [_idx("NIFTY50 DIVIDEND POINTS", "1", "1", "1", "-1")])
+        seed(s, idx=[*ds.index_rows(ds.T1), _idx("NIFTY50 DIVIDEND POINTS", "1", "1", "1", "-1")])
         assert by_check(ref.index_checks(s, ds.T1))["other_row_ranges"].status == "warn"
 
 
