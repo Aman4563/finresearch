@@ -172,7 +172,13 @@ async def read(known, now, *, http=None):
         for y, m in months_to_read(today, known.covered.get("rbi_mpc")):
             got = await http.post(PAGE, data=listing_form(first.text, year=y, month=m))
             rows = parse_listing(got.text) if got.ok else []
-            if not rows:
+            # the current month may be empty early on (a Sunday 1st), but only on the real listing page
+            empty_ok = (
+                got.ok
+                and (y, m) == (today.year, today.month)
+                and 'id="hdnMonth"' in got.text.replace("'", '"')
+            )
+            if not rows and not empty_ok:
                 raise RbiError(f"RBI press-release listing for {y}-{m:02d}: HTTP {got.status}, no releases")
             found.urls.append(f"{PAGE}#{y}-{m:02d}")
             notices |= {p: k for p, t in rows if (k := notice_kind(t))}

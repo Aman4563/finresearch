@@ -174,3 +174,23 @@ async def test_a_new_schedule_withdraws_no_stored_meeting():
         _mock(mock, {3: _read("rbi_listing.html")}, {90002: _read("rbi_schedule.html")})
         found = await rbi.read(_known(date(2027, 3, 31)), now, http=_http())
     assert found.replaces == [] and found.moves == []
+
+
+EMPTY_MONTH = "<html><form><input type='hidden' name='__VIEWSTATE' value='x' /><input type='hidden' name='hdnMonth' " \
+              "id='hdnMonth' value='11' /></form><table class='tablebg'></table></html>"  # fmt: skip
+
+
+async def test_an_empty_current_month_on_its_first_day_is_not_a_failure():
+    now = datetime(2026, 11, 1, 21, 0, tzinfo=IST)  # a Sunday: nothing published yet this month
+    with respx.mock(assert_all_called=False) as mock:
+        _mock(mock, {11: EMPTY_MONTH}, {})
+        found = await rbi.read(_known(date(2027, 3, 31)), now, http=_http())
+    assert found.events == [] and found.coverage == []
+
+
+async def test_an_empty_earlier_month_is_a_failure():
+    now = datetime(2026, 11, 1, 21, 0, tzinfo=IST)
+    with respx.mock(assert_all_called=False) as mock:
+        _mock(mock, {10: EMPTY_MONTH}, {})
+        with pytest.raises(rbi.RbiError):
+            await rbi.read(_known(date(2027, 3, 31)), now, http=_http())
