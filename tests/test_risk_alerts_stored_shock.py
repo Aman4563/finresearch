@@ -238,3 +238,15 @@ def test_each_expiry_is_discounted_at_its_own_tenors_rate_not_the_longest_legs(c
         "rate: a test curve at 0.0164 years: 5.03% continuous (the 27-Oct-2026 expiry)",
         "rate: a test curve at 0.4384 years: 5.88% continuous (the 30-Mar-2027 expiry)",
     }
+
+
+def test_a_known_shock_reading_names_the_carry_as_well_as_the_rate() -> None:
+    """#480: the risk alert's shock detail says which rate discounted the book and which carry rolled each forward."""
+    from finresearch.alerts import risk_readers as rr
+
+    notes = ["rate: fallback 6.5 %, no curve: test (the 27-Oct-2026 expiry)",
+             "carry: NIFTY 27-Oct-2026: 12.66% a year (the same-expiry future's settle on 21-Oct-2026 against the "
+             "underlying's close)", "an unrelated note"]  # fmt: skip
+    rows = rr.book_readings({-0.03: -1500.0, 0.05: 900.0}, notes, 100_000.0, None, None, book_open=True)
+    shock = next(rd for rid, _, rd in rows if rid == "limit_shock")
+    assert notes[0] in shock.detail and notes[1] in shock.detail and notes[2] not in shock.detail
