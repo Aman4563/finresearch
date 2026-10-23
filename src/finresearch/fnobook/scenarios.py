@@ -127,10 +127,9 @@ def forward(chain: Any, now: datetime, rate: float) -> tuple[float | None, str]:
     return None, "no strike has both a call and a put quoted, so the parity forward is unknown"
 
 
-STORED_CARRY_DAYS = (
-    7  # [U] calendar days: an older stored future's carry is not used live (an ex-dividend date or
-)
-# a rate decision may lie in between)
+# [U] calendar days: a stored future's carry older than this is not used live (an ex-dividend date or a rate decision
+# may lie in between)
+STORED_CARRY_DAYS = 7
 
 
 def _two_sided(q: Any) -> tuple[float, float] | None:
@@ -510,11 +509,16 @@ def stored_book(s: Any, day: date, *, rate: float | None = None, expiring_after:
     keys = sorted({(m.symbol.upper(), m.expiry) for m in marks})
     fws: dict[tuple[str, date], float | None] = {}
     notes: list[str] = []
+    # a registered caller's rule, exactly as before #480 (each key's first mark's close picks the parity strike)
     if rate is not None:
-        for u, e in keys:
-            fws[(u, e)], src = stored_forward(s, day, syms[u], e, spots.get(u), rate)
-            if fws[(u, e)] is None:
-                notes.append(src)
+        for m in marks:
+            key = (m.symbol.upper(), m.expiry)
+            if key not in fws:
+                fws[key], src = stored_forward(
+                    s, day, m.symbol, m.expiry, None if m.spot is None else float(m.spot), rate
+                )
+                if fws[key] is None:
+                    notes.append(src)
         return legs, bs.Market(clock, rate, fws, est).fixed_carry(rate, FIXED_RULE), notes
     rinfo = stored_rates(s, day, {e: max(years_to_expiry(e, clock), 0.0) for _, e in keys})
     carries: dict[tuple[str, date], bs.Carry] = {}
