@@ -107,3 +107,55 @@ def effective_annual(info: dict[str, Any]) -> float | None:
     if info.get("yield") is None or not info.get("tenor_days"):
         return float(info["rate"])
     return R.effective_annual(float(info["yield"]), int(info["tenor_days"]))
+
+
+# --------------------------------------------------------------------------- fund and portfolio metrics (#479)
+SOURCE_LABEL = "owner-entered rates, else the RBI repo-rate proxy"
+MONTHLY_LABEL = ("each month's own risk-free rate: the month's average 91-day rate (owner-entered, else the RBI "
+                 "repo-rate proxy), accrued day by day as (1 + y x 91/365)^(days/91) - 1")  # fmt: skip
+FACTSHEET_LABEL = ("factsheet-style: one overnight rate, the RBI repo rate on the last working day, applied to every "
+                   "month, as Indian AMC factsheets apply one overnight MIBOR/TREPS print")  # fmt: skip
+
+
+def months_for(start: date, end: date, *, s: Any = None) -> tuple[dict[date, R.MonthRate], str | None]:
+    """fincalc.riskfree.month_rates for [start, end] with the owner's entries, and why they are missing."""
+    entries, why = _entries(s)
+    return R.month_rates(start, end, entries), why
+
+
+def accrual_fn(months: dict[date, R.MonthRate]) -> Callable[[date, date], float | None]:
+    """(d0, d1) -> the risk-free return over (d0, d1] (fincalc.riskfree.accrual), remembered per period."""
+    seen: dict[tuple[date, date], float | None] = {}
+
+    def rf(d0: date, d1: date) -> float | None:
+        if (d0, d1) not in seen:
+            seen[(d0, d1)] = R.accrual(d0, d1, months)
+        return seen[(d0, d1)]
+
+    return rf
+
+
+def monthly_json(months: dict[date, R.MonthRate], why: str | None = None) -> dict[str, Any]:
+    """What the pages show about a monthly series: each month's average 91-day yield and the days per tier."""
+    tiers: dict[str, int] = {}
+    for m in months.values():
+        for t, n in m.tiers:
+            tiers[t] = tiers.get(t, 0) + n
+    return {"method": "monthly", "label": MONTHLY_LABEL, "basis": R.BASIS, "tiers": tiers, "note": why,
+            "months": [{"month": f"{m.month:%Y-%m}", "days": m.days, "y91": m.y91, "tiers": dict(m.tiers)}
+                       for m in months.values() if m.y91 is not None],
+            "unknown": [{"month": f"{m.month:%Y-%m}", "note": m.note} for m in months.values() if m.y91 is None]}  # fmt: skip
+
+
+def factsheet(day: date) -> dict[str, Any]:
+    """The factsheet-style rate: the repo rate in force on `day` (the window's last working day) as one annual rate
+    for every period, the way Indian AMC factsheets apply one overnight rate of the factsheet date."""
+    from finresearch.fincalc import policy_rates as P
+
+    row = P.in_force(day)
+    if row is None:
+        return {"known": False, "rate": None, "as_of": day.isoformat(), "label": FACTSHEET_LABEL, "url": None,
+                "source": None, "note": R.unknown(day, 1)["note"]}  # fmt: skip
+    return {"known": True, "rate": float(row.repo), "as_of": day.isoformat(), "label": FACTSHEET_LABEL,
+            "source": f"RBI repo rate {float(row.repo) * 100:.2f} % in force on {day:%d-%b-%Y} (from "
+                      f"{row.effective:%d-%b-%Y})", "url": row.url, "note": None}  # fmt: skip

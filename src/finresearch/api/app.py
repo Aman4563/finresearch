@@ -134,7 +134,7 @@ class Strategy(BaseModel):
         ge=-1,
         le=1,
         description="Risk-free rate for greeks (continuous, fraction); "
-        "default: FBIL's G-sec par yield at the expiry (signals.rates)",
+        "default: signals.rates at the expiry (an owner-entered yield, else the RBI repo-rate proxy, #479)",
     )
     drift: Decimal | None = Field(None, ge=-1, le=1, description="Real-world annual drift; default = rate")
     charge_overrides: dict[str, Decimal] | None = Field(

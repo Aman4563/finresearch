@@ -326,7 +326,7 @@ def add_fno_book_routes(app: FastAPI, clock: Callable[[], datetime] | None = Non
             raise HTTPException(
                 422, f"the {body.expiry:%d-%b-%Y} contract has expired (15:30 IST): no margin estimate"
             )
-        rinfo = await service._rate(t, None)  # #366/#385: FBIL's par yield at the expiry, labelled
+        rinfo = await service._rate(t, None)  # signals.rates at the expiry (#479), labelled
         rate = rinfo["rate"]
         legs, spec = [], []
         for x in body.legs:

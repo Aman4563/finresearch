@@ -80,7 +80,8 @@ async def replay_moves(h: Any, fetch: Any, store: Any, today: date, *,
 async def book(now: datetime, *, sources: Any = None, rate: float | None = None,
                candidate: Sequence[bs.BookLeg] = ()) -> tuple[jr.Book, list[bs.BookLeg], list[str]]:  # fmt: skip
     """The open book (None legs = unknown, with the reason) and `candidate` legs, all priced on today's chains, at
-    `rate`, else FBIL's par yield at the longest leg's tenor (fnobook.scenarios.live_rate, named in a "rate: " note)."""
+    `rate`, else signals.rates' rate at the longest leg's tenor (fnobook.scenarios.live_rate, named in a "rate: "
+    note)."""
     from finresearch.fnobook import scenarios as sc
     from finresearch.fnobook import service
 

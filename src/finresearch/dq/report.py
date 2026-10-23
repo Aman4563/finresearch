@@ -17,8 +17,9 @@ LABELS = {
     "index_eod": "Index closes and India VIX", "span": "SPAN risk parameters", "option_quote": "Forward option quotes",
     "intraday_series": "Intraday index archive", "ipo_history": "IPO history", "ipo_issue": "IPO issue registry",
     "groww_close": "Groww vs official closes", "disk": "Disk space",
-    "rate_gsec_par": "FBIL G-sec par curve", "rate_tbill": "FBIL T-bill rates", "rate_mibor_on": "FBIL overnight MIBOR",
-    "rate_mibor_term": "FBIL term MIBOR",
+    # FBIL is paused (#476): nothing loads these and nothing reads them (#479), so they stay stale or never loaded
+    "rate_gsec_par": "FBIL G-sec par curve (paused)", "rate_tbill": "FBIL T-bill rates (paused)",
+    "rate_mibor_on": "FBIL overnight MIBOR (paused)", "rate_mibor_term": "FBIL term MIBOR (paused)",
 }  # fmt: skip
 RANK = {"fail": 0, "unknown": 1, "warn": 2, "ok": 3}
 

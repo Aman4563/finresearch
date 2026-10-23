@@ -18,7 +18,9 @@ Formulas (research note "portfolio-insights" §1.7, §1.8, §1.4, §1.17):
 - historical VaR_95 = -q_0.05(r), CVaR_95 = -mean(r | r <= q_0.05); q by linear interpolation (numpy's default);
   the 21-day figures use overlapping 21-day returns (their effective sample is about n / 21);
 - Sharpe = (mean(r)·252 - r_f) / σ_ann; Sortino divides by the downside deviation below r_f / 252
-  (`fincalc.funds.sharpe_ratio` / `sortino_ratio`, applied to the TWR index);
+  (`fincalc.funds.sharpe_ratio` / `sortino_ratio`, applied to the TWR index); against each day's own risk-free
+  return rf_t (#479): Sharpe = mean(r - rf)/stdev(r - rf)·√252, Sortino = mean(r - rf)·252 / (DD·√252) with
+  DD = √(Σ min(0, r - rf)² / N) (`sharpe_ratio_excess` / `sortino_ratio_excess`);
 - risk contribution RC_i = w_i·(Σw)_i / (wᵀΣw), fractions that add up to 1;
 - marginal contribution MCR_i = (Σw)_i / σ_p (#399, the pre-trade line): new money in i raises σ_p iff MCR_i > σ_p;
 - HHI = Σ w_i², effective number of holdings N_eff = 1 / HHI;
@@ -284,6 +286,22 @@ def sharpe_sortino(
     try:
         so: float | None = float(sortino_ratio(navs, rf_annual))
     except ValueError:  # no downside periods at all
+        so = None
+    return s, so
+
+
+def sharpe_sortino_excess(
+    index: Sequence[float], days: Sequence[date], rf: Sequence[float]
+) -> tuple[float, float | None]:
+    """(Sharpe, Sortino) of the TWR index against each day's own risk-free return `rf[i]` (over days[i]..days[i+1],
+    #479): fincalc.funds.sharpe_ratio_excess / sortino_ratio_excess, 252 periods a year."""
+    from finresearch.fincalc.funds import sharpe_ratio_excess, sortino_ratio_excess
+
+    navs = list(zip(days, index, strict=True))
+    s = float(sharpe_ratio_excess(navs, rf))
+    try:
+        so: float | None = float(sortino_ratio_excess(navs, rf))
+    except ValueError:  # no day below its risk-free return
         so = None
     return s, so
 

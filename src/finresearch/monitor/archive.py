@@ -9,12 +9,14 @@ After the close (from 16:15 IST, weekdays), at most once per IST day per stream:
 - `iv_term.jsonl` — for NIFTY, BANKNIFTY and FINNIFTY, the ATM IV and 25-delta skew of the NEXT expiry after the one
   the IV job records (`monitor.iv`, `iv_history` keeps the near one): the term structure (next − near) and skew for
   the variance-risk-premium measurement of §2.5. One option-chain request per index.
-- `gsec_spread.jsonl` — the FBIL par-yield curve of the latest published day, and NSE's traded bond list (price,
-  coupon, maturity, rating, traded value) with a pre-tax spread to the matching-tenor par yield. The coupon frequency
-  is not in NSE's list, so the spread is computed at an ASSUMED yearly frequency and labelled so; the raw inputs are
-  stored so it can be recomputed once the frequency is known (§2.4: context, not a signal).
+- `gsec_spread.jsonl` — a G-sec par-yield curve and NSE's traded bond list (price, coupon, maturity, rating, traded
+  value) with a pre-tax spread to the matching-tenor par yield. The coupon frequency is not in NSE's list, so the
+  spread is computed at an ASSUMED yearly frequency and labelled so; the raw inputs are stored so it can be
+  recomputed once the frequency is known (§2.4: context, not a signal). There is no G-sec curve source now: FBIL is
+  paused (#476) and the RBI repo-rate proxy (#479) is a short rate, so the live stream archives nothing and reports
+  GSEC_UNKNOWN (no request, no retry) until a curve source is decided; `ArchiveSources.par_curve` takes one.
 
-Network: about 20 quotes, 3 option chains, 1 bond list and 2 FBIL requests a day, through the app's polite clients.
+Network: about 20 quotes and 3 option chains a day, through the app's polite clients.
 A stream that fails is retried at most 3 times a day, 15 minutes apart; a failure never breaks the monitor tick.
 """
 
@@ -43,6 +45,7 @@ SECTOR_REPRESENTATIVES = ("INFY", "HDFCBANK", "SBIN", "BAJFINANCE", "MARUTI", "H
                           "APOLLOHOSP", "NTPC", "ONGC", "DLF", "TITAN", "LT", "BHARTIARTL", "ULTRACEMCO")  # fmt: skip
 IV_TERM_SYMBOLS = ("NIFTY", "BANKNIFTY", "FINNIFTY")
 _tries: dict[tuple[str, date], tuple[int, float]] = {}
+GSEC_UNKNOWN = "unknown: no G-sec curve source (FBIL paused, #476)"
 
 
 @dataclass
@@ -52,7 +55,9 @@ class ArchiveSources:
     quote: Callable[[str], Awaitable[Any]] | None = None  # symbol -> adapters.nse.Quote
     fno: Any = None  # the monitor's option-chain client factory (async context manager)
     bonds: Callable[[], Awaitable[list[Any]]] | None = None  # -> list[adapters.nse_bonds.ListedBond]
-    par_curve: Callable[[], Awaitable[Any]] | None = None  # -> adapters.fbil.ParCurve
+    par_curve: Callable[[], Awaitable[Any]] | None = (
+        None  # -> a G-sec par curve; None: no source (GSEC_UNKNOWN)
+    )
     watched: Callable[[], list[str]] | None = None  # held and watched NSE stocks (tracked(), by weight)
     near_iv: Callable[[str, date], dict[str, Any] | None] | None = None  # iv_history row (symbol, day)
     out_dir: Path = field(default_factory=lambda: ARCHIVE_DIR)
@@ -119,7 +124,7 @@ def iv_term_row(symbol: str, near: dict[str, Any], nxt: dict[str, Any], archived
 
 def bond_spread_rows(bonds: list[Any], curve: Any, today: date, archived_on: date) -> list[dict[str, Any]]:
     """Traded bonds with a complete row: the inputs plus a pre-tax spread (pp) of the effective annual YTM at an
-    ASSUMED yearly coupon over the effective annual FBIL par yield at the same tenor."""
+    ASSUMED yearly coupon over the effective annual G-sec par yield at the same tenor."""
     from finresearch.fincalc import bonds as B
 
     out = []
@@ -150,13 +155,6 @@ async def _live_bonds():
     from finresearch.adapters.nse_bonds import live_bonds
 
     return await live_bonds()
-
-
-async def _live_curve():
-    from finresearch.adapters.fbil import FbilClient
-
-    async with FbilClient() as fbil:
-        return await fbil.latest_par_curve()
 
 
 def _live_watched() -> list[str]:
@@ -217,6 +215,10 @@ async def archive_step(now: datetime, src: ArchiveSources | None = None, *,
     key = today.isoformat()
     for stream, run in (("sector_pe", _sector_pe), ("iv_term", _iv_term), ("gsec_spread", _gsec_spread)):
         if not _due(stream, today):
+            continue
+        if stream == "gsec_spread" and src.par_curve is None:  # no G-sec curve source (#476, #479)
+            out.setdefault("unknown", {})[stream] = GSEC_UNKNOWN
+            _done(stream, today)
             continue
         if key in recorded_days(src, stream):
             _done(stream, today)
@@ -296,17 +298,11 @@ async def _iv_term(src: ArchiveSources, today: date) -> list[dict[str, Any]]:
 
 
 async def _gsec_spread(src: ArchiveSources, today: date) -> list[dict[str, Any]]:
-    if src.par_curve is None:
-        from finresearch import data_rights
-        from finresearch.adapters.fbil import DATASET
-
-        try:
-            data_rights.require(DATASET)
-        except data_rights.NoDecision:
-            return []  # FBIL's Terms of Use forbid an archive without a subscription (#476): nothing archived, no retry
-    curve = await (src.par_curve or _live_curve)()
+    if src.par_curve is None:  # archive_step reports GSEC_UNKNOWN before calling this
+        return []
+    curve = await src.par_curve()
     if getattr(curve, "fallback", False):
-        raise RuntimeError("FBIL unreachable (fallback curve): not archived")
+        raise RuntimeError("a stale G-sec curve: not archived")
     bonds = await (src.bonds or _live_bonds)()
     rows = [{"archived_on": today, "kind": "par_curve", "curve_as_of": curve.as_of, "source": curve.source,
              "points": [[float(p.tenor_years), float(p.semi_annual)] for p in curve.points]}]  # fmt: skip

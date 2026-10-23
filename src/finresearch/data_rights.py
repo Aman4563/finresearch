@@ -17,6 +17,10 @@ non-distributed use only (local database and data/, never committed, published o
 any notice and revisit its decision; re-read a source's terms before a new dataset from it. FBIL's disclaimer ("FBIL
 does not authorize commercial use of the data available in its website without written permission") is respected: no
 commercial use and no redistribution. IIMA asks to be cited: the citation stays wherever its factors are shown.
+
+Risk-free rates (#479, the owner's decision of 23-Oct-2026): no automated collection of rates from anyone. FBIL stays
+paused (PENDING below) and RBI's data is not collected ("rbi_rates" is dropped): the app's risk-free rate is RBI's
+policy repo rate typed in by hand from RBI's releases (fincalc.policy_rates) plus rates the owner enters.
 """
 
 from __future__ import annotations
@@ -53,6 +57,12 @@ _IIMA_TERMS = (
     "citation is kept wherever the factors are shown"
 )
 # MoSPI's CPI API (#347, adapters.mospi_cpi): CPI API User Manual.pdf (10-Apr-2024), read 22-Oct-2026
+# RBI's website disclaimer (www.rbi.org.in/Scripts/Disclaimer.aspx, viewed 23-Oct-2026)
+_RBI_TERMS = (
+    "RBI website disclaimer, viewed 23-Oct-2026: 'Except as set forth below, caching and links to, and the framing "
+    "of this Web Site or any of the contents are prohibited.' No RBI page or series is collected; policy-rate "
+    "decisions are typed in by hand with their release (fincalc.policy_rates)"
+)
 _MOSPI_TERMS = (
     "MoSPI CPI API (government statistics), read 22-Oct-2026: the 2024 user manual describes a sign-up and "
     "a 15-minute access token ('Without access token the APIs will fetch only the first 10 records'); the "
@@ -90,6 +100,8 @@ DECISIONS: dict[str, Decision] = {
                  f"{_NSE_TERMS}: the Nifty 50 member list and the members' quotes, for attribution; nothing stored"),
         Decision("iima_factors", "accept-personal", _OWNER_1023, _REF_1023, _IIMA_TERMS),  # #348/#430
         Decision("mospi_cpi", "accept-personal", _OWNER_1023, _REF_1023, _MOSPI_TERMS),  # #347/#436
+        # #479: no RBI fetcher may run (T-bill auction results, money-market rates, DBIE): the owner dropped it
+        Decision("rbi_rates", "drop", _OWNER_1023, "issue #479", _RBI_TERMS),
     )
 }  # fmt: skip
 
@@ -97,14 +109,15 @@ DECISIONS: dict[str, Decision] = {
 # Datasets whose terms were read but whose decision is the owner's and not yet recorded: `require` refuses them and
 # says what was read. To decide, add a Decision above (choice, date, where it is recorded, the terms it rests on).
 PENDING: dict[str, str] = {
-    # FBIL (#366/#447, adapters.fbil, refseries.rates, the archive job, the bond/portfolio/option rate lookups). FBIL's
+    # FBIL (#366/#447, adapters.fbil, refseries.rates and its nightly job; since #479 no rate lookup, archive or
+    # signal reads FBIL, and FBIL's embedded curve is gone from the repository). FBIL's
     # "Terms of Use and Subscription Disclaimer for FBIL Benchmarks" (posted 13-Oct-2026, read 23-Oct-2026):
     # §9.1 the website shows the data after 7 calendar days "solely for delayed, non-commercial viewing purposes";
     # §9.2 users (including "casual website visitors") are "strictly prohibited from compiling, downloading, storing,
     # or leveraging the delayed website Benchmark Data to construct an internal database, historical archive, or
     # systematic tracking feed without acquiring a specific paid subscription"; §2.1 no redistribution or publishing.
-    # The 23-Oct-2026 decision rested on the older disclaimer, so it is paused until the owner decides (#476):
-    # subscribe, or replace FBIL with RBI's own published data.
+    # The 23-Oct-2026 decision rested on the older disclaimer, so it is paused until the owner decides (#476); the
+    # owner then chose the RBI repo-rate proxy without collecting anything (#479). A subscription would re-enable it.
     "fbil_rates": "FBIL Terms of Use, 13-Oct-2026: free website data is delayed 7 days and for non-commercial viewing "
     "only; building a database, archive or tracking feed from it needs a paid subscription (§9.2); no "
     "redistribution (§2.1). Paused pending the owner's decision (#476)",
