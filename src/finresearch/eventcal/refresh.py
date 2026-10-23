@@ -58,6 +58,7 @@ class Found:
     moves: list[Move] = field(default_factory=list)
     replaces: list[Replace] = field(default_factory=list)
     urls: list[str] = field(default_factory=list)  # what was read, for the log
+    notices: list[str] = field(default_factory=list)  # for the owner to read: nothing is stored from them
 
 
 @dataclass(frozen=True)
@@ -146,7 +147,7 @@ async def run(sources: list[Source], now: datetime) -> dict[str, Any]:
     from finresearch import data_rights
     from finresearch.db import session_scope
 
-    out: dict[str, Any] = {"stored": {}, "skipped": {}, "failed": {}}
+    out: dict[str, Any] = {"stored": {}, "skipped": {}, "failed": {}, "notices": {}}
     for src in sources:
         try:
             data_rights.require(src.dataset)
@@ -163,11 +164,14 @@ async def run(sources: list[Source], now: datetime) -> dict[str, Any]:
             continue
         with session_scope() as s:
             out["stored"][src.dataset] = apply(s, found, now)
+        if found.notices:
+            out["notices"][src.dataset] = found.notices
     return out
 
 
 def sources() -> list[Source]:
     """The official sources of the nightly refresh, each behind its data-rights decision."""
-    from finresearch.eventcal import mospi, rbi
+    from finresearch.eventcal import mospi, nifty_indices, nse, rbi
 
-    return [Source("rbi_mpc_schedule", rbi.read), Source("mospi_release_calendar", mospi.read)]
+    return [Source("rbi_mpc_schedule", rbi.read), Source("mospi_release_calendar", mospi.read),
+            Source("nifty_indices_press", nifty_indices.read), Source("nse_circulars", nse.read)]  # fmt: skip

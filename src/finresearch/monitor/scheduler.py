@@ -570,8 +570,8 @@ def _spawn_rates(now: datetime) -> None:
 
 
 def _spawn_eventcal(now: datetime) -> None:
-    """Start the nightly event-calendar refresh (monitor.eventcal, #367) in the background: a few small RBI and MoSPI
-    requests for sources the owner decided on. At most one runs at a time."""
+    """Start the nightly event-calendar refresh (monitor.eventcal, #367) in the background: a few small RBI, MoSPI,
+    NSE Indices and NSE requests for the sources the owner decided on. At most one runs at a time."""
     from finresearch.monitor import eventcal
 
     t = _BACKGROUND.get("eventcal")

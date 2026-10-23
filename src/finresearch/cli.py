@@ -2697,8 +2697,10 @@ def events_seed() -> None:
 @events_app.command("refresh")
 def events_refresh() -> None:
     """Read the official sources for new forward dates now (what the monitor does nightly from 21:00 IST): RBI MPC
-    schedules and rescheduling notices, MoSPI CPI/GDP release dates. A source without the owner's data-rights decision
-    is skipped unread; a failed source stores nothing (exit code 1). New rows are known from now, never back-dated."""
+    schedules and rescheduling notices, MoSPI CPI/GDP release dates, NSE index rebalances (NSE Indices' press releases)
+    and NSE's F&O expiry-day revision circulars (printed to review, not stored). A source without the owner's
+    data-rights decision is skipped unread; a failed source stores nothing (exit code 1). New rows are known from now,
+    never back-dated."""
     import asyncio
 
     from finresearch.eventcal import refresh
@@ -2708,6 +2710,9 @@ def events_refresh() -> None:
     for name, got in res["stored"].items():
         console.print(f"{name}: {got['events']} new events, {got['coverage']} new coverage rows, "
                       f"{got['withdrawn']} withdrawn, {got['reinstated']} reinstated")  # fmt: skip
+    for name, lines in res["notices"].items():
+        for line in lines:
+            console.print(f"{name}: to review: {line}", markup=False, soft_wrap=True)
     for kind in ("skipped", "failed"):
         for name, why in res[kind].items():
             console.print(f"{name}: {kind} ({why})", markup=False)

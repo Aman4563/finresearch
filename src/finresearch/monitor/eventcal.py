@@ -1,8 +1,10 @@
 """The monitor's nightly event-calendar refresh (#367, eventcal.refresh): once an evening from RUN_AFTER (IST), well
 outside NSE's 09:00-16:00 session, each official source is read: RBI's press-release listing for new MPC schedules and
-rescheduling notices (eventcal.rbi, ~3-5 requests) and MoSPI's Advance Release Calendar for CPI and GDP dates
-(eventcal.mospi, 1-2 requests). RBI and MoSPI publish on their own calendars, not NSE's, so the job runs every day and
-does not consult the NSE holiday list. The night is claimed in `alert_eval_slot` ("eventcal:<day>"); a night where a
+rescheduling notices (eventcal.rbi, ~3-5 requests), MoSPI's Advance Release Calendar for CPI and GDP dates
+(eventcal.mospi, 1-2 requests), NSE Indices' press-release page for index rebalances (eventcal.nifty_indices, 1
+request) and NSE's circulars listing for expiry-day revisions, reported as notices and never stored (eventcal.nse, 1
+request and a warm-up). The publishers do not follow NSE's trading calendar, so the job runs every day and does not
+consult the NSE holiday list. The night is claimed in `alert_eval_slot` ("eventcal:<day>"); a night where a
 decided source failed is retried (monitor.disclosures MAX_ATTEMPTS), and a failed source stores nothing, so coverage
 stays where it was and plans past it read "unknown". A source without the owner's data-rights decision
 (data_rights.PENDING) is recorded as skipped: no request, no retry.

@@ -114,6 +114,20 @@ PENDING: dict[str, str] = {
     # (mospi_cpi, api.mospi.gov.in); no licence text could be read (mospi.gov.in's policy pages need JavaScript).
     "mospi_release_calendar": "MoSPI Advance Release Calendar (www.mospi.gov.in), read 23-Oct-2026: no licence "
     "text readable; CPI and GDP release dates only (#367). Owner decision needed (#367)",
+    # The event calendar's nightly refresh (#367, eventcal.nifty_indices): NSE Indices Ltd's press-release listing
+    # (www.niftyindices.com/press-release, one ~660 KB page a night, titles only, no PDF fetched) for index
+    # constituent changes. NSE Indices' own terms (https://www.niftyindices.com/terms-of-use, read 23-Oct-2026), not
+    # NSE's: "You may not conduct any systematic or automated data collection activities (including scraping, data
+    # mining, data extraction and data harvesting) on or in relation to our website without our express written
+    # consent"; "personal, non-commercial use only"; no material may be copied, reproduced or distributed.
+    "nifty_indices_press": "NSE Indices terms of use read 23-Oct-2026: automated collection prohibited without "
+    "express written consent; personal, non-commercial use only; one listing page a night for index rebalance "
+    "dates (#367). Owner decision needed (#367)",
+    # The event calendar's nightly refresh (#367, eventcal.nse): NSE's circulars listing (/api/circulars, one request
+    # a night for the last 10 days), read only to report F&O expiry-day revisions; no circular body is downloaded
+    # and nothing is stored. Same NSE website terms as above (not re-read for this dataset).
+    "nse_circulars": f"{_NSE_TERMS}: automated collection prohibited (not re-read for it); one circulars-listing "
+    "request a night, expiry-day notices reported, nothing stored (#367). Owner decision needed (#367)",
 }
 
 

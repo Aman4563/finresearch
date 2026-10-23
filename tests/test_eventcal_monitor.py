@@ -36,14 +36,24 @@ def clean(env):
     yield env
 
 
-async def test_undecided_sources_are_skipped_without_requests_and_not_retried(clean):
+SOURCES = ["rbi_mpc_schedule", "mospi_release_calendar", "nifty_indices_press", "nse_circulars"]
+
+
+@pytest.fixture
+def undecided(monkeypatch):
+    """The refresh sources without a decision, whatever the owner has recorded since."""
+    from finresearch import data_rights
+
+    for name in SOURCES:
+        monkeypatch.delitem(data_rights.DECISIONS, name, raising=False)
+
+
+async def test_undecided_sources_are_skipped_without_requests_and_not_retried(clean, undecided):
     import respx
 
     with respx.mock(assert_all_called=False) as mock:
         res = await job.eventcal_step(AFTER)
-    assert (
-        set(res["eventcal"]["skipped"]) == {"rbi_mpc_schedule", "mospi_release_calendar"} and not mock.calls
-    )
+    assert sorted(res["eventcal"]["skipped"]) == sorted(SOURCES) and not mock.calls
     assert await job.eventcal_step(AFTER) == {}  # the night's slot is taken
 
 
@@ -100,7 +110,7 @@ def test_the_live_monitor_runs_it_and_the_schedule_names_it():
     assert Deps.live().eventcal is True
     sj = scheduler.schedule_json(WatchWindows(), running=True)
     assert sj["eventcal"] == {"after": "21:00", "trading_days": False,
-                              "sources": ["rbi_mpc_schedule", "mospi_release_calendar"]}  # fmt: skip
+                              "sources": SOURCES}  # fmt: skip
 
 
 async def test_tick_spawns_the_job_only_when_due(monkeypatch):
@@ -122,7 +132,7 @@ async def test_tick_spawns_the_job_only_when_due(monkeypatch):
     assert calls == [AFTER]
 
 
-def test_cli_refresh_says_which_sources_wait_for_a_decision(clean):
+def test_cli_refresh_says_which_sources_wait_for_a_decision(clean, undecided):
     import respx
     from typer.testing import CliRunner
 
@@ -131,7 +141,7 @@ def test_cli_refresh_says_which_sources_wait_for_a_decision(clean):
     with respx.mock(assert_all_called=False) as mock:
         r = CliRunner().invoke(cli.app, ["events", "refresh"])
     assert r.exit_code == 0, r.output
-    assert "rbi_mpc_schedule: skipped" in r.output and "mospi_release_calendar: skipped" in r.output
+    assert all(f"{name}: skipped" in r.output for name in SOURCES), r.output
     assert not mock.calls
 
 
@@ -150,3 +160,21 @@ def test_cli_refresh_exits_non_zero_when_a_decided_source_fails(clean, monkeypat
         "rbi_mpc_schedule", "accept-personal", "2026-10-23", "test", "test"))  # fmt: skip
     r = CliRunner().invoke(cli.app, ["events", "refresh"])
     assert r.exit_code == 1 and "rbi_mpc_schedule: failed" in r.output
+
+
+def test_cli_refresh_prints_the_notices_to_review(clean, monkeypatch):
+    from typer.testing import CliRunner
+
+    from finresearch import cli, data_rights
+
+    async def reader(known, now):
+        return refresh.Found(
+            "nse_circulars", notices=["NSE/FAOP/99003 of 2026-10-22: Revision in Expiry Day (link)"]
+        )
+
+    monkeypatch.setattr(refresh, "sources", lambda: [refresh.Source("nse_circulars", reader)])
+    monkeypatch.setitem(data_rights.DECISIONS, "nse_circulars", data_rights.Decision(
+        "nse_circulars", "accept-personal", "2026-10-23", "test", "test"))  # fmt: skip
+    r = CliRunner().invoke(cli.app, ["events", "refresh"])
+    assert r.exit_code == 0, r.output
+    assert "nse_circulars: to review: NSE/FAOP/99003 of 2026-10-22: Revision in Expiry Day (link)" in r.output

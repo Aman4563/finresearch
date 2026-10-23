@@ -127,9 +127,7 @@ class Deps:
         False  # the nightly joint P&L of both books for the forward test (monitor.joint_pnl, #397)
     )
     revalidate: bool = False  # the monthly re-validation of the backtest recipes (monitor.revalidate, #379)
-    eventcal: bool = (
-        False  # the nightly event-calendar refresh: RBI MPC, MoSPI CPI/GDP dates (monitor.eventcal, #367)
-    )
+    eventcal: bool = False  # the nightly refresh of the event calendar's official sources (monitor.eventcal, #367)
     # async (holdings, today) -> history.History with the NIFTYBEES benchmark (holding betas and own closes) for
     # monitor.joint_pnl; the live app wires portfolio_daily.live_joint_history
     joint_history: Any = None

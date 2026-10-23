@@ -153,22 +153,37 @@ async def test_a_decided_source_is_stored_and_sees_what_is_already_known(clean, 
     assert seen[0].covered["rbi_mpc"] == date(2027, 3, 31) and URL in seen[0].urls
 
 
-def test_every_refresh_source_waits_for_the_owner_decision():
-    # none of these is decided in this change: the owner records each decision (data_rights.DECISIONS)
-    names = [s.dataset for s in refresh.sources()]
-    assert names == ["rbi_mpc_schedule", "mospi_release_calendar"]
-    for name in names:
-        assert name in data_rights.PENDING and name not in data_rights.DECISIONS
-        with pytest.raises(data_rights.NoDecision, match="Owner decision needed"):
-            data_rights.require(name)
+SOURCES = ["rbi_mpc_schedule", "mospi_release_calendar", "nifty_indices_press", "nse_circulars"]
 
 
-async def test_the_live_sources_make_no_request_while_undecided(clean):
+@pytest.fixture
+def undecided(monkeypatch):
+    """The refresh sources without a decision, whatever the owner has recorded since (so a decision never turns
+    these tests red)."""
+    for name in SOURCES:
+        monkeypatch.delitem(data_rights.DECISIONS, name, raising=False)
+
+
+def test_every_refresh_source_has_a_recorded_data_rights_state():
+    # the owner records each decision (data_rights.DECISIONS); until then it is listed as PENDING with what was read
+    assert [s.dataset for s in refresh.sources()] == SOURCES
+    for name in SOURCES:
+        assert name in data_rights.DECISIONS or name in data_rights.PENDING, name
+
+
+def test_an_undecided_source_is_refused_with_what_was_read(undecided):
+    for name in SOURCES:
+        if name in data_rights.PENDING:
+            with pytest.raises(data_rights.NoDecision, match="Owner decision needed"):
+                data_rights.require(name)
+
+
+async def test_the_live_sources_make_no_request_while_undecided(clean, undecided):
     import respx
 
     with respx.mock(assert_all_called=False) as mock:
         res = await refresh.run(refresh.sources(), NOW)
-    assert not mock.calls and set(res["skipped"]) == {"rbi_mpc_schedule", "mospi_release_calendar"}
+    assert not mock.calls and sorted(res["skipped"]) == sorted(SOURCES)
     assert res["stored"] == {} and res["failed"] == {}
 
 
@@ -193,3 +208,18 @@ def test_a_date_listed_again_after_a_move_is_reinstated_never_left_out(clean):
     got = {e.day: (e.known_since, e.withdrawn_since) for e in _load()[0]}
     assert got[date(2027, 6, 5)] == (NOW, back)
     assert got[date(2027, 6, 4)][1] is None  # reinstated (known since March, as first seen)
+
+
+async def test_notices_are_reported_per_source_and_store_nothing(clean, monkeypatch):
+    monkeypatch.setitem(data_rights.DECISIONS, "nse_circulars", data_rights.Decision(
+        "nse_circulars", "accept-personal", "2026-10-23", "test", "test"))  # fmt: skip
+
+    async def reader(known: refresh.Known, now: datetime) -> refresh.Found:
+        return refresh.Found(
+            "nse_circulars", notices=["NSE/FAOP/99001 of 2026-10-22: Revision in expiry day (url)"]
+        )
+
+    res = await refresh.run([refresh.Source("nse_circulars", reader)], NOW)
+    assert res["notices"] == {"nse_circulars": ["NSE/FAOP/99001 of 2026-10-22: Revision in expiry day (url)"]}
+    assert res["stored"]["nse_circulars"] == {"events": 0, "coverage": 0, "withdrawn": 0, "reinstated": 0}
+    assert _load() == ([], [])
