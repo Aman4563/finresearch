@@ -93,6 +93,10 @@ def staleness(day: date | None, today: date, max_age: int = MAX_EVIDENCE_AGE_DAY
     return why
 
 
+# the issue's regime split for re-runs: "before and after 20-Nov-2024 and 1-Sep-2025" (the fixed market-structure
+# changes; STT changes date-stale a run but do not split the re-validation)
+SPLIT_DAYS = tuple(c.day for c in _FIXED)
+
 TAGS = ("expiry_weekday", "weekly_expiries", "lot_size", "stt")
 
 
