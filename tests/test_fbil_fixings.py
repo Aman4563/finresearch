@@ -11,6 +11,16 @@ import respx
 from finresearch.adapters import fbil
 from finresearch.adapters.http import PoliteClient
 
+
+@pytest.fixture(autouse=True)
+def _fbil_decided(monkeypatch):
+    """These tests exercise the client with a recorded decision; tests/test_fbil_fixings.py covers the gate (#476)."""
+    from finresearch import data_rights
+
+    monkeypatch.setitem(data_rights.DECISIONS, "fbil_rates", data_rights.Decision(
+        "fbil_rates", "accept-personal", "2026-10-23", "test", "test"))  # fmt: skip
+
+
 TBILL = [
     {"processRunDate": "2022-01-03 00:00:00", "displayTime": "2022-01-03 17:30:00", "tenorName": "7 Days",
      "rate": 3.41, "comments": " "},
@@ -90,3 +100,19 @@ async def test_gsec_published_dates_in_a_window():
             date(2018, 3, 31),
             date(2018, 4, 3),
         ]
+
+
+@respx.mock
+async def test_no_request_reaches_fbil_without_a_decision(monkeypatch):
+    """FBIL's Terms of Use of 13-Oct-2026 (#476): every client call asks data_rights first and makes no request."""
+    from finresearch import data_rights
+
+    monkeypatch.delitem(data_rights.DECISIONS, "fbil_rates")
+    routes = [respx.get(url__startswith=fbil.BASE).mock(return_value=httpx.Response(200, json=[]))]
+    async with _client() as c:
+        for call in (c.published_dates(), c.workbook(date(2026, 10, 1)),
+                     c.fixings("tbill", date(2026, 10, 1), date(2026, 10, 2))):  # fmt: skip
+            with pytest.raises(fbil.FbilError, match="fbil_rates"):
+                await call
+    assert all(not r.called for r in routes)
+    assert "fbil_rates" in data_rights.PENDING and "9.2" in data_rights.PENDING["fbil_rates"]

@@ -80,7 +80,8 @@ DECISIONS: dict[str, Decision] = {
             "fno_bhav", "accept-personal", "2026-10-21", "issue #362", _NSE_TERMS
         ),  # the F&O bhavcopy (#306, collected since before #362) and its 2008-2021 vault load (#365)
         # The owner's decisions of 23-Oct-2026 (#471): accept-personal, the safeguards in the module docstring.
-        Decision("fbil_rates", "accept-personal", _OWNER_1023, _REF_1023, _FBIL_TERMS),  # #366, refseries.rates
+        # fbil_rates was accepted on 23-Oct-2026 on _FBIL_TERMS, then paused the same day (#476): FBIL's Terms of Use
+        # of 13-Oct-2026 forbid it (see PENDING).
         Decision("nse_combineoi", "accept-personal", _OWNER_1023, _REF_1023,
                  f"{_NSE_TERMS}: automated collection prohibited (not re-read for it); ~1,200 daily files 2022-2026"),  # #374, nse_mwpl
         Decision("nse_secban", "accept-personal", _OWNER_1023, _REF_1023,
@@ -96,6 +97,17 @@ DECISIONS: dict[str, Decision] = {
 # Datasets whose terms were read but whose decision is the owner's and not yet recorded: `require` refuses them and
 # says what was read. To decide, add a Decision above (choice, date, where it is recorded, the terms it rests on).
 PENDING: dict[str, str] = {
+    # FBIL (#366/#447, adapters.fbil, refseries.rates, the archive job, the bond/portfolio/option rate lookups). FBIL's
+    # "Terms of Use and Subscription Disclaimer for FBIL Benchmarks" (posted 13-Oct-2026, read 23-Oct-2026):
+    # §9.1 the website shows the data after 7 calendar days "solely for delayed, non-commercial viewing purposes";
+    # §9.2 users (including "casual website visitors") are "strictly prohibited from compiling, downloading, storing,
+    # or leveraging the delayed website Benchmark Data to construct an internal database, historical archive, or
+    # systematic tracking feed without acquiring a specific paid subscription"; §2.1 no redistribution or publishing.
+    # The 23-Oct-2026 decision rested on the older disclaimer, so it is paused until the owner decides (#476):
+    # subscribe, or replace FBIL with RBI's own published data.
+    "fbil_rates": "FBIL Terms of Use, 13-Oct-2026: free website data is delayed 7 days and for non-commercial viewing "
+    "only; building a database, archive or tracking feed from it needs a paid subscription (§9.2); no "
+    "redistribution (§2.1). Paused pending the owner's decision (#476)",
     # NSE's daily FII derivative statistics (content/fo/fii_stats_<DD-Mon-YYYY>.xls, P1.9, #371,
     # adapters.nse_fii_stats): one ~10-20 KB workbook a day, ~2,900 requests for 2015-2026. Same NSE website terms as
     # above (not re-read for this dataset): no systematic or automated collection. Recorded as pending by the agent
