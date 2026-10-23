@@ -252,16 +252,25 @@ async def forecast_step(deps: jobs.Deps, now: datetime) -> dict[str, int]:
     except Exception:
         log.warning("forecast ledger step failed", exc_info=True)
         return {}
-    try:  # #376 (b): the fixed probability panel, from the stored bhavcopy (its own table, its own failure)
-        from finresearch.signals import prob_panel
-
-        with session_scope() as s:
-            out["panel_logged"] = prob_panel.record_pending(s, card_forecasts.history())
-        with session_scope() as s:
-            out["panel_resolved"] = prob_panel.resolve_due(s, card_forecasts.history(), now)["resolved"]
+    try:  # #376 (b): the fixed probability panel, from the stored bhavcopy (its own table, its own failure); it reads
+        # many stored sessions on a new one, so it runs off the event loop like the other heavy passes
+        out.update(await asyncio.to_thread(_panel_pass, now))
     except Exception:
         log.warning("probability panel step failed", exc_info=True)
     return out
+
+
+def _panel_pass(now: datetime) -> dict[str, int]:
+    from finresearch.fnobook import card_forecasts
+    from finresearch.signals import prob_panel
+
+    with session_scope() as s:
+        logged = prob_panel.record_pending(s, card_forecasts.history())
+    with session_scope() as s:
+        return {
+            "panel_logged": logged,
+            "panel_resolved": prob_panel.resolve_due(s, card_forecasts.history(), now)["resolved"],
+        }
 
 
 async def alerts_step(now: datetime) -> dict[str, int]:
