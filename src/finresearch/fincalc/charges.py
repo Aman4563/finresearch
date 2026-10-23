@@ -22,6 +22,8 @@ Sources:
 - Exchange charges before 1-Oct-2024 were slabbed by a member's monthly turnover; the table uses the first slab, the
   rate a retail broker passes on. From 1-Apr-2023 the exchange rows include NSE's IPFT contribution (Rs 50 per crore
   of options premium, Rs 10 per crore of futures); before that IPFT was Rs 0.01 per crore and is left out.
+- Before 1-Jul-2020 stamp duty is Maharashtra's 0.002 % and NSE's options charge before 1-Apr-2017 is PTI's Rs 50 per
+  lakh, both secondary and both the owner's choice of 23-Oct-2026 (#471); each row's note gives the caveats.
 - Before a key's earliest row, and in a period recorded with no rate, the rate is unknown (#365): order_costs and
   exercise_stt raise ChargesUnknown and the backtest skips that entry. A later rate is never used for an earlier date.
 """
@@ -68,6 +70,10 @@ ST_2009_2012 = "https://indiabudget.gov.in/budget2012-2013/ub2012-13/cen/st0212.
 TRU_2015 = "https://www.indiabudget.gov.in/budget2015-2016/ub2015-16/cen/dojstru2.pdf"
 TRU_2016 = "https://www.indiabudget.gov.in/budget2016-2017/ub2016-17/cen/dojstru2.pdf"
 NSE_STAMP = "https://www.nseindia.com/static/regulations/member-compliance-stamp-duty"
+# owner's decisions of 23-Oct-2026 (#471): pre-1-Jul-2020 stamp duty and pre-1-Apr-2017 NSE options charge (secondary)
+MH_STAMP_2005 = "https://taxindiaonline.com/RC2/pdfdocs/ordinance/maharashtra_stampduty_ordinance.pdf"
+PTI_2017 = ("https://www.business-standard.com/amp/article/markets/"
+            "nse-cuts-fee-on-options-currency-derivatives-to-deepen-market-117040900174_1.html")  # fmt: skip
 EXERCISE_ON_INTRINSIC_FROM = date(2019, 9, 1)  # before: 0.125 % of the settlement price (Finance Act 2008)
 DEFAULT_BROKERAGE_PER_ORDER = Decimal(20)
 CRORE = 10_000_000
@@ -103,6 +109,11 @@ class ChargesUnknown(ValueError):
 _SLAB = ("NSE's first-slab rate (the turnover slab a retail broker's clients pay; lower slabs apply only to a "
          "member's turnover above it)")  # fmt: skip
 _IPFT = "plus NSE's IPFT contribution (Rs 50/crore of options premium, Rs 10/crore of futures, FA/56129)"
+_MH_STAMP = ("Maharashtra's rate, the owner's choice of 23-Oct-2026 (#471: Maharashtra, NSE's home state; before "
+             "1-Jul-2020 stamp duty was the client's state's, NSE's member-compliance page): 20 paise per Rs 10,000 "
+             "(0.002 %) on F&O trades, Bombay Stamp Act Art. 51A(c) as inserted by Maharashtra Ordinance No. II of "
+             "2005 (7-May-2005, in force at once), read from a third-party copy of the ordinance; the 'or part "
+             "thereof' rounding is not modelled; later Maharashtra amendments up to 2020 were not checked.")  # fmt: skip
 # the table: several rows per key, the latest one on or before the trade date applies
 RATES: tuple[ChargeRate, ...] = (
     # 2008-2020 (#365). A row with no rate (None) records a period with no single sourced rate: unknown, never 0.
@@ -118,9 +129,11 @@ RATES: tuple[ChargeRate, ...] = (
        "intrinsic value only from 1-Sep-2019. Before 1-Jun-2008 not sourced"),
     _r("stt_futures_sell", "0.017", "futures turnover, sell side", date(2006, 6, 1), FINANCE_BILL_2006, "verified",
        "Finance Act 2006: 0.0133 % -> 0.017 % for derivatives from 1-Jun-2006 (in force on 1-Jan-2008, NSE/F&A/10706)"),
-    _r("exchange_option", None, "option premium, both sides (NSE)", date(2008, 1, 1), NSE_TX_2017, "unknown",
-       "NSE's options transaction charge before 1-Apr-2017 is in no NSE circular found (secondary pages disagree: "
-       "PTI Apr-2017 implies Rs 50/lakh, Zerodha Oct-2016 0.053 % possibly with clearing)"),
+    _r("exchange_option", "0.05", "option premium, both sides (NSE)", date(2008, 1, 1), PTI_2017, "secondary",
+       "secondary (PTI): Rs 50 per lakh of premium, the owner's choice of 23-Oct-2026 (#471). No NSE circular found; "
+       "PTI (Business Standard, 9-Apr-2017) says NSE 'so far' levied Rs 5,000 on the first Rs 1 crore of monthly "
+       "premium (= Rs 50 per lakh) with incentives above it (not modelled); Zerodha's Oct-2016 page said 0.053 %, "
+       "possibly with clearing. The start date is not sourced (taken as in force on 1-Jan-2008)"),
     _r("exchange_option", "0.05", "option premium, both sides (NSE)", date(2017, 4, 1), NSE_TX_2017, "secondary",
        f"NSE/FA/34601: a flat Rs 2,500 a month up to Rs 3 crore of premium, then Rs 50 per lakh; the per-lakh band "
        f"is used, the monthly flat fee is not modelled; {_SLAB}"),
@@ -143,11 +156,11 @@ RATES: tuple[ChargeRate, ...] = (
        "SEBI/LAD-NRO/GN/2019/03 from 1-Apr-2019 (text hosted by the Calcutta Stock Exchange)"),
     _r("sebi_fee", "0.00005", "turnover, both sides (₹5 per crore)", date(2020, 6, 1), SEBI_2020, "verified",
        "50 % off the ₹10 per crore from June 2020 to March 2021 (SEBI PR 24/2020)"),
-    _r("stamp_option_buy", None, "option premium, buy side", date(2008, 1, 1), NSE_STAMP, "unknown",
-       "before 1-Jul-2020 stamp duty was the client's state's (Maharashtra 0.002 % under Art. 51A(c), other states "
-       "their own; NSE's member-compliance page): no single rate without choosing a state"),
-    _r("stamp_futures_buy", None, "futures turnover, buy side", date(2008, 1, 1), NSE_STAMP, "unknown",
-       "before 1-Jul-2020 stamp duty was the client's state's: no single rate without choosing a state"),
+    _r("stamp_option_buy", "0.002", "option premium, buy side", date(2005, 5, 7), MH_STAMP_2005, "secondary",
+       f"{_MH_STAMP} The ordinance says 'futures and options trading' without a premium or notional basis: the "
+       "premium is this table's reading, as for the uniform rate from 1-Jul-2020"),
+    _r("stamp_futures_buy", "0.002", "futures turnover, buy side", date(2005, 5, 7), MH_STAMP_2005, "secondary",
+       _MH_STAMP),
     _r("gst", None, "brokerage + exchange charges + SEBI fee", date(2008, 1, 1), NSE_ST_2008, "unknown",
        "until 15-May-2008 service tax applied to brokerage but not to NSE's charges (NSE/F&A/10704)"),
     _r("gst", "12.36", "brokerage + exchange charges + SEBI fee", date(2008, 5, 16), NSE_ST_2008, "secondary",
