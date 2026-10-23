@@ -19,10 +19,11 @@ from finresearch.fincalc import beta as fbeta
 from finresearch.fincalc import book_scenarios as bs
 from finresearch.fincalc.dates import to_ist, years_to_expiry
 
-# #480 (the owner's decision of 23-Oct-2026): each expiry is discounted at its own tenor's rate from signals.rates,
-# asked in one place per path (live: `live_rates`; stored days: `stored_rates`, the curve stored before the day), or
-# at the one rate a caller passes; every rate is named ("rate: ..." notes, and per expiry in the view; the last
-# fallback is the labelled 6.5 %). Each forward is rolled at its own expiry's carry ln(F/S)/T (`chain_carry`,
+# #480 (the owner's decision of 23-Oct-2026): each expiry is discounted at its own tenor's rate from signals.rates
+# (#479: an owner-entered yield, else the RBI repo-rate proxy, each at the expiry's own term), asked in one place per
+# path (live: `live_rates`; stored days: `stored_rates`, as known at the start of the day), or at the one rate a
+# caller passes; every rate is named ("rate: ..." notes, and per expiry in the view; there is no fixed fallback
+# rate). Each forward is rolled at its own expiry's carry ln(F/S)/T (`chain_carry`,
 # `stored_carry`), never at a rate: an expiry whose carry cannot be read leaves its scenarios unknown.
 BETA_RULE = ("Each underlying other than NIFTY moves by its beta x NIFTY's move: an EWMA estimate from stored front-"
              "future settles (evals/experiments/book_betas/PREREG.md). Every P&L takes, per underlying, the worse of "
@@ -36,8 +37,8 @@ def _tenors(legs: Any, now: datetime) -> dict[date, float]:
 
 
 async def live_rates(legs: Any, now: datetime, rate: float | None = None) -> dict[date, dict[str, Any]]:
-    """Each expiry's rate now: the caller's one rate, else signals.rates at that expiry's own tenor (labelled
-    fallbacks)."""
+    """Each expiry's rate now: the caller's one rate, else signals.rates at that expiry's own tenor (#479: an
+    owner-entered yield, else the RBI repo-rate proxy; each answer names its tier, date and source)."""
     from finresearch.signals import rates
 
     tenors = _tenors(legs, now)
@@ -47,7 +48,8 @@ async def live_rates(legs: Any, now: datetime, rate: float | None = None) -> dic
 
 
 def stored_rates(s: Any, day: date, tenors: Mapping[date, float]) -> dict[date, dict[str, Any]]:
-    """Each expiry's rate on a stored day: signals.rates at its own tenor from the curve stored before `day`."""
+    """Each expiry's rate on a stored day: signals.rates at its own tenor as known at the start of `day` (#479: no
+    owner entry or policy decision dated `day`)."""
     from finresearch.signals import rates
 
     return {e: rates.rate_on(s, day, t, before=True) for e, t in tenors.items()}
@@ -478,8 +480,8 @@ def stored_book(s: Any, day: date, *, rate: float | None = None, expiring_after:
     betas (fnohist.betas) as of `day`; the clock is `day`'s 15:30 IST. With `expiring_after`, only legs whose expiry is
     on or after it. ([] , market, []) when nothing is marked; (None, None, why) when a leg's direction is unknown. A
     forward that cannot be found is a note (its legs price as unknown).
-    `rate` None (#480): each expiry at its own rate (`stored_rates`, named in "rate: " notes; the labelled 6.5 % when no
-    curve is stored), its forward and carry from `stored_carry` (known carries named in "carry: " notes).
+    `rate` None (#480): each expiry at its own rate (`stored_rates`, #479: owner-entered else the RBI repo-rate proxy,
+    named in "rate: " notes), its forward and carry from `stored_carry` (known carries named in "carry: " notes).
     `rate` given: a registered caller's fixed rule (joint-risk-v1, fincalc.joint_pnl.RATE): that one rate for every
     expiry, `stored_forward` at it, every forward rolled at it, and no note."""
     from sqlalchemy import select

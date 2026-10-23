@@ -4,6 +4,7 @@ the recorded NIFTY chain (06-Oct-2026 expiry, 28-Sep close) and NSE's NIFTY 50 i
 from __future__ import annotations
 
 import json
+import math
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -239,12 +240,12 @@ def test_strategy_api_iv_and_risk_notice(app_client):
         r["probability_of_profit"] == r["model_probability_of_profit"]
         and "probability_of_profit" in r["deprecated"]
     )
-    # the rate is FBIL's par yield at the expiry (here the dated fallback curve: tests never reach FBIL), not 6.5 %
+    # #479: the rate is signals.rates at the expiry: the RBI repo-rate proxy (5.50 % since 07-Oct-2026) as a simple
+    # yield over the option's own days, made continuous; not FBIL and not 6.5 %
     rate = r["rate"]
-    assert rate["fallback"] is True and "FBIL fallback curve of 23-Sep-2026" in rate["source"]
-    assert (
-        rate["par_yield"] == 0.0534 and an["rate"] == rate["rate"]
-    )  # 0.25-year point of the 23-Sep-2026 curve
+    assert rate["fallback"] is False and rate["source"].startswith("RBI repo-rate proxy") and rate["tier"] == "proxy"
+    d = rate["tenor_days"]
+    assert rate["rate"] == pytest.approx(math.log(1 + 0.055 * d / 365) * 365 / d) and an["rate"] == rate["rate"]
     mine = c.post("/api/fno/strategy", json={**body, "rate": "0.07"}).json()["rate"]
     assert mine["rate"] == 0.07 and mine["source"] == "your input"
     assert an["capital_check"]["message"] == "No F&O capital set in the profile."

@@ -403,9 +403,10 @@ def _bs_delta(right, spot, strike, t, rate, vol):
     return n if right == "call" else n - 1
 
 
-def test_the_delta_rule_uses_fbils_rate_at_the_expiry(book_db, monkeypatch):
-    """#366/#385: the market pass prices the delta rule's greeks at FBIL's par yield at the trade's expiry (the
-    conftest curve's 0.25-year point, 5.34 % half-yearly), not a fixed 6.5 %."""
+def test_the_delta_rule_uses_the_repo_proxy_at_the_expiry(book_db, monkeypatch):
+    """#366/#385, #479: the market pass prices the delta rule's greeks at signals.rates' rate at the trade's expiry:
+    the RBI repo-rate proxy, 5.50 % simple over the expiry's 15 days, z = ln(1 + 0.055 x 15/365) x 365/15; not a
+    fixed 6.5 %."""
     from finresearch.db import session_scope
     from finresearch.db.models import FnoExitRule
     from finresearch.fnobook import service
@@ -420,7 +421,7 @@ def test_the_delta_rule_uses_fbils_rate_at_the_expiry(book_db, monkeypatch):
     )
     run(service.market_pass(t0, FakeMarket({"NSE_NIFTY26OCT25000CE": 180.0, "NSE_NIFTY26OCT25200CE": 70.0}),
                             FakeSources(chain=None)))  # fmt: skip
-    assert seen == [pytest.approx(2 * math.log(1 + 0.0534 / 2))]
+    assert seen == [pytest.approx(math.log(1 + 0.055 * 15 / 365) * 365 / 15)]
 
 
 # ------------------------------------------------------------------ 4. real positions: P&L, greeks, unknowns
@@ -448,11 +449,11 @@ def test_positions_view_prices_known_legs_and_keeps_unknowns_unknown(book_db):
     t = (
         15 * 1440 + 270
     ) / 525_600  # #359: 12-Oct 11:00 IST → 27-Oct 15:30 IST, to the minute (was 15 days flat)
-    # #366/#385: the greeks use FBIL's par yield at the expiry (signals.rates.risk_free; the conftest stub is FBIL's
-    # 23-Sep-2026 curve, whose 0.25-year point, used for a 15-day option, is 5.34 % half-yearly), not a fixed 6.5 %
-    r = 2 * math.log(1 + 0.0534 / 2)
-    assert g["rate"]["rate"] == pytest.approx(r) and g["rate"]["tenor_years"] == 0.25
-    assert g["rate"]["as_of"] == "2026-09-23" and "FBIL" in g["rate"]["source"]
+    # #366/#385, #479: the greeks use signals.rates at the expiry: the RBI repo-rate proxy (5.50 % since 07-Oct-2026;
+    # conftest pins "today" at 23-Oct-2026) as a simple yield over the option's 15 days, made continuous; not 6.5 %
+    r = math.log(1 + 0.055 * 15 / 365) * 365 / 15
+    assert g["rate"]["rate"] == pytest.approx(r) and g["rate"]["tenor_days"] == 15
+    assert g["rate"]["as_of"] == "2026-10-07" and g["rate"]["source"].startswith("RBI repo-rate proxy")
     assert legs["NIFTY26OCT25000CE"]["greeks"]["delta"] == pytest.approx(
         75 * _bs_delta("call", 24900, 25000, t, r, 0.14), abs=1e-3)  # fmt: skip
     assert legs["NIFTY26OCT24500PE"]["greeks"]["delta"] == pytest.approx(
@@ -602,10 +603,9 @@ def test_margin_approximation_is_labelled_and_adds_up(api):
         assert r["status"] == "approximate" and "approximate" in r["label"]
         assert r["groww_calculator"]["available"] is False
         assert all(v["status"] == "unconfirmed" for v in r["assumptions"].values())
-        # #366/#385: the estimate names the rate it used (FBIL's par yield at the expiry, here the conftest curve)
-        assert (
-            r["rate"]["rate"] == pytest.approx(2 * math.log(1 + 0.0534 / 2)) and "FBIL" in r["rate"]["source"]
-        )
+        # #366/#385, #479: the estimate names the rate it used (the RBI repo-rate proxy at the expiry's 15 days)
+        assert r["rate"]["rate"] == pytest.approx(math.log(1 + 0.055 * 15 / 365) * 365 / 15)
+        assert r["rate"]["source"].startswith("RBI repo-rate proxy")
 
 
 # ------------------------------------------------------------------ 7. events strip

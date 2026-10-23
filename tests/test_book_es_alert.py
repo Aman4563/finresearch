@@ -78,7 +78,10 @@ def _want_es() -> float:
         rets[CAL[i]] = (CAL[i - 1], math.log(round(lv[i], 2) / round(lv[i - 1], 2)))
     # #480: the forward rolls at its future's carry against tonight's close, ln(24,050 / 24,000) / (6/365)
     b = math.log(24050 / 24000) / (6 / 365)
-    m = bs.Market(session_clock(DAY), 0.065, {("NIFTY", EXP): 24050.0}, carries={("NIFTY", EXP): bs.Carry(b)})
+    # #479: discounted at the RBI repo-rate proxy at the expiry's own 6 days (5.50 % since 07-Oct-2026, as known at the
+    # start of 21-Oct): z = ln(1 + 0.055 x 6/365) x 365/6; no stored curve and no fixed 6.5 % any more
+    r = math.log(1 + 0.055 * 6 / 365) * 365 / 6
+    m = bs.Market(session_clock(DAY), r, {("NIFTY", EXP): 24050.0}, carries={("NIFTY", EXP): bs.Carry(b)})
     leg = bs.BookLeg("NIFTY", EXP, "put", 23800.0, -75, 60.0, "settle")
     sc = bh.scan([leg], m, {"NIFTY": bh.Series(rets, dict.fromkeys(CAL, 15.0))}, 1, set())
     return sc.es  # type: ignore[return-value]

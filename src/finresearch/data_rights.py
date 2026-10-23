@@ -145,7 +145,8 @@ PENDING: dict[str, str] = {
     # postback) and its MPC schedule / rescheduling releases, about 3-5 requests a night. RBI's disclaimer
     # (https://www.rbi.org.in/Scripts/Disclaimer.aspx, read 23-Oct-2026): contents "as is" without warranties; RBI
     # "reserves all right to deny or restrict access"; no licence or reuse terms stated; the press-release RSS says
-    # "Copyright Reserve Bank of India. All Rights Reserved."
+    # "Copyright Reserve Bank of India. All Rights Reserved." The same page also says "caching and links to, and the
+    # framing of this Web Site or any of the contents are prohibited" (viewed 23-Oct-2026; why "rbi_rates" is dropped).
     "rbi_mpc_schedule": "RBI disclaimer read 23-Oct-2026: 'as is', RBI may deny or restrict access, no reuse terms; "
     "nightly read of the press-release listing for MPC schedules (#367). Owner decision needed (#367)",
     # The event calendar's nightly refresh (#367, eventcal.mospi): MoSPI's Advance Release Calendar PDF and its
