@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
+from pathlib import Path
 
 from finresearch.inventory import regimes
 
@@ -218,3 +219,26 @@ def test_unknown_methods_map_to_nothing():
 
     assert registry.entry_for_method("a brand new method nobody registered") is None
     assert registry.entry_for_method("rule: QIB above 2x").key == "ipo_rules"
+
+
+def test_every_entry_s_code_and_cited_write_up_exist():
+    """A stale path in the inventory would cite evidence nobody can open (#379 second slice)."""
+    import re
+
+    from finresearch.inventory import registry
+
+    root = Path(__file__).resolve().parents[1]
+    for e in registry.entries():
+        for c in e.code:
+            assert (root / "src" / "finresearch" / c).exists(), f"{e.key}: code {c}"
+        for p in re.findall(r"evals/experiments/[\w/]+\.md", e.evidence):
+            assert (root / p).exists(), f"{e.key}: evidence {p}"
+
+
+def test_the_models_merged_after_the_first_slice_are_in_the_inventory():
+    from finresearch.inventory import registry
+
+    want = {"horse_race", "hr_p_rw_bus", "hr_p_rn_b76", "hr_p_rn_svi", "hr_p_rw_tail", "hr_p_path", "joint_risk",
+            "risk_alerts", "risk_var_ledger", "vol_race", "vrp_collectable", "stock_option_vrp", "optimiser",
+            "goal_planner", "factor_exposures", "brinson_attribution", "book_beta"}  # fmt: skip
+    assert want <= {e.key for e in registry.entries()}

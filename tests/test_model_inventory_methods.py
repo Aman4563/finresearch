@@ -218,7 +218,13 @@ def _module_constants(names: set[str]):
         if rel.startswith("inventory/"):
             continue
         for n in ast.parse(path.read_text()).body:
-            tgt = n.targets[0] if isinstance(n, ast.Assign) else n.target if isinstance(n, ast.AnnAssign) else None
+            tgt = (
+                n.targets[0]
+                if isinstance(n, ast.Assign)
+                else n.target
+                if isinstance(n, ast.AnnAssign)
+                else None
+            )
             if isinstance(tgt, ast.Name) and tgt.id in names:
                 v = getattr(importlib.import_module(_module_name(path)), tgt.id)
                 for x in (v,) if isinstance(v, str) else v if isinstance(v, tuple) else ():
@@ -232,12 +238,19 @@ CONSTS = list(_module_constants(METHOD_NAMES))
 
 def test_the_registration_scan_finds_the_known_registrations():
     found = {v for _, _, v in REGS}
-    assert {"vol-forecast-race-v1", "vrp-collectable-v1", "book-beta-v1", "card-horse-race-v1-addendum-A6"} <= found
+    assert {
+        "vol-forecast-race-v1",
+        "vrp-collectable-v1",
+        "book-beta-v1",
+        "card-horse-race-v1-addendum-A6",
+    } <= found
 
 
 @pytest.mark.parametrize(("where", "name", "value"), REGS, ids=[f"{w}:{v}" for w, _, v in REGS])
 def test_every_registered_spec_version_maps_to_an_inventory_entry(where, name, value):
-    assert registry.entry_for_registration(value) is not None, f"{where} {name}={value!r} has no inventory entry"
+    assert registry.entry_for_registration(value) is not None, (
+        f"{where} {name}={value!r} has no inventory entry"
+    )
 
 
 def test_every_horse_race_forecaster_and_challenger_maps_to_an_inventory_entry():
@@ -256,4 +269,6 @@ def test_every_module_method_constant_maps_to_an_inventory_entry(where, name, va
         key = f"{Path(where).stem}:{value}"
         assert registry.entry_for_registration(key) is not None, f"{where} {key!r} has no inventory entry"
     else:
-        assert registry.entry_for_method(value) is not None, f"{where} {name}={value[:60]!r} has no inventory entry"
+        assert registry.entry_for_method(value) is not None, (
+            f"{where} {name}={value[:60]!r} has no inventory entry"
+        )
