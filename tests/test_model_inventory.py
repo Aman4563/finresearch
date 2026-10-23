@@ -165,6 +165,8 @@ def test_fno_backtest_run_saves_engine_and_data_hashes(env, monkeypatch):
         saved = bstore.run_json(s, bstore.latest_run(s))
     assert saved["code_hash"] == pv.code_hash(pv.REPO) and len(saved["engine_hash"]) == 64
     assert len(saved["data_hash"]) == 64 and "data_days" in saved and "git_dirty" in saved
+    # second slice: the regime each tag was in on the run's (IST) day is stored with the run
+    assert saved["regime_tags"] == regimes.regime_state(regimes.run_day(saved["created_at"]))
 
 
 # --------------------------------------------------------------------------- registry
@@ -242,3 +244,28 @@ def test_the_models_merged_after_the_first_slice_are_in_the_inventory():
             "risk_alerts", "risk_var_ledger", "vol_race", "vrp_collectable", "stock_option_vrp", "optimiser",
             "goal_planner", "factor_exposures", "brinson_attribution", "book_beta"}  # fmt: skip
     assert want <= {e.key for e in registry.entries()}
+
+
+# --------------------------------------------------------------------------- regime tags per run (#379 second slice)
+def test_regime_state_names_the_regime_each_tag_was_in_on_a_day():
+    st = regimes.regime_state(date(2025, 8, 29))
+    assert st["expiry_weekday"] == "before 2025-09-01" and st["weekly_expiries"] == "2024-11-20"
+    after = regimes.regime_state(date(2025, 9, 2))
+    assert after["expiry_weekday"] == "2025-09-01" and after["weekly_expiries"] == "2024-11-20"
+    assert set(st) == {"expiry_weekday", "weekly_expiries", "lot_size", "stt"}
+    assert st["lot_size"] == "2024-11-20"  # the SEBI 2024 circular changed lot sizes too
+
+
+def test_stored_regime_tags_that_differ_from_today_s_make_the_run_stale_by_tag():
+    run_tags = regimes.regime_state(date(2025, 8, 29))
+    why = regimes.staleness(
+        date(2026, 10, 20), date(2026, 10, 22), tags=run_tags
+    )  # young, but tagged pre-Tuesday
+    assert any("expiry_weekday" in w for w in why)
+    now_tags = regimes.regime_state(date(2026, 10, 22))
+    assert regimes.staleness(date(2026, 10, 20), date(2026, 10, 22), tags=now_tags) == []
+
+
+def test_unreadable_stored_regime_tags_are_stale_never_current():
+    why = regimes.staleness(date(2026, 10, 20), date(2026, 10, 22), tags={"expiry_weekday": "?"})
+    assert why and all("regime" in w for w in why)

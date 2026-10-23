@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime
+from typing import Any
 
 from finresearch.fincalc import charges
 from finresearch.fincalc.dates import to_ist
@@ -35,11 +36,19 @@ class RegimeChange:
     tag: str  # expiry_weekday | weekly_expiries | lot_size | stt
     what: str
     source: str
+    also: tuple[
+        str, ...
+    ] = ()  # further tags the same event changed (the 2024 circular also changed lot sizes)
+
+    @property
+    def tags(self) -> tuple[str, ...]:
+        return (self.tag, *self.also)
 
 
 _FIXED = (
     RegimeChange(date(2024, 11, 20), "weekly_expiries", "one weekly index expiry per exchange (BANKNIFTY, FINNIFTY "
-                 "and MIDCPNIFTY weeklies ended) and a ₹15 lakh minimum contract value (lot sizes changed)", SEBI_2024),
+                 "and MIDCPNIFTY weeklies ended) and a ₹15 lakh minimum contract value (lot sizes changed)", SEBI_2024,
+                 ("lot_size",)),
     RegimeChange(date(2025, 9, 1), "expiry_weekday", "NIFTY's weekly expiry moved from Thursday to Tuesday",
                  "issue #379; NSE expiry calendar"),
 )  # fmt: skip
@@ -69,14 +78,45 @@ def run_day(created_at: str | datetime | None) -> date | None:
         return None
 
 
-def staleness(day: date | None, today: date, max_age: int = MAX_EVIDENCE_AGE_DAYS) -> list[str]:
-    """Why evidence from a run on `day` is stale on `today` ([] = current)."""
+def staleness(day: date | None, today: date, max_age: int = MAX_EVIDENCE_AGE_DAYS,
+              tags: dict[str, Any] | None = None) -> list[str]:  # fmt: skip
+    """Why evidence from a run on `day` is stale on `today` ([] = current). `tags`: the run's stored regime tags
+    (regime_state on its day; None for a run saved before they were stored, judged by its date alone)."""
     if day is None:
         return ["the run's date is unknown, so its evidence cannot be shown to be current"]
-    why = []
+    why = tag_changes(tags, today) if tags is not None else []
     age = (today - day).days
     if age > max_age:
         why.append(f"the backtest run is {age} days old (evidence expires after {max_age} days): re-run it")
     why += [f"the market changed on {c.day:%d-%b-%Y} after the run ({c.what})"
             for c in regime_changes() if day < c.day <= today]  # fmt: skip
     return why
+
+
+TAGS = ("expiry_weekday", "weekly_expiries", "lot_size", "stt")
+
+
+def regime_state(day: date) -> dict[str, str]:
+    """The regime each tag was in on `day`: the ISO day its last change started (on or before `day`), or
+    "before <first change>" when none had happened yet. Stored on each saved run (#379), so a later change of any
+    tag is visible from the run itself, not only from its date."""
+    out: dict[str, str] = {}
+    for tag in TAGS:
+        days = sorted(c.day for c in regime_changes() if tag in c.tags)
+        past = [d for d in days if d <= day]
+        out[tag] = (
+            past[-1].isoformat() if past else (f"before {days[0].isoformat()}" if days else "no change known")
+        )
+    return out
+
+
+def tag_changes(tags: dict[str, Any], today: date) -> list[str]:
+    """Why a run's stored regime tags differ from today's ([] = the same regime on every tag). A missing or
+    unreadable tag is a difference: unknown never reads as current."""
+    now = regime_state(today)
+    if not isinstance(tags, dict):
+        return [
+            f"the run's stored regime tags are unreadable ({type(tags).__name__}), so its regime is unknown"
+        ]
+    return [f"the {t} regime changed since the run (run: {tags.get(t) or 'unknown'}, now: {now[t]})"
+            for t in TAGS if tags.get(t) != now[t]]  # fmt: skip

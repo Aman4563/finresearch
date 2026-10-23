@@ -1911,11 +1911,15 @@ def fno_backtest_run(
     from finresearch.backtest import dbhistory, evaluate, specs
     from finresearch.backtest import store as bstore
     from finresearch.db import session_scope
-    from finresearch.inventory import provenance
+    from finresearch.fincalc.dates import today_ist
+    from finresearch.inventory import provenance, regimes
 
     url = history_url or get_settings().database_url
     h = dbhistory.DbHistory(history_url)
     stamp = provenance.code_stamp()  # #379: the engine code this run executes, hashed before it runs
+    stamp["regime_tags"] = regimes.regime_state(
+        today_ist()
+    )  # #379: the market regime the run was computed in
     stock = dbhistory.top_stock(h, specs.IS_START, specs.IS_END)
     try:
         rep = evaluate.evaluate(h, stock=stock, source=make_url(url).database or "?", oos=not in_sample_only,

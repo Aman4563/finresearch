@@ -113,3 +113,19 @@ def test_a_run_of_unknown_date_is_stale_not_proven():
     fresh = tpl.evidence_for("iron_condor", "NIFTY", 7, [CANDIDATE], {"created_at": "2026-09-20T12:00:00+05:30"},
                              today=NOW.date())  # fmt: skip
     assert fresh["level"] == "proven" and fresh["stale"] == []
+
+
+def test_a_young_run_whose_stored_regime_tags_differ_from_today_s_is_stale_on_the_card():
+    """#379 second slice: a run stores its regime tags; a run tagged in another regime is stale even when its date
+    alone would read current (e.g. a mis-dated or replayed run)."""
+    from finresearch.inventory import regimes
+    from finresearch.signals import tradeplan as tpl
+
+    head = {
+        "created_at": "2026-09-20T12:00:00+05:30",
+        "regime_tags": regimes.regime_state(datetime(2025, 8, 1).date()),
+    }
+    ev = tpl.evidence_for("iron_condor", "NIFTY", 7, [CANDIDATE], head, today=NOW.date())
+    assert ev["level"] == "none" and any("expiry_weekday regime changed" in w for w in ev["stale"])
+    same = {**head, "regime_tags": regimes.regime_state(NOW.date())}
+    assert tpl.evidence_for("iron_condor", "NIFTY", 7, [CANDIDATE], same, today=NOW.date())["stale"] == []
