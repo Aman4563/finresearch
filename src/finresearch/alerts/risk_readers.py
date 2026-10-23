@@ -49,11 +49,14 @@ def book_readings(shock: Mapping[float, float] | None, shock_notes: Sequence[str
     else:
         worst = min(shock, key=lambda m: shock[m])
         loss = max(0.0, -shock[worst])
+        rate = "".join(
+            f"; {n}" for n in shock_notes if n.startswith("rate: ")
+        )  # #366/#385: which rate priced it
         for rid, pct, name in (("limit_shock", tp.SHOCK_BUDGET_PCT, "common-shock budget"),
                                ("stress_breach", tp.BOOK_BUDGET_PCT, "book loss limit")):  # fmt: skip
             limit = capital * pct / 100
             out.append((rid, "BOOK", Reading(loss / limit, SHOCK_SERIES, f"worst loss ₹{loss:,.0f} at a {worst:+.0%} "
-                        f"NIFTY move vs the ₹{limit:,.0f} {name} ({pct:g}% of F&O capital)")))  # fmt: skip
+                        f"NIFTY move vs the ₹{limit:,.0f} {name} ({pct:g}% of F&O capital){rate}")))  # fmt: skip
     if (book_open or shock is None) and es is not None:
         out.append(("es", "BOOK", _es_reading(es, capital)))
     elif book_open or shock is None:

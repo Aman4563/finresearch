@@ -94,3 +94,13 @@ def test_effective_annual_is_the_half_yearly_par_yield_compounded(rates_db):
         known, none = rates.rate_on(s, DAY, 0.25), rates.rate_on(s, date(2020, 1, 1), 0.25)
     assert rates.effective_annual(known) == pytest.approx(1.03**2 - 1)  # 6.09 % a year
     assert rates.effective_annual(none) == 0.065  # the fallback is the earlier stated annual default
+
+
+# ------------------------------------------------------------------ the risk alerts' shock reading names the rate
+def test_a_known_shock_reading_says_which_rate_priced_the_book():
+    from finresearch.alerts import risk_readers as rr
+
+    note = "rate: FBIL G-sec par yield, 0.25-year point, curve of 2026-10-20: 5.91% continuous"
+    rows = rr.book_readings({-0.03: -1500.0, 0.03: 900.0}, [note], 100_000.0, None, None, book_open=True)
+    shock = next(rd for rid, _, rd in rows if rid == "limit_shock")
+    assert shock.value is not None and note in shock.detail

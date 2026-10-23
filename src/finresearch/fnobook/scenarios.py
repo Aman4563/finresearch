@@ -18,11 +18,33 @@ from finresearch.fincalc import beta as fbeta
 from finresearch.fincalc import book_scenarios as bs
 from finresearch.fincalc.dates import to_ist, years_to_expiry
 
-RATE = 0.065  # the rate the book's greeks use (fnobook.service.RATE)
+# #366/#385: no fixed rate. One rate prices the whole book (bs.Market holds one): FBIL's G-sec par yield at the
+# longest open leg's time to expiry (live: signals.rates.risk_free; stored days: the curve stored before the day,
+# signals.rates.rate_on), or a rate the caller passes. Every answer names the rate (`rate_info`, or a "rate: ..."
+# note); the last fallback is the labelled 6.5 %.
 BETA_RULE = ("Each underlying other than NIFTY moves by its beta x NIFTY's move: an EWMA estimate from stored front-"
              "future settles (evals/experiments/book_betas/PREREG.md). Every P&L takes, per underlying, the worse of "
              "its band's two ends (lo = beta - 1.645 SE; hi = beta + 1.645 SE, at least 1), not the worst over the "
              "interval. The NIFTY-equivalent delta uses the point estimate.")  # fmt: skip
+
+
+def _longest_t(legs: Any, now: datetime) -> float:
+    return max((years_to_expiry(x.expiry, now) for x in legs), default=0.0)
+
+
+async def live_rate(legs: Any, now: datetime, rate: float | None = None) -> dict[str, Any]:
+    """The book's rate now: the caller's, else FBIL's par yield at the longest leg's tenor (labelled fallbacks)."""
+    from finresearch.signals import rates
+
+    if rate is not None:
+        return rates.given(rate, "the rate passed by the caller")
+    return await rates.risk_free(max(_longest_t(legs, now), 0.0))
+
+
+def rate_note(info: dict[str, Any]) -> str:
+    from finresearch.signals import rates
+
+    return f"rate: {rates.label(info)}"
 
 
 def _quote(q: Any) -> tuple[float, str] | None:
@@ -152,7 +174,7 @@ async def _priced(legs: list[bs.BookLeg], now: datetime, sources: Any, rate: flo
     return priced, bs.Market(now, rate, {k: f for k, (f, _) in fws.items()}, est, nifty), fws, hs
 
 
-async def book_shock(now: datetime, *, sources: Any = None, rate: float = RATE, holidays: set[date] | None = None,
+async def book_shock(now: datetime, *, sources: Any = None, rate: float | None = None, holidays: set[date] | None = None,
                      betas_out: dict[str, Any] | None = None) -> tuple[dict[float, float] | None, list[str]]:  # fmt: skip
     """P4.2 (#395): the open book's (paper and Groww) P&L at each registered NIFTY shock move one session from now,
     every leg repriced on its chain as on the scenarios page. (None, why) when a leg, a forward, a beta or the Groww
@@ -171,7 +193,12 @@ async def book_shock(now: datetime, *, sources: Any = None, rate: float = RATE, 
     if real is None:
         return None, notes
     legs += real
-    priced, m = (await _priced(legs, now, sources, rate))[:2] if legs else ([], bs.Market(now, rate, {}))
+    if not legs:  # nothing open: nothing is priced, so no rate is read
+        got, reasons = bs.shock_pnls([], bs.Market(now, rate or 0.0, {}), bs.horizon_clock(now, 1, holidays))
+        return got, notes + list(reasons)
+    rinfo = await live_rate(legs, now, rate)
+    notes.append(rate_note(rinfo))
+    priced, m = (await _priced(legs, now, sources, rinfo["rate"]))[:2]
     if betas_out is not None:
         betas_out.update(m.betas)
     got, reasons = bs.shock_pnls(priced, m, bs.horizon_clock(now, 1, holidays))
@@ -179,7 +206,7 @@ async def book_shock(now: datetime, *, sources: Any = None, rate: float = RATE, 
 
 
 async def view(now: datetime, *, sources: Any = None, capital: float | None = None,
-               rate: float = RATE, holidays: set[date] | None = None) -> dict[str, Any]:  # fmt: skip
+               rate: float | None = None, holidays: set[date] | None = None) -> dict[str, Any]:  # fmt: skip
     """Everything GET /api/fno/scenarios shows. Reads chains (market-data caches only); writes no record. The Groww
     legs come through `signals.tradeplan.real_positions` (Groww's market is `adapters.groww_market.MARKET`)."""
     from finresearch.fnobook import service
@@ -196,6 +223,8 @@ async def view(now: datetime, *, sources: Any = None, capital: float | None = No
         notes.append(why)
     unknown_book = real is None
     legs += real or []
+    rinfo = await live_rate(legs, now, rate)
+    rate = rinfo["rate"]
     priced, m, fws, hs = await _priced(legs, now, sources, rate)
     states = bs.price_legs(priced, m)
     ex, g = bs.exposures(priced, m), bs.grid(priced, m, holidays=holidays)
@@ -211,7 +240,7 @@ async def view(now: datetime, *, sources: Any = None, capital: float | None = No
     hist = hv.history(priced, m, holidays, limit, extra)
     liq = hv.liquidity(states, hs, extra)
     return {
-        "as_of": to_ist(now).isoformat(), "rate": rate, "notes": notes,
+        "as_of": to_ist(now).isoformat(), "rate": rate, "rate_info": rinfo, "notes": notes,
         "legs": [{"underlying": s.leg.underlying, "expiry": s.leg.expiry.isoformat(), "right": s.leg.right,
                   "strike": s.leg.strike, "qty": s.leg.qty, "mark": _r(s.leg.mark), "mark_kind": s.leg.mark_kind,
                   "iv": _r(s.iv, 6), "forward": _r(s.forward), "source": s.leg.label, "reason": s.reason}
@@ -242,7 +271,7 @@ async def view(now: datetime, *, sources: Any = None, capital: float | None = No
 
 
 def stored_forward(
-    s: Any, day: date, sym: str, expiry: date, spot: float | None, rate: float = RATE
+    s: Any, day: date, sym: str, expiry: date, spot: float | None, rate: float
 ) -> tuple[float | None, str]:
     """The forward of (sym, expiry) on `day` from the stored bhavcopy (#398): the same-expiry future's settle, else
     put-call parity on the settles of the strike nearest `spot` with both a call and a put, else unknown."""
@@ -266,12 +295,14 @@ def stored_forward(
     return bs.parity_forward(k, ce[k], pe[k], t, rate), f"put-call parity on the {k:g} settles"
 
 
-def stored_book(s: Any, day: date, *, rate: float = RATE, expiring_after: date | None = None,
+def stored_book(s: Any, day: date, *, rate: float | None = None, expiring_after: date | None = None,
                 ) -> tuple[list[bs.BookLeg] | None, bs.Market | None, list[str]]:  # fmt: skip
     """The book as marked on `day`'s evening (fno_mark: paper and Groww, the bhavcopy settle), each leg on
     `stored_forward`, with the registered betas (fnohist.betas) as of `day`; the clock is `day`'s 15:30 IST. With
     `expiring_after`, only legs whose expiry is on or after it. ([] , market, []) when nothing is marked; (None, None,
-    why) when a leg's direction is unknown. A forward that cannot be found is a note (its legs price as unknown)."""
+    why) when a leg's direction is unknown. A forward that cannot be found is a note (its legs price as unknown).
+    `rate` None: FBIL's par yield from the curve stored before `day` at the longest leg's tenor, named in a "rate: "
+    note (signals.rates.rate_on; the labelled 6.5 % when none is stored); a rate passed is used as is, with no note."""
     from sqlalchemy import select
 
     from finresearch.db.models import FnoMark
@@ -288,8 +319,17 @@ def stored_book(s: Any, day: date, *, rate: float = RATE, expiring_after: date |
             None,
             ["Groww did not confirm whether a leg is long or short: the book's shock P&L is unknown"],
         )
+    if not marks:  # nothing is priced, so no rate is read (and none is used)
+        return [], bs.Market(session_clock(day), 0.0 if rate is None else rate, {}, {}), []
     fws: dict[tuple[str, date], float | None] = {}
     notes: list[str] = []
+    if rate is None:
+        from finresearch.signals import rates
+
+        clock = session_clock(day)
+        rinfo = rates.rate_on(s, day, max(years_to_expiry(m.expiry, clock) for m in marks), before=True)
+        rate = rinfo["rate"]
+        notes.append(rate_note(rinfo))
     for m in marks:
         key = (m.symbol.upper(), m.expiry)
         if key not in fws:
@@ -307,7 +347,7 @@ def stored_book(s: Any, day: date, *, rate: float = RATE, expiring_after: date |
 
 
 def stored_shock(s: Any, day: date, *, holidays: set[date] | None = None,
-                 rate: float = RATE) -> tuple[dict[float, float] | None, list[str]]:  # fmt: skip
+                 rate: float | None = None) -> tuple[dict[float, float] | None, list[str]]:  # fmt: skip
     """P4.5 (#398): the open book's P&L at each registered NIFTY shock move one session after `day`'s close, from
     stored data only (`stored_book`). No chain is read. (None, why) when a leg's direction, price or forward, or a
     beta, is unknown; nothing open is exactly 0 at every move."""
@@ -323,7 +363,7 @@ def stored_shock(s: Any, day: date, *, holidays: set[date] | None = None,
 
 
 def stored_es(s: Any, day: date, *, holidays: set[date] | None = None,
-              rate: float = RATE) -> tuple[float | None, str]:  # fmt: skip
+              rate: float | None = None) -> tuple[float | None, str]:  # fmt: skip
     """#394 -> #398: the open book's historical ES97.5 one session after `day`'s close (fincalc.book_history.scan over
     every stored start day, fnohist.book_history), from stored data only (`stored_book`). (None, why) when a leg, a
     forward, a beta or the history is unknown, or there are too few start days; (0.0, ...) when nothing is open."""
@@ -342,4 +382,4 @@ def stored_es(s: Any, day: date, *, holidays: set[date] | None = None,
     mapped = ", ".join(f"{u} beta-mapped on {n} days" for u, n in sc.mapped.items() if n)
     return sc.es, (f"historical ES97.5 ₹{sc.es:,.0f} of tonight's marked book one session ahead over "
                    f"{len(sc.days)} start days ({sc.first} to {sc.last}; {sc.skipped} skipped)"
-                   + (f"; {mapped}" if mapped else ""))  # fmt: skip
+                   + (f"; {mapped}" if mapped else "") + "".join(f"; {n}" for n in notes))  # fmt: skip
