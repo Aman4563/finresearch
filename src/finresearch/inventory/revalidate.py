@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+from itertools import pairwise
 from typing import Any
 
 from sqlalchemy import select
@@ -36,7 +37,7 @@ class Split:
 def splits() -> list[Split]:
     days = regimes.SPLIT_DAYS
     out = [Split(f"before_{days[0].isoformat()}", None, days[0] - timedelta(days=1))]
-    for a, b in zip(days, days[1:], strict=False):
+    for a, b in pairwise(days):
         end = b - timedelta(days=1)
         out.append(Split(f"{a.isoformat()}_to_{end.isoformat()}", a, end))
     out.append(Split(f"from_{days[-1].isoformat()}", days[-1], None))
