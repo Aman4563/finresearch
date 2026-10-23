@@ -20,7 +20,7 @@ const AFTER: LedgerSection = {
   cohort: { delta: 200, se: 90, t: 2.2, p: 0.16, ci: [-180, 580], clusters: 3, n_pass: 2, n_fail: 2, unknown_class: 1, mean_pass: 200, mean_fail: 0 },
   models: [
     { model: "p_rw", label: "real-world PoP (the card's headline)", n: 3, brier: 0.1633, log: 0.52, mean_p: 0.57, base_rate: 0.33,
-      reliability: [], pit: { n: 4, bins: [2, 1, 0, 0, 0, 1, 0, 0, 0, 0], clipped: 1, no_dots: 0 }, p10: { n: 4, below: 2, share: 0.5, expected: 0.1, p: 0.0523 } },
+      reliability: [{ n: 3, p_low: 0.3, p_high: 0.8, mean_p: 0.57, observed: 0.33, ci: [0.06, 0.79] }], pit: { n: 4, bins: [2, 1, 0, 0, 0, 1, 0, 0, 0, 0], clipped: 1, no_dots: 0 }, p10: { n: 4, below: 2, share: 0.5, expected: 0.1, p: 0.0523 } },
     { model: "p_rn_atm", label: "risk-neutral PoP (benchmark)", n: 3, brier: 0.25, log: 0.69, mean_p: 0.5, base_rate: 0.33,
       reliability: [], pit: { n: 0, bins: [], clipped: 0, no_dots: 3 }, p10: { n: 0, below: 0, share: null, expected: 0.1, p: null } },
   ],
@@ -55,6 +55,8 @@ test("fno card ledger: scores split by registration, unknowns read unknown, no c
   await expect(page.getByText("0.347")).toBeVisible();
   await expect(page.getByText(/t 2.20 · p 0.160 · 3 expiries/)).toBeVisible();
   await expect(page.getByText("unknown (no dots)")).toBeVisible();
+  await expect(page.getByText(/Reliability, real-world PoP \(the card's headline\): 57% → 33% \[6%–79%\] \(n 3\)/)).toBeVisible();
+  await expect(page.getByText(/Latest 1 of 2: card 41#0 traded \(WAIT\)/)).toBeVisible();
   await expect(page.getByText(/1 of 2 recorded decisions went against the card · rate 50%/)).toBeVisible();
   await expect(page.getByText(/Traded with an ENTER card: unknown per set/)).toBeVisible();
   await expect(page.getByText(/1 sessions logged, 2026-10-23 to 2026-10-23/)).toBeVisible();

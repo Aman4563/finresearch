@@ -42,6 +42,8 @@ function Section({ s }: { s: LedgerSection }) {
               <td className="num">{m.p10.n ? `${pct(m.p10.share)} of ${m.p10.n} · p ${num(m.p10.p)}` : "unknown (no dots)"}</td>
               <td className="num">{m.pit.n ? m.pit.bins.join(" ") : "unknown"}{m.pit.clipped ? ` · ${m.pit.clipped} outside` : ""}</td></tr>))}</tbody>
         </table></div>
+        {s.models.filter((m) => m.reliability.length).map((m) => (
+          <p key={m.model} className="mt-2 text-xs text-muted">Reliability, {m.label}: {m.reliability.map((b) => `${pct(b.mean_p)} → ${pct(b.observed)}${b.ci ? ` [${pct(b.ci[0])}–${pct(b.ci[1])}]` : ""} (n ${b.n})`).join(" · ")}</p>))}
       </Card>
     </>
   );
@@ -88,7 +90,7 @@ export default function CardLedgerPage() {
             help="Recorded only when you mark a card traded or skipped on the card itself; never inferred from your trades. P&L is the card's simulated net P&L per set, not your fills.">
             <ul className="space-y-1 text-sm">{GROUPS.map(([k, label]) => (
               <li key={k}>{label}: <Fig className={pnlTone(o!.pnl[k].mean_pnl)}>{money(o!.pnl[k].mean_pnl)}</Fig> per set · <span className="text-muted">{groupLine(o!.pnl[k])}</span></li>))}</ul>
-            {o!.recent.length > 0 && <p className="mt-2 text-xs text-muted">Latest {o!.recent.length} of {o!.rows}: {o!.recent.slice(0, 5).map((r) => `card ${r.card_log_id}#${r.card_index} ${r.decision} (${r.verdict ?? "unknown verdict"})`).join(" · ")}</p>}
+            {o!.recent.length > 0 && <p className="mt-2 text-xs text-muted">Latest {Math.min(5, o!.recent.length)} of {o!.rows}: {o!.recent.slice(0, 5).map((r) => `card ${r.card_log_id}#${r.card_index} ${r.decision} (${r.verdict ?? "unknown verdict"})`).join(" · ")}</p>}
           </Card>
           <Card title="Fixed probability panel" subtitle={p!.rows ? `${p!.sessions} sessions logged, ${p!.first_session} to ${p!.last_session}` : `Logged from ${p!.start}: no session yet`}
             help="NIFTY and BANKNIFTY, near and monthly expiry, every stored session: P(S_T beyond the 10/16/25-delta strikes), the ±1σ band and each registered recipe's PoP, under each model. The first session per expiry is the scored event.">
