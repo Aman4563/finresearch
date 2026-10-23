@@ -34,7 +34,6 @@ ISIN_RE = re.compile(r"^[A-Z]{2}[A-Z0-9]{9}\d$")
 NSE_ARCHIVE_HOSTS = ("nsearchives.nseindia.com",)
 HISTORY_MAX_REQUESTS = 40  # NSE returns at most ~70 rows (the latest) per historical-trade request
 HISTORY_WINDOW_DAYS = 360  # and refuses (HTTP 404) a range longer than a year
-RF_DEFAULT = Decimal("0.065")  # the page shows it and lets the viewer change it
 SIP_DEFAULT = Decimal(10000)
 CESS = Decimal("0.04")
 SHP_XBRL_TTL_S = (
@@ -606,14 +605,23 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
 
     @app.get("/api/funds/{code}/analytics")
     async def fund_analytics(code: str, years: Annotated[int, Query(ge=1, le=10)] = 5,
-                             rf: Annotated[Decimal, Query(ge=0, le=0.2)] = RF_DEFAULT) -> dict[str, Any]:  # fmt: skip
+                             rf: Annotated[Decimal | None, Query(ge=0, le=0.2)] = None) -> dict[str, Any]:  # fmt: skip
         """NAV history with trailing 1/3/5-year returns, 1- and 3-year rolling-return distributions, volatility,
-        max drawdown, Sharpe and Sortino (risk-free rate `rf`, a fraction you choose)."""
+        max drawdown, Sharpe and Sortino (risk-free rate `rf`, a fraction you choose; by default FBIL's 3-month
+        G-sec par yield stored for the last NAV's day as an effective annual rate, #366, or the labelled 6.5 %
+        fallback; `risk_free` says which)."""
         from finresearch.fincalc import funds
+        from finresearch.signals import rates
 
         scheme = await _scheme(code)
         navs = await _navs(scheme, years)
+        if rf is None:
+            info = await rates.rate_for(navs[-1][0] if navs else today_ist(), 0.25)
+            rf = Decimal(str(round(rates.effective_annual(info), 8)))
+        else:
+            info = rates.given(float(rf), "your input")
         out: dict[str, Any] = {"scheme": _scheme_json(scheme), "years": years,
+                               "risk_free": info | {"annual": float(rf)},
                                "source": "https://portal.amfiindia.com/DownloadNAVHistoryReport_Po.aspx",
                                "navs": [{"date": d.isoformat(), "nav": _f(v, 4)} for d, v in navs],
                                "trailing": {}, "rolling": {}, "risk": {}}  # fmt: skip
