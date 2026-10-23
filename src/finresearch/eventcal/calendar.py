@@ -24,6 +24,8 @@ TITLES = {
     "general_election": "General-election results (Lok Sabha)",
     "fomc": "US FOMC decision",
     "us_cpi": "US CPI release",
+    "india_cpi": "India CPI release (MoSPI)",  # context (T17), from the nightly refresh (eventcal.mospi)
+    "india_gdp": "India GDP estimates release (MoSPI)",
 }
 NSE_CLOSE = time(15, 30)
 

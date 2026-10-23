@@ -146,3 +146,10 @@ async def run(sources: list[Source], now: datetime) -> dict[str, Any]:
         with session_scope() as s:
             out["stored"][src.dataset] = apply(s, found, now)
     return out
+
+
+def sources() -> list[Source]:
+    """The official sources of the nightly refresh, each behind its data-rights decision."""
+    from finresearch.eventcal import mospi, rbi
+
+    return [Source("rbi_mpc_schedule", rbi.read), Source("mospi_release_calendar", mospi.read)]

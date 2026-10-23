@@ -72,6 +72,18 @@ PENDING: dict[str, str] = {
     # history. Same terms as above.
     "nse_secban": f"{_NSE_TERMS}: automated collection prohibited; 20 dated files to validate the ban history "
     "(#374). Owner decision needed (#374)",
+    # The event calendar's nightly refresh (#367, eventcal.rbi): RBI's press-release month listing (an ASP.NET
+    # postback) and its MPC schedule / rescheduling releases, about 3-5 requests a night. RBI's disclaimer
+    # (https://www.rbi.org.in/Scripts/Disclaimer.aspx, read 23-Oct-2026): contents "as is" without warranties; RBI
+    # "reserves all right to deny or restrict access"; no licence or reuse terms stated; the press-release RSS says
+    # "Copyright Reserve Bank of India. All Rights Reserved."
+    "rbi_mpc_schedule": "RBI disclaimer read 23-Oct-2026: 'as is', RBI may deny or restrict access, no reuse terms; "
+    "nightly read of the press-release listing for MPC schedules (#367). Owner decision needed (#367)",
+    # The event calendar's nightly refresh (#367, eventcal.mospi): MoSPI's Advance Release Calendar PDF and its
+    # pointer on www.mospi.gov.in/api/, about 2 requests a night. A different dataset and host from the CPI series
+    # (mospi_cpi, api.mospi.gov.in); no licence text could be read (mospi.gov.in's policy pages need JavaScript).
+    "mospi_release_calendar": "MoSPI Advance Release Calendar (www.mospi.gov.in), read 23-Oct-2026: no licence "
+    "text readable; CPI and GDP release dates only (#367). Owner decision needed (#367)",
 }
 
 

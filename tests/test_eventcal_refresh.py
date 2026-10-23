@@ -149,3 +149,28 @@ async def test_a_decided_source_is_stored_and_sees_what_is_already_known(clean, 
     res = await refresh.run([refresh.Source("rbi_mpc_schedule", reader)], NOW)
     assert res["stored"] == {"rbi_mpc_schedule": {"events": 1, "coverage": 1, "withdrawn": 0}}
     assert seen[0].covered["rbi_mpc"] == date(2027, 3, 31) and URL in seen[0].urls
+
+
+def test_every_refresh_source_waits_for_the_owner_decision():
+    # none of these is decided in this change: the owner records each decision (data_rights.DECISIONS)
+    names = [s.dataset for s in refresh.sources()]
+    assert names == ["rbi_mpc_schedule", "mospi_release_calendar"]
+    for name in names:
+        assert name in data_rights.PENDING and name not in data_rights.DECISIONS
+        with pytest.raises(data_rights.NoDecision, match="Owner decision needed"):
+            data_rights.require(name)
+
+
+async def test_the_live_sources_make_no_request_while_undecided(clean):
+    import respx
+
+    with respx.mock(assert_all_called=False) as mock:
+        res = await refresh.run(refresh.sources(), NOW)
+    assert not mock.calls and set(res["skipped"]) == {"rbi_mpc_schedule", "mospi_release_calendar"}
+    assert res["stored"] == {} and res["failed"] == {}
+
+
+def test_cpi_and_gdp_are_context_events_with_titles():
+    assert {"india_cpi", "india_gdp"} <= set(cal.TITLES) and not {"india_cpi", "india_gdp"} & set(
+        cal.TIER1_TYPES
+    )
