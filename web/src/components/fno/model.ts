@@ -19,7 +19,10 @@ export type Leg = { right: "call" | "put" | "future"; strike: string; side: "buy
 export type ChargeRate = { key: string; rate_pct: number; basis: string; effective_from: string; source: string; status: "verified" | "secondary" | "unconfirmed"; note: string };
 export type Costs = { lines: Record<string, number>; total: number; turnover: number; orders: number; rates: ChargeRate[] };
 export type Outcome = { vol: number; drift: number; pop: number; ev: number; ev_gross: number; quantiles: Record<string, number>; window?: string } | null;
-export type RateInfo = { rate: number; par_yield: number | null; tenor_years: number | null; as_of: string | null; fallback: boolean; source: string; note: string };
+export type RateInfo = { rate: number; par_yield: number | null; tenor_years: number | null; as_of: string | null; fallback: boolean; source: string; note: string; known?: boolean };
+/** #366/#385: which rate priced a figure — "5.27% (FBIL G-sec par yield, 0.25-year point, …)", or the labelled
+ * "6.50% (fallback 6.5 %, no curve — <reason>)". */
+export const rateLabel = (r: RateInfo) => `${(r.rate * 100).toFixed(2)}% (${r.source}${r.fallback ? ` — ${r.note}` : ""})`;
 export type RiskNotice = { headline: string; text: string; source: string; url: string; date: string };
 export type Analysis = {
   spot: number;
