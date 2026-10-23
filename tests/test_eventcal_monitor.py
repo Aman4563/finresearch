@@ -120,3 +120,33 @@ async def test_tick_spawns_the_job_only_when_due(monkeypatch):
     scheduler._spawn_eventcal(AFTER)
     await asyncio.gather(*scheduler._BACKGROUND.values())
     assert calls == [AFTER]
+
+
+def test_cli_refresh_says_which_sources_wait_for_a_decision(clean):
+    import respx
+    from typer.testing import CliRunner
+
+    from finresearch import cli
+
+    with respx.mock(assert_all_called=False) as mock:
+        r = CliRunner().invoke(cli.app, ["events", "refresh"])
+    assert r.exit_code == 0, r.output
+    assert "rbi_mpc_schedule: skipped" in r.output and "mospi_release_calendar: skipped" in r.output
+    assert not mock.calls
+
+
+def test_cli_refresh_exits_non_zero_when_a_decided_source_fails(clean, monkeypatch):
+    from typer.testing import CliRunner
+
+    from finresearch import cli
+
+    async def broken(known, now):
+        raise RuntimeError("HTTP 503")
+
+    monkeypatch.setattr(refresh, "sources", lambda: [refresh.Source("rbi_mpc_schedule", broken)])
+    from finresearch import data_rights
+
+    monkeypatch.setitem(data_rights.DECISIONS, "rbi_mpc_schedule", data_rights.Decision(
+        "rbi_mpc_schedule", "accept-personal", "2026-10-23", "test", "test"))  # fmt: skip
+    r = CliRunner().invoke(cli.app, ["events", "refresh"])
+    assert r.exit_code == 1 and "rbi_mpc_schedule: failed" in r.output
