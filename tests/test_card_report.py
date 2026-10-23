@@ -172,3 +172,14 @@ def test_the_report_reads_resolved_card_forecasts_and_their_overrides(client):
     assert rep["after"]["bss"]["bss"] == pytest.approx(1 - 0.49 / 0.36)  # one event: (0.7)^2 vs (0.6)^2
     assert rep["after"]["cohort"]["mean_fail"] == -250.0 and rep["cards"]["resolved"] == 1
     assert rep["overrides"]["pnl"]["traded_against"]["mean_pnl"] == -250.0
+
+
+def test_the_cli_prints_unknown_on_an_empty_ledger(client):
+    from typer.testing import CliRunner
+
+    from finresearch.cli import app
+
+    r = CliRunner().invoke(app, ["forecasts", "card-report"])
+    assert r.exit_code == 0, r.output
+    assert "after: 0 resolved card(s), 0 independent; BSS vs risk-neutral unknown (n 0)" in r.output
+    assert "rate unknown" in r.output
