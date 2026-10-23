@@ -1,7 +1,7 @@
 "use client";
 
 import {
-  Activity, BadgeIndianRupee, BellRing, BookOpenCheck, Briefcase, ChartCandlestick, ChevronsLeft, CircleHelp, Command, Download, EyeOff, FlaskConical, Gauge as GaugeIcon, GraduationCap, Landmark, Layers, LayoutDashboard, ListChecks, Menu, Monitor, Moon, NotebookPen, PieChart, PiggyBank, Radar, Rocket, Search, Sun, Sunrise, UserRound, X,
+  Activity, BadgeIndianRupee, BellRing, BookOpenCheck, Briefcase, ChartCandlestick, ChevronsLeft, CircleHelp, Command, Download, EyeOff, FlaskConical, Gauge as GaugeIcon, GraduationCap, Landmark, Layers, LayoutDashboard, ListChecks, Menu, Monitor, Moon, NotebookPen, PieChart, PiggyBank, Radar, Rocket, Search, ShieldCheck, Sun, Sunrise, UserRound, X,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -44,6 +44,7 @@ export const NAV: { group: string; items: NavItem[] }[] = [
       { href: "/runs", label: "Research runs", icon: <FlaskConical />, keys: "g r", description: "Agent runs, live progress and reports" },
       { href: "/monitor", label: "Monitor", icon: <BellRing />, keys: "g m", description: "Watches, scheduled checks and alerts" },
       { href: "/journal", label: "Journal", icon: <NotebookPen />, keys: "g j", description: "Your decisions and their outcomes" },
+      { href: "/models", label: "Models", icon: <ShieldCheck />, keys: "g v", description: "Every model's status, limits of use, evidence age and re-validation" },
     ],
   },
   {

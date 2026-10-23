@@ -86,7 +86,7 @@ def backtest_rows() -> tuple[list[dict[str, Any]] | None, dict[str, Any] | None]
     if rep is None:
         return None, None
     head = {k: rep.get(k) for k in ("id", "created_at", "source", "oos_evaluated", "variants_tried", "code_hash",
-                                    "engine_hash", "data_hash", "git_commit", "git_dirty")}  # fmt: skip
+                                    "engine_hash", "data_hash", "git_commit", "git_dirty", "regime_tags")}  # fmt: skip
     return rep["strategies"], head
 
 
@@ -483,7 +483,8 @@ def evidence_for(kind: str, symbol: str, dte: int, strategies: list[dict[str, An
         spec, exact = match_spec(kind, symbol, dte)
     row = next((r for r in strategies or [] if spec and r.get("key") == spec.key), None)
     level = tp.evidence_level(row, kind)
-    stale = (regimes.staleness(regimes.run_day((head or {}).get("created_at")), today)
+    stale = (regimes.staleness(regimes.run_day((head or {}).get("created_at")), today,
+                               tags=(head or {}).get("regime_tags"))
              if exact and strategies is not None else [])  # fmt: skip
     raw_level, level = level, ("harmful" if level == "harmful" else "none") if stale else level
     out = {"spec_key": spec.key if spec else None, "spec_name": spec.name if spec else None,
