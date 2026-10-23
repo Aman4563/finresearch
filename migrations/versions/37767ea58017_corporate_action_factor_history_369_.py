@@ -1,7 +1,7 @@
 """Corporate-action factor history (#369): corp_action, corp_action_fetch
 
 Revision ID: 37767ea58017
-Revises: 4a7584a22056
+Revises: 6d6037e6bdfc
 Create Date: 2026-10-23 13:46:09.739877
 
 """
@@ -15,7 +15,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = "37767ea58017"
-down_revision: str | Sequence[str] | None = "4a7584a22056"
+down_revision: str | Sequence[str] | None = "6d6037e6bdfc"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

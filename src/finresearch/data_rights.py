@@ -96,6 +96,12 @@ DECISIONS: dict[str, Decision] = {
 # Datasets whose terms were read but whose decision is the owner's and not yet recorded: `require` refuses them and
 # says what was read. To decide, add a Decision above (choice, date, where it is recorded, the terms it rests on).
 PENDING: dict[str, str] = {
+    # NSE's daily FII derivative statistics (content/fo/fii_stats_<DD-Mon-YYYY>.xls, P1.9, #371,
+    # adapters.nse_fii_stats): one ~10-20 KB workbook a day, ~2,900 requests for 2015-2026. Same NSE website terms as
+    # above (not re-read for this dataset): no systematic or automated collection. Recorded as pending by the agent
+    # that built the collector; the decision is the owner's.
+    "fii_stats": f"{_NSE_TERMS}: automated collection prohibited; a new dataset (#371, one .xls a day, ~2,900 "
+    "files 2015-2026). Owner decision needed (#371)",
     # NSE's per-symbol corporate actions (/api/corporates-corporateActions with from_date/to_date) for the stored
     # factor history (#369 slice 2, refseries.corp_actions): one request per F&O stock underlying, ~300 symbols once,
     # then only new symbols. The monitor's per-symbol fetch for watched stocks predates #362 and is not a backfill.

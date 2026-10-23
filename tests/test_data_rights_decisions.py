@@ -35,8 +35,8 @@ def counting_client(calls: list[str]) -> PoliteClient:
 
 
 def test_the_owners_23_oct_decisions_are_recorded():
-    # none of the decided datasets is pending; PENDING now holds only #369's new datasets, awaiting the owner
-    assert set(data_rights.PENDING) == {"nse_corp_actions", "nse_symbol_change", "bse_corp_actions"}
+    # none of the 23-Oct datasets is still pending; PENDING stays the mechanism for later ones (fii_stats, #371)
+    assert not set(DECIDED_1023) & set(data_rights.PENDING)
     for k in DECIDED_1023:
         d = data_rights.require(k)
         assert (d.dataset, d.choice, d.decided, d.ref) == (k, "accept-personal", "2026-10-23", "issue #471")

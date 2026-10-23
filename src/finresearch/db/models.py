@@ -1720,9 +1720,28 @@ class FnoParticipantVol(Base):
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class FiiStats(Base):
+    """NSE's daily FII derivative statistics (#371, adapters.nse_fii_stats), one row per day and category (INDEX
+    FUTURES, INDEX OPTIONS, STOCK FUTURES, STOCK OPTIONS and any per-index rows the file has): contracts and value
+    (Rs crore) foreign investors bought and sold that day, and their open interest at the day's end. Public aggregate
+    market data; the backfill manifest is fno_participant_day (dataset 'fii_stats')."""
+
+    __tablename__ = "fii_stats"
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    category: Mapped[str] = mapped_column(String(40), primary_key=True)
+    buy_contracts: Mapped[int] = mapped_column(BigInteger)
+    buy_amt_cr: Mapped[Decimal] = mapped_column(Numeric(18, 4))
+    sell_contracts: Mapped[int] = mapped_column(BigInteger)
+    sell_amt_cr: Mapped[Decimal] = mapped_column(Numeric(18, 4))
+    oi_contracts: Mapped[int] = mapped_column(BigInteger)
+    oi_amt_cr: Mapped[Decimal] = mapped_column(Numeric(18, 4))
+    source: Mapped[str] = mapped_column(String(200))
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class FnoParticipantDay(Base):
-    """The participant files' backfill manifest (#371): one row per dataset (fno_participant_oi / _vol) and calendar
-    day tried. status loaded / no_file (404: a holiday, a weekend or not yet published) / failed. Resume skips loaded
+    """The participant files' backfill manifest (#371): one row per dataset (fno_participant_oi / _vol, and the FII
+    statistics workbook fii_stats) and calendar day tried. status loaded / no_file (404: a holiday, a weekend or not yet published) / failed. Resume skips loaded
     days and old no_file days."""
 
     __tablename__ = "fno_participant_day"
