@@ -1690,6 +1690,10 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
     from finresearch.api.fno_plan import add_fno_plan_routes
 
     add_fno_plan_routes(app, _fno)
+
+    from finresearch.api.card_ledger import add_card_ledger_routes
+
+    add_card_ledger_routes(app)  # #376: the card ledger report and the override log
     # F&O backtest evidence: pre-registered specs, the latest evaluation, candidates' setups (#307)
     from finresearch.api.fno_backtests import add_fno_backtest_routes
 

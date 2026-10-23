@@ -6,6 +6,7 @@ and exit-rule routes (api/fno_book.py)."""
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -16,6 +17,8 @@ from pydantic import BaseModel, Field
 
 from finresearch.db import session_scope
 from finresearch.fnobook import card_log
+
+log = logging.getLogger(__name__)
 
 
 class PlanLegIn(BaseModel):
@@ -94,6 +97,18 @@ async def plan_inputs(f: Any, sym: str, expiry: date, today: date, now: datetime
                       calendar=_calendar(today))  # fmt: skip
 
 
+def _record_now(card_log_id: int) -> None:
+    """#376 addendum B1.4: the plan card's forecasts in the same request. A failure is logged, never the response's:
+    the monitor's hourly forecast step records the row later (record_pending skips recorded cards)."""
+    from finresearch.fnobook import card_forecasts
+
+    try:
+        with session_scope() as s:
+            card_forecasts.record_pending(s, card_log_ids=[card_log_id])
+    except Exception:
+        log.warning("recording the plan card's forecasts failed; the hourly step will retry", exc_info=True)
+
+
 def add_fno_plan_routes(app: FastAPI, fno: Callable[[], Any]) -> None:
     """`fno` = the app's option-chain client factory (Groww first, else NSE; tests pass a fake)."""
 
@@ -145,6 +160,7 @@ def add_fno_plan_routes(app: FastAPI, fno: Callable[[], Any]) -> None:
         out = {**card, "risk_notice": fs.risk_notice()}
         out["card_log_id"] = card_log.append("plan", symbol=sym, expiry=body.expiry, request=body.model_dump(mode="json"),
                                              chains=[chain], response=out, plan_inputs=x)  # #360  # fmt: skip
+        _record_now(out["card_log_id"])
         return out
 
     @app.get("/api/fno/{symbol}/suggest")

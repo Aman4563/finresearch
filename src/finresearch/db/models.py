@@ -1746,6 +1746,61 @@ for _sql in CARD_LOG_APPEND_ONLY:
     event.listen(CardLog.__table__, "after_create", DDL(_sql))
 
 
+class CardOverride(Base):
+    """#376 (d), evals/experiments/card_ledger/ADDENDUM.md B1.2: one decision the owner recorded on a logged card
+    (POST /api/fno/overrides): `traded` or `skipped`, with the card's verdict class (fnobook.card_log.bucket) copied
+    from card_log when written. Never inferred from the paper book or broker positions. Append-only (a trigger refuses
+    UPDATE and DELETE); the latest row per card counts. Personal: never sent to a model."""
+
+    __tablename__ = "card_override"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    card_log_id: Mapped[int] = mapped_column(BigInteger, index=True)  # no FK: card_log is append-only anyway
+    card_index: Mapped[int] = mapped_column(Integer)
+    decision: Mapped[str] = mapped_column(String(10))  # traded | skipped
+    verdict: Mapped[str | None] = mapped_column(
+        String(20)
+    )  # ENTER | NO PROVEN EDGE | WAIT | AVOID; None unknown
+    note: Mapped[str | None] = mapped_column(Text)
+
+
+CARD_OVERRIDE_APPEND_ONLY = (
+    "CREATE OR REPLACE FUNCTION card_override_append_only() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN "
+    "RAISE EXCEPTION USING MESSAGE = 'card_override is append-only: ' || TG_OP || ' refused'; END $$",
+    "CREATE TRIGGER card_override_append_only BEFORE UPDATE OR DELETE ON card_override "
+    "FOR EACH ROW EXECUTE FUNCTION card_override_append_only()",
+)
+for _sql in CARD_OVERRIDE_APPEND_ONLY:
+    event.listen(CardOverride.__table__, "after_create", DDL(_sql))
+
+
+class ProbPanel(Base):
+    """#376 (b), evals/experiments/card_ledger/ADDENDUM.md B1.3: the fixed probability panel, one row per stored
+    session x underlying x expiry x event (a delta-strike tail, the +/-1 sigma band, or a registered recipe's PoP),
+    every model's probability in `probabilities` (None = unknown). Written by signals.prob_panel from the stored
+    bhavcopy (the monitor's forecast step, `finresearch forecasts panel`); resolved at the expiry's final settlement
+    (`value` = S_T) or by the card ledger's exit replay (`value` = net P&L per set). Market data only."""
+
+    __tablename__ = "prob_panel"
+    __table_args__ = (
+        UniqueConstraint("session", "underlying", "expiry", "event", name="uq_prob_panel_event"),
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    session: Mapped[date] = mapped_column(Date, index=True)
+    underlying: Mapped[str] = mapped_column(String(20))
+    expiry: Mapped[date] = mapped_column(Date)
+    expiry_kind: Mapped[str] = mapped_column(String(20))  # near | monthly | near, monthly | recipe
+    event: Mapped[str] = mapped_column(String(60))  # put10 ... call25 | band1s | spec:<key>
+    inputs: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    probabilities: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    status: Mapped[str] = mapped_column(String(10), default="open", index=True)  # open | resolved | void
+    outcome: Mapped[int | None] = mapped_column(Integer)
+    value: Mapped[float | None] = mapped_column(Float)
+    note: Mapped[str | None] = mapped_column(Text)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class OptionQuote(Base):
     """A forward option-quote snapshot (#363, P1.1, monitor.quotes): NIFTY and BANKNIFTY, near and next expiry, ATM
     +/-10 strikes, calls and puts, at the registered snapshot times. Keyed on the instrument and the registered
