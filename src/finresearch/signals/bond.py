@@ -15,7 +15,7 @@ suffered, to beat the risk-free alternatives an Indian retail investor actually 
   G-sec yield needs a long G-sec curve, and there is no source for one while FBIL is paused (#476): the RBI
   repo-rate proxy (signals.rates, #479) is a short rate and cannot stand in for it. Without a curve the G-sec rows
   are unknown (GSEC_UNKNOWN) and the signal is NO_SIGNAL, never a comparison against a made-up curve.
-* every yield is compared as an **effective annual** rate: a half-yearly G-sec at 6.66 % is 6.77 % a year.
+* every yield is compared as an **effective annual** rate: a half-yearly G-sec at 7.00 % is 7.12 % a year.
 
 Actions: BUY when y_net beats the matching G-sec by the required credit spread (defaults: the roadmap's 1.5 pp for AA
 and 3 pp for A; ``min_spread`` in pp overrides) *and* beats the FD *and* the bond traded at least ₹1 lakh today;

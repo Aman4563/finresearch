@@ -56,7 +56,7 @@ def _require() -> None:
 @dataclass(frozen=True)
 class ParPoint:
     tenor_years: Decimal
-    semi_annual: Decimal  # fraction, compounded half-yearly (0.0666 = 6.66 %)
+    semi_annual: Decimal  # fraction, compounded half-yearly (0.07 = 7.00 %)
     annualised: Decimal | None  # fraction, FBIL's own annualised figure
 
 
@@ -109,7 +109,7 @@ def _as_of(v: object) -> date | None:
 
 def parse_par_yield(content: bytes) -> ParCurve:
     """The "Par Yield" sheet of FBIL's G-sec workbook, .xlsx or (up to 2022) OLE2 .xls (adapters.xls): a title row
-    with the date ('23-Sep-2026', or '03 Jan, 2022' in the .xls era), then 'Tenor (Year)', 'YTM% p.a.(Semi-Annual)',
+    with the date ('07-Jan-2026', or '03 Jan, 2022' in the .xls era), then 'Tenor (Year)', 'YTM% p.a.(Semi-Annual)',
     'YTM % p.a.(Annualized)' rows."""
     from finresearch.adapters.xls import NotAWorkbook, read_sheets
 
