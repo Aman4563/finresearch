@@ -87,3 +87,15 @@ and `finresearch forecasts panel`; idempotent on (session, underlying, expiry, e
 POST `/api/fno/plan` records the card's two forecasts in the same request, right after the card_log row is written
 (the same rules as `record_pending`); a failure is logged and the hourly step records it later. The suggest GET is
 unchanged (still recorded by the hourly step: GETs never write forecasts).
+
+## B2. 23-Oct-2026: two panel resolution rules decided while building it (post hoc relative to B1)
+
+Recorded before the panel ever ran on stored data or read an outcome; B1 is unchanged.
+
+1. **Which session settles.** B1.3 says S_T is `backtest.pricing.settlement_price` on the contract's last stored
+   session. When expiry day itself is stored, that session is used. When it is not (a holiday, or a missed download),
+   the last stored session before it is accepted only if its expiring options carry ONE uniform settlement price, which
+   NSE prints only on the contract's last session; otherwise the event is void ("not provably the contract's last
+   session"), never settled at an earlier session's price.
+2. **When a row is tried.** No panel row is tried before its expiry date (IST), like the card ledger's
+   `resolve_on` = expiry; a recipe whose stop fires early is resolved at its expiry, as the cards are.
