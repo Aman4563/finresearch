@@ -174,6 +174,7 @@ uv run finresearch events check --from 2026-10-22 --to 2026-11-24  # the plan ca
 uv run finresearch fno span backfill --from 2008-01-01  # NSE SPAN scan ranges, one file a month (#370)
 uv run finresearch fno span margin-check           # margin estimate vs Groww's calculator: the P4.3 trigger
 uv run finresearch fno participants --from 2015-01-01  # participant-wise OI and volume (Client/DII/FII/Pro), 2 files a day (#371)
+uv run finresearch fno fii-stats --from 2015-01-01     # NSE's FII derivative statistics (.xls, 1 file a day; needs the owner's data-rights decision, #371)
 uv run finresearch fno panel build --from 2022-01-01   # market-wide stock-options panel from the kept zips, no download (#374)
 uv run finresearch fno panel mwpl --from 2022-01-01    # combined OI / MWPL, one file a session; needs the owner's data-rights decision (#374)
 uv run finresearch fno panel ban-check                 # derived ban list vs NSE's dated notices on 20 sampled days (#374)
