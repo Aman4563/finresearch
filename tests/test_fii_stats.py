@@ -146,8 +146,16 @@ def clean(env):
 
 
 @pytest.fixture
+def undecided(monkeypatch):
+    """No recorded decision, whatever the owner's record says: the gate itself is under test."""
+    from finresearch import data_rights
+
+    monkeypatch.delitem(data_rights.DECISIONS, fs.DATASET, raising=False)
+
+
+@pytest.fixture
 def decided(monkeypatch):
-    """A recorded decision for the test only: the real entry stays PENDING until the owner decides."""
+    """A recorded decision for the test only, whatever the owner's record says (accepted on 23-Oct-2026, #481)."""
     from finresearch import data_rights
 
     monkeypatch.setitem(data_rights.DECISIONS, fs.DATASET, data_rights.Decision(
@@ -167,15 +175,23 @@ async def run(start: date, end: date, **kw):
         return await fii_stats.backfill(start, end, http=http, **kw)
 
 
-def test_the_dataset_is_pending_the_owners_decision():
+def test_the_owner_accepted_the_dataset_on_23_oct():
+    # PENDING (#371/#473) until the owner's decision of 23-Oct-2026 (#481): accept-personal under the #362 terms
     from finresearch import data_rights
 
-    assert fs.DATASET not in data_rights.DECISIONS and "#371" in data_rights.PENDING[fs.DATASET]
+    d = data_rights.require(fs.DATASET)
+    assert (d.choice, d.decided, d.ref) == ("accept-personal", "2026-10-23", "issue #481")
+    assert fs.DATASET not in data_rights.PENDING
+
+
+def test_without_a_decision_the_dataset_is_refused(undecided):
+    from finresearch import data_rights
+
     with pytest.raises(data_rights.NoDecision, match="fii_stats"):
         data_rights.require(fs.DATASET)
 
 
-async def test_no_decision_no_request(clean):
+async def test_no_decision_no_request(clean, undecided):
     from finresearch import data_rights
 
     with respx.mock(assert_all_called=False) as mock, pytest.raises(data_rights.NoDecision):
@@ -309,7 +325,7 @@ def no_slot(clean):
     return clean
 
 
-async def test_nightly_without_a_decision_is_skipped_not_failed(no_slot):
+async def test_nightly_without_a_decision_is_skipped_not_failed(no_slot, undecided):
     from finresearch.monitor import fno_bhav as job
 
     with respx.mock(assert_all_called=False) as mock:
@@ -411,7 +427,7 @@ def test_cli_passes_dates_and_delay(monkeypatch):
                                                                              3.0, True)  # fmt: skip
 
 
-def test_cli_without_a_decision_says_so_and_exits_2():
+def test_cli_without_a_decision_says_so_and_exits_2(undecided):
     from typer.testing import CliRunner
 
     from finresearch.cli import app

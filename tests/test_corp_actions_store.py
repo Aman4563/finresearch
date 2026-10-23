@@ -168,11 +168,12 @@ def decided(clean, monkeypatch, tmp_path):
     return tmp_path
 
 
-async def test_no_data_rights_decision_no_request(clean):
+async def test_no_data_rights_decision_no_request(clean, monkeypatch):
     from finresearch import data_rights
     from finresearch.refseries import corp_actions as ca
 
-    assert ca.DATASET in data_rights.PENDING  # recorded for the owner, not decided
+    # the owner accepted it on 23-Oct-2026 (#481); the gate itself is under test here
+    monkeypatch.delitem(data_rights.DECISIONS, ca.DATASET, raising=False)
     with respx.mock(assert_all_called=False) as mock, pytest.raises(data_rights.NoDecision):
         await ca.backfill(["EXDEMO"], now=lambda: EVENING)
     assert mock.calls.call_count == 0
@@ -293,6 +294,8 @@ async def test_symbol_change_fetch_needs_its_own_decision_then_loads(clean, monk
     from finresearch import data_rights
     from finresearch.refseries import corp_actions as ca
 
+    # accepted on 23-Oct-2026 (#481); the gate itself is under test here
+    monkeypatch.delitem(data_rights.DECISIONS, ca.SYMBOL_CHANGE_DATASET, raising=False)
     csv = "SM_NAME,SM_KEY_SYMBOL,SM_NEW_SYMBOL,SM_APPLICABLE_FROM\nNew Co Limited,OLDCO,NEWCO,15-JAN-2018\n"
     with respx.mock(assert_all_called=False) as mock:
         route = mock.get(ca.SYMBOL_CHANGE_URL).mock(return_value=httpx.Response(200, text=csv))
@@ -308,11 +311,15 @@ async def test_symbol_change_fetch_needs_its_own_decision_then_loads(clean, monk
         assert route.call_count == 1
 
 
-def test_cli_rebuild_and_a_refused_backfill(clean):
+def test_cli_rebuild_and_a_refused_backfill(clean, monkeypatch):
     from typer.testing import CliRunner
 
+    from finresearch import data_rights
     from finresearch.cli import app
+    from finresearch.refseries import corp_actions as ca
 
+    # accepted on 23-Oct-2026 (#481); the refusal itself is under test here
+    monkeypatch.delitem(data_rights.DECISIONS, ca.DATASET, raising=False)
     load()
     r = CliRunner().invoke(app, ["equity", "actions-rebuild"])
     assert r.exit_code == 0 and "0 changed" in r.output

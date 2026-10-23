@@ -102,3 +102,38 @@ async def test_a_recorded_decision_lets_the_request_through(dataset):
             await mc.MospiCpiClient(http).fetch(today=date(2026, 10, 23))
     await http.aclose()
     assert len(calls) == 1  # the gate passed and the first request was made
+
+
+# The owner's second set of 23-Oct-2026 decisions (#481): four NSE datasets under the #362 terms and RBI's press-release
+# RSS feed accepted; NSE Indices' press releases, MoSPI's release calendar and the RBI page reading (#478) dropped.
+ACCEPTED_481 = ("fii_stats", "nse_corp_actions", "nse_symbol_change", "nse_circulars", "rbi_rss")
+DROPPED_481 = ("nifty_indices_press", "mospi_release_calendar", "rbi_mpc_schedule")
+
+
+def test_the_owners_second_23_oct_decisions_are_recorded():
+    for k in ACCEPTED_481:
+        d = data_rights.require(k)
+        assert (d.dataset, d.choice, d.decided, d.ref) == (k, "accept-personal", "2026-10-23", "issue #481")
+    for k in ("fii_stats", "nse_corp_actions", "nse_symbol_change", "nse_circulars"):
+        assert "Wayback memento of 01-Oct-2026" in data_rights.DECISIONS[k].terms_read  # the #362 terms
+    rss = data_rights.DECISIONS["rbi_rss"].terms_read
+    assert all(w in rss for w in ("syndication", "All Rights Reserved", "caching", "never copies"))
+
+
+def test_dropped_sources_are_refused_with_their_reason_on_record():
+    for k in DROPPED_481:
+        d = data_rights.DECISIONS[k]
+        assert (d.choice, d.decided, d.ref) == ("drop", "2026-10-23", "issue #481")
+        with pytest.raises(data_rights.NoDecision, match=f"dropped {k!r}"):
+            data_rights.require(k)
+    assert "written consent" in data_rights.DECISIONS["nifty_indices_press"].terms_read
+    assert "no licence text" in data_rights.DECISIONS["mospi_release_calendar"].terms_read
+    assert "rbi_rss" in data_rights.DECISIONS["rbi_mpc_schedule"].terms_read
+
+
+def test_only_bse_corporate_actions_and_fbil_wait_for_the_owner():
+    assert set(data_rights.PENDING) == {"bse_corp_actions", "fbil_rates"}
+    assert not set(data_rights.PENDING) & set(data_rights.DECISIONS)
+    for k in data_rights.PENDING:
+        with pytest.raises(data_rights.NoDecision, match=k):
+            data_rights.require(k)
