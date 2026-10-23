@@ -72,6 +72,12 @@ PENDING: dict[str, str] = {
     # history. Same terms as above.
     "nse_secban": f"{_NSE_TERMS}: automated collection prohibited; 20 dated files to validate the ban history "
     "(#374). Owner decision needed (#374)",
+    # NSE's daily FII derivative statistics (content/fo/fii_stats_<DD-Mon-YYYY>.xls, P1.9, #371,
+    # adapters.nse_fii_stats): one ~10-20 KB workbook a day, ~2,900 requests for 2015-2026. Same NSE website terms as
+    # above (not re-read for this dataset): no systematic or automated collection. Recorded as pending by the agent
+    # that built the collector; the decision is the owner's.
+    "fii_stats": f"{_NSE_TERMS}: automated collection prohibited; a new dataset (#371, one .xls a day, ~2,900 "
+    "files 2015-2026). Owner decision needed (#371)",
 }
 
 
