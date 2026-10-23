@@ -5,7 +5,7 @@ adapter expects); no network: respx answers every request."""
 from __future__ import annotations
 
 import io
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 import httpx
@@ -90,6 +90,8 @@ def test_extra_categories_are_kept_and_labels_normalised():
         ({"rows": {**ROWS, "INDEX FUTURES": (1, -0.5, 1, 1, 1, 1)}}, "negative"),
         ({"rows": {**ROWS, "INDEX FUTURES": (1, 1, None, 1, 1, 1)}}, "INDEX FUTURES"),
         ({"rows": {**ROWS, "INDEX FUTURES": (1, 1, "n/a", 1, 1, 1)}}, "INDEX FUTURES"),
+        ({"rows": {**ROWS, "X" * 41: (1, 1, 1, 1, 1, 1)}}, "longer"),  # fits the table's 40 or is refused
+        ({"rows": {**ROWS, "index  futures": (1, 1, 1, 1, 1, 1)}}, "twice"),
     ],
 )
 def test_parse_refuses_a_layout_it_does_not_know(change, match):
@@ -113,7 +115,9 @@ async def test_fetch_day_returns_the_body_as_served_and_none_on_404():
 
 
 @respx.mock
-@pytest.mark.parametrize("resp", [httpx.Response(200, text="<html>Access Denied</html>"), httpx.Response(403)])
+@pytest.mark.parametrize(
+    "resp", [httpx.Response(200, text="<html>Access Denied</html>"), httpx.Response(403)]
+)
 async def test_fetch_day_raises_on_a_block_page_or_refusal(resp):
     respx.get(fs.url_for(D)).mock(return_value=resp)
     async with client() as http:
@@ -198,7 +202,10 @@ async def test_backfill_stores_rows_manifest_and_lineage(clean, decided):
         m = s.get(FnoParticipantDay, (fs.DATASET, D))
         assert m.status == "loaded" and m.rows == 4 and m.url == fs.url_for(D)
         load = s.scalars(select(DatasetLoad).where(DatasetLoad.dataset == fs.DATASET)).one()
-        assert load.sha256 == hashlib.sha256(synth_xls(D)).hexdigest() and load.parser_version == fs.PARSER_VERSION
+        assert (
+            load.sha256 == hashlib.sha256(synth_xls(D)).hexdigest()
+            and load.parser_version == fs.PARSER_VERSION
+        )
 
 
 async def test_a_file_dated_another_day_is_refused(clean):
@@ -222,7 +229,9 @@ async def test_backfill_resumes_and_skips_weekends_and_loaded_days(clean, decide
 
 @respx.mock
 async def test_two_refusals_stop_the_dataset(clean, decided):
-    route = respx.get(url__startswith="https://nsearchives.nseindia.com/").mock(return_value=httpx.Response(429))
+    route = respx.get(url__startswith="https://nsearchives.nseindia.com/").mock(
+        return_value=httpx.Response(429)
+    )
     res = await run(WEEK[0], WEEK[-1])
     assert "refused" in res[fs.DATASET]["stopped"] and route.call_count == 2
 
@@ -235,7 +244,11 @@ async def test_block_pages_are_failures_not_missing_days(clean, decided):
     respx.get(url__startswith="https://nsearchives.nseindia.com/").mock(
         return_value=httpx.Response(200, text="<html>Access Denied</html>"))  # fmt: skip
     res = await run(WEEK[0], WEEK[-1])
-    assert res[fs.DATASET]["no_file"] == 0 and len(res[fs.DATASET]["failed"]) == 2 and "stopped" in res[fs.DATASET]
+    assert (
+        res[fs.DATASET]["no_file"] == 0
+        and len(res[fs.DATASET]["failed"]) == 2
+        and "stopped" in res[fs.DATASET]
+    )
     with session_scope() as s:
         assert s.get(FnoParticipantDay, (fs.DATASET, WEEK[0])).status == "failed"
 
@@ -263,5 +276,146 @@ async def test_raw_files_are_kept_and_reread(clean, decided, tmp_path, monkeypat
         s.execute(text("TRUNCATE fii_stats, fno_participant_day"))
     calls = respx.calls.call_count
     res = await run(D, D, keep_raw=True)
-    assert res[fs.DATASET]["from_raw"] == 1 and res[fs.DATASET]["loaded"] == 1 and respx.calls.call_count == calls
+    assert (
+        res[fs.DATASET]["from_raw"] == 1
+        and res[fs.DATASET]["loaded"] == 1
+        and respx.calls.call_count == calls
+    )
     assert fii_stats.SOURCE.dataset == fs.DATASET
+
+
+# ---------------------------------------------------------------------------------------------------- nightly job
+NIGHT_DAY = date(2026, 10, 9)  # a Friday
+NIGHT = datetime(2026, 10, 9, 14, 15, tzinfo=UTC)  # 19:45 IST
+
+
+def _slot():
+    from finresearch.db import session_scope
+    from finresearch.db.models import AlertEvalSlot
+
+    with session_scope() as s:
+        r = s.get(AlertEvalSlot, f"fii_stats:{NIGHT_DAY}")
+        return None if r is None else r.result
+
+
+@pytest.fixture
+def no_slot(clean):
+    from sqlalchemy import text
+
+    from finresearch.db import session_scope
+
+    with session_scope() as s:
+        s.execute(text("DELETE FROM alert_eval_slot WHERE slot LIKE 'fii_stats:%'"))
+    return clean
+
+
+async def test_nightly_without_a_decision_is_skipped_not_failed(no_slot):
+    from finresearch.monitor import fno_bhav as job
+
+    with respx.mock(assert_all_called=False) as mock:
+        async with client() as http:
+            res = await job.fii_stats_step(NIGHT, holidays=set(), http=http)
+    assert mock.calls.call_count == 0 and "fii_stats" in res["fii_stats"]["skipped"]
+    assert _slot()["status"] == "done"  # no retry: nothing will change until the owner decides
+
+
+@respx.mock
+async def test_nightly_loads_today_and_retries_until_it_is_out(no_slot, decided):
+    from finresearch.monitor import fno_bhav as job
+
+    today = respx.get(fs.url_for(NIGHT_DAY)).mock(return_value=httpx.Response(404))
+    respx.get(url__startswith="https://nsearchives.nseindia.com/").mock(return_value=httpx.Response(404))
+    async with client() as http:
+        await job.fii_stats_step(NIGHT, holidays=set(), http=http)
+        assert _slot()["status"] == "failed"  # not published yet: retried
+        today.mock(return_value=httpx.Response(200, content=synth_xls(NIGHT_DAY)))
+        res = await job.fii_stats_step(NIGHT + timedelta(hours=1), holidays=set(), http=http)
+    assert res["fii_stats"]["loaded"] == 1 and _slot()["status"] == "done"
+
+
+# --------------------------------------------------------------------------------------------------- data quality
+def _checks(day):
+    from finresearch.db import session_scope
+    from finresearch.dq import ref
+
+    with session_scope() as s:
+        return {c.check: c for c in ref.fii_stats_checks(s, day)}
+
+
+def _load(day: date, rows: dict[str, tuple] = ROWS) -> None:
+    from finresearch.db import session_scope
+    from finresearch.fnohist import fii_stats
+
+    with session_scope() as s:
+        fii_stats.load_day(s, day, fs.url_for(day), synth_xls(day, rows))
+
+
+def test_dq_checks_categories_values_and_reupload(clean):
+    assert {c.status for c in _checks(D).values()} == {"unknown"}  # not loaded: unknown, never ok
+    _load(D)
+    got = _checks(D)
+    assert {k: c.status for k, c in got.items()} == {"categories_present": "ok", "value_identity": "ok",
+                                                     "reupload": "ok"}  # fmt: skip
+    assert all(c.dataset == "fii_stats" and c.critical is False for c in got.values())
+    _load(D, {**ROWS, "INDEX FUTURES": (41_235, *ROWS["INDEX FUTURES"][1:])})  # NSE re-uploads the day
+    assert _checks(D)["reupload"].status == "warn"
+
+
+def test_dq_flags_value_without_contracts(clean):
+    # a value with no contracts cannot happen (the reverse can: a few cheap option contracts round to 0.00 crore)
+    _load(D, {**ROWS, "STOCK OPTIONS": (0, 12.5, 119_800, 8_090.0, 140_200, 9_450.3)})
+    c = _checks(D)["value_identity"]
+    assert c.status == "fail" and c.value == 1 and "STOCK OPTIONS buy" in c.note
+
+
+def test_dq_flags_a_missing_category(clean):
+    from sqlalchemy import delete
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import FiiStats
+
+    _load(D)
+    with session_scope() as s:
+        s.execute(delete(FiiStats).where(FiiStats.category == "STOCK FUTURES"))
+    c = _checks(D)["categories_present"]
+    assert c.status == "fail" and "STOCK FUTURES" in c.note
+
+
+def test_fii_stats_is_a_monitored_non_critical_dataset():
+    from finresearch.dq import report, run
+
+    ds = {d.name: d for d in run.DATASETS}["fii_stats"]
+    assert ds.critical is False and ds.sla.hour == 20
+    assert report.LABELS["fii_stats"] == "FII derivative statistics"
+
+
+# ------------------------------------------------------------------------------------------------------------ CLI
+def test_cli_passes_dates_and_delay(monkeypatch):
+    from typer.testing import CliRunner
+
+    from finresearch.cli import app
+    from finresearch.fnohist import fii_stats
+
+    seen = {}
+
+    async def fake(start, end, **kw):
+        seen.update(start=start, end=end, **kw)
+        return {"fii_stats": {"planned": 0}}
+
+    monkeypatch.setattr(fii_stats, "backfill", fake)
+    r = CliRunner().invoke(
+        app, ["fno", "fii-stats", "--from", "2015-01-01", "--to", "2015-12-31", "--delay", "3"]
+    )
+    assert r.exit_code == 0, r.output
+    assert (seen["start"], seen["end"], seen["pause"], seen["keep_raw"]) == (date(2015, 1, 1), date(2015, 12, 31),
+                                                                             3.0, True)  # fmt: skip
+
+
+def test_cli_without_a_decision_says_so_and_exits_2():
+    from typer.testing import CliRunner
+
+    from finresearch.cli import app
+
+    with respx.mock(assert_all_called=False) as mock:
+        r = CliRunner().invoke(app, ["fno", "fii-stats", "--from", "2015-01-01", "--to", "2015-01-02"])
+    assert r.exit_code == 2 and "fii_stats" in r.output and mock.calls.call_count == 0

@@ -40,6 +40,7 @@ TITLE = re.compile(r"FII\s+DERIVATIVES\s+STATISTICS\s+FOR\s+(\d{1,2})-([A-Za-z]{
 SECTIONS = (("BUY", "buy"), ("SELL", "sell"), ("OPEN INTEREST", "oi"))  # header cell prefix -> column prefix
 REQUIRED = ("INDEX FUTURES", "INDEX OPTIONS", "STOCK FUTURES", "STOCK OPTIONS")
 KEYS = ("buy_contracts", "buy_amt_cr", "sell_contracts", "sell_amt_cr", "oi_contracts", "oi_amt_cr")
+MAX_LABEL = 40  # fii_stats.category
 HEAD_ROWS = 10  # the title and header must be within the first rows
 
 
@@ -111,6 +112,8 @@ def parse(content: bytes) -> FiiStatsDay:
             continue  # a blank row or a note
         if not all(_num(v) for v in vals):
             raise FiiStatsError(f"row {label!r}: not all six numbers are present")
+        if len(label) > MAX_LABEL:
+            raise FiiStatsError(f"row {label[:50]!r}: a category name longer than {MAX_LABEL} characters")
         if label in out:
             raise FiiStatsError(f"row {label!r} appears twice")
         rec: dict[str, Any] = {}
