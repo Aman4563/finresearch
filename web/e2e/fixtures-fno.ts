@@ -129,7 +129,8 @@ export const ANALYSIS: Analysis = {
   notes: ["The short call is within the expected move."],
 };
 export const RESULT: Result = { analysis: ANALYSIS, breakevens: [24557, 25443], max_profit: 2762, max_loss: -13488, net_premium: -2762,
-  model_probability_of_profit: 0.66, rate: { rate: 0.065, par_yield: 6.5, tenor_years: 0.02, as_of: "2026-10-12", fallback: false, source: "FBIL", note: "par yield at the expiry" },
+  model_probability_of_profit: 0.66, rate: { rate: 0.054971, par_yield: null, tenor_years: 0.0192, tenor_days: 7, as_of: "2026-10-07", fallback: false, known: true,
+    tier: "proxy", yield: 0.055, source: "RBI repo-rate proxy: repo 5.50 % in force from 07-Oct-2026", note: "repo 5.50 % + 0 bp at 7 days, simple yield, Actual/365 -> 5.50 % continuous" },
   net_greeks: { delta: -1.2, gamma: -0.004, vega: -120.5, theta: 310.2 }, curve: [], lot_size: 65, notes: [], disclaimer: "Model numbers, not advice. No order is placed." };
 export const LONG_RESULT: Result = { ...RESULT, max_profit: big(2762), max_loss: -big(13488), net_premium: -big(2762), breakevens: [124557, 125443],
   analysis: { ...ANALYSIS, expected_move: { move: 123456, low: 1234567, high: 1481479, vol: 0.142 }, risk_neutral: out(0.66, -big(210)), real_world: out(0.71, big(140)) },
@@ -391,8 +392,9 @@ const scWorst = (k: number) => Array.from({ length: 10 }, (_, i) => ({ start: `2
 const VAULT = "waits for the vault's data audit (#394, #365): 2008-2021 sessions live only in the sealed vault database, never in the app's store";
 
 export const SCENARIOS: BookScenarios = {
-  as_of: "2026-10-13T11:00:00+05:30", rate: 0.0527, notes: ["Groww is not connected: only paper legs are in the book."],
-  rate_info: { rate: 0.0527, par_yield: 0.0534, tenor_years: 0.25, as_of: "2026-10-12", fallback: false, known: true, source: "FBIL G-sec par yield, 0.25-year point, 12-Oct-2026", note: "5.34 % half-yearly" },
+  as_of: "2026-10-13T11:00:00+05:30", rate: 0.054626, notes: ["Groww is not connected: only paper legs are in the book."],
+  rate_info: { rate: 0.054626, par_yield: null, tenor_years: 0.2493, tenor_days: 91, as_of: "2026-10-07", fallback: false, known: true, tier: "proxy", yield: 0.055,
+    source: "RBI repo-rate proxy: repo 5.50 % in force from 07-Oct-2026", note: "repo 5.50 % + 0 bp at 91 days, simple yield, Actual/365 -> 5.46 % continuous" },
   legs: [
     { underlying: "NIFTY", expiry: "2026-10-27", right: "call", strike: 25000, qty: 75, mark: 182.4, mark_kind: "mid", iv: 0.1402, forward: 24980, source: "paper #3", reason: null },
     { underlying: "NIFTY", expiry: "2026-10-27", right: "call", strike: 25200, qty: -75, mark: 104.9, mark_kind: "mid", iv: 0.135, forward: 24980, source: "paper #3", reason: null },

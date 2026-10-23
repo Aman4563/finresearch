@@ -23,10 +23,17 @@ const HELP: Record<RankMetricKey, string> = {
   cagr_3y: "Yearly growth rate (CAGR) over the 3 years to the as-of month-end.",
   cagr_5y: "Yearly growth rate (CAGR) over the 5 years to the as-of month-end.",
   consistency_3y: "Of the 25 rolling 1-year periods ending each month over the last 3 years, the share in which the fund's return was above the category median for the same period.",
-  sortino_3y: "Return above the minimum acceptable return (MAR) per unit of downside risk, from 36 monthly returns, annualised. Infinite (∞) when no month fell short of the MAR.",
+  sortino_3y: "Return above the minimum acceptable return (MAR) per unit of downside risk, from 36 monthly returns, annualised; each month's MAR is that month's own risk-free rate. Infinite (∞) when no month fell short of its MAR. The factsheet-style figure uses one rate for every month, as AMC factsheets do.",
   max_drawdown_3y: "Worst fall from a month-end peak to a later month-end low over 3 years. Closer to 0 is better; month-end NAVs miss falls that recovered within a month.",
   ter: "Direct plan's total expense ratio, % a year, from AMFI's TER file. Lower is better.",
 };
+
+/** #479: the factsheet-style Sortino (one rate for every month) as text, or null when the ranking has none. */
+export function fmtFactsheetSortino(f: RankedFund) {
+  if (!f.factsheet) return null;
+  if (f.factsheet.no_downside) return "∞";
+  return f.factsheet.sortino_3y == null ? "—" : f.factsheet.sortino_3y.toFixed(2);
+}
 
 /** One metric's value as text. */
 export function fmtRankValue(f: RankedFund, m: RankMetricKey) {
@@ -103,11 +110,13 @@ export function FundCategoryRankCard({ code }: { code: string }) {
               const rank = d.fund!.ranks[m.key];
               const of = cat.counts[m.key];
               const pct = d.fund!.percentiles[m.key];
+              const fs = m.key === "sortino_3y" ? fmtFactsheetSortino(d.fund!) : null;
               return (
                 <Metric key={m.key} label={m.label} help={HELP[m.key]}
                   value={rank != null ? `${rank} / ${of}` : "—"}
-                  sub={rank != null ? `${fmtRankValue(d.fund!, m.key)} · beats ${Math.round((pct ?? 0) * 100)}%`
-                    : d.fund!.missing[m.key] ?? (cat.ranked[m.key] ? "not available" : "too few funds to rank")} />
+                  sub={(rank != null ? `${fmtRankValue(d.fund!, m.key)} · beats ${Math.round((pct ?? 0) * 100)}%`
+                    : d.fund!.missing[m.key] ?? (cat.ranked[m.key] ? "not available" : "too few funds to rank"))
+                    + (fs != null ? ` · factsheet-style ${fs}` : "")} />
               );
             })}
           </div>
@@ -134,7 +143,8 @@ export function FundCategoryRankCard({ code }: { code: string }) {
                     <Link href={`/funds/${f.code}`} className="hover:text-brand" title={f.name}>{f.name}</Link>
                   </td>
                   {metrics.map((m) => (
-                    <td key={m.key} className="num text-right text-xs" title={f.missing[m.key] ?? undefined}>
+                    <td key={m.key} className="num text-right text-xs"
+                      title={f.missing[m.key] ?? (m.key === "sortino_3y" && f.factsheet ? `factsheet-style (one rate for every month): ${fmtFactsheetSortino(f)}` : undefined)}>
                       {fmtRankValue(f, m.key)}
                       {f.ranks[m.key] != null && <span className="ml-1 text-[10px] text-muted">#{f.ranks[m.key]}</span>}
                     </td>
@@ -160,8 +170,7 @@ export function FundCategoryRankCard({ code }: { code: string }) {
           <div className="space-y-1 text-[11px] text-muted">
             <p>
               <Badge tone="warn">Past returns</Badge>{" "}
-              Funds with a shorter history are ranked only on the periods they cover (counts per column above). Sortino uses a minimum
-              acceptable return of {pctOf(d.mar ?? null, 2)} a year ({pctOf((d.mar ?? 0) / 12, 3)} a month){d.mar_source ? `: ${d.mar_source.source}${d.mar_source.fallback ? ` — ${d.mar_source.note}` : ""}` : ""}. TER {d.ter_day ? `as of ${day(d.ter_day)}` : "unavailable"}{d.ter_error ? ` (${d.ter_error})` : ""}.
+              Funds with a shorter history are ranked only on the periods they cover (counts per column above). <MarText d={d} /> TER {d.ter_day ? `as of ${day(d.ter_day)}` : "unavailable"}{d.ter_error ? ` (${d.ter_error})` : ""}.
               {cat.raw_labels.length > 1 && <> AMFI headings grouped here: {cat.raw_labels.join("; ")}.</>}
             </p>
             <ul className="list-disc pl-4">{(d.caveats ?? []).map((c) => <li key={c}>{c}</li>)}</ul>
@@ -176,6 +185,27 @@ export function FundCategoryRankCard({ code }: { code: string }) {
 function SortIcon({ on, desc }: { on: boolean; desc: boolean }) {
   if (!on) return <ArrowUpDown className="size-3 opacity-50" />;
   return desc ? <ArrowDown className="size-3" /> : <ArrowUp className="size-3" />;
+}
+
+/** #479: the Sortino's minimum acceptable return: each month's own rate and the factsheet-style rate, or (a ranking
+ * stored before #479) the one annual MAR it used. */
+function MarText({ d }: { d: FundCategoryRank }) {
+  const rf = d.risk_free;
+  if (rf?.method === "monthly") {
+    const last = rf.months?.[rf.months.length - 1];
+    return (
+      <span data-testid="rank-mar">
+        Sortino&apos;s minimum acceptable return is each month&apos;s own risk-free rate (the month&apos;s average 91-day rate: your entered T-bill yields, else the RBI repo rate){last ? `, ${pctOf(last.y91)} a year in ${last.month}` : ""}{rf.unknown?.length ? `; unknown for ${rf.unknown.length} month(s)` : ""}.
+        {rf.factsheet && <> The factsheet-style Sortino uses one rate for every month: {rf.factsheet.rate != null ? `${pctOf(rf.factsheet.rate)} (${rf.factsheet.source})` : "unknown"}.</>}
+      </span>
+    );
+  }
+  if (rf?.method === "constant") return <span data-testid="rank-mar">Sortino uses a minimum acceptable return of {pctOf(rf.annual ?? null)} a year ({rf.source}).</span>;
+  return (
+    <span data-testid="rank-mar">
+      Sortino uses a minimum acceptable return of {pctOf(d.mar ?? null, 2)} a year ({pctOf((d.mar ?? 0) / 12, 3)} a month){d.mar_source ? `: ${d.mar_source.source}` : ""} (a ranking stored before the monthly rates; the next daily run replaces it).
+    </span>
+  );
 }
 
 /** "12 / 34 in Flexi Cap, 3y" for a portfolio row; the summary comes from one batch request for every fund held. */

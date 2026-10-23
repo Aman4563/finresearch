@@ -205,12 +205,26 @@ export type FundAnalytics = {
   navs: { date: string; nav: number }[];
   trailing: { "1y"?: number | null; "3y"?: number | null; "5y"?: number | null; since_start?: number | null };
   rolling: { "1y"?: Rolling; "3y"?: Rolling };
-  risk: SeriesStats & { risk_free_annual?: number; sharpe?: number | null; sortino?: number | null };
-  /** #366/#385: the risk-free rate used and where it came from (FBIL's dated 3-month par yield, your input, or the
-   * labelled fallback 6.5 %); `annual` is the effective annual rate applied */
+  risk: SeriesStats & {
+    risk_free_annual?: number | null; sharpe?: number | null; sortino?: number | null; reason?: string;
+    /** #479: one overnight rate (the repo on the last NAV's day) for every day, as AMC factsheets do */
+    factsheet?: FactsheetFigures;
+  };
+  /** #479: the risk-free rate used — "monthly" (each month's own rate: the month's average 91-day rate, owner-entered
+   * else the RBI repo-rate proxy) or "constant" (your input); `annual` is the window's risk-free return, annualised */
   risk_free?: RiskFreeSource;
 };
-export type RiskFreeSource = { rate: number; annual: number; as_of: string | null; tenor_years: number | null; fallback: boolean; source: string; note: string };
+/** #479: one month of the monthly risk-free series (y91: the month's average 91-day yield, simple, Actual/365). */
+export type RiskFreeMonth = { month: string; days: number; y91: number; tiers: Record<string, number> };
+/** #479: the factsheet-style rate: the repo rate in force on the window's last working day, for every period. */
+export type FactsheetRate = { known?: boolean; rate: number | null; as_of: string | null; source: string | null; label: string; url?: string | null; note?: string | null };
+export type FactsheetFigures = FactsheetRate & { sharpe?: number | null; sortino?: number | null; reason?: string };
+export type RiskFreeSource = {
+  method?: "monthly" | "constant"; label?: string; rate?: number | null; annual?: number | null; as_of?: string | null;
+  tenor_years?: number | null; fallback?: boolean; source?: string | null; note?: string | null; known?: boolean;
+  tiers?: Record<string, number>; months?: RiskFreeMonth[]; unknown?: { month: string; note: string | null }[];
+  factsheet?: FactsheetRate;
+};
 
 export type SipResult = {
   scheme_code: string;
@@ -299,11 +313,15 @@ export type RankedFund = {
   percentiles: Record<RankMetricKey, number | null>;
   no_downside: boolean;
   missing: Partial<Record<RankMetricKey, string>>;
+  /** #479: the factsheet-style Sortino (one rate for every month), shown beside the ranked one, not ranked */
+  factsheet?: { sortino_3y: number | null; no_downside: boolean };
 };
 export type FundCategoryRank = {
   status: "ok" | "not_computed" | "not_ranked" | "excluded" | "unknown";
   message?: string; reason?: string; label?: string | null; via?: string | null;
-  as_of?: string; generated_at?: string; sampling?: string; mar?: number; mar_source?: RiskFreeSource; ter_day?: string | null; ter_error?: string | null;
+  as_of?: string; generated_at?: string; sampling?: string; ter_day?: string | null; ter_error?: string | null;
+  /** #479: each month's own MAR and the factsheet-style rate; `mar`/`mar_source` only in a file stored before it */
+  risk_free?: RiskFreeSource; mar?: number; mar_source?: RiskFreeSource;
   metrics?: RankMetric[]; caveats?: string[]; sources?: string[];
   fund?: RankedFund; size?: number; counts?: Record<RankMetricKey, number>;
   category?: {

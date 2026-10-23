@@ -19,9 +19,12 @@ export type Leg = { right: "call" | "put" | "future"; strike: string; side: "buy
 export type ChargeRate = { key: string; rate_pct: number; basis: string; effective_from: string; source: string; status: "verified" | "secondary" | "unconfirmed"; note: string };
 export type Costs = { lines: Record<string, number>; total: number; turnover: number; orders: number; rates: ChargeRate[] };
 export type Outcome = { vol: number; drift: number; pop: number; ev: number; ev_gross: number; quantiles: Record<string, number>; window?: string } | null;
-export type RateInfo = { rate: number; par_yield: number | null; tenor_years: number | null; as_of: string | null; fallback: boolean; source: string; note: string; known?: boolean };
-/** #366/#385: which rate priced a figure — "5.27% (FBIL G-sec par yield, 0.25-year point, …)", or the labelled
- * "6.50% (fallback 6.5 %, no curve — <reason>)". */
+export type RateInfo = {
+  rate: number; par_yield: number | null; tenor_years: number | null; as_of: string | null; fallback: boolean; source: string; note: string;
+  known?: boolean; tier?: "owner" | "proxy" | "given" | null; yield?: number | null; tenor_days?: number | null; url?: string | null;
+};
+/** #479: which rate priced a figure — "5.49% (RBI repo-rate proxy: repo 5.50 % in force from 07-Oct-2026)" or
+ * "5.69% (owner-entered rate: 91D for 14-Oct-2026)"; a rate the caller passed names itself. */
 export const rateLabel = (r: RateInfo) => `${(r.rate * 100).toFixed(2)}% (${r.source}${r.fallback ? ` — ${r.note}` : ""})`;
 export type RiskNotice = { headline: string; text: string; source: string; url: string; date: string };
 export type Analysis = {
@@ -64,7 +67,7 @@ export type Result = {
   model_probability_of_profit: number | null;
   /** @deprecated use model_probability_of_profit; kept by the API for one release */
   probability_of_profit?: number | null;
-  /** where the risk-free rate came from: FBIL's par yield at the expiry, its dated fallback curve, or the fixed 6.5 % */
+  /** where the risk-free rate came from (#479): an owner-entered yield at the expiry, else the RBI repo-rate proxy */
   rate?: RateInfo;
   net_greeks: Record<string, number>;
   curve: [number, number][];

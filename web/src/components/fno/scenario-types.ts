@@ -35,7 +35,7 @@ export type ShockView = { kind: string; label: string; move: number | null; at: 
 
 export type BookScenarios = {
   as_of: string; rate: number; notes: string[];
-  /** #366/#385: where `rate` came from (FBIL's par yield at the book's longest tenor, or a labelled fallback) */
+  /** #479: where `rate` came from (signals.rates at the book's longest tenor: owner-entered, else the RBI repo proxy) */
   rate_info?: RateInfo;
   legs: { underlying: string; expiry: string; right: string; strike: number; qty: number; mark: number | null;
     mark_kind: string | null; iv: number | null; forward: number | null; source: string; reason: string | null }[];
