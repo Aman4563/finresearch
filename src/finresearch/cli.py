@@ -1630,6 +1630,36 @@ def fno_participants(
     console.print_json(json.dumps(res, default=str))
 
 
+@fno_app.command("fii-stats")
+def fno_fii_stats(
+    start: str = typer.Option(..., "--from", help="First day, YYYY-MM-DD (#371: files from 2015 on)"),
+    end: str | None = typer.Option(None, "--to", help="Last day (default today, IST)"),
+    delay: float = typer.Option(
+        3.0, min=0.0, help="Extra seconds between downloads, on top of the shared NSE limit"
+    ),
+    keep_raw: bool = typer.Option(True, help="Keep each .xls under data/fno_participant/ (small)"),
+) -> None:
+    """Download and store NSE's daily FII derivative statistics (fii_stats .xls: FII buy, sell and open interest per
+    F&O category) for [from, to] (#371). Needs the owner's data-rights decision (finresearch.data_rights; exit 2
+    without one, before any request). Resumable and idempotent: re-run the same command to continue. Stops by itself
+    between 09:00 and 16:00 IST on weekdays and after two refusals (403/429) or two failures in a row (exit 1)."""
+    from datetime import date as _date
+
+    from finresearch import data_rights
+    from finresearch.fnohist import fii_stats
+
+    try:
+        res = asyncio.run(fii_stats.backfill(_date.fromisoformat(start), _date.fromisoformat(end) if end else None,
+                                             pause=delay, keep_raw=keep_raw,
+                                             progress=lambda i, n, day, st: console.print(f"{i}/{n} {day} {st}")))  # fmt: skip
+    except data_rights.NoDecision as e:
+        console.print(str(e))
+        raise typer.Exit(2) from e
+    console.print_json(json.dumps(res, default=str))
+    if res.get("stopped") or res.get("fii_stats", {}).get("stopped"):
+        raise typer.Exit(1)
+
+
 @fno_app.command("derive")
 def fno_derive(
     start: str = typer.Option(..., "--from", help="First day, YYYY-MM-DD"),

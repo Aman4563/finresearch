@@ -31,6 +31,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -51,6 +52,26 @@ TABLES: dict[str, type[FnoParticipantOi] | type[FnoParticipantVol]] = {
     po.OI.dataset: FnoParticipantOi, po.VOL.dataset: FnoParticipantVol}  # fmt: skip
 
 
+@dataclass(frozen=True)
+class Source:
+    """One daily archive file the backfill can load: its dataset name (table, manifest, lineage, data rights), URL,
+    fetch (None on 404) and load (rows into the caller's transaction, with manifest and lineage). The participant
+    files are po.Kind (see `_source`); fnohist.fii_stats.SOURCE is the FII statistics workbook (#371)."""
+
+    dataset: str
+    url_for: Callable[[date], str]
+    fetch: Callable[[Any, date], Any]  # async (http, day) -> (url, body) | None
+    load: Callable[[Session, date, str, bytes], int]
+    table: Any  # the ORM table with a `day` column
+
+
+def _source(k: po.Kind | Source) -> Source:
+    if isinstance(k, Source):
+        return k
+    return Source(k.dataset, k.url_for, lambda http, day: po.fetch_day(http, day, k),
+                  lambda s, day, url, body: load_day(s, k, day, url, body), TABLES[k.dataset])  # fmt: skip
+
+
 def save_day(s: Session, day: date, parsed: po.ParticipantDay, url: str, kind: po.Kind = po.OI) -> int:
     if parsed.day is not None and parsed.day != day:
         raise po.ParticipantFileError(f"the file for {day} says it is as on {parsed.day}")
@@ -62,7 +83,7 @@ def save_day(s: Session, day: date, parsed: po.ParticipantDay, url: str, kind: p
     return len(parsed.rows)
 
 
-def _manifest(s: Session, kind: po.Kind, day: date, **values: Any) -> None:
+def _manifest(s: Session, kind: po.Kind | Source, day: date, **values: Any) -> None:
     stmt = pg_insert(FnoParticipantDay).values(dataset=kind.dataset, day=day, attempts=1, **values)
     s.execute(stmt.on_conflict_do_update(index_elements=["dataset", "day"], set_={
         **values, "attempts": FnoParticipantDay.attempts + 1, "fetched_at": stmt.excluded.fetched_at}))  # fmt: skip
@@ -79,12 +100,12 @@ def load_day(s: Session, kind: po.Kind, day: date, url: str, content: bytes) -> 
     return n
 
 
-def mark(s: Session, kind: po.Kind, day: date, status: str, error: str | None = None) -> None:
+def mark(s: Session, kind: po.Kind | Source, day: date, status: str, error: str | None = None) -> None:
     _manifest(s, kind, day, status=status, error=None if error is None else error[:300])
 
 
-def stored_days(s: Session, start: date, end: date, kind: po.Kind = po.OI) -> set[date]:
-    table = TABLES[kind.dataset]
+def stored_days(s: Session, start: date, end: date, kind: po.Kind | Source = po.OI) -> set[date]:
+    table = _source(kind).table
     return set(s.scalars(select(table.day).where(table.day.between(start, end)).distinct()))
 
 
@@ -96,7 +117,7 @@ def bhav_sessions(s: Session, start: date, end: date) -> dict[date, str]:
     return {d: st for d, st in s.execute(q)}
 
 
-def plan_days(s: Session, kind: po.Kind, start: date, end: date, today: date,
+def plan_days(s: Session, kind: po.Kind | Source, start: date, end: date, today: date,
               holidays: set[date] | None = None) -> list[date]:  # fmt: skip
     """The days a run still has to fetch for `kind`, oldest first (see the module docstring)."""
     from finresearch.adapters.nse_holidays import known_trading_holidays
@@ -131,7 +152,7 @@ def raw_dir() -> Path:
     return Path(get_settings().state_dir).parent / "fno_participant"
 
 
-def raw_path(kind: po.Kind, day: date) -> Path:
+def raw_path(kind: po.Kind | Source, day: date) -> Path:
     return raw_dir() / str(day.year) / kind.url_for(day).rsplit("/", 1)[1]
 
 
@@ -139,14 +160,14 @@ def _counts(n: int) -> dict[str, Any]:
     return {"planned": n, "loaded": 0, "no_file": 0, "failed": {}, "from_raw": 0}
 
 
-async def _one(http: Any, kind: po.Kind, day: date, keep_raw: bool, pause: float, res: dict[str, Any]) -> str:
+async def _one(http: Any, kind: Source, day: date, keep_raw: bool, pause: float, res: dict[str, Any]) -> str:
     """Fetch (or re-read) and store one file; returns loaded / no_file. Errors propagate to the caller."""
     p = raw_path(kind, day)
     if p.is_file():
         got: tuple[str, bytes] | None = (kind.url_for(day), p.read_bytes())
         res["from_raw"] += 1
     else:
-        got = await po.fetch_day(http, day, kind)
+        got = await kind.fetch(http, day)
         if pause:
             await asyncio.sleep(pause)
         if got is not None and keep_raw:
@@ -158,11 +179,11 @@ async def _one(http: Any, kind: po.Kind, day: date, keep_raw: bool, pause: float
         if got is None:
             mark(s, kind, day, "no_file")
             return "no_file"
-        load_day(s, kind, day, *got)
+        kind.load(s, day, *got)
     return "loaded"
 
 
-async def backfill(start: date, end: date | None = None, *, kinds: tuple[po.Kind, ...] = po.KINDS,
+async def backfill(start: date, end: date | None = None, *, kinds: tuple[po.Kind | Source, ...] = po.KINDS,
                    today: date | None = None, http: Any = None, holidays: set[date] | None = None,
                    pause: float = 0.0, keep_raw: bool = True, market_hours: bool = True,
                    now: Callable[[], datetime] | None = None,
@@ -177,6 +198,7 @@ async def backfill(start: date, end: date | None = None, *, kinds: tuple[po.Kind
     from finresearch.fincalc.dates import today_ist
     from finresearch.refseries.index_eod import in_market_hours, refused
 
+    kinds = tuple(_source(k) for k in kinds)
     for k in kinds:
         data_rights.require(k.dataset)
     now = now or now_ist

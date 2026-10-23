@@ -65,6 +65,9 @@ DATASETS: tuple[Dataset, ...] = (
         ref.participant_vol_checks,
         critical=False,
     ),
+    # NSE's FII derivative statistics (#371): read by nothing yet, and never loaded until the owner's data-rights
+    # decision (freshness then reads 'never loaded', unknown); published with the participant files in the evening
+    Dataset("fii_stats", time(20, 0), _max(M.FiiStats.day), ref.fii_stats_checks, critical=False),
     Dataset(
         "index_eod", time(18, 30), _max(M.IndexEodDay.day, M.IndexEodDay.status == "loaded"), ref.index_checks
     ),

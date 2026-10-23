@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 
 from finresearch.db.models import (
     DatasetLoad,
+    FiiStats,
     FnoBhavDay,
     FnoIvEod,
     FnoParticipantOi,
@@ -89,6 +90,30 @@ def _participant_rows(
     out.append(Check(dataset, "long_short_identity", "fail" if worst[0] > _tol(tot) else "ok",
                      worst[0], _tol(tot), f"largest gap in {worst[1].removesuffix('_long')}" if worst[0] else None))  # fmt: skip
     return rows, [*out, _reupload(s, dataset, day)]
+
+
+def fii_stats_checks(s: Session, day: date) -> list[Check]:
+    """NSE's FII derivative statistics (#371), all non-critical (read by nothing yet): the four aggregate categories
+    are present, and no category shows a value without contracts (impossible; the reverse is not: a few cheap option
+    contracts can round to 0.00 crore), plus the lineage re-upload check. Unknown when the day is not loaded."""
+    from finresearch.adapters.nse_fii_stats import REQUIRED
+
+    ds = "fii_stats"
+    rows = s.scalars(select(FiiStats).where(FiiStats.day == day)).all()
+    if not rows:
+        return [Check(ds, n, "unknown", note=f"{day} is not loaded", critical=False)
+                for n in ("categories_present", "value_identity", "reupload")]  # fmt: skip
+    have = {r.category for r in rows}
+    missing = [c for c in REQUIRED if c not in have]
+    bad = [f"{r.category} {side}" for r in rows for side in ("buy", "sell", "oi")
+           if getattr(r, f"{side}_contracts") == 0 and getattr(r, f"{side}_amt_cr") != 0]  # fmt: skip
+    return [
+        Check(ds, "categories_present", "fail" if missing else "ok", len(REQUIRED) - len(missing), len(REQUIRED),
+              f"missing: {', '.join(missing)}" if missing else None, critical=False),
+        Check(ds, "value_identity", "fail" if bad else "ok", len(bad), 0,
+              f"a value with no contracts: {', '.join(bad)}" if bad else None, critical=False),
+        _reupload(s, ds, day),
+    ]  # fmt: skip
 
 
 def participant_vol_checks(s: Session, day: date) -> list[Check]:

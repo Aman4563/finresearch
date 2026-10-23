@@ -95,8 +95,14 @@ DECISIONS: dict[str, Decision] = {
 
 # Datasets whose terms were read but whose decision is the owner's and not yet recorded: `require` refuses them and
 # says what was read. To decide, add a Decision above (choice, date, where it is recorded, the terms it rests on).
-# Empty since the owner's decisions of 23-Oct-2026 (#471); kept for the next dataset.
-PENDING: dict[str, str] = {}
+PENDING: dict[str, str] = {
+    # NSE's daily FII derivative statistics (content/fo/fii_stats_<DD-Mon-YYYY>.xls, P1.9, #371,
+    # adapters.nse_fii_stats): one ~10-20 KB workbook a day, ~2,900 requests for 2015-2026. Same NSE website terms as
+    # above (not re-read for this dataset): no systematic or automated collection. Recorded as pending by the agent
+    # that built the collector; the decision is the owner's.
+    "fii_stats": f"{_NSE_TERMS}: automated collection prohibited; a new dataset (#371, one .xls a day, ~2,900 "
+    "files 2015-2026). Owner decision needed (#371)",
+}
 
 
 def require(dataset: str) -> Decision:

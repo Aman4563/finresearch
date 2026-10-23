@@ -50,6 +50,7 @@ dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "respx>=0.21",
+    "xlwt==1.3.0",  # writes synthetic OLE2 .xls fixtures in tests (NSE fii_stats, #371); never imported by src
     "ruff>=0.6",
 ]
 
