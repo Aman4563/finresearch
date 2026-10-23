@@ -320,3 +320,26 @@ def stored_shock(s: Any, day: date, *, holidays: set[date] | None = None,
         return dict.fromkeys(SHOCK_MOVES, 0.0), []
     got, reasons = bs.shock_pnls(legs, mk, bs.horizon_clock(mk.now, 1, holidays or set()))
     return got, notes + list(reasons)
+
+
+def stored_es(s: Any, day: date, *, holidays: set[date] | None = None,
+              rate: float = RATE) -> tuple[float | None, str]:  # fmt: skip
+    """#394 -> #398: the open book's historical ES97.5 one session after `day`'s close (fincalc.book_history.scan over
+    every stored start day, fnohist.book_history), from stored data only (`stored_book`). (None, why) when a leg, a
+    forward, a beta or the history is unknown, or there are too few start days; (0.0, ...) when nothing is open."""
+    from finresearch.fincalc import book_history as bh
+    from finresearch.fnohist import book_history as lh
+
+    legs, mk, notes = stored_book(s, day, rate=rate)
+    if legs is None or mk is None:
+        return None, "; ".join(notes)
+    if not legs:
+        return 0.0, "nothing open"
+    hist = lh.load(s, sorted({x.underlying for x in legs}), day)
+    sc = bh.scan(legs, mk, hist.series, 1, holidays or set())
+    if sc.es is None:
+        return None, "; ".join([*notes, *(sc.reasons or sc.es_reasons)])
+    mapped = ", ".join(f"{u} beta-mapped on {n} days" for u, n in sc.mapped.items() if n)
+    return sc.es, (f"historical ES97.5 ₹{sc.es:,.0f} of tonight's marked book one session ahead over "
+                   f"{len(sc.days)} start days ({sc.first} to {sc.last}; {sc.skipped} skipped)"
+                   + (f"; {mapped}" if mapped else ""))  # fmt: skip

@@ -5,8 +5,9 @@ funds are personal data and never reach a model. Alerts only: nothing here trade
 Book level (`book_readings`, pure): the open book's common-shock P&L (fnobook.scenarios.book_shock, at
 fincalc.tradeplan.SHOCK_MOVES one session ahead) against the shock budget (limit_shock, hysteresis) and against the
 book loss limit (stress_breach); the margin cap in use (fincalc.tradeplan.margin_utilisation with no new trade, over
-MARGIN_UTIL_MAX; only with Groww connected); expected shortfall (P3.4) and stressed margin (P4.3) are not built, so
-while a book is open they read "can't check". Stored series (`series_readings`, `leg_readings`) are in the database.
+MARGIN_UTIL_MAX; only with Groww connected); the book's historical ES97.5 (fnobook.scenarios.stored_es, #394) against
+the book loss limit; stressed margin (P4.3) is not built, so while a book is open it reads "can't check" (as does the
+ES when the caller passes none). Stored series (`series_readings`, `leg_readings`) are in the database.
 """
 
 from __future__ import annotations
@@ -24,11 +25,18 @@ from finresearch.fincalc import tradeplan as tp
 
 Row = tuple[str, str, Reading]  # (rule id, instrument, reading)
 SHOCK_SERIES = "the open F&O book (paper + Groww) repriced at fincalc.tradeplan.SHOCK_MOVES one session ahead"
+ES_SERIES = (
+    "historical ES97.5 of the open F&O book (fno_mark) one session ahead over every stored NIFTY start day "
+    "(fincalc.book_history.scan on fno_bhav futures and fno_iv_eod.iv_30d)"
+)
 FUNDS_SERIES = "Groww funds from the last sync (fnobook.service.stored_funds)"
 
 
 def book_readings(shock: Mapping[float, float] | None, shock_notes: Sequence[str], capital: float | None,
-                  funds: Mapping[str, float] | None, funds_note: str | None, *, book_open: bool) -> list[Row]:  # fmt: skip
+                  funds: Mapping[str, float] | None, funds_note: str | None, *, book_open: bool,
+                  es: tuple[float | None, str] | None = None) -> list[Row]:  # fmt: skip
+    """`es`: the book's historical ES97.5 in ₹ (a positive loss) or None, with its detail
+    (fnobook.scenarios.stored_es); read against the book loss limit. Without it the ES reads "can't check"."""
     out: list[Row] = []
     why = "; ".join(shock_notes) or "the open book could not be repriced"
     if not capital or capital <= 0:
@@ -46,10 +54,13 @@ def book_readings(shock: Mapping[float, float] | None, shock_notes: Sequence[str
             limit = capital * pct / 100
             out.append((rid, "BOOK", Reading(loss / limit, SHOCK_SERIES, f"worst loss ₹{loss:,.0f} at a {worst:+.0%} "
                         f"NIFTY move vs the ₹{limit:,.0f} {name} ({pct:g}% of F&O capital)")))  # fmt: skip
+    if (book_open or shock is None) and es is not None:
+        out.append(("es", "BOOK", _es_reading(es, capital)))
+    elif book_open or shock is None:
+        out.append(("es", "BOOK", Reading(None, "no expected-shortfall series", "the book's expected shortfall is "
+                                          "not computed yet (P3.4), so its limit cannot be checked")))  # fmt: skip
     if book_open or shock is None:
-        out += [("es", "BOOK", Reading(None, "no expected-shortfall series", "the book's expected shortfall is not "
-                                       "computed yet (P3.4), so its limit cannot be checked")),
-                ("margin_stress", "BOOK", Reading(None, "no stressed-margin series", "stressed margin is not "
+        out += [("margin_stress", "BOOK", Reading(None, "no stressed-margin series", "stressed margin is not "
                                                   "computed yet (P4.3), so the headroom cannot be checked"))]  # fmt: skip
     if funds is not None:
         u = tp.margin_utilisation(funds["margin_used"], 0.0, funds["cash"], funds["collateral"])
@@ -58,6 +69,19 @@ def book_readings(shock: Mapping[float, float] | None, shock_notes: Sequence[str
     elif funds_note and "not connected" not in funds_note:
         out.append(("margin", "BOOK", Reading(None, FUNDS_SERIES, funds_note)))
     return out
+
+
+def _es_reading(es: tuple[float | None, str], capital: float | None) -> Reading:
+    value, detail = es
+    if not capital or capital <= 0:
+        return Reading(
+            None, ES_SERIES, "F&O capital is not set on the profile, so the book has no loss limit"
+        )
+    if value is None:
+        return Reading(None, ES_SERIES, detail)
+    limit = capital * tp.BOOK_BUDGET_PCT / 100
+    return Reading(value / limit, ES_SERIES, f"{detail} vs the ₹{limit:,.0f} book loss limit "
+                   f"({tp.BOOK_BUDGET_PCT:g}% of F&O capital)")  # fmt: skip
 
 
 # --------------------------------------------------------------------------- stored series (database only)

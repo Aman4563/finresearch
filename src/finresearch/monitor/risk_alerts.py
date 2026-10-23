@@ -76,9 +76,13 @@ def evaluate(now: datetime, day: date, holidays: set[date] | None = None) -> dic
             shock, notes = scenarios.stored_shock(s, day, holidays=holidays)
         except Exception as e:
             shock, notes = None, [f"the open book could not be repriced ({type(e).__name__})"]
+        try:
+            es = scenarios.stored_es(s, day, holidays=holidays)
+        except Exception as e:  # unknown, never 0
+            es = (None, f"the book's expected shortfall could not be computed ({type(e).__name__})")
         capital = float(load_profile(s).fno_capital_inr)
         held = set(s.scalars(select(FnoMark.symbol).where(FnoMark.day == day)))
-        rows = (rr.book_readings(shock, notes, capital, funds, fnote, book_open=bool(held))
+        rows = (rr.book_readings(shock, notes, capital, funds, fnote, book_open=bool(held), es=es)
                 + rr.series_readings(s, sorted(set(INDEX_SYMBOLS) | held), day) + rr.leg_readings(s, day, now))  # fmt: skip
         for rid, inst, rd in rows:
             what = risk.apply(s, risk.RULES[rid], inst, rd, now)
