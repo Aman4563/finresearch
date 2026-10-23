@@ -233,7 +233,7 @@ def test_universe_keeps_one_direct_growth_row_per_scheme_and_maps_its_other_plan
 
 # --------------------------------------------------------------------------- compute, store, lookup
 @pytest.fixture
-def fake_amfi(monkeypatch):
+def fake_amfi(env, monkeypatch):  # env: compute() reads the stored FBIL curve for the MAR (#366/#385)
     """Ten flexi-cap funds across the two AMFI spellings with steady monthly growth (fund i: 0.3 % + 0.1 % x i a
     month), a regular plan, an index fund, and one fund launched after the as-of month-end."""
     cat_a, cat_b = "Equity Scheme - Flexi Cap Fund", "Equity Schemes - Flexi Cap Fund"
@@ -382,7 +382,13 @@ async def test_empty_early_month_ter_file_falls_back_to_the_previous_month(monke
 def test_category_rank_api_reads_the_stored_ranking_only(env, fake_amfi):
     import asyncio
 
+    from sqlalchemy import text
+
     from finresearch.api import create_app
+    from finresearch.db import session_scope
+
+    with session_scope() as s:
+        s.execute(text("TRUNCATE rate_curve"))  # no stored curve: the MAR is the labelled fallback
 
     with TestClient(create_app()) as c:
         r = c.get("/api/funds/200003/category-rank").json()
