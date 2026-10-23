@@ -1,6 +1,6 @@
-"""#366: the dated rate lookup (refseries.rate_lookup, signals.rates.risk_free_on). A date without a stored curve
-is unknown (rate None with a reason), never the fixed 6.5 %. Expected values are computed here from the formulas,
-not by calling the code under test."""
+"""#366: the dated lookup of the stored FBIL series (refseries.rate_lookup; FBIL is paused, #476, and no live rate
+reads it since #479). A date without a stored curve is unknown (rate None with a reason), never the fixed 6.5 %.
+Expected values are computed here from the formulas, not by calling the code under test."""
 
 from __future__ import annotations
 
@@ -92,10 +92,13 @@ def test_tbill_rate_is_converted_on_a_stated_basis(seeded):
     assert missing["known"] is False and missing["rate"] is None
 
 
-async def test_signals_risk_free_on_reads_the_store(seeded):
+async def test_signals_risk_free_on_no_longer_reads_the_fbil_store(seeded):
+    """Behaviour changed on purpose (#479): FBIL is paused (#476), so signals.rates answers from the RBI repo-rate
+    proxy even with FBIL rows stored: repo 4.00 % on 4-Jan-2022 (since 22-May-2020), 182 days at 0.5 years."""
     from finresearch.signals.rates import risk_free_on
 
     r = await risk_free_on(TUE, 0.5)
-    assert r["known"] and r["rate"] == pytest.approx(2 * math.log(1 + 0.041 / 2)) and r["fallback"] is False
-    gone = await risk_free_on(date(2020, 1, 1), 0.5)
-    assert gone["rate"] is None and gone["known"] is False
+    assert r["known"] and r["tier"] == "proxy" and r["fallback"] is False and r["as_of"] == "2020-05-22"
+    assert r["rate"] == pytest.approx(math.log(1 + 0.04 * 182 / 365) * 365 / 182)
+    old = await risk_free_on(date(2014, 1, 1), 0.5)  # before the policy-rate table: unknown, never a default
+    assert old["rate"] is None and old["known"] is False
