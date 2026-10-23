@@ -87,8 +87,9 @@ def test_index_close_checks_and_underlying_reconciliation(clean):
     with session_scope() as s:
         seed(s)
         res = by_check(ref.index_checks(s, ds.T1))
+    # other_row_ranges (non-critical, unread indices) added on purpose in the replay false-alarm fix
     assert {k: c.status for k, c in res.items()} == {"expected_symbols": "ok", "row_ranges": "ok",
-                                                     "underlying_vs_close": "ok"}  # fmt: skip
+                                                     "other_row_ranges": "ok", "underlying_vs_close": "ok"}  # fmt: skip
     idx = [r for r in ds.index_rows(ds.T1) if r["symbol"] != "INDIA VIX"]
     idx[0] = {**idx[0], "close": idx[0]["close"] + Decimal("1.00")}  # NIFTY's close off by a rupee
     with session_scope() as s:
@@ -97,6 +98,48 @@ def test_index_close_checks_and_underlying_reconciliation(clean):
         res = by_check(ref.index_checks(s, ds.T1))
     assert res["expected_symbols"].status == "fail" and "INDIA VIX" in res["expected_symbols"].note
     assert res["underlying_vs_close"].status == "fail" and res["underlying_vs_close"].value == 1
+
+
+def _idx(sym, o, h, lo, c):
+    d = {k: (None if v is None else Decimal(v)) for k, v in zip(("open", "high", "low", "close"), (o, h, lo, c),
+                                                                 strict=True)}  # fmt: skip
+    return {"day": ds.T1, "symbol": sym, "index_name": sym, **d}
+
+
+def test_unread_indices_with_nse_quirks_do_not_fail_critical(clean):
+    """The replay's index false alarms: NIFTY50 DIVIDEND POINTS reset to 0 each April with zero high/low, and a
+    NIFTY50 USD row with high < low in NSE's own file. Neither index is read by the app: no critical failure."""
+    from finresearch.db import session_scope
+    from finresearch.dq import ref
+
+    extra = [_idx("NIFTY50 DIVIDEND POINTS", "0", "0", "0", "0"),
+             _idx("NIFTY50 DIVIDEND POINTS 2", "12.5", None, None, "12.5"),
+             _idx("NIFTY50 USD", "9800", "9790", "9810", "9800")]  # fmt: skip
+    with session_scope() as s:
+        seed(s, idx=ds.index_rows(ds.T1) + extra)
+        res = by_check(ref.index_checks(s, ds.T1))
+    assert res["row_ranges"].status == "ok"
+    other = res["other_row_ranges"]
+    assert other.status == "warn" and not other.critical and other.note == "NIFTY50 USD"
+    assert not any(c.critical and c.status == "fail" for c in res.values())
+
+
+def test_bad_row_in_a_read_index_still_fails_critical(clean):
+    from finresearch.db import session_scope
+    from finresearch.dq import ref
+
+    for sym, bad in (("NIFTY", {"close": Decimal("30000")}), ("BANKNIFTY", {"high": Decimal("1")}),
+                     ("INDIA VIX", {"close": Decimal("0")})):  # fmt: skip
+        idx = [{**r, **bad} if r["symbol"] == sym else r for r in ds.index_rows(ds.T1)]
+        with session_scope() as s:
+            s.execute(text(f"TRUNCATE {TABLES}"))
+            seed(s, idx=idx)
+            res = by_check(ref.index_checks(s, ds.T1))
+        assert res["row_ranges"].status == "fail" and res["row_ranges"].critical, sym
+    with session_scope() as s:  # a dividend-points index going negative is still shown
+        s.execute(text(f"TRUNCATE {TABLES}"))
+        seed(s, idx=ds.index_rows(ds.T1) + [_idx("NIFTY50 DIVIDEND POINTS", "1", "1", "1", "-1")])
+        assert by_check(ref.index_checks(s, ds.T1))["other_row_ranges"].status == "warn"
 
 
 def test_vix_iv30_gap_outlier(clean):

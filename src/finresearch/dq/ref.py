@@ -40,6 +40,9 @@ LONG_SHORT = (("fut_idx_long", "fut_idx_short"), ("fut_stk_long", "fut_stk_short
               ("opt_stk_call_long", "opt_stk_call_short"), ("opt_stk_put_long", "opt_stk_put_short"),
               ("total_long", "total_short"))  # fmt: skip
 INDEX_SYMBOLS = ("NIFTY", "BANKNIFTY", "INDIA VIX")
+# the index rows something reads (marks, direction, event vol, VRP, underlying_vs_close: by F&O symbol, or VIX): the
+# strict, critical row_ranges rule applies to these only
+USED_INDICES = (*rc.FNO_INDICES, "INDIA VIX")
 VIX_RANGE = (
     5.0,
     100.0,
@@ -119,30 +122,33 @@ def participant_checks(s: Session, day: date) -> list[Check]:
 
 
 def index_checks(s: Session, day: date) -> list[Check]:
-    names = ("expected_symbols", "row_ranges", "underlying_vs_close")
+    names = ("expected_symbols", "row_ranges", "other_row_ranges", "underlying_vs_close")
     m = s.get(IndexEodDay, day)
     if m is None or m.status != "loaded":
-        return [Check("index_eod", n, "unknown", note=f"{day} is not loaded") for n in names]
+        return [Check("index_eod", n, "unknown", note=f"{day} is not loaded", critical=n != "other_row_ranges")
+                for n in names]  # fmt: skip
     have = set(
         s.scalars(select(IndexEod.symbol).where(IndexEod.day == day, IndexEod.symbol.in_(INDEX_SYMBOLS)))
     )
     miss = [x for x in INDEX_SYMBOLS if x not in have]
     out = [Check("index_eod", "expected_symbols", "fail" if miss else "ok", len(miss), 0,
                  f"missing: {', '.join(miss)}" if miss else None)]  # fmt: skip
+    used = {"d": day, "used": list(USED_INDICES), "lo": VIX_RANGE[0], "hi": VIX_RANGE[1]}
     bad = s.scalar(text("""
-        SELECT count(*) FROM index_eod WHERE day = :d AND (close <= 0 OR high < low OR close > high OR close < low
-               OR (symbol = 'INDIA VIX' AND (close < :lo OR close > :hi)))"""),
-                   {"d": day, "lo": VIX_RANGE[0], "hi": VIX_RANGE[1]})  # fmt: skip
-    out.append(
-        Check(
-            "index_eod",
-            "row_ranges",
-            "fail" if bad else "ok",
-            bad,
-            0,
-            f"{bad} row(s) out of range" if bad else None,
-        )
-    )
+        SELECT count(*) FROM index_eod WHERE day = :d AND symbol = ANY(:used)
+               AND (close <= 0 OR high < low OR close > high OR close < low
+                    OR (symbol = 'INDIA VIX' AND (close < :lo OR close > :hi)))"""), used)  # fmt: skip
+    out.append(Check("index_eod", "row_ranges", "fail" if bad else "ok", bad, 0,
+                     f"{bad} row(s) of an index the app reads out of range" if bad else None))  # fmt: skip
+    # the ~100 other indices in NSE's file: nothing reads them, so a defect in NSE's own row is shown, not gated.
+    # A dividend-points index accumulates from 0 each April and is printed with zero/blank high-low: close >= 0 only.
+    odd = s.execute(text("""
+        SELECT symbol FROM index_eod WHERE day = :d AND NOT (symbol = ANY(:used))
+               AND (close < 0 OR (symbol NOT LIKE '%DIVIDEND POINTS%' AND high > 0 AND low > 0
+                                  AND (high < low OR close > high OR close < low)))
+        ORDER BY 1"""), used).scalars().all()  # fmt: skip
+    out.append(Check("index_eod", "other_row_ranges", "warn" if odd else "ok", len(odd), 0,
+                     ", ".join(odd[:6]) or None, critical=False))  # fmt: skip
     r = rc.underlying_vs_close(s, start=day, end=day)
     bad_n = len(r["mismatches"])
     st = "unknown" if not r["pairs"] else ("fail" if bad_n else "ok")
