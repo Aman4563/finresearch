@@ -38,7 +38,10 @@ def clean(env):
     yield env
 
 
-async def test_no_decision_is_skipped_without_requests(clean):
+async def test_no_decision_is_skipped_without_requests(clean, monkeypatch):
+    from finresearch import data_rights
+
+    monkeypatch.delitem(data_rights.DECISIONS, "fbil_rates")  # decided 23-Oct-2026 (#471); here: without it
     with respx.mock(assert_all_called=False) as mock:
         res = await job.rates_step(AFTER)
     assert "skipped" in res["rates"] and not mock.calls

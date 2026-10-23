@@ -4,7 +4,7 @@ workbooks of any newly published day (~0.73 MB each, normally one). FBIL's publi
 window is re-read each night and upserted. FBIL follows the RBI/money-market calendar, not NSE's, so the job runs on
 every weekday and does not consult the NSE holiday list (a holiday only means an empty answer). The night is claimed
 in `alert_eval_slot` ("rates:<day>"); a failed pass is retried (monitor.disclosures MAX_ATTEMPTS). Without the
-owner's data-rights decision for FBIL (data_rights.PENDING) the night is recorded as skipped: no request, no retry.
+owner's data-rights decision for FBIL (data_rights, #471) the night is recorded as skipped: no request, no retry.
 """
 
 from __future__ import annotations
