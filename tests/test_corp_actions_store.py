@@ -318,3 +318,27 @@ def test_cli_rebuild_and_a_refused_backfill(clean):
     assert r.exit_code == 0 and "0 changed" in r.output
     r = CliRunner().invoke(app, ["equity", "actions-backfill", "--symbol", "EXDEMO"])
     assert r.exit_code == 1 and "no recorded data-rights decision" in r.output
+
+
+async def test_unknown_symbols_are_no_symbol_and_do_not_stop_the_run(decided):
+    # legacy F&O symbols (renamed or delisted) may answer 404 [U: NSE's answer for an unknown symbol not verified]:
+    # recorded as no_symbol and not counted towards the five-failures stop
+    from finresearch.db import session_scope
+    from finresearch.db.models import CorpActionFetch
+    from finresearch.refseries import corp_actions as ca
+
+    dead = [f"OLD{i}" for i in range(6)]
+    with respx.mock(assert_all_called=False) as mock:
+        mock.get(url__startswith=PAGE).mock(return_value=httpx.Response(200, text="<html></html>"))
+        mock.get(url__startswith=API, params={"symbol": "EXDEMO"}).mock(
+            return_value=httpx.Response(200, json=ROWS)
+        )
+        mock.get(url__startswith=API).mock(return_value=httpx.Response(404, text="Not Found"))
+        async with client() as http:
+            res = await ca.backfill([*dead, "EXDEMO"], http=http, now=lambda: EVENING)
+    assert (res["loaded"], res["no_symbol"], res["failed"], res.get("stopped")) == (1, 6, {}, None)
+    with session_scope() as s:
+        assert s.get(CorpActionFetch, ("nse", "OLD0")).status == "no_symbol"
+    async with client() as http:
+        with respx.mock(assert_all_called=False) as mock:
+            assert (await ca.backfill([*dead, "EXDEMO"], http=http, now=lambda: EVENING))["planned"] == 0

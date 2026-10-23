@@ -16,7 +16,8 @@ the price move verifies (fincalc.fno_history.front_future_returns).
 Collection (`backfill`): one request per F&O stock (the underlyings in fno_contract; the decision #362 says never widen
 beyond what a feature needs), with data_rights.require("nse_corp_actions") first, the shared NSE budget, no downloads
 between 09:00 and 16:00 IST on weekdays, a stop after REFUSALS_TO_STOP refusals in a row, and a manifest
-(corp_action_fetch) so a re-run resumes. The raw JSON is kept under data/corp_actions/nse/ and each load gets a lineage
+(corp_action_fetch) so a re-run resumes; a symbol NSE answers with 404 (a renamed or delisted legacy symbol
+[U: NSE's answer not verified]) is recorded as no_symbol, not retried and not counted towards the failure stop. The raw JSON is kept under data/corp_actions/nse/ and each load gets a lineage
 row (dq.lineage, dataset "nse_ca:<SYMBOL>"). NSE's endpoint without dates answered INFY's actions back to 2018 only
 (tests/fixtures/nse/equity/actions_INFY.json), so the backfill passes from_date/to_date [U: the date parameters are
 those of NSE's corporate-actions page and were not verified here]; `earliest_ex` in the manifest records the depth each
@@ -29,6 +30,7 @@ import asyncio
 import csv
 import io
 import json
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -304,11 +306,16 @@ def universe(s: Session) -> list[str]:
                           .order_by(FnoContract.symbol)))  # fmt: skip
 
 
+_NOT_FOUND = re.compile(
+    r"\bHTTP 404\b"
+)  # NseEquity._get's error for a 404 [U: NSE's answer for an unknown symbol]
+
+
 def _planned(s: Session, symbols: list[str], refresh: bool) -> list[str]:
     if refresh:
         return symbols
     done = set(s.scalars(select(CorpActionFetch.symbol).where(CorpActionFetch.source == "nse",
-                                                              CorpActionFetch.status == "loaded")))  # fmt: skip
+                                                              CorpActionFetch.status.in_(("loaded", "no_symbol")))))  # fmt: skip
     return [x for x in symbols if x not in done]
 
 
@@ -336,7 +343,8 @@ async def backfill(symbols: list[str] | None = None, *, start: date = HISTORY_ST
     end = min(end or today_ist(), today_ist())
     with session_scope() as s:
         todo = _planned(s, symbols if symbols is not None else universe(s), refresh)
-    out: dict[str, Any] = {"planned": len(todo), "loaded": 0, "rows": 0, "from_raw": 0, "failed": {}}
+    out: dict[str, Any] = {"planned": len(todo), "loaded": 0, "no_symbol": 0, "rows": 0, "from_raw": 0,
+                           "failed": {}}  # fmt: skip
     eq = None
     own = http is None
     streak = refusals = 0
@@ -372,6 +380,16 @@ async def backfill(symbols: list[str] | None = None, *, start: date = HISTORY_ST
                 streak = refusals = 0
                 status = "loaded"
             except Exception as e:  # a refusal, a block page, a transport error: recorded, retried next run
+                if _NOT_FOUND.search(
+                    str(e)
+                ):  # a renamed or delisted legacy symbol: not a failure, not retried
+                    status = "no_symbol"
+                    out["no_symbol"] += 1
+                    with session_scope() as s:
+                        _manifest(s, "nse", sym, status="no_symbol", error=str(e)[:300])
+                    if progress:
+                        progress(i, len(todo), sym, status)
+                    continue
                 status = "failed"
                 out["failed"][sym] = f"{type(e).__name__}: {e}"[:300]
                 with session_scope() as s:

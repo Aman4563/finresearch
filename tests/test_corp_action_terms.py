@@ -103,6 +103,9 @@ def test_actions_without_a_price_factor_are_none_not_unknown(subject, kind, divi
 def test_delisting_exit_price_is_terms_not_a_factor():
     t = action_terms("Delisting Of Equity Shares @ Rs 450 Per Share")
     assert (t.kind, t.status, t.price_factor, t.terms["exit_price"]) == ("delisting", "known", None, "450")
+    # a rupee figure that is not the exit price (the face value) never becomes a known exit price
+    v = action_terms("Voluntary Delisting - Face Value Rs 10")
+    assert (v.status, v.terms) == ("unknown", {})
     u = action_terms("Voluntary Delisting")
     assert (u.kind, u.status, u.price_factor) == ("delisting", "unknown", None)
     assert "exit price" in u.reason

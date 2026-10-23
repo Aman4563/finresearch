@@ -121,7 +121,10 @@ _RIGHTS_T = re.compile(r"\brights?\b[^0-9@]*?(\d+)\s*:\s*(\d+)", re.I)
 _RIGHTS_PREMIUM = re.compile(r"@\s*premium\s*(?:of\s*)?(?:rs|re)?\.?\s*(\d+(?:\.\d+)?)", re.I)
 _RIGHTS_PAR = re.compile(r"@\s*par\b", re.I)
 _RIGHTS_PRICE = re.compile(r"@\s*(?:rs|re)\.?\s*(\d+(?:\.\d+)?)", re.I)
-_RS = re.compile(r"(?:rs|re|₹)\.?\s*(\d+(?:\.\d+)?)", re.I)
+# the exit price: "@ Rs 450" or "Rs 450 Per Share" (a face value "Rs 10" elsewhere in the subject is not one)
+_EXIT = re.compile(
+    r"@\s*(?:rs|re|₹)\.?\s*(\d+(?:\.\d+)?)|(?:rs|re|₹)\.?\s*(\d+(?:\.\d+)?)\s*(?:/-)?\s*per\s*share", re.I
+)
 _DIVIDEND_T = re.compile(r"dividend[^0-9]*?(?:rs\.?|re\.?|₹|inr)\s*-?\s*(\d+(?:\.\d+)?)", re.I)
 # (kind, pattern, reason) for actions whose price effect the exchange terms do not state
 _UNKNOWN_KINDS: tuple[tuple[str, re.Pattern[str], str], ...] = (
@@ -244,8 +247,9 @@ def _rights(
 def _delisting(s: str, dividend: Decimal | None) -> ActionTerms:
     """A delisting has no price factor: its terms are the exit price (fincalc delisting_return), unknown when the
     subject does not state one."""
-    if m := _RS.search(s):
-        return ActionTerms("delisting", "known", None, None, dividend, None, {"exit_price": _num(m.group(1))})
+    if (m := _EXIT.search(s)) and not re.search(r"face value", s[: m.start()][-30:], re.I):
+        price = m.group(1) or m.group(2)
+        return ActionTerms("delisting", "known", None, None, dividend, None, {"exit_price": _num(price)})
     return ActionTerms(
         "delisting", "unknown", None, None, dividend, "delisting: exit price not in the terms", {}
     )
