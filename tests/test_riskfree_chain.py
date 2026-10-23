@@ -99,3 +99,15 @@ def test_owner_rates_interpolate_linearly_in_yield_between_tenors_and_stay_flat_
         date(2026, 10, 20), 30 / 365, rows
     )  # below the shortest node: the 91-day yield, at 30 days
     assert short["yield"] == pytest.approx(0.057281) and short["rate"] == pytest.approx(z(0.057281, 30))
+
+
+def test_an_answer_from_rbis_next_scheduled_decision_on_is_labelled_possibly_stale():
+    # the table was checked on 23-Oct-2026; RBI's next MPC decision was scheduled for 04-Dec-2026 (prid=62422)
+    before = R.answer(date(2026, 12, 3), 91 / 365)
+    assert before["stale"] is False
+    on = R.answer(date(2026, 12, 4), 91 / 365)
+    after = R.answer(date(2027, 1, 15), 91 / 365)
+    assert on["stale"] is True and after["stale"] is True and after["yield"] == pytest.approx(0.055)
+    assert "04-Dec-2026" in after["note"] and "possibly stale" in after["note"]
+    # known at the start of the decision day: nothing newer can have been announced yet
+    assert R.answer(date(2026, 12, 4), 91 / 365, before=True)["stale"] is False

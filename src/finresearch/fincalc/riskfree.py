@@ -20,7 +20,8 @@ tenor, a stated choice, not a measurement:
   Jan-2024's deficit, and 2-9 bp above on average in 2026's four policy periods (the research note above). Expect
   an error of about +/-25 bp, at worst about +/-80 bp.
 * 182 and 364 days (and beyond): held flat at the repo rate, which leaves out the term premium: RBI's cut-offs of
-  14-Oct-2026 were 6.2896 % (182 days) and 6.4891 % (364 days) at a repo rate of 5.50 %, 79 and 99 bp over it, and
+  14-Oct-2026 (https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=63803) were 6.2896 % (182 days) and
+  6.4891 % (364 days) at a repo rate of 5.50 %, 79 and 99 bp over it (the 91-day bill: 5.7281 %, 23 bp), and
   in easing cycles longer bills trade below repo. One auction is not a basis for a spread, so none is typed in; the
   owner-entered tier carries observed 182/364-day yields, and every answer beyond 91 days says it is held flat.
 
@@ -164,7 +165,13 @@ def answer(
     days = tenor_days(t_years)
     if day < P.START:
         return unknown(day, days)
-    return owner(day, days, entries, before=before) or proxy(day, days, before=before)
+    out = owner(day, days, entries, before=before) or proxy(day, days, before=before)
+    if out["known"] and (day > P.NEXT_MPC or (day == P.NEXT_MPC and not before)):
+        out["stale"] = True
+        out["note"] += (f"; possibly stale: RBI's MPC was scheduled to decide on {P.NEXT_MPC:%d-%b-%Y}, after the "
+                        f"policy-rate table was last checked ({P.REVIEWED:%d-%b-%Y}); add any change to "
+                        "fincalc.policy_rates")  # fmt: skip
+    return out
 
 
 # --------------------------------------------------------------------------- the monthly series for fund metrics

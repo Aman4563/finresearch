@@ -8,7 +8,7 @@ FinResearch is a single-user app that runs entirely on one Mac. The invariants e
                     └──────────── FastAPI (api/, 127.0.0.1:8710) ─────────── monitor (scheduled jobs)
                                                │
    research:  orchestrator ── agents ── Claude Bridge ── MCP server (the agents' only tools)
-   markets:   adapters (NSE, BSE, AMFI, SEBI, FBIL, XBRL) ── fincalc ── signals ── alerts
+   markets:   adapters (NSE, BSE, AMFI, SEBI, FBIL paused, XBRL) ── fincalc ── signals ── alerts
    personal:  portfolio ── wealth ── suggest (profile, rules, journal)
                                                │
               Postgres 17 + pgvector  ·  immutable document store  ·  data/ (gitignored)
@@ -81,6 +81,12 @@ a probability with its range, the factors, and how the model was validated. Each
 scored when it resolves; calibration counts independent events only. New models run in shadow until they pass a
 pre-registered test (`evals/experiments/*/PREREG.md`).
 
+The risk-free rate (`signals.rates`, #479) is collected from nobody: it is a yield the owner enters (POST
+`/api/rates/owner`, `finresearch rates enter`), else RBI's policy repo rate in force on the day, typed in by hand from
+RBI's releases (`fincalc.policy_rates`, each row citing its release) plus a stated spread, else unknown before
+01-Jan-2015. Every answer names its tier, date and source; fund and portfolio Sharpe/Sortino subtract each month's own
+rate, with a labelled factsheet-style figure beside them. FBIL is paused (#476), so there is no G-sec curve source.
+
 ## Portfolio and wealth (`portfolio/`, `wealth/`, `suggest/`)
 
 Statements are parsed locally (casparser for CAS, broker-specific readers for tradebooks and holdings statements),
@@ -93,7 +99,7 @@ official closes (`portfolio.series`); the saved snapshots are the "as shown" rec
 
 ```
 src/finresearch/
-  adapters/      NSE, BSE, AMFI, SEBI, FBIL, MoSPI CPI, XBRL clients and the polite HTTP client
+  adapters/      NSE, BSE, AMFI, SEBI, FBIL (paused, #476), MoSPI CPI, XBRL clients and the polite HTTP client
   agents/        research roles, prompts, skills and the role runner
   alerts/        alert rules, the evaluation engine and portfolio alerts
   api/           local HTTP API for the app

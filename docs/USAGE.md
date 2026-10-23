@@ -101,6 +101,9 @@ GET requests don't change your records, the alert inputs or the forecast ledger:
   joint P&L pass (23:15 IST on trading days); the joint-risk GET only reads it for the forward-test line.
 - An alert's "acted" or "ignored" (#398) is stored by `POST /api/alerts/{id}/feedback` (it also marks the alert read).
   `GET /api/alerts/quality`, the per-rule precision and mute suggestions, only reads.
+- An owner-entered risk-free yield (#479) is stored only by `POST /api/rates/owner` (or `finresearch rates enter`) and
+  removed by `DELETE /api/rates/owner/{day}/{tenor}`; `GET /api/rates/risk-free`, `/api/rates/owner` and
+  `/api/rates/policy` only read.
 
 Some GETs still write caches, by design. They store fetched market data, never your records: the intraday series
 archive, the disclosure feed refresh, the ISIN map, the fund cap list, and the HTTP and price caches. The broker OAuth
@@ -163,8 +166,12 @@ uv run finresearch audit prices                    # cross-check price sources a
 uv run finresearch index backfill --from 2013-03-01  # NSE's daily index closes, P/E, P/B, yield, India VIX (#366)
 uv run finresearch audit index-eod                 # bhavcopy underlying vs index close; India VIX vs IV30 (no network)
 uv run finresearch index tri NIFTY --from 2015-01-01  # APPROXIMATE total-return index from stored closes + yields (#366)
-uv run finresearch rates backfill --from 2022-01-01   # FBIL G-sec par curve, T-bill, overnight/term MIBOR (#366; FBIL data-rights decision #471)
-uv run finresearch audit rates                     # 3-month par-curve rate vs FBIL's 3-month T-bill, 15 bp (no network)
+uv run finresearch rates show --tenor 91D          # today's risk-free rate: tier (yours / RBI repo-rate proxy), date, source (#479)
+uv run finresearch rates enter --day 2026-10-14 --tenor 91D --yield 5.7281 --source "RBI auction result"  # a yield you read (#479)
+uv run finresearch rates owner                     # your entered yields; `rates remove --day ... --tenor 91D` drops one
+uv run finresearch rates policy                    # RBI's policy rates as typed into the app, each with its RBI release
+uv run finresearch rates backfill --from 2022-01-01   # FBIL's dated series: PAUSED (#476), refuses without a decision
+uv run finresearch audit rates                     # 3-month par-curve rate vs FBIL's 3-month T-bill on stored rows (no network)
 uv run finresearch equity backfill --from 2025-09-01  # NSE's full equity bhavcopy: closes, delivery; one file a day (#373)
 uv run finresearch audit equity-eod --sample 50    # stored closes vs NSE's history bar on 50 random stock-days (50 requests)
 uv run finresearch equity actions-backfill         # NSE corporate actions per F&O stock -> factor history (#369; needs the nse_corp_actions decision)
@@ -215,9 +222,14 @@ The vault is read only through `finresearch.vault.guard` (registered studies, lo
 NSE data is collected for personal, non-distributed use only (owner decision #362, `finresearch.data_rights`): it
 stays in the local database and `data/`. Backfills go through the shared NSE rate limit, stop by themselves between
 09:00 and 16:00 IST on weekdays and after two refusals (HTTP 403/429) in a row, and resume where they stopped. The
-owner's decisions of 23-Oct-2026 (#471) apply the same personal, non-distributed, polite-access rules to FBIL's rates
-(no commercial use, as FBIL asks), IIMA's factors (cited wherever shown) and MoSPI's CPI; every collector asks
-`data_rights.require` before its first request.
+owner's decisions of 23-Oct-2026 (#471) apply the same personal, non-distributed, polite-access rules to IIMA's factors
+(cited wherever shown) and MoSPI's CPI; every collector asks `data_rights.require` before its first request. FBIL is
+paused (#476: its Terms of Use of 13-Oct-2026 forbid a database or feed built from its free site) and no rate is
+collected from anyone (#479): the risk-free rate is the one you enter (`rates enter` or `POST /api/rates/owner`), else
+RBI's policy repo rate in force on the day (typed in by hand from RBI's releases, `fincalc.policy_rates`) plus a stated
+spread (0 bp; held flat beyond 91 days), else unknown before 01-Jan-2015. Fund and portfolio Sharpe/Sortino subtract
+each month's own rate and show a labelled factsheet-style figure (the repo on the last working day for every month)
+beside it. The bond signal and the archive's G-sec spread have no G-sec curve source and say so.
 
 The nightly stock peer build prices peers from NSE's quote and price-history APIs (about 1,000 website requests a
 night) until `FINRESEARCH_PEER_PRICE_SOURCE=equity_eod` switches it to the stored full bhavcopy (#373): peers' prices
