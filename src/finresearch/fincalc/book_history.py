@@ -25,6 +25,7 @@ from datetime import date, datetime
 import numpy as np
 
 from finresearch.fincalc import book_scenarios as bs
+from finresearch.fincalc import risk_alerts as ra
 from finresearch.fincalc.taildist import ES_ALPHA, expected_shortfall
 
 MIN_SCAN_DAYS = (
@@ -279,7 +280,7 @@ def episode(legs: Sequence[bs.BookLeg], m: bs.Market, hist: Mapping[str, Series]
 # - expiry day: NIFTY's stored front-future close-to-close returns on the contract's own expiry day, applied at the
 #   close of the book's nearest expiry (the underlying is assumed unchanged until that morning) with the response;
 #   legs expiring then are at intrinsic.
-MIN_GAPS = 250  # fincalc.risk_alerts.MIN_GAPS: about a year of stored gaps before the distribution is read
+MIN_GAPS = ra.MIN_GAPS  # about a year of stored gaps before the distribution is read (the risk alerts' rule)
 MIN_EXPIRY_DAYS = 30  # [U] stored expiry days before their distribution is read
 POINTS = (("worst fall", None), ("1st percentile", 0.01), ("99th percentile", 0.99), ("worst rise", None))
 
