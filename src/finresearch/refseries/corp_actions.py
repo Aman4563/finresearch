@@ -312,7 +312,12 @@ async def backfill(symbols: list[str] | None = None, *, start: date = HISTORY_ST
     from finresearch.adapters.nse_equity import NseEquity
     from finresearch.db import session_scope
     from finresearch.fincalc.dates import today_ist
-    from finresearch.refseries.index_eod import MAX_CONSECUTIVE_FAILURES, REFUSALS_TO_STOP, in_market_hours, refused
+    from finresearch.refseries.index_eod import (
+        MAX_CONSECUTIVE_FAILURES,
+        REFUSALS_TO_STOP,
+        in_market_hours,
+        refused,
+    )
 
     data_rights.require(DATASET)
     now = now or now_ist
@@ -328,7 +333,9 @@ async def backfill(symbols: list[str] | None = None, *, start: date = HISTORY_ST
             p = raw_path(sym)
             from_raw = p.is_file() and not refresh
             if not from_raw and in_market_hours(now()):
-                out["stopped"] = "market hours (09:00-16:00 IST): no backfill downloads; re-run after the close"
+                out["stopped"] = (
+                    "market hours (09:00-16:00 IST): no backfill downloads; re-run after the close"
+                )
                 break
             try:
                 if from_raw:
@@ -346,7 +353,9 @@ async def backfill(symbols: list[str] | None = None, *, start: date = HISTORY_ST
                     if pause:
                         await asyncio.sleep(pause)
                 with session_scope() as s:
-                    out["rows"] += load_nse(s, sym, rows, url=url, body=json.dumps(rows, sort_keys=True).encode())
+                    out["rows"] += load_nse(
+                        s, sym, rows, url=url, body=json.dumps(rows, sort_keys=True).encode()
+                    )
                 out["loaded"] += 1
                 streak = refusals = 0
                 status = "loaded"
@@ -362,7 +371,9 @@ async def backfill(symbols: list[str] | None = None, *, start: date = HISTORY_ST
                                       "dataset and check before re-running (#362)")  # fmt: skip
                     break
                 if streak >= MAX_CONSECUTIVE_FAILURES:
-                    out["stopped"] = f"{streak} consecutive failures: stopped to stay polite; re-run to resume"
+                    out["stopped"] = (
+                        f"{streak} consecutive failures: stopped to stay polite; re-run to resume"
+                    )
                     break
             if progress:
                 progress(i, len(todo), sym, status)

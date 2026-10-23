@@ -205,7 +205,9 @@ async def test_a_kept_raw_file_is_reloaded_without_a_request(decided):
     (decided / "nse").mkdir()
     (decided / "nse" / "EXDEMO.json").write_text(json.dumps({"url": URL, "rows": ROWS}))
     with respx.mock(assert_all_called=False) as mock:
-        res = await ca.backfill(["EXDEMO"], now=lambda: datetime(2026, 10, 21, 5, 0, tzinfo=UTC))  # market hours
+        res = await ca.backfill(
+            ["EXDEMO"], now=lambda: datetime(2026, 10, 21, 5, 0, tzinfo=UTC)
+        )  # market hours
     assert (res["loaded"], res["from_raw"], mock.calls.call_count) == (1, 1, 0)
 
 
