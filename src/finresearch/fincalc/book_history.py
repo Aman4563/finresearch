@@ -20,7 +20,7 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 
 import numpy as np
 
@@ -163,3 +163,178 @@ def scan(legs: Sequence[bs.BookLeg], m: bs.Market, hist: Mapping[str, Series], h
     q99, es = tail([d.pnl for d in days])
     worst = tuple(sorted(days, key=lambda d: (d.pnl, d.start))[:WORST_N])
     return Scan(h, tuple(days), skipped, q99, es, worst, (), (), mapped, flags)
+
+
+# --------------------------------------------------------------------------- multi-week episodes (#394)
+EPISODE_H = 21  # sessions (#394: multi-week episodes are replayed as daily paths at h = 21)
+
+
+@dataclass(frozen=True)
+class Episode:
+    key: str
+    label: str
+    start: date  # the window: its last stored session before `start` is the first possible path start
+    end: date
+    source: str
+    waits: str | None = None  # why it cannot be replayed yet
+
+
+VAULT_WAIT = ("waits for the vault's data audit (#394, #365): 2008-2021 sessions live only in the sealed vault "
+              "database, never in the app's store")  # fmt: skip
+EPISODES = (
+    Episode("adani_2023", "Adani sell-off, Jan-Feb 2023", date(2023, 1, 25), date(2023, 2, 28),
+            "#394's library: the Adani episode of Jan-Feb 2023, from the report of 24-Jan-2023 (after the close)"),
+    Episode("febmar_2026", "Feb-Mar 2026 fall", date(2026, 2, 1), date(2026, 3, 31),
+            "#394: NIFTY future -14.1 %, BANKNIFTY -17.3 %, IV30 9.7 to 29.5 (the window of "
+            "portfolio.stress_replay and fincalc.risk_alerts.EPISODES)"),
+    Episode("oct_2008", "October 2008", date(2008, 10, 1), date(2008, 10, 31), "#394 (public crisis days)", VAULT_WAIT),
+    Episode("mar_2020", "March 2020", date(2020, 3, 1), date(2020, 3, 31), "#394 (public crisis days)", VAULT_WAIT),
+)  # fmt: skip
+
+
+@dataclass(frozen=True)
+class PathPoint:
+    day: date  # the historical session
+    d: int  # sessions since the path's start (the book is revalued d sessions from now)
+    move: float  # NIFTY's cumulative move
+    dvol: float  # NIFTY's IV30 change since the start
+    pnl: float
+    intrinsic: int = 0  # legs valued at intrinsic (expired inside d sessions)
+    mapped: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class EpisodeResult:
+    episode: Episode
+    start: date | None
+    path: tuple[PathPoint, ...]
+    worst: PathPoint | None
+    candidates: int = 0  # complete path starts compared
+    reasons: tuple[str, ...] = ()
+    flags: tuple[str, ...] = ()
+
+
+def _path(states: Sequence[bs.LegState], m: bs.Market, hist: Mapping[str, Series], unders: Sequence[str],
+          cal: Sequence[date], i: int, n: int, holidays: frozenset[date] | set[date]) -> list[PathPoint] | tuple[str, ...] | None:  # fmt: skip
+    out = []
+    for d in range(1, n + 1):
+        nifty, own = _moves(hist, unders, cal, i, d)
+        if nifty is None:
+            return None
+        c = bs._revalue(states, m, nifty[0], nifty[1], bs.horizon_clock(m.now, d, holidays), f"{d}d", False,
+                        {**own, "NIFTY": nifty})  # fmt: skip
+        if c.pnl is None:
+            return c.reasons
+        miss = tuple(u for u in unders if u != "NIFTY" and u not in own)
+        out.append(PathPoint(cal[i + d], d, nifty[0], nifty[1], c.pnl, c.intrinsic, miss))
+    return out
+
+
+def episode(legs: Sequence[bs.BookLeg], m: bs.Market, hist: Mapping[str, Series], ep: Episode,
+            holidays: frozenset[date] | set[date] = frozenset(), h: int = EPISODE_H) -> EpisodeResult:  # fmt: skip
+    """The episode as daily paths of up to h sessions applied to today's book (moves as in `scan`), from each start
+    between the last session before the window and the window, staying inside it; the path whose worst point is the
+    lowest is shown (ties: the earliest start). A leg that expires inside the path is valued at intrinsic."""
+    if ep.waits:
+        return EpisodeResult(ep, None, (), None, 0, (f"{ep.label} {ep.waits}",))
+    states = bs.price_legs(legs, m)
+    bad = [s.reason for s in states if s.reason]
+    if bad:
+        return EpisodeResult(ep, None, (), None, 0, tuple(dict.fromkeys(bad)))
+    cal = calendar(hist["NIFTY"]) if "NIFTY" in hist else []
+    first = max((i for i, d in enumerate(cal) if d < ep.start), default=None)
+    inside = [i for i, d in enumerate(cal) if ep.start <= d <= ep.end]
+    if first is None or not inside or cal[-1] < ep.end:
+        span = f"{cal[0]} to {cal[-1]}" if cal else "nothing"
+        why = f"{ep.label}: the stored NIFTY series ({span}) does not cover {ep.start} to {ep.end}"
+        return EpisodeResult(ep, None, (), None, 0, (why,))
+    last = inside[-1]
+    starts = [i for i in range(first, last) if i + h <= last] or [first]
+    unders = sorted({x.underlying.upper() for x in legs})
+    best: tuple[float, int, list[PathPoint]] | None = None
+    n_ok = 0
+    for i in starts:
+        p = _path(states, m, hist, unders, cal, i, min(h, last - i), holidays)
+        if isinstance(p, tuple):
+            return EpisodeResult(ep, None, (), None, 0, tuple(dict.fromkeys(p)))
+        if p:
+            n_ok += 1
+            w = min(x.pnl for x in p)
+            if best is None or w < best[0]:
+                best = (w, i, p)
+    flags = tuple(f for s in states for f in s.flags)
+    if best is None:
+        why = f"{ep.label}: a NIFTY return or IV30 is missing on every path inside the window"
+        return EpisodeResult(ep, None, (), None, 0, (why,), flags)
+    path = tuple(best[2])
+    worst = min(path, key=lambda x: (x.pnl, x.d))
+    return EpisodeResult(ep, cal[best[1]], path, worst, n_ok, (), flags)
+
+
+# --------------------------------------------------------------------------- gap and expiry-day scenarios [U]
+# #394 lists them without maths; the definitions here are this module's (labelled [U] in the API and the PR):
+# - gap: NIFTY's stored overnight gaps of the front future (ln(open / the same contract's previous close),
+#   fincalc.risk_alerts.front_future), applied at once (no time passes, so no theta is earned) with the spot-vol
+#   response; other underlyings by the worse end of their beta band.
+# - expiry day: NIFTY's stored front-future close-to-close returns on the contract's own expiry day, applied at the
+#   close of the book's nearest expiry (the underlying is assumed unchanged until that morning) with the response;
+#   legs expiring then are at intrinsic.
+MIN_GAPS = 250  # fincalc.risk_alerts.MIN_GAPS: about a year of stored gaps before the distribution is read
+MIN_EXPIRY_DAYS = 30  # [U] stored expiry days before their distribution is read
+POINTS = (("worst fall", None), ("1st percentile", 0.01), ("99th percentile", 0.99), ("worst rise", None))
+
+
+@dataclass(frozen=True)
+class Shock:
+    kind: str  # gap | expiry_day
+    label: str
+    move: float | None  # NIFTY's relative move
+    at: datetime  # the revaluation clock
+    pnl: float | None
+    reasons: tuple[str, ...] = ()
+    n: int = 0  # stored observations the point was read from
+
+
+def _points(logs: Sequence[float]) -> list[tuple[str, float]]:
+    x = np.asarray(sorted(logs), float)
+    out = []
+    for label, q in POINTS:
+        v = (
+            x[0]
+            if label == "worst fall"
+            else x[-1]
+            if label == "worst rise"
+            else np.quantile(x, q, method="inverted_cdf")
+        )
+        out.append((label, math.exp(float(v)) - 1))
+    return out
+
+
+def _shocks(kind: str, legs: Sequence[bs.BookLeg], m: bs.Market, logs: Sequence[float], at: datetime,
+            need: int, what: str) -> list[Shock]:  # fmt: skip
+    if len(logs) < need:
+        why = f"{len(logs)} stored {what}, fewer than the {need} needed"
+        return [Shock(kind, label, None, at, None, (why,), len(logs)) for label, _ in POINTS]
+    states = bs.price_legs(legs, m)
+    out = []
+    for label, mv in _points(logs):
+        c = bs._revalue(states, m, mv, 0.0, at, kind, True)
+        out.append(Shock(kind, label, mv, at, c.pnl, c.reasons, len(logs)))
+    return out
+
+
+def gap_scenarios(legs: Sequence[bs.BookLeg], m: bs.Market, gaps: Sequence[float],
+                  min_n: int = MIN_GAPS) -> list[Shock]:  # fmt: skip
+    """The book repriced now at NIFTY's worst, 1st- and 99th-percentile and best stored overnight gaps."""
+    return _shocks("gap", legs, m, gaps, m.now, min_n, "NIFTY overnight gaps")
+
+
+def expiry_day_scenarios(legs: Sequence[bs.BookLeg], m: bs.Market, rets: Sequence[float],
+                         min_n: int = MIN_EXPIRY_DAYS) -> list[Shock]:  # fmt: skip
+    """The book at the close of its nearest expiry under NIFTY's stored expiry-day moves (worst, 1 %, 99 %, best)."""
+    from finresearch.fincalc.dates import EXPIRY_CLOSE, ist_datetime
+
+    if not legs:
+        return []
+    at = ist_datetime(min(x.expiry for x in legs), *EXPIRY_CLOSE)
+    return _shocks("expiry_day", legs, m, rets, at, min_n, "NIFTY expiry-day moves")
