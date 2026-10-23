@@ -789,7 +789,7 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
         if data is None:
             return {"status": "not_computed", "message": fund_rank.NOT_COMPUTED}
         hit = fund_rank.lookup(data, code)
-        head = {k: data.get(k) for k in ("as_of", "generated_at", "sampling", "mar", "ter_day", "ter_error",
+        head = {k: data.get(k) for k in ("as_of", "generated_at", "sampling", "mar", "mar_source", "ter_day", "ter_error",
                                          "metrics", "caveats", "sources")}  # fmt: skip
         out = {**head, **hit}
         if hit["status"] in ("ok", "excluded"):

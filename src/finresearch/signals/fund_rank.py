@@ -241,12 +241,32 @@ def as_of_for(today: date) -> date:
     return R.latest_month_end(today - timedelta(days=1))
 
 
-async def compute(today: date | None = None, mar_annual: Decimal = R.MAR_DEFAULT) -> dict[str, Any]:
+MAR_TENOR = 0.25  # years: FBIL's 3-month par point, a stand-in for the 91-day T-bill (portfolio.analytics)
+
+
+async def mar_for(as_of: date) -> tuple[Decimal, dict[str, Any]]:
+    """The Sortino MAR (#366/#385): FBIL's 3-month G-sec par yield stored for `as_of` (signals.rates.rate_for) as
+    an effective annual rate (1 + y/2)^2 - 1, or the labelled fallback 6.5 % a year when no curve is known."""
+    from finresearch.signals import rates
+
+    info = await rates.rate_for(as_of, MAR_TENOR)
+    annual = rates.effective_annual(info)
+    return Decimal(str(round(annual, 8))), info | {"annual": annual}
+
+
+async def compute(today: date | None = None, mar_annual: Decimal | None = None) -> dict[str, Any]:
     """Rank every rankable category (see the module docstring). Reads 61 month-end snapshots (cached on disk once
-    older than 5 days), NAVAll and the TER file."""
+    older than 5 days), NAVAll and the TER file. `mar_annual` None: FBIL's dated rate at the as-of month-end
+    (`mar_for`); either way `mar_source` says which rate it is."""
     today = today or SOURCES.today()
     rows = await _schemes()
     as_of = as_of_for(today)
+    if mar_annual is None:
+        mar_annual, mar_source = await mar_for(as_of)
+    else:
+        from finresearch.signals.rates import given
+
+        mar_source = given(float(mar_annual), "the MAR passed by the caller") | {"annual": float(mar_annual)}
     grid = R.month_grid(as_of, HISTORY_MONTHS)
     snaps = [await _snapshot(d) for d in grid]  # one after another: AMFI is asked at the polite client's pace
     ter_error = None
@@ -278,6 +298,7 @@ async def compute(today: date | None = None, mar_annual: Decimal = R.MAR_DEFAULT
         categories[key] = {"key": key, "label": label, "raw_labels": raw, **res, "excluded": excluded}
     return {"version": STORE_VERSION, "as_of": as_of.isoformat(), "generated_at": datetime.now(UTC).isoformat(),
             "grid": [d.isoformat() for d in grid], "sampling": "month-end NAVs", "mar": float(mar_annual),
+            "mar_source": mar_source,
             "ter_day": ter_day.isoformat() if ter_day else None, "ter_error": ter_error,
             "metrics": [{"key": m.key, "label": m.label, "higher_is_better": m.higher_is_better, "unit": m.unit}
                         for m in R.METRICS],
