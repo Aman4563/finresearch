@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime
 from typing import Literal
 
@@ -91,6 +91,17 @@ class Carry:
     t: float | None = None
 
 
+def carry_from(forward: float | None, spot: float | None, t: float | None, source: str) -> Carry:
+    """The carry of `forward` against a synchronous `spot` over `t` years (black76.carry), or unknown with why."""
+    from finresearch.fincalc.black76 import carry
+
+    if spot is None or not spot > 0:
+        return Carry(None, None, f"the underlying's price to set against {source} is unknown", forward, spot, t)
+    if forward is None or not forward > 0 or t is None or not t > 0:
+        return Carry(None, None, f"{source}: no positive forward and time to expiry", forward, spot, t)
+    return Carry(carry(forward, spot, t), source, None, forward, spot, t)
+
+
 @dataclass(frozen=True)
 class Market:
     """The clock (#359), the rate, the forward per (UNDERLYING, expiry) (upper case; None or absent = unknown), the
@@ -106,6 +117,12 @@ class Market:
     nifty: float | None = None
     carries: Mapping[tuple[str, date], Carry] = field(default_factory=dict)
     rates: Mapping[date, float] = field(default_factory=dict)
+
+    def fixed_carry(self, b: float, why: str) -> Market:
+        """This market with every forward rolled at `b` on purpose: a registered study's or a model's own rule
+        (joint-risk-v1's pinned rate; the card's S e^{rT} forward), labelled `why`. Never a fallback for an unknown
+        carry."""
+        return replace(self, carries={k: Carry(b, why) for k in self.forwards})
 
     def rate_for(self, expiry: date) -> float:
         """The expiry's own discount rate (#480: `rates`, continuous), else the one rate the caller fixed (`rate`)."""
