@@ -1161,6 +1161,24 @@ def forecasts_cards() -> None:
     console.print(f"{n} card forecast(s) recorded")
 
 
+@forecasts_app.command("panel")
+def forecasts_panel() -> None:
+    """Log the fixed probability panel for every stored F&O session not yet logged, then resolve the panel rows whose
+    expiry has settled (#376 (b); the monitor also does this hourly). Reads the stored bhavcopy only."""
+    from finresearch.db import session_scope
+    from finresearch.fincalc.dates import now_ist
+    from finresearch.fnobook import card_forecasts
+    from finresearch.signals import prob_panel
+
+    with session_scope() as s:
+        n = prob_panel.record_pending(s, card_forecasts.history())
+    with session_scope() as s:
+        got = prob_panel.resolve_due(s, card_forecasts.history(), now_ist())
+    console.print(
+        f"{n} panel row(s) logged; resolved {got['resolved']}, void {got['void']}, waiting {got['open']}"
+    )
+
+
 @forecasts_app.command("resolve")
 def forecasts_resolve(
     recheck: bool = typer.Option(

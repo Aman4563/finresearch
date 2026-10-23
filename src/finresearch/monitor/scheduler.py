@@ -248,10 +248,20 @@ async def forecast_step(deps: jobs.Deps, now: datetime) -> dict[str, int]:
             logged = len(ledger.backfill_runs(s))
         with session_scope() as s:  # #376: every card the F&O pages logged (card_log) becomes a forecast
             cards = card_forecasts.record_pending(s)
-        return {"forecasts_logged": logged, "cards_logged": cards, **await ledger.resolve_due(deps, now)}
+        out = {"forecasts_logged": logged, "cards_logged": cards, **await ledger.resolve_due(deps, now)}
     except Exception:
         log.warning("forecast ledger step failed", exc_info=True)
         return {}
+    try:  # #376 (b): the fixed probability panel, from the stored bhavcopy (its own table, its own failure)
+        from finresearch.signals import prob_panel
+
+        with session_scope() as s:
+            out["panel_logged"] = prob_panel.record_pending(s, card_forecasts.history())
+        with session_scope() as s:
+            out["panel_resolved"] = prob_panel.resolve_due(s, card_forecasts.history(), now)["resolved"]
+    except Exception:
+        log.warning("probability panel step failed", exc_info=True)
+    return out
 
 
 async def alerts_step(now: datetime) -> dict[str, int]:
