@@ -148,3 +148,51 @@ async def test_the_cpi_rule_makes_no_request():
             refresh.Known(urls=frozenset(), covered={}), datetime(2026, 10, 24, 21, 0, tzinfo=IST)
         )
     assert not mock.calls
+
+
+# ---- NIFTY's semi-annual review windows by NSE Indices' rule, confirmed by NSE's F&O circular (eventcal.nse)
+
+
+@pytest.mark.parametrize(("year", "month", "holidays", "effective", "flow"), [
+    # NSE/FAOP/76610 of 29-Sep-2026: "w.e.f. September 30, 2026 (close of September 29, 2026)"
+    (2026, 9, set(), date(2026, 9, 30), date(2026, 9, 29)),
+    (2027, 3, set(), date(2027, 3, 31), date(2027, 3, 30)),
+    (2025, 3, {date(2025, 3, 31)}, date(2025, 3, 28), date(2025, 3, 27)),  # Monday 31st a holiday: Friday 28th
+    (2024, 3, {date(2024, 3, 29)}, date(2024, 3, 28), date(2024, 3, 27)),  # weekend 30-31, holiday Friday 29th
+])  # fmt: skip
+def test_a_review_takes_effect_on_the_months_last_working_day_and_funds_trade_the_close_before(
+    year, month, holidays, effective, flow
+):
+    assert rules.nifty_review(year, month, lambda _d: holidays) == (effective, flow, True)
+
+
+def test_a_review_with_an_unknown_holiday_list_skips_weekends_only():
+    assert rules.nifty_review(2028, 3, UNKNOWN) == (date(2028, 3, 31), date(2028, 3, 30), False)
+
+
+async def test_the_rule_lists_the_review_windows_of_the_next_year():
+    now = datetime(2026, 10, 24, 21, 0, tzinfo=IST)
+    found = await rules.read_nifty(refresh.Known(urls=frozenset(), covered={}), now, holidays_for=NO_HOLIDAYS)
+    assert [e.day for e in found.events] == [
+        date(2027, 3, 30),
+        date(2027, 9, 29),
+    ]  # the closes funds trade at
+    e = found.events[0]
+    assert (e.type, e.tier, e.scope, e.at) == ("index_rebalance", 2, "IN", None)
+    assert "expected window" in e.title and "31-Mar-2027" in e.title and e.source_url == rules.NIFTY_RULE_URL
+    assert found.replaces == [
+        refresh.Replace("index_rebalance", "IN", date(2026, 10, 24), date(2027, 10, 25))
+    ]
+    approx = await rules.read_nifty(refresh.Known(urls=frozenset(), covered={}), now, holidays_for=UNKNOWN)
+    assert [e.day for e in approx.events] == [date(2027, 3, 30), date(2027, 9, 29)]
+    for e in found.events + approx.events:
+        assert len(e.title) <= 200  # calendar_event.title is String(200)
+    assert all("approximate" in e.title for e in approx.events)
+
+
+async def test_the_nifty_rule_makes_no_request():
+    with respx.mock(assert_all_mocked=True, assert_all_called=False) as mock:
+        await rules.read_nifty(
+            refresh.Known(urls=frozenset(), covered={}), datetime(2026, 10, 24, 21, 0, tzinfo=IST)
+        )
+    assert not mock.calls

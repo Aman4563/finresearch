@@ -16,6 +16,18 @@ no new dataset) shows the month: `confirm_cpi` asks it only on nights when an ex
 India GDP: left out. MoSPI's GDP press notes give the next release as a date ("The next release of ...", Q1 2026-27
 note of 31-Aug-2026) "as per the release calendar", not a rule, and the 2026-27 dates (5-Jun, 31-Aug, 30-Nov-2026,
 7-Jan, 26-Feb-2027) follow none; with the calendar dropped there is no sanctioned automated source.
+
+NIFTY's semi-annual review (context, tier 2: index_rebalance). NSE Indices' NIFTY 50 methodology ("Index
+Re-balancing", in its factsheet, NIFTY_METHOD_URL): "Index is re-balanced on semi-annual basis. The cut-off date is
+January 31 and July 31 of each year ... Four weeks prior notice is given to market from the date of change." Its Index
+Reconstitution Calendar (NIFTY_RULE_URL) puts the semi-annual changes on the last working day of March and September.
+Both were read through search results on 23-Oct-2026, never fetched: NSE Indices' terms forbid automated collection,
+and the owner's decision (#481) is to cite the rule without fetching niftyindices.com. NSE's own F&O circular agrees:
+NSE/FAOP/76610 of 29-Sep-2026, "w.e.f. September 30, 2026 (close of September 29, 2026)". So each window is one row on
+the session before the month's last NSE trading day, where index funds trade, titled "expected window": the rule
+gives the window, not the changes, and a review may change no NIFTY 50 member. NSE's F&O circular on the change
+confirms or moves it (eventcal.nse). Holidays, horizon and the replacement of stored future rows are as for CPI; rows
+start tomorrow, so a window confirmed today is never regenerated.
 """
 
 from __future__ import annotations
@@ -123,4 +135,47 @@ async def confirm_cpi(known, now: datetime, *, fetch: Callable[[date], Awaitable
         elif d < today:
             found.notices.append(f"MoSPI's CPI API does not show {month:%b %Y} CPI yet; MoSPI's rule expected it on "
                                  f"{d.isoformat()} at 16:00 IST")  # fmt: skip
+    return found
+
+
+# ---- NIFTY's semi-annual review windows (cited, never fetched: NSE Indices' terms, #481)
+
+NIFTY_RULE_URL = "https://www.niftyindices.com/resources/index-rebalancing-schedule"
+NIFTY_METHOD_URL = "https://www.niftyindices.com/Factsheet/ind_nifty50.pdf"
+REVIEW_MONTHS = (3, 9)  # effective on the last working day of March and September
+NIFTY_EXPECTED = "NIFTY semi-annual review, expected window"
+
+
+def nifty_review(year: int, month: int, holidays_for: HolidaysFor = _holidays) -> tuple[date, date, bool]:
+    """(effective day, the session before it whose close index funds trade at, exact) for a review month. Not exact:
+    that year's NSE holiday list is unknown, so only weekends were skipped."""
+    from finresearch.fincalc.dates import add_business_days
+
+    last = (date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)) - timedelta(days=1)
+    holidays = holidays_for(last)
+    effective = last
+    while effective.weekday() >= 5 or effective in (holidays or ()):
+        effective -= timedelta(days=1)
+    return effective, add_business_days(effective, -1, holidays or set()), holidays is not None
+
+
+async def read_nifty(known, now: datetime, *, holidays_for: HolidaysFor = _holidays):
+    """The NIFTY review windows of the next year by NSE Indices' rule, and a replacement of the stored ones."""
+    from finresearch.eventcal.calendar import TITLES, Event
+    from finresearch.eventcal.refresh import Found, Replace
+    from finresearch.fincalc.dates import to_ist
+
+    today = to_ist(now).date()
+    first, last = today + timedelta(days=1), today + timedelta(days=HORIZON_DAYS)
+    found = Found("nifty_review_rule", replaces=[Replace("index_rebalance", "IN", today, last)])
+    for y in range(first.year, last.year + 1):
+        for m in REVIEW_MONTHS:
+            effective, flow, exact = nifty_review(y, m, holidays_for)
+            if not first <= flow <= last:
+                continue
+            title = (f"{TITLES['index_rebalance']}: {NIFTY_EXPECTED} (effective {effective:%d-%b-%Y}, last working day "
+                     f"of {effective:%b}; funds trade at this close)"
+                     + ("" if exact else f"; approximate: {effective.year} NSE holiday list unknown"))  # fmt: skip
+            found.events.append(Event(type="index_rebalance", tier=2, scope="IN", day=flow, at=None, title=title,
+                                      source_url=NIFTY_RULE_URL, known_since=now, known_since_url=NIFTY_RULE_URL))  # fmt: skip
     return found
