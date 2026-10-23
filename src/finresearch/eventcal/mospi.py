@@ -175,5 +175,7 @@ async def read(known, now, *, http=None, to_text=pdf_text):
                                known_since=now, known_since_url=url) for d in arc.days[kind] if d >= today]  # fmt: skip
         found.coverage.append(Coverage(type=kind, scope="IN", through=arc.through, source_url=url, known_since=now,
                                        note=note))  # fmt: skip
-        found.replaces.append(Replace(kind, "IN", today - timedelta(days=1), arc.through))
+        # its own year only: next year's calendar read in March must not withdraw this year's remaining dates
+        after = max(today - timedelta(days=1), date(arc.fy[0], 3, 31))
+        found.replaces.append(Replace(kind, "IN", after, arc.through))
     return found

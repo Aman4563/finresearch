@@ -53,9 +53,11 @@ def parse_listing(page: str) -> list[tuple[int, str]]:
 
 
 def notice_kind(title: str) -> str | None:
-    """'schedule', 'reschedule' or None for a release title."""
+    """'schedule', 'reschedule' or None for a release title. An unscheduled meeting's announcement is not read: it
+    has no fixed form (the 4-May-2022 meeting was announced by its own resolution), and the schedule's coverage note
+    says off-cycle meetings are not covered."""
     t = title.lower()
-    if "monetary policy committee" not in t or "minutes" in t:
+    if "monetary policy committee" not in t or "minutes" in t or "unscheduled" in t:
         return None
     if "resched" in t:
         return "reschedule"

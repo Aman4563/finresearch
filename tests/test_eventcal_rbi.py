@@ -160,3 +160,17 @@ async def test_a_listing_without_releases_or_a_refusal_is_an_error():
         mock.get(rbi.PAGE).mock(return_value=httpx.Response(403, text="no"))
         with pytest.raises(rbi.RbiError):
             await rbi.read(_known(date(2027, 3, 31)), now, http=_http())
+
+
+def test_an_unscheduled_meeting_title_is_not_read_as_the_schedule():
+    assert rbi.notice_kind("Unscheduled meeting of the Monetary Policy Committee") is None
+    assert rbi.notice_kind("Schedule of Monetary Policy Committee Meetings for 2021-22") == "schedule"
+
+
+async def test_a_new_schedule_withdraws_no_stored_meeting():
+    # tier 1: a date only a notice can withdraw (a stale extra date is flagged, a wrongly dropped one would be missed)
+    now = datetime(2027, 3, 25, 21, 0, tzinfo=IST)
+    with respx.mock(assert_all_called=False) as mock:
+        _mock(mock, {3: _read("rbi_listing.html")}, {90002: _read("rbi_schedule.html")})
+        found = await rbi.read(_known(date(2027, 3, 31)), now, http=_http())
+    assert found.replaces == [] and found.moves == []

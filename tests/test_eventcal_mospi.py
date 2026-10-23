@@ -92,3 +92,14 @@ async def test_a_refused_pointer_or_a_body_that_is_not_a_pdf_is_an_error():
         _mock(mock, pdf=b"<html>blocked</html>")
         with pytest.raises(mospi.MospiCalendarError):
             await mospi.read(_known(), NOW, http=_http(), to_text=lambda b: ARC)
+
+
+async def test_next_years_calendar_never_withdraws_this_years_remaining_dates():
+    # the 2027-28 calendar read on 2-Mar-2027 does not list 12-Mar-2027 (2026-27's): its replacement starts 1-Apr-2027
+    nxt = ARC.replace("(2026-27)", "(2027-28)")
+    with respx.mock(assert_all_called=False) as mock:
+        _mock(mock)
+        found = await mospi.read(
+            _known(), datetime(2027, 3, 2, 21, 0, tzinfo=IST), http=_http(), to_text=lambda b: nxt
+        )
+    assert {(r.after, r.through) for r in found.replaces} == {(date(2027, 3, 31), date(2028, 3, 31))}
