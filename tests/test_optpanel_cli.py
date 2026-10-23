@@ -14,7 +14,12 @@ def test_panel_commands_are_listed() -> None:
         assert cmd in out, cmd
 
 
-def test_mwpl_backfill_refuses_without_a_decision(env) -> None:
+def test_mwpl_backfill_refuses_without_a_decision(env, monkeypatch) -> None:
+    from finresearch import data_rights
+
+    monkeypatch.delitem(
+        data_rights.DECISIONS, "nse_combineoi"
+    )  # decided 23-Oct-2026 (#471); here: without it
     r = CliRunner().invoke(app, ["fno", "panel", "mwpl", "--from", "2026-03-02", "--to", "2026-03-03"])
     assert r.exit_code != 0 and "no recorded data-rights decision" in r.output
 
