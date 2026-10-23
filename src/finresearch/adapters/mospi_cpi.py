@@ -37,6 +37,7 @@ from typing import Any
 from finresearch.adapters.http import Fetched, PoliteClient
 
 BASE = "https://api.mospi.gov.in/api/cpi/"
+DATASET = "mospi_cpi"  # data_rights
 SOURCE = "MoSPI, All-India CPI (Combined), api.mospi.gov.in"
 CATEGORIES = ("general", "health", "education")
 OLD_SUBGROUPS = {"General-Overall": "general", "Health": "health", "Education": "education"}
@@ -144,6 +145,9 @@ class MospiCpiClient:
 
     async def fetch(self, *, today: date) -> CpiData:
         """Both series. `today` (IST) bounds the 2024-base years asked for."""
+        from finresearch import data_rights
+
+        data_rights.require(DATASET)  # before the first request (#471): no decision, no request
         urls: list[str] = []
         old_rows, f1 = await self._rows("getCPIIndex", {
             "base_year": "2012", "series": "Current", "year": ",".join(str(y) for y in range(2013, 2026)),

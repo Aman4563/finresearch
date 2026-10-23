@@ -66,13 +66,14 @@ def lineage(dataset: str) -> list[tuple]:
                                             .where(DatasetLoad.dataset == dataset).order_by(DatasetLoad.id))]  # fmt: skip
 
 
-async def test_no_data_rights_decision_no_request(env):
+async def test_no_data_rights_decision_no_request(env, monkeypatch):
     from finresearch import data_rights
     from finresearch.refseries import rates
 
-    assert (
-        "fbil_rates" not in data_rights.DECISIONS
-    )  # the owner has not decided yet (#366): FBIL's terms are cited
+    # the owner decided on 23-Oct-2026 (#471); without that decision nothing is requested, and the refusal cites
+    # FBIL's terms while they are pending
+    monkeypatch.delitem(data_rights.DECISIONS, "fbil_rates")
+    monkeypatch.setitem(data_rights.PENDING, "fbil_rates", "FBIL disclaimer: owner decision needed")
     with respx.mock(assert_all_called=False) as mock, pytest.raises(data_rights.NoDecision, match="FBIL"):
         await rates.backfill(["tbill"], date(2022, 1, 1), today=TODAY, http=client(), now=lambda: NIGHT)
     assert not mock.calls
