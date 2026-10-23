@@ -130,3 +130,71 @@ def parse_reschedule(page: str) -> Reschedule:
     if len(days) < 2 or days[0] == days[-1]:
         raise RbiError(f"RBI MPC rescheduling notice without an old and a new date: {days}")
     return Reschedule(old=days[0], new=days[-1])
+
+
+# ---- the nightly read (monitor.eventcal through eventcal.refresh)
+
+TITLE_SCHEDULED = "RBI monetary policy decision (scheduled; decision on the meeting's last day)"
+TITLE_MOVED = "RBI monetary policy decision (rescheduled; decision on the meeting's last day)"
+COVERAGE_NOTE = "scheduled meetings only: RBI can meet off-cycle (4-May-2022)"
+
+
+def months_to_read(today: date, covered: date | None) -> list[tuple[int, int]]:
+    """This month and the last (about 3 requests a night); while the current financial year's schedule is not
+    covered, also February and March of its first calendar year, when RBI publishes it (a catch-up after downtime)."""
+    prev = (today.year - 1, 12) if today.month == 1 else (today.year, today.month - 1)
+    out = {(today.year, today.month), prev}
+    fy_start = today.year if today.month >= 4 else today.year - 1
+    if covered is None or covered < date(fy_start + 1, 3, 31):
+        out |= {(fy_start, 2), (fy_start, 3)}
+    return sorted(out)
+
+
+async def read(known, now, *, http=None):
+    """One complete read: the month listings, then each MPC notice not yet stored. Any refusal or unparsable page
+    raises (nothing is stored); rows dated before today are left out (they could never be known in advance)."""
+    from finresearch.adapters.http import PoliteClient
+    from finresearch.eventcal.calendar import Coverage, Event
+    from finresearch.eventcal.refresh import Found, Move
+    from finresearch.fincalc.dates import to_ist
+
+    today = to_ist(now).date()
+    own = http is None
+    http = http or PoliteClient(cache_dir=None)
+    found = Found("rbi_mpc_schedule")
+    try:
+        first = await http.get(PAGE)
+        if not first.ok:
+            raise RbiError(f"RBI press-release listing HTTP {first.status}")
+        notices: dict[int, str] = {}
+        for y, m in months_to_read(today, known.covered.get("rbi_mpc")):
+            got = await http.post(PAGE, data=listing_form(first.text, year=y, month=m))
+            rows = parse_listing(got.text) if got.ok else []
+            if not rows:
+                raise RbiError(f"RBI press-release listing for {y}-{m:02d}: HTTP {got.status}, no releases")
+            found.urls.append(f"{PAGE}#{y}-{m:02d}")
+            notices |= {p: k for p, t in rows if (k := notice_kind(t))}
+        for prid, kind in sorted(notices.items()):
+            url = RELEASE.format(prid)
+            if url in known.urls:
+                continue
+            page = await http.get(url)
+            if not page.ok:
+                raise RbiError(f"RBI press release {prid}: HTTP {page.status}")
+            found.urls.append(url)
+            ev = lambda d, title: Event(type="rbi_mpc", tier=1, scope="IN", day=d, at=None, title=title,  # noqa: E731
+                                        source_url=url, known_since=now, known_since_url=url)  # fmt: skip
+            if kind == "schedule":
+                sched = parse_schedule(page.text)
+                found.events += [ev(d, TITLE_SCHEDULED) for d in sched.days if d >= today]
+                found.coverage.append(Coverage(type="rbi_mpc", scope="IN", through=sched.through, source_url=url,
+                                               known_since=now, note=COVERAGE_NOTE))  # fmt: skip
+            else:
+                move = parse_reschedule(page.text)
+                if move.new >= today:
+                    found.events.append(ev(move.new, TITLE_MOVED))
+                    found.moves.append(Move("rbi_mpc", "IN", move.old, move.new))
+    finally:
+        if own:
+            await http.aclose()
+    return found

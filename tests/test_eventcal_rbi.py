@@ -3,12 +3,16 @@ month listing and press-release pages (tests/fixtures/eventcal, synthetic dates)
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
+import httpx
 import pytest
+import respx
 
-from finresearch.eventcal import rbi
+from finresearch.adapters.http import PoliteClient
+from finresearch.eventcal import rbi, refresh
+from finresearch.fincalc.dates import IST
 
 FIX = Path(__file__).parent / "fixtures" / "eventcal"
 
@@ -69,3 +73,90 @@ def test_reschedule_without_two_distinct_dates_is_refused():
         rbi.parse_reschedule(
             _read("rbi_resched.html").replace("June 3 &#8211; 5,\n2027", "June 2, 3 and 4, 2027")
         )
+
+
+# ---- the nightly read through PoliteClient (respx; no network)
+
+QUIET = "<html><form><input type='hidden' name='__VIEWSTATE' value='x' /></form><table><tr><td><a class='link2' " \
+        "href=BS_PressReleaseDisplay.aspx?prid=80000>Result of the 7-day VRR auction</a></td></tr></table></html>"  # fmt: skip
+
+
+async def _no_sleep(_s: float) -> None:
+    return None
+
+
+def _http() -> PoliteClient:
+    return PoliteClient(cache_dir=None, sleep=_no_sleep, clock=lambda: 0.0, max_retries=0)
+
+
+def _known(covered: date | None = None, urls: tuple[str, ...] = ()) -> refresh.Known:
+    return refresh.Known(urls=frozenset(urls), covered={"rbi_mpc": covered} if covered else {})
+
+
+def _mock(mock, months: dict[int, str], releases: dict[int, str]):
+    for prid, body in releases.items():  # before the listing route, which ignores the query
+        mock.get(rbi.RELEASE.format(prid)).mock(return_value=httpx.Response(200, text=body))
+    mock.get(rbi.PAGE).mock(return_value=httpx.Response(200, text=_read("rbi_listing.html")))
+
+    def listing(request: httpx.Request) -> httpx.Response:
+        form = dict(httpx.QueryParams(request.content.decode()))
+        return httpx.Response(200, text=months.get(int(form["hdnMonth"]), QUIET))
+
+    return mock.post(rbi.PAGE).mock(side_effect=listing)
+
+
+def _months(post) -> list[tuple[str, str]]:
+    return sorted((f["hdnYear"], f["hdnMonth"]) for f in
+                  (dict(httpx.QueryParams(c.request.content.decode())) for c in post.calls))  # fmt: skip
+
+
+async def test_read_finds_the_new_schedule_in_this_or_last_month():
+    now = datetime(2027, 3, 25, 21, 0, tzinfo=IST)
+    with respx.mock(assert_all_called=False) as mock:
+        post = _mock(mock, {3: _read("rbi_listing.html")}, {90002: _read("rbi_schedule.html")})
+        found = await rbi.read(_known(date(2027, 3, 31)), now, http=_http())
+    assert _months(post) == [("2027", "2"), ("2027", "3")]
+    assert [e.day for e in found.events] == rbi.parse_schedule(_read("rbi_schedule.html")).days
+    assert {(e.type, e.tier, e.scope, e.source_url) for e in found.events} == {
+        ("rbi_mpc", 1, "IN", rbi.RELEASE.format(90002))}  # fmt: skip
+    assert [(c.type, c.through, c.source_url) for c in found.coverage] == [
+        ("rbi_mpc", date(2028, 3, 31), rbi.RELEASE.format(90002))]  # fmt: skip
+
+
+async def test_read_skips_a_release_already_stored():
+    now = datetime(2027, 3, 25, 21, 0, tzinfo=IST)
+    with respx.mock(assert_all_called=False) as mock:
+        _mock(mock, {3: _read("rbi_listing.html")}, {})
+        found = await rbi.read(_known(date(2028, 3, 31), (rbi.RELEASE.format(90002),)), now, http=_http())
+        assert not any("prid=" in str(c.request.url) for c in mock.calls if c.request.method == "GET")
+    assert found.events == [] and found.coverage == []
+
+
+async def test_read_widens_to_february_and_march_when_this_year_is_not_covered():
+    now = datetime(2027, 4, 10, 21, 0, tzinfo=IST)  # FY 2027-28 began; coverage ends 31-Mar-2027
+    with respx.mock(assert_all_called=False) as mock:
+        post = _mock(mock, {}, {})
+        await rbi.read(_known(date(2027, 3, 31)), now, http=_http())
+    assert _months(post) == [("2027", "2"), ("2027", "3"), ("2027", "4")]
+
+
+async def test_read_turns_a_rescheduling_notice_into_a_move():
+    now = datetime(2027, 5, 21, 21, 0, tzinfo=IST)
+    with respx.mock(assert_all_called=False) as mock:
+        _mock(mock, {5: _read("rbi_listing_resched.html")}, {90100: _read("rbi_resched.html")})
+        found = await rbi.read(_known(date(2028, 3, 31)), now, http=_http())
+    assert found.moves == [refresh.Move("rbi_mpc", "IN", date(2027, 6, 4), date(2027, 6, 5))]
+    assert [(e.day, e.source_url) for e in found.events] == [(date(2027, 6, 5), rbi.RELEASE.format(90100))]
+    assert found.coverage == []
+
+
+async def test_a_listing_without_releases_or_a_refusal_is_an_error():
+    now = datetime(2027, 3, 25, 21, 0, tzinfo=IST)
+    with respx.mock(assert_all_called=False) as mock:
+        _mock(mock, {3: "<html>Access denied</html>"}, {})
+        with pytest.raises(rbi.RbiError):
+            await rbi.read(_known(date(2027, 3, 31)), now, http=_http())
+    with respx.mock(assert_all_called=False) as mock:
+        mock.get(rbi.PAGE).mock(return_value=httpx.Response(403, text="no"))
+        with pytest.raises(rbi.RbiError):
+            await rbi.read(_known(date(2027, 3, 31)), now, http=_http())
