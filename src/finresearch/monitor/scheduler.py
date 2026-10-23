@@ -688,6 +688,26 @@ def _spawn_risk_alerts(now: datetime) -> None:
     _BACKGROUND["risk_alerts"] = asyncio.create_task(run())
 
 
+def _spawn_revalidate(now: datetime) -> None:
+    """Start the monthly re-validation (monitor.revalidate, #379) when due: a worker thread that waits on a
+    low-priority CLI worker (the replay never runs in this process). At most one runs at a time."""
+    from finresearch.monitor import revalidate
+
+    t = _BACKGROUND.get("revalidate")
+    if (t is not None and not t.done()) or revalidate.due_slot(now) is None:
+        return
+
+    async def run() -> None:
+        try:
+            res = await asyncio.to_thread(revalidate.revalidate_step, now)
+            if res:
+                log.info("re-validation pass: %s", res.get("revalidate"))
+        except Exception:
+            log.warning("re-validation pass failed", exc_info=True)
+
+    _BACKGROUND["revalidate"] = asyncio.create_task(run())
+
+
 def _spawn_joint_pnl(deps: jobs.Deps, now: datetime) -> None:
     """Start the nightly joint P&L pass (monitor.joint_pnl, #397) in the background when due: one value-history build
     with NIFTYBEES (network, cached closes) and SQL. At most one runs at a time."""
@@ -880,6 +900,8 @@ async def tick(deps: jobs.Deps, now: datetime | None = None) -> dict[str, int]:
         _spawn_risk_alerts(now)
     if deps.joint_pnl:
         _spawn_joint_pnl(deps, now)
+    if deps.revalidate:
+        _spawn_revalidate(now)
     out_brief = brief_step(now) if deps.brief else {}
     if deps.holidays is not None or deps.live_holidays:
         await _refresh_holidays(deps)
@@ -982,6 +1004,7 @@ def schedule_json(ww=None, *, running: bool | None = None) -> dict:
     from finresearch.monitor import portfolio_daily as pd
     from finresearch.monitor import quotes as mq
     from finresearch.monitor import rates as mr
+    from finresearch.monitor import revalidate as rvj
     from finresearch.monitor import risk_alerts as rka
     from finresearch.monitor import scheme_master as sm
     from finresearch.monitor import sip_estimates as sipe
@@ -1025,6 +1048,8 @@ def schedule_json(ww=None, *, running: bool | None = None) -> dict:
         "skill": {"after": hm((skj.RUN_AFTER.hour, skj.RUN_AFTER.minute)), "trading_days": False},
         "risk_alerts": {"after": hm((rka.RUN_AFTER.hour, rka.RUN_AFTER.minute)),
                         "deadline": hm((rka.DEADLINE.hour, rka.DEADLINE.minute)), "trading_days": True},
+        "revalidate": {"after": hm((rvj.RUN_AFTER.hour, rvj.RUN_AFTER.minute)), "every": "month",
+                       "priority": "background"},
         "joint_pnl": {"after": hm((jpj.RUN_AFTER.hour, jpj.RUN_AFTER.minute)),
                       "deadline": hm((jpj.DEADLINE.hour, jpj.DEADLINE.minute)), "trading_days": True},
         "span": {"after": hm((spj.RUN_AFTER.hour, spj.RUN_AFTER.minute)), "lookback_days": spj.LOOKBACK_DAYS,

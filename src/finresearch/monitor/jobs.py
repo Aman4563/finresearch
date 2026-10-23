@@ -126,6 +126,7 @@ class Deps:
     joint_pnl: bool = (
         False  # the nightly joint P&L of both books for the forward test (monitor.joint_pnl, #397)
     )
+    revalidate: bool = False  # the monthly re-validation of the backtest recipes (monitor.revalidate, #379)
     # async (holdings, today) -> history.History with the NIFTYBEES benchmark (holding betas and own closes) for
     # monitor.joint_pnl; the live app wires portfolio_daily.live_joint_history
     joint_history: Any = None
@@ -233,7 +234,7 @@ class Deps:
                    lookthrough=True, pf_history=live_history, retention=True, lifecycle=True,
                    ipo_symbols=ipo_symbols, ipo_harvest=True, ipo_registry=True, sip_estimates=True,
                    scheme_master=True, fno_bhav=True, quotes=True, index_eod=True, span=True, dq=True, rates=True,
-                   equity_eod=True, skill=True, risk_alerts=True, joint_pnl=True,
+                   equity_eod=True, skill=True, risk_alerts=True, joint_pnl=True, revalidate=True,
                    joint_history=live_joint_history)  # fmt: skip
 
 

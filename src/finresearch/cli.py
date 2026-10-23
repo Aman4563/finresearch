@@ -2809,6 +2809,60 @@ def fno_span_margin_check() -> None:
     console.print_json(json.dumps(ma.check_summary(rows)))
 
 
+models_app = typer.Typer(
+    no_args_is_help=True, help="The model inventory: statuses, re-validation, red-team reviews (#379)"
+)
+app.add_typer(models_app, name="models")
+
+
+@models_app.command("list")
+def models_list() -> None:
+    """Every inventory entry with its tier and computed status (validated / unvalidated / failed) and the reason."""
+    from finresearch.fincalc.dates import today_ist
+    from finresearch.inventory import registry
+
+    today = today_ist()
+    for e in registry.entries():
+        st, why = e.status(today)
+        console.print(f"{e.key:28} {e.tier} {st:12} {why[:90]}")
+
+
+@models_app.command("revalidate")
+def models_revalidate(
+    slot: str | None = typer.Option(
+        None, help="Slot key (the monitor passes revalidate:YYYY-MM); default manual:<now>"
+    ),
+    history_url: str | None = typer.Option(
+        None, help="Database holding the F&O history, read only (default: the app's)"
+    ),
+) -> None:
+    """Re-run the registered backtest recipes as a read-only replay and APPEND their per-regime-split statistics to
+    model_revalidation (inventory.revalidate). Never saves a backtest run, so the cards' evidence is untouched."""
+    from sqlalchemy.engine import make_url
+
+    from finresearch.backtest import dbhistory, specs
+    from finresearch.db import session_scope
+    from finresearch.fincalc.dates import now_ist
+    from finresearch.inventory import provenance
+    from finresearch.inventory import revalidate as rv
+
+    now = now_ist()
+    url = history_url or get_settings().database_url
+    h = dbhistory.DbHistory(history_url)
+    stock = dbhistory.top_stock(h, specs.IS_START, specs.IS_END)
+    with session_scope(history_url) as s:  # the manifest of the history the replay reads
+        data = provenance.data_hash(s, specs.IS_START, None)
+    try:
+        out = rv.run(h, slot=slot or f"manual:{now:%Y-%m-%dT%H:%M}", source=make_url(url).database or "?", now=now,
+                     stock=stock, data=data)  # fmt: skip
+    except (
+        Exception
+    ) as e:  # PreregistrationError included: say why, exit non-zero (the monitor retries the slot)
+        console.print(f"[red]re-validation failed: {type(e).__name__}: {e}[/red]")
+        raise typer.Exit(2) from e
+    console.print(json.dumps(out))
+
+
 # keep last: `python -m finresearch.cli` (how the API spawns research and lab workers) must see every command above
 if __name__ == "__main__":
     app()

@@ -127,3 +127,22 @@ def test_latest_by_model_reads_the_newest_slot_per_split(db):
         got = rv.latest_by_model(s)
     assert got["recipe:x"]["slot"] == "revalidate:2026-11"
     assert got["recipe:x"]["splits"]["from_2025-09-01"]["metrics"]["expectancy"] == 2.0
+
+
+def test_the_cli_re_validates_into_the_table_only(db, monkeypatch):
+    from typer.testing import CliRunner
+
+    from finresearch.backtest import dbhistory
+    from finresearch.cli import app
+    from finresearch.db.models import FnoBacktestRun, ModelRevalidation
+
+    mem = fs.history(date(2024, 9, 2), date(2025, 1, 31))
+    monkeypatch.setattr(dbhistory, "DbHistory", lambda url=None: mem)
+    monkeypatch.setattr(dbhistory, "top_stock", lambda h, a, b: None)
+    r = CliRunner().invoke(app, ["models", "revalidate", "--slot", "revalidate:2026-11"])
+    assert r.exit_code == 0, r.output
+    with db() as s:
+        assert s.scalar(select(func.count()).select_from(FnoBacktestRun)) == 0
+        rows = s.scalars(select(ModelRevalidation)).all()
+        assert rows and {r.slot for r in rows} == {"revalidate:2026-11"}
+        assert all(len(r.data_hash or "") == 64 for r in rows)  # the manifest of the database the replay read
