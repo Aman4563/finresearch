@@ -23,8 +23,9 @@ test("book scenarios: heatmap by horizon, ES, episodes, betas and liquidity", as
   await expect(page.getByText(/waits for the vault/).first()).toBeVisible();
   await expect(page.getByRole("row", { name: /BANKNIFTY.*1\.15.*0\.09.*9 Oct 2026/ })).toBeVisible();
   await expect(page.getByText(/Liquidity-adjusted stress needs P1\.1/)).toBeVisible();
-  // #366/#385: the rate names its source (FBIL's dated par yield), not a bare 6.5 %
-  await expect(page.getByText(/Rate 5\.27% \(FBIL G-sec par yield, 0\.25-year point, 12-Oct-2026\)/)).toBeVisible();
+  // #480: each expiry's carry (its scenarios roll the forward at it, keeping the market's dividend) and its own
+  // discount rate (#366/#385: named, never a bare 6.5 %)
+  await expect(page.getByText(/NIFTY 27 Oct 2026: forward 24,980 \(put-call parity fit over 5 strikes' mids\); carry 4\.50% a year \(put-call parity fit over 5 strikes' mids against the chain's underlying\), implied dividend yield 0\.77%; discount rate 5\.27% \(FBIL G-sec par yield, 0\.25-year point, 12-Oct-2026\)/)).toBeVisible();
   await expectNoHorizontalOverflow(page);
   api.expectClean();
 });
@@ -38,6 +39,8 @@ test("book scenarios: unknown cells and ES read unknown with the reason", async 
   await expect(page.getByText(/RELIANCE: beta to NIFTY unknown/).first()).toBeVisible();
   await expect(page.getByText(/fewer than the 250 needed/).first()).toBeVisible();
   await expect(page.getByText(/a future \(the chain quotes no futures\)/)).toBeVisible();
+  // #480: an expiry whose carry cannot be read says so; its scenarios are unknown, never rolled at the rate
+  await expect(page.getByText(/BANKNIFTY 27 Oct 2026: forward 51,820 .*carry unknown \(no reliable put-call parity fit/)).toBeVisible();
   api.expectClean();
 });
 

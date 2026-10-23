@@ -10,12 +10,17 @@ import { RiskBanner } from "@/components/fno/risk";
 import { ScenarioHeatmap } from "@/components/fno/scenario-grid";
 import { EpisodesCard, ExposuresCard, LiquidityCard, Reasons, ScanCard, ShocksCard, loss } from "@/components/fno/scenario-parts";
 import { rateLabel } from "@/components/fno/model";
-import type { BookScenarios } from "@/components/fno/scenario-types";
+import type { BookScenarios, ForwardView } from "@/components/fno/scenario-types";
 import { Card, EmptyState, ErrorNote, PageHeader, Skeleton, Stat, Table } from "@/components/ui";
 import { api, day, when } from "@/lib/api";
 
 const H: Record<string, string> = { "1d": "1 session", "5d": "5 sessions", expiry: "To nearest expiry" };
 const pct = (m: number) => `${m > 0 ? "+" : m < 0 ? "−" : ""}${Math.abs(m * 100).toFixed(1)}%`;
+const pa = (x: number) => `${(x * 100).toFixed(2)}%`;
+// #480: the forward, the carry its scenarios roll it at (or why it is unknown) and the expiry's own discount rate
+const fwdLine = (f: ForwardView) => `${f.underlying} ${day(f.expiry)}: forward ${f.forward == null ? "unknown" : f.forward.toLocaleString("en-IN")} (${f.source}); `
+  + `carry ${f.carry == null ? `unknown (${f.carry_reason})` : `${pa(f.carry)} a year (${f.carry_source})`}${f.implied_q == null ? "" : `, implied dividend yield ${pa(f.implied_q)}`}; `
+  + `discount rate ${rateLabel(f.rate_info)}`;
 
 export default function BookScenariosPage() {
   const [v, setV] = useState<BookScenarios | null>(null);
@@ -54,7 +59,7 @@ export default function BookScenariosPage() {
           </div>
           <Reasons items={[...v.notes, ...es!.reasons]} />
           <Card title="Spot × vol grid" subtitle={`Full revaluation. Spot-vol response: +${v.grid.vol_response.down_per_pct} vol pts per 1% fall, ${v.grid.vol_response.up_per_pct} per 1% rise; the vol shift is on top`}
-            help="Every leg repriced in full with Black-76 (no greek approximation). Other underlyings move by the worse end of their beta band × NIFTY's move.">
+            help="Every leg repriced in full with Black-76 (no greek approximation), each expiry discounted at its own rate. Each forward is rolled to the horizon at its own expiry's carry (the market's dividend and financing; see the footer), never at the rate. Other underlyings move by the worse end of their beta band × NIFTY's move.">
             <ScenarioHeatmap cells={v.grid.cells} moves={v.grid.moves} vols={v.grid.vol_shifts} />
             <Reasons items={v.grid.reasons} />
           </Card>
@@ -86,7 +91,7 @@ export default function BookScenariosPage() {
               </Table>
             ) : <p className="text-sm text-muted">Only NIFTY is held (β = 1 by definition).</p>}
           </Card>
-          <p className="text-[11px] text-muted">As of {when(v.as_of)}. Rate {v.rate_info ? rateLabel(v.rate_info) : `${(v.rate * 100).toFixed(1)}%`}. Forwards: {v.forwards.map((f) => `${f.underlying} ${day(f.expiry)} ${f.forward == null ? "unknown" : f.forward.toLocaleString("en-IN")} (${f.source})`).join("; ")}.</p>
+          <p className="text-[11px] text-muted [overflow-wrap:anywhere]">As of {when(v.as_of)}. Per expiry: {v.forwards.map(fwdLine).join(". ")}.</p>
         </>
       )}
       <p className="text-xs text-muted"><Link className="text-brand hover:underline" href="/fno/paper">Paper book →</Link></p>
