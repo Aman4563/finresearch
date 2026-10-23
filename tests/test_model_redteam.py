@@ -4,17 +4,19 @@ cannot read validated without a filed review."""
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import replace
 from datetime import date
 
 from finresearch.inventory import redteam, registry
 
-GOOD = """---
+SHA = hashlib.sha1(b"prereg").hexdigest()  # built at runtime (hex fixtures stay out of the source)
+GOOD = f"""---
 model: fno_strategy_gate
 reviewed_on: 2026-10-23
 reviewer: separate Claude session, given only the PREREG and the code
 prereg: evals/experiments/card_ledger/PREREG.md
-prereg_commit: 0123456789abcdef0123456789abcdef01234567
+prereg_commit: {SHA}
 prereg_committed_at: 2026-10-20T10:00:00+05:30
 verdict: changes-needed
 ---
@@ -35,11 +37,7 @@ def test_a_filed_review_is_read_with_its_prereg_commit_and_timestamp(tmp_path):
     got = redteam.scan(tmp_path)
     assert not got.invalid
     (r,) = got.by_model["fno_strategy_gate"]
-    assert (
-        r.verdict == "changes-needed"
-        and r.prereg_commit.startswith("0123")
-        and r.reviewed_on == date(2026, 10, 23)
-    )
+    assert r.verdict == "changes-needed" and r.prereg_commit == SHA and r.reviewed_on == date(2026, 10, 23)
     assert r.path == "evals/redteam/fno_strategy_gate/2026-10-23-first.md"
 
 
@@ -47,7 +45,7 @@ def test_a_malformed_or_misfiled_review_is_reported_not_dropped(tmp_path):
     _file(
         tmp_path,
         "fno_strategy_gate/2026-10-23-a.md",
-        GOOD.replace("prereg_commit: 0123", "prereg_commit: zz"),
+        GOOD.replace(f"prereg_commit: {SHA}", "prereg_commit: zz"),
     )
     _file(tmp_path, "no_such_model/2026-10-23-b.md", GOOD.replace("fno_strategy_gate", "no_such_model"))
     _file(tmp_path, "direction_logistic/2026-10-23-c.md", GOOD)  # folder and front matter disagree
