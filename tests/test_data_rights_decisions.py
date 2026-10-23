@@ -18,7 +18,8 @@ from finresearch.adapters import mospi_cpi as mc
 from finresearch.adapters import nse_index_weights as nw
 from finresearch.adapters.http import PoliteClient
 
-DECIDED_1023 = ("fbil_rates", "nse_combineoi", "nse_secban", nw.DATASET, iima.DATASET, mc.DATASET)
+# fbil_rates was decided on 23-Oct-2026 too, then paused the same day under FBIL's Terms of Use of 13-Oct-2026 (#476)
+DECIDED_1023 = ("nse_combineoi", "nse_secban", nw.DATASET, iima.DATASET, mc.DATASET)
 
 
 async def _no_sleep(_: float) -> None:
@@ -41,9 +42,18 @@ def test_the_owners_23_oct_decisions_are_recorded():
         d = data_rights.require(k)
         assert (d.dataset, d.choice, d.decided, d.ref) == (k, "accept-personal", "2026-10-23", "issue #471")
         assert d.terms_read and "Owner decision needed" not in d.terms_read
-    assert "commercial use" in data_rights.DECISIONS["fbil_rates"].terms_read
     assert "citation" in data_rights.DECISIONS[iima.DATASET].terms_read
     assert "token" in data_rights.DECISIONS[mc.DATASET].terms_read
+
+
+def test_fbil_is_paused_under_its_13_oct_terms_of_use():
+    """#476: FBIL's Terms of Use (posted 13-Oct-2026) forbid building a database, archive or tracking feed from the
+    free website without a paid subscription, so the 23-Oct decision is paused and every FBIL path refuses."""
+    assert "fbil_rates" not in data_rights.DECISIONS
+    why = data_rights.PENDING["fbil_rates"]
+    assert "13-Oct-2026" in why and "9.2" in why and "#476" in why
+    with pytest.raises(data_rights.NoDecision, match="fbil_rates"):
+        data_rights.require("fbil_rates")
 
 
 def test_every_decision_is_dated_sourced_and_a_known_choice():

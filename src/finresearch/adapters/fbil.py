@@ -12,6 +12,11 @@ The domain is fbil.org.in. (fbil.co.in is an unrelated bullion dealer.)
 
 When FBIL can't be reached, `FALLBACK_CURVE` is the curve published for 23-Sep-2026, labelled with its date so a
 stale curve is never mistaken for today's.
+
+Every request first asks `data_rights.require(DATASET)` and raises FbilError without a recorded decision, so no caller
+reaches FBIL unless the owner has decided. FBIL's Terms of Use of 13-Oct-2026 (section 9) limit the free website to
+delayed, non-commercial viewing and prohibit building a database, archive or tracking feed from it without a paid
+subscription, so the 23-Oct-2026 decision was paused pending the owner (#476).
 """
 
 from __future__ import annotations
@@ -30,10 +35,20 @@ LATEST_URL = f"{BASE}/gsec/fetch"
 DOWNLOAD_URL = f"{BASE}/gsec/downloadPublished"
 SITE = "https://www.fbil.org.in/"
 HEADERS = {"Referer": SITE, "Accept": "application/json, text/plain, */*"}
+DATASET = "fbil_rates"  # the data-rights entry covering every FBIL request
 
 
 class FbilError(RuntimeError):
     pass
+
+
+def _require() -> None:
+    from finresearch import data_rights
+
+    try:
+        data_rights.require(DATASET)
+    except data_rights.NoDecision as e:
+        raise FbilError(str(e)) from None
 
 
 @dataclass(frozen=True)
@@ -143,8 +158,12 @@ class FbilClient:
         if self._own:
             await self.http.aclose()
 
+    async def _get(self, url: str, **kw):
+        _require()  # no decision, no request (FBIL Terms of Use, 13-Oct-2026)
+        return await self.http.get(url, **kw)
+
     async def published_dates(self) -> list[date]:
-        resp = await self.http.get(LATEST_URL, params={"authenticated": "false"}, headers=HEADERS, cache_ttl=3600,
+        resp = await self._get(LATEST_URL, params={"authenticated": "false"}, headers=HEADERS, cache_ttl=3600,
                                    cache_if=lambda f: f.content.lstrip()[:1] == b"[")  # fmt: skip
         if not resp.ok:
             raise FbilError(f"FBIL HTTP {resp.status} for {LATEST_URL}")
@@ -154,7 +173,7 @@ class FbilClient:
     async def workbook(self, day: date, *, cache_ttl: float | None = None) -> bytes:
         """`day`'s G-sec workbook as downloaded (.xlsx or OLE2 .xls). Not cached unless `cache_ttl` is given: the
         backfill reads ~0.73 MB a day and discards it after parsing."""
-        resp = await self.http.get(DOWNLOAD_URL, params={"date": day.isoformat()}, headers=HEADERS,
+        resp = await self._get(DOWNLOAD_URL, params={"date": day.isoformat()}, headers=HEADERS,
                                    cache_ttl=cache_ttl, cache_if=lambda f: xls.kind(f.content) is not None)  # fmt: skip
         if not resp.ok or xls.kind(resp.content) is None:
             raise FbilError(f"FBIL has no G-sec workbook for {day} (HTTP {resp.status})")
@@ -169,7 +188,7 @@ class FbilClient:
     async def _filtered(self, path: str, start: date, end: date) -> tuple[str, bytes, object]:
         url = f"{BASE}/{path}/fetchfiltered"
         params = {"fromDate": start.isoformat(), "toDate": end.isoformat(), "authenticated": "false"}
-        resp = await self.http.get(url, params=params, headers=HEADERS)
+        resp = await self._get(url, params=params, headers=HEADERS)
         if not resp.ok or resp.content.lstrip()[:1] != b"[":
             raise FbilError(f"FBIL HTTP {resp.status} for {url} (not a JSON list)")
         try:

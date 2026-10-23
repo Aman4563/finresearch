@@ -72,7 +72,7 @@ async def test_no_data_rights_decision_no_request(env, monkeypatch):
 
     # the owner decided on 23-Oct-2026 (#471); without that decision nothing is requested, and the refusal cites
     # FBIL's terms while they are pending
-    monkeypatch.delitem(data_rights.DECISIONS, "fbil_rates")
+    monkeypatch.delitem(data_rights.DECISIONS, "fbil_rates", raising=False)
     monkeypatch.setitem(data_rights.PENDING, "fbil_rates", "FBIL disclaimer: owner decision needed")
     with respx.mock(assert_all_called=False) as mock, pytest.raises(data_rights.NoDecision, match="FBIL"):
         await rates.backfill(["tbill"], date(2022, 1, 1), today=TODAY, http=client(), now=lambda: NIGHT)

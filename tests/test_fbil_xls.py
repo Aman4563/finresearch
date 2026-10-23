@@ -13,6 +13,16 @@ from finresearch.adapters import xls
 from finresearch.adapters.fbil import FbilClient, FbilError, parse_par_yield
 from finresearch.adapters.http import PoliteClient
 
+
+@pytest.fixture(autouse=True)
+def _fbil_decided(monkeypatch):
+    """These tests exercise the client with a recorded decision; tests/test_fbil_fixings.py covers the gate (#476)."""
+    from finresearch import data_rights
+
+    monkeypatch.setitem(data_rights.DECISIONS, "fbil_rates", data_rights.Decision(
+        "fbil_rates", "accept-personal", "2026-10-23", "test", "test"))  # fmt: skip
+
+
 FIX = Path(__file__).parent / "fixtures" / "fbil"
 
 
