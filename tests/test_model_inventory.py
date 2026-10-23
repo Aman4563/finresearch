@@ -270,3 +270,11 @@ def test_stored_regime_tags_that_differ_from_today_s_make_the_run_stale_by_tag()
 def test_unreadable_stored_regime_tags_are_stale_never_current():
     why = regimes.staleness(date(2026, 10, 20), date(2026, 10, 22), tags={"expiry_weekday": "?"})
     assert why and all("regime" in w for w in why)
+
+
+def test_a_correctly_dated_run_gets_one_reason_per_regime_change_not_two():
+    run = date(2025, 8, 20)
+    why = regimes.staleness(run, date(2025, 9, 10), tags=regimes.regime_state(run))
+    assert [w for w in why if "01-Sep-2025" in w or "expiry_weekday" in w] == [
+        next(w for w in why if "01-Sep-2025" in w)
+    ]  # the date reason covers it; the tag reason is only the safety net for a mis-dated run

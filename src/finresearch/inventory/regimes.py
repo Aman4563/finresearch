@@ -84,12 +84,17 @@ def staleness(day: date | None, today: date, max_age: int = MAX_EVIDENCE_AGE_DAY
     (regime_state on its day; None for a run saved before they were stored, judged by its date alone)."""
     if day is None:
         return ["the run's date is unknown, so its evidence cannot be shown to be current"]
-    why = tag_changes(tags, today) if tags is not None else []
+    why = []
     age = (today - day).days
     if age > max_age:
         why.append(f"the backtest run is {age} days old (evidence expires after {max_age} days): re-run it")
-    why += [f"the market changed on {c.day:%d-%b-%Y} after the run ({c.what})"
-            for c in regime_changes() if day < c.day <= today]  # fmt: skip
+    after = [c for c in regime_changes() if day < c.day <= today]
+    why += [f"the market changed on {c.day:%d-%b-%Y} after the run ({c.what})" for c in after]
+    if (
+        tags is not None
+    ):  # the safety net for a mis-dated run: a tag whose change the date already explains is not
+        covered = {t for c in after for t in c.tags}  # repeated
+        why += [w for w in tag_changes(tags, today) if not any(f"the {t} regime" in w for t in covered)]
     return why
 
 
