@@ -296,6 +296,14 @@ async def _iv_term(src: ArchiveSources, today: date) -> list[dict[str, Any]]:
 
 
 async def _gsec_spread(src: ArchiveSources, today: date) -> list[dict[str, Any]]:
+    if src.par_curve is None:
+        from finresearch import data_rights
+        from finresearch.adapters.fbil import DATASET
+
+        try:
+            data_rights.require(DATASET)
+        except data_rights.NoDecision:
+            return []  # FBIL's Terms of Use forbid an archive without a subscription (#476): nothing archived, no retry
     curve = await (src.par_curve or _live_curve)()
     if getattr(curve, "fallback", False):
         raise RuntimeError("FBIL unreachable (fallback curve): not archived")

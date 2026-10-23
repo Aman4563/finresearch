@@ -142,7 +142,14 @@ def test_fbil_par_yield_sheet_parses_and_interpolates():
 
 
 @respx.mock
-async def test_fbil_client_reads_the_latest_published_curve(tmp_path):
+async def test_fbil_client_reads_the_latest_published_curve(tmp_path, monkeypatch):
+    from finresearch import data_rights
+
+    monkeypatch.setitem(
+        data_rights.DECISIONS,
+        "fbil_rates",
+        data_rights.Decision("fbil_rates", "accept-personal", "2026-10-23", "test", "test"),
+    )  # paused in the app (#476); the client itself
     respx.get(fbil_mod.LATEST_URL).mock(return_value=httpx.Response(200, json=[
         {"processRunDate": "2026-09-22", "archive": "x"}, {"processRunDate": "2026-09-23", "archive": "x"}]))  # fmt: skip
     dl = respx.get(fbil_mod.DOWNLOAD_URL).mock(
