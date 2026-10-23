@@ -68,6 +68,14 @@ const SCENARIOS: Scenario[] = [
   { name: "lab-empty", path: "/fno/lab", routes: { "GET /api/fno/lab": { ...F.LAB, strategies: [] }, "GET /api/fno/lab/paper": { rules: [] }, "GET /api/fno/risk-notice": F.NOTICE },
     ready: (p) => expect(p.getByText("No strategy yet")).toBeVisible() },
   { name: "lab-loading", path: "/fno/lab", routes: { "GET /api/fno/lab/paper": { rules: [] }, "GET /api/fno/risk-notice": F.NOTICE }, hold: "/api/fno/lab", ready: skeleton },
+  { name: "scenarios-data", path: "/fno/scenarios", routes: { "GET /api/fno/scenarios": F.SCENARIOS, "GET /api/fno/risk-notice": F.NOTICE },
+    ready: (p) => expect(p.getByRole("table", { name: "P&L by NIFTY move and vol shift" })).toBeVisible() },
+  { name: "scenarios-long", path: "/fno/scenarios", routes: { "GET /api/fno/scenarios": F.LONG_SCENARIOS, "GET /api/fno/risk-notice": F.NOTICE },
+    ready: (p) => expect(p.getByRole("table", { name: "P&L by NIFTY move and vol shift" })).toBeVisible() },
+  { name: "scenarios-empty", path: "/fno/scenarios", routes: { "GET /api/fno/scenarios": F.EMPTY_SCENARIOS, "GET /api/fno/risk-notice": F.NOTICE },
+    ready: (p) => expect(p.getByText("No open legs")).toBeVisible() },
+  { name: "scenarios-loading", path: "/fno/scenarios", routes: { "GET /api/fno/risk-notice": F.NOTICE }, hold: "/api/fno/scenarios", ready: skeleton },
+  { name: "scenarios-error", path: "/fno/scenarios", routes: { "GET /api/fno/scenarios": fail, "GET /api/fno/risk-notice": F.NOTICE }, ready: alert },
   { name: "lab-error", path: "/fno/lab", routes: { "GET /api/fno/lab": fail, "GET /api/fno/lab/paper": { rules: [] }, "GET /api/fno/risk-notice": F.NOTICE }, ready: alert },
 ];
 
