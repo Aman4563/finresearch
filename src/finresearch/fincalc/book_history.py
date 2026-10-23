@@ -5,8 +5,9 @@ scenarios. Analysis only: nothing here places, modifies or cancels an order. Pur
 
 Historical-scenario revaluation over every start day s (#394's "Maths"): the book is revalued h sessions from now with
 each underlying's forward moved by its own stored move S_{s+h}/S_s - 1 (front-future log returns within one contract,
-fincalc.fno_history.front_future_returns, compounded) and every leg's IV by its own IV30_{s+h} - IV30_s (sticky
-strike: the skew change is not applied). An underlying without its own stored move in a window moves by the worse end
+fincalc.fno_history.front_future_returns, compounded), rolled to the horizon at its own expiry's carry (#480,
+book_scenarios: an unknown carry leaves the scan and the episodes unknown), and every leg's IV by its own
+IV30_{s+h} - IV30_s (sticky strike: the skew change is not applied). An underlying without its own stored move in a window moves by the worse end
 of its beta band x NIFTY's move, with NIFTY's IV30 change, and is counted. A window with a missing NIFTY return (or
 one spanning two sessions) or a missing IV30 is not a scenario: it is skipped and counted, never 0.
 
@@ -132,8 +133,8 @@ def tail(pnls: Sequence[float]) -> tuple[float, float]:
 def scan(legs: Sequence[bs.BookLeg], m: bs.Market, hist: Mapping[str, Series], h: int,
          holidays: frozenset[date] | set[date] = frozenset(), min_days: int = MIN_SCAN_DAYS) -> Scan:  # fmt: skip
     """Today's book revalued h sessions ahead under every stored start day's moves (module docstring)."""
-    states = bs.price_legs(legs, m)
-    bad = [s.reason for s in states if s.reason]
+    states, at = bs.price_legs(legs, m), bs.horizon_clock(m.now, h, holidays)
+    bad = [s.reason for s in states if s.reason] + bs.roll_reasons(states, m, at)
     if bad:
         return _unknown(h, bad)
     if "NIFTY" not in hist:
@@ -141,7 +142,7 @@ def scan(legs: Sequence[bs.BookLeg], m: bs.Market, hist: Mapping[str, Series], h
             h, ["NIFTY's front-future and IV30 history is not stored, so no historical scenario exists"]
         )
     unders = sorted({x.underlying.upper() for x in legs})
-    cal, at = calendar(hist["NIFTY"]), bs.horizon_clock(m.now, h, holidays)
+    cal = calendar(hist["NIFTY"])
     days: list[ScanDay] = []
     skipped, mapped = 0, dict.fromkeys([u for u in unders if u != "NIFTY"], 0)
     for i in range(len(cal) - h):
@@ -239,7 +240,9 @@ def episode(legs: Sequence[bs.BookLeg], m: bs.Market, hist: Mapping[str, Series]
     if ep.waits:
         return EpisodeResult(ep, None, (), None, 0, (f"{ep.label} {ep.waits}",))
     states = bs.price_legs(legs, m)
-    bad = [s.reason for s in states if s.reason]
+    bad = [s.reason for s in states if s.reason] + bs.roll_reasons(
+        states, m, bs.horizon_clock(m.now, 1, holidays)
+    )
     if bad:
         return EpisodeResult(ep, None, (), None, 0, tuple(dict.fromkeys(bad)))
     cal = calendar(hist["NIFTY"]) if "NIFTY" in hist else []

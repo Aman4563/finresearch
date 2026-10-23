@@ -300,6 +300,11 @@ def card_betas(symbol: str, today: date) -> dict[str, Any]:
     return betas.read([symbol], today)
 
 
+CARD_CARRY = (
+    "the card's model: Black-Scholes on spot, forward S e^{rT}, so its carry is the rate (#480, #377)"
+)
+
+
 def trade_terms(symbol: str, expiry: date, spot: float, legs: list[o.Leg], now: datetime, rate: float,
                 is_index: bool, span: dict[str, Any] | None = None,
                 betas: Mapping[str, Any] | None = None) -> tuple[Any, tuple[str, ...], float | None,
@@ -322,7 +327,9 @@ def trade_terms(symbol: str, expiry: date, spot: float, legs: list[o.Leg], now: 
     sym = symbol.upper()
     if betas is None:
         betas = card_betas(sym, to_ist(now).date())
-    m = bs.Market(now, rate, {(sym, expiry): spot * math.exp(rate * t)}, betas)
+    # #480: the card's own model (Black-Scholes on spot, no dividend) has forward S e^{rT}, so its carry is the rate
+    # by construction; moving the card to a market carry is the horse race's decision (#377), not made here
+    m = bs.Market(now, rate, {(sym, expiry): spot * math.exp(rate * t)}, betas).fixed_carry(rate, CARD_CARRY)
     bl = [bs.BookLeg(sym, expiry, x.right, 0.0 if x.right == "future" else x.strike, x.qty,
                      None if x.right == "future" else x.premium, "ltp") for x in legs]  # fmt: skip
     one, reasons = bs.shock_pnls(bl, m, bs.horizon_clock(now, 1, _holidays()))

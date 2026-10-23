@@ -8,13 +8,20 @@ put-call parity forward when there is none. Vendor IVs and fnobook's Black-Schol
 e^{-rT}[F N(d1) - K N(d2)]), so the pricing code is the app's one implementation. T is to the minute, to 15:30 IST on
 the expiry day (#359). A leg whose mark, forward or IV is unknown, or that has expired, is unpriced with a reason: the
 book's exposures and scenarios are then incomplete and say so, never counted as 0.
+
+#480 (the owner's decision of 23-Oct-2026): each expiry is discounted at its own rate (`Market.rates`, the caller's
+signals.rates answer at that expiry's tenor), and a scenario rolls each forward to the horizon at its own expiry's carry
+b = ln(F/S)/T (`Market.carries`: the market's dividend and financing, from the forward the legs are priced on and a
+synchronous spot), F' = F (1 + m) e^{-b h}, never at the rate (which dropped NIFTY's dividend yield, about 0.85 index
+points a day). An expiry whose carry is unknown leaves every scenario that lets time pass unknown, with the reason.
+One flat carry per expiry spreads a discrete dividend over the whole life of the contract.
 """
 
 from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime
 from typing import Literal
 
@@ -68,17 +75,64 @@ class BookLeg:
     label: str = ""
 
 
+NO_CARRY = "the carry of its forward, ln(F/S)/T, is unknown"
+
+
+@dataclass(frozen=True)
+class Carry:
+    """One expiry's carry b = ln(F/S)/T (annual, continuous), read from the forward F its legs are priced on, a
+    synchronous spot S and T, with where it came from (`source`); `b` None = unknown, with `reason`."""
+
+    b: float | None
+    source: str | None = None
+    reason: str | None = None
+    forward: float | None = None
+    spot: float | None = None
+    t: float | None = None
+
+
+def carry_from(forward: float | None, spot: float | None, t: float | None, source: str) -> Carry:
+    """The carry of `forward` against a synchronous `spot` over `t` years (black76.carry), or unknown with why."""
+    from finresearch.fincalc.black76 import carry
+
+    if spot is None or not spot > 0:
+        return Carry(
+            None, None, f"the underlying's price to set against {source} is unknown", forward, spot, t
+        )
+    if forward is None or not forward > 0 or t is None or not t > 0:
+        return Carry(None, None, f"{source}: no positive forward and time to expiry", forward, spot, t)
+    return Carry(carry(forward, spot, t), source, None, forward, spot, t)
+
+
 @dataclass(frozen=True)
 class Market:
     """The clock (#359), the rate, the forward per (UNDERLYING, expiry) (upper case; None or absent = unknown), the
     registered beta estimate of each underlying's front-future returns to NIFTY's (fincalc.beta; NIFTY = 1 always;
-    absent or with a reason = unknown) and NIFTY's level for the NIFTY-equivalent delta (None = unknown)."""
+    absent or with a reason = unknown) and NIFTY's level for the NIFTY-equivalent delta (None = unknown). #480: the
+    carry per (UNDERLYING, expiry) the scenarios roll each forward at (absent = unknown, never the rate) and each
+    expiry's own discount rate (absent = `rate`, the one rate a caller fixed)."""
 
     now: datetime
     rate: float
     forwards: Mapping[tuple[str, date], float | None]
     betas: Mapping[str, BetaEstimate] = field(default_factory=dict)
     nifty: float | None = None
+    carries: Mapping[tuple[str, date], Carry] = field(default_factory=dict)
+    rates: Mapping[date, float] = field(default_factory=dict)
+
+    def fixed_carry(self, b: float, why: str) -> Market:
+        """This market with every forward rolled at `b` on purpose: a registered study's or a model's own rule
+        (joint-risk-v1's pinned rate; the card's S e^{rT} forward), labelled `why`. Never a fallback for an unknown
+        carry."""
+        return replace(self, carries={k: Carry(b, why) for k in self.forwards})
+
+    def rate_for(self, expiry: date) -> float:
+        """The expiry's own discount rate (#480: `rates`, continuous), else the one rate the caller fixed (`rate`)."""
+        return self.rates.get(expiry, self.rate)
+
+    def carry(self, underlying: str, expiry: date) -> Carry:
+        """The expiry's carry; absent = unknown (never the rate)."""
+        return self.carries.get((underlying.upper(), expiry)) or Carry(None, reason=NO_CARRY)
 
     def estimate(self, underlying: str) -> BetaEstimate | None:
         return fbeta.NIFTY if underlying.upper() == "NIFTY" else self.betas.get(underlying.upper())
@@ -114,8 +168,12 @@ class LegState:
     flags: tuple[str, ...] = ()
 
 
+def _name(x: BookLeg) -> str:
+    return f"{x.underlying} {x.expiry:%d-%b-%Y} {x.right}{'' if x.right == 'future' else f' {x.strike:g}'}"
+
+
 def _price(x: BookLeg, m: Market) -> LegState:
-    name = f"{x.underlying} {x.expiry:%d-%b-%Y} {x.right}{'' if x.right == 'future' else f' {x.strike:g}'}"
+    name, r = _name(x), m.rate_for(x.expiry)
     t = years_to_expiry(x.expiry, m.now)
     if t <= 0:
         return LegState(x, reason=f"{name} has expired (15:30 IST on its expiry day): it cannot be repriced")
@@ -128,11 +186,11 @@ def _price(x: BookLeg, m: Market) -> LegState:
         return LegState(x, f, t, None, f, o.Greeks(f, 1.0, 0.0, 0.0, 0.0, 0.0))
     if x.mark is None or x.mark <= 0:
         return LegState(x, f, t, reason=f"{name}: no price (mid or LTP) is known, so its IV is unknown")
-    iv = b76_iv(x.right, x.mark, f, x.strike, t, m.rate)
+    iv = b76_iv(x.right, x.mark, f, x.strike, t, r)
     if iv is None:
         return LegState(x, f, t, reason=f"{name}: its price {x.mark:g} is outside the no-arbitrage bounds on the "
                                         f"forward {f:g}, so no IV reproduces it")  # fmt: skip
-    g = b76_greeks(x.right, f, x.strike, t, m.rate, iv)
+    g = b76_greeks(x.right, f, x.strike, t, r, iv)
     flags = (
         ()
         if x.mark_kind == "mid"
@@ -296,15 +354,33 @@ def _intrinsic(right: str, f: float, k: float) -> float:
     return f if right == "future" else max(f - k, 0.0) if right == "call" else max(k - f, 0.0)
 
 
+def roll_reasons(states: Sequence[LegState], m: Market, at: datetime) -> list[str]:
+    """#480: why priced legs cannot be rolled to `at`: their expiry's carry is unknown. One reason per underlying and
+    expiry; none when no time passes (`at` is the clock)."""
+    if at <= m.now:
+        return []
+    out: dict[tuple[str, date], int] = {}
+    for s in states:
+        if s.reason is None and m.carry(s.leg.underlying, s.leg.expiry).b is None:
+            k = (s.leg.underlying.upper(), s.leg.expiry)
+            out[k] = out.get(k, 0) + 1
+    why = lambda c: f"{NO_CARRY} ({c.reason})" if c.reason and c.reason != NO_CARRY else NO_CARRY  # noqa: E731
+    return [f"{u} {e:%d-%b-%Y} ({n} leg{'s' if n > 1 else ''}): scenario value unknown: {why(m.carry(u, e))}; a "
+            "forward is never rolled at the risk-free rate" for (u, e), n in out.items()]  # fmt: skip
+
+
 def _side(ss: Sequence[LegState], m: Market, mu: float, dvol: float, at: datetime,
           response: bool) -> tuple[float, int, int]:  # fmt: skip
     """One underlying's legs moved by mu: (P&L, IVs floored, legs at intrinsic)."""
     pnl, floored, intrinsic = 0.0, 0, 0
     for s in ss:
         x = s.leg
-        # the forward is shocked and rolled to the horizon at the same rate: F' = F (1 + mu) e^{-r (T - T')}, T' >= 0
+        # #480: the forward is shocked and rolled to the horizon at its own expiry's carry b = ln(F/S)/T, never at
+        # the rate: F' = F (1 + mu) e^{-b (T - T')}, T' >= 0, so it keeps the market's dividend and financing, and at
+        # its own expiry F' = S (1 + mu). No time passing needs no carry (_revalue refuses an unknown one otherwise).
         t1 = years_to_expiry(x.expiry, at)
-        f1 = s.forward * (1 + mu) * math.exp(-m.rate * (s.t - max(t1, 0.0)))  # type: ignore[operator]
+        h = s.t - max(t1, 0.0)  # type: ignore[operator]
+        f1 = s.forward * (1 + mu) * (math.exp(-m.carry(x.underlying, x.expiry).b * h) if h > 0 else 1.0)  # type: ignore[operator]
         if t1 <= 0 or x.right == "future":
             v1 = _intrinsic(x.right, f1, x.strike)
             intrinsic += t1 <= 0 and x.right != "future"
@@ -312,7 +388,7 @@ def _side(ss: Sequence[LegState], m: Market, mu: float, dvol: float, at: datetim
             vol = s.iv + ((vol_response(mu) if response else 0.0) + dvol) / 100  # type: ignore[operator]
             if vol < MIN_VOL:
                 vol, floored = MIN_VOL, floored + 1
-            v1 = b76_price(x.right, f1, x.strike, t1, m.rate, vol)
+            v1 = b76_price(x.right, f1, x.strike, t1, m.rate_for(x.expiry), vol)
         pnl += (v1 - s.value) * x.qty  # type: ignore[operator]
     return pnl, floored, intrinsic
 
@@ -323,7 +399,7 @@ def _revalue(states: Sequence[LegState], m: Market, move: float, dvol: float, at
     underlying in `own` ({UNDERLYING: (its own move, its own vol shift)}, historical scenarios) moves by that
     instead and needs no beta."""
     own = own or {}
-    reasons = [s.reason for s in states if s.reason]
+    reasons = [s.reason for s in states if s.reason] + roll_reasons(states, m, at)
     groups: dict[str, list[LegState]] = {}
     for s in states:
         groups.setdefault(s.leg.underlying, []).append(s)
@@ -348,7 +424,8 @@ def _revalue(states: Sequence[LegState], m: Market, move: float, dvol: float, at
 
 def revalue(legs: Sequence[BookLeg], m: Market, move: float, dvol: float, at: datetime, *, response: bool = True,
             horizon: str = "") -> Cell:  # fmt: skip
-    """PnL = Σ_j [V_j(F'_j, σ'_j, T_j at `at`) - V_j(now)] x q_j (Black-76 on the forward), F' = F(1 + β_u move),
+    """PnL = Σ_j [V_j(F'_j, σ'_j, T_j at `at`) - V_j(now)] x q_j (Black-76 on the forward, each expiry at its own
+    rate), F' = F(1 + β_u move) e^{-b h} rolled at its expiry's carry b (#480),
     σ' = σ_K + response(β_u move) + dvol (points); β_u is the worse of the ends of u's band (lo, hi), per
     underlying (fincalc.beta_specs: the worse of the two ends, not the worst over the interval)."""
     return _revalue(price_legs(legs, m), m, move, dvol, at, horizon, response)
