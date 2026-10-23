@@ -8,6 +8,15 @@ only, with these safeguards: the data stays in the local database and the gitign
 published or shared); polite access (the shared per-host rate limit, one archive file per dataset per day, backfills
 spread out and run outside market hours); stop a dataset on repeated 403/429 or any notice and revisit the decision;
 re-check NSE's terms before each new dataset.
+
+The owner's decisions of 23-Oct-2026 (issue #471) extend accept-personal, under the same condition ("low risk only"),
+to NSE's combined-OI and ban files, NSE's Nifty 50 member list and the members' quotes read for attribution, FBIL's
+rates, IIMA's factor library and MoSPI's CPI. The same rules apply to FBIL, IIMA and MoSPI as to NSE: personal,
+non-distributed use only (local database and data/, never committed, published or shared); polite access
+(PoliteClient's per-host rate limit, disk caches so a source is read rarely); stop a source on repeated 403/429 or
+any notice and revisit its decision; re-read a source's terms before a new dataset from it. FBIL's disclaimer ("FBIL
+does not authorize commercial use of the data available in its website without written permission") is respected: no
+commercial use and no redistribution. IIMA asks to be cited: the citation stays wherever its factors are shown.
 """
 
 from __future__ import annotations
@@ -29,6 +38,26 @@ class Decision:
 
 
 _NSE_TERMS = "NSE website terms, Wayback memento of 01-Oct-2026 ('Updated on: 29/10/2025')"
+_OWNER_1023, _REF_1023 = "2026-10-23", "issue #471"
+# FBIL's T-bill, MIBOR and G-sec par curve history (#366): read 22-Oct-2026 from the disclaimer FBIL's benchmark pages
+# show (www.fbil.org.in, site bundle main.12b820d6bf685718ad3d.js); no separate terms-of-use page was found.
+_FBIL_TERMS = (
+    "FBIL disclaimer read 22-Oct-2026: the benchmark is provided 'as is' without warranties; 'FBIL does not "
+    "authorize commercial use of the data available in its website without written permission'; personal "
+    "use not addressed. Respected: no commercial use, no redistribution"
+)
+# IIMA's Indian Fama-French-Momentum data library (#348, adapters.iima_factors): the page and its FAQ, read 22-Oct-2026
+_IIMA_TERMS = (
+    "IIMA Indian Fama-French-Momentum data library, page and FAQ read 22-Oct-2026: no licence, terms of use "
+    "or redistribution permission stated, only a citation request (Agarwalla, Jacob and Varma 2013); the "
+    "citation is kept wherever the factors are shown"
+)
+# MoSPI's CPI API (#347, adapters.mospi_cpi): CPI API User Manual.pdf (10-Apr-2024), read 22-Oct-2026
+_MOSPI_TERMS = (
+    "MoSPI CPI API (government statistics), read 22-Oct-2026: the 2024 user manual describes a sign-up and "
+    "a 15-minute access token ('Without access token the APIs will fetch only the first 10 records'); the "
+    "live API serves pages without one; no licence text could be read; cited wherever shown"
+)
 DECISIONS: dict[str, Decision] = {
     d.dataset: d
     for d in (
@@ -50,28 +79,23 @@ DECISIONS: dict[str, Decision] = {
         Decision(
             "fno_bhav", "accept-personal", "2026-10-21", "issue #362", _NSE_TERMS
         ),  # the F&O bhavcopy (#306, collected since before #362) and its 2008-2021 vault load (#365)
+        # The owner's decisions of 23-Oct-2026 (#471): accept-personal, the safeguards in the module docstring.
+        Decision("fbil_rates", "accept-personal", _OWNER_1023, _REF_1023, _FBIL_TERMS),  # #366, refseries.rates
+        Decision("nse_combineoi", "accept-personal", _OWNER_1023, _REF_1023,
+                 f"{_NSE_TERMS}: automated collection prohibited (not re-read for it); ~1,200 daily files 2022-2026"),  # #374, nse_mwpl
+        Decision("nse_secban", "accept-personal", _OWNER_1023, _REF_1023,
+                 f"{_NSE_TERMS}: automated collection prohibited (not re-read for it); 20 dated files to check the ban history"),  # #374
+        Decision("nse_index_members", "accept-personal", _OWNER_1023, _REF_1023,
+                 f"{_NSE_TERMS}: the Nifty 50 member list and the members' quotes, for attribution; nothing stored"),
+        Decision("iima_factors", "accept-personal", _OWNER_1023, _REF_1023, _IIMA_TERMS),  # #348/#430
+        Decision("mospi_cpi", "accept-personal", _OWNER_1023, _REF_1023, _MOSPI_TERMS),  # #347/#436
     )
-}
+}  # fmt: skip
 
 
 # Datasets whose terms were read but whose decision is the owner's and not yet recorded: `require` refuses them and
 # says what was read. To decide, add a Decision above (choice, date, where it is recorded, the terms it rests on).
 PENDING: dict[str, str] = {
-    # FBIL's T-bill, MIBOR and G-sec par curve history (#366, refseries.rates). Read 22-Oct-2026 from the disclaimer
-    # FBIL's benchmark pages show (www.fbil.org.in, site bundle main.12b820d6bf685718ad3d.js): the benchmark is
-    # provided "as is" without warranties, and "FBIL does not authorize commercial use of the data available in its
-    # website without written permission". No separate terms-of-use page was found; personal use is not addressed.
-    "fbil_rates": "FBIL disclaimer read 22-Oct-2026: no commercial use without written permission; personal use "
-    "not addressed. Owner decision needed (#366)",
-    # NSE Clearing's combined OI / MWPL file (P1.12, #374, adapters.nse_mwpl): one zip a day on nsearchives, ~1,200
-    # requests for 2022-2026. Same NSE website terms as the datasets above ('Updated on: 29/10/2025', read through
-    # the 01-Oct-2026 Wayback memento for #362; not re-read for this dataset): no systematic or automated collection.
-    "nse_combineoi": f"{_NSE_TERMS}: automated collection prohibited; a new dataset (#374, ~1,200 daily files "
-    "2022-2026). Owner decision needed (#374)",
-    # NSE's dated F&O ban notice (fo_secban_DDMMYYYY.csv, P1.12, #374): 20 files, only to validate the derived ban
-    # history. Same terms as above.
-    "nse_secban": f"{_NSE_TERMS}: automated collection prohibited; 20 dated files to validate the ban history "
-    "(#374). Owner decision needed (#374)",
     # NSE's per-symbol corporate actions (/api/corporates-corporateActions with from_date/to_date) for the stored
     # factor history (#369 slice 2, refseries.corp_actions): one request per F&O stock underlying, ~300 symbols once,
     # then only new symbols. The monitor's per-symbol fetch for watched stocks predates #362 and is not a backfill.
