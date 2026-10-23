@@ -65,11 +65,17 @@ def derive_day(s: Session, day: date, rate: float = fh.RATE) -> int:
             hist[sym].append((d, exp, float(settle)))
         if lot:
             lots[sym][(d, exp)] = lot
+    # legacy days carry no lot field: the stored corporate-action factors stand in for the lot change (#369 slice 2)
+    from finresearch.refseries.corp_actions import fno_factors
+
+    table = fno_factors(s, sorted(opts), lo, day)
     n = 0
     for sym, by_exp in opts.items():
         sm = fh.day_summary(day, by_exp, futs.get(sym, {}), spot.get(sym), rate)
-        # a lot change inside a contract is adjusted by its factor; an unexplained |ln| > 0.25 is left out of RV20 (#369)
-        rets = [r for d, r in fh.front_future_returns(hist.get(sym, []), lots=lots.get(sym)) if d <= day]
+        # a lot change inside a contract (or, without lots, a stored action's factor) is adjusted when it explains the
+        # move; an unexplained |ln| > 0.25 is left out of RV20 (#369)
+        rets = [r for d, r in fh.front_future_returns(hist.get(sym, []), lots=lots.get(sym), factors=table.get(sym))
+                if d <= day]  # fmt: skip
         near = sm.near
         values: dict[str, Any] = {
             "near_expiry": near.expiry if near else None, "forward": _q(near.forward, 2) if near else None,

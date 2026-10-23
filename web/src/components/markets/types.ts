@@ -206,7 +206,11 @@ export type FundAnalytics = {
   trailing: { "1y"?: number | null; "3y"?: number | null; "5y"?: number | null; since_start?: number | null };
   rolling: { "1y"?: Rolling; "3y"?: Rolling };
   risk: SeriesStats & { risk_free_annual?: number; sharpe?: number | null; sortino?: number | null };
+  /** #366/#385: the risk-free rate used and where it came from (FBIL's dated 3-month par yield, your input, or the
+   * labelled fallback 6.5 %); `annual` is the effective annual rate applied */
+  risk_free?: RiskFreeSource;
 };
+export type RiskFreeSource = { rate: number; annual: number; as_of: string | null; tenor_years: number | null; fallback: boolean; source: string; note: string };
 
 export type SipResult = {
   scheme_code: string;
@@ -299,7 +303,7 @@ export type RankedFund = {
 export type FundCategoryRank = {
   status: "ok" | "not_computed" | "not_ranked" | "excluded" | "unknown";
   message?: string; reason?: string; label?: string | null; via?: string | null;
-  as_of?: string; generated_at?: string; sampling?: string; mar?: number; ter_day?: string | null; ter_error?: string | null;
+  as_of?: string; generated_at?: string; sampling?: string; mar?: number; mar_source?: RiskFreeSource; ter_day?: string | null; ter_error?: string | null;
   metrics?: RankMetric[]; caveats?: string[]; sources?: string[];
   fund?: RankedFund; size?: number; counts?: Record<RankMetricKey, number>;
   category?: {

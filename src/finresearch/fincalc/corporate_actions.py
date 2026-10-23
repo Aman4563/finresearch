@@ -17,7 +17,9 @@ Money stays Decimal, as in the rest of fincalc. Bad terms raise ValueError rathe
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
+from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
 
@@ -107,3 +109,152 @@ def delisting_return(
         return None
     _pos(p_last=p_last)
     return (Decimal(p_exit) + dividend) / Decimal(p_last) - 1
+
+
+# --------------------------------------------------------------------------- exchange terms -> factors (#369 slice 2)
+# Subjects as NSE (/api/corporates-corporateActions `subject`) and BSE (`Purpose`) print them. A subject can carry
+# several actions ("Bonus 1:1/Face Value Split ..."): known factors compound; one unknown part makes the ex-date unknown.
+_BONUS_T = re.compile(r"\bbonus\b[^0-9]*(\d+)\s*:\s*(\d+)", re.I)
+_FV_T = re.compile(r"(split|sub[- ]?division|splt|consolidat\w*).*?(?:from|frm)\s*(?:rs|re)?\.?\s*(\d+(?:\.\d+)?)"
+                   r".*?to\s*(?:rs|re)?\.?\s*(\d+(?:\.\d+)?)", re.I | re.S)  # fmt: skip
+_RIGHTS_T = re.compile(r"\brights?\b[^0-9@]*?(\d+)\s*:\s*(\d+)", re.I)
+_RIGHTS_PREMIUM = re.compile(r"@\s*premium\s*(?:of\s*)?(?:rs|re)?\.?\s*(\d+(?:\.\d+)?)", re.I)
+_RIGHTS_PAR = re.compile(r"@\s*par\b", re.I)
+_RIGHTS_PRICE = re.compile(r"@\s*(?:rs|re)\.?\s*(\d+(?:\.\d+)?)", re.I)
+# the exit price: "@ Rs 450" or "Rs 450 Per Share" (a face value "Rs 10" elsewhere in the subject is not one)
+_EXIT = re.compile(
+    r"@\s*(?:rs|re|₹)\.?\s*(\d+(?:\.\d+)?)|(?:rs|re|₹)\.?\s*(\d+(?:\.\d+)?)\s*(?:/-)?\s*per\s*share", re.I
+)
+_DIVIDEND_T = re.compile(r"dividend[^0-9]*?(?:rs\.?|re\.?|₹|inr)\s*-?\s*(\d+(?:\.\d+)?)", re.I)
+# (kind, pattern, reason) for actions whose price effect the exchange terms do not state
+_UNKNOWN_KINDS: tuple[tuple[str, re.Pattern[str], str], ...] = (
+    ("demerger", re.compile(r"\bde-?merger\b|\bspin[- ]?off\b", re.I),
+     "demerger: the value of the demerged business is not in the exchange terms"),
+    ("merger", re.compile(r"\bamalgamation\b|\bmerger\b", re.I), "merger/amalgamation: swap ratio not modelled"),
+    ("capital_reduction", re.compile(r"\bcapital reduction\b|\breduction (?:of|in) (?:share )?capital\b", re.I),
+     "capital reduction: terms not modelled"),
+    ("isin_change", re.compile(r"\b(?:change (?:in|of) isin|isin change|new isin)\b", re.I),
+     "ISIN change: may carry a share exchange; not modelled"),
+    ("scheme", re.compile(r"\bscheme of arrangement\b", re.I), "scheme of arrangement: terms not modelled"),
+)  # fmt: skip
+# actions that change neither the share count nor the price basis of a price series: factor exactly 1
+_NO_EFFECT: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("dividend", re.compile(r"\bdividend\b", re.I)),
+    ("buyback", re.compile(r"\bbuy[- ]?back\b", re.I)),
+    ("meeting", re.compile(r"\b(?:annual|extra[- ]?ordinary) general meeting\b|\bagm\b|\begm\b", re.I)),
+    ("interest", re.compile(r"\binterest\b", re.I)),
+    ("redemption", re.compile(r"\bredemption\b", re.I)),
+    ("distribution", re.compile(r"\bdistribution\b|\bincome distribution\b", re.I)),
+)
+
+
+@dataclass(frozen=True)
+class ActionTerms:
+    kind: str  # bonus | split | consolidation | rights | demerger | ... | "bonus+split" when compounded
+    status: (
+        str  # known (factor from the terms) | unknown (reason says why) | none (no price effect: factor 1)
+    )
+    price_factor: Decimal | None  # f: the pre-ex price divided by f is comparable with the post-ex price
+    share_factor: Decimal | None  # shares one old share became without paying (bonus, split, consolidation)
+    dividend: Decimal | None  # cash per share, when the subject states it
+    reason: str | None
+    terms: dict[str, str] = field(default_factory=dict)  # the parsed terms, as strings (stored as JSON)
+
+
+def _num(x: str | Decimal) -> str:
+    return format(Decimal(x).normalize(), "f")
+
+
+def action_terms(subject: str, *, face_value: Decimal | None = None, p_cum: Decimal | None = None,
+                 dividend: Decimal | None = None) -> ActionTerms:  # fmt: skip
+    """Price and share factor of one exchange corporate-action subject. `face_value` (NSE's `faceVal`) prices a
+    rights issue "@ Premium Rs X" (P_sub = FV + X); `p_cum` is the close on the last cum-rights day. Terms the exchange
+    does not state (a demerged value, a bare "Consolidation Of Shares", a rights issue with no ratio or price) give
+    status "unknown" with a reason and no factor: never a silent 1."""
+    s = " ".join((subject or "").split())
+    kinds: list[str] = []
+    f = sh = Decimal(1)
+    terms: dict[str, str] = {}
+    unknown: list[tuple[str, str]] = []
+    try:
+        if m := _BONUS_T.search(s):
+            f *= (b := bonus_factor(int(m.group(1)), int(m.group(2))))
+            sh *= b
+            kinds.append("bonus")
+            terms |= {"bonus_new": m.group(1), "bonus_held": m.group(2)}
+        if m := _FV_T.search(s):
+            fv = face_value_factor(Decimal(m.group(2)), Decimal(m.group(3)))
+            f, sh = f * fv, sh * fv
+            kinds.append("consolidation" if fv < 1 else "split")
+            terms |= {"fv_old": _num(m.group(2)), "fv_new": _num(m.group(3))}
+        elif re.search(r"\bconsolidat", s, re.I):
+            unknown.append(("consolidation", "consolidation: face values not in the terms"))
+        elif re.search(r"\bsplit\b|\bsub[- ]?division\b", s, re.I):
+            unknown.append(("split", "split: face values not in the terms"))
+        if re.search(r"\brights?\b", s, re.I):
+            got = _rights(s, face_value, p_cum)
+            if isinstance(got, str):
+                unknown.append(("rights", got))
+            else:
+                f *= got[0]
+                terms |= got[1]
+                kinds.append("rights")
+    except ValueError as e:
+        return ActionTerms("bad_terms", "unknown", None, None, dividend, f"bad terms in {s!r}: {e}", {})
+    for kind, rx, why in _UNKNOWN_KINDS:
+        if rx.search(s):
+            unknown.append((kind, why))
+    if re.search(r"\bdelist", s, re.I):
+        return _delisting(s, dividend)
+    div = dividend if dividend is not None else _dividend(s)
+    if unknown:
+        return ActionTerms("+".join([*kinds, *(k for k, _ in unknown)]), "unknown", None, None, div,
+                           "; ".join(w for _, w in unknown), terms)  # fmt: skip
+    if kinds:
+        return ActionTerms("+".join(kinds), "known", f, sh, div, None, terms)
+    for kind, rx in _NO_EFFECT:
+        if rx.search(s):
+            return ActionTerms(kind, "none", Decimal(1), Decimal(1), div, None, {})
+    return ActionTerms("unknown", "unknown", None, None, div, f"unrecognised action terms: {s!r}", {})
+
+
+def _rights(
+    s: str, face_value: Decimal | None, p_cum: Decimal | None
+) -> tuple[Decimal, dict[str, str]] | str:
+    """(factor, terms) of "Rights n:N @ Premium Rs X" / "@ Par" / "@ Rs P", or the reason it is unknown. NSE prints
+    the ratio new:held, as for a bonus."""
+    if not (m := _RIGHTS_T.search(s)):
+        return "rights: the ratio is not in the terms"
+    n_new, n_held = m.group(1), m.group(2)
+    if pm := _RIGHTS_PREMIUM.search(s):
+        if face_value is None:
+            return "rights: priced at a premium, but the face value is not known"
+        p_sub = Decimal(face_value) + Decimal(pm.group(1))
+    elif _RIGHTS_PAR.search(s):
+        if face_value is None:
+            return "rights: priced at par, but the face value is not known"
+        p_sub = Decimal(face_value)
+    elif pm := _RIGHTS_PRICE.search(s):
+        p_sub = Decimal(pm.group(1))
+    else:
+        return "rights: the subscription price is not in the terms"
+    if p_cum is None:
+        return "rights: the cum-rights close is not known"
+    terms = {"n_new": n_new, "n_held": n_held, "p_sub": _num(p_sub), "p_cum": _num(p_cum)}
+    return rights_factor(int(n_new), int(n_held), Decimal(p_cum), p_sub), terms
+
+
+def _delisting(s: str, dividend: Decimal | None) -> ActionTerms:
+    """A delisting has no price factor: its terms are the exit price (fincalc delisting_return), unknown when the
+    subject does not state one."""
+    if (m := _EXIT.search(s)) and not re.search(r"face value", s[: m.start()][-30:], re.I):
+        price = m.group(1) or m.group(2)
+        return ActionTerms("delisting", "known", None, None, dividend, None, {"exit_price": _num(price)})
+    return ActionTerms(
+        "delisting", "unknown", None, None, dividend, "delisting: exit price not in the terms", {}
+    )
+
+
+def _dividend(s: str) -> Decimal | None:
+    amounts = _DIVIDEND_T.findall(s)
+    return sum((Decimal(a) for a in amounts), Decimal(0)).normalize() if amounts else None

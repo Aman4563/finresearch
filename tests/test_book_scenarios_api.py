@@ -26,7 +26,9 @@ N = NormalDist()
 pytestmark = pytest.mark.usefixtures("book_db")
 NOW = at_ist(TRADE_DAY, 11)  # 12-Oct-2026 11:00 IST
 T = (15 * 1440 + 270) / 525_600  # to 27-Oct 15:30 IST, to the minute (#359)
-R = 0.065
+# #366/#385: the view prices at FBIL's par yield at the book's tenor (signals.rates.risk_free; the conftest stub is
+# FBIL's 23-Sep-2026 curve, whose 0.25-year point is 5.34 % half-yearly), no longer a fixed 6.5 %
+R = 2 * math.log(1 + 0.0534 / 2)
 F = 24980.0  # the synthetic forward the chain's prices are built on
 
 
@@ -86,6 +88,8 @@ def test_paper_legs_are_priced_at_mids_on_the_parity_forward():
 
     _paper_spread()
     v = run(scenarios.view(NOW, sources=Sources(chain()), capital=500_000))
+    assert v["rate"] == pytest.approx(R) and v["rate_info"]["tenor_years"] == 0.25
+    assert v["rate_info"]["as_of"] == "2026-09-23" and "FBIL" in v["rate_info"]["source"]
     (fw,) = v["forwards"]
     assert (
         fw["forward"] == pytest.approx(F, abs=1e-6) and "parity" in fw["source"]
@@ -225,3 +229,14 @@ def test_a_groww_future_shows_no_strike(monkeypatch):
     monkeypatch.setattr(tradeplan, "real_positions", real)
     legs, _ = run(scenarios.groww_legs(TRADE_DAY))
     assert [(x.right, x.strike, x.qty) for x in legs] == [("future", 0.0, -75)]
+
+
+def test_the_joint_risk_book_prices_at_fbils_rate_and_names_it():
+    """#366/#385: the joint risk view's book (portfolio.joint_risk.book) uses the same dated rate as the scenarios
+    page and says which, in its notes."""
+    from finresearch.portfolio import joint_risk as jl
+
+    _paper_spread()
+    b, _, notes = run(jl.book(NOW, sources=Sources(chain())))
+    assert b.market.rate == pytest.approx(R)
+    assert any(n.startswith("rate: FBIL fallback curve of 23-Sep-2026") for n in notes)

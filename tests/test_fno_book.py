@@ -4,6 +4,7 @@ Groww answers in the docs' shapes, made-up contracts and prices; no network."""
 from __future__ import annotations
 
 import asyncio
+import math
 from decimal import Decimal as D
 
 import httpx
@@ -402,6 +403,26 @@ def _bs_delta(right, spot, strike, t, rate, vol):
     return n if right == "call" else n - 1
 
 
+def test_the_delta_rule_uses_fbils_rate_at_the_expiry(book_db, monkeypatch):
+    """#366/#385: the market pass prices the delta rule's greeks at FBIL's par yield at the trade's expiry (the
+    conftest curve's 0.25-year point, 5.34 % half-yearly), not a fixed 6.5 %."""
+    from finresearch.db import session_scope
+    from finresearch.db.models import FnoExitRule
+    from finresearch.fnobook import service
+
+    t0 = at_ist(TRADE_DAY, 10)
+    with session_scope() as s:
+        sid = _record_spread(s, t0).id
+        s.add(FnoExitRule(paper_id=sid, kind="delta", threshold=D("0.3"), status="armed", created_at=t0))
+    seen = []
+    monkeypatch.setattr(
+        service, "paper_short_deltas", lambda st, chain, today, rate, now=None: seen.append(rate) or [None]
+    )
+    run(service.market_pass(t0, FakeMarket({"NSE_NIFTY26OCT25000CE": 180.0, "NSE_NIFTY26OCT25200CE": 70.0}),
+                            FakeSources(chain=None)))  # fmt: skip
+    assert seen == [pytest.approx(2 * math.log(1 + 0.0534 / 2))]
+
+
 # ------------------------------------------------------------------ 4. real positions: P&L, greeks, unknowns
 def test_positions_view_prices_known_legs_and_keeps_unknowns_unknown(book_db):
     from finresearch.fnobook import service
@@ -427,10 +448,15 @@ def test_positions_view_prices_known_legs_and_keeps_unknowns_unknown(book_db):
     t = (
         15 * 1440 + 270
     ) / 525_600  # #359: 12-Oct 11:00 IST → 27-Oct 15:30 IST, to the minute (was 15 days flat)
+    # #366/#385: the greeks use FBIL's par yield at the expiry (signals.rates.risk_free; the conftest stub is FBIL's
+    # 23-Sep-2026 curve, whose 0.25-year point, used for a 15-day option, is 5.34 % half-yearly), not a fixed 6.5 %
+    r = 2 * math.log(1 + 0.0534 / 2)
+    assert g["rate"]["rate"] == pytest.approx(r) and g["rate"]["tenor_years"] == 0.25
+    assert g["rate"]["as_of"] == "2026-09-23" and "FBIL" in g["rate"]["source"]
     assert legs["NIFTY26OCT25000CE"]["greeks"]["delta"] == pytest.approx(
-        75 * _bs_delta("call", 24900, 25000, t, service.RATE, 0.14), abs=1e-3)  # fmt: skip
+        75 * _bs_delta("call", 24900, 25000, t, r, 0.14), abs=1e-3)  # fmt: skip
     assert legs["NIFTY26OCT24500PE"]["greeks"]["delta"] == pytest.approx(
-        -75 * _bs_delta("put", 24900, 24500, t, service.RATE, 0.16), abs=1e-3)  # fmt: skip
+        -75 * _bs_delta("put", 24900, 24500, t, r, 0.16), abs=1e-3)  # fmt: skip
     # a contract the instruments file does not list stays unresolved
     un = next(x for x in v["groups"] if x["key"] == "unresolved")
     assert [x["symbol"] for x in un["legs"]] == ["NIFTY26OCT24000PE"] and un["max_loss"] is None
@@ -576,6 +602,10 @@ def test_margin_approximation_is_labelled_and_adds_up(api):
         assert r["status"] == "approximate" and "approximate" in r["label"]
         assert r["groww_calculator"]["available"] is False
         assert all(v["status"] == "unconfirmed" for v in r["assumptions"].values())
+        # #366/#385: the estimate names the rate it used (FBIL's par yield at the expiry, here the conftest curve)
+        assert (
+            r["rate"]["rate"] == pytest.approx(2 * math.log(1 + 0.0534 / 2)) and "FBIL" in r["rate"]["source"]
+        )
 
 
 # ------------------------------------------------------------------ 7. events strip

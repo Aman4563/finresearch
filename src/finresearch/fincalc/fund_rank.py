@@ -14,7 +14,7 @@ Metrics (all funds in a category are measured between the *same* grid dates):
   the category's median for the same window. The median is over the funds with a complete 3-year grid (the same
   funds that get this metric). A fund exactly at the median does not count as beating it.
 * ``sortino_3y``: from the 36 monthly returns of the last 3 years. Minimum acceptable return (MAR) is a stated
-  annual rate (default 6.5 %, the app's risk-free default) taken as MAR / 12 a month. Downside deviation is
+  annual rate (the caller's: signals.fund_rank passes FBIL's dated 3-month par yield, #366) taken as MAR / 12 a month. Downside deviation is
   ``sqrt(sum(min(0, r - MAR/12)^2) / N)`` over *all* N months (the full-sample convention of Sortino & Price 1994),
   annualised by sqrt(12); the numerator is ``(mean(r) - MAR/12) x 12`` (fincalc.funds.sortino_ratio with 12 periods a
   year). A fund with no month below the MAR has an infinite ratio: it ranks first and its value is shown as None
@@ -53,7 +53,6 @@ Point = tuple[date, Decimal] | None
 MONTHS_3Y = 36
 ROLLING_WINDOWS_3Y = MONTHS_3Y - 12 + 1  # 25 one-year windows ending at each of the last 25 month-ends
 MIN_RANKED = 5  # fewer funds with a metric than this: no rank for anyone (a rank of 2 of 3 says little)
-MAR_DEFAULT = Decimal("0.065")  # the app's risk-free default (api.markets.RF_DEFAULT); stated in every output
 
 
 @dataclass(frozen=True)
@@ -226,7 +225,7 @@ def rank(values: dict[str, float], higher_is_better: bool = True) -> dict[str, t
     return out
 
 
-def rank_category(funds: Sequence[RankInput], mar_annual: Decimal = MAR_DEFAULT,
+def rank_category(funds: Sequence[RankInput], mar_annual: Decimal,
                   min_ranked: int = MIN_RANKED) -> dict:  # fmt: skip
     """Every fund's metrics, per-metric rank and percentile within one category (see the module docstring).
 

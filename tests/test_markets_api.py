@@ -332,6 +332,41 @@ def test_fund_analytics_returns_rolling_and_risk(app_client):
     assert c.get("/api/funds/abc/analytics").status_code == 422
 
 
+def test_fund_analytics_defaults_to_fbils_dated_rate_and_names_it(app_client):
+    """#366/#385: with no `rf`, the risk-free rate is FBIL's 3-month G-sec par yield stored for the last NAV's day,
+    as an effective annual rate (1 + y/2)^2 - 1: 6.00 % half-yearly -> 6.09 % a year; a typed `rf` is labelled as
+    the viewer's; no curve is the labelled fallback 6.5 %."""
+    from datetime import timedelta
+
+    from sqlalchemy import text
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import RateCurve
+
+    c, _, me, _ = app_client
+    with session_scope() as s:
+        s.execute(text("TRUNCATE rate_curve"))
+    r = c.get(f"/api/funds/{me.code}/analytics", params={"years": 5}).json()
+    assert r["risk"]["risk_free_annual"] == 0.065 and r["risk_free"]["source"] == "fallback 6.5 %, no curve"
+    with session_scope() as s:
+        s.add(RateCurve(series="gsec_par", day=me.day - timedelta(days=1), tenor="0.25Y",
+                        tenor_years=Decimal("0.25"), rate=Decimal("0.06")))  # fmt: skip
+    try:
+        r = c.get(f"/api/funds/{me.code}/analytics", params={"years": 5}).json()
+        typed = c.get(f"/api/funds/{me.code}/analytics", params={"years": 5, "rf": "0.07"}).json()
+    finally:
+        with session_scope() as s:
+            s.execute(text("TRUNCATE rate_curve"))
+    want = 1.03**2 - 1
+    assert r["risk"]["risk_free_annual"] == pytest.approx(want, abs=1e-6)
+    assert (
+        r["risk_free"]["as_of"] == (me.day - timedelta(days=1)).isoformat()
+        and r["risk_free"]["fallback"] is False
+    )
+    assert "FBIL G-sec par yield, 0.25-year point" in r["risk_free"]["source"]
+    assert typed["risk"]["risk_free_annual"] == 0.07 and typed["risk_free"]["source"] == "your input"
+
+
 def test_fund_sip_matches_fincalc_and_compares_lump_sum(app_client):
     c, log, me, navs = app_client
     r = c.get(f"/api/funds/{me.code}/sip", params={"amount": 5000, "years": 3, "day": 5}).json()

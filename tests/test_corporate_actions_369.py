@@ -171,3 +171,53 @@ def test_delisting_return_is_unknown_without_an_exit_price():
     assert ca.delisting_return(Dc(80), Dc(100)) == Dc("0.25")  # exit offer 100 vs last close 80
     assert ca.delisting_return(Dc(80), Dc(70), dividend=Dc(2)) == Dc(72) / Dc(80) - 1
     assert ca.delisting_return(Dc(80), None) is None  # never a US-style -30 % default
+
+
+# --------------------------------------------------------------------------- legacy days: factors from the table (slice 2)
+def test_lot_less_bonus_day_is_adjusted_from_the_action_table():
+    # pre-UDiFF day, no lot field: the stored 1:1 bonus (f = 2) going ex on D[2] explains 1010 -> 500
+    adjusted: list = []
+    unverified: list = []
+    rets = fh.front_future_returns(_futs([1000.0, 1010.0, 500.0]), factors={D[2]: 2.0}, unverified=unverified,
+                                   adjusted=adjusted)  # fmt: skip
+    assert rets[1] == (D[2], pytest.approx(math.log(1000 / 1010)))
+    assert unverified == []
+    assert adjusted == [(D[2], E, pytest.approx(2.0), pytest.approx(math.log(500 / 1010)))]
+
+
+def test_an_ex_date_without_a_session_applies_to_the_next_session():
+    # ex-date D[1] has no stored row (a holiday): it lies in (D[0], D[2]], so the D[0] -> D[2] return is adjusted
+    futs = [(D[0], E, 1000.0), (D[2], E, 505.0)]
+    assert fh.front_future_returns(futs, factors={D[1]: 2.0}) == [
+        (D[2], pytest.approx(math.log(1010 / 1000)))
+    ]
+
+
+def test_a_jump_on_another_day_stays_unverified():
+    unverified: list = []
+    rets = fh.front_future_returns(_futs([1000.0, 500.0, 505.0]), factors={D[2]: 2.0}, unverified=unverified)
+    assert [d for d, _ in rets] == [
+        D[2]
+    ]  # D[2]'s factor is not applied to its own +1 % (it would make it +100 %)
+    assert unverified == [(D[1], E, pytest.approx(math.log(0.5)))]
+
+
+def test_an_unknown_factor_never_adjusts():
+    # a demerger went ex (factor unknown, None): the -50 % day is unverified, never treated as f = 1 or adjusted
+    unverified: list = []
+    assert fh.front_future_returns(_futs([1000.0, 500.0]), factors={D[1]: None}, unverified=unverified) == []
+    assert unverified == [(D[1], E, pytest.approx(math.log(0.5)))]
+
+
+def test_a_table_factor_that_does_not_explain_the_move_is_not_applied():
+    unverified: list = []
+    assert fh.front_future_returns(_futs([1000.0, 200.0]), factors={D[1]: 2.0}, unverified=unverified) == []
+    assert unverified == [(D[1], E, pytest.approx(math.log(0.2)))]
+
+
+def test_a_lot_change_wins_over_the_table():
+    # UDiFF lots say f = 2; a (wrong) table factor of 3 is not consulted when both lots are known
+    adjusted: list = []
+    fh.front_future_returns(_futs([1000.0, 1010.0, 500.0]), lots=_lots([500, 500, 1000]), factors={D[2]: 3.0},
+                            adjusted=adjusted)  # fmt: skip
+    assert adjusted[0][2] == pytest.approx(2.0)

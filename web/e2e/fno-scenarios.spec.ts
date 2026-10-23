@@ -23,6 +23,8 @@ test("book scenarios: heatmap by horizon, ES, episodes, betas and liquidity", as
   await expect(page.getByText(/waits for the vault/).first()).toBeVisible();
   await expect(page.getByRole("row", { name: /BANKNIFTY.*1\.15.*0\.09.*9 Oct 2026/ })).toBeVisible();
   await expect(page.getByText(/Liquidity-adjusted stress needs P1\.1/)).toBeVisible();
+  // #366/#385: the rate names its source (FBIL's dated par yield), not a bare 6.5 %
+  await expect(page.getByText(/Rate 5\.27% \(FBIL G-sec par yield, 0\.25-year point, 12-Oct-2026\)/)).toBeVisible();
   await expectNoHorizontalOverflow(page);
   api.expectClean();
 });
