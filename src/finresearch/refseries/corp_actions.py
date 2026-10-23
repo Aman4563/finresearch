@@ -393,3 +393,38 @@ async def backfill(symbols: list[str] | None = None, *, start: date = HISTORY_ST
         if own and http is not None:
             await http.aclose()
     return out
+
+
+SYMBOL_CHANGE_URL = (
+    "https://nsearchives.nseindia.com/content/equities/symbolchange.csv"  # [U: path as recalled]
+)
+
+
+async def fetch_symbol_changes(
+    *, http: Any = None, now: Callable[[], datetime] | None = None
+) -> dict[str, Any]:
+    """Download NSE's symbol-change file once and store it (one request; data_rights "nse_symbol_change" first, no
+    download between 09:00 and 16:00 IST on weekdays)."""
+    from finresearch import data_rights
+    from finresearch.adapters.http import PoliteClient, now_ist
+    from finresearch.adapters.nse import NseError
+    from finresearch.db import session_scope
+    from finresearch.refseries.index_eod import in_market_hours
+
+    data_rights.require(SYMBOL_CHANGE_DATASET)
+    if in_market_hours((now or now_ist)()):
+        return {
+            "loaded": 0,
+            "stopped": "market hours (09:00-16:00 IST): no downloads; re-run after the close",
+        }
+    own = http is None
+    http = http or PoliteClient()
+    try:
+        resp = await http.get(SYMBOL_CHANGE_URL, headers={"Referer": "https://www.nseindia.com/"})
+    finally:
+        if own:
+            await http.aclose()
+    if not resp.ok:
+        raise NseError(f"NSE HTTP {resp.status} for {SYMBOL_CHANGE_URL}")
+    with session_scope() as s:
+        return {"loaded": load_symbol_changes(s, resp.text, url=SYMBOL_CHANGE_URL)}

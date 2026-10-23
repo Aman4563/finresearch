@@ -287,3 +287,34 @@ def test_derive_day_adjusts_a_lot_less_bonus_day_from_the_table(clean):
         s.execute(text("TRUNCATE fno_bhav, fno_iv_eod"))
     # the ex-day return becomes ln(250 x 2 / 505) = ln(1/1.01): every return is +-ln(1.01), RV ~ 15.8 %
     assert rv is not None and D(10) < rv < D(20)
+
+
+async def test_symbol_change_fetch_needs_its_own_decision_then_loads(clean, monkeypatch):
+    from finresearch import data_rights
+    from finresearch.refseries import corp_actions as ca
+
+    csv = "SM_NAME,SM_KEY_SYMBOL,SM_NEW_SYMBOL,SM_APPLICABLE_FROM\nNew Co Limited,OLDCO,NEWCO,15-JAN-2018\n"
+    with respx.mock(assert_all_called=False) as mock:
+        route = mock.get(ca.SYMBOL_CHANGE_URL).mock(return_value=httpx.Response(200, text=csv))
+        with pytest.raises(data_rights.NoDecision):
+            await ca.fetch_symbol_changes(now=lambda: EVENING)
+        assert route.call_count == 0
+        monkeypatch.setitem(data_rights.DECISIONS, ca.SYMBOL_CHANGE_DATASET, data_rights.Decision(
+            ca.SYMBOL_CHANGE_DATASET, "accept-personal", "2026-10-23", "test", "test"))  # fmt: skip
+        market = datetime(2026, 10, 21, 5, 0, tzinfo=UTC)
+        assert "market hours" in (await ca.fetch_symbol_changes(now=lambda: market))["stopped"]
+        async with client() as http:
+            assert (await ca.fetch_symbol_changes(http=http, now=lambda: EVENING))["loaded"] == 1
+        assert route.call_count == 1
+
+
+def test_cli_rebuild_and_a_refused_backfill(clean):
+    from typer.testing import CliRunner
+
+    from finresearch.cli import app
+
+    load()
+    r = CliRunner().invoke(app, ["equity", "actions-rebuild"])
+    assert r.exit_code == 0 and "0 changed" in r.output
+    r = CliRunner().invoke(app, ["equity", "actions-backfill", "--symbol", "EXDEMO"])
+    assert r.exit_code == 1 and "no recorded data-rights decision" in r.output
