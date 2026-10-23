@@ -1,7 +1,7 @@
 """Model revalidation (#379): append-only table
 
 Revision ID: 4a7584a22056
-Revises: 50472fcc0630
+Revises: d7732a2b8af2
 Create Date: 2026-10-23 11:54:14.719707
 
 """
@@ -15,7 +15,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = "4a7584a22056"
-down_revision: str | Sequence[str] | None = "50472fcc0630"
+down_revision: str | Sequence[str] | None = "d7732a2b8af2"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
