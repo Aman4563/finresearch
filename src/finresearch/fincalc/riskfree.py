@@ -91,7 +91,9 @@ def unknown(day: date, days: int, why: str | None = None) -> dict[str, Any]:
                           "source": None, "note": why}  # fmt: skip
 
 
-def _known(tier: str, y: float, days: int, as_of: date, source: str, note: str, **extra: Any) -> dict[str, Any]:
+def _known(
+    tier: str, y: float, days: int, as_of: date, source: str, note: str, **extra: Any
+) -> dict[str, Any]:
     r = continuous(y, days)
     note = f"{note}, {BASIS.split(' (')[0]} -> {r * 100:.2f} % continuous{_flat_note(days)}"
     return _base(days) | {"known": True, "tier": tier, "rate": r, "yield": y, "as_of": as_of.isoformat(),
@@ -127,7 +129,9 @@ def _nodes(entries: Sequence[OwnerRate], day: date, before: bool) -> list[tuple[
     return out
 
 
-def owner(day: date, days: int, entries: Sequence[OwnerRate], *, before: bool = False) -> dict[str, Any] | None:
+def owner(
+    day: date, days: int, entries: Sequence[OwnerRate], *, before: bool = False
+) -> dict[str, Any] | None:
     """The owner-entered tier for `days` days on `day`, or None when no entry is usable."""
     nodes = _nodes(entries, day, before)
     if not nodes:
@@ -152,7 +156,9 @@ def owner(day: date, days: int, entries: Sequence[OwnerRate], *, before: bool = 
                   shift_bp=shifts.pop() if len(shifts) == 1 else None, url=cites)  # fmt: skip
 
 
-def answer(day: date, t_years: float, entries: Sequence[OwnerRate] = (), *, before: bool = False) -> dict[str, Any]:
+def answer(
+    day: date, t_years: float, entries: Sequence[OwnerRate] = (), *, before: bool = False
+) -> dict[str, Any]:
     """The risk-free rate for a term of `t_years` on `day`: the owner's entries, else the RBI repo-rate proxy, else
     unknown. `before`: only what was known at the start of `day` (no entry or decision dated `day`)."""
     days = tenor_days(t_years)

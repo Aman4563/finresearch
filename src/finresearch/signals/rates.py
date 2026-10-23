@@ -41,7 +41,10 @@ def _entries(s: Any = None) -> tuple[list[R.OwnerRate], str | None]:
         with s.begin_nested():  # a failed read must not break the caller's transaction
             return owner_rates.entries(s), None
     except Exception as e:
-        return [], f"the owner-entered rates could not be read ({type(e).__name__}): the RBI repo-rate proxy is used"
+        return (
+            [],
+            f"the owner-entered rates could not be read ({type(e).__name__}): the RBI repo-rate proxy is used",
+        )
 
 
 def _answer(day: date, t_years: float, *, before: bool = False, s: Any = None) -> dict[str, Any]:

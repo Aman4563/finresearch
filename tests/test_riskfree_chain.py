@@ -95,5 +95,7 @@ def test_owner_rates_interpolate_linearly_in_yield_between_tenors_and_stay_flat_
     mid = R.answer(date(2026, 10, 20), 137 / 365, rows)
     y = 0.057281 + (0.062896 - 0.057281) * (137 - 91) / (182 - 91)
     assert mid["yield"] == pytest.approx(y, abs=1e-12) and mid["rate"] == pytest.approx(z(y, 137), abs=1e-12)
-    short = R.answer(date(2026, 10, 20), 30 / 365, rows)  # below the shortest node: the 91-day yield, at 30 days
+    short = R.answer(
+        date(2026, 10, 20), 30 / 365, rows
+    )  # below the shortest node: the 91-day yield, at 30 days
     assert short["yield"] == pytest.approx(0.057281) and short["rate"] == pytest.approx(z(0.057281, 30))

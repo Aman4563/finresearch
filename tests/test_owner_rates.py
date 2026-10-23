@@ -42,7 +42,8 @@ def test_an_entry_is_stored_as_a_fraction_and_replaced_by_a_new_one_for_the_same
 @pytest.mark.parametrize(
     ("day", "tenor", "pct", "why"),
     [
-        (date(2014, 12, 31), "91D", "5", "01-Jan-2015"),  # before the policy table: its repo change is unknown
+        # before the policy table: the repo change since the entry's day would be unknown
+        (date(2014, 12, 31), "91D", "5", "01-Jan-2015"),
         (date(2026, 10, 21), "91D", "5", "future"),
         (OCT14, "0D", "5", "tenor"),
         (OCT14, "365D", "5", "tenor"),

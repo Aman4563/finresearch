@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
+from itertools import pairwise
 
 import pytest
 
@@ -40,7 +41,9 @@ def test_before_uses_the_rates_in_force_at_the_start_of_the_day():
 def test_before_the_tables_start_is_unknown():
     assert P.in_force(date(2014, 12, 31)) is None
     assert P.in_force(date(2014, 12, 31), before=True) is None
-    assert P.in_force(date(2015, 1, 1), before=True).repo == Decimal("0.08")  # set in 2014, known at the start
+    assert P.in_force(date(2015, 1, 1), before=True).repo == Decimal(
+        "0.08"
+    )  # set in 2014, known at the start
 
 
 def test_the_corridor_floor_names_its_instrument():
@@ -74,7 +77,7 @@ def test_repo_change_between_two_days():
 def test_every_row_cites_an_rbi_release_and_the_rows_are_ordered():
     rows = P.TABLE
     assert rows[0].effective <= P.START < rows[1].effective
-    assert all(a.effective < b.effective for a, b in zip(rows, rows[1:]))
+    assert all(a.effective < b.effective for a, b in pairwise(rows))
     for r in rows:
         assert r.url.startswith("https://www.rbi.org.in/"), r
         assert r.title and r.released >= r.effective

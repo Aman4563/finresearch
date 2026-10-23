@@ -1710,6 +1710,10 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
     from finresearch.api.fno_lab import add_fno_lab_routes
 
     add_fno_lab_routes(app, clock=clock)
+    # the risk-free rate (#479): owner-entered yields (POST/DELETE), the answer and the RBI policy-rate table
+    from finresearch.api.rates import add_rates_routes
+
+    add_rates_routes(app, clock=clock)
 
     # ------------------------------------------------------------------ buy/sell signals (finresearch.signals)
     @app.get("/api/signals")
