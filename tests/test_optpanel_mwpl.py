@@ -59,16 +59,18 @@ def oi_for(day: date) -> str:
     return OI_CSV.replace("02-Mar-2026", f"{day:%d-%b-%Y}")
 
 
-def test_both_new_datasets_wait_for_the_owners_decision() -> None:
+def test_both_new_datasets_carry_the_owners_decision() -> None:
+    # PENDING until the owner's decision of 23-Oct-2026 (#471): accept-personal under #362's safeguards
     for k in ("nse_combineoi", "nse_secban"):
-        assert k in data_rights.PENDING and k not in data_rights.DECISIONS
-        with pytest.raises(data_rights.NoDecision, match="Owner decision needed"):
-            data_rights.require(k)
+        assert k not in data_rights.PENDING
+        d = data_rights.require(k)
+        assert (d.choice, d.decided, d.ref) == ("accept-personal", "2026-10-23", "issue #471")
 
 
-async def test_backfill_refuses_without_a_decision_and_requests_nothing(clean) -> None:
+async def test_backfill_refuses_without_a_decision_and_requests_nothing(clean, monkeypatch) -> None:
     from finresearch.optpanel import mwpl
 
+    monkeypatch.delitem(data_rights.DECISIONS, "nse_combineoi")
     async with respx.mock(assert_all_mocked=True) as m:
         with pytest.raises(data_rights.NoDecision):
             await mwpl.backfill(D1, D3, today=D3, http=client(), now=lambda: EVENING)

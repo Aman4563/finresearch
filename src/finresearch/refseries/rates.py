@@ -17,7 +17,8 @@ Lineage (dq.lineage): one dataset_load row per day and series when that day's co
 Politeness: FBIL is not NSE, so #362's market-hours rule does not bind it; the backfill still keeps the same stops so
 a long workbook run stays out of FBIL's business day: no new download 09:00-16:00 IST on weekdays (re-run after),
 stop after REFUSALS_TO_STOP refusals (HTTP 403/429) in a row or MAX_CONSECUTIVE_FAILURES failures. Data rights:
-`data_rights.require("fbil_rates")` first (pending the owner's decision, data_rights.PENDING).
+`data_rights.require("fbil_rates")` first (the owner's decision of 23-Oct-2026, #471: personal use only, no commercial
+use and no redistribution, as FBIL's disclaimer asks).
 """
 
 from __future__ import annotations

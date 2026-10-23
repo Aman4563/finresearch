@@ -163,7 +163,7 @@ uv run finresearch audit prices                    # cross-check price sources a
 uv run finresearch index backfill --from 2013-03-01  # NSE's daily index closes, P/E, P/B, yield, India VIX (#366)
 uv run finresearch audit index-eod                 # bhavcopy underlying vs index close; India VIX vs IV30 (no network)
 uv run finresearch index tri NIFTY --from 2015-01-01  # APPROXIMATE total-return index from stored closes + yields (#366)
-uv run finresearch rates backfill --from 2022-01-01   # FBIL G-sec par curve, T-bill, overnight/term MIBOR (#366; needs the FBIL data-rights decision)
+uv run finresearch rates backfill --from 2022-01-01   # FBIL G-sec par curve, T-bill, overnight/term MIBOR (#366; FBIL data-rights decision #471)
 uv run finresearch audit rates                     # 3-month par-curve rate vs FBIL's 3-month T-bill, 15 bp (no network)
 uv run finresearch equity backfill --from 2025-09-01  # NSE's full equity bhavcopy: closes, delivery; one file a day (#373)
 uv run finresearch audit equity-eod --sample 50    # stored closes vs NSE's history bar on 50 random stock-days (50 requests)
@@ -174,8 +174,9 @@ uv run finresearch events check --from 2026-10-22 --to 2026-11-24  # the plan ca
 uv run finresearch fno span backfill --from 2008-01-01  # NSE SPAN scan ranges, one file a month (#370)
 uv run finresearch fno span margin-check           # margin estimate vs Groww's calculator: the P4.3 trigger
 uv run finresearch fno participants --from 2015-01-01  # participant-wise OI and volume (Client/DII/FII/Pro), 2 files a day (#371)
+uv run finresearch fno fii-stats --from 2015-01-01     # NSE's FII derivative statistics (.xls, 1 file a day; needs the owner's data-rights decision, #371)
 uv run finresearch fno panel build --from 2022-01-01   # market-wide stock-options panel from the kept zips, no download (#374)
-uv run finresearch fno panel mwpl --from 2022-01-01    # combined OI / MWPL, one file a session; needs the owner's data-rights decision (#374)
+uv run finresearch fno panel mwpl --from 2022-01-01    # combined OI / MWPL, one file a session; data-rights decision #471 (#374)
 uv run finresearch fno panel ban-check                 # derived ban list vs NSE's dated notices on 20 sampled days (#374)
 uv run finresearch fno panel coverage                  # per-stock % of sessions with a fitted ATM IV (#374)
 uv run finresearch fno panel reconcile                 # panel stock-option OI vs participant-wise OI (#374)
@@ -210,7 +211,10 @@ The vault is read only through `finresearch.vault.guard` (registered studies, lo
 
 NSE data is collected for personal, non-distributed use only (owner decision #362, `finresearch.data_rights`): it
 stays in the local database and `data/`. Backfills go through the shared NSE rate limit, stop by themselves between
-09:00 and 16:00 IST on weekdays and after two refusals (HTTP 403/429) in a row, and resume where they stopped.
+09:00 and 16:00 IST on weekdays and after two refusals (HTTP 403/429) in a row, and resume where they stopped. The
+owner's decisions of 23-Oct-2026 (#471) apply the same personal, non-distributed, polite-access rules to FBIL's rates
+(no commercial use, as FBIL asks), IIMA's factors (cited wherever shown) and MoSPI's CPI; every collector asks
+`data_rights.require` before its first request.
 
 The nightly stock peer build prices peers from NSE's quote and price-history APIs (about 1,000 website requests a
 night) until `FINRESEARCH_PEER_PRICE_SOURCE=equity_eod` switches it to the stored full bhavcopy (#373): peers' prices

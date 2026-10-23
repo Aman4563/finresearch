@@ -31,6 +31,7 @@ from datetime import date, datetime
 from finresearch.adapters.http import PoliteClient
 
 BASE = "https://faculty.iima.ac.in/iffm/Indian-Fama-French-Momentum/"
+DATASET = "iima_factors"  # data_rights
 CITATION = ("Agarwalla, Jacob and Varma (2013), 'Four factor model in Indian equities market', IIM Ahmedabad W.P. "
             "2013-09-05; data: IIMA Indian Fama-French-Momentum data library")  # fmt: skip
 TERMS = ("The library states no licence or terms beyond a citation request: used here for personal analysis only, "
@@ -124,6 +125,9 @@ class IimaFactorsClient:
             await self.http.aclose()
 
     async def latest_daily(self) -> FactorSeries:
+        from finresearch import data_rights
+
+        data_rights.require(DATASET)  # before the first request (#471): no decision, no request
         page = await self.http.get(BASE, cache_ttl=INDEX_TTL_S,
                                    cache_if=lambda f: b"FourFactors_and_Market_Returns" in f.content)  # fmt: skip
         if not page.ok:

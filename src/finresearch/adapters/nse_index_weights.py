@@ -26,6 +26,7 @@ from datetime import datetime
 from typing import Any
 
 INDEX = "NIFTY 50"
+DATASET = "nse_index_members"  # data_rights: the member list and the members' quotes read for it
 LIST_URL = "https://nsearchives.nseindia.com/content/indices/ind_nifty50list.csv"
 LIST_TTL_S = 86400  # the list changes at the semi-annual reconstitution
 HEADER = ["Company Name", "Industry", "Symbol", "Series", "ISIN Code"]
@@ -120,6 +121,11 @@ class NiftyWeightsClient:
             await self.http.aclose()
 
     async def nifty50(self, quote: Callable[[str], Awaitable[Any]]) -> IndexWeights:
+        from finresearch import data_rights
+
+        data_rights.require(
+            DATASET
+        )  # before the list and the members' quotes (#471): no decision, no request
         got = await self.http.get(LIST_URL, cache_ttl=LIST_TTL_S, cache_if=lambda f: _is_list(f.text))
         if not got.ok:
             raise IndexWeightsError(f"NSE index constituent list HTTP {got.status}")

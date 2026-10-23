@@ -104,6 +104,24 @@ STT basis changes only before 1-Sep-2019 (`tests/test_charges_dated.py` pins the
   entry ("charges unknown on the trade date"). Rows dated from 2006/2008 for STT, NSE futures charges, SEBI fee and
   service tax; exercise STT before 1-Sep-2019 on the settlement value (Finance Act 2008).
 
+## Engine change (23-Oct-2026, #471): owner-chosen pre-2020 stamp duty and pre-2017 NSE options charge
+
+Post hoc, engine only, the owner's decisions of 23-Oct-2026 (specs, book, criteria, `PREREG.md` and the vault pack
+untouched; registration hash unchanged; the vault engine pin is still unset and is set by the owner after this
+merges). Two `fincalc.charges` rows that were unknown now carry a rate, both labelled `secondary`:
+
+- **Stamp duty before 1-Jul-2020**: Maharashtra's 0.002 % on the buy side (options on the premium, futures on the
+  turnover), Bombay Stamp Act Art. 51A(c) as inserted by Maharashtra Ordinance No. II of 2005, read from a third-party
+  copy. The owner chose Maharashtra (NSE's home state); a client in another state paid that state's rate.
+- **NSE options transaction charge before 1-Apr-2017**: Rs 50 per lakh of premium (PTI, Business Standard
+  9-Apr-2017); no NSE circular was found and the start date is not sourced.
+- Option-sale STT from 1-Jan to 31-May-2008 (on strike + premium) stays unknown, so those entries are still skipped.
+
+No effect on any 2022-26 trade by construction: both rows end where rows that already existed begin (1-Jul-2020 and
+1-Apr-2017), and those later rows are unchanged (`tests/test_charges_dated.py`,
+`tests/test_charges_unknown.py::test_a_mid_2020_spread_costs_the_mid_2020_rates`). Vault entries from 1-Jun-2008
+(after service tax reached NSE's charges on 16-May-2008) become priceable. Tests: `tests/test_charges_owner_1023.py`.
+
 ## Evidence labels on the trade-plan cards (#355), pre-registered 21-Oct-2026 before the code change
 
 harmful ⇔ expiry-clustered t ≤ −2 AND the upper bound of the cluster-bootstrap 95 % CI < 0, for roughly delta-neutral
