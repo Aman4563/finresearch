@@ -6,6 +6,7 @@ read is merged into calendar_event / calendar_coverage under three rules.
   read off the same page by hand) keeps its earlier known_since (store.upsert).
 * A moved date keeps its old row until the notice is seen: the old row is withdrawn at `now`, the time the new row
   becomes known, so at no time is neither date usable.
+* A day listed again by a later complete read (moved away, then back) is reinstated: never a missing tier-1 date.
 * A failed or refused source stores nothing, coverage included: past the last coverage the plan check keeps reading
   "unknown", never "no events". A source runs only with the owner's data-rights decision (data_rights.require).
 """
@@ -103,6 +104,22 @@ def _withdraw(s: Session, kind: str, scope: str, now: datetime, keep: set[date],
     return n
 
 
+def _reinstate(s: Session, events: list[Event]) -> int:
+    """A complete read lists a day whose row an earlier notice withdrew (a meeting moved and then moved back): the row
+    is usable again. One row per (type, scope, day) cannot record the gap, so a replay inside it also sees this date,
+    an extra event flagged and never a missing one."""
+    from finresearch.db.models import CalendarEvent
+
+    n = 0
+    for e in events:
+        r = s.scalars(select(CalendarEvent).where(CalendarEvent.type == e.type, CalendarEvent.scope == e.scope,
+                                                  CalendarEvent.day == e.day)).first()  # fmt: skip
+        if r is not None and r.withdrawn_since is not None:
+            r.withdrawn_since = None
+            n += 1
+    return n
+
+
 def apply(s: Session, found: Found, now: datetime) -> dict[str, int]:
     """Merge one source's complete read: rows known from `now`, then the moves and replacements."""
     from finresearch.eventcal import store
@@ -111,6 +128,7 @@ def apply(s: Session, found: Found, now: datetime) -> dict[str, int]:
               for e in found.events]  # fmt: skip
     coverage = [replace(c, known_since=now) for c in found.coverage]
     ne, nc = store.upsert(s, events, coverage)
+    reinstated = _reinstate(s, events)
     withdrawn = 0
     for m in found.moves:
         withdrawn += _withdraw(s, m.type, m.scope, now, {m.new}, m.old, m.old)
@@ -120,7 +138,7 @@ def apply(s: Session, found: Found, now: datetime) -> dict[str, int]:
             s, r.type, r.scope, now, keep, date.fromordinal(r.after.toordinal() + 1), r.through
         )
     s.flush()
-    return {"events": ne, "coverage": nc, "withdrawn": withdrawn}
+    return {"events": ne, "coverage": nc, "withdrawn": withdrawn, "reinstated": reinstated}
 
 
 async def run(sources: list[Source], now: datetime) -> dict[str, Any]:

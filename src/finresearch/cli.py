@@ -2677,7 +2677,7 @@ def events_refresh() -> None:
     res = asyncio.run(refresh.run(refresh.sources(), now_ist()))
     for name, got in res["stored"].items():
         console.print(f"{name}: {got['events']} new events, {got['coverage']} new coverage rows, "
-                      f"{got['withdrawn']} withdrawn")  # fmt: skip
+                      f"{got['withdrawn']} withdrawn, {got['reinstated']} reinstated")  # fmt: skip
     for kind in ("skipped", "failed"):
         for name, why in res[kind].items():
             console.print(f"{name}: {kind} ({why})", markup=False)

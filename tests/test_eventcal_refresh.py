@@ -147,7 +147,9 @@ async def test_a_decided_source_is_stored_and_sees_what_is_already_known(clean, 
         )
 
     res = await refresh.run([refresh.Source("rbi_mpc_schedule", reader)], NOW)
-    assert res["stored"] == {"rbi_mpc_schedule": {"events": 1, "coverage": 1, "withdrawn": 0}}
+    assert res["stored"] == {
+        "rbi_mpc_schedule": {"events": 1, "coverage": 1, "withdrawn": 0, "reinstated": 0}
+    }
     assert seen[0].covered["rbi_mpc"] == date(2027, 3, 31) and URL in seen[0].urls
 
 
@@ -174,3 +176,20 @@ def test_cpi_and_gdp_are_context_events_with_titles():
     assert {"india_cpi", "india_gdp"} <= set(cal.TITLES) and not {"india_cpi", "india_gdp"} & set(
         cal.TIER1_TYPES
     )
+
+
+def test_a_date_listed_again_after_a_move_is_reinstated_never_left_out(clean):
+    # moved away (4 -> 5 June), then a later notice moves it back: the 4th must be usable again, or a complete
+    # schedule would read "no tier-1 event" on a real meeting day
+    from finresearch.db import session_scope
+
+    with session_scope() as s:
+        store.upsert(s, [_ev(date(2027, 6, 4))], [])
+    _apply(refresh.Found("rbi_mpc_schedule", events=[_ev(date(2027, 6, 5))],
+                         moves=[refresh.Move("rbi_mpc", "IN", date(2027, 6, 4), date(2027, 6, 5))]))  # fmt: skip
+    back = datetime(2026, 11, 2, 21, 0, tzinfo=IST)
+    _apply(refresh.Found("rbi_mpc_schedule", events=[_ev(date(2027, 6, 4))],
+                         moves=[refresh.Move("rbi_mpc", "IN", date(2027, 6, 5), date(2027, 6, 4))]), back)  # fmt: skip
+    got = {e.day: (e.known_since, e.withdrawn_since) for e in _load()[0]}
+    assert got[date(2027, 6, 5)] == (NOW, back)
+    assert got[date(2027, 6, 4)][1] is None  # reinstated (known since March, as first seen)
