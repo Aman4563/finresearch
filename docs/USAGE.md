@@ -174,6 +174,7 @@ uv run finresearch dq run                          # data-quality checks now (th
 uv run finresearch dq replay --from 2024-01-01 --to 2026-10-22  # content checks over stored history, read only
 uv run finresearch events seed                     # load the curated event calendar (RBI MPC, Budgets, 2024 election, FOMC; #367)
 uv run finresearch events check --from 2026-10-22 --to 2026-11-24  # the plan card's tier-1 event check for a window
+uv run finresearch events refresh                  # new forward dates now: RBI MPC schedules/moves, MoSPI CPI/GDP, NSE index rebalances; NSE expiry-day circulars printed to review (#367; each source needs its data-rights decision; the monitor runs it nightly from 21:00 IST)
 uv run finresearch fno span backfill --from 2008-01-01  # NSE SPAN scan ranges, one file a month (#370)
 uv run finresearch fno span margin-check           # margin estimate vs Groww's calculator: the P4.3 trigger
 uv run finresearch fno participants --from 2015-01-01  # participant-wise OI and volume (Client/DII/FII/Pro), 2 files a day (#371)

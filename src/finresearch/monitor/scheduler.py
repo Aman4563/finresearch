@@ -569,6 +569,26 @@ def _spawn_rates(now: datetime) -> None:
     _BACKGROUND["rates"] = asyncio.create_task(run())
 
 
+def _spawn_eventcal(now: datetime) -> None:
+    """Start the nightly event-calendar refresh (monitor.eventcal, #367) in the background: a few small RBI, MoSPI,
+    NSE Indices and NSE requests for the sources the owner decided on. At most one runs at a time."""
+    from finresearch.monitor import eventcal
+
+    t = _BACKGROUND.get("eventcal")
+    if (t is not None and not t.done()) or eventcal.due_slot(now) is None:
+        return
+
+    async def run() -> None:
+        try:
+            res = await eventcal.eventcal_step(now)
+            if res:
+                log.info("event calendar refresh: %s", res)
+        except Exception:
+            log.warning("event calendar refresh failed", exc_info=True)
+
+    _BACKGROUND["eventcal"] = asyncio.create_task(run())
+
+
 def _spawn_equity_eod(now: datetime) -> None:
     """Start the nightly full equity bhavcopy update (monitor.equity_eod, #373) in the background on trading days: one
     NSE download (~400 KB). At most one runs at a time."""
@@ -929,6 +949,8 @@ async def tick(deps: jobs.Deps, now: datetime | None = None) -> dict[str, int]:
         _spawn_joint_pnl(deps, now)
     if deps.revalidate:
         _spawn_revalidate(now)
+    if deps.eventcal:
+        _spawn_eventcal(now)
     out_brief = brief_step(now) if deps.brief else {}
     if deps.holidays is not None or deps.live_holidays:
         await _refresh_holidays(deps)
@@ -1017,12 +1039,14 @@ def schedule_json(ww=None, *, running: bool | None = None) -> dict:
 
     from finresearch.api.live import BIDDING_HOURS, EQUITY_HOURS
     from finresearch.dq import misc as dqm
+    from finresearch.eventcal.refresh import sources as evc_sources
     from finresearch.fincalc.ipo import lock_in_schedule
     from finresearch.fnohist import quotes as fq
     from finresearch.fnohist import span as fspan
     from finresearch.monitor import digest as dg
     from finresearch.monitor import dq as dqj
     from finresearch.monitor import equity_eod as eqe
+    from finresearch.monitor import eventcal as evc
     from finresearch.monitor import fno_bhav as fb
     from finresearch.monitor import index_eod as ixe
     from finresearch.monitor import intraday, iv
@@ -1073,6 +1097,8 @@ def schedule_json(ww=None, *, running: bool | None = None) -> dict:
         "dq": {"evening": hm((dqj.EVENING.hour, dqj.EVENING.minute)),
                "morning": hm((dqj.MORNING.hour, dqj.MORNING.minute)), "min_free_gib": dqm.MIN_FREE_GIB},
         "skill": {"after": hm((skj.RUN_AFTER.hour, skj.RUN_AFTER.minute)), "trading_days": False},
+        "eventcal": {"after": hm((evc.RUN_AFTER.hour, evc.RUN_AFTER.minute)), "trading_days": False,
+                     "sources": [src.dataset for src in evc_sources()]},
         "risk_alerts": {"after": hm((rka.RUN_AFTER.hour, rka.RUN_AFTER.minute)),
                         "deadline": hm((rka.DEADLINE.hour, rka.DEADLINE.minute)), "trading_days": True},
         "revalidate": {"after": hm((rvj.RUN_AFTER.hour, rvj.RUN_AFTER.minute)), "every": "month",
