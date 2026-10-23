@@ -243,9 +243,15 @@ def test_strategy_api_iv_and_risk_notice(app_client):
     # #479: the rate is signals.rates at the expiry: the RBI repo-rate proxy (5.50 % since 07-Oct-2026) as a simple
     # yield over the option's own days, made continuous; not FBIL and not 6.5 %
     rate = r["rate"]
-    assert rate["fallback"] is False and rate["source"].startswith("RBI repo-rate proxy") and rate["tier"] == "proxy"
+    assert (
+        rate["fallback"] is False
+        and rate["source"].startswith("RBI repo-rate proxy")
+        and rate["tier"] == "proxy"
+    )
     d = rate["tenor_days"]
-    assert rate["rate"] == pytest.approx(math.log(1 + 0.055 * d / 365) * 365 / d) and an["rate"] == rate["rate"]
+    assert (
+        rate["rate"] == pytest.approx(math.log(1 + 0.055 * d / 365) * 365 / d) and an["rate"] == rate["rate"]
+    )
     mine = c.post("/api/fno/strategy", json={**body, "rate": "0.07"}).json()["rate"]
     assert mine["rate"] == 0.07 and mine["source"] == "your input"
     assert an["capital_check"]["message"] == "No F&O capital set in the profile."
