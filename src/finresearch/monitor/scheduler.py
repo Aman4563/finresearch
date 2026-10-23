@@ -501,6 +501,14 @@ def _spawn_fno_bhav(now: datetime) -> None:
                 log.info("F&O participant OI update: %s", res)
         except Exception:
             log.warning("F&O participant OI update failed", exc_info=True)
+        try:  # NSE's FII derivative statistics (#371): its own slot; skipped until the owner's data-rights decision
+            from finresearch.monitor.fno_bhav import fii_stats_step
+
+            res = await fii_stats_step(now)
+            if res:
+                log.info("FII derivative statistics update: %s", res)
+        except Exception:
+            log.warning("FII derivative statistics update failed", exc_info=True)
         try:  # the direction model's forecasts for today's close (#327): its own slot, once today's file is loaded
             from finresearch.monitor.fno_direction import fno_direction_step
 

@@ -1,6 +1,6 @@
 """MWPL utilisation history and the derived F&O ban history (P1.12, #374; PREREG.md §3): `finresearch fno panel
 mwpl-backfill` and `ban-check`. Behind the registered study (prereg.require_registered) and the owner's data-rights
-decision for each new dataset (data_rights.PENDING until it is recorded: nothing is requested before).
+decision for each new dataset (recorded 23-Oct-2026, #471; without a decision nothing is requested).
 
 Politeness (owner decision #362): one combineoi zip per session, through the shared NSE budget (adapters.http), with
 `pause` seconds between downloads; no download between 09:00 and 16:00 IST on a weekday (kept files are still read);

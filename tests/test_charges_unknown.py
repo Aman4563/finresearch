@@ -72,17 +72,12 @@ SPREAD = [
 
 
 def test_vault_years_unknown_keys_follow_the_sources():
-    # stamp duty before Jul-2020 was the client's state's (no single rate); NSE's options charge before Apr-2017 is
-    # in no NSE circular found; option-sale STT before Jun-2008 was on strike + premium; service tax reached
-    # exchange charges only on 16-May-2008
-    assert set(ch.unknown_keys(date(2008, 3, 3))) == {"stt_option_sell", "stt_option_exercise", "exchange_option",
-                                                       "gst", "stamp_option_buy", "stamp_futures_buy"}  # fmt: skip
-    assert set(ch.unknown_keys(date(2010, 6, 1))) == {
-        "exchange_option",
-        "stamp_option_buy",
-        "stamp_futures_buy",
-    }
-    assert set(ch.unknown_keys(date(2018, 6, 1))) == {"stamp_option_buy", "stamp_futures_buy"}
+    # option-sale STT before Jun-2008 was on strike + premium; service tax reached exchange charges only on
+    # 16-May-2008. Stamp duty before Jul-2020 (Maharashtra's) and NSE's options charge before Apr-2017 (PTI) are
+    # known since the owner's decisions of 23-Oct-2026 (#471; tests/test_charges_owner_1023.py)
+    assert set(ch.unknown_keys(date(2008, 3, 3))) == {"stt_option_sell", "stt_option_exercise", "gst"}
+    assert ch.unknown_keys(date(2010, 6, 1)) == []
+    assert ch.unknown_keys(date(2018, 6, 1)) == []
     assert ch.unknown_keys(date(2020, 7, 1)) == []
 
 

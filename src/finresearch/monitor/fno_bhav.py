@@ -11,7 +11,9 @@ Each night is claimed in `alert_eval_slot` ("fno_bhav:<day>"), so two monitor pr
 
 The same evening NSE's participant-wise F&O open interest and trading volume files (#317, #371, fnohist.participants)
 are fetched in their own slot ("fno_participant:<day>"), so a failure of one never retries or fails the other. The
-slot counts as failed (retried) until both of today's files are stored.
+slot counts as failed (retried) until both of today's files are stored. NSE's FII derivative statistics workbook
+(#371, fnohist.fii_stats) has its own slot too ("fii_stats:<day>"); without the owner's data-rights decision for it
+(data_rights.PENDING) the night is recorded as skipped: no request, no retry.
 """
 
 from __future__ import annotations
@@ -81,6 +83,44 @@ async def fno_participant_step(now: datetime, holidays: set[date] | None = None,
         return {"fno_participant": "failed"}
     finish(slot, res, now, failed=bool(res["failed"]) or not _participant_loaded(today))
     return {"fno_participant": res}
+
+
+async def fii_stats_step(now: datetime, holidays: set[date] | None = None, **kw: Any) -> dict[str, Any]:
+    """Claim tonight's FII statistics slot and fetch the missing recent days (one small .xls a night). `kw` goes to
+    fnohist.fii_stats.update (tests)."""
+    from finresearch import data_rights
+    from finresearch.monitor.disclosures import claim, finish
+
+    bhav = due_slot(now, holidays)
+    if bhav is None:
+        return {}
+    slot = bhav.replace("fno_bhav:", "fii_stats:")
+    if not claim(slot, now):
+        return {}
+    today = to_ist(now).date()
+    try:
+        from finresearch.fnohist import fii_stats
+
+        res = await fii_stats.update(today, holidays=holidays, **kw)
+    except data_rights.NoDecision as e:
+        finish(slot, {"skipped": str(e)[:300]}, now, failed=False)
+        return {"fii_stats": {"skipped": str(e)}}
+    except Exception as e:
+        log.warning("FII derivative statistics update failed; retried later", exc_info=True)
+        finish(slot, {"error": f"{type(e).__name__}: {e}"[:300]}, now, failed=True)
+        return {"fii_stats": "failed"}
+    finish(slot, res, now, failed=bool(res["failed"]) or "stopped" in res or not _fii_loaded(today))
+    return {"fii_stats": res}
+
+
+def _fii_loaded(day: date) -> bool:
+    from sqlalchemy import select
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import FiiStats
+
+    with session_scope() as s:
+        return s.scalar(select(FiiStats.day).where(FiiStats.day == day).limit(1)) is not None
 
 
 def _participant_loaded(day: date) -> bool:
