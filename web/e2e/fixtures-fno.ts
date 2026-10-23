@@ -8,6 +8,7 @@ import type { EventVolData } from "../src/components/fno/event-vol";
 import type { LabResponse, LabRunView, LabSpec, LabTrade, PaperRule } from "../src/components/fno/lab-types";
 import type { Analysis, Chain, Result } from "../src/components/fno/model";
 import type { MarketContext, SuggestResponse, TradePlan } from "../src/components/fno/plan-types";
+import type { BookScenarios, EpisodeView, ScenarioCell, ShockView } from "../src/components/fno/scenario-types";
 
 export const NOTICE = { headline: "87.7% lost", text: "SEBI study", source: "SEBI", url: "https://www.sebi.gov.in", date: "2026-08-20" };
 
@@ -372,4 +373,88 @@ export const FNO_SIGNAL = {
   reliability: { base_rate_n: null, validation: { status: "rule_based", n: 0, label: "rule-based, not validated on outcomes" },
     calibration: { scored: 0, established: false, tier: "none", needed: 50, label: "calibration not established: 0 scored" },
     support: "no historical base rate · calibration not established: 0 scored", summary: "", how: "Calibration counts resolved forecasts." },
+};
+
+// ---------------------------------------------------------------- the book's scenarios (#394): made-up legs and P&Ls
+const SC_MOVES = [-0.15, -0.1, -0.07, -0.05, -0.03, -0.02, -0.01, 0, 0.01, 0.02, 0.03, 0.05, 0.07, 0.1];
+const SC_VOLS = [-3, 0, 5, 10, 20];
+const SC_AT: Record<string, string> = { "1d": "2026-10-14T15:30:00+05:30", "5d": "2026-10-20T15:30:00+05:30", expiry: "2026-10-27T15:30:00+05:30" };
+const scPnl = (m: number, dv: number, h: string) => Math.round(-((m * 100) ** 2) * 90 - dv * 410 + (h === "1d" ? 150 : h === "5d" ? 700 : 1500) + m * 30000);
+const scCells = (k = 1, nul = false): ScenarioCell[] => Object.keys(SC_AT).flatMap((h) => SC_MOVES.flatMap((move) => SC_VOLS.map((dvol) => ({
+  move, dvol, horizon: h, at: SC_AT[h], pnl: nul ? null : scPnl(move, dvol, h) * k, floored: 0, intrinsic: h === "expiry" ? 2 : 0, ends: { BANKNIFTY: move < 0 ? "hi" as const : "lo" as const } }))));
+const scPath = (k: number): EpisodeView["path"] => Array.from({ length: 21 }, (_, i) => ({ day: `2026-02-${String(i + 2).padStart(2, "0")}`, d: i + 1,
+  move: -0.007 * (i + 1), dvol: 0.9 * (i + 1), pnl: -650 * (i + 1) * k, intrinsic: i > 10 ? 1 : 0, mapped: [] }));
+const scShocks = (kind: string, k: number, at: string): ShockView[] => [["worst fall", -0.061], ["1st percentile", -0.012], ["99th percentile", 0.011], ["worst rise", 0.04]]
+  .map(([label, move]) => ({ kind, label: label as string, move: move as number, at, pnl: Math.round((move as number) * 410000 * k), n: kind === "gap" ? 1130 : 210, reasons: [] }));
+const scWorst = (k: number) => Array.from({ length: 10 }, (_, i) => ({ start: `2024-06-${String(i + 3).padStart(2, "0")}`, end: `2024-06-${String(i + 4).padStart(2, "0")}`,
+  move: -0.059 + i * 0.004, dvol: 4.4 - i * 0.3, pnl: (-24100 + i * 1500) * k, mapped: [] }));
+const VAULT = "waits for the vault's data audit (#394, #365): 2008-2021 sessions live only in the sealed vault database, never in the app's store";
+
+export const SCENARIOS: BookScenarios = {
+  as_of: "2026-10-13T11:00:00+05:30", rate: 0.065, notes: ["Groww is not connected: only paper legs are in the book."],
+  legs: [
+    { underlying: "NIFTY", expiry: "2026-10-27", right: "call", strike: 25000, qty: 75, mark: 182.4, mark_kind: "mid", iv: 0.1402, forward: 24980, source: "paper #3", reason: null },
+    { underlying: "NIFTY", expiry: "2026-10-27", right: "call", strike: 25200, qty: -75, mark: 104.9, mark_kind: "mid", iv: 0.135, forward: 24980, source: "paper #3", reason: null },
+    { underlying: "BANKNIFTY", expiry: "2026-10-27", right: "put", strike: 51000, qty: -30, mark: 210.5, mark_kind: "ltp", iv: 0.162, forward: 51820, source: "paper #4", reason: null },
+  ],
+  betas: [{ underlying: "BANKNIFTY", beta: 1.15, se: 0.09, lo: 1.0, hi: 1.3, n: 240, missing: 3, window_start: "2025-10-01", as_of: "2026-10-09", half_life: 63, z: 1.645, floor: 1, reason: null }],
+  beta_rule: "Each underlying other than NIFTY moves by its beta x NIFTY's move; every P&L takes the worse of its band's two ends.",
+  forwards: [{ underlying: "NIFTY", expiry: "2026-10-27", forward: 24980, source: "put-call parity at 25000 from mids" },
+    { underlying: "BANKNIFTY", expiry: "2026-10-27", forward: 51820, source: "put-call parity at 52000 from mids" }],
+  exposures: { complete: true, reasons: [], total: { rs_delta: 412000, rs_gamma_1pct: -1830, vega_pt: -905, theta_day: 1240 },
+    flags: ["BANKNIFTY 27-Oct-2026 put 51000: IV from the LTP (no two-sided quote), not a mid"], nifty_delta: 18.2, nifty_delta_reasons: [],
+    rows: [{ underlying: "BANKNIFTY", bucket: "this_month", legs: 1, exposure: { rs_delta: 290000, rs_gamma_1pct: -2100, vega_pt: -1200, theta_day: 1500 } },
+      { underlying: "NIFTY", bucket: "this_month", legs: 2, exposure: { rs_delta: 122000, rs_gamma_1pct: 270, vega_pt: 295, theta_day: -260 } }] },
+  grid: { complete: true, reasons: [], moves: SC_MOVES, vol_shifts: SC_VOLS, cells: scCells(), vol_response: { down_per_pct: 1.04, up_per_pct: -0.76 } },
+  replays: [{ day: "2024-06-04", label: "4-Jun-2024 election-result day", move: -0.0593, iv30_change: 4.46, source: "NIFTY index log return -6.11 %; IV30 +4.46", pnl: -21450, reasons: [],
+    notes: ["The same expiry's 25-delta skew change (from fno_bhav) is not applied yet."] }],
+  reverse: { limit: 40000, reason: null, rows: [{ horizon: "1d", complete: true, reasons: [], cell: { ...scCells()[0], move: -0.1, dvol: 0, pnl: -40880 } },
+    { horizon: "5d", complete: true, reasons: [], cell: null }] },
+  history: {
+    stored: ["2022-01-03", "2026-10-12"],
+    scan: [{ h: 1, n: 1180, skipped: 4, first: "2022-01-03", last: "2026-10-09", loss_99: 15800, es: 19650, worst: scWorst(1), reasons: [], es_reasons: [], mapped: { BANKNIFTY: 0 }, flags: [] },
+      { h: 5, n: 1170, skipped: 18, first: "2022-01-03", last: "2026-10-05", loss_99: 31200, es: 36900, worst: scWorst(2), reasons: [], es_reasons: [], mapped: { BANKNIFTY: 12 }, flags: [] }],
+    es: { value: 19650, h: 1, n: 1180, limit: 40000, ratio: 0.4913, reasons: [], note: "Historical-simulation ES97.5: the mean of the worst 2.5% of the scan's P&Ls (equal weights) on the stored history, not a model ES." },
+    episodes: [
+      { key: "adani_2023", label: "Adani sell-off, Jan-Feb 2023", window: ["2023-01-25", "2023-02-28"], source: "#394's library", start: "2023-01-24", path: scPath(0.4), worst: scPath(0.4)[20], candidates: 3, reasons: [] },
+      { key: "febmar_2026", label: "Feb-Mar 2026 fall", window: ["2026-02-01", "2026-03-31"], source: "#394: NIFTY future -14.1 %", start: "2026-01-30", path: scPath(1), worst: scPath(1)[20], candidates: 20, reasons: [] },
+      { key: "oct_2008", label: "October 2008", window: ["2008-10-01", "2008-10-31"], source: "#394", start: null, path: [], worst: null, candidates: 0, reasons: [`October 2008 ${VAULT}`] },
+      { key: "mar_2020", label: "March 2020", window: ["2020-03-01", "2020-03-31"], source: "#394", start: null, path: [], worst: null, candidates: 0, reasons: [`March 2020 ${VAULT}`] },
+    ],
+    episode_h: 21, gaps: scShocks("gap", 1, "2026-10-13T11:00:00+05:30"), expiry_day: scShocks("expiry_day", 1, SC_AT.expiry),
+    scenario_note: "Gap: NIFTY's stored overnight gaps applied at once. Expiry day: NIFTY's stored expiry-day moves at the nearest expiry's close.",
+    skew_note: "The same expiry's 25-delta skew change is not applied yet.",
+  },
+  liquidity: { stressed: null, reason: "Liquidity-adjusted stress needs P1.1's quantile model and the stress multiplier k; neither is fitted yet, so it is unknown.",
+    quoted_exit_cost: 75, reasons: [], note: "Today's quoted exit cost at today's quotes. Not a stressed figure." },
+};
+const SC_LONG_U = "BANKNIFTY_WITH_AN_IMPROBABLY_LONG_UNDERLYING_NAME";
+export const LONG_SCENARIOS: BookScenarios = {
+  ...SCENARIOS,
+  legs: SCENARIOS.legs.map((x) => ({ ...x, underlying: x.underlying === "BANKNIFTY" ? SC_LONG_U : x.underlying, qty: x.qty * 1000, source: `${x.source} ${LONG_NAME}` })),
+  betas: [{ ...SCENARIOS.betas[0], underlying: SC_LONG_U }],
+  exposures: { ...SCENARIOS.exposures, total: { rs_delta: big(412000), rs_gamma_1pct: -big(1830), vega_pt: -big(905), theta_day: big(1240) },
+    rows: SCENARIOS.exposures.rows.map((r) => ({ ...r, underlying: r.underlying === "BANKNIFTY" ? SC_LONG_U : r.underlying, exposure: r.exposure && { rs_delta: big(r.exposure.rs_delta), rs_gamma_1pct: big(r.exposure.rs_gamma_1pct), vega_pt: big(r.exposure.vega_pt), theta_day: big(r.exposure.theta_day) } })) },
+  grid: { ...SCENARIOS.grid, cells: scCells(12345) },
+  history: { ...SCENARIOS.history,
+    scan: SCENARIOS.history.scan.map((x) => ({ ...x, loss_99: big(x.loss_99!), es: big(x.es!), worst: scWorst(12345), mapped: { [SC_LONG_U]: 12 } })),
+    es: { ...SCENARIOS.history.es, value: big(19650), limit: big(40000) },
+    episodes: SCENARIOS.history.episodes.map((e) => e.worst ? { ...e, path: scPath(12345), worst: scPath(12345)[20], label: `${e.label} ${LONG_NAME}` } : e),
+    gaps: scShocks("gap", 12345, "2026-10-13T11:00:00+05:30"), expiry_day: scShocks("expiry_day", 12345, SC_AT.expiry) },
+  liquidity: { ...SCENARIOS.liquidity, quoted_exit_cost: big(75000) },
+};
+export const UNKNOWN_SCENARIOS: BookScenarios = {
+  ...SCENARIOS,
+  grid: { ...SCENARIOS.grid, complete: false, reasons: ["RELIANCE: beta to NIFTY unknown, fewer than 120 paired returns"], cells: scCells(1, true) },
+  reverse: { ...SCENARIOS.reverse, rows: [{ horizon: "1d", complete: false, reasons: ["RELIANCE: beta to NIFTY unknown, fewer than 120 paired returns"], cell: null }] },
+  history: { ...SCENARIOS.history, es: { ...SCENARIOS.history.es, value: null, ratio: null, reasons: ["212 complete start days at h = 1, fewer than the 250 needed"] },
+    scan: SCENARIOS.history.scan.map((x) => ({ ...x, es: null, loss_99: null, worst: [], es_reasons: ["212 complete start days at h = 1, fewer than the 250 needed"] })) },
+  liquidity: { ...SCENARIOS.liquidity, quoted_exit_cost: null, reasons: ["NIFTY 27-Oct-2026 future 0: a future (the chain quotes no futures)"] },
+};
+export const EMPTY_SCENARIOS: BookScenarios = {
+  ...SCENARIOS, legs: [], betas: [], forwards: [], notes: [],
+  exposures: { complete: true, reasons: [], total: { rs_delta: 0, rs_gamma_1pct: 0, vega_pt: 0, theta_day: 0 }, flags: [], nifty_delta: 0, nifty_delta_reasons: [], rows: [] },
+  grid: { ...SCENARIOS.grid, cells: scCells(0) }, replays: [], reverse: { limit: 40000, reason: null, rows: [] },
+  history: { ...SCENARIOS.history, stored: null, scan: [], es: { ...SCENARIOS.history.es, value: 0, ratio: 0, n: 0 }, episodes: [], gaps: [], expiry_day: [] },
+  liquidity: { ...SCENARIOS.liquidity, quoted_exit_cost: 0 },
 };
