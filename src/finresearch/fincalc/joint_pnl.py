@@ -25,7 +25,9 @@ RATE = 0.065  # fnobook.marks.RATE: the rate fno_mark's IVs were implied at; eve
 # joint-risk-v1 (PREREG.md, ADDENDUM.md) was registered when book_scenarios rolled every forward at the rate. #480
 # rolls the book's scenarios at each expiry's own carry; this registered test keeps its rule until a registered
 # variant (post hoc, in ADDENDUM.md) adopts the carry.
-REGISTERED_ROLL = "joint-risk-v1's registered rule: every forward rolled at its fixed 6.5 % (#480 needs a variant)"
+REGISTERED_ROLL = (
+    "joint-risk-v1's registered rule: every forward rolled at its fixed 6.5 % (#480 needs a variant)"
+)
 
 
 @dataclass(frozen=True)

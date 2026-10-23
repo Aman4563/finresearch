@@ -203,12 +203,13 @@ def test_shock_pnls_reprice_one_session_later_with_the_spot_vol_response_395():
     t0, t1 = 35 / 365, 34 / 365
     mark = _b76("put", f, k, t0, r, v)
     leg = bs.BookLeg("NIFTY", exp, "put", k, -65, mark, "mid")
-    m = bs.Market(now, r, {("NIFTY", exp): f})
+    b = 0.0575 - 0.0124  # #480: the forward's own carry r - q (a dividend-paying NIFTY), not the 6.5 % rate
+    m = bs.Market(now, r, {("NIFTY", exp): f}, carries={("NIFTY", exp): bs.Carry(b, "test: r - q")})
     got, reasons = bs.shock_pnls([leg], m, bs.horizon_clock(now, 1))
     assert reasons == ()
     for mv in tp.SHOCK_MOVES:
-        # independent: F' = F (1 + m) e^{−r (T0 − T1)}; IV + 1.04 points per 1 % fall, − 0.76 per 1 % rise
-        f1 = f * (1 + mv) * math.exp(-r * (t0 - t1))
+        # independent: F' = F (1 + m) e^{−b (T0 − T1)}; IV + 1.04 points per 1 % fall, − 0.76 per 1 % rise
+        f1 = f * (1 + mv) * math.exp(-b * (t0 - t1))
         v1 = v + (-1.04 * mv * 100 if mv < 0 else -0.76 * mv * 100) / 100
         assert got[mv] == pytest.approx((_b76("put", f1, k, t1, r, v1) - mark) * -65, rel=1e-6)
     # P&L is linear in lots: three sets lose three times one (dL/dn = L_1)

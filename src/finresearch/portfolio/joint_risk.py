@@ -80,7 +80,8 @@ async def replay_moves(h: Any, fetch: Any, store: Any, today: date, *,
 async def book(now: datetime, *, sources: Any = None, rate: float | None = None,
                candidate: Sequence[bs.BookLeg] = ()) -> tuple[jr.Book, list[bs.BookLeg], list[str]]:  # fmt: skip
     """The open book (None legs = unknown, with the reason) and `candidate` legs, all priced on today's chains, at
-    `rate`, else FBIL's par yield at the longest leg's tenor (fnobook.scenarios.live_rate, named in a "rate: " note)."""
+    `rate`, else each expiry at its own tenor's rate (#480: fnobook.scenarios.live_rates, named in "rate: " notes),
+    each forward rolled at its expiry's carry (named in "carry: " notes)."""
     from finresearch.fnobook import scenarios as sc
     from finresearch.fnobook import service
 
@@ -90,9 +91,9 @@ async def book(now: datetime, *, sources: Any = None, rate: float | None = None,
     notes = [why] if why else []
     legs = [*paper, *(real or []), *candidate]
     if legs:
-        rinfo = await sc.live_rate(legs, now, rate)
-        notes.append(sc.rate_note(rinfo))
-        priced, m = (await sc._priced(legs, now, sources, rinfo["rate"]))[:2]
+        rinfo = await sc.live_rates(legs, now, rate)
+        priced, m = (await sc._priced(legs, now, sources, rinfo))[:2]
+        notes += sc.rate_notes(rinfo) + sc.carry_notes(m.carries)
     else:  # nothing open: nothing is priced, so no rate is read
         priced, m = [], bs.Market(now, rate or 0.0, {})
     n = len(priced) - len(candidate)

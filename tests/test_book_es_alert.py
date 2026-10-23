@@ -76,7 +76,9 @@ def _want_es() -> float:
         lv.append(lv[-1] * math.exp(X[i]))
     for i in range(1, len(CAL)):  # the stored settles are rounded to the paisa
         rets[CAL[i]] = (CAL[i - 1], math.log(round(lv[i], 2) / round(lv[i - 1], 2)))
-    m = bs.Market(session_clock(DAY), 0.065, {("NIFTY", EXP): 24050.0})
+    # #480: the forward rolls at its future's carry against tonight's close, ln(24,050 / 24,000) / (6/365)
+    b = math.log(24050 / 24000) / (6 / 365)
+    m = bs.Market(session_clock(DAY), 0.065, {("NIFTY", EXP): 24050.0}, carries={("NIFTY", EXP): bs.Carry(b)})
     leg = bs.BookLeg("NIFTY", EXP, "put", 23800.0, -75, 60.0, "settle")
     sc = bh.scan([leg], m, {"NIFTY": bh.Series(rets, dict.fromkeys(CAL, 15.0))}, 1, set())
     return sc.es  # type: ignore[return-value]

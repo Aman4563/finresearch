@@ -26,36 +26,42 @@ N = NormalDist()
 pytestmark = pytest.mark.usefixtures("book_db")
 NOW = at_ist(TRADE_DAY, 11)  # 12-Oct-2026 11:00 IST
 T = (15 * 1440 + 270) / 525_600  # to 27-Oct 15:30 IST, to the minute (#359)
-# #366/#385: the view prices at FBIL's par yield at the book's tenor (signals.rates.risk_free; the conftest stub is
-# FBIL's 23-Sep-2026 curve, whose 0.25-year point is 5.34 % half-yearly), no longer a fixed 6.5 %
+# #366/#385, #480: each expiry is priced at FBIL's par yield at its own tenor (signals.rates.risk_free; the conftest stub
+# is FBIL's 23-Sep-2026 curve, whose 0.25-year point is 5.34 % half-yearly), no longer a fixed 6.5 %
 R = 2 * math.log(1 + 0.0534 / 2)
 F = 24980.0  # the synthetic forward the chain's prices are built on
+SPOT = 24900.0  # the chain's underlying
+# #480: the carry the scenarios roll the forward at, from the parity fit and the chain's underlying:
+# ln(24,980 / 24,900) / T = 7.71 % a year (the old rule rolled it at R)
+B = math.log(F / SPOT) / T
 
 
-def _b76(right, f, k, t, v):
+def _b76(right, f, k, t, v, r=R):
     d1 = (math.log(f / k) + v * v * t / 2) / (v * math.sqrt(t))
-    c = math.exp(-R * t) * (f * N.cdf(d1) - k * N.cdf(d1 - v * math.sqrt(t)))
-    return c if right == "call" else c - math.exp(-R * t) * (f - k)
+    c = math.exp(-r * t) * (f * N.cdf(d1) - k * N.cdf(d1 - v * math.sqrt(t)))
+    return c if right == "call" else c - math.exp(-r * t) * (f - k)
 
 
-VOLS = {25000: 0.14, 25200: 0.135}
+VOLS = {24800: 0.145, 25000: 0.14, 25200: 0.135}
 
 
-def chain(drop=(), ltp_only=()):
-    """A chain whose mids are Black-76 prices on F at VOLS (bid/ask ±0.5 around them); `drop` removes quotes and
-    `ltp_only` leaves a quote with a last price but no bid/ask."""
+def chain(drop=(), ltp_only=(), *, expiry=EXPIRY, f=F, t=T, r=R, strikes=None):
+    """A chain whose mids are Black-76 prices on `f` at VOLS (bid/ask ±0.5 around them); `drop` removes quotes and
+    `ltp_only` leaves a quote with a last price but no bid/ask. Three strikes, so the parity fit (#480) can read the
+    carry; `strikes` keeps only some."""
     from finresearch.adapters.nse_fno import ChainRow, OptionChain, OptionQuote
 
     def q(right, k):
         if (right, k) in drop:
             return None
-        mid = _b76(right, F, k, T, VOLS[k])
+        mid = _b76(right, f, k, t, VOLS[k], r)
         two = (right, k) not in ltp_only
         return OptionQuote(last_price=D(str(round(mid, 2))), iv=D("99"), oi=None, change_in_oi=None, volume=None,
                            bid=D(str(mid - 0.5)) if two else None, ask=D(str(mid + 0.5)) if two else None)  # fmt: skip
 
-    return OptionChain(symbol="NIFTY", expiry=EXPIRY, underlying=D("24900"), as_of=None,
-                       rows=[ChainRow(strike=D(k), call=q("call", k), put=q("put", k)) for k in VOLS])  # fmt: skip
+    return OptionChain(symbol="NIFTY", expiry=expiry, underlying=D(str(SPOT)), as_of=None,
+                       rows=[ChainRow(strike=D(k), call=q("call", k), put=q("put", k))
+                             for k in (VOLS if strikes is None else strikes)])  # fmt: skip
 
 
 @pytest.fixture(autouse=True)
@@ -71,9 +77,10 @@ class Sources:
 
     async def chain(self, symbol, expiry):
         self.calls.append((symbol, expiry))
-        if self.ch is None:
+        ch = self.ch.get(expiry) if isinstance(self.ch, dict) else self.ch
+        if ch is None:
             raise RuntimeError("no chain")
-        return self.ch
+        return ch
 
 
 def _paper_spread():
@@ -88,12 +95,20 @@ def test_paper_legs_are_priced_at_mids_on_the_parity_forward():
 
     _paper_spread()
     v = run(scenarios.view(NOW, sources=Sources(chain()), capital=500_000))
-    assert v["rate"] == pytest.approx(R) and v["rate_info"]["tenor_years"] == 0.25
-    assert v["rate_info"]["as_of"] == "2026-09-23" and "FBIL" in v["rate_info"]["source"]
     (fw,) = v["forwards"]
+    assert fw["rate"] == pytest.approx(R) and fw["rate_info"]["tenor_years"] == 0.25
+    assert fw["rate_info"]["as_of"] == "2026-09-23" and "FBIL" in fw["rate_info"]["source"]
     assert (
-        fw["forward"] == pytest.approx(F, abs=1e-6) and "parity" in fw["source"]
+        fw["forward"] == pytest.approx(F, abs=1e-6) and "parity fit" in fw["source"]
     )  # mids reproduce F exactly
+    # #480: the carry its scenarios roll it at, ln(24,980 / 24,900) / T, and the dividend yield r - b it implies
+    assert (
+        fw["spot"] == SPOT
+        and fw["carry"] == pytest.approx(B, rel=1e-9)
+        and fw["carry"] == pytest.approx(0.0771, abs=1e-4)
+    )
+    assert "parity fit over 3 strikes" in fw["carry_source"] and fw["carry_reason"] is None
+    assert fw["implied_q"] == pytest.approx(R - B, rel=1e-9)
     legs = {x["strike"]: x for x in v["legs"]}
     assert legs[25000]["mark_kind"] == "mid" and legs[25000]["iv"] == pytest.approx(0.14, abs=1e-6)
     assert legs[25200]["qty"] == -75 and legs[25200]["iv"] == pytest.approx(0.135, abs=1e-6)
@@ -238,5 +253,112 @@ def test_the_joint_risk_book_prices_at_fbils_rate_and_names_it():
 
     _paper_spread()
     b, _, notes = run(jl.book(NOW, sources=Sources(chain())))
-    assert b.market.rate == pytest.approx(R)
+    assert b.market.rate_for(EXPIRY) == pytest.approx(R)
     assert any(n.startswith("rate: FBIL fallback curve of 23-Sep-2026") for n in notes)
+    # #480: and rolls its forward at the expiry's carry, named in a note
+    assert b.market.carry("NIFTY", EXPIRY).b == pytest.approx(B, rel=1e-9)
+    assert any(n.startswith("carry: NIFTY 27-Oct-2026: 7.71% a year (put-call parity fit") for n in notes)
+
+
+# --------------------------------------------------------------------------- #480: the carry and rate per expiry
+@pytest.fixture
+def no_bhav(env):
+    """No stored bhavcopy rows before or after (other test files leave futures behind)."""
+    from sqlalchemy import text
+
+    from finresearch.db import session_scope
+
+    def wipe():
+        with session_scope() as s:
+            s.execute(text("TRUNCATE fno_bhav"))
+
+    wipe()
+    yield
+    wipe()
+
+
+def _future(day, settle, underlying):
+    from finresearch.db import session_scope
+    from finresearch.db.models import FnoBhav
+
+    with session_scope() as s:
+        s.add(FnoBhav(day=day, symbol="NIFTY", instrument="IDF", expiry=EXPIRY, strike=D(0), option_type="XX",
+                      settle=D(str(settle)), close=D(str(settle)),
+                      underlying=None if underlying is None else D(str(underlying))))  # fmt: skip
+
+
+def test_without_a_reliable_parity_fit_the_carry_is_the_stored_futures_settle_else_unknown(no_bhav):
+    from datetime import date
+
+    from finresearch.fnobook import scenarios
+
+    _paper_spread()
+    two = Sources(chain(strikes=(25000, 25200)))  # two strikes: no parity fit (it needs three)
+    v = run(scenarios.view(NOW, sources=two, capital=500_000))
+    (fw,) = v["forwards"]
+    assert fw["forward"] == pytest.approx(F, abs=1e-6)  # still priced, on the single-strike parity forward
+    assert v["exposures"]["complete"] and fw["carry"] is None and "parity" in fw["carry_reason"]
+    assert not v["grid"]["complete"] and all(c["pnl"] is None for c in v["grid"]["cells"])
+    assert all(r["pnl"] is None for r in v["replays"])
+    assert any("carry" in r and "never rolled at the risk-free rate" in r for r in v["grid"]["reasons"])
+    # a stored future 11 days old is not used (an ex-date or a rate decision may lie in between)
+    _future(date(2026, 10, 1), 25000.0, 24890.0)
+    v = run(scenarios.view(NOW, sources=two, capital=500_000))
+    assert v["forwards"][0]["carry"] is None and "01-Oct-2026" in v["forwards"][0]["carry_reason"]
+    # the latest stored same-expiry future (Fri 9-Oct, 18 days to expiry) against the close stored with it
+    _future(date(2026, 10, 9), 25010.0, 24900.0)
+    v = run(scenarios.view(NOW, sources=two, capital=500_000))
+    (fw,) = v["forwards"]
+    assert fw["carry"] == pytest.approx(math.log(25010 / 24900) / (18 / 365), rel=1e-12)  # 8.94 % a year
+    assert "future's settle" in fw["carry_source"] and "09-Oct-2026" in fw["carry_source"]
+    assert v["grid"]["complete"]
+
+
+def test_a_stored_future_without_the_underlyings_close_gives_no_carry(no_bhav):
+    from datetime import date
+
+    from finresearch.fnobook import scenarios
+
+    _paper_spread()
+    _future(date(2026, 10, 9), 25010.0, None)
+    v = run(scenarios.view(NOW, sources=Sources(chain(strikes=(25000, 25200))), capital=500_000))
+    assert v["forwards"][0]["carry"] is None and not v["grid"]["complete"]
+
+
+def test_each_expiry_is_discounted_at_its_own_tenors_rate_not_the_longest_legs(monkeypatch):
+    """#480: signals.rates is asked at each expiry's own tenor; the old rule read one rate at the longest leg's tenor
+    and priced every expiry at it."""
+    from datetime import date
+
+    from finresearch.db import session_scope
+    from finresearch.fnobook import book, scenarios
+    from finresearch.signals import rates
+    from finresearch.signals.fno import LegIn
+
+    asked = []
+
+    async def fake(t):
+        asked.append(round(t * 525_600))  # minutes
+        return {"known": True, "rate": 0.05 + 0.02 * t, "par_yield": None, "tenor_years": t, "as_of": "2026-10-09",
+                "fallback": False, "source": f"a test curve at {t:.4f} years", "note": "test"}  # fmt: skip
+
+    monkeypatch.setattr(rates, "risk_free", fake)
+    far, t_far = date(2027, 3, 30), (169 * 1440 + 270) / 525_600  # 12-Oct 11:00 to 30-Mar-2027 15:30 IST
+    r_near, r_far = 0.05 + 0.02 * T, 0.05 + 0.02 * t_far
+    _paper_spread()
+    with session_scope() as s:
+        book.record(s, symbol="NIFTY", expiry=far, lot=75, legs_in=[LegIn("call", 25000, "buy", 1)],
+                    quotes=[book.Quote(900.0, "test")], slippage_pct=1.0, brokerage=20, now=NOW)  # fmt: skip
+    src = Sources({EXPIRY: chain(r=r_near), far: chain(expiry=far, f=25300.0, t=t_far, r=r_far)})
+    v = run(scenarios.view(NOW, sources=src, capital=500_000))
+    assert sorted(asked) == [21870, 243630]
+    rows = {x["expiry"]: x for x in v["forwards"]}
+    assert rows["2026-10-27"]["rate"] == pytest.approx(r_near) and rows["2027-03-30"][
+        "rate"
+    ] == pytest.approx(r_far)
+    # each leg's IV is inverted at its own expiry's rate, so both recover the 14 % their mids were built at
+    ivs = {(x["expiry"], x["strike"]): x["iv"] for x in v["legs"]}
+    assert ivs[("2026-10-27", 25000)] == pytest.approx(0.14, abs=1e-6)
+    assert ivs[("2027-03-30", 25000)] == pytest.approx(0.14, abs=1e-6)
+    assert rows["2027-03-30"]["carry"] == pytest.approx(math.log(25300 / SPOT) / t_far, rel=1e-9)
+    assert v["grid"]["complete"]

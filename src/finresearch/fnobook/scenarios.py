@@ -59,17 +59,19 @@ def _days(es: list[date]) -> str:
 
 
 def rate_notes(infos: Mapping[date, dict[str, Any]]) -> list[str]:
-    """"rate: <signals.rates.label> (the <expiry> expiry)", one note per distinct answer."""
+    """ "rate: <signals.rates.label> (the <expiry> expiry)", one note per distinct answer."""
     from finresearch.signals import rates
 
     groups: dict[str, list[date]] = {}
     for e, info in sorted(infos.items()):
         groups.setdefault(rates.label(info), []).append(e)
-    return [f"rate: {lab} (the {_days(es)} expir{'y' if len(es) == 1 else 'ies'})" for lab, es in groups.items()]
+    return [
+        f"rate: {lab} (the {_days(es)} expir{'y' if len(es) == 1 else 'ies'})" for lab, es in groups.items()
+    ]
 
 
 def carry_notes(carries: Mapping[tuple[str, date], bs.Carry]) -> list[str]:
-    """"carry: ..." for each expiry whose carry is known (an unknown one is a scenario reason)."""
+    """ "carry: ..." for each expiry whose carry is known (an unknown one is a scenario reason)."""
     return [f"carry: {u} {e:%d-%b-%Y}: {c.b:.2%} a year ({c.source})"
             for (u, e), c in sorted(carries.items()) if c.b is not None]  # fmt: skip
 
@@ -123,6 +125,72 @@ def forward(chain: Any, now: datetime, rate: float) -> tuple[float | None, str]:
                     src = "mids" if kind == "mid" else "last prices (no strike had two mids)"
                     return f, f"put-call parity at {k:g} from {src}"
     return None, "no strike has both a call and a put quoted, so the parity forward is unknown"
+
+
+STORED_CARRY_DAYS = (
+    7  # [U] calendar days: an older stored future's carry is not used live (an ex-dividend date or
+)
+# a rate decision may lie in between)
+
+
+def _two_sided(q: Any) -> tuple[float, float] | None:
+    """(mid, ask - bid) of a two-sided quote, or None."""
+    if q is None or q.bid is None or q.ask is None or not 0 < float(q.bid) <= float(q.ask):
+        return None
+    return (float(q.bid) + float(q.ask)) / 2, float(q.ask) - float(q.bid)
+
+
+def chain_carry(chain: Any, now: datetime) -> tuple[float | None, str, bs.Carry]:
+    """#480: the expiry's forward and carry from its option chain: the parity regression (fincalc.black76.parity_fit)
+    over every strike whose call and put both have a two-sided quote (mids, weighted by their spreads), against the
+    chain's underlying. A forward of None (with why) when it is not identified: fewer than three such strikes within
+    5 % of the forward, or no negative slope."""
+    from finresearch.fincalc import black76 as b76
+
+    if chain is None:
+        return (
+            None,
+            "the option chain could not be read",
+            bs.Carry(None, reason="the option chain could not be read"),
+        )
+    t = years_to_expiry(chain.expiry, now)
+    if t <= 0:
+        return None, "the expiry has passed", bs.Carry(None, reason="the expiry has passed")
+    two = {float(r.strike): (_two_sided(r.call), _two_sided(r.put)) for r in chain.rows}
+    fit = b76.parity_fit(
+        [b76.ParityQuote(k, c[0], p[0], c[1], p[1]) for k, (c, p) in sorted(two.items()) if c and p], t
+    )
+    if fit.forward is None:
+        why = f"no reliable put-call parity fit on the chain ({fit.reason})"
+        return None, why, bs.Carry(None, reason=why)
+    src = f"put-call parity fit over {fit.n} strikes' mids"
+    spot = float(chain.underlying) if chain.underlying else None
+    return fit.forward, src, bs.carry_from(fit.forward, spot, t, f"{src} against the chain's underlying")
+
+
+def stored_future_carry(s: Any, sym: str, expiry: date, today: date, why: str) -> bs.Carry:
+    """#480, live, when the chain gives no carry (`why`): the latest stored same-expiry future's settle (fno_bhav, on
+    or before `today`) against the underlying's close stored in the same row, at that day's T; unknown when none is
+    stored, it is more than STORED_CARRY_DAYS old or its row has no close."""
+    from sqlalchemy import select
+
+    from finresearch.db.models import FnoBhav
+    from finresearch.fincalc.dates import session_clock
+
+    row = s.execute(select(FnoBhav.day, FnoBhav.settle, FnoBhav.underlying).where(
+        FnoBhav.symbol == sym, FnoBhav.expiry == expiry, FnoBhav.option_type == "XX", FnoBhav.day <= today,
+        FnoBhav.settle.is_not(None)).order_by(FnoBhav.day.desc()).limit(1)).first()  # fmt: skip
+    if row is None:
+        return bs.Carry(None, reason=f"{why}, and no same-expiry future is stored")
+    d, settle, close = row
+    if (today - d).days > STORED_CARRY_DAYS:
+        return bs.Carry(None, reason=f"{why}, and the latest stored same-expiry future ({d:%d-%b-%Y}) is more than "
+                                     f"{STORED_CARRY_DAYS} days old")  # fmt: skip
+    src = f"the same-expiry future's settle on {d:%d-%b-%Y} (stored bhavcopy) against the underlying's close that day"
+    got = bs.carry_from(
+        float(settle), None if close is None else float(close), years_to_expiry(expiry, session_clock(d)), src
+    )
+    return got if got.b is not None else bs.Carry(None, reason=f"{why}; {got.reason}")
 
 
 def paper_legs() -> list[bs.BookLeg]:
@@ -181,24 +249,63 @@ def _exposure(e: bs.Exposure | None) -> dict[str, float] | None:
                                                                           "theta_day")}  # fmt: skip
 
 
-async def _priced(legs: list[bs.BookLeg], now: datetime, sources: Any, rate: float) -> tuple[Any, ...]:
-    """The legs with their marks from each (underlying, expiry)'s chain, and the Market of parity forwards and each
-    underlying's registered beta estimate (fnohist.betas: stored futures settles; NIFTY = 1); also the forwards with
-    their sources."""
+def _forward_row(
+    u: str, e: date, f: float | None, src: str, c: bs.Carry, info: dict[str, Any]
+) -> dict[str, Any]:
+    """One expiry in the view (#480): its forward, the carry its scenarios roll it at (or why it is unknown), the
+    dividend yield q = r - b that carry implies at the expiry's own rate, and that rate."""
+    from finresearch.fincalc.black76 import implied_q
+
+    r = float(info["rate"])
+    q = None if c.b is None else implied_q(r, c.forward, c.spot, c.t)  # type: ignore[arg-type]
+    return {"underlying": u, "expiry": e.isoformat(), "forward": _r(f, 4), "source": src, "spot": c.spot,
+            "t_years": c.t, "carry": c.b, "carry_source": c.source,
+            "carry_reason": None if c.b is not None else (c.reason or bs.NO_CARRY), "implied_q": q, "rate": r,
+            "rate_info": info}  # fmt: skip
+
+
+async def _priced(legs: list[bs.BookLeg], now: datetime, sources: Any,
+                  rinfo: Mapping[date, dict[str, Any]]) -> tuple[Any, ...]:  # fmt: skip
+    """The legs with their marks from each (underlying, expiry)'s chain, and the Market: each expiry's forward and
+    carry (`chain_carry`; without a fit, `forward` at the expiry's own rate prices the legs and the carry is
+    `stored_future_carry`'s), its rate (`rinfo`, from `live_rates`) and each underlying's registered beta estimate
+    (fnohist.betas: stored futures settles; NIFTY = 1); also the forwards with their sources."""
     from finresearch.fnobook import service
     from finresearch.fnohist import betas
 
+    today = to_ist(now).date()
     chains = {k: await service._chain(sources, *k) for k in sorted({(x.underlying, x.expiry) for x in legs})}
-    fws = {k: forward(c, now, rate) for k, c in chains.items()}
+    rs = {e: float(i["rate"]) for e, i in rinfo.items()}
+    fws: dict[tuple[str, date], tuple[float | None, str]] = {}
+    carries: dict[tuple[str, date], bs.Carry] = {}
+    for (u, e), c in chains.items():
+        f, src, carries[(u, e)] = chain_carry(c, now)
+        fws[(u, e)] = (f, src) if f is not None else forward(c, now, rs[e])
+    if need := [k for k, c in carries.items() if c.b is None and fws[k][0] is not None]:
+        from finresearch.db import session_scope
+
+        try:
+            with session_scope() as s:
+                for u, e in need:
+                    carries[(u, e)] = stored_future_carry(
+                        s, u, e, today, carries[(u, e)].reason or bs.NO_CARRY
+                    )
+        except Exception as ex:  # the store cannot be read: the carry stays unknown, with why
+            for k in need:
+                carries[k] = bs.Carry(None, reason=f"{carries[k].reason}; the stored futures could not be read "
+                                                   f"({type(ex).__name__})")  # fmt: skip
     mk = {k: marks(c) for k, c in chains.items()}
     priced = [bs.BookLeg(x.underlying, x.expiry, x.right, x.strike, x.qty, *(mk[(x.underlying, x.expiry)].get(
         (x.right, x.strike)) or (None, None)), x.label) for x in legs]  # fmt: skip
     nifty = next(
         (float(c.underlying) for (u, _), c in chains.items() if u == "NIFTY" and c and c.underlying), None
     )
-    est = betas.read({x.underlying for x in legs}, to_ist(now).date()) if legs else {}
+    est = betas.read({x.underlying for x in legs}, today) if legs else {}
     hs = {(u, e, right, k): h for (u, e), c in chains.items() for (right, k), h in half_spreads(c).items()}
-    return priced, bs.Market(now, rate, {k: f for k, (f, _) in fws.items()}, est, nifty), fws, hs
+    m = bs.Market(
+        now, next(iter(rs.values()), 0.0), {k: f for k, (f, _) in fws.items()}, est, nifty, carries, rs
+    )
+    return priced, m, fws, hs
 
 
 async def book_shock(now: datetime, *, sources: Any = None, rate: float | None = None, holidays: set[date] | None = None,
@@ -223,9 +330,9 @@ async def book_shock(now: datetime, *, sources: Any = None, rate: float | None =
     if not legs:  # nothing open: nothing is priced, so no rate is read
         got, reasons = bs.shock_pnls([], bs.Market(now, rate or 0.0, {}), bs.horizon_clock(now, 1, holidays))
         return got, notes + list(reasons)
-    rinfo = await live_rate(legs, now, rate)
-    notes.append(rate_note(rinfo))
-    priced, m = (await _priced(legs, now, sources, rinfo["rate"]))[:2]
+    rinfo = await live_rates(legs, now, rate)
+    priced, m = (await _priced(legs, now, sources, rinfo))[:2]
+    notes += rate_notes(rinfo) + carry_notes(m.carries)
     if betas_out is not None:
         betas_out.update(m.betas)
     got, reasons = bs.shock_pnls(priced, m, bs.horizon_clock(now, 1, holidays))
@@ -250,9 +357,8 @@ async def view(now: datetime, *, sources: Any = None, capital: float | None = No
         notes.append(why)
     unknown_book = real is None
     legs += real or []
-    rinfo = await live_rate(legs, now, rate)
-    rate = rinfo["rate"]
-    priced, m, fws, hs = await _priced(legs, now, sources, rate)
+    rinfo = await live_rates(legs, now, rate)
+    priced, m, fws, hs = await _priced(legs, now, sources, rinfo)
     states = bs.price_legs(priced, m)
     ex, g = bs.exposures(priced, m), bs.grid(priced, m, holidays=holidays)
     reps = bs.replays(priced, m, holidays)
@@ -267,7 +373,7 @@ async def view(now: datetime, *, sources: Any = None, capital: float | None = No
     hist = hv.history(priced, m, holidays, limit, extra)
     liq = hv.liquidity(states, hs, extra)
     return {
-        "as_of": to_ist(now).isoformat(), "rate": rate, "rate_info": rinfo, "notes": notes,
+        "as_of": to_ist(now).isoformat(), "notes": notes,
         "legs": [{"underlying": s.leg.underlying, "expiry": s.leg.expiry.isoformat(), "right": s.leg.right,
                   "strike": s.leg.strike, "qty": s.leg.qty, "mark": _r(s.leg.mark), "mark_kind": s.leg.mark_kind,
                   "iv": _r(s.iv, 6), "forward": _r(s.forward), "source": s.leg.label, "reason": s.reason}
@@ -275,8 +381,7 @@ async def view(now: datetime, *, sources: Any = None, capital: float | None = No
         # the registered beta to NIFTY of every other underlying in the book (fincalc.beta_specs), with its band
         "betas": [fbeta.as_json(e) for e in m.betas.values()],
         "beta_rule": BETA_RULE,
-        "forwards": [{"underlying": u, "expiry": e.isoformat(), "forward": _r(f, 4), "source": src}
-                     for (u, e), (f, src) in fws.items()],
+        "forwards": [_forward_row(u, e, f, src, m.carry(u, e), rinfo[e]) for (u, e), (f, src) in fws.items()],
         "exposures": {"complete": ex.complete and not extra, "reasons": [*extra, *ex.reasons],
                       "total": None if extra else _exposure(ex.total), "flags": list(ex.flags),
                       "nifty_delta": None if extra else _r(ex.nifty_delta),
@@ -343,8 +448,16 @@ def stored_carry(s: Any, day: date, sym: str, expiry: date, spot: float | None,
     spot = spot or next((float(u) for *_, u in rows if u is not None and u > 0), None)
     fut = next((float(v) for k, _, v, *_ in rows if k == "XX" and v > 0), None)
     if fut is not None:
-        return fut, "the same-expiry future's settle", bs.carry_from(
-            fut, spot, t, f"the same-expiry future's settle on {day:%d-%b-%Y} against the underlying's close")
+        return (
+            fut,
+            "the same-expiry future's settle",
+            bs.carry_from(
+                fut,
+                spot,
+                t,
+                f"the same-expiry future's settle on {day:%d-%b-%Y} against the underlying's close",
+            ),
+        )
     px = {(k, float(x)): float(v) for k, x, v, c, n, _ in rows
           if k in ("CE", "PE") and market_settle(float(v), None if c is None else float(c), n)}  # fmt: skip
     both = sorted({x for _, x in px if ("CE", x) in px and ("PE", x) in px})

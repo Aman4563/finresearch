@@ -96,7 +96,9 @@ def carry_from(forward: float | None, spot: float | None, t: float | None, sourc
     from finresearch.fincalc.black76 import carry
 
     if spot is None or not spot > 0:
-        return Carry(None, None, f"the underlying's price to set against {source} is unknown", forward, spot, t)
+        return Carry(
+            None, None, f"the underlying's price to set against {source} is unknown", forward, spot, t
+        )
     if forward is None or not forward > 0 or t is None or not t > 0:
         return Carry(None, None, f"{source}: no positive forward and time to expiry", forward, spot, t)
     return Carry(carry(forward, spot, t), source, None, forward, spot, t)
