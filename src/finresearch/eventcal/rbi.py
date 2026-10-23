@@ -182,7 +182,7 @@ async def read(known, now, *, http=None):
             if not page.ok:
                 raise RbiError(f"RBI press release {prid}: HTTP {page.status}")
             found.urls.append(url)
-            ev = lambda d, title: Event(type="rbi_mpc", tier=1, scope="IN", day=d, at=None, title=title,  # noqa: E731
+            ev = lambda d, title, url=url: Event(type="rbi_mpc", tier=1, scope="IN", day=d, at=None, title=title,  # noqa: E731
                                         source_url=url, known_since=now, known_since_url=url)  # fmt: skip
             if kind == "schedule":
                 sched = parse_schedule(page.text)
