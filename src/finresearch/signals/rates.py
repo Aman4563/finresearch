@@ -67,3 +67,63 @@ async def risk_free_on(day: date, t_years: float, *, before: bool = False) -> di
     with session_scope() as s:
         r = par_rate_on(s, day, t_years, before=before)
     return r | {"fallback": False}
+
+
+# --------------------------------------------------------------------------- dated rate with a labelled fallback
+FALLBACK_SOURCE = "fallback 6.5 %, no curve"
+
+
+def fallback(why: str) -> dict[str, Any]:
+    """FIXED_RATE as an answer that says it is a fallback and why (#366/#385: never a silent 6.5 %)."""
+    return {"known": False, "rate": FIXED_RATE, "par_yield": None, "tenor_years": None, "as_of": None,
+            "fallback": True, "source": FALLBACK_SOURCE, "note": f"{why}; the fixed 6.5 % is used"}  # fmt: skip
+
+
+def or_fallback(answer: dict[str, Any]) -> dict[str, Any]:
+    """A dated answer (refseries.rate_lookup) as is when known, else the labelled fallback with its reason."""
+    if answer.get("known") and answer.get("rate") is not None:
+        return answer | {"fallback": False}
+    return fallback(answer.get("note") or "no FBIL curve")
+
+
+def rate_on(s: Any, day: date, t_years: float, *, before: bool = False) -> dict[str, Any]:
+    """The stored FBIL par rate for `day` at `t_years` (refseries.rate_lookup.par_rate_on, in the caller's session),
+    or the labelled 6.5 % fallback when no curve is known. For non-registered callers only."""
+    from finresearch.refseries.rate_lookup import par_rate_on
+
+    return or_fallback(par_rate_on(s, day, t_years, before=before))
+
+
+async def rate_for(day: date, t_years: float, *, before: bool = False) -> dict[str, Any]:
+    """rate_on in its own session; a rate store that cannot be read is the labelled fallback, with the reason."""
+    from finresearch.db import session_scope
+
+    try:
+        with session_scope() as s:
+            return rate_on(s, day, t_years, before=before)
+    except Exception as e:  # noqa: BLE001 - the reason is shown with the fallback
+        return fallback(f"the stored FBIL rates could not be read ({type(e).__name__})")
+
+
+def given(rate: float, why: str) -> dict[str, Any]:
+    """A rate a caller fixed on purpose (a registered setting, or a value the user typed), labelled as such."""
+    return {"known": True, "rate": rate, "par_yield": None, "tenor_years": None, "as_of": None, "fallback": False,
+            "source": why, "note": why}  # fmt: skip
+
+
+def label(info: dict[str, Any]) -> str:
+    """One line naming the rate used: 'FBIL G-sec par yield, 0.25-year point, curve of 2026-10-20: 5.91 %
+    continuous' or 'fallback 6.5 %, no curve: <reason>'."""
+    if info.get("fallback") and info.get("source") == FALLBACK_SOURCE:
+        return f"{FALLBACK_SOURCE}: {info.get('note')}"
+    out = f"{info.get('source')}: {float(info['rate']):.2%} continuous"
+    return f"{out} ({info.get('note')})" if info.get("fallback") and info.get("note") else out
+
+
+def effective_annual(info: dict[str, Any]) -> float:
+    """The answer as an effective annual rate (1 + y/2)^2 - 1 from its half-yearly par yield (the convention of
+    portfolio.analytics.risk_free_from_curve); the fallback stays the stated 6.5 % a year the app used before."""
+    y = info.get("par_yield")
+    if info.get("fallback"):
+        return FIXED_RATE
+    return float(info["rate"]) if y is None else (1 + float(y) / 2) ** 2 - 1
