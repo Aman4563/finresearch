@@ -130,6 +130,9 @@ def nse_endpoint(kind: str, symbol: str, **kw: Any) -> tuple[str, dict[str, str]
     if kind == "shareholding":
         return "/api/corporate-share-holdings-master", eq
     if kind == "corporate_actions":
+        if "start" in kw:  # the corporate-actions page's date range [U: not verified to reach before 2018] (#369)
+            return "/api/corporates-corporateActions", {**eq, "from_date": kw["start"].strftime("%d-%m-%Y"),
+                                                        "to_date": kw["end"].strftime("%d-%m-%Y")}  # fmt: skip
         return "/api/corporates-corporateActions", eq
     if kind == "annual_reports":
         return "/api/annual-reports", eq
@@ -402,6 +405,14 @@ class NseEquity:
     async def corporate_actions(self, symbol: str) -> list[CorporateAction]:
         rows = await self._get(symbol, *nse_endpoint("corporate_actions", symbol))
         return [CorporateAction.parse(r) for r in rows or []]
+
+    async def corporate_actions_raw(self, symbol: str, start: date, end: date) -> tuple[str, list[dict[str, Any]]]:
+        """(the exact URL, NSE's raw rows) of one symbol's corporate actions with ex-dates in [start, end]: the
+        factor history (refseries.corp_actions) keeps the rows as served, for lineage and the face value."""
+        path, params = nse_endpoint("corporate_actions", symbol, start=start, end=end)
+        rows = await self._get(symbol, path, params)
+        rows = rows.get("data", []) if isinstance(rows, dict) else rows or []
+        return nse_source_url("corporate_actions", symbol, start=start, end=end), list(rows)
 
     async def board_meetings(self, symbol: str) -> list[BoardMeeting]:
         """Board meetings (upcoming and past) with their purpose; results meetings give the results date."""

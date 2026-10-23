@@ -9,8 +9,12 @@ import json
 from datetime import UTC, date, datetime
 from decimal import Decimal as D
 
+import httpx
 import pytest
+import respx
 from sqlalchemy import select, text
+
+from finresearch.adapters.http import PoliteClient
 
 EVENING = datetime(2026, 10, 21, 14, 0, tzinfo=UTC)  # 19:30 IST, a Wednesday
 URL = "https://www.nseindia.com/api/corporates-corporateActions?index=equities&symbol=EXDEMO"
@@ -138,3 +142,107 @@ def test_factor_history_back_adjusts_with_the_known_factors_only(clean):
     # 1000 before both actions is 1000 / (2 x 5) = 100 in today's units; 150 after both stays 150
     days = [date(2015, 1, 1), date(2018, 1, 1)]
     assert adjust_prices(days, [D(1000), D(150)], h.events) == [D(100), D(150)]
+
+
+# --------------------------------------------------------------------------- the polite backfill
+API = "https://www.nseindia.com/api/corporates-corporateActions"
+PAGE = "https://www.nseindia.com/get-quotes/equity"
+
+
+async def _no_sleep(_s: float) -> None:
+    return None
+
+
+def client() -> PoliteClient:
+    return PoliteClient(cache_dir=None, sleep=_no_sleep, clock=lambda: 0.0, max_retries=0)
+
+
+@pytest.fixture
+def decided(clean, monkeypatch, tmp_path):
+    from finresearch import data_rights
+    from finresearch.refseries import corp_actions as ca
+
+    monkeypatch.setitem(data_rights.DECISIONS, ca.DATASET, data_rights.Decision(
+        ca.DATASET, "accept-personal", "2026-10-23", "test", "test"))  # fmt: skip
+    monkeypatch.setattr(ca, "raw_dir", lambda: tmp_path)
+    return tmp_path
+
+
+async def test_no_data_rights_decision_no_request(clean):
+    from finresearch import data_rights
+    from finresearch.refseries import corp_actions as ca
+
+    assert ca.DATASET in data_rights.PENDING  # recorded for the owner, not decided
+    with respx.mock(assert_all_called=False) as mock, pytest.raises(data_rights.NoDecision):
+        await ca.backfill(["EXDEMO"], now=lambda: EVENING)
+    assert mock.calls.call_count == 0
+
+
+async def test_backfill_loads_with_dates_keeps_raw_and_resumes(decided):
+    from finresearch.db import session_scope
+    from finresearch.db.models import CorpAction
+    from finresearch.refseries import corp_actions as ca
+
+    with respx.mock(assert_all_called=False) as mock:
+        mock.get(url__startswith=PAGE).mock(return_value=httpx.Response(200, text="<html></html>"))
+        api = mock.get(url__startswith=API).mock(return_value=httpx.Response(200, json=ROWS))
+        async with client() as http:
+            res = await ca.backfill(["EXDEMO"], start=date(2008, 1, 1), end=date(2026, 10, 21), http=http,
+                                    now=lambda: EVENING)  # fmt: skip
+            assert (res["loaded"], res["rows"], res["failed"]) == (1, 5, {})
+            q = api.calls.last.request.url.params
+            assert (q["symbol"], q["from_date"], q["to_date"]) == ("EXDEMO", "01-01-2008", "21-10-2026")
+            again = await ca.backfill(["EXDEMO"], http=http, now=lambda: EVENING)
+        assert again["planned"] == 0 and api.call_count == 1
+    assert (decided / "nse" / "EXDEMO.json").is_file()
+    with session_scope() as s:
+        assert len(s.scalars(select(CorpAction)).all()) == 5
+
+
+async def test_a_kept_raw_file_is_reloaded_without_a_request(decided):
+    from finresearch.refseries import corp_actions as ca
+
+    (decided / "nse").mkdir()
+    (decided / "nse" / "EXDEMO.json").write_text(json.dumps({"url": URL, "rows": ROWS}))
+    with respx.mock(assert_all_called=False) as mock:
+        res = await ca.backfill(["EXDEMO"], now=lambda: datetime(2026, 10, 21, 5, 0, tzinfo=UTC))  # market hours
+    assert (res["loaded"], res["from_raw"], mock.calls.call_count) == (1, 1, 0)
+
+
+async def test_no_downloads_in_market_hours(decided):
+    from finresearch.refseries import corp_actions as ca
+
+    with respx.mock(assert_all_called=False) as mock:
+        res = await ca.backfill(["EXDEMO"], now=lambda: datetime(2026, 10, 21, 5, 0, tzinfo=UTC))  # 10:30 IST
+    assert res["loaded"] == 0 and "market hours" in res["stopped"] and mock.calls.call_count == 0
+
+
+async def test_two_refusals_in_a_row_stop_the_run(decided):
+    from finresearch.db import session_scope
+    from finresearch.db.models import CorpActionFetch
+    from finresearch.refseries import corp_actions as ca
+
+    with respx.mock(assert_all_called=False) as mock:
+        mock.get(url__startswith=PAGE).mock(return_value=httpx.Response(200, text="<html></html>"))
+        mock.get(url__startswith=API).mock(return_value=httpx.Response(429))
+        async with client() as http:
+            res = await ca.backfill(["AAA", "BBB", "CCC"], http=http, now=lambda: EVENING)
+    assert sorted(res["failed"]) == ["AAA", "BBB"] and "refused" in res["stopped"]
+    with session_scope() as s:
+        assert s.get(CorpActionFetch, ("nse", "AAA")).status == "failed"
+        assert s.get(CorpActionFetch, ("nse", "CCC")) is None
+
+
+def test_the_default_universe_is_the_fno_stock_underlyings(clean):
+    from finresearch.db import session_scope
+    from finresearch.db.models import FnoContract
+    from finresearch.refseries import corp_actions as ca
+
+    with session_scope() as s:
+        s.execute(text("TRUNCATE fno_contract"))
+        for sym, kind in (("EXDEMO", "stock"), ("NIFTY", "index")):
+            s.add(FnoContract(symbol=sym, expiry=date(2015, 6, 25), underlying_kind=kind, kind="monthly",
+                              first_seen=date(2015, 4, 1), last_seen=date(2015, 6, 25)))  # fmt: skip
+    with session_scope() as s:
+        assert ca.universe(s) == ["EXDEMO"]
+        s.execute(text("TRUNCATE fno_contract"))

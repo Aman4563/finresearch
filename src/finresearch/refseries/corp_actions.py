@@ -25,11 +25,15 @@ symbol actually got.
 
 from __future__ import annotations
 
+import asyncio
 import csv
 import io
+import json
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select
@@ -264,3 +268,105 @@ def factor_history(s: Session, symbol: str) -> FactorHistory:
         elif is_factor:
             events.append((d, f))
     return FactorHistory(symbol, events, unknown)
+
+
+# --------------------------------------------------------------------------- collection
+HISTORY_START = date(2008, 1, 1)  # the stored F&O bhavcopy starts in 2008 (#365's vault load)
+
+
+def raw_dir() -> Path:
+    from finresearch.config import get_settings
+
+    return Path(get_settings().state_dir).parent / "corp_actions"
+
+
+def raw_path(symbol: str, source: str = "nse") -> Path:
+    return raw_dir() / source / f"{symbol}.json"
+
+
+def universe(s: Session) -> list[str]:
+    """The F&O stock underlyings ever listed (fno_contract): the symbols whose futures returns this history adjusts."""
+    from finresearch.db.models import FnoContract
+
+    return list(s.scalars(select(FnoContract.symbol).where(FnoContract.underlying_kind == "stock").distinct()
+                          .order_by(FnoContract.symbol)))  # fmt: skip
+
+
+def _planned(s: Session, symbols: list[str], refresh: bool) -> list[str]:
+    if refresh:
+        return symbols
+    done = set(s.scalars(select(CorpActionFetch.symbol).where(CorpActionFetch.source == "nse",
+                                                              CorpActionFetch.status == "loaded")))  # fmt: skip
+    return [x for x in symbols if x not in done]
+
+
+async def backfill(symbols: list[str] | None = None, *, start: date = HISTORY_START, end: date | None = None,
+                   http: Any = None, pause: float = 0.0, keep_raw: bool = True, refresh: bool = False,
+                   now: Callable[[], datetime] | None = None,
+                   progress: Callable[[int, int, str, str], None] | None = None) -> dict[str, Any]:  # fmt: skip
+    """Fetch and store each symbol's NSE corporate actions with ex-dates in [start, end] (module docstring). Resumable:
+    loaded symbols are skipped (unless `refresh`), failed ones retried, a kept raw file is re-read without a request."""
+    from finresearch import data_rights
+    from finresearch.adapters.http import PoliteClient, now_ist
+    from finresearch.adapters.nse import NseClient
+    from finresearch.adapters.nse_equity import NseEquity
+    from finresearch.db import session_scope
+    from finresearch.fincalc.dates import today_ist
+    from finresearch.refseries.index_eod import MAX_CONSECUTIVE_FAILURES, REFUSALS_TO_STOP, in_market_hours, refused
+
+    data_rights.require(DATASET)
+    now = now or now_ist
+    end = min(end or today_ist(), today_ist())
+    with session_scope() as s:
+        todo = _planned(s, symbols if symbols is not None else universe(s), refresh)
+    out: dict[str, Any] = {"planned": len(todo), "loaded": 0, "rows": 0, "from_raw": 0, "failed": {}}
+    eq = None
+    own = http is None
+    streak = refusals = 0
+    try:
+        for i, sym in enumerate(todo, 1):
+            p = raw_path(sym)
+            from_raw = p.is_file() and not refresh
+            if not from_raw and in_market_hours(now()):
+                out["stopped"] = "market hours (09:00-16:00 IST): no backfill downloads; re-run after the close"
+                break
+            try:
+                if from_raw:
+                    kept = json.loads(p.read_text())
+                    url, rows = kept["url"], kept["rows"]
+                    out["from_raw"] += 1
+                else:
+                    if eq is None:
+                        http = http or PoliteClient()
+                        eq = NseEquity(NseClient(http))
+                    url, rows = await eq.corporate_actions_raw(sym, start, end)
+                    if keep_raw:
+                        p.parent.mkdir(parents=True, exist_ok=True)
+                        p.write_text(json.dumps({"url": url, "rows": rows}))
+                    if pause:
+                        await asyncio.sleep(pause)
+                with session_scope() as s:
+                    out["rows"] += load_nse(s, sym, rows, url=url, body=json.dumps(rows, sort_keys=True).encode())
+                out["loaded"] += 1
+                streak = refusals = 0
+                status = "loaded"
+            except Exception as e:  # a refusal, a block page, a transport error: recorded, retried next run
+                status = "failed"
+                out["failed"][sym] = f"{type(e).__name__}: {e}"[:300]
+                with session_scope() as s:
+                    mark_failed(s, sym, out["failed"][sym])
+                streak += 1
+                refusals = refusals + 1 if refused(e) else 0
+                if refusals >= REFUSALS_TO_STOP:
+                    out["stopped"] = (f"NSE refused {refusals} requests in a row (403/429): stopped; pause this "
+                                      "dataset and check before re-running (#362)")  # fmt: skip
+                    break
+                if streak >= MAX_CONSECUTIVE_FAILURES:
+                    out["stopped"] = f"{streak} consecutive failures: stopped to stay polite; re-run to resume"
+                    break
+            if progress:
+                progress(i, len(todo), sym, status)
+    finally:
+        if own and http is not None:
+            await http.aclose()
+    return out
