@@ -59,8 +59,9 @@ class ModelEntry:
     # pre-registered spec versions and challenger keys (`horserace:<forecaster>`, `<module>:<method>`) it covers
     registrations: tuple[str, ...] = ()
 
-    def status(self, today: date) -> tuple[Status, str]:
-        """(status, reason) on `today`."""
+    def status(self, today: date, reviews: int | None = None) -> tuple[Status, str]:
+        """(status, reason) on `today`. `reviews`: red-team reviews filed for it (inventory.redteam; None = count
+        `red_team`). Tier A needs one before it can read validated."""
         if self.declared == "failed":
             return "failed", f"failed its test on {_d(self.validated_on)}: {self.evidence}"
         if self.declared == "validated":
@@ -71,6 +72,12 @@ class ModelEntry:
                 )
             if today > self.valid_until:
                 return "unvalidated", f"validation expired on {_d(self.valid_until)}: re-validate it"
+            n = len(self.red_team) if reviews is None else reviews
+            if self.tier == "A" and n == 0:
+                return (
+                    "unvalidated",
+                    "tier A: no red-team review of its PREREG and code is filed (evals/redteam/)",
+                )
             return "validated", f"validated on {_d(self.validated_on)}, valid until {_d(self.valid_until)}"
         return "unvalidated", self.evidence or "no validation yet"
 

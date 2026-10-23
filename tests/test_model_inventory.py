@@ -197,8 +197,9 @@ def test_status_is_validated_only_with_current_dates():
 
     base = registry.entry("fno_strategy_gate")
     ok = replace(base, declared="validated", validated_on=date(2026, 9, 1), valid_until=date(2026, 12, 1))
-    assert ok.status(date(2026, 10, 22))[0] == "validated"
-    st, why = ok.status(date(2026, 12, 2))  # expired evidence reads unvalidated, never fine
+    # a tier-A entry also needs a filed red-team review since the second slice (behaviour changed on purpose)
+    assert ok.status(date(2026, 10, 22), reviews=1)[0] == "validated"
+    st, why = ok.status(date(2026, 12, 2), reviews=1)  # expired evidence reads unvalidated, never fine
     assert st == "unvalidated" and "expired on 01-Dec-2026" in why
     assert replace(base, declared="validated").status(date(2026, 10, 22))[0] == "unvalidated"  # no dates
     assert (

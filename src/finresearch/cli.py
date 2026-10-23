@@ -2863,6 +2863,25 @@ def models_revalidate(
     console.print(json.dumps(out))
 
 
+@models_app.command("redteam-new")
+def models_redteam_new(
+    key: str = typer.Argument(..., help="Inventory entry key (finresearch models list)"),
+    prereg: str = typer.Option(..., help="The PREREG the review is given, repo-relative and committed"),
+    slug: str = typer.Option("review", help="File name suffix"),
+) -> None:
+    """Start a red-team review file under evals/redteam/<key>/ with the PREREG's commit and timestamp filled in. Give
+    the separate Claude session only the files it lists, then fill in the reviewer, verdict and findings."""
+    from finresearch.fincalc.dates import today_ist
+    from finresearch.inventory import redteam
+
+    try:
+        p = redteam.scaffold(key, prereg, today=today_ist(), slug=slug)
+    except ValueError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(2) from e
+    console.print(f"started {p}")
+
+
 # keep last: `python -m finresearch.cli` (how the API spawns research and lab workers) must see every command above
 if __name__ == "__main__":
     app()
