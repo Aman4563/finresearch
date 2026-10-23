@@ -326,6 +326,8 @@ def add_fno_book_routes(app: FastAPI, clock: Callable[[], datetime] | None = Non
             raise HTTPException(
                 422, f"the {body.expiry:%d-%b-%Y} contract has expired (15:30 IST): no margin estimate"
             )
+        rinfo = await service._rate(t, None)  # #366/#385: FBIL's par yield at the expiry, labelled
+        rate = rinfo["rate"]
         legs, spec = [], []
         for x in body.legs:
             k = float(x.strike)
@@ -336,14 +338,12 @@ def add_fno_book_routes(app: FastAPI, clock: Callable[[], datetime] | None = Non
                 continue
             price = service._chain_price(chain, x.right, k)
             spec.append((x.right, k, x.side, abs(qty), price))
-            iv = positions.chain_iv(chain, x.right, k) or positions.implied(
-                x.right, price, spot, k, t, service.RATE
-            )
+            iv = positions.chain_iv(chain, x.right, k) or positions.implied(x.right, price, spot, k, t, rate)
             legs.append(ma.MarginLeg(x.right, k, qty, price or 0.0, iv))
         kind = "index" if events.is_index(sym) else "stock"
         span = _span_params(sym, today())
         try:
-            est = ma.estimate(legs, spot, t, service.RATE, kind, params=span and span["params"],
+            est = ma.estimate(legs, spot, t, rate, kind, params=span and span["params"],
                               sources=span and span["sources"])  # fmt: skip
         except ValueError as e:
             raise HTTPException(422, str(e)) from e
@@ -352,7 +352,7 @@ def add_fno_book_routes(app: FastAPI, clock: Callable[[], datetime] | None = Non
             _log_margin_check(sym, body.expiry, kind, spec, est, groww, span and span["day"])
         return {"symbol": sym, "expiry": body.expiry.isoformat(), "spot": spot, "lot_size": lot,
                 **ma.to_json(est, kind), "groww_calculator": groww,
-                "margin_source": "groww" if groww["available"] else "approximate"}  # fmt: skip
+                "margin_source": "groww" if groww["available"] else "approximate", "rate": rinfo}  # fmt: skip
 
     @app.get("/api/fno/{symbol}/event-vol")
     def fno_event_vol(symbol: str) -> dict[str, Any]:

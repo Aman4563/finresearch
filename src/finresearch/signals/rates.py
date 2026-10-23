@@ -101,7 +101,7 @@ async def rate_for(day: date, t_years: float, *, before: bool = False) -> dict[s
     try:
         with session_scope() as s:
             return rate_on(s, day, t_years, before=before)
-    except Exception as e:  # noqa: BLE001 - the reason is shown with the fallback
+    except Exception as e:  # the reason is shown with the fallback
         return fallback(f"the stored FBIL rates could not be read ({type(e).__name__})")
 
 

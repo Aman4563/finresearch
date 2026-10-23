@@ -71,7 +71,9 @@ def test_before_excludes_the_days_own_curve(rates_db):
     _curve(DAY, (("0.25", "0.0700"),))
     with session_scope() as s:
         same, prior = rates.rate_on(s, DAY, 0.1), rates.rate_on(s, DAY, 0.1, before=True)
-    assert same["rate"] == pytest.approx(2 * math.log(1.035)) and prior["rate"] == pytest.approx(2 * math.log(1.03))
+    assert same["rate"] == pytest.approx(2 * math.log(1.035)) and prior["rate"] == pytest.approx(
+        2 * math.log(1.03)
+    )
 
 
 async def test_rate_for_opens_its_own_session_and_labels_the_tenor(rates_db):
