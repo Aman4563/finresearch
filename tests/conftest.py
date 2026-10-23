@@ -77,15 +77,13 @@ def _no_groww_session(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _offline_rate_curve(monkeypatch):
-    """F&O maths reads FBIL's par curve (signals.rates); tests use FBIL's dated fallback curve, never the network."""
-    from finresearch.adapters.fbil import FALLBACK_CURVE
+def _no_owner_rates(monkeypatch):
+    """signals.rates reads the owner-entered rates from the database (#479); a test without the `env` fixture would
+    read the configured (live) one, so every test sees none unless it sets `rates.OWNER` itself. The rest of the
+    chain (the hand-typed RBI policy-rate table) needs no database and no network."""
     from finresearch.signals import rates
 
-    async def curve():
-        return FALLBACK_CURVE
-
-    monkeypatch.setattr(rates, "CURVE", curve)
+    monkeypatch.setattr(rates, "OWNER", list)
 
 
 @pytest.fixture(scope="session")

@@ -1941,6 +1941,20 @@ class RateCurve(Base):
     )  # FBIL's display time, IST (naive as printed)
 
 
+class OwnerRate(Base):
+    """A risk-free yield the owner typed in (#479, the first tier of signals.rates): `simple_yield` as RBI quotes it
+    (simple, Actual/365, a fraction) for a term of `tenor_days` days observed on `day`, e.g. RBI's 91-day T-bill
+    cut-off on an auction day. Entered only through the POST API or `finresearch rates enter`, never fetched; one
+    row per day and tenor (a new entry replaces the old one). `source` is what the owner typed as its source."""
+
+    __tablename__ = "owner_rate"
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    tenor_days: Mapped[int] = mapped_column(Integer, primary_key=True)
+    simple_yield: Mapped[Decimal] = mapped_column(Numeric(10, 8))
+    source: Mapped[str | None] = mapped_column(String(300))
+    entered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class RateCurveLoad(Base):
     """The rate backfill manifest (#366): one row per (series, period) tried. gsec_par: one workbook day; the JSON
     fixings: one calendar month (`period` = its first day). status loaded / no_file / failed. A month is fetched
