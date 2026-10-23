@@ -43,7 +43,7 @@ def flagged(res) -> set[str]:
 def test_clean_day_passes_every_check(clean):
     res = run()
     assert flagged(res) == set(), {k: (c.status, c.note) for k, c in res.items()}
-    assert {"futures_continuity", "expiry_continuity", "expired_contracts", "stale_settle", "oi_lot_multiple",
+    assert {"futures_continuity", "symbol_changed", "expiry_continuity", "expiry_moved", "expired_contracts", "stale_settle", "oi_lot_multiple",
             "turnover_units", "price_jump", "row_ranges", "rows_total_z", "rows_kept_z", "reupload",
             "duplicate_body"} <= set(res)  # fmt: skip
 
@@ -130,3 +130,85 @@ def test_not_loaded_day_is_unknown_never_ok(clean):
     with session_scope() as s:
         res = fno.bhav_checks(s, ds.T1)
     assert res and all(c.status == "unknown" for c in res)
+
+
+# --- replay false alarms (2024-01-01 .. 2026-10-22): expiries NSE moved or never traded, renamed symbols
+
+
+def test_expiry_on_a_special_holiday_is_moved_not_lost():
+    """MIDCPNIFTY's 22-Jan-2024 expiry: 22-Jan was declared a holiday, the contract settled on the earlier session,
+    so on 23-Jan it is gone. Reasoned (expiry_moved), not a critical loss."""
+    from datetime import date
+
+    from finresearch.dq.fno import classify_lost_expiries
+
+    groups = {("MIDCPNIFTY", "IDO", date(2024, 1, 22)): 5000, ("MIDCPNIFTY", "IDO", date(2024, 1, 29)): 900}
+    lost, moved, idle = classify_lost_expiries(groups, {("MIDCPNIFTY", "IDO", date(2024, 1, 29))},
+                                               date(2024, 1, 20), date(2024, 1, 23))  # fmt: skip
+    assert lost == [] and idle == 0 and moved == ["MIDCPNIFTY IDO 2024-01-22 fell between sessions 2024-01-20 and "
+                                                  "2024-01-23"]  # fmt: skip
+    # the holiday list explains a later expiry too
+    groups = {("MIDCPNIFTY", "IDO", date(2024, 1, 25)): 5000}
+    assert classify_lost_expiries(groups, set(), date(2024, 1, 20), date(2024, 1, 23),
+                                  holidays={date(2024, 1, 25)})[:2] == ([], ["MIDCPNIFTY IDO 2024-01-25 is an NSE "
+                                                                             "holiday"])  # fmt: skip
+
+
+def test_idle_far_expiry_is_not_required_but_one_with_oi_is():
+    """MIDCPNIFTY IDO 2024-05-27 absent on 2024-04-12: a far expiry with no open interest (the store drops rows with no
+    OI and no trades). The same expiry with OI, or a near expiry without OI, is still a critical loss."""
+    from datetime import date
+
+    from finresearch.dq.fno import classify_lost_expiries
+
+    p, d = date(2024, 4, 10), date(2024, 4, 12)
+    near, nxt, far = date(2024, 4, 29), date(2024, 5, 27 - 7), date(2024, 5, 27)
+    keep = {("MIDCPNIFTY", "IDO", near), ("MIDCPNIFTY", "IDO", nxt)}
+    groups = {("MIDCPNIFTY", "IDO", near): 100, ("MIDCPNIFTY", "IDO", nxt): 50, ("MIDCPNIFTY", "IDO", far): 0}
+    assert classify_lost_expiries(groups, keep, p, d) == ([], [], 1)
+    assert classify_lost_expiries({**groups, ("MIDCPNIFTY", "IDO", far): 75}, keep, p, d)[0] == [
+        ("MIDCPNIFTY", "IDO", far)]  # fmt: skip
+    no_oi_near = {**groups, ("MIDCPNIFTY", "IDO", near): 0}
+    assert classify_lost_expiries(no_oi_near, keep - {("MIDCPNIFTY", "IDO", near)}, p, d)[0] == [
+        ("MIDCPNIFTY", "IDO", near)]  # fmt: skip
+
+
+def test_far_idle_expiry_and_moved_expiry_in_the_store(clean):
+    from datetime import date
+
+    far, e0 = date(2026, 12, 29), date(2026, 10, 1)
+    t0 = ds.bhav_rows(ds.T0)
+    idle = [
+        {**r, "expiry": far, "oi": 0, "contracts": 1}
+        for r in t0
+        if r["instrument"] == "IDO" and r["expiry"] == ds.E1
+    ]
+    near = [{**r, "expiry": e0} for r in t0 if r["instrument"] == "IDO" and r["expiry"] == ds.E1]
+    moved = [
+        {**r, "expiry": ds.T1}
+        for r in ds.bhav_rows(ds.T1)
+        if r["instrument"] == "IDO" and r["expiry"] == ds.E1
+    ]
+    res = run(t0_rows=t0 + idle + near, t1_rows=ds.bhav_rows(ds.T1) + moved)
+    assert res["expiry_continuity"].status == "ok" and "1 far expiry" in res["expiry_continuity"].note
+    assert res["expiry_moved"].status == "warn" and not res["expiry_moved"].critical
+    assert "2026-10-01→2026-09-30" in res["expiry_moved"].note
+
+
+def test_renamed_symbol_is_a_symbol_change_not_a_drop(clean):
+    """L&TFH -> LTF (2024-04-23), TATAMOTORS -> TMPV (2025-10-24): the open futures continue under a new symbol."""
+    rows = [{**r, "symbol": "NEWSTK"} if r["symbol"] == "XYZSTK" else r for r in ds.bhav_rows(ds.T1)]
+    res = run(t1_rows=rows)
+    assert res["futures_continuity"].status == "ok"
+    sc = res["symbol_changed"]
+    assert sc.status == "warn" and not sc.critical and sc.note == "symbol changed XYZSTK→NEWSTK"
+
+
+def test_unexplained_vanish_with_an_unrelated_new_listing_stays_critical(clean):
+    """A drop on the day an unrelated stock enters F&O (another lot size, or a price nowhere near) is not a rename."""
+    t1 = ds.bhav_rows(ds.T1)
+    for change in ({"lot_size": 300}, {"close": t1[0]["close"] * 3}):
+        new = [{**r, "symbol": "NEWSTK", **change} for r in t1 if r["symbol"] == "XYZSTK"]
+        res = run(t1_rows=[r for r in t1 if r["symbol"] != "XYZSTK"] + new)
+        assert res["futures_continuity"].status == "fail" and res["futures_continuity"].critical, change
+        assert "XYZSTK" in res["futures_continuity"].note and res["symbol_changed"].status == "ok"
