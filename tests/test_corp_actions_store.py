@@ -248,3 +248,42 @@ def test_the_default_universe_is_the_fno_stock_underlyings(clean):
     with session_scope() as s:
         assert ca.universe(s) == ["EXDEMO"]
         s.execute(text("TRUNCATE fno_contract"))
+
+
+# --------------------------------------------------------------------------- legacy F&O days read the table
+def _legacy_futures(s, days, prices):
+    from finresearch.db.models import FnoBhav
+
+    exp = date(2015, 1, 29)
+    for d, p in zip(days, prices, strict=True):  # pre-UDiFF: no lot field
+        s.add(FnoBhav(day=d, symbol="EXDEMO", instrument="STF", expiry=exp, strike=D(0), option_type="XX",
+                      settle=D(str(p)), close=D(str(p))))  # fmt: skip
+    s.add(FnoBhav(day=days[-1], symbol="EXDEMO", instrument="STO", expiry=exp, strike=D(250), option_type="CE",
+                  settle=D("10.00"), close=D("10.00"), contracts=50))  # fmt: skip
+
+
+def test_derive_day_adjusts_a_lot_less_bonus_day_from_the_table(clean):
+    from datetime import timedelta
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import FnoIvEod
+    from finresearch.fnohist import derive
+
+    days = [date(2015, 1, 1) + timedelta(days=i) for i in range(21)]  # 20 returns: exactly the RV window
+    prices = [500.0 * (1.01 if i % 2 else 1.0) for i in range(10)] + [250.0 * (1.01 if i % 2 else 1.0)
+                                                                        for i in range(10, 21)]  # fmt: skip
+    with session_scope() as s:
+        s.execute(text("TRUNCATE fno_bhav, fno_iv_eod"))
+        _legacy_futures(s, days, prices)
+    with session_scope() as s:
+        derive.derive_day(s, days[-1])
+        assert (
+            s.scalars(select(FnoIvEod.rv_20).where(FnoIvEod.symbol == "EXDEMO")).one() is None
+        )  # no table row: the halving is unverified, 19 left
+    load([row("Bonus 1:1", "11-Jan-2015")])  # ex on days[10]
+    with session_scope() as s:
+        derive.derive_day(s, days[-1])
+        rv = s.scalars(select(FnoIvEod.rv_20).where(FnoIvEod.symbol == "EXDEMO")).one()
+        s.execute(text("TRUNCATE fno_bhav, fno_iv_eod"))
+    # the ex-day return becomes ln(250 x 2 / 505) = ln(1/1.01): every return is +-ln(1.01), RV ~ 15.8 %
+    assert rv is not None and D(10) < rv < D(20)

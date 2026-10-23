@@ -177,14 +177,18 @@ def constant_maturity(
 
 def front_future_returns(futs: Sequence[tuple[date, date, float]], lots: Mapping[tuple[date, date], int] | None = None,
                          unverified: list[tuple[date, date, float]] | None = None,
-                         adjusted: list[tuple[date, date, float, float]] | None = None) -> list[tuple[date, float]]:  # fmt: skip
+                         adjusted: list[tuple[date, date, float, float]] | None = None,
+                         factors: Mapping[date, float | None] | None = None) -> list[tuple[date, float]]:  # fmt: skip
     """Daily log returns of the front future from (day, expiry, settle) rows, each within one contract: for day d1 the
     contract is the earliest expiry after the previous day d0 that has a settlement on both days.
 
     Corporate actions (#369): with `lots` ({(day, expiry): lot size}) a contract whose lot changed between d0 and d1 is
     a candidate adjustment, f = L1 / L0 and r_adj = ln(F1 x f / F0). The factor is verified when it brings the return
     closer to zero and within QUARANTINE_LN: then r_adj is used and (d1, expiry, f, raw r) appended to `adjusted`.
-    Otherwise the raw return stands (NSE's periodic lot revisions change the lot without touching the price). Any
+    Otherwise the raw return stands (NSE's periodic lot revisions change the lot without touching the price).
+    Without both lots (legacy days before UDiFF), `factors` ({ex-date: price factor}, refseries.corp_actions.
+    fno_factors) supplies f instead: the product of the factors going ex in (d0, d1], under the same verification. An
+    ex-date whose factor is unknown (None) adjusts nothing, so a jump on it stays unverified. Any
     return still beyond QUARANTINE_LN, with or without lot data, is left out and appended to `unverified` as
     (d1, expiry, raw r): a missing return is unknown, never a fake -50 % day."""
     by_day: dict[date, dict[date, float]] = {}
@@ -200,8 +204,10 @@ def front_future_returns(futs: Sequence[tuple[date, date, float]], lots: Mapping
         e = common[0]
         r = math.log(by_day[d1][e] / by_day[d0][e])
         l0, l1 = (lots.get((d0, e)), lots.get((d1, e))) if lots else (None, None)
-        if l0 and l1 and l0 != l1:
-            f = l1 / l0
+        f = l1 / l0 if l0 and l1 and l0 != l1 else None
+        if not (l0 and l1) and factors:
+            f = _table_factor(factors, d0, d1)
+        if f is not None:
             r_adj = r + math.log(f)
             if abs(r_adj) < abs(r) and abs(r_adj) <= QUARANTINE_LN:
                 if adjusted is not None:
@@ -214,6 +220,17 @@ def front_future_returns(futs: Sequence[tuple[date, date, float]], lots: Mapping
             continue
         out.append((d1, r))
     return out
+
+
+def _table_factor(factors: Mapping[date, float | None], d0: date, d1: date) -> float | None:
+    """The product of the factors going ex in (d0, d1]; None when none did, or when any of them is unknown."""
+    f = None
+    for ex, x in factors.items():
+        if d0 < ex <= d1:
+            if x is None:
+                return None
+            f = (f or 1.0) * x
+    return f
 
 
 def realised_vol_pct(returns: Sequence[float], window: int = RV_WINDOW) -> float | None:

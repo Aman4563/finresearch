@@ -180,14 +180,19 @@ def load_symbol_changes(s: Session, text: str, *, url: str | None) -> int:
     return n
 
 
-def aliases(s: Session, symbol: str) -> set[str]:
-    """`symbol` and every symbol joined to it by a recorded symbol change (in either direction, transitively)."""
+def _edges(s: Session) -> dict[str, set[str]]:
     edges: dict[str, set[str]] = {}
     for t in s.scalars(select(CorpAction.terms).where(CorpAction.source == "nse_symchg")):
         o, n = t.get("old_symbol"), t.get("new_symbol")
         if o and n:
             edges.setdefault(o, set()).add(n)
             edges.setdefault(n, set()).add(o)
+    return edges
+
+
+def aliases(s: Session, symbol: str, edges: dict[str, set[str]] | None = None) -> set[str]:
+    """`symbol` and every symbol joined to it by a recorded symbol change (in either direction, transitively)."""
+    edges = _edges(s) if edges is None else edges
     group, todo = {symbol}, [symbol]
     while todo:
         for x in edges.get(todo.pop(), ()):
@@ -197,23 +202,30 @@ def aliases(s: Session, symbol: str) -> set[str]:
     return group
 
 
-def _actions(
-    s: Session, symbol: str, lo: date | None = None, hi: date | None = None
-) -> dict[date, list[CorpAction]]:
-    """Exchange actions of `symbol` and its aliases by ex-date, one row per (ex-date, subject); NSE's rows win over
-    BSE's on an ex-date both list (the same action must not compound twice). Delistings are exits, not factors."""
-    q = select(CorpAction).where(CorpAction.symbol.in_(aliases(s, symbol)), CorpAction.source.in_(SOURCES),
-                                 CorpAction.kind != "delisting")  # fmt: skip
+def _actions(s: Session, symbols: list[str], lo: date | None = None,
+             hi: date | None = None) -> dict[str, dict[date, list[CorpAction]]]:  # fmt: skip
+    """Exchange actions of each symbol and its aliases by ex-date (one query), one row per (ex-date, subject); NSE's
+    rows win over BSE's on an ex-date both list (the same action must not compound twice). Delistings are exits, not
+    factors."""
+    edges = _edges(s)
+    groups = {sym: aliases(s, sym, edges) for sym in symbols}
+    q = select(CorpAction).where(CorpAction.symbol.in_(set().union(*groups.values()) if groups else set()),
+                                 CorpAction.source.in_(SOURCES), CorpAction.kind != "delisting")  # fmt: skip
     if lo is not None:
         q = q.where(CorpAction.ex_date >= lo)
     if hi is not None:
         q = q.where(CorpAction.ex_date <= hi)
-    by: dict[date, dict[str, list[CorpAction]]] = {}
-    for r in s.scalars(q.order_by(CorpAction.ex_date, CorpAction.id)):
-        per = by.setdefault(r.ex_date, {}).setdefault(r.source, [])
-        if all(x.subject_key != r.subject_key for x in per):
-            per.append(r)
-    return {d: src.get("nse") or src.get("bse") or [] for d, src in by.items()}
+    rows = list(s.scalars(q.order_by(CorpAction.ex_date, CorpAction.id)))
+    out: dict[str, dict[date, list[CorpAction]]] = {}
+    for sym, group in groups.items():
+        by: dict[date, dict[str, list[CorpAction]]] = {}
+        for r in rows:
+            if r.symbol in group:
+                per = by.setdefault(r.ex_date, {}).setdefault(r.source, [])
+                if all(x.subject_key != r.subject_key for x in per):
+                    per.append(r)
+        out[sym] = {d: src.get("nse") or src.get("bse") or [] for d, src in by.items()}
+    return out
 
 
 def _day_factor(rows: list[CorpAction]) -> tuple[bool, Decimal | None, list[tuple[str, str]]]:
@@ -233,9 +245,9 @@ def fno_factors(s: Session, symbols: list[str], lo: date, hi: date) -> dict[str,
     (fincalc.fno_history.front_future_returns `factors`). None = an action went ex but its factor is unknown (the day
     then stays unverified); days with only dividends or meetings are not listed. Symbols without actions are omitted."""
     out: dict[str, dict[date, float | None]] = {}
-    for sym in symbols:
+    for sym, by_day in _actions(s, symbols, lo, hi).items():
         got = {}
-        for d, rows in _actions(s, sym, lo, hi).items():
+        for d, rows in by_day.items():
             is_factor, f, _ = _day_factor(rows)
             if is_factor:
                 got[d] = None if f is None else float(f)
@@ -261,7 +273,7 @@ def factor_history(s: Session, symbol: str) -> FactorHistory:
     variant, not an in-place change."""
     events: list[tuple[date, Decimal]] = []
     unknown: list[tuple[date, str, str]] = []
-    for d, rows in sorted(_actions(s, symbol).items()):
+    for d, rows in sorted(_actions(s, [symbol])[symbol].items()):
         is_factor, f, why = _day_factor(rows)
         if f is None:
             unknown += [(d, k, r) for k, r in why]
