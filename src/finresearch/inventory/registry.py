@@ -22,7 +22,7 @@ from typing import Literal
 
 Tier = Literal["A", "B", "C"]
 Status = Literal["unvalidated", "validated", "failed"]
-Kind = Literal["signal", "rule", "recipe", "benchmark", "risk", "none"]
+Kind = Literal["signal", "rule", "recipe", "benchmark", "risk", "analytics", "none"]
 
 LIMITS_OF_USE = (
     "Personal research only: no distribution and no automated orders (nothing here places an order)."
@@ -56,6 +56,8 @@ class ModelEntry:
     red_team: tuple[str, ...] = field(
         default_factory=tuple
     )  # filed reviews (path or issue), with the PREREG's date
+    # pre-registered spec versions and challenger keys (`horserace:<forecaster>`, `<module>:<method>`) it covers
+    registrations: tuple[str, ...] = ()
 
     def status(self, today: date) -> tuple[Status, str]:
         """(status, reason) on `today`."""
@@ -83,7 +85,7 @@ class ModelEntry:
                 "validated_on": self.validated_on.isoformat() if self.validated_on else None,
                 "valid_until": self.valid_until.isoformat() if self.valid_until else None,
                 "evidence": self.evidence, "regime_tags": list(self.regime_tags), "methods": list(self.methods),
-                "red_team": list(self.red_team)}  # fmt: skip
+                "red_team": list(self.red_team), "registrations": list(self.registrations)}  # fmt: skip
 
 
 def _d(d: date | None) -> str:
@@ -104,3 +106,8 @@ def entry_for_method(method: str) -> ModelEntry | None:
     """The entry whose method (exact or literal prefix) is the longest match for `method`."""
     hits = [(len(m), e) for e in entries() for m in e.methods if method == m or method.startswith(m)]
     return max(hits, key=lambda h: h[0])[1] if hits else None
+
+
+def entry_for_registration(reg: str) -> ModelEntry | None:
+    """The entry that lists `reg` (a SPEC_VERSION, ADDENDUM_VERSION or `horserace:<forecaster>` key) exactly."""
+    return next((e for e in entries() if reg in e.registrations), None)
