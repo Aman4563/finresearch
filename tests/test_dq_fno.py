@@ -43,7 +43,7 @@ def flagged(res) -> set[str]:
 def test_clean_day_passes_every_check(clean):
     res = run()
     assert flagged(res) == set(), {k: (c.status, c.note) for k, c in res.items()}
-    assert {"futures_continuity", "expiry_continuity", "expired_contracts", "stale_settle", "oi_lot_multiple",
+    assert {"futures_continuity", "symbol_changed", "expiry_continuity", "expiry_moved", "expired_contracts", "stale_settle", "oi_lot_multiple",
             "turnover_units", "price_jump", "row_ranges", "rows_total_z", "rows_kept_z", "reupload",
             "duplicate_body"} <= set(res)  # fmt: skip
 

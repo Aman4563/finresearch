@@ -114,6 +114,7 @@ def test_unread_indices_with_nse_quirks_do_not_fail_critical(clean):
 
     extra = [_idx("NIFTY50 DIVIDEND POINTS", "0", "0", "0", "0"),
              _idx("NIFTY50 DIVIDEND POINTS 2", "12.5", None, None, "12.5"),
+             _idx("NIFTY50 DIVIDEND POINTS 3", "5", "5", "3", "9"),  # close above a printed high: exempt too
              _idx("NIFTY50 USD", "9800", "9790", "9810", "9800")]  # fmt: skip
     with session_scope() as s:
         seed(s, idx=ds.index_rows(ds.T1) + extra)
