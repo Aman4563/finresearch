@@ -10,8 +10,10 @@ annualised. The site's own front end reads two endpoints:
 
 The domain is fbil.org.in. (fbil.co.in is an unrelated bullion dealer.)
 
-When FBIL can't be reached, `FALLBACK_CURVE` is the curve published for 23-Sep-2026, labelled with its date so a
-stale curve is never mistaken for today's.
+No FBIL data is embedded in this public repository (#479: FBIL's Terms of Use forbid redistributing it, §2.1), and no
+live path of the app calls this adapter any more: risk-free rates come from signals.rates (owner-entered yields and
+the RBI repo-rate proxy) and the bond signal has no G-sec curve source. The client stays, paused, so a future
+subscription can re-enable it.
 
 Every request first asks `data_rights.require(DATASET)` and raises FbilError without a recorded decision, so no caller
 reaches FBIL unless the owner has decided. FBIL's Terms of Use of 13-Oct-2026 (section 9) limit the free website to
@@ -285,30 +287,3 @@ def _iso(v: object) -> date | None:
         return date.fromisoformat(str(v)[:10])
     except ValueError:
         return None
-
-
-def _curve(rows: list[tuple[str, str, str]]) -> list[ParPoint]:
-    return [ParPoint(Decimal(t), Decimal(s) / 100, Decimal(a) / 100) for t, s, a in rows]
-
-
-# FBIL GSec Base/Par Yield published for 23-Sep-2026 (tenor years, % semi-annual, % annualised), read from
-# https://www.fbil.org.in/wasdm/gsec/downloadPublished?date=2026-09-23 on 30-Sep-2026. Only the fallback.
-_FALLBACK_ROWS = [
-    ("0.25", "5.34", "5.42"), ("0.5", "5.80", "5.88"), ("0.75", "5.98", "6.07"), ("1", "6.07", "6.16"),
-    ("1.5", "6.18", "6.28"), ("2", "6.33", "6.43"), ("2.5", "6.51", "6.62"), ("3", "6.66", "6.77"),
-    ("3.5", "6.72", "6.83"), ("4", "6.72", "6.84"), ("4.5", "6.73", "6.85"), ("5", "6.79", "6.91"),
-    ("5.5", "6.88", "7.00"), ("6", "6.93", "7.05"), ("6.5", "6.95", "7.07"), ("7", "6.96", "7.08"),
-    ("7.5", "6.99", "7.11"), ("8", "7.01", "7.13"), ("8.5", "7.00", "7.12"), ("9", "7.01", "7.13"),
-    ("9.5", "7.03", "7.16"), ("10", "7.07", "7.20"), ("11", "7.10", "7.23"), ("12", "7.11", "7.24"),
-    ("13", "7.13", "7.25"), ("14", "7.17", "7.29"), ("15", "7.23", "7.36"), ("16", "7.29", "7.43"),
-    ("17", "7.35", "7.49"), ("18", "7.41", "7.54"), ("19", "7.45", "7.59"), ("20", "7.49", "7.63"),
-    ("25", "7.56", "7.71"), ("30", "7.58", "7.73"), ("35", "7.63", "7.77"), ("40", "7.64", "7.78"),
-    ("50", "7.64", "7.79"),
-]  # fmt: skip
-FALLBACK_CURVE = ParCurve(
-    as_of=date(2026, 9, 23),
-    points=_curve(_FALLBACK_ROWS),
-    source=f"{DOWNLOAD_URL}?date=2026-09-23",
-    fallback=True,
-    notes=["FBIL could not be reached: this is FBIL's curve for 23-Sep-2026, not today's"],
-)

@@ -32,7 +32,7 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -165,3 +165,62 @@ def answer(
     if day < P.START:
         return unknown(day, days)
     return owner(day, days, entries, before=before) or proxy(day, days, before=before)
+
+
+# --------------------------------------------------------------------------- the monthly series for fund metrics
+# Each month's own risk-free rate (the owner's decision 4): y_m = the average of the daily 91-day chain yield (owner
+# tier, else the repo proxy) over the month's calendar days, up to `end` in the last month. Over a period (d0, d1]
+# the risk-free return accrues day by day at the rate of the month each day falls in:
+#     rf(d0, d1) = prod over d in (d0, d1] of (1 + y_m(d) x 91/365)^(1/91) - 1,
+# so a whole calendar month of d_m days is (1 + y_m x 91/365)^(d_m/91) - 1: the 91-day bill's return rolled at its
+# own simple Actual/365 yield, a month being d_m/91 of a bill's term (the research note's convention).
+BILL_DAYS = 91
+
+
+@dataclass(frozen=True)
+class MonthRate:
+    month: date  # the month's first day
+    days: int  # calendar days averaged
+    y91: float | None  # the month's average 91-day yield (simple, Actual/365); None: some day is unknown
+    tiers: tuple[tuple[str, int], ...] = ()  # (tier, days) behind the average
+    note: str | None = None
+
+
+def _month_end(m: date) -> date:
+    nxt = date(m.year + (m.month == 12), m.month % 12 + 1, 1)
+    return nxt - timedelta(days=1)
+
+
+def month_rates(start: date, end: date, entries: Sequence[OwnerRate] = ()) -> dict[date, MonthRate]:
+    """Every month that [start, end] touches, each averaged over its own calendar days (to `end` in the last)."""
+    out: dict[date, MonthRate] = {}
+    m = start.replace(day=1)
+    while m <= end:
+        last = min(_month_end(m), end)
+        ys, tiers, why = [], {}, None
+        d = m
+        while d <= last:
+            a = answer(d, BILL_DAYS / 365, entries)
+            if a["yield"] is None:
+                why = a["note"]
+                break
+            ys.append(a["yield"])
+            tiers[a["tier"]] = tiers.get(a["tier"], 0) + 1
+            d += timedelta(days=1)
+        n = (last - m).days + 1
+        out[m] = MonthRate(m, n, None if why else sum(ys) / n, tuple(tiers.items()), why)
+        m = last + timedelta(days=1)
+    return out
+
+
+def accrual(d0: date, d1: date, months: dict[date, MonthRate]) -> float | None:
+    """The risk-free return over (d0, d1] from `months` (month_rates); None when a day's month is unknown or absent."""
+    total, d = 0.0, d0 + timedelta(days=1)
+    while d <= d1:
+        mr = months.get(d.replace(day=1))
+        if mr is None or mr.y91 is None:
+            return None
+        seg = min(d1, _month_end(d))
+        total += ((seg - d).days + 1) * math.log1p(mr.y91 * BILL_DAYS / 365) / BILL_DAYS
+        d = seg + timedelta(days=1)
+    return math.expm1(total)

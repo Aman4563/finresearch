@@ -4,6 +4,7 @@ from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
+import fbil_synth
 import httpx
 import pytest
 import respx
@@ -35,7 +36,7 @@ def test_read_sheets_reads_an_ole2_workbook_as_rows():
 
 
 def test_read_sheets_reads_xlsx_too():
-    sheets = xls.read_sheets((FIX / "gsec_20260923_trimmed.xlsx").read_bytes())
+    sheets = xls.read_sheets(fbil_synth.gsec_xlsx())  # synthetic (#479): no FBIL file is kept in the repo
     assert any("par" in n.lower() for n in sheets)
 
 
@@ -54,7 +55,7 @@ def test_par_curve_from_the_ole2_workbook():
 
 
 def test_par_curve_from_the_xlsx_workbook_unchanged():
-    curve = parse_par_yield((FIX / "gsec_20260923_trimmed.xlsx").read_bytes())
+    curve = parse_par_yield(fbil_synth.gsec_xlsx(date(2026, 9, 23)))
     assert curve.as_of == date(2026, 9, 23)
 
 

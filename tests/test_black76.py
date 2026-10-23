@@ -293,8 +293,6 @@ def test_a_known_dated_rate_gives_its_discount_factor_and_source() -> None:
 
 
 def test_an_unknown_dated_rate_is_no_discount_factor_never_six_and_a_half_percent() -> None:
-    from finresearch.signals import rates
-
     unknown = {
         "known": False,
         "rate": None,
@@ -304,8 +302,8 @@ def test_an_unknown_dated_rate_is_no_discount_factor_never_six_and_a_half_percen
     }
     got = b.dated_df(unknown, 0.1)
     assert got.df is None and got.rate is None and "no FBIL" in got.reason
-    # risk_free()'s last fallback is the fixed 6.5 %: it is not a dated rate and is refused
-    fixed = {"rate": rates.FIXED_RATE, "fallback": True, "as_of": None, "source": "fixed 6.5 % (fallback)"}
+    # an answer labelled a fallback (the app's earlier fixed 6.5 %, gone since #479) is not a dated rate: refused
+    fixed = {"rate": 0.065, "fallback": True, "as_of": None, "source": "fixed 6.5 % (fallback)"}
     got = b.dated_df(fixed, 0.1)
     assert got.df is None and "fallback" in got.reason
     assert b.dated_df(None, 0.1).df is None

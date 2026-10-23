@@ -23,6 +23,9 @@ from finresearch.fincalc import riskfree as R
 # () -> the owner's entries; None = read the owner_rate table. conftest sets it to `list`, so a test without the
 # test database never reads the configured one.
 OWNER: Callable[[], list[R.OwnerRate]] | None = None
+# () -> today (IST) for risk_free(); None = fincalc.dates.today_ist. conftest pins it so live-rate tests do not depend
+# on the day they run.
+TODAY: Callable[[], date] | None = None
 
 
 def _entries(s: Any = None) -> tuple[list[R.OwnerRate], str | None]:
@@ -59,7 +62,7 @@ async def risk_free(t_years: float) -> dict[str, Any]:
     """Today's (IST) rate for a term of `t_years` (see the module docstring)."""
     from finresearch.fincalc.dates import today_ist
 
-    return _answer(today_ist(), max(float(t_years), 0.0))
+    return _answer((TODAY or today_ist)(), max(float(t_years), 0.0))
 
 
 async def risk_free_on(day: date, t_years: float, *, before: bool = False) -> dict[str, Any]:
