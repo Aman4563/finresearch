@@ -83,6 +83,11 @@ GET requests don't change your records, the alert inputs or the forecast ledger:
   `POST /api/fno/strategy` and `GET /api/fno/{symbol}/suggest` response appends one row (the suggest GET is the one
   F&O read that writes, because a card shown and never logged cannot be recovered). Rows are never updated or
   deleted; `uv run finresearch fno card-log --since <ISO time with zone>` counts the verdicts before and after it.
+- A plan card's forecasts (#376) are recorded in the same `POST /api/fno/plan`; suggest cards (a GET) are recorded
+  by the monitor's hourly forecast step. The override log (#376 (d), append-only, personal) is written only by
+  `POST /api/fno/overrides` when you mark a card traded or skipped; it is never inferred from your trades.
+  `GET /api/fno/card-ledger` and `GET /api/fno/overrides` only read. The fixed probability panel (`prob_panel`,
+  market data) is written only by the monitor's forecast step and `finresearch forecasts panel`.
 - The Strategy Lab's trial log (#380) is append-only: every lab run that ends appends one `lab_trial` row. Listing the
   lab (`GET /api/fno/lab`) or a run (`GET /api/fno/lab/runs/{id}`) marks a run whose worker has gone silent as failed,
   as before, and now also appends its trial row, so an abandoned run still counts in N. `GET /api/fno/lab/family`
@@ -236,6 +241,8 @@ uv run finresearch portfolio tax-csv gains.csv --fy 2027                 # reali
 uv run finresearch forecasts calibration     # Brier score, skill vs the base rate, hit rate with Wilson intervals
 uv run finresearch forecasts resolve         # score every due forecast now (the monitor does this daily)
 uv run finresearch forecasts cards           # record every logged F&O card (card_log) as a forecast (#376; the monitor does this hourly)
+uv run finresearch forecasts panel           # log the fixed probability panel for stored F&O sessions and resolve settled ones (#376 (b); hourly in the monitor)
+uv run finresearch forecasts card-report     # the card ledger's registered scores before/after registration, and the override rate (read only)
 uv run finresearch forecasts horse-race      # the pre-registered card horse race on resolved cards (#377; --window, --json); read only
 uv run finresearch forecasts skill           # the live skill monitor per method x event kind x underlying (#378; --json); read only
 uv run finresearch models list                # the model inventory: tier, computed status (validated / unvalidated / failed) and why (#379)

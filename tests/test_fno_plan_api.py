@@ -735,3 +735,42 @@ def test_a_candidate_with_unknown_real_funds_waits_with_its_paper_size_395(clien
 
     with session_scope() as s:  # later files read the saved backtest: leave no candidate behind
         s.execute(text("TRUNCATE fno_backtest_result, fno_backtest_run CASCADE"))
+
+
+def _card_forecasts(card_log_id: int) -> list[tuple[str, str]]:
+    from sqlalchemy import select
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import Forecast
+
+    with session_scope() as s:
+        return sorted((f.dedupe_key, f.event_kind) for f in s.scalars(
+            select(Forecast).where(Forecast.source == f"card_log:{card_log_id}")))  # fmt: skip
+
+
+def test_a_plan_card_is_recorded_as_forecasts_in_the_post_376(client):
+    """#376 addendum B1.4: the POST records the card's two forecasts at once, never twice (the hourly step finds
+    nothing left); the suggest GET records none."""
+    from finresearch.db import session_scope
+    from finresearch.fnobook import card_forecasts as cf
+
+    _profile("1000000")
+    card = client.post("/api/fno/plan", json={"symbol": "NIFTY", "expiry": "2026-10-06", "legs": PCS}).json()
+    i = card["card_log_id"]
+    assert _card_forecasts(i) == [(f"card:{i}:0:rn", "card_pnl"), (f"card:{i}:0:rw", "card_pnl")]
+    with session_scope() as s:
+        assert cf.record_pending(s, card_log_ids=[i]) == 0  # already recorded: the hourly step skips it
+    sug = client.get("/api/fno/NIFTY/suggest").json()
+    assert _card_forecasts(sug["card_log_id"]) == []  # a GET never writes a forecast
+
+
+def test_a_failed_post_time_recording_still_serves_the_card_376(client, monkeypatch):
+    from finresearch.fnobook import card_forecasts as cf
+
+    def boom(s, card_log_ids=None):
+        raise RuntimeError("recording failed")
+
+    monkeypatch.setattr(cf, "record_pending", boom)
+    _profile("1000000")
+    r = client.post("/api/fno/plan", json={"symbol": "NIFTY", "expiry": "2026-10-06", "legs": PCS})
+    assert r.status_code == 200 and _card_forecasts(r.json()["card_log_id"]) == []

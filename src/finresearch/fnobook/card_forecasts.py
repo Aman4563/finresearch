@@ -195,11 +195,11 @@ def _cards(kind: str, response: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
-def record_pending(s: Session) -> int:
+def record_pending(s: Session, card_log_ids: list[int] | None = None) -> int:
     """Record every card_log card that has no forecast yet: one forecast per model (the real-world PoP under the plan
     card's method, the risk-neutral PoP as a benchmark), keyed on the card so nothing is ever replaced. Returns the
-    number of forecasts written. Runs from the monitor's forecast step and `finresearch forecasts cards`, never in a
-    GET (the suggest endpoint is one)."""
+    number of forecasts written. Runs from the monitor's forecast step, `finresearch forecasts cards` and, for its own
+    row only (`card_log_ids`), POST /api/fno/plan (addendum B1.4); never in a GET (the suggest endpoint is one)."""
     from finresearch.signals.tradeplan import PLAN_METHOD
 
     recorded = select(Forecast.id).where(Forecast.source == literal(SOURCE) + cast(CardLog.id, Text)).exists()
@@ -209,6 +209,8 @@ def record_pending(s: Session) -> int:
     )
     q = (select(CardLog.id, CardLog.kind, CardLog.symbol, CardLog.created_at, CardLog.response)
          .where(CardLog.kind.in_(("plan", "suggest")), has_legs, ~recorded).order_by(CardLog.id))  # fmt: skip
+    if card_log_ids is not None:
+        q = q.where(CardLog.id.in_(card_log_ids))
     n = 0
     for row in s.execute(q).all():
         for i, c in enumerate(_cards(row.kind, row.response)):

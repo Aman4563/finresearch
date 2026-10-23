@@ -1161,6 +1161,47 @@ def forecasts_cards() -> None:
     console.print(f"{n} card forecast(s) recorded")
 
 
+@forecasts_app.command("panel")
+def forecasts_panel() -> None:
+    """Log the fixed probability panel for every stored F&O session not yet logged, then resolve the panel rows whose
+    expiry has settled (#376 (b); the monitor also does this hourly). Reads the stored bhavcopy only."""
+    from finresearch.db import session_scope
+    from finresearch.fincalc.dates import now_ist
+    from finresearch.fnobook import card_forecasts
+    from finresearch.signals import prob_panel
+
+    with session_scope() as s:
+        n = prob_panel.record_pending(s, card_forecasts.history())
+    with session_scope() as s:
+        got = prob_panel.resolve_due(s, card_forecasts.history(), now_ist())
+    console.print(
+        f"{n} panel row(s) logged; resolved {got['resolved']}, void {got['void']}, waiting {got['open']}"
+    )
+
+
+@forecasts_app.command("card-report")
+def forecasts_card_report() -> None:
+    """The card ledger's registered scoring report (#376; evals/experiments/card_ledger), read only: the two primary
+    statistics before and after registration, and the override rate. The full report: GET /api/fno/card-ledger."""
+    from finresearch.db import session_scope
+    from finresearch.fnobook import card_report
+
+    with session_scope() as s:
+        rep = card_report.report(s)
+
+    def f(x: object, d: int = 3) -> str:
+        return "unknown" if x is None else f"{x:.{d}f}" if isinstance(x, float) else str(x)
+
+    for half in ("before", "after", "pooled"):
+        h = rep[half]
+        console.print(f"{half}: {h['events']} resolved card(s), {h['independent']} independent; "
+                      f"BSS vs risk-neutral {f(h['bss']['bss'])} (n {h['bss']['n']}); cohort delta "
+                      f"{f(h['cohort']['delta'], 2)} per set, clustered t {f(h['cohort']['t'], 2)}")  # fmt: skip
+    o = rep["overrides"]
+    console.print(f"overrides: {o['overrides']} of {o['decisions']} recorded decisions (rate {f(o['rate'])})")
+    console.print(f"no calibration claim below {rep['claim_min']} independent events per symbol")
+
+
 @forecasts_app.command("resolve")
 def forecasts_resolve(
     recheck: bool = typer.Option(
