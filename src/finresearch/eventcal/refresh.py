@@ -67,6 +67,9 @@ class Known:
 
     urls: frozenset[str]
     covered: dict[str, date]  # type -> the furthest coverage `through`
+    standing: dict[str, dict[date, str]] = field(
+        default_factory=dict
+    )  # type -> {day: title}, rows not withdrawn
 
 
 Reader = Callable[[Known, datetime], Awaitable[Found]]
@@ -90,7 +93,11 @@ def known(s: Session) -> Known:
     ):
         urls.add(url)
         covered[kind] = max(covered.get(kind, through), through)
-    return Known(urls=frozenset(urls), covered=covered)
+    standing: dict[str, dict[date, str]] = {}
+    for kind, day, title in s.execute(select(CalendarEvent.type, CalendarEvent.day, CalendarEvent.title)
+                                      .where(CalendarEvent.withdrawn_since.is_(None))):  # fmt: skip
+        standing.setdefault(kind, {})[day] = title
+    return Known(urls=frozenset(urls), covered=covered, standing=standing)
 
 
 def _withdraw(s: Session, kind: str, scope: str, now: datetime, keep: set[date], lo: date, hi: date) -> int:
