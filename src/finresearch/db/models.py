@@ -2278,3 +2278,52 @@ class OptPanelFileDay(Base):
     attempts: Mapped[int] = mapped_column(Integer, default=1)
     error: Mapped[str | None] = mapped_column(String(300))
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class CorpAction(Base):
+    """The per-stock corporate-action factor history (#369 slice 2, refseries.corp_actions): one row per exchange
+    action (source nse / bse) or symbol change (source nse_symchg, symbol = the old symbol). `price_factor` f is from
+    fincalc.corporate_actions.action_terms: status known (from the terms), none (no price effect, f = 1: a dividend, a
+    meeting) or unknown (NULL, `reason` says why: never a silent 1). Cumulative factors are computed on read."""
+
+    __tablename__ = "corp_action"
+    __table_args__ = (
+        UniqueConstraint("source", "symbol", "ex_date", "subject_key"),
+        Index("ix_corp_action_symbol_ex", "symbol", "ex_date"),
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    source: Mapped[str] = mapped_column(String(12))
+    symbol: Mapped[str] = mapped_column(String(30))
+    ex_date: Mapped[date] = mapped_column(Date)
+    record_date: Mapped[date | None] = mapped_column(Date)
+    subject: Mapped[str] = mapped_column(Text)
+    subject_key: Mapped[str] = mapped_column(
+        String(300)
+    )  # the lower-cased, space-collapsed subject (NSE repeats rows)
+    isin: Mapped[str | None] = mapped_column(String(12))
+    face_value: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
+    kind: Mapped[str] = mapped_column(String(60))
+    status: Mapped[str] = mapped_column(String(10))
+    price_factor: Mapped[Decimal | None] = mapped_column(Numeric(24, 12))
+    share_factor: Mapped[Decimal | None] = mapped_column(Numeric(24, 12))
+    dividend: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    reason: Mapped[str | None] = mapped_column(String(300))
+    terms: Mapped[dict[str, Any]] = mapped_column(default=dict)
+    source_url: Mapped[str | None] = mapped_column(String(300))
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class CorpActionFetch(Base):
+    """The corporate-action download manifest (#369 slice 2): one row per (source, symbol) tried. status loaded /
+    failed; `earliest_ex` is the oldest ex-date the exchange returned (its history depth is not documented)."""
+
+    __tablename__ = "corp_action_fetch"
+    source: Mapped[str] = mapped_column(String(12), primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(30), primary_key=True)
+    status: Mapped[str] = mapped_column(String(10))
+    url: Mapped[str | None] = mapped_column(String(300))
+    rows: Mapped[int | None] = mapped_column(Integer)
+    earliest_ex: Mapped[date | None] = mapped_column(Date)
+    attempts: Mapped[int] = mapped_column(Integer, default=1)
+    error: Mapped[str | None] = mapped_column(String(300))
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

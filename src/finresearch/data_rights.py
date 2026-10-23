@@ -102,6 +102,20 @@ PENDING: dict[str, str] = {
     # that built the collector; the decision is the owner's.
     "fii_stats": f"{_NSE_TERMS}: automated collection prohibited; a new dataset (#371, one .xls a day, ~2,900 "
     "files 2015-2026). Owner decision needed (#371)",
+    # NSE's per-symbol corporate actions (/api/corporates-corporateActions with from_date/to_date) for the stored
+    # factor history (#369 slice 2, refseries.corp_actions): one request per F&O stock underlying, ~300 symbols once,
+    # then only new symbols. The monitor's per-symbol fetch for watched stocks predates #362 and is not a backfill.
+    # Same NSE website terms as above (not re-read for this dataset): no systematic or automated collection.
+    "nse_corp_actions": f"{_NSE_TERMS}: automated collection prohibited; a new backfill (#369, ~300 per-symbol "
+    "requests once). Owner decision needed (#369)",
+    # NSE's symbol-change file (content/equities/symbolchange.csv on nsearchives [U: path as recalled]): one file, to
+    # join old and new F&O symbols (#369). Same terms as above.
+    "nse_symbol_change": f"{_NSE_TERMS}: automated collection prohibited; one file (#369). Owner decision needed "
+    "(#369)",
+    # BSE's corporate actions (adapters.bse_equity) as a factor source: BSE's terms of use were not read for any
+    # decision in this repo. The terms parser reads BSE purposes offline; no BSE backfill exists (#369).
+    "bse_corp_actions": "BSE terms of use not read: no BSE corporate-action backfill until the owner reads and decides "
+    "(#369)",
 }
 
 

@@ -2498,6 +2498,64 @@ def equity_backfill(
     console.print_json(json.dumps(res, default=str))
 
 
+@equity_app.command("actions-backfill")
+def equity_actions_backfill(
+    symbol: list[str] = typer.Option(
+        None, "--symbol", help="Only these symbols (default: every F&O stock underlying)"
+    ),
+    start: str = typer.Option("2008-01-01", "--from", help="Earliest ex-date asked for"),
+    delay: float = typer.Option(
+        2.0, min=0.0, help="Extra seconds between requests, on top of the shared NSE limit"
+    ),
+    refresh: bool = typer.Option(
+        False, help="Re-fetch symbols already loaded (new actions since the last run)"
+    ),
+) -> None:
+    """Download NSE's corporate actions per F&O stock into the factor history (#369): one request per symbol.
+    Resumable (loaded symbols are skipped); stops by itself between 09:00 and 16:00 IST on weekdays and after two
+    refusals (403/429). Needs the owner's data-rights decision "nse_corp_actions" (#362)."""
+    from datetime import date as _date
+
+    from finresearch.data_rights import NoDecision
+    from finresearch.refseries import corp_actions as ca
+
+    try:
+        res = asyncio.run(
+            ca.backfill(symbol or None, start=_date.fromisoformat(start), pause=delay, refresh=refresh)
+        )
+    except NoDecision as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1) from e
+    console.print_json(json.dumps(res, default=str))
+
+
+@equity_app.command("actions-rebuild")
+def equity_actions_rebuild() -> None:
+    """Re-derive every stored action's factor (no network): after a parser change, or once the equity_eod closes a
+    rights issue is priced from are loaded."""
+    from finresearch.db import session_scope
+    from finresearch.refseries import corp_actions as ca
+
+    with session_scope() as s:
+        n = ca.rebuild(s)
+    console.print(f"{n} changed")
+
+
+@equity_app.command("symbol-changes")
+def equity_symbol_changes() -> None:
+    """Download NSE's symbol-change file (one request) so old F&O symbols share their new symbol's factor history.
+    Needs the owner's data-rights decision "nse_symbol_change" (#362)."""
+    from finresearch.data_rights import NoDecision
+    from finresearch.refseries import corp_actions as ca
+
+    try:
+        res = asyncio.run(ca.fetch_symbol_changes())
+    except NoDecision as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1) from e
+    console.print_json(json.dumps(res, default=str))
+
+
 @audit_app.command("equity-eod")
 def audit_equity_eod(
     sample: int = typer.Option(

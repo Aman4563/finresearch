@@ -167,6 +167,9 @@ uv run finresearch rates backfill --from 2022-01-01   # FBIL G-sec par curve, T-
 uv run finresearch audit rates                     # 3-month par-curve rate vs FBIL's 3-month T-bill, 15 bp (no network)
 uv run finresearch equity backfill --from 2025-09-01  # NSE's full equity bhavcopy: closes, delivery; one file a day (#373)
 uv run finresearch audit equity-eod --sample 50    # stored closes vs NSE's history bar on 50 random stock-days (50 requests)
+uv run finresearch equity actions-backfill         # NSE corporate actions per F&O stock -> factor history (#369; needs the nse_corp_actions decision)
+uv run finresearch equity symbol-changes           # NSE's symbol-change file (one request; needs the nse_symbol_change decision)
+uv run finresearch equity actions-rebuild          # re-derive stored factors (rights need the equity_eod cum close); no network
 uv run finresearch dq run                          # data-quality checks now (the monitor runs them 21:00 and 08:00 IST, #368)
 uv run finresearch dq replay --from 2024-01-01 --to 2026-10-22  # content checks over stored history, read only
 uv run finresearch events seed                     # load the curated event calendar (RBI MPC, Budgets, 2024 election, FOMC; #367)
