@@ -110,7 +110,7 @@ _SLAB = ("NSE's first-slab rate (the turnover slab a retail broker's clients pay
          "member's turnover above it)")  # fmt: skip
 _IPFT = "plus NSE's IPFT contribution (Rs 50/crore of options premium, Rs 10/crore of futures, FA/56129)"
 _MH_STAMP = ("Maharashtra's rate, the owner's choice of 23-Oct-2026 (#471: Maharashtra, NSE's home state; before "
-             "1-Jul-2020 stamp duty was the client's state's, NSE's member-compliance page): 20 paise per Rs 10,000 "
+             f"1-Jul-2020 stamp duty was the client's state's, {NSE_STAMP}): 20 paise per Rs 10,000 "
              "(0.002 %) on F&O trades, Bombay Stamp Act Art. 51A(c) as inserted by Maharashtra Ordinance No. II of "
              "2005 (7-May-2005, in force at once), read from a third-party copy of the ordinance; the 'or part "
              "thereof' rounding is not modelled; later Maharashtra amendments up to 2020 were not checked.")  # fmt: skip
