@@ -11,6 +11,7 @@ from sqlalchemy import text
 from test_book_scenarios_api import (  # noqa: F401
     NOW,
     VOLS,
+    B,
     F,
     R,
     Sources,
@@ -74,7 +75,7 @@ def test_the_view_prices_a_fall_at_the_band_s_upper_end_and_shows_the_estimate(b
     assert v["grid"]["complete"], v["grid"]["reasons"]
     cell = next(c for c in v["grid"]["cells"] if (c["move"], c["dvol"], c["horizon"]) == (-0.05, 0.0, "1d"))
     f1, dv = (
-        F * (1 - 1.3 * 0.05) * math.exp(-R * (T - T1)),
+        F * (1 - 1.3 * 0.05) * math.exp(-B * (T - T1)),  # #480: rolled at the expiry's carry B
         1.04 * 6.5 / 100,
     )  # β_hi x 5 % fall, +6.76 vol pts
     want = sum(q * (_b76("call", f1, k, T1, VOLS[k] + dv) - _b76("call", F, k, T, VOLS[k]))

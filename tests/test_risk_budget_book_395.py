@@ -11,6 +11,7 @@ import pytest
 from test_book_scenarios_api import (  # noqa: F401
     NOW,
     VOLS,
+    B,
     F,
     R,
     Sources,
@@ -34,7 +35,7 @@ def test_the_open_books_shock_pnl_is_priced_on_its_chain_395():
     assert got is not None, notes
     t1 = 14 / 365  # Mon 12-Oct 11:00 → Tue 13-Oct 15:30, which is 14 days before 27-Oct 15:30
     for m in SHOCK_MOVES:
-        f1 = F * (1 + m) * math.exp(-R * (T - t1))
+        f1 = F * (1 + m) * math.exp(-B * (T - t1))  # #480: rolled at the expiry's carry B, not the rate
         dv = (-1.04 * m * 100 if m < 0 else -0.76 * m * 100) / 100
         want = sum(q * (_b76("call", f1, k, t1, VOLS[k] + dv) - _b76("call", F, k, T, VOLS[k]))
                    for k, q in ((25000, 75), (25200, -75)))  # fmt: skip

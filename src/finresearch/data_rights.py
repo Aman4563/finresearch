@@ -141,6 +141,32 @@ PENDING: dict[str, str] = {
     # decision in this repo. The terms parser reads BSE purposes offline; no BSE backfill exists (#369).
     "bse_corp_actions": "BSE terms of use not read: no BSE corporate-action backfill until the owner reads and decides "
     "(#369)",
+    # The event calendar's nightly refresh (#367, eventcal.rbi): RBI's press-release month listing (an ASP.NET
+    # postback) and its MPC schedule / rescheduling releases, about 3-5 requests a night. RBI's disclaimer
+    # (https://www.rbi.org.in/Scripts/Disclaimer.aspx, read 23-Oct-2026): contents "as is" without warranties; RBI
+    # "reserves all right to deny or restrict access"; no licence or reuse terms stated; the press-release RSS says
+    # "Copyright Reserve Bank of India. All Rights Reserved."
+    "rbi_mpc_schedule": "RBI disclaimer read 23-Oct-2026: 'as is', RBI may deny or restrict access, no reuse terms; "
+    "nightly read of the press-release listing for MPC schedules (#367). Owner decision needed (#367)",
+    # The event calendar's nightly refresh (#367, eventcal.mospi): MoSPI's Advance Release Calendar PDF and its
+    # pointer on www.mospi.gov.in/api/, about 2 requests a night. A different dataset and host from the CPI series
+    # (mospi_cpi, api.mospi.gov.in); no licence text could be read (mospi.gov.in's policy pages need JavaScript).
+    "mospi_release_calendar": "MoSPI Advance Release Calendar (www.mospi.gov.in), read 23-Oct-2026: no licence "
+    "text readable; CPI and GDP release dates only (#367). Owner decision needed (#367)",
+    # The event calendar's nightly refresh (#367, eventcal.nifty_indices): NSE Indices Ltd's press-release listing
+    # (www.niftyindices.com/press-release, one ~660 KB page a night, titles only, no PDF fetched) for index
+    # constituent changes. NSE Indices' own terms (https://www.niftyindices.com/terms-of-use, read 23-Oct-2026), not
+    # NSE's: "You may not conduct any systematic or automated data collection activities (including scraping, data
+    # mining, data extraction and data harvesting) on or in relation to our website without our express written
+    # consent"; "personal, non-commercial use only"; no material may be copied, reproduced or distributed.
+    "nifty_indices_press": "NSE Indices terms of use read 23-Oct-2026: automated collection prohibited without "
+    "express written consent; personal, non-commercial use only; one listing page a night for index rebalance "
+    "dates (#367). Owner decision needed (#367)",
+    # The event calendar's nightly refresh (#367, eventcal.nse): NSE's circulars listing (/api/circulars, one request
+    # a night for the last 10 days), read only to report F&O expiry-day revisions; no circular body is downloaded
+    # and nothing is stored. Same NSE website terms as above (not re-read for this dataset).
+    "nse_circulars": f"{_NSE_TERMS}: automated collection prohibited (not re-read for it); one circulars-listing "
+    "request a night, expiry-day notices reported, nothing stored (#367). Owner decision needed (#367)",
 }
 
 

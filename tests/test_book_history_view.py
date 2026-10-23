@@ -10,6 +10,7 @@ import pytest
 from test_book_scenarios_api import (  # noqa: F401
     NOW,
     VOLS,
+    B,
     F,
     R,
     Sources,
@@ -53,8 +54,9 @@ def stored(monkeypatch):
 
 
 def _spread_pnl(r: float) -> float:
-    """The 25000/25200 call spread one session ahead with the forward moved by e^r and rolled, IVs unchanged."""
-    f1 = F * math.exp(r) * math.exp(-R * (T - T1))
+    """The 25000/25200 call spread one session ahead with the forward moved by e^r and rolled at the expiry's carry B
+    (#480), IVs unchanged."""
+    f1 = F * math.exp(r) * math.exp(-B * (T - T1))
     return sum(q * (_b76("call", f1, k, T1, VOLS[k]) - _b76("call", F, k, T, VOLS[k]))
                for k, q in ((25000, 75), (25200, -75)))  # fmt: skip
 
