@@ -24,7 +24,9 @@ log = logging.getLogger(__name__)
 
 MTM_EVERY = timedelta(minutes=5)
 SETTLE_RETRY = timedelta(hours=1)
-RATE = 0.065  # the greeks' rate when none is passed (signals.fno.RATE)
+# #366/#385: no fixed rate. The greeks use FBIL's par yield at each expiry (signals.rates.risk_free, as the plan card
+# does), or a rate the caller passes; every answer says which (the group's `rate`), and its last fallback is the
+# labelled 6.5 %.
 GROWW_LTP = "Groww LTP"
 _LAST: dict[str, datetime] = {}
 
@@ -45,6 +47,15 @@ def _phase(now: datetime) -> str:
     from finresearch.adapters.groww_market import phase
 
     return phase(now)
+
+
+async def _rate(t: float | None, rate: float | None) -> dict[str, Any]:
+    """The rate for a T: the caller's, else FBIL's par yield at T (signals.rates.risk_free, labelled fallbacks)."""
+    from finresearch.signals import rates
+
+    if rate is not None:
+        return rates.given(rate, "the rate passed by the caller")
+    return await rates.risk_free(t or 0.0)
 
 
 def _t(expiry: date, now: datetime) -> float | None:
@@ -141,7 +152,7 @@ def _f(v: Any) -> float | None:
         return None
 
 
-async def positions_view(now: datetime, *, rate: float = RATE, market: Any = None, sources: Any = None,
+async def positions_view(now: datetime, *, rate: float | None = None, market: Any = None, sources: Any = None,
                          stored: dict[str, Any] | None = None) -> dict[str, Any]:  # fmt: skip
     """The user's F&O positions grouped by underlying + expiry, priced live (see `fnobook.positions`)."""
     market, sources = market or _market(), sources or _sources()
@@ -171,10 +182,11 @@ async def positions_view(now: datetime, *, rate: float = RATE, market: Any = Non
                       "Unrealised P&L = (LTP − Groww's net average price) × signed quantity [U: whether net_price "
                       "is the open quantity's average is not stated in Groww's docs].",
                       "Greeks: Black-Scholes at the option chain's IV for the strike (else the IV implied by the "
-                      "LTP), per position (× signed units)."]}  # fmt: skip
+                      "LTP), per position (× signed units), at each group's `rate` (FBIL's G-sec par yield at the "
+                      "expiry; a fallback says so)."]}  # fmt: skip
 
 
-async def _group(key: str, gl: list[dict[str, Any]], ltp: dict[str, float], now: datetime, rate: float,
+async def _group(key: str, gl: list[dict[str, Any]], ltp: dict[str, float], now: datetime, rate: float | None,
                  sources: Any) -> dict[str, Any]:  # fmt: skip
     today = to_ist(now).date()
     first = gl[0]
@@ -183,6 +195,8 @@ async def _group(key: str, gl: list[dict[str, Any]], ltp: dict[str, float], now:
         chain = await _chain(sources, first["underlying"], first["expiry"])
     spot = _f(getattr(chain, "underlying", None)) if chain is not None else None
     t = _t(first["expiry"], now) if first["contract_known"] else None
+    rinfo = await _rate(t, rate) if t is not None else None
+    rate = None if rinfo is None else rinfo["rate"]
     tot = {"delta": 0.0, "gamma": 0.0, "vega": 0.0, "theta": 0.0}
     greeks_known, pnl, pnl_known = True, 0.0, True
     for x in gl:
@@ -194,7 +208,7 @@ async def _group(key: str, gl: list[dict[str, Any]], ltp: dict[str, float], now:
         else:
             pnl += x["unrealised_pnl"]
         g = None
-        if x["contract_known"] and x["qty"] is not None and t is not None:
+        if x["contract_known"] and x["qty"] is not None and t is not None and rate is not None:
             iv = None
             if x["right"] != "future":
                 iv = pos.chain_iv(chain, x["right"], x["strike"]) or pos.implied(x["right"], x["ltp"], spot, x["strike"],
@@ -215,7 +229,8 @@ async def _group(key: str, gl: list[dict[str, Any]], ltp: dict[str, float], now:
             "chain_source": getattr(chain, "source", None), "legs": [{**x, "expiry": x["expiry"].isoformat()
             if x["expiry"] else None} for x in gl], "unrealised_pnl": round(pnl, 2) if pnl_known else None,
             "net_greeks": {k: round(v, 4) for k, v in tot.items()} if greeks_known else None,
-            "max_loss": None if ml is None else round(ml, 2), "max_loss_note": why or None}  # fmt: skip
+            "max_loss": None if ml is None else round(ml, 2), "max_loss_note": why or None,
+            "rate": rinfo}  # fmt: skip
 
 
 # --------------------------------------------------------------------------- paper entries and exits
@@ -251,7 +266,7 @@ async def quotes(symbol: str, expiry: date, legs: list[tuple[str, float]], now: 
     return out, chain
 
 
-def paper_short_deltas(st: Any, chain: Any, today: date, rate: float = RATE,
+def paper_short_deltas(st: Any, chain: Any, today: date, rate: float,
                        now: datetime | None = None) -> list[float | None]:  # fmt: skip
     """|delta| inputs for the delta rule: one per short option leg, None when there is no spot or IV, or the contract
     has expired. T from `now` (#359), else from 15:30 IST on `today`."""
@@ -342,9 +357,10 @@ async def settle_step(now: datetime, sources: Any) -> dict[str, int]:
     return out
 
 
-async def market_pass(now: datetime, market: Any, sources: Any, rate: float = RATE) -> dict[str, int]:
+async def market_pass(now: datetime, market: Any, sources: Any, rate: float | None = None) -> dict[str, int]:
     """Mark open paper trades (Groww LTP batch; the chain's last price for legs Groww did not price) and check every
-    armed exit rule. One rule check per pass; a rule that fires records one alert and never fires again."""
+    armed exit rule. One rule check per pass; a rule that fires records one alert and never fires again. The delta
+    rule's greeks use `rate`, else FBIL's par yield at each trade's expiry (`_rate`)."""
     from finresearch.db import session_scope
     from finresearch.db.models import FnoExitRule, PaperStrategy
 
@@ -366,6 +382,8 @@ async def market_pass(now: datetime, market: Any, sources: Any, rate: float = RA
             chains[(sym, exp)] = await _chain(sources, sym, exp)
         return chains[(sym, exp)]
 
+    rates_at = {sid: (await _rate(_t(exp, now), rate))["rate"] for sid, (_, exp) in heads.items()
+                if f"paper:{sid}" in need}  # fmt: skip
     marks: dict[int, tuple[dict[int, float], str]] = {}
     for sid, ls in legs.items():
         prices, srcs = {}, set()
@@ -392,7 +410,7 @@ async def market_pass(now: datetime, market: Any, sources: Any, rate: float = RA
                 snaps[key] = exits.Snapshot(label=f"Paper #{sid} {st.symbol} {st.expiry:%d-%b}", symbol=st.symbol,
                                             expiry=st.expiry, today=today, gross_pnl=_f(st.mtm_gross),
                                             base=abs(book.pp.net_premium(book.legs_of(st))) or None,
-                                            short_deltas=paper_short_deltas(st, chains.get(heads[sid]), today, rate, now=now),
+                                            short_deltas=paper_short_deltas(st, chains.get(heads[sid]), today, rates_at[sid], now=now),
                                             path=f"/fno/paper#{sid}")  # fmt: skip
     if any(k.startswith("real:") for k in need):
         snaps |= await real_snapshots(now, market, sources, rate)
@@ -407,7 +425,7 @@ async def market_pass(now: datetime, market: Any, sources: Any, rate: float = RA
 
 
 async def real_snapshots(
-    now: datetime, market: Any, sources: Any, rate: float = RATE
+    now: datetime, market: Any, sources: Any, rate: float | None = None
 ) -> dict[str, exits.Snapshot]:
     """Exit-rule snapshots of the user's Groww F&O position groups (underlying + expiry)."""
     view = await positions_view(now, rate=rate, market=market, sources=sources)

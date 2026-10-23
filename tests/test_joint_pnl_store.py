@@ -265,3 +265,31 @@ def test_forward_status_before_20_usable_days_is_not_evaluable_never_a_pass(db):
     with session_scope() as s:
         st = jl.forward_status(s, date(2026, 12, 31))["stored"]
     assert st["usable_qualifying"] == 19 and st["r2"] is None and st["passed"] is None
+
+
+def test_the_registered_forward_test_keeps_its_fixed_rate_when_a_curve_is_stored(db):
+    """#366/#385: the dated FBIL rate does not reach the registered joint_risk forward test (PREREG.md): its model
+    term stays at fincalc.joint_pnl.RATE (6.5 %) even with a stored curve (3 % here, which would move the roll)."""
+    from sqlalchemy import text
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import RateCurve
+    from finresearch.fincalc import joint_pnl as jp
+    from finresearch.fincalc.dates import session_clock, years_to_expiry
+
+    _setup()
+    with session_scope() as s:
+        s.execute(text("TRUNCATE rate_curve"))
+        for d in (D0 - timedelta(days=1), D0):
+            s.add(RateCurve(series="gsec_par", day=d, tenor="0.25Y", tenor_years=D("0.25"), rate=D("0.03")))
+    try:
+        _record()
+        r = _row()
+    finally:
+        with session_scope() as s:
+            s.execute(text("TRUNCATE rate_curve"))
+    roll = math.exp(
+        -jp.RATE * (years_to_expiry(EXP, session_clock(D0)) - years_to_expiry(EXP, session_clock(D1)))
+    )
+    assert float(r.fno_model) == pytest.approx(75 * (25100 * (24500 / 25000) * roll - 25100), abs=0.01)
+    assert r.snapshot_reasons == [] and not any("rate:" in n for n in r.notes or [])

@@ -64,7 +64,9 @@ def _shock():
 
 def test_the_shock_reprices_tonights_marks_on_the_same_expiry_future(clean) -> None:
     _add(_bhav("XX", 0, 24050.0), _mark(1, 23800, -75, 60.0))
-    got, _ = _shock()
+    got, notes = _shock()
+    # #366/#385: no stored FBIL curve, so the labelled 6.5 % fallback, said in the notes
+    assert any(n.startswith("rate: fallback 6.5 %, no curve") for n in notes)
     m = bs.Market(session_clock(DAY), 0.065, {("NIFTY", EXP): 24050.0})
     leg = bs.BookLeg("NIFTY", EXP, "put", 23800.0, -75, 60.0, "settle")
     want, _ = bs.shock_pnls([leg], m, bs.horizon_clock(session_clock(DAY), 1, set()))
@@ -116,3 +118,37 @@ def _bhav_sym(sym: str, settle: float):
 
     return FnoBhav(day=DAY, symbol=sym, instrument="STF", expiry=EXP, strike=D(0), option_type="XX",
                    settle=D(str(settle)), close=D(str(settle)))  # fmt: skip
+
+
+def test_the_shock_uses_the_stored_fbil_curve_published_before_the_day(clean) -> None:
+    """#366/#385: the previous day's stored curve (FBIL publishes in the evening; the clock is 15:30 IST), 6.00 %
+    half-yearly at 0.25 years -> r = 2 ln(1.03); the day's own curve (7 %) is not used."""
+    from finresearch.db import session_scope
+    from finresearch.db.models import RateCurve
+
+    with session_scope() as s:
+        s.execute(text("TRUNCATE rate_curve"))
+        s.add(
+            RateCurve(
+                series="gsec_par",
+                day=date(2026, 10, 20),
+                tenor="0.25Y",
+                tenor_years=D("0.25"),
+                rate=D("0.06"),
+            )
+        )
+        s.add(RateCurve(series="gsec_par", day=DAY, tenor="0.25Y", tenor_years=D("0.25"), rate=D("0.07")))
+    try:
+        _add(_bhav("CE", 24000, 150.0), _bhav("PE", 24000, 120.0), _mark(1, 23800, -75, 60.0))
+        got, notes = _shock()
+        r = 2 * math.log(1.03)
+        t = (session_clock(EXP) - session_clock(DAY)).total_seconds() / (365 * 86400)
+        f = 24000 + math.exp(r * t) * (150.0 - 120.0)
+        m = bs.Market(session_clock(DAY), r, {("NIFTY", EXP): f})
+        want, _ = bs.shock_pnls([bs.BookLeg("NIFTY", EXP, "put", 23800.0, -75, 60.0, "settle")], m,
+                                bs.horizon_clock(session_clock(DAY), 1, set()))  # fmt: skip
+        assert got == pytest.approx(want, rel=1e-9)
+        assert any("curve of 2026-10-20" in n and n.startswith("rate: FBIL G-sec par yield") for n in notes)
+    finally:
+        with session_scope() as s:
+            s.execute(text("TRUNCATE rate_curve"))

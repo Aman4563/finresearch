@@ -1,5 +1,7 @@
 // Shapes of the F&O book API (#308): finresearch.api.fno_book. Nothing here places an order.
 
+import type { RateInfo } from "./model";
+
 export type Greeks = { delta: number; gamma: number; vega: number; theta: number };
 
 export type PositionLeg = {
@@ -13,6 +15,8 @@ export type PositionGroup = {
   key: string; underlying: string | null; expiry: string | null; days_to_expiry: number | null; spot: number | null;
   chain_source: string | null; legs: PositionLeg[]; unrealised_pnl: number | null; net_greeks: Greeks | null;
   max_loss: number | null; max_loss_note: string | null;
+  /** #366/#385: the rate the group's greeks used (null when its expiry is unknown or past) */
+  rate?: RateInfo | null;
 };
 
 export type PositionsView = {

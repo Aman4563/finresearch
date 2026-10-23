@@ -391,7 +391,8 @@ const scWorst = (k: number) => Array.from({ length: 10 }, (_, i) => ({ start: `2
 const VAULT = "waits for the vault's data audit (#394, #365): 2008-2021 sessions live only in the sealed vault database, never in the app's store";
 
 export const SCENARIOS: BookScenarios = {
-  as_of: "2026-10-13T11:00:00+05:30", rate: 0.065, notes: ["Groww is not connected: only paper legs are in the book."],
+  as_of: "2026-10-13T11:00:00+05:30", rate: 0.0527, notes: ["Groww is not connected: only paper legs are in the book."],
+  rate_info: { rate: 0.0527, par_yield: 0.0534, tenor_years: 0.25, as_of: "2026-10-12", fallback: false, known: true, source: "FBIL G-sec par yield, 0.25-year point, 12-Oct-2026", note: "5.34 % half-yearly" },
   legs: [
     { underlying: "NIFTY", expiry: "2026-10-27", right: "call", strike: 25000, qty: 75, mark: 182.4, mark_kind: "mid", iv: 0.1402, forward: 24980, source: "paper #3", reason: null },
     { underlying: "NIFTY", expiry: "2026-10-27", right: "call", strike: 25200, qty: -75, mark: 104.9, mark_kind: "mid", iv: 0.135, forward: 24980, source: "paper #3", reason: null },

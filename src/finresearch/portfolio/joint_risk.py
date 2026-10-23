@@ -79,17 +79,22 @@ async def replay_moves(h: Any, fetch: Any, store: Any, today: date, *,
 
 async def book(now: datetime, *, sources: Any = None, rate: float | None = None,
                candidate: Sequence[bs.BookLeg] = ()) -> tuple[jr.Book, list[bs.BookLeg], list[str]]:  # fmt: skip
-    """The open book (None legs = unknown, with the reason) and `candidate` legs, all priced on today's chains."""
+    """The open book (None legs = unknown, with the reason) and `candidate` legs, all priced on today's chains, at
+    `rate`, else FBIL's par yield at the longest leg's tenor (fnobook.scenarios.live_rate, named in a "rate: " note)."""
     from finresearch.fnobook import scenarios as sc
     from finresearch.fnobook import service
 
     sources = sources or service._sources()
-    rate = sc.RATE if rate is None else rate
     paper = sc.paper_legs()
     real, why = await sc.groww_legs(to_ist(now).date())
     notes = [why] if why else []
     legs = [*paper, *(real or []), *candidate]
-    priced, m = (await sc._priced(legs, now, sources, rate))[:2] if legs else ([], bs.Market(now, rate, {}))
+    if legs:
+        rinfo = await sc.live_rate(legs, now, rate)
+        notes.append(sc.rate_note(rinfo))
+        priced, m = (await sc._priced(legs, now, sources, rinfo["rate"]))[:2]
+    else:  # nothing open: nothing is priced, so no rate is read
+        priced, m = [], bs.Market(now, rate or 0.0, {})
     n = len(priced) - len(candidate)
     b = jr.Book(priced[:n] if real is not None else None, m, None if real is not None else why)
     return b, priced[n:], notes

@@ -161,7 +161,7 @@ export function FundCategoryRankCard({ code }: { code: string }) {
             <p>
               <Badge tone="warn">Past returns</Badge>{" "}
               Funds with a shorter history are ranked only on the periods they cover (counts per column above). Sortino uses a minimum
-              acceptable return of {pctOf(d.mar ?? null, 1)} a year ({pctOf((d.mar ?? 0) / 12, 3)} a month). TER {d.ter_day ? `as of ${day(d.ter_day)}` : "unavailable"}{d.ter_error ? ` (${d.ter_error})` : ""}.
+              acceptable return of {pctOf(d.mar ?? null, 2)} a year ({pctOf((d.mar ?? 0) / 12, 3)} a month){d.mar_source ? `: ${d.mar_source.source}${d.mar_source.fallback ? ` — ${d.mar_source.note}` : ""}` : ""}. TER {d.ter_day ? `as of ${day(d.ter_day)}` : "unavailable"}{d.ter_error ? ` (${d.ter_error})` : ""}.
               {cat.raw_labels.length > 1 && <> AMFI headings grouped here: {cat.raw_labels.join("; ")}.</>}
             </p>
             <ul className="list-disc pl-4">{(d.caveats ?? []).map((c) => <li key={c}>{c}</li>)}</ul>
