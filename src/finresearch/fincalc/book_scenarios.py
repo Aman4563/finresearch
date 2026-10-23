@@ -318,17 +318,24 @@ def _side(ss: Sequence[LegState], m: Market, mu: float, dvol: float, at: datetim
 
 
 def _revalue(states: Sequence[LegState], m: Market, move: float, dvol: float, at: datetime, horizon: str,
-             response: bool) -> Cell:  # fmt: skip
-    """Per underlying, its legs at the worse of its beta band's two ends (lo x move, hi x move), summed."""
+             response: bool, own: Mapping[str, tuple[float, float]] | None = None) -> Cell:  # fmt: skip
+    """Per underlying, its legs at the worse of its beta band's two ends (lo x move, hi x move), summed. An
+    underlying in `own` ({UNDERLYING: (its own move, its own vol shift)}, historical scenarios) moves by that
+    instead and needs no beta."""
+    own = own or {}
     reasons = [s.reason for s in states if s.reason]
     groups: dict[str, list[LegState]] = {}
     for s in states:
         groups.setdefault(s.leg.underlying, []).append(s)
-    reasons += sorted({m.beta_reason(u) for u in groups if m.band(u) is None})
+    reasons += sorted({m.beta_reason(u) for u in groups if u.upper() not in own and m.band(u) is None})
     if reasons:
         return Cell(move, dvol, horizon, at, None, tuple(reasons))
     pnl, floored, intrinsic, ends = 0.0, 0, 0, []
     for u in sorted(groups):
+        if u.upper() in own:
+            p, fl, it = _side(groups[u], m, *own[u.upper()], at, response)
+            pnl, floored, intrinsic = pnl + p, floored + fl, intrinsic + it
+            continue
         lo, hi = m.band(u)  # type: ignore[misc]
         sides = [(_side(groups[u], m, hi * move, dvol, at, response), "hi")]
         if lo != hi:
