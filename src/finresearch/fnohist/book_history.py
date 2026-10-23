@@ -23,7 +23,9 @@ from finresearch.fincalc import risk_alerts as ra
 class History:
     series: dict[str, bh.Series] = field(default_factory=dict)  # absent = nothing stored
     gaps: list[float] = field(default_factory=list)  # NIFTY's overnight gaps, ln(open / previous close)
-    expiry_returns: list[float] = field(default_factory=list)  # NIFTY's close-to-close log moves on expiry days
+    expiry_returns: list[float] = field(
+        default_factory=list
+    )  # NIFTY's close-to-close log moves on expiry days
     span: tuple[date, date] | None = None  # NIFTY's first and last stored session
 
 

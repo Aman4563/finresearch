@@ -58,7 +58,9 @@ def _store(symbol: str, base: float, beta: float, ivs: bool = True) -> None:
                               close=Decimal(str(round(level * carry, 2))),
                               settle=Decimal(str(round(level * carry, 2)))))  # fmt: skip
             if ivs:
-                s.add(FnoIvEod(symbol=symbol, day=d, iv_30d=Decimal(str(12 + i * 0.1)), rate=Decimal("0.065")))
+                s.add(
+                    FnoIvEod(symbol=symbol, day=d, iv_30d=Decimal(str(12 + i * 0.1)), rate=Decimal("0.065"))
+                )
 
 
 def test_the_loader_reads_returns_within_one_contract_and_iv30(clean):

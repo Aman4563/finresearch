@@ -45,6 +45,16 @@ def marks(chain: Any) -> dict[tuple[str, float], tuple[float, str]]:
     return out
 
 
+def half_spreads(chain: Any) -> dict[tuple[str, float], float]:
+    """(ask - bid) / 2 of each two-sided quote of a chain (none for a one-sided or crossed quote)."""
+    out: dict[tuple[str, float], float] = {}
+    for r in chain.rows if chain is not None else []:
+        for right, q in (("call", r.call), ("put", r.put)):
+            if q is not None and q.bid and q.ask and float(q.bid) > 0 and float(q.ask) >= float(q.bid):
+                out[(right, float(r.strike))] = (float(q.ask) - float(q.bid)) / 2
+    return out
+
+
 def forward(chain: Any, now: datetime, rate: float) -> tuple[float | None, str]:
     """The parity forward of a chain and where it came from (or why it is unknown)."""
     if chain is None:
@@ -138,7 +148,8 @@ async def _priced(legs: list[bs.BookLeg], now: datetime, sources: Any, rate: flo
         (float(c.underlying) for (u, _), c in chains.items() if u == "NIFTY" and c and c.underlying), None
     )
     est = betas.read({x.underlying for x in legs}, to_ist(now).date()) if legs else {}
-    return priced, bs.Market(now, rate, {k: f for k, (f, _) in fws.items()}, est, nifty), fws
+    hs = {(u, e, right, k): h for (u, e), c in chains.items() for (right, k), h in half_spreads(c).items()}
+    return priced, bs.Market(now, rate, {k: f for k, (f, _) in fws.items()}, est, nifty), fws, hs
 
 
 async def book_shock(now: datetime, *, sources: Any = None, rate: float = RATE, holidays: set[date] | None = None,
@@ -185,7 +196,7 @@ async def view(now: datetime, *, sources: Any = None, capital: float | None = No
         notes.append(why)
     unknown_book = real is None
     legs += real or []
-    priced, m, fws = await _priced(legs, now, sources, rate)
+    priced, m, fws, hs = await _priced(legs, now, sources, rate)
     states = bs.price_legs(priced, m)
     ex, g = bs.exposures(priced, m), bs.grid(priced, m, holidays=holidays)
     reps = bs.replays(priced, m, holidays)
@@ -195,6 +206,10 @@ async def view(now: datetime, *, sources: Any = None, capital: float | None = No
                     g.flags)  # fmt: skip
     limit = bs.book_limit(capital) if capital else None
     rev = bs.reverse_stress(g, limit) if limit else []
+    from finresearch.fnobook import history_view as hv
+
+    hist = hv.history(priced, m, holidays, limit, extra)
+    liq = hv.liquidity(states, hs, extra)
     return {
         "as_of": to_ist(now).isoformat(), "rate": rate, "notes": notes,
         "legs": [{"underlying": s.leg.underlying, "expiry": s.leg.expiry.isoformat(), "right": s.leg.right,
@@ -222,6 +237,7 @@ async def view(now: datetime, *, sources: Any = None, capital: float | None = No
         "reverse": {"limit": limit, "reason": None if limit else "F&O capital is not set on the profile: no book limit",
                     "rows": [{"horizon": r.horizon, "complete": r.complete, "reasons": list(r.reasons),
                               "cell": None if r.cell is None else _cell(r.cell)} for r in rev]},
+        "history": hist, "liquidity": liq,
     }  # fmt: skip
 
 
