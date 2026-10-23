@@ -10,6 +10,7 @@ import { api, day, when } from "@/lib/api";
 import type { ExitRule, PaperBook, PositionGroup, PositionsView } from "./book-types";
 import { ExitRules } from "./exit-rules";
 import { Parts } from "./fit";
+import { rateLabel } from "./model";
 
 const rs = (x: number | null | undefined) => (x == null ? "unknown" : `${x < 0 ? "−" : x > 0 ? "+" : ""}${fmtINR(Math.abs(Math.round(x)))}`);
 const tone = (x: number | null | undefined) => (x == null ? "text-muted" : x > 0 ? "text-gain" : x < 0 ? "text-loss" : "");
@@ -24,6 +25,7 @@ function Group({ g, rules, onRules }: { g: PositionGroup; rules: ExitRule[]; onR
         <span className={cx("num text-xs text-muted", g.max_loss != null && "whitespace-nowrap")}>max loss {g.max_loss != null ? rs(g.max_loss) : g.max_loss_note ?? "unknown"}{g.max_loss != null && g.max_loss_note ? ` (${g.max_loss_note})` : ""}</span>
         {g.net_greeks && <span className="num text-xs text-muted"><Parts parts={[`Δ ${g.net_greeks.delta.toFixed(1)}`, `Θ/day ${g.net_greeks.theta.toFixed(0)}`, `vega ${g.net_greeks.vega.toFixed(0)}`]} /></span>}
       </div>
+      {g.rate && <p className="mt-1 text-[11px] text-muted [overflow-wrap:anywhere]">Greeks at rate {rateLabel(g.rate)}</p>}
       {/* the contract column stays in view while the numbers scroll sideways on a phone (#326) */}
       <div tabIndex={0} role="region" aria-label={`${g.underlying ?? "Unresolved"} legs`} className="-mx-3 mt-2 overflow-x-auto px-3">
         <table className="num w-full min-w-[560px] text-xs [&_td]:py-1 [&_td]:pr-3 [&_td]:whitespace-nowrap [&_th]:pr-3 [&_th]:text-left [&_th]:font-medium [&_th]:text-muted [&_tr>*:first-child]:sticky [&_tr>*:first-child]:left-0 [&_tr>*:first-child]:bg-card">

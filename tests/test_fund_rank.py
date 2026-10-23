@@ -94,7 +94,7 @@ def test_sortino_monthly_against_a_stated_mar_by_hand():
 def test_three_year_metrics_need_every_month_end():
     pts = const(0.01)
     pts[5] = None  # a month-end without a NAV (not priced)
-    m, rolls = R.fund_metrics(R.RankInput("1", "Gappy Fund", pts), R.MAR_DEFAULT)
+    m, rolls = R.fund_metrics(R.RankInput("1", "Gappy Fund", pts), Decimal("0.065"))
     assert rolls is None and m.values["sortino_3y"] is None and m.values["max_drawdown_3y"] is None
     assert "complete 3-year" in m.reasons["consistency_3y"]
     assert m.values["cagr_3y"] is not None  # point-to-point still works: both ends are there
@@ -114,7 +114,7 @@ def _category():
 
 
 def test_rank_category_ranks_percentiles_ties_and_short_history_by_hand():
-    res = R.rank_category(_category())
+    res = R.rank_category(_category(), Decimal("0.065"))
     by = {f["code"]: f for f in res["funds"]}
     assert res["size"] == 6
     # 1-year: 30-Sep-2025 -> 30-Sep-2026 is 365 days, so it is (1 + g) ** 12 - 1; the new fund has it too
@@ -149,7 +149,7 @@ def test_rank_category_ranks_percentiles_ties_and_short_history_by_hand():
 
 
 def test_a_metric_with_too_few_funds_is_not_ranked():
-    res = R.rank_category(_category()[:4])  # 4 funds < MIN_RANKED
+    res = R.rank_category(_category()[:4], Decimal("0.065"))  # 4 funds < MIN_RANKED
     assert res["ranked"]["cagr_1y"] is False and all(f["ranks"]["cagr_1y"] is None for f in res["funds"])
     assert all(f["values"]["consistency_3y"] is None for f in res["funds"])
 
@@ -233,7 +233,7 @@ def test_universe_keeps_one_direct_growth_row_per_scheme_and_maps_its_other_plan
 
 # --------------------------------------------------------------------------- compute, store, lookup
 @pytest.fixture
-def fake_amfi(monkeypatch):
+def fake_amfi(env, monkeypatch):  # env: compute() reads the stored FBIL curve for the MAR (#366/#385)
     """Ten flexi-cap funds across the two AMFI spellings with steady monthly growth (fund i: 0.3 % + 0.1 % x i a
     month), a regular plan, an index fund, and one fund launched after the as-of month-end."""
     cat_a, cat_b = "Equity Scheme - Flexi Cap Fund", "Equity Schemes - Flexi Cap Fund"
@@ -291,6 +291,35 @@ async def test_compute_ranks_from_month_end_snapshots_and_records_exclusions(fak
     assert FR.lookup(data, "200300")["status"] == "not_ranked"
     assert FR.lookup(data, "200200")["status"] == "excluded"
     assert FR.lookup(data, "999999")["status"] == "unknown"
+
+
+async def test_the_mar_is_fbils_dated_rate_at_the_as_of_month_end(env, fake_amfi, monkeypatch):
+    """#366/#385: the Sortino MAR is FBIL's 3-month G-sec par yield on the as-of month-end (30-Sep-2026), as an
+    effective annual rate (1 + y/2)^2 - 1 (portfolio.analytics' convention): 6.00 % half-yearly -> 6.09 % a year.
+    No curve: the labelled fallback 6.5 %."""
+    from sqlalchemy import text
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import RateCurve
+
+    with session_scope() as s:
+        s.execute(text("TRUNCATE rate_curve"))
+    res = await FR.compute()
+    assert res["mar"] == 0.065 and res["mar_source"]["source"] == "fallback 6.5 %, no curve"
+    assert "no FBIL gsec_par curve" in res["mar_source"]["note"]
+    with session_scope() as s:
+        s.add(RateCurve(series="gsec_par", day=date(2026, 9, 29), tenor="0.25Y", tenor_years=Decimal("0.25"),
+                        rate=Decimal("0.06")))  # fmt: skip
+    seen, real = [], R.rank_category
+    monkeypatch.setattr(R, "rank_category", lambda funds, mar: seen.append(mar) or real(funds, mar))
+    try:
+        res = await FR.compute()
+    finally:
+        with session_scope() as s:
+            s.execute(text("TRUNCATE rate_curve"))
+    assert res["mar"] == pytest.approx(1.03**2 - 1) and res["mar_source"]["as_of"] == "2026-09-29"
+    assert res["mar_source"]["tenor_years"] == 0.25 and "FBIL G-sec par yield" in res["mar_source"]["source"]
+    assert seen and all(m == Decimal(str(round(1.03**2 - 1, 8))) for m in seen)  # the MAR every Sortino got
 
 
 async def test_fund_signal_peers_are_the_rank_category_not_the_raw_heading(fake_amfi, monkeypatch):
@@ -353,7 +382,13 @@ async def test_empty_early_month_ter_file_falls_back_to_the_previous_month(monke
 def test_category_rank_api_reads_the_stored_ranking_only(env, fake_amfi):
     import asyncio
 
+    from sqlalchemy import text
+
     from finresearch.api import create_app
+    from finresearch.db import session_scope
+
+    with session_scope() as s:
+        s.execute(text("TRUNCATE rate_curve"))  # no stored curve: the MAR is the labelled fallback
 
     with TestClient(create_app()) as c:
         r = c.get("/api/funds/200003/category-rank").json()
@@ -367,6 +402,7 @@ def test_category_rank_api_reads_the_stored_ranking_only(env, fake_amfi):
         r = c.get("/api/funds/200100/category-rank").json()
         assert r["status"] == "ok" and r["via"] == "200003" and r["as_of"] == "2026-09-30"
         assert r["category"]["size"] == 10 and len(r["category"]["funds"]) == 10 and r["mar"] == 0.065
+        assert r["mar_source"]["fallback"] is True  # #366/#385: no stored curve -> the labelled 6.5 %
         assert r["fund"]["ranks"]["cagr_1y"] == 7 and r["caveats"]
         b = c.get("/api/funds/category-ranks", params={"codes": "200009,200300", "metric": "cagr_1y"}).json()
         assert b["ranks"]["200009"]["rank"] == 1 and b["ranks"]["200009"]["of"] == 10

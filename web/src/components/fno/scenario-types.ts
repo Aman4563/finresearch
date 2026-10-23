@@ -2,6 +2,8 @@
 // historical scan with its ES97.5, multi-week episodes, gap and expiry-day scenarios and the liquidity term.
 // Every figure may be null: unknown (with the reasons), never 0.
 
+import type { RateInfo } from "./model";
+
 export type Exposure = { rs_delta: number; rs_gamma_1pct: number; vega_pt: number; theta_day: number };
 
 export type ScenarioCell = {
@@ -33,6 +35,8 @@ export type ShockView = { kind: string; label: string; move: number | null; at: 
 
 export type BookScenarios = {
   as_of: string; rate: number; notes: string[];
+  /** #366/#385: where `rate` came from (FBIL's par yield at the book's longest tenor, or a labelled fallback) */
+  rate_info?: RateInfo;
   legs: { underlying: string; expiry: string; right: string; strike: number; qty: number; mark: number | null;
     mark_kind: string | null; iv: number | null; forward: number | null; source: string; reason: string | null }[];
   betas: BookBeta[]; beta_rule: string;

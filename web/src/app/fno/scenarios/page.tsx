@@ -9,6 +9,7 @@ import { pnlTone, rs } from "@/components/fno/paper-trade";
 import { RiskBanner } from "@/components/fno/risk";
 import { ScenarioHeatmap } from "@/components/fno/scenario-grid";
 import { EpisodesCard, ExposuresCard, LiquidityCard, Reasons, ScanCard, ShocksCard, loss } from "@/components/fno/scenario-parts";
+import { rateLabel } from "@/components/fno/model";
 import type { BookScenarios } from "@/components/fno/scenario-types";
 import { Card, EmptyState, ErrorNote, PageHeader, Skeleton, Stat, Table } from "@/components/ui";
 import { api, day, when } from "@/lib/api";
@@ -85,7 +86,7 @@ export default function BookScenariosPage() {
               </Table>
             ) : <p className="text-sm text-muted">Only NIFTY is held (β = 1 by definition).</p>}
           </Card>
-          <p className="text-[11px] text-muted">As of {when(v.as_of)}. Rate {(v.rate * 100).toFixed(1)}%. Forwards: {v.forwards.map((f) => `${f.underlying} ${day(f.expiry)} ${f.forward == null ? "unknown" : f.forward.toLocaleString("en-IN")} (${f.source})`).join("; ")}.</p>
+          <p className="text-[11px] text-muted">As of {when(v.as_of)}. Rate {v.rate_info ? rateLabel(v.rate_info) : `${(v.rate * 100).toFixed(1)}%`}. Forwards: {v.forwards.map((f) => `${f.underlying} ${day(f.expiry)} ${f.forward == null ? "unknown" : f.forward.toLocaleString("en-IN")} (${f.source})`).join("; ")}.</p>
         </>
       )}
       <p className="text-xs text-muted"><Link className="text-brand hover:underline" href="/fno/paper">Paper book →</Link></p>

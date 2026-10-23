@@ -23,19 +23,21 @@ const PERIODS: Period[] = ["1M", "3M", "6M", "1Y", "3Y", "5Y"];
 export default function FundDetail() {
   const { code } = useParams<{ code: string }>();
   const router = useRouter();
-  const [rfDraft, setRfDraft] = useState("6.5");
-  const rf = Math.max(0, Math.min(20, Number(rfDraft) || 0)) / 100;
+  // #366/#385: empty = the API's dated rate (FBIL's 3-month par yield on the last NAV's day, or a labelled fallback)
+  const [rfDraft, setRfDraft] = useState("");
+  const typedRf = rfDraft.trim() ? Math.max(0, Math.min(20, Number(rfDraft) || 0)) / 100 : null;
   const [period, setPeriod] = useState<Period>("3Y");
   const [rollWin, setRollWin] = useState<"1y" | "3y">("1y");
   const [rollView, setRollView] = useState<"dist" | "time">("dist");
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  const a = useApi<FundAnalytics>(`/api/funds/${code}/analytics?years=5&rf=${rf.toFixed(4)}`);
+  const a = useApi<FundAnalytics>(`/api/funds/${code}/analytics?years=5${typedRf == null ? "" : `&rf=${typedRf.toFixed(4)}`}`);
   // the category comparator is the default (roadmap §B /funds 1), asked for once the fund's own NAVs are in so the
   // slower all-schemes read never delays the page
   const peers = useApi<FundPeers>(a.data ? `/api/funds/${code}/peers` : null);
   const d = a.data;
+  const rf = typedRf ?? d?.risk_free?.annual ?? d?.risk?.risk_free_annual ?? null;
   const s = d?.scheme;
   const navs = useMemo(() => d?.navs ?? [], [d]);
   const spanYears = navs.length > 1 ? (new Date(navs[navs.length - 1].date).getTime() - new Date(navs[0].date).getTime()) / (365.25 * 86400000) : 0;
@@ -179,7 +181,7 @@ export default function FundDetail() {
                 </div>
                 {rollView === "dist" ? (
                   <>
-                    <ReturnHistogram bins={roll.histogram} median={roll.median} reference={{ value: rf, label: `risk-free ${pctOf(rf, 1)}` }} height={200} />
+                    <ReturnHistogram bins={roll.histogram} median={roll.median} reference={rf == null ? { value: 0, label: "0% (risk-free rate unknown)" } : { value: rf, label: `risk-free ${pctOf(rf, 1)}` }} height={200} />
                     <p className="mt-1 text-center text-[11px] text-muted">
                       Yearly return of each window (x) against the share of windows (y). Dashed amber line: risk-free rate; grey line: median.
                     </p>
@@ -219,9 +221,11 @@ export default function FundDetail() {
                   <Metric label="Sortino ratio" value={d.risk.sortino?.toFixed(2) ?? "—"} tone={toneOf(d.risk.sortino)}
                     help="Like Sharpe, but only counts downside swings as risk (upside volatility isn't punished)." />
                 </div>
-                <Field label="Risk-free rate for Sharpe / Sortino (% a year)" hint="An assumption you choose, e.g. the 91-day T-bill yield or your FD rate.">
-                  <input className={cx(inputClass, "num w-32")} inputMode="decimal" value={rfDraft} onChange={(e) => setRfDraft(e.target.value.replace(/[^0-9.]/g, ""))} />
+                <Field label="Risk-free rate for Sharpe / Sortino (% a year)" hint="Empty: FBIL's 3-month G-sec par yield for the last NAV's day. Or type your own, e.g. your FD rate.">
+                  <input className={cx(inputClass, "num w-32")} inputMode="decimal" value={rfDraft} placeholder={d.risk_free ? (d.risk_free.annual * 100).toFixed(2) : undefined}
+                    aria-label="Risk-free rate, % a year" onChange={(e) => setRfDraft(e.target.value.replace(/[^0-9.]/g, ""))} />
                 </Field>
+                {d.risk_free && <p className="mt-1 text-[11px] text-muted [overflow-wrap:anywhere]" data-testid="fund-risk-free">Using {pctOf(d.risk_free.annual)} a year: {d.risk_free.source}{d.risk_free.fallback ? ` — ${d.risk_free.note}` : ""}</p>}
               </div>
               <div className="min-w-0">
                 <p className="mb-2 flex items-center gap-1.5 text-xs font-medium text-muted"><TrendingDown className="size-3.5" /> Drawdown: how far below its previous peak the NAV was</p>
@@ -246,14 +250,14 @@ export default function FundDetail() {
 }
 
 /** Colour a return by whether it beat its comparator (category median, else the risk-free rate), not by its sign. */
-function vsTone(x: number | null | undefined, bench: number) {
-  return x == null ? "" : x >= bench ? "text-gain" : "text-loss";
+function vsTone(x: number | null | undefined, bench: number | null) {
+  return x == null || bench == null ? "" : x >= bench ? "text-gain" : "text-loss";
 }
 
 /** "▲ 0.9 pp vs category median 5.2% · risk-free 6.5%" */
-function vsHint(x: number, median: number | null, rf: number) {
+function vsHint(x: number, median: number | null, rf: number | null) {
   const pp = (v: number) => `${x >= v ? "▲" : "▼"} ${Math.abs((x - v) * 100).toFixed(1)} pp`;
   return median != null
     ? `${pp(median)} vs category median ${(median * 100).toFixed(1)}%`
-    : `${pp(rf)} vs risk-free ${(rf * 100).toFixed(1)}%`;
+    : rf != null ? `${pp(rf)} vs risk-free ${(rf * 100).toFixed(1)}%` : "risk-free rate unknown";
 }

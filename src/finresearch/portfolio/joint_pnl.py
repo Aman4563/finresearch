@@ -135,7 +135,9 @@ def session(s: Session, prev: JointPnlDay | None, day: date, hist: Any) -> jp.Da
     elif move is None:
         model = (None, ["NIFTY's move is unknown"])
     else:
-        legs, mk, notes = stored_book(s, p, expiring_after=day)
+        legs, mk, notes = stored_book(
+            s, p, rate=jp.RATE, expiring_after=day
+        )  # the registered rate (see snapshot)
         got = (
             jp.fno_model(legs, mk, session_clock(day), move)
             if legs is not None and mk is not None
@@ -149,7 +151,7 @@ def session(s: Session, prev: JointPnlDay | None, day: date, hist: Any) -> jp.Da
 # --------------------------------------------------------------------------- the evening snapshot
 def snapshot(s: Session, day: date, hist: Any, holidays: set[date] | frozenset[date]) -> dict[str, Any]:
     """D_total, L(m) on book_scenarios.MOVES and each holding's value and beta at `day`'s evening (the column values)."""
-    from finresearch.fnobook.scenarios import RATE, stored_book
+    from finresearch.fnobook.scenarios import stored_book
     from finresearch.portfolio import joint_risk as jl
 
     hs: jr.Holdings
@@ -160,9 +162,13 @@ def snapshot(s: Session, day: date, hist: Any, holidays: set[date] | frozenset[d
     clock = session_clock(day)
     why = book_known(s, day)
     legs, mk, notes = (
-        (None, None, [why]) if why else stored_book(s, day, expiring_after=day + timedelta(days=1))
+        # #366/#385: the registered joint_risk forward test (PREREG.md) keeps its fixed 6.5 % (fincalc.joint_pnl.RATE,
+        # the rate fno_mark's IVs were implied at), not the dated FBIL rate: a dated rate needs a registered variant
+        (None, None, [why])
+        if why
+        else stored_book(s, day, rate=jp.RATE, expiring_after=day + timedelta(days=1))
     )
-    b = jr.Book(legs, mk or bs.Market(clock, RATE, {}), None if legs is not None else "; ".join(notes))
+    b = jr.Book(legs, mk or bs.Market(clock, jp.RATE, {}), None if legs is not None else "; ".join(notes))
     d = jr.d_total(hs, b)
     ls = jr.losses(hs, b, bs.horizon_clock(clock, 1, holidays), bs.MOVES)
     reasons = list(dict.fromkeys([*d.reasons, *(r for x in ls for r in x.reasons)]))
