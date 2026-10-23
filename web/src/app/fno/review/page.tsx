@@ -82,7 +82,7 @@ export default function FnoReviewPage() {
           <ul className="list-disc space-y-1 pl-5 text-[11px] text-muted">{v.notes.map((n) => <li key={n}>{n}</li>)}</ul>
         </>
       )}
-      <p className="text-xs text-muted"><Link className="text-brand hover:underline" href="/fno/paper">Paper book →</Link></p>
+      <p className="text-xs text-muted"><Link className="text-brand hover:underline" href="/fno/paper">Paper book →</Link> · <Link className="text-brand hover:underline" href="/fno/ledger">Card ledger: scores and overrides →</Link></p>
     </div>
   );
 }

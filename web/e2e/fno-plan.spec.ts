@@ -66,3 +66,18 @@ test("fno: market context labels evidence; suggest shows AVOID on a failed hard 
   if (phone(page)) await expectNoHorizontalOverflow(page);
   api.expectClean(OPTIONAL);
 });
+
+test("fno: a logged card records the owner's traded/skipped decision, never inferred (#376)", async ({ page }) => {
+  const api = await mockApi(page, {
+    ...ROUTES,
+    "GET /api/fno/NIFTY/suggest": { symbol: "NIFTY", today: "2026-10-13", cards: [{ ...PAPER, card_log_id: 41, card_index: 0 }], note: "Made-up." },
+    "POST /api/fno/overrides": { id: 1, card_log_id: 41, card_index: 0, decision: "traded", verdict: "NO PROVEN EDGE", override: true, note: null, created_at: null },
+  });
+  await page.goto("/fno");
+  await page.getByRole("button", { name: "Suggest setups" }).click();
+  const card = page.getByRole("article", { name: /short iron condor/ });
+  await card.getByRole("button", { name: "I traded it" }).click();
+  await expect(card.getByRole("status")).toContainText("Recorded: traded against this NO PROVEN EDGE card (an override)");
+  expect(api.count("POST /api/fno/overrides")).toBe(1);
+  api.expectClean(OPTIONAL);
+});

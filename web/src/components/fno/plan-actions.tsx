@@ -1,6 +1,6 @@
 "use client";
 
-import { BellPlus, Loader2, NotebookPen } from "lucide-react";
+import { BellPlus, CheckCheck, Loader2, NotebookPen, SkipForward } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "@/components/ui";
@@ -12,7 +12,7 @@ import type { TradePlan } from "./plan-types";
 /** One click from a plan: a paper trade with the plan's exit rules, or the rules alone on the Groww position group
  * (symbol + expiry) the user opens by hand. Each rule raises one alert; nothing is ever ordered (#317). */
 export function PlanActions({ plan }: { plan: TradePlan }) {
-  const [busy, setBusy] = useState<"" | "paper" | "alerts">("");
+  const [busy, setBusy] = useState<"" | "paper" | "alerts" | "decision">("");
   const [done, setDone] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const rules = plan.exit_rules ?? [];
@@ -49,6 +49,19 @@ export function PlanActions({ plan }: { plan: TradePlan }) {
       setBusy("");
     }
   };
+  // #376 (d): the owner says what they did with this card; recorded append-only, never inferred from trades
+  const decide = async (decision: "traded" | "skipped") => {
+    setBusy("decision");
+    try {
+      const r = await api<{ verdict: string | null; override: boolean | null }>("/api/fno/overrides", { method: "POST", body: JSON.stringify({ card_log_id: plan.card_log_id, card_index: plan.card_index ?? 0, decision }) });
+      setDone(`Recorded: ${decision}${r.override == null ? " (the card's verdict is unknown)" : r.override ? ` against this ${r.verdict} card (an override)` : ` with this ${r.verdict} card`}. See the card ledger.`);
+      setError(null);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy("");
+    }
+  };
   return (
     <div className="flex flex-wrap items-center gap-2 border-t border-border/60 pt-2 text-xs">
       <Button onClick={paper} disabled={!!busy || !plan.size?.suggested} icon={busy === "paper" ? <Loader2 className="size-3.5 animate-spin" /> : <NotebookPen className="size-3.5" />}>
@@ -57,6 +70,10 @@ export function PlanActions({ plan }: { plan: TradePlan }) {
       <Button variant="ghost" onClick={alerts} disabled={!!busy || !rules.length} icon={<BellPlus className="size-3.5" />}>
         Alerts on my Groww position
       </Button>
+      {plan.card_log_id != null && <>
+        <Button variant="ghost" onClick={() => decide("traded")} disabled={!!busy} icon={<CheckCheck className="size-3.5" />}>I traded it</Button>
+        <Button variant="ghost" onClick={() => decide("skipped")} disabled={!!busy} icon={<SkipForward className="size-3.5" />}>I skipped it</Button>
+      </>}
       <span className="text-[11px] text-muted">{rules.map((r) => `${r.kind} ${r.threshold}`).join(" · ")}</span>
       {error && <p role="alert" className="w-full text-loss">{error}</p>}
       {done && <p role="status" className="w-full text-gain">{done}</p>}
