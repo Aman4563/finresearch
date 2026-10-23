@@ -883,7 +883,9 @@ def backtest_evidence(with_setups: bool = True) -> dict[str, Any] | None:
     from finresearch.fincalc.dates import today_ist
     from finresearch.inventory import provenance, regimes
 
-    stale = regimes.staleness(regimes.run_day(rep.get("created_at")), today_ist())
+    stale = regimes.staleness(
+        regimes.run_day(rep.get("created_at")), today_ist(), tags=rep.get("regime_tags")
+    )
     # #379: stale evidence reads as unvalidated (a card matched to it waits); a code change is shown, not a gate
     rep["evidence_status"] = {"current": not stale, "stale": stale, "code_changed": provenance.code_changed(rep),
                               "max_age_days": regimes.MAX_EVIDENCE_AGE_DAYS}  # fmt: skip

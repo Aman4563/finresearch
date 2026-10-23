@@ -7,9 +7,12 @@ from __future__ import annotations
 from datetime import date
 
 from finresearch.backtest import specs as bspecs
+from finresearch.direction import specs as dspecs
 from finresearch.direction.live import METHOD_IMPLIED, METHOD_LOGIT
 from finresearch.fnobook.card_forecasts import RN_METHOD
+from finresearch.inventory.entries_p3 import ENTRIES_P3
 from finresearch.inventory.registry import ModelEntry
+from finresearch.portfolio import stress_replay
 from finresearch.signals.ipo import BASE_RATE_METHOD, BLEND_METHOD
 from finresearch.signals.ledger import RUN_METHOD
 from finresearch.signals.stock import METHOD as STOCK_METHOD
@@ -197,7 +200,31 @@ def _recipe(s) -> ModelEntry:
                       declared="unvalidated" if overlay else "failed", validated_on=None if overlay else date(2026, 10, 12),
                       evidence=(f"{FNO_RESULTS}: not evaluated (no stock options in the history copy)" if overlay
                                 else f"{FNO_RESULTS}: nothing passed the pre-registered criteria"),
-                      regime_tags=FNO_TAGS)  # fmt: skip
+                      regime_tags=FNO_TAGS, registrations=(bspecs.SPEC_VERSION,))  # fmt: skip
 
 
-ENTRIES: tuple[ModelEntry, ...] = (*_SIGNALS, *_OTHER, *_RISK, *(_recipe(s) for s in bspecs.SPECS))
+def _with(e: ModelEntry, **kw) -> ModelEntry:
+    from dataclasses import replace
+
+    return replace(e, **kw)
+
+
+_RISK = tuple(
+    _with(e, methods=(stress_replay.METHOD,)) if e.key == "risk_stress"
+    # the card's headline real-world PoP is the horse race's incumbent p_rw (the lower-EV of p_rw20 and p_rw60)
+    else _with(e, registrations=("horserace:p_rw", "horserace:p_rw20", "horserace:p_rw60"))
+    if e.key == "risk_lognormal_pop" else e for e in _RISK
+)  # fmt: skip
+_SIGNALS = tuple(
+    _with(e, registrations=(dspecs.SPEC_VERSION,)) if e.key == "direction_logistic"
+    else _with(e, registrations=("horserace:p_rn_atm",)) if e.key == "fno_card_rn_pop"
+    else e for e in _SIGNALS
+)  # fmt: skip
+
+ENTRIES: tuple[ModelEntry, ...] = (
+    *_SIGNALS,
+    *_OTHER,
+    *_RISK,
+    *(_recipe(s) for s in bspecs.SPECS),
+    *ENTRIES_P3,
+)

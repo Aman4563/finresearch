@@ -22,6 +22,8 @@ CALLS = {"Signal", "signal", "Forecast", "dict"}
 RESOLVED: dict[tuple[str, str], list[str]] = {
     ("signals/ipo.py", "shadow_signal"): [BLEND_METHOD],  # shadow["method"]: only _shadow_blend builds one
     ("signals/ledger.py", "record"): [],  # copies an already-checked Signal's method
+    ("signals/ledger.py", "forecast_json"): [],  # reads a stored row back
+    ("signals/ledger.py", "calibration_groups"): [],  # groups stored rows by their method
 }
 # a helper whose `method` parameter is resolved at its call sites (also scanned, as calls named in CALLS)
 PARAM_HELPERS = {("signals/fund.py", "signal")}
@@ -128,19 +130,31 @@ def _resolve(e: ast.expr, fns: list[ast.AST], mod) -> list[str]:
     raise Unresolved(ast.unparse(e))
 
 
+def _row_method(node: ast.AST) -> ast.expr | None:
+    """A forecast-ledger row written as a dict literal ({"method": ..., "validation_status": ...}, later
+    `insert(Forecast).values(**row)`): its method expression (#379: the VaR ledger logs its rows this way)."""
+    if not isinstance(node, ast.Dict):
+        return None
+    keys = {k.value: v for k, v in zip(node.keys, node.values, strict=True) if isinstance(k, ast.Constant)}
+    return keys["method"] if "method" in keys and "validation_status" in keys else None
+
+
 def _sites():
-    """(where, [method templates]) for every method= keyword of a call in CALLS."""
+    """(where, [method templates]) for every method= keyword of a call in CALLS, and every forecast-row dict."""
     for path in sorted(SRC.rglob("*.py")):
         rel = path.relative_to(SRC).as_posix()
         tree = ast.parse(path.read_text())
         mod = None
         funcs = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)]
         for call in ast.walk(tree):
-            if not isinstance(call, ast.Call):
-                continue
-            name = call.func.id if isinstance(call.func, ast.Name) else getattr(call.func, "attr", None)
-            kw = next((k for k in call.keywords if k.arg == "method"), None)
-            if name not in CALLS or kw is None:
+            if (row := _row_method(call)) is not None:
+                kw = ast.keyword("method", row)
+            elif isinstance(call, ast.Call):
+                name = call.func.id if isinstance(call.func, ast.Name) else getattr(call.func, "attr", None)
+                kw = next((k for k in call.keywords if k.arg == "method"), None)
+                if name not in CALLS or kw is None:
+                    continue
+            else:
                 continue
             fns = sorted((f for f in funcs if f.lineno <= call.lineno <= (f.end_lineno or 0)),
                          key=lambda f: (f.end_lineno or 0) - f.lineno)  # fmt: skip
@@ -163,7 +177,8 @@ SITES = list(_sites())
 def test_the_scan_finds_the_known_signal_producers():
     files = {w.split(":")[0] for w, _, _ in SITES}
     for f in ("signals/ipo.py", "signals/stock.py", "signals/fund.py", "signals/bond.py", "signals/fno.py",
-              "direction/live.py", "fnobook/card_forecasts.py", "signals/ledger.py"):  # fmt: skip
+              "direction/live.py", "fnobook/card_forecasts.py", "signals/ledger.py",
+              "portfolio/var_ledger.py"):  # fmt: skip
         assert f in files, f
 
 
@@ -189,3 +204,71 @@ def test_the_scan_follows_locals_and_loops_and_flags_what_it_cannot():
     assert registry.entry_for_method(got[1][0]) is None  # an unregistered method fails the gate
     with pytest.raises(Unresolved):
         _resolve(calls[2].keywords[0].value, [fn], mod)
+
+
+# ---------------------------------------------------------------------------------------- registrations (#379 slice 2)
+REG_NAMES = {"SPEC_VERSION", "ADDENDUM_VERSION"}
+METHOD_NAMES = {"METHOD", "METHODS"}
+
+
+def _module_constants(names: set[str]):
+    """(file, name, value) for every module-level string (or tuple of strings) assignment named in `names`."""
+    for path in sorted(SRC.rglob("*.py")):
+        rel = path.relative_to(SRC).as_posix()
+        if rel.startswith("inventory/"):
+            continue
+        for n in ast.parse(path.read_text()).body:
+            tgt = (
+                n.targets[0]
+                if isinstance(n, ast.Assign)
+                else n.target
+                if isinstance(n, ast.AnnAssign)
+                else None
+            )
+            if isinstance(tgt, ast.Name) and tgt.id in names:
+                v = getattr(importlib.import_module(_module_name(path)), tgt.id)
+                for x in (v,) if isinstance(v, str) else v if isinstance(v, tuple) else ():
+                    if isinstance(x, str):
+                        yield rel, tgt.id, x
+
+
+REGS = list(_module_constants(REG_NAMES))
+CONSTS = list(_module_constants(METHOD_NAMES))
+
+
+def test_the_registration_scan_finds_the_known_registrations():
+    found = {v for _, _, v in REGS}
+    assert {
+        "vol-forecast-race-v1",
+        "vrp-collectable-v1",
+        "book-beta-v1",
+        "card-horse-race-v1-addendum-A6",
+    } <= found
+
+
+@pytest.mark.parametrize(("where", "name", "value"), REGS, ids=[f"{w}:{v}" for w, _, v in REGS])
+def test_every_registered_spec_version_maps_to_an_inventory_entry(where, name, value):
+    assert registry.entry_for_registration(value) is not None, (
+        f"{where} {name}={value!r} has no inventory entry"
+    )
+
+
+def test_every_horse_race_forecaster_and_challenger_maps_to_an_inventory_entry():
+    from finresearch.horserace import addendum_a6, specs
+
+    for key in (*specs.FORECASTERS, *addendum_a6.CHALLENGERS):
+        assert registry.entry_for_registration(f"horserace:{key}") is not None, key
+
+
+@pytest.mark.parametrize(("where", "name", "value"), CONSTS, ids=[f"{w}:{n}:{v[:20]}" for w, n, v in CONSTS])
+def test_every_module_method_constant_maps_to_an_inventory_entry(where, name, value):
+    """A model a page shows by its METHOD text (VaR, joint risk, factor exposures, Brinson, liquidity, the optimiser's
+    methods, ...) must be in the inventory, so its status badge and limits of use are on the models page. A METHODS
+    tuple's short names are registrations `<module>:<name>` (a bare "hrp" would be too loose as a method prefix)."""
+    if name == "METHODS":
+        key = f"{Path(where).stem}:{value}"
+        assert registry.entry_for_registration(key) is not None, f"{where} {key!r} has no inventory entry"
+    else:
+        assert registry.entry_for_method(value) is not None, (
+            f"{where} {name}={value[:60]!r} has no inventory entry"
+        )

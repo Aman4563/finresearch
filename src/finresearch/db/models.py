@@ -581,6 +581,32 @@ class FnoBacktestRun(Base):
     detail: Mapped[dict[str, Any]] = mapped_column(JSONB)  # windows, book, criteria, generated_at, sources
 
 
+class ModelRevalidation(Base):
+    """One model's monthly re-validation on one regime split (#379, inventory.revalidate): a read-only replay of the
+    registered spec, appended per (slot, model, split) and never updated. A post hoc analysis: it is not the
+    evidence the cards read (fno_backtest_run) and it can create no candidate. `metrics` is None when the split has
+    no trade (`status` no_data, with the reason): never zero."""
+
+    __tablename__ = "model_revalidation"
+    __table_args__ = (UniqueConstraint("slot", "model_key", "split"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    slot: Mapped[str] = mapped_column(String(40))  # revalidate:YYYY-MM (the monitor's) or manual:<timestamp>
+    model_key: Mapped[str] = mapped_column(String(80), index=True)
+    split: Mapped[str] = mapped_column(String(40))
+    split_from: Mapped[date | None] = mapped_column(Date)
+    split_to: Mapped[date | None] = mapped_column(Date)
+    status: Mapped[str] = mapped_column(String(20))  # computed | no_data
+    reason: Mapped[str | None] = mapped_column(String(300))
+    metrics: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    code_hash: Mapped[str] = mapped_column(String(64))
+    engine_hash: Mapped[str] = mapped_column(String(64))
+    data_hash: Mapped[str | None] = mapped_column(String(64))
+    registration_hash: Mapped[str] = mapped_column(String(64))
+    regime_tags: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    source: Mapped[str] = mapped_column(String(200))
+
+
 class FnoBacktestResult(Base):
     """One strategy's evidence in a run: status candidate / fails / overlay_reported / in_sample_only / no_data, the
     criteria with their values, window statistics, by-year and by-IV-regime tables, the (thinned) equity curve and

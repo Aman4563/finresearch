@@ -117,3 +117,25 @@ registered v2: the bar falls from ~3.0 to ~2.0 annualised at T = 570). That is a
   changed no published verdict).
 - `evals/stock_universe.py` keeps its own registered DSR copy.
 - The Strategy Lab judges with v1 (P2.5 territory); the v2 functions are importable for it.
+
+---
+
+# Addendum: monthly regime-split re-validation (issue #379, P2.4), POST HOC to PREREG.md
+
+Written 23-Oct-2026, after the results in RESULTS.md had been seen. Nothing here edits `PREREG.md`,
+`backtest/specs.py` or its registered hash. Issue #379 calls the regime-split re-run "a post hoc ADDENDUM analysis
+that can create no candidate", and it is built that way:
+
+- **What runs.** Once a month (the monitor's `revalidate:YYYY-MM` slot, from 22:30 IST, a low-priority worker) or by
+  hand (`finresearch models revalidate`), `backtest.evaluate.evaluate` replays the registered library read only on the
+  stored history. It refuses to run when `specs.py` differs from its registration.
+- **Splits.** Each recipe's trades are split by the day they were decided on (else their entry day): before 20-Nov-2024
+  (the SEBI 1-Oct-2024 circular: one weekly expiry, new lot sizes), 20-Nov-2024 to 31-Aug-2025, and from 1-Sep-2025
+  (NIFTY's weekly expiry moved to Tuesday). Per split the same `backtest.metrics.trade_stats` is computed:
+  expectancy, the expiry-clustered t and the bootstrap CI. A split with no trade is `no_data`, never zero. Equity
+  statistics are not split.
+- **Where it goes.** Rows are appended to `model_revalidation` (one per slot, recipe and split, never updated), with
+  the code, engine, data and registration hashes and the regime tags. Nothing is written to `fno_backtest_run` or
+  `fno_backtest_result`, so the cards, the Strategy Lab and the backtest page keep reading only the registered run.
+- **What it cannot do.** It sets no status and creates no candidate. A recipe's inventory status still comes from
+  RESULTS.md, and its split statistics are shown beside that status on the Models page as context.

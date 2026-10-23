@@ -248,5 +248,8 @@ uv run finresearch forecasts panel           # log the fixed probability panel f
 uv run finresearch forecasts card-report     # the card ledger's registered scores before/after registration, and the override rate (read only)
 uv run finresearch forecasts horse-race      # the pre-registered card horse race on resolved cards (#377; --window, --json); read only
 uv run finresearch forecasts skill           # the live skill monitor per method x event kind x underlying (#378; --json); read only
+uv run finresearch models list                # the model inventory: tier, computed status (validated / unvalidated / failed) and why (#379)
+uv run finresearch models revalidate          # re-run the backtest recipes read-only and APPEND per-regime-split stats to model_revalidation; never saves a backtest run (the monitor does this monthly, 22:30 IST, low priority)
+uv run finresearch models redteam-new <key> --prereg evals/experiments/<x>/PREREG.md   # start a red-team review file (evals/redteam/README.md)
 uv run finresearch forecasts horse-race --source replay --window seen   # the same race on one replayed card per stored session, 2022-26 (addendum A1, plus the business-time challenger p_rw_bus of addendum A2, #384, the parity-forward Black-76 IV challenger p_rn_b76 of addendum A3, #385, and the tail-aware challengers p_rw_emp (IV-scaled empirical) and p_rw_fhs (GJR filtered historical simulation) of addendum A5, #387, and the exit-rule Monte Carlo p_path of addendum A6, #388, with its simulation error and exit-reason score; design | seen | tuesday); read only, run outside market hours
 ```
