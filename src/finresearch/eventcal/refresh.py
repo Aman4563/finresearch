@@ -8,7 +8,9 @@ read is merged into calendar_event / calendar_coverage under three rules.
   becomes known, so at no time is neither date usable.
 * A day listed again by a later complete read (moved away, then back) is reinstated: never a missing tier-1 date.
 * A failed or refused source stores nothing, coverage included: past the last coverage the plan check keeps reading
-  "unknown", never "no events". A source runs only with the owner's data-rights decision (data_rights.require).
+  "unknown", never "no events". A source that reads anything runs only with the owner's data-rights decision
+  (data_rights.require); a rule source (eventcal.rules) computes dates from a published rule, requests nothing and
+  needs none.
 """
 
 from __future__ import annotations
@@ -77,8 +79,11 @@ Reader = Callable[[Known, datetime], Awaitable[Found]]
 
 @dataclass(frozen=True)
 class Source:
-    dataset: str  # the data_rights key
+    dataset: str  # the data_rights key; for a rule source, its name
     read: Reader
+    rule: bool = (
+        False  # computed from a published rule: requests nothing, so no data-rights decision is asked
+    )
 
 
 def known(s: Session) -> Known:
@@ -157,7 +162,8 @@ async def run(sources: list[Source], now: datetime) -> dict[str, Any]:
     out: dict[str, Any] = {"stored": {}, "skipped": {}, "failed": {}, "notices": {}}
     for src in sources:
         try:
-            data_rights.require(src.dataset)
+            if not src.rule:
+                data_rights.require(src.dataset)
         except data_rights.NoDecision as e:
             out["skipped"][src.dataset] = str(e)[:300]
             continue
@@ -177,8 +183,10 @@ async def run(sources: list[Source], now: datetime) -> dict[str, Any]:
 
 
 def sources() -> list[Source]:
-    """The official sources of the nightly refresh, each behind its data-rights decision."""
-    from finresearch.eventcal import mospi, nifty_indices, nse, rbi
+    """The nightly refresh (#481): RBI's RSS feed, MoSPI's CPI rule and its confirmation through the CPI API, NSE
+    Indices' review rule and NSE's F&O circulars. A rule runs before the source that confirms it."""
+    from finresearch.eventcal import nse, rbi, rules
 
-    return [Source("rbi_mpc_schedule", rbi.read), Source("mospi_release_calendar", mospi.read),
-            Source("nifty_indices_press", nifty_indices.read), Source("nse_circulars", nse.read)]  # fmt: skip
+    return [Source("rbi_rss", rbi.read), Source("india_cpi_rule", rules.read_cpi, rule=True),
+            Source("mospi_cpi", rules.confirm_cpi), Source("nifty_review_rule", rules.read_nifty, rule=True),
+            Source("nse_circulars", nse.read)]  # fmt: skip

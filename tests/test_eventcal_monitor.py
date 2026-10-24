@@ -36,15 +36,17 @@ def clean(env):
     yield env
 
 
-SOURCES = ["rbi_mpc_schedule", "mospi_release_calendar", "nifty_indices_press", "nse_circulars"]
+SOURCES = ["rbi_rss", "india_cpi_rule", "mospi_cpi", "nifty_review_rule", "nse_circulars"]  # #481
+GATED = ["rbi_rss", "mospi_cpi", "nse_circulars"]  # read only with a data-rights decision
+RULES = ["india_cpi_rule", "nifty_review_rule"]  # published rules: no request, no decision needed
 
 
 @pytest.fixture
 def undecided(monkeypatch):
-    """The refresh sources without a decision, whatever the owner has recorded since."""
+    """The gated sources without a decision, whatever the owner has recorded since."""
     from finresearch import data_rights
 
-    for name in SOURCES:
+    for name in GATED:
         monkeypatch.delitem(data_rights.DECISIONS, name, raising=False)
 
 
@@ -53,7 +55,10 @@ async def test_undecided_sources_are_skipped_without_requests_and_not_retried(cl
 
     with respx.mock(assert_all_called=False) as mock:
         res = await job.eventcal_step(AFTER)
-    assert sorted(res["eventcal"]["skipped"]) == sorted(SOURCES) and not mock.calls
+        assert not mock.calls  # respx clears its calls on exit
+    assert sorted(res["eventcal"]["skipped"]) == sorted(GATED) and sorted(
+        res["eventcal"]["stored"]
+    ) == sorted(RULES)
     assert await job.eventcal_step(AFTER) == {}  # the night's slot is taken
 
 
@@ -140,9 +145,10 @@ def test_cli_refresh_says_which_sources_wait_for_a_decision(clean, undecided):
 
     with respx.mock(assert_all_called=False) as mock:
         r = CliRunner().invoke(cli.app, ["events", "refresh"])
+        assert not mock.calls  # respx clears its calls on exit
     assert r.exit_code == 0, r.output
-    assert all(f"{name}: skipped" in r.output for name in SOURCES), r.output
-    assert not mock.calls
+    assert all(f"{name}: skipped" in r.output for name in GATED), r.output
+    assert all(f"{name}: " in r.output and "new events" in r.output for name in RULES), r.output
 
 
 def test_cli_refresh_exits_non_zero_when_a_decided_source_fails(clean, monkeypatch):

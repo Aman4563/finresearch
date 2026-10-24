@@ -108,7 +108,7 @@ async def _fetch_cpi(today: date):
         return await c.fetch(today=today)
 
 
-async def confirm_cpi(known, now: datetime, *, fetch: Callable[[date], Awaitable] = _fetch_cpi):
+async def confirm_cpi(known, now: datetime, *, fetch: Callable[[date], Awaitable] | None = None):
     """Mark expected CPI releases that have come as published once MoSPI's CPI API shows their month. The API is
     read only on nights when such a release is due (about one a month); a month still missing after its release day
     is a notice and the row stays expected."""
@@ -123,7 +123,7 @@ async def confirm_cpi(known, now: datetime, *, fetch: Callable[[date], Awaitable
                  if EXPECTED in title and today - timedelta(days=CONFIRM_DAYS) <= d <= today)  # fmt: skip
     if not due:
         return found
-    data = await fetch(today)
+    data = await (fetch or _fetch_cpi)(today)
     url = BASE + "getCPIData"
     found.urls.append(url)
     for d in due:
