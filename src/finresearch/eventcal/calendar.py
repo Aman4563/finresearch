@@ -24,9 +24,9 @@ TITLES = {
     "general_election": "General-election results (Lok Sabha)",
     "fomc": "US FOMC decision",
     "us_cpi": "US CPI release",
-    "india_cpi": "India CPI release (MoSPI)",  # context (T17), from the nightly refresh (eventcal.mospi)
-    "india_gdp": "India GDP estimates release (MoSPI)",
-    "index_rebalance": "NSE index constituent change",  # context, from NSE Indices' press releases (eventcal.nifty_indices)
+    "india_cpi": "India CPI release (MoSPI)",  # context (T17), by MoSPI's published rule (eventcal.rules, #481)
+    "india_gdp": "India GDP estimates release (MoSPI)",  # no source since #481: MoSPI states dates, not a rule
+    "index_rebalance": "NSE index constituent change",  # context: NIFTY review windows by rule, NSE F&O circulars
 }
 NSE_CLOSE = time(15, 30)
 
