@@ -212,7 +212,7 @@ def to_check(res: Result) -> Check:
                 "(details: finresearch dq broker)")  # fmt: skip
         return Check(DATASET, res.check, "warn", len(res.mismatches), 0, note)
     if res.why:
-        return Check(DATASET, res.check, "unknown", None, 0, f"not verified: {res.why}")
+        return Check(DATASET, res.check, "unknown", None, 0, res.why)  # the brief adds "not verified"
     if res.check == CHECKS[0]:
         note = (f"{res.compared} Groww F&O position(s) read {res.asof} match the app's book for that session"
                 if res.compared else f"no Groww F&O position read {res.asof} and none in the app's book")  # fmt: skip
@@ -235,9 +235,5 @@ def broker_checks(s: Session, now: datetime) -> list[Check]:
                 out.append(to_check(fn(s, now)))
         except Exception as e:
             log.warning("broker reconciliation %s could not run: %s", name, type(e).__name__)
-            out.append(
-                Check(
-                    DATASET, name, "unknown", note=f"not verified: could not be checked ({type(e).__name__})"
-                )
-            )
+            out.append(Check(DATASET, name, "unknown", note=f"could not be checked ({type(e).__name__})"))
     return out

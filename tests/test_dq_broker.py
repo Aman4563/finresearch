@@ -290,7 +290,7 @@ def test_a_crash_is_unknown_with_the_exception_type_only(clean, monkeypatch, cap
     monkeypatch.setattr(broker, "fno_positions", boom)
     held([row(f"ISIN:{ISIN}", "10")], [(f"ISIN:{ISIN}", [BUY])])
     got = checks()
-    assert got["fno_positions_vs_book"].note == "not verified: could not be checked (KeyError)"
+    assert got["fno_positions_vs_book"].note == "could not be checked (KeyError)"
     assert got["holdings_vs_book"].status == "ok"  # the other check still ran
     assert not any("ZZTEST" in r.getMessage() for r in caplog.records)
 
@@ -363,3 +363,18 @@ def test_cli_prints_the_detail_on_this_machine_and_writes_nothing(clean):
     )  # Groww 10, the book 6 after the sell (not "1": no trailing-zero cut)
     with session_scope() as s:
         assert s.scalar(select(func.count()).select_from(DqCheck)) == 0
+
+
+def test_the_brief_says_not_verified_once(clean):
+    """The brief wraps an unknown dataset as "<label>: not verified (<check>: <note>)": the note gives only the reason."""
+    from finresearch.db import session_scope
+    from finresearch.dq import report
+
+    nightly()  # Groww never connected
+    with session_scope() as s:
+        line = next(
+            h["text"]
+            for h in report.brief_lines(report.data_health(s))
+            if "Groww reconciliation" in h["text"]
+        )
+    assert line.count("not verified") == 1 and "(fno_positions_vs_book: Groww is not connected)" in line, line
