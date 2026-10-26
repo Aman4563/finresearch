@@ -22,7 +22,7 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from finresearch.db.models import PolicyRateObs as Row
-from finresearch.fincalc.policy_feed import Observation, differences, when
+from finresearch.fincalc.policy_feed import Observation, Observed, differences, when
 
 LOCK_KEY = 492_001  # pg_advisory_xact_lock: reads at once (monitor, `eventcal refresh`) store an item once
 
@@ -64,3 +64,20 @@ def record(s: Session, observations: list[Observation], now: datetime) -> int:
         added += 1
     s.flush()
     return added
+
+
+def observed(s: Session) -> Observed:
+    """The stored observations with the event calendar's MPC schedule, for the rate chain: the standing (not
+    withdrawn) rbi_mpc decision days and the furthest day the calendar's coverage lists every meeting through. Read
+    from the calendar's tables: the rate chain does not import the event calendar's readers."""
+    from sqlalchemy import func
+
+    from finresearch.db.models import CalendarCoverage, CalendarEvent
+
+    ev = CalendarEvent
+    days = s.scalars(
+        select(ev.day).where(ev.type == "rbi_mpc", ev.scope == "IN", ev.withdrawn_since.is_(None))
+    )
+    through = s.scalar(select(func.max(CalendarCoverage.through)).where(CalendarCoverage.type == "rbi_mpc",
+                                                                        CalendarCoverage.scope == "IN"))  # fmt: skip
+    return Observed(observations=tuple(load(s)), scheduled=tuple(sorted(set(days))), covered=through)

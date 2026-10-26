@@ -81,12 +81,15 @@ def _no_owner_rates(monkeypatch):
     """signals.rates reads the owner-entered rates from the database (#479); a test without the `env` fixture would
     read the configured (live) one, so every test sees none unless it sets `rates.OWNER` itself. The rest of the
     chain (the hand-typed RBI policy-rate table) needs no database and no network; risk_free()'s "today" is pinned
-    to 23-Oct-2026 (repo 5.50 %) so a test's rate does not change with the day it runs."""
+    to 23-Oct-2026 (repo 5.50 %) so a test's rate does not change with the day it runs. Likewise the policy rates
+    read from RBI's RSS feed and the MPC calendar (#492): none unless the test sets `rates.OBSERVED` itself."""
     from datetime import date
 
+    from finresearch.fincalc.policy_feed import Observed
     from finresearch.signals import rates
 
     monkeypatch.setattr(rates, "OWNER", list)
+    monkeypatch.setattr(rates, "OBSERVED", Observed)  # an empty Observed: the typed table alone
     monkeypatch.setattr(
         rates, "TODAY", lambda: date(2026, 10, 23)
     )  # repo 5.50 %: live-rate tests are date-proof

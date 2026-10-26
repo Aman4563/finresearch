@@ -18,11 +18,15 @@ from collections.abc import Callable
 from datetime import date
 from typing import Any
 
+from finresearch.fincalc import policy_feed as F
 from finresearch.fincalc import riskfree as R
 
 # () -> the owner's entries; None = read the owner_rate table. conftest sets it to `list`, so a test without the
 # test database never reads the configured one.
 OWNER: Callable[[], list[R.OwnerRate]] | None = None
+# () -> the policy rates read from RBI's RSS feed and the event calendar's MPC schedule (#492); None = read the
+# policy_rate_obs and calendar tables (refseries.policy_obs). conftest sets it to an empty F.Observed, likewise.
+OBSERVED: Callable[[], F.Observed] | None = None
 # () -> today (IST) for risk_free(); None = fincalc.dates.today_ist. conftest pins it so live-rate tests do not depend
 # on the day they run.
 TODAY: Callable[[], date] | None = None
@@ -50,11 +54,34 @@ def _entries(s: Any = None) -> tuple[list[R.OwnerRate], str | None]:
         )
 
 
+def _observed(s: Any = None) -> tuple[F.Observed, str | None]:
+    """The policy rates read from RBI's RSS feed and the MPC schedule (in the caller's session when given), and why
+    they are missing if they could not be read: the chain then uses the typed table alone, possibly stale from its
+    next scheduled meeting (never "fresh" for want of the feed)."""
+    if OBSERVED is not None:
+        return OBSERVED(), None
+    from finresearch.refseries import policy_obs
+
+    try:
+        if s is None:
+            from finresearch.db import session_scope
+
+            with session_scope() as own:
+                return policy_obs.observed(own), None
+        with s.begin_nested():  # a failed read must not break the caller's transaction
+            return policy_obs.observed(s), None
+    except Exception as e:
+        return F.Observed(), (f"the policy rates read from RBI's RSS feed could not be read ({type(e).__name__}): "
+                              "the typed RBI policy-rate table alone is used")  # fmt: skip
+
+
 def _answer(day: date, t_years: float, *, before: bool = False, s: Any = None) -> dict[str, Any]:
     entries, why = _entries(s)
-    out = R.answer(day, t_years, entries, before=before)
-    if why:
-        out["note"] = f"{out['note']}; {why}"
+    observed, why_feed = _observed(s)
+    out = R.answer(day, t_years, entries, before=before, observed=observed)
+    for w in (why, why_feed):
+        if w:
+            out["note"] = f"{out['note']}; {w}"
     return out
 
 
@@ -120,7 +147,8 @@ FACTSHEET_LABEL = ("factsheet-style: one overnight rate, the RBI repo rate on th
 def months_for(start: date, end: date, *, s: Any = None) -> tuple[dict[date, R.MonthRate], str | None]:
     """fincalc.riskfree.month_rates for [start, end] with the owner's entries, and why they are missing."""
     entries, why = _entries(s)
-    return R.month_rates(start, end, entries), why
+    observed, why_feed = _observed(s)
+    return R.month_rates(start, end, entries, observed), "; ".join(w for w in (why, why_feed) if w) or None
 
 
 def accrual_fn(months: dict[date, R.MonthRate]) -> Callable[[date, date], float | None]:
@@ -152,10 +180,13 @@ def factsheet(day: date) -> dict[str, Any]:
     for every period, the way Indian AMC factsheets apply one overnight rate of the factsheet date."""
     from finresearch.fincalc import policy_rates as P
 
-    row = P.in_force(day)
+    observed, why = _observed()
+    row = P.in_force(day, rows=F.merge(observed.observations).rows)
     if row is None:
         return {"known": False, "rate": None, "as_of": day.isoformat(), "label": FACTSHEET_LABEL, "url": None,
                 "source": None, "note": R.unknown(day, 1)["note"]}  # fmt: skip
+    feed = f"; from RBI's RSS feed, item {row.title}, seen {F.when(row.seen)}" if row.seen else ""
+    note = "; ".join(w for w in (F.stale(day, observed), why) if w) or None
     return {"known": True, "rate": float(row.repo), "as_of": day.isoformat(), "label": FACTSHEET_LABEL,
             "source": f"RBI repo rate {float(row.repo) * 100:.2f} % in force on {day:%d-%b-%Y} (from "
-                      f"{row.effective:%d-%b-%Y})", "url": row.url, "note": None}  # fmt: skip
+                      f"{row.effective:%d-%b-%Y}{feed})", "url": row.url, "note": note}  # fmt: skip
