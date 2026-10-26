@@ -134,7 +134,7 @@ class Strategy(BaseModel):
         ge=-1,
         le=1,
         description="Risk-free rate for greeks (continuous, fraction); "
-        "default: FBIL's G-sec par yield at the expiry (signals.rates)",
+        "default: signals.rates at the expiry (an owner-entered yield, else the RBI repo-rate proxy, #479)",
     )
     drift: Decimal | None = Field(None, ge=-1, le=1, description="Real-world annual drift; default = rate")
     charge_overrides: dict[str, Decimal] | None = Field(
@@ -1710,6 +1710,10 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
     from finresearch.api.fno_lab import add_fno_lab_routes
 
     add_fno_lab_routes(app, clock=clock)
+    # the risk-free rate (#479): owner-entered yields (POST/DELETE), the answer and the RBI policy-rate table
+    from finresearch.api.rates import add_rates_routes
+
+    add_rates_routes(app, clock=clock)
 
     # ------------------------------------------------------------------ buy/sell signals (finresearch.signals)
     @app.get("/api/signals")

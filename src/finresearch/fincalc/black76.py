@@ -399,8 +399,9 @@ class DatedDf:
 
 def dated_df(answer: dict | None, t: float) -> DatedDf:
     """DF = e^(-rT) from a dated-rate answer (refseries.rate_lookup.par_rate_on / tbill_rate_on or
-    signals.rates.risk_free_on). An unknown answer, or one that is a fallback (risk_free()'s fixed 6.5 % or its
-    stale curve), gives no discount factor with the reason: the caller shows unknown, never a default."""
+    signals.rates.risk_free_on). An unknown answer, or one labelled a fallback (the app's earlier fixed 6.5 % or a
+    stale curve; signals.rates has none since #479), gives no discount factor with the reason: the caller shows
+    unknown, never a default."""
     if not answer:
         return DatedDf(None, None, None, "no dated rate")
     if answer.get("fallback"):

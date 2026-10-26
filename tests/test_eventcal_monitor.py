@@ -66,8 +66,8 @@ async def test_a_failed_source_marks_the_night_failed_and_stores_nothing(clean, 
     from finresearch import data_rights
     from finresearch.monitor import disclosures
 
-    monkeypatch.setitem(data_rights.DECISIONS, "rbi_mpc_schedule", data_rights.Decision(
-        "rbi_mpc_schedule", "accept-personal", "2026-10-23", "test", "test"))  # fmt: skip
+    monkeypatch.setitem(data_rights.DECISIONS, "rbi_rss", data_rights.Decision(
+        "rbi_rss", "accept-personal", "2026-10-23", "test", "test"))  # fmt: skip
 
     async def broken(known, now):
         raise RuntimeError("HTTP 503")
@@ -76,8 +76,8 @@ async def test_a_failed_source_marks_the_night_failed_and_stores_nothing(clean, 
     real = disclosures.finish
     monkeypatch.setattr(disclosures, "finish", lambda slot, r, now, failed: (finished.append(failed),
                                                                             real(slot, r, now, failed)))  # fmt: skip
-    res = await job.eventcal_step(AFTER, sources=[refresh.Source("rbi_mpc_schedule", broken)])
-    assert res["eventcal"]["failed"] == {"rbi_mpc_schedule": "RuntimeError: HTTP 503"} and finished == [True]
+    res = await job.eventcal_step(AFTER, sources=[refresh.Source("rbi_rss", broken)])
+    assert res["eventcal"]["failed"] == {"rbi_rss": "RuntimeError: HTTP 503"} and finished == [True]
     from finresearch.db import session_scope
     from finresearch.eventcal import store
 
@@ -88,17 +88,17 @@ async def test_a_failed_source_marks_the_night_failed_and_stores_nothing(clean, 
 async def test_a_decided_source_is_stored_known_from_the_run(clean, monkeypatch):
     from finresearch import data_rights
 
-    monkeypatch.setitem(data_rights.DECISIONS, "rbi_mpc_schedule", data_rights.Decision(
-        "rbi_mpc_schedule", "accept-personal", "2026-10-23", "test", "test"))  # fmt: skip
+    monkeypatch.setitem(data_rights.DECISIONS, "rbi_rss", data_rights.Decision(
+        "rbi_rss", "accept-personal", "2026-10-23", "test", "test"))  # fmt: skip
     url = "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=90002"
 
     async def reader(known, now):
-        return refresh.Found("rbi_mpc_schedule", events=[cal.Event(
+        return refresh.Found("rbi_rss", events=[cal.Event(
             type="rbi_mpc", tier=1, scope="IN", day=date(2027, 4, 7), at=None, title="t", source_url=url,
             known_since=now)])  # fmt: skip
 
-    res = await job.eventcal_step(AFTER, sources=[refresh.Source("rbi_mpc_schedule", reader)])
-    assert res["eventcal"]["stored"]["rbi_mpc_schedule"]["events"] == 1
+    res = await job.eventcal_step(AFTER, sources=[refresh.Source("rbi_rss", reader)])
+    assert res["eventcal"]["stored"]["rbi_rss"]["events"] == 1
     from finresearch.db import session_scope
     from finresearch.eventcal import store
 
@@ -159,13 +159,13 @@ def test_cli_refresh_exits_non_zero_when_a_decided_source_fails(clean, monkeypat
     async def broken(known, now):
         raise RuntimeError("HTTP 503")
 
-    monkeypatch.setattr(refresh, "sources", lambda: [refresh.Source("rbi_mpc_schedule", broken)])
+    monkeypatch.setattr(refresh, "sources", lambda: [refresh.Source("rbi_rss", broken)])
     from finresearch import data_rights
 
-    monkeypatch.setitem(data_rights.DECISIONS, "rbi_mpc_schedule", data_rights.Decision(
-        "rbi_mpc_schedule", "accept-personal", "2026-10-23", "test", "test"))  # fmt: skip
+    monkeypatch.setitem(data_rights.DECISIONS, "rbi_rss", data_rights.Decision(
+        "rbi_rss", "accept-personal", "2026-10-23", "test", "test"))  # fmt: skip
     r = CliRunner().invoke(cli.app, ["events", "refresh"])
-    assert r.exit_code == 1 and "rbi_mpc_schedule: failed" in r.output
+    assert r.exit_code == 1 and "rbi_rss: failed" in r.output
 
 
 def test_cli_refresh_prints_the_notices_to_review(clean, monkeypatch):

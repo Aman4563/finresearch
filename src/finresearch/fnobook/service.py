@@ -24,9 +24,9 @@ log = logging.getLogger(__name__)
 
 MTM_EVERY = timedelta(minutes=5)
 SETTLE_RETRY = timedelta(hours=1)
-# #366/#385: no fixed rate. The greeks use FBIL's par yield at each expiry (signals.rates.risk_free, as the plan card
-# does), or a rate the caller passes; every answer says which (the group's `rate`), and its last fallback is the
-# labelled 6.5 %.
+# #366/#385/#479: no fixed rate. The greeks use signals.rates.risk_free at each expiry (an owner-entered yield, else
+# the RBI repo-rate proxy; as the plan card does), or a rate the caller passes; every answer says which (the group's
+# `rate`).
 GROWW_LTP = "Groww LTP"
 _LAST: dict[str, datetime] = {}
 
@@ -50,7 +50,7 @@ def _phase(now: datetime) -> str:
 
 
 async def _rate(t: float | None, rate: float | None) -> dict[str, Any]:
-    """The rate for a T: the caller's, else FBIL's par yield at T (signals.rates.risk_free, labelled fallbacks)."""
+    """The rate for a T: the caller's, else signals.rates.risk_free at T (owner-entered, else the repo proxy)."""
     from finresearch.signals import rates
 
     if rate is not None:
@@ -182,8 +182,8 @@ async def positions_view(now: datetime, *, rate: float | None = None, market: An
                       "Unrealised P&L = (LTP − Groww's net average price) × signed quantity [U: whether net_price "
                       "is the open quantity's average is not stated in Groww's docs].",
                       "Greeks: Black-Scholes at the option chain's IV for the strike (else the IV implied by the "
-                      "LTP), per position (× signed units), at each group's `rate` (FBIL's G-sec par yield at the "
-                      "expiry; a fallback says so)."]}  # fmt: skip
+                      "LTP), per position (× signed units), at each group's `rate` (signals.rates at the expiry: an "
+                      "owner-entered yield, else the RBI repo-rate proxy; the rate says which)."]}  # fmt: skip
 
 
 async def _group(key: str, gl: list[dict[str, Any]], ltp: dict[str, float], now: datetime, rate: float | None,
@@ -360,7 +360,7 @@ async def settle_step(now: datetime, sources: Any) -> dict[str, int]:
 async def market_pass(now: datetime, market: Any, sources: Any, rate: float | None = None) -> dict[str, int]:
     """Mark open paper trades (Groww LTP batch; the chain's last price for legs Groww did not price) and check every
     armed exit rule. One rule check per pass; a rule that fires records one alert and never fires again. The delta
-    rule's greeks use `rate`, else FBIL's par yield at each trade's expiry (`_rate`)."""
+    rule's greeks use `rate`, else signals.rates at each trade's expiry (`_rate`)."""
     from finresearch.db import session_scope
     from finresearch.db.models import FnoExitRule, PaperStrategy
 

@@ -1,5 +1,6 @@
 """Point-in-time invariant (#244): features must be available by the decision they inform; the IPO listing model is
-labelled because its subscription features are the final book; F&O uses FBIL's curve for the risk-free rate."""
+labelled because its subscription features are the final book; F&O uses the RBI repo-rate proxy (#479) for the
+risk-free rate."""
 
 from __future__ import annotations
 
@@ -67,23 +68,16 @@ def test_earnings_events_cannot_use_a_surprise_broadcast_after_the_event_session
         es.build_events(data, lambda _t0: frozenset({"ACME"}), first=date(2026, 3, 1), last=date(2026, 4, 1))
 
 
-async def test_fno_rate_comes_from_fbil_converted_to_continuous(monkeypatch):
-    from finresearch.adapters.fbil import FALLBACK_CURVE
+async def test_fno_rate_is_the_repo_proxy_converted_to_continuous_at_the_expirys_own_term(monkeypatch):
+    """#479: the F&O rate is RBI's repo rate in force today (5.50 % from 07-Oct-2026), a simple Actual/365 yield over
+    the option's own term, converted z = ln(1 + y D/365) / (D/365); no FBIL curve and no fixed 6.5 %."""
     from finresearch.signals import rates
 
-    y = 0.0623
-    r = rates.continuous_from_half_yearly(y)
-    assert math.isclose(math.exp(r), (1 + y / 2) ** 2, rel_tol=1e-12)  # same growth over a year
-    week = await rates.risk_free(7 / 365)  # conftest serves FBIL's dated fallback curve
-    assert week["tenor_years"] == 0.25 and week["par_yield"] == 0.0534 and week["fallback"] is True
-    assert math.isclose(math.exp(week["rate"]), (1 + 0.0534 / 2) ** 2, rel_tol=1e-12)
-    assert "shortest tenor" in week["note"] and "FBIL fallback curve of 23-Sep-2026" in week["source"]
-    two_y = await rates.risk_free(2.0)
-    assert two_y["par_yield"] == float(FALLBACK_CURVE.par_yield(2))
-
-    async def gone():
-        return None
-
-    monkeypatch.setattr(rates, "CURVE", gone)
-    none = await rates.risk_free(0.1)
-    assert none["rate"] == 0.065 and none["fallback"] is True and "fixed 6.5 %" in none["source"]
+    monkeypatch.setattr(rates, "TODAY", lambda: date(2026, 10, 23))
+    week = await rates.risk_free(7 / 365)
+    assert week["tenor_days"] == 7 and week["tier"] == "proxy" and week["fallback"] is False
+    assert math.isclose(week["rate"], math.log(1 + 0.055 * 7 / 365) * 365 / 7, rel_tol=1e-12)
+    assert math.isclose(math.exp(week["rate"] * 7 / 365), 1 + 0.055 * 7 / 365, rel_tol=1e-12)  # same growth
+    assert week["source"].startswith("RBI repo-rate proxy") and "07-Oct-2026" in week["source"]
+    monkeypatch.setattr(rates, "TODAY", lambda: date(2026, 10, 6))  # the day before the hike: 5.25 %
+    assert math.isclose((await rates.risk_free(7 / 365))["yield"], 0.0525, rel_tol=1e-12)

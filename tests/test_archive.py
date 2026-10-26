@@ -155,3 +155,26 @@ async def test_archive_failures_are_retried_at_most_three_times(tmp_path):
     assert ar._tries[("gsec_spread", date(2026, 9, 30))][0] == 1
     again = await ar.archive_step(AFTER_CLOSE, src)  # inside the 15-minute retry gap: not tried
     assert again["failed"] == {} and ar._tries[("gsec_spread", date(2026, 9, 30))][0] == 1
+
+
+async def test_no_gsec_curve_source_archives_no_spread_and_asks_nobody(tmp_path, monkeypatch):
+    """#479: FBIL is paused (#476) and nothing else gives a long G-sec curve, so the live archive files no bond spread:
+    the stream is reported unknown with the reason, is not a failure and is not retried, and FBIL is never asked."""
+    from finresearch.adapters import fbil
+
+    def no_fbil(*a, **k):
+        raise AssertionError("the archive must not ask FBIL")
+
+    monkeypatch.setattr(fbil, "FbilClient", no_fbil)
+    ar.reset_tries()
+
+    async def bonds():
+        raise AssertionError("no curve: the bond list is not read either")
+
+    src = ar.ArchiveSources(quote=lambda s: None, fno=None, bonds=bonds, par_curve=None, watched=lambda: [],
+                            near_iv=lambda s, d: None, out_dir=tmp_path)  # fmt: skip
+    res = await ar.archive_step(AFTER_CLOSE, src)
+    assert res["unknown"] == {"gsec_spread": "unknown: no G-sec curve source (FBIL paused, #476)"}
+    assert "gsec_spread" not in res["failed"] and "gsec_spread" not in res["archived"]
+    assert not (tmp_path / "gsec_spread.jsonl").exists()
+    assert ar._tries[("gsec_spread", date(2026, 9, 30))][0] == ar.MAX_TRIES  # done for the day: no retries

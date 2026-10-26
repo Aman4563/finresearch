@@ -82,6 +82,19 @@ def test_sharpe_sortino_reuse_fincalc():
     assert so == pytest.approx((mean - rf) * 252 / (dd * math.sqrt(252)))
 
 
+def test_sharpe_sortino_against_each_days_own_risk_free_return():
+    """#479: each daily return less that day's own risk-free return (accrued over its calendar-day gap): Sharpe =
+    mean(e) / stdev(e) x sqrt(252), Sortino = mean(e) x 252 / (sqrt(sum(min(0, e)^2) / N) x sqrt(252))."""
+    days = [date(2026, 1, 1) + timedelta(days=i) for i in range(5)]
+    idx = [1.0, 1.01, 1.0, 1.02, 1.01]
+    rfs = [0.0002, 0.0001, 0.0003, 0.0001]
+    e = [idx[i] / idx[i - 1] - 1 - rfs[i - 1] for i in range(1, 5)]
+    s, so = am.sharpe_sortino_excess(idx, days, rfs)
+    assert s == pytest.approx(sum(e) / 4 / math_stdev(e) * math.sqrt(252))
+    dd = math.sqrt(sum(min(0, x) ** 2 for x in e) / 4)
+    assert so == pytest.approx(sum(e) / 4 * 252 / (dd * math.sqrt(252)))
+
+
 def math_stdev(xs):
     m = sum(xs) / len(xs)
     return math.sqrt(sum((x - m) ** 2 for x in xs) / (len(xs) - 1))
@@ -354,6 +367,64 @@ def test_risk_payload_matches_numpy_on_a_long_series(tmp_path):
     assert top["key"] == "NSE:AAA" and top["risk_share"] > top["weight"]
 
 
+def test_risk_uses_each_periods_own_rate_and_shows_the_factsheet_figure(tmp_path):
+    """#479: with a monthly risk-free source the Sharpe/Sortino subtract each period's own risk-free return; beside
+    them, the factsheet-style figures use one annual rate (the repo on the last day) for every day."""
+    import numpy as np
+
+    from finresearch.portfolio.analytics import RiskFree, risk
+
+    days, bench, a, b = long_series()
+    global DAYS
+    old = DAYS
+    try:
+        DAYS = days
+        f = FakeFetch({"NSE:AAA": a, "NSE:BBB": b, "NSE:NIFTYBEES": bench})
+        hs = [holding(1, "AAA", "stock", [ev(1, days[0], "buy", 100, 50, 5000)], nse="AAA"),
+              holding(2, "BBB", "stock", [ev(2, days[0], "buy", 25, 200, 5000)], nse="BBB")]  # fmt: skip
+        h = build(hs, tmp_path, fetch=f, today=days[-1])
+        fs = {"rate": 0.055, "as_of": days[-1].isoformat(), "label": "factsheet-style", "source": "test"}
+        rf = RiskFree(0.06, "monthly", days[-1].isoformat(), "test",
+                      period=lambda d0, d1: 0.0002 * (d1 - d0).days, factsheet=fs)  # fmt: skip
+        p = risk(h, rf, {"NSE:AAA": "IT", "NSE:BBB": "Banks"})
+    finally:
+        DAYS = old
+    v = np.array(h.value)
+    r = v[1:] / v[:-1] - 1
+    gaps = np.array([(days[i] - days[i - 1]).days for i in range(1, len(days))])
+    e = r - 0.0002 * gaps
+    real = p["realised"]
+    assert real["sharpe"]["value"] == pytest.approx(e.mean() / e.std(ddof=1) * math.sqrt(252), abs=1e-4)
+    dd = math.sqrt((np.minimum(e, 0) ** 2).mean())
+    assert real["sortino"]["value"] == pytest.approx(e.mean() * 252 / (dd * math.sqrt(252)), abs=1e-4)
+    want = (r.mean() * 252 - 0.055) / (r.std(ddof=1) * math.sqrt(252))
+    assert real["sharpe_factsheet"]["value"] == pytest.approx(want, abs=1e-4)
+    assert real["sortino_factsheet"]["value"] is not None and "factsheet" in real["sharpe_factsheet"]["note"]
+    assert p["risk_free"]["method"] == "monthly" and p["risk_free"]["factsheet"]["rate"] == 0.055
+
+
+def test_an_unknown_periods_rate_leaves_sharpe_unknown_but_shows_the_factsheet_figure(tmp_path):
+    from finresearch.portfolio.analytics import RiskFree, risk
+
+    days, bench, a, b = long_series()
+    global DAYS
+    old = DAYS
+    try:
+        DAYS = days
+        f = FakeFetch({"NSE:AAA": a, "NSE:BBB": b, "NSE:NIFTYBEES": bench})
+        hs = [holding(1, "AAA", "stock", [ev(1, days[0], "buy", 100, 50, 5000)], nse="AAA")]
+        h = build(hs, tmp_path, fetch=f, today=days[-1])
+        fs = {"rate": 0.055, "as_of": days[-1].isoformat(), "label": "factsheet-style", "source": "test"}
+        rf = RiskFree(None, "monthly", None, None, period=lambda d0, d1: None if d0 < days[10] else 0.0002,
+                      factsheet=fs)  # fmt: skip
+        p = risk(h, rf, {})
+    finally:
+        DAYS = old
+    real = p["realised"]
+    assert real["sharpe"]["value"] is None and "risk-free rate is unknown" in real["sharpe"]["reason"]
+    assert real["sortino"]["value"] is None and real["sharpe_factsheet"]["value"] is not None
+
+
 def test_stress_scenario_uses_own_moves_and_proxies():
     from finresearch.portfolio.analytics import SCENARIOS, scenario_result
     from finresearch.portfolio.history import Position
@@ -568,7 +639,6 @@ def api(env):
     from sqlalchemy import text
 
     from finresearch.adapters.amfi import SchemeNav
-    from finresearch.adapters.fbil import FALLBACK_CURVE
     from finresearch.api import create_app
     from finresearch.api.markets import MarketSources
     from finresearch.api.portfolio_analytics import AnalyticsSources
@@ -590,9 +660,6 @@ def api(env):
     async def quote(sym):
         return SimpleNamespace(industry={"AAA": "IT - Software", "BBB": "Banks"}.get(sym))
 
-    async def curve():
-        return FALLBACK_CURVE
-
     async def ter(month):
         from finresearch.adapters.amfi import ter_key
 
@@ -603,7 +670,7 @@ def api(env):
     app = create_app(nav_all=rows)
     app.state.markets = MarketSources(equity=lambda: FakeEquity(CLOSES), nav_history=navs, quote=quote,
                                       today=lambda: DAYS[-1])  # fmt: skip
-    app.state.analytics_sources = AnalyticsSources(ter=ter, curve=curve)
+    app.state.analytics_sources = AnalyticsSources(ter=ter)
     with TestClient(app) as c:
         for body in ({"asset_type": "stock", "name": "AAA Ltd", "nse_symbol": "AAA", "day": "2026-01-05", "kind": "buy",
                       "quantity": "10", "price": "100", "amount": "1000"},
@@ -620,7 +687,12 @@ def test_api_routes_end_to_end(api):
     assert p["available"] and p["summary"]["value"] == pytest.approx(10 * 60 + 5 * 205 + 10000 * 10.1)
     assert p["summary"]["benchmark"]["symbol"] == "NIFTYBEES"
     r = api.get("/api/portfolio/analytics/risk").json()
-    assert r["risk_free"]["fallback"] and "FBIL" in r["risk_free"]["label"]
+    # #479: each month's own rate (the RBI repo-rate proxy here) and the factsheet-style rate, never FBIL
+    assert r["risk_free"]["method"] == "monthly" and not r["risk_free"]["fallback"]
+    assert "FBIL" not in str(r["risk_free"]) and "RBI repo-rate proxy" in r["risk_free"]["label"]
+    assert (
+        r["risk_free"]["factsheet"]["rate"] == 0.0525 and r["risk_free"]["factsheet"]["as_of"] == "2026-01-08"
+    )
     assert r["realised"]["volatility"]["reason"]
     assert {s["id"] for s in r["stress"]} >= {"covid2020", "gfc2008", "beta20"}
     vl = r["realised"]["var_ledger"]  # #399: the logged VaR's backtest, read only

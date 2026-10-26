@@ -10,9 +10,10 @@ machine and is never sent to an LLM.
 
 from __future__ import annotations
 
+import itertools
 import math
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal
@@ -164,28 +165,34 @@ def performance(h: History) -> dict[str, Any]:
 # --------------------------------------------------------------------------- risk
 @dataclass
 class RiskFree:
-    rate: float  # annual, effective
+    """The risk-free rate of the Risk tab (#479). With `period` (each period's own risk-free return: the month's
+    average 91-day rate, owner-entered else the RBI repo-rate proxy, signals.rates) the Sharpe/Sortino subtract each
+    day's own rate, and `factsheet` (one annual rate, the repo on the last day) gives the factsheet-style figures
+    beside them. Without it, `rate` (the user's figure) is one effective annual rate for every day."""
+
+    rate: float | None  # annual, effective: the user's figure, or the window's risk-free return annualised
     label: str
     as_of: str | None
     source: str | None
     fallback: bool = False
     user_set: bool = False
+    period: Callable[[date, date], float | None] | None = None
+    factsheet: dict[str, Any] | None = None
+    detail: dict[str, Any] | None = None  # the monthly series shown (signals.rates.monthly_json)
 
     def to_json(self) -> dict[str, Any]:
-        return {"rate": round(self.rate, 6), "label": self.label, "as_of": self.as_of, "source": self.source,
-                "fallback": self.fallback, "user_set": self.user_set}  # fmt: skip
+        return {"rate": None if self.rate is None else round(self.rate, 6), "label": self.label,
+                "as_of": self.as_of, "source": self.source, "fallback": self.fallback, "user_set": self.user_set,
+                "method": "monthly" if self.period is not None else "constant", "factsheet": self.factsheet,
+                "detail": self.detail}  # fmt: skip
 
 
-def risk_free_from_curve(curve: Any) -> RiskFree:
-    """FBIL's 3-month point of the G-sec par curve (half-yearly compounded) as an effective annual rate. A proxy for
-    the 91-day T-bill: FBIL's T-bill benchmark is not read by the app."""
-    y = float(curve.par_yield(0.25))
-    eff = (1 + y / 2) ** 2 - 1
-    label = (f"FBIL G-sec par yield at 3 months, {y * 100:.2f} % half-yearly = {eff * 100:.2f} % a year "
-             "(a stand-in for the 91-day T-bill)")  # fmt: skip
-    return RiskFree(
-        eff, label, curve.as_of.isoformat(), curve.source, bool(getattr(curve, "fallback", False))
-    )
+def realised_window(h: History) -> tuple[date, date] | None:
+    """The first and last day of the realised window the Risk tab measures (`_realised`), or None without history."""
+    if not h.ok:
+        return None
+    days = _realised(h)[0]
+    return (days[0], days[-1]) if days else None
 
 
 def _realised(h: History) -> tuple[list[date], list[float], list[float], list[float] | None]:
@@ -198,6 +205,50 @@ def _realised(h: History) -> tuple[list[date], list[float], list[float], list[fl
         lv = h.benchmark.level[w:]
         rb = [lv[t] / lv[t - 1] - 1 for t in range(1, len(lv))]
     return days, idx, r, rb
+
+
+def _sharpe_sortino(idx: list[float], days: list[date], n: int, rf: RiskFree) -> dict[str, Any]:
+    """Sharpe and Sortino (#479): against each day's own risk-free return when `rf.period` is given, with the
+    factsheet-style pair beside them (one annual rate, the repo on the last day, for every day); else against the
+    one annual rate `rf.rate`. A rate that is unknown leaves the ratio unknown, with the reason."""
+    out: dict[str, Any] = {}
+    keys = ("sharpe", "sortino") + (
+        ("sharpe_factsheet", "sortino_factsheet") if rf.period is not None else ()
+    )
+    if n < MIN_SHARPE:
+        why = f"needs {MIN_SHARPE} daily returns (about a year); have {n}"
+        return {k: metric(None, "ratio", reason=why, n=n) for k in keys}
+    no_down = "no day fell below the risk-free rate"
+    if rf.period is None and rf.rate is not None:
+        s, so = am.sharpe_sortino(idx, days, rf.rate)
+        out["sharpe"] = metric(s, "ratio", n=n, how="(mean daily return·252 - risk-free) / volatility")
+        out["sortino"] = metric(so, "ratio", n=n, reason=None if so is not None else no_down,
+                                how="(mean daily return - risk-free/252)·252 / (downside deviation·√252)")  # fmt: skip
+        return out
+    rfs = [rf.period(a, b) for a, b in itertools.pairwise(days)] if rf.period is not None else [None]
+    if any(x is None for x in rfs):
+        why = "the risk-free rate is unknown for part of the window (the RBI policy-rate table starts 01-Jan-2015)"
+        out["sharpe"] = metric(None, "ratio", reason=why, n=n)
+        out["sortino"] = metric(None, "ratio", reason=why, n=n)
+    else:
+        s, so = am.sharpe_sortino_excess(idx, days, rfs)  # type: ignore[arg-type]
+        out["sharpe"] = metric(s, "ratio", n=n, how="mean(daily return - that day's risk-free return)·√252 / its "
+                                                    "stdev; each day's rate is its month's average 91-day rate")  # fmt: skip
+        out["sortino"] = metric(so, "ratio", n=n, reason=None if so is not None else no_down,
+                                how="mean(daily return - that day's risk-free return)·252 / (downside deviation·√252)")  # fmt: skip
+    fs = rf.factsheet or {}
+    if fs.get("rate") is None:
+        why = fs.get("note") or "no factsheet-style rate"
+        out["sharpe_factsheet"] = metric(None, "ratio", reason=why, n=n)
+        out["sortino_factsheet"] = metric(None, "ratio", reason=why, n=n)
+    else:
+        s, so = am.sharpe_sortino(idx, days, float(fs["rate"]))
+        note = f"{fs.get('label')}: {fs.get('source')}"
+        out["sharpe_factsheet"] = metric(s, "ratio", n=n, note=note,
+                                         how="(mean daily return·252 - one annual rate) / volatility")  # fmt: skip
+        out["sortino_factsheet"] = metric(so, "ratio", n=n, note=note, reason=None if so is not None else no_down,
+                                          how="(mean daily return - rate/252)·252 / (downside deviation·√252)")  # fmt: skip
+    return out
 
 
 def _position_returns(
@@ -297,15 +348,7 @@ def risk(h: History, rf: RiskFree, sectors: dict[str, str], stress: list[dict[st
         real["cvar_21d"] = {**metric(c21, "fraction", n=len(hr), how="average of the worst 5 % of 21-day returns"),
                             "inr": _r(c21 * v_end, 0)}  # fmt: skip
     # Sharpe / Sortino
-    if n < MIN_SHARPE:
-        why = f"needs {MIN_SHARPE} daily returns (about a year); have {n}"
-        real["sharpe"] = metric(None, "ratio", reason=why, n=n)
-        real["sortino"] = metric(None, "ratio", reason=why, n=n)
-    else:
-        s, so = am.sharpe_sortino(idx, days, rf.rate)
-        real["sharpe"] = metric(s, "ratio", n=n, how="(mean daily return·252 - risk-free) / volatility")
-        real["sortino"] = metric(so, "ratio", n=n, reason=None if so is not None else "no day fell below the risk-free rate",
-                                 how="(mean daily return - risk-free/252)·252 / (downside deviation·√252)")  # fmt: skip
+    real.update(_sharpe_sortino(idx, days, n, rf))
     # hypothetical: today's weights over the last 12 months of prices
     keep, common, mat = _position_returns(h)
     hypo: dict[str, Any] = {"note": "Today's holdings and weights applied to their last 12 months of prices: what "

@@ -24,8 +24,8 @@ test("book scenarios: heatmap by horizon, ES, episodes, betas and liquidity", as
   await expect(page.getByRole("row", { name: /BANKNIFTY.*1\.15.*0\.09.*9 Oct 2026/ })).toBeVisible();
   await expect(page.getByText(/Liquidity-adjusted stress needs P1\.1/)).toBeVisible();
   // #480: each expiry's carry (its scenarios roll the forward at it, keeping the market's dividend) and its own
-  // discount rate (#366/#385: named, never a bare 6.5 %)
-  await expect(page.getByText(/NIFTY 27 Oct 2026: forward 24,980 \(put-call parity fit over 5 strikes' mids\); carry 4\.50% a year \(put-call parity fit over 5 strikes' mids against the chain's underlying\), implied dividend yield 0\.77%; discount rate 5\.27% \(FBIL G-sec par yield, 0\.25-year point, 12-Oct-2026\)/)).toBeVisible();
+  // discount rate (#479: the RBI repo-rate proxy at the expiry's tenor, named; never FBIL or a bare 6.5 %)
+  await expect(page.getByText(/NIFTY 27 Oct 2026: forward 24,980 \(put-call parity fit over 5 strikes' mids\); carry 4\.50% a year \(put-call parity fit over 5 strikes' mids against the chain's underlying\), implied dividend yield 0\.99%; discount rate 5\.49% \(RBI repo-rate proxy: repo 5\.50 % in force from 07-Oct-2026\)/)).toBeVisible();
   await expectNoHorizontalOverflow(page);
   api.expectClean();
 });

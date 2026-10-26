@@ -330,6 +330,54 @@ def _series_stats(points: list[tuple[date, Decimal]]) -> dict[str, Any]:
             "drawdown_trough": points[dd.trough_index][0].isoformat(), "points": len(points)}  # fmt: skip
 
 
+def _share_above(navs: list[tuple[date, Decimal]], series: list[tuple[date, Decimal]], years: int,
+                 window_rf: Callable[[date, date], float | None]) -> float | None:  # fmt: skip
+    """The share of rolling windows (start, annualised return) that beat their own window's annualised risk-free
+    return (#479); a window ends at the first NAV on or after start + `years`, as fincalc.funds.rolling_return_series.
+    None when a window's rate is unknown."""
+    from bisect import bisect_left
+
+    days = [d for d, _ in navs]
+    beat = 0
+    for d0, r in series:
+        i = bisect_left(days, add_years(d0, years))
+        w = window_rf(d0, days[i]) if i < len(days) else None
+        if w is None:
+            return None
+        beat += float(r) > w
+    return round(beat / len(series), 4)
+
+
+def _sharpe_sortino(navs: list[tuple[date, Decimal]], rf_of: Callable[[date, date], float | None] | None,
+                    rf_annual: Decimal | None) -> dict[str, Any]:  # fmt: skip
+    """Sharpe and Sortino of daily NAVs: against each period's own risk-free return when `rf_of` is given (#479,
+    fincalc.funds.*_excess), else one annual rate for every period. A ratio that cannot be computed is None."""
+    from itertools import pairwise
+
+    from finresearch.fincalc import funds
+
+    if rf_of is not None:
+        rfs = [rf_of(a[0], b[0]) for a, b in pairwise(navs)]
+        if any(x is None for x in rfs):
+            why = "the risk-free rate is unknown for part of the window (the RBI policy-rate table starts 01-Jan-2015)"
+            return {"sharpe": None, "sortino": None, "reason": why}
+        pairs: tuple = (
+            ("sharpe", funds.sharpe_ratio_excess, rfs),
+            ("sortino", funds.sortino_ratio_excess, rfs),
+        )
+    elif rf_annual is None:
+        return {"sharpe": None, "sortino": None, "reason": "the risk-free rate is unknown"}
+    else:
+        pairs = (("sharpe", funds.sharpe_ratio, rf_annual), ("sortino", funds.sortino_ratio, rf_annual))
+    out: dict[str, Any] = {}
+    for name, fn, arg in pairs:
+        try:
+            out[name] = _f(fn(navs, arg), 4)
+        except ValueError:
+            out[name] = None
+    return out
+
+
 def _pct_rank(sorted_vals: list[float], x: float) -> float:
     """Share of values at or below x (0..1)."""
     return sum(1 for v in sorted_vals if v <= x) / len(sorted_vals) if sorted_vals else 0.0
@@ -607,26 +655,39 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
     async def fund_analytics(code: str, years: Annotated[int, Query(ge=1, le=10)] = 5,
                              rf: Annotated[Decimal | None, Query(ge=0, le=0.2)] = None) -> dict[str, Any]:  # fmt: skip
         """NAV history with trailing 1/3/5-year returns, 1- and 3-year rolling-return distributions, volatility,
-        max drawdown, Sharpe and Sortino (risk-free rate `rf`, a fraction you choose; by default FBIL's 3-month
-        G-sec par yield stored for the last NAV's day as an effective annual rate, #366, or the labelled 6.5 %
-        fallback; `risk_free` says which)."""
+        max drawdown, Sharpe and Sortino. Risk-free (#479): by default each day's return is measured against its
+        month's own rate (the month's average 91-day rate: owner-entered, else the RBI repo-rate proxy), and the
+        factsheet-style figure beside it uses one overnight rate (the repo on the last NAV's day) for every day; `rf`
+        (a fraction you choose) is one annual rate for the whole window. `risk_free` says which."""
         from finresearch.fincalc import funds
         from finresearch.signals import rates
 
         scheme = await _scheme(code)
         navs = await _navs(scheme, years)
+        end = navs[-1][0] if navs else today_ist()
+        rf_of = None  # (d0, d1) -> the risk-free return over (d0, d1], for the monthly method
         if rf is None:
-            info = await rates.rate_for(navs[-1][0] if navs else today_ist(), 0.25)
-            rf = Decimal(str(round(rates.effective_annual(info), 8)))
+            months, why = rates.months_for(navs[0][0] if navs else end, end)
+            rf_of = rates.accrual_fn(months)
+            info: dict[str, Any] = rates.monthly_json(months, why) | {
+                "known": not any(m.y91 is None for m in months.values()), "source": rates.MONTHLY_LABEL,
+                "fallback": False, "factsheet": rates.factsheet(end)}  # fmt: skip
         else:
-            info = rates.given(float(rf), "your input")
-        out: dict[str, Any] = {"scheme": _scheme_json(scheme), "years": years,
-                               "risk_free": info | {"annual": float(rf)},
+            info = rates.given(float(rf), "your input") | {"method": "constant"}
+        out: dict[str, Any] = {"scheme": _scheme_json(scheme), "years": years, "risk_free": info,
                                "source": "https://portal.amfiindia.com/DownloadNAVHistoryReport_Po.aspx",
                                "navs": [{"date": d.isoformat(), "nav": _f(v, 4)} for d, v in navs],
                                "trailing": {}, "rolling": {}, "risk": {}}  # fmt: skip
         if len(navs) < 3:
             return out
+
+        def window_rf(d0: date, d1: date) -> float | None:  # annual: the window's own risk-free return
+            if rf_of is None:
+                return float(rf)  # type: ignore[arg-type]
+            got = rf_of(d0, d1)
+            return None if got is None or d1 <= d0 else (1 + got) ** (365 / (d1 - d0).days) - 1
+
+        info["annual"] = window_rf(navs[0][0], end)
         out["trailing"] = {f"{y}y": _f(funds.trailing_return(navs, y)) for y in (1, 3, 5)}
         span = (navs[-1][0] - navs[0][0]).days
         out["trailing"]["since_start"] = _f(funds.annualised_return(navs[0][1], navs[-1][1], navs[0][0], navs[-1][0])) \
@@ -640,16 +701,16 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
             out["rolling"][f"{y}y"] = {"count": len(vals), "min": _f(vals[0]), "p25": _quantile(vals, 0.25),
                                        "median": _quantile(vals, 0.5), "p75": _quantile(vals, 0.75), "max": _f(vals[-1]),
                                        "share_positive": round(sum(1 for v in vals if v > 0) / len(vals), 4),
-                                       "share_above_rf": round(sum(1 for v in vals if v > float(rf)) / len(vals), 4),
+                                       "share_above_rf": _share_above(navs, series, y, window_rf),
                                        "histogram": _histogram(vals),
                                        "series": [{"date": d.isoformat(), "return": _f(r)} for d, r in series]}  # fmt: skip
         risk = _series_stats(navs)
-        risk["risk_free_annual"] = _f(rf)
-        for name, fn in (("sharpe", funds.sharpe_ratio), ("sortino", funds.sortino_ratio)):
-            try:
-                risk[name] = _f(fn(navs, rf), 4)
-            except ValueError:
-                risk[name] = None
+        risk["risk_free_annual"] = _f(info["annual"])
+        risk.update(_sharpe_sortino(navs, rf_of, rf))
+        if rf_of is not None:
+            fs = info["factsheet"]
+            risk["factsheet"] = {k: fs[k] for k in ("rate", "as_of", "source", "label", "url", "note")} | \
+                _sharpe_sortino(navs, None, None if fs["rate"] is None else Decimal(str(fs["rate"])))  # fmt: skip
         out["risk"] = risk
         return out
 
@@ -797,8 +858,10 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
         if data is None:
             return {"status": "not_computed", "message": fund_rank.NOT_COMPUTED}
         hit = fund_rank.lookup(data, code)
-        head = {k: data.get(k) for k in ("as_of", "generated_at", "sampling", "mar", "mar_source", "ter_day", "ter_error",
-                                         "metrics", "caveats", "sources")}  # fmt: skip
+        # "risk_free" since #479 (each month's own rate, the factsheet-style rate); a file stored before it has
+        # "mar"/"mar_source" until the monitor's next daily run replaces it
+        head = {k: data.get(k) for k in ("as_of", "generated_at", "sampling", "risk_free", "mar", "mar_source",
+                                         "ter_day", "ter_error", "metrics", "caveats", "sources") if k in data}  # fmt: skip
         out = {**head, **hit}
         if hit["status"] in ("ok", "excluded"):
             cat = data["categories"][hit["category_key"]]

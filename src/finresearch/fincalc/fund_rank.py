@@ -13,12 +13,16 @@ Metrics (all funds in a category are measured between the *same* grid dates):
   (``grid[e + 12] -> grid[e]``, e = 0..24, one per month) in which the fund's annualised return was strictly above
   the category's median for the same window. The median is over the funds with a complete 3-year grid (the same
   funds that get this metric). A fund exactly at the median does not count as beating it.
-* ``sortino_3y``: from the 36 monthly returns of the last 3 years. Minimum acceptable return (MAR) is a stated
-  annual rate (the caller's: signals.fund_rank passes FBIL's dated 3-month par yield, #366) taken as MAR / 12 a month. Downside deviation is
-  ``sqrt(sum(min(0, r - MAR/12)^2) / N)`` over *all* N months (the full-sample convention of Sortino & Price 1994),
-  annualised by sqrt(12); the numerator is ``(mean(r) - MAR/12) x 12`` (fincalc.funds.sortino_ratio with 12 periods a
-  year). A fund with no month below the MAR has an infinite ratio: it ranks first and its value is shown as None
-  with ``no_downside``.
+* ``sortino_3y``: from the 36 monthly returns of the last 3 years. The minimum acceptable return (MAR) of each month
+  is that month's own risk-free return (#479): a callable giving the risk-free return over a period (signals.fund_rank
+  passes fincalc.riskfree.accrual, the month's average 91-day rate, owner-entered else the RBI repo-rate proxy).
+  Downside deviation is ``sqrt(sum(min(0, r_t - MAR_t)^2) / N)`` over *all* N months (the full-sample convention of
+  Sortino & Price 1994), annualised by sqrt(12); the numerator is ``mean(r_t - MAR_t) x 12``
+  (fincalc.funds.sortino_ratio_excess). A stated annual MAR (a Decimal) is taken as MAR / 12 every month
+  (fincalc.funds.sortino_ratio): that is the factsheet-style figure (`factsheet_mar`, one overnight rate on the as-of
+  day for every month, as AMC factsheets do), shown beside the ranked value and not ranked. A fund with no month below
+  the MAR has an infinite ratio: it ranks first and its value is shown as None with ``no_downside``; a month whose
+  risk-free rate is unknown leaves the Sortino unknown, with the reason.
 * ``max_drawdown_3y``: the worst fall from a month-end peak to a later month-end low over the 37 month-ends of the
   last 3 years, ``trough / peak - 1`` (negative; 0 if it never fell). Month-end sampling misses falls that recovered
   within a month, so it understates daily drawdowns.
@@ -39,7 +43,7 @@ the one input with reliable persistence, so it is shown as its own column rather
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from decimal import Decimal
@@ -49,6 +53,8 @@ from finresearch.fincalc import funds as F
 from finresearch.fincalc.market import max_drawdown
 
 Point = tuple[date, Decimal] | None
+# the MAR: a stated annual rate (MAR / 12 a month), or a callable (d0, d1) -> the risk-free return over (d0, d1]
+Mar = Decimal | Callable[[date, date], float | None]
 
 MONTHS_3Y = 36
 ROLLING_WINDOWS_3Y = MONTHS_3Y - 12 + 1  # 25 one-year windows ending at each of the last 25 month-ends
@@ -124,6 +130,7 @@ class FundMetrics:
     values: dict[str, float | None] = field(default_factory=dict)
     no_downside: bool = False  # Sortino infinite: no month below the MAR
     reasons: dict[str, str] = field(default_factory=dict)  # metric -> why it is missing
+    factsheet: dict[str, float | bool | None] | None = None  # the factsheet-style Sortino (not ranked)
 
     def sort_value(self, key: str) -> float | None:
         if key == "sortino_3y" and self.no_downside:
@@ -161,10 +168,22 @@ def rolling_1y(path: Sequence[tuple[date, Decimal]]) -> list[float]:
             for i in range(12, len(path))]  # fmt: skip
 
 
-def sortino(path: Sequence[tuple[date, Decimal]], mar_annual: Decimal) -> tuple[float | None, bool]:
+class UnknownRate(ValueError):
+    """A month's risk-free rate is unknown: the Sortino is unknown, never computed against a made-up rate."""
+
+
+def sortino(path: Sequence[tuple[date, Decimal]], mar: Mar) -> tuple[float | None, bool]:
     """(annualised Sortino of the monthly returns, no_downside). See the module docstring."""
+    if callable(mar):
+        mars = [mar(a[0], b[0]) for a, b in pairwise(path)]
+        if any(m is None for m in mars):
+            raise UnknownRate("the risk-free rate of a month in the window is unknown")
+        try:
+            return float(F.sortino_ratio_excess(path, mars, periods_per_year=12)), False  # type: ignore[arg-type]
+        except ValueError:  # no month below its MAR
+            return None, True
     try:
-        return float(F.sortino_ratio(path, mar_annual, periods_per_year=12)), False
+        return float(F.sortino_ratio(path, mar, periods_per_year=12)), False
     except (
         ValueError
     ):  # no month below the MAR: downside deviation is zero, the ratio is unbounded. (The only
@@ -176,7 +195,8 @@ def drawdown(path: Sequence[tuple[date, Decimal]]) -> float:
     return float(max_drawdown([v for _, v in path]).max_drawdown)
 
 
-def fund_metrics(f: RankInput, mar_annual: Decimal) -> tuple[FundMetrics, list[float] | None]:
+def fund_metrics(f: RankInput, mar: Mar, factsheet_mar: Decimal | None = None) -> tuple[FundMetrics,
+                                                                                       list[float] | None]:  # fmt: skip
     """Every metric that needs only this fund's NAVs, and its rolling 1-year returns (for consistency)."""
     m = FundMetrics(f.code)
     for y in (1, 3, 5):
@@ -194,7 +214,13 @@ def fund_metrics(f: RankInput, mar_annual: Decimal) -> tuple[FundMetrics, list[f
             m.reasons[k] = "no complete 3-year month-end history (short history or unpriced months)"
     else:
         rolls = rolling_1y(path)
-        m.values["sortino_3y"], m.no_downside = sortino(path, mar_annual)
+        try:
+            m.values["sortino_3y"], m.no_downside = sortino(path, mar)
+        except UnknownRate as e:
+            m.values["sortino_3y"], m.reasons["sortino_3y"] = None, str(e)
+        if factsheet_mar is not None:
+            v, nd = sortino(path, factsheet_mar)
+            m.factsheet = {"sortino_3y": None if v is None else round(v, 4), "no_downside": nd}
         m.values["max_drawdown_3y"] = drawdown(path)
     m.values["ter"] = f.ter
     if f.ter is None:
@@ -225,8 +251,8 @@ def rank(values: dict[str, float], higher_is_better: bool = True) -> dict[str, t
     return out
 
 
-def rank_category(funds: Sequence[RankInput], mar_annual: Decimal,
-                  min_ranked: int = MIN_RANKED) -> dict:  # fmt: skip
+def rank_category(funds: Sequence[RankInput], mar: Mar, min_ranked: int = MIN_RANKED, *,
+                  factsheet_mar: Decimal | None = None) -> dict:  # fmt: skip
     """Every fund's metrics, per-metric rank and percentile within one category (see the module docstring).
 
     Returns {"size", "counts": {metric: funds with it}, "ranked": {metric: bool}, "funds": [{code, name, amc,
@@ -234,7 +260,7 @@ def rank_category(funds: Sequence[RankInput], mar_annual: Decimal,
     metrics: dict[str, FundMetrics] = {}
     rolls: dict[str, list[float]] = {}
     for f in funds:
-        m, r = fund_metrics(f, mar_annual)
+        m, r = fund_metrics(f, mar, factsheet_mar)
         metrics[f.code] = m
         if r is not None:
             rolls[f.code] = r
@@ -260,7 +286,8 @@ def rank_category(funds: Sequence[RankInput], mar_annual: Decimal,
                      "ranks": {k: ranks[k][f.code][0] if f.code in ranks[k] else None for k in METRIC_KEYS},
                      "percentiles": {k: round(ranks[k][f.code][1], 4) if f.code in ranks[k] else None
                                      for k in METRIC_KEYS},
-                     "no_downside": m.no_downside, "missing": m.reasons})  # fmt: skip
+                     "no_downside": m.no_downside, "missing": m.reasons,
+                     **({"factsheet": m.factsheet} if m.factsheet is not None else {})})  # fmt: skip
     return {"size": len(funds), "counts": counts, "ranked": ranked, "funds": rows}
 
 

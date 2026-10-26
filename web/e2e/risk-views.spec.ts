@@ -86,3 +86,37 @@ test("risk: relative, rolling, drawdown and VaR-backtest lines; unmapped stress 
   api.expectClean(["GET /api/funds/category-ranks", "GET /api/lookthrough", "GET /api/portfolio/health",
     "GET /api/disclosures/tracked", "GET /api/portfolio/ais", "GET /api/portfolio/tax"]);
 });
+
+// #479: Sharpe and Sortino against each month's own risk-free rate, with the factsheet-style pair beside them
+const MONTHLY = {
+  ...RISK,
+  risk_free: { rate: 0.0598, label: "owner-entered rates, else the RBI repo-rate proxy: each month's own risk-free rate", as_of: "2026-10-20",
+    source: "signals.rates (#479)", fallback: false, user_set: false, method: "monthly", detail: { tiers: { proxy: 870 } },
+    factsheet: { rate: 0.055, as_of: "2026-10-20", source: "RBI repo rate 5.50 % in force on 20-Oct-2026 (from 07-Oct-2026)", label: "factsheet-style" } },
+  realised: { ...RISK.realised, sharpe: m(0.81), sortino: m(1.07),
+    sharpe_factsheet: { ...m(0.86), note: "factsheet-style" }, sortino_factsheet: { ...m(1.15), note: "factsheet-style" } },
+};
+
+test("risk: Sharpe and Sortino use each month's own rate, beside the factsheet-style pair (#479)", async ({ page }) => {
+  const api = await mockApi(page, {
+    "GET /api/portfolio": SNAPSHOT,
+    "POST /api/portfolio/snapshot": { recorded: false, reason: "e2e" },
+    "GET /api/connections/summary": [],
+    "GET /api/portfolio/analytics/risk": MONTHLY,
+  });
+  await page.goto("/portfolio#risk");
+  const card = page.locator("section").filter({ has: page.getByRole("heading", { name: "Volatility and market sensitivity" }) });
+  await expect(card.getByText("Sharpe ratio", { exact: true })).toBeVisible();
+  await expect(card.getByText("0.81")).toBeVisible();
+  await expect(card.getByText("Sharpe (factsheet-style)")).toBeVisible();
+  await expect(card.getByText("0.86")).toBeVisible();
+  await expect(card.getByText("Sortino (factsheet-style)")).toBeVisible();
+  await expect(card.getByText("1.15")).toBeVisible();
+  const line = page.getByTestId("portfolio-risk-free");
+  await expect(line).toContainText("each month's own rate, 5.98 % a year on average");
+  await expect(line).toContainText("Factsheet-style: 5.50 % (RBI repo rate 5.50 % in force on 20-Oct-2026");
+  await expect(line).not.toContainText("FBIL");
+  if (phone(page)) await expectNoHorizontalOverflow(page);
+  api.expectClean(["GET /api/funds/category-ranks", "GET /api/lookthrough", "GET /api/portfolio/health",
+    "GET /api/disclosures/tracked", "GET /api/portfolio/ais", "GET /api/portfolio/tax"]);
+});

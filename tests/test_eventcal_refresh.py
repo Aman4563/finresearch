@@ -53,9 +53,7 @@ def _apply(found: refresh.Found, now: datetime = NOW) -> None:
 
 
 def test_new_rows_are_known_from_the_fetch_never_from_the_document_date(clean):
-    _apply(
-        refresh.Found("rbi_mpc_schedule", events=[_ev(date(2027, 6, 4))], coverage=[_cov(date(2028, 3, 31))])
-    )
+    _apply(refresh.Found("rbi_rss", events=[_ev(date(2027, 6, 4))], coverage=[_cov(date(2028, 3, 31))]))
     ev, cov = _load()
     assert [(e.day, e.known_since) for e in ev] == [(date(2027, 6, 4), NOW)]
     assert ev[0].known_since_url == URL
@@ -67,7 +65,7 @@ def test_a_row_already_known_earlier_keeps_its_earlier_known_since(clean):
 
     with session_scope() as s:
         store.upsert(s, [_ev(date(2026, 12, 4))], [])  # the seed's row, known since March
-    _apply(refresh.Found("rbi_mpc_schedule", events=[_ev(date(2026, 12, 4))], coverage=[]))
+    _apply(refresh.Found("rbi_rss", events=[_ev(date(2026, 12, 4))], coverage=[]))
     assert [e.known_since for e in _load()[0]] == [MARCH]
 
 
@@ -76,7 +74,7 @@ def test_a_moved_meeting_keeps_the_old_date_until_the_notice_is_seen(clean):
 
     with session_scope() as s:
         store.upsert(s, [_ev(date(2027, 6, 4))], [])
-    _apply(refresh.Found("rbi_mpc_schedule", events=[_ev(date(2027, 6, 5))],
+    _apply(refresh.Found("rbi_rss", events=[_ev(date(2027, 6, 5))],
                          moves=[refresh.Move("rbi_mpc", "IN", date(2027, 6, 4), date(2027, 6, 5))]))  # fmt: skip
     ev, _ = _load()
     full = [cal.Coverage(type=k, scope="IN", through=date(2028, 3, 31), source_url=URL, known_since=MARCH)
@@ -101,8 +99,8 @@ def test_a_newer_release_calendar_withdraws_future_dates_it_no_longer_lists(clea
 
 
 async def test_a_failed_source_stores_nothing_and_coverage_stays_where_it_was(clean, monkeypatch):
-    monkeypatch.setitem(data_rights.DECISIONS, "rbi_mpc_schedule", data_rights.Decision(
-        "rbi_mpc_schedule", "accept-personal", "2026-10-23", "test", "test"))  # fmt: skip
+    monkeypatch.setitem(data_rights.DECISIONS, "rbi_rss", data_rights.Decision(
+        "rbi_rss", "accept-personal", "2026-10-23", "test", "test"))  # fmt: skip
     from finresearch.db import session_scope
 
     with session_scope() as s:
@@ -111,8 +109,8 @@ async def test_a_failed_source_stores_nothing_and_coverage_stays_where_it_was(cl
     async def broken(known: refresh.Known, now: datetime) -> refresh.Found:
         raise RuntimeError("HTTP 503")
 
-    res = await refresh.run([refresh.Source("rbi_mpc_schedule", broken)], NOW)
-    assert res["failed"] == {"rbi_mpc_schedule": "RuntimeError: HTTP 503"} and res["stored"] == {}
+    res = await refresh.run([refresh.Source("rbi_rss", broken)], NOW)
+    assert res["failed"] == {"rbi_rss": "RuntimeError: HTTP 503"} and res["stored"] == {}
     ev, cov = _load()
     assert ev == [] and [c.through for c in cov] == [date(2027, 3, 31)]
     # past the last coverage the check reads unknown, never "no events"
@@ -132,8 +130,8 @@ async def test_a_source_without_a_data_rights_decision_is_skipped_unread(clean):
 
 
 async def test_a_decided_source_is_stored_and_sees_what_is_already_known(clean, monkeypatch):
-    monkeypatch.setitem(data_rights.DECISIONS, "rbi_mpc_schedule", data_rights.Decision(
-        "rbi_mpc_schedule", "accept-personal", "2026-10-23", "test", "test"))  # fmt: skip
+    monkeypatch.setitem(data_rights.DECISIONS, "rbi_rss", data_rights.Decision(
+        "rbi_rss", "accept-personal", "2026-10-23", "test", "test"))  # fmt: skip
     from finresearch.db import session_scope
 
     with session_scope() as s:
@@ -142,14 +140,10 @@ async def test_a_decided_source_is_stored_and_sees_what_is_already_known(clean, 
 
     async def reader(known: refresh.Known, now: datetime) -> refresh.Found:
         seen.append(known)
-        return refresh.Found(
-            "rbi_mpc_schedule", events=[_ev(date(2027, 6, 4))], coverage=[_cov(date(2028, 3, 31))]
-        )
+        return refresh.Found("rbi_rss", events=[_ev(date(2027, 6, 4))], coverage=[_cov(date(2028, 3, 31))])
 
-    res = await refresh.run([refresh.Source("rbi_mpc_schedule", reader)], NOW)
-    assert res["stored"] == {
-        "rbi_mpc_schedule": {"events": 1, "coverage": 1, "withdrawn": 0, "reinstated": 0}
-    }
+    res = await refresh.run([refresh.Source("rbi_rss", reader)], NOW)
+    assert res["stored"] == {"rbi_rss": {"events": 1, "coverage": 1, "withdrawn": 0, "reinstated": 0}}
     assert seen[0].covered["rbi_mpc"] == date(2027, 3, 31) and URL in seen[0].urls
 
 
@@ -211,10 +205,10 @@ def test_a_date_listed_again_after_a_move_is_reinstated_never_left_out(clean):
 
     with session_scope() as s:
         store.upsert(s, [_ev(date(2027, 6, 4))], [])
-    _apply(refresh.Found("rbi_mpc_schedule", events=[_ev(date(2027, 6, 5))],
+    _apply(refresh.Found("rbi_rss", events=[_ev(date(2027, 6, 5))],
                          moves=[refresh.Move("rbi_mpc", "IN", date(2027, 6, 4), date(2027, 6, 5))]))  # fmt: skip
     back = datetime(2026, 11, 2, 21, 0, tzinfo=IST)
-    _apply(refresh.Found("rbi_mpc_schedule", events=[_ev(date(2027, 6, 4))],
+    _apply(refresh.Found("rbi_rss", events=[_ev(date(2027, 6, 4))],
                          moves=[refresh.Move("rbi_mpc", "IN", date(2027, 6, 5), date(2027, 6, 4))]), back)  # fmt: skip
     got = {e.day: (e.known_since, e.withdrawn_since) for e in _load()[0]}
     assert got[date(2027, 6, 5)] == (NOW, back)

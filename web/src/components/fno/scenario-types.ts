@@ -35,7 +35,8 @@ export type ShockView = { kind: string; label: string; move: number | null; at: 
 
 /** #480: one expiry's forward, the carry its scenarios roll it at (b = ln(F/S)/T, a year; null = unknown, with
  * `carry_reason`: then its scenarios are unknown, never rolled at the rate), the dividend yield r - b it implies, and
- * its own discount rate (#366/#385: FBIL's par yield at the expiry's tenor, or a labelled fallback). */
+ * its own discount rate (#479: signals.rates at the expiry's tenor: an owner-entered yield, else the RBI repo-rate
+ * proxy, named in `rate_info`). */
 export type ForwardView = {
   underlying: string; expiry: string; forward: number | null; source: string; spot: number | null; t_years: number | null;
   carry: number | null; carry_source: string | null; carry_reason: string | null; implied_q: number | null;

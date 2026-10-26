@@ -215,7 +215,7 @@ def after_tax_ytm(clean: Num, settlement: date, maturity: date, coupon_rate: Num
 
 def effective_annual(nominal: Num, freq: int) -> Decimal:
     """A yield compounded `freq` times a year as an effective annual rate, ``(1 + y/freq)**freq - 1``. Compare yields
-    only on this basis: a half-yearly 6.66 % G-sec par yield is 6.77 % a year, a quarterly-compounded 6.40 % FD is
+    only on this basis: a half-yearly 7.00 % G-sec par yield is 7.12 % a year, a quarterly-compounded 6.40 % FD is
     6.56 %."""
     if freq < 1:
         raise ValueError("freq must be at least 1")

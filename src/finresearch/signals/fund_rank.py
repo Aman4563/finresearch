@@ -48,7 +48,9 @@ SEBI_CATEGORIES = "https://www.sebi.gov.in/legal/circulars/oct-2017/categorizati
 
 HISTORY_MONTHS = 60  # 5 years of month-ends (the 5-year CAGR's start)
 NEAR_DAYS = 10  # a NAV further than this before a grid date means the scheme was not priced then
-STORE_VERSION = 1
+STORE_VERSION = (
+    2  # 2 (#479): "risk_free" (each month's own rate, the factsheet figure) replaced "mar"/"mar_source"
+)
 NOT_COMPUTED = (
     "Category ranks have not been computed yet. The monitor computes them once a day (from 07:00 IST); "
     "`finresearch fund rank` computes them now (about a minute the first time)."
@@ -74,6 +76,9 @@ CAVEATS = [
     "ranks among survivors, whose median is flattered.",
     "Month-end NAVs: the drawdown misses falls that recovered within a month, and the Sortino ratio rests on 36 "
     "monthly returns.",
+    "The Sortino's minimum acceptable return is each month's own risk-free rate (the month's average 91-day rate: "
+    "your entered T-bill yields, else the RBI repo rate). The factsheet-style figure beside it applies one overnight "
+    "rate, the repo rate on the as-of day, to every month, as AMC factsheets do; the two differ when rates moved.",
     "Category headings are AMFI's. Where AMCs use differently named headings (for example 'Short Duration' and "
     "'Short Term') the funds are ranked separately until it is clear the two are the same SEBI category.",
 ]
@@ -241,32 +246,38 @@ def as_of_for(today: date) -> date:
     return R.latest_month_end(today - timedelta(days=1))
 
 
-MAR_TENOR = 0.25  # years: FBIL's 3-month par point, a stand-in for the 91-day T-bill (portfolio.analytics)
-
-
-async def mar_for(as_of: date) -> tuple[Decimal, dict[str, Any]]:
-    """The Sortino MAR (#366/#385): FBIL's 3-month G-sec par yield stored for `as_of` (signals.rates.rate_for) as
-    an effective annual rate (1 + y/2)^2 - 1, or the labelled fallback 6.5 % a year when no curve is known."""
+def mar_for(as_of: date) -> tuple[R.Mar, Decimal | None, dict[str, Any]]:
+    """The Sortino MAR (#479): each month's own risk-free return over the 3-year window (signals.rates: the month's
+    average 91-day rate, owner-entered else the RBI repo-rate proxy), the factsheet-style annual rate (the repo rate
+    in force on the as-of month-end, for every month) and the payload block that says which."""
     from finresearch.signals import rates
 
-    info = await rates.rate_for(as_of, MAR_TENOR)
-    annual = rates.effective_annual(info)
-    return Decimal(str(round(annual, 8))), info | {"annual": annual}
+    start = R.month_grid(as_of, R.MONTHS_3Y)[-1] - timedelta(
+        days=NEAR_DAYS + 1
+    )  # a NAV may predate its grid day
+    months, why = rates.months_for(start, as_of)
+    fs = rates.factsheet(as_of)
+    factsheet_mar = None if fs["rate"] is None else Decimal(str(fs["rate"]))
+    return rates.accrual_fn(months), factsheet_mar, rates.monthly_json(months, why) | {"factsheet": fs}
 
 
 async def compute(today: date | None = None, mar_annual: Decimal | None = None) -> dict[str, Any]:
     """Rank every rankable category (see the module docstring). Reads 61 month-end snapshots (cached on disk once
-    older than 5 days), NAVAll and the TER file. `mar_annual` None: FBIL's dated rate at the as-of month-end
-    (`mar_for`); either way `mar_source` says which rate it is."""
+    older than 5 days), NAVAll and the TER file. `mar_annual` None: each month's own risk-free rate and the
+    factsheet-style figure beside it (`mar_for`); a stated annual MAR is used for every month. `risk_free` says
+    which."""
     today = today or SOURCES.today()
     rows = await _schemes()
     as_of = as_of_for(today)
+    mar: R.Mar
     if mar_annual is None:
-        mar_annual, mar_source = await mar_for(as_of)
+        mar, factsheet_mar, risk_free = mar_for(as_of)
     else:
         from finresearch.signals.rates import given
 
-        mar_source = given(float(mar_annual), "the MAR passed by the caller") | {"annual": float(mar_annual)}
+        mar, factsheet_mar = mar_annual, None
+        risk_free = given(float(mar_annual), "the MAR passed by the caller") | {"method": "constant",
+                                                                                 "annual": float(mar_annual)}  # fmt: skip
     grid = R.month_grid(as_of, HISTORY_MONTHS)
     snaps = [await _snapshot(d) for d in grid]  # one after another: AMFI is asked at the polite client's pace
     ter_error = None
@@ -294,11 +305,10 @@ async def compute(today: date | None = None, mar_annual: Decimal | None = None) 
                     " (launched after it)" if launched else " (not priced then)")})  # fmt: skip
                 continue
             inputs.append(R.RankInput(x.code, x.name, pts, _ter_of(x, table), x.amc))
-        res = R.rank_category(inputs, mar_annual)
+        res = R.rank_category(inputs, mar, factsheet_mar=factsheet_mar)
         categories[key] = {"key": key, "label": label, "raw_labels": raw, **res, "excluded": excluded}
     return {"version": STORE_VERSION, "as_of": as_of.isoformat(), "generated_at": datetime.now(UTC).isoformat(),
-            "grid": [d.isoformat() for d in grid], "sampling": "month-end NAVs", "mar": float(mar_annual),
-            "mar_source": mar_source,
+            "grid": [d.isoformat() for d in grid], "sampling": "month-end NAVs", "risk_free": risk_free,
             "ter_day": ter_day.isoformat() if ter_day else None, "ter_error": ter_error,
             "metrics": [{"key": m.key, "label": m.label, "higher_is_better": m.higher_is_better, "unit": m.unit}
                         for m in R.METRICS],

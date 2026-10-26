@@ -91,6 +91,38 @@ def test_sortino_monthly_against_a_stated_mar_by_hand():
     assert R.sortino(R.three_year_path(const(0.01)), Decimal("0.065")) == (None, True)
 
 
+def test_sortino_against_each_months_own_rate_beside_the_factsheet_rate_by_hand():
+    """#479: the MAR of each month is that month's own risk-free return (a callable over the period); the
+    factsheet-style figure applies one annual rate to every month. Months alternate +2 % and -1 %; the MAR is 0.5 % a
+    month for the first 18 and 0.25 % for the last 18. Excess returns: +1.5/-1.5 % (9 each), then +1.75/-1.25 %
+    (9 each); mean = 9 x 0.5 % / 36 = 0.125 %; DD = sqrt((9 x 1.5 %^2 + 9 x 1.25 %^2) / 36) = 0.97628 %;
+    Sortino = 0.125 % x 12 / (0.97628 % x sqrt 12) = 0.44353. At one rate of 6 % a year (0.5 % a month) the mean
+    excess is 0, so the factsheet-style Sortino is 0."""
+    path = R.three_year_path(points([0.02, -0.01] * 18, 36))
+    first = {path[i][0] for i in range(18)}  # the first 18 periods' start dates
+
+    def mar(d0, d1):
+        return 0.005 if d0 in first else 0.0025
+
+    value, no_down = R.sortino(path, mar)
+    assert not no_down and value == pytest.approx(0.44353276, abs=1e-8)
+    assert R.sortino(path, Decimal("0.06")) == (pytest.approx(0.0, abs=1e-12), False)
+    funds = [R.RankInput(str(i), f"Fund {i}", points([0.02, -0.01] * 30, 60)) for i in range(5)]
+    res = R.rank_category(funds, mar, factsheet_mar=Decimal("0.06"))
+    row = res["funds"][0]
+    assert row["values"]["sortino_3y"] == pytest.approx(0.4435, abs=1e-4)
+    assert row["factsheet"] == {"sortino_3y": 0.0, "no_downside": False}
+
+
+def test_an_unknown_monthly_rate_leaves_the_sortino_unknown_with_the_reason():
+    path = R.three_year_path(const(0.01))
+    with pytest.raises(R.UnknownRate):
+        R.sortino(path, lambda d0, d1: None)
+    m, _ = R.fund_metrics(R.RankInput("1", "Any Fund", const(0.01)), lambda d0, d1: None)
+    assert m.values["sortino_3y"] is None and not m.no_downside
+    assert "risk-free rate" in m.reasons["sortino_3y"]
+
+
 def test_three_year_metrics_need_every_month_end():
     pts = const(0.01)
     pts[5] = None  # a month-end without a NAV (not priced)
@@ -233,7 +265,7 @@ def test_universe_keeps_one_direct_growth_row_per_scheme_and_maps_its_other_plan
 
 # --------------------------------------------------------------------------- compute, store, lookup
 @pytest.fixture
-def fake_amfi(env, monkeypatch):  # env: compute() reads the stored FBIL curve for the MAR (#366/#385)
+def fake_amfi(env, monkeypatch):  # env: compute() reads the owner-entered rates (#479; conftest: none)
     """Ten flexi-cap funds across the two AMFI spellings with steady monthly growth (fund i: 0.3 % + 0.1 % x i a
     month), a regular plan, an index fund, and one fund launched after the as-of month-end."""
     cat_a, cat_b = "Equity Scheme - Flexi Cap Fund", "Equity Schemes - Flexi Cap Fund"
@@ -293,33 +325,31 @@ async def test_compute_ranks_from_month_end_snapshots_and_records_exclusions(fak
     assert FR.lookup(data, "999999")["status"] == "unknown"
 
 
-async def test_the_mar_is_fbils_dated_rate_at_the_as_of_month_end(env, fake_amfi, monkeypatch):
-    """#366/#385: the Sortino MAR is FBIL's 3-month G-sec par yield on the as-of month-end (30-Sep-2026), as an
-    effective annual rate (1 + y/2)^2 - 1 (portfolio.analytics' convention): 6.00 % half-yearly -> 6.09 % a year.
-    No curve: the labelled fallback 6.5 %."""
-    from sqlalchemy import text
-
-    from finresearch.db import session_scope
-    from finresearch.db.models import RateCurve
-
-    with session_scope() as s:
-        s.execute(text("TRUNCATE rate_curve"))
-    res = await FR.compute()
-    assert res["mar"] == 0.065 and res["mar_source"]["source"] == "fallback 6.5 %, no curve"
-    assert "no FBIL gsec_par curve" in res["mar_source"]["note"]
-    with session_scope() as s:
-        s.add(RateCurve(series="gsec_par", day=date(2026, 9, 29), tenor="0.25Y", tenor_years=Decimal("0.25"),
-                        rate=Decimal("0.06")))  # fmt: skip
+async def test_the_mar_is_each_months_own_rate_beside_the_factsheet_rate(fake_amfi, monkeypatch):
+    """#479: the Sortino MAR is each month's own risk-free return, here the RBI repo-rate proxy (no owner-entered
+    rates): September 2026 at 5.25 % for its 30 days is (1 + 0.0525 x 91/365)^(30/91) - 1, November 2023 at 6.50 %
+    is (1 + 0.065 x 91/365)^(30/91) - 1. The factsheet-style rate is the repo in force on the as-of month-end
+    (30-Sep-2026), 5.25 % a year for every month, shown beside the ranked Sortino and not ranked."""
     seen, real = [], R.rank_category
-    monkeypatch.setattr(R, "rank_category", lambda funds, mar: seen.append(mar) or real(funds, mar))
-    try:
-        res = await FR.compute()
-    finally:
-        with session_scope() as s:
-            s.execute(text("TRUNCATE rate_curve"))
-    assert res["mar"] == pytest.approx(1.03**2 - 1) and res["mar_source"]["as_of"] == "2026-09-29"
-    assert res["mar_source"]["tenor_years"] == 0.25 and "FBIL G-sec par yield" in res["mar_source"]["source"]
-    assert seen and all(m == Decimal(str(round(1.03**2 - 1, 8))) for m in seen)  # the MAR every Sortino got
+    monkeypatch.setattr(R, "rank_category",
+                        lambda funds, mar, **kw: seen.append((mar, kw)) or real(funds, mar, **kw))  # fmt: skip
+    res = await FR.compute()
+    rf = res["risk_free"]
+    assert rf["method"] == "monthly" and set(rf["tiers"]) == {"proxy"} and rf["unknown"] == []
+    assert rf["factsheet"]["rate"] == 0.0525 and rf["factsheet"]["as_of"] == "2026-09-30"
+    assert "mar" not in res and "mar_source" not in res
+    mar, kw = seen[0]
+    assert kw["factsheet_mar"] == Decimal("0.0525")
+    assert mar(date(2026, 8, 31), date(2026, 9, 30)) == pytest.approx((1 + 0.0525 * 91 / 365) ** (30 / 91) - 1,
+                                                                       abs=1e-15)  # fmt: skip
+    assert mar(date(2023, 10, 31), date(2023, 11, 30)) == pytest.approx((1 + 0.065 * 91 / 365) ** (30 / 91) - 1,
+                                                                         abs=1e-15)  # fmt: skip
+    # fund 0 grows 0.3 % a month, below every month's rate. At one rate its excess return is the same every month,
+    # so mean / root-mean-square = -1 and the factsheet Sortino is -sqrt(12); against each month's own rate (6.50 %
+    # falling to 5.25 % over the window) the excess varies, |mean| < rms, so it lies between -sqrt(12) and 0
+    f0 = next(f for f in res["categories"]["equity:flexi cap"]["funds"] if f["code"] == "200000")
+    assert f0["factsheet"]["sortino_3y"] == pytest.approx(-math.sqrt(12), abs=1e-4)
+    assert -math.sqrt(12) < f0["values"]["sortino_3y"] < 0
 
 
 async def test_fund_signal_peers_are_the_rank_category_not_the_raw_heading(fake_amfi, monkeypatch):
@@ -388,7 +418,7 @@ def test_category_rank_api_reads_the_stored_ranking_only(env, fake_amfi):
     from finresearch.db import session_scope
 
     with session_scope() as s:
-        s.execute(text("TRUNCATE rate_curve"))  # no stored curve: the MAR is the labelled fallback
+        s.execute(text("TRUNCATE rate_curve"))  # no FBIL rows: nothing reads them any more (#479)
 
     with TestClient(create_app()) as c:
         r = c.get("/api/funds/200003/category-rank").json()
@@ -401,8 +431,9 @@ def test_category_rank_api_reads_the_stored_ranking_only(env, fake_amfi):
         fake_amfi.clear()
         r = c.get("/api/funds/200100/category-rank").json()
         assert r["status"] == "ok" and r["via"] == "200003" and r["as_of"] == "2026-09-30"
-        assert r["category"]["size"] == 10 and len(r["category"]["funds"]) == 10 and r["mar"] == 0.065
-        assert r["mar_source"]["fallback"] is True  # #366/#385: no stored curve -> the labelled 6.5 %
+        assert r["category"]["size"] == 10 and len(r["category"]["funds"]) == 10
+        # #479: each month's own rate and the factsheet-style rate, never a fixed 6.5 %
+        assert r["risk_free"]["method"] == "monthly" and r["risk_free"]["factsheet"]["rate"] == 0.0525
         assert r["fund"]["ranks"]["cagr_1y"] == 7 and r["caveats"]
         b = c.get("/api/funds/category-ranks", params={"codes": "200009,200300", "metric": "cagr_1y"}).json()
         assert b["ranks"]["200009"]["rank"] == 1 and b["ranks"]["200009"]["of"] == 10

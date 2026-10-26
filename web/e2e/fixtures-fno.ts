@@ -129,7 +129,8 @@ export const ANALYSIS: Analysis = {
   notes: ["The short call is within the expected move."],
 };
 export const RESULT: Result = { analysis: ANALYSIS, breakevens: [24557, 25443], max_profit: 2762, max_loss: -13488, net_premium: -2762,
-  model_probability_of_profit: 0.66, rate: { rate: 0.065, par_yield: 6.5, tenor_years: 0.02, as_of: "2026-10-12", fallback: false, source: "FBIL", note: "par yield at the expiry" },
+  model_probability_of_profit: 0.66, rate: { rate: 0.054971, par_yield: null, tenor_years: 0.0192, tenor_days: 7, as_of: "2026-10-07", fallback: false, known: true,
+    tier: "proxy", yield: 0.055, source: "RBI repo-rate proxy: repo 5.50 % in force from 07-Oct-2026", note: "repo 5.50 % + 0 bp at 7 days, simple yield, Actual/365 -> 5.50 % continuous" },
   net_greeks: { delta: -1.2, gamma: -0.004, vega: -120.5, theta: 310.2 }, curve: [], lot_size: 65, notes: [], disclaimer: "Model numbers, not advice. No order is placed." };
 export const LONG_RESULT: Result = { ...RESULT, max_profit: big(2762), max_loss: -big(13488), net_premium: -big(2762), breakevens: [124557, 125443],
   analysis: { ...ANALYSIS, expected_move: { move: 123456, low: 1234567, high: 1481479, vol: 0.142 }, risk_neutral: out(0.66, -big(210)), real_world: out(0.71, big(140)) },
@@ -390,9 +391,12 @@ const scWorst = (k: number) => Array.from({ length: 10 }, (_, i) => ({ start: `2
   move: -0.059 + i * 0.004, dvol: 4.4 - i * 0.3, pnl: (-24100 + i * 1500) * k, mapped: [] }));
 const VAULT = "waits for the vault's data audit (#394, #365): 2008-2021 sessions live only in the sealed vault database, never in the app's store";
 
-const SC_RATE: RateInfo = { rate: 0.0527, par_yield: 0.0534, tenor_years: 0.25, as_of: "2026-10-12", fallback: false, known: true, source: "FBIL G-sec par yield, 0.25-year point, 12-Oct-2026", note: "5.34 % half-yearly" };
+// #479: each expiry's discount rate is the RBI repo-rate proxy at its own tenor (15 days here: 5.50 % simple -> 5.49 %)
+const SC_RATE: RateInfo = { rate: 0.054938, par_yield: null, tenor_years: 0.0411, tenor_days: 15, as_of: "2026-10-07", fallback: false, known: true,
+  tier: "proxy", yield: 0.055, source: "RBI repo-rate proxy: repo 5.50 % in force from 07-Oct-2026",
+  note: "repo 5.50 % + 0 bp at 15 days, simple yield, Actual/365 -> 5.49 % continuous" };
 const SC_FWD: ForwardView = { underlying: "NIFTY", expiry: "2026-10-27", forward: null, source: "", spot: null, t_years: 0.0416, carry: null,
-  carry_source: null, carry_reason: null, implied_q: null, rate: 0.0527, rate_info: SC_RATE };
+  carry_source: null, carry_reason: null, implied_q: null, rate: 0.054938, rate_info: SC_RATE };
 
 export const SCENARIOS: BookScenarios = {
   as_of: "2026-10-13T11:00:00+05:30", notes: ["Groww is not connected: only paper legs are in the book."],
@@ -405,9 +409,9 @@ export const SCENARIOS: BookScenarios = {
   beta_rule: "Each underlying other than NIFTY moves by its beta x NIFTY's move; every P&L takes the worse of its band's two ends.",
   // #480: each expiry's carry (b = ln(F/S)/T) and its own discount rate (#366/#385)
   forwards: [{ ...SC_FWD, underlying: "NIFTY", forward: 24980, source: "put-call parity fit over 5 strikes' mids", spot: 24933.3, carry: 0.045,
-    carry_source: "put-call parity fit over 5 strikes' mids against the chain's underlying", implied_q: 0.0077 },
+    carry_source: "put-call parity fit over 5 strikes' mids against the chain's underlying", implied_q: 0.0099 },
     { ...SC_FWD, underlying: "BANKNIFTY", forward: 51820, source: "put-call parity fit over 4 strikes' mids", spot: 51720.6, carry: 0.0462,
-      carry_source: "put-call parity fit over 4 strikes' mids against the chain's underlying", implied_q: 0.0065 }],
+      carry_source: "put-call parity fit over 4 strikes' mids against the chain's underlying", implied_q: 0.0087 }],
   exposures: { complete: true, reasons: [], total: { rs_delta: 412000, rs_gamma_1pct: -1830, vega_pt: -905, theta_day: 1240 },
     flags: ["BANKNIFTY 27-Oct-2026 put 51000: IV from the LTP (no two-sided quote), not a mid"], nifty_delta: 18.2, nifty_delta_reasons: [],
     rows: [{ underlying: "BANKNIFTY", bucket: "this_month", legs: 1, exposure: { rs_delta: 290000, rs_gamma_1pct: -2100, vega_pt: -1200, theta_day: 1500 } },
