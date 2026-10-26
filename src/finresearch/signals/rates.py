@@ -190,3 +190,26 @@ def factsheet(day: date) -> dict[str, Any]:
     return {"known": True, "rate": float(row.repo), "as_of": day.isoformat(), "label": FACTSHEET_LABEL,
             "source": f"RBI repo rate {float(row.repo) * 100:.2f} % in force on {day:%d-%b-%Y} (from "
                       f"{row.effective:%d-%b-%Y}{feed})", "url": row.url, "note": note}  # fmt: skip
+
+
+def policy_table(s: Any = None) -> dict[str, Any]:
+    """RBI's policy rates as the chain uses them (GET /api/rates/policy, `finresearch rates policy`): the typed table
+    (origin "typed"), then each decision read from RBI's RSS feed (origin "rss", with the time it was first seen;
+    #492); `feed` is every stored observation with its conflict flag, and the table's disagreements and the feed's
+    conflicts are listed as the data-quality pass reports them. Reads only."""
+    from finresearch.fincalc import policy_rates as P
+
+    def num(x: Any) -> float | None:
+        return None if x is None else float(x)
+
+    observed, why = _observed(s)
+    merged = F.merge(observed.observations)
+    rows = [{"effective": r.effective.isoformat(), "repo": float(r.repo), "floor": num(r.floor),
+             "floor_kind": r.floor_kind, "msf": num(r.msf), "title": r.title, "released": r.released.isoformat(),
+             "url": r.url, "origin": "rss" if r.seen else "typed", "seen": r.seen.isoformat() if r.seen else None}
+            for r in merged.rows]  # fmt: skip
+    feed = [{"decided": o.decided.isoformat(), "repo": num(o.repo), "sdf": num(o.sdf), "msf": num(o.msf),
+             "title": o.title, "url": o.url, "seen": o.seen.isoformat() if o.seen else None, "conflict": o.conflict}
+            for o in observed.observations]  # fmt: skip
+    return {"start": P.START.isoformat(), "reviewed": P.REVIEWED.isoformat(), "rows": rows, "feed": feed,
+            "disagreements": list(merged.disagreements), "conflicts": [n for _, n in merged.conflicts], "note": why}  # fmt: skip
