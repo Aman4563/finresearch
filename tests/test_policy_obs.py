@@ -163,7 +163,7 @@ def _rate(day: date) -> dict:
         return rates.rate_on(s, day, 91 / 365)
 
 
-def test_the_chain_reads_the_stored_decision_and_clears_the_flag(clean, monkeypatch):
+def test_the_chain_reads_the_stored_decision_and_clears_the_flag(utc, clean, monkeypatch):
     from finresearch.signals import rates
 
     monkeypatch.setattr(rates, "OBSERVED", None)  # read policy_rate_obs and the calendar in the test database
@@ -178,6 +178,7 @@ def test_the_chain_reads_the_stored_decision_and_clears_the_flag(clean, monkeypa
     read = _rate(date(2026, 12, 10))
     assert read["stale"] is False and read["yield"] == pytest.approx(0.0575) and read["as_of"] == "2026-12-04"
     assert "from RBI's RSS feed" in read["source"] and "seen 04-Dec-2026 12:00 IST" in read["source"]
+    assert read["policy"]["seen"] == "2026-12-04T12:00:00+05:30"  # IST, whatever the database session's zone
 
 
 def test_a_withdrawn_meeting_date_is_not_waited_for(clean, monkeypatch):
@@ -219,7 +220,14 @@ def test_the_factsheet_rate_uses_a_decision_read_from_the_feed(clean, monkeypatc
 # ---- the policy-rate listing: GET /api/rates/policy and `finresearch rates policy` show what the feed added
 
 
-def test_the_policy_listing_shows_decisions_read_from_the_feed(clean, monkeypatch):
+@pytest.fixture
+def utc(monkeypatch):
+    """The database session in UTC, as CI's Postgres runs (this Mac's runs in Asia/Kolkata): times read back must
+    still be shown in IST."""
+    monkeypatch.setenv("PGTZ", "UTC")
+
+
+def test_the_policy_listing_shows_decisions_read_from_the_feed(utc, clean, monkeypatch):
     from starlette.testclient import TestClient
     from typer.testing import CliRunner
 
@@ -236,6 +244,7 @@ def test_the_policy_listing_shows_decisions_read_from_the_feed(clean, monkeypatc
     assert (typed["effective"], typed["origin"], typed["seen"]) == ("2026-10-07", "typed", None)
     assert (read["effective"], read["repo"], read["floor"], read["msf"], read["origin"], read["url"]) == (
         "2026-12-04", 0.0575, None, None, "rss", URL.format(91004))  # fmt: skip
-    assert read["seen"] == T1.isoformat() and body["feed"][0]["url"] == URL.format(91004)
+    assert read["seen"] == "2026-12-04T12:00:00+05:30" and body["feed"][0]["url"] == URL.format(91004)  # IST
+    assert body["feed"][0]["seen"] == "2026-12-04T12:00:00+05:30"
     out = CliRunner().invoke(app, ["rates", "policy"]).output
     assert "04-Dec-2026  repo 5.75" in out and "SDF unknown" in out and "RBI's RSS feed" in out
