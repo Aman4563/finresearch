@@ -195,6 +195,15 @@ async def test_an_mpc_item_without_text_yet_is_a_notice_and_the_rest_is_read(tmp
     assert {e.source_url for e in found.events} == {URL.format(90102), URL.format(90106)}
 
 
+async def test_an_unscheduled_meeting_is_a_notice_and_adds_no_date(tmp_path):
+    # off-cycle meetings have no fixed form (#478) and coverage is scheduled meetings only: the owner is told
+    feed = FEED.replace("Governor’s Statement: April 7, 2027".encode(),
+                        b"Unscheduled meeting of the Monetary Policy Committee")  # fmt: skip
+    found = await _read(feed=feed, known=_known(90100, 90102, 90106), state=tmp_path / "rss.json")
+    assert found.events == [] and len(found.notices) == 1
+    assert "outside the schedule" in found.notices[0] and URL.format(90103) in found.notices[0]
+
+
 async def test_a_refused_or_broken_feed_raises_and_keeps_no_state(tmp_path):
     state = tmp_path / "rss.json"
     with pytest.raises(rbi.RbiError):
