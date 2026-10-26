@@ -121,8 +121,8 @@ def _pct(x: float | None) -> str:
 
 def verdict(r: dict[str, Any]) -> str:
     p, s = r["primary"], r["secondary"]
-    head = (f"PARTIAL: the stored history ends on {r['last_session']}, before the period's last weekday; not the "
-            "registered run. " if r["partial"] else "")  # fmt: skip
+    head = (f"PARTIAL: the stored history ends on {r['last_session']}, before the period's last weekday "
+            f"({last_weekday(specs.PERIOD_END):%d-%b-%Y}); not the registered run. " if r["partial"] else "")  # fmt: skip
     if p["worst_month"]["p"] is None:
         prim = f"UNKNOWN ({p['reason']})"
     else:

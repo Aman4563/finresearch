@@ -52,6 +52,9 @@ def test_the_report_is_aggregates_labelled_seen(short) -> None:
     rep = run.report(short)
     u, b = short.arms["uncapped"], short.arms["budgeted"]
     assert rep["label"] == specs.LABEL and rep["partial"] is True  # it ends in Aug-2022, not Oct-2026
+    assert (
+        "30-Oct-2026" in rep["verdict"]
+    )  # the date the end was compared with (the last weekday of the period)
     assert (rep["first_session"], rep["last_session"]) == ("2022-03-01", "2022-08-31")
     mean = lambda arm: sum(r for _, r in arm.risk) / len(arm.risk)  # noqa: E731
     assert rep["control"]["k"] == pytest.approx(mean(b) / mean(u))
