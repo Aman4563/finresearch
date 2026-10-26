@@ -1347,6 +1347,53 @@ def forecasts_skill(
         console.print(f"report written to {json_out}")
 
 
+@forecasts_app.command("ipo-intervals")
+def forecasts_ipo_intervals(
+    data: Path | None = typer.Option(None, help="Read a JSONL export of ipo_history instead of the database"),
+    json_out: Path | None = typer.Option(None, "--json", help="Also write the full report here"),
+) -> None:
+    """The IPO ranges' pinball loss and 80 % coverage per year of the 2019-2026 walk-forward, with issue #378's
+    acceptance (d) for the quantile model and for the base-rate table (skill-monitor-v2). For the owner: read only (it
+    reads ipo_history, or --data, and writes only --json); refuses if skillmon/specs_v2.py changed after its
+    registration."""
+    import json
+
+    from rich.table import Table
+
+    from finresearch.evals import ipo_model as im
+    from finresearch.skillmon import ipo_intervals, monitor
+
+    try:
+        monitor.require_registered_v2()  # before any row is read
+    except monitor.PreregistrationError as e:
+        console.print(str(e))
+        raise typer.Exit(1) from e
+    rep = ipo_intervals.evaluate(im.load_rows(data))
+
+    def cov(f: dict | None) -> str:
+        return "insufficient data" if f is None else (f"{f['coverage']:.1%} ({f['inside']} of {f['n']}"
+                                                      f"{', within ±7 pp' if f['within'] else ''})")  # fmt: skip
+
+    def pin(f: dict | None) -> str:
+        return "—" if f is None else " / ".join(f"{v:.4f}" for v in f["pinball"].values())
+
+    t = Table(
+        "year", "issues", "model p10-p90", "model pinball 10/50/90", "table p10-p90", "table pinball 10/50/90"
+    )
+    for f in rep["years"]:
+        year = f"{f['year']}" + (" (partial)" if f["year"] in rep["partial"] else "")
+        t.add_row(year, str(f["n_test"]), cov(f.get("model")), pin(f.get("model")), cov(f.get("table")),
+                  pin(f.get("table")))  # fmt: skip
+    console.print(t)
+    for name, acc in rep["acceptance"].items():
+        console.print(f"(d) {name}: {acc['verdict']} ({acc['within']} years within, {acc['insufficient']} with "
+                      f"insufficient data; rule: {acc['rule']})")  # fmt: skip
+    console.print(f"{rep['version']}: {rep['n_rows']} usable issues. On seen data: {rep['seen']}")
+    if json_out:
+        json_out.write_text(json.dumps(rep, indent=1, default=str))
+        console.print(f"report written to {json_out}")
+
+
 def _print_skill_v2(v2: dict) -> None:
     from rich.table import Table
 

@@ -90,3 +90,37 @@ def test_a_year_the_walk_forward_skips_is_insufficient_data() -> None:
     assert first["year"] == 2019 and first["skipped"] and "model" not in first
     for name in ("model", "table"):
         assert rep["acceptance"][name]["years"][2019] == "insufficient data"
+
+
+def test_the_owner_command_reads_an_export_and_prints_both_verdicts(tmp_path) -> None:
+    import json
+
+    from typer.testing import CliRunner
+
+    from finresearch.cli import app
+
+    data, out = tmp_path / "ipo.jsonl", tmp_path / "report.json"
+    data.write_text("\n".join(json.dumps(r) for r in _issues()) + "\n")
+    r = CliRunner().invoke(app, ["forecasts", "ipo-intervals", "--data", str(data), "--json", str(out)],
+                           env={"COLUMNS": "250"})  # fmt: skip
+    assert r.exit_code == 0, r.output
+    rep = json.loads(out.read_text())
+    assert (
+        rep["version"] == "skill-monitor-v2"
+        and rep["n_rows"] == 440
+        and set(rep["acceptance"]) == {"model", "table"}
+    )
+    for name, acc in rep["acceptance"].items():
+        assert f"(d) {name}: {acc['verdict']}" in r.output
+    assert "2026 (partial)" in r.output and "seen data" in r.output
+
+
+def test_the_owner_command_refuses_a_changed_registration_before_reading(tmp_path, monkeypatch) -> None:
+    from typer.testing import CliRunner
+
+    from finresearch.cli import app
+    from finresearch.skillmon import prereg
+
+    monkeypatch.setattr(prereg, "V2_HASH", "0" * 64)
+    r = CliRunner().invoke(app, ["forecasts", "ipo-intervals", "--data", str(tmp_path / "missing.jsonl")])
+    assert r.exit_code == 1 and "refused" in r.output  # refused first: the missing file was never opened
