@@ -2,8 +2,8 @@
 
 Runs once a day from RUN_AFTER (21:30 IST), after the evening forecast resolutions (signals.ledger READY_AFTER_IST,
 16:30, and the card ledger's bhavcopy replay after the 20:30 bhavcopy). Every calendar day, holidays included: it
-reads only the forecast ledger, so an unknown holiday list cannot make it wrong, and skipping would only make the
-brief's report staler. Claimed in `alert_eval_slot` ("skill:<day>"), whose result keeps the report for the brief; a
+reads only the forecast ledger and the stored F&O history (whatever is stored), so an unknown holiday list cannot make
+it wrong, and skipping would only make the brief's report staler. Claimed in `alert_eval_slot` ("skill:<day>"), whose result keeps the report for the brief; a
 crash is retried (monitor.disclosures MAX_ATTEMPTS, RETRY_AFTER apart). Alarms are results, not a failed pass.
 
 skill-monitor-v2 (skillmon/specs_v2.py) adds the report's "v2" key: input drift of the direction model and the card
