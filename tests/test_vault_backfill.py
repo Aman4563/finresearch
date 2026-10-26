@@ -213,6 +213,7 @@ def test_cli_engine_hash_and_status(vault, monkeypatch):
     from finresearch.vault import registry
 
     r = _cli("engine-hash", vault_url=None, monkeypatch=monkeypatch)
-    assert r.exit_code == 0 and registry.engine_hash() in r.output and "no pin" in r.output
+    # pinned on 26-Oct-2026: the CLI shows the pin and that it matches the engine
+    assert r.exit_code == 0 and registry.engine_hash() in r.output and "(matches)" in r.output
     r = _cli("status", vault_url=vault, monkeypatch=monkeypatch)
     assert r.exit_code == 0 and "{}" in r.output.replace(" ", "").replace("\n", "")
