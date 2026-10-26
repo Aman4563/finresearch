@@ -2173,6 +2173,27 @@ class CalendarCoverage(Base):
     recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class PolicyRateObs(Base):
+    """RBI's policy rates as an MPC resolution in RBI's press-release RSS feed states them (#492,
+    refseries.policy_obs). Append-only: a row per item, decision and rates, never updated. Rates are fractions as
+    printed (NULL = not stated: unknown, never 0); `decided` is the meeting's last day; `known_since` when the app
+    first read it; `conflict` names an earlier row for the same decision with other rates (stored and flagged, never
+    merged). Numbers, dates, the item's link and title only, never its text (data_rights `rbi_rss`, #481)."""
+
+    __tablename__ = "policy_rate_obs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    decided: Mapped[date] = mapped_column(Date, index=True)
+    repo: Mapped[Decimal | None] = mapped_column(Numeric(10, 8))
+    sdf: Mapped[Decimal | None] = mapped_column(Numeric(10, 8))
+    msf: Mapped[Decimal | None] = mapped_column(Numeric(10, 8))
+    title: Mapped[str] = mapped_column(String(300))
+    url: Mapped[str] = mapped_column(String(400))
+    published: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    known_since: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    conflict: Mapped[str | None] = mapped_column(String(300))
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class OptPanelEod(Base):
     """The cross-sectional options panel (P1.12, #374; optpanel.panel, evals/experiments/stock_option_vrp/PREREG.md):
     one row per underlying and session for EVERY stock-option underlying in the day's bhavcopy (plus NIFTYNXT50),

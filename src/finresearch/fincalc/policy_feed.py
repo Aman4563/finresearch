@@ -29,3 +29,27 @@ class Observation:
     published: datetime | None = None  # the item's pubDate (IST)
     seen: datetime | None = None  # when the app first read it (known_since); set when stored
     conflict: str | None = None  # set when stored: an earlier one for the same decision states other rates
+
+
+RATES = (("repo", "repo"), ("sdf", "SDF"), ("msf", "MSF"))
+
+
+def pct(x: Decimal | None) -> str:
+    return "unknown" if x is None else f"{x * 100:.2f} %"
+
+
+def when(t: datetime | None) -> str:
+    from finresearch.fincalc.dates import to_ist
+
+    return "at an unknown time" if t is None else f"{to_ist(t):%d-%b-%Y %H:%M} IST"
+
+
+def differences(a: Observation, b: Observation) -> list[str]:
+    """The rates both state with different figures, b's first: ['repo 6.00 % vs 5.75 %']. A rate one of them does
+    not state is no difference (unknown is not a disagreement)."""
+    out = []
+    for name, label in RATES:
+        x, y = getattr(a, name), getattr(b, name)
+        if x is not None and y is not None and x != y:
+            out.append(f"{label} {pct(y)} vs {pct(x)}")
+    return out

@@ -154,7 +154,12 @@ def apply(s: Session, found: Found, now: datetime) -> dict[str, int]:
             s, r.type, r.scope, now, keep, date.fromordinal(r.after.toordinal() + 1), r.through
         )
     s.flush()
-    return {"events": ne, "coverage": nc, "withdrawn": withdrawn, "reinstated": reinstated}
+    out = {"events": ne, "coverage": nc, "withdrawn": withdrawn, "reinstated": reinstated}
+    if found.observations:  # RBI's policy rates read from MPC resolutions (#492): new observations stored
+        from finresearch.refseries import policy_obs
+
+        out["policy_rates"] = policy_obs.record(s, found.observations, now)
+    return out
 
 
 async def run(sources: list[Source], now: datetime) -> dict[str, Any]:
