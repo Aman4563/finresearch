@@ -244,13 +244,13 @@ def parse_resolution(item: Item) -> Resolution:
 # the policy repo rate ... unchanged at 5.50 per cent" / "to 6.25 per cent from 6.50 per cent"; "the standing deposit
 # facility (SDF) rate stands adjusted at 5.25 per cent" / "remains at" / "shall stand adjusted to"; "the marginal
 # standing facility (MSF) rate and the Bank Rate at 5.75 per cent". The first figure after "to"/"at" in the same
-# sentence. For the repo rate only a decision verb counts ("keep/increase/raise/reduce/cut/lower/hike the policy
-# repo rate"), and its first statement is the MPC's decision: a recap ("had increased the policy repo rate") does
-# not match, and members' votes, a dissent among them, come after it.
+# sentence. For the repo rate only a decision verb counts ("keep/retain/maintain/leave/increase/raise/reduce/cut/
+# lower/hike the policy repo rate"), and its first statement is the MPC's decision: a recap ("had increased the
+# policy repo rate") does not match, and members' votes, a dissent among them, come after it.
 _PCT = r"\b(?:to|at)\s+(\d{1,2}(?:\.\d{1,2})?)\s*(?:per\s*cent|%)"
 _SAME = r"(?:[^.]|\.(?=\d)){0,200}?"  # within the sentence: a period only as a decimal point
-_REPO = re.compile(r"\b(?:keep|increase|raise|reduce|cut|lower|hike)\s+the\s+policy\s+repo\s+rate\b" + _SAME + _PCT,
-                   re.I)  # fmt: skip
+_REPO = re.compile(r"\b(?:keep|retain|maintain|leave|increase|raise|reduce|cut|lower|hike)\s+the\s+policy\s+repo\s+"
+                   r"rate\b" + _SAME + _PCT, re.I)  # fmt: skip
 _SDF = re.compile(r"(?:standing\s+deposit\s+facility\s*(?:\(SDF\)\s*)?|\bSDF\s+)rate\b" + _SAME + _PCT, re.I)
 _MSF = re.compile(r"(?:marginal\s+standing\s+facility\s*(?:\(MSF\)\s*)?|\bMSF\s+)rate\b" + _SAME + _PCT, re.I)
 MAX_RATE = Decimal("0.20")  # a sanity band, not a market view: no RBI policy rate has been near 20 %
