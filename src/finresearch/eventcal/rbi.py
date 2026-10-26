@@ -240,20 +240,64 @@ def parse_resolution(item: Item) -> Resolution:
 
 
 # ---- the policy rates a resolution states (#492), read from the same item in memory and kept as numbers only.
-# "Increase the policy repo rate under the liquidity adjustment facility (LAF) by 25 bps to 5.50 per cent" / "keep
-# the policy repo rate ... unchanged at 5.50 per cent" / "to 6.25 per cent from 6.50 per cent"; "the standing deposit
-# facility (SDF) rate stands adjusted at 5.25 per cent" / "remains at" / "shall stand adjusted to"; "the marginal
-# standing facility (MSF) rate and the Bank Rate at 5.75 per cent". The first figure after "to"/"at" in the same
-# sentence. For the repo rate only a decision verb counts ("keep/retain/maintain/leave/increase/raise/reduce/cut/
-# lower/hike the policy repo rate"), and its first statement is the MPC's decision: a recap ("had increased the
-# policy repo rate") does not match, and members' votes, a dissent among them, come after it.
+# "decided to: Increase the policy repo rate under the liquidity adjustment facility (LAF) by 25 bps to 5.50 per
+# cent" / "keep the policy repo rate ... unchanged at 5.50 per cent" / "to 6.25 per cent from 6.50 per cent"; "the
+# standing deposit facility (SDF) rate stands adjusted at 5.25 per cent" / "remains at" / "shall stand adjusted to";
+# "the marginal standing facility (MSF) rate and the Bank Rate at 5.75 per cent". A figure is the first after "to" or
+# "at" in the same sentence: a block's end (</p>, </li>, a cell, <br>) ends a sentence, and the search never runs
+# past another instrument's name (CRR, SLR, reverse repo, the other corridor rates). For the repo rate only a
+# decision verb counts ("keep/retain/maintain/leave/increase/raise/reduce/cut/lower/hike the policy repo rate"), and
+# of its statements the one tied to "decided/decision/resolved to" is the decision, else a unanimous vote, else one
+# that is neither a member's vote (a dissent among them) nor a recap ("having cut", "had cut"); else it is unknown.
+# The SDF and MSF rates are read from the decision on (a recap of an earlier corridor before it is not read).
 _PCT = r"\b(?:to|at)\s+(\d{1,2}(?:\.\d{1,2})?)\s*(?:per\s*cent|%)"
-_SAME = r"(?:[^.]|\.(?=\d)){0,200}?"  # within the sentence: a period only as a decimal point
-_REPO = re.compile(r"\b(?:keep|retain|maintain|leave|increase|raise|reduce|cut|lower|hike)\s+the\s+policy\s+repo\s+"
-                   r"rate\b" + _SAME + _PCT, re.I)  # fmt: skip
-_SDF = re.compile(r"(?:standing\s+deposit\s+facility\s*(?:\(SDF\)\s*)?|\bSDF\s+)rate\b" + _SAME + _PCT, re.I)
-_MSF = re.compile(r"(?:marginal\s+standing\s+facility\s*(?:\(MSF\)\s*)?|\bMSF\s+)rate\b" + _SAME + _PCT, re.I)
+_BLOCK = re.compile(
+    r"<\s*(?:/\s*(?:p|li|div|td|th|tr|h[1-6]|ul|ol|table|blockquote)\b[^>]*|br\b[^>]*)>", re.I
+)
+_OTHER = ("CRR", "SLR", r"cash\s+reserve", r"statutory\s+liquidity", r"reverse\s+repo")
+
+
+def _same(*stop: str) -> str:
+    """Within the sentence (a period only as a decimal point), never past one of the `stop` names."""
+    return r"(?:(?!\b(?:" + "|".join(stop) + r")\b)(?:[^.]|\.(?=\d))){0,200}?"
+
+
+_VERB = r"(?:keep|retain|maintain|leave|increase|raise|reduce|cut|lower|hike)"
+_HEAD = re.compile(r"\b" + _VERB + r"\s+the\s+policy\s+repo\s+rate\b", re.I)
+_REPO = re.compile(_HEAD.pattern + _same(*_OTHER, r"standing\s+deposit", r"marginal\s+standing", "SDF", "MSF",
+                                         r"Bank\s+Rate") + _PCT, re.I)  # fmt: skip
+_SDF = re.compile(r"(?:standing\s+deposit\s+facility\s*(?:\(SDF\)\s*)?|\bSDF\s+)rate\b"
+                  + _same(*_OTHER, r"marginal\s+standing", "MSF", r"Bank\s+Rate", r"policy\s+repo") + _PCT, re.I)  # fmt: skip
+_MSF = re.compile(r"(?:marginal\s+standing\s+facility\s*(?:\(MSF\)\s*)?|\bMSF\s+)rate\b"
+                  + _same(*_OTHER, r"standing\s+deposit", "SDF", r"policy\s+repo") + _PCT, re.I)  # fmt: skip
+# what precedes a repo-rate statement (its own sentence, or "decided to:" before a bullet)
+_DECIDED = re.compile(r"\b(?:decided|decision|resolved)\b[^.]{0,40}?\bto\s*:?[\s.\u2022]*$", re.I)
+_UNANIMOUS = re.compile(r"\bunanimous(?:ly)?\b[^.]{0,60}$", re.I)
+_VOTED = re.compile(r"\bvoted\b[^.]{0,60}$", re.I)
+_RECAP = re.compile(r"\b(?:having|had|has|have|was|were|been)\s+$", re.I)
 MAX_RATE = Decimal("0.20")  # a sanity band, not a market view: no RBI policy rate has been near 20 %
+
+
+def _sentences(body: str) -> str:
+    """The description as text with every block's end as a sentence's end."""
+    return _text(_BLOCK.sub(". ", body))
+
+
+def _before(text: str, at: int) -> str:
+    return text[max(0, at - 120) : at]
+
+
+def _repo(text: str) -> tuple[Decimal | None, int]:
+    """The decided repo rate and where its statement starts (-1: unknown); see the comment above."""
+    stated = [
+        (m, _before(text, h.start())) for h in _HEAD.finditer(text) if (m := _REPO.match(text, h.start()))
+    ]
+    for keep in (lambda pre: _DECIDED.search(pre), lambda pre: _UNANIMOUS.search(pre),
+                 lambda pre: not _VOTED.search(pre) and not _RECAP.search(pre)):  # fmt: skip
+        for m, pre in stated:
+            if keep(pre):
+                return Decimal(m.group(1)) / 100, m.start()
+    return None, -1
 
 
 def _rate(rx: re.Pattern[str], text: str) -> Decimal | None:
@@ -269,13 +313,19 @@ def observe(item: Item) -> Observation | None:
     then all three are unknown, never a guess."""
     from finresearch.fincalc.policy_feed import Observation
 
-    if notice_kind(item.title) != "resolution" or not (text := _text(item.body)):
+    if notice_kind(item.title) != "resolution" or not _text(item.body):
         return None
     try:
         held = parse_resolution(item).held
     except RbiError:
         return None
-    repo, sdf, msf = (_rate(rx, text) for rx in (_REPO, _SDF, _MSF))
+    text = _sentences(item.body)
+    repo, at = _repo(text)
+    decided = next(
+        (h.start() for h in _HEAD.finditer(text) if _DECIDED.search(_before(text, h.start()))), None
+    )
+    rest = text[decided if decided is not None else max(at, 0) :]
+    sdf, msf = _rate(_SDF, rest), _rate(_MSF, rest)
     stated = [x for x in (sdf, repo, msf) if x is not None]  # in corridor order
     if any(not 0 < x < MAX_RATE for x in stated) or any(a >= b for a, b in pairwise(stated)):
         repo = sdf = msf = None
