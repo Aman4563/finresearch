@@ -195,6 +195,10 @@ uv run finresearch fno panel reconcile                 # panel stock-option OI v
 uv run finresearch fno card-log --since 2026-10-21T18:00:00+05:30   # F&O card verdicts before/after a release (#360)
 uv run finresearch fno marks --from 2026-10-01      # missing daily marks of open paper legs from stored bhavcopy days (#383)
 uv run finresearch fno review --month 2026-10      # the month's post-trade review in one line (#383; reads only)
+uv run finresearch fno risk-budget --history-url <db> --out report.json   # #395 Stage 2: the pre-registered
+                                                   # P4.2 book limits on 2022-26 (seen): the four sellers on one
+                                                   # book, uncapped vs budgeted vs the card rule, against a size-
+                                                   # matched control; reads only, never the vault
 uv run finresearch fno risk-replay --from 2024-01-01 --json   # #398: replay the IV30-shock, cumulative-shock and gap
                                                    # alerts on the stored series: firings, false alarms a year, the
                                                    # scenario days (reads only; public market data)

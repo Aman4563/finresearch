@@ -22,6 +22,7 @@ from finresearch.portfolio import (
     var_ledger,
 )
 from finresearch.refseries import tri
+from finresearch.riskbudget import specs as rbspecs
 from finresearch.skillmon import specs as skspecs
 from finresearch.skillmon import specs_v2 as skspecs_v2
 from finresearch.volrace import specs as vspecs
@@ -143,6 +144,15 @@ STUDIES = (
                ("stratlab/overfit.py",), D22, "Size and power on registered synthetic panels",
                declared="failed", validated_on=D22,
                evidence=f"{_X}/lab_rigour/RESULTS.md: items B (SPA size 8 %) and C (power) fail"),
+    ModelEntry("risk_budget_seen", "Book-level risk budget counterfactual on 2022-26 (seen, #395 Stage 2)", "rule",
+               "B", "Whether the one sizing rule's book limits (B_book, the -5 % common shock, the margin cap, the "
+               "month stop) cut the registered sellers' worst month and drawdown beyond a size-matched uncapped book.",
+               "Read by its own report (finresearch fno risk-budget); never sizes a card or changes a limit.",
+               "Study only: seen data, aggregates; the registered test of the limits is the vault read.",
+               ("F&O bhavcopy", "30-day IV", "NSE SPAN ranges", "dated charges"), ("riskbudget/",), date(2026, 10, 26),
+               "Worst calendar month and maximum drawdown against the size-matched control (moving-block bootstrap)",
+               evidence=f"{_X}/risk_budget_seen/PREREG.md: registered, not run", regime_tags=FNO_TAGS,
+               registrations=(rbspecs.SPEC_VERSION,)),
 )  # fmt: skip
 
 ANALYTICS = (
