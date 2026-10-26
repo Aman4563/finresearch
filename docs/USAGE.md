@@ -174,18 +174,18 @@ uv run finresearch rates backfill --from 2022-01-01   # FBIL's dated series: PAU
 uv run finresearch audit rates                     # 3-month par-curve rate vs FBIL's 3-month T-bill on stored rows (no network)
 uv run finresearch equity backfill --from 2025-09-01  # NSE's full equity bhavcopy: closes, delivery; one file a day (#373)
 uv run finresearch audit equity-eod --sample 50    # stored closes vs NSE's history bar on 50 random stock-days (50 requests)
-uv run finresearch equity actions-backfill         # NSE corporate actions per F&O stock -> factor history (#369; needs the nse_corp_actions decision)
-uv run finresearch equity symbol-changes           # NSE's symbol-change file (one request; needs the nse_symbol_change decision)
+uv run finresearch equity actions-backfill         # NSE corporate actions per F&O stock -> factor history (#369; data-rights decision #481)
+uv run finresearch equity symbol-changes           # NSE's symbol-change file (one request; data-rights decision #481)
 uv run finresearch equity actions-rebuild          # re-derive stored factors (rights need the equity_eod cum close); no network
 uv run finresearch dq run                          # data-quality checks now (the monitor runs them 21:00 and 08:00 IST, #368)
 uv run finresearch dq replay --from 2024-01-01 --to 2026-10-22  # content checks over stored history, read only
 uv run finresearch events seed                     # load the curated event calendar (RBI MPC, Budgets, 2024 election, FOMC; #367)
 uv run finresearch events check --from 2026-10-22 --to 2026-11-24  # the plan card's tier-1 event check for a window
-uv run finresearch events refresh                  # new forward dates now: RBI MPC schedules/moves, MoSPI CPI/GDP, NSE index rebalances; NSE expiry-day circulars printed to review (#367; each source needs its data-rights decision; the monitor runs it nightly from 21:00 IST)
+uv run finresearch events refresh                  # forward dates now (#481; the monitor runs it nightly from 21:00 IST): RBI MPC schedules/moves/resolutions from RBI's RSS feed, India CPI by MoSPI's rule (confirmed via the CPI API), NIFTY review windows by rule, NSE F&O circulars (index changes stored; expiry-day revisions printed to review)
 uv run finresearch fno span backfill --from 2008-01-01  # NSE SPAN scan ranges, one file a month (#370)
 uv run finresearch fno span margin-check           # margin estimate vs Groww's calculator: the P4.3 trigger
 uv run finresearch fno participants --from 2015-01-01  # participant-wise OI and volume (Client/DII/FII/Pro), 2 files a day (#371)
-uv run finresearch fno fii-stats --from 2015-01-01     # NSE's FII derivative statistics (.xls, 1 file a day; needs the owner's data-rights decision, #371)
+uv run finresearch fno fii-stats --from 2015-01-01     # NSE's FII derivative statistics (.xls, 1 file a day; #371, data-rights decision #481)
 uv run finresearch fno panel build --from 2022-01-01   # market-wide stock-options panel from the kept zips, no download (#374)
 uv run finresearch fno panel mwpl --from 2022-01-01    # combined OI / MWPL, one file a session; data-rights decision #471 (#374)
 uv run finresearch fno panel ban-check                 # derived ban list vs NSE's dated notices on 20 sampled days (#374)
@@ -231,6 +231,28 @@ RBI's policy repo rate in force on the day (typed in by hand from RBI's releases
 spread (0 bp; held flat beyond 91 days), else unknown before 01-Jan-2015. Fund and portfolio Sharpe/Sortino subtract
 each month's own rate and show a labelled factsheet-style figure (the repo on the last working day for every month)
 beside it. The bond signal and the archive's G-sec spread have no G-sec curve source and say so.
+
+The owner's second set of decisions of 23-Oct-2026 (#481) asks for low risk and fully automated sources with no hand
+curation, using only channels sanctioned for automated use. The same rules now cover NSE's FII derivative statistics,
+per-symbol corporate actions, symbol-change file and F&O circulars, and RBI's press-release RSS feed, read for MPC
+event dates only (no rate is collected, as above). RBI provides the feed for syndication; its site is "All Rights
+Reserved" and its disclaimer prohibits caching, so the event calendar fetches the feed once a night without a cache
+and keeps only facts and links (dates, type, the item's link and title).
+NSE Indices' press releases (their terms forbid automated collection without written consent), MoSPI's release
+calendar (no licence text) and #478's reading of RBI's web pages are dropped; BSE's corporate actions wait for the
+owner to read BSE's terms. The event calendar's refresh therefore reads:
+
+| Source | What it adds | Requests |
+|---|---|---|
+| RBI's RSS feed (`rbi_rss`) | MPC schedule (tier 1, with coverage to 31 March), rescheduling notices (the old date stays until the notice), resolutions (the meeting held and the next one it names) | 1 a night |
+| MoSPI's CPI rule (`india_cpi_rule`) | India CPI releases a year ahead: the 12th or the next working day, 16:00 IST (MoSPI's release of 12-Oct-2026); NSE holidays stand in for working days, "approximate" where a year's list is unknown | none |
+| MoSPI's CPI API (`mospi_cpi`) | marks a CPI release "published" once the API shows the month; a notice if it is still missing a day later | only on a night a release is due |
+| NSE Indices' review rule (`nifty_review_rule`) | NIFTY semi-annual review "expected window": the session before the last NSE trading day of March and September (cited, never fetched) | none |
+| NSE's F&O circulars (`nse_circulars`) | index constituent changes as dated rows that confirm (or move) the expected window; expiry-day revisions printed to review | 1 and a warm-up |
+
+GDP release dates are left out: MoSPI states each next date, not a rule. RBI's feed lists only its newest ten
+releases, so on a busy day an MPC item can leave it before the nightly read; the refresh reports such gaps from RBI's
+sequential release numbers (`events refresh` prints them, the monitor keeps them in the night's result).
 
 The nightly stock peer build prices peers from NSE's quote and price-history APIs (about 1,000 website requests a
 night) until `FINRESEARCH_PEER_PRICE_SOURCE=equity_eod` switches it to the stored full bhavcopy (#373): peers' prices

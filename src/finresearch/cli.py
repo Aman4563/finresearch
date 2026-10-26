@@ -2846,11 +2846,11 @@ def events_seed() -> None:
 
 @events_app.command("refresh")
 def events_refresh() -> None:
-    """Read the official sources for new forward dates now (what the monitor does nightly from 21:00 IST): RBI MPC
-    schedules and rescheduling notices, MoSPI CPI/GDP release dates, NSE index rebalances (NSE Indices' press releases)
-    and NSE's F&O expiry-day revision circulars (printed to review, not stored). A source without the owner's
-    data-rights decision is skipped unread; a failed source stores nothing (exit code 1). New rows are known from now,
-    never back-dated."""
+    """Refresh the forward dates now (what the monitor does nightly from 21:00 IST; #481): RBI MPC schedules,
+    rescheduling notices and resolutions from RBI's RSS feed, India CPI releases by MoSPI's rule (confirmed through
+    MoSPI's CPI API), NIFTY review windows by NSE Indices' rule and NSE's F&O circulars (index changes stored,
+    expiry-day revisions printed to review). A source without the owner's data-rights decision is skipped unread; a
+    failed source stores nothing (exit code 1). New rows are known from now, never back-dated."""
     import asyncio
 
     from finresearch.eventcal import refresh

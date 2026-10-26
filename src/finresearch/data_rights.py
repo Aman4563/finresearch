@@ -21,6 +21,18 @@ commercial use and no redistribution. IIMA asks to be cited: the citation stays 
 Risk-free rates (#479, the owner's decision of 23-Oct-2026): no automated collection of rates from anyone. FBIL stays
 paused (PENDING below) and RBI's data is not collected ("rbi_rates" is dropped): the app's risk-free rate is RBI's
 policy repo rate typed in by hand from RBI's releases (fincalc.policy_rates) plus rates the owner enters.
+
+The owner's second set of decisions of 23-Oct-2026 (issue #481) asks for low risk and fully automated sources with no
+hand curation, using only channels sanctioned for automated use. It accepts, on the same personal, non-distributed,
+polite terms: NSE's FII derivative statistics, per-symbol corporate actions, symbol-change file and F&O circulars (the
+NSE terms above), and RBI's press-release RSS feed, read for MPC event dates only (no rate is collected: "rbi_rates"
+stays dropped). RBI provides the feed for syndication; the site's general notice is "All Rights Reserved" and its
+disclaimer prohibits caching site content, so the event calendar keeps only facts and links (dates, type, the item's
+link and title), never a copy of a page or of the feed, and fetches it without a cache.
+It drops NSE Indices' press releases (NSE Indices' own terms forbid automated collection without express written
+consent), MoSPI's Advance Release Calendar (no licence text) and #478's reading of RBI's web pages: those dates now
+come from published rules (eventcal.rules) and the RSS feed. A dropped dataset is refused like an undecided one.
+BSE's corporate actions wait for the owner to read BSE's terms; FBIL stays paused.
 """
 
 from __future__ import annotations
@@ -68,6 +80,15 @@ _MOSPI_TERMS = (
     "a 15-minute access token ('Without access token the APIs will fetch only the first 10 records'); the "
     "live API serves pages without one; no licence text could be read; cited wherever shown"
 )
+_REF_481 = "issue #481"  # the owner's second set of decisions of 23-Oct-2026
+# RBI's press-release RSS feed (#481, eventcal.rbi): https://rbi.org.in/pressreleases_rss.xml, listed on RBI's RSS page
+# (https://www.rbi.org.in/Scripts/rss.aspx, read 23-Oct-2026: feeds "help users to receive automatic site updates");
+# the feed's channel says "Copyright Reserve Bank of India. All Rights Reserved."
+_RBI_RSS_TERMS = (
+    "RBI provides the press-release RSS feed for syndication (RBI's RSS page, read 23-Oct-2026); the site's general "
+    "notice is 'All Rights Reserved' and its disclaimer prohibits caching site content: only facts and links are kept "
+    "(event dates, type, the item's link and title), never copies; the feed is not cached; one fetch a night"
+)
 DECISIONS: dict[str, Decision] = {
     d.dataset: d
     for d in (
@@ -102,6 +123,30 @@ DECISIONS: dict[str, Decision] = {
         Decision("mospi_cpi", "accept-personal", _OWNER_1023, _REF_1023, _MOSPI_TERMS),  # #347/#436
         # #479: no RBI fetcher may run (T-bill auction results, money-market rates, DBIE): the owner dropped it
         Decision("rbi_rates", "drop", _OWNER_1023, "issue #479", _RBI_TERMS),
+        # The owner's second set of 23-Oct-2026 decisions (#481): low risk, fully automated, sanctioned channels only.
+        Decision("fii_stats", "accept-personal", _OWNER_1023, _REF_481,
+                 f"{_NSE_TERMS}: automated collection prohibited (not re-read for it); one .xls a day, ~2,900 files 2015-2026"),  # #371/#473
+        Decision("nse_corp_actions", "accept-personal", _OWNER_1023, _REF_481,
+                 f"{_NSE_TERMS}: automated collection prohibited (not re-read for it); ~300 per-symbol requests once, then new symbols"),  # #369/#475
+        Decision("nse_symbol_change", "accept-personal", _OWNER_1023, _REF_481,
+                 f"{_NSE_TERMS}: automated collection prohibited (not re-read for it); one file"),  # #369/#475
+        Decision("nse_circulars", "accept-personal", _OWNER_1023, _REF_481,
+                 f"{_NSE_TERMS}: automated collection prohibited (not re-read for it); one circulars-listing request a night, "
+                 "no circular body downloaded: expiry-day revisions reported, index constituent changes kept as dated facts "
+                 "with the circular's number and link"),  # #367/#478, eventcal.nse
+        Decision("rbi_rss", "accept-personal", _OWNER_1023, _REF_481, _RBI_RSS_TERMS),  # eventcal.rbi
+        Decision("nifty_indices_press", "drop", _OWNER_1023, _REF_481,
+                 "NSE Indices terms of use read 23-Oct-2026: no systematic or automated data collection on or in relation "
+                 "to its website without its express written consent. Removed from the event-calendar refresh; NIFTY "
+                 "review windows follow NSE Indices' published methodology rule instead (eventcal.rules)"),  # #478
+        Decision("mospi_release_calendar", "drop", _OWNER_1023, _REF_481,
+                 "MoSPI Advance Release Calendar (www.mospi.gov.in): no licence text could be read. Removed from the "
+                 "event-calendar refresh; CPI dates follow MoSPI's published rule (eventcal.rules), confirmed through "
+                 "mospi_cpi; no GDP rule is stated in MoSPI's release text, so GDP dates are left out"),  # #478
+        Decision("rbi_mpc_schedule", "drop", _OWNER_1023, _REF_481,
+                 "RBI's press-release month listing and release pages (#478): replaced by RBI's RSS feed (rbi_rss); no RBI "
+                 "web page is requested. RBI's disclaimer (viewed 23-Oct-2026): 'caching and links to, and the framing of "
+                 "this Web Site or any of the contents are prohibited'"),
     )
 }  # fmt: skip
 
@@ -121,53 +166,10 @@ PENDING: dict[str, str] = {
     "fbil_rates": "FBIL Terms of Use, 13-Oct-2026: free website data is delayed 7 days and for non-commercial viewing "
     "only; building a database, archive or tracking feed from it needs a paid subscription (§9.2); no "
     "redistribution (§2.1). Paused pending the owner's decision (#476)",
-    # NSE's daily FII derivative statistics (content/fo/fii_stats_<DD-Mon-YYYY>.xls, P1.9, #371,
-    # adapters.nse_fii_stats): one ~10-20 KB workbook a day, ~2,900 requests for 2015-2026. Same NSE website terms as
-    # above (not re-read for this dataset): no systematic or automated collection. Recorded as pending by the agent
-    # that built the collector; the decision is the owner's.
-    "fii_stats": f"{_NSE_TERMS}: automated collection prohibited; a new dataset (#371, one .xls a day, ~2,900 "
-    "files 2015-2026). Owner decision needed (#371)",
-    # NSE's per-symbol corporate actions (/api/corporates-corporateActions with from_date/to_date) for the stored
-    # factor history (#369 slice 2, refseries.corp_actions): one request per F&O stock underlying, ~300 symbols once,
-    # then only new symbols. The monitor's per-symbol fetch for watched stocks predates #362 and is not a backfill.
-    # Same NSE website terms as above (not re-read for this dataset): no systematic or automated collection.
-    "nse_corp_actions": f"{_NSE_TERMS}: automated collection prohibited; a new backfill (#369, ~300 per-symbol "
-    "requests once). Owner decision needed (#369)",
-    # NSE's symbol-change file (content/equities/symbolchange.csv on nsearchives [U: path as recalled]): one file, to
-    # join old and new F&O symbols (#369). Same terms as above.
-    "nse_symbol_change": f"{_NSE_TERMS}: automated collection prohibited; one file (#369). Owner decision needed "
-    "(#369)",
     # BSE's corporate actions (adapters.bse_equity) as a factor source: BSE's terms of use were not read for any
     # decision in this repo. The terms parser reads BSE purposes offline; no BSE backfill exists (#369).
     "bse_corp_actions": "BSE terms of use not read: no BSE corporate-action backfill until the owner reads and decides "
     "(#369)",
-    # The event calendar's nightly refresh (#367, eventcal.rbi): RBI's press-release month listing (an ASP.NET
-    # postback) and its MPC schedule / rescheduling releases, about 3-5 requests a night. RBI's disclaimer
-    # (https://www.rbi.org.in/Scripts/Disclaimer.aspx, read 23-Oct-2026): contents "as is" without warranties; RBI
-    # "reserves all right to deny or restrict access"; no licence or reuse terms stated; the press-release RSS says
-    # "Copyright Reserve Bank of India. All Rights Reserved." The same page also says "caching and links to, and the
-    # framing of this Web Site or any of the contents are prohibited" (viewed 23-Oct-2026; why "rbi_rates" is dropped).
-    "rbi_mpc_schedule": "RBI disclaimer read 23-Oct-2026: 'as is', RBI may deny or restrict access, no reuse terms; "
-    "nightly read of the press-release listing for MPC schedules (#367). Owner decision needed (#367)",
-    # The event calendar's nightly refresh (#367, eventcal.mospi): MoSPI's Advance Release Calendar PDF and its
-    # pointer on www.mospi.gov.in/api/, about 2 requests a night. A different dataset and host from the CPI series
-    # (mospi_cpi, api.mospi.gov.in); no licence text could be read (mospi.gov.in's policy pages need JavaScript).
-    "mospi_release_calendar": "MoSPI Advance Release Calendar (www.mospi.gov.in), read 23-Oct-2026: no licence "
-    "text readable; CPI and GDP release dates only (#367). Owner decision needed (#367)",
-    # The event calendar's nightly refresh (#367, eventcal.nifty_indices): NSE Indices Ltd's press-release listing
-    # (www.niftyindices.com/press-release, one ~660 KB page a night, titles only, no PDF fetched) for index
-    # constituent changes. NSE Indices' own terms (https://www.niftyindices.com/terms-of-use, read 23-Oct-2026), not
-    # NSE's: "You may not conduct any systematic or automated data collection activities (including scraping, data
-    # mining, data extraction and data harvesting) on or in relation to our website without our express written
-    # consent"; "personal, non-commercial use only"; no material may be copied, reproduced or distributed.
-    "nifty_indices_press": "NSE Indices terms of use read 23-Oct-2026: automated collection prohibited without "
-    "express written consent; personal, non-commercial use only; one listing page a night for index rebalance "
-    "dates (#367). Owner decision needed (#367)",
-    # The event calendar's nightly refresh (#367, eventcal.nse): NSE's circulars listing (/api/circulars, one request
-    # a night for the last 10 days), read only to report F&O expiry-day revisions; no circular body is downloaded
-    # and nothing is stored. Same NSE website terms as above (not re-read for this dataset).
-    "nse_circulars": f"{_NSE_TERMS}: automated collection prohibited (not re-read for it); one circulars-listing "
-    "request a night, expiry-day notices reported, nothing stored (#367). Owner decision needed (#367)",
 }
 
 

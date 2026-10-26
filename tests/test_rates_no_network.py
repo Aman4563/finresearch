@@ -126,9 +126,9 @@ NETWORK = ("httpx", "finresearch.adapters.http", "finresearch.adapters.fbil", "f
 
 def test_the_rate_chain_imports_no_network_client_and_rbi_rate_collection_is_dropped():
     """The policy rates are typed in by hand and the owner's yields are typed in: no module of the chain imports an
-    HTTP client, the FBIL adapter or the event calendar's RBI reader (eventcal.rbi reads MPC dates, not rates, and
-    waits for its own data-rights decision, rbi_mpc_schedule); and the owner's decision not to collect RBI rates is
-    recorded, so a future collector is refused."""
+    HTTP client, the FBIL adapter or the event calendar's RBI reader (eventcal.rbi reads MPC dates, not rates, from
+    RBI's press-release RSS feed under its own decision, rbi_rss, #481); and the owner's decision not to collect RBI
+    rates is recorded, so a future collector is refused."""
     from finresearch import data_rights
 
     for rel in RATE_MODULES:
