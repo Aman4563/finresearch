@@ -1,6 +1,6 @@
 // Models page (#379): every inventory entry with its status badge (validated / unvalidated / failed) and the reason,
 // its limits of use, its evidence age (unknown when there is none, never 0 days), its filed red-team reviews and the
-// latest monthly re-validation by regime split. Synthetic fixture only.
+// latest monthly re-validation by regime split, and a VaR model's Kupiec mark (#378). Synthetic fixture only.
 import { type Page, expect, test } from "@playwright/test";
 
 import { expectNoHorizontalOverflow, mockApi } from "./mock-api";
@@ -13,7 +13,9 @@ const base = {
   limits_of_use: LIMITS, inputs: ["option chain"], code: ["signals/fno.py"], last_update: "2026-10-20",
   outcome_metric: "Brier score", validated_on: null, valid_until: null, evidence: "", regime_tags: [], methods: [],
   registrations: [], red_team: [], evidence_as_of: null, evidence_age_days: null, evidence_stale: null, revalidation: null,
+  limits: null,
 };
+const RULE = "Kupiec p < 0.05 in 3 consecutive quarters marks the model 'not for limits' (skill-monitor-v2)";
 const MODELS = {
   as_of: today, limits_of_use: LIMITS, max_evidence_age_days: 45,
   tiers: { A: "pre-registered test + red team", B: "calibration", C: "reasonableness" },
@@ -36,6 +38,15 @@ const MODELS = {
     { ...base, key: "example_blend", name: "Example calibrated blend", kind: "signal", tier: "B", purpose: "A probability.",
       status: "validated", status_reason: "validated on 01-Oct-2026, valid until 01-Jan-2027", validated_on: "2026-10-01",
       valid_until: "2027-01-01", evidence_as_of: "2026-10-01", evidence_age_days: 22 },
+    { ...base, key: "example_var", name: "Example portfolio VaR", kind: "risk", tier: "B", purpose: "A loss quantile.",
+      status: "unvalidated", status_reason: "no outcome analysis yet",
+      limits: { status: "not for limits", run: ["2026-Q1", "2026-Q2", "2026-Q3"], tested: 3, rule: RULE,
+        why: "Kupiec p < 0.05 in 3 consecutive quarters (2026-Q1 to 2026-Q3): the VaR's exceptions did not come at its stated rate",
+        version: "skill-monitor-v2", quarters: [] } },
+    { ...base, key: "example_var_new", name: "Example logged VaR", kind: "risk", tier: "B", purpose: "A logged quantile.",
+      status: "unvalidated", status_reason: "ledger running",
+      limits: { status: "insufficient data", run: null, tested: 0, rule: RULE, version: "skill-monitor-v2", quarters: [],
+        why: "0 of the 3 tested quarters needed (a quarter is tested once it has ended with no open row and at least 50 resolved days)" } },
   ],
 };
 
@@ -67,5 +78,18 @@ test("models: a status filter narrows the list (#379)", async ({ page }) => {
   await page.getByRole("tab", { name: /^failed/ }).click();
   await expect(page.getByRole("article")).toHaveCount(1);
   await expect(page.getByRole("article", { name: "Example iron condor" })).toBeVisible();
+  api.expectClean();
+});
+
+test("models: a VaR model shows the Kupiec mark; insufficient data is a warning, never fine (#378)", async ({ page }) => {
+  const api = await mockApi(page, { "GET /api/models": MODELS });
+  await page.goto("/models");
+  const marked = page.getByRole("article", { name: "Example portfolio VaR" });
+  await expect(marked.getByText("not for limits", { exact: true })).toHaveAttribute("data-tone", "loss");
+  await expect(marked.getByText(/3 consecutive quarters \(2026-Q1 to 2026-Q3\)/)).toBeVisible();
+  const fresh = page.getByRole("article", { name: "Example logged VaR" });
+  await expect(fresh.getByText("insufficient data", { exact: true })).toHaveAttribute("data-tone", "warn");
+  await expect(page.getByRole("article", { name: "Example strategy gate" }).getByText("VaR backtest for limits")).toHaveCount(0);
+  if (phone(page)) await expectNoHorizontalOverflow(page);
   api.expectClean();
 });
