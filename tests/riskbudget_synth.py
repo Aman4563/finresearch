@@ -28,8 +28,9 @@ def futures_only(sym: str, d: date, s: float, monthly: set[date]) -> Day:
 
 
 def history(start: date, end: date, *, chains_from: date | None = None, prices: dict[date, float] | None = None,
-            bank: bool = True, seed: int = 7) -> MemoryHistory:  # fmt: skip
-    """Sessions from `start` to `end`; before `chains_from` only the monthly futures are stored."""
+            bank: bool = True, seed: int = 7, iv30: dict[date, float] | None = None) -> MemoryHistory:  # fmt: skip
+    """Sessions from `start` to `end`; before `chains_from` only the monthly futures are stored. `iv30`: each
+    session's 30-day IV reading (the IV filter's input; options stay priced at the flat volatility)."""
     px = prices or fs.path(start, end, s0=20000.0, vol=0.15, seed=seed)
     exps, monthly = fs.expiries(start, end)
     bpx = bank_path(px)
@@ -40,8 +41,11 @@ def history(start: date, end: date, *, chains_from: date | None = None, prices: 
             if bank:
                 days.append(futures_only("BANKNIFTY", d, bpx[d], monthly))
             continue
-        days.append(fs.day("NIFTY", d, px[d], exps, monthly, 0.15, NIFTY_LOT, step=100.0, width=0.08))
+        iv = -1.0 if iv30 is None else iv30[d]
+        days.append(
+            fs.day("NIFTY", d, px[d], exps, monthly, 0.15, NIFTY_LOT, step=100.0, width=0.08, iv30=iv)
+        )
         if bank:
             days.append(fs.day("BANKNIFTY", d, bpx[d], sorted(monthly), monthly, 0.18, BANK_LOT, step=500.0,
-                               width=0.10))  # fmt: skip
+                               width=0.10, iv30=iv))  # fmt: skip
     return MemoryHistory(days)

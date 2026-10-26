@@ -1950,6 +1950,60 @@ def _vrp_vault(common_range: float | None, banknifty_from: int | None, out: Path
     return res
 
 
+@fno_app.command("risk-budget")
+def fno_risk_budget(
+    history_url: str | None = typer.Option(
+        None,
+        help="Database holding the F&O history and the NSE SPAN ranges, read only (default: the app's database)",
+    ),
+    out: Path | None = typer.Option(
+        None, "--out", help="Also write the report (aggregates only) as JSON here"
+    ),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """The pre-registered seen-period counterfactual of P4.2's book-level limits (#395 Stage 2,
+    evals/experiments/risk_budget_seen/PREREG.md): the four registered sellers on one Rs 10 lakh book over the stored
+    2022-2026 history, uncapped, under the limits (B_book 8 %, B_shock 6 % at -5 %, u_max 0.5, L_month 6 %) and under
+    the card rule, against a size-matched control. Refused unless the registration is intact. Reads only (no database
+    row is written), never reads the 2008-2021 vault (this is not the vault read) and changes no card or limit."""
+    from sqlalchemy.engine import make_url
+
+    from finresearch.riskbudget import prereg, run
+    from finresearch.vault.registry import VaultSealed
+
+    try:
+        prereg.require_registered()  # before the database is touched
+        h = run.open_history(history_url)
+        rep = run.study(h, source=make_url(history_url or get_settings().database_url).database or "?")
+    except (prereg.PreregistrationError, run.Refused, VaultSealed) as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(2) from e
+    text = json.dumps(rep, indent=1, default=str)
+    if out:
+        out.write_text(text)
+        console.print(f"report: {out}")
+    if as_json:
+        print(text)
+        return
+    t = Table(title=f"P4.2 book limits, {rep['first_session']} to {rep['last_session']} ({rep['label']})")
+    for c in ("book", "entries", "closed", "₹/trade", "95 % CI ₹/trade", "net ₹", "worst month ₹", "max DD ₹",
+              "mean open risk ₹"):  # fmt: skip
+        t.add_column(c)
+    for name, a in rep["arms"].items():
+        t.add_row(name, str(a["entries"]), str(a["closed_trades"]), _num(a["expectancy"], 0),
+                  f"{_num(a['ci_low'], 0)} … {_num(a['ci_high'], 0)}", _num(a["total_net"], 0),
+                  _num(a["worst_month"], 0), _num(a["max_drawdown"], 0), _num(a["mean_open_risk"], 0))  # fmt: skip
+    c = rep["control"]
+    if c["k"] is not None:
+        t.add_row(f"control (uncapped x {c['k']:.3f})", "—", "—", "—", "—", "—", _num(c["worst_month"], 0),
+                  _num(c["max_drawdown"], 0), "—")  # fmt: skip
+    console.print(t)
+    for name, a in rep["arms"].items():
+        if a["refused"] or a["cut"]:
+            console.print(f"{name}: refused {a['refused']}; cut {a['cut']}")
+    console.print(rep["verdict"])
+
+
 backtest_app = typer.Typer(
     no_args_is_help=True,
     help="Backtest the pre-registered F&O strategies on the stored bhavcopy history (#307)",
