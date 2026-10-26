@@ -137,7 +137,8 @@ def _reinstate(s: Session, events: list[Event]) -> int:
 
 
 def apply(s: Session, found: Found, now: datetime) -> dict[str, int]:
-    """Merge one source's complete read: rows known from `now`, then the moves and replacements."""
+    """Merge one source's complete read: rows known from `now`, then the moves and replacements; the policy rates
+    read from MPC resolutions (#492) are stored append-only (refseries.policy_obs) and counted under "policy_rates"."""
     from finresearch.eventcal import store
 
     events = [replace(e, known_since=now, known_since_url=e.known_since_url or e.source_url, withdrawn_since=None)

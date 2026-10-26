@@ -169,7 +169,7 @@ uv run finresearch index tri NIFTY --from 2015-01-01  # APPROXIMATE total-return
 uv run finresearch rates show --tenor 91D          # today's risk-free rate: tier (yours / RBI repo-rate proxy), date, source (#479)
 uv run finresearch rates enter --day 2026-10-14 --tenor 91D --yield 5.7281 --source "RBI auction result"  # a yield you read (#479)
 uv run finresearch rates owner                     # your entered yields; `rates remove --day ... --tenor 91D` drops one
-uv run finresearch rates policy                    # RBI's policy rates as typed into the app, each with its RBI release
+uv run finresearch rates policy                    # RBI's policy rates the app uses: typed table + decisions read from RBI's RSS feed (#492)
 uv run finresearch rates backfill --from 2022-01-01   # FBIL's dated series: PAUSED (#476), refuses without a decision
 uv run finresearch audit rates                     # 3-month par-curve rate vs FBIL's 3-month T-bill on stored rows (no network)
 uv run finresearch equity backfill --from 2025-09-01  # NSE's full equity bhavcopy: closes, delivery; one file a day (#373)
@@ -227,24 +227,29 @@ owner's decisions of 23-Oct-2026 (#471) apply the same personal, non-distributed
 (cited wherever shown) and MoSPI's CPI; every collector asks `data_rights.require` before its first request. FBIL is
 paused (#476: its Terms of Use of 13-Oct-2026 forbid a database or feed built from its free site) and no rate is
 collected from anyone (#479): the risk-free rate is the one you enter (`rates enter` or `POST /api/rates/owner`), else
-RBI's policy repo rate in force on the day (typed in by hand from RBI's releases, `fincalc.policy_rates`) plus a stated
-spread (0 bp; held flat beyond 91 days), else unknown before 01-Jan-2015. Fund and portfolio Sharpe/Sortino subtract
+RBI's policy repo rate in force on the day (typed in by hand from RBI's releases to 23-Oct-2026, `fincalc.policy_rates`;
+later decisions read from the MPC resolutions in RBI's RSS feed, #492) plus a stated spread (0 bp; held flat beyond 91
+days), else unknown before 01-Jan-2015. An answer is "possibly stale" once a scheduled MPC decision has come that has
+not been read from the feed (or past the event calendar's known MPC schedule); the data-quality pass warns when a
+scheduled decision is not read within 2 days. Fund and portfolio Sharpe/Sortino subtract
 each month's own rate and show a labelled factsheet-style figure (the repo on the last working day for every month)
 beside it. The bond signal and the archive's G-sec spread have no G-sec curve source and say so.
 
 The owner's second set of decisions of 23-Oct-2026 (#481) asks for low risk and fully automated sources with no hand
 curation, using only channels sanctioned for automated use. The same rules now cover NSE's FII derivative statistics,
 per-symbol corporate actions, symbol-change file and F&O circulars, and RBI's press-release RSS feed, read for MPC
-event dates only (no rate is collected, as above). RBI provides the feed for syndication; its site is "All Rights
-Reserved" and its disclaimer prohibits caching, so the event calendar fetches the feed once a night without a cache
-and keeps only facts and links (dates, type, the item's link and title).
+event dates and, since #492 (the owner's request of 26-Oct-2026: no hand curation), for the policy rates an MPC
+resolution states (no other RBI channel is collected: `rbi_rates` stays dropped). RBI provides the feed for
+syndication; its site is "All Rights Reserved" and its disclaimer prohibits caching, so the event calendar fetches the
+feed without a cache (four times a day, #489) and keeps only facts and links (dates, type, the item's link and title,
+and a resolution's repo, SDF and MSF rates as numbers in `policy_rate_obs`, append-only, never its text).
 NSE Indices' press releases (their terms forbid automated collection without written consent), MoSPI's release
 calendar (no licence text) and #478's reading of RBI's web pages are dropped; BSE's corporate actions wait for the
 owner to read BSE's terms. The event calendar's refresh therefore reads:
 
 | Source | What it adds | Requests |
 |---|---|---|
-| RBI's RSS feed (`rbi_rss`) | MPC schedule (tier 1, with coverage to 31 March), rescheduling notices (the old date stays until the notice), resolutions (the meeting held and the next one it names) | 1 a night |
+| RBI's RSS feed (`rbi_rss`) | MPC schedule (tier 1, with coverage to 31 March), rescheduling notices (the old date stays until the notice), resolutions (the meeting held and the next one it names; the repo, SDF and MSF rates they state, #492) | 1 at 06:00, 12:00, 16:30 and 21:00 IST (#489) |
 | MoSPI's CPI rule (`india_cpi_rule`) | India CPI releases a year ahead: the 12th or the next working day, 16:00 IST (MoSPI's release of 12-Oct-2026); NSE holidays stand in for working days, "approximate" where a year's list is unknown | none |
 | MoSPI's CPI API (`mospi_cpi`) | marks a CPI release "published" once the API shows the month; a notice if it is still missing a day later | only on a night a release is due |
 | NSE Indices' review rule (`nifty_review_rule`) | NIFTY semi-annual review "expected window": the session before the last NSE trading day of March and September (cited, never fetched) | none |

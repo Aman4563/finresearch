@@ -1,10 +1,11 @@
 """The monitor's event-calendar refresh (#367, eventcal.refresh). RBI's RSS feed alone at RSS_TIMES, then once an evening from RUN_AFTER (IST), well
 outside NSE's 09:00-16:00 session, the sources the owner accepted on 23-Oct-2026 (#481) are read: RBI's press-release
-RSS feed for MPC schedules, rescheduling notices and resolutions (eventcal.rbi, 1 request, never cached), MoSPI's
-CPI rule and NSE Indices' NIFTY review rule (eventcal.rules, no request), MoSPI's CPI API to confirm a CPI release
-that has come (eventcal.rules.confirm_cpi, only on such nights) and NSE's circulars listing for expiry-day revisions
-(notices) and index-change circulars (eventcal.nse, 1 request and a warm-up). The publishers do not follow NSE's
-trading calendar, so the job runs every day and does not consult the NSE holiday list. The night is claimed in
+RSS feed for MPC schedules, rescheduling notices and resolutions, and the policy rates the resolutions state (#492)
+(eventcal.rbi, 1 request, never cached), MoSPI's CPI rule and NSE Indices' NIFTY review rule (eventcal.rules, no
+request), MoSPI's CPI API to confirm a CPI release that has come (eventcal.rules.confirm_cpi, only on such nights)
+and NSE's circulars listing for expiry-day revisions (notices) and index-change circulars (eventcal.nse, 1 request and
+a warm-up). The publishers do not follow NSE's trading calendar, so the job runs every day and does not consult the
+NSE holiday list. The night is claimed in
 `alert_eval_slot` ("eventcal:<day>"); a night where a decided source failed is retried (monitor.disclosures
 MAX_ATTEMPTS), and a failed source stores nothing, so coverage stays where it was and plans past it read "unknown". A
 source without the owner's data-rights decision is recorded as skipped: no request, no retry.

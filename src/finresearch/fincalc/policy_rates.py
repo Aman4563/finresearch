@@ -1,9 +1,10 @@
-"""RBI's policy rates, typed in by hand from RBI's own releases (#479, the owner's decision of 23-Oct-2026).
+"""RBI's policy rates, typed in by hand from RBI's own releases (#479, the owner's decision of 23-Oct-2026): the
+history to REVIEWED. Later decisions are read from RBI's press-release RSS feed (#492, fincalc.policy_feed).
 
-No rate is collected automatically from anyone: FBIL's Terms of Use of 13-Oct-2026 forbid building a database or feed
-from its free site (#476), and RBI's website disclaimer prohibits caching its pages. A policy-rate decision is a
-public announcement, so each change is typed in here with the RBI release that announced it (title, date, URL), and
-every row was checked by viewing that release on rbi.org.in. Nothing here fetches anything.
+No rate is collected from FBIL, whose Terms of Use of 13-Oct-2026 forbid building a database or feed from its free
+site (#476), nor from RBI's web pages, whose disclaimer prohibits caching them. A policy-rate decision is a public
+announcement, so each change to REVIEWED is typed in here with the RBI release that announced it (title, date, URL),
+and every row was checked by viewing that release on rbi.org.in. Nothing here fetches anything.
 
 One row per change of the policy repo rate or of the corridor around it, from the rates in force on 01-Jan-2015
 (START) to the 07-Oct-2026 hike to 5.50 %. Corridor-only changes are rows too (06-Apr-2017, 17-Apr-2020, 08-Apr-2022).
@@ -20,8 +21,11 @@ no effective date, so the announcement day is assumed there. `in_force(day, befo
 the start of `day`, so a decision announced that day is not used by a caller that must not see that day's news.
 
 REVIEWED is the last day the table was checked against RBI's releases (all rows and every MPC meeting between them,
-23-Oct-2026). From NEXT_MPC, RBI's next scheduled decision, the table may miss a newer rate: fincalc.riskfree labels
-such answers as possibly stale until a row is added here.
+23-Oct-2026): it covers every day to then and wins there. After it, a decision read from an MPC resolution in RBI's
+RSS feed extends it (fincalc.policy_feed.merge, #492); `rows=` passes that extended table to the lookups here. From
+NEXT_MPC, RBI's next scheduled decision, an answer is labelled possibly stale until that meeting's decision has been
+read (fincalc.policy_feed.stale; the event calendar gives the later meetings). Adding a row here (and moving REVIEWED)
+still works: the typed table always wins on the days it covers.
 """
 
 from __future__ import annotations

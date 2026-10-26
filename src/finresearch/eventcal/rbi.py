@@ -18,10 +18,15 @@ are sequential) and a pubDate in IST without a zone ("Fri, 23 Oct 2026 17:30:00"
 An "Unscheduled meeting" title becomes a notice: such meetings have no fixed form, and coverage is scheduled
 meetings only.
 
-Terms (data_rights "rbi_rss", the owner's decision of 23-Oct-2026, #481): RBI provides the feed for syndication; the
-site says "All Rights Reserved" and its disclaimer prohibits caching site content. The feed is fetched once a night
-without a cache, its text is read in memory, and only facts and links are kept: the dates, the type, the item's link
-(in the seed's citation form) and a fixed title. No RBI web page is ever requested.
+Policy rates (#492): every resolution in the feed is also read for the rates it states (`observe`: the decision day,
+the repo, SDF and MSF rates as printed, each unknown when not stated, the item's link and title), whether or not its
+dates are stored already; refseries.policy_obs keeps them append-only for the risk-free chain (fincalc.policy_feed).
+
+Terms (data_rights "rbi_rss", the owner's decision of 23-Oct-2026, #481; its policy rates, #492): RBI provides the
+feed for syndication; the site says "All Rights Reserved" and its disclaimer prohibits caching site content. The feed
+is fetched without a cache (four times a day, #489), its text is read in memory, and only facts and links are kept:
+the dates, the type, the item's link (in the seed's citation form), a fixed title, and from a resolution its policy
+rates as numbers with the item's title, never its text. No RBI web page is ever requested.
 
 Completeness: one fetch a night sees only the newest ten releases, so on a busy day the morning's have left the feed
 (23-Oct-2026: ten releases between 09:00 and 17:30). The newest prid read is kept in state_dir (eventcal/rbi_rss.json:

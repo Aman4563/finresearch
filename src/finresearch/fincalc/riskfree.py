@@ -1,6 +1,8 @@
 """The risk-free rate without FBIL (#479, the owner's decision of 23-Oct-2026): an owner-entered rate, else the RBI
 repo-rate proxy, else unknown. Pure: the caller passes the owner's entries (signals.rates reads them from the
-`owner_rate` table) and the policy rates are fincalc.policy_rates' hand-typed table. Nothing is fetched from anyone.
+`owner_rate` table) and what RBI's RSS feed has told the app (fincalc.policy_feed.Observed, #492: the decisions read
+from MPC resolutions and the event calendar's MPC schedule); the policy rates are fincalc.policy_rates' hand-typed
+table extended by those decisions. Nothing is fetched from anyone here.
 
 Conventions. RBI quotes T-bill cut-offs as simple yields on an Actual/365 basis, y = (100 - P)/P x 365/D, and the
 policy repo rate as a simple annual rate. Every rate here is such a yield y for a term of D days (D = T x 365,
@@ -13,8 +15,9 @@ RBI's 91-day cut-off on an auction day. The latest entry per tenor on or before 
 repo rate has not moved since its date, else shifted by the repo change since then (an MPC hold moves nothing).
 Between entered tenors the yield is linear in D; outside them it is held flat.
 
-Tier "proxy" ("RBI repo-rate proxy"): y = the repo rate in force on the day + SPREAD_BP. The spread is 0 bp at every
-tenor, a stated choice, not a measurement:
+Tier "proxy" ("RBI repo-rate proxy"): y = the repo rate in force on the day + SPREAD_BP; a rate read from RBI's RSS
+feed says so in its source ("from RBI's RSS feed, item <title>, seen <time>"). The spread is 0 bp at every tenor, a
+stated choice, not a measurement:
 * up to 91 days: the 91-day T-bill yield tracks the repo rate with a spread that changes sign with banking-system
   liquidity, so no fixed spread is right across 2015-2026: about 81 bp below repo in 2020's surplus, 52 bp above in
   Jan-2024's deficit, and 2-9 bp above on average in 2026's four policy periods (the research note above). Expect
@@ -25,7 +28,8 @@ tenor, a stated choice, not a measurement:
   in easing cycles longer bills trade below repo. One auction is not a basis for a spread, so none is typed in; the
   owner-entered tier carries observed 182/364-day yields, and every answer beyond 91 days says it is held flat.
 
-Unknown: before policy_rates.START (01-Jan-2015), with the reason; never a fixed rate.
+Unknown: before policy_rates.START (01-Jan-2015), with the reason; never a fixed rate. "Possibly stale" (`stale`):
+a scheduled MPC decision may be missing from the rates used (fincalc.policy_feed.stale), with the reason in the note.
 """
 
 from __future__ import annotations

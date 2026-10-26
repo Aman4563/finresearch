@@ -1,15 +1,17 @@
 """The risk-free rate for option maths and fund and portfolio metrics (#479, the owner's decision of 23-Oct-2026).
 
 The chain is fincalc.riskfree: the owner's entered yield (table `owner_rate`, refseries.owner_rates), else the RBI
-repo-rate proxy (the repo rate in force on the day from fincalc.policy_rates' hand-typed table, plus a stated
-spread), else unknown before 01-Jan-2015. Nothing is fetched from anyone: FBIL is paused (#476: its Terms of Use of
-13-Oct-2026 forbid a database or feed built from its free site) and RBI's pages are not collected. There is no fixed
-fallback rate any more: the earlier 6.5 % and FBIL's dated 23-Sep-2026 curve are gone.
+repo-rate proxy (the repo rate in force on the day from fincalc.policy_rates' hand-typed table, extended by the
+decisions the event calendar's read of RBI's press-release RSS feed found in MPC resolutions, table policy_rate_obs,
+#492; plus a stated spread), else unknown before 01-Jan-2015. Nothing is fetched here: FBIL is paused (#476: its
+Terms of Use of 13-Oct-2026 forbid a database or feed built from its free site), RBI's pages are not collected, and
+the feed is read by the event calendar under its own decision (rbi_rss). There is no fixed fallback rate any more:
+the earlier 6.5 % and FBIL's dated 23-Sep-2026 curve are gone.
 
 Every answer is a dict: "known", "rate" (continuously compounded, a fraction; None when unknown), "yield" (simple,
 Actual/365, as RBI quotes it), "tenor_days", "tenor_years", "tier" ("owner" | "proxy" | None), "as_of", "source",
-"note", "url", "shift_bp", "basis", "par_yield" (None: there is no par curve) and "fallback" (False: the proxy is the
-designed source, not a fallback).
+"note", "url", "shift_bp", "basis", "par_yield" (None: there is no par curve), "fallback" (False: the proxy is the
+designed source, not a fallback) and "stale" (a scheduled MPC decision may be missing; the note says which).
 """
 
 from __future__ import annotations
