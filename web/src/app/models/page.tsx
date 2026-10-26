@@ -3,19 +3,26 @@
 import { ShieldCheck } from "lucide-react";
 import { useState } from "react";
 
-import { Badge, Callout, Card, ErrorNote, PageHeader, Segmented, Skeleton, Table, type Tone } from "@/components/ui";
+import { Badge, Callout, Card, ErrorNote, InfoTip, PageHeader, Segmented, Skeleton, Table, type Tone } from "@/components/ui";
 import { useApi } from "@/lib/api";
 
 type Split = { from: string | null; to: string | null; status: string; reason: string | null;
   metrics: { trades?: number; expectancy?: number | null; t_stat?: number | null; ci_low?: number | null; ci_high?: number | null } | null };
 type Review = { reviewed_on?: string; reviewer?: string; verdict?: string; prereg_commit?: string;
   prereg_committed_at?: string; path: string };
+// #378: the Kupiec trigger's mark, computed from the VaR ledger (VaR models only; every other entry has none)
+type Limits = {
+  status: "not for limits" | "not triggered" | "insufficient data" | "unknown"; why: string; run: string[] | null;
+  tested: number; rule: string; version: string;
+  quarters: { quarter: string; days: number; exceptions: number; p: number | null; status: string }[];
+};
 type Entry = {
   key: string; name: string; kind: string; tier: "A" | "B" | "C"; purpose: string; intended_use: string;
   restrictions: string; limits_of_use: string; outcome_metric: string; status: "validated" | "unvalidated" | "failed";
   status_reason: string; evidence: string; evidence_as_of: string | null; evidence_age_days: number | null;
   evidence_stale: string[] | null; red_team: Review[];
   revalidation: { slot: string; created_at: string; splits: Record<string, Split> } | null;
+  limits?: Limits | null;
 };
 type Models = {
   as_of: string; limits_of_use: string; max_evidence_age_days: number; tiers: Record<string, string>;
@@ -24,6 +31,10 @@ type Models = {
 };
 
 const TONE: Record<Entry["status"], Tone> = { validated: "gain", unvalidated: "warn", failed: "loss" };
+// unchecked reads as a warning, never as fine
+const LIMIT_TONE: Record<Limits["status"], Tone> = {
+  "not for limits": "loss", "not triggered": "neutral", "insufficient data": "warn", unknown: "warn",
+};
 type Filter = "all" | Entry["status"];
 const num = (x: number | null | undefined) => (x == null ? "unknown" : String(x));
 
@@ -66,6 +77,15 @@ function EntryCard({ e, splits }: { e: Entry; splits: string[] }) {
         <dt className="text-muted">Outcome metric</dt><dd>{e.outcome_metric}</dd>
       </dl>
       <p className="text-xs">Evidence age: {age}</p>
+      {e.limits && (
+        <p className="flex flex-wrap items-center gap-1 text-xs">
+          <span>VaR backtest for limits</span>
+          <InfoTip>Kupiec&apos;s test asks whether losses beyond the VaR came as often as its level says (1 day in 20
+            at 95 %). {e.limits.rule}; the mark stays once set.</InfoTip>
+          <Badge tone={LIMIT_TONE[e.limits.status] ?? "warn"}>{e.limits.status}</Badge>
+          <span>{e.limits.why}</span>
+        </p>
+      )}
       {e.evidence_stale?.map((w) => <p key={w} className="text-xs text-warn">{w}</p>)}
       {e.red_team.length > 0 && (
         <ul className="text-xs">

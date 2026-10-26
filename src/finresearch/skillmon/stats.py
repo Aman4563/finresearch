@@ -11,7 +11,7 @@
   S_i = max(0, S_{i-1} + W_i), alarm when S_i > h; two-sided with R = 2 (odds up) and R = 0.5 (odds down).
   S does not depend on h, so a run length for any h is the first index where the running maximum of S exceeds it:
   `calibrate_h` bisects h on one set of simulated paths (common random numbers).
-- PSI = Σ_b (a_b - e_b) ln(a_b / e_b) on bin shares. Pinball L_τ(q, y) = (y - q)(τ - 1{y < q}). Adaptive conformal
+- PSI = Σ_b (a_b - e_b) ln(a_b / e_b) on bin shares, over the reference's decile bins (right-closed). Pinball L_τ(q, y) = (y - q)(τ - 1{y < q}). Adaptive conformal
   (Gibbs & Candès 2021) α_{t+1} = α_t + γ(α - err_t). P&L CUSUM S_t = max(0, S_{t-1} + (μ0 - x_t) - k).
 """
 
@@ -199,3 +199,16 @@ def pnl_cusum(x: Sequence[float], *, mu0: float, k: float) -> list[float]:
         s = max(0.0, s + (mu0 - v) - k)
         out.append(s)
     return out
+
+
+def decile_edges(reference: Sequence[float]) -> list[float]:
+    """The distinct values among the reference's 10th, 20th, ..., 90th percentiles (numpy linear interpolation),
+    ascending: the edges of skill-monitor-v2's PSI bins (specs_v2.Drift.bins)."""
+    q = np.quantile(np.asarray(reference, float), np.arange(1, 10) / 10)
+    return [float(x) for x in np.unique(q)]
+
+
+def bin_counts(values: Sequence[float], edges: Sequence[float]) -> list[int]:
+    """Counts in the right-closed bins (-inf, e1], (e1, e2], ..., (ek, +inf): a value on an edge is in the lower bin."""
+    idx = np.searchsorted(np.asarray(edges, float), np.asarray(values, float), side="left")
+    return [int(c) for c in np.bincount(idx, minlength=len(edges) + 1)]
