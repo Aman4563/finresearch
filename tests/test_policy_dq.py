@@ -124,3 +124,17 @@ def test_past_the_calendars_coverage_a_missed_decision_cannot_be_ruled_out(clean
     _store(datetime(2027, 2, 5, 12, 0, tzinfo=IST), obs(91006, date(2027, 2, 5), "0.055", "0.0525", "0.0575"))
     status, _, note, _ = _checks(late)["mpc_decision_read"]
     assert status == "unknown" and "31-Mar-2027" in note
+
+
+def test_a_decision_read_a_day_after_its_calendar_date_counts_for_that_meeting(clean):
+    # the meeting moved to 2-5 Dec and the calendar missed the notice: the decision read on 05-Dec-2026 is that
+    # meeting's (before the next scheduled one), so nothing is missing; February's is not due yet
+    _store(datetime(2026, 12, 5, 12, 0, tzinfo=IST), obs(91004, date(2026, 12, 5), "0.0575", "0.055", "0.06"))
+    assert _checks(datetime(2026, 12, 8, 8, 0, tzinfo=IST))["mpc_decision_read"][:2] == ("ok", 0)
+
+
+def test_a_later_decision_does_not_hide_a_missed_one(clean):
+    # February's decision was read but December's never was: the rates between them were not known
+    _store(datetime(2027, 2, 5, 12, 0, tzinfo=IST), obs(91006, date(2027, 2, 5), "0.055", "0.0525", "0.0575"))
+    status, value, note, _ = _checks(datetime(2027, 2, 9, 8, 0, tzinfo=IST))["mpc_decision_read"]
+    assert (status, value) == ("warn", 1) and "04-Dec-2026" in note
