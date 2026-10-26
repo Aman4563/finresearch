@@ -1,7 +1,11 @@
 """Historical replay of the content checks (#368 acceptance 2): every loaded bhavcopy day in [start, end] through the
 bhavcopy, participant OI, derived IV and index close checks, read only (nothing is stored). Freshness is not replayed
 (it is about the clock, not the data). The owner runs it on the real history with `finresearch dq replay`; acceptance:
-every known incident flagged and at most 1 false alarm per 20 sessions on 2024-26."""
+every known incident flagged and at most 1 false alarm per 20 sessions on 2024-26.
+
+The non-critical warnings (the option-price screens and control charts of #368's third slice among them) are measured
+the same way: `warn_rate` per check (warnings / sessions) and `warning_rate`, the share of sessions with any warning.
+The broker reconciliation is not replayed: it has no history (Groww keeps only the latest state) and is personal."""
 
 from __future__ import annotations
 
@@ -24,8 +28,9 @@ def replay(s: Session, start: date, end: date) -> dict[str, Any]:
     by_check: dict[str, Counter[str]] = defaultdict(Counter)
     flagged: dict[str, list[str]] = defaultdict(list)
     critical: list[str] = []
+    warned: list[str] = []
     for d in days:
-        hit = False
+        hit = warn = False
         for fn in CHECKS:
             for c in fn(s, d):
                 key = f"{c.dataset}:{c.check}"
@@ -33,10 +38,15 @@ def replay(s: Session, start: date, end: date) -> dict[str, Any]:
                 if c.status in ("fail", "warn"):
                     flagged[key].append(d.isoformat())
                     hit = hit or (c.critical and c.status == "fail")
+                    warn = warn or c.status == "warn" or not c.critical
         if hit:
             critical.append(d.isoformat())
+        if warn:
+            warned.append(d.isoformat())
     s.rollback()  # read only
     return {"start": start.isoformat(), "end": end.isoformat(), "sessions": len(days),
             "by_check": {k: dict(v) for k, v in sorted(by_check.items())}, "flagged_days": dict(flagged),
             "critical_days": critical,
-            "critical_rate": None if not days else len(critical) / len(days)}  # fmt: skip
+            "critical_rate": None if not days else len(critical) / len(days),
+            "warn_rate": {k: round(v.get("warn", 0) / len(days), 4) for k, v in sorted(by_check.items())} if days else {},
+            "warning_days": warned, "warning_rate": None if not days else len(warned) / len(days)}  # fmt: skip

@@ -25,7 +25,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from finresearch.db import models as M
-from finresearch.dq import equity, fno, misc, policy, rates, ref, stats
+from finresearch.dq import broker, equity, fno, misc, policy, rates, ref, stats
 from finresearch.dq.base import Check
 from finresearch.fincalc.dates import IST, to_ist
 
@@ -201,10 +201,11 @@ def run_all(s: Session, now: datetime, *, holidays: set[date] | None = None,
         n += len(checks)
     session = stats.expected_day(now, time(16, 0), hol or set())
     free = {"free_bytes": free_bytes} if free_bytes else {}
+    # broker_groww guards itself: _guarded's note carries the exception's message, which could name a holding
     extra = [*_guarded(s, "ipo_history", False, misc.ipo_checks, s, now),
              *_guarded(s, "groww_close", False, misc.close_checks, s, session),
              *_guarded(s, policy.DATASET, False, policy.checks, s, now),  # RBI policy rates from the RSS feed (#492)
-             misc.disk_check(get_settings().state_dir.parent, **free)]  # fmt: skip
+             misc.disk_check(get_settings().state_dir.parent, **free), *broker.broker_checks(s, now)]  # fmt: skip
     for name in sorted({c.dataset for c in extra}):
         mine = [c for c in extra if c.dataset == name]
         _store(s, today, mine, now)

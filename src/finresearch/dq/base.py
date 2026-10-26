@@ -2,7 +2,15 @@
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+
+log = logging.getLogger(__name__)
 
 STATUSES = ("ok", "warn", "fail", "unknown")
 
@@ -34,3 +42,20 @@ def share_status(bad: int, n: int, limit: float) -> tuple[str, float | None]:
         return "unknown", None
     share = bad / n
     return ("fail" if share > limit else "ok"), share
+
+
+def soft(
+    s: Session, dataset: str, names: Sequence[str], fn: Callable[..., list[Check]], *args: Any
+) -> list[Check]:
+    """A group of non-critical checks inside another dataset's pass (#368: the option screens, the control charts),
+    run in its own savepoint: a crash, even a failed SQL statement, becomes non-critical unknown rows naming the
+    exception's type only, so it never aborts the session or leaves the dataset critically unknown."""
+    try:
+        with s.begin_nested():
+            return fn(s, *args)
+    except Exception as e:
+        log.warning("%s: non-critical checks %s failed", dataset, ", ".join(names), exc_info=True)
+        return [
+            Check(dataset, n, "unknown", note=f"screen failed: {type(e).__name__}", critical=False)
+            for n in names
+        ]

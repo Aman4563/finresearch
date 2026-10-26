@@ -110,7 +110,7 @@ src/finresearch/
   bridge/        Claude Code, API-key and Ollama engines; limit tracking; router
   db/            database models (Alembic migrations in migrations/)
   disclosures/   surveillance, pledge, insider, deal, rating and SEBI-order feeds
-  dq/            data quality: post-load checks, reconciliations, load lineage and the page gate (#368)
+  dq/            data quality: post-load checks, option screens, control charts, reconciliations, lineage, page gate (#368)
   evals/         backtests, calibration and pre-registered experiments
   fincalc/       deterministic finance and tax calculations
   fnohist/       NSE F&O bhavcopy history: backfill, derived IV series, contract calendar

@@ -18,6 +18,7 @@ LABELS = {
     "intraday_series": "Intraday index archive", "ipo_history": "IPO history", "ipo_issue": "IPO issue registry",
     "groww_close": "Groww vs official closes", "disk": "Disk space",
     "policy_rate": "RBI policy rates read from RBI's RSS feed",  # #492, dq.policy
+    "broker_groww": "Groww reconciliation (positions and holdings vs the app's book; counts only)",
     # FBIL is paused (#476): nothing loads these and nothing reads them (#479), so they stay stale or never loaded
     "rate_gsec_par": "FBIL G-sec par curve (paused)", "rate_tbill": "FBIL T-bill rates (paused)",
     "rate_mibor_on": "FBIL overnight MIBOR (paused)", "rate_mibor_term": "FBIL term MIBOR (paused)",
@@ -47,8 +48,9 @@ def data_health(s: Session) -> dict[str, Any]:
     return {"status": status, "checked_at": max((d["checked_at"] or "" for d in sets), default=None) or None,
             "datasets": sets, "dependents": deps,
             "method": "Post-load checks over the stored files (freshness against each file's publication time and "
-                      "NSE's holiday list, row counts, expected contracts, ranges, cross-source reconciliations), "
-                      "run by the monitor at 21:00 and 08:00 IST. Unknown means not checked, never ok."}  # fmt: skip
+                      "NSE's holiday list, row counts, expected contracts, ranges, cross-source reconciliations, "
+                      "option-price screens and control charts) and the Groww reconciliation (counts only), run by "
+                      "the monitor at 21:00 and 08:00 IST. Unknown means not checked, never ok."}  # fmt: skip
 
 
 def brief_lines(r: dict[str, Any]) -> list[dict[str, str]]:
