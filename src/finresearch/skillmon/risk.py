@@ -102,7 +102,7 @@ def ledger_obs(s: Any) -> tuple[list[Obs], int]:
     for f in s.scalars(q):
         try:
             day = date.fromisoformat(str((f.inputs or {})["as_of"])[:10])
-        except (KeyError, ValueError):
+        except (KeyError, TypeError, ValueError):  # no day, or inputs that are not an object
             bad += 1
             continue
         out.append(Obs(day, f.status, f.outcome, f.id))

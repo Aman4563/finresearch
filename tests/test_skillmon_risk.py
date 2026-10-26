@@ -126,3 +126,19 @@ def test_an_unreadable_ledger_row_never_lets_the_trigger_read_not_triggered(ledg
         assert (
             risk.marks(s, date(2026, 1, 15))["risk_var"]["status"] == "insufficient data"
         )  # nothing complete yet
+
+
+def test_a_ledger_row_whose_inputs_are_not_an_object_is_unreadable_not_a_crash(ledger) -> None:
+    from finresearch.db import session_scope
+    from finresearch.db.models import Forecast
+    from finresearch.portfolio import var_ledger as vl
+
+    store(quarter(Q1, 60, 3) + quarter(Q2, 60, 3, first_id=100) + quarter(Q3, 60, 3, first_id=200))
+    with session_scope() as s:
+        s.add(Forecast(asset=vl.ASSET, instrument=vl.INSTRUMENT, source="monitor:portfolio", event_kind=vl.EVENT_KIND,
+                       event=vl.EVENT, horizon="1 trading day", resolve_on=Q3, probability=0.05, action="RISK",
+                       method=vl.METHOD, validation_status="rule_based", inputs=["not", "an", "object"],
+                       status="resolved", outcome=1, dedupe_key="malformed"))  # fmt: skip
+    with session_scope() as s:
+        m = risk.marks(s, AFTER_Q3)["risk_var"]
+    assert m["status"] == "unknown" and m["unreadable"] == 1
