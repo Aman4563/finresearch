@@ -27,8 +27,9 @@ such answers as possibly stale until a row is added here.
 from __future__ import annotations
 
 from bisect import bisect_right
+from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 START = date(2015, 1, 1)  # the first day the table answers for
@@ -39,12 +40,13 @@ REVIEWED = date(2026, 10, 23)
 class PolicyRate:
     effective: date  # in force from this day (the announcement day)
     repo: Decimal  # fractions: 0.055 = 5.50 %
-    floor: Decimal
+    floor: Decimal | None  # None only on a row read from RBI's RSS feed whose resolution did not state it
     floor_kind: str  # "reverse repo" (to 07-Apr-2022) | "SDF" (from 08-Apr-2022)
-    msf: Decimal
+    msf: Decimal | None
     title: str  # the RBI release's title, as printed
     released: date
     url: str
+    seen: datetime | None = None  # read from RBI's RSS feed (#492): when first read; None: typed in here
 
 
 def _row(effective: str, repo: str, floor: str, msf: str, title: str, url: str, released: str | None = None,
@@ -55,25 +57,31 @@ def _row(effective: str, repo: str, floor: str, msf: str, title: str, url: str, 
                       date.fromisoformat(released or effective), url)  # fmt: skip
 
 
-def in_force(day: date, *, before: bool = False) -> PolicyRate | None:
+def in_force(
+    day: date, *, before: bool = False, rows: Sequence[PolicyRate] | None = None
+) -> PolicyRate | None:
     """The rates in force on `day` (with `before`, at the start of `day`: a decision announced that day is not
-    counted); None before START, where the table does not answer."""
+    counted); None before START, where the table does not answer. `rows`: the table extended by RBI's RSS feed
+    (fincalc.policy_feed.merge); default the table alone."""
     if day < START:
         return None
-    i = bisect_right(_DAYS, day - timedelta(days=1) if before else day)
-    return TABLE[i - 1] if i else None
+    rows = TABLE if rows is None else rows
+    days = _DAYS if rows is TABLE else [r.effective for r in rows]
+    i = bisect_right(days, day - timedelta(days=1) if before else day)
+    return rows[i - 1] if i else None
 
 
-def repo_change(since: date, day: date, *, before: bool = False) -> Decimal | None:
+def repo_change(since: date, day: date, *, before: bool = False,
+                rows: Sequence[PolicyRate] | None = None) -> Decimal | None:  # fmt: skip
     """The change in the repo rate from the one in force on `since` to the one in force on `day` (`before` applies
     to `day`); None when either is unknown."""
-    a, b = in_force(since), in_force(day, before=before)
+    a, b = in_force(since, rows=rows), in_force(day, before=before, rows=rows)
     return None if a is None or b is None else b.repo - a.repo
 
 
-def changes_between(since: date, day: date) -> list[PolicyRate]:
+def changes_between(since: date, day: date, rows: Sequence[PolicyRate] | None = None) -> list[PolicyRate]:
     """The rows that took effect after `since` and on or before `day`."""
-    return [r for r in TABLE if since < r.effective <= day]
+    return [r for r in (TABLE if rows is None else rows) if since < r.effective <= day]
 
 
 _PR = "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid="

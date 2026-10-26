@@ -11,8 +11,11 @@ the parsed numbers, the decision date, the item's link and title and the times a
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
+from functools import lru_cache
+
+from finresearch.fincalc import policy_rates as P
 
 
 @dataclass(frozen=True)
@@ -53,3 +56,100 @@ def differences(a: Observation, b: Observation) -> list[str]:
         if x is not None and y is not None and x != y:
             out.append(f"{label} {pct(y)} vs {pct(x)}")
     return out
+
+
+@dataclass(frozen=True)
+class Observed:
+    """What RBI's RSS feed and the event calendar know, for the pure rate chain. The default (empty) is the hand-typed
+    table alone, possibly stale from its P.NEXT_MPC as before #492."""
+
+    observations: tuple[Observation, ...] = ()  # refseries.policy_obs.load: first seen first
+    scheduled: tuple[date, ...] = ()  # the event calendar's standing rbi_mpc decision days
+    covered: date | None = None  # every scheduled MPC meeting is listed through this day; None: unknown
+
+
+@dataclass(frozen=True)
+class Merged:
+    rows: tuple[P.PolicyRate, ...]  # the table, then a row per decision read from the feed after P.REVIEWED
+    # (decision day, note): another item gave other rates for a decision; the first one seen is used
+    conflicts: tuple[tuple[date, str], ...]
+    disagreements: tuple[str, ...]  # what the table contradicts on a day it covers (the table is kept)
+
+
+def _first_seen(o: Observation) -> tuple[bool, float]:
+    return o.seen is None, o.seen.timestamp() if o.seen else 0.0
+
+
+def _against_table(o: Observation, row: P.PolicyRate) -> list[str]:
+    floor = row.floor if row.floor_kind == "SDF" else None  # an SDF figure says nothing of a reverse repo
+    pairs = (("repo", o.repo, row.repo), ("SDF", o.sdf, floor), ("MSF", o.msf, row.msf))
+    return [f"{label} {pct(x)} where the table has {pct(y)}" for label, x, y in pairs
+            if x is not None and y is not None and x != y]  # fmt: skip
+
+
+def _released(o: Observation) -> date:
+    from finresearch.fincalc.dates import to_ist
+
+    return to_ist(o.published).date() if o.published else o.decided
+
+
+@lru_cache(maxsize=64)
+def merge(observations: tuple[Observation, ...]) -> Merged:
+    """The table extended by the feed. The table covers every day to P.REVIEWED (its rows and every MPC meeting
+    between them were checked then) and wins there: an observation of such a day that contradicts it is listed in
+    `disagreements`, never used. A later decision becomes a row from its day if an observation of it states the
+    repo rate; the first one seen is used, and any other giving other rates for the same decision is listed in
+    `conflicts` (an observation without the repo rate extends nothing: unknown)."""
+    rows: list[P.PolicyRate] = list(P.TABLE)
+    conflicts: list[tuple[date, str]] = []
+    disagreements: list[str] = []
+    by_day: dict[date, list[Observation]] = {}
+    for o in sorted(observations, key=_first_seen):
+        by_day.setdefault(o.decided, []).append(o)
+    for day in sorted(by_day):
+        group = by_day[day]
+        if day <= P.REVIEWED:
+            row = P.in_force(day)
+            for o in group:
+                if row is not None and (diff := _against_table(o, row)):
+                    disagreements.append(f"RBI's RSS feed item {o.url} (seen {when(o.seen)}) states for the "
+                                         f"{day:%d-%b-%Y} decision {'; '.join(diff)} (fincalc.policy_rates, kept)")  # fmt: skip
+            continue
+        used = next((o for o in group if o.repo is not None), None)
+        if used is None:
+            continue
+        for o in group:
+            if o is not used and (diff := differences(used, o)):
+                conflicts.append((day, f"RBI's RSS feed gave other rates for the {day:%d-%b-%Y} decision in another "
+                                       f"item ({o.url}, seen {when(o.seen)}: {'; '.join(diff)}); the first item seen "
+                                       "is used, flagged in data quality"))  # fmt: skip
+        rows.append(P.PolicyRate(effective=day, repo=used.repo, floor=used.sdf, floor_kind="SDF", msf=used.msf,
+                                 title=used.title, released=_released(used), url=used.url, seen=used.seen))  # fmt: skip
+    return Merged(tuple(rows), tuple(conflicts), tuple(disagreements))
+
+
+def schedule(observed: Observed) -> tuple[list[date], date]:
+    """The scheduled MPC decision days after the table's review, and the day through which that list is complete:
+    the event calendar's when it covers the table's next meeting (P.NEXT_MPC), else that meeting alone."""
+    cal = sorted({d for d in observed.scheduled if d > P.REVIEWED})
+    if observed.covered is not None and observed.covered >= P.NEXT_MPC:
+        return cal, observed.covered
+    return sorted({*cal, P.NEXT_MPC}), P.NEXT_MPC
+
+
+def stale(day: date, observed: Observed, *, before: bool = False) -> str | None:
+    """Why an answer for `day` may miss a newer decision, or None. Stale when a scheduled decision day has come (with
+    `before`, a day before `day`) later than the last decision known (the table's review, or a decision read from
+    the feed with its repo rate), or when `day` is past the last day the schedule is known for."""
+    known = [r.effective for r in merge(observed.observations).rows
+             if r.seen is not None and (r.effective < day if before else r.effective <= day)]  # fmt: skip
+    last = max([P.REVIEWED, *known])
+    days, through = schedule(observed)
+    for s in days:
+        if last < s and (s < day if before else s <= day):
+            return (f"possibly stale: RBI's MPC was scheduled to decide on {s:%d-%b-%Y} and no decision for it has "
+                    f"been read from RBI's RSS feed (the typed table was last checked on {P.REVIEWED:%d-%b-%Y})")  # fmt: skip
+    if (day - timedelta(days=1) if before else day) > through:
+        return (f"possibly stale: no MPC schedule is known after {through:%d-%b-%Y} (the event calendar lists none), "
+                "so a newer decision may be missing")  # fmt: skip
+    return None

@@ -37,6 +37,7 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
+from finresearch.fincalc import policy_feed as F
 from finresearch.fincalc import policy_rates as P
 
 BASIS = "simple yield, Actual/365 (RBI's T-bill and repo convention)"
@@ -101,20 +102,31 @@ def _known(
                           "source": source, "note": note} | extra  # fmt: skip
 
 
-def proxy(day: date, days: int, *, before: bool = False) -> dict[str, Any]:
-    """The RBI repo-rate proxy for `days` days on `day` (see the module docstring)."""
-    row = P.in_force(day, before=before)
+def _num(x: Decimal | None) -> float | None:
+    return None if x is None else float(x)
+
+
+def proxy(
+    day: date, days: int, *, before: bool = False, rows: Sequence[P.PolicyRate] | None = None
+) -> dict[str, Any]:
+    """The RBI repo-rate proxy for `days` days on `day` (see the module docstring); `rows`: the table extended by
+    RBI's RSS feed (fincalc.policy_feed.merge), default the table alone."""
+    row = P.in_force(day, before=before, rows=rows)
     if row is None:
         return unknown(day, days)
     y = float(row.repo) + SPREAD_BP / 10000
     src = f"{SOURCE}: repo {_pct(row.repo)} in force from {row.effective:%d-%b-%Y}"
+    if row.seen is not None:
+        src += f" (from RBI's RSS feed, item {row.title}, seen {F.when(row.seen)})"
     note = f"repo {_pct(row.repo)} + {SPREAD_BP} bp at {days} days"
     return _known("proxy", y, days, row.effective, src, note, url=row.url,
-                  policy={"repo": float(row.repo), "floor": float(row.floor), "floor_kind": row.floor_kind,
-                          "msf": float(row.msf), "effective": row.effective.isoformat(), "title": row.title})  # fmt: skip
+                  policy={"repo": float(row.repo), "floor": _num(row.floor), "floor_kind": row.floor_kind,
+                          "msf": _num(row.msf), "effective": row.effective.isoformat(), "title": row.title,
+                          "seen": row.seen.isoformat() if row.seen else None})  # fmt: skip
 
 
-def _nodes(entries: Sequence[OwnerRate], day: date, before: bool) -> list[tuple[OwnerRate, Decimal]]:
+def _nodes(entries: Sequence[OwnerRate], day: date, before: bool,
+           rows: Sequence[P.PolicyRate] | None = None) -> list[tuple[OwnerRate, Decimal]]:  # fmt: skip
     """The latest entry per tenor usable on `day`, each with the repo change since its own date."""
     latest: dict[int, OwnerRate] = {}
     for e in entries:
@@ -124,17 +136,16 @@ def _nodes(entries: Sequence[OwnerRate], day: date, before: bool) -> list[tuple[
             latest[e.tenor_days] = e
     out = []
     for t in sorted(latest):
-        shift = P.repo_change(latest[t].day, day, before=before)
+        shift = P.repo_change(latest[t].day, day, before=before, rows=rows)
         if shift is not None:
             out.append((latest[t], shift))
     return out
 
 
-def owner(
-    day: date, days: int, entries: Sequence[OwnerRate], *, before: bool = False
-) -> dict[str, Any] | None:
+def owner(day: date, days: int, entries: Sequence[OwnerRate], *, before: bool = False,
+          rows: Sequence[P.PolicyRate] | None = None) -> dict[str, Any] | None:  # fmt: skip
     """The owner-entered tier for `days` days on `day`, or None when no entry is usable."""
-    nodes = _nodes(entries, day, before)
+    nodes = _nodes(entries, day, before, rows)
     if not nodes:
         return None
     lo = max((n for n in nodes if n[0].tenor_days <= days), default=nodes[0], key=lambda n: n[0].tenor_days)
@@ -157,20 +168,28 @@ def owner(
                   shift_bp=shifts.pop() if len(shifts) == 1 else None, url=cites)  # fmt: skip
 
 
-def answer(
-    day: date, t_years: float, entries: Sequence[OwnerRate] = (), *, before: bool = False
-) -> dict[str, Any]:
+def answer(day: date, t_years: float, entries: Sequence[OwnerRate] = (), *, before: bool = False,
+           observed: F.Observed | None = None) -> dict[str, Any]:  # fmt: skip
     """The risk-free rate for a term of `t_years` on `day`: the owner's entries, else the RBI repo-rate proxy, else
-    unknown. `before`: only what was known at the start of `day` (no entry or decision dated `day`)."""
+    unknown. `before`: only what was known at the start of `day` (no entry or decision dated `day`). `observed`: the
+    policy rates read from RBI's RSS feed and the event calendar's MPC schedule (#492); None: the typed table alone.
+    An answer is "possibly stale" when a scheduled MPC decision may be missing (fincalc.policy_feed.stale)."""
     days = tenor_days(t_years)
     if day < P.START:
         return unknown(day, days)
-    out = owner(day, days, entries, before=before) or proxy(day, days, before=before)
-    if out["known"] and (day > P.NEXT_MPC or (day == P.NEXT_MPC and not before)):
+    observed = F.Observed() if observed is None else observed
+    merged = F.merge(observed.observations)
+    out = owner(day, days, entries, before=before, rows=merged.rows) or proxy(day, days, before=before,
+                                                                               rows=merged.rows)  # fmt: skip
+    if not out["known"]:
+        return out
+    row = P.in_force(day, before=before, rows=merged.rows)
+    if row is not None and row.seen is not None:
+        for note in (n for d, n in merged.conflicts if d == row.effective):
+            out["note"] += f"; {note}"
+    if why := F.stale(day, observed, before=before):
         out["stale"] = True
-        out["note"] += (f"; possibly stale: RBI's MPC was scheduled to decide on {P.NEXT_MPC:%d-%b-%Y}, after the "
-                        f"policy-rate table was last checked ({P.REVIEWED:%d-%b-%Y}); add any change to "
-                        "fincalc.policy_rates")  # fmt: skip
+        out["note"] += f"; {why}"
     return out
 
 
@@ -198,7 +217,8 @@ def _month_end(m: date) -> date:
     return nxt - timedelta(days=1)
 
 
-def month_rates(start: date, end: date, entries: Sequence[OwnerRate] = ()) -> dict[date, MonthRate]:
+def month_rates(start: date, end: date, entries: Sequence[OwnerRate] = (),
+                observed: F.Observed | None = None) -> dict[date, MonthRate]:  # fmt: skip
     """Every month that [start, end] touches, each averaged over its own calendar days (to `end` in the last)."""
     out: dict[date, MonthRate] = {}
     m = start.replace(day=1)
@@ -207,7 +227,7 @@ def month_rates(start: date, end: date, entries: Sequence[OwnerRate] = ()) -> di
         ys, tiers, why = [], {}, None
         d = m
         while d <= last:
-            a = answer(d, BILL_DAYS / 365, entries)
+            a = answer(d, BILL_DAYS / 365, entries, observed=observed)
             if a["yield"] is None:
                 why = a["note"]
                 break
