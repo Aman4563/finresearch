@@ -331,3 +331,35 @@ def test_mirrored_constants_match_the_connector_and_the_merge():
         "reconciliation"
     ]
     assert len(cut) == broker.RECON_CAP
+
+
+def test_cli_prints_the_detail_on_this_machine_and_writes_nothing(clean):
+    """`finresearch dq broker`: the per-instrument detail the nightly checks leave out, read only. Seeded relative to
+    now (the command uses the clock): Groww read an hour ago, the app's book for that session written."""
+    from sqlalchemy import func, select
+    from typer.testing import CliRunner
+
+    from finresearch.cli import app
+    from finresearch.db import session_scope
+    from finresearch.db.models import DqCheck
+    from finresearch.fincalc.dates import to_ist
+
+    at = datetime.now(UTC) - timedelta(hours=1)
+    day = to_ist(at).date()
+    with session_scope() as s:
+        connect(s, [pos(CE, -75), pos(PE, 75)], at=at)
+        mark(s, CE, -150, day=day)
+        marks_done(s, day)
+        synced(s, [row(f"ISIN:{ISIN}", "10")], at=at)
+        holding(
+            s, f"ISIN:{ISIN}", [(day - timedelta(days=9), "buy", 10), (day - timedelta(days=2), "sell", 4)]
+        )
+    r = CliRunner().invoke(app, ["dq", "broker"])
+    assert r.exit_code == 0, r.output
+    out = " ".join(r.output.replace("│", " ").split())  # the table's cells, in reading order
+    assert f"quantity differs {CE} -75 -150" in out and f"not in the book {PE} 75 -" in out
+    assert (
+        f"units differ {NAME} 10 6" in out
+    )  # Groww 10, the book 6 after the sell (not "1": no trailing-zero cut)
+    with session_scope() as s:
+        assert s.scalar(select(func.count()).select_from(DqCheck)) == 0

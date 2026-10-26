@@ -2816,7 +2816,9 @@ def dq_replay(
     end: str = typer.Option(..., "--to", help="Last day, YYYY-MM-DD"),
 ) -> None:
     """Acceptance 2's historical replay: the content checks over every loaded bhavcopy day in the range, read only.
-    Prints counts per check, the flagged days and the share of sessions with a critical failure."""
+    Prints counts per check, the flagged days, the share of sessions with a critical failure, each check's warning
+    rate (warn_rate: the option-price screens and control charts among them) and the share of sessions with any
+    warning (warning_rate). Several minutes over the full history."""
     from datetime import date as _date
 
     from finresearch.db import session_scope
@@ -2825,6 +2827,44 @@ def dq_replay(
     with session_scope() as s:
         res = replay.replay(s, _date.fromisoformat(start), _date.fromisoformat(end))
     console.print_json(json.dumps(res, default=str))
+
+
+@dq_app.command("broker")
+def dq_broker() -> None:
+    """The broker reconciliation's detail (#368): each Groww F&O position and holding that differs from the app's own
+    book, from the rows the last sync stored (no Groww call). Personal: printed on this machine only; the nightly
+    checks keep counts only. Read only."""
+    from datetime import UTC, datetime
+
+    from rich.table import Table
+
+    from finresearch.db import session_scope
+    from finresearch.dq import broker
+
+    with session_scope() as s:
+        results = broker.reconcile(s, datetime.now(UTC))
+        s.rollback()  # read only
+    for r in results:
+        c = broker.to_check(r)
+        console.print(f"[bold]{r.check}[/bold] ({c.status}): {c.note}")
+        if r.mismatches:
+            t = Table("what", "instrument", "Groww", "app's book")
+            for m in r.mismatches:
+                t.add_row(
+                    broker.kind_label(r.check, m["kind"]),
+                    m["instrument"],
+                    _units(m["groww"]),
+                    _units(m["book"]),
+                )
+            console.print(t)
+
+
+def _units(v: object) -> str:
+    """A quantity without trailing zeros after the point ("10", "6.5"); "-" when absent on that side."""
+    if v is None:
+        return "-"
+    txt = f"{v:f}"
+    return txt.rstrip("0").rstrip(".") if "." in txt else txt
 
 
 events_app = typer.Typer(no_args_is_help=True, help="The point-in-time event and macro calendar (#367)")

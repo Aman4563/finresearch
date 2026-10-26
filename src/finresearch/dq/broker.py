@@ -63,6 +63,11 @@ LABELS = {"not_in_book": "not in the book", "not_at_broker": "no longer at Groww
           "units_differ": "units differ"}  # fmt: skip
 
 
+def kind_label(check: str, kind: str) -> str:
+    """A mismatch kind in words: a holding Groww did not report was never "at Groww" in this sync."""
+    return "not at Groww" if (check, kind) == (CHECKS[1], "not_at_broker") else LABELS[kind]
+
+
 @dataclass
 class Result:
     check: str
@@ -202,8 +207,7 @@ def to_check(res: Result) -> Check:
     what = "F&O positions read" if res.check == CHECKS[0] else "holdings of"
     if res.mismatches:
         n = Counter(m["kind"] for m in res.mismatches)
-        kinds = ", ".join(f"{n[k]} {LABELS[k].replace('no longer at', 'not at') if res.check == CHECKS[1] else LABELS[k]}"
-                          for k in LABELS if n[k])  # fmt: skip
+        kinds = ", ".join(f"{n[k]} {kind_label(res.check, k)}" for k in LABELS if n[k])
         note = (f"{len(res.mismatches)} mismatch(es) between Groww's {what} {res.asof} and the app's book: {kinds} "
                 "(details: finresearch dq broker)")  # fmt: skip
         return Check(DATASET, res.check, "warn", len(res.mismatches), 0, note)
