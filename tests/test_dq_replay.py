@@ -69,8 +69,13 @@ def test_replay_reports_warning_rates_for_the_screens_and_charts(clean):
     with session_scope() as s:
         res = replay.replay(s, ds.T0, ds.T1)
     assert res["by_check"]["fno_bhav:opt_bounds"] == {"ok": 1, "warn": 1}
-    assert res["warn_rate"]["fno_bhav:opt_bounds"] == 0.5 and res["warn_rate"]["fno_bhav:futures_continuity"] == 0
+    assert (
+        res["warn_rate"]["fno_bhav:opt_bounds"] == 0.5
+        and res["warn_rate"]["fno_bhav:futures_continuity"] == 0
+    )
     assert {"fno_bhav:opt_butterfly", "fno_bhav:opt_calendar", "fno_bhav:cc_rows_total", "fno_bhav:cc_settle_dispersion",
             "fno_iv_eod:cc_iv30", "fno_iv_eod:cc_iv30_vix_gap"} <= set(res["by_check"])  # fmt: skip
     assert res["warning_days"] == [ds.T1.isoformat()] and res["warning_rate"] == 0.5
-    assert not any(k.startswith("broker_groww") for k in res["by_check"])  # personal, and no history to replay
+    assert not any(
+        k.startswith("broker_groww") for k in res["by_check"]
+    )  # personal, and no history to replay
