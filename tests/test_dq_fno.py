@@ -45,7 +45,8 @@ def test_clean_day_passes_every_check(clean):
     assert flagged(res) == set(), {k: (c.status, c.note) for k, c in res.items()}
     assert {"futures_continuity", "symbol_changed", "expiry_continuity", "expiry_moved", "expired_contracts", "stale_settle", "oi_lot_multiple",
             "turnover_units", "price_jump", "row_ranges", "rows_total_z", "rows_kept_z", "reupload",
-            "duplicate_body"} <= set(res)  # fmt: skip
+            "duplicate_body", "opt_bounds", "opt_strike_monotone", "opt_butterfly", "opt_parity",
+            "opt_calendar"} <= set(res)  # fmt: skip
 
 
 def test_dropped_symbol(clean):

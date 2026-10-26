@@ -31,8 +31,8 @@ from finresearch.db.models import (
     IndexEodDay,
     SpanDay,
 )
-from finresearch.dq import stats
-from finresearch.dq.base import Check, share_status
+from finresearch.dq import control, stats
+from finresearch.dq.base import Check, share_status, soft
 from finresearch.refseries import checks as rc
 
 PARTICIPANTS = ("Client", "DII", "FII", "Pro")
@@ -203,7 +203,7 @@ def iv_checks(s: Session, day: date) -> list[Check]:
         Check("fno_iv_eod", "flat_iv30_share", "warn" if st == "fail" else st, v, FLAT_SHARE, critical=False)
     )
     out.append(_vix_gap(s, day))
-    return out
+    return out + soft(s, "fno_iv_eod", control.IV_CHARTS, control.iv_charts, day)
 
 
 def _vix_gap(s: Session, day: date) -> Check:

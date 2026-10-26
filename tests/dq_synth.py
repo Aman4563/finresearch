@@ -1,10 +1,12 @@
 """Synthetic F&O days for the data-quality tests (#368): a made-up universe of two index futures (NIFTY, BANKNIFTY),
-two stock futures (ABCSTK, XYZSTK, fake symbols), NIFTY options on two expiries, the bhavcopy manifest with 30 days of
+two stock futures (ABCSTK, XYZSTK, fake symbols), NIFTY options on two expiries (Black-76 prices off each expiry's
+future, so the option-price screens of dq.options see an arbitrage-free day), the bhavcopy manifest with 30 days of
 row-count history, participant OI that reconciles with the futures, and index closes with India VIX. Prices drift
 deterministically day to day so a copied day is visible. No network, no real data."""
 
 from __future__ import annotations
 
+import math
 from datetime import date, timedelta
 from decimal import Decimal
 
@@ -27,18 +29,30 @@ def _row(day, sym, inst, expiry, strike, right, px, lot, oi_lots, contracts):
             "turnover": Decimal(contracts * lot) * p, "underlying": None, "lot_size": lot}  # fmt: skip
 
 
+SIGMA, RATE = 0.12, 0.06  # the options: Black-76 at a flat 12 % volatility and a 6 % rate (arbitrage-free)
+
+
+def option_price(day: date, expiry: date, strike: float, right: str, fwd: float) -> float:
+    """Black-76 off the same-expiry future's settle, T = calendar days / 365 (fincalc.fno_history's clock)."""
+    from finresearch.fincalc import black76
+
+    t = (expiry - day).days / 365
+    return black76.price(right, fwd, strike, t, math.exp(-RATE * t), SIGMA)  # type: ignore[arg-type]
+
+
 def bhav_rows(day: date) -> list[dict]:
-    out = []
+    out, fut = [], {}
     for sym, lot in LOTS.items():
         inst = "IDF" if sym in ("NIFTY", "BANKNIFTY") else "STF"
         for i, e in enumerate((E1, E2)):
             r = _row(day, sym, inst, e, 0, "XX", price(sym, day) * (1 + 0.004 * i), lot, 1000 - 400 * i, 50)
             r["underlying"] = Decimal(str(round(price(sym, day), 2))) if inst == "IDF" else None
+            fut[(sym, e)] = float(r["settle"])
             out.append(r)
     for e in (E1, E2):
         for k in STRIKES:
             for right in ("CE", "PE"):
-                prem = 100 + abs(k - price("NIFTY", day)) * 0.1 + (e - day).days
+                prem = option_price(day, e, k, "call" if right == "CE" else "put", fut[("NIFTY", e)])
                 out.append(_row(day, "NIFTY", "IDO", e, k, right, prem, 75, 200, 10))
     return out
 
