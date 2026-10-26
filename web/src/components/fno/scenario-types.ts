@@ -33,14 +33,21 @@ export type EpisodeView = {
 
 export type ShockView = { kind: string; label: string; move: number | null; at: string; pnl: number | null; n: number; reasons: string[] };
 
+/** #480: one expiry's forward, the carry its scenarios roll it at (b = ln(F/S)/T, a year; null = unknown, with
+ * `carry_reason`: then its scenarios are unknown, never rolled at the rate), the dividend yield r - b it implies, and
+ * its own discount rate (#366/#385: FBIL's par yield at the expiry's tenor, or a labelled fallback). */
+export type ForwardView = {
+  underlying: string; expiry: string; forward: number | null; source: string; spot: number | null; t_years: number | null;
+  carry: number | null; carry_source: string | null; carry_reason: string | null; implied_q: number | null;
+  rate: number; rate_info: RateInfo;
+};
+
 export type BookScenarios = {
-  as_of: string; rate: number; notes: string[];
-  /** #366/#385: where `rate` came from (FBIL's par yield at the book's longest tenor, or a labelled fallback) */
-  rate_info?: RateInfo;
+  as_of: string; notes: string[];
   legs: { underlying: string; expiry: string; right: string; strike: number; qty: number; mark: number | null;
     mark_kind: string | null; iv: number | null; forward: number | null; source: string; reason: string | null }[];
   betas: BookBeta[]; beta_rule: string;
-  forwards: { underlying: string; expiry: string; forward: number | null; source: string }[];
+  forwards: ForwardView[];
   exposures: {
     complete: boolean; reasons: string[]; total: Exposure | null; flags: string[]; nifty_delta: number | null;
     nifty_delta_reasons: string[]; rows: { underlying: string; bucket: string; legs: number; exposure: Exposure | null }[];

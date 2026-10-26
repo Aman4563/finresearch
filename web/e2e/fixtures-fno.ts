@@ -6,9 +6,9 @@ import type { BacktestsResponse, StrategyResult, WindowStats } from "../src/comp
 import type { PaperBook, PaperTrade, PositionsView, EventStripData } from "../src/components/fno/book-types";
 import type { EventVolData } from "../src/components/fno/event-vol";
 import type { LabResponse, LabRunView, LabSpec, LabTrade, PaperRule } from "../src/components/fno/lab-types";
-import type { Analysis, Chain, Result } from "../src/components/fno/model";
+import type { Analysis, Chain, RateInfo, Result } from "../src/components/fno/model";
 import type { MarketContext, SuggestResponse, TradePlan } from "../src/components/fno/plan-types";
-import type { BookScenarios, EpisodeView, ScenarioCell, ShockView } from "../src/components/fno/scenario-types";
+import type { BookScenarios, EpisodeView, ForwardView, ScenarioCell, ShockView } from "../src/components/fno/scenario-types";
 
 export const NOTICE = { headline: "87.7% lost", text: "SEBI study", source: "SEBI", url: "https://www.sebi.gov.in", date: "2026-08-20" };
 
@@ -390,9 +390,12 @@ const scWorst = (k: number) => Array.from({ length: 10 }, (_, i) => ({ start: `2
   move: -0.059 + i * 0.004, dvol: 4.4 - i * 0.3, pnl: (-24100 + i * 1500) * k, mapped: [] }));
 const VAULT = "waits for the vault's data audit (#394, #365): 2008-2021 sessions live only in the sealed vault database, never in the app's store";
 
+const SC_RATE: RateInfo = { rate: 0.0527, par_yield: 0.0534, tenor_years: 0.25, as_of: "2026-10-12", fallback: false, known: true, source: "FBIL G-sec par yield, 0.25-year point, 12-Oct-2026", note: "5.34 % half-yearly" };
+const SC_FWD: ForwardView = { underlying: "NIFTY", expiry: "2026-10-27", forward: null, source: "", spot: null, t_years: 0.0416, carry: null,
+  carry_source: null, carry_reason: null, implied_q: null, rate: 0.0527, rate_info: SC_RATE };
+
 export const SCENARIOS: BookScenarios = {
-  as_of: "2026-10-13T11:00:00+05:30", rate: 0.0527, notes: ["Groww is not connected: only paper legs are in the book."],
-  rate_info: { rate: 0.0527, par_yield: 0.0534, tenor_years: 0.25, as_of: "2026-10-12", fallback: false, known: true, source: "FBIL G-sec par yield, 0.25-year point, 12-Oct-2026", note: "5.34 % half-yearly" },
+  as_of: "2026-10-13T11:00:00+05:30", notes: ["Groww is not connected: only paper legs are in the book."],
   legs: [
     { underlying: "NIFTY", expiry: "2026-10-27", right: "call", strike: 25000, qty: 75, mark: 182.4, mark_kind: "mid", iv: 0.1402, forward: 24980, source: "paper #3", reason: null },
     { underlying: "NIFTY", expiry: "2026-10-27", right: "call", strike: 25200, qty: -75, mark: 104.9, mark_kind: "mid", iv: 0.135, forward: 24980, source: "paper #3", reason: null },
@@ -400,8 +403,11 @@ export const SCENARIOS: BookScenarios = {
   ],
   betas: [{ underlying: "BANKNIFTY", beta: 1.15, se: 0.09, lo: 1.0, hi: 1.3, n: 240, missing: 3, window_start: "2025-10-01", as_of: "2026-10-09", half_life: 63, z: 1.645, floor: 1, reason: null }],
   beta_rule: "Each underlying other than NIFTY moves by its beta x NIFTY's move; every P&L takes the worse of its band's two ends.",
-  forwards: [{ underlying: "NIFTY", expiry: "2026-10-27", forward: 24980, source: "put-call parity at 25000 from mids" },
-    { underlying: "BANKNIFTY", expiry: "2026-10-27", forward: 51820, source: "put-call parity at 52000 from mids" }],
+  // #480: each expiry's carry (b = ln(F/S)/T) and its own discount rate (#366/#385)
+  forwards: [{ ...SC_FWD, underlying: "NIFTY", forward: 24980, source: "put-call parity fit over 5 strikes' mids", spot: 24933.3, carry: 0.045,
+    carry_source: "put-call parity fit over 5 strikes' mids against the chain's underlying", implied_q: 0.0077 },
+    { ...SC_FWD, underlying: "BANKNIFTY", forward: 51820, source: "put-call parity fit over 4 strikes' mids", spot: 51720.6, carry: 0.0462,
+      carry_source: "put-call parity fit over 4 strikes' mids against the chain's underlying", implied_q: 0.0065 }],
   exposures: { complete: true, reasons: [], total: { rs_delta: 412000, rs_gamma_1pct: -1830, vega_pt: -905, theta_day: 1240 },
     flags: ["BANKNIFTY 27-Oct-2026 put 51000: IV from the LTP (no two-sided quote), not a mid"], nifty_delta: 18.2, nifty_delta_reasons: [],
     rows: [{ underlying: "BANKNIFTY", bucket: "this_month", legs: 1, exposure: { rs_delta: 290000, rs_gamma_1pct: -2100, vega_pt: -1200, theta_day: 1500 } },
@@ -451,6 +457,8 @@ export const UNKNOWN_SCENARIOS: BookScenarios = {
   history: { ...SCENARIOS.history, es: { ...SCENARIOS.history.es, value: null, ratio: null, reasons: ["212 complete start days at h = 1, fewer than the 250 needed"] },
     scan: SCENARIOS.history.scan.map((x) => ({ ...x, es: null, loss_99: null, worst: [], es_reasons: ["212 complete start days at h = 1, fewer than the 250 needed"] })) },
   liquidity: { ...SCENARIOS.liquidity, quoted_exit_cost: null, reasons: ["NIFTY 27-Oct-2026 future 0: a future (the chain quotes no futures)"] },
+  forwards: [SCENARIOS.forwards[0], { ...SC_FWD, underlying: "BANKNIFTY", forward: 51820, source: "put-call parity at 52000 from mids", spot: 51720.6,
+    carry_reason: "no reliable put-call parity fit on the chain (fewer than 3 strikes with both sides priced), and no same-expiry future is stored" }],
 };
 export const EMPTY_SCENARIOS: BookScenarios = {
   ...SCENARIOS, legs: [], betas: [], forwards: [], notes: [],

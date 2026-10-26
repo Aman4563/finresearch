@@ -47,7 +47,8 @@ def test_parity_forward():
 
 
 def _roll(days: float) -> float:
-    """The forward rolled `days` closer to expiry at the same spot: F(T') = F e^{-r (T - T')}, r = 6.5 %."""
+    """The forward rolled `days` closer to expiry at the same spot: F(T') = F e^{-b (T - T')} at its expiry's carry,
+    b = 6.5 % for every expiry in these tests (#480: the carry rolls the forward, never the rate; `_mkt`)."""
     return math.exp(-0.065 * days / 365)
 
 
@@ -57,8 +58,11 @@ def _beta(u: str, beta: float, lo: float | None = None, hi: float | None = None)
 
 
 def _mkt(**kw):
+    """The tests' market: every forward's carry is 6.5 % (equal to the rate) unless `carries` is given (#480)."""
     base = {"now": NOW, "rate": 0.065, "forwards": {("NIFTY", EXP): 24000.0}, "betas": {}, "nifty": 23900.0}
-    return bs.Market(**{**base, **kw})
+    base |= kw
+    base.setdefault("carries", {k: bs.Carry(0.065, "test carry 6.5 %") for k in base["forwards"]})
+    return bs.Market(**base)
 
 
 def test_leg_iv_is_inverted_from_the_mark_on_the_forward():
@@ -373,3 +377,72 @@ def test_the_shock_terms_use_the_band():
     assert why == ()
     assert pnl[-0.10] == pytest.approx(_fut("BANKNIFTY", 35, 52000, -0.10, 1.3))
     assert pnl[0.05] == pytest.approx(_fut("BANKNIFTY", 35, 52000, 0.05, 1.0))
+
+
+# --------------------------------------------------------------------------- the roll at each expiry's carry (#480)
+# A dividend-paying NIFTY (the research note's inputs): r = 5.75 % continuous and a dividend yield q = 1.24 %, so the
+# forward's own carry is b = r - q = 4.51 % a year. The old rule rolled every forward at r and dropped the dividend.
+R_DIV, B_DIV = 0.0575, 0.0575 - 0.0124
+
+
+@pytest.mark.parametrize(
+    ("sessions", "days", "new", "old"),
+    [(1, 1, -200.7753, -255.9730), (5, 7, -1404.9060, -1790.9644)],  # Fri 23-Oct; Thu 29-Oct over a weekend
+)
+def test_a_dividend_paying_forward_is_rolled_at_its_carry_not_at_the_rate(sessions, days, new, old):
+    legs = [bs.BookLeg("NIFTY", EXP, "future", 0, 65, None, None)]  # one lot of 65 on F = 25,000
+    m = _mkt(rate=R_DIV, forwards={("NIFTY", EXP): 25000.0},
+             carries={("NIFTY", EXP): bs.Carry(B_DIV, "test: r - q")})  # fmt: skip
+    cell = bs.revalue(legs, m, 0.0, 0.0, bs.horizon_clock(NOW, sessions))
+    # F' = F e^{-b h}, h = calendar days / 365 on the 15:30 clock: 65 x 25,000 x (e^{-0.0451 days / 365} - 1)
+    assert cell.pnl == pytest.approx(65 * 25000 * (math.exp(-B_DIV * days / 365) - 1), rel=1e-9)
+    assert cell.pnl == pytest.approx(new, abs=1e-3)
+    # the old e^{-r h} roll is about 0.85 index points (₹55 a lot) a day away: 65 x 25,000 x (e^{-0.0575 days/365} - 1)
+    assert 65 * 25000 * (math.exp(-R_DIV * days / 365) - 1) == pytest.approx(old, abs=1e-3)
+    assert abs(cell.pnl - old) > 50 * days
+
+
+def test_at_its_own_expiry_a_forward_rolled_at_its_carry_is_the_shocked_spot():
+    # spot 24,000, carry 4.51 %, expiry Tue 27-Oct (T = 5/365): F = 24,000 e^{0.0451 x 5/365} = 24,014.832; five
+    # sessions later the future has expired at S (1 + m), not at S (1 + m) e^{-qT} (the old rule's dividend gap)
+    near = date(2026, 10, 27)
+    f = 24000 * math.exp(B_DIV * 5 / 365)
+    m = _mkt(rate=R_DIV, forwards={("NIFTY", near): f}, carries={("NIFTY", near): bs.Carry(B_DIV, "test")})
+    cell = bs.revalue([bs.BookLeg("NIFTY", near, "future", 0, 65, None, None)], m, -0.05, 0.0,
+                      bs.horizon_clock(NOW, 5), response=False)  # fmt: skip
+    assert f == pytest.approx(24014.832, abs=1e-3)
+    assert cell.pnl == pytest.approx(65 * (24000 * 0.95 - f), rel=1e-12)  # -78,964.08
+
+
+def test_a_calendar_rolls_and_discounts_each_expiry_at_its_own_carry_and_rate():
+    # short 65 x the 29-Oct (7 days) 25,000 call at 12 %, long 65 x the 26-Nov (35 days) one at 13 %; the near expiry
+    # carries 6 % and is discounted at 5 %, the far one 3 % and 7 %. One session on, no move, no vol shift.
+    near, b1, r1, f1 = date(2026, 10, 29), 0.06, 0.05, 25030.0
+    b2, r2, f2 = 0.03, 0.07, 25070.0
+    v0n, v0f = _b76("call", f1, 25000, 7 / 365, r1, 0.12), _b76("call", f2, 25000, 35 / 365, r2, 0.13)
+    assert (round(v0n, 4), round(v0f, 4)) == (181.0980, 435.0699)
+    legs = [bs.BookLeg("NIFTY", near, "call", 25000, -65, v0n, "mid"),
+            bs.BookLeg("NIFTY", EXP, "call", 25000, 65, v0f, "mid")]  # fmt: skip
+    m = _mkt(forwards={("NIFTY", near): f1, ("NIFTY", EXP): f2}, rates={near: r1, EXP: r2},
+             carries={("NIFTY", near): bs.Carry(b1, "test"), ("NIFTY", EXP): bs.Carry(b2, "test")})  # fmt: skip
+    st = {s.leg.expiry: s for s in bs.price_legs(legs, m)}
+    assert st[near].iv == pytest.approx(0.12, abs=1e-9) and st[EXP].iv == pytest.approx(0.13, abs=1e-9)
+    cell = bs.revalue(legs, m, 0.0, 0.0, bs.horizon_clock(NOW, 1))
+    v1n = _b76("call", f1 * math.exp(-b1 / 365), 25000, 6 / 365, r1, 0.12)
+    v1f = _b76("call", f2 * math.exp(-b2 / 365), 25000, 34 / 365, r2, 0.13)
+    assert cell.pnl == pytest.approx(65 * (v1f - v0f) - 65 * (v1n - v0n), rel=1e-9)
+    assert cell.pnl == pytest.approx(498.7999, abs=1e-3)
+
+
+def test_an_unknown_carry_leaves_its_scenarios_unknown_never_rolled_at_the_rate():
+    legs = [bs.BookLeg("NIFTY", EXP, "future", 0, 65, None, None)]
+    why = "no reliable put-call parity fit and no stored futures price"
+    for carries in ({}, {("NIFTY", EXP): bs.Carry(None, reason=why)}):
+        m = _mkt(carries=carries)
+        cell = bs.revalue(legs, m, -0.05, 0.0, bs.horizon_clock(NOW, 1))
+        assert cell.pnl is None and any("carry" in r for r in cell.reasons)
+        assert not bs.grid(legs, m).complete
+        assert bs.shock_pnls(legs, m, bs.horizon_clock(NOW, 1))[0] is None
+        assert bs.exposures(legs, m).complete  # today's greeks need no roll
+        assert bs.revalue(legs, m, -0.05, 0.0, NOW).pnl == pytest.approx(65 * 24000 * -0.05)  # no time passes
+    assert any(why in r for r in bs.revalue(legs, m, 0.0, 0.0, bs.horizon_clock(NOW, 1)).reasons)

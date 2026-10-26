@@ -29,7 +29,8 @@ def _b76(right: str, f: float, k: float, t: float, v: float) -> float:
     return c if right == "call" else c - math.exp(-R * t) * (f - k)
 
 
-MARKET = bs.Market(NOW, R, {("NIFTY", EXP): F}, nifty=24900.0)
+B = 0.0575 - 0.0124  # #480: the forward rolls at its expiry's carry (a dividend-paying NIFTY's r - q)
+MARKET = bs.Market(NOW, R, {("NIFTY", EXP): F}, nifty=24900.0, carries={("NIFTY", EXP): bs.Carry(B, "test")})
 SHORT_PUT = bs.BookLeg("NIFTY", EXP, "put", 24000.0, -75, _b76("put", F, 24000, T35, 0.15), "mid")
 SHORT_FUT = bs.BookLeg("NIFTY", EXP, "future", 0.0, -75, None, None)
 EQUITY = jr.Holding("NSE:FAKEEQ", "Fake Equity Ltd", 1_000_000.0, 1.2, "beta 1.20 (250 days)")
@@ -100,7 +101,9 @@ def test_the_hedge_trigger_fires_at_a_25_percent_fno_share_of_the_minus_10_loss(
 
 def test_an_underlying_without_a_registered_beta_leaves_the_book_term_unknown():
     stock = bs.BookLeg("FAKESTK", EXP, "future", 0.0, -500, None, None)
-    m = bs.Market(NOW, R, {("FAKESTK", EXP): 1500.0}, nifty=24900.0)
+    m = bs.Market(
+        NOW, R, {("FAKESTK", EXP): 1500.0}, nifty=24900.0, carries={("FAKESTK", EXP): bs.Carry(B, "test")}
+    )
     d = jr.d_total([EQUITY], jr.Book([stock], m))
     assert d.fno is None and d.total is None and any("FAKESTK" in r for r in d.reasons)
     (lo,) = jr.losses([EQUITY], jr.Book([stock], m), AT, moves=(-0.10,))

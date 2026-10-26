@@ -37,8 +37,12 @@ def _series(rets: list[float], ivs: list[float] | None = None, start: date = dat
                      {cal[i]: ivs[i] for i in range(len(rets))})  # fmt: skip
 
 
-def _mkt(betas: dict[str, BetaEstimate] | None = None, fwd: dict | None = None) -> bs.Market:
-    return bs.Market(NOW, R, fwd or {("NIFTY", EXP): F0}, betas or {}, 23900.0)
+def _mkt(betas: dict[str, BetaEstimate] | None = None, fwd: dict | None = None,
+         carries: dict | None = None) -> bs.Market:  # fmt: skip
+    """#480: every forward's carry is R (6.5 %) unless `carries` is given, so `_roll` is the roll at the carry."""
+    fwd = fwd or {("NIFTY", EXP): F0}
+    carries = {k: bs.Carry(R, "test carry 6.5 %") for k in fwd} if carries is None else carries
+    return bs.Market(NOW, R, fwd, betas or {}, 23900.0, carries)
 
 
 def _fut(u: str = "NIFTY", q: int = 1) -> bs.BookLeg:
@@ -155,7 +159,7 @@ def test_a_leg_expiring_inside_the_episode_is_at_intrinsic():
     fwd = {("NIFTY", EXP): F0, ("NIFTY", near): 24010.0}
     call = bs.BookLeg("NIFTY", near, "call", 23800.0, 75, 260.0, "mid")
     ep = bh.episode([call], _mkt(fwd=fwd), {"NIFTY": _feb_series()}, FEB)
-    p = ep.path[9]  # d = 10, after the expiry: F' = F (1 + move) e^{-r T}, valued at max(F' - K, 0)
+    p = ep.path[9]  # d = 10, after the expiry: F' = F (1 + move) e^{-b T}, valued at max(F' - K, 0)
     f1 = 24010.0 * math.exp(-0.10) * math.exp(-R * 7 / 365)
     assert p.d == 10 and p.pnl == pytest.approx((max(f1 - 23800, 0) - 260.0) * 75, rel=1e-9)
     assert p.intrinsic == 1
@@ -210,6 +214,45 @@ def test_expiry_day_scenarios_value_the_book_at_the_nearest_expiry_close():
     rets = [0.001 * ((i * 7) % 61 - 30) for i in range(100)]
     got = {g.label: g for g in bh.expiry_day_scenarios([_fut()], _mkt(), rets)}
     mv = math.exp(min(rets)) - 1
-    # at the expiry's close: F' = F (1 + move) e^{-r T}, the future at intrinsic = F'
+    # at the expiry's close: F' = F (1 + move) e^{-b T} (b = R here), the future at intrinsic = F'
     assert got["worst fall"].pnl == pytest.approx(F0 * (1 + mv) * math.exp(-R * 35 / 365) - F0, rel=1e-9)
     assert got["worst fall"].at.date() == EXP
+
+
+# --------------------------------------------------------------------------- #480: the roll at each expiry's carry
+B = (
+    0.0575 - 0.0124
+)  # a dividend-paying NIFTY's carry r - q (r 5.75 %, dividend yield 1.24 %), not the 6.5 % rate
+EXPIRY_RETS = [0.001 * ((i * 7) % 61 - 30) for i in range(100)]
+
+
+def test_the_scan_rolls_each_window_at_the_expirys_carry_not_the_rate():
+    sc = bh.scan(
+        [_fut()], _mkt(carries={("NIFTY", EXP): bs.Carry(B, "test: r - q")}), {"NIFTY": _series(RETS)}, 1
+    )
+    # one long future, one session: F e^{r_1} e^{-b/365} - F; the rate's roll is 1.3 index points (24,000 x 1.99 %
+    # / 365) away
+    assert sc.days[0].pnl == pytest.approx(F0 * math.exp(RETS[1]) * math.exp(-B / 365) - F0, rel=1e-9)
+    assert abs(sc.days[0].pnl - (F0 * math.exp(RETS[1]) * _roll(1) - F0)) > 1.0
+
+
+def test_an_episode_rolls_its_daily_path_at_the_carry():
+    ep = bh.episode(
+        [_fut()], _mkt(carries={("NIFTY", EXP): bs.Carry(B, "test")}), {"NIFTY": _feb_series()}, FEB
+    )
+    assert ep.worst.d == 21  # Fri 20-Nov: 29 calendar days of roll
+    assert ep.worst.pnl == pytest.approx(F0 * math.exp(-0.21) * math.exp(-B * 29 / 365) - F0, rel=1e-9)
+
+
+def test_an_unknown_carry_makes_the_scan_and_episodes_unknown_but_not_a_gap():
+    m = _mkt(carries={})
+    sc = bh.scan([_fut()], m, {"NIFTY": _series(RETS)}, 1)
+    assert sc.days == () and sc.es is None and any("carry" in r for r in sc.reasons)
+    # even with every window skipped (no NIFTY return stored), the scan is unknown because of the carry
+    sc = bh.scan([_fut()], m, {"NIFTY": bh.Series({}, dict(_series(RETS).iv30))}, 1)
+    assert sc.es is None and any("carry" in r for r in sc.reasons)
+    ep = bh.episode([_fut()], m, {"NIFTY": _feb_series()}, FEB)
+    assert ep.worst is None and any("carry" in r for r in ep.reasons)
+    assert all(g.pnl is not None for g in bh.gap_scenarios([_fut()], m, GAPS))  # no time passes: no roll
+    exp = bh.expiry_day_scenarios([_fut()], m, EXPIRY_RETS)
+    assert all(g.pnl is None and any("carry" in r for r in g.reasons) for g in exp)

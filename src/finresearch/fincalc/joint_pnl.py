@@ -22,6 +22,12 @@ from datetime import date, datetime
 from finresearch.fincalc import book_scenarios as bs
 
 RATE = 0.065  # fnobook.marks.RATE: the rate fno_mark's IVs were implied at; every revaluation here uses it
+# joint-risk-v1 (PREREG.md, ADDENDUM.md) was registered when book_scenarios rolled every forward at the rate. #480
+# rolls the book's scenarios at each expiry's own carry; this registered test keeps its rule until a registered
+# variant (post hoc, in ADDENDUM.md) adopts the carry.
+REGISTERED_ROLL = (
+    "joint-risk-v1's registered rule: every forward rolled at its fixed 6.5 % (#480 needs a variant)"
+)
 
 
 @dataclass(frozen=True)
@@ -112,7 +118,7 @@ def fno_model(
     spot-vol response and no extra vol shift (book_scenarios.shock_pnls at one move). [] = exactly 0."""
     if not legs:
         return 0.0, []
-    c = bs.revalue(legs, m, move, 0.0, at, response=True, horizon="shock")
+    c = bs.revalue(legs, m.fixed_carry(RATE, REGISTERED_ROLL), move, 0.0, at, response=True, horizon="shock")
     return c.pnl, list(c.reasons)
 
 
