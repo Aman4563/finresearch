@@ -33,6 +33,12 @@ It drops NSE Indices' press releases (NSE Indices' own terms forbid automated co
 consent), MoSPI's Advance Release Calendar (no licence text) and #478's reading of RBI's web pages: those dates now
 come from published rules (eventcal.rules) and the RSS feed. A dropped dataset is refused like an undecided one.
 BSE's corporate actions wait for the owner to read BSE's terms; FBIL stays paused.
+
+Policy rates from the RSS feed (#492, the owner's request of 26-Oct-2026: no hand curation of the policy-rate table):
+covered by `rbi_rss`, facts from the sanctioned feed only. The MPC resolution items the event calendar already reads
+state the decided repo, SDF and MSF rates; those numbers, the decision date and the item's link and title are kept
+(refseries.policy_obs), never the item's text, from the same request, without a cache. "rbi_rates" stays dropped: no
+other RBI channel (auction results, money-market pages, DBIE) is collected.
 """
 
 from __future__ import annotations

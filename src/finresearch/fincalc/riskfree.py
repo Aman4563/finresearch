@@ -1,6 +1,8 @@
 """The risk-free rate without FBIL (#479, the owner's decision of 23-Oct-2026): an owner-entered rate, else the RBI
 repo-rate proxy, else unknown. Pure: the caller passes the owner's entries (signals.rates reads them from the
-`owner_rate` table) and the policy rates are fincalc.policy_rates' hand-typed table. Nothing is fetched from anyone.
+`owner_rate` table) and what RBI's RSS feed has told the app (fincalc.policy_feed.Observed, #492: the decisions read
+from MPC resolutions and the event calendar's MPC schedule); the policy rates are fincalc.policy_rates' hand-typed
+table extended by those decisions. Nothing is fetched from anyone here.
 
 Conventions. RBI quotes T-bill cut-offs as simple yields on an Actual/365 basis, y = (100 - P)/P x 365/D, and the
 policy repo rate as a simple annual rate. Every rate here is such a yield y for a term of D days (D = T x 365,
@@ -13,8 +15,9 @@ RBI's 91-day cut-off on an auction day. The latest entry per tenor on or before 
 repo rate has not moved since its date, else shifted by the repo change since then (an MPC hold moves nothing).
 Between entered tenors the yield is linear in D; outside them it is held flat.
 
-Tier "proxy" ("RBI repo-rate proxy"): y = the repo rate in force on the day + SPREAD_BP. The spread is 0 bp at every
-tenor, a stated choice, not a measurement:
+Tier "proxy" ("RBI repo-rate proxy"): y = the repo rate in force on the day + SPREAD_BP; a rate read from RBI's RSS
+feed says so in its source ("from RBI's RSS feed, item <title>, seen <time>"). The spread is 0 bp at every tenor, a
+stated choice, not a measurement:
 * up to 91 days: the 91-day T-bill yield tracks the repo rate with a spread that changes sign with banking-system
   liquidity, so no fixed spread is right across 2015-2026: about 81 bp below repo in 2020's surplus, 52 bp above in
   Jan-2024's deficit, and 2-9 bp above on average in 2026's four policy periods (the research note above). Expect
@@ -25,7 +28,8 @@ tenor, a stated choice, not a measurement:
   in easing cycles longer bills trade below repo. One auction is not a basis for a spread, so none is typed in; the
   owner-entered tier carries observed 182/364-day yields, and every answer beyond 91 days says it is held flat.
 
-Unknown: before policy_rates.START (01-Jan-2015), with the reason; never a fixed rate.
+Unknown: before policy_rates.START (01-Jan-2015), with the reason; never a fixed rate. "Possibly stale" (`stale`):
+a scheduled MPC decision may be missing from the rates used (fincalc.policy_feed.stale), with the reason in the note.
 """
 
 from __future__ import annotations
@@ -37,6 +41,7 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
+from finresearch.fincalc import policy_feed as F
 from finresearch.fincalc import policy_rates as P
 
 BASIS = "simple yield, Actual/365 (RBI's T-bill and repo convention)"
@@ -101,20 +106,31 @@ def _known(
                           "source": source, "note": note} | extra  # fmt: skip
 
 
-def proxy(day: date, days: int, *, before: bool = False) -> dict[str, Any]:
-    """The RBI repo-rate proxy for `days` days on `day` (see the module docstring)."""
-    row = P.in_force(day, before=before)
+def _num(x: Decimal | None) -> float | None:
+    return None if x is None else float(x)
+
+
+def proxy(
+    day: date, days: int, *, before: bool = False, rows: Sequence[P.PolicyRate] | None = None
+) -> dict[str, Any]:
+    """The RBI repo-rate proxy for `days` days on `day` (see the module docstring); `rows`: the table extended by
+    RBI's RSS feed (fincalc.policy_feed.merge), default the table alone."""
+    row = P.in_force(day, before=before, rows=rows)
     if row is None:
         return unknown(day, days)
     y = float(row.repo) + SPREAD_BP / 10000
     src = f"{SOURCE}: repo {_pct(row.repo)} in force from {row.effective:%d-%b-%Y}"
+    if row.seen is not None:
+        src += f" (from RBI's RSS feed, item {row.title}, seen {F.when(row.seen)})"
     note = f"repo {_pct(row.repo)} + {SPREAD_BP} bp at {days} days"
     return _known("proxy", y, days, row.effective, src, note, url=row.url,
-                  policy={"repo": float(row.repo), "floor": float(row.floor), "floor_kind": row.floor_kind,
-                          "msf": float(row.msf), "effective": row.effective.isoformat(), "title": row.title})  # fmt: skip
+                  policy={"repo": float(row.repo), "floor": _num(row.floor), "floor_kind": row.floor_kind,
+                          "msf": _num(row.msf), "effective": row.effective.isoformat(), "title": row.title,
+                          "seen": row.seen.isoformat() if row.seen else None})  # fmt: skip
 
 
-def _nodes(entries: Sequence[OwnerRate], day: date, before: bool) -> list[tuple[OwnerRate, Decimal]]:
+def _nodes(entries: Sequence[OwnerRate], day: date, before: bool,
+           rows: Sequence[P.PolicyRate] | None = None) -> list[tuple[OwnerRate, Decimal]]:  # fmt: skip
     """The latest entry per tenor usable on `day`, each with the repo change since its own date."""
     latest: dict[int, OwnerRate] = {}
     for e in entries:
@@ -124,17 +140,16 @@ def _nodes(entries: Sequence[OwnerRate], day: date, before: bool) -> list[tuple[
             latest[e.tenor_days] = e
     out = []
     for t in sorted(latest):
-        shift = P.repo_change(latest[t].day, day, before=before)
+        shift = P.repo_change(latest[t].day, day, before=before, rows=rows)
         if shift is not None:
             out.append((latest[t], shift))
     return out
 
 
-def owner(
-    day: date, days: int, entries: Sequence[OwnerRate], *, before: bool = False
-) -> dict[str, Any] | None:
+def owner(day: date, days: int, entries: Sequence[OwnerRate], *, before: bool = False,
+          rows: Sequence[P.PolicyRate] | None = None) -> dict[str, Any] | None:  # fmt: skip
     """The owner-entered tier for `days` days on `day`, or None when no entry is usable."""
-    nodes = _nodes(entries, day, before)
+    nodes = _nodes(entries, day, before, rows)
     if not nodes:
         return None
     lo = max((n for n in nodes if n[0].tenor_days <= days), default=nodes[0], key=lambda n: n[0].tenor_days)
@@ -157,20 +172,31 @@ def owner(
                   shift_bp=shifts.pop() if len(shifts) == 1 else None, url=cites)  # fmt: skip
 
 
-def answer(
-    day: date, t_years: float, entries: Sequence[OwnerRate] = (), *, before: bool = False
-) -> dict[str, Any]:
+def answer(day: date, t_years: float, entries: Sequence[OwnerRate] = (), *, before: bool = False,
+           observed: F.Observed | None = None) -> dict[str, Any]:  # fmt: skip
     """The risk-free rate for a term of `t_years` on `day`: the owner's entries, else the RBI repo-rate proxy, else
-    unknown. `before`: only what was known at the start of `day` (no entry or decision dated `day`)."""
+    unknown. `before`: only what was known at the start of `day` (no entry or decision dated `day`). `observed`: the
+    policy rates read from RBI's RSS feed and the event calendar's MPC schedule (#492); None: the typed table alone.
+    An answer is "possibly stale" when a scheduled MPC decision may be missing (fincalc.policy_feed.stale)."""
     days = tenor_days(t_years)
     if day < P.START:
         return unknown(day, days)
-    out = owner(day, days, entries, before=before) or proxy(day, days, before=before)
-    if out["known"] and (day > P.NEXT_MPC or (day == P.NEXT_MPC and not before)):
+    observed = F.Observed() if observed is None else observed
+    merged = F.merge(observed.observations)
+    out = owner(day, days, entries, before=before, rows=merged.rows) or proxy(day, days, before=before,
+                                                                               rows=merged.rows)  # fmt: skip
+    if not out["known"]:
+        return out
+    row = P.in_force(day, before=before, rows=merged.rows)
+    if row is not None and row.seen is not None:
+        if out["tier"] == "owner":  # the shift includes a decision read from the feed: say which
+            out["note"] += (f"; the repo rate in force from {row.effective:%d-%b-%Y} is from RBI's RSS feed, item "
+                            f"{row.title}, seen {F.when(row.seen)}")  # fmt: skip
+        for note in (n for d, n in merged.conflicts if d == row.effective):
+            out["note"] += f"; {note}"
+    if why := F.stale(day, observed, before=before):
         out["stale"] = True
-        out["note"] += (f"; possibly stale: RBI's MPC was scheduled to decide on {P.NEXT_MPC:%d-%b-%Y}, after the "
-                        f"policy-rate table was last checked ({P.REVIEWED:%d-%b-%Y}); add any change to "
-                        "fincalc.policy_rates")  # fmt: skip
+        out["note"] += f"; {why}"
     return out
 
 
@@ -191,6 +217,7 @@ class MonthRate:
     y91: float | None  # the month's average 91-day yield (simple, Actual/365); None: some day is unknown
     tiers: tuple[tuple[str, int], ...] = ()  # (tier, days) behind the average
     note: str | None = None
+    stale_days: int = 0  # days answered "possibly stale": a scheduled MPC decision may be missing (#492)
 
 
 def _month_end(m: date) -> date:
@@ -198,24 +225,26 @@ def _month_end(m: date) -> date:
     return nxt - timedelta(days=1)
 
 
-def month_rates(start: date, end: date, entries: Sequence[OwnerRate] = ()) -> dict[date, MonthRate]:
+def month_rates(start: date, end: date, entries: Sequence[OwnerRate] = (),
+                observed: F.Observed | None = None) -> dict[date, MonthRate]:  # fmt: skip
     """Every month that [start, end] touches, each averaged over its own calendar days (to `end` in the last)."""
     out: dict[date, MonthRate] = {}
     m = start.replace(day=1)
     while m <= end:
         last = min(_month_end(m), end)
-        ys, tiers, why = [], {}, None
+        ys, tiers, why, stale = [], {}, None, 0
         d = m
         while d <= last:
-            a = answer(d, BILL_DAYS / 365, entries)
+            a = answer(d, BILL_DAYS / 365, entries, observed=observed)
             if a["yield"] is None:
                 why = a["note"]
                 break
             ys.append(a["yield"])
             tiers[a["tier"]] = tiers.get(a["tier"], 0) + 1
+            stale += bool(a["stale"])
             d += timedelta(days=1)
         n = (last - m).days + 1
-        out[m] = MonthRate(m, n, None if why else sum(ys) / n, tuple(tiers.items()), why)
+        out[m] = MonthRate(m, n, None if why else sum(ys) / n, tuple(tiers.items()), why, stale)
         m = last + timedelta(days=1)
     return out
 

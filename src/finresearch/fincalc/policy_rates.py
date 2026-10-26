@@ -1,9 +1,10 @@
-"""RBI's policy rates, typed in by hand from RBI's own releases (#479, the owner's decision of 23-Oct-2026).
+"""RBI's policy rates, typed in by hand from RBI's own releases (#479, the owner's decision of 23-Oct-2026): the
+history to REVIEWED. Later decisions are read from RBI's press-release RSS feed (#492, fincalc.policy_feed).
 
-No rate is collected automatically from anyone: FBIL's Terms of Use of 13-Oct-2026 forbid building a database or feed
-from its free site (#476), and RBI's website disclaimer prohibits caching its pages. A policy-rate decision is a
-public announcement, so each change is typed in here with the RBI release that announced it (title, date, URL), and
-every row was checked by viewing that release on rbi.org.in. Nothing here fetches anything.
+No rate is collected from FBIL, whose Terms of Use of 13-Oct-2026 forbid building a database or feed from its free
+site (#476), nor from RBI's web pages, whose disclaimer prohibits caching them. A policy-rate decision is a public
+announcement, so each change to REVIEWED is typed in here with the RBI release that announced it (title, date, URL),
+and every row was checked by viewing that release on rbi.org.in. Nothing here fetches anything.
 
 One row per change of the policy repo rate or of the corridor around it, from the rates in force on 01-Jan-2015
 (START) to the 07-Oct-2026 hike to 5.50 %. Corridor-only changes are rows too (06-Apr-2017, 17-Apr-2020, 08-Apr-2022).
@@ -20,15 +21,19 @@ no effective date, so the announcement day is assumed there. `in_force(day, befo
 the start of `day`, so a decision announced that day is not used by a caller that must not see that day's news.
 
 REVIEWED is the last day the table was checked against RBI's releases (all rows and every MPC meeting between them,
-23-Oct-2026). From NEXT_MPC, RBI's next scheduled decision, the table may miss a newer rate: fincalc.riskfree labels
-such answers as possibly stale until a row is added here.
+23-Oct-2026): it covers every day to then and wins there. After it, a decision read from an MPC resolution in RBI's
+RSS feed extends it (fincalc.policy_feed.merge, #492); `rows=` passes that extended table to the lookups here. From
+NEXT_MPC, RBI's next scheduled decision, an answer is labelled possibly stale until that meeting's decision has been
+read (fincalc.policy_feed.stale; the event calendar gives the later meetings). Adding a row here (and moving REVIEWED)
+still works: the typed table always wins on the days it covers.
 """
 
 from __future__ import annotations
 
 from bisect import bisect_right
+from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 START = date(2015, 1, 1)  # the first day the table answers for
@@ -39,12 +44,13 @@ REVIEWED = date(2026, 10, 23)
 class PolicyRate:
     effective: date  # in force from this day (the announcement day)
     repo: Decimal  # fractions: 0.055 = 5.50 %
-    floor: Decimal
+    floor: Decimal | None  # None only on a row read from RBI's RSS feed whose resolution did not state it
     floor_kind: str  # "reverse repo" (to 07-Apr-2022) | "SDF" (from 08-Apr-2022)
-    msf: Decimal
+    msf: Decimal | None
     title: str  # the RBI release's title, as printed
     released: date
     url: str
+    seen: datetime | None = None  # read from RBI's RSS feed (#492): when first read; None: typed in here
 
 
 def _row(effective: str, repo: str, floor: str, msf: str, title: str, url: str, released: str | None = None,
@@ -55,25 +61,37 @@ def _row(effective: str, repo: str, floor: str, msf: str, title: str, url: str, 
                       date.fromisoformat(released or effective), url)  # fmt: skip
 
 
-def in_force(day: date, *, before: bool = False) -> PolicyRate | None:
+def covered_through() -> date:
+    """The last day the typed table covers: REVIEWED, or a later row typed without moving REVIEWED. The table wins on
+    every day to then; RBI's RSS feed only extends it after (fincalc.policy_feed)."""
+    return max(REVIEWED, TABLE[-1].effective)
+
+
+def in_force(
+    day: date, *, before: bool = False, rows: Sequence[PolicyRate] | None = None
+) -> PolicyRate | None:
     """The rates in force on `day` (with `before`, at the start of `day`: a decision announced that day is not
-    counted); None before START, where the table does not answer."""
+    counted); None before START, where the table does not answer. `rows`: the table extended by RBI's RSS feed
+    (fincalc.policy_feed.merge); default the table alone."""
     if day < START:
         return None
-    i = bisect_right(_DAYS, day - timedelta(days=1) if before else day)
-    return TABLE[i - 1] if i else None
+    rows = TABLE if rows is None else rows
+    days = _DAYS if rows is TABLE else [r.effective for r in rows]
+    i = bisect_right(days, day - timedelta(days=1) if before else day)
+    return rows[i - 1] if i else None
 
 
-def repo_change(since: date, day: date, *, before: bool = False) -> Decimal | None:
+def repo_change(since: date, day: date, *, before: bool = False,
+                rows: Sequence[PolicyRate] | None = None) -> Decimal | None:  # fmt: skip
     """The change in the repo rate from the one in force on `since` to the one in force on `day` (`before` applies
     to `day`); None when either is unknown."""
-    a, b = in_force(since), in_force(day, before=before)
+    a, b = in_force(since, rows=rows), in_force(day, before=before, rows=rows)
     return None if a is None or b is None else b.repo - a.repo
 
 
-def changes_between(since: date, day: date) -> list[PolicyRate]:
+def changes_between(since: date, day: date, rows: Sequence[PolicyRate] | None = None) -> list[PolicyRate]:
     """The rows that took effect after `since` and on or before `day`."""
-    return [r for r in TABLE if since < r.effective <= day]
+    return [r for r in (TABLE if rows is None else rows) if since < r.effective <= day]
 
 
 _PR = "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid="

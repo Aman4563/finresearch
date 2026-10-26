@@ -81,11 +81,15 @@ a probability with its range, the factors, and how the model was validated. Each
 scored when it resolves; calibration counts independent events only. New models run in shadow until they pass a
 pre-registered test (`evals/experiments/*/PREREG.md`).
 
-The risk-free rate (`signals.rates`, #479) is collected from nobody: it is a yield the owner enters (POST
-`/api/rates/owner`, `finresearch rates enter`), else RBI's policy repo rate in force on the day, typed in by hand from
-RBI's releases (`fincalc.policy_rates`, each row citing its release) plus a stated spread, else unknown before
-01-Jan-2015. Every answer names its tier, date and source; fund and portfolio Sharpe/Sortino subtract each month's own
-rate, with a labelled factsheet-style figure beside them. FBIL is paused (#476), so there is no G-sec curve source.
+The risk-free rate (`signals.rates`, #479) is a yield the owner enters (POST `/api/rates/owner`, `finresearch rates
+enter`), else RBI's policy repo rate in force on the day plus a stated spread, else unknown before 01-Jan-2015. The
+policy rates are a table typed in by hand from RBI's releases to 23-Oct-2026 (`fincalc.policy_rates`, each row citing
+its release, winning on every day it covers), extended by the decisions the event calendar's read of RBI's RSS feed
+finds in MPC resolutions (#492: `eventcal.rbi.observe`, stored append-only in `policy_rate_obs`, merged by
+`fincalc.policy_feed`). An answer is "possibly stale" while a scheduled MPC decision has not been read, and the
+data-quality pass warns two days after one (`dq.policy`). Every answer names its tier, date and source; fund and
+portfolio Sharpe/Sortino subtract each month's own rate, with a labelled factsheet-style figure beside them. FBIL is
+paused (#476), so there is no G-sec curve source.
 
 ## Portfolio and wealth (`portfolio/`, `wealth/`, `suggest/`)
 

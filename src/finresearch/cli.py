@@ -2793,13 +2793,26 @@ def rates_show(
 
 @rates_app.command("policy")
 def rates_policy() -> None:
-    """RBI's policy rates as typed into the app (fincalc.policy_rates, #479), each with its RBI release."""
-    from finresearch.fincalc import policy_rates as P
+    """RBI's policy rates as the app uses them: the table typed in from RBI's releases (fincalc.policy_rates, #479),
+    then each decision read from RBI's RSS feed (#492), each with its RBI release; conflicts are listed."""
+    from datetime import date as _date
 
-    console.print(f"from {P.START:%d-%b-%Y}, checked against RBI's releases on {P.REVIEWED:%d-%b-%Y}")
-    for r in P.TABLE:
-        console.print(f"{r.effective:%d-%b-%Y}  repo {float(r.repo) * 100:.2f}  {r.floor_kind} "
-                      f"{float(r.floor) * 100:.2f}  MSF {float(r.msf) * 100:.2f}  {r.url}", soft_wrap=True)  # fmt: skip
+    from finresearch.db import session_scope
+    from finresearch.signals import rates
+
+    def pct(x: float | None) -> str:
+        return "unknown" if x is None else f"{x * 100:.2f}"
+
+    with session_scope() as s:
+        t = rates.policy_table(s)
+    console.print(f"from {_date.fromisoformat(t['start']):%d-%b-%Y}, checked against RBI's releases on "
+                  f"{_date.fromisoformat(t['reviewed']):%d-%b-%Y}; later decisions read from RBI's RSS feed")  # fmt: skip
+    for r in t["rows"]:
+        seen = f"  (RBI's RSS feed: {r['title']}, seen {r['seen']})" if r["origin"] == "rss" else ""
+        console.print(f"{_date.fromisoformat(r['effective']):%d-%b-%Y}  repo {pct(r['repo'])}  {r['floor_kind']} "
+                      f"{pct(r['floor'])}  MSF {pct(r['msf'])}  {r['url']}{seen}", soft_wrap=True)  # fmt: skip
+    for note in [*t["disagreements"], *t["conflicts"], *([t["note"]] if t["note"] else [])]:
+        console.print(f"flagged: {note}", soft_wrap=True)
 
 
 @rates_app.command("backfill")
@@ -3015,10 +3028,11 @@ def events_seed() -> None:
 @events_app.command("refresh")
 def events_refresh() -> None:
     """Refresh the forward dates now (what the monitor does nightly from 21:00 IST; #481): RBI MPC schedules,
-    rescheduling notices and resolutions from RBI's RSS feed, India CPI releases by MoSPI's rule (confirmed through
-    MoSPI's CPI API), NIFTY review windows by NSE Indices' rule and NSE's F&O circulars (index changes stored,
-    expiry-day revisions printed to review). A source without the owner's data-rights decision is skipped unread; a
-    failed source stores nothing (exit code 1). New rows are known from now, never back-dated."""
+    rescheduling notices and resolutions (with the policy rates they state, #492) from RBI's RSS feed, India CPI
+    releases by MoSPI's rule (confirmed through MoSPI's CPI API), NIFTY review windows by NSE Indices' rule and NSE's
+    F&O circulars (index changes stored, expiry-day revisions printed to review). A source without the owner's
+    data-rights decision is skipped unread; a failed source stores nothing (exit code 1). New rows are known from
+    now, never back-dated."""
     import asyncio
 
     from finresearch.eventcal import refresh

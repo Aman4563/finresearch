@@ -25,6 +25,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from finresearch.eventcal.calendar import Coverage, Event
+from finresearch.fincalc.policy_feed import Observation
 
 log = logging.getLogger(__name__)
 
@@ -61,6 +62,8 @@ class Found:
     replaces: list[Replace] = field(default_factory=list)
     urls: list[str] = field(default_factory=list)  # what was read, for the log
     notices: list[str] = field(default_factory=list)  # for the owner to read: nothing is stored from them
+    # RBI's policy rates stated by MPC resolutions in the read (#492, eventcal.rbi.observe): stored append-only
+    observations: list[Observation] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -133,8 +136,11 @@ def _reinstate(s: Session, events: list[Event]) -> int:
     return n
 
 
-def apply(s: Session, found: Found, now: datetime) -> dict[str, int]:
-    """Merge one source's complete read: rows known from `now`, then the moves and replacements."""
+def apply(s: Session, found: Found, now: datetime) -> dict[str, Any]:
+    """Merge one source's complete read: rows known from `now`, then the moves and replacements; the policy rates
+    read from MPC resolutions (#492) are stored append-only (refseries.policy_obs) and counted under "policy_rates".
+    A failure storing those (say, before its migration) is logged and reported as "policy_rates_failed": the
+    calendar's rows are kept and the refresh goes on."""
     from finresearch.eventcal import store
 
     events = [replace(e, known_since=now, known_since_url=e.known_since_url or e.source_url, withdrawn_since=None)
@@ -151,7 +157,18 @@ def apply(s: Session, found: Found, now: datetime) -> dict[str, int]:
             s, r.type, r.scope, now, keep, date.fromordinal(r.after.toordinal() + 1), r.through
         )
     s.flush()
-    return {"events": ne, "coverage": nc, "withdrawn": withdrawn, "reinstated": reinstated}
+    out = {"events": ne, "coverage": nc, "withdrawn": withdrawn, "reinstated": reinstated}
+    if found.observations:  # RBI's policy rates read from MPC resolutions (#492): new observations stored
+        from finresearch.refseries import policy_obs
+
+        try:
+            with s.begin_nested():  # a savepoint: a failure here undoes only these rows
+                out["policy_rates"] = policy_obs.record(s, found.observations, now)
+        except Exception as e:
+            log.warning("storing RBI's policy rates from %s failed; the calendar's rows are kept", found.dataset,
+                        exc_info=True)  # fmt: skip
+            out["policy_rates_failed"] = f"{type(e).__name__}: {e}"[:300]
+    return out
 
 
 async def run(sources: list[Source], now: datetime) -> dict[str, Any]:

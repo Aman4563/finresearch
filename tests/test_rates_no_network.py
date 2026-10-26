@@ -120,15 +120,15 @@ def test_no_live_module_imports_the_fbil_adapter():
 
 # the rate chain itself: these modules must not even be able to make a request
 RATE_MODULES = ("fincalc/policy_rates.py", "fincalc/riskfree.py", "signals/rates.py", "refseries/owner_rates.py",
-                "api/rates.py")  # fmt: skip
+                "api/rates.py", "fincalc/policy_feed.py", "refseries/policy_obs.py")  # fmt: skip
 NETWORK = ("httpx", "finresearch.adapters.http", "finresearch.adapters.fbil", "finresearch.eventcal")
 
 
 def test_the_rate_chain_imports_no_network_client_and_rbi_rate_collection_is_dropped():
-    """The policy rates are typed in by hand and the owner's yields are typed in: no module of the chain imports an
-    HTTP client, the FBIL adapter or the event calendar's RBI reader (eventcal.rbi reads MPC dates, not rates, from
-    RBI's press-release RSS feed under its own decision, rbi_rss, #481); and the owner's decision not to collect RBI
-    rates is recorded, so a future collector is refused."""
+    """The policy rates are typed in by hand or read from RBI's press-release RSS feed by the event calendar's read
+    (eventcal.rbi, under its own decision rbi_rss, #481/#492) and stored, and the owner's yields are typed in: no
+    module of the chain imports an HTTP client, the FBIL adapter or the event calendar's readers; and the owner's
+    decision not to collect RBI rates from RBI's other channels is recorded, so a future collector is refused."""
     from finresearch import data_rights
 
     for rel in RATE_MODULES:

@@ -18,10 +18,15 @@ are sequential) and a pubDate in IST without a zone ("Fri, 23 Oct 2026 17:30:00"
 An "Unscheduled meeting" title becomes a notice: such meetings have no fixed form, and coverage is scheduled
 meetings only.
 
-Terms (data_rights "rbi_rss", the owner's decision of 23-Oct-2026, #481): RBI provides the feed for syndication; the
-site says "All Rights Reserved" and its disclaimer prohibits caching site content. The feed is fetched once a night
-without a cache, its text is read in memory, and only facts and links are kept: the dates, the type, the item's link
-(in the seed's citation form) and a fixed title. No RBI web page is ever requested.
+Policy rates (#492): every resolution in the feed is also read for the rates it states (`observe`: the decision day,
+the repo, SDF and MSF rates as printed, each unknown when not stated, the item's link and title), whether or not its
+dates are stored already; refseries.policy_obs keeps them append-only for the risk-free chain (fincalc.policy_feed).
+
+Terms (data_rights "rbi_rss", the owner's decision of 23-Oct-2026, #481; its policy rates, #492): RBI provides the
+feed for syndication; the site says "All Rights Reserved" and its disclaimer prohibits caching site content. The feed
+is fetched without a cache (four times a day, #489), its text is read in memory, and only facts and links are kept:
+the dates, the type, the item's link (in the seed's citation form), a fixed title, and from a resolution its policy
+rates as numbers with the item's title, never its text. No RBI web page is ever requested.
 
 Completeness: one fetch a night sees only the newest ten releases, so on a busy day the morning's have left the feed
 (23-Oct-2026: ten releases between 09:00 and 17:30). The newest prid read is kept in state_dir (eventcal/rbi_rss.json:
@@ -40,8 +45,14 @@ import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import date, datetime
+from decimal import Decimal
 from email.utils import parsedate_to_datetime
+from itertools import pairwise
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from finresearch.fincalc.policy_feed import Observation
 
 FEED = "https://rbi.org.in/pressreleases_rss.xml"
 # the citation form of an item's link (the seed's), so a release already stored is recognised; never requested
@@ -228,6 +239,100 @@ def parse_resolution(item: Item) -> Resolution:
     return Resolution(held=days[-1], next=nxt)
 
 
+# ---- the policy rates a resolution states (#492), read from the same item in memory and kept as numbers only.
+# "decided to: Increase the policy repo rate under the liquidity adjustment facility (LAF) by 25 bps to 5.50 per
+# cent" / "keep the policy repo rate ... unchanged at 5.50 per cent" / "to 6.25 per cent from 6.50 per cent"; "the
+# standing deposit facility (SDF) rate stands adjusted at 5.25 per cent" / "remains at" / "shall stand adjusted to";
+# "the marginal standing facility (MSF) rate and the Bank Rate at 5.75 per cent". A figure is the first after "to" or
+# "at" in the same sentence: a block's end (</p>, </li>, a cell, <br>) ends a sentence, and the search never runs
+# past another instrument's name (CRR, SLR, reverse repo, the other corridor rates). For the repo rate only a
+# decision verb counts ("keep/retain/maintain/leave/increase/raise/reduce/cut/lower/hike the policy repo rate"), and
+# of its statements the one tied to "decided/decision/resolved to" is the decision, else a unanimous vote, else one
+# that is neither a member's vote (a dissent among them) nor a recap ("having cut", "had cut"); else it is unknown.
+# The SDF and MSF rates are read from the decision on (a recap of an earlier corridor before it is not read).
+_PCT = r"\b(?:to|at)\s+(\d{1,2}(?:\.\d{1,2})?)\s*(?:per\s*cent|%)"
+_BLOCK = re.compile(
+    r"<\s*(?:/\s*(?:p|li|div|td|th|tr|h[1-6]|ul|ol|table|blockquote)\b[^>]*|br\b[^>]*)>", re.I
+)
+_OTHER = ("CRR", "SLR", r"cash\s+reserve", r"statutory\s+liquidity", r"reverse\s+repo")
+
+
+def _same(*stop: str) -> str:
+    """Within the sentence (a period only as a decimal point), never past one of the `stop` names."""
+    return r"(?:(?!\b(?:" + "|".join(stop) + r")\b)(?:[^.]|\.(?=\d))){0,200}?"
+
+
+_VERB = r"(?:keep|retain|maintain|leave|increase|raise|reduce|cut|lower|hike)"
+_HEAD = re.compile(r"\b" + _VERB + r"\s+the\s+policy\s+repo\s+rate\b", re.I)
+_REPO = re.compile(_HEAD.pattern + _same(*_OTHER, r"standing\s+deposit", r"marginal\s+standing", "SDF", "MSF",
+                                         r"Bank\s+Rate") + _PCT, re.I)  # fmt: skip
+_SDF = re.compile(r"(?:standing\s+deposit\s+facility\s*(?:\(SDF\)\s*)?|\bSDF\s+)rate\b"
+                  + _same(*_OTHER, r"marginal\s+standing", "MSF", r"Bank\s+Rate", r"policy\s+repo") + _PCT, re.I)  # fmt: skip
+_MSF = re.compile(r"(?:marginal\s+standing\s+facility\s*(?:\(MSF\)\s*)?|\bMSF\s+)rate\b"
+                  + _same(*_OTHER, r"standing\s+deposit", "SDF", r"policy\s+repo") + _PCT, re.I)  # fmt: skip
+# what precedes a repo-rate statement (its own sentence, or "decided to:" before a bullet)
+_DECIDED = re.compile(r"\b(?:decided|decision|resolved)\b[^.]{0,40}?\bto\s*:?[\s.\u2022]*$", re.I)
+_UNANIMOUS = re.compile(r"\bunanimous(?:ly)?\b[^.]{0,60}$", re.I)
+_VOTED = re.compile(r"\bvoted\b[^.]{0,60}$", re.I)
+_RECAP = re.compile(r"\b(?:having|had|has|have|was|were|been)\s+$", re.I)
+MAX_RATE = Decimal("0.20")  # a sanity band, not a market view: no RBI policy rate has been near 20 %
+
+
+def _sentences(body: str) -> str:
+    """The description as text with every block's end as a sentence's end."""
+    return _text(_BLOCK.sub(". ", body))
+
+
+def _before(text: str, at: int) -> str:
+    return text[max(0, at - 120) : at]
+
+
+def _repo(text: str) -> tuple[Decimal | None, int]:
+    """The decided repo rate and where its statement starts (-1: unknown); see the comment above."""
+    stated = [
+        (m, _before(text, h.start())) for h in _HEAD.finditer(text) if (m := _REPO.match(text, h.start()))
+    ]
+    for keep in (lambda pre: _DECIDED.search(pre), lambda pre: _UNANIMOUS.search(pre),
+                 lambda pre: not _VOTED.search(pre) and not _RECAP.search(pre)):  # fmt: skip
+        for m, pre in stated:
+            if keep(pre):
+                return Decimal(m.group(1)) / 100, m.start()
+    return None, -1
+
+
+def _rate(rx: re.Pattern[str], text: str) -> Decimal | None:
+    m = rx.search(text)
+    return Decimal(m.group(1)) / 100 if m else None
+
+
+def observe(item: Item) -> Observation | None:
+    """The policy rates an MPC resolution item states (#492): the decision day (the meeting's last day, from the
+    title), the repo, SDF and MSF rates, each None when the text does not state it, the item's link and title. None
+    for any other item, a title without the meeting's dates, or an empty description (not in the feed yet: read on a
+    later pass). Figures outside (0, MAX_RATE) or out of the corridor's order (SDF < repo < MSF) are a misreading:
+    then all three are unknown, never a guess."""
+    from finresearch.fincalc.policy_feed import Observation
+
+    if notice_kind(item.title) != "resolution" or not _text(item.body):
+        return None
+    try:
+        held = parse_resolution(item).held
+    except RbiError:
+        return None
+    text = _sentences(item.body)
+    repo, at = _repo(text)
+    decided = next(
+        (h.start() for h in _HEAD.finditer(text) if _DECIDED.search(_before(text, h.start()))), None
+    )
+    rest = text[decided if decided is not None else max(at, 0) :]
+    sdf, msf = _rate(_SDF, rest), _rate(_MSF, rest)
+    stated = [x for x in (sdf, repo, msf) if x is not None]  # in corridor order
+    if any(not 0 < x < MAX_RATE for x in stated) or any(a >= b for a, b in pairwise(stated)):
+        repo = sdf = msf = None
+    return Observation(decided=held, repo=repo, sdf=sdf, msf=msf, title=item.title, url=item.url,
+                       published=item.published)  # fmt: skip
+
+
 # ---- the nightly read (monitor.eventcal through eventcal.refresh)
 
 TITLE_SCHEDULED = "RBI monetary policy decision (scheduled; decision on the meeting's last day)"
@@ -319,6 +424,10 @@ async def read(known, now, *, http=None, state_path: Path | None = None):
     newest_stored = max(stored, default=0)
     for item in sorted(items, key=lambda i: i.prid):
         kind = notice_kind(item.title)
+        # a resolution's rates are read whether or not its dates are stored: refseries.policy_obs keeps the first
+        # sighting (#492)
+        if kind == "resolution" and (obs := observe(item)) is not None:
+            found.observations.append(obs)
         if kind is None or item.url in known.urls:
             continue
         if kind == "unscheduled":

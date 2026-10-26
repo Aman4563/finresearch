@@ -34,7 +34,7 @@ def test_the_monthly_series_says_which_tiers_it_used(monkeypatch):
     assert info["method"] == "monthly" and info["tiers"] == {"proxy": 30 + 13, "owner": 18}
     assert info["months"][-1] == {"month": "2026-10", "days": 31,
                                   "y91": pytest.approx((6 * 0.0525 + 7 * 0.055 + 18 * 0.057281) / 31),
-                                  "tiers": {"proxy": 13, "owner": 18}}  # fmt: skip
+                                  "tiers": {"proxy": 13, "owner": 18}, "stale_days": 0}  # fmt: skip
     assert info["unknown"] == [] and "91-day" in info["label"]
     rf = rates.accrual_fn(months)
     assert rf(date(2026, 9, 30), date(2026, 10, 31)) == pytest.approx(

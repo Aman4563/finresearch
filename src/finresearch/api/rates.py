@@ -2,7 +2,9 @@
 
 * GET /api/rates/risk-free?day=&tenor=91D: the answer of signals.rates for a day (default today, IST) and tenor:
   the owner-entered tier, else the RBI repo-rate proxy, else unknown, with tier, date and source.
-* GET /api/rates/policy: fincalc.policy_rates' hand-typed table of RBI policy rates, each row with its RBI release.
+* GET /api/rates/policy: RBI's policy rates as the chain uses them: fincalc.policy_rates' hand-typed table, then each
+  decision read from RBI's RSS feed (#492, origin "rss" and when it was first seen), each row with its RBI release;
+  `feed` lists the stored observations with their conflict flags.
 * GET /api/rates/owner: the owner's entries. POST /api/rates/owner stores (or replaces) one; DELETE
   /api/rates/owner/{day}/{tenor} removes one. The GETs write nothing.
 """
@@ -56,12 +58,14 @@ def add_rates_routes(app: FastAPI, *, clock=None) -> None:
 
     @app.get("/api/rates/policy")
     def policy() -> dict[str, Any]:
-        from finresearch.fincalc import policy_rates as P
+        """RBI's policy rates as the app uses them: the typed table, then decisions read from RBI's RSS feed."""
+        from finresearch.db import session_scope
+        from finresearch.signals import rates
 
-        return {"start": P.START.isoformat(), "reviewed": P.REVIEWED.isoformat(),
-                "rows": [{"effective": r.effective.isoformat(), "repo": float(r.repo), "floor": float(r.floor),
-                          "floor_kind": r.floor_kind, "msf": float(r.msf), "title": r.title,
-                          "released": r.released.isoformat(), "url": r.url} for r in P.TABLE]}  # fmt: skip
+        with session_scope() as s:
+            out = rates.policy_table(s)
+            s.rollback()  # read only
+        return out
 
     @app.get("/api/rates/owner")
     def owner_list() -> dict[str, Any]:
