@@ -141,9 +141,28 @@ def test_owner_entries_shift_by_a_change_read_from_the_feed():
         and got["shift_bp"] == 25
         and got["yield"] == pytest.approx(0.059781, abs=1e-12)
     )
+    assert (
+        f"from RBI's RSS feed, item {DEC_T}, seen 04-Dec-2026 12:00 IST" in got["note"]
+    )  # where the +25 bp came from
 
 
 def test_the_monthly_series_uses_the_feeds_decision_from_its_day():
     months = R.month_rates(date(2026, 12, 1), date(2026, 12, 31), observed=Observed((HIKE,), CAL, COV))
     # 1-3 Dec at 5.50 %, 4-31 Dec at 5.75 %: (3 x 0.055 + 28 x 0.0575) / 31
     assert months[date(2026, 12, 1)].y91 == pytest.approx(0.0572580645, abs=1e-10)
+
+
+def test_a_row_typed_after_the_review_date_still_wins_over_the_feed(monkeypatch):
+    # the 04-Dec-2026 decision typed into the table without moving REVIEWED: the typed row covers its own day, so an
+    # item claiming 6.00 % for it is a disagreement, and nothing is stale on that account
+    from finresearch.fincalc import policy_rates as P
+
+    typed = P.PolicyRate(date(2026, 12, 4), Decimal("0.0575"), Decimal("0.055"), "SDF", Decimal("0.06"), DEC_T,
+                         date(2026, 12, 4), URL.format(91004))  # fmt: skip
+    monkeypatch.setattr(P, "TABLE", (*P.TABLE, typed))
+    monkeypatch.setattr(P, "_DAYS", [r.effective for r in P.TABLE])
+    wrong = ob(91013, date(2026, 12, 4), "0.06")
+    got = a(date(2026, 12, 10), wrong)
+    assert got["yield"] == pytest.approx(0.0575) and "RSS" not in got["source"] and got["stale"] is False
+    (note,) = merge((wrong,)).disagreements
+    assert "04-Dec-2026" in note and "6.00 %" in note and "5.75 %" in note
