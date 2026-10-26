@@ -1302,7 +1302,9 @@ def forecasts_skill(
 ) -> None:
     """The live skill monitor (#378) on read: per method x event kind x underlying, calibration-in-the-large and the
     promotion BSS CI against the benchmark; at >= 100 resolved independent events also Spiegelhalter, Murphy and the
-    Bernoulli CUSUM, with alarms. Read only; refuses if skillmon/specs.py changed after its registration."""
+    Bernoulli CUSUM, with alarms. Then skill-monitor-v2: input drift (PSI) of the direction model and the card against
+    their registered windows, and the VaR models' Kupiec mark. Read only; refuses if skillmon/specs.py or
+    specs_v2.py changed after its registration."""
     import json
 
     from rich.table import Table
@@ -1333,9 +1335,81 @@ def forecasts_skill(
                   sk.get("promotion", "—"), "; ".join(a["text"] for a in c["alarms"]) or "—")  # fmt: skip
     console.print(t)
     console.print(f"{rep['version']}: {rep['counts']}; {rep['alarms']} alarm(s)")
+    try:  # skill-monitor-v2: input drift and the VaR models' Kupiec mark (#378)
+        with session_scope() as s:
+            rep["v2"] = monitor.report_v2(s, now_ist())
+    except monitor.PreregistrationError as e:
+        console.print(str(e))
+        raise typer.Exit(1) from e
+    _print_skill_v2(rep["v2"])
     if json_out:
         json_out.write_text(json.dumps(rep, indent=1, default=str))
         console.print(f"report written to {json_out}")
+
+
+@forecasts_app.command("ipo-intervals")
+def forecasts_ipo_intervals(
+    data: Path | None = typer.Option(None, help="Read a JSONL export of ipo_history instead of the database"),
+    json_out: Path | None = typer.Option(None, "--json", help="Also write the full report here"),
+) -> None:
+    """The IPO ranges' pinball loss and 80 % coverage per year of the 2019-2026 walk-forward, with issue #378's
+    acceptance (d) for the quantile model and for the base-rate table (skill-monitor-v2). For the owner: read only (it
+    reads ipo_history, or --data, and writes only --json); refuses if skillmon/specs_v2.py changed after its
+    registration."""
+    import json
+
+    from rich.table import Table
+
+    from finresearch.evals import ipo_model as im
+    from finresearch.skillmon import ipo_intervals, monitor
+
+    try:
+        monitor.require_registered_v2()  # before any row is read
+    except monitor.PreregistrationError as e:
+        console.print(str(e))
+        raise typer.Exit(1) from e
+    rep = ipo_intervals.evaluate(im.load_rows(data))
+
+    def cov(f: dict | None) -> str:
+        return "insufficient data" if f is None else (f"{f['coverage']:.1%} ({f['inside']} of {f['n']}"
+                                                      f"{', within ±7 pp' if f['within'] else ''})")  # fmt: skip
+
+    def pin(f: dict | None) -> str:
+        return "—" if f is None else " / ".join(f"{v:.4f}" for v in f["pinball"].values())
+
+    t = Table(
+        "year", "issues", "model p10-p90", "model pinball 10/50/90", "table p10-p90", "table pinball 10/50/90"
+    )
+    for f in rep["years"]:
+        year = f"{f['year']}" + (" (partial)" if f["year"] in rep["partial"] else "")
+        t.add_row(year, str(f["n_test"]), cov(f.get("model")), pin(f.get("model")), cov(f.get("table")),
+                  pin(f.get("table")))  # fmt: skip
+    console.print(t)
+    for name, acc in rep["acceptance"].items():
+        console.print(f"(d) {name}: {acc['verdict']} ({acc['within']} years within, {acc['insufficient']} with "
+                      f"insufficient data; rule: {acc['rule']})")  # fmt: skip
+    console.print(f"{rep['version']}: {rep['n_rows']} usable issues. On seen data: {rep['seen']}")
+    if json_out:
+        json_out.write_text(json.dumps(rep, indent=1, default=str))
+        console.print(f"report written to {json_out}")
+
+
+def _print_skill_v2(v2: dict) -> None:
+    from rich.table import Table
+
+    d, r = v2["drift"], v2["risk"]
+    if d.get("status") == "unknown":
+        console.print(f"input drift unknown: {d.get('error')}")
+    t = Table("inputs", "status", "act (PSI)", "watch", "too few values", "live to / why")
+    for g in d.get("groups") or []:
+        t.add_row(g["label"], g["status"], ", ".join(f"{a['input']} {a['psi']:.2f}" for a in g["act"]) or "—",
+                  str(len(g["watch"])), str(len(g["insufficient"])), g.get("live_to") or g.get("why") or "—")  # fmt: skip
+    console.print(t)
+    if r.get("status") == "unknown":
+        console.print(f"Kupiec trigger unknown: {r.get('error')}")
+    for key, m in (r.get("marks") or {}).items():
+        console.print(f"{key}: {m['status']} ({m['why']})")
+    console.print(f"{v2['version']}: {v2['alarms']} alarm(s)")
 
 
 portfolio_app = typer.Typer(
@@ -1948,6 +2022,60 @@ def _vrp_vault(common_range: float | None, banknifty_from: int | None, out: Path
             x, counts = data.load(sym, start, VAULT_END, lots=hist.lot, band=common_range, url=g.url, grant=g)
             res["symbols"][sym] = {**run.report(x), "unknown": counts}
     return res
+
+
+@fno_app.command("risk-budget")
+def fno_risk_budget(
+    history_url: str | None = typer.Option(
+        None,
+        help="Database holding the F&O history and the NSE SPAN ranges, read only (default: the app's database)",
+    ),
+    out: Path | None = typer.Option(
+        None, "--out", help="Also write the report (aggregates only) as JSON here"
+    ),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """The pre-registered seen-period counterfactual of P4.2's book-level limits (#395 Stage 2,
+    evals/experiments/risk_budget_seen/PREREG.md): the four registered sellers on one Rs 10 lakh book over the stored
+    2022-2026 history, uncapped, under the limits (B_book 8 %, B_shock 6 % at -5 %, u_max 0.5, L_month 6 %) and under
+    the card rule, against a size-matched control. Refused unless the registration is intact. Reads only (no database
+    row is written), never reads the 2008-2021 vault (this is not the vault read) and changes no card or limit."""
+    from sqlalchemy.engine import make_url
+
+    from finresearch.riskbudget import prereg, run
+    from finresearch.vault.registry import VaultSealed
+
+    try:
+        prereg.require_registered()  # before the database is touched
+        h = run.open_history(history_url)
+        rep = run.study(h, source=make_url(history_url or get_settings().database_url).database or "?")
+    except (prereg.PreregistrationError, run.Refused, VaultSealed) as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(2) from e
+    text = json.dumps(rep, indent=1, default=str)
+    if out:
+        out.write_text(text)
+        console.print(f"report: {out}")
+    if as_json:
+        print(text)
+        return
+    t = Table(title=f"P4.2 book limits, {rep['first_session']} to {rep['last_session']} ({rep['label']})")
+    for c in ("book", "entries", "closed", "₹/trade", "95 % CI ₹/trade", "net ₹", "worst month ₹", "max DD ₹",
+              "mean open risk ₹"):  # fmt: skip
+        t.add_column(c)
+    for name, a in rep["arms"].items():
+        t.add_row(name, str(a["entries"]), str(a["closed_trades"]), _num(a["expectancy"], 0),
+                  f"{_num(a['ci_low'], 0)} … {_num(a['ci_high'], 0)}", _num(a["total_net"], 0),
+                  _num(a["worst_month"], 0), _num(a["max_drawdown"], 0), _num(a["mean_open_risk"], 0))  # fmt: skip
+    c = rep["control"]
+    if c["k"] is not None:
+        t.add_row(f"control (uncapped x {c['k']:.3f})", "—", "—", "—", "—", "—", _num(c["worst_month"], 0),
+                  _num(c["max_drawdown"], 0), "—")  # fmt: skip
+    console.print(t)
+    for name, a in rep["arms"].items():
+        if a["refused"] or a["cut"]:
+            console.print(f"{name}: refused {a['refused']}; cut {a['cut']}")
+    console.print(rep["verdict"])
 
 
 backtest_app = typer.Typer(
@@ -3078,14 +3206,24 @@ app.add_typer(models_app, name="models")
 
 @models_app.command("list")
 def models_list() -> None:
-    """Every inventory entry with its tier and computed status (validated / unvalidated / failed) and the reason."""
-    from finresearch.fincalc.dates import today_ist
-    from finresearch.inventory import registry
+    """Every inventory entry with its tier and computed status (validated / unvalidated / failed) and the reason; a VaR
+    model also shows the Kupiec trigger's mark (not for limits / not triggered / insufficient data / unknown, #378)."""
+    from finresearch.db import session_scope
+    from finresearch.fincalc import dates
+    from finresearch.inventory import limits, registry
 
-    today = today_ist()
+    today = dates.today_ist()
+    try:
+        with session_scope() as s:
+            marks = limits.marks(s, today)
+    except Exception as e:  # the marks are unknown, never fine: say so and still list the inventory
+        marks = {k: {"status": f"unknown ({type(e).__name__})"} for k in limits.specs_v2.RISK_MODELS}
     for e in registry.entries():
         st, why = e.status(today)
-        console.print(f"{e.key:28} {e.tier} {st:12} {why[:90]}")
+        mark = (
+            f"  (limits: {marks[e.key]['status']})" if e.key in marks else ""
+        )  # no [..]: Rich reads it as markup
+        console.print(f"{e.key:28} {e.tier} {st:12} {why[:90]}{mark}")
 
 
 @models_app.command("revalidate")

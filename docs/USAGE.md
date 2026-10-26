@@ -194,6 +194,10 @@ uv run finresearch fno panel reconcile                 # panel stock-option OI v
 uv run finresearch fno card-log --since 2026-10-21T18:00:00+05:30   # F&O card verdicts before/after a release (#360)
 uv run finresearch fno marks --from 2026-10-01      # missing daily marks of open paper legs from stored bhavcopy days (#383)
 uv run finresearch fno review --month 2026-10      # the month's post-trade review in one line (#383; reads only)
+uv run finresearch fno risk-budget --history-url <db> --out report.json   # #395 Stage 2: the pre-registered
+                                                   # P4.2 book limits on 2022-26 (seen): the four sellers on one
+                                                   # book, uncapped vs budgeted vs the card rule, against a size-
+                                                   # matched control; reads only, never the vault
 uv run finresearch fno risk-replay --from 2024-01-01 --json   # #398: replay the IV30-shock, cumulative-shock and gap
                                                    # alerts on the stored series: firings, false alarms a year, the
                                                    # scenario days (reads only; public market data)
@@ -294,8 +298,9 @@ uv run finresearch forecasts cards           # record every logged F&O card (car
 uv run finresearch forecasts panel           # log the fixed probability panel for stored F&O sessions and resolve settled ones (#376 (b); hourly in the monitor)
 uv run finresearch forecasts card-report     # the card ledger's registered scores before/after registration, and the override rate (read only)
 uv run finresearch forecasts horse-race      # the pre-registered card horse race on resolved cards (#377; --window, --json); read only
-uv run finresearch forecasts skill           # the live skill monitor per method x event kind x underlying (#378; --json); read only
-uv run finresearch models list                # the model inventory: tier, computed status (validated / unvalidated / failed) and why (#379)
+uv run finresearch forecasts skill           # the live skill monitor per method x event kind x underlying (#378; --json), then skill-monitor-v2: input drift (PSI) of the direction model and the card against their registered windows, and the VaR models' Kupiec mark; read only
+uv run finresearch forecasts ipo-intervals   # the IPO ranges' pinball loss and 80 % coverage per year of the 2019-2026 walk-forward with acceptance (d), for the model and the base-rate table (#378; --data a JSONL export, --json); read only, for the owner
+uv run finresearch models list                # the model inventory: tier, computed status (validated / unvalidated / failed) and why (#379); the VaR models also show the Kupiec mark (limits: not for limits / not triggered / insufficient data / unknown, #378)
 uv run finresearch models revalidate          # re-run the backtest recipes read-only and APPEND per-regime-split stats to model_revalidation; never saves a backtest run (the monitor does this monthly, 22:30 IST, low priority)
 uv run finresearch models redteam-new <key> --prereg evals/experiments/<x>/PREREG.md   # start a red-team review file (evals/redteam/README.md)
 uv run finresearch forecasts horse-race --source replay --window seen   # the same race on one replayed card per stored session, 2022-26 (addendum A1, plus the business-time challenger p_rw_bus of addendum A2, #384, the parity-forward Black-76 IV challenger p_rn_b76 of addendum A3, #385, and the tail-aware challengers p_rw_emp (IV-scaled empirical) and p_rw_fhs (GJR filtered historical simulation) of addendum A5, #387, and the exit-rule Monte Carlo p_path of addendum A6, #388, with its simulation error and exit-reason score; design | seen | tuesday); read only, run outside market hours

@@ -1,6 +1,7 @@
 """The model inventory (#379): every model or rule with its tier, computed status, outcome metric, limits of use and
 the regime changes that make evidence stale; each entry's evidence date and age (unknown stays None, never 0), its
-filed red-team reviews and its latest monthly re-validation by regime split. Read-only."""
+filed red-team reviews, its latest monthly re-validation by regime split and, for the VaR models, the Kupiec trigger's
+mark (`limits`, #378; None for every other entry). Read-only."""
 
 from __future__ import annotations
 
@@ -18,7 +19,7 @@ def add_model_inventory_routes(app: FastAPI, *, clock=None) -> None:
         from finresearch.backtest import store
         from finresearch.db import session_scope
         from finresearch.fincalc.dates import to_ist
-        from finresearch.inventory import redteam, regimes, registry
+        from finresearch.inventory import limits, redteam, regimes, registry
         from finresearch.inventory import revalidate as rv
         from finresearch.monitor import revalidate as rvj
 
@@ -29,6 +30,7 @@ def add_model_inventory_routes(app: FastAPI, *, clock=None) -> None:
             run_day = regimes.run_day(run.created_at) if run is not None else None
             run_tags = (run.detail or {}).get("regime_tags") if run is not None else None
             latest = rv.latest_by_model(s)
+            marks = limits.marks(s, today)  # #378: the Kupiec trigger's "not for limits", from the VaR ledger
         stale = regimes.staleness(run_day, today, tags=run_tags) if run is not None else None
         out = []
         for e in registry.entries():
@@ -41,6 +43,7 @@ def add_model_inventory_routes(app: FastAPI, *, clock=None) -> None:
             row["evidence_age_days"] = (today - as_of).days if as_of else None
             row["evidence_stale"] = stale if e.kind == "recipe" else None
             row["revalidation"] = latest.get(e.key)
+            row["limits"] = limits.to_json(marks.get(e.key))
             out.append(row)
         return {"as_of": today.isoformat(), "limits_of_use": registry.LIMITS_OF_USE, "tiers": registry.TIER_DEPTH,
                 "max_evidence_age_days": regimes.MAX_EVIDENCE_AGE_DAYS,
