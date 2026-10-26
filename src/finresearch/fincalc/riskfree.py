@@ -217,6 +217,7 @@ class MonthRate:
     y91: float | None  # the month's average 91-day yield (simple, Actual/365); None: some day is unknown
     tiers: tuple[tuple[str, int], ...] = ()  # (tier, days) behind the average
     note: str | None = None
+    stale_days: int = 0  # days answered "possibly stale": a scheduled MPC decision may be missing (#492)
 
 
 def _month_end(m: date) -> date:
@@ -231,7 +232,7 @@ def month_rates(start: date, end: date, entries: Sequence[OwnerRate] = (),
     m = start.replace(day=1)
     while m <= end:
         last = min(_month_end(m), end)
-        ys, tiers, why = [], {}, None
+        ys, tiers, why, stale = [], {}, None, 0
         d = m
         while d <= last:
             a = answer(d, BILL_DAYS / 365, entries, observed=observed)
@@ -240,9 +241,10 @@ def month_rates(start: date, end: date, entries: Sequence[OwnerRate] = (),
                 break
             ys.append(a["yield"])
             tiers[a["tier"]] = tiers.get(a["tier"], 0) + 1
+            stale += bool(a["stale"])
             d += timedelta(days=1)
         n = (last - m).days + 1
-        out[m] = MonthRate(m, n, None if why else sum(ys) / n, tuple(tiers.items()), why)
+        out[m] = MonthRate(m, n, None if why else sum(ys) / n, tuple(tiers.items()), why, stale)
         m = last + timedelta(days=1)
     return out
 

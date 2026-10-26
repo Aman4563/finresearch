@@ -166,14 +166,16 @@ def accrual_fn(months: dict[date, R.MonthRate]) -> Callable[[date, date], float 
 
 
 def monthly_json(months: dict[date, R.MonthRate], why: str | None = None) -> dict[str, Any]:
-    """What the pages show about a monthly series: each month's average 91-day yield and the days per tier."""
+    """What the pages show about a monthly series: each month's average 91-day yield, the days per tier and the days
+    answered "possibly stale" (a scheduled MPC decision not read yet, #492)."""
     tiers: dict[str, int] = {}
     for m in months.values():
         for t, n in m.tiers:
             tiers[t] = tiers.get(t, 0) + n
     return {"method": "monthly", "label": MONTHLY_LABEL, "basis": R.BASIS, "tiers": tiers, "note": why,
-            "months": [{"month": f"{m.month:%Y-%m}", "days": m.days, "y91": m.y91, "tiers": dict(m.tiers)}
-                       for m in months.values() if m.y91 is not None],
+            "months": [{"month": f"{m.month:%Y-%m}", "days": m.days, "y91": m.y91, "tiers": dict(m.tiers),
+                        "stale_days": m.stale_days} for m in months.values() if m.y91 is not None],
+            "stale_days": sum(m.stale_days for m in months.values()),
             "unknown": [{"month": f"{m.month:%Y-%m}", "note": m.note} for m in months.values() if m.y91 is None]}  # fmt: skip
 
 
