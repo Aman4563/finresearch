@@ -17,6 +17,7 @@ LABELS = {
     "index_eod": "Index closes and India VIX", "span": "SPAN risk parameters", "option_quote": "Forward option quotes",
     "intraday_series": "Intraday index archive", "ipo_history": "IPO history", "ipo_issue": "IPO issue registry",
     "groww_close": "Groww vs official closes", "disk": "Disk space",
+    "broker_groww": "Groww reconciliation (positions and holdings vs the app's book; counts only)",
     # FBIL is paused (#476): nothing loads these and nothing reads them (#479), so they stay stale or never loaded
     "rate_gsec_par": "FBIL G-sec par curve (paused)", "rate_tbill": "FBIL T-bill rates (paused)",
     "rate_mibor_on": "FBIL overnight MIBOR (paused)", "rate_mibor_term": "FBIL term MIBOR (paused)",
