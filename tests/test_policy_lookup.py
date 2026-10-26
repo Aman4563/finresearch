@@ -179,3 +179,15 @@ def test_an_item_conflicting_with_any_earlier_one_is_named_as_the_store_flags_it
     ((day, note),) = merge((a_, b_, c_)).conflicts
     assert day == date(2026, 12, 4) and URL.format(91014) in note and "SDF 5.25 % vs 5.50 %" in note
     assert URL.format(91014) in a(date(2026, 12, 10), a_, b_, c_)["note"]
+
+
+def test_the_monthly_series_counts_the_days_answered_possibly_stale():
+    # review of #494: a month's average must say how many of its days may miss a decision. December 2026 without
+    # the 04-Dec-2026 decision read: 4-31 Dec, 28 days; with it read: none
+    from finresearch.signals import rates
+
+    unread = R.month_rates(date(2026, 12, 1), date(2026, 12, 31), observed=Observed((), CAL, COV))
+    assert unread[date(2026, 12, 1)].stale_days == 28
+    assert rates.monthly_json(unread)["months"][0]["stale_days"] == 28
+    read = R.month_rates(date(2026, 12, 1), date(2026, 12, 31), observed=Observed((HIKE,), CAL, COV))
+    assert read[date(2026, 12, 1)].stale_days == 0
