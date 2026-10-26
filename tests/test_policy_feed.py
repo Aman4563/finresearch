@@ -87,13 +87,21 @@ def test_rates_that_break_the_corridor_are_unknown():
     o = rbi.observe(_resolution("<p>The MPC decided to keep the policy repo rate unchanged at 5.50 per cent. The "
                                 "SDF rate remains at 5.75 per cent and the MSF rate at 6.00 per cent.</p>"))  # fmt: skip
     assert _rates(o)[1:] == (None, None, None)
-    o = rbi.observe(_resolution("<p>The MPC decided to keep the policy repo rate unchanged at 55.0 per cent.</p>"))
+    o = rbi.observe(
+        _resolution("<p>The MPC decided to keep the policy repo rate unchanged at 55.0 per cent.</p>")
+    )
     assert o.repo is None  # outside any plausible policy rate (0 to 20 %)
 
 
 def test_an_observation_keeps_numbers_dates_link_and_title_never_the_text():
     kept = repr(rbi.observe(_item(91004)))
-    for text in ("voted", "liquidity adjustment facility", "Consequently", "Chief General Manager", "Press Release"):
+    for text in (
+        "voted",
+        "liquidity adjustment facility",
+        "Consequently",
+        "Chief General Manager",
+        "Press Release",
+    ):
         assert text not in kept
 
 
@@ -128,7 +136,9 @@ async def test_one_read_observes_every_resolution_with_text(tmp_path):
 async def test_a_resolution_already_in_the_calendar_is_still_observed(tmp_path):
     # the calendar skips an item whose dates it stored; its rates are read all the same (the store keeps the first
     # sighting), so a resolution stored before #492 or by an earlier pass is not lost
-    known = refresh.Known(urls=frozenset(URL.format(p) for p in (91001, 91004, 91006, 91008, 91009)), covered={})
+    known = refresh.Known(
+        urls=frozenset(URL.format(p) for p in (91001, 91004, 91006, 91008, 91009)), covered={}
+    )
     found = await _read(known, tmp_path)
     assert found.events == [] and {o.url for o in found.observations} == {
         URL.format(p) for p in (91001, 91004, 91006, 91008, 91009)}  # fmt: skip

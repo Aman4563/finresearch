@@ -40,8 +40,14 @@ import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import date, datetime
+from decimal import Decimal
 from email.utils import parsedate_to_datetime
+from itertools import pairwise
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from finresearch.fincalc.policy_feed import Observation
 
 FEED = "https://rbi.org.in/pressreleases_rss.xml"
 # the citation form of an item's link (the seed's), so a release already stored is recognised; never requested
@@ -228,6 +234,50 @@ def parse_resolution(item: Item) -> Resolution:
     return Resolution(held=days[-1], next=nxt)
 
 
+# ---- the policy rates a resolution states (#492), read from the same item in memory and kept as numbers only.
+# "Increase the policy repo rate under the liquidity adjustment facility (LAF) by 25 bps to 5.50 per cent" / "keep
+# the policy repo rate ... unchanged at 5.50 per cent" / "to 6.25 per cent from 6.50 per cent"; "the standing deposit
+# facility (SDF) rate stands adjusted at 5.25 per cent" / "remains at" / "shall stand adjusted to"; "the marginal
+# standing facility (MSF) rate and the Bank Rate at 5.75 per cent". The first figure after "to"/"at" in the same
+# sentence. For the repo rate only a decision verb counts ("keep/increase/raise/reduce/cut/lower/hike the policy
+# repo rate"), and its first statement is the MPC's decision: a recap ("had increased the policy repo rate") does
+# not match, and members' votes, a dissent among them, come after it.
+_PCT = r"\b(?:to|at)\s+(\d{1,2}(?:\.\d{1,2})?)\s*(?:per\s*cent|%)"
+_SAME = r"(?:[^.]|\.(?=\d)){0,200}?"  # within the sentence: a period only as a decimal point
+_REPO = re.compile(r"\b(?:keep|increase|raise|reduce|cut|lower|hike)\s+the\s+policy\s+repo\s+rate\b" + _SAME + _PCT,
+                   re.I)  # fmt: skip
+_SDF = re.compile(r"(?:standing\s+deposit\s+facility\s*(?:\(SDF\)\s*)?|\bSDF\s+)rate\b" + _SAME + _PCT, re.I)
+_MSF = re.compile(r"(?:marginal\s+standing\s+facility\s*(?:\(MSF\)\s*)?|\bMSF\s+)rate\b" + _SAME + _PCT, re.I)
+MAX_RATE = Decimal("0.20")  # a sanity band, not a market view: no RBI policy rate has been near 20 %
+
+
+def _rate(rx: re.Pattern[str], text: str) -> Decimal | None:
+    m = rx.search(text)
+    return Decimal(m.group(1)) / 100 if m else None
+
+
+def observe(item: Item) -> Observation | None:
+    """The policy rates an MPC resolution item states (#492): the decision day (the meeting's last day, from the
+    title), the repo, SDF and MSF rates, each None when the text does not state it, the item's link and title. None
+    for any other item, a title without the meeting's dates, or an empty description (not in the feed yet: read on a
+    later pass). Figures outside (0, MAX_RATE) or out of the corridor's order (SDF < repo < MSF) are a misreading:
+    then all three are unknown, never a guess."""
+    from finresearch.fincalc.policy_feed import Observation
+
+    if notice_kind(item.title) != "resolution" or not (text := _text(item.body)):
+        return None
+    try:
+        held = parse_resolution(item).held
+    except RbiError:
+        return None
+    repo, sdf, msf = (_rate(rx, text) for rx in (_REPO, _SDF, _MSF))
+    stated = [x for x in (sdf, repo, msf) if x is not None]  # in corridor order
+    if any(not 0 < x < MAX_RATE for x in stated) or any(a >= b for a, b in pairwise(stated)):
+        repo = sdf = msf = None
+    return Observation(decided=held, repo=repo, sdf=sdf, msf=msf, title=item.title, url=item.url,
+                       published=item.published)  # fmt: skip
+
+
 # ---- the nightly read (monitor.eventcal through eventcal.refresh)
 
 TITLE_SCHEDULED = "RBI monetary policy decision (scheduled; decision on the meeting's last day)"
@@ -319,6 +369,10 @@ async def read(known, now, *, http=None, state_path: Path | None = None):
     newest_stored = max(stored, default=0)
     for item in sorted(items, key=lambda i: i.prid):
         kind = notice_kind(item.title)
+        # a resolution's rates are read whether or not its dates are stored: refseries.policy_obs keeps the first
+        # sighting (#492)
+        if kind == "resolution" and (obs := observe(item)) is not None:
+            found.observations.append(obs)
         if kind is None or item.url in known.urls:
             continue
         if kind == "unscheduled":

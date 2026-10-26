@@ -25,6 +25,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from finresearch.eventcal.calendar import Coverage, Event
+from finresearch.fincalc.policy_feed import Observation
 
 log = logging.getLogger(__name__)
 
@@ -61,6 +62,8 @@ class Found:
     replaces: list[Replace] = field(default_factory=list)
     urls: list[str] = field(default_factory=list)  # what was read, for the log
     notices: list[str] = field(default_factory=list)  # for the owner to read: nothing is stored from them
+    # RBI's policy rates stated by MPC resolutions in the read (#492, eventcal.rbi.observe): stored append-only
+    observations: list[Observation] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
