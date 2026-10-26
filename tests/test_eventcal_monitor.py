@@ -19,10 +19,18 @@ SUNDAY = datetime(2026, 10, 25, 15, 45, tzinfo=UTC)
 
 
 def test_due_slot_every_evening_after_the_market():
-    assert job.due_slot(BEFORE) is None
+    # 20:45 IST: before the full run, inside the 16:30 daytime window of RBI's feed (owner, 26-Oct-2026)
+    assert job.due_slot(BEFORE) == "eventcal-rss:2026-10-23T1630"
     assert job.due_slot(AFTER) == "eventcal:2026-10-23"
     assert job.due_slot(SUNDAY) == "eventcal:2026-10-25"  # RBI and MoSPI do not follow NSE's calendar
-    assert job.due_slot(datetime(2026, 10, 23, 5, 0, tzinfo=UTC)) is None  # 10:30 IST, in session
+    # 10:30 IST: only the 06:00 daytime window of RBI's RSS feed is open (owner, 26-Oct-2026: four reads a day)
+    assert job.due_slot(datetime(2026, 10, 23, 5, 0, tzinfo=UTC)) == "eventcal-rss:2026-10-23T0600"
+    assert (
+        job.due_slot(datetime(2026, 10, 23, 0, 0, tzinfo=UTC)) is None
+    )  # 05:30 IST, before the first window
+    assert (
+        job.due_slot(datetime(2026, 10, 23, 11, 15, tzinfo=UTC)) == "eventcal-rss:2026-10-23T1630"
+    )  # 16:45 IST
     assert job.RUN_AFTER.hour >= 16  # never inside 09:00-16:00 IST
 
 
@@ -32,7 +40,7 @@ def clean(env):
 
     with session_scope() as s:
         s.execute(text("TRUNCATE calendar_event, calendar_coverage"))
-        s.execute(text("DELETE FROM alert_eval_slot WHERE slot LIKE 'eventcal:%'"))
+        s.execute(text("DELETE FROM alert_eval_slot WHERE slot LIKE 'eventcal%'"))
     yield env
 
 
@@ -131,7 +139,7 @@ async def test_tick_spawns_the_job_only_when_due(monkeypatch):
 
     monkeypatch.setattr(job, "eventcal_step", fake_step)
     monkeypatch.setattr(scheduler, "_BACKGROUND", {})
-    scheduler._spawn_eventcal(BEFORE)
+    scheduler._spawn_eventcal(datetime(2026, 10, 23, 0, 0, tzinfo=UTC))  # 05:30 IST: nothing due before 06:00
     scheduler._spawn_eventcal(AFTER)
     await asyncio.gather(*scheduler._BACKGROUND.values())
     assert calls == [AFTER]
@@ -184,3 +192,31 @@ def test_cli_refresh_prints_the_notices_to_review(clean, monkeypatch):
     r = CliRunner().invoke(cli.app, ["events", "refresh"])
     assert r.exit_code == 0, r.output
     assert "nse_circulars: to review: NSE/FAOP/99003 of 2026-10-22: Revision in Expiry Day (link)" in r.output
+
+
+async def test_a_daytime_window_reads_rbis_feed_alone(clean, monkeypatch):
+    """Owner, 26-Oct-2026: RBI's feed keeps only its 10 newest items, so it is read at 06:00, 12:00 and 16:30 IST too.
+    Those windows read the feed alone, never NSE, and each is claimed once."""
+    from finresearch import data_rights
+
+    monkeypatch.setitem(data_rights.DECISIONS, "rbi_rss", data_rights.Decision(
+        "rbi_rss", "accept-personal", "2026-10-23", "test", "test"))  # fmt: skip
+    called: list[str] = []
+
+    def reader(name):
+        async def read(known, now):
+            called.append(name)
+            return refresh.Found(name)
+
+        return read
+
+    srcs = [refresh.Source(n, reader(n)) for n in ("rbi_rss", "nse_circulars")]
+    monkeypatch.setitem(data_rights.DECISIONS, "nse_circulars", data_rights.Decision(
+        "nse_circulars", "accept-personal", "2026-10-23", "test", "test"))  # fmt: skip
+    noon = datetime(2026, 10, 23, 7, 0, tzinfo=UTC)  # 12:30 IST
+    res = await job.eventcal_step(noon, sources=srcs)
+    assert called == ["rbi_rss"] and not res["eventcal"]["failed"]
+    assert await job.eventcal_step(noon, sources=srcs) == {}  # the window is claimed once
+    called.clear()
+    await job.eventcal_step(AFTER, sources=srcs)  # 21:15 IST: the full nightly run reads every source
+    assert called == ["rbi_rss", "nse_circulars"]
