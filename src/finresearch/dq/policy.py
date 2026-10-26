@@ -7,8 +7,8 @@ them, and the risk-free answer carries its own "possibly stale" flag (fincalc.po
   GRACE past with no decision read from the feed with its repo rate dated from that day to the next scheduled one:
   warn, and answers from that day stay "possibly stale" until a decision is read. Unknown when every known meeting
   was read but the known schedule itself ended more than GRACE ago.
-* table_agreement: an observation of a day the typed table covers (to fincalc.policy_rates.REVIEWED) that
-  contradicts it: warn; the table is kept.
+* table_agreement: an observation of a day the typed table covers (fincalc.policy_rates.covered_through(), normally
+  REVIEWED) that contradicts it: warn; the table is kept.
 * feed_conflicts: another item giving other rates for a decision already read: warn; the first one seen is used.
 """
 
