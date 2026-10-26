@@ -229,9 +229,12 @@ paused (#476: its Terms of Use of 13-Oct-2026 forbid a database or feed built fr
 is collected from anyone (#479): the risk-free rate is the one you enter (`rates enter` or `POST /api/rates/owner`), else
 RBI's policy repo rate in force on the day (typed in by hand from RBI's releases to 23-Oct-2026, `fincalc.policy_rates`;
 later decisions read from the MPC resolutions in RBI's RSS feed, #492) plus a stated spread (0 bp; held flat beyond 91
-days), else unknown before 01-Jan-2015. An answer is "possibly stale" once a scheduled MPC decision has come that has
-not been read from the feed (or past the event calendar's known MPC schedule); the data-quality pass warns when a
-scheduled decision is not read within 2 days. Fund and portfolio Sharpe/Sortino subtract
+days), else unknown before 01-Jan-2015. A decision read from the feed applies from RBI's decision day, like a typed
+row; for one decision the first item read wins, and a later one with other rates is flagged, never merged (type the
+row into `fincalc.policy_rates` to settle it: the typed table wins on its days). An answer is "possibly stale" once a
+scheduled MPC decision has come that has not been read from the feed (or past the event calendar's known MPC
+schedule); the data-quality pass warns when a scheduled decision is not read within 2 days, and the monthly series
+counts each month's possibly stale days. Fund and portfolio Sharpe/Sortino subtract
 each month's own rate and show a labelled factsheet-style figure (the repo on the last working day for every month)
 beside it. The bond signal and the archive's G-sec spread have no G-sec curve source and say so.
 

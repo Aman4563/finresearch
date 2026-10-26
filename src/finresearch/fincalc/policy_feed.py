@@ -6,6 +6,15 @@ Source and data rights: covered by `rbi_rss` (#481), facts from the sanctioned f
 the feed for MPC dates; each MPC resolution item carries the release's text in its description, and the policy rates
 it states are parsed in memory from that same read (eventcal.rbi.observe): no other request, no page fetched. Only
 the parsed numbers, the decision date, the item's link and title and the times are kept, never the item's text.
+
+Two rules, the owner's to change:
+* Decision date. A decision read from the feed applies from RBI's decision day (the meeting's last day), like the
+  typed rows, not from the time the app read it; `before=True` leaves out the day's own decision. The time it was
+  read is kept (`seen`, the label "seen <time>") and decides which item came first.
+* First item wins. For one decision the first item read that states the repo rate is used, never replaced: a later
+  item (a corrigendum, a changed text) giving other rates is stored, flagged and named in the answer and the
+  data-quality pass, and an earlier item's rates are not completed from a later one (a repo-only first item leaves
+  SDF and MSF unknown). Typing the decision into fincalc.policy_rates settles it: the typed table wins on its days.
 """
 
 from __future__ import annotations
