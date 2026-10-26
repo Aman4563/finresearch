@@ -225,8 +225,8 @@ stays in the local database and `data/`. Backfills go through the shared NSE rat
 09:00 and 16:00 IST on weekdays and after two refusals (HTTP 403/429) in a row, and resume where they stopped. The
 owner's decisions of 23-Oct-2026 (#471) apply the same personal, non-distributed, polite-access rules to IIMA's factors
 (cited wherever shown) and MoSPI's CPI; every collector asks `data_rights.require` before its first request. FBIL is
-paused (#476: its Terms of Use of 13-Oct-2026 forbid a database or feed built from its free site) and no rate is
-collected from anyone (#479): the risk-free rate is the one you enter (`rates enter` or `POST /api/rates/owner`), else
+paused (#476: its Terms of Use of 13-Oct-2026 forbid a database or feed built from its free site) and no rate series
+is collected from anyone (#479): the risk-free rate is the one you enter (`rates enter` or `POST /api/rates/owner`), else
 RBI's policy repo rate in force on the day (typed in by hand from RBI's releases to 23-Oct-2026, `fincalc.policy_rates`;
 later decisions read from the MPC resolutions in RBI's RSS feed, #492) plus a stated spread (0 bp; held flat beyond 91
 days), else unknown before 01-Jan-2015. An answer is "possibly stale" once a scheduled MPC decision has come that has
