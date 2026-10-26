@@ -82,6 +82,22 @@ def test_percent_signs_and_basis_points_are_read():
     assert _rates(o)[1:] == (Decimal("0.0625"), Decimal("0.06"), Decimal("0.065"))
 
 
+def test_other_wordings_of_a_hold_are_read():
+    for verb in ("retain", "maintain", "leave"):
+        o = rbi.observe(_resolution(f"<p>The MPC decided to {verb} the policy repo rate under the liquidity "
+                                    "adjustment facility (LAF) unchanged at 5.50 per cent.</p>"))  # fmt: skip
+        assert o.repo == Decimal("0.055"), verb
+
+
+def test_a_recap_before_the_decision_is_not_read_as_the_decision():
+    # only "keep/increase/raise/reduce/cut/lower/hike the policy repo rate" states a decision: a recap of the last one
+    # ("raised the policy repo rate ... to 5.50 per cent") placed first must not be taken for this meeting's 5.75 %
+    o = rbi.observe(_resolution("<p>Since the MPC raised the policy repo rate by 25 bps to 5.50 per cent in October, "
+                                "inflation has risen.</p><p>The MPC decided to increase the policy repo rate by 25 "
+                                "bps to 5.75 per cent.</p>"))  # fmt: skip
+    assert o.repo == Decimal("0.0575")
+
+
 def test_rates_that_break_the_corridor_are_unknown():
     # an SDF above the repo rate cannot be RBI's corridor (SDF < repo < MSF): which figure is wrong is unknown
     o = rbi.observe(_resolution("<p>The MPC decided to keep the policy repo rate unchanged at 5.50 per cent. The "
