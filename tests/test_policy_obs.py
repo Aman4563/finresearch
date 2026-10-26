@@ -136,3 +136,81 @@ async def test_a_read_of_the_feed_keeps_numbers_dates_link_and_title_only(clean,
         "Press Release",
     ):
         assert phrase not in kept
+
+
+# ---- the risk-free chain reads the stored observations and the event calendar's MPC schedule (signals.rates)
+
+
+def _calendar(*days: tuple[date, bool], through: date = date(2027, 3, 31)) -> None:
+    """rbi_mpc meetings (day, standing) and the 2026-27 schedule's coverage, as the calendar's refresh stores them."""
+    from finresearch.db import session_scope
+    from finresearch.eventcal import calendar as cal
+    from finresearch.eventcal import store
+
+    march = datetime(2026, 3, 23, 21, 0, tzinfo=IST)
+    events = [cal.Event(type="rbi_mpc", tier=1, scope="IN", day=d, at=None, title="t", source_url=URL.format(62422),
+                        known_since=march, withdrawn_since=None if standing else T1) for d, standing in days]  # fmt: skip
+    with session_scope() as s:
+        store.upsert(s, events, [cal.Coverage(type="rbi_mpc", scope="IN", through=through,
+                                              source_url=URL.format(62422), known_since=march)])  # fmt: skip
+
+
+def _rate(day: date) -> dict:
+    from finresearch.db import session_scope
+    from finresearch.signals import rates
+
+    with session_scope() as s:
+        return rates.rate_on(s, day, 91 / 365)
+
+
+def test_the_chain_reads_the_stored_decision_and_clears_the_flag(clean, monkeypatch):
+    from finresearch.signals import rates
+
+    monkeypatch.setattr(rates, "OBSERVED", None)  # read policy_rate_obs and the calendar in the test database
+    _calendar((date(2026, 12, 4), True), (date(2027, 2, 5), True))
+    unread = _rate(date(2026, 12, 10))
+    assert (
+        unread["stale"] is True
+        and unread["yield"] == pytest.approx(0.055)
+        and "04-Dec-2026" in unread["note"]
+    )
+    _apply(T1, obs(91004, DEC, "0.0575", "0.055", "0.06"))
+    read = _rate(date(2026, 12, 10))
+    assert read["stale"] is False and read["yield"] == pytest.approx(0.0575) and read["as_of"] == "2026-12-04"
+    assert "from RBI's RSS feed" in read["source"] and "seen 04-Dec-2026 12:00 IST" in read["source"]
+
+
+def test_a_withdrawn_meeting_date_is_not_waited_for(clean, monkeypatch):
+    from finresearch.signals import rates
+
+    monkeypatch.setattr(rates, "OBSERVED", None)
+    _calendar(
+        (date(2026, 12, 4), False), (date(2026, 12, 5), True), (date(2027, 2, 5), True)
+    )  # moved to 5 Dec
+    _apply(T1, obs(91004, date(2026, 12, 5), "0.0575", "0.055", "0.06"))
+    assert _rate(date(2026, 12, 10))["stale"] is False
+
+
+def test_unreadable_observations_leave_the_table_alone_and_say_so(clean, monkeypatch):
+    from finresearch.refseries import policy_obs
+    from finresearch.signals import rates
+
+    def broken(_s):
+        raise RuntimeError("synthetic read failure")
+
+    monkeypatch.setattr(rates, "OBSERVED", None)
+    monkeypatch.setattr(policy_obs, "observed", broken)
+    got = _rate(date(2026, 12, 10))
+    assert got["yield"] == pytest.approx(0.055) and got["stale"] is True  # never "fresh" without the feed
+    assert "could not be read" in got["note"]
+
+
+def test_the_factsheet_rate_uses_a_decision_read_from_the_feed(clean, monkeypatch):
+    from finresearch.signals import rates
+
+    monkeypatch.setattr(rates, "OBSERVED", None)
+    _calendar((date(2026, 12, 4), True), (date(2027, 2, 5), True))
+    _apply(T1, obs(91004, DEC, "0.0575", "0.055", "0.06"))
+    fs = rates.factsheet(date(2026, 12, 31))
+    assert fs["rate"] == pytest.approx(0.0575) and fs["url"] == URL.format(91004)
+    assert "RBI's RSS feed" in fs["source"]
