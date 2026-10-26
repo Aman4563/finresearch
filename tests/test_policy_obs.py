@@ -214,3 +214,28 @@ def test_the_factsheet_rate_uses_a_decision_read_from_the_feed(clean, monkeypatc
     fs = rates.factsheet(date(2026, 12, 31))
     assert fs["rate"] == pytest.approx(0.0575) and fs["url"] == URL.format(91004)
     assert "RBI's RSS feed" in fs["source"]
+
+
+# ---- the policy-rate listing: GET /api/rates/policy and `finresearch rates policy` show what the feed added
+
+
+def test_the_policy_listing_shows_decisions_read_from_the_feed(clean, monkeypatch):
+    from starlette.testclient import TestClient
+    from typer.testing import CliRunner
+
+    from finresearch.api import create_app
+    from finresearch.cli import app
+    from finresearch.signals import rates
+
+    monkeypatch.setattr(rates, "OBSERVED", None)
+    _calendar((date(2026, 12, 4), True), (date(2027, 2, 5), True))
+    _apply(T1, obs(91004, DEC, "0.0575"))  # the repo rate only: the corridor stays unknown
+    with TestClient(create_app()) as c:
+        body = c.get("/api/rates/policy").json()
+    typed, read = body["rows"][-2], body["rows"][-1]
+    assert (typed["effective"], typed["origin"], typed["seen"]) == ("2026-10-07", "typed", None)
+    assert (read["effective"], read["repo"], read["floor"], read["msf"], read["origin"], read["url"]) == (
+        "2026-12-04", 0.0575, None, None, "rss", URL.format(91004))  # fmt: skip
+    assert read["seen"] == T1.isoformat() and body["feed"][0]["url"] == URL.format(91004)
+    out = CliRunner().invoke(app, ["rates", "policy"]).output
+    assert "04-Dec-2026  repo 5.75" in out and "SDF unknown" in out and "RBI's RSS feed" in out
