@@ -146,3 +146,22 @@ def test_cli_skill_prints_drift_and_the_marks_read_only(clean, monkeypatch) -> N
     )
     with session_scope() as s:  # read only: no slot claimed
         assert s.execute(text("SELECT count(*) FROM alert_eval_slot WHERE slot LIKE 'skill:%'")).scalar() == 0
+
+
+def test_each_unchecked_var_model_gets_its_own_line_never_ok(clean) -> None:
+    from finresearch.db import session_scope
+
+    marks = {k: {"status": "insufficient data", "run": None, "why": "0 of the 3 tested quarters needed"}
+             for k in ("risk_var_ledger", "risk_var")}  # fmt: skip
+    _stored(
+        "2026-10-26",
+        {"version": "skill-monitor-v2", "drift": {"groups": [], "alarms": 0}, "risk": {"marks": marks}},
+    )
+    with session_scope() as s:
+        sec = job.brief_section(s, BRIEF_AT)
+    lines = [x["text"] for x in sec["lines"] if "Kupiec trigger reads insufficient data" in x["text"]]
+    assert sec["alarms"] == [] and len(lines) == 2  # specs_v2.BRIEF: an info line per model
+    assert {t.split(":")[0] for t in lines} == {
+        "Portfolio 1-day 95 % VaR (forecast ledger)",
+        "Portfolio historical VaR / CVaR",
+    }

@@ -178,10 +178,6 @@ def _risk_brief(r: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str,
     marks = r.get("marks") or {}
     alarms = [{"label": name(k), "check": "kupiec", "text": f"not for limits: {m['why']}"}
               for k, m in marks.items() if m["status"] == "not for limits"]  # fmt: skip
-    unchecked: dict[tuple[str, str], list[str]] = {}
-    for k, m in marks.items():
-        if m["status"] in ("insufficient data", "unknown"):
-            unchecked.setdefault((m["status"], m["why"]), []).append(name(k))
-    lines += [{"level": "info", "text": f"{' and '.join(names)}: the Kupiec trigger reads {st} ({why}): not ok, just "
-               "unchecked."} for (st, why), names in unchecked.items()]  # fmt: skip
+    lines += [{"level": "info", "text": f"{name(k)}: the Kupiec trigger reads {m['status']} ({m['why']}): not ok, "
+               "just unchecked."} for k, m in marks.items() if m["status"] in ("insufficient data", "unknown")]  # fmt: skip
     return alarms, lines
