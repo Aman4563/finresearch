@@ -47,8 +47,9 @@ def data_health(s: Session) -> dict[str, Any]:
     return {"status": status, "checked_at": max((d["checked_at"] or "" for d in sets), default=None) or None,
             "datasets": sets, "dependents": deps,
             "method": "Post-load checks over the stored files (freshness against each file's publication time and "
-                      "NSE's holiday list, row counts, expected contracts, ranges, cross-source reconciliations), "
-                      "run by the monitor at 21:00 and 08:00 IST. Unknown means not checked, never ok."}  # fmt: skip
+                      "NSE's holiday list, row counts, expected contracts, ranges, cross-source reconciliations, "
+                      "option-price screens and control charts) and the Groww reconciliation (counts only), run by "
+                      "the monitor at 21:00 and 08:00 IST. Unknown means not checked, never ok."}  # fmt: skip
 
 
 def brief_lines(r: dict[str, Any]) -> list[dict[str, str]]:

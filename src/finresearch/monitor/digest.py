@@ -311,7 +311,9 @@ def build_brief(s: Session, now: datetime) -> dict[str, Any]:
                        "are not shown as 'none'."})  # fmt: skip
     from finresearch.dq import report as dq_report
 
-    dq = dq_report.data_health(s)  # #368: post-load checks of the market datasets (public data only)
+    # #368: post-load checks of the market datasets, plus the Groww reconciliation's counts (no instrument, quantity
+    # or name: dq.broker keeps those out of dq_check)
+    dq = dq_report.data_health(s)
     health = dq_report.brief_lines(dq) + health
     dq_failed = [d for d in dq["datasets"] if d["status"] == "fail"]
     skill = _skill(

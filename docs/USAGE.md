@@ -178,7 +178,8 @@ uv run finresearch equity actions-backfill         # NSE corporate actions per F
 uv run finresearch equity symbol-changes           # NSE's symbol-change file (one request; data-rights decision #481)
 uv run finresearch equity actions-rebuild          # re-derive stored factors (rights need the equity_eod cum close); no network
 uv run finresearch dq run                          # data-quality checks now (the monitor runs them 21:00 and 08:00 IST, #368)
-uv run finresearch dq replay --from 2024-01-01 --to 2026-10-22  # content checks over stored history, read only
+uv run finresearch dq replay --from 2024-01-01 --to 2026-10-22  # content checks over stored history, read only; warn_rate per check
+uv run finresearch dq broker                       # Groww vs the app's book, per instrument (personal: printed here only), read only
 uv run finresearch events seed                     # load the curated event calendar (RBI MPC, Budgets, 2024 election, FOMC; #367)
 uv run finresearch events check --from 2026-10-22 --to 2026-11-24  # the plan card's tier-1 event check for a window
 uv run finresearch events refresh                  # forward dates now (#481; the monitor runs it nightly from 21:00 IST): RBI MPC schedules/moves/resolutions from RBI's RSS feed, India CPI by MoSPI's rule (confirmed via the CPI API), NIFTY review windows by rule, NSE F&O circulars (index changes stored; expiry-day revisions printed to review)
