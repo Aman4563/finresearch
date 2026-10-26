@@ -113,6 +113,19 @@ def _label(c: Chain, k: float, right: str) -> str:
     return f"{c.symbol} {c.expiry:%d-%b-%Y} {k:g} {_TYPE[right]}"
 
 
+class _Deltas(dict):
+    """|delta| per (strike, right), solved on first use: a combination whose raw excess is within ABS_TOL (the smallest
+    tolerance) cannot be flagged, so most prices never need an implied volatility (the replay runs every session)."""
+
+    def __init__(self, opts: list[Opt], fwd: float, t: float) -> None:
+        super().__init__()
+        self._opts, self._fwd, self._t = {(o.strike, o.right): o for o in opts}, fwd, t
+
+    def __missing__(self, key: tuple[float, str]) -> float:
+        self[key] = d = option_delta(self._opts[key], self._fwd, self._t)
+        return d
+
+
 def forward(c: Chain, t: float) -> tuple[float | None, black76.ParityFit | None]:
     """The parity forward (and its fit) when parity_fit finds one, else the future's settle, else None."""
     calls = {o.strike: o.price for o in c.options if o.right == "call"}
@@ -134,7 +147,7 @@ def screen(chains: Sequence[Chain]) -> Screen:
         if fwd is None:
             res.no_forward += 1
             continue
-        delta = {(o.strike, o.right): option_delta(o, fwd, t) for o in opts}
+        delta = _Deltas(opts, fwd, t)
         _bounds(res, c, opts, fwd, t, delta)
         _strikes(res, c, opts, fwd, t, delta)
         if fit is not None:
@@ -145,32 +158,35 @@ def screen(chains: Sequence[Chain]) -> Screen:
     return res
 
 
-def _bounds(res: Screen, c: Chain, opts: list[Opt], fwd: float, t: float, delta: dict) -> None:
+def _bounds(res: Screen, c: Chain, opts: list[Opt], fwd: float, t: float, delta: _Deltas) -> None:
     lo_df, hi_df = df_range(t)
     for o in opts:
         lo = black76.bounds(o.right, fwd, o.strike, lo_df)[0]  # type: ignore[arg-type]
         hi = black76.bounds(o.right, fwd, o.strike, hi_df)[1]  # type: ignore[arg-type]
-        tol = tolerance(fwd, [(1.0, delta[(o.strike, o.right)])])
         res.tested["opt_bounds"] += 1
+        if max(lo - o.price, o.price - hi) <= ABS_TOL:
+            continue
+        tol = tolerance(fwd, [(1.0, delta[(o.strike, o.right)])])
         if o.price < lo - tol:
             res.found["opt_bounds"].append(f"{_label(c, o.strike, o.right)} {o.price:.2f} under {lo:.2f}")
         elif o.price > hi + tol:
             res.found["opt_bounds"].append(f"{_label(c, o.strike, o.right)} {o.price:.2f} over {hi:.2f}")
 
 
-def _strikes(res: Screen, c: Chain, opts: list[Opt], fwd: float, t: float, delta: dict) -> None:
+def _strikes(res: Screen, c: Chain, opts: list[Opt], fwd: float, t: float, delta: _Deltas) -> None:
     """Monotonicity and convexity in strike on each out-of-the-money side (and the strike nearest F)."""
     atm = min({o.strike for o in opts}, key=lambda k: (abs(k - fwd), k))
     hi_df = df_range(t)[1]
     for right, side in (("call", [o for o in opts if o.right == "call" and o.strike >= atm]),
                         ("put", [o for o in opts if o.right == "put" and o.strike <= atm])):  # fmt: skip
         side.sort(key=lambda o: o.strike)
-        d = [delta[(o.strike, right)] for o in side]
-        for i, (a, b) in enumerate(pairwise(side)):
-            tol = tolerance(fwd, [(-1.0, d[i]), (1.0, d[i + 1])])
+        for a, b in pairwise(side):
             rise = b.price - a.price  # calls fall with K, puts rise
             order, slope = (rise, -rise) if right == "call" else (-rise, rise)
             res.tested["opt_strike_monotone"] += 1
+            if max(order, slope - hi_df * (b.strike - a.strike)) <= ABS_TOL:
+                continue
+            tol = tolerance(fwd, [(-1.0, delta[(a.strike, right)]), (1.0, delta[(b.strike, right)])])
             if order > tol:
                 res.found["opt_strike_monotone"].append(f"{_label(c, b.strike, right)} {b.price:.2f} out of order "
                                                         f"with {a.strike:g} at {a.price:.2f}")  # fmt: skip
@@ -182,12 +198,19 @@ def _strikes(res: Screen, c: Chain, opts: list[Opt], fwd: float, t: float, delta
             w = (z.strike - b.strike) / (z.strike - a.strike)
             chord = w * a.price + (1 - w) * z.price
             res.tested["opt_butterfly"] += 1
-            if b.price - chord > tolerance(fwd, [(w, d[i]), (-1.0, d[i + 1]), (1 - w, d[i + 2])]):
+            if b.price - chord <= ABS_TOL:
+                continue
+            terms = [
+                (w, delta[(a.strike, right)]),
+                (-1.0, delta[(b.strike, right)]),
+                (1 - w, delta[(z.strike, right)]),
+            ]
+            if b.price - chord > tolerance(fwd, terms):
                 res.found["opt_butterfly"].append(f"{_label(c, b.strike, right)} {b.price:.2f} over its chord "
                                                   f"{chord:.2f}")  # fmt: skip
 
 
-def _parity(res: Screen, c: Chain, opts: list[Opt], fit: black76.ParityFit, t: float, delta: dict) -> None:
+def _parity(res: Screen, c: Chain, opts: list[Opt], fit: black76.ParityFit, t: float, delta: _Deltas) -> None:
     fwd = fit.forward or 0.0
     lo_df, hi_df = df_range(t)
     px = {(o.strike, o.right): o.price for o in opts}
@@ -196,7 +219,7 @@ def _parity(res: Screen, c: Chain, opts: list[Opt], fit: black76.ParityFit, t: f
         lo, hi = y - lo_df * (fwd - k), y - hi_df * (fwd - k)
         off = 0.0 if lo * hi <= 0 else min(abs(lo), abs(hi))
         res.tested["opt_parity"] += 1
-        if off > tolerance(fwd, [(1.0, delta[(k, "call")]), (-1.0, delta[(k, "put")])]):
+        if off > ABS_TOL and off > tolerance(fwd, [(1.0, delta[(k, "call")]), (-1.0, delta[(k, "put")])]):
             res.found["opt_parity"].append(
                 f"{c.symbol} {c.expiry:%d-%b-%Y} {k:g} C - P {y:.2f} is {off:.2f} off parity"
             )
