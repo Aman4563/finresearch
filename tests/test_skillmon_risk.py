@@ -99,3 +99,62 @@ def test_one_outcome_per_day_the_newest_row() -> None:
     rows.append(risk.Obs(rows[0].day, "resolved", 1, 999))  # a later row for the first day: an exception
     (q,) = risk.quarters(rows, AFTER_Q3)
     assert q["days"] == 60 and q["exceptions"] == 1
+
+
+# --------------------------------------------------------------------------- the VaR ledger (test database only)
+@pytest.fixture
+def ledger(env):
+    from sqlalchemy import text
+
+    from finresearch.db import session_scope
+
+    def wipe() -> None:
+        with session_scope() as s:
+            s.execute(text("TRUNCATE forecast"))
+
+    wipe()
+    yield env
+    wipe()
+
+
+def store(obs: list, *, drop_as_of: int = 0) -> None:
+    """Made-up VaR-ledger rows (fractions and dates only, as the ledger logs them); the first `drop_as_of` lose their
+    day, as a malformed row would."""
+    from finresearch.db import session_scope
+    from finresearch.db.models import Forecast
+    from finresearch.portfolio import var_ledger as vl
+
+    with session_scope() as s:
+        for i, o in enumerate(obs):
+            inputs = {"var": 0.02} if i < drop_as_of else {"as_of": o.day.isoformat(), "var": 0.02}
+            s.add(Forecast(asset=vl.ASSET, instrument=vl.INSTRUMENT, source="monitor:portfolio", event_kind=vl.EVENT_KIND,
+                           event=vl.EVENT, horizon="1 trading day", resolve_on=o.day + timedelta(days=1),
+                           probability=0.05, action="RISK", method=vl.METHOD, validation_status="rule_based",
+                           inputs=inputs, status=o.status, outcome=o.outcome, dedupe_key=f"var{i}"))  # fmt: skip
+
+
+def test_the_logged_var_rows_mark_both_var_models_not_for_limits(ledger) -> None:
+    from finresearch.db import session_scope
+
+    store(quarter(Q1, 60, 0) + quarter(Q2, 60, 0, first_id=100) + quarter(Q3, 60, 9, first_id=200))
+    with session_scope() as s:
+        m = risk.marks(s, AFTER_Q3)
+    assert set(m) == {"risk_var_ledger", "risk_var"}
+    for key in m:
+        assert m[key]["status"] == "not for limits" and m[key]["run"] == ["2026-Q1", "2026-Q2", "2026-Q3"]
+    assert [q["exceptions"] for q in m["risk_var"]["quarters"]] == [0, 0, 9]
+
+
+def test_an_unreadable_ledger_row_never_lets_the_trigger_read_not_triggered(ledger) -> None:
+    from finresearch.db import session_scope
+
+    store(
+        quarter(Q1, 60, 3) + quarter(Q2, 60, 3, first_id=100) + quarter(Q3, 60, 3, first_id=200), drop_as_of=1
+    )
+    with session_scope() as s:
+        m = risk.marks(s, AFTER_Q3)["risk_var_ledger"]
+    assert m["status"] == "unknown" and m["unreadable"] == 1 and "no readable day" in m["why"]
+    with session_scope() as s:
+        assert (
+            risk.marks(s, date(2026, 1, 15))["risk_var"]["status"] == "insufficient data"
+        )  # nothing complete yet

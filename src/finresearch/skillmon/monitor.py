@@ -33,6 +33,20 @@ def require_registered() -> str:
     return h
 
 
+def require_registered_v2() -> str:
+    """skill-monitor-v2 (specs_v2.py: drift, IPO ranges, risk trigger) against its own pinned hash; v1 is unaffected."""
+    from finresearch.skillmon import specs_v2
+
+    h = specs_v2.registration_hash()
+    if h != prereg.V2_HASH:
+        raise PreregistrationError(
+            f"skillmon/specs_v2.py hashes to {h[:12]}… but the registered hash is {prereg.V2_HASH[:12]}…: "
+            "skill-monitor-v2 is refused. Record the change in ADDENDUM.md as a new SPEC_VERSION and commit its hash "
+            "first."
+        )
+    return h
+
+
 def cell_key(c: cells.Cell) -> str:
     return f"{c.method}|{c.event_kind}|{c.underlying}"
 

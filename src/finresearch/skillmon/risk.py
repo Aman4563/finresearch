@@ -85,3 +85,38 @@ def evaluate(rows: Sequence[Obs], today: date, rate: float = NOMINAL) -> dict[st
                        "so they could be a failing run"}  # fmt: skip
     return {**out, "status": "not triggered",
             "why": f"{tested} quarters tested; every {c} in a row hold a passing one"}  # fmt: skip
+
+
+# --------------------------------------------------------------------------- the VaR ledger (read only)
+def ledger_obs(s: Any) -> tuple[list[Obs], int]:
+    """The forecast ledger's VaR rows (portfolio.var_ledger) as Obs by their own day, and how many have no readable
+    day (counted, never silently dropped)."""
+    from sqlalchemy import select
+
+    from finresearch.db.models import Forecast
+
+    q = select(Forecast).where(
+        Forecast.asset == var_ledger.ASSET, Forecast.event_kind == var_ledger.EVENT_KIND
+    )
+    out, bad = [], 0
+    for f in s.scalars(q):
+        try:
+            day = date.fromisoformat(str((f.inputs or {})["as_of"])[:10])
+        except (KeyError, ValueError):
+            bad += 1
+            continue
+        out.append(Obs(day, f.status, f.outcome, f.id))
+    return out, bad
+
+
+def marks(s: Any, today: date) -> dict[str, dict[str, Any]]:
+    """The trigger for every registered risk model (specs_v2.RISK_MODELS), each scored on the VaR ledger's logged
+    record. A row with no readable day could be an exception, so it never lets the trigger read "not triggered"."""
+    obs, bad = ledger_obs(s)
+    r = evaluate(obs, today)
+    if bad:
+        r["unreadable"] = bad
+        if r["status"] == "not triggered":
+            r.update(status="unknown", why=f"{bad} VaR-ledger row(s) have no readable day, so a quarter's count of "
+                                            "exceptions is unknown")  # fmt: skip
+    return {key: {**r, "model": key, "evidence": why} for key, why in specs_v2.RISK_MODELS.items()}

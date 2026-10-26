@@ -49,3 +49,15 @@ def test_addendum_restates_the_hash_and_the_registered_numbers() -> None:
     )
     for day in ("2022-01-01", "2022-04-01", "2024-06-30"):
         assert day in text
+
+
+def test_a_changed_v2_registration_is_refused(monkeypatch) -> None:
+    import pytest
+
+    from finresearch.skillmon import monitor
+
+    assert monitor.require_registered_v2() == prereg.V2_HASH
+    monkeypatch.setattr(prereg, "V2_HASH", "0" * 64)
+    with pytest.raises(monitor.PreregistrationError, match="skill-monitor-v2 is refused"):
+        monitor.require_registered_v2()
+    monitor.require_registered()  # v1 is checked on its own pinned hash and still runs
