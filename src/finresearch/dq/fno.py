@@ -33,7 +33,7 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from finresearch.db.models import DatasetLoad, FnoBhavDay
-from finresearch.dq import options, stats
+from finresearch.dq import control, options, stats
 from finresearch.dq.base import Check, share_status, soft
 
 DATASET = "fno_bhav"
@@ -47,7 +47,7 @@ MOVE_DAYS = 3  # an expiry NSE shifts for a holiday moves to an adjacent session
 CHECKS = ("rows_total_z", "rows_kept_z", "futures_continuity", "symbol_changed", "expiry_continuity", "expiry_moved",
           "expired_contracts", "stale_settle", "oi_lot_multiple", "turnover_units", "price_jump", "row_ranges", "reupload",
           "duplicate_body")  # fmt: skip
-SOFT = options.CHECKS  # non-critical screens over the same rows, each group guarded (base.soft)
+SOFT = options.CHECKS + control.FNO_CHARTS  # non-critical screens and charts, each group guarded (base.soft)
 NON_CRITICAL = {"price_jump", "reupload", "symbol_changed", "expiry_moved", *SOFT}
 
 
@@ -69,7 +69,11 @@ def bhav_checks(s: Session, day: date, holidays: set[date] | None = None) -> lis
         z = stats.robust_z(float(x), [float(v) for v in h]) if x is not None else None
         out.append(_c(f"{col}_z", stats.z_status(z), z, stats.Z_LIMIT, f"{col} {x} vs {len(h)} prior days"))
     out += _continuity(s, day, prev, holidays) + _contents(s, day, prev) + _lineage(s, day)
-    return out + soft(s, DATASET, options.CHECKS, options.option_checks, day)
+    return (
+        out
+        + soft(s, DATASET, options.CHECKS, options.option_checks, day)
+        + soft(s, DATASET, control.FNO_CHARTS, control.bhav_charts, day)
+    )
 
 
 def _continuity(s: Session, day: date, prev: date | None, holidays: set[date] | None = None) -> list[Check]:
