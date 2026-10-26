@@ -3064,14 +3064,24 @@ app.add_typer(models_app, name="models")
 
 @models_app.command("list")
 def models_list() -> None:
-    """Every inventory entry with its tier and computed status (validated / unvalidated / failed) and the reason."""
-    from finresearch.fincalc.dates import today_ist
-    from finresearch.inventory import registry
+    """Every inventory entry with its tier and computed status (validated / unvalidated / failed) and the reason; a VaR
+    model also shows the Kupiec trigger's mark (not for limits / not triggered / insufficient data / unknown, #378)."""
+    from finresearch.db import session_scope
+    from finresearch.fincalc import dates
+    from finresearch.inventory import limits, registry
 
-    today = today_ist()
+    today = dates.today_ist()
+    try:
+        with session_scope() as s:
+            marks = limits.marks(s, today)
+    except Exception as e:  # the marks are unknown, never fine: say so and still list the inventory
+        marks = {k: {"status": f"unknown ({type(e).__name__})"} for k in limits.specs_v2.RISK_MODELS}
     for e in registry.entries():
         st, why = e.status(today)
-        console.print(f"{e.key:28} {e.tier} {st:12} {why[:90]}")
+        mark = (
+            f"  (limits: {marks[e.key]['status']})" if e.key in marks else ""
+        )  # no [..]: Rich reads it as markup
+        console.print(f"{e.key:28} {e.tier} {st:12} {why[:90]}{mark}")
 
 
 @models_app.command("revalidate")
