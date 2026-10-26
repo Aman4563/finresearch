@@ -22,6 +22,7 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from finresearch.db.models import PolicyRateObs as Row
+from finresearch.fincalc.dates import to_ist
 from finresearch.fincalc.policy_feed import Observation, Observed, differences, when
 
 LOCK_KEY = 492_001  # pg_advisory_xact_lock: reads at once (monitor, `eventcal refresh`) store an item once
@@ -35,11 +36,15 @@ def _dec(x: Decimal | None) -> Decimal | None:
     return None if x is None else Decimal(x).normalize()
 
 
+def _ist(t: datetime | None) -> datetime | None:
+    return None if t is None else to_ist(t)  # the session's zone is the server's (UTC in CI): shown in IST
+
+
 def load(s: Session) -> list[Observation]:
-    """Every stored observation, first seen first."""
+    """Every stored observation, first seen first; times in IST."""
     rows = s.scalars(select(Row).order_by(Row.known_since, Row.id)).all()
     return [Observation(decided=r.decided, repo=_dec(r.repo), sdf=_dec(r.sdf), msf=_dec(r.msf), title=r.title,
-                        url=r.url, published=r.published, seen=r.known_since, conflict=r.conflict)
+                        url=r.url, published=_ist(r.published), seen=_ist(r.known_since), conflict=r.conflict)
             for r in rows]  # fmt: skip
 
 
