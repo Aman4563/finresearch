@@ -248,3 +248,38 @@ def test_the_policy_listing_shows_decisions_read_from_the_feed(utc, clean, monke
     assert body["feed"][0]["seen"] == "2026-12-04T12:00:00+05:30"
     out = CliRunner().invoke(app, ["rates", "policy"]).output
     assert "04-Dec-2026  repo 5.75" in out and "SDF unknown" in out and "RBI's RSS feed" in out
+
+
+async def test_a_failure_storing_the_rates_keeps_the_calendar_refresh_going(clean, monkeypatch):
+    # review of #494: e.g. the migration not applied yet; the calendar's rows are still stored and the failure is
+    # reported in the refresh's result (and logged), and the sources after it still run
+    from sqlalchemy import func, select
+
+    from finresearch.db import session_scope
+    from finresearch.db.models import CalendarEvent, PolicyRateObs
+    from finresearch.eventcal import calendar as cal
+    from finresearch.refseries import policy_obs
+
+    def broken(*_a, **_k):
+        raise RuntimeError("synthetic: policy_rate_obs is missing")
+
+    async def rss(known, now):
+        return refresh.Found("rbi_rss", observations=[obs(91004, DEC, "0.0575")], events=[cal.Event(
+            type="rbi_mpc", tier=1, scope="IN", day=DEC, at=None, title="t", source_url=URL.format(91004),
+            known_since=now)])  # fmt: skip
+
+    async def after(known, now):
+        return refresh.Found("india_cpi_rule")
+
+    monkeypatch.setattr(policy_obs, "record", broken)
+    res = await refresh.run(
+        [refresh.Source("rbi_rss", rss), refresh.Source("india_cpi_rule", after, rule=True)], T1
+    )
+    assert (
+        res["stored"]["rbi_rss"]["events"] == 1
+        and "RuntimeError" in res["stored"]["rbi_rss"]["policy_rates_failed"]
+    )
+    assert "india_cpi_rule" in res["stored"] and res["failed"] == {}
+    with session_scope() as s:
+        assert s.scalar(select(func.count()).select_from(CalendarEvent)) == 1
+        assert s.scalar(select(func.count()).select_from(PolicyRateObs)) == 0
