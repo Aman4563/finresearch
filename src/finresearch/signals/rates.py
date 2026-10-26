@@ -214,4 +214,4 @@ def policy_table(s: Any = None) -> dict[str, Any]:
              "title": o.title, "url": o.url, "seen": o.seen.isoformat() if o.seen else None, "conflict": o.conflict}
             for o in observed.observations]  # fmt: skip
     return {"start": P.START.isoformat(), "reviewed": P.REVIEWED.isoformat(), "rows": rows, "feed": feed,
-            "disagreements": list(merged.disagreements), "conflicts": [n for _, n in merged.conflicts], "note": why}  # fmt: skip
+            "disagreements": list(merged.disagreements), "conflicts": F.flagged(observed.observations), "note": why}  # fmt: skip

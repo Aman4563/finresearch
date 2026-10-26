@@ -10,7 +10,8 @@ them, and the risk-free answer carries its own "possibly stale" flag (fincalc.po
   but the known schedule itself ended more than GRACE ago.
 * table_agreement: an observation of a day the typed table covers (fincalc.policy_rates.covered_through(), normally
   REVIEWED) that contradicts it: warn; the table is kept.
-* feed_conflicts: another item giving other rates for a decision already read: warn; the first one seen is used.
+* feed_conflicts: the store's `conflict` flags (an item giving other rates than any earlier one for the same
+  decision, refseries.policy_obs): warn; the first item seen is used.
 """
 
 from __future__ import annotations
@@ -53,7 +54,7 @@ def checks(s: Session, now: datetime) -> list[Check]:
 
     observed = policy_obs.observed(s)
     merged = F.merge(observed.observations)
-    dis, con = merged.disagreements, [n for _, n in merged.conflicts]
+    dis, con = merged.disagreements, F.flagged(observed.observations)
     return [_mpc(observed, merged, to_ist(now).date()),
             Check(DATASET, "table_agreement", "warn" if dis else "ok", len(dis), 0, "; ".join(dis) or None,
                   critical=False),

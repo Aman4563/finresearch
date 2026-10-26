@@ -166,3 +166,16 @@ def test_a_row_typed_after_the_review_date_still_wins_over_the_feed(monkeypatch)
     assert got["yield"] == pytest.approx(0.0575) and "RSS" not in got["source"] and got["stale"] is False
     (note,) = merge((wrong,)).disagreements
     assert "04-Dec-2026" in note and "6.00 %" in note and "5.75 %" in note
+
+
+def test_an_item_conflicting_with_any_earlier_one_is_named_as_the_store_flags_it():
+    # review of #494: A states the repo rate only, B all three, C another SDF than B; C agrees with A (whose rates are
+    # used) but not with B, and the answer names it as the store does
+    a_, b_ = ob(91004, date(2026, 12, 4), "0.0575"), ob(91012, date(2026, 12, 4), "0.0575", "0.055", "0.06",
+                                                        seen=datetime(2026, 12, 4, 16, 30, tzinfo=IST))  # fmt: skip
+    c_ = ob(
+        91014, date(2026, 12, 4), "0.0575", "0.0525", "0.06", seen=datetime(2026, 12, 4, 21, 0, tzinfo=IST)
+    )
+    ((day, note),) = merge((a_, b_, c_)).conflicts
+    assert day == date(2026, 12, 4) and URL.format(91014) in note and "SDF 5.25 % vs 5.50 %" in note
+    assert URL.format(91014) in a(date(2026, 12, 10), a_, b_, c_)["note"]

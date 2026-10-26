@@ -122,14 +122,20 @@ def _merge(observations: tuple[Observation, ...], table: tuple[P.PolicyRate, ...
         used = next((o for o in group if o.repo is not None), None)
         if used is None:
             continue
-        for o in group:
-            if o is not used and (diff := differences(used, o)):
+        for i, o in enumerate(group):  # each item against every earlier one, as the store flags it
+            if (clash := next((h for h in group[:i] if differences(h, o)), None)) is not None:
                 conflicts.append((day, f"RBI's RSS feed gave other rates for the {day:%d-%b-%Y} decision in another "
-                                       f"item ({o.url}, seen {when(o.seen)}: {'; '.join(diff)}); the first item seen "
-                                       "is used, flagged in data quality"))  # fmt: skip
+                                       f"item ({o.url}, seen {when(o.seen)}: {'; '.join(differences(clash, o))}); "
+                                       "the first item seen is used, flagged in data quality"))  # fmt: skip
         rows.append(P.PolicyRate(effective=day, repo=used.repo, floor=used.sdf, floor_kind="SDF", msf=used.msf,
                                  title=used.title, released=_released(used), url=used.url, seen=used.seen))  # fmt: skip
     return Merged(tuple(rows), tuple(conflicts), tuple(disagreements))
+
+
+def flagged(observations: tuple[Observation, ...]) -> list[str]:
+    """The observations the store flagged (`conflict`: other rates than an earlier item for the same decision)."""
+    return [f"{o.url} (seen {when(o.seen)}) for the {o.decided:%d-%b-%Y} decision: {o.conflict}"
+            for o in observations if o.conflict]  # fmt: skip
 
 
 def schedule(observed: Observed) -> tuple[list[date], date]:
