@@ -155,7 +155,7 @@ def test_llm_paths_never_import_personal_tables():
     """Static guard: the modules that build prompts or serve the agents' tools import no personal model or module."""
     personal = {"PortfolioHolding", "PortfolioTxn", "PortfolioLot", "PortfolioDisposal", "PortfolioImport",
                 "PortfolioAis", "PortfolioSnapshot", "PortfolioSetting", "TradeNote", "WealthAsset", "WealthGoal",
-                "WealthLoan", "WealthPolicy", "WealthValuation", "BrokerConnection", "Decision",
+                "WealthLoan", "WealthPolicy", "WealthValuation", "BrokerConnection", "BrokerSyncLog", "Decision",
                 "PaperStrategy", "PaperLeg", "FnoExitRule", "CardLog", "CardOverride", "FnoMark",
                 "JointPnlDay"}  # fmt: skip
     bad = []
@@ -163,8 +163,13 @@ def test_llm_paths_never_import_personal_tables():
         for f in (SRC / pkg).rglob("*.py"):
             for node in ast.walk(ast.parse(f.read_text())):
                 if isinstance(node, ast.ImportFrom) and node.module:
-                    if node.module.startswith(
-                        ("finresearch.portfolio", "finresearch.wealth", "finresearch.fnobook")
+                    if node.module.startswith(  # dq.broker: the broker reconciliation (#368) reads the book
+                        (
+                            "finresearch.portfolio",
+                            "finresearch.wealth",
+                            "finresearch.fnobook",
+                            "finresearch.dq.broker",
+                        )
                     ):
                         bad.append(f"{f.name}: {node.module}")
                     if node.module == "finresearch.db.models":
