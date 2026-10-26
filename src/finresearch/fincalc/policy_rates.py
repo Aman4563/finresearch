@@ -61,6 +61,12 @@ def _row(effective: str, repo: str, floor: str, msf: str, title: str, url: str, 
                       date.fromisoformat(released or effective), url)  # fmt: skip
 
 
+def covered_through() -> date:
+    """The last day the typed table covers: REVIEWED, or a later row typed without moving REVIEWED. The table wins on
+    every day to then; RBI's RSS feed only extends it after (fincalc.policy_feed)."""
+    return max(REVIEWED, TABLE[-1].effective)
+
+
 def in_force(
     day: date, *, before: bool = False, rows: Sequence[PolicyRate] | None = None
 ) -> PolicyRate | None:

@@ -93,14 +93,18 @@ def _released(o: Observation) -> date:
     return to_ist(o.published).date() if o.published else o.decided
 
 
-@lru_cache(maxsize=64)
 def merge(observations: tuple[Observation, ...]) -> Merged:
-    """The table extended by the feed. The table covers every day to P.REVIEWED (its rows and every MPC meeting
-    between them were checked then) and wins there: an observation of such a day that contradicts it is listed in
-    `disagreements`, never used. A later decision becomes a row from its day if an observation of it states the
-    repo rate; the first one seen is used, and any other giving other rates for the same decision is listed in
-    `conflicts` (an observation without the repo rate extends nothing: unknown)."""
-    rows: list[P.PolicyRate] = list(P.TABLE)
+    """The table extended by the feed. The table covers every day to P.covered_through() (REVIEWED: its rows and
+    every MPC meeting between them were checked then) and wins there: an observation of such a day that contradicts
+    it is listed in `disagreements`, never used. A later decision becomes a row from its day if an observation of it
+    states the repo rate; the first one seen is used, and any other giving other rates for the same decision is listed
+    in `conflicts` (an observation without the repo rate extends nothing: unknown)."""
+    return _merge(observations, P.TABLE, P.covered_through())
+
+
+@lru_cache(maxsize=64)
+def _merge(observations: tuple[Observation, ...], table: tuple[P.PolicyRate, ...], covered: date) -> Merged:
+    rows: list[P.PolicyRate] = list(table)
     conflicts: list[tuple[date, str]] = []
     disagreements: list[str] = []
     by_day: dict[date, list[Observation]] = {}
@@ -108,8 +112,8 @@ def merge(observations: tuple[Observation, ...]) -> Merged:
         by_day.setdefault(o.decided, []).append(o)
     for day in sorted(by_day):
         group = by_day[day]
-        if day <= P.REVIEWED:
-            row = P.in_force(day)
+        if day <= covered:
+            row = P.in_force(day, rows=table)
             for o in group:
                 if row is not None and (diff := _against_table(o, row)):
                     disagreements.append(f"RBI's RSS feed item {o.url} (seen {when(o.seen)}) states for the "
@@ -131,7 +135,7 @@ def merge(observations: tuple[Observation, ...]) -> Merged:
 def schedule(observed: Observed) -> tuple[list[date], date]:
     """The scheduled MPC decision days after the table's review, and the day through which that list is complete:
     the event calendar's when it covers the table's next meeting (P.NEXT_MPC), else that meeting alone."""
-    cal = sorted({d for d in observed.scheduled if d > P.REVIEWED})
+    cal = sorted({d for d in observed.scheduled if d > P.covered_through()})
     if observed.covered is not None and observed.covered >= P.NEXT_MPC:
         return cal, observed.covered
     return sorted({*cal, P.NEXT_MPC}), P.NEXT_MPC
@@ -143,7 +147,7 @@ def stale(day: date, observed: Observed, *, before: bool = False) -> str | None:
     the feed with its repo rate), or when `day` is past the last day the schedule is known for."""
     known = [r.effective for r in merge(observed.observations).rows
              if r.seen is not None and (r.effective < day if before else r.effective <= day)]  # fmt: skip
-    last = max([P.REVIEWED, *known])
+    last = max([P.covered_through(), *known])
     days, through = schedule(observed)
     for s in days:
         if last < s and (s < day if before else s <= day):

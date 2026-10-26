@@ -189,6 +189,9 @@ def answer(day: date, t_years: float, entries: Sequence[OwnerRate] = (), *, befo
         return out
     row = P.in_force(day, before=before, rows=merged.rows)
     if row is not None and row.seen is not None:
+        if out["tier"] == "owner":  # the shift includes a decision read from the feed: say which
+            out["note"] += (f"; the repo rate in force from {row.effective:%d-%b-%Y} is from RBI's RSS feed, item "
+                            f"{row.title}, seen {F.when(row.seen)}")  # fmt: skip
         for note in (n for d, n in merged.conflicts if d == row.effective):
             out["note"] += f"; {note}"
     if why := F.stale(day, observed, before=before):
