@@ -48,7 +48,8 @@ test("fund: Sharpe and Sortino against each month's own rate, beside the factshe
     [`GET /api/funds/${CODE}/category-rank`]: RANK,
   });
   await page.goto(`/funds/${CODE}`);
-  const risk = page.locator("section").filter({ has: page.getByRole("heading", { name: "Risk", exact: true }) });
+  // the card's heading carries its help button: "Risk What is this?"
+  const risk = page.locator("section").filter({ has: page.getByRole("heading", { name: /^Risk( What is this\?)?$/ }) });
   await expect(risk.getByText("Sharpe ratio", { exact: true })).toBeVisible();
   await expect(risk.getByText("0.91")).toBeVisible();
   await expect(risk.getByText("Sharpe (factsheet-style)")).toBeVisible();

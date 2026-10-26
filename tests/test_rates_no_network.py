@@ -74,6 +74,7 @@ async def test_every_rate_consumer_answers_with_all_http_refused(monkeypatch, tm
         months, _ = rates.months_for(date(2023, 9, 1), date(2026, 9, 30))
         mar, factsheet_mar, info = fund_rank.mar_for(date(2026, 9, 30))
         signal = await bond_sig.bond_signal("INE413U07475", {"freq": "1"})
+        ar.reset_tries()  # the archive's per-day retry state is module-level: other tests leave it behind
         src = ar.ArchiveSources(quote=lambda s: None, fno=None, par_curve=None, watched=lambda: [],
                                 near_iv=lambda s, d: None, out_dir=tmp_path)  # fmt: skip
         archived = await ar.archive_step(datetime(2026, 9, 30, 17, 0, tzinfo=IST), src, holidays=set())
