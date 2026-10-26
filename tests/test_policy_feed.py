@@ -98,6 +98,49 @@ def test_a_recap_before_the_decision_is_not_read_as_the_decision():
     assert o.repo == Decimal("0.0575")
 
 
+# ---- review of #494: wordings that once made the parser read another figure as the decision
+
+
+def test_a_sentence_ends_with_its_paragraph_or_bullet():
+    # "keep the policy repo rate ... unchanged</p><p>... reduce the cash reserve ratio (CRR) by 25 bps to 3.75 per cent"
+    # read the CRR figure as the repo rate: a block's end is a sentence's end, so the repo rate here is unknown
+    paragraphs = ("<p>The MPC decided to keep the policy repo rate under the LAF unchanged</p><p>It also decided to "
+                  "reduce the cash reserve ratio (CRR) by 25 bps to 3.75 per cent of net demand and time "
+                  "liabilities.</p>")  # fmt: skip
+    bullets = ("<p>The MPC decided to:</p><ul><li>Keep the policy repo rate under the LAF unchanged</li><li>Reduce the "
+               "cash reserve ratio (CRR) by 25 bps to 3.75 per cent</li></ul>")  # fmt: skip
+    for body in (paragraphs, bullets):
+        assert _rates(rbi.observe(_resolution(body)))[1:] == (None, None, None), body
+
+
+def test_another_instruments_figure_in_the_same_sentence_is_not_the_repo_rate():
+    o = rbi.observe(_resolution("<p>The MPC decided to keep the policy repo rate unchanged and to reduce the cash "
+                                "reserve ratio (CRR) by 50 bps to 4.00 per cent.</p>"))  # fmt: skip
+    assert o.repo is None
+
+
+def test_a_participle_recap_before_the_decision_is_skipped():
+    # "cut" is also its own past tense: "Having cut ... to 5.25 per cent" is October's decision, today's is 5.50 %
+    o = rbi.observe(_resolution("<p>Having cut the policy repo rate by 25 bps to 5.25 per cent in October, the MPC "
+                                "decided today to increase the policy repo rate by 25 bps to 5.50 per cent.</p>"))  # fmt: skip
+    assert o.repo == Decimal("0.055")
+
+
+def test_a_members_dissent_is_never_the_decision():
+    # the decision states no figure and a named member's vote comes first: unknown, never the dissent's 5.75 %
+    o = rbi.observe(_resolution("<p>The MPC decided to reduce the policy repo rate by 25 bps.</p><p>Prof. F voted to "
+                                "keep the policy repo rate unchanged at 5.75 per cent, while the others voted to "
+                                "reduce the policy repo rate by 25 bps to 5.50 per cent.</p>"))  # fmt: skip
+    assert o.repo is None
+
+
+def test_a_unanimous_vote_states_the_decision():
+    o = rbi.observe(_resolution("<p>The MPC decided to increase the policy repo rate by 25 bps.</p><p>All members of "
+                                "the MPC voted unanimously to increase the policy repo rate under the liquidity "
+                                "adjustment facility (LAF) by 25 bps to 5.75 per cent.</p>"))  # fmt: skip
+    assert o.repo == Decimal("0.0575")
+
+
 def test_rates_that_break_the_corridor_are_unknown():
     # an SDF above the repo rate cannot be RBI's corridor (SDF < repo < MSF): which figure is wrong is unknown
     o = rbi.observe(_resolution("<p>The MPC decided to keep the policy repo rate unchanged at 5.50 per cent. The "
