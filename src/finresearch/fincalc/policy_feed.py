@@ -133,12 +133,14 @@ def _merge(observations: tuple[Observation, ...], table: tuple[P.PolicyRate, ...
 
 
 def schedule(observed: Observed) -> tuple[list[date], date]:
-    """The scheduled MPC decision days after the table's review, and the day through which that list is complete:
-    the event calendar's when it covers the table's next meeting (P.NEXT_MPC), else that meeting alone."""
-    cal = sorted({d for d in observed.scheduled if d > P.covered_through()})
+    """The scheduled MPC decision days after the typed table's coverage (P.covered_through()), and the day through
+    which that list is complete: the event calendar's when it covers the table's next meeting (P.NEXT_MPC), else that
+    meeting alone. A day the typed table covers is never waited for (stale() and dq.policy agree on it)."""
+    covered = P.covered_through()
+    cal = {d for d in observed.scheduled if d > covered}
     if observed.covered is not None and observed.covered >= P.NEXT_MPC:
-        return cal, observed.covered
-    return sorted({*cal, P.NEXT_MPC}), P.NEXT_MPC
+        return sorted(cal), max(observed.covered, covered)
+    return sorted(d for d in {*cal, P.NEXT_MPC} if d > covered), max(P.NEXT_MPC, covered)
 
 
 def stale(day: date, observed: Observed, *, before: bool = False) -> str | None:

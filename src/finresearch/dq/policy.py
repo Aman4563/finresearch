@@ -2,11 +2,12 @@
 `policy_rate`, run in every data-quality pass (dq.run). None is critical: no page is marked 'data unverified' by
 them, and the risk-free answer carries its own "possibly stale" flag (fincalc.policy_feed.stale).
 
-* mpc_decision_read: a scheduled MPC decision day (the event calendar's rbi_mpc days after the typed table's review,
-  or the table's own next meeting while the calendar does not cover it: fincalc.policy_feed.schedule) more than
-  GRACE past with no decision read from the feed with its repo rate dated from that day to the next scheduled one:
-  warn, and answers from that day stay "possibly stale" until a decision is read. Unknown when every known meeting
-  was read but the known schedule itself ended more than GRACE ago.
+* mpc_decision_read: a scheduled MPC decision day (the event calendar's rbi_mpc days after the typed table's
+  coverage, or the table's own next meeting while the calendar does not cover it: fincalc.policy_feed.schedule) more
+  than GRACE past with no decision read from the feed with its repo rate from that day to GRACE after it: warn. That
+  is exactly when the answers' "possibly stale" flag (fincalc.policy_feed.stale) still marks the meeting's gap at the
+  end of the grace; a later or off-cycle decision does not stand for it. Unknown when every known meeting was read
+  but the known schedule itself ended more than GRACE ago.
 * table_agreement: an observation of a day the typed table covers (fincalc.policy_rates.covered_through(), normally
   REVIEWED) that contradicts it: warn; the table is kept.
 * feed_conflicts: another item giving other rates for a decision already read: warn; the first one seen is used.
@@ -29,10 +30,10 @@ GRACE = timedelta(days=2)  # the owner's rule (#492): a scheduled decision not r
 def _mpc(observed: F.Observed, merged: F.Merged, today: date) -> Check:
     days, through = F.schedule(observed)
     read = [r.effective for r in merged.rows if r.seen is not None]
-    # a meeting is read when a decision dated from its day to the next scheduled one was (one that moved a day or two
-    # later is still that meeting's); a later meeting's decision does not stand for it
-    late = [d for d, nxt in zip(days, [*days[1:], None], strict=True)
-            if today > d + GRACE and not any(d <= r and (nxt is None or r < nxt) for r in read)]  # fmt: skip
+    # exactly the gaps stale() flags at the end of the grace: no decision read from the meeting's day to GRACE after
+    # it (a meeting moved a day or two later is still read in time); a later meeting's decision, or an off-cycle one,
+    # does not stand for it, since the rates between are not known
+    late = [d for d in days if today > d + GRACE and not any(d <= r <= d + GRACE for r in read)]
     if late:
         blind = {o.decided: o for o in observed.observations if o.repo is None}
         parts = [f"{d:%d-%b-%Y}" + (f" (read from {blind[d].url}, seen {F.when(blind[d].seen)}, but no repo rate "
