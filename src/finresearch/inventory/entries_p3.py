@@ -24,6 +24,7 @@ from finresearch.portfolio import (
 from finresearch.refseries import tri
 from finresearch.riskbudget import specs as rbspecs
 from finresearch.skillmon import specs as skspecs
+from finresearch.skillmon import specs_v2 as skspecs_v2
 from finresearch.volrace import specs as vspecs
 from finresearch.vrp import specs as vrpspecs
 
@@ -132,9 +133,11 @@ STUDIES = (
     ModelEntry("skill_monitor", "Live forecast skill monitor", "rule", "B",
                "Calibration-drift and skill alarms for every forecast-ledger cell.",
                "Flags a model whose live forecasts drift; never promotes one.", "Monitoring only.",
-               ("forecast ledger",), ("skillmon/",), D22, "Simulated false-alarm rate (registered thresholds)",
-               evidence=f"{_X}/skill_monitoring/PREREG.md: registered; thresholds from synthetic simulation",
-               registrations=(skspecs.SPEC_VERSION,)),
+               ("forecast ledger", "stored F&O history", "VaR ledger", "IPO history"), ("skillmon/",),
+               date(2026, 10, 26), "Simulated false-alarm rate (registered thresholds)",
+               evidence=f"{_X}/skill_monitoring/PREREG.md and ADDENDUM.md (v2): registered; thresholds from "
+                        "synthetic simulation",
+               registrations=(skspecs.SPEC_VERSION, skspecs_v2.SPEC_VERSION)),
     ModelEntry("lab_overfit", "Strategy Lab overfitting checks (PBO by CSCV, Hansen SPA)", "rule", "B",
                "Probability of backtest overfitting and a data-snooping test over a user's Lab trials.",
                "Shown beside a Lab result.", "A screen, not a proof of edge.", ("Lab trial returns",),
