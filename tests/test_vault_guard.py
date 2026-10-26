@@ -26,7 +26,9 @@ def test_the_committed_pack_matches_its_files():
     for sid, st in registry.STUDIES.items():
         assert registry.study_hash(st, REPO_ROOT) == H[sid]
         assert all(r in registry.STUDIES for r in st.requires)
-    assert engine_pin.ENGINE_HASH is None  # pinned only after P2.7(a) and P1.3 merge (PREREG.md §2.7)
+    # Pinned on 26-Oct-2026 (PREREG.md §2.7). If this fails, backtest/*.py, fincalc/options.py or fincalc/charges.py
+    # changed: they are frozen for vault studies, so revert the change or register a new engine; never re-pin quietly.
+    assert registry.engine_hash() == engine_pin.ENGINE_HASH
 
 
 def test_unregistered_or_wrong_hash_is_refused():
@@ -141,6 +143,7 @@ def test_engine_pinned_studies_need_the_committed_pin(vault, monkeypatch):
     with guard.vault_read("vault_data_audit", H["vault_data_audit"], purpose="audit", vault_url=vault):
         pass
     sid = "library_v1_same_print"
+    monkeypatch.setattr(engine_pin, "ENGINE_HASH", None)  # the state before the 26-Oct-2026 pin
     with pytest.raises(VaultSealed, match="no pin is committed"):
         _open(sid, H[sid], purpose="t", vault_url=vault)
     monkeypatch.setattr(engine_pin, "ENGINE_HASH", "0" * 64)
