@@ -122,3 +122,37 @@ def report(s: Session, now: datetime) -> dict[str, Any]:
     """Every cell, read only (refused while the registration differs from its pinned hash)."""
     require_registered()
     return evaluate_all(cells.load(s), now)
+
+
+def _err(e: Exception) -> str:
+    return f"{type(e).__name__}: {e}"[:300]
+
+
+def report_v2(s: Session, now: datetime, *, panels: dict[str, Any] | None = None) -> dict[str, Any]:
+    """skill-monitor-v2's sections, read only: input drift (skillmon.drift; `panels` replaces its loader) and the VaR
+    models' Kupiec marks (skillmon.risk). Each section fails soft: an error reads unknown with its reason, never ok.
+    Refused while specs_v2.py differs from its pinned hash."""
+    import logging
+
+    from finresearch.skillmon import drift, risk, specs_v2
+
+    require_registered_v2()
+    out: dict[str, Any] = {
+        "version": specs_v2.SPEC_VERSION,
+        "registration_hash": prereg.V2_HASH,
+        "status": "done",
+    }
+    try:
+        out["drift"] = drift.report(panels)
+    except Exception as e:
+        logging.getLogger(__name__).warning("input drift failed", exc_info=True)
+        out["drift"] = {"status": "unknown", "error": _err(e), "groups": [], "alarms": 0}
+    try:
+        with s.begin_nested():  # a database error rolls back to here; the drift section is kept
+            out["risk"] = {"marks": risk.marks(s, to_ist(now).date())}
+    except Exception as e:
+        logging.getLogger(__name__).warning("risk trigger failed", exc_info=True)
+        out["risk"] = {"status": "unknown", "error": _err(e), "marks": {}}
+    marked = sum(m["status"] == "not for limits" for m in out["risk"]["marks"].values())
+    out["alarms"] = out["drift"].get("alarms", 0) + marked
+    return out

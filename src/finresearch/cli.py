@@ -1302,7 +1302,9 @@ def forecasts_skill(
 ) -> None:
     """The live skill monitor (#378) on read: per method x event kind x underlying, calibration-in-the-large and the
     promotion BSS CI against the benchmark; at >= 100 resolved independent events also Spiegelhalter, Murphy and the
-    Bernoulli CUSUM, with alarms. Read only; refuses if skillmon/specs.py changed after its registration."""
+    Bernoulli CUSUM, with alarms. Then skill-monitor-v2: input drift (PSI) of the direction model and the card against
+    their registered windows, and the VaR models' Kupiec mark. Read only; refuses if skillmon/specs.py or
+    specs_v2.py changed after its registration."""
     import json
 
     from rich.table import Table
@@ -1333,9 +1335,34 @@ def forecasts_skill(
                   sk.get("promotion", "—"), "; ".join(a["text"] for a in c["alarms"]) or "—")  # fmt: skip
     console.print(t)
     console.print(f"{rep['version']}: {rep['counts']}; {rep['alarms']} alarm(s)")
+    try:  # skill-monitor-v2: input drift and the VaR models' Kupiec mark (#378)
+        with session_scope() as s:
+            rep["v2"] = monitor.report_v2(s, now_ist())
+    except monitor.PreregistrationError as e:
+        console.print(str(e))
+        raise typer.Exit(1) from e
+    _print_skill_v2(rep["v2"])
     if json_out:
         json_out.write_text(json.dumps(rep, indent=1, default=str))
         console.print(f"report written to {json_out}")
+
+
+def _print_skill_v2(v2: dict) -> None:
+    from rich.table import Table
+
+    d, r = v2["drift"], v2["risk"]
+    if d.get("status") == "unknown":
+        console.print(f"input drift unknown: {d.get('error')}")
+    t = Table("inputs", "status", "act (PSI)", "watch", "too few values", "live to / why")
+    for g in d.get("groups") or []:
+        t.add_row(g["label"], g["status"], ", ".join(f"{a['input']} {a['psi']:.2f}" for a in g["act"]) or "—",
+                  str(len(g["watch"])), str(len(g["insufficient"])), g.get("live_to") or g.get("why") or "—")  # fmt: skip
+    console.print(t)
+    if r.get("status") == "unknown":
+        console.print(f"Kupiec trigger unknown: {r.get('error')}")
+    for key, m in (r.get("marks") or {}).items():
+        console.print(f"{key}: {m['status']} ({m['why']})")
+    console.print(f"{v2['version']}: {v2['alarms']} alarm(s)")
 
 
 portfolio_app = typer.Typer(
