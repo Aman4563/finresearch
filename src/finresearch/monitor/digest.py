@@ -422,8 +422,8 @@ def _headline(rules: list, changes: list, events: list, missed: list, today: dat
         parts.append(f"{risk_standing} risk alert{'s' if risk_standing != 1 else ''} still standing (limits, shocks, "
                      "gaps or short strikes)")  # fmt: skip
     if skill_alarms:
-        parts.append(f"{skill_alarms} forecast skill alarm{'s' if skill_alarms != 1 else ''} (calibration drift or "
-                     "skill below the benchmark)")  # fmt: skip
+        parts.append(f"{skill_alarms} forecast skill alarm{'s' if skill_alarms != 1 else ''} (calibration drift, "
+                     "skill below the benchmark, input drift or a VaR model not for limits)")  # fmt: skip
     if dq_failed:
         parts.append(f"{dq_failed} market dataset{'s' if dq_failed != 1 else ''} failed a data check (figures that "
                      "use them are unverified)")  # fmt: skip
