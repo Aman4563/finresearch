@@ -174,3 +174,20 @@ def test_an_off_cycle_decision_does_not_hide_a_missed_meeting(clean):
     with session_scope() as s:
         observed = policy_obs.observed(s)
     assert F.stale(date(2026, 12, 10), observed) and F.stale(date(2026, 12, 22), observed) is None
+
+
+def test_a_conflict_stored_against_any_earlier_item_is_reported(clean, monkeypatch):
+    # A states the repo rate only, B all three (agreeing), C another SDF than B: the store flags C against B, so the
+    # check and the listing report it, although C agrees with A, the item the rates are taken from
+    from finresearch.db import session_scope
+    from finresearch.signals import rates
+
+    _store(SEEN, obs(91004, DEC4, "0.0575"))
+    _store(datetime(2026, 12, 4, 16, 30, tzinfo=IST), obs(91012, DEC4, "0.0575", "0.055", "0.06"))
+    _store(datetime(2026, 12, 4, 21, 0, tzinfo=IST), obs(91014, DEC4, "0.0575", "0.0525", "0.06"))
+    status, value, note, _ = _checks(FIRST_WARN)["feed_conflicts"]
+    assert (status, value) == ("warn", 1) and URL.format(91014) in note and "5.25 %" in note
+    monkeypatch.setattr(rates, "OBSERVED", None)
+    with session_scope() as s:
+        listed = rates.policy_table(s)["conflicts"]
+    assert len(listed) == 1 and URL.format(91014) in listed[0]
