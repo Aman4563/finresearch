@@ -267,7 +267,5 @@ def option_checks(s: Session, day: date) -> list[Check]:
             fut[(sym, exp)] = float(settle)
         elif typ in RIGHTS and fh.market_settle(float(settle), None if close is None else float(close), n):
             opts[(sym, exp)].append(Opt(float(k), RIGHTS[typ], float(settle)))
-    chains = [
-        Chain(sym, exp, (exp - day).days, tuple(v), fut.get((sym, exp))) for (sym, exp), v in opts.items()
-    ]
+    chains = [Chain(sym, e, (e - day).days, tuple(v), fut.get((sym, e))) for (sym, e), v in opts.items()]
     return to_checks(screen(chains))
