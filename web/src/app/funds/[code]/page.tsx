@@ -13,7 +13,7 @@ import { Metric, type Period, PeriodChart, pctOf, toneOf } from "@/components/ma
 import { FundConsistencyCard } from "@/components/markets/signal-charts";
 import { SipCalculator } from "@/components/markets/sip";
 import { FundOverlapCard } from "@/components/portfolio/fund-overlap-card";
-import type { FundAnalytics, FundPeers } from "@/components/markets/types";
+import type { FactsheetFigures, FundAnalytics, FundPeers, RiskFreeSource } from "@/components/markets/types";
 import { SignalCard } from "@/components/signal";
 import { Button, Callout, Card, EmptyState, ErrorNote, Field, PageHeader, Segmented, Skeleton, Stat, cx, inputClass } from "@/components/ui";
 import { day, useApi } from "@/lib/api";
@@ -23,7 +23,7 @@ const PERIODS: Period[] = ["1M", "3M", "6M", "1Y", "3Y", "5Y"];
 export default function FundDetail() {
   const { code } = useParams<{ code: string }>();
   const router = useRouter();
-  // #366/#385: empty = the API's dated rate (FBIL's 3-month par yield on the last NAV's day, or a labelled fallback)
+  // #479: empty = each month's own rate (owner-entered, else the RBI repo-rate proxy); typed = one rate for the window
   const [rfDraft, setRfDraft] = useState("");
   const typedRf = rfDraft.trim() ? Math.max(0, Math.min(20, Number(rfDraft) || 0)) / 100 : null;
   const [period, setPeriod] = useState<Period>("3Y");
@@ -217,15 +217,27 @@ export default function FundDetail() {
                     sub={d.risk.drawdown_peak ? `${shortDate(d.risk.drawdown_peak)} → ${shortDate(d.risk.drawdown_trough!)}` : undefined}
                     help="The worst fall from a peak to a later low: what someone who bought at the top would have been down at the bottom." />
                   <Metric label="Sharpe ratio" value={d.risk.sharpe?.toFixed(2) ?? "—"} tone={toneOf(d.risk.sharpe)}
-                    help="Return above the risk-free rate per unit of volatility. Above 1 is good; below 0 means a risk-free deposit would have done better." />
+                    sub={d.risk_free?.method === "monthly" ? "each month's own rate" : undefined}
+                    help="Return above the risk-free rate per unit of volatility, each day measured against its own month's risk-free rate. Above 1 is good; below 0 means a risk-free deposit would have done better." />
                   <Metric label="Sortino ratio" value={d.risk.sortino?.toFixed(2) ?? "—"} tone={toneOf(d.risk.sortino)}
+                    sub={d.risk_free?.method === "monthly" ? "each month's own rate" : undefined}
                     help="Like Sharpe, but only counts downside swings as risk (upside volatility isn't punished)." />
+                  {d.risk.factsheet && (
+                    <>
+                      <Metric label="Sharpe (factsheet-style)" value={d.risk.factsheet.sharpe?.toFixed(2) ?? "—"} tone={toneOf(d.risk.factsheet.sharpe ?? null)}
+                        sub={d.risk.factsheet.rate != null ? `one rate: ${pctOf(d.risk.factsheet.rate)}` : "rate unknown"}
+                        help="How AMC factsheets compute it: one overnight rate on the last working day (here the RBI repo rate) applied to every month. It differs from the Sharpe above when rates moved during the window." />
+                      <Metric label="Sortino (factsheet-style)" value={d.risk.factsheet.sortino?.toFixed(2) ?? "—"} tone={toneOf(d.risk.factsheet.sortino ?? null)}
+                        sub={d.risk.factsheet.rate != null ? `one rate: ${pctOf(d.risk.factsheet.rate)}` : "rate unknown"}
+                        help="The Sortino ratio with the same single factsheet rate as its minimum acceptable return." />
+                    </>
+                  )}
                 </div>
-                <Field label="Risk-free rate for Sharpe / Sortino (% a year)" hint="Empty: FBIL's 3-month G-sec par yield for the last NAV's day. Or type your own, e.g. your FD rate.">
-                  <input className={cx(inputClass, "num w-32")} inputMode="decimal" value={rfDraft} placeholder={d.risk_free ? (d.risk_free.annual * 100).toFixed(2) : undefined}
+                <Field label="Risk-free rate for Sharpe / Sortino (% a year)" hint="Empty: each month's own rate (the month's average 91-day rate: T-bill yields you entered, else the RBI repo rate). Or type one rate for the whole window, e.g. your FD rate.">
+                  <input className={cx(inputClass, "num w-32")} inputMode="decimal" value={rfDraft} placeholder={d.risk_free?.annual != null ? (d.risk_free.annual * 100).toFixed(2) : undefined}
                     aria-label="Risk-free rate, % a year" onChange={(e) => setRfDraft(e.target.value.replace(/[^0-9.]/g, ""))} />
                 </Field>
-                {d.risk_free && <p className="mt-1 text-[11px] text-muted [overflow-wrap:anywhere]" data-testid="fund-risk-free">Using {pctOf(d.risk_free.annual)} a year: {d.risk_free.source}{d.risk_free.fallback ? ` — ${d.risk_free.note}` : ""}</p>}
+                {d.risk_free && <RiskFreeLine rf={d.risk_free} factsheet={d.risk.factsheet} reason={d.risk.reason} />}
               </div>
               <div className="min-w-0">
                 <p className="mb-2 flex items-center gap-1.5 text-xs font-medium text-muted"><TrendingDown className="size-3.5" /> Drawdown: how far below its previous peak the NAV was</p>
@@ -255,6 +267,21 @@ function vsTone(x: number | null | undefined, bench: number | null) {
 }
 
 /** "▲ 0.9 pp vs category median 5.2% · risk-free 6.5%" */
+/** #479: which risk-free rate the ratios used, the monthly one with the days per tier, and the factsheet rate. */
+function RiskFreeLine({ rf, factsheet, reason }: { rf: RiskFreeSource; factsheet?: FactsheetFigures; reason?: string }) {
+  const tiers = Object.entries(rf.tiers ?? {}).map(([t, n]) => `${t === "owner" ? "your entered rates" : "RBI repo-rate proxy"} ${n} days`).join(", ");
+  return (
+    <div className="mt-1 space-y-0.5 text-[11px] text-muted [overflow-wrap:anywhere]" data-testid="fund-risk-free">
+      {rf.method === "monthly" ? (
+        <p>Risk-free: each month&apos;s own rate{rf.annual != null ? `, ${pctOf(rf.annual)} a year on average over the window` : ""}{tiers ? ` (${tiers})` : ""}.{reason ? ` ${reason}.` : ""}</p>
+      ) : (
+        <p>Using {pctOf(rf.annual ?? null)} a year for every day: {rf.source}.</p>
+      )}
+      {factsheet && <p>Factsheet-style: {factsheet.rate != null ? `${pctOf(factsheet.rate)} — ${factsheet.source}` : factsheet.note ?? "rate unknown"}.</p>}
+    </div>
+  );
+}
+
 function vsHint(x: number, median: number | null, rf: number | null) {
   const pp = (v: number) => `${x >= v ? "▲" : "▼"} ${Math.abs((x - v) * 100).toFixed(1)} pp`;
   return median != null

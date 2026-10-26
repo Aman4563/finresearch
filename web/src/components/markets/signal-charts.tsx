@@ -98,6 +98,9 @@ export function BondLadderCard({ isin, query }: { isin: string; query: Record<st
     return typeof v === "number" ? [{ label: r.label, y: v, color: r.color }] : [];
   });
   const spread = byName.get("Spread over G-sec (after tax and loss)");
+  // #479: no G-sec curve source while FBIL is paused (#476): the G-sec bars are unknown, never a made-up curve
+  const gsec = byName.get("G-sec par yield");
+  const gsecUnknown = gsec != null && typeof gsec.value !== "number";
   return (
     <Card title="Yield ladder" icon={<Layers className="size-4" />}
       subtitle="Every rate as an effective yearly yield, from the risk-free options to what the bond keeps after tax and expected default losses"
@@ -116,6 +119,8 @@ export function BondLadderCard({ isin, query }: { isin: string; query: Record<st
           <p className="mt-2 text-xs text-muted">
             {spread && typeof spread.value === "number" ? (
               <>After tax and expected loss the bond earns <span className={spread.value >= 0 ? "num font-semibold text-gain" : "num font-semibold text-loss"}>{spread.value >= 0 ? "+" : ""}{spread.value.toFixed(2)} pp</span> over the matching G-sec.</>
+            ) : gsecUnknown ? (
+              <span data-testid="bond-gsec-unknown">{gsec.explanation} The bond&apos;s own yields and the FD are shown; the G-sec bars and the spread over the G-sec are not.</span>
             ) : (
               <>No rating to price the default risk, so the last bar is missing.</>
             )}

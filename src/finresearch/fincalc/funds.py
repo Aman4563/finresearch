@@ -191,6 +191,39 @@ def sortino_ratio(navs: Series, risk_free_annual: Num, periods_per_year: int = 2
         return (mean - rf) * periods_per_year / (dd * Decimal(periods_per_year).sqrt())
 
 
+def _excess(navs: Series, rf: Sequence[Num]) -> list[Decimal]:
+    r = _period_returns(navs)
+    if len(rf) != len(r):
+        raise ValueError(f"need one risk-free return per period: {len(r)} periods, {len(rf)} rates")
+    return [x - to_decimal(f) for x, f in zip(r, rf, strict=True)]
+
+
+def sharpe_ratio_excess(navs: Series, rf: Sequence[Num], periods_per_year: int = 252) -> Decimal:
+    """Sharpe (1994, https://web.stanford.edu/~wfsharpe/art/sr/sr.htm) on excess returns: each period's NAV return
+    less that period's own risk-free return `rf[i]` (a return over the same period, not an annual rate), mean over
+    sample standard deviation, times sqrt(periods_per_year). With a constant rf/P it equals sharpe_ratio."""
+    e = _excess(navs, rf)
+    with localcontext() as ctx:
+        ctx.prec = 28
+        mean = sum(e, Decimal(0)) / len(e)
+        sd = (sum(((x - mean) ** 2 for x in e), Decimal(0)) / (len(e) - 1)).sqrt()
+        if sd == 0:
+            raise ValueError("volatility is zero")
+        return mean / sd * Decimal(periods_per_year).sqrt()
+
+
+def sortino_ratio_excess(navs: Series, mar: Sequence[Num], periods_per_year: int = 252) -> Decimal:
+    """Sortino with a minimum acceptable return per period (`mar[i]`, a return over that period): mean(r - MAR) x P
+    over the downside deviation sqrt(sum(min(0, r - MAR)^2) / N) x sqrt(P), over all N periods (as sortino_ratio)."""
+    e = _excess(navs, mar)
+    with localcontext() as ctx:
+        ctx.prec = 28
+        dd = (sum((min(Decimal(0), x) ** 2 for x in e), Decimal(0)) / len(e)).sqrt()
+        if dd == 0:
+            raise ValueError("no downside periods")
+        return sum(e, Decimal(0)) / len(e) * periods_per_year / (dd * Decimal(periods_per_year).sqrt())
+
+
 def expense_drag(amount: Num, years: Num, gross_return: Num, ter_high: Num, ter_low: Num) -> Decimal:
     """Rupee difference after `years` between paying `ter_low` and `ter_high` on the same gross return (the cost of
     a regular plan's commission, for example)."""

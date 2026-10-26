@@ -1,5 +1,6 @@
-"""Fund and bond signals (docs/dev/RESEARCH_ROADMAP.md §D.3, §D.4): golden values for every formula, the FBIL and
-AMFI TER adapters on recorded (trimmed) files, and both providers end to end on fixtures. Nothing touches the network."""
+"""Fund and bond signals (docs/dev/RESEARCH_ROADMAP.md §D.3, §D.4): golden values for every formula, the FBIL adapter
+on a synthetic workbook in FBIL's layout (#479) and the AMFI TER adapter on a recorded (trimmed) file, and both
+providers end to end on fixtures. Nothing touches the network."""
 
 from __future__ import annotations
 
@@ -8,6 +9,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
 
+import fbil_synth
 import httpx
 import pytest
 import respx
@@ -16,7 +18,7 @@ from fastapi.testclient import TestClient
 from finresearch.adapters import amfi as amfi_mod
 from finresearch.adapters import fbil as fbil_mod
 from finresearch.adapters.amfi import AmfiClient, SchemeNav, parse_ter_xlsx, ter_key
-from finresearch.adapters.fbil import FALLBACK_CURVE, FbilClient, ParCurve, ParPoint, parse_par_yield_xlsx
+from finresearch.adapters.fbil import FbilClient, ParCurve, ParPoint, parse_par_yield_xlsx
 from finresearch.adapters.http import PoliteClient
 from finresearch.adapters.nse_bonds import ListedBond, parse_live_bonds
 from finresearch.fincalc import bonds as b
@@ -128,17 +130,15 @@ def test_holding_period_yield_at_an_unchanged_yield_is_the_coupon():
 
 # --------------------------------------------------------------------------- adapters on recorded files
 def test_fbil_par_yield_sheet_parses_and_interpolates():
-    curve = parse_par_yield_xlsx((FIX / "fbil" / "gsec_20260923_trimmed.xlsx").read_bytes())
-    assert curve.as_of == date(2026, 9, 23) and len(curve.points) == 12
-    assert curve.points[4] == ParPoint(Decimal(3), Decimal("0.0666"), Decimal("0.0677"))
-    assert curve.par_yield(3.125) == Decimal("0.06680000")  # halfway between 6.66 % (3y) and 6.70 % (3.25y)
-    assert curve.par_yield(0.1) == Decimal("0.0534") and curve.par_yield(60) == Decimal(
-        "0.0764"
-    )  # flat beyond
-    # FBIL's own annualised column is the half-yearly rate made effective annual
+    # a synthetic workbook in FBIL's layout with made-up yields (tests/fbil_synth.py, #479)
+    curve = parse_par_yield_xlsx(fbil_synth.gsec_xlsx())
+    assert curve.as_of == fbil_synth.AS_OF and len(curve.points) == 12
+    assert curve.points[4] == ParPoint(Decimal(3), Decimal("0.058"), Decimal("0.0588"))
+    assert curve.par_yield(3.125) == Decimal("0.05900000")  # halfway between 5.80 % (3y) and 6.00 % (3.25y)
+    assert curve.par_yield(0.1) == Decimal("0.05") and curve.par_yield(60) == Decimal("0.072")  # flat beyond
+    # the annualised column is the half-yearly rate made effective annual
     for p in curve.points:
         assert float(b.effective_annual(p.semi_annual, 2)) == pytest.approx(float(p.annualised), abs=6e-4)
-    assert FALLBACK_CURVE.fallback and FALLBACK_CURVE.par_yield(3) == Decimal("0.0666")
 
 
 @respx.mock
@@ -153,7 +153,7 @@ async def test_fbil_client_reads_the_latest_published_curve(tmp_path, monkeypatc
     respx.get(fbil_mod.LATEST_URL).mock(return_value=httpx.Response(200, json=[
         {"processRunDate": "2026-09-22", "archive": "x"}, {"processRunDate": "2026-09-23", "archive": "x"}]))  # fmt: skip
     dl = respx.get(fbil_mod.DOWNLOAD_URL).mock(
-        return_value=httpx.Response(200, content=(FIX / "fbil" / "gsec_20260923_trimmed.xlsx").read_bytes())
+        return_value=httpx.Response(200, content=fbil_synth.gsec_xlsx(date(2026, 9, 23)))
     )
     async with FbilClient(PoliteClient(cache_dir=tmp_path)) as fb:
         curve = await fb.latest_par_curve()
@@ -532,8 +532,8 @@ def test_bond_provider_on_the_recorded_nse_list(monkeypatch):
     async def bonds():
         return listed
 
-    async def curve():
-        return parse_par_yield_xlsx((FIX / "fbil" / "gsec_20260923_trimmed.xlsx").read_bytes())
+    async def curve():  # a G-sec curve source passed in (none is live while FBIL is paused, #476)
+        return parse_par_yield_xlsx(fbil_synth.gsec_xlsx(date(2026, 9, 23)))
 
     async def verified(isin):
         return None
@@ -590,7 +590,7 @@ def test_bond_verified_frequency_is_used_and_an_assumed_one_lowers_confidence():
     signal must use that, not yearly."""
     listed = parse_live_bonds(json.loads((FIX / "nse" / "bonds_live_trimmed.json").read_text()))
     ltf = max((x for x in listed if x.isin == "INE027E07998"), key=lambda x: x.traded_value or 0)
-    curve = parse_par_yield_xlsx((FIX / "fbil" / "gsec_20260923_trimmed.xlsx").read_bytes())
+    curve = parse_par_yield_xlsx(fbil_synth.gsec_xlsx(date(2026, 9, 23)))
     p, day = Profile(tax_slab_pct=30), date(2026, 9, 28)
     monthly = bond_sig.assess(
         ltf, curve, p, {}, day, (12, {"kind": "verified", "claim_id": 2180, "run_id": 12})
@@ -623,7 +623,7 @@ def test_bond_provider_asks_for_the_verified_frequency_only_without_ctx_freq(mon
         return listed
 
     async def curve():
-        return FALLBACK_CURVE
+        return FLAT_7
 
     async def verified(isin):
         asked.append(isin)
@@ -640,3 +640,42 @@ def test_bond_provider_asks_for_the_verified_frequency_only_without_ctx_freq(mon
     assert asked == ["INE027E07998"] and factor(s, "Coupon frequency").value == "monthly (verified)"
     asyncio.run(bond_sig.bond_signal("INE027E07998", {"freq": "1"}))
     assert asked == ["INE027E07998"]
+
+
+# --------------------------------------------------------------------------- no G-sec curve source (#479)
+GSEC_UNKNOWN = "unknown: no G-sec curve source (FBIL paused, #476)"
+
+
+def test_bond_without_a_gsec_curve_is_unknown_never_a_made_up_curve():
+    s = bond_sig.assess(par_bond(), None, Profile(tax_slab_pct=30), {"freq": "1"}, TODAY, None)
+    assert s.action == "NO_SIGNAL" and s.probability is None and GSEC_UNKNOWN in s.caveats[0]
+    for name in ("G-sec par yield", "G-sec after tax"):
+        assert factor(s, name).value is None and GSEC_UNKNOWN in factor(s, name).explanation
+    # the bond's own yields and the FD comparison are still shown, computed as before
+    assert factor(s, "Pre-tax YTM").value == pytest.approx(9.0, abs=1e-3)
+    fd_post = ((1 + 0.063 * 0.688 / 4) ** 4 - 1) * 100  # SBI 3-5 years 6.30 %, quarterly, after 31.2 % tax
+    assert factor(s, "FD after tax").value == pytest.approx(fd_post, abs=1e-3)
+    assert not any(f.name == "Spread over G-sec (after tax and loss)" for f in s.factors)
+
+
+async def test_the_live_bond_provider_has_no_gsec_curve_source(monkeypatch):
+    listed = parse_live_bonds(json.loads((FIX / "nse" / "bonds_live_trimmed.json").read_text()))
+
+    async def bonds():
+        return listed
+
+    async def verified(isin):
+        return None
+
+    async def profile():
+        return Profile(tax_slab_pct=30)
+
+    def no_fbil(*a, **k):
+        raise AssertionError("the bond signal must not ask FBIL")
+
+    monkeypatch.setattr(fbil_mod, "FbilClient", no_fbil)
+    monkeypatch.setattr(bond_sig, "SOURCES", bond_sig.BondSources(bonds, None, verified, profile,
+                                                                  lambda: date(2026, 9, 28)))  # fmt: skip
+    s = await bond_sig.bond_signal("INE413U07475", {"freq": "1"})
+    assert s.action == "NO_SIGNAL" and GSEC_UNKNOWN in s.caveats[0]
+    assert not any("fbil" in x for x in s.sources)

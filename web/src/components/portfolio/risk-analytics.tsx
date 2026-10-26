@@ -30,11 +30,18 @@ type Scenario = {
 };
 type Risk = AnalyticsBase & {
   value?: number;
-  risk_free: { rate: number; label: string; as_of: string | null; source: string | null; fallback: boolean; user_set: boolean };
+  // #479: "monthly" = each day against its own month's rate (owner-entered, else the RBI repo-rate proxy); `rate` is the
+  // window's risk-free return a year (null when unknown); "constant" = your own figure for every day
+  risk_free: {
+    rate: number | null; label: string; as_of: string | null; source: string | null; fallback: boolean; user_set: boolean;
+    method?: "monthly" | "constant"; detail?: { tiers?: Record<string, number> } | null;
+    factsheet?: { rate: number | null; as_of: string | null; source: string | null; label: string; note?: string | null } | null;
+  };
   realised: null | (Relative & {
     rolling?: Rolling; drawdowns?: Episode[]; var_backtest?: VarBacktest; var_ledger?: VarBacktest;
     window: { start: string; end: string; returns: number };
     volatility: Metric; beta: Metric; tracking_error: Metric; sharpe: Metric; sortino: Metric;
+    sharpe_factsheet?: Metric; sortino_factsheet?: Metric;
     var_1d: Metric; cvar_1d: Metric; var_21d: Metric; cvar_21d: Metric;
     max_drawdown: Metric & { peak: string; trough: string; recovered: string | null; days_to_recover: number | null; underwater_days: number; current: number };
   });
@@ -121,10 +128,17 @@ export function RiskAnalytics({ refresh }: { refresh: number }) {
           <MetricRow label="Volatility (annualised)" m={r.volatility} format={(v) => pct(v)} help="How much daily returns swing, scaled to a year. About two years in three land within ± this much of the average (if returns were normal, which they are not quite)." />
           <MetricRow label="Beta vs NIFTYBEES" m={r.beta} format={(v) => v.toFixed(2)} help="How much your portfolio moved per 1 % move of the Nifty 50 ETF: 1.2 means about 1.2 % on average. Needs 120 trading days." />
           <MetricRow label="Tracking error" m={r.tracking_error} format={(v) => pct(v)} help="How far your returns wander from the index's, annualised. Low: index-like; high: very different from the index." />
-          <MetricRow label="Sharpe ratio" m={r.sharpe} format={(v) => v.toFixed(2)} help="Return above the risk-free rate per unit of volatility. Needs about a year of data." />
+          <MetricRow label="Sharpe ratio" m={r.sharpe} format={(v) => v.toFixed(2)} help="Return above the risk-free rate per unit of volatility, each day against its own month's risk-free rate. Needs about a year of data." />
           <MetricRow label="Sortino ratio" m={r.sortino} format={(v) => v.toFixed(2)} help="Like Sharpe, but only falls below the risk-free rate count as risk." />
+          {r.sharpe_factsheet && <MetricRow label="Sharpe (factsheet-style)" m={r.sharpe_factsheet} format={(v) => v.toFixed(2)} help="How AMC factsheets compute it: one overnight rate on the last day (here the RBI repo rate) for every day. It differs from the Sharpe above when rates moved during the window." />}
+          {r.sortino_factsheet && <MetricRow label="Sortino (factsheet-style)" m={r.sortino_factsheet} format={(v) => v.toFixed(2)} help="The Sortino ratio against the same single factsheet rate." />}
           <div className="mt-3 flex flex-wrap items-end gap-2 border-t border-border pt-3">
-            <p className="w-full text-[11px] text-muted">Risk-free rate: {(data.risk_free.rate * 100).toFixed(2)} % a year — {data.risk_free.label}{data.risk_free.as_of ? `, as of ${day(data.risk_free.as_of)}` : ""}{data.risk_free.fallback ? " (FBIL unreachable: stored curve)" : ""}.</p>
+            <p className="w-full text-[11px] text-muted" data-testid="portfolio-risk-free">
+              {data.risk_free.method === "monthly"
+                ? <>Risk-free: each month&apos;s own rate{data.risk_free.rate != null ? `, ${(data.risk_free.rate * 100).toFixed(2)} % a year on average over the window` : " (unknown for part of the window)"} — {data.risk_free.label}.</>
+                : <>Risk-free rate: {data.risk_free.rate != null ? `${(data.risk_free.rate * 100).toFixed(2)} % a year` : "unknown"} — {data.risk_free.label}{data.risk_free.as_of ? `, as of ${day(data.risk_free.as_of)}` : ""}.</>}
+              {data.risk_free.factsheet && <> Factsheet-style: {data.risk_free.factsheet.rate != null ? `${(data.risk_free.factsheet.rate * 100).toFixed(2)} % (${data.risk_free.factsheet.source})` : data.risk_free.factsheet.note ?? "unknown"}.</>}
+            </p>
             <Field label="Use your own rate (% a year)"><input inputMode="decimal" value={rfInput} onChange={(e) => setRfInput(e.target.value)} placeholder="e.g. 6.5" className={cx(inputClass, "w-28 num")} /></Field>
             <Button variant="secondary" disabled={!rfInput || Number.isNaN(Number(rfInput))} onClick={() => setRf(rfInput)}>Apply</Button>
             {rf && <Button variant="ghost" onClick={() => { setRf(null); setRfInput(""); }}>Reset</Button>}

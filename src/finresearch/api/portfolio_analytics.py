@@ -11,7 +11,8 @@ performance payload reconciles the "as shown" snapshots against this build.
 Privacy: personal data stays in the local database; nothing here calls an LLM.
 
 Test seams: `app.state.markets` (a `MarketSources` with fake NSE/AMFI) and `app.state.analytics_sources` (an
-`AnalyticsSources` with a fake TER table and risk-free curve).
+`AnalyticsSources` with a fake TER table). The risk-free rate is signals.rates' (#479: owner-entered else the RBI
+repo-rate proxy, no network); tests set `rates.OWNER`.
 """
 
 from __future__ import annotations
@@ -37,7 +38,6 @@ SETTINGS_KEY = "analytics"
 @dataclass
 class AnalyticsSources:
     ter: Callable[[date], Awaitable[dict]] | None = None  # month -> {ter_key(name): SchemeTer}
-    curve: Callable[[], Awaitable[Any]] | None = None  # () -> fbil.ParCurve
     index_series: Callable[[str, date, date], dict] | None = None  # (symbol, start, end) -> closes (#345)
 
 
@@ -129,24 +129,25 @@ def add_portfolio_analytics_routes(app: FastAPI, *, scheme_rows: Callable[[], Aw
 
     app.state.portfolio_history = history  # shared with the behaviour report (api/journal.py)
 
-    async def _risk_free(rf: float | None):
-        from finresearch.portfolio.analytics import RiskFree, risk_free_from_curve
+    def _risk_free(rf: float | None, hist: Any):
+        """The user's figure (one annual rate), else each month's own rate over the realised window and the
+        factsheet-style rate on its last day (#479: signals.rates; no FBIL, no network)."""
+        from finresearch.portfolio.analytics import RiskFree, realised_window
+        from finresearch.signals import rates
 
         if rf is not None:
             return RiskFree(rf / 100, f"your figure: {rf:g} % a year", None, None, user_set=True)
-
-        async def make():
-            if seams().curve is not None:
-                return await seams().curve()
-            from finresearch.adapters.fbil import FALLBACK_CURVE, FbilClient
-
-            try:
-                async with FbilClient() as c:
-                    return await c.latest_par_curve()
-            except Exception:
-                return FALLBACK_CURVE
-
-        return risk_free_from_curve(await cache.get(("fbil",), 12 * 3600, make))
+        win = realised_window(hist)
+        if win is None:
+            return RiskFree(None, "not needed: no history yet", None, None)
+        start, end = win
+        months, why = rates.months_for(start, end)
+        period = rates.accrual_fn(months)
+        acc = period(start, end)
+        annual = None if acc is None or end <= start else (1 + acc) ** (365 / (end - start).days) - 1
+        return RiskFree(annual, f"{rates.SOURCE_LABEL}: {rates.MONTHLY_LABEL}", end.isoformat(),
+                        "signals.rates (#479)", period=period, factsheet=rates.factsheet(end),
+                        detail=rates.monthly_json(months, why))  # fmt: skip
 
     async def _sectors(hist) -> dict[str, str]:
         """Sector per stock position: the user's own label on the holding, else NSE's industry from the quote (cached
@@ -211,8 +212,9 @@ def add_portfolio_analytics_routes(app: FastAPI, *, scheme_rows: Callable[[], Aw
         ),
     ) -> dict[str, Any]:
         """Realised volatility, beta and tracking error vs NIFTYBEES, max drawdown and recovery, historical VaR/CVaR,
-        Sharpe/Sortino (risk-free: FBIL 3-month par yield unless `rf` is given), today's mix over the last year with
-        each holding's risk contribution, and stress scenarios."""
+        Sharpe/Sortino (risk-free, #479: each day's own month's average 91-day rate, owner-entered else the RBI
+        repo-rate proxy, with the factsheet-style pair beside it; `rf` is one annual rate you give), today's mix over
+        the last year with each holding's risk contribution, and stress scenarios."""
         from finresearch.portfolio.analytics import hypothetical_fall, stress_scenarios
         from finresearch.portfolio.analytics import risk as risk_payload
         from finresearch.portfolio.history import Fetcher
@@ -222,7 +224,7 @@ def add_portfolio_analytics_routes(app: FastAPI, *, scheme_rows: Callable[[], Aw
             from finresearch.portfolio.analytics import RiskFree
 
             return risk_payload(hist, RiskFree(0.0, "not needed: no history yet", None, None), {}, [])
-        rfree = await _risk_free(rf)
+        rfree = _risk_free(rf, hist)
         sectors = await _sectors(hist) if hist.ok else {}
 
         async def make_stress():

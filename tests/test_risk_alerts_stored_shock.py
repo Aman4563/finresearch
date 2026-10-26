@@ -21,6 +21,8 @@ from finresearch.fincalc.tradeplan import SHOCK_MOVES
 
 DAY, EXP = date(2026, 10, 21), date(2026, 10, 27)
 T6 = 6 / 365  # 21-Oct 15:30 to 27-Oct 15:30 IST
+# #479: the RBI repo-rate proxy at the expiry's own 6 days, 5.50 % simple (since 07-Oct-2026) -> continuous
+R6 = math.log(1 + 0.055 * 6 / 365) * 365 / 6
 
 
 @pytest.fixture
@@ -71,12 +73,14 @@ def _shock():
 def test_the_shock_reprices_tonights_marks_on_the_same_expiry_future(clean) -> None:
     _add(_bhav("XX", 0, 24050.0), _mark(1, 23800, -75, 60.0))
     got, notes = _shock()
-    # #366/#385: no stored FBIL curve, so the labelled 6.5 % fallback, said in the notes
-    assert any(n.startswith("rate: fallback 6.5 %, no curve") for n in notes)
+    # #479: the RBI repo-rate proxy at the expiry's own 6 days (5.50 % since 07-Oct-2026), named in the notes
+    assert any(
+        n.startswith("rate: RBI repo-rate proxy: repo 5.50 % in force from 07-Oct-2026") for n in notes
+    )
     # #480: rolled at the future's own carry against tonight's close (24,000), named in the notes
     b = math.log(24050 / 24000) / T6
     assert any(n.startswith("carry: NIFTY 27-Oct-2026: 12.66% a year") for n in notes)
-    m = bs.Market(session_clock(DAY), 0.065, {("NIFTY", EXP): 24050.0}, carries={("NIFTY", EXP): bs.Carry(b)})
+    m = bs.Market(session_clock(DAY), R6, {("NIFTY", EXP): 24050.0}, carries={("NIFTY", EXP): bs.Carry(b)})
     leg = bs.BookLeg("NIFTY", EXP, "put", 23800.0, -75, 60.0, "settle")
     want, _ = bs.shock_pnls([leg], m, bs.horizon_clock(session_clock(DAY), 1, set()))
     assert got == pytest.approx(want) and set(got) == set(SHOCK_MOVES)
@@ -166,29 +170,27 @@ def _bhav_sym(sym: str, settle: float):
                    settle=D(str(settle)), close=D(str(settle)))  # fmt: skip
 
 
-def test_the_shock_uses_the_stored_fbil_curve_published_before_the_day(clean) -> None:
-    """#366/#385: the previous day's stored curve (FBIL publishes in the evening; the clock is 15:30 IST), 6.00 %
-    half-yearly at 0.25 years -> r = 2 ln(1.03); the day's own curve (7 %) is not used."""
+def test_the_shock_uses_the_rate_known_before_the_day_never_stored_fbil_rows(clean, monkeypatch) -> None:
+    """#479 (changed on purpose: the stored FBIL curve was read before; FBIL is paused, #476): the owner's 91-day
+    entry of 20-Oct (5.80 %, no repo change since) is the expiry's rate, held flat to its 6 days,
+    r = ln(1 + 0.058 x 6/365) x 365/6; the entry of the day itself (7.00 %) and stored FBIL rows are not used."""
     from finresearch.db import session_scope
     from finresearch.db.models import RateCurve
+    from finresearch.refseries import owner_rates
+    from finresearch.signals import rates
 
+    monkeypatch.setattr(rates, "OWNER", None)  # read the owner_rate table
     with session_scope() as s:
-        s.execute(text("TRUNCATE rate_curve"))
-        s.add(
-            RateCurve(
-                series="gsec_par",
-                day=date(2026, 10, 20),
-                tenor="0.25Y",
-                tenor_years=D("0.25"),
-                rate=D("0.06"),
-            )
-        )
-        s.add(RateCurve(series="gsec_par", day=DAY, tenor="0.25Y", tenor_years=D("0.25"), rate=D("0.07")))
+        s.execute(text("TRUNCATE rate_curve, owner_rate"))
+        s.add(RateCurve(series="gsec_par", day=date(2026, 10, 20), tenor="0.25Y", tenor_years=D("0.25"),
+                        rate=D("0.06")))  # fmt: skip
+        owner_rates.add(s, date(2026, 10, 20), "91D", D("5.80"), "test entry", today=DAY)
+        owner_rates.add(s, DAY, "91D", D("7.00"), "test entry of the day", today=DAY)
     try:
         from finresearch.fnobook.scenarios import stored_book
 
         _add(_bhav("CE", 24000, 150.0), _bhav("PE", 24000, 120.0), _mark(1, 23800, -75, 60.0))
-        r = 2 * math.log(1.03)
+        r = math.log(1 + 0.058 * 6 / 365) * 365 / 6
         with session_scope() as s:
             _, mk, notes = stored_book(s, DAY)
         # #480: it is the expiry's own rate, and it is what the single-strike parity forward is read at
@@ -196,7 +198,7 @@ def test_the_shock_uses_the_stored_fbil_curve_published_before_the_day(clean) ->
         assert mk.forwards[("NIFTY", EXP)] == pytest.approx(
             24000 + math.exp(r * T6) * (150.0 - 120.0), rel=1e-12
         )
-        assert any("curve of 2026-10-20" in n and n.startswith("rate: FBIL G-sec par yield") for n in notes)
+        assert any(n.startswith("rate: owner-entered rate: 91D for 20-Oct-2026") for n in notes)
         _add(_bhav("XX", 0, 24050.0))  # with the future the carry is known, so the shock is priced, at r
         got, notes = _shock()
         m = bs.Market(session_clock(DAY), r, {("NIFTY", EXP): 24050.0},
@@ -204,14 +206,14 @@ def test_the_shock_uses_the_stored_fbil_curve_published_before_the_day(clean) ->
         want, _ = bs.shock_pnls([bs.BookLeg("NIFTY", EXP, "put", 23800.0, -75, 60.0, "settle")], m,
                                 bs.horizon_clock(session_clock(DAY), 1, set()))  # fmt: skip
         assert got == pytest.approx(want, rel=1e-9)
-        assert any("curve of 2026-10-20" in n and n.startswith("rate: FBIL G-sec par yield") for n in notes)
+        assert any(n.startswith("rate: owner-entered rate: 91D for 20-Oct-2026") for n in notes)
     finally:
         with session_scope() as s:
-            s.execute(text("TRUNCATE rate_curve"))
+            s.execute(text("TRUNCATE rate_curve, owner_rate"))
 
 
 def test_each_expiry_is_discounted_at_its_own_tenors_rate_not_the_longest_legs(clean, monkeypatch) -> None:
-    """#480: signals.rates is asked once per expiry, at that expiry's own tenor and from the curve stored before the
+    """#480: signals.rates is asked once per expiry, at that expiry's own tenor and as known before the
     day; the old rule asked once, at the longest leg's tenor, and used that rate for every expiry."""
     from finresearch.db import session_scope
     from finresearch.fnobook.scenarios import stored_book
@@ -244,7 +246,8 @@ def test_a_known_shock_reading_names_the_carry_as_well_as_the_rate() -> None:
     """#480: the risk alert's shock detail says which rate discounted the book and which carry rolled each forward."""
     from finresearch.alerts import risk_readers as rr
 
-    notes = ["rate: fallback 6.5 %, no curve: test (the 27-Oct-2026 expiry)",
+    notes = ["rate: RBI repo-rate proxy: repo 5.50 % in force from 07-Oct-2026: 5.49% continuous (the 27-Oct-2026 "
+             "expiry)",
              "carry: NIFTY 27-Oct-2026: 12.66% a year (the same-expiry future's settle on 21-Oct-2026 against the "
              "underlying's close)", "an unrelated note"]  # fmt: skip
     rows = rr.book_readings({-0.03: -1500.0, 0.05: 900.0}, notes, 100_000.0, None, None, book_open=True)

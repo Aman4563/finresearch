@@ -25,6 +25,7 @@ from finresearch.adapters.nse_equity import (
 from finresearch.api.markets import MarketSources
 from finresearch.fincalc import bonds as b
 from finresearch.fincalc import funds
+from finresearch.fincalc.dates import add_years
 
 FIX = Path(__file__).parent / "fixtures"
 EQ = FIX / "nse" / "equity"
@@ -332,39 +333,78 @@ def test_fund_analytics_returns_rolling_and_risk(app_client):
     assert c.get("/api/funds/abc/analytics").status_code == 422
 
 
-def test_fund_analytics_defaults_to_fbils_dated_rate_and_names_it(app_client):
-    """#366/#385: with no `rf`, the risk-free rate is FBIL's 3-month G-sec par yield stored for the last NAV's day,
-    as an effective annual rate (1 + y/2)^2 - 1: 6.00 % half-yearly -> 6.09 % a year; a typed `rf` is labelled as
-    the viewer's; no curve is the labelled fallback 6.5 %."""
-    from datetime import timedelta
+# RBI's repo rate over the fund window, typed from RBI's releases (the facts fincalc.policy_rates holds), for an
+# independent computation of each month's own risk-free rate (#479)
+REPO_PATH = [(date(2020, 5, 22), 0.04), (date(2022, 5, 4), 0.044), (date(2022, 6, 8), 0.049), (date(2022, 8, 5), 0.054),
+             (date(2022, 9, 30), 0.059), (date(2022, 12, 7), 0.0625), (date(2023, 2, 8), 0.065),
+             (date(2025, 2, 7), 0.0625), (date(2025, 4, 9), 0.06), (date(2025, 6, 6), 0.055),
+             (date(2025, 12, 5), 0.0525)]  # fmt: skip
 
-    from sqlalchemy import text
 
-    from finresearch.db import session_scope
-    from finresearch.db.models import RateCurve
+def _repo(d: date) -> float:
+    return [r for e, r in REPO_PATH if e <= d][-1]
 
+
+def _monthly_rf(end: date):
+    """(d0, d1) -> prod over the days in (d0, d1] of (1 + y_m x 91/365)^(1/91) - 1, y_m the month's average repo
+    over its days up to `end` (the fund's last NAV)."""
+    import math
+    from functools import cache
+
+    @cache
+    def y(year: int, month: int) -> float:
+        days, d = [], date(year, month, 1)
+        while d.month == month and d <= end:
+            days.append(_repo(d))
+            d += timedelta(days=1)
+        return sum(days) / len(days)
+
+    def rf(d0: date, d1: date) -> float:
+        n, d = 0.0, d0 + timedelta(days=1)
+        while d <= d1:
+            n += math.log(1 + y(d.year, d.month) * 91 / 365) / 91
+            d += timedelta(days=1)
+        return math.exp(n) - 1
+
+    return rf
+
+
+def test_fund_analytics_subtracts_each_months_own_rate_and_shows_the_factsheet_figure(app_client):
+    """#479: with no `rf`, every daily return's risk-free return accrues at its month's average 91-day rate (the RBI
+    repo-rate proxy here); beside it, the factsheet-style figure uses the repo on the last NAV's day for every day. A
+    typed `rf` is one annual rate for the whole window, labelled as the viewer's."""
     c, _, me, _ = app_client
-    with session_scope() as s:
-        s.execute(text("TRUNCATE rate_curve"))
     r = c.get(f"/api/funds/{me.code}/analytics", params={"years": 5}).json()
-    assert r["risk"]["risk_free_annual"] == 0.065 and r["risk_free"]["source"] == "fallback 6.5 %, no curve"
-    with session_scope() as s:
-        s.add(RateCurve(series="gsec_par", day=me.day - timedelta(days=1), tenor="0.25Y",
-                        tenor_years=Decimal("0.25"), rate=Decimal("0.06")))  # fmt: skip
-    try:
-        r = c.get(f"/api/funds/{me.code}/analytics", params={"years": 5}).json()
-        typed = c.get(f"/api/funds/{me.code}/analytics", params={"years": 5, "rf": "0.07"}).json()
-    finally:
-        with session_scope() as s:
-            s.execute(text("TRUNCATE rate_curve"))
-    want = 1.03**2 - 1
-    assert r["risk"]["risk_free_annual"] == pytest.approx(want, abs=1e-6)
-    assert (
-        r["risk_free"]["as_of"] == (me.day - timedelta(days=1)).isoformat()
-        and r["risk_free"]["fallback"] is False
-    )
-    assert "FBIL G-sec par yield, 0.25-year point" in r["risk_free"]["source"]
+    window = [(date.fromisoformat(x["date"]), Decimal(str(x["nav"]))) for x in r["navs"]]
+    rf = _monthly_rf(window[-1][0])
+    rfs = [rf(a[0], b[0]) for a, b in pairwise(window)]
+    assert r["risk"]["sharpe"] == round(float(funds.sharpe_ratio_excess(window, rfs, 252)), 4)
+    assert r["risk"]["sortino"] == round(float(funds.sortino_ratio_excess(window, rfs, 252)), 4)
+    fs = r["risk"]["factsheet"]
+    assert fs["rate"] == 0.0525 and fs["as_of"] == me.day.isoformat() and "factsheet" in fs["label"]
+    assert fs["sharpe"] == round(float(funds.sharpe_ratio(window, Decimal("0.0525"))), 4)
+    assert fs["sortino"] == round(float(funds.sortino_ratio(window, Decimal("0.0525"))), 4)
+    assert fs["sharpe"] != r["risk"]["sharpe"]
+    info = r["risk_free"]
+    assert info["method"] == "monthly" and set(info["tiers"]) == {"proxy"} and info["fallback"] is False
+    # what was subtracted on average: the window's risk-free return, annualised
+    days = (window[-1][0] - window[0][0]).days
+    assert r["risk"]["risk_free_annual"] == pytest.approx((1 + rf(window[0][0], window[-1][0])) ** (365 / days) - 1,
+                                                          abs=1e-6)  # fmt: skip
+    # each rolling 1-year window is compared with its own risk-free return
+    roll = r["rolling"]["1y"]
+    navd = dict(window)
+    beat = 0
+    for x in roll["series"]:
+        d0 = date.fromisoformat(x["date"])
+        d1 = next(d for d in navd if d >= add_years(d0, 1))
+        beat += x["return"] > (1 + rf(d0, d1)) ** (365 / (d1 - d0).days) - 1
+    assert roll["share_above_rf"] == round(beat / roll["count"], 4)
+
+    typed = c.get(f"/api/funds/{me.code}/analytics", params={"years": 5, "rf": "0.07"}).json()
     assert typed["risk"]["risk_free_annual"] == 0.07 and typed["risk_free"]["source"] == "your input"
+    assert typed["risk_free"]["method"] == "constant"
+    assert typed["risk"]["sharpe"] == round(float(funds.sharpe_ratio(window, Decimal("0.07"))), 4)
 
 
 def test_fund_sip_matches_fincalc_and_compares_lump_sum(app_client):

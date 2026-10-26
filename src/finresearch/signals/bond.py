@@ -10,9 +10,12 @@ suffered, to beat the risk-free alternatives an Indian retail investor actually 
   than 12 months, else at the slab (§D.7). A tax-free bond (ctx ``tax_free=1``) pays no tax on coupons.
 * CDR: CRISIL's average cumulative default rates by grade, FY2016-26 [P29] (`fincalc.credit`). LGD: 60 % unsecured,
   40 % secured, an assumption ([U] in the roadmap) you can change with ``lgd`` or ``secured=1``.
-* alternatives, post-tax: the FBIL G-sec par yield at the bond's remaining tenor (half-yearly coupons, slab-taxed)
-  and a bank FD (SBI's card rate for the tenor by default, quarterly compounding; ``fd`` overrides it, in % a year).
-* every yield is compared as an **effective annual** rate: a half-yearly G-sec at 6.66 % is 6.77 % a year.
+* alternatives, post-tax: the G-sec par yield at the bond's remaining tenor (half-yearly coupons, slab-taxed) and a
+  bank FD (SBI's card rate for the tenor by default, quarterly compounding; ``fd`` overrides it, in % a year). The
+  G-sec yield needs a long G-sec curve, and there is no source for one while FBIL is paused (#476): the RBI
+  repo-rate proxy (signals.rates, #479) is a short rate and cannot stand in for it. Without a curve the G-sec rows
+  are unknown (GSEC_UNKNOWN) and the signal is NO_SIGNAL, never a comparison against a made-up curve.
+* every yield is compared as an **effective annual** rate: a half-yearly G-sec at 7.00 % is 7.12 % a year.
 
 Actions: BUY when y_net beats the matching G-sec by the required credit spread (defaults: the roadmap's 1.5 pp for AA
 and 3 pp for A; ``min_spread`` in pp overrides) *and* beats the FD *and* the bond traded at least ₹1 lakh today;
@@ -69,10 +72,14 @@ LADDER = ("G-sec par yield", "G-sec after tax", "FD rate", "FD after tax", "Pre-
           "Post-tax, after expected loss")  # fmt: skip
 
 
+GSEC_UNKNOWN = "unknown: no G-sec curve source (FBIL paused, #476)"
+
+
 @dataclass
 class BondSources:
     bonds: Callable[[], Awaitable[list]] | None = None  # () -> [ListedBond]
-    par_curve: Callable[[], Awaitable[Any]] | None = None  # () -> adapters.fbil.ParCurve
+    # () -> a G-sec par curve (adapters.fbil.ParCurve's shape); None: no source (FBIL paused, #476)
+    par_curve: Callable[[], Awaitable[Any]] | None = None
     verified_freq: Callable[[str], Awaitable[tuple[int, dict] | None]] | None = None
     profile: Callable[[], Awaitable[Any]] | None = None
     today: Callable[[], date] = today_ist
@@ -95,25 +102,10 @@ async def _bonds() -> list:
 
 
 async def _par_curve():
+    """The G-sec par curve, or None: FBIL is paused (#476) and no other G-sec curve source is collected (#479)."""
     if SOURCES.par_curve is not None:
         return await SOURCES.par_curve()
-
-    async def make():
-        from finresearch.adapters.fbil import FbilClient
-
-        try:
-            async with FbilClient() as fbil:
-                return await fbil.latest_par_curve()
-        except Exception:
-            return None
-
-    curve = await _CACHE.get("fbil", 6 * 3600, make)
-    if curve is None:  # FBIL could not be reached: the fallback is used now and FBIL is asked again next time
-        from finresearch.adapters.fbil import FALLBACK_CURVE
-
-        _CACHE.entries.pop("fbil", None)
-        return FALLBACK_CURVE
-    return curve
+    return None
 
 
 async def _verified_freq(isin: str):
@@ -182,10 +174,11 @@ def holding_period_yield(dirty_buy: Decimal, settlement: date, exit_day: date, y
 def assess(
     bond, curve, profile, ctx: dict[str, Any], today: date, verified: tuple[int, dict] | None
 ) -> Signal:
-    """The bond signal from NSE's list row, the FBIL curve and the profile (pure: no I/O)."""
+    """The bond signal from NSE's list row, a G-sec par curve (None: no source, GSEC_UNKNOWN) and the profile
+    (pure: no I/O)."""
     factors: list[Factor] = []
     caveats: list[str] = []
-    sources = [NSE_BONDS_URL, curve.source, C.CDR_SOURCE, SBI_FD_URL]
+    sources = [x for x in (NSE_BONDS_URL, getattr(curve, "source", None), C.CDR_SOURCE, SBI_FD_URL) if x]
     event = "held to maturity, it pays in full and its post-tax yield beats the better of the matching G-sec and an FD"
     common = dict(asset="bond", instrument=bond.isin, name=f"{bond.symbol} {bond.series or ''}".strip(),
                   sources=sources, as_of=bond.as_of or datetime.now(UTC))  # fmt: skip
@@ -265,9 +258,11 @@ def assess(
 
     # --- alternatives
     tenor = hold or years
-    gsec_semi = curve.par_yield(tenor)
-    gsec_eff = B.effective_annual(gsec_semi, 2)
-    gsec_post = B.after_tax_par_yield(gsec_semi, tax, 2)
+    gsec_eff = gsec_post = None
+    if curve is not None:
+        gsec_semi = curve.par_yield(tenor)
+        gsec_eff = B.effective_annual(gsec_semi, 2)
+        gsec_post = B.after_tax_par_yield(gsec_semi, tax, 2)
     fd_ctx = _num(ctx, "fd", 0, 20)
     fd = fd_ctx / 100 if fd_ctx is not None else fd_rate_for(tenor)
     fd_eff = B.effective_annual(fd, 4)
@@ -275,10 +270,12 @@ def assess(
     # year on the year's accrual gets EAR x (1 - t), about 3 bp a year higher at 6.4 % and a 31.2 % rate; the
     # difference flatters the bond side by that much at most.
     fd_post = B.after_tax_par_yield(fd, tax, 4)
-    alt = max(gsec_post, fd_post)
-    alt_name = "G-sec" if gsec_post >= fd_post else "FD"
-    curve_note = f"FBIL par yield curve of {curve.as_of:%d-%b-%Y}" + (" (FBIL unreachable: stored copy)"
-                                                                      if curve.fallback else "")  # fmt: skip
+    if curve is None:
+        g_rows = (f"{GSEC_UNKNOWN}: the matching G-sec yield is not shown.", f"{GSEC_UNKNOWN}.")
+    else:
+        g_rows = (f"G-sec par yield curve of {curve.as_of:%d-%b-%Y}, at {tenor:.2f} years; "
+                  f"{gsec_semi * 100:.2f} % half-yearly is {gsec_eff * 100:.2f} % a year.",
+                  f"G-sec coupons are taxed at your slab ({slab}% + 4 % cess).")  # fmt: skip
     fd_note = (
         f"your FD rate {fd * 100:.2f} %"
         if fd_ctx is not None
@@ -286,9 +283,8 @@ def assess(
     )
 
     ladder = [
-        (LADDER[0], gsec_eff, f"{curve_note}, at {tenor:.2f} years; {gsec_semi * 100:.2f} % half-yearly is "
-                              f"{gsec_eff * 100:.2f} % a year.", curve.source),
-        (LADDER[1], gsec_post, f"G-sec coupons are taxed at your slab ({slab}% + 4 % cess).", curve.source),
+        (LADDER[0], gsec_eff, g_rows[0], getattr(curve, "source", None)),
+        (LADDER[1], gsec_post, g_rows[1], getattr(curve, "source", None)),
         (LADDER[2], fd_eff, f"{fd_note}, compounded quarterly.", SBI_FD_URL if fd_ctx is None else None),
         (LADDER[3], fd_post, "FD interest is taxed at your slab every year.", SBI_FD_URL if fd_ctx is None else None),
         (LADDER[4], ytm_eff, f"Yield to maturity at the {basis} price {price} (coupon {freq_note}), as an annual "
@@ -298,7 +294,7 @@ def assess(
            "bond page's after-tax yield taxes it at the slab, so the two can differ).", "fincalc:bonds.after_tax_ytm"),
     ]  # fmt: skip
     for name, v, text, src in ladder:
-        factors.append(Factor(name, _pp(v), 0.0, text, source=src, unit="% a year"))
+        factors.append(Factor(name, None if v is None else _pp(v), 0.0, text, source=src, unit="% a year"))
     freq_names = {1: "yearly", 2: "half-yearly", 4: "quarterly", 12: "monthly"}
     factors.append(Factor("Coupon frequency", f"{freq_names[freq]} ({freq_kind})", -5.0 if freq_kind == "assumed" else 0.0,
                           {"verified": f"Paid {freq_names[freq]}, {freq_note} (a verified coupon_frequency claim).",
@@ -306,6 +302,11 @@ def assess(
                            "assumed": "Not known: yearly is assumed. The offer document gives it."}[freq_kind],
                           source=(f"claim:{verified[1].get('claim_id')}" if freq_kind == "verified" and verified
                                   else None)))  # fmt: skip
+    if gsec_post is None:
+        return no_signal(f"{GSEC_UNKNOWN}: the signal weighs the bond against the matching G-sec, so it is not "
+                         "computed. The bond's own yields and the FD are shown.", horizon)  # fmt: skip
+    alt = max(gsec_post, fd_post)
+    alt_name = "G-sec" if gsec_post >= fd_post else "FD"
 
     if grade is None:
         return no_signal(f"No usable long-term rating ({rating_text or 'none in NSE list'}): the expected loss needs "
@@ -446,7 +447,7 @@ def assess(
         action = "HOLD"  # another schedule would beat the alternative: not enough to say avoid
     if action == "HOLD" and not liquid:
         caveats.append("Little or no trading today: check the last few sessions' volumes before buying.")
-    method = (f"§D.4 expected-loss-adjusted post-tax yield vs post-tax FBIL G-sec and FD (effective annual rates); "
+    method = (f"§D.4 expected-loss-adjusted post-tax yield vs post-tax G-sec and FD (effective annual rates); "
               f"EL = PD_annual × LGD from CRISIL {C.CDR_AS_OF}")  # fmt: skip
     metrics = {"no_default_rate": round(float(1 - p_def), 6), "years": round(hold or years, 2)}
     if decided:

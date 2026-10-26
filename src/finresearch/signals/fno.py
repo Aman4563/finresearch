@@ -54,7 +54,7 @@ RISK_NOTICE = {
     "url": SEBI_STUDY_URL,
     "date": "2026-08-20",
 }  # fmt: skip
-RATE = 0.065  # analyse()'s default only; the API and the signal pass FBIL's par yield at the expiry (signals.rates)
+RATE = 0.065  # analyse()'s default only; the API and the signal pass signals.rates' rate at the expiry (#479)
 # #356 (P0.6, roadmap MF1): model EV is shown, never a gate, until a physical model passes P2.2/P3.4. The only
 # EV-related gate is liquidity: Σ|q_i|·(ask_i − bid_i)/2 ≤ LIQUIDITY_MAX_SPREAD_SHARE × the premium at mids (the
 # credit received, or the debit paid). 10% is the issue's registered example [U: an assumption, not a measured cut-off]
@@ -749,7 +749,7 @@ async def fno_signal(instrument: str, ctx: dict[str, Any]) -> Signal:
         return no_signal(f"the {expiry:%d-%b-%Y} contract expired at 15:30 IST today: nothing to assess")
     rinfo = await risk_free(
         years_to_expiry(expiry, now)
-    )  # FBIL par yield at the expiry (#244); T to the minute (#359)
+    )  # signals.rates at the expiry (#479: owner-entered, else the RBI repo-rate proxy); T to the minute (#359)
     a = analyse(chain, lot, legs, today=today, now=now, closes=closes, iv_series=[v for _, v, _ in series], capital=capital,
                 max_loss_pct=float(profile.fno_max_loss_pct), brokerage=float(profile.fno_brokerage_per_order_inr),
                 rate=rinfo["rate"], drift=drift, iv_source=src,

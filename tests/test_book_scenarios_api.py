@@ -26,9 +26,10 @@ N = NormalDist()
 pytestmark = pytest.mark.usefixtures("book_db")
 NOW = at_ist(TRADE_DAY, 11)  # 12-Oct-2026 11:00 IST
 T = (15 * 1440 + 270) / 525_600  # to 27-Oct 15:30 IST, to the minute (#359)
-# #366/#385, #480: each expiry is priced at FBIL's par yield at its own tenor (signals.rates.risk_free; the conftest stub
-# is FBIL's 23-Sep-2026 curve, whose 0.25-year point is 5.34 % half-yearly), no longer a fixed 6.5 %
-R = 2 * math.log(1 + 0.0534 / 2)
+# #479, #480: each expiry is priced at signals.rates' rate at its own tenor: the RBI repo-rate proxy, 5.50 % since the
+# 07-Oct-2026 hike (conftest pins "today" at 23-Oct-2026), a simple Actual/365 yield over the expiry's 15 days, so
+# z = ln(1 + 0.055 x 15/365) x 365/15 continuous; no FBIL curve and no fixed 6.5 %
+R = math.log(1 + 0.055 * 15 / 365) * 365 / 15
 F = 24980.0  # the synthetic forward the chain's prices are built on
 SPOT = 24900.0  # the chain's underlying
 # #480: the carry the scenarios roll the forward at, from the parity fit and the chain's underlying:
@@ -96,8 +97,10 @@ def test_paper_legs_are_priced_at_mids_on_the_parity_forward():
     _paper_spread()
     v = run(scenarios.view(NOW, sources=Sources(chain()), capital=500_000))
     (fw,) = v["forwards"]
-    assert fw["rate"] == pytest.approx(R) and fw["rate_info"]["tenor_years"] == 0.25
-    assert fw["rate_info"]["as_of"] == "2026-09-23" and "FBIL" in fw["rate_info"]["source"]
+    assert fw["rate"] == pytest.approx(R) and fw["rate_info"]["tenor_days"] == 15
+    assert fw["rate_info"]["as_of"] == "2026-10-07" and fw["rate_info"]["source"].startswith(
+        "RBI repo-rate proxy"
+    )
     assert (
         fw["forward"] == pytest.approx(F, abs=1e-6) and "parity fit" in fw["source"]
     )  # mids reproduce F exactly
@@ -119,7 +122,7 @@ def test_paper_legs_are_priced_at_mids_on_the_parity_forward():
     assert any("Groww is not connected" in n for n in v["notes"])
     # a debit spread loses at most its debit: no grid cell loses more than (C25000 - C25200) x 75
     debit = (_b76("call", F, 25000, T, 0.14) - _b76("call", F, 25200, T, 0.135)) * 75
-    assert min(c["pnl"] for c in v["grid"]["cells"]) >= -debit - 1e-6
+    assert min(c["pnl"] for c in v["grid"]["cells"]) >= -debit - 0.005  # cells are rounded to the paisa
 
 
 def test_a_missing_quote_makes_the_book_incomplete_never_zero():
@@ -246,15 +249,17 @@ def test_a_groww_future_shows_no_strike(monkeypatch):
     assert [(x.right, x.strike, x.qty) for x in legs] == [("future", 0.0, -75)]
 
 
-def test_the_joint_risk_book_prices_at_fbils_rate_and_names_it():
-    """#366/#385: the joint risk view's book (portfolio.joint_risk.book) uses the same dated rate as the scenarios
-    page and says which, in its notes."""
+def test_the_joint_risk_book_prices_at_the_repo_proxy_and_names_it():
+    """#366/#385, #479: the joint risk view's book (portfolio.joint_risk.book) uses the same rate as the scenarios
+    page (the RBI repo-rate proxy at the expiry's tenor) and says which, in its notes."""
     from finresearch.portfolio import joint_risk as jl
 
     _paper_spread()
     b, _, notes = run(jl.book(NOW, sources=Sources(chain())))
     assert b.market.rate_for(EXPIRY) == pytest.approx(R)
-    assert any(n.startswith("rate: FBIL fallback curve of 23-Sep-2026") for n in notes)
+    assert any(
+        n.startswith("rate: RBI repo-rate proxy: repo 5.50 % in force from 07-Oct-2026") for n in notes
+    )
     # #480: and rolls its forward at the expiry's carry, named in a note
     assert b.market.carry("NIFTY", EXPIRY).b == pytest.approx(B, rel=1e-9)
     assert any(n.startswith("carry: NIFTY 27-Oct-2026: 7.71% a year (put-call parity fit") for n in notes)

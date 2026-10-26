@@ -2577,9 +2577,101 @@ def audit_equity_eod(
 
 rates_app = typer.Typer(
     no_args_is_help=True,
-    help="Dated rate series from FBIL: G-sec par curve, T-bill, overnight and term MIBOR",
+    help="Risk-free rates (#479): your entered yields, the RBI repo-rate proxy and its policy-rate table; FBIL's "
+    "dated series (paused, #476)",
 )
 app.add_typer(rates_app, name="rates")
+
+
+@rates_app.command("enter")
+def rates_enter(
+    day: str = typer.Option(..., "--day", help="The day the yield was observed, YYYY-MM-DD"),
+    tenor: str = typer.Option(
+        "91D", "--tenor", help="Term in days, 1D to 364D (RBI's bills: 91D, 182D, 364D)"
+    ),
+    pct: str = typer.Option(
+        ..., "--yield", help="% a year as RBI quotes it (simple, Actual/365), e.g. 5.7281"
+    ),
+    source: str | None = typer.Option(None, "--source", help="Where you read it, e.g. RBI's auction result"),
+) -> None:
+    """Store a risk-free yield you read yourself (#479), e.g. RBI's 91-day T-bill cut-off on an auction day. It is
+    used as typed while the repo rate has not moved since its day, else shifted by the change; it replaces an
+    earlier entry for the same day and tenor. Nothing is fetched."""
+    from datetime import date as _date
+    from decimal import Decimal, InvalidOperation
+
+    from finresearch.db import session_scope
+    from finresearch.fincalc.dates import today_ist
+    from finresearch.refseries import owner_rates
+
+    try:
+        with session_scope() as s:
+            e = owner_rates.add(s, _date.fromisoformat(day), tenor, Decimal(pct), source, today=today_ist())
+    except (ValueError, InvalidOperation) as err:
+        console.print(f"not stored: {err}")
+        raise typer.Exit(2) from err
+    console.print(f"stored {e.tenor_days}D {float(e.yld) * 100:.4f} % for {e.day.isoformat()}")
+
+
+@rates_app.command("owner")
+def rates_owner() -> None:
+    """List your entered yields (#479), oldest first."""
+    from finresearch.db import session_scope
+    from finresearch.refseries import owner_rates
+
+    with session_scope() as s:
+        rows = owner_rates.entries(s)
+    for e in rows:
+        console.print(f"{e.day.isoformat()}  {e.tenor_days}D  {float(e.yld) * 100:.4f} %  {e.source or ''}")
+    if not rows:
+        console.print("no entered yields: the RBI repo-rate proxy is used")
+
+
+@rates_app.command("remove")
+def rates_remove(
+    day: str = typer.Option(..., "--day", help="YYYY-MM-DD"), tenor: str = typer.Option("91D", "--tenor")
+) -> None:
+    """Remove one entered yield (#479). Exit 1 when there was none."""
+    from datetime import date as _date
+
+    from finresearch.db import session_scope
+    from finresearch.refseries import owner_rates
+
+    with session_scope() as s:
+        gone = owner_rates.remove(s, _date.fromisoformat(day), tenor)
+    console.print("removed" if gone else f"no entered yield for {day} {tenor}")
+    if not gone:
+        raise typer.Exit(1)
+
+
+@rates_app.command("show")
+def rates_show(
+    day: str | None = typer.Option(None, "--day", help="YYYY-MM-DD (default today, IST)"),
+    tenor: str = typer.Option("91D", "--tenor", help="Term in days, e.g. 91D or 7D"),
+) -> None:
+    """The risk-free rate for a day and tenor, as the app uses it (#479): tier, date, source and conventions."""
+    from datetime import date as _date
+
+    from finresearch.db import session_scope
+    from finresearch.fincalc.dates import today_ist
+    from finresearch.refseries.owner_rates import tenor_days
+    from finresearch.signals import rates
+
+    d = _date.fromisoformat(day) if day else today_ist()
+    with session_scope() as s:
+        out = rates.rate_on(s, d, tenor_days(tenor) / 365)
+    console.print_json(json.dumps({"day": d.isoformat(), **out}, default=str))
+
+
+@rates_app.command("policy")
+def rates_policy() -> None:
+    """RBI's policy rates as typed into the app (fincalc.policy_rates, #479), each with its RBI release."""
+    from finresearch.fincalc import policy_rates as P
+
+    console.print(f"from {P.START:%d-%b-%Y}, checked against RBI's releases on {P.REVIEWED:%d-%b-%Y}")
+    for r in P.TABLE:
+        console.print(f"{r.effective:%d-%b-%Y}  repo {float(r.repo) * 100:.2f}  {r.floor_kind} "
+                      f"{float(r.floor) * 100:.2f}  MSF {float(r.msf) * 100:.2f}  {r.url}", soft_wrap=True)  # fmt: skip
 
 
 @rates_app.command("backfill")

@@ -127,7 +127,7 @@ _OTHER = (
         "Compare a bond's post-tax, expected-loss-adjusted yield with G-secs and FDs.",
         "Manual bond selection.",
         "Rated corporate and government bonds only.",
-        ("bond price", "rating", "FBIL G-sec", "FD rates"),
+        ("bond price", "rating", "G-sec curve (none while FBIL is paused, #476)", "FD rates"),
         ("signals/bond.py",),
         date(2026, 10, 1),
         "Realised vs expected yield and defaults over the horizon",
