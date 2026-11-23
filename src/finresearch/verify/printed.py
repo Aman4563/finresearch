@@ -84,12 +84,12 @@ _CUR_BEFORE = re.compile(r"(₹|\brs\.?|\binr|us\$|\busd|\$|€|£)\s?$", re.I)
 _CUR = {"₹": "INR", "rs": "INR", "rs.": "INR", "inr": "INR", "us$": "USD", "usd": "USD", "$": "USD"}
 # scale words after a figure; the one-letter forms count only when glued to a currency figure ("₹915m", "$2.5b")
 _SCALE_AFTER = re.compile(
-    r"\s?(lakh\s+crores?|crores?|cr\b\.?|lakhs?|lacs?|millions?|mn\b|billions?|bn\b|trillions?|thousands?)"
-    r"|(k|m|b)(?![a-z])",
+    r"\s?((?:lakh|thousand|k)\s+crores?|crores?|cr\b\.?|lakhs?|lacs?|millions?|mn\b|billions?|bn\b|trillions?"
+    r"|thousands?)|(k|m|b)(?![a-z])",
     re.I,
 )
-_SCALES = {"lakh crore": 12, "crore": 7, "cr": 7, "lakh": 5, "lac": 5, "million": 6, "mn": 6, "m": 6, "billion": 9,
-           "bn": 9, "b": 9, "trillion": 12, "thousand": 3, "k": 3}  # fmt: skip
+_SCALES = {"lakh crore": 12, "thousand crore": 10, "k crore": 10, "crore": 7, "cr": 7, "lakh": 5, "lac": 5,
+           "million": 6, "mn": 6, "m": 6, "billion": 9, "bn": 9, "b": 9, "trillion": 12, "thousand": 3, "k": 3}  # fmt: skip
 _PCT_AFTER = re.compile(r"\s?(%|per\s?cent\b|percent\b|percentage points?\b|pp\b|ppts?\b)", re.I)
 _MULT_AFTER = re.compile(r"(x\b|×(?!\s?[\d₹])|\s?times\b)", re.I)
 _WORD_AFTER = re.compile(r"[\s*_]*([A-Za-z][A-Za-z/-]*)")
@@ -247,7 +247,7 @@ def _unit(unit: str | None) -> tuple[str, str | None, Decimal, frozenset[str]]:
 
 
 def _near(p: Decimal, v: Decimal, tol: Decimal) -> bool:
-    return abs(p - v) <= max(tol, abs(v) * REL_TOL)
+    return abs(p - v) <= tol
 
 
 def matches(f: Fig, value: Decimal, unit: str | None) -> bool:
@@ -258,7 +258,8 @@ def matches(f: Fig, value: Decimal, unit: str | None) -> bool:
     v = abs(value)
     if f.value == 0 or v == 0:
         return f.value == v
-    half = f.half if f.figure or f.word in words else Decimal(0)
+    # a bare integer below 100 is a count ("3 plants" is never a rounded 2.65); "889" may be a rounded 888.84
+    half = f.half if f.figure or f.word in words or f.value >= 100 else Decimal(0)
     if f.cur and cur and f.cur != cur:
         return False
     if f.scale is not None:
@@ -277,7 +278,10 @@ def matches(f: Fig, value: Decimal, unit: str | None) -> bool:
         return _near(f.value, v / 100, half)
     if kind == "frac":
         return _near(f.value, v * 100, half)
-    return kind == "money" and any(_near(f.value, abs(alt), Decimal(0)) for alt in candidate_forms(v, unit))
+    # an unmarked figure may be the claim's value in another ₹ scale (the report's table may be in crore)
+    return kind == "money" and any(
+        alt != v and _near(f.value, alt, alt * REL_TOL) for alt in map(abs, candidate_forms(v, unit))
+    )
 
 
 def _same(p: Fig, s: Fig) -> bool:
@@ -286,7 +290,9 @@ def _same(p: Fig, s: Fig) -> bool:
         return p.value == s.value
     if (p.kind != s.kind and "plain" not in (p.kind, s.kind)) or (p.cur and s.cur and p.cur != s.cur):
         return False
-    half = p.half if p.figure else Decimal(0)
+    if (p.kind != "plain" and (s.cur or s.scale)) or (s.kind != "plain" and (p.cur or p.scale)):
+        return False  # a rate or multiple is never a money amount: "258.4%" is not "₹258"
+    half = max(p.half if p.figure else Decimal(0), s.half if s.figure else Decimal(0))
     if _near(p.value, s.value, half) and (p.scale is None or s.scale is None or p.scale == s.scale):
         return True
     return p.scale is not None and s.scale is not None and _near(p.base, s.base, half * p.scale)
@@ -363,6 +369,7 @@ _ROW_RULE = re.compile(r"^\s*:?-{2,}:?\s*$")
 _SENT_END = re.compile(r"[.!?][\"')\]*_]*(?:\s*\[C\d+\])*\s+(?=[\"'(*_\[]*[A-Z0-9₹])")
 _ABBREV = re.compile(r"(?:\b(?:e\.g|i\.e|vs|approx|Rs|No|Nos|Ltd|Inc|Co|Corp|Comm|est|cf|Dr|Mr|Mrs|Ms|St|incl|excl|viz|"
                      r"Pvt|Jr|Sr)|\b[A-Z])$")  # fmt: skip
+_WORDS = re.compile(r"[A-Za-z]{2}")  # a citation that follows words supports those words
 _LIST_MARK = re.compile(r"^\s*(?:#+\s*)?(?:[-*+]\s+)?(?:\d{1,2}[.)]\s+)?(?:\[[ xX]\]\s+)?")
 # the citations that follow are inputs of a computed figure, not its source
 _INPUT = re.compile(r"(?:\bfrom|\binputs?|\busing)\s*:?\s*$", re.I)
@@ -475,7 +482,7 @@ def _in_row(line_no: int, line: str, cells: list[str], computed: list[Fig]) -> I
             if _INPUT.search(clause) and (_COMPUTED.search(clause) or "input" in clause.lower()):
                 inputs = True
                 yield _Site(line_no, ids, row, row, cited, True, text)
-            elif re.search(r"[A-Za-z]{2}", clause):
+            elif _WORDS.search(clause):
                 yield _Site(line_no, ids, [], [], cited, False, text)
             else:
                 direct = True
@@ -564,10 +571,9 @@ def _sign_clash(h: _Held, s: _Seen) -> bool:
         return src > 0
     if claim > 0:
         return src < 0
-    # a bare claim against a printed negative: only where a minus cannot be an outflow convention
-    return s.fig.neg and (
-        h.kind in ("pct", "frac") or bool(POS_RE.search(re.sub(r"\([^()]*\)", " ", s.label)))
-    )
+    # a bare claim against a printed negative: only where a minus cannot be an outflow convention (a money row
+    # such as "Purchase of equipment (635.75)" is negative by convention, a rate, multiple or count is not)
+    return s.fig.neg and (h.kind != "money" or bool(POS_RE.search(re.sub(r"\([^()]*\)", " ", s.label))))
 
 
 def _kind_of(h: _Held, f: Fig) -> str:
@@ -633,23 +639,26 @@ def _judge(
         return "mismatch", Finding(
             h.id, "sign", h.importance, h.holds(), hit[-1].fig.text, site.line, site.text
         )
-    if any(_same(s.fig, o) for s in site.wide for o in h.own):
-        return "statement", None
     if not site.wide:
         return "no_number", None
-    others = [held[i] for i in site.cited if i != h.id and i in held]
+    cited = [held[i] for i in site.cited if i in held]
 
     def explained(f: Fig) -> bool:
         return any(_same(f, x) for x in computed) or any(
             (o.value is not None and matches(f, o.value, o.unit)) or any(_same(f, x) for x in o.own)
-            for o in others
+            for o in cited
         )
 
+    # its value is not printed: is a figure printed here that nothing cited in the scope holds?
     accused = [s for s in site.near if _stated(s) and _fits(s.fig, h) and not explained(s.fig)]
-    if not accused:
-        return "other_figures", None
-    f = accused[-1].fig  # the one nearest the citation
-    return "mismatch", Finding(h.id, _kind_of(h, f), h.importance, h.holds(), f.text, site.line, site.text)
+    if accused:
+        f = accused[-1].fig  # the one nearest the citation
+        return "mismatch", Finding(
+            h.id, _kind_of(h, f), h.importance, h.holds(), f.text, site.line, site.text
+        )
+    if any(_same(s.fig, o) for s in site.wide for o in h.own):
+        return "statement", None
+    return "other_figures", None
 
 
 def _quantity(h: _Held) -> Decimal:
