@@ -290,6 +290,19 @@ _FINCALC_MODULES = {
         fincalc.market,
     )
 }
+# Fund and bond arithmetic (#505): of these modules only the functions named here are callable, the ones that take
+# plain numbers and dates. Left out: everything that takes a NAV or return series (an agent holds a sample of it at
+# most and no claim could bind hundreds of points: amfi_nav_history and fund_sip_outcome compute on the full series);
+# the float helpers that would order string arguments as text (funds.percentile_rank, median); bonds.post_tax_yield
+# (right only at par: after_tax_ytm and after_tax_par_yield cover both cases); and the bond schedule functions, whose
+# stepped-back dates are a pricing convention, not the terms the offer document states. fincalc.credit is not
+# exposed: its deciding argument is a rating grade, a word that save_claim cannot bind to a cited claim.
+_FINCALC_ONLY = {
+    "funds": ("annualised_return", "expense_drag"),
+    "bonds": ("accrued_interest", "after_tax_par_yield", "after_tax_ytm", "clean_price", "current_yield",
+              "dirty_price", "duration", "effective_annual", "ytm"),
+}  # fmt: skip
+_FINCALC_MODULES.update({m: getattr(fincalc, m) for m in _FINCALC_ONLY})
 
 
 def _fincalc_catalog() -> dict[str, str]:
@@ -297,6 +310,8 @@ def _fincalc_catalog() -> dict[str, str]:
     for mod_name, mod in _FINCALC_MODULES.items():
         for name, fn in inspect.getmembers(mod, inspect.isfunction):
             if name.startswith("_") or fn.__module__ != mod.__name__:
+                continue
+            if name not in _FINCALC_ONLY.get(mod_name, (name,)):
                 continue
             doc = (inspect.getdoc(fn) or "").split("\n")[0]
             cat[f"{mod_name}.{name}"] = f"{name}{inspect.signature(fn)} — {doc}"
