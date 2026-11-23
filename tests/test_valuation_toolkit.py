@@ -186,3 +186,137 @@ def test_dcf_explicit_leaves_unknown_figures_none_with_the_reason():
         x.implied_terminal_growth is None and "final year's cash flow" in x.unknown["implied_terminal_growth"]
     )
     assert x.terminal_value == D(200) and x.pv_terminal == D(128)  # 4 x 50 = 200; 200 / 1.5625 = 128
+
+
+# --------------------------------------------------------------------------- projected cash flows
+def test_fcf_path_two_years_by_hand():
+    """Revenue 1,000; growth 10 % then 20 %; EBIT margin 20 % then 25 %; tax 25 %; D&A 4 % and capex 6 % of revenue;
+    working capital 10 % of the change in revenue.
+    Year 1: revenue 1,100; EBIT 220; tax 55; NOPAT 165; D&A 44; capex 66; working capital 10 (10 % of 100);
+            FCF = 165 + 44 - 66 - 10 = 133; EBITDA 264.
+    Year 2: revenue 1,320; EBIT 330; tax 82.5; NOPAT 247.5; D&A 52.8; capex 79.2; working capital 22 (10 % of 220);
+            FCF = 247.5 + 52.8 - 79.2 - 22 = 199.1; EBITDA 382.8."""
+    p = V.fcf_path(1000, ["0.10", "0.20"], ["0.20", "0.25"], "0.25", "0.04", "0.06", "0.10")
+    assert p.revenue == [D(1100), D(1320)] and p.ebit == [D(220), D(330)]
+    assert p.tax == [D(55), D("82.5")] and p.nopat == [D(165), D("247.5")]
+    assert p.da == [D(44), D("52.8")] and p.capex == [D(66), D("79.2")] and p.nwc_change == [D(10), D(22)]
+    assert p.fcf == [D(133), D("199.1")] and p.ebitda == [D(264), D("382.8")]
+    assert (p.final_revenue, p.final_ebit, p.final_ebitda, p.final_fcf) == (
+        D(1320),
+        D(330),
+        D("382.8"),
+        D("199.1"),
+    )
+    # the path feeds the explicit DCF as it is
+    assert V.dcf_explicit(p.fcf, "0.25", terminal_growth="0.05").cash_flows == p.fcf
+
+
+def test_fcf_path_loss_year_pays_no_tax_and_gets_no_refund():
+    """Revenue falls 10 % to 900 at an EBIT margin of -5 %: EBIT -45, tax 0 (not -11.25: no refund is assumed),
+    NOPAT -45; D&A 36; capex 54; working capital released 10 (10 % of -100);
+    FCF = -45 + 36 - 54 + 10 = -53. The rule is returned with the numbers."""
+    p = V.fcf_path(1000, ["-0.10"], ["-0.05"], "0.25", "0.04", "0.06", "0.10")
+    assert (p.revenue, p.ebit, p.tax, p.nopat) == ([D(900)], [D(-45)], [D(0)], [D(-45)])
+    assert p.nwc_change == [D(-10)] and p.fcf == [D(-53)] and "no refund" in p.tax_rule
+
+
+def test_fcf_path_refuses_invalid_input():
+    ok = {"revenue": 1000, "growth_path": ["0.1"], "ebit_margin_path": ["0.2"], "tax_rate": "0.25",
+          "da_pct": "0.04", "capex_pct": "0.06", "nwc_pct_of_change": "0.1"}  # fmt: skip
+    for bad, why in (
+        ({"revenue": 0}, "revenue must be > 0"),
+        ({"growth_path": ["0.1", "0.1"]}, "one EBIT margin for each year"),  # paths of different lengths
+        ({"growth_path": []}, "non-empty list"),
+        ({"growth_path": ["10"]}, "must be a fraction"),  # 10 % typed as 10
+        ({"growth_path": ["-1"]}, "must be > -1"),
+        ({"ebit_margin_path": ["20"]}, "must be a fraction"),
+        ({"tax_rate": "25"}, "must be a fraction"),
+        ({"tax_rate": "-0.1"}, "tax_rate must be >= 0"),
+        ({"da_pct": "-0.01"}, "da_pct must be >= 0"),
+        ({"capex_pct": "-0.01"}, "capex_pct must be >= 0"),
+    ):
+        with pytest.raises(ValueError, match=why):
+            V.fcf_path(**{**ok, **bad})
+
+
+# --------------------------------------------------------------------------- DCF sanity checks
+def test_dcf_checks_clean_case_is_ok_and_carries_its_bands():
+    """Rate 12 %, terminal growth 5 %, risk-free 6.5 %, terminal share 0.60: growth is below the rate and below the
+    risk-free rate, the share is inside 0.35-0.75 and the rate is 5.5 points over risk-free (inside 0-15)."""
+    c = V.dcf_checks("0.12", terminal_growth="0.05", risk_free="0.065", terminal_share="0.60")
+    assert (c.status, c.flags, c.errors, c.warnings, c.not_checked) == ("ok", [], 0, 0, {})
+    assert c.checked == list(V.DCF_CHECKS)
+    assert c.spread_over_terminal_growth == D("0.07") and c.spread_over_risk_free == D("0.055")
+    assert c.bands == {
+        "terminal_share_low": D("0.35"),
+        "terminal_share_high": D("0.75"),
+        "discount_rate_max_over_risk_free": D("0.15"),
+    }
+
+
+def test_dcf_checks_terminal_growth_equal_to_the_rate_is_an_error():
+    for g in ("0.12", "0.13"):  # equal, and above
+        c = V.dcf_checks("0.12", terminal_growth=g, risk_free="0.065", terminal_share="0.60")
+        names = {f.name: f.level for f in c.flags}
+        assert names["terminal_growth_at_or_above_discount_rate"] == "error"
+        assert c.status == "error" and c.errors == 1
+        assert names["terminal_growth_above_risk_free"] == "warn"  # 12 % growth for ever also beats 6.5 %
+
+
+def test_dcf_checks_each_warning_by_its_boundary():
+    """Boundaries by hand. Growth vs risk-free 6.5 %: 6.5 % passes, 6.6 % warns. Share band 0.35-0.75: both ends
+    pass, 0.3499 and 0.7501 warn. Rate vs risk-free 6.5 %: it must be above 6.5 % and at most 21.5 %."""
+
+    def names(**kw):
+        base = {
+            "discount_rate": "0.12",
+            "terminal_growth": "0.05",
+            "risk_free": "0.065",
+            "terminal_share": "0.6",
+        }
+        return [f.name for f in V.dcf_checks(**{**base, **kw}).flags]
+
+    assert names(terminal_growth="0.065") == [] and names(terminal_growth="0.066") == [
+        "terminal_growth_above_risk_free"
+    ]
+    assert names(terminal_share="0.35") == [] and names(terminal_share="0.75") == []
+    assert names(terminal_share="0.3499") == ["terminal_share_outside_band"]
+    assert names(terminal_share="0.7501") == ["terminal_share_outside_band"]
+    assert names(discount_rate="0.215") == [] and names(discount_rate="0.2151") == [
+        "discount_rate_outside_band"
+    ]
+    assert names(discount_rate="0.065", terminal_growth="0.03") == ["discount_rate_outside_band"]
+    assert names(discount_rate="0.0651", terminal_growth="0.03") == []
+    warned = V.dcf_checks("0.12", terminal_growth="0.05", risk_free="0.065", terminal_share="0.9")
+    assert (warned.status, warned.errors, warned.warnings) == ("warn", 0, 1)
+
+
+def test_dcf_checks_a_missing_input_is_not_checked_never_ok():
+    """Only the rate is known: nothing can be checked, and the answer says so rather than passing."""
+    c = V.dcf_checks("0.12")
+    assert c.status == "incomplete" and c.flags == [] and c.checked == []
+    assert set(c.not_checked) == set(V.DCF_CHECKS) and all("not given" in w for w in c.not_checked.values())
+    # without the risk-free rate two checks cannot run; the other two do
+    part = V.dcf_checks("0.12", terminal_growth="0.05", terminal_share="0.6")
+    assert part.status == "incomplete" and part.spread_over_risk_free is None
+    assert set(part.not_checked) == {"terminal_growth_above_risk_free", "discount_rate_outside_band"}
+    assert part.checked == ["terminal_growth_at_or_above_discount_rate", "terminal_share_outside_band"]
+    # a finding outranks "incomplete", and what was not checked is still listed
+    bad = V.dcf_checks("0.12", terminal_growth="0.12")
+    assert bad.status == "error" and "terminal_share_outside_band" in bad.not_checked
+
+
+def test_dcf_checks_steady_state_share_for_the_horizon():
+    """The benchmark a flagged share is put beside: a company growing at g from year 1 has ((1+g)/(1+r))^n of its
+    value beyond year n. (1.05 / 1.12)^5 = 0.9375^5 = 0.72420; the band's two corners are (1.03 / 1.14)^10 = 0.3625
+    and that 0.7242, rounded outwards to 0.35 and 0.75."""
+    c = V.dcf_checks("0.12", terminal_growth="0.05", risk_free="0.065", terminal_share="0.82", years=5)
+    assert c.steady_state_share.quantize(D("0.00001")) == D("0.72420")
+    (flag,) = c.flags
+    assert flag.name == "terminal_share_outside_band" and "0.7242" in flag.message
+    low = V.dcf_checks("0.14", terminal_growth="0.03", years=10).steady_state_share
+    assert low.quantize(D("0.0001")) == D("0.3625")
+    assert V.dcf_checks("0.12", terminal_growth="0.05").steady_state_share is None  # no horizon given
+    for bad in ({"years": 0}, {"years": 2.5}, {"discount_rate": "12"}, {"risk_free": "6.5"}):
+        with pytest.raises(ValueError):
+            V.dcf_checks(**{"discount_rate": "0.12", "terminal_growth": "0.05", **bad})

@@ -564,3 +564,205 @@ def dcf_explicit(cash_flows: list[Num], discount_rate: Num, terminal_growth: Num
     return DcfExplicit(cfs, r, mid_year, [Decimal(t) - half for t in range(1, n + 1)], pvs, pv,
                        "growth" if g is not None else "exit_multiple", g, m, metric, tv, tv_period, pv_tv, value,
                        pv_tv / value if value > 0 else None, implied_m, implied_g, unknown)  # fmt: skip
+
+
+# --------------------------------------------------------------------------- projected cash flows (#504)
+# Unlevered free cash flow, year by year, from a revenue growth path and an EBIT margin path:
+#     revenue_t = revenue_(t-1) x (1 + growth_t)         EBIT_t = revenue_t x margin_t
+#     NOPAT_t   = EBIT_t - tax_t                          tax_t  = tax_rate x max(EBIT_t, 0)
+#     FCF_t     = NOPAT_t + D&A_t - capex_t - change in working capital_t
+# with D&A and capex as shares of revenue and the working-capital change as a share of the CHANGE in revenue (free
+# cash flow to the firm as in Damodaran, "Investment Valuation", and Koller, Goedhart & Wessels, "Valuation"
+# [U: chapters not checked]; the layout follows the dcf-model skill of anthropics/financial-services, rewritten).
+# Every input is the caller's assumption and belongs in the ledger as an ASSUMPTION claim.
+LOSS_YEAR_TAX_RULE = ("a year with negative EBIT pays no tax and gets no refund; losses carried forward are not "
+                      "modelled (they would lower a later year's tax: state that as its own assumption)")  # fmt: skip
+
+
+@dataclass(frozen=True)
+class FcfPath:
+    """Projected revenue, EBIT, tax, NOPAT, D&A, EBITDA, capex, working-capital change and FCF: one list entry per
+    year (year 1 first), the inputs they came from, and the final year's figures as single values a claim can cite."""
+
+    base_revenue: Decimal
+    growth_path: list[Decimal]
+    ebit_margin_path: list[Decimal]
+    tax_rate: Decimal
+    da_pct: Decimal
+    capex_pct: Decimal
+    nwc_pct_of_change: Decimal
+    revenue: list[Decimal]
+    ebit: list[Decimal]
+    tax: list[Decimal]
+    nopat: list[Decimal]
+    da: list[Decimal]
+    ebitda: list[Decimal]
+    capex: list[Decimal]
+    nwc_change: list[Decimal]
+    fcf: list[Decimal]
+    final_revenue: Decimal
+    final_ebit: Decimal
+    final_ebitda: Decimal
+    final_fcf: Decimal
+    tax_rule: str
+
+
+def fcf_path(revenue: Num, growth_path: list[Num], ebit_margin_path: list[Num], tax_rate: Num, da_pct: Num,
+             capex_pct: Num, nwc_pct_of_change: Num) -> FcfPath:  # fmt: skip
+    """Year-by-year revenue, EBIT, NOPAT and free cash flow from a growth path and an EBIT margin path (fractions).
+
+    `revenue` is the latest actual year (not yet grown); `growth_path` and `ebit_margin_path` have one entry per
+    forecast year. FCF = EBIT - tax + D&A - capex - change in working capital, with `da_pct` and `capex_pct` shares
+    of revenue and `nwc_pct_of_change` the share of the year's CHANGE in revenue tied up in working capital. A loss
+    year pays no tax and gets no refund (`tax_rule`). Pass `fcf` to `dcf_explicit` as its cash flows; to cite one
+    year's figure, pass the paths up to that year and cite `final_fcf` (or `final_revenue`, `final_ebit`,
+    `final_ebitda`). ValueError for paths of different lengths or a rate that is not a fraction.
+    """
+    rev0 = to_decimal(revenue)
+    if rev0 <= 0:
+        raise ValueError(f"revenue must be > 0, got {rev0}")
+    gs = [_rate(g, f"growth_path[{i}]") for i, g in enumerate(_series(growth_path, "growth_path"))]
+    ms = [_rate(m, f"ebit_margin_path[{i}]")
+          for i, m in enumerate(_series(ebit_margin_path, "ebit_margin_path"))]  # fmt: skip
+    if len(gs) != len(ms):
+        raise ValueError(
+            f"need one EBIT margin for each year of growth: {len(gs)} growth rates, {len(ms)} margins"
+        )
+    t = _rate(tax_rate, "tax_rate", low=Decimal(0), low_ok=True)
+    da_p = _rate(da_pct, "da_pct", low=Decimal(0), low_ok=True)
+    cx_p = _rate(capex_pct, "capex_pct", low=Decimal(0), low_ok=True)
+    wc_p = _rate(nwc_pct_of_change, "nwc_pct_of_change")
+    cols: dict[str, list[Decimal]] = {k: [] for k in ("revenue", "ebit", "tax", "nopat", "da", "ebitda", "capex",
+                                                      "nwc_change", "fcf")}  # fmt: skip
+    prev = rev0
+    for g, m in zip(gs, ms, strict=True):
+        rev = prev * (1 + g)
+        ebit = rev * m
+        tax = t * max(ebit, Decimal(0))
+        da, capex, wc = da_p * rev, cx_p * rev, wc_p * (rev - prev)
+        row = {"revenue": rev, "ebit": ebit, "tax": tax, "nopat": ebit - tax, "da": da, "ebitda": ebit + da,
+               "capex": capex, "nwc_change": wc, "fcf": ebit - tax + da - capex - wc}  # fmt: skip
+        for k, v in row.items():
+            cols[k].append(v)
+        prev = rev
+    return FcfPath(rev0, gs, ms, t, da_p, cx_p, wc_p, **cols, final_revenue=cols["revenue"][-1],
+                   final_ebit=cols["ebit"][-1], final_ebitda=cols["ebitda"][-1], final_fcf=cols["fcf"][-1],
+                   tax_rule=LOSS_YEAR_TAX_RULE)  # fmt: skip
+
+
+# --------------------------------------------------------------------------- DCF sanity checks (#504)
+# Four named checks on a DCF's own inputs and output (the idea of validate_dcf.py in anthropics/financial-services,
+# rewritten; its bands are US-dollar numbers and are not used). A check whose input is missing is listed under
+# `not_checked` with the reason and the status is then "incomplete", never "ok". The bands are OUR stated choices:
+#
+# 1. terminal growth >= discount rate: an ERROR, not a judgement. Gordon's CF (1+g) / (r - g) has no finite value.
+# 2. terminal growth > the risk-free rate: a warning. A company growing faster than the economy for ever becomes the
+#    economy, and the nominal risk-free rate is the market's stand-in for the economy's long-run nominal growth
+#    (the stable-growth cap of Damodaran, "Investment Valuation" [U: chapter not checked]). The rate compared is
+#    whatever the caller supplies; with this app's short risk-free rate (fincalc.riskfree: at most 364 days, no
+#    term premium) the check is stricter than with a 10-year yield.
+# 3. terminal share outside TERMINAL_SHARE_BAND = 0.35 to 0.75: a warning [U]. A company already in its steady state
+#    (cash flow growing at g from year 1, discounted at r) has exactly ((1+g) / (1+r))^n of its value beyond year
+#    n: the flows from year n + 1 on are the whole stream scaled by (1+g)^n and arriving n years later. At rupee
+#    discount rates of 12-14 % and terminal growth of 3-5 % (the ranges api/accuracy.py states as its assumptions)
+#    and the usual 5 to 10 forecast years that is 0.3625 ((1.03/1.14)^10) to 0.7242 ((1.05/1.12)^5): the band is
+#    those corners rounded outwards. Above it the forecast years carry less of the value than they would for a
+#    company that is already in its steady state, so the answer is mostly the terminal assumption; below it the
+#    terminal assumptions are harsher than a steady state and need a reason. The identity is exact; choosing those
+#    corners is the judgement. With `years` the benchmark for the caller's own r, g and horizon is returned too.
+# 4. discount rate not above the risk-free rate, or more than DISCOUNT_RATE_MAX_OVER_RISK_FREE = 15 percentage
+#    points above it: a warning. The floor is the supplied rupee risk-free rate itself (a risky rupee is never
+#    worth more than a certain one), so no equity risk premium is assumed by the floor. The ceiling is a judgement
+#    [U]: 15 points is a beta of 2 on a 7.5 % premium, or 1.5 on 10 %; beyond it the rate is a venture hurdle rate
+#    and the DCF returns whatever the rate was set to. A band tied to the risk-free rate moves with rupee rates,
+#    which a fixed range cannot.
+TERMINAL_SHARE_BAND = (Decimal("0.35"), Decimal("0.75"))
+DISCOUNT_RATE_MAX_OVER_RISK_FREE = Decimal("0.15")
+DCF_CHECKS = ("terminal_growth_at_or_above_discount_rate", "terminal_growth_above_risk_free",
+              "terminal_share_outside_band", "discount_rate_outside_band")  # fmt: skip
+
+
+@dataclass(frozen=True)
+class DcfFlag:
+    name: str  # one of DCF_CHECKS
+    level: str  # "error" or "warn"
+    message: str
+
+
+@dataclass(frozen=True)
+class DcfChecks:
+    """The DCF sanity checks: `status` is "error", "warn", "incomplete" (a check could not run) or "ok"."""
+
+    status: str
+    flags: list[DcfFlag]
+    errors: int
+    warnings: int
+    checked: list[str]
+    not_checked: dict[str, str]  # check -> why it could not run
+    discount_rate: Decimal
+    terminal_growth: Decimal | None
+    risk_free: Decimal | None
+    terminal_share: Decimal | None
+    years: int | None
+    spread_over_terminal_growth: Decimal | None  # r - g
+    spread_over_risk_free: Decimal | None  # r - risk-free
+    steady_state_share: (
+        Decimal | None
+    )  # ((1+g) / (1+r))^years: the terminal share of a company growing at g throughout
+    bands: dict[str, Decimal]
+
+
+def _pct(x: Decimal) -> str:
+    return f"{x * 100:.2f} %"
+
+
+def dcf_checks(discount_rate: Num, terminal_growth: Num | None = None, risk_free: Num | None = None,
+               terminal_share: Num | None = None, years: int | None = None) -> DcfChecks:  # fmt: skip
+    """Sanity flags for a DCF: terminal growth vs the rate (error) and vs risk-free, terminal share and rate bands.
+
+    Flags (see DCF_CHECKS and the reasoning above this function): terminal growth at or above the discount rate
+    (error); terminal growth above the risk-free rate (warn); terminal share outside 0.35-0.75 (warn); discount
+    rate not above the risk-free rate or more than 15 percentage points over it (warn). All inputs are fractions;
+    for the exit-multiple method pass `dcf_explicit`'s implied_terminal_growth. A check whose input is not given is
+    listed in `not_checked` and the status is "incomplete": it has not passed. `years` (the forecast length) adds
+    `steady_state_share`. Citable numbers: `errors`, `warnings`, `spread_over_terminal_growth`.
+    """
+    r = _rate(discount_rate, "discount_rate", low=Decimal(0))
+    g = None if terminal_growth is None else _rate(terminal_growth, "terminal_growth")
+    rf = None if risk_free is None else _rate(risk_free, "risk_free", low=Decimal(0), low_ok=True)
+    share = opt_decimal(terminal_share)
+    if years is not None and (isinstance(years, bool) or not isinstance(years, int) or years < 1):
+        raise ValueError(f"years must be a whole number >= 1, got {years!r}")
+    lo, hi = TERMINAL_SHARE_BAND
+    steady = ((1 + g) / (1 + r)) ** years if years is not None and g is not None and g < r else None
+    missing = {"terminal_growth": g, "risk_free": rf, "terminal_share": share}
+    needs = dict(zip(DCF_CHECKS, (("terminal_growth",), ("terminal_growth", "risk_free"), ("terminal_share",),
+                                  ("risk_free",)), strict=True))  # fmt: skip
+    flags: list[DcfFlag] = []
+    not_checked = {name: " and ".join(k for k in keys if missing[k] is None) + " not given"
+                   for name, keys in needs.items() if any(missing[k] is None for k in keys)}  # fmt: skip
+
+    def flag(i: int, level: str, message: str) -> None:
+        flags.append(DcfFlag(DCF_CHECKS[i], level, message))
+
+    if g is not None and g >= r:
+        flag(0, "error", f"terminal growth {_pct(g)} is not below the discount rate {_pct(r)}: the terminal value "
+                         "has no finite value")  # fmt: skip
+    if g is not None and rf is not None and g > rf:
+        flag(1, "warn", f"terminal growth {_pct(g)} is above the risk-free rate {_pct(rf)}: growth for ever above "
+                        "the economy's long-run nominal growth needs a reason")  # fmt: skip
+    if share is not None and not lo <= share <= hi:
+        beside = (
+            "" if steady is None else f"; a company growing at {_pct(g)} throughout would have {steady:.4f}"
+        )
+        flag(2, "warn", f"the terminal value is {share:.4f} of the value, outside {lo}-{hi}{beside}")
+    if rf is not None and not rf < r <= rf + DISCOUNT_RATE_MAX_OVER_RISK_FREE:
+        flag(3, "warn", f"the discount rate {_pct(r)} is not within (0, {_pct(DISCOUNT_RATE_MAX_OVER_RISK_FREE)}] "
+                        f"over the risk-free rate {_pct(rf)}")  # fmt: skip
+    errors = sum(f.level == "error" for f in flags)
+    status = "error" if errors else "warn" if flags else "incomplete" if not_checked else "ok"
+    return DcfChecks(status, flags, errors, len(flags) - errors, [c for c in DCF_CHECKS if c not in not_checked],
+                     not_checked, r, g, rf, share, years, None if g is None else r - g,
+                     None if rf is None else r - rf, steady,
+                     {"terminal_share_low": lo, "terminal_share_high": hi,
+                      "discount_rate_max_over_risk_free": DISCOUNT_RATE_MAX_OVER_RISK_FREE})  # fmt: skip
