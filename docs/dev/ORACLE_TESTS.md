@@ -68,7 +68,7 @@ To add a library: read its licence in both places, confirm the wheels, pin it ex
 
 ## What is compared (first slice, 23-Nov-2026)
 
-38 tests, 74 comparisons, about 75 seconds. The run prints one row per comparison (function, oracle, grid size,
+39 tests, 75 comparisons, about 70 seconds. The run prints one row per comparison (function, oracle, grid size,
 largest difference, tolerance and its reason, verdict); `--oracle-report` writes the same table to a file. In short:
 
 | In-house | Oracle | Inputs | Result |
@@ -82,6 +82,7 @@ largest difference, tolerance and its reason, verdict); `--oracle-report` writes
 | `risk_alerts.touch_prob` | QuantLib `AnalyticDigitalAmericanEngine` (one-touch, zero rates) | 686 | the shortcut's error is exactly (option price) / K; see "needs decision" |
 | `taildist._gjr_nll`, `gjr_filter`, `ewma_variance`, `backcast`; `gjr_fit`; `realvol.garch11_fit` | arch `ZeroMean` + `GARCH`, `EWMAVariance` | 5 synthetic paths, 5 parameter points, 10 fits | likelihood and filter to 1e-15; fits within 2e-10 in log-likelihood |
 | `overfit.reality_check`, `spa`, `romano_wolf`, `kernel_var`; the three stationary-bootstrap index functions | arch `SPA`, `StepM`, `StationaryBootstrap`, on arch's own resampled indices | 4 designs of 6 trials over 250 sessions; 3.7 million index steps | Reality Check identical; SPA differs by two conventions (below) |
+| `volrace/stats.mcs` | arch `MCS(method="max")`, independent resamples | 3 designs, 12 p-values | within Monte Carlo error; arch 9.0.0 still gives the arch 8.0 values frozen in `tests/test_volrace_stats.py` |
 | `analytics_math.kupiec`, `christoffersen_ind`, `chi2_sf` | arch `kupiec_pof`, `christoffersen_independence`; scipy `chi2.sf` | 468 counts, 116 hit sequences, the tail out to x = 1,400 | agree to rounding, edge cases included |
 | `factor_math.ols_hac`, `metrics.clustered_t`, `signals.wilson`, `funds.wilson_interval`, `taildist.gpd_fit` | statsmodels OLS (HAC, cluster); scipy `binomtest`, `genpareto.fit` | 48 regressions, 20 clusterings, 34 intervals, 18 samples | agree |
 
@@ -104,22 +105,27 @@ Both are in `FUNCTIONAL_TESTING.md` (23-Nov-2026).
    pays face x coupon / freq, while interest accrues actual days over the 365- or 366-day year. For half-yearly,
    quarterly and monthly bonds a full period therefore does not accrue one coupon (a 184-day half-year accrues
    4.537 against 4.50 paid per 100 at 9 %; February accrues 0.690 against 0.75), and a par bond's clean price steps
-   at each coupon date (99.963 to 100.036 half-yearly, 99.986 to 100.057 monthly). SEBI's circular sets its
-   denominator "for payment of interest", which means day-count coupons for listed NCDs; an equal-coupon bond
-   would instead want ISMA accrual. Annual-coupon bonds are consistent either way. Changing it moves every
-   non-annual YTM slightly and needs to know which instruments pay which way.
+   at each coupon date (99.963 to 100.036 half-yearly, 99.986 to 100.057 monthly). If SEBI's denominator also
+   sets the coupon amount (our reading of the circular's wording on the payment of interest, from a secondary
+   copy; not verified against SEBI's own PDF), listed NCDs pay day-count coupons; an equal-coupon bond would
+   instead want ISMA accrual. Annual-coupon bonds are consistent either way. Changing it moves every non-annual
+   YTM slightly and needs to know which instruments pay which way. `bonds.py` is not in the engine pin: it was
+   left alone because the right fix depends on that fact, not because it may not be edited.
 2. **The touch-probability shortcut is one-sided only below the forward** (`risk_alerts.touch_prob`, registered
    with #398). 2 x N(-d2) overstates the exact first-passage probability by (put price) / K for a strike below the
    forward and UNDERSTATES it by (call price) / K above it: up to 0.097 and 0.116 in probability on the grid (60 %
    volatility, 90 days). At the alert's 0.60 level, 30 days and 15 % volatility, the exact probability of a short
    call is already 0.608 when the shortcut reaches 0.60 (the strike is 2.19 % away; exact 0.60 is at 2.24 %). The
    exact form, N(-d2) + (F/K) N(-d1), costs one more normal CDF.
-3. **SPA p-values against arch 9** (`stratlab/overfit.spa`). The module follows Hansen (2005) as it cites: every
-   bootstrap statistic is divided by the sample's standard error, and the statistic is floored at zero. arch 9.0.0
-   re-studentises inside each bootstrap draw and does not floor. On arch's own resamples the consistent p-value of
-   an all-noise design is 0.1025 in-house against 0.1325 in arch, and 0.4875 against 0.8075 when every trial
-   loses; the 5 % reading agreed on all four designs. Both are defensible; arch's variant is the more conservative
-   on noise. A size study on simulated nulls would say which the Strategy Lab's gate should read.
+   `risk_alerts.py` is not in the engine pin: it was left alone because 2 x N(-d2) is the maths registered
+   with #398 and printed in the alert's own label, so replacing it is the owner's call.
+3. **SPA p-values against arch 9** (`stratlab/overfit.spa`). The module divides every bootstrap statistic by the
+   sample's standard error and floors the statistic at zero, which is how its docstring gives Hansen (2005).
+   arch 9.0.0 re-studentises inside each bootstrap draw and does not floor. On arch's own resamples the consistent
+   p-value of an all-noise design is 0.1025 in-house against 0.1325 in arch, and 0.4875 against 0.8075 when every
+   trial loses; the 5 % reading agreed on all four designs. arch's variant is the more conservative on noise. The
+   paper was not re-read here; reading its bootstrap section, or a size study on simulated nulls, would say which
+   the Strategy Lab's gate should use.
 
 ### (b) Convention differences (written down in the tests)
 
@@ -137,14 +143,15 @@ Both are in `FUNCTIONAL_TESTING.md` (23-Nov-2026).
   its far-wing Black prices are off by up to 5.7e-6 relative and its implied volatilities by 1.7e-7; it returns 0
   for 448 far-wing prices it cannot invert. The in-house values are within rounding of the 40-digit ones.
 - QuantLib 1.44's `BlackCalculator.volga(T)` returns the true volga divided by sqrt(T) (right only at T = 1).
-- QuantLib's `yieldRate` cannot bracket a negative or zero yield (665 of 2,979 histories).
+- QuantLib's `yieldRate` searches for a bracket by walking toward the smaller |NPV|: from its default guess of 5 %
+  it fails on 665 of 2,979 many-instalment histories whose root is below the guess (24 stay unsolved from lower
+  guesses). scipy's `brentq` on QuantLib's NPV is the oracle for the root.
 - QuantLib's smile-section density is a finite difference: 1e-4 of the peak at its default gap.
 - A double cannot carry the time value of a deep in-the-money quote: the implied volatility is then only as good
   as the quote (the bound holds; the largest error was 2.3 vol points on a 300 % volatility one day from expiry).
 
 ### Not done yet (#503 stays open)
 
-- arch: `volrace/stats.mcs` (frozen from arch 8.0 in the normal suite; no live comparison yet).
 - scipy / statsmodels: `inference.twoway_clustered_t`, `lo_sharpe`, `bca_interval`, `ipo_model.fit_quantile` and
   `fit_logistic`, `realvol.ols` and `mincer_zarnowitz`, `stock_backtest.newey_west_t`.
 - skfolio (+ scikit-learn, scipy linkage): Ledoit-Wolf, minimum variance, risk parity, HRP, deflated Sharpe.

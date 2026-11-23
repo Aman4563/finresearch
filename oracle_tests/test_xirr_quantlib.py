@@ -4,9 +4,11 @@ Convention pinned first: the module discounts each flow by (1 + r)^(days / 365) 
 flow. In QuantLib's words that is `Actual365Fixed`, `Compounded`, `Annual`, with the first flow's date as both the
 settlement and the NPV date. Leap years therefore add a day, never change the divisor.
 
-QuantLib is the oracle for the DISCOUNTING. For the root it is used twice: its own solver (`CashFlows.yieldRate`)
-where that converges, and scipy's `brentq` on QuantLib's NPV everywhere, because QuantLib's solver cannot bracket a
-negative yield or a root at zero (an oracle limitation, counted below).
+QuantLib is the oracle for the DISCOUNTING. For the root it is used twice: scipy's `brentq` on QuantLib's NPV
+everywhere, and QuantLib's own solver (`CashFlows.yieldRate`) as a second witness. That solver searches for a bracket
+by walking from its guess toward the smaller |NPV|; for a history of many instalments whose root lies below the guess
+that is the wrong direction, so from the default guess of 5 % it fails on some, and is retried from lower guesses
+(an oracle limitation, counted below).
 """
 
 from __future__ import annotations
@@ -43,6 +45,20 @@ def ql_root(flows) -> float:
     return brentq(lambda r: ql_npv(flows, r), LO, HI, xtol=1e-15, rtol=1e-15, maxiter=500)
 
 
+def ql_own_root(flows) -> tuple[float | None, bool]:
+    """QuantLib's own solver: (root or None, solved from the default guess)."""
+    cf, d0 = leg(flows)
+    for guess in (0.05, -0.5, -0.9, -0.99):
+        try:
+            root = ql.CashFlows.yieldRate(
+                cf, 0.0, DC, ql.Compounded, ql.Annual, True, d0, d0, 1e-13, 500, guess
+            )
+        except RuntimeError:
+            continue
+        return root, guess == 0.05
+    return None, False
+
+
 def books(n: int, seed: int = 503):
     """Synthetic investor histories: 1 to 40 irregular purchases over up to 13 years (so several 29 Februaries),
     then one redemption worth 2 % to 12 times the money put in."""
@@ -64,7 +80,7 @@ def test_xirr_is_the_root_of_quantlibs_act365_annual_npv(oracle):
     """Tolerance 5e-9 absolute: the module rounds its root to 8 decimals (half a unit), brentq adds 1e-15. Where the
     module answers "no solution in (-99.99 %, 1000 %)" the QuantLib NPV must have no sign change in that bracket
     either: the root is outside it, which the module reports as unknown by design."""
-    worst, n, outside, ql_own, ql_failed, ql_worst = (0.0, None), 0, 0, 0, 0, 0.0
+    worst, n, outside, ql_own, ql_failed, ql_retried, ql_worst = (0.0, None), 0, 0, 0, 0, 0, 0.0
     for flows in books(3000):
         try:
             got = float(funds.xirr(flows))
@@ -75,25 +91,22 @@ def test_xirr_is_the_root_of_quantlibs_act365_annual_npv(oracle):
         n += 1
         ref = ql_root(flows)
         worst = max(worst, (abs(got - ref), (got, ref, flows[0], flows[-1], len(flows))), key=lambda x: x[0])
-        cf, d0 = leg(flows)
-        try:
-            own = ql.CashFlows.yieldRate(
-                cf, 0.0, DC, ql.Compounded, ql.Annual, True, d0, d0, 1e-13, 500, 0.05
-            )
-        except RuntimeError:
-            ql_failed += 1  # (c): no bracket found below zero, or a root at exactly zero
-            assert ref <= 1e-9, (ref, flows)
+        own, first_try = ql_own_root(flows)
+        ql_retried += not first_try
+        if own is None:
+            ql_failed += 1
             continue
         ql_own += 1
         ql_worst = max(ql_worst, abs(got - own))
-    assert n > 2500 and outside >= 10 and ql_own > 1500 and ql_failed > 300, (n, outside, ql_own, ql_failed)
+    assert n > 2500 and outside >= 10 and ql_own > 2500 and ql_retried > 300, (n, outside, ql_own, ql_retried)
     oracle.check("funds.xirr", "QuantLib NPV (Actual365Fixed, Compounded, Annual) + scipy brentq", grid=n,
                  max_diff=worst[0], limit=5.0001e-9, why="absolute (the module rounds to 8 decimals)", worst=worst[1])  # fmt: skip
     oracle.check("funds.xirr", "QuantLib CashFlows.yieldRate (its own solver)", grid=ql_own, max_diff=ql_worst,
                  limit=5.0001e-9, why="absolute (the module rounds to 8 decimals)")  # fmt: skip
-    oracle.note("funds.xirr", "QuantLib CashFlows.yieldRate (its own solver)", grid=ql_failed, max_diff=ql_failed,
-                tolerance="none: count of cases QuantLib could not solve (every one has a root <= 0)",
-                verdict="(c) oracle limit: QuantLib's bracketing fails for negative and zero yields")  # fmt: skip
+    oracle.note("funds.xirr", "QuantLib CashFlows.yieldRate from its default guess of 5 %", grid=n, max_diff=ql_retried,
+                tolerance=f"none: count of histories it could not bracket from 5 % ({ql_failed} still unsolved from "
+                "-50 %, -90 % and -99 %)",
+                verdict="(c) oracle limit: QuantLib's bracket search walks away from a root below its guess")  # fmt: skip
     oracle.note("funds.xirr", "QuantLib NPV at the bracket's ends", grid=outside, max_diff=outside,
                 tolerance="none: count of roots outside (-99.99 %, 1000 %)",
                 verdict="(b) convention: a root outside the bracket is unknown (ValueError), by design")  # fmt: skip

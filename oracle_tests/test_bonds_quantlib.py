@@ -5,9 +5,10 @@ Conventions pinned on the QuantLib side to match the module's docstring before a
   and clamped to the month's end, no business-day adjustment, end-of-month rule off, no settlement lag, face 100;
 * discounting: `Compounded` at `freq`, time by `ActualActual(ISMA, schedule)` (the fraction of the current coupon
   period still to run, then whole periods): the street convention the module's "counts coupon periods" describes;
-* accrued interest: NOT a QuantLib day count. SEBI's rule (CIR/IMD/DF-1/122/2016, para 3(b)) is "366 days for a whole
-  one year period" when 29 February falls in it, "reckoned twice as the denominator" for half-yearly interest. It is
-  rebuilt here from QuantLib's own dates and day counts, and the gap to ActualActual(ISMA) is measured and explained.
+* accrued interest: NOT a QuantLib day count. The module follows SEBI's rule as its own docstring and tests state it
+  (CIR/IMD/DF-1/122/2016): when 29 February falls in a one-year period, 366 is the denominator for that whole year,
+  whatever the coupon frequency. It is rebuilt here from QuantLib's own dates and day counts, and the gap to
+  ActualActual(ISMA) is measured and explained.
 
 The grid is built to hit what tests/test_bonds.py never did: settlement between coupon dates, on the eve and the day
 of a coupon, on and around 29 February, month-end maturities (29th, 30th, 31st), and all four frequencies.
@@ -215,10 +216,12 @@ def test_a_full_periods_accrual_is_not_the_coupon_the_module_pays(oracle):
     `cash_flows` pays face x coupon / freq every period, while `accrued_interest` accrues actual days over the
     year. For annual coupons the two meet (the period is the year). For half-yearly, quarterly and monthly coupons a
     full period accrues coupon x L / basis, not coupon / freq, so on the eve of a coupon the accrued interest is not
-    the coupon about to be paid and the clean price of a par bond steps at the coupon date. SEBI's circular sets the
-    366-day denominator "for payment of interest", i.e. day-count coupons, which would make the two consistent; an
-    equal-coupon bond (a G-sec) would instead want ISMA accrual. Which instruments pay which is the owner's call,
-    and it moves every non-annual YTM a little, so it is measured here and left alone."""
+    the coupon about to be paid and the clean price of a par bond steps at the coupon date. If SEBI's denominator
+    also sets the coupon AMOUNT (interest paid = face x rate x days / 365 or 366, which is how we read the circular's
+    wording on the payment of interest; read on a secondary copy, not verified against SEBI's own PDF), day-count
+    coupons would make the two consistent; an equal-coupon bond (a G-sec) would instead want ISMA accrual. Which
+    instruments pay which way is the owner's call, and it moves every non-annual YTM a little, so it is measured
+    here and left alone."""
     worst = {f: (0.0, None) for f in FREQ}
     step = {f: [math.inf, -math.inf] for f in FREQ}
     n = 0

@@ -8,13 +8,15 @@ Conventions pinned first:
 * Monte Carlo noise is removed, not tolerated: arch's own resampled indices (same seed, same block) are read from
   its `StationaryBootstrap` and handed to the in-house functions, so equal algorithms must give EQUAL p-values.
 
-Result: White's Reality Check is identical. The studentised SPA is not, and the whole difference is two conventions:
-* Hansen (2005, section 3) divides every bootstrap statistic by the SAMPLE's standard error omega_k, which is what
-  the module does and cites; arch 9.0.0 re-estimates omega_k inside each bootstrap draw (a bootstrap-t);
-* Hansen's statistic is max(max_k t_k, 0), floored at zero on both the sample and the bootstrap side, as in the
-  module; arch compares the unfloored maxima. This matters only when every trial's mean is negative ("all bad"),
-  where the p-values differ most and both are far from rejecting.
+Result: White's Reality Check is identical. The studentised SPA is not, and the whole difference is two choices:
+* the module divides every bootstrap statistic by the SAMPLE's standard error omega_k; arch 9.0.0 re-estimates
+  omega_k inside each bootstrap draw (a bootstrap-t);
+* the module's statistic is max(max_k t_k, 0), floored at zero on both the sample and the bootstrap side; arch
+  compares the unfloored maxima. This matters only when every trial's mean is negative ("all bad"), where the
+  p-values differ most and both are far from rejecting.
 Applying both of arch's choices on the test's side reproduces arch's three p-values exactly, so nothing else differs.
+The module's two choices are what its docstring gives as Hansen (2005); the paper was not re-read for this
+comparison, so which variant is the paper's own is not settled here.
 """
 
 from __future__ import annotations
@@ -22,11 +24,12 @@ from __future__ import annotations
 import math
 
 import numpy as np
-from arch.bootstrap import SPA, StationaryBootstrap, StepM
+from arch.bootstrap import MCS, SPA, StationaryBootstrap, StepM
 
 from finresearch.backtest import inference as bi
 from finresearch.fincalc import taildist as td
 from finresearch.stratlab import overfit as ov
+from finresearch.volrace import stats as vr
 
 T, K, BLOCK, REPS, SEED = 250, 6, 10, 400, 42
 Q = 1 / BLOCK
@@ -97,7 +100,7 @@ def test_reality_check_and_spa_on_archs_own_resamples(oracle):
     oracle.note("overfit.spa (lower, consistent, upper p)", "arch SPA(studentize=True), same resamples", grid=3 * n,
                 max_diff=spa_h[0], tolerance=f"none: largest p-value difference (design '{spa_h[1][0]}'); the 5 % "
                 "reading agrees on all four designs",
-                verdict="(b) convention: in-house follows Hansen (2005): sample omega, statistic floored at 0; arch 9 does neither")  # fmt: skip
+                verdict="(b) convention: in-house uses the sample's omega and floors the statistic at 0 (its reading of Hansen 2005); arch 9 does neither")  # fmt: skip
 
 
 def test_stepdown_rejections_against_arch_stepm(oracle):
@@ -153,3 +156,47 @@ def test_stationary_bootstrap_indices_have_archs_distribution(oracle):
         assert abs(first - 1 / n).max() < 5 * math.sqrt((1 / n) / len(idx)), name
     oracle.check("stationary bootstrap indices (taildist, inference, overfit)", "arch StationaryBootstrap + theory",
                  grid=cells, max_diff=worst, limit=4.0, why="binomial standard errors (Monte Carlo)")  # fmt: skip
+
+
+def test_model_confidence_set_matches_arch_within_monte_carlo_error(oracle):
+    """volrace/stats.mcs (T_max) against arch's MCS(method="max"). The module draws its own resamples, so here the
+    Monte Carlo error cannot be removed: two independent bootstraps of B draws differ by up to
+    4 sqrt(2 p (1 - p) / B) + 2/B in a p-value. The first design is the one tests/test_volrace_stats.py freezes from
+    arch 8.0; arch 9.0.0 must still give those numbers (it does: its MCS did not change the way its SPA did)."""
+    reps, worst, n = 4000, 0.0, 0
+    for seed, bias in (
+        (390, [0.0, 0.03, 0.06, 0.25]),
+        (17, [0.0, 0.0, 0.10, 0.12, 0.30]),
+        (5, [0.0, 0.01, 0.02]),
+    ):
+        rng = np.random.default_rng(seed)
+        common = rng.gamma(2.0, 0.5, 250)
+        losses = common[:, None] + np.array(bias) + rng.normal(0, 0.3, (250, len(bias)))
+        ref = MCS(losses, size=0.10, reps=reps, block_size=5, method="max", bootstrap="stationary", seed=seed)
+        ref.compute()
+        theirs = {f"m{k}": float(v) for k, v in ref.pvalues["Pvalue"].items()}
+        ours = vr.mcs(
+            {f"m{i}": c.tolist() for i, c in enumerate(losses.T)}, alpha=0.10, reps=reps, mean_block=5, seed=1
+        )
+        for name, p in theirs.items():
+            n += 1
+            allowed = 4 * math.sqrt(2 * p * (1 - p) / reps) + 2 / reps
+            worst = max(worst, abs(ours.pvalues[name] - p) / allowed)
+        near = [
+            m for m, p in theirs.items() if abs(p - 0.10) < 0.02
+        ]  # a model on the 10 % line may fall either way
+        assert set(ours.included) ^ {f"m{k}" for k in ref.included} <= set(near)
+        if seed == 390:
+            frozen = MCS(
+                losses, size=0.10, reps=20000, block_size=5, method="max", bootstrap="stationary", seed=390
+            )
+            frozen.compute()
+            got = [round(float(frozen.pvalues["Pvalue"][k]), 5) for k in (3, 2, 1, 0)]
+            assert got == [
+                0.0,
+                0.02455,
+                0.5659,
+                1.0,
+            ]  # the arch 8.0 values pasted in tests/test_volrace_stats.py
+    oracle.check("volrace.stats.mcs (MCS p-values)", "arch MCS(method='max'), independent resamples", grid=n,
+                 max_diff=worst, limit=1.0, why="x 4 Monte Carlo standard errors of a p-value difference")  # fmt: skip
