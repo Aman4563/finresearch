@@ -102,9 +102,10 @@ def table(rows: list[Row]) -> str:
         "| --- | --- | ---: | ---: | --- | --- |",
     ]
     for r in sorted(rows, key=lambda r: r.order):
+        cells = [r.function, r.oracle, f"{r.grid:,}", f"{r.max_diff:.3g}", r.tolerance, r.verdict]
         lines.append(
-            f"| {r.function} | {r.oracle} | {r.grid:,} | {r.max_diff:.3g} | {r.tolerance} | {r.verdict} |"
-        )
+            "| " + " | ".join(c.replace("|", "\\|") for c in cells) + " |"
+        )  # |d| must not split a cell
     return "\n".join(lines)
 
 
