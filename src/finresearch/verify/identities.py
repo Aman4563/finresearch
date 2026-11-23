@@ -30,6 +30,22 @@ Checks (each result names the claims it used):
   (RHP restated vs annual report, or a later filing): must be explained by the restatement-adjustments note.
 * Sanity bands (C.2) — PAT margin within −200 %…80 %, P/E within 0…500, receivable days within 0…730.
 
+Statement checks (#518; the list is the model-integrity checks of anthropics/financial-services' `audit-xls` skill,
+rewritten for Ind AS ledgers). All six are warn-level: pass or warn, never fail, never `hard`, so none can block a
+report. Each reads claims of one period (and the year before), one basis and one currency, names them, and is listed
+as "<check> — not checked: <input>" when an input is absent, never passed:
+
+* Equity roll-forward — other equity (or retained earnings) at the previous year end + profit − dividends ± the
+  movements the ledger states (buyback, share-based payments, OCI) = this year end. Annual; dividends are required.
+* D&A tie — depreciation and amortisation added back in the cash-flow statement = the P&L charge.
+* Effective tax rate — tax ÷ PBT (or the rate implied by PBT − PAT, labelled so) inside `TAX_BAND`: the statutory
+  rates of the Income-tax Act, 1961 (s.115BAB, s.115JB MAT, s.115BAA 25.168 %, the 25 % and 30 % slabs) with a
+  cushion; outside it only a reason held as a claim (deferred tax, MAT credit, exceptional items) passes.
+* Margin ordering — gross ≥ EBITDA ≥ PAT margin; skipped, with the reason, for a bank, NBFC or insurer.
+* Capex — cash capex against the rise in gross block (+ CWIP), within `CAPEX_BAND`.
+* Growth outliers — a headline line above 2× the same period a year earlier, or changing sign: needs an explanation
+  in the text.
+
 Tolerance (roadmap C.1): ε = max(0.5 × reporting unit × lines summed, 0.1 % of the largest operand), where the
 reporting unit is the last printed decimal of the coarsest operand. Rates (margins, growth) pass within half a unit
 of the printed percentage plus 0.5 % relative. A formula with several accepted definitions (EBITDA margin on

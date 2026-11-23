@@ -437,7 +437,12 @@ def identity_checks(run_id: int, only_failing: bool = True) -> str:
     restated for bonus/split, balance sheet balances, cash roll-forward, margins and growth recomputed from their
     parts, lakh/crore/million scale shifts, ₹ vs US$ labels, standalone vs consolidated mixes and restated-vs-later
     filing differences. Each result names the claim ids involved; fix or caveat failing figures before citing them
-    (a failing high-importance figure blocks the publish gate). Checks without inputs are listed, never guessed."""
+    (a failing high-importance figure blocks the publish gate). Checks without inputs are listed, never guessed.
+    Six statement checks only warn (they never block): other-equity roll-forward (opening + profit − dividends ±
+    stated movements = closing), D&A in the cash flow = D&A in the P&L, effective tax rate inside the statutory
+    band, gross ≥ EBITDA ≥ PAT margin (skipped for lenders), capex vs the rise in gross block and CWIP, and a
+    headline line that more than doubles or changes sign year on year: explain a warning in the text, or save the
+    missing claim (dividends_paid, other_equity, depreciation_cash_flow, gross_block, cwip, deferred_tax)."""
     from finresearch.verify.identities import run_identities
 
     if (why := _foreign_run(run_id, "check the ledger of")) is not None:
