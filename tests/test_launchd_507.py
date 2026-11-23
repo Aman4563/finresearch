@@ -275,7 +275,9 @@ def test_the_launcher_starts_each_service_as_it_is_started_by_hand(box):
             repo,
             f"-i uv run finresearch serve --port {api} --log-file {repo}/data/logs/serve.log",
         ),
-        ("pnpm", f"{repo}/web", f"start -H 127.0.0.1 -p {web}"),
+        # under caffeinate like the API (#523): with node as the job's main process macOS held the web app at a
+        # "node would like to access files in your Desktop folder" prompt until someone answered it
+        ("caffeinate", f"{repo}/web", f"-i pnpm start -H 127.0.0.1 -p {web}"),
         ("uv", repo, f"run --no-project --quiet python {repo}/scripts/healthcheck.py"),
     ]
     bad = _launch(box, "everything")

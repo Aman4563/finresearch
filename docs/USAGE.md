@@ -78,6 +78,11 @@ scripts/launchd/uninstall.sh            # unload the jobs (this stops the servic
   `data/logs/serve.launchd.log` (the launcher's own lines, and anything printed before the API's log starts). A
   job's own output always goes to a `*.launchd.log` file: launchd cannot start a job whose output file was
   created by another process, such as the `web.log` of an app started by hand (#523).
+- **If the web app does not answer after a login** and `data/logs/web.launchd.log` ends at "starting": macOS may
+  be waiting for you to answer a privacy prompt ("... would like to access files in your Desktop folder"), which
+  appears when the checkout is under Desktop, Documents or Downloads. Click Allow once. Both services run under
+  `caffeinate`, which avoids the prompt for `node` and `python` themselves; the health check reports a web app
+  that does not answer within five minutes.
 - **Uninstall** stops the three jobs' services. Start the app by hand afterwards (above), or install again.
 
 #### The health check
