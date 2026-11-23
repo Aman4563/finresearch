@@ -274,8 +274,9 @@ def dcf_grid(cash_flow: Num, growth: Num, shares: Num, discount_rates: list[Num]
 @dataclass(frozen=True)
 class PeerStats:
     """Median, inter-quartile range and full range of peer multiples, and where the company sits (0–100
-    percentile). `min` and `max` are of the values counted in `n` (#504: the five-number summary; non-positive
-    values are already dropped when the caller asked for positive ones only)."""
+    percentile). `min` and `max` are of the values counted in `n` (#504: non-positive values are already dropped
+    when the caller asked for positive ones only). The five-number summary (minimum, quartiles, maximum) is after
+    the comps-analysis skill of anthropics/financial-services (Apache-2.0), rewritten."""
 
     n: int
     q1: Decimal
