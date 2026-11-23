@@ -33,7 +33,7 @@ Every change must preserve these.
 4. All arithmetic in reports comes from `fincalc`, using Decimal, documented rounding, and `None` for "not reported". LLMs never compute figures that end up in a report.
 5. Live market figures (subscription, GMP, prices) carry their source timestamp and an INTERIM label while bidding is open. NSE subscription multiples use the lower price-band share base.
 6. Numeric claims are atomic (metric, value, unit, period). A verifier's correction becomes a new claim linked by `corrects_claim_id` and is verified only if its value is printed at the cited lines. A deterministic contradiction (for example a wrong bidding day) is never overridden by a model.
-6a. A report is published (`report.md`) only if the publish gate passes: it cites only this run's claims, none contradicted or unsupported, no raw document lines, and every high-importance claim it cites is verified with evidence grade A (document quote at its lines), B (web quote found on the page text `fetch_page` stored) or D (fincalc re-ran and reproduced it from cited inputs); see `verify/evidence.py`. Otherwise the output is `report_blocked.md` and the run status is `blocked`.
+6a. A report is published (`report.md`) only if the publish gate passes: it cites only this run's claims, none contradicted or unsupported, no raw document lines, and every high-importance claim it cites is verified with evidence grade A (document quote at its lines), B (web quote found on the page text `fetch_page` stored) or D (fincalc re-ran and reproduced it from cited inputs); see `verify/evidence.py`. Otherwise the output is `report_blocked.md` and the run status is `blocked`. The gate also compares the figure printed beside each citation with the claim's value (`verify/printed.py`, #502): a mismatch is a warning, and blocks for a high-importance claim only once `verify.gate.PRINTED_VALUE_BLOCKS` is turned on.
 6b. Tests never write to the real `data/` folder (autouse isolation fixture).
 6c. Research packs are built only from the ledger and step outputs (`finresearch ipo render`). A blocked report is written as `report_NOT_PUBLISHED.*` with the gate's reasons, never as `report.*`. PDFs are validated and atomically replaced.
 7a. Nothing is silently truncated. Tools paginate with explicit continuation hints, and engines refuse over-long inputs (`CapabilityMismatch`) rather than cutting them.
@@ -73,6 +73,20 @@ Every change must preserve these.
 - **Offer-document tables:** multi-line headers, per-row horizontal shifts and a Notes column. Use `ingest.layout_table` (or the MCP `extract_table` tool) rather than asking an LLM to parse layout.
 - **glm-ocr** doesn't stop at the end of a page and replays earlier paragraphs. It is streamed with loop detection.
 - **MCP SDK 2.x:** `FastMCP` was renamed `MCPServer` (`mcp.server.mcpserver`).
+- **pgvector on Postgres 17 (#507):** Homebrew's `pgvector` formula now builds for Postgres 18 and 19 only. On
+  23-Nov-2026 a `brew upgrade` replaced it, and on Postgres 17 every read or write of `chunk.embedding` then failed
+  with `could not access file "$libdir/vector"`. On Postgres 17, build pgvector from source instead (in a checkout
+  of github.com/pgvector/pgvector):
+  `PG_CONFIG=/opt/homebrew/opt/postgresql@17/bin/pg_config make && make install`. A later `brew upgrade` can remove
+  it again; rebuild the same way. The database keeps its extension entry, so new sessions load the library once the
+  file is back (`ALTER EXTENSION vector UPDATE` if the rebuilt version is newer). How it is noticed: `GET /api/health` answers
+  `"vector": false`, the data-health pass stores a failed `pgvector` check (brief and Data health card), and the
+  launchd health check raises a notification (`dq.misc.vector_check` probes on a new connection, because a pooled
+  session that loaded the library earlier keeps working).
+- **Starting the app (#507):** uvicorn runs the app's lifespan (the monitor) before it binds the port, so a second
+  copy used to run a scheduler for a moment, which could claim tonight's jobs, before failing on the port. `finresearch
+  serve` now looks at the port first and refuses (exit 1) when it is in use, and under launchd the launcher waits
+  while the port answers (`scripts/launchd/run-service.sh`). Keep both when changing how the app starts.
 - **Claude Code flags:** `--bare` needs an API key, so it isn't usable on the Max tier. MCP tool permissions go in `--allowedTools` (`mcp__finresearch`), never in `--tools`.
 - **SEBI:** the full offer document is the iframe `file=` target (`sebi_data/attachdocs`). Listing rows link only the abridged prospectus.
 - **OCR'd documents** (scanned annual reports, audited statements; Tesseract mean confidence about 90) are accurate on clean pages. Noisy pages garble digits (for example `2,066 53`, `L7ULA7`). Treat OCR'd figures as secondary: prefer the RHP text layer and cross-check before citing.
