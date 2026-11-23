@@ -168,7 +168,8 @@ async def backfill(series: Iterable[str], start: date, end: date | None = None, 
         out["failed"][key] = f"{type(e).__name__}: {e}"[:300]
         if period is not None:
             with session_scope() as s:
-                _manifest(s, *period, status="failed", url=None, rows=None, error=out["failed"][key])
+                _manifest(s, *period, status="failed", url=None, rows=None, error=out["failed"][key],
+                          fetched_at=now())  # fmt: skip
         st["streak"] += 1
         st["refusals"] = st["refusals"] + 1 if refused(e) else 0
         if st["refusals"] >= REFUSALS_TO_STOP:
@@ -199,9 +200,9 @@ async def backfill(series: Iterable[str], start: date, end: date | None = None, 
                 url, _, got = await client.fixings(name, a, b)
                 with session_scope() as s:
                     n = load_fixings(s, name, got, url)
-                    _manifest(
-                        s, name, m, status="loaded" if n else "no_file", url=url[:200], rows=n, error=None
-                    )
+                    # this run's clock, not the database's: _settled reads fetched_at (#500)
+                    _manifest(s, name, m, status="loaded" if n else "no_file", url=url[:200], rows=n, error=None,
+                              fetched_at=now())  # fmt: skip
                 out["rows"] += n
                 done(key, "loaded" if n else "no_file")
             except _Stop:
