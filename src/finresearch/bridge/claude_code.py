@@ -275,6 +275,10 @@ class ClaudeCodeEngine:
         # refreshed the login at once, no connection) as an is_error result whose subtype is still "success"
         subtype = res.get("subtype", "")
         why = f"{task.name}: {text[:300]}" if subtype == "success" else f"{task.name}: {subtype} {text[:300]}"
+        if subtype == "error_max_structured_output_retries":
+            # the answer never fitted --json-schema (a length or item cap, #505): the CLI made the model try again in
+            # the same session and gave up. Its reason is in `errors`, not `result`: keep it, it names the field.
+            why = f"{why.rstrip()} {'; '.join(str(x) for x in res.get('errors') or [])[:600]}".rstrip()
         if res.get("is_error"):
             kind = transient_kind(text)
             if kind is None and (
