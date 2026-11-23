@@ -12,7 +12,8 @@ ollama pull qwen3.5:9b && ollama pull qwen3.5:4b && ollama pull qwen3-embedding:
 
 cp .env.example .env        # optional overrides; never commit .env
 uv run finresearch bridge health          # Claude login, local models, memory, limits
-uv run finresearch bridge limits          # how much of the Claude plan's 5-hour and 7-day windows is used
+uv run finresearch bridge limits          # the Claude plan's 5-hour and 7-day windows, as last seen (a reading
+                                          # whose window has since reset is shown as expired, with its date)
 uv run finresearch bridge usage --runs 10 # which agent roles spend the plan: cost share, tokens, turns per role
 ```
 
@@ -30,6 +31,80 @@ forecast scoring. `uv run finresearch monitor run` runs it without the API.
 The after-close market jobs (stock peers, disclosures, IV history) skip NSE holidays. If NSE's holiday list for the
 year can't be loaded, they don't run at all (they fail closed): the monitor logs it, raises one warning alert a day,
 and tries the list again every hour.
+
+### Start at login (launchd)
+
+Started by hand, the API, the monitor and the web app stay down after a restart of the Mac until someone starts them
+again (in November 2026 that took three weeks to notice, #507). Three LaunchAgents fix that. They run in your login
+session (`gui/<uid>`), because the app's secrets are in the login Keychain.
+
+| Job | What it runs | Restarted by launchd |
+|---|---|---|
+| `in.finresearch.api` | `caffeinate -i uv run finresearch serve --log-file data/logs/serve.log` (API + monitor, 127.0.0.1:8710) | when it exits, at most once per 30 s |
+| `in.finresearch.web` | `pnpm start -H 127.0.0.1 -p 3100` in `web/` | when it exits, at most once per 30 s |
+| `in.finresearch.healthcheck` | `scripts/healthcheck.py`, every 5 minutes | not needed: each run is short |
+
+```bash
+scripts/launchd/install.sh --print      # show the three plists it would write; changes nothing
+scripts/launchd/install.sh              # write them to ~/Library/LaunchAgents and load the jobs not loaded yet
+scripts/launchd/uninstall.sh            # unload the jobs (this stops the services) and delete the plists
+```
+
+- **Install** is safe to repeat: an unchanged plist is not rewritten and a loaded job is left as it is. It never
+  stops, kills or restarts anything. The templates in `scripts/launchd/` hold no path of yours; the installer fills
+  in the checkout path, your home folder, the labels and the folders where `uv`, `pnpm`, `node` and `pg_isready`
+  are. If a plist changed for a job that is already loaded, the installer prints the two commands that apply it.
+- **If the app is already running** (started by hand), installing starts no second copy. Each job first looks at
+  its port; while something answers there it waits, looks again every 15 seconds, and starts the service when the
+  port is free. So the hand-started copy keeps running until you stop it, and then the job takes over. Do not
+  start a copy by hand while the jobs are loaded: it would only make the job wait again.
+- **Restart** (after a deploy, or when something hangs) is one command per service; launchd stops the running
+  instance and starts it again:
+  ```bash
+  launchctl kickstart -k gui/$(id -u)/in.finresearch.api     # API + monitor
+  launchctl kickstart -k gui/$(id -u)/in.finresearch.web     # web app (after `pnpm build`)
+  ```
+  A research run in progress is a separate worker process and is not stopped by this.
+- **How do I know it is running?**
+  ```bash
+  launchctl print gui/$(id -u)/in.finresearch.api | grep -E 'state|pid|last exit'   # state = running, a pid
+  curl -s http://127.0.0.1:8710/api/health          # {"ok":true,"version":"…","vector":true}
+  curl -sI http://127.0.0.1:3100/ | head -n 1       # the web app answers
+  tail -n 5 data/logs/healthcheck.log               # the last problems, if any
+  cat data/state/healthcheck.json                   # "checked_at": the last check; "ok": true
+  ```
+  Logs: `data/logs/serve.log` (the API and the monitor, rotated), `data/logs/web.log`, and
+  `data/logs/serve.launchd.log` (the launcher's own lines, and anything printed before the API's log starts).
+- **Uninstall** stops the three jobs' services. Start the app by hand afterwards (above), or install again.
+
+#### The health check
+
+`scripts/healthcheck.py` needs neither the app nor the database, and never reads `.env`, `~/.pgpass` or the Keychain.
+Every five minutes it asks: does Postgres accept connections (`pg_isready`), does the API answer, does the web app
+answer, and can Postgres load pgvector (`/api/health`'s `vector`). A problem that is still there on the next run
+gets one macOS notification, repeated every six hours while it lasts, and a line in `data/logs/healthcheck.log` on
+every run. While Postgres is down only that is reported, since the API cannot answer without it.
+`uv run --no-project python scripts/healthcheck.py --dry-run` prints what it sees and changes nothing.
+
+The stale lock: after an unclean shutdown `postmaster.pid` can name a process ID that, after a restart, belongs to
+another program, and Postgres then refuses every start. The check reports this case only when all of these hold:
+Postgres gives no answer, the file exists, the process with that ID is alive and is not a postgres process, and no
+postgres process exists at all. By default it only tells you the command to run. If you install with
+`scripts/launchd/install.sh --allow-move-stale-postmaster-pid`, it moves the file aside itself (to
+`postmaster.pid.stale-<time>` in the same folder; it never deletes it), but only after two runs in a row saw exactly
+that case and a fresh look just before acting still does. It never starts or stops Postgres: Homebrew's own job
+starts it at its next retry.
+
+#### If the app or the database is down
+
+1. `pg_isready` says whether Postgres accepts connections; `brew services list` whether its job runs.
+2. If Postgres does not start, read its log; a stale `postmaster.pid` is described above (the health check's
+   notification names the exact `mv` command).
+3. `could not access file "$libdir/vector"`: pgvector is missing for this Postgres. Rebuild it
+   (`docs/dev/ENGINEERING_HANDOFF.md`, "pgvector on Postgres 17").
+4. When Postgres is back: `launchctl kickstart -k gui/$(id -u)/in.finresearch.api`.
+5. Missed evenings refill by themselves at the next evening run (see "Catch-up after an outage" below). The forward
+   quote recorder, the F&O card log and the intraday archive cannot be refilled: nobody serves those sessions again.
 
 ### Logs and retention
 
@@ -65,6 +140,10 @@ uv run finresearch batch run -- uv run finresearch fno backfill --from 2022-01-0
 
 The off-machine destination is `FINRESEARCH_BACKUP_OFFSITE_DIR`, a folder that must already exist (a mounted drive,
 NAS share or cloud-synced folder); copies are encrypted on this Mac first. Details: `docs/BACKUPS.md`.
+`backup.sh` says why it did not dump: exit 3 "REFUSED: plaintext secrets" only when `finresearch secrets check`
+found some (its exit 1); exit 5 when the database cannot be reached (the check's exit 3); exit 6 when the check
+could not run. Every run records its outcome, and the next morning brief and the Data health card show a refused or
+failed backup and the age of the newest good one (unknown until a run is on record).
 `batch run` exits 75 when it defers a job (`--wait` sleeps until 15:45 IST instead), runs the job at background
 CPU and I/O priority, and pauses it while the market is open.
 
@@ -214,6 +293,20 @@ uv run finresearch vault backfill --from 2018-01-01 --to 2021-12-31 --max-days 4
 uv run finresearch vault status                    # vault load manifest: days by year and status (no market data)
 uv run finresearch vault engine-hash               # the engine hash for the vault pin (PREREG.md §2.7)
 ```
+
+**Catch-up after an outage (#507).** The evening jobs that load one exchange file a day normally re-check a short
+window (F&O bhavcopy 10 days; participant files 5; index closes, the full equity bhavcopy and SPAN 4). When the app
+was down for longer, each job starts instead at the day after its own store's last loaded day, and at the oldest
+day its store still misses inside the bound (a day that failed, or a hole an interrupted run left), so the gap
+refills on the first evening the job runs again. Nothing else changes: the jobs still start only after 19:00 /
+19:30 IST on a trading day (never in market hours), use the shared NSE budget and the manual backfill's pause between
+downloads, and stop after two refusals. The bound is 45 calendar days (SPAN: 14, at ~10 MB a file); both are
+proposals, not measured against NSE's tolerance. A gap that reaches further back is not fetched and not hidden: the
+job's result names it, the log warns every evening, and one alert gives the command that fills it, for example
+`uv run finresearch equity backfill --from 2026-09-02 --to 2026-10-08` (run it outside market hours). An empty store
+keeps the normal window: its history is the backfill command's job. Not caught up, because nobody serves them
+again: the forward quote recorder, the F&O card log, the intraday archive and the IV recorder. The NSE circulars
+listing (10 days) and the paused FBIL rates (45 days) keep their own windows.
 
 The sealed 2008-2021 vault (#364, #365) is loaded only into its own database, `FINRESEARCH_VAULT_DATABASE_URL`
 (never the app's: the loader refuses a URL naming it, and refuses days outside 2008-2021). Create it once with

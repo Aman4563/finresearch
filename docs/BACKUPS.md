@@ -21,6 +21,25 @@ database. `scripts/backup.sh` takes a nightly `pg_dump` so a disk failure or a b
   `uv run finresearch secrets migrate --apply` once to move them. A restore therefore needs the same Keychain (the
   login keychain is in Time Machine); on a new Mac, re-enter the broker and notification credentials. Dumps taken
   before the migration still contain the old plaintext: delete them once a new dump exists.
+- Says which failure it was (#507). In November 2026 an unreachable database was logged as "REFUSED: plaintext
+  secrets" on 12 nights, because the check's crash and its finding had the same exit code.
+
+  | `backup.sh` exit | Meaning | `secrets check` exit |
+  |---|---|---|
+  | 0 | dump written and verified | 0 |
+  | 2 | `pg_dump` / `pg_restore` missing, or a bad `KEEP` | not run |
+  | 3 | REFUSED: plaintext secrets are still in the database | 1 |
+  | 4 | the off-machine copy failed; the local dump is kept | 0 |
+  | 5 | the database cannot be reached; nothing was dumped | 3 |
+  | 6 | the secrets check itself could not run | anything else |
+
+  Any other code is `pg_dump`'s or `pg_restore`'s own.
+- Records every run, good or bad, in `data/state/backup_status` (`at`, `outcome`, `exit`, and `last_ok_at` /
+  `last_ok_dump`, which a failed run leaves as they were). The app's data-health pass reads it (08:00 and 21:00 IST
+  on trading days): the morning brief and the Data health card show "Nightly backup" as failed when the last run
+  was refused or failed, or when the newest good dump is more than 36 hours old; as a warning when only the
+  off-machine copy failed; and as unknown, never ok, when no run is on record. That pass needs the app and the
+  database up; while they are down the launchd health check is what tells you (`docs/USAGE.md`).
 
 | Variable | Default |
 |---|---|
@@ -28,6 +47,7 @@ database. `scripts/backup.sh` takes a nightly `pg_dump` so a disk failure or a b
 | `BACKUP_DIR` | `<repo>/data/backups` |
 | `DOCS_DIR` | `<repo>/data/docs` |
 | `KEEP` | `14` |
+| `FINRESEARCH_STATE_DIR` | the app's own setting, else `<repo>/data/state` (where `backup_status` is written) |
 
 To run it by hand: `scripts/backup.sh`.
 
@@ -179,6 +199,9 @@ once, never replaced), pushes to a tmp destination, rotation, a missing destinat
 scratch `*_drill_test` database (matching counts, a forced mismatch, refused targets) and check the exit codes.
 `tests/test_backup.py` also runs `backup.sh` with a destination, and with a missing one (exit 4, local dump kept).
 `tests/test_batch_window.py` covers the market-hours window, deferral, `--wait`, and the pause and resume.
+`tests/test_backup_refusal_507.py` runs the script with a fake `finresearch` on `PATH` (plaintext found, database
+unreachable, check could not run), checks `backup_status` after a good and a failed run, and `secrets check`'s exit
+codes; `tests/test_dq_system_507.py` covers what the data-health pass makes of each outcome.
 
 The database tests are skipped in these cases:
 - `pg_dump` or `pg_restore` is missing.
