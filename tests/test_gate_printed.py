@@ -652,39 +652,71 @@ def transposed(number: str, *, last: bool) -> str | None:
     return number[:i] + number[i + 1] + number[i] + number[i + 2 :]
 
 
-def plant(name: str, *, last: bool, step: int = 1) -> tuple[int, int]:
+def shifted(number: str) -> str | None:
+    """The number times ten: its decimal point one place to the right (numbers with digit grouping are left)."""
+    if "," in number:
+        return None
+    whole, _, frac = number.partition(".")
+    if not frac:
+        return number + "0"
+    out = whole + frac[0] + ("." + frac[1:] if len(frac) > 1 else "")
+    return out if out.startswith("0.") else out.lstrip("0") or "0"
+
+
+PLANTS = {"first": lambda n: transposed(n, last=False), "last": lambda n: transposed(n, last=True), "shift": shifted,
+          "minus": lambda n: n}  # fmt: skip
+
+
+def plant(name: str, kind: str, step: int = 1) -> tuple[int, int]:
     """(caught, planted): corrupt, one at a time, the figure of every `step`-th citation whose claim value is
-    printed exactly once on its line, and count the plants that raise a finding for that claim on that line."""
+    printed exactly once on its line, and count the plants that raise a finding for that claim on that line.
+    Kinds: the first / last two differing neighbouring digits swapped, the decimal point shifted one place, a
+    minus sign put before a figure that has none."""
     report, claims = exported(name)
     claims = {i: c for i, c in claims.items() if f"[C{i}]" in report}
     lines = report.split("\n")
     sites = sorted({(i, no) for i, no, outcome in check_printed(report, claims).cites if outcome == "value"})
     caught = planted = 0
     for cid, no in sites[::step]:
-        hits = [f for f in figures(lines[no - 1]) if matches(f, Decimal(claims[cid].value), claims[cid].unit)]
-        number = (
-            re.search(r"\d[\d,]*(?:\.\d+)?", hits[0].text).group(0).rstrip(",") if len(hits) == 1 else None
-        )
-        wrong = transposed(number, last=last) if number else None
-        if wrong is None:
+        old = lines[no - 1]
+        hits = [f for f in figures(old) if matches(f, Decimal(claims[cid].value), claims[cid].unit)]
+        if len(hits) != 1:
             continue
-        at = hits[0].start + lines[no - 1][hits[0].start :].index(number)
-        line = lines[no - 1][:at] + wrong + lines[no - 1][at + len(number) :]
-        rep = check_printed("\n".join([*lines[: no - 1], line, *lines[no:]]), claims)
+        hit = hits[0]
+        number = re.search(r"\d[\d,]*(?:\.\d+)?", hit.text).group(0).rstrip(",")
+        wrong = PLANTS[kind](number)
+        if wrong is None or (wrong == number and (kind != "minus" or hit.neg)):
+            continue
+        at = hit.start + old[hit.start :].index(number)
+        new = (
+            old[: hit.start] + "−" + old[hit.start :]
+            if kind == "minus"
+            else old[:at] + wrong + old[at + len(number) :]
+        )
+        rep = check_printed("\n".join([*lines[: no - 1], new, *lines[no:]]), claims)
         planted += 1
         caught += any(f.claim_id == cid and f.line == no for f in rep.findings)
     return caught, planted
 
 
-@pytest.mark.parametrize("name,caught,planted", [("bond-ine027e07998-run12", 10, 10), ("infosys-run9", 24, 27),
-                                                 ("mf-120505-run11", 24, 25), ("orient-cables-run5", 37, 39)])  # fmt: skip
-def test_transposed_digits_planted_in_the_live_reports_are_caught(name, caught, planted):
-    """A sample (every 5th citation) of the measurement in the PR of #502, where `plant(name, last=..., step=1)`
-    over the four runs caught 467 of 494 plants of the first pair of digits and 463 of 494 of the last. The misses
-    are figures the rule does not judge on purpose (a bound, a labelled computation, a bare integer without its
-    unit word, a date). Making the rule more lenient must show up here."""
-    assert plant(name, last=False, step=5) == (caught, planted)
-    assert plant(name, last=True, step=5) == (caught, planted)
+# fixture -> (caught, planted) for every 5th citation, per kind of plant. `plant(name, kind)` over all citations
+# of the four runs gives the table in the PR of #502: first digit pair 467 of 494, last pair 463 of 494, decimal
+# shift 374 of 437, minus sign 317 of 542.
+SAMPLED = {
+    "bond-ine027e07998-run12": {"first": (10, 10), "last": (10, 10), "shift": (7, 7), "minus": (5, 10)},
+    "infosys-run9": {"first": (24, 27), "last": (24, 27), "shift": (24, 27), "minus": (17, 34)},
+    "mf-120505-run11": {"first": (24, 25), "last": (24, 25), "shift": (23, 24), "minus": (22, 23)},
+    "orient-cables-run5": {"first": (37, 39), "last": (37, 39), "shift": (22, 30), "minus": (21, 42)},
+}
+
+
+@pytest.mark.parametrize("name", sorted(SAMPLED))
+def test_mismatches_planted_in_the_live_reports_are_caught(name):
+    """Recall, so that a rule made more lenient to remove a false alarm cannot quietly stop finding anything. The
+    misses are what the rule does not judge on purpose: a bound, a labelled computation, a bare integer without
+    its unit word; a decimal shift on an unmarked ₹ figure, which equals another ₹ scale (million against lakh);
+    a minus on a money amount with no profit or loss word, which is how an outflow row is printed."""
+    assert {kind: plant(name, kind, step=5) for kind in PLANTS} == SAMPLED[name]
 
 
 def test_without_its_five_context_rules_the_rule_raises_14_false_alarms_on_the_live_runs(monkeypatch):
