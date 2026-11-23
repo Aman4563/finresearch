@@ -337,3 +337,64 @@ def replay_summary(firings: Sequence[Firing], *, scenario_days: Sequence[date] =
             "episodes": {f"{a.isoformat()}..{b.isoformat()}": any(a <= d <= b for d in fired) for a, b in episodes},
             "max_false_alarms_per_year": MAX_FALSE_ALARMS,
             "within_false_alarm_limit": all(y["false_alarms"] <= MAX_FALSE_ALARMS for y in years.values())}  # fmt: skip
+
+
+# --------------------------------------------------------------------------- the touch variants' replay (#520)
+# Definitions registered in fincalc/risk_alert_specs.REPLAY before this code existed. It decides nothing.
+@dataclass(frozen=True)
+class TouchMark:
+    """One stored mark of a short option leg, as the nightly alert reads it (alerts.risk_readers.touch_marks). An
+    input that is missing or not positive makes it an unknown leg-day."""
+
+    day: date
+    leg: str  # symbol, expiry, strike and right: the alert's instrument
+    forward: float | None
+    strike: float | None
+    vol: float | None
+    t_years: float | None
+
+
+def touch_replay(marks: Iterable[TouchMark], level: float = TOUCH_LEVEL) -> dict[str, Any]:
+    """Both registered variants on the same marks, counts only: leg-days at `level` under each, under both, under
+    neither and under exactly one (by the strike's side of the forward); alert-days (sessions with at least one known
+    leg at the level) and those that change; firings as alerts.risk.apply counts them (a leg at the level fires unless
+    its last reading was also at the level; a reading below it or an unknown one ends the standing state). An unknown
+    leg-day is counted and never read as below the level; a session with only unknown legs is "unknown_only"."""
+    v1, v2 = TOUCH_V1, TOUCH_V2
+    leg_days: dict[str, Any] = {"known": 0, "unknown": 0, "at_level": {v1: 0, v2: 0}, "both": 0, "neither": 0,
+                                "changed": 0, "only": {v: {"below_forward": 0, "above_forward": 0} for v in (v1, v2)}}  # fmt: skip
+    gap = {"below_forward": 0.0, "above_forward": 0.0}
+    sessions: dict[date, dict[str, bool]] = {}
+    standing: dict[tuple[str, str], bool] = {}
+    firings = {v1: 0, v2: 0}
+    for m in sorted(marks, key=lambda x: x.day):
+        ses = sessions.setdefault(m.day, {"known": False, v1: False, v2: False})
+        exact = touch_prob_exact(m.forward, m.strike, m.vol, m.t_years)
+        if exact is None:
+            leg_days["unknown"] += 1
+            standing[(v1, m.leg)] = standing[(v2, m.leg)] = False
+            continue
+        p = {v1: touch_prob(m.forward, m.strike, m.vol, m.t_years), v2: exact}  # type: ignore[arg-type]
+        side = "below_forward" if m.strike < m.forward else "above_forward"  # type: ignore[operator]
+        gap[side] = max(gap[side], abs(p[v1] - p[v2]))
+        leg_days["known"] += 1
+        ses["known"] = True
+        on = {v: p[v] >= level for v in (v1, v2)}
+        for v in (v1, v2):
+            leg_days["at_level"][v] += on[v]
+            ses[v] = ses[v] or on[v]
+            firings[v] += on[v] and not standing.get((v, m.leg), False)
+            standing[(v, m.leg)] = on[v]
+        if on[v1] != on[v2]:
+            leg_days["changed"] += 1
+            leg_days["only"][v1 if on[v1] else v2][side] += 1
+        else:
+            leg_days["both" if on[v1] else "neither"] += 1
+    days = list(sessions.values())
+    return {"level": level, "variants": [v1, v2], "leg_days": leg_days,
+            "alert_days": {"sessions": len(days), "unknown_only": sum(not d["known"] for d in days),
+                           "at_level": {v: sum(d[v] for d in days) for v in (v1, v2)},
+                           "changed": sum(d[v1] != d[v2] for d in days),
+                           "only": {v1: sum(d[v1] and not d[v2] for d in days),
+                                    v2: sum(d[v2] and not d[v1] for d in days)}},
+            "firings": firings, "largest_gap": gap}  # fmt: skip

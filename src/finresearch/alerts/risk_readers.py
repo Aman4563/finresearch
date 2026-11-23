@@ -228,3 +228,25 @@ def leg_readings(s: Session, day: date, now: datetime) -> list[Row]:
             out.append(("event", sym, Reading(val, f"calendar_event tier 1 from {day} to {end}",
                                               w["note"] + (f" ({names})" if names else ""))))  # fmt: skip
     return out
+
+
+def touch_marks(s: Session, start: date, end: date) -> list[ra.TouchMark]:
+    """#520: every stored mark of a short option leg from `start` to `end`, with the inputs the touch alert reads
+    (`leg_readings`: the forward is the close carried at MARK_RATE), for ra.touch_replay. A leg whose direction, IV,
+    close or time is not stored keeps its row with no inputs (an unknown leg-day). The book is personal: local,
+    reads only."""
+    import math
+
+    rows = s.scalars(select(FnoMark).where(FnoMark.day >= start, FnoMark.day <= end,
+                                           FnoMark.right.in_(("call", "put"))).order_by(FnoMark.day, FnoMark.id)).all()  # fmt: skip
+    out: list[ra.TouchMark] = []
+    for m in rows:
+        if m.qty is not None and m.qty >= 0:
+            continue
+        if m.qty is None or m.iv is None or m.spot is None or m.t_years is None:
+            out.append(ra.TouchMark(m.day, _leg_key(m), None, None, None, None))
+            continue
+        t = float(m.t_years)
+        out.append(ra.TouchMark(m.day, _leg_key(m), float(m.spot) * math.exp(MARK_RATE * t), float(m.strike or 0),
+                                float(m.iv), t))  # fmt: skip
+    return out

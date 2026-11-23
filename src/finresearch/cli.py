@@ -1869,11 +1869,22 @@ def fno_risk_replay(
     start: str = typer.Option("2024-01-01", "--from", help="first firing day reported (YYYY-MM-DD)"),
     end: str | None = typer.Option(None, "--to", help="last day (default today, IST)"),
     as_json: bool = typer.Option(False, "--json"),
+    touch: bool = typer.Option(
+        False,
+        "--touch",
+        help="instead compare the touch formula's two registered variants on the book's marks",
+    ),
 ) -> None:
     """Replay the risk alerts' shock rules (#398: IV30 shock, cumulative shock, gap) over the stored fno_iv_eod and
     fno_bhav history: the days they fire, per-year firings and false alarms (a synthetic short 30-day ATM straddle
     losing no more than 1 % of the forward within 2 sessions; at most 12 a year), and whether the issue's scenario
-    days and the Feb-Mar 2026 episode fire. Public market data only; reads only, writes nothing."""
+    days and the Feb-Mar 2026 episode fire. Public market data only; reads only, writes nothing.
+
+    With --touch (#520) it instead compares the touch probability's two registered variants (the 2 x P_Q shortcut
+    and the exact first passage, fincalc/risk_alert_specs.py) on the stored marks of the book's short option legs
+    (fno_mark, from --from to --to; --symbol is not used): leg-days and alert-days at the 0.60 level under each, the
+    ones that change, and firings. The book is personal: this stays on this machine and prints counts only, never a
+    leg. Refused unless the registration hash is intact; reads only, writes nothing."""
     import json as _json
     from datetime import date as _date
 
@@ -1885,6 +1896,9 @@ def fno_risk_replay(
     from finresearch.fincalc import risk_alerts as ra
     from finresearch.fincalc.dates import today_ist
 
+    if touch:
+        _touch_replay(start, end, as_json)
+        return
     sym, first = symbol.upper(), _date.fromisoformat(start)
     last = _date.fromisoformat(end) if end else today_ist()
     with session_scope() as s:
@@ -1916,6 +1930,59 @@ def fno_risk_replay(
         console.print(f"  episode {w}: {'fired' if hit else 'did NOT fire'}")
     for f in out["firings"]:
         console.print(f"  {f['day']} {','.join(f['rules'])} loss {f['loss']} false alarm {f['false_alarm']}")
+
+
+def _touch_replay(start: str, end: str | None, as_json: bool) -> None:
+    """`fno risk-replay --touch` (#520): the two registered touch variants on the stored marks; counts only."""
+    from datetime import date as _date
+
+    from finresearch.alerts.risk_readers import touch_marks
+    from finresearch.db import session_scope
+    from finresearch.fincalc import risk_alert_prereg as prereg
+    from finresearch.fincalc import risk_alerts as ra
+    from finresearch.fincalc.dates import today_ist
+
+    try:
+        reg = prereg.require_registered()  # before the database is touched
+    except prereg.PreregistrationError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(2) from e
+    first, last = _date.fromisoformat(start), _date.fromisoformat(end) if end else today_ist()
+    with session_scope() as s:
+        marks = touch_marks(s, first, last)
+    days = sorted({m.day for m in marks})
+    out = {"from": first.isoformat(), "to": last.isoformat(),
+           "series": f"fno_mark short option legs, paper and Groww ({len(marks)} leg-days on {len(days)} sessions); "
+                     "forward = close x exp(0.065 x t), each leg's own IV",
+           "first_mark": days[0].isoformat() if days else None, "last_mark": days[-1].isoformat() if days else None,
+           "registration": reg, **ra.touch_replay(marks)}  # fmt: skip
+    if as_json:
+        print(json.dumps(out, indent=2))
+        return
+    v1, v2 = out["variants"]
+    ld, ad = out["leg_days"], out["alert_days"]
+    console.print(f"{out['from']}..{out['to']}: {out['series']}")
+    if not days:
+        console.print(
+            "  no stored mark of a short option leg in this range: nothing to compare (not 'no change')"
+        )
+        return
+    console.print(
+        f"  marks from {out['first_mark']} to {out['last_mark']}; level {out['level']:.0%}; {v1} vs {v2}"
+    )
+    console.print(f"  leg-days: {ld['known']} known, {ld['unknown']} unknown; at the level {ld['at_level'][v1]} vs "
+                  f"{ld['at_level'][v2]}; both {ld['both']}, neither {ld['neither']}")  # fmt: skip
+    console.print(f"  leg-days that change: {ld['changed']} (only {v1}: {ld['only'][v1]['below_forward']} below the "
+                  f"forward, {ld['only'][v1]['above_forward']} above; only {v2}: {ld['only'][v2]['below_forward']} "
+                  f"below, {ld['only'][v2]['above_forward']} above)")  # fmt: skip
+    console.print(f"  alert-days: {ad['at_level'][v1]} vs {ad['at_level'][v2]} of {ad['sessions']} sessions "
+                  f"({ad['unknown_only']} with only unknown legs)")  # fmt: skip
+    console.print(
+        f"  alert-days that change: {ad['changed']} (only {v1}: {ad['only'][v1]}, only {v2}: {ad['only'][v2]})"
+    )
+    console.print(f"  firings: {out['firings'][v1]} vs {out['firings'][v2]}; largest gap in probability "
+                  f"{out['largest_gap']['below_forward']:.3f} below the forward, "
+                  f"{out['largest_gap']['above_forward']:.3f} above")  # fmt: skip
 
 
 @fno_app.command("vol-race")
