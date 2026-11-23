@@ -22,7 +22,7 @@ EXPOSED = {
     "credit": set(),
 }  # fmt: skip
 SERIES = "takes a NAV or return series: an agent holds a sample at most, no claim binds hundreds of points"
-TEXT_ORDER = "plain-float helper: numbers passed as strings would be compared as text"
+TEXT_ORDER = "float helper of the fund ranking: given numbers as strings it orders them as text or fails"
 SCHEDULE = "a stepped-back schedule is a pricing convention, not the bond's stated terms; a list cannot be re-checked"
 GRADE = "decided by a rating grade (a word): save_claim binds numeric arguments only, and the result has no source"
 LEFT_OUT = {

@@ -293,7 +293,8 @@ _FINCALC_MODULES = {
 # Fund and bond arithmetic (#505): of these modules only the functions named here are callable, the ones that take
 # plain numbers and dates. Left out: everything that takes a NAV or return series (an agent holds a sample of it at
 # most and no claim could bind hundreds of points: amfi_nav_history and fund_sip_outcome compute on the full series);
-# the float helpers that would order string arguments as text (funds.percentile_rank, median); bonds.post_tax_yield
+# the float helpers of the fund ranking, written for Python numbers (given the strings agents pass, funds.median and
+# percentile_rank would order them as text and wilson_interval and effective_windows fail); bonds.post_tax_yield
 # (right only at par: after_tax_ytm and after_tax_par_yield cover both cases); and the bond schedule functions, whose
 # stepped-back dates are a pricing convention, not the terms the offer document states. fincalc.credit is not
 # exposed: its deciding argument is a rating grade, a word that save_claim cannot bind to a cited claim.
