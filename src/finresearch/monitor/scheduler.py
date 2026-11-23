@@ -1043,6 +1043,7 @@ def schedule_json(ww=None, *, running: bool | None = None) -> dict:
     from finresearch.fincalc.ipo import lock_in_schedule
     from finresearch.fnohist import quotes as fq
     from finresearch.fnohist import span as fspan
+    from finresearch.monitor import catchup as cu
     from finresearch.monitor import digest as dg
     from finresearch.monitor import dq as dqj
     from finresearch.monitor import equity_eod as eqe
@@ -1107,6 +1108,8 @@ def schedule_json(ww=None, *, running: bool | None = None) -> dict:
                       "deadline": hm((jpj.DEADLINE.hour, jpj.DEADLINE.minute)), "trading_days": True},
         "span": {"after": hm((spj.RUN_AFTER.hour, spj.RUN_AFTER.minute)), "lookback_days": spj.LOOKBACK_DAYS,
                  "requests_per_night": 2, "raw_sessions_kept": fspan.KEEP_SESSIONS},
+        # #507: after an outage the EOD jobs above start at the day after their store's last loaded day, this far back
+        "catch_up": {"max_days": cu.MAX_CATCHUP_DAYS, "span_max_days": cu.SPAN_MAX_CATCHUP_DAYS},
         "forecasts": {"after": hm(READY_AFTER_IST), "every_min": int(FORECAST_EVERY.total_seconds() // 60)},
         "portfolio": {"close_pass": hm((pd.close_time(ww.stock_time()).hour, pd.close_time(ww.stock_time()).minute)),
                       "nav_pass": hm((pd.NAV_AT.hour, pd.NAV_AT.minute)), "max_instruments": pd.MAX_INSTRUMENTS,

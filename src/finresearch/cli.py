@@ -55,19 +55,36 @@ def health() -> None:
 
 @bridge_app.command()
 def limits() -> None:
-    """Show the last known subscription-window utilisation and any cool-downs."""
+    """Show the last known subscription-window utilisation and any cool-downs. A reading whose window has since
+    reset is shown as expired with when it was last seen, never as current usage."""
+    from finresearch.bridge.limits import window_views
+
     router = build_router()
     state = router.tracker.describe()
+    now = time.time()
+    LONG = "%a %d %b %Y %H:%M"  # an expired reading can be weeks old: say the year
+
+    def at(ts: float | None, fmt: str = "%a %d %b %H:%M") -> str:
+        return time.strftime(fmt, time.localtime(ts)) if ts else "at an unknown time"
+
     for tier, st in state.items():
         snap = st.get("snapshot") or {}
         console.print(f"[bold]{tier}[/]")
         if snap:
-            for win in ("five_hour", "seven_day"):
-                u, r = snap.get(f"{win}_utilization"), snap.get(f"{win}_resets_at")
-                if u is not None:
-                    reset = time.strftime("%a %H:%M", time.localtime(r)) if r else "?"
-                    console.print(f"  {win}: {u:.0%} used, resets {reset}")
-            console.print(f"  status: {snap.get('status')}  overage: {snap.get('overage_status')}")
+            views = window_views(snap, now)
+            for win, v in views.items():
+                if v["state"] == "expired":
+                    # #507: a reading from a window that has reset is not current usage
+                    reset = f" (window reset {at(v['resets_at'], LONG)})" if v["resets_at"] else ""
+                    console.print(f"  {win}: [yellow]expired[/]{reset}; last seen {at(v['last_seen'], LONG)}: "
+                                  f"{v['last_utilization']:.0%} used; current usage unknown until the next task",
+                                  soft_wrap=True)  # fmt: skip
+                else:
+                    reset = at(v["resets_at"]) if v["resets_at"] else "?"
+                    console.print(f"  {win}: {v['utilization']:.0%} used, resets {reset}")
+            stale = bool(views) and all(v["state"] == "expired" for v in views.values())
+            console.print(f"  status: {snap.get('status')}{' (as last seen)' if stale else ''}  "
+                          f"overage: {snap.get('overage_status')}")  # fmt: skip
         if st.get("cooling_until", 0) > time.time():
             console.print(f"  [red]cooling until {time.strftime('%H:%M', time.localtime(st['cooling_until']))}[/]"
                           f" — {st.get('reason')}")  # fmt: skip
@@ -836,12 +853,27 @@ def serve(
     ),
 ) -> None:
     """Start the local API for the research app (always bound to 127.0.0.1). The first start creates the local API
-    token (Keychain + data/state/api_token, mode 0600) that every route but /api/health requires."""
+    token (Keychain + data/state/api_token, mode 0600) that every route but /api/health requires. Refuses (exit 1)
+    when the port is already in use: a second copy would run a second monitor."""
+    import socket
+
     import uvicorn
 
     from finresearch.api import create_app
     from finresearch.api.auth import bootstrap, token_file
 
+    # #507: uvicorn starts the app's lifespan (the monitor scheduler) before it binds, so without this look a second
+    # copy ran a scheduler for a moment, which could claim tonight's jobs, and only then failed on the port
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.setsockopt(
+            socket.SOL_SOCKET, socket.SO_REUSEADDR, 1
+        )  # as uvicorn binds: a just-closed port is free
+        try:
+            probe.bind(("127.0.0.1", port))
+        except OSError:
+            console.print(f"[red bold]127.0.0.1:{port} is already in use: FinResearch (or something else) is "
+                          "running there. Not starting a second copy.")  # fmt: skip
+            raise typer.Exit(1) from None
     token = bootstrap()
     console.print(
         f"API token: {token_file()} (0600; the web app reads it, CLI clients send it as a bearer token)"
@@ -895,20 +927,41 @@ def _secret_report(rep, verb: str) -> None:
         )
 
 
+# `secrets check` exit codes (scripts/backup.sh reads them, #507): 1 only when plaintext was found. 2 is Click's
+# usage error, so the database being unreachable is 3 and any other failure of the check itself is 4.
+SECRETS_PLAINTEXT, SECRETS_DB_UNREACHABLE, SECRETS_CHECK_FAILED = 1, 3, 4
+
+
 @secrets_app.command("check")
 def secrets_check() -> None:
-    """Exit 1 if any secret is still stored as plain text in the database (counts and field names only)."""
-    from finresearch.db import session_scope
-    from finresearch.secrets_migrate import scan
+    """Exit 1 if any secret is still stored as plain text in the database (counts and field names only). Exit 3 when
+    the database cannot be reached and 4 when the check failed for another reason: nothing was checked then, which
+    is neither "plaintext found" nor "clean"."""
+    from sqlalchemy.exc import OperationalError
 
-    with session_scope() as s:
-        rep = scan(s)
+    from finresearch import secrets_migrate
+    from finresearch.db import session_scope
+
+    try:
+        with session_scope() as s:
+            rep = secrets_migrate.scan(s)
+    except OperationalError as e:  # the server is down, refuses the login or the database does not exist
+        from rich.markup import escape
+
+        why = str(getattr(e, "orig", e)).strip().splitlines()[0][:200]  # libpq's first line: host and port
+        console.print(f"[red bold]cannot reach the database, so nothing was checked:[/] {escape(why)}")
+        raise typer.Exit(SECRETS_DB_UNREACHABLE) from None
+    except Exception as e:
+        console.print(
+            f"[red bold]the secrets check could not be completed ({type(e).__name__}): nothing was checked"
+        )
+        raise typer.Exit(SECRETS_CHECK_FAILED) from None
     _secret_report(rep, "left")
     if rep.found or rep.unknown:
         console.print(
             "[red bold]plaintext secrets in the database: run `uv run finresearch secrets migrate --apply`"
         )
-        raise typer.Exit(1)
+        raise typer.Exit(SECRETS_PLAINTEXT)
     console.print("[green]no plaintext secrets in the database")
 
 

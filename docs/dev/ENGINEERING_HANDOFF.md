@@ -73,6 +73,20 @@ Every change must preserve these.
 - **Offer-document tables:** multi-line headers, per-row horizontal shifts and a Notes column. Use `ingest.layout_table` (or the MCP `extract_table` tool) rather than asking an LLM to parse layout.
 - **glm-ocr** doesn't stop at the end of a page and replays earlier paragraphs. It is streamed with loop detection.
 - **MCP SDK 2.x:** `FastMCP` was renamed `MCPServer` (`mcp.server.mcpserver`).
+- **pgvector on Postgres 17 (#507):** Homebrew's `pgvector` formula now builds for Postgres 18 and 19 only. On
+  23-Nov-2026 a `brew upgrade` replaced it, and on Postgres 17 every read or write of `chunk.embedding` then failed
+  with `could not access file "$libdir/vector"`. On Postgres 17, build pgvector from source instead (in a checkout
+  of github.com/pgvector/pgvector):
+  `PG_CONFIG=/opt/homebrew/opt/postgresql@17/bin/pg_config make && make install`. A later `brew upgrade` can remove
+  it again; rebuild the same way. The database keeps its extension entry, so new sessions load the library once the
+  file is back (`ALTER EXTENSION vector UPDATE` if the rebuilt version is newer). How it is noticed: `GET /api/health` answers
+  `"vector": false`, the data-health pass stores a failed `pgvector` check (brief and Data health card), and the
+  launchd health check raises a notification (`dq.misc.vector_check` probes on a new connection, because a pooled
+  session that loaded the library earlier keeps working).
+- **Starting the app (#507):** uvicorn runs the app's lifespan (the monitor) before it binds the port, so a second
+  copy used to run a scheduler for a moment, which could claim tonight's jobs, before failing on the port. `finresearch
+  serve` now looks at the port first and refuses (exit 1) when it is in use, and under launchd the launcher waits
+  while the port answers (`scripts/launchd/run-service.sh`). Keep both when changing how the app starts.
 - **Claude Code flags:** `--bare` needs an API key, so it isn't usable on the Max tier. MCP tool permissions go in `--allowedTools` (`mcp__finresearch`), never in `--tools`.
 - **SEBI:** the full offer document is the iframe `file=` target (`sebi_data/attachdocs`). Listing rows link only the abridged prospectus.
 - **OCR'd documents** (scanned annual reports, audited statements; Tesseract mean confidence about 90) are accurate on clean pages. Noisy pages garble digits (for example `2,066 53`, `L7ULA7`). Treat OCR'd figures as secondary: prefer the RHP text layer and cross-check before citing.

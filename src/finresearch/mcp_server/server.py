@@ -522,6 +522,57 @@ def valuation_monte_carlo(cash_flow: str, shares: str, growth: dict[str, Any], d
                        "method": "fincalc.montecarlo.simulate_dcf (triangular draws, seeded)"})  # fmt: skip
 
 
+# --------------------------------------------------------------------------- market facts for a discount rate (#504)
+def _market_fact(fn, **args: Any) -> str:
+    """Run one mcp_server.market_facts function read-only; a refused argument is an unknown answer with its reason."""
+    with session_scope() as s:
+        try:
+            out = fn(s, **args)
+        except ValueError as e:
+            out = {"known": False, "reason": str(e)}
+        s.rollback()  # read-only: nothing of a tool call is written
+    return json.dumps(out, indent=1)
+
+
+@server.tool()
+def risk_free_rate(tenor: str = "364D", day: str | None = None) -> str:
+    """The rupee risk-free rate from the app's rate chain for a tenor of 1D to 364D on a day (default today, IST):
+    the owner-entered yield, else the RBI repo-rate proxy, else unknown. Returns rate_effective_annual (the annual
+    fraction for fincalc valuation.cost_of_equity_capm), the yield as RBI quotes it, and the tier, as_of date,
+    source, url and note behind it; `stale` true means a scheduled RBI decision may be missing. It is a SHORT rate
+    with no term premium (`caveat`): no 10-year government yield is stored, and a longer tenor is refused.
+    known=false carries a reason and no number: report the rate as unknown, never assume one."""
+    from finresearch.mcp_server import market_facts
+
+    return _market_fact(market_facts.risk_free_rate, tenor=tenor, day=day)
+
+
+@server.tool()
+def index_history(symbol: str, start: str | None = None, end: str | None = None) -> str:
+    """An NSE index's stored daily closes between two ISO dates (default: the year to today), oldest first, with the
+    index P/E, P/B and dividend yield (%) NSE printed that day; at most 400 rows a call (`next_start` continues).
+    symbol: NIFTY, BANKNIFTY, FINNIFTY, MIDCPNIFTY, NIFTYNXT50, or NSE's index name in capitals ("NIFTY 500").
+    Index levels, not total-return levels; null = not printed (unknown, not 0). known=false carries the reason."""
+    from finresearch.mcp_server import market_facts
+
+    return _market_fact(market_facts.index_history, symbol=symbol, start=start, end=end)
+
+
+@server.tool()
+def stock_beta(symbol: str, index: str = "NIFTY", end: str | None = None, sessions: int = 250) -> str:
+    """The beta of an NSE stock to an index, by ordinary least squares on daily returns from the stored official
+    closes of both (fincalc market.beta): beta, its standard error, R-squared, n, the window, the sessions the stock
+    missed and its largest one-session move. symbol: the NSE symbol you name (your company or a listed peer);
+    sessions: 60 to 1250 index sessions ending at `end` (YYYY-MM-DD; default the latest stored session). Closes are
+    back-adjusted for stored splits and bonuses (`adjustment` says whether that history is stored for the stock).
+    known=false carries the reason (short, stale or gappy series, an action with no known factor, an unexplained
+    jump) and no number: report the beta as unknown, never assume 1. `reproduce` holds the arguments that give
+    this answer again; quote the standard error and the window with the beta."""
+    from finresearch.mcp_server import market_facts
+
+    return _market_fact(market_facts.stock_beta, symbol=symbol, index=index, end=end, sessions=sessions)
+
+
 # --------------------------------------------------------------------------- listed bonds
 @server.tool()
 async def nse_bond_search(query: str) -> str:

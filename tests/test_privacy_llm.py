@@ -132,6 +132,10 @@ async def test_no_agent_task_or_agent_tool_carries_personal_data(world):
         docs,
         server.list_claims(world["run_id"]),
         server.identity_checks(world["run_id"], only_failing=False),
+        # the valuation streams' market-fact tools (#504): the rate chain and stored closes, nothing personal
+        server.risk_free_rate(),
+        server.index_history("NIFTY"),
+        server.stock_beta("PRIVTEST"),
     ]
     assert len(texts) > 2 * len(ROLES)
     _assert_clean(texts)

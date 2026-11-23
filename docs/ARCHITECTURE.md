@@ -54,11 +54,17 @@ A resumable, budget-aware pipeline per research kind (IPO, stock, fund, bond): a
 adversarial verifiers, bull and bear analysts, a synthesiser and a completeness critic. Agents work only through the
 FinResearch MCP tools: documents, sections, search, tables, `fincalc`, live market data, read-only option-implied facts
 (`mcp_server/option_facts.py`: implied move, IV30 percentile, 25-delta skew from the stored bhavcopy; indices and the
-run's own stock only, the run bound by the server's config, granted to `stock_technical` only), a SIP outcome from
-AMFI NAVs (`fund_sip_outcome`, `mcp_server/fund_facts.py`: the fund roles) and the claim ledger. `fincalc_call` runs
-the catalogued modules, and of `fincalc.funds` and `fincalc.bonds` only the functions that take plain numbers and
-dates (`mcp_server/server.py` `_FINCALC_ONLY`); a prompt or skill may name only what the catalogue holds
-(`tests/test_prompt_fincalc_refs.py`).
+run's own stock only, the run bound by the server's config, granted to `stock_technical` only), read-only
+discount-rate inputs (`mcp_server/market_facts.py`, #504: the risk-free rate from the rate chain with its tier and
+source, stored index history, and a stock's beta with its standard error from the stored full bhavcopy and index
+closes; granted to the two valuation streams only), a SIP outcome from AMFI NAVs (`fund_sip_outcome`,
+`mcp_server/fund_facts.py`, #505: the fund roles) and the claim ledger. A discount rate is built from cited claims
+with `fincalc.valuation` (CAPM cost of equity, after-tax cost of debt, WACC), and a DCF's cash flows, terminal value
+and sanity flags come from `fcf_path`, `dcf_explicit` and `dcf_checks`; lenders are valued with `residual_income`,
+`ddm` and `justified_pb`. The equity risk premium is always the agent's stated assumption, never a built-in number.
+`fincalc_call` runs the catalogued modules, and of `fincalc.funds` and `fincalc.bonds` only the functions that take
+plain numbers and dates (`mcp_server/server.py` `_FINCALC_ONLY`); a prompt or skill may name only what the catalogue
+holds (`tests/test_prompt_fincalc_refs.py`).
 
 What one agent hands to the next agent's prompt (the planner's questions and leads, a stream's summary, red flags
 and open questions, the bull and bear cases, the critic's follow-up tasks) is capped in length and count
@@ -139,5 +145,5 @@ src/finresearch/
   cli.py         finresearch command line
 web/             Next.js app (design notes in web/DESIGN.md)
 tests/           offline tests with recorded fixtures
-scripts/         live smoke checks, backups and gold-set ingestion
+scripts/         live smoke checks, backups, gold-set ingestion, the launchd agents and the health check
 ```

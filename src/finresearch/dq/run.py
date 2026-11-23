@@ -205,7 +205,9 @@ def run_all(s: Session, now: datetime, *, holidays: set[date] | None = None,
     extra = [*_guarded(s, "ipo_history", False, misc.ipo_checks, s, now),
              *_guarded(s, "groww_close", False, misc.close_checks, s, session),
              *_guarded(s, policy.DATASET, False, policy.checks, s, now),  # RBI policy rates from the RSS feed (#492)
-             misc.disk_check(get_settings().state_dir.parent, **free), *broker.broker_checks(s, now)]  # fmt: skip
+             misc.disk_check(get_settings().state_dir.parent, **free), *broker.broker_checks(s, now),
+             # #507: the machine's own two: the nightly backup's last outcome and age, and pgvector's library
+             misc.backup_check(get_settings().state_dir, now), misc.vector_check()]  # fmt: skip
     for name in sorted({c.dataset for c in extra}):
         mine = [c for c in extra if c.dataset == name]
         _store(s, today, mine, now)

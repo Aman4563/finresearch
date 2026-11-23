@@ -37,6 +37,9 @@ CHECKS = [
     f"{MCP}identity_checks"
 ]  # accounting-identity / scale checks over the ledger (verify/identities.py)
 VALUE = [f"{MCP}reverse_dcf", f"{MCP}valuation_monte_carlo"]  # valuation triangulation (fincalc)
+# discount-rate inputs from the rate chain and stored closes (#504): the two valuation streams only, never through
+# VALUE (the synthesizers hold that) and no verifier until claims can cite these tools
+RATE_INPUTS = [f"{MCP}{t}" for t in ("risk_free_rate", "index_history", "stock_beta")]
 LEDGER_WRITE = [f"{MCP}save_claim", f"{MCP}list_claims"]
 LEDGER_READ = [f"{MCP}list_claims"]
 MARKET = [f"{MCP}{t}" for t in ("nse_ipo_detail", "nse_current_issues", "sebi_filings", "sebi_resolve_pdf")]
@@ -86,7 +89,7 @@ def _stream(name: str, *, web: bool, market: bool = False, docs: bool = True, tu
             options: bool = False, skills: list[str] | None = None) -> Role:  # fmt: skip
     tools = [*(DOC_READ if docs else [f"{MCP}search_documents", f"{MCP}read_lines_tool"]), *CALC, *LEDGER_WRITE,
              *(MARKET if market else []), *(EQUITY if equity else []), *(FUNDS if funds else []),
-             *(BONDS if bonds else []), *(VALUE if value else []), *(OPTIONS if options else []),
+             *(BONDS if bonds else []), *([*VALUE, *RATE_INPUTS] if value else []), *(OPTIONS if options else []),
              *(WEB if web else []), *SKILL]  # fmt: skip
     extra = {"skills": skills} if skills is not None else {}
     return Role(name=name, template=f"stream_{name}.md", output=StreamReport, model_class=ModelClass.STANDARD,

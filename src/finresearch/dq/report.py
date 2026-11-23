@@ -17,6 +17,7 @@ LABELS = {
     "index_eod": "Index closes and India VIX", "span": "SPAN risk parameters", "option_quote": "Forward option quotes",
     "intraday_series": "Intraday index archive", "ipo_history": "IPO history", "ipo_issue": "IPO issue registry",
     "groww_close": "Groww vs official closes", "disk": "Disk space",
+    "backup": "Nightly backup (scripts/backup.sh)", "pgvector": "pgvector extension (document search)",  # #507
     "policy_rate": "RBI policy rates read from RBI's RSS feed",  # #492, dq.policy
     "broker_groww": "Groww reconciliation (positions and holdings vs the app's book; counts only)",
     # FBIL is paused (#476): nothing loads these and nothing reads them (#479), so they stay stale or never loaded
@@ -24,6 +25,10 @@ LABELS = {
     "rate_mibor_on": "FBIL overnight MIBOR (paused)", "rate_mibor_term": "FBIL term MIBOR (paused)",
 }  # fmt: skip
 RANK = {"fail": 0, "unknown": 1, "warn": 2, "ok": 3}
+SYSTEM = (
+    "backup",
+    "pgvector",
+)  # checks on the machine, not on market data: the brief's headline words them apart
 
 
 def _checks(s: Session, row: DatasetStatus) -> list[dict[str, Any]]:
