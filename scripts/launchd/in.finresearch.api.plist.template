@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  FinResearch API + monitor, started at login and restarted when it exits (#507; docs/USAGE.md "Start at login").
+  A TEMPLATE: scripts/launchd/install.sh replaces every placeholder (label, checkout path, home, tool folders) and
+  writes the result to ~/Library/LaunchAgents. Nothing user-specific is committed. It is a LaunchAgent in the
+  user's GUI session (gui/<uid>, Aqua), because the app's secrets are in the login Keychain, which a daemon or a
+  background session cannot read.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>__LABEL__</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__REPO__/scripts/launchd/run-service.sh</string>
+    <string>api</string>
+  </array>
+  <key>WorkingDirectory</key><string>__REPO__</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- launchd gives a job a minimal PATH: uv, pnpm, node and the Postgres tools are named here -->
+    <key>PATH</key><string>__TOOL_DIRS__/opt/homebrew/bin:/usr/local/bin:__HOME__/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <!-- restart whenever it exits; at most one start per 30 s, so a crash loop cannot spin -->
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>30</integer>
+  <key>LimitLoadToSessionType</key><string>Aqua</string>
+  <key>StandardOutPath</key><string>__REPO__/data/logs/serve.launchd.log</string>
+  <key>StandardErrorPath</key><string>__REPO__/data/logs/serve.launchd.log</string>
+</dict>
+</plist>
