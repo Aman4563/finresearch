@@ -39,12 +39,11 @@ async def index_eod_step(now: datetime, holidays: set[date] | None = None, **kw:
         return {}
     today = to_ist(now).date()
     try:
-        from finresearch.db import session_scope
         from finresearch.monitor import catchup
         from finresearch.refseries import index_eod as store
 
-        with session_scope() as s:
-            w = catchup.index_eod(s, today, LOOKBACK_DAYS, holidays)
+        w = catchup.safely("index_eod", today, LOOKBACK_DAYS,
+                           lambda s: catchup.index_eod(s, today, LOOKBACK_DAYS, holidays))  # fmt: skip
         catchup.report(
             "index_eod", "Index close file", w, "uv run finresearch index backfill --from {start} --to {end}"
         )

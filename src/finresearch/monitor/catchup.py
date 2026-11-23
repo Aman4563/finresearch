@@ -55,6 +55,9 @@ class Window:
     start: date
     normal: date
     uncovered: tuple[date, date, int] | None = None
+    error: str | None = (
+        None  # the window could not be worked out (`safely`): the normal lookback, gaps unknown
+    )
 
     @property
     def extended(self) -> bool:
@@ -62,9 +65,11 @@ class Window:
 
     def summary(self) -> dict[str, Any] | None:
         """For the job's result: None on an ordinary night."""
-        if not self.extended and self.uncovered is None:
+        if not self.extended and self.uncovered is None and self.error is None:
             return None
         out: dict[str, Any] = {"from": self.start.isoformat(), "days": (self.normal - self.start).days}
+        if self.error is not None:
+            out["error"] = self.error
         if self.uncovered is not None:
             a, b, n = self.uncovered
             out["uncovered"] = {"from": a.isoformat(), "to": b.isoformat(), "sessions": n}
@@ -197,6 +202,22 @@ def participant_files(s: Any, today: date, lookback: int, kinds: Iterable[Any],
                          lambda a, b: store.plan_days(s, kind, a, b, today, holidays), holidays=holidays)  # fmt: skip
 
     return merge(*(one(k) for k in kinds))
+
+
+def safely(job: str, today: date, lookback: int, compute: Callable[[Any], Window]) -> Window:
+    """`compute(session)` in its own session. If it fails, tonight's job still runs over its normal lookback (a
+    fault here must never cost tonight's file), the failure is logged, and the job's result says the catch-up could
+    not be worked out: unknown, not "nothing was missed"."""
+    from finresearch.db import session_scope
+
+    try:
+        with session_scope() as s:
+            return compute(s)
+    except Exception as e:
+        log.warning("catch-up window for %s could not be worked out; tonight uses the normal lookback", job,
+                    exc_info=True)  # fmt: skip
+        normal = today - timedelta(days=lookback)
+        return Window(normal, normal, error=f"{type(e).__name__}: {e}"[:200])
 
 
 # ---------------------------------------------------------------------------------------------- reporting

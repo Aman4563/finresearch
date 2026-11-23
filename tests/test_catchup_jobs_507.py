@@ -322,3 +322,32 @@ async def test_an_old_hole_in_the_equity_store_is_reported_once_and_not_fetched(
     with session_scope() as s:
         (msg,) = s.scalars(select(Alert.message).where(Alert.kind == "catchup_gap")).all()
     assert "finresearch equity backfill --from 2026-09-14 --to 2026-09-18" in msg
+
+
+@respx.mock
+async def test_a_fault_in_the_catch_up_never_costs_tonights_file(clean, monkeypatch):
+    from finresearch.db import session_scope
+    from finresearch.db.models import AlertEvalSlot, EquityEodDay
+    from finresearch.monitor import catchup
+    from finresearch.monitor import equity_eod as job
+
+    def broken(*_a, **_kw):
+        raise RuntimeError("plan broke")
+
+    _loaded(EquityEodDay, D(2026, 10, 30))
+    monkeypatch.setattr(catchup, "for_store", broken)
+    respx.get(url__startswith=NSE).mock(return_value=httpx.Response(404, text="<html></html>"))
+    async with _http() as http:
+        res = await job.equity_eod_step(EVENING, holidays=set(), http=http, keep_raw=False)
+    assert _asked(ee.url_for) == [D(2026, 11, 19), D(2026, 11, 20), TODAY]  # the normal 4 days still ran
+    # and the result says the gaps are unknown, not that nothing was missed
+    assert res["equity_eod"]["catch_up"] == {
+        "from": "2026-11-19",
+        "days": 0,
+        "error": "RuntimeError: plan broke",
+    }
+    with session_scope() as s:
+        assert (
+            s.get(AlertEvalSlot, "equity_eod:2026-11-23").result["catch_up"]["error"]
+            == "RuntimeError: plan broke"
+        )

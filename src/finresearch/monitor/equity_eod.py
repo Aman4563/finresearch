@@ -44,12 +44,11 @@ async def equity_eod_step(now: datetime, holidays: set[date] | None = None, **kw
         return {}
     today = to_ist(now).date()
     try:
-        from finresearch.db import session_scope
         from finresearch.monitor import catchup
         from finresearch.refseries import equity_eod as store
 
-        with session_scope() as s:
-            w = catchup.equity_eod(s, today, LOOKBACK_DAYS, holidays)
+        w = catchup.safely("equity_eod", today, LOOKBACK_DAYS,
+                           lambda s: catchup.equity_eod(s, today, LOOKBACK_DAYS, holidays))  # fmt: skip
         catchup.report(
             "equity_eod",
             "Full equity bhavcopy",

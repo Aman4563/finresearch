@@ -51,12 +51,11 @@ async def fno_bhav_step(now: datetime, holidays: set[date] | None = None, **kw: 
         return {}
     today = to_ist(now).date()
     try:
-        from finresearch.db import session_scope
         from finresearch.fnohist import store
         from finresearch.monitor import catchup
 
-        with session_scope() as s:
-            w = catchup.fno_bhav(s, today, LOOKBACK_DAYS, holidays)
+        w = catchup.safely("fno_bhav", today, LOOKBACK_DAYS,
+                           lambda s: catchup.fno_bhav(s, today, LOOKBACK_DAYS, holidays))  # fmt: skip
         catchup.report(
             "fno_bhav", "F&O bhavcopy", w, "uv run finresearch fno backfill --from {start} --to {end}"
         )
@@ -86,12 +85,12 @@ async def fno_participant_step(now: datetime, holidays: set[date] | None = None,
     today = to_ist(now).date()
     try:
         from finresearch.adapters.nse_participant_oi import KINDS
-        from finresearch.db import session_scope
         from finresearch.fnohist import participants
         from finresearch.monitor import catchup
 
-        with session_scope() as s:
-            w = catchup.participant_files(s, today, participants.LOOKBACK_DAYS, KINDS, holidays)
+        days = participants.LOOKBACK_DAYS
+        w = catchup.safely("fno_participant", today, days,
+                           lambda s: catchup.participant_files(s, today, days, KINDS, holidays))  # fmt: skip
         catchup.report("fno_participant", "F&O participant files", w,
                        "uv run finresearch fno participants --from {start} --to {end}")  # fmt: skip
         catchup.polite("fno_participant", w, kw)
@@ -119,13 +118,13 @@ async def fii_stats_step(now: datetime, holidays: set[date] | None = None, **kw:
         return {}
     today = to_ist(now).date()
     try:
-        from finresearch.db import session_scope
         from finresearch.fnohist import fii_stats
         from finresearch.monitor import catchup
 
         data_rights.require(fii_stats.fs.DATASET)  # no decision: skipped below, before any catch-up report
-        with session_scope() as s:
-            w = catchup.participant_files(s, today, fii_stats.LOOKBACK_DAYS, (fii_stats.SOURCE,), holidays)
+        days = fii_stats.LOOKBACK_DAYS
+        w = catchup.safely("fii_stats", today, days,
+                           lambda s: catchup.participant_files(s, today, days, (fii_stats.SOURCE,), holidays))  # fmt: skip
         catchup.report("fii_stats", "FII derivative statistics", w,
                        "uv run finresearch fno fii-stats --from {start} --to {end}")  # fmt: skip
         catchup.polite("fii_stats", w, kw)

@@ -41,12 +41,12 @@ async def span_step(now: datetime, holidays: set[date] | None = None, **kw: Any)
         return {}
     today = to_ist(now).date()
     try:
-        from finresearch.db import session_scope
         from finresearch.fnohist import span
         from finresearch.monitor import catchup
 
-        with session_scope() as s:
-            w = catchup.span(s, today, LOOKBACK_DAYS, holidays)
+        w = catchup.safely(
+            "span", today, LOOKBACK_DAYS, lambda s: catchup.span(s, today, LOOKBACK_DAYS, holidays)
+        )
         catchup.report(
             "span", "SPAN file", w, "uv run finresearch fno span backfill --daily --from {start} --to {end}"
         )

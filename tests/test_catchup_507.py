@@ -108,3 +108,8 @@ def test_holes_older_than_the_bound_are_reported_not_fetched():
     assert both.uncovered == (D(2026, 9, 2), D(2026, 10, 8), 27)
     # a day inside the bound passed as `older` by mistake is not reported as out of reach
     assert cu.window(TODAY, 4, D(2026, 11, 20), older=[D(2026, 10, 12)], holidays=set()).uncovered is None
+
+
+def test_a_window_that_could_not_be_worked_out_says_so():
+    w = cu.Window(D(2026, 11, 19), D(2026, 11, 19), error="RuntimeError: x")
+    assert not w.extended and w.summary() == {"from": "2026-11-19", "days": 0, "error": "RuntimeError: x"}
