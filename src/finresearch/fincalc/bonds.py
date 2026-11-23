@@ -117,6 +117,8 @@ def dirty_price(
 def clean_price(
     yld: Num, settlement: date, maturity: date, coupon_rate: Num, freq: int, face: Num = 100
 ) -> Decimal:
+    """Price excluding accrued interest at annual yield `yld`: the dirty price less `accrued_interest`, per `face`.
+    Repricing at another yield gives the exact price move of a rate scenario."""
     return dirty_price(yld, settlement, maturity, coupon_rate, freq, face) - accrued_interest(
         settlement, maturity, coupon_rate, freq, face)  # fmt: skip
 
@@ -142,6 +144,7 @@ def ytm(
 
 
 def current_yield(clean: Num, coupon_rate: Num, face: Num = 100) -> Decimal:
+    """A year's coupon over the clean price, ``face x coupon_rate / clean`` (a fraction; ignores pull to par)."""
     return require_price(face, "face") * to_decimal(coupon_rate) / require_price(clean, "price")
 
 
@@ -155,6 +158,7 @@ class Duration:
 def duration(
     yld: Num, settlement: date, maturity: date, coupon_rate: Num, freq: int, face: Num = 100
 ) -> Duration:
+    """Macaulay duration (years), modified duration and convexity of the remaining cash flows at annual yield `yld`."""
     y = float(to_decimal(yld))
     flows = cash_flows(settlement, maturity, coupon_rate, freq, face)
     pv = [(float(cf.amount) / (1 + y / freq) ** float(cf.periods), float(cf.periods) / freq) for cf in flows]

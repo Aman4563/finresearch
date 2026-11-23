@@ -7,11 +7,33 @@ so the synthesizer and renderer can trace every number back to a citation.
 from __future__ import annotations
 
 import copy
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, StringConstraints, field_validator
 
 Impact = Literal["positive", "negative", "neutral", "mixed"]
+
+# ---- caps on the text one agent hands to the next agent's prompt (#505)
+# The planner's questions and leads become a stream's focus, a stream's summary, red flags and open questions and
+# the bull and bear cases are pasted into the synthesiser's prompt, and the critic's tasks become a follow-up
+# stream's focus (orchestrator.base._focus, _reports_text, run). Those agents read untrusted documents and pages, so
+# what they hand on is bounded: a wall of injected text cannot ride along whole. The caps reach the CLI through
+# --json-schema (maxLength / maxItems), which makes the model shorten an over-long answer in the same session
+# (what it drops there leaves no trace: keep the caps well above normal output); Pydantic checks them again and
+# refuses, never cuts. Method after the schema-capped reader output in anthropics/financial-services'
+# managed-agent cookbooks, rewritten.
+# No run's step outputs are in the replay fixtures (evals.replay exports claims and the report only), so the caps
+# rest on the closest text that is: the longest claim statement an agent wrote is 1,016 characters, the longest
+# bullet of a final report 463, the longest paragraph 2,398, the longest list in one report section 29 items (the
+# ranked risks: 26); the planner prompts ask for 4-10 questions a stream.
+HANDOFF_LINE_CHARS = 1500  # one question, lead, red flag, open question or case point
+HANDOFF_LIST_ITEMS = 30  # questions, leads, case points, critic gaps
+HANDOFF_FLAG_ITEMS = 60  # a stream's red flags and open questions (offer documents list risks by the dozen)
+HANDOFF_TASK_CHARS = 2000  # one follow-up instruction from the critic
+HANDOFF_VIEW_CHARS = 4000  # a case's thesis, views and counterargument
+HANDOFF_SUMMARY_CHARS = 8000  # a stream's 8-15 sentence summary
+PLAN_STREAMS = 12  # a kind has at most seven streams
+HandoffLine = Annotated[str, StringConstraints(max_length=HANDOFF_LINE_CHARS)]
 
 
 class Finding(BaseModel):
@@ -25,19 +47,27 @@ class Finding(BaseModel):
 class StreamReport(BaseModel):
     """Output of one research stream."""
 
-    summary: str = Field(description="8-15 sentence summary of what the stream established")
+    summary: str = Field(
+        description="8-15 sentence summary of what the stream established", max_length=HANDOFF_SUMMARY_CHARS
+    )
     section_markdown: str = Field(description="Report section in markdown; cite claims inline as [C<id>]")
     key_findings: list[Finding]
-    red_flags: list[str] = Field(default_factory=list)
-    open_questions: list[str] = Field(default_factory=list, description="What could not be verified and why")
+    red_flags: list[HandoffLine] = Field(default_factory=list, max_length=HANDOFF_FLAG_ITEMS)
+    open_questions: list[HandoffLine] = Field(
+        default_factory=list, description="What could not be verified and why", max_length=HANDOFF_FLAG_ITEMS
+    )
     claim_ids: list[int] = Field(default_factory=list, description="All claims this stream saved")
 
 
 class StreamFocus(BaseModel):
     stream: str
-    questions: list[str] = Field(description="Specific questions this stream must answer")
-    leads: list[str] = Field(
-        default_factory=list, description="Pointers: sections, lines, facts worth checking"
+    questions: list[HandoffLine] = Field(
+        description="Specific questions this stream must answer", max_length=HANDOFF_LIST_ITEMS
+    )
+    leads: list[HandoffLine] = Field(
+        default_factory=list,
+        description="Pointers: sections, lines, facts worth checking",
+        max_length=HANDOFF_LIST_ITEMS,
     )
 
 
@@ -46,7 +76,7 @@ class ResearchPlan(BaseModel):
 
     company_one_liner: str
     critical_questions: list[str] = Field(description="The questions that decide apply / avoid")
-    streams: list[StreamFocus]
+    streams: list[StreamFocus] = Field(max_length=PLAN_STREAMS)
 
 
 class ClaimVerdict(BaseModel):
@@ -92,14 +122,21 @@ class CasePoint(BaseModel):
     claim_ids: list[int] = Field(default_factory=list)
 
 
+# A bull or bear point as the synthesiser's prompt receives it: capped (#505). The synthesiser's own reasons_for /
+# reasons_against stay plain CasePoints: they are shown to the reader, not handed to an agent. (A comment, not a
+# docstring: a model's docstring becomes the `description` the agent reads in its output schema.)
+class CaseLine(CasePoint):
+    point: HandoffLine
+
+
 class CaseReport(BaseModel):
     """Bull or bear case, argued only from verified claims."""
 
-    thesis: str
-    points: list[CasePoint]
-    listing_view: str
-    long_term_view: str
-    strongest_counterargument: str
+    thesis: str = Field(max_length=HANDOFF_VIEW_CHARS)
+    points: list[CaseLine] = Field(max_length=HANDOFF_LIST_ITEMS)
+    listing_view: str = Field(max_length=HANDOFF_VIEW_CHARS)
+    long_term_view: str = Field(max_length=HANDOFF_VIEW_CHARS)
+    strongest_counterargument: str = Field(max_length=HANDOFF_VIEW_CHARS)
 
 
 class Scenario(BaseModel):
@@ -205,12 +242,14 @@ class BondSynthesis(BaseModel):
 class Gap(BaseModel):
     description: str
     stream: str = Field(description="Which stream should fill it")
-    task: str = Field(description="Concrete follow-up instruction for that stream")
+    task: str = Field(
+        description="Concrete follow-up instruction for that stream", max_length=HANDOFF_TASK_CHARS
+    )
     severity: Literal["high", "medium", "low"]
 
 
 class CriticReport(BaseModel):
-    gaps: list[Gap]
+    gaps: list[Gap] = Field(max_length=HANDOFF_LIST_ITEMS)
     stale_or_unverified: list[str] = Field(default_factory=list)
     ready_to_publish: bool
 

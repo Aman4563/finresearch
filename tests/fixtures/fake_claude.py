@@ -143,6 +143,26 @@ if scenario == "no_structured":
         }
     )
     sys.exit(0)
+if scenario == "structured_retries":
+    # the answer never fitted --json-schema: Claude Code 2.1.330 lets the model retry the StructuredOutput call (five
+    # times by default, MAX_STRUCTURED_OUTPUT_RETRIES), then ends the turn with this error variant: `errors`, no
+    # `result` (shape read from the CLI's own code, #505)
+    emit(rl_ok)
+    emit(
+        {
+            "type": "result",
+            "subtype": "error_max_structured_output_retries",
+            "is_error": True,
+            "errors": [
+                "Failed to provide valid structured output after 5 attempts \u2014 last StructuredOutput error: "
+                "Output does not match required schema: /red_flags/0: must NOT have more than 1500 characters "
+                "(got 2100)"
+            ],
+            "session_id": "s1",
+            "num_turns": 9,
+        }
+    )
+    sys.exit(1)
 if scenario == "near_ceiling":
     rl = json.loads(json.dumps(rl_ok))
     rl["rate_limit_info"]["unifiedWindows"]["five_hour"]["utilization"] = 0.95
