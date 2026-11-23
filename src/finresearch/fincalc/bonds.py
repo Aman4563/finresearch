@@ -69,8 +69,10 @@ def cash_flows(
     f, c = require_price(face, "face"), to_decimal(coupon_rate)
     per = f * c / freq
     days = coupon_dates(settlement, maturity, freq)
-    prev = _back(maturity, len(days) * _months(freq))  # from the maturity, as previous_coupon (month-end clamp)
-    first =Decimal((days[0] - settlement).days) / Decimal((days[0] - prev).days)
+    prev = _back(
+        maturity, len(days) * _months(freq)
+    )  # from the maturity, as previous_coupon (month-end clamp)
+    first = Decimal((days[0] - settlement).days) / Decimal((days[0] - prev).days)
     return [CashFlow(d, per + (f if d == maturity else 0), first + k) for k, d in enumerate(days)]
 
 
