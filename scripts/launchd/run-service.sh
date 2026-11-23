@@ -11,7 +11,8 @@
 # port is free. launchd sees one long-running job, not a crash loop, and nothing is ever killed here.
 #
 # The API's own log goes to data/logs/serve.log, rotated by size (`serve --log-file`); what launchd captures of this
-# launcher and of a crash before logging starts goes to data/logs/serve.launchd.log (and web.log for the web app).
+# launcher and of a crash before logging starts goes to data/logs/serve.launchd.log; the web app's output goes to
+# data/logs/web.launchd.log (files only launchd writes: #523).
 set -uo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

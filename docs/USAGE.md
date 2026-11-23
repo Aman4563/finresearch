@@ -74,8 +74,10 @@ scripts/launchd/uninstall.sh            # unload the jobs (this stops the servic
   tail -n 5 data/logs/healthcheck.log               # the last problems, if any
   cat data/state/healthcheck.json                   # "checked_at": the last check; "ok": true
   ```
-  Logs: `data/logs/serve.log` (the API and the monitor, rotated), `data/logs/web.log`, and
-  `data/logs/serve.launchd.log` (the launcher's own lines, and anything printed before the API's log starts).
+  Logs: `data/logs/serve.log` (the API and the monitor, rotated), `data/logs/web.launchd.log` (the web app), and
+  `data/logs/serve.launchd.log` (the launcher's own lines, and anything printed before the API's log starts). A
+  job's own output always goes to a `*.launchd.log` file: launchd cannot start a job whose output file was
+  created by another process, such as the `web.log` of an app started by hand (#523).
 - **Uninstall** stops the three jobs' services. Start the app by hand afterwards (above), or install again.
 
 #### The health check
