@@ -83,9 +83,10 @@ Every change must preserve these.
   `"vector": false`, the data-health pass stores a failed `pgvector` check (brief and Data health card), and the
   launchd health check raises a notification (`dq.misc.vector_check` probes on a new connection, because a pooled
   session that loaded the library earlier keeps working).
-- **Starting the app:** `finresearch serve` runs its lifespan (the monitor) before it binds the port, so a second
-  copy runs a scheduler for a moment before failing on the port. Under launchd the launcher waits while the port
-  answers (`scripts/launchd/run-service.sh`); never start a second copy by hand.
+- **Starting the app (#507):** uvicorn runs the app's lifespan (the monitor) before it binds the port, so a second
+  copy used to run a scheduler for a moment, which could claim tonight's jobs, before failing on the port. `finresearch
+  serve` now looks at the port first and refuses (exit 1) when it is in use, and under launchd the launcher waits
+  while the port answers (`scripts/launchd/run-service.sh`). Keep both when changing how the app starts.
 - **Claude Code flags:** `--bare` needs an API key, so it isn't usable on the Max tier. MCP tool permissions go in `--allowedTools` (`mcp__finresearch`), never in `--tools`.
 - **SEBI:** the full offer document is the iframe `file=` target (`sebi_data/attachdocs`). Listing rows link only the abridged prospectus.
 - **OCR'd documents** (scanned annual reports, audited statements; Tesseract mean confidence about 90) are accurate on clean pages. Noisy pages garble digits (for example `2,066 53`, `L7ULA7`). Treat OCR'd figures as secondary: prefer the RHP text layer and cross-check before citing.

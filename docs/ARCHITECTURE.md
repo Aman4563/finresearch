@@ -129,5 +129,5 @@ src/finresearch/
   cli.py         finresearch command line
 web/             Next.js app (design notes in web/DESIGN.md)
 tests/           offline tests with recorded fixtures
-scripts/         live smoke checks, backups and gold-set ingestion
+scripts/         live smoke checks, backups, gold-set ingestion, the launchd agents and the health check
 ```

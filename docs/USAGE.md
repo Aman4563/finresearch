@@ -26,7 +26,8 @@ cd web && pnpm build && pnpm start       # app on http://127.0.0.1:3100
 
 The monitor inside `serve` runs the scheduled jobs: live refresh in market hours, IPO subscription and listing
 checks, the nightly portfolio valuation, fund ranks, the stock peer dataset, disclosures, the statement inbox and
-forecast scoring. `uv run finresearch monitor run` runs it without the API.
+forecast scoring. `uv run finresearch monitor run` runs it without the API. `serve` refuses to start (exit 1) when
+its port is already in use, so a second copy never runs a second monitor.
 
 The after-close market jobs (stock peers, disclosures, IV history) skip NSE holidays. If NSE's holiday list for the
 year can't be loaded, they don't run at all (they fail closed): the monitor logs it, raises one warning alert a day,
