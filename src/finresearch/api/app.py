@@ -1570,10 +1570,13 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
     # ------------------------------------------------------------------ plan usage
     @app.get("/api/limits")
     def limits() -> dict[str, Any]:
-        from finresearch.bridge.limits import LimitTracker
+        """The last reading of each plan window. A window that has reset since the reading is expired (#507): its
+        utilization is null (unknown now), with `<window>_expired` and `<window>_last_utilization`."""
+        from finresearch.bridge.limits import LimitTracker, display_state
 
         s = get_settings()
-        return {"tiers": LimitTracker(s.state_dir).describe(), "now": datetime.now(UTC).timestamp(),
+        now = datetime.now(UTC).timestamp()
+        return {"tiers": display_state(LimitTracker(s.state_dir).describe(), now), "now": now,
                 "ceilings": {"five_hour": s.max_five_hour_ceiling}}  # fmt: skip
 
     @app.get("/api/usage/runs")

@@ -55,19 +55,36 @@ def health() -> None:
 
 @bridge_app.command()
 def limits() -> None:
-    """Show the last known subscription-window utilisation and any cool-downs."""
+    """Show the last known subscription-window utilisation and any cool-downs. A reading whose window has since
+    reset is shown as expired with when it was last seen, never as current usage."""
+    from finresearch.bridge.limits import window_views
+
     router = build_router()
     state = router.tracker.describe()
+    now = time.time()
+    LONG = "%a %d %b %Y %H:%M"  # an expired reading can be weeks old: say the year
+
+    def at(ts: float | None, fmt: str = "%a %d %b %H:%M") -> str:
+        return time.strftime(fmt, time.localtime(ts)) if ts else "at an unknown time"
+
     for tier, st in state.items():
         snap = st.get("snapshot") or {}
         console.print(f"[bold]{tier}[/]")
         if snap:
-            for win in ("five_hour", "seven_day"):
-                u, r = snap.get(f"{win}_utilization"), snap.get(f"{win}_resets_at")
-                if u is not None:
-                    reset = time.strftime("%a %H:%M", time.localtime(r)) if r else "?"
-                    console.print(f"  {win}: {u:.0%} used, resets {reset}")
-            console.print(f"  status: {snap.get('status')}  overage: {snap.get('overage_status')}")
+            views = window_views(snap, now)
+            for win, v in views.items():
+                if v["state"] == "expired":
+                    # #507: a reading from a window that has reset is not current usage
+                    reset = f" (window reset {at(v['resets_at'], LONG)})" if v["resets_at"] else ""
+                    console.print(f"  {win}: [yellow]expired[/]{reset}; last seen {at(v['last_seen'], LONG)}: "
+                                  f"{v['last_utilization']:.0%} used; current usage unknown until the next task",
+                                  soft_wrap=True)  # fmt: skip
+                else:
+                    reset = at(v["resets_at"]) if v["resets_at"] else "?"
+                    console.print(f"  {win}: {v['utilization']:.0%} used, resets {reset}")
+            stale = bool(views) and all(v["state"] == "expired" for v in views.values())
+            console.print(f"  status: {snap.get('status')}{' (as last seen)' if stale else ''}  "
+                          f"overage: {snap.get('overage_status')}")  # fmt: skip
         if st.get("cooling_until", 0) > time.time():
             console.print(f"  [red]cooling until {time.strftime('%H:%M', time.localtime(st['cooling_until']))}[/]"
                           f" — {st.get('reason')}")  # fmt: skip
