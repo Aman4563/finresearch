@@ -41,6 +41,9 @@ LOOKBACK_DAYS = 10
 # an instalment bought (or a valuation dated) more than this many days from its date means NAVs are missing: the
 # longest run of days without a NAV is a weekend plus market holidays
 MAX_GAP_DAYS = 10
+# the longest SIP period answered, as the app's own SIP calculator (/api/funds/{code}/sip): one request to AMFI
+# returns the whole fund house's NAVs for the period, so the period is kept to what the question needs
+MAX_YEARS = 10
 CITABLE = ("xirr_pct", "value", "invested", "gain")
 Nav = tuple[date, Decimal]
 
@@ -51,17 +54,21 @@ def _unknown(reason: str) -> dict[str, Any]:
 
 def window(latest: date | None, years: int | None, start: str | None, end: str | None) -> tuple[date, date]:
     """(start, end) of the SIP: `end` defaults to the scheme's latest NAV date, `start` to `years` before `end`.
-    Exactly one of `years` and `start` is given. ValueError otherwise, or when the dates are not in order."""
+    Exactly one of `years` and `start` is given. ValueError otherwise, when the dates are not in order, or when
+    the period is longer than MAX_YEARS."""
     if (years is None) == (start is None):
         raise ValueError("give either years (a SIP over the last N years) or start (YYYY-MM-DD), not both")
     e = date.fromisoformat(end) if end else latest
     if e is None:
         raise ValueError("the scheme has no dated NAV in AMFI's file: give end (YYYY-MM-DD)")
-    if years is not None and (isinstance(years, bool) or not isinstance(years, int) or not 1 <= years <= 30):
-        raise ValueError("years must be a whole number between 1 and 30")
+    whole = isinstance(years, int) and not isinstance(years, bool)
+    if years is not None and not (whole and 1 <= years <= MAX_YEARS):
+        raise ValueError(f"years must be a whole number between 1 and {MAX_YEARS}")
     s = date.fromisoformat(start) if start else add_years(e, -years)
     if s >= e:
         raise ValueError(f"start {s} must be before end {e}")
+    if s < add_years(e, -MAX_YEARS):
+        raise ValueError(f"the SIP period may be at most {MAX_YEARS} years: {s} to {e} is longer")
     return s, e
 
 
@@ -104,12 +111,19 @@ def due_dates(start: date, end: date, day_of_month: int) -> list[date]:
         y, m = (y + 1, 1) if m == 12 else (y, m + 1)
 
 
-def sip(series: dict[str, Any], sha256: str, amount: Any, day_of_month: int = 1) -> dict[str, Any]:
-    """The SIP outcome over a stored series (`store_series` / `load_series`): fincalc.funds.sip_outcome on its NAVs,
-    with the NAV date of every instalment. Raises ValueError for a bad amount or day."""
+def check_inputs(amount: Any, day_of_month: Any) -> Decimal:
+    """The instalment amount as a Decimal. ValueError for an amount that is not a positive number or a day that is
+    not 1-31: checked before anything is fetched."""
     amt = require_price(amount, "amount")
     if isinstance(day_of_month, bool) or not isinstance(day_of_month, int) or not 1 <= day_of_month <= 31:
         raise ValueError("day_of_month must be a whole number from 1 to 31")
+    return amt
+
+
+def sip(series: dict[str, Any], sha256: str, amount: Any, day_of_month: int = 1) -> dict[str, Any]:
+    """The SIP outcome over a stored series (`store_series` / `load_series`): fincalc.funds.sip_outcome on its NAVs,
+    with the NAV date of every instalment. Raises ValueError for a bad amount or day."""
+    amt = check_inputs(amount, day_of_month)
     code = str(series["scheme"]["scheme_code"])
     start, end = date.fromisoformat(series["start"]), date.fromisoformat(series["end"])
     navs = [(date.fromisoformat(d), Decimal(v)) for d, v in series["navs"]]

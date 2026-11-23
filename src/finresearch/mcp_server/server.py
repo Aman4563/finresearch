@@ -722,8 +722,8 @@ async def fund_sip_outcome(scheme_code: str, amount: str, years: int | None = No
     """What a monthly SIP of `amount` rupees in a scheme came to, from AMFI's NAV history (fincalc.funds.sip_outcome):
     instalments, amount invested, value, gain and XIRR (annualised, in %), with the NAV date and NAV of every
     instalment and of the valuation. Give `years` (a SIP over the last N years, ending at the latest NAV) or `start`
-    (YYYY-MM-DD); `end` defaults to the latest NAV date. Each instalment buys at the first NAV on or after
-    `day_of_month`. To save a figure, cite the returned `citation` with result_key set to the key you quote (one of
+    (YYYY-MM-DD); `end` defaults to the latest NAV date; at most 10 years. Each instalment buys at the first NAV on or
+    after `day_of_month`. To save a figure, cite the returned `citation` with result_key set to the key you quote (one of
     citable_keys) and the value exactly as returned or rounded (rupees; % for xirr_pct): save_claim re-runs it on the
     stored NAVs and grades it D only if it reproduces the value. known=false carries a reason and no number (a scheme
     younger than the period, missing NAVs): report it as unknown, or ask for a shorter period."""
@@ -735,6 +735,7 @@ async def fund_sip_outcome(scheme_code: str, amount: str, years: int | None = No
     from finresearch.mcp_server import fund_facts, option_facts
 
     try:
+        fund_facts.check_inputs(amount, day_of_month)  # before anything is fetched
         async with AmfiClient(cache_dir=get_settings().state_dir) as amfi:
             scheme = next((x for x in await _nav_all(amfi) if x.code == str(scheme_code).strip()), None)
             if scheme is None:
@@ -742,7 +743,7 @@ async def fund_sip_outcome(scheme_code: str, amount: str, years: int | None = No
             lo, hi = fund_facts.window(scheme.day, years, start, end)
             hist = await amfi.scheme_history(scheme, lo - timedelta(days=fund_facts.LOOKBACK_DAYS), hi,
                                              probe_day(today_ist()))  # fmt: skip
-    except ValueError as e:  # an unknown scheme or a refused period: no number
+    except ValueError as e:  # a refused amount, day or period, or an unknown scheme: no number
         return json.dumps({"known": False, "reason": str(e)})
     except Exception as e:  # AMFI could not be read: unknown, never an estimate
         return json.dumps({"known": False, "reason": "AMFI's NAV history could not be read: "
@@ -751,11 +752,7 @@ async def fund_sip_outcome(scheme_code: str, amount: str, years: int | None = No
     with session_scope() as s:
         series, sha = fund_facts.store_series(s, about, lo, hi, [(h.day, h.nav) for h in hist],
                                               run_id=option_facts.bound_run_id())  # fmt: skip
-    try:
-        out = fund_facts.sip(series, sha, amount, day_of_month)
-    except ValueError as e:  # a refused amount or day: no number
-        out = {"known": False, "reason": str(e)}
-    return json.dumps(out, indent=1)
+    return json.dumps(fund_facts.sip(series, sha, amount, day_of_month), indent=1)
 
 
 # --------------------------------------------------------------------------- listed-stock data

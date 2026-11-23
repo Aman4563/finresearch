@@ -18,14 +18,17 @@ Impact = Literal["positive", "negative", "neutral", "mixed"]
 # the bull and bear cases are pasted into the synthesiser's prompt, and the critic's tasks become a follow-up
 # stream's focus (orchestrator.base._focus, _reports_text, run). Those agents read untrusted documents and pages, so
 # what they hand on is bounded: a wall of injected text cannot ride along whole. The caps reach the CLI through
-# --json-schema (maxLength / maxItems), which makes the model shorten an over-long answer in the same session;
-# Pydantic checks them again. Method after the schema-capped reader output in anthropics/financial-services'
+# --json-schema (maxLength / maxItems), which makes the model shorten an over-long answer in the same session
+# (what it drops there leaves no trace: keep the caps well above normal output); Pydantic checks them again and
+# refuses, never cuts. Method after the schema-capped reader output in anthropics/financial-services'
 # managed-agent cookbooks, rewritten.
 # No run's step outputs are in the replay fixtures (evals.replay exports claims and the report only), so the caps
 # rest on the closest text that is: the longest claim statement an agent wrote is 1,016 characters, the longest
-# bullet of a final report 463, the longest paragraph 2,398; the planner prompts ask for 4-10 questions a stream.
+# bullet of a final report 463, the longest paragraph 2,398, the longest list in one report section 29 items (the
+# ranked risks: 26); the planner prompts ask for 4-10 questions a stream.
 HANDOFF_LINE_CHARS = 1500  # one question, lead, red flag, open question or case point
-HANDOFF_LIST_ITEMS = 30  # questions, leads, red flags, open questions, case points, critic gaps
+HANDOFF_LIST_ITEMS = 30  # questions, leads, case points, critic gaps
+HANDOFF_FLAG_ITEMS = 60  # a stream's red flags and open questions (offer documents list risks by the dozen)
 HANDOFF_TASK_CHARS = 2000  # one follow-up instruction from the critic
 HANDOFF_VIEW_CHARS = 4000  # a case's thesis, views and counterargument
 HANDOFF_SUMMARY_CHARS = 8000  # a stream's 8-15 sentence summary
@@ -49,9 +52,9 @@ class StreamReport(BaseModel):
     )
     section_markdown: str = Field(description="Report section in markdown; cite claims inline as [C<id>]")
     key_findings: list[Finding]
-    red_flags: list[HandoffLine] = Field(default_factory=list, max_length=HANDOFF_LIST_ITEMS)
+    red_flags: list[HandoffLine] = Field(default_factory=list, max_length=HANDOFF_FLAG_ITEMS)
     open_questions: list[HandoffLine] = Field(
-        default_factory=list, description="What could not be verified and why", max_length=HANDOFF_LIST_ITEMS
+        default_factory=list, description="What could not be verified and why", max_length=HANDOFF_FLAG_ITEMS
     )
     claim_ids: list[int] = Field(default_factory=list, description="All claims this stream saved")
 

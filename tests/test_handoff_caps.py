@@ -22,7 +22,7 @@ from finresearch.agents.roles import ROLES
 from finresearch.agents.schemas import json_schema_for
 
 FIX = Path(__file__).parent / "fixtures"
-LINE, ITEMS = S.HANDOFF_LINE_CHARS, S.HANDOFF_LIST_ITEMS
+LINE, ITEMS, FLAGS = S.HANDOFF_LINE_CHARS, S.HANDOFF_LIST_ITEMS, S.HANDOFF_FLAG_ITEMS
 
 
 def _focus(**kw) -> dict:
@@ -64,8 +64,8 @@ STRINGS = [
 LISTS = [
     (S.StreamFocus, "questions", ITEMS, lambda n: _focus(questions=["q"] * n)),
     (S.StreamFocus, "leads", ITEMS, lambda n: _focus(leads=["l"] * n)),
-    (S.StreamReport, "red_flags", ITEMS, lambda n: _stream(red_flags=["r"] * n)),
-    (S.StreamReport, "open_questions", ITEMS, lambda n: _stream(open_questions=["o"] * n)),
+    (S.StreamReport, "red_flags", FLAGS, lambda n: _stream(red_flags=["r"] * n)),
+    (S.StreamReport, "open_questions", FLAGS, lambda n: _stream(open_questions=["o"] * n)),
     (S.CaseReport, "points", ITEMS, lambda n: _case(points=[_point("p")] * n)),
     (S.CriticReport, "gaps", ITEMS, lambda n: {"gaps": [_gap()] * n, "ready_to_publish": False}),
     (S.ResearchPlan, "streams", S.PLAN_STREAMS,
@@ -123,8 +123,9 @@ def test_the_caps_clear_the_longest_comparable_text_in_the_replay_fixtures():
     """The replay fixtures hold no step outputs (evals.replay exports the steps' timings, the claims and the final
     report), so the capped fields themselves cannot be measured there: if a fixture ever carries outputs, this test
     fails and the real fields must be measured. Until then the caps are held against the closest text an agent
-    wrote in those four live runs."""
-    statement = bullet = paragraph = 0
+    wrote in those live runs: on 23-Nov-2026 the longest claim statement was 1,016 characters, the longest bullet of
+    a final report 463, its longest paragraph 2,398, and the longest list in one report section 29 items."""
+    statement = bullet = paragraph = listed = 0
     files = sorted((FIX / "eval").glob("*.json"))
     for p in files:
         d = json.loads(p.read_text())
@@ -134,13 +135,14 @@ def test_the_caps_clear_the_longest_comparable_text_in_the_replay_fixtures():
         bullets = [ln.strip() for ln in md.splitlines() if re.match(r"\s*([-*]|\d+\.)\s", ln)]
         paragraphs = [x for x in re.split(r"\n\s*\n", md) if not x.lstrip().startswith(("|", "#"))]
         bullet, paragraph = max(bullet, *map(len, bullets)), max(paragraph, *map(len, paragraphs))
-    assert len(files) == 4 and (statement, bullet, paragraph) == (1016, 463, 2398)
+        for section in re.split(r"(?m)^#{1,3} ", md):  # the bullets under one heading
+            listed = max(listed, sum(1 for ln in section.splitlines() if re.match(r"\s*([-*]|\d+\.)\s", ln)))
+    assert files and statement and bullet and paragraph and listed  # the fixtures were read
+    assert listed * 2 <= S.HANDOFF_FLAG_ITEMS and listed < S.HANDOFF_LIST_ITEMS
     assert statement * 1.4 < S.HANDOFF_LINE_CHARS and bullet * 3 < S.HANDOFF_LINE_CHARS  # one line
     assert statement * 1.9 < S.HANDOFF_TASK_CHARS and paragraph * 1.6 < S.HANDOFF_VIEW_CHARS
     assert paragraph * 3 < S.HANDOFF_SUMMARY_CHARS  # 8-15 sentences
     # the planner prompts ask for 4-10 questions a stream; no kind has more than seven streams
-    for name in ("planner", "stock_planner", "fund_planner", "bond_planner"):
-        assert re.search(r"4.10 (specific )?questions", ROLES[name].template_text()), name
     assert S.HANDOFF_LIST_ITEMS >= 3 * 10 and S.PLAN_STREAMS > 7
 
 

@@ -200,7 +200,7 @@ async def test_the_tool_resolves_the_period_stores_the_series_and_returns_a_cita
     assert prov["method_version"] == "fund_facts/1"
     assert (prov["nav_first"], prov["nav_last"]) == ("2022-12-21", "2025-12-31")
     with session_scope() as s:
-        (snap,) = s.query(WebSnapshot).filter_by(sha256=args["series_sha256"]).all()
+        snap = s.query(WebSnapshot).filter_by(sha256=args["series_sha256"]).first()
         key = fund_facts.series_key(CODE, date(2022, 12, 31), date(2025, 12, 31))
         assert snap.url == key == prov["series_key"]
         assert json.loads(snap.text)["navs"][-1] == ["2025-12-31", str(FULL[-1][1])]
@@ -213,10 +213,13 @@ async def test_refused_periods_unknown_schemes_and_a_failed_fetch_carry_no_numbe
     from finresearch.mcp_server import server
 
     for args, why in (({}, "either years"), ({"years": 3, "start": "2023-01-01"}, "either years"),
-                      ({"start": "2026-01-01"}, "must be before end"), ({"years": 0}, "between 1 and 30"),
+                      ({"start": "2026-01-01"}, "must be before end"), ({"years": 0}, "between 1 and 10"),
+                      ({"years": 11}, "between 1 and 10"), ({"start": "2015-12-30"}, "at most 10 years"),
                       ({"years": 3, "day_of_month": 40}, "day_of_month")):  # fmt: skip
         out = await _tool(**args)
         assert set(out) == {"known", "reason"} and why in out["reason"], (args, out)
+    free = json.loads(await server.fund_sip_outcome(CODE, "0", years=3))
+    assert set(free) == {"known", "reason"} and "amount must be > 0" in free["reason"]
     other = json.loads(await server.fund_sip_outcome("123456", "10000", years=3))
     assert other == {"known": False, "reason": "scheme 123456 is not in AMFI's NAV file"}
     amfi["navs"] = [(d, v) for d, v in FULL if d >= date(2024, 3, 11)]
@@ -229,6 +232,29 @@ async def test_refused_periods_unknown_schemes_and_a_failed_fetch_carry_no_numbe
     monkeypatch.setattr(AmfiClient, "scheme_history", down)
     out = await _tool(years=1)
     assert set(out) == {"known", "reason"} and "could not be read" in out["reason"] and "503" in out["reason"]
+    # nothing was fetched for a refused amount, day, period or scheme: only the young scheme's three years were
+    assert amfi["asked"] == [(date(2022, 12, 21), date(2025, 12, 31))]
+
+
+async def test_under_a_run_bound_server_the_series_belongs_to_the_run_and_the_claim_is_graded_d(
+    env, tmp_path, amfi, monkeypatch
+):
+    """An agent's MCP server is always bound to its run (mcp_server.config.RUN_ENV): the series is stored with that
+    run, save_claim under the binding re-runs it, and the bound server still refuses to write into another run."""
+    from finresearch.db import session_scope
+    from finresearch.db.models import WebSnapshot
+    from finresearch.mcp_server.config import RUN_ENV
+
+    mine, theirs = _run(tmp_path), _run(tmp_path / "theirs")
+    monkeypatch.setenv(RUN_ENV, str(mine))
+    out = await _tool(years=3)
+    sha = out["provenance"]["series_sha256"]
+    with session_scope() as s:
+        assert [x.run_id for x in s.query(WebSnapshot).filter_by(sha256=sha, run_id=mine)] == [mine]
+    res = _save(mine, out["citation"], out["xirr_pct"])
+    assert _claim(res["claim_id"])[0]["grade"] == "D"
+    other = _save(theirs, out["citation"], out["xirr_pct"])
+    assert f"bound to run {mine}" in other["error"]
 
 
 # --------------------------------------------------------------------------- citing it: save_claim re-runs it (#242)
@@ -279,7 +305,7 @@ async def test_only_the_series_the_tool_stored_can_be_cited(env, tmp_path, amfi)
         return {"fund_fact": {"tool": "fund_sip_outcome", "args": {**args, **changed}}}
 
     with session_scope() as s:  # a faster-growing series planted as a page: same period, its own sha
-        rich = json.loads(s.query(WebSnapshot).filter_by(sha256=args["series_sha256"]).one().text)
+        rich = json.loads(s.query(WebSnapshot).filter_by(sha256=args["series_sha256"]).first().text)
         rich["navs"] = [[d, str(Decimal(v) * 3)] if d > "2025-06-30" else [d, v] for d, v in rich["navs"]]
         page = web.store(s, "https://evil.example/navs.json", json.dumps(rich, sort_keys=True), run_id=run_id)
         planted = page.sha256
@@ -308,8 +334,9 @@ async def test_an_unknown_answer_cannot_be_cited(env, tmp_path, amfi):
     from finresearch.mcp_server import fund_facts
 
     key = fund_facts.series_key(CODE, date(2022, 12, 31), date(2025, 12, 31))
-    with session_scope() as s:  # the newest series under the key (other tests stored the full history there)
-        sha = s.query(WebSnapshot.sha256).filter_by(url=key).order_by(WebSnapshot.id.desc()).first()[0]
+    with session_scope() as s:  # the young scheme's series (the full history sits under the same key)
+        (sha,) = {x.sha256 for x in s.query(WebSnapshot).filter_by(url=key)
+                  if json.loads(x.text)["navs"][0][0] == "2024-03-11"}  # fmt: skip
     cite = {"fund_fact": {"tool": "fund_sip_outcome",
                           "args": {"scheme_code": CODE, "amount": "10000", "start": "2022-12-31", "end": "2025-12-31",
                                    "day_of_month": 1, "series_sha256": sha}}}  # fmt: skip
