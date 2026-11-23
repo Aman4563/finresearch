@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from finresearch.fincalc import beta_specs, brinson
+from finresearch.fincalc import beta_specs, brinson, risk_alert_specs
 from finresearch.horserace import addendum, addendum_a2, addendum_a3, addendum_a4, addendum_a5, addendum_a6
 from finresearch.horserace import specs as hspecs
 from finresearch.inventory.registry import ModelEntry
@@ -123,7 +123,7 @@ STUDIES = (
                "Prompts a manual review; never an action by itself.", ANALYSIS,
                ("stored IV and closes", "limits", "F&O book"), ("fincalc/risk_alerts.py", "alerts/risk.py"), D22,
                "Alert precision (actioned / fired) per category", evidence="rule-based: precision not yet measured",
-               regime_tags=FNO_TAGS),
+               regime_tags=FNO_TAGS, registrations=(risk_alert_specs.SPEC_VERSION,)),
     ModelEntry("risk_var_ledger", "Portfolio 1-day 95 % VaR (forecast ledger)", "risk", "B",
                "The next day's loss quantile from the last 250 daily returns, logged before the outcome.",
                "Risk context; backtested on its own exceedances.", "A model figure, not a forecast of returns.",
