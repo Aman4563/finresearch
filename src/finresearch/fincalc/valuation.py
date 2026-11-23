@@ -511,7 +511,9 @@ def dcf_explicit(cash_flows: list[Num], discount_rate: Num, terminal_growth: Num
     if not isinstance(mid_year, bool):
         raise ValueError("mid_year must be true or false")
     if (terminal_growth is None) == (exit_multiple is None):
-        raise ValueError("give terminal_growth (growth method) or exit_multiple with terminal_metric, one per call")
+        raise ValueError(
+            "give terminal_growth (growth method) or exit_multiple with terminal_metric, one per call"
+        )
     n, half = len(cfs), Decimal("0.5") if mid_year else Decimal(0)
     s = (1 + r).sqrt() if mid_year else Decimal(1)  # (1 + r)^0.5: what half a year of discounting is worth
     disc, pvs = Decimal(1), []
@@ -532,10 +534,14 @@ def dcf_explicit(cash_flows: list[Num], discount_rate: Num, terminal_growth: Num
         if metric is None:
             unknown["implied_exit_multiple"] = "terminal_metric was not given"
         elif metric <= 0:
-            unknown["implied_exit_multiple"] = "terminal_metric is not positive: a multiple of it means nothing"
+            unknown["implied_exit_multiple"] = (
+                "terminal_metric is not positive: a multiple of it means nothing"
+            )
         else:
             implied_m = tv * s / metric
-        unknown["implied_terminal_growth"] = "applies to the exit-multiple method: here the growth is the input"
+        unknown["implied_terminal_growth"] = (
+            "applies to the exit-multiple method: here the growth is the input"
+        )
     else:
         m = to_decimal(exit_multiple)
         if m <= 0:

@@ -83,14 +83,21 @@ def test_dcf_explicit_growth_method_with_a_negative_year_by_hand():
     assert (v.pv_explicit, v.terminal_value, v.pv_terminal, v.value) == (D(24), D(525), D(336), D(360))
     assert v.terminal_share.quantize(D("0.0001")) == D("0.9333") and v.terminal_method == "growth"
     assert v.implied_exit_multiple == D("3.5")
-    assert v.implied_terminal_growth is None and "exit-multiple method" in v.unknown["implied_terminal_growth"]
+    assert (
+        v.implied_terminal_growth is None and "exit-multiple method" in v.unknown["implied_terminal_growth"]
+    )
 
 
 def test_dcf_explicit_exit_multiple_chosen_to_equal_the_growth_method():
     """Independent check: the exit multiple the growth method implies (3.5x of 150, above) must reproduce the same
     value, and the growth it implies must be the 5 % that built it: (525 x 0.25 - 100) / (525 + 100) = 0.05."""
     v = V.dcf_explicit([-50, 100], "0.25", exit_multiple="3.5", terminal_metric=150)
-    assert (v.terminal_value, v.pv_terminal, v.value, v.terminal_method) == (D(525), D(336), D(360), "exit_multiple")
+    assert (v.terminal_value, v.pv_terminal, v.value, v.terminal_method) == (
+        D(525),
+        D(336),
+        D(360),
+        "exit_multiple",
+    )
     assert v.implied_terminal_growth == D("0.05")
     assert v.implied_exit_multiple is None and "growth method" in v.unknown["implied_exit_multiple"]
 
@@ -104,7 +111,9 @@ def test_dcf_explicit_equals_the_perpetuity_and_gordon_closed_forms(years):
     assert abs(V.dcf_explicit(flows, "0.11", terminal_growth="0.05").value - 1750) < TINY
     # and it agrees with the two-stage `dcf` already in the module on a path that function can express
     old = V.dcf(100, "0.08", "0.12", "0.04", years=years)
-    new = V.dcf_explicit([D(100) * D("1.08") ** t for t in range(1, years + 1)], "0.12", terminal_growth="0.04")
+    new = V.dcf_explicit(
+        [D(100) * D("1.08") ** t for t in range(1, years + 1)], "0.12", terminal_growth="0.04"
+    )
     assert abs(new.value - old.value) < TINY and abs(new.pv_terminal - old.pv_terminal) < TINY
 
 
@@ -113,7 +122,9 @@ def test_dcf_explicit_mid_year_convention_by_hand():
     PV1 = 110 x 1.1 / 1.21 = 100; PV2 = 133.1 x 1.1 / 1.4641 = 100. Growth 10 %: TV = 133.1 x 1.1 / 0.11 = 1,331,
     discounted 1.5 years (its flows are mid-year too): 1,331 x 1.1 / 1.4641 = 1,000. Value 1,200, share 0.8333.
     Year-end discounting of the same numbers gives 1,200 / 1.1 = 1,090.909..."""
-    v = V.dcf_explicit(["110", "133.1"], "0.21", terminal_growth="0.10", terminal_metric="266.2", mid_year=True)
+    v = V.dcf_explicit(
+        ["110", "133.1"], "0.21", terminal_growth="0.10", terminal_metric="266.2", mid_year=True
+    )
     assert v.periods == [D("0.5"), D("1.5")] and v.terminal_period == D("1.5")
     assert [abs(p - 100) < TINY for p in v.pv_cash_flows] == [True, True]
     assert abs(v.pv_terminal - 1000) < TINY and abs(v.value - 1200) < TINY and v.terminal_value == D(1331)
@@ -164,9 +175,14 @@ def test_dcf_explicit_leaves_unknown_figures_none_with_the_reason():
     negative one (a loss at EBITDA level) likewise. A negative final flow has no implied growth."""
     v = V.dcf_explicit([-1000, 10], "0.25", terminal_growth="0.05")
     assert v.value == D(-760) and v.terminal_share is None and "not positive" in v.unknown["terminal_share"]
-    assert v.implied_exit_multiple is None and "terminal_metric was not given" in v.unknown["implied_exit_multiple"]
+    assert (
+        v.implied_exit_multiple is None
+        and "terminal_metric was not given" in v.unknown["implied_exit_multiple"]
+    )
     neg = V.dcf_explicit([100, 110], "0.25", terminal_growth="0.05", terminal_metric=-3)
     assert neg.implied_exit_multiple is None and "not positive" in neg.unknown["implied_exit_multiple"]
     x = V.dcf_explicit([100, -10], "0.25", exit_multiple=4, terminal_metric=50)
-    assert x.implied_terminal_growth is None and "final year's cash flow" in x.unknown["implied_terminal_growth"]
+    assert (
+        x.implied_terminal_growth is None and "final year's cash flow" in x.unknown["implied_terminal_growth"]
+    )
     assert x.terminal_value == D(200) and x.pv_terminal == D(128)  # 4 x 50 = 200; 200 / 1.5625 = 128
