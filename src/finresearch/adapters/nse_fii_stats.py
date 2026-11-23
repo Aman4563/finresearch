@@ -14,6 +14,8 @@ confirms or corrects it.
   - one row per category (at least INDEX FUTURES, INDEX OPTIONS, STOCK FUTURES and STOCK OPTIONS; newer files may add
     per-index rows, which are kept under their own label), then free-text notes, which are skipped.
 
+The real file writes its figures as text cells (#509), so a figure is a numeric cell or plain unsigned decimal text.
+
 Checks: the body is a workbook (a block page is an error, never "no file"); contracts are whole and non-negative,
 amounts non-negative; a category row has all six numbers or is refused; no category appears twice. A 404 is a holiday
 or a day not yet published, so `fetch_day` returns None for it.
@@ -62,8 +64,17 @@ def _norm(v: Any) -> str:
     return re.sub(r"\s+", " ", v).strip().upper() if isinstance(v, str) else ""
 
 
-def _num(v: Any) -> bool:
-    return isinstance(v, int | float) and not isinstance(v, bool)
+_FIGURE = re.compile(r"\d+(\.\d+)?")
+
+
+def _figure(v: Any) -> Decimal | None:
+    """A cell's figure, or None. NSE's workbook stores every figure as text ('63789', '11345.30': seen on the file
+    for 20-Nov-2026, #509), so plain unsigned decimal text counts; a sign, a comma or an exponent does not."""
+    if isinstance(v, int | float) and not isinstance(v, bool):
+        return Decimal(str(v))
+    if isinstance(v, str) and _FIGURE.fullmatch(v.strip()):
+        return Decimal(v.strip())
+    return None
 
 
 def _title_day(rows: list[list[Any]]) -> date:
@@ -107,10 +118,11 @@ def parse(content: bytes) -> FiiStatsDay:
     out: dict[str, dict[str, Any]] = {}
     for row in rows[head + 2 :]:
         label = _norm(row[0]) if row else ""
-        vals = [row[c] if c < len(row) else None for c in cols.values()]
-        if not label or not any(_num(v) for v in vals):
+        cells = [row[c] if c < len(row) else None for c in cols.values()]
+        vals = [_figure(v) for v in cells]
+        if not label or not any(v is not None for v in vals):
             continue  # a blank row or a note
-        if not all(_num(v) for v in vals):
+        if not all(v is not None for v in vals):
             raise FiiStatsError(f"row {label!r}: not all six numbers are present")
         if len(label) > MAX_LABEL:
             raise FiiStatsError(f"row {label[:50]!r}: a category name longer than {MAX_LABEL} characters")
@@ -121,11 +133,11 @@ def parse(content: bytes) -> FiiStatsDay:
             if v < 0:
                 raise FiiStatsError(f"row {label!r}: {k} is negative ({v})")
             if k.endswith("_contracts"):
-                if v != int(v):
+                if v != v.to_integral_value():
                     raise FiiStatsError(f"row {label!r}: {k} is not a whole number ({v})")
                 rec[k] = int(v)
             else:
-                rec[k] = Decimal(str(v))
+                rec[k] = v
         out[label] = {k: rec[k] for k in KEYS}
     missing = [c for c in REQUIRED if c not in out]
     if missing:
