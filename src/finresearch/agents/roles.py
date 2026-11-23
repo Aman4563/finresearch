@@ -44,7 +44,8 @@ LEDGER_WRITE = [f"{MCP}save_claim", f"{MCP}list_claims"]
 LEDGER_READ = [f"{MCP}list_claims"]
 MARKET = [f"{MCP}{t}" for t in ("nse_ipo_detail", "nse_current_issues", "sebi_filings", "sebi_resolve_pdf")]
 BONDS = [f"{MCP}nse_bond_search", f"{MCP}bond_analytics"]
-FUNDS = [f"{MCP}{t}" for t in ("amfi_scheme_search", "amfi_nav_history", "amfi_category_peers")]
+FUNDS = [f"{MCP}{t}" for t in ("amfi_scheme_search", "amfi_nav_history", "amfi_category_peers",
+                               "fund_sip_outcome")]  # fmt: skip
 EQUITY = [f"{MCP}{t}" for t in ("nse_price_history", "nse_announcements", "nse_results_filings", "nse_results_facts",
                                  "nse_shareholding", "nse_corporate_actions")]  # fmt: skip
 # option-implied facts from stored F&O data (#393): only the price-behaviour stream, which writes market context

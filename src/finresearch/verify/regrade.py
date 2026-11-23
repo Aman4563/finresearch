@@ -79,6 +79,8 @@ def _recheck(session: Session, ct: Citation, claim: Claim) -> tuple[bool, dict[s
     old = ct.computation or {}
     if old.get("kind") == "option_fact":  # #393: re-run the option-fact tool on today's stored data
         return _recheck_option_fact(session, ct, claim, old)
+    if old.get("kind") == "fund_fact":  # #505: re-run the fund-fact tool on the NAV series it stored
+        return _recheck_fund_fact(session, claim, old)
     spec = {"function": old.get("function"), "args": old.get("args") or {}}
     if old.get("result_key") is not None:
         spec["result_key"] = old["result_key"]
@@ -116,6 +118,22 @@ def _recheck_option_fact(session: Session, ct: Citation, claim: Claim,
             {**{k: v for k, v in old.items() if k != "regrade"}, "matches": False, "detail": detail},
             detail,
         )
+    comp = dict(new.computation or {})
+    return bool(new.quote_found), comp, str(comp.get("detail") or "")
+
+
+def _recheck_fund_fact(session: Session, claim: Claim, old: dict[str, Any]) -> tuple[bool, dict[str, Any], str]:  # fmt: skip
+    from finresearch.mcp_server import fund_facts
+    from finresearch.mcp_server.claims import _tool_fact_citation
+
+    c = {"fund_fact": {"tool": (old.get("function") or "").removeprefix("fund_fact:"), "args": old.get("args") or {}},
+         "result_key": old.get("result_key")}  # fmt: skip
+    try:
+        new, _ = _tool_fact_citation(session, claim.run_id, c, claim.value, "fund_fact", fund_facts.run)
+    except ValueError as e:  # the stored series is gone, or the answer is unknown today: it proves nothing
+        detail = f"fund-fact citation could not be re-checked: {e}"[:1000]
+        kept = {k: v for k, v in old.items() if k != "regrade"}
+        return False, {**kept, "matches": False, "detail": detail}, detail
     comp = dict(new.computation or {})
     return bool(new.quote_found), comp, str(comp.get("detail") or "")
 

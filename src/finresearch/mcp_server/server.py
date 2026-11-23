@@ -42,7 +42,7 @@ server = MCPServer(
         "Tools over FinResearch's document store (offer documents, annual reports) and claim ledger. "
         "Always cite document_id + line numbers from these tools. Record every factual or numeric finding with "
         "save_claim, quoting the exact text at the cited lines. Use fincalc for ALL arithmetic. Option-fact tools "
-        "return a ready `citation`: cite it with its result_key."
+        "and fund_sip_outcome return a ready `citation`: cite it with its result_key."
     ),
 )
 
@@ -290,6 +290,20 @@ _FINCALC_MODULES = {
         fincalc.market,
     )
 }
+# Fund and bond arithmetic (#505): of these modules only the functions named here are callable, the ones that take
+# plain numbers and dates. Left out: everything that takes a NAV or return series (an agent holds a sample of it at
+# most and no claim could bind hundreds of points: amfi_nav_history and fund_sip_outcome compute on the full series);
+# the float helpers of the fund ranking, written for Python numbers (given the strings agents pass, funds.median and
+# percentile_rank would order them as text and wilson_interval and effective_windows fail); bonds.post_tax_yield
+# (right only at par: after_tax_ytm and after_tax_par_yield cover both cases); and the bond schedule functions, whose
+# stepped-back dates are a pricing convention, not the terms the offer document states. fincalc.credit is not
+# exposed: its deciding argument is a rating grade, a word that save_claim cannot bind to a cited claim.
+_FINCALC_ONLY = {
+    "funds": ("annualised_return", "expense_drag"),
+    "bonds": ("accrued_interest", "after_tax_par_yield", "after_tax_ytm", "clean_price", "current_yield",
+              "dirty_price", "duration", "effective_annual", "ytm"),
+}  # fmt: skip
+_FINCALC_MODULES.update({m: getattr(fincalc, m) for m in _FINCALC_ONLY})
 
 
 def _fincalc_catalog() -> dict[str, str]:
@@ -297,6 +311,8 @@ def _fincalc_catalog() -> dict[str, str]:
     for mod_name, mod in _FINCALC_MODULES.items():
         for name, fn in inspect.getmembers(mod, inspect.isfunction):
             if name.startswith("_") or fn.__module__ != mod.__name__:
+                continue
+            if name not in _FINCALC_ONLY.get(mod_name, (name,)):
                 continue
             doc = (inspect.getdoc(fn) or "").split("\n")[0]
             cat[f"{mod_name}.{name}"] = f"{name}{inspect.signature(fn)} — {doc}"
@@ -749,6 +765,52 @@ async def amfi_category_peers(scheme_code: str, limit: int = 25) -> str:
                        "table": table[:limit]}, indent=1)  # fmt: skip
 
 
+def run_fund_fact(session, tool: str, args: dict[str, Any], run_id: int | None) -> dict[str, Any]:
+    """Re-run a fund-fact tool for save_claim, on the NAV series the tool stored (mcp_server.fund_facts): no network."""
+    from finresearch.mcp_server import fund_facts
+
+    return fund_facts.run(session, tool, args, run_id=run_id)
+
+
+@server.tool()
+async def fund_sip_outcome(scheme_code: str, amount: str, years: int | None = None, start: str | None = None,
+                           end: str | None = None, day_of_month: int = 1) -> str:  # fmt: skip
+    """What a monthly SIP of `amount` rupees in a scheme came to, from AMFI's NAV history (fincalc.funds.sip_outcome):
+    instalments, amount invested, value, gain and XIRR (annualised, in %), with the NAV date and NAV of every
+    instalment and of the valuation. Give `years` (a SIP over the last N years, ending at the latest NAV) or `start`
+    (YYYY-MM-DD); `end` defaults to the latest NAV date; at most 10 years. Each instalment buys at the first NAV on or
+    after `day_of_month`. To save a figure, cite the returned `citation` with result_key set to the key you quote (one of
+    citable_keys) and the value exactly as returned or rounded (rupees; % for xirr_pct): save_claim re-runs it on the
+    stored NAVs and grades it D only if it reproduces the value. known=false carries a reason and no number (a scheme
+    younger than the period, missing NAVs): report it as unknown, or ask for a shorter period."""
+    from datetime import timedelta
+
+    from finresearch.adapters.amfi import AmfiClient, probe_day
+    from finresearch.config import get_settings
+    from finresearch.fincalc.dates import today_ist
+    from finresearch.mcp_server import fund_facts, option_facts
+
+    try:
+        fund_facts.check_inputs(amount, day_of_month)  # before anything is fetched
+        async with AmfiClient(cache_dir=get_settings().state_dir) as amfi:
+            scheme = next((x for x in await _nav_all(amfi) if x.code == str(scheme_code).strip()), None)
+            if scheme is None:
+                raise ValueError(f"scheme {scheme_code} is not in AMFI's NAV file")
+            lo, hi = fund_facts.window(scheme.day, years, start, end)
+            hist = await amfi.scheme_history(scheme, lo - timedelta(days=fund_facts.LOOKBACK_DAYS), hi,
+                                             probe_day(today_ist()))  # fmt: skip
+    except ValueError as e:  # a refused amount, day or period, or an unknown scheme: no number
+        return json.dumps({"known": False, "reason": str(e)})
+    except Exception as e:  # AMFI could not be read: unknown, never an estimate
+        return json.dumps({"known": False, "reason": "AMFI's NAV history could not be read: "
+                                                     f"{type(e).__name__}: {str(e)[:200]}"})  # fmt: skip
+    about = {k: v for k, v in _scheme_json(scheme).items() if k not in ("nav", "nav_date")}  # not today's NAV
+    with session_scope() as s:
+        series, sha = fund_facts.store_series(s, about, lo, hi, [(h.day, h.nav) for h in hist],
+                                              run_id=option_facts.bound_run_id())  # fmt: skip
+    return json.dumps(fund_facts.sip(series, sha, amount, day_of_month), indent=1)
+
+
 # --------------------------------------------------------------------------- listed-stock data
 def _equity_json(rows) -> str:
     return json.dumps([r.model_dump(mode="json") for r in rows], indent=1)
@@ -1091,6 +1153,8 @@ def save_claim(run_id: int, stream: str, statement: str, claim_type: str, citati
                argument must be the value of one cited input claim (any ₹ scale or %/fraction) or a declared constant.
                or [{"option_fact": {"tool": "option_implied_move", "args": {...}}, "result_key": "move_1sd_pct"}]: the
                `citation` an option-fact tool returned, with result_key the figure quoted (re-run on stored data).
+               or [{"fund_fact": {"tool": "fund_sip_outcome", "args": {...}}, "result_key": "xirr_pct"}]: the
+               `citation` fund_sip_outcome returned (re-run on the NAV series it stored).
     The server checks each document quote really appears at the cited lines, a web quote against the page text
     fetch_page (or an exchange tool) returned, and re-runs a fincalc citation. Evidence grades: A document quote
     verified, B web quote verified on the stored page, C web quote unchecked (no fetch_page), D fincalc reproduces
@@ -1114,6 +1178,7 @@ def save_claim(run_id: int, stream: str, statement: str, claim_type: str, citati
                 importance=importance,
                 fincalc=run_fincalc,
                 option_fact=run_option_fact,
+                fund_fact=run_fund_fact,
             )
         except ValueError as e:
             s.rollback()  # nothing of a rejected claim is kept

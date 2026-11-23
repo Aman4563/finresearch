@@ -262,19 +262,32 @@ def _option_fact_citation(session: Session, run_id: int, c: dict[str, Any], valu
     data, scoped by the claim's own run, and must reproduce the cited result_key (grade D). An unknown answer, an
     argument the tool refuses or a key it did not return rejects the claim. Its inputs are stored market data, not
     claims, so there is nothing to bind (`inputs` is empty)."""
+    return _tool_fact_citation(session, run_id, c, value, "option_fact", option_fact)
+
+
+def _tool_fact_citation(session: Session, run_id: int, c: dict[str, Any], value: Decimal | None, kind: str,
+                        rerun: Callable[..., dict[str, Any]] | None) -> tuple[Citation, dict[str, Any]]:  # fmt: skip
+    """A figure a deterministic tool computed from data the app stores (verify.evidence.TOOL_FACT: an option-fact
+    tool on the F&O bhavcopy, #393; fund_sip_outcome on the AMFI NAV series it kept, #505, mcp_server.fund_facts).
+    `rerun` runs the tool again on that data: it must be known, return the cited result_key and reproduce the value
+    (grade D)."""
     import json
 
-    spec = c.get("option_fact")
+    from finresearch.verify.evidence import TOOL_FACT
+
+    _, name, data = TOOL_FACT[kind]
+    words = ("an " if name[0] in "aeiou" else "a ") + name.replace(" ", "-")
+    spec = c.get(kind)
     if not isinstance(spec, dict) or not isinstance(spec.get("tool"), str) or not isinstance(
             spec.get("args") or {}, dict):  # fmt: skip
-        raise ValueError('an option-fact citation is the `citation` the tool returned: {"option_fact": {"tool": ..., '
+        raise ValueError(f'{words} citation is the `citation` the tool returned: {{"{kind}": {{"tool": ..., '
                          '"args": {...}}, "result_key": "<one of citable_keys>"}')  # fmt: skip
-    if option_fact is None:
-        raise ValueError("option-fact citations are checked by the MCP server's save_claim")
+    if rerun is None:
+        raise ValueError(f"{words.split(' ', 1)[1]} citations are checked by the MCP server's save_claim")
     tool, args, key = spec["tool"], spec.get("args") or {}, c.get("result_key")
-    out = option_fact(session, tool, args, run_id)  # ValueError for an unknown tool or a refused argument
+    out = rerun(session, tool, args, run_id)  # ValueError for an unknown tool or a refused argument
     if not out.get("known"):
-        raise ValueError(f"the option fact is unknown, so it cannot be cited: {out.get('reason')}")
+        raise ValueError(f"the {name} is unknown, so it cannot be cited: {out.get('reason')}")
     keys = out.get("citable_keys") or []
     if key not in keys:
         raise ValueError(f"name the cited figure as result_key, one of {keys}")
@@ -282,15 +295,15 @@ def _option_fact_citation(session: Session, run_id: int, c: dict[str, Any], valu
     rd = _dec(result)
     matches = value is not None and rd is not None and _close(value, rd)
     prov = out.get("provenance") or {}
-    detail = (f"{tool} reproduces the value from stored market data" if matches
+    detail = (f"{tool} reproduces the value from {data}" if matches
               else f"{tool} gives {key} = {result}, not the stated {value}")  # fmt: skip
-    comp = {"kind": "option_fact", "function": f"option_fact:{tool}", "args": args, "result_key": key,
+    comp = {"kind": kind, "function": f"{kind}:{tool}", "args": args, "result_key": key,
             "result": str(result), "inputs": [], "matches": bool(matches), "inputs_ok": True, "args_bound": True,
             "method_version": prov.get("method_version"), "provenance": prov, "detail": detail}  # fmt: skip
-    url = f"option_fact:{tool}({json.dumps(args, sort_keys=True, default=str)})"[:2000]
+    url = f"{kind}:{tool}({json.dumps(args, sort_keys=True, default=str)})"[:2000]
     return (Citation(url=url, quote=f"{tool} {key} = {result}"[:1000], quote_found=bool(matches), computation=comp,
                      accessed_at=datetime.now(UTC)),
-            {"option_fact": tool, "quote_found": bool(matches), "match": detail})  # fmt: skip
+            {kind: tool, "quote_found": bool(matches), "match": detail})  # fmt: skip
 
 
 def _negatives(s: str) -> set[Decimal]:
@@ -337,10 +350,12 @@ def save_claim(
     importance: str = "normal",
     fincalc: Callable[[str, dict[str, Any]], Any] | None = None,
     option_fact: Callable[..., dict[str, Any]] | None = None,
+    fund_fact: Callable[..., dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Validate and store one claim with its citations (see the save_claim MCP tool). `fincalc` runs a computed
     figure's fincalc citation again (mcp_server.server.run_fincalc); `option_fact` re-runs an option-fact tool
-    (mcp_server.server.run_option_fact)."""
+    (mcp_server.server.run_option_fact) and `fund_fact` a fund-fact tool on its stored NAV series
+    (mcp_server.fund_facts.run)."""
     if claim_type not in CLAIM_TYPES:
         raise ValueError(f"claim_type must be one of {sorted(CLAIM_TYPES)}")
     if importance not in IMPORTANCE:
@@ -388,6 +403,8 @@ def save_claim(
             parsed.append(_computed_citation(session, run_id, c, _dec(value), unit, fincalc))
         elif c.get("option_fact"):
             parsed.append(_option_fact_citation(session, run_id, c, _dec(value), option_fact))
+        elif c.get("fund_fact"):
+            parsed.append(_tool_fact_citation(session, run_id, c, _dec(value), "fund_fact", fund_fact))
         elif c.get("url"):
             accessed = c.get("accessed_at")
             try:
@@ -397,7 +414,7 @@ def save_claim(
             parsed.append(_web_citation(session, run_id, c["url"], (c.get("quote") or "").strip(), at))
         else:
             raise ValueError("each citation needs document_id+line_start(+line_end)+quote, url(+quote), "
-                             "fincalc+inputs, or an option-fact tool's citation")  # fmt: skip
+                             "fincalc+inputs, or the citation an option-fact or fund-fact tool returned")  # fmt: skip
 
     claim = Claim(
         run_id=run_id,

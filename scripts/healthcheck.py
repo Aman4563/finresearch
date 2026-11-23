@@ -224,7 +224,7 @@ def decide(p: Probes, cfg: Config) -> Decision:
     if p.web_ok is False:  # the web app serves pages without the database: reported on its own
         out.append(Problem("web", "FinResearch web app is not answering",
                            f"{cfg.web} does not answer. Restart: launchctl kickstart -k {cfg.domain}/"
-                           f"{cfg.label_web}; log: data/logs/web.log"))  # fmt: skip
+                           f"{cfg.label_web}; log: data/logs/web.launchd.log"))  # fmt: skip
     return Decision(tuple(out), action, pid)
 
 
