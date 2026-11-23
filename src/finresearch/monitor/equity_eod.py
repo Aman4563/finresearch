@@ -1,6 +1,7 @@
 """The monitor's nightly full equity bhavcopy update (#373 (a), refseries.equity_eod): once per trading-day evening
 from RUN_AFTER (IST), NSE's sec_bhavdata_full file for today (one GET, ~400 KB), plus any of the last LOOKBACK_DAYS
-days missed while the Mac was off. When today's file is not there yet the run counts as failed and is retried
+days missed while the Mac was off; after a longer outage the window starts the day after the store's last loaded
+day, bounded (monitor.catchup, #507). When today's file is not there yet the run counts as failed and is retried
 (monitor.disclosures MAX_ATTEMPTS, 30 minutes apart). Weekends and NSE holidays are skipped; an unknown holiday list
 skips the run too (monitor.market_days fails closed). The night is claimed in `alert_eval_slot`
 ("equity_eod:<day>"), so two monitor processes never run it twice. Older history is the CLI's job (`finresearch
@@ -14,7 +15,7 @@ this store when `Settings.peer_price_source` is "equity_eod". NSE's publication 
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time
 from typing import Any
 
 from finresearch.fincalc.dates import to_ist
@@ -43,16 +44,25 @@ async def equity_eod_step(now: datetime, holidays: set[date] | None = None, **kw
         return {}
     today = to_ist(now).date()
     try:
+        from finresearch.monitor import catchup
         from finresearch.refseries import equity_eod as store
 
-        res = await store.backfill(today - timedelta(days=LOOKBACK_DAYS), today, today=today, holidays=holidays,
-                                   now=lambda: now, **kw)  # fmt: skip
+        w = catchup.safely("equity_eod", today, LOOKBACK_DAYS,
+                           lambda s: catchup.equity_eod(s, today, LOOKBACK_DAYS, holidays))  # fmt: skip
+        catchup.report(
+            "equity_eod",
+            "Full equity bhavcopy",
+            w,
+            "uv run finresearch equity backfill --from {start} --to {end}",
+        )
+        catchup.polite("equity_eod", w, kw)
+        res = await store.backfill(w.start, today, today=today, holidays=holidays, now=lambda: now, **kw)
     except Exception as e:
         log.warning("full equity bhavcopy update failed; retried later", exc_info=True)
         finish(slot, {"error": f"{type(e).__name__}: {e}"[:300]}, now, failed=True)
         return {"equity_eod": "failed"}
     pending = not loaded(today)
-    summary = res | {"today_pending": pending}
+    summary = res | {"today_pending": pending} | catchup.note(w)
     finish(slot, summary, now, failed=pending or bool(res["failed"]))
     return {"equity_eod": summary}
 

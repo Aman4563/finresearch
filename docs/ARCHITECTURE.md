@@ -54,7 +54,13 @@ A resumable, budget-aware pipeline per research kind (IPO, stock, fund, bond): a
 adversarial verifiers, bull and bear analysts, a synthesiser and a completeness critic. Agents work only through the
 FinResearch MCP tools: documents, sections, search, tables, `fincalc`, live market data, read-only option-implied facts
 (`mcp_server/option_facts.py`: implied move, IV30 percentile, 25-delta skew from the stored bhavcopy; indices and the
-run's own stock only, the run bound by the server's config, granted to `stock_technical` only) and the claim ledger.
+run's own stock only, the run bound by the server's config, granted to `stock_technical` only), read-only
+discount-rate inputs (`mcp_server/market_facts.py`, #504: the risk-free rate from the rate chain with its tier and
+source, stored index history, and a stock's beta with its standard error from the stored full bhavcopy and index
+closes; granted to the two valuation streams only) and the claim ledger. A discount rate is built from cited claims
+with `fincalc.valuation` (CAPM cost of equity, after-tax cost of debt, WACC), and a DCF's cash flows, terminal value
+and sanity flags come from `fcf_path`, `dcf_explicit` and `dcf_checks`; lenders are valued with `residual_income`,
+`ddm` and `justified_pb`. The equity risk premium is always the agent's stated assumption, never a built-in number.
 
 Every finding is saved as an atomic claim (metric, value, unit, period) with citations. The verification gate:
 - checks each quoted value against its cited lines, and each web quote against the page text the `fetch_page` tool
@@ -142,5 +148,5 @@ src/finresearch/
   cli.py         finresearch command line
 web/             Next.js app (design notes in web/DESIGN.md)
 tests/           offline tests with recorded fixtures
-scripts/         live smoke checks, backups and gold-set ingestion
+scripts/         live smoke checks, backups, gold-set ingestion, the launchd agents and the health check
 ```

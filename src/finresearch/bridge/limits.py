@@ -8,6 +8,7 @@ from __future__ import annotations
 import fcntl
 import json
 import time
+from collections.abc import Mapping
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,45 @@ from typing import Any
 from finresearch.bridge.types import RateLimitSnapshot, Tier
 
 DEFAULT_LIMIT_COOLDOWN_S = 3600  # used when a limit is hit but no reset time is reported
+WINDOW_SECONDS = {"five_hour": 5 * 3600, "seven_day": 7 * 86400}  # the two plan windows, by their own names
+
+
+def window_views(snap: Mapping[str, Any] | None, now: float) -> dict[str, dict[str, Any]]:
+    """How to show a stored snapshot at `now`, per window that has a reading (#507). A window whose reset time has
+    passed is `expired`: its `utilization` is None (the current usage is unknown until the next task reports it,
+    never the old figure and never 0) and the old figure stays in `last_utilization` with `last_seen`, the time of
+    the reading (None when the snapshot carries no time: observed_at 0.0 is "not stamped", not 1970). Without a
+    reset time the reading's age decides: older than the window's own length, or undated, is expired. Display only:
+    `LimitTracker.availability` and `snapshot` read the stored state and already ignore expired windows."""
+    out: dict[str, dict[str, Any]] = {}
+    for win, length in WINDOW_SECONDS.items():
+        used = (snap or {}).get(f"{win}_utilization")
+        if used is None:
+            continue
+        resets = (snap or {}).get(f"{win}_resets_at")
+        seen = (snap or {}).get("observed_at") or None
+        expired = resets <= now if resets else (seen is None or now - seen >= length)
+        out[win] = {"state": "expired" if expired else "current", "utilization": None if expired else used,
+                    "last_utilization": used, "resets_at": resets, "last_seen": seen}  # fmt: skip
+    return out
+
+
+def display_state(state: Mapping[str, Any], now: float) -> dict[str, Any]:
+    """`LimitTracker.describe()` for showing (GET /api/limits): a copy in which an expired window's utilization is
+    None, with `<window>_expired` and, when expired, `<window>_last_utilization`; an undated reading's observed_at
+    is None. The stored state is not changed."""
+    out = json.loads(json.dumps(state))
+    for tier in out.values():
+        snap = tier.get("snapshot") if isinstance(tier, dict) else None
+        if not snap:
+            continue
+        for win, v in window_views(snap, now).items():
+            snap[f"{win}_utilization"] = v["utilization"]
+            snap[f"{win}_expired"] = v["state"] == "expired"
+            if v["state"] == "expired":
+                snap[f"{win}_last_utilization"] = v["last_utilization"]
+        snap["observed_at"] = snap.get("observed_at") or None
+    return out
 
 
 class LimitTracker:

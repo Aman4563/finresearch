@@ -55,19 +55,36 @@ def health() -> None:
 
 @bridge_app.command()
 def limits() -> None:
-    """Show the last known subscription-window utilisation and any cool-downs."""
+    """Show the last known subscription-window utilisation and any cool-downs. A reading whose window has since
+    reset is shown as expired with when it was last seen, never as current usage."""
+    from finresearch.bridge.limits import window_views
+
     router = build_router()
     state = router.tracker.describe()
+    now = time.time()
+    LONG = "%a %d %b %Y %H:%M"  # an expired reading can be weeks old: say the year
+
+    def at(ts: float | None, fmt: str = "%a %d %b %H:%M") -> str:
+        return time.strftime(fmt, time.localtime(ts)) if ts else "at an unknown time"
+
     for tier, st in state.items():
         snap = st.get("snapshot") or {}
         console.print(f"[bold]{tier}[/]")
         if snap:
-            for win in ("five_hour", "seven_day"):
-                u, r = snap.get(f"{win}_utilization"), snap.get(f"{win}_resets_at")
-                if u is not None:
-                    reset = time.strftime("%a %H:%M", time.localtime(r)) if r else "?"
-                    console.print(f"  {win}: {u:.0%} used, resets {reset}")
-            console.print(f"  status: {snap.get('status')}  overage: {snap.get('overage_status')}")
+            views = window_views(snap, now)
+            for win, v in views.items():
+                if v["state"] == "expired":
+                    # #507: a reading from a window that has reset is not current usage
+                    reset = f" (window reset {at(v['resets_at'], LONG)})" if v["resets_at"] else ""
+                    console.print(f"  {win}: [yellow]expired[/]{reset}; last seen {at(v['last_seen'], LONG)}: "
+                                  f"{v['last_utilization']:.0%} used; current usage unknown until the next task",
+                                  soft_wrap=True)  # fmt: skip
+                else:
+                    reset = at(v["resets_at"]) if v["resets_at"] else "?"
+                    console.print(f"  {win}: {v['utilization']:.0%} used, resets {reset}")
+            stale = bool(views) and all(v["state"] == "expired" for v in views.values())
+            console.print(f"  status: {snap.get('status')}{' (as last seen)' if stale else ''}  "
+                          f"overage: {snap.get('overage_status')}")  # fmt: skip
         if st.get("cooling_until", 0) > time.time():
             console.print(f"  [red]cooling until {time.strftime('%H:%M', time.localtime(st['cooling_until']))}[/]"
                           f" — {st.get('reason')}")  # fmt: skip
@@ -784,6 +801,51 @@ def eval_gold(
     console.print(f"saved {out}")
 
 
+@eval_app.command("factor-diagnostics")
+def eval_factor_diagnostics(
+    data_dir: Path | None = typer.Option(
+        None, help="The price cache to read (default: data/cache/stock_backtest of this checkout)"
+    ),
+    out_dir: Path | None = typer.Option(
+        None,
+        help="Where results.json and RESULTS.md go (default: evals/experiments/stock_factor_diagnostics)",
+    ),
+    overwrite: bool = typer.Option(False, "--overwrite", help="Replace an existing results.json"),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """The pre-registered factor diagnostics of the stock signal (#506,
+    evals/experiments/stock_factor_diagnostics/PREREG.md): each price component's rank IC against 1, 3, 6 and 12 month
+    forward returns on the point-in-time Nifty 50, its decay, sub-periods, quintile spreads, turnover and break-even
+    cost, with a block randomisation null and Benjamini-Hochberg q-values over the two registered families. Refused
+    unless the registration is intact. Reads the price cache only (no database, no network) and writes two files; a
+    diagnosis of a registered signal that changes no signal, call or card."""
+    from finresearch.config import REPO_ROOT
+    from finresearch.evals.stock_harvest import DATA_DIR
+    from finresearch.factordiag import prereg, specs, study
+    from finresearch.factordiag.panel import LookAheadError
+
+    out = out_dir or REPO_ROOT / "evals" / "experiments" / specs.STUDY_ID
+    try:
+        res = study.execute(data_dir or DATA_DIR, out, overwrite=overwrite)
+    except (prereg.PreregistrationError, study.Refused, LookAheadError) as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(2) from e
+    if as_json:
+        print(json.dumps(res, indent=1, default=str))
+        return
+    t = Table(title=f"Rank IC, {res['panel']['from']} to {res['panel']['to']} ({res['label']})")
+    for c in ("component", "months ahead", "months", "mean IC", "95 % interval", "p", "q", "detected"):
+        t.add_column(c)
+    for name, comp in res["components"].items():
+        for h, c in comp["horizons"].items():
+            i = c["interval"]
+            t.add_row(name, h, str(c["months"]), _num(c["mean"], 3), f"{_num(i['lo'], 3)} … {_num(i['hi'], 3)}",
+                      _num(c["sign_flip"]["p"], 4), _num(c["q"], 4),
+                      "unknown" if c["detected"] is None else "yes" if c["detected"] else "no")  # fmt: skip
+    console.print(t)
+    console.print(f"report: {out / study.RESULTS_MD}; data: {out / study.RESULTS_JSON}")
+
+
 @ipo_app.command("status")
 def ipo_status(run_id: int) -> None:
     """Show a run's steps, costs and Max-window usage."""
@@ -836,12 +898,27 @@ def serve(
     ),
 ) -> None:
     """Start the local API for the research app (always bound to 127.0.0.1). The first start creates the local API
-    token (Keychain + data/state/api_token, mode 0600) that every route but /api/health requires."""
+    token (Keychain + data/state/api_token, mode 0600) that every route but /api/health requires. Refuses (exit 1)
+    when the port is already in use: a second copy would run a second monitor."""
+    import socket
+
     import uvicorn
 
     from finresearch.api import create_app
     from finresearch.api.auth import bootstrap, token_file
 
+    # #507: uvicorn starts the app's lifespan (the monitor scheduler) before it binds, so without this look a second
+    # copy ran a scheduler for a moment, which could claim tonight's jobs, and only then failed on the port
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.setsockopt(
+            socket.SOL_SOCKET, socket.SO_REUSEADDR, 1
+        )  # as uvicorn binds: a just-closed port is free
+        try:
+            probe.bind(("127.0.0.1", port))
+        except OSError:
+            console.print(f"[red bold]127.0.0.1:{port} is already in use: FinResearch (or something else) is "
+                          "running there. Not starting a second copy.")  # fmt: skip
+            raise typer.Exit(1) from None
     token = bootstrap()
     console.print(
         f"API token: {token_file()} (0600; the web app reads it, CLI clients send it as a bearer token)"
@@ -895,20 +972,41 @@ def _secret_report(rep, verb: str) -> None:
         )
 
 
+# `secrets check` exit codes (scripts/backup.sh reads them, #507): 1 only when plaintext was found. 2 is Click's
+# usage error, so the database being unreachable is 3 and any other failure of the check itself is 4.
+SECRETS_PLAINTEXT, SECRETS_DB_UNREACHABLE, SECRETS_CHECK_FAILED = 1, 3, 4
+
+
 @secrets_app.command("check")
 def secrets_check() -> None:
-    """Exit 1 if any secret is still stored as plain text in the database (counts and field names only)."""
-    from finresearch.db import session_scope
-    from finresearch.secrets_migrate import scan
+    """Exit 1 if any secret is still stored as plain text in the database (counts and field names only). Exit 3 when
+    the database cannot be reached and 4 when the check failed for another reason: nothing was checked then, which
+    is neither "plaintext found" nor "clean"."""
+    from sqlalchemy.exc import OperationalError
 
-    with session_scope() as s:
-        rep = scan(s)
+    from finresearch import secrets_migrate
+    from finresearch.db import session_scope
+
+    try:
+        with session_scope() as s:
+            rep = secrets_migrate.scan(s)
+    except OperationalError as e:  # the server is down, refuses the login or the database does not exist
+        from rich.markup import escape
+
+        why = str(getattr(e, "orig", e)).strip().splitlines()[0][:200]  # libpq's first line: host and port
+        console.print(f"[red bold]cannot reach the database, so nothing was checked:[/] {escape(why)}")
+        raise typer.Exit(SECRETS_DB_UNREACHABLE) from None
+    except Exception as e:
+        console.print(
+            f"[red bold]the secrets check could not be completed ({type(e).__name__}): nothing was checked"
+        )
+        raise typer.Exit(SECRETS_CHECK_FAILED) from None
     _secret_report(rep, "left")
     if rep.found or rep.unknown:
         console.print(
             "[red bold]plaintext secrets in the database: run `uv run finresearch secrets migrate --apply`"
         )
-        raise typer.Exit(1)
+        raise typer.Exit(SECRETS_PLAINTEXT)
     console.print("[green]no plaintext secrets in the database")
 
 

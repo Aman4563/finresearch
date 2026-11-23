@@ -19,7 +19,8 @@ import { isLiveIpo, watchExchangeLabel, type Decision, type Issue, type RunSumma
 // ------------------------------------------------------------------ plan window tile
 
 export type Limits = {
-  tiers: Record<string, { snapshot?: { five_hour_utilization?: number; five_hour_resets_at?: number; seven_day_utilization?: number; seven_day_resets_at?: number } }>;
+  // #507: the API answers null for a window that has reset since the reading (expired: unknown, never the old figure)
+  tiers: Record<string, { snapshot?: { five_hour_utilization?: number | null; five_hour_resets_at?: number; seven_day_utilization?: number | null; seven_day_resets_at?: number } }>;
   now: number;
   ceilings: { five_hour: number };
 };
@@ -59,7 +60,7 @@ export function PlanTile({ limits, now }: { limits: Limits | null; now: number |
           {/* the gauge shows the fuller (binding) window; the other one is the small line */}
           <div className="min-w-0 text-xs text-muted">
             <p className="font-medium text-foreground">{b.label} window</p>
-            <p>{b.resets && now && b.resets * 1000 > now ? <>resets in <span className="num text-foreground">{countdown(b.resets * 1000, now)}</span></> : "used"}</p>
+            <p>{b.resets && now && b.resets * 1000 > now ? <>resets in <span className="num text-foreground">{countdown(b.resets * 1000, now)}</span></> : b.used == null ? "no current reading" : "used"}</p>
             {b.other && <p className="num mt-0.5 whitespace-nowrap">{b.other.label}: {Math.round(b.other.used * 100)}%</p>}
           </div>
           <div className="-mb-1 shrink-0"><Gauge value={limits ? b.used : null} size={88} /></div>

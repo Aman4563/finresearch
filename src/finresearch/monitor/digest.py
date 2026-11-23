@@ -316,6 +316,7 @@ def build_brief(s: Session, now: datetime) -> dict[str, Any]:
     dq = dq_report.data_health(s)
     health = dq_report.brief_lines(dq) + health
     dq_failed = [d for d in dq["datasets"] if d["status"] == "fail"]
+    sys_failed = [d["label"] for d in dq_failed if d["dataset"] in dq_report.SYSTEM]  # #507: backup, pgvector
     skill = _skill(
         s, now
     )  # #378: forecast calibration drift and skill against the benchmarks (the ledger only)
@@ -338,8 +339,9 @@ def build_brief(s: Session, now: datetime) -> dict[str, Any]:
     return {
         "day": today.isoformat(), "generated_at": now.isoformat(), "has_portfolio": has_pf,
         "headline": "Nothing needs a decision today: no rule fired and nothing is due. No action needed."
-                    if quiet else _headline(rules, changes, events, missed, today, disc, len(dq_failed),
-                                            len(skill["alarms"]), risk["standing"]),
+                    if quiet else _headline(rules, changes, events, missed, today, disc,
+                                            len(dq_failed) - len(sys_failed), len(skill["alarms"]),
+                                            risk["standing"], sys_failed),
         "events": events, "rules_fired": rules, "since": since.isoformat(), "signal_changes": changes,
         "sip": sips, "sip_missed": missed, "long_term": lots, "tax_calendar": tax_cal, "advance_tax": at,
         "elss_unlocks": elss_month,
@@ -418,8 +420,11 @@ def _disclosure_items(disc: dict[str, Any] | None) -> int:
 
 def _headline(rules: list, changes: list, events: list, missed: list, today: date,
               disc: dict[str, Any] | None = None, dq_failed: int = 0, skill_alarms: int = 0,
-              risk_standing: int = 0) -> str:  # fmt: skip
+              risk_standing: int = 0, system_failed: list[str] | None = None) -> str:  # fmt: skip
     parts = []
+    if system_failed:
+        parts.append(f"{len(system_failed)} system check{'s' if len(system_failed) != 1 else ''} failed "
+                     f"({', '.join(system_failed)})")  # fmt: skip
     if risk_standing:
         parts.append(f"{risk_standing} risk alert{'s' if risk_standing != 1 else ''} still standing (limits, shocks, "
                      "gaps or short strikes)")  # fmt: skip
