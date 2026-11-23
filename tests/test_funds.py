@@ -48,6 +48,18 @@ def test_fund_arithmetic_golden_values():
         funds.xirr([(date(2025, 1, 1), -1000)])
 
 
+def test_a_flat_investment_has_an_xirr_of_zero_not_minus_zero():
+    """#503: money that comes back unchanged earned exactly 0 %. The bisection ends a hair below zero and rounding
+    kept the sign, so the figure was Decimal('-0.0') and printed as "-0.00%"."""
+    flat = funds.xirr([(date(2025, 1, 1), -1000), (date(2026, 1, 1), 1000)])
+    assert flat == 0 and not flat.is_signed() and f"{flat:.2%}" == "0.00%"
+    navs = [(date(2025, 1, 1) + timedelta(days=i), Decimal(10)) for i in range(400)]
+    sip = funds.sip_outcome(navs, 1000, date(2025, 1, 1), date(2025, 12, 31)).xirr
+    assert sip == 0 and not sip.is_signed()
+    # a real loss keeps its sign: 1,000 back as 900 after 365 days is -10 %
+    assert funds.xirr([(date(2025, 1, 1), -1000), (date(2026, 1, 1), 900)]) == Decimal("-0.1")
+
+
 def test_trailing_and_rolling_returns():
     # NAV grows 10% a year exactly on each anniversary; linear in between
     navs, d, v = [], date(2020, 1, 1), Decimal(100)
