@@ -552,14 +552,14 @@ class _Engine:
     def _lender(self) -> str | None:
         """Why the ledger reads as a bank, NBFC or insurer (naming the claims), or None. From metric names only, so
         every caller (pipeline, gate, report reader, MCP tool) gets the same answer; peers' figures do not count."""
-        hits = []
+        hits: dict[str, Fact] = {}  # one claim per metric name
         for f in self.facts:
             m = re.sub(r"[^a-z0-9]+", "_", f.metric.lower()).strip("_")
             if _LENDER_RE.search(m) and not re.search(r"(?:^|_)(?:peer|peers|industry|sector)(?:_|$)", m):
-                hits.append(f)
+                hits.setdefault(f.metric, f)
         if not hits:
             return None
-        names = sorted({f"C{f.id} {f.metric}" for f in hits})
+        names = [f"C{f.id} {f.metric}" for _, f in sorted(hits.items())]
         return f"the ledger holds lender or insurer metrics ({', '.join(names[:4])})"
 
     def sum_identity(self, family: str, title: str, period: str, basis: str, cur: str,
@@ -1158,9 +1158,9 @@ class _Engine:
         self, rate: Decimal, formula: str, used: list[Fact], p: str, b: str, cur: str | None
     ) -> None:
         lo, hi = TAX_BAND
-        near_label, near = min(STATUTORY_TAX_RATES, key=lambda s: abs(s[1] - rate))
-        detail = (f"effective tax rate {_pct(rate)} ({formula}); band {_pct(lo)}…{_pct(hi)}; nearest statutory rate "
-                  f"{_pct(near)} ({near_label})")  # fmt: skip
+        # the company's regime is not known here, so the result shows every reference rate, not a "nearest" one
+        refs = "; ".join(f"{_pct(r)} {label.split(':')[0]}" for label, r in STATUTORY_TAX_RATES)
+        detail = f"effective tax rate {_pct(rate)} ({formula}); band {_pct(lo)}…{_pct(hi)}"
         why: list[Fact] = []
         status, hint = "pass", None
         if not lo <= rate <= hi:
@@ -1177,8 +1177,9 @@ class _Engine:
                         "under s.115JAA, exceptional items, tax of earlier years) or recheck the tax and PBT figures")  # fmt: skip
         self.add(Check(id=f"tax_band:{p}:{b}:{cur or 'stated'}", family="tax_band",
                        title="Effective tax rate inside the statutory band", status=status, period=p, basis=b,
-                       formula=formula, detail=detail, claims=[f.brief() for f in (*used, *why)], expected=_f(near),
-                       actual=_f(rate), tolerance=f"{_pct(lo)}…{_pct(hi)}", hint=hint))  # fmt: skip
+                       formula=formula, detail=detail, claims=[f.brief() for f in (*used, *why)], actual=_f(rate),
+                       tolerance=f"{_pct(lo)}…{_pct(hi)}: the statutory rates ({refs}) with "
+                                 f"{float(TAX_BAND_CUSHION) * 100:.0f} pp either side", hint=hint))  # fmt: skip
 
     def margin_order(self) -> None:
         """Gross margin ≥ EBITDA margin ≥ PAT margin for a non-lender, over the margins the ledger states or lets
