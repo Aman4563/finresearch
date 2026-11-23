@@ -617,7 +617,7 @@ class FcfPath:
 
 def fcf_path(revenue: Num, growth_path: list[Num], ebit_margin_path: list[Num], tax_rate: Num, da_pct: Num,
              capex_pct: Num, nwc_pct_of_change: Num) -> FcfPath:  # fmt: skip
-    """Year-by-year revenue, EBIT, NOPAT and free cash flow from a growth path and an EBIT margin path (fractions).
+    """Year-by-year revenue, EBIT, NOPAT and free cash flow from growth and EBIT margin paths; cite `final_fcf`.
 
     `revenue` is the latest actual year (not yet grown); `growth_path` and `ebit_margin_path` have one entry per
     forecast year. FCF = EBIT - tax + D&A - capex - change in working capital, with `da_pct` and `capex_pct` shares
@@ -725,7 +725,7 @@ def _pct(x: Decimal) -> str:
 
 def dcf_checks(discount_rate: Num, terminal_growth: Num | None = None, risk_free: Num | None = None,
                terminal_share: Num | None = None, years: int | None = None) -> DcfChecks:  # fmt: skip
-    """Sanity flags for a DCF: terminal growth vs the rate (error) and vs risk-free, terminal share and rate bands.
+    """Sanity flags for a DCF: terminal growth vs the rate (error) and risk-free, share and rate bands; cite `errors`.
 
     Flags (see DCF_CHECKS and the reasoning above this function): terminal growth at or above the discount rate
     (error); terminal growth above the risk-free rate (warn); terminal share outside 0.35-0.75 (warn); discount

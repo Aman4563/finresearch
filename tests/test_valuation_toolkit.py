@@ -380,6 +380,28 @@ def test_residual_income_loss_year_pays_no_dividend_by_hand():
     assert v.residual_income == [D(-35), D("-4.5")] and v.value == D("69.12")
 
 
+@pytest.mark.parametrize(("payout", "fade"), [("0.4", 5), ("0", 3), ("1", 1), ("0.75", 0)])
+def test_residual_income_with_a_fade_equals_discounted_dividends_plus_closing_book(payout, fade):
+    """Independent check by the dividend-discount identity (clean surplus; Ohlson 1995): once the fade has brought
+    ROE to the cost of equity the company is worth its book value from then on, so its value today is the present
+    value of the dividends paid until then plus the closing book value discounted from then. Worked here with a
+    loop over DIVIDENDS, never over residual incomes. Book 250; ROE 22 %, 19 %, -4 % (a loss: no dividend), 17 %;
+    Ke 12.5 %. (For book 100, Ke 25 %, ROE 45 %, payout 50 %, fade 2 this is 22.5 / 1.25 + 21.4375 / 1.5625
+    + (17.9921875 + 161.9296875) / 1.953125 = 18 + 13.72 + 92.12 = 123.84, the fade test's hand value.)"""
+    ke, p, roes = D("0.125"), D(payout), [D("0.22"), D("0.19"), D("-0.04"), D("0.17")]
+    path = roes + [roes[-1] + (ke - roes[-1]) * k / fade for k in range(1, fade + 1)]
+    book, disc, pv = D(250), D(1), D(0)
+    for roe in path:
+        earnings = roe * book
+        dividend = p * max(earnings, D(0))
+        disc *= 1 + ke
+        pv += dividend / disc
+        book += earnings - dividend
+    got = V.residual_income(250, ["0.22", "0.19", "-0.04", "0.17"], "0.125", payout, fade_years=fade)
+    assert abs(got.value - (pv + book / disc)) < D("1e-18") and got.closing_book == book
+    assert len(got.roe) == 4 + fade and got.roe_path == roes
+
+
 def test_residual_income_refuses_invalid_input():
     ok = {"book_value": 100, "roe_path": ["0.18"], "cost_of_equity": "0.13", "payout_ratio": "0.5"}
     for bad, why in (
