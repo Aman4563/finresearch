@@ -282,6 +282,11 @@ uv run finresearch fno risk-budget --history-url <db> --out report.json   # #395
 uv run finresearch fno risk-replay --from 2024-01-01 --json   # #398: replay the IV30-shock, cumulative-shock and gap
                                                    # alerts on the stored series: firings, false alarms a year, the
                                                    # scenario days (reads only; public market data)
+uv run finresearch fno risk-replay --touch --from 2026-10-01 --json   # #520: the touch probability's two registered
+                                                   # variants (the 2 x P_Q shortcut, the exact first passage) on the
+                                                   # book's stored marks (fno_mark): leg-days and alert-days at 0.60
+                                                   # under each, the ones that change, firings. Counts only, never a
+                                                   # leg; refused if the registration hash moved; reads only
 uv run finresearch fno vol-race --json              # #390: the pre-registered volatility forecast race on the stored
                                                    # 2022-26 NIFTY window (HAR-IV vs the implied-variance benchmark,
                                                    # QLIKE, DM-HLN + Holm, 90 % MCS; refused if the hash moved; reads only)

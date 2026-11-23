@@ -68,7 +68,7 @@ To add a library: read its licence in both places, confirm the wheels, pin it ex
 
 ## What is compared (first slice, 23-Nov-2026)
 
-39 tests, 75 comparisons, between one and two minutes. The run prints one row per comparison (function, oracle, grid size,
+39 tests, 77 comparisons (75 in the first slice; #520 added two for the exact touch variant), between one and two minutes. The run prints one row per comparison (function, oracle, grid size,
 largest difference, tolerance and its reason, verdict); `--oracle-report` writes the same table to a file. In short:
 
 | In-house | Oracle | Inputs | Result |
@@ -79,7 +79,7 @@ largest difference, tolerance and its reason, verdict); `--oracle-report` writes
 | `black76.price`, `vega`, `forward_delta`, `spot_delta`; `smile.vanna`, `volga` | mpmath (40 digits) as referee; QuantLib `blackFormula`, `BlackCalculator` | 9,216 points: strikes 30 % to 300 % of the forward, one minute to three years, 1 % to 300 % volatility | within first-order float rounding of the exact value |
 | `black76.implied_vol` | mpmath prices with a known volatility; QuantLib `blackFormulaImpliedStdDev` | 6,090 solvable quotes of that grid | within the solver's stated tolerance; 1.9e-9 in volatility out of the money |
 | `svi.w`, `smile.sigma`, `density`, `cdf` | QuantLib `SviSmileSection`; mpmath strike derivatives of the price | 4 slices (one arbitrageable), 49 strikes each | exact form agrees to 1e-16; QuantLib's finite differences to their truncation error |
-| `risk_alerts.touch_prob` | QuantLib `AnalyticDigitalAmericanEngine` (one-touch, zero rates) | 686 | the shortcut's error is exactly (option price) / K; see "needs decision" |
+| `risk_alerts.touch_prob_exact` (the alert's variant since #520) and `touch_prob` (the #398 shortcut, kept for the replay) | QuantLib `AnalyticDigitalAmericanEngine` (one-touch, zero rates) | 686 | the exact variant agrees to 1e-14 (limit 1e-12), also at the strikes where the alert turns on; the shortcut's error is exactly (option price) / K; see "needs decision" |
 | `taildist._gjr_nll`, `gjr_filter`, `ewma_variance`, `backcast`; `gjr_fit`; `realvol.garch11_fit` | arch `ZeroMean` + `GARCH`, `EWMAVariance` | 5 synthetic paths, 5 parameter points, 10 fits | likelihood and filter to 1e-15; fits within 2e-10 in log-likelihood |
 | `overfit.reality_check`, `spa`, `romano_wolf`, `kernel_var`; the three stationary-bootstrap index functions | arch `SPA`, `StepM`, `StationaryBootstrap`, on arch's own resampled indices | 4 designs of 6 trials over 250 sessions; 3.7 million index steps | Reality Check identical; SPA differs by two conventions (below) |
 | `volrace/stats.mcs` | arch `MCS(method="max")`, independent resamples | 3 designs, 12 p-values | within Monte Carlo error; arch 9.0.0 still gives the arch 8.0 values frozen in `tests/test_volrace_stats.py` |
@@ -119,6 +119,12 @@ Both are in `FUNCTIONAL_TESTING.md` (23-Nov-2026).
    exact form, N(-d2) + (F/K) N(-d1), costs one more normal CDF.
    `risk_alerts.py` is not in the engine pin: it was left alone because 2 x N(-d2) is the maths registered
    with #398 and printed in the alert's own label, so replacing it is the owner's call.
+   **Done by #520 (23-Nov-2026):** the exact form is registered as variant 2 (`touch_prob_exact`,
+   `fincalc/risk_alert_specs.py`, `evals/experiments/risk_alerts/ADDENDUM.md`) and is what the alert reads; the
+   shortcut is kept, unedited, as variant 1 for the replay (`finresearch fno risk-replay --touch`), and this
+   suite now holds the exact variant to QuantLib within 1e-12. **Still the owner's call:** the 0.60 level was not
+   re-centred, so at 30 days and 15 % volatility the alert now turns on for a short call at 2.24 % from the
+   forward (the shortcut: 2.19 %) and for a short put at 2.27 % (the shortcut: 2.32 %).
 3. **SPA p-values against arch 9** (`stratlab/overfit.spa`). The module divides every bootstrap statistic by the
    sample's standard error and floors the statistic at zero, which is how its docstring gives Hansen (2005).
    arch 9.0.0 re-studentises inside each bootstrap draw and does not floor. On arch's own resamples the consistent
