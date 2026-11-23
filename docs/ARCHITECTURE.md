@@ -80,6 +80,13 @@ Every finding is saved as an atomic claim (metric, value, unit, period) with cit
   copy of the page, C web quote unchecked, D computed by fincalc from cited inputs (or by an option-fact tool from
   stored market data, or by `fund_sip_outcome` from the stored AMFI NAV series), U unsupported;
 - catches conflicts between streams, stale live figures and wrong bidding-day labels;
+- checks the ledger's arithmetic without a model (`verify/identities.py`): statement identities (P&L subtotals, EPS
+  × shares, balance sheet, cash roll-forward), margins and growth recomputed from their parts, unit and scale
+  slips, standalone vs consolidated mixes; an unambiguous break on a cited high-importance figure blocks the report.
+  Six further statement checks only ever warn: the other-equity roll-forward, D&A in the cash flow against the P&L,
+  the effective tax rate against a band around the statutory rates, gross ≥ EBITDA ≥ PAT margin (not for lenders),
+  capex against the rise in gross block, and a headline line that more than doubles or changes sign. A check
+  without its inputs is listed as not checked, never passed;
 - turns verifier corrections into new, re-checked claims, and gives verified high-importance claims an independent
   second verifier (`verifier_blind`: its own prompt, the STANDARD model tier, no ledger access) that is never shown
   the figure, the status or the first verifier's reasoning; it re-derives the value, the orchestrator compares

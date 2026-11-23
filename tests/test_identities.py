@@ -327,3 +327,331 @@ def test_gate_blocks_an_unrestated_eps_only_when_that_eps_is_cited(env, tmp_path
         assert ok.ok
         bad = check_report(s, run_id, f"FY24 EPS was ₹39.30 [C{ids[1]}].")
         assert not bad.ok and "not restated" in bad.blocking[0]
+
+
+# --------------------------------------------------------------------------- statement checks (#518), all warn-level
+NEW_FAMILIES = (
+    "equity_rollforward",
+    "da_tie",
+    "tax_band",
+    "margin_order",
+    "capex_fixed_assets",
+    "growth_outlier",
+)
+CONS, STAND = "FY2026, consolidated", "FY2026 (standalone)"
+
+
+def not_checked(rep, text):
+    return [m for m in rep.to_dict()["not_enough_inputs"] if text in m]
+
+
+def one(rows, family):
+    (chk,) = by_family(check_claims(rows), family)
+    return chk
+
+
+def equity(closing="1210", dividends="90", **kw):
+    """Other equity 1000 at FY2025; + profit 300 − dividends 90 = 1210 at FY2026."""
+    return [c("other_equity", 1000, period="FY2025", **kw), c("profit_attributable_to_owners", 300, **kw),
+            c("dividends_paid", dividends, **kw), c("other_equity", closing, **kw)]  # fmt: skip
+
+
+def test_equity_roll_forward_passes_with_stated_movements_and_either_dividend_sign():
+    assert one(equity(), "equity_rollforward").status == "pass"
+    assert one(equity(dividends="-90"), "equity_rollforward").status == "pass"  # recorded as a cash outflow
+    # 1000 + 300 − 90 − 50 buyback + 10 share-based payments − 20 OCI = 1150
+    rows = [*equity("1150"), c("buyback_of_equity_shares", 50), c("esop_charge", 10),
+            c("other_comprehensive_income", -20)]  # fmt: skip
+    chk = one(rows, "equity_rollforward")
+    assert chk.status == "pass" and len(chk.claim_ids) == 7 and "buyback_out" in chk.formula
+    # retained earnings roll on their own: 500 + 200 − 50 = 650
+    re_rows = [c("retained_earnings", 500, period="FY2025"), c("pat", 200), c("dividends_paid", 50),
+               c("retained_earnings", 650)]  # fmt: skip
+    assert one(re_rows, "equity_rollforward").id.endswith(":retained_earnings")
+
+
+def test_equity_roll_forward_gap_is_a_warning_never_a_block():
+    bad = one(equity("1260"), "equity_rollforward")  # 1210 expected: 4.0 % apart, every operand verified
+    assert bad.status == "warn" and not bad.hard and "other comprehensive income" in bad.hint
+    # a lakh/crore slip is still named, but this check never fails: 90 lakh is 0.9 crore, the identity wants 90
+    rows = equity()
+    rows[2] = c("dividends_paid", 90, "INR lakh")
+    slip = one(rows, "equity_rollforward")
+    assert slip.status == "warn" and not slip.hard and "unit slip" in slip.hint
+
+
+def test_equity_roll_forward_says_which_input_is_missing():
+    no_div = check_claims([r for r in equity() if r["metric"] != "dividends_paid"])
+    assert not by_family(no_div, "equity_rollforward")  # an absent dividend is never read as "no dividend"
+    assert not_checked(no_div, "equity roll-forward — not checked (FY2026): dividends paid")
+    no_open = check_claims(equity()[1:])
+    assert not by_family(no_open, "equity_rollforward") and not_checked(no_open, "the opening balance")
+    assert not_checked(check_claims(pnl()), "equity roll-forward — not checked: no other equity")
+    # opening balance standalone, closing consolidated: never rolled into each other
+    mixed = equity()
+    mixed[0] = c("other_equity", 1000, period="FY2025 (standalone)")
+    mixed[3] = c("other_equity", 1210, period=CONS)
+    rep = check_claims(mixed)
+    assert not by_family(rep, "equity_rollforward") and not_checked(rep, "FY2026 consolidated")
+
+
+def test_da_in_the_cash_flow_ties_to_the_pnl_charge():
+    rows = [c("depreciation", "147.20", "INR million"),
+            c("depreciation_cash_flow", "147.20", "INR million")]  # fmt: skip
+    assert one(rows, "da_tie").status == "pass"
+    # the claim's own words place a plain "depreciation" in the cash-flow statement; an outflow sign does not matter
+    rows[1] = c(
+        "depreciation",
+        "-147.20",
+        "INR million",
+        statement="Depreciation added back in the cash-flow statement",
+    )
+    assert one(rows, "da_tie").status == "pass"
+    rows[1] = c("depreciation_cash_flow", "157.20", "INR million")  # planted: 10 more than the charge (6.4 %)
+    bad = one(rows, "da_tie")
+    assert bad.status == "warn" and not bad.hard and bad.diff_pct > 6
+
+
+def test_da_tie_missing_side_and_mixed_bases_are_not_checked():
+    only_pnl = check_claims([c("depreciation", "147.20", "INR million")])
+    assert not by_family(only_pnl, "da_tie")
+    assert not_checked(
+        only_pnl, "D&A tie (cash flow vs P&L) — not checked (FY2026): the add-back in the cash-flow"
+    )
+    mixed = check_claims(
+        [c("depreciation", 100, period=STAND), c("depreciation_cash_flow", 180, period=CONS)]
+    )
+    assert not by_family(mixed, "da_tie") and len(not_checked(mixed, "D&A tie")) == 2
+    assert not_checked(check_claims(pnl()), "D&A tie (cash flow vs P&L) — not checked: no depreciation")
+
+
+def test_statutory_tax_rates_and_band_are_the_hand_computed_ones():
+    """rate × (1 + surcharge) × 1.04 cess, by hand: 115BAB 0.15 × 1.10 × 1.04; MAT (115JB) 0.15 × 1.12 × 1.04;
+    115BAA 0.22 × 1.10 × 1.04; the 25 % and 30 % slabs with the 12 % surcharge. Band: lowest − 3 pp … highest + 3 pp."""
+    from decimal import Decimal as D
+
+    from finresearch.verify.identities import STATUTORY_TAX_RATES, TAX_BAND
+
+    assert [r for _, r in STATUTORY_TAX_RATES] == [
+        D("0.1716"),
+        D("0.17472"),
+        D("0.25168"),
+        D("0.2912"),
+        D("0.34944"),
+    ]
+    assert all(sec in " ".join(n for n, _ in STATUTORY_TAX_RATES) for sec in ("115BAA", "115BAB", "115JB"))
+    assert (D("0.1416"), D("0.37944")) == TAX_BAND
+
+
+def tax(amount, pbt=1000, **kw):
+    return [c("profit_before_tax", pbt, **kw), c("tax_expense", amount, **kw)]
+
+
+def test_effective_tax_rate_band():
+    ok = one(tax("251.68"), "tax_band")  # the 115BAA rate itself
+    assert ok.status == "pass" and ok.formula == "tax ÷ pbt" and abs(ok.actual - 0.25168) < 1e-9
+    assert one(tax("141.6"), "tax_band").status == "pass"  # 14.16 %: the edge is inside
+    for amount in ("141", "380"):  # 14.10 % and 38.00 %: outside 14.16 %…37.944 %
+        bad = one(tax(amount), "tax_band")
+        assert bad.status == "warn" and not bad.hard and "s.115JAA" in bad.hint and "115BAA" in bad.tolerance
+
+
+def test_tax_rate_outside_the_band_needs_an_explanation_claim():
+    rows = [*tax(450), c("deferred_tax", 180, cid=7001)]  # 45 %, with a deferred-tax charge in the ledger
+    chk = one(rows, "tax_band")
+    assert chk.status == "pass" and "C7001 deferred_tax" in chk.detail and 7001 in chk.claim_ids
+    # a nil exceptional item explains nothing; a reason for another basis does not count either
+    assert one([*tax(450), c("exceptional_items", 0)], "tax_band").status == "warn"
+    cons = [c("profit_before_tax", 1000, period=CONS), c("tax_expense", 450, period=CONS),
+            c("deferred_tax", 180, period=STAND)]  # fmt: skip
+    assert one(cons, "tax_band").status == "warn"
+
+
+def test_tax_rate_implied_stated_and_not_checked():
+    # no tax line: (726.00 − 535.61) ÷ 726.00 = 26.22 %, labelled as implied (live run 5, FY2026)
+    implied = one([c("pbt", "726.00", "INR million"), c("pat", "535.61", "INR million")], "tax_band")
+    assert implied.status == "pass" and "implied" in implied.formula and abs(implied.actual - 0.262245) < 1e-6
+    stated = one([c("effective_tax_rate", 45, "%")], "tax_band")
+    assert stated.status == "warn" and "as stated" in stated.formula
+    loss = check_claims(tax(5, pbt=-100))
+    assert not by_family(loss, "tax_band") and not_checked(loss, "PBT is zero or negative")
+    alone = check_claims([c("profit_before_tax", 1000)])
+    assert not by_family(alone, "tax_band")
+    assert not_checked(alone, "effective tax rate — not checked (FY2026): tax expense")
+    # consolidated PBT with a standalone tax line: not divided into each other
+    mixed = check_claims([c("profit_before_tax", 1000, period=CONS), c("tax_expense", 450, period=STAND)])
+    assert not by_family(mixed, "tax_band") and not_checked(mixed, "FY2026 consolidated")
+
+
+def margins(gross=40, ebitda=20, pat=10, **kw):
+    return [
+        c("gross_margin", gross, "%", **kw),
+        c("ebitda_margin", ebitda, "%", **kw),
+        c("pat_margin", pat, "%", **kw),
+    ]
+
+
+def test_margin_order_stated_or_computed():
+    assert one(margins(), "margin_order").status == "pass"
+    assert one(margins(ebitda=20, pat=20), "margin_order").status == "pass"  # equal is in order
+    parts = [c("revenue_from_operations", 1000), c("gross_profit", 400), c("ebitda", 200), c("pat", 100)]
+    chk = one(parts, "margin_order")  # 40 % ≥ 20 % ≥ 10 % on revenue
+    assert chk.status == "pass" and "gross 40.00% ≥ EBITDA 20.00% ≥ PAT 10.00%" in chk.detail
+    bad = one(margins(pat=25), "margin_order")
+    assert (
+        bad.status == "warn"
+        and not bad.hard
+        and "PAT margin 25.00% is above EBITDA margin 20.00%" in bad.detail
+    )
+    assert "gross margin 15.00% is above" not in one(margins(gross=15), "margin_order").detail
+    assert (
+        "EBITDA margin 20.00% is above gross margin 15.00%" in one(margins(gross=15), "margin_order").detail
+    )
+    two = one(margins()[1:], "margin_order")  # two of the three are enough; the third is named
+    assert two.status == "pass" and "gross margin not in the ledger: not checked" in two.detail
+
+
+def test_margin_order_skips_lenders_and_never_mixes_bases():
+    bank = check_claims([*margins(pat=25), c("gross_npa_pct", "2.5", "%", cid=7100)])
+    assert not by_family(bank, "margin_order")
+    (line,) = not_checked(bank, "skipped")
+    assert "C7100 gross_npa_pct" in line and "bank, NBFC or insurer" in line
+    # a peer's lender metric does not make this company a lender
+    assert one([*margins(pat=25), c("peer_nim_hdfc_bank", "3.4", "%")], "margin_order").status == "warn"
+    mixed = check_claims([c("ebitda_margin", 20, "%", STAND), c("pat_margin", 25, "%", CONS)])
+    assert not by_family(mixed, "margin_order") and len(not_checked(mixed, "a second margin")) == 1
+    assert not_checked(check_claims([c("ebitda_margin", 20, "%")]), "not checked (FY2026): a second margin")
+
+
+def block(capex, cwip=True, **kw):
+    """Gross block 1000 → 1400 and CWIP 100 → 250 over FY2026: a rise of 550 with CWIP, 400 without."""
+    rows = [
+        c("gross_block", 1000, period="FY2025", **kw),
+        c("gross_block", 1400, **kw),
+        c("capex", capex, **kw),
+    ]
+    return [*rows, c("cwip", 100, period="FY2025", **kw), c("cwip", 250, **kw)] if cwip else rows
+
+
+def test_capex_against_the_rise_in_gross_block_and_cwip():
+    ok = one(block(600), "capex_fixed_assets")  # 600 vs 550: 50 ÷ 600 = 8.3 %
+    assert (
+        ok.status == "pass"
+        and ok.expected == 550e7  # ₹550 crore, in rupees
+        and abs(ok.diff_pct - 8.333) < 0.001
+        and len(ok.claim_ids) == 5
+    )
+    assert one(block(-600), "capex_fixed_assets").status == "pass"  # the cash-flow line as an outflow
+    bad = one(block(900), "capex_fixed_assets")  # 900 vs 550: 350 ÷ 900 = 38.9 %, above the 25 % band
+    assert bad.status == "warn" and not bad.hard and "disposals" in bad.hint
+    # without CWIP at both year ends only the block moves: 500 vs 400 is 20 % (inside), 550 vs 400 is 27.3 %
+    assert one(block(500, cwip=False), "capex_fixed_assets").status == "pass"
+    edge = one(block(550, cwip=False), "capex_fixed_assets")
+    assert edge.status == "warn" and "CWIP is not held" in edge.detail and len(edge.claim_ids) == 3
+
+
+def test_capex_missing_inputs_and_mixed_bases_are_not_checked():
+    no_open = check_claims(block(600, cwip=False)[1:])
+    assert not by_family(no_open, "capex_fixed_assets")
+    assert not_checked(
+        no_open, "capex vs gross block — not checked (FY2026): gross block at the previous year end"
+    )
+    no_capex = check_claims(block(600, cwip=False)[:2])
+    assert not by_family(no_capex, "capex_fixed_assets") and not_checked(
+        no_capex, "not checked (FY2026): capex"
+    )
+    mixed = check_claims([c("gross_block", 1000, period="FY2025 (standalone)"), c("gross_block", 1400, period=CONS),
+                          c("capex", 600, period=CONS)])  # fmt: skip
+    assert not by_family(mixed, "capex_fixed_assets") and not_checked(mixed, "FY2026 consolidated")
+    # unlabelled capex and block, CWIP standalone at one year end and consolidated at the other: never differenced
+    cwip = [
+        *block(500, cwip=False),
+        c("cwip", 100, period="FY2025 (standalone)"),
+        c("cwip", 900, period=CONS),
+    ]
+    chk = one(cwip, "capex_fixed_assets")
+    assert chk.status == "pass" and "CWIP is not held" in chk.detail and len(chk.claim_ids) == 3
+
+
+def test_growth_above_100_pct_or_a_sign_change_needs_an_explanation():
+    def rev(now, then, **kw):
+        return [
+            c("revenue_from_operations", then, period="FY2025", **kw),
+            c("revenue_from_operations", now, **kw),
+        ]
+
+    assert one(rev(1500, 1000), "growth_outlier").status == "pass"  # +50 %
+    assert one(rev(2000, 1000), "growth_outlier").status == "pass"  # exactly +100 % is not "above"
+    up = one(rev(2001, 1000), "growth_outlier")
+    assert (
+        up.status == "warn"
+        and not up.hard
+        and "+100.1%" in up.detail
+        and "explanation in the text" in up.hint
+    )
+    turn = one([c("pat", -50, period="FY2025"), c("pat", 30)], "growth_outlier")
+    assert turn.status == "warn" and "loss to profit" in turn.detail
+    assert "profit to loss" in one([c("pat", 30, period="FY2025"), c("pat", -50)], "growth_outlier").detail
+    assert (
+        one([c("pat", -10, period="FY2025"), c("pat", -30)], "growth_outlier").status == "warn"
+    )  # the loss tripled
+    q = one([c("ebitda", 100, period="Q1 FY2026"), c("ebitda", 300, period="Q1 FY2027")], "growth_outlier")
+    assert (
+        q.status == "warn" and q.period == "Q1FY2027" and "+200.0%" in q.detail
+    )  # same quarter a year earlier
+
+
+def test_growth_outliers_never_compare_across_basis_currency_or_unit_kind():
+    pairs = [
+        [c("revenue_from_operations", 100, period="FY2025 (standalone)"), c("revenue_from_operations", 1000, period=CONS)],
+        [c("revenue", 19277, "USD million", "FY2025"), c("revenue", 178650, "INR crore")],  # live run 9's two units
+        [c("basic_eps", "64.50", "INR", "FY2025"), c("basic_eps", "171.58", "INR per share")],  # money vs per share
+    ]  # fmt: skip
+    for rows in pairs:
+        rep = check_claims(rows)
+        assert not by_family(rep, "growth_outlier") and not_checked(rep, "growth outliers — not checked")
+    # a stated growth counts only when the two figures are not both held
+    stated = [c("revenue_growth_fy26", 150, "%", "FY2026 vs FY2025")]
+    assert one(stated, "growth_outlier").status == "warn"
+    both = [*stated, c("revenue_from_operations", 1000, period="FY2025"), c("revenue_from_operations", 2500)]
+    chk = one(both, "growth_outlier")
+    assert chk.status == "warn" and len(chk.claim_ids) == 2
+
+
+def test_statement_checks_on_the_live_runs():
+    """Coverage of the six checks on runs 5/9/11/12 (the PR's replay table): what each fixture lets them check.
+    No new warning on any of them; no fixture holds other equity, a cash-flow D&A or a gross block."""
+    want = {"orient-cables-run5.json": {"tax_band": 4, "margin_order": 3, "growth_outlier": 10},
+            "infosys-run9.json": {"tax_band": 2, "margin_order": 2, "growth_outlier": 14},
+            "mf-120505-run11.json": {}, "bond-ine027e07998-run12.json": {}}  # fmt: skip
+    for name, families in want.items():
+        rep = check_claims(_fixture(name)["claims"])
+        new = [x for x in rep.checks if x.family in NEW_FAMILIES]
+        assert {f: len(by_family(rep, f)) for f in NEW_FAMILIES if by_family(rep, f)} == families, name
+        assert all(x.status == "pass" and not x.hard for x in new), [
+            x.detail for x in new if x.status != "pass"
+        ]
+        for missing in ("equity roll-forward — not checked", "D&A tie (cash flow vs P&L) — not checked",
+                        "capex vs gross block — not checked"):  # fmt: skip
+            assert not_checked(rep, missing), (name, missing)
+    r5, r9 = (check_claims(_fixture(n)["claims"]) for n in ("orient-cables-run5.json", "infosys-run9.json"))
+    assert all("implied" in x.formula for x in by_family(r5, "tax_band"))  # the IPO ledger holds no tax line
+    assert sorted(x.formula[:9] for x in by_family(r9, "tax_band")) == ["(pbt − pa", "tax ÷ pbt"]
+    bond = check_claims(_fixture("bond-ine027e07998-run12.json")["claims"])
+    assert "crar_pct" in not_checked(bond, "margin ordering (gross ≥ EBITDA ≥ PAT) — skipped")[0]  # an NBFC
+
+
+def test_gate_only_warns_on_a_statement_check_however_wrong_and_cited(env, tmp_path):
+    from finresearch.db import session_scope
+    from finresearch.verify.gate import check_report
+
+    # every operand verified and high-importance: a 45 % tax rate, PAT up 5.5×, margins out of order, equity 4 % off
+    rows = [c("profit_before_tax", 1000), c("tax_expense", 450), c("pat", 100, period="FY2025"), c("pat", 550),
+            c("ebitda_margin", 20, "%"), c("pat_margin", 25, "%"), *equity("1260")]  # fmt: skip
+    with session_scope() as s:
+        run_id, ids = _db_run(s, tmp_path, rows)
+        g = check_report(s, run_id, " ".join(f"[C{i}]" for i in ids))
+        assert g.ok and not g.blocking
+        for title in ("Effective tax rate inside the statutory band", "Year-on-year change in a headline line (PAT)",
+                      "Margins in order", "Other equity roll-forward"):  # fmt: skip
+            assert any(f"accounting check '{title}" in w and " warns " in w for w in g.warnings), title
