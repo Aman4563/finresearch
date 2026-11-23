@@ -77,3 +77,13 @@ Every change must preserve these.
 - **SEBI:** the full offer document is the iframe `file=` target (`sebi_data/attachdocs`). Listing rows link only the abridged prospectus.
 - **OCR'd documents** (scanned annual reports, audited statements; Tesseract mean confidence about 90) are accurate on clean pages. Noisy pages garble digits (for example `2,066 53`, `L7ULA7`). Treat OCR'd figures as secondary: prefer the RHP text layer and cross-check before citing.
 - **Agent roles** live in `src/finresearch/agents/`: `roles.py` (model, effort, tools, schema), `prompts/*.md` (house rules plus one file per role; their hash goes in the run manifest) and `skills/*/SKILL.md` (copied into each role's sandbox under `data/runs/<run>/<role>/.claude/skills`). Research roles never degrade to local models.
+
+## 4. Oracle tests
+
+The finance maths is in-house and tested against hand-computed values; `oracle_tests/` compares it with mature
+outside libraries (QuantLib, arch, scipy, statsmodels, mpmath) over grids of synthetic inputs, to catch what a few
+hand-worked cases cannot. Run it with `uv run --group oracle pytest oracle_tests -q` (one to two minutes, no database).
+The libraries are a uv dependency group that nothing else installs, and `tests/test_oracle_isolation.py` fails if
+anything under `src/` imports one. A difference beyond a stated tolerance is a finding to classify (bug, convention
+or oracle limitation), never a tolerance to loosen. Licences, the comparison table, the findings and what is not yet
+covered: [ORACLE_TESTS.md](ORACLE_TESTS.md).
