@@ -8,6 +8,7 @@ from __future__ import annotations
 import ast
 import json
 import math
+import re
 from datetime import date, timedelta
 from decimal import Decimal as D
 from pathlib import Path
@@ -428,6 +429,15 @@ def test_the_blind_verifier_sees_where_an_option_fact_points_but_not_its_value(e
     assert out["move_1sd_pct"] not in json.dumps(item)
 
 
+# a decimal figure in a message; a run id before the sentence's full stop ("Use run_id 184.") is not one (#516)
+_FIGURE = re.compile(r"\d\.\d")
+
+
+def test_the_leak_check_reads_figures_not_run_ids():
+    assert not _FIGURE.search("this server is bound to run 184; you named run 185. Use run_id 184.")
+    assert _FIGURE.search("the stored 1-sd move is 4.87 %")
+
+
 def test_save_claim_through_the_server_scopes_by_its_bound_run_not_the_run_id_argument(
     env, tmp_path, monkeypatch
 ):
@@ -450,7 +460,8 @@ def test_save_claim_through_the_server_scopes_by_its_bound_run_not_the_run_id_ar
     out = json.loads(
         server.save_claim(theirs, "stock_technical", "ZZSECRET implied move", "numeric", [cite], **kw)
     )
-    assert f"bound to run {mine}" in out["error"] and "5.20" not in out["error"] and "4." not in out["error"]
+    assert f"bound to run {mine}" in out["error"] and "5.20" not in out["error"]
+    assert not _FIGURE.search(out["error"])  # was `"4." not in`, which a run id ending in 4 tripped (#516)
     # in its own run the re-check reads with the bound run's scope: ZZSECRET is not available to it
     out = json.loads(
         server.save_claim(mine, "stock_technical", "ZZSECRET implied move", "numeric", [cite], **kw)

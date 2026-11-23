@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  FinResearch health check, every five minutes (#507; scripts/healthcheck.py, docs/USAGE.md "Start at login"): is
+  Postgres accepting connections, do the API and the web app answer, does pgvector load. A TEMPLATE:
+  scripts/launchd/install.sh replaces every placeholder and writes the result to ~/Library/LaunchAgents.
+  FINRESEARCH_HEALTH_MOVE_STALE_PID is 0 unless the installer was run with allow-move-stale-postmaster-pid: only
+  the value 1 lets the check move a stale postmaster.pid aside (it never deletes it; see the script's docstring).
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>__LABEL__</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__REPO__/scripts/launchd/run-service.sh</string>
+    <string>healthcheck</string>
+  </array>
+  <key>WorkingDirectory</key><string>__REPO__</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>__TOOL_DIRS__/opt/homebrew/bin:/usr/local/bin:__HOME__/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>FINRESEARCH_HEALTH_PGDATA</key><string>__PGDATA__</string>
+    <key>FINRESEARCH_HEALTH_MOVE_STALE_PID</key><string>__MOVE_STALE_PID__</string>
+    <key>FINRESEARCH_HEALTH_UID_DOMAIN</key><string>__UID_DOMAIN__</string>
+    <key>FINRESEARCH_HEALTH_LABEL_API</key><string>__LABEL_API__</string>
+    <key>FINRESEARCH_HEALTH_LABEL_WEB</key><string>__LABEL_WEB__</string>
+  </dict>
+  <!-- not at load: at login the API needs a moment to start; the first run is five minutes in -->
+  <key>StartInterval</key><integer>300</integer>
+  <key>LimitLoadToSessionType</key><string>Aqua</string>
+  <key>StandardOutPath</key><string>__REPO__/data/logs/healthcheck.log</string>
+  <key>StandardErrorPath</key><string>__REPO__/data/logs/healthcheck.log</string>
+</dict>
+</plist>

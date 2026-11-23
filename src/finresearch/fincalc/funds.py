@@ -115,7 +115,7 @@ def xirr(cashflows: Sequence[tuple[date, Num]], guess: float = 0.1) -> Decimal:
             hi = mid
         else:
             lo = mid
-    return Decimal(str(round((lo + hi) / 2, 8)))
+    return Decimal(str(round((lo + hi) / 2, 8) + 0.0))  # + 0.0: a root of zero is 0.0, never -0.0 ("-0.00%")
 
 
 @dataclass(frozen=True)

@@ -71,6 +71,29 @@ def test_least_privilege_tools():
     assert not ROLES["stock_technical"].needs_web and ROLES["stock_news"].needs_web
 
 
+def test_discount_rate_tools_go_to_the_two_valuation_streams_only():
+    """#504: risk_free_rate, index_history and stock_beta are held by `valuation` and `stock_valuation` and nobody
+    else: not the synthesizers (which share the older VALUE tools), no verifier, no other stream. Every name granted
+    is a tool the MCP server really registers, and the server registers no ungranted market-fact tool."""
+    import asyncio
+
+    from finresearch.agents.roles import MCP, RATE_INPUTS
+    from finresearch.mcp_server import market_facts, server
+
+    assert [f"{MCP}{t}" for t in market_facts.TOOLS] == RATE_INPUTS
+    assert [t.removeprefix(MCP) for t in RATE_INPUTS] == ["risk_free_rate", "index_history", "stock_beta"]
+    for tool in RATE_INPUTS:
+        assert {n for n, r in ROLES.items() if tool in r.tools} == {"valuation", "stock_valuation"}, tool
+    for name in ("synthesizer", "stock_synthesizer", "verifier", "verifier_blind"):
+        assert not set(RATE_INPUTS) & set(ROLES[name].tools), name
+    registered = {t.name for t in asyncio.run(server.server.list_tools())}
+    assert {t.removeprefix(MCP) for t in RATE_INPUTS} <= registered
+    for tool in ("risk_free_rate", "index_history", "stock_beta"):
+        assert "known=false" in next(
+            t.description for t in asyncio.run(server.server.list_tools()) if t.name == tool
+        )
+
+
 @pytest.mark.parametrize("name", sorted(ROLES))
 def test_output_schemas_are_self_contained(name):
     schema = json_schema_for(ROLES[name].output)

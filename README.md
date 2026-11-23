@@ -94,6 +94,7 @@ import a statement on **Portfolio → Import**. The complete command reference i
 | [Architecture](docs/ARCHITECTURE.md) | Components, the Claude Bridge, agents, the verification gate |
 | [Engineering handoff](docs/dev/ENGINEERING_HANDOFF.md) | Invariants and sharp edges for anyone changing the code |
 | [Product requirements](docs/dev/PRODUCT_REQUIREMENTS.md) | Requirement status and the verification log |
+| [Oracle tests](docs/dev/ORACLE_TESTS.md) | The in-house maths checked against QuantLib, arch, scipy and statsmodels |
 | [Research roadmap](docs/dev/RESEARCH_ROADMAP.md) | Accuracy and signal research behind the models |
 
 Release notes are on the [Releases](https://github.com/Aman4563/finresearch/releases) page.
