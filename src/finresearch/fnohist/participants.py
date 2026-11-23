@@ -249,11 +249,12 @@ async def backfill(start: date, end: date | None = None, *, kinds: tuple[po.Kind
 
 
 async def update(today: date, *, http: Any = None, lookback: int = LOOKBACK_DAYS,
-                 holidays: set[date] | None = None) -> dict[str, Any]:  # fmt: skip
+                 holidays: set[date] | None = None, pause: float = 0.0) -> dict[str, Any]:  # fmt: skip
     """The nightly load: both files for the missing sessions in [today - lookback, today]. Returns the counts summed
-    over the datasets, failed days keyed "<dataset> <day>", `stopped` when a dataset stopped, and `by_dataset`."""
+    over the datasets, failed days keyed "<dataset> <day>", `stopped` when a dataset stopped, and `by_dataset`.
+    `lookback` is longer and `pause` set while the job catches up after an outage (monitor.catchup, #507)."""
     res = await backfill(today - timedelta(days=lookback), today, today=today, http=http, holidays=holidays,
-                         keep_raw=False, market_hours=False)  # fmt: skip
+                         pause=pause, keep_raw=False, market_hours=False)  # fmt: skip
     by = {k: v for k, v in res.items() if k != "stopped"}
     out: dict[str, Any] = {key: sum(v[key] for v in by.values()) for key in ("planned", "loaded", "no_file")}
     out["failed"] = {f"{ds} {d}": err for ds, v in by.items() for d, err in v["failed"].items()}

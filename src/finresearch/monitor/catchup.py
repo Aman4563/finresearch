@@ -213,3 +213,9 @@ def polite(job: str, w: Window, kw: dict[str, Any]) -> None:
     wins)."""
     if w.extended:
         kw.setdefault("pause", PAUSE_S[job])
+
+
+def note(w: Window) -> dict[str, Any]:
+    """{"catch_up": ...} for the job's result, {} on an ordinary night."""
+    got = w.summary()
+    return {} if got is None else {"catch_up": got}

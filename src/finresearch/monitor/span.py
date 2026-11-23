@@ -1,6 +1,8 @@
 """The monitor's nightly SPAN update (#370, fnohist.span): once per trading-day evening from RUN_AFTER (IST), NSE
 Clearing's SPAN file for today (one GET, ~10 MB zipped; the 16-Oct-2026 file was created at 16:54 IST) and its FOVOLT
-file (one GET, ~40 KB), plus any of the last LOOKBACK_DAYS days missed while the Mac was off. The zip is kept for
+file (one GET, ~40 KB), plus any of the last LOOKBACK_DAYS days missed while the Mac was off; after a longer outage
+the window starts the day after the store's last loaded day, at most catchup.SPAN_MAX_CATCHUP_DAYS back (#507: a
+smaller bound than the other jobs', each file being ~10 MB; an older gap is reported). The zip is kept for
 the last fnohist.span.KEEP_SESSIONS sessions (the full risk arrays) and older ones are deleted. When today's file is
 not there yet the run counts as failed and is retried (monitor.disclosures MAX_ATTEMPTS, 30 minutes apart). Weekends
 and NSE holidays are skipped; an unknown holiday list skips the run too (monitor.market_days fails closed). The night
@@ -10,7 +12,7 @@ is claimed in `alert_eval_slot` ("span:<day>"), so two monitor processes never r
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time
 from typing import Any
 
 from finresearch.fincalc.dates import to_ist
@@ -39,17 +41,25 @@ async def span_step(now: datetime, holidays: set[date] | None = None, **kw: Any)
         return {}
     today = to_ist(now).date()
     try:
+        from finresearch.db import session_scope
         from finresearch.fnohist import span
+        from finresearch.monitor import catchup
 
+        with session_scope() as s:
+            w = catchup.span(s, today, LOOKBACK_DAYS, holidays)
+        catchup.report(
+            "span", "SPAN file", w, "uv run finresearch fno span backfill --daily --from {start} --to {end}"
+        )
+        catchup.polite("span", w, kw)
         kw.setdefault("keep_raw", True)
-        res = await span.backfill(today - timedelta(days=LOOKBACK_DAYS), today, today=today, monthly=False,
-                                  holidays=holidays, now=lambda: now, **kw)  # fmt: skip
+        res = await span.backfill(w.start, today, today=today, monthly=False, holidays=holidays, now=lambda: now,
+                                  **kw)  # fmt: skip
     except Exception as e:
         log.warning("SPAN update failed; retried later", exc_info=True)
         finish(slot, {"error": f"{type(e).__name__}: {e}"[:300]}, now, failed=True)
         return {"span": "failed"}
     pending = not _loaded(today)
-    summary = res | {"today_pending": pending}
+    summary = res | {"today_pending": pending} | catchup.note(w)
     finish(slot, summary, now, failed=pending or bool(res["failed"]))
     return {"span": summary}
 

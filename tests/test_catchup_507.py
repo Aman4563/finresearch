@@ -83,3 +83,12 @@ def test_sessions_are_weekdays_that_are_not_known_holidays():
         D(2026, 11, 22), set()
     )  # Monday, Sunday
     assert not cu.is_session(D(2026, 10, 2), {D(2026, 10, 2)}) and cu.is_session(D(2026, 10, 2), None)
+
+
+def test_the_schedule_names_the_bounds():
+    from finresearch.monitor import scheduler
+    from finresearch.suggest.profile import WatchWindows
+
+    sj = scheduler.schedule_json(WatchWindows(), running=True)
+    assert sj["catch_up"] == {"max_days": 45, "span_max_days": 14}
+    assert sj["equity_eod"] == {"after": "19:00", "lookback_days": 4, "requests_per_night": 1}  # unchanged

@@ -60,8 +60,8 @@ async def backfill(start: date, end: date | None = None, **kw: Any) -> dict[str,
 
 
 async def update(today: date, *, http: Any = None, lookback: int = LOOKBACK_DAYS,
-                 holidays: set[date] | None = None) -> dict[str, Any]:  # fmt: skip
+                 holidays: set[date] | None = None, pause: float = 0.0) -> dict[str, Any]:  # fmt: skip
     """The nightly load: the missing sessions in [today - lookback, today]. Returns the dataset's counts."""
     res = await backfill(today - timedelta(days=lookback), today, today=today, http=http, holidays=holidays,
-                         keep_raw=False, market_hours=False)  # fmt: skip
+                         pause=pause, keep_raw=False, market_hours=False)  # fmt: skip
     return res[fs.DATASET]

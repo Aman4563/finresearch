@@ -8,6 +8,9 @@ failed and is retried (monitor.disclosures.MAX_ATTEMPTS, 30 minutes apart); the 
 otherwise. After loading, the day's derived IV row per underlying (fno_iv_eod) and the contract calendar are updated.
 Weekends and NSE holidays are skipped; an unknown holiday list skips the run too (monitor.market_days fails closed).
 Each night is claimed in `alert_eval_slot` ("fno_bhav:<day>"), so two monitor processes never run it twice.
+After an outage longer than LOOKBACK_DAYS the window starts the day after the store's last loaded day, at most
+catchup.MAX_CATCHUP_DAYS back; an older gap is reported, not fetched (monitor.catchup, #507). The participant and FII
+files below do the same from their own last loaded day.
 
 The same evening NSE's participant-wise F&O open interest and trading volume files (#317, #371, fnohist.participants)
 are fetched in their own slot ("fno_participant:<day>"), so a failure of one never retries or fails the other. The
@@ -19,7 +22,7 @@ slot counts as failed (retried) until both of today's files are stored. NSE's FI
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time
 from typing import Any
 
 from finresearch.fincalc.dates import to_ist
@@ -48,15 +51,23 @@ async def fno_bhav_step(now: datetime, holidays: set[date] | None = None, **kw: 
         return {}
     today = to_ist(now).date()
     try:
+        from finresearch.db import session_scope
         from finresearch.fnohist import store
+        from finresearch.monitor import catchup
 
-        res = await store.backfill(today - timedelta(days=LOOKBACK_DAYS), today, today=today, **kw)
+        with session_scope() as s:
+            w = catchup.fno_bhav(s, today, LOOKBACK_DAYS, holidays)
+        catchup.report(
+            "fno_bhav", "F&O bhavcopy", w, "uv run finresearch fno backfill --from {start} --to {end}"
+        )
+        catchup.polite("fno_bhav", w, kw)
+        res = await store.backfill(w.start, today, today=today, **kw)
     except Exception as e:
         log.warning("F&O bhavcopy update failed; retried later", exc_info=True)
         finish(slot, {"error": f"{type(e).__name__}: {e}"[:300]}, now, failed=True)
         return {"fno_bhav": "failed"}
     pending = not _loaded(today)
-    summary = {k: v for k, v in res.items() if k != "stocks"} | {"today_pending": pending}
+    summary = {k: v for k, v in res.items() if k != "stocks"} | {"today_pending": pending} | catchup.note(w)
     finish(slot, summary, now, failed=pending or bool(res["failed"]))
     return {"fno_bhav": summary}
 
@@ -74,9 +85,18 @@ async def fno_participant_step(now: datetime, holidays: set[date] | None = None,
         return {}
     today = to_ist(now).date()
     try:
+        from finresearch.adapters.nse_participant_oi import KINDS
+        from finresearch.db import session_scope
         from finresearch.fnohist import participants
+        from finresearch.monitor import catchup
 
-        res = await participants.update(today, **kw)
+        with session_scope() as s:
+            w = catchup.participant_files(s, today, participants.LOOKBACK_DAYS, KINDS, holidays)
+        catchup.report("fno_participant", "F&O participant files", w,
+                       "uv run finresearch fno participants --from {start} --to {end}")  # fmt: skip
+        catchup.polite("fno_participant", w, kw)
+        res = await participants.update(today, lookback=(today - w.start).days, holidays=holidays, **kw)
+        res |= catchup.note(w)
     except Exception as e:
         log.warning("F&O participant OI update failed; retried later", exc_info=True)
         finish(slot, {"error": f"{type(e).__name__}: {e}"[:300]}, now, failed=True)
@@ -99,9 +119,18 @@ async def fii_stats_step(now: datetime, holidays: set[date] | None = None, **kw:
         return {}
     today = to_ist(now).date()
     try:
+        from finresearch.db import session_scope
         from finresearch.fnohist import fii_stats
+        from finresearch.monitor import catchup
 
-        res = await fii_stats.update(today, holidays=holidays, **kw)
+        data_rights.require(fii_stats.fs.DATASET)  # no decision: skipped below, before any catch-up report
+        with session_scope() as s:
+            w = catchup.participant_files(s, today, fii_stats.LOOKBACK_DAYS, (fii_stats.SOURCE,), holidays)
+        catchup.report("fii_stats", "FII derivative statistics", w,
+                       "uv run finresearch fno fii-stats --from {start} --to {end}")  # fmt: skip
+        catchup.polite("fii_stats", w, kw)
+        res = await fii_stats.update(today, lookback=(today - w.start).days, holidays=holidays, **kw)
+        res |= catchup.note(w)
     except data_rights.NoDecision as e:
         finish(slot, {"skipped": str(e)[:300]}, now, failed=False)
         return {"fii_stats": {"skipped": str(e)}}
