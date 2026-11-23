@@ -243,3 +243,14 @@ def test_month_end_maturity_keeps_its_coupon_day_for_the_previous_coupon():
     )
     # a maturity every month has is unchanged
     assert b.previous_coupon(date(2026, 9, 28), date(2029, 2, 5), 1) == date(2026, 2, 5)
+
+
+def test_a_zero_yield_is_zero_not_minus_zero():
+    """#503: at a zero yield a bond is worth the plain sum of its cash flows (5 x 8 + 100 = 140). The bisection ends
+    a hair below zero and the rounding kept the sign: the yield read Decimal('-0E-8') and printed "-0.00%"."""
+    s, m = date(2026, 1, 1), date(2031, 1, 1)
+    y = b.ytm(140, s, m, "0.08", 1)
+    assert y == 0 and not y.is_signed() and f"{y:.2%}" == "0.00%"
+    a = b.after_tax_ytm(140, s, m, "0.08", 1, 0)
+    assert a == 0 and not a.is_signed() and f"{a:.2%}" == "0.00%"
+    assert b.ytm(141, s, m, "0.08", 1) < 0  # a real negative yield keeps its sign

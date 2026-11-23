@@ -138,7 +138,7 @@ def ytm(
             lo = mid
         else:
             hi = mid
-    return ((lo + hi) / 2).quantize(Decimal("1e-8"))
+    return ((lo + hi) / 2).quantize(Decimal("1e-8")) + 0  # + 0: a zero yield is 0, never -0 ("-0.00%")
 
 
 def current_yield(clean: Num, coupon_rate: Num, face: Num = 100) -> Decimal:
@@ -212,7 +212,7 @@ def after_tax_ytm(clean: Num, settlement: date, maturity: date, coupon_rate: Num
             lo = mid
         else:
             hi = mid
-    return Decimal(str(round((lo + hi) / 2, 8)))
+    return Decimal(str(round((lo + hi) / 2, 8) + 0.0))  # + 0.0: never -0.0
 
 
 def effective_annual(nominal: Num, freq: int) -> Decimal:
