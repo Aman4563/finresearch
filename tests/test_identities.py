@@ -396,7 +396,7 @@ def test_equity_roll_forward_says_which_input_is_missing():
 
 
 def test_da_in_the_cash_flow_ties_to_the_pnl_charge():
-    rows = [c("depreciation_and_amortisation", "147.20", "INR million"),
+    rows = [c("depreciation", "147.20", "INR million"),
             c("depreciation_cash_flow", "147.20", "INR million")]  # fmt: skip
     assert one(rows, "da_tie").status == "pass"
     # the claim's own words place a plain "depreciation" in the cash-flow statement; an outflow sign does not matter
@@ -563,6 +563,14 @@ def test_capex_missing_inputs_and_mixed_bases_are_not_checked():
     mixed = check_claims([c("gross_block", 1000, period="FY2025 (standalone)"), c("gross_block", 1400, period=CONS),
                           c("capex", 600, period=CONS)])  # fmt: skip
     assert not by_family(mixed, "capex_fixed_assets") and not_checked(mixed, "FY2026 consolidated")
+    # unlabelled capex and block, CWIP standalone at one year end and consolidated at the other: never differenced
+    cwip = [
+        *block(500, cwip=False),
+        c("cwip", 100, period="FY2025 (standalone)"),
+        c("cwip", 900, period=CONS),
+    ]
+    chk = one(cwip, "capex_fixed_assets")
+    assert chk.status == "pass" and "CWIP is not held" in chk.detail and len(chk.claim_ids) == 3
 
 
 def test_growth_above_100_pct_or_a_sign_change_needs_an_explanation():

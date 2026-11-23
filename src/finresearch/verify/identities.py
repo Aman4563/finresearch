@@ -123,27 +123,26 @@ _ALIASES: dict[str, tuple[str, ...]] = {
     "receivable_days": ("receivable_days", "trade_receivable_days", "debtor_days", "dso"),
     "bonus": ("bonus_issue", "bonus_issue_shares", "bonus_ratio", "bonus_issue_ratio"),
     "split": ("stock_split", "share_split", "split_ratio", "sub_division"),
-    # Statement checks of #518. "(run N)" marks a name a live ledger used (tests/fixtures/eval); the rest are the
-    # Schedule III / Ind AS 7 captions themselves, kept that narrow until a ledger shows what agents really write.
+    # Statement checks of #518. "(run N)" marks the name a live ledger used (tests/fixtures/eval). No fixture holds
+    # the other inputs, so each gets ONE name, the statement caption, until a ledger shows what agents really write:
+    # every alias here also feeds the scale-shift and cross-document checks, which group by canonical key.
     "other_equity": ("other_equity",),
     "retained_earnings": ("retained_earnings",),
-    "dividends": ("dividends_paid", "dividend_paid"),  # run 9
-    "buyback": ("buyback_of_equity_shares", "buyback_amount"),  # run 9 (both)
-    "esop_charge": ("esop_charge", "share_based_payment_expense"),  # run 5
+    "dividends": ("dividends_paid",),  # run 9
+    "buyback": ("buyback_of_equity_shares",),  # run 9: the cash-flow line; its buyback_amount is the announced size
+    "esop_charge": ("esop_charge",),  # run 5
     "oci": ("other_comprehensive_income",),
-    "da": ("depreciation", "depreciation_and_amortisation", "depreciation_and_amortization",  # run 5: depreciation
-           "depreciation_and_amortisation_expense", "depreciation_and_amortization_expense"),
-    "da_cf": ("depreciation_cash_flow", "depreciation_and_amortisation_cash_flow",
-              "depreciation_and_amortization_cash_flow"),
-    "deferred_tax": ("deferred_tax", "deferred_tax_expense", "deferred_tax_charge", "deferred_tax_credit"),
-    "mat_credit": ("mat_credit", "mat_credit_entitlement"),
-    "tax_adjustment": ("tax_reversal", "tax_reversal_and_interest_footnote", "tax_for_earlier_years"),  # run 9
+    "da": ("depreciation",),  # run 5
+    "da_cf": ("depreciation_cash_flow",),
+    "deferred_tax": ("deferred_tax",),
+    "mat_credit": ("mat_credit",),
+    "tax_adjustment": ("tax_reversal",),  # run 9
     "etr": ("effective_tax_rate",),  # run 9
     "gross_profit": ("gross_profit",),
     "gross_margin": ("gross_margin",),  # run 9
-    "capex": ("capex", "capital_expenditure", "purchase_of_property_plant_and_equipment"),  # runs 5 and 9: capex
-    "gross_block": ("gross_block", "gross_fixed_assets"),
-    "cwip": ("cwip", "capital_work_in_progress"),
+    "capex": ("capex",),  # runs 5 and 9
+    "gross_block": ("gross_block",),
+    "cwip": ("cwip",),
 }  # fmt: skip
 _CANON = {alias: key for key, aliases in _ALIASES.items() for alias in aliases}
 _GROWTH_RE = re.compile(r"^(revenue|pat|eps|net_profit|profit)(?:_from_operations)?_(growth|cagr)(?:_(yoy|inr|usd))?"
@@ -168,6 +167,12 @@ STATUTORY_TAX_RATES: tuple[tuple[str, Decimal], ...] = (
 # enacted rate; permanent differences (exempt income, disallowed expenses, a subsidiary taxed elsewhere) move it by a
 # few points. The cushion on each side of the lowest and highest statutory rate is a judgement [U].
 TAX_BAND_CUSHION = Decimal("0.03")
+_TAX_REASONS = (
+    "deferred_tax",
+    "mat_credit",
+    "exceptional",
+    "tax_adjustment",
+)  # what explains a rate outside it
 TAX_BAND = (min(r for _, r in STATUTORY_TAX_RATES) - TAX_BAND_CUSHION,
             max(r for _, r in STATUTORY_TAX_RATES) + TAX_BAND_CUSHION)  # 14.16 % … 37.944 %  # fmt: skip
 # Cash capex against the rise in gross block (+ CWIP): disposals, capital advances and creditors, leased assets
@@ -1083,6 +1088,7 @@ class _Engine:
         the ledger states them; the ones it does not state are the usual reason for a gap."""
         name = "equity roll-forward"
         stocks = (("other_equity", "Other equity"), ("retained_earnings", "Retained earnings"))
+        flows = ("pat_owners", "pat", "dividends", "buyback", "esop_charge", "oci")
         if not any(self.L.periods(k) for k, _ in stocks):
             self.not_checked(name, "no other equity or retained earnings claim in the ledger")
             return
@@ -1091,7 +1097,7 @@ class _Engine:
         for stock, label in stocks:
             for p in sorted(q for q in self.L.periods(stock) if q.startswith("FY")):
                 prev = _prev(p)
-                for b in self._bases((stock,), (p, prev)):
+                for b in self._bases((stock, *flows), (p, prev)):
                     for cur in self.L.currencies((stock,), p):
                         if not self._money(stock, p, b, cur):
                             continue
@@ -1144,7 +1150,7 @@ class _Engine:
         name = "effective tax rate"
         done: set[tuple[str, str]] = set()
         for p in sorted(self.L.periods("pbt")):
-            for b in self.L.bases(("pbt", "tax", "pat"), p):
+            for b in self.L.bases(("pbt", "tax", "pat", *_TAX_REASONS), p):
                 for cur in self.L.currencies(("pbt",), p):
                     pbts, tax, pat = (self._money(k, p, b, cur) for k in ("pbt", "tax", "pat"))
                     if not pbts:
@@ -1180,8 +1186,7 @@ class _Engine:
         why: list[Fact] = []
         status, hint = "pass", None
         if not lo <= rate <= hi:
-            why = [f for k in ("deferred_tax", "mat_credit", "exceptional", "tax_adjustment")
-                   for f in self._money(k, p, b, cur) if f.value]  # fmt: skip
+            why = [f for k in _TAX_REASONS for f in self._money(k, p, b, cur) if f.value]
             if why:
                 detail += "; outside the band, with the reason in the ledger: " + ", ".join(
                     f"C{f.id} {f.metric}" for f in why
@@ -1210,7 +1215,7 @@ class _Engine:
         keys = [k for _, mkey, nums in tiers for k in (mkey, *nums)]
         seen_any = False
         for p in sorted(set().union(*(self.L.periods(k) for k in keys))):
-            for b in self.L.bases(keys, p):
+            for b in self.L.bases((*keys, "revenue"), p):
                 held: list[tuple[str, Decimal, list[Fact], Decimal]] = []  # tier, margin, claims, rounding
                 for tier, mkey, nums in tiers:
                     if stated := self.L.get(mkey, p, b, kind="pct"):
@@ -1250,7 +1255,7 @@ class _Engine:
             self.not_checked(name, "no capex or gross block claim in the ledger")
         for p in years:
             prev = _prev(p)
-            for b in self._bases(("capex", "gross_block"), (p, prev)):
+            for b in self._bases(("capex", "gross_block", "cwip"), (p, prev)):
                 for cur in self.L.currencies(("capex", "gross_block"), p):
                     capex, gb1, gb0 = (self._money(k, q, b, cur)
                                        for k, q in (("capex", p), ("gross_block", p), ("gross_block", prev)))  # fmt: skip
