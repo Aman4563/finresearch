@@ -9,7 +9,7 @@ import { Badge, Callout, Card, EmptyState, ErrorNote, InfoTip, PageHeader, Segme
 import { fmtDuration, kindMeta } from "@/components/workspace/run-meta";
 import { ApiError, type RunDetail, type RunSummary, api, pct, useApi, when } from "@/lib/api";
 
-type Snapshot = Record<string, number | string | null>;
+type Snapshot = Record<string, number | string | boolean | null>;
 type TierState = { snapshot?: Snapshot; cooling_until?: number; reason?: string | null; failures?: number };
 type Limits = { tiers: Record<string, TierState>; now: number; ceilings: { five_hour: number } };
 type RunUsage = {
@@ -73,20 +73,25 @@ function useRunUsage() {
   return { data, error, reload: () => setTick((t) => t + 1) };
 }
 
-function WindowGauge({ title, used, resets, ceiling, now, help }: {
-  title: string; used?: number; resets?: number; ceiling?: number; now: number; help: string;
+function WindowGauge({ title, used, resets, ceiling, now, help, expired, last, seen }: {
+  title: string; used?: number | null; resets?: number; ceiling?: number; now: number; help: string;
+  expired?: boolean; last?: number | null; seen?: number | null;
 }) {
+  // #507: a reading from a window that has since reset is not current usage (and not 0): unknown until the next step
+  const gone = !!expired || (!!resets && resets * 1000 <= now);
+  const was = last ?? used;
   return (
     <div className="flex flex-col items-center rounded-xl border border-border bg-background-subtle/40 px-3 pt-4 pb-3">
       <p className="mb-2 flex items-center gap-1 text-xs font-medium text-muted">
         {title}
         <InfoTip>{help}</InfoTip>
       </p>
-      <Gauge value={resets && resets * 1000 <= now ? 0 : (used ?? null)} size={160} label={ceiling ? `runs pause at ${pct(ceiling)}` : "used"} />
+      <Gauge value={gone ? null : (used ?? null)} size={160} label={gone ? "current usage unknown" : ceiling ? `runs pause at ${pct(ceiling)}` : "used"} />
       <div className="mt-3 w-full space-y-1 border-t border-border pt-2 text-center text-xs">
-        {resets && resets * 1000 <= now ? (
+        {gone ? (
           <p className="text-muted">
-            <span className="font-medium text-gain">Window has reset.</span> This reading is from before; the next agent step takes a fresh one.
+            <span className="font-medium text-warn">Expired reading.</span> Last seen{seen ? ` ${when(new Date(seen * 1000).toISOString())}` : ""}
+            {was != null ? `: ${pct(was)} used` : ""}. The window has reset since; the next agent step takes a fresh reading.
           </p>
         ) : (
           <p className="flex items-center justify-center gap-1 text-muted">
@@ -156,10 +161,12 @@ export default function Usage() {
                 }>
                 {has ? (
                   <div className="grid gap-3 sm:grid-cols-2">
-                    <WindowGauge title="5-hour window" used={s.five_hour_utilization as number | undefined} resets={s.five_hour_resets_at as number | undefined}
+                    <WindowGauge title="5-hour window" used={s.five_hour_utilization as number | null | undefined} resets={s.five_hour_resets_at as number | undefined}
+                      expired={s.five_hour_expired === true} last={s.five_hour_last_utilization as number | undefined} seen={s.observed_at as number | null | undefined}
                       ceiling={data.ceilings.five_hour} now={now}
                       help="Claude plans allow a certain amount of work in any rolling 5-hour period. Research runs pause automatically before the ceiling and resume after the reset." />
-                    <WindowGauge title="7-day window" used={s.seven_day_utilization as number | undefined} resets={s.seven_day_resets_at as number | undefined}
+                    <WindowGauge title="7-day window" used={s.seven_day_utilization as number | null | undefined} resets={s.seven_day_resets_at as number | undefined}
+                      expired={s.seven_day_expired === true} last={s.seven_day_last_utilization as number | undefined} seen={s.observed_at as number | null | undefined}
                       now={now} help="A second, weekly allowance on top of the 5-hour one. When it is full, nothing runs until it resets." />
                   </div>
                 ) : (

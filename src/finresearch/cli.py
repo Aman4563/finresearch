@@ -853,12 +853,27 @@ def serve(
     ),
 ) -> None:
     """Start the local API for the research app (always bound to 127.0.0.1). The first start creates the local API
-    token (Keychain + data/state/api_token, mode 0600) that every route but /api/health requires."""
+    token (Keychain + data/state/api_token, mode 0600) that every route but /api/health requires. Refuses (exit 1)
+    when the port is already in use: a second copy would run a second monitor."""
+    import socket
+
     import uvicorn
 
     from finresearch.api import create_app
     from finresearch.api.auth import bootstrap, token_file
 
+    # #507: uvicorn starts the app's lifespan (the monitor scheduler) before it binds, so without this look a second
+    # copy ran a scheduler for a moment, which could claim tonight's jobs, and only then failed on the port
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.setsockopt(
+            socket.SOL_SOCKET, socket.SO_REUSEADDR, 1
+        )  # as uvicorn binds: a just-closed port is free
+        try:
+            probe.bind(("127.0.0.1", port))
+        except OSError:
+            console.print(f"[red bold]127.0.0.1:{port} is already in use: FinResearch (or something else) is "
+                          "running there. Not starting a second copy.")  # fmt: skip
+            raise typer.Exit(1) from None
     token = bootstrap()
     console.print(
         f"API token: {token_file()} (0600; the web app reads it, CLI clients send it as a bearer token)"
