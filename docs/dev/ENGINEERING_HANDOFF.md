@@ -82,7 +82,7 @@ Every change must preserve these.
 
 The finance maths is in-house and tested against hand-computed values; `oracle_tests/` compares it with mature
 outside libraries (QuantLib, arch, scipy, statsmodels, mpmath) over grids of synthetic inputs, to catch what a few
-hand-worked cases cannot. Run it with `uv run --group oracle pytest oracle_tests -q` (about 70 seconds, no database).
+hand-worked cases cannot. Run it with `uv run --group oracle pytest oracle_tests -q` (one to two minutes, no database).
 The libraries are a uv dependency group that nothing else installs, and `tests/test_oracle_isolation.py` fails if
 anything under `src/` imports one. A difference beyond a stated tolerance is a finding to classify (bug, convention
 or oracle limitation), never a tolerance to loosen. Licences, the comparison table, the findings and what is not yet

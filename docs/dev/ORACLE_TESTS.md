@@ -5,7 +5,7 @@ is a second line of defence: it compares our functions with mature outside libra
 the bugs and the unstated conventions that a handful of hand-worked cases cannot.
 
 ```bash
-uv run --group oracle pytest oracle_tests -q                               # the whole suite (about a minute)
+uv run --group oracle pytest oracle_tests -q                               # the whole suite (1 to 2 minutes)
 uv run --group oracle pytest oracle_tests -q --oracle-report=/tmp/t.md     # also write the comparison table
 uv sync --locked                                                           # back to the default environment
 ```
@@ -68,7 +68,7 @@ To add a library: read its licence in both places, confirm the wheels, pin it ex
 
 ## What is compared (first slice, 23-Nov-2026)
 
-39 tests, 75 comparisons, about 70 seconds. The run prints one row per comparison (function, oracle, grid size,
+39 tests, 75 comparisons, between one and two minutes. The run prints one row per comparison (function, oracle, grid size,
 largest difference, tolerance and its reason, verdict); `--oracle-report` writes the same table to a file. In short:
 
 | In-house | Oracle | Inputs | Result |
