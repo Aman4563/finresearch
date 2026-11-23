@@ -251,7 +251,7 @@ def confirmed(decision: Decision, problems_state: dict[str, Any], *, confirm: in
 
 
 # ---------------------------------------------------------------------------------------------- probes (thin)
-Run = Callable[[list[str]], tuple[int | None, str]]
+Run = Callable[[list], tuple]  # argv -> (exit code or None, stdout); spelled for any Python 3.9+
 
 
 def run_command(argv: list[str]) -> tuple[int | None, str]:

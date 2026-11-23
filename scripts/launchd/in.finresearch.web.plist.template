@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  FinResearch web app (the built Next.js app in web/), started at login and restarted when it exits (#507;
+  docs/USAGE.md "Start at login"). A TEMPLATE: scripts/launchd/install.sh replaces every placeholder and writes the
+  result to ~/Library/LaunchAgents. Nothing user-specific is committed.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>__LABEL__</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__REPO__/scripts/launchd/run-service.sh</string>
+    <string>web</string>
+  </array>
+  <key>WorkingDirectory</key><string>__REPO__/web</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>__TOOL_DIRS__/opt/homebrew/bin:/usr/local/bin:__HOME__/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>30</integer>
+  <key>LimitLoadToSessionType</key><string>Aqua</string>
+  <key>StandardOutPath</key><string>__REPO__/data/logs/web.log</string>
+  <key>StandardErrorPath</key><string>__REPO__/data/logs/web.log</string>
+</dict>
+</plist>
