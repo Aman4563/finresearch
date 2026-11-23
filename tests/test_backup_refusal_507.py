@@ -6,6 +6,7 @@ no database, no dump, no Keychain."""
 from __future__ import annotations
 
 import os
+import shutil
 import stat
 import subprocess
 from pathlib import Path
@@ -114,3 +115,32 @@ def test_secrets_check_that_crashes_is_not_exit_1(env, monkeypatch):
     monkeypatch.setattr(secrets_migrate, "scan", boom)
     r = CliRunner().invoke(app, ["secrets", "check"])
     assert r.exit_code == 4 and "could not be completed" in r.output and "RuntimeError" in r.output
+
+
+@pytest.mark.skipif(
+    not all(shutil.which(t) for t in ("pg_dump", "pg_restore")), reason="pg_dump/pg_restore missing"
+)
+def test_a_good_run_records_its_dump_and_a_later_failure_keeps_it(env, db_url, tmp_path):
+    state, out = tmp_path / "state", tmp_path / "backups"
+    base = {**os.environ, "FINRESEARCH_DATABASE_URL": db_url, "FINRESEARCH_STATE_DIR": str(state),
+            "BACKUP_DIR": str(out), "DOCS_DIR": str(tmp_path / "docs"), "KEEP": "2"}  # fmt: skip
+    r = subprocess.run(["bash", str(SCRIPT)], env=base, capture_output=True, text=True, timeout=300)
+    if r.returncode != 0 and "version mismatch" in r.stderr:
+        pytest.skip(f"pg_dump older than the server: {r.stderr.strip()[:200]}")
+    assert r.returncode == 0, r.stderr
+    good = dict(ln.split("=", 1) for ln in (state / "backup_status").read_text().splitlines())
+    (dump,) = out.glob("finresearch-*.dump")
+    assert good["outcome"] == "ok" and good["exit"] == "0"
+    assert good["last_ok_dump"] == dump.name and good["last_ok_at"] == good["at"]
+    # the next night the database is down: the failure is recorded, the good dump stays on record
+    fake = _fake_bin(tmp_path, check_exit=3)
+    env2 = {**base, "PATH": f"{fake}{os.pathsep}{os.environ['PATH']}", "FINRESEARCH_CLI": "finresearch"}
+    assert (
+        subprocess.run(
+            ["bash", str(SCRIPT)], env=env2, capture_output=True, text=True, timeout=120
+        ).returncode
+        == 5
+    )
+    bad = dict(ln.split("=", 1) for ln in (state / "backup_status").read_text().splitlines())
+    assert bad["outcome"] == "database_unreachable"
+    assert (bad["last_ok_at"], bad["last_ok_dump"]) == (good["last_ok_at"], dump.name)

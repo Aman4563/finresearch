@@ -895,20 +895,41 @@ def _secret_report(rep, verb: str) -> None:
         )
 
 
+# `secrets check` exit codes (scripts/backup.sh reads them, #507): 1 only when plaintext was found. 2 is Click's
+# usage error, so the database being unreachable is 3 and any other failure of the check itself is 4.
+SECRETS_PLAINTEXT, SECRETS_DB_UNREACHABLE, SECRETS_CHECK_FAILED = 1, 3, 4
+
+
 @secrets_app.command("check")
 def secrets_check() -> None:
-    """Exit 1 if any secret is still stored as plain text in the database (counts and field names only)."""
-    from finresearch.db import session_scope
-    from finresearch.secrets_migrate import scan
+    """Exit 1 if any secret is still stored as plain text in the database (counts and field names only). Exit 3 when
+    the database cannot be reached and 4 when the check failed for another reason: nothing was checked then, which
+    is neither "plaintext found" nor "clean"."""
+    from sqlalchemy.exc import OperationalError
 
-    with session_scope() as s:
-        rep = scan(s)
+    from finresearch import secrets_migrate
+    from finresearch.db import session_scope
+
+    try:
+        with session_scope() as s:
+            rep = secrets_migrate.scan(s)
+    except OperationalError as e:  # the server is down, refuses the login or the database does not exist
+        from rich.markup import escape
+
+        why = str(getattr(e, "orig", e)).strip().splitlines()[0][:200]  # libpq's first line: host and port
+        console.print(f"[red bold]cannot reach the database, so nothing was checked:[/] {escape(why)}")
+        raise typer.Exit(SECRETS_DB_UNREACHABLE) from None
+    except Exception as e:
+        console.print(
+            f"[red bold]the secrets check could not be completed ({type(e).__name__}): nothing was checked"
+        )
+        raise typer.Exit(SECRETS_CHECK_FAILED) from None
     _secret_report(rep, "left")
     if rep.found or rep.unknown:
         console.print(
             "[red bold]plaintext secrets in the database: run `uv run finresearch secrets migrate --apply`"
         )
-        raise typer.Exit(1)
+        raise typer.Exit(SECRETS_PLAINTEXT)
     console.print("[green]no plaintext secrets in the database")
 
 
