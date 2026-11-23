@@ -144,11 +144,15 @@ Both are in `FUNCTIONAL_TESTING.md` (23-Nov-2026).
   for 448 far-wing prices it cannot invert. The in-house values are within rounding of the 40-digit ones.
 - QuantLib 1.44's `BlackCalculator.volga(T)` returns the true volga divided by sqrt(T) (right only at T = 1).
 - QuantLib's `yieldRate` searches for a bracket by walking toward the smaller |NPV|: from its default guess of 5 %
-  it fails on 665 of 2,979 many-instalment histories whose root is below the guess (24 stay unsolved from lower
-  guesses). scipy's `brentq` on QuantLib's NPV is the oracle for the root.
+  it fails on 665 of 2,979 many-instalment histories whose root is below the guess on macOS arm64 and on 880 on
+  Linux x86_64 (24 and 64 stay unsolved from lower guesses). scipy's `brentq` on QuantLib's NPV is the oracle for
+  the root, and agrees with the module on all 2,979 on both platforms.
 - QuantLib's smile-section density is a finite difference: 1e-4 of the peak at its default gap.
 - A double cannot carry the time value of a deep in-the-money quote: the implied volatility is then only as good
   as the quote (the bound holds; the largest error was 2.3 vol points on a 300 % volatility one day from expiry).
+
+Platforms: the suite passes on macOS arm64 (local) and Linux x86_64 (CI's `oracle` job). The measured differences are
+the same on both to the digits shown, except the counts of what QuantLib's own yield solver manages.
 
 ### Not done yet (#503 stays open)
 

@@ -137,17 +137,27 @@ def test_investor_xirr_is_the_same_root_with_the_investors_signs(oracle):
 
 
 def test_two_roots_inside_the_bracket_are_unknown_not_one_of_them(oracle):
-    """(b) convention. -100, +230, -132 a year apart has two honest IRRs, 10 % and 20 %. The NPV has the same sign
-    at both ends of the bracket, so the module raises (unknown) while QuantLib's solver returns whichever root its
-    guess is nearer to. Unknown is the house rule for an ambiguous figure; the message says "no solution"."""
+    """(b) convention. -100, +230, -132 a year apart has two honest IRRs, 10 % and 20 %: QuantLib's NPV is zero at
+    both. The NPV has the same sign at both ends of the bracket, so the module raises (unknown). QuantLib's solver
+    returns whichever root its guess leads to, or gives up (which guesses converge differs between macOS and Linux),
+    so all that is asked of it is that anything it returns is one of the two. Unknown is the house rule for an
+    ambiguous figure; the module's message says "no solution"."""
     flows = [(date(2023, 1, 1), -100), (date(2024, 1, 1), 230), (date(2024, 12, 31), -132)]
     assert abs(ql_npv(flows, 0.10)) < 1e-9 and abs(ql_npv(flows, 0.20)) < 1e-9
     with pytest.raises(ValueError, match="no solution"):
         funds.xirr(flows)
     cf, d0 = leg(flows)
-    found = {round(ql.CashFlows.yieldRate(cf, 0.0, DC, ql.Compounded, ql.Annual, True, d0, d0, 1e-12, 1000, g), 6)
-             for g in (0.05, 0.12, 0.18, 0.3)}  # fmt: skip
-    assert found <= {0.1, 0.2} and found
-    oracle.note("funds.xirr (two sign changes)", "QuantLib CashFlows.yieldRate", grid=1, max_diff=len(found),
-                tolerance="none: QuantLib returns one of the two roots (10 %, 20 %), the module raises",
+    found = set()
+    for guess in (0.05, 0.12, 0.18, 0.3):
+        try:
+            root = ql.CashFlows.yieldRate(
+                cf, 0.0, DC, ql.Compounded, ql.Annual, True, d0, d0, 1e-12, 1000, guess
+            )
+        except RuntimeError:
+            continue
+        found.add(round(root, 6))
+    assert found <= {0.1, 0.2}
+    oracle.note("funds.xirr (two sign changes)", "QuantLib NPV; CashFlows.yieldRate from four guesses", grid=1,
+                max_diff=len(found), tolerance="none: both 10 % and 20 % zero QuantLib's NPV; its solver returned this "
+                "many of them (platform-dependent), the module raises",
                 verdict="(b) convention: an ambiguous IRR is unknown; the error text says 'no solution'")  # fmt: skip
