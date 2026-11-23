@@ -343,7 +343,7 @@ async def test_regrade_reruns_the_stored_series_and_fails_closed_when_it_is_gone
         assert [c.grade for c in mine] == ["U"] and mine[0].changed
         assert "could not be re-checked" in mine[0].reason and "no stored NAV series" in mine[0].reason
         s.rollback()
-    with session_scope() as s:  # the database is shared by the session: leave no citation that re-checks differently
+    with session_scope() as s:  # one database per session: leave no citation that re-checks differently
         s.query(Claim).filter_by(id=res["claim_id"]).delete()
 
 
