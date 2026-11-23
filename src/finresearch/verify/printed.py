@@ -1,54 +1,72 @@
 """Printed-value check of a synthesised report: the figure printed beside a citation is the cited claim's value.
 
-`verify.gate.check_report` proves that every `[C<id>]` is a usable claim; this module proves the text agrees with
-it (issue #502; the idea of a number-consistency pass over the finished document is after the ib-check-deck and
-initiating-coverage skills of anthropics/financial-services, rewritten). It reads only the report and the ledger
-rows the gate already loaded, uses no model, and decides nothing about severity (`verify.gate.printed_findings`).
+`verify.gate.check_report` proves that every `[C<id>]` is a usable claim; this module checks that the text agrees
+with it (issue #502; the idea of a number-consistency pass over the finished document is after the ib-check-deck
+and initiating-coverage skills of anthropics/financial-services, rewritten). It reads only the report and the
+ledger rows the gate already loaded, uses no model, and decides nothing about severity
+(`verify.gate.printed_findings`).
 
-How one citation is judged
---------------------------
+How one citation is judged (`_judge`)
+-------------------------------------
 * Group  — consecutive citations (`[C1][C2]`, `[C1], [C2]`, `[C1] and [C2]`) form one group and share the figures
            printed before them ("Only ₹3,976.54m of ₹6,847.20m [C4688][C4687]": two figures, two claims, any order).
-* Scope  — what may SATISFY a claim: in a table row the cell that holds the citation, or the whole row when that
-           cell prints no figure of its own (a "Source" column); elsewhere the sentence.
-           What may be ACCUSED (reported as "printed instead"): only the clause between the previous citation group
-           of that scope and this one, so a figure that already has its own citation is never held against the next.
-* Pass   — any number in the scope equals the claim's value (`matches`: display rounding, ₹ scales, % vs fraction,
-           the printed sign), or equals another figure of the claim's own statement or period. Ledger claims are
-           often one statement holding several periods with one headline `value` ("38.54% (Q1 FY27), 25.75%
-           (FY26), ..."), so a report row printing the FY25 figure beside that claim is supported by it.
+* Scope  — what may SATISFY a claim: in a table row the sentence of the cell that holds the citation; the whole
+           row when the citation stands alone in a cell without numbers (a "Source" column); elsewhere the sentence
+           (a citation after the full stop belongs to the sentence before it).
+           What may be HELD AGAINST it: only the clause between the previous citation group of that sentence and
+           this one (in a "Source" cell: the row).
+* Pass   — a number in the scope equals the claim's value (`matches`, below) and is not printed with the opposite
+           sign.
+* Flag   — the value is not printed, and the clause states a figure of the claim's kind that nothing cited in the
+           scope holds: not the value or another statement figure of any claim cited there (this one included),
+           and not a figure the report computes. The finding names the claim, the value held and that figure.
+           A matched magnitude printed with the opposite sign is flagged as `sign`.
 * Not judged — a claim without a numeric value; a claim cited as the INPUT of a computation ("fincalc from
-           [C1][C2]", "inputs [C1]"); a clause labelled as a computation ("(fincalc)", "analyst estimate"); a scope
-           that prints no figure that could be the claim's (none at all, only other cited claims' figures, or only
-           figures of another kind: a "33%" is never held against a claim in ₹ million).
-* Flag   — otherwise: the claim's value is not printed, and the clause prints a figure of the claim's kind that no
-           claim cited in the scope holds. The finding names the claim, the value held and the figure printed.
+           [C1][C2]", "inputs [C1]"); and, when nothing is flagged, a scope that prints no number, or only figures
+           that cannot be held against the claim:
+           - another figure of the claim's own statement or period (outcome `statement`). Ledger claims are often
+             one statement over several periods with one headline `value` ("38.54% (Q1 FY27), 25.75% (FY26),
+             ..."), so a row printing the FY25 figure beside that claim is supported by it;
+           - figures of the other claims cited there, or of another kind (a "33%" is never held against a claim in
+             ₹ million, a ₹ amount never against a rate, a bare integer only against a count whose unit word
+             follows it: "54 shares");
+           - a labelled computation ("(fincalc)", "analyst estimate", a row whose only citations are inputs),
+             where it is labelled and wherever the report repeats it;
+           - a figure in double quotation marks (quoted or discussed: 'any "₹20 crore" figure is wrong');
+           - a bound the author sets ("at least 1.0x", "below ₹250");
+           - in a table cell without numbers, a citation that follows words ("QIB stays thin [C920]") supports
+             those words: the row's other cells are not its figures.
 
 Display rounding (the precise rule, `matches`)
 ----------------------------------------------
 A printed figure p with d digits after the point equals a held value v when |p - v| <= half a unit of p's last
-printed digit (2,651.97 -> "2,652", "2,652.0"; 0.057377 -> "0.057", "0.06"), or within `REL_TOL` (0.05 %, the
-gate's tolerance for source figures). The half-unit rule applies in the unit the figure is printed in:
-"₹2.65k crore" is 2,650 crore +- 5 crore, "₹26.5bn" is 26.5bn +- 0.05bn. It does not apply to
-* a bare integer with no marker (no ₹, %, x, scale word, decimal point or digit grouping, and not followed by the
-  claim's own unit word): "3 plants" is 3, never a rounded 2.65;
-* a ₹ scale the figure does not name: an unmarked "2,652" may be the claim's value in its own unit after rounding,
-  or its value in another ₹ scale within `REL_TOL` only (so "3" is never 2.65 billion);
-* a printed 0, which equals only a held 0.
-A scale word or a % sign next to the figure is binding: "₹2,651.97 crore" is not 2,651.97 million, and "0.15%" is
-not 15 % (an unmarked "0.15" may be the fraction form of 15 %).
+printed digit, in the unit the figure names: 2,651.97 -> "2,652", "2,652.0"; 0.057377 -> "0.057", "0.06";
+2,651.97 crore -> "₹2.65k crore" (2,650 +- 5 crore), "₹26.5bn" (+- 0.05 bn). Truncation is not rounding
+("2,651"). There is no other tolerance, except that
+* an unmarked figure (no scale word) may also be the value in another ₹ scale within `REL_TOL` (0.05 %, the gate's
+  tolerance for source figures: a crore table printing 265.20 for 2,651.97 million), and the fraction or per cent
+  form of a rate ("0.15" for 15 %);
+* a bare integer below 100 with no marker (no ₹, %, x, scale word, decimal point or digit grouping, and not
+  followed by the claim's own unit word) is a count and must be exact: "3 plants" is never a rounded 2.65;
+* a printed 0 equals only a held 0.
+A scale word, a % sign or a currency sign next to the figure is binding: "₹2,651.97 crore" is not 2,651.97
+million, "0.15%" is not 15 %, "₹5,100 million" is not US$5,100 million.
 
-Sign: a matched magnitude is a `sign` mismatch only on positive evidence of the opposite sign (an explicit + or
-minus, an accounting bracket, or a profit / loss word next to the figure, read as `verify.values.sign_conflict`
-does). A negative claim printed without any sign word ("₹348.45m higher than the books") passes.
+Sign: a matched magnitude is a mismatch only on positive evidence of the opposite sign: an explicit + or minus, an
+accounting bracket (the whole table cell, or "₹(117.64)m"; never a parenthesis in prose), or a profit / loss word
+in the figure's own clause, read as `verify.values.sign_conflict` reads a source line. A negative claim printed
+without any sign word ("₹348.45m higher than the books") passes, and so does a bracketed money amount beside a
+claim that says nothing about direction (an outflow row).
 
-Also reported, separately: one metric and period printed with two values (`TwoValues`): two different cited
-claims with the same metric and period whose headline values are both printed and more than `CONFLICT_TOL` apart.
-One claim printing several figures of its own statement is not a finding.
+Also reported, separately (`TwoValues`): one metric and period printed with two values, i.e. two different cited
+claims with the same metric and period and the same kind of unit, both printed, more than `CONFLICT_TOL` apart,
+and never set side by side. The ledger's metric and period do not name the entity (live runs hold one "peer_pe"
+claim per peer), so claims printed in one table, list or paragraph are a comparison the report makes on purpose.
 
-Not read: a unit declared only in a table caption or header ("(₹ million)"), citations in a non-canonical spelling
-("(C12)"; the gate asks for those to be rewritten), and which of two claims cited in one sentence owns which figure
-(two ids swapped inside one sentence both pass; in a table with one citation per cell they are caught).
+Not read: a unit declared only in a table caption or header ("(₹ million)"), so a x10 slip on an unmarked ₹ figure
+equals another ₹ scale and passes; citations in a non-canonical spelling ("(C12)"; the gate asks for those to be
+rewritten); and which of two claims cited in one sentence owns which figure (two ids swapped inside one sentence
+both pass; in a table with one citation per cell they are caught).
 """
 
 from __future__ import annotations

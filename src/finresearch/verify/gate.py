@@ -24,7 +24,8 @@ Checks (results stored in claim.checks; a failing check never silently passes a 
 The publish gate (check_report) inspects a synthesized report: it may only cite usable claims, must not cite raw
 document lines, and high-importance claims it relies on must be verified AND carry evidence grade A, B or D
 (verify.evidence, #242: a verified web-only claim whose quote was never checked is grade C and blocks). It also applies the accounting-identity
-severity policy (see `identity_findings`) to the checks in `verify.identities`.
+severity policy (see `identity_findings`) to the checks in `verify.identities`, and compares the figure printed
+beside each citation with the cited claim's value (verify.printed, #502; severity policy at `printed_findings`).
 """
 
 from __future__ import annotations
@@ -503,24 +504,25 @@ def check_report(session: Session, run_id: int, report_markdown: str) -> ReportG
 # --------------------------------------------------------------------------- printed figures: severity policy
 # verify.printed judges each [C<id>] of the report against the figures printed beside it (#502; its docstring has the
 # rule). How a finding reaches the publish gate:
-#   1. A mismatch (the claim's value is not printed there, and a figure that nothing cited there holds is; or its
+#   1. A mismatch (the claim's value is not printed there and a figure that nothing cited there holds is; or the
 #      value is printed with the opposite sign) is a WARNING at every importance while PRINTED_VALUE_BLOCKS is False.
 #   2. With PRINTED_VALUE_BLOCKS True, a mismatch on a high-importance claim BLOCKS; other importances still warn.
 #   3. "One metric and period printed with two values" always warns.
-# The messages name the claim, the value it holds and the figure printed, because they become revision notes.
+# The messages name the claim, the value it holds and the figure printed, because they become revision notes. They
+# are put ahead of the other warnings: `revision_request` sends the first 30 and the run manifest keeps 50.
 #
 # Why the switch is off (measured 23-Nov-2026 on the four exported live runs in tests/fixtures/eval: 848 citations
-# of 446 claims that hold a value; the PR of #502 has the table). The rule now raises 2 findings there, both real
-# (a claim for the floor-price share count cited beside the cap-price count; a FY25 ROCE claim beside the FY24
-# figure), both on normal-importance claims, and no false alarm. But it got there by four fixes, each read off the
-# one report that showed the problem (a figure-less table cell that argues in words, a bound the author sets, a
-# quoted figure, a fincalc result repeated without its label, a sign word of the neighbouring clause): judged on
-# the report it was NOT fitted to, the rule gave 12 false alarms in 3 of the 4 runs, 10 of them on high-importance
-# claims, each of which would have re-run synthesis and could have left a sound report blocked. Four reports
-# cannot show that the next report's layout is covered.
-# To turn it on: export runs the rule has never been fitted to (`finresearch eval export`), read every finding of
-# `finresearch.verify.printed.check_printed` on them, and set this to True once at least three such runs in a row
-# show no false alarm on a high-importance claim (tests/test_gate_printed.py pins both settings).
+# of 446 claims that hold a value; tests/test_gate_printed.py pins the table). The rule raises 2 findings there,
+# both real (the floor-price share-count claim cited beside the cap-price count; the FY25 ROCE claim beside the FY24
+# figure), both on normal-importance claims, and no false alarm. It got there through five rules that were each
+# read off the one report that showed the problem (a citation after words in a table cell without figures, a bound
+# the author sets, a quoted figure, a fincalc result repeated without its label, a sign word of the neighbouring
+# clause). Without those five the same code raises 14 false alarms in 3 of the 4 reports, 12 of them on
+# high-importance claims: that is what it did on reports it had not been fitted to, and each one would have re-run
+# synthesis and could have left a sound report blocked. Four reports cannot show the next layout is covered.
+# To turn it on: export runs the rule was never fitted to (`finresearch eval export`), read every finding of
+# `verify.printed.check_printed` on them, and set this to True once three such runs in a row show no false alarm on
+# a high-importance claim. Until then a warning reaches the synthesiser only when something else blocks.
 PRINTED_VALUE_BLOCKS = False
 
 
