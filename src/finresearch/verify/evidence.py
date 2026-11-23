@@ -6,7 +6,8 @@
     C  web citation whose quote was not checked (no stored snapshot)
     D  computed by fincalc: save_claim re-ran the call, it reproduced the value, its input claims are cited, and
        every numeric argument is one of those claims' values or a declared constant (#265); or an option-fact tool
-       (mcp_server.option_facts, #393) that save_claim re-ran on the stored market data and that reproduced it
+       (mcp_server.option_facts, #393) that save_claim re-ran on the stored market data and that reproduced it; or
+       fund_sip_outcome (mcp_server.fund_facts, #505), re-run on the AMFI NAV series it stored
     U  unsupported: a checked citation that failed, or a free-text calculation note nobody re-ran
 
 A claim's grade is the best of its citations' (A, B, D are "checked"; C is weaker; U worst). The publish gate
@@ -30,6 +31,9 @@ LABEL = {
     "U": "unsupported",
 }
 OPTION_FACT = "computed from stored market data by an option-fact tool, re-run on save"
+FUND_FACT = "computed from the stored AMFI NAV series by a fund-fact tool, re-run on save"
+# computation["kind"] of a tool's own citation -> (grade-D label, what a failed check is called)
+TOOL_FACT = {"option_fact": (OPTION_FACT, "option-fact"), "fund_fact": (FUND_FACT, "fund-fact")}
 _HTTP = re.compile(r"^https?://", re.I)
 
 
@@ -42,15 +46,12 @@ def citation_grade(ct: Citation) -> tuple[str, str]:
             return "A", LABEL["A"]
         return "U", "document quote not found at the cited lines"
     if ct.computation:
-        if (ct.computation or {}).get(
-            "kind"
-        ) == "option_fact":  # #393: an option-fact tool re-run on stored data
+        kind = (ct.computation or {}).get("kind")
+        if kind in TOOL_FACT:  # #393, #505: a tool re-run on the data it was computed from
+            label, words = TOOL_FACT[kind]
             if ct.quote_found:
-                return "D", OPTION_FACT
-            return (
-                "U",
-                f"option-fact check failed: {(ct.computation or {}).get('detail') or 'not reproduced'}",
-            )
+                return "D", label
+            return "U", f"{words} check failed: {(ct.computation or {}).get('detail') or 'not reproduced'}"
         if ct.quote_found:
             return "D", LABEL["D"]
         return "U", f"fincalc check failed: {(ct.computation or {}).get('detail') or 'not reproduced'}"

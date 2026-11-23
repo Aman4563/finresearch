@@ -192,18 +192,26 @@ def test_a_claim_citing_expense_drag_is_rerun_and_grade_d(env, tmp_path):
 
 
 def test_a_bond_yield_claim_binds_price_coupon_frequency_and_face(env, tmp_path):
+    """The par bond of the tests above bought at 97.4687, its price at a 9 % yield: so the YTM is 9 %. At 9 % the
+    present values are 7.339450, 6.733440 and 83.395816 (sum 97.468705): Macaulay = (7.339450 + 2 x 6.733440 +
+    3 x 83.395816) / 97.468705 = 2.780316 years, modified = 2.780316 / 1.09 = 2.550748."""
     run_id = _run(tmp_path)
-    ids = [_fact(run_id, "clean_price", "100", "INR per 100 face value"), _fact(run_id, "coupon_rate", "8", "%"),
+    ids = [_fact(run_id, "clean_price", "97.4687", "INR per 100 face value"), _fact(run_id, "coupon_rate", "8", "%"),
            _fact(run_id, "coupon_frequency", "1", "payments/year"), _fact(run_id, "face_value", "100", "INR")]  # fmt: skip
-    ytm = {"fincalc": {"function": "bonds.ytm", "args": {"clean": "100", **PAR}}, "inputs": ids}
-    y = _save(run_id, [ytm], stream="bond_pricing", statement="Yield to maturity is 8 %", metric="ytm",
-              value="8", unit="%")  # fmt: skip
+    ytm = {"fincalc": {"function": "bonds.ytm", "args": {"clean": "97.4687", **PAR}}, "inputs": ids}
+    y = _save(run_id, [ytm], stream="bond_pricing", statement="Yield to maturity is 9 %", metric="ytm",
+              value="9", unit="%")  # fmt: skip
     assert _grade(y["claim_id"]) == ("D", "unverified"), y
     # the duration at that yield: the yield argument is the computed claim, the rest are the bond's terms
-    cite = {"fincalc": {"function": "bonds.duration", "args": {"yld": "0.08", **PAR}, "result_key": "modified"},
+    cite = {"fincalc": {"function": "bonds.duration", "args": {"yld": "0.09", **PAR}, "result_key": "modified"},
             "inputs": [*ids[1:], y["claim_id"]]}  # fmt: skip
-    kw = {"stream": "bond_pricing", "statement": "Modified duration is 2.58 years", "metric": "modified_duration",
-          "unit": "years"}  # fmt: skip
-    assert _grade(_save(run_id, [cite], value="2.58", **kw)["claim_id"]) == ("D", "unverified")
-    macaulay = _save(run_id, [cite], value="2.78", **kw)  # the other duration: not what result_key names
+    kw = {"stream": "bond_pricing", "statement": "Modified duration is 2.5507 years", "unit": "years",
+          "metric": "modified_duration"}  # fmt: skip
+    assert _grade(_save(run_id, [cite], value="2.5507", **kw)["claim_id"]) == ("D", "unverified")
+    macaulay = _save(run_id, [cite], value="2.7803", **kw)  # the other duration: not what result_key names
     assert _grade(macaulay["claim_id"]) == ("U", "unsupported")
+    # a price the cited claims do not hold: right arithmetic, no evidence
+    loose = {"fincalc": {"function": "bonds.ytm", "args": {"clean": "100", **PAR}}, "inputs": ids}
+    res = _save(run_id, [loose], stream="bond_pricing", statement="Yield to maturity is 8 %", metric="ytm",
+                value="8", unit="%")  # fmt: skip
+    assert _grade(res["claim_id"]) == ("U", "unsupported")
