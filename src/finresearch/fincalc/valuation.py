@@ -444,3 +444,117 @@ def wacc(cost_of_equity: Num, cost_of_debt_after_tax: Num, market_cap: Num, net_
     we, wd = e / (e + d), d / (e + d)
     rule = NET_CASH_RULE if nd <= 0 else "market-value weights: E = market cap, D = net debt"
     return Wacc(ke, kd, e, nd, d, we, wd, ke * we + kd * wd, nd <= 0, rule)
+
+
+# --------------------------------------------------------------------------- explicit DCF (#504)
+# Year-by-year cash flows with one terminal-value method per call, so each call has one value to cite; call it once
+# per method to compare them. Conventions:
+# * year-end (default): CF_t is discounted t years. Mid-year: the year's cash arrives evenly, so it is treated as
+#   arriving at t - 0.5 (the mid-year adjustment of Koller, Goedhart & Wessels, "Valuation", McKinsey & Co.
+#   [U: chapter and page not checked]; the terminal-value treatment below is derived here, not quoted).
+# * growth method (Gordon 1962, "The Investment, Financing and Valuation of the Corporation"): TV_n = CF_n (1+g) /
+#   (r - g). Under the mid-year convention its flows are mid-year too, CF_n (1+g)^k at n + k - 0.5, whose sum at
+#   time 0 is TV_n / (1+r)^(n - 0.5): the terminal value is discounted n - 0.5 years, not n.
+# * exit-multiple method: TV_n = multiple x the final year's metric (EBITDA, say), a price at the END of year n, so
+#   it is discounted the full n years under both conventions.
+# * implied figures put the two methods on one footing: with s = sqrt(1 + r) under mid-year (else 1), the growth
+#   method implies the exit multiple s x TV_n / metric, and an exit value TV implies the growth
+#   (TV x r - s x CF_n) / (TV + s x CF_n), the g that solves TV = s x CF_n (1+g) / (r - g).
+
+
+@dataclass(frozen=True)
+class DcfExplicit:
+    """A DCF of year-by-year cash flows with one terminal-value method; `unknown` says why each None is None."""
+
+    cash_flows: list[Decimal]
+    discount_rate: Decimal
+    mid_year: bool
+    periods: list[Decimal]  # years each cash flow is discounted: t, or t - 0.5 under the mid-year convention
+    pv_cash_flows: list[Decimal]
+    pv_explicit: Decimal
+    terminal_method: str  # "growth" or "exit_multiple"
+    terminal_growth: Decimal | None
+    exit_multiple: Decimal | None
+    terminal_metric: Decimal | None
+    terminal_value: Decimal  # at the end of the last year, before discounting
+    terminal_period: Decimal  # years the terminal value is discounted
+    pv_terminal: Decimal
+    value: Decimal
+    terminal_share: Decimal | None  # pv_terminal / value; None when the value is not positive
+    implied_exit_multiple: Decimal | None  # growth method, when a positive terminal_metric is given
+    implied_terminal_growth: Decimal | None  # exit-multiple method, when the final cash flow is positive
+    unknown: dict[str, str]
+
+
+def _series(xs: object, name: str) -> list[Decimal]:
+    """A non-empty list of numbers (year 1 first); ValueError for a bare number, a string or an empty list."""
+    if not isinstance(xs, list | tuple) or not xs:
+        raise ValueError(f"{name} must be a non-empty list, year 1 first")
+    return [to_decimal(x) for x in xs]
+
+
+def dcf_explicit(cash_flows: list[Num], discount_rate: Num, terminal_growth: Num | None = None,
+                 exit_multiple: Num | None = None, terminal_metric: Num | None = None,
+                 mid_year: bool = False) -> DcfExplicit:  # fmt: skip
+    """DCF of year-by-year `cash_flows` (year 1 first) plus a terminal value by growth OR exit multiple; cite `value`.
+
+    Give `terminal_growth` (Gordon: CF_n (1+g) / (r - g)) or `exit_multiple` with `terminal_metric` (the final
+    year's EBITDA or other metric), one per call. Returns the PV of each year, the PV of the terminal value, its
+    share of the value, and the other method's implied figure: the exit multiple the growth method implies (needs
+    `terminal_metric`), or the growth an exit multiple implies. `mid_year`: cash arrives at t - 0.5 (see the
+    conventions above this function). A negative year is allowed. ValueError when r <= g, when the final cash flow
+    is not positive under the growth method (a perpetuity of a loss is not a value), or for a non-positive multiple
+    or metric under the exit method. A figure that cannot be computed is None with its reason in `unknown`.
+    """
+    cfs = _series(cash_flows, "cash_flows")
+    r = _rate(discount_rate, "discount_rate", low=Decimal(0))
+    if not isinstance(mid_year, bool):
+        raise ValueError("mid_year must be true or false")
+    if (terminal_growth is None) == (exit_multiple is None):
+        raise ValueError("give terminal_growth (growth method) or exit_multiple with terminal_metric, one per call")
+    n, half = len(cfs), Decimal("0.5") if mid_year else Decimal(0)
+    s = (1 + r).sqrt() if mid_year else Decimal(1)  # (1 + r)^0.5: what half a year of discounting is worth
+    disc, pvs = Decimal(1), []
+    for cf in cfs:
+        disc *= 1 + r
+        pvs.append(cf * s / disc)
+    metric, unknown = opt_decimal(terminal_metric), {}
+    g = m = implied_m = implied_g = None
+    if terminal_growth is not None:
+        g = _rate(terminal_growth, "terminal_growth")
+        if r <= g:
+            raise ValueError("discount_rate must exceed terminal_growth")
+        if cfs[-1] <= 0:
+            raise ValueError("the final year's cash flow must be > 0 for the growth method: extend the forecast "
+                             "to a year with a positive cash flow, or use an exit multiple")  # fmt: skip
+        tv, tv_period = cfs[-1] * (1 + g) / (r - g), n - half
+        pv_tv = tv * s / disc
+        if metric is None:
+            unknown["implied_exit_multiple"] = "terminal_metric was not given"
+        elif metric <= 0:
+            unknown["implied_exit_multiple"] = "terminal_metric is not positive: a multiple of it means nothing"
+        else:
+            implied_m = tv * s / metric
+        unknown["implied_terminal_growth"] = "applies to the exit-multiple method: here the growth is the input"
+    else:
+        m = to_decimal(exit_multiple)
+        if m <= 0:
+            raise ValueError(f"exit_multiple must be > 0, got {m}")
+        if metric is None:
+            raise ValueError("the exit-multiple method needs terminal_metric (the final year's EBITDA, say)")
+        if metric <= 0:
+            raise ValueError(f"terminal_metric must be > 0 for the exit-multiple method, got {metric}")
+        tv, tv_period = m * metric, Decimal(n)
+        pv_tv = tv / disc
+        if cfs[-1] <= 0:
+            unknown["implied_terminal_growth"] = ("the final year's cash flow is not positive: no growth rate "
+                                                  "turns it into this terminal value")  # fmt: skip
+        else:
+            implied_g = (tv * r - s * cfs[-1]) / (tv + s * cfs[-1])
+        unknown["implied_exit_multiple"] = "applies to the growth method: here the multiple is the input"
+    pv, value = sum(pvs, Decimal(0)), sum(pvs, Decimal(0)) + pv_tv
+    if value <= 0:
+        unknown["terminal_share"] = "the value is not positive: a share of it means nothing"
+    return DcfExplicit(cfs, r, mid_year, [Decimal(t) - half for t in range(1, n + 1)], pvs, pv,
+                       "growth" if g is not None else "exit_multiple", g, m, metric, tv, tv_period, pv_tv, value,
+                       pv_tv / value if value > 0 else None, implied_m, implied_g, unknown)  # fmt: skip
