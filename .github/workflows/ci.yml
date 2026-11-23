@@ -56,6 +56,17 @@ jobs:
           uv run alembic upgrade head
           uv run alembic check
       - run: uv run pytest -q   # offline: fake Claude CLI, mocked Ollama/HTTP, real Postgres service
+  # #503: the in-house maths against outside libraries (QuantLib, arch, scipy, statsmodels, mpmath) over grids of
+  # synthetic inputs. Its own job and its own uv group: `test` above never installs these libraries, the suite needs
+  # no database, and merges do not wait on this job (docs/dev/ORACLE_TESTS.md).
+  oracle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --locked --group oracle
+      - run: uv run --locked --group oracle pytest oracle_tests -q
   web:
     runs-on: ubuntu-latest
     timeout-minutes: 30  # a slow runner took 16 min to install and build and was cancelled mid-e2e at 20 (#461)
