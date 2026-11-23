@@ -304,8 +304,10 @@ refills on the first evening the job runs again. Nothing else changes: the jobs 
 downloads, and stop after two refusals. The bound is 45 calendar days (SPAN: 14, at ~10 MB a file); both are
 proposals, not measured against NSE's tolerance. A gap that reaches further back is not fetched and not hidden: the
 job's result names it, the log warns every evening, and one alert gives the command that fills it, for example
-`uv run finresearch equity backfill --from 2026-09-02 --to 2026-10-08` (run it outside market hours). An empty store
-keeps the normal window: its history is the backfill command's job. Not caught up, because nobody serves them
+`uv run finresearch equity backfill --from 2026-09-02 --to 2026-10-08` (run it outside market hours). The same goes
+for a hole behind newer loaded days, looked for up to 90 days back (an older build's short window filled only the
+last days of the November outage). An empty store keeps the normal window: its history is the backfill command's
+job, and SPAN's one-file-a-month history from before its nightly job is not a gap. Not caught up, because nobody serves them
 again: the forward quote recorder, the F&O card log, the intraday archive and the IV recorder. The NSE circulars
 listing (10 days) and the paused FBIL rates (45 days) keep their own windows.
 

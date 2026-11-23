@@ -92,3 +92,19 @@ def test_the_schedule_names_the_bounds():
     sj = scheduler.schedule_json(WatchWindows(), running=True)
     assert sj["catch_up"] == {"max_days": 45, "span_max_days": 14}
     assert sj["equity_eod"] == {"after": "19:00", "lookback_days": 4, "requests_per_night": 1}  # unchanged
+
+
+def test_holes_older_than_the_bound_are_reported_not_fetched():
+    # loaded right up to Friday 20-Nov, but the store's plan still wants the week of 14-Sep (older than the 9-Oct
+    # floor). Saturday 19-Sep is a day the F&O store would probe: not a session, so not counted
+    older = [D(2026, 9, n) for n in (14, 15, 16, 17, 18, 19)]
+    w = cu.window(TODAY, 4, D(2026, 11, 20), older=older, holidays=set())
+    assert (w.start, w.extended) == (D(2026, 11, 19), False)  # nothing older than the bound is fetched
+    assert w.uncovered == (D(2026, 9, 14), D(2026, 9, 18), 5)
+    assert w.summary() == {"from": "2026-11-19", "days": 0,
+                           "uncovered": {"from": "2026-09-14", "to": "2026-09-18", "sessions": 5}}  # fmt: skip
+    # with a continuous gap as well (loaded to 1-Sep): one range, a day named twice counted once
+    both = cu.window(TODAY, 4, D(2026, 9, 1), older=[D(2026, 9, 2), D(2026, 9, 3)], holidays=set())
+    assert both.uncovered == (D(2026, 9, 2), D(2026, 10, 8), 27)
+    # a day inside the bound passed as `older` by mistake is not reported as out of reach
+    assert cu.window(TODAY, 4, D(2026, 11, 20), older=[D(2026, 10, 12)], holidays=set()).uncovered is None

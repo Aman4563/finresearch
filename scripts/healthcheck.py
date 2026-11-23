@@ -151,11 +151,16 @@ def _postgres_down(p: Probes, cfg: Config) -> tuple[Problem, bool]:
             f"running, so Postgres refuses every start. To fix it, run: {fix}",
         ), True
     if p.postgres_running is True:
+        odd = ""
+        if p.pid_file and p.pid is not None and p.pid_command and not is_postgres(p.pid_command):
+            # e.g. another cluster runs while this one's lock is stale: said, never acted on
+            odd = f" {pidfile} names PID {p.pid}, which is '{p.pid_command}', not Postgres."
         return Problem(
             "postgres",
             "Postgres is not accepting connections",
             f"A postgres process is running but nothing answers on {where} (still starting, shutting down, or "
-            "listening elsewhere). Nothing was changed. Look at: brew services list, and Postgres's log.",
+            f"another cluster).{odd} Nothing was changed, because a postgres process exists. Look at: brew "
+            "services list, and Postgres's log.",
         ), False
     if (
         p.postgres_running is None
@@ -365,19 +370,16 @@ def move_stale_pid(pgdata: Path, now: float) -> Path:
     return dst
 
 
-def notify_macos(title: str, message: str, run: Run = run_command) -> None:
-    """A Notification Centre banner through osascript (the text is passed as AppleScript strings, quotes escaped)."""
+def notify_macos(title: str, message: str, run: Run = run_command) -> bool:
+    """A Notification Centre banner through osascript (the text is passed as AppleScript strings, quotes escaped).
+    False when osascript is missing or failed: the caller logs it, so a banner that never showed is not silent."""
 
     def q(s: str) -> str:
         return '"' + s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ") + '"'
 
-    run(
-        [
-            "osascript",
-            "-e",
-            f"display notification {q(message[:240])} with title {q('FinResearch')} subtitle {q(title)}",
-        ]
-    )
+    script = f"display notification {q(message[:240])} with title {q('FinResearch')} subtitle {q(title)}"
+    rc, _ = run(["osascript", "-e", script])
+    return rc == 0
 
 
 def load_state(path: Path) -> dict[str, Any]:
@@ -396,7 +398,7 @@ def save_state(path: Path, state: dict[str, Any]) -> None:
 
 
 def run_once(cfg: Config, state: dict[str, Any], now: float, *, probe: Callable[[], Probes],
-             notify: Callable[[str, str], None], move: Callable[[Path, float], Path],
+             notify: Callable[[str, str], Any], move: Callable[[Path, float], Path],
              log: Callable[[str], None]) -> dict[str, Any]:  # fmt: skip
     """One check: probe, decide, log every problem, notify the due ones, and (opt-in, confirmed, re-probed) move a
     stale postmaster.pid aside. Returns the new state."""
@@ -426,10 +428,13 @@ def run_once(cfg: Config, state: dict[str, Any], now: float, *, probe: Callable[
     if cfg.notify:
         for pr in due:
             if moved and pr.key == "postgres_stale_lock":
-                notify("Moved a stale postmaster.pid aside", f"It named PID {decision.pid}, which is not Postgres. "
-                       f"It is now {moved}; nothing was deleted. Postgres should start at its next retry.")  # fmt: skip
+                shown = notify("Moved a stale postmaster.pid aside",
+                               f"It named PID {decision.pid}, which is not Postgres. It is now {moved}; nothing "
+                               "was deleted. Postgres should start at its next retry.")  # fmt: skip
             else:
-                notify(pr.title, pr.message)
+                shown = notify(pr.title, pr.message)
+            if shown is False:  # osascript missing or refused: this log line is then the only notice
+                log(f"NOTIFY FAILED {pr.key}: the macOS notification could not be shown (osascript)")
     return {"checked_at": now, "ok": not decision.problems, "problems": problems,
             **({"last_move": {"at": now, "to": moved, "pid": decision.pid}} if moved else
                {"last_move": state["last_move"]} if "last_move" in state else {})}  # fmt: skip

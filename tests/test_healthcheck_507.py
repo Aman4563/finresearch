@@ -356,3 +356,93 @@ def test_the_script_is_standard_library_only_and_reads_no_secrets():
     for never in (".pgpass", '.env"', "/.env", "dotenv", "find-generic-password", "security ", "api_token",
                   "PGPASSWORD", "psql"):  # fmt: skip
         assert never not in code, never
+
+
+# ---------------------------------------------------------------------------------------------- review follow-ups
+def test_a_foreign_pid_in_the_lock_is_named_even_when_a_postgres_process_exists():
+    # e.g. another cluster is running while this one's lock is stale: said plainly, and still nothing is done
+    d = hc.decide(_with(STALE, postgres_running=True), OPTED_IN)
+    assert d.action is None and keys(d) == ["postgres"]
+    msg = d.problems[0].message
+    assert "/pg/data/postmaster.pid names PID 709, which is '/usr/libexec/rapportd', not Postgres." in msg
+    assert "Nothing was changed, because a postgres process exists" in msg
+    own = hc.decide(_with(STALE, postgres_running=True, pid_command="postgres"), OPTED_IN).problems[0].message
+    assert "names PID" not in own
+
+
+def test_a_notification_that_could_not_be_shown_is_logged():
+    assert hc.notify_macos("t", "m", runner({"osascript": (0, "")})) is True
+    assert hc.notify_macos("t", "m", runner({"osascript": (1, "")})) is False
+    assert hc.notify_macos("t", "m", runner({})) is False  # osascript is not there
+    f = Fakes(_with(OK, web_ok=False))
+    kw = f.kw()
+    kw["notify"] = lambda _t, _m: False
+    state = hc.run_once(CFG, hc.run_once(CFG, {}, 1000.0, **kw), 1300.0, **kw)
+    assert state["problems"]["web"]["notified"] == 1300.0
+    assert [ln for ln in f.lines if ln.startswith("NOTIFY FAILED web")] != []
+
+
+def _main_env(monkeypatch, tmp_path, probes, **env):
+    """main() with the probes and the banner replaced: it never looks at this machine."""
+    notes: list[tuple[str, str]] = []
+    monkeypatch.setattr(hc, "gather", lambda cfg: probes)
+    monkeypatch.setattr(hc, "notify_macos", lambda title, message: notes.append((title, message)) or True)
+    for k in [k for k in hc.os.environ if k.startswith("FINRESEARCH_HEALTH_")]:
+        monkeypatch.delenv(k)
+    monkeypatch.setenv("FINRESEARCH_HEALTH_STATE", str(tmp_path / "state" / "healthcheck.json"))
+    monkeypatch.setenv("FINRESEARCH_HEALTH_PGDATA", str(tmp_path / "pgdata"))
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    return notes
+
+
+def test_main_writes_its_state_notifies_on_the_second_run_and_never_moves_by_default(
+    monkeypatch, tmp_path, capsys
+):
+    import json
+
+    (tmp_path / "pgdata").mkdir()
+    (tmp_path / "pgdata" / "postmaster.pid").write_text("709\n")
+    notes = _main_env(monkeypatch, tmp_path, STALE)
+    assert hc.main([]) == 0 and notes == []
+    assert hc.main([]) == 0 and [t for t, _ in notes] == ["Postgres cannot start: stale postmaster.pid"]
+    state = json.loads((tmp_path / "state" / "healthcheck.json").read_text())
+    assert (
+        state["ok"] is False
+        and state["problems"]["postgres_stale_lock"]["count"] == 2
+        and state["checked_at"] > 0
+    )
+    assert (tmp_path / "pgdata" / "postmaster.pid").read_text() == "709\n"  # untouched: no opt-in
+    out = capsys.readouterr().out
+    assert out.count("PROBLEM postgres_stale_lock") == 2 and "ACTION" not in out
+
+
+def test_main_with_the_opt_in_moves_the_tmp_lock_on_the_second_run(monkeypatch, tmp_path, capsys):
+    pg = tmp_path / "pgdata"
+    pg.mkdir()
+    (pg / "postmaster.pid").write_text("709\n")
+    notes = _main_env(monkeypatch, tmp_path, STALE, FINRESEARCH_HEALTH_MOVE_STALE_PID="1")
+    assert hc.main([]) == 0 and (pg / "postmaster.pid").exists()  # the first run only waits
+    assert hc.main([]) == 0
+    (moved,) = list(pg.iterdir())
+    assert moved.name.startswith("postmaster.pid.stale-") and moved.read_text() == "709\n"
+    assert [t for t, _ in notes] == ["Moved a stale postmaster.pid aside"]
+    out = capsys.readouterr().out
+    assert "ACTION waiting" in out and f"ACTION moved the stale {pg / 'postmaster.pid'}" in out
+
+
+def test_dry_run_prints_and_changes_nothing(monkeypatch, tmp_path, capsys):
+    pg = tmp_path / "pgdata"
+    pg.mkdir()
+    (pg / "postmaster.pid").write_text("709\n")
+    notes = _main_env(monkeypatch, tmp_path, STALE, FINRESEARCH_HEALTH_MOVE_STALE_PID="1")
+    for _ in range(3):
+        assert hc.main(["--dry-run"]) == 0
+    out = capsys.readouterr().out
+    assert (
+        "DRY RUN would report postgres_stale_lock" in out
+        and "DRY RUN action: move_stale_pid (opt-in on)" in out
+    )
+    assert (
+        notes == [] and not (tmp_path / "state").exists() and (pg / "postmaster.pid").read_text() == "709\n"
+    )

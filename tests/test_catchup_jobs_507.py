@@ -67,6 +67,15 @@ def _loaded(model, *days: date) -> None:
             s.add(model(day=d, status="loaded", attempts=1))
 
 
+def _nightly_ran(slot: str) -> None:
+    """The record a nightly job leaves of an evening it ran (alert_eval_slot)."""
+    from finresearch.db import session_scope
+    from finresearch.db.models import AlertEvalSlot
+
+    with session_scope() as s:
+        s.add(AlertEvalSlot(slot=slot, result={"status": "done", "attempts": 1}))
+
+
 # ---------------------------------------------------------------------------------------------- equity (4 days)
 @respx.mock
 async def test_equity_job_refills_three_weeks_and_skips_holidays_and_weekends(clean):
@@ -208,6 +217,7 @@ async def test_span_job_has_its_own_smaller_bound(clean):
     from finresearch.monitor import span as job
 
     _loaded(SpanDay, D(2026, 10, 30))
+    _nightly_ran("span:2026-10-30")
     respx.get(url__startswith=sp.ARCHIVES).mock(return_value=httpx.Response(404, text="<html/>"))
     async with _http() as http:
         res = await job.span_step(EVENING, holidays=set(), http=http, pause=0.0)
@@ -237,3 +247,78 @@ async def test_participant_job_starts_from_the_file_that_is_further_behind(clean
     assert _asked(po.VOL.url_for) == NOV_WEEKDAYS  # before #507: 18, 19, 20 and 23-Nov
     assert _asked(po.OI.url_for) == [TODAY]
     assert res["fno_participant"]["catch_up"] == {"from": "2026-10-31", "days": 18}
+
+
+# ---------------------------------------------------------------------------------------------- older than the bound
+@respx.mock
+async def test_a_hole_older_than_spans_bound_is_reported_when_the_newest_days_are_loaded(clean):
+    """What exists at deploy: SPAN loaded to 30-Oct, an older build then loaded 19, 20 and 23-Nov. On Tuesday 24-Nov
+    the 14-day window starts at 10-Nov; 2-Nov to 9-Nov is out of reach and must be said, not dropped."""
+    from finresearch.db import session_scope
+    from finresearch.db.models import Alert, SpanDay
+    from finresearch.monitor import span as job
+
+    _loaded(SpanDay, D(2026, 10, 30), D(2026, 11, 19), D(2026, 11, 20), D(2026, 11, 23))
+    _nightly_ran("span:2026-10-30")
+    respx.get(url__startswith=sp.ARCHIVES).mock(return_value=httpx.Response(404, text="<html/>"))
+    async with _http() as http:
+        res = await job.span_step(EVENING + timedelta(days=1), holidays=set(), http=http, pause=0.0)
+    assert _asked(sp.url_for) == [D(2026, 11, n) for n in (10, 11, 12, 13, 16, 17, 18, 24)]
+    gap = {"from": "2026-11-02", "to": "2026-11-09", "sessions": 6}  # 2, 3, 4, 5, 6 and Monday 9-Nov
+    assert res["span"]["catch_up"] == {"from": "2026-11-10", "days": 10, "uncovered": gap}
+    with session_scope() as s:
+        msg = s.scalars(select(Alert.message).where(Alert.kind == "catchup_gap")).one()
+    assert "finresearch fno span backfill --daily --from 2026-11-02 --to 2026-11-09" in msg
+
+
+@respx.mock
+async def test_spans_monthly_samples_from_before_the_nightly_job_are_not_a_gap(clean):
+    from finresearch.db import session_scope
+    from finresearch.db.models import Alert, SpanDay
+    from finresearch.monitor import span as job
+
+    # one sampled file a month until the nightly job began on 30-Oct (fnohist.span), every session since
+    _loaded(
+        SpanDay, D(2026, 9, 15), D(2026, 10, 15), D(2026, 10, 30), *[d for d in NOV_WEEKDAYS if d != TODAY]
+    )
+    _nightly_ran("span:2026-10-30")
+    respx.get(url__startswith=sp.ARCHIVES).mock(return_value=httpx.Response(404, text="<html/>"))
+    async with _http() as http:
+        res = await job.span_step(EVENING, holidays=set(), http=http)
+    assert _asked(sp.url_for) == [TODAY] and "catch_up" not in res["span"]
+    with session_scope() as s:
+        assert s.scalars(select(Alert).where(Alert.kind == "catchup_gap")).all() == []
+
+
+@respx.mock
+async def test_the_first_ever_span_night_does_not_backfill_from_the_last_sample(clean):
+    from finresearch.db.models import SpanDay
+    from finresearch.monitor import span as job
+
+    _loaded(SpanDay, D(2026, 10, 15))  # a sampled file; tonight is the nightly job's first run
+    respx.get(url__startswith=sp.ARCHIVES).mock(return_value=httpx.Response(404, text="<html/>"))
+    async with _http() as http:
+        res = await job.span_step(EVENING, holidays=set(), http=http)
+    assert _asked(sp.url_for) == [D(2026, 11, 19), D(2026, 11, 20), TODAY] and "catch_up" not in res["span"]
+
+
+@respx.mock
+async def test_an_old_hole_in_the_equity_store_is_reported_once_and_not_fetched(clean):
+    from finresearch.db import session_scope
+    from finresearch.db.models import Alert, EquityEodDay
+    from finresearch.monitor import equity_eod as job
+
+    # every weekday from 1-Sep to 20-Nov is loaded except the week of 14-Sep (older than the 9-Oct floor)
+    days = [D(2026, 9, 1) + timedelta(days=n) for n in range(81)]
+    hole = {D(2026, 9, n) for n in (14, 15, 16, 17, 18)}
+    _loaded(EquityEodDay, *[d for d in days if d.weekday() < 5 and d not in hole])
+    respx.get(url__startswith=NSE).mock(return_value=httpx.Response(404, text="<html></html>"))
+    async with _http() as http:
+        res = await job.equity_eod_step(EVENING, holidays=set(), http=http, keep_raw=False)
+        await job.equity_eod_step(EVENING + timedelta(days=1), holidays=set(), http=http, keep_raw=False)
+    assert _asked(ee.url_for) == [TODAY, D(2026, 11, 24)]  # the hole is never downloaded by the nightly job
+    gap = {"from": "2026-09-14", "to": "2026-09-18", "sessions": 5}
+    assert res["equity_eod"]["catch_up"] == {"from": "2026-11-19", "days": 0, "uncovered": gap}
+    with session_scope() as s:
+        (msg,) = s.scalars(select(Alert.message).where(Alert.kind == "catchup_gap")).all()
+    assert "finresearch equity backfill --from 2026-09-14 --to 2026-09-18" in msg

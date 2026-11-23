@@ -10,7 +10,9 @@ Bounded: never further back than MAX_CATCHUP_DAYS [U] (45 calendar days, about 3
 evening's worth of small files, and the 30 sessions of SPAN zips the margin engine keeps). SPAN_MAX_CATCHUP_DAYS [U]
 is smaller because one SPAN file is ~10 MB and fnohist.span calls daily history "a disk and request decision". A gap
 that reaches beyond the bound is reported, never silently skipped: `uncovered` names its first and last session, the
-job's result carries it, a warning is logged and one alert per gap says which command fills it (`report`).
+job's result carries it, a warning is logged and one alert per gap says which command fills it (`report`). That
+covers the sessions between the last loaded day and the bound, and a hole behind newer loaded days as far back as
+REPORT_DAYS (an older build's short lookback filled only the newest days of an outage and left such a hole).
 
 What stays as it was: the job still runs once per trading-day evening from its RUN_AFTER (19:00 to 19:30 IST), so a
 catch-up never downloads in market hours; the same backfill does the work, with the shared NSE budget, its stops
@@ -34,6 +36,9 @@ log = logging.getLogger(__name__)
 
 MAX_CATCHUP_DAYS = 45  # [U] calendar days; proposed in #507, not measured against NSE's tolerance
 SPAN_MAX_CATCHUP_DAYS = 14  # [U] calendar days: at most ~10 SPAN zips (~100 MB) in one evening
+REPORT_DAYS = (
+    90  # how far back a hole behind newer loaded days is still looked for and reported (never fetched)
+)
 ALERT_KIND = "catchup_gap"
 # seconds between downloads while a catch-up is on: each dataset's manual backfill default (`finresearch fno
 # backfill --delay`, `index backfill`, `equity backfill`, `fno span backfill`, `fno participants`, `fno fii-stats`)
@@ -71,17 +76,21 @@ def is_session(day: date, holidays: Collection[date] | None) -> bool:
 
 
 def window(today: date, lookback: int, last_loaded: date | None, *, missing: Iterable[date] = (),
-           bound: int = MAX_CATCHUP_DAYS, holidays: Collection[date] | None = None) -> Window:  # fmt: skip
+           older: Iterable[date] = (), bound: int = MAX_CATCHUP_DAYS,
+           holidays: Collection[date] | None = None) -> Window:  # fmt: skip
     """Pure arithmetic. `last_loaded`: the store's newest loaded day (None: an empty store). `missing`: days the
-    store's own plan would still fetch (those outside [today - bound, today - lookback) are ignored). `holidays`:
-    the known trading holidays, None when unknown."""
+    store's own plan would still fetch (those outside [today - bound, today - lookback) are ignored). `older`: days
+    that plan still wants that are older than the bound (a hole behind newer loaded days): reported with the
+    sessions between `last_loaded` and the bound, never fetched. `holidays`: the known trading holidays, None when
+    unknown."""
     normal = today - timedelta(days=lookback)
     if last_loaded is None:
         return Window(normal, normal)
     floor = min(today - timedelta(days=bound), normal)
     want = min([normal, last_loaded + DAY, *(d for d in missing if floor <= d < normal)])
-    gap = [d for d in _days(last_loaded + DAY, floor - DAY) if is_session(d, holidays)]
-    return Window(max(want, floor), normal, (gap[0], gap[-1], len(gap)) if gap else None)
+    gap = {d for d in _days(last_loaded + DAY, floor - DAY) if is_session(d, holidays)}
+    gap |= {d for d in older if d < floor and is_session(d, holidays)}
+    return Window(max(want, floor), normal, (min(gap), max(gap), len(gap)) if gap else None)
 
 
 def _days(a: date, b: date) -> Iterable[date]:
@@ -115,18 +124,24 @@ def _known_holidays(a: date, b: date, holidays: set[date] | None) -> set[date]:
 
 def for_store(s: Any, today: date, lookback: int, day_col: Any, where: tuple[Any, ...],
               plan: Callable[[date, date], list[date]], *, bound: int = MAX_CATCHUP_DAYS,
-              holidays: set[date] | None = None) -> Window:  # fmt: skip
+              holidays: set[date] | None = None, since: date | None = None) -> Window:  # fmt: skip
     """`window` for one store: `day_col` (filtered by `where`) holds its loaded days and `plan(start, end)` is its
-    own list of days still to fetch. Days before the store's first loaded day are its history, never a gap."""
+    own list of days still to fetch, asked once from REPORT_DAYS back: the days inside the bound move the start, the
+    older ones are reported. Days before the store's first loaded day are its history, never a gap; so are days
+    before `since`, the first day of the store's daily coverage when that is later (SPAN)."""
     from sqlalchemy import func, select
 
     first, last = s.execute(select(func.min(day_col), func.max(day_col)).where(*where)).one()
     normal, floor = today - timedelta(days=lookback), today - timedelta(days=bound)
-    missing = (
-        [d for d in plan(floor, normal - DAY) if d > first] if first is not None and floor < normal else []
-    )
-    return window(today, lookback, last, missing=missing, bound=bound,
-                  holidays=_known_holidays(floor - timedelta(days=366), today, holidays))  # fmt: skip
+    horizon = min(today - timedelta(days=REPORT_DAYS), floor)
+    if since is not None and last is not None:
+        last = max(last, since - DAY)
+    wanted: list[date] = []
+    if first is not None and horizon < normal:
+        wanted = [d for d in plan(horizon, normal - DAY) if d > first and (since is None or d >= since)]
+    return window(today, lookback, last, missing=[d for d in wanted if d >= floor],
+                  older=[d for d in wanted if d < floor], bound=bound,
+                  holidays=_known_holidays(horizon - timedelta(days=366), today, holidays))  # fmt: skip
 
 
 def fno_bhav(s: Any, today: date, lookback: int, holidays: set[date] | None = None) -> Window:
@@ -155,12 +170,19 @@ def equity_eod(s: Any, today: date, lookback: int, holidays: set[date] | None = 
 
 
 def span(s: Any, today: date, lookback: int, holidays: set[date] | None = None) -> Window:
+    """SPAN's history before the nightly job is one sampled file a month (fnohist.span), so its daily coverage
+    starts on the first evening the nightly job ran: the oldest "span:<day>" slot (tonight's, on its first night)."""
+    from sqlalchemy import func, select
+
+    from finresearch.db.models import AlertEvalSlot
     from finresearch.db.models import SpanDay as D
     from finresearch.fnohist import span as store
 
+    oldest = s.scalar(select(func.min(AlertEvalSlot.slot)).where(AlertEvalSlot.slot.like("span:%")))
+    since = date.fromisoformat(oldest.split(":", 1)[1]) if oldest else today
     return for_store(s, today, lookback, D.day, (D.status == "loaded",),
                      lambda a, b: store.plan_days(s, a, b, today, holidays, monthly=False),
-                     bound=SPAN_MAX_CATCHUP_DAYS, holidays=holidays)  # fmt: skip
+                     bound=SPAN_MAX_CATCHUP_DAYS, holidays=holidays, since=since)  # fmt: skip
 
 
 def participant_files(s: Any, today: date, lookback: int, kinds: Iterable[Any],
