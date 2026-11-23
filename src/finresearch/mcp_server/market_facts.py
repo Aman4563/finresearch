@@ -231,7 +231,9 @@ def stock_beta(s: Session, symbol: str, index: str = "NIFTY", end: str | None = 
 
 def _beta_answer(s: Session, sym: str, idx: str, sessions: int, b: market.Beta, missing: int, last: date,
                  events: list[tuple[date, Decimal]], fetched: bool) -> dict[str, Any]:  # fmt: skip
-    if fetched:
+    if (
+        fetched or events
+    ):  # the symbol's actions were loaded (or rows of an old symbol or BSE's gave a factor)
         adjustment = (f"back-adjusted for {len(events)} stored split, bonus or rights factor(s) in the window "
                       "(corp_action, fincalc.corporate_actions.adjust_prices)")  # fmt: skip
     else:

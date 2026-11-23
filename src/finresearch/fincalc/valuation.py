@@ -5,6 +5,10 @@ rupee unit; per-share outputs are in that unit per share, so convert to **rupees
 (``numbers.convert(x, "crore", "inr")``) when you want ₹/share. Multiples are plain numbers;
 yields are fractions. ``None`` propagates; P/E and P/B return ``None`` for non-positive
 EPS/BVPS (not meaningful). ValueError for negative share counts / prices and COE <= g.
+
+The valuation toolkit (#504: discount rate, explicit DCF and its checks, projected cash flows, lender methods)
+returns small dataclasses that carry their inputs and constants, so a claim can cite one figure of a call by its
+``result_key``; a figure that cannot be computed is ``None`` with the reason in the result's ``unknown``.
 """
 
 from __future__ import annotations
@@ -710,9 +714,8 @@ class DcfChecks:
     years: int | None
     spread_over_terminal_growth: Decimal | None  # r - g
     spread_over_risk_free: Decimal | None  # r - risk-free
-    steady_state_share: (
-        Decimal | None
-    )  # ((1+g) / (1+r))^years: the terminal share of a company growing at g throughout
+    # ((1+g) / (1+r))^years: the terminal share of a company that grows at g from year 1 (needs `years`)
+    steady_state_share: Decimal | None
     bands: dict[str, Decimal]
 
 
