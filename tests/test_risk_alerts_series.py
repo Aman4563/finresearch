@@ -136,7 +136,14 @@ def test_short_legs_get_touch_gap_through_and_event_readings(clean) -> None:
     got = _read(leg_readings, DAY, NOW)
     inst = "NIFTY 2026-10-27 23800PE"
     f = 24000 * math.exp(0.065 * 4 / 365)
-    assert got[("touch", inst)].value == pytest.approx(ra.touch_prob(f, 23800, 0.14, 4 / 365))
+    # #520: the reader gives the exact first passage N(-d2) + (F/K) N(-d1), no longer ra.touch_prob's 2 N(-d2)
+    sd = 0.14 * math.sqrt(4 / 365)
+    d1 = (math.log(f / 23800) + sd * sd / 2) / sd
+    n = statistics.NormalDist().cdf
+    assert got[("touch", inst)].value == pytest.approx(n(-(d1 - sd)) + f / 23800 * n(-d1))
+    assert got[("touch", inst)].value < ra.touch_prob(
+        f, 23800, 0.14, 4 / 365
+    )  # a put: the shortcut overstated it
     assert "risk-neutral" in got[("touch", inst)].detail
     assert not any(i.endswith("23000PE") for _, i in got)  # a long leg is not at risk of a gap through it
     # 299 same-contract gaps: 298 of +-ln(1.01) = 0.995 % (opens equal the closes, which alternate +-1 %) and

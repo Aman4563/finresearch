@@ -150,9 +150,10 @@ def _may_hold(s: Session, day: date) -> bool:
 
 def leg_readings(s: Session, day: date, now: datetime) -> list[Row]:
     """Per open short option leg in tonight's marks (fno_mark, paper and Groww): its risk-neutral touch probability
-    at its own IV (ra.TOUCH_LABEL) and the share of the front future's stored overnight gaps beyond its strike's
-    distance; per index underlying held, the tier-1 event check up to its last expiry (eventcal). Tonight's marks
-    not written, or a Groww book that could not be marked, read unknown for the whole book."""
+    at its own IV (the formula and label of ra.TOUCH_VARIANT, the exact first passage since #520; inputs that are not
+    positive read unknown) and the share of the front future's stored overnight gaps beyond its strike's distance;
+    per index underlying held, the tier-1 event check up to its last expiry (eventcal). Tonight's marks not written,
+    or a Groww book that could not be marked, read unknown for the whole book."""
     import math
 
     from finresearch.eventcal import calendar, store
@@ -194,9 +195,12 @@ def leg_readings(s: Session, day: date, now: datetime) -> list[Row]:
         else:
             t, iv = float(m.t_years), float(m.iv)
             f = spot * math.exp(MARK_RATE * t)
-            p = ra.touch_prob(f, k, iv, t)
-            out.append(("touch", key, Reading(p, mser, f"strike {k:g}, forward {f:,.0f}, IV {iv:.1%}, "
-                                              f"{t * 365:.1f} days: {ra.TOUCH_LABEL}")))  # fmt: skip
+            fn, label = ra.TOUCH_VARIANTS[ra.TOUCH_VARIANT]  # #520: the exact first passage (variant 2)
+            p = fn(f, k, iv, t)
+            inputs = f"strike {k:g}, forward {f:,.0f}, IV {iv:.1%}, {t * 365:.1f} days"
+            detail = f"{inputs}: {label}" if p is not None else (
+                f"{inputs}: one of them is not positive, so there is no touch probability")  # fmt: skip
+            out.append(("touch", key, Reading(p, mser, detail)))
         gser = f"fno_bhav front-future overnight gaps of {m.symbol} to {day}"
         if spot is None:
             out.append(("gap_stop", key, Reading(None, gser, "the underlying's close is unknown")))
@@ -223,4 +227,26 @@ def leg_readings(s: Session, day: date, now: datetime) -> list[Row]:
             names = ", ".join(f"{e['title']} {e['day']}" for e in w["tier1"])
             out.append(("event", sym, Reading(val, f"calendar_event tier 1 from {day} to {end}",
                                               w["note"] + (f" ({names})" if names else ""))))  # fmt: skip
+    return out
+
+
+def touch_marks(s: Session, start: date, end: date) -> list[ra.TouchMark]:
+    """#520: every stored mark of a short option leg from `start` to `end`, with the inputs the touch alert reads
+    (`leg_readings`: the forward is the close carried at MARK_RATE), for ra.touch_replay. A leg whose direction, IV,
+    close or time is not stored keeps its row with no inputs (an unknown leg-day). The book is personal: local,
+    reads only."""
+    import math
+
+    rows = s.scalars(select(FnoMark).where(FnoMark.day >= start, FnoMark.day <= end,
+                                           FnoMark.right.in_(("call", "put"))).order_by(FnoMark.day, FnoMark.id)).all()  # fmt: skip
+    out: list[ra.TouchMark] = []
+    for m in rows:
+        if m.qty is not None and m.qty >= 0:
+            continue
+        if m.qty is None or m.iv is None or m.spot is None or m.t_years is None:
+            out.append(ra.TouchMark(m.day, _leg_key(m), None, None, None, None))
+            continue
+        t = float(m.t_years)
+        out.append(ra.TouchMark(m.day, _leg_key(m), float(m.spot) * math.exp(MARK_RATE * t), float(m.strike or 0),
+                                float(m.iv), t))  # fmt: skip
     return out

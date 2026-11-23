@@ -14,6 +14,11 @@ Registered values, from the issue's reviewed text (20-Oct-2026, "Maths"):
 TOUCH_LEVEL and GAP_STOP_LEVEL are not given by the issue ("against a registered level"): they are registered here
 [U: set by this PR, listed for the owner's decision]. Every statistic needs its full window; a shorter or gapped
 history is unknown (None with the reason), never "no shock".
+
+Post hoc, 23-Nov-2026 (#520): the lines above are left as registered. The 2 x P_Q shortcut is variant 1 of the touch
+formula; the alert now reads variant 2, the exact first-passage probability (`touch_prob_exact`, TOUCH_VARIANT), at
+the same TOUCH_LEVEL. Both variants, their labels and the replay that compares them are recorded and hashed in
+fincalc/risk_alert_specs.py (pinned in risk_alert_prereg.py; prose in evals/experiments/risk_alerts/ADDENDUM.md).
 """
 
 from __future__ import annotations
@@ -38,6 +43,14 @@ MUTE_PRECISION, MUTE_MIN_FIRED = 0.20, 10
 NEVER_MUTE = frozenset({"limit", "margin", "es", "gap_stop"})
 TOUCH_LABEL = ("risk-neutral (Q) probability that the underlying touches the strike before expiry, from the strike's "
                "own IV (driftless reflection, 2 x P_Q(S_T beyond K)): not a forecast of the real-world chance")  # fmt: skip
+# #520, variant 2 (the three values above are variant 1's and stay as shipped; TOUCH_LEVEL is shared, not re-centred)
+TOUCH_LABEL_EXACT = ("risk-neutral (Q) probability that the underlying touches the strike before expiry, from the "
+                     "strike's own IV (exact for a driftless lognormal forward watched continuously: N(-d2) + (F/K) "
+                     "N(-d1) below it, N(d2) + (F/K) N(d1) above; daily closes see fewer touches): not a forecast of "
+                     "the real-world chance")  # fmt: skip
+# beta = -zeta(1/2) / sqrt(2 pi), zeta(1/2) = -1.4603545088...: Broadie, Glasserman and Kou (1997), "A continuity
+# correction for discrete barrier options", Mathematical Finance 7(4), 325-349, Theorem 1.1 (beta ~ 0.5826)
+BGK_BETA = 0.5825971579390107
 
 
 @dataclass(frozen=True)
@@ -159,6 +172,66 @@ def touch_prob(forward: float, strike: float, vol: float, t_years: float) -> flo
     return min(1.0, 2 * p)
 
 
+def touch_prob_exact(forward: float | None, strike: float | None, vol: float | None, t_years: float | None, *,
+                     monitoring_dates: int | None = None) -> float | None:  # fmt: skip
+    """The exact risk-neutral probability that the forward touches `strike` before expiry (variant 2, #520).
+
+    Derivation. Under Q the forward is a driftless lognormal martingale, dF = sigma F dW, so X_t = ln(F_t / F_0) is a
+    Brownian motion with drift, X_t = mu t + sigma W_t with mu = -sigma^2 / 2. Its first-passage law (the reflection
+    principle after Girsanov's change of drift, i.e. the inverse Gaussian law; a textbook result, e.g. Karatzas and
+    Shreve 1991, "Brownian Motion and Stochastic Calculus", on Brownian motion with drift) is, with s = sigma sqrt(T),
+        b < 0:  P(min_{t<=T} X_t <= b) = N(( b - mu T) / s) + exp(2 mu b / sigma^2) N(( b + mu T) / s)
+        b > 0:  P(max_{t<=T} X_t >= b) = N((-b + mu T) / s) + exp(2 mu b / sigma^2) N((-b - mu T) / s)
+    Put b = ln(K / F) and mu = -sigma^2 / 2. Then exp(2 mu b / sigma^2) = exp(-b) = F / K on both sides, and with
+        d1 = (ln(F / K) + sigma^2 T / 2) / s,    d2 = d1 - s
+    the arguments are (b - mu T) / s = -d2 and (b + mu T) / s = -d1 below, (-b + mu T) / s = d2 and
+    (-b - mu T) / s = d1 above:
+        K < F (a short put's strike):   P = N(-d2) + (F / K) N(-d1)
+        K > F (a short call's strike):  P = N( d2) + (F / K) N( d1)
+    (the one-touch paid at expiry at zero rates: Reiner and Rubinstein 1991, "Unscrambling the binary code", Risk
+    4(9)). Against the shortcut 2 N(-/+d2), with the undiscounted Black-76 prices put = K N(-d2) - F N(-d1) and
+    call = F N(d1) - K N(d2):
+        K < F:  exact = shortcut - put / K        K > F:  exact = shortcut + call / K
+    so the shortcut overstates a short put and understates a short call. Limits: K -> F gives 1, a strike far away
+    gives 0; for a given K / F it depends on sigma and T only through sigma^2 T and rises with it; at the same
+    |ln(K / F)| the strike below has the higher probability (the -sigma^2 / 2 drift), equal only as sigma^2 T -> 0.
+
+    Monitoring. The formula assumes the barrier is watched continuously, while the alert reads one close a day; a
+    daily-close watch sees fewer touches, so this is the larger of the two figures. `monitoring_dates` = m (off by
+    default; turning it on for the alert would be a new registered variant) applies the continuity correction of
+    Broadie, Glasserman and Kou (1997; see BGK_BETA): m equally spaced watch dates, the last at expiry, are priced as
+    a continuous barrier moved away from the forward to K exp(-/+ beta sigma sqrt(T / m)). Their Theorem 1.1 and
+    Corollary 4.1 state it for barrier and binary barrier option prices, with error o(1 / sqrt(m)); using the same
+    shift for the plain touch probability is this module's reading, checked against a daily-step Monte Carlo
+    (tests/test_touch_exact_mc.py), not a result quoted from the paper.
+
+    Unknown stays unknown: a missing, non-finite or non-positive input returns None (never 0 or 1); so does a strike
+    exactly at the forward under discrete monitoring, where the barrier's side is not defined."""
+    if any(v is None or not math.isfinite(v) or v <= 0 for v in (forward, strike, vol, t_years)):
+        return None
+    f, k, sigma, t = float(forward), float(strike), float(vol), float(t_years)  # type: ignore[arg-type]
+    if monitoring_dates is not None:
+        if monitoring_dates < 1 or k == f:
+            return None
+        shift = BGK_BETA * sigma * math.sqrt(t / monitoring_dates)
+        k *= math.exp(-shift if k < f else shift)
+    if k == f:
+        return 1.0
+    s = sigma * math.sqrt(t)
+    d1 = (math.log(f / k) + s * s / 2) / s
+    d2 = d1 - s
+    n = NormalDist().cdf
+    p = n(-d2) + f / k * n(-d1) if k < f else n(d2) + f / k * n(d1)
+    return min(1.0, p) if math.isfinite(p) else None
+
+
+# The touch formula's registered variants (fincalc/risk_alert_specs.py): key -> (function, label). The alert reads
+# TOUCH_VARIANT; variant 1 stays callable for the replay comparison (`touch_replay`).
+TOUCH_V1, TOUCH_V2 = "touch-reflection-v1", "touch-exact-v2"
+TOUCH_VARIANTS = {TOUCH_V1: (touch_prob, TOUCH_LABEL), TOUCH_V2: (touch_prob_exact, TOUCH_LABEL_EXACT)}
+TOUCH_VARIANT = TOUCH_V2
+
+
 def hysteresis(prev: str, u: float, fire: float = FIRE_U, clear: float = CLEAR_U) -> str:
     """ "fired" or "clear": a fired alert stays fired until u drops below `clear`; anything else fires at `fire`."""
     if prev == "fired":
@@ -264,3 +337,64 @@ def replay_summary(firings: Sequence[Firing], *, scenario_days: Sequence[date] =
             "episodes": {f"{a.isoformat()}..{b.isoformat()}": any(a <= d <= b for d in fired) for a, b in episodes},
             "max_false_alarms_per_year": MAX_FALSE_ALARMS,
             "within_false_alarm_limit": all(y["false_alarms"] <= MAX_FALSE_ALARMS for y in years.values())}  # fmt: skip
+
+
+# --------------------------------------------------------------------------- the touch variants' replay (#520)
+# Definitions registered in fincalc/risk_alert_specs.REPLAY before this code existed. It decides nothing.
+@dataclass(frozen=True)
+class TouchMark:
+    """One stored mark of a short option leg, as the nightly alert reads it (alerts.risk_readers.touch_marks). An
+    input that is missing or not positive makes it an unknown leg-day."""
+
+    day: date
+    leg: str  # symbol, expiry, strike and right: the alert's instrument
+    forward: float | None
+    strike: float | None
+    vol: float | None
+    t_years: float | None
+
+
+def touch_replay(marks: Iterable[TouchMark], level: float = TOUCH_LEVEL) -> dict[str, Any]:
+    """Both registered variants on the same marks, counts only: leg-days at `level` under each, under both, under
+    neither and under exactly one (by the strike's side of the forward); alert-days (sessions with at least one known
+    leg at the level) and those that change; firings as alerts.risk.apply counts them (a leg at the level fires unless
+    its last reading was also at the level; a reading below it or an unknown one ends the standing state). An unknown
+    leg-day is counted and never read as below the level; a session with only unknown legs is "unknown_only"."""
+    v1, v2 = TOUCH_V1, TOUCH_V2
+    leg_days: dict[str, Any] = {"known": 0, "unknown": 0, "at_level": {v1: 0, v2: 0}, "both": 0, "neither": 0,
+                                "changed": 0, "only": {v: {"below_forward": 0, "above_forward": 0} for v in (v1, v2)}}  # fmt: skip
+    gap = {"below_forward": 0.0, "above_forward": 0.0}
+    sessions: dict[date, dict[str, bool]] = {}
+    standing: dict[tuple[str, str], bool] = {}
+    firings = {v1: 0, v2: 0}
+    for m in sorted(marks, key=lambda x: x.day):
+        ses = sessions.setdefault(m.day, {"known": False, v1: False, v2: False})
+        exact = touch_prob_exact(m.forward, m.strike, m.vol, m.t_years)
+        if exact is None:
+            leg_days["unknown"] += 1
+            standing[(v1, m.leg)] = standing[(v2, m.leg)] = False
+            continue
+        p = {v1: touch_prob(m.forward, m.strike, m.vol, m.t_years), v2: exact}  # type: ignore[arg-type]
+        side = "below_forward" if m.strike < m.forward else "above_forward"  # type: ignore[operator]
+        gap[side] = max(gap[side], abs(p[v1] - p[v2]))
+        leg_days["known"] += 1
+        ses["known"] = True
+        on = {v: p[v] >= level for v in (v1, v2)}
+        for v in (v1, v2):
+            leg_days["at_level"][v] += on[v]
+            ses[v] = ses[v] or on[v]
+            firings[v] += on[v] and not standing.get((v, m.leg), False)
+            standing[(v, m.leg)] = on[v]
+        if on[v1] != on[v2]:
+            leg_days["changed"] += 1
+            leg_days["only"][v1 if on[v1] else v2][side] += 1
+        else:
+            leg_days["both" if on[v1] else "neither"] += 1
+    days = list(sessions.values())
+    return {"level": level, "variants": [v1, v2], "leg_days": leg_days,
+            "alert_days": {"sessions": len(days), "unknown_only": sum(not d["known"] for d in days),
+                           "at_level": {v: sum(d[v] for d in days) for v in (v1, v2)},
+                           "changed": sum(d[v1] != d[v2] for d in days),
+                           "only": {v1: sum(d[v1] and not d[v2] for d in days),
+                                    v2: sum(d[v2] and not d[v1] for d in days)}},
+            "firings": firings, "largest_gap": gap}  # fmt: skip
