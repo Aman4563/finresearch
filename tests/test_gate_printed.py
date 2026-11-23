@@ -503,10 +503,17 @@ def gate(led, report):
         return check_report(s, led["run"], report)
 
 
-def test_the_publish_gate_warns_about_a_printed_mismatch_and_says_what_to_fix(ledger):
+def test_the_block_switch_is_off_until_the_rule_is_read_on_runs_it_was_not_fitted_to():
+    """The one assertion to change when the owner turns blocking on (see the policy note in verify.gate)."""
     from finresearch.verify import gate as gate_mod
 
-    assert gate_mod.PRINTED_VALUE_BLOCKS is False  # the measured default: see the policy note in verify.gate
+    assert gate_mod.PRINTED_VALUE_BLOCKS is False
+
+
+def test_the_publish_gate_warns_about_a_printed_mismatch_and_says_what_to_fix(ledger, monkeypatch):
+    from finresearch.verify import gate as gate_mod
+
+    monkeypatch.setattr(gate_mod, "PRINTED_VALUE_BLOCKS", False)
     pat, band, lot = ledger["pat"], ledger["band"], ledger["lot"]
     clean = f"PAT was ₹2,651.97m [C{pat}] at the ₹272 cap [C{band}], in lots of 55 shares [C{lot}].\n"
     g = gate(ledger, clean)
@@ -524,9 +531,12 @@ def test_the_publish_gate_warns_about_a_printed_mismatch_and_says_what_to_fix(le
     assert f"[C{pat}] holds 2,651.97 INR million" in g.revision_request()
 
 
-def test_printed_findings_come_before_the_other_warnings(ledger):
+def test_printed_findings_come_before_the_other_warnings(ledger, monkeypatch):
     """`revision_request` sends the first 30 warnings and the run manifest keeps 50: a report with many caveat
     warnings must not push the one that says which figure is wrong out of sight."""
+    from finresearch.verify import gate as gate_mod
+
+    monkeypatch.setattr(gate_mod, "PRINTED_VALUE_BLOCKS", False)
     pat = ledger["pat"]
     lines = "".join(f"Margin was {i}.5% in segment {i}.\n" for i in range(40))  # an "uncited figures" warning
     g = gate(ledger, lines + f"PAT was ₹2,561.97m [C{pat}].\n")
