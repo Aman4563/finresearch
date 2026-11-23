@@ -340,3 +340,107 @@ def triangulate(ranges: dict[str, tuple[Num, Num]], disagree_above: Num = "0.30"
     mids = [(a + b) / 2 for a, b in rs]
     spread = (max(mids) - min(mids)) / min(mids) if min(mids) > 0 else Decimal(0)
     return Band(lo, hi, (ilo, ihi) if ilo <= ihi else None, spread > to_decimal(disagree_above), spread)
+
+
+# --------------------------------------------------------------------------- discount rate (#504)
+# The cost of capital built from its parts, so the rate in a DCF is a calculation on cited claims and never a
+# free-hand number. Every rate is an annual fraction (0.065 = 6.5 %); a figure of 1 or more is refused as a percent
+# typed where a fraction belongs. Idea after the dcf-model skill of anthropics/financial-services (Apache-2.0),
+# rewritten from the published formulas.
+
+
+def _rate(x: Num, name: str, *, low: Decimal = Decimal(-1), low_ok: bool = False) -> Decimal:
+    """A rate as a fraction in (low, 1), or [low, 1) with `low_ok`; ValueError otherwise."""
+    d = to_decimal(x)
+    if d >= 1:
+        raise ValueError(f"{name} must be a fraction (0.065 for 6.5 %), got {d}")
+    if d < low or (d == low and not low_ok):
+        raise ValueError(f"{name} must be {'>=' if low_ok else '>'} {low}, got {d}")
+    return d
+
+
+@dataclass(frozen=True)
+class CostOfEquity:
+    """CAPM cost of equity with the three inputs it was built from."""
+
+    risk_free: Decimal
+    beta: Decimal
+    equity_risk_premium: Decimal
+    cost_of_equity: Decimal
+
+
+def cost_of_equity_capm(risk_free: Num, beta: Num, equity_risk_premium: Num) -> CostOfEquity:
+    """CAPM cost of equity ``risk_free + beta x equity_risk_premium`` (Sharpe 1964); fractions; cite `cost_of_equity`.
+
+    Sharpe, "Capital Asset Prices: A Theory of Market Equilibrium under Conditions of Risk", Journal of Finance
+    19(3), 1964. The equity risk premium is the caller's ASSUMPTION claim (India has no official figure): nothing is
+    defaulted here. A negative beta is allowed (the formula holds); a premium <= 0 is refused, it is not a premium.
+    """
+    rf, b = _rate(risk_free, "risk_free"), to_decimal(beta)
+    erp = _rate(equity_risk_premium, "equity_risk_premium", low=Decimal(0))
+    return CostOfEquity(rf, b, erp, rf + b * erp)
+
+
+@dataclass(frozen=True)
+class CostOfDebt:
+    """After-tax cost of debt with its inputs."""
+
+    pre_tax: Decimal
+    tax_rate: Decimal
+    after_tax: Decimal
+
+
+def after_tax_cost_of_debt(pre_tax: Num, tax_rate: Num) -> CostOfDebt:
+    """After-tax cost of debt ``pre_tax x (1 - tax_rate)``: interest is tax-deductible; fractions; cite `after_tax`.
+
+    `pre_tax` is the company's borrowing rate (the yield on its bonds, or interest / average debt); `tax_rate` the
+    marginal rate the interest is deducted at. A loss-making company gets no shield yet: pass 0 and say so.
+    """
+    kd = _rate(pre_tax, "pre_tax", low=Decimal(0), low_ok=True)
+    t = _rate(tax_rate, "tax_rate", low=Decimal(0), low_ok=True)
+    return CostOfDebt(kd, t, kd * (1 - t))
+
+
+# The net-cash rule, our stated choice [U]: a company with more cash than debt is discounted at its cost of equity
+# (debt weight 0). Strictly its shares are a blend of the business and the cash, so the business alone is riskier
+# than the shares and its rate is ABOVE the cost of equity: (Ke x E - r_cash x C) / (E - C) for net cash C. That
+# needs the return on the cash as one more assumption, so the simple floor is used and the direction of the error is
+# said: the rule understates the rate (overstates value) for a cash-rich company, by about 0.4 percentage points
+# when net cash is 5 % of market cap (Ke 13.7 %, cash earning 6.5 %: (0.137 - 0.065 x 0.05) / 0.95 = 14.08 %).
+NET_CASH_RULE = ("net debt <= 0 (net cash): the debt weight is 0 and WACC = cost of equity; the cash is not "
+                 "unlevered out of the equity, which understates the rate for a cash-rich company")  # fmt: skip
+
+
+@dataclass(frozen=True)
+class Wacc:
+    """Weighted average cost of capital on market-value weights, with its inputs, the weights and the rule used."""
+
+    cost_of_equity: Decimal
+    cost_of_debt_after_tax: Decimal
+    market_cap: Decimal
+    net_debt: Decimal
+    debt_used: Decimal  # max(net debt, 0)
+    weight_equity: Decimal
+    weight_debt: Decimal
+    wacc: Decimal
+    net_cash: bool
+    rule: str
+
+
+def wacc(cost_of_equity: Num, cost_of_debt_after_tax: Num, market_cap: Num, net_debt: Num) -> Wacc:
+    """WACC ``Ke x E/(E+D) + Kd(after tax) x D/(E+D)`` on market-value weights; net cash gives Ke; cite `wacc`.
+
+    E is the market capitalisation and D the net debt, in one unit (book debt stands in for its market value, the
+    usual practice when the debt is not traded; never book equity). Weighting by market values is Modigliani and
+    Miller's cost of capital (American Economic Review 48(3), 1958; with the interest tax shield, 53(3), 1963).
+    Net cash (net_debt <= 0): the debt weight is 0 and the answer is the cost of equity (NET_CASH_RULE, in `rule`).
+    """
+    ke = _rate(cost_of_equity, "cost_of_equity", low=Decimal(0))
+    kd = _rate(cost_of_debt_after_tax, "cost_of_debt_after_tax", low=Decimal(0), low_ok=True)
+    e, nd = to_decimal(market_cap), to_decimal(net_debt)
+    if e <= 0:
+        raise ValueError(f"market_cap must be > 0, got {e}")
+    d = max(nd, Decimal(0))
+    we, wd = e / (e + d), d / (e + d)
+    rule = NET_CASH_RULE if nd <= 0 else "market-value weights: E = market cap, D = net debt"
+    return Wacc(ke, kd, e, nd, d, we, wd, ke * we + kd * wd, nd <= 0, rule)
