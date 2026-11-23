@@ -685,3 +685,33 @@ def test_transposed_digits_planted_in_the_live_reports_are_caught(name, caught, 
     unit word, a date). Making the rule more lenient must show up here."""
     assert plant(name, last=False, step=5) == (caught, planted)
     assert plant(name, last=True, step=5) == (caught, planted)
+
+
+def test_without_its_five_context_rules_the_rule_raises_14_false_alarms_on_the_live_runs(monkeypatch):
+    """The evidence behind `verify.gate.PRINTED_VALUE_BLOCKS = False`. Five exemptions were each read off the one
+    report that needed it. Switched off, the same code flags 16 citations: the 2 real ones and 14 false alarms in
+    3 of the 4 reports, 12 of them on high-importance claims, each of which would have been a block."""
+    from finresearch.verify import printed
+    from finresearch.verify.values import near_polarity
+
+    never = re.compile(r"(?!)")
+    sites = printed._sites
+    monkeypatch.setattr(printed, "_WORDS", never)  # a citation after words in a table cell without figures
+    monkeypatch.setattr(printed, "_BOUND", never)  # a bound the author sets
+    monkeypatch.setattr(printed, "_stated", lambda s: not s.computed)  # a quoted figure
+    monkeypatch.setattr(
+        printed, "_sites", lambda report: (sites(report)[0], [])
+    )  # a computed figure repeated
+    monkeypatch.setattr(printed, "_printed_sign",  # a sign word of the neighbouring clause
+                        lambda s: -1 if s.fig.neg else 1 if s.fig.plus else near_polarity(s.before, s.after))  # fmt: skip
+    real = {("orient-cables-run5", 656), ("orient-cables-run5", 744)}
+    false = []
+    for name in sorted(MEASURED):
+        report, claims = exported(name)
+        false += [(name, f.claim_id, f.importance, f.line) for f in check_printed(report, claims).findings
+                  if (name, f.claim_id) not in real]  # fmt: skip
+    assert len(false) == 14 and sum(importance == "high" for _, _, importance, _ in false) == 12
+    assert {name: sum(n == name for n, *_ in false) for name in MEASURED} == {
+        "bond-ine027e07998-run12": 2, "infosys-run9": 1, "mf-120505-run11": 0, "orient-cables-run5": 11}  # fmt: skip
+    assert sorted({line for name, _, _, line in false if name == "orient-cables-run5"}) == [16, 232, 303, 304, 306,
+                                                                                            308]  # fmt: skip
