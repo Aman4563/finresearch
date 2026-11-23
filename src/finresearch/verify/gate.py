@@ -24,7 +24,8 @@ Checks (results stored in claim.checks; a failing check never silently passes a 
 The publish gate (check_report) inspects a synthesized report: it may only cite usable claims, must not cite raw
 document lines, and high-importance claims it relies on must be verified AND carry evidence grade A, B or D
 (verify.evidence, #242: a verified web-only claim whose quote was never checked is grade C and blocks). It also applies the accounting-identity
-severity policy (see `identity_findings`) to the checks in `verify.identities`.
+severity policy (see `identity_findings`) to the checks in `verify.identities`, and compares the figure printed
+beside each citation with the cited claim's value (verify.printed, #502; severity policy at `printed_findings`).
 """
 
 from __future__ import annotations
@@ -493,8 +494,52 @@ def check_report(session: Session, run_id: int, report_markdown: str) -> ReportG
     ib, iw = identity_findings(session, run_id, set(ids))
     g.blocking += ib
     g.warnings += iw
+    pb, pw = printed_findings(report_markdown, {i: c for i, c in claims.items() if c.run_id == run_id})
+    g.blocking += pb
+    g.warnings = pw + g.warnings  # first: revision_request and the run manifest keep only the first 30 / 50
     g.ok = not g.blocking
     return g
+
+
+# --------------------------------------------------------------------------- printed figures: severity policy
+# verify.printed judges each [C<id>] of the report against the figures printed beside it (#502; its docstring has the
+# rule). How a finding reaches the publish gate:
+#   1. A mismatch (the claim's value is not printed there and a figure that nothing cited there holds is; or the
+#      value is printed with the opposite sign) is a WARNING at every importance while PRINTED_VALUE_BLOCKS is False.
+#   2. With PRINTED_VALUE_BLOCKS True, a mismatch on a high-importance claim BLOCKS; other importances still warn.
+#   3. "One metric and period printed with two values" always warns.
+# The messages name the claim, the value it holds and the figure printed, because they become revision notes. They
+# are put ahead of the other warnings: `revision_request` sends the first 30 and the run manifest keeps 50.
+#
+# Why the switch is off (measured 23-Nov-2026 on the four exported live runs in tests/fixtures/eval: 848 citations
+# of 446 claims that hold a value; tests/test_gate_printed.py pins the table). The rule raises 2 findings there,
+# both real (the floor-price share-count claim cited beside the cap-price count; the FY25 ROCE claim beside the FY24
+# figure), both on normal-importance claims, and no false alarm. It got there through five rules that were each
+# read off the one report that showed the problem (a citation after words in a table cell without figures, a bound
+# the author sets, a quoted figure, a fincalc result repeated without its label, a sign word of the neighbouring
+# clause). Without those five the same code raises 14 false alarms in 3 of the 4 reports, 12 of them on
+# high-importance claims: that is what it did on reports it had not been fitted to, and each one would have re-run
+# synthesis and could have left a sound report blocked. Four reports cannot show the next layout is covered.
+# To turn it on: export runs the rule was never fitted to (`finresearch eval export`), read every finding of
+# `verify.printed.check_printed` on them, and set this to True once three such runs in a row show no false alarm on
+# a high-importance claim. Until then a warning reaches the synthesiser only when something else blocks.
+PRINTED_VALUE_BLOCKS = False
+
+
+def printed_findings(report_markdown: str, claims: dict[int, Claim]) -> tuple[list[str], list[str]]:
+    """(blocking, warnings) of the printed-value check for the report's cited claims of this run."""
+    from finresearch.verify.printed import check_printed
+
+    rep = check_printed(report_markdown, claims)
+    blocking: list[str] = []
+    warnings: list[str] = []
+    for f in rep.findings:
+        msg = f.message() + (" — print the claim's value with its sign" if f.kind == "sign" else
+                             " — print the claim's value, cite the claim that holds this figure, or label it as a "
+                             "fincalc result with its inputs")  # fmt: skip
+        (blocking if PRINTED_VALUE_BLOCKS and f.importance == "high" else warnings).append(msg)
+    warnings += [t.message() + " — print one value, or say why the two differ" for t in rep.two_values]
+    return blocking, warnings
 
 
 # --------------------------------------------------------------------------- accounting identities: severity policy

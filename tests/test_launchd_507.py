@@ -70,9 +70,13 @@ def test_the_service_jobs_restart_with_a_throttle_and_run_in_the_gui_session():
     assert (
         by["api"]["StandardOutPath"] == "__REPO__/data/logs/serve.launchd.log"
     )  # serve.log is the app's, rotated
-    assert by["web"]["WorkingDirectory"] == "__REPO__/web" and by["web"]["StandardOutPath"].endswith(
-        "/web.log"
-    )
+    assert by["web"]["WorkingDirectory"] == "__REPO__/web"
+    assert by["web"]["StandardOutPath"] == "__REPO__/data/logs/web.launchd.log"
+    # #523: launchd cannot spawn a job whose stdout path is a file another process created, so no job may log
+    # to a file the hand-started app writes (the web job did, and exited 78 EX_CONFIG on every spawn)
+    for d in by.values():
+        for key in ("StandardOutPath", "StandardErrorPath"):
+            assert d[key].rsplit("/", 1)[1] not in ("serve.log", "web.log"), (d["Label"], key)
     h = by["healthcheck"]
     assert h["StartInterval"] == 300 and "KeepAlive" not in h and "RunAtLoad" not in h
     assert h["EnvironmentVariables"]["FINRESEARCH_HEALTH_MOVE_STALE_PID"] == "__MOVE_STALE_PID__"
@@ -144,7 +148,7 @@ def test_print_renders_valid_plists_and_changes_nothing(box):
     assert api["Label"] == "in.finresearch.api" and api["WorkingDirectory"] == str(box.repo)
     assert (
         web["WorkingDirectory"] == f"{box.repo}/web"
-        and web["StandardOutPath"] == f"{box.repo}/data/logs/web.log"
+        and web["StandardOutPath"] == f"{box.repo}/data/logs/web.launchd.log"
     )
     path = api["EnvironmentVariables"]["PATH"].split(":")
     assert path[-7:] == ["/opt/homebrew/bin", "/usr/local/bin", f"{box.home}/.local/bin", "/usr/bin", "/bin",
@@ -271,7 +275,9 @@ def test_the_launcher_starts_each_service_as_it_is_started_by_hand(box):
             repo,
             f"-i uv run finresearch serve --port {api} --log-file {repo}/data/logs/serve.log",
         ),
-        ("pnpm", f"{repo}/web", f"start -H 127.0.0.1 -p {web}"),
+        # under caffeinate like the API (#523): with node as the job's main process macOS held the web app at a
+        # "node would like to access files in your Desktop folder" prompt until someone answered it
+        ("caffeinate", f"{repo}/web", f"-i pnpm start -H 127.0.0.1 -p {web}"),
         ("uv", repo, f"run --no-project --quiet python {repo}/scripts/healthcheck.py"),
     ]
     bad = _launch(box, "everything")

@@ -1,7 +1,8 @@
 #!/bin/bash
 # The launchd jobs' launcher (#507; docs/USAGE.md "Start at login"). launchd runs
 #   run-service.sh api          the API and the monitor on 127.0.0.1:8710 (as by hand: caffeinate -i uv run finresearch serve)
-#   run-service.sh web          the web app on 127.0.0.1:3100 (as by hand: pnpm start -H 127.0.0.1 -p 3100, in web/)
+#   run-service.sh web          the web app on 127.0.0.1:3100 (as by hand: pnpm start -H 127.0.0.1 -p 3100, in web/;
+#                               here under caffeinate -i, see below)
 #   run-service.sh healthcheck  one run of scripts/healthcheck.py
 #
 # Never a second copy. `finresearch serve` starts the monitor before it binds its port, so a second copy would run
@@ -11,7 +12,8 @@
 # port is free. launchd sees one long-running job, not a crash loop, and nothing is ever killed here.
 #
 # The API's own log goes to data/logs/serve.log, rotated by size (`serve --log-file`); what launchd captures of this
-# launcher and of a crash before logging starts goes to data/logs/serve.launchd.log (and web.log for the web app).
+# launcher and of a crash before logging starts goes to data/logs/serve.launchd.log; the web app's output goes to
+# data/logs/web.launchd.log (files only launchd writes: #523).
 set -uo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -48,7 +50,10 @@ case "$SERVICE" in
     mkdir -p "$REPO/data/logs"
     wait_for_port "$WEB_PORT"
     cd "$REPO/web" || exit 1
-    exec pnpm start -H 127.0.0.1 -p "$WEB_PORT"
+    # under caffeinate, like the API: macOS asks for folder access on behalf of the job's MAIN process. With node
+    # there, a checkout under ~/Desktop (or Documents, Downloads) raised "node would like to access files in your
+    # Desktop folder" and the web app hung, silent, until someone answered; a node upgrade asks again (#523).
+    exec caffeinate -i pnpm start -H 127.0.0.1 -p "$WEB_PORT"
     ;;
   healthcheck)
     cd "$REPO" || exit 1
