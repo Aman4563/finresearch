@@ -265,19 +265,17 @@ def _option_fact_citation(session: Session, run_id: int, c: dict[str, Any], valu
     return _tool_fact_citation(session, run_id, c, value, "option_fact", option_fact)
 
 
-# citation key -> (what the kind is called, what its tool is re-run on)
-TOOL_FACTS = {"option_fact": ("option fact", "stored market data"),
-              "fund_fact": ("fund fact", "the stored NAV series")}  # fmt: skip
-
-
 def _tool_fact_citation(session: Session, run_id: int, c: dict[str, Any], value: Decimal | None, kind: str,
                         rerun: Callable[..., dict[str, Any]] | None) -> tuple[Citation, dict[str, Any]]:  # fmt: skip
-    """A figure a deterministic tool computed from data the app stores (TOOL_FACTS: an option-fact tool on the F&O
-    bhavcopy, #393; fund_sip_outcome on the AMFI NAV series it kept, #505, mcp_server.fund_facts). `rerun` runs the
-    tool again on that data: it must be known, return the cited result_key and reproduce the value (grade D)."""
+    """A figure a deterministic tool computed from data the app stores (verify.evidence.TOOL_FACT: an option-fact
+    tool on the F&O bhavcopy, #393; fund_sip_outcome on the AMFI NAV series it kept, #505, mcp_server.fund_facts).
+    `rerun` runs the tool again on that data: it must be known, return the cited result_key and reproduce the value
+    (grade D)."""
     import json
 
-    name, data = TOOL_FACTS[kind]
+    from finresearch.verify.evidence import TOOL_FACT
+
+    _, name, data = TOOL_FACT[kind]
     words = ("an " if name[0] in "aeiou" else "a ") + name.replace(" ", "-")
     spec = c.get(kind)
     if not isinstance(spec, dict) or not isinstance(spec.get("tool"), str) or not isinstance(

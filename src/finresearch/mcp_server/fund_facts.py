@@ -57,9 +57,9 @@ def window(latest: date | None, years: int | None, start: str | None, end: str |
     e = date.fromisoformat(end) if end else latest
     if e is None:
         raise ValueError("the scheme has no dated NAV in AMFI's file: give end (YYYY-MM-DD)")
-    if years is not None and not 1 <= int(years) <= 30:
-        raise ValueError("years must be between 1 and 30")
-    s = date.fromisoformat(start) if start else add_years(e, -int(years))
+    if years is not None and (isinstance(years, bool) or not isinstance(years, int) or not 1 <= years <= 30):
+        raise ValueError("years must be a whole number between 1 and 30")
+    s = date.fromisoformat(start) if start else add_years(e, -years)
     if s >= e:
         raise ValueError(f"start {s} must be before end {e}")
     return s, e

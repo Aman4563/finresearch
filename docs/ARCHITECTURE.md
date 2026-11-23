@@ -54,15 +54,24 @@ A resumable, budget-aware pipeline per research kind (IPO, stock, fund, bond): a
 adversarial verifiers, bull and bear analysts, a synthesiser and a completeness critic. Agents work only through the
 FinResearch MCP tools: documents, sections, search, tables, `fincalc`, live market data, read-only option-implied facts
 (`mcp_server/option_facts.py`: implied move, IV30 percentile, 25-delta skew from the stored bhavcopy; indices and the
-run's own stock only, the run bound by the server's config, granted to `stock_technical` only) and the claim ledger.
+run's own stock only, the run bound by the server's config, granted to `stock_technical` only), a SIP outcome from
+AMFI NAVs (`fund_sip_outcome`, `mcp_server/fund_facts.py`: the fund roles) and the claim ledger. `fincalc_call` runs
+the catalogued modules, and of `fincalc.funds` and `fincalc.bonds` only the functions that take plain numbers and
+dates (`mcp_server/server.py` `_FINCALC_ONLY`); a prompt or skill may name only what the catalogue holds
+(`tests/test_prompt_fincalc_refs.py`).
+
+What one agent hands to the next agent's prompt (the planner's questions and leads, a stream's summary, red flags
+and open questions, the bull and bear cases, the critic's follow-up tasks) is capped in length and count
+(`agents/schemas.py`). The caps reach the CLI through `--json-schema`; an answer that still breaks one is refused
+whole with the field named, never cut.
 
 Every finding is saved as an atomic claim (metric, value, unit, period) with citations. The verification gate:
 - checks each quoted value against its cited lines, and each web quote against the page text the `fetch_page` tool
-  stored (`verify/web.py`); a fincalc citation, or an option-fact tool's citation, is run again and must reproduce
-  the value;
+  stored (`verify/web.py`); a fincalc citation, or an option-fact or fund-fact tool's citation, is run again and
+  must reproduce the value (a fund fact on the NAV series the tool stored, found by its key and sha256);
 - grades every claim's evidence (`verify/evidence.py`): A document quote verified, B web quote verified on a stored
-  copy of the page, C web quote unchecked, D computed by fincalc from cited inputs (or by an option-fact tool from stored market data),
-  U unsupported;
+  copy of the page, C web quote unchecked, D computed by fincalc from cited inputs (or by an option-fact tool from
+  stored market data, or by `fund_sip_outcome` from the stored AMFI NAV series), U unsupported;
 - catches conflicts between streams, stale live figures and wrong bidding-day labels;
 - turns verifier corrections into new, re-checked claims, and gives verified high-importance claims an independent
   second verifier (`verifier_blind`: its own prompt, the STANDARD model tier, no ledger access) that is never shown

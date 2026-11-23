@@ -32,8 +32,10 @@ LABEL = {
 }
 OPTION_FACT = "computed from stored market data by an option-fact tool, re-run on save"
 FUND_FACT = "computed from the stored AMFI NAV series by a fund-fact tool, re-run on save"
-# computation["kind"] of a tool's own citation -> (grade-D label, what a failed check is called)
-TOOL_FACT = {"option_fact": (OPTION_FACT, "option-fact"), "fund_fact": (FUND_FACT, "fund-fact")}
+# computation["kind"] of a tool's own citation -> (grade-D label, what the kind is called, the data its tool is
+# re-run on): mcp_server.claims re-runs it on save, verify.regrade later
+TOOL_FACT = {"option_fact": (OPTION_FACT, "option fact", "stored market data"),
+             "fund_fact": (FUND_FACT, "fund fact", "the stored NAV series")}  # fmt: skip
 _HTTP = re.compile(r"^https?://", re.I)
 
 
@@ -48,9 +50,10 @@ def citation_grade(ct: Citation) -> tuple[str, str]:
     if ct.computation:
         kind = (ct.computation or {}).get("kind")
         if kind in TOOL_FACT:  # #393, #505: a tool re-run on the data it was computed from
-            label, words = TOOL_FACT[kind]
+            label, name, _ = TOOL_FACT[kind]
             if ct.quote_found:
                 return "D", label
+            words = name.replace(" ", "-")
             return "U", f"{words} check failed: {(ct.computation or {}).get('detail') or 'not reproduced'}"
         if ct.quote_found:
             return "D", LABEL["D"]
