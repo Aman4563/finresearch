@@ -68,12 +68,13 @@ To add a library: read its licence in both places, confirm the wheels, pin it ex
 
 ## What is compared (first slice, 23-Nov-2026)
 
-39 tests, 75 comparisons, between one and two minutes. The run prints one row per comparison (function, oracle, grid size,
+41 tests, 80 comparisons (39 and 75 in the first slice; #519 added the coupon comparisons), about two minutes. The run prints one row per comparison (function, oracle, grid size,
 largest difference, tolerance and its reason, verdict); `--oracle-report` writes the same table to a file. In short:
 
 | In-house | Oracle | Inputs | Result |
 | --- | --- | --- | --- |
-| `fincalc/bonds`: schedule, dirty price, YTM, durations, convexity | QuantLib `Schedule`, `CashFlows.npv`, `BondFunctions` (`ActualActual(ISMA)`, `Compounded`) | 12,864 bonds: 12 maturities (month ends, 29 February), 17 settlements (between coupons, leap days), 4 coupons, 4 frequencies, 4 yields | agree to rounding after the fix below |
+| `fincalc/bonds`: schedule, coupon amounts, dirty price, YTM, durations, convexity | QuantLib `Schedule`, `FixedRateCoupon` on the anniversary year (SEBI's day count, #519), `CashFlows.npv`, `BondFunctions` (`ActualActual(ISMA)` time, `Compounded`) | 12,864 bonds and 15,544 coupons: 12 maturities (month ends, 29 February), 17 settlements (between coupons, leap days), 4 coupons, 4 frequencies, 4 yields | agree to rounding after the fixes below |
+| `fincalc/bonds` with `day_count=GSEC` (Government securities): accrued interest, dirty price | QuantLib `Thirty360(European)` accrual; an equal-coupon `FixedRateBond` | 603 accruals, 2,412 half-yearly bonds | agree to rounding; one convention noted below |
 | `bonds.accrued_interest` | QuantLib `ActualActual(ISMA)` on the one-year anniversary period (SEBI's rule in QuantLib's terms) | 2,412 | agree to 1e-15 |
 | `funds.xirr`, `analytics_math.investor_xirr` | QuantLib NPV (`Actual365Fixed`, annual compounding) with scipy `brentq`; QuantLib's own solver where it converges | 3,300 synthetic investor histories across leap years | agree to the 8 decimals returned |
 | `black76.price`, `vega`, `forward_delta`, `spot_delta`; `smile.vanna`, `volga` | mpmath (40 digits) as referee; QuantLib `blackFormula`, `BlackCalculator` | 9,216 points: strikes 30 % to 300 % of the forward, one minute to three years, 1 % to 300 % volatility | within first-order float rounding of the exact value |
@@ -97,20 +98,26 @@ largest difference, tolerance and its reason, verdict); `--oracle-report` writes
    tests: `tests/test_funds.py::test_a_flat_investment_has_an_xirr_of_zero_not_minus_zero`,
    `tests/test_bonds.py::test_a_zero_yield_is_zero_not_minus_zero`.
 
-Both are in `FUNCTIONAL_TESTING.md` (23-Nov-2026).
+3. **Coupons were equal while accrual followed the day count** (`bonds.cash_flows` against
+   `bonds.accrued_interest`; #519, left under "needs decision" by the first slice). A 184-day half-year accrued
+   4.537 per 100 at 9 % and paid 4.50, so the clean price of an unchanged bond moved at every coupon date: by up to
+   0.037 per 100 half-yearly, 0.055 quarterly and 0.057 monthly on the grid. SEBI's own text settles it (the NCS
+   master circular of 15-Oct-2025, Chapter III; CIR/IMD/DF-1/122/2016, clause 3(b); CIR/IMD/DF/18/2013, Annexure A,
+   all read on sebi.gov.in): a coupon is face x rate x the actual days of its period / 365, or / 366 for every
+   period of a coupon year that holds 29 February. Coupon and accrual now come from one function, and the move
+   across a coupon date is 0.0022 per 100 at most (one day's discounting less one day's accrual). QuantLib's coupon
+   objects, with the anniversary year as reference period, agree on all 15,544 coupons to 2e-14 relative. Government
+   securities keep equal coupons and 30/360 (`day_count=GSEC`, RBI's primer). Regression tests:
+   `tests/test_bonds.py::test_listed_bond_coupons_are_paid_for_the_actual_days_of_each_period`,
+   `test_sebis_own_illustrations_of_cash_flows`,
+   `test_government_securities_pay_equal_half_yearly_coupons_and_accrue_30_360`.
+
+All three are in `FUNCTIONAL_TESTING.md` (23-Nov-2026).
 
 ### Needs decision (measured, not changed)
 
-1. **Coupons are equal, accrual is by the day** (`bonds.cash_flows` against `bonds.accrued_interest`). Every period
-   pays face x coupon / freq, while interest accrues actual days over the 365- or 366-day year. For half-yearly,
-   quarterly and monthly bonds a full period therefore does not accrue one coupon (a 184-day half-year accrues
-   4.537 against 4.50 paid per 100 at 9 %; February accrues 0.690 against 0.75), and a par bond's clean price steps
-   at each coupon date (99.963 to 100.036 half-yearly, 99.986 to 100.057 monthly). If SEBI's denominator also
-   sets the coupon amount (our reading of the circular's wording on the payment of interest, from a secondary
-   copy; not verified against SEBI's own PDF), listed NCDs pay day-count coupons; an equal-coupon bond would
-   instead want ISMA accrual. Annual-coupon bonds are consistent either way. Changing it moves every non-annual
-   YTM slightly and needs to know which instruments pay which way. `bonds.py` is not in the engine pin: it was
-   left alone because the right fix depends on that fact, not because it may not be edited.
+1. *Closed by #519:* coupons and accrual now follow one day count; see (a) 3. (The number is kept so that 2 and 3
+   keep theirs.)
 2. **The touch-probability shortcut is one-sided only below the forward** (`risk_alerts.touch_prob`, registered
    with #398). 2 x N(-d2) overstates the exact first-passage probability by (put price) / K for a strike below the
    forward and UNDERSTATES it by (call price) / K above it: up to 0.097 and 0.116 in probability on the grid (60 %
@@ -131,6 +138,10 @@ Both are in `FUNCTIONAL_TESTING.md` (23-Nov-2026).
 
 - Accrued interest: SEBI's Actual/Actual divides by the anniversary year, QuantLib's `ActualActual(ISMA)` bond
   accrual by the coupon period: up to 0.091 per 100 face on the grid, every case explained by one identity.
+- Government securities: RBI pays half the annual coupon each half-year whatever the 30/360 count of that half.
+  For a coupon day that is a clamped month end (28-Feb and 31-Aug) the count is 178 or 182 days, so a coupon derived
+  from the day count would differ by up to 0.079 per 100 on the grid, and the module's 30/360 accrual does not land
+  exactly on the coupon on such a security's coupon eve. Listed bonds have no such gap.
 - XIRR: a root outside (-99.99 %, 1000 %) is unknown (21 of 3,000 histories); two roots inside the bracket are
   unknown too, though the error text says "no solution".
 - Implied volatility: an in-the-money quote whose time value is below one ulp of its price is unknown (622 grid
