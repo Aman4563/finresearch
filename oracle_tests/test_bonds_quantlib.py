@@ -146,7 +146,7 @@ def test_ytm_matches_quantlib_bond_yield(oracle):
         bond, rate = street(schedule(st, mat, f), f, c, y)
         dirty = float(clean + b.accrued_interest(st, mat, c, f))
         ref = ql.BondFunctions.bondYield(bond, ql.BondPrice(dirty, ql.BondPrice.Dirty), rate.dayCounter(),
-                                         ql.Compounded, FREQ[f], qd(st), 1e-13, 1000, float(y))  # fmt: skip
+                                         ql.Compounded, FREQ[f], qd(st), 1e-13, 1000, 0.05)  # fmt: skip
         got = b.ytm(clean, st, mat, c, f)
         worst = max(worst, (abs(float(got) - ref), (mat, st, c, f, y, got, ref)), key=lambda x: x[0])
         assert abs(got - Decimal(y)) <= Decimal("1e-8")  # and it returns the yield the price was built from
