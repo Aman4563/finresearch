@@ -219,11 +219,11 @@ export default function BondDetail() {
             <div className="grid [&>*]:min-w-0 gap-5 lg:grid-cols-5">
               <Card className="lg:col-span-3" title="Cash-flow schedule" icon={<CalendarRange className="size-4" />}
                 subtitle={`${a.cash_flows.length} payments from ${shortDate(a.cash_flows[0].date)} to ${shortDate(a.cash_flows[a.cash_flows.length - 1].date)}, per bond of face ${inr(b.face_value, 0)}`}
-                help="Every coupon still to come and the face value repaid at maturity, on the assumed coupon frequency. Dates step back from the maturity date.">
+                help="Every coupon still to come and the face value repaid at maturity, on the assumed coupon frequency. Dates step back from the maturity date. Each coupon is the interest for the actual days of its period (SEBI's Actual/Actual rule for listed bonds), so half-yearly, quarterly and monthly payments differ a little; a year's payments add up to the annual coupon.">
                 <CashFlowChart flows={a.cash_flows} />
                 <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
                   <Metric label="You pay today" value={inr(a.totals.paid_today)} sub="dirty price" />
-                  <Metric label="Coupons to come" value={inr(a.totals.coupons)} sub={`${inr(a.coupon_per_payment)} each`} />
+                  <Metric label="Coupons to come" value={inr(a.totals.coupons)} sub={a.coupon_range[0] === a.coupon_range[1] ? `${inr(a.coupon_per_payment)} each` : `${inr(a.coupon_range[0])} to ${inr(a.coupon_range[1])} each, by the days in the period`} />
                   <Metric label="Principal back" value={inr(a.totals.principal)} sub={day(b.maturity)} />
                   <Metric label="Total received" value={inr(a.totals.received)} tone={toneOf(a.totals.received - a.totals.paid_today)}
                     sub={`${a.totals.received >= a.totals.paid_today ? "+" : ""}${inr(a.totals.received - a.totals.paid_today)} before tax`} />
