@@ -320,3 +320,124 @@ def test_dcf_checks_steady_state_share_for_the_horizon():
     for bad in ({"years": 0}, {"years": 2.5}, {"discount_rate": "12"}, {"risk_free": "6.5"}):
         with pytest.raises(ValueError):
             V.dcf_checks(**{"discount_rate": "0.12", "terminal_growth": "0.05", **bad})
+
+
+# --------------------------------------------------------------------------- lender methods
+@pytest.mark.parametrize("ending", [{"terminal_growth": "0.05"}, {"fade_years": 4}, {"fade_years": 0}])
+@pytest.mark.parametrize("payout", ["0", "0.3", "1"])
+def test_residual_income_with_roe_equal_to_the_cost_of_equity_is_exactly_book_value(ending, payout):
+    """Closed form: a company that earns exactly its cost of equity adds nothing to book value, whatever it pays out
+    and however the forecast ends. Book 500, ROE = Ke = 13 % for five years: value = 500, exactly."""
+    v = V.residual_income(500, ["0.13"] * 5, "0.13", payout, **ending)
+    assert v.value == D(500) and v.value_to_book == D(1)
+    assert all(x == 0 for x in v.residual_income) and v.pv_continuing == 0
+
+
+@pytest.mark.parametrize("years", [1, 3, 7])
+def test_residual_income_ddm_and_justified_pb_agree_in_the_steady_state(years):
+    """Independent check across three functions. ROE 18 %, payout 50 %, so book, earnings and dividends all grow at
+    g = 18 % x (1 - 0.5) = 9 %; Ke 13 %; book 100. Gordon's closed form gives book x (ROE - g) / (Ke - g)
+    = 100 x 0.09 / 0.04 = 225. Residual income with terminal growth 9 % must give 225 for any number of years
+    written out; the dividend model too: D1 = 18 % x 100 x 50 % = 9, 9 / 0.04 = 225; and book x justified P/B."""
+    ri = V.residual_income(100, ["0.18"] * years, "0.13", "0.5", terminal_growth="0.09")
+    assert abs(ri.value - 225) < TINY and abs(ri.value_to_book - D("2.25")) < TINY
+    assert 100 * V.justified_pb("0.18", "0.13", "0.09") == D(225)
+    d0 = D(9) / D("1.09")  # the dividend just paid, which grows 9 % into next year's 9
+    assert abs(V.ddm(d0, "0.09", "0.13").value - 225) < TINY
+
+
+def test_residual_income_level_perpetuity_by_hand():
+    """Full payout keeps book at 100; ROE 18 % against Ke 12 % is a residual income of 6 a year for ever:
+    100 + 6 / 0.12 = 150 (= book x ROE / Ke). Step by step: 100 + 6 / 1.12 + (6 / 0.12) / 1.12 = 100 + 56 / 1.12."""
+    v = V.residual_income(100, ["0.18"], "0.12", 1, terminal_growth=0)
+    assert abs(v.value - 150) < TINY and v.continuing_value == D(50) and v.closing_book == D(100)
+
+
+def test_residual_income_fade_to_the_cost_of_equity_by_hand():
+    """Book 100, Ke 25 %, ROE 45 % in year 1, then a 2-year linear fade to Ke: 35 % in year 2, 25 % in year 3.
+    Payout 50 %. Year 1: residual income (45 % - 25 %) x 100 = 20; earnings 45, half retained: book 122.5.
+    Year 2: (35 % - 25 %) x 122.5 = 12.25; earnings 42.875, book 143.9375. Year 3: ROE = Ke, residual income 0.
+    PV = 20 / 1.25 + 12.25 / 1.5625 = 16 + 7.84 = 23.84; value 123.84. Nothing is earned above Ke after the fade."""
+    v = V.residual_income(100, ["0.45"], "0.25", "0.5", fade_years=2)
+    assert v.roe == [D("0.45"), D("0.35"), D("0.25")] and v.opening_book == [
+        D(100),
+        D("122.5"),
+        D("143.9375"),
+    ]
+    assert v.residual_income == [D(20), D("12.25"), D(0)]
+    assert (v.pv_explicit, v.pv_continuing, v.value) == (D(16), D("7.84"), D("123.84"))
+    assert v.continuing_value is None and "fade" in v.unknown["continuing_value"]
+    # fade_years 0: the excess return stops with the forecast; 100 + 16
+    assert V.residual_income(100, ["0.45"], "0.25", "0.5", fade_years=0).value == D(116)
+
+
+def test_residual_income_loss_year_pays_no_dividend_by_hand():
+    """Book 100, Ke 25 %, ROE -10 % then 20 %, payout 50 %, no continuing value. Year 1: loss 10, no dividend, book
+    90; residual income (-10 % - 25 %) x 100 = -35. Year 2: (20 % - 25 %) x 90 = -4.5; earnings 18, 9 retained,
+    book 99. PV = -35 / 1.25 - 4.5 / 1.5625 = -28 - 2.88 = -30.88; value 69.12, below book as it should be."""
+    v = V.residual_income(100, ["-0.10", "0.20"], "0.25", "0.5", fade_years=0)
+    assert v.opening_book == [D(100), D(90)] and v.closing_book == D(99)
+    assert v.residual_income == [D(-35), D("-4.5")] and v.value == D("69.12")
+
+
+def test_residual_income_refuses_invalid_input():
+    ok = {"book_value": 100, "roe_path": ["0.18"], "cost_of_equity": "0.13", "payout_ratio": "0.5"}
+    for bad, why in (
+        ({}, "one per call"),  # neither ending
+        ({"terminal_growth": "0.05", "fade_years": 3}, "one per call"),
+        ({"terminal_growth": "0.13"}, "cost_of_equity must exceed terminal_growth"),
+        ({"terminal_growth": "0.05", "book_value": 0}, "book_value must be > 0"),
+        ({"terminal_growth": "0.05", "book_value": -40}, "book_value must be > 0"),
+        ({"terminal_growth": "0.05", "roe_path": []}, "non-empty list"),
+        ({"terminal_growth": "0.05", "roe_path": ["18"]}, "must be a fraction"),
+        ({"terminal_growth": "0.05", "payout_ratio": "1.2"}, "payout_ratio must be between 0 and 1"),
+        ({"terminal_growth": "0.05", "payout_ratio": "-0.1"}, "payout_ratio must be between 0 and 1"),
+        ({"fade_years": -1}, "fade_years must be a whole number >= 0"),
+        ({"fade_years": 2.5}, "fade_years must be a whole number >= 0"),
+        ({"terminal_growth": "0.05", "cost_of_equity": "13"}, "must be a fraction"),
+    ):
+        with pytest.raises(ValueError, match=why):
+            V.residual_income(**{**ok, **bad})
+
+
+def test_ddm_single_and_two_stage_by_hand():
+    """Single stage (Gordon 1962): 10 x 1.05 / (0.25 - 0.05) = 52.5.
+    Two stages: 50 % growth for 2 years, then 5 %, at 25 %. D1 = 15, D2 = 22.5; PV = 15 / 1.25 + 22.5 / 1.5625
+    = 12 + 14.4 = 26.4; terminal value 22.5 x 1.05 / 0.20 = 118.125, PV 75.6; value 102, terminal share 75.6 / 102."""
+    one = V.ddm(10, "0.05", "0.25")
+    assert (one.value, one.next_dividend, one.stages) == (D("52.5"), D("10.5"), 1)
+    assert one.pv_high_growth is None and one.terminal_share is None
+    two = V.ddm(10, "0.05", "0.25", high_growth="0.50", high_growth_years=2)
+    assert (two.pv_high_growth, two.pv_terminal, two.value, two.stages) == (D("26.4"), D("75.6"), D(102), 2)
+    assert two.next_dividend == D(15) and two.terminal_share.quantize(D("0.0001")) == D("0.7412")
+    # closed form: a "high" stage that grows at the terminal rate is the single-stage model
+    same = V.ddm(10, "0.05", "0.25", high_growth="0.05", high_growth_years=6)
+    assert abs(same.value - D("52.5")) < TINY
+
+
+def test_ddm_refuses_no_dividend_and_other_invalid_input():
+    """A company that pays nothing has no dividend-discount value: refused with the reason, never valued at 0."""
+    with pytest.raises(ValueError, match="pays no dividend"):
+        V.ddm(0, "0.05", "0.13")
+    with pytest.raises(ValueError, match="dividend must be > 0"):
+        V.ddm(-2, "0.05", "0.13")
+    with pytest.raises(ValueError, match="cost_of_equity must exceed growth"):
+        V.ddm(10, "0.13", "0.13")
+    with pytest.raises(ValueError, match="together"):
+        V.ddm(10, "0.05", "0.13", high_growth="0.2")
+    with pytest.raises(ValueError, match="together"):
+        V.ddm(10, "0.05", "0.13", high_growth_years=3)
+    for bad in ({"high_growth_years": 0}, {"high_growth_years": 2.5}, {"high_growth": "20"}):
+        with pytest.raises(ValueError):
+            V.ddm(10, "0.05", "0.13", **{"high_growth": "0.2", "high_growth_years": 3, **bad})
+
+
+# --------------------------------------------------------------------------- peer range
+def test_peer_stats_carry_min_and_max_of_the_values_counted():
+    """Six positive multiples (the -5 of a loss-maker is dropped, as before): the lowest is 26.29 and the highest
+    54.85; with negatives kept (peer_distribution, e.g. ROE) the minimum is the -5 itself."""
+    s = V.peer_stats([54.85, 46.69, 42.69, 48.99, 26.29, 33.47, -5], own="51.61")
+    assert (s.n, s.min, s.max) == (6, D("26.29"), D("54.85"))
+    assert s.min <= s.q1 <= s.median <= s.q3 <= s.max
+    kept = V.peer_distribution([54.85, 46.69, 42.69, 48.99, 26.29, 33.47, -5])
+    assert (kept.n, kept.min, kept.max) == (7, D(-5), D("54.85"))

@@ -269,7 +269,9 @@ def dcf_grid(cash_flow: Num, growth: Num, shares: Num, discount_rates: list[Num]
 
 @dataclass(frozen=True)
 class PeerStats:
-    """Median and inter-quartile range of peer multiples, and where the company sits (0–100 percentile)."""
+    """Median, inter-quartile range and full range of peer multiples, and where the company sits (0–100
+    percentile). `min` and `max` are of the values counted in `n` (#504: the five-number summary; non-positive
+    values are already dropped when the caller asked for positive ones only)."""
 
     n: int
     q1: Decimal
@@ -277,6 +279,8 @@ class PeerStats:
     q3: Decimal
     own: Decimal | None
     percentile: Decimal | None
+    min: Decimal
+    max: Decimal
 
 
 def _quantile(xs: list[Decimal], q: Decimal) -> Decimal:
@@ -307,7 +311,7 @@ def peer_distribution(
         ties = sum(1 for x in xs if x == o)
         pct = Decimal(100) * (below + Decimal(ties) / 2) / len(xs)
     return PeerStats(len(xs), _quantile(xs, Decimal("0.25")), _quantile(xs, Decimal("0.5")),
-                     _quantile(xs, Decimal("0.75")), o, pct)  # fmt: skip
+                     _quantile(xs, Decimal("0.75")), o, pct, xs[0], xs[-1])  # fmt: skip
 
 
 def peer_stats(peers: list[Num], own: Num | None = None) -> PeerStats:
@@ -766,3 +770,152 @@ def dcf_checks(discount_rate: Num, terminal_growth: Num | None = None, risk_free
                      None if rf is None else r - rf, steady,
                      {"terminal_share_low": lo, "terminal_share_high": hi,
                       "discount_rate_max_over_risk_free": DISCOUNT_RATE_MAX_OVER_RISK_FREE})  # fmt: skip
+
+
+# --------------------------------------------------------------------------- lender methods (#504)
+# Banks, NBFCs and insurers: debt is their raw material, so free cash flow, EV and EBITDA do not apply (see `ev`).
+# They are valued on equity: book value plus the present value of what they earn above their cost of equity, or the
+# dividends they pay. `justified_pb` above is the one-line steady-state case of both. The need for these was noted
+# from FinceptTerminal's feature list (AGPL-3.0: its code was not opened); built from the papers named below.
+#
+# Residual income (Edwards & Bell, "The Theory and Measurement of Business Income", 1961; Ohlson, "Earnings, Book
+# Values, and Dividends in Equity Valuation", Contemporary Accounting Research 11(2), 1995):
+#     V_0 = B_0 + sum over t of (ROE_t - Ke) x B_(t-1) / (1 + Ke)^t
+# with book value rolled forward by clean surplus, B_t = B_(t-1) + earnings_t - dividends_t (Ohlson's assumption),
+# dividends = payout_ratio x earnings; a loss year pays no dividend. After the forecast years, one of:
+#   * terminal growth g: residual income grows at g for ever, RI_n (1+g) / (Ke - g), discounted n years;
+#   * a fade: ROE moves in a straight line from the last forecast ROE to Ke over `fade_years` years (year n + k has
+#     ROE_n + (Ke - ROE_n) x k / fade_years), after which nothing is earned above Ke. The straight-line fade is
+#     Lee, Myers & Swaminathan's ("What is the Intrinsic Value of the Dow?", Journal of Finance 54(5), 1999), who
+#     fade to the industry's median ROE; fading to Ke itself is our stricter choice [U]: competition removes the
+#     whole excess return. fade_years = 0 ends it with the forecast.
+
+
+@dataclass(frozen=True)
+class ResidualIncome:
+    """Residual-income value: one list entry per year (forecast years, then any fade years), the inputs, and why
+    `continuing_value` is None when it is (`unknown`)."""
+
+    book_value: Decimal
+    cost_of_equity: Decimal
+    payout_ratio: Decimal
+    roe_path: list[Decimal]
+    terminal_growth: Decimal | None
+    fade_years: int | None
+    roe: list[Decimal]  # the forecast ROEs, then the fade years' ROEs
+    opening_book: list[Decimal]  # B_(t-1) of each year
+    residual_income: list[Decimal]
+    pv_residual_income: list[Decimal]
+    closing_book: Decimal  # book value at the end of the last listed year
+    pv_explicit: Decimal  # PV of the forecast years' residual income
+    continuing_value: Decimal | None  # growth ending: the value at year n of all later residual income
+    pv_continuing: (
+        Decimal  # PV of everything after the forecast years (the growth perpetuity, or the fade years)
+    )
+    value: Decimal
+    value_to_book: Decimal  # value / book_value: the P/B the inputs justify
+    unknown: dict[str, str]
+
+
+def _whole(x: object, name: str, minimum: int) -> int:
+    if isinstance(x, bool) or not isinstance(x, int) or x < minimum:
+        raise ValueError(f"{name} must be a whole number >= {minimum}, got {x!r}")
+    return x
+
+
+def residual_income(book_value: Num, roe_path: list[Num], cost_of_equity: Num, payout_ratio: Num,
+                    terminal_growth: Num | None = None, fade_years: int | None = None) -> ResidualIncome:  # fmt: skip
+    """Residual-income value for a lender: book + PV of (ROE - Ke) x opening book, then growth OR a fade; cite `value`.
+
+    `book_value` is the latest book value (total or per share); `roe_path` the forecast ROE of each year; book rolls
+    forward by retained earnings (`payout_ratio` of earnings is paid out, nothing in a loss year). End the forecast
+    with `terminal_growth` (residual income grows at g for ever) or `fade_years` (ROE moves in a straight line to
+    the cost of equity over that many years; 0 = no excess return after the forecast), one per call. With ROE equal
+    to the cost of equity throughout the value is the book value. Edwards-Bell (1961), Ohlson (1995); fractions.
+    ValueError for a non-positive book value, Ke <= g, or a payout ratio outside 0-1.
+    """
+    b0 = to_decimal(book_value)
+    if b0 <= 0:
+        raise ValueError(f"book_value must be > 0 to anchor a residual-income value, got {b0}")
+    roes = [_rate(x, f"roe_path[{i}]") for i, x in enumerate(_series(roe_path, "roe_path"))]
+    ke, p = _rate(cost_of_equity, "cost_of_equity", low=Decimal(0)), to_decimal(payout_ratio)
+    if not 0 <= p <= 1:
+        raise ValueError(f"payout_ratio must be between 0 and 1, got {p}")
+    if (terminal_growth is None) == (fade_years is None):
+        raise ValueError(
+            "give terminal_growth or fade_years (0 = no excess return after the forecast), one per call"
+        )
+    g = fade = None
+    if terminal_growth is not None:
+        g = _rate(terminal_growth, "terminal_growth")
+        if ke <= g:
+            raise ValueError("cost_of_equity must exceed terminal_growth")
+    else:
+        fade = _whole(fade_years, "fade_years", 0)
+        roes = roes + [roes[-1] + (ke - roes[-1]) * k / fade for k in range(1, fade + 1)]
+    n = len(roes) - (fade or 0)  # the forecast years; any fade years follow them
+    book, disc, opening, ris, pvs = b0, Decimal(1), [], [], []
+    for roe in roes:
+        disc *= 1 + ke
+        earnings, ri = roe * book, (roe - ke) * book
+        opening.append(book)
+        ris.append(ri)
+        pvs.append(ri / disc)
+        book += earnings - p * max(earnings, Decimal(0))
+    pv_explicit, unknown = sum(pvs[:n], Decimal(0)), {}
+    if g is not None:
+        cv = ris[-1] * (1 + g) / (ke - g)
+        pv_cont = cv / disc
+    else:
+        cv, pv_cont = None, sum(pvs[n:], Decimal(0))
+        unknown["continuing_value"] = (
+            "the fade years are listed one by one: there is no single continuing value"
+        )
+    value = b0 + pv_explicit + pv_cont
+    return ResidualIncome(b0, ke, p, roes[:n], g, fade, roes, opening, ris, pvs, book, pv_explicit, cv, pv_cont,
+                          value, value / b0, unknown)  # fmt: skip
+
+
+@dataclass(frozen=True)
+class Ddm:
+    """Dividend-discount value in one or two stages, with its inputs. The stage figures are None for one stage:
+    there the whole value is Gordon's formula and has no parts."""
+
+    dividend: Decimal
+    growth: Decimal
+    cost_of_equity: Decimal
+    high_growth: Decimal | None
+    high_growth_years: int | None
+    stages: int  # 1 or 2
+    next_dividend: Decimal  # the dividend of year 1
+    pv_high_growth: Decimal | None  # PV of the high-growth years' dividends
+    pv_terminal: Decimal | None  # PV of the Gordon value at the end of the high-growth years
+    value: Decimal
+    terminal_share: Decimal | None
+
+
+def ddm(dividend: Num, growth: Num, cost_of_equity: Num, high_growth: Num | None = None,
+        high_growth_years: int | None = None) -> Ddm:  # fmt: skip
+    """Dividend-discount value: Gordon ``D0 (1+g) / (Ke - g)``, or two stages with `high_growth` first; cite `value`.
+
+    `dividend` is the latest annual dividend (D0, total or per share, not yet grown). One stage (Gordon, "The
+    Investment, Financing and Valuation of the Corporation", 1962): dividends grow at `growth` for ever. Two stages:
+    they grow at `high_growth` for `high_growth_years`, then at `growth`; give both or neither. For a lender next
+    to `residual_income` and `justified_pb`. ValueError unless the dividend is positive (a company that pays no
+    dividend has no dividend-discount value: that is unknown, not 0) and Ke > g.
+    """
+    d0 = to_decimal(dividend)
+    if d0 <= 0:
+        raise ValueError(f"dividend must be > 0, got {d0}: a dividend-discount model says nothing about a company "
+                         "that pays no dividend")  # fmt: skip
+    g, ke = _rate(growth, "growth"), _rate(cost_of_equity, "cost_of_equity", low=Decimal(0))
+    if ke <= g:
+        raise ValueError("cost_of_equity must exceed growth")
+    if (high_growth is None) != (high_growth_years is None):
+        raise ValueError("high_growth and high_growth_years go together: give both (two stages) or neither")
+    if high_growth is None:
+        return Ddm(d0, g, ke, None, None, 1, d0 * (1 + g), None, None, d0 * (1 + g) / (ke - g), None)
+    gh, years = _rate(high_growth, "high_growth"), _whole(high_growth_years, "high_growth_years", 1)
+    v = dcf(d0, gh, ke, g, years)  # the same two-stage arithmetic, on dividends
+    return Ddm(d0, g, ke, gh, years, 2, d0 * (1 + gh), v.pv_explicit, v.pv_terminal, v.value,
+               v.pv_terminal / v.value)  # fmt: skip
