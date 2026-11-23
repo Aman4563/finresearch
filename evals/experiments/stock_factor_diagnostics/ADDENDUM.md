@@ -17,3 +17,17 @@ the sign-flip's rate, at one and at twelve months.
 
 The figures of the registered procedures themselves (family A, the block interval, Newey-West, family B) are
 reproduced exactly, digit for digit, by `uv run python -m finresearch.factordiag.synth 2000 506`.
+
+## Note 2 (23-Nov-2026, before any price was read): how two registered readings are applied
+
+Written while the reading rules were being coded, with no result in hand. Neither changes a registered value.
+
+- **"Short-lived" names no sign.** The registered condition is "detected at 1 or 3 months and not at 12, with the
+  (6, 12] segment's interval including 0". The code applies it as written, whatever the sign of the detected IC. For
+  a component detected with a negative IC it therefore appears beside "ranks the wrong way": read together, a
+  wrong-way ranking seen only at short horizons. "Not at 12" means the 12-month cell is known and not detected; an
+  unknown 12-month cell, or an unknown (6, 12] interval, gives no "short-lived" note.
+- **Order of the checks for a cell detected with a positive IC**: the long-only spread's interval first (unknown: no
+  reading; not wholly above 0, including an interval that touches 0: "not captured"), then the long-only break-even
+  cost (unknown: no reading; below the harness's cost per side: "smaller than its trading cost"; equal or above:
+  "disagrees"). A q exactly equal to 0.10 counts as detected ("at most").

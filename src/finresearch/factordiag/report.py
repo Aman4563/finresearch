@@ -18,6 +18,10 @@ def _p(x: float | None) -> str:
     return UNKNOWN if x is None else f"{x:.4f}"
 
 
+def _u(x: float | None, digits: int = 3) -> str:
+    return UNKNOWN if x is None else f"{x:.{digits}f}"
+
+
 def _pct(x: float | None, digits: int = 2) -> str:
     return UNKNOWN if x is None else f"{x * 100:+.{digits}f} %"
 
@@ -43,7 +47,7 @@ def _ic_table(res: dict[str, Any]) -> list[str]:
             share = UNKNOWN if c["share_positive"] is None else f"{c['share_positive'] * 100:.0f} %"
             out.append(f"| `{name}` | {h} | {c['months']} | {_ci(c)} | {_n(c['icir'], 2)} | {share} | "
                        f"{_n(c['newey_west']['t'], 2)} | {sf['blocks']} | {_p(sf['p'])} | {_p(sf['min_p'])} | "
-                       f"{_p(c['q'])} | {_yes(c['detected'])} | {_n(c['interval']['mde'])} |")  # fmt: skip
+                       f"{_p(c['q'])} | {_yes(c['detected'])} | {_u(c['interval']['mde'])} |")  # fmt: skip
     return out
 
 
