@@ -86,6 +86,19 @@ Every finding is saved as an atomic claim (metric, value, unit, period) with cit
 The publish gate releases a report only if every citation in it is sound and every high-importance claim it cites is
 verified with evidence grade A, B or D; otherwise it is rendered as a marked draft.
 
+The publish gate also reads the text against the ledger (`verify/printed.py`, #502): beside each `[C<id>]` the report
+must print the cited claim's value. A citation is judged inside its table cell (the whole row when it stands alone
+in a "Source" cell) or its sentence; consecutive citations share the figures before them. A printed figure equals
+the value after display rounding (half a unit of its last printed digit, in the unit it names; a scale word, a %
+sign or a currency sign is binding; an unmarked figure may be another ₹ scale or the fraction form), without the
+opposite sign. It is a finding when the value is not printed and the clause states a figure that no claim cited
+there holds. Not judged: claims without a value, claims cited as inputs of a fincalc figure, figures labelled as
+computed, quoted figures, bounds the author sets ("at least 1.0x") and scopes that print no figure of the claim's
+kind. Two cited claims with one metric and period, both printed with different values and never side by side, are
+reported separately. The findings name the claim, the value held and the figure printed. They are warnings: the
+switch `verify.gate.PRINTED_VALUE_BLOCKS` makes a mismatch on a high-importance claim block, and stays off until
+the rule has been read on exported runs it was not fitted to (the measurement is in the note above the switch).
+
 ## Markets, signals and accuracy (`adapters/`, `fincalc/`, `signals/`, `evals/`, `disclosures/`)
 
 Adapters fetch public exchange and AMFI data through one polite HTTP client (rate limits, retries, timeouts, size
