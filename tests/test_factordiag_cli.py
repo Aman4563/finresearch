@@ -79,6 +79,13 @@ def test_the_command_writes_a_json_and_a_report_and_never_replaces_them_unasked(
     assert mom["1"]["unknown_months"] == {"too_few_names": WARM}
     assert mom["12"]["mean"] > 0.1 and mom["12"]["interval"]["lo"] > 0  # the planted persistence in drifts
     assert res["families"]["A"]["size"] == 20 and res["families"]["B"]["size"] == 10
+    # the registered output: the monthly IC series and the two spread series, dated, beside their statistics
+    q1 = mom["1"]["quintiles"]
+    for series, n in ((mom["1"]["series"], mom["1"]["months"]), (q1["top_minus_universe"]["series"], q1["months"]),
+                      (q1["top_minus_bottom"]["series"], q1["months"])):  # fmt: skip
+        assert len(series) == n and series[0][0] == ENDS[WARM].isoformat() and isinstance(series[0][1], float)
+    assert np.mean([v for _, v in q1["top_minus_universe"]["series"]]) == pytest.approx(
+        q1["top_minus_universe"]["mean"], abs=1e-6)  # fmt: skip
     for head in ("## Rank IC by horizon", "## Decay", "## Sub-periods", "## Quintiles, turnover and break-even cost",
                  "## Reading", "## What is unknown", "## Limits"):  # fmt: skip
         assert head in text, head
@@ -86,8 +93,11 @@ def test_the_command_writes_a_json_and_a_report_and_never_replaces_them_unasked(
     again = _run("--data-dir", str(cache), "--out-dir", str(out))
     assert again.exit_code == 2 and "already run" in again.output
     forced = _run("--data-dir", str(cache), "--out-dir", str(out), "--overwrite", "--json")
-    assert forced.exit_code == 0 and json.loads(forced.output) == res  # deterministic, to the last digit
-    assert json.loads((out / "results.json").read_text()) == res
+    assert forced.exit_code == 0
+    # deterministic to the last digit; only the run date may differ (it is not a result)
+    want = {k: v for k, v in res.items() if k != "generated"}
+    for again_res in (json.loads(forced.output), json.loads((out / "results.json").read_text())):
+        assert {k: v for k, v in again_res.items() if k != "generated"} == want
 
 
 def test_the_outputs_hold_statistics_and_no_price(cache, tmp_path, made_up_index) -> None:

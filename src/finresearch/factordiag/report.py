@@ -99,7 +99,8 @@ def _reading(res: dict[str, Any]) -> list[str]:
     for name, comp in res["components"].items():
         out.append(f"**`{name}`**")
         for note in comp["reading"]:
-            at = "" if note["horizon"] is None else f" ({note['horizon']} months ahead)"
+            h = note["horizon"]
+            at = "" if h is None else f" ({h} month{'' if h == 1 else 's'} ahead)"
             why = f" {note['why']}." if note.get("why") else ""
             out.append(f"- *{note['label'].replace('_', ' ')}*{at}:{why} {note['text']}")
         out.append("")
@@ -142,6 +143,9 @@ LIMITS = (
     "A stock that stopped trading is held in cash at 0 % from its last close; for a merger the holder really received "
     "the acquirer's shares.",
     "Price returns without dividends; decisions and prices at the same month-end close, as the base harness.",
+    "The ICs are on raw returns, not returns in excess of the market or adjusted for beta. A score tied to beta (low "
+    "volatility above all) can show an IC that is beta times the market's drift over the sample, not stock selection; "
+    "the registered synthetic null has a market with no drift.",
     "The Newey-West t is reported only: on overlapping horizons it rejects a true null too often (8 to 15 % at 6 "
     "and 12 months on the registered synthetic null).",
     "At 12 months the sample holds about six two-year blocks, so the smallest p a cell can reach is printed beside "

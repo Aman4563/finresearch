@@ -31,6 +31,7 @@ FAMILY_SIZE = {
     "B": len(COMPONENTS) * len(specs.FAMILY_B_HORIZONS),
 }
 RESULTS_JSON, RESULTS_MD = "results.json", "RESULTS.md"
+SHORT_HORIZONS = (1, 3)  # the registered wording of the `short_lived` reading: "detected at 1 or 3 months"
 
 
 class Refused(RuntimeError):
@@ -167,6 +168,7 @@ def quintile_stats(panel: Panel, component: str, h: int) -> dict[str, Any]:
     """Mean forward return per score quintile, the two spreads and the monotonicity measure at horizon h."""
     rows: list[list[float]] = []
     universe: list[float] = []
+    dates: list[date] = []
     unknown: Counter[str] = Counter()
     for m in panel.months:
         r = m.returns.get((0, h))
@@ -183,6 +185,7 @@ def quintile_stats(panel: Panel, component: str, h: int) -> dict[str, Any]:
             continue
         rows.append([float(rv[q == k].mean()) for k in range(1, specs.QUANTILES + 1)])
         universe.append(float(rv.mean()))
+        dates.append(m.t)
     out: dict[str, Any] = {"months": len(rows), "unknown_months": dict(unknown), "unknown": None, "mean_return": None,
                            "universe_mean": None, "top_minus_bottom": None, "top_minus_universe": None,
                            "monotonicity": None}  # fmt: skip
@@ -191,7 +194,13 @@ def quintile_stats(panel: Panel, component: str, h: int) -> dict[str, Any]:
         return out
     qm, um = np.array(rows), np.array(universe)
     means = qm.mean(axis=0)
-    spread = lambda v: {k: x for k, x in series_stats(list(v), h).items() if k != "icir"}  # noqa: E731
+
+    def spread(v: np.ndarray) -> dict[str, Any]:
+        """The registered summary of one spread series, with the dated monthly series itself."""
+        s = {k: x for k, x in series_stats(list(v), h).items() if k != "icir"}
+        s["series"] = [[d.isoformat(), round(float(x), 6)] for d, x in zip(dates, v, strict=True)]
+        return s
+
     out.update(
         mean_return=[float(x) for x in means], universe_mean=float(um.mean()),
         top_minus_bottom=spread(qm[:, -1] - qm[:, 0]), top_minus_universe=spread(qm[:, -1] - um),
@@ -273,7 +282,7 @@ def reading(comp: dict[str, Any], per_side_cost: float) -> list[dict[str, Any]]:
             notes.append(_note("eaten_by_costs" if cost < per_side_cost else "disagrees", h))
     last = max(specs.HORIZONS)
     tail = comp["decay"][_key(specs.SEGMENTS[-1])]["interval"]
-    if (any(h in detected for h in specs.FAMILY_B_HORIZONS) and last in known and last not in detected
+    if (any(h in detected for h in SHORT_HORIZONS) and last in known and last not in detected
             and tail["lo"] is not None and tail["lo"] <= 0 <= tail["hi"]):  # fmt: skip
         notes.append(_note("short_lived"))
     notes += [_note("period_difference", h) for h, c in cells.items()
