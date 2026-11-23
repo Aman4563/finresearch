@@ -323,6 +323,24 @@ def test_listed_bond_coupons_are_paid_for_the_actual_days_of_each_period():
     assert {cf.coupon for cf in b.cash_flows(date(2026, 1, 1), date(2031, 1, 1), "0.08", 1)} == {Decimal(8)}
 
 
+def test_after_tax_ytm_taxes_each_coupons_own_amount():
+    """#519: `after_tax_ytm` taxed face x coupon / freq every period, not the coupon the bond pays. The listed bond
+    of the test above on 1-Jan-2017, two periods from maturity: coupons 90 x 181/365 and 90 x 184/365 per 1,000.
+    Untaxed, the after-tax yield of its own price is the 9 % that price was built from (it was 9.0016 %). Bought at
+    face with coupons taxed at 30 %, there is no capital gain and the yield solves 1000 = a1/x + a2/x^2 with
+    x = 1 + y/2, a1 = 0.7 c1, a2 = 0.7 c2 + 1000: the root of a quadratic, by hand. Equal coupons gave 6.3 % flat."""
+    s, m = date(2017, 1, 1), date(2018, 1, 1)
+    c1, c2 = 90 * 181 / 365, 90 * 184 / 365
+    price = c1 / 1.045 + (c2 + 1000) / 1.045**2
+    assert b.after_tax_ytm(Decimal(str(price)), s, m, "0.09", 2, 0, face=1000) == Decimal("0.09")
+    a1, a2 = 0.7 * c1, 0.7 * c2 + 1000
+    x = (a1 + (a1 * a1 + 4000 * a2) ** 0.5) / 2000
+    got = b.after_tax_ytm(1000, s, m, "0.09", 2, "0.30", face=1000)
+    assert float(got) == pytest.approx(2 * (x - 1), abs=1e-8) and round(got, 6) == Decimal("0.062992")
+    # with equal coupons (a Government security) the same purchase is exactly 70 % of the coupon
+    assert b.after_tax_ytm(1000, s, m, "0.09", 2, "0.30", face=1000, day_count=b.GSEC) == Decimal("0.063")
+
+
 def test_sebis_own_illustrations_of_cash_flows():
     """#519, the tables printed by SEBI, hand-checked. Master circular SEBI/HO/DDHS/DDHS-PoD/P/CIR/2025/0000000137
     (15-Oct-2025), Chapter III, Table 1: XYZ Limited, face 10,00,000, allotted 14-Dec-2020, redeemed 14-Dec-2025,

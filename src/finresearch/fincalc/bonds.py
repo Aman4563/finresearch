@@ -3,10 +3,11 @@ interest, durations, convexity and post-tax yield.
 
 Conventions (state them in reports):
 * Coupons are paid `freq` times a year (1 annual, 2 half-yearly, 4 quarterly, 12 monthly) on the maturity date's
-  day and month schedule, the last one with the principal. Dates are the due dates: a payment that a holiday moves
-  (to the next working day; a redemption to the previous one) keeps its amount, and SEBI's master circular has
-  yields computed on "the due date of payment as per the cash flow schedule and not as per the date of payment"
-  (Chapter XXII, para 9).
+  day and month schedule, the last one with the principal. Dates are the due dates, with no holiday shift. In SEBI's
+  master circular (Chapter III, Table 1) a coupon moved to the next working day, and a redemption moved to the
+  previous one, keep the amount of the due date; some offer documents instead pay the last coupon only up to an
+  early redemption day. For trades on the RFQ platform the same circular (Chapter XXII, para 9) has yield computed
+  on "the due date of payment as per the cash flow schedule and not as per the date of payment".
 * Interest follows the instrument's own day count, `day_count`, for the coupon paid and the interest accrued alike
   (#519: the two used to disagree for listed bonds, which accrued by the day and paid equal coupons):
   - `SEBI` (the default), listed NCDs and bonds: Actual/Actual. A coupon is face x rate x the actual days of its
