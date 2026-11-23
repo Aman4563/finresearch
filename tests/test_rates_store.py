@@ -121,6 +121,29 @@ async def test_an_unsettled_month_is_refetched_and_a_revision_is_seen(clean):
 
 
 @respx.mock
+async def test_the_manifest_is_stamped_with_the_backfills_own_clock(clean):
+    """#500: a month is settled by its manifest's fetched_at, so that comes from the injected clock. The database's
+    now() made the test above fail on every real date after 14-Nov-2026 (31-Oct-2026 + SETTLE_DAYS)."""
+    from finresearch.db import session_scope
+    from finresearch.db.models import RateCurveLoad
+    from finresearch.refseries import rates
+
+    respx.get(f"{fbil.BASE}/tbill/fetchfiltered").mock(side_effect=lambda req: (
+        httpx.Response(200, json=tbill("2022-01-03")) if req.url.params["fromDate"] == "2022-01-01"
+        else httpx.Response(500)))  # fmt: skip
+    out = await rates.backfill(["tbill"], date(2022, 1, 1), date(2022, 2, 28), today=TODAY, http=client(),
+                               now=lambda: NIGHT)  # fmt: skip
+    assert out["loaded"] == 1 and list(out["failed"]) == ["tbill 2022-02"]
+    with session_scope() as s:
+        got = s.execute(select(RateCurveLoad.period, RateCurveLoad.status, RateCurveLoad.fetched_at)
+                        .order_by(RateCurveLoad.period)).all()  # fmt: skip
+    assert [tuple(r) for r in got] == [
+        (date(2022, 1, 1), "loaded", NIGHT),
+        (date(2022, 2, 1), "failed", NIGHT),
+    ]
+
+
+@respx.mock
 async def test_gsec_workbook_days_from_the_published_list(clean):
     from finresearch.refseries import rates
 
