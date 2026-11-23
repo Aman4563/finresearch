@@ -294,7 +294,8 @@ export type BondAnalytics = {
     convexity: number;
     years_to_maturity: number;
     premium_pct: number;
-    coupon_per_payment: number;
+    coupon_per_payment: number; // the year's coupon / payments a year: the average payment
+    coupon_range: [number, number]; // smallest and largest coupon still to come (equal only for yearly coupons)
     cash_flows: { date: string; coupon: number; principal: number; coupon_after_tax: number; periods: number }[];
     totals: { coupons: number; principal: number; received: number; paid_today: number };
     curve: { bp: number; yield: number; dirty: number; clean: number }[];

@@ -936,7 +936,10 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
             return {**head, "analytics": None, "error": f"{e}: check the price basis and face value"}
         d = b.duration(y, s_day, bond.maturity, coupon, freq, face)
         flows = b.cash_flows(s_day, bond.maturity, coupon, freq, face)
+        # a listed bond's coupons follow the days of each period (#519): `per` is the year's coupon / freq, their
+        # average, and the range says how far single payments are from it (equal only for yearly coupons)
         per = face * coupon / freq
+        paid = [cf.coupon for cf in flows]
         yf = float(y)
         curve = []
         for bp in range(-300, 301, 10):
@@ -960,14 +963,20 @@ def add_market_routes(app: FastAPI, *, bond_rows: Callable[[], Awaitable[list]],
                      "macaulay_duration": _f(d.macaulay, 4), "modified_duration": _f(d.modified, 4),
                      "convexity": _f(d.convexity, 4), "years_to_maturity": round((bond.maturity - s_day).days / 365.25, 3),
                      "premium_pct": _f((clean / face - 1) * 100, 4), "coupon_per_payment": _f(per, 4),
-                     "cash_flows": [{"date": cf.day.isoformat(), "coupon": _f(per, 4),
+                     "coupon_range": [_f(min(paid), 4), _f(max(paid), 4)],
+                     "cash_flows": [{"date": cf.day.isoformat(), "coupon": _f(cf.coupon, 4),
                                      "principal": _f(face if cf.day == bond.maturity else 0, 4),
-                                     "coupon_after_tax": _f(per * (1 - tax_rate), 4), "periods": _f(cf.periods, 6)}
+                                     "coupon_after_tax": _f(cf.coupon * (1 - tax_rate), 4),
+                                     "periods": _f(cf.periods, 6)}
                                     for cf in flows],
                      "totals": {"coupons": _f(total_coupons, 2), "principal": _f(face, 2),
                                 "received": _f(total_coupons + face, 2), "paid_today": _f(dirty, 2)},
                      "curve": curve, "sensitivity": sensitivity,
-                     "conventions": "accrued interest Actual/Actual (SEBI); discounting by coupon periods; after-tax "
+                     "conventions": "coupons and accrued interest Actual/Actual (SEBI's NCS master circular, "
+                                    "Chapter III): each coupon is the interest for the actual days of its period "
+                                    "over a 365- or 366-day coupon year, on its due date (a bond issued before 2017 "
+                                    "may differ by a day's interest in a leap year or around a holiday: see its "
+                                    "offer document); discounting by coupon periods; after-tax "
                                     "yield pays the dirty price, taxes each coupon at the slab rate plus 4% cess and "
                                     "treats the gap between face value and the clean price as a capital gain or loss "
                                     "at redemption"}  # fmt: skip

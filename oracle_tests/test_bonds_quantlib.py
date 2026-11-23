@@ -3,12 +3,19 @@
 Conventions pinned on the QuantLib side to match the module's docstring before any difference counts:
 * schedule: rolled BACK from the maturity date in steps of 12/freq months, each date taken from the maturity itself
   and clamped to the month's end, no business-day adjustment, end-of-month rule off, no settlement lag, face 100;
+* coupons of a listed bond (#519, SEBI's Actual/Actual: NCS master circular of 15-Oct-2025, Chapter III;
+  CIR/IMD/DF-1/122/2016, clause 3(b)): face x rate x actual days of the period / 365, or / 366 for every period of a
+  coupon year that holds 29 February. In QuantLib's terms that is a `FixedRateCoupon` per period on
+  `ActualActual(ISMA)` whose REFERENCE period is the one-year period between two anniversaries of the maturity:
+  `sebi_bond` builds exactly that, and QuantLib computes every amount and accrual from it;
+* coupons of a Government security (RBI's primer): half the annual coupon each half-year, accrued 30/360, which is
+  QuantLib's `Thirty360(European)` (the primer names Excel's basis 4);
 * discounting: `Compounded` at `freq`, time by `ActualActual(ISMA, schedule)` (the fraction of the current coupon
   period still to run, then whole periods): the street convention the module's "counts coupon periods" describes;
-* accrued interest: NOT a QuantLib day count. The module follows SEBI's rule as its own docstring and tests state it
+* accrued interest of a listed bond: NOT a ready-made QuantLib bond convention. The module follows SEBI's rule
   (CIR/IMD/DF-1/122/2016): when 29 February falls in a one-year period, 366 is the denominator for that whole year,
   whatever the coupon frequency. It is rebuilt here from QuantLib's own dates and day counts, and the gap to
-  ActualActual(ISMA) is measured and explained.
+  ActualActual(ISMA) on the coupon period is measured and explained.
 
 The grid is built to hit what tests/test_bonds.py never did: settlement between coupon dates, on the eve and the day
 of a coupon, on and around 29 February, month-end maturities (29th, 30th, 31st), and all four frequencies.
@@ -17,11 +24,9 @@ of a coupon, on and around 29 February, month-end maturities (29th, 30th, 31st),
 from __future__ import annotations
 
 import itertools
-import math
 from datetime import date, timedelta
 from decimal import Decimal
 
-import pytest
 import QuantLib as ql
 
 from finresearch.fincalc import bonds as b
@@ -69,11 +74,25 @@ def cases(coupons=COUPONS, yields=YIELDS):
             yield mat, st, c, f, y
 
 
-def street(sched: ql.Schedule, freq: int, c: str, y: str):
-    dc = ql.ActualActual(ql.ActualActual.ISMA, sched)
-    return ql.FixedRateBond(0, 100.0, sched, [float(c)], dc), ql.InterestRate(
-        float(y), dc, ql.Compounded, FREQ[freq]
-    )
+def sebi_bond(st: date, mat: date, freq: int, c: str) -> ql.Bond:
+    """A listed bond in QuantLib's own objects: one `FixedRateCoupon` per period of the backward schedule, on
+    `ActualActual(ISMA)` with the anniversary year that holds the period as its reference period, so QuantLib pays
+    nominal x rate x days / days of that year. Nothing here divides days by a basis: the dates come from QuantLib's
+    schedules and the amounts from its coupons. `ql.Bond` adds the redemption at the last coupon date."""
+    days, years = list(schedule(st, mat, freq)), list(schedule(st, mat, 1))
+    isma, leg = ql.ActualActual(ql.ActualActual.ISMA), []
+    for start, end in itertools.pairwise(days):
+        ref_start = max(d for d in years if d <= start)
+        ref_end = min(d for d in years if d > start)
+        leg.append(ql.FixedRateCoupon(end, 100.0, float(c), isma, start, end, ref_start, ref_end))
+    return ql.Bond(0, ql.NullCalendar(), days[0], ql.Leg(leg))
+
+
+def street(st: date, mat: date, freq: int, c: str, y: str):
+    """The listed bond and the street yield convention: compounded `freq` times a year, time counted in coupon
+    periods (`ActualActual(ISMA)` on the schedule, which ignores the coupons' own reference periods)."""
+    dc = ql.ActualActual(ql.ActualActual.ISMA, schedule(st, mat, freq))
+    return sebi_bond(st, mat, freq, c), ql.InterestRate(float(y), dc, ql.Compounded, FREQ[freq])
 
 
 def test_coupon_schedule_matches_quantlib(oracle):
@@ -100,7 +119,7 @@ def test_dirty_price_matches_quantlib_street_convention(oracle):
     worst, n = (0.0, None), 0
     for mat, st, c, f, y in cases():
         n += 1
-        bond, rate = street(schedule(st, mat, f), f, c, y)
+        bond, rate = street(st, mat, f, c, y)
         ref = ql.CashFlows.npv(bond.cashflows(), rate, False, qd(st), qd(st))
         rel = abs(float(b.dirty_price(y, st, mat, c, f)) / ref - 1)
         worst = max(worst, (rel, (mat, st, c, f, y, ref)), key=lambda x: x[0])
@@ -114,7 +133,7 @@ def test_duration_and_convexity_match_quantlib(oracle):
     worst, n = {"macaulay": (0.0, None), "modified": (0.0, None), "convexity": (0.0, None)}, 0
     for mat, st, c, f, y in cases():
         n += 1
-        bond, rate = street(schedule(st, mat, f), f, c, y)
+        bond, rate = street(st, mat, f, c, y)
         got = b.duration(y, st, mat, c, f)
         ref = {
             "macaulay": ql.BondFunctions.duration(bond, rate, ql.Duration.Macaulay, qd(st)),
@@ -144,7 +163,7 @@ def test_ytm_matches_quantlib_bond_yield(oracle):
             continue
         n += 1
         clean = b.clean_price(y, st, mat, c, f)
-        bond, rate = street(schedule(st, mat, f), f, c, y)
+        bond, rate = street(st, mat, f, c, y)
         dirty = float(clean + b.accrued_interest(st, mat, c, f))
         ref = ql.BondFunctions.bondYield(bond, ql.BondPrice(dirty, ql.BondPrice.Dirty), rate.dayCounter(),
                                          ql.Compounded, FREQ[f], qd(st), 1e-13, 1000, 0.05)  # fmt: skip
@@ -211,40 +230,114 @@ def test_accrued_interest_gap_to_coupon_period_isma_is_the_stated_convention(ora
                 verdict="(b) convention: SEBI divides by the anniversary year, ISMA by the coupon period")  # fmt: skip
 
 
-def test_a_full_periods_accrual_is_not_the_coupon_the_module_pays(oracle):
-    """NEEDS DECISION (not a QuantLib difference: the module against itself, found while pinning the accrual).
-    `cash_flows` pays face x coupon / freq every period, while `accrued_interest` accrues actual days over the
-    year. For annual coupons the two meet (the period is the year). For half-yearly, quarterly and monthly coupons a
-    full period accrues coupon x L / basis, not coupon / freq, so on the eve of a coupon the accrued interest is not
-    the coupon about to be paid and the clean price of a par bond steps at the coupon date. If SEBI's denominator
-    also sets the coupon AMOUNT (interest paid = face x rate x days / 365 or 366, which is how we read the circular's
-    wording on the payment of interest; read on a secondary copy, not verified against SEBI's own PDF), day-count
-    coupons would make the two consistent; an equal-coupon bond (a G-sec) would instead want ISMA accrual. Which
-    instruments pay which way is the owner's call, and it moves every non-annual YTM a little, so it is measured
-    here and left alone."""
-    worst = {f: (0.0, None) for f in FREQ}
-    step = {f: [math.inf, -math.inf] for f in FREQ}
-    n = 0
+def test_listed_bond_coupons_match_quantlib_coupons_on_the_anniversary_year(oracle):
+    """#519. Every coupon the module pays against the amount of QuantLib's own coupon object (`sebi_bond`): nominal x
+    rate x ActualActual(ISMA) year fraction with the anniversary year as reference period, which is SEBI's "366 days
+    ... for the entire year, irrespective of whether the interest/ dividend is payable annually, half yearly,
+    quarterly or monthly". The module divides in Decimal, QuantLib in double precision: 1e-12 relative. The grid
+    must really hold unequal coupons (leap and non-leap years, 28- to 31-day months, clamped month ends)."""
+    worst, n, unequal = (0.0, None), 0, 0
+    for mat, st, f in sorted({(m, s, f) for m, s, _, f, _ in cases(["0"], ["0"])}):
+        ref = [cf.amount() for cf in sebi_bond(st, mat, f, "0.09").cashflows()]
+        got = b.cash_flows(st, mat, "0.09", f)
+        assert len(ref) == len(got) + 1 and ref[-1] == 100.0  # QuantLib lists the redemption on its own
+        for cf, want in zip(got, ref[:-1], strict=True):
+            n += 1
+            unequal += abs(want - 9.0 / f) > 1e-6
+            worst = max(
+                worst, (abs(float(cf.coupon) / want - 1), (mat, st, f, cf.day, want)), key=lambda x: x[0]
+            )
+            assert cf.amount == cf.coupon + (100 if cf.day == mat else 0)
+    assert unequal > 10000  # the day-count branch is really on the grid (annual coupons are all 9.0)
+    oracle.check("bonds.cash_flows (coupon amounts, SEBI)", "QuantLib FixedRateCoupon, ActualActual(ISMA) on the "
+                 "anniversary year", grid=n, max_diff=worst[0], limit=1e-12, why="relative (Decimal vs float)",
+                 worst=worst[1])  # fmt: skip
+
+
+def test_a_full_periods_accrual_is_the_coupon_paid(oracle):
+    """#519, the finding the first slice left under "needs decision", now closed: `cash_flows` paid face x coupon /
+    freq while `accrued_interest` accrued actual days over the year, so a 184-day half-year accrued 4.537 per 100 at
+    9 % and paid 4.50, and a par bond's clean price stepped at each coupon date (by up to 0.037 half-yearly, 0.055
+    quarterly and 0.057 monthly per 100, measured on this grid with the module as it was). Both now come from one sum. Checked on the eve of every coupon of the grid, against QuantLib's coupon:
+    its accrued amount on the eve, and its amount less that (one day's interest) against the module's. Then the step
+    itself: across a coupon date the clean price of a 9 % bond at a 9 % yield may move only by one day's discounting
+    of the dirty price less one day's accrual, which is far below one day's interest (9/365 per 100)."""
+    worst, jump, n = (0.0, None), {f: 0.0 for f in FREQ}, 0
     for mat in MATURITIES:
         for f in FREQ:
             for day in b.coupon_dates(date(2025, 1, 1), mat, f)[:-1]:
                 n += 1
                 eve = day - timedelta(days=1)
-                prev, nxt, start, end = _accrual_refs(eve, mat, f)
-                gap = 9.0 * (nxt - prev) / (end - start) - 9.0 / f  # per 100 face at a 9 % coupon
-                worst[f] = max(worst[f], (abs(gap), (mat, day, gap)), key=lambda x: x[0])
-                clean = float(b.clean_price("0.09", eve, mat, "0.09", f))
-                step[f] = [min(step[f][0], clean), max(step[f][1], clean)]
-    assert worst[1][0] < 1e-12  # annual: a full year's accrual is the coupon ...
-    assert (
-        99.998 < step[1][0] <= step[1][1] < 100.0
-    )  # ... and par stays par, up to simple-vs-compound accrual
-    # half-yearly: a 184-day half accrues 9 x 184/365 = 4.5370 against the 4.50 paid; monthly: February's 28 days
-    # accrue 9 x 28/365 = 0.6904 against 0.75
-    assert worst[2][0] == pytest.approx(9 * 184 / 365 - 4.5, abs=1e-12)
-    assert worst[12][0] == pytest.approx(0.75 - 9 * 28 / 365, abs=1e-12)
-    oracle.note("bonds.cash_flows vs bonds.accrued_interest", "the module itself (SEBI accrual, equal coupons)", grid=n,
-                max_diff=max(w[0] for w in worst.values()),
-                tolerance=(f"none: per 100 face at 9 %; a par bond's clean price on the eve of a coupon reads "
-                           f"{step[2][0]:.3f} to {step[2][1]:.3f} (half-yearly), {step[12][0]:.3f} to {step[12][1]:.3f} (monthly)"),
-                verdict="needs decision: day-count coupons (SEBI) or ISMA accrual for equal coupons")  # fmt: skip
+                coupon = next(c for c in map(ql.as_coupon, sebi_bond(eve, mat, f, "0.09").cashflows())
+                              if c is not None and c.date() == qd(day))  # fmt: skip
+                paid = next(cf for cf in b.cash_flows(eve, mat, "0.09", f) if cf.day == day).coupon
+                accrued = b.accrued_interest(eve, mat, "0.09", f)
+                diffs = (abs(float(accrued) - coupon.accruedAmount(qd(eve))),
+                         abs(float(paid - accrued) - (coupon.amount() - coupon.accruedAmount(qd(eve)))))  # fmt: skip
+                worst = max(
+                    worst, (max(diffs), (mat, day, f, float(paid), float(accrued))), key=lambda x: x[0]
+                )
+                step = float(
+                    b.clean_price("0.09", day, mat, "0.09", f) - b.clean_price("0.09", eve, mat, "0.09", f)
+                )
+                jump[f] = max(jump[f], abs(step))
+    oracle.check("bonds.accrued_interest on the eve of a coupon; bonds.cash_flows less it", "QuantLib FixedRateCoupon "
+                 "accruedAmount and amount (anniversary year)", grid=n, max_diff=worst[0], limit=1e-12,
+                 why="absolute per 100 face (Decimal vs float)", worst=worst[1])  # fmt: skip
+    oracle.check("bonds.clean_price across a coupon date (cash_flows against accrued_interest)", "the module itself: "
+                 "one day's discount less one day's accrual", grid=n, max_diff=max(jump.values()), limit=9 / 365,
+                 why=(f"per 100 face at 9 %: below one day's interest; half-yearly {jump[2]:.4f}, monthly "
+                      f"{jump[12]:.4f} (0.0373 and 0.0574 before #519)"), worst=jump)  # fmt: skip
+
+
+def test_government_security_rule_matches_quantlib(oracle):
+    """The other instrument class (#519), half-yearly only, as dated G-secs and SDLs pay. RBI's primer: "half yearly
+    payment being half of the annual coupon", accrued on "30/360", for which its Annex 6 names Excel's basis 4: the
+    European 30/360, QuantLib's `Thirty360(European)`.
+    * accrued interest against QuantLib's accrued amount of a `FixedRateBond` on that day count, every settlement of
+      the grid (31sts, 28 and 29 February): 1e-12, Decimal against float;
+    * dirty price against the same street convention as the listed bond, on QuantLib's equal-coupon bond
+      (`ActualActual(ISMA)` coupons are rate / 2 for every regular period): 1e-12 relative;
+    * (b) convention, measured: had the COUPON been derived from the 30/360 count, a month-end security (28-Feb and
+      31-Aug) would pay 178/360 and 182/360 of the annual coupon. RBI states half and half, so the module pays that
+      and its 30/360 accrual does not land exactly on the coupon on such a security's coupon eve."""
+    e30, worst_ai, worst_px, gap, n, n_px = (
+        ql.Thirty360(ql.Thirty360.European),
+        (0.0, None),
+        (0.0, None),
+        0.0,
+        0,
+        0,
+    )
+    for mat, st, c, f, y in cases(["0.0675", "0.09", "0.1425"]):
+        if f != 2:
+            continue
+        sched = schedule(st, mat, 2)
+        counted = ql.FixedRateBond(0, 100.0, sched, [float(c)], e30)
+        equal = ql.FixedRateBond(0, 100.0, sched, [float(c)], ql.ActualActual(ql.ActualActual.ISMA, sched))
+        got = b.cash_flows(st, mat, c, 2, day_count=b.GSEC)
+        assert {cf.coupon for cf in got} == {100 * Decimal(c) / 2}
+        gap = max(gap, *(abs(cf.amount() - 100 * float(c) / 2) for cf in list(counted.cashflows())[:-1]))
+        if y == YIELDS[0]:  # the accrual does not depend on the yield
+            n += 1
+            diff = abs(
+                float(b.accrued_interest(st, mat, c, 2, day_count=b.GSEC)) - counted.accruedAmount(qd(st))
+            )
+            worst_ai = max(worst_ai, (diff, (mat, st, c)), key=lambda x: x[0])
+        n_px += 1
+        rate = ql.InterestRate(
+            float(y), ql.ActualActual(ql.ActualActual.ISMA, sched), ql.Compounded, ql.Semiannual
+        )
+        ref = ql.CashFlows.npv(equal.cashflows(), rate, False, qd(st), qd(st))
+        rel = abs(float(b.dirty_price(y, st, mat, c, 2, day_count=b.GSEC)) / ref - 1)
+        worst_px = max(worst_px, (rel, (mat, st, c, y, ref)), key=lambda x: x[0])
+    oracle.check("bonds.accrued_interest (GSEC)", "QuantLib FixedRateBond accruedAmount, Thirty360(European)", grid=n,
+                 max_diff=worst_ai[0], limit=1e-12, why="absolute per 100 face (Decimal vs float)",
+                 worst=worst_ai[1])  # fmt: skip
+    oracle.check("bonds.dirty_price (GSEC, equal coupons)", "QuantLib CashFlows.npv, ActualActual(ISMA) coupons, "
+                 "Compounded", grid=n_px, max_diff=worst_px[0], limit=1e-12, why="relative (float rounding)",
+                 worst=worst_px[1])  # fmt: skip
+    oracle.note("bonds.cash_flows (GSEC coupon amounts)", "QuantLib FixedRateBond coupons counted on "
+                "Thirty360(European)", grid=n_px, max_diff=gap,
+                tolerance="none: per 100 face; 0 unless the coupon day is a clamped month end (178 or 182 of 360 days)",
+                verdict="(b) convention: RBI pays half the annual coupon each half-year, whatever its 30/360 count")  # fmt: skip

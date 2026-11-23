@@ -516,7 +516,24 @@ def test_bond_frequency_comes_from_verified_research_else_is_flagged_as_assumed(
     run_id, claim_id = add_claim(2, "verified")
     r = c.get("/api/bonds/INE906B07DF8/analytics", params={"tax_slab_pct": 30}).json()
     assert r["freq"] == 2 and r["freq_source"] == {"kind": "verified", "claim_id": claim_id, "run_id": run_id}
-    assert r["analytics"]["coupon_per_payment"] == 43.75
+    assert r["analytics"]["coupon_per_payment"] == 43.75  # the year's 87.50 / 2: the average payment
+    # #519: half-yearly coupons follow the days of each half (SEBI Actual/Actual), by hand from a calendar: 5-Aug to
+    # 5-Feb is 184 days and 5-Feb to 5-Aug 181 (182 across 29-Feb-2028); the coupon year from 5-Feb-2028 has 366
+    rows = r["analytics"]["cash_flows"]
+    assert [x["date"] for x in rows] == ["2027-02-05", "2027-08-05", "2028-02-05", "2028-08-05", "2029-02-05"]
+    by_hand = [87.5 * 184 / 365, 87.5 * 181 / 365, 87.5 * 184 / 365, 87.5 * 182 / 366, 87.5 * 184 / 366]
+    assert (
+        [x["coupon"] for x in rows]
+        == [round(x, 4) for x in by_hand]
+        == [44.1096, 43.3904, 44.1096, 43.5109, 43.9891]
+    )
+    assert r["analytics"]["coupon_range"] == [43.3904, 44.1096]
+    assert rows[0]["coupon_after_tax"] == round(by_hand[0] * (1 - 0.312), 4) == 30.3474
+    assert (
+        r["analytics"]["totals"]["coupons"] == 219.11
+    )  # not 5 x 43.75 = 218.75: three long halves, two short
+    yearly = c.get("/api/bonds/INE906B07DF8/analytics", params={"freq": 1}).json()["analytics"]
+    assert yearly["coupon_range"] == [87.5, 87.5] and yearly["coupon_per_payment"] == 87.5
     chosen = c.get("/api/bonds/INE906B07DF8/analytics", params={"freq": 4}).json()  # an explicit choice wins
     assert chosen["freq"] == 4 and chosen["freq_source"] == {"kind": "chosen"}
 
