@@ -25,10 +25,12 @@ def test_bond_arithmetic_golden_values():
     # a par bond with equal coupons on a coupon date yields exactly its coupon: a half-yearly G-sec, and a listed
     # bond paying once a year (#519: a listed bond's half-yearly coupons follow the days of each half, so that case
     # moved to the G-sec rule; test_listed_bond_coupons_are_paid_for_the_actual_days_of_each_period has its prices)
-    assert b.clean_price("0.08", date(2026, 1, 1), date(2031, 1, 1), "0.08", 2, day_count=b.GSEC) == pytest.approx(
-        Decimal(100), abs=Decimal("1e-9")
+    assert b.clean_price(
+        "0.08", date(2026, 1, 1), date(2031, 1, 1), "0.08", 2, day_count=b.GSEC
+    ) == pytest.approx(Decimal(100), abs=Decimal("1e-9"))
+    assert b.ytm(100, date(2026, 1, 1), date(2031, 1, 1), "0.08", 2, day_count=b.GSEC) == Decimal(
+        "0.08000000"
     )
-    assert b.ytm(100, date(2026, 1, 1), date(2031, 1, 1), "0.08", 2, day_count=b.GSEC) == Decimal("0.08000000")
     assert b.clean_price("0.08", date(2026, 1, 1), date(2031, 1, 1), "0.08", 1) == pytest.approx(
         Decimal(100), abs=Decimal("1e-9")
     )
@@ -202,7 +204,9 @@ def test_ytm_raises_when_no_yield_in_range_fits():
     with pytest.raises(ValueError, match="no after-tax yield"):
         b.after_tax_ytm(10, s, m, "0.09", 1, "0.3")
     assert b.ytm(100, date(2026, 4, 1), m, "0.09", 1) == Decimal("0.09")
-    assert b.ytm(100, date(2026, 4, 1), m, "0.09", 2, day_count=b.GSEC) == Decimal("0.09")  # equal coupons (#519)
+    assert b.ytm(100, date(2026, 4, 1), m, "0.09", 2, day_count=b.GSEC) == Decimal(
+        "0.09"
+    )  # equal coupons (#519)
 
 
 def test_month_end_maturity_keeps_its_coupon_day_for_the_previous_coupon():
@@ -228,7 +232,9 @@ def test_month_end_maturity_keeps_its_coupon_day_for_the_previous_coupon():
     # the listed bond a year from maturity, on its coupon date 31-Aug-2029: 181 days to 28-Feb-2030 and 184 to
     # 31-Aug-2030 in a coupon year without 29 February, discounted one and two whole half-years
     last_year = 9 * 181 / 365 / 1.045 + (100 + 9 * 184 / 365) / 1.045**2
-    assert float(b.clean_price("0.09", date(2029, 8, 31), aug31, "0.09", 2)) == pytest.approx(last_year, abs=1e-9)
+    assert float(b.clean_price("0.09", date(2029, 8, 31), aug31, "0.09", 2)) == pytest.approx(
+        last_year, abs=1e-9
+    )
     # a zero maturing 31-Aug-2026, seen on 1-Jan-2026: 58 of the 181 days of the period 31-Aug-2025..28-Feb-2026 are
     # left, then one whole period, so it is discounted over 1 + 58/181 half-years (was 1 + 58/184)
     periods = 1 + 58 / 181
@@ -266,8 +272,18 @@ def test_listed_bond_coupons_are_paid_for_the_actual_days_of_each_period():
     the next coupon year holds no 29 February: 90 x 181/365 and 90 x 184/365. Expected values by hand."""
     s, m = date(2016, 1, 1), date(2018, 1, 1)
     flows = b.cash_flows(s, m, "0.09", 2, 1000)
-    assert [cf.day for cf in flows] == [date(2016, 7, 1), date(2017, 1, 1), date(2017, 7, 1), date(2018, 1, 1)]
-    want = [Decimal(90) * 182 / 366, Decimal(90) * 184 / 366, Decimal(90) * 181 / 365, Decimal(90) * 184 / 365]
+    assert [cf.day for cf in flows] == [
+        date(2016, 7, 1),
+        date(2017, 1, 1),
+        date(2017, 7, 1),
+        date(2018, 1, 1),
+    ]
+    want = [
+        Decimal(90) * 182 / 366,
+        Decimal(90) * 184 / 366,
+        Decimal(90) * 181 / 365,
+        Decimal(90) * 184 / 365,
+    ]
     assert [cf.coupon for cf in flows] == pytest.approx(want, abs=Decimal("1e-12"))
     assert [round(cf.coupon, 4) for cf in flows] == [
         Decimal("44.7541"), Decimal("45.2459"), Decimal("44.6301"), Decimal("45.3699")]  # fmt: skip
@@ -286,12 +302,16 @@ def test_listed_bond_coupons_are_paid_for_the_actual_days_of_each_period():
     # two periods left on 1-Jan-2017: the price is the two flows discounted one and two half-years (closed form)
     c1, c2 = 90 * 181 / 365, 90 * 184 / 365
     price = c1 / 1.045 + (c2 + 1000) / 1.045**2
-    assert float(b.dirty_price("0.09", date(2017, 1, 1), m, "0.09", 2, 1000)) == pytest.approx(price, abs=1e-9)
+    assert float(b.dirty_price("0.09", date(2017, 1, 1), m, "0.09", 2, 1000)) == pytest.approx(
+        price, abs=1e-9
+    )
     assert b.ytm(Decimal(str(price)), date(2017, 1, 1), m, "0.09", 2, 1000) == Decimal("0.09")
     # quarterly and monthly, 12 % on 1,000 maturing 15-Jan-2028, in the coupon year 15-Jan-2026..15-Jan-2027 (365):
     # 15-Jan to 15-Apr is 16 + 28 + 31 + 15 = 90 days; 15-Feb to 15-Mar is 28 days, 15-Mar to 15-Apr is 31
     q = b.cash_flows(date(2026, 1, 15), date(2028, 1, 15), "0.12", 4, 1000)
-    assert q[0].day == date(2026, 4, 15) and q[0].coupon == pytest.approx(Decimal(120) * 90 / 365, abs=Decimal("1e-12"))
+    assert q[0].day == date(2026, 4, 15) and q[0].coupon == pytest.approx(
+        Decimal(120) * 90 / 365, abs=Decimal("1e-12")
+    )
     mth = b.cash_flows(date(2026, 2, 15), date(2028, 1, 15), "0.12", 12, 1000)
     assert [cf.coupon for cf in mth[:2]] == pytest.approx(
         [Decimal(120) * 28 / 365, Decimal(120) * 31 / 365], abs=Decimal("1e-12")
@@ -351,7 +371,9 @@ def test_government_securities_pay_equal_half_yearly_coupons_and_accrue_30_360()
     2023, last coupon 25-Nov-2013, settlement 30-Jan-2014, 65 days, "8.83 x (65/360) = Rs 1.5943"."""
     flows = b.cash_flows(date(2008, 4, 22), date(2018, 4, 22), "0.0824", 2, day_count=b.GSEC)
     assert len(flows) == 20 and {cf.coupon for cf in flows} == {Decimal("4.12")}
-    assert {(cf.day.month, cf.day.day) for cf in flows} == {(10, 22), (4, 22)} and flows[-1].amount == Decimal("104.12")
+    assert {(cf.day.month, cf.day.day) for cf in flows} == {(10, 22), (4, 22)} and flows[
+        -1
+    ].amount == Decimal("104.12")
     ai = b.accrued_interest(date(2014, 1, 30), date(2023, 11, 25), "0.0883", 2, day_count=b.GSEC)
     assert ai == Decimal("8.83") * 65 / 360 and round(ai, 4) == Decimal("1.5943")
     # the same dates under the listed-bond rule are 66 actual days over 365: the classes must not be mixed

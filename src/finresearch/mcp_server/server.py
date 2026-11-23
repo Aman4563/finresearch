@@ -572,7 +572,11 @@ async def bond_analytics(isin: str, coupon_frequency: int, price_basis: str = "d
            "price_basis": price_basis,
            "price_basis_source": "NSE: CM-segment bonds are traded and settled on dirty price (bonds-traded-in-capital-market page)"
            if price_basis == "dirty" else "stated by the caller",
-           "conventions": "accrued interest Actual/Actual (SEBI CIR/IMD/DF-1/122/2016); discounting by coupon periods",
+           "conventions": "coupons and accrued interest Actual/Actual (SEBI NCS master circular of 15-Oct-2025, "
+                          "Chapter III; CIR/IMD/DF-1/122/2016): each coupon is the interest for the actual days of "
+                          "its period over a 365- or 366-day coupon year, so non-annual payments differ; dates are "
+                          "due dates, stepped back from the maturity; discounting by coupon periods. A bond issued "
+                          "before 2017 follows its own offer document in a leap year and around holidays",
            "warnings": bond.warnings}  # fmt: skip
     if tax_rate is not None:
         # live bond run 12: YTM x (1 - t) overstated the post-tax yield of a premium bond (pull-to-par is a

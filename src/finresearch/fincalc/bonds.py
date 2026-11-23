@@ -102,7 +102,8 @@ def cash_flows(settlement: date, maturity: date, coupon_rate: Num, freq: int, fa
     reaches on the coupon date), for a Government security the annual coupon / freq."""
     f, c = require_price(face, "face"), to_decimal(coupon_rate)
     step, days = _months(freq), coupon_dates(settlement, maturity, freq)
-    starts = [_back(maturity, (len(days) - k) * step) for k in range(len(days))]  # from the maturity, like the dates
+    # each period's start, stepped back from the maturity like the dates themselves (previous_coupon)
+    starts = [_back(maturity, (len(days) - k) * step) for k in range(len(days))]
     first = Decimal((days[0] - settlement).days) / Decimal((days[0] - starts[0]).days)
     equal = f * c / freq if _rule(day_count) == GSEC else None
     out = []
@@ -147,7 +148,9 @@ def _days_30_360(start: date, end: date) -> int:
     """Days from `start` to `end` with every month taken as 30 days and a 31st as the 30th: RBI's primer, question
     25 ("irrespective of the actual number of days in a month, the number of days in a month is taken as 30"), and
     its Annex 6, which names Excel's basis 4 (the European 30/360) for Government bonds."""
-    return (end.year - start.year) * 360 + (end.month - start.month) * 30 + min(end.day, 30) - min(start.day, 30)
+    return (
+        (end.year - start.year) * 360 + (end.month - start.month) * 30 + min(end.day, 30) - min(start.day, 30)
+    )
 
 
 def interest(start: date, end: date, maturity: date, coupon_rate: Num, face: Num = 100,
@@ -167,7 +170,9 @@ def accrued_interest(settlement: date, maturity: date, coupon_rate: Num, freq: i
     coupon / 365, or coupon / 366 in a one-year period that contains 29 February; on the next coupon date it has
     reached the coupon `cash_flows` pays. Government securities (`GSEC`): 30/360, RBI's worked case being
     8.83 x 65/360 = 1.5943 per 100 from 25-Nov-2013 to settlement on 30-Jan-2014."""
-    return interest(previous_coupon(settlement, maturity, freq), settlement, maturity, coupon_rate, face, day_count)
+    return interest(
+        previous_coupon(settlement, maturity, freq), settlement, maturity, coupon_rate, face, day_count
+    )
 
 
 def dirty_price(yld: Num, settlement: date, maturity: date, coupon_rate: Num, freq: int, face: Num = 100,
