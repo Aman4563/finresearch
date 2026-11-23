@@ -72,12 +72,23 @@ class Recorder:
     def __init__(self, rows: list[Row]):
         self._rows = rows
 
-    def add(self, function: str, oracle: str, *, grid: int, max_diff: float, tolerance: str, verdict: str):
-        """`max_diff` is the largest difference seen (in the unit the tolerance names); `verdict` is `agree`,
-        or the class of the finding: `(a) bug: ...`, `(b) convention: ...`, `(c) oracle limit: ...`."""
-        assert grid > 0, "a comparison over an empty grid proves nothing"
+    def _add(self, function: str, oracle: str, grid: int, max_diff: float, tolerance: str, verdict: str):
+        assert grid > 0, f"{function}: a comparison over an empty grid proves nothing"
         assert math.isfinite(max_diff), f"{function}: the largest difference must be a number, got {max_diff}"
         self._rows.append(Row(function, oracle, grid, float(max_diff), tolerance, verdict, len(self._rows)))
+
+    def check(self, function: str, oracle: str, *, grid: int, max_diff: float, limit: float, why: str,
+              verdict: str = "agree", worst: object = None):  # fmt: skip
+        """Record the largest difference seen and fail when it is beyond `limit`. `why` names the tolerance's unit
+        and its reason; the row is written before the assertion, so a failing comparison still shows in the table."""
+        ok = max_diff <= limit
+        self._add(function, oracle, grid, max_diff, f"{limit:g} {why}", verdict if ok else "BEYOND TOLERANCE")
+        assert ok, f"{function} vs {oracle}: {max_diff!r} > {limit!r} ({why}); worst case: {worst!r}"
+
+    def note(self, function: str, oracle: str, *, grid: int, max_diff: float, tolerance: str, verdict: str):
+        """Record a difference that is measured and explained, not held to a limit: a convention difference
+        `(b) ...`, an oracle limitation `(c) ...`, or a finding left for the owner `needs decision: ...`."""
+        self._add(function, oracle, grid, max_diff, tolerance, verdict)
 
 
 @pytest.fixture
