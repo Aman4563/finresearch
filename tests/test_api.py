@@ -354,7 +354,8 @@ def test_one_version_source_for_openapi_and_health(client):
     project = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())["project"]["version"]
     assert __version__ == project
     assert client.get("/api/openapi.json").json()["info"]["version"] == project
-    assert client.get("/api/health").json() == {"ok": True, "version": project}
+    # #507: /api/health also says whether a new database session can load pgvector (true on the test database)
+    assert client.get("/api/health").json() == {"ok": True, "version": project, "vector": True}
 
 
 def test_limits_reads_the_isolated_state(client, env):

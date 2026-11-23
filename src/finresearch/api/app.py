@@ -362,9 +362,14 @@ def create_app(*, spawner: Spawner | None = None, poll_s: float = 1.0, router=No
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:
+        """`ok`: the API answers and reaches its database (an unreachable database is a 500). `vector` (#507):
+        whether a new database session can load pgvector; false when its library or the extension is missing, null
+        when that could not be checked. scripts/healthcheck.py reads both."""
         with session_scope() as s:
             s.execute(select(1))
-        return {"ok": True, "version": __version__}
+        from finresearch.dq.misc import vector_loadable
+
+        return {"ok": True, "version": __version__, "vector": vector_loadable()}
 
     # ------------------------------------------------------------------ companies & documents
     @app.get("/api/companies")
