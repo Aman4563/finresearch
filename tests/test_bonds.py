@@ -197,3 +197,49 @@ def test_ytm_raises_when_no_yield_in_range_fits():
         b.after_tax_ytm(10, s, m, "0.09", 1, "0.3")
     assert b.ytm(100, date(2026, 4, 1), m, "0.09", 1) == Decimal("0.09")
     assert b.ytm(100, date(2026, 4, 1), m, "0.09", 2) == Decimal("0.09")
+
+
+def test_month_end_maturity_keeps_its_coupon_day_for_the_previous_coupon():
+    """#503 (found by the QuantLib oracle): a bond maturing on the 29th, 30th or 31st pays in a shorter month on that
+    month's last day (31-Aug -> 28-Feb), and the coupon before a clamped date is the maturity day again (31-Aug), not
+    the clamped day carried back (28-Aug). `previous_coupon` and `cash_flows` stepped back from the clamped date, so
+    accrued interest gained up to three days and the first discounting fraction used a period three days too long.
+    Expected values by hand, from the schedule and a calendar."""
+    aug31 = date(2030, 8, 31)  # half-yearly: 28/29-Feb and 31-Aug
+    assert b.coupon_dates(date(2026, 1, 1), aug31, 2)[:2] == [date(2026, 2, 28), date(2026, 8, 31)]
+    assert b.previous_coupon(date(2026, 1, 1), aug31, 2) == date(2025, 8, 31)  # was 28-Aug-2025
+    # 31-Aug-2025 to 1-Jan-2026 is 30 + 31 + 30 + 31 + 1 = 123 days, in a year without 29 February (was 126 days)
+    assert b.accrued_interest(date(2026, 1, 1), aug31, "0.09", 2, 1000) == pytest.approx(
+        Decimal(90) * 123 / 365, abs=Decimal("1e-9")
+    )
+    # on a coupon date nothing has accrued and a par bond is worth par (was 3 days' interest and 99.99...)
+    assert b.accrued_interest(date(2025, 8, 31), aug31, "0.1425", 2) == 0
+    assert b.clean_price("0.09", date(2025, 8, 31), aug31, "0.09", 2) == pytest.approx(
+        Decimal(100), abs=Decimal("1e-9")
+    )
+    assert b.ytm(100, date(2025, 8, 31), aug31, "0.09", 2) == Decimal("0.09")
+    # a zero maturing 31-Aug-2026, seen on 1-Jan-2026: 58 of the 181 days of the period 31-Aug-2025..28-Feb-2026 are
+    # left, then one whole period, so it is discounted over 1 + 58/181 half-years (was 1 + 58/184)
+    periods = 1 + 58 / 181
+    flows = b.cash_flows(date(2026, 1, 1), date(2026, 8, 31), 0, 2)
+    assert [float(cf.periods) for cf in flows] == pytest.approx([58 / 181, periods], abs=1e-12)
+    assert float(b.dirty_price("0.10", date(2026, 1, 1), date(2026, 8, 31), 0, 2)) == pytest.approx(
+        100 / 1.05**periods, abs=1e-9
+    )
+    assert b.duration("0.10", date(2026, 1, 1), date(2026, 8, 31), 0, 2).macaulay == Decimal(
+        str(round(periods / 2, 6))
+    )
+    # the commonest Indian case, a 31-March maturity paying 30-Sep and 31-Mar: 31-Mar to 15-Jun-2026 is
+    # 30 + 31 + 15 = 76 days (was 77, counted from 30-Mar)
+    mar31 = date(2030, 3, 31)
+    assert b.previous_coupon(date(2026, 6, 15), mar31, 2) == date(2026, 3, 31)
+    assert b.accrued_interest(date(2026, 6, 15), mar31, "0.08", 2) == pytest.approx(
+        Decimal(8) * 76 / 365, abs=Decimal("1e-9")
+    )
+    # monthly on the 31st: the coupon before 30-Apr-2026 is 31-Mar-2026, 16 days before 16-Apr (was 30-Mar: 17)
+    assert b.previous_coupon(date(2026, 4, 16), date(2027, 1, 31), 12) == date(2026, 3, 31)
+    assert b.accrued_interest(date(2026, 4, 16), date(2027, 1, 31), "0.12", 12, 1000) == pytest.approx(
+        Decimal(120) * 16 / 365, abs=Decimal("1e-9")
+    )
+    # a maturity every month has is unchanged
+    assert b.previous_coupon(date(2026, 9, 28), date(2029, 2, 5), 1) == date(2026, 2, 5)
