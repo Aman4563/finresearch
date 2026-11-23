@@ -150,9 +150,10 @@ def _may_hold(s: Session, day: date) -> bool:
 
 def leg_readings(s: Session, day: date, now: datetime) -> list[Row]:
     """Per open short option leg in tonight's marks (fno_mark, paper and Groww): its risk-neutral touch probability
-    at its own IV (ra.TOUCH_LABEL) and the share of the front future's stored overnight gaps beyond its strike's
-    distance; per index underlying held, the tier-1 event check up to its last expiry (eventcal). Tonight's marks
-    not written, or a Groww book that could not be marked, read unknown for the whole book."""
+    at its own IV (the formula and label of ra.TOUCH_VARIANT, the exact first passage since #520; inputs that are not
+    positive read unknown) and the share of the front future's stored overnight gaps beyond its strike's distance;
+    per index underlying held, the tier-1 event check up to its last expiry (eventcal). Tonight's marks not written,
+    or a Groww book that could not be marked, read unknown for the whole book."""
     import math
 
     from finresearch.eventcal import calendar, store
@@ -194,9 +195,12 @@ def leg_readings(s: Session, day: date, now: datetime) -> list[Row]:
         else:
             t, iv = float(m.t_years), float(m.iv)
             f = spot * math.exp(MARK_RATE * t)
-            p = ra.touch_prob(f, k, iv, t)
-            out.append(("touch", key, Reading(p, mser, f"strike {k:g}, forward {f:,.0f}, IV {iv:.1%}, "
-                                              f"{t * 365:.1f} days: {ra.TOUCH_LABEL}")))  # fmt: skip
+            fn, label = ra.TOUCH_VARIANTS[ra.TOUCH_VARIANT]  # #520: the exact first passage (variant 2)
+            p = fn(f, k, iv, t)
+            inputs = f"strike {k:g}, forward {f:,.0f}, IV {iv:.1%}, {t * 365:.1f} days"
+            detail = f"{inputs}: {label}" if p is not None else (
+                f"{inputs}: one of them is not positive, so there is no touch probability")  # fmt: skip
+            out.append(("touch", key, Reading(p, mser, detail)))
         gser = f"fno_bhav front-future overnight gaps of {m.symbol} to {day}"
         if spot is None:
             out.append(("gap_stop", key, Reading(None, gser, "the underlying's close is unknown")))
