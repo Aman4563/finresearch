@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import date
 
+from finresearch.factordiag import specs as fdspecs
 from finresearch.fincalc import beta_specs, brinson, risk_alert_specs
 from finresearch.horserace import addendum, addendum_a2, addendum_a3, addendum_a4, addendum_a5, addendum_a6
 from finresearch.horserace import specs as hspecs
@@ -153,6 +154,17 @@ STUDIES = (
                "Worst calendar month and maximum drawdown against the size-matched control (moving-block bootstrap)",
                evidence=f"{_X}/risk_budget_seen/PREREG.md: registered, not run", regime_tags=FNO_TAGS,
                registrations=(rbspecs.SPEC_VERSION,)),
+    ModelEntry("stock_factor_diagnostics", "Factor diagnostics of the stock signal's price components (#506)",
+               "analytics", "C", "Why the stock signal's price rule showed no edge: each component's rank IC against "
+               "1 to 12 month forward returns on the point-in-time Nifty 50, its decay, quintile spreads, turnover "
+               "and break-even cost.",
+               "Read by its own report (finresearch eval factor-diagnostics); can justify at most one further "
+               "registered test.",
+               "Study only: seen data. It changes no signal, call or card and is never an edge claim.",
+               ("price history (the base experiment's harvest)", "Nifty 50 membership change log"), ("factordiag/",),
+               date(2026, 11, 23), "Measured size of its tests on a synthetic null (the registered calibration)",
+               evidence=f"{_X}/stock_factor_diagnostics/PREREG.md: registered, not run",
+               registrations=(fdspecs.SPEC_VERSION,)),
 )  # fmt: skip
 
 ANALYTICS = (
