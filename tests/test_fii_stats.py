@@ -79,6 +79,68 @@ def test_extra_categories_are_kept_and_labels_normalised():
     assert fs.parse(synth_xls(rows=rows)).rows["NIFTY FUTURES"]["oi_contracts"] == 3
 
 
+# NSE's real workbook, as seen on the file for 20-Nov-2026 (#509): every figure is a TEXT cell, the title is on the
+# first row with the header straight under it, BUY and SELL are written over both of their columns, and each index
+# has its own row under its group, with a blank row between groups. Made-up figures; a group is its indices' sum.
+REAL = [
+    ("INDEX FUTURES", ("300", "45.60", "280", "42.10", "1500", "230.00")),
+    ("BANKNIFTY FUTURES", ("100", "20.10", "80", "16.00", "500", "100.25")),
+    ("NIFTY FUTURES", ("200", "25.50", "200", "26.10", "1000", "129.75")),
+    None,
+    ("INDEX OPTIONS", ("9000", "1500.05", "8800", "1470.00", "40000", "6600.90")),
+    ("NIFTY OPTIONS", ("9000", "1500.05", "8800", "1470.00", "40000", "6600.90")),
+    None,
+    ("STOCK FUTURES", ("7000", "480.00", "6900", "470.35", "60000", "4100.00")),
+    None,
+    ("STOCK OPTIONS", ("5000", "360.20", "4900", "350.00", "15000", "1050.10")),
+]
+
+
+def real_xls(rows: list = REAL, day: date = D) -> bytes:
+    wb = xlwt.Workbook()
+    ws = wb.add_sheet("sheet1")
+    ws.write(0, 0, f"FII DERIVATIVES STATISTICS FOR {day:%d-%b-%Y}")
+    for c, h in enumerate(("BUY", "BUY", "SELL", "SELL", "OPEN INTEREST AT THE END OF THE DAY"), start=1):
+        ws.write(1, c, h)
+    for i in range(3):
+        ws.write(2, 1 + 2 * i, "No. of contracts")
+        ws.write(2, 2 + 2 * i, "Amt in Crores")
+    for r, row in enumerate(rows, start=3):
+        if row is not None:
+            ws.write(r, 0, row[0])
+            for c, v in enumerate(row[1], start=1):
+                ws.write(r, c, v)
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def test_parse_reads_nses_real_layout_whose_figures_are_text():
+    got = fs.parse(real_xls())
+    assert got.day == D and list(got.rows) == [r[0] for r in REAL if r]
+    fut = got.rows["INDEX FUTURES"]
+    assert fut == {"buy_contracts": 300, "buy_amt_cr": Decimal("45.60"), "sell_contracts": 280,
+                   "sell_amt_cr": Decimal("42.10"), "oi_contracts": 1500, "oi_amt_cr": Decimal("230.00")}  # fmt: skip
+    assert isinstance(fut["buy_contracts"], int)
+    assert got.rows["STOCK OPTIONS"]["oi_amt_cr"] == Decimal("1050.10")
+
+
+@pytest.mark.parametrize(
+    ("figures", "match"),
+    [
+        (("1,000", "1.00", "1", "1.00", "1", "1.00"), "six numbers"),  # a grouped figure is not guessed at
+        (("-5", "1.00", "1", "1.00", "1", "1.00"), "six numbers"),  # nor a signed one
+        (("1e3", "1.00", "1", "1.00", "1", "1.00"), "six numbers"),
+        (("", "1.00", "1", "1.00", "1", "1.00"), "six numbers"),
+        (("1.5", "1.00", "1", "1.00", "1", "1.00"), "whole"),  # half a contract
+    ],
+)
+def test_a_text_figure_that_is_not_a_plain_number_fails_its_row(figures, match):
+    rows = [("INDEX FUTURES", figures), *REAL[1:]]
+    with pytest.raises(fs.FiiStatsError, match=match):
+        fs.parse(real_xls(rows))
+
+
 @pytest.mark.parametrize(
     ("change", "match"),
     [
