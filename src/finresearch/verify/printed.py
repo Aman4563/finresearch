@@ -57,6 +57,7 @@ import re
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
+from functools import lru_cache
 from typing import Any
 
 from finresearch.verify.gate import CONFLICT_TOL, REL_TOL, candidate_forms, rupee_scale
@@ -74,7 +75,7 @@ _NOT_FIGURES = re.compile(
     r"\[C\d+\]"
     r"|\b\d{1,2}:\d{2}(?::\d{2})?\b"  # 16:09, 17:00:00
     rf"|\b(?P<y1>{_YEAR})-\d{{2}}-\d{{2}}\b|\b\d{{1,2}}/\d{{1,2}}/\d{{2,4}}\b"  # 2026-09-28, 28/09/2026
-    rf"|\b\d{{1,2}}(?:st|nd|rd|th)?[-\s]{_MON}\b(?:[-\s,]+(?:(?P<y2>{_YEAR})|\d{{2}})\b)?"  # 28-Sep-2026, 29 Sep
+    rf"|\b\d{{1,2}}(?:st|nd|rd|th)?[-\s]{_MON}\b(?:[-\s,]+(?:(?P<y2>{_YEAR})|\d{{2}})\b(?!-\d))?"  # 28-Sep-2026, 29 Sep
     rf"|\b{_MON}[-\s,]+(?:\d{{1,2}},?\s+)?(?P<y3>{_YEAR})\b|\b{_MON}-\d{{2}}\b"  # Jan-2025, March 31, 2025, Jun-26
     r"|\b(?:FY|CY|AY)\s?'?\d{2,4}(?:\s?[-–/]\s?\d{2,4})?\b"  # FY26, FY24–26, FY2020-21
     rf"|\b{_YEAR}\s?[-–/]\s?\d{{2}}\b"  # 2025-26
@@ -173,6 +174,11 @@ def figures(text: str, *, cell: bool = False) -> list[Fig]:
     """The numbers a piece of report text prints, with their sign and markers; dates, times, period labels,
     citations and digits glued to letters ("Q1", "CAT6A", "1Lattice") are not numbers. `cell`: the text is one
     whole table cell, where a bracket around its only content is an accounting negative ("(117.64)")."""
+    return list(_figures(text, cell))
+
+
+@lru_cache(maxsize=8192)  # the gate re-reads the same claim statements for every revision of a report
+def _figures(text: str, cell: bool) -> tuple[Fig, ...]:
     t = _blank(text)
     out: list[Fig] = []
     for m in _NUM.finditer(t):
@@ -211,7 +217,7 @@ def figures(text: str, *, cell: bool = False) -> list[Fig]:
                        cur=cur, scale=scale, kind=kind,
                        figure=bool(cur or scale or decimals or grouped or kind != "plain"), start=start, end=end,
                        text=text[start:end].strip(), word=wm.group(1).lower() if wm else ""))  # fmt: skip
-    return out
+    return tuple(out)
 
 
 # --------------------------------------------------------------------------- what a claim holds
@@ -226,6 +232,7 @@ _U_SCALE = re.compile(r"lakh\s+crores?|crores?|\bcr\b|lakhs?|lacs?|millions?|\bm
 _U_WORD = re.compile(r"[a-z]{2,}")
 
 
+@lru_cache(maxsize=1024)
 def _unit(unit: str | None) -> tuple[str, str | None, Decimal, frozenset[str]]:
     """(kind, currency, scale, unit words) of a claim's unit. Kinds: money | pct | frac | mult | other."""
     u = unit or ""
@@ -260,8 +267,8 @@ def matches(f: Fig, value: Decimal, unit: str | None) -> bool:
         return f.value == v
     # a bare integer below 100 is a count ("3 plants" is never a rounded 2.65); "889" may be a rounded 888.84
     half = f.half if f.figure or f.word in words or f.value >= 100 else Decimal(0)
-    if f.cur and cur and f.cur != cur:
-        return False
+    if f.cur and (f.cur != cur if cur else kind in ("pct", "frac", "mult")):
+        return False  # another currency, or a ₹ amount against a rate ("₹15" is not 15 %)
     if f.scale is not None:
         return kind in ("money", "other") and _near(f.base, v * scale, half * f.scale)
     if f.kind == "pct":
@@ -308,17 +315,20 @@ class _Held:
     kind: str
     cur: str | None
     words: frozenset[str]
-    own: list[Fig]  # the figures of its own statement and period
+    own: list[Fig]  # the other figures of its own statement and period (not its value)
     neg: bool  # the value, or its figure in the statement, is negative
     word: int  # polarity of the words next to its figure in the statement, else of the metric name
     metric: str
     period: str
     importance: str | None
 
+    def amount(self) -> str:
+        return f"{_plain(self.value)} {self.unit or ''}".strip()
+
     def holds(self) -> str:
-        """ "2,651.97 INR million (pat, FY2026)": what the finding tells the synthesiser the claim holds."""
+        """ "2,651.97 INR million (pat, FY2026)": what a finding tells the synthesiser the claim holds."""
         what = ", ".join(x for x in (self.metric, self.period) if x)
-        return f"{_plain(self.value)} {self.unit or ''}".strip() + (f" ({what})" if what else "")
+        return self.amount() + (f" ({what})" if what else "")
 
 
 def _plain(v: Decimal | None) -> str:
@@ -333,14 +343,17 @@ def _held(c: Any) -> _Held:
     value = Decimal(c.value) if c.value is not None else None
     kind, cur, _scale, words = _unit(c.unit)
     statement = c.statement or ""
-    own = figures(statement) + figures(c.period or "")
+    stated = figures(statement)
     neg, word = bool(value is not None and value < 0), 0
     if value is not None:
-        for f in figures(statement):
+        for f in stated:
             if matches(f, value, c.unit):
                 neg = neg or f.neg
                 word = near_polarity(statement[: f.start][-80:], statement[f.end :])
                 break
+    # its other figures: the statement's own print of the value is not one of them, so a report figure with the
+    # value's digits is always judged against the value and its unit ("₹2,651.97 crore" for 2,651.97 INR million)
+    own = [f for f in stated + figures(c.period or "") if value is None or not matches(f, value, c.unit)]
     word = word or polarity((c.metric or "").replace("_", " "))
     return _Held(id=c.id, value=value, unit=c.unit, kind=kind, cur=cur, words=words, own=own, neg=neg, word=word,
                  metric=c.metric or "", period=c.period or "", importance=c.importance)  # fmt: skip
@@ -595,14 +608,14 @@ class TwoValues:
     period: str
     a: int
     b: int
-    a_holds: str
-    b_holds: str
+    a_amount: str
+    b_amount: str
     a_line: int
     b_line: int
 
     def message(self) -> str:
-        return (f"{self.metric} ({self.period}) is printed with two values: {self.a_holds} [C{self.a}] on line "
-                f"{self.a_line} and {self.b_holds} [C{self.b}] on line {self.b_line}")  # fmt: skip
+        return (f"{self.metric} ({self.period}) is printed with two values: {self.a_amount} [C{self.a}] on line "
+                f"{self.a_line} and {self.b_amount} [C{self.b}] on line {self.b_line}")  # fmt: skip
 
 
 @dataclass
@@ -669,6 +682,9 @@ def _quantity(h: _Held) -> Decimal:
     return h.value / 100 if h.kind == "pct" else h.value
 
 
+_RATE = {"pct": "rate", "frac": "rate"}  # 15 % and 0.15 are one kind of quantity
+
+
 def _key(s: str) -> str:
     return re.sub(r"[^a-z0-9]", "", s.lower())
 
@@ -705,8 +721,12 @@ def _two_values(
                 top = max(abs(qa), abs(qb))
                 apart = bool(top) and abs(qa - qb) / top > CONFLICT_TOL
                 beside = {block[n] for n in printed[a.id]} & {block[n] for n in printed[b.id]}
-                if apart and not beside and (a.kind, a.cur) == (b.kind, b.cur):
-                    out.append(TwoValues(a.metric, a.period, a.id, b.id, a.holds(), b.holds(), printed[a.id][0],
+                if (
+                    apart
+                    and not beside
+                    and (_RATE.get(a.kind, a.kind), a.cur) == (_RATE.get(b.kind, b.kind), b.cur)
+                ):
+                    out.append(TwoValues(a.metric, a.period, a.id, b.id, a.amount(), b.amount(), printed[a.id][0],
                                          printed[b.id][0]))  # fmt: skip
     return out
 
