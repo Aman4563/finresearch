@@ -178,8 +178,8 @@ def touch_prob_exact(forward: float | None, strike: float | None, vol: float | N
 
     Derivation. Under Q the forward is a driftless lognormal martingale, dF = sigma F dW, so X_t = ln(F_t / F_0) is a
     Brownian motion with drift, X_t = mu t + sigma W_t with mu = -sigma^2 / 2. Its first-passage law (the reflection
-    principle after Girsanov's change of drift; Karatzas and Shreve 1991, "Brownian Motion and Stochastic Calculus",
-    s. 3.5.C) is, with s = sigma sqrt(T),
+    principle after Girsanov's change of drift, i.e. the inverse Gaussian law; a textbook result, e.g. Karatzas and
+    Shreve 1991, "Brownian Motion and Stochastic Calculus", on Brownian motion with drift) is, with s = sigma sqrt(T),
         b < 0:  P(min_{t<=T} X_t <= b) = N(( b - mu T) / s) + exp(2 mu b / sigma^2) N(( b + mu T) / s)
         b > 0:  P(max_{t<=T} X_t >= b) = N((-b + mu T) / s) + exp(2 mu b / sigma^2) N((-b - mu T) / s)
     Put b = ln(K / F) and mu = -sigma^2 / 2. Then exp(2 mu b / sigma^2) = exp(-b) = F / K on both sides, and with

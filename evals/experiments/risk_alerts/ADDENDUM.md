@@ -108,6 +108,10 @@ use it, real sessions are not equally spaced (weekends), and turning it on would
 
 The marks exist only since #383 (October 2026), so the replay is as deep as the book's own stored marks.
 
+Reported beside the registered counts (noted 23-Nov-2026, before any run on stored marks): the first and last stored
+session in the range, the registration hash, and the largest difference in probability between the two variants on
+each side of the forward. None of them identifies a leg, a strike or an underlying.
+
 ### State carried across the switch
 
 The rule's label and level are unchanged, so its signature in `alert_rule_state` is unchanged and standing state is
