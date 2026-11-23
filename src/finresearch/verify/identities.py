@@ -44,9 +44,11 @@ from __future__ import annotations
 import itertools
 import re
 from collections.abc import Iterable
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from decimal import Decimal, InvalidOperation
 from typing import Any
+
+from finresearch.fincalc.forensic import FINANCIAL_BASES
 
 USABLE = ("verified", "needs_review", "unverified")
 REL_EPS = Decimal("0.001")  # 0.1 % floor of the identity tolerance
@@ -105,11 +107,69 @@ _ALIASES: dict[str, tuple[str, ...]] = {
     "receivable_days": ("receivable_days", "trade_receivable_days", "debtor_days", "dso"),
     "bonus": ("bonus_issue", "bonus_issue_shares", "bonus_ratio", "bonus_issue_ratio"),
     "split": ("stock_split", "share_split", "split_ratio", "sub_division"),
+    # Statement checks of #518. "(run N)" marks a name a live ledger used (tests/fixtures/eval); the rest are the
+    # Schedule III / Ind AS 7 captions themselves, kept that narrow until a ledger shows what agents really write.
+    "other_equity": ("other_equity",),
+    "retained_earnings": ("retained_earnings",),
+    "dividends": ("dividends_paid", "dividend_paid"),  # run 9
+    "buyback": ("buyback_of_equity_shares", "buyback_amount"),  # run 9 (both)
+    "esop_charge": ("esop_charge", "share_based_payment_expense"),  # run 5
+    "oci": ("other_comprehensive_income",),
+    "da": ("depreciation", "depreciation_and_amortisation", "depreciation_and_amortization",  # run 5: depreciation
+           "depreciation_and_amortisation_expense", "depreciation_and_amortization_expense"),
+    "da_cf": ("depreciation_cash_flow", "depreciation_and_amortisation_cash_flow",
+              "depreciation_and_amortization_cash_flow"),
+    "deferred_tax": ("deferred_tax", "deferred_tax_expense", "deferred_tax_charge", "deferred_tax_credit"),
+    "mat_credit": ("mat_credit", "mat_credit_entitlement"),
+    "tax_adjustment": ("tax_reversal", "tax_reversal_and_interest_footnote", "tax_for_earlier_years"),  # run 9
+    "etr": ("effective_tax_rate",),  # run 9
+    "gross_profit": ("gross_profit",),
+    "gross_margin": ("gross_margin",),  # run 9
+    "capex": ("capex", "capital_expenditure", "purchase_of_property_plant_and_equipment"),  # runs 5 and 9: capex
+    "gross_block": ("gross_block", "gross_fixed_assets"),
+    "cwip": ("cwip", "capital_work_in_progress"),
 }  # fmt: skip
 _CANON = {alias: key for key, aliases in _ALIASES.items() for alias in aliases}
 _GROWTH_RE = re.compile(r"^(revenue|pat|eps|net_profit|profit)(?:_from_operations)?_(growth|cagr)(?:_(yoy|inr|usd))?"
                         r"(?:_fy\d{2,4}(?:_fy\d{2,4}|_\d{2,4})?)?$")  # fmt: skip
 _GROWTH_BASE = {"revenue": "revenue", "pat": "pat", "net_profit": "pat", "profit": "pat", "eps": "eps_basic"}
+
+# --------------------------------------------------------------------------- statement checks (#518): constants
+# Effective tax rate band. Statutory rates of a domestic company under the Income-tax Act, 1961, each as
+# rate × (1 + surcharge) × (1 + 4 % health and education cess); the 1961 Act governs every year up to FY2025-26
+# (the Income-tax Act, 2025 applies from 1 April 2026). Rates as enacted by the Taxation Laws (Amendment) Act, 2019
+# and the annual Finance Acts; not re-read from the Act's text when this was written [U].
+_CESS = Decimal("1.04")
+STATUTORY_TAX_RATES: tuple[tuple[str, Decimal], ...] = (
+    ("s.115BAB, new manufacturing company: 15 % + 10 % surcharge + cess", Decimal("0.15") * Decimal("1.10") * _CESS),
+    ("s.115JB, MAT on book profit: 15 % + 12 % surcharge + cess", Decimal("0.15") * Decimal("1.12") * _CESS),
+    ("s.115BAA: 22 % + 10 % surcharge + cess", Decimal("0.22") * Decimal("1.10") * _CESS),  # 25.168 %
+    ("25 % slab, turnover up to ₹400 crore (Finance Act, First Schedule): + 12 % surcharge + cess",
+     Decimal("0.25") * Decimal("1.12") * _CESS),
+    ("30 % slab, other domestic companies: + 12 % surcharge + cess", Decimal("0.30") * Decimal("1.12") * _CESS),
+)  # fmt: skip
+# Total tax (current + deferred, Ind AS 12) ÷ PBT sits near the statutory rate because deferred tax is booked at the
+# enacted rate; permanent differences (exempt income, disallowed expenses, a subsidiary taxed elsewhere) move it by a
+# few points. The cushion on each side of the lowest and highest statutory rate is a judgement [U].
+TAX_BAND_CUSHION = Decimal("0.03")
+TAX_BAND = (min(r for _, r in STATUTORY_TAX_RATES) - TAX_BAND_CUSHION,
+            max(r for _, r in STATUTORY_TAX_RATES) + TAX_BAND_CUSHION)  # 14.16 % … 37.944 %  # fmt: skip
+# Cash capex against the rise in gross block (+ CWIP): disposals, capital advances and creditors, leased assets
+# (Ind AS 116 adds to the block without cash) and acquisitions all sit between the two, so only a gap above a
+# quarter of the larger figure is worth a question. A judgement [U].
+CAPEX_BAND = Decimal("0.25")
+GROWTH_FLAG = Decimal(2)  # this year above 2× last year = growth above 100 % (issue #518)
+# The lines whose jump a reader expects the text to explain: what the financial streams record every year.
+HEADLINE = (("revenue", "revenue"), ("ebitda", "EBITDA"), ("pbt", "PBT"), ("pat", "PAT"),
+            ("pat_owners", "PAT to owners"), ("eps_basic", "basic EPS"))  # fmt: skip
+# A bank, NBFC or insurer has no gross margin or EBITDA. The ledger says so through its own metrics: the three
+# results-taxonomy lines `fincalc.forensic` uses, the lender metrics the financial stream is asked for (NIM, credit
+# cost, GS3 / NS3) and the ones bond run 12 recorded (crar_pct, gross_stage3_pct, consolidated_loan_book).
+_LENDER_RE = re.compile(
+    r"(?:^|_)(?:" + "|".join(FINANCIAL_BASES) + r"|net_interest_income|net_interest_margin|nim|credit_cost|"
+    r"gross_stage3|net_stage3|gs3|ns3|gnpa|nnpa|gross_npa|net_npa|crar|capital_adequacy|casa|loan_book|"
+    r"gross_written_premium|solvency_ratio)(?:_|$)")  # fmt: skip
+_CASH_FLOW_RE = re.compile(r"cash[- ]flow statement|statement of cash flows|added back|add-back", re.I)
 
 
 def canonical(metric: str | None) -> str | None:
@@ -323,6 +383,8 @@ def facts_from(claims: Iterable[dict[str, Any]]) -> tuple[list[Fact], list[dict[
         g = _GROWTH_RE.match(re.sub(r"[^a-z0-9]+", "_", metric.lower()))
         if g and kind == "pct":
             key = f"{_GROWTH_BASE[g.group(1)]}_{g.group(2)}"
+        if key == "da" and _CASH_FLOW_RE.search(c.get("statement") or ""):
+            key = "da_cf"  # the add-back in the cash-flow statement, said in the claim's own words
         out.append(Fact(id=int(c["id"]), key=key or "", metric=metric, raw=raw, value=raw * factor,
                         unit=c.get("unit"), kind=kind, currency=cur, period=parse_period(c.get("period")),
                         period_raw=c.get("period"), basis=basis_of(c), status=c.get("status") or "",
@@ -443,6 +505,7 @@ class _Engine:
         self.facts = facts
         self.report = IdentityReport(facts=len(facts))
         self._seen: set[tuple[str, frozenset[int]]] = set()
+        self._nc: dict[tuple[str, str], list[str]] = {}
 
     # ---- helpers
     def add(self, chk: Check) -> None:
@@ -455,11 +518,56 @@ class _Engine:
     def missing(self, name: str) -> None:
         self.report.not_enough_inputs.append(name)
 
+    def not_checked(self, check: str, what: str, where: str | None = None) -> None:
+        """A statement check (#518) that could not run: which input is absent, and for which period and basis.
+        One line per check and reason (`_flush_not_checked`); an absent input is never read as nil or as a pass."""
+        self._nc.setdefault((check, what), [])
+        if where:
+            self._nc[(check, what)].append(where)
+
+    def _flush_not_checked(self) -> None:
+        for (check, what), wheres in self._nc.items():
+            at = f" ({', '.join(sorted(set(wheres)))})" if wheres else ""
+            self.missing(f"{check} — not checked{at}: {what}")
+
+    @staticmethod
+    def _where(period: str, basis: str) -> str:
+        return period if basis == "unknown" else f"{period} {basis}"
+
+    def _bases(self, keys: Iterable[str], periods: Iterable[str | None]) -> list[str]:
+        """The labelled bases among these keys over EVERY period a cross-period check reads. `_Ledger.bases` looks at
+        one period, and `get(..., "unknown")` is a wildcard: used across two periods it would pair a standalone year
+        with a consolidated one. The wildcard is left only when no fact on either side carries a label."""
+        found = {f.basis for k in keys for p in periods if p for f in self.L.by.get((k, p), [])}
+        return [b for b in ("consolidated", "standalone") if b in found] or ["unknown"]
+
+    def _as(self, key: str, period: str, facts: list[Fact], *, magnitude: bool = False) -> str:
+        """Put `facts` in the ledger under a role name for one `sum_identity` call (as the cash roll-forward does for
+        its opening balance). `magnitude`: an outflow recorded with either sign (dividends 18,653 or −18,653)."""
+        self.L.by[(key, period)] = (
+            [replace(f, value=abs(f.value)) for f in facts] if magnitude else list(facts)
+        )
+        return key
+
+    def _lender(self) -> str | None:
+        """Why the ledger reads as a bank, NBFC or insurer (naming the claims), or None. From metric names only, so
+        every caller (pipeline, gate, report reader, MCP tool) gets the same answer; peers' figures do not count."""
+        hits = []
+        for f in self.facts:
+            m = re.sub(r"[^a-z0-9]+", "_", f.metric.lower()).strip("_")
+            if _LENDER_RE.search(m) and not re.search(r"(?:^|_)(?:peer|peers|industry|sector)(?:_|$)", m):
+                hits.append(f)
+        if not hits:
+            return None
+        names = sorted({f"C{f.id} {f.metric}" for f in hits})
+        return f"the ledger holds lender or insurer metrics ({', '.join(names[:4])})"
+
     def sum_identity(self, family: str, title: str, period: str, basis: str, cur: str,
                      lhs: list[tuple[str, int]], rhs: str, *, soft: str | None = None,
-                     signs_free: tuple[str, ...] = ()) -> bool:  # fmt: skip
+                     signs_free: tuple[str, ...] = (), warn_only: bool = False, tag: str = "") -> bool:  # fmt: skip
         """Σ sign × lhs ≈ rhs over every candidate combination; pass if any combination is within ε.
-        `signs_free`: operands whose sign convention varies in the ledger (exceptional items), tried both ways."""
+        `signs_free`: operands whose sign convention varies in the ledger (exceptional items), tried both ways.
+        `warn_only`: the statement checks of #518, which never fail and are never `hard`; `tag` keeps their ids apart."""
         cands = [self.L.get(k, period, basis, kind="money", currency=cur) for k, _ in lhs]
         tgt = self.L.get(rhs, period, basis, kind="money", currency=cur)
         if not tgt or any(not c for c in cands):
@@ -494,11 +602,14 @@ class _Engine:
             hint = hint or soft
             if scale_slip:
                 status = "fail"  # a 10^n slip is an error however small the gap it leaves
-        self.add(Check(id=f"{family}:{period}:{basis}:{cur}", family=family, title=title, status=status,
+        if warn_only and status == "fail":
+            status = "warn"
+        self.add(Check(id=f"{family}:{period}:{basis}:{cur}{tag}", family=family, title=title, status=status,
                        period=period, basis=basis, formula=formula, detail=detail,
                        claims=[f.brief() for f in (*ops, t)], expected=_f(total), actual=_f(t.value),
                        diff_pct=round(float(rel) * 100, 3), tolerance=_amt(eps, cur),
-                       hard=scale_slip or (status == "fail" and verified and rel > Decimal("0.05") and soft is None),
+                       hard=not warn_only and (scale_slip or (status == "fail" and verified
+                                                              and rel > Decimal("0.05") and soft is None)),
                        hint=hint))  # fmt: skip
         return True
 
@@ -943,6 +1054,288 @@ class _Engine:
                                    detail=f"{f.metric} = {f.raw.normalize():f} {f.unit or ''} is outside the band",
                                    claims=[f.brief()], hint="possible unit slip (% vs fraction, x vs %)"))  # fmt: skip
 
+    # ---- statement checks (#518). The idea is the model-integrity list of anthropics/financial-services' `audit-xls`
+    # skill, rewritten for Ind AS ledgers. All six are warn-level: a result is pass or warn, never fail, never `hard`,
+    # so none can block a report; a check without its inputs is listed as "not checked: <input>", never passed.
+    def _money(self, key: str, period: str | None, basis: str, cur: str | None) -> list[Fact]:
+        return self.L.get(key, period, basis, kind="money", currency=cur)
+
+    def equity_rollforward(self) -> None:
+        """Opening + profit for the year − dividends ± stated movements = closing, for other equity and for retained
+        earnings (annual; the opening balance is the previous year's closing one). Dividends are required: a ledger
+        without them is "not checked", never read as "no dividend". Buybacks, share-based payments and OCI join when
+        the ledger states them; the ones it does not state are the usual reason for a gap."""
+        name = "equity roll-forward"
+        stocks = (("other_equity", "Other equity"), ("retained_earnings", "Retained earnings"))
+        if not any(self.L.periods(k) for k, _ in stocks):
+            self.not_checked(name, "no other equity or retained earnings claim in the ledger")
+            return
+        soft = ("movements the ledger does not hold may explain the gap (other comprehensive income, shares issued "
+                "at a premium, buybacks, share-based payments, transfers between reserves): record them as claims")  # fmt: skip
+        for stock, label in stocks:
+            for p in sorted(q for q in self.L.periods(stock) if q.startswith("FY")):
+                prev = _prev(p)
+                for b in self._bases((stock,), (p, prev)):
+                    for cur in self.L.currencies((stock,), p):
+                        if not self._money(stock, p, b, cur):
+                            continue
+                        opening, paid = self._money(stock, prev, b, cur), self._money("dividends", p, b, cur)
+                        profit = self._money("pat_owners", p, b, cur) or self._money("pat", p, b, cur)
+                        absent = [n for n, held in (("the opening balance (the previous year's closing figure)", opening),
+                                                    ("profit for the year", profit), ("dividends paid", paid)) if not held]  # fmt: skip
+                        if absent:
+                            self.not_checked(name, ", ".join(absent), self._where(p, b))
+                            continue
+                        lhs = [(self._as("opening_balance", p, opening), 1), (self._as("profit", p, profit), 1),
+                               (self._as("dividends_out", p, paid, magnitude=True), -1)]  # fmt: skip
+                        for key, role, sign in (("buyback", "buyback_out", -1), ("esop_charge", "share_based_payments", 1)):  # fmt: skip
+                            if held := self._money(key, p, b, cur):
+                                lhs.append((self._as(role, p, held, magnitude=True), sign))
+                        if self._money("oci", p, b, cur):
+                            lhs.append(("oci", 1))  # signed as recorded: a loss in OCI is negative
+                        self.sum_identity(
+                            "equity_rollforward",
+                            f"{label} roll-forward: opening + profit − dividends ± stated movements = closing",
+                            p, b, cur, lhs, stock, soft=soft, warn_only=True, tag=f":{stock}")  # fmt: skip
+
+    def da_tie(self) -> None:
+        """D&A added back in the cash-flow statement = D&A charged in the P&L (same period, same basis)."""
+        name = "D&A tie (cash flow vs P&L)"
+        periods = self.L.periods("da") | self.L.periods("da_cf")
+        if not periods:
+            self.not_checked(name, "no depreciation and amortisation claim in the ledger")
+        for p in sorted(periods):
+            for b in self.L.bases(("da", "da_cf"), p):
+                for cur in self.L.currencies(("da", "da_cf"), p):
+                    pnl, cf = self._money("da", p, b, cur), self._money("da_cf", p, b, cur)
+                    if pnl and cf:
+                        self.sum_identity(
+                            "da_tie", "D&A added back in the cash flow = D&A charged in the P&L", p, b, cur,
+                            [(self._as("pnl_charge", p, pnl, magnitude=True), 1)],
+                            self._as("cash_flow_add_back", p, cf, magnitude=True), warn_only=True,
+                            soft="the add-back normally equals the charge: a gap means discontinued operations, an "
+                                 "impairment inside one of the lines, or a misread line")  # fmt: skip
+                    elif pnl or cf:
+                        self.not_checked(name, "the add-back in the cash-flow statement (only the P&L charge is held)"
+                                         if pnl else "the P&L charge (only the cash-flow add-back is held)",
+                                         self._where(p, b))  # fmt: skip
+
+    def tax_band(self) -> None:
+        """Effective tax rate (tax ÷ PBT) inside `TAX_BAND`. Without a tax-expense claim the rate implied by PBT − PAT
+        is used and labelled so; a stated effective_tax_rate is banded when neither can be computed. A rate outside
+        the band passes only when the ledger holds the reason for the same period and basis (deferred tax, MAT
+        credit, exceptional items, a tax reversal); a rate on a loss is not checked."""
+        name = "effective tax rate"
+        done: set[tuple[str, str]] = set()
+        for p in sorted(self.L.periods("pbt")):
+            for b in self.L.bases(("pbt", "tax", "pat"), p):
+                for cur in self.L.currencies(("pbt",), p):
+                    pbts, tax, pat = (self._money(k, p, b, cur) for k in ("pbt", "tax", "pat"))
+                    if not pbts:
+                        continue
+                    pbt = pbts[0]
+                    if pbt.value <= 0:
+                        self.not_checked(name, "PBT is zero or negative (a rate on a loss says nothing)",
+                                         self._where(p, b))  # fmt: skip
+                    elif tax:
+                        self._tax_check(tax[0].value / pbt.value, "tax ÷ pbt", [tax[0], pbt], p, b, cur)
+                    elif pat:
+                        self._tax_check((pbt.value - pat[0].value) / pbt.value,
+                                        "(pbt − pat) ÷ pbt — implied, no tax-expense claim in the ledger",
+                                        [pbt, pat[0]], p, b, cur)  # fmt: skip
+                    else:
+                        self.not_checked(name, "tax expense (and no PAT to imply it from)", self._where(p, b))
+                        continue
+                    done.add((p, b))
+        stated = [f for f in self.facts if f.key == "etr" and f.kind == "pct" and f.period]
+        for e in stated:
+            if not any(p == e.period and (b == e.basis or "unknown" in (b, e.basis)) for p, b in done):
+                self._tax_check(e.value, "effective_tax_rate as stated", [e], e.period or "", e.basis, None)
+        if not self.L.periods("pbt") and not stated:
+            self.not_checked(name, "no PBT claim in the ledger")
+
+    def _tax_check(
+        self, rate: Decimal, formula: str, used: list[Fact], p: str, b: str, cur: str | None
+    ) -> None:
+        lo, hi = TAX_BAND
+        near_label, near = min(STATUTORY_TAX_RATES, key=lambda s: abs(s[1] - rate))
+        detail = (f"effective tax rate {_pct(rate)} ({formula}); band {_pct(lo)}…{_pct(hi)}; nearest statutory rate "
+                  f"{_pct(near)} ({near_label})")  # fmt: skip
+        why: list[Fact] = []
+        status, hint = "pass", None
+        if not lo <= rate <= hi:
+            why = [f for k in ("deferred_tax", "mat_credit", "exceptional", "tax_adjustment")
+                   for f in self._money(k, p, b, cur) if f.value]  # fmt: skip
+            if why:
+                detail += "; outside the band, with the reason in the ledger: " + ", ".join(
+                    f"C{f.id} {f.metric}" for f in why
+                )
+                hint = "say the reason for the unusual tax rate in the text"
+            else:
+                status = "warn"
+                hint = ("outside the band with no reason in the ledger: record it as a claim (deferred tax, MAT credit "
+                        "under s.115JAA, exceptional items, tax of earlier years) or recheck the tax and PBT figures")  # fmt: skip
+        self.add(Check(id=f"tax_band:{p}:{b}:{cur or 'stated'}", family="tax_band",
+                       title="Effective tax rate inside the statutory band", status=status, period=p, basis=b,
+                       formula=formula, detail=detail, claims=[f.brief() for f in (*used, *why)], expected=_f(near),
+                       actual=_f(rate), tolerance=f"{_pct(lo)}…{_pct(hi)}", hint=hint))  # fmt: skip
+
+    def margin_order(self) -> None:
+        """Gross margin ≥ EBITDA margin ≥ PAT margin for a non-lender, over the margins the ledger states or lets
+        compute on revenue (two of the three are enough; the absent one is named). Skipped for a bank, NBFC or
+        insurer, with the reason."""
+        name = "margin ordering (gross ≥ EBITDA ≥ PAT)"
+        if lender := self._lender():
+            self.missing(f"{name} — skipped: {lender}; a bank, NBFC or insurer has no gross margin or EBITDA")
+            return
+        tiers = (("gross", "gross_margin", ("gross_profit",)), ("EBITDA", "ebitda_margin", ("ebitda",)),
+                 ("PAT", "pat_margin", ("pat", "pat_owners")))  # fmt: skip
+        keys = [k for _, mkey, nums in tiers for k in (mkey, *nums)]
+        seen_any = False
+        for p in sorted(set().union(*(self.L.periods(k) for k in keys))):
+            for b in self.L.bases(keys, p):
+                held: list[tuple[str, Decimal, list[Fact], Decimal]] = []  # tier, margin, claims, rounding
+                for tier, mkey, nums in tiers:
+                    if stated := self.L.get(mkey, p, b, kind="pct"):
+                        held.append((tier, stated[0].value, [stated[0]], stated[0].ulp))
+                    elif pair := next(((num, den) for nk in nums for num in self.L.get(nk, p, b, kind="money")
+                                       for den in self._money("revenue", p, b, num.currency) if den.value), None):  # fmt: skip
+                        held.append((tier, pair[0].value / pair[1].value, list(pair), Decimal(0)))
+                if not held:
+                    continue
+                seen_any = True
+                if len(held) < 2:
+                    self.not_checked(name, "a second margin (only one of gross, EBITDA and PAT margin is held or "
+                                           "computable on revenue)", self._where(p, b))  # fmt: skip
+                    continue
+                breaks = [f"{lo[0]} margin {_pct(lo[1])} is above {hi[0]} margin {_pct(hi[1])}"
+                          for hi, lo in itertools.pairwise(held) if lo[1] > hi[1] + hi[3] + lo[3] + Decimal("0.0005")]  # fmt: skip
+                absent = [t for t, *_ in tiers if t not in {h[0] for h in held}]
+                detail = "; ".join(breaks) or " ≥ ".join(f"{t} {_pct(v)}" for t, v, *_ in held)
+                if absent:
+                    detail += f" ({absent[0]} margin not in the ledger: not checked)"
+                used = {f.id: f for h in held for f in h[2]}
+                self.add(Check(id=f"margin_order:{p}:{b}", family="margin_order",
+                               title="Margins in order: gross ≥ EBITDA ≥ PAT", status="warn" if breaks else "pass",
+                               period=p, basis=b, formula=" ≥ ".join(f"{t} margin" for t, *_ in held), detail=detail,
+                               claims=[f.brief() for f in used.values()],
+                               hint="other income or an exceptional gain can lift PAT above EBITDA: say so in the "
+                                    "text; otherwise one margin is on another basis or misread" if breaks else None))  # fmt: skip
+        if not seen_any:
+            self.not_checked(name, "no margin, and no EBITDA or PAT with revenue, in the ledger")
+
+    def capex_fixed_assets(self) -> None:
+        """Cash capex against the year's rise in gross block, plus the rise in CWIP when both year ends hold it
+        (annual). Within `CAPEX_BAND` of the larger figure passes; a wider gap needs a reason in the text."""
+        name = "capex vs gross block"
+        years = sorted({q for k in ("capex", "gross_block") for q in self.L.periods(k) if q.startswith("FY")})
+        if not years:
+            self.not_checked(name, "no capex or gross block claim in the ledger")
+        for p in years:
+            prev = _prev(p)
+            for b in self._bases(("capex", "gross_block"), (p, prev)):
+                for cur in self.L.currencies(("capex", "gross_block"), p):
+                    capex, gb1, gb0 = (self._money(k, q, b, cur)
+                                       for k, q in (("capex", p), ("gross_block", p), ("gross_block", prev)))  # fmt: skip
+                    if not capex and not (gb1 and gb0):
+                        continue  # the opening year's block alone asks no question
+                    absent = [n for n, held in (("capex", capex), ("gross block at the year end", gb1),
+                                                ("gross block at the previous year end", gb0)) if not held]  # fmt: skip
+                    if absent:
+                        self.not_checked(name, ", ".join(absent), self._where(p, b))
+                        continue
+                    used, move = [capex[0], gb1[0], gb0[0]], gb1[0].value - gb0[0].value
+                    note = "CWIP is not held for both year ends, so its movement is left out"
+                    w1, w0 = self._money("cwip", p, b, cur), self._money("cwip", prev, b, cur)
+                    if w1 and w0:
+                        used, move, note = (
+                            [*used, w1[0], w0[0]],
+                            move + w1[0].value - w0[0].value,
+                            "with CWIP",
+                        )
+                    spend = abs(
+                        capex[0].value
+                    )  # the cash-flow line is often recorded as an outflow (negative)
+                    big = max(spend, abs(move))
+                    rel = abs(spend - move) / big if big else Decimal(0)
+                    ok = rel <= CAPEX_BAND
+                    self.add(Check(id=f"capex_fixed_assets:{p}:{b}:{cur}", family="capex_fixed_assets",
+                                   title="Capex against the rise in gross block (and CWIP)",
+                                   status="pass" if ok else "warn", period=p, basis=b,
+                                   formula="capex ≈ Δ gross_block + Δ cwip",
+                                   detail=f"capex {_amt(spend, cur)} vs a rise of {_amt(move, cur)} in gross block "
+                                          f"({note}) — {float(rel) * 100:.1f}% apart",
+                                   claims=[f.brief() for f in used], expected=_f(move), actual=_f(spend),
+                                   diff_pct=round(float(rel) * 100, 3),
+                                   tolerance=f"{float(CAPEX_BAND) * 100:.0f}% of the larger figure",
+                                   hint=None if ok else "disposals, capital advances and creditors, leased assets, an "
+                                        "acquisition or FX translation can explain it: say which in the text"))  # fmt: skip
+
+    def growth_outliers(self) -> None:
+        """A headline line (`HEADLINE`) that more than doubles or changes sign against the same period a year
+        earlier, from the two figures themselves (same basis, same unit kind, same currency); a stated year-on-year
+        growth above 100 % counts when the two figures are not both held. Always a warning: the checker cannot read
+        the report, so it asks for the explanation."""
+        n = 0
+        paired: set[tuple[str, str]] = set()
+        hint = ("needs an explanation in the text: what drove it (an acquisition, a low base, a one-off, a change of "
+                "basis or unit)")  # fmt: skip
+        for key, label in HEADLINE:
+            for p in sorted(self.L.periods(key)):
+                prev = _prev(p)
+                for b in self._bases((key,), (p, prev)):
+                    for kind in ("per_share", "money") if key == "eps_basic" else ("money",):
+                        for cur in sorted(
+                            {f.currency for f in self.L.get(key, p, b, kind=kind) if f.currency}
+                        ):
+                            now = self.L.get(key, p, b, kind=kind, currency=cur)
+                            then = self.L.get(key, prev, b, kind=kind, currency=cur)
+                            if not now or not then:
+                                continue
+                            x1, x0 = now[0], then[0]
+                            n += 1
+                            paired.add((key, p))
+                            change = "nil in both periods"
+                            if x0.value == 0:
+                                flag = "from nil a year earlier" if x1.value else None
+                            elif x0.value * x1.value < 0:
+                                flag = (
+                                    "a sign change ("
+                                    + ("loss to profit" if x1.value > 0 else "profit to loss")
+                                    + ")"
+                                )
+                            else:
+                                change = f"{float((x1.value - x0.value) / abs(x0.value)) * 100:+.1f}%"
+                                flag = change if abs(x1.value) > GROWTH_FLAG * abs(x0.value) else None
+                            show = [
+                                _amt(x.value, cur) if kind == "money" else f"{x.raw.normalize():f}"
+                                for x in (x1, x0)
+                            ]
+                            self.add(Check(id=f"growth_outlier:{key}:{p}:{b}:{kind}:{cur}", family="growth_outlier",
+                                           title=f"Year-on-year change in a headline line ({label})",
+                                           status="warn" if flag else "pass", period=p, basis=b,
+                                           formula=f"{key} {p} vs {key} {prev}",
+                                           detail=f"{label} {p} {show[0]} vs {prev} {show[1]}: "
+                                                  + (flag or f"{change}, not above 100 % and no sign change"),
+                                           claims=[x1.brief(), x0.brief()], expected=_f(x0.value), actual=_f(x1.value),
+                                           tolerance="above 100 % or a sign change", hint=hint if flag else None))  # fmt: skip
+        for g in [f for f in self.facts if f.key.endswith("_growth") and f.kind == "pct"]:
+            span = parse_growth_period(g.period_raw, g.metric)
+            base = g.key.rsplit("_", 1)[0]
+            if not span or span[2] != 1 or {(base, span[1]), (f"{base}_owners", span[1])} & paired:
+                continue
+            n += 1
+            big = abs(g.value) > 1
+            self.add(Check(id=f"growth_outlier:stated:{g.id}", family="growth_outlier",
+                           title=f"Year-on-year change in a headline line ({g.metric})",
+                           status="warn" if big else "pass", period=span[1], basis=g.basis,
+                           formula=f"{g.metric} as stated", detail=f"stated growth {_pct(g.value)}"
+                           + ("" if big else ", not above 100 %"), claims=[g.brief()], actual=_f(g.value),
+                           tolerance="above 100 %", hint=hint if big else None))  # fmt: skip
+        if not n:
+            self.not_checked("growth outliers", "no headline line (revenue, EBITDA, PBT, PAT, basic EPS) is held for "
+                                                "the same period a year apart on one basis")  # fmt: skip
+
     def run(self) -> IdentityReport:
         self.pnl()
         self.eps()
@@ -952,6 +1345,13 @@ class _Engine:
         self.growth()
         self.scale_and_basis()
         self.sanity()
+        self.equity_rollforward()
+        self.da_tie()
+        self.tax_band()
+        self.margin_order()
+        self.capex_fixed_assets()
+        self.growth_outliers()
+        self._flush_not_checked()
         return self.report
 
 
