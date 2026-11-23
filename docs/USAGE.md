@@ -409,3 +409,29 @@ uv run finresearch models revalidate          # re-run the backtest recipes read
 uv run finresearch models redteam-new <key> --prereg evals/experiments/<x>/PREREG.md   # start a red-team review file (evals/redteam/README.md)
 uv run finresearch forecasts horse-race --source replay --window seen   # the same race on one replayed card per stored session, 2022-26 (addendum A1, plus the business-time challenger p_rw_bus of addendum A2, #384, the parity-forward Black-76 IV challenger p_rn_b76 of addendum A3, #385, and the tail-aware challengers p_rw_emp (IV-scaled empirical) and p_rw_fhs (GJR filtered historical simulation) of addendum A5, #387, and the exit-rule Monte Carlo p_path of addendum A6, #388, with its simulation error and exit-reason score; design | seen | tuesday); read only, run outside market hours
 ```
+
+### The stock signal's factor diagnostics (#506)
+
+A pre-registered **diagnostic** of the already-registered stock signal (it changes no signal, call or card and is never
+an edge claim): the rank IC of each price component against 1, 3, 6 and 12 month forward returns on the point-in-time
+Nifty 50, its decay, the two sub-periods, quintile spreads, turnover and the break-even cost, with a block sign-flip
+randomisation null and Benjamini-Hochberg q-values over the two registered families
+(`evals/experiments/stock_factor_diagnostics/PREREG.md`). The read of the real price cache is the **owner's one-shot
+command**, run once from the main checkout (the only one that holds `data/cache/stock_backtest/`):
+
+```bash
+uv run finresearch eval factor-diagnostics            # reads data/cache/stock_backtest and the two pinned membership
+                                                      # files; writes results.json and RESULTS.md to
+                                                      # evals/experiments/stock_factor_diagnostics/ (statistics and
+                                                      # counts only, no price); no database, no network
+uv run finresearch eval factor-diagnostics --help     # --data-dir, --out-dir, --overwrite, --json
+uv run python -m finresearch.factordiag.synth 2000 506   # reprints the registered calibration table from generated
+                                                      # panels (no price read; about a minute)
+```
+
+It is refused (exit code 2, nothing written) when `factordiag/specs.py`, `PREREG.md` or a pinned membership file
+differs from the registration, when the price cache is missing, when the look-ahead audit finds a score that reads
+past its decision date or a forward return that reads before it, and when `results.json` already exists (pass
+`--overwrite` to replace it; the result is deterministic). What cannot be computed (a month with fewer than 20 names,
+a cell with too few months or blocks, a break-even cost when the spread is not positive, the valuation, shareholding
+and forensic components that have no point-in-time history) is printed as unknown with its count, never as 0.
